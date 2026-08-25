@@ -37,7 +37,14 @@ import { getSupabaseService } from "../../db/supabase";
 // c.get('user').id, so every salesperson shared ONE row. Anything per-person —
 // attribution, ownership, a cart, a visibility scope — reads `houzsUser` and the
 // 0066 bridge, never the pinned `user`.
-const SCM_SYSTEM_STAFF_ID = "00000000-0000-4000-8000-000000000001";
+/* EXPORTED since 2026-08-26. The public delivery-order scan has no session, so
+   it cannot go through this middleware — but it DOES go through the same status
+   writer, which stamps `user.id` onto the inventory movements it produces. That
+   caller identity has to be a real, declared one rather than a uuid typed a
+   second time in the public route: it is the SAME pinned system-staff row every
+   authenticated SCM write already carries, so a scanned movement and an office
+   movement are attributed identically and neither is a fabricated person. */
+export const SCM_SYSTEM_STAFF_ID = "00000000-0000-4000-8000-000000000001";
 
 export const supabaseAuth = createMiddleware<{ Bindings: Env; Variables: Variables }>(
   async (c, next) => {

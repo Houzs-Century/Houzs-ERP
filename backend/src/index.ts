@@ -102,6 +102,7 @@ import { caseTrack } from "./middleware/caseTrack";
 import { supplierTrack } from "./middleware/supplierTrack";
 import { dbInject, withPgDb } from "./middleware/db";
 import { companyContext } from "./middleware/companyContext";
+import { publicDoScan } from "./routes/publicDoScan";
 import { drainEmailOutbox } from "./services/email";
 import { runClientErrorDigest } from "./services/clientErrors";
 import { runSlaEscalation } from "./services/assrEscalation";
@@ -292,6 +293,17 @@ app.route("/api/assr-form-intake", assrFormIntake);
 // other /api/scm/* path is untouched and still hits the gates below. Mirrors how
 // 2990's api serves Model photos auth-free. See scm/routes/public-images.ts.
 app.route("/api/scm", publicScmImages);
+
+// PUBLIC no-login delivery-order SCAN — MUST be mounted BEFORE the `auth` gate,
+// because the driver opens the printed QR with a phone camera and has no
+// session. The gate is the unguessable 64-hex token printed on the paper
+// (mig 0328), which the owner chose in those terms (「就跟hookka一样」), plus the
+// kill switch he asked for on top of it. The surface is deliberately two
+// endpoints: a minimal summary with no money, no address and no contact, and a
+// forward-only one-rung advance that runs the OFFICE's own status writer. The
+// company is taken from the row the token resolves to, never from the request.
+// See routes/publicDoScan.ts and backend/tests/publicDoScan*.test.ts.
+app.route("/api/public/do-scan", publicDoScan);
 
 app.use("/api/*", auth);
 

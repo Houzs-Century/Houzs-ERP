@@ -1,6 +1,13 @@
 import { useLocation } from "react-router-dom";
 
-export type AppSurface = "survey" | "portal" | "reset" | "invite" | "privacy" | "staff";
+export type AppSurface =
+  | "survey"
+  | "portal"
+  | "doscan"
+  | "reset"
+  | "invite"
+  | "privacy"
+  | "staff";
 
 /**
  * Pick the top-level application tree for one browser location.
@@ -17,6 +24,11 @@ export function appSurfaceForPath(pathname: string): AppSurface {
     pathname === "/portal" ||
     pathname.startsWith("/portal/")
   ) return "portal";
+  // The printed delivery-order QR. NO LOGIN — the driver opens it with a phone
+  // camera and the 64-hex token in the path is the only credential (owner:
+  // 「就跟hookka一样」). It must land OUTSIDE AuthGate for the same reason the
+  // survey does: a staff sign-in screen in front of it makes the paper useless.
+  if (pathname.startsWith("/d/")) return "doscan";
   if (pathname.startsWith("/reset/")) return "reset";
   if (pathname.startsWith("/invite/")) return "invite";
   // The App Store's privacy-policy URL. A static file cannot survive the

@@ -1501,10 +1501,10 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD, flowNav }:
     try {
       if (moduleKey === "delivery-orders-mfg") {
         const { generateDeliveryOrderPdf } = await import("../vendor/scm/lib/delivery-order-pdf");
-        // loadScanId arms the print's "scan to mark loaded" QR (desktop parity).
-        await generateDeliveryOrderPdf(
-          { ...(header as Record<string, unknown>), loadScanId: (header as { id?: string }).id } as never,
-          items as never, { action });
+        // armDoScanToken puts the PUBLIC scan token on the header (desktop parity).
+        const { armDoScanToken } = await import("../vendor/scm/lib/do-scan-token-arm");
+        const doId = (header as { id?: string }).id ?? "";
+        await generateDeliveryOrderPdf(await armDoScanToken(header as Record<string, unknown>, doId) as never, items as never, { action });
       } else {
         const { generateSalesInvoicePdf } = await import("../vendor/scm/lib/sales-invoice-pdf");
         await generateSalesInvoicePdf(header as never, items as never, { action });

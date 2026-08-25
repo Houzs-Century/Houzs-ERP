@@ -58,6 +58,7 @@ if (canonicalTarget) window.location.replace(canonicalTarget);
 // public flows skip the whole dashboard bundle in return.
 const SurveyPublic = lazy(() => import("./pages/SurveyPublic").then((m) => ({ default: m.SurveyPublic })));
 const PortalApp = lazy(() => import("./portal/PortalApp").then((m) => ({ default: m.PortalApp })));
+const PublicDoScan = lazy(() => import("./pages/PublicDoScan").then((m) => ({ default: m.PublicDoScan })));
 const ResetPassword = lazy(() => import("./pages/ResetPassword").then((m) => ({ default: m.ResetPassword })));
 // Invite acceptance rides in the unauthenticated-screens chunk (see
 // auth/AuthGate.tsx) — same split, same reason: staff sessions never load it.
@@ -149,6 +150,7 @@ if (LOGIN_AS_HOSTS.has(window.location.hostname)) {
 
 // Public routes that must bypass the staff AuthGate entirely:
 //   /survey/:token       — tokenized customer satisfaction survey
+//   /d/:token            — the printed delivery-order QR (no login, owner's call)
 //   /track               — public case-lookup form (ASSR no + phone)
 //   /portal/case/:token  — customer-facing case view scoped by token
 // The selection is made from the LIVE Router location. It used to be frozen
@@ -172,6 +174,13 @@ function RootApp() {
     return (
       <LazySlot resetKey={`public:${surface}`} fallback={<PublicFallback />}>
         <PortalApp />
+      </LazySlot>
+    );
+  }
+  if (surface === "doscan") {
+    return (
+      <LazySlot resetKey={`public:${surface}`} fallback={<PublicFallback />}>
+        <PublicDoScan />
       </LazySlot>
     );
   }

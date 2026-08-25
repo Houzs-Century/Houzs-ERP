@@ -169,10 +169,12 @@ export async function fetchPrintBundle(target: PrintTarget): Promise<Bundle> {
     }
     case "do": {
       const j = await authedFetch<{ deliveryOrder: Json; items: unknown[] }>(`/delivery-orders-mfg/${k}`);
-      /* loadScanId arms the print's "scan to mark loaded" QR — stamped here for
-         the same reason MfgDeliveryOrdersListV2 stamps it in its own fetcher:
-         so no call site has to remember to. */
-      return { header: { ...j.deliveryOrder, loadScanId: target.key }, items: j.items };
+      /* armDoScanToken puts the PUBLIC scan token on the header, which is what
+         the print's QR encodes since 2026-08-26 (/d/<token>, no login). Stamped
+         here for the same reason the row id used to be: so no call site has to
+         remember to. */
+      const { armDoScanToken } = await import("../vendor/scm/lib/do-scan-token-arm");
+      return { header: await armDoScanToken(j.deliveryOrder as object, target.key), items: j.items };
     }
     case "si": {
       const j = await authedFetch<{ salesInvoice: Json; items: unknown[] }>(`/sales-invoices/${k}`);

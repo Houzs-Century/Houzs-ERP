@@ -45,9 +45,19 @@ const unitsLabel = (n: number): string => `${qty(n)} ${n === 1 ? 'unit' : 'units
 /**
  * Where the QR points. The EXISTING authed app route for the run — Last Mile
  * Delivery, on this day, focused on this trip. It requires a login by
- * construction (`ScmGuard area="scm.transportation.drivers"` in App.tsx), which
- * is deliberate for now: a public no-login scan target is a separate change
- * with its own security review, and it is not this one.
+ * construction (`ScmGuard area="scm.transportation.drivers"` in App.tsx).
+ *
+ * RE-CHECKED 2026-08-26, when the DELIVERY ORDER's printed QR did go public
+ * (`/d/<token>`, no login — the owner's call, 「就跟hookka一样」). This one stays
+ * authed, and the reason is structural rather than a deferral: the public token
+ * is a column on `scm.delivery_orders`, minted per DOCUMENT, and it resolves to
+ * exactly one row — which is what supplies the company scope and what makes the
+ * forward-only one-rung ladder meaningful. A packing list is not a row. There is
+ * no `packing_lists` table at all (backend/src/scm/lib/packing-list-view.ts: "A
+ * PACKING LIST IS A TRIP, RENDERED"), so there is nothing here to hang a token
+ * on, and this sheet is a run OVERVIEW rather than a scan target — it advances
+ * nothing. Giving a trip its own public token is a separate change with its own
+ * decision to take, and it is still not this one.
  */
 export function packingRunUrl(origin: string, list: PackingListRow, date: string): string {
   const p = new URLSearchParams();

@@ -232,9 +232,14 @@
       "why": "Not an empty-read conclusion: it is read off the ONE document in hand, from its own status column being CANCELLED, and it repeats the server's own refusal wording (delivery-orders-mfg.ts:5403 do_cancelled_final). The stock claim is the cancel path's documented effect - cancelling a DO writes the add-back - not an inference from a list that came back empty."
     },
     {
-      "file": "frontend/src/vendor/scm/lib/do-next-step.ts",
+      "file": "backend/src/scm/shared/do-scan-ladder.ts",
       "text": "return 'Nothing left to do on this document.';",
-      "why": "The claim is read off THIS document's own status, never off an empty result set. The scan page has the delivery order in hand and the sentence means \"this row is DELIVERED / SIGNED / INVOICED\" — the shape this gate exists for is an empty READ reported as a finished job, and there is no read here to be empty. Wording is the owner's, 2026-08-26."
+      "why": "The claim is read off THIS document's own status, never off an empty result set. The scan page has the delivery order in hand and the sentence means \"this row is DELIVERED / SIGNED / INVOICED\" — the shape this gate exists for is an empty READ reported as a finished job, and there is no read here to be empty. Wording is the owner's, 2026-08-26. MOVED 2026-08-26 from vendor/scm/lib/do-next-step.ts into the mirrored do-scan-ladder module (the server reads the ladder now, so it has an original and a byte-identical frontend copy); the sentence and the reasoning are unchanged."
+    },
+    {
+      "file": "frontend/src/vendor/shared/do-scan-ladder.ts",
+      "text": "return 'Nothing left to do on this document.';",
+      "why": "The claim is read off THIS document's own status, never off an empty result set. The scan page has the delivery order in hand and the sentence means \"this row is DELIVERED / SIGNED / INVOICED\" — the shape this gate exists for is an empty READ reported as a finished job, and there is no read here to be empty. Wording is the owner's, 2026-08-26. MOVED 2026-08-26 from vendor/scm/lib/do-next-step.ts into the mirrored do-scan-ladder module (the server reads the ladder now, so it has an original and a byte-identical frontend copy); the sentence and the reasoning are unchanged."
     },
     {
       "file": "frontend/src/pages/scm-v2/DoLoadScan.ladder.test.tsx",

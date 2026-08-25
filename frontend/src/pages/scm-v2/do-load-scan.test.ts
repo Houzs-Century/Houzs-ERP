@@ -32,25 +32,55 @@ import { resolve } from 'node:path';
 const read = (p: string) => readFileSync(resolve(__dirname, p), 'utf8');
 const PAGE = read('./DoLoadScan.tsx');
 const PDF = read('../../vendor/scm/lib/delivery-order-pdf.ts');
+/* Comments stripped, for the NEGATIVE assertions only. The header of that file
+   RECORDS what the QR used to encode and what the caption used to say, which is
+   exactly the prose a reader needs and exactly the string a naive `not.toContain`
+   trips on — the same trap this file already fixed once, three tests below. */
+const PDF_CODE = PDF.replace(/\/\*[\s\S]*?\*\//g, '')
+  .split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
 const APP = read('../../App.tsx');
 const CN = read('./ConsignmentNoteDetail.tsx');
-const LADDER_SRC = read('../../vendor/scm/lib/do-next-step.ts');
+/* The ladder MOVED on 2026-08-26 (it is read by the server now, so it lives in
+   the mirrored rule module and do-next-step.ts re-exports it). This file follows
+   it rather than dropping the assertion — the copy under the button is what a
+   storekeeper reads at the dock, and it is pinned wherever it lives. */
+const LADDER_SRC = read('../../vendor/shared/do-scan-ladder.ts');
+const PUBLIC_PAGE = read('../PublicDoScan.tsx');
 
 describe('the DO print QR', () => {
-  it('is gated on the explicit loadScanId, and encodes the /scm/do-load link', () => {
-    expect(PDF).toContain('header.loadScanId && typeof window');
-    expect(PDF).toContain('/scm/do-load?id=');
+  /* IT POINTS AT THE PUBLIC PAGE SINCE 2026-08-26. It encoded
+     /scm/do-load?id=<uuid> until then, which only a signed-in office user could
+     open — useless to the driver the code is printed for. The owner chose the
+     no-login scan (「就跟hookka一样」), so the QR carries a 64-hex token and the
+     link is /d/<token>. `loadScanId` is gone with it: it was not an id any more
+     and the code had stopped being about "load". */
+  it('is gated on the explicit scanToken, and encodes the PUBLIC /d/ link', () => {
+    expect(PDF).toContain('header.scanToken && typeof window');
+    expect(PDF).toContain('/d/${encodeURIComponent(header.scanToken)}');
     expect(PDF).toContain('drawQrIntoPdf');
+    expect(PDF_CODE, 'the authed link must not still be printed anywhere').not.toContain('/scm/do-load?id=');
+  });
+
+  /* THE CAPTION HAD TO CHANGE WITH THE LADDER. "SCAN · MARK LOADED" named ONE
+     of the four things the code now does, so it was wrong on three papers out
+     of four. The caption states what is true of every rung. */
+  it('the caption names the repeated scan, not one rung', () => {
+    expect(PDF).toContain("doc.text('SCAN AT EACH STEP'");
+    expect(PDF_CODE).not.toContain('MARK LOADED');
   });
 
   it('is never armed by the Consignment Note print', () => {
+    expect(CN).not.toContain('scanToken');
     expect(CN).not.toContain('loadScanId');
   });
 
-  it('the three DO surfaces arm it', () => {
-    for (const p of ['./DeliveryOrderDetailV2.tsx', './MfgDeliveryOrdersListV2.tsx', '../../mobile/MobileModuleDetail.tsx']) {
-      expect(read(p), `${p} does not arm loadScanId`).toContain('loadScanId');
+  it('the DO surfaces arm it through the ONE shared helper', () => {
+    for (const p of ['./DeliveryOrderDetailV2.tsx', '../../mobile/MobileModuleDetail.tsx', '../../lib/printDocumentPdf.ts']) {
+      expect(read(p), `${p} does not arm the scan token`).toContain('armDoScanToken');
     }
+    /* The list goes through printDocumentPdf's fetcher, which is the third file
+       above — it has no stamping of its own to keep in step. */
+    expect(read('./MfgDeliveryOrdersListV2.tsx')).toContain('fetchPrintBundle');
   });
 });
 
@@ -96,7 +126,7 @@ describe('the landing page', () => {
        page in DoLoadScan.ladder.test.tsx; this only pins that the words exist
        and that the retracted ones have not come back anywhere. */
     expect(LADDER_SRC).toContain('takes the goods out of warehouse stock');
-    expect(LADDER_SRC + PAGE).not.toContain('Stock leaves the warehouse when the');
+    expect(LADDER_SRC + PAGE + PUBLIC_PAGE).not.toContain('Stock leaves the warehouse when the');
   });
 
   it('is routed at /scm/do-load behind the delivery guard', () => {

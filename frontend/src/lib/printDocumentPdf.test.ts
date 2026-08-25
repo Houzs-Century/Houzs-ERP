@@ -114,10 +114,32 @@ describe("each document type is fetched at ITS OWN address", () => {
     expect(authedFetch.mock.calls.map((c) => c[0])).toEqual(["/mfg-purchase-orders/po-uuid"]);
   });
 
-  test("a Delivery Order's header carries loadScanId, which arms the print's QR", async () => {
-    authedFetch.mockResolvedValue({ deliveryOrder: { do_number: "HC-DO-2608-003" }, items: [] });
+  /* Was `loadScanId === "do-uuid"` until 2026-08-26. The QR encodes the PUBLIC
+     page now (/d/<token>, no login — the owner's call), so the header carries a
+     minted TOKEN instead of the row id, fetched from the authed mint endpoint.
+     The property is unchanged and is still the one worth pinning: the DO branch
+     of this fetcher is where the QR gets armed, so no print call site has to
+     remember to. */
+  test("a Delivery Order's header carries the PUBLIC scan token, which arms the print's QR", async () => {
+    authedFetch.mockImplementation((p: string) =>
+      p.endsWith("/scan-token")
+        ? Promise.resolve({ scanToken: "f".repeat(64) })
+        : Promise.resolve({ deliveryOrder: { do_number: "HC-DO-2608-003" }, items: [] }));
     const b = await fetchPrintBundle(t("do", "HC-DO-2608-003", "do-uuid"));
-    expect(b.header.loadScanId).toBe("do-uuid");
+    expect((b.header as { scanToken?: string }).scanToken).toBe("f".repeat(64));
+    expect(authedFetch.mock.calls.map((c) => c[0])).toContain("/delivery-orders-mfg/do-uuid/scan-token");
+  });
+
+  /* A print must never be blocked by the QR. The operator asked for the
+     document; an unreachable mint endpoint costs the code, not the paper. */
+  test("a failed mint still prints the Delivery Order, with no QR", async () => {
+    authedFetch.mockImplementation((p: string) =>
+      p.endsWith("/scan-token")
+        ? Promise.reject(new Error("mint down"))
+        : Promise.resolve({ deliveryOrder: { do_number: "HC-DO-2608-003" }, items: [] }));
+    const b = await fetchPrintBundle(t("do", "HC-DO-2608-003", "do-uuid"));
+    expect((b.header as { scanToken?: string }).scanToken).toBeUndefined();
+    expect((b.header as { do_number?: string }).do_number).toBe("HC-DO-2608-003");
   });
 });
 

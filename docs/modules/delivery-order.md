@@ -288,6 +288,68 @@ still need `edit` on `scm.sales.delivery`.
 | POST/PATCH/DELETE | `/:id/items[/:itemId]` | `:3636` / `:3784` / `:4005` | Line CRUD. |
 | GET/POST/DELETE | `/:id/payments[/:paymentId]` | `:4075` / `:4118` / `:4155` | Payments ledger. |
 | PATCH | `/:id/status` | `:4359` (handler `:4166`) | **The stock chokepoint.** |
+| GET | `/:id/scan-token` | `backend/src/scm/routes/delivery-order-scan-token.ts` | Mint-if-missing the 64-hex token the printed QR encodes (mig 0328). A SEPARATE router on the same prefix, because `delivery-orders-mfg.ts` is past its file-size ceiling. A **GET** although it can write: the write is an idempotent create-if-missing, and a POST would deny the QR to somebody who may print a delivery order but not edit one. Scoped to the SESSION's company; the public route can never reach it. |
+
+### The PUBLIC surface — `/api/public/do-scan/*` (2026-08-26)
+
+`backend/src/routes/publicDoScan.ts`, mounted in `backend/src/index.ts`
+**before** the `/api/*` auth gate. No session, no permission, no company header.
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/api/public/do-scan/:token` | Minimal summary + the ONE next rung |
+| POST | `/api/public/do-scan/:token/advance` | `{ to }` — move exactly one rung |
+
+**The owner chose this**, after being shown the risk twice: 「就跟hookka一样」 —
+a public, no-login QR exactly like Hookka's, where the unguessable token printed
+on the paper IS the credential. He accepted ONE addition, a kill switch
+(`qr_revoked_at`), because Hookka's token has neither an expiry nor a revocation
+while Houzs already runs that pattern (mig 0126, `case_track_tokens`).
+
+**What the response contains:** delivery order number, customer name, delivery
+area (city + state), line count, status, and the next rung's label + note. The
+line count is `null` — never 0 — when that read did not answer, and the page
+prints "line count unavailable": zero is a claim about the load, and supabase-js
+does not throw, so an unbound error would render a blip as an empty lorry.
+**What it never contains:** any price, the street address, the postcode, any
+phone number or email. `backend/tests/publicDoScanSurface.test.ts` fails the
+build if the route file so much as MENTIONS one of those column names.
+
+**Where the company comes from.** From `company_id` on the ONE ROW the token
+resolved to — never from a session (there is none) and never from the request.
+`scm.delivery_orders.company_id` is NOT NULL (mig 0083) and mig 0328 puts a
+UNIQUE index on `qr_token`, so "the token resolves to exactly one row" is a
+database guarantee rather than a probability argument. That value scopes every
+statement afterwards, including every read and write inside the status handler.
+A row carrying no usable company is refused, never served unscoped.
+
+**The write is the OFFICE's write.** The advance calls
+`patchDeliveryOrderStatusHandler` through a synthetic context — there is
+deliberately no second write path to drift, so the inventory OUT, the SO
+delivered-qty resync, the confirm-hop customer email, the over-delivery cap and
+the cancelled-is-final refusal all fire exactly as they do for an office click.
+Its caller identity is `SCM_SYSTEM_STAFF_ID`, the same pinned `scm.staff` row
+every authenticated SCM write already carries; `houzsUser` is left UNDEFINED
+because there is no person, and no fake user id is minted to fill the hole.
+
+**Rate limits** (`checkRateLimit`, the KV limiter every other public surface
+uses): 30/900s per IP on the read (matching `survey_read`), 20/900s per IP on
+the advance (matching `survey_submit` / `track`), plus 10/900s per TOKEN — a cap
+nothing else has, because nothing else writes to a document identified by the
+credential itself.
+
+**Revocation.** `UPDATE scm.delivery_orders SET qr_revoked_at = now() WHERE id =
+…` kills one paper. A revoked token gets the SAME "unknown or expired" answer an
+unknown one gets, byte for byte — a different message would tell whoever holds a
+leaked paper that the code used to be real. There is no UI for it yet; the
+column is the kill switch and the button is a follow-up.
+
+**A FAILED READ IS THE OPPOSITE CASE AND GETS ITS OWN ANSWER: 503.** supabase-js
+does not throw, so a five-second database blip and "no such token" arrive
+identically unless the error is bound — and answering 404 to a blip tells a
+driver standing at a lorry that his paper is dead. It leaks nothing, because a
+blip fails for every token alike and so says nothing about the one in hand;
+revocation is folded into the unknown answer precisely because it WOULD.
 
 ---
 
@@ -558,10 +620,17 @@ status from a child document.
 
 ### The loading QR — how a warehouse actually reaches LOADED (2026-08-21)
 
-The DO print's header carries a **"SCAN · MARK LOADED"** QR encoding
-`/scm/do-load?id=<do uuid>`. The warehouse scans the paper that travels with
-the goods; the landing page (`frontend/src/pages/scm-v2/DoLoadScan.tsx`,
-routed in `App.tsx` behind `scm.sales.delivery`) shows the DO and one action.
+**THE PRINTED QR IS PUBLIC SINCE 2026-08-26 — see `docs/bugs/0544`.** It carries
+a **"SCAN AT EACH STEP"** caption and encodes `/d/<64-hex token>`, which opens
+with NO login (`frontend/src/pages/PublicDoScan.tsx`, outside `AuthGate`). It
+encoded `/scm/do-load?id=<do uuid>` until then, and that link is behind the staff
+sign-in AND `scm.sales.delivery` — so the code printed for the storekeeper and
+the driver, neither of whom has an account, showed them a login screen.
+
+`/scm/do-load` (`frontend/src/pages/scm-v2/DoLoadScan.tsx`, routed in `App.tsx`
+behind `scm.sales.delivery`) is unchanged and is now the AUTHENTICATED TWIN: the
+same ladder, for office staff who reach it from a link rather than a camera. It
+shows the DO and one action.
 On a `DRAFT` that action is **Confirm loading**, the ordinary status PATCH to
 `LOADED` (audited; the illegal-transition guard owns legality, so a shipped DO
 can never be pulled back by a stray scan). **Since 2026-08-26 the same QR also
@@ -576,16 +645,15 @@ deduction's existence check plus `uq_inv_mov_do_source_v2` make a second one
 impossible regardless. The page copy was corrected in the same change, because
 the person reading it is standing at the dock deciding whether to press it.
 
-> **KNOWN WORDING GAP — fix before the QR goes into use.** The PRINT still says
-> **"SCAN · MARK LOADED"**, and scanning it now takes the goods out of stock —
-> and since 2026-08-26 the same code is also the loading, departure and delivery
-> scan, so the caption names one of four things it does. Still deliberately NOT
-> changed here: print text is the owner's to word.
-> The owner's position is that the QR feature stays, Confirmed is the stock-out
-> point, and the QR is not in use yet: 「QR 跑 可是confirmed就出货 QR之后才用」.
-> So this is a wording change to make before anyone scans a printed DO in
-> anger — deliberately NOT made here, because changing print text is a separate
-> decision from moving the deduction.
+> **THE WORDING GAP IS CLOSED (2026-08-26).** This box used to read "KNOWN
+> WORDING GAP — fix before the QR goes into use": the print still said
+> **"SCAN · MARK LOADED"** while the code did four things and the first of them
+> moved stock. The caption now reads **"SCAN AT EACH STEP"**, which is true of
+> every rung and tells the reader the thing the old one did not — that this code
+> is scanned more than once. The owner's position that made this safe to do now
+> still holds: the QR feature stays, Confirmed is the stock-out point, and the
+> QR was not yet in use (「QR 跑 可是confirmed就出货 QR之后才用」), so no printed
+> paper carries the old caption in anger.
 
 ### THE THREE SCANS — one QR, three steps (owner, 2026-08-25/26)
 
@@ -621,8 +689,15 @@ step, which is the physical shape of the rule above.
 `DO_SHIPPED_STATES` member, so the deduction is done before the second scan.
 
 **The ladder is `doScanStep` / `doScanBlockReason` in
-`frontend/src/vendor/scm/lib/do-next-step.ts`**, beside the office's
-`doAdvanceStep` rather than as a second copy of it. The two are deliberately
+`backend/src/scm/shared/do-scan-ladder.ts`**, mirrored byte-identically at
+`frontend/src/vendor/shared/do-scan-ladder.ts` and held there by
+`check-shared-mirrors --strict`. It MOVED there from
+`frontend/src/vendor/scm/lib/do-next-step.ts` on 2026-08-26 (which re-exports it,
+so no import changed): the public scan must decide the target status on the
+SERVER — a rung named in a request body is a rung an attacker picks — and a
+second copy of the ladder in `backend/` is the duplicated-decision class this
+repo gates on. It still sits beside the office's `doAdvanceStep` conceptually
+rather than as a second copy of it. The two are deliberately
 separate: the office at a desk is offered the confirm and then pointed at the
 Sales Invoice; the person at the lorry is offered the one physical step in front
 of him. Each rung carries its own `note` — the line under the button — so adding
@@ -661,7 +736,10 @@ left the handler alone. Do not cite this page as the guarantee.
 
 Pinned by `frontend/src/pages/scm-v2/DoLoadScan.ladder.test.tsx`, which mounts the
 real page and presses the real button rather than calling the helper the page is
-supposed to call.
+supposed to call; by `frontend/src/pages/PublicDoScan.test.tsx` for the no-login
+twin; and by `backend/tests/doScanLadder.test.ts`, which asserts forward-only as
+a PROPERTY over the ladder's own derived order — so a rung added tomorrow is
+covered without editing the test, and a rung pointed backwards fails there.
 
 ### The three manual status moves on the row menu (2026-08-22)
 
