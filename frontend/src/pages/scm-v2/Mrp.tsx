@@ -20,9 +20,9 @@
 // Backed by GET /mrp (apps/api/src/routes/mrp.ts).
 // ----------------------------------------------------------------------------
 
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router';
-import { ChevronRight, ChevronDown, RefreshCw, Truck, ShoppingCart, CalendarRange, Clock, Columns3 } from 'lucide-react';
+import { ChevronRight, ChevronDown, RefreshCw, Truck, ShoppingCart, CalendarRange, Clock } from 'lucide-react';
 import {
   useMrp, useRegenerateMrp, useCategoryLeadTimes, useUpdateCategoryLeadTime, GLOBAL_LEAD_KEY,
   type MrpSku, type MrpLine, type MrpResponse, type SofaSet, type LeadCategory,
@@ -47,45 +47,6 @@ const ICON = { size: 14, strokeWidth: 1.75 } as const;
    .ghostBtn / .primaryBtn only resolved via the removed .page cascade). */
 const TOOLBAR_BTN =
   'inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-surface px-3 text-[11px] font-semibold uppercase tracking-wider text-ink-secondary transition-colors hover:border-primary/40 hover:bg-primary-soft hover:text-primary disabled:cursor-default disabled:opacity-50';
-
-/* Columns menu — a small toolbar dropdown mirroring the Sales-Order list's
-   "Columns" control. Its one toggle, "Sales Orders", is OFF by default: the
-   bedframe / mattress / accessory tabs group by SKU (a SKU can serve several
-   SOs, so the order breakdown lives one level down), and turning this on
-   expands every row to reveal which Sales Orders need each SKU without the
-   operator drilling in row by row. Owner ask 2026-08-25. Persisted so the
-   choice sticks. Closes on outside-click / Escape. */
-const ColumnsMenu = ({ showSo, onToggleSo }: { showSo: boolean; onToggleSo: (v: boolean) => void }) => {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
-    document.addEventListener('mousedown', onDown);
-    document.addEventListener('keydown', onKey);
-    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey); };
-  }, [open]);
-  return (
-    <div ref={ref} className="relative">
-      <button type="button" className={TOOLBAR_BTN} data-active={showSo} onClick={() => setOpen((o) => !o)}
-        aria-haspopup="menu" aria-expanded={open} title="Choose columns">
-        <Columns3 {...ICON} /> Columns
-      </button>
-      {open && (
-        <div role="menu" className="absolute right-0 z-30 mt-1 w-64 rounded-md border border-border bg-surface p-2 shadow-lg">
-          <label className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-[12.5px] font-medium text-ink hover:bg-primary-soft">
-            <input type="checkbox" checked={showSo} onChange={(e) => onToggleSo(e.target.checked)} />
-            <span>Sales Orders</span>
-          </label>
-          <p className="px-2 pt-1 text-[11px] leading-snug text-ink-muted">
-            Expand every row to show which Sales Orders need each SKU — No · Qty · Delivery · Shortage.
-          </p>
-        </div>
-      )}
-    </div>
-  );
-};
 
 
 /* The Delivery cell for an SO line. A missing delivery date is NOT the same
@@ -477,14 +438,6 @@ export const Mrp = () => {
      view reuses expandedVariants (each sofa row is variant-level). */
   const [expandedModels, setExpandedModels] = useState<Set<string>>(new Set());
   const [expandedVariants, setExpandedVariants] = useState<Set<string>>(new Set());
-  /* "Sales Orders" column (Columns menu) — when on, every SKU row is expanded to
-     its SO breakdown. Default off, persisted (survives reload). */
-  const [showSo, setShowSo] = useState<boolean>(() => {
-    try { return localStorage.getItem('mrp:show-so') === '1'; } catch { return false; }
-  });
-  useEffect(() => {
-    try { localStorage.setItem('mrp:show-so', showSo ? '1' : '0'); } catch { /* private mode — non-fatal */ }
-  }, [showSo]);
   /* Commander 2026-05-31 — selection lives at the SO ORDER-LINE level: each
      individual shortage line (soItemId) has its own checkbox. The Model/Variant
      checkboxes are parent "select all shortage lines beneath me" toggles. */
@@ -957,7 +910,6 @@ export const Mrp = () => {
             <div className="inline-flex items-center gap-1.5" role="group" aria-label="Table utilities">
               <button type="button" className={TOOLBAR_BTN} onClick={collapseAll}>Collapse</button>
               <button type="button" className={TOOLBAR_BTN} onClick={expandAll}>Expand</button>
-              <ColumnsMenu showSo={showSo} onToggleSo={setShowSo} />
               <button type="button" className={TOOLBAR_BTN} onClick={() => void q.refetch()} disabled={q.isFetching}>
                 <RefreshCw {...ICON} className={q.isFetching ? 'animate-spin' : undefined} /> Refresh
               </button>
@@ -1144,9 +1096,8 @@ export const Mrp = () => {
               <ModelRows
                 key={g.groupKey}
                 group={g}
-                modelOpen={showSo || expandedModels.has(g.groupKey)}
+                modelOpen={expandedModels.has(g.groupKey)}
                 onToggleModel={() => toggleModel(g.groupKey)}
-                forceOpen={showSo}
                 expandedVariants={expandedVariants}
                 onToggleVariant={toggleVariant}
                 selected={selected}
@@ -1269,16 +1220,13 @@ const shortageLineIdsOf = (s: MrpSku): string[] =>
    (mattress, accessory) expand straight to their SO orders. Selection + supplier
    live on each SO ORDER LINE; the Model / Variant checkboxes are parent toggles. */
 const ModelRows = ({
-  group, modelOpen, onToggleModel, forceOpen, expandedVariants, onToggleVariant,
+  group, modelOpen, onToggleModel, expandedVariants, onToggleVariant,
   selected, onToggleLine, onSetLinesSelected, lineSupplier, onLineSupplierChange,
   flatModules, variantAtL1,
 }: {
   group: ModelGroup;
   modelOpen: boolean;
   onToggleModel: () => void;
-  /* "Sales Orders" column is on → every variant is forced open to its SO lines,
-     independent of the manual expandedVariants set. */
-  forceOpen?: boolean;
   expandedVariants: Set<string>;
   onToggleVariant: (key: string) => void;
   selected: Set<string>;
@@ -1387,7 +1335,7 @@ const ModelRows = ({
       {modelOpen && !flatModules && !single && group.variants.map((v) => {
         const k = rowKey(v);
         const vShort = v.shortage > 0;
-        const vOpen = forceOpen || expandedVariants.has(k);
+        const vOpen = expandedVariants.has(k);
         // Variant parent checkbox — over this variant's shortage lines.
         const vLineIds = shortageLineIdsOf(v);
         const vSel = vLineIds.filter((id) => selected.has(id));
