@@ -32,6 +32,7 @@ Verified against `main` @ `8f8427ed`. Line citations are that commit.
 | Desktop trips | `frontend/src/pages/scm-v2/Trips.tsx` | **Delivery Time Arrangement** (pipeline stage 3, 2026-08-08). The page IS the time-arrangement queue: the EXACT shared board locked to PENDING_SCHEDULE, split Pending Time Arrangement (the inbox) vs Time arranged. Multiselect carries TWO actions: **"Propose time (N)"** — the per-date, per-zone STOP-SEQUENCE proposal (owner's final division 2026-08-08: this page is 排单, sequencing only). Runs the sequence-assign engine under the confirmed-date discipline of `vendor/scm/lib/propose-time.ts` (one call per confirmed delivery date, started AT that date, pinned to that one day; the depot is derived from the selected orders' majority warehouse via `depotForDocNos` so routes — and therefore delivery windows — can be computed at all), then `vendor/scm/lib/anonymous-runs.ts` folds the engine's crewed trips into anonymous **"Trip 1 / Trip 2"** cards per date: every crew/vehicle identity field is stripped (the opaque `vehicleSlotId` survives as Apply plumbing only — a stop needs a trip and a trip keys on (lorry, date)); each stop shows its **estimated delivery window** (`estWindowOf`: engine arrival → finish [installation folded in via residence rules] + `DELIVERY_UNLOAD_BUFFER_MIN`) beside the ALLOWED residence window; a proposal with no geocodable depot gets a LOUD red box naming the warehouse to fix. Applying a trip stages the sequence + dates through the schedule PATCH with NO driver/helper written — and the manual **Schedule (N)** → `ScheduleTripDrawer` (unchanged). The crew machinery (AssignTripCard / 3PL overflow) moved on to Last Mile Delivery (2026-08-08); the shared presentation pieces live in `pages/scm-v2/delivery-propose-ui.tsx`. The trip list + stop sheet (+ route optimiser + Phase-4 live map) render UNDER the "Time arranged" tab; the old page-top trip-state chip bar is gone (CANCELLED dropped, ordering IN_PROGRESS → PLANNED → COMPLETED). |
 | Desktop fleet day-map (A4) | `frontend/src/pages/scm-v2/FleetDay.tsx` | **Last Mile Delivery** — the EXECUTION + CREW stage (pipeline stage 4; owner's final division 2026-08-08: 智能 assign driver + lorry lives HERE). Route `/scm/fleet-day`. Same page skeleton as the family: split chips (All / Time arranged / Delivered for the picked day) + the shared board over the day's SO rows on a live trip (the pure fold `vendor/scm/lib/last-mile.ts` over the server-stamped `trip_date`; state=ALL so a delivered order stays visible as done). **"Propose crew"**: ONE leave-aware sequence-assign call over the day's time-arranged orders; the engine's per-run crew picks re-attach to the day's REAL numbered trips by stop overlap (`matchCrewSuggestions`), each trip carrying editable Lorry + Driver 1/2 + Helper 1/2 selects (crew-leave marked) and per-trip Apply → `PATCH /trips/:id` (trip row) + `PUT /delivery-orders-mfg/:id/crew` per live DO (the `delivery_order_crew` snapshot the board shows — the only driver-2 store, hence no migration). The 3PL overflow section (carrier + captured cost) lives here. The board's inline Driver / Lorry cells stay as the manual path. **Option B (2026-08-08):** the day map is now the RIGHT PANEL of the board/map split (see "The Option B side map" below) — the old "Lorries today" side list merged into the trip/crew cards under the map, run-sheet links kept, and the trip-focus click filters the board. The map read for the run-sheet (`GET /trips/day`) is unchanged. |
 | Desktop driver run-sheet (A4) | `frontend/src/pages/scm-v2/FleetRunSheet.tsx` | Route `/scm/fleet-run-sheet?date=&warehouseId=&trip=`. The printable paper the driver takes: one clean sheet PER lorry (`@media print`, one lorry per page) — trip summary (date, driver, helper, plate, drops, revenue), the lorry's route map, and the ordered stop table (no., customer, full address, phone, house type, time window, ETA, access note). Same `GET /trips/day` data as the day-map. |
+| Desktop packing lists | `frontend/src/vendor/scm/components/PackingListsSection.tsx` | **Packing lists**, mounted full-width at the foot of Last Mile Delivery (`FleetDay.tsx`) — owner 2026-08-25: the packing list hangs off transportation's last-mile module, NOT off a delivery order, because one run can legitimately carry both companies' DOs. One row per trip of the picked day: packing/trip no, date, lorry, driver, DOs, stops, units, volume, a delivery-status rollup chip and Print / QR. It is its own component rather than more of `FleetDay.tsx` so that page keeps its size; FleetDay owns the date + depot, which are already its URL state. The printed sheet is `vendor/scm/lib/packing-list-pdf.ts`. |
 | Desktop fleet masters | `frontend/src/pages/scm-v2/Fleet.tsx:78` | `DriversSection` `:98`, `HelpersSection` `:294`, `LorriesSection` `:461`; `LorryDetail.tsx:71` mounts as a drawer from `Fleet.tsx:613`. |
 | Desktop regions | `frontend/src/pages/scm-v2/DeliveryPlanningRegions.tsx:40` | Region master + per-state mapping editor. |
 | Desktop residence rules | `frontend/src/pages/scm-v2/DeliveryResidenceRules.tsx` | Per residence / building-type CONFIG the Phase-3 scheduler will read: service duration (shown in hours, stored as minutes), optional no-delivery time windows, lift-booking / registration flags. Owner-editable master, mirrors the Regions page (DataGrid + inline edit buffers + create drawer). Route `/scm/delivery-residence-rules`; not a nav row — it opens as the Residence Rules section of Coverage & Fleet. **Wired and read by three endpoints**: `GET /trips/day` (`trips.ts:308`), `POST /trips/propose-schedule` (`:910`) and `POST /delivery-zones/sequence-assign` (`delivery-zones.ts:562`), for per-building-type service duration and the allowed delivery window; shaping in `scm/lib/fleet-day-view.ts`. |
@@ -547,6 +548,67 @@ delivery date (`:297-330`); the four states survive only as the `Bucket` type
 delivered is deliberately off the driver run-sheet — the desktop board owns
 long-range planning (`:33-42`).
 
+### Packing lists — a trip, rendered (owner 2026-08-25/26)
+
+**There is no `packing_lists` table and there must not be one.** `scm.trips`
+already IS "one day + one lorry" — `trip_date DATE`, `lorry_id`, both indexed
+(mig 0053) — and `scm.trip_stops` already carries the ordered drops with a
+delivery order hanging off each. So the owner's rule falls out of the schema
+rather than needing a schema: 「如果今天出 3 辆罗里，就会有 3 个 packing list；
+如果出 5 辆罗里，就会有 5 个；一周 6 天、每天 1 辆罗里，那就是不同日期的 6 个」.
+Three trips on a date = three packing lists. Mixed companies work by
+construction, because each stop's DO carries its own `company_id`.
+
+It hangs off **Last Mile Delivery**, not off the Delivery Order —
+「packing list 不是跟着 delivery order 走的，应该挂在 transportation 的
+last-mile delivery 模块下。因为我们还有我们的 delivery 那一边，可能掺杂了不一样
+公司的一些 DO」.
+
+**The sheet is the REVERSE of the route, and that is the whole point.** Stops are
+numbered 1..N in DELIVERY order; the printed sheet runs N..1, because the last
+delivery is loaded first and goes deepest into the lorry:
+「Packing List 还得根据我的 Delivery Time 那边去排序，把最后一张单排在最前面。
+因为我们进货 Loading 的时候，都是把最后一张单放在最里面，所以顺序应该反过来」.
+
+The reversal lives in ONE function — `loadingOrder` in
+`frontend/src/vendor/scm/lib/packing-list-model.ts` — so the screen and the
+sheet cannot drift apart on it, and
+`frontend/src/vendor/scm/lib/packing-list-model.test.ts` fails if anyone "fixes"
+it to ascending.
+
+**Numbered by LOADING order only.** The sheet prints 1, 2, 3 and does NOT also
+print the stop number beside it. The two-number form was shown to the owner and
+rejected: 「LOAD FIRST ① STOP 3 · … 这个地方太复杂了」. Same reason the header
+carries `Lorry · Driver · Stops · Total` and not a combined `Stops / DOs`.
+
+**All copy on the sheet is ENGLISH** (owner checked, 2026-08-26). The letterhead
+is `drawHeader` from `vendor/scm/lib/pdf-common.ts` — the same one the other
+twelve generators use — so company details follow the switcher and are never
+typed into the document.
+
+**The status chip is a ROLLUP, and it can refuse to answer.** The words are the
+owner's ladder over the rungs `scm.do_status` actually has: `LOADED` = Confirmed,
+`DISPATCHED` = **Loaded**, `IN_TRANSIT` = In Transit, `SIGNED`/`DELIVERED`/
+`INVOICED` = Delivered. `rollupDeliveryStatus` names the furthest rung any member
+DO reached and counts how many got there — "Loaded 2/3" — and returns **null**
+when there is no readable delivery order at all, which the row renders as a dash.
+A company predicate that matched nothing and a run with nothing on it are the
+same shape from the client, so a confident `Delivered 0/0` would be a claim the
+data cannot support.
+
+**What the rack column can and cannot say.** Houzs stores ONE rack per
+delivery-order LINE (`scm.delivery_order_items.rack_id`, mig 0118), so the sheet
+prints one rack per line and a dash where no explicit pick was made (dispatch
+auto-picks then). It does NOT print per PIECE. Hookka can — its packing job cards
+carry a rack per component, which is why its sheet reads "HB: Rack 19 / Divan:
+Rack 19, 20" — and Houzs has no piece layer to read. Inventing one would be a
+sheet that says more than the data does.
+
+**The QR points at an AUTHED route.** `/scm/fleet-day?date=&trip=<id>` — Last
+Mile Delivery, this day, this trip — which sits behind
+`ScmGuard area="scm.transportation.drivers"`. A public no-login scan target is a
+separate change with its own security review.
+
 ### Data hooks
 
 All in `frontend/src/vendor/scm/lib/`:
@@ -607,6 +669,7 @@ these routers is gated by `scmAreaGuard('scm.transportation.drivers')`** — see
 | GET | `/lorry-service-records` | `lorry-service-records.ts` | Service history (mig 0121) |
 | GET/POST/PATCH/DELETE | `/trips`, `/trips/:id`, `/trips/:id/stops`, `/trips/:id/status` | `trips.ts:101,141,175,234,277,325,398,412` | Trip (lorry-day) CRUD + stop ordering |
 | GET | `/trips/day` | `trips.ts` (before `/:id`) | **Fleet A4 day-view.** `?date=YYYY-MM-DD&warehouseId=<id>` → `{ date, configured, warehouses, trips[] }`: every non-cancelled trip that day with its ordered stops enriched (customer / phone / house type / window / ETA / revenue) and geocoded (cache-first, gated on `GOOGLE_MAPS_API_KEY`). READ-only; enriches phone + house type by resolving each stop's `do_id → delivery_orders.so_doc_no → mfg_sales_orders`, and the window from `scm.delivery_residence_rules`. Per-assignee row scope like the trip list. Shaping is the pure `scm/lib/fleet-day-view.ts` (`assembleDayView`). |
+| GET | `/trips/packing` | `trips.ts` (before `/:id`) | **Packing lists (2026-08-26).** `?date=YYYY-MM-DD&warehouseId=<id>` -> `{ date, lists[] }` — ONE ENTRY PER TRIP, because a packing list IS a trip (one lorry, one day; owner 2026-08-25). Each entry carries the trip header (plate / driver / depot), the counts (stops, DOs, units) and `m3_milli`, plus its stops in DELIVERY order with each stop's delivery order, its LINES and the rack each line was picked from. READ-only. **Five reads, five company predicates** — trips, delivery_orders, delivery_order_items and warehouse_racks all take `scopeToAllowedCompanies`; `trip_stops` has no `company_id` column (mig 0053) and is scoped through its already-scoped trips. Every id list is chunked (`chunkIn`). Shaping is the pure `scm/lib/packing-list-view.ts` (`assemblePackingLists`); the LOADING-order reversal is frontend-side, in `vendor/scm/lib/packing-list-model.ts`. |
 | POST | `/trips/:id/optimize-route` | `trips.ts:438` | Google route optimisation; returns `{configured:false}` when `GOOGLE_MAPS_API_KEY` is unset |
 | POST | `/trips/propose-schedule` | `trips.ts` | **Phase 3 smart scheduler.** Selected SO stops + depot → geocode (cached) + residence-rule service/windows + ONE Distance Matrix call → sequenced route + per-stop arrival/start/finish times. `{configured:false}` with no key; nothing written |
 | POST | `/trips/:id/location` | `trips.ts` | **Phase 4 live GPS.** A driver on an IN_PROGRESS trip posts one ping `{lat,lng,accuracy?,recorded_at?}`. Range-validated + server-side rate-capped (pings <10s apart ignored); accepted ONLY for an IN_PROGRESS trip; row-scoped to the caller's own trip. A bad ping is rejected cleanly (never a 500). No Google dependency |
