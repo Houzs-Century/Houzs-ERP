@@ -1,4 +1,4 @@
--- 0327_scm_so_header_cas_rebind_line_ids.sql (Postgres)
+-- 0328_scm_so_header_cas_rebind_line_ids.sql (Postgres)
 -- The State-change warehouse rebind learns to move VERIFIED lines, not only
 -- NULL ones. Since the operator-store create default (same change, route
 -- side), a POS walk-in order is born with its lines bound to the operator's
@@ -37,10 +37,10 @@ CREATE OR REPLACE FUNCTION scm.apply_so_header_cas(
   -- Houzs and 2990 customers; calling the 3-arg form here would silently
   -- default every re-customer to the HOUZS row and re-open that hole.
   p_company_id bigint DEFAULT NULL,
-  -- 0327 — line ids the ROUTE has verified safe to move (bound to another
+  -- 0328 — line ids the ROUTE has verified safe to move (bound to another
   -- warehouse but with NO live downstream PO/DO). They follow the order to
   -- p_warehouse_id in the same transaction as the NULL-line rebind below.
-  -- NULL = only NULL-warehouse lines rebind (the pre-0327 behaviour).
+  -- NULL = only NULL-warehouse lines rebind (the pre-0328 behaviour).
   p_rebind_line_ids uuid[] DEFAULT NULL
 ) RETURNS TABLE(
   applied boolean,

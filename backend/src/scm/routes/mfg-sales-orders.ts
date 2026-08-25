@@ -7328,7 +7328,7 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
       : null,
     p_apply_warehouse: Boolean(reboundWarehouseId),
     p_warehouse_id: reboundWarehouseId,
-    // mig 0327 — conflicted-but-unanchored lines move with the order in the
+    // mig 0328 — conflicted-but-unanchored lines move with the order in the
     // same transaction as the NULL-line rebind. null = only NULL lines move.
     p_rebind_line_ids: rebindLineIds.length > 0 ? rebindLineIds : null,
     p_apply_delivery_date: body['customerDeliveryDate'] !== undefined || cascadedDeliveryClear,
