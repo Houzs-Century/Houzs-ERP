@@ -160,9 +160,15 @@ export function PublicDoScan() {
   }
 
   if (!data) {
+    /* THE TITLE FOLLOWS THE SERVER'S ANSWER. A 503 means the system could not be
+       reached, not that the paper is dead — putting "Unknown or expired" over a
+       blip sends a driver back to the office over a hiccup. A REVOKED code
+       deliberately lands on the same screen as an unknown one; a blip does not,
+       because it says nothing about the code in hand. */
+    const unreachable = /wait a moment|could not reach/i.test(error ?? "");
     return (
       <Frame>
-        <Notice tone="warn" title="Unknown or expired QR code">
+        <Notice tone="warn" title={unreachable ? "Could not reach the system" : "Unknown or expired QR code"}>
           {error ??
             "This code does not match a delivery order. Please ask the office for a freshly printed copy."}
         </Notice>

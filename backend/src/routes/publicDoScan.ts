@@ -91,6 +91,21 @@ export const publicDoScan = new Hono<{ Bindings: Env }>();
    that it USED to work is the single fact the kill switch exists to withhold.
    resolveDoScanToken already collapses both cases to `null`, so there is only
    one branch here to keep honest. */
+const readFailed = (c: Context<{ Bindings: Env }>) =>
+  c.json(
+    {
+      error: 'scan_unavailable',
+      message: 'We could not reach this delivery order just now. Wait a moment and scan again.',
+    },
+    503,
+  );
+
+/* A BLIP IS NOT A DEAD CODE. 503, not the 404 above — telling a driver at a
+   lorry that his paper is unknown because the database hiccuped is the same
+   dishonesty as not binding the error in the first place. It leaks nothing: a
+   failed read fails for every token alike, so the answer says nothing about the
+   one in hand, unlike revocation, which is exactly why THAT one is folded into
+   the unknown answer and this one is not. */
 const unknownToken = (c: Context<{ Bindings: Env }>) =>
   c.json(
     {
@@ -179,9 +194,10 @@ publicDoScan.get('/:token', async (c) => {
   if (limited) return limited;
 
   const sb = getSupabaseService(c.env);
-  const resolved = await resolveDoScanToken(sb, token);
-  if (!resolved) return unknownToken(c);
-  return c.json(await buildSummary(sb, resolved));
+  const found = await resolveDoScanToken(sb, token);
+  if (found.status === 'read_failed') return readFailed(c);
+  if (found.status === 'unknown') return unknownToken(c);
+  return c.json(await buildSummary(sb, found.row));
 });
 
 // ── POST /:token/advance ────────────────────────────────────────────────────
@@ -211,8 +227,10 @@ publicDoScan.post('/:token/advance', async (c) => {
   }
 
   const sb = getSupabaseService(c.env);
-  const resolved = await resolveDoScanToken(sb, token);
-  if (!resolved) return unknownToken(c);
+  const found = await resolveDoScanToken(sb, token);
+  if (found.status === 'read_failed') return readFailed(c);
+  if (found.status === 'unknown') return unknownToken(c);
+  const resolved = found.row;
 
   const from = String(resolved.status ?? '');
   const wantedIdx = doScanRungIndex(wanted);

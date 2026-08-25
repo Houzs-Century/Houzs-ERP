@@ -90,6 +90,7 @@ re-running:
 | the company taken from the resolved row | `the company comes from the resolved ROW` — the write missed our row |
 | a rung pointed backwards | `every rung lands strictly further along than where it started` |
 | the line count's bound `error` | `a failed line count is null, NEVER 0` — a blip rendered as a delivery order with nothing on it |
+| the resolve's `read_failed` arm | `a failed token resolve is 503 "try again", NOT "unknown code"` — a blip told the driver his paper was dead |
 
 Pinned by `backend/tests/publicDoScanRoute.test.ts` (behaviour, through the real
 handler), `backend/tests/publicDoScanSurface.test.ts` (mount order, per-statement
@@ -108,7 +109,12 @@ endpoint answers 503 rather than 404 on the third, and a failed claim is told
 apart from a lost race (both come back with no row). The public line count got
 the same treatment: it is `null` on a failed read and the page prints "line count
 unavailable", because "0 lines" is a claim about the load rather than a report of
-what we hold.
+what we hold. And the token RESOLVE got it too: a failed read answers **503 "wait
+a moment and scan again"** instead of the 404 an unknown code gets, so a database
+hiccup does not tell a driver standing at a lorry that his paper is dead. That
+distinction leaks nothing — a blip fails for every token alike, so the answer says
+nothing about the one in hand. **Revocation stays folded into the unknown answer**,
+which is the opposite case and the whole point of the kill switch.
 
 **What this does NOT do, said plainly.** `Confirm Delivered` still writes
 DELIVERED and captures no signature, no photo and no location — bugs 0480 and

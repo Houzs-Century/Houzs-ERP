@@ -49,8 +49,8 @@ export function newDoScanToken(): string {
  * route has NO session, so this field — read off the row the token resolved to,
  * never off the request — is the entire tenant scope for everything that
  * follows. `scm.delivery_orders.company_id` is NOT NULL (mig 0083), and a row
- * that somehow carries no usable company resolves to `null` here rather than
- * being served with an unscoped follow-up.
+ * that somehow carries no usable company resolves to `unknown` rather than being
+ * served with an unscoped follow-up.
  */
 export type ResolvedDoScan = {
   id: string;
@@ -77,41 +77,62 @@ const RESOLVE_COLS =
  * a UNIQUE index on qr_token — so it resolves to one row and that row's
  * company_id becomes the scope for every statement after it.
  *
- * `null` is returned for an unknown token AND for a revoked one, on purpose and
- * by the same route out of this function: a different answer for a revoked token
- * tells whoever holds it that it used to be real, which is the one fact the kill
- * switch exists to stop leaking. Revocation is read only AFTER the row is found,
- * which is what mig 0126 established and why revoked_at needs no index.
+ * `unknown` is returned for an unknown token AND for a revoked one, on purpose
+ * and by the same route out of this function: a different answer for a revoked
+ * token tells whoever holds it that it used to be real, which is the one fact
+ * the kill switch exists to stop leaking. Revocation is read only AFTER the row
+ * is found, which is what mig 0126 established and why revoked_at needs no index.
+ *
+ * `read_failed` IS a separate answer, and it leaks nothing — a blip fails for
+ * every token alike, so it says nothing about the one in hand. Collapsing it
+ * into `unknown` would tell a driver standing at a lorry that the paper in his
+ * hand is dead because the database hiccuped, which is the same dishonesty as
+ * an unbound `error`: supabase-js does not throw, so the two are identical
+ * unless somebody chooses to tell them apart.
  */
+export type ResolvedDoScanResult =
+  | { status: 'ok'; row: ResolvedDoScan }
+  | { status: 'unknown' }
+  | { status: 'read_failed' };
+
 export async function resolveDoScanToken(
   sb: any,
   token: string,
-): Promise<ResolvedDoScan | null> {
-  if (!DO_SCAN_TOKEN_RE.test(token)) return null;
+): Promise<ResolvedDoScanResult> {
+  if (!DO_SCAN_TOKEN_RE.test(token)) return { status: 'unknown' };
   const { data, error } = await sb
     .from('delivery_orders')
     .select(RESOLVE_COLS)
     .eq('qr_token', token)
     .maybeSingle();
-  if (error || !data) return null;
+  if (error) return { status: 'read_failed' };
+  if (!data) return { status: 'unknown' };
   const row = data as {
     id?: string; company_id?: number | string | null; do_number?: string | null;
     debtor_name?: string | null; city?: string | null; state?: string | null;
     status?: string | null; on_hold?: boolean | null; qr_revoked_at?: string | null;
   };
-  if (row.qr_revoked_at) return null;
+  /* Killed. Same answer as never-existed, deliberately — see above. */
+  if (row.qr_revoked_at) return { status: 'unknown' };
   const companyId = Number(row.company_id);
-  if (!Number.isInteger(companyId) || companyId <= 0) return null;
-  if (!row.id || !row.do_number) return null;
+  /* NO USABLE COMPANY = UNKNOWN, never "serve it unscoped". company_id is NOT
+     NULL (mig 0083), so this branch is unreachable on a healthy row — and it
+     exists because the alternative to refusing is running the rest of the
+     request with no tenant boundary at all. */
+  if (!Number.isInteger(companyId) || companyId <= 0) return { status: 'unknown' };
+  if (!row.id || !row.do_number) return { status: 'unknown' };
   return {
-    id: row.id,
-    companyId,
-    doNumber: row.do_number,
-    customerName: row.debtor_name ?? null,
-    city: row.city ?? null,
-    state: row.state ?? null,
-    status: row.status ?? null,
-    onHold: row.on_hold ?? null,
+    status: 'ok',
+    row: {
+      id: row.id,
+      companyId,
+      doNumber: row.do_number,
+      customerName: row.debtor_name ?? null,
+      city: row.city ?? null,
+      state: row.state ?? null,
+      status: row.status ?? null,
+      onHold: row.on_hold ?? null,
+    },
   };
 }
 

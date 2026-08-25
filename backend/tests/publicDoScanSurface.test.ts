@@ -51,6 +51,9 @@ describe('the public surface is mounted where it has to be', () => {
   test('exactly two public endpoints — a read and a one-rung advance', () => {
     const routes = codeOf(ROUTE).match(/publicDoScan\.(get|post|put|patch|delete)\(/g) ?? [];
     expect(routes.sort()).toEqual(['publicDoScan.get(', 'publicDoScan.post(']);
+    /* Both of them tell a blip apart from an unknown code. */
+    expect((codeOf(ROUTE).match(/found\.status === 'read_failed'/g) ?? []).length).toBe(2);
+    expect((codeOf(ROUTE).match(/found\.status === 'unknown'/g) ?? []).length).toBe(2);
   });
 });
 
@@ -118,6 +121,12 @@ describe('the tenant boundary, statement by statement', () => {
        holds the paper their code is dead. */
     expect((code.match(/\berror(?::\s*\w+)?\s*[,}]/g) ?? []).length).toBeGreaterThanOrEqual(3);
     expect(code).toContain(".eq('qr_token', token)");
+    /* REVOCATION AND A FAILED READ ARE DIFFERENT ANSWERS, and only one of them
+       is folded into "unknown". A revoked token must be indistinguishable from
+       one that never existed; a blip must not be, because it says nothing about
+       the token in hand and answering 404 would tell a driver his paper is dead. */
+    expect(code).toContain("if (row.qr_revoked_at) return { status: 'unknown' }");
+    expect(code).toContain("if (error) return { status: 'read_failed' }");
     expect(MIG).toContain('CREATE UNIQUE INDEX IF NOT EXISTS ux_delivery_orders_qr_token');
   });
 

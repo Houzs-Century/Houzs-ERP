@@ -128,6 +128,15 @@ describe("what it refuses to say", () => {
     }
   });
 
+  it("a 503 reads as \"could not reach\", not as a dead code", async () => {
+    /* A driver must not be sent back to the office over a database hiccup. */
+    fetchMock.mockImplementation(() =>
+      json({ error: "scan_unavailable", message: "We could not reach this delivery order just now. Wait a moment and scan again." }, 503));
+    await mount();
+    expect(screen.getByText("Could not reach the system")).toBeTruthy();
+    expect(screen.queryByText("Unknown or expired QR code")).toBeNull();
+  });
+
   it("names what Confirm Delivered does NOT collect, before it is pressed — bug 0481", async () => {
     serve({
       ...LOADED,

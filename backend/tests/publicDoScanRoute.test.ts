@@ -280,15 +280,22 @@ describe('an unanswered read is never rendered as an empty one', () => {
     expect(body.itemCount, 'a failed count must not read as an empty document').toBeNull();
   });
 
-  test('a failed token resolve is not reported as an unknown code', async () => {
-    /* A blip must not tell the driver his paper is dead. It answers 404 today
-       — the same as unknown — and that is the one place this route is knowingly
-       lossy, so it is pinned here rather than left to be discovered: the read
-       IS error-bound (resolveDoScanToken returns null on `error`), and the
-       follow-up if this ever matters is a 503 arm, not an unbound read. */
+  test('a failed token resolve is 503 "try again", NOT "unknown code"', async () => {
+    /* A blip must not tell a driver standing at a lorry that his paper is dead.
+       It leaks nothing either — a failed read fails for every token alike, so
+       the answer says nothing about the one in hand, unlike revocation. */
     failing.add('delivery_orders');
-    const res = await get(TOKEN);
-    expect(res.status).toBe(404);
+    expect((await get(TOKEN)).status).toBe(503);
+    expect((await advance(TOKEN, 'DISPATCHED')).status).toBe(503);
+  });
+
+  test('…and REVOCATION is still folded into the unknown answer', async () => {
+    /* The distinction above must not have opened a door: a revoked token gets
+       the unknown answer, not a third one. */
+    seed({ qr_token: REVOKED, qr_revoked_at: '2026-08-26T00:00:00Z' });
+    const revoked = await get(REVOKED);
+    expect(revoked.status).toBe(404);
+    expect(await revoked.text()).toBe(await (await get('c'.repeat(64))).text());
   });
 });
 

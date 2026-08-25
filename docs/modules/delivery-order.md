@@ -344,6 +344,13 @@ unknown one gets, byte for byte — a different message would tell whoever holds
 leaked paper that the code used to be real. There is no UI for it yet; the
 column is the kill switch and the button is a follow-up.
 
+**A FAILED READ IS THE OPPOSITE CASE AND GETS ITS OWN ANSWER: 503.** supabase-js
+does not throw, so a five-second database blip and "no such token" arrive
+identically unless the error is bound — and answering 404 to a blip tells a
+driver standing at a lorry that his paper is dead. It leaks nothing, because a
+blip fails for every token alike and so says nothing about the one in hand;
+revocation is folded into the unknown answer precisely because it WOULD.
+
 ---
 
 ## 3. Backend
