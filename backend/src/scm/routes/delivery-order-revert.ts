@@ -91,10 +91,13 @@ export const revertDeliveryOrderHandler = async (
   //    company's order (mirrors the status handler's scoped read).
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
-  const { data: doRow } = await scopeToCompanyId(
+  const { data: doRow, error: doErr } = await scopeToCompanyId(
     sb.from('delivery_orders').select('id, do_number, status, company_id, so_doc_no').eq('id', id),
     co.companyId,
   ).maybeSingle();
+  // Surface a read failure as 500 — masking it as 404 (NOT_THIS_COMPANY) would
+  // tell the operator the DO does not exist when the database simply hiccuped.
+  if (doErr) return c.json({ error: 'load_failed', reason: doErr.message }, 500);
   if (!doRow) return c.json(NOT_THIS_COMPANY, 404);
   const row = doRow as { do_number?: string | null; status?: string | null; company_id?: number | null; so_doc_no?: string | null };
   const from = String(row.status ?? '').toUpperCase();
