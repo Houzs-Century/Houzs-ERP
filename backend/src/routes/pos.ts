@@ -31,6 +31,13 @@ import {
   SESSION_ORIGIN_POS,
 } from "../services/auth";
 import { posPinWriteRefusal, readPosPinStatus, setPosPinForUser } from "../services/posPin";
+/* item-KPI: the SAME source /hr/commission reads, so the dashboard's KPI row
+   and the commission run can never disagree about what a flagged item earned.
+   getSupabaseService rather than the `supabase` middleware: /api/pos is
+   session-authed and mounted pre-auth, so it has no Supabase context to read. */
+import { getSupabaseService } from "../db/supabase";
+import { loadKpiUnitsByDoc } from "../scm/lib/kpi-units";
+import { kpiSenForDocs, splitScopeRevenue } from "../scm/lib/pos-kpi-split";
 
 /* No `sessionOrigin` here on purpose. This router does not READ the origin of
    the caller's session anywhere — /exchange-web-session used to, and the ruling
@@ -231,11 +238,21 @@ pos.post("/verify-pin", auth, async (c) => {
 // the scope below would pool BOTH companies' orders.
 //
 // Revenue split (Loo 2026-06-20): Products = goods (mattress/sofa + bedframe +
-// accessories + others), Service = total − goods (delivery + SERVICE lines),
-// KPI = the item-KPI-flagged add-on amount. The item-KPI split needs the HR
-// commission machinery, which has no Houzs home yet (#19) — so KPI is 0 and
-// Products = goods here, which is EXACTLY 2990's own value when no item-KPI flag
-// is active. status::text guards the enum (excludes CANCELLED/ON_HOLD safely).
+// accessories + others) MINUS the item-KPI portion, Service = total − goods
+// (delivery + SERVICE lines), KPI = the item-KPI-flagged add-on amount.
+//
+// KPI was hardcoded 0 here until 2026-08-26, on a comment saying the HR
+// commission machinery had "no Houzs home yet (#19)". That stopped being true
+// when hr.ts and lib/kpi-units.ts were ported — the tables (scm.hr_item_kpi),
+// the loader, the per-unit rule and the admin UI (HrSettings) have all been
+// live for weeks. Only this read was never wired up, so the tile answered RM 0
+// for every salesperson in both companies and no amount of tracing from the POS
+// could find a source, because there wasn't one. It now reads the real flags.
+//
+// An empty scm.hr_item_kpi still yields 0 — correctly, and that is the same
+// answer 2990's own API gives when no flag is active. Zero means "nothing is
+// flagged", not "not implemented".
+// status::text guards the enum (excludes CANCELLED/ON_HOLD safely).
 // ?salesperson targets the Personal card at ANOTHER salesperson. Honoured since
 // 2026-08-19, and gated on canViewAllSales HERE, not on the POS: the board was
 // already filtering by it while this card silently kept answering for the
@@ -273,6 +290,7 @@ export function canTargetSalesperson(
 
 const KPI_MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 pos.get("/sales-stats", auth, companyContext, async (c) => {
+  // company-scope: scoped by string-built SQL the checker cannot see — :366 pushes `company_id = ?` into `conds` from the companyContext value read at :298, and every statement below joins `conds` into its own WHERE (aggSql :368, docSql :396), so all four reads carry the predicate. The KPI resolve at :411 takes companyId as an explicit argument and is guarded on it being present. NOT a cross-company surface: companyContext is on the registration line precisely because /api/pos is mounted pre-auth and would otherwise pool both companies. Verified 2026-08-26.
   const DB = c.env.DB;
   const uid = c.get("user")?.id;
   const me = uid == null ? null : await DB.prepare(
@@ -368,24 +386,68 @@ pos.get("/sales-stats", auth, companyContext, async (c) => {
   }
 
   type Agg = { cnt: number; total_sen: number; goods_sen: number };
+  // company-scope: `conds` carries `company_id = ?` (built at :366 from the
+  // companyContext value read at :298) and aggSql joins it into every WHERE, so
+  // the predicate is on both statements — assembled, which is why the scanner
+  // cannot see it. Verified 2026-08-26.
   const showroomRow = await DB.prepare(aggSql(showroomWhere)).bind(...binds, ...showroomBinds).first<Agg>();
   const personalRow = await DB.prepare(aggSql("salesperson_id = ?"))
     .bind(...binds, target?.id ?? me.id).first<Agg>();
 
-  const toMyr = (centi: number) => Math.round(Number(centi) / 100);
-  const card = (r: Agg | null) => {
-    const total = Number(r?.total_sen ?? 0);
-    const goods = Number(r?.goods_sen ?? 0);
-    return {
-      total: toMyr(total),
-      count: Number(r?.cnt ?? 0),
-      products: toMyr(goods),                       // = goods (item-KPI split deferred → #19)
-      service: toMyr(Math.max(0, total - goods)),
-      kpi: 0,
-    };
-  };
-  const s = card(showroomRow);
-  const p = card(personalRow);
+  /* The item-KPI portion is per-LINE, so it cannot come out of the header
+     aggregate above — these read the doc numbers the same predicate matched, and
+     kpi-units resolves their lines. Same WHERE, same binds: the two queries
+     cannot describe different order sets. */
+  // company-scope: same `conds` as aggSql above — identical WHERE, identical
+  // binds, so this cannot read an order the aggregate did not count. Verified
+  // 2026-08-26.
+  const docSql = (extraWhere: string) =>
+    `SELECT doc_no FROM scm.mfg_sales_orders WHERE ${[...conds, extraWhere].join(" AND ")}`;
+  // company-scope: both reads use docSql, whose WHERE is the same `conds` the
+  // aggregate uses — the company predicate is in there, assembled at :366.
+  // Verified 2026-08-26.
+  const showroomDocs = await DB.prepare(docSql(showroomWhere))
+    .bind(...binds, ...showroomBinds).all<{ doc_no: string }>();
+  const personalDocs = await DB.prepare(docSql("salesperson_id = ?"))
+    .bind(...binds, target?.id ?? me.id).all<{ doc_no: string }>();
+  const showroomDocNos = showroomDocs.results.map((r) => r.doc_no);
+  const personalDocNos = personalDocs.results.map((r) => r.doc_no);
+
+  /* Resolved ONCE for both scopes — personal orders are a subset of showroom
+     ones, so a second pass would re-read the same lines. */
+  let kpiFlags: Awaited<ReturnType<typeof loadKpiUnitsByDoc>>["flags"] = [];
+  let kpiUnitsByDoc: Awaited<ReturnType<typeof loadKpiUnitsByDoc>>["unitsByDoc"] = new Map();
+  if (companyId != null && (showroomDocNos.length > 0 || personalDocNos.length > 0)) {
+    try {
+      const kpi = await loadKpiUnitsByDoc(
+        getSupabaseService(c.env),
+        [...new Set([...showroomDocNos, ...personalDocNos])],
+        Number(companyId),
+      );
+      kpiFlags = kpi.flags;
+      kpiUnitsByDoc = kpi.unitsByDoc;
+    } catch (e) {
+      /* Mirrors hr.ts: a KPI read failure must NOT fall through to "no flags".
+         Silently answering 0 is indistinguishable from "nothing is flagged",
+         which is the exact ambiguity this endpoint just spent weeks in. */
+      return c.json(
+        { error: "kpi_failed", reason: e instanceof Error ? e.message : String(e) },
+        500,
+      );
+    }
+  }
+  /* The money split + every clamp lives in lib/pos-kpi-split, where it is
+     tested; this route only supplies the three sums and the count. */
+  const card = (r: Agg | null, docNos: string[]) => ({
+    ...splitScopeRevenue({
+      totalSen: Number(r?.total_sen ?? 0),
+      goodsSen: Number(r?.goods_sen ?? 0),
+      kpiSen: kpiSenForDocs(docNos, kpiUnitsByDoc, kpiFlags),
+    }),
+    count: Number(r?.cnt ?? 0),
+  });
+  const s = card(showroomRow, showroomDocNos);
+  const p = card(personalRow, personalDocNos);
 
   return c.json({
     monthLabel, monthStart, monthEnd,
