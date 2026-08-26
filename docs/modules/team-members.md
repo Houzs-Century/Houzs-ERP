@@ -329,6 +329,39 @@ first two — the other two come from `GET /api/pos/admin-pin-status/:userId`:
 | `POST /api/pos/admin-reset-pin/:userId` | clear it |
 | `GET /api/pos/admin-pin-status/:userId` | has-PIN + readiness. **Never returns the hash** |
 
+### The POS My-Orders tiles — what the three revenue rows mean
+
+`GET /api/pos/sales-stats` (same file) feeds the two cards on the POS home
+board. Each card carries a headline total plus three rows, and they sum to it:
+
+| row | is |
+| --- | --- |
+| Products sales revenue | goods **minus** the item-KPI portion — the commission threshold base |
+| Service sales revenue | total − goods (delivery + every SERVICE line) |
+| KPI item sales revenue | the item-KPI-flagged portion of goods |
+
+**KPI is carved OUT of Products, not added on top.** A flagged item earns a
+fixed bonus INSTEAD of percentage commission (`scm/shared/hr-commission.ts`), so
+leaving it in Products would pay for it twice. The split and its clamps live in
+`scm/lib/pos-kpi-split.ts`; the flags come from `scm.hr_item_kpi` through
+`scm/lib/kpi-units.ts` — the SAME loader `/hr/commission` reads, so the
+dashboard and the commission run cannot disagree.
+
+**Which scope the Showroom card counts** depends on the caller: staff WITH a
+`showroom_id` get their showroom mates, staff without one (director / owner /
+coordinator) get the whole company. The response says which in `showroomScope`,
+and the POS labels the tile from it — so a director reading company-wide figures
+under the word "Showroom" is a bug that has already been fixed once. Two people
+sharing a `showroom_id` always see identical Showroom figures; if they don't,
+the question is their `scm.staff.showroom_id`, not the query.
+
+⚠️ **A KPI row of RM 0 means "nothing is flagged", not "not built".** It was
+hardcoded `kpi: 0` until 2026-08-26 behind a comment claiming the HR commission
+machinery had no Houzs home — untrue since `hr.ts` and `lib/kpi-units.ts` were
+ported. Items are flagged in **HR Settings** (`hr.ts` `/item-kpi`, UI
+`frontend/src/pages/scm-v2/HrSettings.tsx`); with `scm.hr_item_kpi` empty for a
+company, every card in that company correctly reads RM 0.
+
 **Traps this section exists for.**
 
 1. **A PIN on a non-sales title is a credential that can never sign in.**
