@@ -3685,8 +3685,16 @@ function FloorPlans({
   // Approve/Reject on the reviewable Floor-Plans docs (owner 2026-07-29): Stock
   // Out Transfer Record (stock_transfer.approve), 3D / 2D Design + Display Floor
   // Plan (no perm → submit-then-review). Shared gate/buttons with the doc cards.
-  const { user } = useAuth();
+  const { user, can } = useAuth();
   const prompt = usePrompt();
+  // Owner 2026-08-24: "display floorplan i cant remove existing file using
+  // mobile". These tiles were VIEW-only — tap opens the lightbox and that was
+  // the whole interaction — while the tasklist rows that carry the file chips
+  // (with their ×) are hidden for every mobile cohort. So on a phone there was
+  // no way to remove, or replace, a plan already uploaded. Same DELETE rule as
+  // the PC and the doc tiles: managers only (projects.manage), on top of the
+  // card's own write gate.
+  const canDeleteFiles = canWrite && can("projects.manage");
   const itemByPrefix = (prefix: RegExp): ChecklistItem | undefined =>
     (checklist ?? []).find((it) => prefix.test((it.title || "").trim()));
   const threeDItem = itemByPrefix(/^3d\s*(design|render)/i);
@@ -3702,35 +3710,42 @@ function FloorPlans({
   // mobile browsers popup-block window.open once an await has broken the
   // user-gesture chain, which made these tiles dead on phones.
   const plans = (attachments ?? []).filter((a) => (a.category || "").toLowerCase() === "floorplan");
-  const taskPlanFiles = (prefix: RegExp): MediaItem[] => {
+  /** The tile's live attachment ROWS — the lightbox only needs r2_key, but
+   *  removing a file needs its id, so keep the rows and derive the media. */
+  const taskPlanAtts = (prefix: RegExp): TaskAttachment[] => {
     const ids = new Set(
       (checklist ?? []).filter((it) => prefix.test((it.title || "").trim())).map((it) => it.id)
     );
-    return (checklistAttachments ?? [])
-      .filter((a) => !a.archived_at && ids.has(a.item_id))
-      .map((a): MediaItem => ({
-        r2_key: a.r2_key,
-        content_type: a.mime_type ?? mimeFromKey(a.r2_key),
-        caption: a.file_name,
-      }));
+    return (checklistAttachments ?? []).filter((a) => !a.archived_at && ids.has(a.item_id));
   };
+  const asMedia = (a: TaskAttachment): MediaItem => ({
+    r2_key: a.r2_key,
+    content_type: a.mime_type ?? mimeFromKey(a.r2_key),
+    caption: a.file_name,
+  });
+  const taskPlanFiles = (prefix: RegExp): MediaItem[] => taskPlanAtts(prefix).map(asMedia);
   const legacyItem = (a: ProjectAttachment | undefined): MediaItem[] => {
     const k = a ? pick(a.r2_key, a.r2Key) : undefined;
     return a && k
       ? [{ r2_key: k, content_type: pick(a.mime_type, a.mimeType) ?? mimeFromKey(k), caption: pick(a.file_name, a.fileName) }]
       : [];
   };
-  const unfilledFiles = (() => { const t = taskPlanFiles(/^blank\s*floor\s*plan/i); return t.length ? t : legacyItem(plans[0]); })();
-  const filledFiles = (() => { const t = taskPlanFiles(/^filled\s*floor\s*plan/i); return t.length ? t : legacyItem(plans[1]); })();
+  const unfilledAtts = taskPlanAtts(/^blank\s*floor\s*plan/i);
+  const filledAtts = taskPlanAtts(/^filled\s*floor\s*plan/i);
+  const unfilledFiles = unfilledAtts.length ? unfilledAtts.map(asMedia) : legacyItem(plans[0]);
+  const filledFiles = filledAtts.length ? filledAtts.map(asMedia) : legacyItem(plans[1]);
   // Owner 2026-07-23: 3D + 2D design tiles join this card (view/download via
   // the lightbox) — their booth-layout tasklist rows are gone on mobile.
-  const threeDFiles = taskPlanFiles(/^3d\s*(design|render)/i);
-  const twoDFiles = taskPlanFiles(/^2d\s*design/i);
+  const threeDAtts = taskPlanAtts(/^3d\s*(design|render)/i);
+  const twoDAtts = taskPlanAtts(/^2d\s*design/i);
+  const threeDFiles = threeDAtts.map(asMedia);
+  const twoDFiles = twoDAtts.map(asMedia);
   // Black banner (owner 2026-07-17 v2): shows the "Display Floor Plan" task
   // attachments in the lightbox (which carries a Download button). Was the 3D
   // placeholder, then briefly wired to 3D Design; the owner wants the booth's
   // display floorplan here instead.
-  const displayPlanFiles = taskPlanFiles(/^display\s*floor\s*plan/i);
+  const displayPlanAtts = taskPlanAtts(/^display\s*floor\s*plan/i);
+  const displayPlanFiles = displayPlanAtts.map(asMedia);
   // Checklist task ids by title prefix — used to attach uploads to the right task.
   const taskIdByPrefix = (prefix: RegExp): number | null =>
     (checklist ?? []).find((it) => prefix.test((it.title || "").trim()))?.id ?? null;
@@ -3811,6 +3826,59 @@ function FloorPlans({
       if (filledRef.current) filledRef.current.value = "";
     }
   };
+  // Remove one file from a plan tile (owner 2026-08-24). Same endpoint the
+  // tasklist chip and the stock-transfer row use — the file belongs to the
+  // checklist task either way, so all three surfaces stay one file.
+  const removePlanFile = async (attId: number, name: string | null | undefined) => {
+    if (confirm && !(await confirm({ title: `Remove ${name || "this file"}?`, confirmLabel: "Remove", danger: true }))) return;
+    setBusy(true);
+    try {
+      await api.del(`/api/projects/checklist/attachments/${attId}`);
+      reload();
+    } catch (e) {
+      await notify({ title: "Remove failed", body: e instanceof Error ? e.message : "Please try again.", tone: "error" });
+    } finally {
+      setBusy(false);
+    }
+  };
+  // Upload straight onto the Display floor plan task — the replace half of the
+  // same complaint: with no upload here, removing a wrong plan left the tile
+  // empty and the phone with no way to put the right one back.
+  const displayRef = useRef<HTMLInputElement | null>(null);
+  const displayPlanTaskId = displayItem?.id ?? null;
+  const uploadDisplayPlan = async (file: File) => {
+    if (displayPlanTaskId == null) {
+      await notify({ title: "No Display Floor Plan task", body: "This event has no Display Floor Plan task to attach to.", tone: "error" });
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      await notify({ title: "File too large", body: "Max 10MB.", tone: "error" });
+      return;
+    }
+    const ext = (file.name.split(".").pop() || "").toLowerCase();
+    if (!ext) {
+      await notify({ title: "Missing extension", body: "The file needs an extension.", tone: "error" });
+      return;
+    }
+    setBusy(true);
+    try {
+      const buf = await file.arrayBuffer();
+      await api.putBinary(
+        `/api/projects/checklist/${displayPlanTaskId}/attachments?ext=${encodeURIComponent(ext)}&name=${encodeURIComponent(file.name)}`,
+        buf,
+        file.type || "application/octet-stream",
+      );
+      // Display Floor Plan is reviewable — mirror the doc tiles so the
+      // approver's Approve/Reject reappear after a re-upload.
+      await autoSubmitReviewable(displayPlanTaskId, displayItem?.title ?? "Display Floor Plan");
+      reload();
+    } catch (e) {
+      await notify({ title: "Upload failed", body: e instanceof Error ? e.message : "Please try again.", tone: "error" });
+    } finally {
+      setBusy(false);
+      if (displayRef.current) displayRef.current.value = "";
+    }
+  };
   const [planView, setPlanView] = useState<{ items: MediaItem[]; idx: number } | null>(null);
   const [docView, setDocView] = useState<MediaItem | null>(null);
   const openPlan = async (files: MediaItem[], which: string) => {
@@ -3838,11 +3906,11 @@ function FloorPlans({
             (owner 2026-07-23: sales/SD/mgt/BD only). */}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 9 }}>
           {([
-            { key: "Display", label: "Display floor plan", files: displayPlanFiles, badge: "PLAN", bg: "#f3ece0", col: "#a16a2e", item: displayItem, full: true, mediaH: 140 },
-            { key: "3D Design", label: "3D Design", files: threeDFiles, badge: "3D", bg: "#e9e6f4", col: "#5b4b8a", item: threeDItem, full: false, mediaH: 80 },
-            { key: "2D Design", label: "2D Design", files: twoDFiles, badge: "2D", bg: "#e2ecf5", col: "#2f5c8a", item: twoDItem, full: false, mediaH: 80 },
-            { key: "Unfilled", label: "Unfilled plan", files: unfilledFiles, badge: "DRAFT", bg: "#f6efd9", col: "#6e4d12", item: undefined, full: false, mediaH: 80 },
-            { key: "Filled", label: "Filled plan", files: filledFiles, badge: "PLACED", bg: "#e2f0e9", col: "#2f8a5b", item: undefined, full: false, mediaH: 80 },
+            { key: "Display", label: "Display floor plan", files: displayPlanFiles, atts: displayPlanAtts, badge: "PLAN", bg: "#f3ece0", col: "#a16a2e", item: displayItem, full: true, mediaH: 140 },
+            { key: "3D Design", label: "3D Design", files: threeDFiles, atts: threeDAtts, badge: "3D", bg: "#e9e6f4", col: "#5b4b8a", item: threeDItem, full: false, mediaH: 80 },
+            { key: "2D Design", label: "2D Design", files: twoDFiles, atts: twoDAtts, badge: "2D", bg: "#e2ecf5", col: "#2f5c8a", item: twoDItem, full: false, mediaH: 80 },
+            { key: "Unfilled", label: "Unfilled plan", files: unfilledFiles, atts: unfilledAtts, badge: "DRAFT", bg: "#f6efd9", col: "#6e4d12", item: undefined, full: false, mediaH: 80 },
+            { key: "Filled", label: "Filled plan", files: filledFiles, atts: filledAtts, badge: "PLACED", bg: "#e2f0e9", col: "#2f8a5b", item: undefined, full: false, mediaH: 80 },
           ] as const).filter((t) =>
             !(hideFilledPlan && t.key === "Filled") &&
             !(hidePlanTiles && (t.key === "Unfilled" || t.key === "Filled"))
@@ -3883,6 +3951,49 @@ function FloorPlans({
                       {files.length ? "+ Add / replace" : "Upload"}
                     </button>
                   )}
+                  {t.key === "Display" && canWrite && displayPlanTaskId != null && (
+                    <button
+                      className="tinybtn"
+                      style={{ marginTop: 6, width: "100%" }}
+                      disabled={busy}
+                      onClick={(e) => { e.stopPropagation(); displayRef.current?.click(); }}
+                    >
+                      {files.length ? "+ Add / replace" : "Upload"}
+                    </button>
+                  )}
+                  {/* One chip per file with its × (owner 2026-08-24). Only for
+                      real task attachments — the legacy project-level plans the
+                      Unfilled/Filled tiles fall back to are a different store
+                      and this endpoint would not find them. stopPropagation, or
+                      the tap opens the lightbox instead of removing. */}
+                  {canDeleteFiles && t.atts.length > 0 && (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 6 }}>
+                      {t.atts.map((a) => (
+                        <span
+                          key={a.id}
+                          style={{
+                            display: "inline-flex", alignItems: "center", gap: 4, maxWidth: "100%",
+                            border: "1px solid #e3e6e0", borderRadius: 7, padding: "2px 4px 2px 6px",
+                            fontSize: 10, color: "#414539", background: "#fbfcfa",
+                          }}
+                        >
+                          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 128 }}>
+                            {a.file_name || "file"}
+                          </span>
+                          <button
+                            className="tinybtn"
+                            disabled={busy}
+                            aria-label={`Remove ${a.file_name || "file"}`}
+                            title="Remove file"
+                            style={{ color: "#a13a34", padding: "1px 6px", fontWeight: 700 }}
+                            onClick={(e) => { e.stopPropagation(); void removePlanFile(a.id, a.file_name); }}
+                          >
+                            ×
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
                   {tileCanReview && tileItem && (
                     <ReviewButtons item={tileItem} busy={busy} setBusy={setBusy} prompt={prompt} notify={notify} reload={reload} />
                   )}
@@ -3892,6 +4003,7 @@ function FloorPlans({
           })}
         </div>
         <input ref={filledRef} type="file" accept="image/*,.pdf" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) void uploadFilledPlan(f); }} />
+        <input ref={displayRef} type="file" accept="image/*,.pdf" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) void uploadDisplayPlan(f); }} />
 
         <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "#9aa093", margin: "10px 0 6px" }}>Stock transfer record</div>
         {stockOutAtts.length === 0 && <div style={{ fontSize: 12, color: "#9aa093", marginBottom: 8 }}>No stock transfer recorded yet.</div>}

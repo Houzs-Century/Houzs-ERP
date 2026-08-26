@@ -23,7 +23,7 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/announcements.ts` | 11 | 1421 |
 | `backend/src/routes/assistant.ts` | 4 | 225 |
 | `backend/src/routes/assr.ts` | 62 | 3323 |
-| `backend/src/routes/assrFormIntake.ts` | 6 | 902 |
+| `backend/src/routes/assrFormIntake.ts` | 6 | 954 |
 | `backend/src/routes/assrPortal.ts` | 14 | 540 |
 | `backend/src/routes/assr_print.ts` | 1 | 1218 |
 | `backend/src/routes/audit.ts` | 1 | 74 |
@@ -31,7 +31,7 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/branding.ts` | 5 | 294 |
 | `backend/src/routes/clientErrors.ts` | 2 | 232 |
 | `backend/src/routes/companies.ts` | 1 | 48 |
-| `backend/src/routes/departments.ts` | 4 | 202 |
+| `backend/src/routes/departments.ts` | 4 | 242 |
 | `backend/src/routes/finance.ts` | 2 | 466 |
 | `backend/src/routes/fleet.ts` | 1 | 37 |
 | `backend/src/routes/inbox.ts` | 1 | 545 |
@@ -176,14 +176,14 @@ scripts, never assumed: each runner declares its own directory, and
 
 | tree | runner | *.sql | highest | applied to PRODUCTION by deploy.yml | read by backend vitest |
 |---|---|---|---|---|---|
-| `backend/src/db/migrations` | `backend/scripts/migrate.mjs` | 150 | `151_position_page_overrides.sql` (151) | no | yes |
-| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 328 | `0330_scm_so_header_cas_rebind_line_ids.sql` (0330) | YES | no |
+| `backend/src/db/migrations` | `backend/scripts/migrate.mjs` | 151 | `152_departments_lead_and_headcount.sql` (152) | no | yes |
+| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 329 | `0331_departments_lead_and_headcount.sql` (0331) | YES | no |
 
 Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its number): `0136_capture_compat_views_trips_lorries.sql.TEMPLATE`
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1761 files, 640489 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1763 files, 641089 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -198,7 +198,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `backend/src/routes/projects.ts` | 5052 |
 | `backend/src/scm/routes/scan-so.ts` | 4865 |
 | `backend/src/scm/routes/mfg-purchase-orders.ts` | 4538 |
-| `frontend/src/mobile/MobilePMS.tsx` | 4375 |
+| `frontend/src/mobile/MobilePMS.tsx` | 4487 |
 | `frontend/src/pages/scm-v2/SupplierDetail.tsx` | 4326 |
 | `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | 4195 |
 | `frontend/src/mobile/MobileNewSO.tsx` | 3744 |
@@ -407,7 +407,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileModuleList.tsx` | 2105 |
 | `frontend/src/mobile/MobileMyCaseDetail.tsx` | 326 |
 | `frontend/src/mobile/MobileNewSO.tsx` | 3744 |
-| `frontend/src/mobile/MobilePMS.tsx` | 4375 |
+| `frontend/src/mobile/MobilePMS.tsx` | 4487 |
 | `frontend/src/mobile/MobilePOD.tsx` | 558 |
 | `frontend/src/mobile/MobilePmsDefectActions.tsx` | 109 |
 | `frontend/src/mobile/MobilePoAmendmentDetail.tsx` | 448 |
