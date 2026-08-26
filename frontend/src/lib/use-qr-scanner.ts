@@ -181,7 +181,20 @@ export function useQrScanner(onDecoded: (value: string) => void): QrScanner {
     video.srcObject = stream;
     video.setAttribute('playsinline', 'true');
     video.muted = true;
-    video.play().catch(() => {});
+    /* A REFUSED play() IS A BLACK RECTANGLE, and swallowing it is how the
+       operator ends up staring at one deciding the scanner is broken. It rejects
+       for real reasons — an autoplay policy that wants a user gesture, the
+       element detached mid-start — and none of them are visible any other way,
+       because the decode loop below simply never sees a frame. So it is said out
+       loud, in the same place every other camera failure is said. */
+    video.play().catch((e: unknown) => {
+      const name = e instanceof DOMException ? e.name : '';
+      /* AbortError is the ordinary one: a play() interrupted by the stream being
+         torn down, which is what STOPPING the scanner looks like. Not a failure
+         and not worth a message. */
+      if (name === 'AbortError') return;
+      setCameraError('The camera opened but the picture would not start. Close this page and open it again.');
+    });
 
     if (!canvasRef.current) canvasRef.current = document.createElement('canvas');
     const canvas = canvasRef.current;
