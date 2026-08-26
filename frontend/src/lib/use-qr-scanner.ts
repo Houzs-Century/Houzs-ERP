@@ -120,11 +120,20 @@ export function useQrScanner(onDecoded: (value: string) => void): QrScanner {
          a small code blurred at arm's length, which reads to the operator as
          "it does not scan". Best-effort: never block a scan on focus tuning. */
       try {
-        const track = stream.getVideoTracks()[0];
-        const caps = track?.getCapabilities?.() as
-          | (MediaTrackCapabilities & { focusMode?: string[]; torch?: boolean })
+        /* ANNOTATED `| undefined` rather than inferred, and `getCapabilities`
+           reached through a cast: lib.dom types both as always present, and
+           neither is. A stream can arrive with no video track, and Safari
+           shipped MediaStreamTrack without getCapabilities for years. Letting
+           the compiler's optimism stand here would crash the whole start() on
+           the phones this exists for. */
+        const track: MediaStreamTrack | undefined = stream.getVideoTracks()[0];
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- lib.dom types getVideoTracks()[0] as always present; a stream can arrive with no video track and this whole block is best-effort.
+        const getCaps = track?.getCapabilities as
+          | (() => MediaTrackCapabilities & { focusMode?: string[]; torch?: boolean })
           | undefined;
-        if (caps?.focusMode?.includes('continuous')) {
+        const caps = getCaps ? getCaps.call(track) : undefined;
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- same optimism: `track` is only always-truthy to the compiler.
+        if (track && caps?.focusMode?.includes('continuous')) {
           await track.applyConstraints({
             advanced: [{ focusMode: 'continuous' } as unknown as MediaTrackConstraintSet],
           });
@@ -186,7 +195,12 @@ export function useQrScanner(onDecoded: (value: string) => void): QrScanner {
       }
     }
 
-    let stopped = false;
+    /* ANNOTATED, because the compiler narrows `let stopped = false` to the
+       LITERAL false and then calls every `if (stopped)` below dead — the writes
+       happen in the cleanup closure, across an await it does not follow. The
+       checks are real: they are what stops a decode that was already in flight
+       from firing after the camera closed. */
+    let stopped: boolean = false;
     let lastDecode = 0;
     /* The native decoder is cheap enough to run more often; the canvas path
        costs a full frame copy plus a JS decode, so it is throttled harder to
@@ -218,6 +232,7 @@ export function useQrScanner(onDecoded: (value: string) => void): QrScanner {
         if (nativeDetector) {
           try {
             const codes = await nativeDetector.detect(video);
+            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- `stopped` is written by the cleanup closure across this await, which control-flow analysis does not follow; this check is what stops a decode already in flight from firing after the camera closed.
             if (stopped) return;
             const first = codes.find((cd) => cd.rawValue);
             if (first?.rawValue) hit = first.rawValue;
