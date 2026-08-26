@@ -934,6 +934,15 @@ errors and refuse the whole export: a swallowed line-read reads as "no lines",
 and `summariseReadiness([])` would then write a BLANK Remarks 2 and call the
 order ready.
 
+**Balance comes from the VIEW.** `mfg_sales_orders.balance_sen` is a stored
+column nothing maintains — it still equals `local_total` on orders paid in full
+months ago — so the first cut wrote "everything outstanding" into the sheet.
+The export reads `mfg_sales_orders_with_payment_totals.balance_sen_live`, the
+same figure the SO list shows. **PO No.** is not a header column either: it is
+collected through SO line → `purchase_order_items.so_item_id` →
+`purchase_orders.po_number`, comma-joined when an order has several, cancelled
+POs dropped.
+
 Column map lives in the handler's header comment. Two traps recorded there:
 the tab's frozen-column freezebar renders as an extra cell, so counting cells
 by eye shifts every letter from G on by one; and `Sales Exemption Expiry Date`
