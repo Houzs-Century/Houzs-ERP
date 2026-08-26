@@ -110,7 +110,9 @@ export const loadingListHandler = async (c: Context<{ Bindings: Env; Variables: 
 
   const { data, error } = await q;
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  const headers = (data ?? []) as unknown as HeaderRow[];
+  // After the error check PostgREST narrows `data` to the success arm (a row
+  // array, never null), so no `?? []` guard here.
+  const headers = data as unknown as HeaderRow[];
   if (headers.length === 0) return c.json({ deliveryOrders: [] });
 
   const ids = headers.map((h) => h.id);
@@ -135,7 +137,8 @@ export const loadingListHandler = async (c: Context<{ Bindings: Env; Variables: 
   }
 
   const linesByDo = new Map<string, ItemRow[]>();
-  for (const l of ((lineRes.data ?? []) as unknown as ItemRow[])) {
+  // lineRes.error returned above → data is the non-null success arm.
+  for (const l of (lineRes.data as unknown as ItemRow[])) {
     const arr = linesByDo.get(l.delivery_order_id) ?? [];
     arr.push(l);
     linesByDo.set(l.delivery_order_id, arr);
