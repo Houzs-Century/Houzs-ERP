@@ -38,6 +38,7 @@ import {
   CheckCircle2,
   Receipt,
   Share2,
+  Undo2,
   X as XIcon,
 } from "lucide-react";
 import { Badge } from "../../components/Badge";
@@ -60,6 +61,7 @@ import {
 import {
   useMfgDeliveryOrderDetail,
   useUpdateMfgDeliveryOrderStatus,
+  useRevertMfgDeliveryOrder,
   useUpdateMfgDeliveryOrderItem,
 } from "../../vendor/scm/lib/delivery-order-queries";
 import { useRacks } from "../../vendor/scm/lib/warehouse-queries";
@@ -67,6 +69,7 @@ import { useSetBreadcrumbs } from "../../hooks/useBreadcrumbs";
 import { useStaffLookup } from "../../hooks/useStaffLookup";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
+import { usePrompt } from "../../vendor/scm/components/PromptDialog";
 import { useDoRelationshipMap } from "./sales-doc-relationship-map";
 import {
   DocumentRelationshipMapModal,
@@ -84,7 +87,7 @@ import { convertToLink, transferToLabel } from "../../lib/convertScope";
 import { buildVariantSummary, fmtDate, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import { useAuth } from "../../auth/AuthContext";
-import { canOperateDeliveryOrders } from "../../auth/salesAccess";
+import { canOperateDeliveryOrders, canRevertDelivery } from "../../auth/salesAccess";
 import { DO_SHIPPED_STATES } from '../../vendor/shared/do-shipped-states';
 import { HoldChip, type HoldFields } from "../../vendor/scm/components/HoldChip";
 
@@ -705,6 +708,8 @@ export function DeliveryOrderDetailV2() {
   const { nameOf: salespersonNameOf } = useStaffLookup();
   const notify = useNotify();
   const askConfirm = useConfirm();
+  const askPrompt = usePrompt();
+  const revert = useRevertMfgDeliveryOrder();
   const { user, can, pageAccess } = useAuth();
   // showCustomerPo + node click handling now live inside useDoRelationshipMap.
   // Mutation gate — a salesperson opens this DO read-only via the sales inherit
@@ -794,6 +799,33 @@ export function DeliveryOrderDetailV2() {
     })) {
       updateStatus.mutate({ id: deliveryOrder.id, status: "CANCELLED" });
     }
+  };
+  /* The Ops-lead REVERT — the safety net for a wrong scan (LOADED) or an
+     accidental dispatch (DISPATCHED). The plan is derived from the current
+     status so the one control never changes meaning ambiguously: a LOADED order
+     undoes the load (→ Draft, stock returns), a DISPATCHED one undoes the
+     dispatch (→ Loaded, stock stays out — a full reset is then a second click).
+     The server owns the legal transitions, the downstream lock and the stock
+     reversal; a reason is mandatory (it lands in the audit trail). */
+  const doStatusUpper = (deliveryOrder?.status || "").toUpperCase();
+  const revertPlan: { to: "LOADED" | "DRAFT"; label: string; body: string } | null =
+    doStatusUpper === "LOADED"
+      ? { to: "DRAFT", label: "Undo load", body: "Returns the goods to warehouse stock and moves the delivery order back to Draft." }
+      : doStatusUpper === "DISPATCHED"
+        ? { to: "LOADED", label: "Undo dispatch", body: "Moves the delivery order back to Loaded. The goods stay out of stock — undo the load next to return them." }
+        : null;
+  const doRevert = async () => {
+    if (!deliveryOrder || !revertPlan) return;
+    const reason = await askPrompt({
+      title: `${revertPlan.label} — ${deliveryOrder.do_number}?`,
+      body: revertPlan.body,
+      placeholder: "Reason (e.g. scanned the wrong order)",
+      confirmLabel: revertPlan.label,
+      multiline: true,
+      validate: (v) => (v.trim() ? null : "A reason is required."),
+    });
+    if (reason == null) return; // cancelled
+    revert.mutate({ id: deliveryOrder.id, toStatus: revertPlan.to, reason: reason.trim() });
   };
   /* The ONE status-advance control. Its verb and its target both come from
      do-next-step.ts, so a DRAFT delivery order gets the same "Confirm"
@@ -1127,6 +1159,19 @@ export function DeliveryOrderDetailV2() {
                 onClick={doCancel}
               >
                 Cancel DO
+              </Button>
+            )}
+            {/* Ops-lead exception power (scm.do.revert): undo a wrong scan or an
+                accidental dispatch. Shown only when a revert is legal (LOADED or
+                DISPATCHED); the server re-checks the capability and the rules. */}
+            {canRevertDelivery(user) && revertPlan && (
+              <Button
+                variant="secondary"
+                icon={<Undo2 size={14} />}
+                onClick={doRevert}
+                disabled={revert.isPending}
+              >
+                {revertPlan.label}
               </Button>
             )}
             {/* ── The two status-driven controls. BOTH ARE ALWAYS RENDERED for
