@@ -403,6 +403,8 @@ function drawInfoPanel(
   const PAD_X = 6;
   const PAD_Y = 5;
   const GAP = 8;
+  /* Space between the customer name and the debtor code that follows it. */
+  const CODE_GAP = 3;
   const innerW = CONTENT_W - PAD_X * 2;
   const colW = (innerW - GAP) / 2;
   const leftX = M + PAD_X;
@@ -435,18 +437,43 @@ function drawInfoPanel(
       y += pt(12) * 1.2;
       if (draw) { setInk(doc, T.ink); doc.text(line, leftX, y); }
     }
-    // The debtor code rides on the name's last line — it is how the warehouse
-    // and the customer's own AP team match the account, and it costs no height
-    // there. Omitted rather than dashed when a record has none.
-    if (draw && header.debtor_code) {
+    /* The debtor code rides on the name's last line — it is how the warehouse
+       and the customer's own AP team match the account, and it costs no height
+       there. Omitted rather than dashed when a record has none.
+
+       IT ONLY RIDES IF IT FITS. `splitTextToSize` wraps the NAME to colW, so a
+       name whose last line ends near the column edge left no room, and the code
+       was drawn past it — straight over "SO No" in the details column
+       (docs/bugs/0550). When it does not fit it takes its own line instead, and
+       the MEASURE pass counts that line too, so the panel grows with it rather
+       than the code falling out of the bottom. */
+    const codeFits = (): boolean => {
+      if (!header.debtor_code) return true;
       const lastLine = nameLines[nameLines.length - 1] ?? '';
       doc.setFont(SANS, 'bold');
       doc.setFontSize(12);
       const nameW = doc.getTextWidth(lastLine);
       doc.setFont(monoFor(header.debtor_code), 'normal');
       doc.setFontSize(9);
-      setInk(doc, T.inkMuted);
-      doc.text(header.debtor_code, leftX + nameW + 3, y);
+      return nameW + CODE_GAP + doc.getTextWidth(header.debtor_code) <= colW;
+    };
+    if (header.debtor_code) {
+      const inline = codeFits();
+      const lastLine = nameLines[nameLines.length - 1] ?? '';
+      let codeX = leftX;
+      if (inline) {
+        doc.setFont(SANS, 'bold');
+        doc.setFontSize(12);
+        codeX = leftX + doc.getTextWidth(lastLine) + CODE_GAP;
+      } else {
+        y += pt(9) * 1.2;
+      }
+      if (draw) {
+        doc.setFont(monoFor(header.debtor_code), 'normal');
+        doc.setFontSize(9);
+        setInk(doc, T.inkMuted);
+        doc.text(header.debtor_code, codeX, y);
+      }
     }
 
     doc.setFont(SANS, 'normal');
