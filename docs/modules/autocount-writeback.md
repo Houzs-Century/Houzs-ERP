@@ -3354,6 +3354,32 @@ It goes through `callAcRead` (`services/autocount-host-read.ts`), NOT
 names something an outbox ROW can be — a document with a status, attempts and a
 retry policy — and a log read is none of those.
 
+**`GET /api/scm/autocount-outbox/book-doc`** (2026-08-26, docs/bugs/0550) is the
+second of those four routes to be wired up: `?docType=SO|PO|DO|GR|IV|PI` and
+`?docNo=`, returning the header, every line, and `missingColumns` — the wanted
+columns the book does not have, passed through rather than dropped, because
+*"AutoCount has no such field"* is itself the answer to several of the questions
+this route exists for. Same permission keys again; it returns debtor codes,
+prices and addresses out of a licensed account book.
+
+**IT ANSWERS THE ONE QUESTION NOTHING ELSE HERE CAN.** Every other route reports
+what the ERP SENT or what the host SAID BACK, and neither is evidence about the
+book. `Set()` on the host swallows a refused assignment and still reports
+success, so *sent* has never meant *landed* — #0549 is eight days of purchase
+orders carrying no warehouse with the queue, the page and the log all green.
+Owner 2026-08-26: 「我 edit 了之后，怎么没输入回去给 AutoCount 呢?」 — a question
+about the book, which no reading of our own payload can answer.
+
+`DetailWanted` is chosen for exactly these questions: `FromDocType` /
+`FromDocNo` / `FromDocDtlKey` / `FullTransferFromDocList` on the downstream side
+and `FromSODtlKey` / `FromSODocList` on a PO answer *is the convert-from link
+there*; `Location` answers *which warehouse did this line really get*.
+
+`BOOK_DOC_TYPES` lives in `autocount-host-read.ts` beside `AC_READ_ROUTE`, and
+the test pins it against `AcSyncService.DocTypes` read out of the C# source with
+`?raw` — so a type the host drops fails a test here rather than becoming a 400
+for a document the book can read.
+
 **A PENDING ANCESTOR IS SENT, NOT RE-QUEUED** (2026-08-26, docs/bugs/0542).
 `sendAncestorsFirst` always went through `requeueOutboxRow`, which refuses a
 pending row outright — `row-pending`, and rightly, since the sweep is already
