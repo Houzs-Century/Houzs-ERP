@@ -68,6 +68,61 @@ export function planStateWarehouseRebind(
   return { offenders: [], rebindLineIds: moved.map((l) => l.id) };
 }
 
+/** The whole gate for one document: load the mismatched lines, look up their
+ *  downstream anchors, and return the plan. The MISMATCH read failing is
+ *  fail-OPEN on purpose (log + empty plan): that is byte-for-byte the
+ *  pre-narrowing behaviour (`const { data: mismatchRows }` discarded its
+ *  error, so an unreadable check silently skipped the gate), and the CAS only
+ *  ever moves NULL lines plus the ids returned here, so the worst case is "no
+ *  extra move and no gate" — exactly the old worst case. The ANCHOR read
+ *  failing stays fail-CLOSED inside loadSoLineDownstreamAnchors (null →
+ *  caller marks everything anchored). */
+export async function planStateRebindForDoc(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the untyped supabase client this SCM tree passes around
+  sb: any,
+  docNo: string,
+  reboundWarehouseId: string,
+): Promise<StateRebindPlan> {
+  const { data: mismatchRows, error } = await sb
+    .from('mfg_sales_order_items')
+    .select('id, item_code, warehouse_id')
+    .eq('doc_no', docNo)
+    .eq('cancelled', false)
+    .not('warehouse_id', 'is', null)
+    .neq('warehouse_id', reboundWarehouseId);
+  if (error) {
+    /* eslint-disable-next-line no-console */
+    console.error('[so-state-rebind] mismatch read failed — gate skipped, only NULL lines rebind:', error.message ?? error);
+    return { offenders: [], rebindLineIds: [] };
+  }
+  const conflicts = (mismatchRows ?? []) as Array<{ id: string; item_code: string; warehouse_id: string }>;
+  if (conflicts.length === 0) return { offenders: [], rebindLineIds: [] };
+  const anchors = await loadSoLineDownstreamAnchors(sb, conflicts.map((r) => r.id));
+  return planStateWarehouseRebind(reboundWarehouseId, conflicts.map((r) => ({
+    id: r.id,
+    itemCode: r.item_code,
+    warehouseId: r.warehouse_id,
+    anchored: anchors === null ? true : anchors.has(r.id),
+  })));
+}
+
+/** The 409 payload for a blocked State change — shape unchanged from the
+ *  2026-07-22 gate so the frontend's handling keeps working. */
+export function stateChangeConflictBody(
+  reboundWarehouseId: string,
+  offenders: StateRebindPlan['offenders'],
+): Record<string, unknown> {
+  return {
+    error: 'state_change_conflicts_line_warehouse',
+    reason:
+      'One or more lines are already bound to a different warehouse AND have a live PO / DO cut against it. ' +
+      'Changing the State would leave that downstream doc targeting the old warehouse — supplier could ship to the wrong place. ' +
+      'Cancel the affected downstream doc, or move each line to the new warehouse explicitly, then retry.',
+    newWarehouseId: reboundWarehouseId,
+    offenders: offenders.map((r) => ({ itemCode: r.itemCode, currentWarehouseId: r.currentWarehouseId })),
+  };
+}
+
 /** Which of `lineIds` are anchored by a LIVE downstream document?
  *
  *  Live = the parent doc is not CANCELLED. DRAFT POs count as live on purpose
