@@ -133,6 +133,41 @@ export function warehousesDiffer(
   return a != null && b != null && a !== b;
 }
 
+/** WRITE-time warehouse default for a brand-new order's goods lines — the
+ *  read-time chain above (Location, then State) applied at create, plus ONE
+ *  final fallback the read chain does not have: the creating operator's own
+ *  store (owner 2026-08-25, after 2990-SO-2608-045 was born with four goods
+ *  lines no allocation bucket could ever match).
+ *
+ *  THE STORE ONLY STANDS IN WHEN THE ORDER WOULD OTHERWISE BE LOCATIONLESS. A
+ *  resolved Location or State always wins — those are statements about the
+ *  ORDER. And an EXPLICIT Location that fails to resolve (typo, retired
+ *  warehouse) blocks the store too: the operator said something specific, and
+ *  silently overriding it with their parking spot would bind lines to a
+ *  warehouse that contradicts the header text. That case keeps today's NULL
+ *  and the [null-warehouse] signal keeps naming it. */
+export function chooseCreateWarehouseDefault(i: {
+  /** body.salesLocation, trimmed — null when the caller sent none. */
+  explicitSalesLocation: string | null;
+  /** explicitSalesLocation resolved against the warehouse master, if sent. */
+  salesLocationWarehouseId: string | null;
+  /** customer_state resolved through state_warehouse_mappings. */
+  stateWarehouseId: string | null;
+  /** The creating operator's scm.staff.showroom_warehouse_id — already
+   *  verified to exist in the ACTIVE company's warehouse master (the staff
+   *  row is shared across companies, so an unverified id could bind a Houzs
+   *  order to a 2990 showroom). */
+  operatorStoreWarehouseId: string | null;
+}): { warehouseId: string | null; usedOperatorStore: boolean } {
+  const derived = i.salesLocationWarehouseId ?? i.stateWarehouseId;
+  if (derived) return { warehouseId: derived, usedOperatorStore: false };
+  if (i.explicitSalesLocation) return { warehouseId: null, usedOperatorStore: false };
+  if (i.operatorStoreWarehouseId) {
+    return { warehouseId: i.operatorStoreWarehouseId, usedOperatorStore: true };
+  }
+  return { warehouseId: null, usedOperatorStore: false };
+}
+
 /* ── Loaders ────────────────────────────────────────────────────────────────
    Kept apart from the rule above so callers that already hold the masters (MRP
    loads the warehouse list for its own labels) do not re-read them. `scope`

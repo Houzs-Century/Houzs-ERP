@@ -1706,9 +1706,40 @@ Service lines are excluded (they hold no stock; a guard that cries on every
 delivery-fee line is one somebody turns off). The hourly do-link sentinel
 counts the same shape, baseline 10 (the addressless orders below).
 
-Also relevant: `apply_so_header_cas` (mig 0173) rebinds `warehouse_id` on the
-order's **NULL lines only** when the header's warehouse changes, while the
-approved-amendment path (`so-revision.ts`) rebinds every non-cancelled line.
+Also relevant: `apply_so_header_cas` rebinds `warehouse_id` when the header's
+warehouse changes — on the order's **NULL lines** (mig 0173) plus, since mig
+0330, the ids the route passes as `p_rebind_line_ids`; the approved-amendment
+path (`so-revision.ts`) rebinds every non-cancelled line.
+
+#### The order is born belonging to the operator's store (owner 2026-08-25)
+
+A POS walk-in has no address yet, and until 2026-08-25 the create default
+derived the per-line warehouse from the State ALONE — so a no-address order
+wrote every goods line `warehouse_id NULL` (2990-SO-2608-045: four of them,
+docs/bugs/0541; the hourly sentinel red for days on the same class after the
+0501 rebuild). Now the create default is the READ chain applied at write time
+— explicit Location, then State — plus one final fallback: **the creating
+operator's own store** (`scm.staff.showroom_warehouse_id`, verified in the
+ACTIVE company's warehouse master because `scm.staff` is one shared table).
+The decision is `so-warehouse.ts::chooseCreateWarehouseDefault` (pure); the
+reads are `lib/so-create-warehouse-default.ts`. A resolved Location or State
+always wins, and an EXPLICIT Location that resolves to nothing blocks the
+store too (the operator said something specific; that case keeps its NULL and
+the `[null-warehouse]` signal). The header's `sales_location` falls back to
+the same store label, and the single-row / sofa-split add-line paths inherit
+the ORDER's warehouse (`resolveSoWarehouseId`) instead of the State-only
+derive — so every goods-line write path binds a warehouse whenever the header
+has one.
+
+**The 2026-07-22 State-change conflict gate is narrowed to its stated
+reason** (`lib/so-state-warehouse-rebind.ts`): a bound line 409s only when a
+LIVE downstream PO/DO anchors it (DRAFT POs count as live, same ruling as
+`so-po-lock`); an un-anchored bound line MOVES with its order inside the CAS
+transaction (`p_rebind_line_ids`, mig 0330). Without this, no state maps to a
+showroom, so every store-born order would 409 on the address fill. The anchor
+lookup fails CLOSED (unreadable downstream = anchored = the old blanket 409);
+the mismatch read keeps its historical fail-OPEN (gate skipped, only NULL
+lines rebind). All-or-nothing: one anchored line blocks the whole change.
 
 #### Company 1 cannot create an order with no stock location (owner 2026-08-13, SURFACE CHANGE)
 

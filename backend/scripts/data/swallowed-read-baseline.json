@@ -326,7 +326,7 @@
       "catches": 0
     },
     "backend/src/scm/routes/mfg-sales-orders.ts": {
-      "reads": 82,
+      "reads": 81,
       "catches": 2
     },
     "backend/src/scm/routes/mrp.ts": {
