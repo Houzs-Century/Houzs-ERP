@@ -3,7 +3,7 @@
 // the real public/scm relation and column names so PostgreSQL plans the same
 // joins, view aggregation, row width, predicates and indexes as the hot routes.
 
-export const REAL_SCHEMA_CONTRACT_VERSION = "2026-07-21.1";
+export const REAL_SCHEMA_CONTRACT_VERSION = "2026-08-26.1";
 
 export const SO_LIST_COLUMNS = [
   "doc_no", "transfer_to", "so_date", "branding", "debtor_code", "debtor_name",
@@ -242,6 +242,10 @@ export const PG_REAL_SCHEMA_DDL = `
     created_at timestamptz NOT NULL DEFAULT now(),
     created_by uuid,
     updated_at timestamptz NOT NULL DEFAULT now(),
+    on_hold boolean NOT NULL DEFAULT false,
+    hold_reason text,
+    held_at timestamptz,
+    held_by uuid,
     company_id bigint NOT NULL
   );
 
