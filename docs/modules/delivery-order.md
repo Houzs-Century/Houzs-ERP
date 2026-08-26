@@ -774,7 +774,10 @@ holds `scm.warehouse.inventory` + `scm.transportation` (view) but **not**
 served by `backend/src/scm/routes/loading-list.ts` — `GET
 /api/scm/loading-list?status=to_load|loaded|all` — mounted in
 `backend/src/scm/index.ts` behind `scmAreaGuard('scm.warehouse.inventory')`, the
-grant the warehouse line already has.
+grant the warehouse line already has. That mount is also registered in the
+`SCM_AREA_MOUNTS` table (`backend/src/scm/lib/scm-areas.ts`) — the `scm.use()`
+prefix → area map the write-freeze resolver reads — and the desktop route list
+(`frontend/src/routing/routeManifest.ts`).
 
 **THE NO-PRICE GUARANTEE IS STRUCTURAL.** Owner 2026-08-25: 「仓库线只扫码置
 LOADED 不见价格」. The route's header and line projections are hand-picked
