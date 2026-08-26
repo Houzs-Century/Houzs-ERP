@@ -45,9 +45,10 @@ const allMobile: MobileDestination[] = [
 describe("executable route contract", () => {
   it("matches every canonical staff page mounted by App.tsx, with no extras", () => {
     // 143 since 2026-08-21: /scm/do-load, the DO print's loading-QR landing page.
-    // 142 since 2026-08-16: /scm/daily-bank, the Daily Bank board (accounting phase 2B).
+    // 144 since 2026-08-25: /scm/loading-list, the warehouse no-price loading queue.
+    // (143 since 2026-08-25: driver POD; 142 since 2026-08-16: /scm/daily-bank.)
     // (141 since 2026-08-15: /autocount-sync, the AutoCount write-back queue.)
-    expect(STAFF_ROUTE_PATTERNS).toHaveLength(143);
+    expect(STAFF_ROUTE_PATTERNS).toHaveLength(144);
     expect(new Set(STAFF_ROUTE_PATTERNS).size).toBe(STAFF_ROUTE_PATTERNS.length);
     expect([...STAFF_ROUTE_PATTERNS].sort()).toEqual([...appPages].sort());
   });
@@ -68,10 +69,9 @@ describe("executable route contract", () => {
       .filter((path) => path !== "*");
     expect([...new Set(["/survey/:token", ...mountedPublic])].sort())
       .toEqual([...PUBLIC_ROUTE_PATTERNS].sort());
-    // 152 since 2026-08-21 — see the staff-route count above.
-    // (151 since 2026-08-16.)
-    // (150 since 2026-08-15.)
-    expect(ROUTE_CONTRACT).toHaveLength(152);
+    // 153 since 2026-08-25 — /scm/loading-list; see the staff-route count above.
+    // (152 since 2026-08-21.) (151 since 2026-08-16.) (150 since 2026-08-15.)
+    expect(ROUTE_CONTRACT).toHaveLength(153);
   });
 
   it("keeps every desktop nav destination on a live staff route", () => {

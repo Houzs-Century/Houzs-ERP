@@ -755,6 +755,43 @@ twin; and by `backend/tests/doScanLadder.test.ts`, which asserts forward-only as
 a PROPERTY over the ladder's own derived order — so a rung added tomorrow is
 covered without editing the test, and a rung pointed backwards fails there.
 
+### The warehouse Loading List — the no-price queue (owner 2026-08-25)
+
+The loading QR above is how a storekeeper *confirms* a load; the **Loading List**
+is how they see **what** to load. `frontend/src/pages/scm-v2/LoadingList.tsx`
+(routed at `/scm/loading-list` in `App.tsx` behind `scm.warehouse.inventory`,
+with a Warehouse-group nav item in `frontend/src/components/Sidebar.tsx` on the
+same gate) is a card list: one card per delivery order waiting to load, showing
+the customer, destination, assigned lorry, and the item lines (product +
+quantity). A **"Scan to load"** link on each DRAFT card jumps into the QR flow
+above. It has a `to_load` / `loaded` / `all` status filter and a client-side
+search.
+
+**WHY IT IS ITS OWN BACKEND ROUTE, not a filter on the DO list.** A Storekeeper
+holds `scm.warehouse.inventory` + `scm.transportation` (view) but **not**
+`scm.sales.delivery`, so the `/delivery-orders-mfg` reads (gated on
+`scm.sales.delivery`, inheriting `scm.sales.orders`) 403 them. The queue is
+served by `backend/src/scm/routes/loading-list.ts` — `GET
+/api/scm/loading-list?status=to_load|loaded|all` — mounted in
+`backend/src/scm/index.ts` behind `scmAreaGuard('scm.warehouse.inventory')`, the
+grant the warehouse line already has. That mount is also registered in the
+`SCM_AREA_MOUNTS` table (`backend/src/scm/lib/scm-areas.ts`) — the `scm.use()`
+prefix → area map the write-freeze resolver reads — and the desktop route list
+(`frontend/src/routing/routeManifest.ts`).
+
+**THE NO-PRICE GUARANTEE IS STRUCTURAL.** Owner 2026-08-25: 「仓库线只扫码置
+LOADED 不见价格」. The route's header and line projections are hand-picked
+allowlists that name no `*_sen` column — cost, margin, unit price and line total
+are never selected, so they cannot reach the payload. This is stronger than the
+finance-strip on the main list (which deletes keys after reading them); here the
+money is never read. `backend/tests/loadingListPayloadHasNoMoney.test.ts` drives
+the handler through a column-projecting fake and asserts no `_sen` / cost /
+margin / price survives, while the queue itself does.
+
+This screen is **read-only**. The load action stays where the QR flow put it —
+the `PATCH /:id/status` to `LOADED`, admitted by the editable `scm.do.load`
+capability — so seeing the queue and moving stock remain separate grants.
+
 ### The three manual status moves on the row menu (2026-08-22)
 
 `Mark Loaded`, `Mark In Transit` and `Mark Delivered` are offered on the
