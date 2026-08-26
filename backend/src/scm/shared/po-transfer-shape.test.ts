@@ -15,6 +15,10 @@ const line = (over: Partial<PoLineShape> = {}): PoLineShape => ({
   allocationCount: 0,
   sourceAcDtlKey: 991,
   sourceSoDocNo: 'HC-SO-000021',
+  /* The default fixture is a sales order the book ALREADY holds, so every
+     existing case keeps asserting what it always asserted. The `wait` shape is
+     reached only by a fixture that says otherwise. */
+  sourceSoInBook: true,
   ...over,
 });
 
@@ -98,5 +102,56 @@ describe('the Ref a created purchase order carries', () => {
   test('nothing to say is null, never an empty string', () => {
     expect(poSourceRef([])).toBeNull();
     expect(poSourceRef([null, undefined, '  '])).toBeNull();
+  });
+});
+
+/* ---------------------------------------------------------------------------
+   NOT YET IS NOT NEVER.
+
+   `linked_ac_dtlkey` is written when the sales order reaches AutoCount and its
+   create hands back line keys. A purchase order raised in the same minute sees
+   NULL keys — and that used to be read as "the book has no key for these lines,
+   so a transfer cannot address them". True at that instant, false five minutes
+   later, and never revisited.
+
+   Measured on production 2026-08-25: HC-PO-2608-007 was raised from
+   HC-SO-2608-008 and went as `create_po`, so the account book holds NO link
+   between them. The five purchase orders before it transferred correctly —
+   they were raised long enough after their sales orders. A race, not a rule,
+   and a create is the one answer that cannot be taken back.
+   ------------------------------------------------------------------------ */
+describe('a keyless line waits when its sales order is merely not in the book yet', () => {
+  test('WAIT — no key, and the sales order has not reached the book', () => {
+    const r = poTransferShape([line({ sourceAcDtlKey: null, sourceSoInBook: false })]);
+    expect(r.kind).toBe('wait');
+    if (r.kind === 'wait') expect(r.fromSoDocNo).toBe('HC-SO-000021');
+  });
+
+  test('CREATE — no key even though the sales order IS in the book', () => {
+    /* Then the key is genuinely missing rather than merely unissued, and
+       waiting would wait for ever. A create is the honest answer. */
+    const r = poTransferShape([line({ sourceAcDtlKey: null, sourceSoInBook: true })]);
+    expect(r.kind).toBe('create');
+  });
+
+  test('CREATE — a keyless line for STOCK, which no sales order can supply', () => {
+    const r = poTransferShape([line({ sourceAcDtlKey: null, so_item_id: null, sourceSoDocNo: null })]);
+    expect(r.kind).toBe('create');
+  });
+
+  test('CREATE — two different sales orders, so there is no single anchor to wait on', () => {
+    const r = poTransferShape([
+      line({ id: 'a', sourceAcDtlKey: null, sourceSoInBook: false }),
+      line({ id: 'b', so_item_id: 'soi-2', sourceAcDtlKey: null, sourceSoInBook: false, sourceSoDocNo: 'HC-SO-000022' }),
+    ]);
+    expect(r.kind).toBe('create');
+  });
+
+  test('TRANSFER is unchanged when the keys are there', () => {
+    /* The half that must not move: every case that transferred before still
+       transfers, by the same route. */
+    const r = poTransferShape([line()]);
+    expect(r.kind).toBe('transfer');
+    if (r.kind === 'transfer') expect(r.dtlKeys).toEqual([991]);
   });
 });

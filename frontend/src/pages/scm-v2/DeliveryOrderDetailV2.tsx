@@ -241,12 +241,18 @@ const EFFECTIVE_TONE: Record<
 };
 
 // Fine-grained stage label — kept for the sticky header Badge so ops sees
-// the exact stored status (Loaded / Dispatched / In transit / Signed / …)
+// the exact stored status (Confirmed / Loaded / In transit / Signed / …)
 // even when the effective bucket collapses to "shipped".
+//
+// DISPATCHED reads "Loaded" since 2026-08-26 (owner), matching status-pill.ts.
+// It said "Dispatched" here and "Shipped" everywhere else — the same stored
+// value under two words on two screens — and neither of them was what the step
+// means on the three-scan flow: DISPATCHED is the pallet ON the lorry, and
+// departure is IN_TRANSIT. The stored value is untouched.
 const STAGE_LABEL: Record<string, string> = {
   DRAFT: "Draft",
   LOADED: "Confirmed",
-  DISPATCHED: "Dispatched",
+  DISPATCHED: "Loaded",
   IN_TRANSIT: "In transit",
   SIGNED: "Signed",
   DELIVERED: "Delivered",
@@ -819,14 +825,16 @@ export function DeliveryOrderDetailV2() {
   // reveals only .org-print-area); it now prints the real document.
   const doDeliverPdf = (action: PdfAction) => {
     return import("../../vendor/scm/lib/delivery-order-pdf")
-      .then(({ generateDeliveryOrderPdf }) =>
-        generateDeliveryOrderPdf(
-          // loadScanId arms the print's "scan to mark loaded" QR.
-          { ...(deliveryOrder as Record<string, unknown>), loadScanId: (deliveryOrder as { id?: string }).id } as never,
-          items as never,
-          { action },
-        )
-      )
+      .then(async ({ generateDeliveryOrderPdf }) => {
+        // armDoScanToken puts the PUBLIC scan token on the header — the print's
+        // QR encodes /d/<token>, which opens with no login.
+        const { armDoScanToken } = await import("../../vendor/scm/lib/do-scan-token-arm");
+        const header = await armDoScanToken(
+          deliveryOrder as Record<string, unknown>,
+          (deliveryOrder as { id?: string }).id ?? "",
+        );
+        return generateDeliveryOrderPdf(header as never, items as never, { action });
+      })
       .then(() => {
         // Downloads and prints are terminal — close behind them. A new-tab
         // preview leaves the dialog up so the operator can print after looking.

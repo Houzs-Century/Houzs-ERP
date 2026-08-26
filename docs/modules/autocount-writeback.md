@@ -3290,6 +3290,78 @@ it is empty. **The fallback is not a shim to delete**: the column starts NULL on
 every row, so removing it would stop resolving the 1,874 that land correctly
 today. Seeding the column is a separate step with its own dry run.
 
+**A TRANSFER SENDS NO ItemCode, AND IS NO LONGER REFUSED OVER ONE** (2026-08-25,
+docs/bugs/0541). Owner: 「如果它是 by convert 的，那肯定是先跟 Sales Order 的 SKU
+进行 convert … SKU 可能就不用看了」.
+
+`AddSOToPOTransferDetail(Int64)` takes a source line KEY and nothing else —
+AutoCount copies the sales line's own item into the purchase line — and
+`composeSoToPo` already matched that: DtlKey, UnitPrice, Qty, Location,
+DeliveryDate, every ItemCode discarded. But the enqueue composed a full CREATE
+payload first, which resolves every line's ItemCode and throws `ItemCodeError`,
+and only then threw the codes away. A purchase order that needs no item code was
+being refused over one — and 139 bindings resolve to `ambiguous: … none belongs
+to supplier`, so on a transfer every one of them blocked a document over a value
+that would never be sent.
+
+`ComposeOptions.forTransfer` stops that refusal on the transfer path and nowhere
+else: **the create path is unchanged**, because there the ItemCode really is
+sent and really does open or name an item in a licensed book. Two details are
+load-bearing — `readPoEnqueueShape` is read BEFORE `composeDetails` (whether an
+ItemCode matters is the shape's decision), and an unresolved line is KEPT rather
+than dropped, because a short `Details` array misaligns the DtlKey zip and puts
+a wrong quantity on a live purchase order.
+
+**`GET /api/scm/autocount-outbox/host-log`** (2026-08-25, docs/bugs/0537) returns
+the last N lines of AcSyncService's own log from the office machine —
+`?lines=` (default 200, the host clamps it) and `?onlyErrors=1`. Same permission
+keys as Send again, because the log carries document numbers, account codes and
+the book's own refusals.
+
+It exists because `Invalid transfer item.` names nothing, and the sentence that
+settles such a failure — `target debtor before transfer = [...]` — is written by
+the service into a file on that machine. The host has served that file over HTTP
+since it was written; a grep on 2026-08-25 found the only file in this repo
+naming `/last-errors` was the C# that serves it, and all four read-only host
+routes were dead code from the ERP's side.
+
+It goes through `callAcRead` (`services/autocount-host-read.ts`), NOT
+`callAcService`: read routes are deliberately not `AcOp`s, and
+`autocountHostRead.test.ts` pins the two vocabularies disjoint. Every `AcOp`
+names something an outbox ROW can be — a document with a status, attempts and a
+retry policy — and a log read is none of those.
+
+**A PENDING ANCESTOR IS SENT, NOT RE-QUEUED** (2026-08-26, docs/bugs/0542).
+`sendAncestorsFirst` always went through `requeueOutboxRow`, which refuses a
+pending row outright — `row-pending`, and rightly, since the sweep is already
+going to take it. So on the shape the cascade meets most, a chain where every
+document waits on the one above it, every ancestor came back `row-pending` and
+nothing was sent: the button did exactly what the operator could see, nothing.
+Owner: 「顺着点完…就没问题。但…直接去点 Sales Invoice…就不行」— pressing each row
+by hand worked because that sends its own pending row directly, which is
+precisely what the cascade omitted. Failed and skipped ancestors still take the
+re-queue path.
+
+**A PURCHASE ORDER WAITS FOR ITS SALES ORDER RATHER THAN BECOMING A CREATE**
+(2026-08-26, docs/bugs/0543). `poTransferShape` decides transfer-or-create on
+whether the sales-order lines carry an AutoCount DtlKey — and that key is
+written back only when the sales order reaches the book. A purchase order raised
+in the same minute sees NULL keys, so "the account book has no key for these
+lines" was read as permanent. Measured: HC-PO-2608-007 from HC-SO-2608-008 went
+as `create_po` at 16:55 on 2026-08-25 and the book holds no link between them;
+the five before it transferred, because they were raised long enough afterwards.
+A race, not a rule — and a create is the one answer that cannot be taken back.
+
+A third shape, `wait`: keyless AND the source sales order is not in the book yet
+→ queued as `so_to_po` with `fromDoc` on that sales order, which the drain
+already holds until the parent has its number, and the keys are filled at drain
+by `lib/autocount-so-to-po-keys.ts` — the same shape as the CreditorCode, DocNo
+and DebtorCode backfills, and for the same reason. Keyless while the sales order
+IS in the book stays a create; so does for-stock, and so does a purchase order
+drawing on two sales orders, which has no single anchor to wait on. The backfill
+is all-or-nothing: a partial set would send a purchase order that looks complete
+and is short some lines.
+
 **It also splits the queue by OPERATION, and that is a different question.**
 *Added 2026-08-20 (#2417).* A status total says whether the QUEUE works; it says
 nothing about whether an `edit` has ever changed a document in the account book,

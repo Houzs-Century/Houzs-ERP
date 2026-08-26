@@ -66,7 +66,7 @@ the `DELIVERED` tracking status is no longer reached from the office.
 | Mobile POD (driver) | **Yes — the ONLY closer now** | pad, photo, GPS; confirm warns if no signature, still allowed |
 | Mobile planning board | No — routes to Mobile POD | n/a — writes no status |
 | Desktop detail / list drawer | **No** — "Mark signed" removed 2026-08-21; only DRAFT → Confirm remains | n/a |
-| Mobile shell action bar | **No** — the "Mark Signed" rung was removed 2026-08-21; its no-evidence hole (`docs/bugs/0481`) is closed with it. It still offers DRAFT→Confirm, LOADED→Dispatch, DISPATCHED→"Mark In Transit" | n/a |
+| Mobile shell action bar | **No** — the "Mark Signed" rung was removed 2026-08-21; its no-evidence hole (`docs/bugs/0481`) is closed with it. It still offers DRAFT→Confirm, LOADED→"Confirm Loaded", DISPATCHED→"Mark In Transit" | n/a |
 
 Evidence is now captured on the one path that closes a delivery (the driver's
 POD), which signs it. The office's old permissiveness — closing a delivery it did
@@ -166,7 +166,7 @@ sits at its size ceiling.
 | Open · Edit · Print | always | navigation only |
 | Transfer to Sales Invoice | `doCountsAsInvoiceable(status)` | `convertToLink('doToSi', id)` |
 | Transfer to Delivery Return | `doCountsAsDelivered(status)` | `convertToLink('doToDr', id)` |
-| Confirm | `doAdvanceStep(status)` is non-null, i.e. DRAFT | `PATCH /:id/status` → `DISPATCHED` |
+| Confirm | `doAdvanceStep(status)` is non-null, i.e. DRAFT | `PATCH /:id/status` → `LOADED` (it wrote `DISPATCHED` until 2026-08-22 — the target was the wrong half of the control) |
 | Cancel Delivery Order | status is neither `CANCELLED` nor `INVOICED` | in-app confirm, then `PATCH /:id/status` → `CANCELLED` |
 
 Everything above additionally requires `canWriteDo`
@@ -288,6 +288,82 @@ still need `edit` on `scm.sales.delivery`.
 | POST/PATCH/DELETE | `/:id/items[/:itemId]` | `:3636` / `:3784` / `:4005` | Line CRUD. |
 | GET/POST/DELETE | `/:id/payments[/:paymentId]` | `:4075` / `:4118` / `:4155` | Payments ledger. |
 | PATCH | `/:id/status` | `:4359` (handler `:4166`) | **The stock chokepoint.** |
+| GET | `/:id/scan-token` | `backend/src/scm/routes/delivery-order-scan-token.ts` | Mint-if-missing the 64-hex token the printed QR encodes (mig 0328). A SEPARATE router on the same prefix, because `delivery-orders-mfg.ts` is past its file-size ceiling. A **GET** although it can write: the write is an idempotent create-if-missing, and a POST would deny the QR to somebody who may print a delivery order but not edit one. Scoped to the SESSION's company; the public route can never reach it. |
+
+### The PUBLIC surface — `/api/public/do-scan/*` (2026-08-26)
+
+`backend/src/routes/publicDoScan.ts`, mounted in `backend/src/index.ts`
+**before** the `/api/*` auth gate. No session, no permission, no company header.
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/api/public/do-scan/:token` | Minimal summary + the ONE next rung |
+| POST | `/api/public/do-scan/:token/advance` | `{ to }` — move exactly one rung |
+
+**The owner chose this**, after being shown the risk twice: 「就跟hookka一样」 —
+a public, no-login QR exactly like Hookka's, where the unguessable token printed
+on the paper IS the credential. He accepted ONE addition, a kill switch
+(`qr_revoked_at`), because Hookka's token has neither an expiry nor a revocation
+while Houzs already runs that pattern (mig 0126, `case_track_tokens`).
+
+**What the response contains:** delivery order number, customer name, delivery
+area (city + state), line count, status, and the next rung's label + note. The
+line count is `null` — never 0 — when that read did not answer, and the page
+prints "line count unavailable": zero is a claim about the load, and supabase-js
+does not throw, so an unbound error would render a blip as an empty lorry.
+**What it never contains:** any price, the street address, the postcode, any
+phone number or email. `backend/tests/publicDoScanSurface.test.ts` fails the
+build if the route file so much as MENTIONS one of those column names.
+
+**Where the company comes from.** From `company_id` on the ONE ROW the token
+resolved to — never from a session (there is none) and never from the request.
+`scm.delivery_orders.company_id` is NOT NULL (mig 0083) and mig 0328 puts a
+UNIQUE index on `qr_token`, so "the token resolves to exactly one row" is a
+database guarantee rather than a probability argument. That value scopes every
+statement afterwards, including every read and write inside the status handler.
+A row carrying no usable company is refused, never served unscoped.
+
+**The write is the OFFICE's write.** The advance calls
+`patchDeliveryOrderStatusHandler` through a synthetic context — there is
+deliberately no second write path to drift, so the inventory OUT, the SO
+delivered-qty resync, the confirm-hop customer email, the over-delivery cap and
+the cancelled-is-final refusal all fire exactly as they do for an office click.
+Its caller identity is `SCM_SYSTEM_STAFF_ID`, the same pinned `scm.staff` row
+every authenticated SCM write already carries; `houzsUser` is left UNDEFINED
+because there is no person, and no fake user id is minted to fill the hole.
+
+**A TOKEN RESOLVES TO EITHER KIND (2026-08-26).** The same two endpoints serve a
+delivery order and a **packing list** — the spec quotes the owner: 「这三个操作都
+可以通过 scan DO 或 scan packing list 来达成（scan packing list 会将该 list 内的
+货物统一全部出完）」. A packing list is a TRIP, and a trip is a row
+(`scm.trips`, mig 0053, `company_id` NOT NULL from mig 0083), so it carries the
+same column pair (mig 0329), the same atomic claim and the same resolver —
+deliberately ONE mechanism, because two would be a second place to forget the
+revocation check. The response carries `kind: 'do' | 'trip'` and the page
+branches on what the server reports, never on the token, which is identical for
+both by design. The run half — stop order, the sequential rule, per-drop results
+and how another company's drop is refused — is documented in
+`docs/modules/delivery-tms.md`, and why it was missed the first time is
+`docs/bugs/0545-the-packing-list-was-left-unscannable-because-a-trip-was-mis.md`.
+
+**Rate limits** (`checkRateLimit`, the KV limiter every other public surface
+uses): 30/900s per IP on the read (matching `survey_read`), 20/900s per IP on
+the advance (matching `survey_submit` / `track`), plus 10/900s per TOKEN — a cap
+nothing else has, because nothing else writes to a document identified by the
+credential itself.
+
+**Revocation.** `UPDATE scm.delivery_orders SET qr_revoked_at = now() WHERE id =
+…` kills one paper. A revoked token gets the SAME "unknown or expired" answer an
+unknown one gets, byte for byte — a different message would tell whoever holds a
+leaked paper that the code used to be real. There is no UI for it yet; the
+column is the kill switch and the button is a follow-up.
+
+**A FAILED READ IS THE OPPOSITE CASE AND GETS ITS OWN ANSWER: 503.** supabase-js
+does not throw, so a five-second database blip and "no such token" arrive
+identically unless the error is bound — and answering 404 to a blip tells a
+driver standing at a lorry that his paper is dead. It leaks nothing, because a
+blip fails for every token alike and so says nothing about the one in hand;
+revocation is folded into the unknown answer precisely because it WOULD.
 
 ---
 
@@ -501,8 +577,8 @@ shape the Sales Order list already has: 页签＝状态.
 |---|---|---|
 | Draft | `DRAFT` | not confirmed. Stock untouched, counts as delivered nowhere |
 | Confirmed | `LOADED` | **the first entry here writes the inventory OUT**, once. The stock has left, and the customer email goes out here |
-| Shipped | `DISPATCHED` | on the road. Stock already gone — a tracking step, set by a person. Holds the 30 delivery orders raised before 2026-08-22, when a create landed here; it drains as they age out |
-| In transit | `IN_TRANSIT` | on the road; identical to Shipped for stock |
+| Loaded | `DISPATCHED` | **relabelled from "Shipped" on 2026-08-26** — the goods are ON the lorry, not gone. Stock already out. Written by the storekeeper's scan (§ below) or by hand. Holds the 30 delivery orders raised before 2026-08-22, when a create landed here; it drains as they age out |
+| In transit | `IN_TRANSIT` | the lorry has left; identical to Loaded for stock |
 | Delivered | `DELIVERED` (and `SIGNED`, folded) | the customer has it. A RECORD of arrival, not a stock event |
 | Invoiced | `INVOICED` | a legal enum value that **nothing in this repo writes** |
 | Cancelled | `CANCELLED` | final; stock returned |
@@ -551,19 +627,29 @@ status from a child document.
 |---|---|---|
 | `DRAFT` | create with `asDraft: true` | Not shipped. A DRAFT DO does NOT count as delivered anywhere — `so-stock-allocation.ts`, `soDeliverableRemaining` and MRP all exclude it (leak guard, audit D5). |
 | `LOADED` | **a non-draft create**, the office/phone **Confirm** button, or the print's loading QR (§ below) | **THE STOCK CHOKEPOINT since 2026-08-22.** The create deducts on arrival here; a Confirm from DRAFT deducts on entry. Either way the OUT is written, the lines count as delivered, and the customer is emailed. Reads as **Confirmed** on every screen. |
-| `DISPATCHED` | `PATCH /:id/status` — the row menu's "Mark Shipped", the phone's "Dispatch" rung | Shipped state; the stock already left at Confirm. **No longer a create landing status** (2026-08-22) — a person records that the goods went on the road. |
-| `IN_TRANSIT`, `SIGNED`, `DELIVERED`, `INVOICED` | `PATCH /:id/status`; mobile POD; the row menu's "Mark In Transit" / "Mark Delivered" | shipped states; stock has already left |
+| `DISPATCHED` | the **storekeeper's scan** (§ below, 2026-08-26); `PATCH /:id/status` — the row menu's "Mark Loaded", the phone's "Confirm Loaded" rung | Reads **Loaded**: the goods are on the lorry. Stock already left at Confirm. **No longer a create landing status** (2026-08-22). |
+| `IN_TRANSIT` | the **driver's departure scan** (§ below, 2026-08-26); `PATCH /:id/status`; the row menu's "Mark In Transit" | the lorry has left; stock has already gone |
+| `DELIVERED` | the **driver's arrival scan** (§ below — status only, NO evidence); mobile POD (status **with** signature / photo / GPS); the row menu's "Mark Delivered" | arrival recorded; stock has already gone |
+| `SIGNED`, `INVOICED` | `PATCH /:id/status` only | **Nothing writes `SIGNED` since 2026-08-21**, and the scan ladder cannot produce it — its target type excludes it. `INVOICED` is written by nothing in this repo. |
 
 ### The loading QR — how a warehouse actually reaches LOADED (2026-08-21)
 
-The DO print's header carries a **"SCAN · MARK LOADED"** QR encoding
-`/scm/do-load?id=<do uuid>`. The warehouse scans the paper that travels with
-the goods; the landing page (`frontend/src/pages/scm-v2/DoLoadScan.tsx`,
-routed in `App.tsx` behind `scm.sales.delivery`) shows the DO and one action —
-**Confirm loading** — which is the ordinary status PATCH to `LOADED`
-(audited; the illegal-transition guard owns legality, so a shipped DO can
-never be pulled back by a stray scan). A re-scan reads as confirmation, not an
-error.
+**THE PRINTED QR IS PUBLIC SINCE 2026-08-26 — see `docs/bugs/0544`.** It carries
+a **"SCAN AT EACH STEP"** caption and encodes `/d/<64-hex token>`, which opens
+with NO login (`frontend/src/pages/PublicDoScan.tsx`, outside `AuthGate`). It
+encoded `/scm/do-load?id=<do uuid>` until then, and that link is behind the staff
+sign-in AND `scm.sales.delivery` — so the code printed for the storekeeper and
+the driver, neither of whom has an account, showed them a login screen.
+
+`/scm/do-load` (`frontend/src/pages/scm-v2/DoLoadScan.tsx`, routed in `App.tsx`
+behind `scm.sales.delivery`) is unchanged and is now the AUTHENTICATED TWIN: the
+same ladder, for office staff who reach it from a link rather than a camera. It
+shows the DO and one action.
+On a `DRAFT` that action is **Confirm loading**, the ordinary status PATCH to
+`LOADED` (audited; the illegal-transition guard owns legality, so a shipped DO
+can never be pulled back by a stray scan). **Since 2026-08-26 the same QR also
+carries the next two rungs** — see *THE THREE SCANS* below; a re-scan is never
+an error, it simply shows whatever step that document is now on.
 
 **SINCE 2026-08-22 THIS SCAN MOVES STOCK.** It did not before, and this
 paragraph said so. `LOADED` is now a member of `DO_SHIPPED_STATES`, so pressing
@@ -573,13 +659,101 @@ deduction's existence check plus `uq_inv_mov_do_source_v2` make a second one
 impossible regardless. The page copy was corrected in the same change, because
 the person reading it is standing at the dock deciding whether to press it.
 
-> **KNOWN WORDING GAP — fix before the QR goes into use.** The PRINT still says
-> **"SCAN · MARK LOADED"**, and scanning it now takes the goods out of stock.
-> The owner's position is that the QR feature stays, Confirmed is the stock-out
-> point, and the QR is not in use yet: 「QR 跑 可是confirmed就出货 QR之后才用」.
-> So this is a wording change to make before anyone scans a printed DO in
-> anger — deliberately NOT made here, because changing print text is a separate
-> decision from moving the deduction.
+> **THE WORDING GAP IS CLOSED (2026-08-26).** This box used to read "KNOWN
+> WORDING GAP — fix before the QR goes into use": the print still said
+> **"SCAN · MARK LOADED"** while the code did four things and the first of them
+> moved stock. The caption now reads **"SCAN AT EACH STEP"**, which is true of
+> every rung and tells the reader the thing the old one did not — that this code
+> is scanned more than once. The owner's position that made this safe to do now
+> still holds: the QR feature stays, Confirmed is the stock-out point, and the
+> QR was not yet in use (「QR 跑 可是confirmed就出货 QR之后才用」), so no printed
+> paper carries the old caption in anger.
+
+### THE THREE SCANS — one QR, three steps (owner, 2026-08-25/26)
+
+**The scan page above did ONE rung until 2026-08-26.** Once the delivery order
+was Confirmed — which is what the office raising it already makes it — scanning
+the paper that travels with the goods did nothing at all. The owner's flow:
+
+> 「(a) Storekeeper 扫码确认货物装上罗里 (b) 司机出发（IN TRANSIT）(c) 送达
+> （DELIVERED）」
+
+and the rule that shapes the screen:
+
+> 「就是我状态只要一点，它基本上都只能剩最后一个状态（下一个状态）」
+
+`DoLoadScan` now shows the NEXT rung and only the next rung:
+
+| document is | button | writes | shows as |
+|---|---|---|---|
+| `DRAFT` | Confirm loading | `LOADED` | Confirmed |
+| `LOADED` | Confirm Loaded | `DISPATCHED` | **Loaded** |
+| `DISPATCHED` | Confirm Departure | `IN_TRANSIT` | In Transit |
+| `IN_TRANSIT` | Confirm Delivered | `DELIVERED` | Delivered |
+| `SIGNED` / `DELIVERED` / `INVOICED` | none — "Nothing left to do on this document." | — | — |
+| `CANCELLED` | none — a refusal naming the office | — | — |
+| on hold | none — it says it is on hold | — | — |
+
+No picker, no skipping, no way back — and after a rung is written the page shows
+a confirmation and NO button until the paper is scanned again. One scan is one
+step, which is the physical shape of the rule above.
+
+**Stock is untouched by every rung past the confirm.** 「只要我一开 DO，我就扣库
+存。In transit、Delivered，这些都只是状态，看一下情况而已。」 `LOADED` is already a
+`DO_SHIPPED_STATES` member, so the deduction is done before the second scan.
+
+**The ladder is `doScanStep` / `doScanBlockReason` in
+`backend/src/scm/shared/do-scan-ladder.ts`**, mirrored byte-identically at
+`frontend/src/vendor/shared/do-scan-ladder.ts` and held there by
+`check-shared-mirrors --strict`. It MOVED there from
+`frontend/src/vendor/scm/lib/do-next-step.ts` on 2026-08-26 (which re-exports it,
+so no import changed): the public scan must decide the target status on the
+SERVER — a rung named in a request body is a rung an attacker picks — and a
+second copy of the ladder in `backend/` is the duplicated-decision class this
+repo gates on. It still sits beside the office's `doAdvanceStep` conceptually
+rather than as a second copy of it. The two are deliberately
+separate: the office at a desk is offered the confirm and then pointed at the
+Sales Invoice; the person at the lorry is offered the one physical step in front
+of him. Each rung carries its own `note` — the line under the button — so adding
+a rung cannot leave one behind.
+
+**`SIGNED` cannot be produced, and the COMPILER enforces it.**
+`DoScanStep['status']` is `Extract<DoStatus, 'LOADED' | 'DISPATCHED' |
+'IN_TRANSIT' | 'DELIVERED'>`, so a fifth target does not typecheck. `SIGNED`
+counts as delivered everywhere (`doCountsAsDelivered`), which is why the bare
+button writing it was `docs/bugs/0481`; nothing has written it since 2026-08-21.
+A row that already holds it is answered as finished. The same type answers
+`docs/bugs/0530`'s class: a label `scm.do_status` does not define is a 22P02 and
+a 400, never an empty match.
+
+**THE THIRD SCAN IS NOT A SIGNED RECEIPT, AND THE SCREEN SAYS SO.** It writes
+`DELIVERED` and captures **no signature, no photo and no location**. Compared to
+the driver's Proof-of-Delivery screen:
+
+| | the scan | `frontend/src/mobile/MobilePOD.tsx` |
+|---|---|---|
+| status written | `DELIVERED` | `DELIVERED` |
+| customer signature → `signature_data` | **no** | yes, gated on a real pointerdown |
+| delivery photo → `pod_r2_key` | **no** | yes, uploaded to R2 first |
+| GPS → `pod_lat/lng/accuracy_m/located_at` | **no** | yes, sent only when captured |
+| what the screen says | names all three losses BEFORE the press | warns when no signature was captured |
+
+`DO_SCAN_DELIVERED_EVIDENCE_NOTE` is that sentence. Capturing evidence here
+instead was rejected on `docs/bugs/0480`'s reasoning — five surfaces PATCH this
+endpoint and a second capture path is the divergence that entry was written
+about. Evidence stays allowed everywhere and required nowhere; what was wrong
+there was the silence, so this screen is not silent.
+
+**The on-hold refusal is the SCREEN's, not the server's.** `PATCH /:id/status`
+does not read `on_hold` — mig 0324 gave the delivery order the marker columns and
+left the handler alone. Do not cite this page as the guarantee.
+
+Pinned by `frontend/src/pages/scm-v2/DoLoadScan.ladder.test.tsx`, which mounts the
+real page and presses the real button rather than calling the helper the page is
+supposed to call; by `frontend/src/pages/PublicDoScan.test.tsx` for the no-login
+twin; and by `backend/tests/doScanLadder.test.ts`, which asserts forward-only as
+a PROPERTY over the ladder's own derived order — so a rung added tomorrow is
+covered without editing the test, and a rung pointed backwards fails there.
 
 ### The warehouse Loading List — the no-price queue (owner 2026-08-25)
 
@@ -617,7 +791,7 @@ capability — so seeing the queue and moving stock remain separate grants.
 
 ### The three manual status moves on the row menu (2026-08-22)
 
-`Mark Shipped`, `Mark In Transit` and `Mark Delivered` are offered on the
+`Mark Loaded`, `Mark In Transit` and `Mark Delivered` are offered on the
 delivery-order list's right-click menu (`frontend/src/pages/scm-v2/row-menus.ts`,
 `deliveryOrderRowMenu`). The owner maintains those three by hand until their
 machines exist: 「保留全部状态 我可以convert，可是库存当我开了DO 就是confirmed的时候

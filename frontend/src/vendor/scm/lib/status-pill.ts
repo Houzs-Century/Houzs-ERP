@@ -28,12 +28,21 @@
  *
  * WHAT DELIBERATELY KEEPS ITS OWN WORD, because it is a DIFFERENT event and not
  * a second name for this one:
- *   DO  DISPATCHED = "Shipped"  — the goods are on the road. LOADED is the
- *       delivery order's confirm step and reads "Confirmed"; since 2026-08-22 it
- *       is ALSO where the inventory OUT fires (owner: confirming a delivery
- *       order is what takes the stock out). So the two words no longer split
- *       "booked" from "moved" — they split CONFIRMED from ON ITS WAY, and
- *       DISPATCHED keeps its own word because that is still a different event.
+ *   DO  DISPATCHED = "Loaded"   — the goods are physically on the lorry. LOADED
+ *       is the delivery order's confirm step and reads "Confirmed"; since
+ *       2026-08-22 it is ALSO where the inventory OUT fires (owner: confirming a
+ *       delivery order is what takes the stock out). DISPATCHED keeps its own
+ *       word because it is still a different event: CONFIRMED is the paperwork,
+ *       Loaded is the pallet on the truck, In Transit is the truck moving.
+ *
+ *       THE LABEL WAS "Shipped" UNTIL 2026-08-26. The owner asked where dispatch
+ *       sits — 「dispatch就是出发了啊?」 — and the honest answer was that it does
+ *       not: on the three-scan flow he settled the same week, the storekeeper's
+ *       scan writes DISPATCHED when the goods go ON the lorry, and DEPARTURE is
+ *       the driver's next scan (IN_TRANSIT). "Shipped" claimed the truck had
+ *       left. The STORED value is untouched and stays `DISPATCHED` for ever —
+ *       Postgres enum labels are permanent and every report reads the stored
+ *       value — so this is the same option A as the Confirmed sweep above.
  *   SI  PAID / PARTIALLY_PAID   — money, not commitment.
  *   PO  PARTIALLY_RECEIVED / RECEIVED — progress, not commitment.
  *
@@ -103,7 +112,7 @@ const SO: Record<string, Entry> = {
 const DO: Record<string, Entry> = {
   DRAFT:      { label: 'Draft',      tone: 'pending' },
   LOADED:     { label: 'Confirmed',  tone: 'info' },
-  DISPATCHED: { label: 'Shipped',    tone: 'progress' },
+  DISPATCHED: { label: 'Loaded',     tone: 'progress' },
   IN_TRANSIT: { label: 'In Transit', tone: 'progress' },
   SIGNED:     { label: 'Signed',     tone: 'success' },
   DELIVERED:  { label: 'Delivered',  tone: 'success' },

@@ -1153,7 +1153,7 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     ],
     chips: [
       { key: "all", label: "All", match: () => true },
-      { key: "Dispatched", label: "Dispatched", match: (r) => eq(pick(r, "status"), "dispatched") },
+      { key: "Loaded", label: "Loaded", match: (r) => eq(pick(r, "status"), "dispatched") }, // stored value unchanged; DISPATCHED reads "Loaded" since 2026-08-26. Key moves with the label — `chip` is local useState (:388), nothing persists it.
       { key: "Delivered", label: "Delivered", match: (r) => eq(pick(r, "status"), "delivered") },
       { key: "Cancelled", label: "Cancelled", match: (r) => eq(pick(r, "status"), "cancelled") },
     ],

@@ -25,7 +25,7 @@
 // he asked for a Hold on the Delivery Order too, and it was missed while the
 // PO, GRN and PI got theirs the same day). It reads the MARKER COLUMN, so it
 // deliberately OVERLAPS every other tab: a held delivery still sits under its
-// real stage — Confirmed, Shipped, In transit — and carries a Hold chip beside
+// real stage — Confirmed, Loaded, In transit — and carries a Hold chip beside
 // its pill. The numbers therefore do not sum to All, which is the same
 // deliberate overlap the Purchase Order list's `outstanding` pill has had since
 // 2026-07-31. It has no entry in STATUS_TONE below for the same reason: no
@@ -44,7 +44,7 @@ const STATUS_TONE: Record<
   loaded:      { tone: "warning", label: "Confirmed",   bucket: "loaded" },
   // "warning" (amber) doubles as the "in-transit" tone — Badge only ships
   // 4 tones (success/warning/error/neutral); the label carries the nuance.
-  dispatched:  { tone: "warning", label: "Shipped",     bucket: "dispatched" },
+  dispatched:  { tone: "warning", label: "Loaded",      bucket: "dispatched" },
   in_transit:  { tone: "warning", label: "In transit",  bucket: "in_transit" },
   // SIGNED: merged into DELIVERED (owner, 2026-08-21). No tab of its own.
   signed:      { tone: "success", label: "Delivered",   bucket: "delivered" },

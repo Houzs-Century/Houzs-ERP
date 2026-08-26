@@ -44,6 +44,7 @@ import { soHandover } from "./routes/so-handover";
 import { poAmendments } from "./routes/po-amendments";
 import { stateWarehouseMappings } from "./routes/state-warehouse-mappings";
 import { deliveryOrdersMfg } from "./routes/delivery-orders-mfg";
+import { deliveryOrderScanToken } from "./routes/delivery-order-scan-token";
 import { salesInvoices } from "./routes/sales-invoices";
 import { deliveryReturns } from "./routes/delivery-returns";
 import { purchaseReturns } from "./routes/purchase-returns";
@@ -86,6 +87,7 @@ import { deliveryZones } from "./routes/delivery-zones";
 import { deliveryRateCards } from "./routes/delivery-rate-cards";
 import { driverLeave } from "./routes/driver-leave";
 import { trips } from "./routes/trips";
+import { tripScanToken } from "./routes/trip-scan-token";
 import { dpOrders } from "./routes/dp-orders";
 import { deliveryMessages } from "./routes/delivery-messages";
 import { arReconciliation } from "./routes/ar-reconciliation";
@@ -343,6 +345,11 @@ scm.use(
     },
   }),
 );
+/* Two routers on one prefix, like /grns and /purchase-invoices above. The
+   scan-token mint is a NEW FILE because delivery-orders-mfg.ts is already past
+   its file-size ceiling and a ceiling may only fall. Mounted FIRST so its one
+   route is matched before the main router's /:id patterns can shadow it. */
+scm.route("/delivery-orders-mfg", deliveryOrderScanToken);
 scm.route("/delivery-orders-mfg", deliveryOrdersMfg);
 // Ported 2026-06-20 — SI backend (skipped in the earlier sync; the vendored SI
 // pages 404'd on /sales-invoices). NEEDS scm.sales_invoice_payments +
@@ -591,6 +598,10 @@ scm.route("/delivery-rate-cards", deliveryRateCards);
 scm.use("/driver-leave/*", scmAreaGuard("scm.transportation.drivers"));
 scm.route("/driver-leave", driverLeave);
 scm.use("/trips/*", scmAreaGuard("scm.transportation.drivers"));
+/* Two routers on one prefix, like /delivery-orders-mfg above. The packing
+   list's public scan-token mint is a NEW FILE so the large trips router does
+   not grow; '/:id/scan-token' is two segments and cannot shadow '/packing'. */
+scm.route("/trips", tripScanToken);
 scm.route("/trips", trips);
 scm.use("/dp-orders/*", scmAreaGuard("scm.transportation.drivers"));
 scm.route("/dp-orders", dpOrders);

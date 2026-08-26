@@ -1031,15 +1031,16 @@ function statusActionsFor(moduleKey: string, id: string, header: any, mayOperate
       /* CONFIRM LANDS ON LOADED, not DISPATCHED — corrected 2026-08-22 with the
          desktop's identical fault. This rung said `DRAFT: ["DISPATCHED",
          "Confirm"]`: labelled Confirm, writing the status every screen renders
-         as "Shipped", so the phone's Confirm skipped Confirmed exactly the way
+         as "Loaded" (it read "Shipped" until 2026-08-26), so the phone's
+         Confirm skipped Confirmed exactly the way
          the office button did. LOADED is where the stock leaves now (owner:
          「once confirmed就代表出货了 就是直接扣库存」), so this is the same
          event under its right name. The LOADED→DISPATCHED rung stays: that is a
          real, separate step — the goods actually going on the road. */
       const next: Record<string, [string, string]> = {
-        "": ["DISPATCHED", "Dispatch"],
+        "": ["DISPATCHED", "Confirm Loaded"],
         DRAFT: ["LOADED", "Confirm"],
-        LOADED: ["DISPATCHED", "Dispatch"],
+        LOADED: ["DISPATCHED", "Confirm Loaded"],
         DISPATCHED: ["IN_TRANSIT", "Mark In Transit"],
       };
       const step = next[st];
@@ -1500,10 +1501,10 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD, flowNav }:
     try {
       if (moduleKey === "delivery-orders-mfg") {
         const { generateDeliveryOrderPdf } = await import("../vendor/scm/lib/delivery-order-pdf");
-        // loadScanId arms the print's "scan to mark loaded" QR (desktop parity).
-        await generateDeliveryOrderPdf(
-          { ...(header as Record<string, unknown>), loadScanId: (header as { id?: string }).id } as never,
-          items as never, { action });
+        // armDoScanToken puts the PUBLIC scan token on the header (desktop parity).
+        const { armDoScanToken } = await import("../vendor/scm/lib/do-scan-token-arm");
+        const doId = (header as { id?: string }).id ?? "";
+        await generateDeliveryOrderPdf(await armDoScanToken(header as Record<string, unknown>, doId) as never, items as never, { action });
       } else {
         const { generateSalesInvoicePdf } = await import("../vendor/scm/lib/sales-invoice-pdf");
         await generateSalesInvoicePdf(header as never, items as never, { action });

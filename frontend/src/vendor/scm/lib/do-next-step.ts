@@ -1,4 +1,4 @@
-import { SI_TRANSFERABLE_DO_STATES } from '../../shared/do-shipped-states';
+import { SI_TRANSFERABLE_DO_STATES, type DoStatus } from '../../shared/do-shipped-states';
 // ----------------------------------------------------------------------------
 // do-next-step — what a Delivery Order may do next, and why it may not yet, in
 // ONE place, as words an operator can act on.
@@ -48,6 +48,14 @@ import { SI_TRANSFERABLE_DO_STATES } from '../../shared/do-shipped-states';
 //     keeps its own driver rung DISPATCHED → IN_TRANSIT ("Mark In Transit", the
 //     "On the way" departure marker, MobileDeliveryPlanning.tsx) — that is not
 //     "Mark signed" and stays. SIGNED / DELIVERED are the POD screen's job.
+//   · The SCAN question (doScanStep, added 2026-08-26) has exactly ONE caller,
+//     the QR landing page DoLoadScan, and is DELIBERATELY not the same ladder as
+//     doAdvanceStep. They answer different questions for different people: the
+//     office, at a desk, is offered the confirm and then pointed at the Sales
+//     Invoice; a person holding the paper at the lorry is offered the one
+//     physical step in front of him. Sharing one function between them would
+//     have put "Confirm Departure" on the office's detail page. See the SCAN
+//     LADDER block at the foot of this file.
 //
 // ── THE VOCABULARY (measured, not assumed) ──────────────────────────────────
 // The eight legal delivery_orders.status values are declared once, server-side,
@@ -174,14 +182,15 @@ export function siTransferBlockReason(status: string | null | undefined): string
  *
  * THE TARGET WAS WRONG UNTIL 2026-08-22, and the label was right. This button
  * said "Confirm" while writing DISPATCHED — which every screen renders as
- * "Shipped" — so pressing Confirm skipped the Confirmed state entirely and
+ * "Loaded" (it read "Shipped" until 2026-08-26) — so pressing Confirm skipped
+ * the Confirmed state entirely and
  * landed the document two rungs along. The owner settled where the stock leaves:
  *
  *   「once confirmed就代表出货了 就是直接扣库存」
  *   「draft 没出货，Confirmed就代表出货了 然后delivered只是记录而已，记录送到了」
  *
  * So Confirm writes LOADED, LOADED is where the inventory OUT fires
- * (shared/do-shipped-states.ts), and Shipped / In transit / Delivered are the
+ * (shared/do-shipped-states.ts), and Loaded / In transit / Delivered are the
  * operator's record of where the goods have got to. Nothing about the ladder was
  * removed — 「保留全部状态 我可以convert」.
  *
@@ -226,7 +235,7 @@ export function doAdvanceBlockReason(status: string | null | undefined): string 
     return 'A cancelled delivery order cannot be reactivated — its stock was already returned. Raise a new delivery order to deliver again.';
   }
   if (s === 'loaded' || s === 'dispatched' || s === 'in_transit') {
-    /* Shipped, not yet closed. Since 2026-08-21 there is no "Mark signed" step
+    /* On its way, not yet closed. Since 2026-08-21 there is no "Mark signed" step
        on these surfaces; the delivery is closed by the driver's Proof-of-Delivery
        screen, and the office's next action is the Sales Invoice. */
     return 'This delivery order is on its way. The next step is to raise its Sales Invoice.';
@@ -239,3 +248,26 @@ export function doAdvanceBlockReason(status: string | null | undefined): string 
   }
   return 'This delivery order is in an unexpected state, so no next step can be offered. Please check with the office.';
 }
+
+// ── THE SCAN LADDER — MOVED, NOT COPIED (2026-08-26) ────────────────────────
+//
+// `doScanStep` / `doScanBlockReason` / `doScanConfirmation` /
+// `DO_SCAN_DELIVERED_EVIDENCE_NOTE` were DECLARED here until the driver's scan
+// had to work without a login. The public endpoint decides the target status on
+// the SERVER — a rung named in a request body is a rung an attacker picks — so
+// the server needs the same ladder, and a second copy of it in backend/ is the
+// duplicated-decision class this repo gates on.
+//
+// The declaration therefore moved to the mirrored rule module
+// `vendor/shared/do-scan-ladder.ts` (original: backend/src/scm/shared/), held
+// byte-identical by check-shared-mirrors --strict. It is re-exported from here
+// so every existing import of the ladder from this module still resolves — the
+// SCAN question is still answered next to the office's ADVANCE question, which
+// is what the header above promises a reader.
+export {
+  doScanStep,
+  doScanBlockReason,
+  doScanConfirmation,
+  DO_SCAN_DELIVERED_EVIDENCE_NOTE,
+} from '../../shared/do-scan-ladder';
+export type { DoScanStep } from '../../shared/do-scan-ladder';

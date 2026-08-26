@@ -227,6 +227,19 @@ Anyone else: the probe reports disabled and the mint endpoint 404s. It mints a
 REGULAR session for the target (2FA is bypassed by design — the caller already
 proved `users.manage`), so "exit" is just logging out.
 
+**`main.tsx` also chooses the PUBLIC surfaces, and gained one on 2026-08-26.**
+`appSurfaceForPath` (`frontend/src/routing/appSurface.ts`) decides which tree
+boots for a location, and the ones it sends OUTSIDE `AuthGate` are the app's
+whole no-login surface: `/survey/:token`, `/track` + `/portal/*`,
+`/reset/:token`, `/invite/:token`, `/privacy`, and now **`/d/:token`** — the
+printed delivery-order QR (`frontend/src/pages/PublicDoScan.tsx`). That last one
+is the owner's decision, the driver has no account, so the 64-hex token printed
+on the paper is the credential. Adding a surface here means adding a way in that
+no session guards, so the list is worth reading before extending it; the backend
+half of the same decision is the mount ORDER in `backend/src/index.ts` (before
+`app.use("/api/*", auth)`). See `docs/modules/delivery-order.md` and
+`docs/bugs/0544-the-qr-printed-for-the-driver-opened-a-page-only-the-office.md`.
+
 **So the staging door does not exist at runtime**, even though
 `backend/wrangler.toml` really does set `IMPERSONATION_ENABLED="true"` for
 `[env.staging.vars]`. And `GET /api/users/impersonation-enabled` is NOT shadowed
