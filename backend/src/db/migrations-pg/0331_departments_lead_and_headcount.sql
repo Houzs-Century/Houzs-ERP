@@ -13,9 +13,14 @@
 -- 还没指定，红色 No lead；删人自动置空不挡事）和 headcount_target（编制目标，HR 可选填，
 -- 空=只显示实时人数）。都是加列、幂等，正式库上是安全的增量。
 --
--- REVERSAL (repo-tracking only, never casually on prod — the Departments screen
--- reads both): ALTER TABLE departments DROP COLUMN IF EXISTS headcount_target;
--- ALTER TABLE departments DROP COLUMN IF EXISTS lead_user_id;
+-- Reversal: repo-tracking only, never casually on prod — the Departments screen
+-- reads both columns. To undo the tracking on a throwaway DB: ALTER TABLE
+-- departments DROP COLUMN IF EXISTS headcount_target; ALTER TABLE departments
+-- DROP COLUMN IF EXISTS lead_user_id;
+-- Verified against: the live Supabase prod catalog (departments has id/name/
+-- description/color/sort_order/created_at and neither new column), so both
+-- ADD COLUMN IF NOT EXISTS run once and are no-ops on any environment that
+-- already has them. Additive only — no data is read or rewritten.
 
 ALTER TABLE departments
   ADD COLUMN IF NOT EXISTS lead_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL;

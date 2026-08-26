@@ -157,6 +157,31 @@ position / manager ids exist in the `invitations` table but are NOT selected.
 
 ---
 
+## 2a. A department's lead + headcount are REAL fields now (mig-pg 0331)
+
+The Team redesign rendered a department's lead and its "N / target" headcount,
+but neither was in the schema: the lead was DERIVED from reporting lines
+(`teamShared.deriveDeptLead`) and the target did not exist (the design's "/45"
+was a placeholder). Owner 2026-08-26 made both real:
+`backend/src/db/schema.pg.ts` gains `departments.lead_user_id` (FK `users`,
+`ON DELETE SET NULL`) and `departments.headcount_target`
+(`backend/src/db/migrations-pg/0331_departments_lead_and_headcount.sql`, D1
+mirror `152`). `backend/src/routes/departments.ts` exposes both on GET and
+accepts them on PATCH (lead must be a known user or `null`; target a
+non-negative int or `null`).
+
+**The derived lead did not go away — it became the FALLBACK.** The one
+chokepoint is `frontend/src/pages/team/teamShared.tsx`'s `buildDeptNodes`: the
+chosen `lead_user_id` wins, falling back to `deriveDeptLead` when none is set OR
+when the chosen person has left the roster (so a stale id never shows a ghost).
+Every screen that reads a `DeptNode` inherits this in one place; the new
+`DeptNode.leadIsChosen` flag lets a card mark a still-derived lead "derived".
+`frontend/src/pages/team/TeamDepartmentsV2.tsx` adds the Leadership panel (a lead
+dropdown of the department's own members + a headcount input) on edit, and the
+card shows `active / target` when a target is set.
+
+---
+
 ## 3. Traps
 
 - **Users vs invitation rows.** A pending person exists twice: a
