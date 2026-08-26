@@ -29,6 +29,8 @@ import { createAssrCase, assrAttachmentKey, saveAttachment } from "../services/a
 import { timingSafeEqualStr } from "../services/auth";
 import { checkRateLimit, clientIp } from "../middleware/rateLimit";
 import { ASSR_SHEET_STATUS } from "../scm/shared/assr-stage-labels";
+import { getSupabaseService, isSupabaseConfigured } from "../db/supabase";
+import { summariseReadiness } from "../scm/lib/so-readiness";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -670,6 +672,203 @@ app.post("/delivery-dates", async (c) => {
   }
 
   return c.json({ ok: true, results });
+});
+
+// ── 2990 SO → HC Delivery sheet export (Nico 2026-08-26) ───────
+//
+// Houzs orders reach the sheet's Delivery Details tab through the
+// AutoCount pull (GetAutoCountData.gs). 2990's orders are born in the
+// ERP's own SCM module and never touch AutoCount, so dispatch has been
+// hand-typing them — 19 rows so far, with every AutoCount-fed column
+// (Sales Location / Agent / Local Total / Balance) left blank. This
+// export is the missing feed: every 2990 order whose stock has come
+// good, with the columns a Delivery Details row needs.
+//
+// "Stock is ready" = the header status the ERP already derives in
+// recomputeSoStockAllocation: READY_TO_SHIP, i.e. every MAIN line
+// (SOFA / BEDFRAME / MATTRESS) allocated. Accessories do not block a
+// delivery, so a main-ready order ships with `stock_remark` reading
+// "READY (PARTIAL)" — the operator's existing Remarks-2 wording.
+//
+// Full-state export, not a cursor: the sheet's script appends only the
+// Doc. Nos it doesn't already carry, so re-sending an order it already
+// has is a no-op. Nothing to lose, nothing to replay — a missed sweep
+// heals on the next one.
+//
+// Same dual-key guard as /status-export. This one DOES carry customer
+// name / phone / address: the same columns the status-export append
+// path already sends, into the same sheet, which has owned them on
+// every row since long before either feed existed.
+//
+// Column map (Delivery Details), agreed with Nico 2026-08-26. The letters
+// are the sheet's own — read off the header row's column ids, NOT counted by
+// eye: the tab has a frozen-column freezebar that renders as an extra cell
+// and shifts every letter from G on by one if you count cells.
+//   B  Doc. No.                     doc_no          <- the sheet's dedupe key
+//   C  Transfer To                  transfer_to     (DO no; usually still null)
+//   D  Date                         so_date
+//   E  Ref. No                      doc_no again - what dispatch already types
+//                                   by hand on the 2990 rows, and it keeps the
+//                                   odd essay-length `ref` out of the sheet
+//   F  Branding                     branding, prefixed to "2990s ..." when the
+//                                   stored value lacks it - the SCM list grew
+//                                   two shapes ("2990s Sofa" / "2990s Mattress"
+//                                   but bare "Bedframe" / "Accessories") and
+//                                   Nico wants one shape in the sheet
+//   G-L Debtor Name .. Balance      debtor_name / phone / venue / salesperson /
+//                                   local_total / balance. venue is the STORE
+//                                   ("2990s PJ"); sales_location holds the
+//                                   warehouse, which dispatch cannot route on.
+//                                   `agent` is null on every 2990 order - the
+//                                   name lives behind salesperson_id.
+//   M  Remarks 2                    stock_remark
+//   N  Processing Date              processing_date
+//   O  Sales Exemption Expiry Date  customer_delivery_date - 2990 never uses
+//        the exemption field (NULL on every SCM order), so Nico repurposed the
+//        column: dispatch reads the customer's requested date there.
+//   Q  Delivery Date                left blank - scheduling owns it
+//   V  Landed / Condo / Apartment   building_type
+//   AA PO Doc No.                   left blank - the SCM header has no such
+//        column (the stale local clone said otherwise; prod does not)
+//   AB-AE Address 1-4               address1 / address2 / postcode+city /
+//                                   customer_state - matches how the AutoCount
+//                                   feed fills the Houzs rows.
+
+/** The sheet's Branding column wants every 2990 row under one prefix; the SCM
+ *  branding list carries two shapes ("2990s Sofa" / "2990s Mattress" but bare
+ *  "Bedframe" / "Accessories"). Normalise on the way out rather than rewriting
+ *  stored data — the ERP's own screens keep showing what was picked. */
+const brandingForSheet = (raw: string | null): string | null => {
+  const b = (raw ?? "").trim();
+  if (!b) return null;
+  return /^2990s\b/i.test(b) ? b : `2990s ${b}`;
+};
+
+const SHEET_SO_COMPANY_ID = 2; // 2990 Sdn Bhd — Houzs (1) comes via AutoCount
+
+/** sen → the plain ringgit number the sheet's currency columns expect. */
+const senToAmount = (sen: number | null | undefined): number =>
+  Number((Number(sen ?? 0) / 100).toFixed(2));
+
+/* The SCM tables have no generated types on this client (the service client is
+   schema-pinned, not typed), so the REST rows land as `GenericStringError |
+   Row`. These two shapes are the contract this handler reads. */
+type ReadySoHead = {
+  doc_no: string;
+  so_date: string | null;
+  branding: string | null;
+  venue: string | null;
+  debtor_name: string | null;
+  phone: string | null;
+  agent: string | null;
+  salesperson_id: string | null;
+  local_total_sen: number | null;
+  balance_sen: number | null;
+  processing_date: string | null;
+  customer_delivery_date: string | null;
+  building_type: string | null;
+  address1: string | null;
+  address2: string | null;
+  address3: string | null;
+  address4: string | null;
+  city: string | null;
+  postcode: string | null;
+  customer_state: string | null;
+  transfer_to: string | null;
+};
+type ReadySoLine = {
+  doc_no: string;
+  item_group: string | null;
+  item_code: string | null;
+  stock_status: string;
+  cancelled: boolean | null;
+};
+
+app.get("/so-export", async (c) => {
+  const provided = c.req.header("X-Intake-Key") || "";
+  const keys = [c.env.FORM_INTAKE_KEY, c.env.SHEET_SYNC_KEY];
+  const ok = keys.some((k) => k && timingSafeEqualStr(provided, k));
+  if (!ok) {
+    const limited = await checkRateLimit(c, "intake_badkey", clientIp(c), 10, 900);
+    await new Promise((r) => setTimeout(r, 250));
+    if (limited) return limited;
+    return c.json({ error: "unauthorized" }, 401);
+  }
+  if (!isSupabaseConfigured(c.env)) {
+    return c.json({ error: "supabase not configured" }, 503);
+  }
+
+  const sb = getSupabaseService(c.env);
+  const { data: heads, error } = await sb
+    .from("mfg_sales_orders")
+    .select(
+      "doc_no, so_date, branding, venue, debtor_name, phone, agent, salesperson_id, " +
+        "local_total_sen, balance_sen, processing_date, customer_delivery_date, " +
+        "building_type, address1, address2, address3, address4, " +
+        "city, postcode, customer_state, transfer_to"
+    )
+    .eq("company_id", SHEET_SO_COMPANY_ID)
+    .eq("status", "READY_TO_SHIP")
+    .order("so_date", { ascending: true });
+  if (error) return c.json({ error: error.message }, 502);
+
+  const orders = (heads ?? []) as unknown as ReadySoHead[];
+  const docNos = orders.map((o) => o.doc_no);
+
+  // Lines exist only to re-derive the Remarks-2 wording. Chunked because the
+  // REST edge caps a single `in.()` list, and this set only ever grows.
+  const linesByDoc = new Map<string, ReadySoLine[]>();
+  for (let i = 0; i < docNos.length; i += 100) {
+    const { data } = await sb
+      .from("mfg_sales_order_items")
+      .select("doc_no, item_group, item_code, stock_status, cancelled")
+      .in("doc_no", docNos.slice(i, i + 100));
+    for (const l of (data ?? []) as unknown as ReadySoLine[]) {
+      const arr = linesByDoc.get(l.doc_no) ?? [];
+      arr.push(l);
+      linesByDoc.set(l.doc_no, arr);
+    }
+  }
+
+  /* The Agent column wants a person, and 2990 orders carry only the id. */
+  const staffById = new Map<string, string>();
+  const staffIds = [...new Set(orders.map((o) => o.salesperson_id).filter(Boolean))] as string[];
+  for (let i = 0; i < staffIds.length; i += 100) {
+    const { data } = await sb
+      .from("staff")
+      .select("id, name")
+      .in("id", staffIds.slice(i, i + 100));
+    for (const st of (data ?? []) as unknown as Array<{ id: string; name: string | null }>) {
+      if (st.name) staffById.set(st.id, st.name);
+    }
+  }
+
+  const rows = orders.map((o) => ({
+    doc_no: o.doc_no,
+    transfer_to: o.transfer_to,
+    so_date: o.so_date,
+    ref: o.doc_no,
+    branding: brandingForSheet(o.branding),
+    debtor_name: o.debtor_name,
+    phone: o.phone,
+    sales_location: o.venue,
+    agent: o.agent ?? (o.salesperson_id ? staffById.get(o.salesperson_id) ?? null : null),
+    local_total: senToAmount(o.local_total_sen),
+    balance: senToAmount(o.balance_sen),
+    stock_remark: summariseReadiness(linesByDoc.get(o.doc_no) ?? []).stockRemark,
+    processing_date: o.processing_date,
+    // Sheet col O — see the column map above.
+    customer_delivery_date: o.customer_delivery_date,
+    building_type: o.building_type,
+    address1: o.address1,
+    address2: o.address2,
+    /* 2990 keeps town/state in their own columns while the sheet expects the
+       AutoCount shape: "<postcode> <town>" on line 3, state on line 4. */
+    address3: o.address3 ?? ([o.postcode, o.city].filter(Boolean).join(" ") || null),
+    address4: o.address4 ?? o.customer_state,
+  }));
+
+  return c.json({ count: rows.length, orders: rows });
 });
 
 export default app;

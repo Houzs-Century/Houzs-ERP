@@ -73,6 +73,7 @@ POST,/api/assr-form-intake,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,YES
 POST,/api/assr-form-intake/attachments,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/assrFormIntake.ts
 POST,/api/assr-form-intake/attachments-by-so,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/assrFormIntake.ts
 POST,/api/assr-form-intake/delivery-dates,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/assrFormIntake.ts
+GET,/api/assr-form-intake/so-export,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,NO,INHERITED_ONLY,backend/src/routes/assrFormIntake.ts
 GET,/api/assr-form-intake/status-export,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,NO,INHERITED_ONLY,backend/src/routes/assrFormIntake.ts
 GET,/api/assr-print/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""service_cases.read"")",,NO,DECLARED_GATE,backend/src/routes/assr_print.ts
 POST,/api/assr/:id/approve,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""service_cases.approve"")",,YES,DECLARED_GATE,backend/src/routes/assr.ts
