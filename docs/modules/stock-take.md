@@ -192,6 +192,15 @@ documents in the system that could not be printed at all.
 | Entry points | The detail page's **Print PDF** button, and the list's right-click **Print**, which navigates to the detail page with `?print=1`. |
 | Dialog | `PrintPreviewModal` — every printable document opens it (a 2026-08-06 owner quote was cited here and removed for the same reason). **Never `window.print()`**: `index.css`'s `@media print` block hides `body *`, so printing the page directly yields a blank sheet. |
 
+**The status word comes from `status-pill.ts`, not from this file** (2026-08-26).
+It used to be a local `titleCase()` over the STORED value, so the sheet printed
+`Posted` while the screen said **Confirmed**. The generator now calls
+`statusLabel('stockTake', header.status)`, the same map every screen reads, and
+`frontend/src/vendor/scm/lib/pdf-status-label.test.ts` renders this document for
+every status in its vocabulary and compares what was drawn. Trace:
+`docs/bugs/0548-every-printed-document-title-cased-the-raw-stored-status-ins.md`;
+the rule is `docs/modules/document-status-vocabulary.md` §1.
+
 **What it renders**, and nothing it does not: the active company's letterhead
 (via `pdf-common.ts`), the take no, the date, the status, the warehouse, the
 scope, the assignee, the notes, the posted / cancelled dates, then one row per

@@ -3222,6 +3222,21 @@ Flow:
    2990 sofa orders print the 2990 company letterhead until the owner uploads
    one. Entry `docs/bugs/0489-a-2990-sales-order-pdf-printed-houzs-s-zanotti-logo.md`.
 
+   **And the PDF's STATUS word is a third path again, fixed 2026-08-26.**
+   `sales-order-pdf.ts` title-cased the stored value with its own hand-rolled
+   caser, so the sheet printed `Ready To Ship` where the screen says
+   **Ready to Ship**, and `In Production` where `status-pill.ts` says
+   **Proceed**. It now calls `statusLabel('so', header.status)` — the one home
+   the owner's 2026-08-21 ruling put those words in — and
+   `frontend/src/vendor/scm/lib/pdf-status-label.test.ts` renders this document
+   for every status in the SO vocabulary and compares what was drawn.
+   **`IN_PRODUCTION` is the one word still unsettled**: `status-pill.ts` says
+   *Proceed*, `frontend/src/pages/scm-v2/so-list-status.ts` says *In Production*
+   while claiming the two match, and both are live on screens. The sheet follows
+   `status-pill.ts`; picking the word is the owner's call. Entry
+   `docs/bugs/0548-every-printed-document-title-cased-the-raw-stored-status-ins.md`,
+   rule `docs/modules/document-status-vocabulary.md` §1.
+
 `?summary=1` skips the view join + item read entirely (dashboard only needs status
 buckets) — do not fully-hydrate 500 rows for a count.
 

@@ -37,6 +37,10 @@ import {
 import { DO_THEME as T, MONO, SANS, charSpace, monoFor, pt, type Rgb } from './delivery-order-theme';
 import { docVariantLine, loadCustomerFabricMaps } from './supplier-doc-data';
 import { drawQrIntoPdf } from './pdf-qr';
+/* The status WORD comes from the one home for it, never from a caser here:
+   what this document prints and what the screen shows must be the same word.
+   docs/modules/document-status-vocabulary.md §1. */
+import { statusLabel } from './status-pill';
 
 type DoHeader = {
   do_number: string;
@@ -518,9 +522,7 @@ function drawInfoPanel(
     ...(header.vehicle ? [{ label: 'Vehicle', value: header.vehicle }] : []),
     {
       label: 'Status',
-      value: header.status
-        ? header.status.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase())
-        : null,
+      value: header.status ? statusLabel('do', header.status) : null,
       chip: true,
     },
   ];

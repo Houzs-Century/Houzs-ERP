@@ -194,8 +194,31 @@ revision N" footer. **No emoji anywhere** (owner rule).
 `poAmendmentToPdfInput`) that fold each detail-API shape into the template input,
 one change-table row per changed field. Unit-tested in `amendment-pdf-map.test.ts`.
 
+**The STATUS word is the mapper's, not the caller's — since 2026-08-26.**
+`frontend/src/vendor/scm/lib/amendment-pdf-map.ts` exports
+`amendmentPrintedStatus`, which is `simplifiedAmendmentPill(status).label` from
+`frontend/src/vendor/scm/lib/status-pill.ts` — the canonical Requested /
+Approved / Rejected collapse the amendment LISTS use. `AmendmentPdfInput` no
+longer takes a `statusLabel`, so a caller cannot hand the document its own word.
+It used to, and all four surfaces hand-wrote the same
+`applied ? "Approved" : "Requested"`, which has no arm for REJECTED: **a rejected
+amendment printed "Requested"** — the word that says nobody has decided yet — on
+the sheet filed as the decision record. The `PrintPreviewModal` Status row on all
+four surfaces reads the same helper, so the preview and the document cannot
+disagree; `amendment-pdf-map.test.ts` source-scans the four for the old
+expression. Entry
+`docs/bugs/0548-every-printed-document-title-cased-the-raw-stored-status-ins.md`.
+
+**Still open, and deliberately not settled here:** the amendment DETAIL page
+shows the GRANULAR pill (`resolveStatusPill('soAmendment', …)` — Supplier
+Pending, SO Approved, Sent) while the document carries the simplified collapse,
+so paper and that screen still differ on the in-flight states. Which vocabulary
+the printed document should carry is a naming decision, and the owner reserved
+those to himself on 2026-08-21 (`docs/modules/document-status-vocabulary.md` §1).
+
 Wired into the SO amendment detail page (`AmendmentDetailV2.tsx`, "Print
-amendment" button) with the simplified Requested / Approved status label, into the
+amendment" button) with the simplified status label described directly above,
+into the
 mobile SO amendment surface (`MobileSODetail.tsx`'s `AmendmentDiffSheet` footer,
 same generator + `soAmendmentToPdfInput` — added to close the desktop/mobile
 parity gap; reachable REQUESTED..PO_APPROVED, i.e. `open_amendment`), and into the

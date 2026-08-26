@@ -143,11 +143,40 @@ this drifted.** Sixteen list and detail pages declare their own
 `{ tone, label, bucket }` map, because they need the bucket and the blurb that
 `status-pill` does not carry. Those copies were aligned by hand on 2026-08-21.
 
-> **OPEN — the root fix is not done.** Those sixteen pages should read their
-> LABEL from `status-pill` and keep only their own bucket/blurb. Until they do,
-> a seventeenth page can invent a sixth word and nothing will say so. Adding a
-> document type today? Its confirm step reads **Confirmed**, in `status-pill.ts`
-> AND in that page's own map.
+> **OPEN — the root fix is not done ON THE SCREENS.** Those sixteen pages should
+> read their LABEL from `status-pill` and keep only their own bucket/blurb. Until
+> they do, a seventeenth page can invent a sixth word and nothing will say so.
+> Adding a document type today? Its confirm step reads **Confirmed**, in
+> `status-pill.ts` AND in that page's own map.
+
+> **DONE ON THE PAPER — 2026-08-26.** The printed documents were a
+> seventeenth-to-twenty-fifth surface of exactly this shape, and worse than a
+> stale copy: they had no map at all. Nine generators each ran their own
+> `replace(/_/g,' ').toLowerCase()…` over the RAW STORED VALUE, so a delivery
+> order stored `LOADED` printed **LOADED** while every screen said Confirmed —
+> and after the `DISPATCHED` → "Loaded" relabel directly above, the word *Loaded*
+> named one rung on paper and a different rung on the list. Ten of the vocabulary's
+> values printed the wrong word; the full table is in
+> `docs/bugs/0548-every-printed-document-title-cased-the-raw-stored-status-ins.md`.
+>
+> All nine now call `statusLabel(docType, status)`. The document types they map
+> to are `do`, `dr`, `grn`, `pi`, `pr`, `si`, `so`, `stockTake`,
+> `stockTransfer`; the purchase order sheet prints no status at all, by design.
+> The SO / PO amendment document reads `simplifiedAmendmentPill` — it printed
+> "Requested" on a REJECTED amendment until this change.
+>
+> **Adding a printed document? It reads its status from `status-pill.ts`, and
+> `frontend/src/vendor/scm/lib/pdf-status-label.test.ts` is what makes that
+> non-optional.** It renders every generator for EVERY member of its vocabulary
+> and compares what `doc.text` painted; a source scan over `*-pdf.ts` catches a
+> generator that is not in its table yet.
+>
+> **One word is still unsettled and it is the owner's to pick.**
+> `status-pill.ts` says SO `IN_PRODUCTION` reads **Proceed**;
+> `frontend/src/pages/scm-v2/so-list-status.ts` says **In Production** while its
+> own comment claims the two match exactly. Both are live on screens. The printed
+> sales order now follows `status-pill.ts`, so it says *Proceed* where it said
+> *In Production* before this change.
 
 ### A HOLD IS NOT A STATUS — it is a MARKER beside one (2026-08-22, migs 0324/0325)
 

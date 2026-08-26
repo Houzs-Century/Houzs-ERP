@@ -539,6 +539,14 @@ The two generators are `frontend/src/vendor/scm/lib/stock-transfer-pdf.ts` and
 which prints a blank sheet because `index.css`'s `@media print` block hides
 `body *`.
 
+**Both print their status through `statusLabel(docType, status)`** since
+2026-08-26 — `stockTransfer` and `stockTake` — rather than title-casing the
+stored `POSTED`, which printed *Posted* against a screen saying **Confirmed**.
+Every printed document in this repo is held to that by
+`frontend/src/vendor/scm/lib/pdf-status-label.test.ts`; the rule is
+`docs/modules/document-status-vocabulary.md` §1 and the trace is
+`docs/bugs/0548-every-printed-document-title-cased-the-raw-stored-status-ins.md`.
+
 **The menu entry navigates; it does not render.** `Print` goes to the detail
 page with `?print=1`, which `useOpenPrintPreviewFromUrl` consumes — the same
 contract the other eight lists' Print entries use. It could not work any other

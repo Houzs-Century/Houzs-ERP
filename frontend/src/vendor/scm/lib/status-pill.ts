@@ -230,6 +230,15 @@ export function statusLabel(docType: StatusDocType, status: string | null | unde
   return resolveStatusPill(docType, status).label;
 }
 
+/** Every status this document type's canonical map carries. Exported so a
+ *  caller that must cover a WHOLE vocabulary — the printed-document label test
+ *  is the one today — enumerates it from here instead of re-typing the list.
+ *  A hand-copied vocabulary is the drift this file exists to stop, and the copy
+ *  in a test is the one nobody notices has gone stale. */
+export function statusVocabulary(docType: StatusDocType): string[] {
+  return Object.keys(MAPS[docType]);
+}
+
 // ── Simplified amendment status buckets (owner 2026-07-24) ───────────────────
 // The amendment LIST surfaces (SO + PO queues, desktop + mobile) collapse to just
 // Requested / Approved / All. The SO amendment backend still carries the granular
