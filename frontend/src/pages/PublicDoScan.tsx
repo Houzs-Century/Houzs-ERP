@@ -38,6 +38,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { CheckCircle2, Loader2, PackageCheck, PauseCircle, XCircle } from "lucide-react";
 import { statusLabel } from "../vendor/scm/lib/status-pill";
+import { PublicDoScanBasket } from "./PublicDoScanBasket";
 import { humanHttpMessage } from "../api/client";
 import {
   consumeCorrelated,
@@ -327,6 +328,14 @@ export function PublicDoScan() {
           {error}
         </div>
       )}
+
+      {/* THE PILE. Closed by default and one button wide, so this page reads
+          exactly as it did for anyone holding a single paper — the owner asked
+          for the feature and asked for the screens to stop moving in the same
+          breath. Not offered on a packing list: that sheet already moves its
+          whole run with its own button, and a basket beside it would be two
+          ways to do one thing. */}
+      {!isRun && <PublicDoScanBasket />}
     </Frame>
   );
 }
