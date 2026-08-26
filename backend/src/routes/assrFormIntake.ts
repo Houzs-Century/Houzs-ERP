@@ -728,8 +728,10 @@ app.post("/delivery-dates", async (c) => {
 //        column: dispatch reads the customer's requested date there.
 //   Q  Delivery Date                left blank - scheduling owns it
 //   V  Landed / Condo / Apartment   building_type
-//   AA PO Doc No.                   left blank - the SCM header has no such
-//        column (the stale local clone said otherwise; prod does not)
+//   AA PO Doc No.                   the manufacturing PO(s) raised off this
+//        order. The SO header has no PO column: the link runs SO line ->
+//        purchase_order_items.so_item_id -> purchase_orders.po_number, and an
+//        order can carry more than one (comma-joined, cancelled POs dropped).
 //   AB-AE Address 1-4               address1 / address2 / postcode+city /
 //                                   customer_state - matches how the AutoCount
 //                                   feed fills the Houzs rows.
@@ -769,7 +771,7 @@ type ReadySoHead = {
   agent: string | null;
   salesperson_id: string | null;
   local_total_sen: number | null;
-  balance_sen: number | null;
+  balance_sen_live: number | null;
   processing_date: string | null;
   customer_delivery_date: string | null;
   building_type: string | null;
@@ -783,6 +785,7 @@ type ReadySoHead = {
   transfer_to: string | null;
 };
 type ReadySoLine = {
+  id: string;
   doc_no: string;
   item_group: string | null;
   item_code: string | null;
@@ -820,10 +823,15 @@ app.get("/so-export", async (c) => {
 
   const sb = getSupabaseService(c.env);
   const { data: heads, error } = await sb
-    .from("mfg_sales_orders")
+    /* The VIEW, not the base table. mfg_sales_orders.balance_sen is a stored
+       column nothing maintains - it still equals local_total on orders that
+       were paid in full months ago - so reading it wrote "everything is
+       outstanding" into the sheet. balance_sen_live is netted against the
+       payments and is what the SO list itself shows. */
+    .from("mfg_sales_orders_with_payment_totals")
     .select(
       "doc_no, so_date, branding, venue, debtor_name, phone, agent, salesperson_id, " +
-        "local_total_sen, balance_sen, processing_date, customer_delivery_date, " +
+        "local_total_sen, balance_sen_live, processing_date, customer_delivery_date, " +
         "building_type, address1, address2, address3, address4, " +
         "city, postcode, customer_state, transfer_to"
     )
@@ -845,13 +853,56 @@ app.get("/so-export", async (c) => {
        the sheet and call it ready. Refuse the whole export instead. */
     const { data, error: lineErr } = await sb
       .from("mfg_sales_order_items")
-      .select("doc_no, item_group, item_code, stock_status, cancelled")
+      .select("id, doc_no, item_group, item_code, stock_status, cancelled")
       .in("doc_no", docNos.slice(i, i + 100));
     if (lineErr) return c.json({ error: lineErr.message }, 502);
     for (const l of (data ?? []) as unknown as ReadySoLine[]) {
       const arr = linesByDoc.get(l.doc_no) ?? [];
       arr.push(l);
       linesByDoc.set(l.doc_no, arr);
+    }
+  }
+
+  /* PO No. — the SO header carries no PO column; the link runs SO line ->
+     purchase_order_items.so_item_id -> purchase_orders.po_number. Dispatch
+     reads that column on the Houzs rows, so the 2990 rows should carry it too.
+     An order can have several POs (and a PO can serve several orders), so this
+     collects per order and joins. Cancelled POs are dropped. */
+  const docBySoItem = new Map<string, string>();
+  for (const [doc, lines] of linesByDoc) {
+    for (const l of lines) if (l.id) docBySoItem.set(l.id, doc);
+  }
+  const soItemIdsByPo = new Map<string, string[]>();
+  const soItemIds = [...docBySoItem.keys()];
+  for (let i = 0; i < soItemIds.length; i += 100) {
+    const { data, error: poiErr } = await sb
+      .from("purchase_order_items")
+      .select("so_item_id, purchase_order_id")
+      .in("so_item_id", soItemIds.slice(i, i + 100));
+    if (poiErr) return c.json({ error: poiErr.message }, 502);
+    for (const r of (data ?? []) as unknown as Array<{ so_item_id: string; purchase_order_id: string }>) {
+      const arr = soItemIdsByPo.get(r.purchase_order_id) ?? [];
+      arr.push(r.so_item_id);
+      soItemIdsByPo.set(r.purchase_order_id, arr);
+    }
+  }
+  const posByDoc = new Map<string, Set<string>>();
+  const poIds = [...soItemIdsByPo.keys()];
+  for (let i = 0; i < poIds.length; i += 100) {
+    const { data, error: poErr } = await sb
+      .from("purchase_orders")
+      .select("id, po_number, cancelled_at")
+      .in("id", poIds.slice(i, i + 100));
+    if (poErr) return c.json({ error: poErr.message }, 502);
+    for (const po of (data ?? []) as unknown as Array<{ id: string; po_number: string | null; cancelled_at: string | null }>) {
+      if (po.cancelled_at || !po.po_number) continue;
+      for (const itemId of soItemIdsByPo.get(po.id) ?? []) {
+        const doc = docBySoItem.get(itemId);
+        if (!doc) continue;
+        const set = posByDoc.get(doc) ?? new Set<string>();
+        set.add(po.po_number);
+        posByDoc.set(doc, set);
+      }
     }
   }
 
@@ -882,12 +933,13 @@ app.get("/so-export", async (c) => {
     sales_location: o.venue,
     agent: o.agent ?? (o.salesperson_id ? staffById.get(o.salesperson_id) ?? null : null),
     local_total: senToAmount(o.local_total_sen),
-    balance: senToAmount(o.balance_sen),
+    balance: senToAmount(o.balance_sen_live),
     stock_remark: summariseReadiness(linesByDoc.get(o.doc_no) ?? []).stockRemark,
     processing_date: o.processing_date,
     // Sheet col O — see the column map above.
     customer_delivery_date: o.customer_delivery_date,
     building_type: o.building_type,
+    po_doc_no: [...(posByDoc.get(o.doc_no) ?? [])].sort().join(", ") || null,
     address1: o.address1,
     address2: o.address2,
     /* 2990 keeps town/state in their own columns while the sheet expects the
