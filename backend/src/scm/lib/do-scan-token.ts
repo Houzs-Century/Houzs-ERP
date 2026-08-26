@@ -48,12 +48,68 @@
 // than trusting that argument, which is the cheap half of the defence.
 // ----------------------------------------------------------------------------
 
-/** Exactly 64 lower/upper hex characters. The shape gate, before any query. */
-export const DO_SCAN_TOKEN_RE = /^[0-9a-f]{64}$/i;
+/* ── WHY THE TOKEN GOT SHORTER, 2026-08-27 ──────────────────────────────────
+ *
+ * THE TOKEN'S LENGTH IS A PRINT SETTING, which is not obvious and is the whole
+ * reason this changed. The QR on the paper encodes
+ * `https://erp.houzscentury.com/d/<token>`, and a QR's MODULE COUNT is set by
+ * how many characters it carries. At a fixed printed size, more characters mean
+ * smaller squares — and below roughly 0.4mm a square stops being reliable to a
+ * phone camera at arm's length.
+ *
+ * The 64-hex token needed 41 modules. Printed at 16mm that is 0.356mm per
+ * square, which is BELOW the only number anybody has field evidence for:
+ * Hookka's delivery QR runs at 0.415mm on a warehouse floor today.
+ *
+ * The owner asked for a SMALLER code on the page (2026-08-27), and a smaller
+ * code with the same payload is a less scannable code. Shortening the token is
+ * what makes both true at once: 10 characters is 29 modules, so 14mm gives
+ * 0.424mm — 12% smaller on the sheet than today and better to scan than today.
+ *
+ * IS 50 BITS ENOUGH? Yes, and the reason is that this credential is not offline-
+ * attackable. Guessing means asking THIS server, which admits 300 reads per
+ * quarter-hour per address and answers a miss identically to a revoked token.
+ * Against 32^10 ≈ 1.1e15 values that is not a search anyone finishes. The 244
+ * bits it replaced were free at the time and are not free now — they are a
+ * quarter of a millimetre of print.
+ *
+ * NOTHING PRINTED BEFORE TODAY STOPS WORKING. The shape gate accepts BOTH forms
+ * and this file mints only the short one from now on, so live papers keep
+ * resolving and no reprint is forced. The PDF sizes the QR from its own module
+ * count, so a legacy long token still prints big enough to scan rather than
+ * being squeezed into 14mm.
+ */
 
-/** Two UUIDs, hyphens stripped: 64 hex chars, ~244 bits of randomness. */
+/** The two shapes a live token may have: 10-char base32, or the legacy 64 hex. */
+export const DO_SCAN_TOKEN_RE = /^(?:[0-9a-hjkmnp-tv-z]{10}|[0-9a-f]{64})$/i;
+
+/* CROCKFORD'S ALPHABET, minus nothing it does not already exclude: no i, l, o
+   or u. Not decoration — a warehouse reads these off paper when a code will not
+   scan and types them into the office, and `1/l/I` and `0/O` are the pairs that
+   get read back wrong. `u` is dropped for the reason Crockford drops it. */
+const TOKEN_ALPHABET = '0123456789abcdefghjkmnpqrstvwxyz';
+const TOKEN_LEN = 10;
+
+/**
+ * A fresh public scan token: 10 characters, ~50 bits.
+ *
+ * REJECTION SAMPLING, not a modulo. `byte % 32` would be uniform here only
+ * because 32 divides 256 — true today and silently false the moment somebody
+ * edits the alphabet to 33 characters, at which point the first few symbols
+ * become slightly likelier and nothing fails. Masking the low 5 bits is exact
+ * for a 32-symbol alphabet and the assertion below is what keeps it honest.
+ */
 export function newDoScanToken(): string {
-  return (crypto.randomUUID() + crypto.randomUUID()).replace(/-/g, '');
+  if (TOKEN_ALPHABET.length !== 32) {
+    /* Unreachable today; here so an edit to the alphabet fails loudly instead
+       of quietly skewing the distribution. */
+    throw new Error('newDoScanToken: the alphabet must be exactly 32 symbols');
+  }
+  const bytes = new Uint8Array(TOKEN_LEN);
+  crypto.getRandomValues(bytes);
+  let out = '';
+  for (const b of bytes) out += TOKEN_ALPHABET[b & 31];
+  return out;
 }
 
 /**

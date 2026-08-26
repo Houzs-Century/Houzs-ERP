@@ -35,7 +35,26 @@ export function drawQrIntoPdf(doc: Doc, text: string, x: number, y: number, size
   qr.make();
   const count = qr.getModuleCount();
   const quiet = 2; // modules of quiet zone on each side
-  const cell = sizeMm / (count + quiet * 2);
+
+  /* THE REQUESTED SIZE IS A FLOOR TO GROW FROM, NOT A PROMISE TO SHRINK INTO.
+     A QR's readability is its MODULE size, not its overall size, and the module
+     count is set by the payload — so the same 14mm box is comfortable for a
+     short URL and unscannable for a long one. Printing whatever was asked for
+     would have made a legacy 64-character token print at 0.311mm per module the
+     day the layout shrank, and nothing would have failed: the sheet would look
+     right and simply not scan at the lorry.
+
+     0.42mm is the floor, and it is the only number with field evidence behind
+     it — Hookka's delivery QR runs at 0.415mm on a warehouse floor today. Below
+     that is the owner's own 2026-07-03 complaint, 「上下左右斜角不敏感」.
+
+     So: draw at the asked-for size when the payload allows it, and GROW when it
+     does not. Callers are told what was actually drawn (the return value) and
+     flow their layout from that, which is why the return has always existed. */
+  const MIN_MODULE_MM = 0.42;
+  const drawn = Math.max(sizeMm, (count + quiet * 2) * MIN_MODULE_MM);
+  const cell = drawn / (count + quiet * 2);
+  sizeMm = drawn;
 
   doc.setFillColor(255, 255, 255);
   doc.rect(x, y, sizeMm, sizeMm, 'F');

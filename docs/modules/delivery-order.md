@@ -288,7 +288,7 @@ still need `edit` on `scm.sales.delivery`.
 | POST/PATCH/DELETE | `/:id/items[/:itemId]` | `:3636` / `:3784` / `:4005` | Line CRUD. |
 | GET/POST/DELETE | `/:id/payments[/:paymentId]` | `:4075` / `:4118` / `:4155` | Payments ledger. |
 | PATCH | `/:id/status` | `:4359` (handler `:4166`) | **The stock chokepoint.** |
-| GET | `/:id/scan-token` | `backend/src/scm/routes/delivery-order-scan-token.ts` | Mint-if-missing the 64-hex token the printed QR encodes (mig 0328). A SEPARATE router on the same prefix, because `delivery-orders-mfg.ts` is past its file-size ceiling. A **GET** although it can write: the write is an idempotent create-if-missing, and a POST would deny the QR to somebody who may print a delivery order but not edit one. Scoped to the SESSION's company; the public route can never reach it. |
+| GET | `/:id/scan-token` | `backend/src/scm/routes/delivery-order-scan-token.ts` | Mint-if-missing the token the printed QR encodes (mig 0328). **10 characters since 2026-08-27** — the length is a print setting, see `docs/bugs/0552-…`; the 64-hex form every sheet already printed carries still resolves. A SEPARATE router on the same prefix, because `delivery-orders-mfg.ts` is past its file-size ceiling. A **GET** although it can write: the write is an idempotent create-if-missing, and a POST would deny the QR to somebody who may print a delivery order but not edit one. Scoped to the SESSION's company; the public route can never reach it. |
 
 ### The PUBLIC surface — `/api/public/do-scan/*` (2026-08-26)
 
@@ -332,6 +332,18 @@ not move. That collapses three buttons to ONE. The server keeps every one of its
 own checks regardless, because a document can move between the scan and the
 press; what the page rule buys is that the refusal happens at the lorry with the
 paper still in hand instead of afterwards in a list of reasons.
+
+**THE PAGE AND THE SERVER MUST AGREE ON WHAT A TOKEN LOOKS LIKE.** The basket
+parses the token out of a decoded QR (`TOKEN_IN_URL` in
+`frontend/src/pages/PublicDoScanBasket.tsx`) before anything is sent; the server
+re-checks the shape (`DO_SCAN_TOKEN_RE`) before any query. Two regexes, two
+files, one fact — and the drift is silent in the worst possible way: the page
+would simply DROP a scan the server would have resolved perfectly, and the
+operator would see a code that "does not scan".
+`frontend/src/pages/public-do-scan-token-shape.test.ts` reads BOTH FILES and
+asserts they accept the same set. Both live shapes are in that set: the
+10-character token minted since 2026-08-27, and the 64-hex one every sheet
+already on a lorry still carries.
 
 **A basket is refused, never truncated,** above 60 documents. The first version
 of the token parser stopped at the cap and returned what it had, so eighty papers
