@@ -102,10 +102,48 @@ describe('minting stays behind the session', () => {
     expect(MINT_ROUTE).toContain("deliveryOrderScanToken.use('*', supabaseAuth)");
   });
 
-  test('the token is unguessable — two UUIDs, 64 hex chars', () => {
-    expect(TOKEN_LIB).toMatch(/crypto\.randomUUID\(\)\s*\+\s*crypto\.randomUUID\(\)/);
-    expect(TOKEN_LIB).toMatch(/\.replace\(\/-\/g,\s*''\)/);
-    expect(TOKEN_LIB).toMatch(/DO_SCAN_TOKEN_RE\s*=\s*\/\^\[0-9a-f\]\{64\}\$\/i/);
+  test('the token is unguessable, and it is the MINTER that is asked, not its source text', async () => {
+    /* REWRITTEN 2026-08-27, when the token went from 64 hex to 10 characters so
+       the printed QR could shrink to 14mm and still scan. The old version
+       asserted the exact expression that built it — which meant the check had
+       to be rewritten to change an implementation detail, and told you nothing
+       about the value that comes out. This asks the function instead.
+
+       50 bits is enough HERE and would not be everywhere: this credential is not
+       offline-attackable. Guessing means asking the server, which admits 300
+       reads per quarter-hour per address and answers a miss exactly as it
+       answers a revoked token. */
+    const { newDoScanToken, DO_SCAN_TOKEN_RE } = await import('../src/scm/lib/do-scan-token');
+
+    const minted = Array.from({ length: 500 }, () => newDoScanToken());
+    for (const t of minted) {
+      expect(t, `minted a token the gate would refuse: ${t}`).toMatch(DO_SCAN_TOKEN_RE);
+      expect(t).toHaveLength(10);
+      /* The letters Crockford drops, because a warehouse reads these off paper
+         and phones them in when a code will not scan. */
+      expect(t).not.toMatch(/[ilou]/);
+    }
+    /* 500 draws from 32^10 collide with probability ~1e-10. A repeat here means
+       the source is not random, which is the failure that matters. */
+    expect(new Set(minted).size).toBe(500);
+
+    /* Every position varies — a bug that fixed one character would still pass
+       the uniqueness check above. */
+    for (let i = 0; i < 10; i += 1) {
+      expect(new Set(minted.map((t) => t[i])).size, `position ${i} never varied`).toBeGreaterThan(8);
+    }
+
+    /* AND THE SOURCE IS A CSPRNG. Behaviour cannot tell getRandomValues from a
+       good-looking Math.random, and this is the one thing worth reading the
+       file for. */
+    expect(TOKEN_LIB).toContain('crypto.getRandomValues');
+    expect(TOKEN_LIB).not.toContain('Math.random');
+  });
+
+  test('the shape gate still admits every paper already printed', () => {
+    /* The 64-hex form is not history: it is on every sheet on a lorry today, and
+       dropping it from the gate would kill them all at once. */
+    expect(TOKEN_LIB).toMatch(/DO_SCAN_TOKEN_RE\s*=.*\[0-9a-f\]\{64\}/);
   });
 
   test('the mint is claimed ATOMICALLY, and the claim carries the company too', () => {

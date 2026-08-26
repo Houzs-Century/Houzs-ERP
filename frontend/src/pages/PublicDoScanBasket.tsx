@@ -56,11 +56,19 @@ const BATCH_STEPS: DoScanStep[] = doScanLadderOrder()
   .filter((s): s is DoScanStep => s !== null)
   .filter((s) => s.status !== "LOADED");
 
-/* THE ONLY SHAPE THIS BASKET CAN READ. The printed QR encodes `${origin}/d/<64
-   hex>`; the token is the credential and nothing else on the paper identifies
-   the document to a page with no login. Matched on the PATH, not the origin, so
-   a sheet printed under an old domain still scans. */
-const TOKEN_IN_URL = /\/d\/([0-9a-f]{64})\b/i;
+/* THE TWO SHAPES THIS BASKET CAN READ, and it must read both: papers printed
+   before 2026-08-27 carry a 64-hex token, papers printed after carry the
+   10-character one that let the code shrink to 14mm. Accepting only the new
+   shape would have made every sheet already on a lorry unscannable, which is a
+   worse failure than the one the change was for.
+
+   Kept in step with the server's own gate by `public-do-scan-token-shape.test`,
+   which reads both files: a regex here that drifts from
+   `DO_SCAN_TOKEN_RE` is a token the page drops before the server ever sees it.
+
+   Matched on the PATH, not the origin, so a sheet printed under an old domain
+   still scans. */
+const TOKEN_IN_URL = /\/d\/([0-9a-hjkmnp-tv-z]{10}|[0-9a-f]{64})(?![0-9a-z])/i;
 
 type Line = {
   token: string;

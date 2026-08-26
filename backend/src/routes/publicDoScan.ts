@@ -165,8 +165,9 @@ const unknownToken = (c: Context<{ Bindings: Env }>) =>
    basket endpoint below spends one read for a whole pile, which is the real fix,
    but the single-paper page still spends one per scan and shares this bucket.
 
-   What keeps it safe is not this number: DO_SCAN_TOKEN_RE admits only 64 hex, so
-   enumeration is hopeless at any rate, and the WRITE limits — which are what
+   What keeps it safe is not this number: DO_SCAN_TOKEN_RE admits two fixed
+   shapes and nothing else, and the smaller of them is 50 bits — enumeration is
+   hopeless at any rate — and the WRITE limits — which are what
    actually move a document — are untouched at 20 per address and 10 per
    document. */
 const READ_MAX = 300;
@@ -437,7 +438,8 @@ async function advanceOneDocument(
 // TWO ENDPOINTS, AND THEY ARE REGISTERED BEFORE `/:token` ON PURPOSE. Hono
 // matches in registration order, so `/batch/advance` declared after
 // `/:token/advance` would be captured with token = "batch". It would still be
-// refused — DO_SCAN_TOKEN_RE admits only 64 hex, and "batch" is not — so this is
+// refused — DO_SCAN_TOKEN_RE admits a 10-character or a 64-character token and
+// "batch" is neither — so this is
 // belt and braces rather than the only guard, but a 404 for a route that exists
 // is a confusing way to find that out. publicDoScan.batch.test.ts pins the
 // order by calling both.
