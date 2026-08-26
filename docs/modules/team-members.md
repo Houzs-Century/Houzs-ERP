@@ -90,6 +90,7 @@ Team page shell are separate concerns and are only referenced here.
 | Desktop detail | same file → `MemberDetail` | Full-page; reached from grid card click or list row click. Sub-tab `?view=org-performance`. |
 | Edit drawer | same file → `EditMemberPanel` | One `PATCH /api/users/:id` on save; showroom parking via `/api/scm/staff`. |
 | Invite drawer | same file → `InvitePanel` | `POST /api/users/invite`. |
+| Invite modal | `frontend/src/pages/team/TeamInviteModal.tsx` | Single + **Bulk paste** modes (owner 2026-08-26). Bulk (`parseBulkEmails` + `sendBulk`) pastes many emails, shares ONE assignment, and loops the SAME `POST /api/users/invite` — no bulk endpoint; per-email failures are collected, not fatal; per-person fields (name / phone / password / POS PIN) are single-only. "Import from AutoCount" stays a disabled placeholder (no employee pipeline yet). |
 | Mobile list | `frontend/src/mobile/MobileModuleList.tsx` (`members` module) | Person cards; chips All / Active / Invited. |
 | Mobile invitations | `frontend/src/mobile/MobileInvitations.tsx` | Accordion card at the top of the members list (`aboveList` slot): count + expired badge always visible; expanded rows offer Resend / Copy Link / Revoke + bulk revoke-expired for `users.manage`. Expiry buckets + copied link shared with desktop via `frontend/src/lib/invitations.ts`. |
 | Mobile actions | `frontend/src/mobile/MobileModuleDetail.tsx` → `MemberActions` | Mirrors desktop resend-invite / reset-password 1:1 (single-logic-layer rule). |
