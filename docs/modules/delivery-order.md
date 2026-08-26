@@ -333,6 +333,18 @@ own checks regardless, because a document can move between the scan and the
 press; what the page rule buys is that the refusal happens at the lorry with the
 paper still in hand instead of afterwards in a list of reasons.
 
+**THE PAGE AND THE SERVER MUST AGREE ON WHAT A TOKEN LOOKS LIKE.** The basket
+parses the token out of a decoded QR (`TOKEN_IN_URL` in
+`frontend/src/pages/PublicDoScanBasket.tsx`) before anything is sent; the server
+re-checks the shape (`DO_SCAN_TOKEN_RE`) before any query. Two regexes, two
+files, one fact — and the drift is silent in the worst possible way: the page
+would simply DROP a scan the server would have resolved perfectly, and the
+operator would see a code that "does not scan".
+`frontend/src/pages/public-do-scan-token-shape.test.ts` reads BOTH FILES and
+asserts they accept the same set. Both live shapes are in that set: the
+10-character token minted since 2026-08-27, and the 64-hex one every sheet
+already on a lorry still carries.
+
 **A basket is refused, never truncated,** above 60 documents. The first version
 of the token parser stopped at the cap and returned what it had, so eighty papers
 would have moved sixty and reported success — a silent cap on a delivery floor is
