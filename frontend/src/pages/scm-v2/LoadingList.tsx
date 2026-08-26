@@ -14,6 +14,7 @@ import { Link } from 'react-router-dom';
 import { Loader2, PackageSearch, Search, Truck, MapPin, CalendarDays, QrCode } from 'lucide-react';
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import { StatusPill } from '../../vendor/scm/components/StatusPill';
+import { fmtDate } from '../../vendor/shared/format';
 import { PageHeader } from '../../components/Layout';
 
 type LoadingLine = {
@@ -54,15 +55,6 @@ const useLoadingList = (status: StatusFilter) =>
     queryFn: () => authedFetch<{ deliveryOrders: LoadingDo[] }>(`/loading-list?status=${status}`),
     staleTime: 20_000,
   });
-
-const fmtDate = (d: string | null): string => {
-  if (!d) return '—';
-  // Dates arrive as YYYY-MM-DD (or ISO); show the date part, locale-formatted.
-  const only = d.slice(0, 10);
-  const parsed = new Date(`${only}T00:00:00`);
-  if (Number.isNaN(parsed.getTime())) return only;
-  return parsed.toLocaleDateString(undefined, { day: '2-digit', month: 'short' });
-};
 
 export const LoadingList = () => {
   const [status, setStatus] = useState<StatusFilter>('to_load');
