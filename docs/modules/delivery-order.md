@@ -288,7 +288,7 @@ still need `edit` on `scm.sales.delivery`.
 | POST/PATCH/DELETE | `/:id/items[/:itemId]` | `:3636` / `:3784` / `:4005` | Line CRUD. |
 | GET/POST/DELETE | `/:id/payments[/:paymentId]` | `:4075` / `:4118` / `:4155` | Payments ledger. |
 | PATCH | `/:id/status` | `:4359` (handler `:4166`) | **The stock chokepoint.** |
-| GET | `/:id/scan-token` | `backend/src/scm/routes/delivery-order-scan-token.ts` | Mint-if-missing the 64-hex token the printed QR encodes (mig 0328). A SEPARATE router on the same prefix, because `delivery-orders-mfg.ts` is past its file-size ceiling. A **GET** although it can write: the write is an idempotent create-if-missing, and a POST would deny the QR to somebody who may print a delivery order but not edit one. Scoped to the SESSION's company; the public route can never reach it. |
+| GET | `/:id/scan-token` | `backend/src/scm/routes/delivery-order-scan-token.ts` | Mint-if-missing the token the printed QR encodes (mig 0328). **10 characters since 2026-08-27** — the length is a print setting, see `docs/bugs/0552-…`; the 64-hex form every sheet already printed carries still resolves. A SEPARATE router on the same prefix, because `delivery-orders-mfg.ts` is past its file-size ceiling. A **GET** although it can write: the write is an idempotent create-if-missing, and a POST would deny the QR to somebody who may print a delivery order but not edit one. Scoped to the SESSION's company; the public route can never reach it. |
 
 ### The PUBLIC surface — `/api/public/do-scan/*` (2026-08-26)
 
