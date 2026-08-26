@@ -13,6 +13,18 @@
 -- against it when this file was generated). Same reason as 0173 for the DROP:
 -- CREATE OR REPLACE cannot change an argument list — it creates an OVERLOAD,
 -- and the named-args PostgREST call would then raise "function is not unique".
+--
+-- REVERSAL:
+--   DROP FUNCTION scm.apply_so_header_cas(
+--     text, integer, text, jsonb, boolean, text, text, text, boolean, uuid, boolean, date, bigint, uuid[]
+--   );
+--   then re-run migration 0173's CREATE block (the 13-argument function) and
+--   its REVOKE/GRANT pair. MUST ship together with reverting the route: the
+--   post-0330 Worker passes p_rebind_line_ids by name, which the 13-argument
+--   function rejects — reverse code and function in one deploy, never the
+--   function alone. Verified against the live prod catalog on 2026-08-26:
+--   pg_proc holds exactly ONE apply_so_header_cas, the 13-arg shape above, so
+--   the DROP here can neither miss nor be ambiguous.
 
 DROP FUNCTION IF EXISTS scm.apply_so_header_cas(
   text, integer, text, jsonb, boolean, text, text, text, boolean, uuid, boolean, date, bigint
