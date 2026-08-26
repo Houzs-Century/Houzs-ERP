@@ -273,7 +273,8 @@ jobs:
             --arg form_intake_key "$FORM_INTAKE_KEY" \
             --arg sheet_sync_key "$SHEET_SYNC_KEY" \
             --arg sheet_sync_key_2990 "$SHEET_SYNC_KEY_2990" \
-            '{FORM_INTAKE_KEY: $form_intake_key, SHEET_SYNC_KEY: $sheet_sync_key, SHEET_SYNC_KEY_2990: $sheet_sync_key_2990}' \
+            '{FORM_INTAKE_KEY: $form_intake_key, SHEET_SYNC_KEY: $sheet_sync_key}
+             + (if $sheet_sync_key_2990 == "" then {} else {SHEET_SYNC_KEY_2990: $sheet_sync_key_2990} end)' \
             | npx wrangler secret bulk
       # Post-deploy smoke check: confirm the new Worker is serving AND its
       # DB path (Hyperdrive -> Supabase) is alive before calling the deploy
