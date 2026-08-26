@@ -792,6 +792,48 @@ This screen is **read-only**. The load action stays where the QR flow put it —
 the `PATCH /:id/status` to `LOADED`, admitted by the editable `scm.do.load`
 capability — so seeing the queue and moving stock remain separate grants.
 
+### The Ops-lead revert — undo a wrong scan / accidental dispatch (owner 2026-08-26)
+
+The load and dispatch are the two dock mistakes that need an undo: the wrong
+delivery order scanned to LOADED (which is the stock OUT since 08-22), or Dispatch
+hit by accident. `POST /api/scm/delivery-orders-mfg/:id/revert`
+(`backend/src/scm/routes/delivery-order-revert.ts`) is the safety net — an Ops
+Executive (whoever the editable matrix grants `scm.do.revert`, owner:
+「Executive 及以上」) pulls the order back.
+
+**WHY A DEDICATED ROUTE, not the status PATCH.** `PATCH /:id/status` REFUSES a
+shipped→pre-ship move (LOADED→DRAFT) because a plain status write does not reverse
+the inventory OUT — it would leave the DO reading un-shipped with its stock still
+deducted. The revert is the ONE path allowed to cross that line, and it earns it
+by reversing the stock in the same call. It reuses the CANCELLED cleanup
+(`reverseInventoryForDo` + `returnDoRacksOnCancel` + `syncSoDeliveredFromDo` +
+`recomputeSoStockAllocation` — the two inventory helpers are now `export`ed from
+`backend/src/scm/routes/delivery-orders-mfg.ts`) MINUS the AutoCount cancel,
+because a revert is not a cancel: the document stays alive and re-workable.
+
+**WHAT IS REVERTABLE, and how stock moves.** Only LOADED (wrong scan) and
+DISPATCHED (accidental send) are revertable, backward only; a delivery with a
+live Sales Invoice or Delivery Return is refused (`doHasDownstream`). Stock
+reverses ONLY when crossing back to DRAFT — both revertable FROM states are
+stock-out, so `DISPATCHED→LOADED` (un-send) moves no stock while `anything→DRAFT`
+(un-load / reset) restores it. A reason is mandatory (it lands in the audit trail
+as a `REVERSE` action).
+
+**AUTHORIZATION** is layered: the area-guard `writeBypass` in
+`backend/src/scm/index.ts` admits a `scm.do.revert` holder to `POST .../revert`
+without `scm.sales.delivery` edit, and the handler re-checks the capability so a
+plain dispatcher who can move a status forward cannot UN-move it. `*` (owner /
+super-admin) passes.
+
+**FRONTEND.** `frontend/src/auth/salesAccess.ts` `canRevertDelivery` decides
+whether the control shows; `frontend/src/pages/scm-v2/DeliveryOrderDetailV2.tsx`
+renders a status-aware button — "Undo dispatch" (DISPATCHED→LOADED) or "Undo
+load" (LOADED→DRAFT) — that captures the mandatory reason via `usePrompt` and
+calls `useRevertMfgDeliveryOrder`
+(`frontend/src/vendor/scm/lib/delivery-order-queries.ts`), which invalidates the
+same queries a status change does. The server is the boundary — the button only
+decides visibility.
+
 ### The three manual status moves on the row menu (2026-08-22)
 
 `Mark Loaded`, `Mark In Transit` and `Mark Delivered` are offered on the
