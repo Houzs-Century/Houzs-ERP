@@ -74,6 +74,31 @@ type Line = {
   message?: string;
 };
 
+/**
+ * The pile scanner as its OWN PAGE — /d/scan, no login, outside the AuthGate.
+ *
+ * It got a page of its own rather than a second button on /d/:token because two
+ * properties of that screen are deliberate, older than this feature, and each
+ * has a test: a delivery order offers exactly ONE button (the next rung, never a
+ * choice), and a held or cancelled one offers a sentence and NO BUTTON AT ALL.
+ * Loosening either to make room here would have been the wrong trade.
+ *
+ * It is also simply better: a bookmarkable page means the storekeeper who does
+ * this every morning does not have to scan one paper to reach the scanner.
+ */
+export function PublicDoScanBasketPage() {
+  return (
+    <div className="mx-auto flex min-h-screen w-full max-w-md flex-col gap-3 px-4 py-6">
+      <h1 className="text-lg font-semibold">Scan delivery orders</h1>
+      <p className="text-sm text-ink-secondary">
+        Scan as many delivery orders as you like, then press once. The first one you scan decides the step —
+        anything at a different step is not added, so a pile always moves together.
+      </p>
+      <PublicDoScanBasket />
+    </div>
+  );
+}
+
 export function PublicDoScanBasket() {
   const [open, setOpen] = useState(false);
   const [lines, setLines] = useState<Line[]>([]);

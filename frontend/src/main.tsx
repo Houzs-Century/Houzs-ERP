@@ -59,6 +59,7 @@ if (canonicalTarget) window.location.replace(canonicalTarget);
 const SurveyPublic = lazy(() => import("./pages/SurveyPublic").then((m) => ({ default: m.SurveyPublic })));
 const PortalApp = lazy(() => import("./portal/PortalApp").then((m) => ({ default: m.PortalApp })));
 const PublicDoScan = lazy(() => import("./pages/PublicDoScan").then((m) => ({ default: m.PublicDoScan })));
+const PublicDoScanBasket = lazy(() => import("./pages/PublicDoScanBasket").then((m) => ({ default: m.PublicDoScanBasketPage })));
 const ResetPassword = lazy(() => import("./pages/ResetPassword").then((m) => ({ default: m.ResetPassword })));
 // Invite acceptance rides in the unauthenticated-screens chunk (see
 // auth/AuthGate.tsx) — same split, same reason: staff sessions never load it.
@@ -151,6 +152,7 @@ if (LOGIN_AS_HOSTS.has(window.location.hostname)) {
 // Public routes that must bypass the staff AuthGate entirely:
 //   /survey/:token       — tokenized customer satisfaction survey
 //   /d/:token            — the printed delivery-order QR (no login, owner's call)
+//   /d/scan              — the pile scanner: scan several, press once (2026-08-27)
 //   /track               — public case-lookup form (ASSR no + phone)
 //   /portal/case/:token  — customer-facing case view scoped by token
 // The selection is made from the LIVE Router location. It used to be frozen
@@ -181,6 +183,15 @@ function RootApp() {
     return (
       <LazySlot resetKey={`public:${surface}`} fallback={<PublicFallback />}>
         <PublicDoScan />
+      </LazySlot>
+    );
+  }
+  if (surface === "doscanbasket") {
+    /* The pile scanner, on its own page and outside the AuthGate for the same
+       reason /d/:token is: the storekeeper holding the papers has no account. */
+    return (
+      <LazySlot resetKey={`public:${surface}`} fallback={<PublicFallback />}>
+        <PublicDoScanBasket />
       </LazySlot>
     );
   }
