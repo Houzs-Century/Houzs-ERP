@@ -632,6 +632,7 @@ GET,/api/scm/inventory/warehouses,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth
 POST,/api/scm/inventory/warehouses,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.warehouse.inventory"", { openReadPaths: [""/inventory/warehouses""] })",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/inventory.ts
 DELETE,/api/scm/inventory/warehouses/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.warehouse.inventory"", { openReadPaths: [""/inventory/warehouses""] })",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/inventory.ts
 PATCH,/api/scm/inventory/warehouses/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.warehouse.inventory"", { openReadPaths: [""/inventory/warehouses""] })",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/inventory.ts
+GET,/api/scm/loading-list,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.warehouse.inventory"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/loading-list.ts
 GET,/api/scm/localities,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/localities.ts
 POST,/api/scm/localities,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/localities.ts
 DELETE,/api/scm/localities/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/localities.ts
