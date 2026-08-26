@@ -297,8 +297,55 @@ still need `edit` on `scm.sales.delivery`.
 
 | Method | Path | Purpose |
 |--------|------|---------|
+| POST | `/api/public/do-scan/batch/lookup` | `{ tokens }` — summarise a whole basket in ONE read |
+| POST | `/api/public/do-scan/batch/advance` | `{ tokens, to }` — move a basket, one document at a time |
 | GET | `/api/public/do-scan/:token` | Minimal summary + the ONE next rung |
 | POST | `/api/public/do-scan/:token/advance` | `{ to }` — move exactly one rung |
+
+**THE BATCH ROUTES ARE LISTED FIRST BECAUSE THEY ARE REGISTERED FIRST.** Hono
+matches in registration order, and `/batch/advance` declared after
+`/:token/advance` would be captured with `token = "batch"`. It would still be
+refused — `DO_SCAN_TOKEN_RE` admits only a 10- or 64-character token — but a 404
+for a route that exists is a confusing way to discover the ordering.
+`publicDoScanSurface.test.ts` pins both the order and the exact set of four.
+
+**The basket (2026-08-26).** The owner: 「我不能 scan 好几个 DO，然后一起点 load
+吗？…它应该可以支持连续扚描的。」 A storekeeper loading a lorry holds thirty
+papers. Two things made that impossible before: every "scan" was the phone's own
+camera app, which NAVIGATES AWAY and takes any basket with it, and the read limit
+was 30 per quarter-hour for what is one public IP for a whole warehouse floor.
+So the page grew its own camera (`frontend/src/lib/use-qr-scanner.ts`) and the
+basket spends ONE read for a whole pile.
+
+**One decision function, not a third copy.** Three surfaces now move a delivery
+order with nobody logged in — one paper, a packing list, a basket — and the five
+checks that decide whether one document may move live once, in
+`advanceOneDocument`. Only the off-rung SENTENCE varies per caller: a driver
+holding one paper, a driver holding a packing list and a storekeeper holding a
+pile need different words for the same fact.
+
+**The pile is uniform BY CONSTRUCTION, and that is a page rule rather than a
+server rule.** The owner, 2026-08-27: 「不同状态你就不要给它扫描进来吧，就当做它
+还没扫描到。」 The first paper scanned sets the rung; a paper on a different rung
+is not added at all — the optimistically-drawn row is removed and the count does
+not move. That collapses three buttons to ONE. The server keeps every one of its
+own checks regardless, because a document can move between the scan and the
+press; what the page rule buys is that the refusal happens at the lorry with the
+paper still in hand instead of afterwards in a list of reasons.
+
+**A basket is refused, never truncated,** above 60 documents. The first version
+of the token parser stopped at the cap and returned what it had, so eighty papers
+would have moved sixty and reported success — a silent cap on a delivery floor is
+worse than a refusal because the refusal is visible.
+
+**`DRAFT` → `LOADED` cannot be batched.** That rung confirms the delivery order
+and takes the goods out of stock; doing it to a pile at once from a page with no
+login is a different class of risk from moving papers that already left.
+
+**Sequential, never parallel** — the same rule the packing list follows, and for
+the reason written up in the route header: two delivery orders frequently share
+one sales order, and Hookka deadlocked doing this in parallel.
+`publicDoScanRoute.test.ts` MEASURES it rather than asserting a comment.
 
 **The owner chose this**, after being shown the risk twice: 「就跟hookka一样」 —
 a public, no-login QR exactly like Hookka's, where the unguessable token printed

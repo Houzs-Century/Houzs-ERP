@@ -257,10 +257,29 @@ proved `users.manage`), so "exit" is just logging out.
 `appSurfaceForPath` (`frontend/src/routing/appSurface.ts`) decides which tree
 boots for a location, and the ones it sends OUTSIDE `AuthGate` are the app's
 whole no-login surface: `/survey/:token`, `/track` + `/portal/*`,
-`/reset/:token`, `/invite/:token`, `/privacy`, and now **`/d/:token`** — the
-printed delivery-order QR (`frontend/src/pages/PublicDoScan.tsx`). That last one
-is the owner's decision, the driver has no account, so the 64-hex token printed
-on the paper is the credential. Adding a surface here means adding a way in that
+`/reset/:token`, `/invite/:token`, `/privacy`, **`/d/:token`** — the printed
+delivery-order QR (`frontend/src/pages/PublicDoScan.tsx`) — and, since
+2026-08-27, **`/d/scan`**, the pile scanner
+(`frontend/src/pages/PublicDoScanBasket.tsx`). The QR one is the owner's
+decision: the driver has no account, so the token printed on the paper is the
+credential. It is 10 characters since 2026-08-27 — the length is a print setting,
+see `docs/bugs/0552-…` — and the 64-hex form on every sheet already printed still
+resolves.
+
+**`/d/scan` IS DECIDED BEFORE THE TOKEN BRANCH**, and that ordering is the whole
+of its correctness: `startsWith("/d/")` would otherwise classify it as a token
+named `scan`, and the storekeeper would get "unknown or expired QR code" for a
+page that exists. A real token cannot collide — 10 or 64 characters from a fixed
+alphabet — but the specific path is still matched first rather than relying on
+that. `appSurface.test.tsx` pins both. The same trap and the same fix live in the
+backend's `/batch/*` routes.
+
+**It is a page and not a button on `/d/:token`**, deliberately: that screen
+offers exactly ONE button (the next rung, never a choice) and offers NO BUTTON AT
+ALL when the document is held or cancelled. Both are older than the scanner and
+both have tests, so the basket moved rather than the guarantees loosening. The
+delivery-order page carries a text LINK to it instead, and not at all when the
+document is blocked. Adding a surface here means adding a way in that
 no session guards, so the list is worth reading before extending it; the backend
 half of the same decision is the mount ORDER in `backend/src/index.ts` (before
 `app.use("/api/*", auth)`). See `docs/modules/delivery-order.md` and

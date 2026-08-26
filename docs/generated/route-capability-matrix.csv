@@ -368,6 +368,8 @@ DELETE,/api/projects/venues/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"
 PATCH,/api/projects/venues/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""projects.manage"")",,YES,DECLARED_GATE,backend/src/routes/projects.ts
 GET,/api/public/do-scan/:token,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,NO,INHERITED_ONLY,backend/src/routes/publicDoScan.ts
 POST,/api/public/do-scan/:token/advance,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/publicDoScan.ts
+POST,/api/public/do-scan/batch/advance,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/publicDoScan.ts
+POST,/api/public/do-scan/batch/lookup,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/publicDoScan.ts
 POST,/api/push/devices,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/push.ts
 DELETE,/api/push/devices/:token,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/push.ts
 GET,/api/roles,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermissionOrSalesDirector(""roles.read"")",,NO,DECLARED_GATE,backend/src/routes/roles.ts
