@@ -589,6 +589,10 @@ export const NAV_TABS: NavTab[] = [
         anyPerm: ["*", "scm.access"],
         anyAccess: ["scm.warehouse", "scm.warehouse.inventory", "scm.warehouse.adjustments", "scm.warehouse.transfers", "scm.warehouse.stock_take"],
         children: [
+          // Loading List (owner 2026-08-25) — the storekeeper's daily "what to
+          // load" queue (no prices). Same gate as Inventory (scm.warehouse.inventory,
+          // the Storekeeper's grant) so the warehouse line sees it first.
+          { to: "/scm/loading-list", label: "Loading List", icon: ClipboardList, anyPerm: ["*", "scm.access"], anyAccess: ["scm.warehouse.inventory"], hideForSalesRep: true },
           // Warehouses master sits at the TOP of the group (2990 parity) — it's
           // the location registry every other warehouse doc binds against.
           { to: "/scm/warehouses", label: "Warehouses", icon: Warehouse, anyPerm: ["*", "scm.access"], anyAccess: ["scm.warehouse.inventory"], hideForSalesRep: true },
