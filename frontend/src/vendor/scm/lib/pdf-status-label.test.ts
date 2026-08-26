@@ -321,7 +321,12 @@ describe('the harness itself', () => {
 });
 
 describe('a printed document states the status the screen states', () => {
-  for (const d of PRINTED_DOCS) {
+  /* `do` is skipped while the owner's 2026-08-26 revert stands — the Delivery
+     Order sheet prints its STORED value again, at his request, and the test
+     that pins that is above. Skipping it HERE rather than deleting this loop
+     keeps every other document held to the rule, so the revert cannot quietly
+     become the new normal. Undo the revert and delete this filter together. */
+  for (const d of PRINTED_DOCS.filter((x) => x.docType !== 'do')) {
     for (const status of statusVocabulary(d.docType)) {
       test(`${d.title}: stored ${status}`, async () => {
         const printed = await d.render(status);
@@ -338,18 +343,31 @@ describe('the delivery order trap the owner was holding', () => {
      (docs/modules/document-status-vocabulary.md §1). Before this fix the sheet
      printed LOADED for stored LOADED — the state every screen calls Confirmed —
      so the word "Loaded" named two different rungs at once. */
-  test('LOADED prints Confirmed and DISPATCHED prints Loaded', async () => {
+  /* REVERTED 2026-08-26, DELIBERATELY, at the owner's request: he asked to see
+     the previous printed Delivery Order again before deciding, so this ONE
+     generator went back to title-casing its stored value.
+
+     THE TRAP IS THEREFORE BACK, and this test now pins it so nobody mistakes it
+     for an oversight: the sheet prints LOADED for the state every screen calls
+     "Confirmed", while "Loaded" is what the screen calls stored DISPATCHED. One
+     word, two rungs, depending on whether you are reading paper or a screen.
+
+     The other eight documents keep the fix. Undoing the revert is one import
+     and one expression in delivery-order-pdf.ts. */
+  test('the DO sheet prints its STORED value again — the trap is back on purpose', async () => {
     const doPdf = PRINTED_DOCS.find((d) => d.docType === 'do')!;
-    expect(await doPdf.render('LOADED')).toBe('CONFIRMED');
-    expect(await doPdf.render('DISPATCHED')).toBe('LOADED');
+    expect(await doPdf.render('LOADED')).toBe('LOADED');
+    expect(await doPdf.render('DISPATCHED')).toBe('DISPATCHED');
   });
 
   /* The confirm step reads Confirmed on ALL of them (owner 2026-08-21, 「那就
      A」). Five stored words, one printed word — the sweep that reached every
      screen and stopped at the paper. */
   test('every document\'s confirm step prints Confirmed', async () => {
+    /* `do` is ABSENT on purpose — reverted 2026-08-26 at the owner's request;
+       see the test above. Every other printed document still reads Confirmed. */
     const CONFIRM_STEP: Array<[StatusDocType, string]> = [
-      ['do', 'LOADED'], ['grn', 'POSTED'], ['pi', 'POSTED'], ['pr', 'POSTED'],
+      ['grn', 'POSTED'], ['pi', 'POSTED'], ['pr', 'POSTED'],
       ['si', 'SENT'], ['so', 'CONFIRMED'],
       ['stockTake', 'POSTED'], ['stockTransfer', 'POSTED'],
     ];
@@ -404,9 +422,12 @@ describe('no PDF generator hand-rolls a status label', () => {
     }
   });
 
-  test('every generator in this directory is clean', () => {
+  /* `delivery-order-pdf.ts` is EXEMPT while the owner's revert stands — it is
+     the one generator that hand-rolls again, on purpose. Every other one must
+     stay clean, so a tenth generator written tomorrow is still caught. */
+  test('every other generator in this directory is clean', () => {
     expect(GENERATORS.length).toBeGreaterThan(9);
-    for (const file of GENERATORS) {
+    for (const file of GENERATORS.filter((f) => f !== 'delivery-order-pdf.ts')) {
       const src = readFileSync(join(HERE, file), 'utf8');
       for (const re of HAND_ROLLED) {
         expect(re.test(src), `${file} hand-rolls a status label — use statusLabel(docType, status)`).toBe(false);

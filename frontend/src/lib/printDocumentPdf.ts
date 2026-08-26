@@ -169,12 +169,15 @@ export async function fetchPrintBundle(target: PrintTarget): Promise<Bundle> {
     }
     case "do": {
       const j = await authedFetch<{ deliveryOrder: Json; items: unknown[] }>(`/delivery-orders-mfg/${k}`);
-      /* armDoScanToken puts the PUBLIC scan token on the header, which is what
-         the print's QR encodes since 2026-08-26 (/d/<token>, no login). Stamped
-         here for the same reason the row id used to be: so no call site has to
-         remember to. */
-      const { armDoScanToken } = await import("../vendor/scm/lib/do-scan-token-arm");
-      return { header: await armDoScanToken(j.deliveryOrder as object, target.key), items: j.items };
+      /* REVERTED 2026-08-26 at the owner's request: the printed Delivery Order
+         goes back to exactly what it was before today — same QR, same caption,
+         same link. `loadScanId` arms the print's "scan to mark loaded" QR, which
+         lands on /scm/do-load and needs a signed-in office account.
+
+         The PUBLIC no-login token still exists and the driver page still works;
+         it is only the PRINTED code that points at the old, authed link again.
+         Undoing this revert is one line: swap this back for armDoScanToken. */
+      return { header: { ...(j.deliveryOrder as object), loadScanId: target.key }, items: j.items };
     }
     case "si": {
       const j = await authedFetch<{ salesInvoice: Json; items: unknown[] }>(`/sales-invoices/${k}`);

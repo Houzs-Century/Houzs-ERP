@@ -55,18 +55,24 @@ describe('the DO print QR', () => {
      link is /d/<token>. `loadScanId` is gone with it: it was not an id any more
      and the code had stopped being about "load". */
   it('is gated on the explicit scanToken, and encodes the PUBLIC /d/ link', () => {
-    expect(PDF).toContain('header.scanToken && typeof window');
-    expect(PDF).toContain('/d/${encodeURIComponent(header.scanToken)}');
+    /* REVERTED 2026-08-26 at the owner's request — he asked to see the previous
+       printed Delivery Order again before deciding. The PUBLIC token and the
+       no-login driver page both still exist and still work; only the PRINTED QR
+       points back at the authed /scm/do-load link. Undoing this revert is one
+       line in printDocumentPdf.ts (swap loadScanId back for armDoScanToken). */
+    expect(PDF).toContain('header.loadScanId && typeof window');
+    expect(PDF).toContain('/scm/do-load?id=${encodeURIComponent(header.loadScanId)}');
     expect(PDF).toContain('drawQrIntoPdf');
-    expect(PDF_CODE, 'the authed link must not still be printed anywhere').not.toContain('/scm/do-load?id=');
   });
 
   /* THE CAPTION HAD TO CHANGE WITH THE LADDER. "SCAN · MARK LOADED" named ONE
      of the four things the code now does, so it was wrong on three papers out
      of four. The caption states what is true of every rung. */
   it('the caption names the repeated scan, not one rung', () => {
-    expect(PDF).toContain("doc.text('SCAN AT EACH STEP'");
-    expect(PDF_CODE).not.toContain('MARK LOADED');
+    /* REVERTED with the link above. The caption is the old one again because
+       the link it describes is the old one again — a caption naming four rungs
+       over a QR that only opens the office page would be the worse lie. */
+    expect(PDF).toContain("doc.text('SCAN · MARK LOADED'");
   });
 
   it('is never armed by the Consignment Note print', () => {
