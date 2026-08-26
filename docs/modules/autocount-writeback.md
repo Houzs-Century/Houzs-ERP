@@ -1361,6 +1361,29 @@ through `Set()`, which **swallows**, so a warehouse code `dbo.Location` does not
 hold would leave the purchase order looking saved and carrying no location at
 all.
 
+**AND FOR EIGHT DAYS IT DID** (#0549, fixed 2026-08-26). `Set()` swallowing was
+written down here; what was not, is that the value being swallowed was one this
+ERP sends on *every* purchase order. `readWarehouseCode` returned
+`scm.warehouses.code` RAW — `KL WAREHOUSE`, twelve characters against a
+`LocationCode` of eight — so AutoCount skipped both `PurchaseLocation` and every
+line `Location` and saved the order anyway:
+
+```
+set skipped: Cannot set column 'PurchaseLocation'. The value violates the
+             MaxLength limit of this column.
+```
+
+Owner 2026-08-24: *「我的 PO 明明应该是 Bintang Warehouse，但去到 AutoCount 里面
+它却变成了 HQ」* — the book's default, showing because nothing was written.
+
+The table at §the create's location ladder has said *"then through
+`LOCATION_MAP`"* since it was written. **The document was right and the code was
+not**: `withLocations` (the line resolver) and `readWarehouseCode` (the PO
+header) both skipped the map. The conversion header was fixed on 2026-08-25, but
+that fix reads `warehouse_id` and a purchase order has no such column — its
+warehouse is `purchase_location_id` — so the whole PO path was untouched by it.
+*A fix for "the same bug" does not reach a path it never runs on.*
+
 **TWO ASSIGNMENTS, AND THE FIRST DRAFT OF THIS FIX HAD ONE.** `CreatePo` does
 not call `PurchaseHeader`; it sets `DocNo`, `DocDate`, the creditor, `Agent`,
 `Ref`, `Description` and the UDFs itself. Adding `PurchaseLocation` only to
