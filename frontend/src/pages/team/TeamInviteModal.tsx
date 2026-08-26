@@ -32,6 +32,28 @@ type SendResult = {
   activated: boolean;
 };
 
+type BulkResult = { email: string; ok: boolean; error?: string };
+
+/** Split a pasted blob into unique, lower-cased, syntactically-plausible emails.
+ *  Accepts newline / comma / semicolon / whitespace separators, and tolerates
+ *  "Name <a@b.com>" by taking the part inside the angle brackets. Dedupes. */
+export function parseBulkEmails(text: string): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of text.split(/[\s,;]+/)) {
+    const token = raw.trim().replace(/^.*<([^>]+)>.*$/, "$1"); // "Name <a@b>" → a@b
+    const email = token.toLowerCase();
+    if (!email) continue;
+    // Deliberately lenient — the server does the authoritative validation; this
+    // only keeps obvious non-emails out of the send loop and out of the count.
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) continue;
+    if (seen.has(email)) continue;
+    seen.add(email);
+    out.push(email);
+  }
+  return out;
+}
+
 const inputCls =
   "w-full rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-ink outline-none focus:border-primary disabled:bg-surface-2 disabled:text-ink-muted";
 
@@ -75,6 +97,13 @@ export function TeamInviteModal({
   const [posPin, setPosPin] = useState("");
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState<SendResult | null>(null);
+  // Bulk-paste mode (owner 2026-08-26): paste many emails, share ONE assignment,
+  // loop the same invite endpoint. Single stays the default; AutoCount import
+  // stays a placeholder (no employee pipeline — separate research).
+  const [inputMode, setInputMode] = useState<"single" | "bulk">("single");
+  const [bulkText, setBulkText] = useState("");
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkResults, setBulkResults] = useState<BulkResult[] | null>(null);
 
   const multiCompany = companies.length > 1;
 
@@ -130,6 +159,7 @@ export function TeamInviteModal({
   }, [members, deptId]);
 
   const canSend = email.trim().includes("@") && !sending && !posPinInvalid;
+  const bulkEmails = useMemo(() => parseBulkEmails(bulkText), [bulkText]);
 
   async function send() {
     if (!canSend) return;
@@ -182,6 +212,56 @@ export function TeamInviteModal({
     } finally {
       setSending(false);
     }
+  }
+
+  // Bulk send — the SAME assignment (dept / position / manager / role / company /
+  // team) applied to every pasted email, one invite POST each. Per-person fields
+  // (name, phone, password, POS PIN) are NOT offered in bulk; those are set on
+  // the member afterward. Failures are collected per-email and reported, never
+  // aborting the rest — a duplicate or a typo in the middle must not swallow the
+  // twenty good invites around it.
+  async function sendBulk() {
+    if (bulkEmails.length === 0 || bulkBusy) return;
+    const roleId = defaultRoleId(roles);
+    if (roleId == null && !salesDirScoped) {
+      toast.error("No role available to assign — create a baseline role first.");
+      return;
+    }
+    setBulkBusy(true);
+    const results: BulkResult[] = [];
+    for (const addr of bulkEmails) {
+      try {
+        await api.post("/api/users/invite", {
+          email: addr,
+          department_id: deptId,
+          position_id: positionId,
+          manager_id: managerId,
+          ...(roleId != null ? { role_id: roleId } : {}),
+          ...(multiCompany && companyIds.length ? { company_ids: companyIds } : {}),
+        });
+        results.push({ email: addr, ok: true });
+      } catch (e) {
+        results.push({ email: addr, ok: false, error: e instanceof Error ? e.message : "failed" });
+      }
+    }
+    // One roster read, then stamp the shared team on every member the batch
+    // created — the same placeholder-row PATCH the single path does, batched.
+    const invited = results.filter((r) => r.ok).map((r) => r.email);
+    if (division.trim() && invited.length > 0) {
+      try {
+        const fresh = await api.get<{ users: TeamMember[] }>("/api/users");
+        const byEmail = new Map(fresh.users.map((u) => [u.email.toLowerCase(), u]));
+        for (const addr of invited) {
+          const u = byEmail.get(addr);
+          if (u) await api.patch(`/api/users/${u.id}`, { division: division.trim() });
+        }
+      } catch {
+        toast.error(`Invites sent, but the team "${division.trim()}" wasn't saved on all of them — set it on their profiles.`);
+      }
+    }
+    setBulkResults(results);
+    setBulkBusy(false);
+    onInvited();
   }
 
   /* Company is a first-class choice on every invite (owner 2026-08-21:
@@ -260,6 +340,32 @@ export function TeamInviteModal({
               Done
             </Button>
           </div>
+        ) : bulkResults ? (
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setBulkResults(null);
+                setBulkText("");
+              }}
+            >
+              Invite more
+            </Button>
+            <Button variant="primary" onClick={onClose}>
+              Done
+            </Button>
+          </div>
+        ) : inputMode === "bulk" ? (
+          <div className="flex items-center justify-end gap-2">
+            <Button variant="ghost" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button variant="primary" disabled={bulkEmails.length === 0 || bulkBusy} onClick={sendBulk}>
+              {bulkBusy
+                ? "Sending…"
+                : `Send ${bulkEmails.length} invite${bulkEmails.length === 1 ? "" : "s"}`}
+            </Button>
+          </div>
         ) : (
           <div className="flex items-center justify-end gap-2">
             <Button variant="ghost" onClick={onClose}>
@@ -309,19 +415,62 @@ export function TeamInviteModal({
             </div>
           )}
         </div>
+      ) : bulkResults ? (
+        <div className="flex flex-col gap-4 p-1">
+          {(() => {
+            const okCount = bulkResults.filter((r) => r.ok).length;
+            const failCount = bulkResults.length - okCount;
+            return (
+              <div className="rounded-lg border border-primary bg-primary-soft p-4">
+                <div className="text-[13px] font-semibold text-primary-ink">
+                  {okCount} invite{okCount === 1 ? "" : "s"} sent
+                  {failCount > 0 ? ` · ${failCount} failed` : ""}
+                </div>
+                <p className="mb-0 mt-1 text-[12px] leading-relaxed text-primary-ink">
+                  Each member gets a link to set their password. Name, phone and POS
+                  access are set on their profile afterward.
+                </p>
+              </div>
+            );
+          })()}
+          <div className="flex flex-col gap-1">
+            {bulkResults.map((r) => (
+              <div
+                key={r.email}
+                className="flex items-center justify-between gap-2 rounded-md border border-border-subtle bg-surface-2 px-3 py-1.5"
+              >
+                <span className="truncate font-mono text-[12px] text-ink">{r.email}</span>
+                {r.ok ? (
+                  <span className="flex-none text-[11.5px] text-primary">Sent</span>
+                ) : (
+                  <span className="flex-none text-[11.5px] text-err" title={r.error}>
+                    {r.error ?? "Failed"}
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
       ) : (
         <div className="flex flex-col gap-5 p-1">
-          {/* Input modes — Single works today; the other two await backend. */}
+          {/* Input modes — Single + Bulk paste both work; AutoCount import still
+              awaits an employee pipeline (separate research). */}
           <div className="flex w-max items-center gap-1 rounded-md bg-surface-2 p-1">
-            <span className="rounded bg-surface px-3 py-1 text-[12px] font-semibold text-ink shadow-stone">
-              Single
-            </span>
-            <span
-              className="cursor-not-allowed px-3 py-1 text-[12px] text-ink-muted"
-              title="Bulk invites aren't wired up yet"
-            >
-              Bulk paste
-            </span>
+            {(["single", "bulk"] as const).map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => setInputMode(mode)}
+                className={cn(
+                  "rounded px-3 py-1 text-[12px] transition-colors",
+                  inputMode === mode
+                    ? "bg-surface font-semibold text-ink shadow-stone"
+                    : "text-ink-muted hover:text-ink-secondary",
+                )}
+              >
+                {mode === "single" ? "Single" : "Bulk paste"}
+              </button>
+            ))}
             <span
               className="cursor-not-allowed px-3 py-1 text-[12px] text-ink-muted"
               title="AutoCount staff import isn't wired up yet"
@@ -330,42 +479,64 @@ export function TeamInviteModal({
             </span>
           </div>
 
-          <div className="grid gap-x-5 gap-y-4" style={{ gridTemplateColumns: "1fr 1fr" }}>
-            <div>
-              <div className="text-[11.5px] text-ink-muted">Name</div>
-              <input
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="Full name"
-                className={cn(inputCls, "mt-1")}
-              />
-            </div>
-            <div>
-              <div className="text-[11.5px] text-ink-muted">Employee ID</div>
-              <div className="mt-1 rounded-md border border-border bg-surface-2 px-3 py-2 font-mono text-[12.5px] text-ink-muted">
-                Assigned automatically (EMP-…)
+          {inputMode === "single" ? (
+            <div className="grid gap-x-5 gap-y-4" style={{ gridTemplateColumns: "1fr 1fr" }}>
+              <div>
+                <div className="text-[11.5px] text-ink-muted">Name</div>
+                <input
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="Full name"
+                  className={cn(inputCls, "mt-1")}
+                />
+              </div>
+              <div>
+                <div className="text-[11.5px] text-ink-muted">Employee ID</div>
+                <div className="mt-1 rounded-md border border-border bg-surface-2 px-3 py-2 font-mono text-[12.5px] text-ink-muted">
+                  Assigned automatically (EMP-…)
+                </div>
+              </div>
+              <div>
+                <div className="text-[11.5px] text-ink-muted">Login email</div>
+                <input
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="name@houzscentury.com"
+                  type="email"
+                  className={cn(inputCls, "mt-1 font-mono text-[12.5px]")}
+                />
+              </div>
+              <div>
+                <div className="text-[11.5px] text-ink-muted">Phone</div>
+                <PhoneInput
+                  value={phone}
+                  onChange={setPhone}
+                  placeholder="12-345 6789 (optional)"
+                  className={cn(inputCls, "mt-1")}
+                />
               </div>
             </div>
+          ) : (
             <div>
-              <div className="text-[11.5px] text-ink-muted">Login email</div>
-              <input
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="name@houzscentury.com"
-                type="email"
-                className={cn(inputCls, "mt-1 font-mono text-[12.5px]")}
+              <div className="flex items-baseline justify-between">
+                <div className="text-[11.5px] text-ink-muted">Login emails</div>
+                <div className="text-[11px] text-ink-muted">
+                  {bulkEmails.length} valid email{bulkEmails.length === 1 ? "" : "s"}
+                </div>
+              </div>
+              <textarea
+                value={bulkText}
+                onChange={(e) => setBulkText(e.target.value)}
+                rows={5}
+                placeholder={"Paste emails — one per line, or separated by commas.\nname@houzscentury.com\nother@houzscentury.com"}
+                className={cn(inputCls, "mt-1 resize-y font-mono text-[12.5px]")}
               />
+              <div className="mt-1 text-[10.5px] text-ink-muted">
+                Everyone below shares the same assignment. Name, phone, password and POS
+                PIN are per-person — set them on each member afterward.
+              </div>
             </div>
-            <div>
-              <div className="text-[11.5px] text-ink-muted">Phone</div>
-              <PhoneInput
-                value={phone}
-                onChange={setPhone}
-                placeholder="12-345 6789 (optional)"
-                className={cn(inputCls, "mt-1")}
-              />
-            </div>
-          </div>
+          )}
 
           {/* Assignment — prefilled from the Directory's selected department. */}
           <div className="rounded-md border border-border-subtle bg-surface-2 p-4">
@@ -489,7 +660,7 @@ export function TeamInviteModal({
             </p>
           </div>
 
-          {showPosPin && (
+          {inputMode === "single" && showPosPin && (
             <div className="flex flex-col gap-2 border-t border-border-subtle pt-4">
               <div className="text-[12.5px] font-medium text-ink">
                 POS PIN &middot; 2990&rsquo;s Home
@@ -518,27 +689,30 @@ export function TeamInviteModal({
             </div>
           )}
 
-          {/* Optional direct-create: set a password now → active account. */}
-          <div className="flex flex-col gap-2 border-t border-border-subtle pt-4">
-            <label className="flex cursor-pointer items-center gap-2 text-[12.5px] text-ink-secondary">
-              <input
-                type="checkbox"
-                checked={withPassword}
-                onChange={(e) => setWithPassword(e.target.checked)}
-                className="h-3.5 w-3.5 accent-primary"
-              />
-              Set a password now — creates the account active, no invite email
-            </label>
-            {withPassword && (
-              <input
-                type="text"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Initial password (member can change it later)"
-                className={cn(inputCls, "max-w-[340px] font-mono text-[12.5px]")}
-              />
-            )}
-          </div>
+          {/* Optional direct-create: set a password now → active account. Single
+              only — a shared password across a paste of people is never right. */}
+          {inputMode === "single" && (
+            <div className="flex flex-col gap-2 border-t border-border-subtle pt-4">
+              <label className="flex cursor-pointer items-center gap-2 text-[12.5px] text-ink-secondary">
+                <input
+                  type="checkbox"
+                  checked={withPassword}
+                  onChange={(e) => setWithPassword(e.target.checked)}
+                  className="h-3.5 w-3.5 accent-primary"
+                />
+                Set a password now — creates the account active, no invite email
+              </label>
+              {withPassword && (
+                <input
+                  type="text"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Initial password (member can change it later)"
+                  className={cn(inputCls, "max-w-[340px] font-mono text-[12.5px]")}
+                />
+              )}
+            </div>
+          )}
         </div>
       )}
     </Panel>
