@@ -452,11 +452,16 @@ async function renderPurchaseOrderInto(
     styles: { fontSize: 8.5, cellPadding: { top: 1.5, right: 1.5, bottom: 1.5, left: 1.5 }, lineColor: [120, 120, 120], lineWidth: 0.1 },
     headStyles: { fontStyle: 'bold', halign: 'left', valign: 'middle', lineWidth: { top: 0.4, bottom: 0.4 } as never },
     bodyStyles: { valign: 'top' },
-    // Widths sum to 180mm — fits the A4 printable width (210 − 14×2 = 182).
+    // Fixed columns sum + Description('auto') fit the A4 printable width (210 − margin×2).
     columnStyles: {
-      0: { cellWidth: 25 },                    // For SO — fits "SO-2606-001" on one line
+      // For SO — must fit the LONGEST doc number on ONE line. The prefix grew:
+      // "SO-2606-001" (11 ch) was the old worst case at 25mm, but company-prefixed
+      // numbers are longer — "HC-SO-2608-008" (14) and "2990-SO-2608-026" (16) —
+      // and were wrapping ("HC-SO-2608-00" / "8"). 34mm fits 16 ch at 8.5pt; the
+      // 'auto' Description column absorbs the extra width.
+      0: { cellWidth: 34 },                    // For SO — fits "2990-SO-2608-026" on one line
       1: { cellWidth: 27, fontStyle: 'bold' }, // Supplier Code (the code they act on)
-      2: { cellWidth: 'auto' },                // Description — auto-fills (≈68mm with margin 10)
+      2: { cellWidth: 'auto' },                // Description — auto-fills the remainder
       3: { cellWidth: 11 },                    // UOM
       4: { cellWidth: 10, halign: 'right' },   // Qty
       5: { cellWidth: 19, halign: 'right' },   // U/Price
