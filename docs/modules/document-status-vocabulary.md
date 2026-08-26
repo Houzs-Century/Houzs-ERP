@@ -171,6 +171,18 @@ this drifted.** Sixteen list and detail pages declare their own
 > and compares what `doc.text` painted; a source scan over `*-pdf.ts` catches a
 > generator that is not in its table yet.
 >
+> **EIGHT of the nine, not nine — the delivery order was reverted the same day
+> (2026-08-26).** The owner asked for the previous printed sheet back
+> (「就是pdf啊」), so `delivery-order-pdf.ts` title-cases the raw stored value
+> again. That makes the delivery order **the one printed document whose status
+> disagrees with its own screen**: the paper prints `LOADED` for the state every
+> screen calls *Confirmed*, while *Loaded* on screen means stored `DISPATCHED`.
+> One word, two rungs, depending on paper or screen. This is the restored
+> previous behaviour, chosen — not an oversight. `pdf-status-label.test.ts` pins
+> it by name (`render('LOADED') === 'LOADED'`) and exempts this one file from the
+> generator scan with a comment saying to delete both filters when the revert is
+> undone; a tenth generator written tomorrow is still caught.
+>
 > **One word is still unsettled and it is the owner's to pick.**
 > `status-pill.ts` says SO `IN_PRODUCTION` reads **Proceed**;
 > `frontend/src/pages/scm-v2/so-list-status.ts` says **In Production** while its

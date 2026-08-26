@@ -782,6 +782,21 @@ not a thirteenth spelling.
 now read their batch-export bundles from `printDocumentPdf.ts` too, so the row
 menu's print and the list's "Export PDF (N)" cannot drift apart.
 
+**REVERTED THE SAME DAY, AT THE OWNER'S REQUEST (2026-08-26).** Everything in
+the next three paragraphs was live for a few hours and is now UNDONE: the `do`
+branch stamps `loadScanId` (the delivery order's row id) again, so the printed
+QR encodes `/scm/do-load?id=…` — the authed link — and the caption is
+`SCAN · MARK LOADED`. The owner looked at the new sheet and asked for the old
+one back before deciding: 「就是pdf啊」/「revert 回来之后，我要先看到旧的那个文件」.
+The consequence he was told about and accepted: **the paper QR opens a login
+screen for the storekeeper and the driver again.** The public token, the
+`/d/<token>` page and the three-scan ladder all still exist and still work —
+only the paper points elsewhere. Undoing the revert is one line here (swap
+`loadScanId` back for `armDoScanToken`) plus one in the generator;
+`docs/bugs/0549-the-delivery-order-sheet-is-reverted-to-its-previous-form-at.md`
+has the pair. Read the rest as the design that is waiting to come back, not as
+what ships today.
+
 **The `do` branch fetches a SECOND thing, and it is the only branch that does
 (2026-08-26).** After reading the delivery order it calls `armDoScanToken`
 (`frontend/src/vendor/scm/lib/do-scan-token-arm.ts`), which asks the authed
