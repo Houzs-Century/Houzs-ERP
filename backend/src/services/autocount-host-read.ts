@@ -38,19 +38,6 @@ export const AC_READ_ROUTE = {
 
 export type AcReadOp = keyof typeof AC_READ_ROUTE;
 
-/**
- * The document types `/doc-read` will read.
- *
- * MIRRORS `AcSyncService.DocTypes`, which is the list the host turns into a
- * table name (`SO` -> `SO` + `SODTL`). Kept here rather than in the route so the
- * ERP's copy of the host's contract lives with the rest of the host's contract;
- * a type the host drops should fail one import, not go looking for a string
- * literal in a handler.
- */
-export const BOOK_DOC_TYPES = ['SO', 'PO', 'DO', 'GR', 'IV', 'PI'] as const;
-
-export type BookDocType = typeof BOOK_DOC_TYPES[number];
-
 export interface AcReadResult {
   ok: boolean;
   status: number;

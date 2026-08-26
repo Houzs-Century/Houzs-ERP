@@ -1,5 +1,6 @@
 import { describe, expect, test, vi } from 'vitest';
-import { callAcRead, AC_READ_ROUTE, BOOK_DOC_TYPES } from './autocount-host-read';
+import { callAcRead, AC_READ_ROUTE } from './autocount-host-read';
+import { REQUEUE_DOC_TYPES } from '../scm/lib/autocount-requeue';
 import acSyncSrc from '../../scripts/autocount-service/AcSyncService.cs?raw';
 import { AC_ROUTE } from './autocount-writeback';
 
@@ -69,7 +70,16 @@ describe('callAcRead — the read-only host routes', () => {
 });
 
 /* ---------------------------------------------------------------------------
-   BOOK_DOC_TYPES — the ERP's copy of the host's own list.
+   REQUEUE_DOC_TYPES — the ERP's ONE list of AutoCount document types, pinned
+   against the host's own.
+
+   Named for the sweep because that is where it was first needed, but the
+   question it answers is "which six documents does this ERP sync with
+   AutoCount", and `/book-doc` asks the same one. The first draft of that route
+   declared a `BOOK_DOC_TYPES` of its own; `audit:duplicated-decisions` refused
+   it as a fifth home for one decision, correctly. This test is what makes the
+   shared list safe to share: it proves the single answer still matches the
+   book's.
 
    `/doc-read` turns this value into a TABLE NAME (`SO` -> `SO` + `SODTL`), so a
    list that drifts from the host's is not a cosmetic mismatch: it is either a
@@ -86,7 +96,7 @@ describe('the document types the account book will read', () => {
     expect(m, 'AcSyncService.DocTypes not found — did the host rename it?').toBeTruthy();
     const theirs = (m as RegExpMatchArray)[1]
       .split(',').map((t) => t.trim().replace(/^"|"$/g, '')).filter(Boolean);
-    expect([...BOOK_DOC_TYPES]).toEqual(theirs);
+    expect([...REQUEUE_DOC_TYPES]).toEqual(theirs);
   });
 
   test('every type is a table the host can name', () => {
@@ -94,6 +104,6 @@ describe('the document types the account book will read', () => {
        `[" + docType + "DTL]`, so anything else is a SQL identifier it never
        meant to build. The host also upper-cases the caller's value, and the
        route does the same, so the stored list must already be upper. */
-    for (const t of BOOK_DOC_TYPES) expect(t).toMatch(/^[A-Z]{2}$/);
+    for (const t of REQUEUE_DOC_TYPES) expect(t).toMatch(/^[A-Z]{2}$/);
   });
 });

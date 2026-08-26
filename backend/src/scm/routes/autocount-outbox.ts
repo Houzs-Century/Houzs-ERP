@@ -58,9 +58,10 @@ import {
   acRowIsRequeueable,
   classifyAcSkip,
 } from '../lib/autocount-outbox-status';
-import { callAcRead, BOOK_DOC_TYPES } from '../../services/autocount-host-read';
+import { callAcRead } from '../../services/autocount-host-read';
 import {
   AC_REQUEUE_MEANING,
+  REQUEUE_DOC_TYPES,
   acRequeueAccepted,
   requeueOutboxRow,
   sendOutboxRowNow,
@@ -652,11 +653,18 @@ export const autocountBookDocHandler = async (
   /* VALIDATED HERE AS WELL AS ON THE HOST. The host builds its table name from
      this value, and it guards itself — but a route that forwards whatever it is
      given makes the host's guard the only one, and a caller then learns the
-     rule from a 500. */
-  if (!(BOOK_DOC_TYPES as readonly string[]).includes(docType)) {
+     rule from a 500.
+
+     `REQUEUE_DOC_TYPES`, NOT A LIST OF ITS OWN. The first draft declared
+     `BOOK_DOC_TYPES` beside `AC_READ_ROUTE` — one business question ("which six
+     documents does this ERP sync with AutoCount") acquiring a fifth home, which
+     `audit:duplicated-decisions` refused, correctly. The set is the same set and
+     `autocountHostRead.test.ts` now pins THIS list against the host's own
+     `DocTypes`, so the shared answer is the one proven to match the book. */
+  if (!(REQUEUE_DOC_TYPES as readonly string[]).includes(docType)) {
     return c.json({
       error: 'invalid_doc_type',
-      message: `docType must be one of ${BOOK_DOC_TYPES.join(', ')}.`,
+      message: `docType must be one of ${REQUEUE_DOC_TYPES.join(', ')}.`,
     }, 400);
   }
   if (!docNo) {
