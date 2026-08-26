@@ -8793,15 +8793,24 @@ function DocumentTable({
   onReload: () => void;
   toast?: ReturnType<typeof useToast>;
 }) {
-  const { user } = useAuth();
+  const { can, user } = useAuth();
   // Owner 2026-08-10: "kris can upload fill in floorplan". A view-only Sales
   // Director has no projects.write, so canManage is false and the Attach button
   // was hidden — for this ONE document they get it. Backend enforces the same
   // narrow rule (salesDirectorMayAttach), this is just the affordance.
   const isSalesDirectorPos =
     (user?.position_name ?? "").trim().toLowerCase() === "sales director";
+  // Owner 2026-08-24: a tick-only role (no projects.write — the Purchaser after
+  // that permission was stripped from the role, and drivers before her) attaches
+  // to documents badged for its OWN function. The upload endpoint has always
+  // allowed this (projects.checklist.tick + roleLabelAdmits), and mobile shows
+  // the button; only this desktop table demanded projects.write, so the
+  // Purchaser saw an empty Actions column on her own Stock Out Transfer Record.
+  const canTick = can("projects.checklist.tick");
   const mayAttach = (it: ChecklistItem) =>
-    canManage || (isSalesDirectorPos && /^filled floor\s*plan/i.test((it.title || "").trim()));
+    canManage ||
+    (isSalesDirectorPos && /^filled floor\s*plan/i.test((it.title || "").trim())) ||
+    (canTick && roleLabelAdmitsRole(it.role_label, user?.role_name));
   return (
     <div className="p-2 sm:overflow-x-auto">
       <table className="w-full text-[11px]">
@@ -9582,6 +9591,15 @@ function ChecklistRow({
   toast?: ReturnType<typeof useToast>;
 }) {
   const dialog = useDialog();
+  const { user: authUser } = useAuth();
+  // Attach capability for THIS row. canManage is projects.write; a tick-only
+  // role (Purchaser since projects.write was stripped, drivers before her) may
+  // also attach to a task badged for its own function — the upload endpoint has
+  // always allowed exactly that, and mobile already shows the button. DELETE is
+  // deliberately NOT widened here: it stays on canManage (owner 2026-08-05
+  // "managers only"), matching the mobile rule.
+  const mayAttachRow =
+    !!canManage || (!!canTick && roleLabelAdmitsRole(item.role_label, authUser?.role_name));
   const [expanded, setExpanded] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
   const [reason, setReason] = useState("");
@@ -9765,7 +9783,7 @@ function ChecklistRow({
             ))}
           </div>
           <span className="flex-1" />
-          {canManage && (
+          {mayAttachRow && (
             <button
               onClick={() => void startAttach()}
               disabled={uploading}
@@ -10001,7 +10019,7 @@ function ChecklistRow({
               different controls depending on the section. Now every section
               uses the DocRow treatment: icon + label inside one bordered pill,
               accent-filled when active. */}
-          {canManage && !readOnlyAttach && (
+          {mayAttachRow && !readOnlyAttach && (
             <button
               onClick={() => void startAttach()}
               disabled={uploading}
@@ -10685,6 +10703,24 @@ function AddStockTransferForm({
 // merged "Sales PIC & Driver" pill.
 function roleLabelParts(label: string): string[] {
   return label.split("&").map((s) => s.trim()).filter(Boolean);
+}
+
+/** Does the task's role badge admit this user's role? MIRRORS the backend
+ *  `roleLabelAdmits` (backend/src/services/projectGates.ts) and the mobile copy
+ *  in MobilePMS.tsx: exact match on each "&"-separated part, plus DRIVER-badged
+ *  field tasks admitting HELPER / STOREKEEPER (no task is ever badged those).
+ *  Desktop had no copy of this rule, which is why a tick-only role saw no
+ *  Attach button on its OWN badged documents while mobile and the API allowed
+ *  the upload — see attachAdmitsRole below. */
+function roleLabelAdmitsRole(
+  label: string | null | undefined,
+  roleName: string | null | undefined,
+): boolean {
+  const r = (roleName ?? "").trim().toUpperCase();
+  if (!r) return false;
+  return roleLabelParts((label ?? "").toUpperCase()).some(
+    (l) => l === r || (l === "DRIVER" && (r === "HELPER" || r === "STOREKEEPER")),
+  );
 }
 
 /** THE Attach / Remark / N/A button shape for the whole desktop PMS (owner
