@@ -6862,7 +6862,7 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
        2026-08-25: only a line ANCHORED by a live downstream PO/DO still 409s;
        an un-anchored bound line moves with its order like a NULL line (gate,
        fail modes and plan: lib/so-state-warehouse-rebind.ts). The rebind runs
-       inside apply_so_header_cas (mig 0328, p_rebind_line_ids) — same
+       inside apply_so_header_cas (mig 0330, p_rebind_line_ids) — same
        transaction as the CAS, so a losing stale editor half-moves nothing. */
     const reboundWh = await deriveWarehouseIdFromState(sb, body['customerState'] as string | null, c);
     if (reboundWh) {
@@ -7222,7 +7222,7 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
       : null,
     p_apply_warehouse: Boolean(reboundWarehouseId),
     p_warehouse_id: reboundWarehouseId,
-    // mig 0328 — cleared conflicts move with the order; null = NULL lines only.
+    // mig 0330 — cleared conflicts move with the order; null = NULL lines only.
     p_rebind_line_ids: rebindLineIds.length > 0 ? rebindLineIds : null,
     p_apply_delivery_date: body['customerDeliveryDate'] !== undefined || cascadedDeliveryClear,
     p_delivery_date: cascadedDeliveryClear ? null : dateOrNull(body['customerDeliveryDate']),

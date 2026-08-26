@@ -33,7 +33,7 @@ cannot disagree. The line-ADD path inherits the order's warehouse through
 gate is narrowed to its own stated reason
 (lib/so-state-warehouse-rebind.ts): a line anchored by a live downstream
 PO/DO still 409s; an un-anchored bound line moves with its order inside the
-header CAS transaction (mig 0328 adds `p_rebind_line_ids uuid[]` to
+header CAS transaction (mig 0330 adds `p_rebind_line_ids uuid[]` to
 `apply_so_header_cas`; anchor lookup fails CLOSED). Pinned by
 `tests/soCreateOperatorStoreDefault.test.ts` and
 `tests/soStateWarehouseRebind.test.ts`.

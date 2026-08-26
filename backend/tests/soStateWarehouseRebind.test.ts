@@ -42,7 +42,7 @@ describe('planStateWarehouseRebind', () => {
   });
 
   it('NULL-warehouse and already-matching lines are never conflicts', () => {
-    // NULL lines rebind unconditionally inside the CAS (the pre-0328 clause);
+    // NULL lines rebind unconditionally inside the CAS (the pre-0330 clause);
     // matching lines have nothing to move.
     const plan = planStateWarehouseRebind(KL, [
       { id: 'l1', itemCode: 'A', warehouseId: null, anchored: true },

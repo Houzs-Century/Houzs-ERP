@@ -1708,7 +1708,7 @@ counts the same shape, baseline 10 (the addressless orders below).
 
 Also relevant: `apply_so_header_cas` rebinds `warehouse_id` when the header's
 warehouse changes — on the order's **NULL lines** (mig 0173) plus, since mig
-0328, the ids the route passes as `p_rebind_line_ids`; the approved-amendment
+0330, the ids the route passes as `p_rebind_line_ids`; the approved-amendment
 path (`so-revision.ts`) rebinds every non-cancelled line.
 
 #### The order is born belonging to the operator's store (owner 2026-08-25)
@@ -1735,7 +1735,7 @@ has one.
 reason** (`lib/so-state-warehouse-rebind.ts`): a bound line 409s only when a
 LIVE downstream PO/DO anchors it (DRAFT POs count as live, same ruling as
 `so-po-lock`); an un-anchored bound line MOVES with its order inside the CAS
-transaction (`p_rebind_line_ids`, mig 0328). Without this, no state maps to a
+transaction (`p_rebind_line_ids`, mig 0330). Without this, no state maps to a
 showroom, so every store-born order would 409 on the address fill. The anchor
 lookup fails CLOSED (unreadable downstream = anchored = the old blanket 409);
 the mismatch read keeps its historical fail-OPEN (gate skipped, only NULL
