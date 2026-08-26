@@ -11,7 +11,7 @@ FOR, which trees are dead, what must be changed in pairs — lives in
 
 ## 1. Backend route inventory
 
-148 route modules (44 in `backend/src/routes`, 104 in `backend/src/scm/routes`), 1070 endpoint registrations.
+148 route modules (44 in `backend/src/routes`, 104 in `backend/src/scm/routes`), 1072 endpoint registrations.
 
 An endpoint is a `router.<method>("/…")` registration. For the per-route authorization
 boundary see the sibling artifact `docs/generated/route-capability-matrix.csv`, which
@@ -23,7 +23,7 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/announcements.ts` | 11 | 1421 |
 | `backend/src/routes/assistant.ts` | 4 | 225 |
 | `backend/src/routes/assr.ts` | 62 | 3323 |
-| `backend/src/routes/assrFormIntake.ts` | 6 | 902 |
+| `backend/src/routes/assrFormIntake.ts` | 6 | 954 |
 | `backend/src/routes/assrPortal.ts` | 14 | 540 |
 | `backend/src/routes/assr_print.ts` | 1 | 1218 |
 | `backend/src/routes/audit.ts` | 1 | 74 |
@@ -31,7 +31,7 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/branding.ts` | 5 | 294 |
 | `backend/src/routes/clientErrors.ts` | 2 | 232 |
 | `backend/src/routes/companies.ts` | 1 | 48 |
-| `backend/src/routes/departments.ts` | 4 | 202 |
+| `backend/src/routes/departments.ts` | 4 | 242 |
 | `backend/src/routes/finance.ts` | 2 | 466 |
 | `backend/src/routes/fleet.ts` | 1 | 37 |
 | `backend/src/routes/inbox.ts` | 1 | 545 |
@@ -48,7 +48,7 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/presence.ts` | 2 | 201 |
 | `backend/src/routes/projects.ts` | 109 | 5052 |
 | `backend/src/routes/projects_print.ts` | 1 | 1320 |
-| `backend/src/routes/publicDoScan.ts` | 2 | 657 |
+| `backend/src/routes/publicDoScan.ts` | 4 | 924 |
 | `backend/src/routes/push.ts` | 2 | 71 |
 | `backend/src/routes/roles.ts` | 8 | 376 |
 | `backend/src/routes/sales.ts` | 13 | 1302 |
@@ -176,14 +176,14 @@ scripts, never assumed: each runner declares its own directory, and
 
 | tree | runner | *.sql | highest | applied to PRODUCTION by deploy.yml | read by backend vitest |
 |---|---|---|---|---|---|
-| `backend/src/db/migrations` | `backend/scripts/migrate.mjs` | 150 | `151_position_page_overrides.sql` (151) | no | yes |
-| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 328 | `0330_scm_so_header_cas_rebind_line_ids.sql` (0330) | YES | no |
+| `backend/src/db/migrations` | `backend/scripts/migrate.mjs` | 151 | `152_departments_lead_and_headcount.sql` (152) | no | yes |
+| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 329 | `0331_departments_lead_and_headcount.sql` (0331) | YES | no |
 
 Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its number): `0136_capture_compat_views_trips_lorries.sql.TEMPLATE`
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1761 files, 640489 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1769 files, 642944 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -367,7 +367,7 @@ Page files by directory:
 
 | directory | *.tsx |
 |---|---|
-| `frontend/src/pages` | 34 |
+| `frontend/src/pages` | 35 |
 | `frontend/src/pages/MailCenter` | 3 |
 | `frontend/src/pages/scm-v2` | 125 |
 | `frontend/src/pages/scm-v2/products` | 1 |
@@ -410,11 +410,11 @@ Page files by directory:
 | `frontend/src/mobile/MobilePMS.tsx` | 4375 |
 | `frontend/src/mobile/MobilePOD.tsx` | 558 |
 | `frontend/src/mobile/MobilePmsDefectActions.tsx` | 109 |
-| `frontend/src/mobile/MobilePoAmendmentDetail.tsx` | 448 |
+| `frontend/src/mobile/MobilePoAmendmentDetail.tsx` | 447 |
 | `frontend/src/mobile/MobilePoAmendments.tsx` | 137 |
 | `frontend/src/mobile/MobileProfile.tsx` | 1002 |
 | `frontend/src/mobile/MobileRelationshipMap.tsx` | 275 |
-| `frontend/src/mobile/MobileSODetail.tsx` | 2118 |
+| `frontend/src/mobile/MobileSODetail.tsx` | 2116 |
 | `frontend/src/mobile/MobileSalesOrders.tsx` | 847 |
 | `frontend/src/mobile/MobileScan.tsx` | 1467 |
 | `frontend/src/mobile/MobileSearch.tsx` | 285 |
