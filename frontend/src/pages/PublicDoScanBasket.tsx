@@ -15,6 +15,22 @@
 // possible inside a page that never leaves — see lib/use-qr-scanner.ts, which is
 // Hookka's loop with its hard-won rules intact.
 //
+// THE FIRST PAPER SETS THE RUNG, AND A PAPER ON A DIFFERENT RUNG IS NOT LET IN
+// AT ALL. The owner, 2026-08-27: 「不同状态你就不要给它扫描进来吧，就当做它还没
+// 扫描到。同样的东西不能在不同状态下重复扫描。它应该根据第一个状态来扫描。」
+//
+// This is stricter than the server, on purpose, and the server keeps its own
+// checks anyway — a document can move between the scan and the press, and the
+// basket is not the thing that decides whether a write is legal. What the rule
+// buys is that the operator never assembles a pile that CANNOT all move: the
+// refusal happens at the lorry with the paper still in hand, not afterwards in a
+// list of reasons. A rejected scan leaves the basket exactly as it was, which is
+// what 「就当做它还没扫描到」 means.
+//
+// It also collapses three buttons to ONE. A uniform pile has exactly one next
+// rung, and the ladder computes it — so there is nothing to choose and no way to
+// press the wrong thing.
+//
 // WHICH RUNGS ARE OFFERED, AND THE ONE THAT IS NOT. The three buttons are
 // DERIVED from the ladder, never typed here. DRAFT -> LOADED is deliberately
 // excluded: it is the rung that CONFIRMS a delivery order and takes the goods
@@ -31,9 +47,10 @@ import { statusLabel } from "../vendor/scm/lib/status-pill";
 import { doScanLadderOrder, doScanStep, type DoScanStep } from "../vendor/shared/do-scan-ladder";
 import { correlatedFetch } from "../lib/requestCorrelation";
 
-/* THE RUNGS A PILE MAY BE MOVED TO, walked out of the ladder rather than typed.
-   Add a rung to the ladder and it appears here; there is no second list to
-   forget. LOADED is dropped for the reason in the header. */
+/* THE RUNGS A PILE MAY BE FOR, walked out of the ladder rather than typed. Add a
+   rung to the ladder and it appears here; there is no second list to forget.
+   LOADED is dropped for the reason in the header — a paper whose next step is
+   LOADED cannot start or join a pile. */
 const BATCH_STEPS: DoScanStep[] = doScanLadderOrder()
   .map((from) => doScanStep(from, false))
   .filter((s): s is DoScanStep => s !== null)
@@ -67,6 +84,11 @@ export function PublicDoScanBasket() {
      loop fires from a callback that must see the CURRENT set, and a state
      snapshot captured at subscribe time would let the same paper in twice. */
   const seen = useRef<Set<string>>(new Set());
+  /* THE RUNG THIS BASKET IS FOR, taken from the first paper that got in. Null
+     until then. A ref as well as state because the decode callback has to test
+     it synchronously, before a re-render. */
+  const lockedRef = useRef<DoScanStep | null>(null);
+  const [locked, setLocked] = useState<DoScanStep | null>(null);
 
   const addToken = useCallback(async (token: string) => {
     if (seen.current.has(token)) return;
@@ -83,7 +105,54 @@ export function PublicDoScanBasket() {
       });
       const body = (await res.json()) as { lines?: Line[] };
       const found = body.lines?.[0];
-      if (found) setLines((prev) => prev.map((l) => (l.token === token ? { ...l, ...found } : l)));
+      if (!found) return;
+
+      /* UNDO THE OPTIMISTIC LINE when the paper may not join. The line went in
+         before the lookup answered so the count keeps up with the operator's
+         hands; a refusal has to take it back out, or the basket would show a
+         document it is not going to move. */
+      const reject = (why: string) => {
+        seen.current.delete(token);
+        setLines((prev) => prev.filter((l) => l.token !== token));
+        setRejected(why);
+      };
+
+      if (!found.step) {
+        /* Held, cancelled, or already finished. It has a sentence of its own
+           from the ladder — the operator reads that, not a generic refusal. */
+        reject(
+          `${found.doNumber ?? "That delivery order"} was not added. ${found.blockReason ?? "It has no next step."}`,
+        );
+        return;
+      }
+      /* THE RUNG THAT DEDUCTS STOCK CANNOT BE PILED. A delivery order still at
+         DRAFT has LOADED as its next step, and that rung confirms the document
+         and takes the goods out of the warehouse — a decision that belongs to
+         one document at a time, not to whatever happened to be in a hand. */
+      if (!BATCH_STEPS.some((b) => b.status === found.step!.status)) {
+        reject(
+          `${found.doNumber ?? "That delivery order"} was not added — confirming a delivery order takes it out of `
+          + `stock, so it is done one at a time. Open it on its own.`,
+        );
+        return;
+      }
+      const lock = lockedRef.current;
+      if (lock && found.step.status !== lock.status) {
+        reject(
+          `${found.doNumber ?? "That delivery order"} was not added — this pile is for "${lock.label}", `
+          + `and that one is at ${statusLabel("do", found.status)}. Finish this pile first, then start another.`,
+        );
+        return;
+      }
+      if (!lock) {
+        /* FIRST PAPER IN SETS THE RUNG. Held in a ref as well as state because
+           the next decode may arrive before React has re-rendered. */
+        const first: DoScanStep = { ...found.step } as DoScanStep;
+        lockedRef.current = first;
+        setLocked(first);
+      }
+      setRejected(null);
+      setLines((prev) => prev.map((l) => (l.token === token ? { ...l, ...found } : l)));
     } catch {
       setLines((prev) =>
         prev.map((l) =>
@@ -116,15 +185,32 @@ export function PublicDoScanBasket() {
 
   const scanner = useQrScanner(onDecoded);
 
+  /* EMPTYING THE BASKET RELEASES THE RUNG. Otherwise a storekeeper who cleared
+     a pile of Loaded papers could not then start a pile of In Transit ones
+     without reloading the page — the lock would outlive the pile it was for. */
+  const releaseIfEmpty = (remaining: number) => {
+    if (remaining === 0) {
+      lockedRef.current = null;
+      setLocked(null);
+    }
+  };
+
   const remove = (token: string) => {
     seen.current.delete(token);
-    setLines((prev) => prev.filter((l) => l.token !== token));
+    setLines((prev) => {
+      const next = prev.filter((l) => l.token !== token);
+      releaseIfEmpty(next.length);
+      return next;
+    });
   };
 
   const clear = () => {
     seen.current = new Set();
+    lockedRef.current = null;
+    setLocked(null);
     setLines([]);
     setNotice(null);
+    setRejected(null);
   };
 
   async function send(to: string) {
@@ -284,27 +370,27 @@ export function PublicDoScanBasket() {
 
       {lines.length > 0 && (
         <>
-          <div className="space-y-2">
-            {BATCH_STEPS.map((s) => (
+          {/* ONE BUTTON, because the pile is uniform by construction — the
+              first paper set the rung and nothing on a different one was let
+              in. There is nothing to choose, so there is no wrong thing to
+              press. Its words come from the ladder, never from here. */}
+          {locked && (
+            <>
               <button
-                key={s.status}
                 type="button"
                 disabled={busy}
-                onClick={() => void send(s.status)}
+                onClick={() => void send(locked.status)}
                 className="flex w-full items-center justify-center gap-2 rounded-md bg-accent px-4 py-3 text-base font-semibold text-white disabled:opacity-60"
               >
                 {busy ? <Loader2 size={18} className="animate-spin" /> : <PackageCheck size={18} />}
-                {s.label} ({lines.length})
+                {locked.label} ({lines.length})
               </button>
-            ))}
-          </div>
-          {/* THE PILE IS NOT UNIFORM AND THE OPERATOR IS TOLD SO BEFORE PRESSING.
-              Only the papers on that rung move; the rest come back with a line
-              each saying why. */}
-          <p className="text-xs text-ink-secondary">
-            Only the delivery orders ready for the step you press will move. Anything already past it, on hold or
-            cancelled is left alone and listed back to you.
-          </p>
+              {/* The line the rung carries with it. For the delivered rung this
+                  is the sentence naming the signature, photo and location this
+                  scan does NOT capture (bug 0481). */}
+              <p className="text-xs text-ink-secondary">{locked.note}</p>
+            </>
+          )}
           <button type="button" onClick={clear} className="w-full rounded-md border border-line px-3 py-2 text-sm">
             Clear the list
           </button>

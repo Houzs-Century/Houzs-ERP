@@ -58,14 +58,37 @@ delivery order and takes the goods out of stock; doing that to a pile at once
 from a page with no login is a different class of risk from moving papers that
 already left the warehouse. Everything a basket holds is past the deduction.
 
-**IT DOES NOT WORK ON A PAPER PRINTED AFTER THE REVERT, AND THAT IS NOT A BUG
-HERE.** The basket reads `/d/<64 hex>` — the public token. The same day, at the
-owner's request, `docs/bugs/0549` put the printed delivery order back to encoding
-`/scm/do-load?id=<uuid>`, the logged-in link. **A sheet printed today cannot go
-into the basket**; a sheet printed yesterday can. The page says so in words
-rather than ignoring the scan, because an operator scanning repeatedly with
-nothing happening decides the scanner is broken. Resolving this is the owner's
-call — either undo 0549, or accept that batch scanning needs sheets reprinted
-with the public QR.
+**THE FIRST PAPER SETS THE RUNG, AND A PAPER ON A DIFFERENT RUNG IS NOT LET IN.**
+The owner, 2026-08-27, after being shown what a mixed pile did:
+「不同状态你就不要给它扫描进来吧，就当做它还没扫描到。同样的东西不能在不同状态下
+重复扫描。它应该根据第一个状态来扫描。」
+
+「就当做它还没扫描到」 is the load-bearing half: a refused scan leaves the basket
+exactly as it was — the optimistic row removed, the count unchanged, the token
+free to be scanned again into a pile it belongs to. Adding the row and greying it
+out would satisfy a looser reading and would still be wrong.
+
+This is STRICTER than the server, deliberately, and the server keeps all of its
+own checks: a document can move between the scan and the press, and the basket is
+not the thing that decides whether a write is legal. What the rule buys is that
+the refusal happens at the lorry with the paper still in hand, instead of
+afterwards in a list of reasons.
+
+It also collapses three buttons to ONE — a uniform pile has exactly one next
+rung, so there is nothing to choose and no way to press the wrong thing. Emptying
+the basket releases the rung, or a storekeeper could not start a second pile
+without reloading the page.
+
+**THE REVERT WAS DROPPED (2026-08-27).** An earlier draft of this entry warned
+that a sheet printed after `docs/bugs/0549` would carry the logged-in link and
+could not go into the basket. The owner then said 「DO PDF revert 不需要了 就用最
+新的」, so 0549 was closed unmerged and the printed delivery order keeps the
+public `/d/<token>` QR. Freshly printed sheets scan into the basket. The
+paragraph is kept rather than deleted because the conflict was real and would
+return if the revert were ever reopened.
+
+**A code the basket cannot read is still NAMED, not ignored,** because an operator scanning repeatedly with nothing happening decides the
+scanner is broken. The basket reads `/d/<64 hex>` and says so about anything
+else.
 
 **Ref.** feat/scan-a-pile-of-papers-and-press-once, 2026-08-26.
