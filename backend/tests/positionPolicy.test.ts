@@ -46,7 +46,7 @@ const EXPECTED_COHORT: Record<string, "full" | "restricted" | "sales"> = {
   "Helper": "restricted",
   "Service Admin": "full",
   "Storekeeper Supervisor": "restricted",
-  "Calendar Viewer": "full",
+  "Calendar Viewer": "restricted",
 };
 
 // The manual whitelists — the FULL set of non-none resolved keys (including the
@@ -99,6 +99,14 @@ const EXPECTED_WHITELIST: Record<string, Record<string, AccessLevel>> = {
     projects: "view",
     "projects.list": "view", // inherits the L1 parent
     "projects.calendar": "view", // inherits the L1 parent
+  },
+  // Calendar ONLY (owner 2026-08-26). Projects group renders for the one Calendar
+  // sub-tab; projects.list / finances / maintenance carry explicit none rows and
+  // resolve none in the all-else sweep. scm = none (explicit) keeps it honestly
+  // scm_l2_configured — see CALENDAR_VIEWER_ROWS in positionPolicy.ts.
+  "Calendar Viewer": {
+    projects: "view",
+    "projects.calendar": "view",
   },
 };
 
@@ -646,14 +654,16 @@ describe("money-write carve-out — the DOOR (not theatre)", () => {
     expect(body.error).not.toContain("scm.finance");
   });
 
-  test("every OTHER full position is denied the same way (ops, logistics, calendar viewer)", async () => {
+  test("every OTHER full position is denied the same way (ops, logistics, service admin)", async () => {
+    // Calendar Viewer is NO LONGER here — it is restricted (scm = none), so it
+    // cannot even READ the finance pages, let alone write. The restricted
+    // all-else-none sweep proves scm.finance.accounting = none for it.
     for (const [pos, dept] of [
       ["Operation Manager", "Operation Department"],
       ["Operation Executive", "Operation Department"],
       ["Procurement/Purchasing", "Operation Department"],
       ["Logistic Admin", "Operation Department"],
       ["Service Admin", "Operation Department"],
-      ["Calendar Viewer", "Management"],
     ] as const) {
       const app = financeAppFor(fullNonFinance(pos, dept));
       expect((await app.request("/accounting/journal-entries", { method: "POST" })).status, pos).toBe(403);

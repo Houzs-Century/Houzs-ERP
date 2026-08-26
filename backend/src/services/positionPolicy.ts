@@ -288,14 +288,41 @@ const STOREKEEPER_SUPERVISOR_ROWS: readonly PolicyRow[] = [
   { page_key: "scm.procurement.grn", level: "edit" },
 ];
 
+// Calendar Viewer — the narrowest office role: the CALENDAR and nothing else
+// (owner 2026-08-26, 「Calendar Viewer = 只有日历」). It exists to give someone
+// the shared events board without any operational surface, so a fail-open FULL
+// map (which it had until this row) was the whole point defeated.
+//
+// The Projects group renders for its ONE Calendar sub-tab; the List / Finances /
+// Maintenance sub-tabs carry explicit `none` rows so the L1 `projects` = view
+// does not cascade onto them (same override mechanism as the Storekeeper
+// warehouse denials).
+//
+// The `scm` = none row is deliberate and load-bearing. Calendar Viewer has NO
+// SCM access, and stating it EXPLICITLY (rather than leaving SCM absent) flips
+// this position scm_l2_configured — so the area-guard ENFORCES the denial on
+// every /api/scm/* route instead of falling through to the coarse `scm.access`
+// umbrella, which a stray role grant could otherwise satisfy. Every scm.* child
+// inherits this none. (The three other office positions the owner reviewed —
+// HR Manager / Service Admin / Procurement-Purchasing — stay FULL for now: owner
+// 2026-08-26 kept them on the default-full interim, so they are NOT listed here.)
+const CALENDAR_VIEWER_ROWS: readonly PolicyRow[] = [
+  { page_key: "projects", level: "view" },
+  { page_key: "projects.calendar", level: "view" },
+  { page_key: "projects.list", level: "none" },
+  { page_key: "projects.finances", level: "none" },
+  { page_key: "projects.maintenance", level: "none" },
+  { page_key: "scm", level: "none" },
+];
+
 /**
  * The restricted cohort, keyed by normalised position name. Each entry is the
  * WHOLE of that position's page access (default-none for everything unlisted).
  *
  * Aliases: the map is the single place a future documented rename is added, so a
- * partial revert never silently drops a restriction — none of the two renames the
+ * partial revert never silently drops a restriction — none of the renames the
  * repo has seen ("Purchasing"->"Procurement/Purchasing", "Logistic"->"Logistic
- * Admin") touch these four names, so no alias is needed today.
+ * Admin") touch these names, so no alias is needed today.
  */
 const RESTRICTED_ROWS: ReadonlyMap<string, readonly PolicyRow[]> = new Map(
   [
@@ -303,6 +330,7 @@ const RESTRICTED_ROWS: ReadonlyMap<string, readonly PolicyRow[]> = new Map(
     ["Helper", DRIVER_HELPER_ROWS],
     ["Storekeeper", STOREKEEPER_ROWS],
     ["Storekeeper Supervisor", STOREKEEPER_SUPERVISOR_ROWS],
+    ["Calendar Viewer", CALENDAR_VIEWER_ROWS],
   ].map(([name, rows]) => [normalisePosition(name as string), rows as readonly PolicyRow[]]),
 );
 
