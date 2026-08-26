@@ -336,12 +336,20 @@ scm.use(
   scmAreaGuard("scm.sales.delivery", {
     readInheritsFrom: "scm.sales.orders",
     writeBypass: (c) => {
-      if (c.req.method !== "PATCH" || !c.req.path.endsWith("/status")) return false;
       const u = c.get("user") as unknown as Parameters<typeof hasPositionCapability>[0];
-      return (
-        hasPositionCapability(u, "scm.do.load") ||
-        hasPositionCapability(u, "scm.do.dispatch")
-      );
+      // Storekeeper / driver scan-confirm + dispatch — PATCH .../status only.
+      if (c.req.method === "PATCH" && c.req.path.endsWith("/status")) {
+        return (
+          hasPositionCapability(u, "scm.do.load") ||
+          hasPositionCapability(u, "scm.do.dispatch")
+        );
+      }
+      // Ops-lead revert — POST .../revert only, on the editable scm.do.revert
+      // capability. The handler re-checks the verb and reverses stock itself.
+      if (c.req.method === "POST" && c.req.path.endsWith("/revert")) {
+        return hasPositionCapability(u, "scm.do.revert");
+      }
+      return false;
     },
   }),
 );

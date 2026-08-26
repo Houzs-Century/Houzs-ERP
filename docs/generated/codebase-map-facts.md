@@ -11,7 +11,7 @@ FOR, which trees are dead, what must be changed in pairs — lives in
 
 ## 1. Backend route inventory
 
-146 route modules (44 in `backend/src/routes`, 102 in `backend/src/scm/routes`), 1067 endpoint registrations.
+148 route modules (44 in `backend/src/routes`, 104 in `backend/src/scm/routes`), 1070 endpoint registrations.
 
 An endpoint is a `router.<method>("/…")` registration. For the per-route authorization
 boundary see the sibling artifact `docs/generated/route-capability-matrix.csv`, which
@@ -23,7 +23,7 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/announcements.ts` | 11 | 1421 |
 | `backend/src/routes/assistant.ts` | 4 | 225 |
 | `backend/src/routes/assr.ts` | 62 | 3323 |
-| `backend/src/routes/assrFormIntake.ts` | 5 | 675 |
+| `backend/src/routes/assrFormIntake.ts` | 6 | 902 |
 | `backend/src/routes/assrPortal.ts` | 14 | 540 |
 | `backend/src/routes/assr_print.ts` | 1 | 1218 |
 | `backend/src/routes/audit.ts` | 1 | 74 |
@@ -42,7 +42,7 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/mail-inbound.ts` | 1 | 59 |
 | `backend/src/routes/notifications.ts` | 1 | 218 |
 | `backend/src/routes/portal.ts` | 6 | 329 |
-| `backend/src/routes/pos.ts` | 9 | 444 |
+| `backend/src/routes/pos.ts` | 9 | 506 |
 | `backend/src/routes/position-capabilities.ts` | 3 | 218 |
 | `backend/src/routes/positions.ts` | 9 | 571 |
 | `backend/src/routes/presence.ts` | 2 | 201 |
@@ -76,8 +76,9 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/customer-mirror.ts` | 1 | 103 |
 | `backend/src/scm/routes/delivery-fees.ts` | 5 | 236 |
 | `backend/src/scm/routes/delivery-messages.ts` | 2 | 190 |
+| `backend/src/scm/routes/delivery-order-revert.ts` | 0 | 206 |
 | `backend/src/scm/routes/delivery-order-scan-token.ts` | 1 | 53 |
-| `backend/src/scm/routes/delivery-orders-mfg.ts` | 15 | 5601 |
+| `backend/src/scm/routes/delivery-orders-mfg.ts` | 16 | 5601 |
 | `backend/src/scm/routes/delivery-planning-regions.ts` | 7 | 356 |
 | `backend/src/scm/routes/delivery-planning.ts` | 5 | 2904 |
 | `backend/src/scm/routes/delivery-rate-cards.ts` | 11 | 689 |
@@ -102,6 +103,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/hr.ts` | 19 | 1573 |
 | `backend/src/scm/routes/inventory-adjustments.ts` | 1 | 233 |
 | `backend/src/scm/routes/inventory.ts` | 16 | 1739 |
+| `backend/src/scm/routes/loading-list.ts` | 1 | 182 |
 | `backend/src/scm/routes/localities.ts` | 4 | 265 |
 | `backend/src/scm/routes/lorries.ts` | 3 | 329 |
 | `backend/src/scm/routes/lorry-capacity.ts` | 3 | 493 |
@@ -111,7 +113,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/mfg-purchase-orders-list-enrichment.ts` | 1 | 82 |
 | `backend/src/scm/routes/mfg-purchase-orders.ts` | 24 | 4538 |
 | `backend/src/scm/routes/mfg-sales-orders-list-enrichment.ts` | 1 | 195 |
-| `backend/src/scm/routes/mfg-sales-orders.ts` | 42 | 12057 |
+| `backend/src/scm/routes/mfg-sales-orders.ts` | 42 | 11947 |
 | `backend/src/scm/routes/model-free-gifts.ts` | 3 | 147 |
 | `backend/src/scm/routes/mrp-lead-times.ts` | 2 | 95 |
 | `backend/src/scm/routes/mrp.ts` | 2 | 1688 |
@@ -175,19 +177,19 @@ scripts, never assumed: each runner declares its own directory, and
 | tree | runner | *.sql | highest | applied to PRODUCTION by deploy.yml | read by backend vitest |
 |---|---|---|---|---|---|
 | `backend/src/db/migrations` | `backend/scripts/migrate.mjs` | 150 | `151_position_page_overrides.sql` (151) | no | yes |
-| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 328 | `0329_scm_trip_public_scan_token.sql` (0329) | YES | no |
+| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 328 | `0330_scm_so_header_cas_rebind_line_ids.sql` (0330) | YES | no |
 
 Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its number): `0136_capture_compat_views_trips_lorries.sql.TEMPLATE`
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1753 files, 639085 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1761 files, 640489 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
 |---|---|
 | `frontend/src/pages/Projects.tsx` | 15054 |
-| `backend/src/scm/routes/mfg-sales-orders.ts` | 12057 |
+| `backend/src/scm/routes/mfg-sales-orders.ts` | 11947 |
 | `frontend/src/pages/ServiceCases.tsx` | 8816 |
 | `backend/src/services/autocount-sofa-corpus.ts` | 7933 |
 | `frontend/src/pages/Team.tsx` | 5686 |
@@ -209,7 +211,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 
 ## 4. Frontend desktop routes
 
-145 `<Route>` declarations in `frontend/src/App.tsx` (aliases from
+146 `<Route>` declarations in `frontend/src/App.tsx` (aliases from
 `frontend/src/lib/routeAliases.ts` are expanded at runtime and not counted here).
 
 | path | page module |
@@ -287,6 +289,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `/scm/hr/settings` | `frontend/src/pages/scm-v2/HrSettings` |
 | `/scm/inventory` | `frontend/src/pages/scm-v2/Inventory` |
 | `/scm/inventory/stock-card/:itemCode` | `frontend/src/pages/scm-v2/StockCard` |
+| `/scm/loading-list` | `frontend/src/pages/scm-v2/LoadingList` |
 | `/scm/lorry-capacity` | `frontend/src/pages/scm-v2/LorryCapacity` |
 | `/scm/maintenance` | `frontend/src/pages/scm-v2/Products` |
 | `/scm/mrp` | `frontend/src/pages/scm-v2/Mrp` |
@@ -366,7 +369,7 @@ Page files by directory:
 |---|---|
 | `frontend/src/pages` | 34 |
 | `frontend/src/pages/MailCenter` | 3 |
-| `frontend/src/pages/scm-v2` | 124 |
+| `frontend/src/pages/scm-v2` | 125 |
 | `frontend/src/pages/scm-v2/products` | 1 |
 | `frontend/src/pages/team` | 10 |
 

@@ -325,6 +325,33 @@ export const useUpdateMfgDeliveryOrderStatus = () => {
   });
 };
 
+/* DO REVERT — the Ops-lead exception power (undo a wrong scan / accidental
+   dispatch). POSTs to the dedicated revert route, NOT the status PATCH (which
+   refuses a shipped→pre-ship move). The server enforces the capability, the legal
+   transitions, the downstream lock and the inventory reversal; this hook just
+   invalidates the same queries a status change does — a revert to DRAFT restores
+   stock and releases the SO. */
+export const useRevertMfgDeliveryOrder = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, toStatus, reason }: { id: string; toStatus: 'LOADED' | 'DRAFT'; reason: string }) =>
+      authedFetch(`/delivery-orders-mfg/${id}/revert`, {
+        method: 'POST', body: JSON.stringify({ toStatus, reason }),
+      }),
+    onSuccess: (_, vars) => {
+      // void — same fire-and-forget invalidation the sibling status hook does;
+      // marked so this new hook adds no floating promise to the file's ratchet.
+      void qc.invalidateQueries({ queryKey: ['mfg-delivery-orders'] });
+      void qc.invalidateQueries({ queryKey: ['mfg-delivery-order-detail', vars.id] });
+      void qc.invalidateQueries({ queryKey: ['inventory'] });
+      releaseSoSideQueries(qc);
+    },
+    onError: (err) => {
+      void serviceNotify({ title: 'Revert failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' });
+    },
+  });
+};
+
 /* DO header PATCH — editable SO-style fields (debtor / salesperson / address /
    dates / driver / emergency contact / venue). Mirrors
    useUpdateMfgSalesOrderHeader. */

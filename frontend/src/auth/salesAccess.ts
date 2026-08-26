@@ -250,6 +250,17 @@ export function canDriverCompleteDelivery(
 }
 
 /**
+ * May this user REVERT a delivery order — the Ops-lead exception power (undo a
+ * wrong scan / accidental dispatch, restoring stock when it crosses back to a
+ * pre-ship state)? Gated on the editable scm.do.revert capability. The SERVER is
+ * the boundary — it enforces the exact legal transitions, the downstream lock and
+ * the inventory reversal — so this only decides whether the Revert controls SHOW.
+ */
+export function canRevertDelivery(user: AuthUser | null | undefined): boolean {
+  return (user?.position_capabilities ?? []).includes("scm.do.revert");
+}
+
+/**
  * PROCUREMENT OPERATE gate — "may this user CREATE or CHANGE a PO / GRN".
  *
  * Same job as {@link canOperateScmSalesDoc} for the two supply-chain areas, and
