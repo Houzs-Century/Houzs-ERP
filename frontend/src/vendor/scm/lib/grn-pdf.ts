@@ -14,6 +14,10 @@ import { formatPhone } from '@2990s/shared/phone';
 import { COMPANY, DOC_TABLE_HEAD_STYLES, DOC_TABLE_STYLES, deliverPdf, drawHeader, drawInfoColumns, drawSignatureBoxes, ensurePdfCjkFont, fmtRm, safeName, fmtDocDate, type PdfAction } from './pdf-common';
 import { supplierBlock } from './pdf-party-blocks';
 import { loadSupplierDocData, supplierCodeFor, docVariantLine } from './supplier-doc-data';
+/* The status WORD comes from the one home for it, never from a caser here:
+   what this document prints and what the screen shows must be the same word.
+   docs/modules/document-status-vocabulary.md §1. */
+import { statusLabel } from './status-pill';
 
 type GrnHeader = {
   grn_number: string; status: string;
@@ -78,7 +82,7 @@ export async function renderGrnInto(
     sFull?.country,
   ].filter(Boolean) as string[];
 
-  const statusText = header.status.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
+  const statusText = statusLabel('grn', header.status);
   y = drawInfoColumns(doc, y,
     /* Canonical supplier block via the shared helper — matches PO / PI / PR
        so the four purchasing docs read the same rows in the same order. */

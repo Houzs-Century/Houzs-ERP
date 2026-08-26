@@ -17,6 +17,10 @@ import { siDepositAppliedSen } from './si-outstanding';
 import { COMPANY, DOC_TABLE_HEAD_STYLES, DOC_TABLE_STYLES, deliverPdf, drawHeader, drawInfoColumns, drawSignatureBoxes, ensurePdfCjkFont, fmtRm, safeName, fmtDocDate, type PdfAction } from './pdf-common';
 import { billToBlock } from './pdf-party-blocks';
 import { docVariantLine, loadCustomerFabricMaps } from './supplier-doc-data';
+/* The status WORD comes from the one home for it, never from a caser here:
+   what this document prints and what the screen shows must be the same word.
+   docs/modules/document-status-vocabulary.md §1. */
+import { statusLabel } from './status-pill';
 
 type SiHeader = {
   invoice_number: string; status: string;
@@ -102,7 +106,7 @@ export async function renderSalesInvoiceInto(
     .map((s) => (typeof s === 'string' ? s.trim() : ''))
     .filter(Boolean)
     .join(', ');
-  const statusText = header.status.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
+  const statusText = statusLabel('si', header.status);
   /* An invoice with no address is not a document that stands alone — it cannot
      be posted, filed or matched to a customer record on its own. Row order +
      labels mirror the SO/DO BILL TO block via the shared billToBlock. */

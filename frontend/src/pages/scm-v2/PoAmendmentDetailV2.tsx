@@ -28,7 +28,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { generateAmendmentPdf } from "../../vendor/scm/lib/amendment-pdf";
-import { poAmendmentToPdfInput } from "../../vendor/scm/lib/amendment-pdf-map";
+import { amendmentPrintedStatus, poAmendmentToPdfInput } from "../../vendor/scm/lib/amendment-pdf-map";
 import { fmtDateTime, fmtMoneySen } from "@2990s/shared";
 import { Button } from "../../components/Button";
 import {
@@ -445,7 +445,6 @@ export function PoAmendmentDetailV2() {
   /* Printable amendment document — the shared client-side jsPDF template already
      handles PO via poAmendmentToPdfInput. Status label is the SIMPLIFIED
      Requested / Approved the owner asked for. */
-  const applied = status === "APPROVED";
   const deliverPrintPdf = (action: PdfAction) => {
     if (!amendment) return;
     const input = poAmendmentToPdfInput({
@@ -461,7 +460,6 @@ export function PoAmendmentDetailV2() {
       lines: lines as never,
       purchaseOrder: purchaseOrder as never,
       supplierName: null,
-      statusLabel: applied ? "Approved" : "Requested",
     });
     return Promise.resolve(generateAmendmentPdf(input, { action })).catch((e: unknown) =>
       notify({ title: "PDF generation failed", body: e instanceof Error ? e.message : "Something went wrong.", tone: "error" }),
@@ -858,7 +856,7 @@ export function PoAmendmentDetailV2() {
         docNo={amendmentNo ?? "Amendment"}
         rows={[
           { label: "Against PO", value: poNumber || "—" },
-          { label: "Status", value: applied ? "Approved" : "Requested" },
+          { label: "Status", value: amendmentPrintedStatus(status) },
           { label: "Reason", value: reason || "—" },
           {
             label: "Changes",
