@@ -29,6 +29,11 @@ export type Env = {
    *  a separate key from FORM_INTAKE_KEY because the form-intake script
    *  lives in a different Google account than the HC Delivery sheet's. */
   SHEET_SYNC_KEY?: string;
+  /** Shared secret for the sheet's 2990 ready-to-ship pull (Nico 2026-08-26).
+   *  A THIRD key, not a reuse: the two above both speak for HOUZS, and by the
+   *  2026-08-18 rule a secret may only open its own company's data. This one
+   *  speaks for 2990 and opens nothing else. Unset => /so-export 401s. */
+  SHEET_SYNC_KEY_2990?: string;
   /** ISO-8601 instant. While set AND in the future, a Sales Order mutation that
    *  omits the concurrency `version` is accepted with the pre-CAS
    *  last-writer-wins semantics instead of 428. This is the ROLLOUT grace for

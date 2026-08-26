@@ -744,7 +744,13 @@ const brandingForSheet = (raw: string | null): string | null => {
   return /^2990s\b/i.test(b) ? b : `2990s ${b}`;
 };
 
-const SHEET_SO_COMPANY_ID = 2; // 2990 Sdn Bhd — Houzs (1) comes via AutoCount
+/* The 2990 feed carries 2990 customers' names, phones and addresses, so by the
+   rule established 2026-08-18 (see INTAKE_KEY_COMPANY above) it needs its OWN
+   secret: FORM_INTAKE_KEY and SHEET_SYNC_KEY both speak for HOUZS and must
+   never be the key that opens 2990 data. The company id is then read from the
+   companies master under this code rather than hardcoded — a renamed or
+   re-seeded company must break loudly, not silently export the wrong tenant. */
+const SO_EXPORT_KEY_COMPANY = "2990";
 
 /** sen → the plain ringgit number the sheet's currency columns expect. */
 const senToAmount = (sen: number | null | undefined): number =>
@@ -786,9 +792,8 @@ type ReadySoLine = {
 
 app.get("/so-export", async (c) => {
   const provided = c.req.header("X-Intake-Key") || "";
-  const keys = [c.env.FORM_INTAKE_KEY, c.env.SHEET_SYNC_KEY];
-  const ok = keys.some((k) => k && timingSafeEqualStr(provided, k));
-  if (!ok) {
+  const secret = c.env.SHEET_SYNC_KEY_2990 || "";
+  if (!secret || !timingSafeEqualStr(provided, secret)) {
     const limited = await checkRateLimit(c, "intake_badkey", clientIp(c), 10, 900);
     await new Promise((r) => setTimeout(r, 250));
     if (limited) return limited;
@@ -796,6 +801,21 @@ app.get("/so-export", async (c) => {
   }
   if (!isSupabaseConfigured(c.env)) {
     return c.json({ error: "supabase not configured" }, 503);
+  }
+
+  /* Scope from the master, and refuse when it cannot be read. The ASSR exports
+     above may degrade to "no predicate" on a master-less install (single tenant,
+     nothing to leak to); this one may not — an unscoped read HERE is the Houzs
+     export, which is the whole thing the 2026-08-18 rule forbids. */
+  const keyCo = await intakeCompany(c.env.DB, SO_EXPORT_KEY_COMPANY);
+  if (keyCo.id == null) {
+    return c.json(
+      {
+        error: "company_unresolved",
+        message: `No company is configured for code ${SO_EXPORT_KEY_COMPANY}, so this export cannot be scoped and is refused.`,
+      },
+      503,
+    );
   }
 
   const sb = getSupabaseService(c.env);
@@ -807,7 +827,7 @@ app.get("/so-export", async (c) => {
         "building_type, address1, address2, address3, address4, " +
         "city, postcode, customer_state, transfer_to"
     )
-    .eq("company_id", SHEET_SO_COMPANY_ID)
+    .eq("company_id", keyCo.id)
     .eq("status", "READY_TO_SHIP")
     .order("so_date", { ascending: true });
   if (error) return c.json({ error: error.message }, 502);
@@ -819,10 +839,15 @@ app.get("/so-export", async (c) => {
   // REST edge caps a single `in.()` list, and this set only ever grows.
   const linesByDoc = new Map<string, ReadySoLine[]>();
   for (let i = 0; i < docNos.length; i += 100) {
-    const { data } = await sb
+    /* Bind the error: supabase-js does not throw, and a swallowed failure here
+       reads as "this order has no lines" — summariseReadiness([]) then returns
+       an empty remark, so a five-second blip would write a BLANK Remarks 2 into
+       the sheet and call it ready. Refuse the whole export instead. */
+    const { data, error: lineErr } = await sb
       .from("mfg_sales_order_items")
       .select("doc_no, item_group, item_code, stock_status, cancelled")
       .in("doc_no", docNos.slice(i, i + 100));
+    if (lineErr) return c.json({ error: lineErr.message }, 502);
     for (const l of (data ?? []) as unknown as ReadySoLine[]) {
       const arr = linesByDoc.get(l.doc_no) ?? [];
       arr.push(l);
@@ -834,10 +859,13 @@ app.get("/so-export", async (c) => {
   const staffById = new Map<string, string>();
   const staffIds = [...new Set(orders.map((o) => o.salesperson_id).filter(Boolean))] as string[];
   for (let i = 0; i < staffIds.length; i += 100) {
-    const { data } = await sb
+    /* Same reason: a swallowed failure here empties the Agent column instead
+       of saying that anything went wrong. */
+    const { data, error: staffErr } = await sb
       .from("staff")
       .select("id, name")
       .in("id", staffIds.slice(i, i + 100));
+    if (staffErr) return c.json({ error: staffErr.message }, 502);
     for (const st of (data ?? []) as unknown as Array<{ id: string; name: string | null }>) {
       if (st.name) staffById.set(st.id, st.name);
     }
