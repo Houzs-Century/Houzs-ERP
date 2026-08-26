@@ -1,5 +1,7 @@
 import { describe, expect, test, vi } from 'vitest';
 import { callAcRead, AC_READ_ROUTE } from './autocount-host-read';
+import { REQUEUE_DOC_TYPES } from '../scm/lib/autocount-requeue';
+import acSyncSrc from '../../scripts/autocount-service/AcSyncService.cs?raw';
 import { AC_ROUTE } from './autocount-writeback';
 
 const env = { AC_SYNC_URL: 'http://ac.local:8900/', AC_SYNC_KEY: 'k' } as never;
@@ -64,5 +66,44 @@ describe('callAcRead — the read-only host routes', () => {
     const r = await callAcRead(env, 'last_errors', {}, f);
     expect(r.ok).toBe(false);
     expect(r.error).toContain('could not be reached');
+  });
+});
+
+/* ---------------------------------------------------------------------------
+   REQUEUE_DOC_TYPES — the ERP's ONE list of AutoCount document types, pinned
+   against the host's own.
+
+   Named for the sweep because that is where it was first needed, but the
+   question it answers is "which six documents does this ERP sync with
+   AutoCount", and `/book-doc` asks the same one. The first draft of that route
+   declared a `BOOK_DOC_TYPES` of its own; `audit:duplicated-decisions` refused
+   it as a fifth home for one decision, correctly. This test is what makes the
+   shared list safe to share: it proves the single answer still matches the
+   book's.
+
+   `/doc-read` turns this value into a TABLE NAME (`SO` -> `SO` + `SODTL`), so a
+   list that drifts from the host's is not a cosmetic mismatch: it is either a
+   400 for a document type the book can read, or a request the host has to
+   refuse. The host guards itself; this pins that the ERP's copy still says the
+   same thing, which is what makes the route's own 400 a real answer rather than
+   a guess forwarded to a 500.
+   ------------------------------------------------------------------------ */
+describe('the document types the account book will read', () => {
+  test('the ERP list matches AcSyncService.DocTypes exactly, in order', () => {
+    /* READ OFF THE HOST'S SOURCE, not retyped. `?raw` rather than node:fs —
+       backend/tsconfig.json types Workers only. */
+    const m = acSyncSrc.match(/static readonly string\[\] DocTypes = \{([^}]*)\}/);
+    expect(m, 'AcSyncService.DocTypes not found — did the host rename it?').toBeTruthy();
+    const theirs = (m as RegExpMatchArray)[1]
+      .split(',').map((t) => t.trim().replace(/^"|"$/g, '')).filter(Boolean);
+    expect([...REQUEUE_DOC_TYPES]).toEqual(theirs);
+  });
+
+  test('every type is a table the host can name', () => {
+    /* No lower case, no spaces, no punctuation: the host concatenates this into
+       `[" + docType + "DTL]`, so anything else is a SQL identifier it never
+       meant to build. The host also upper-cases the caller's value, and the
+       route does the same, so the stored list must already be upper. */
+    for (const t of REQUEUE_DOC_TYPES) expect(t).toMatch(/^[A-Z]{2}$/);
   });
 });

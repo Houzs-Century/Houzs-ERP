@@ -61,6 +61,7 @@ import {
 import { callAcRead } from '../../services/autocount-host-read';
 import {
   AC_REQUEUE_MEANING,
+  REQUEUE_DOC_TYPES,
   acRequeueAccepted,
   requeueOutboxRow,
   sendOutboxRowNow,
@@ -608,6 +609,83 @@ export const autocountHostLogHandler = async (
   });
 };
 
+/**
+ * GET /book-doc — one document as the ACCOUNT BOOK holds it, not as we sent it.
+ *
+ * WHY. Every other route here answers "what did the ERP send" or "what did the
+ * host say back". Neither can answer the questions that actually cost days:
+ *
+ *   did my edit reach AutoCount              (owner 2026-08-26)
+ *   is the convert-from link really there    (owner 2026-08-24)
+ *   which warehouse does the line carry      (#0549)
+ *
+ * All three are questions about what the BOOK holds, and no amount of reading
+ * our own payload answers one of them. `Set()` on the host SWALLOWS a refused
+ * assignment and still reports success, so "sent" has never meant "landed" —
+ * #0549 is eight days of a purchase order silently carrying no warehouse while
+ * the queue, the page and the log all showed green.
+ *
+ * AcSyncService has served `/doc-read` since 2026-08-15. Nothing in this ERP
+ * ever called it. That is the same gap `/host-log` closed for the log file.
+ *
+ * READ-ONLY IN BOTH DIRECTIONS: two SELECTs on the host, no SDK session, no
+ * outbox row, no attempt, no retry. A failure is reported and dropped.
+ *
+ * THE SAME KEYS AS SEND AGAIN, for the same reason `/host-log` uses them: this
+ * returns debtor codes, prices and addresses out of a licensed account book.
+ */
+export const autocountBookDocHandler = async (
+  c: Context<{ Bindings: Env; Variables: Variables }>,
+) => {
+  if (!REQUEUE_KEYS.some((k) => hasHouzsPerm(c, k))) {
+    return c.json(
+      {
+        error: 'forbidden',
+        message: 'Reading a document out of the account book returns account codes and '
+          + `prices, so it is limited to ${REQUEUE_KEYS.join(' or ')}.`,
+      },
+      403,
+    );
+  }
+
+  const docType = (c.req.query('docType') ?? '').trim().toUpperCase();
+  const docNo = (c.req.query('docNo') ?? '').trim();
+  /* VALIDATED HERE AS WELL AS ON THE HOST. The host builds its table name from
+     this value, and it guards itself — but a route that forwards whatever it is
+     given makes the host's guard the only one, and a caller then learns the
+     rule from a 500.
+
+     `REQUEUE_DOC_TYPES`, NOT A LIST OF ITS OWN. The first draft declared
+     `BOOK_DOC_TYPES` beside `AC_READ_ROUTE` — one business question ("which six
+     documents does this ERP sync with AutoCount") acquiring a fifth home, which
+     `audit:duplicated-decisions` refused, correctly. The set is the same set and
+     `autocountHostRead.test.ts` now pins THIS list against the host's own
+     `DocTypes`, so the shared answer is the one proven to match the book. */
+  if (!(REQUEUE_DOC_TYPES as readonly string[]).includes(docType)) {
+    return c.json({
+      error: 'invalid_doc_type',
+      message: `docType must be one of ${REQUEUE_DOC_TYPES.join(', ')}.`,
+    }, 400);
+  }
+  if (!docNo) {
+    return c.json({ error: 'invalid_doc_no', message: '`docNo` is required.' }, 400);
+  }
+
+  const r = await callAcRead(c.env, 'doc_read', { DocType: docType, DocNo: docNo });
+  if (!r.ok) return c.json({ ok: false, error: r.error, status: r.status }, 502);
+  return c.json({
+    ok: true,
+    docType: r.body?.docType ?? docType,
+    header: r.body?.header ?? null,
+    lines: r.body?.lines ?? [],
+    /* PASSED THROUGH, not dropped. The host reports a wanted column the book
+       does not have, and "AutoCount has no such field" is itself the answer to
+       several of the questions this route exists for. */
+    missingColumns: r.body?.missingColumns ?? [],
+  });
+};
+
+autocountOutbox.get('/book-doc', autocountBookDocHandler);
 autocountOutbox.get('/host-log', autocountHostLogHandler);
 autocountOutbox.get('/', listAutocountOutboxHandler);
 
