@@ -625,6 +625,11 @@ export interface Department {
   color: string;
   sort_order: number;
   member_count: number;
+  /** The department's chosen lead (mig-pg 0331). null = no lead set — the real
+   *  lead takes precedence over the derived one; see teamShared.buildDeptNodes. */
+  lead_user_id?: number | null;
+  /** Optional planned headcount an HR lead fills in. null = no target. */
+  headcount_target?: number | null;
   created_at?: string;
 }
 
