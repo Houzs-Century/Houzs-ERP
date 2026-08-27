@@ -16,7 +16,7 @@ import { describe, it, expect } from 'vitest';
 import { recogniseAcquirer } from '../src/acc/bank-match';
 
 const sql = readFileSync(
-  new URL('../src/db/migrations-pg/0330_acc_bank_reconciliation.sql', import.meta.url),
+  new URL('../src/db/migrations-pg/0336_acc_bank_reconciliation.sql', import.meta.url),
   'utf8',
 );
 
