@@ -119,7 +119,12 @@ GLOBAL (statement format, unique-ref flag, fee method, date tolerance, column
 map — 决定4, taught once) and `scm.acc_company_acquirers` is the per-company
 link (which bank/transit/fee accounts); migration 0332 splits them and leaves
 `scm.acc_acquirers` behind as a VIEW of the same shape, so every phase-2A
-reader is untouched.
+reader is untouched. **The five layouts arrive TAUGHT** (migration 0338 seeds
+HLB/MBB/GHL/PBB/AEON with the validated column maps — the owner, 2026-08-27:
+为什么report setup 我还需要自己set; tests/acquirerLayoutSeed.test.mjs runs each
+seeded layout against its committed fixture). The seed fills only rows still
+untaught, so a layout corrected in the UI is never overwritten. What setup
+still asks per company is ONLY the account links below.
 
 **Which bank receives the money is PER COMPANY** (owner, 2026-08-18: 例如pbb，在
 houzs 可能是maybank 收钱，但是在2990 是hong leong bank 收钱). That is exactly what
