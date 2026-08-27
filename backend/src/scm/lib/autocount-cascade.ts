@@ -37,6 +37,18 @@ type Sb = any;
 
 import { DOWNSTREAM } from './autocount-convert-lines';
 
+/**
+ * Why an ancestor has to be sent before its child.
+ *
+ * `missing` — it is not in the account book at all, so the conversion cannot be
+ *   built: AutoCount makes a DO / GR / invoice ONLY by carrying an earlier
+ *   document into it.
+ * `stale`  — it IS in the book, but the ERP is still holding an edit for it that
+ *   never landed. The conversion would then be built from the version the book
+ *   holds, which is not the version the operator is looking at.
+ */
+export type CascadeReason = 'missing' | 'stale';
+
 /** A document in the chain, named the way the outbox names one. */
 export interface CascadeDoc {
   docType: 'SO' | 'PO' | 'DO' | 'GR' | 'IV' | 'PI';
@@ -109,28 +121,89 @@ async function parentOf(sb: Sb, docType: string, docId: string): Promise<Cascade
 }
 
 /**
- * The ancestors this document needs in the account book, OUTERMOST FIRST — so
- * the caller can send them in the order AutoCount needs them.
+ * An ancestor that must be sent first, and the row that sends it.
  *
- * Stops at the first ancestor that is already in the book: everything above it
- * must be too, because that is how it got there.
- *
- * Returns [] when the document has no parent, when a parent cannot be resolved,
- * or when the immediate parent is already in the book. All three mean the same
- * thing to the caller — nothing to send first — and none of them is an error.
- *
- * `maxDepth` is a guard, not a policy: the real chains are two rungs
- * (SO -> DO -> IV, PO -> GR -> PI) and a cycle in the data must not hang a
- * request.
+ * The ROW comes back with the walk rather than being looked up afterwards. A
+ * `missing` ancestor's row is whatever we last tried; a `stale` one's row is the
+ * specific EDIT that never landed, and "the newest row" is not reliably that —
+ * a re-queue of the create would be newer. Naming the row here is what makes
+ * the two cases one loop for the caller instead of two.
  */
-export async function ancestorsMissingFromBook(
+export interface CascadeStep extends CascadeDoc {
+  reason: CascadeReason;
+  /** The outbox row to send, or null when the document has none at all. */
+  rowId: string | null;
+  rowStatus: string | null;
+}
+
+/**
+ * The oldest edit for this document that never reached the account book.
+ *
+ * PENDING OR FAILED, both. A pending edit is one the sweep has not taken yet; a
+ * failed one is a sweep that gave up. From the operator's side they are the same
+ * fact — the book does not have my change — and a cascade that handled only one
+ * of them would fix half the cases and be impossible to explain.
+ *
+ * OLDEST, not newest. Two unsent edits are two changes in order, and sending the
+ * newer one first would apply them backwards. The caller sends one per press;
+ * the next press takes the next.
+ */
+export async function unsentEditFor(
   sb: Sb,
+  companyId: number | null | undefined,
+  docNo: string,
+): Promise<{ id: string; status: string } | null> {
+  if (!docNo) return null;
+  let q = sb.from('autocount_outbox').select('id, status')
+    .eq('doc_no', docNo).eq('op', 'edit').in('status', ['pending', 'failed'])
+    .order('created_at', { ascending: true }).limit(1);
+  if (companyId != null) q = q.eq('company_id', companyId);
+  const { data, error } = await q;
+  if (error || !data?.length) return null;
+  const r = (data as Array<{ id: string; status?: string }>)[0];
+  return { id: String(r.id), status: String(r.status ?? '') };
+}
+
+/**
+ * Every ancestor that has to reach the account book before this document can be
+ * built from it — OUTERMOST FIRST, so the caller sends them in AutoCount's own
+ * order.
+ *
+ * THIS IS THE SECOND HALF OF THE OWNER'S RULE. `ancestorsMissingFromBook`
+ * answered "which ancestors are not in the book"; it stopped at the first one
+ * that was, because presence propagates upward — a document only gets into the
+ * book by way of its parent. Owner, 2026-08-26:
+ *
+ *   「为了确保我送 DO 的时候，如果之前的东西是不一样的，它是不是就需要 convert
+ *     多一次？」
+ *
+ * The answer is that converting again does nothing; what was missing is that
+ * FRESHNESS does not propagate the way presence does. A sales order can be in
+ * the book and still be the wrong version of itself, and the conversion then
+ * carries the old lines into a live account book with nothing reporting it.
+ *
+ * SO THE WALK NO LONGER STOPS AT THE FIRST ANCESTOR IN THE BOOK. It goes to the
+ * top of the chain, because a stale ancestor can sit ABOVE a fresh one: an
+ * invoice built from a delivery order built from a sales order the operator
+ * edited afterwards. The chains are two rungs, so this is one or two more reads,
+ * not a new cost.
+ *
+ * "STALE" IS AN UNSENT EDIT, NOT A DIFF AGAINST THE BOOK. The ERP already
+ * queues an edit every time a document changes, so an edit still sitting in the
+ * queue IS the statement that the book is behind — read from data we already
+ * keep, with no second call to the host and no second opinion about what
+ * "different" means. A document whose edits have all been sent is treated as
+ * current, which is exactly what the queue is for.
+ */
+export async function ancestorsNeedingSend(
+  sb: Sb,
+  companyId: number | null | undefined,
   docType: string,
   docId: string | null,
   maxDepth = 4,
-): Promise<CascadeDoc[]> {
+): Promise<CascadeStep[]> {
   if (!docId) return [];
-  const chain: CascadeDoc[] = [];
+  const steps: CascadeStep[] = [];
   let type = docType;
   let id: string | null = docId;
   const seen = new Set<string>([`${docType}:${docId}`]);
@@ -141,13 +214,26 @@ export async function ancestorsMissingFromBook(
     const key = `${parent.docType}:${parent.docId}`;
     if (seen.has(key)) break;
     seen.add(key);
-    if (parent.linkedAcDocNo) break;   // in the book — and so is everything above it
-    chain.push(parent);
+
+    if (!parent.linkedAcDocNo) {
+      const row = await newestOutboxRowWithStatus(sb, companyId, parent.docNo);
+      steps.push({
+        ...parent,
+        reason: 'missing',
+        rowId: row?.id ?? null,
+        rowStatus: row?.status ?? null,
+      });
+    } else {
+      const edit = await unsentEditFor(sb, companyId, parent.docNo);
+      if (edit) {
+        steps.push({ ...parent, reason: 'stale', rowId: edit.id, rowStatus: edit.status });
+      }
+    }
     type = parent.docType;
     id = parent.docId;
   }
   /* Collected child-upwards; the caller sends parent-downwards. */
-  return chain.reverse();
+  return steps.reverse();
 }
 
 /**

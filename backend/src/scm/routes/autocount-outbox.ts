@@ -66,7 +66,7 @@ import {
   requeueOutboxRow,
   sendOutboxRowNow,
 } from '../lib/autocount-requeue';
-import { ancestorsMissingFromBook, newestOutboxRowWithStatus, sendNowPeek } from '../lib/autocount-cascade';
+import { ancestorsNeedingSend, sendNowPeek } from '../lib/autocount-cascade';
 
 export const autocountOutbox = new Hono<{ Bindings: Env; Variables: Variables }>();
 autocountOutbox.use('*', supabaseAuth);
@@ -746,15 +746,21 @@ export /* THE ANCESTORS, SENT FIRST — shared by both buttons on purpose.
 async function sendAncestorsFirst(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Hono ctx + PostgREST client, both `any` throughout this file
   c: any, sb: any, companyId: number, docType: string, docId: string | null,
-): Promise<Array<{ doc_type: string; doc_no: string; code: string }>> {
-  const out: Array<{ doc_type: string; doc_no: string; code: string }> = [];
-  for (const a of await ancestorsMissingFromBook(sb, docType, docId)) {
-    const row = await newestOutboxRowWithStatus(sb, companyId, a.docNo);
-    if (!row) { out.push({ doc_type: a.docType, doc_no: a.docNo, code: 'no-outbox-row' }); continue; }
+): Promise<Array<{ doc_type: string; doc_no: string; code: string; reason: string }>> {
+  const out: Array<{ doc_type: string; doc_no: string; code: string; reason: string }> = [];
+  for (const a of await ancestorsNeedingSend(sb, companyId, docType, docId)) {
+    /* THE REASON TRAVELS WITH THE OUTCOME. `missing` and `stale` are two
+       different things to tell a person — "AutoCount did not have this one yet"
+       against "AutoCount had an older version of this one" — and the page cannot
+       tell them apart from a document number and a status. */
+    const say = (code: string) => out.push({
+      doc_type: a.docType, doc_no: a.docNo, code, reason: a.reason,
+    });
+    if (!a.rowId) { say('no-outbox-row'); continue; }
 
     /* A PENDING ANCESTOR IS SENT, NOT RE-QUEUED, and this is the whole of the
-       fix. `requeueOutboxRow` refuses a pending row — `row-pending`, and
-       rightly, because the sweep is already going to take it — so a cascade
+       2026-08-26 fix. `requeueOutboxRow` refuses a pending row — `row-pending`,
+       and rightly, because the sweep is already going to take it — so a cascade
        that only ever re-queued did NOTHING for the shape it meets most: a
        chain where every document is waiting on the one above it.
 
@@ -763,19 +769,20 @@ async function sendAncestorsFirst(
        because each press sends that row's own pending row directly. Pressing
        only the invoice found three pending ancestors, asked to re-queue each,
        was told `row-pending` three times, and sent nothing — the button did
-       exactly what the operator could see: nothing. */
-    if (row.status === 'pending') {
-      const st = await sendOutboxRowNow(c.env, sb, { rowId: row.id, companyId });
-      out.push({ doc_type: a.docType, doc_no: a.docNo, code: st.outcome });
+       exactly what the operator could see: nothing.
+
+       A `stale` ancestor arrives here as an EDIT row and takes the same two
+       paths for the same reasons: pending means the sweep has not reached it,
+       failed means the sweep gave up. Either way the book is behind and the
+       press is the moment to catch it up. */
+    if (a.rowStatus === 'pending') {
+      say((await sendOutboxRowNow(c.env, sb, { rowId: a.rowId, companyId })).outcome);
       continue;
     }
 
-    const rq = await requeueOutboxRow(sb, { rowId: row.id, companyId });
-    if (!acRequeueAccepted(rq.outcome) || !rq.newRowId) {
-      out.push({ doc_type: a.docType, doc_no: a.docNo, code: rq.outcome }); continue;
-    }
-    const st = await sendOutboxRowNow(c.env, sb, { rowId: rq.newRowId, companyId });
-    out.push({ doc_type: a.docType, doc_no: a.docNo, code: st.outcome });
+    const rq = await requeueOutboxRow(sb, { rowId: a.rowId, companyId });
+    if (!acRequeueAccepted(rq.outcome) || !rq.newRowId) { say(rq.outcome); continue; }
+    say((await sendOutboxRowNow(c.env, sb, { rowId: rq.newRowId, companyId })).outcome);
   }
   return out;
 }
@@ -895,7 +902,7 @@ export const requeueAutocountOutboxHandler = async (
      reporting it as a failure would lose the row the operator can retry. What
      the send did is reported separately, in `sent_now`. */
   let sentNow: { attempted: boolean; code?: string; detail?: string | null } = { attempted: false };
-  const ancestors: Array<{ doc_type: string; doc_no: string; code: string }> = [];
+  const ancestors: Array<{ doc_type: string; doc_no: string; code: string; reason: string }> = [];
   if (acRequeueAccepted(result.outcome) && result.newRowId) {
     /* THE ANCESTORS FIRST, OUTERMOST FIRST. Owner 2026-08-23: 「按 SI 就
        SO → DO → SI」. AutoCount builds a conversion only by carrying an earlier

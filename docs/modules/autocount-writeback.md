@@ -3391,6 +3391,35 @@ by hand worked because that sends its own pending row directly, which is
 precisely what the cascade omitted. Failed and skipped ancestors still take the
 re-queue path.
 
+**AN ANCESTOR IN THE BOOK CAN STILL BE THE WRONG VERSION OF ITSELF**
+(2026-08-27, docs/bugs/0551). The walk used to stop at the first ancestor
+carrying a `linked_ac_docno`, reasoning that presence propagates upward — which
+it does: a document only reaches the book by way of its parent. **Freshness does
+not.** A sales order edited after its delivery order was raised is in the book,
+sits above a document that is also in the book, and is still not what the
+operator is looking at; the conversion then carried the old lines into a live
+account book with nothing reporting it. Owner: 「如果我 edit 了之后直接开 DO/SI，
+然后我的 edit 还没进到 AutoCount，我点 send now，它也会把这个最新 version send
+进去了…对吗?」
+
+`ancestorsNeedingSend` replaces `ancestorsMissingFromBook` (deleted, not kept —
+one question, one home) and walks to the TOP of the chain, classifying each
+ancestor `missing` (not in the book) or `stale` (in the book, holding an unsent
+edit). **"Stale" is an unsent edit, not a diff against the book**: the ERP
+already queues an edit on every change, so an edit still in the queue IS the
+statement that the book is behind — no second call to the host, no second opinion
+about what "different" means. `pending` and `failed` both count; from the
+operator's side both mean *AutoCount does not have my change*. The step carries
+the EDIT's row id rather than the newest row, because a re-queued create is
+newer and sending that would leave the change behind; `unsentEditFor` returns the
+OLDEST unsent edit, since two edits are two changes in order. Order stays
+outermost-first, which matters most when a `stale` ancestor sits above a
+`missing` one — refreshing the order *after* transferring it would leave the
+delivery carrying lines the order no longer has.
+
+Still open: the page does not render `ancestors_sent` (now carrying `reason`),
+so a press that fixed three documents shows the operator nothing.
+
 **A PURCHASE ORDER WAITS FOR ITS SALES ORDER RATHER THAN BECOMING A CREATE**
 (2026-08-26, docs/bugs/0543). `poTransferShape` decides transfer-or-create on
 whether the sales-order lines carry an AutoCount DtlKey — and that key is
