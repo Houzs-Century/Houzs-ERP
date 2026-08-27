@@ -255,6 +255,31 @@
       "file": "frontend/src/pages/scm-v2/DoLoadScan.ladder.test.tsx",
       "text": "[\"SIGNED\", \"Nothing left to do on this document.\"],",
       "why": "A test asserting the refusal sentence above, quoting the product copy it pins. Not a second place the claim is made."
+    },
+    {
+      "file": "frontend/src/pages/scm-v2/BankRecon.tsx",
+      "text": "Every merchant statement you have reconciled has been paid in full.",
+      "why": "Guarded at the callsite: renders only over a successful read with at least one reconciled statement, every one summed to zero outstanding - the sums are the evidence; an empty or failed read renders nothing."
+    },
+    {
+      "file": "frontend/src/pages/scm-v2/MerchantRecon.test.tsx",
+      "text": "expect(screen.getByText(/opens for this report once every line is done/)).toBeTruthy();",
+      "why": "The test pinning the next-step instruction reviewed below - a test source line no operator sees."
+    },
+    {
+      "file": "frontend/src/pages/scm-v2/MerchantRecon.tsx",
+      "text": "Nothing to reconcile — every merchant report you have uploaded is done.",
+      "why": "Guarded at the callsite: spoken only after a successful read returning at least one report, every line of which was counted decided; zero reports read gets a different sentence about what was looked for, and a failed read renders neither."
+    },
+    {
+      "file": "frontend/src/pages/scm-v2/MerchantRecon.tsx",
+      "text": "Bank statement reconciliation opens for this report once every line is done.",
+      "why": "Printed while the report still HAS open lines (toConfirm/toDecide counted from the read are above zero) - it says when the next step unlocks, not that anything finished."
+    },
+    {
+      "file": "backend/src/acc/settlement.ts",
+      "text": "reason: `This statement is already fully received — ${(payableSen / 100).toFixed(2)} across ${already.receipts.length} credit(s). If the bank shows more, it belongs to another statement.`,",
+      "why": "A refusal spoken over receipts that were read and summed to the statement payable - the amount and credit count in the sentence are that evidence; an empty receipts read cannot reach it, since nothing sums to a non-zero payable."
     }
   ]
 }

@@ -27,6 +27,11 @@ books which entry":
 | Purchase invoice posted | Dr INVENTORY / Cr AP | `PI` | `PI_REVERSAL` |
 | Payment voucher posted | Dr expense legs / Cr bank-or-AP header | `PV` | `PV_REVERSAL` |
 | Manual journal (JV) | operator lines, draft first | `MANUAL` | `MANUAL_REVERSAL` |
+| Customer payment collected | Dr CASH/BANK/transit / Cr AR | `SOPAY` / `SIPAY` | `*_REVERSAL` |
+| Daily cash close | Dr/Cr OVER_SHORT / Cr/Dr CASH | `CASHUP` | (correct by JV) |
+| Acquirer settlement confirmed | Dr fee / Cr transit | `SETTLE` | `SETTLE_REVERSAL` |
+| Statement charge with no transaction | Dr fee / Cr transit | `SETTLEADJ` | `SETTLEADJ_REVERSAL` |
+| Acquirer payout received | Dr bank / Cr transit | `SETTLEBANK` | `SETTLEBANK_REVERSAL` |
 
 Adding an auto-posting document type means: a rule in `rules.ts`, a caller
 that builds its lines through that rule, and a behaviour-lock test — the
@@ -107,6 +112,136 @@ zero-difference self-check tile), AR/AP Aging, and Self-check (layer 1).
 
 **Phase 2B part 2 (2026-08-16): Daily close (layer 2).** GET/PUT /accounting/daily-close + POST /daily-close/confirm: each day each company counts the drawer against the system takings (both sales panels, bucketed cash / transfer / per-acquirer; imported rows never count). Confirming freezes the day (scm.acc_daily_closes, migration 0300) and posts the CASH over/short THAT DAY through the gate (946-0000, source CASHUP, idempotent per company+date); card/transfer differences are settlement timing owned by layer 3 - recorded, never posted here. UI: the Daily close view on the Daily Bank page. Confirmed buckets refuse edits - corrections are manual journals, on the record.
 
+**Phase 2B part 3 (2026-08-16): acquirer settlement reconciliation (layer 3).**
+The layer that empties `320-0000`. The acquirer master follows the owner's
+"define once, all companies share" principle: `scm.acc_acquirer_config` is
+GLOBAL (statement format, unique-ref flag, fee method, date tolerance, column
+map — 决定4, taught once) and `scm.acc_company_acquirers` is the per-company
+link (which bank/transit/fee accounts); migration 0332 splits them and leaves
+`scm.acc_acquirers` behind as a VIEW of the same shape, so every phase-2A
+reader is untouched.
+
+**Which bank receives the money is PER COMPANY** (owner, 2026-08-18: 例如pbb，在
+houzs 可能是maybank 收钱，但是在2990 是hong leong bank 收钱). That is exactly what
+`acc_company_acquirers.bank_account_code` is for, and the screens now say so:
+`GET /setup` returns `bankReady` per merchant plus the ACTIVE company's own money
+accounts (`accounts.acc_money`), so the setup field is a CHOICE from this
+company's bank accounts rather than a typed account code; `GET /batches/:id`
+returns `receiving_bank` { code, name, configured } so the bank screen names the
+account BEFORE the money is recorded. Unset still falls back to the company's
+BANK_DEFAULT role — the books never stop — but the fallback is now stated on
+screen in red instead of only in a server log.
+
+Migration 0302 adds `acc_settlement_batches` (one upload,
+UNIQUE on the file's content hash), `acc_settlement_rows` (the four screen
+buckets MATCHED / NEEDS_CONFIRM / UNMATCHED / IGNORED) and
+`acc_settlement_matches` (which payments a line covers — UNIQUE
+`(payment_source, payment_id)`, so the database itself refuses to settle the
+same money twice). `acc/settlement-parse.ts` reads a statement entirely from
+config and REFUSES by name rather than parsing 0 rows (§2.14);
+`acc/settlement-match.ts` auto-matches ONLY on a unique reference — an acquirer
+without one (or one whose 决定4 is still blank) sends every line to a human, and
+the date tolerance comes from the config row, not a literal. A reference that
+matches NOTHING falls through to amount+date, because the owner cannot guarantee
+the code was typed correctly (2026-08-18: 我没办法确定 authorised code salesperson
+一定填对); when exactly ONE payment makes that amount in range — one payment, or
+one exact-summing pair — it comes back as `suggested`, pre-ticked on screen with
+the reason, for a human to confirm. Offered, never taken: two possible answers is
+a question, so nothing is ticked and he chooses;
+`acc/settlement.ts` confirms, which POSTS that moment.
+
+**Two events, two entries** (owner, 2026-08-17: 全部卡机都是隔几天收到的。应该是
+先对卡机报告，然后 match 了就会去 match bank statement). Reconciling the card
+machine and receiving the money are days apart, so the ledger keeps them apart:
+confirming a line books the FEE only (Dr fee / Cr transit, source `SETTLE`,
+keyed `SETTLE-<row id>`, dated by the transaction). In between, settlement-in-
+transit holds exactly what the acquirer still owes — the fee is already lost and
+is no longer receivable. The customer side never changes: AR is knocked off by
+the full gross at the swipe (owner: 顾客还款确定到时是记录6000哦，不然knock off
+不到). A fee-free line confirms with no entry at all.
+
+**One statement, one or more credits** (owner, same day: 我实际收到的钱可能是多笔
+的哦). Hong Leong pays a multi-day statement one credit per trading day, Maybank
+credits each trading date separately, and Public Bank goes the other way — one
+advice covering three days. So each credit is a row in
+`scm.acc_settlement_receipts` (migration 0335) with its own date, amount and
+entry: Dr bank / Cr transit, source `SETTLEBANK`, keyed
+`SETTLEBANK-<batch id>-<receipt id>` (per receipt, so two identical credits on
+one day both post), dated by the BANK statement. A statement is "in the bank"
+only when its credits add up to `stated_net_sen ?? net_sen`; a credit that would
+overshoot is refused with both numbers named, because that money belongs to
+another statement. `undoBatchReceipt` REVERSES a credit's entry rather than
+deleting it. Layer 4 (bank reconciliation) will write these same rows from the
+bank statement itself, which is why the operator is never asked for a payout
+date at upload time — that is the one moment he cannot know it.
+
+Thirteen endpoints under `/accounting/settlement/*` (setup read/write, upload,
+batch list/detail, confirm one, confirm-all-matched, received, receipt undo,
+ignore, watchlist, in-transit, CSV export), each carrying its own permission
+check on top of the area guard.
+
+**Two pages, named by the owner** (2026-08-17: 就不能分成 merchant
+reconciliation, bank statement reconciliation 吗？) — because it is two jobs on
+two days:
+
+- `/scm/merchant-recon` — **Merchant reconciliation** (step 1 of 2): the
+  MERCHANT statement against what the ERP recorded. It books fees; it never
+  books the bank. Setup moved out to its own screen, so this one is the work.
+
+  Uploading lands on WHAT THE UPLOAD FOUND, across every file at once (owner,
+  2026-08-18: 当我上传完全部文件后…让我知道我 upload 的文件有哪里几笔是 match 的，
+  有哪里几笔是我要 manual check 或 verify 的，有哪里几笔会是 merchant 收到但完全
+  match 不上的) — three counts because they are three different jobs, a per-file
+  breakdown, and one button that confirms every reference-matched line in the
+  whole upload, report by report so a refusal names its own file.
+
+  Then the work list, which shows ONLY what is not matched yet (owner: 应该就只会
+  显示还没对上的 transaction 吧): the reports with lines still to decide, split by
+  the kind of problem (`to_confirm_count` — matched by reference, one button;
+  `to_choose_count` — a choice he can make; `no_record_count` — the report has it
+  and no sale in the ERP does), and underneath, the card
+  payments the sales team keyed in that no report has reported yet. A report
+  whose lines are all decided leaves the screen, saying where it went. Opening
+  one shows its open lines and nothing else; one checkbox brings the finished
+  lines back. The four buckets still exist in the data and in the CSV export —
+  the screen shows the work instead of a pile switcher.
+- `/scm/bank-recon` — **Bank statement reconciliation** (step 2 of 2): the BANK
+  statement against what the merchants owe. **GATED**: a report appears here
+  only once every one of its lines is decided (owner: 核对完了没有问题才会显示去
+  bank statement 的 reconciliation) — the ones not ready are counted and NAMED
+  rather than silently missing, and the record-a-credit box is withheld from a
+  report that goes back to undecided. Tabs: Money to come in (the reports still
+  owed money, the credits banked against each, a date+amount box for the next
+  one, undo), Still with the merchants (the in-transit detail — three states,
+  each naming who keyed the payment in, each showing what is STILL owed after
+  fees, statement charges and part-payments). This is the screen layer 4 will
+  feed from the bank statement file.
+
+- `/scm/settlement-setup` — **Reconciliation setup**: ONE maintenance TABLE,
+  every company at once (owner, 2026-08-18: 我应该 overall maintenance table，左手
+  边是 merchant、bank，上面 header 是公司，这个公司有就 tick). Merchants and banks
+  are the ROWS, companies are the COLUMNS, and a tick in a cell means that
+  company uses it; a ticked merchant cell also carries WHICH of that company's
+  banks its money lands in. The shared half — how the report reads — sits on the
+  row, outside every company column, because that is what it is. The read
+  answers for every company the caller is granted; the two writes take the
+  company as a PARAMETER and re-check it against those same grants
+  (`allowedCompanyIds`)
+  — a company id in a request body is an instruction, not an authorisation. A
+  company nobody has set up shows every merchant unticked and creates its link
+  row on the first tick, so a new company needs no migration. Unticking a bank a
+  merchant still pays into is REFUSED by name. Nothing new is stored: the ticks
+  are `acc_company_acquirers` (0301) and `accounts.is_active` on the company's
+  money accounts — the chart is already maintained centrally (0297), which is the
+  owner's own answer to where banks are defined ("chart of account 我也是会做成总
+  维护不是？").
+
+On both reconciliation screens, working a statement REPLACES the list rather than stacking under it —
+the owner on the version that stacked: 就感觉很多东西挤在一页. Each page links to
+the other where the work hands over. What they share is presentation only
+(`settlement-ui.ts`); every rule stays on the server, so the two screens cannot
+drift into two answers.
+
 SI auto-posts on create/confirm (`lib/post-si-revenue.ts`; resync
 void+reposts on post-issue edits). PI posts on demand + resyncs. PV posts on
 `POST /payment-vouchers/:id/post` and reverses on cancel. All three files own
@@ -119,6 +254,13 @@ This is the parallel-run seam and it stays until the owner retires AutoCount.
 ## 4. Tests
 
 - `backend/src/acc/engine.test.ts` — 22 locks on the gate itself.
+- `backend/src/acc/settlement-parse.test.ts` / `settlement-match.test.ts` /
+  `settlement.test.ts` — the layer-3 rules: a refused file names what is wrong,
+  only a unique reference auto-matches, the tolerance is the configured number,
+  a prorated fee sums exactly, a selection that does not add up is refused, and
+  confirming twice books once.
+- `backend/tests/settlementRoutes.test.ts` — the endpoints, including the 403
+  at this end and the same-file-twice refusal.
 - `backend/src/scm/lib/post-si-revenue.test.ts` — the SI path's 15 locks,
   passing unchanged across the engine rewire (the proof the rewire preserved
   behaviour).

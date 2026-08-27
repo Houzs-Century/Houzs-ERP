@@ -1164,6 +1164,11 @@
       "check": "D2",
       "key": ",DISPATCHED,DRAFT,LOADED ~ DISPATCHED,DRAFT,LOADED",
       "why": "THE REVERT'S BACKWARD LIFECYCLE RANK against the mobile detail's FORWARD next-status map. RANK (routes/delivery-order-revert.ts) orders DRAFT<LOADED<DISPATCHED for ONE purpose — proving a revert target is strictly EARLIER than the current status — while MobileModuleDetail.tsx's `next` maps each status to the one AHEAD of it, with '' as the terminal sentinel (no next) the backward rank has no use for. Opposite directions of the same lifecycle, and NOT one rule at N-1 of N places: folding them would make the revert's backward check depend on the forward step map, but the two move independently — the owner adds forward steps as their machines land, while the revertable set is fixed at the two dock-mistake states (LOADED / DISPATCHED). Differs by '' precisely because a backward rank has no terminal."
+    },
+    {
+      "check": "D1",
+      "key": "IGNORED,MATCHED,NEEDS_CONFIRM,UNMATCHED|backend/src/scm/routes/accounting-settlement.ts frontend/src/pages/scm-v2/settlement-ui.ts",
+      "why": "THE SETTLEMENT BUCKET SET under its one home, the MatchBucket union (acc/settlement-match): the backend line initialises a tally over it and the frontend line maps it to display labels, a client-side map that cannot round-trip. Both sites are Record-typed against that union, so adding a bucket fails compilation at both rather than diverging silently."
     }
   ]
 }

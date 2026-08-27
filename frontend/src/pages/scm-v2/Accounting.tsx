@@ -37,6 +37,7 @@ import {
   useReverseJournalEntry,
   useControlCheck,
   type ControlCheckRow,
+  type UnbookedPayments,
 } from './accounting-phase1-queries';
 import { DataTable, type Column } from '../../components/DataTable';
 import { fmtSen } from '../../vendor/shared/format';
@@ -688,6 +689,71 @@ const SelfCheckTab = () => {
     <div className="space-y-3">
       {q.isLoading && <div style={{ fontSize: 'var(--fs-13)' }}>Running checks…</div>}
       {checks.map((check) => <ControlCheckCard key={check.role} check={check} />)}
+      {q.data?.payments && <UnbookedPaymentsCard p={q.data.payments} />}
+    </div>
+  );
+};
+
+/* ── Money on a document that never reached the ledger ──────────────────────
+   A booking failure does not fail the operator's save — sales must be able to
+   record money whatever accounting is doing — so until this card existed the
+   only trace was a server log. Owner, asked whether this page should say so: 要.
+
+   The BOUNDARY is shown, not hidden. About 2,700 historical payments are
+   deliberately unbooked, so the server reports from the first day this company
+   ever booked one; a card that silently spoke about a period nobody could see
+   would be its own kind of lie. */
+
+const UnbookedPaymentsCard = ({ p }: { p: UnbookedPayments }) => {
+  const good = 'var(--c-secondary-a, #2F5D4F)';
+  const bad = 'var(--c-festive-b, #B8331F)';
+  const clean = p.ok && p.rows.length === 0;
+
+  return (
+    <div style={{ ...cardStyle, borderColor: clean ? good : bad }} className="space-y-2">
+      <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap' }}>
+        <b>Payments that reached the ledger</b>
+        <span style={{
+          padding: '2px 10px', borderRadius: 999, fontWeight: 700, fontSize: 'var(--fs-12)',
+          background: clean ? 'rgba(47, 93, 79, 0.12)' : 'rgba(184, 51, 31, 0.12)',
+          color: clean ? good : bad,
+        }}>
+          {clean ? 'all of them' : `${p.rows.length} did not`}
+        </span>
+        {!clean && <span>{fmt(p.totalSen)} on documents and not in the books</span>}
+      </div>
+
+      {p.error && <div style={{ fontSize: 'var(--fs-13)', color: bad }}>The check could not run: {p.error}</div>}
+
+      {/* The period this card is speaking about, always — including when it is
+          speaking about nothing. */}
+      <div style={{ fontSize: 'var(--fs-12)', color: 'var(--c-ink-soft, #777)' }}>
+        {p.since == null
+          ? 'No payment has been booked in this company yet, so there is no period to check. '
+            + 'Payments recorded before the accounting module starts here are expected to be unbooked.'
+          : `Counting payments from ${p.since}, the first day this company booked one. `
+            + 'Anything earlier is history that was deliberately left unbooked.'}
+      </div>
+
+      {p.rows.length > 0 && (
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
+          <thead>
+            <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--c-line, rgba(34,31,32,0.18))' }}>
+              <th>Document</th><th>Paid on</th><th>How</th><th style={{ textAlign: 'right' }}>Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            {p.rows.map((r) => (
+              <tr key={`${r.source}:${r.id}`} style={{ borderBottom: '1px solid var(--c-line, rgba(34,31,32,0.10))' }}>
+                <td>{r.docNo}</td>
+                <td>{r.paidOn}</td>
+                <td>{r.method}</td>
+                <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmt(r.amountSen)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </div>
   );
 };

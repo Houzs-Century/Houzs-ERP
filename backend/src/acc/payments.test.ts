@@ -6,7 +6,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { fakeSb, type Row } from '../scm/lib/fake-postgrest';
-import { postSoPayment, postSiPayment, reverseSoPayment, backfillSoPayments } from './payments';
+import { postSoPayment, postSiPayment, reverseSoPayment, backfillSoPayments, unbookedPayments } from './payments';
 import { DEFAULT_ROLE_CODES } from './rules';
 
 const CHART: Row[] = ['300-0000', '500-0000', '335-0000', '330-0000', '320-0000', '325-0000', '888-0000'].map((code) => ({
@@ -162,5 +162,109 @@ describe('backfillSoPayments — converges, never double-posts', () => {
     // Second run: nothing left to do.
     const again = await backfillSoPayments(sb, 100);
     expect(again).toMatchObject({ ok: true, scanned: 0, posted: 0, remaining: 0 });
+  });
+});
+
+/* ── The unbooked-payments panel ───────────────────────────────────────────
+   Owner, asked whether the accounting page should say when a payment never
+   reached the ledger: 要.
+
+   What is pinned here is the CUTOFF, because it is the whole difference
+   between a useful alarm and a silenced one. About 2,700 historical payments
+   are deliberately unbooked (the owner's trial-period decision), and a panel
+   that opened on 2,700 rows would be scrolled past on day one and every real
+   failure with it. */
+
+describe('payments that never reached the ledger', () => {
+  const payRow = (id: string, docNo: string, paidAt: string, sen: number, method = 'merchant') => ({
+    id, so_doc_no: docNo, paid_at: paidAt, amount_sen: sen, method, company_id: 1,
+  });
+  const je = (docNo: string, entryDate: string, over: Record<string, unknown> = {}) => ({
+    id: `je-${docNo}`, je_no: `JE-${docNo}`, company_id: 1, source_type: 'SOPAY',
+    source_doc_no: docNo, entry_date: entryDate, posted: true, reversed: false, ...over,
+  });
+
+  const world = (tables: Record<string, unknown[]>) => fakeSb({
+    journal_entries: [], journal_entry_lines: [],
+    mfg_sales_order_payments: [], sales_invoice_payments: [],
+    ...tables,
+  } as never);
+
+  it('says nothing at all until this company has booked its FIRST payment', async () => {
+    /* No entry anywhere: the module is not running here, so unbooked is the
+       expected state for every row and listing them would be the noise. */
+    const r = await unbookedPayments(world({
+      mfg_sales_order_payments: [payRow('p1', 'SO-1', '2026-01-05', 50000)],
+    }), 1);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.since).toBeNull();
+    expect(r.rows).toHaveLength(0);
+  });
+
+  it('ignores everything dated before the first booked payment', async () => {
+    const r = await unbookedPayments(world({
+      journal_entries: [je('p2', '2026-08-01')],
+      mfg_sales_order_payments: [
+        payRow('old', 'SO-OLD', '2026-01-05', 900000),   // historical, deliberately unbooked
+        payRow('p2', 'SO-2', '2026-08-01', 50000),       // booked
+        payRow('p3', 'SO-3', '2026-08-05', 12345),       // NOT booked, and after the boundary
+      ],
+    }), 1);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.since).toBe('2026-08-01');
+    expect(r.rows.map((x) => x.id)).toEqual(['p3']);
+    expect(r.totalSen).toBe(12345);
+  });
+
+  /* The three the poster itself skips. Reporting them would be reporting as
+     failures the rows it was told to leave alone. */
+  it('does not report what the poster deliberately skips', async () => {
+    const r = await unbookedPayments(world({
+      journal_entries: [je('p2', '2026-08-01')],
+      mfg_sales_order_payments: [
+        payRow('p2', 'SO-2', '2026-08-01', 50000),
+        payRow('imported', 'SO-4', '2026-08-05', 70000, 'imported'),
+        payRow('zero', 'SO-5', '2026-08-05', 0),
+        payRow('nodate', 'SO-6', '', 70000),
+      ],
+    }), 1);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.rows).toHaveLength(0);
+  });
+
+  /* A reversed entry is not a booking: the money is on the document and NOT in
+     the books, which is exactly what this panel exists to find. */
+  it('counts a payment whose only entry was reversed', async () => {
+    const r = await unbookedPayments(world({
+      journal_entries: [je('p2', '2026-08-01'), je('p3', '2026-08-05', { reversed: true })],
+      mfg_sales_order_payments: [
+        payRow('p2', 'SO-2', '2026-08-01', 50000),
+        payRow('p3', 'SO-3', '2026-08-05', 12345),
+      ],
+    }), 1);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.rows.map((x) => x.id)).toEqual(['p3']);
+  });
+
+  it('covers invoice payments as well as order payments, oldest first', async () => {
+    const r = await unbookedPayments(world({
+      journal_entries: [je('p2', '2026-08-01')],
+      mfg_sales_order_payments: [
+        payRow('p2', 'SO-2', '2026-08-01', 50000),
+        payRow('late', 'SO-9', '2026-08-20', 10000),
+      ],
+      sales_invoice_payments: [
+        { id: 'q1', sales_invoice_id: 'INV-1', paid_at: '2026-08-10', amount_sen: 30000, method: 'merchant', company_id: 1 },
+      ],
+    }), 1);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.rows.map((x) => x.id)).toEqual(['q1', 'late']);
+    expect(r.rows.map((x) => x.source)).toEqual(['SIPAY', 'SOPAY']);
+    expect(r.totalSen).toBe(40000);
   });
 });

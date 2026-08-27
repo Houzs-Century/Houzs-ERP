@@ -64,7 +64,7 @@ import {
   History,
   Wand2,
   CalendarOff,
-  type LucideIcon, Landmark } from "lucide-react";
+  type LucideIcon, Landmark, CreditCard, Banknote } from "lucide-react";
 import { cn } from "../lib/utils";
 import { booleanRecordPreference, useIdentityPreference } from "../hooks/useIdentityPreference";
 import { useAuth } from "../auth/AuthContext";
@@ -641,6 +641,14 @@ export const NAV_TABS: NavTab[] = [
     children: [
       { to: "/scm/accounting", label: "Accounting", icon: BookOpen, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
       { to: "/scm/daily-bank", label: "Daily Bank", icon: Landmark, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
+      // The two screens that empty settlement-in-transit, named the way the
+      // owner names the work: the merchant statement first, the bank statement
+      // after. Both gated on the same GL key the backend checks
+      // (scm.payment_voucher.post) — front and back both.
+      { to: "/scm/merchant-recon", label: "Merchant Recon", icon: CreditCard, anyPerm: ["*", "scm.access", "scm.payment_voucher.post"], anyAccess: ["scm.finance.accounting"] },
+      { to: "/scm/bank-recon", label: "Bank Recon", icon: Banknote, anyPerm: ["*", "scm.access", "scm.payment_voucher.post"], anyAccess: ["scm.finance.accounting"] },
+      // Maintained across companies from one screen (owner, 2026-08-18).
+      { to: "/scm/settlement-setup", label: "Recon Setup", icon: SettingsIcon, anyPerm: ["*", "scm.access", "scm.payment_voucher.post"], anyAccess: ["scm.finance.accounting"] },
       { to: "/scm/payment-vouchers", label: "Payment Vouchers", icon: Wallet, anyPerm: ["*", "scm.access", "scm.payment_voucher.create", "scm.payment_voucher.write", "scm.payment_voucher.post", "scm.payment_voucher.cancel"], anyAccess: ["scm.finance.accounting"] },
       { to: "/scm/outstanding", label: "Outstanding", icon: AlertCircle, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.outstanding"] },
       // Delivered-but-not-billed, aged. Sits next to Outstanding and on the
