@@ -13,6 +13,8 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { poSourceRef, poTransferShape, type PoTransferShape } from '../shared/po-transfer-shape';
 import { soOutstandingSen } from '../shared/so-outstanding';
+import { bookSpellingOrOwn, type ErpLine } from '../../services/autocount-writeback';
+import { LOCATION_MAP } from '../../services/autocount-master-maps';
 
 type Sb = SupabaseClient<any, any, any>;
 
@@ -85,6 +87,50 @@ export async function readSoOutstandingSen(
 }
 
 /**
+ * Hang the AutoCount stock location on each line.
+ *
+ * `warehouse_id` is a `scm.warehouses` UUID; AutoCount's `dbo.Location` is
+ * keyed by the short code (KL, PG, HQ...), so one lookup per document turns
+ * the ids into codes. Lines share warehouses, so this is one `in` query, not
+ * one per line.
+ *
+ * A line with no warehouse keeps `location: null` and the caller decides:
+ * a create refuses it (MissingLocationError), an edit simply omits the key so
+ * the account book keeps its own value.
+ *
+ * MOVED HERE FROM `autocount-outbox.ts` ON 2026-08-26, to sit beside
+ * `readWarehouseCode` — its single-row twin, whose own note already said the
+ * two answer different questions about the same table. Keeping them apart is
+ * what let one of them go eight days without `LOCATION_MAP` while the other
+ * had it (#0549). The outbox file is also at its 2,000-line cap, and this is a
+ * READ, which is the reason this module exists at all.
+ */
+export async function withLocations(
+  sb: Sb,
+  rows: Record<string, unknown>[],
+  lines: ErpLine[],
+): Promise<ErpLine[]> {
+  const ids = [...new Set(rows.map((r) => r.warehouse_id).filter((v): v is string => typeof v === 'string' && v !== ''))];
+  if (!ids.length) return lines;
+  const wh = await readOrThrow('warehouses',
+    sb.from('warehouses').select('id, code, name').in('id', ids));
+  const byId = new Map<string, string>();
+  for (const w of (wh ?? []) as Array<Record<string, unknown>>) {
+    /* THROUGH THE BOOK'S SPELLING: `LocationCode` is eight characters, and
+       AutoCount SKIPS an over-long value rather than refusing the document, so
+       `KL WAREHOUSE` left the line with no warehouse at all (#0549). */
+    const raw = (w.code as string | null) ?? (w.name as string | null);
+    const code = bookSpellingOrOwn(raw, LOCATION_MAP);
+    if (w.id && code) byId.set(String(w.id), code);
+  }
+  return lines.map((l, i) => {
+    const id = rows[i]?.warehouse_id;
+    const code = typeof id === 'string' ? byId.get(id) ?? null : null;
+    return code ? { ...l, location: code } : l;
+  });
+}
+
+/**
  * One warehouse id -> the `dbo.Location` code AutoCount keys its stock by.
  *
  * The single-row twin of `withLocations` (autocount-outbox.ts), for a document's
@@ -105,10 +151,22 @@ export async function readWarehouseCode(sb: Sb, warehouseId: unknown): Promise<s
   const row = await readOrThrow('warehouses',
     sb.from('warehouses').select('id, code, name').eq('id', id).maybeSingle());
   const w = row as { code?: string | null; name?: string | null } | null;
-  /* `code` first, `name` as the fallback — exactly what `withLocations` does, so
-     a warehouse row with a blank code resolves the same way on a header as it
-     does on a line. */
-  const code = ((w?.code ?? w?.name ?? '') as string).trim();
+  /* `code` first, `name` as the fallback, THEN THROUGH THE BOOK'S OWN SPELLING —
+     exactly what `withLocations` does, so a warehouse row resolves the same way
+     on a header as it does on a line.
+
+     The map is load-bearing, not cosmetic. `dbo.Location.LocationCode` is eight
+     characters and `KL WAREHOUSE` is twelve, and AutoCount answers an over-long
+     assignment by SKIPPING it and saving the document anyway — measured on the
+     host log 2026-08-25:
+       set skipped: Cannot set column 'PurchaseLocation'. The value violates the
+                    MaxLength limit of this column.
+     So the purchase order landed in a licensed book with no ship-to warehouse,
+     showing the book's default, and nothing anywhere reported it. Owner
+     2026-08-24: 「我的 PO 明明应该是 Bintang Warehouse，但去到 AutoCount 里面它
+     却变成了 HQ」. LOCATION_MAP is the book's NAME for each warehouse — an
+     unmapped one still travels as its own code, unchanged. */
+  const code = bookSpellingOrOwn((w?.code ?? w?.name ?? null), LOCATION_MAP);
   return code || null;
 }
 
@@ -157,7 +215,7 @@ export async function readSoPaymentRefs(
 export async function readPoTransferFacts(
   sb: Sb,
   poId: string,
-): Promise<Array<{ id: string; so_item_id: string | null; allocationCount: number; sourceAcDtlKey: number | null; sourceSoDocNo: string | null }>> {
+): Promise<Array<{ id: string; so_item_id: string | null; allocationCount: number; sourceAcDtlKey: number | null; sourceSoDocNo: string | null; sourceSoInBook: boolean }>> {
   const rows = ((await readOrThrow('purchase_order_items',
     sb.from('purchase_order_items').select('id, so_item_id').eq('purchase_order_id', poId))) ?? []) as Array<Record<string, unknown>>;
   if (!rows.length) return [];
@@ -176,6 +234,7 @@ export async function readPoTransferFacts(
     .filter((v): v is string => v !== null))];
   const keyOf = new Map<string, number>();
   const docOf = new Map<string, string>();
+  const inBook = new Set<string>();
   if (soItemIds.length) {
     const soLines = ((await readOrThrow('mfg_sales_order_items',
       sb.from('mfg_sales_order_items').select('id, linked_ac_dtlkey, doc_no').in('id', soItemIds))) ?? []) as Array<Record<string, unknown>>;
@@ -184,6 +243,30 @@ export async function readPoTransferFacts(
       if (Number.isFinite(k) && k > 0) keyOf.set(String(l.id), k);
       const dn = String(l.doc_no ?? '').trim();
       if (dn) docOf.set(String(l.id), dn);
+    }
+
+    /* IS THE SALES ORDER IN THE BOOK YET — the fact that tells a MISSING key
+       apart from an IMPOSSIBLE one.
+
+       `linked_ac_dtlkey` is written when the sales order reaches AutoCount and
+       the create hands back its line keys. A purchase order raised in the same
+       minute therefore sees NULL keys, and poTransferShape used to read that as
+       "the book has no key for these lines, so a transfer cannot address them"
+       — true at that instant, false five minutes later, and never revisited.
+       Measured on production 2026-08-25: HC-PO-2608-007 was raised from
+       HC-SO-2608-008 and went as `create_po`, so the account book holds no link
+       between them at all. Owner the next morning: 「明明我的 PO 是通过 Transfer
+       from Sales Order 来开的，可是进到 AutoCount 那边…没有建立 Transaction
+       Relationship」. The five POs before it transferred correctly — they were
+       raised long enough after their sales orders. It is a race, not a rule. */
+    const soDocNos = [...new Set([...docOf.values()])];
+    if (soDocNos.length) {
+      const sos = ((await readOrThrow('mfg_sales_orders',
+        sb.from('mfg_sales_orders').select('doc_no, linked_ac_docno').in('doc_no', soDocNos))) ?? []) as Array<Record<string, unknown>>;
+      for (const so of sos) {
+        const dn = String(so.doc_no ?? '').trim();
+        if (dn && String(so.linked_ac_docno ?? '').trim()) inBook.add(dn);
+      }
     }
   }
 
@@ -195,6 +278,7 @@ export async function readPoTransferFacts(
       allocationCount: allocCount.get(String(r.id)) ?? 0,
       sourceAcDtlKey: soItemId ? (keyOf.get(soItemId) ?? null) : null,
       sourceSoDocNo: soItemId ? (docOf.get(soItemId) ?? null) : null,
+      sourceSoInBook: soItemId ? inBook.has(docOf.get(soItemId) ?? '') : false,
     };
   });
 }

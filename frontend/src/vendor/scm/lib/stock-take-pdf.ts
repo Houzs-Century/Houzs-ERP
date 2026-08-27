@@ -31,6 +31,10 @@ import {
 } from './pdf-common';
 import { warehouseLabel, type WarehouseLabelSource } from './warehouse-label';
 import { variantKeyLabel } from './variant-key-label';
+/* The status WORD comes from the one home for it, never from a caser here:
+   what this document prints and what the screen shows must be the same word.
+   docs/modules/document-status-vocabulary.md §1. */
+import { statusLabel } from './status-pill';
 
 type StkWarehouse = WarehouseLabelSource & { name?: string | null };
 
@@ -74,9 +78,6 @@ const SCOPE_LABEL = (scopeType: string, scopeValue: string | null): string => {
   if (scopeType === 'CODE_PREFIX') return `Prefix · ${scopeValue ?? '—'}`;
   return scopeType;
 };
-
-const titleCase = (s: string): string =>
-  s.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, (ch) => ch.toUpperCase());
 
 /** A signed variance reads as a variance only with its sign on it. */
 const signed = (n: number): string => (n > 0 ? `+${n}` : String(n));
@@ -134,7 +135,7 @@ export async function renderStockTakeInto(
       rows: [
         ['STK No', header.take_no],
         ['Date', fmtDocDate(header.take_date)],
-        ['Status', titleCase(header.status)],
+        ['Status', statusLabel('stockTake', header.status)],
         ['Posted', header.posted_at ? fmtDocDate(header.posted_at) : null],
         ['Cancelled', header.cancelled_at ? fmtDocDate(header.cancelled_at) : null],
         ['Blind', header.blind ? 'Yes' : null],

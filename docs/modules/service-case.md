@@ -904,3 +904,47 @@ form and the HC Delivery sheet), so both map to `HOUZS` in
 sheet gets its OWN key and its own row there; it must never be handed one of
 these two. A readable companies master with no row for the code is a
 MISCONFIGURATION and answers 503 — it does not fall back to "no predicate".
+
+## `/so-export` feeds the sheet 2990's ready-to-ship orders (2026-08-26)
+
+Houzs orders reach the HC Delivery sheet's **Delivery Details** tab through the
+AutoCount pull (`GetAutoCountData.gs`). 2990's orders are born in the ERP's own
+SCM module and never touch AutoCount, so dispatch had been hand-typing them —
+19 rows, every AutoCount-fed column blank, 11 of them already past the
+customer's date with no DO raised. `GET /api/assr-form-intake/so-export` closes
+that gap.
+
+**Trigger** — the header status `recomputeSoStockAllocation` already derives:
+`READY_TO_SHIP`, i.e. every MAIN line (SOFA / BEDFRAME / MATTRESS) allocated.
+Accessories never block a delivery, so a main-ready order exports with
+`stock_remark` reading `READY (PARTIAL)` — the operator's Remarks-2 wording.
+
+**It is the FIRST 2990 intake secret.** Per the rule above, `FORM_INTAKE_KEY`
+and `SHEET_SYNC_KEY` speak for HOUZS and must never open 2990 data — and this
+export carries 2990 customers' names, phones and addresses. So `/so-export`
+accepts **`SHEET_SYNC_KEY_2990` and nothing else**, resolves the company id from
+the master under code `2990`, and refuses (503 `company_unresolved`) when the
+master cannot answer. It does NOT inherit the ASSR exports' "degrade to no
+predicate" branch: an unscoped read here would BE the Houzs export.
+
+**Full state, no cursor.** The sheet appends only the `Doc. No.`s it lacks, so
+re-sending an order it already carries is a no-op and a missed sweep heals on
+the next one. The two follow-up reads (order lines, `scm.staff`) bind their
+errors and refuse the whole export: a swallowed line-read reads as "no lines",
+and `summariseReadiness([])` would then write a BLANK Remarks 2 and call the
+order ready.
+
+**Balance comes from the VIEW.** `mfg_sales_orders.balance_sen` is a stored
+column nothing maintains — it still equals `local_total` on orders paid in full
+months ago — so the first cut wrote "everything outstanding" into the sheet.
+The export reads `mfg_sales_orders_with_payment_totals.balance_sen_live`, the
+same figure the SO list shows. **PO No.** is not a header column either: it is
+collected through SO line → `purchase_order_items.so_item_id` →
+`purchase_orders.po_number`, comma-joined when an order has several, cancelled
+POs dropped.
+
+Column map lives in the handler's header comment. Two traps recorded there:
+the tab's frozen-column freezebar renders as an extra cell, so counting cells
+by eye shifts every letter from G on by one; and `Sales Exemption Expiry Date`
+deliberately carries `customer_delivery_date` — that field is NULL on all 126
+SCM orders, so the column was free and dispatch reads the requested date there.

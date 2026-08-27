@@ -165,6 +165,7 @@ const ScmDeliveryOrderNewV2 = lazy(() => import("./pages/scm-v2/DeliveryOrderNew
 const ScmDeliveryOrderFromSoV2 = lazy(() => import("./pages/scm-v2/DeliveryOrderFromSo").then((m) => ({ default: m.DeliveryOrderFromSo })));
 const ScmDeliveryOrderDetailV2 = lazy(() => import("./pages/scm-v2/DeliveryOrderDetailV2").then((m) => ({ default: m.DeliveryOrderDetailV2 })));
 const ScmDoLoadScan = lazy(() => import("./pages/scm-v2/DoLoadScan").then((m) => ({ default: m.DoLoadScan })));
+const ScmLoadingList = lazy(() => import("./pages/scm-v2/LoadingList").then((m) => ({ default: m.LoadingList })));
 const ScmSalesInvoicesV2 = lazy(() => import("./pages/scm-v2/SalesInvoicesListV2").then((m) => ({ default: m.SalesInvoicesListV2 })));
 const ScmSalesInvoiceNewV2 = lazy(() => import("./pages/scm-v2/SalesInvoiceNew").then((m) => ({ default: m.SalesInvoiceNew })));
 const ScmSalesInvoiceFromDoV2 = lazy(() => import("./pages/scm-v2/SalesInvoiceFromDo").then((m) => ({ default: m.SalesInvoiceFromDo })));
@@ -292,6 +293,7 @@ function ScmGuard({
   area,
   allowSales = false,
   allowDirector = false,
+  allowCapability,
   children,
 }: {
   area: string;
@@ -301,11 +303,19 @@ function ScmGuard({
    * the /scm HUB so the landing grid opens for directors, matching the sub-pages
    * that already carry allowSales; each card still enforces its own area key. */
   allowDirector?: boolean;
+  /* allowCapability (2026-08-25) — admit a holder of this position capability
+   * even without the area grant, mirroring the backend area guard's writeBypass.
+   * Set on /scm/do-load so a storekeeper holding scm.do.load opens the scan-
+   * confirm page though scm.sales.delivery is none; the page's one action still
+   * hits the capability-gated status endpoint. */
+  allowCapability?: string;
   children: React.ReactNode;
 }) {
   const { user } = useAuth();
   if (allowSales && isSalesStaff(user)) return <>{children}</>;
   if (allowDirector && isDirectorUser(user)) return <>{children}</>;
+  if (allowCapability && (user?.position_capabilities ?? []).includes(allowCapability))
+    return <>{children}</>;
   // SCM hub landing pages (area === "scm": /scm and the six sub-group hubs) are a
   // navigation INDEX, not a data surface — every tile is permission-filtered and
   // each real page still gates on its own area key. Admit any caller who holds ANY
@@ -642,6 +652,7 @@ export default function App() {
             flat scm.currency.manage permission (Owner / IT Admin cover it via *). */}
         <Route path="/scm/currencies" element={<Guard anyPerm={["*", "scm.currency.manage"]}><Scm2990Shell><ScmCurrenciesV2 /></Scm2990Shell></Guard>} />
         <Route path="/scm/fabric-tracking" element={<ScmGuard area="scm.procurement.products"><Scm2990Shell><ScmFabricTrackingV2 /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/loading-list" element={<ScmGuard area="scm.warehouse.inventory"><Scm2990Shell><ScmLoadingList /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/warehouses" element={<ScmGuard area="scm.warehouse.inventory"><Scm2990Shell><ScmWarehousesV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/warehouses/racks" element={<ScmGuard area="scm.warehouse.inventory"><Scm2990Shell><ScmWarehouseRacksV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/products" element={<ScmGuard area="scm.procurement.products"><Scm2990Shell><ScmProductsV2 /></Scm2990Shell></ScmGuard>} />
@@ -778,7 +789,7 @@ export default function App() {
         <Route path="/scm/delivery-orders/from-so" element={<ScmGuard area="scm.sales.delivery"><Scm2990Shell><ScmDeliveryOrderFromSoV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/delivery-orders/:id" element={<ScmGuard area="scm.sales.delivery" allowSales><Scm2990Shell><ScmDeliveryOrderDetailV2 /></Scm2990Shell></ScmGuard>} />
         {/* The DO print's "SCAN · MARK LOADED" QR lands here (warehouse loading confirmation). */}
-        <Route path="/scm/do-load" element={<ScmGuard area="scm.sales.delivery" allowSales><Scm2990Shell><ScmDoLoadScan /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/do-load" element={<ScmGuard area="scm.sales.delivery" allowSales allowCapability="scm.do.load"><Scm2990Shell><ScmDoLoadScan /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/sales-invoices" element={<ScmGuard area="scm.sales.invoices" allowSales><Scm2990Shell><ScmSalesInvoicesV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/sales-invoices/new" element={<ScmGuard area="scm.sales.invoices"><Scm2990Shell><ScmSalesInvoiceNewV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/sales-invoices/from-do" element={<ScmGuard area="scm.sales.invoices"><Scm2990Shell><ScmSalesInvoiceFromDoV2 /></Scm2990Shell></ScmGuard>} />

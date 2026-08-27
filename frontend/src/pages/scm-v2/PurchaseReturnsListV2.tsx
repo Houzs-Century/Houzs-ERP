@@ -45,6 +45,7 @@ import {
 } from "../../vendor/scm/lib/purchase-return-queries";
 import { authedFetch } from "../../vendor/scm/lib/authed-fetch";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
+import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { useChoice } from "../../vendor/scm/components/ChoiceDialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
@@ -462,6 +463,7 @@ export function PurchaseReturnsListV2() {
   const queryClient = useQueryClient();
   const notify = useNotify();
   const askChoice = useChoice();
+  const askConfirm = useConfirm();
 
   const status = (params.get("status") ?? "all") as StatusTab;
   const view = (params.get("view") ?? "table") as "table" | "cards";
@@ -637,14 +639,23 @@ export function PurchaseReturnsListV2() {
     }
   };
   const batchPrint = usePrintPreview(deliverSelectedPrs);
-  const doPost = (r: PrRow) => {
-    if (window.confirm(`Post return ${r.return_number}? A credit-owed entry will be booked against the supplier.`)) {
+  const doPost = async (r: PrRow) => {
+    if (await askConfirm({
+      title: `Post return ${r.return_number}?`,
+      body: "A credit-owed entry will be booked against the supplier.",
+      confirmLabel: "Post return",
+    })) {
       postPr.mutate(r.id, { onSuccess: () => setSelected(null) });
     }
   };
   const doComplete = (r: PrRow) => navigate(`/scm/purchase-returns/${r.id}?tab=complete`);
-  const doCancel = (r: PrRow) => {
-    if (window.confirm(`Cancel return ${r.return_number}? Stock will be reversed.`)) {
+  const doCancel = async (r: PrRow) => {
+    if (await askConfirm({
+      title: `Cancel return ${r.return_number}?`,
+      body: "Stock will be reversed.",
+      confirmLabel: "Cancel return",
+      danger: true,
+    })) {
       cancelPr.mutate(r.id, { onSuccess: () => setSelected(null) });
     }
   };

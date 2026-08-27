@@ -1,0 +1,47 @@
+# Read-only. Answers ONE question: why does "A venue is required before this
+# order can be confirmed." fire for a named salesperson?
+#
+# Prints every input the create path reads for the venue — the showroom masters,
+# scm.venues, project_venues, the person's parking and PMS projects — replays
+# the pure resolver in lib/venue-binding.ts, and states the verdict.
+#
+# SELECT only. No writes, no DDL, no transaction. The verdict is the output.
+name: probe-so-venue-gate
+
+on:
+  workflow_dispatch:
+    inputs:
+      staff:
+        description: "staff NAME fragment(s), comma separated (e.g. Adrian)"
+        required: true
+        type: string
+      company:
+        description: "restrict to one company id (2 = 2990, 1 = HOUZS); blank = all"
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: probe-so-venue-gate
+  cancel-in-progress: false
+
+jobs:
+  run-prod:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/probe-so-venue-gate-for-staff.mjs
+        env:
+          STAFF: ${{ inputs.staff }}
+          COMPANY: ${{ inputs.company }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
+          NODE_OPTIONS: --dns-result-order=ipv4first

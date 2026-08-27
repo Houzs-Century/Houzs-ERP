@@ -37,7 +37,14 @@ import { getSupabaseService } from "../../db/supabase";
 // c.get('user').id, so every salesperson shared ONE row. Anything per-person —
 // attribution, ownership, a cart, a visibility scope — reads `houzsUser` and the
 // 0066 bridge, never the pinned `user`.
-const SCM_SYSTEM_STAFF_ID = "00000000-0000-4000-8000-000000000001";
+/* EXPORTED since 2026-08-26. The public delivery-order scan has no session, so
+   it cannot go through this middleware — but it DOES go through the same status
+   writer, which stamps `user.id` onto the inventory movements it produces. That
+   caller identity has to be a real, declared one rather than a uuid typed a
+   second time in the public route: it is the SAME pinned system-staff row every
+   authenticated SCM write already carries, so a scanned movement and an office
+   movement are attributed identically and neither is a fabricated person. */
+export const SCM_SYSTEM_STAFF_ID = "00000000-0000-4000-8000-000000000001";
 
 export const supabaseAuth = createMiddleware<{ Bindings: Env; Variables: Variables }>(
   async (c, next) => {
@@ -72,6 +79,7 @@ export const supabaseAuth = createMiddleware<{ Bindings: Env; Variables: Variabl
       department_name?: string | null;
       permissions?: string[];
       permissions_set?: Set<string>;
+      position_capabilities?: string[];
     } | undefined;
     // Stash the real Houzs user (integer id) for per-user PUBLIC-schema lookups
     // (the next line overwrites `user` with the scm.staff system identity).
@@ -92,6 +100,12 @@ export const supabaseAuth = createMiddleware<{ Bindings: Env; Variables: Variabl
             department_name: hu.department_name ?? null,
             permissions: hu.permissions,
             permissions_set: hu.permissions_set,
+            // Operational-capability grants (position_capabilities, mig 0322)
+            // carried through so SCM handlers can gate on them against the REAL
+            // caller — e.g. the DO status endpoint admits a storekeeper's
+            // scan-to-LOADED on scm.do.load. hasPositionCapability fails closed
+            // when this is absent, so an older cached session simply can't.
+            position_capabilities: hu.position_capabilities,
           }
         : undefined,
     );

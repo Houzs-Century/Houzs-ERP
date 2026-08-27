@@ -169,7 +169,7 @@ export const settlementSetupSave = guard(async (c) => {
    an instruction, not an authorisation.
 
    Nothing new is stored. Which merchants a company uses and where their money
-   lands is `scm.acc_company_acquirers` (migration 0326, one row per company per
+   lands is `scm.acc_company_acquirers` (migration 0332, one row per company per
    merchant); which banks a company has is `scm.accounts.is_active` on its money
    accounts — the chart is already maintained centrally (migration 0297: one
    AutoCount-style chart for every company), which is his own answer to where

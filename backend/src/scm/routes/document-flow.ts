@@ -842,6 +842,35 @@ documentFlow.get('/:type/:id', async (c) => {
     }
   }
 
+  /* FK-over-note (clobber-residue guard). A PO that carries ANY so_item_id line
+     is a modern, FK-linked purchase; its "From SOs: …" note is legacy free text,
+     authoritative only for pre-so_item_id POs with no hard link at all. When a
+     reused SO doc_no lingers in such a note (a rebuilt SO taking over a number a
+     since-renumbered order once held), the token match wrongly drags that PO's
+     whole received chain onto the SO now holding the number. So drop the note
+     edges for any PO that has a hard so_item_id link — the poItemLinks above are
+     its real provenance. Bounded by notePoIds (POs whose note already matched a
+     root SO), so this adds one small read only when notes matched at all. */
+  if (notePoIds.length) {
+    const { data: fkRows, error: fkErr } = await sb.from('purchase_order_items')
+      .select('purchase_order_id')
+      .in('purchase_order_id', uniq(notePoIds))
+      .not('so_item_id', 'is', null);
+    /* On a read failure leave the note edges untouched rather than guess — the
+       map is advisory and this FK-over-note guard is an enhancement, not a
+       correctness gate. */
+    if (!fkErr) {
+      const fkLinkedPoIds = new Set((fkRows ?? []).map((r: any) => r.purchase_order_id as string));
+      if (fkLinkedPoIds.size) {
+        const kept = noteEdges.filter((e) => !fkLinkedPoIds.has(e.poId));
+        noteEdges.length = 0;
+        noteEdges.push(...kept);
+        notePoIds.length = 0;
+        notePoIds.push(...uniq(kept.map((e) => e.poId)));
+      }
+    }
+  }
+
   const poIds = uniq([...(poItemLinks as any[]).map((l) => l.purchase_order_id), ...notePoIds]);
   if (poIds.length) {
     const { data: pos } = await sb.from('purchase_orders').select('id, po_number, status').in('id', poIds);

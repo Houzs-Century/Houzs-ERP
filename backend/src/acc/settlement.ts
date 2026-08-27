@@ -52,7 +52,7 @@ export type AcquirerRow = {
 };
 
 /** One acquirer as this company uses it: global config joined to the company's
-    own accounts (the scm.acc_acquirers view built by migration 0326). */
+    own accounts (the scm.acc_acquirers view built by migration 0332). */
 export async function loadAcquirer(
   sb: any,
   companyId: number,

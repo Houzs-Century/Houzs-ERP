@@ -1361,6 +1361,29 @@ through `Set()`, which **swallows**, so a warehouse code `dbo.Location` does not
 hold would leave the purchase order looking saved and carrying no location at
 all.
 
+**AND FOR EIGHT DAYS IT DID** (#0549, fixed 2026-08-26). `Set()` swallowing was
+written down here; what was not, is that the value being swallowed was one this
+ERP sends on *every* purchase order. `readWarehouseCode` returned
+`scm.warehouses.code` RAW — `KL WAREHOUSE`, twelve characters against a
+`LocationCode` of eight — so AutoCount skipped both `PurchaseLocation` and every
+line `Location` and saved the order anyway:
+
+```
+set skipped: Cannot set column 'PurchaseLocation'. The value violates the
+             MaxLength limit of this column.
+```
+
+Owner 2026-08-24: *「我的 PO 明明应该是 Bintang Warehouse，但去到 AutoCount 里面
+它却变成了 HQ」* — the book's default, showing because nothing was written.
+
+The table at §the create's location ladder has said *"then through
+`LOCATION_MAP`"* since it was written. **The document was right and the code was
+not**: `withLocations` (the line resolver) and `readWarehouseCode` (the PO
+header) both skipped the map. The conversion header was fixed on 2026-08-25, but
+that fix reads `warehouse_id` and a purchase order has no such column — its
+warehouse is `purchase_location_id` — so the whole PO path was untouched by it.
+*A fix for "the same bug" does not reach a path it never runs on.*
+
 **TWO ASSIGNMENTS, AND THE FIRST DRAFT OF THIS FIX HAD ONE.** `CreatePo` does
 not call `PurchaseHeader`; it sets `DocNo`, `DocDate`, the creditor, `Agent`,
 `Ref`, `Description` and the UDFs itself. Adding `PurchaseLocation` only to
@@ -3240,6 +3263,153 @@ the script could not disagree; that script now imports the mirror.) An
 unrecognised reason is printed rather than counted away, and a skip that has
 already been re-queued (below) is reported separately rather than counted as
 backlog.
+
+**IT RUNS EVERY DAY NOW, AND IT IS SILENT UNLESS SOMETHING IS STUCK**
+(2026-08-24, docs/bugs/0534). The workflow was manual-only and its header refused
+a cron in as many words; that paragraph is kept verbatim above the schedule
+because it is the reason the schedule is shaped this way. Both its conditions
+changed: the write-back went live, and on 2026-08-21 the shop-floor service
+stopped answering — 13 documents piled up over two days and the owner found out
+by noticing the account book was short.
+
+`ALARM=1` (set only on the schedule) makes the run exit non-zero for exactly two
+things: an OUTSTANDING failed row, and a pending row older than
+`ALARM_PENDING_MINUTES` (default 60, twelve times the drain interval). Everything
+else passes silently, so a quiet day sends no mail. The failure e-mail GitHub
+sends is the alarm; the `::error::` line it quotes names the document and the
+remedy. A `skipped` row deliberately does not alarm — it is a statement about the
+document's shape, it does not change on its own, and firing daily forever on one
+hand-keyed receipt is the noise the header refused.
+
+**A failed row whose ERP document no longer exists is history, not backlog.** The
+FAILED heading claims each row is "a document that is in the ERP and NOT in
+AutoCount", and a go-live wipe makes that false without touching this table: the
+export log is KEPT while the documents it names are deleted. Measured minutes
+after a wipe on 2026-08-24: one such row, `HC-DO-2608-003`. It is printed under
+its own heading and excluded from both the outstanding count and the alarm.
+
+**AND IT IS COVERED BY A PARSE CHECK NOW** (docs/bugs/0535). An edit to this
+script dropped one character and shipped; the daily run then failed on
+`ReferenceError` while an operator waited on the report. `backend/tests/
+opsScriptsParse.test.ts` runs `node --check` over every `scripts/*.mjs` —
+these scripts are imported by nothing, so nothing else was looking at them.
+
+**THE BOOK'S NAME FOR AN ITEM IS ITS OWN COLUMN NOW** (migration 0326,
+docs/bugs/0539). `supplier_material_bindings.supplier_sku` was read by two
+questions — the bold "Supplier Code" printed on the PO / GRN / PI, and the
+ItemCode written into the account book — and the second reader was attached to
+purchasing's column on 2026-08-11 (#2031).
+
+`scripts/ac-item-code-census.mjs` measured the cost over all 3,076 bindings with
+the real resolver: **1,874 IN BOOK, 1,063 WOULD OPEN** an item the book does not
+hold, **139 REFUSED**, every refusal `ambiguous: … none belongs to supplier`.
+The rule the working rows follow is exact — a value that IS an ItemCode the book
+holds wins outright (`index.acCodes.has(bound)`), with no supplier comparison
+and nothing opened. Hookka's 50 working bedframes carry `HOK-1019 (SK)`; the 139
+refusals carry `1007-(K)`, which the book has never held.
+
+`bindingsFor` now prefers `ac_item_code` and falls back to `supplier_sku` while
+it is empty. **The fallback is not a shim to delete**: the column starts NULL on
+every row, so removing it would stop resolving the 1,874 that land correctly
+today. Seeding the column is a separate step with its own dry run.
+
+**A TRANSFER SENDS NO ItemCode, AND IS NO LONGER REFUSED OVER ONE** (2026-08-25,
+docs/bugs/0541). Owner: 「如果它是 by convert 的，那肯定是先跟 Sales Order 的 SKU
+进行 convert … SKU 可能就不用看了」.
+
+`AddSOToPOTransferDetail(Int64)` takes a source line KEY and nothing else —
+AutoCount copies the sales line's own item into the purchase line — and
+`composeSoToPo` already matched that: DtlKey, UnitPrice, Qty, Location,
+DeliveryDate, every ItemCode discarded. But the enqueue composed a full CREATE
+payload first, which resolves every line's ItemCode and throws `ItemCodeError`,
+and only then threw the codes away. A purchase order that needs no item code was
+being refused over one — and 139 bindings resolve to `ambiguous: … none belongs
+to supplier`, so on a transfer every one of them blocked a document over a value
+that would never be sent.
+
+`ComposeOptions.forTransfer` stops that refusal on the transfer path and nowhere
+else: **the create path is unchanged**, because there the ItemCode really is
+sent and really does open or name an item in a licensed book. Two details are
+load-bearing — `readPoEnqueueShape` is read BEFORE `composeDetails` (whether an
+ItemCode matters is the shape's decision), and an unresolved line is KEPT rather
+than dropped, because a short `Details` array misaligns the DtlKey zip and puts
+a wrong quantity on a live purchase order.
+
+**`GET /api/scm/autocount-outbox/host-log`** (2026-08-25, docs/bugs/0537) returns
+the last N lines of AcSyncService's own log from the office machine —
+`?lines=` (default 200, the host clamps it) and `?onlyErrors=1`. Same permission
+keys as Send again, because the log carries document numbers, account codes and
+the book's own refusals.
+
+It exists because `Invalid transfer item.` names nothing, and the sentence that
+settles such a failure — `target debtor before transfer = [...]` — is written by
+the service into a file on that machine. The host has served that file over HTTP
+since it was written; a grep on 2026-08-25 found the only file in this repo
+naming `/last-errors` was the C# that serves it, and all four read-only host
+routes were dead code from the ERP's side.
+
+It goes through `callAcRead` (`services/autocount-host-read.ts`), NOT
+`callAcService`: read routes are deliberately not `AcOp`s, and
+`autocountHostRead.test.ts` pins the two vocabularies disjoint. Every `AcOp`
+names something an outbox ROW can be — a document with a status, attempts and a
+retry policy — and a log read is none of those.
+
+**`GET /api/scm/autocount-outbox/book-doc`** (2026-08-26, docs/bugs/0550) is the
+second of those four routes to be wired up: `?docType=SO|PO|DO|GR|IV|PI` and
+`?docNo=`, returning the header, every line, and `missingColumns` — the wanted
+columns the book does not have, passed through rather than dropped, because
+*"AutoCount has no such field"* is itself the answer to several of the questions
+this route exists for. Same permission keys again; it returns debtor codes,
+prices and addresses out of a licensed account book.
+
+**IT ANSWERS THE ONE QUESTION NOTHING ELSE HERE CAN.** Every other route reports
+what the ERP SENT or what the host SAID BACK, and neither is evidence about the
+book. `Set()` on the host swallows a refused assignment and still reports
+success, so *sent* has never meant *landed* — #0549 is eight days of purchase
+orders carrying no warehouse with the queue, the page and the log all green.
+Owner 2026-08-26: 「我 edit 了之后，怎么没输入回去给 AutoCount 呢?」 — a question
+about the book, which no reading of our own payload can answer.
+
+`DetailWanted` is chosen for exactly these questions: `FromDocType` /
+`FromDocNo` / `FromDocDtlKey` / `FullTransferFromDocList` on the downstream side
+and `FromSODtlKey` / `FromSODocList` on a PO answer *is the convert-from link
+there*; `Location` answers *which warehouse did this line really get*.
+
+`BOOK_DOC_TYPES` lives in `autocount-host-read.ts` beside `AC_READ_ROUTE`, and
+the test pins it against `AcSyncService.DocTypes` read out of the C# source with
+`?raw` — so a type the host drops fails a test here rather than becoming a 400
+for a document the book can read.
+
+**A PENDING ANCESTOR IS SENT, NOT RE-QUEUED** (2026-08-26, docs/bugs/0542).
+`sendAncestorsFirst` always went through `requeueOutboxRow`, which refuses a
+pending row outright — `row-pending`, and rightly, since the sweep is already
+going to take it. So on the shape the cascade meets most, a chain where every
+document waits on the one above it, every ancestor came back `row-pending` and
+nothing was sent: the button did exactly what the operator could see, nothing.
+Owner: 「顺着点完…就没问题。但…直接去点 Sales Invoice…就不行」— pressing each row
+by hand worked because that sends its own pending row directly, which is
+precisely what the cascade omitted. Failed and skipped ancestors still take the
+re-queue path.
+
+**A PURCHASE ORDER WAITS FOR ITS SALES ORDER RATHER THAN BECOMING A CREATE**
+(2026-08-26, docs/bugs/0543). `poTransferShape` decides transfer-or-create on
+whether the sales-order lines carry an AutoCount DtlKey — and that key is
+written back only when the sales order reaches the book. A purchase order raised
+in the same minute sees NULL keys, so "the account book has no key for these
+lines" was read as permanent. Measured: HC-PO-2608-007 from HC-SO-2608-008 went
+as `create_po` at 16:55 on 2026-08-25 and the book holds no link between them;
+the five before it transferred, because they were raised long enough afterwards.
+A race, not a rule — and a create is the one answer that cannot be taken back.
+
+A third shape, `wait`: keyless AND the source sales order is not in the book yet
+→ queued as `so_to_po` with `fromDoc` on that sales order, which the drain
+already holds until the parent has its number, and the keys are filled at drain
+by `lib/autocount-so-to-po-keys.ts` — the same shape as the CreditorCode, DocNo
+and DebtorCode backfills, and for the same reason. Keyless while the sales order
+IS in the book stays a create; so does for-stock, and so does a purchase order
+drawing on two sales orders, which has no single anchor to wait on. The backfill
+is all-or-nothing: a partial set would send a purchase order that looks complete
+and is short some lines.
 
 **It also splits the queue by OPERATION, and that is a different question.**
 *Added 2026-08-20 (#2417).* A status total says whether the QUEUE works; it says

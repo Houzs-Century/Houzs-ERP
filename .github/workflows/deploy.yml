@@ -251,6 +251,9 @@ jobs:
           command: deploy --var GIT_SHA:${{ github.sha }}
       # Worker secrets, pushed on every deploy (idempotent). FORM_INTAKE_KEY
       # guards the Google Form intake webhook (/api/assr-form-intake).
+      # SHEET_SYNC_KEY_2990 is the sheet's 2990 ready-to-ship pull and the only
+      # key /so-export accepts — the other two speak for HOUZS and may not open
+      # 2990 customer data (docs/modules/service-case.md).
       #
       # Built with `jq -n --arg` and piped on STDIN so no value ever reaches an
       # argv the runner logs. Actions masks these anyway; this is the second
@@ -263,12 +266,15 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           FORM_INTAKE_KEY: ${{ secrets.FORM_INTAKE_KEY }}
           SHEET_SYNC_KEY: ${{ secrets.SHEET_SYNC_KEY }}
+          SHEET_SYNC_KEY_2990: ${{ secrets.SHEET_SYNC_KEY_2990 }}
         run: |
           set -euo pipefail
           jq -n \
             --arg form_intake_key "$FORM_INTAKE_KEY" \
             --arg sheet_sync_key "$SHEET_SYNC_KEY" \
-            '{FORM_INTAKE_KEY: $form_intake_key, SHEET_SYNC_KEY: $sheet_sync_key}' \
+            --arg sheet_sync_key_2990 "$SHEET_SYNC_KEY_2990" \
+            '{FORM_INTAKE_KEY: $form_intake_key, SHEET_SYNC_KEY: $sheet_sync_key}
+             + (if $sheet_sync_key_2990 == "" then {} else {SHEET_SYNC_KEY_2990: $sheet_sync_key_2990} end)' \
             | npx wrangler secret bulk
       # Post-deploy smoke check: confirm the new Worker is serving AND its
       # DB path (Hyperdrive -> Supabase) is alive before calling the deploy

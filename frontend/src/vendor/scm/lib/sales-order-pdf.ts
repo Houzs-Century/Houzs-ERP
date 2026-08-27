@@ -30,6 +30,10 @@ import {
   ensureBrandLogoLoaded,
   getBrandLogoCache,
 } from '../../../lib/branding';
+/* The status WORD comes from the one home for it, never from a caser here:
+   what this document prints and what the screen shows must be the same word.
+   docs/modules/document-status-vocabulary.md §1. */
+import { statusLabel } from './status-pill';
 
 // ----------------------------------------------------------------------------
 // Sales Order PDF generator — dynamic jspdf import so it doesn't bloat the
@@ -417,7 +421,7 @@ export async function renderSalesOrderInto(
         (header.emergency_contact_relationship ?? '').trim() ? `(${(header.emergency_contact_relationship ?? '').trim()})` : '',
       ].filter(Boolean).join(' · ')
     : null;
-  const statusText = header.status.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
+  const statusText = statusLabel('so', header.status);
   /* Owner batch 2026-07 — ORDER DETAILS additions. Dual-read camelCase ??
      snake_case (repo #1 recurring bug) since these fields are stamped onto the
      GET /:docNo payload. Blank values are skipped by drawInfoColumns, so a CO

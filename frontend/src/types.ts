@@ -545,6 +545,13 @@ export interface AuthUser {
    *  code-keyed Sales-access model (auth/salesAccess.ts isSalesStaff), which
    *  is more robust than keying off the position name alone. */
   department_name?: string | null;
+  /** Operational-capability grants for this member's POSITION
+   *  (position_capabilities, mig 0322) — the editable Roles & Permissions
+   *  matrix. e.g. "scm.do.load", "scm.do.dispatch". Sent by /auth/me. Drives
+   *  UX gating that mirrors the backend hasPositionCapability check (the scan-
+   *  confirm route + button); the server endpoint is the real boundary. Older
+   *  backends omit it → treated as no grants. */
+  position_capabilities?: string[];
 }
 
 export interface TeamMember {
@@ -618,6 +625,11 @@ export interface Department {
   color: string;
   sort_order: number;
   member_count: number;
+  /** The department's chosen lead (mig-pg 0331). null = no lead set — the real
+   *  lead takes precedence over the derived one; see teamShared.buildDeptNodes. */
+  lead_user_id?: number | null;
+  /** Optional planned headcount an HR lead fills in. null = no target. */
+  headcount_target?: number | null;
   created_at?: string;
 }
 

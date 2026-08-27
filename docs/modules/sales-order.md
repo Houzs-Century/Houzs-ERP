@@ -1683,6 +1683,15 @@ answer. Before this, `2990-SO-2607-028`'s two-module LOTTI set rendered as TWO
 rows — `Mrp.tsx`'s `groupBySo` keys on `` `${warehouseId ?? WH_NONE}|${soDocNo}` ``
 — and the split was in the backend's own allocation, not only on screen.
 
+**The PO SO-drift check resolves the same way** (`lib/so-po-drift.ts`,
+2026-08-25, bug 0539). A PO line snapshots its source SO line's warehouse at
+proceed time; the drift banner used to compare that against the SO line's RAW
+`warehouse_id`, so a NULL line warehouse — inherited from the header — read as
+"SO warehouse moved" on a line that never moved (it fired across a rebuilt SO
+whose lines all carry NULL). It now resolves the SO line's effective warehouse
+first (`so-warehouse.ts::resolveLineWarehouseId`) and flags a move only when both
+sides resolve to a real, DISTINCT warehouse (`so-warehouse.ts::warehousesDiffer`).
+
 
 **A goods line written with NO warehouse now says so** (2026-08-20).
 `lib/null-warehouse-signal.ts::signalNullWarehouseRows` is called at all three
@@ -1697,9 +1706,40 @@ Service lines are excluded (they hold no stock; a guard that cries on every
 delivery-fee line is one somebody turns off). The hourly do-link sentinel
 counts the same shape, baseline 10 (the addressless orders below).
 
-Also relevant: `apply_so_header_cas` (mig 0173) rebinds `warehouse_id` on the
-order's **NULL lines only** when the header's warehouse changes, while the
-approved-amendment path (`so-revision.ts`) rebinds every non-cancelled line.
+Also relevant: `apply_so_header_cas` rebinds `warehouse_id` when the header's
+warehouse changes — on the order's **NULL lines** (mig 0173) plus, since mig
+0330, the ids the route passes as `p_rebind_line_ids`; the approved-amendment
+path (`so-revision.ts`) rebinds every non-cancelled line.
+
+#### The order is born belonging to the operator's store (owner 2026-08-25)
+
+A POS walk-in has no address yet, and until 2026-08-25 the create default
+derived the per-line warehouse from the State ALONE — so a no-address order
+wrote every goods line `warehouse_id NULL` (2990-SO-2608-045: four of them,
+docs/bugs/0541; the hourly sentinel red for days on the same class after the
+0501 rebuild). Now the create default is the READ chain applied at write time
+— explicit Location, then State — plus one final fallback: **the creating
+operator's own store** (`scm.staff.showroom_warehouse_id`, verified in the
+ACTIVE company's warehouse master because `scm.staff` is one shared table).
+The decision is `so-warehouse.ts::chooseCreateWarehouseDefault` (pure); the
+reads are `lib/so-create-warehouse-default.ts`. A resolved Location or State
+always wins, and an EXPLICIT Location that resolves to nothing blocks the
+store too (the operator said something specific; that case keeps its NULL and
+the `[null-warehouse]` signal). The header's `sales_location` falls back to
+the same store label, and the single-row / sofa-split add-line paths inherit
+the ORDER's warehouse (`resolveSoWarehouseId`) instead of the State-only
+derive — so every goods-line write path binds a warehouse whenever the header
+has one.
+
+**The 2026-07-22 State-change conflict gate is narrowed to its stated
+reason** (`lib/so-state-warehouse-rebind.ts`): a bound line 409s only when a
+LIVE downstream PO/DO anchors it (DRAFT POs count as live, same ruling as
+`so-po-lock`); an un-anchored bound line MOVES with its order inside the CAS
+transaction (`p_rebind_line_ids`, mig 0330). Without this, no state maps to a
+showroom, so every store-born order would 409 on the address fill. The anchor
+lookup fails CLOSED (unreadable downstream = anchored = the old blanket 409);
+the mismatch read keeps its historical fail-OPEN (gate skipped, only NULL
+lines rebind). All-or-nothing: one anchored line blocks the whole change.
 
 #### Company 1 cannot create an order with no stock location (owner 2026-08-13, SURFACE CHANGE)
 
@@ -2466,6 +2506,28 @@ same contract as the Processing-Date gates), all reasons at once:
 | `salesperson_required` | `salesperson_id` OR the legacy `agent` text set (HC-SO-2607-008 confirmed as "Unassigned") |
 | `venue_required` | `venue` text OR `venue_id` set (owner: *"venue is compulsory的"*). No venue-less order class exists in code — venue-binding's "empty is honest" rule governs AUTO-resolution only; when it resolves nothing, confirm demands a human pick |
 
+> **`venue_required` is only satisfiable on a surface that HAS a Venue field
+> (2026-08-25).** "When it resolves nothing, confirm demands a human pick" is
+> true of the desktop and the phone — `SalesOrderNew.tsx:1911` renders a Venue
+> dropdown over the 92 `project_venues` rows (owner 2026-06-22, *"houzs 的 venue
+> 是 manually 選的"*). The 2990 POS handover had no such field and sent no venue,
+> so its users hit this problem AFTER the customer had signed with nothing on
+> screen that could answer it.
+>
+> Measured the same day (`probe-so-venue-gate`, runs 32827817087 / 32826133061):
+> **0** PMS projects were running, **83 of 90** active staff resolved no venue
+> from any source, and exactly **one** warehouse in the system carries a
+> `venue_name` (`PJ SHOWROOM`, company 2). Between exhibitions this gate is
+> unsatisfiable by resolution alone for almost everyone — the picker is the
+> answer, not the resolver. Fixed POS-side in `wenwei4046/2990s#774`; full trace
+> in `docs/bugs/0539-the-confirm-gate-demanded-a-venue-the-pos-screen-had-nowhere.md`.
+>
+> **A confirm can pass this gate and still store NO venue.** The rule reads
+> `venue` OR `venue_id`, but `venue_id` is a uuid column and `project_venues` ids
+> are INTEGERS, so `venueIdUuidOrNull` (`mfg-sales-orders.ts:746`) nulls any id a
+> client sends. A payload carrying only `venueId` is accepted and lands blank,
+> silently. Any new client must send the venue TEXT.
+
 > **CORRECTED 2026-08-14 — the confirm gate no longer checks variants.** This
 > table carried a fourth row, `variants_incomplete`, "every goods line's required
 > axes via `missingConfirmVariantAxes`". Commit `16d94ab4` (#2072, 2026-08-13)
@@ -3159,6 +3221,21 @@ Flow:
    wrong. `"2990s Sofa"` exists as a 2990 brand row with no `logo_r2_key`, so
    2990 sofa orders print the 2990 company letterhead until the owner uploads
    one. Entry `docs/bugs/0489-a-2990-sales-order-pdf-printed-houzs-s-zanotti-logo.md`.
+
+   **And the PDF's STATUS word is a third path again, fixed 2026-08-26.**
+   `sales-order-pdf.ts` title-cased the stored value with its own hand-rolled
+   caser, so the sheet printed `Ready To Ship` where the screen says
+   **Ready to Ship**, and `In Production` where `status-pill.ts` says
+   **Proceed**. It now calls `statusLabel('so', header.status)` — the one home
+   the owner's 2026-08-21 ruling put those words in — and
+   `frontend/src/vendor/scm/lib/pdf-status-label.test.ts` renders this document
+   for every status in the SO vocabulary and compares what was drawn.
+   **`IN_PRODUCTION` is the one word still unsettled**: `status-pill.ts` says
+   *Proceed*, `frontend/src/pages/scm-v2/so-list-status.ts` says *In Production*
+   while claiming the two match, and both are live on screens. The sheet follows
+   `status-pill.ts`; picking the word is the owner's call. Entry
+   `docs/bugs/0548-every-printed-document-title-cased-the-raw-stored-status-ins.md`,
+   rule `docs/modules/document-status-vocabulary.md` §1.
 
 `?summary=1` skips the view join + item read entirely (dashboard only needs status
 buckets) — do not fully-hydrate 500 rows for a count.

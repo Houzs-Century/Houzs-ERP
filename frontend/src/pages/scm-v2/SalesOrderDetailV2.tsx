@@ -62,6 +62,7 @@ import { useAuth as useHouzsAuth } from "../../auth/AuthContext";
 import { useSetBreadcrumbs } from "../../hooks/useBreadcrumbs";
 import { useStaffLookup } from "../../hooks/useStaffLookup";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
+import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { DocumentRelationshipMapModal, DocumentChoiceDialog } from "../../components/scm-v2/DocumentRelationshipMapModal";
 import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
@@ -553,6 +554,7 @@ function SalesOrderDetailV2ReadOnly() {
   const updateStatus = useUpdateMfgSalesOrderStatus();
   const { nameOf: salespersonNameOf } = useStaffLookup();
   const notify = useNotify();
+  const askConfirm = useConfirm();
   // Followup #81 — the printed SO reads payments from the ledger, not the
   // deprecated header columns; fetch them for the Print PDF handler.
   const printPaymentsQ = useSalesOrderPayments(docNo ?? null);
@@ -625,10 +627,13 @@ function SalesOrderDetailV2ReadOnly() {
   // details page's back button goes to its relevant list, not wherever
   // browser history happens to point). The list restores its own sticky
   // filters, so the prior filtered view comes back — no context lost.
-  const goBack = () => {
-    if (unsavedPayments > 0 && !window.confirm(
-      `${unsavedPayments} payment row${unsavedPayments === 1 ? " is" : "s are"} typed but not saved — leave anyway?`,
-    )) return;
+  const goBack = async () => {
+    if (unsavedPayments > 0 && !(await askConfirm({
+      title: "Leave without saving payments?",
+      body: `${unsavedPayments} payment row${unsavedPayments === 1 ? " is" : "s are"} typed but not saved.`,
+      confirmLabel: "Leave anyway",
+      danger: true,
+    }))) return;
     navigate(scmListReturnTo("/scm/sales-orders"));
   };
   // Edit always forwards to the full editor (?edit=1). When the SO is
@@ -670,13 +675,14 @@ function SalesOrderDetailV2ReadOnly() {
     setPayEditing(true);
     paymentsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
-  const doCancel = () => {
+  const doCancel = async () => {
     if (!salesOrder) return;
-    if (
-      window.confirm(
-        `Cancel sales order ${salesOrder.doc_no}? This cannot be undone.`
-      )
-    ) {
+    if (await askConfirm({
+      title: `Cancel sales order ${salesOrder.doc_no}?`,
+      body: "This cannot be undone.",
+      confirmLabel: "Cancel order",
+      danger: true,
+    })) {
       updateStatus.mutate({
         docNo: salesOrder.doc_no,
         status: "cancelled",

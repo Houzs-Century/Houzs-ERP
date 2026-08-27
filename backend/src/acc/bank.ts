@@ -9,7 +9,7 @@
 // The one writer, postBankLine, is deliberately thin: a movement that settles a
 // merchant statement is posted by LAYER 3's postBatchReceipt, not by a second
 // path of this module's own. There is one notion of "the acquirer paid us" in
-// this system and one place that books it — 0329's header says so — and a bank
+// this system and one place that books it — 0335's header says so — and a bank
 // screen that wrote its own receipts would be a second, parallel truth about
 // the same money.
 // ----------------------------------------------------------------------------

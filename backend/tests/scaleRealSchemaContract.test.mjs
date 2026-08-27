@@ -29,6 +29,26 @@ test("uses production relation names, payment view and hot indexes, never perf_*
   assert.match(PG_REAL_SCHEMA_DDL, /sum\(amount_sen\).*paid_total/s);
 });
 
+/* The projection and the synthetic schema are edited by different hands, and
+   only PostgreSQL ever compares them — in scale-postgres-contract, which since
+   2026-08-18 runs POST-merge. Mig 0324 added the four hold columns to
+   SO_LIST_COLUMNS here without adding them to the CREATE TABLE below it, and
+   the first thing to say so was the Postsubmit run of the merge that landed it:
+   `column "on_hold" does not exist`, red on every push from 2026-08-22 to
+   2026-08-26. A projection name the DDL nowhere declares cannot survive the
+   benchmark, so it is checkable as text, pre-merge, without a database. */
+test("the SO list projection only names columns the synthetic schema declares", () => {
+  const missing = SO_LIST_COLUMNS.split(", ").filter(
+    (col) => !new RegExp(`\\b${col}\\b`).test(PG_REAL_SCHEMA_DDL),
+  );
+  assert.deepEqual(
+    missing, [],
+    `SO_LIST_COLUMNS names columns PG_REAL_SCHEMA_DDL never declares: ${missing.join(", ")}. ` +
+      "The benchmark SELECTs this projection against the synthetic table, so the " +
+      "post-merge 100k run dies on the first of these — declare them in the DDL too.",
+  );
+});
+
 test("seeds requested cardinality for each of two tenants", () => {
   const seed = pgSeedSql({ orders: 100_000, lines: 100_000, skus: 10_000, users: 10_000 });
   assert.equal(seed.match(/generate_series\(1, 100000\) g/g)?.length, 3);

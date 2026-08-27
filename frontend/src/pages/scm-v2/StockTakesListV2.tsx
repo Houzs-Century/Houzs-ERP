@@ -28,6 +28,7 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
 import { useStaffLookup } from "../../hooks/useStaffLookup";
+import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { fmtDate } from "../../vendor/shared/format";
 import { warehouseLabel } from "../../vendor/scm/lib/warehouse-label";
 import { stockTakeRowMenu } from "./row-menus";
@@ -136,6 +137,7 @@ export function StockTakesListV2() {
   const [params, setParams] = useSearchParams();
   const queryClient = useQueryClient();
   const { actorNameOf } = useStaffLookup();
+  const askConfirm = useConfirm();
 
   const status = (params.get("status") ?? "all") as StatusTab;
   const view = (params.get("view") ?? "table") as "table" | "cards";
@@ -215,8 +217,12 @@ export function StockTakesListV2() {
      from a list row in any case: the row carries a line COUNT and a variance
      TOTAL, never the count sheet itself. */
   const goPrint = (r: StockTakeRow) => navigate(`/scm/stock-takes/${r.id}?print=1`);
-  const doCancel = (r: StockTakeRow) => {
-    if (window.confirm(`Cancel take ${r.take_no}?`)) {
+  const doCancel = async (r: StockTakeRow) => {
+    if (await askConfirm({
+      title: `Cancel take ${r.take_no}?`,
+      confirmLabel: "Cancel take",
+      danger: true,
+    })) {
       cancelTake.mutate(r.id);
     }
   };

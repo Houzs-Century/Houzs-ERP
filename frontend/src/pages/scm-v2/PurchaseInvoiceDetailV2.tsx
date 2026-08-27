@@ -41,6 +41,7 @@ import { useSupplierDetail } from "../../vendor/scm/lib/suppliers-queries";
 import { skuMapFromBindings, supplierCodeFor } from "../../vendor/scm/lib/supplier-doc-data";
 import { useSetBreadcrumbs } from "../../hooks/useBreadcrumbs";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
+import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { cn } from "../../lib/utils";
@@ -370,6 +371,7 @@ function PurchaseInvoiceDetailV2ReadOnly() {
   const postPi = usePostPurchaseInvoice();
   const recordPayment = useRecordPiPayment();
   const notify = useNotify();
+  const askConfirm = useConfirm();
 
   const purchaseInvoice =
     (detail.data as { purchaseInvoice?: PiHeader } | undefined)?.purchaseInvoice ??
@@ -453,15 +455,24 @@ function PurchaseInvoiceDetailV2ReadOnly() {
   useOpenPrintPreviewFromUrl(print.openPreview, !!purchaseInvoice);
   const goRecordPayment = () =>
     id && navigate(`/scm/purchase-invoices/${id}?tab=payments&record=1`);
-  const doPost = () => {
+  const doPost = async () => {
     if (!id) return;
-    if (window.confirm("Post this purchase invoice? Revenue-side and AP will be updated.")) {
+    if (await askConfirm({
+      title: "Post this purchase invoice?",
+      body: "Revenue-side and AP will be updated.",
+      confirmLabel: "Post invoice",
+    })) {
       postPi.mutate(id);
     }
   };
-  const doCancel = () => {
+  const doCancel = async () => {
     if (!purchaseInvoice) return;
-    if (window.confirm(`Cancel invoice ${purchaseInvoice.invoice_number}? Any posted revenue will be reversed via a contra JE.`)) {
+    if (await askConfirm({
+      title: `Cancel invoice ${purchaseInvoice.invoice_number}?`,
+      body: "Any posted revenue will be reversed via a contra JE.",
+      confirmLabel: "Cancel invoice",
+      danger: true,
+    })) {
       cancelPi.mutate(purchaseInvoice.id);
     }
   };

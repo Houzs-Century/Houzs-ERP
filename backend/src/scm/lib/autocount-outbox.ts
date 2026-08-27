@@ -100,7 +100,9 @@ import { soEditHeader } from './so-edit-header';
 import {
   AcReadError, readOrThrow, readSoOutstandingSen, readSoPaymentRefs, readPoEnqueueShape,
   readWarehouseCode,
+  withLocations,
 } from './autocount-read';
+import { backfillSoToPoKeys, poBodyForShape } from './autocount-so-to-po-keys';
 /* The reason a parentless create records, kept beside the needle that
    classifies it and pinned by a test — see acParentlessCreateReason. */
 import { acParentlessCreateReason, acNotCarriedReason } from './autocount-outbox-status';
@@ -159,7 +161,6 @@ const AC_ENQUEUE_SILENT: AcEnqueueOutcome = { queued: false, problems: [] };
 /** Past this an operation is surfaced as FAILED instead of retrying forever. */
 export const MAX_ATTEMPTS = 6;
 const DRAIN_BATCH = 20;
-
 
 /** The ERP tables that can carry an AutoCount counterpart number. */
 export type AcLinkTable =
@@ -422,38 +423,6 @@ const PO_ITEM_COLS =
  *     document the ERP is not the authority for.
  */
 
-/**
- * Hang the AutoCount stock location on each line.
- *
- * `warehouse_id` is a `scm.warehouses` UUID; AutoCount's `dbo.Location` is
- * keyed by the short code (KL, PG, HQ...), so one lookup per document turns
- * the ids into codes. Lines share warehouses, so this is one `in` query, not
- * one per line.
- *
- * A line with no warehouse keeps `location: null` and the caller decides:
- * a create refuses it (MissingLocationError), an edit simply omits the key so
- * the account book keeps its own value.
- */
-async function withLocations(
-  sb: Sb,
-  rows: Record<string, unknown>[],
-  lines: ErpLine[],
-): Promise<ErpLine[]> {
-  const ids = [...new Set(rows.map((r) => r.warehouse_id).filter((v): v is string => typeof v === 'string' && v !== ''))];
-  if (!ids.length) return lines;
-  const wh = await readOrThrow('warehouses',
-    sb.from('warehouses').select('id, code, name').in('id', ids));
-  const byId = new Map<string, string>();
-  for (const w of (wh ?? []) as Array<Record<string, unknown>>) {
-    const code = (w.code as string | null) ?? (w.name as string | null);
-    if (w.id && code) byId.set(String(w.id), code);
-  }
-  return lines.map((l, i) => {
-    const id = rows[i]?.warehouse_id;
-    const code = typeof id === 'string' ? byId.get(id) ?? null : null;
-    return code ? { ...l, location: code } : l;
-  });
-}
 
 /**
  * The salesperson's NAME, for the AutoCount Sales Agent.
@@ -479,7 +448,6 @@ async function readSalespersonName(sb: Sb, salespersonId: unknown): Promise<stri
   const name = ((row as { name?: string | null } | null)?.name ?? '').trim();
   return name || null;
 }
-
 
 /**
  * Write a failed compose down instead of dropping it.
@@ -704,18 +672,19 @@ export async function enqueuePoCreate(
     const rows = (items ?? []) as Record<string, unknown>[];
     const lines = await withLocations(sb, rows, rows.map(soLine));
     const bindings = await bindingsFor(sb, opts.companyId, lines.map((l) => l.item_code), header.supplier_id);
-    const { collapsed, details } = composeDetails(lines, { supplierCode: header.creditor_code, bindings });
 
-    /* TRANSFER OR CREATE — po-transfer-shape.ts, which falls back on ANY doubt
-       because a create is today's behaviour and cannot be wrong. */
+    /* TRANSFER OR CREATE — po-transfer-shape.ts falls back on ANY doubt. READ
+       BEFORE COMPOSING: the shape decides whether an ItemCode is even sent
+       (docs/bugs/0541). */
     const { shape, sourceRef } = await readPoEnqueueShape(sb, opts.poId);
-
-    const body = composeCreatePo(header, lines, { bindings });
+    const forTransfer = shape.kind === 'transfer';
+    const { collapsed, details } = composeDetails(lines, { supplierCode: header.creditor_code, bindings, forTransfer });
+    const body = composeCreatePo(header, lines, { bindings, forTransfer });
     if (sourceRef) (body as unknown as Record<string, unknown>).Ref = sourceRef;
 
     return { queued: await enqueueAcOp(sb, {
       companyId: opts.companyId,
-      op: shape.kind === 'transfer' ? 'so_to_po' : 'create_po',
+      op: shape.kind === 'create' ? 'create_po' : 'so_to_po',   // `wait` is a transfer whose keys are not issued yet
       docType: 'PO',
       docNo: header.po_number,
       docId: opts.poId,
@@ -729,12 +698,10 @@ export async function enqueuePoCreate(
            the number (10:15, `PO-009968` for `HC-PO-2608-001`, divergence D5).
            Both were patched one at a time and FIVE were still missing after.
            Guide §7c3a, §7c3b, §7c3b-i. */
-        body: (shape.kind === 'transfer'
-          ? composeSoToPo(body, shape.dtlKeys, details)
-          : body) as unknown as Record<string, unknown>,
+        body: poBodyForShape(shape, body as never, details),
         /* THE PARENT MUST EXIST FIRST — dispatchOne holds this as `waiting`,
            without burning an attempt, until the sales order has its number. */
-        ...(shape.kind === 'transfer'
+        ...(shape.kind === 'transfer' || shape.kind === 'wait'
           ? { fromDoc: { table: 'mfg_sales_orders', keyCol: 'doc_no', key: shape.fromSoDocNo } as AcDocRef }
           : {}),
         writeback: { table: 'purchase_orders', keyCol: 'id', key: opts.poId },
@@ -942,7 +909,6 @@ export async function enqueueConvert(
 const AC_DOC_KIND: Record<'DO' | 'IV' | 'GR' | 'PI', AcDocKind> = {
   DO: 'delivery order', IV: 'invoice', GR: 'goods receipt', PI: 'purchase invoice',
 };
-
 
 /** The ItemCode column each line table spells its product in. */
 const LINE_CODE_COL: Record<AcLineTable, string> = {
@@ -1558,12 +1524,17 @@ async function bindingsFor(
   const rows = await readOrThrow('supplier_material_bindings', readMfgProductBindings<Record<string, unknown>>(sb, {
     codes: wanted,
     companyId,
-    select: 'item_code, supplier_id, supplier_sku, is_main_supplier',
+    select: 'item_code, supplier_id, supplier_sku, ac_item_code, is_main_supplier',
   }));
   const bySupplier = new Map<string, string>();
   for (const r of (rows ?? []) as Array<Record<string, unknown>>) {
     const code = String(r.item_code ?? '').trim().toUpperCase();
-    const sku = typeof r.supplier_sku === 'string' ? r.supplier_sku.trim() : '';
+    /* `ac_item_code` FIRST, `supplier_sku` only while empty (mig 0326 — the
+       column comments there say who owns which). THE FALLBACK IS NOT A SHIM:
+       ac_item_code is NULL everywhere, so dropping it stops resolving the 1,874
+       bindings that land today. Why the split exists: docs/bugs/0539. */
+    const acCode = typeof r.ac_item_code === 'string' ? r.ac_item_code.trim() : '';
+    const sku = acCode || (typeof r.supplier_sku === 'string' ? r.supplier_sku.trim() : '');
     if (!code || !sku) continue;
     if (supplierId && String(r.supplier_id ?? '') === supplierId && !bySupplier.has(code)) {
       bySupplier.set(code, sku);
@@ -1682,7 +1653,6 @@ async function mark(sb: Sb, id: string, patch: Record<string, unknown>): Promise
     .eq('id', id);
 }
 
-
 export type DispatchOutcome = 'sent' | 'failed' | 'retry' | 'waiting';
 
 /**
@@ -1782,6 +1752,8 @@ export async function dispatchOne(
      already KEYED by the ERP's number. Without it AcSyncService auto-numbers —
      how PO-009968 got a number nobody in this building would say. Guide §7c3b. */
   if (row.op === 'so_to_po' && !body.DocNo && row.doc_no) body.DocNo = row.doc_no;
+
+  await backfillSoToPoKeys(sb, row.op, body, payload.writeback);  // `wait` shape's keys — see that module
 
   /* THE SUPPLIER ON A PURCHASE CONVERSION, for a row composed before D15 was
      closed. Exactly the `so_to_po` shape twelve lines up and for exactly the

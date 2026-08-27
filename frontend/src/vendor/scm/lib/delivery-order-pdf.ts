@@ -37,6 +37,10 @@ import {
 import { DO_THEME as T, MONO, SANS, charSpace, monoFor, pt, type Rgb } from './delivery-order-theme';
 import { docVariantLine, loadCustomerFabricMaps } from './supplier-doc-data';
 import { drawQrIntoPdf } from './pdf-qr';
+/* The status WORD comes from the one home for it, never from a caser here:
+   what this document prints and what the screen shows must be the same word.
+   docs/modules/document-status-vocabulary.md §1. */
+import { statusLabel } from './status-pill';
 
 type DoHeader = {
   do_number: string;
@@ -45,7 +49,10 @@ type DoHeader = {
      /scm/do-load?id=<this>. EXPLICIT opt-in by name, not a generic id: the
      Consignment Note print reuses this renderer, and a CN must never grow a
      control that flips a DELIVERY ORDER's status. Only the DO surfaces set it. */
-  loadScanId?: string | null;
+  /* The PUBLIC scan token (64 hex), stamped by armDoScanToken. Not a row id:
+     the QR encodes /d/<token>, which opens with no login, because a driver has
+     no account (owner: 「就跟hookka一样」). Absent = print no QR. */
+  scanToken?: string | null;
   do_date: string;
   so_doc_no: string | null;
   debtor_code: string | null;
@@ -236,21 +243,43 @@ function drawDoHeader(
 
   let rightBottom = issuedBaseline + 1.2;
 
-  /* "Scan to mark loaded" (2026-08-21): the warehouse scans the paper that
-     travels with the goods; the link lands on /scm/do-load which flips
-     DRAFT → LOADED through the ordinary status PATCH (audited, guarded).
-     Right column only — the header rule clears whichever column ran longer,
-     so growing this column is layout-safe by construction. */
-  if (header.loadScanId && typeof window !== 'undefined') {
-    const QR = 16;
+  /* THE SCAN QR. It points at the PUBLIC page now (2026-08-26): the driver has
+     no account, so the link must open without one — the owner's call,
+     「就跟hookka一样」 — and the 64-hex token in it is the only credential. It
+     used to encode /scm/do-load?id=<uuid>, which only signed-in office staff
+     could open.
+
+     THE CAPTION CHANGED WITH IT, and had to. "SCAN · MARK LOADED" was written
+     when the code did exactly one thing (DRAFT -> LOADED). Since the three-scan
+     ladder it does four — confirm loading, confirm loaded onto the lorry,
+     confirm departure, confirm delivered — so a caption naming one of them is
+     wrong on three of the four papers a storekeeper picks up, and the one it
+     names is the rung most papers never see. "SCAN AT EACH STEP" is what is
+     true of every rung, and it tells the person holding the paper the thing the
+     old caption did not: that this code is scanned more than once.
+
+     Right column only — the header rule clears whichever column ran longer, so
+     growing this column is layout-safe by construction. */
+  if (header.scanToken && typeof window !== 'undefined') {
+    /* 14mm, DOWN FROM 16 (owner, 2026-08-27: 「我不要 16mm，只想要 10mm，太大了可能
+       会有影响」). 10mm was measured and refused back to him: the smallest QR that
+       exists is 21 modules square, so 10mm cannot carry a URL at a readable module
+       size no matter how short the link — it lands at 0.303mm, WORSE than the 16mm
+       it replaced. 14mm with the shortened token is 0.424mm, which is both smaller
+       on the sheet than today AND better to scan than today.
+
+       This number is a FLOOR, not a promise: drawQrIntoPdf grows the code when the
+       payload needs more room, so a delivery order still carrying a legacy 64-char
+       token prints readable instead of silently unscannable. */
+    const QR = 14;
     const qrTop = rightBottom + 2.5;
-    const url = `${window.location.origin}/scm/do-load?id=${encodeURIComponent(header.loadScanId)}`;
+    const url = `${window.location.origin}/d/${encodeURIComponent(header.scanToken)}`;
     drawQrIntoPdf(doc, url, rightEdge - QR, qrTop, QR);
     doc.setFont(SANS, 'normal');
     doc.setFontSize(6.5);
     setInk(doc, T.inkMuted);
     const labelBaseline = baselineOf(qrTop + QR + 0.8, 6.5);
-    doc.text('SCAN · MARK LOADED', rightEdge, labelBaseline, { align: 'right', charSpace: charSpace(6.5, 0.08) });
+    doc.text('SCAN AT EACH STEP', rightEdge, labelBaseline, { align: 'right', charSpace: charSpace(6.5, 0.08) });
     rightW = Math.max(rightW, QR);
     rightBottom = labelBaseline + 0.8;
   }
@@ -384,6 +413,8 @@ function drawInfoPanel(
   const PAD_X = 6;
   const PAD_Y = 5;
   const GAP = 8;
+  /* Space between the customer name and the debtor code that follows it. */
+  const CODE_GAP = 3;
   const innerW = CONTENT_W - PAD_X * 2;
   const colW = (innerW - GAP) / 2;
   const leftX = M + PAD_X;
@@ -416,18 +447,43 @@ function drawInfoPanel(
       y += pt(12) * 1.2;
       if (draw) { setInk(doc, T.ink); doc.text(line, leftX, y); }
     }
-    // The debtor code rides on the name's last line — it is how the warehouse
-    // and the customer's own AP team match the account, and it costs no height
-    // there. Omitted rather than dashed when a record has none.
-    if (draw && header.debtor_code) {
+    /* The debtor code rides on the name's last line — it is how the warehouse
+       and the customer's own AP team match the account, and it costs no height
+       there. Omitted rather than dashed when a record has none.
+
+       IT ONLY RIDES IF IT FITS. `splitTextToSize` wraps the NAME to colW, so a
+       name whose last line ends near the column edge left no room, and the code
+       was drawn past it — straight over "SO No" in the details column
+       (docs/bugs/0550). When it does not fit it takes its own line instead, and
+       the MEASURE pass counts that line too, so the panel grows with it rather
+       than the code falling out of the bottom. */
+    const codeFits = (): boolean => {
+      if (!header.debtor_code) return true;
       const lastLine = nameLines[nameLines.length - 1] ?? '';
       doc.setFont(SANS, 'bold');
       doc.setFontSize(12);
       const nameW = doc.getTextWidth(lastLine);
       doc.setFont(monoFor(header.debtor_code), 'normal');
       doc.setFontSize(9);
-      setInk(doc, T.inkMuted);
-      doc.text(header.debtor_code, leftX + nameW + 3, y);
+      return nameW + CODE_GAP + doc.getTextWidth(header.debtor_code) <= colW;
+    };
+    if (header.debtor_code) {
+      const inline = codeFits();
+      const lastLine = nameLines[nameLines.length - 1] ?? '';
+      let codeX = leftX;
+      if (inline) {
+        doc.setFont(SANS, 'bold');
+        doc.setFontSize(12);
+        codeX = leftX + doc.getTextWidth(lastLine) + CODE_GAP;
+      } else {
+        y += pt(9) * 1.2;
+      }
+      if (draw) {
+        doc.setFont(monoFor(header.debtor_code), 'normal');
+        doc.setFontSize(9);
+        setInk(doc, T.inkMuted);
+        doc.text(header.debtor_code, codeX, y);
+      }
     }
 
     doc.setFont(SANS, 'normal');
@@ -503,9 +559,7 @@ function drawInfoPanel(
     ...(header.vehicle ? [{ label: 'Vehicle', value: header.vehicle }] : []),
     {
       label: 'Status',
-      value: header.status
-        ? header.status.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase())
-        : null,
+      value: header.status ? statusLabel('do', header.status) : null,
       chip: true,
     },
   ];

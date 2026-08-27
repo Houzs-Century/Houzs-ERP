@@ -1,0 +1,85 @@
+-- ----------------------------------------------------------------------------
+-- RE-CHECK NUMBER AT MERGE — parallel PRs; last on main was 0327 when written.
+--
+-- 0328 — the delivery order gets a public scan token, and a kill switch for it.
+--
+-- THE OWNER, shown the risk twice and asked to choose: 「就跟hookka一样」. Hookka's
+-- driver scans the paper with a normal phone camera and no login; the QR encodes
+-- an unguessable token and the token IS the credential. He wanted the same here,
+-- and that is settled. He accepted ONE addition on top of Hookka's shape: a way
+-- to kill a single leaked link, because Hookka's token has no expiry and no
+-- revocation while Houzs already has that pattern (mig 0126, whose header calls
+-- it "that kill switch").
+--
+-- TWO COLUMNS.
+--
+--   qr_token       text        64 random hex chars, or NULL until first printed
+--   qr_revoked_at  timestamptz NULL = live; a stamp = this link is dead
+--
+-- qr_token IS NULLABLE AND MINTED LAZILY, not backfilled. A delivery order has
+-- no public page until somebody prints its QR, so the population of live public
+-- URLs is exactly the population of printed papers instead of every delivery
+-- order that has ever existed. Minting happens in ONE place — the authenticated
+-- GET /api/scm/delivery-orders-mfg/:id/scan-token — and the public route can
+-- only ever RESOLVE a token, never create one.
+--
+-- THE UNIQUE INDEX IS A TENANCY CONTROL, NOT A PERFORMANCE ONE, and that is why
+-- it is UNIQUE rather than plain. The public route has no session, so the ONLY
+-- thing that tells it which company's books it is allowed to touch is the row
+-- the token resolved to (delivery_orders.company_id, NOT NULL since mig 0083).
+-- "The token resolves to exactly one row" therefore has to be a database
+-- guarantee, not a probability argument about 256 bits. It is PARTIAL (WHERE
+-- qr_token IS NOT NULL) because the column is overwhelmingly NULL — every
+-- unprinted delivery order — and NULLs would otherwise pay for index pages that
+-- can never be searched.
+--
+-- qr_revoked_at GETS NO INDEX, deliberately, exactly as mig 0126 reasoned about
+-- case_track_tokens.revoked_at: it is a nullable flag read only AFTER the row
+-- has already been found by its token. There is no query that selects rows BY
+-- revocation, so an index on it would be pure write cost.
+--
+-- timestamptz, NOT the text timestamp of mig 0126. That migration was in the
+-- PUBLIC schema, which mig 0008 put on text stamps. This is scm.*, where the
+-- convention is timestamptz — mig 0324 gave these same five document tables
+-- `held_at timestamptz` four days ago. Following the schema you are in beats
+-- following the migration you copied.
+--
+-- Houzs SCM port conventions (mirrors 0324 / 0317): schema-qualified to scm.*,
+-- plain ADD COLUMN IF NOT EXISTS — NOT a DO block, because pg-migrate splits
+-- each file on ";\n" and would fragment a dollar-quoted one — additive, re-run
+-- safe, so the auto-apply on every deploy is a no-op after the first.
+--
+-- NO BACKFILL, AND NO ROW CHANGES MEANING. Both columns start NULL on every
+-- existing row: NULL qr_token means "no public page yet", which is true of all
+-- of them, and NULL qr_revoked_at means "live", which is the default state a
+-- link is minted into. This is a pure add-column no-op on production data.
+--
+-- VIEW-TRAP NOTE: every view over scm.delivery_orders enumerates its columns
+-- explicitly (0189, 0305, 0306, 0312); none does SELECT *. ADD COLUMN cannot
+-- break a column-enumerated view, and nothing here drops or recreates anything,
+-- so no GRANT is at risk — the direction mig 0189 was destroyed from.
+--
+-- REVERSAL:
+--   DROP INDEX IF EXISTS scm.ux_delivery_orders_qr_token;
+--   ALTER TABLE scm.delivery_orders DROP COLUMN qr_token, DROP COLUMN qr_revoked_at;
+--   Dropping qr_token INVALIDATES EVERY PRINTED QR — the paper in the warehouse
+--   keeps pointing at a token no row carries any more, and re-adding the column
+--   mints fresh tokens that do not match the print. So the reversal is safe only
+--   before any DO has been printed with a QR; after that, the recovery is to
+--   re-print, not to re-add. Ship the reversal as a NEW migration: this file is
+--   checksummed the moment it reaches prod and its body may never be edited.
+-- Verified against: the vendored production DDL in
+-- backend/scripts/scm-schema/2990s-full-schema.sql for scm.delivery_orders'
+-- column conventions, and migrations 0083 (company_id bigint NOT NULL on this
+-- table) and 0324 (the timestamptz convention on these five tables). NOT
+-- verified against a live production connection — no production query or write
+-- was made for this change.
+-- ----------------------------------------------------------------------------
+
+SET search_path = scm, public;
+
+ALTER TABLE scm.delivery_orders ADD COLUMN IF NOT EXISTS qr_token text;
+ALTER TABLE scm.delivery_orders ADD COLUMN IF NOT EXISTS qr_revoked_at timestamptz;
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_delivery_orders_qr_token
+  ON scm.delivery_orders (qr_token) WHERE qr_token IS NOT NULL;

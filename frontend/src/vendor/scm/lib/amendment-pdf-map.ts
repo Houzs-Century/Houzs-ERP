@@ -20,6 +20,9 @@ import {
   FIELD_KIND_LABEL,
 } from './amendment-routing';
 import { amendmentLineChangedFields, amendmentVariantSummaries } from './so-amendment-line-diff';
+/* The printed Status comes from the one home for the amendment vocabulary, not
+   from a caller-supplied word. See PRINTED STATUS below. */
+import { simplifiedAmendmentPill } from './status-pill';
 
 const money = (centi: number | null | undefined): string =>
   centi == null ? '—' : `RM ${(Number(centi) / 100).toFixed(2)}`;
@@ -56,7 +59,6 @@ export type SoAmendmentDetail = {
   }>;
   salesOrder: { doc_no?: string | null; revision?: number | null } | null;
   customerName?: string | null;
-  statusLabel?: string;
 };
 
 /* ── PO amendment ──────────────────────────────────────────────────────────
@@ -87,7 +89,6 @@ export type PoAmendmentDetail = {
   }>;
   purchaseOrder: { po_number?: string | null; revision?: number | null } | null;
   supplierName?: string | null;
-  statusLabel?: string;
 };
 
 // A revision that reads "old -> new". An amendment applied is the PENDING (old)
@@ -223,6 +224,28 @@ function attachRouting(rows: AmendmentChangeRow[]): { rows: AmendmentChangeRow[]
   return { rows: tagged, routing };
 }
 
+/* PRINTED STATUS — the amendment document's Status field.
+ *
+ * It used to be a `statusLabel?: string` on the input, and all four callers
+ * (SO + PO amendment detail, desktop + mobile) hand-wrote the SAME expression:
+ * `applied ? "Approved" : "Requested"`. That is CLAUDE.md's optional-param-noop
+ * shape carrying a two-way collapse of a SIX-value vocabulary, and it got
+ * REJECTED wrong on all four: a rejected amendment printed **Requested**, the
+ * one word that says the decision has not been made yet.
+ *
+ * `simplifiedAmendmentPill` is the canonical implementation of the collapse the
+ * owner chose for the amendment LISTS (2026-07-24, Requested / Approved / All),
+ * so this is the same three words the screens show, from one place. Output is
+ * identical for every status except REJECTED, which is the defect.
+ *
+ * NOT settled here, deliberately: the amendment DETAIL page shows the GRANULAR
+ * pill (`resolveStatusPill('soAmendment', …)` — Supplier Pending, SO Approved,
+ * Sent), so paper and that screen still differ on the in-flight states. Which
+ * vocabulary the printed document should carry is the owner's call, not a
+ * defect to fix quietly. */
+export const amendmentPrintedStatus = (status: string | null | undefined): string =>
+  simplifiedAmendmentPill(status).label;
+
 export function soAmendmentToPdfInput(d: SoAmendmentDetail): AmendmentPdfInput {
   // The SO revision is bumped at the Approve-SO gate; treat SO_APPROVED and
   // beyond as "applied" for the old -> new display.
@@ -233,7 +256,7 @@ export function soAmendmentToPdfInput(d: SoAmendmentDetail): AmendmentPdfInput {
     kind: 'SO',
     amendmentNo: str(d.amendment.amendment_no),
     issueDate: d.amendment.created_at ?? null,
-    status: d.statusLabel ?? str(d.amendment.status),
+    status: amendmentPrintedStatus(d.amendment.status),
     docNo: str(d.salesOrder?.doc_no),
     partyLabel: 'Customer',
     partyName: d.customerName ?? null,
@@ -257,7 +280,7 @@ export function poAmendmentToPdfInput(d: PoAmendmentDetail): AmendmentPdfInput {
     kind: 'PO',
     amendmentNo: str(d.amendment.amendment_no),
     issueDate: d.amendment.created_at ?? null,
-    status: d.statusLabel ?? str(d.amendment.status),
+    status: amendmentPrintedStatus(d.amendment.status),
     docNo: str(d.purchaseOrder?.po_number),
     partyLabel: 'Supplier',
     partyName: d.supplierName ?? null,

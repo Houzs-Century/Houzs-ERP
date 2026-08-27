@@ -35,6 +35,7 @@ import { useSupplierDetail } from "../../vendor/scm/lib/suppliers-queries";
 import { skuMapFromBindings, supplierCodeFor } from "../../vendor/scm/lib/supplier-doc-data";
 import { useSetBreadcrumbs } from "../../hooks/useBreadcrumbs";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
+import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { cn } from "../../lib/utils";
@@ -303,6 +304,7 @@ function GoodsReceivedDetailV2ReadOnly() {
   const postGrn = usePostGrn();
   const cancelGrn = useCancelGrn();
   const notify = useNotify();
+  const askConfirm = useConfirm();
 
   const grn = (detail.data as { grn?: GrnHeader } | undefined)?.grn ?? null;
   const items: GrnItem[] = useMemo(
@@ -363,15 +365,24 @@ function GoodsReceivedDetailV2ReadOnly() {
   useOpenPrintPreviewFromUrl(print.openPreview, !!grn);
   const goConvertToPi = () => id && navigate(convertToLink('grnToPi', id));
   const goConvertToPr = () => id && navigate(convertToLink('grnToPr', id));
-  const doPost = () => {
+  const doPost = async () => {
     if (!grn) return;
-    if (window.confirm(`Post GRN ${grn.grn_number}? Inventory will be received into the warehouse.`)) {
+    if (await askConfirm({
+      title: `Post GRN ${grn.grn_number}?`,
+      body: "Inventory will be received into the warehouse.",
+      confirmLabel: "Post GRN",
+    })) {
       postGrn.mutate(grn.id);
     }
   };
-  const doCancel = () => {
+  const doCancel = async () => {
     if (!grn) return;
-    if (window.confirm(`Cancel GRN ${grn.grn_number}? Inventory receipt will be reversed.`)) {
+    if (await askConfirm({
+      title: `Cancel GRN ${grn.grn_number}?`,
+      body: "Inventory receipt will be reversed.",
+      confirmLabel: "Cancel GRN",
+      danger: true,
+    })) {
       cancelGrn.mutate(grn.id);
     }
   };

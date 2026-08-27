@@ -100,7 +100,7 @@ const STATUS_CLASS: Record<string, string> = {
 };
 const STATUS_LABEL: Record<string, string> = {
   LOADED:     'Confirmed',
-  DISPATCHED: 'Shipped',
+  DISPATCHED: 'Loaded',
   IN_TRANSIT: 'In Transit',
   SIGNED:     'Signed',
   DELIVERED:  'Delivered',

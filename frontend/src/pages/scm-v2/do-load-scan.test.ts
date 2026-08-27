@@ -15,6 +15,15 @@
 // operator-facing sentence is pinned too, because the person reading it is
 // standing at the dock deciding whether to press the button.
 //
+// AND THE PAGE HAS THREE MORE RUNGS SINCE 2026-08-26. The owner's three scans —
+// storekeeper loads, driver departs, driver delivers — mean the page no longer
+// writes one hard-coded status. Two assertions here were about the OLD premise
+// and are rewritten below rather than deleted, because the properties underneath
+// them survive the change: ONE call site, and NO status literal typed on the
+// page. The ladder and its copy moved to vendor/scm/lib/do-next-step.ts and are
+// pinned by DoLoadScan.ladder.test.tsx, which mounts the page and presses the
+// button instead of reading its source.
+//
 // Structural pins; the page itself needs a session + live API.
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -23,33 +32,74 @@ import { resolve } from 'node:path';
 const read = (p: string) => readFileSync(resolve(__dirname, p), 'utf8');
 const PAGE = read('./DoLoadScan.tsx');
 const PDF = read('../../vendor/scm/lib/delivery-order-pdf.ts');
+/* Comments stripped, for the NEGATIVE assertions only. The header of that file
+   RECORDS what the QR used to encode and what the caption used to say, which is
+   exactly the prose a reader needs and exactly the string a naive `not.toContain`
+   trips on — the same trap this file already fixed once, three tests below. */
+const PDF_CODE = PDF.replace(/\/\*[\s\S]*?\*\//g, '')
+  .split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
 const APP = read('../../App.tsx');
 const CN = read('./ConsignmentNoteDetail.tsx');
+/* The ladder MOVED on 2026-08-26 (it is read by the server now, so it lives in
+   the mirrored rule module and do-next-step.ts re-exports it). This file follows
+   it rather than dropping the assertion — the copy under the button is what a
+   storekeeper reads at the dock, and it is pinned wherever it lives. */
+const LADDER_SRC = read('../../vendor/shared/do-scan-ladder.ts');
+const PUBLIC_PAGE = read('../PublicDoScan.tsx');
 
 describe('the DO print QR', () => {
-  it('is gated on the explicit loadScanId, and encodes the /scm/do-load link', () => {
-    expect(PDF).toContain('header.loadScanId && typeof window');
-    expect(PDF).toContain('/scm/do-load?id=');
+  /* IT POINTS AT THE PUBLIC PAGE SINCE 2026-08-26. It encoded
+     /scm/do-load?id=<uuid> until then, which only a signed-in office user could
+     open — useless to the driver the code is printed for. The owner chose the
+     no-login scan (「就跟hookka一样」), so the QR carries a 64-hex token and the
+     link is /d/<token>. `loadScanId` is gone with it: it was not an id any more
+     and the code had stopped being about "load". */
+  it('is gated on the explicit scanToken, and encodes the PUBLIC /d/ link', () => {
+    expect(PDF).toContain('header.scanToken && typeof window');
+    expect(PDF).toContain('/d/${encodeURIComponent(header.scanToken)}');
     expect(PDF).toContain('drawQrIntoPdf');
+    expect(PDF_CODE, 'the authed link must not still be printed anywhere').not.toContain('/scm/do-load?id=');
+  });
+
+  /* THE CAPTION HAD TO CHANGE WITH THE LADDER. "SCAN · MARK LOADED" named ONE
+     of the four things the code now does, so it was wrong on three papers out
+     of four. The caption states what is true of every rung. */
+  it('the caption names the repeated scan, not one rung', () => {
+    expect(PDF).toContain("doc.text('SCAN AT EACH STEP'");
+    expect(PDF_CODE).not.toContain('MARK LOADED');
   });
 
   it('is never armed by the Consignment Note print', () => {
+    expect(CN).not.toContain('scanToken');
     expect(CN).not.toContain('loadScanId');
   });
 
-  it('the three DO surfaces arm it', () => {
-    for (const p of ['./DeliveryOrderDetailV2.tsx', './MfgDeliveryOrdersListV2.tsx', '../../mobile/MobileModuleDetail.tsx']) {
-      expect(read(p), `${p} does not arm loadScanId`).toContain('loadScanId');
+  it('the DO surfaces arm it through the ONE shared helper', () => {
+    for (const p of ['./DeliveryOrderDetailV2.tsx', '../../mobile/MobileModuleDetail.tsx', '../../lib/printDocumentPdf.ts']) {
+      expect(read(p), `${p} does not arm the scan token`).toContain('armDoScanToken');
     }
+    /* The list goes through printDocumentPdf's fetcher, which is the third file
+       above — it has no stamping of its own to keep in step. */
+    expect(read('./MfgDeliveryOrdersListV2.tsx')).toContain('fetchPrintBundle');
   });
 });
 
 describe('the landing page', () => {
-  it('writes exactly one status, LOADED, through the ordinary status hook', () => {
-    expect(PAGE).toContain("status: 'LOADED'");
-    // No other status literal is ever written from this page.
+  it('has ONE write site, and types no status literal of its own', () => {
+    /* One call site is the property that outlived the one-rung premise: four
+       rungs written by four `mutate` calls would be four places to forget the
+       confirmation state or the evidence note. */
     const writes = PAGE.match(/updateStatus\.mutate\(/g) ?? [];
     expect(writes.length).toBe(1);
+    /* And it writes what the LADDER hands it, never a status it typed. A
+       hand-typed literal here is how a value the enum does not define reaches
+       Postgres as a 22P02 — bug 0530 — and the ladder's target type is checked
+       by the compiler. `status: step.status` is the only shape allowed. */
+    expect(PAGE).toContain('status: step.status');
+    const code = PAGE
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
+    expect(code).not.toMatch(/status: ['"](DRAFT|LOADED|DISPATCHED|IN_TRANSIT|SIGNED|DELIVERED|INVOICED|CANCELLED)['"]/);
   });
 
   it('never touches the ledger itself — the server owns the stock write', () => {
@@ -68,9 +118,15 @@ describe('the landing page', () => {
     /* The copy is a pin, not decoration. It said the opposite until 2026-08-22
        ("Stock leaves the warehouse when the dispatcher sends the truck ... not
        now"), and a sentence that survives the behaviour it describes is how a
-       storekeeper comes to trust a thing that is not true. */
-    expect(PAGE).toContain('takes the goods out of warehouse stock');
-    expect(PAGE).not.toContain('Stock leaves the warehouse when the');
+       storekeeper comes to trust a thing that is not true.
+
+       It moved into the LADDER on 2026-08-26 — each rung carries its own line,
+       so adding a rung cannot leave one behind — so the assertion follows it
+       there. Which rung shows which sentence is asserted through the rendered
+       page in DoLoadScan.ladder.test.tsx; this only pins that the words exist
+       and that the retracted ones have not come back anywhere. */
+    expect(LADDER_SRC).toContain('takes the goods out of warehouse stock');
+    expect(LADDER_SRC + PAGE + PUBLIC_PAGE).not.toContain('Stock leaves the warehouse when the');
   });
 
   it('is routed at /scm/do-load behind the delivery guard', () => {

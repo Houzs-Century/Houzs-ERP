@@ -1,0 +1,43 @@
+name: AutoCount item codes — census (read-only)
+
+# Owner 2026-08-25: 「确保全部 supplier 全部 SKU 进 AutoCount 都知道要开什么 code
+# 然后确保是可以用的」.
+#
+# READ-ONLY. One SELECT, no writes, no host call. For every supplier binding it
+# asks the REAL resolver what the account book would receive and whether the
+# book already holds it, and prints the gap per supplier plus a total.
+#
+# Manual trigger only.
+on:
+  workflow_dispatch:
+    inputs:
+      rows_per_supplier:
+        description: "How many example rows to print per supplier (0 = every row)"
+        type: string
+        required: false
+        default: "8"
+
+concurrency:
+  group: ac-item-code-census
+  cancel-in-progress: true
+
+jobs:
+  census:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: npx tsx scripts/ac-item-code-census.mjs
+        env:
+          ROWS_PER_SUPPLIER: ${{ github.event.inputs.rows_per_supplier }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

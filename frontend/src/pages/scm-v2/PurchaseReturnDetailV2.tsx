@@ -37,6 +37,8 @@ import {
 } from "../../vendor/scm/lib/purchase-return-queries";
 import { useSetBreadcrumbs } from "../../hooks/useBreadcrumbs";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
+import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
+import { usePrompt } from "../../vendor/scm/components/PromptDialog";
 import { RelationshipMapButton } from "../../vendor/scm/components/RelationshipMapButton";
 import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
@@ -231,6 +233,8 @@ export function PurchaseReturnDetailV2() {
   const completePr = useCompletePurchaseReturn();
   const cancelPr = useCancelPurchaseReturn();
   const notify = useNotify();
+  const askConfirm = useConfirm();
+  const askPrompt = usePrompt();
 
   const purchaseReturn = (detail.data as { purchaseReturn?: PrHeader } | undefined)?.purchaseReturn ?? null;
   const items: PrItem[] = useMemo(
@@ -276,20 +280,36 @@ export function PurchaseReturnDetailV2() {
   };
   const print = usePrintPreview(deliverPrintPdf);
   useOpenPrintPreviewFromUrl(print.openPreview, !!purchaseReturn);
-  const doPost = () => {
+  const doPost = async () => {
     if (!purchaseReturn) return;
-    if (window.confirm("Post this purchase return? A credit-owed entry will be booked against the supplier.")) {
+    if (await askConfirm({
+      title: "Post this purchase return?",
+      body: "A credit-owed entry will be booked against the supplier.",
+      confirmLabel: "Post return",
+    })) {
       postPr.mutate(purchaseReturn.id);
     }
   };
-  const doComplete = () => {
+  const doComplete = async () => {
     if (!purchaseReturn) return;
-    const ref = window.prompt("Enter the supplier's credit note reference (optional):", "") ?? undefined;
-    completePr.mutate({ id: purchaseReturn.id, creditNoteRef: ref || undefined });
+    /* The reference is OPTIONAL — an empty confirm still completes, so only a
+       Cancel (null) aborts. This mirrors the old window.prompt contract. */
+    const ref = await askPrompt({
+      title: "Complete return",
+      body: "Enter the supplier's credit note reference (optional):",
+      confirmLabel: "Complete",
+    });
+    if (ref === null) return;
+    completePr.mutate({ id: purchaseReturn.id, creditNoteRef: ref.trim() || undefined });
   };
-  const doCancel = () => {
+  const doCancel = async () => {
     if (!purchaseReturn) return;
-    if (window.confirm(`Cancel return ${purchaseReturn.return_number}? Stock will be reversed.`)) {
+    if (await askConfirm({
+      title: `Cancel return ${purchaseReturn.return_number}?`,
+      body: "Stock will be reversed.",
+      confirmLabel: "Cancel return",
+      danger: true,
+    })) {
       cancelPr.mutate(purchaseReturn.id);
     }
   };

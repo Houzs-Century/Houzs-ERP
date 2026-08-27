@@ -57,6 +57,34 @@ if (!url) {
   process.exit(1);
 }
 
+/* ── THE ALARM (ALARM=1) ──────────────────────────────────────────────────
+   This file's workflow said, in its own header: "When the sync is live and this
+   needs to become an ALARM rather than a report, that is a different mechanism
+   (somewhere a human actually looks), not a cron on this workflow."
+
+   The sync went live 2026-08-13 and on 2026-08-21 the shop-floor service
+   stopped answering. Thirteen documents piled up over TWO DAYS and the owner
+   found out by noticing they were missing from the account book. Nothing was
+   watching, so the outage's cost was almost entirely the delay in spotting it.
+
+   THE OBJECTION IN THAT HEADER IS ANSWERED, NOT OVERRULED. It was about NOISE —
+   "a production DB read on a schedule turns a real question into CI noise
+   nobody reads". So this alarm is SILENT when the queue is healthy: the run
+   passes, GitHub sends nothing, and nobody reads anything. It speaks only by
+   FAILING, which is the one CI signal that reaches a person who is not looking.
+
+   WHAT COUNTS AS STUCK, and why only these two:
+     - an OUTSTANDING failed row. The document is in the ERP and not in the
+       account book, nothing will retry it, and only a person can move it.
+     - a pending row older than ALARM_PENDING_MINUTES (default 60). A pending
+       row is NOT an error by itself — the drain is a 5-minute cron and a
+       conversion legitimately waits for its parent. It becomes one when the age
+       stops falling, which at 12x the drain interval it has.
+   A skipped row is deliberately NOT an alarm: it is a statement about the
+   document's shape, it does not change on its own, and firing daily forever on
+   one hand-keyed receipt is exactly the noise the header refused. */
+const alarm = { failedOutstanding: 0, pending: [] };
+
 const notice = (msg) =>
   console.log(process.env.GITHUB_ACTIONS ? `::notice::${msg}` : msg);
 
@@ -116,7 +144,8 @@ try {
        wait ~30 minutes for the row to dead-letter into 'failed', which this
        script does print. */
     pg`SELECT doc_type, doc_no, op, attempts, last_error,
-              (now() - created_at) AS age
+              (now() - created_at) AS age,
+              EXTRACT(EPOCH FROM (now() - created_at)) AS age_s
          FROM scm.autocount_outbox
         WHERE status = 'pending'
         ORDER BY created_at ASC`,
@@ -165,12 +194,51 @@ try {
     );
   }
 
+  /* ── DOES THE ERP DOCUMENT STILL EXIST? ────────────────────────────────
+     The FAILED heading says "each is a document that is in the ERP and NOT in
+     AutoCount". After a go-live wipe that sentence goes FALSE without anything
+     changing in this table: the export log is deliberately KEPT (it is the
+     ERP's only memory of what it told the book) while the documents it names
+     are deleted. Measured 2026-08-24, minutes after golive-wipe-hc apply: one
+     failed row, HC-DO-2608-003, whose delivery order no longer exists. Left
+     alone the daily watchdog would have alarmed on it every morning forever —
+     the exact "CI noise nobody reads" this workflow's header refused.
+
+     So a failed row whose document is gone is history, not backlog. It is still
+     PRINTED, under its own heading, because the row is the record of what was
+     attempted and deleting the document does not unsay it. It is simply not
+     counted as something a person can act on, because there is nothing left to
+     act on.
+
+     One query, six document types, keyed the way the outbox keys them. */
+  const liveDocs = failed.length
+    ? await pg`
+        SELECT 'SO' AS doc_type, doc_no          AS doc_no FROM scm.mfg_sales_orders
+        UNION ALL SELECT 'PO', po_number              FROM scm.purchase_orders
+        UNION ALL SELECT 'DO', do_number              FROM scm.delivery_orders
+        UNION ALL SELECT 'IV', invoice_number         FROM scm.sales_invoices
+        UNION ALL SELECT 'GR', grn_number             FROM scm.grns
+        UNION ALL SELECT 'PI', invoice_number         FROM scm.purchase_invoices`
+    : [];
+  const liveKeys = new Set(liveDocs.map((r) => `${r.doc_type}:${r.doc_no}`));
+  const stillInErp = (r) => liveKeys.has(`${r.doc_type}:${r.doc_no}`);
+  const failedLive = failed.filter(stillInErp);
+  const failedGone = failed.filter((r) => !stillInErp(r));
+
   const by = Object.fromEntries(counts.map((r) => [r.status, r.n]));
   const byRequeued = Object.fromEntries(counts.map((r) => [r.status, r.requeued]));
   const total = counts.reduce((a, r) => a + r.n, 0);
   /* OUTSTANDING per terminal state = the total minus the ones already asked
      again. Both, not just skips: see the query comment above. */
   const failedOutstanding = (by.failed ?? 0) - (byRequeued.failed ?? 0);
+  /* THE ALARM READS THE SAME TWO NUMBERS THE REPORT DOES, not its own query.
+     A watchdog that asks a different question from the report it is attached to
+     is a watchdog that can disagree with the page a human then opens. */
+  alarm.failedOutstanding = Math.max(0, failedOutstanding - failedGone.length);
+  alarm.pending = oldest.map((r) => ({
+    docType: r.doc_type, docNo: r.doc_no, op: r.op,
+    ageS: Number(r.age_s ?? 0), age: String(r.age ?? ''),
+  }));
 
   /* A RE-QUEUED skip is history, not backlog.
      This table is append-only and a skipped row is never deleted, so once the
@@ -255,9 +323,25 @@ try {
   /* FAILED is the one that means a document diverged — the OUTSTANDING ones.
      A re-queued failure is history and is listed under RE-QUEUED below. */
   if (failedOutstanding > 0) {
-    notice(`FAILED: ${failedOutstanding} — each is a document that is in the ERP and NOT in AutoCount.`);
-    for (const r of failed) {
-      notice(`  ${r.doc_type} ${r.doc_no} (${r.op}, ${r.attempts} attempts): ${String(r.last_error ?? "").slice(0, 300)}`);
+    if (failedLive.length) {
+      notice(`FAILED: ${failedLive.length} — each is a document that is in the ERP and NOT in AutoCount.`);
+      for (const r of failedLive) {
+        notice(`  ${r.doc_type} ${r.doc_no} (${r.op}, ${r.attempts} attempts): ${String(r.last_error ?? "").slice(0, 300)}`);
+      }
+    } else {
+      notice(`FAILED: 0 outstanding${requeuedFailed.length ? ` (${requeuedFailed.length} re-queued, below)` : ""}`);
+    }
+    /* SEPARATE HEADING, not a footnote on the one above, because the remedy is
+       the opposite: there is none, and none is needed. */
+    if (failedGone.length) {
+      notice(
+        `FAILED — DOCUMENT DELETED SINCE: ${failedGone.length}. The ERP document no longer exists ` +
+          '(a wipe, or someone deleted it), so this row is the record of an attempt and not ' +
+          'something to send again. Nothing to do.',
+      );
+      for (const r of failedGone) {
+        notice(`  ${r.doc_type} ${r.doc_no} (${r.op}): gone from the ERP`);
+      }
     }
   } else {
     notice(`FAILED: 0 outstanding${requeuedFailed.length ? ` (${requeuedFailed.length} re-queued, below)` : ""}`);
@@ -539,4 +623,38 @@ try {
 
 } finally {
   await pg.end({ timeout: 5 });
+}
+
+/* ── THE VERDICT, and it runs AFTER the finally on purpose ────────────────────
+   The report above is the whole point of the run and must reach the log whether
+   or not the alarm fires. Exiting from inside the try would take the connection
+   down mid-report; exiting here means the log is complete and the exit code is
+   the only thing that changed. */
+if (process.env.ALARM === '1') {
+  const limitMin = Number(process.env.ALARM_PENDING_MINUTES ?? 60);
+  const stalled = alarm.pending.filter((r) => r.ageS > limitMin * 60);
+  const reasons = [];
+  if (alarm.failedOutstanding > 0) {
+    reasons.push(
+      `${alarm.failedOutstanding} document(s) are in the ERP and NOT in AutoCount, ` +
+        'with no retries left. Open AutoCount Sync and press Send again on each.',
+    );
+  }
+  if (stalled.length) {
+    const worst = stalled[0];
+    reasons.push(
+      `${stalled.length} document(s) have been queued longer than ${limitMin} minutes — ` +
+        `oldest ${worst.docType} ${worst.docNo} (${worst.op}) waiting ${worst.age}. ` +
+        'The AutoCount host is usually not answering; check that AcSyncService is running on it.',
+    );
+  }
+  if (reasons.length) {
+    /* ::error:: so the line is the one GitHub quotes in the failure e-mail —
+       the e-mail IS the alarm, so the sentence a person reads first has to say
+       what is wrong and what to do, not "a step failed". */
+    for (const r of reasons) console.log(`::error::AutoCount sync: ${r}`);
+    process.exitCode = 1;
+  } else {
+    notice('ALARM: nothing stuck. Silent pass.');
+  }
 }

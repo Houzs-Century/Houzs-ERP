@@ -35,6 +35,10 @@ vi.mock("../../hooks/useStaffLookup", () => ({
   useStaffLookup: () => ({ nameOf: () => "Kris" }),
 }));
 vi.mock("../../vendor/scm/components/NotifyDialog", () => ({ useNotify: () => vi.fn() }));
+/* The 2026-08-25 native-confirm sweep gave the page a useConfirm() (Cancel and
+   the unsaved-payments Back gate); like useNotify it throws outside its
+   provider, and like useNotify these tests never reach a confirm. */
+vi.mock("../../vendor/scm/components/ConfirmDialog", () => ({ useConfirm: () => vi.fn() }));
 vi.mock("./so-relationship-map", () => ({ useSoRelationshipMap: () => ({ nodes: [], edges: [] }) }));
 vi.mock("../../components/scm-v2/PrintPreviewModal", () => ({
   PrintPreviewModal: () => null,

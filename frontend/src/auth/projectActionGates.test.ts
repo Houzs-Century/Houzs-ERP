@@ -158,3 +158,50 @@ describe("Projects.tsx — the desktop control is gated on what the server enfor
     expect(projects()).not.toContain('can("sales.write")');
   });
 });
+
+// ----------------------------------------------------------------------------
+// The MIRROR IMAGE of the four above (bug 0546): a desktop control that did not
+// render for someone the SERVER ALLOWS. The attach endpoint admits
+// projects.write OR projects.checklist.tick + roleLabelAdmits(role_label,
+// role_name); both desktop gates asked projects.write alone, so the day 0489
+// stripped that permission from the Purchaser role she lost the Attach button on
+// her own PURCHASER-badged documents while mobile and the API still allowed it.
+// ----------------------------------------------------------------------------
+const allWindowsBefore = (needle: string, chars: number): string[] => {
+  const text = projects();
+  let at = text.indexOf(needle);
+  expect(at, `anchor disappeared from Projects.tsx: ${needle}`).toBeGreaterThan(-1);
+  const out: string[] = [];
+  while (at > -1) {
+    out.push(text.slice(Math.max(0, at - chars), at));
+    at = text.indexOf(needle, at + needle.length);
+  }
+  return out;
+};
+
+describe("Projects.tsx — Attach is offered to every role the server admits (0546)", () => {
+  it("desktop carries a mirror of the backend roleLabelAdmits rule", () => {
+    // Backend original: backend/src/services/projectGates.ts roleLabelAdmits.
+    // Mobile's copy lives in MobilePMS.tsx; desktop had none, which is the bug.
+    expect(projects()).toContain("function roleLabelAdmitsRole(");
+  });
+
+  it("every desktop Attach button reads a role-aware predicate, not projects.write alone", () => {
+    const wins = allWindowsBefore("void startAttach()", 160);
+    expect(wins.length).toBeGreaterThanOrEqual(2);
+    for (const w of wins) expect(w).toMatch(/mayAttachRow/);
+  });
+
+  it("the document-table gate admits a tick-only role on its OWN badged row", () => {
+    const w = windowBefore("canTick && roleLabelAdmitsRole(it.role_label", 500);
+    expect(w).toContain("mayAttach");
+    // The Sales Director exception (owner 2026-08-10) must survive beside it.
+    expect(w).toContain("isSalesDirectorPos");
+  });
+
+  it("file DELETE is NOT widened by this — it stays on projects.write", () => {
+    // Mobile requires projects.manage to remove a file; widening attach must not
+    // hand a tick-only role the ability to delete someone's evidence.
+    expect(projects()).toContain("canManage && !readOnlyAttach && a.id > 0");
+  });
+});

@@ -232,6 +232,31 @@
       "why": "Not an empty-read conclusion: it is read off the ONE document in hand, from its own status column being CANCELLED, and it repeats the server's own refusal wording (delivery-orders-mfg.ts:5403 do_cancelled_final). The stock claim is the cancel path's documented effect - cancelling a DO writes the add-back - not an inference from a list that came back empty."
     },
     {
+      "file": "backend/src/scm/shared/do-scan-ladder.ts",
+      "text": "return 'Nothing left to do on this document.';",
+      "why": "The claim is read off THIS document's own status, never off an empty result set. The scan page has the delivery order in hand and the sentence means \"this row is DELIVERED / SIGNED / INVOICED\" — the shape this gate exists for is an empty READ reported as a finished job, and there is no read here to be empty. Wording is the owner's, 2026-08-26. MOVED 2026-08-26 from vendor/scm/lib/do-next-step.ts into the mirrored do-scan-ladder module (the server reads the ladder now, so it has an original and a byte-identical frontend copy); the sentence and the reasoning are unchanged."
+    },
+    {
+      "file": "frontend/src/vendor/shared/do-scan-ladder.ts",
+      "text": "return 'Nothing left to do on this document.';",
+      "why": "The claim is read off THIS document's own status, never off an empty result set. The scan page has the delivery order in hand and the sentence means \"this row is DELIVERED / SIGNED / INVOICED\" — the shape this gate exists for is an empty READ reported as a finished job, and there is no read here to be empty. Wording is the owner's, 2026-08-26. MOVED 2026-08-26 from vendor/scm/lib/do-next-step.ts into the mirrored do-scan-ladder module (the server reads the ladder now, so it has an original and a byte-identical frontend copy); the sentence and the reasoning are unchanged."
+    },
+    {
+      "file": "frontend/src/pages/scm-v2/DoLoadScan.ladder.test.tsx",
+      "text": "[\"DELIVERED\", \"Nothing left to do on this document.\"],",
+      "why": "A test asserting the refusal sentence above, quoting the product copy it pins. Not a second place the claim is made."
+    },
+    {
+      "file": "frontend/src/pages/scm-v2/DoLoadScan.ladder.test.tsx",
+      "text": "[\"INVOICED\", \"Nothing left to do on this document.\"],",
+      "why": "A test asserting the refusal sentence above, quoting the product copy it pins. Not a second place the claim is made."
+    },
+    {
+      "file": "frontend/src/pages/scm-v2/DoLoadScan.ladder.test.tsx",
+      "text": "[\"SIGNED\", \"Nothing left to do on this document.\"],",
+      "why": "A test asserting the refusal sentence above, quoting the product copy it pins. Not a second place the claim is made."
+    },
+    {
       "file": "frontend/src/pages/scm-v2/BankRecon.tsx",
       "text": "Every merchant statement you have reconciled has been paid in full.",
       "why": "Guarded at the callsite: renders only over a successful read with at least one reconciled statement, every one summed to zero outstanding - the sums are the evidence; an empty or failed read renders nothing."

@@ -81,17 +81,43 @@ describe('resolveDeliveryScope — IDENTITY gate (fleet link)', () => {
     }
   });
 
-  test('a restricted caller with NO fleet link fails OPEN (whole board), never a lockout', async () => {
+  test('an UNLINKED Driver fails CLOSED — empty self scope, sees no board', async () => {
+    // 2026-08-25 (owner: 只能看到分配给自己的). Fleet personnel with no link get
+    // an empty self scope, which matches no assignment — not the whole fleet.
     const scope = await resolveDeliveryScope(fakeSb({ drivers: [], helpers: [] }), driverCaller(7));
-    expect(scope.mode).toBe('all');
+    expect(scope.mode).toBe('self');
+    if (scope.mode === 'self') {
+      expect(scope.driverIds.size).toBe(0);
+      expect(scope.helperIds.size).toBe(0);
+      // Proof it is closed, not open: an empty self matches nothing.
+      expect(scopeMatchesAssignment(scope, { driverIds: ['drv-9'], helperIds: ['hlp-9'] })).toBe(false);
+    }
   });
 
-  test('a fleet lookup error fails OPEN (never a 500 / lockout)', async () => {
+  test('an UNLINKED Helper also fails CLOSED', async () => {
+    const scope = await resolveDeliveryScope(fakeSb({ drivers: [], helpers: [] }), helperCaller(7));
+    expect(scope.mode).toBe('self');
+  });
+
+  test('a Storekeeper (restricted but NOT fleet) with no link keeps the whole board', async () => {
+    // The delivery board is a coordination surface for the warehouse, not a run
+    // sheet — storekeepers are not narrowed even without a fleet row.
+    const sk = await resolveDeliveryScope(fakeSb({ drivers: [], helpers: [] }), {
+      id: 5, position_name: 'Storekeeper', department_name: 'Operation',
+    });
+    expect(sk.mode).toBe('all');
+    const sup = await resolveDeliveryScope(fakeSb({ drivers: [], helpers: [] }), {
+      id: 6, position_name: 'Storekeeper Supervisor', department_name: 'Operation',
+    });
+    expect(sup.mode).toBe('all');
+  });
+
+  test('a fleet lookup ERROR fails OPEN (a DB fault is not a lockout)', async () => {
     const scope = await resolveDeliveryScope(fakeSb({ error: true }), driverCaller(7));
     expect(scope.mode).toBe('all');
   });
 
-  test('a restricted caller with no id fails OPEN', async () => {
+  test('a caller with no id fails OPEN (cannot resolve a fleet identity at all)', async () => {
     const scope = await resolveDeliveryScope(fakeSb({}), { id: null, position_name: 'Driver' });
     expect(scope.mode).toBe('all');
   });

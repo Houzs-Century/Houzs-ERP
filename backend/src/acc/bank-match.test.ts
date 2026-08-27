@@ -235,7 +235,7 @@ describe('matching a credit to the statement it settles', () => {
 
 
 /* ── One credit, several statements ───────────────────────────────────────────
-   Public Bank's real shape (migration 0329's header): one advice of 10 Aug pays
+   Public Bank's real shape (migration 0335's header): one advice of 10 Aug pays
    for trading on the 7th, 8th and 9th. The owner raised the same shape one
    level down — 顾客可能刷一次卡，但是还两个单 — and the merchant side has handled
    it since layer 3; the bank side did not, and told the operator his credit was

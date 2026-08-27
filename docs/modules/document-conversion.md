@@ -107,6 +107,14 @@ complaint, and it is confirmed.
 > *"The DO-specific 'From Sales Order' toolbar button and the SI / DR convert
 > menu entries are intentionally DROPPED — a consignment note is free-entry."*
 
+> **The CN list's status WORD changed on 2026-08-26, its conversion surface did
+> not.** `DISPATCHED` reads **Loaded** rather than "Shipped" on the CN list, and
+> the CN DETAIL page needed no edit at all — it renders the shared
+> `<StatusPill docType="do">` and inherits the canonical map, which is what that
+> layer is for. The owner's rule is that a consignment note mirrors a delivery
+> order, so the two vocabularies move together. Stored values are untouched. Full
+> reasoning: `docs/modules/document-status-vocabulary.md`.
+
 The CN list has only `New Consignment Note`, and its row menu is
 Edit / View / Cancel / Reopen. So the line-level picker
 (`ConsignmentNoteFromOrder.tsx`) is reachable **only** by entering the
@@ -531,6 +539,14 @@ The two generators are `frontend/src/vendor/scm/lib/stock-transfer-pdf.ts` and
 which prints a blank sheet because `index.css`'s `@media print` block hides
 `body *`.
 
+**Both print their status through `statusLabel(docType, status)`** since
+2026-08-26 — `stockTransfer` and `stockTake` — rather than title-casing the
+stored `POSTED`, which printed *Posted* against a screen saying **Confirmed**.
+Every printed document in this repo is held to that by
+`frontend/src/vendor/scm/lib/pdf-status-label.test.ts`; the rule is
+`docs/modules/document-status-vocabulary.md` §1 and the trace is
+`docs/bugs/0548-every-printed-document-title-cased-the-raw-stored-status-ins.md`.
+
 **The menu entry navigates; it does not render.** `Print` goes to the detail
 page with `?print=1`, which `useOpenPrintPreviewFromUrl` consumes — the same
 contract the other eight lists' Print entries use. It could not work any other
@@ -765,6 +781,24 @@ not a thirteenth spelling.
 `MfgSalesOrdersListV2`, `MfgDeliveryOrdersListV2` and `DeliveryReturnsListV2`
 now read their batch-export bundles from `printDocumentPdf.ts` too, so the row
 menu's print and the list's "Export PDF (N)" cannot drift apart.
+
+**The `do` branch fetches a SECOND thing, and it is the only branch that does
+(2026-08-26).** After reading the delivery order it calls `armDoScanToken`
+(`frontend/src/vendor/scm/lib/do-scan-token-arm.ts`), which asks the authed
+`GET /delivery-orders-mfg/:id/scan-token` for the 64-hex token the printed QR
+encodes, and stamps it on the header as `scanToken`. It replaced `loadScanId`,
+which carried the delivery order's row id — the QR pointed at
+`/scm/do-load?id=…`, behind the staff sign-in, so the code printed for the
+storekeeper and the driver showed them a login screen (`docs/bugs/0544`). It now
+encodes `/d/<token>`, which opens with no login.
+
+A FAILED MINT PRINTS THE DOCUMENT WITH NO QR — it never falls back to the old
+authed link. A paper carrying a link only office staff can open is worse than a
+paper carrying none, because the storekeeper finds out at the lorry. This is
+also why the token is fetched HERE rather than at each print call site: the
+three surfaces that print a delivery order all reach the QR through one helper,
+so none of them has to remember to arm it. Details in
+`docs/modules/delivery-order.md`.
 
 ---
 

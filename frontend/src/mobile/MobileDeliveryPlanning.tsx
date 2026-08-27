@@ -25,7 +25,7 @@ import {
 import { fmtSen } from "../lib/scm";
 import { formatDate } from "../lib/utils";
 import { useAuth } from "../auth/AuthContext";
-import { canOperateDeliveryOrders } from "../auth/salesAccess";
+import { canOperateDeliveryOrders, canDriverCompleteDelivery } from "../auth/salesAccess";
 import { MobileTrackingBanner } from "./MobileTrackingBanner";
 import "./mobile.css";
 
@@ -1167,6 +1167,12 @@ function StopDetail({
      left the status buttons ungated once a DO existed). */
   const { user, can, pageAccess } = useAuth();
   const canOperateDo = canOperateDeliveryOrders(user, can, pageAccess);
+  /* The driver POD chain (Start → Arrived → POD) also opens for a position
+     holding scm.do.dispatch (a Driver), whose scm.sales.delivery is `none` so
+     canOperateDo is false. The SERVER enforces the DO is their OWN, already-
+     dispatched job. Convert-to-DO stays canOperateDo — cutting a document is
+     Office-only; a driver at a stop with no DO is told to ask Office. */
+  const canDoSteps = canOperateDo || canDriverCompleteDelivery(user);
   /* One key for the one DO this stop can cut (lib/idempotency.ts). NOT on
      fix/so-idempotency's list — it names the DO hook, and this surface reaches
      /delivery-orders-mfg/from-sos through a bare authedFetch instead — but it is
@@ -1374,7 +1380,7 @@ function StopDetail({
   const onStart = async () => {
     // Advancing DO status is Office-only (backend 403s the Sales cohort). The
     // button is already withheld for a view-only user; guard the handler too.
-    if (!canOperateDo) return;
+    if (!canDoSteps) return;
     if (!(await requireDo())) return;
     if (!doId) return; // requireDo guarantees this; narrows the type.
     start.mutate({ id: doId, status: "IN_TRANSIT" }, {
@@ -1392,13 +1398,13 @@ function StopDetail({
      IN_TRANSIT and never stamped arrival_at, which is why the Arrived pill only
      ever lit up once the delivery was already done. */
   const onArrive = async () => {
-    if (!canOperateDo) return;
+    if (!canDoSteps) return;
     if (!(await requireDo())) return;
     arrive.mutate();
   };
 
   const onComplete = async () => {
-    if (!canOperateDo) return;
+    if (!canDoSteps) return;
     if (!(await requireDo())) return;
     /* The DO NUMBER, not the id — MobilePOD resolves a document number through
        the list route. `requireDo()` above guarantees a DO exists by now. */
@@ -1944,7 +1950,7 @@ function StopDetail({
                 label="On the way"
                 time={startAt ? `${startAt} · ${eff}` : eff}
               />
-            ) : canOperateDo ? (
+            ) : canDoSteps ? (
               <TrackButton
                 onClick={onStart}
                 busy={busy}
@@ -1961,7 +1967,7 @@ function StopDetail({
                 time={arriveAt ? `${arriveAt} · ${eff}` : eff}
                 border
               />
-            ) : started && canOperateDo ? (
+            ) : started && canDoSteps ? (
               <TrackButton
                 onClick={onArrive}
                 busy={busy}
@@ -1979,7 +1985,7 @@ function StopDetail({
                 border
                 check
               />
-            ) : arrived && canOperateDo ? (
+            ) : arrived && canDoSteps ? (
               <TrackButton
                 onClick={onComplete}
                 busy={busy}
@@ -1991,7 +1997,7 @@ function StopDetail({
 
             {/* View-only (Sales cohort): status writes are the Office team's job.
                 Say so plainly instead of leaving an empty timeline. */}
-            {!canOperateDo && !done && (
+            {!canDoSteps && !done && (
               <div
                 style={{
                   fontSize: 11.5,

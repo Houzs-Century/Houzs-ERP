@@ -44,6 +44,7 @@ import { soHandover } from "./routes/so-handover";
 import { poAmendments } from "./routes/po-amendments";
 import { stateWarehouseMappings } from "./routes/state-warehouse-mappings";
 import { deliveryOrdersMfg } from "./routes/delivery-orders-mfg";
+import { deliveryOrderScanToken } from "./routes/delivery-order-scan-token";
 import { salesInvoices } from "./routes/sales-invoices";
 import { deliveryReturns } from "./routes/delivery-returns";
 import { purchaseReturns } from "./routes/purchase-returns";
@@ -55,6 +56,7 @@ import { purchaseConsignmentReceives } from "./routes/purchase-consignment-recei
 import { purchaseConsignmentReturns } from "./routes/purchase-consignment-returns";
 import { inventory } from "./routes/inventory";
 import { inventoryAdjustments } from "./routes/inventory-adjustments";
+import { loadingList } from "./routes/loading-list";
 import { warehouse } from "./routes/warehouse";
 import { stockTransfers } from "./routes/stock-transfers";
 import { stockTakes } from "./routes/stock-takes";
@@ -85,6 +87,7 @@ import { deliveryZones } from "./routes/delivery-zones";
 import { deliveryRateCards } from "./routes/delivery-rate-cards";
 import { driverLeave } from "./routes/driver-leave";
 import { trips } from "./routes/trips";
+import { tripScanToken } from "./routes/trip-scan-token";
 import { dpOrders } from "./routes/dp-orders";
 import { deliveryMessages } from "./routes/delivery-messages";
 import { arReconciliation } from "./routes/ar-reconciliation";
@@ -99,6 +102,7 @@ import { quotes } from "./routes/quotes";
 import { hr } from "./routes/hr";
 
 import { scmAreaGuard } from "./middleware/area-guard";
+import { hasPositionCapability } from "../services/positionCapabilities";
 import { scmWriteFreeze } from "./lib/write-freeze";
 import { writeFreezeStatus } from "./routes/write-freeze-status";
 
@@ -320,7 +324,40 @@ scm.route("/state-warehouse-mappings", stateWarehouseMappings);
 // readInheritsFrom scm.sales.orders — a salesperson may READ the DOs generated
 // from their OWN Sales Orders (row-scoped own+downline by the route, cost/margin
 // stripped for non-finance). Writes still require edit on scm.sales.delivery.
-scm.use("/delivery-orders-mfg/*", scmAreaGuard("scm.sales.delivery", { readInheritsFrom: "scm.sales.orders" }));
+// writeBypass — a position holding scm.do.load / scm.do.dispatch (the editable
+// Roles & Permissions matrix, mig 0322) may reach PATCH /:id/status WITHOUT
+// scm.sales.delivery edit, so a storekeeper can scan-confirm (→LOADED) and a
+// driver can dispatch (→DISPATCHED). Narrow on purpose: only the status PATCH,
+// only a holder of one of those two verbs. The HANDLER then enforces the exact
+// transition per verb (LOADED needs load, DISPATCHED needs dispatch, nothing
+// else) — the guard only proves the caller holds SOME qualifying capability.
+scm.use(
+  "/delivery-orders-mfg/*",
+  scmAreaGuard("scm.sales.delivery", {
+    readInheritsFrom: "scm.sales.orders",
+    writeBypass: (c) => {
+      const u = c.get("user") as unknown as Parameters<typeof hasPositionCapability>[0];
+      // Storekeeper / driver scan-confirm + dispatch — PATCH .../status only.
+      if (c.req.method === "PATCH" && c.req.path.endsWith("/status")) {
+        return (
+          hasPositionCapability(u, "scm.do.load") ||
+          hasPositionCapability(u, "scm.do.dispatch")
+        );
+      }
+      // Ops-lead revert — POST .../revert only, on the editable scm.do.revert
+      // capability. The handler re-checks the verb and reverses stock itself.
+      if (c.req.method === "POST" && c.req.path.endsWith("/revert")) {
+        return hasPositionCapability(u, "scm.do.revert");
+      }
+      return false;
+    },
+  }),
+);
+/* Two routers on one prefix, like /grns and /purchase-invoices above. The
+   scan-token mint is a NEW FILE because delivery-orders-mfg.ts is already past
+   its file-size ceiling and a ceiling may only fall. Mounted FIRST so its one
+   route is matched before the main router's /:id patterns can shadow it. */
+scm.route("/delivery-orders-mfg", deliveryOrderScanToken);
 scm.route("/delivery-orders-mfg", deliveryOrdersMfg);
 // Ported 2026-06-20 — SI backend (skipped in the earlier sync; the vendored SI
 // pages 404'd on /sales-invoices). NEEDS scm.sales_invoice_payments +
@@ -382,6 +419,13 @@ scm.use(
 scm.route("/inventory", inventory);
 scm.use("/warehouse/*", scmAreaGuard("scm.warehouse.inventory"));
 scm.route("/warehouse", warehouse);
+// Loading queue (owner 2026-08-25) — the storekeeper's no-price "what to load
+// today" list. Gated on scm.warehouse.inventory (the Storekeeper's existing
+// grant, positionPolicy.STOREKEEPER_ROWS) so the warehouse line reaches it
+// without scm.sales.delivery; the payload carries no money by construction (see
+// routes/loading-list.ts). Read-only router — no writes to gate.
+scm.use("/loading-list/*", scmAreaGuard("scm.warehouse.inventory"));
+scm.route("/loading-list", loadingList);
 scm.use("/stock-transfers/*", scmAreaGuard("scm.warehouse.transfers"));
 scm.route("/stock-transfers", stockTransfers);
 scm.use("/stock-takes/*", scmAreaGuard("scm.warehouse.stock_take"));
@@ -562,6 +606,10 @@ scm.route("/delivery-rate-cards", deliveryRateCards);
 scm.use("/driver-leave/*", scmAreaGuard("scm.transportation.drivers"));
 scm.route("/driver-leave", driverLeave);
 scm.use("/trips/*", scmAreaGuard("scm.transportation.drivers"));
+/* Two routers on one prefix, like /delivery-orders-mfg above. The packing
+   list's public scan-token mint is a NEW FILE so the large trips router does
+   not grow; '/:id/scan-token' is two segments and cannot shadow '/packing'. */
+scm.route("/trips", tripScanToken);
 scm.route("/trips", trips);
 scm.use("/dp-orders/*", scmAreaGuard("scm.transportation.drivers"));
 scm.route("/dp-orders", dpOrders);

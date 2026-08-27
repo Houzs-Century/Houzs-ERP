@@ -117,7 +117,7 @@ The layer that empties `320-0000`. The acquirer master follows the owner's
 "define once, all companies share" principle: `scm.acc_acquirer_config` is
 GLOBAL (statement format, unique-ref flag, fee method, date tolerance, column
 map — 决定4, taught once) and `scm.acc_company_acquirers` is the per-company
-link (which bank/transit/fee accounts); migration 0326 splits them and leaves
+link (which bank/transit/fee accounts); migration 0332 splits them and leaves
 `scm.acc_acquirers` behind as a VIEW of the same shape, so every phase-2A
 reader is untouched.
 
@@ -164,7 +164,7 @@ the full gross at the swipe (owner: 顾客还款确定到时是记录6000哦，�
 的哦). Hong Leong pays a multi-day statement one credit per trading day, Maybank
 credits each trading date separately, and Public Bank goes the other way — one
 advice covering three days. So each credit is a row in
-`scm.acc_settlement_receipts` (migration 0329) with its own date, amount and
+`scm.acc_settlement_receipts` (migration 0335) with its own date, amount and
 entry: Dr bank / Cr transit, source `SETTLEBANK`, keyed
 `SETTLEBANK-<batch id>-<receipt id>` (per receipt, so two identical credits on
 one day both post), dated by the BANK statement. A statement is "in the bank"

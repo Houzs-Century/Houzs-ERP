@@ -244,7 +244,7 @@ const covers = (b: PayableBatch, day: string) => day >= b.periodFrom && day <= b
  * one way to do it.
  *
  * Public Bank's real shape: one advice of 10 Aug pays for trading on the 7th,
- * 8th and 9th (migration 0329's header). Without this the operator is told his
+ * 8th and 9th (migration 0335's header). Without this the operator is told his
  * credit is too big for the statement he picked and given no way to do the
  * right thing, which is what the rig showed.
  *

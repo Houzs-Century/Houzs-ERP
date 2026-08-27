@@ -74,6 +74,7 @@ export const SCM_AREA_MOUNTS: ReadonlyArray<readonly [string, string]> = [
   ["/inventory/adjustments", "scm.warehouse.adjustments"],
   ["/inventory/*", "scm.warehouse.inventory"],
   ["/warehouse/*", "scm.warehouse.inventory"],
+  ["/loading-list/*", "scm.warehouse.inventory"],
   ["/stock-transfers/*", "scm.warehouse.transfers"],
   ["/stock-takes/*", "scm.warehouse.stock_take"],
   ["/accounting/*", "scm.finance.accounting"],

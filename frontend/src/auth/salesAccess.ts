@@ -234,6 +234,33 @@ export function canOperateSalesInvoices(
 }
 
 /**
+ * May this user COMPLETE their own delivery — the driver POD chain (On the way /
+ * Arrived / Proof of Delivery)? A driver holds no scm.sales.delivery edit, so
+ * canOperateDeliveryOrders is false for them; this admits a position holding the
+ * scm.do.dispatch operational capability (the editable Roles & Permissions
+ * matrix). The SERVER is the boundary — it additionally enforces that the DO is
+ * the caller's OWN, already-dispatched job — so this only decides whether the
+ * button SHOWS. Deliberately NOT folded into canOperateDeliveryOrders, which
+ * also gates office-only actions (Convert-to-DO).
+ */
+export function canDriverCompleteDelivery(
+  user: AuthUser | null | undefined,
+): boolean {
+  return (user?.position_capabilities ?? []).includes("scm.do.dispatch");
+}
+
+/**
+ * May this user REVERT a delivery order — the Ops-lead exception power (undo a
+ * wrong scan / accidental dispatch, restoring stock when it crosses back to a
+ * pre-ship state)? Gated on the editable scm.do.revert capability. The SERVER is
+ * the boundary — it enforces the exact legal transitions, the downstream lock and
+ * the inventory reversal — so this only decides whether the Revert controls SHOW.
+ */
+export function canRevertDelivery(user: AuthUser | null | undefined): boolean {
+  return (user?.position_capabilities ?? []).includes("scm.do.revert");
+}
+
+/**
  * PROCUREMENT OPERATE gate — "may this user CREATE or CHANGE a PO / GRN".
  *
  * Same job as {@link canOperateScmSalesDoc} for the two supply-chain areas, and

@@ -21,6 +21,7 @@ import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
 import { PullToRefresh } from "../../components/PullToRefresh";
 import { useStaffLookup } from "../../hooks/useStaffLookup";
+import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import {
   useStockTransfers,
   useCancelStockTransfer,
@@ -125,6 +126,7 @@ export function StockTransfersListV2() {
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const queryClient = useQueryClient();
+  const askConfirm = useConfirm();
 
   const status = (params.get("status") ?? "all") as StatusTab;
   const view = (params.get("view") ?? "table") as "table" | "cards";
@@ -201,8 +203,13 @@ export function StockTransfersListV2() {
      the PDF from a LIST row is not possible here anyway: the row carries the
      warehouse pair and a line COUNT, never the lines. */
   const goPrint = (r: StockTransferRow) => navigate(`/scm/stock-transfers/${r.id}?print=1`);
-  const doCancel = (r: StockTransferRow) => {
-    if (window.confirm(`Cancel transfer ${r.transfer_no}? Stock movements will be reversed.`)) {
+  const doCancel = async (r: StockTransferRow) => {
+    if (await askConfirm({
+      title: `Cancel transfer ${r.transfer_no}?`,
+      body: "Stock movements will be reversed.",
+      confirmLabel: "Cancel transfer",
+      danger: true,
+    })) {
       cancelTransfer.mutate(r.id);
     }
   };

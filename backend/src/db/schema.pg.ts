@@ -128,6 +128,14 @@ export const departments = pgTable("departments", {
   description: text("description"),
   color: text("color").notNull().default("64748b"),
   sort_order: integer("sort_order").notNull().default(0),
+  // The department's LEAD, an explicit choice (mig-pg 0331) rather than the
+  // derived one the Team screens inferred from manager_id. NULL = no lead yet
+  // (the red "No lead" state), which is the default. ON DELETE SET NULL so
+  // removing the person un-leads the department instead of blocking.
+  lead_user_id: integer("lead_user_id"),
+  // Optional planned headcount an HR lead fills in — the "N / target" the
+  // Departments cards show. NULL = no target set (show live count only).
+  headcount_target: integer("headcount_target"),
   created_at: text("created_at").default(nowText),
 });
 

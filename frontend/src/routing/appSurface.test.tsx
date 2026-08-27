@@ -20,12 +20,28 @@ describe("app surface routing", () => {
   it.each([
     ["/survey/token", "survey"],
     ["/track", "portal"],
+    /* The printed delivery-order QR. NO LOGIN behind it — the owner's call
+       (「就跟hookka一样」) — so it must classify OUTSIDE the staff tree, or the
+       driver meets a sign-in screen and the paper is useless. */
+    ["/d/" + "a".repeat(64), "doscan"],
+    ["/d/k3m9p2vx7q", "doscan"],
+    /* THE PILE SCANNER IS ITS OWN PAGE, and it is decided BEFORE the token
+       branch — otherwise "/d/scan" resolves as a token named "scan" and the
+       storekeeper gets "unknown or expired QR code" for a page that exists. A
+       real token cannot collide: it is 10 or 64 characters from a fixed
+       alphabet, and "scan" is four. */
+    ["/d/scan", "doscanbasket"],
+    ["/d/scan/", "doscanbasket"],
     ["/portal/case/token", "portal"],
     ["/reset/token", "reset"],
     ["/invite/token", "invite"],
     ["/privacy", "privacy"],
     ["/", "staff"],
     ["/scm/sales-orders", "staff"],
+    /* /d alone is NOT the scan surface — only /d/<something>. A bare /d would
+       otherwise swallow any future staff route that starts with those letters. */
+    ["/d", "staff"],
+    ["/dashboard", "staff"],
   ] as const)("classifies %s as %s", (path, surface) => {
     expect(appSurfaceForPath(path)).toBe(surface);
   });

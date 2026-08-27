@@ -359,7 +359,7 @@ async function applyDeliveryRowScope<T extends { row_type: string; so_doc_no: st
 /* A single DO's crew assignment (header driver_id + delivery_order_crew ids),
    for the write-ownership check on the driver-facing step/POD endpoints. Returns
    an empty assignment (matches no self scope) when the DO or its crew is absent. */
-async function fetchDoCrewAssignment(
+export async function fetchDoCrewAssignment(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   sb: any,
   doId: string,

@@ -2,7 +2,7 @@ import { lazy, useEffect, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
-import { canOperateDeliveryOrders, canOperateSalesInvoices, canOperateGoodsReceipts, canOperatePurchaseOrders, canViewFairReport } from "../auth/salesAccess";
+import { canOperateDeliveryOrders, canDriverCompleteDelivery, canOperateSalesInvoices, canOperateGoodsReceipts, canOperatePurchaseOrders, canViewFairReport } from "../auth/salesAccess";
 import { capability, type CapabilityKey } from "../auth/capabilities";
 import { NAV_TABS, type NavTab } from "../components/Sidebar";
 import { makeNavVisible } from "../components/navFilter";
@@ -816,12 +816,16 @@ function MobileAppInner() {
   }
   else if (screen.t === "module-detail") {
     const doNo = screen.key === "delivery-orders-mfg" ? (screen.row?.do_number ?? screen.row?.doNumber) : null;
-    /* POD confirms a delivery — DEDUCTS STOCK + SYNCS THE SO — so it is an
-       operate action, gated on the SAME canOperateDeliveryOrders helper as the
-       Dispatch/Cancel status actions and the desktop DO controls. A view-only
-       user (the Sales cohort) gets NO POD entry (off, not hide); MobilePOD also
-       gates its Confirm action defensively for any other entry path. */
-    const canPod = !!doNo && canOperateDeliveryOrders(user, can, pageAccess);
+    /* POD records a delivery's arrival (signature + photo; it does NOT move
+       stock — the OUT fired at LOADED). Office operators reach it via the same
+       canOperateDeliveryOrders helper as the other DO controls; a DRIVER reaches
+       it via canDriverCompleteDelivery (scm.do.dispatch), whose scm.sales.delivery
+       is `none`. A view-only user (the Sales cohort) gets NO POD entry; the
+       SERVER enforces a driver may complete only their OWN dispatched job, so
+       this only decides whether the entry SHOWS. */
+    const canPod =
+      !!doNo &&
+      (canOperateDeliveryOrders(user, can, pageAccess) || canDriverCompleteDelivery(user));
     overlay = <MobileModuleDetail moduleKey={screen.key} row={screen.row} title={screen.title}
       onBack={() => setScreen({ t: "module", key: screen.key, title: screen.title })}
       onEdit={() => setScreen({ t: "module-form", key: screen.key, mode: "edit", row: screen.row })}

@@ -55,6 +55,7 @@ import {
 } from "../../vendor/scm/lib/purchase-invoice-queries";
 import { authedFetch } from "../../vendor/scm/lib/authed-fetch";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
+import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { useChoice } from "../../vendor/scm/components/ChoiceDialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
@@ -603,6 +604,7 @@ export function PurchaseInvoicesListV2() {
   const queryClient = useQueryClient();
   const notify = useNotify();
   const askChoice = useChoice();
+  const askConfirm = useConfirm();
 
   const status = (params.get("status") ?? "all") as StatusTab;
   const view = (params.get("view") ?? "table") as "table" | "cards";
@@ -821,8 +823,11 @@ export function PurchaseInvoicesListV2() {
   const batchPrint = usePrintPreview(deliverSelectedPis);
   const goRecordPayment = (r: PiRow) =>
     navigate(`/scm/purchase-invoices/${r.id}?tab=payments&record=1`);
-  const doMarkPaid = (r: PiRow) => {
-    if (window.confirm(`Mark invoice ${r.invoice_number} as paid?`)) {
+  const doMarkPaid = async (r: PiRow) => {
+    if (await askConfirm({
+      title: `Mark invoice ${r.invoice_number} as paid?`,
+      confirmLabel: "Mark paid",
+    })) {
       recordPayment.mutate({ id: r.id, amountSen: outstandingOf(r) }, { onSuccess: () => setSelected(null) });
     }
   };
@@ -837,8 +842,12 @@ export function PurchaseInvoicesListV2() {
      Both carry an onError, because a refusal that reaches nobody reads to the
      operator as "the menu did nothing" — the exact bug class
      `check-silent-mutations.mjs` exists to stop. */
-  const doConfirm = (r: PiRow) => {
-    if (!window.confirm(`Confirm invoice ${r.invoice_number}? Inventory and Payables will be updated.`)) return;
+  const doConfirm = async (r: PiRow) => {
+    if (!(await askConfirm({
+      title: `Confirm invoice ${r.invoice_number}?`,
+      body: "Inventory and Payables will be updated.",
+      confirmLabel: "Confirm invoice",
+    }))) return;
     postPi.mutate(r.id, {
       onSuccess: () => setSelected(null),
       onError: (e) =>
@@ -849,8 +858,13 @@ export function PurchaseInvoicesListV2() {
         }),
     });
   };
-  const doCancelPi = (r: PiRow) => {
-    if (!window.confirm(`Cancel invoice ${r.invoice_number}? Any posted amount will be reversed via a contra JE.`)) return;
+  const doCancelPi = async (r: PiRow) => {
+    if (!(await askConfirm({
+      title: `Cancel invoice ${r.invoice_number}?`,
+      body: "Any posted amount will be reversed via a contra JE.",
+      confirmLabel: "Cancel invoice",
+      danger: true,
+    }))) return;
     cancelPi.mutate(r.id, {
       onSuccess: () => setSelected(null),
       onError: (e) =>

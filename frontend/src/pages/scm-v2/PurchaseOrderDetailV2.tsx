@@ -618,21 +618,33 @@ function PurchaseOrderDetailV2ReadOnly() {
      that never had an update in it. The confirm dialog is kept because
      confirming is what makes the PO live supply and drops its SO lines out of
      the From-SO picker; the wording now matches what the button does. */
-  const doConfirm = () => {
+  const doConfirm = async () => {
     if (!id) return;
-    if (window.confirm("Confirm this PO? It becomes live supply and its sales-order lines leave the From-SO picker.")) {
+    if (await confirm({
+      title: "Confirm this PO?",
+      body: "It becomes live supply and its sales-order lines leave the From-SO picker.",
+      confirmLabel: "Confirm PO",
+    })) {
       confirmPo.mutate(id);
     }
   };
-  const doCancel = () => {
+  const doCancel = async () => {
     if (!purchaseOrder) return;
-    if (window.confirm(`Cancel PO ${purchaseOrder.po_number}? Any GRN raised against this PO must be cancelled first.`)) {
+    if (await confirm({
+      title: `Cancel PO ${purchaseOrder.po_number}?`,
+      body: "Any GRN raised against this PO must be cancelled first.",
+      confirmLabel: "Cancel PO",
+      danger: true,
+    })) {
       cancelPo.mutate(purchaseOrder.id);
     }
   };
-  const doReopen = () => {
+  const doReopen = async () => {
     if (!purchaseOrder) return;
-    if (window.confirm(`Reopen cancelled PO ${purchaseOrder.po_number}?`)) {
+    if (await confirm({
+      title: `Reopen cancelled PO ${purchaseOrder.po_number}?`,
+      confirmLabel: "Reopen",
+    })) {
       reopenPo.mutate(purchaseOrder.id);
     }
   };
