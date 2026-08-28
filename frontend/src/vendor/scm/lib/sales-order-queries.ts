@@ -1013,36 +1013,68 @@ function blobToDataUrl(blob: Blob): Promise<string | null> {
  * Per-compartment best-effort: anything that cannot be resolved, fetched or
  * measured is simply absent from the map and the engine draws that one cell's
  * schematic. */
-/* THE PRINT PATH LOADS ITS OWN ART — one lookup, not five call sites.
+/* THE PRINT PATH LOADS ITS OWN ART — one lookup, not five call sites, and it
+ * does NOT depend on the stored config carrying an imageKey.
  *
- * WHY THIS EXISTS (owner, 2026-08-28, comparing three printed POs: 「为什么感觉
- * 不是全部都一样的？」). Five surfaces print a Purchase Order — the V2 detail, the
- * EDIT page, two list exports and the right-click document-chain print — and
- * only ONE of them passed `sofaPhotos`. The other four silently drew the
- * schematic, so the same delivery order looked different depending on which
- * button raised it. Passing the map at every call site is the arrangement that
- * produced the bug; a sixth caller would have reproduced it.
+ * WHY IT IS KEYED BY THE CODES THE SHEET NEEDS (owner, 2026-08-28, still looking
+ * at a schematic after two fixes: 「还是一样的问题啊」). The earlier version walked
+ * `sofaCompartmentMeta` and used only entries that HAD an `imageKey`. The stored
+ * config has none: `seedCompartmentMeta` in Products.tsx supplies the default
+ * `sofa-modules/<id>.svg` CLIENT-SIDE, so the Maintenance list shows a thumbnail
+ * for every compartment while the database holds nothing. Two places, one
+ * default, and only one of them had it — which is why the owner could see the
+ * pictures on screen and never on paper, and why neither of us was wrong.
  *
- * The generator therefore fetches it itself when the caller did not supply one.
- * That is the same shape as the supplier/fabric lookup the PO print already does
- * at print time (`loadSupplierDocData`), so it is not a new kind of thing.
+ * So the default is derived from the CODE rather than looked up: a compartment's
+ * code IS the name of its artwork. The stored config is consulted only for an
+ * OVERRIDE — an uploaded photo, or an external URL somebody typed in. A missing
+ * config is now a non-event rather than the difference between a picture and a
+ * drawing.
  *
- * Fail-soft the whole way: a failed config read returns `{}` and every cell
- * draws its schematic, exactly as before. A print must never fail for want of a
- * picture. */
-export async function loadSofaCompartmentArtForPrint(): Promise<Record<string, string>> {
+ * Fail-soft throughout: anything that cannot be resolved, fetched or measured is
+ * simply absent, and that cell draws its schematic. A print must never fail for
+ * want of a picture. */
+export async function loadSofaCompartmentArtForPrint(
+  codes: readonly string[],
+): Promise<Record<string, string>> {
+  const wanted = [...new Set(codes.map((c) => String(c ?? '').trim()).filter(Boolean))];
+  if (wanted.length === 0) return {};
+
+  /* The override map, best-effort. A company with no config yet, or a failed
+     read, simply means every code falls back to its bundled art. */
+  let meta: Record<string, { imageKey?: string }> = {};
   try {
     const resolved = await authedFetch<{ data?: { sofaCompartmentMeta?: Record<string, { imageKey?: string }> } }>(
       '/maintenance-config/resolved?scope=master',
     );
-    /* `resolved` itself is non-optional by TYPE — authedFetch returns T — and
-       the ratchet is right to say so. `data` stays optional because the
-       endpoint really can answer with no config yet (a fresh company), and
-       loadSofaCompartmentPhotos treats undefined as "draw the schematics". */
-    return await loadSofaCompartmentPhotos(resolved.data?.sofaCompartmentMeta);
+    meta = resolved.data?.sofaCompartmentMeta ?? {};
   } catch {
-    return {};
+    meta = {};
   }
+
+  const out: Record<string, string> = {};
+  await Promise.all(wanted.map(async (code) => {
+    try {
+      /* An UPLOADED override needs the session; anything else is a plain file
+         on this origin and must NOT carry a bearer token. Absent override →
+         `sofa-modules/<code>` is the seed, exactly what the Maintenance list
+         shows. */
+      const key = meta[code]?.imageKey || `sofa-modules/${code}`;
+      const url = resolveCompartmentArtUrl(code, key, API_URL);
+      if (!url) return;
+      if (url.startsWith(`${API_URL}/`)) {
+        const blob = await fetchSofaCompartmentPhotoBlob(code, key);
+        const dataUrl = await blobToDataUrl(blob);
+        if (dataUrl) out[code] = dataUrl;
+        return;
+      }
+      const art = await loadCompartmentArt(url);
+      if (art) out[code] = art.dataUrl;
+    } catch {
+      /* this one cell draws its schematic */
+    }
+  }));
+  return out;
 }
 
 export async function loadSofaCompartmentPhotos(
