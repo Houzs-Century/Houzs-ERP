@@ -96,6 +96,19 @@ export-ac-fidelity-truth.py）、live 尺（export-ac-live.py）。
 | ac-po-fromsodtlkey | 685 | PO→SO 行链 |
 | ac-reimport-manifest.json | — | 各档行数 + 口径说明 |
 
+## 4b. 开货（新 SKU）执行记录
+
+- PR #2747 合并（快照 + 种子档 + 流水账进 main）。
+- 开货 dry-run 第 1 次（run 33152112108）：报 `create 3 / skip 17` —— **与只读导出（run 33152256221）矛盾**：
+  live 绑定里 20 条一条都不存在（FLAT 只有 NB 六条，5562/DL 全无）。查明：种子档绑定键写了旧名
+  `material_code`，现行脚本读 `item_code`（batch-3 命名统一后改的）——每家供应商首行占空键、
+  其余 17 行被误判重复；apply 会插 3 条空货号垃圾。**dry-run + 对账拦住了**（docs/bugs/0554）。
+- 修正：键名改 `item_code`（fix/ac-newskus-item-code）。
+- **发现现成机制**：`mirror-hookka-bindings`（8-25 建）= 把 OHANA 每条绑定镜像到两家 Hookka
+  （H003 制造 + H004 实业）并把主供应商统一提到 H004 —— owner 8-09 的老规矩（"两家一样 SKU
+  一样价钱；Hookka Industries 有的都是 main"）。**开货 apply 之后跑一次它**：H003 自动补齐、
+  FLAT 上 NB 的 main 让位给 Hookka（避免双 main）。
+
 ## 5. 待办队列（照第一轮 19 步序，按本轮口径改）
 
 导出全部落地并核对 → 对照表补 16 行 + 开新 SKU（等 owner 定 ①）→ 导入 SO（non-sofa → sofa）→
