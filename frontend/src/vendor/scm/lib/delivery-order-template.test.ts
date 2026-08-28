@@ -549,4 +549,37 @@ describe('Delivery Order — Theme C template', () => {
     expect(spans.some((s) => s.text === 'RACK')).toBe(false);
     expect(spans.some((s) => s.text === 'QTY')).toBe(true);
   });
+
+  /* Photos follow the line (owner spec 2026-08). The block's grouping, layout
+     and page-fit are unit-tested in pdf-item-photos.test.ts; what belongs to
+     THIS file is the DO wiring: the marker on the row, and best-effort — a
+     photo that cannot be fetched must cost the sheet nothing. The fetch is
+     mocked to fail, so the marker prints while the block (empty) does not. */
+  test('a photo-carrying line is marked, and a failed fetch never breaks the sheet', async () => {
+    const queries = await import('./sales-order-queries');
+    vi.spyOn(queries, 'fetchDoItemPhotoBlob').mockRejectedValue(new Error('offline'));
+
+    const withPhoto = [
+      { ...itemAt(1), id: 'line-1', photo_urls: ['so-items/SO-1/line-1/a.jpg'] },
+      itemAt(2),
+    ] as unknown as ReturnType<typeof itemAt>[];
+    const { spans } = await renderDo(withPhoto, { ...HEADER, id: 'do-row-1' } as typeof HEADER);
+
+    /* autoTable wraps the long description, so "(photo)" can start a wrapped
+       line rather than end the first one — assert presence, not position. */
+    expect(spans.some((s) => s.text.includes('(photo)'))).toBe(true);
+    expect(spans.some((s) => s.text === 'ITEM PHOTOS')).toBe(false);
+  });
+
+  test('without a header id (the CN reuse) no photo fetch is even attempted', async () => {
+    const queries = await import('./sales-order-queries');
+    const spy = vi.spyOn(queries, 'fetchDoItemPhotoBlob').mockRejectedValue(new Error('offline'));
+
+    const withPhoto = [
+      { ...itemAt(1), id: 'line-1', photo_urls: ['so-items/SO-1/line-1/a.jpg'] },
+    ] as unknown as ReturnType<typeof itemAt>[];
+    await renderDo(withPhoto);
+
+    expect(spy).not.toHaveBeenCalled();
+  });
 });

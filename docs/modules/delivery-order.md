@@ -985,6 +985,20 @@ DELIVERY ORDER's status. The three DO surfaces (detail, list export, mobile)
 stamp it; `ConsignmentNoteDetail` deliberately does not. Vector-drawn via
 `vendor/scm/lib/pdf-qr.ts` (frontend twin of the ASSR print's `qrSvg`).
 Pinned by `pages/scm-v2/do-load-scan.test.ts` + `lib/pdf-qr.test.ts`.
+
+**Line photos on the printed DO (owner spec 2026-08).** The same ITEM PHOTOS
+block the SO and PO PDFs print (shared `vendor/scm/lib/pdf-item-photos.ts` —
+`Item N` chips, ~52mm thumbnails, max 3 per row, English-only generated text,
+a group never splits across pages): one block after the items table, before
+the bottom-pinned signature; a photo-carrying row appends " (photo)" to its
+description and carries no image itself. Keys are the SO-carried
+`delivery_order_items.photo_urls`; only `.thumb` siblings are fetched, through
+the per-line proxy route above, keyed by `DoHeader.id` + line `id` — the CN
+reuse passes no header id, so it fetches nothing by construction. Every photo
+is best-effort: a failed fetch or decode is skipped and can never fail the
+PDF (pinned in `delivery-order-template.test.ts`). Photos imported from
+AutoCount (`ac-*.jpg`) have no `.thumb` sibling yet, so they show on screen
+but print nothing — same caveat as SO/PO.
 | `COMPLETED` | **nothing writes it.** Still in the code vocabulary (`DO_STOCK_OUT_STATES`, `DO_STATUSES`) but NOT a member of the `do_status` enum in any schema file or migration. Removed from the `delivered` filter bucket 2026-08-17. **CORRECTED 2026-08-18** — this cell used to end "the JS-side sets compare a status already in hand, where a value that can never occur is inert", and that was FALSE: `services/agents/delivery-agent.ts` mapped `DO_STATUSES` into one `.eq('status', st)` query per entry, so `COMPLETED` *was* being handed to Postgres to parse. That consumer no longer enumerates the list at all (it counts the rows it reads), so the claim is now true of every remaining reader — but it was a second live 22P02 for a day, and it was found by a reviewer, not by the sweep that wrote the sentence | read-only |
 | `CANCELLED` | `PATCH /:id/status`, atomic branch | **FINAL.** `A cancelled Delivery Order cannot be reactivated — its stock was already returned. Create a new DO to deliver again.` (409 `do_cancelled_final`) |
 

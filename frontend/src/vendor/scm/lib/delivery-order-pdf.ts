@@ -37,12 +37,32 @@ import {
 import { DO_THEME as T, MONO, SANS, charSpace, monoFor, pt, type Rgb } from './delivery-order-theme';
 import { docVariantLine, loadCustomerFabricMaps } from './supplier-doc-data';
 import { drawQrIntoPdf } from './pdf-qr';
+/* Owner spec 2026-08 — photos follow the line onto the printed document
+   (SO → PO → DO). Same shared block the SO/PO PDFs print through; keys are
+   the SO-carried `photo_urls` (mig 20260828T0746). All generated strings are
+   WinAnsi by rule (pdf-item-photos.ts header). */
+import {
+  appendPhotoMarker,
+  blobToSquarePdfImage,
+  buildPhotoGroups,
+  collectPhotoImages,
+  drawItemPhotosBlock,
+  photoKeyOwners,
+  photoKeysOf,
+  type PdfPhotoImage,
+} from './pdf-item-photos';
+import { fetchDoItemPhotoBlob } from './sales-order-queries';
+import { THUMB_KEY_SUFFIX } from '../../../lib/imagePipeline';
 /* The status WORD comes from the one home for it, never from a caser here:
    what this document prints and what the screen shows must be the same word.
    docs/modules/document-status-vocabulary.md §1. */
 import { statusLabel } from './status-pill';
 
 type DoHeader = {
+  /* Row id — the photo proxy route is keyed by it. Optional so the
+     Consignment Note reuse (which has no DO row) stays valid; absent is the
+     STRICTER direction: no photo fetch, the block simply does not print. */
+  id?: string | null;
   do_number: string;
   status: string;
   /* When set, the header carries a "scan to mark loaded" QR encoding
@@ -81,6 +101,9 @@ type DoHeader = {
 };
 
 type DoItem = {
+  /* Line row id — pairs with DoHeader.id on the photo proxy route. Optional
+     for the same CN reuse; absent = that line fetches no photos (stricter). */
+  id?: string | null;
   item_code: string;
   description: string | null;
   qty: number;
@@ -95,6 +118,12 @@ type DoItem = {
      stored on. Both optional / possibly empty → the cell shows a dash. */
   source_pos?: string[] | null;
   racks?: string[] | null;
+  /* Line reference photos (R2 keys, delivery_order_items.photo_urls — carried
+     from the SO line, mig 20260828T0746). Optional so the Consignment Note
+     reuse stays valid. When present the row's first description line gains
+     the " (photo)" marker and the ITEM PHOTOS block prints the `.thumb`
+     siblings. */
+  photo_urls?: string[] | null;
 };
 
 type Doc = import('jspdf').jsPDF;
@@ -713,6 +742,32 @@ export async function renderDeliveryOrderInto(
   const docNoLabel = opts?.docNoLabel ?? 'DO No';
   const startPage = doc.getNumberOfPages();
 
+  /* Photos follow the line (owner spec 2026-08): fetch the `.thumb` siblings
+     of every carried photo key up front, best-effort — a key whose fetch or
+     decode fails is skipped and the PDF renders without it. The CN reuse has
+     no header id, so it fetches nothing by construction. */
+  const doId = header.id ?? null;
+  const photoGroups = doId
+    ? buildPhotoGroups(items.map((it) => ({
+        code: it.item_code,
+        photoKeys: photoKeysOf(it.photo_urls),
+      })))
+    : [];
+  const photoOwners = photoKeyOwners(
+    items.flatMap((it) => (it.id ? [{ id: it.id, photoKeys: photoKeysOf(it.photo_urls) }] : [])),
+  );
+  const photoImages: Map<string, PdfPhotoImage> = doId && photoGroups.length > 0
+    ? await collectPhotoImages(
+        photoGroups,
+        (key) => {
+          const ownerId = photoOwners.get(key);
+          if (!ownerId) return Promise.reject(new Error('photo_owner_missing'));
+          return fetchDoItemPhotoBlob(doId, ownerId, key + THUMB_KEY_SUFFIX);
+        },
+        blobToSquarePdfImage,
+      )
+    : new Map<string, PdfPhotoImage>();
+
   const ruleY = drawDoHeader(doc, header, {
     docTitle: opts?.docTitle ?? 'DELIVERY ORDER',
     docNoLabel,
@@ -729,8 +784,15 @@ export async function renderDeliveryOrderInto(
   // volume, not money. The unit_price_sen still flows to the Sales Invoice.
   const listCell = (vals?: string[] | null): string =>
     vals && vals.length > 0 ? vals.join('\n') : EM_DASH;
-  const descOf = (it: DoItem): string =>
-    [it.description, docVariantLine(it, fabric.ext, fabric.desc)].filter(Boolean).join('\n') || EM_DASH;
+  const descOf = (it: DoItem): string => {
+    const composed = [it.description, docVariantLine(it, fabric.ext, fabric.desc)]
+      .filter((s): s is string => Boolean(s));
+    if (composed.length === 0) return EM_DASH;
+    /* Owner spec: a row carries NO image — the " (photo)" marker on the first
+       description line points the reader at the ITEM PHOTOS block below. */
+    const lines = photoKeysOf(it.photo_urls).length > 0 ? appendPhotoMarker(composed) : composed;
+    return lines.join('\n');
+  };
   const m3Of = (it: DoItem): string => (it.m3_milli != null ? (it.m3_milli / 1000).toFixed(3) : EM_DASH);
 
   const rows = items.map((it, idx) => {
@@ -873,8 +935,30 @@ export async function renderDeliveryOrderInto(
     },
   });
 
+  // ── ITEM PHOTOS (owner spec 2026-08) ───────────────────────────────
+  /* One block per document, AFTER the items table and BEFORE the pinned
+     signature/footer. Row-number chips key each group back to the table
+     above; a group never splits across pages (it moves whole, under a
+     continued heading). Pages the block adds are swept up by the closing
+     loop below, so they get the footer like any table spill page. The
+     block draws in jsPDF's built-in helvetica — deliberate: the Ink &
+     Petrol faces are display fonts, and the block must read identically
+     on SO/PO/DO. Absent entirely when no photo actually fetched. */
+  let finalY = ((doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? panelBottom);
+  if (photoImages.size > 0) {
+    const photoRes = drawItemPhotosBlock(doc, photoGroups, photoImages, {
+      margin: M,
+      contentW: CONTENT_W,
+      startY: finalY + 6,
+      pageBottom: PAGE_H - PAD_BOTTOM - 12, // the items table's own bottom rail
+      pageTop: M,
+      side: null,
+      onNewPage: null,
+    });
+    if (photoRes.drew) finalY = photoRes.endY;
+  }
+
   // ── Closing: signature + footer, pinned to the bottom ──────────────
-  const finalY = ((doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? panelBottom);
   const CLOSING_TOP = PAGE_H - PAD_BOTTOM - 6 - 6 - (24 + 2.5 + pt(10) + 2 + (pt(8) + 3.2) * 2);
   if (finalY > CLOSING_TOP) doc.addPage();
 

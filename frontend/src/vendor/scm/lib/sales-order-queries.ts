@@ -908,6 +908,19 @@ export async function fetchPoItemPhotoBlob(
   );
 }
 
+/* DO twin of the two above — same proxy contract, mounted by
+   routes/delivery-order-item-photos.ts (keys are SO-carried, mig 20260828T0746). */
+export async function fetchDoItemPhotoBlob(
+  doId: string,
+  itemId: string,
+  photoKey: string,
+): Promise<Blob> {
+  return fetchItemPhotoBlobAt(
+    `/delivery-orders-mfg/${encodeURIComponent(doId)}/items/${encodeURIComponent(itemId)}`,
+    photoKey,
+  );
+}
+
 /* Sofa Compartment hero photo — a DIFFERENT wire than the per-line item photos
    above: keyed by compartment CODE, served by the public
    /maintenance-config/sofa-compartments/:code/photo/:key proxy (singular
