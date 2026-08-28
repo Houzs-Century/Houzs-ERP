@@ -798,7 +798,24 @@ caller-supplied array would let any PO line reference any R2 object),
 
 **Read-only on the PO side.** Photos are authored on the Sales Order (or by the
 importer); there is no PO upload or delete route to drift from the SO's
-lease/audit rules. The frontend does not render them yet — see §8.
+lease/audit rules. Since 2026-08-28 the desktop V2 detail renders them (Photos
+column, read-only strip — see §8) and the printed PO carries them too:
+
+**Line photos on the printed PO (owner mockup, 2026-08).**
+`frontend/src/vendor/scm/lib/purchase-order-pdf.ts` prints ONE
+"ITEM PHOTOS · 照片对照" block in the page-bottom zone — beside the
+"Sofa layout — front faces TV" section when the last diagram row leaves usable
+width, wrapping below it otherwise; a PO with no sofa renders the block alone,
+full width. Table rows carry NO image; a line with `photo_urls` appends " (图)"
+to its description instead. Groups are keyed by row position in the items table
+(`#3`, or `#2-4` when consecutive rows carry a deep-equal photo list — a sofa
+set's shared build photo prints once), with the SUPPLIER code beside the chip
+and ~26mm square thumbnails, max 6 per row; a group never splits across pages.
+The logic is the shared `frontend/src/vendor/scm/lib/pdf-item-photos.ts`
+module the SO PDF also prints through (unit-tested beside it). Only `.thumb`
+siblings are fetched (never originals — PDF size) via the authed PO proxy,
+keyed by the header's `id`; per-photo best-effort — a failed fetch or an
+undecodable format skips that photo, never the document.
 
 ### Status vocabulary
 
@@ -943,27 +960,29 @@ A rule change to the PO touches both surfaces. The pairs:
 | SO→PO conversion | `pages/scm-v2/PurchaseOrderFromSo.tsx` | `mobile/MobileConvertWizard.tsx` (`target: "po"`) |
 | Line allocations (mig 0235) | `PurchaseOrderDetailV2.tsx` Allocations column + `components/scm-v2/PoLineAllocationsModal.tsx` (editor) | `mobile/MobileModuleDetail.tsx` `LineItem` chips — DISPLAY-ONLY (the phone PO surface has no per-line editor, same precedent as the SO-link picker) |
 | Cache invalidation after a write | the mutation hooks in `vendor/scm/lib/suppliers-queries.ts` | `mobile/sharedInvalidate.ts:71` |
-| Line photos (mig 0274) | NOT BUILT — see below | NOT BUILT — the mobile PO detail surface DOES exist (`MobileModuleDetail` config, Submit/Cancel/Reopen actions, a line list already rendering the mig-0235 allocation chips); it renders no photos, and there is no per-line editor to hang an uploader on |
+| Line photos (mig 0274) | Photos column on `PurchaseOrderDetailV2.tsx` (read-only strip, since 2026-08-28) | NOT BUILT — the mobile PO detail surface DOES exist (`MobileModuleDetail` config, Submit/Cancel/Reopen actions, a line list already rendering the mig-0235 allocation chips); it renders no photos, and there is no per-line editor to hang an uploader on |
 
-**Line photos are backend-only today, deliberately.** The keys are on the detail
-row and both the signed-URL route and the proxy route serve them, but no PO
-surface renders them yet.
+**Line photos render on the desktop V2 detail since 2026-08-28** — a read-only
+Photos column between Supplier SKU and Ordered, tiles opening the shared
+`MediaLightbox` against the full object. Read-only is BY DESIGN: photos are
+authored on the SO and carried across, so the PO strip has no upload/delete UI.
 
-The extraction this section used to ask for HAS HAPPENED on the SO side: the
-resolver is no longer buried in `SoLineCard.tsx`. It lives in
-`frontend/src/vendor/scm/lib/so-line-photo.ts` as `useSoLinePhoto`, and both SO
-surfaces (the edit card's `PhotoThumb`, the V2 read-only
-`components/scm-v2/SoLinePhotoStrip.tsx`) are thin chrome over it. Read that
-file's header before touching it — three production regressions have lived in
-that state machine.
+The fetcher seam this section used to ask for exists now, the way it asked: the
+resolver in `frontend/src/vendor/scm/lib/so-line-photo.ts` is
+source-parameterised (`useScmLinePhoto('so' | 'po', …)`; `useSoLinePhoto` stays
+as the SO-shaped wrapper so the SO call sites did not change), the PO-shaped
+fetcher siblings live beside the SO ones in
+`frontend/src/vendor/scm/lib/sales-order-queries.ts`
+(`fetchPoItemPhotoSignedUrl` / `fetchPoItemPhotoBlob` — that file owns the
+photo wire contract), and `photo_urls` is threaded through `PoItemRow`. The
+hook was NOT copied. Read `so-line-photo.ts`'s header before touching it —
+three production regressions have lived in that state machine. The caches are
+keyed by the R2 key and shared across sources on purpose: an SO→PO convert
+copies the key list, so both surfaces show the same bytes.
 
-What is still missing for the PO is the FETCHER SEAM, not the state machine:
-`useSoLinePhoto` calls `fetchSoItemPhotoSignedUrl` / `fetchSoItemPhotoBlob`
-directly, and the PO's routes are `/mfg-purchase-orders/:id/items/:itemId/…`.
-So the remaining work is: make the two fetchers injectable (or add a PO-shaped
-sibling that passes the PO pair), thread `photoUrls` through the PO detail type
-into `PoLineCard.tsx`, and build the phone surface that does not exist. Still
-its own PR — but a seam plus wiring now, not a rewrite. Do NOT copy the hook.
+Still missing: the phone surface (no photos on `MobileModuleDetail`'s PO line
+list), and `PoLineCard.tsx` (the edit card) shows none either — both stay open,
+each its own PR.
 
 Shared, so a change lands on both at once: the backend route, and the
 `suppliers-queries.ts` hooks (mobile's convert wizard and POD screens call

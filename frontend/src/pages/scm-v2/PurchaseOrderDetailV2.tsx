@@ -77,6 +77,8 @@ import { usePoRelationshipMap } from "./po-relationship-map";
 // customers (and stock) it serves; sub-numbered PO-xxxx-yy-01, -02, ...
 import { PoLineAllocationsModal } from "../../components/scm-v2/PoLineAllocationsModal";
 import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
+// Carried line photos (mig 0274) — the shared read-only strip, PO-sourced.
+import { SoLinePhotoStrip } from "../../components/scm-v2/SoLinePhotoStrip";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { cn } from "../../lib/utils";
 import { convertToLink, transferToLabel } from "../../lib/convertScope";
@@ -743,6 +745,25 @@ function PurchaseOrderDetailV2ReadOnly() {
           <span className="font-mono text-[12px] text-ink-secondary">{code}</span>
         );
       },
+    },
+    /* Photos (mig 0274 carry) — the reference shots the SO line brought along
+       (plus any the AutoCount importer appended), through the SAME strip +
+       state machine the SO detail renders (components/scm-v2/SoLinePhotoStrip
+       with source="po"). Read-only by design: photos are authored on the SO.
+       getValue is the COUNT so the column sorts/filters/exports as a number. */
+    {
+      key: "photos",
+      label: "Photos",
+      width: "110px",
+      getValue: (l) => (l.photo_urls ?? []).length,
+      render: (l) => (
+        <SoLinePhotoStrip
+          source="po"
+          docId={purchaseOrder?.id ?? ""}
+          itemId={l.id}
+          photoKeys={l.photo_urls ?? []}
+        />
+      ),
     },
     {
       key: "qty",
