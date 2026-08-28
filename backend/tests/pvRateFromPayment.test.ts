@@ -157,6 +157,11 @@ const world = (over: {
       voucher_date: '2026-07-30', payee_name: 'Shenzhen Vendor', credit_account_code: '1000',
       currency: over.pvCurrency ?? 'RMB', exchange_rate: over.pvRate ?? RMB_RATE,
       purpose: over.pvPurpose ?? 'SUPPLIER_PAYMENT', total_sen: FACE_SEN,
+      /* Phase 3: this suite tests the RATE mechanics, so the voucher arrives
+         already through the approval queue — the gate itself is
+         tests/pvApproval.test.ts's contract. */
+      submitted_at: '2026-07-30T01:00:00Z', submitted_by: 'Tester',
+      approved_at: '2026-07-30T02:00:00Z', approved_by: 'Tester',
     }],
     payment_voucher_lines: [{
       id: 'pvl-1', pv_id: 'pv-1', line_no: 1, description: 'Sofa order',

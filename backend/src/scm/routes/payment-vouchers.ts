@@ -58,6 +58,7 @@ import { hasHouzsPerm } from '../lib/houzs-perms';
 import { normalizeCurrency, normalizeExchangeRate, masterRateForCurrency } from '../lib/fx';
 import { todayMyt } from '../lib/my-time';
 import { recordEntityAudit, diffFields, compactChanges, fieldChange, statusChange, assertAuditWritable, auditUnavailableBody } from '../lib/entity-audit';
+import { pvCanEdit, pvCanSubmit, pvCanDecide, pvCanWithdraw, pvCanPost } from '../lib/pv-approval';
 import { settlePiPaidSen } from '../lib/pi-settlement';
 import { planPvRateAdoption, isRateRetainedFromPv, roundRate6 } from '../lib/pv-rate-adoption';
 import { recostFromGrn } from '../lib/recost';
@@ -80,7 +81,7 @@ const PV_AUDIT_FIELDS: Array<[string, string]> = [
 ];
 
 const HEADER =
-  'id, pv_number, voucher_date, payee_name, supplier_id, credit_account_code, currency, exchange_rate, purpose, notes, total_sen, status, posted_at, created_at, created_by, updated_at, company_id';
+  'id, pv_number, voucher_date, payee_name, supplier_id, credit_account_code, currency, exchange_rate, purpose, notes, total_sen, status, posted_at, created_at, created_by, updated_at, company_id, submitted_at, submitted_by, approved_at, approved_by';
 
 const LINE = 'id, pv_id, line_no, description, debit_account_code, amount_sen, created_at';
 
@@ -448,7 +449,9 @@ paymentVouchers.post('/', createPaymentVoucherHandler);
    Update — DRAFT only (a POSTED / CANCELLED voucher is read-only)
    ──────────────────────────────────────────────────────────────────────── */
 
-paymentVouchers.patch('/:id', async (c) => {
+/* Exported like post/cancel: the vitest harness mounts it on a bare Hono app
+   (the phase-3 edit gate is proved in tests/pvApproval.test.ts). */
+export const updatePaymentVoucherHandler = async (c: any) => {
   if (!hasHouzsPerm(c, 'scm.payment_voucher.write')) {
     return c.json({ error: "You don't have permission to do that." }, 403);
   }
@@ -477,6 +480,10 @@ paymentVouchers.patch('/:id', async (c) => {
   if ((before as { status: string }).status !== 'DRAFT') {
     return c.json({ error: 'not_editable', message: 'Only a DRAFT voucher can be edited' }, 409);
   }
+  /* Phase 3: a voucher in the approval cycle is frozen — what was approved is
+     what gets paid. Withdraw first; it then needs approval again. */
+  const editable = pvCanEdit(before as { status: string; submitted_at?: string | null; approved_at?: string | null });
+  if (!editable.ok) return c.json({ error: editable.error, message: editable.message }, 409);
 
   const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
   if (body.payeeName !== undefined) {
@@ -582,7 +589,8 @@ paymentVouchers.patch('/:id', async (c) => {
   });
 
   return c.json({ paymentVoucher: data });
-});
+};
+paymentVouchers.patch('/:id', updatePaymentVoucherHandler);
 
 /* ────────────────────────────────────────────────────────────────────────
    POST /:id/post — write the balanced GL entry, flip DRAFT → POSTED
@@ -649,6 +657,14 @@ export const postPaymentVoucherHandler = async (c: any) => {
     }
     return c.json({ ok: true, alreadyPosted: true, jeNo: active.je_no, jeId: active.id });
   }
+
+  /* PHASE 3 GATE — the one door money leaves through. Placed AFTER the
+     idempotency echo above: a voucher whose ACTIVE journal entry already
+     exists has already paid, and re-posting it must stay an echo whatever
+     its approval marks say. A fresh post, though, does not start without a
+     recorded yes. */
+  const gate = pvCanPost(pv as unknown as { status: string; submitted_at?: string | null; approved_at?: string | null });
+  if (!gate.ok) return c.json({ error: gate.error, message: gate.message }, 409);
 
   const { data: linesRaw } = await sb.from('payment_voucher_lines')
     .select('line_no, description, debit_account_code, amount_sen').eq('pv_id', id).order('line_no');
@@ -909,6 +925,123 @@ export const postPaymentVoucherHandler = async (c: any) => {
   });
 };
 paymentVouchers.post('/:id/post', postPaymentVoucherHandler);
+
+/* ────────────────────────────────────────────────────────────────────────
+   Phase 3 — the approval cycle. Markers on the DRAFT, never new statuses
+   (the 0324 lesson); the rules live in lib/pv-approval.ts as a pure table.
+   submit / withdraw need write permission; approve / reject need
+   scm.payment_voucher.approve — a key nobody holds by default except '*'
+   (the owner and IT admin), grantable per position like every other key.
+   ──────────────────────────────────────────────────────────────────────── */
+
+const loadPvForApproval = async (c: any) => {
+  const sb = c.get('supabase'); const id = c.req.param('id');
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return { refusal: c.json(co.refusal, 409) };
+  const { data, error } = await scopeToCompanyId(
+    sb.from('payment_vouchers').select(HEADER).eq('id', id), co.companyId,
+  ).maybeSingle();
+  if (error) return { refusal: c.json({ error: 'load_failed', reason: error.message }, 500) };
+  if (!data) return { refusal: c.json(NOT_THIS_COMPANY, 404) };
+  return { sb, id, pv: data as Record<string, any>, companyId: co.companyId };
+};
+
+const approvalActor = (c: any): string =>
+  String((c.get('houzsUser') as { name?: string } | undefined)?.name ?? 'unknown');
+
+export const submitPaymentVoucherHandler = async (c: any) => {
+  if (!hasHouzsPerm(c, 'scm.payment_voucher.write')) {
+    return c.json({ error: "You don't have permission to do that." }, 403);
+  }
+  const loaded = await loadPvForApproval(c);
+  if ('refusal' in loaded) return loaded.refusal;
+  const { sb, id, pv, companyId } = loaded;
+  const v = pvCanSubmit(pv as { status: string; submitted_at?: string | null; approved_at?: string | null });
+  if (!v.ok) return c.json({ error: v.error, message: v.message }, 409);
+  const who = approvalActor(c);
+  const at = new Date().toISOString();
+  const { error } = await scopeToCompanyId(sb.from('payment_vouchers')
+    .update({ submitted_at: at, submitted_by: who, updated_at: at }).eq('id', id), companyId);
+  if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);
+  await recordEntityAudit(sb, {
+    entityType: 'PAYMENT_VOUCHER', entityId: id, entityDocNo: pv.pv_number,
+    action: 'SUBMIT_FOR_APPROVAL', actor: c.get('houzsUser'), statusSnapshot: 'DRAFT',
+    fieldChanges: compactChanges([fieldChange('submitted_by', null, who)]),
+  });
+  return c.json({ id, submittedAt: at, submittedBy: who });
+};
+paymentVouchers.post('/:id/submit', submitPaymentVoucherHandler);
+
+export const withdrawPaymentVoucherHandler = async (c: any) => {
+  if (!hasHouzsPerm(c, 'scm.payment_voucher.write')) {
+    return c.json({ error: "You don't have permission to do that." }, 403);
+  }
+  const loaded = await loadPvForApproval(c);
+  if ('refusal' in loaded) return loaded.refusal;
+  const { sb, id, pv, companyId } = loaded;
+  const v = pvCanWithdraw(pv as { status: string; submitted_at?: string | null; approved_at?: string | null });
+  if (!v.ok) return c.json({ error: v.error, message: v.message }, 409);
+  const { error } = await scopeToCompanyId(sb.from('payment_vouchers')
+    .update({ submitted_at: null, submitted_by: null, approved_at: null, approved_by: null, updated_at: new Date().toISOString() })
+    .eq('id', id), companyId);
+  if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);
+  await recordEntityAudit(sb, {
+    entityType: 'PAYMENT_VOUCHER', entityId: id, entityDocNo: pv.pv_number,
+    action: 'WITHDRAW_FROM_APPROVAL', actor: c.get('houzsUser'), statusSnapshot: 'DRAFT',
+    fieldChanges: compactChanges([fieldChange('submitted_by', pv.submitted_by ?? null, null)]),
+  });
+  return c.json({ id, withdrawn: true });
+};
+paymentVouchers.post('/:id/withdraw', withdrawPaymentVoucherHandler);
+
+export const approvePaymentVoucherHandler = async (c: any) => {
+  if (!hasHouzsPerm(c, 'scm.payment_voucher.approve')) {
+    return c.json({ error: "You don't have permission to do that." }, 403);
+  }
+  const loaded = await loadPvForApproval(c);
+  if ('refusal' in loaded) return loaded.refusal;
+  const { sb, id, pv, companyId } = loaded;
+  const v = pvCanDecide(pv as { status: string; submitted_at?: string | null; approved_at?: string | null });
+  if (!v.ok) return c.json({ error: v.error, message: v.message }, 409);
+  const who = approvalActor(c);
+  const at = new Date().toISOString();
+  const { error } = await scopeToCompanyId(sb.from('payment_vouchers')
+    .update({ approved_at: at, approved_by: who, updated_at: at }).eq('id', id), companyId);
+  if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);
+  await recordEntityAudit(sb, {
+    entityType: 'PAYMENT_VOUCHER', entityId: id, entityDocNo: pv.pv_number,
+    action: 'APPROVE', actor: c.get('houzsUser'), statusSnapshot: 'DRAFT',
+    fieldChanges: compactChanges([fieldChange('approved_by', null, who)]),
+  });
+  return c.json({ id, approvedAt: at, approvedBy: who });
+};
+paymentVouchers.post('/:id/approve', approvePaymentVoucherHandler);
+
+export const rejectPaymentVoucherHandler = async (c: any) => {
+  if (!hasHouzsPerm(c, 'scm.payment_voucher.approve')) {
+    return c.json({ error: "You don't have permission to do that." }, 403);
+  }
+  const loaded = await loadPvForApproval(c);
+  if ('refusal' in loaded) return loaded.refusal;
+  const { sb, id, pv, companyId } = loaded;
+  const v = pvCanDecide(pv as { status: string; submitted_at?: string | null; approved_at?: string | null });
+  if (!v.ok) return c.json({ error: v.error, message: v.message }, 409);
+  let note = '';
+  try { note = String(((await c.req.json()) as { note?: unknown })?.note ?? '').trim(); } catch { /* empty body is a valid no-note reject */ }
+  const { error } = await scopeToCompanyId(sb.from('payment_vouchers')
+    .update({ submitted_at: null, submitted_by: null, approved_at: null, approved_by: null, updated_at: new Date().toISOString() })
+    .eq('id', id), companyId);
+  if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);
+  /* The reason lives on the audit trail, where the submitter reads it — a
+     rejected voucher goes back to editable with the WHY on its history. */
+  await recordEntityAudit(sb, {
+    entityType: 'PAYMENT_VOUCHER', entityId: id, entityDocNo: pv.pv_number,
+    action: 'REJECT', actor: c.get('houzsUser'), statusSnapshot: 'DRAFT',
+    fieldChanges: compactChanges([fieldChange('rejection_note', null, note || '(no note)')]),
+  });
+  return c.json({ id, rejected: true });
+};
+paymentVouchers.post('/:id/reject', rejectPaymentVoucherHandler);
 
 /* ────────────────────────────────────────────────────────────────────────
    POST /:id/cancel — reverse the JE (if posted), flip → CANCELLED.

@@ -74,6 +74,43 @@ checks. Those read `paid_sen`, so a partly-paid invoice later put on hold would
 have shown "Partially paid" and the hold would have been invisible on the one
 screen a person opens to decide whether to pay the rest.
 
+## 0b. Money leaves only after a yes (phase 3, mig 0339, 2026-08-28)
+
+The accounting brief's phase 3, delivered against the placeholder Daily Bank
+carried since phase 2B. **Marker columns, not new statuses** — the 0324 lesson
+one section up applies verbatim: `submitted_at/by` and `approved_at/by` live on
+the voucher, `status` stays `DRAFT` through the whole cycle, and every
+`.eq('status', ...)` filter in the tree is untouched.
+
+The state machine is a pure table in `backend/src/scm/lib/pv-approval.ts`
+(tests beside it; the route half is `backend/tests/pvApproval.test.ts`):
+
+| Voucher is…            | Edit | Submit | Approve/Reject | Withdraw | Post |
+|------------------------|------|--------|----------------|----------|------|
+| DRAFT, unsubmitted     | ✓    | ✓      | —              | —        | ✗ refused |
+| DRAFT, submitted       | ✗ frozen | ✗  | ✓              | ✓        | ✗ refused |
+| DRAFT, approved        | ✗ frozen | ✗  | ✗ (already)    | ✓        | ✓    |
+| POSTED / CANCELLED     | ✗    | ✗      | ✗              | ✗        | (idempotent echo only) |
+
+Routes: `POST /:id/submit`, `/:id/withdraw` (write permission),
+`/:id/approve`, `/:id/reject` (the new `scm.payment_voucher.approve` key —
+held by nobody but `*` until the owner grants it per position). A reject's
+`note` lands on the entity-audit trail (`REJECT` + `rejection_note`), where
+the submitter reads the why; every step writes its own audit verb
+(`SUBMIT_FOR_APPROVAL` / `WITHDRAW_FROM_APPROVAL` / `APPROVE` / `REJECT`).
+
+The post GATE sits in `postPaymentVoucherHandler` AFTER the idempotency echo:
+a voucher whose active JE already exists has already paid, and re-posting
+stays an echo whatever its marks say; a FRESH post without `approved_at` is
+refused 409 `not_approved`. Editing a queued voucher is refused the same way
+— what was approved is what gets paid, or it goes back through the queue
+(withdraw clears BOTH marks).
+
+**Daily Bank effect**: every DRAFT with `submitted_at` set (approved or not)
+counts into `pendingApprovalSen` and subtracts from the board's available
+money — money already asked for is not money the owner may still spend. MYR
+conversion per voucher mirrors posting: `round(total_sen × exchange_rate)`.
+
 ## 1. Frontend
 
 | Surface | File |

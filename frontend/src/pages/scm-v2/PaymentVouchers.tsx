@@ -78,14 +78,37 @@ const buildPvColumns = (): DataGridColumn<PaymentVoucherRow>[] => [
     sortFn: (a, b) => Number(a.total_sen ?? 0) - Number(b.total_sen ?? 0),
   },
   {
-    key: 'status', label: 'Status', width: 120, sortable: true, groupable: true,
-    accessor: (r) => <StatusPill docType="pv" status={r.status} />,
-    searchValue: (r) => statusLabel('pv', r.status),
-    groupValue: (r) => statusLabel('pv', r.status),
-    exportValue: (r) => statusLabel('pv', r.status),
+    key: 'status', label: 'Status', width: 160, sortable: true, groupable: true,
+    /* Phase 3: the approval marks ride BESIDE the pill, never inside the
+       status enum (the 0324 lesson). A DRAFT in the queue reads differently
+       from a DRAFT still being written, and the list is where the approver
+       finds what is waiting for them. */
+    accessor: (r) => (
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+        <StatusPill docType="pv" status={r.status} />
+        {r.status === 'DRAFT' && r.approved_at != null && (
+          <span style={{ fontSize: 'var(--fs-12, 12px)', color: 'var(--c-green, #2c7a3f)' }}>approved</span>
+        )}
+        {r.status === 'DRAFT' && r.submitted_at != null && r.approved_at == null && (
+          <span style={{ fontSize: 'var(--fs-12, 12px)', color: 'var(--c-orange, #b06000)' }}>awaiting approval</span>
+        )}
+      </span>
+    ),
+    searchValue: (r) => queueLabel(r),
+    groupValue: (r) => queueLabel(r),
+    exportValue: (r) => queueLabel(r),
     sortFn: (a, b) => a.status.localeCompare(b.status),
   },
 ];
+
+/* The searchable/groupable text mirrors what the cell SHOWS — a grouped list
+   splits queued drafts from plain ones the same way the eye does. */
+function queueLabel(r: { status: string; submitted_at?: string | null; approved_at?: string | null }): string {
+  if (r.status !== 'DRAFT') return statusLabel('pv', r.status);
+  if (r.approved_at != null) return `${statusLabel('pv', r.status)} · approved`;
+  if (r.submitted_at != null) return `${statusLabel('pv', r.status)} · awaiting approval`;
+  return statusLabel('pv', r.status);
+}
 
 export const PaymentVouchers = () => {
   const navigate = useNavigate();

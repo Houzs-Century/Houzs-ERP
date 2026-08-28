@@ -33,6 +33,12 @@ export type PaymentVoucherRow = Record<string, unknown> & {
   currency?: string;
   credit_account_code?: string;
   supplier?: { id: string; code: string; name: string } | null;
+  /* Phase 3 — the approval cycle's marks. Both null: an editable draft.
+     Submitted only: in the queue. Both set: approved, waiting to post. */
+  submitted_at?: string | null;
+  submitted_by?: string | null;
+  approved_at?: string | null;
+  approved_by?: string | null;
 };
 
 export type PaymentVoucherAllocation = {
@@ -115,6 +121,37 @@ export const useCancelPaymentVoucher = () => {
       qc.invalidateQueries({ queryKey: ['payment-vouchers'] });
       qc.invalidateQueries({ queryKey: ['payment-voucher-detail', id] });
       qc.invalidateQueries({ queryKey: ['purchase-invoices'] });
+    },
+  });
+};
+
+/* ── Phase 3: the approval cycle. Each mutation refreshes the list, the
+   detail, and the Daily Bank board — a voucher entering or leaving the queue
+   moves the board's "available" figure. */
+const approvalMutation = (path: 'submit' | 'withdraw' | 'approve') => () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => authedFetch(`/payment-vouchers/${id}/${path}`, { method: 'POST' }),
+    onSuccess: (_d, id) => {
+      void qc.invalidateQueries({ queryKey: ['payment-vouchers'] });
+      void qc.invalidateQueries({ queryKey: ['payment-voucher-detail', id] });
+      void qc.invalidateQueries({ queryKey: ['daily-bank'] });
+    },
+  });
+};
+export const useSubmitPaymentVoucher = approvalMutation('submit');
+export const useWithdrawPaymentVoucher = approvalMutation('withdraw');
+export const useApprovePaymentVoucher = approvalMutation('approve');
+
+export const useRejectPaymentVoucher = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, note }: { id: string; note: string }) =>
+      authedFetch(`/payment-vouchers/${id}/reject`, { method: 'POST', body: JSON.stringify({ note }) }),
+    onSuccess: (_d, vars) => {
+      void qc.invalidateQueries({ queryKey: ['payment-vouchers'] });
+      void qc.invalidateQueries({ queryKey: ['payment-voucher-detail', vars.id] });
+      void qc.invalidateQueries({ queryKey: ['daily-bank'] });
     },
   });
 };
