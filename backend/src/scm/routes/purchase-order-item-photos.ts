@@ -34,7 +34,7 @@
 import { Hono, type Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
-import { scopeToCompany } from '../lib/companyScope';
+import { requireActiveCompanyId, scopeToCompany, scopeToCompanyId } from '../lib/companyScope';
 import { deleteThumbFor, putOptionalThumb } from '../../services/photoThumbs';
 
 export const purchaseOrderItemPhotos = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -158,15 +158,23 @@ purchaseOrderItemPhotos.post('/:id/items/:itemId/photos', async (c) => {
     uploadedBy: user.id,
   });
 
-  /* Append on the WRITE with the parent predicate re-stated — nothing re-checks
-     between two PostgREST round trips (CLAUDE.md company-scope rule b). */
+  /* Append on the WRITE with the parent predicate re-stated AND the company
+     predicate on the statement itself — nothing re-checks between two
+     PostgREST round trips (CLAUDE.md company-scope rules a+b; the line table
+     carries company_id, stamped on every insert). */
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) {
+    await c.env.SO_ITEM_PHOTOS.delete(photoKey).catch(() => {});
+    await deleteThumbFor(c.env.SO_ITEM_PHOTOS, photoKey);
+    return c.json(co.refusal, 409);
+  }
   const nextKeys = [...(owned.item.photo_urls ?? []), photoKey];
   const sb = c.get('supabase');
-  const { error: updErr } = await sb
+  const { error: updErr } = await scopeToCompanyId(sb
     .from('purchase_order_items')
     .update({ photo_urls: nextKeys })
     .eq('id', itemId)
-    .eq('purchase_order_id', poId);
+    .eq('purchase_order_id', poId), co.companyId);
   if (updErr) {
     await c.env.SO_ITEM_PHOTOS.delete(photoKey).catch(() => {});
     await deleteThumbFor(c.env.SO_ITEM_PHOTOS, photoKey);
@@ -193,13 +201,15 @@ purchaseOrderItemPhotos.delete('/:id/items/:itemId/photos/:photoKey', async (c) 
     return c.json({ error: 'carried_photo_readonly', manageOn: 'sales_order' }, 403);
   }
 
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
   const nextKeys = (owned.item.photo_urls ?? []).filter((k) => k !== photoKey);
   const sb = c.get('supabase');
-  const { error: updErr } = await sb
+  const { error: updErr } = await scopeToCompanyId(sb
     .from('purchase_order_items')
     .update({ photo_urls: nextKeys })
     .eq('id', itemId)
-    .eq('purchase_order_id', poId);
+    .eq('purchase_order_id', poId), co.companyId);
   if (updErr) return c.json({ error: 'db_update_failed', reason: updErr.message }, 500);
 
   /* R2 cleanup AFTER the row no longer lists the key — a failed delete leaves

@@ -47,11 +47,16 @@ describe('handler source pins', () => {
     expect(body).toContain("'carried_photo_readonly'");
   });
 
-  it('both writes re-state the parent predicate on the UPDATE itself', () => {
+  it('both writes carry the parent AND the company predicate on the UPDATE itself', () => {
     const updates = SRC.split(".update({ photo_urls: nextKeys })");
     expect(updates.length, 'expected exactly two photo_urls updates (upload append + delete filter)').toBe(3);
-    for (const after of updates.slice(1)) {
+    for (const [i, after] of updates.slice(1).entries()) {
       expect(after.slice(0, 200)).toContain(".eq('purchase_order_id', poId)");
+      /* CLAUDE.md company-scope rule a: the predicate goes on the write, not
+         only on the read that preceded it. scopeToCompanyId wraps the query,
+         so it must OPEN before the update in the same statement. */
+      const before = updates[i]!;
+      expect(before.slice(-200)).toContain('scopeToCompanyId(');
     }
   });
 
