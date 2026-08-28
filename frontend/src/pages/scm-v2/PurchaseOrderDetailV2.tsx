@@ -56,6 +56,12 @@ import {
   type PoHeaderRow,
   type PoItemRow,
 } from "../../vendor/scm/lib/suppliers-queries";
+import {
+  deletePoItemPhoto,
+  isPoOwnedPhotoKey,
+  uploadPoItemPhoto,
+} from "../../vendor/scm/lib/sales-order-queries";
+import { canOperatePurchaseOrders } from "../../auth/salesAccess";
 import { skuMapFromBindings, supplierCodeFor } from "../../vendor/scm/lib/supplier-doc-data";
 import { useWarehouses } from "../../vendor/scm/lib/inventory-queries";
 import { useMaintenanceConfig } from "../../vendor/scm/lib/mfg-products-queries";
@@ -422,7 +428,38 @@ function PurchaseOrderDetailV2ReadOnly() {
   const reopenPo = useReopenPurchaseOrder();
   const notify = useNotify();
   const confirm = useConfirm();
-  const { can } = useHouzsAuth();
+  const { can, pageAccess } = useHouzsAuth();
+  /* Line-photo ADD-ONS (owner 2026-08-28): a purchaser may attach photos
+     directly on a PO line. Carried SO keys stay read-only here (server refuses
+     their deletion); only `po-items/...` keys grow a delete control. UI gate =
+     the same cohort that may operate POs; the server's area guard is the
+     boundary either way. */
+  const mayEditPoPhotos = canOperatePurchaseOrders(can, pageAccess);
+  const uploadLinePhoto = async (itemId: string, file: File) => {
+    if (!purchaseOrder?.id) return;
+    try {
+      await uploadPoItemPhoto(purchaseOrder.id, itemId, file);
+      await detail.refetch();
+    } catch (e) {
+      void notify({ title: "Photo not added", body: e instanceof Error ? e.message : "Upload failed.", tone: "error" });
+    }
+  };
+  const deleteLinePhoto = async (itemId: string, photoKey: string) => {
+    if (!purchaseOrder?.id) return;
+    const ok = await confirm({
+      title: "Delete this photo?",
+      body: "Only photos added on this PO can be deleted here. This cannot be undone.",
+      confirmLabel: "Delete",
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await deletePoItemPhoto(purchaseOrder.id, itemId, photoKey);
+      await detail.refetch();
+    } catch (e) {
+      void notify({ title: "Photo not deleted", body: e instanceof Error ? e.message : "Delete failed.", tone: "error" });
+    }
+  };
   // In-flight guard for the supplier send — see doSendToSupplier.
   const [sendingToSupplier, setSendingToSupplier] = useState(false);
   // PO amendment create modal (feat/amendment-ui) — localized state.
@@ -753,10 +790,13 @@ function PurchaseOrderDetailV2ReadOnly() {
         );
       },
     },
-    /* Photos (mig 0274 carry) — the reference shots the SO line brought along
-       (plus any the AutoCount importer appended), through the SAME strip +
-       state machine the SO detail renders (components/scm-v2/SoLinePhotoStrip
-       with source="po"). Read-only by design: photos are authored on the SO.
+    /* Photos — the reference shots the SO line brought along (mig 0274 carry,
+       plus the AutoCount importer's keys), through the SAME strip + state
+       machine the SO detail renders (components/scm-v2/SoLinePhotoStrip with
+       source="po"). Since owner 2026-08-28 the PO also AUTHORS its own
+       add-ons (`po-items/...` keys): operate-cohort users get an add tile and
+       a delete control on PO-owned keys only — carried SO keys stay read-only
+       here and are managed on the Sales Order.
        getValue is the COUNT so the column sorts/filters/exports as a number. */
     {
       key: "photos",
@@ -769,6 +809,15 @@ function PurchaseOrderDetailV2ReadOnly() {
           docId={purchaseOrder?.id ?? ""}
           itemId={l.id}
           photoKeys={l.photo_urls ?? []}
+          edit={
+            mayEditPoPhotos && purchaseOrder?.status !== "CANCELLED"
+              ? {
+                  onUpload: (file) => uploadLinePhoto(l.id, file),
+                  onDelete: (key) => deleteLinePhoto(l.id, key),
+                  canDeleteKey: isPoOwnedPhotoKey,
+                }
+              : null
+          }
         />
       ),
     },

@@ -29,6 +29,7 @@ import { fabricTracking } from "./routes/fabric-tracking";
 import { suppliers } from "./routes/suppliers";
 import { mfgPurchaseOrders } from "./routes/mfg-purchase-orders";
 import { mfgPurchaseOrdersListEnrichment } from "./routes/mfg-purchase-orders-list-enrichment";
+import { purchaseOrderItemPhotos } from "./routes/purchase-order-item-photos";
 import { grns } from "./routes/grns";
 import { grnsListEnrichment } from "./routes/grns-list-enrichment";
 import { purchaseInvoices } from "./routes/purchase-invoices";
@@ -282,6 +283,9 @@ scm.use("/mfg-purchase-orders/*", scmAreaGuard("scm.procurement.po"));
 // `/:id`. Shares the guard above via the path prefix.
 scm.route("/mfg-purchase-orders", mfgPurchaseOrdersListEnrichment);
 scm.route("/mfg-purchase-orders", mfgPurchaseOrders);
+// Per-line photo WRITES (upload / delete PO-owned keys) — separate file because
+// the main router is at its size ceiling; same prefix, same area guard.
+scm.route("/mfg-purchase-orders", purchaseOrderItemPhotos);
 // PO amendment / revision workflow — PO-centric, so it rides the same L2 area
 // guard as Purchase Orders (GET=view, PATCH=edit); the finer scm.po_amendment.*
 // gates layer on inside the handlers (mig 0192).
