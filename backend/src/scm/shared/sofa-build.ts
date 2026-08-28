@@ -1715,14 +1715,40 @@ export const sofaModuleHand = (moduleId: string): 'LHF' | 'MID' | 'RHF' => {
  */
 export const orderSofaCellsForNewLines = (cells: Cell[], depth: Depth): Cell[] => {
   if (cells.length <= 1) return cells.slice();
-  const hasGeometry = cells.every(
-    (c) => typeof c.moduleId === 'string' && Number.isFinite(c.x) && Number.isFinite(c.y),
-  );
-  if (hasGeometry) return orderSofaCellsLeftToRight(cells, depth);
-  return cells
+
+  /* THE SUFFIX IS THE DIRECTION, and the owner said so in as many words when I
+     had built it the other way round (2026-08-28: 「我们是看后面的 LHF RHF 啊
+     这才是方向」). So handedness decides FIRST and geometry only settles ties.
+
+     The two normally agree — the configurator decomposes a sofa as
+     "2A(LHF) + L(RHF)", laid out in that order — so this changes nothing for a
+     POS build in the ordinary case. Where they CAN disagree is a customer who
+     deliberately placed an (RHF) piece on the left: the plan still draws the
+     real placement, because it is drawn from x/y, while the LINES list by
+     handedness. That mismatch is the owner's call, made knowingly. */
+  const ranked = cells
     .map((c, i) => ({ c, i }))
     .sort((a, b) =>
       (SOFA_HAND_RANK[sofaModuleHand(a.c.moduleId)] - SOFA_HAND_RANK[sofaModuleHand(b.c.moduleId)])
-      || (a.i - b.i))
-    .map((x) => x.c);
+      || (a.i - b.i));
+
+  /* Within one hand — two LHF pieces, or several armless middles — the codes
+     say nothing, so real geometry breaks the tie when there is any and the
+     caller's own order does when there is not. */
+  const byHand = new Map<'LHF' | 'MID' | 'RHF', Cell[]>();
+  for (const { c } of ranked) {
+    const h = sofaModuleHand(c.moduleId);
+    const list = byHand.get(h);
+    if (list) list.push(c); else byHand.set(h, [c]);
+  }
+  const out: Cell[] = [];
+  for (const hand of ['LHF', 'MID', 'RHF'] as const) {
+    const group = byHand.get(hand);
+    if (!group) continue;
+    const placed = group.every(
+      (c) => typeof c.moduleId === 'string' && Number.isFinite(c.x) && Number.isFinite(c.y),
+    );
+    out.push(...(placed && group.length > 1 ? orderSofaCellsLeftToRight(group, depth) : group));
+  }
+  return out;
 };

@@ -878,6 +878,24 @@ undecodable format skips that photo, never the document.
 > The encoder never UPSCALES — a 300px source re-encoded at 1536 is the same
 > 300px of detail in nine times the bytes.
 
+> **THE PLAN FOLLOWS THE LINES, SO THE LINES ARE ORDERED WHEN THEY ARE MADE
+> (2026-08-28).** `buildDefaultSofaCells` tiles modules left→right IN THE GIVEN
+> ORDER, and the given order is whatever the document lists — so a PO carrying
+> `L(RHF)` before `2A(LHF)` drew the right-hand chaise on the left. The fix is at
+> line creation, not in the drawing: `orderSofaCellsForNewLines` (shared) sorts
+> by the handedness the CODES carry — the owner: 「我们是看后面的 LHF RHF 啊 这才
+> 是方向」 — with real geometry breaking ties within one hand.
+>
+> It is separate from `orderSofaCellsLeftToRight` because that one runs at
+> DISPLAY time too, and reordering there would re-sequence every existing order
+> the next time it was opened (「只针对新的order生效 旧的就不理了」).
+> `docs/bugs/0564-…`.
+>
+> The plan's heading is now `Sofa layout — viewed from above, front faces the
+> TV`. It used to end `(orientation / LHF·RHF)` — a note to ourselves on a
+> document a supplier reads. LHF/RHF still print per line, where they identify a
+> part.
+
 > **THE COMPARTMENT DEFAULT IS DERIVED FROM THE CODE, NOT READ FROM CONFIG
 > (2026-08-28).** `loadSofaCompartmentArtForPrint(codes)` takes the module codes
 > THIS sheet needs and falls back to `sofa-modules/<code>`; the stored

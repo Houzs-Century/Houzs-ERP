@@ -18,7 +18,7 @@
 // ----------------------------------------------------------------------------
 import { describe, expect, test } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { orderSofaCellsForNewLines, orderSofaCellsLeftToRight, sofaModuleHand } from './sofa-build';
+import { orderSofaCellsForNewLines, orderSofaCellsLeftToRight, sofaModuleHand } from '../src/scm/shared/sofa-build';
 
 type C = { moduleId: string; x?: number; y?: number; rot?: 0 };
 const bare = (...ids: string[]): C[] => ids.map((moduleId) => ({ moduleId }));
@@ -50,16 +50,31 @@ describe('a geometry-less sofa is ordered by its own handedness', () => {
       .toEqual(['1A(LHF)', '1B(LHF)', 'L(RHF)']);
   });
 
-  test('REAL GEOMETRY STILL WINS — a POS build is never re-sequenced', () => {
-    /* A customer placed this furniture. The x coordinates say the RHF piece is
-       on the left, and that is a fact about their living room, not a typo. */
+  test('THE SUFFIX WINS OVER GEOMETRY — the owner said so', () => {
+    /* 「我们是看后面的 LHF RHF 啊 这才是方向」 (2026-08-28), correcting a first
+       version of this that preferred x/y. The two normally agree; where they
+       disagree — a customer who placed an (RHF) piece on the left — the LINES
+       list by handedness while the PLAN still draws the real placement, because
+       the plan is drawn from x/y. Knowingly. */
     const placed = [
-      { moduleId: '2A(LHF)', x: 200, y: 0, rot: 0 },
       { moduleId: '1A(RHF)', x: 0, y: 0, rot: 0 },
+      { moduleId: '2A(LHF)', x: 200, y: 0, rot: 0 },
     ];
     expect(ids(orderSofaCellsForNewLines(placed as never, '24')))
-      .toEqual(ids(orderSofaCellsLeftToRight(placed as never, '24')));
-    expect(ids(orderSofaCellsForNewLines(placed as never, '24'))[0]).toBe('1A(RHF)');
+      .toEqual(['2A(LHF)', '1A(RHF)']);
+    /* And the geometry sorter is untouched — it still answers by placement, so
+       every display path keeps behaving exactly as it did. */
+    expect(ids(orderSofaCellsLeftToRight(placed as never, '24'))[0]).toBe('1A(RHF)');
+  });
+
+  test('within ONE hand, geometry breaks the tie', () => {
+    /* Two left-hand pieces: the codes cannot separate them, so their real
+       placement does. */
+    const two = [
+      { moduleId: '1B(LHF)', x: 200, y: 0, rot: 0 },
+      { moduleId: '1A(LHF)', x: 0, y: 0, rot: 0 },
+    ];
+    expect(ids(orderSofaCellsForNewLines(two as never, '24'))).toEqual(['1A(LHF)', '1B(LHF)']);
   });
 
   test('hands are read off the code, not guessed', () => {
@@ -74,8 +89,8 @@ describe('a geometry-less sofa is ordered by its own handedness', () => {
     /* 「只针对新的order生效 旧的就不理了」. so-line-display and the label builder
        must keep calling the geometry-only sorter, or every existing order would
        re-sequence the next time somebody opened it. */
-    const split = readFileSync(new URL('./so-sofa-split.ts', import.meta.url), 'utf8');
-    const display = readFileSync(new URL('./so-line-display.ts', import.meta.url), 'utf8');
+    const split = readFileSync(new URL('../src/scm/shared/so-sofa-split.ts', import.meta.url), 'utf8');
+    const display = readFileSync(new URL('../src/scm/shared/so-line-display.ts', import.meta.url), 'utf8');
     expect(split).toContain('orderSofaCellsForNewLines');
     expect(display).not.toContain('orderSofaCellsForNewLines');
     expect(display).toContain('orderSofaCellsLeftToRight');
