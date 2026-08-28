@@ -831,6 +831,18 @@ export async function fetchSoItemPhotoBlob(
   itemId: string,
   photoKey: string,
 ): Promise<Blob> {
+  return fetchItemPhotoBlobAt(
+    `/mfg-sales-orders/${encodeURIComponent(docNo)}/items/${encodeURIComponent(itemId)}`,
+    photoKey,
+  );
+}
+
+/* One transport for every line-photo proxy read. `itemBase` is the
+   API-client-relative document/item prefix ("/mfg-sales-orders/:docNo/items/
+   :itemId" or "/mfg-purchase-orders/:id/items/:itemId") — the routes mirror
+   each other by design (mig 0274: the PO photo read path was built to the SO
+   contract so one client code path drives both surfaces). */
+async function fetchItemPhotoBlobAt(itemBase: string, photoKey: string): Promise<Blob> {
   const token = readAuthToken();
   if (!token) throw new PhotoProxyError(401, 'Your session has expired — please sign in again.');
 
@@ -840,8 +852,7 @@ export async function fetchSoItemPhotoBlob(
   let res: Response;
   try {
     res = await correlatedFetch(
-      `${API_URL}/mfg-sales-orders/${encodeURIComponent(docNo)}/items/${encodeURIComponent(itemId)}`
-        + `/photos/${encodeURIComponent(photoKey)}`,
+      `${API_URL}${itemBase}/photos/${encodeURIComponent(photoKey)}`,
       { headers: { authorization: `Bearer ${token}`, ...companyHeader() }, signal },
     );
   } catch (e) {
@@ -865,4 +876,34 @@ export async function fetchSoItemPhotoBlob(
   }
 
   return consumeCorrelated(res, () => res.blob());
+}
+
+/* ── PO twins ──────────────────────────────────────────────────────────────
+   Purchase-order lines carry the SAME photo keys (an SO→PO convert copies the
+   key list; both point at one R2 object), served by mirrored routes on
+   /mfg-purchase-orders/:id/items/:itemId (mig 0274). They live HERE because
+   this file owns the photo wire contract — the payload union, PhotoProxyError
+   and the proxy transport above — and a second copy of that contract is how
+   the SO side originally shipped a surface that rendered nothing. */
+
+export async function fetchPoItemPhotoSignedUrl(
+  poId: string,
+  itemId: string,
+  photoKey: string,
+): Promise<PhotoUrlPayload> {
+  return authedFetch<PhotoUrlPayload>(
+    `/mfg-purchase-orders/${encodeURIComponent(poId)}/items/${encodeURIComponent(itemId)}`
+      + `/photos/${encodeURIComponent(photoKey)}/signed`,
+  );
+}
+
+export async function fetchPoItemPhotoBlob(
+  poId: string,
+  itemId: string,
+  photoKey: string,
+): Promise<Blob> {
+  return fetchItemPhotoBlobAt(
+    `/mfg-purchase-orders/${encodeURIComponent(poId)}/items/${encodeURIComponent(itemId)}`,
+    photoKey,
+  );
 }

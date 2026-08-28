@@ -946,6 +946,33 @@ renders a permanent loading placeholder — indistinguishable from "still
 loading", which is exactly how it ships. See §"Why photos need the proxy" in
 `backend/src/scm/lib/photoProxyFallback.ts`.
 
+Since 2026-08-28 that state machine is source-parameterised
+(`useScmLinePhoto('so' | 'po', …)` — `useSoLinePhoto` is the unchanged SO-shaped
+wrapper) and the strip takes a required `source` prop, because the PO detail now
+renders the carried copies of these photos through the same component. Same
+keys, same R2 objects, shared byte cache — a thumb loaded on the SO detail is
+free on the PO detail.
+
+#### Line photos on the printed SO (owner mockup, 2026-08)
+
+`sales-order-pdf.ts` prints photos as ONE "ITEM PHOTOS · 照片对照" block after
+the items table and before PAYMENTS RECEIVED — table rows carry NO image; a
+line with `photo_urls` appends " (图)" to its first description line instead.
+Each group in the block is keyed by the printed row number (`#3`, or a range
+`#2-4` when consecutive rows carry a deep-equal photo list — the sofa-set
+shared build photo prints once per set), with the item code beside the chip and
+~26mm square thumbnails, max 6 per row. A group never splits across pages: one
+that does not fit moves whole to the next page under a continued heading. The
+grouping/packing/page-fit logic and the drawing live in the shared
+`vendor/scm/lib/pdf-item-photos.ts` (unit-tested beside it); the PO PDF prints
+through the same module. Only `.thumb` siblings are fetched (never originals —
+PDF size), through the authed proxy, collected before drawing, and every photo
+is best-effort: a key whose fetch or decode fails is skipped silently, so a
+missing photo can never fail the PDF. Thumbs uploaded by the client pipeline
+are mostly WebP (which jsPDF cannot embed), so the module re-encodes each to a
+small square JPEG via canvas. An empty block — no photos, or nothing fetched —
+renders nothing at all.
+
 ### The delivery address block — both directions, shared layer
 
 State / City / Postcode on `SalesOrderNew`, `SalesOrderDetail` and
