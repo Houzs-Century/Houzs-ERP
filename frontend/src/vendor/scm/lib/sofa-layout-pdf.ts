@@ -48,6 +48,13 @@ export function drawSofaLayout(
   y: number,
   maxW: number,
   maxH: number,
+  /** Real compartment photos keyed by module code ("2A(RHF)" → data-URL), the
+   *  same per-code hero photos POS Custom Builder uses. When a cell's code has a
+   *  photo it is drawn in place of the schematic rectangle; a code with no photo
+   *  (or a failed fetch) falls back to the drawn schematic, so this is safe to
+   *  omit and safe to pass partially. Optional because ABSENCE = draw the
+   *  schematic = the prior, always-correct behaviour. */
+  photos?: Record<string, string>,
 ): number {
   if (!Array.isArray(cells) || cells.length === 0) return 0;
 
@@ -88,6 +95,20 @@ export function drawSofaLayout(
     const py = oy + (c.y - bbox.y) * scale;
     const w = fp.w * scale;
     const h = fp.h * scale;
+    // Real compartment photo when one exists for this module code; the drawn
+    // schematic below is the fallback, so a compartment with no uploaded photo
+    // (or a failed image) still renders and a newly-uploaded photo appears
+    // automatically. addImage can throw on a malformed data-URL — swallow it and
+    // fall through to the schematic rather than aborting the whole PDF.
+    const photo = photos?.[c.moduleId];
+    if (photo) {
+      try {
+        doc.addImage(photo, px, py, w, h);
+        continue;
+      } catch {
+        /* fall through to the drawn schematic */
+      }
+    }
     // Seat — cream fill + thin border.
     doc.setLineWidth(0.2);
     doc.setDrawColor(120);

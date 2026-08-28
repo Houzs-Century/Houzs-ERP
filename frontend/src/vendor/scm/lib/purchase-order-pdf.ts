@@ -219,7 +219,7 @@ async function renderPurchaseOrderInto(
   autoTable: AutoTableFn,
   header: PoHeader,
   items: PoItem[],
-  opts?: { docTitle?: string },
+  opts?: { docTitle?: string; sofaPhotos?: Record<string, string> },
 ): Promise<{ supplierName: string }> {
   const pageW = doc.internal.pageSize.getWidth();
   const margin = 10; // tighter left/right than the SO's 14 (owner 2026-06-19)
@@ -633,7 +633,7 @@ async function renderPurchaseOrderInto(
         rowTop += 6;
       }
       const dx = margin + col * (DIAGRAM_W + GAP_X);
-      const drawn = drawSofaLayout(doc, sofa.cells, sofa.depth, dx, rowTop, DIAGRAM_W, DIAGRAM_H);
+      const drawn = drawSofaLayout(doc, sofa.cells, sofa.depth, dx, rowTop, DIAGRAM_W, DIAGRAM_H, opts?.sofaPhotos);
       // Caption: model + SO no, wrapped to the diagram width.
       doc.setFont('helvetica', 'normal'); doc.setFontSize(6.5); doc.setTextColor(80);
       const capParts = [sofa.model, sofa.soNo].filter(Boolean);
@@ -687,7 +687,7 @@ function finalizePoPdf(doc: JsPdf): void {
 export async function generatePurchaseOrderPdf(
   header: PoHeader,
   items: PoItem[],
-  opts?: { docTitle?: string; action?: PdfAction },
+  opts?: { docTitle?: string; action?: PdfAction; sofaPhotos?: Record<string, string> },
 ): Promise<void> {
   const { jsPDF } = await import('jspdf');
   const autoTable = (await import('jspdf-autotable')).default;
@@ -709,7 +709,7 @@ export async function generatePurchaseOrderPdf(
 export async function purchaseOrderPdfBase64(
   header: PoHeader,
   items: PoItem[],
-  opts?: { docTitle?: string },
+  opts?: { docTitle?: string; sofaPhotos?: Record<string, string> },
 ): Promise<string> {
   const { jsPDF } = await import('jspdf');
   const autoTable = (await import('jspdf-autotable')).default;
@@ -728,7 +728,7 @@ export async function purchaseOrderPdfBase64(
    "Page p of N" footer. */
 export async function generateCombinedPurchaseOrderPdf(
   pos: Array<{ header: PoHeader; items: PoItem[] }>,
-  opts?: { docTitle?: string; fileName?: string; action?: PdfAction },
+  opts?: { docTitle?: string; fileName?: string; action?: PdfAction; sofaPhotos?: Record<string, string> },
 ): Promise<void> {
   const { jsPDF } = await import('jspdf');
   const autoTable = (await import('jspdf-autotable')).default;
