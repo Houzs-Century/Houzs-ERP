@@ -48,7 +48,10 @@ const line = (over: Partial<ErpLine>): ErpLine => ({
 describe('the cutover map', () => {
   it('is compiled in and complete', () => {
     const idx = acItemIndex();
-    expect(AC_ITEM_MAP_ROWS).toBe(1561);
+    // 1,561 at the 2026-08-05 cut; +16 on 2026-08-28 (the codes the owner
+    // opened in the book since — DL-CLASSIC mattresses, HOK-1056 -> FLAT,
+    // 5562 sofa, RC charges).
+    expect(AC_ITEM_MAP_ROWS).toBe(1577);
     expect(idx.rows).toBe(AC_ITEM_MAP_ROWS);
     // one bucket per DISTINCT erp code; several AutoCount items may share one
     expect(idx.byErp.size).toBeGreaterThan(1300);

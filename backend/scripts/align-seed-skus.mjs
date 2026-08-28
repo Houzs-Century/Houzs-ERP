@@ -81,7 +81,10 @@ async function main() {
       supplier_id: sid, material_kind: "mfg_product",
       item_code: b.item_code,
       material_name: nameByCode.get(nkey(b.item_code)) || b.item_code,
-      supplier_sku: b.supplier_sku, is_main_supplier: false,
+      /* is_main comes from the data row now (2026-08-28: owner ruled Hookka is
+         the MAIN supplier for the HOK/FLAT dual bindings). Absent = false,
+         which is exactly what every earlier data file gets. */
+      supplier_sku: b.supplier_sku, is_main_supplier: b.is_main === true,
       company_id: cid, created_at: now, updated_at: now,
     });
     bindCreated++;
