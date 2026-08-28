@@ -1231,8 +1231,9 @@ app.get("/lookup-items/:docNo", requireServiceCaseAccess(), async (c) => {
 });
 
 // ── SO search (typeahead for create-case intake) ──────────────
-// Returns up to 20 SO candidates matched by partial DocNo,
-// reference number, or customer name (case-insensitive).
+// Returns up to 20 SO candidates matched by partial DocNo, reference
+// number, customer name, or — SCM arm only — the linked AutoCount
+// DocNo (case-insensitive).
 //
 // Company reach mirrors the ASSR read rule (assrCompanySql): every caller
 // searches across their GRANTED companies — a rank-and-file rep sees only their
@@ -1288,6 +1289,7 @@ app.get("/search-so", requireServiceCaseAccess(), async (c) => {
   // allowed set. This is the fix that stops 2990 orders leaking into the
   // service-case SO picker for a both-company SALES user.
   const coFilter = assrCompanySql(c, "so.company_id");
+  // Migrated/写回 orders keep their AutoCount number in linked_ac_docno (doc_no is the ERP one); customers quote it.
   const scmRows = await c.env.DB.prepare(
     `SELECT so.doc_no, so.ref, so.debtor_name, so.phone,
             so.so_date AS doc_date, so.agent AS sales_agent, co.code AS company_code
@@ -1295,12 +1297,13 @@ app.get("/search-so", requireServiceCaseAccess(), async (c) => {
        LEFT JOIN companies co ON co.id = so.company_id
       WHERE (LOWER(so.doc_no) LIKE ?
           OR LOWER(COALESCE(so.ref, '')) LIKE ?
-          OR LOWER(COALESCE(so.debtor_name, '')) LIKE ?)
+          OR LOWER(COALESCE(so.debtor_name, '')) LIKE ?
+          OR LOWER(COALESCE(so.linked_ac_docno, '')) LIKE ?)
         AND so.status <> 'DRAFT' AND so.status <> 'CANCELLED'${coFilter}
       ORDER BY so.so_date DESC
       LIMIT 20`
   )
-    .bind(pattern, pattern, pattern)
+    .bind(pattern, pattern, pattern, pattern)
     .all();
 
   // Merge: SCM rows first so a doc_no present in both keeps the company-tagged
