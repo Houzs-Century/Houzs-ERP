@@ -1037,7 +1037,10 @@ function blobToDataUrl(blob: Blob): Promise<string | null> {
 export async function loadSofaCompartmentArtForPrint(
   codes: readonly string[],
 ): Promise<Record<string, string>> {
-  const wanted = [...new Set(codes.map((c) => String(c ?? '').trim()).filter(Boolean))];
+  /* `String(c)` rather than `c ?? ''` — the array is `readonly string[]`, so the
+     compiler is right that the coalesce is dead. String() still guards a stray
+     non-string arriving from untyped cell data at runtime. */
+  const wanted = [...new Set(codes.map((c) => String(c).trim()).filter(Boolean))];
   if (wanted.length === 0) return {};
 
   /* The override map, best-effort. A company with no config yet, or a failed
@@ -1059,6 +1062,7 @@ export async function loadSofaCompartmentArtForPrint(
          on this origin and must NOT carry a bearer token. Absent override →
          `sofa-modules/<code>` is the seed, exactly what the Maintenance list
          shows. */
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- a Record index is typed as always present and is not; `meta` comes off the wire and carries an entry only for a compartment somebody overrode, which is the common case for NONE of them.
       const key = meta[code]?.imageKey || `sofa-modules/${code}`;
       const url = resolveCompartmentArtUrl(code, key, API_URL);
       if (!url) return;
