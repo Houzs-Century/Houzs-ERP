@@ -258,7 +258,7 @@ byte-identical to an honest empty answer. That matters because `GET
 | --- | --- | --- |
 | 1 | `requireServiceCaseAccess()` 403s the caller | see the gate note below |
 | 2 | the caller does not hold HOUZS, so `assr.ts:1256` skips the AutoCount mirror where a bare `SO-XXXXXX` lives | grant it on the Team screen |
-| 3 | the order is not in the mirror, or its `doc_no` is spelled differently | `?since=` backfill — see `docs/modules/system-health.md` |
+| 3 | the order is not in the mirror, or its `doc_no` is spelled differently | `?since=` backfill — see `docs/modules/system-health.md`. Since 2026-08-28 a migrated/写回 SCM order is also found by its AutoCount number directly (`linked_ac_docno`, SCM arm), so the backfill is only for mirror-only orders |
 
 The hook now returns `error` and the picker renders it **instead of** the
 not-found line. `check-silent-mutations` enforces this for `useMutation`, not
