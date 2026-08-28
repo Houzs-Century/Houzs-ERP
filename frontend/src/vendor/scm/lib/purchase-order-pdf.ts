@@ -28,7 +28,7 @@
 //   ├──────────────────────────────────────────────────────────────────┤
 //   │ RINGGIT MALAYSIA … ONLY                          TOTAL  9,999.00 │
 //   │ E. & O.E.                                                        │
-//   │ Sofa layout — front faces TV   ITEM PHOTOS · 照片对照 (row-chip  │
+//   │ Sofa layout — front faces TV   ITEM PHOTOS (row-chip  │
 //   │ (orientation / LHF·RHF)        thumb groups, beside; wraps below)│
 //   │ Authorised Signature          Supplier Acknowledgement           │
 //   └──────────────────────────────────────────────────────────────────┘
@@ -60,7 +60,6 @@ import {
   buildPhotoGroups,
   collectPhotoImages,
   drawItemPhotosBlock,
-  ITEM_PHOTOS_CJK_TEXT,
   PHOTO_MARKER,
   photoKeyOwners,
   photoKeysOf,
@@ -160,7 +159,7 @@ type PoItem = {
   so_doc_no?:     string | null;
   /** Line reference photos (mig 0274 — carried from the source SO line on
       convert; same R2 objects). Optional for callers that predate the column.
-      When present the description gains the " (图)" marker and the ITEM
+      When present the description gains the " (photo)" marker and the ITEM
       PHOTOS block prints the `.thumb` siblings. */
   photo_urls?:    string[] | null;
 };
@@ -304,11 +303,10 @@ async function renderPurchaseOrderInto(
      count too (a China supplier's are the likely CJK on this document): text
      carrying CJK needs the font embedded up front, or helvetica silently paints
      the whole field as mojibake. No-op for a pure-WinAnsi PO. The photo marker
-     + heading are GENERATED text the payload walk cannot see, so they ride
-     along whenever the photo block will print. */
+     + heading are WinAnsi by rule (pdf-item-photos.ts header) — a CJK char
+     there re-fonts every photo-carrying document, refused at owner QA. */
   await ensurePdfCjkFont(doc, [
     header, items, fullSupplier, skuMap, fabricMap,
-    photoGroups.length > 0 ? ITEM_PHOTOS_CJK_TEXT : '',
   ]);
 
   // ── Company letterhead (centered, AutoCount style) ────────────────
@@ -475,7 +473,7 @@ async function renderPurchaseOrderInto(
       it.supplier_delivery_date_3,
       it.supplier_delivery_date_4,
     );
-    /* Owner spec: a row carries NO image — the " (图)" marker on the first
+    /* Owner spec: a row carries NO image — the " (photo)" marker on the first
        description line points the supplier at the ITEM PHOTOS block below. */
     const descParts = [
       `${it.description ?? it.material_name}${photoKeysOf(it.photo_urls).length > 0 ? PHOTO_MARKER : ''}`,
@@ -729,7 +727,7 @@ async function renderPurchaseOrderInto(
     lastY = rowTop + ROW_H;
   }
 
-  // ── ITEM PHOTOS · 照片对照 (owner spec 2026-08) ───────────────────
+  // ── ITEM PHOTOS (owner spec 2026-08) ───────────────────
   /* Page-bottom zone, beside the sofa layout when width remains; a PO with no
      sofa renders the block alone, full width. Row-position chips key each
      group back to the items table; a group never splits across pages (it

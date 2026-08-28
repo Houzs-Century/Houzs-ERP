@@ -64,6 +64,7 @@ import {
 import { canOperatePurchaseOrders } from "../../auth/salesAccess";
 import { skuMapFromBindings, supplierCodeFor } from "../../vendor/scm/lib/supplier-doc-data";
 import { useWarehouses } from "../../vendor/scm/lib/inventory-queries";
+import { useMaintenanceConfig } from "../../vendor/scm/lib/mfg-products-queries";
 import { poDisplayNumber } from "../../vendor/scm/lib/po-status";
 import { useSetBreadcrumbs } from "../../hooks/useBreadcrumbs";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
@@ -478,6 +479,10 @@ function PurchaseOrderDetailV2ReadOnly() {
      hook every other PO screen uses. includeInactive so a warehouse
      that was toggled off after the PO was raised still resolves. */
   const warehousesQ = useWarehouses({ includeInactive: true });
+  // Sofa-compartment hero photos for the PO's sofa-layout schematic (drawn from
+  // real photos when uploaded, else the drawn fallback). Same master-scope config
+  // POS Custom Builder reads.
+  const maintenanceQ = useMaintenanceConfig();
   const warehouseNameById = useMemo(() => {
     const m = new Map<string, string>();
     for (const w of warehousesQ.data ?? []) {
@@ -571,9 +576,11 @@ function PurchaseOrderDetailV2ReadOnly() {
           .source_so_doc_no ?? null,
     };
     return import("../../vendor/scm/lib/purchase-order-pdf")
-      .then(({ generatePurchaseOrderPdf }) =>
-        generatePurchaseOrderPdf(headerForPdf as never, items as never, { action })
-      )
+      .then(async ({ generatePurchaseOrderPdf }) => {
+        const { loadSofaCompartmentPhotos } = await import("../../vendor/scm/lib/sales-order-queries");
+        const sofaPhotos = await loadSofaCompartmentPhotos(maintenanceQ.data?.data?.sofaCompartmentMeta);
+        return generatePurchaseOrderPdf(headerForPdf as never, items as never, { action, sofaPhotos });
+      })
       .catch((e) =>
         notify({
           title: "PDF generation failed",

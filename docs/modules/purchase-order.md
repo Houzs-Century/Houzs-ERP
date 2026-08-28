@@ -815,14 +815,17 @@ column, read-only strip — see §8) and the printed PO carries them too:
 
 **Line photos on the printed PO (owner mockup, 2026-08).**
 `frontend/src/vendor/scm/lib/purchase-order-pdf.ts` prints ONE
-"ITEM PHOTOS · 照片对照" block in the page-bottom zone — beside the
+"ITEM PHOTOS" block in the page-bottom zone — beside the
 "Sofa layout — front faces TV" section when the last diagram row leaves usable
 width, wrapping below it otherwise; a PO with no sofa renders the block alone,
-full width. Table rows carry NO image; a line with `photo_urls` appends " (图)"
-to its description instead. Groups are keyed by row position in the items table
-(`#3`, or `#2-4` when consecutive rows carry a deep-equal photo list — a sofa
-set's shared build photo prints once), with the SUPPLIER code beside the chip
-and ~26mm square thumbnails, max 6 per row; a group never splits across pages.
+full width. (Owner print QA 2026-08-28: generated strings are English-only —
+CJK in generated text re-fonted every photo-carrying PDF — and the labels and
+sizes here are the v2 ruling.) Table rows carry NO image; a line with
+`photo_urls` appends " (photo)" to its description instead. Groups are keyed by
+row position in the items table (`Item 3`, or `Item 2-4` when consecutive rows
+carry a deep-equal photo list — a sofa set's shared build photo prints once),
+with the SUPPLIER code beside the chip and ~52mm square thumbnails, max 3 per
+row; a group never splits across pages.
 The logic is the shared `frontend/src/vendor/scm/lib/pdf-item-photos.ts`
 module the SO PDF also prints through (unit-tested beside it). Only `.thumb`
 siblings are fetched (never originals — PDF size) via the authed PO proxy,
@@ -1128,3 +1131,22 @@ Two exclusions are deliberate: an `assigned_sos` entry whose `source` is `'mrp'`
 builds NO entry (a live allocation binds nothing — the 2026-07-29 incident), and
 neither does a PRE-2026-07-31 bare-string GRN chip, which carries a number and
 no address. `document-conversion.md` §8b has both.
+
+### The PO PDF's sofa diagram draws REAL compartment photos (2026-08-28)
+
+The sofa-layout schematic on the PO PDF (`drawSofaLayout` in
+`vendor/scm/lib/sofa-layout-pdf.ts`) draws each module's real uploaded hero photo
+— the same per-code photos POS Custom Builder shows — in place of the hand-drawn
+cream rectangle, when one exists. It is an OPTIONAL overlay: a compartment with no
+uploaded photo, or one whose fetch fails, still renders the drawn schematic, so
+this is never a hard dependency and pre-existing behaviour is unchanged.
+
+Photos are keyed by compartment CODE, so a photo uploaded later in Backend → Sofa
+Compartments appears on the PO the next time it is printed, with no code change.
+The live `/scm/purchase-orders/:id` page (`PurchaseOrderDetailV2`) reads the master
+maintenance config's `sofaCompartmentMeta` and `loadSofaCompartmentPhotos`
+(`vendor/scm/lib/sales-order-queries.ts`) fetches each via the public
+`/maintenance-config/sofa-compartments/:code/photo/:key` proxy into a
+`{ code: dataURL }` map passed to `generatePurchaseOrderPdf`. Other PO print paths
+(list bulk-print, consignment, v1 detail) pass no photos and keep the schematic.
+Engine merged in #2754; wiring in #2758.
