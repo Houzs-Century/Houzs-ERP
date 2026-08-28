@@ -1,6 +1,10 @@
 // ----------------------------------------------------------------------------
-// SoLinePhotoStrip — read-only line-photo thumbnails for the V2 SO detail,
-// with a click-to-open full-size viewer.
+// SoLinePhotoStrip — read-only line-photo thumbnails with a click-to-open
+// full-size viewer. Born on the V2 SO detail; since the mig-0274 carry it also
+// serves the PO detail through the same state machine — `source` picks the
+// endpoint pair, nothing else differs (the PO strip is read-only BY DESIGN:
+// photos are authored on the SO and carried across, so there is no upload or
+// delete UI to add here).
 //
 // Owner 2026-08-10: "我在外面的 UI 看不到照片了吗?不能点开照片来看吗?" — the
 // V2 read-only detail carried `photo_urls` on the wire the whole time
@@ -31,19 +35,27 @@ import { useState } from "react";
 import { MediaLightbox } from "../MediaLightbox";
 import {
   photoContentType,
+  poLinePhotoLightboxBase,
   soLinePhotoLightboxBase,
-  useSoLinePhoto,
+  useScmLinePhoto,
+  type LinePhotoSource,
 } from "../../vendor/scm/lib/so-line-photo";
 
+/* `source` decides which document family's routes serve the keys — REQUIRED,
+   because a strip that silently defaulted to 'so' would 404 every thumb the
+   day a PO surface forgot to pass it (the optional-param-noop bug class).
+   `docId` is the SO doc_no or the PO row id, whichever the routes key on. */
+
 function Thumb({
-  docNo, itemId, photoKey, onOpen,
+  source, docId, itemId, photoKey, onOpen,
 }: {
-  docNo: string;
+  source: LinePhotoSource;
+  docId: string;
   itemId: string;
   photoKey: string;
   onOpen: () => void;
 }) {
-  const { src, error, onImgError } = useSoLinePhoto(photoKey, docNo, itemId);
+  const { src, error, onImgError } = useScmLinePhoto(source, photoKey, docId, itemId);
 
   /* "err" survives here for the same reason it does on the edit card: when the
      proxy ALSO fails (404 missing object, 401/403 refused) a missing photo must
@@ -82,15 +94,16 @@ function Thumb({
 }
 
 export function SoLinePhotoStrip({
-  docNo, itemId, photoKeys,
+  source, docId, itemId, photoKeys,
 }: {
-  docNo: string;
+  source: LinePhotoSource;
+  docId: string;
   itemId: string;
   photoKeys: string[];
 }) {
   const [openAt, setOpenAt] = useState<number | null>(null);
 
-  if (!docNo || !itemId || photoKeys.length === 0) {
+  if (!docId || !itemId || photoKeys.length === 0) {
     return <span className="text-[11px] text-ink-muted">—</span>;
   }
 
@@ -113,7 +126,8 @@ export function SoLinePhotoStrip({
         {photoKeys.map((k, i) => (
           <Thumb
             key={k}
-            docNo={docNo}
+            source={source}
+            docId={docId}
             itemId={itemId}
             photoKey={k}
             onOpen={() => setOpenAt(i)}
@@ -126,7 +140,11 @@ export function SoLinePhotoStrip({
           index={openAt}
           onChange={setOpenAt}
           onClose={() => setOpenAt(null)}
-          baseUrl={soLinePhotoLightboxBase(docNo, itemId)}
+          baseUrl={
+            source === "po"
+              ? poLinePhotoLightboxBase(docId, itemId)
+              : soLinePhotoLightboxBase(docId, itemId)
+          }
           badge="Line photo"
         />
       )}

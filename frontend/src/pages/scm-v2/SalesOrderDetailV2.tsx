@@ -920,7 +920,8 @@ function SalesOrderDetailV2ReadOnly() {
       getValue: (l) => (l.photo_urls ?? []).length,
       render: (l) => (
         <SoLinePhotoStrip
-          docNo={docNo ?? ""}
+          source="so"
+          docId={docNo ?? ""}
           itemId={l.id}
           photoKeys={l.photo_urls ?? []}
         />
