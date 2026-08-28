@@ -227,7 +227,11 @@ export function layoutPhotoGroups(
 
 /* ── Image bytes → something jsPDF can embed ─────────────────────────────── */
 
-export type PdfPhotoImage = { dataUrl: string; format: 'JPEG' | 'PNG' };
+/** `w`/`h` are the ENCODED pixel dimensions, carried so the tile can letterbox
+ *  the image instead of stretching it. Present since the centre-crop was
+ *  dropped (2026-08-28) — without them a portrait photo drawn into a square tile
+ *  would come out squashed, which is a worse lie than the crop was. */
+export type PdfPhotoImage = { dataUrl: string; format: 'JPEG' | 'PNG'; w: number; h: number };
 
 /** Magic-byte sniff — R2 serves pre-pipeline objects as octet-stream, so the
  *  declared type cannot be trusted. Returns null for anything unrecognised. */
@@ -253,15 +257,36 @@ export function sniffImageMime(
   return null;
 }
 
-/** Rendered pixel size of an embedded thumb (square). 512px across 52mm is
- *  ~250dpi — crisp in print, ~30-70 kB per JPEG in the file. */
-export const PDF_THUMB_PX = 512;
+/** Rendered pixel size of an embedded thumb (longest edge).
+ *
+ * RAISED 512 → 1536 (owner, 2026-08-28: 「确保一下，当我就算 zoom 大这个照片，它
+ * 也不会变模糊」). 512px across a 52mm tile is ~250dpi — fine on paper, and that
+ * is all it was ever chosen for. On a SCREEN it is a different sum: a reader who
+ * zooms a 52mm tile to 400% is asking for ~786 device pixels, which 512 cannot
+ * supply, so the photo softens exactly when somebody leans in to check a detail —
+ * which is the whole reason a purchaser attaches a photo of a measurement.
+ *
+ * 1536 is ~750dpi at 52mm and stays sharp past 600% zoom. The cost is file size:
+ * roughly 9× the pixels, so a tile lands around 200-500 kB instead of 30-70 kB.
+ * Worth it — these PDFs are read on a phone at a workbench far more often than
+ * they are printed. */
+export const PDF_THUMB_PX = 1536;
 
 /**
- * Decode any browser-displayable image blob and re-encode it as a small
- * square (centre-cropped) JPEG data URL for jsPDF. Returns null on ANY
- * failure — undecodable bytes, no canvas in this environment — and never
- * throws; the caller skips the photo.
+ * Decode any browser-displayable image blob and re-encode it as a JPEG data URL
+ * for jsPDF. Returns null on ANY failure — undecodable bytes, no canvas in this
+ * environment — and never throws; the caller skips the photo.
+ *
+ * THE WHOLE PHOTO, NOT A CENTRE CROP (owner, 2026-08-28). It used to force a
+ * square by cropping to the shorter side, which silently threw away the top and
+ * bottom of every portrait photo — and a purchaser's photo is very often
+ * portrait BECAUSE it is a tape measure held against a panel. Cropping cut off
+ * the two ends of the measurement, which is the one thing the photo was taken to
+ * show.
+ *
+ * The tile stays square; the image is letterboxed inside it on white, so the
+ * grid layout is untouched and nothing below has to move. The returned aspect
+ * ratio lets the caller size it — see drawPhotoTile.
  */
 export async function blobToSquarePdfImage(blob: Blob): Promise<PdfPhotoImage | null> {
   try {
@@ -273,33 +298,28 @@ export async function blobToSquarePdfImage(blob: Blob): Promise<PdfPhotoImage | 
     const typed = declared === mime ? blob : new Blob([bytes], { type: mime });
     const bitmap = await createImageBitmap(typed);
     try {
-      const side = Math.min(bitmap.width, bitmap.height);
-      if (side <= 0) return null;
+      const longest = Math.max(bitmap.width, bitmap.height);
+      if (!(longest > 0)) return null;
+      /* NEVER UPSCALE. A 300px source re-encoded at 1536 is the same 300px of
+         detail in nine times the bytes — bigger file, not a better photo. */
+      const scale = Math.min(1, PDF_THUMB_PX / longest);
+      const cw = Math.max(1, Math.round(bitmap.width * scale));
+      const ch = Math.max(1, Math.round(bitmap.height * scale));
       const canvas = document.createElement('canvas');
-      canvas.width = PDF_THUMB_PX;
-      canvas.height = PDF_THUMB_PX;
+      canvas.width = cw;
+      canvas.height = ch;
       const ctx = canvas.getContext('2d');
       if (!ctx) return null;
       // Flatten any alpha onto white — JPEG has no transparency and black
       // squares read as broken photos on paper.
       ctx.fillStyle = '#ffffff';
-      ctx.fillRect(0, 0, PDF_THUMB_PX, PDF_THUMB_PX);
-      ctx.drawImage(
-        bitmap,
-        (bitmap.width - side) / 2,
-        (bitmap.height - side) / 2,
-        side,
-        side,
-        0,
-        0,
-        PDF_THUMB_PX,
-        PDF_THUMB_PX,
-      );
+      ctx.fillRect(0, 0, cw, ch);
+      ctx.drawImage(bitmap, 0, 0, bitmap.width, bitmap.height, 0, 0, cw, ch);
       const dataUrl = canvas.toDataURL('image/jpeg', 0.78);
-      if (dataUrl.startsWith('data:image/jpeg')) return { dataUrl, format: 'JPEG' };
+      if (dataUrl.startsWith('data:image/jpeg')) return { dataUrl, format: 'JPEG', w: cw, h: ch };
       // canvas.toBlob/toDataURL silently fall back to PNG when JPEG encoding
       // is unavailable — jsPDF takes PNG too, so keep it.
-      if (dataUrl.startsWith('data:image/png')) return { dataUrl, format: 'PNG' };
+      if (dataUrl.startsWith('data:image/png')) return { dataUrl, format: 'PNG', w: cw, h: ch };
       return null;
     } finally {
       bitmap.close();
@@ -408,7 +428,15 @@ function drawGroup(
     const tx = x + col * (THUMB_MM + THUMB_GAP_MM);
     const ty = y + GROUP_HEADER_MM + row * (THUMB_MM + THUMB_GAP_MM);
     try {
-      doc.addImage(img.dataUrl, img.format, tx, ty, THUMB_MM, THUMB_MM);
+      /* LETTERBOXED INSIDE THE SQUARE, not stretched to fill it. The tile stays
+         52mm so the grid and every height calculation below are untouched; the
+         image keeps its own proportions and sits centred in it. Stretching would
+         make a tape measure held against a panel read as a different length,
+         which is the one thing these photos exist to settle. */
+      const ar = img.w > 0 && img.h > 0 ? img.w / img.h : 1;
+      const dw = ar >= 1 ? THUMB_MM : THUMB_MM * ar;
+      const dh = ar >= 1 ? THUMB_MM / ar : THUMB_MM;
+      doc.addImage(img.dataUrl, img.format, tx + (THUMB_MM - dw) / 2, ty + (THUMB_MM - dh) / 2, dw, dh);
       doc.rect(tx, ty, THUMB_MM, THUMB_MM);
     } catch {
       // Per-photo best-effort — a bad image skips its tile, never the doc.
