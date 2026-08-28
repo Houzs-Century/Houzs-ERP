@@ -1023,6 +1023,55 @@ describe("AutoCountSync — Send now", () => {
        nobody reads as "the button does nothing". */
     expect(await within(cardOf("SO-P")).findByText(/never got through/i)).toBeTruthy();
   });
+
+  /* ONE PRESS CAN MOVE THREE DOCUMENTS, and until #0552 the page reported one.
+     Every ancestor the cascade sends is a write into a licensed account book on
+     the operator's behalf; showing them only the row they pressed is showing
+     them the wrong thing. */
+  it("names every ancestor the press sent, and WHY each had to go first", async () => {
+    apiPost.mockResolvedValue(sendNowAnswer({
+      ancestors_sent: [
+        { doc_type: "SO", doc_no: "SO-A", code: "sent", reason: "stale" },
+        { doc_type: "DO", doc_no: "DO-B", code: "sent", reason: "missing" },
+      ],
+    }));
+    await mount(busy);
+    await userEvent.click(await screen.findByRole("button", { name: "Send now" }));
+    const card = cardOf("SO-P");
+    /* The two reasons are different facts and the page must not flatten them:
+       one document was BEHIND, the other was ABSENT. */
+    expect(await within(card).findByText(/SO-A — AutoCount had an older version, sent\./)).toBeTruthy();
+    expect(within(card).getByText(/DO-B — AutoCount did not have it yet, sent\./)).toBeTruthy();
+  });
+
+  it("shows an ancestor that FAILED, not only the ones that worked", async () => {
+    /* The dangerous shape: the pressed row succeeds while an ancestor did not.
+       Reporting only the press would read as "all done". */
+    apiPost.mockResolvedValue(sendNowAnswer({
+      ancestors_sent: [{ doc_type: "SO", doc_no: "SO-A", code: "still-refused", reason: "missing" }],
+    }));
+    await mount(busy);
+    await userEvent.click(await screen.findByRole("button", { name: "Send now" }));
+    expect(await within(cardOf("SO-P")).findByText(/SO-A .*not sent — still-refused/)).toBeTruthy();
+  });
+
+  it("says nothing about ancestors when the press moved none", async () => {
+    /* An empty heading on every ordinary press would be noise, and noise is how
+       the useful case stops being read. */
+    apiPost.mockResolvedValue(sendNowAnswer({ ancestors_sent: [] }));
+    await mount(busy);
+    await userEvent.click(await screen.findByRole("button", { name: "Send now" }));
+    await within(cardOf("SO-P")).findByText(/in the account book now/i);
+    expect(within(cardOf("SO-P")).queryByText(/Sent first/i)).toBeNull();
+  });
+
+  it("invents no ancestor list when the call never got through", async () => {
+    apiPost.mockRejectedValue(new Error("Network request failed"));
+    await mount(busy);
+    await userEvent.click(await screen.findByRole("button", { name: "Send now" }));
+    await within(cardOf("SO-P")).findByText(/never got through/i);
+    expect(within(cardOf("SO-P")).queryByText(/Sent first/i)).toBeNull();
+  });
 });
 
 /* ───────────────────────────────────────────────────────────────────────────

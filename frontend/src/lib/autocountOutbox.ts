@@ -310,6 +310,44 @@ export interface AcRequeueResult {
   new_row_id: string | null;
   /** The ERP's own words, present only when the composer refused it again. */
   reason: string | null;
+  /**
+   * The ancestors this press caused, in the order they were sent.
+   *
+   * The server has returned this since the cascade was written and NOTHING HERE
+   * READ IT (#0552): pressing Send on an invoice could put a sales order and a
+   * delivery order into the account book and the operator saw one line about the
+   * invoice. `reason` says which of the two things happened to each — `missing`
+   * (AutoCount did not have it) or `stale` (AutoCount had an older version) —
+   * and those are different enough that a document number alone cannot carry it.
+   */
+  ancestors_sent?: AcAncestorSent[] | null;
+}
+
+/** One ancestor the press sent, as the server names it. */
+export interface AcAncestorSent {
+  doc_type: string;
+  doc_no: string;
+  /** The outcome code, from the same catalogue as the pressed row's. */
+  code: string;
+  /** Why it had to go first: `missing` or `stale`. */
+  reason?: string;
+}
+
+/**
+ * What the page SAYS about each ancestor, in the operator's words.
+ *
+ * The reason and the outcome are two facts and they are combined here rather
+ * than in the component, so the mobile and desktop pages cannot come to word
+ * this differently — the same argument `AC_SEND_NOW_LABEL` and `useAcRequeue`
+ * already make for the button and the note.
+ */
+export function acAncestorLine(a: AcAncestorSent): string {
+  const what = a.reason === 'stale'
+    ? 'AutoCount had an older version'
+    : 'AutoCount did not have it yet';
+  const ok = a.code === 'sent' || a.code === 'accepted';
+  const how = ok ? 'sent' : `not sent — ${a.code}`;
+  return `${a.doc_no} — ${what}, ${how}.`;
 }
 
 /**
@@ -440,6 +478,14 @@ export interface AcRequeueNote {
   /** The quote's own machinery, behind the technical disclosure. */
   quoteTechnical: string | null;
   /**
+   * The ancestors this press caused, already worded — one line each.
+   *
+   * ON THE ROW, like everything else here. A press on an invoice can move three
+   * documents, and the operator has to be able to see which, on the row they
+   * pressed, rather than by re-reading the whole table for what changed.
+   */
+  ancestors: string[];
+  /**
    * The document is on its way again, so the OLD refusal on this row is no
    * longer true and comes off it.
    *
@@ -499,6 +545,7 @@ export function useAcRequeue(onAccepted: () => void) {
             todo: acRequeueTodo(r.code),
             quote: quoted?.said ?? null,
             quoteTechnical: quoted?.detail ?? null,
+            ancestors: (r.ancestors_sent ?? []).map(acAncestorLine),
             clearsReason: r.accepted,
           },
         }));
@@ -518,6 +565,9 @@ export function useAcRequeue(onAccepted: () => void) {
             todo: null,
             quote: e instanceof Error ? e.message : String(e),
             quoteTechnical: null,
+            /* The call was never answered, so nothing is known to have been sent
+               — an ancestor list here would be an invention. */
+            ancestors: [],
             /* The old refusal still stands — nothing was sent. */
             clearsReason: false,
           },

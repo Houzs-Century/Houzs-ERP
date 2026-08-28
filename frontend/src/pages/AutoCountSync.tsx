@@ -574,6 +574,28 @@ function RegisterRow(
               {note.todo}
             </p>
           )}
+          {/* WHAT ELSE THIS PRESS MOVED. One press can put three documents into
+              the account book — the invoice and both its ancestors — and until
+              #0552 the page reported one. An operator who cannot see that a
+              sales order was sent on their behalf has no way to know it
+              happened, and every one of those is a write to a licensed book. */}
+          {note.ancestors.length > 0 && (
+            <div className="mt-1.5">
+              <p
+                className={cn(
+                  "text-[11px] font-bold uppercase tracking-wide",
+                  TONE_TEXT[note.tone],
+                )}
+              >
+                Sent first
+              </p>
+              <ul className="mt-0.5 max-w-[84ch] space-y-0.5 text-ink">
+                {note.ancestors.map((line) => (
+                  <li key={line}>{line}</li>
+                ))}
+              </ul>
+            </div>
+          )}
           {note.quote && (
             <p className="mt-1 whitespace-pre-wrap break-words font-mono text-[11.5px] text-ink">
               {note.quote}
