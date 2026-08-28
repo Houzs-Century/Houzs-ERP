@@ -31,6 +31,19 @@ export function dateOrNull(v: unknown): string | null {
   return s === '' ? null : s;
 }
 
+/* Bug #10 — normalize a lifecycle event's business date to a single comparable
+   representation. Inputs are a mix of plain 'YYYY-MM-DD' dates and full ISO
+   timestamps; both share the leading 'YYYY-MM-DD', so truncating to the first 10
+   chars yields a stable day-level key that sorts correctly regardless of which
+   form the row carried. (created_at is the tie-breaker, applied separately.)
+   Moved here from routes/delivery-orders-mfg.ts — that file is over its size
+   ceiling and a ceiling may only fall; this is its date lib. Accepts null /
+   undefined because the rows it reads are untyped PostgREST results — the
+   guard was always there at runtime, the signature now says so. */
+export function normalizeEventDay(d: string | null | undefined): string {
+  return (d ?? '').slice(0, 10);
+}
+
 /* Which mapped column is a DATE, decided from the column NAME.
  *
  * The generic field-map loops (`for (const [from, to] of map) updates[to] =
