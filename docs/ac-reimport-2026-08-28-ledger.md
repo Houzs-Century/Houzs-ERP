@@ -145,3 +145,6 @@ export-ac-fidelity-truth.py）、live 尺（export-ac-live.py）。
   跳该单点名报告，与第一路一致）。**身份问题挂 owner**：账本 400-R001 现名 RED SOFA PLT（23 个 RDS
   货的主供应商都登它），ERP 的 400-R001 却叫 RENNESS BEDDING，账本另有 400-R002 RENNES BEDDING——
   一家改名还是两家错码，owner 定；导入只照抄账本补 400-R002 一行，不判合并。
+- **owner 裁定（「应该不一样啊」）**：RED SOFA 和 RENNES 是两家公司——ERP 400-R001 那行是
+  **贴错名**（号对、名错）。修法 = 改名为 RED SOFA PLT（号与绑定不动；本批有 2 张 RED SOFA 的
+  PO-000425/001068 会因此显示正确），工具 repair-supplier-names（plan 默认 + 确认句 + 独立复核）。
