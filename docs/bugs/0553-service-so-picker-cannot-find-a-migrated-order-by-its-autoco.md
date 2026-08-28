@@ -26,4 +26,4 @@ on the unfixed tree (2 failed: column absent, 3 binds not 4), GREEN with the
 fix. UNTESTED against the production order itself — no prod query from this
 session; the code-level mechanism is what is proven.
 
-**Ref.** fix/assr-search-so-linked-ac-docno, 2026-08-28.
+**Ref.** PR #2748, fix/assr-search-so-linked-ac-docno, 2026-08-28.
