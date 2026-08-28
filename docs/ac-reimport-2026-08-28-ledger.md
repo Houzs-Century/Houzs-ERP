@@ -148,3 +148,11 @@ export-ac-fidelity-truth.py）、live 尺（export-ac-live.py）。
 - **owner 裁定（「应该不一样啊」）**：RED SOFA 和 RENNES 是两家公司——ERP 400-R001 那行是
   **贴错名**（号对、名错）。修法 = 改名为 RED SOFA PLT（号与绑定不动；本批有 2 张 RED SOFA 的
   PO-000425/001068 会因此显示正确），工具 repair-supplier-names（plan 默认 + 确认句 + 独立复核）。
+## 4e. 日期两个框不亮 — owner 在 HC-SO-013097 上抓到的（2026-08-28）
+
+账本明明有（UDF_PDate 2026-08-17、行交期 2026-09-24），画面两个日期空。查实：
+① 导入把 processing date 写进了 **8-18 就退役的旧栏 proceeded_at**（0286 改名后画面只读
+`processing_date`，导入脚本没跟着搬家）；② 送货日期本来就属于补日期那一步，本轮还没跑，
+而补日期脚本写的也是旧栏。两个脚本一起搬正（docs/bugs/0556），防呆名单保留旧名匹配。
+账本里该亮的：processing 538 张、delivery 545 张（2,756 张里）——补日期 apply 后逐一核对。
+另：PO-009979 的无码行「ERGOTEX PILLOW CASE - FAIR ×20 @RM50」照实例外，导入后人工补一行。

@@ -388,7 +388,7 @@ async function main() {
   const todo = built.filter((o) => !existing.has(o.docNo));
   log(`already imported: ${existing.size}; to insert: ${todo.length}`);
 
-  const HCOLS = "(doc_no,linked_ac_docno,so_date,debtor_name,debtor_code,agent,salesperson_id,sales_location,ref,customer_so_no,venue,venue_id,branding,address1,address2,address3,address4,postcode,city,customer_state,phone,emergency_contact_phone,status,company_id,currency,local_total_sen,balance_sen,paid_sen,deposit_sen,line_count,mattress_sofa_sen,bedframe_sen,accessories_sen,service_sen,others_sen,payment_method,approval_code,payment_date,proceeded_at)";
+  const HCOLS = "(doc_no,linked_ac_docno,so_date,debtor_name,debtor_code,agent,salesperson_id,sales_location,ref,customer_so_no,venue,venue_id,branding,address1,address2,address3,address4,postcode,city,customer_state,phone,emergency_contact_phone,status,company_id,currency,local_total_sen,balance_sen,paid_sen,deposit_sen,line_count,mattress_sofa_sen,bedframe_sen,accessories_sen,service_sen,others_sen,payment_method,approval_code,payment_date,processing_date)";
   /* warehouse_id was resolved per line (`warehouseId: whId(l.Location)`) and then
      left OUT of this list, so every migrated line landed with the location as
      text and no warehouse. Stock is bucketed by warehouse_id, so nothing could
