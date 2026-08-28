@@ -812,6 +812,14 @@ export async function renderDeliveryOrderInto(
       const isDescription = data.column.index === 2;
       if (data.section === 'body') {
         if (isDescription) data.cell.styles.font = SANS;
+        /* Owner 2026-08-28: Source PO reads in the normal face, bold — the
+           typewriter mono the identifier columns default to was hard to read
+           on the printed sheet. Body cells only, so the head row stays on one
+           face; the column exists only on the warehouse (showPicking) face. */
+        if (showPicking && data.column.index === 3) {
+          data.cell.styles.font = SANS;
+          data.cell.styles.fontStyle = 'bold';
+        }
         // The em-dash placeholder is deliberately fainter than a real value —
         // "nothing here" should not read as loudly as a rack number.
         if (String((data.cell as unknown as { text: string[] }).text?.join('') ?? '') === EM_DASH) {
