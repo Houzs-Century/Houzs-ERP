@@ -83,11 +83,31 @@ import { useEffect, useRef, useState } from 'react';
 import {
   fetchSoItemPhotoSignedUrl,
   fetchSoItemPhotoBlob,
+  fetchPoItemPhotoSignedUrl,
+  fetchPoItemPhotoBlob,
   isDirectlyLoadableUrl,
   isProxyPhotoPayload,
   PhotoProxyError,
+  type PhotoUrlPayload,
 } from './sales-order-queries';
 import { THUMB_KEY_SUFFIX } from '../../../lib/imagePipeline';
+
+/* ── The fetcher seam (mig 0274 follow-through) ────────────────────────────
+   The PO carries the SAME photo keys (an SO→PO convert copies the key list;
+   both point at one R2 object) behind mirrored routes keyed by the PO id.
+   The state machine below is endpoint-agnostic — `source` picks the fetcher
+   pair, and the module-level caches stay keyed by the R2 key, which is
+   CORRECT to share across sources: same key, same bytes, so a thumb loaded on
+   the SO detail is free on the PO detail. */
+export type LinePhotoSource = 'so' | 'po';
+
+const PHOTO_FETCHERS: Record<LinePhotoSource, {
+  signedUrl: (docId: string, itemId: string, photoKey: string) => Promise<PhotoUrlPayload>;
+  blob: (docId: string, itemId: string, photoKey: string) => Promise<Blob>;
+}> = {
+  so: { signedUrl: fetchSoItemPhotoSignedUrl, blob: fetchSoItemPhotoBlob },
+  po: { signedUrl: fetchPoItemPhotoSignedUrl, blob: fetchPoItemPhotoBlob },
+};
 
 const SIGNED_URL_SKEW_BUFFER_MS = 30_000;
 
@@ -145,13 +165,19 @@ const photoBlobInflight = new Map<string, Promise<Blob>>();
 
 /** Thumb-first, base-on-404, cached by bytes. Throws the base-key error when
  *  the photo is genuinely unreachable — that is what still renders "err". */
-async function loadPhotoBytes(docNo: string, itemId: string, photoKey: string): Promise<Blob> {
+async function loadPhotoBytes(
+  source: LinePhotoSource,
+  docId: string,
+  itemId: string,
+  photoKey: string,
+): Promise<Blob> {
+  const fetchBlob = PHOTO_FETCHERS[source].blob;
   if (!thumbMissingKeys.has(photoKey)) {
     const thumbKey = photoKey + THUMB_KEY_SUFFIX;
     const cachedThumb = photoBlobCache.get(thumbKey);
     if (cachedThumb) return cachedThumb;
     try {
-      const blob = await fetchSoItemPhotoBlob(docNo, itemId, thumbKey);
+      const blob = await fetchBlob(docId, itemId, thumbKey);
       rememberPhotoBlob(thumbKey, blob);
       return blob;
     } catch (e) {
@@ -164,16 +190,21 @@ async function loadPhotoBytes(docNo: string, itemId: string, photoKey: string): 
   }
   const cachedFull = photoBlobCache.get(photoKey);
   if (cachedFull) return cachedFull;
-  const blob = await fetchSoItemPhotoBlob(docNo, itemId, photoKey);
+  const blob = await fetchBlob(docId, itemId, photoKey);
   rememberPhotoBlob(photoKey, blob);
   return blob;
 }
 
-function loadPhotoBytesShared(docNo: string, itemId: string, photoKey: string): Promise<Blob> {
-  const inflightKey = `${docNo}${itemId}${photoKey}`;
+function loadPhotoBytesShared(
+  source: LinePhotoSource,
+  docId: string,
+  itemId: string,
+  photoKey: string,
+): Promise<Blob> {
+  const inflightKey = `${source}|${docId}|${itemId}|${photoKey}`;
   const existing = photoBlobInflight.get(inflightKey);
   if (existing) return existing;
-  const pending = loadPhotoBytes(docNo, itemId, photoKey)
+  const pending = loadPhotoBytes(source, docId, itemId, photoKey)
     .finally(() => { photoBlobInflight.delete(inflightKey); });
   photoBlobInflight.set(inflightKey, pending);
   return pending;
@@ -202,15 +233,19 @@ export type SoLinePhoto = {
 /**
  * Resolve one line photo to something an <img> can display.
  *
- * `docNo` / `itemId` are optional because a DRAFT line has neither yet; with
- * either missing the hook stays inert (no request, no error, no tile) rather
- * than reporting a failure the operator cannot act on.
+ * `source` names the document family whose routes serve the key — the whole
+ * state machine is shared, only the fetcher pair differs (see PHOTO_FETCHERS).
+ * `docId` (SO doc_no / PO id) and `itemId` are optional because a DRAFT line
+ * has neither yet; with either missing the hook stays inert (no request, no
+ * error, no tile) rather than reporting a failure the operator cannot act on.
  */
-export function useSoLinePhoto(
+export function useScmLinePhoto(
+  source: LinePhotoSource,
   photoKey: string,
-  docNo?: string,
+  docId?: string,
   itemId?: string,
 ): SoLinePhoto {
+  const docNo = docId;
   const [urls, setUrls] = useState<{ signedUrl: string; thumbUrl?: string } | null>(() => {
     const cached = signedUrlCache.get(photoKey);
     return isCachedUrlFresh(cached) ? cached! : null;
@@ -256,7 +291,7 @@ export function useSoLinePhoto(
     }
     attempt.proxyTried = true;
     try {
-      const blob = await loadPhotoBytesShared(docNo, itemId, photoKey);
+      const blob = await loadPhotoBytesShared(source, docNo, itemId, photoKey);
       /* Cancelled mid-flight: return BEFORE minting an object URL, so there is
          nothing to leak. The bytes stay in the module cache for the next pass,
          which is what makes StrictMode's second run free. */
@@ -270,7 +305,7 @@ export function useSoLinePhoto(
   const loadSignedUrl = async (attempt: PhotoAttempt) => {
     if (!docNo || !itemId) return;
     try {
-      const payload = await fetchSoItemPhotoSignedUrl(docNo, itemId, photoKey);
+      const payload = await PHOTO_FETCHERS[source].signedUrl(docNo, itemId, photoKey);
       if (attempt.cancelled) return;
       /* THE PRODUCTION ARM. The R2 S3 credentials have never been provisioned,
          so the route reports `mode: 'proxy'` for every photo and there is no
@@ -318,7 +353,7 @@ export function useSoLinePhoto(
        can never revoke the blob a later pass is showing. */
     return () => { attempt.cancelled = true; releaseAttemptUrl(attempt); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [docNo, itemId, photoKey]);
+  }, [source, docNo, itemId, photoKey]);
 
   const showingThumb = !useFull && !!urls?.thumbUrl;
 
@@ -360,6 +395,17 @@ export function useSoLinePhoto(
   return { src, error, onImgError };
 }
 
+/** The SO-shaped entry point every pre-0274 call site uses — same signature
+ *  as before the fetcher seam existed, so SoLineCard's PhotoThumb and friends
+ *  did not change a line. */
+export function useSoLinePhoto(
+  photoKey: string,
+  docNo?: string,
+  itemId?: string,
+): SoLinePhoto {
+  return useScmLinePhoto('so', photoKey, docNo, itemId);
+}
+
 /* ── Full-size viewing ─────────────────────────────────────────────────────
    The tile above resolves the THUMB tier. A viewer must show the FULL object,
    and must not reuse the tile's `src`: under the proxy arm that src is a
@@ -378,6 +424,11 @@ export function useSoLinePhoto(
  *  NOT the scm-vendor-relative form `authedFetch` takes. */
 export const soLinePhotoLightboxBase = (docNo: string, itemId: string): string =>
   `/api/scm/mfg-sales-orders/${encodeURIComponent(docNo)}/items/${encodeURIComponent(itemId)}/photos`;
+
+/** PO twin — same contract against the mirrored mig-0274 routes, keyed by the
+ *  PO row id rather than a doc_no. */
+export const poLinePhotoLightboxBase = (poId: string, itemId: string): string =>
+  `/api/scm/mfg-purchase-orders/${encodeURIComponent(poId)}/items/${encodeURIComponent(itemId)}/photos`;
 
 /** Content type for a photo key, from its extension. R2 hands back
  *  `application/octet-stream` for objects stored without a type, and an
