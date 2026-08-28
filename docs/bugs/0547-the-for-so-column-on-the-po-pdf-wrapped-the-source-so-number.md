@@ -1,6 +1,6 @@
 ## The For SO column on the PO PDF wrapped the source SO number onto two lines [low]
 
-<!-- area: SCM, PO, procurement -->
+<!-- area: Purchase orders + GRN + PI -->
 
 **Symptom.** On the printed Purchase Order, the first column ("For SO") broke the
 source Sales-Order number across two lines — `HC-SO-2608-008` rendered as
