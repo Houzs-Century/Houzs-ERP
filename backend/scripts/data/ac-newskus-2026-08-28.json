@@ -1,7 +1,12 @@
 {
-  "_note": "2026-08-28 re-import round: the 16 codes the owner opened in AutoCount since the 2026-08-11 snapshot. Rulings (see docs/ac-reimport-2026-08-28-ledger.md §0#7): HOK-1056 maps to the EXISTING FLAT bedframe (no new model, bindings only); DL-CLASSIC mattresses + 5562 sofa + RC repair charges are opened in the ERP. Owner 2026-08-28: bind BOTH suppliers on the HOK items, Hookka (400-H004) is MAIN, OHANA (400-O002, the book's own registration) secondary. Consumed by align-seed-skus.mjs via DATA_FILE. 2026-08-28b: +2 sofa piece SKUs the owner ruled to open (00913-3S, 8050-STOOL) so the 3 blocked decode lines can decompose.",
+  "_note": "2026-08-28 re-import round: the 16 codes the owner opened in AutoCount since the 2026-08-11 snapshot. Rulings (see docs/ac-reimport-2026-08-28-ledger.md §0#7): HOK-1056 maps to the EXISTING FLAT bedframe (no new model, bindings only); DL-CLASSIC mattresses + 5562 sofa + RC repair charges are opened in the ERP. Owner 2026-08-28: bind BOTH suppliers on the HOK items, Hookka (400-H004) is MAIN, OHANA (400-O002, the book's own registration) secondary. Consumed by align-seed-skus.mjs via DATA_FILE. 2026-08-28b: +2 sofa piece SKUs the owner ruled to open (00913-3S, 8050-STOOL) so the 3 blocked decode lines can decompose. 2026-08-28c: +supplier 400-R002 (the book creditor on PO-009555; ERP had no row for that code — the 400-R001 name split RED SOFA PLT vs RENNESS is a separate owner catalog question, docs/bugs/0557).",
   "company_id": 1,
-  "suppliers": [],
+  "suppliers": [
+    {
+      "code": "400-R002",
+      "name": "RENNES BEDDING SDN BHD"
+    }
+  ],
   "products": [
     {
       "code": "DUNLOPILLO CLASSIC AURORA REST MATT (K)",
