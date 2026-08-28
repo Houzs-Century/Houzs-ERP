@@ -691,7 +691,14 @@ async function renderPurchaseOrderInto(
     }
 
     doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(0);
-    doc.text('Sofa layout — front faces TV (orientation / LHF·RHF)', margin, lastY);
+    /* PLAIN WORDS, because a supplier reads this, not an engineer. The old
+       heading ended "(orientation / LHF·RHF)" — that parenthesis was a note to
+       ourselves about which convention the drawing follows, and the owner
+       flagged it as odd (2026-08-28: 「这个字眼也是奇怪？」). What the reader needs
+       is the two facts the picture depends on: it is a plan view, and the front
+       is the edge facing the TV. LHF/RHF still print in every line's own
+       description, where they identify a part. */
+    doc.text('Sofa layout — viewed from above, front faces the TV', margin, lastY);
     lastY += 6;
 
     let col = 0;
@@ -724,7 +731,7 @@ async function renderPurchaseOrderInto(
         col = 0;
         // Repeat the section title at the top of the continued page.
         doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(0);
-        doc.text('Sofa layout — front faces TV (orientation / LHF·RHF) (cont.)', margin, rowTop);
+        doc.text('Sofa layout — viewed from above, front faces the TV (cont.)', margin, rowTop);
         rowTop += 6;
       }
       const dx = margin + col * (DIAGRAM_W + GAP_X);
