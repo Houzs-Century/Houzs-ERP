@@ -134,3 +134,12 @@ export-ac-fidelity-truth.py）、live 尺（export-ac-live.py）。
 行键 backfill ×2 → PO 行键 → dedication → 纯损失修复 → 文本链 → ac_item_code seed →
 迁移 GRN/DO 建档 → 迁移发票（金额相等规则）→ allocation 重算 → 验证五连。
 每步 dry-run 先行、看 notice 不看徽章、APPLY 后独立重读核对——三条全是第一轮的铁律。
+
+## 4c. 日期两个框不亮 — owner 在 HC-SO-013097 上抓到的（2026-08-28）
+
+账本明明有（UDF_PDate 2026-08-17、行交期 2026-09-24），画面两个日期空。查实：
+① 导入把 processing date 写进了 **8-18 就退役的旧栏 proceeded_at**（0286 改名后画面只读
+`processing_date`，导入脚本没跟着搬家）；② 送货日期本来就属于补日期那一步，本轮还没跑，
+而补日期脚本写的也是旧栏。两个脚本一起搬正（docs/bugs/0556），防呆名单保留旧名匹配。
+账本里该亮的：processing 538 张、delivery 545 张（2,756 张里）——补日期 apply 后逐一核对。
+另：PO-009979 的无码行「ERGOTEX PILLOW CASE - FAIR ×20 @RM50」照实例外，导入后人工补一行。
