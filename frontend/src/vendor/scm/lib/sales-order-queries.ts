@@ -1013,6 +1013,38 @@ function blobToDataUrl(blob: Blob): Promise<string | null> {
  * Per-compartment best-effort: anything that cannot be resolved, fetched or
  * measured is simply absent from the map and the engine draws that one cell's
  * schematic. */
+/* THE PRINT PATH LOADS ITS OWN ART — one lookup, not five call sites.
+ *
+ * WHY THIS EXISTS (owner, 2026-08-28, comparing three printed POs: 「为什么感觉
+ * 不是全部都一样的？」). Five surfaces print a Purchase Order — the V2 detail, the
+ * EDIT page, two list exports and the right-click document-chain print — and
+ * only ONE of them passed `sofaPhotos`. The other four silently drew the
+ * schematic, so the same delivery order looked different depending on which
+ * button raised it. Passing the map at every call site is the arrangement that
+ * produced the bug; a sixth caller would have reproduced it.
+ *
+ * The generator therefore fetches it itself when the caller did not supply one.
+ * That is the same shape as the supplier/fabric lookup the PO print already does
+ * at print time (`loadSupplierDocData`), so it is not a new kind of thing.
+ *
+ * Fail-soft the whole way: a failed config read returns `{}` and every cell
+ * draws its schematic, exactly as before. A print must never fail for want of a
+ * picture. */
+export async function loadSofaCompartmentArtForPrint(): Promise<Record<string, string>> {
+  try {
+    const resolved = await authedFetch<{ data?: { sofaCompartmentMeta?: Record<string, { imageKey?: string }> } }>(
+      '/maintenance-config/resolved?scope=master',
+    );
+    /* `resolved` itself is non-optional by TYPE — authedFetch returns T — and
+       the ratchet is right to say so. `data` stays optional because the
+       endpoint really can answer with no config yet (a fresh company), and
+       loadSofaCompartmentPhotos treats undefined as "draw the schematics". */
+    return await loadSofaCompartmentPhotos(resolved.data?.sofaCompartmentMeta);
+  } catch {
+    return {};
+  }
+}
+
 export async function loadSofaCompartmentPhotos(
   meta: Record<string, { imageKey?: string }> | undefined | null,
 ): Promise<Record<string, string>> {

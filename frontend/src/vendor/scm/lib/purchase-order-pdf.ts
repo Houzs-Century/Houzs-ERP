@@ -55,6 +55,7 @@ import {
   docVariantLine,
   type SupplierRecord,
 } from './supplier-doc-data';
+import { loadSofaCompartmentArtForPrint } from './sales-order-queries';
 import {
   blobToSquarePdfImage,
   buildPhotoGroups,
@@ -257,6 +258,19 @@ async function renderPurchaseOrderInto(
      Converter colour map + the FULL supplier master record (the PO detail
      endpoint embeds only 7 fields — no fax / attention / payment_terms). */
   const { skuMap, fabricMap, fabricDescMap, supplier: fullSupplier } = await loadSupplierDocData(header.supplier_id, items);
+
+  /* THE SOFA ARTWORK IS FETCHED HERE, NOT PASSED IN (2026-08-28). Five surfaces
+     print this document and only one of them was passing `sofaPhotos`, so the
+     same PO looked different depending on which button raised it — the owner
+     found it by printing three and asking why they did not match. A caller that
+     must remember to pass something is a caller that will forget; a sixth one
+     would have forgotten too.
+
+     `opts.sofaPhotos` still wins when supplied, so a caller that already holds
+     the map (the V2 detail has it from its own query) spends no second request,
+     and the tests can inject. Fail-soft: `{}` means every cell draws its
+     schematic, which is what happened before this line existed. */
+  const sofaArt = opts?.sofaPhotos ?? await loadSofaCompartmentArtForPrint();
 
   /* Printed row order, resolved BEFORE any drawing: the ITEM PHOTOS block at
      the page bottom is keyed by the table's row positions and the photo bytes
@@ -710,7 +724,7 @@ async function renderPurchaseOrderInto(
         rowTop += 6;
       }
       const dx = margin + col * (DIAGRAM_W + GAP_X);
-      const drawn = drawSofaLayout(doc, sofa.cells, sofa.depth, dx, rowTop, DIAGRAM_W, DIAGRAM_H, opts?.sofaPhotos);
+      const drawn = drawSofaLayout(doc, sofa.cells, sofa.depth, dx, rowTop, DIAGRAM_W, DIAGRAM_H, sofaArt);
       // Caption: model + SO no, wrapped to the diagram width.
       doc.setFont('helvetica', 'normal'); doc.setFontSize(6.5); doc.setTextColor(80);
       const capParts = [sofa.model, sofa.soNo].filter(Boolean);
