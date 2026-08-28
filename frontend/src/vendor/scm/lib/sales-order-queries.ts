@@ -1013,36 +1013,100 @@ function blobToDataUrl(blob: Blob): Promise<string | null> {
  * Per-compartment best-effort: anything that cannot be resolved, fetched or
  * measured is simply absent from the map and the engine draws that one cell's
  * schematic. */
-/* THE PRINT PATH LOADS ITS OWN ART — one lookup, not five call sites.
+/* THE PRINT PATH LOADS ITS OWN ART — one lookup, not five call sites, and it
+ * does NOT depend on the stored config carrying an imageKey.
  *
- * WHY THIS EXISTS (owner, 2026-08-28, comparing three printed POs: 「为什么感觉
- * 不是全部都一样的？」). Five surfaces print a Purchase Order — the V2 detail, the
- * EDIT page, two list exports and the right-click document-chain print — and
- * only ONE of them passed `sofaPhotos`. The other four silently drew the
- * schematic, so the same delivery order looked different depending on which
- * button raised it. Passing the map at every call site is the arrangement that
- * produced the bug; a sixth caller would have reproduced it.
+ * WHY IT IS KEYED BY THE CODES THE SHEET NEEDS (owner, 2026-08-28, still looking
+ * at a schematic after two fixes: 「还是一样的问题啊」). The earlier version walked
+ * `sofaCompartmentMeta` and used only entries that HAD an `imageKey`. The stored
+ * config has none: `seedCompartmentMeta` in Products.tsx supplies the default
+ * `sofa-modules/<id>.svg` CLIENT-SIDE, so the Maintenance list shows a thumbnail
+ * for every compartment while the database holds nothing. Two places, one
+ * default, and only one of them had it — which is why the owner could see the
+ * pictures on screen and never on paper, and why neither of us was wrong.
  *
- * The generator therefore fetches it itself when the caller did not supply one.
- * That is the same shape as the supplier/fabric lookup the PO print already does
- * at print time (`loadSupplierDocData`), so it is not a new kind of thing.
+ * So the default is derived from the CODE rather than looked up: a compartment's
+ * code IS the name of its artwork. The stored config is consulted only for an
+ * OVERRIDE — an uploaded photo, or an external URL somebody typed in. A missing
+ * config is now a non-event rather than the difference between a picture and a
+ * drawing.
  *
- * Fail-soft the whole way: a failed config read returns `{}` and every cell
- * draws its schematic, exactly as before. A print must never fail for want of a
- * picture. */
-export async function loadSofaCompartmentArtForPrint(): Promise<Record<string, string>> {
+ * Fail-soft throughout: anything that cannot be resolved, fetched or measured is
+ * simply absent, and that cell draws its schematic. A print must never fail for
+ * want of a picture. */
+/* How long the whole artwork lookup may take before the sheet prints without it.
+   Generous enough for a warehouse connection, short enough that nobody stares at
+   a blank tab wondering whether Print worked. */
+const ART_DEADLINE_MS = 6000;
+
+/** Resolve `p`, or `fallback` if it has not settled within `ms`. Never rejects. */
+async function withDeadline<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const resolved = await authedFetch<{ data?: { sofaCompartmentMeta?: Record<string, { imageKey?: string }> } }>(
-      '/maintenance-config/resolved?scope=master',
-    );
-    /* `resolved` itself is non-optional by TYPE — authedFetch returns T — and
-       the ratchet is right to say so. `data` stays optional because the
-       endpoint really can answer with no config yet (a fresh company), and
-       loadSofaCompartmentPhotos treats undefined as "draw the schematics". */
-    return await loadSofaCompartmentPhotos(resolved.data?.sofaCompartmentMeta);
-  } catch {
-    return {};
+    return await Promise.race([
+      p.catch(() => fallback),
+      new Promise<T>((resolve) => { timer = setTimeout(() => resolve(fallback), ms); }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
   }
+}
+
+export async function loadSofaCompartmentArtForPrint(
+  codes: readonly string[],
+): Promise<Record<string, string>> {
+  /* `String(c)` rather than `c ?? ''` — the array is `readonly string[]`, so the
+     compiler is right that the coalesce is dead. String() still guards a stray
+     non-string arriving from untyped cell data at runtime. */
+  const wanted = [...new Set(codes.map((c) => String(c).trim()).filter(Boolean))];
+  if (wanted.length === 0) return {};
+
+  /* The override map, best-effort AND TIME-BOUNDED. A company with no config
+     yet, a failed read, or a slow one all mean the same thing: every code falls
+     back to its bundled art.
+
+     THE DEADLINE IS THE POINT. Artwork is decoration on a document whose job is
+     to tell a supplier what to build — a print must never sit waiting for it.
+     CI found this the honest way: the PO sofa test hung for fifteen seconds on a
+     fetch that never answered, which is exactly what a purchaser on a bad
+     connection would have experienced with no test to catch it. */
+  const meta = await withDeadline(
+    (async () => {
+      const resolved = await authedFetch<{ data?: { sofaCompartmentMeta?: Record<string, { imageKey?: string }> } }>(
+        '/maintenance-config/resolved?scope=master',
+      );
+      return resolved.data?.sofaCompartmentMeta ?? {};
+    })(),
+    ART_DEADLINE_MS,
+    {} as Record<string, { imageKey?: string }>,
+  );
+
+  const out: Record<string, string> = {};
+  /* The per-code loads share one deadline as well: thirty compartments each
+     waiting on their own timeout would still be thirty times too long. */
+  await withDeadline(Promise.all(wanted.map(async (code) => {
+    try {
+      /* An UPLOADED override needs the session; anything else is a plain file
+         on this origin and must NOT carry a bearer token. Absent override →
+         `sofa-modules/<code>` is the seed, exactly what the Maintenance list
+         shows. */
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- a Record index is typed as always present and is not; `meta` comes off the wire and carries an entry only for a compartment somebody overrode, which is the common case for NONE of them.
+      const key = meta[code]?.imageKey || `sofa-modules/${code}`;
+      const url = resolveCompartmentArtUrl(code, key, API_URL);
+      if (!url) return;
+      if (url.startsWith(`${API_URL}/`)) {
+        const blob = await fetchSofaCompartmentPhotoBlob(code, key);
+        const dataUrl = await blobToDataUrl(blob);
+        if (dataUrl) out[code] = dataUrl;
+        return;
+      }
+      const art = await loadCompartmentArt(url);
+      if (art) out[code] = art.dataUrl;
+    } catch {
+      /* this one cell draws its schematic */
+    }
+  })), ART_DEADLINE_MS, [] as unknown[]);
+  return out;
 }
 
 export async function loadSofaCompartmentPhotos(

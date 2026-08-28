@@ -878,6 +878,23 @@ undecodable format skips that photo, never the document.
 > The encoder never UPSCALES — a 300px source re-encoded at 1536 is the same
 > 300px of detail in nine times the bytes.
 
+> **THE COMPARTMENT DEFAULT IS DERIVED FROM THE CODE, NOT READ FROM CONFIG
+> (2026-08-28).** `loadSofaCompartmentArtForPrint(codes)` takes the module codes
+> THIS sheet needs and falls back to `sofa-modules/<code>`; the stored
+> `sofaCompartmentMeta` is consulted only for an OVERRIDE (an uploaded photo, or
+> a typed URL).
+>
+> It has to work that way because the stored config carries NO imageKey for the
+> defaults: `seedCompartmentMeta` in `Products.tsx` supplies them CLIENT-SIDE at
+> render time, so the Maintenance list shows a picture for every compartment
+> while the database holds nothing. The print path read the stored value, found
+> nothing, and drew schematics — pictures on screen, drawings on paper, no error
+> anywhere, and both observations true. `docs/bugs/0561-…`.
+>
+> **`seedCompartmentMeta` is still a second declaration of the same default** and
+> should move to the shared library both surfaces import. Today they agree only
+> because both happen to land on `sofa-modules/<code>`.
+
 > **FIVE BUTTONS PRINT THIS DOCUMENT; THERE IS ONE OF THE DOCUMENT (2026-08-28).**
 > The owner printed three POs and asked why they did not match, then asked the
 > question that names the confusion: 「我的 PO 的 documentation 不是应该只有一个

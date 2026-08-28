@@ -259,18 +259,7 @@ async function renderPurchaseOrderInto(
      endpoint embeds only 7 fields — no fax / attention / payment_terms). */
   const { skuMap, fabricMap, fabricDescMap, supplier: fullSupplier } = await loadSupplierDocData(header.supplier_id, items);
 
-  /* THE SOFA ARTWORK IS FETCHED HERE, NOT PASSED IN (2026-08-28). Five surfaces
-     print this document and only one of them was passing `sofaPhotos`, so the
-     same PO looked different depending on which button raised it — the owner
-     found it by printing three and asking why they did not match. A caller that
-     must remember to pass something is a caller that will forget; a sixth one
-     would have forgotten too.
 
-     `opts.sofaPhotos` still wins when supplied, so a caller that already holds
-     the map (the V2 detail has it from its own query) spends no second request,
-     and the tests can inject. Fail-soft: `{}` means every cell draws its
-     schematic, which is what happened before this line existed. */
-  const sofaArt = opts?.sofaPhotos ?? await loadSofaCompartmentArtForPrint();
 
   /* Printed row order, resolved BEFORE any drawing: the ITEM PHOTOS block at
      the page bottom is keyed by the table's row positions and the photo bytes
@@ -707,6 +696,21 @@ async function renderPurchaseOrderInto(
 
     let col = 0;
     let rowTop = lastY;
+    /* THE ARTWORK IS FETCHED HERE, NOT PASSED IN, and only for the codes THIS
+       sheet needs (2026-08-28). Five surfaces print a Purchase Order and only
+       one of them was passing `sofaPhotos`, so the same document looked
+       different depending on which button raised it — the owner found it by
+       printing three and asking why they did not match. A caller that must
+       remember to pass something is a caller that will forget.
+
+       Keyed by module code because the code IS the artwork's name: the stored
+       config carries no imageKey for the defaults (Products.tsx seeds those
+       client-side), so a config lookup alone found nothing and drew schematics.
+       See docs/bugs/0561. */
+    const sofaArt = opts?.sofaPhotos
+      ?? await loadSofaCompartmentArtForPrint(
+        distinctSofas.flatMap((s2) => s2.cells.map((c) => c.moduleId)),
+      );
     for (const sofa of distinctSofas) {
       // New row when the current row is full.
       if (col >= perRow) {
