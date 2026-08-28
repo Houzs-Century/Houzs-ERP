@@ -803,14 +803,17 @@ column, read-only strip — see §8) and the printed PO carries them too:
 
 **Line photos on the printed PO (owner mockup, 2026-08).**
 `frontend/src/vendor/scm/lib/purchase-order-pdf.ts` prints ONE
-"ITEM PHOTOS · 照片对照" block in the page-bottom zone — beside the
+"ITEM PHOTOS" block in the page-bottom zone — beside the
 "Sofa layout — front faces TV" section when the last diagram row leaves usable
 width, wrapping below it otherwise; a PO with no sofa renders the block alone,
-full width. Table rows carry NO image; a line with `photo_urls` appends " (图)"
-to its description instead. Groups are keyed by row position in the items table
-(`#3`, or `#2-4` when consecutive rows carry a deep-equal photo list — a sofa
-set's shared build photo prints once), with the SUPPLIER code beside the chip
-and ~26mm square thumbnails, max 6 per row; a group never splits across pages.
+full width. (Owner print QA 2026-08-28: generated strings are English-only —
+CJK in generated text re-fonted every photo-carrying PDF — and the labels and
+sizes here are the v2 ruling.) Table rows carry NO image; a line with
+`photo_urls` appends " (photo)" to its description instead. Groups are keyed by
+row position in the items table (`Item 3`, or `Item 2-4` when consecutive rows
+carry a deep-equal photo list — a sofa set's shared build photo prints once),
+with the SUPPLIER code beside the chip and ~52mm square thumbnails, max 3 per
+row; a group never splits across pages.
 The logic is the shared `frontend/src/vendor/scm/lib/pdf-item-photos.ts`
 module the SO PDF also prints through (unit-tested beside it). Only `.thumb`
 siblings are fetched (never originals — PDF size) via the authed PO proxy,

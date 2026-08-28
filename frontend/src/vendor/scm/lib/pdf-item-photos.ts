@@ -1,15 +1,25 @@
 // ----------------------------------------------------------------------------
 // pdf-item-photos — line photos on printed documents (SO + PO PDFs).
 //
-// Owner-approved mockup (2026-08): a table row carries NO image — a line that
-// has photos appends " (图)" to its first description line, and ONE
-// "ITEM PHOTOS · 照片对照" block per document maps printed row numbers to
-// their reference shots. Each group = a row-number chip (#1, or a range #2-4
-// when consecutive rows share the exact same photo set — the sofa-set build
-// photo prints ONCE per set), a small item/supplier code, and uniform ~26mm
-// square thumbnails (max 6 per row, then wrap). Groups flow left-to-right and
-// wrap; a group NEVER splits across pages — when it does not fit, the whole
-// group moves to the next page under a continued heading.
+// Owner-approved mockup (2026-08) + his live-print QA (2026-08-28): a table
+// row carries NO image — a line that has photos appends " (photo)" to its
+// first description line, and ONE "ITEM PHOTOS" block per document maps
+// printed row numbers to their reference shots. Each group = a row-number
+// chip ("Item 1", or a range "Item 2-4" when consecutive rows share the exact
+// same photo set — the sofa-set build photo prints ONCE per set), a small
+// item/supplier code, and uniform ~52mm square thumbnails (max 3 per row,
+// then wrap). Groups flow left-to-right and wrap; a group NEVER splits across
+// pages — when it does not fit, the whole group moves to the next page under
+// a continued heading.
+//
+// EVERY generated string here is deliberately WinAnsi-only. The v1 heading
+// carried 「照片对照」 and the marker 「(图)」, and ensurePdfCjkFont's
+// whole-document family redirect then swapped EVERY photo-carrying PDF —
+// including pure-English ones — off helvetica onto the CJK face. The owner
+// caught it on his first live print ("为什么是这样中文字的"). English-only
+// generated text keeps documents without Chinese CONTENT on their normal
+// face; documents whose own data carries Chinese still switch, as they
+// always did.
 //
 // This module holds the pure logic (grouping, packing, page-fit math) plus the
 // fetch/transcode/draw plumbing, so sales-order-pdf.ts and
@@ -28,31 +38,27 @@
 // embedding phone-camera originals would balloon the PDF.
 // ----------------------------------------------------------------------------
 
-/** Appended to a photo-carrying line's first description line. */
-export const PHOTO_MARKER = ' (图)';
+/** Appended to a photo-carrying line's first description line. WinAnsi only —
+ *  see the header: one CJK char here re-fonts every photo-carrying PDF. */
+export const PHOTO_MARKER = ' (photo)';
 
-export const ITEM_PHOTOS_HEADING = 'ITEM PHOTOS · 照片对照';
-export const ITEM_PHOTOS_HEADING_CONT = 'ITEM PHOTOS · 照片对照 (cont.)';
+export const ITEM_PHOTOS_HEADING = 'ITEM PHOTOS';
+export const ITEM_PHOTOS_HEADING_CONT = 'ITEM PHOTOS (cont.)';
 
-/* Every CJK glyph this feature can print. Pass to ensurePdfCjkFont alongside
-   the document payload whenever photo groups exist — the marker and heading
-   are GENERATED text, so the payload walk alone would never see them and
-   helvetica would paint them as mojibake. */
-export const ITEM_PHOTOS_CJK_TEXT = `${ITEM_PHOTOS_HEADING}${PHOTO_MARKER}`;
-
-// Layout constants (mm). Thumbs are ~26mm squares with ~2mm gaps per the
-// mockup; six per row, then wrap within the group.
-export const THUMB_MM = 26;
+// Layout constants (mm). Owner live-print QA 2026-08-28: v1's 26mm tiles were
+// "太小了 我要大一倍" — 52mm squares now, so a row of THREE fills the 182mm
+// A4 measure (3 x 52 + 2 x 2 = 160) the way six 26mm tiles used to.
+export const THUMB_MM = 52;
 export const THUMB_GAP_MM = 2;
-export const MAX_THUMBS_PER_ROW = 6;
+export const MAX_THUMBS_PER_ROW = 3;
 /** Chip + code line above a group's thumbnails. */
 export const GROUP_HEADER_MM = 5;
-/** Block heading line ("ITEM PHOTOS · 照片对照"). */
+/** Block heading line ("ITEM PHOTOS"). */
 export const HEADING_MM = 7;
 export const GROUP_GAP_X_MM = 6;
 export const GROUP_GAP_Y_MM = 4;
 /** Narrowest beside-zone worth using: the heading + a one-thumb group. */
-export const MIN_SIDE_W_MM = 48;
+export const MIN_SIDE_W_MM = THUMB_MM + 2;
 
 /** Normalise a photo_urls-ish value to the list of non-empty R2 keys. */
 export function photoKeysOf(v: unknown): string[] {
@@ -74,7 +80,9 @@ export type PhotoGroupInput = {
 };
 
 export type PhotoGroup = {
-  /** Printed row-number chip: "#3", or "#2-4" for a merged consecutive run. */
+  /** Printed row-number chip: "Item 3", or "Item 2-4" for a merged run —
+   *  the owner's wording ("不要放#1 放item 1"), matching the table's own
+   *  row numbers. */
   chip: string;
   code: string;
   photoKeys: string[];
@@ -115,7 +123,7 @@ export function buildPhotoGroups(rows: readonly PhotoGroupInput[]): PhotoGroup[]
     let j = i;
     while (j + 1 < rows.length && sameKeys(rows[j + 1]!.photoKeys, keys)) j += 1;
     groups.push({
-      chip: j > i ? `#${i + 1}-${j + 1}` : `#${i + 1}`,
+      chip: j > i ? `Item ${i + 1}-${j + 1}` : `Item ${i + 1}`,
       code: rangeLabel(rows.slice(i, j + 1).map((r) => r.code)),
       photoKeys: [...keys],
     });
@@ -245,9 +253,9 @@ export function sniffImageMime(
   return null;
 }
 
-/** Rendered pixel size of an embedded thumb (square). 320px across 26mm is
- *  ~313dpi — crisp in print, ~15-30 kB per JPEG in the file. */
-export const PDF_THUMB_PX = 320;
+/** Rendered pixel size of an embedded thumb (square). 512px across 52mm is
+ *  ~250dpi — crisp in print, ~30-70 kB per JPEG in the file. */
+export const PDF_THUMB_PX = 512;
 
 /**
  * Decode any browser-displayable image blob and re-encode it as a small
