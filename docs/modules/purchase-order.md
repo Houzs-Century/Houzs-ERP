@@ -854,6 +854,30 @@ undecodable format skips that photo, never the document.
 > The encoder never UPSCALES — a 300px source re-encoded at 1536 is the same
 > 300px of detail in nine times the bytes.
 
+> **FIVE BUTTONS PRINT THIS DOCUMENT; THERE IS ONE OF THE DOCUMENT (2026-08-28).**
+> The owner printed three POs and asked why they did not match, then asked the
+> question that names the confusion: 「我的 PO 的 documentation 不是应该只有一个
+> documentation 吗？」 There is. `purchase-order-pdf.ts` is the only generator and
+> the layout has never been duplicated. What there are five of is CALLERS —
+> `PurchaseOrderDetailV2`, `PurchaseOrderDetail` (the edit page),
+> `PurchaseOrdersListV2` (two exports) and `printDocumentPdf` (the right-click
+> chain print) — and the sofa artwork was an OPTIONAL ARGUMENT each had to
+> remember. Only the V2 detail did, so the other four printed the fallback
+> schematic.
+>
+> **The generator now fetches the artwork itself**
+> (`loadSofaCompartmentArtForPrint`, beside the supplier/fabric lookup it already
+> does at print time). A supplied `opts.sofaPhotos` still wins, so the V2 detail
+> spends no second request. Passing it at five call sites is the arrangement that
+> produced the defect; a sixth caller would have reproduced it.
+> `po-print-paths-draw-the-sofa.test.ts` COUNTS the callers that pass the map, so
+> it fails when a fifth appears. `docs/bugs/0556-…`.
+>
+> Note for diagnosis: the plan is drawn at PRINT time and nothing about it is
+> stored on the document, so an old PO and a new one print identically — which is
+> what ruled out the data when the owner asked whether only new orders were
+> affected.
+
 > **THE SOFA PLAN DRAWS THE OWNER'S OWN ARTWORK, POS'S WAY (2026-08-28).**
 > `sofa-compartment-art.ts` resolves the THREE shapes an `imageKey` takes — an
 > uploaded object, the seeded `sofa-modules/<code>` bundled art, or an http URL.
