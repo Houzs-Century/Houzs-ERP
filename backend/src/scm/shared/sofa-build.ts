@@ -1698,11 +1698,18 @@ export const cellsToPoSkus = (cells: Cell[], depth: Depth): PoSkuLine[] => {
  * Stable: two LHF pieces keep the order the caller gave them, because nothing
  * distinguishes them and the caller's order is then the only evidence there is.
  */
-const SOFA_HAND_RANK: Record<'LHF' | 'MID' | 'RHF', number> = { LHF: 0, MID: 1, RHF: 2 };
+/* THE ORDER, DECLARED ONCE. It was a rank map plus a separate
+   `['LHF','MID','RHF']` walk below, which `audit:duplicated-decisions` flagged
+   and was right to: two statements of one sequence, and the walk is the half
+   that would silently disagree if a hand were ever added. The walk now reads
+   the map. */
+const SOFA_HANDS = ['LHF', 'MID', 'RHF'] as const;
+type SofaHand = (typeof SOFA_HANDS)[number];
+const SOFA_HAND_RANK = new Map<SofaHand, number>(SOFA_HANDS.map((h, i) => [h, i]));
 
 /** Which end of a sofa a module code belongs to, by the supplier convention. */
-export const sofaModuleHand = (moduleId: string): 'LHF' | 'MID' | 'RHF' => {
-  const id = String(moduleId ?? '').toUpperCase();
+export const sofaModuleHand = (moduleId: string): SofaHand => {
+  const id = String(moduleId).toUpperCase();
   if (id.includes('(LHF)')) return 'LHF';
   if (id.includes('(RHF)')) return 'RHF';
   return 'MID';
@@ -1729,20 +1736,21 @@ export const orderSofaCellsForNewLines = (cells: Cell[], depth: Depth): Cell[] =
   const ranked = cells
     .map((c, i) => ({ c, i }))
     .sort((a, b) =>
-      (SOFA_HAND_RANK[sofaModuleHand(a.c.moduleId)] - SOFA_HAND_RANK[sofaModuleHand(b.c.moduleId)])
+      ((SOFA_HAND_RANK.get(sofaModuleHand(a.c.moduleId)) ?? 1)
+        - (SOFA_HAND_RANK.get(sofaModuleHand(b.c.moduleId)) ?? 1))
       || (a.i - b.i));
 
   /* Within one hand — two LHF pieces, or several armless middles — the codes
      say nothing, so real geometry breaks the tie when there is any and the
      caller's own order does when there is not. */
-  const byHand = new Map<'LHF' | 'MID' | 'RHF', Cell[]>();
+  const byHand = new Map<SofaHand, Cell[]>();
   for (const { c } of ranked) {
     const h = sofaModuleHand(c.moduleId);
     const list = byHand.get(h);
     if (list) list.push(c); else byHand.set(h, [c]);
   }
   const out: Cell[] = [];
-  for (const hand of ['LHF', 'MID', 'RHF'] as const) {
+  for (const hand of SOFA_HANDS) {
     const group = byHand.get(hand);
     if (!group) continue;
     const placed = group.every(
