@@ -37,11 +37,32 @@ describe('one sheet, whichever button raised it', () => {
     expect(GEN).toContain('loadSofaCompartmentArtForPrint');
     /* Supplied wins, so the caller that already holds the map spends no second
        request — but absence is a fetch, never a blank. */
-    expect(GEN).toContain('opts?.sofaPhotos ?? await loadSofaCompartmentArtForPrint()');
+    expect(GEN).toContain('opts?.sofaPhotos');
+    expect(GEN).toContain('?? await loadSofaCompartmentArtForPrint(');
+    /* KEYED BY THE CODES THIS SHEET NEEDS, not by walking the stored config.
+       The config carries no imageKey for the defaults — Products.tsx seeds
+       those client-side — so a config-only lookup found nothing and drew
+       schematics while the Maintenance list showed pictures. */
+    expect(GEN).toContain('cells.map((c) => c.moduleId)');
     /* And the drawing reads the RESOLVED value, not the raw option — passing
        `opts?.sofaPhotos` straight to the engine is the original bug. */
     expect(GEN).toContain('DIAGRAM_H, sofaArt)');
     expect(GEN).not.toContain('DIAGRAM_H, opts?.sofaPhotos)');
+  });
+
+  test('an EMPTY config still draws artwork — the code IS the artwork name', () => {
+    /* THE BUG THAT SURVIVED TWO FIXES. The loader used to walk
+       `sofaCompartmentMeta` and use only entries carrying an `imageKey`. The
+       stored config has none: Products.tsx's `seedCompartmentMeta` supplies the
+       default CLIENT-SIDE, so the Maintenance list showed a thumbnail for every
+       compartment while the database held nothing — pictures on screen, drawings
+       on paper, and neither observation wrong.
+
+       The default is now DERIVED from the code, and the config is consulted only
+       for an override. */
+    const LOADER = read('./sales-order-queries.ts');
+    expect(LOADER).toContain('`sofa-modules/${code}`');
+    expect(LOADER).toContain("meta[code]?.imageKey ||");
   });
 
   test('every caller still compiles without knowing about artwork', () => {
