@@ -907,3 +907,61 @@ export async function fetchPoItemPhotoBlob(
     photoKey,
   );
 }
+
+/* Sofa Compartment hero photo — a DIFFERENT wire than the per-line item photos
+   above: keyed by compartment CODE, served by the public
+   /maintenance-config/sofa-compartments/:code/photo/:key proxy (singular
+   "photo"), so it does not go through fetchItemPhotoBlobAt (which appends
+   "/photos/:key"). Used to paint the real compartment picture into the PO's
+   sofa-layout schematic. The auth header is sent when present but the route is
+   public, so a signed-out preview still resolves. */
+export async function fetchSofaCompartmentPhotoBlob(code: string, photoKey: string): Promise<Blob> {
+  let signal: AbortSignal | undefined;
+  try { signal = AbortSignal.timeout(PHOTO_PROXY_TIMEOUT_MS); } catch { signal = undefined; }
+  const token = readAuthToken();
+  const res = await correlatedFetch(
+    `${API_URL}/maintenance-config/sofa-compartments/${encodeURIComponent(code)}`
+      + `/photo/${encodeURIComponent(photoKey)}`,
+    { headers: { ...(token ? { authorization: `Bearer ${token}` } : {}), ...companyHeader() }, signal },
+  );
+  if (!res.ok) {
+    const text = await res.text().catch(() => '<no body>');
+    throw new PhotoProxyError(res.status, humanApiError(res.status, text));
+  }
+  return consumeCorrelated(res, () => res.blob());
+}
+
+function blobToDataUrl(blob: Blob): Promise<string | null> {
+  return new Promise((resolve) => {
+    const r = new FileReader();
+    r.onload = () => resolve(typeof r.result === 'string' ? r.result : null);
+    r.onerror = () => resolve(null);
+    r.readAsDataURL(blob);
+  });
+}
+
+/* Fetch every sofa-compartment hero photo into a `{ code: dataURL }` map for the
+   PO PDF's sofa-layout schematic (drawSofaLayout's optional `photos` arg). Given
+   the maintenance config's `sofaCompartmentMeta`, it fetches only compartments
+   that HAVE an uploaded photo, in parallel, and simply omits any that fail — the
+   PDF engine falls back to its drawn schematic for a missing code, so a partial
+   or empty map is safe. A newly-uploaded compartment photo appears on the PO the
+   next time it is printed, with no code change. */
+export async function loadSofaCompartmentPhotos(
+  meta: Record<string, { imageKey?: string }> | undefined | null,
+): Promise<Record<string, string>> {
+  if (!meta) return {};
+  const withKey = Object.entries(meta)
+    .filter((e): e is [string, { imageKey: string }] => typeof e[1].imageKey === 'string' && e[1].imageKey.length > 0);
+  const out: Record<string, string> = {};
+  await Promise.all(withKey.map(async ([code, m]) => {
+    try {
+      const blob = await fetchSofaCompartmentPhotoBlob(code, m.imageKey);
+      const dataUrl = await blobToDataUrl(blob);
+      if (dataUrl) out[code] = dataUrl;
+    } catch {
+      /* skip this compartment — the engine draws its schematic instead */
+    }
+  }));
+  return out;
+}
