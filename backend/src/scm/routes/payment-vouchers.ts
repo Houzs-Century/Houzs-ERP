@@ -406,17 +406,25 @@ export const createPaymentVoucherHandler = async (c: any) => {
   if (hErr) return c.json({ error: 'insert_failed', reason: hErr.message }, 500);
   const h = header as unknown as { id: string; pv_number: string };
   const auditActor = c.get('houzsUser');
+  /* Compensating delete for the failure paths below — scoped like every other
+     PV write when the company is known (it stamped the row one insert ago);
+     the fresh unique id carries the delete either way. */
+  const rollbackHeader = () => {
+    const del = sb.from('payment_vouchers').delete().eq('id', h.id);
+    const coId = activeCompanyId(c);
+    return coId == null ? del : scopeToCompanyId(del, coId);
+  };
 
   const rowsWithId = built.rows.map((r) => ({ ...r, pv_id: h.id }));
   const { error: lErr } = await sb.from('payment_voucher_lines').insert(stampCompany(rowsWithId, c));
-  if (lErr) { await sb.from('payment_vouchers').delete().eq('id', h.id); return c.json({ error: 'lines_insert_failed', reason: lErr.message }, 500); }
+  if (lErr) { await rollbackHeader(); return c.json({ error: 'lines_insert_failed', reason: lErr.message }, 500); }
 
   // PV→PI settlement links (0202) — persist the allocations (compensating-delete
   // the whole PV on failure). They settle paid_sen only on POST, not here.
   if (allocBuilt.rows.length > 0) {
     const allocRows = allocBuilt.rows.map((r) => ({ ...r, pv_id: h.id }));
     const { error: aErr } = await sb.from('pv_allocations').insert(stampCompany(allocRows, c));
-    if (aErr) { await sb.from('payment_vouchers').delete().eq('id', h.id); return c.json({ error: 'allocations_insert_failed', reason: aErr.message }, 500); }
+    if (aErr) { await rollbackHeader(); return c.json({ error: 'allocations_insert_failed', reason: aErr.message }, 500); }
   }
 
   /* Recorded only after every compensating-delete path above is behind us, so
