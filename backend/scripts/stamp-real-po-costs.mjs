@@ -111,6 +111,15 @@ async function main() {
   const payload = JSON.parse(
     zlib.gunzipSync(fs.readFileSync(path.join(here, "data", "ac-invoice-prices.json.gz")))
       .toString("utf8").replace(/^﻿/, ""));
+  /* Invoice prices move in the book daily. Same trap as docs/bugs/0560/0561:
+     a checkout gives the file a fresh mtime while its content ages — the only
+     honest age is the generatedAt inside it, and a printed date nobody reads
+     is not a guard. Regenerate with export-ac-invoice-prices.py. */
+  const ageDays = (Date.now() - new Date(payload.generatedAt).getTime()) / 86400000;
+  if (!(ageDays <= 2)) {
+    log(`REFUSED: ac-invoice-prices.json.gz was generated ${payload.generatedAt} (${ageDays.toFixed(1)} days ago). Re-export it first.`);
+    process.exit(2);
+  }
   const acToErp = buildAcToErp(parseCsv(
     fs.readFileSync(path.join(here, "data", "autocount-erp-mapping-1561.csv"), "utf8")));
   const idx = buildPriceIndex(payload.rows, acToErp);
