@@ -1,5 +1,6 @@
 // Vendored SLICE of apps/backend/src/lib/flow-queries.ts — ONLY the Sales-Order
 import { writeFailed } from './mutation-error';
+import { resolveCompartmentArtUrl, loadCompartmentArt } from './sofa-compartment-art';
 // read / detail / status / mutation hooks the vendored SO list + detail pages
 // use. The full source module (~2000 lines) carries the entire SO/DO/SI/DR
 // query surface; the DO/SI/DR hooks are intentionally NOT vendored here.
@@ -994,25 +995,45 @@ function blobToDataUrl(blob: Blob): Promise<string | null> {
   });
 }
 
-/* Fetch every sofa-compartment hero photo into a `{ code: dataURL }` map for the
-   PO PDF's sofa-layout schematic (drawSofaLayout's optional `photos` arg). Given
-   the maintenance config's `sofaCompartmentMeta`, it fetches only compartments
-   that HAVE an uploaded photo, in parallel, and simply omits any that fail — the
-   PDF engine falls back to its drawn schematic for a missing code, so a partial
-   or empty map is safe. A newly-uploaded compartment photo appears on the PO the
-   next time it is printed, with no code change. */
+/* Fetch every sofa compartment's ART into a `{ code: dataURL }` map for the PO
+   PDF's plan view.
+ *
+ * REWRITTEN 2026-08-28 to follow POS, at the owner's instruction. The previous
+ * version fetched every imageKey through the uploaded-photo API, which is one of
+ * the THREE shapes a key can take and not the common one: the seeded default is
+ * `sofa-modules/<code>.svg`, bundled art served from /public. Every default
+ * compartment 404'd, the catch below swallowed it, and the sheet drew its own
+ * schematic — which is what the owner was looking at when he said the plan still
+ * did not look like his sofas.
+ *
+ * The art also arrives PADDED inside a 1024² frame, so it is cropped to its
+ * silhouette before it is handed to jsPDF — POS's technique, ported in
+ * sofa-compartment-art.ts, without which the modules tile small and gappy.
+ *
+ * Per-compartment best-effort: anything that cannot be resolved, fetched or
+ * measured is simply absent from the map and the engine draws that one cell's
+ * schematic. */
 export async function loadSofaCompartmentPhotos(
   meta: Record<string, { imageKey?: string }> | undefined | null,
 ): Promise<Record<string, string>> {
   if (!meta) return {};
-  const withKey = Object.entries(meta)
+  const entries = Object.entries(meta)
     .filter((e): e is [string, { imageKey: string }] => typeof e[1].imageKey === 'string' && e[1].imageKey.length > 0);
   const out: Record<string, string> = {};
-  await Promise.all(withKey.map(async ([code, m]) => {
+  await Promise.all(entries.map(async ([code, m]) => {
     try {
-      const blob = await fetchSofaCompartmentPhotoBlob(code, m.imageKey);
-      const dataUrl = await blobToDataUrl(blob);
-      if (dataUrl) out[code] = dataUrl;
+      const url = resolveCompartmentArtUrl(code, m.imageKey, API_URL);
+      if (!url) return;
+      /* An UPLOADED photo needs the session; a bundled one is a plain static
+         file on this origin and must NOT carry a bearer token. */
+      if (url.startsWith(`${API_URL}/`)) {
+        const blob = await fetchSofaCompartmentPhotoBlob(code, m.imageKey);
+        const dataUrl = await blobToDataUrl(blob);
+        if (dataUrl) out[code] = dataUrl;
+        return;
+      }
+      const art = await loadCompartmentArt(url);
+      if (art) out[code] = art.dataUrl;
     } catch {
       /* skip this compartment — the engine draws its schematic instead */
     }

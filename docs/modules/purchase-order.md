@@ -832,6 +832,46 @@ siblings are fetched (never originals — PDF size) via the authed PO proxy,
 keyed by the header's `id`; per-photo best-effort — a failed fetch or an
 undecodable format skips that photo, never the document.
 
+> **THE TILE IS SQUARE; THE PHOTO IS NOT CROPPED TO IT (2026-08-28).** Owner:
+> 「确保一下，当我就算 zoom 大这个照片，它也不会变模糊」. Two things changed
+> together and `docs/bugs/0554-…` carries the arithmetic:
+>
+> · `PDF_THUMB_PX` 512 → **1536**. 512 across a 52mm tile is ~250dpi, chosen for
+> PAPER and fine there — but a reader zooming to 400% on a screen is asking for
+> ~786 device pixels, so the photo softened exactly when somebody leaned in to
+> check a detail. That is the moment these photos exist for: a purchaser
+> photographs a tape measure against a panel. The cost is real and was accepted:
+> ~9× the pixels, a tile around 200-500 kB instead of 30-70 kB.
+>
+> · The transcode used to force a square by cropping to the shorter side, so
+> every PORTRAIT photo lost its top and bottom — and a tape-measure photo is
+> portrait BECAUSE it is a tape measure. It now keeps its aspect ratio,
+> letterboxed inside the still-52mm tile, so the grid and every height
+> calculation are untouched. `PdfPhotoImage` carries `w`/`h` for that: without
+> the encoded dimensions a portrait photo in a square tile comes out squashed,
+> which is a worse lie than the crop was.
+>
+> The encoder never UPSCALES — a 300px source re-encoded at 1536 is the same
+> 300px of detail in nine times the bytes.
+
+> **THE SOFA PLAN DRAWS THE OWNER'S OWN ARTWORK, POS'S WAY (2026-08-28).**
+> `sofa-compartment-art.ts` resolves the THREE shapes an `imageKey` takes — an
+> uploaded object, the seeded `sofa-modules/<code>` bundled art, or an http URL.
+> It previously sent all three to the uploaded-photo API, so every DEFAULT
+> compartment 404'd and the sheet drew its own schematic instead. The art is also
+> cropped to its alpha bbox before jsPDF sees it, because the files are 1024²
+> with the drawing padded inside and filling a cell with the raw file tiles the
+> modules small and gappy — POS's "2WC card bug".
+>
+> A corner sofa draws as ONE connected L (`sofa-corner-pdf.ts`, ported from POS):
+> tiling the three per-module PNGs "leaves a STEP + an INTERNAL ARM", and on a
+> supplier's sheet that step reads as a real gap.
+>
+> **NOT ported:** POS's `renderSeamlessSofa`, which joins a straight run
+> containing a power seat or a wide-arm 1B/2B. The 13 SVG-only codes fall back to
+> the drawn schematic — a drawing is visibly a drawing; a blank cell looks like a
+> missing module. `docs/bugs/0553-…`.
+
 ### Status vocabulary
 
 > **THE HOLD IS A MARKER NOW, NOT A STATUS — 2026-08-22, mig 0324.** Owner:

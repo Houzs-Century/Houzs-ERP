@@ -219,7 +219,7 @@ describe('blobToSquarePdfImage', () => {
 });
 
 describe('collectPhotoImages', () => {
-  const img: PdfPhotoImage = { dataUrl: 'data:image/jpeg;base64,x', format: 'JPEG' };
+  const img: PdfPhotoImage = { dataUrl: 'data:image/jpeg;base64,x', format: 'JPEG', w: 800, h: 800 };
   const groups: PhotoGroup[] = [
     { chip: '#1', code: 'A', photoKeys: ['a.jpg', 'shared.jpg'] },
     { chip: '#2-3', code: 'B', photoKeys: ['shared.jpg', 'bad.jpg'] },
@@ -277,7 +277,7 @@ function stubDoc(): { doc: PdfDocLike; ops: Op[] } {
 }
 
 describe('drawItemPhotosBlock', () => {
-  const img: PdfPhotoImage = { dataUrl: 'data:image/jpeg;base64,x', format: 'JPEG' };
+  const img: PdfPhotoImage = { dataUrl: 'data:image/jpeg;base64,x', format: 'JPEG', w: 800, h: 800 };
   const baseOpts = {
     margin: 14,
     contentW: 182,
