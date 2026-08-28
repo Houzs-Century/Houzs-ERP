@@ -101,12 +101,25 @@ import { THUMB_KEY_SUFFIX } from '../../../lib/imagePipeline';
    the SO detail is free on the PO detail. */
 export type LinePhotoSource = 'so' | 'po';
 
+/* Wrappers, not bare references, ON PURPOSE: a bare reference dereferences the
+   sales-order-queries module namespace while THIS module evaluates, and every
+   page test that mocks that module with a plain factory (no importOriginal
+   spread — e.g. so-v2-history-and-activity.test.tsx) makes that access THROW
+   under vitest ("No export is defined on the mock"). The pre-seam code only
+   touched the fetchers inside function bodies, i.e. at call time — these
+   wrappers keep that timing. */
 const PHOTO_FETCHERS: Record<LinePhotoSource, {
   signedUrl: (docId: string, itemId: string, photoKey: string) => Promise<PhotoUrlPayload>;
   blob: (docId: string, itemId: string, photoKey: string) => Promise<Blob>;
 }> = {
-  so: { signedUrl: fetchSoItemPhotoSignedUrl, blob: fetchSoItemPhotoBlob },
-  po: { signedUrl: fetchPoItemPhotoSignedUrl, blob: fetchPoItemPhotoBlob },
+  so: {
+    signedUrl: (d, i, k) => fetchSoItemPhotoSignedUrl(d, i, k),
+    blob: (d, i, k) => fetchSoItemPhotoBlob(d, i, k),
+  },
+  po: {
+    signedUrl: (d, i, k) => fetchPoItemPhotoSignedUrl(d, i, k),
+    blob: (d, i, k) => fetchPoItemPhotoBlob(d, i, k),
+  },
 };
 
 const SIGNED_URL_SKEW_BUFFER_MS = 30_000;
