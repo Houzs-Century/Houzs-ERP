@@ -1116,3 +1116,22 @@ Two exclusions are deliberate: an `assigned_sos` entry whose `source` is `'mrp'`
 builds NO entry (a live allocation binds nothing — the 2026-07-29 incident), and
 neither does a PRE-2026-07-31 bare-string GRN chip, which carries a number and
 no address. `document-conversion.md` §8b has both.
+
+### The PO PDF's sofa diagram draws REAL compartment photos (2026-08-28)
+
+The sofa-layout schematic on the PO PDF (`drawSofaLayout` in
+`vendor/scm/lib/sofa-layout-pdf.ts`) draws each module's real uploaded hero photo
+— the same per-code photos POS Custom Builder shows — in place of the hand-drawn
+cream rectangle, when one exists. It is an OPTIONAL overlay: a compartment with no
+uploaded photo, or one whose fetch fails, still renders the drawn schematic, so
+this is never a hard dependency and pre-existing behaviour is unchanged.
+
+Photos are keyed by compartment CODE, so a photo uploaded later in Backend → Sofa
+Compartments appears on the PO the next time it is printed, with no code change.
+The live `/scm/purchase-orders/:id` page (`PurchaseOrderDetailV2`) reads the master
+maintenance config's `sofaCompartmentMeta` and `loadSofaCompartmentPhotos`
+(`vendor/scm/lib/sales-order-queries.ts`) fetches each via the public
+`/maintenance-config/sofa-compartments/:code/photo/:key` proxy into a
+`{ code: dataURL }` map passed to `generatePurchaseOrderPdf`. Other PO print paths
+(list bulk-print, consignment, v1 detail) pass no photos and keep the schematic.
+Engine merged in #2754; wiring in #2758.

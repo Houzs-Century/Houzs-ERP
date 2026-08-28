@@ -952,7 +952,7 @@ export async function loadSofaCompartmentPhotos(
 ): Promise<Record<string, string>> {
   if (!meta) return {};
   const withKey = Object.entries(meta)
-    .filter((e): e is [string, { imageKey: string }] => typeof e[1]?.imageKey === 'string' && e[1].imageKey.length > 0);
+    .filter((e): e is [string, { imageKey: string }] => typeof e[1].imageKey === 'string' && e[1].imageKey.length > 0);
   const out: Record<string, string> = {};
   await Promise.all(withKey.map(async ([code, m]) => {
     try {
