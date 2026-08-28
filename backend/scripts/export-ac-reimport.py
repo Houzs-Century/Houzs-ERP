@@ -118,8 +118,14 @@ def write_gz(name, obj):
     return n
 
 def reload_gz(name):
-    with gzip.open(os.path.join(OUT, name), "rt", encoding="utf-8") as f:
-        return json.load(f)
+    try:
+        with gzip.open(os.path.join(OUT, name), "rt", encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        # a skipped section's receipt when OUT_DIR holds no earlier files
+        # (e.g. ONLY=<section> into a scratch OUT_DIR); the count reads 0
+        print("   (no earlier %s in OUT_DIR — skipped section left empty)" % name, flush=True)
+        return []
 
 NOW = datetime.datetime.now().isoformat(sep=" ")
 manifest = {"exported_at": NOW, "source": "%s live (read-only)" % DB, "round": "reimport-v3 2026-08-28", "files": {}}
@@ -129,9 +135,26 @@ START_AT = os.environ.get("START_AT", "so")
 if START_AT not in SECTION_ORDER:
     print("unknown START_AT %r" % START_AT, file=sys.stderr)
     sys.exit(2)
+# ONLY=<section> runs exactly that one section and touches no other file.
+# START_AT runs from a section ONWARDS — on 2026-08-28 a "refresh just the
+# dates" attempt used START_AT, re-exported the whole tail, and clobbered two
+# mid-round snapshots before being killed (restored from git). Mid-round
+# refreshes must be surgical.
+ONLY = os.environ.get("ONLY")
+if ONLY and ONLY not in SECTION_ORDER:
+    print("unknown ONLY %r" % ONLY, file=sys.stderr)
+    sys.exit(2)
+if ONLY == "ruler":
+    # the ruler summarises the so/po1/po2 sections; alone it would summarise
+    # whatever happens to be reloadable and read as a fresh census
+    print("ONLY=ruler refused — the ruler is derived; use START_AT=ruler", file=sys.stderr)
+    sys.exit(2)
 
 def want(key):
-    run = SECTION_ORDER.index(key) >= SECTION_ORDER.index(START_AT)
+    if ONLY:
+        run = key == ONLY
+    else:
+        run = SECTION_ORDER.index(key) >= SECTION_ORDER.index(START_AT)
     if not run:
         print("skip %-6s (kept from the earlier invocation)" % key, flush=True)
     return run
@@ -329,7 +352,7 @@ if want("links"):
         "ac-po-fromsodtlkey.json.gz", {"exportedAt": NOW, "source": DB, "rows": uniq}
     )
 else:
-    manifest["files"]["ac-po-fromsodtlkey.json.gz"] = len(reload_gz("ac-po-fromsodtlkey.json.gz").get("rows", []))
+    manifest["files"]["ac-po-fromsodtlkey.json.gz"] = len((reload_gz("ac-po-fromsodtlkey.json.gz") or {}).get("rows", []))
 
 # ── 12. the ruler: what is outstanding RIGHT NOW, doc numbers only ───────────
 if want("ruler"):
