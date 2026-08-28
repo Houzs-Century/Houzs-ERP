@@ -20,7 +20,7 @@
 // Pure + shared so tests pin the distribution math.
 // ----------------------------------------------------------------------------
 
-import { normalizeCompartmentCode, orderSofaCellsLeftToRight, type Rot } from './sofa-build';
+import { normalizeCompartmentCode, orderSofaCellsForNewLines, type Rot } from './sofa-build';
 
 export interface SofaSplitCell {
   moduleId: string;
@@ -190,7 +190,14 @@ export function splitSofaBuildIntoModuleLines(args: {
     // on degenerate stored rot (-90, 450, …).
     rot: ((((src.rot ?? 0) % 360) + 360) % 360) as Rot,
   }));
-  const cells = orderSofaCellsLeftToRight(wrapped, args.depth ?? '24')
+  /* CREATION-TIME ORDER. A sofa built in the ERP has no x/y, and the geometry
+     sorter deliberately keeps the stored order rather than guess — which left a
+     purchase order listing `L(RHF)` before `2A(LHF)` and a plan with the
+     right-hand chaise on the left. This variant falls back to the handedness the
+     codes carry. Owner 2026-08-28: 「我们只需要 control SKU 的顺序」, and
+     「只针对新的order生效 旧的就不理了」 — which is exactly why it is used HERE,
+     where lines are born, and not in the display path. */
+  const cells = orderSofaCellsForNewLines(wrapped, args.depth ?? '24')
     .map((w) => (w as (typeof wrapped)[number]).src);
 
   const codes = cells.map((c) => normalizeCompartmentCode(c.moduleId));

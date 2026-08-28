@@ -1670,3 +1670,59 @@ export const cellsToPoSkus = (cells: Cell[], depth: Depth): PoSkuLine[] => {
   }
   return out;
 };
+
+/* ─── ORDER FOR A SOFA THAT HAS NO GEOMETRY (owner, 2026-08-28) ───────────
+ *
+ * 「排版都要从L开始啊 Left to right」, and then the sharper version:
+ * 「这个的问题是跟着 SKU 排版下来…所以我们只需要 control SKU 的顺序」.
+ *
+ * `orderSofaCellsLeftToRight` above sorts by real x/y and DELIBERATELY keeps the
+ * stored order when the coordinates are missing — it refuses to guess. That is
+ * right for a POS build, where the customer placed the furniture. It leaves one
+ * case unanswered: a sofa built in the ERP (SO New / Maintenance) never had
+ * geometry, so its modules stay in whatever order somebody typed them. A
+ * purchase order listing `L(RHF)` before `2A(LHF)` then draws the right-hand
+ * chaise on the LEFT — and the drawing is not wrong about its input; the input
+ * is wrong about the sofa.
+ *
+ * The codes already carry the answer: `(LHF)` is left-hand facing, so it IS the
+ * left end; `(RHF)` the right; anything with neither (1NA, 2NA, CNR, Console,
+ * STOOL) is an armless middle and keeps its place between them.
+ *
+ * WHY THIS IS A SEPARATE FUNCTION AND NOT A NEW BRANCH IN THE ONE ABOVE. That
+ * one is called at DISPLAY time as well (so-line-display, the label builder), so
+ * teaching it to reorder would silently re-sequence every EXISTING order's lines
+ * the next time anyone looked at them. The owner drew that line himself:
+ * 「只针对新的order生效 旧的就不理了」. This is used at LINE-CREATION time only.
+ *
+ * Stable: two LHF pieces keep the order the caller gave them, because nothing
+ * distinguishes them and the caller's order is then the only evidence there is.
+ */
+const SOFA_HAND_RANK: Record<'LHF' | 'MID' | 'RHF', number> = { LHF: 0, MID: 1, RHF: 2 };
+
+/** Which end of a sofa a module code belongs to, by the supplier convention. */
+export const sofaModuleHand = (moduleId: string): 'LHF' | 'MID' | 'RHF' => {
+  const id = String(moduleId ?? '').toUpperCase();
+  if (id.includes('(LHF)')) return 'LHF';
+  if (id.includes('(RHF)')) return 'RHF';
+  return 'MID';
+};
+
+/**
+ * Left-to-right order for cells ABOUT TO BECOME LINES. Uses real geometry when
+ * there is any; falls back to the handedness the codes carry when there is not,
+ * instead of keeping an order nobody chose.
+ */
+export const orderSofaCellsForNewLines = (cells: Cell[], depth: Depth): Cell[] => {
+  if (cells.length <= 1) return cells.slice();
+  const hasGeometry = cells.every(
+    (c) => typeof c.moduleId === 'string' && Number.isFinite(c.x) && Number.isFinite(c.y),
+  );
+  if (hasGeometry) return orderSofaCellsLeftToRight(cells, depth);
+  return cells
+    .map((c, i) => ({ c, i }))
+    .sort((a, b) =>
+      (SOFA_HAND_RANK[sofaModuleHand(a.c.moduleId)] - SOFA_HAND_RANK[sofaModuleHand(b.c.moduleId)])
+      || (a.i - b.i))
+    .map((x) => x.c);
+};
