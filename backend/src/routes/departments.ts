@@ -38,6 +38,11 @@ app.get("/", requirePermissionOrSalesDirector("users.read"), async (c) => {
       description: departments.description,
       color: departments.color,
       sort_order: departments.sort_order,
+      // The REAL lead + optional headcount target (mig-pg 0331). The FE resolves
+      // lead_user_id to a member from the users list it already holds, so no
+      // join is needed here.
+      lead_user_id: departments.lead_user_id,
+      headcount_target: departments.headcount_target,
       created_at: departments.created_at,
       // Active-only member count, kept as a correlated subquery so
       // the row shape stays flat for the frontend.
@@ -117,6 +122,8 @@ app.patch("/:id", requirePermission("users.manage"), async (c) => {
     description?: string;
     color?: string;
     sort_order?: number;
+    lead_user_id?: number | null;
+    headcount_target?: number | null;
   }>();
 
   const set: Record<string, any> = {};
@@ -135,6 +142,39 @@ app.patch("/:id", requirePermission("users.manage"), async (c) => {
   }
   if (body.sort_order !== undefined) {
     set.sort_order = body.sort_order;
+  }
+  // Lead — an explicit person or none. `null` un-leads; a value must be a real
+  // user (the FE offers the department's own members, but any user is allowed —
+  // super-admin managed). Not required to be IN the department, deliberately:
+  // a shared lead over two teams is a real case the manual does not forbid.
+  if (body.lead_user_id !== undefined) {
+    if (body.lead_user_id === null) {
+      set.lead_user_id = null;
+    } else {
+      const leadId = Number(body.lead_user_id);
+      if (!Number.isInteger(leadId) || leadId <= 0) {
+        return c.json({ error: "lead_user_id must be a user id or null" }, 400);
+      }
+      const leadRow = await getDb(c.env)
+        .select({ id: users.id })
+        .from(users)
+        .where(eq(users.id, leadId))
+        .limit(1);
+      if (leadRow.length === 0) return c.json({ error: "lead_user_id is not a known user" }, 400);
+      set.lead_user_id = leadId;
+    }
+  }
+  // Headcount target — a non-negative integer, or null to clear it.
+  if (body.headcount_target !== undefined) {
+    if (body.headcount_target === null) {
+      set.headcount_target = null;
+    } else {
+      const target = Number(body.headcount_target);
+      if (!Number.isInteger(target) || target < 0) {
+        return c.json({ error: "headcount_target must be a non-negative whole number or null" }, 400);
+      }
+      set.headcount_target = target;
+    }
   }
   if (Object.keys(set).length === 0) {
     return c.json({ error: "No fields to update" }, 400);

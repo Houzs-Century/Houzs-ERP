@@ -675,11 +675,21 @@ covered positions. `loadPageAccessForRole` survives as the **positionless**
 fallback only.
 
 The policy is **default-FULL**: except Driver, Helper, Storekeeper, Storekeeper
-Supervisor and the four Sales tiers, a position resolves to `fullAccessMap()`,
-and a position the module cannot classify falls to FULL, never to none — the
-anti-lockout guarantee (`positionPolicy.ts:12-19`). Project rows for the
-restricted cohorts are `projects: view`, `projects.finances: none`,
+Supervisor, Calendar Viewer and the four Sales tiers, a position resolves to
+`fullAccessMap()`, and a position the module cannot classify falls to FULL, never
+to none — the anti-lockout guarantee (`positionPolicy.ts:12-19`). Project rows
+for the crew cohorts are `projects: view`, `projects.finances: none`,
 `projects.maintenance: none` (`:241-243`, `:253-255`, `:273-275`).
+
+**Calendar Viewer is narrower still — the calendar and nothing else** (owner
+2026-08-26, 「Calendar Viewer = 只有日历」). `CALENDAR_VIEWER_ROWS` grants
+`projects: view` + `projects.calendar: view` but sets an explicit `none` on
+`projects.list` / `.finances` / `.maintenance` so the L1 view does not cascade,
+and an explicit `scm: none` so the position is honestly `scm_l2_configured` and
+the SCM area-guard enforces the denial rather than deferring to the coarse
+`scm.access` umbrella. The three OTHER office positions the owner reviewed the
+same day — HR Manager, Service Admin, Procurement/Purchasing — stay on the
+default-full interim and are deliberately absent from `RESTRICTED_ROWS`.
 
 Enforcement: `requirePageAccess` (`backend/src/middleware/auth.ts:414-437`) reads
 `user.page_access?.[pageKey] ?? "none"` (`:427`), `*` short-circuits to `full`

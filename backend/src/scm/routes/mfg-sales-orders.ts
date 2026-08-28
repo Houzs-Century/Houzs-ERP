@@ -102,6 +102,9 @@ import { soPaidSen, soBalanceSen, soPaidInputsOf } from '../shared/so-outstandin
    + row-build lives in the lib; this route batches the DB collision check. */
 import { buildOneShotMints, type OneShotMintReq } from '../lib/one-shot-mint';
 import { warehouseLabel } from '../lib/warehouse-label';
+import { loadSoWarehouseMasters, resolveSoWarehouseId } from '../lib/so-warehouse';
+import { resolveCreateWarehouseDefaults } from '../lib/so-create-warehouse-default';
+import { planStateRebindForDoc, stateChangeConflictBody } from '../lib/so-state-warehouse-rebind';
 import { canonicalizeMyState } from '../lib/canonical-state';
 import { deriveLineBrandingFromProduct, deriveHeaderBrandingFromLines } from '../lib/derive-line-branding';
 import { resolveBrandLetterheadKey } from '../lib/brand-letterhead';
@@ -3388,7 +3391,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
   }
   /* Guarded: `.eq('id', null)` is not "no venue", it is a malformed filter. */
   const callerStaffRes = callerStaffId
-    ? await sb.from('staff').select('role, venue_id').eq('id', callerStaffId).maybeSingle()
+    ? await sb.from('staff').select('role, venue_id, showroom_warehouse_id').eq('id', callerStaffId).maybeSingle()
     : null;
   const callerStaff = callerStaffRes?.data ?? null;
   /* Loo 2026-06-05 — a self-scoped sales caller can only create orders under
@@ -4174,14 +4177,20 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
       }, 422);
     }
   }
-  /* Commander 2026-05-31 — per-line ship-from warehouse default. MRP +
-     auto-allocation run strictly per-warehouse; each line gets the SO state's
-     warehouse by default, editable per line via it.warehouseId. */
-  const defaultWarehouseId = await deriveWarehouseIdFromState(
+  /* Commander 2026-05-31 — per-line ship-from warehouse default; editable per
+     line via it.warehouseId. Owner 2026-08-25: Location, then State, then the
+     creating OPERATOR'S OWN STORE when the order is otherwise locationless
+     (2990-SO-2608-045, docs/bugs/0541) — decision in lib/so-warehouse.ts
+     chooseCreateWarehouseDefault, reads in lib/so-create-warehouse-default.ts. */
+  const createWhDefaults = await resolveCreateWarehouseDefaults({
     sb,
-    (body.customerState as string | null | undefined) ?? null,
-    c,
-  );
+    scope: <Q,>(q: Q): Q => scopeToCompany(q, c),
+    bodySalesLocation: body.salesLocation,
+    stateWarehouseIdOf: () => deriveWarehouseIdFromState(
+      sb, (body.customerState as string | null | undefined) ?? null, c),
+    callerStaff,
+  });
+  const defaultWarehouseId = createWhDefaults.defaultWarehouseId;
 
   /* Task 5 — one-shot SKU mint accumulator. When pos_remark_extra_auto_sku is
      ON and a line declares an extra add-on charge, we collect a mint request per
@@ -4734,14 +4743,16 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
   /* Commander 2026-05-29 — Location follows the address (State). When the
      caller already sent a salesLocation it wins; otherwise derive it from the
      State so API/import callers get the same warehouse binding the form gives.
-     Stays null when the State is unmapped. */
+     Since 2026-08-25 a locationless order falls back to the operator's STORE
+     label — same fallback as the line default, so the two cannot disagree. */
   const derivedSalesLocation =
-    (body.salesLocation as string | null | undefined) ??
+    createWhDefaults.explicitSalesLocation ??
     (await deriveSalesLocationFromState(
       sb,
       (body.customerState as string | null | undefined) ?? null,
       c,
-    ));
+    )) ??
+    createWhDefaults.operatorStoreLabel ?? null;
 
   /* ── Stock-location gate (owner 2026-08-13, company 1 only) ───────────────
      An order this company writes to AutoCount must resolve a warehouse, or the
@@ -6821,6 +6832,8 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
      A null state explicitly clears the snapshot (so an SO whose state is
      wiped doesn't keep a stale country). */
   let reboundWarehouseId: string | null = null;
+  let rebindLineIds: string[] = []; // un-anchored conflicts the CAS moves too
+
   if (body['customerState'] !== undefined) {
     updates['customer_country'] = await deriveCountryFromState(
       sb,
@@ -6845,41 +6858,19 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
        don't have one yet (NULL only — explicit per-line overrides untouched).
        Wei Siang 2026-06-16.
 
-       CONFLICT BLOCK (owner 2026-07-22 — 'supplier 就会发错货给我'): if any
-       non-cancelled line has ALREADY been bound to a warehouse (typically
-       because a PO / DO was cut against it), a State change that would move
-       it to a different warehouse creates a real risk: the SO header says
-       new State + new warehouse, but the downstream PO still targets the OLD
-       warehouse, so the supplier ships to the wrong place. Detect the
-       mismatch BEFORE we mutate anything, 409 with the offending line codes
-       + old + new warehouse. Operator must resolve manually (cancel the PO,
-       or move the SO line's warehouse deliberately). NULL lines are still
-       auto-rebound below — this only guards non-NULL overrides. */
+       CONFLICT BLOCK (owner 2026-07-22 — 'supplier 就会发错货给我'), NARROWED
+       2026-08-25: only a line ANCHORED by a live downstream PO/DO still 409s;
+       an un-anchored bound line moves with its order like a NULL line (gate,
+       fail modes and plan: lib/so-state-warehouse-rebind.ts). The rebind runs
+       inside apply_so_header_cas (mig 0330, p_rebind_line_ids) — same
+       transaction as the CAS, so a losing stale editor half-moves nothing. */
     const reboundWh = await deriveWarehouseIdFromState(sb, body['customerState'] as string | null, c);
     if (reboundWh) {
-      const { data: mismatchRows } = await sb
-        .from('mfg_sales_order_items')
-        .select('item_code, warehouse_id')
-        .eq('doc_no', docNo)
-        .eq('cancelled', false)
-        .not('warehouse_id', 'is', null)
-        .neq('warehouse_id', reboundWh);
-      const conflicts = (mismatchRows ?? []) as Array<{ item_code: string; warehouse_id: string }>;
-      if (conflicts.length > 0) {
-        return c.json({
-          error: 'state_change_conflicts_line_warehouse',
-          reason:
-            'One or more lines are already bound to a different warehouse (usually because a PO / DO was cut). ' +
-            'Changing the State would leave the downstream doc targeting the old warehouse — supplier could ship to the wrong place. ' +
-            'Cancel the affected downstream doc, or move each line to the new warehouse explicitly, then retry.',
-          newWarehouseId: reboundWh,
-          offenders: conflicts.map((r) => ({ itemCode: r.item_code, currentWarehouseId: r.warehouse_id })),
-        }, 409);
+      const plan = await planStateRebindForDoc(sb, docNo, reboundWh);
+      if (plan.offenders.length > 0) {
+        return c.json(stateChangeConflictBody(reboundWh, plan.offenders), 409);
       }
-      /* The actual NULL-line rebind is NOT done here any more: it moved inside
-         apply_so_header_cas (p_apply_warehouse / p_warehouse_id) so it commits
-         in the SAME transaction as the header CAS. A stale editor whose CAS
-         loses must not have already rewritten line warehouses. */
+      rebindLineIds = plan.rebindLineIds;
       reboundWarehouseId = reboundWh;
     }
   }
@@ -7231,6 +7222,8 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
       : null,
     p_apply_warehouse: Boolean(reboundWarehouseId),
     p_warehouse_id: reboundWarehouseId,
+    // mig 0330 — cleared conflicts move with the order; null = NULL lines only.
+    p_rebind_line_ids: rebindLineIds.length > 0 ? rebindLineIds : null,
     p_apply_delivery_date: body['customerDeliveryDate'] !== undefined || cascadedDeliveryClear,
     p_delivery_date: cascadedDeliveryClear ? null : dateOrNull(body['customerDeliveryDate']),
     // mig 0164 — the customer upsert inside the RPC is company-scoped. Omitting
@@ -7658,7 +7651,7 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
   /* PR-E — pull customer_delivery_date alongside debtor/agent/venue so a
      line added later still inherits the SO header's delivery date by
      default. Client can override by sending lineDeliveryDate explicitly. */
-  const { data: header } = await sb.from('mfg_sales_orders').select('debtor_code, debtor_name, agent, branding, venue, customer_delivery_date, customer_state, processing_date, status, customer_id').eq('doc_no', docNo).maybeSingle();
+  const { data: header } = await sb.from('mfg_sales_orders').select('debtor_code, debtor_name, agent, branding, venue, customer_delivery_date, customer_state, sales_location, processing_date, status, customer_id').eq('doc_no', docNo).maybeSingle();
   if (!header) return c.json({ error: 'not_found' }, 404);
   /* Owner 2026-06-12 — processing-date lock: no line ADD once a CONFIRMED-or-later
      SO's processing day has passed (already PO'd to the supplier). Owner
@@ -7672,8 +7665,18 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
   }
   /* Commander 2026-05-31 — a line added later inherits the SO state's warehouse
      by default (migration 0118). Explicit it.warehouseId override wins. */
+  /* The line inherits the ORDER'S warehouse (resolveSoWarehouseId: recorded
+     sales_location first, then State). It used to read the State ALONE, so a
+     line added to an order located any other way landed NULL and could never
+     allocate — 2990-SO-2608-045's hand-added pillow (docs/bugs/0541). */
   const addLineWarehouseId = (it.warehouseId as string | null | undefined)
-    ?? await deriveWarehouseIdFromState(sb, (header.customer_state as string | null) ?? null, c);
+    ?? resolveSoWarehouseId(
+      {
+        sales_location: (header.sales_location as string | null) ?? null,
+        customer_state: (header.customer_state as string | null) ?? null,
+      },
+      await loadSoWarehouseMasters(sb, (q) => scopeToCompany(q, c)),
+    );
 
   /* POS line quantity (Loo 2026-06-12) — same 422 gate as POST / (review
      found the create-only gate left qty 0 free-line inserts open here). */

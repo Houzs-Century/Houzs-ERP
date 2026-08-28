@@ -327,6 +327,23 @@ export function PublicDoScan() {
           {error}
         </div>
       )}
+
+      {/* SCANNING A PILE IS ITS OWN PAGE, AND THIS IS A LINK RATHER THAN A
+          BUTTON. Two properties of this screen are deliberate and older than the
+          basket: a delivery order offers exactly ONE button — the next rung, never
+          a choice — and a held or cancelled one offers a sentence and NO BUTTON
+          AT ALL. Both have tests. A second button here would have broken them,
+          and the honest answer was to move the basket rather than to loosen a
+          guarantee that was written on purpose.
+
+          It is better this way round anyway: /d/scan is bookmarkable, so a
+          storekeeper who does this every morning does not have to scan one paper
+          just to reach the scanner. */}
+      {!isRun && !data.blockReason && !done && (
+        <a href="/d/scan" className="block text-center text-sm underline text-ink-secondary">
+          Loading several? Open the scanner
+        </a>
+      )}
     </Frame>
   );
 }

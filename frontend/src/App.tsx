@@ -73,6 +73,9 @@ const ScmPurchaseOrderDetailV2 = lazy(() => import("./pages/scm-v2/PurchaseOrder
 const ScmMrpV2 = lazy(() => import("./pages/scm-v2/Mrp").then((m) => ({ default: m.Mrp })));
 const ScmAccountingV2 = lazy(() => import("./pages/scm-v2/Accounting").then((m) => ({ default: m.Accounting })));
 const ScmDailyBank = lazy(() => import("./pages/scm-v2/DailyBank").then((m) => ({ default: m.DailyBank })));
+const ScmMerchantRecon = lazy(() => import("./pages/scm-v2/MerchantRecon").then((m) => ({ default: m.MerchantRecon })));
+const ScmBankRecon = lazy(() => import("./pages/scm-v2/BankRecon").then((m) => ({ default: m.BankRecon })));
+const ScmSettlementSetup = lazy(() => import("./pages/scm-v2/SettlementSetup").then((m) => ({ default: m.SettlementSetup })));
 const ScmOutstandingV2 = lazy(() => import("./pages/scm-v2/Outstanding").then((m) => ({ default: m.Outstanding })));
 const ScmUnbilledDeliveriesV2 = lazy(() => import("./pages/scm-v2/UnbilledDeliveriesV2").then((m) => ({ default: m.UnbilledDeliveriesV2 })));
 const ScmFabricTrackingV2 = lazy(() => import("./pages/scm-v2/FabricTracking").then((m) => ({ default: m.FabricTracking })));
@@ -162,6 +165,7 @@ const ScmDeliveryOrderNewV2 = lazy(() => import("./pages/scm-v2/DeliveryOrderNew
 const ScmDeliveryOrderFromSoV2 = lazy(() => import("./pages/scm-v2/DeliveryOrderFromSo").then((m) => ({ default: m.DeliveryOrderFromSo })));
 const ScmDeliveryOrderDetailV2 = lazy(() => import("./pages/scm-v2/DeliveryOrderDetailV2").then((m) => ({ default: m.DeliveryOrderDetailV2 })));
 const ScmDoLoadScan = lazy(() => import("./pages/scm-v2/DoLoadScan").then((m) => ({ default: m.DoLoadScan })));
+const ScmLoadingList = lazy(() => import("./pages/scm-v2/LoadingList").then((m) => ({ default: m.LoadingList })));
 const ScmSalesInvoicesV2 = lazy(() => import("./pages/scm-v2/SalesInvoicesListV2").then((m) => ({ default: m.SalesInvoicesListV2 })));
 const ScmSalesInvoiceNewV2 = lazy(() => import("./pages/scm-v2/SalesInvoiceNew").then((m) => ({ default: m.SalesInvoiceNew })));
 const ScmSalesInvoiceFromDoV2 = lazy(() => import("./pages/scm-v2/SalesInvoiceFromDo").then((m) => ({ default: m.SalesInvoiceFromDo })));
@@ -636,6 +640,9 @@ export default function App() {
         <Route path="/scm/mrp" element={<ScmGuard area="scm.procurement.mrp"><Scm2990Shell><ScmMrpV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/accounting" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmAccountingV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/daily-bank" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmDailyBank /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/merchant-recon" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmMerchantRecon /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/bank-recon" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmBankRecon /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/settlement-setup" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmSettlementSetup /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/outstanding" element={<ScmGuard area="scm.finance.outstanding"><Scm2990Shell><ScmOutstandingV2 /></Scm2990Shell></ScmGuard>} />
         {/* Delivered-but-not-billed, aged. Same area key as Outstanding — it is the
             money answer to the question that page's DO tab asks with a status flag. */}
@@ -645,6 +652,7 @@ export default function App() {
             flat scm.currency.manage permission (Owner / IT Admin cover it via *). */}
         <Route path="/scm/currencies" element={<Guard anyPerm={["*", "scm.currency.manage"]}><Scm2990Shell><ScmCurrenciesV2 /></Scm2990Shell></Guard>} />
         <Route path="/scm/fabric-tracking" element={<ScmGuard area="scm.procurement.products"><Scm2990Shell><ScmFabricTrackingV2 /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/loading-list" element={<ScmGuard area="scm.warehouse.inventory"><Scm2990Shell><ScmLoadingList /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/warehouses" element={<ScmGuard area="scm.warehouse.inventory"><Scm2990Shell><ScmWarehousesV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/warehouses/racks" element={<ScmGuard area="scm.warehouse.inventory"><Scm2990Shell><ScmWarehouseRacksV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/products" element={<ScmGuard area="scm.procurement.products"><Scm2990Shell><ScmProductsV2 /></Scm2990Shell></ScmGuard>} />

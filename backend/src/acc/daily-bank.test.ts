@@ -58,4 +58,23 @@ describe('computeDailyBank', () => {
     expect(board.blocks[1]).toMatchObject({ openingSen: 0, closingSen: 0 });
     expect(board.availableSen).toBe(0);
   });
+
+  it('phase 3: vouchers in the approval queue subtract from available — asked-for money is not spendable', () => {
+    const board = computeDailyBank('2026-08-16', MONEY, TRANSIT, [
+      L({ entry_date: '2026-08-10', debit_sen: 100000 }),
+    ], [
+      { total_sen: 30000, exchange_rate: 1 },            // RM 300.00 awaiting a yes
+      { total_sen: 10000, exchange_rate: 0.619838 },     // ¥100.00 → RM 61.98, converted the way posting will
+    ]);
+    expect(board.pendingApprovalSen).toBe(30000 + Math.round(10000 * 0.619838));
+    expect(board.availableSen).toBe(100000 - board.pendingApprovalSen);
+  });
+
+  it('phase 3: a garbage rate falls back to 1, never to zero pending', () => {
+    const board = computeDailyBank('2026-08-16', MONEY, TRANSIT, [], [
+      { total_sen: 5000, exchange_rate: null },
+      { total_sen: 5000, exchange_rate: 'not-a-number' },
+    ]);
+    expect(board.pendingApprovalSen).toBe(10000);
+  });
 });

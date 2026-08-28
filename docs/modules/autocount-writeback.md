@@ -1361,6 +1361,29 @@ through `Set()`, which **swallows**, so a warehouse code `dbo.Location` does not
 hold would leave the purchase order looking saved and carrying no location at
 all.
 
+**AND FOR EIGHT DAYS IT DID** (#0549, fixed 2026-08-26). `Set()` swallowing was
+written down here; what was not, is that the value being swallowed was one this
+ERP sends on *every* purchase order. `readWarehouseCode` returned
+`scm.warehouses.code` RAW — `KL WAREHOUSE`, twelve characters against a
+`LocationCode` of eight — so AutoCount skipped both `PurchaseLocation` and every
+line `Location` and saved the order anyway:
+
+```
+set skipped: Cannot set column 'PurchaseLocation'. The value violates the
+             MaxLength limit of this column.
+```
+
+Owner 2026-08-24: *「我的 PO 明明应该是 Bintang Warehouse，但去到 AutoCount 里面
+它却变成了 HQ」* — the book's default, showing because nothing was written.
+
+The table at §the create's location ladder has said *"then through
+`LOCATION_MAP`"* since it was written. **The document was right and the code was
+not**: `withLocations` (the line resolver) and `readWarehouseCode` (the PO
+header) both skipped the map. The conversion header was fixed on 2026-08-25, but
+that fix reads `warehouse_id` and a purchase order has no such column — its
+warehouse is `purchase_location_id` — so the whole PO path was untouched by it.
+*A fix for "the same bug" does not reach a path it never runs on.*
+
 **TWO ASSIGNMENTS, AND THE FIRST DRAFT OF THIS FIX HAD ONE.** `CreatePo` does
 not call `PurchaseHeader`; it sets `DocNo`, `DocDate`, the creditor, `Agent`,
 `Ref`, `Description` and the UDFs itself. Adding `PurchaseLocation` only to
@@ -3331,6 +3354,32 @@ It goes through `callAcRead` (`services/autocount-host-read.ts`), NOT
 names something an outbox ROW can be — a document with a status, attempts and a
 retry policy — and a log read is none of those.
 
+**`GET /api/scm/autocount-outbox/book-doc`** (2026-08-26, docs/bugs/0550) is the
+second of those four routes to be wired up: `?docType=SO|PO|DO|GR|IV|PI` and
+`?docNo=`, returning the header, every line, and `missingColumns` — the wanted
+columns the book does not have, passed through rather than dropped, because
+*"AutoCount has no such field"* is itself the answer to several of the questions
+this route exists for. Same permission keys again; it returns debtor codes,
+prices and addresses out of a licensed account book.
+
+**IT ANSWERS THE ONE QUESTION NOTHING ELSE HERE CAN.** Every other route reports
+what the ERP SENT or what the host SAID BACK, and neither is evidence about the
+book. `Set()` on the host swallows a refused assignment and still reports
+success, so *sent* has never meant *landed* — #0549 is eight days of purchase
+orders carrying no warehouse with the queue, the page and the log all green.
+Owner 2026-08-26: 「我 edit 了之后，怎么没输入回去给 AutoCount 呢?」 — a question
+about the book, which no reading of our own payload can answer.
+
+`DetailWanted` is chosen for exactly these questions: `FromDocType` /
+`FromDocNo` / `FromDocDtlKey` / `FullTransferFromDocList` on the downstream side
+and `FromSODtlKey` / `FromSODocList` on a PO answer *is the convert-from link
+there*; `Location` answers *which warehouse did this line really get*.
+
+`BOOK_DOC_TYPES` lives in `autocount-host-read.ts` beside `AC_READ_ROUTE`, and
+the test pins it against `AcSyncService.DocTypes` read out of the C# source with
+`?raw` — so a type the host drops fails a test here rather than becoming a 400
+for a document the book can read.
+
 **A PENDING ANCESTOR IS SENT, NOT RE-QUEUED** (2026-08-26, docs/bugs/0542).
 `sendAncestorsFirst` always went through `requeueOutboxRow`, which refuses a
 pending row outright — `row-pending`, and rightly, since the sweep is already
@@ -3341,6 +3390,47 @@ Owner: 「顺着点完…就没问题。但…直接去点 Sales Invoice…就�
 by hand worked because that sends its own pending row directly, which is
 precisely what the cascade omitted. Failed and skipped ancestors still take the
 re-queue path.
+
+**AN ANCESTOR IN THE BOOK CAN STILL BE THE WRONG VERSION OF ITSELF**
+(2026-08-27, docs/bugs/0551). The walk used to stop at the first ancestor
+carrying a `linked_ac_docno`, reasoning that presence propagates upward — which
+it does: a document only reaches the book by way of its parent. **Freshness does
+not.** A sales order edited after its delivery order was raised is in the book,
+sits above a document that is also in the book, and is still not what the
+operator is looking at; the conversion then carried the old lines into a live
+account book with nothing reporting it. Owner: 「如果我 edit 了之后直接开 DO/SI，
+然后我的 edit 还没进到 AutoCount，我点 send now，它也会把这个最新 version send
+进去了…对吗?」
+
+`ancestorsNeedingSend` replaces `ancestorsMissingFromBook` (deleted, not kept —
+one question, one home) and walks to the TOP of the chain, classifying each
+ancestor `missing` (not in the book) or `stale` (in the book, holding an unsent
+edit). **"Stale" is an unsent edit, not a diff against the book**: the ERP
+already queues an edit on every change, so an edit still in the queue IS the
+statement that the book is behind — no second call to the host, no second opinion
+about what "different" means. `pending` and `failed` both count; from the
+operator's side both mean *AutoCount does not have my change*. The step carries
+the EDIT's row id rather than the newest row, because a re-queued create is
+newer and sending that would leave the change behind; `unsentEditFor` returns the
+OLDEST unsent edit, since two edits are two changes in order. Order stays
+outermost-first, which matters most when a `stale` ancestor sits above a
+`missing` one — refreshing the order *after* transferring it would leave the
+delivery carrying lines the order no longer has.
+
+**AND THE PAGE NOW RENDERS IT** (2026-08-28, docs/bugs/0552). The server had
+returned `ancestors_sent` since the cascade was written and a grep found no
+reader in `frontend/src` at all: a press on an invoice could write a sales order
+and a delivery order into a licensed account book on the operator's behalf and
+report one line about the invoice. It lands on the pressed ROW under `Sent
+first`, one line per document, worded once by `acAncestorLine` so the desktop
+table and the mobile cards cannot drift — the same argument `AC_SEND_NOW_LABEL`
+and `useAcRequeue` already make. The `reason` is carried through rather than
+flattened, because *AutoCount did not have it yet* and *AutoCount had an older
+version* are different things to be told. **Ancestors that FAILED are shown too**,
+which is the point: the dangerous shape is a pressed row that succeeded above an
+ancestor that did not, and reporting only the press reads as "all done". A throw
+lists nothing — what was sent is unknown, and a list there would be an
+invention.
 
 **A PURCHASE ORDER WAITS FOR ITS SALES ORDER RATHER THAN BECOMING A CREATE**
 (2026-08-26, docs/bugs/0543). `poTransferShape` decides transfer-or-create on

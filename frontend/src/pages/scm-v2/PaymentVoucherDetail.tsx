@@ -20,7 +20,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { ChevronDown, History, Pencil, Plus, Save, Send, Ban, Trash2, X } from 'lucide-react';
+import { CheckCircle2, ChevronDown, History, Pencil, Plus, RotateCcw, Save, Send, Ban, Trash2, X, XCircle } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { fmtDateOrDash } from '../../vendor/shared/format';
 import {
@@ -28,6 +28,10 @@ import {
   useUpdatePaymentVoucher,
   usePostPaymentVoucher,
   useCancelPaymentVoucher,
+  useSubmitPaymentVoucher,
+  useWithdrawPaymentVoucher,
+  useApprovePaymentVoucher,
+  useRejectPaymentVoucher,
 } from '../../vendor/scm/lib/payment-voucher-queries';
 import { useAccounts, type Account } from '../../vendor/scm/lib/accounting-queries';
 import { usePurchaseInvoices } from '../../vendor/scm/lib/purchase-invoice-queries';
@@ -105,11 +109,27 @@ export const PaymentVoucherDetail = () => {
   const update = useUpdatePaymentVoucher();
   const post   = usePostPaymentVoucher();
   const cancel = useCancelPaymentVoucher();
-  const busy   = update.isPending || post.isPending || cancel.isPending;
+  const submit   = useSubmitPaymentVoucher();
+  const withdraw = useWithdrawPaymentVoucher();
+  const approve  = useApprovePaymentVoucher();
+  const reject   = useRejectPaymentVoucher();
+  const busy   = update.isPending || post.isPending || cancel.isPending
+    || submit.isPending || withdraw.isPending || approve.isPending || reject.isPending;
 
-  const canWrite  = can('scm.payment_voucher.write');
-  const canPost   = can('scm.payment_voucher.post');
-  const canCancel = can('scm.payment_voucher.cancel');
+  const canWrite   = can('scm.payment_voucher.write');
+  const canPost    = can('scm.payment_voucher.post');
+  const canCancel  = can('scm.payment_voucher.cancel');
+  const canApprove = can('scm.payment_voucher.approve');
+
+  /* Phase 3 — where in the approval cycle this voucher stands. Both marks
+     null: an editable draft. Submitted only: queued, frozen. Both: approved,
+     waiting for Post. The server enforces all of it; these only decide which
+     buttons are worth showing. */
+  const isSubmitted  = Boolean(pv?.submitted_at);
+  const isApprovedPv = Boolean(pv?.approved_at);
+  /* Reject wants a why the submitter will read — an inline note swaps in
+     for the approve/reject pair while it is being typed. */
+  const [rejectNote, setRejectNote] = useState<string | null>(null);
 
   const accountsQ = useAccounts();
   const accounts  = useMemo<Account[]>(() => (accountsQ.data?.accounts ?? []).filter((a) => a.is_active), [accountsQ.data]);
@@ -325,6 +345,33 @@ export const PaymentVoucherDetail = () => {
     }
   };
 
+  /* Phase 3 actions. Submit and withdraw are freely reversible so they carry
+     no dialog; approving is the decision, so it does. */
+  const onSubmitForApproval = async () => {
+    try { await submit.mutateAsync(id); } catch (err) {
+      void notify({ title: 'Submit failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' });
+    }
+  };
+  const onWithdraw = async () => {
+    try { await withdraw.mutateAsync(id); } catch (err) {
+      void notify({ title: 'Withdraw failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' });
+    }
+  };
+  const onApprove = async () => {
+    if (!(await askConfirm({ title: `Approve ${pv.pv_number}?`, body: 'Post to GL becomes available, and the amount reserves against Daily Bank’s available money until it is paid.', confirmLabel: 'Approve' }))) return;
+    try { await approve.mutateAsync(id); } catch (err) {
+      void notify({ title: 'Approve failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' });
+    }
+  };
+  const onRejectConfirm = async () => {
+    try {
+      await reject.mutateAsync({ id, note: rejectNote ?? '' });
+      setRejectNote(null);
+    } catch (err) {
+      void notify({ title: 'Reject failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' });
+    }
+  };
+
   return (
     <div className="space-y-4">
       <PageHeader back
@@ -340,17 +387,61 @@ export const PaymentVoucherDetail = () => {
             </Button>
             {!isEditing ? (
               <>
-                {isDraft && canWrite && (
+                {/* Phase 3: where the voucher stands, said once beside the pill. */}
+                {isDraft && isSubmitted && (
+                  <span style={{ fontSize: 'var(--fs-13)', color: isApprovedPv ? 'var(--c-green, #2c7a3f)' : 'var(--c-orange, #b06000)' }}>
+                    {isApprovedPv ? `Approved · ${String(pv.approved_by ?? '')}` : `Awaiting approval · ${String(pv.submitted_by ?? '')}`}
+                  </span>
+                )}
+                {isDraft && canWrite && !isSubmitted && (
                   <Button variant="ghost" size="md" onClick={() => setIsEditing(true)} disabled={busy}>
                     <Pencil {...ICON} /> Edit
                   </Button>
                 )}
-                {isDraft && canPost && (
+                {isDraft && canWrite && !isSubmitted && (
+                  <Button variant="primary" size="md" onClick={() => void onSubmitForApproval()} disabled={busy}>
+                    <Send {...ICON} /> Submit for approval
+                  </Button>
+                )}
+                {isDraft && canWrite && isSubmitted && (
+                  <Button variant="ghost" size="md" onClick={() => void onWithdraw()} disabled={busy}
+                    title="Back to editable — it will need approval again">
+                    <RotateCcw {...ICON} /> Withdraw
+                  </Button>
+                )}
+                {isDraft && canApprove && isSubmitted && !isApprovedPv && rejectNote === null && (
+                  <>
+                    <Button variant="primary" size="md" onClick={() => void onApprove()} disabled={busy}>
+                      <CheckCircle2 {...ICON} /> Approve
+                    </Button>
+                    <Button variant="ghost" size="md" onClick={() => setRejectNote('')} disabled={busy}>
+                      <XCircle {...ICON} /> Reject
+                    </Button>
+                  </>
+                )}
+                {rejectNote !== null && (
+                  <>
+                    <input
+                      value={rejectNote}
+                      onChange={(e) => setRejectNote(e.target.value)}
+                      placeholder="Why it goes back (the submitter reads this)"
+                      aria-label="Rejection reason"
+                      style={{ padding: '6px 10px', fontSize: 'var(--fs-13)', minWidth: 220 }}
+                    />
+                    <Button variant="primary" size="md" onClick={() => void onRejectConfirm()} disabled={busy}>
+                      <XCircle {...ICON} /> Reject it
+                    </Button>
+                    <Button variant="ghost" size="md" onClick={() => setRejectNote(null)} disabled={busy}>
+                      <X {...ICON} /> Back
+                    </Button>
+                  </>
+                )}
+                {isDraft && canPost && isApprovedPv && (
                   <Button variant="primary" size="md" onClick={onPost} disabled={busy}>
                     <Send {...ICON} /> Post to GL
                   </Button>
                 )}
-                {pv.status !== 'CANCELLED' && canCancel && (
+                {pv.status !== 'CANCELLED' && canCancel && rejectNote === null && (
                   <Button variant="ghost" size="md" onClick={onCancel} disabled={busy}>
                     <Ban {...ICON} /> Cancel
                   </Button>

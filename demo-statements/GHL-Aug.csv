@@ -1,0 +1,3 @@
+tx_create_date,gateway_tx_id,mah_ref,product_itemname,tx_code_true,terminal_id,currency_code,currency_tx_amount,tx_amount,merchant_mdr_amount,product_commission_amount,vat_amount,net_amount
+2026-08-01 18:38:24.0,'615318040666,'VIPP0000040666000010,VISA - IPP12/VISA-EDC-IPP12,PAYMENT,66043062,MYR,,800.0000,-12.0000,0.0000,0.0000,788.0000
+2026-08-02 11:02:10.0,'615318040701,'VIPP0000040666000011,VISA - EDC,PAYMENT,66043062,MYR,,450.0000,-6.7500,0.0000,0.0000,443.2500

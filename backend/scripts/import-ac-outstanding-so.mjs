@@ -149,6 +149,10 @@ async function main() {
   const createAgents = new Set(); // agent display names needing an inactive staff row
   const fcRows = await sql`SELECT fabric_id, colour_id, label FROM scm.fabric_colours WHERE company_id = 1`;
   const { findColour } = buildFabricColourIndex(fcRows);
+  // #1998 contract: an unlabelled colour is read only when the library CONFIRMS
+  // the code. The predicate was built for the backfill and the importers never
+  // passed it, so colour-first Desc2 lost even library-known codes.
+  const knownColour = (c) => { const h = findColour(c); return h ? h.colour_id : null; };
   // product -> allowed colour_ids (so we don't set a colour the picker would drop).
   // Best-effort: the colour-config table's product_id may reference a different
   // product table/type; if the join fails we skip this check (colour still
@@ -247,7 +251,7 @@ async function main() {
         // owner 2026-08-10: R 的含义看款 — 有 recliner/power 件的款才有 recliner 语义
         const RECL_PROBE = ["-1S(R)", "-1A(R)(LHF)", "-1A(P)(LHF)", "-1S(P)"];
         const reclOK = RECL_PROBE.some((sfx) => codeSet.has((model + sfx).toUpperCase()));
-        const ps = parseSofa(l.Desc2, model, reclOK);
+        const ps = parseSofa(l.Desc2, model, reclOK, { knownColour });
         const pieceCodes = ps.pieces.map((c) => `${model}-${c}`);
         const allExist = pieceCodes.length > 0 && pieceCodes.every((c) => codeSet.has(c.toUpperCase()));
         const fullyOk = ps.conf !== "low" && allExist;

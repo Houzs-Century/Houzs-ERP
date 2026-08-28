@@ -266,7 +266,12 @@ is the `optional-param-noop` trap CLAUDE.md names, and the other ~15
 - SERVICE lines never create demand (`isServiceLine`).
 - **The warehouse follows the SO**: a line's NULL `warehouse_id` is resolved
   from the SO header (`lib/so-warehouse.ts`) BEFORE bucketing, server-side, so
-  every consumer sees one binding.
+  every consumer sees one binding. Since 2026-08-25 the same lib also holds
+  the WRITE-side twin — `chooseCreateWarehouseDefault`, the SO-create default
+  chain (Location, then State, then the creating operator's own store when the
+  order is otherwise locationless; docs/bugs/0541) — so far fewer goods lines
+  are born NULL in the first place. Read rule and write default live in one
+  file on purpose: they must never disagree about the same order.
 
 ## 3. Supply
 

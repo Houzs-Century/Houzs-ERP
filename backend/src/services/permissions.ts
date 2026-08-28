@@ -138,6 +138,9 @@ export const PERMISSIONS: PermissionDef[] = [
   { key: "scm.payment_voucher.write",  resource: "Supply Chain", verb: "write",  label: "Edit payment voucher",    description: "Edit a DRAFT Payment Voucher (payee, accounts, lines, PI settlement allocations)" },
   { key: "scm.payment_voucher.post",   resource: "Supply Chain", verb: "manage", label: "Post payment voucher",     description: "Post a Payment Voucher to the General Ledger (DRAFT -> POSTED; settles any linked PIs)" },
   { key: "scm.payment_voucher.cancel", resource: "Supply Chain", verb: "manage", label: "Cancel payment voucher",   description: "Cancel a Payment Voucher (reverses the GL entry + any PI settlement)" },
+  // Phase 3 (2026-08-28): money leaves only after a yes. Nobody holds this by
+  // default except '*' — the owner grants it per position when he delegates.
+  { key: "scm.payment_voucher.approve", resource: "Supply Chain", verb: "manage", label: "Approve payment voucher", description: "Approve or reject a submitted Payment Voucher — an unapproved voucher cannot post, and a submitted one reserves against Daily Bank's available money" },
 
   // Stock take supervision (owner-approved phase 1, 2026-08-08). A stock take
   // carries an ASSIGNEE (scm.stock_takes.assignee_staff_id — the person

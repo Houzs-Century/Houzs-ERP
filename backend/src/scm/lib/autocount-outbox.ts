@@ -100,6 +100,7 @@ import { soEditHeader } from './so-edit-header';
 import {
   AcReadError, readOrThrow, readSoOutstandingSen, readSoPaymentRefs, readPoEnqueueShape,
   readWarehouseCode,
+  withLocations,
 } from './autocount-read';
 import { backfillSoToPoKeys, poBodyForShape } from './autocount-so-to-po-keys';
 /* The reason a parentless create records, kept beside the needle that
@@ -422,38 +423,6 @@ const PO_ITEM_COLS =
  *     document the ERP is not the authority for.
  */
 
-/**
- * Hang the AutoCount stock location on each line.
- *
- * `warehouse_id` is a `scm.warehouses` UUID; AutoCount's `dbo.Location` is
- * keyed by the short code (KL, PG, HQ...), so one lookup per document turns
- * the ids into codes. Lines share warehouses, so this is one `in` query, not
- * one per line.
- *
- * A line with no warehouse keeps `location: null` and the caller decides:
- * a create refuses it (MissingLocationError), an edit simply omits the key so
- * the account book keeps its own value.
- */
-async function withLocations(
-  sb: Sb,
-  rows: Record<string, unknown>[],
-  lines: ErpLine[],
-): Promise<ErpLine[]> {
-  const ids = [...new Set(rows.map((r) => r.warehouse_id).filter((v): v is string => typeof v === 'string' && v !== ''))];
-  if (!ids.length) return lines;
-  const wh = await readOrThrow('warehouses',
-    sb.from('warehouses').select('id, code, name').in('id', ids));
-  const byId = new Map<string, string>();
-  for (const w of (wh ?? []) as Array<Record<string, unknown>>) {
-    const code = (w.code as string | null) ?? (w.name as string | null);
-    if (w.id && code) byId.set(String(w.id), code);
-  }
-  return lines.map((l, i) => {
-    const id = rows[i]?.warehouse_id;
-    const code = typeof id === 'string' ? byId.get(id) ?? null : null;
-    return code ? { ...l, location: code } : l;
-  });
-}
 
 /**
  * The salesperson's NAME, for the AutoCount Sales Agent.

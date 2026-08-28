@@ -18,8 +18,10 @@ import { buildDeptNodes, type DeptNode } from "./teamShared";
 /* Departments — design handoff screen 05. Card grid for a company-wide
  * headcount scan; a department with no lead surfaces as a red card. Clicking
  * a card opens that department's roster in the Directory (same right-pane
- * table, scoped). The "lead" is DERIVED from reporting lines (see
- * deriveDeptLead) — the schema has no lead column yet. */
+ * table, scoped). The lead is a REAL field since mig-pg 0331 (set from the Edit
+ * panel); when none is set it falls back to the derived one (deriveDeptLead) and
+ * the card marks it "derived". headcount_target, when set, is the card's
+ * denominator ("active / target"). */
 
 const DEPT_PALETTE = [
   "64748b", "3b82f6", "06b6d4", "10b981",
@@ -113,13 +115,15 @@ export function TeamDepartmentsV2({
       </div>
 
       <p className="mb-0 mt-4 text-[11.5px] text-ink-muted">
-        Click a card to open its roster in the Directory. The lead shown is derived from
-        reporting lines (the member most others in the department report to).
+        Click a card to open its roster in the Directory. Set a department's lead and
+        headcount target from its Edit panel; a card marked "derived" has no lead set yet
+        and falls back to the member most others report to.
       </p>
 
       {editorOpen && (
         <DeptEditor
           dept={editing}
+          users={users}
           onClose={() => {
             setEditing(null);
             setCreatingLocal(false);
@@ -148,8 +152,9 @@ function DeptCard({
   onOpen: () => void;
   onEdit: () => void;
 }) {
-  const { dept, counts, divisions, lead } = node;
+  const { dept, counts, divisions, lead, leadIsChosen } = node;
   const noLead = lead == null && counts.visible > 0;
+  const target = dept.headcount_target;
   const preview = users
     .filter((u) => u.department_id === dept.id && u.status === "active")
     .slice(0, 3);
@@ -183,11 +188,16 @@ function DeptCard({
         </span>
         <span className={cn("font-money text-[13px]", noLead ? "text-err" : "text-ink")}>
           {counts.active}
-          {counts.visible > counts.active && (
+          {target != null ? (
+            /* Planned headcount (mig-pg 0331) takes the denominator when set. */
+            <span className={cn("text-[11px]", noLead ? "text-err" : "text-ink-muted")}>
+              {" "}/ {target}
+            </span>
+          ) : counts.visible > counts.active ? (
             <span className={cn("text-[11px]", noLead ? "text-err" : "text-ink-muted")}>
               /{counts.visible}
             </span>
-          )}
+          ) : null}
         </span>
       </div>
 
@@ -203,6 +213,11 @@ function DeptCard({
           />
           <span className="truncate text-[11.5px] text-ink-secondary">
             {lead.name || lead.email}
+            {!leadIsChosen && (
+              <span className="text-ink-muted" title="Derived from reporting lines — no lead set">
+                {" "}· derived
+              </span>
+            )}
             {divisions.length > 0 &&
               ` · ${divisions.length} team${divisions.length === 1 ? "" : "s"}`}
           </span>
@@ -250,10 +265,12 @@ function DeptCard({
 
 function DeptEditor({
   dept,
+  users,
   onClose,
   onSaved,
 }: {
   dept: Department | null;
+  users: TeamMember[];
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -262,15 +279,41 @@ function DeptEditor({
   const [name, setName] = useState(dept?.name ?? "");
   const [description, setDescription] = useState(dept?.description ?? "");
   const [color, setColor] = useState(dept?.color ?? DEPT_PALETTE[0]);
+  // Lead + headcount target (mig-pg 0331). "" = no lead / no target.
+  const [leadUserId, setLeadUserId] = useState<string>(
+    dept?.lead_user_id != null ? String(dept.lead_user_id) : "",
+  );
+  const [headcount, setHeadcount] = useState<string>(
+    dept?.headcount_target != null ? String(dept.headcount_target) : "",
+  );
   const [busy, setBusy] = useState(false);
+
+  // Lead candidates — the department's own members (active first), non-disabled.
+  // A brand-new department has none, so the Leadership section only shows on edit.
+  const leadOptions = useMemo(
+    () =>
+      users
+        .filter((u) => dept != null && u.department_id === dept.id && u.status !== "disabled")
+        .sort((a, b) => (a.name || a.email).localeCompare(b.name || b.email)),
+    [users, dept],
+  );
 
   async function save() {
     if (!name.trim() || busy) return;
     setBusy(true);
     try {
-      const body = { name: name.trim(), description: description.trim() || null, color };
-      if (dept) await api.patch(`/api/departments/${dept.id}`, body);
-      else await api.post("/api/departments", body);
+      const base = { name: name.trim(), description: description.trim() || null, color };
+      if (dept) {
+        // Lead / headcount ride only on the edit path — a new department has no
+        // members to lead yet. "" clears each (null).
+        await api.patch(`/api/departments/${dept.id}`, {
+          ...base,
+          lead_user_id: leadUserId === "" ? null : Number(leadUserId),
+          headcount_target: headcount.trim() === "" ? null : Number(headcount),
+        });
+      } else {
+        await api.post("/api/departments", base);
+      }
       toast.success(dept ? "Department updated" : "Department created");
       onSaved();
       onClose();
@@ -387,6 +430,47 @@ function DeptEditor({
           </div>
         </div>
       </PanelSection>
+
+      {/* Leadership — only on an existing department (a new one has no members
+          to lead yet). The lead is now a REAL choice, not the manager_id
+          inference; leaving it blank keeps the derived-lead fallback and the
+          red "No lead" state. */}
+      {dept && (
+        <PanelSection title="Leadership">
+          <div className="flex flex-col gap-3">
+            <div>
+              <div className="text-[11.5px] text-ink-muted">Department lead</div>
+              <select
+                value={leadUserId}
+                onChange={(e) => setLeadUserId(e.target.value)}
+                className="mt-1 w-full rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-ink outline-none focus:border-primary"
+              >
+                <option value="">— No lead (derive from reporting lines) —</option>
+                {leadOptions.map((u) => (
+                  <option key={u.id} value={String(u.id)}>
+                    {u.name || u.email}
+                    {u.status === "invited" ? " (pending)" : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <div className="text-[11.5px] text-ink-muted">Headcount target</div>
+              <input
+                type="number"
+                min={0}
+                value={headcount}
+                onChange={(e) => setHeadcount(e.target.value)}
+                placeholder="Optional — e.g. 45"
+                className="mt-1 w-full rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-ink outline-none focus:border-primary"
+              />
+              <div className="mt-1 text-[10.5px] text-ink-muted">
+                Shown as "active / target" on the card. Leave blank to show the live count only.
+              </div>
+            </div>
+          </div>
+        </PanelSection>
+      )}
     </Panel>
   );
 }

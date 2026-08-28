@@ -18,6 +18,10 @@ import { formatPhone } from '@2990s/shared/phone';
 import { COMPANY, DOC_TABLE_HEAD_STYLES, DOC_TABLE_STYLES, deliverPdf, drawHeader, drawInfoColumns, drawSignatureBoxes, ensurePdfCjkFont, fmtRm, safeName, fmtDocDate, type PdfAction } from './pdf-common';
 import { billToBlock } from './pdf-party-blocks';
 import { docVariantLine, loadCustomerFabricMaps } from './supplier-doc-data';
+/* The status WORD comes from the one home for it, never from a caser here:
+   what this document prints and what the screen shows must be the same word.
+   docs/modules/document-status-vocabulary.md §1. */
+import { statusLabel } from './status-pill';
 
 type DrHeader = {
   return_number: string; status: string; return_date: string;
@@ -80,7 +84,7 @@ export async function renderDeliveryReturnInto(
     ],
   });
 
-  const statusText = header.status.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
+  const statusText = statusLabel('dr', header.status);
   /* Same composition as the DO / SI so the three customer-facing docs render
      one address the same way. Every field is nullable — a legacy DR without
      the DO-clone address columns (migration 0102) prints an empty row that

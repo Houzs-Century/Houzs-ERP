@@ -4,6 +4,7 @@ export type AppSurface =
   | "survey"
   | "portal"
   | "doscan"
+  | "doscanbasket"
   | "reset"
   | "invite"
   | "privacy"
@@ -28,6 +29,12 @@ export function appSurfaceForPath(pathname: string): AppSurface {
   // camera and the 64-hex token in the path is the only credential (owner:
   // 「就跟hookka一样」). It must land OUTSIDE AuthGate for the same reason the
   // survey does: a staff sign-in screen in front of it makes the paper useless.
+  /* BEFORE the token branch, or "/d/scan" resolves as a token named "scan" and
+     the driver gets "unknown or expired QR code" for a page that exists. Same
+     trap the backend's /batch routes carry, and the same fix: the specific path
+     is decided first. A real token can never collide — it is 10 or 64 characters
+     from a fixed alphabet. */
+  if (pathname === "/d/scan" || pathname === "/d/scan/") return "doscanbasket";
   if (pathname.startsWith("/d/")) return "doscan";
   if (pathname.startsWith("/reset/")) return "reset";
   if (pathname.startsWith("/invite/")) return "invite";

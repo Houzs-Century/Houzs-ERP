@@ -110,6 +110,10 @@ function parseSofa(d2raw, model, recl = false, opts = {}) {
     const u = unlabelledColour(d2raw, opts.knownColour);
     if (u) { o.color = u.value; o.colorEvidence = u.evidence; o.why.push(`colour from an unlabelled code "${u.evidence}"`); }
   }
+  /* Colour-first with NO label ("CH141-11 (SILVER)/28”/1A(LHF)+…") stays on
+     the #1998 contract: unlabelledColour above reads it ONLY when the fabric
+     library confirms the code. An unconfirmed code is left blank, never
+     copied — parseSofaUnlabelledColour.test.ts pins both directions. */
   // seat size: inches or cm anywhere (also "(28'Inch)" / "28''" / "28'" / "Size:28")
   const sm = /(\d{2,3})\s*(cm)\b/i.exec(d2) || /(\d{2})\s*(?:['"]{1,2}\s*inch(?:es)?\b|"|''|'(?!\w)|\s*inch(?:es)?\b)/i.exec(d2) || /size\s*[:：]\s*(\d{2})/i.exec(d2);
   if (sm) {
@@ -161,6 +165,24 @@ function parseSofa(d2raw, model, recl = false, opts = {}) {
     // owner layout rule: bare "n+L" == "nL"; "L+n" == "Ln"
     if (s.split("+").filter(Boolean).length === 2)
       s = s.replace(/(^|\+)([123])\+L(?=$|\+)/, "$1$2L").replace(/(^|\+)L\+([123])(?=$|\+)/, "$1L$2");
+    /* NEW-STYLE tokens (staff entries since ~2026-08, SO-0131xx onward, mirror
+       the ERP's own compartment spelling): "1A(LHF)+C+2A(RHF)" and bare-end
+       chains "2A+1A(30')". After ()->+ the side rides as its own token, so
+       fold A+side into the E-notation the grammar already speaks — 1A+LHF is
+       1EL — and give a BARE A-piece its side by POSITION, the owner's sketch
+       rule (草图两端阴影=扶手: the chain's two ends are the armed ends): first
+       faces LEFT, last faces RIGHT. A bare A-piece in the MIDDLE stays
+       unclassified and holds the line — an arm mid-row is a real ambiguity,
+       not a spelling. A side marker after 1B/NA has no sided grammar class;
+       position already places those, so the marker is dropped. */
+    s = s.replace(/^\++|\++$/g, ""); // stripped sizes/notes leave dangling '+', which breaks the end anchors below
+    s = s
+      .replace(/(^|\+)([12])A\+(?:LHF|LHS|LF)(?=$|\+)/g, "$1$2EL")
+      .replace(/(^|\+)([12])A\+(?:RHF|RHS|RF)(?=$|\+)/g, "$1$2ER")
+      .replace(/(^|\+)([12])(B|NA)\+(?:LHF|LHS|RHF|RHS)(?=$|\+)/g, "$1$2$3");
+    if (s.includes("+")) {
+      s = s.replace(/^([12])A(?=\+)/, "$1EL").replace(/\+([12])A$/, "+$1ER");
+    }
     if (!s || /^[\d.]+\+*$/.test(s)) continue;
     /* The single-letter arm of NOISE must exclude EVERY letter the grammar
        classifies on its own: C (corner), L (chaise), P (power), R (recliner).

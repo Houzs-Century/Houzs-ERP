@@ -1,0 +1,210 @@
+/* Reconciliation setup — the maintenance matrix.
+ *
+ * A CSS module rather than inline styles because the three things that make a
+ * wide grid readable cannot be expressed inline: a row that lights up under the
+ * cursor, a first column that stays put while the companies scroll, and a
+ * checkbox that looks like a decision instead of a default. */
+
+.card {
+  background: var(--c-cream);
+  border: 1px solid var(--c-line);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-1);
+  overflow: hidden;
+}
+
+.cardHead {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--c-line);
+  background: var(--c-paper);
+}
+
+.cardTitle {
+  font-size: var(--fs-15, 15px);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.hint {
+  font-size: var(--fs-12);
+  color: var(--c-ink-soft, #777);
+}
+
+.scroll { overflow-x: auto; }
+
+.grid {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: var(--fs-13);
+}
+
+/* ── Header ─────────────────────────────────────────────────────────────── */
+
+.groupHead {
+  padding: 6px var(--space-3);
+  font-size: var(--fs-11, 11px);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--c-ink-soft, #777);
+  text-align: center;
+  background: var(--c-paper);
+  border-bottom: 1px solid var(--c-line);
+}
+
+.head {
+  padding: var(--space-2) var(--space-3);
+  text-align: left;
+  font-weight: 600;
+  white-space: nowrap;
+  background: var(--c-paper);
+  border-bottom: 1px solid var(--c-line);
+}
+
+.headCompany {
+  composes: head;
+  text-align: center;
+  /* Wide enough that the tick and its bank stay on ONE line: 18 + 12 gap +
+     175 select + 24 padding. Narrower and the select wraps under the tick,
+     which is the thing that made it look cramped. */
+  min-width: 240px;
+  border-left: 1px solid var(--c-line);
+}
+
+.companyName { font-weight: 700; }
+
+/* ── Body ───────────────────────────────────────────────────────────────── */
+
+.row > td { border-bottom: 1px solid var(--line-soft, rgba(34, 31, 32, 0.06)); }
+.row:last-child > td { border-bottom: 0; }
+.row:hover > td { background: rgba(17, 20, 15, 0.025); }
+
+.label {
+  padding: var(--space-3);
+  vertical-align: middle;
+  position: sticky;
+  left: 0;
+  background: var(--c-cream);
+  z-index: 1;
+}
+.row:hover > .label { background: #f7f8f6; }
+
+.name { font-weight: 700; }
+.sub {
+  font-size: var(--fs-12);
+  color: var(--c-ink-soft, #777);
+  font-variant-numeric: tabular-nums;
+}
+
+.shared {
+  padding: var(--space-3);
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+/* One company's answer for one row. Tinted so the eye can run DOWN a company
+   as easily as across a merchant — the whole reason this is a matrix. */
+.cellCompany {
+  padding: var(--space-3);
+  text-align: center;
+  vertical-align: middle;
+  border-left: 1px solid var(--c-line);
+  background: rgba(17, 20, 15, 0.015);
+}
+
+/* Tick first, then what that tick decides, side by side with air between —
+   the owner: 这个打勾和旁边的 bank 可以有点距离 / aeon, mbb 这些放旁边. */
+.cellInner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.tick {
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+  accent-color: var(--c-ink);
+  flex: 0 0 auto;
+}
+
+.bankPick {
+  flex: 0 1 175px;
+  min-width: 0;
+  padding: 4px 6px;
+  font-size: var(--fs-12);
+  border: 1px solid var(--c-line);
+  border-radius: var(--radius-xs);
+  background: var(--c-cream);
+  color: var(--c-ink);
+}
+
+/* Its own line: it is about the select, not beside it. */
+.warn {
+  flex-basis: 100%;
+  font-size: var(--fs-11, 11px);
+  color: var(--c-warn, #B76B00);
+}
+
+.absent {
+  font-size: var(--fs-12);
+  color: var(--c-ink-soft, #777);
+  font-style: italic;
+}
+
+/* Which merchants pay into this account, for this company. */
+.users {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.userChip {
+  font-size: var(--fs-11, 11px);
+  font-family: var(--font-mono);
+  padding: 1px 7px;
+  border-radius: var(--radius-pill);
+  background: var(--c-success-bg, rgba(47, 93, 79, 0.08));
+  color: var(--c-success, #2F5D4F);
+}
+
+.pill {
+  font-size: var(--fs-11, 11px);
+  padding: 1px 8px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--c-line);
+  color: var(--c-ink-soft, #777);
+  white-space: nowrap;
+}
+
+.pillWarn {
+  composes: pill;
+  border-color: var(--c-warn, #B76B00);
+  color: var(--c-warn, #B76B00);
+}
+
+.footNote {
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--c-line);
+  background: var(--c-paper);
+  font-size: var(--fs-12);
+  color: var(--c-ink-soft, #777);
+}
+
+.error {
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--c-error, #B71C1C);
+  background: var(--c-error-bg, rgba(211, 47, 47, 0.08));
+  color: var(--c-error, #B71C1C);
+  font-size: var(--fs-13);
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}

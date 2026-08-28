@@ -1,0 +1,100 @@
+Ezypay Transactions
+
+Report Type  :, EP41,,,,,,,,,,,,,,,,,
+Report Date  :,01/08/26,,,,,,,,,,,,,,,,,
+Run Date  :,02/08/26,
+
+DEMO COMPANY SDN. BHD.,,,,,,,,,,,,,,,,,
+109G, 109A, 109B AND 109C,,,,,,,,,,,,,,,,,
+JALAN SS 25/2, TAMAN MEGAH,,,,,,,,,,,,,,,,,
+47301 PETALING JAYA, SELANGOR,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,
+
+Merchant No.,:, 027099999432,,,,,,,,,,,,,,,
+Account No.,:, ,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,
+Card Number,,Amount,,Tran Date,,Auth Code,,Tran ID,,Reference No,,Terminal No.,,Batch No.,,Card Type.,,EzyPay Term,,Interchange Fee,
+037918******3357,,3899.00,,01/08/26,,002825,,,,,,58223641,,-,,AMEX CR MAYBANK,,12,,23.39,
+Total Amount,:,3899.00,,Items,:,1,,,,,,,,,,,,,,,
+
+,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,
+Total Debit Amount,:,3899.00
+Total Credit Amount,:,0.00
+,,,,,,,,,,,,,,,,,
+Items Withheld,:,,,Reasons,:,,,,,,,,,,,,
+Total Amount,:,,,,:,0,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,
+Items Rejected,:,,,Reasons,:,,,,,,,,,,,,
+Total Amount,:,,,,:,0,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,
+,,,,Amt (Dr),,Items,,Amt (Cr),,Items,,,,,,,
+VISA CR MAYBANK,,,,0.0,,0.0,,0.0,,0.0,,,,,,,
+VISA CR LOCAL,,,,0,,0,,0,,0,,,,,,,
+VISA DR MAYBANK,,,,0,,0,,0,,0,,,,,,,
+VISA DR LOCAL,,,,0,,0,,0,,0,,,,,,,
+VISA PP MAYBANK,,,,0,,0,,0,,0,,,,,,,
+VISA PP LOCAL,,,,0,,0,,0,,0,,,,,,,
+VISA FOREIGN,,,,0.0,,0.0,,0.0,,0.0,,,,,,,
+MC CR MAYBANK,,,,0.0,,0.0,,0.0,,0.0,,,,,,,
+MC CR LOCAL,,,,0,,0,,0,,0,,,,,,,
+MC DR MAYBANK,,,,0,,0,,0,,0,,,,,,,
+MC DR LOCAL,,,,0,,0,,0,,0,,,,,,,
+MC PP MAYBANK,,,,0,,0,,0,,0,,,,,,,
+MC PP LOCAL,,,,0,,0,,0,,0,,,,,,,
+MC FOREIGN,,,,0.0,,0.0,,0.0,,0.0,,,,,,,
+AMEX CR MAYBANK,,,,3899.0,,1.0,,0.0,,0.0,,,,,,,
+AMEX CR LOCAL,,,,0,,0,,0,,0,,,,,,,
+AMEX DR MAYBANK,,,,0,,0,,0,,0,,,,,,,
+AMEX DR LOCAL,,,,0,,0,,0,,0,,,,,,,
+AMEX PP MAYBANK,,,,0,,0,,0,,0,,,,,,,
+AMEX PP LOCAL,,,,0,,0,,0,,0,,,,,,,
+AMEX FOREIGN,,,,0,,0,,0,,0,,,,,,,
+JCB FOREIGN,,,,0,,0,,0,,0,,,,,,,
+PET CO-BR(CONV),,,,0,,0,,0,,0,,,,,,,
+PET CO-BR(ISLM),,,,0,,0,,0,,0,,,,,,,
+MYDEBIT MBB,,,,0,,0,,0,,0,,,,,,,
+MYDEBIT LOCAL,,,,0,,0,,0,,0,,,,,,,
+VISA CORP MBB,,,,0,,0,,0,,0,,,,,,,
+MC CORP MBB,,,,0,,0,,0,,0,,,,,,,
+AMEX CORP MBB,,,,0,,0,,0,,0,,,,,,,
+UPI CR LOCAL,,,,0,,0,,0,,0,,,,,,,
+UPI DR LOCAL,,,,0,,0,,0,,0,,,,,,,
+UPI FOREIGN,,,,0,,0,,0,,0,,,,,,,
+TOTAL,,,,3899.0,,1.0,,0.0,,0.0,,,,,,,
+,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,
+,,,,Gross Amt,,CashBack Amt,,Total After CashBack,,Disc Rate,,Disc. Amt,,Net Amount,,Trnx Count,,Interchange Fee,,,
+VISA CR MAYBANK,,,,0.00,,0,,0,,.00000,,0.00,,0.00,,0,,0.00
+VISA CR LOCAL,,,,0,,0,,0,,0,,0,,0,,0,,0.00
+VISA DR MAYBANK,,,,0,,0,,0,,0,,0,,0,,0,,0.00
+VISA DR LOCAL,,,,0,,0,,0,,0,,0,,0,,0,,0.00
+VISA PP MAYBANK,,,,0,,0,,0,,0,,0,,0,,0,,0.00
+VISA PP LOCAL,,,,0,,0,,0,,0,,0,,0,,0,,0.00
+VISA FOREIGN,,,,0.00,,0,,0,,.00000,,0.00,,0.00,,0,,0.00
+MC CR MAYBANK,,,,0.00,,0,,0,,.00000,,0.00,,0.00,,0,,0.00
+MC CR LOCAL,,,,0,,0,,0,,0,,0,,0,,0,,0.00
+MC DR MAYBANK,,,,0,,0,,0,,0,,0,,0,,0,,0.00
+MC DR LOCAL,,,,0,,0,,0,,0,,0,,0,,0,,0.00
+MC PP MAYBANK,,,,0,,0,,0,,0,,0,,0,,0,,0.00
+MC PP LOCAL,,,,0,,0,,0,,0,,0,,0,,0,,0.00
+MC FOREIGN,,,,0.00,,0,,0,,.00000,,0.00,,0.00,,0,,0.00
+AMEX CR MAYBANK,,,,3899.00,,0,,0,,.04000,,155.96,,3743.04,,1,,23.39
+AMEX CR LOCAL,,,,0,,0,,0,,0,,0,,0,,0,,0.00
+AMEX DR MAYBANK,,,,0,,0,,0,,0,,0,,0,,0,,0.00
+AMEX DR LOCAL,,,,0,,0,,0,,0,,0,,0,,0,,0.00
+AMEX PP MAYBANK,,,,0,,0,,0,,0,,0,,0,,0,,0.00
+AMEX PP LOCAL,,,,0,,0,,0,,0,,0,,0,,0,,0.00
+AMEX FOREIGN,,,,0,,0,,0,,0,,0,,0,,0,,0.00
+JCB FOREIGN,,,,0,,0,,0,,0,,0,,0,,0,,0.00
+PET CO-BR(CONV),,,,0,,0,,0,,0,,0,,0,,0,,0.00
+PET CO-BR(ISLM),,,,0,,0,,0,,0,,0,,0,,0,,0.00
+MYDEBIT MBB,,,,0,,0,,0,,0,,0,,0,,0,,0.00
+MYDEBIT LOCAL,,,,0,,0,,0,,0,,0,,0,,0,,0.00
+UPI CR LOCAL,,,,0,,0,,0,,0,,0,,0,,0,,0.00
+UPI DR LOCAL,,,,0,,0,,0,,0,,0,,0,,0,,0.00
+UPI FOREIGN,,,,0,,0,,0,,0,,0,,0,,0,,0.00
+ALIPAY,,,,0,,0,,0,,0,,0,,0,,0,,0.00
+TOTAL,,,,3899.00,,0,,0,,,,155.96,,3743.04,,1,,23.39

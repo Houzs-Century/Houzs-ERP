@@ -90,6 +90,7 @@ Team page shell are separate concerns and are only referenced here.
 | Desktop detail | same file → `MemberDetail` | Full-page; reached from grid card click or list row click. Sub-tab `?view=org-performance`. |
 | Edit drawer | same file → `EditMemberPanel` | One `PATCH /api/users/:id` on save; showroom parking via `/api/scm/staff`. |
 | Invite drawer | same file → `InvitePanel` | `POST /api/users/invite`. |
+| Invite modal | `frontend/src/pages/team/TeamInviteModal.tsx` | Single + **Bulk paste** modes (owner 2026-08-26). Bulk (`parseBulkEmails` + `sendBulk`) pastes many emails, shares ONE assignment, and loops the SAME `POST /api/users/invite` — no bulk endpoint; per-email failures are collected, not fatal; per-person fields (name / phone / password / POS PIN) are single-only. "Import from AutoCount" stays a disabled placeholder (no employee pipeline yet). |
 | Mobile list | `frontend/src/mobile/MobileModuleList.tsx` (`members` module) | Person cards; chips All / Active / Invited. |
 | Mobile invitations | `frontend/src/mobile/MobileInvitations.tsx` | Accordion card at the top of the members list (`aboveList` slot): count + expired badge always visible; expanded rows offer Resend / Copy Link / Revoke + bulk revoke-expired for `users.manage`. Expiry buckets + copied link shared with desktop via `frontend/src/lib/invitations.ts`. |
 | Mobile actions | `frontend/src/mobile/MobileModuleDetail.tsx` → `MemberActions` | Mirrors desktop resend-invite / reset-password 1:1 (single-logic-layer rule). |
@@ -154,6 +155,31 @@ Invitation rows return id, email, role, token, created/expires/accepted_at,
 invited_by_email, invite_url (canonical PUBLIC_APP_URL link), email_status +
 emailed_at (latest `email_log` outcome). The invite's target department /
 position / manager ids exist in the `invitations` table but are NOT selected.
+
+---
+
+## 2a. A department's lead + headcount are REAL fields now (mig-pg 0331)
+
+The Team redesign rendered a department's lead and its "N / target" headcount,
+but neither was in the schema: the lead was DERIVED from reporting lines
+(`teamShared.deriveDeptLead`) and the target did not exist (the design's "/45"
+was a placeholder). Owner 2026-08-26 made both real:
+`backend/src/db/schema.pg.ts` gains `departments.lead_user_id` (FK `users`,
+`ON DELETE SET NULL`) and `departments.headcount_target`
+(`backend/src/db/migrations-pg/0331_departments_lead_and_headcount.sql`, D1
+mirror `152`). `backend/src/routes/departments.ts` exposes both on GET and
+accepts them on PATCH (lead must be a known user or `null`; target a
+non-negative int or `null`).
+
+**The derived lead did not go away — it became the FALLBACK.** The one
+chokepoint is `frontend/src/pages/team/teamShared.tsx`'s `buildDeptNodes`: the
+chosen `lead_user_id` wins, falling back to `deriveDeptLead` when none is set OR
+when the chosen person has left the roster (so a stale id never shows a ghost).
+Every screen that reads a `DeptNode` inherits this in one place; the new
+`DeptNode.leadIsChosen` flag lets a card mark a still-derived lead "derived".
+`frontend/src/pages/team/TeamDepartmentsV2.tsx` adds the Leadership panel (a lead
+dropdown of the department's own members + a headcount input) on edit, and the
+card shows `active / target` when a target is set.
 
 ---
 
@@ -231,10 +257,29 @@ proved `users.manage`), so "exit" is just logging out.
 `appSurfaceForPath` (`frontend/src/routing/appSurface.ts`) decides which tree
 boots for a location, and the ones it sends OUTSIDE `AuthGate` are the app's
 whole no-login surface: `/survey/:token`, `/track` + `/portal/*`,
-`/reset/:token`, `/invite/:token`, `/privacy`, and now **`/d/:token`** — the
-printed delivery-order QR (`frontend/src/pages/PublicDoScan.tsx`). That last one
-is the owner's decision, the driver has no account, so the 64-hex token printed
-on the paper is the credential. Adding a surface here means adding a way in that
+`/reset/:token`, `/invite/:token`, `/privacy`, **`/d/:token`** — the printed
+delivery-order QR (`frontend/src/pages/PublicDoScan.tsx`) — and, since
+2026-08-27, **`/d/scan`**, the pile scanner
+(`frontend/src/pages/PublicDoScanBasket.tsx`). The QR one is the owner's
+decision: the driver has no account, so the token printed on the paper is the
+credential. It is 10 characters since 2026-08-27 — the length is a print setting,
+see `docs/bugs/0552-…` — and the 64-hex form on every sheet already printed still
+resolves.
+
+**`/d/scan` IS DECIDED BEFORE THE TOKEN BRANCH**, and that ordering is the whole
+of its correctness: `startsWith("/d/")` would otherwise classify it as a token
+named `scan`, and the storekeeper would get "unknown or expired QR code" for a
+page that exists. A real token cannot collide — 10 or 64 characters from a fixed
+alphabet — but the specific path is still matched first rather than relying on
+that. `appSurface.test.tsx` pins both. The same trap and the same fix live in the
+backend's `/batch/*` routes.
+
+**It is a page and not a button on `/d/:token`**, deliberately: that screen
+offers exactly ONE button (the next rung, never a choice) and offers NO BUTTON AT
+ALL when the document is held or cancelled. Both are older than the scanner and
+both have tests, so the basket moved rather than the guarantees loosening. The
+delivery-order page carries a text LINK to it instead, and not at all when the
+document is blocked. Adding a surface here means adding a way in that
 no session guards, so the list is worth reading before extending it; the backend
 half of the same decision is the mount ORDER in `backend/src/index.ts` (before
 `app.use("/api/*", auth)`). See `docs/modules/delivery-order.md` and
@@ -328,6 +373,39 @@ first two — the other two come from `GET /api/pos/admin-pin-status/:userId`:
 | `POST /api/pos/admin-set-pin/:userId` | issue or replace the PIN (hashed server-side) |
 | `POST /api/pos/admin-reset-pin/:userId` | clear it |
 | `GET /api/pos/admin-pin-status/:userId` | has-PIN + readiness. **Never returns the hash** |
+
+### The POS My-Orders tiles — what the three revenue rows mean
+
+`GET /api/pos/sales-stats` (same file) feeds the two cards on the POS home
+board. Each card carries a headline total plus three rows, and they sum to it:
+
+| row | is |
+| --- | --- |
+| Products sales revenue | goods **minus** the item-KPI portion — the commission threshold base |
+| Service sales revenue | total − goods (delivery + every SERVICE line) |
+| KPI item sales revenue | the item-KPI-flagged portion of goods |
+
+**KPI is carved OUT of Products, not added on top.** A flagged item earns a
+fixed bonus INSTEAD of percentage commission (`scm/shared/hr-commission.ts`), so
+leaving it in Products would pay for it twice. The split and its clamps live in
+`scm/lib/pos-kpi-split.ts`; the flags come from `scm.hr_item_kpi` through
+`scm/lib/kpi-units.ts` — the SAME loader `/hr/commission` reads, so the
+dashboard and the commission run cannot disagree.
+
+**Which scope the Showroom card counts** depends on the caller: staff WITH a
+`showroom_id` get their showroom mates, staff without one (director / owner /
+coordinator) get the whole company. The response says which in `showroomScope`,
+and the POS labels the tile from it — so a director reading company-wide figures
+under the word "Showroom" is a bug that has already been fixed once. Two people
+sharing a `showroom_id` always see identical Showroom figures; if they don't,
+the question is their `scm.staff.showroom_id`, not the query.
+
+⚠️ **A KPI row of RM 0 means "nothing is flagged", not "not built".** It was
+hardcoded `kpi: 0` until 2026-08-26 behind a comment claiming the HR commission
+machinery had no Houzs home — untrue since `hr.ts` and `lib/kpi-units.ts` were
+ported. Items are flagged in **HR Settings** (`hr.ts` `/item-kpi`, UI
+`frontend/src/pages/scm-v2/HrSettings.tsx`); with `scm.hr_item_kpi` empty for a
+company, every card in that company correctly reads RM 0.
 
 **Traps this section exists for.**
 

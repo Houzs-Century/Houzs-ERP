@@ -29,6 +29,7 @@ import { supabaseAuth } from '../middleware/auth';
 import { statusCapabilityRefusal, POD_STATES } from '../lib/do-status-capability';
 import { resolveDeliveryScope, scopeMatchesAssignment } from '../lib/deliveryScope';
 import { fetchDoCrewAssignment } from './delivery-planning';
+import { revertDeliveryOrderHandler } from './delivery-order-revert';
 import type { Env, Variables } from '../env';
 import { writeMovements, defaultWarehouseId } from '../lib/inventory-movements';
 import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
@@ -1481,7 +1482,7 @@ async function refreshRackStatusInline(sb: any, rackId: string): Promise<void> {
 // item so occupancy recovers — original customer/date metadata is not restored).
 // Idempotent on the STOCK_IN marker so a double-cancel never double-credits.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function returnDoRacksOnCancel(sb: any, deliveryOrderId: string, doNo: string, performedBy: string, companyId: number | null): Promise<void> {
+export async function returnDoRacksOnCancel(sb: any, deliveryOrderId: string, doNo: string, performedBy: string, companyId: number | null): Promise<void> {
   const OUT_REASON = 'Delivery order dispatch';
   const IN_REASON = 'DO cancelled';
   const { count: alreadyBack } = await sb.from('warehouse_rack_movements')
@@ -1905,7 +1906,7 @@ async function resyncInventoryForDo(sb: any, deliveryOrderId: string, performedB
    THROWS (it logs and returns {ok:false}), so a caller's best-effort try/catch
    catches nothing: discarding this result is how a cancelled DO whose reversal
    failed returned a clean 200 with the shipped stock still deducted. */
-async function reverseInventoryForDo(sb: any, deliveryOrderId: string, performedBy: string): Promise<string[]> {
+export async function reverseInventoryForDo(sb: any, deliveryOrderId: string, performedBy: string): Promise<string[]> {
   // Idempotency guard — has this DO already been reversed? Reversal rows are
   // tagged source_doc_type='ADJUSTMENT' + this DO's id. They may be ADJUSTMENT
   // (non-sofa) OR a batch-restoring IN (sofa, Stage 4), so DON'T filter on
@@ -5547,11 +5548,9 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
     await syncSoDeliveredFromDo(sb, [(doRow as { so_doc_no?: string } | null)?.so_doc_no], user.id);
   }
 
-  /* Bug #1 — cancelling a DO AUTO-REVERSES the stock OUT. Not reverseMovements:
-     its balancing IN reuses the DO source key the partial UNIQUE index
-     uq_inv_mov_do_source (prod-only DDL, keyed WITHOUT movement_type) rejects, so
-     the insert silently fails and stock stays deducted. reverseInventoryForDo
-     writes a FIFO-neutral positive ADJUSTMENT instead. Idempotent + best-effort. */
+  /* Bug #1 — cancelling a DO AUTO-REVERSES the stock OUT via reverseInventoryForDo,
+     NOT reverseMovements: the latter's balancing IN reuses the DO source key the
+     partial UNIQUE uq_inv_mov_do_source rejects, so it silently no-ops. Idempotent. */
   if (toStatus === 'CANCELLED') {
     /* REPORTED, not just best-effort: this branch never populated movementErrors.
        The catch stays — an unexpected throw must not un-cancel the DO. */
@@ -5596,6 +5595,7 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
   });
 };
 deliveryOrdersMfg.patch('/:id/status', patchDeliveryOrderStatusHandler);
+deliveryOrdersMfg.post('/:id/revert', revertDeliveryOrderHandler); // Ops-lead exception power (scm.do.revert) — routes/delivery-order-revert.ts
 
 /* PATCH .../hold — the mig-0324 MARKER, never `status`. routes/document-hold-routes.ts. */
 mountHoldRoute(deliveryOrdersMfg, 'do');

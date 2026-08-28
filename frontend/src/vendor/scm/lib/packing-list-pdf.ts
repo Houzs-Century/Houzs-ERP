@@ -35,7 +35,17 @@ import { loadingOrder, fmtM3, formatRacksCompact } from './packing-list-model';
 import type { PackingListRow, PackingStop } from './packing-list-queries';
 
 const MARGIN = 14;
-const QR_MM = 16;
+/* 14mm, DOWN FROM 16 (owner, 2026-08-27: 「我不要 16mm，只想要 10mm，太大了可能
+   会有影响」). 10mm was measured and refused back to him: the smallest QR that
+   exists is 21 modules square, so 10mm cannot carry a URL at a readable module
+   size no matter how short the link — it lands at 0.303mm, WORSE than the 16mm
+   it replaced. 14mm with the shortened token is 0.424mm, which is both smaller
+   on the sheet than today AND better to scan than today.
+
+   This number is a FLOOR, not a promise: drawQrIntoPdf grows the code when the
+   payload needs more room, so a delivery order still carrying a legacy 64-char
+   token prints readable instead of silently unscannable. */
+const QR_MM = 14;
 
 const qty = (n: number): string => (Number.isInteger(n) ? String(n) : String(n));
 

@@ -1,0 +1,226 @@
+{
+  "_note": "2026-08-28 re-import round: the 16 codes the owner opened in AutoCount since the 2026-08-11 snapshot. Rulings (see docs/ac-reimport-2026-08-28-ledger.md §0#7): HOK-1056 maps to the EXISTING FLAT bedframe (no new model, bindings only); DL-CLASSIC mattresses + 5562 sofa + RC repair charges are opened in the ERP. Owner 2026-08-28: bind BOTH suppliers on the HOK items, Hookka (400-H004) is MAIN, OHANA (400-O002, the book's own registration) secondary. Consumed by align-seed-skus.mjs via DATA_FILE. 2026-08-28b: +2 sofa piece SKUs the owner ruled to open (00913-3S, 8050-STOOL) so the 3 blocked decode lines can decompose.",
+  "company_id": 1,
+  "suppliers": [],
+  "products": [
+    {
+      "code": "DUNLOPILLO CLASSIC AURORA REST MATT (K)",
+      "name": "DUNLOPILLO CLASSIC AURORA REST MATTRESS (183X190X30CM)",
+      "category": "MATTRESS",
+      "branding": "DUNLOPILLO",
+      "status": "ACTIVE"
+    },
+    {
+      "code": "DUNLOPILLO CLASSIC AURORA REST MATT (Q)",
+      "name": "DUNLOPILLO CLASSIC AURORA REST MATTRESS (152X190X30CM)",
+      "category": "MATTRESS",
+      "branding": "DUNLOPILLO",
+      "status": "ACTIVE"
+    },
+    {
+      "code": "DUNLOPILLO CLASSIC AURORA REST MATT (SS)",
+      "name": "DUNLOPILLO CLASSIC AURORA REST MATTRESS (107X190X30CM)",
+      "category": "MATTRESS",
+      "branding": "DUNLOPILLO",
+      "status": "ACTIVE"
+    },
+    {
+      "code": "DUNLOPILLO CLASSIC DREAM VALLEY MATT (K)",
+      "name": "DUNLOPILLO CLASSIC DREAM VALLEY MATTRESS (183X190X34CM)",
+      "category": "MATTRESS",
+      "branding": "DUNLOPILLO",
+      "status": "ACTIVE"
+    },
+    {
+      "code": "DUNLOPILLO CLASSIC DREAM VALLEY MATT (Q)",
+      "name": "DUNLOPILLO CLASSIC DREAM VALLEY MATTRESS (152X190X34CM)",
+      "category": "MATTRESS",
+      "branding": "DUNLOPILLO",
+      "status": "ACTIVE"
+    },
+    {
+      "code": "DUNLOPILLO CLASSIC DREAM VALLEY MATT (SS)",
+      "name": "DUNLOPILLO CLASSIC DREAM VALLEY MATTRESS (107X190X34CM)",
+      "category": "MATTRESS",
+      "branding": "DUNLOPILLO",
+      "status": "ACTIVE"
+    },
+    {
+      "code": "5562-1S",
+      "name": "SOFA 5562 1S",
+      "category": "SOFA",
+      "branding": "",
+      "status": "ACTIVE"
+    },
+    {
+      "code": "RC-COM",
+      "name": "REPAIR CHARGES - PAY BY COMPANY",
+      "category": "SERVICE",
+      "branding": "",
+      "status": "ACTIVE"
+    },
+    {
+      "code": "RC-CUS",
+      "name": "REPAIR CHARGES - PAY BY CUSTOMER",
+      "category": "SERVICE",
+      "branding": "",
+      "status": "ACTIVE"
+    },
+    {
+      "code": "RC-TRP",
+      "name": "REPAIR TRANSPORT CHARGES",
+      "category": "SERVICE",
+      "branding": "",
+      "status": "ACTIVE"
+    },
+    {
+      "code": "00913-3S",
+      "name": "SOFA 00913 3S",
+      "category": "SOFA",
+      "branding": "",
+      "status": "ACTIVE"
+    },
+    {
+      "code": "8050-STOOL",
+      "name": "SOFA 8050 STOOL",
+      "category": "SOFA",
+      "branding": "",
+      "status": "ACTIVE"
+    }
+  ],
+  "bindings": [
+    {
+      "item_code": "FLAT-(K)",
+      "supplier_code": "400-H004",
+      "supplier_sku": "1056 (K)",
+      "category": "BEDFRAME",
+      "is_main": true
+    },
+    {
+      "item_code": "FLAT-(Q)",
+      "supplier_code": "400-H004",
+      "supplier_sku": "1056 (Q)",
+      "category": "BEDFRAME",
+      "is_main": true
+    },
+    {
+      "item_code": "FLAT-(S)",
+      "supplier_code": "400-H004",
+      "supplier_sku": "1056 (S)",
+      "category": "BEDFRAME",
+      "is_main": true
+    },
+    {
+      "item_code": "FLAT-(SK)",
+      "supplier_code": "400-H004",
+      "supplier_sku": "1056 (SK)",
+      "category": "BEDFRAME",
+      "is_main": true
+    },
+    {
+      "item_code": "FLAT-(SP)",
+      "supplier_code": "400-H004",
+      "supplier_sku": "1056 (SP)",
+      "category": "BEDFRAME",
+      "is_main": true
+    },
+    {
+      "item_code": "FLAT-(SS)",
+      "supplier_code": "400-H004",
+      "supplier_sku": "1056 (SS)",
+      "category": "BEDFRAME",
+      "is_main": true
+    },
+    {
+      "item_code": "FLAT-(K)",
+      "supplier_code": "400-O002",
+      "supplier_sku": "HOK-1056 (K)",
+      "category": "BEDFRAME"
+    },
+    {
+      "item_code": "FLAT-(Q)",
+      "supplier_code": "400-O002",
+      "supplier_sku": "HOK-1056 (Q)",
+      "category": "BEDFRAME"
+    },
+    {
+      "item_code": "FLAT-(S)",
+      "supplier_code": "400-O002",
+      "supplier_sku": "HOK-1056 (S)",
+      "category": "BEDFRAME"
+    },
+    {
+      "item_code": "FLAT-(SK)",
+      "supplier_code": "400-O002",
+      "supplier_sku": "HOK-1056 (SK)",
+      "category": "BEDFRAME"
+    },
+    {
+      "item_code": "FLAT-(SP)",
+      "supplier_code": "400-O002",
+      "supplier_sku": "HOK-1056 (SP)",
+      "category": "BEDFRAME"
+    },
+    {
+      "item_code": "FLAT-(SS)",
+      "supplier_code": "400-O002",
+      "supplier_sku": "HOK-1056 (SS)",
+      "category": "BEDFRAME"
+    },
+    {
+      "item_code": "5562-1S",
+      "supplier_code": "400-H004",
+      "supplier_sku": "5562",
+      "category": "SOFA",
+      "is_main": true
+    },
+    {
+      "item_code": "5562-1S",
+      "supplier_code": "400-O002",
+      "supplier_sku": "HOK-5562 SOFA",
+      "category": "SOFA"
+    },
+    {
+      "item_code": "DUNLOPILLO CLASSIC AURORA REST MATT (K)",
+      "supplier_code": "400-D001",
+      "supplier_sku": "DL-CLASSIC AURORA REST (K)",
+      "category": "MATTRESS",
+      "is_main": true
+    },
+    {
+      "item_code": "DUNLOPILLO CLASSIC AURORA REST MATT (Q)",
+      "supplier_code": "400-D001",
+      "supplier_sku": "DL-CLASSIC AURORA REST (Q)",
+      "category": "MATTRESS",
+      "is_main": true
+    },
+    {
+      "item_code": "DUNLOPILLO CLASSIC AURORA REST MATT (SS)",
+      "supplier_code": "400-D001",
+      "supplier_sku": "DL-CLASSIC AURORA REST (SS)",
+      "category": "MATTRESS",
+      "is_main": true
+    },
+    {
+      "item_code": "DUNLOPILLO CLASSIC DREAM VALLEY MATT (K)",
+      "supplier_code": "400-D001",
+      "supplier_sku": "DL-CLASSIC DREAM VALLEY (K)",
+      "category": "MATTRESS",
+      "is_main": true
+    },
+    {
+      "item_code": "DUNLOPILLO CLASSIC DREAM VALLEY MATT (Q)",
+      "supplier_code": "400-D001",
+      "supplier_sku": "DL-CLASSIC DREAM VALLEY (Q)",
+      "category": "MATTRESS",
+      "is_main": true
+    },
+    {
+      "item_code": "DUNLOPILLO CLASSIC DREAM VALLEY MATT (SS)",
+      "supplier_code": "400-D001",
+      "supplier_sku": "DL-CLASSIC DREAM VALLEY (SS)",
+      "category": "MATTRESS",
+      "is_main": true
+    }
+  ]
+}

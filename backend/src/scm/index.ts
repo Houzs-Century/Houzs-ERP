@@ -56,6 +56,7 @@ import { purchaseConsignmentReceives } from "./routes/purchase-consignment-recei
 import { purchaseConsignmentReturns } from "./routes/purchase-consignment-returns";
 import { inventory } from "./routes/inventory";
 import { inventoryAdjustments } from "./routes/inventory-adjustments";
+import { loadingList } from "./routes/loading-list";
 import { warehouse } from "./routes/warehouse";
 import { stockTransfers } from "./routes/stock-transfers";
 import { stockTakes } from "./routes/stock-takes";
@@ -335,12 +336,20 @@ scm.use(
   scmAreaGuard("scm.sales.delivery", {
     readInheritsFrom: "scm.sales.orders",
     writeBypass: (c) => {
-      if (c.req.method !== "PATCH" || !c.req.path.endsWith("/status")) return false;
       const u = c.get("user") as unknown as Parameters<typeof hasPositionCapability>[0];
-      return (
-        hasPositionCapability(u, "scm.do.load") ||
-        hasPositionCapability(u, "scm.do.dispatch")
-      );
+      // Storekeeper / driver scan-confirm + dispatch — PATCH .../status only.
+      if (c.req.method === "PATCH" && c.req.path.endsWith("/status")) {
+        return (
+          hasPositionCapability(u, "scm.do.load") ||
+          hasPositionCapability(u, "scm.do.dispatch")
+        );
+      }
+      // Ops-lead revert — POST .../revert only, on the editable scm.do.revert
+      // capability. The handler re-checks the verb and reverses stock itself.
+      if (c.req.method === "POST" && c.req.path.endsWith("/revert")) {
+        return hasPositionCapability(u, "scm.do.revert");
+      }
+      return false;
     },
   }),
 );
@@ -410,6 +419,13 @@ scm.use(
 scm.route("/inventory", inventory);
 scm.use("/warehouse/*", scmAreaGuard("scm.warehouse.inventory"));
 scm.route("/warehouse", warehouse);
+// Loading queue (owner 2026-08-25) — the storekeeper's no-price "what to load
+// today" list. Gated on scm.warehouse.inventory (the Storekeeper's existing
+// grant, positionPolicy.STOREKEEPER_ROWS) so the warehouse line reaches it
+// without scm.sales.delivery; the payload carries no money by construction (see
+// routes/loading-list.ts). Read-only router — no writes to gate.
+scm.use("/loading-list/*", scmAreaGuard("scm.warehouse.inventory"));
+scm.route("/loading-list", loadingList);
 scm.use("/stock-transfers/*", scmAreaGuard("scm.warehouse.transfers"));
 scm.route("/stock-transfers", stockTransfers);
 scm.use("/stock-takes/*", scmAreaGuard("scm.warehouse.stock_take"));

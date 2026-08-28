@@ -102,6 +102,10 @@ async function main() {
   const codeSet = new Set(products.map((p) => p.code.toUpperCase()));
   const fcRows = await sql`SELECT fabric_id, colour_id, label FROM scm.fabric_colours WHERE company_id = 1`;
   const { findColour } = buildFabricColourIndex(fcRows);
+  // #1998 contract: an unlabelled colour is read only when the library CONFIRMS
+  // the code. The predicate was built for the backfill and the importers never
+  // passed it, so colour-first Desc2 lost even library-known codes.
+  const knownColour = (c) => { const h = findColour(c); return h ? h.colour_id : null; };
   log(`suppliers=${sup.length} warehouses=${wh.length} products=${products.length} fabric_colours=${fcRows.length}`);
 
   /* DEDICATION. AutoCount SO DtlKey -> the order it sits on, so a PO line can
@@ -201,7 +205,7 @@ async function main() {
         model = SOFA_MODEL_ALIAS[model] || model;
         const RECL_PROBE = ["-1S(R)", "-1A(R)(LHF)", "-1A(P)(LHF)", "-1S(P)"];
         const reclOK = RECL_PROBE.some((sfx) => codeSet.has((model + sfx).toUpperCase()));
-        const ps = parseSofa(l.Desc2, model, reclOK);
+        const ps = parseSofa(l.Desc2, model, reclOK, { knownColour });
         const codes = ps.pieces.map((c) => `${model}-${c}`);
         const allExist = codes.length > 0 && codes.every((c) => codeSet.has(c.toUpperCase()));
         const colour = isPendingColour(ps.color) ? null : ps.color;

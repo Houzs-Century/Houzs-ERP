@@ -288,7 +288,7 @@ still need `edit` on `scm.sales.delivery`.
 | POST/PATCH/DELETE | `/:id/items[/:itemId]` | `:3636` / `:3784` / `:4005` | Line CRUD. |
 | GET/POST/DELETE | `/:id/payments[/:paymentId]` | `:4075` / `:4118` / `:4155` | Payments ledger. |
 | PATCH | `/:id/status` | `:4359` (handler `:4166`) | **The stock chokepoint.** |
-| GET | `/:id/scan-token` | `backend/src/scm/routes/delivery-order-scan-token.ts` | Mint-if-missing the 64-hex token the printed QR encodes (mig 0328). A SEPARATE router on the same prefix, because `delivery-orders-mfg.ts` is past its file-size ceiling. A **GET** although it can write: the write is an idempotent create-if-missing, and a POST would deny the QR to somebody who may print a delivery order but not edit one. Scoped to the SESSION's company; the public route can never reach it. |
+| GET | `/:id/scan-token` | `backend/src/scm/routes/delivery-order-scan-token.ts` | Mint-if-missing the token the printed QR encodes (mig 0328). **10 characters since 2026-08-27** — the length is a print setting, see `docs/bugs/0552-…`; the 64-hex form every sheet already printed carries still resolves. A SEPARATE router on the same prefix, because `delivery-orders-mfg.ts` is past its file-size ceiling. A **GET** although it can write: the write is an idempotent create-if-missing, and a POST would deny the QR to somebody who may print a delivery order but not edit one. Scoped to the SESSION's company; the public route can never reach it. |
 
 ### The PUBLIC surface — `/api/public/do-scan/*` (2026-08-26)
 
@@ -297,8 +297,67 @@ still need `edit` on `scm.sales.delivery`.
 
 | Method | Path | Purpose |
 |--------|------|---------|
+| POST | `/api/public/do-scan/batch/lookup` | `{ tokens }` — summarise a whole basket in ONE read |
+| POST | `/api/public/do-scan/batch/advance` | `{ tokens, to }` — move a basket, one document at a time |
 | GET | `/api/public/do-scan/:token` | Minimal summary + the ONE next rung |
 | POST | `/api/public/do-scan/:token/advance` | `{ to }` — move exactly one rung |
+
+**THE BATCH ROUTES ARE LISTED FIRST BECAUSE THEY ARE REGISTERED FIRST.** Hono
+matches in registration order, and `/batch/advance` declared after
+`/:token/advance` would be captured with `token = "batch"`. It would still be
+refused — `DO_SCAN_TOKEN_RE` admits only a 10- or 64-character token — but a 404
+for a route that exists is a confusing way to discover the ordering.
+`publicDoScanSurface.test.ts` pins both the order and the exact set of four.
+
+**The basket (2026-08-26).** The owner: 「我不能 scan 好几个 DO，然后一起点 load
+吗？…它应该可以支持连续扚描的。」 A storekeeper loading a lorry holds thirty
+papers. Two things made that impossible before: every "scan" was the phone's own
+camera app, which NAVIGATES AWAY and takes any basket with it, and the read limit
+was 30 per quarter-hour for what is one public IP for a whole warehouse floor.
+So the page grew its own camera (`frontend/src/lib/use-qr-scanner.ts`) and the
+basket spends ONE read for a whole pile.
+
+**One decision function, not a third copy.** Three surfaces now move a delivery
+order with nobody logged in — one paper, a packing list, a basket — and the five
+checks that decide whether one document may move live once, in
+`advanceOneDocument`. Only the off-rung SENTENCE varies per caller: a driver
+holding one paper, a driver holding a packing list and a storekeeper holding a
+pile need different words for the same fact.
+
+**The pile is uniform BY CONSTRUCTION, and that is a page rule rather than a
+server rule.** The owner, 2026-08-27: 「不同状态你就不要给它扫描进来吧，就当做它
+还没扫描到。」 The first paper scanned sets the rung; a paper on a different rung
+is not added at all — the optimistically-drawn row is removed and the count does
+not move. That collapses three buttons to ONE. The server keeps every one of its
+own checks regardless, because a document can move between the scan and the
+press; what the page rule buys is that the refusal happens at the lorry with the
+paper still in hand instead of afterwards in a list of reasons.
+
+**THE PAGE AND THE SERVER MUST AGREE ON WHAT A TOKEN LOOKS LIKE.** The basket
+parses the token out of a decoded QR (`TOKEN_IN_URL` in
+`frontend/src/pages/PublicDoScanBasket.tsx`) before anything is sent; the server
+re-checks the shape (`DO_SCAN_TOKEN_RE`) before any query. Two regexes, two
+files, one fact — and the drift is silent in the worst possible way: the page
+would simply DROP a scan the server would have resolved perfectly, and the
+operator would see a code that "does not scan".
+`frontend/src/pages/public-do-scan-token-shape.test.ts` reads BOTH FILES and
+asserts they accept the same set. Both live shapes are in that set: the
+10-character token minted since 2026-08-27, and the 64-hex one every sheet
+already on a lorry still carries.
+
+**A basket is refused, never truncated,** above 60 documents. The first version
+of the token parser stopped at the cap and returned what it had, so eighty papers
+would have moved sixty and reported success — a silent cap on a delivery floor is
+worse than a refusal because the refusal is visible.
+
+**`DRAFT` → `LOADED` cannot be batched.** That rung confirms the delivery order
+and takes the goods out of stock; doing it to a pile at once from a page with no
+login is a different class of risk from moving papers that already left.
+
+**Sequential, never parallel** — the same rule the packing list follows, and for
+the reason written up in the route header: two delivery orders frequently share
+one sales order, and Hookka deadlocked doing this in parallel.
+`publicDoScanRoute.test.ts` MEASURES it rather than asserting a comment.
 
 **The owner chose this**, after being shown the risk twice: 「就跟hookka一样」 —
 a public, no-login QR exactly like Hookka's, where the unguessable token printed
@@ -754,6 +813,85 @@ supposed to call; by `frontend/src/pages/PublicDoScan.test.tsx` for the no-login
 twin; and by `backend/tests/doScanLadder.test.ts`, which asserts forward-only as
 a PROPERTY over the ladder's own derived order — so a rung added tomorrow is
 covered without editing the test, and a rung pointed backwards fails there.
+
+### The warehouse Loading List — the no-price queue (owner 2026-08-25)
+
+The loading QR above is how a storekeeper *confirms* a load; the **Loading List**
+is how they see **what** to load. `frontend/src/pages/scm-v2/LoadingList.tsx`
+(routed at `/scm/loading-list` in `App.tsx` behind `scm.warehouse.inventory`,
+with a Warehouse-group nav item in `frontend/src/components/Sidebar.tsx` on the
+same gate) is a card list: one card per delivery order waiting to load, showing
+the customer, destination, assigned lorry, and the item lines (product +
+quantity). A **"Scan to load"** link on each DRAFT card jumps into the QR flow
+above. It has a `to_load` / `loaded` / `all` status filter and a client-side
+search.
+
+**WHY IT IS ITS OWN BACKEND ROUTE, not a filter on the DO list.** A Storekeeper
+holds `scm.warehouse.inventory` + `scm.transportation` (view) but **not**
+`scm.sales.delivery`, so the `/delivery-orders-mfg` reads (gated on
+`scm.sales.delivery`, inheriting `scm.sales.orders`) 403 them. The queue is
+served by `backend/src/scm/routes/loading-list.ts` — `GET
+/api/scm/loading-list?status=to_load|loaded|all` — mounted in
+`backend/src/scm/index.ts` behind `scmAreaGuard('scm.warehouse.inventory')`, the
+grant the warehouse line already has. That mount is also registered in the
+`SCM_AREA_MOUNTS` table (`backend/src/scm/lib/scm-areas.ts`) — the `scm.use()`
+prefix → area map the write-freeze resolver reads — and the desktop route list
+(`frontend/src/routing/routeManifest.ts`).
+
+**THE NO-PRICE GUARANTEE IS STRUCTURAL.** Owner 2026-08-25: 「仓库线只扫码置
+LOADED 不见价格」. The route's header and line projections are hand-picked
+allowlists that name no `*_sen` column — cost, margin, unit price and line total
+are never selected, so they cannot reach the payload. This is stronger than the
+finance-strip on the main list (which deletes keys after reading them); here the
+money is never read. `backend/tests/loadingListPayloadHasNoMoney.test.ts` drives
+the handler through a column-projecting fake and asserts no `_sen` / cost /
+margin / price survives, while the queue itself does.
+
+This screen is **read-only**. The load action stays where the QR flow put it —
+the `PATCH /:id/status` to `LOADED`, admitted by the editable `scm.do.load`
+capability — so seeing the queue and moving stock remain separate grants.
+
+### The Ops-lead revert — undo a wrong scan / accidental dispatch (owner 2026-08-26)
+
+The load and dispatch are the two dock mistakes that need an undo: the wrong
+delivery order scanned to LOADED (which is the stock OUT since 08-22), or Dispatch
+hit by accident. `POST /api/scm/delivery-orders-mfg/:id/revert`
+(`backend/src/scm/routes/delivery-order-revert.ts`) is the safety net — an Ops
+Executive (whoever the editable matrix grants `scm.do.revert`, owner:
+「Executive 及以上」) pulls the order back.
+
+**WHY A DEDICATED ROUTE, not the status PATCH.** `PATCH /:id/status` REFUSES a
+shipped→pre-ship move (LOADED→DRAFT) because a plain status write does not reverse
+the inventory OUT — it would leave the DO reading un-shipped with its stock still
+deducted. The revert is the ONE path allowed to cross that line, and it earns it
+by reversing the stock in the same call. It reuses the CANCELLED cleanup
+(`reverseInventoryForDo` + `returnDoRacksOnCancel` + `syncSoDeliveredFromDo` +
+`recomputeSoStockAllocation` — the two inventory helpers are now `export`ed from
+`backend/src/scm/routes/delivery-orders-mfg.ts`) MINUS the AutoCount cancel,
+because a revert is not a cancel: the document stays alive and re-workable.
+
+**WHAT IS REVERTABLE, and how stock moves.** Only LOADED (wrong scan) and
+DISPATCHED (accidental send) are revertable, backward only; a delivery with a
+live Sales Invoice or Delivery Return is refused (`doHasDownstream`). Stock
+reverses ONLY when crossing back to DRAFT — both revertable FROM states are
+stock-out, so `DISPATCHED→LOADED` (un-send) moves no stock while `anything→DRAFT`
+(un-load / reset) restores it. A reason is mandatory (it lands in the audit trail
+as a `REVERSE` action).
+
+**AUTHORIZATION** is layered: the area-guard `writeBypass` in
+`backend/src/scm/index.ts` admits a `scm.do.revert` holder to `POST .../revert`
+without `scm.sales.delivery` edit, and the handler re-checks the capability so a
+plain dispatcher who can move a status forward cannot UN-move it. `*` (owner /
+super-admin) passes.
+
+**FRONTEND.** `frontend/src/auth/salesAccess.ts` `canRevertDelivery` decides
+whether the control shows; `frontend/src/pages/scm-v2/DeliveryOrderDetailV2.tsx`
+renders a status-aware button — "Undo dispatch" (DISPATCHED→LOADED) or "Undo
+load" (LOADED→DRAFT) — that captures the mandatory reason via `usePrompt` and
+calls `useRevertMfgDeliveryOrder`
+(`frontend/src/vendor/scm/lib/delivery-order-queries.ts`), which invalidates the
+same queries a status change does. The server is the boundary — the button only
+decides visibility.
 
 ### The three manual status moves on the row menu (2026-08-22)
 

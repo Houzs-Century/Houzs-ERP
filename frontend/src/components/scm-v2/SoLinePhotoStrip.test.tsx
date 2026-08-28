@@ -76,7 +76,7 @@ const freshKey = () => `so-items/${DOC_NO}/${ITEM_ID}/strip-${++n}.jpg`;
 
 describe('SoLinePhotoStrip', () => {
   it('renders a line with no photos as a dash and fires no request', async () => {
-    render(<SoLinePhotoStrip docNo={DOC_NO} itemId={ITEM_ID} photoKeys={[]} />);
+    render(<SoLinePhotoStrip source="so" docId={DOC_NO} itemId={ITEM_ID} photoKeys={[]} />);
 
     expect(screen.getByText('—')).toBeTruthy();
     await waitFor(() => {
@@ -90,7 +90,7 @@ describe('SoLinePhotoStrip', () => {
     fetchSoItemPhotoSignedUrl.mockResolvedValue(proxyPayload(key));
     fetchSoItemPhotoBlob.mockResolvedValue(photoBytes());
 
-    render(<SoLinePhotoStrip docNo={DOC_NO} itemId={ITEM_ID} photoKeys={[key]} />);
+    render(<SoLinePhotoStrip source="so" docId={DOC_NO} itemId={ITEM_ID} photoKeys={[key]} />);
 
     const img = await screen.findByAltText('Line photo');
     expect(img).toHaveProperty('src', 'blob:obj-1');
@@ -105,7 +105,7 @@ describe('SoLinePhotoStrip', () => {
     fetchSoItemPhotoBlob.mockResolvedValue(photoBytes());
     fetchBlobUrl.mockResolvedValue('blob:full-size');
 
-    render(<SoLinePhotoStrip docNo={DOC_NO} itemId={ITEM_ID} photoKeys={[key]} />);
+    render(<SoLinePhotoStrip source="so" docId={DOC_NO} itemId={ITEM_ID} photoKeys={[key]} />);
     await screen.findByAltText('Line photo');
 
     await userEvent.click(screen.getByTitle('Open full size'));
@@ -130,7 +130,7 @@ describe('SoLinePhotoStrip', () => {
     fetchSoItemPhotoSignedUrl.mockResolvedValue(proxyPayload(key));
     fetchSoItemPhotoBlob.mockRejectedValue(new PhotoProxyError(404, 'photo_not_found_in_r2'));
 
-    render(<SoLinePhotoStrip docNo={DOC_NO} itemId={ITEM_ID} photoKeys={[key]} />);
+    render(<SoLinePhotoStrip source="so" docId={DOC_NO} itemId={ITEM_ID} photoKeys={[key]} />);
 
     expect(await screen.findByText('err')).toBeTruthy();
     expect(screen.queryByAltText('Line photo')).toBeNull();

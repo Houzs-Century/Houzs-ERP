@@ -56,6 +56,9 @@ export type DeptNode = {
   counts: DeptCounts;
   divisions: DivisionNode[];
   lead: TeamMember | null;
+  /** true when `lead` is the department's EXPLICITLY chosen lead
+   *  (dept.lead_user_id), false when it was derived from manager_id. */
+  leadIsChosen: boolean;
 };
 
 /** The division string, normalised: trimmed, empty → null. */
@@ -124,11 +127,20 @@ export function buildDeptNodes(
     const divisions: DivisionNode[] = [...byDivision.entries()]
       .map(([name, ms]) => ({ name, counts: countByStatus(ms) }))
       .sort((a, b) => b.counts.visible - a.counts.visible || a.name.localeCompare(b.name));
+    // The REAL lead (dept.lead_user_id, mig-pg 0331) wins over the derived one:
+    // an explicit choice beats an inference. Falls back to deriveDeptLead only
+    // when no lead is set, or when the chosen person is no longer a member — so
+    // the red "No lead" state still keys off "nobody, derived or chosen".
+    const chosenLead =
+      dept.lead_user_id != null
+        ? members.find((m) => m.id === dept.lead_user_id) ?? null
+        : null;
     return {
       dept,
       counts: countByStatus(deptMembers),
       divisions,
-      lead: deriveDeptLead(deptMembers, members),
+      lead: chosenLead ?? deriveDeptLead(deptMembers, members),
+      leadIsChosen: chosenLead != null,
     };
   });
   const noDept = countByStatus(members.filter((m) => m.department_id == null));

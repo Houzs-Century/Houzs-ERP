@@ -119,6 +119,15 @@ documents in the system that could not be printed at all.
 | Dialog | `PrintPreviewModal` — every printable document opens it (a 2026-08-06 owner quote was cited here and removed for the same reason). **Never `window.print()`**: `index.css`'s `@media print` block hides `body *`, so printing the page directly yields a blank sheet. |
 | Test | `frontend/src/vendor/scm/lib/stock-movement-pdf.test.ts`. |
 
+**The status word comes from `status-pill.ts`, not from this file** (2026-08-26).
+It used to be a local `titleCase()` over the STORED value, so the sheet printed
+`Posted` while the screen said **Confirmed**. The generator now calls
+`statusLabel('stockTransfer', header.status)`, the same map every screen reads, and
+`frontend/src/vendor/scm/lib/pdf-status-label.test.ts` renders this document for
+every status in its vocabulary and compares what was drawn. Trace:
+`docs/bugs/0548-every-printed-document-title-cased-the-raw-stored-status-ins.md`;
+the rule is `docs/modules/document-status-vocabulary.md` §1.
+
 **The warehouse pair is the document,** so FROM and TO get their own band under
 the letterhead — both codes, both full names, an arrow between them — rather
 than a row in a label gutter. The arrow is DRAWN with `doc.line`, not typed:

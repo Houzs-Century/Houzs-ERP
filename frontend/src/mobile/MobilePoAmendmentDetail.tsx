@@ -32,7 +32,7 @@ import { humanApiError } from "../vendor/scm/lib/authed-fetch";
 import { generateAmendmentPdf } from "../vendor/scm/lib/amendment-pdf";
 import { PrintPreviewModal, usePrintPreview } from "../components/scm-v2/PrintPreviewModal";
 import type { PdfAction } from "../vendor/scm/lib/pdf-common";
-import { poAmendmentToPdfInput } from "../vendor/scm/lib/amendment-pdf-map";
+import { amendmentPrintedStatus, poAmendmentToPdfInput } from "../vendor/scm/lib/amendment-pdf-map";
 import "./mobile.css";
 
 /* ------------------------------------------------------------------ *
@@ -230,7 +230,6 @@ export function MobilePoAmendmentDetail({
       lines: lines as never,
       purchaseOrder: purchaseOrder as never,
       supplierName: null,
-      statusLabel: status === "APPROVED" ? "Approved" : "Requested",
     });
     return Promise.resolve(generateAmendmentPdf(input, { action })).catch((e: unknown) =>
       notify({ title: "PDF generation failed", body: e instanceof Error ? e.message : "Something went wrong.", tone: "error" }));
@@ -416,7 +415,7 @@ export function MobilePoAmendmentDetail({
                 docNo={amendmentNo ?? "Amendment"}
                 rows={[
                   { label: "Against PO", value: poNumber || "—" },
-                  { label: "Status", value: status === "APPROVED" ? "Approved" : "Requested" },
+                  { label: "Status", value: amendmentPrintedStatus(status) },
                   { label: "Reason", value: reason || "—" },
                   { label: "Changes", value: `${lines.length} change${lines.length === 1 ? "" : "s"}` },
                 ]}

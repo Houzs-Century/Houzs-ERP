@@ -946,6 +946,33 @@ renders a permanent loading placeholder — indistinguishable from "still
 loading", which is exactly how it ships. See §"Why photos need the proxy" in
 `backend/src/scm/lib/photoProxyFallback.ts`.
 
+Since 2026-08-28 that state machine is source-parameterised
+(`useScmLinePhoto('so' | 'po', …)` — `useSoLinePhoto` is the unchanged SO-shaped
+wrapper) and the strip takes a required `source` prop, because the PO detail now
+renders the carried copies of these photos through the same component. Same
+keys, same R2 objects, shared byte cache — a thumb loaded on the SO detail is
+free on the PO detail.
+
+#### Line photos on the printed SO (owner mockup, 2026-08)
+
+`sales-order-pdf.ts` prints photos as ONE "ITEM PHOTOS · 照片对照" block after
+the items table and before PAYMENTS RECEIVED — table rows carry NO image; a
+line with `photo_urls` appends " (图)" to its first description line instead.
+Each group in the block is keyed by the printed row number (`#3`, or a range
+`#2-4` when consecutive rows carry a deep-equal photo list — the sofa-set
+shared build photo prints once per set), with the item code beside the chip and
+~26mm square thumbnails, max 6 per row. A group never splits across pages: one
+that does not fit moves whole to the next page under a continued heading. The
+grouping/packing/page-fit logic and the drawing live in the shared
+`vendor/scm/lib/pdf-item-photos.ts` (unit-tested beside it); the PO PDF prints
+through the same module. Only `.thumb` siblings are fetched (never originals —
+PDF size), through the authed proxy, collected before drawing, and every photo
+is best-effort: a key whose fetch or decode fails is skipped silently, so a
+missing photo can never fail the PDF. Thumbs uploaded by the client pipeline
+are mostly WebP (which jsPDF cannot embed), so the module re-encodes each to a
+small square JPEG via canvas. An empty block — no photos, or nothing fetched —
+renders nothing at all.
+
 ### The delivery address block — both directions, shared layer
 
 State / City / Postcode on `SalesOrderNew`, `SalesOrderDetail` and
@@ -1706,9 +1733,40 @@ Service lines are excluded (they hold no stock; a guard that cries on every
 delivery-fee line is one somebody turns off). The hourly do-link sentinel
 counts the same shape, baseline 10 (the addressless orders below).
 
-Also relevant: `apply_so_header_cas` (mig 0173) rebinds `warehouse_id` on the
-order's **NULL lines only** when the header's warehouse changes, while the
-approved-amendment path (`so-revision.ts`) rebinds every non-cancelled line.
+Also relevant: `apply_so_header_cas` rebinds `warehouse_id` when the header's
+warehouse changes — on the order's **NULL lines** (mig 0173) plus, since mig
+0330, the ids the route passes as `p_rebind_line_ids`; the approved-amendment
+path (`so-revision.ts`) rebinds every non-cancelled line.
+
+#### The order is born belonging to the operator's store (owner 2026-08-25)
+
+A POS walk-in has no address yet, and until 2026-08-25 the create default
+derived the per-line warehouse from the State ALONE — so a no-address order
+wrote every goods line `warehouse_id NULL` (2990-SO-2608-045: four of them,
+docs/bugs/0541; the hourly sentinel red for days on the same class after the
+0501 rebuild). Now the create default is the READ chain applied at write time
+— explicit Location, then State — plus one final fallback: **the creating
+operator's own store** (`scm.staff.showroom_warehouse_id`, verified in the
+ACTIVE company's warehouse master because `scm.staff` is one shared table).
+The decision is `so-warehouse.ts::chooseCreateWarehouseDefault` (pure); the
+reads are `lib/so-create-warehouse-default.ts`. A resolved Location or State
+always wins, and an EXPLICIT Location that resolves to nothing blocks the
+store too (the operator said something specific; that case keeps its NULL and
+the `[null-warehouse]` signal). The header's `sales_location` falls back to
+the same store label, and the single-row / sofa-split add-line paths inherit
+the ORDER's warehouse (`resolveSoWarehouseId`) instead of the State-only
+derive — so every goods-line write path binds a warehouse whenever the header
+has one.
+
+**The 2026-07-22 State-change conflict gate is narrowed to its stated
+reason** (`lib/so-state-warehouse-rebind.ts`): a bound line 409s only when a
+LIVE downstream PO/DO anchors it (DRAFT POs count as live, same ruling as
+`so-po-lock`); an un-anchored bound line MOVES with its order inside the CAS
+transaction (`p_rebind_line_ids`, mig 0330). Without this, no state maps to a
+showroom, so every store-born order would 409 on the address fill. The anchor
+lookup fails CLOSED (unreadable downstream = anchored = the old blanket 409);
+the mismatch read keeps its historical fail-OPEN (gate skipped, only NULL
+lines rebind). All-or-nothing: one anchored line blocks the whole change.
 
 #### Company 1 cannot create an order with no stock location (owner 2026-08-13, SURFACE CHANGE)
 
@@ -3190,6 +3248,21 @@ Flow:
    wrong. `"2990s Sofa"` exists as a 2990 brand row with no `logo_r2_key`, so
    2990 sofa orders print the 2990 company letterhead until the owner uploads
    one. Entry `docs/bugs/0489-a-2990-sales-order-pdf-printed-houzs-s-zanotti-logo.md`.
+
+   **And the PDF's STATUS word is a third path again, fixed 2026-08-26.**
+   `sales-order-pdf.ts` title-cased the stored value with its own hand-rolled
+   caser, so the sheet printed `Ready To Ship` where the screen says
+   **Ready to Ship**, and `In Production` where `status-pill.ts` says
+   **Proceed**. It now calls `statusLabel('so', header.status)` — the one home
+   the owner's 2026-08-21 ruling put those words in — and
+   `frontend/src/vendor/scm/lib/pdf-status-label.test.ts` renders this document
+   for every status in the SO vocabulary and compares what was drawn.
+   **`IN_PRODUCTION` is the one word still unsettled**: `status-pill.ts` says
+   *Proceed*, `frontend/src/pages/scm-v2/so-list-status.ts` says *In Production*
+   while claiming the two match, and both are live on screens. The sheet follows
+   `status-pill.ts`; picking the word is the owner's call. Entry
+   `docs/bugs/0548-every-printed-document-title-cased-the-raw-stored-status-ins.md`,
+   rule `docs/modules/document-status-vocabulary.md` §1.
 
 `?summary=1` skips the view join + item read entirely (dashboard only needs status
 buckets) — do not fully-hydrate 500 rows for a count.

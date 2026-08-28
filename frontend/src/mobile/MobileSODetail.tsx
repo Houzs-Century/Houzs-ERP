@@ -69,7 +69,7 @@ import {
 import { generateAmendmentPdf } from "../vendor/scm/lib/amendment-pdf";
 import { PrintPreviewModal, usePrintPreview } from "../components/scm-v2/PrintPreviewModal";
 import type { PdfAction } from "../vendor/scm/lib/pdf-common";
-import { soAmendmentToPdfInput } from "../vendor/scm/lib/amendment-pdf-map";
+import { amendmentPrintedStatus, soAmendmentToPdfInput } from "../vendor/scm/lib/amendment-pdf-map";
 import { useStaffLookup } from "../hooks/useStaffLookup";
 /* The 2990 bridge's staff row — the vocabulary so_amendments.requested_by is
    written in (a scm.staff uuid). Desktop AmendmentDetailV2 compares it to decide
@@ -1902,7 +1902,6 @@ function AmendmentDiffSheet({ amendmentId, onClose }: { amendmentId: string; onC
   const { actorNameOf } = useStaffLookup();
   const amd = data?.amendment as Record<string, unknown> | undefined;
   const amdStatus = String(amd?.status ?? "");
-  const soApplied = ["SO_APPROVED", "PO_APPROVED", "SENT", "APPROVED"].includes(amdStatus);
   const deliverAmendmentPdf = (action: PdfAction) => {
     if (!amd) return;
     const input = soAmendmentToPdfInput({
@@ -1918,7 +1917,6 @@ function AmendmentDiffSheet({ amendmentId, onClose }: { amendmentId: string; onC
       lines: (data?.lines ?? []) as never,
       salesOrder: (data?.salesOrder ?? null) as never,
       customerName: (data?.salesOrder as { customer_name?: string | null } | null)?.customer_name ?? null,
-      statusLabel: soApplied ? "Approved" : "Requested",
     });
     return Promise.resolve(generateAmendmentPdf(input, { action })).catch((e: unknown) =>
       void notify({ title: "PDF generation failed", body: e instanceof Error ? e.message : "Something went wrong.", tone: "error" }));
@@ -2098,7 +2096,7 @@ function AmendmentDiffSheet({ amendmentId, onClose }: { amendmentId: string; onC
             docNo={amNo || "Amendment"}
             rows={[
               { label: "Against SO", value: soDocNo || "—" },
-              { label: "Status", value: soApplied ? "Approved" : "Requested" },
+              { label: "Status", value: amendmentPrintedStatus(amdStatus) },
               { label: "Reason", value: reason || "—" },
               {
                 label: "Changes",

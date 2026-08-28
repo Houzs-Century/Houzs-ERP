@@ -627,9 +627,26 @@ sheet that says more than the data does.
 > `docs/bugs/0545-…`. The no-table rule stands; it was never a statement about
 > rows.
 
-The printed sheet's QR encodes **`/d/<64-hex token>`** and is captioned **`SCAN
-AT EACH STEP`** — the same words as the delivery-order print, because it is the
-same act. It opens `frontend/src/pages/PublicDoScan.tsx` with **no login**: the
+The printed sheet's QR encodes **`/d/<token>`** and is captioned **`SCAN AT EACH
+STEP`** — the same words as the delivery-order print, because it is the same act.
+
+> **THE TOKEN'S LENGTH IS A PRINT SETTING (2026-08-27).** A QR's readability is
+> its MODULE size, and the module count comes from the payload — so at a fixed
+> printed size a longer token is a less scannable code. The owner asked for a
+> smaller code on the sheet, which with the same payload would have made a worse
+> one, so the two changed together: the token went from **64 hex to 10
+> characters** (Crockford's alphabet, no `i`/`l`/`o`/`u`, because a warehouse
+> reads these off paper and phones them in), the code went from 41 modules to 29,
+> and the print went from 16mm to **14mm — 12% smaller AND 0.424mm per module
+> against 0.356mm before.** The only figure with field evidence behind it is
+> Hookka's 0.415mm, running on a warehouse floor today. Details and the refused
+> 10mm arithmetic: `docs/bugs/0552-…`.
+>
+> **Both shapes resolve.** Every sheet already on a lorry carries a 64-hex token
+> and keeps working; only the short form is minted from now on. `drawQrIntoPdf`
+> treats its size argument as a FLOOR TO GROW FROM, so a legacy token prints at
+> the size it needs rather than being squeezed into 14mm and quietly failing at
+> the lorry. It opens `frontend/src/pages/PublicDoScan.tsx` with **no login**: the
 driver carrying the sheet has no account, and the token is the credential.
 
 **One scan moves the whole run.** The spec quotes the owner: 「这三个操作都可以
