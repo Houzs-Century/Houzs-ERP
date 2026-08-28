@@ -40,5 +40,13 @@ surfaces import, so the Maintenance list and the print path cannot disagree abou
 what a compartment looks like. Today they agree by construction only because both
 end up at `sofa-modules/<code>`.
 
+**AND A DEADLINE, WHICH CI FOUND THE HONEST WAY.** Moving the lookup into the
+generator made the PO sofa test hang for fifteen seconds on a fetch that never
+answered — which is exactly what a purchaser on a bad connection would have
+experienced, with nothing to catch it. Artwork is decoration on a document whose
+job is to tell a supplier what to build, so the whole lookup is now bounded
+(`ART_DEADLINE_MS`, 6s, covering both the config read and the per-code loads) and
+the sheet prints its schematics rather than waiting.
+
 **Ref.** feat/a-brand-new-po-line-can-carry-photos → renamed
 fix/the-default-compartment-picture, 2026-08-28.

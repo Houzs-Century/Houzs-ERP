@@ -1034,6 +1034,24 @@ function blobToDataUrl(blob: Blob): Promise<string | null> {
  * Fail-soft throughout: anything that cannot be resolved, fetched or measured is
  * simply absent, and that cell draws its schematic. A print must never fail for
  * want of a picture. */
+/* How long the whole artwork lookup may take before the sheet prints without it.
+   Generous enough for a warehouse connection, short enough that nobody stares at
+   a blank tab wondering whether Print worked. */
+const ART_DEADLINE_MS = 6000;
+
+/** Resolve `p`, or `fallback` if it has not settled within `ms`. Never rejects. */
+async function withDeadline<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      p.catch(() => fallback),
+      new Promise<T>((resolve) => { timer = setTimeout(() => resolve(fallback), ms); }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 export async function loadSofaCompartmentArtForPrint(
   codes: readonly string[],
 ): Promise<Record<string, string>> {
@@ -1043,20 +1061,30 @@ export async function loadSofaCompartmentArtForPrint(
   const wanted = [...new Set(codes.map((c) => String(c).trim()).filter(Boolean))];
   if (wanted.length === 0) return {};
 
-  /* The override map, best-effort. A company with no config yet, or a failed
-     read, simply means every code falls back to its bundled art. */
-  let meta: Record<string, { imageKey?: string }> = {};
-  try {
-    const resolved = await authedFetch<{ data?: { sofaCompartmentMeta?: Record<string, { imageKey?: string }> } }>(
-      '/maintenance-config/resolved?scope=master',
-    );
-    meta = resolved.data?.sofaCompartmentMeta ?? {};
-  } catch {
-    meta = {};
-  }
+  /* The override map, best-effort AND TIME-BOUNDED. A company with no config
+     yet, a failed read, or a slow one all mean the same thing: every code falls
+     back to its bundled art.
+
+     THE DEADLINE IS THE POINT. Artwork is decoration on a document whose job is
+     to tell a supplier what to build — a print must never sit waiting for it.
+     CI found this the honest way: the PO sofa test hung for fifteen seconds on a
+     fetch that never answered, which is exactly what a purchaser on a bad
+     connection would have experienced with no test to catch it. */
+  const meta = await withDeadline(
+    (async () => {
+      const resolved = await authedFetch<{ data?: { sofaCompartmentMeta?: Record<string, { imageKey?: string }> } }>(
+        '/maintenance-config/resolved?scope=master',
+      );
+      return resolved.data?.sofaCompartmentMeta ?? {};
+    })(),
+    ART_DEADLINE_MS,
+    {} as Record<string, { imageKey?: string }>,
+  );
 
   const out: Record<string, string> = {};
-  await Promise.all(wanted.map(async (code) => {
+  /* The per-code loads share one deadline as well: thirty compartments each
+     waiting on their own timeout would still be thirty times too long. */
+  await withDeadline(Promise.all(wanted.map(async (code) => {
     try {
       /* An UPLOADED override needs the session; anything else is a plain file
          on this origin and must NOT carry a bearer token. Absent override →
@@ -1077,7 +1105,7 @@ export async function loadSofaCompartmentArtForPrint(
     } catch {
       /* this one cell draws its schematic */
     }
-  }));
+  })), ART_DEADLINE_MS, [] as unknown[]);
   return out;
 }
 
