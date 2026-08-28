@@ -1035,7 +1035,11 @@ export async function loadSofaCompartmentArtForPrint(): Promise<Record<string, s
     const resolved = await authedFetch<{ data?: { sofaCompartmentMeta?: Record<string, { imageKey?: string }> } }>(
       '/maintenance-config/resolved?scope=master',
     );
-    return await loadSofaCompartmentPhotos(resolved?.data?.sofaCompartmentMeta);
+    /* `resolved` itself is non-optional by TYPE — authedFetch returns T — and
+       the ratchet is right to say so. `data` stays optional because the
+       endpoint really can answer with no config yet (a fresh company), and
+       loadSofaCompartmentPhotos treats undefined as "draw the schematics". */
+    return await loadSofaCompartmentPhotos(resolved.data?.sofaCompartmentMeta);
   } catch {
     return {};
   }
