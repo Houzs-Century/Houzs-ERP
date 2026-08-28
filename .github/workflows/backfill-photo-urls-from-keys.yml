@@ -1,0 +1,40 @@
+name: Attach round-1 photo keys to re-imported lines
+
+# Manual. Re-attaches the R2 photo keys recovered from the round-1 attach-run
+# logs (committed under data/r2-*-photo-keys-2026-08-10.txt) to the re-imported
+# lines, matched by each key's own doc_no + AC DtlKey against
+# linked_ac_dtlkey. Touches no R2 object — the signed-URL route serves any key
+# listed in photo_urls, and the old keys still name their objects. PLAN prints
+# every attach and miss; apply=1 + the confirm phrase writes. Idempotent.
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "1 to write, else PLAN"
+        required: false
+        default: "0"
+        type: string
+      confirm:
+        description: 'For apply ONLY, type exactly: ATTACH PHOTO KEYS'
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: backfill-photo-urls-from-keys
+  cancel-in-progress: false
+
+jobs:
+  run-prod:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/backfill-photo-urls-from-keys.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          CONFIRM: ${{ inputs.confirm }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

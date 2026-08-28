@@ -1,0 +1,5 @@
+# Keys seen ONLY in earlier round-1 runs — may have been re-minted; verify in R2
+# (needs an auth with R2 read on the company account) before attaching.
+so-items/HC-SO-010882/c9cfa4b5-93b3-4a80-a8a8-ec660b770bba/ac-758395-1.jpg
+so-items/HC-SO-011660/81a0ed1d-72b4-440f-a390-c32e409fbb0d/ac-803503-1.jpg
+so-items/HC-SO-012629/41eb2770-8792-47b5-af1c-4e4bdd794a0c/ac-860757-1.jpg
