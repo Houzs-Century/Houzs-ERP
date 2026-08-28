@@ -580,6 +580,22 @@ Two things happen here that are easy to miss:
      surfaces (`Projects.tsx` `TaskAttachmentRow` + `mobile/MobilePMS.tsx`
      `DefectFileActions`), gate the buttons on the attachment's latest status.
 
+7. **The `section` (Task) filter matches OPEN WORK, not the project's stage**
+   (owner 2026-08-27). `?section=A,B` keeps every project holding at least one
+   task that is not `done`/`na` in ANY ticked section — a plain `EXISTS` over
+   `project_checklist` joined to `project_checklist_sections`. It used to
+   compare against the project's ACTIVE section (lowest `sort_order` with an
+   open task), which is ONE value per project: a project stuck on CONTRACT
+   could never match `BOOTH LAYOUT & SETUP` however many of its tasks were
+   open. On 2026-08-27 all 18 confirmed Sep-2026 events sat on CONTRACT, so
+   ticking the two later sections returned zero rows — and EXPORT, which sends
+   the same `section` param (`Projects.tsx` `exportProjects`), came back empty
+   with it. The `__done` / `__none` sentinels are unchanged and still OR
+   alongside the real names, and `section_tasks_map` still returns the ticked
+   sections' per-task badges. The project's stage is still reported per row as
+   `active_section_name`, and the CALENDAR handler still filters on that stage
+   — the two surfaces now answer different questions on purpose.
+
 ### Setup & Dismantle crew editor — outsourced providers
 
 `PhaseCrewEditor` (`Projects.tsx`, around `:8994`) edits the `setup_crew` /
@@ -596,6 +612,23 @@ renders — the chip falls back). Service / Exchange keeps the older single
 **Outsourced** checkbox (it has its own per-lorry Grab/Lalamove `provider`
 dropdown). Because the picked helper names land in the crew JSON, a Grab-assigned
 helper still matches the `assigned_to_me` / calendar `setup_crew` name arm.
+
+**Who may edit it, and how the optional crew rows work.** `LogisticsCrewSection`
+lets EVERYONE VIEW the crew but only **Logistic** (position `Logistic Admin` or
+role `Logistic` — Syu, Syasya), **BD**, and directors / `*` EDIT it; everyone
+else renders `readOnly`, every control disabled. The schedule reference is
+tighter again (BD + weisiang + `*` edit; logistic view; hidden from the rest).
+
+Each lorry card always shows **Driver 1 + Helper 1**; **Driver 2 / Helper 2**
+appear only once filled or once their `+ Add …` button is pressed, tracked in
+the UI-only `openSlot2` set. Since 2026-08-27 that button is **reversible** —
+the slot-2 rows carry an `×` (`CrewSlotRow`'s `onRemove`) that clears the local
+open flag AND, when slot 2 holds someone, slices them out of the saved crew. It
+was one-way before, so a mis-clicked `+ Add driver` left a row on screen until
+the page was reloaded. An untouched slot-2 row closes without a PATCH, so
+closing one on a never-saved crew does not persist a blank lorry card. Slot 1 is
+structural and still clears through the blank `Name…` option; the whole lorry
+card goes with the `×` beside its plate.
 
 ### Stock transfers and their tasklist mirror
 
@@ -1103,6 +1136,7 @@ is a strict subset: it excludes the granular `projects.finance.view` holders
 | Project list, cards, filters | `pages/Projects.tsx:949` `ProjectsListView` | `mobile/MobilePMS.tsx` |
 | Project detail, checklist, crew, photos, defects | `pages/Projects.tsx:4756` / `:5919` | `mobile/MobilePMS.tsx` (same file) |
 | Defect-file action timeline (Done / Replace + remark) | `pages/Projects.tsx` `TaskAttachmentRow` `saveAction` | `mobile/MobilePmsDefectActions.tsx` — extracted from `MobilePMS.tsx` 2026-08-21 so the save path is renderable in a test; both surfaces must SURFACE a refusal |
+| Project CREATE | `pages/Projects.tsx` `CreateProjectPanel` | `mobile/MobileNewProject.tsx` (2026-08-28) — same derived name, same three code-part validations, same `canCreateEvent` gate |
 | Calendar | `pages/Projects.tsx:3034` | `mobile/MobileCalendar.tsx` |
 | Finances profitability analytics (group tables, rental column, drill-down) | `pages/Projects.tsx` `ProjectsAnalyticsView` / `BreakdownCard` | **no mobile counterpart** (mobile PMS is single-project detail only) |
 | Gantt | `components/ProjectGantt.tsx` | `mobile/MobileGantt.tsx` (rendered from `MobilePMS.tsx:1603`) |
@@ -1114,6 +1148,43 @@ is a strict subset: it excludes the granular `projects.finance.view` holders
 | P&L category labels | — | — shared in `vendor/scm/lib/pms-ledger-categories.ts`; neither surface labels a category itself |
 | Which checklist rows carry Approve/Reject | — | — shared in `vendor/scm/lib/pms-reviewable-titles.ts` |
 | Project STATUS values + payment-pill labels | — | — shared in `vendor/scm/lib/pms-project-status.ts`; each surface keeps only its own palette |
+
+#### What mobile can WRITE at project level (2026-08-28)
+
+All three project-level writes now exist on the phone. Each carries the SAME
+gate as its route, so a visible control cannot 403:
+
+| Action | Mobile control | Gate | Route |
+|---|---|---|---|
+| Change status | `<select>` in the detail header, `PROJECT_STATUS_OPTIONS` | `projects.write` **and** `access.canEdit` (the PMS EDIT section — sales roles have `canEdit=false`) and not archived | `PATCH /:id` |
+| Remove | **Archive** / **Restore** button in the detail header | `projects.manage` | `POST /:id/archive` · `/unarchive` |
+| Create | **+ New** in the list header → `MobileNewProject` | `canCreateEvent` — BD role or position `owner`, nobody else | `POST /` (`projects.write` + the same `canCreateEvent` server-side) |
+
+There is **no hard delete** for a project on either surface — "remove" is
+archive, and it is reversible from the same button.
+
+`MobileNewProject` deliberately does NOT use `MobileModuleForm`. That renderer
+is a flat config→field map and this form has two derivations it cannot express:
+STATE comes from the picked venue (`project_venues.state`, the source
+`deriveProjectCode` reads), and NAME is composed from state/brand/organizer/
+venue rather than typed — the same read-only rule the desktop panel applies,
+because the project CODE is built from those same parts and a hand-typed name
+would drift from it. The three fields `deriveProjectCode` throws on (state,
+venue, brand) are validated client-side so a missing one is named on screen
+instead of returning as a 400.
+
+**Who may create, narrowed 2026-08-28.** The owner: *"only owner and BD can
+create"*. `canCreateEvent` (mirrored in `frontend/src/auth/salesAccess.ts` and
+`backend/src/routes/projects.ts`, which stays the authority) was BD role OR
+position `owner` OR a hard-coded `weisiang329@gmail.com`. The named-email arm is
+removed. Measured against the live users table on the day of the change, it
+admitted exactly one live account — Lim, position `Super Admin`, role `IT Admin`
+— so he is the one person the narrowing removes. The remaining holders are
+HOUZS CENTURY (position `Owner`) and UMMU (role `BD Exec`); `Test Admin` also
+matches on position but the account is disabled. **Re-grant by giving an account
+the BD role or the Owner position, never by putting an address back in the
+function.** Note neither arm honours the `*` wildcard, so a Super Admin has
+never been admitted by it — that was already the 2026-07-24 ruling.
 
 #### The shared PMS vocabularies, and why they are shared
 

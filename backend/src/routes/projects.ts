@@ -2377,18 +2377,23 @@ app.get("/:id", requirePageAccess("projects.list"), async (c) => {
 
 // ── Create ────────────────────────────────────────────────────
 
-// Event (project) creation is restricted to BD staff, the Owner account, and
-// Lim (weisiang329@gmail.com) — NOT other Super Admins nor anyone else (owner
-// 2026-07-24). This is the authority; the FE hides the New Project button for
-// everyone else. Mirrors frontend auth/salesAccess.canCreateEvent.
+// Event (project) creation is restricted to BD staff and the Owner account --
+// NOT Super Admins, NOT anyone else (owner 2026-07-24; narrowed 2026-08-28,
+// "only owner and BD can create"). This is the authority; the FE hides the New
+// Project button for everyone else. Mirrors frontend auth/salesAccess.canCreateEvent.
+//
+// The named-email arm is GONE. It admitted exactly one live account -- Lim,
+// weisiang329@gmail.com, position Super Admin, role IT Admin -- so he is the
+// one person this narrowing removes, and it is removed deliberately rather
+// than drifted past. Re-grant by giving that account the BD role or the Owner
+// position; never by pasting an address back in here.
 function canCreateEvent(
   user: { role_name?: string | null; position_name?: string | null; email?: string | null } | null | undefined,
 ): boolean {
   if (!user) return false;
   const role = (user.role_name ?? "").toLowerCase();
   const position = (user.position_name ?? "").toLowerCase();
-  const email = (user.email ?? "").toLowerCase();
-  return /\bbd\b/.test(role) || position === "owner" || email === "weisiang329@gmail.com";
+  return /\bbd\b/.test(role) || position === "owner";
 }
 
 app.post("/", requirePermission("projects.write"), async (c) => {

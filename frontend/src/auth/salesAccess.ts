@@ -79,9 +79,13 @@ export function isSalesStaff(user: AuthUser | null | undefined): boolean {
 }
 
 /**
- * May this user CREATE an event (New Project)? Owner 2026-07-24: restricted to
- * BD staff, the Owner account, and Lim (weisiang329@gmail.com) — NOT other
- * Super Admins (Nico/Loo) nor anyone else. Mirrored server-side in
+ * May this user CREATE an event (New Project)? Owner 2026-07-24, narrowed
+ * 2026-08-28 ("only owner and BD can create"): BD staff and the Owner account,
+ * nobody else -- not Super Admins (Nico/Loo), and not the named-email arm this
+ * used to carry. That arm admitted exactly one live account (Lim,
+ * weisiang329@gmail.com -- Super Admin / IT Admin), so he is the one person the
+ * narrowing removes; re-grant with the BD role or the Owner position rather
+ * than by reintroducing an address here. Mirrored server-side in
  * backend/src/routes/projects.ts on the New Project POST (this is UX/nav gating;
  * the backend stays the authority).
  */
@@ -89,8 +93,7 @@ export function canCreateEvent(user: AuthUser | null | undefined): boolean {
   if (!user) return false;
   const role = (user.role_name ?? "").toLowerCase();
   const position = (user.position_name ?? "").toLowerCase();
-  const email = (user.email ?? "").toLowerCase();
-  return /\bbd\b/.test(role) || position === "owner" || email === "weisiang329@gmail.com";
+  return /\bbd\b/.test(role) || position === "owner";
 }
 
 /**

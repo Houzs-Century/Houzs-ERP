@@ -5,12 +5,13 @@ import { api } from "../api/client";
 import { formatPhone } from "../vendor/shared/phone";
 import { MobileVirtualList } from "./MobileVirtualList";
 import { MobileGantt } from "./MobileGantt";
+import { MobileNewProject } from "./MobileNewProject";
 import { MediaLightbox, type MediaItem } from "../components/MediaLightbox";
 import { SearchProgress } from "../components/SearchProgress";
 import { SearchScopeHint } from "../components/SearchScopeHint";
 import { useSearchResultTransition } from "../hooks/useServerSearch";
 import { useAuth } from "../auth/AuthContext";
-import { isSalesNonDirector, isSalesDirectorUser, canLogSalesEntry } from "../auth/salesAccess";
+import { isSalesNonDirector, isSalesDirectorUser, canLogSalesEntry, canCreateEvent } from "../auth/salesAccess";
 import { capability } from "../auth/capabilities";
 import { readProjectAccess, projectAccessUnresolved, holdsChecklistApproval } from "../auth/projectAccess";
 import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
@@ -345,11 +346,30 @@ export function MobilePMS({ onBack, initialProjectId }: { onBack?: () => void; i
   // When entered straight into a detail (e.g. tapped from the Calendar), Back
   // leaves PMS entirely; once the user visits the list, Back returns to it.
   const [direct, setDirect] = useState<boolean>(initialProjectId != null);
+  /* Create sits ABOVE the detail branch: a create started from the list must
+     win over any stale openId, and on success we hand straight over to the new
+     project detail rather than dropping the user back on the list. */
+  const [creating, setCreating] = useState(false);
+
+  if (creating) {
+    return (
+      <MobileNewProject
+        onBack={() => setCreating(false)}
+        onCreated={(id) => { setCreating(false); setDirect(false); setOpenId(id); }}
+      />
+    );
+  }
 
   if (openId != null) {
     return <ProjectDetailView id={openId} onBack={() => (direct ? onBack?.() : setOpenId(null))} />;
   }
-  return <ProjectListView onOpen={(id) => { setDirect(false); setOpenId(id); }} onBack={onBack} />;
+  return (
+    <ProjectListView
+      onOpen={(id) => { setDirect(false); setOpenId(id); }}
+      onBack={onBack}
+      onNew={() => setCreating(true)}
+    />
+  );
 }
 
 // ── List ──
@@ -389,7 +409,7 @@ const STAGE_FILTERS: [string, string][] = [
 
 const PMS_PAGE_SIZE = 30;
 
-function ProjectListView({ onOpen, onBack }: { onOpen: (id: number) => void; onBack?: () => void }) {
+function ProjectListView({ onOpen, onBack, onNew }: { onOpen: (id: number) => void; onBack?: () => void; onNew?: () => void }) {
   const { can, user } = useAuth();
   // Owner 2026-07-21: the sales cohort's list rows show progress over THEIR
   // OWN deliverables (SALES PIC tasks) — the admin section chip ("CONTRACT
@@ -531,6 +551,21 @@ function ProjectListView({ onOpen, onBack }: { onOpen: (id: number) => void; onB
               <div className="scr-title">Projects</div>
             </div>
           </div>
+          {/* Owner 2026-08-28: mobile could change a project's status and
+              archive one, but had no way to CREATE one. Same gate as the
+              desktop QuickActionsFAB and as POST /api/projects itself
+              (canCreateEvent — BD / owner / weisiang), so the button and the
+              route cannot disagree about who may press it. */}
+          {onNew && canCreateEvent(user) && (
+            <button
+              className="tinybtn"
+              onClick={onNew}
+              aria-label="New project"
+              style={{ marginLeft: "auto", flexShrink: 0 }}
+            >
+              + New
+            </button>
+          )}
         </div>
         <div className="hdr-row" style={{ marginTop: 11 }}>
           <div className="searchbar">
@@ -3862,9 +3897,17 @@ function FloorPlans({
                 onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); void openPlan(files, t.label); } }}
                 style={{ border: "1px solid #d6d9d2", borderRadius: 11, overflow: "hidden", cursor: "pointer", background: "#fff", ...(t.full ? { gridColumn: "1 / -1" } : {}) }}
               >
+                {/* A PDF has no thumbnail, and an empty grey box reads as
+                    "nothing here" — which is how a PDF floorplan came back
+                    reported as a file nobody could see (owner 2026-08-27).
+                    Name the format rather than showing a blank. */}
                 {latest && /^image\//.test(latest.content_type ?? "")
                   ? <R2Thumb r2Key={latest.r2_key} style={{ width: "100%", height: t.mediaH }} />
-                  : <div className="ph" style={{ height: t.mediaH }} />}
+                  : latest
+                    ? <div className="ph" style={{ height: t.mediaH, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, letterSpacing: ".08em", color: "#8a9086" }}>
+                        {(latest.r2_key.split(".").pop() || "file").toUpperCase()}
+                      </div>
+                    : <div className="ph" style={{ height: t.mediaH }} />}
                 <div style={{ padding: "7px 9px" }}>
                   <div style={{ fontSize: 11, fontWeight: 700, color: "#11140f" }}>{t.label}</div>
                   <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>

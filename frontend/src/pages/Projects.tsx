@@ -10870,6 +10870,7 @@ function CrewSlotRow({
   options,
   slot,
   onChange,
+  onRemove,
   readOnly = false,
 }: {
   label: string;
@@ -10877,6 +10878,13 @@ function CrewSlotRow({
   options: CrewMember[];
   slot: CrewSlot | undefined;
   onChange: (s: CrewSlot) => void;
+  /** Owner 2026-08-27: when given, the row carries an × that takes the WHOLE
+   *  row away, not just its name. Passed for the optional Driver 2 / Helper 2
+   *  slots — before this, "+ Add driver" was one-way: `openSlot2` only ever
+   *  grew, so a row opened by a mis-click stayed on screen for the rest of the
+   *  session and the only escape was reloading the page. Slot 1 is structural
+   *  and keeps clearing through the blank "Name…" option instead. */
+  onRemove?: () => void;
   /** View-only for Sales (owner 2026-07): disable both controls. */
   readOnly?: boolean;
 }) {
@@ -10907,6 +10915,17 @@ function CrewSlotRow({
             <option value={cur.name}>{cur.name}</option>
           )}
         </select>
+        {onRemove && !readOnly && (
+          <button
+            type="button"
+            onClick={onRemove}
+            className="shrink-0 text-ink-muted hover:text-err"
+            title={`Remove ${label}`}
+            aria-label={`Remove ${label}`}
+          >
+            <X size={13} />
+          </button>
+        )}
       </div>
       <input
         className="min-w-0 rounded-md border border-border bg-surface px-1.5 py-1 text-[11px] disabled:bg-bg/40"
@@ -11099,10 +11118,31 @@ function PhaseCrewEditor({
   // Owner 2026-07-22: the Driver 2 / Helper 2 rows stay HIDDEN until needed —
   // most lorries run one driver + one helper, so the empty second slots were
   // noise. A filled slot always shows; an empty one shows only after its
-  // "+ Add …" button (styled like "+ Add lorry") is clicked. UI-only state:
-  // collapsing back happens by clearing the name (row hides on next open).
+  // "+ Add …" button (styled like "+ Add lorry") is clicked.
   const [openSlot2, setOpenSlot2] = useState<Set<string>>(new Set());
   const showSlot2 = (li: number, kind: "d" | "h") => setOpenSlot2((s) => new Set(s).add(`${li}${kind}`));
+  /* Owner 2026-08-27: and it can be TAKEN BACK. This used to be a one-way
+     door — `openSlot2` only ever grew, and the note here said "collapsing back
+     happens by clearing the name (row hides on next open)", i.e. not until the
+     page was reloaded. A mis-clicked "+ Add driver" therefore left a row the
+     operator could not get rid of, which is how it was reported (logistic,
+     2026-08-27: wanted to add a helper, could not remove the driver row).
+     Removing drops BOTH halves: the local open flag and, when slot 2 actually
+     holds someone, the saved entry. Nothing is written when the slot was still
+     empty — closing an untouched row is not worth a PATCH, and on a crew that
+     has never been saved it would persist a blank lorry card. */
+  const removeSlot2 = (li: number, kind: "drivers" | "helpers") => {
+    setOpenSlot2((s) => {
+      const next = new Set(s);
+      next.delete(`${li}${kind === "drivers" ? "d" : "h"}`);
+      return next;
+    });
+    if (!lorries[li]?.[kind]?.[1]) return;
+    save({
+      ...pc,
+      lorryCrew: lorries.map((l, i) => (i === li ? { ...l, [kind]: l[kind].slice(0, 1) } : l)),
+    });
+  };
   return (
     <div className="mt-3 space-y-2">
       {emptyHint && <div className="text-[9px] italic text-ink-muted">{emptyHint}</div>}
@@ -11136,11 +11176,11 @@ function PhaseCrewEditor({
             </div>
             <CrewSlotRow label="Driver 1" color="text-synced" options={drivers} slot={lorry.drivers[0]} onChange={(s) => setLorrySlot(li, "drivers", 0, s)} readOnly={readOnly} />
             {(!!lorry.drivers[1]?.name || openSlot2.has(`${li}d`)) && (
-              <CrewSlotRow label="Driver 2" color="text-synced" options={drivers} slot={lorry.drivers[1]} onChange={(s) => setLorrySlot(li, "drivers", 1, s)} readOnly={readOnly} />
+              <CrewSlotRow label="Driver 2" color="text-synced" options={drivers} slot={lorry.drivers[1]} onChange={(s) => setLorrySlot(li, "drivers", 1, s)} onRemove={() => removeSlot2(li, "drivers")} readOnly={readOnly} />
             )}
             <CrewSlotRow label="Helper 1" color="text-warning-text" options={helpers} slot={lorry.helpers[0]} onChange={(s) => setLorrySlot(li, "helpers", 0, s)} readOnly={readOnly} />
             {(!!lorry.helpers[1]?.name || openSlot2.has(`${li}h`)) && (
-              <CrewSlotRow label="Helper 2" color="text-warning-text" options={helpers} slot={lorry.helpers[1]} onChange={(s) => setLorrySlot(li, "helpers", 1, s)} readOnly={readOnly} />
+              <CrewSlotRow label="Helper 2" color="text-warning-text" options={helpers} slot={lorry.helpers[1]} onChange={(s) => setLorrySlot(li, "helpers", 1, s)} onRemove={() => removeSlot2(li, "helpers")} readOnly={readOnly} />
             )}
             {!readOnly && (!(lorry.drivers[1]?.name || openSlot2.has(`${li}d`)) || !(lorry.helpers[1]?.name || openSlot2.has(`${li}h`))) && (
               <div className="flex gap-1.5 pt-0.5">

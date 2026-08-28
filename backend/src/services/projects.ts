@@ -1765,19 +1765,26 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
       );
     }
     if (names.length) {
-      // Match the active section (lowest sort_order with open tasks).
+      /* Owner 2026-08-27: match ANY ticked section that still holds open work
+         — NOT the project's single "active" section. This used to compare
+         against the active section (lowest sort_order with an open task), so
+         a project stuck on CONTRACT could never match "BOOTH LAYOUT & SETUP"
+         even while that section was full of outstanding tasks. Every
+         confirmed Sep-2026 event sat on CONTRACT, so ticking the two later
+         sections returned zero rows — and EXPORT, which reuses this same
+         `section` param, came back empty with it. The dropdown prints a TASK
+         COUNT beside each section, so "has open tasks here" is the question
+         it was always read as asking. The project's current stage is still
+         reported separately as the `active_section_name` column. */
       ors.push(
-        `(
-           SELECT s.name FROM project_checklist_sections s
-            WHERE s.project_id = p.id
-              AND EXISTS (
-                SELECT 1 FROM project_checklist c
-                 WHERE c.project_id = p.id
-                   AND c.section_id = s.id
-                   AND c.status NOT IN ('done','na')
-              )
-            ORDER BY s.sort_order LIMIT 1
-         ) IN (${names.map(() => "?").join(",")})`
+        `EXISTS (
+           SELECT 1 FROM project_checklist c
+             JOIN project_checklist_sections s ON s.id = c.section_id
+            WHERE c.project_id = p.id
+              AND s.project_id = p.id
+              AND c.status NOT IN ('done','na')
+              AND s.name IN (${names.map(() => "?").join(",")})
+         )`
       );
     }
     where.push(`(${ors.join(" OR ")})`);

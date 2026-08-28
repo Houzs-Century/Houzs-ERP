@@ -52,6 +52,21 @@ export function MediaLightbox({
   const isVideo = !!item && (item.content_type || "").startsWith("video/");
   const isPdf = !!item && ((item.content_type || "").includes("pdf") || /\.pdf$/i.test(item.r2_key));
   const [url, setUrl] = useState<string | null>(null);
+  const [loadErr, setLoadErr] = useState(false);
+  /* A phone or tablet cannot render a PDF inside an <iframe> -- iOS Safari and
+     Android Chrome both refuse a blob: PDF there, so the viewer came up as a
+     blank white box (owner report 2026-08-27: a PDF floorplan a sales rep could
+     neither view nor download on his phone). Touch devices fall through to the
+     document card below, whose Open link hands the file to the OS PDF viewer.
+     Detected by POINTER, not viewport width: a desktop window narrowed to phone
+     size still has a real PDF plugin and keeps the inline iframe. Read once --
+     the pointer type does not change for the life of one lightbox. */
+  const [coarsePointer] = useState(
+    () =>
+      typeof window !== "undefined" &&
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(pointer: coarse)").matches
+  );
 
   const go = useCallback(
     (delta: number) => {
@@ -84,6 +99,7 @@ export function MediaLightbox({
   useEffect(() => {
     if (!item) return;
     setUrl(null);
+    setLoadErr(false);
     let revoked = false;
     api
       // Re-type octet-stream blobs from the item's known MIME so a PDF renders
@@ -93,7 +109,12 @@ export function MediaLightbox({
         if (!revoked) setUrl(u);
         else URL.revokeObjectURL(u);
       })
-      .catch(() => {});
+      .catch(() => {
+        /* Was a silent swallow, and that is how this reaches you as "I tap it
+           and nothing happens": a failed fetch left the box reading "Loading"
+           for ever, with no error anywhere for the user to report. */
+        if (!revoked) setLoadErr(true);
+      });
     return () => {
       revoked = true;
       if (url) URL.revokeObjectURL(url);
@@ -107,6 +128,26 @@ export function MediaLightbox({
     const m = item.r2_key.match(/\.([a-z0-9]+)$/i);
     return m ? m[1].toUpperCase() : "FILE";
   })();
+
+  /* The old download re-fetched the file just to read its Content-Disposition
+     filename, and only fell back to the caption. Serving the blob we already
+     hold means naming it here — but a caption is not always a filename (the
+     defect tiles put a free-text remark there), so a caption is used only when
+     it carries an extension. Otherwise the R2 key basename, which always
+     does. */
+  const downloadName =
+    item.caption && /[.][a-z0-9]{2,5}$/i.test(item.caption)
+      ? item.caption
+      : item.r2_key.split("/").pop() || "download";
+
+  /* ONE box for both states. It used to read "Loading…" whether the fetch was
+     still in flight or had already failed, so a dead file and a slow one were
+     indistinguishable to the person looking at it. */
+  const fallbackBox = (
+    <div className="flex h-64 w-64 items-center justify-center rounded bg-white/5 px-4 text-center text-[13px] text-white/60">
+      {loadErr ? "Could not load this file. Check your connection and try again." : "Loading…"}
+    </div>
+  );
 
   return createPortal(
     <div
@@ -132,17 +173,28 @@ export function MediaLightbox({
           )}
         </div>
         <div className="flex items-center gap-2">
-          <button
-            onClick={() => {
-              const name = item.caption || item.r2_key.split("/").pop() || "download";
-              void api.downloadFile(`${baseUrl}/${item.r2_key}`, name).catch(() => {});
-            }}
-            aria-label="Download"
-            title="Download"
-            className="rounded-full bg-white/10 p-2 text-white transition-colors hover:bg-white/20"
-          >
-            <Download size={18} />
-          </button>
+          {/* A real <a href> to the blob we ALREADY hold, not a fetch-then-
+              synthesise-a-click. The old path awaited api.downloadFile first,
+              and that await breaks the user-gesture chain every mobile browser
+              requires before it will start a download — the same gesture rule
+              MobilePMS.tsx already documents for window.open on these very
+              tiles. On a phone the button simply did nothing, and the trailing
+              .catch(() => {}) meant it did nothing SILENTLY. The href is live
+              by the time this header renders, so the tap is a plain link
+              activation with no async gap in front of it. */}
+          {url && (
+            <a
+              href={url}
+              download={downloadName}
+              target="_blank"
+              rel="noreferrer"
+              aria-label="Download"
+              title="Download"
+              className="rounded-full bg-white/10 p-2 text-white transition-colors hover:bg-white/20"
+            >
+              <Download size={18} />
+            </a>
+          )}
           <button
             onClick={onClose}
             aria-label="Close"
@@ -191,9 +243,7 @@ export function MediaLightbox({
               draggable={false}
             />
           ) : (
-            <div className="flex h-64 w-64 items-center justify-center rounded bg-white/5 text-white/60">
-              Loading…
-            </div>
+            fallbackBox
           )
         ) : isVideo ? (
           url ? (
@@ -205,11 +255,9 @@ export function MediaLightbox({
               className="max-h-[88vh] max-w-[92vw] rounded shadow-2xl"
             />
           ) : (
-            <div className="flex h-64 w-64 items-center justify-center rounded bg-white/5 text-white/60">
-              Loading…
-            </div>
+            fallbackBox
           )
-        ) : isPdf ? (
+        ) : isPdf && !coarsePointer ? (
           url ? (
             <iframe
               src={url}
@@ -217,9 +265,7 @@ export function MediaLightbox({
               className="h-[88vh] w-[92vw] max-w-[1000px] rounded bg-white shadow-2xl"
             />
           ) : (
-            <div className="flex h-64 w-64 items-center justify-center rounded bg-white/5 text-white/60">
-              Loading…
-            </div>
+            fallbackBox
           )
         ) : (
           <div className="flex flex-col items-center gap-4 rounded-xl bg-white/5 px-10 py-12 text-white">
@@ -230,7 +276,10 @@ export function MediaLightbox({
                 {extLabel}
               </div>
             </div>
-            {url && (
+            {/* On a touch device this card IS the PDF viewer, so it has to say
+                something when the blob never arrived — otherwise a failed load
+                is a card with a filename and no control at all. */}
+            {url ? (
               <a
                 href={url}
                 target="_blank"
@@ -239,6 +288,10 @@ export function MediaLightbox({
               >
                 <FileText size={15} /> Open
               </a>
+            ) : (
+              <div className="max-w-[260px] text-center text-[12px] text-white/60">
+                {loadErr ? "Could not load this file. Check your connection and try again." : "Loading…"}
+              </div>
             )}
           </div>
         )}
