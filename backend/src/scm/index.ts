@@ -45,6 +45,7 @@ import { poAmendments } from "./routes/po-amendments";
 import { stateWarehouseMappings } from "./routes/state-warehouse-mappings";
 import { deliveryOrdersMfg } from "./routes/delivery-orders-mfg";
 import { deliveryOrderScanToken } from "./routes/delivery-order-scan-token";
+import { deliveryOrderItemPhotos } from "./routes/delivery-order-item-photos";
 import { salesInvoices } from "./routes/sales-invoices";
 import { deliveryReturns } from "./routes/delivery-returns";
 import { purchaseReturns } from "./routes/purchase-returns";
@@ -358,6 +359,10 @@ scm.use(
    its file-size ceiling and a ceiling may only fall. Mounted FIRST so its one
    route is matched before the main router's /:id patterns can shadow it. */
 scm.route("/delivery-orders-mfg", deliveryOrderScanToken);
+// Per-line photo read path (mig 20260828T0746) — same new-file-same-prefix
+// reasoning as the scan token directly above. Shares the DO area guard via the
+// path prefix, so GET here needs exactly what the DO detail GET needs.
+scm.route("/delivery-orders-mfg", deliveryOrderItemPhotos);
 scm.route("/delivery-orders-mfg", deliveryOrdersMfg);
 // Ported 2026-06-20 — SI backend (skipped in the earlier sync; the vendored SI
 // pages 404'd on /sales-invoices). NEEDS scm.sales_invoice_payments +
