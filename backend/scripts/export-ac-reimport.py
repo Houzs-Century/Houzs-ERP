@@ -41,7 +41,7 @@ RESUME: the ZeroTier link can drop mid-run (it did, 08S01, on the first full
 run).  Every statement retries once on a fresh connection; if the run still
 dies, START_AT=<section> re-runs from that section and keeps the files the
 earlier invocation already wrote.  Sections, in order:
-    so iv dates po1 po2 dos bal costs grrefs links ruler
+    so iv dates po1 po2 dos bal costs grrefs links ruler remarks
 
 Env:  AC_HOST (default 10.147.17.100,55500)   AC_DB (default AED_HOUZS)
       AC_USER (default sa2)                   AC_CRED_FILE (password file, required)
@@ -124,7 +124,7 @@ def reload_gz(name):
 NOW = datetime.datetime.now().isoformat(sep=" ")
 manifest = {"exported_at": NOW, "source": "%s live (read-only)" % DB, "round": "reimport-v3 2026-08-28", "files": {}}
 
-SECTION_ORDER = ["so", "iv", "dates", "po1", "po2", "dos", "bal", "costs", "grrefs", "links", "ruler"]
+SECTION_ORDER = ["so", "iv", "dates", "po1", "po2", "dos", "bal", "costs", "grrefs", "links", "ruler", "remarks"]
 START_AT = os.environ.get("START_AT", "so")
 if START_AT not in SECTION_ORDER:
     print("unknown START_AT %r" % START_AT, file=sys.stderr)
@@ -340,6 +340,25 @@ if want("ruler"):
         "so_linked_po": sorted({r["DocNo"] for r in po2}),
     }
     manifest["files"]["ac-outstanding-now.json.gz"] = write_gz("ac-outstanding-now.json.gz", ruler)
+
+# ── 13. header remark / note / stock-status text + the delivery-date field ──
+# The owner's SO listing (2026-08-28): Remark2 = per-order stock status
+# (READY / MATTRESS/ACC / ...), Remark3+Remark4 = notes, the listing's "Note"
+# column = UDF_Note (plain text, 481 docs), SalesExemptionExpiryDate = the
+# delivery date the staff maintain on the header (533 of 539 equal the earliest
+# line date). All five have native scm.mfg_sales_orders columns the SO screen
+# reads. SO.Note itself is NOT exported: the only 2 docs that fill it hold an
+# RTF-embedded PICTURE (megabytes of hex), not words.
+if want("remarks"):
+    rem = rows_of(f"""
+        SELECT LTRIM(RTRIM(h.DocNo)) AS DocNo, h.Remark2, h.Remark3, h.Remark4,
+               h.UDF_Note, h.SalesExemptionExpiryDate
+          FROM SO h
+         WHERE {SO_OUT} AND NOT ({HAS_IV})
+         ORDER BY h.DocNo""")
+    manifest["files"]["ac-so-remarks.json.gz"] = write_gz("ac-so-remarks.json.gz", rem)
+    r2 = sum(1 for r in rem if (r["Remark2"] or "").strip())
+    print("   remarks: %d docs, Remark2 filled on %d" % (len(rem), r2), flush=True)
 
 with open(os.path.join(OUT, "ac-reimport-manifest.json"), "w", encoding="utf-8") as f:
     json.dump(manifest, f, ensure_ascii=False, indent=2)
