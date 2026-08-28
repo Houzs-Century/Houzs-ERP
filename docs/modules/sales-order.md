@@ -955,13 +955,16 @@ free on the PO detail.
 
 #### Line photos on the printed SO (owner mockup, 2026-08)
 
-`sales-order-pdf.ts` prints photos as ONE "ITEM PHOTOS · 照片对照" block after
+`sales-order-pdf.ts` prints photos as ONE "ITEM PHOTOS" block after
 the items table and before PAYMENTS RECEIVED — table rows carry NO image; a
-line with `photo_urls` appends " (图)" to its first description line instead.
-Each group in the block is keyed by the printed row number (`#3`, or a range
-`#2-4` when consecutive rows carry a deep-equal photo list — the sofa-set
-shared build photo prints once per set), with the item code beside the chip and
-~26mm square thumbnails, max 6 per row. A group never splits across pages: one
+line with `photo_urls` appends " (photo)" to its first description line
+instead. (Owner print QA 2026-08-28: every generated string is English-only —
+a CJK char in generated text made `ensurePdfCjkFont` re-font EVERY
+photo-carrying PDF off helvetica — and the labels/sizes below are the v2
+ruling.) Each group in the block is keyed by the printed row number (`Item 3`,
+or a range `Item 2-4` when consecutive rows carry a deep-equal photo list —
+the sofa-set shared build photo prints once per set), with the item code
+beside the chip and ~52mm square thumbnails, max 3 per row. A group never splits across pages: one
 that does not fit moves whole to the next page under a continued heading. The
 grouping/packing/page-fit logic and the drawing live in the shared
 `vendor/scm/lib/pdf-item-photos.ts` (unit-tested beside it); the PO PDF prints

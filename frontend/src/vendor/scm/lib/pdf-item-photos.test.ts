@@ -1,5 +1,5 @@
 // pdf-item-photos — the pure grouping / packing / page-fit logic behind the
-// SO + PO "ITEM PHOTOS · 照片对照" block, plus the fetch-collect and draw
+// SO + PO "ITEM PHOTOS" block, plus the fetch-collect and draw
 // plumbing driven through stubs (no jsPDF, no canvas, no network needed).
 import { describe, expect, it } from 'vitest';
 
@@ -14,7 +14,6 @@ import {
   groupBoxSize,
   groupGridSize,
   HEADING_MM,
-  ITEM_PHOTOS_CJK_TEXT,
   ITEM_PHOTOS_HEADING,
   ITEM_PHOTOS_HEADING_CONT,
   layoutPhotoGroups,
@@ -63,8 +62,8 @@ describe('buildPhotoGroups (row chips + the consecutive-identical range rule)', 
       row('C', ['p2.jpg']),
     ]);
     expect(groups).toEqual([
-      { chip: '#1', code: 'A', photoKeys: ['p1.jpg'] },
-      { chip: '#3', code: 'C', photoKeys: ['p2.jpg'] },
+      { chip: 'Item 1', code: 'A', photoKeys: ['p1.jpg'] },
+      { chip: 'Item 3', code: 'C', photoKeys: ['p2.jpg'] },
     ]);
   });
 
@@ -77,7 +76,7 @@ describe('buildPhotoGroups (row chips + the consecutive-identical range rule)', 
       row('XAMMAR-CNR', [...shared]),
       row('SVC-DELIVERY', []),
     ]);
-    expect(groups.map((g) => g.chip)).toEqual(['#1', '#2-4']);
+    expect(groups.map((g) => g.chip)).toEqual(['Item 1', 'Item 2-4']);
     // The sofa-set shared photo prints ONCE per set.
     expect(groups[1]!.photoKeys).toEqual(shared);
     expect(groups[1]!.code).toBe('XAMMAR');
@@ -89,7 +88,7 @@ describe('buildPhotoGroups (row chips + the consecutive-identical range rule)', 
       row('B', ['y.jpg', 'x.jpg']),
       row('C', ['x.jpg', 'y.jpg']),
     ]);
-    expect(groups.map((g) => g.chip)).toEqual(['#1', '#2', '#3']);
+    expect(groups.map((g) => g.chip)).toEqual(['Item 1', 'Item 2', 'Item 3']);
   });
 });
 
@@ -118,10 +117,11 @@ describe('photoKeyOwners', () => {
 });
 
 describe('grid + box sizing', () => {
-  it('wraps at six thumbs per row', () => {
+  it('wraps at three thumbs per row (52mm tiles, owner QA v2)', () => {
     expect(groupGridSize(1)).toEqual({ cols: 1, rows: 1 });
-    expect(groupGridSize(6)).toEqual({ cols: 6, rows: 1 });
-    expect(groupGridSize(7)).toEqual({ cols: 6, rows: 2 });
+    expect(groupGridSize(3)).toEqual({ cols: 3, rows: 1 });
+    expect(groupGridSize(4)).toEqual({ cols: 3, rows: 2 });
+    expect(groupGridSize(7)).toEqual({ cols: 3, rows: 3 });
     expect(groupGridSize(0)).toEqual({ cols: 0, rows: 0 });
   });
 
@@ -129,7 +129,7 @@ describe('grid + box sizing', () => {
     expect(groupBoxSize(1)).toEqual({ w: THUMB_MM, h: GROUP_HEADER_MM + THUMB_MM });
     expect(groupBoxSize(7)).toEqual({
       w: MAX_THUMBS_PER_ROW * THUMB_MM + (MAX_THUMBS_PER_ROW - 1) * THUMB_GAP_MM,
-      h: GROUP_HEADER_MM + 2 * THUMB_MM + THUMB_GAP_MM,
+      h: GROUP_HEADER_MM + 3 * THUMB_MM + 2 * THUMB_GAP_MM,
     });
   });
 });
@@ -351,7 +351,10 @@ describe('drawItemPhotosBlock', () => {
   it('lays the first groups beside the sofa zone and the overflow below it', () => {
     const { doc, ops } = stubDoc();
     const images = new Map([['a.jpg', img], ['b.jpg', img], ['c.jpg', img], ['d.jpg', img]]);
-    const side = { x: 120, y: 196, w: 76, bottom: 240 };
+    /* Wide + tall enough for TWO 52mm one-thumb groups side by side
+       (52 + 6 gap + 52 = 110 <= 116); the 106mm two-thumb group wraps to
+       the full-width zone below. */
+    const side = { x: 120, y: 150, w: 116, bottom: 240 };
     const res = drawItemPhotosBlock(
       doc,
       [
@@ -360,24 +363,30 @@ describe('drawItemPhotosBlock', () => {
         { chip: '#3', code: 'C', photoKeys: ['c.jpg', 'd.jpg'] },
       ],
       images,
-      { ...baseOpts, startY: 240, side },
+      { ...baseOpts, startY: 200, side },
     );
     expect(res.drew).toBe(true);
     const texts = ops.filter((o): o is Extract<Op, { op: 'text' }> => o.op === 'text');
     // Heading sits in the beside-zone, not at the left margin.
     expect(texts[0]).toMatchObject({ text: ITEM_PHOTOS_HEADING, x: 120 });
     const tiles = ops.filter((o): o is Extract<Op, { op: 'image' }> => o.op === 'image');
-    // #1 and #2 (26mm each + gap) fit beside; #3 (54mm) wraps below full-width.
+    // Items 1+2 (one 52mm tile each) fit beside; item 3 (106mm) wraps below.
     expect(tiles[0]!.x).toBe(120);
     expect(tiles[1]!.x).toBe(120 + THUMB_MM + GROUP_GAP_X_MM);
     expect(tiles[2]!.x).toBe(14);
-    expect(tiles[2]!.y).toBeGreaterThanOrEqual(240 + GROUP_HEADER_MM);
+    expect(tiles[2]!.y).toBeGreaterThanOrEqual(200 + GROUP_HEADER_MM);
   });
 });
 
-describe('CJK probe text', () => {
-  it('carries the heading and the row marker so ensurePdfCjkFont sees them', () => {
-    expect(ITEM_PHOTOS_CJK_TEXT).toContain('照片对照');
-    expect(ITEM_PHOTOS_CJK_TEXT).toContain('图');
+describe('generated text stays WinAnsi', () => {
+  /* Owner live-print QA 2026-08-28: one CJK char in generated text makes
+     ensurePdfCjkFont re-font EVERY photo-carrying PDF off helvetica. The
+     heading, its continuation and the row marker must stay plain ASCII so
+     documents without Chinese CONTENT keep their normal face. */
+  it('heading, continuation and marker contain no non-ASCII characters', () => {
+    for (const s of [ITEM_PHOTOS_HEADING, ITEM_PHOTOS_HEADING_CONT, PHOTO_MARKER]) {
+      expect(/^[\x20-\x7e]+$/.test(s), `${JSON.stringify(s)} must be WinAnsi-safe ASCII`).toBe(true);
+    }
+    expect(PHOTO_MARKER).toBe(' (photo)');
   });
 });

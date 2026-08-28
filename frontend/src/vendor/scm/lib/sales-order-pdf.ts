@@ -31,7 +31,6 @@ import {
   buildPhotoGroups,
   collectPhotoImages,
   drawItemPhotosBlock,
-  ITEM_PHOTOS_CJK_TEXT,
   photoKeyOwners,
   photoKeysOf,
   type PdfPhotoImage,
@@ -70,8 +69,8 @@ import { statusLabel } from './status-pill';
 //      SKU | Description (desc / description2 or remark / specs line —
 //      fabric code enriched with the fabric_trackings description; PWP
 //      notes after) | Qty | Unit | Disc | Line Total. A line carrying
-//      photo_urls appends " (图)" to its first description line.
-//   4b. ITEM PHOTOS · 照片对照 — row-number-keyed thumbnail groups for the
+//      photo_urls appends " (photo)" to its first description line.
+//   4b. ITEM PHOTOS — row-number-keyed thumbnail groups for the
 //      lines that carry photos (shared pdf-item-photos module); absent when
 //      no line has photos
 //   5. PAYMENTS RECEIVED ledger (mfg_sales_order_payments rows)
@@ -167,7 +166,7 @@ type SoItem = {
   /* Line reference photos (R2 keys, mfg_sales_order_items.photo_urls).
      Optional so callers that predate the column (Consignment Order reuse)
      stay valid. When present the row's first description line gains the
-     " (图)" marker and the ITEM PHOTOS block prints the `.thumb` siblings. */
+     " (photo)" marker and the ITEM PHOTOS block prints the `.thumb` siblings. */
   photo_urls?: string[] | null;
 };
 
@@ -393,12 +392,11 @@ export async function renderSalesOrderInto(
   /* Before ANY drawing, and after the print-time lookups so their text counts
      too: a customer name / delivery address / remark carrying CJK needs the
      font embedded up front, or helvetica paints the whole field as mojibake.
-     No-op for a pure-WinAnsi SO. The photo marker + heading are GENERATED
-     text the payload walk cannot see, so they ride along whenever the photo
-     block will print. */
+     No-op for a pure-WinAnsi SO. The photo marker + heading are WinAnsi by
+     rule (pdf-item-photos.ts header) — a CJK char there re-fonts every
+     photo-carrying document, which the owner refused on his first print. */
   await ensurePdfCjkFont(doc, [
     header, items, payments, fabricDescMap, fabricExtMap,
-    photoGroups.length > 0 ? ITEM_PHOTOS_CJK_TEXT : '',
   ]);
 
   const pageW = doc.internal.pageSize.getWidth();
@@ -576,7 +574,7 @@ export async function renderSalesOrderInto(
       remark: typeof it.remark === 'string' ? it.remark : null,
       notes,
     });
-    /* Owner spec: a row carries NO image — the " (图)" marker on the first
+    /* Owner spec: a row carries NO image — the " (photo)" marker on the first
        description line points the reader at the ITEM PHOTOS block below. */
     const lines = photoKeysOf(it.photo_urls).length > 0
       ? appendPhotoMarker(composed)
@@ -643,7 +641,7 @@ export async function renderSalesOrderInto(
   // Covered by pdf-money-layout.test.ts.
   let ty = ((doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? y) + 6;
 
-  // ── ITEM PHOTOS · 照片对照 (owner spec 2026-08) ───────────────────
+  // ── ITEM PHOTOS (owner spec 2026-08) ───────────────────
   /* One block per document, AFTER the items table and BEFORE the payments
      ledger. Row-number chips key each group back to the table above; a group
      never splits across pages (it moves whole, under a continued heading).
