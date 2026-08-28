@@ -134,3 +134,14 @@ export-ac-fidelity-truth.py）、live 尺（export-ac-live.py）。
 行键 backfill ×2 → PO 行键 → dedication → 纯损失修复 → 文本链 → ac_item_code seed →
 迁移 GRN/DO 建档 → 迁移发票（金额相等规则）→ allocation 重算 → 验证五连。
 每步 dry-run 先行、看 notice 不看徽章、APPLY 后独立重读核对——三条全是第一轮的铁律。
+
+## 4d. PO 两路执行（2026-08-28 下午）
+
+- **第一路（自己没收完）APPLY 完成**：run 33157041761 前段 + 重读确认——187 张 / 559 行进 ERP，
+  例外 4 条照实（PO-009979 无码枕套行人工补；3 条 taroni 色词照旧留空）。
+- **第二路 dry-run**：293 张新建（442−149 与第一路重叠）/ 511 行 / 连回 SO 497 行 / 带收货量 591。
+- **第二路 apply（run 33169457109）中途崩**：PO-009555 的供应商 400-R002（RENNES BEDDING）在 ERP
+  没有对应行，脚本只数数不跳单，空供应商撞非空约束整跑中断（docs/bugs/0557）。护栏补上（缺主档=
+  跳该单点名报告，与第一路一致）。**身份问题挂 owner**：账本 400-R001 现名 RED SOFA PLT（23 个 RDS
+  货的主供应商都登它），ERP 的 400-R001 却叫 RENNESS BEDDING，账本另有 400-R002 RENNES BEDDING——
+  一家改名还是两家错码，owner 定；导入只照抄账本补 400-R002 一行，不判合并。

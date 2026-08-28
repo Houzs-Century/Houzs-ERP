@@ -184,7 +184,15 @@ async function main() {
   for (const [doc, lines] of toCreate) {
     const first = lines[0];
     const supId = supByCode.get(norm(first.CreditorCode)) ?? null;
-    if (!supId) noSupplier++;
+    if (!supId) {
+      /* Same refusal the outstanding-PO import carries. Counting alone let a
+         null supplier_id reach the INSERT and the NOT NULL constraint killed
+         the whole run mid-loop (PO-009555, creditor 400-R002 — docs/bugs/0557).
+         A missing master skips ITS document, loudly, and the rest still land. */
+      noSupplier++;
+      log(`   SKIP ${doc}: supplier ${first.CreditorCode} (${first.CreditorName || "?"}) has no scm.suppliers row — open it, then re-run`);
+      continue;
+    }
     const items = [];
     for (const l of lines) {
       const src = soLineByDtl.get(String(l.FromSODtlKey));
