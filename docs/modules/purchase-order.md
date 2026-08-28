@@ -747,6 +747,30 @@ MEMBERSHIP of the row's `photo_urls`, never by key shape. The importer's append
 (`ARRAY(SELECT DISTINCT unnest(COALESCE(photo_urls,'{}') || <keys>))`) is why
 the column must stay NOT NULL with a `'{}'` default.
 
+**TWO SCREENS OFFER THE CONTROL, AND THEY MUST NOT DRIFT (2026-08-28).** The
+strip is on the PO's TABLE view (`PurchaseOrderDetailV2`, a `Photos` column) AND
+in the rich LINE EDITOR (`PurchaseOrderDetail`, inside each `PoLineCard`). The
+editor was added second, hours after the owner said 「还是不能添加照片啊」 with
+the table version already shipped — he was on the screen a purchaser is actually
+on when specifying a line.
+
+The cause is worth remembering: `PoLineCard` was extracted as "the same SHAPE as
+SoLineCard" — a copy of the layout, not a use of the component — so the photo
+rail `SoLineCard` grew later had no mechanism by which to arrive here. The card
+now takes a `photos` RENDER SLOT (a node, not photo data) so it stays a layout
+and knows nothing about documents or permissions;
+`vendor/scm/components/po-line-card-photos.test.ts` asserts it never grows an
+upload of its own, and that BOTH surfaces use `canOperatePurchaseOrders` and
+`isPoOwnedPhotoKey` — two screens writing one column must not disagree about who
+may write or which keys they own.
+
+**An UNSAVED line has no address.** The key is `po-items/<poId>/<itemId>/…`, so
+the item id is not a detail — it is where the photo lives. A brand-new card says
+"Save this line first, then attach photos to it." rather than showing nothing:
+an absent rail is what sent the owner looking for it. **The SO stages instead**
+(`SoLineCard`'s `pendingPhotoFiles`, drained after save); the PO does not, so a
+photo on a not-yet-saved PO line costs one extra save. `docs/bugs/0555-…`.
+
 **The prefix IS the ownership rule on DELETE (since 2026-08-28).** `po-items/...`
 keys are PO-owned: the PO detail offers a delete control for them (add-on uploads
 and the importer's historical keys alike), and DELETE removes the key, the R2
