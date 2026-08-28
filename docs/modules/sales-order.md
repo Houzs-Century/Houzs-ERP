@@ -967,8 +967,11 @@ the sofa-set shared build photo prints once per set), with the item code
 beside the chip and ~52mm square thumbnails, max 3 per row. A group never splits across pages: one
 that does not fit moves whole to the next page under a continued heading. The
 grouping/packing/page-fit logic and the drawing live in the shared
-`vendor/scm/lib/pdf-item-photos.ts` (unit-tested beside it); the PO PDF prints
-through the same module. Only `.thumb` siblings are fetched (never originals —
+`vendor/scm/lib/pdf-item-photos.ts` (unit-tested beside it); the PO and DO
+PDFs print through the same module (the per-document blob fetchers —
+`fetchSoItemPhotoBlob` / `fetchPoItemPhotoBlob` / `fetchDoItemPhotoBlob` —
+sit together in `sales-order-queries.ts`, one proxy contract). Only `.thumb`
+siblings are fetched (never originals —
 PDF size), through the authed proxy, collected before drawing, and every photo
 is best-effort: a key whose fetch or decode fails is skipped silently, so a
 missing photo can never fail the PDF. Thumbs uploaded by the client pipeline

@@ -908,6 +908,19 @@ export async function fetchPoItemPhotoBlob(
   );
 }
 
+/* DO twin of the two above — same proxy contract, mounted by
+   routes/delivery-order-item-photos.ts (keys are SO-carried, mig 20260828T0746). */
+export async function fetchDoItemPhotoBlob(
+  doId: string,
+  itemId: string,
+  photoKey: string,
+): Promise<Blob> {
+  return fetchItemPhotoBlobAt(
+    `/delivery-orders-mfg/${encodeURIComponent(doId)}/items/${encodeURIComponent(itemId)}`,
+    photoKey,
+  );
+}
+
 /* PO WRITE twins (owner 2026-08-28: 如果我要 add on 照片在 PO 而已 — a purchaser
    attaches photos DIRECTLY on a PO line). Two ownership classes share the
    photo_urls column, told apart by key prefix: carried `so-items/...` keys are
