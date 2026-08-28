@@ -287,7 +287,7 @@ async function main() {
           for (const comp of ps.pieces) {
             const code = `${model}-${comp}`;
             const pr = prodId.get(code.toUpperCase());
-            items.push({ erp: code, grp: "sofa", desc: (pr && pr.name) || code, d2: l.Desc2, deliv: l.DeliveryDate,
+            items.push({ erp: code, grp: "sofa", desc: (pr && pr.name) || code, d2: l.Desc2, deliv: l.DeliveryDate, dtlkey: l.DtlKey,
               qty, up: first ? up : 0, lineTotal: first ? lineTotal : 0, loc: l.Location, bf: null,
               variants: { seatHeight: ps.size, fabricId: fcHit ? fcHit.fabric_id : null,
                 colourId: fcHit ? fcHit.colour_id : null, fabricCode: fcHit ? fcHit.colour_id : null,
@@ -301,7 +301,7 @@ async function main() {
           // never guess pieces — placeholder on the base SKU, human completes
           const base = `${model}-1S`;
           const pr = prodId.get(base.toUpperCase());
-          items.push({ erp: base, grp: "sofa", desc: (pr && pr.name) || base, d2: l.Desc2, deliv: l.DeliveryDate,
+          items.push({ erp: base, grp: "sofa", desc: (pr && pr.name) || base, d2: l.Desc2, deliv: l.DeliveryDate, dtlkey: l.DtlKey,
             qty, up, lineTotal, loc: l.Location, bf: null,
             variants: { seatHeight: ps.size || null, colourLabel: colour || null, specials: ps.specials },
             resolvedFree: false, unitCost: 0, lineCost: 0, warehouseId: whId(l.Location),
@@ -312,7 +312,7 @@ async function main() {
       const prodRow = prodId.get((erp || "").toUpperCase());
       const unitCost = prodRow && prodRow.cost_price_sen ? prodRow.cost_price_sen : 0; // per-unit cost (sen)
       const lineCost = unitCost * qty;
-      items.push({ erp, grp, desc: (prodRow && prodRow.name) || l.Description, d2: l.Desc2, deliv: l.DeliveryDate, qty, up, lineTotal, loc: l.Location, bf, variants, resolvedFree, unitCost, lineCost, warehouseId: whId(l.Location) });
+      items.push({ erp, grp, desc: (prodRow && prodRow.name) || l.Description, d2: l.Desc2, deliv: l.DeliveryDate, dtlkey: l.DtlKey, qty, up, lineTotal, loc: l.Location, bf, variants, resolvedFree, unitCost, lineCost, warehouseId: whId(l.Location) });
     }
     const bal = centi(h.UDF_BALANCE); const paid = Math.max(0, total - bal);
     const pay = parsePayment(h.UDF_PAYEMENT);
@@ -418,7 +418,7 @@ async function main() {
      sofa-set-coverage.findCoveringBatch returns null on a null warehouse before
      it reads any stock. Existing rows are repaired by
      backfill-so-line-warehouse.mjs; this stops it recurring. */
-  const ICOLS = "(doc_no,line_no,item_group,item_code,description,description2,uom,location,warehouse_id,qty,unit_price_sen,total_sen,balance_sen,company_id,gap_inches,divan_height_inches,leg_height_inches,variants,custom_specials,remark,line_delivery_date)";
+  const ICOLS = "(doc_no,line_no,item_group,item_code,description,description2,uom,location,warehouse_id,qty,unit_price_sen,total_sen,balance_sen,company_id,gap_inches,divan_height_inches,leg_height_inches,variants,custom_specials,remark,line_delivery_date,linked_ac_dtlkey)";
   const PCOLS = "(so_doc_no,paid_at,method,approval_code,account_sheet,amount_sen,is_deposit,company_id,note)";
 
   let nOrders = 0, nItems = 0, nPay = 0;
@@ -449,7 +449,7 @@ async function main() {
         lineNo++;
         const variants = it.variants || null; // resolved {fabricId,colourId,colourLabel,gap,divanHeight,legHeight,specials}
         const specials = it.variants && it.variants.specials && it.variants.specials.length ? it.variants.specials : null;
-        iv.push("(" + [V(o.docNo), String(lineNo), V(it.grp), V(it.erp), V(it.desc || null), V(it.d2 || null), V(uomOf(it.grp)), V(it.loc || null), V(it.warehouseId || null), String(it.qty), V(it.up), V(it.lineTotal), V(it.lineTotal), "1", it.bf && isFinite(it.bf.gap) ? String(Math.round(it.bf.gap)) : "NULL", it.bf && isFinite(it.bf.divan) ? String(Math.round(it.bf.divan)) : "NULL", it.bf && isFinite(it.bf.leg) ? String(Math.round(it.bf.leg)) : "NULL", V({ __json: variants }), V({ __json: specials }), V(it.remark ?? (it.resolvedFree ? "name-matched from free-text" : null)), it.deliv ? V(String(it.deliv).slice(0, 10)) : "NULL"].join(",") + ")");
+        iv.push("(" + [V(o.docNo), String(lineNo), V(it.grp), V(it.erp), V(it.desc || null), V(it.d2 || null), V(uomOf(it.grp)), V(it.loc || null), V(it.warehouseId || null), String(it.qty), V(it.up), V(it.lineTotal), V(it.lineTotal), "1", it.bf && isFinite(it.bf.gap) ? String(Math.round(it.bf.gap)) : "NULL", it.bf && isFinite(it.bf.divan) ? String(Math.round(it.bf.divan)) : "NULL", it.bf && isFinite(it.bf.leg) ? String(Math.round(it.bf.leg)) : "NULL", V({ __json: variants }), V({ __json: specials }), V(it.remark ?? (it.resolvedFree ? "name-matched from free-text" : null)), it.deliv ? V(String(it.deliv).slice(0, 10)) : "NULL", it.dtlkey != null ? String(Math.trunc(it.dtlkey)) : "NULL"].join(",") + ")");
         nItems++;
       }
       if (o.paid > 0) { pv.push("(" + [V(o.docNo), h.DocDate ? V(h.DocDate) : V(CUR), V("imported"), V(o.pay.appr || null), V(o.pay.acct || null), V(o.paid), "true", "1", V("imported from AutoCount " + o.acDoc + (o.pay.extra ? " [" + o.pay.extra + "]" : ""))].join(",") + ")"); nPay++; }
