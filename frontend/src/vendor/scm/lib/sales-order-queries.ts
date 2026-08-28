@@ -907,3 +907,44 @@ export async function fetchPoItemPhotoBlob(
     photoKey,
   );
 }
+
+/* PO WRITE twins (owner 2026-08-28: 如果我要 add on 照片在 PO 而已 — a purchaser
+   attaches photos DIRECTLY on a PO line). Two ownership classes share the
+   photo_urls column, told apart by key prefix: carried `so-items/...` keys are
+   SO-owned (the server refuses deleting them here — manage on the SO);
+   `po-items/...` keys are PO-authored, live only on the PO, and print only on
+   the PO PDF. */
+export const PO_OWNED_PHOTO_PREFIX = 'po-items/';
+export const isPoOwnedPhotoKey = (key: string): boolean => key.startsWith(PO_OWNED_PHOTO_PREFIX);
+
+export type UploadPoItemPhotoResult = { photoKey: string; photoUrls: string[] };
+
+export async function uploadPoItemPhoto(
+  poId: string,
+  itemId: string,
+  file: File,
+): Promise<UploadPoItemPhotoResult> {
+  /* WO-7 — downscale/re-encode + thumbnail in one decode pass. The thumb is
+     what the PO PDF prints (pdf-item-photos fetches thumbs only), so sending
+     it is not cosmetic. */
+  const prepared = await prepareImageForUpload(file);
+  const fd = new FormData();
+  fd.append('file', prepared.file);
+  if (prepared.thumb) fd.append('thumb', prepared.thumb);
+  return authedFetch<UploadPoItemPhotoResult>(
+    `/mfg-purchase-orders/${encodeURIComponent(poId)}/items/${encodeURIComponent(itemId)}/photos`,
+    { method: 'POST', body: fd },
+  );
+}
+
+export async function deletePoItemPhoto(
+  poId: string,
+  itemId: string,
+  photoKey: string,
+): Promise<{ photoUrls: string[] }> {
+  return authedFetch<{ photoUrls: string[] }>(
+    `/mfg-purchase-orders/${encodeURIComponent(poId)}/items/${encodeURIComponent(itemId)}`
+      + `/photos/${encodeURIComponent(photoKey)}`,
+    { method: 'DELETE' },
+  );
+}

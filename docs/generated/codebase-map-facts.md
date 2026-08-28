@@ -11,7 +11,7 @@ FOR, which trees are dead, what must be changed in pairs — lives in
 
 ## 1. Backend route inventory
 
-152 route modules (44 in `backend/src/routes`, 108 in `backend/src/scm/routes`), 1105 endpoint registrations.
+153 route modules (44 in `backend/src/routes`, 109 in `backend/src/scm/routes`), 1107 endpoint registrations.
 
 An endpoint is a `router.<method>("/…")` registration. For the per-route authorization
 boundary see the sibling artifact `docs/generated/route-capability-matrix.csv`, which
@@ -22,7 +22,7 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/agent-console.ts` | 33 | 1304 |
 | `backend/src/routes/announcements.ts` | 11 | 1421 |
 | `backend/src/routes/assistant.ts` | 4 | 225 |
-| `backend/src/routes/assr.ts` | 62 | 3323 |
+| `backend/src/routes/assr.ts` | 62 | 3326 |
 | `backend/src/routes/assrFormIntake.ts` | 6 | 954 |
 | `backend/src/routes/assrPortal.ts` | 14 | 540 |
 | `backend/src/routes/assr_print.ts` | 1 | 1218 |
@@ -79,7 +79,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/customer-mirror.ts` | 1 | 103 |
 | `backend/src/scm/routes/delivery-fees.ts` | 5 | 236 |
 | `backend/src/scm/routes/delivery-messages.ts` | 2 | 190 |
-| `backend/src/scm/routes/delivery-order-item-photos.ts` | 2 | 148 |
+| `backend/src/scm/routes/delivery-order-item-photos.ts` | 2 | 151 |
 | `backend/src/scm/routes/delivery-order-revert.ts` | 0 | 206 |
 | `backend/src/scm/routes/delivery-order-scan-token.ts` | 1 | 53 |
 | `backend/src/scm/routes/delivery-orders-mfg.ts` | 16 | 5601 |
@@ -137,6 +137,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/purchase-consignment-returns.ts` | 14 | 1151 |
 | `backend/src/scm/routes/purchase-invoices-list-enrichment.ts` | 1 | 73 |
 | `backend/src/scm/routes/purchase-invoices.ts` | 14 | 2416 |
+| `backend/src/scm/routes/purchase-order-item-photos.ts` | 2 | 214 |
 | `backend/src/scm/routes/purchase-returns.ts` | 14 | 1816 |
 | `backend/src/scm/routes/pwp-codes.ts` | 5 | 500 |
 | `backend/src/scm/routes/pwp-rules.ts` | 4 | 233 |
@@ -187,7 +188,7 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1814 files, 658667 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1818 files, 660904 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -195,7 +196,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `frontend/src/pages/Projects.tsx` | 15054 |
 | `backend/src/scm/routes/mfg-sales-orders.ts` | 11947 |
 | `frontend/src/pages/ServiceCases.tsx` | 8816 |
-| `backend/src/services/autocount-sofa-corpus.ts` | 7933 |
+| `backend/src/services/autocount-sofa-corpus.ts` | 8389 |
 | `frontend/src/pages/Team.tsx` | 5686 |
 | `backend/src/scm/routes/delivery-orders-mfg.ts` | 5601 |
 | `frontend/src/pages/scm-v2/Products.tsx` | 5425 |
@@ -209,7 +210,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `backend/src/scm/routes/grns.ts` | 3564 |
 | `frontend/src/components/DataTable.tsx` | 3545 |
 | `frontend/src/mobile/MobileServiceCase.tsx` | 3376 |
-| `backend/src/routes/assr.ts` | 3323 |
+| `backend/src/routes/assr.ts` | 3326 |
 | `backend/src/services/projects.ts` | 3135 |
 | `frontend/src/pages/MailCenter/Inbox.tsx` | 3013 |
 

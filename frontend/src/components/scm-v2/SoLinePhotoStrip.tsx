@@ -31,7 +31,7 @@
 // holds THUMB bytes. MediaLightbox therefore re-fetches the FULL object from
 // the same authed proxy route — which is the point, not waste.
 // ----------------------------------------------------------------------------
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { MediaLightbox } from "../MediaLightbox";
 import {
   photoContentType,
@@ -93,17 +93,32 @@ function Thumb({
   );
 }
 
+export type LinePhotoEdit = {
+  /** Upload one image onto this line; the caller owns errors + refetch. */
+  onUpload: (file: File) => Promise<void>;
+  /** Delete one key from this line; only offered where canDeleteKey passes. */
+  onDelete: (photoKey: string) => Promise<void>;
+  /** Which keys THIS surface owns (PO: `po-items/...`; carried SO keys stay
+   *  read-only here and are managed on the Sales Order). */
+  canDeleteKey: (photoKey: string) => boolean;
+};
+
 export function SoLinePhotoStrip({
-  source, docId, itemId, photoKeys,
+  source, docId, itemId, photoKeys, edit = null,
 }: {
   source: LinePhotoSource;
   docId: string;
   itemId: string;
   photoKeys: string[];
+  /** Optional is the STRICTER direction here (CLAUDE.md optional-param rule):
+   *  absent = read-only display, exactly what every pre-existing caller gets. */
+  edit?: LinePhotoEdit | null;
 }) {
   const [openAt, setOpenAt] = useState<number | null>(null);
+  const [busy, setBusy] = useState(false);
+  const fileRef = useRef<HTMLInputElement | null>(null);
 
-  if (!docId || !itemId || photoKeys.length === 0) {
+  if (!docId || !itemId || (photoKeys.length === 0 && !edit)) {
     return <span className="text-[11px] text-ink-muted">—</span>;
   }
 
@@ -124,15 +139,58 @@ export function SoLinePhotoStrip({
     <>
       <span className="flex flex-wrap items-center gap-1">
         {photoKeys.map((k, i) => (
-          <Thumb
-            key={k}
-            source={source}
-            docId={docId}
-            itemId={itemId}
-            photoKey={k}
-            onOpen={() => setOpenAt(i)}
-          />
+          <span key={k} className="relative inline-flex">
+            <Thumb
+              source={source}
+              docId={docId}
+              itemId={itemId}
+              photoKey={k}
+              onOpen={() => setOpenAt(i)}
+            />
+            {edit && edit.canDeleteKey(k) && (
+              <button
+                type="button"
+                aria-label="Delete photo"
+                title="Delete photo"
+                disabled={busy}
+                className="absolute -right-1 -top-1 h-4 w-4 rounded-full border border-line bg-white text-[10px] leading-none text-ink-secondary hover:text-red-600 disabled:opacity-50"
+                onClick={async (e) => {
+                  e.stopPropagation();
+                  setBusy(true);
+                  try { await edit.onDelete(k); } finally { setBusy(false); }
+                }}
+              >
+                x
+              </button>
+            )}
+          </span>
         ))}
+        {edit && (
+          <>
+            <button
+              type="button"
+              disabled={busy}
+              title="Add photo"
+              className="inline-flex h-9 w-9 items-center justify-center rounded border border-dashed border-line text-[16px] leading-none text-ink-muted hover:text-ink disabled:opacity-50"
+              onClick={() => fileRef.current?.click()}
+            >
+              +
+            </button>
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={async (e) => {
+                const file = e.target.files?.[0];
+                e.target.value = "";
+                if (!file) return;
+                setBusy(true);
+                try { await edit.onUpload(file); } finally { setBusy(false); }
+              }}
+            />
+          </>
+        )}
       </span>
       {openAt !== null && (
         <MediaLightbox

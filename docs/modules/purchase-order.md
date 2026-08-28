@@ -255,6 +255,8 @@ with no per-area level consulted.
 | DELETE | `/:id/items/:itemId/allocations/:allocationId` | | Remove a slice + resequence the survivors dense 1..n. |
 | GET | `/:id/items/:itemId/photos/:photoKey/signed` | | Trade one key from the line's `photo_urls` for a short-lived signed R2 GET URL (`{ mode:'signed', signedUrl, thumbUrl, expiresAt }`). Falls back to `{ mode:'proxy', proxyPath, … }` — never 500 — when signing is impossible. READ-ONLY — see §4 *Line photos*. |
 | GET | `/:id/items/:itemId/photos/:photoKey` | | PROXY: streams the object from the R2 binding, no S3 credential needed. Same authz as `/signed`, company scoping included. Behind the auth gate, so NOT usable as a bare `<img src>` — see §4 *Line photos*. |
+| POST | `/:id/items/:itemId/photos` | | Upload a PO-authored add-on photo (owner 2026-08-28; multipart `file` + optional client `thumb`). Key minted under `po-items/<poId>/<itemId>/`. Refused on a CANCELLED PO. Lives in `purchase-order-item-photos.ts` (the main router is at its size ceiling). |
+| DELETE | `/:id/items/:itemId/photos/:photoKey` | | Delete a PO-OWNED (`po-items/...`) key + its R2 object/thumb. A carried `so-items/...` key is refused 403 `carried_photo_readonly` — same R2 object as the SO's photo; manage it on the Sales Order. |
 | POST | `/` | `:911` | Create (`asDraft: true` → DRAFT, else SUBMITTED). SO-sourced lines (carrying `soItemId`, e.g. the desktop New-PO-from-SO flow) are capped at the SO line's remaining (`qty - po_qty_picked`): over-convert → 409 `qty_exceeds_remaining` unless `confirmOverConvert: true` (pre-write guard, marks idempotency no-write). Manual lines (no `soItemId`) unaffected. |
 | POST | `/from-sos` | `:2139` | Batch convert whole SOs, emitting N POs. The bucket key is per-CATEGORY (owner 2026-07-17, `po-grouping.ts:69-90`): sofa/bedframe per (warehouse, supplier, SO), mattress per (warehouse, supplier, 7-day delivery window), everything else per the caller's `combined \| per-so` toggle. Warehouse is always in the key, which is what keeps the header's `purchase_location_id` unambiguous. |
 | POST | `/:id/convert-from-so` | `:2694` | Append SO lines onto an existing PO. |
@@ -731,23 +733,33 @@ Owner 2026-08-10: an SO line can hold photos, a PO line must too, and converting
 an SO into a PO carries them across automatically. `photo_urls text[] NOT NULL
 DEFAULT '{}'` — the same column shape as `mfg_sales_order_items.photo_urls`.
 
-**Two producers, one column, and no key-shape rule anywhere.**
+**Three producers, one column — reads are shape-blind, DELETION is not.**
 
 | Producer | Key shape |
 |---|---|
 | SO->PO convert (copies the source line's array) | `so-items/<soDocNo>/<soItemId>/<uuid>.<ext>` |
 | AutoCount photo importer (appends its own) | `po-items/<po_number>/<po item id>/ac-<DtlKey>-<n>.jpg` |
+| PO add-on upload (owner 2026-08-28, `purchase-order-item-photos.ts`) | `po-items/<poId>/<itemId>/<uuid>.<ext>` |
 
-Both live in the SAME R2 bucket (binding `SO_ITEM_PHOTOS`). Nothing in the schema
-or the read path may depend on the prefix — no CHECK constraint, and the signed
-URL route authorises by MEMBERSHIP of the row's `photo_urls`, never by key shape.
-The importer's append (`ARRAY(SELECT DISTINCT unnest(COALESCE(photo_urls,'{}') ||
-<keys>))`) is why the column must stay NOT NULL with a `'{}'` default.
+All live in the SAME R2 bucket (binding `SO_ITEM_PHOTOS`). The READ path stays
+shape-blind — no CHECK constraint, and the signed/proxy routes authorise by
+MEMBERSHIP of the row's `photo_urls`, never by key shape. The importer's append
+(`ARRAY(SELECT DISTINCT unnest(COALESCE(photo_urls,'{}') || <keys>))`) is why
+the column must stay NOT NULL with a `'{}'` default.
+
+**The prefix IS the ownership rule on DELETE (since 2026-08-28).** `po-items/...`
+keys are PO-owned: the PO detail offers a delete control for them (add-on uploads
+and the importer's historical keys alike), and DELETE removes the key, the R2
+object and its `.thumb`. A carried `so-items/...` key is the SAME R2 object the
+SO line lists, so deleting it from the PO is refused (403
+`carried_photo_readonly`) — delete it on the Sales Order instead.
 
 **The convert copies KEYS, not objects.** SO line and PO line point at the same
 R2 objects — one photo, two documents, no duplicated bytes and no R2 round-trip
 inside the convert. Consequence, deliberate: deleting a photo from the SO line
-removes the object, so it also leaves any PO raised from that line.
+removes the object, so it also leaves any PO raised from that line. The reverse
+is false by design: a PO add-on lives only on the PO (its keys are never copied
+back), shows only on the PO detail, and prints only on the PO PDF.
 
 **Reading a photo: signed first, proxy fallback (2026-08-10).** There are two
 read routes and the difference is not cosmetic.
