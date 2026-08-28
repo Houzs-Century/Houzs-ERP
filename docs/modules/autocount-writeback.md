@@ -3417,8 +3417,20 @@ outermost-first, which matters most when a `stale` ancestor sits above a
 `missing` one — refreshing the order *after* transferring it would leave the
 delivery carrying lines the order no longer has.
 
-Still open: the page does not render `ancestors_sent` (now carrying `reason`),
-so a press that fixed three documents shows the operator nothing.
+**AND THE PAGE NOW RENDERS IT** (2026-08-28, docs/bugs/0552). The server had
+returned `ancestors_sent` since the cascade was written and a grep found no
+reader in `frontend/src` at all: a press on an invoice could write a sales order
+and a delivery order into a licensed account book on the operator's behalf and
+report one line about the invoice. It lands on the pressed ROW under `Sent
+first`, one line per document, worded once by `acAncestorLine` so the desktop
+table and the mobile cards cannot drift — the same argument `AC_SEND_NOW_LABEL`
+and `useAcRequeue` already make. The `reason` is carried through rather than
+flattened, because *AutoCount did not have it yet* and *AutoCount had an older
+version* are different things to be told. **Ancestors that FAILED are shown too**,
+which is the point: the dangerous shape is a pressed row that succeeded above an
+ancestor that did not, and reporting only the press reads as "all done". A throw
+lists nothing — what was sent is unknown, and a list there would be an
+invention.
 
 **A PURCHASE ORDER WAITS FOR ITS SALES ORDER RATHER THAN BECOMING A CREATE**
 (2026-08-26, docs/bugs/0543). `poTransferShape` decides transfer-or-create on

@@ -490,6 +490,21 @@ function OutboxCard(
               {note.todo}
             </div>
           )}
+          {/* WHAT ELSE THIS PRESS MOVED — the same block the desktop page shows,
+              worded by `acAncestorLine` so the two cannot come to say it
+              differently. One press can write three documents into a licensed
+              account book; reporting one of them is reporting the wrong thing
+              (#0552). */}
+          {note.ancestors.length > 0 && (
+            <div style={{ marginTop: 5, fontWeight: 400, color: "var(--ink2)" }}>
+              <b style={{ fontSize: 10, letterSpacing: 0.5, textTransform: "uppercase", color: TONE_COLOR[note.tone].fg }}>
+                Sent first
+              </b>
+              {note.ancestors.map((line) => (
+                <div key={line} style={{ marginTop: 2 }}>{line}</div>
+              ))}
+            </div>
+          )}
           {note.quote && (
             <div style={{ marginTop: 4, fontWeight: 400, fontFamily: "ui-monospace, monospace", color: "var(--ink2)", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
               {note.quote}
