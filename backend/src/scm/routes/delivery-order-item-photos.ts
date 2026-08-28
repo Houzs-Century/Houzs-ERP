@@ -64,11 +64,14 @@ async function loadOwnedLine(c: Ctx, doId: string, itemId: string): Promise<
   { ok: true; line: DoLinePhotoRow } | { ok: false; res: Response }
 > {
   const sb = c.get('supabase');
-  const { data: item } = await scopeToCompany(sb
+  const { data: item, error } = await scopeToCompany(sb
     .from('delivery_order_items')
     .select('delivery_order_id, photo_urls')
     .eq('id', itemId), c)
     .maybeSingle();
+  /* A FAILED READ IS NOT A MISSING LINE — supabase-js does not throw, and
+     answering 404 to a database blip reads as "photo gone" on the tile. */
+  if (error) return { ok: false, res: c.json({ error: 'load_failed', reason: error.message }, 500) };
   if (!item) return { ok: false, res: c.json({ error: 'item_not_found' }, 404) };
   const line = item as DoLinePhotoRow;
   if (line.delivery_order_id !== doId) {

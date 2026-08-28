@@ -2,7 +2,7 @@
 // These pin the pure half of the carry (the map read + the row builder); the
 // convert path itself is driven end-to-end by
 // routes/delivery-orders-mfg.photo-carry.test.ts.
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 import { buildDoItemRow, carriedPhotoUrls, loadCarriedSoLinePhotos } from './do-item-row';
 
 /* The scoped read, faked at the PostgREST seam: `scope` receives the builder
@@ -60,6 +60,26 @@ describe('loadCarriedSoLinePhotos', () => {
     const { sb, calls } = fakeSb([{ id: 'si-1', photo_urls: ['k.jpg'] }]);
     await loadCarriedSoLinePhotos(sb, [{ soItemId: 'si-1' }, { soItemId: 'si-1' }], (q) => q);
     expect(calls[0]!.inIds).toEqual(['si-1']);
+  });
+
+  test('a failed read degrades to photo-less lines (empty map), never a throw', async () => {
+    /* Best-effort by design — the keys stay on the SO line and a re-carry is
+       possible, so a blip must not fail the delivery being cut. */
+    const sb = {
+      from: () => ({
+        select: () => ({
+          in: () => Promise.resolve({ data: null, error: { message: 'connection reset' } }),
+        }),
+      }),
+    };
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const map = await loadCarriedSoLinePhotos(sb, [{ soItemId: 'si-1' }], (q) => q);
+      expect(map.size).toBe(0);
+      expect(spy).toHaveBeenCalledOnce();
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 

@@ -52,7 +52,17 @@ export async function loadCarriedSoLinePhotos(
     lines.map((l) => l.soItemId).filter((x): x is string => typeof x === 'string' && x.length > 0),
   )];
   if (ids.length === 0) return out;
-  const { data } = await scope(sb.from('mfg_sales_order_items').select('id, photo_urls')).in('id', ids);
+  const { data, error } = await scope(sb.from('mfg_sales_order_items').select('id, photo_urls')).in('id', ids);
+  if (error) {
+    /* Best-effort by DESIGN, and the trade is stated: photo_urls is an
+       annotation, the keys stay on the SO line, and a re-carry is always
+       possible — so a read blip degrades to photo-less lines rather than
+       failing a delivery the operator is cutting. The failure still reaches
+       the log instead of nobody. */
+    // eslint-disable-next-line no-console
+    console.error('[do-line-photo-carry] SO line photo read failed; inserting DO lines without photos:', error.message);
+    return out;
+  }
   for (const r of (data ?? []) as Array<{ id: string; photo_urls: string[] | null }>) {
     out.set(r.id, r.photo_urls ?? []);
   }
