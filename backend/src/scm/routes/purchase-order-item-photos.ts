@@ -164,7 +164,8 @@ purchaseOrderItemPhotos.post('/:id/items/:itemId/photos', async (c) => {
      carries company_id, stamped on every insert). */
   const co = requireActiveCompanyId(c);
   if (!co.ok) {
-    await c.env.SO_ITEM_PHOTOS.delete(photoKey).catch(() => {});
+    await c.env.SO_ITEM_PHOTOS.delete(photoKey).catch((e: unknown) =>
+      console.error('[po-item-photos] R2 cleanup failed (orphan blob left)', { photoKey, error: e }));
     await deleteThumbFor(c.env.SO_ITEM_PHOTOS, photoKey);
     return c.json(co.refusal, 409);
   }
@@ -176,7 +177,8 @@ purchaseOrderItemPhotos.post('/:id/items/:itemId/photos', async (c) => {
     .eq('id', itemId)
     .eq('purchase_order_id', poId), co.companyId);
   if (updErr) {
-    await c.env.SO_ITEM_PHOTOS.delete(photoKey).catch(() => {});
+    await c.env.SO_ITEM_PHOTOS.delete(photoKey).catch((e: unknown) =>
+      console.error('[po-item-photos] R2 cleanup failed (orphan blob left)', { photoKey, error: e }));
     await deleteThumbFor(c.env.SO_ITEM_PHOTOS, photoKey);
     return c.json({ error: 'db_update_failed', reason: updErr.message }, 500);
   }
@@ -216,7 +218,8 @@ purchaseOrderItemPhotos.delete('/:id/items/:itemId/photos/:photoKey', async (c) 
      an orphan blob (harmless), never a listed key with no object. */
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- same runtime-absent-binding guard as the upload route
   if (c.env.SO_ITEM_PHOTOS) {
-    await c.env.SO_ITEM_PHOTOS.delete(photoKey).catch(() => {});
+    await c.env.SO_ITEM_PHOTOS.delete(photoKey).catch((e: unknown) =>
+      console.error('[po-item-photos] R2 cleanup failed (orphan blob left)', { photoKey, error: e }));
     await deleteThumbFor(c.env.SO_ITEM_PHOTOS, photoKey);
   }
 
