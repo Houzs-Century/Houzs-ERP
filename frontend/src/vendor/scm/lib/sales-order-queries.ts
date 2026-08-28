@@ -907,3 +907,16 @@ export async function fetchPoItemPhotoBlob(
     photoKey,
   );
 }
+
+/* DO twin of the two above — same proxy contract, mounted by
+   routes/delivery-order-item-photos.ts (keys are SO-carried, mig 20260828T0746). */
+export async function fetchDoItemPhotoBlob(
+  doId: string,
+  itemId: string,
+  photoKey: string,
+): Promise<Blob> {
+  return fetchItemPhotoBlobAt(
+    `/delivery-orders-mfg/${encodeURIComponent(doId)}/items/${encodeURIComponent(itemId)}`,
+    photoKey,
+  );
+}
