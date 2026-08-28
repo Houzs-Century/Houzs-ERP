@@ -1027,9 +1027,22 @@ accounting.get('/daily-bank', async (c) => {
     account_name: nameOf.get(code) ?? code,
   }));
 
+  /* Phase 3: DRAFT vouchers sitting in the approval cycle — money already
+     asked for. Submitted on or before the board date, still undecided-or-
+     approved (posting clears the pending by flipping status; withdraw/reject
+     clear the marks). The error is bound: a failed read must not dress up as
+     "nothing pending" on the one board that answers how much can move. */
+  const { data: pendingRaw, error: pErr } = await sb.from('payment_vouchers')
+    .select('total_sen, exchange_rate')
+    .eq('company_id', co.companyId).eq('status', 'DRAFT')
+    .not('submitted_at', 'is', null)
+    .lte('submitted_at', `${date}T23:59:59.999`);
+  if (pErr) return c.json({ error: 'load_failed', reason: pErr.message }, 500);
+  const pending = (pendingRaw ?? []) as Array<{ total_sen: number; exchange_rate: string | number | null }>;
+
   const allCodes = [...money.map((m) => m.account_code), ...transitCodes];
   if (allCodes.length === 0) {
-    return c.json(computeDailyBank(date, [], [], []));
+    return c.json(computeDailyBank(date, [], [], [], pending));
   }
   const { data: lines, error: lErr } = await paginateAll<Record<string, unknown>>((from, to) =>
     sb.from('v_gl_entries').select('entry_date, je_no, source_type, source_doc_no, account_code, debit_sen, credit_sen, notes')
@@ -1040,7 +1053,7 @@ accounting.get('/daily-bank', async (c) => {
       .range(from, to));
   if (lErr) return c.json({ error: 'load_failed', reason: lErr.message }, 500);
 
-  return c.json(computeDailyBank(date, money, transitAccounts, (lines ?? []) as never));
+  return c.json(computeDailyBank(date, money, transitAccounts, (lines ?? []) as never, pending));
 });
 
 /* ════════════════════════════════════════════════════════════════════════

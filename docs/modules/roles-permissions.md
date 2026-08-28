@@ -57,6 +57,12 @@ So an undeclared key cannot be granted through the UI, cannot be stored through
 the API, and is thrown away if it is already in the row. **None of those three
 produces a log, an error, or anything a human sees.**
 
+**`scm.payment_voucher.approve`** (phase 3, 2026-08-28) is the decision half
+of the PV approval cycle — an unapproved voucher cannot post, and a submitted
+one reserves against Daily Bank's available money (docs/modules/payment-voucher.md
+§0b). Declared like every key, deliberately granted to **no** seed role: only
+`*` (Owner / IT Admin) can approve until the owner assigns it to a position.
+
 `EXPLICIT_APPROVAL_KEYS` is a separate rule on top: the four checklist-approval
 keys are NOT conferred by `*`. `holdsChecklistApproval()` is the reader; the
 Owner role carries them explicitly instead.

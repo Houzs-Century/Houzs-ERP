@@ -183,9 +183,12 @@ describe('item 4 — PV cancel (reverses the GL entry)', () => {
    reported nothing here. Posting writes a balanced journal entry into the
    voucher's company ledger, so this is the money half. */
 describe('item 4b — PV post (writes the GL entry)', () => {
+  /* approved_at: this suite tests COMPANY SCOPE, so both vouchers arrive
+     already through the phase-3 queue — the approval gate itself is
+     tests/pvApproval.test.ts's contract. */
   const pvs = (): Row[] => [
-    { id: 'pv-a', pv_number: 'PV-A-2', company_id: CO_A, status: 'DRAFT', total_sen: 100, credit_account_code: '1000', voucher_date: '2026-08-13', payee_name: 'A', currency: 'MYR', exchange_rate: 1 },
-    { id: 'pv-b', pv_number: 'PV-B-2', company_id: CO_B, status: 'DRAFT', total_sen: 900, credit_account_code: '1000', voucher_date: '2026-08-13', payee_name: 'B', currency: 'MYR', exchange_rate: 1 },
+    { id: 'pv-a', pv_number: 'PV-A-2', company_id: CO_A, status: 'DRAFT', total_sen: 100, credit_account_code: '1000', voucher_date: '2026-08-13', payee_name: 'A', currency: 'MYR', exchange_rate: 1, approved_at: '2026-08-13T01:00:00Z', approved_by: 'T' },
+    { id: 'pv-b', pv_number: 'PV-B-2', company_id: CO_B, status: 'DRAFT', total_sen: 900, credit_account_code: '1000', voucher_date: '2026-08-13', payee_name: 'B', currency: 'MYR', exchange_rate: 1, approved_at: '2026-08-13T01:00:00Z', approved_by: 'T' },
   ];
   const lines = (): Row[] => [
     { pv_id: 'pv-a', line_no: 1, description: 'a', debit_account_code: '5000', amount_sen: 100 },
