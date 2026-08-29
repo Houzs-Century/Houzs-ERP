@@ -82,14 +82,30 @@ async function main() {
 
   /* Lines that SHOULD be ready by the bound rule but are not — after the
      allocation has run, this list must be empty. Anything left is a real
-     defect, not a timing artefact. */
-  const shouldBe = await sql`SELECT h.doc_no, i.item_code, i.item_group, i.stock_status, poi.received_qty, i.qty
+     defect, not a timing artefact.
+     DELIVERED lines are excluded (2026-08-29): a line whose DOs already cover
+     its qty has deliverable remaining 0, the allocator rightly leaves it
+     alone, and its stock_status legitimately never flips to READY. The first
+     version of this lens counted 35 such sofa piece lines as defects —
+     traced on SO-003295/SO-009585, both delivered in the book, mirrors and
+     all (round ledger 4h). A lens that cannot see deliveries indicts the
+     allocator for obeying them. */
+  const shouldBe = await sql`SELECT h.doc_no, i.item_code, i.item_group, i.stock_status, poi.received_qty, i.qty,
+      COALESCE(del.dq, 0) AS delivered
     FROM scm.mfg_sales_order_items i
     JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
     JOIN scm.purchase_order_items poi ON poi.so_item_id = i.id
+    LEFT JOIN (
+      SELECT d.so_item_id, SUM(d.qty) AS dq
+      FROM scm.delivery_order_items d
+      JOIN scm.delivery_orders dh ON dh.id = d.delivery_order_id
+      WHERE COALESCE(dh.status::text, '') NOT ILIKE '%cancel%'
+      GROUP BY d.so_item_id
+    ) del ON del.so_item_id = i.id
     WHERE h.company_id = ${CO} AND h.${PDATE} IS NOT NULL AND COALESCE(i.cancelled,false) = false
       AND h.status NOT IN ('CANCELLED','CLOSED','DELIVERED','SHIPPED','INVOICED')
       AND COALESCE(poi.received_qty,0) >= i.qty AND i.stock_status <> 'READY'
+      AND i.qty - COALESCE(del.dq, 0) > 0
     ORDER BY h.doc_no LIMIT 200`;
   /* Bound mode is bedframe + sofa ONLY (owner 2026-08-10: "SOFA 和 BEDFRAME…要走
      Convert to PO 的那个模式。可是 MATTRESS 跟 Accessories…走回我们正常 MRP 的

@@ -35,34 +35,76 @@ function classifyClaim(r) {
 
 async function main() {
   const rows = await sql`
-    SELECT h.doc_no, h.remark2,
-           COUNT(*) FILTER (WHERE i.item_group NOT IN ('service')) AS stock_lines,
-           COUNT(*) FILTER (WHERE i.item_group NOT IN ('service') AND i.stock_status = 'READY') AS ready_lines
+    SELECT h.doc_no, h.remark2, i.id, i.item_group, i.stock_status, i.qty,
+           COALESCE(del.dq, 0) AS delivered,
+           COALESCE(ded.n, 0) AS dedicated_po_lines
     FROM scm.mfg_sales_orders h
     JOIN scm.mfg_sales_order_items i ON i.doc_no = h.doc_no AND i.cancelled = false
+    LEFT JOIN (
+      SELECT d.so_item_id, SUM(d.qty) AS dq
+      FROM scm.delivery_order_items d
+      JOIN scm.delivery_orders dh ON dh.id = d.delivery_order_id
+      WHERE COALESCE(dh.status::text, '') NOT ILIKE '%cancel%'
+      GROUP BY d.so_item_id
+    ) del ON del.so_item_id = i.id
+    LEFT JOIN (
+      SELECT so_item_id, COUNT(*) AS n FROM scm.purchase_order_items
+      WHERE so_item_id IS NOT NULL GROUP BY so_item_id
+    ) ded ON ded.so_item_id = i.id
     WHERE h.company_id = 1 AND h.linked_ac_docno IS NOT NULL
-      AND UPPER(h.status::text) NOT IN ('CANCELLED', 'COMPLETED')
-    GROUP BY h.doc_no, h.remark2`;
-  log(`imported live orders measured: ${rows.length}`);
+      AND UPPER(h.status::text) NOT IN ('CANCELLED', 'COMPLETED')`;
 
-  const matrix = new Map();
-  const staffReadySystemNone = [];
-  let claimed = 0;
+  const byDoc = new Map();
   for (const r of rows) {
-    const claim = classifyClaim(r.remark2);
+    if (!byDoc.has(r.doc_no)) byDoc.set(r.doc_no, { remark2: r.remark2, lines: [] });
+    byDoc.get(r.doc_no).lines.push(r);
+  }
+  log(`imported live orders measured: ${byDoc.size}`);
+
+  /* The owner's 2026-08-29 protocol (「甲」): the system's computed status is
+     the truth; a difference from the hand-written Remark2 is only an ALGORITHM
+     defect after three legitimate causes are excluded —
+       DELIVERED-STALE  every short line is already delivered; the handwriting
+                        aged (delivery moves in the book daily; measured 40
+                        delivery-date edits in one day)
+       NO-OWN-PO        the short lines are bedframe/sofa with NO dedicated PO:
+                        under hard binding they NEVER light from pooled old
+                        stock, by his explicit ruling
+       GRANULARITY      the main pieces (bedframe/sofa/mattress) are all READY
+                        and only accessories/services are short — staff's READY
+                        speaks of the main pieces
+     What remains is ALGO-SUSPECT and MUST BE ZERO. */
+  const MAIN = new Set(["bedframe", "sofa", "mattress"]);
+  const BOUND = new Set(["bedframe", "sofa"]);
+  const matrix = new Map();
+  const classes = { "DELIVERED-STALE": [], "NO-OWN-PO": [], GRANULARITY: [], "ALGO-SUSPECT": [] };
+  let claimed = 0, agree = 0;
+  for (const [doc, o] of byDoc) {
+    const claim = classifyClaim(o.remark2);
     if (!claim) continue;
     claimed++;
-    const nStock = Number(r.stock_lines), nReady = Number(r.ready_lines);
-    const view = nStock === 0 ? "NO-STOCK-LINES" : nReady === 0 ? "NONE-READY" : nReady === nStock ? "ALL-READY" : "SOME-READY";
-    const k = `${claim} | ${view}`;
-    matrix.set(k, (matrix.get(k) || 0) + 1);
-    if (claim === "READY" && view === "NONE-READY") staffReadySystemNone.push(r.doc_no);
+    const stock = o.lines.filter((l) => (l.item_group || "") !== "service");
+    const nReady = stock.filter((l) => l.stock_status === "READY").length;
+    const view = stock.length === 0 ? "NO-STOCK-LINES" : nReady === 0 ? "NONE-READY" : nReady === stock.length ? "ALL-READY" : "SOME-READY";
+    matrix.set(`${claim} | ${view}`, (matrix.get(`${claim} | ${view}`) || 0) + 1);
+
+    const disagrees = (claim === "READY" && view !== "ALL-READY" && view !== "NO-STOCK-LINES");
+    if (!disagrees) { agree++; continue; }
+    const short = stock.filter((l) => l.stock_status !== "READY");
+    const allDelivered = short.every((l) => Number(l.delivered) >= Number(l.qty));
+    const allNoPo = short.every((l) => BOUND.has((l.item_group || "").toLowerCase()) && Number(l.dedicated_po_lines) === 0);
+    const mainsReady = stock.filter((l) => MAIN.has((l.item_group || "").toLowerCase())).every((l) => l.stock_status === "READY" || Number(l.delivered) >= Number(l.qty));
+    const cls = allDelivered ? "DELIVERED-STALE" : allNoPo ? "NO-OWN-PO" : mainsReady ? "GRANULARITY" : "ALGO-SUSPECT";
+    classes[cls].push(doc);
   }
   log(`orders where staff wrote a status: ${claimed}`);
   for (const [k, n] of [...matrix.entries()].sort((a, b) => b[1] - a[1])) log(`  ${k.padEnd(34)} ${n}`);
-  log(`ACTIONABLE — staff wrote READY, system covers no line: ${staffReadySystemNone.length}`);
-  for (const d of staffReadySystemNone.slice(0, 20)) log(`   ${d}`);
-  if (staffReadySystemNone.length > 20) log(`   ... and ${staffReadySystemNone.length - 20} more`);
+  log(`READY claims that disagree, classified per the owner's protocol:`);
+  for (const [cls, docs] of Object.entries(classes)) {
+    log(`  ${cls.padEnd(16)} ${docs.length}${cls === "ALGO-SUSPECT" ? "   <-- MUST BE ZERO" : ""}`);
+    for (const d of docs.slice(0, cls === "ALGO-SUSPECT" ? 30 : 6)) log(`     ${d}`);
+    if (docs.length > (cls === "ALGO-SUSPECT" ? 30 : 6)) log(`     ... and ${docs.length - (cls === "ALGO-SUSPECT" ? 30 : 6)} more`);
+  }
   await sql.end();
 }
 main().catch((e) => { console.error(e); process.exit(1); });
