@@ -220,7 +220,13 @@ async function main() {
     };
     let bothAgree = 0, acMore = 0, erpMore = 0, mixed = 0;
     const acMoreByGroup = {}, erpMoreByGroup = {};
-    const erpMoreSamples = [];
+    const erpMoreDocs = [];
+    /* WHY is the book behind where we are ahead? Compare the remark we
+       imported (21:59 snapshot, byte-equal in the DB) against the LIVE book
+       remark exported 23:27 the same night (committed ac-live-so-remark2):
+       if the live book has since stamped a status, the gap was TIMING — the
+       detector runs after us; if the live book is still blank, the detector
+       simply does not cover that order (its gap, not ours). */
     for (const [doc, o] of byDoc) {
       const cs = claimSet(o.remark2);
       if (cs === null) continue;
@@ -234,12 +240,33 @@ async function main() {
       if (!acOnly.length && !erpOnly.length) bothAgree++;
       else if (acOnly.length && erpOnly.length) mixed++;
       else if (acOnly.length) { acMore++; for (const g of acOnly) acMoreByGroup[g] = (acMoreByGroup[g] || 0) + 1; }
-      else { erpMore++; for (const g of erpOnly) erpMoreByGroup[g] = (erpMoreByGroup[g] || 0) + 1; if (erpMoreSamples.length < 8) erpMoreSamples.push(`${doc} erp-ready:{${erpOnly.join(",")}} book-says:${JSON.stringify(o.remark2 ?? "")}`); }
+      else { erpMore++; for (const g of erpOnly) erpMoreByGroup[g] = (erpMoreByGroup[g] || 0) + 1; erpMoreDocs.push({ doc, erpOnly, imported: o.remark2 ?? "" }); }
     }
     log(`BIDIRECTIONAL category matrix (orders with a parseable claim incl. blank): agree ${bothAgree}; book-claims-more ${acMore}; ERP-ready-more ${erpMore}; both-directions ${mixed}`);
     log(`  book-claims-more by category: ${JSON.stringify(acMoreByGroup)}`);
     log(`  ERP-ready-more by category: ${JSON.stringify(erpMoreByGroup)}`);
-    for (const x of erpMoreSamples) log(`   ERP-MORE ${x}`);
+    {
+      const fs2 = await import("node:fs");
+      const zlib2 = await import("node:zlib");
+      const path2 = await import("node:path");
+      const url2 = await import("node:url");
+      const here2 = path2.dirname(url2.fileURLToPath(import.meta.url));
+      const live = new Map(JSON.parse(zlib2.gunzipSync(fs2.readFileSync(path2.join(here2, "data", "ac-live-so-remark2.json.gz"))).toString("utf8")).map((r) => [String(r.DocNo).trim(), (r.Remark2 || "").trim()]));
+      const buckets = { "BOOK-CAUGHT-UP": [], "BOOK-STILL-BLANK": [], "BOOK-SAYS-OTHER": [], "NOT-IN-LIVE": [] };
+      for (const e of erpMoreDocs) {
+        const ac = e.doc.replace(/^HC-/, "");
+        if (!live.has(ac)) { buckets["NOT-IN-LIVE"].push(e.doc); continue; }
+        const now = live.get(ac);
+        const then = (e.imported || "").trim();
+        if (now && now !== then) buckets["BOOK-CAUGHT-UP"].push(`${e.doc} now=${JSON.stringify(now)}`);
+        else if (!now) buckets["BOOK-STILL-BLANK"].push(`${e.doc} erp-ready:{${e.erpOnly.join(",")}}`);
+        else buckets["BOOK-SAYS-OTHER"].push(`${e.doc} book=${JSON.stringify(now)} erp-extra:{${e.erpOnly.join(",")}}`);
+      }
+      for (const [k, v] of Object.entries(buckets)) {
+        log(`  ERP-ahead cause ${k}: ${v.length}`);
+        for (const x of v.slice(0, 6)) log(`     ${x}`);
+      }
+    }
   }
   log(`orders where staff wrote a status: ${claimed}`);
   for (const [k, n] of [...matrix.entries()].sort((a, b) => b[1] - a[1])) log(`  ${k.padEnd(34)} ${n}`);
