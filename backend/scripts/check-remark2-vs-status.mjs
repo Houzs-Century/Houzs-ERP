@@ -39,6 +39,7 @@ async function main() {
     SELECT h.doc_no, h.remark2, to_char(h.processing_date, 'YYYY-MM-DD') AS pdate,
            i.id, i.item_code, i.item_group, i.stock_status, i.qty,
            i.warehouse_id, COALESCE(i.stock_qty_ready, 0) AS qty_ready,
+           (i.variants IS NOT NULL AND i.variants::text NOT IN ('null', '{}')) AS has_variants,
            COALESCE(del.dq, 0) AS delivered,
            COALESCE(ded.n, 0) AS dedicated_po_lines,
            COALESCE(ded.recv, 0) AS recv
@@ -146,7 +147,7 @@ async function main() {
       const allNoPo = short.every((l) => BOUND.has((l.item_group || "").toLowerCase()) && Number(l.dedicated_po_lines) === 0);
       classes[allDelivered ? "DELIVERED-STALE" : allNoPo ? "NO-OWN-PO" : "GRANULARITY"].push(doc);
     } else {
-      classes["ALGO-SUSPECT"].push(`${doc} <- ${suspects.map((l) => `${l.item_code}[${l.item_group}]${l.stock_status}`).slice(0, 3).join(" ")}`);
+      classes["ALGO-SUSPECT"].push(`${doc} <- ${suspects.map((l) => `${l.item_code}[${l.item_group}]${l.stock_status} wh=${l.warehouse_id ?? "NULL"} variants=${l.has_variants ? "YES" : "no"} leftover=${leftover(l)}`).slice(0, 3).join(" | ")}`);
     }
   }
   log(`orders where staff wrote a status: ${claimed}`);
