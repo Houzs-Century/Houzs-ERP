@@ -32,8 +32,20 @@ export interface AcSofaCorpusRow {
   desc2: string;
 }
 
-export const AC_SOFA_CORPUS_ROWS = 696;
+export const AC_SOFA_CORPUS_ROWS = 697;
 export const AC_SOFA_CORPUS: readonly AcSofaCorpusRow[] = [
+  {
+    "side": "PO",
+    "docNo": "PO-000254",
+    "dtlKey": 59343,
+    "acItemCode": "RDS-5526 SOFA",
+    "erpCode": "5526-1S",
+    "model": "5526",
+    "qty": 1,
+    "creditorCode": "400-R001",
+    "desc2": "[ (1 ELT / T + NA +2ER) (28\") / COL: J9883-1-1 PAMA]",
+    "recl": false
+  },
   {
     "side": "PO",
     "docNo": "PO-001068",
@@ -396,18 +408,6 @@ export const AC_SOFA_CORPUS: readonly AcSofaCorpusRow[] = [
   },
   {
     "side": "PO",
-    "docNo": "PO-009364",
-    "dtlKey": 853220,
-    "acItemCode": "TD-5119 SOFA",
-    "erpCode": "5119-1S",
-    "model": "5119",
-    "qty": 1,
-    "creditorCode": "400-T005",
-    "desc2": "(P+1NA+L)30’’/Col:CH141-1 Cream",
-    "recl": true
-  },
-  {
-    "side": "PO",
     "docNo": "PO-009399",
     "dtlKey": 857269,
     "acItemCode": "DSL-8051 SOFA",
@@ -476,18 +476,6 @@ export const AC_SOFA_CORPUS: readonly AcSofaCorpusRow[] = [
     "qty": 1,
     "creditorCode": "400-D004",
     "desc2": "1+1NA+L(32'INCH)/COL:MODENZA 07/EXTEND TO FLOOR WITH 1'INCH LEG/BOTTOM USE UMBRELLA FABRIC",
-    "recl": true
-  },
-  {
-    "side": "PO",
-    "docNo": "PO-009467",
-    "dtlKey": 861768,
-    "acItemCode": "HOK-5530 SOFA",
-    "erpCode": "5530-1S",
-    "model": "9028",
-    "qty": 1,
-    "creditorCode": "400-O002",
-    "desc2": "(1EL+1ER)28inch/Col:BO315-2  \n*Fully Covered to floor no leg",
     "recl": true
   },
   {
@@ -576,18 +564,6 @@ export const AC_SOFA_CORPUS: readonly AcSofaCorpusRow[] = [
   },
   {
     "side": "PO",
-    "docNo": "PO-009554",
-    "dtlKey": 868667,
-    "acItemCode": "HOK-5536 SOFA",
-    "erpCode": "5536-1S",
-    "model": "9058",
-    "qty": 1,
-    "creditorCode": "400-O002",
-    "desc2": "30\" CORNER / COL : B0315-23",
-    "recl": true
-  },
-  {
-    "side": "PO",
     "docNo": "PO-009582",
     "dtlKey": 872556,
     "acItemCode": "DSL-8030 SOFA",
@@ -608,18 +584,6 @@ export const AC_SOFA_CORPUS: readonly AcSofaCorpusRow[] = [
     "qty": 1,
     "creditorCode": "400-A004",
     "desc2": "(L+2)28inch/Col:HR805-40\nBottom Wrap By nylon",
-    "recl": true
-  },
-  {
-    "side": "PO",
-    "docNo": "PO-009587",
-    "dtlKey": 872577,
-    "acItemCode": "HOK-5536 SOFA",
-    "erpCode": "5536-1S",
-    "model": "9058",
-    "qty": 1,
-    "creditorCode": "400-O002",
-    "desc2": "L shape \nbottom Nilon \nColour : modenza 01- Houston cream",
     "recl": true
   },
   {
@@ -740,18 +704,6 @@ export const AC_SOFA_CORPUS: readonly AcSofaCorpusRow[] = [
     "qty": 1,
     "creditorCode": "400-D004",
     "desc2": "(1B/S+1NA+1NA+1ER)28inch/Col:Bo315-21\nBottom Wrap By Nylon",
-    "recl": true
-  },
-  {
-    "side": "PO",
-    "docNo": "PO-009677",
-    "dtlKey": 880121,
-    "acItemCode": "DSL-8050 SOFA",
-    "erpCode": "8050-1S",
-    "model": "8050",
-    "qty": 1,
-    "creditorCode": "400-D004",
-    "desc2": "Sofa 8050 24” 1R+1R (both want recliner)\nCol:B0315-3",
     "recl": true
   },
   {
@@ -1092,18 +1044,6 @@ export const AC_SOFA_CORPUS: readonly AcSofaCorpusRow[] = [
   },
   {
     "side": "PO",
-    "docNo": "PO-009830",
-    "dtlKey": 892708,
-    "acItemCode": "HOK-5530 SOFA",
-    "erpCode": "5530-1S",
-    "model": "9028",
-    "qty": 1,
-    "creditorCode": "400-O002",
-    "desc2": "2L(30”)/Col:CH141-13/Bottom Nylon Fabric",
-    "recl": true
-  },
-  {
-    "side": "PO",
     "docNo": "PO-009832",
     "dtlKey": 892716,
     "acItemCode": "HOK-5540 SOFA",
@@ -1135,7 +1075,7 @@ export const AC_SOFA_CORPUS: readonly AcSofaCorpusRow[] = [
     "model": "8051",
     "qty": 1,
     "creditorCode": "400-D004",
-    "desc2": "3S(32’Inch)/Col:BO315-21",
+    "desc2": "3S(2+1)(32’Inch)/Col:BO315-21",
     "recl": true
   },
   {
@@ -1376,18 +1316,6 @@ export const AC_SOFA_CORPUS: readonly AcSofaCorpusRow[] = [
     "qty": 1,
     "creditorCode": "400-O002",
     "desc2": "1S/Size:35”/Col:MODENZA 04-MUSTARD",
-    "recl": true
-  },
-  {
-    "side": "PO",
-    "docNo": "PO-009944",
-    "dtlKey": 905144,
-    "acItemCode": "HOK-5540 SOFA",
-    "erpCode": "5540-1S",
-    "model": "8030",
-    "qty": 1,
-    "creditorCode": "400-O002",
-    "desc2": "HR805-90/35”/1R+1R",
     "recl": true
   },
   {
@@ -1748,6 +1676,162 @@ export const AC_SOFA_CORPUS: readonly AcSofaCorpusRow[] = [
     "qty": 1,
     "creditorCode": "400-D004",
     "desc2": "Lshape/Col: GD2502#11",
+    "recl": true
+  },
+  {
+    "side": "PO",
+    "docNo": "PO-010078",
+    "dtlKey": 917233,
+    "acItemCode": "DSL-8030 SOFA",
+    "erpCode": "8030-1S",
+    "model": "8030",
+    "qty": 1,
+    "creditorCode": "400-D004",
+    "desc2": "HR805-90/35”/1R+1R",
+    "recl": true
+  },
+  {
+    "side": "PO",
+    "docNo": "PO-010079",
+    "dtlKey": 917238,
+    "acItemCode": "DSL-8051 SOFA",
+    "erpCode": "8051-1S",
+    "model": "8051",
+    "qty": 1,
+    "creditorCode": "400-D004",
+    "desc2": "NICCA-04 (OLIVE)/32”/1R(INCLINER)+1NA+1R",
+    "recl": true
+  },
+  {
+    "side": "PO",
+    "docNo": "PO-010080",
+    "dtlKey": 917243,
+    "acItemCode": "DSL-9058 SOFA",
+    "erpCode": "9058-1S",
+    "model": "9058",
+    "qty": 1,
+    "creditorCode": "400-D004",
+    "desc2": "2R+1R/Size:30”/Col:BO315-21 Pearl/Bottom wrap nylon fabric",
+    "recl": true
+  },
+  {
+    "side": "PO",
+    "docNo": "PO-010080",
+    "dtlKey": 917245,
+    "acItemCode": "DSL-9058 SOFA",
+    "erpCode": "9058-1S",
+    "model": "9058",
+    "qty": 1,
+    "creditorCode": "400-D004",
+    "desc2": "2S/Size:30”/Col:BO315-21 Pearl/Bottom wrap nylon fabric/one side armrest replace seat ",
+    "recl": true
+  },
+  {
+    "side": "PO",
+    "docNo": "PO-010080",
+    "dtlKey": 917247,
+    "acItemCode": "DSL-8051 SOFA",
+    "erpCode": "8051-1S",
+    "model": "8051",
+    "qty": 1,
+    "creditorCode": "400-D004",
+    "desc2": "1S/Size:30”/Col:BO315-21 Pearl/Bottom wrap nylon fabric",
+    "recl": true
+  },
+  {
+    "side": "PO",
+    "docNo": "PO-010081",
+    "dtlKey": 917250,
+    "acItemCode": "DSL-8069 SOFA",
+    "erpCode": "8069-1S",
+    "model": "8069",
+    "qty": 1,
+    "creditorCode": "400-D004",
+    "desc2": "Size:24”/Col:BO315-7 Peach/Bottom wrap nylon/Seater depth +1”",
+    "recl": true
+  },
+  {
+    "side": "PO",
+    "docNo": "PO-010082",
+    "dtlKey": 917310,
+    "acItemCode": "DSL-9028 SOFA",
+    "erpCode": "9028-1S",
+    "model": "9028",
+    "qty": 1,
+    "creditorCode": "400-D004",
+    "desc2": "Size:26”/Col:ZL-12 TAN/Backrest change to 8030 design/Bottom wrap nylon",
+    "recl": true
+  },
+  {
+    "side": "PO",
+    "docNo": "PO-010083",
+    "dtlKey": 917315,
+    "acItemCode": "DSL-8030 SOFA",
+    "erpCode": "8030-1S",
+    "model": "8030",
+    "qty": 1,
+    "creditorCode": "400-D004",
+    "desc2": "Col : ZL -15 MISTY \nfully cover replace the leg \nNilon bottom ",
+    "recl": true
+  },
+  {
+    "side": "PO",
+    "docNo": "PO-010083",
+    "dtlKey": 917317,
+    "acItemCode": "DSL-8030 SOFA",
+    "erpCode": "8030-1S",
+    "model": "8030",
+    "qty": 1,
+    "creditorCode": "400-D004",
+    "desc2": "Col : ZL -15 MISTY \nfully cover replace the leg \nNilon bottom ",
+    "recl": true
+  },
+  {
+    "side": "PO",
+    "docNo": "PO-010084",
+    "dtlKey": 917324,
+    "acItemCode": "DSL-9028 SOFA",
+    "erpCode": "9028-1S",
+    "model": "9028",
+    "qty": 1,
+    "creditorCode": "400-D004",
+    "desc2": "Col : ZL-15 MISTY \nNilon bottom \nfully cover with one layer\nback rest change 8030",
+    "recl": true
+  },
+  {
+    "side": "PO",
+    "docNo": "PO-010085",
+    "dtlKey": 917329,
+    "acItemCode": "HOK-5536 SOFA",
+    "erpCode": "5536-1S",
+    "model": "9058",
+    "qty": 1,
+    "creditorCode": "400-O002",
+    "desc2": "MODENZA-05 (DARK OLIVE)/30”/3S",
+    "recl": true
+  },
+  {
+    "side": "PO",
+    "docNo": "PO-010086",
+    "dtlKey": 917334,
+    "acItemCode": "HOK-5540 SOFA",
+    "erpCode": "5540-1S",
+    "model": "8030",
+    "qty": 1,
+    "creditorCode": "400-O002",
+    "desc2": "2seater(35”)Col:CH141-11Sliver",
+    "recl": true
+  },
+  {
+    "side": "PO",
+    "docNo": "PO-010087",
+    "dtlKey": 917339,
+    "acItemCode": "HOK-5540 SOFA",
+    "erpCode": "5540-1S",
+    "model": "8030",
+    "qty": 1,
+    "creditorCode": "400-O002",
+    "desc2": "35 inch per seat \nNilon bottom \nCol : HR805-30\nreplace the leg by fully cover",
     "recl": true
   },
   {
@@ -3912,18 +3996,6 @@ export const AC_SOFA_CORPUS: readonly AcSofaCorpusRow[] = [
   },
   {
     "side": "SO",
-    "docNo": "SO-010209",
-    "dtlKey": 694403,
-    "acItemCode": "HOK-5536 SOFA",
-    "erpCode": "5536-1S",
-    "model": "9058",
-    "qty": 1,
-    "creditorCode": null,
-    "desc2": "L shape \nbottom Nilon \nColour : modenza 01- Houston cream",
-    "recl": true
-  },
-  {
-    "side": "SO",
     "docNo": "SO-010214",
     "dtlKey": 694418,
     "acItemCode": "DSL-9028 SOFA",
@@ -3962,8 +4034,8 @@ export const AC_SOFA_CORPUS: readonly AcSofaCorpusRow[] = [
     "side": "SO",
     "docNo": "SO-010287",
     "dtlKey": 701070,
-    "acItemCode": "DSL-9058 SOFA",
-    "erpCode": "9058-1S",
+    "acItemCode": "HOK-5536 SOFA",
+    "erpCode": "5536-1S",
     "model": "9058",
     "qty": 1,
     "creditorCode": null,
@@ -4063,7 +4135,7 @@ export const AC_SOFA_CORPUS: readonly AcSofaCorpusRow[] = [
     "model": "8051",
     "qty": 1,
     "creditorCode": null,
-    "desc2": "3S(32’Inch)/Col:BO315-21",
+    "desc2": "3S (2+1)(32’Inch)/Col:BO315-21",
     "recl": true
   },
   {
@@ -4700,18 +4772,6 @@ export const AC_SOFA_CORPUS: readonly AcSofaCorpusRow[] = [
     "qty": 1,
     "creditorCode": null,
     "desc2": "{SIZE:2NA+1R+L(28\")}/{COL:CH141-1-Cream}",
-    "recl": true
-  },
-  {
-    "side": "SO",
-    "docNo": "SO-011207",
-    "dtlKey": 773519,
-    "acItemCode": "HOK-5530 SOFA",
-    "erpCode": "5530-1S",
-    "model": "9028",
-    "qty": 1,
-    "creditorCode": null,
-    "desc2": "2L(30”)/Col:CH141-13/Bottom Nylon Fabric",
     "recl": true
   },
   {
@@ -5376,18 +5436,6 @@ export const AC_SOFA_CORPUS: readonly AcSofaCorpusRow[] = [
   },
   {
     "side": "SO",
-    "docNo": "SO-011742",
-    "dtlKey": 806495,
-    "acItemCode": "TD-5119 SOFA",
-    "erpCode": "5119-1S",
-    "model": "5119",
-    "qty": 1,
-    "creditorCode": null,
-    "desc2": "(P+1NA+L)30’’/Col:CH141-1 Cream",
-    "recl": true
-  },
-  {
-    "side": "SO",
     "docNo": "SO-011743",
     "dtlKey": 806373,
     "acItemCode": "HOK-5535 SOFA",
@@ -5976,18 +6024,6 @@ export const AC_SOFA_CORPUS: readonly AcSofaCorpusRow[] = [
   },
   {
     "side": "SO",
-    "docNo": "SO-012128",
-    "dtlKey": 833309,
-    "acItemCode": "HOK-5530 SOFA",
-    "erpCode": "5530-1S",
-    "model": "9028",
-    "qty": 1,
-    "creditorCode": null,
-    "desc2": "(1EL+1ER)28inch/Col:BO315-2  \n*Fully Covered to floor no leg",
-    "recl": true
-  },
-  {
-    "side": "SO",
     "docNo": "SO-012134",
     "dtlKey": 833776,
     "acItemCode": "HOK-5530 SOFA",
@@ -6564,18 +6600,6 @@ export const AC_SOFA_CORPUS: readonly AcSofaCorpusRow[] = [
   },
   {
     "side": "SO",
-    "docNo": "SO-012571",
-    "dtlKey": 876762,
-    "acItemCode": "DSL-8050 SOFA",
-    "erpCode": "8050-1S",
-    "model": "8050",
-    "qty": 1,
-    "creditorCode": null,
-    "desc2": "Sofa 8050 24” 1R+1R (both want recliner)\nCol:B0315-3",
-    "recl": true
-  },
-  {
-    "side": "SO",
     "docNo": "SO-012582",
     "dtlKey": 857793,
     "acItemCode": "DSL-9028 SOFA",
@@ -6800,18 +6824,6 @@ export const AC_SOFA_CORPUS: readonly AcSofaCorpusRow[] = [
     "qty": 1,
     "creditorCode": null,
     "desc2": "bottom use sofa fabric/L+2S(28\")/col:CH141-13 deep grey",
-    "recl": true
-  },
-  {
-    "side": "SO",
-    "docNo": "SO-012729",
-    "dtlKey": 867593,
-    "acItemCode": "HOK-5536 SOFA",
-    "erpCode": "5536-1S",
-    "model": "9058",
-    "qty": 1,
-    "creditorCode": null,
-    "desc2": "30\" CORNER / COL : B0315-23",
     "recl": true
   },
   {
@@ -7850,8 +7862,8 @@ export const AC_SOFA_CORPUS: readonly AcSofaCorpusRow[] = [
     "side": "SO",
     "docNo": "SO-013232",
     "dtlKey": 901861,
-    "acItemCode": "HOK-5540 SOFA",
-    "erpCode": "5540-1S",
+    "acItemCode": "DSL-8030 SOFA",
+    "erpCode": "8030-1S",
     "model": "8030",
     "qty": 1,
     "creditorCode": null,
@@ -8306,12 +8318,12 @@ export const AC_SOFA_CORPUS: readonly AcSofaCorpusRow[] = [
     "side": "SO",
     "docNo": "SO-013346",
     "dtlKey": 913488,
-    "acItemCode": "DSL-8030 SOFA",
-    "erpCode": "8030-1S",
+    "acItemCode": "HOK-5540 SOFA",
+    "erpCode": "5540-1S",
     "model": "8030",
     "qty": 1,
     "creditorCode": null,
-    "desc2": "2seater(35”)Col:CH141-11Sliver ",
+    "desc2": "2seater(35”)Col:CH141-11Sliver",
     "recl": true
   },
   {
@@ -8371,19 +8383,19 @@ export const AC_SOFA_CORPUS: readonly AcSofaCorpusRow[] = [
     "model": "9028",
     "qty": 1,
     "creditorCode": null,
-    "desc2": "Col : ZL-15 MISTY \nNilon bottom \nfully cover with one layer\nback rest change 8030 ",
+    "desc2": "Col : ZL-15 MISTY \nNilon bottom \nfully cover with one layer\nback rest change 8030",
     "recl": true
   },
   {
     "side": "SO",
     "docNo": "SO-013389",
     "dtlKey": 915302,
-    "acItemCode": "DSL-8030 SOFA",
-    "erpCode": "8030-1S",
+    "acItemCode": "HOK-5540 SOFA",
+    "erpCode": "5540-1S",
     "model": "8030",
     "qty": 1,
     "creditorCode": null,
-    "desc2": "35 inch per seat \nNilon bottom \nCol : HR805-30\nreplace the leg by fully cover ",
+    "desc2": "35 inch per seat \nNilon bottom \nCol : HR805-30\nreplace the leg by fully cover",
     "recl": true
   }
 ];
