@@ -95,23 +95,50 @@ async function main() {
   for (const c of create.slice(0, 15)) log(`   ${c.doc} ${String(c.code).padEnd(26)} -> ${c.tgt.doc_no} ${c.tgt.item_code}`);
   if (create.length > 15) log(`   ... and ${create.length - 15} more`);
 
-  if (!APPLY) { log("\nDRY-RUN - set APPLY=1 to write."); await sql.end(); return; }
+  if (!APPLY) {
+    /* The apply-path guard below scans EVERY company-1 dedication, not only
+       this batch's writes — so a pre-existing mismatch fails the whole apply
+       and reads as if the batch caused it (run 33271420009 did exactly that).
+       Surface the CURRENT violations here, read-only, so the operator can see
+       whether the refusal belongs to the batch or to standing data. */
+    const bad = await sql`SELECT p.linked_ac_docno AS po, i.item_code AS po_code, s.doc_no AS so, s.item_code AS so_code
+        FROM scm.purchase_order_items i
+        JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
+        JOIN scm.mfg_sales_order_items s ON s.id = i.so_item_id
+       WHERE p.company_id = 1 AND upper(btrim(i.item_code)) <> upper(btrim(s.item_code))`;
+    log(`\ncode check on CURRENT data: ${bad.length} dedication(s) already point at a different item code`);
+    for (const b of bad.slice(0, 10)) log(`   ${b.po} "${b.po_code}" -> ${b.so} "${b.so_code}"`);
+    log("DRY-RUN - set APPLY=1 to write.");
+    await sql.end(); return;
+  }
 
   let n = 0;
   await sql.begin(async (tx) => {
+    /* A dedication may only point at a line carrying the SAME item code - two
+       rows describing one physical build cannot be different products. The
+       guard used to scan the WHOLE company-1 population after writing, so ONE
+       pre-existing mismatch (PO-001696 "2379-2S" -> a still-unsplit sofa
+       placeholder line, standing data) vetoed every future batch including
+       clean ones (run 33271420009). Scope it to the batch: snapshot the
+       standing violations first, write, then fail only on NEW ones — the
+       standing set is reported, never silently accepted. */
+    const before = await tx`SELECT i.id FROM scm.purchase_order_items i
+        JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
+        JOIN scm.mfg_sales_order_items s ON s.id = i.so_item_id
+       WHERE p.company_id = 1 AND upper(btrim(i.item_code)) <> upper(btrim(s.item_code))`;
+    const standing = new Set(before.map((r) => r.id));
+    if (standing.size) log(`standing code-mismatch dedications (NOT this batch's, left alone): ${standing.size}`);
     for (const r of [...fix, ...create]) {
       const u = await tx`UPDATE scm.purchase_order_items SET so_item_id = ${r.tgt.id} WHERE id = ${r.id} RETURNING id`;
       n += u.length;
     }
-    /* A dedication may only point at a line carrying the SAME item code - two
-       rows describing one physical build cannot be different products. Checked
-       after the write, inside the transaction, so a bad snapshot rolls back. */
-    const bad = await tx`SELECT COUNT(*)::int c FROM scm.purchase_order_items i
+    const after = await tx`SELECT i.id FROM scm.purchase_order_items i
         JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
         JOIN scm.mfg_sales_order_items s ON s.id = i.so_item_id
        WHERE p.company_id = 1 AND upper(btrim(i.item_code)) <> upper(btrim(s.item_code))`;
-    if (bad[0].c) throw new Error(`REFUSED: ${bad[0].c} dedications would point at a different item code. Rolled back.`);
-    log(`code check: 0 dedications point at a different item code`);
+    const fresh = after.filter((r) => !standing.has(r.id));
+    if (fresh.length) throw new Error(`REFUSED: this batch would create ${fresh.length} dedication(s) pointing at a different item code. Rolled back.`);
+    log(`code check: this batch created 0 cross-code dedications (standing: ${standing.size})`);
   });
   log(`APPLIED - re-pointed ${fix.length}, created ${create.length}, total ${n}. A link only: no value, no money, no stock.`);
   await sql.end();
