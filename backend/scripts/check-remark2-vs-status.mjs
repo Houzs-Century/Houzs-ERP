@@ -23,6 +23,7 @@ const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
 const log = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 const sql = postgres(DST, { ssl: "require", prepare: false, max: 1 });
+const norm = (s) => (s || "").trim().toUpperCase().replace(/\s+/g, " ");
 
 function classifyClaim(r) {
   const s = (r || "").trim().toUpperCase();
@@ -35,34 +36,122 @@ function classifyClaim(r) {
 
 async function main() {
   const rows = await sql`
-    SELECT h.doc_no, h.remark2,
-           COUNT(*) FILTER (WHERE i.item_group NOT IN ('service')) AS stock_lines,
-           COUNT(*) FILTER (WHERE i.item_group NOT IN ('service') AND i.stock_status = 'READY') AS ready_lines
+    SELECT h.doc_no, h.remark2, i.id, i.item_code, i.item_group, i.stock_status, i.qty,
+           i.warehouse_id, COALESCE(i.stock_qty_ready, 0) AS qty_ready,
+           COALESCE(del.dq, 0) AS delivered,
+           COALESCE(ded.n, 0) AS dedicated_po_lines,
+           COALESCE(ded.recv, 0) AS recv
     FROM scm.mfg_sales_orders h
     JOIN scm.mfg_sales_order_items i ON i.doc_no = h.doc_no AND i.cancelled = false
+    LEFT JOIN (
+      SELECT d.so_item_id, SUM(d.qty) AS dq
+      FROM scm.delivery_order_items d
+      JOIN scm.delivery_orders dh ON dh.id = d.delivery_order_id
+      WHERE COALESCE(dh.status::text, '') NOT ILIKE '%cancel%'
+      GROUP BY d.so_item_id
+    ) del ON del.so_item_id = i.id
+    LEFT JOIN (
+      SELECT so_item_id, COUNT(*) AS n, COALESCE(SUM(received_qty), 0) AS recv
+      FROM scm.purchase_order_items
+      WHERE so_item_id IS NOT NULL GROUP BY so_item_id
+    ) ded ON ded.so_item_id = i.id
     WHERE h.company_id = 1 AND h.linked_ac_docno IS NOT NULL
-      AND UPPER(h.status::text) NOT IN ('CANCELLED', 'COMPLETED')
-    GROUP BY h.doc_no, h.remark2`;
-  log(`imported live orders measured: ${rows.length}`);
+      AND UPPER(h.status::text) NOT IN ('CANCELLED', 'COMPLETED')`;
 
-  const matrix = new Map();
-  const staffReadySystemNone = [];
-  let claimed = 0;
+  const byDoc = new Map();
   for (const r of rows) {
-    const claim = classifyClaim(r.remark2);
+    if (!byDoc.has(r.doc_no)) byDoc.set(r.doc_no, { remark2: r.remark2, lines: [] });
+    byDoc.get(r.doc_no).lines.push(r);
+  }
+  log(`imported live orders measured: ${byDoc.size}`);
+
+  /* Bucket leftovers — the FIFO-exhaustion cause. A short pooled line is
+     LEGITIMATELY unlit when older lines drained its (warehouse, item) bucket:
+     the handwriting was optimistic, the allocator obeyed first-come-first-
+     served. Only a bucket with units left over AFTER every lit line's claim is
+     evidence the allocator owed this line a light. Blank-variant migrated
+     stock pools under variant_key '', which is what the balance rows carry. */
+  const balRows = await sql`SELECT warehouse_id, item_code, SUM(qty) AS q
+    FROM scm.inventory_balances WHERE company_id = 1 GROUP BY 1, 2`;
+  const bucketQty = new Map(balRows.map((b) => [`${b.warehouse_id}|${norm(b.item_code)}`, Number(b.q)]));
+  for (const r of rows) {
+    if (Number(r.qty_ready) > 0) {
+      const k = `${r.warehouse_id}|${norm(r.item_code)}`;
+      if (bucketQty.has(k)) bucketQty.set(k, bucketQty.get(k) - Number(r.qty_ready));
+    }
+  }
+  const leftover = (l) => bucketQty.get(`${l.warehouse_id}|${norm(l.item_code)}`) ?? 0;
+
+  /* The owner's 2026-08-29 protocol (「甲」): the system's computed status is
+     the truth; a difference from the hand-written Remark2 is only an ALGORITHM
+     defect after three legitimate causes are excluded —
+       DELIVERED-STALE  every short line is already delivered; the handwriting
+                        aged (delivery moves in the book daily; measured 40
+                        delivery-date edits in one day)
+       NO-OWN-PO        the short lines are bedframe/sofa with NO dedicated PO:
+                        under hard binding they NEVER light from pooled old
+                        stock, by his explicit ruling
+       GRANULARITY      the main pieces (bedframe/sofa/mattress) are all READY
+                        and only accessories/services are short — staff's READY
+                        speaks of the main pieces
+     What remains is ALGO-SUSPECT and MUST BE ZERO. */
+  const MAIN = new Set(["bedframe", "sofa", "mattress"]);
+  const BOUND = new Set(["bedframe", "sofa"]);
+  const matrix = new Map();
+  const classes = { "DELIVERED-STALE": [], "NO-OWN-PO": [], GRANULARITY: [], "ALGO-SUSPECT": [] };
+  let claimed = 0, agree = 0;
+  for (const [doc, o] of byDoc) {
+    const claim = classifyClaim(o.remark2);
     if (!claim) continue;
     claimed++;
-    const nStock = Number(r.stock_lines), nReady = Number(r.ready_lines);
-    const view = nStock === 0 ? "NO-STOCK-LINES" : nReady === 0 ? "NONE-READY" : nReady === nStock ? "ALL-READY" : "SOME-READY";
-    const k = `${claim} | ${view}`;
-    matrix.set(k, (matrix.get(k) || 0) + 1);
-    if (claim === "READY" && view === "NONE-READY") staffReadySystemNone.push(r.doc_no);
+    const stock = o.lines.filter((l) => (l.item_group || "") !== "service");
+    const nReady = stock.filter((l) => l.stock_status === "READY").length;
+    const view = stock.length === 0 ? "NO-STOCK-LINES" : nReady === 0 ? "NONE-READY" : nReady === stock.length ? "ALL-READY" : "SOME-READY";
+    matrix.set(`${claim} | ${view}`, (matrix.get(`${claim} | ${view}`) || 0) + 1);
+
+    const disagrees = (claim === "READY" && view !== "ALL-READY" && view !== "NO-STOCK-LINES");
+    if (!disagrees) { agree++; continue; }
+    /* PER-LINE attribution (2026-08-29 second cut): the first version classed
+       the whole ORDER by one cause and pushed every mixed order (one line
+       delivered + one line PO-less) into ALGO-SUSPECT — 57 of them, most
+       explained line by line. A short line is LEGITIMATELY unlit when it is
+       already delivered, or it is a bound-group line with no dedicated PO
+       (the owner's hard-binding scope), or it is not a main piece (staff's
+       READY speaks of bedframe/sofa/mattress). An order is ALGO-SUSPECT only
+       if at least one short line has NONE of those causes — and that line is
+       named, so the trace starts at the line, not the order. */
+    const short = stock.filter((l) => l.stock_status !== "READY");
+    const suspects = short.filter((l) => {
+      const g = (l.item_group || "").toLowerCase();
+      if (Number(l.delivered) >= Number(l.qty)) return false;          // delivered
+      if (!MAIN.has(g)) return false;                                   // granularity
+      if (BOUND.has(g)) {
+        /* hard binding: a bedframe/sofa line lights ONLY from its own PO's
+           receipts. No PO, or PO not yet received = legitimate dark. The
+           received-but-dark case is the reconcile lens's must-be-zero list,
+           counted there — here it still flags as suspect. */
+        return Number(l.dedicated_po_lines) > 0 && Number(l.recv) > Number(l.qty_ready);
+      }
+      /* pooled (mattress/acc): dark is legitimate while the bucket is drained
+         by older lines; suspect only when units are LEFT OVER unclaimed */
+      return leftover(l) > 0;
+    });
+    if (suspects.length === 0) {
+      const allDelivered = short.every((l) => Number(l.delivered) >= Number(l.qty));
+      const allNoPo = short.every((l) => BOUND.has((l.item_group || "").toLowerCase()) && Number(l.dedicated_po_lines) === 0);
+      classes[allDelivered ? "DELIVERED-STALE" : allNoPo ? "NO-OWN-PO" : "GRANULARITY"].push(doc);
+    } else {
+      classes["ALGO-SUSPECT"].push(`${doc} <- ${suspects.map((l) => `${l.item_code}[${l.item_group}]${l.stock_status}`).slice(0, 3).join(" ")}`);
+    }
   }
   log(`orders where staff wrote a status: ${claimed}`);
   for (const [k, n] of [...matrix.entries()].sort((a, b) => b[1] - a[1])) log(`  ${k.padEnd(34)} ${n}`);
-  log(`ACTIONABLE — staff wrote READY, system covers no line: ${staffReadySystemNone.length}`);
-  for (const d of staffReadySystemNone.slice(0, 20)) log(`   ${d}`);
-  if (staffReadySystemNone.length > 20) log(`   ... and ${staffReadySystemNone.length - 20} more`);
+  log(`READY claims that disagree, classified per the owner's protocol:`);
+  for (const [cls, docs] of Object.entries(classes)) {
+    log(`  ${cls.padEnd(16)} ${docs.length}${cls === "ALGO-SUSPECT" ? "   <-- MUST BE ZERO" : ""}`);
+    for (const d of docs.slice(0, cls === "ALGO-SUSPECT" ? 30 : 6)) log(`     ${d}`);
+    if (docs.length > (cls === "ALGO-SUSPECT" ? 30 : 6)) log(`     ... and ${docs.length - (cls === "ALGO-SUSPECT" ? 30 : 6)} more`);
+  }
   await sql.end();
 }
 main().catch((e) => { console.error(e); process.exit(1); });
