@@ -69,6 +69,7 @@
 | 15 | `check-so-dates-truth.yml` | 八字段 **DIFFER 全 0** |
 | 16 | `check-ac-vs-erp-reconcile.yml` | 「收满必亮」= **0** |
 | 17 | `check-remark2-vs-status.yml` | **ALGO-SUSPECT = 0**;其余差异四抽屉归因即合格(已送过时/没自家PO/粒度/需求>库存) |
+| 18 | `check-ac-erp-doc-links.yml` | 两边关系图互查(SO/PO/DO/GR/PI 在册、SO→PO 行级绑定、DO 认对父单、账本已开票而 ERP 还活着的单)——**backlog = 0** 才算两图一致;非 0 的每一项就是下一轮的补课名单(owner 2026-08-30:不要只看一张 SO,要各单互相验证)。快照 >2 天旧会自拒,先跑阶段 0 |
 
 ## 阶段 5 — 上线封关(最后一轮才做)
 
