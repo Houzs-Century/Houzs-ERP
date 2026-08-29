@@ -95,7 +95,22 @@ async function main() {
   for (const c of create.slice(0, 15)) log(`   ${c.doc} ${String(c.code).padEnd(26)} -> ${c.tgt.doc_no} ${c.tgt.item_code}`);
   if (create.length > 15) log(`   ... and ${create.length - 15} more`);
 
-  if (!APPLY) { log("\nDRY-RUN - set APPLY=1 to write."); await sql.end(); return; }
+  if (!APPLY) {
+    /* The apply-path guard below scans EVERY company-1 dedication, not only
+       this batch's writes — so a pre-existing mismatch fails the whole apply
+       and reads as if the batch caused it (run 33271420009 did exactly that).
+       Surface the CURRENT violations here, read-only, so the operator can see
+       whether the refusal belongs to the batch or to standing data. */
+    const bad = await sql`SELECT p.linked_ac_docno AS po, i.item_code AS po_code, s.doc_no AS so, s.item_code AS so_code
+        FROM scm.purchase_order_items i
+        JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
+        JOIN scm.mfg_sales_order_items s ON s.id = i.so_item_id
+       WHERE p.company_id = 1 AND upper(btrim(i.item_code)) <> upper(btrim(s.item_code))`;
+    log(`\ncode check on CURRENT data: ${bad.length} dedication(s) already point at a different item code`);
+    for (const b of bad.slice(0, 10)) log(`   ${b.po} "${b.po_code}" -> ${b.so} "${b.so_code}"`);
+    log("DRY-RUN - set APPLY=1 to write.");
+    await sql.end(); return;
+  }
 
   let n = 0;
   await sql.begin(async (tx) => {
