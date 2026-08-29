@@ -23,6 +23,7 @@ const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
 const log = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 const sql = postgres(DST, { ssl: "require", prepare: false, max: 1 });
+const norm = (s) => (s || "").trim().toUpperCase().replace(/\s+/g, " ");
 
 function classifyClaim(r) {
   const s = (r || "").trim().toUpperCase();
@@ -35,9 +36,11 @@ function classifyClaim(r) {
 
 async function main() {
   const rows = await sql`
-    SELECT h.doc_no, h.remark2, i.id, i.item_group, i.stock_status, i.qty,
+    SELECT h.doc_no, h.remark2, i.id, i.item_code, i.item_group, i.stock_status, i.qty,
+           i.warehouse_id, COALESCE(i.stock_qty_ready, 0) AS qty_ready,
            COALESCE(del.dq, 0) AS delivered,
-           COALESCE(ded.n, 0) AS dedicated_po_lines
+           COALESCE(ded.n, 0) AS dedicated_po_lines,
+           COALESCE(ded.recv, 0) AS recv
     FROM scm.mfg_sales_orders h
     JOIN scm.mfg_sales_order_items i ON i.doc_no = h.doc_no AND i.cancelled = false
     LEFT JOIN (
@@ -48,7 +51,8 @@ async function main() {
       GROUP BY d.so_item_id
     ) del ON del.so_item_id = i.id
     LEFT JOIN (
-      SELECT so_item_id, COUNT(*) AS n FROM scm.purchase_order_items
+      SELECT so_item_id, COUNT(*) AS n, COALESCE(SUM(received_qty), 0) AS recv
+      FROM scm.purchase_order_items
       WHERE so_item_id IS NOT NULL GROUP BY so_item_id
     ) ded ON ded.so_item_id = i.id
     WHERE h.company_id = 1 AND h.linked_ac_docno IS NOT NULL
@@ -60,6 +64,23 @@ async function main() {
     byDoc.get(r.doc_no).lines.push(r);
   }
   log(`imported live orders measured: ${byDoc.size}`);
+
+  /* Bucket leftovers — the FIFO-exhaustion cause. A short pooled line is
+     LEGITIMATELY unlit when older lines drained its (warehouse, item) bucket:
+     the handwriting was optimistic, the allocator obeyed first-come-first-
+     served. Only a bucket with units left over AFTER every lit line's claim is
+     evidence the allocator owed this line a light. Blank-variant migrated
+     stock pools under variant_key '', which is what the balance rows carry. */
+  const balRows = await sql`SELECT warehouse_id, item_code, SUM(qty) AS q
+    FROM scm.inventory_balances WHERE company_id = 1 GROUP BY 1, 2`;
+  const bucketQty = new Map(balRows.map((b) => [`${b.warehouse_id}|${norm(b.item_code)}`, Number(b.q)]));
+  for (const r of rows) {
+    if (Number(r.qty_ready) > 0) {
+      const k = `${r.warehouse_id}|${norm(r.item_code)}`;
+      if (bucketQty.has(k)) bucketQty.set(k, bucketQty.get(k) - Number(r.qty_ready));
+    }
+  }
+  const leftover = (l) => bucketQty.get(`${l.warehouse_id}|${norm(l.item_code)}`) ?? 0;
 
   /* The owner's 2026-08-29 protocol (「甲」): the system's computed status is
      the truth; a difference from the hand-written Remark2 is only an ALGORITHM
@@ -103,9 +124,17 @@ async function main() {
     const suspects = short.filter((l) => {
       const g = (l.item_group || "").toLowerCase();
       if (Number(l.delivered) >= Number(l.qty)) return false;          // delivered
-      if (BOUND.has(g) && Number(l.dedicated_po_lines) === 0) return false; // no own PO
       if (!MAIN.has(g)) return false;                                   // granularity
-      return true;
+      if (BOUND.has(g)) {
+        /* hard binding: a bedframe/sofa line lights ONLY from its own PO's
+           receipts. No PO, or PO not yet received = legitimate dark. The
+           received-but-dark case is the reconcile lens's must-be-zero list,
+           counted there — here it still flags as suspect. */
+        return Number(l.dedicated_po_lines) > 0 && Number(l.recv) > Number(l.qty_ready);
+      }
+      /* pooled (mattress/acc): dark is legitimate while the bucket is drained
+         by older lines; suspect only when units are LEFT OVER unclaimed */
+      return leftover(l) > 0;
     });
     if (suspects.length === 0) {
       const allDelivered = short.every((l) => Number(l.delivered) >= Number(l.qty));
