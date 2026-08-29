@@ -119,20 +119,34 @@ async function main() {
   // may fail without poisoning everything after them. Manual savepoints on the
   // plain connection — NOT sql.begin, whose uncaughtError bookkeeping rethrows
   // recovered errors at commit (BUG-HISTORY 2026-08-01, twice).
+  /* SERIALIZED (2026-08-29, docs/bugs/0562). The canonical function fans its
+     reads out six-wide (paginate-all's CHUNK_CONCURRENCY), and Postgres
+     releases a savepoint TOGETHER WITH every savepoint created after it — so
+     interleaved triads (SAVEPOINT 5, SAVEPOINT 6, RELEASE 5...) destroyed
+     pgrest_sp_6 before its own RELEASE and the sweep died with "savepoint does
+     not exist". One statement's triad at a time; the semantics per statement
+     are unchanged, and a diagnostic driver has no business being concurrent
+     on a single transaction anyway. */
   let spN = 0;
+  let spChain = Promise.resolve();
   const spSql = {
-    unsafe: async (text, params) => {
-      spN += 1;
-      const sp = `pgrest_sp_${spN}`;
-      await pg.unsafe(`SAVEPOINT ${sp}`);
-      try {
-        const rows = await pg.unsafe(text, params);
-        await pg.unsafe(`RELEASE SAVEPOINT ${sp}`);
-        return rows;
-      } catch (e) {
-        await pg.unsafe(`ROLLBACK TO SAVEPOINT ${sp}`);
-        throw e;
-      }
+    unsafe: (text, params) => {
+      const run = async () => {
+        spN += 1;
+        const sp = `pgrest_sp_${spN}`;
+        await pg.unsafe(`SAVEPOINT ${sp}`);
+        try {
+          const rows = await pg.unsafe(text, params);
+          await pg.unsafe(`RELEASE SAVEPOINT ${sp}`);
+          return rows;
+        } catch (e) {
+          await pg.unsafe(`ROLLBACK TO SAVEPOINT ${sp}`);
+          throw e;
+        }
+      };
+      const next = spChain.then(run, run);
+      spChain = next.then(() => undefined, () => undefined);
+      return next;
     },
   };
   const sb = pgrestShim(spSql, "scm");

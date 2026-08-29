@@ -108,6 +108,26 @@ export function pgrestShim(sql, schema = "scm") {
         };
         const target = `"${schema}".${q(state.table)}`;
 
+        if (state.mode === "upsert") {
+          /* 2026-08-29 growth (docs/bugs/0562): the allocator's self-retry
+             enqueue — stock-allocation-queue.ts upserts the GLOBAL singleton
+             with { onConflict: 'job_key' }. PostgREST semantics: insert, and
+             on the named conflict target update every OTHER provided column.
+             Only the shapes that call site uses; anything fancier gaps. */
+          const rows = Array.isArray(state.insertRows) ? state.insertRows : [state.insertRows];
+          if (rows.length === 0) return { data: null, error: null };
+          const conflict = String(state.upsertOnConflict ?? "").trim();
+          if (!conflict || !IDENT.test(conflict)) {
+            return gap(`upsert onConflict ${JSON.stringify(state.upsertOnConflict)} (table "${state.table}")`);
+          }
+          const cols = [...new Set(rows.flatMap((r) => Object.keys(r ?? {})))];
+          if (cols.length === 0) return { data: null, error: null };
+          const tuples = rows.map((r) => `(${cols.map((cName) => p(Object.prototype.hasOwnProperty.call(r ?? {}, cName) ? r[cName] : null)).join(", ")})`);
+          const updates = cols.filter((cName) => cName !== conflict).map((cName) => `${q(cName)} = EXCLUDED.${q(cName)}`);
+          const onConf = updates.length ? `DO UPDATE SET ${updates.join(", ")}` : "DO NOTHING";
+          await sql.unsafe(`INSERT INTO ${target} (${cols.map((cName) => q(cName)).join(", ")}) VALUES ${tuples.join(", ")} ON CONFLICT (${q(conflict)}) ${onConf}`, params);
+          return { data: null, error: null };
+        }
         if (state.mode === "insert") {
           const rows = Array.isArray(state.insertRows) ? state.insertRows : [state.insertRows];
           if (rows.length === 0) return { data: null, error: null };
@@ -182,6 +202,7 @@ export function pgrestShim(sql, schema = "scm") {
       select(cols) { state.cols = cols ?? "*"; return proxied; },
       update(obj) { state.mode = "update"; state.updateObj = obj; return proxied; },
       insert(rows) { state.mode = "insert"; state.insertRows = rows; return proxied; },
+      upsert(rows, opts) { state.mode = "upsert"; state.insertRows = rows; state.upsertOnConflict = opts?.onConflict; return proxied; },
       eq(col, v) { state.filters.push({ op: "eq", col, v }); return proxied; },
       /* PostgREST's neq is SQL's <>, NULL semantics and all: a row whose column
          IS NULL is excluded by both, so the literal translation is faithful.
