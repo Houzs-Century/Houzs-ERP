@@ -1,0 +1,37 @@
+name: Rename new-code rows to the family long names
+
+# Manual, one-shot (2026-08-30). Aligns the day-old short-named rows (balance
+# cells + 17 imported SO lines) to the family's long-name convention now in the
+# mapping CSV. PLAN default; apply=1 + the confirm phrase writes; re-run inert.
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "1 to write, else PLAN"
+        required: false
+        default: "0"
+        type: string
+      confirm:
+        description: 'For apply ONLY, type exactly: RENAME NEW CODE ROWS'
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: rename-new-code-rows
+  cancel-in-progress: false
+
+jobs:
+  run-prod:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/rename-new-code-rows.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          CONFIRM: ${{ inputs.confirm }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
