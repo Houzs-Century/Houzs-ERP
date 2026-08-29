@@ -102,3 +102,29 @@ test("neq(col, null) is a loud gap, not a silent match-nothing", async () => {
   // and nothing was sent
   assert.equal(sql.calls.length, 0);
 });
+
+// ── 2026-08-29 growth: upsert (docs/bugs/0562) ───────────────────────────────
+
+test("upsert emits INSERT ... ON CONFLICT (col) DO UPDATE of the other columns", async () => {
+  const sql = fakeSql([]);
+  const sb = pgrestShim(sql);
+  const { error } = await sb.from("stock_allocation_recompute_queue").upsert(
+    { job_key: "GLOBAL", request_token: "t-1", requested_at: "2026-08-29", reason: "x" },
+    { onConflict: "job_key" },
+  );
+  assert.equal(error, null);
+  const c = lastCall(sql);
+  assert.match(c.text, /INSERT INTO "scm"\."stock_allocation_recompute_queue"/);
+  assert.match(c.text, /ON CONFLICT \("job_key"\) DO UPDATE SET/);
+  assert.match(c.text, /"request_token" = EXCLUDED\."request_token"/);
+  assert.ok(!/EXCLUDED\."job_key"/.test(c.text), "the conflict column itself is never overwritten");
+});
+
+test("upsert without a safe onConflict is a loud gap, never a silent write", async () => {
+  const sql = fakeSql([]);
+  const sb = pgrestShim(sql);
+  const r = await sb.from("stock_allocation_recompute_queue").upsert({ job_key: "GLOBAL" }, {});
+  assert.ok(r.error && /upsert onConflict/.test(r.error.message), `expected a loud gap error, got ${JSON.stringify(r)}`);
+  assert.ok(sb.__gaps.some((g) => /upsert onConflict/.test(g)), "the gap is recorded on __gaps");
+  assert.equal(sql.calls.length, 0, "and nothing was written");
+});
