@@ -94,6 +94,9 @@ describe("assembleSoListMrpEnrichment", () => {
   const headers = new Map<string, EnrichmentHeader>([
     ["SO-1", { status: "CONFIRMED", storedOverride: null, effectiveDD: "2099-01-01" }],
   ]);
+  /* SO-1 is PROCESSED and its mattress line is pooled — the gates are open, so
+     these cases exercise the promotion arm exactly as before 2026-08-30. */
+  const processedDocs = new Set(["SO-1"]);
   const base = {
     docNos: ["SO-1"],
     items,
@@ -104,13 +107,14 @@ describe("assembleSoListMrpEnrichment", () => {
     delivered: new Map<string, number>(),
     remaining: new Map<string, number>([["SO-1", 1]]),
     today: "2026-08-18",
+    processedDocs,
   };
 
   // Independent expected readiness for a coverage, via the SAME shared helpers
   // the list uses — proves the assembler delegates faithfully rather than
   // re-implementing.
   function expectedReadiness(coverage: Map<string, { source: string }> | null) {
-    const lines = readinessLinesByDoc(items, coverage);
+    const lines = readinessLinesByDoc(items, coverage, processedDocs);
     attachLineCategories(lines.values(), categoryByCode);
     return summariseReadiness(lines.get("SO-1")!);
   }
@@ -133,6 +137,12 @@ describe("assembleSoListMrpEnrichment", () => {
       }),
     );
     expect(out.planningState).toBe("PENDING_SCHEDULE"); // ready → scheduled
+  });
+
+  test("an UNPROCESSED order does not promote on live 'stock' — the allocator gated it (HC-SO-013367)", () => {
+    const coverage = new Map([["l1", { source: "stock" }]]);
+    const out = assembleSoListMrpEnrichment({ ...base, coverage, processedDocs: new Set<string>() }).get("SO-1")!;
+    expect(out.isMainReady).toBe(false); // stored PENDING stands; no "accessories Ready" on a date-less order
   });
 
   test("null coverage (list first paint) keeps the stored-PENDING verdict", () => {
@@ -166,6 +176,7 @@ describe("assembleSoListMrpEnrichment — C16 payload key-set parity", () => {
       delivered: new Map<string, number>(),
       remaining: new Map<string, number>(),
       today: "2026-08-18",
+      processedDocs: null,
     }).get("SO-1")!;
 
     expect(new Set(Object.keys(out))).toEqual(new Set<string>(SO_LIST_MRP_ENRICHMENT_KEYS));
