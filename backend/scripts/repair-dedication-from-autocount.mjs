@@ -114,19 +114,31 @@ async function main() {
 
   let n = 0;
   await sql.begin(async (tx) => {
+    /* A dedication may only point at a line carrying the SAME item code - two
+       rows describing one physical build cannot be different products. The
+       guard used to scan the WHOLE company-1 population after writing, so ONE
+       pre-existing mismatch (PO-001696 "2379-2S" -> a still-unsplit sofa
+       placeholder line, standing data) vetoed every future batch including
+       clean ones (run 33271420009). Scope it to the batch: snapshot the
+       standing violations first, write, then fail only on NEW ones — the
+       standing set is reported, never silently accepted. */
+    const before = await tx`SELECT i.id FROM scm.purchase_order_items i
+        JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
+        JOIN scm.mfg_sales_order_items s ON s.id = i.so_item_id
+       WHERE p.company_id = 1 AND upper(btrim(i.item_code)) <> upper(btrim(s.item_code))`;
+    const standing = new Set(before.map((r) => r.id));
+    if (standing.size) log(`standing code-mismatch dedications (NOT this batch's, left alone): ${standing.size}`);
     for (const r of [...fix, ...create]) {
       const u = await tx`UPDATE scm.purchase_order_items SET so_item_id = ${r.tgt.id} WHERE id = ${r.id} RETURNING id`;
       n += u.length;
     }
-    /* A dedication may only point at a line carrying the SAME item code - two
-       rows describing one physical build cannot be different products. Checked
-       after the write, inside the transaction, so a bad snapshot rolls back. */
-    const bad = await tx`SELECT COUNT(*)::int c FROM scm.purchase_order_items i
+    const after = await tx`SELECT i.id FROM scm.purchase_order_items i
         JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
         JOIN scm.mfg_sales_order_items s ON s.id = i.so_item_id
        WHERE p.company_id = 1 AND upper(btrim(i.item_code)) <> upper(btrim(s.item_code))`;
-    if (bad[0].c) throw new Error(`REFUSED: ${bad[0].c} dedications would point at a different item code. Rolled back.`);
-    log(`code check: 0 dedications point at a different item code`);
+    const fresh = after.filter((r) => !standing.has(r.id));
+    if (fresh.length) throw new Error(`REFUSED: this batch would create ${fresh.length} dedication(s) pointing at a different item code. Rolled back.`);
+    log(`code check: this batch created 0 cross-code dedications (standing: ${standing.size})`);
   });
   log(`APPLIED - re-pointed ${fix.length}, created ${create.length}, total ${n}. A link only: no value, no money, no stock.`);
   await sql.end();
