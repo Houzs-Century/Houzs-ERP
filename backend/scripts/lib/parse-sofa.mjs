@@ -21,6 +21,12 @@ const CM_TO_INCH = { 60: 24, 66: 26, 70: 28, 75: 30, 80: 32 };
 const SPECIAL_WORD = /depth|\b(?:bottom|bttm|umbrella|umb|nylon|nilon|cover\w*|back\s*rest|backrest|back\s*cushion|backcushion|head\s*rest|headrest|cushion|firm\w*|soft\w*|harder|notch|stitch\w*|stich\w*|holes?|push\s*back|extend\w*|separate|packing|bracket|wood\w*|arm\s*rest|armrest|arm|adj\w*table|slider|plane|plain|legs?|height|seating|in\s?front|feeling|stopper|microgel|movable)\b/i;
 // "CH141-4 WOOD" is a fabric colour, not a request for a wooden anything
 const COLOUR_LIKE = /^[A-Z]{1,6}\s?\d{2,5}\s*[-#]?\s*\d{0,3}\s*\(?[A-Z0-9 ]{0,20}\)?$/i;
+/* Instruction phrases that GLUE into one token (spaces are stripped inside a
+   segment) and carry digits or the ARM/SEAT letters, so neither the rider rule
+   nor SPECIAL_WORD could claim them — each then read as unknown STRUCTURE and
+   killed its whole segment ("token \"HEADRESTCHANGETO8030\""). All harvested
+   from the 2026-08-30 placeholder sweep; every one is a request, never a piece. */
+const INSTRUCTION_TOKEN = /(ARMREST|ARMCHANGE|BACKREST|BACKCUSHION|HEADREST|CUSHION|SEATHEIGHT|SEATERDEPTH|SEATEXTEND|EXTENDTO|FEELING|CUSTOMIZE|READYSTOCK|ADJUSTABLE|INCLINER|PUSHBACK|WOODENPLATE|TAKEOFF|REPLACETO|FOLLOWTHE|SITTINGAREA|SITAREA|SEATAREA|SEATCHANGE|RESTCHANGE)/;
 /* An UNLABELLED colour code — "BO315-21 (PEARL)/28"/2L" — was read as an
    unrecognised structure token and thrown away, so the colour never reached the
    line. That is the whole missing-Fabrics bucket on sofa: 85 of 86 blank colour
@@ -92,6 +98,10 @@ function parseSofa(d2raw, model, recl = false, opts = {}) {
   }
   // protect composite tokens from the slash-splitter
   d2 = d2.replace(/\bCUSTOM\b/gi, " ").replace(/([123])S?\s*P\s*\+\s*P\b/gi, "$1PP")
+    /* "1R(P)+1R(P)" (SO-011530) — a recliner unit with a POWER mechanism.
+       Rewrite before the bracket→'+' conversion frees the P into its own
+       mid-row token, which the grammar rightly holds as ambiguous. */
+    .replace(/\b([123])R\s*\(\s*P\s*\)/gi, "$1P")
     .replace(/\bCORNER\s*\((?=[^)]*[A-Za-z])/gi, "(").replace(/NO\s*CONSOLE/gi, " NOCONS ")
     .replace(/\bC\s+TABLE\b\.?/gi, "+CT+").replace(/([12])B\/S/gi, "$1B")
     .replace(/\bC\/?T\s*TABLE\.?/gi, "CT").replace(/CONSOLE\s*TABLE\.?/gi, "CT")
@@ -158,7 +168,9 @@ function parseSofa(d2raw, model, recl = false, opts = {}) {
     // a label followed by a parenthesised BUILD is just a title: the bracket
     // wins (owner 2026-08-10: "2R(1+1) 就是 1A+1A"; "2 seater (1EL+1ER)").
     // Guarded to brackets holding a '+', so "4S (corner)+L" keeps its label.
-    const seg = rawSeg.replace(/^\s*[1-4]\s*[A-Za-z]{0,8}\s*\(([^)]*\+[^)]*)\)\s*$/, "$1");
+    // The title may be letter-led too — "L2L(L+1NA+1NA+L)" (SO-008166).
+    const seg = rawSeg.replace(/^\s*[A-Za-z0-9]{1,8}\s*\(([^)]*\+[^)]*)\)\s*$/, "$1")
+      .replace(/^\s*[1-4]\s*[A-Za-z]{0,8}\s*\(([^)]*\+[^)]*)\)\s*$/, "$1");
     // spaces glue ("3 SEATER"->3SEATER) but paren notes become their own
     // tokens ("(HANDLE MOVABLE)"->+HANDLEMOVABLE+); quotes are residue
     let s = seg.replace(/\s+/g, "").toUpperCase().replace(/[()]/g, "+").replace(/["'*]/g, "").replace(/:/g, "+").replace(/\.(?![5])/g, "+");
@@ -238,6 +250,31 @@ function parseSofa(d2raw, model, recl = false, opts = {}) {
       else if (t === "P") U.push({ k: "pw", raw: t });
       else if (t === "R" && recl) U.push({ k: "rc", raw: t });
       else if (t === "LSHAPE") { U.push({ k: "nL", n: "2", dir: "R", raw: t }); o._photo = "L-shape≈2L,左右随放—看图可换"; }
+      /* ── 2026-08-30 placeholder-sweep vocabulary ─────────────────────────
+         Every arm below is a real book spelling from the 103-placeholder
+         audit (run 33251287997); the gold cases live in
+         parseSofaGrammar.test.ts under the same date. */
+      else if (/^([12])CT$/.test(t)) U.push({ k: "console", raw: t });        // "1Console"→1CT (SO-012695)
+      else if ((m = /^([12])EF([LR])$/.exec(t))) U.push({ k: "armed", n: m[1], side: m[2], raw: t }); // 1EFL=1EL (SO-010324)
+      else if ((m = /^([12])BSEATERS?$/.exec(t))) U.push({ k: "bseat", n: m[1], raw: t }); // "1B/S seater" glued (SO-013329)
+      else if ((m = /^([123])POWER(?:RE|IN)CLINERS?$/.exec(t)) && recl) U.push({ k: "mech", n: m[1], M: "P", raw: t });
+      else if (/^([23]\d)$/.test(t)) {
+        // an orphan size whose unit was stripped ("(26/28'Inch)" SO-010015) — never a piece
+        if (!o.size) { o.size = t; o.why.push(`size from bare "${t}"`); }
+        else if (t !== o.size) o._multiSize = true;
+        quiet.push(t);
+      }
+      else if (t === model || SOFA_MODEL_ALIAS[t]) quiet.push(t);             // model rider ("back rest (5540)" SO-013312)
+      else if (/^COLOU?R.+/.test(t)) quiet.push(t);                           // a glued colour mention — colour reads off the RAW text, never here
+      else if (/[A-Z]\d|\d[A-Z]/.test(t) && typeof opts.knownColour === "function" && opts.knownColour(t)) {
+        // a library-CONFIRMED colour code inside the structure segment (SO-013121);
+        // an unconfirmed code stays fatal — this migration does not guess colours
+        if (!o.color) { o.color = opts.knownColour(t); o.why.push(`colour token "${t}"`); }
+        quiet.push(t);
+      }
+      else if (t === "ARM" || t === "ARMREST" || (t.length >= 6 && INSTRUCTION_TOKEN.test(t))) {
+        rider.push(t);                                                        // digit-bearing instruction — a request, never a piece
+      }
       else if (!/\d/.test(t) && t.length >= 3 && !/(ARM|SEAT|CUSTOM|RECLIN|WOOD|SHAPE|CORNER|CHAISE)/.test(t)
                && !/^(CT|CNR|STOOL|NA)/.test(t)) rider.push(t);
       else { bad = `token "${t}"`; break; }
