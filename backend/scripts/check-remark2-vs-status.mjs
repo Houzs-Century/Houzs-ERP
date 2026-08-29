@@ -109,6 +109,18 @@ async function main() {
     }
   }
   const leftover = (l) => bucketQty.get(`${l.warehouse_id}|${norm(l.item_code)}`) ?? 0;
+  const cellStock = new Map();
+  for (const b of balRows) {
+    const k = `${b.warehouse_id}|${norm(b.item_code)}`;
+    cellStock.set(k, (cellStock.get(k) ?? 0) + Number(b.q));
+  }
+  const cellDemand = new Map();
+  for (const r of rows) {
+    const rem = Number(r.qty) - Number(r.delivered);
+    if (rem <= 0) continue;
+    const k = `${r.warehouse_id}|${norm(r.item_code)}`;
+    cellDemand.set(k, (cellDemand.get(k) ?? 0) + rem);
+  }
   const blankLeftover = (l) => blankBucketQty.get(`${l.warehouse_id}|${norm(l.item_code)}`) ?? 0;
   /* The allocator buckets by the RAW item_code string. A line and its stock
      that differ by an invisible space or case match under norm() and never in
@@ -187,9 +199,17 @@ async function main() {
            counted there — here it still flags as suspect. */
         return Number(l.dedicated_po_lines) > 0 && Number(l.recv) > Number(l.qty_ready);
       }
-      /* pooled (mattress/acc): dark is legitimate while the bucket is drained
-         by older lines; suspect only when units are LEFT OVER unclaimed */
-      return leftover(l) > 0;
+      /* pooled (mattress/acc): dark is legitimate while warehouse-scoped
+         demand outruns the cell. The earlier "leftover" arithmetic (balances
+         minus lit claims) was DISPROVEN on 2026-08-30: it reported 14 spare
+         units in a cell whose warehouse held 12 against 188 demanded — an
+         approximation error that manufactured 22 false ALGO-SUSPECTs. The
+         honest external test is demand-vs-stock: a dark pooled line is
+         suspect only when the cell's TOTAL outstanding demand fits inside the
+         cell's stock (then everyone should light, this line included).
+         Anything tighter needs the engine's own replay, not a lookalike. */
+      const k = `${l.warehouse_id}|${norm(l.item_code)}`;
+      return (cellStock.get(k) ?? 0) >= (cellDemand.get(k) ?? Infinity);
     });
     if (suspects.length === 0) {
       const allDelivered = short.every((l) => Number(l.delivered) >= Number(l.qty));
