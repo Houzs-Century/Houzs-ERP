@@ -33,7 +33,13 @@
 ## 阶段 1 — 单据(全部幂等:有的跳过、新的进、apply 后看「跳过/新增」两个数)
 
 按序 dispatch(每个:无 apply 参数=dry → 读数 → `apply=1` 重发;带确认句的**裸调**,
-不要包在 shell 函数里——引号会哑):
+不要包在 shell 函数里——引号会哑)。
+
+⚠️ **每次 dispatch 都带 `-f target=prod`**(收 target 的 workflow 默认全是
+staging——2026-08-30 一趟 SO apply 就这样整批落进 staging,job 名 `run-staging`
+才暴露;prod 未动,但白等一轮。验法:读 run 日志第一行 `Complete job name:
+run-prod`)。少数 workflow 不收 target(如 `refresh-so-tail-from-book.yml`、
+`rename-new-code-rows.yml`,天生 prod)——422 Unexpected inputs 就去掉该参数重发。
 
 | # | workflow | 备注 |
 |---|---|---|
