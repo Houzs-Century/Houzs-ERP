@@ -61,6 +61,7 @@ const SUGGESTED_ROW: SettlementRow = {
 };
 
 const confirmMutate = vi.fn();
+const unconfirmMutate = vi.fn();
 const confirmMatchedMutate = vi.fn();
 const uploadMutateAsync = vi.fn();
 const saveMutate = vi.fn();
@@ -99,6 +100,7 @@ vi.mock('./settlement-queries', () => ({
   }),
   useUploadStatement: () => ({ mutateAsync: uploadMutateAsync, isPending: false }),
   useConfirmSettlementRow: () => ({ mutate: confirmMutate, isPending: false, isError: false, error: null }),
+  useUnconfirmSettlementRow: () => ({ mutate: unconfirmMutate, isPending: false }),
   useConfirmMatched: () => ({ mutate: confirmMatchedMutate, isPending: false, data: null }),
   useIgnoreSettlementRow: () => ({ mutate: vi.fn(), isPending: false }),
   useSettlementWatchlist: () => ({ data: { from: '2026-05-18', to: '2026-08-16', clean: false, arrivedNotRecorded: [], recordedNotArrived: [
@@ -272,6 +274,11 @@ describe('the reconcile tab', () => {
        asks nothing of anybody, so it is information, and the journal number
        reads inside its status cell. */
     expect(screen.getByText(/done · JE-2608-0011/)).toBeTruthy();
+    /* And beside it, the way back out of the ledger — the door the ignore
+       refusal has always named. One press per row, straight to the server;
+       the server's own refusals (money already received) come back verbatim. */
+    fireEvent.click(screen.getByTitle(/Take this line back out of the ledger/));
+    expect(unconfirmMutate).toHaveBeenCalledWith(8, expect.anything());
   });
 
   /* The approval code may be mistyped, so the system falls back to amount+date

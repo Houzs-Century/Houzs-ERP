@@ -18,7 +18,7 @@ import { fakeSb, type Row } from '../src/scm/lib/fake-postgrest';
 import {
   settlementSetup, settlementUpload, settlementBatches, settlementBatchDetail,
   settlementConfirmRow, settlementConfirmMatched, settlementIgnoreRow, settlementWatchlist,
-  settlementBatchReceived, settlementInTransit,
+  settlementBatchReceived, settlementInTransit, settlementRowUnconfirm,
   settlementMaintenance, settlementMaintenanceMerchant, settlementMaintenanceBank,
 } from '../src/scm/routes/accounting-settlement';
 
@@ -86,6 +86,7 @@ function harness(tables: Record<string, Row[]>, perms: readonly string[] = [GL_P
   app.get('/settlement/batches/:id', settlementBatchDetail as never);
   app.post('/settlement/batches/:id/confirm-matched', settlementConfirmMatched as never);
   app.post('/settlement/rows/:id/confirm', settlementConfirmRow as never);
+  app.post('/settlement/rows/:id/unconfirm', settlementRowUnconfirm as never);
   app.post('/settlement/rows/:id/ignore', settlementIgnoreRow as never);
   app.post('/settlement/batches/:id/received', settlementBatchReceived as never);
   app.get('/settlement/watchlist', settlementWatchlist as never);
@@ -518,6 +519,68 @@ describe('setting a line aside', () => {
     const res = await post(app, `/settlement/rows/${confirmed.id}/ignore`, {});
     expect(res.status).toBe(409);
     expect(await res.json()).toMatchObject({ error: 'already_confirmed' });
+  });
+});
+
+describe('taking a confirmed line back — the door the ignore refusal points at', () => {
+  test('unconfirm reverses the fee entry, releases the payment, and asks the human again', async () => {
+    const { app, sb } = harness({ mfg_sales_order_payments: [soPayment()] });
+    const up = await (await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT })).json() as { batchId: string };
+    await post(app, `/settlement/batches/${up.batchId}/confirm-matched`);
+    const confirmed = sb.tables.acc_settlement_rows.find((r) => r.confirmed_at)!;
+    const feeJe = confirmed.posted_je_no as string;
+    expect(feeJe).toBeTruthy();
+
+    const res = await post(app, `/settlement/rows/${confirmed.id}/unconfirm`, {});
+    expect(res.status).toBe(200);
+
+    /* The row is a fresh question again, not silently re-matched. */
+    const row = sb.tables.acc_settlement_rows.find((r) => r.id === confirmed.id)!;
+    expect(row).toMatchObject({ bucket: 'NEEDS_CONFIRM', confirmed_at: null, posted_je_no: null });
+
+    /* The fee entry is REVERSED (flagged + a contra written), never deleted. */
+    const original = sb.tables.journal_entries.find((j) => j.je_no === feeJe)!;
+    expect(original.reversed).toBe(true);
+
+    /* The payment link is gone, so the money is claimable again... */
+    expect(sb.tables.acc_settlement_matches.filter((m) => m.settlement_row_id === confirmed.id)).toHaveLength(0);
+
+    /* ...proven by confirming the SAME line against the SAME payment a second
+       time — the once-only unique would refuse this if the link survived. */
+    const again = await post(app, `/settlement/rows/${confirmed.id}/confirm`, {
+      matchReason: 'manual',
+      payments: [{ source: 'SOPAY', id: 'm1', docNo: 'SO-2608-001', amountSen: 100000 }],
+    });
+    expect(again.status).toBe(200);
+    expect(sb.tables.acc_settlement_rows.find((r) => r.id === confirmed.id)!.confirmed_at).toBeTruthy();
+  });
+
+  test('a line never confirmed has nothing to take back', async () => {
+    const { app, sb } = harness({ mfg_sales_order_payments: [soPayment()] });
+    await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT });
+    const open = sb.tables.acc_settlement_rows.find((r) => !r.confirmed_at)!;
+    const res = await post(app, `/settlement/rows/${open.id}/unconfirm`, {});
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ error: 'not_confirmed' });
+  });
+
+  test('REFUSED while money is recorded received — undo the credits first', async () => {
+    const { app, sb } = harness({ mfg_sales_order_payments: [soPayment()] });
+    const up = await (await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT })).json() as { batchId: string };
+    await post(app, `/settlement/batches/${up.batchId}/confirm-matched`);
+    const confirmed = sb.tables.acc_settlement_rows.find((r) => r.confirmed_at)!;
+
+    const rec = await post(app, `/settlement/batches/${up.batchId}/received`, { receivedOn: '2026-08-05', amountSen: 500 });
+    expect(rec.status).toBe(200);
+
+    const res = await post(app, `/settlement/rows/${confirmed.id}/unconfirm`, {});
+    expect(res.status).toBe(409);
+    const body = await res.json() as { error: string; message: string };
+    expect(body.error).toBe('has_receipts');
+    expect(body.message).toMatch(/Undo those credits/);
+    /* And nothing moved: still confirmed, entry still standing. */
+    expect(sb.tables.acc_settlement_rows.find((r) => r.id === confirmed.id)!.confirmed_at).toBeTruthy();
+    expect(sb.tables.journal_entries.find((j) => j.je_no === confirmed.posted_je_no)!.reversed).not.toBe(true);
   });
 });
 
