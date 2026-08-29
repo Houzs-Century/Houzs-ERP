@@ -36,15 +36,16 @@ function classifyClaim(r) {
 
 async function main() {
   const rows = await sql`
-    SELECT h.doc_no, h.remark2, to_char(h.processing_date, 'YYYY-MM-DD') AS pdate,
+    SELECT h.doc_no, h.remark2, h.status::text AS so_status, to_char(h.processing_date, 'YYYY-MM-DD') AS pdate,
            i.id, i.item_code, i.item_group, i.stock_status, i.qty,
-           i.warehouse_id, COALESCE(i.stock_qty_ready, 0) AS qty_ready,
+           i.warehouse_id, w.name AS wh_name, COALESCE(i.stock_qty_ready, 0) AS qty_ready,
            (i.variants IS NOT NULL AND i.variants::text NOT IN ('null', '{}')) AS has_variants,
            COALESCE(del.dq, 0) AS delivered,
            COALESCE(ded.n, 0) AS dedicated_po_lines,
            COALESCE(ded.recv, 0) AS recv
     FROM scm.mfg_sales_orders h
     JOIN scm.mfg_sales_order_items i ON i.doc_no = h.doc_no AND i.cancelled = false
+    LEFT JOIN scm.warehouses w ON w.id = i.warehouse_id
     LEFT JOIN (
       SELECT d.so_item_id, SUM(d.qty) AS dq
       FROM scm.delivery_order_items d
@@ -66,6 +67,24 @@ async function main() {
     byDoc.get(r.doc_no).lines.push(r);
   }
   log(`imported live orders measured: ${byDoc.size}`);
+  {
+    /* Verdict probe for the engine's balance read: mattresses light ONLY via
+       the pooled bucket (no bound path), and the repo's own sofa module
+       measured that PostgREST's in.(...) silently returns zero rows for codes
+       containing parentheses. If that read is blind, no parenthesized mattress
+       can ever be READY while paren-free ones are. */
+    const m = { parenReady: 0, parenPending: 0, plainReady: 0, plainPending: 0 };
+    for (const r of rows) {
+      if ((r.item_group || "").toLowerCase() !== "mattress") continue;
+      const paren = (r.item_code || "").includes("(");
+      const ready = r.stock_status === "READY";
+      if (paren && ready) m.parenReady++;
+      else if (paren) m.parenPending++;
+      else if (ready) m.plainReady++;
+      else m.plainPending++;
+    }
+    log(`MATTRESS PAREN PROBE — with '(': READY ${m.parenReady} / other ${m.parenPending}; without: READY ${m.plainReady} / other ${m.plainPending}`);
+  }
 
   /* Bucket leftovers — the FIFO-exhaustion cause. A short pooled line is
      LEGITIMATELY unlit when older lines drained its (warehouse, item) bucket:
@@ -91,6 +110,28 @@ async function main() {
   }
   const leftover = (l) => bucketQty.get(`${l.warehouse_id}|${norm(l.item_code)}`) ?? 0;
   const blankLeftover = (l) => blankBucketQty.get(`${l.warehouse_id}|${norm(l.item_code)}`) ?? 0;
+  /* The allocator buckets by the RAW item_code string. A line and its stock
+     that differ by an invisible space or case match under norm() and never in
+     the engine. rawLeftover uses the exact string; when it reads 0 while
+     blankKeyLeftover is positive, the conviction is a code-string drift and
+     the suspect print quotes both spellings. */
+  const rawBlank = new Map();
+  const stockSpellings = new Map(); // normed -> Set of raw spellings seen in stock
+  for (const b of balRows) {
+    if ((b.vk ?? '') !== '') continue;
+    rawBlank.set(`${b.warehouse_id}|${b.item_code}`, (rawBlank.get(`${b.warehouse_id}|${b.item_code}`) ?? 0) + Number(b.q));
+    const nk = norm(b.item_code);
+    if (!stockSpellings.has(nk)) stockSpellings.set(nk, new Set());
+    stockSpellings.get(nk).add(b.item_code);
+  }
+  for (const r of rows) {
+    if (Number(r.qty_ready) > 0) {
+      const k = `${r.warehouse_id}|${r.item_code}`;
+      if (rawBlank.has(k)) rawBlank.set(k, rawBlank.get(k) - Number(r.qty_ready));
+    }
+  }
+  const rawLeftover = (l) => rawBlank.get(`${l.warehouse_id}|${l.item_code}`) ?? 0;
+  const spellings = (l) => [...(stockSpellings.get(norm(l.item_code)) ?? [])].map((x) => JSON.stringify(x)).join(" / ");
 
   /* The owner's 2026-08-29 protocol (「甲」): the system's computed status is
      the truth; a difference from the hand-written Remark2 is only an ALGORITHM
@@ -155,7 +196,76 @@ async function main() {
       const allNoPo = short.every((l) => BOUND.has((l.item_group || "").toLowerCase()) && Number(l.dedicated_po_lines) === 0);
       classes[allDelivered ? "DELIVERED-STALE" : allNoPo ? "NO-OWN-PO" : "GRANULARITY"].push(doc);
     } else {
-      classes["ALGO-SUSPECT"].push(`${doc} <- ${suspects.map((l) => `${l.item_code}[${l.item_group}]${l.stock_status} wh=${l.warehouse_id ?? "NULL"} variants=${l.has_variants ? "YES" : "no"} leftover=${leftover(l)} blankKeyLeftover=${blankLeftover(l)}`).slice(0, 3).join(" | ")}`);
+      classes["ALGO-SUSPECT"].push(`${doc} [${o.lines[0].so_status}] <- ${suspects.map((l) => `${l.item_code}[${l.item_group}]${l.stock_status} wh=${l.wh_name ?? l.warehouse_id ?? "NULL"} variants=${l.has_variants ? "YES" : "no"} leftover=${leftover(l)} blankKeyLeftover=${blankLeftover(l)} rawKeyLeftover=${rawLeftover(l)} line=${JSON.stringify(l.item_code)} stock=${spellings(l)}`).slice(0, 3).join(" | ")}`);
+    }
+  }
+  /* BIDIRECTIONAL category matrix (owner 2026-08-29): not only "the book
+     claims READY and the system is short", but the reverse — categories the
+     system has fully READY that the book's Remark2 never mentions. */
+  {
+    const GROUPS = ["mattress", "bedframe", "sofa", "accessory", "others"];
+    const claimSet = (r) => {
+      const c = classifyClaim(r);
+      if (c === "READY") return new Set(GROUPS);
+      if (c === "READY-PARTIAL") return null; // not falsifiable per category
+      if (c === "CATEGORY") {
+        const set = new Set();
+        const t = (r || "").toUpperCase();
+        if (/MATTRESS/.test(t)) set.add("mattress");
+        if (/BEDFRAME/.test(t)) set.add("bedframe");
+        if (/ACC/.test(t)) set.add("accessory");
+        return set;
+      }
+      return c ? null : new Set();
+    };
+    let bothAgree = 0, acMore = 0, erpMore = 0, mixed = 0;
+    const acMoreByGroup = {}, erpMoreByGroup = {};
+    const erpMoreDocs = [];
+    /* WHY is the book behind where we are ahead? Compare the remark we
+       imported (21:59 snapshot, byte-equal in the DB) against the LIVE book
+       remark exported 23:27 the same night (committed ac-live-so-remark2):
+       if the live book has since stamped a status, the gap was TIMING — the
+       detector runs after us; if the live book is still blank, the detector
+       simply does not cover that order (its gap, not ours). */
+    for (const [doc, o] of byDoc) {
+      const cs = claimSet(o.remark2);
+      if (cs === null) continue;
+      const ready = new Set();
+      for (const g of GROUPS) {
+        const ls = o.lines.filter((l) => (l.item_group || "").toLowerCase() === g);
+        if (ls.length && ls.every((l) => l.stock_status === "READY" || Number(l.delivered) >= Number(l.qty))) ready.add(g);
+      }
+      const acOnly = [...cs].filter((g) => !ready.has(g) && o.lines.some((l) => (l.item_group || "").toLowerCase() === g));
+      const erpOnly = [...ready].filter((g) => !cs.has(g));
+      if (!acOnly.length && !erpOnly.length) bothAgree++;
+      else if (acOnly.length && erpOnly.length) mixed++;
+      else if (acOnly.length) { acMore++; for (const g of acOnly) acMoreByGroup[g] = (acMoreByGroup[g] || 0) + 1; }
+      else { erpMore++; for (const g of erpOnly) erpMoreByGroup[g] = (erpMoreByGroup[g] || 0) + 1; erpMoreDocs.push({ doc, erpOnly, imported: o.remark2 ?? "" }); }
+    }
+    log(`BIDIRECTIONAL category matrix (orders with a parseable claim incl. blank): agree ${bothAgree}; book-claims-more ${acMore}; ERP-ready-more ${erpMore}; both-directions ${mixed}`);
+    log(`  book-claims-more by category: ${JSON.stringify(acMoreByGroup)}`);
+    log(`  ERP-ready-more by category: ${JSON.stringify(erpMoreByGroup)}`);
+    {
+      const fs2 = await import("node:fs");
+      const zlib2 = await import("node:zlib");
+      const path2 = await import("node:path");
+      const url2 = await import("node:url");
+      const here2 = path2.dirname(url2.fileURLToPath(import.meta.url));
+      const live = new Map(JSON.parse(zlib2.gunzipSync(fs2.readFileSync(path2.join(here2, "data", "ac-live-so-remark2.json.gz"))).toString("utf8")).map((r) => [String(r.DocNo).trim(), (r.Remark2 || "").trim()]));
+      const buckets = { "BOOK-CAUGHT-UP": [], "BOOK-STILL-BLANK": [], "BOOK-SAYS-OTHER": [], "NOT-IN-LIVE": [] };
+      for (const e of erpMoreDocs) {
+        const ac = e.doc.replace(/^HC-/, "");
+        if (!live.has(ac)) { buckets["NOT-IN-LIVE"].push(e.doc); continue; }
+        const now = live.get(ac);
+        const then = (e.imported || "").trim();
+        if (now && now !== then) buckets["BOOK-CAUGHT-UP"].push(`${e.doc} now=${JSON.stringify(now)}`);
+        else if (!now) buckets["BOOK-STILL-BLANK"].push(`${e.doc} erp-ready:{${e.erpOnly.join(",")}}`);
+        else buckets["BOOK-SAYS-OTHER"].push(`${e.doc} book=${JSON.stringify(now)} erp-extra:{${e.erpOnly.join(",")}}`);
+      }
+      for (const [k, v] of Object.entries(buckets)) {
+        log(`  ERP-ahead cause ${k}: ${v.length}`);
+        for (const x of v.slice(0, 6)) log(`     ${x}`);
+      }
     }
   }
   log(`orders where staff wrote a status: ${claimed}`);
@@ -163,7 +273,7 @@ async function main() {
   log(`READY claims that disagree, classified per the owner's protocol:`);
   for (const [cls, docs] of Object.entries(classes)) {
     log(`  ${cls.padEnd(16)} ${docs.length}${cls === "ALGO-SUSPECT" ? "   <-- MUST BE ZERO" : ""}`);
-    for (const d of docs.slice(0, cls === "ALGO-SUSPECT" ? 30 : 6)) log(`     ${d}`);
+    for (const d of docs.slice(0, cls === "ALGO-SUSPECT" ? 40 : 6)) log(`     ${d}`);
     if (docs.length > (cls === "ALGO-SUSPECT" ? 30 : 6)) log(`     ... and ${docs.length - (cls === "ALGO-SUSPECT" ? 30 : 6)} more`);
   }
   await sql.end();
