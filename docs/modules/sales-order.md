@@ -458,7 +458,7 @@ Values: `'stock' | 'po' | 'shortage' | null`.
 | Line kind | Rule |
 |---|---|
 | SERVICE (`isServiceLine`) | always `'stock'` — a service carries no inventory, so it is inherently available |
-| SOFA | `stock_status === 'READY' ? 'stock' : (MRP says po ? 'po' : 'shortage')` — sofa coverage is decided by the batch-aware allocator, because MRP does not know about dye lots |
+| SOFA | `stock_status === 'READY' ? 'stock' : (MRP says po ? 'po' : 'shortage')` — sofa coverage is decided by the batch-aware allocator, because MRP does not know about dye lots. Since 2026-08-29 that allocator answers in two steps: a single covering dye lot wins and stamps `allocated_batch_no`; with NO covering lot, the owner's hard binding takes over — a piece whose OWN converted PO has received lights `min(received, need)` per line, batch left null for the operator to pick at dispatch. Until then sofa lines never reached bound mode at all (docs/bugs/0565): they were diverted to the batch pass before `needs` was built, and every migrated set without an exact-multiset lot sat PENDING with its PO fully received |
 | everything else | `cov?.source ?? null` — **whatever MRP says**, with no reference to the stored column at all |
 
 **So for a non-sofa, non-service line, `stock_state` and `stock_status` are
@@ -945,6 +945,39 @@ with no `signedUrl` at all, so a hand-rolled loader that reads `signedUrl`
 renders a permanent loading placeholder — indistinguishable from "still
 loading", which is exactly how it ships. See §"Why photos need the proxy" in
 `backend/src/scm/lib/photoProxyFallback.ts`.
+
+Since 2026-08-28 that state machine is source-parameterised
+(`useScmLinePhoto('so' | 'po', …)` — `useSoLinePhoto` is the unchanged SO-shaped
+wrapper) and the strip takes a required `source` prop, because the PO detail now
+renders the carried copies of these photos through the same component. Same
+keys, same R2 objects, shared byte cache — a thumb loaded on the SO detail is
+free on the PO detail.
+
+#### Line photos on the printed SO (owner mockup, 2026-08)
+
+`sales-order-pdf.ts` prints photos as ONE "ITEM PHOTOS" block after
+the items table and before PAYMENTS RECEIVED — table rows carry NO image; a
+line with `photo_urls` appends " (photo)" to its first description line
+instead. (Owner print QA 2026-08-28: every generated string is English-only —
+a CJK char in generated text made `ensurePdfCjkFont` re-font EVERY
+photo-carrying PDF off helvetica — and the labels/sizes below are the v2
+ruling.) Each group in the block is keyed by the printed row number (`Item 3`,
+or a range `Item 2-4` when consecutive rows carry a deep-equal photo list —
+the sofa-set shared build photo prints once per set), with the item code
+beside the chip and ~52mm square thumbnails, max 3 per row. A group never splits across pages: one
+that does not fit moves whole to the next page under a continued heading. The
+grouping/packing/page-fit logic and the drawing live in the shared
+`vendor/scm/lib/pdf-item-photos.ts` (unit-tested beside it); the PO and DO
+PDFs print through the same module (the per-document blob fetchers —
+`fetchSoItemPhotoBlob` / `fetchPoItemPhotoBlob` / `fetchDoItemPhotoBlob` —
+sit together in `sales-order-queries.ts`, one proxy contract). Only `.thumb`
+siblings are fetched (never originals —
+PDF size), through the authed proxy, collected before drawing, and every photo
+is best-effort: a key whose fetch or decode fails is skipped silently, so a
+missing photo can never fail the PDF. Thumbs uploaded by the client pipeline
+are mostly WebP (which jsPDF cannot embed), so the module re-encodes each to a
+small square JPEG via canvas. An empty block — no photos, or nothing fetched —
+renders nothing at all.
 
 ### The delivery address block — both directions, shared layer
 

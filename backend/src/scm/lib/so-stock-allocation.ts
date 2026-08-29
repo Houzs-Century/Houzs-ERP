@@ -623,7 +623,13 @@ async function runSoStockAllocation(
     const BOUND_GROUPS = new Set(['bedframe', 'sofa']);
     const dedicatedReady = new Map<string, number>();
     const boundNeeds = needs.filter((n) => BOUND_GROUPS.has(n.group));
-    if (boundNeeds.length > 0) {
+    /* Sofa lines were diverted into sofaLineRecs before `needs` was built, so
+       for three months this read never saw them and the bound rule the comment
+       above NAMES sofa into never fired for sofa — every migrated set with no
+       exact-multiset dye lot stayed PENDING with its own PO fully received
+       (11 lines on 2026-08-29, run 33233660301). Their ids join the read here;
+       the sofa set walk below consults dedicatedReady when no batch covers. */
+    if (boundNeeds.length > 0 || sofaLineRecs.length > 0) {
       /* INVERTED, for the same reason and by the same shape as the DO-line read
          above: chunking the 3,520 bedframe/sofa line ids cost 18 serial
          requests on production. `!inner` on the PO link means only lines that
@@ -635,7 +641,7 @@ async function runSoStockAllocation(
          case-insensitively there, and a SQL predicate that had to reproduce
          that could answer differently. Reading a superset and intersecting is
          exact — `dedicatedReady` is only ever consulted for bound line ids. */
-      const boundIds = new Set(boundNeeds.map((n) => n.id));
+      const boundIds = new Set([...boundNeeds.map((n) => n.id), ...sofaLineRecs.map((s) => s.id)]);
       const { data: poLinkRows } = await paginateAll<{
         id: string; po_items: Array<{ qty: number; received_qty: number | null }> | null;
       }>((from, to) => sb
@@ -748,7 +754,24 @@ async function runSoStockAllocation(
         if (batch && whId) claimSofaBatch(whId, batch, lines, sofaStock);
         for (const s of group) {
           batchTargetByLine.set(s.id, batch);
-          targetById.set(s.id, batch ? { status: 'READY', qtyReady: s.need } : { status: 'PENDING', qtyReady: 0 });
+          if (batch) {
+            targetById.set(s.id, { status: 'READY', qtyReady: s.need });
+            continue;
+          }
+          /* No covering dye lot — the owner's hard binding takes over
+             (2026-08-29, re-ruling his 2026-08-10 call): a sofa piece whose
+             OWN converted PO has received is READY per line, min(received,
+             need), exactly the bedframe arithmetic above. No batch is claimed
+             — the migrated stock this serves rarely forms an exact multiset,
+             and the DO flow lets the operator pick the physical batch at
+             dispatch, which is the shipping rule already in force. */
+          const got = dedicatedReady.get(s.id) ?? 0;
+          const fill = Math.min(got, s.need);
+          targetById.set(s.id, fill >= s.need
+            ? { status: 'READY', qtyReady: s.need }
+            : fill > 0
+              ? { status: 'PARTIAL', qtyReady: fill }
+              : { status: 'PENDING', qtyReady: 0 });
         }
       }
     }

@@ -1,0 +1,25 @@
+name: Check staff Remark2 vs computed stock status (read-only)
+
+# Manual. Measures whether the system's computed per-line stock status agrees
+# with the status staff hand-wrote in AutoCount's Remark2 (imported verbatim).
+# Prints the claim-vs-view matrix and the actionable list (staff wrote READY,
+# system covers nothing). SELECTs only; exit 0 for every verdict.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: check-remark2-vs-status
+  cancel-in-progress: false
+
+jobs:
+  check-prod:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/check-remark2-vs-status.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

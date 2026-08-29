@@ -289,6 +289,7 @@ still need `edit` on `scm.sales.delivery`.
 | GET/POST/DELETE | `/:id/payments[/:paymentId]` | `:4075` / `:4118` / `:4155` | Payments ledger. |
 | PATCH | `/:id/status` | `:4359` (handler `:4166`) | **The stock chokepoint.** |
 | GET | `/:id/scan-token` | `backend/src/scm/routes/delivery-order-scan-token.ts` | Mint-if-missing the token the printed QR encodes (mig 0328). **10 characters since 2026-08-27** — the length is a print setting, see `docs/bugs/0552-…`; the 64-hex form every sheet already printed carries still resolves. A SEPARATE router on the same prefix, because `delivery-orders-mfg.ts` is past its file-size ceiling. A **GET** although it can write: the write is an idempotent create-if-missing, and a POST would deny the QR to somebody who may print a delivery order but not edit one. Scoped to the SESSION's company; the public route can never reach it. |
+| GET | `/:id/items/:itemId/photos/:photoKey` and `…/signed` | `backend/src/scm/routes/delivery-order-item-photos.ts` | **Per-line photo read path (mig `20260828T0746_do_item_photo_urls.sql`).** A DO line raised from an SO line carries that line's `photo_urls` (R2 keys, SAME objects — owner 2026-08-10: 送货时照片要跟着 line), and these two routes are how a client views them: `/signed` mints a presigned URL and falls back to the proxy payload (production has no R2 S3 creds — 2026-08-10 incident), the bare route streams the bytes from the R2 binding. Read-only; authz is MEMBERSHIP (key listed in THIS line's `photo_urls`, line on THIS DO, active company via `scopeToCompany`) — never key shape; a `.thumb` sibling is authorised against its base key. Same separate-router-same-prefix construction as the scan token, same reason. The exact contract the SO and PO photo routes already serve, so `DoLinePhotoStrip` (desktop DO detail) mirrors `SoLinePhotoStrip`. |
 
 ### The PUBLIC surface — `/api/public/do-scan/*` (2026-08-26)
 
@@ -531,7 +532,7 @@ column lists are `HEADER` (`delivery-orders-mfg.ts:292-310`), `ITEM` (`:333-337`
 | Table | Role |
 |-------|------|
 | `scm.delivery_orders` | DO header. `do_number`, `so_doc_no`, `debtor_code/name`, `do_date`, `expected_delivery_at`, `customer_delivery_date`, `dispatched_at` / `signed_at` / `delivered_at`, `driver_id/name`, `vehicle`, `m3_total_milli`, address block, `salesperson_id`, `branding`, `venue_id`, per-category revenue + cost subtotals, `local_total_sen`, `total_cost_sen`, `total_margin_sen`, `line_count`, `warehouse_id`, `is_dropship`, `arrives_em_warehouse_date`, `pod_r2_key`, `signature_data`, `status`, `company_id`. |
-| `scm.delivery_order_items` | DO lines. `so_item_id` (the SO link that drives warehouse resolution + remaining-qty caps), `item_code`, `item_group`, `qty`, `m3_milli`, `unit_price_sen`, `discount_sen`, `line_total_sen`, `unit_cost_sen`, `line_cost_sen`, `line_margin_sen`, **`ship_cost_sen`**, `variants`, `line_delivery_date`, `line_delivery_date_overridden`, `rack_id`, **`committed_po_batch_no`** (mig 0230 — the incoming PO this line shipped against before its goods arrived; the per-line claim signal the receipt reconcile reads). |
+| `scm.delivery_order_items` | DO lines. `so_item_id` (the SO link that drives warehouse resolution + remaining-qty caps), `item_code`, `item_group`, `qty`, `m3_milli`, `unit_price_sen`, `discount_sen`, `line_total_sen`, `unit_cost_sen`, `line_cost_sen`, `line_margin_sen`, **`ship_cost_sen`**, `variants`, `line_delivery_date`, `line_delivery_date_overridden`, `rack_id`, **`committed_po_batch_no`** (mig 0230 — the incoming PO this line shipped against before its goods arrived; the per-line claim signal the receipt reconcile reads), **`photo_urls`** (mig `20260828T0746_do_item_photo_urls.sql` — `text[] NOT NULL DEFAULT '{}'`, the source SO line's R2 photo keys carried on convert/add; SHARED keys not copies, per line never deduplicated, `[]` never null; every insert path derives it server-side via `loadCarriedSoLinePhotos` + `carriedPhotoUrls` in `backend/src/scm/lib/do-item-row.ts`, ad-hoc lines get `[]`). |
 | `scm.delivery_order_payments` | Payments taken at delivery. `method`, `merchant_provider`, `installment_months`, `online_type`, `approval_code`, `amount_sen`, `account_sheet`, `collected_by`. |
 | `scm.delivery_order_crew` | One row per DO (UNIQUE `do_id`): driver/helper/lorry FKs plus the assign-time name/IC/contact/plate snapshot. |
 | `scm.inventory_movements` | Where the OUT lands. Keyed `(source_doc_type='DO', source_doc_id, item_code, variant_key, COALESCE(correction_seq,0))` by `uq_inv_mov_do_source_v2` (migration 0279; before that, `uq_inv_mov_do_source` without the correction slot), the partial unique index the reversal has to route around (`:4322-4328`). Full definition in §on idempotency below. |
@@ -984,6 +985,20 @@ DELIVERY ORDER's status. The three DO surfaces (detail, list export, mobile)
 stamp it; `ConsignmentNoteDetail` deliberately does not. Vector-drawn via
 `vendor/scm/lib/pdf-qr.ts` (frontend twin of the ASSR print's `qrSvg`).
 Pinned by `pages/scm-v2/do-load-scan.test.ts` + `lib/pdf-qr.test.ts`.
+
+**Line photos on the printed DO (owner spec 2026-08).** The same ITEM PHOTOS
+block the SO and PO PDFs print (shared `vendor/scm/lib/pdf-item-photos.ts` —
+`Item N` chips, ~52mm thumbnails, max 3 per row, English-only generated text,
+a group never splits across pages): one block after the items table, before
+the bottom-pinned signature; a photo-carrying row appends " (photo)" to its
+description and carries no image itself. Keys are the SO-carried
+`delivery_order_items.photo_urls`; only `.thumb` siblings are fetched, through
+the per-line proxy route above, keyed by `DoHeader.id` + line `id` — the CN
+reuse passes no header id, so it fetches nothing by construction. Every photo
+is best-effort: a failed fetch or decode is skipped and can never fail the
+PDF (pinned in `delivery-order-template.test.ts`). Photos imported from
+AutoCount (`ac-*.jpg`) have no `.thumb` sibling yet, so they show on screen
+but print nothing — same caveat as SO/PO.
 | `COMPLETED` | **nothing writes it.** Still in the code vocabulary (`DO_STOCK_OUT_STATES`, `DO_STATUSES`) but NOT a member of the `do_status` enum in any schema file or migration. Removed from the `delivered` filter bucket 2026-08-17. **CORRECTED 2026-08-18** — this cell used to end "the JS-side sets compare a status already in hand, where a value that can never occur is inert", and that was FALSE: `services/agents/delivery-agent.ts` mapped `DO_STATUSES` into one `.eq('status', st)` query per entry, so `COMPLETED` *was* being handed to Postgres to parse. That consumer no longer enumerates the list at all (it counts the rows it reads), so the claim is now true of every remaining reader — but it was a second live 22P02 for a day, and it was found by a reviewer, not by the sweep that wrote the sentence | read-only |
 | `CANCELLED` | `PATCH /:id/status`, atomic branch | **FINAL.** `A cancelled Delivery Order cannot be reactivated — its stock was already returned. Create a new DO to deliver again.` (409 `do_cancelled_final`) |
 

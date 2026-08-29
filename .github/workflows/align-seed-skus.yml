@@ -18,6 +18,11 @@ on:
         default: "dry-run"
         type: choice
         options: [dry-run, apply]
+      data_file:
+        description: "Seed data file (relative to backend/)"
+        required: false
+        default: "scripts/data/align-seed-houzs-century.json"
+        type: string
 
 jobs:
   run:
@@ -32,6 +37,7 @@ jobs:
         env:
           DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
           MODE: ${{ inputs.mode }}
+          DATA_FILE: ${{ inputs.data_file }}
         run: |
           if [ -z "$DATABASE_URL" ]; then echo "DATABASE_URL missing"; exit 2; fi
           node scripts/align-seed-skus.mjs

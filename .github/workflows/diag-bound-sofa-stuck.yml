@@ -1,0 +1,25 @@
+name: Diag bound sofa lines stuck not-READY (read-only)
+
+# Manual. Classifies the reconcile lens's "fully-received BOUND dedications
+# still not READY" lines into DELIVERED (lens must exclude) / GATED (by
+# design) / STUCK (real allocator defect), with per-line arithmetic. SELECTs
+# only; exit 0 for every verdict.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: diag-bound-sofa-stuck
+  cancel-in-progress: false
+
+jobs:
+  check-prod:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/diag-bound-sofa-stuck.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

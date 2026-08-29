@@ -59,7 +59,13 @@ describe('purchase-order-pdf sofa layout (reinstated 2026-07-27)', () => {
     const raw = pdf.toString('latin1');
     // Section title + the TV marker label are literal text ops in the stream.
     expect(raw).toContain('Sofa layout');
-    expect(raw).toContain('front faces TV');
+    /* Reworded 2026-08-28 — the heading used to end "(orientation / LHF·RHF)",
+       which was a note to ourselves in a document a supplier reads. What is
+       pinned is the two facts the picture depends on, not the wording around
+       them. */
+    expect(raw).toContain('viewed from above');
+    expect(raw).toContain('front faces the TV');
+    expect(raw).not.toContain('LHF·RHF');
     // Caption carries the module list + source SO no. jsPDF escapes parens in
     // text ops ("2A(LHF)" → "2A\(LHF\)"), and the caption wraps to the diagram
     // width, so assert the atomic tokens rather than the joined line.

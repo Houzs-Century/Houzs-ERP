@@ -84,6 +84,13 @@ import { RelationshipMapButton } from '../../vendor/scm/components/RelationshipM
 import { StatusPill } from '../../vendor/scm/components/StatusPill';
 import { SearchableSelect } from '../../vendor/scm/components/SearchableSelect';
 import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
+import { canOperatePurchaseOrders } from '../../auth/salesAccess';
+import { SoLinePhotoStrip } from '../../components/scm-v2/SoLinePhotoStrip';
+import {
+  uploadPoItemPhoto,
+  deletePoItemPhoto,
+  isPoOwnedPhotoKey,
+} from '../../vendor/scm/lib/sales-order-queries';
 import {
   useApprovePo,
   useSendAmendment,
@@ -224,7 +231,27 @@ export const PurchaseOrderDetail = () => {
      then Send + Download Revised PO (at PO_APPROVED); the Revisions tab lists
      prior PO snapshots. Buttons are gated on the Houzs scm.amendment.approve_po
      permission (the server 403 stays the real gate). */
-  const { can } = useHouzsAuth();
+  const { can, pageAccess } = useHouzsAuth();
+  /* LINE PHOTOS ON THE EDIT CARD (owner 2026-08-28: 「还是不能添加照片啊」).
+     #2759 put the strip on the PO's TABLE view and gave the server its upload
+     and delete routes; the rich line editor — the screen a purchaser is
+     actually on when they want to attach a photo — never got one, because this
+     card was written as "the same SHAPE as SoLineCard" rather than as a use of
+     it, so the rail SoLineCard grew later never arrived here.
+
+     Same component, same cohort gate and same helpers as the table view, so
+     there is one behaviour rather than two. */
+  const mayEditPoPhotos = canOperatePurchaseOrders(can, pageAccess);
+  const uploadLinePhoto = async (itemId: string, file: File) => {
+    if (!po?.id) return;
+    await uploadPoItemPhoto(po.id, itemId, file);
+    await detail.refetch();
+  };
+  const deleteLinePhoto = async (itemId: string, photoKey: string) => {
+    if (!po?.id) return;
+    await deletePoItemPhoto(po.id, itemId, photoKey);
+    await detail.refetch();
+  };
   const approvePo = useApprovePo();
   const sendAmendment = useSendAmendment();
   /* Main content tab — 'order' = the existing detail view; 'revisions' lists
@@ -1286,6 +1313,44 @@ export const PurchaseOrderDetail = () => {
                     onRemove={() => removeLine(l.rid)}
                     disabled={isLocked}
                     soLinkOptions={soLinkOptionsFor(l)}
+                    photos={
+                      /* A LINE THAT IS NOT SAVED YET HAS NOWHERE TO PUT A
+                         PHOTO. The keys are `po-items/<po>/<item id>/…`, so
+                         the item id is not a detail — it is the address. A
+                         brand-new card therefore says so instead of showing a
+                         control that would throw: silently omitting the rail
+                         is what sent the owner looking for it in the first
+                         place. Save the line, then attach. */
+                      l.itemId ? (
+                        <div style={{ display: 'grid', gap: 4 }}>
+                          <span className={styles.fieldLabel}>Photos</span>
+                          <SoLinePhotoStrip
+                            source="po"
+                            docId={po.id}
+                            itemId={l.itemId}
+                            photoKeys={
+                              visibleItems.find((it) => it.id === l.itemId)?.photo_urls ?? []
+                            }
+                            edit={
+                              mayEditPoPhotos && !isLocked && po.status !== 'CANCELLED'
+                                ? {
+                                    onUpload: (file) => uploadLinePhoto(l.itemId!, file),
+                                    onDelete: (key) => deleteLinePhoto(l.itemId!, key),
+                                    canDeleteKey: isPoOwnedPhotoKey,
+                                  }
+                                : null
+                            }
+                          />
+                        </div>
+                      ) : (
+                        <div style={{ display: 'grid', gap: 4 }}>
+                          <span className={styles.fieldLabel}>Photos</span>
+                          <span style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)' }}>
+                            Save this line first, then attach photos to it.
+                          </span>
+                        </div>
+                      )
+                    }
                   />
                 </div>
               );

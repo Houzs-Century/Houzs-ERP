@@ -266,6 +266,11 @@ export type PoItemRow = {
       GET /:id so the PO list expansion can show a "Received" column identical
       to the SO "Delivered" column. Cancelled GRNs excluded server-side. */
   receipts?: PoLineReceipt[];
+  /** Mig 0274 — line reference photos (R2 keys), carried from the source SO
+      line on convert (same R2 objects; the AutoCount importer appends its own
+      `po-items/...` keys). On the wire from GET /:id (ITEM_COLS) all along;
+      read-only on the PO — photos are authored on the SO. */
+  photo_urls?: string[] | null;
   /** Migration 0098 — source SO line this PO line was converted from. */
   so_item_id?: string | null;
   /** 2026-06-12 — stamped by GET /:id (so_item_id → SO doc_no) for the PO

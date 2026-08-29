@@ -28,6 +28,8 @@
 //   ├──────────────────────────────────────────────────────────────────┤
 //   │ RINGGIT MALAYSIA … ONLY                          TOTAL  9,999.00 │
 //   │ E. & O.E.                                                        │
+//   │ Sofa layout — front faces TV   ITEM PHOTOS (row-chip  │
+//   │ (orientation / LHF·RHF)        thumb groups, beside; wraps below)│
 //   │ Authorised Signature          Supplier Acknowledgement           │
 //   └──────────────────────────────────────────────────────────────────┘
 //
@@ -53,9 +55,28 @@ import {
   docVariantLine,
   type SupplierRecord,
 } from './supplier-doc-data';
+import { loadSofaCompartmentArtForPrint } from './sales-order-queries';
+import {
+  blobToSquarePdfImage,
+  buildPhotoGroups,
+  collectPhotoImages,
+  drawItemPhotosBlock,
+  PHOTO_MARKER,
+  photoKeyOwners,
+  photoKeysOf,
+  type PdfPhotoImage,
+  type PhotoRegion,
+} from './pdf-item-photos';
+import { fetchPoItemPhotoBlob } from './sales-order-queries';
+import { THUMB_KEY_SUFFIX } from '../../../lib/imagePipeline';
 
 type PoHeader = {
   po_number:     string;
+  /** PO row id (uuid) — the per-line photo proxy routes are keyed by it
+      (/mfg-purchase-orders/:id/items/:itemId/photos/…). Optional: the detail
+      pages spread the API row (which carries it); a caller without it simply
+      prints no photo block. */
+  id?:           string | null;
   /** Mig 0080 — approved-revision counter. The PRINTED number carries the _R
       suffix (poDisplayNumber) so the supplier can tell a revised order sheet
       from the original: PO-xxx_R1, _R2… Optional: absent → no suffix. */
@@ -103,6 +124,9 @@ type PoHeader = {
 };
 
 type PoItem = {
+  /** Line id (uuid) — pairs with the header id for the photo proxy routes.
+      Optional for callers that predate photos on the PO. */
+  id?:           string | null;
   item_code: string;
   material_name: string;
   supplier_sku:  string | null;
@@ -134,6 +158,11 @@ type PoItem = {
       carry a floating MRP/READY pairing (Decision, owner 2026-08-06:
       docs/modules/purchase-order.md). */
   so_doc_no?:     string | null;
+  /** Line reference photos (mig 0274 — carried from the source SO line on
+      convert; same R2 objects). Optional for callers that predate the column.
+      When present the description gains the " (photo)" marker and the ITEM
+      PHOTOS block prints the `.thumb` siblings. */
+  photo_urls?:    string[] | null;
 };
 
 const fmtMoney = (centi: number, currency: string): string => fmtMoneySen(centi, currency);
@@ -219,7 +248,7 @@ async function renderPurchaseOrderInto(
   autoTable: AutoTableFn,
   header: PoHeader,
   items: PoItem[],
-  opts?: { docTitle?: string },
+  opts?: { docTitle?: string; sofaPhotos?: Record<string, string> },
 ): Promise<{ supplierName: string }> {
   const pageW = doc.internal.pageSize.getWidth();
   const margin = 10; // tighter left/right than the SO's 14 (owner 2026-06-19)
@@ -230,11 +259,58 @@ async function renderPurchaseOrderInto(
      endpoint embeds only 7 fields — no fax / attention / payment_terms). */
   const { skuMap, fabricMap, fabricDescMap, supplier: fullSupplier } = await loadSupplierDocData(header.supplier_id, items);
 
+
+
+  /* Printed row order, resolved BEFORE any drawing: the ITEM PHOTOS block at
+     the page bottom is keyed by the table's row positions and the photo bytes
+     must be in hand before drawing starts, so the ordering the items table
+     used to compute inline moved up here — the table below reads this same
+     const. Canonical SKU/build order (sofa modules LHF→NA→RHF, mains→
+     accessories→services) — mirror the sales side. The shared helper keys on
+     `item_code`; sort a shimmed view that carries the original row back
+     unchanged (render-time only, no persistence touched). */
+  const orderedItems = orderSofaModuleRowsWithinBuilds(
+    sortSoLinesByGroupRank(
+      items.map((it) => ({ ...it, item_code: it.item_code, __row: it })),
+      (r) => r.item_group as string | null | undefined,
+    ),
+  ).map((r) => r.__row);
+
+  /* Owner spec 2026-08 — photos follow the line onto the supplier PO. The
+     code beside each row chip is the SUPPLIER code (the code they act on).
+     Only `.thumb` siblings are fetched (never originals — PDF size), each
+     photo best-effort: a key whose fetch or decode fails is skipped and the
+     PDF renders without it. */
+  const poId = (header.id ?? '').trim();
+  const photoGroups = buildPhotoGroups(orderedItems.map((it) => ({
+    code: supplierCodeFor(it, skuMap),
+    photoKeys: photoKeysOf(it.photo_urls),
+  })));
+  const photoOwners = photoKeyOwners(orderedItems.map((it) => ({
+    id: it.id ?? null,
+    photoKeys: photoKeysOf(it.photo_urls),
+  })));
+  const photoImages: Map<string, PdfPhotoImage> = photoGroups.length > 0 && poId !== ''
+    ? await collectPhotoImages(
+        photoGroups,
+        (key) => {
+          const ownerId = photoOwners.get(key);
+          if (!ownerId) return Promise.reject(new Error('photo_owner_missing'));
+          return fetchPoItemPhotoBlob(poId, ownerId, key + THUMB_KEY_SUFFIX);
+        },
+        blobToSquarePdfImage,
+      )
+    : new Map<string, PdfPhotoImage>();
+
   /* Before ANY drawing, and after the supplier lookup so its name / address
      count too (a China supplier's are the likely CJK on this document): text
      carrying CJK needs the font embedded up front, or helvetica silently paints
-     the whole field as mojibake. No-op for a pure-WinAnsi PO. */
-  await ensurePdfCjkFont(doc, [header, items, fullSupplier, skuMap, fabricMap]);
+     the whole field as mojibake. No-op for a pure-WinAnsi PO. The photo marker
+     + heading are WinAnsi by rule (pdf-item-photos.ts header) — a CJK char
+     there re-fonts every photo-carrying document, refused at owner QA. */
+  await ensurePdfCjkFont(doc, [
+    header, items, fullSupplier, skuMap, fabricMap,
+  ]);
 
   // ── Company letterhead (centered, AutoCount style) ────────────────
   let y = margin;
@@ -380,17 +456,9 @@ async function renderPurchaseOrderInto(
   //                   buildVariantSummary inside docVariantLine) + line remark +
   //                   per-line delivery date
   //   UOM | Qty | U/Price | Disc | Total
-  /* Canonical SKU/build order (sofa modules LHF→NA→RHF, mains→accessories→
-     services) — mirror the sales side. The shared helper keys on `item_code`,
-     but PO lines expose `item_code`; sort a shimmed view that carries the
-     original row back unchanged (render-time only, no persistence touched). */
-  const orderedItems = orderSofaModuleRowsWithinBuilds(
-    sortSoLinesByGroupRank(
-      items.map((it) => ({ ...it, item_code: it.item_code, __row: it })),
-      (r) => r.item_group as string | null | undefined,
-    ),
-  ).map((r) => r.__row);
-
+  /* orderedItems is computed up top (before drawing) so this table and the
+     ITEM PHOTOS block share ONE row order — the photo chips point at these
+     row positions. */
   type Row = [string, string, string, string, string, string, string, string];
   const rows: Row[] = orderedItems.map((it) => {
     // ONE variant line only: the unified fabric summary (`CG-001 Pearl
@@ -408,8 +476,10 @@ async function renderPurchaseOrderInto(
       it.supplier_delivery_date_3,
       it.supplier_delivery_date_4,
     );
+    /* Owner spec: a row carries NO image — the " (photo)" marker on the first
+       description line points the supplier at the ITEM PHOTOS block below. */
     const descParts = [
-      it.description ?? it.material_name,
+      `${it.description ?? it.material_name}${photoKeysOf(it.photo_urls).length > 0 ? PHOTO_MARKER : ''}`,
       specs || null,
       (it.notes ?? '').trim() ? `Remark: ${(it.notes ?? '').trim()}` : null,
       lineEff ? `Delivery: ${fmtDocDate(lineEff)}` : null,
@@ -452,11 +522,16 @@ async function renderPurchaseOrderInto(
     styles: { fontSize: 8.5, cellPadding: { top: 1.5, right: 1.5, bottom: 1.5, left: 1.5 }, lineColor: [120, 120, 120], lineWidth: 0.1 },
     headStyles: { fontStyle: 'bold', halign: 'left', valign: 'middle', lineWidth: { top: 0.4, bottom: 0.4 } as never },
     bodyStyles: { valign: 'top' },
-    // Widths sum to 180mm — fits the A4 printable width (210 − 14×2 = 182).
+    // Fixed columns sum + Description('auto') fit the A4 printable width (210 − margin×2).
     columnStyles: {
-      0: { cellWidth: 25 },                    // For SO — fits "SO-2606-001" on one line
+      // For SO — must fit the LONGEST doc number on ONE line. The prefix grew:
+      // "SO-2606-001" (11 ch) was the old worst case at 25mm, but company-prefixed
+      // numbers are longer — "HC-SO-2608-008" (14) and "2990-SO-2608-026" (16) —
+      // and were wrapping ("HC-SO-2608-00" / "8"). 34mm fits 16 ch at 8.5pt; the
+      // 'auto' Description column absorbs the extra width.
+      0: { cellWidth: 34 },                    // For SO — fits "2990-SO-2608-026" on one line
       1: { cellWidth: 27, fontStyle: 'bold' }, // Supplier Code (the code they act on)
-      2: { cellWidth: 'auto' },                // Description — auto-fills (≈68mm with margin 10)
+      2: { cellWidth: 'auto' },                // Description — auto-fills the remainder
       3: { cellWidth: 11 },                    // UOM
       4: { cellWidth: 10, halign: 'right' },   // Qty
       5: { cellWidth: 19, halign: 'right' },   // U/Price
@@ -595,6 +670,11 @@ async function renderPurchaseOrderInto(
     distinctSofas.push({ cells, depth: g.depth, model: caption, soNo: g.soNo });
   }
 
+  /* Where the last sofa-diagram row leaves usable width, the ITEM PHOTOS
+     block starts BESIDE it (owner mockup 2026-08); groups that do not fit
+     there wrap below the section. Null = no sofa section (or a full last
+     row): the block renders alone, full width. */
+  let photoSide: PhotoRegion | null = null;
   if (distinctSofas.length > 0) {
     const contentW = pageW - margin * 2;
     const DIAGRAM_W = 36;   // mm — ~32–38mm wide per owner
@@ -611,11 +691,33 @@ async function renderPurchaseOrderInto(
     }
 
     doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(0);
-    doc.text('Sofa layout — front faces TV (orientation / LHF·RHF)', margin, lastY);
+    /* PLAIN WORDS, because a supplier reads this, not an engineer. The old
+       heading ended "(orientation / LHF·RHF)" — that parenthesis was a note to
+       ourselves about which convention the drawing follows, and the owner
+       flagged it as odd (2026-08-28: 「这个字眼也是奇怪？」). What the reader needs
+       is the two facts the picture depends on: it is a plan view, and the front
+       is the edge facing the TV. LHF/RHF still print in every line's own
+       description, where they identify a part. */
+    doc.text('Sofa layout — viewed from above, front faces the TV', margin, lastY);
     lastY += 6;
 
     let col = 0;
     let rowTop = lastY;
+    /* THE ARTWORK IS FETCHED HERE, NOT PASSED IN, and only for the codes THIS
+       sheet needs (2026-08-28). Five surfaces print a Purchase Order and only
+       one of them was passing `sofaPhotos`, so the same document looked
+       different depending on which button raised it — the owner found it by
+       printing three and asking why they did not match. A caller that must
+       remember to pass something is a caller that will forget.
+
+       Keyed by module code because the code IS the artwork's name: the stored
+       config carries no imageKey for the defaults (Products.tsx seeds those
+       client-side), so a config lookup alone found nothing and drew schematics.
+       See docs/bugs/0561. */
+    const sofaArt = opts?.sofaPhotos
+      ?? await loadSofaCompartmentArtForPrint(
+        distinctSofas.flatMap((s2) => s2.cells.map((c) => c.moduleId)),
+      );
     for (const sofa of distinctSofas) {
       // New row when the current row is full.
       if (col >= perRow) {
@@ -629,11 +731,11 @@ async function renderPurchaseOrderInto(
         col = 0;
         // Repeat the section title at the top of the continued page.
         doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(0);
-        doc.text('Sofa layout — front faces TV (orientation / LHF·RHF) (cont.)', margin, rowTop);
+        doc.text('Sofa layout — viewed from above, front faces the TV (cont.)', margin, rowTop);
         rowTop += 6;
       }
       const dx = margin + col * (DIAGRAM_W + GAP_X);
-      const drawn = drawSofaLayout(doc, sofa.cells, sofa.depth, dx, rowTop, DIAGRAM_W, DIAGRAM_H);
+      const drawn = drawSofaLayout(doc, sofa.cells, sofa.depth, dx, rowTop, DIAGRAM_W, DIAGRAM_H, sofaArt);
       // Caption: model + SO no, wrapped to the diagram width.
       doc.setFont('helvetica', 'normal'); doc.setFontSize(6.5); doc.setTextColor(80);
       const capParts = [sofa.model, sofa.soNo].filter(Boolean);
@@ -643,7 +745,34 @@ async function renderPurchaseOrderInto(
       doc.setTextColor(0);
       col += 1;
     }
+    if (col < perRow) {
+      const sideX = margin + col * (DIAGRAM_W + GAP_X);
+      photoSide = { x: sideX, y: rowTop, w: pageW - margin - sideX, bottom: rowTop + ROW_H };
+    }
     lastY = rowTop + ROW_H;
+  }
+
+  // ── ITEM PHOTOS (owner spec 2026-08) ───────────────────
+  /* Page-bottom zone, beside the sofa layout when width remains; a PO with no
+     sofa renders the block alone, full width. Row-position chips key each
+     group back to the items table; a group never splits across pages (it
+     moves whole, under a continued heading). Absent entirely when no photo
+     actually fetched. */
+  if (photoImages.size > 0) {
+    const photoRes = drawItemPhotosBlock(doc, photoGroups, photoImages, {
+      margin,
+      contentW: pageW - margin * 2,
+      startY: lastY,
+      pageBottom: 275,
+      pageTop: 20,
+      side: photoSide,
+      onNewPage: () => drawPageHeader(doc.getNumberOfPages()),
+    });
+    if (photoRes.drew) {
+      lastY = photoRes.pagesAdded > 0
+        ? photoRes.endY + 6
+        : Math.max(lastY, photoRes.endY + 6);
+    }
   }
 
   // ── Signature block ──────────────────────────────────────────────
@@ -687,7 +816,7 @@ function finalizePoPdf(doc: JsPdf): void {
 export async function generatePurchaseOrderPdf(
   header: PoHeader,
   items: PoItem[],
-  opts?: { docTitle?: string; action?: PdfAction },
+  opts?: { docTitle?: string; action?: PdfAction; sofaPhotos?: Record<string, string> },
 ): Promise<void> {
   const { jsPDF } = await import('jspdf');
   const autoTable = (await import('jspdf-autotable')).default;
@@ -709,7 +838,7 @@ export async function generatePurchaseOrderPdf(
 export async function purchaseOrderPdfBase64(
   header: PoHeader,
   items: PoItem[],
-  opts?: { docTitle?: string },
+  opts?: { docTitle?: string; sofaPhotos?: Record<string, string> },
 ): Promise<string> {
   const { jsPDF } = await import('jspdf');
   const autoTable = (await import('jspdf-autotable')).default;
@@ -728,7 +857,7 @@ export async function purchaseOrderPdfBase64(
    "Page p of N" footer. */
 export async function generateCombinedPurchaseOrderPdf(
   pos: Array<{ header: PoHeader; items: PoItem[] }>,
-  opts?: { docTitle?: string; fileName?: string; action?: PdfAction },
+  opts?: { docTitle?: string; fileName?: string; action?: PdfAction; sofaPhotos?: Record<string, string> },
 ): Promise<void> {
   const { jsPDF } = await import('jspdf');
   const autoTable = (await import('jspdf-autotable')).default;

@@ -26,6 +26,18 @@ import { billToBlock } from './pdf-party-blocks';
 import { loadFabricDescriptionMap, loadFabricSupplierMap } from './supplier-doc-data';
 import { composeSoLineDescription } from './so-line-description';
 import {
+  appendPhotoMarker,
+  blobToSquarePdfImage,
+  buildPhotoGroups,
+  collectPhotoImages,
+  drawItemPhotosBlock,
+  photoKeyOwners,
+  photoKeysOf,
+  type PdfPhotoImage,
+} from './pdf-item-photos';
+import { fetchSoItemPhotoBlob } from './sales-order-queries';
+import { THUMB_KEY_SUFFIX } from '../../../lib/imagePipeline';
+import {
   ensureBrandingLogoLoaded,
   ensureBrandLogoLoaded,
   getBrandLogoCache,
@@ -56,7 +68,11 @@ import { statusLabel } from './status-pill';
 //      ordered SOFA+MATTRESS → BEDFRAME → ACCESSORY → others → SERVICE last.
 //      SKU | Description (desc / description2 or remark / specs line —
 //      fabric code enriched with the fabric_trackings description; PWP
-//      notes after) | Qty | Unit | Disc | Line Total
+//      notes after) | Qty | Unit | Disc | Line Total. A line carrying
+//      photo_urls appends " (photo)" to its first description line.
+//   4b. ITEM PHOTOS — row-number-keyed thumbnail groups for the
+//      lines that carry photos (shared pdf-item-photos module); absent when
+//      no line has photos
 //   5. PAYMENTS RECEIVED ledger (mfg_sales_order_payments rows)
 //   6. Totals: SUBTOTAL / PAID TO DATE / TOTAL / BALANCE DUE
 //   7. Customer signature (stored signature_b64 image when present) +
@@ -147,6 +163,11 @@ type SoItem = {
      see the filter at the top of renderSalesOrderInto. Optional because older
      callers pass rows that predate the column. */
   cancelled?: boolean | null;
+  /* Line reference photos (R2 keys, mfg_sales_order_items.photo_urls).
+     Optional so callers that predate the column (Consignment Order reuse)
+     stay valid. When present the row's first description line gains the
+     " (photo)" marker and the ITEM PHOTOS block prints the `.thumb` siblings. */
+  photo_urls?: string[] | null;
 };
 
 /* Mirrors flow-queries.ts `SoPayment`. Re-declared here to keep the PDF
@@ -333,11 +354,50 @@ export async function renderSalesOrderInto(
      (Commander 2026-06-16 — Fabric internal + external on the SO too). */
   const fabricExtMap = await loadFabricSupplierMap(collectFabricCodes(items));
 
+  /* Printed row order, resolved BEFORE any drawing: the ITEM PHOTOS block is
+     keyed by the row numbers the items table prints (#1, #2-4…) and the photo
+     bytes must be in hand before drawing starts, so the ordering the table
+     used to compute inline moved up here — the table below reads this same
+     const. (Within a buildKey group the module rows print LEFT-TO-RIGHT, Loo
+     2026-06-12 — the create path persists that order on new SOs; the in-place
+     permute fixes SOs booked before it without moving any other row.) */
+  const orderedItems = orderSofaModuleRowsWithinBuilds(
+    [...items].sort((a, b) => groupRank(a.item_group) - groupRank(b.item_group)),
+  );
+
+  /* Owner spec 2026-08 — photos follow the line onto the printed document.
+     Only `.thumb` siblings are fetched (never originals — PDF size), each
+     photo best-effort: a key whose fetch or decode fails is skipped and the
+     PDF renders without it. */
+  const photoGroups = buildPhotoGroups(orderedItems.map((it) => ({
+    code: it.item_code,
+    photoKeys: photoKeysOf(it.photo_urls),
+  })));
+  const photoOwners = photoKeyOwners(orderedItems.map((it) => ({
+    id: it.id,
+    photoKeys: photoKeysOf(it.photo_urls),
+  })));
+  const photoImages: Map<string, PdfPhotoImage> = photoGroups.length > 0
+    ? await collectPhotoImages(
+        photoGroups,
+        (key) => {
+          const ownerId = photoOwners.get(key);
+          if (!ownerId) return Promise.reject(new Error('photo_owner_missing'));
+          return fetchSoItemPhotoBlob(header.doc_no, ownerId, key + THUMB_KEY_SUFFIX);
+        },
+        blobToSquarePdfImage,
+      )
+    : new Map<string, PdfPhotoImage>();
+
   /* Before ANY drawing, and after the print-time lookups so their text counts
      too: a customer name / delivery address / remark carrying CJK needs the
      font embedded up front, or helvetica paints the whole field as mojibake.
-     No-op for a pure-WinAnsi SO. */
-  await ensurePdfCjkFont(doc, [header, items, payments, fabricDescMap, fabricExtMap]);
+     No-op for a pure-WinAnsi SO. The photo marker + heading are WinAnsi by
+     rule (pdf-item-photos.ts header) — a CJK char there re-fonts every
+     photo-carrying document, which the owner refused on his first print. */
+  await ensurePdfCjkFont(doc, [
+    header, items, payments, fabricDescMap, fabricExtMap,
+  ]);
 
   const pageW = doc.internal.pageSize.getWidth();
   const margin = 14;
@@ -486,13 +546,9 @@ export async function renderSalesOrderInto(
        2. description2 / remark (when present)
        3. specs — fabric code — description / SEAT / LEG (variantLine)
      PWP notes (reward voucher consumed / trigger codes issued) come after. */
-  /* Within a buildKey group the module rows print LEFT-TO-RIGHT (Loo
-     2026-06-12) — the create path persists that order on new SOs; the
-     in-place permute fixes SOs booked before it without moving any other
-     row. */
-  const orderedItems = orderSofaModuleRowsWithinBuilds(
-    [...items].sort((a, b) => groupRank(a.item_group) - groupRank(b.item_group)),
-  );
+  /* orderedItems is computed up top (before drawing) so this table and the
+     ITEM PHOTOS block share ONE row order — the photo chips point at these
+     row numbers. */
   /* Each issued voucher prints ONCE across the whole doc — two lines of the
      same trigger SKU used to repeat the full list under both (SO-2606-013,
      Loo 2026-06-12). */
@@ -511,13 +567,18 @@ export async function renderSalesOrderInto(
        ONCE (the fresh, fabric-expanded `specs` preferred over the stored
        description2) so a split-sofa module line no longer shows SEAT/SPECIAL
        twice (Loo 2026-06-13); it also keeps the legacy remark dedup. */
-    const lines = composeSoLineDescription({
+    const composed = composeSoLineDescription({
       description: it.description ?? it.item_code,
       description2: (it.description2 ?? '').trim(),
       specs: variantLine(it, fabricDescMap, fabricExtMap) ?? '',
       remark: typeof it.remark === 'string' ? it.remark : null,
       notes,
     });
+    /* Owner spec: a row carries NO image — the " (photo)" marker on the first
+       description line points the reader at the ITEM PHOTOS block below. */
+    const lines = photoKeysOf(it.photo_urls).length > 0
+      ? appendPhotoMarker(composed)
+      : composed;
     return [
       String(itIdx + 1),
       it.item_code,
@@ -579,6 +640,24 @@ export async function renderSalesOrderInto(
   // read below picks up the payments table, not this one).
   // Covered by pdf-money-layout.test.ts.
   let ty = ((doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? y) + 6;
+
+  // ── ITEM PHOTOS (owner spec 2026-08) ───────────────────
+  /* One block per document, AFTER the items table and BEFORE the payments
+     ledger. Row-number chips key each group back to the table above; a group
+     never splits across pages (it moves whole, under a continued heading).
+     Absent entirely when no photo actually fetched. */
+  if (photoImages.size > 0) {
+    const photoRes = drawItemPhotosBlock(doc, photoGroups, photoImages, {
+      margin,
+      contentW: pageW - margin * 2,
+      startY: ty,
+      pageBottom: 272,
+      pageTop: margin,
+      side: null,
+      onNewPage: null,
+    });
+    if (photoRes.drew) ty = photoRes.endY + 6;
+  }
 
   // ── PAYMENTS RECEIVED ledger ──────────────────────────────────────
   // Sources transactions from the payments ledger (mfg_sales_order_payments)

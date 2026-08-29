@@ -96,6 +96,10 @@ async function main() {
      colour rides as a label only. */
   const fcRows = await sql`SELECT fabric_id, colour_id, label FROM scm.fabric_colours WHERE company_id = 1`;
   const { findColour } = buildFabricColourIndex(fcRows);
+  // #1998 contract: an unlabelled colour is read only when the library CONFIRMS
+  // the code. The predicate was built for the backfill and the importers never
+  // passed it, so colour-first Desc2 lost even library-known codes.
+  const knownColour = (c) => { const h = findColour(c); return h ? h.colour_id : null; };
   const suppliers = await sql`SELECT id, code FROM scm.suppliers WHERE company_id = 1`;
   const supByCode = new Map(suppliers.map((s) => [norm(s.code), s.id]));
   const whs = await sql`SELECT id, code FROM scm.warehouses WHERE company_id = 1`;
@@ -180,7 +184,15 @@ async function main() {
   for (const [doc, lines] of toCreate) {
     const first = lines[0];
     const supId = supByCode.get(norm(first.CreditorCode)) ?? null;
-    if (!supId) noSupplier++;
+    if (!supId) {
+      /* Same refusal the outstanding-PO import carries. Counting alone let a
+         null supplier_id reach the INSERT and the NOT NULL constraint killed
+         the whole run mid-loop (PO-009555, creditor 400-R002 — docs/bugs/0557).
+         A missing master skips ITS document, loudly, and the rest still land. */
+      noSupplier++;
+      log(`   SKIP ${doc}: supplier ${first.CreditorCode} (${first.CreditorName || "?"}) has no scm.suppliers row — open it, then re-run`);
+      continue;
+    }
     const items = [];
     for (const l of lines) {
       const src = soLineByDtl.get(String(l.FromSODtlKey));
@@ -216,10 +228,10 @@ async function main() {
         const reclOK = ["-1S(R)", "-1A(R)(LHF)", "-1A(P)(LHF)", "-1S(P)"]
           .some((sfx) => codeSet.has((model + sfx).toUpperCase()));
         // the PO's own spec first, then the order it was raised from
-        let ps = parseSofa(l.Desc2, model, reclOK);
+        let ps = parseSofa(l.Desc2, model, reclOK, { knownColour });
         let usedSoText = false;
         if ((ps.conf === "low" || !ps.pieces.length) && src && src.d2) {
-          const alt = parseSofa(src.d2, model, reclOK);
+          const alt = parseSofa(src.d2, model, reclOK, { knownColour });
           if (alt.pieces.length && alt.conf !== "low") { ps = alt; usedSoText = true; }
         }
         const codes = ps.pieces.map((cmp) => `${model}-${cmp}`);

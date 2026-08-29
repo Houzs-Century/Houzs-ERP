@@ -286,3 +286,48 @@ describe('special-order phrase map: the notch family', () => {
         .toBe(`${phrase}: json=${mapped(phrase)} lib=${mapped(phrase)}`);
   });
 });
+
+describe('parse-sofa: the 2026-08 new-style spelling (ERP compartment names, colour-first order)', () => {
+  /* Staff entries from ~SO-0131xx onward write the ERP's own vocabulary —
+     1A(LHF)+C+2A(RHF) — and put the colour FIRST with no COL: label. Every
+     case here is a REAL Desc2 from the 2026-08-28 snapshot that the parser
+     held before it learned the style (round ledger §4c). */
+  const CASES: Array<[string, string, string[], string | null]> = [
+    ['TBC/28”/1A(LHF)+C+2A(RHF)', '9028', ['1A(LHF)', 'CNR', '2A(RHF)'], null],
+    ['TBC/35”/1A(LHF)+1A(RHF)', '8030', ['1A(LHF)', '1A(RHF)'], null],
+    ["2A+1A(28'INCH)/COL:KIV/BOTTOM USE UMBRELLA FABIRC", '8030', ['2A(LHF)', '1A(RHF)'], 'KIV'],
+    ["1A+1A(35'INCH)/COL:BOO315-01/BOTTOM USE UMBRELLA FABIRC", '8030', ['1A(LHF)', '1A(RHF)'], 'BOO315-01'],
+    // colour-first with no label: pieces decode; the colour stays on the
+    // #1998 library-confirmation contract (blank here, no predicate given)
+    ['CH141-11 (SILVER)/28”/1A(LHF)+1NA+1A(RHF)', '9028', ['1A(LHF)', '1NA', '1A(RHF)'], null],
+    ["1B+C TABLE+1A+WOODEN ARM(28'INCH)/COL:GD2502#20", '8060', ['1B(LHF)', 'Console', '1A(RHF)'], 'GD2502#20'],
+    ['2A+L (30”)/Col:B0315-25', '5535', ['2A(LHF)', 'L(RHF)'], 'B0315-25'],
+  ];
+  for (const [d2, model, pieces, colour] of CASES)
+    test(`"${d2}" decodes`, () => {
+      const r = parseSofa(d2, model, false);
+      expect(r.pieces).toEqual(pieces);
+      expect(r.conf).not.toBe('low');
+      if (colour) expect(r.color).toBe(colour);
+      else expect(r.color).toBeNull();
+    });
+
+  test('a bare A-piece in the MIDDLE still holds the line — an arm mid-row is real ambiguity', () => {
+    const r = parseSofa('1A(LHF)+1A+1A(RHF)', '9028', false);
+    expect(r.pieces).toEqual([]);
+    expect(r.conf).toBe('low');
+  });
+
+  test('colour-first + new-style pieces: the library-confirmed path still reads the code', () => {
+    const known = (c: string) => (/^CH141-11$/i.test(c.trim()) ? 'CH141-11' : null);
+    const r = parseSofa('CH141-11 (SILVER)/28”/1A(LHF)+1A(RHF)', '9028', false, { knownColour: known });
+    expect(r.pieces).toEqual(['1A(LHF)', '1A(RHF)']);
+    expect(r.color).toBe('CH141-11');
+  });
+
+  test('colour-first with a code the library does not know decodes its pieces and leaves colour blank', () => {
+    const r = parseSofa('MODENZA-03 (BROWN)/28”/1A(LHF)+1A(RHF)', '8060', false);
+    expect(r.pieces).toEqual(['1A(LHF)', '1A(RHF)']);
+    expect(r.color).toBeNull();
+  });
+});

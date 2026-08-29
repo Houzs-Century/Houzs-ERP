@@ -1,0 +1,47 @@
+name: Repair supplier names (plan/apply)
+
+# Corrects a supplier row whose NAME does not match the AutoCount creditor its
+# CODE points at. Data lives in the script; plan is the default and writes
+# nothing. See backend/scripts/repair-supplier-names.mjs.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [prod, staging]
+      mode:
+        description: "plan (report only) or apply (write)"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: 'apply requires: RENAME SUPPLIER ROWS'
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: repair-supplier-names-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - name: Repair supplier names
+        env:
+          DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          if [ -z "$DATABASE_URL" ]; then echo "DATABASE_URL missing"; exit 2; fi
+          node scripts/repair-supplier-names.mjs

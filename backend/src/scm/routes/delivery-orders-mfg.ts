@@ -32,7 +32,7 @@ import { fetchDoCrewAssignment } from './delivery-planning';
 import { revertDeliveryOrderHandler } from './delivery-order-revert';
 import type { Env, Variables } from '../env';
 import { writeMovements, defaultWarehouseId } from '../lib/inventory-movements';
-import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
+import { dateOrNull, coerceEmptyDates, normalizeEventDay } from '../lib/date-coerce';
 import { allocateAcrossBuckets } from '../lib/bucket-cost-allocation';
 import { doHasDownstream } from '../lib/downstream-lock';
 import { claimedSoItemIdsOnDo, fillMissingSoItemIds } from '../lib/derive-do-so-item-id';
@@ -94,7 +94,7 @@ import { SO_ITEM_FINANCE_KEYS } from '../lib/finance-keys';
 import { freezeShipCost } from '../lib/fulfillment-costing';
 import { validateItemCodes, unknownItemCodeResponse } from '../lib/validate-item-codes';
 import { resolveItemGroups } from '../lib/sku-category';
-import { buildDoItemRow as buildItemRow } from '../lib/do-item-row';
+import { buildDoItemRow as buildItemRow, loadCarriedSoLinePhotos, carriedPhotoUrls } from '../lib/do-item-row';
 import { checkStockAvailability, shortStockResponse, stockCheckableLines, type StockShortage } from '../lib/check-stock-availability';
 import { findSofaLinesWithoutCompleteBatch, sofaNoCompleteBatchResponse, findIncompleteSofaSets, sofaIncompleteSetResponse, detectSofaSoItemIds } from '../lib/sofa-batch-guard';
 import { resolveExpectedBatchBySoItem, buildDropshipOffenders } from '../lib/dropship-batch';
@@ -341,6 +341,8 @@ const DO_FINANCE_KEYS = [
 const ITEM =
   'id, delivery_order_id, so_item_id, item_code, item_group, description, description2, ' +
   'uom, qty, m3_milli, unit_price_sen, discount_sen, line_total_sen, ' +
+  /* Mig 20260828T0746 — SO-carried photo keys; read path: routes/delivery-order-item-photos.ts, carry contract: lib/do-item-row.ts. */
+  'photo_urls, ' +
   'unit_cost_sen, line_cost_sen, line_margin_sen, variants, notes, ' +
   'line_delivery_date, line_delivery_date_overridden, rack_id, created_at, ' +
   /* Mig 0230 — the incoming PO batch this line shipped against before its goods
@@ -2519,15 +2521,6 @@ export async function computeSoLifecycle(
   return out;
 }
 
-/* Bug #10 — normalize a lifecycle event's business date to a single comparable
-   representation. Inputs are a mix of plain 'YYYY-MM-DD' dates and full ISO
-   timestamps; both share the leading 'YYYY-MM-DD', so truncating to the first 10
-   chars yields a stable day-level key that sorts correctly regardless of which
-   form the row carried. (created_at is the tie-breaker, applied separately.) */
-function normalizeEventDay(d: string): string {
-  return (d ?? '').slice(0, 10);
-}
-
 /* Per-DO lifecycle state by "latest event wins" (Wei Siang 2026-05-31). A
    Delivery Order ships on creation, so its baseline badge is 'shipped'. If a
    NON-cancelled Sales Invoice or Delivery Return points back at the DO, the one
@@ -3522,7 +3515,9 @@ deliveryOrdersMfg.post('/', async (c) => {
   const h = header as unknown as { id: string; do_number: string };
 
   if (items.length > 0) {
-    const rows = items.map((it, lineNo) => buildItemRow(h.id, it, lineNo, commitments.get(String(lineNo)) ?? null));
+    // Mig 20260828T0746 — SO-linked lines carry the SO line's photos (contract: lib/do-item-row.ts).
+    const linePhotos = await loadCarriedSoLinePhotos(sb, items as Array<{ soItemId?: unknown }>, (q) => scopeToCompany(q, c));
+    const rows = items.map((it, lineNo) => buildItemRow(h.id, it, lineNo, commitments.get(String(lineNo)) ?? null, linePhotos));
     const { error: iErr } = await sb.from('delivery_order_items').insert(stampCompany(rows, c));
     if (iErr) { await sb.from('delivery_orders').delete().eq('id', h.id); return c.json({ error: 'items_insert_failed', reason: iErr.message }, 500); }
     await recomputeTotals(sb, h.id);
@@ -4035,6 +4030,9 @@ export const createDoFromSoLinesHandler = async (c: Context<{ Bindings: Env; Var
   // 3b. One DO line per pick — qty = the picked qty (NOT the full SO line qty).
   //     Carry cost so margins survive. line_no (0165) = the sortedPicks
   //     position, i.e. the SO's listing order carried onto the DO.
+  // Mig 20260828T0746 — photos ride the convert (contract: lib/do-item-row.ts). scopeToAllowedCompanies,
+  // NOT scopeToCompany: this route's source SOs may belong to the other company (the SOURCE LOAD above).
+  const linePhotos = await loadCarriedSoLinePhotos(sb, sortedPicks, (q) => scopeToAllowedCompanies(q, c));
   const doRows = sortedPicks.map((line, lineNo) => {
     const qty = pickQtyById.get(line.soItemId)!;
     const unit = line.unitPriceSen;
@@ -4049,6 +4047,7 @@ export const createDoFromSoLinesHandler = async (c: Context<{ Bindings: Env; Var
       delivery_order_id: dh.id,
       line_no: lineNo,
       so_item_id: line.soItemId,
+      photo_urls: carriedPhotoUrls(linePhotos, line.soItemId),
       item_code: line.itemCode,
       item_group: itemGroup,
       description: line.description ?? null,
@@ -4715,7 +4714,8 @@ export const addDeliveryOrderItemHandler = async (c: Context<{ Bindings: Env; Va
   const nextLineNo = typeof (maxNoRow as { line_no?: number | null } | null)?.line_no === 'number'
     ? (maxNoRow as { line_no: number }).line_no + 1
     : null;
-  const row = buildItemRow(id, it, nextLineNo, addCommitments.get('add') ?? null);
+  const addPhotos = await loadCarriedSoLinePhotos(sb, [it as { soItemId?: unknown }], (q) => scopeToCompany(q, c));
+  const row = buildItemRow(id, it, nextLineNo, addCommitments.get('add') ?? null, addPhotos);
   const { data, error } = await sb.from('delivery_order_items').insert({ ...row, company_id: activeCompanyId(c) }).select(ITEM).single();
   if (error) return c.json({ error: 'insert_failed', reason: error.message }, 500);
   /* Drop-ship (mig 0057) — once a drop-shipped line is added, stamp the DO so
