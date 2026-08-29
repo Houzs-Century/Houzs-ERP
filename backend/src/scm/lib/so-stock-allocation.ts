@@ -491,7 +491,7 @@ async function runSoStockAllocation(
           line's existing stock_qty_ready — used to compute "did the value
           change". */
     const WH_NONE = 'NOWH';
-    type LineNeed = { id: string; doc_no: string; bucket: string; whId: string | null; need: number; current: string; curReady: number; group: string };
+    type LineNeed = { id: string; doc_no: string; bucket: string; whId: string | null; need: number; current: string; curReady: number; group: string; item_code: string };
     const needs: LineNeed[] = [];
     /* Sofa lines walk the batch-bound path instead of the per-line bucket
        fill. Keep the SKU + variant + remaining so we can check each module's
@@ -532,6 +532,7 @@ async function runSoStockAllocation(
         need: remaining, current: l.stock_status,
         curReady: Number(l.stock_qty_ready ?? 0),
         group: (l.item_group ?? '').toLowerCase(),
+        item_code: l.item_code,
       });
     }
     if (needs.length === 0 && sofaLineRecs.length === 0) return { ok: true, linesFlipped: 0, ordersAdvanced: 0, ordersRegressed: 0 };
@@ -621,8 +622,16 @@ async function runSoStockAllocation(
        Mattress and accessories are common stock: pooling them is correct and
        is what the floor already expects, so they must NOT be diverted. */
     const BOUND_GROUPS = new Set(['bedframe', 'sofa']);
+    /* Owner 2026-08-29: special-order mattresses follow hard binding too —
+       "如果是specialorder的话 也是像bedframe这样指定的 hard binding的". The
+       book's own convention marks them with an (SP) suffix; a made-to-size
+       mattress cannot be served from the standard pool any more than a
+       coloured bedframe can. Standard mattresses stay pooled (his 2026-08-10
+       ruling, unchanged). */
+    const isSpecialOrderMattress = (n: LineNeed) =>
+      n.group === 'mattress' && /\(SP\)\s*$/i.test(n.item_code ?? '');
     const dedicatedReady = new Map<string, number>();
-    const boundNeeds = needs.filter((n) => BOUND_GROUPS.has(n.group));
+    const boundNeeds = needs.filter((n) => BOUND_GROUPS.has(n.group) || isSpecialOrderMattress(n));
     /* Sofa lines were diverted into sofaLineRecs before `needs` was built, so
        for three months this read never saw them and the bound rule the comment
        above NAMES sofa into never fired for sofa — every migrated set with no
