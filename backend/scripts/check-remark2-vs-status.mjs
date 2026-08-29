@@ -38,13 +38,14 @@ async function main() {
   const rows = await sql`
     SELECT h.doc_no, h.remark2, h.status::text AS so_status, to_char(h.processing_date, 'YYYY-MM-DD') AS pdate,
            i.id, i.item_code, i.item_group, i.stock_status, i.qty,
-           i.warehouse_id, COALESCE(i.stock_qty_ready, 0) AS qty_ready,
+           i.warehouse_id, w.name AS wh_name, COALESCE(i.stock_qty_ready, 0) AS qty_ready,
            (i.variants IS NOT NULL AND i.variants::text NOT IN ('null', '{}')) AS has_variants,
            COALESCE(del.dq, 0) AS delivered,
            COALESCE(ded.n, 0) AS dedicated_po_lines,
            COALESCE(ded.recv, 0) AS recv
     FROM scm.mfg_sales_orders h
     JOIN scm.mfg_sales_order_items i ON i.doc_no = h.doc_no AND i.cancelled = false
+    LEFT JOIN scm.warehouses w ON w.id = i.warehouse_id
     LEFT JOIN (
       SELECT d.so_item_id, SUM(d.qty) AS dq
       FROM scm.delivery_order_items d
@@ -195,7 +196,7 @@ async function main() {
       const allNoPo = short.every((l) => BOUND.has((l.item_group || "").toLowerCase()) && Number(l.dedicated_po_lines) === 0);
       classes[allDelivered ? "DELIVERED-STALE" : allNoPo ? "NO-OWN-PO" : "GRANULARITY"].push(doc);
     } else {
-      classes["ALGO-SUSPECT"].push(`${doc} [${o.lines[0].so_status}] <- ${suspects.map((l) => `${l.item_code}[${l.item_group}]${l.stock_status} wh=${l.warehouse_id ?? "NULL"} variants=${l.has_variants ? "YES" : "no"} leftover=${leftover(l)} blankKeyLeftover=${blankLeftover(l)} rawKeyLeftover=${rawLeftover(l)} line=${JSON.stringify(l.item_code)} stock=${spellings(l)}`).slice(0, 3).join(" | ")}`);
+      classes["ALGO-SUSPECT"].push(`${doc} [${o.lines[0].so_status}] <- ${suspects.map((l) => `${l.item_code}[${l.item_group}]${l.stock_status} wh=${l.wh_name ?? l.warehouse_id ?? "NULL"} variants=${l.has_variants ? "YES" : "no"} leftover=${leftover(l)} blankKeyLeftover=${blankLeftover(l)} rawKeyLeftover=${rawLeftover(l)} line=${JSON.stringify(l.item_code)} stock=${spellings(l)}`).slice(0, 3).join(" | ")}`);
     }
   }
   log(`orders where staff wrote a status: ${claimed}`);
@@ -203,7 +204,7 @@ async function main() {
   log(`READY claims that disagree, classified per the owner's protocol:`);
   for (const [cls, docs] of Object.entries(classes)) {
     log(`  ${cls.padEnd(16)} ${docs.length}${cls === "ALGO-SUSPECT" ? "   <-- MUST BE ZERO" : ""}`);
-    for (const d of docs.slice(0, cls === "ALGO-SUSPECT" ? 30 : 6)) log(`     ${d}`);
+    for (const d of docs.slice(0, cls === "ALGO-SUSPECT" ? 40 : 6)) log(`     ${d}`);
     if (docs.length > (cls === "ALGO-SUSPECT" ? 30 : 6)) log(`     ... and ${docs.length - (cls === "ALGO-SUSPECT" ? 30 : 6)} more`);
   }
   await sql.end();
