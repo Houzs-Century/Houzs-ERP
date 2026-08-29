@@ -90,12 +90,30 @@ async function main() {
 
     const disagrees = (claim === "READY" && view !== "ALL-READY" && view !== "NO-STOCK-LINES");
     if (!disagrees) { agree++; continue; }
+    /* PER-LINE attribution (2026-08-29 second cut): the first version classed
+       the whole ORDER by one cause and pushed every mixed order (one line
+       delivered + one line PO-less) into ALGO-SUSPECT — 57 of them, most
+       explained line by line. A short line is LEGITIMATELY unlit when it is
+       already delivered, or it is a bound-group line with no dedicated PO
+       (the owner's hard-binding scope), or it is not a main piece (staff's
+       READY speaks of bedframe/sofa/mattress). An order is ALGO-SUSPECT only
+       if at least one short line has NONE of those causes — and that line is
+       named, so the trace starts at the line, not the order. */
     const short = stock.filter((l) => l.stock_status !== "READY");
-    const allDelivered = short.every((l) => Number(l.delivered) >= Number(l.qty));
-    const allNoPo = short.every((l) => BOUND.has((l.item_group || "").toLowerCase()) && Number(l.dedicated_po_lines) === 0);
-    const mainsReady = stock.filter((l) => MAIN.has((l.item_group || "").toLowerCase())).every((l) => l.stock_status === "READY" || Number(l.delivered) >= Number(l.qty));
-    const cls = allDelivered ? "DELIVERED-STALE" : allNoPo ? "NO-OWN-PO" : mainsReady ? "GRANULARITY" : "ALGO-SUSPECT";
-    classes[cls].push(doc);
+    const suspects = short.filter((l) => {
+      const g = (l.item_group || "").toLowerCase();
+      if (Number(l.delivered) >= Number(l.qty)) return false;          // delivered
+      if (BOUND.has(g) && Number(l.dedicated_po_lines) === 0) return false; // no own PO
+      if (!MAIN.has(g)) return false;                                   // granularity
+      return true;
+    });
+    if (suspects.length === 0) {
+      const allDelivered = short.every((l) => Number(l.delivered) >= Number(l.qty));
+      const allNoPo = short.every((l) => BOUND.has((l.item_group || "").toLowerCase()) && Number(l.dedicated_po_lines) === 0);
+      classes[allDelivered ? "DELIVERED-STALE" : allNoPo ? "NO-OWN-PO" : "GRANULARITY"].push(doc);
+    } else {
+      classes["ALGO-SUSPECT"].push(`${doc} <- ${suspects.map((l) => `${l.item_code}[${l.item_group}]${l.stock_status}`).slice(0, 3).join(" ")}`);
+    }
   }
   log(`orders where staff wrote a status: ${claimed}`);
   for (const [k, n] of [...matrix.entries()].sort((a, b) => b[1] - a[1])) log(`  ${k.padEnd(34)} ${n}`);
