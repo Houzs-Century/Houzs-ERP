@@ -91,6 +91,28 @@ async function main() {
   }
   const leftover = (l) => bucketQty.get(`${l.warehouse_id}|${norm(l.item_code)}`) ?? 0;
   const blankLeftover = (l) => blankBucketQty.get(`${l.warehouse_id}|${norm(l.item_code)}`) ?? 0;
+  /* The allocator buckets by the RAW item_code string. A line and its stock
+     that differ by an invisible space or case match under norm() and never in
+     the engine. rawLeftover uses the exact string; when it reads 0 while
+     blankKeyLeftover is positive, the conviction is a code-string drift and
+     the suspect print quotes both spellings. */
+  const rawBlank = new Map();
+  const stockSpellings = new Map(); // normed -> Set of raw spellings seen in stock
+  for (const b of balRows) {
+    if ((b.vk ?? '') !== '') continue;
+    rawBlank.set(`${b.warehouse_id}|${b.item_code}`, (rawBlank.get(`${b.warehouse_id}|${b.item_code}`) ?? 0) + Number(b.q));
+    const nk = norm(b.item_code);
+    if (!stockSpellings.has(nk)) stockSpellings.set(nk, new Set());
+    stockSpellings.get(nk).add(b.item_code);
+  }
+  for (const r of rows) {
+    if (Number(r.qty_ready) > 0) {
+      const k = `${r.warehouse_id}|${r.item_code}`;
+      if (rawBlank.has(k)) rawBlank.set(k, rawBlank.get(k) - Number(r.qty_ready));
+    }
+  }
+  const rawLeftover = (l) => rawBlank.get(`${l.warehouse_id}|${l.item_code}`) ?? 0;
+  const spellings = (l) => [...(stockSpellings.get(norm(l.item_code)) ?? [])].map((x) => JSON.stringify(x)).join(" / ");
 
   /* The owner's 2026-08-29 protocol (「甲」): the system's computed status is
      the truth; a difference from the hand-written Remark2 is only an ALGORITHM
@@ -155,7 +177,7 @@ async function main() {
       const allNoPo = short.every((l) => BOUND.has((l.item_group || "").toLowerCase()) && Number(l.dedicated_po_lines) === 0);
       classes[allDelivered ? "DELIVERED-STALE" : allNoPo ? "NO-OWN-PO" : "GRANULARITY"].push(doc);
     } else {
-      classes["ALGO-SUSPECT"].push(`${doc} <- ${suspects.map((l) => `${l.item_code}[${l.item_group}]${l.stock_status} wh=${l.warehouse_id ?? "NULL"} variants=${l.has_variants ? "YES" : "no"} leftover=${leftover(l)} blankKeyLeftover=${blankLeftover(l)}`).slice(0, 3).join(" | ")}`);
+      classes["ALGO-SUSPECT"].push(`${doc} <- ${suspects.map((l) => `${l.item_code}[${l.item_group}]${l.stock_status} wh=${l.warehouse_id ?? "NULL"} variants=${l.has_variants ? "YES" : "no"} leftover=${leftover(l)} blankKeyLeftover=${blankLeftover(l)} rawKeyLeftover=${rawLeftover(l)} line=${JSON.stringify(l.item_code)} stock=${spellings(l)}`).slice(0, 3).join(" | ")}`);
     }
   }
   log(`orders where staff wrote a status: ${claimed}`);
