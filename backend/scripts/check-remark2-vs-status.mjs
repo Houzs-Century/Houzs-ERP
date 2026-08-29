@@ -36,7 +36,8 @@ function classifyClaim(r) {
 
 async function main() {
   const rows = await sql`
-    SELECT h.doc_no, h.remark2, i.id, i.item_code, i.item_group, i.stock_status, i.qty,
+    SELECT h.doc_no, h.remark2, to_char(h.processing_date, 'YYYY-MM-DD') AS pdate,
+           i.id, i.item_code, i.item_group, i.stock_status, i.qty,
            i.warehouse_id, COALESCE(i.stock_qty_ready, 0) AS qty_ready,
            COALESCE(del.dq, 0) AS delivered,
            COALESCE(ded.n, 0) AS dedicated_po_lines,
@@ -98,7 +99,7 @@ async function main() {
   const MAIN = new Set(["bedframe", "sofa", "mattress"]);
   const BOUND = new Set(["bedframe", "sofa"]);
   const matrix = new Map();
-  const classes = { "DELIVERED-STALE": [], "NO-OWN-PO": [], GRANULARITY: [], "ALGO-SUSPECT": [] };
+  const classes = { "DELIVERED-STALE": [], "NO-OWN-PO": [], GRANULARITY: [], "GATED-NO-PDATE": [], "ALGO-SUSPECT": [] };
   let claimed = 0, agree = 0;
   for (const [doc, o] of byDoc) {
     const claim = classifyClaim(o.remark2);
@@ -120,6 +121,10 @@ async function main() {
        READY speaks of bedframe/sofa/mattress). An order is ALGO-SUSPECT only
        if at least one short line has NONE of those causes — and that line is
        named, so the trace starts at the line, not the order. */
+    /* the allocator skips whole orders without a processing date (its own
+       gate, by design — MRP runs on processed orders). Dark lines on such an
+       order are the gate speaking, not the algorithm failing. */
+    if (!o.lines[0].pdate) { classes["GATED-NO-PDATE"].push(doc); continue; }
     const short = stock.filter((l) => l.stock_status !== "READY");
     const suspects = short.filter((l) => {
       const g = (l.item_group || "").toLowerCase();
