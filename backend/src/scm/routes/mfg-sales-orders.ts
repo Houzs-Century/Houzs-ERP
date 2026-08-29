@@ -249,7 +249,7 @@ import {
   type SoCreatePayment,
 } from '../lib/so-create-payment-slips';
 import { pickCrossCategoryMatch, type AutoMatchCandidate } from '../lib/cross-category-match';
-import { recomputeSoStockAllocation } from '../lib/so-stock-allocation';
+import { recomputeSoStockAllocation, isHardBoundLine } from '../lib/so-stock-allocation';
 import { snapshotSoLineLinks, planSoLineRelink, applySoLineRelink } from '../lib/so-line-relink';
 import { advanceSoGeneration } from '../lib/so-generation';
 import { creditFromCancelledSo, getCustomerCreditBalance } from '../lib/customer-credits';
@@ -1676,7 +1676,10 @@ mfgSalesOrders.get('/', async (c) => {
        client overlays stock_remark / is_main_ready / planning_state then. Not
        running computeMrp here is the whole point of the deferral. */
     const readinessByDoc = new Map<string, ReturnType<typeof summariseReadiness>>();
-    const linesByDoc = readinessLinesByDoc(itemRows, null);
+    /* Third argument null: the list first-paint reads the payment-totals VIEW
+       (frozen column set, no processing_date) — and with null coverage the
+       promotion arm cannot fire anyway, so "cannot say" is exact. */
+    const linesByDoc = readinessLinesByDoc(itemRows, null, null);
     attachLineCategories(linesByDoc.values(), productCategory);
     for (const [docNo, ls] of linesByDoc) readinessByDoc.set(docNo, summariseReadiness(ls));
 
@@ -2896,7 +2899,19 @@ mfgSalesOrders.get('/:docNo', async (c) => {
          set when an outstanding PO covers the line, so the UI shows PO·ETA. */
       stock_state: stockState,
       // What the PILL renders, decided here so it and the board agree (§0.4).
-      stock_status_effective: effectiveLineStockStatus((it as { stock_status?: string | null }).stock_status ?? null, stockState as LiveStockState),
+      // Gated (2026-08-30): no processing date, or a hard-bound line, and the
+      // live-'stock' promotion is off — the stored engine verdict stands.
+      stock_status_effective: effectiveLineStockStatus(
+        (it as { stock_status?: string | null }).stock_status ?? null,
+        stockState as LiveStockState,
+        {
+          orderProcessed: !!(h.data as { processing_date?: string | null }).processing_date,
+          lineHardBound: isHardBoundLine(
+            (it as { item_group?: string | null }).item_group ?? null,
+            (it as { item_code?: string | null }).item_code ?? null,
+          ),
+        },
+      ),
       coverage_po: covered ? cov?.po ?? null : null,
       coverage_eta: covered ? cov?.eta ?? null : null,
       /* Source PO(s) the delivered goods actually shipped from (from the DO OUT
@@ -2962,9 +2977,10 @@ mfgSalesOrders.get('/:docNo', async (c) => {
 mfgSalesOrders.get('/:docNo/items', async (c) => {
   const sb = c.get('supabase'); const docNo = c.req.param('docNo');
   const [h, i] = await Promise.all([
-    // Header read is company-scoped + minimal — we only need it to exist +
-    // resolve salesperson_id for the same self-scoped-sales gate the detail uses.
-    scopeToCompany(sb.from('mfg_sales_orders').select('doc_no, salesperson_id').eq('doc_no', docNo), c).maybeSingle(),
+    // Header read is company-scoped + minimal — we only need it to exist,
+    // resolve salesperson_id for the same self-scoped-sales gate the detail
+    // uses, and carry processing_date for the promotion gate below.
+    scopeToCompany(sb.from('mfg_sales_orders').select('doc_no, salesperson_id, processing_date').eq('doc_no', docNo), c).maybeSingle(),
     // Same ITEM select + line_no ordering as the detail (nulls last → pre-0165
     // fallback to created_at, then the rule re-order below).
     sb.from('mfg_sales_order_items').select(ITEM).eq('doc_no', docNo)
@@ -3033,7 +3049,19 @@ mfgSalesOrders.get('/:docNo/items', async (c) => {
       remaining_qty: rem?.remaining ?? Number(it.qty ?? 0),
       stock_state: stockState,
       // What the PILL renders, decided here so it and the board agree (§0.4).
-      stock_status_effective: effectiveLineStockStatus((it as { stock_status?: string | null }).stock_status ?? null, stockState as LiveStockState),
+      // Gated (2026-08-30): no processing date, or a hard-bound line, and the
+      // live-'stock' promotion is off — the stored engine verdict stands.
+      stock_status_effective: effectiveLineStockStatus(
+        (it as { stock_status?: string | null }).stock_status ?? null,
+        stockState as LiveStockState,
+        {
+          orderProcessed: !!(h.data as { processing_date?: string | null }).processing_date,
+          lineHardBound: isHardBoundLine(
+            (it as { item_group?: string | null }).item_group ?? null,
+            (it as { item_code?: string | null }).item_code ?? null,
+          ),
+        },
+      ),
       coverage_po: covered ? cov?.po ?? null : null,
       coverage_eta: covered ? cov?.eta ?? null : null,
       shipped_source_pos: shippedPos,

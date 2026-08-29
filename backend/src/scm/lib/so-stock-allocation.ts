@@ -61,6 +61,28 @@ import { enqueueStockAllocationRecompute } from './stock-allocation-queue';
 import { SO_TERMINAL_STATES_PGREST } from '../shared/so-terminal-states';
 import { SO_PROCESSING_DATE_COLUMN } from '../shared/so-processing-date';
 
+/* Only the variant-bearing categories run bound. Owner 2026-08-10:
+   "SOFA 和 BEDFRAME 因为有变体的问题,所以要走 Convert to PO 的那个模式.
+    可是 MATTRESS 跟 Accessories 都是没有变体的 ... 走回我们正常 MRP 的模式".
+   Owner 2026-08-29: special-order mattresses follow hard binding too —
+   "如果是specialorder的话 也是像bedframe这样指定的 hard binding的"; the book's
+   own convention marks them with an (SP) suffix. Standard mattresses stay
+   pooled (the 2026-08-10 ruling, unchanged).
+
+   EXPORTED because the rule now has two consumers and they must not drift:
+   this engine's bound-needs filter, and the display union's promotion gate
+   (so-line-effective-stock.ts) — a hard-bound line's live-MRP 'stock' verdict
+   is variant-blind and must never promote it (HC-SO-013367, 2026-08-30). */
+const HARD_BOUND_GROUPS = new Set(['bedframe', 'sofa']);
+export function isHardBoundLine(
+  itemGroup: string | null | undefined,
+  itemCode: string | null | undefined,
+): boolean {
+  const g = (itemGroup ?? '').toLowerCase();
+  if (HARD_BOUND_GROUPS.has(g)) return true;
+  return g === 'mattress' && /\(SP\)\s*$/i.test(itemCode ?? '');
+}
+
 export type AllocationResult = {
   ok: boolean;
   linesFlipped: number;
@@ -616,22 +638,13 @@ async function runSoStockAllocation(
            variant first, then the blank-variant bucket the migration created),
            so a dedicated receipt can never be counted twice — once for its own
            SO here, and again for somebody else's line in the pooled walk below. */
-    /* Only the variant-bearing categories run bound. Owner 2026-08-10:
-       "SOFA 和 BEDFRAME 因为有变体的问题,所以要走 Convert to PO 的那个模式.
-        可是 MATTRESS 跟 Accessories 都是没有变体的 ... 走回我们正常 MRP 的模式".
-       Mattress and accessories are common stock: pooling them is correct and
-       is what the floor already expects, so they must NOT be diverted. */
-    const BOUND_GROUPS = new Set(['bedframe', 'sofa']);
-    /* Owner 2026-08-29: special-order mattresses follow hard binding too —
-       "如果是specialorder的话 也是像bedframe这样指定的 hard binding的". The
-       book's own convention marks them with an (SP) suffix; a made-to-size
-       mattress cannot be served from the standard pool any more than a
-       coloured bedframe can. Standard mattresses stay pooled (his 2026-08-10
-       ruling, unchanged). */
-    const isSpecialOrderMattress = (n: LineNeed) =>
-      n.group === 'mattress' && /\(SP\)\s*$/i.test(n.item_code ?? '');
+    /* Which lines run bound is `isHardBoundLine` (module top) — one home for
+       the two owner rulings (2026-08-10 bedframe/sofa, 2026-08-29 (SP)
+       mattresses), shared with the display union's promotion gate. Mattress
+       and accessories are common stock: pooling them is correct and is what
+       the floor already expects, so they must NOT be diverted. */
     const dedicatedReady = new Map<string, number>();
-    const boundNeeds = needs.filter((n) => BOUND_GROUPS.has(n.group) || isSpecialOrderMattress(n));
+    const boundNeeds = needs.filter((n) => isHardBoundLine(n.group, n.item_code));
     /* Sofa lines were diverted into sofaLineRecs before `needs` was built, so
        for three months this read never saw them and the bound rule the comment
        above NAMES sofa into never fired for sofa — every migrated set with no
