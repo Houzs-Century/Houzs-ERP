@@ -77,15 +77,21 @@ mfgSalesOrdersListEnrichment.get('/list-mrp-enrichment', async (c) => {
      visibility filter, in one read. Only docs that survive company + sales
      scope are returned, so a spoofed doc_no yields nothing. */
   const headers = new Map<string, EnrichmentHeader>();
+  /* The first promotion gate for the readiness rollup: which of these orders
+     carry a processing date (readinessLinesByDoc suppresses the live-'stock'
+     promotion on the rest — the allocator refuses to allocate to them, so the
+     enrichment must not light them either; HC-SO-013367, 2026-08-30). */
+  const processedDocs = new Set<string>();
   {
     const { data, error } = await chunkIn<{
       doc_no: string; status: string | null;
       delivery_state?: string | null; deliveryState?: string | null;
       amended_delivery_date?: string | null; amendedDeliveryDate?: string | null;
       customer_delivery_date?: string | null; customerDeliveryDate?: string | null;
+      processing_date?: string | null; processingDate?: string | null;
     }>(docNos, (batch, from, to) => {
       let q = sb.from('mfg_sales_orders')
-        .select('doc_no, status, delivery_state, amended_delivery_date, customer_delivery_date')
+        .select('doc_no, status, delivery_state, amended_delivery_date, customer_delivery_date, processing_date')
         .in('doc_no', batch);
       if (scopeIds) q = q.in('salesperson_id', scopeIds);
       return scopeToCompany(q, c).order('doc_no').range(from, to);
@@ -95,6 +101,7 @@ mfgSalesOrdersListEnrichment.get('/list-mrp-enrichment', async (c) => {
       const override = r.deliveryState ?? r.delivery_state ?? null;
       const amendedDD = r.amendedDeliveryDate ?? r.amended_delivery_date ?? null;
       const customerDD = r.customerDeliveryDate ?? r.customer_delivery_date ?? null;
+      if (r.processingDate ?? r.processing_date) processedDocs.add(r.doc_no);
       headers.set(r.doc_no, {
         status: r.status ?? null,
         storedOverride: override,
@@ -189,6 +196,7 @@ mfgSalesOrdersListEnrichment.get('/list-mrp-enrichment', async (c) => {
     delivered,
     remaining,
     today: todayMyt(),
+    processedDocs,
   });
 
   return c.json({ enrichment: Object.fromEntries(enrichment) });

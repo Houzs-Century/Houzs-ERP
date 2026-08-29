@@ -483,19 +483,38 @@ not following the rule I set". It is one: two engines, one screen.
 ### `stock_status_effective` — the verdict BOTH surfaces answer from
 
 `backend/src/scm/lib/so-line-effective-stock.ts`. `effectiveLineStockStatus(storedStatus,
-liveState)`, a UNION:
+liveState, gates)`, a UNION whose promotion arm is GATED (2026-08-30):
 
 | stored | live | effective | why |
 |---|---|---|---|
-| `PENDING` | `stock` | **READY** | the stale-projection case — the goods are physically there |
-| `READY` | `shortage` / `po` | **READY** | the allocator knows BOUND MODE and dye-lot batches; MRP structurally cannot see either |
+| `PENDING` | `stock` (gates open) | **READY** | the stale-projection case — the goods are physically there |
+| `PENDING` | `stock` (either gate closed) | `PENDING` | see the two gates below — the live verdict is answering a different question |
+| `READY` | anything | **READY** | the allocator knows BOUND MODE and dye-lot batches; MRP structurally cannot see either. The gates never veto a stored READY |
 | `PENDING` | `po` / `shortage` | `PENDING` | an incoming PO is not stock |
-| `PARTIAL` | anything but `stock` | `PARTIAL` | |
+| `PARTIAL` | anything but gates-open `stock` | `PARTIAL` | |
 | anything | `null` | the stored value | MRP had no verdict, or `computeMrp` threw — fail-soft to the pre-2026-08-17 behaviour exactly |
 
+**The two promotion gates** (`gates: { orderProcessed, lineHardBound } | null`,
+bug `docs/bugs/0569-the-display-union-promoted-pending-lines-to-ready-past-the-p.md`,
+owner report HC-SO-013367):
+
+1. `orderProcessed` — the order carries a processing date. The allocator refuses
+   to allocate to a date-less order (`allocGated`, "no processing date = the
+   goods are not needed yet"), so the display must not light one either. This is
+   how "accessories Ready" appeared on an order with no dates.
+2. `lineHardBound` — `isHardBoundLine(item_group, item_code)` from
+   `so-stock-allocation.ts`, the allocator's OWN bound predicate (bedframe /
+   sofa / `(SP)` special-order mattress). Those buckets key on the VARIANT; MRP
+   pools by SKU and is variant-blind, so its `stock` can be migrated blank-variant
+   units the line's colour can never be served from. JAGER-(Q) read READY with
+   no processing date, no linked PO and no matching stock — both gates open.
+
 Neither engine may VETO the other; a line is short only when both say so. `null`
-is a REQUIRED argument, not an omitted one — a new caller has to type it and
-thereby say the stored value is standing alone.
+is a REQUIRED argument on all three parameters, not an omitted one — a caller
+with no MRP result types `liveState: null` (the stored value stands), and a
+caller that cannot establish the gate context types `gates: null`, which fails
+in the STRICT direction: the promotion arm is off, the stored value still
+stands.
 
 Where it is used:
 
