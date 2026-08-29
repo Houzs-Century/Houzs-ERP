@@ -452,8 +452,13 @@ describe("the owner's chain for a code no sales order can disambiguate", () => {
        the wrong-alphabet scenario cannot be built from committed data any
        more. Rule 3's positive case stays pinned by the HB709NL test above;
        THIS test now pins the healed state instead: the ARCTIC family resolves
-       to itself, one candidate, no merge. */
-    const r = resolveAcItemCode('DL-CS2 ARCTIC DREAM MATT (K)', {});
+       to itself, one candidate, no merge.
+
+       2026-08-30: the ERP side of the row was renamed to the family long name
+       (scripts/rename-new-code-rows.mjs, this PR), so the INPUT here follows
+       it. The pinned ANSWER does not move — the book's Item master holds
+       'DL-CS2 ARCTIC DREAM (K)', measured live (no MATT in the AC code). */
+    const r = resolveAcItemCode('DUNLOPILLO COOLSILK 2.0 ARCTIC DREAM MATT (K)', {});
     expect(r.ok).toBe(true);
     if (r.ok) {
       expect(r.acItemCode).toBe('DL-CS2 ARCTIC DREAM (K)');
