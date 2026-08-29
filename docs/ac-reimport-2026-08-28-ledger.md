@@ -403,3 +403,43 @@ Owner 连环三问(顺序?location?SP?)逼出最终拼图。逐一验毕:
 **转接层修复实录**:保存点连坐死症根治(#2791:六路并发下 RELEASE 连带后续保存点;
 串行化triads + shim 长出带测试的 upsert);借道重放随即撞出第二层(嵌套查询,设计域外),
 留 0562 排期;Worker 生产路全程无恙。
+
+## 4m. 2026-08-30 owner 三连问 + 全书关系互验round(记录=owner 五令)
+
+**Owner 三问,全部以账本原始行答毕(probe-owner-docs.py,只读 pyodbc):**
+
+1. **「沙发单全是 1S 1S?」** 账本沙发座位组成写在 Desc2 自由文本;上轮 547 行沙发
+   拆件 444 成功、103 行按「绝不猜件」落 `{型号}-1S` 占位(remark 带 SOFA UNPARSED
+   原文)。103 = **46 行账本根本没写组成**(HC-SO-013384/5 属此类,颜色/特制均已抽到,
+   截图可见)+ **~57 行解析词汇缺口**。词汇修复 #2797(11 个金标全用真账本行,先红后
+   绿 82/82;语料 71/71 未动):带数字的特制长词(HEADRESTCHANGETO8030 等)改判「随行
+   特制」不再杀段;新增 1Console→1CT、1EFL/R、1R(P)、字母开头括号标题、1B/S seater、
+   孤儿尺寸、型号随行、fabric 库确认的颜色 token。实测新解析器可机器救回 **~8 行**
+   (008166/010015/010324/011530/012695/013226/013329/013121);其余 ~95 行账本真没写,
+   要人看图补——名单待下轮导入 run 的解码日志出权威版后交 owner(补法二选一:门市在
+   ERP 补,或账本补写后 resync 自动拆)。「1 ELT」歧义行的**拒绝**金标保住(开发中
+   一度被裸 NA 臂破坏,当场撤臂)。
+2. **「HC-SO-013338 好像送了,确定没 DO?」** 账本本身 DO=0、IV=0、TransferedQty=0
+   (PROVEN)。不是漏抓——若货已实交,是门市没在 AutoCount 开单;下轮同步一开即跟进。
+3. **「JAGER 没 PO 怎么 BedFrame ready?我们不是 hard binding?」+「没 processing
+   date 怎么分配 accessories?」** 账本确实没有任何 PO 绑 SO-013367(0 行)——「未关
+   联」显示忠实;亮灯是**显示合成层**越过引擎的两道闸:合成规则把「MRP 说有货」直升
+   READY,而 MRP 按 SKU 合池,看不见 processing-date 闸(allocGated)也看不见按变体
+   bucket 的 hard binding(70 件空变体 JAGER 老库存对不上有变体的行)。修复 #2796:
+   `effectiveLineStockStatus` 第三参数 gates 必填(无日期不升格;床架/沙发/SP 床垫
+   不靠 MRP 升格;存储 READY 永不被否),绑定判定 `isHardBoundLine` 从引擎导出共用,
+   先红(6 失败)后绿,全套 532/533(唯一失败=既有 doStockLeavesOnConfirm 钉,主干
+   同样红,另有任务卡)。bug 0569/0570 入册。付款题再答:5,199 = 10,399 − 5,200,
+   余额=还欠,数字对。
+
+**「不要只看一张 SO,全书互验、缺的补齐、全部可重跑」→ 本轮动作:**
+- 新工具 `check-ac-erp-doc-links.mjs` + workflow(只读):账本关系图 vs ERP 关系图
+  双向核对(五类单在册、SO→PO 行级绑定两个方向、DO 认父、账本已开票 ERP 还活着),
+  快照 >2 天自拒;入手册阶段 4 第 18 条,backlog=0 为合格,非 0 即下轮补课名单。
+- 手册照跑:阶段 0 三导出全新鲜(02:36-38;SO 2,750 / lane2 444 / DO 73 单 316 行 /
+  库存非零 1,086 格 / Remark2 413;invoice-refs grToPi 5,217 / doToIv 10,396;价单
+  控制组 98.3% agree)。corpus+item-map 重生成后 test:light 532/533,**零重钉**。
+- 半路修一桩:#2794(14 短名改长名)卡在 ARCTIC 钉——CSV 改的是 ERP 侧名(对),
+  测试输入还喂旧 ERP 名。账本 Item 主档实测 `DL-CS2 ARCTIC DREAM (K)`(无 MATT),
+  钉的答案不动、输入跟改名走;顺手两次本地并主干解 BEHIND。旧看守链(bztiny1vp)
+  零输出 >1.5h,按监管规则接管击杀,步骤改为本人直驱。
