@@ -451,6 +451,83 @@ export type ReceiptInput = {
 };
 
 /** Every credit recorded against a batch, oldest first, with what is left. */
+/** Take a confirmed line back out of the ledger — the door the ignore
+    refusal has pointed at since layer 3 shipped ("This line is already in the
+    ledger. Reverse its journal entry instead.") without any screen being able
+    to perform it. The owner asked for cancel-ability before his first real
+    upload (2026-08-27: 上传了能cancel 掉?).
+
+    Mirror of undoBatchReceipt one function down: reverse the fee entry
+    (SETTLE-{rowId} — a fee-free line posted nothing and reverses nothing),
+    release the payment links so the money is claimable again, and send the
+    row back to NEEDS_CONFIRM for a fresh human decision — never silently back
+    to MATCHED, because whatever prompted the undo may also mean the old match
+    was the mistake.
+
+    REFUSED while the statement has money recorded received: the receipts were
+    taken against the batch's confirmed payable, and pulling a row out from
+    under them would leave credits explaining themselves with arithmetic that
+    no longer exists. Undo the credits first — they have their own button. */
+export async function unconfirmSettlementRow(
+  sb: any,
+  companyId: number,
+  rowId: number,
+): Promise<{ ok: true; status: 'unconfirmed'; jeNo?: string } | { ok: false; status: string; reason: string }> {
+  const { data: rowRaw, error } = await sb
+    .from('acc_settlement_rows')
+    .select('id, batch_id, acquirer_code, txn_date, ref, bucket, confirmed_at, posted_je_no')
+    .eq('id', rowId).eq('company_id', companyId).maybeSingle();
+  if (error) return { ok: false, status: 'load_failed', reason: error.message };
+  if (!rowRaw) return { ok: false, status: 'not_found', reason: `settlement line ${rowId} not found` };
+  const row = rowRaw as {
+    id: number; batch_id: number; acquirer_code: string; txn_date: string; ref: string | null;
+    bucket: string; confirmed_at: string | null; posted_je_no: string | null;
+  };
+  if (!row.confirmed_at) {
+    return { ok: false, status: 'not_confirmed', reason: 'This line is not in the ledger — there is nothing to take back.' };
+  }
+
+  const { data: receiptsRaw, error: rcErr } = await sb
+    .from('acc_settlement_receipts')
+    .select('id')
+    .eq('batch_id', row.batch_id).eq('company_id', companyId).limit(1);
+  if (rcErr) return { ok: false, status: 'load_failed', reason: rcErr.message };
+  if (((receiptsRaw ?? []) as unknown[]).length > 0) {
+    return {
+      ok: false, status: 'has_receipts',
+      reason: 'Money is already recorded received against this statement. Undo those credits on the bank side first, then take this line back.',
+    };
+  }
+
+  if (row.posted_je_no) {
+    const reversed = await reverseJournal(sb, {
+      sourceType: 'SETTLE',
+      sourceDocNo: `SETTLE-${row.id}`,
+      companyId,
+      entryDate: isoDay(row.txn_date),
+      narration: (orig: { je_no: string }) => `Reversal of ${orig.je_no} — the confirmation was taken back`,
+    });
+    if (!reversed.ok) return { ok: false, status: reversed.status, reason: reversed.reason ?? 'the reversal was refused' };
+  }
+
+  /* Links go AFTER the reversal held: releasing the payments while the fee
+     entry still stands would let the same money confirm twice against one
+     booked fee. */
+  const { error: delErr } = await sb.from('acc_settlement_matches').delete().eq('settlement_row_id', row.id);
+  if (delErr) {
+    return { ok: false, status: 'unlink_failed', reason: `${delErr.message} (the entry WAS reversed — press undo again to finish releasing the payments)` };
+  }
+
+  const { error: upErr } = await sb
+    .from('acc_settlement_rows')
+    .update({ confirmed_at: null, posted_je_no: null, bucket: 'NEEDS_CONFIRM', match_reason: null })
+    .eq('id', row.id).eq('company_id', companyId);
+  if (upErr) {
+    return { ok: false, status: 'update_failed', reason: `${upErr.message} (entry reversed and payments released — press undo again to finish the row)` };
+  }
+  return { ok: true, status: 'unconfirmed' };
+}
+
 export async function loadBatchReceipts(
   sb: any,
   companyId: number,

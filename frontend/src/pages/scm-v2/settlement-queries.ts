@@ -325,6 +325,19 @@ export const useConfirmSettlementRow = () => {
   });
 };
 
+/* The door the ignore refusal points at: reverse the fee entry, release the
+   payments, send the row back to the deciding pile. Same invalidations as
+   confirming — the ledger moved, just in the other direction. */
+export const useUnconfirmSettlementRow = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (rowId: number) => authedFetch<{ ok: boolean; reversalJeNo?: string }>(
+      `/accounting/settlement/rows/${rowId}/unconfirm`, { method: 'POST', body: '{}' },
+    ),
+    onSuccess: () => invalidateAfterPosting(qc),
+  });
+};
+
 export const useConfirmMatched = () => {
   const qc = useQueryClient();
   return useMutation({
