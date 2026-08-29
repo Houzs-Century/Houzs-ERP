@@ -458,7 +458,7 @@ Values: `'stock' | 'po' | 'shortage' | null`.
 | Line kind | Rule |
 |---|---|
 | SERVICE (`isServiceLine`) | always `'stock'` — a service carries no inventory, so it is inherently available |
-| SOFA | `stock_status === 'READY' ? 'stock' : (MRP says po ? 'po' : 'shortage')` — sofa coverage is decided by the batch-aware allocator, because MRP does not know about dye lots |
+| SOFA | `stock_status === 'READY' ? 'stock' : (MRP says po ? 'po' : 'shortage')` — sofa coverage is decided by the batch-aware allocator, because MRP does not know about dye lots. Since 2026-08-29 that allocator answers in two steps: a single covering dye lot wins and stamps `allocated_batch_no`; with NO covering lot, the owner's hard binding takes over — a piece whose OWN converted PO has received lights `min(received, need)` per line, batch left null for the operator to pick at dispatch. Until then sofa lines never reached bound mode at all (docs/bugs/0565): they were diverted to the batch pass before `needs` was built, and every migrated set without an exact-multiset lot sat PENDING with its PO fully received |
 | everything else | `cov?.source ?? null` — **whatever MRP says**, with no reference to the stored column at all |
 
 **So for a non-sofa, non-service line, `stock_state` and `stock_status` are
