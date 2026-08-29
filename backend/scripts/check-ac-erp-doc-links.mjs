@@ -101,8 +101,15 @@ const erpPoItems = await sql`SELECT i.id, i.linked_ac_dtlkey, i.so_item_id, p.li
 const poLineByDtlkey = new Map(erpPoItems.filter((r) => r.linked_ac_dtlkey != null).map((r) => [String(r.linked_ac_dtlkey), r]));
 const erpDo = await sql`SELECT do_number, so_doc_no, linked_ac_docno FROM scm.delivery_orders WHERE company_id=${CO} AND linked_ac_docno IS NOT NULL`;
 const erpDoByAc = new Map(erpDo.map((r) => [trim(r.linked_ac_docno), r]));
-const erpGr = await sql`SELECT id, linked_ac_docno FROM scm.grns WHERE company_id=${CO} AND linked_ac_docno IS NOT NULL`;
-const erpGrByAc = new Map(erpGr.map((r) => [trim(r.linked_ac_docno), r]));
+/* GRN mirrors carry the PO's AC number in linked_ac_docno; the AC GR numbers
+   live on the PO row (stamp-ac-grn-refs writes purchase_orders.
+   linked_ac_grn_docnos) and inside the grn_number itself (HC-<GrNo>[-<PoNo>]).
+   Match book GrNos against the stamped array — the first run of this check
+   matched against grns.linked_ac_docno and reported all 216 as missing. */
+const erpPoGrStamps = await sql`SELECT linked_ac_grn_docnos FROM scm.purchase_orders
+  WHERE company_id=${CO} AND linked_ac_grn_docnos IS NOT NULL`;
+const erpGrByAc = new Map();
+for (const r of erpPoGrStamps) for (const g of r.linked_ac_grn_docnos ?? []) erpGrByAc.set(trim(g), r);
 const erpPi = await sql`SELECT id, linked_ac_docno FROM scm.purchase_invoices WHERE company_id=${CO} AND linked_ac_docno IS NOT NULL`;
 const erpPiByAc = new Map(erpPi.map((r) => [trim(r.linked_ac_docno), r]));
 const erpSi = await sql`SELECT id, linked_ac_docno FROM scm.sales_invoices WHERE company_id=${CO} AND linked_ac_docno IS NOT NULL`;
@@ -112,30 +119,41 @@ const listSome = (arr, n = 15) => arr.slice(0, n).join(", ") + (arr.length > n ?
 let backlog = 0;
 
 // A. document coverage, book → ERP (missing = the next resync's import list)
-for (const [label, bookSet, erpMap] of [
-  ["SO", bookSoDocs, erpSoByAc],
-  ["PO", bookPoDocs, erpPoByAc],
-  ["DO", new Set(bookDoDocs.keys()), erpDoByAc],
-  ["GR", new Set(bookGrDocs.keys()), erpGrByAc],
-  ["PI", new Set(bookPiDocs.keys()), erpPiByAc],
+for (const [label, bookSet, erpMap, note] of [
+  ["SO", bookSoDocs, erpSoByAc, ""],
+  ["PO", bookPoDocs, erpPoByAc, ""],
+  ["DO", new Set(bookDoDocs.keys()), erpDoByAc,
+   " (a DO the mirror creator's duplicate-guard refused — no unclaimed SO line left — is deliberate; check its plan log before treating this as a gap)"],
+  ["GR", new Set(bookGrDocs.keys()), erpGrByAc, ""],
+  ["PI", new Set(bookPiDocs.keys()), erpPiByAc,
+   " (a PI the exact-amount lane REFUSED — cross-scope or amount-differs — is the owner's standing decision list, not an import gap; create-migrated-invoices dry names each)"],
 ]) {
   const missing = [...bookSet].filter((d) => !erpMap.has(d));
   backlog += missing.length;
-  console.log(`${label}: book ${bookSet.size}, in ERP ${bookSet.size - missing.length}, MISSING ${missing.length}${missing.length ? " -> " + listSome(missing) : ""}`);
+  console.log(`${label}: book ${bookSet.size}, in ERP ${bookSet.size - missing.length}, MISSING ${missing.length}${missing.length ? " -> " + listSome(missing) + note : ""}`);
 }
 
 // B. SO→PO line edges, both directions
 {
-  let ok = 0; const missEdge = []; const halfLinked = [];
+  let ok = 0; const missEdge = []; const missSofa = []; const halfLinked = [];
   for (const e of bookEdges) {
     const poLine = poLineByDtlkey.get(String(e.DtlKey));
     const soIds = soLineByDtlkey.get(String(e.FromSODtlKey));
-    if (!poLine || !soIds) { missEdge.push(`${trim(e.DocNo)}#${e.DtlKey}(line not imported)`); continue; }
+    if (!poLine || !soIds) {
+      /* Sofa SET lines are piece-SPLIT (or placeholder'd) on the ERP side, and
+         the sofa line-key backfill honestly skips ambiguous groups — a sofa
+         edge landing here is that representation difference, not a lost link.
+         repair-dedication-from-autocount is the lane that resolves the rest. */
+      (/\bSOFA\b/i.test(e.ItemCode ?? "") ? missSofa : missEdge)
+        .push(`${trim(e.DocNo)}#${e.DtlKey}(line not imported)`);
+      continue;
+    }
     if (poLine.so_item_id && soIds.includes(poLine.so_item_id)) ok += 1;
     else halfLinked.push(`${trim(e.DocNo)}#${e.DtlKey}->SODtl${e.FromSODtlKey}${poLine.so_item_id ? "(points elsewhere)" : "(so_item_id NULL)"}`);
   }
   backlog += missEdge.length + halfLinked.length;
   console.log(`\nSO→PO line edges: book ${bookEdges.length}, linked-in-ERP ${ok}, LINE-MISSING ${missEdge.length}${missEdge.length ? " -> " + listSome(missEdge) : ""}, EDGE-MISSING ${halfLinked.length}${halfLinked.length ? " -> " + listSome(halfLinked) : ""}`);
+  if (missSofa.length) console.log(`  sofa set lines without a per-line key (piece-split/placeholder representation; not counted in the backlog): ${missSofa.length}`);
   // the owner's exact case, reversed: the PO side sees a link the SO side lacks
   const bookEdgeKeys = new Set(bookEdges.map((e) => String(e.DtlKey)));
   const erpOnly = erpPoItems.filter((r) => r.so_item_id && r.linked_ac_dtlkey != null && !bookEdgeKeys.has(String(r.linked_ac_dtlkey)));
