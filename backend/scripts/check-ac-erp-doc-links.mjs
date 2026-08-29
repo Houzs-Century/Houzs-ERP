@@ -93,7 +93,7 @@ for (const r of erpSoItems) {
   if (!soLineByDtlkey.has(k)) soLineByDtlkey.set(k, []);
   soLineByDtlkey.get(k).push(r.id);
 }
-const erpPo = await sql`SELECT id, doc_no, linked_ac_docno FROM scm.purchase_orders WHERE company_id=${CO} AND linked_ac_docno IS NOT NULL`;
+const erpPo = await sql`SELECT id, po_number, linked_ac_docno FROM scm.purchase_orders WHERE company_id=${CO} AND linked_ac_docno IS NOT NULL`;
 const erpPoByAc = new Map(erpPo.map((r) => [trim(r.linked_ac_docno), r]));
 const erpPoItems = await sql`SELECT i.id, i.linked_ac_dtlkey, i.so_item_id, p.linked_ac_docno AS po_ac
   FROM scm.purchase_order_items i JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
