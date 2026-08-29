@@ -199,6 +199,48 @@ async function main() {
       classes["ALGO-SUSPECT"].push(`${doc} [${o.lines[0].so_status}] <- ${suspects.map((l) => `${l.item_code}[${l.item_group}]${l.stock_status} wh=${l.wh_name ?? l.warehouse_id ?? "NULL"} variants=${l.has_variants ? "YES" : "no"} leftover=${leftover(l)} blankKeyLeftover=${blankLeftover(l)} rawKeyLeftover=${rawLeftover(l)} line=${JSON.stringify(l.item_code)} stock=${spellings(l)}`).slice(0, 3).join(" | ")}`);
     }
   }
+  /* BIDIRECTIONAL category matrix (owner 2026-08-29): not only "the book
+     claims READY and the system is short", but the reverse — categories the
+     system has fully READY that the book's Remark2 never mentions. */
+  {
+    const GROUPS = ["mattress", "bedframe", "sofa", "accessory", "others"];
+    const claimSet = (r) => {
+      const c = classifyClaim(r);
+      if (c === "READY") return new Set(GROUPS);
+      if (c === "READY-PARTIAL") return null; // not falsifiable per category
+      if (c === "CATEGORY") {
+        const set = new Set();
+        const t = (r || "").toUpperCase();
+        if (/MATTRESS/.test(t)) set.add("mattress");
+        if (/BEDFRAME/.test(t)) set.add("bedframe");
+        if (/ACC/.test(t)) set.add("accessory");
+        return set;
+      }
+      return c ? null : new Set();
+    };
+    let bothAgree = 0, acMore = 0, erpMore = 0, mixed = 0;
+    const acMoreByGroup = {}, erpMoreByGroup = {};
+    const erpMoreSamples = [];
+    for (const [doc, o] of byDoc) {
+      const cs = claimSet(o.remark2);
+      if (cs === null) continue;
+      const ready = new Set();
+      for (const g of GROUPS) {
+        const ls = o.lines.filter((l) => (l.item_group || "").toLowerCase() === g);
+        if (ls.length && ls.every((l) => l.stock_status === "READY" || Number(l.delivered) >= Number(l.qty))) ready.add(g);
+      }
+      const acOnly = [...cs].filter((g) => !ready.has(g) && o.lines.some((l) => (l.item_group || "").toLowerCase() === g));
+      const erpOnly = [...ready].filter((g) => !cs.has(g));
+      if (!acOnly.length && !erpOnly.length) bothAgree++;
+      else if (acOnly.length && erpOnly.length) mixed++;
+      else if (acOnly.length) { acMore++; for (const g of acOnly) acMoreByGroup[g] = (acMoreByGroup[g] || 0) + 1; }
+      else { erpMore++; for (const g of erpOnly) erpMoreByGroup[g] = (erpMoreByGroup[g] || 0) + 1; if (erpMoreSamples.length < 8) erpMoreSamples.push(`${doc} erp-ready:{${erpOnly.join(",")}} book-says:${JSON.stringify(o.remark2 ?? "")}`); }
+    }
+    log(`BIDIRECTIONAL category matrix (orders with a parseable claim incl. blank): agree ${bothAgree}; book-claims-more ${acMore}; ERP-ready-more ${erpMore}; both-directions ${mixed}`);
+    log(`  book-claims-more by category: ${JSON.stringify(acMoreByGroup)}`);
+    log(`  ERP-ready-more by category: ${JSON.stringify(erpMoreByGroup)}`);
+    for (const x of erpMoreSamples) log(`   ERP-MORE ${x}`);
+  }
   log(`orders where staff wrote a status: ${claimed}`);
   for (const [k, n] of [...matrix.entries()].sort((a, b) => b[1] - a[1])) log(`  ${k.padEnd(34)} ${n}`);
   log(`READY claims that disagree, classified per the owner's protocol:`);
