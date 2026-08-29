@@ -27,11 +27,11 @@
 
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { AlertTriangle, ArrowLeft, ArrowRight, CheckCheck, Download, Upload } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, ArrowRight, CheckCheck, Download, Undo2, Upload } from 'lucide-react';
 import {
   useAcquirerSetup, useSaveAcquirerSetup, useSettlementBatches, useSettlementBatch,
   useUploadStatement, useConfirmSettlementRow, useConfirmMatched, useIgnoreSettlementRow,
-  useSettlementWatchlist,
+  useSettlementWatchlist, useUnconfirmSettlementRow,
   type AcquirerSetup, type SettlementRow, type SettlementBucket, type SettlementBatch, type BankAccount,
 } from './settlement-queries';
 import {
@@ -704,7 +704,12 @@ const BatchRows = ({ batch, onOpen, openOnly }: {
 
             <td>
               {r.confirmed_at
-                ? <span className={grid.good}>done{r.posted_je_no ? ` · ${r.posted_je_no}` : ''}</span>
+                ? (
+                  <span style={{ display: 'inline-flex', alignItems: 'center', flexWrap: 'wrap', gap: 2 }}>
+                    <span className={grid.good}>done{r.posted_je_no ? ` · ${r.posted_je_no}` : ''}</span>
+                    <UndoDone rowId={r.id} />
+                  </span>
+                )
                 : sale
                   ? <span className={grid.good}>matched by reference</span>
                   : guess.length > 0
@@ -717,6 +722,30 @@ const BatchRows = ({ batch, onOpen, openOnly }: {
         );
       })}
     </tbody>
+  );
+};
+
+/* The way back out of the ledger — the ignore refusal has always named it,
+   and now a button performs it: reverse the fee entry, release the payments,
+   put the line back among the ones to decide. Refused by the server while
+   money is recorded received against the statement, and the server's sentence
+   is shown verbatim. */
+const UndoDone = ({ rowId }: { rowId: number }) => {
+  const undo = useUnconfirmSettlementRow();
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <>
+      <button
+        type="button"
+        style={{ ...btn(false, undo.isPending), marginLeft: 8 }}
+        disabled={undo.isPending}
+        title="Take this line back out of the ledger — its fee entry is reversed and the payment is claimable again"
+        onClick={() => { setError(null); undo.mutate(rowId, { onError: (e) => setError(refusalText(e, 'The line could not be taken back.')) }); }}
+      >
+        <Undo2 {...ICON} /> Undo
+      </button>
+      {error && <div className={grid.bad} style={{ fontSize: 'var(--fs-12, 12px)' }}>{error}</div>}
+    </>
   );
 };
 
@@ -875,7 +904,12 @@ const BatchView = ({ batchId, onBack }: { batchId: number; onBack: () => void })
                 </td>
                 <td>
                   {r.confirmed_at
-                    ? <span className={grid.good}>done{r.posted_je_no ? ` · ${r.posted_je_no}` : ''}</span>
+                    ? (
+                      <span style={{ display: 'inline-flex', alignItems: 'center', flexWrap: 'wrap', gap: 2 }}>
+                        <span className={grid.good}>done{r.posted_je_no ? ` · ${r.posted_je_no}` : ''}</span>
+                        <UndoDone rowId={r.id} />
+                      </span>
+                    )
                     : r.bucket === 'IGNORED'
                       ? <span style={softText}>set aside</span>
                       : <span className={grid.good}>matched — the button above books it</span>}
