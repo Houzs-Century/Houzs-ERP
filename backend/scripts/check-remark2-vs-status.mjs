@@ -73,16 +73,24 @@ async function main() {
      served. Only a bucket with units left over AFTER every lit line's claim is
      evidence the allocator owed this line a light. Blank-variant migrated
      stock pools under variant_key '', which is what the balance rows carry. */
-  const balRows = await sql`SELECT warehouse_id, item_code, SUM(qty) AS q
-    FROM scm.inventory_balances WHERE company_id = 1 GROUP BY 1, 2`;
-  const bucketQty = new Map(balRows.map((b) => [`${b.warehouse_id}|${norm(b.item_code)}`, Number(b.q)]));
+  const balRows = await sql`SELECT warehouse_id, item_code, COALESCE(variant_key, '') AS vk, SUM(qty) AS q
+    FROM scm.inventory_balances WHERE company_id = 1 GROUP BY 1, 2, 3`;
+  const bucketQty = new Map();       // all variant keys summed
+  const blankBucketQty = new Map();  // the '' bucket the allocator matches variant-less lines against
+  for (const b of balRows) {
+    const k = `${b.warehouse_id}|${norm(b.item_code)}`;
+    bucketQty.set(k, (bucketQty.get(k) ?? 0) + Number(b.q));
+    if ((b.vk ?? '') === '') blankBucketQty.set(k, (blankBucketQty.get(k) ?? 0) + Number(b.q));
+  }
   for (const r of rows) {
     if (Number(r.qty_ready) > 0) {
       const k = `${r.warehouse_id}|${norm(r.item_code)}`;
       if (bucketQty.has(k)) bucketQty.set(k, bucketQty.get(k) - Number(r.qty_ready));
+      if (blankBucketQty.has(k)) blankBucketQty.set(k, blankBucketQty.get(k) - Number(r.qty_ready));
     }
   }
   const leftover = (l) => bucketQty.get(`${l.warehouse_id}|${norm(l.item_code)}`) ?? 0;
+  const blankLeftover = (l) => blankBucketQty.get(`${l.warehouse_id}|${norm(l.item_code)}`) ?? 0;
 
   /* The owner's 2026-08-29 protocol (「甲」): the system's computed status is
      the truth; a difference from the hand-written Remark2 is only an ALGORITHM
@@ -147,7 +155,7 @@ async function main() {
       const allNoPo = short.every((l) => BOUND.has((l.item_group || "").toLowerCase()) && Number(l.dedicated_po_lines) === 0);
       classes[allDelivered ? "DELIVERED-STALE" : allNoPo ? "NO-OWN-PO" : "GRANULARITY"].push(doc);
     } else {
-      classes["ALGO-SUSPECT"].push(`${doc} <- ${suspects.map((l) => `${l.item_code}[${l.item_group}]${l.stock_status} wh=${l.warehouse_id ?? "NULL"} variants=${l.has_variants ? "YES" : "no"} leftover=${leftover(l)}`).slice(0, 3).join(" | ")}`);
+      classes["ALGO-SUSPECT"].push(`${doc} <- ${suspects.map((l) => `${l.item_code}[${l.item_group}]${l.stock_status} wh=${l.warehouse_id ?? "NULL"} variants=${l.has_variants ? "YES" : "no"} leftover=${leftover(l)} blankKeyLeftover=${blankLeftover(l)}`).slice(0, 3).join(" | ")}`);
     }
   }
   log(`orders where staff wrote a status: ${claimed}`);
