@@ -66,6 +66,24 @@ async function main() {
     byDoc.get(r.doc_no).lines.push(r);
   }
   log(`imported live orders measured: ${byDoc.size}`);
+  {
+    /* Verdict probe for the engine's balance read: mattresses light ONLY via
+       the pooled bucket (no bound path), and the repo's own sofa module
+       measured that PostgREST's in.(...) silently returns zero rows for codes
+       containing parentheses. If that read is blind, no parenthesized mattress
+       can ever be READY while paren-free ones are. */
+    const m = { parenReady: 0, parenPending: 0, plainReady: 0, plainPending: 0 };
+    for (const r of rows) {
+      if ((r.item_group || "").toLowerCase() !== "mattress") continue;
+      const paren = (r.item_code || "").includes("(");
+      const ready = r.stock_status === "READY";
+      if (paren && ready) m.parenReady++;
+      else if (paren) m.parenPending++;
+      else if (ready) m.plainReady++;
+      else m.plainPending++;
+    }
+    log(`MATTRESS PAREN PROBE — with '(': READY ${m.parenReady} / other ${m.parenPending}; without: READY ${m.plainReady} / other ${m.plainPending}`);
+  }
 
   /* Bucket leftovers — the FIFO-exhaustion cause. A short pooled line is
      LEGITIMATELY unlit when older lines drained its (warehouse, item) bucket:
