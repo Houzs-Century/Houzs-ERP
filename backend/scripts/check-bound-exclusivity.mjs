@@ -91,5 +91,5 @@ for (const co of [1, 2]) {
   console.log(`  LIT WITH NO PO AT ALL: ${litNoPo.length}${co === 1 ? "  <-- must be 0 under hard binding" : "  (pooled company - informational)"}`);
   for (const l of litNoPo.slice(0, 20)) console.log(`     ${l.doc_no} ${l.item_code} wh=${l.warehouse_id ?? "-"} status=${l.stock_status} qty_ready=${l.stock_qty_ready} variant=${blankVariant(l.variants) ? "BLANK" : "typed"} pdate=${l.processing_date ? "yes" : "NO"}`);
 }
-console.log(`\nMechanism note (code fact): the engine's bound pass has NO company filter, and a bound line with no receipt FALLS THROUGH to the pooled walk for BOTH companies — any company-1 rows listed above are that fall-through firing.`);
+console.log(`\nMechanism note: since 2026-08-30 (docs/bugs/0572) the engine force-stamps PENDING for company-1 bound lines in the pooled walk — HARD_BOUND_COMPANY_ID in so-stock-allocation.ts. A company-1 row above therefore means that guard has REGRESSED, not that the old fall-through is expected.`);
 await sql.end();
