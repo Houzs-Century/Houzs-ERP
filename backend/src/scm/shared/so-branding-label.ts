@@ -234,6 +234,24 @@ export const NO_ITEMS_LABEL = 'No Items';
  *                  unrecognised keeps the 2990 reading, which is what every
  *                  caller had before this argument existed.
  */
+/* The book's ways of writing "no brand". AutoCount's branding field is free
+   text and the floor types a placeholder rather than leaving it empty — 170
+   imported company-1 orders carry the literal "NONE" (measured 2026-08-31).
+   The import copies it faithfully (copy-never-compute), so it is the READERS
+   that must know a placeholder is not a brand: a header carrying one must not
+   out-rank the derived label, or a TRION bedframe renders "NONE" where the
+   catalog plainly says BEDFRAME (owner, HC-SO-013402).
+
+   Deliberately a SMALL closed list of spellings, not a heuristic: a brand this
+   business actually uses must never be swallowed ("Nonesuch" is a brand). */
+const PLACEHOLDER_BRAND_TEXTS = new Set(['NONE', 'N/A', 'NA', 'N.A.', 'NIL', 'TBC', 'KIV', '-', '--', '—']);
+
+export function isPlaceholderBrandText(text: string | null | undefined): boolean {
+  const t = (text ?? '').trim();
+  if (t === '') return true;
+  return PLACEHOLDER_BRAND_TEXTS.has(t.toUpperCase().replace(/\s+/g, ''));
+}
+
 export function brandingLabel(
   category: string | null | undefined,
   branding: string | null | undefined,

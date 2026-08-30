@@ -22,6 +22,15 @@ class FakeQuery {
   order() { return this; }
   eq(col: string, val: unknown) { this.preds.push((r) => String(r[col]) === String(val)); return this; }
   in(col: string, vals: unknown[]) { const s = new Set(vals.map(String)); this.preds.push((r) => s.has(String(r[col]))); return this; }
+  /* `.not(col,'in','(A,B)')` — the report's scope predicate since 2026-08-31
+     (draft/cancelled out, every other status in). PostgREST spells the list
+     parenthesised, so parse it the same way the real client sends it. */
+  not(col: string, op: string, list: string) {
+    if (op !== 'in') throw new Error(`FakeQuery: unsupported .not(${op})`);
+    const set = new Set(String(list).replace(/^\(|\)$/g, '').split(',').map((x) => x.trim().replace(/^"|"$/g, '')));
+    this.preds.push((r) => !set.has(String(r[col] ?? '')));
+    return this;
+  }
   gte(col: string, val: any) { this.preds.push((r) => r[col] != null && r[col] >= val); return this; }
   lte(col: string, val: any) { this.preds.push((r) => r[col] != null && r[col] <= val); return this; }
   range(from: number, to: number) { this._range = [from, to]; return this; }
@@ -87,6 +96,19 @@ function fixture(): DataSet {
         total_cost_sen: 20000,
       },
       { doc_no: 'SO-3', status: 'DRAFT', project_id: 1, so_date: '2026-07-07', total_cost_sen: 999 },
+      /* 2026-08-31 (owner: "很多单都没进得来…可能因为我还没 delivered"): a fair's
+         orders KEEP moving after confirmation, and the report used to anchor on
+         status='CONFIRMED' alone — so an order dropped off the report the moment
+         it was delivered (measured on 2990: 34 of 49 DOs were invisible for
+         exactly this reason). Delivered/invoiced/closed orders are the fair's
+         completed business and belong in it; only DRAFT and CANCELLED are out. */
+      { doc_no: 'SO-5', status: 'DELIVERED', project_id: 1, venue_id: 'v-1', customer_state: 'Selangor',
+        salesperson_id: 'sp-1', branding: 'Brand A', so_date: '2026-07-08', ref: 'OF-5', venue: 'Hall 1',
+        local_total_sen: 20000, balance_sen: 0, deposit_sen: 0, paid_sen: 20000,
+        mattress_sofa_sen: 20000, bedframe_sen: 0, accessories_sen: 0, others_sen: 0, service_sen: 0,
+        mattress_sofa_cost_sen: 8000, bedframe_cost_sen: 0, accessories_cost_sen: 0, others_cost_sen: 0, service_cost_sen: 0,
+        total_cost_sen: 8000 },
+      { doc_no: 'SO-6', status: 'CANCELLED', project_id: 1, so_date: '2026-07-09', total_cost_sen: 777 },
       { doc_no: 'SO-4', status: 'CONFIRMED', project_id: 2, venue_id: 'v-9', customer_state: 'Penang',
         salesperson_id: 'sp-1', branding: 'Brand A', so_date: '2026-07-05', ref: 'OF-9', venue: 'Other',
         local_total_sen: 12345, balance_sen: 0, deposit_sen: 0, paid_sen: 12345,
@@ -215,8 +237,11 @@ describe('filters narrow correctly', () => {
   test('project filter keeps only that fair', async () => {
     const { app, env } = appWith(fixture());
     const body = (await (await req(app, '/fair-report?stage=so&project=1', env)).json()) as any;
-    expect(body.rows.map((r: any) => r.so_no).sort()).toEqual(['SO-1', 'SO-2']);
+    /* SO-5 is DELIVERED and belongs to this fair — in scope since 2026-08-31
+       (see the fixture note); SO-3 DRAFT and SO-6 CANCELLED stay out. */
+    expect(body.rows.map((r: any) => r.so_no).sort()).toEqual(['SO-1', 'SO-2', 'SO-5']);
     expect(body.rows.some((r: any) => r.so_no === 'SO-4')).toBe(false);
+    expect(body.rows.some((r: any) => r.so_no === 'SO-3' || r.so_no === 'SO-6')).toBe(false);
   });
   test('salesperson filter', async () => {
     const { app, env } = appWith(fixture());
@@ -231,7 +256,8 @@ describe('filters narrow correctly', () => {
   test('venue filter (on the venue TEXT, not the dead venue_id column)', async () => {
     const { app, env } = appWith(fixture());
     const body = (await (await req(app, '/fair-report?stage=so&venue=Hall%201', env)).json()) as any;
-    expect(body.rows.map((r: any) => r.so_no)).toEqual(['SO-1']);
+    // SO-5 (delivered, Hall 1) is in scope too — completed business stays on the fair.
+    expect(body.rows.map((r: any) => r.so_no).sort()).toEqual(['SO-1', 'SO-5']);
   });
   test('branding filter', async () => {
     const { app, env } = appWith(fixture());

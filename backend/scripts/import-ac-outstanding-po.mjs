@@ -232,7 +232,15 @@ async function main() {
           const ph = `${model}-1S`;
           const pr = prodByCode.get(ph.toUpperCase());
           const phCode = codeSet.has(ph.toUpperCase()) ? ph : erp;
-          const soItemId = dedicate(l, phCode, erp);
+          /* ALWAYS try the ALIASED placeholder first, even when the catalog has
+             no row for it and the line is written under `erp` (owner 2026-08-31,
+             HC-SO-013389 / PO-010087). The SO importer's placeholder branch
+             writes `${model}-1S` with the alias applied (5540 -> 8030); this
+             branch fell back to the raw mapped code and then looked the SO line
+             up by that same fallback TWICE, so an aliased model could never
+             match its own order line and the PO arrived unlinked — the book's
+             own SO->PO link was there all along. */
+          const soItemId = dedicate(l, ph, phCode, erp);
           if (!soItemId && !skipDedication) noSoLine++;
           items.push({ erp: phCode, grp,
             name: (pr && pr.name) || ph, sku: l.ItemCode, desc: l.Description, d2: l.Desc2,
