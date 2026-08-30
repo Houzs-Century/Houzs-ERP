@@ -31,10 +31,10 @@ for (const doNo of ["2990-DO-2607-021", "2990-DO-2607-007"]) {
     FROM scm.delivery_order_items WHERE delivery_order_id=${d.id}`;
   console.log(`A. ${doNo} (SO ${d.so_doc_no}, ${d.status}) lines:`);
   for (const l of lines) console.log(`   ${l.item_code} x${l.qty} unit_cost=${l.unit_cost_sen == null ? "NULL" : sen(l.unit_cost_sen)} ship_cost=${l.ship_cost_sen == null ? "NULL" : sen(l.ship_cost_sen)} so-linked=${l.linked}`);
-  const so = await sql`SELECT item_code, qty, unit_cost_sen, line_cost_sen, created_at::date AS created, updated_at::date AS updated
+  const so = await sql`SELECT item_code, qty, unit_cost_sen, line_cost_sen, created_at::date AS created
     FROM scm.mfg_sales_order_items WHERE doc_no=${d.so_doc_no} AND cancelled=false`;
   console.log(`   its SO lines:`);
-  for (const l of so) console.log(`   ${l.item_code} x${l.qty} unit_cost=${l.unit_cost_sen == null ? "NULL" : sen(l.unit_cost_sen)} created=${l.created} updated=${l.updated}`);
+  for (const l of so) console.log(`   ${l.item_code} x${l.qty} unit_cost=${l.unit_cost_sen == null ? "NULL" : sen(l.unit_cost_sen)} created=${l.created}`);
 }
 
 // ── B. the zero-amount SOs behind the accessories DOs ──────────────────────
