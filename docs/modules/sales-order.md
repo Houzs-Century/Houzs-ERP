@@ -3250,6 +3250,19 @@ Flow:
    'Houzs'/blank rows are repaired by **HC sofa branding fix (Zanotti)**
    (`fix-hc-sofa-branding.mjs`, DRY-RUN gated, #1723).
 
+   **A HEADER BRANDING THAT IS A PLACEHOLDER IS NOT A BRAND (2026-08-31).**
+   Every surface prefers the SO header's own `branding` text over the derived
+   label, and AutoCount's branding field is free text the floor fills with a
+   placeholder rather than leaving empty: **170 imported company-1 orders carry
+   the literal `NONE`** (measured), so a TRION bedframe printed "NONE" where
+   the catalog plainly says BEDFRAME (owner, HC-SO-013402). The import keeps
+   copying the book faithfully; the READERS now ask
+   `isPlaceholderBrandText(header)` first — a small CLOSED list (NONE / N/A /
+   NIL / TBC / KIV / dashes / blank), never a heuristic, so a real brand
+   ("Nonesuch") is never swallowed. Consumers: `MfgSalesOrdersListV2.tsx`
+   (`brandOf`), `mobile/MobileSalesOrders.tsx`, and the Sales/Fair report's
+   derive-blank pass. Bug `docs/bugs/0575-the-book-s-none-placeholder-outranked-the-derived-branding-a.md`.
+
    **The LABEL rule is `scm/shared/so-branding-label.ts`, and since 2026-08-18
    the sofa half of it no longer depends on that data being repaired.** The
    owner restated the same 2026-08-08 rule as two equations —「houzs
