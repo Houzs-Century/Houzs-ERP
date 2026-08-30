@@ -83,6 +83,16 @@ export function isHardBoundLine(
   return g === 'mattress' && /\(SP\)\s*$/i.test(itemCode ?? '');
 }
 
+/* The company whose bound groups are EXCLUSIVELY PO-bound (owner, ruled three
+   times — 2026-08-10, 2026-08-29, 2026-08-30 "他明明都没有 PO,怎么会 ready 呢
+   …它一定是根据 PO…Company 1 跟 Company 2 机制是不一样的"): a company-1
+   bedframe / sofa / (SP) mattress line lights ONLY through its own received
+   purchase order; the pooled walk is never its evidence. Company 2 (2990)
+   pools. When company-1 stock has grown variants and the migrated blanks have
+   washed out, the owner's stated plan is to switch this company to the pooled
+   model too — that switch is THIS constant. */
+export const HARD_BOUND_COMPANY_ID = 1;
+
 export type AllocationResult = {
   ok: boolean;
   linesFlipped: number;
@@ -323,6 +333,9 @@ async function runSoStockAllocation(
     const allocGated = new Set(
       orders.filter((o) => !o[SO_PROCESSING_DATE_COLUMN]).map((o) => o.doc_no),
     );
+    /* Which company each document belongs to — the pooled walk needs it to
+       enforce HARD_BOUND_COMPANY_ID's exclusivity (see the constant's note). */
+    const companyByDoc = new Map(orders.map((o) => [o.doc_no, Number(o.company_id ?? 0)]));
 
     // 2. Non-cancelled lines on those SOs. Pull qty + variant fields so we
     //    can compute variant_key and the bucket.
@@ -713,6 +726,16 @@ async function runSoStockAllocation(
     for (const n of needs) {
       if (targetById.has(n.id)) continue; // settled by its dedicated PO above
       if (allocGated.has(n.doc_no)) {
+        targetById.set(n.id, { status: 'PENDING', qtyReady: 0 });
+        continue;
+      }
+      /* HARD BINDING IS EXCLUSIVE for HARD_BOUND_COMPANY_ID: an un-receipted
+         bound line must NOT fall through to the pool. Dormant while variant
+         buckets mismatched; the moment BOTH sides were blank it fired —
+         HC-SO-013253 JAGER-(Q) read READY with no PO against blank-variant
+         migrated stock (census run 33287776781, owner report 2026-08-30).
+         docs/bugs/0572. Company 2 (2990) keeps pooling past this guard. */
+      if (companyByDoc.get(n.doc_no) === HARD_BOUND_COMPANY_ID && isHardBoundLine(n.group, n.item_code)) {
         targetById.set(n.id, { status: 'PENDING', qtyReady: 0 });
         continue;
       }

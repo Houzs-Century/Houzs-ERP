@@ -402,6 +402,22 @@ Column: `scm.mfg_sales_order_items.stock_status`. **Three values**, not two:
 `summariseReadiness` treats `PARTIAL` as **not ready** — `isReady` is strictly
 `stock_status === 'READY'`.
 
+**The two allocation mechanisms are COMPANY-SPLIT (2026-08-30, owner ruling —
+bug `docs/bugs/0572-a-company-1-bound-line-with-no-receipt-fell-through-to-the-p.md`).**
+`HARD_BOUND_COMPANY_ID = 1` in `so-stock-allocation.ts`:
+
+| company | bedframe / sofa / `(SP)` mattress (`isHardBoundLine`) | everything else |
+|---|---|---|
+| 1 (Houzs) | **exclusively PO-bound**: lights `min(received, need)` from its OWN dedicated PO (sofa: covering dye-lot batch first, then dedication). The pooled walk force-stamps PENDING — the pool is never its evidence, however well the bucket matches | pooled FIFO by (warehouse, code, variant_key) |
+| 2 (2990) | dedication lights first if present, then the pooled walk — the soft model | pooled FIFO |
+
+Before this split the un-receipted bound line FELL THROUGH to the pool for both
+companies; it only looked hard-bound because typed variant keys never match the
+blank-variant migrated stock, and it fired the moment both sides were blank
+(HC-SO-013253). `check-bound-exclusivity.mjs` (workflow: *Bound exclusivity
+census*) re-measures the rule on demand — company-1 "LIT WITH NO PO" must be 0.
+Flipping company 1 to the pooled end-state later is that one constant.
+
 > **Do not confuse this column with the delivery-planning board's field of the
 > same name.** `scm/lib/so-readiness-row.ts` emits a per-ROW `stock_status` that
 > is `'READY' | 'PENDING'` — TWO values, derived from `isFullyReady`. Same name,
