@@ -101,7 +101,6 @@ const HEADER_FAMILIES = [
 const DOCNO_SEEDS = [
   ['scm', 'inventory_movements', 'source_doc_no'],
   ['scm', 'inventory_lots', 'source_doc_no'],
-  ['scm', 'autocount_outbox', 'doc_no'],
 ];
 
 function topoDeleteOrder(nodes, edges) {
@@ -204,9 +203,37 @@ async function main() {
     note(`  ${label} (${rows.length}):`);
     for (const r of rows) note(`      ${r.num}   status=${r.status ?? '-'}   ${r.created_at ? String(r.created_at).slice(0, 19) : ''}`);
   }
-  if (!headerInfo.length) { note(`\n=== NO TEST DOCUMENTS FOUND — nothing to do. ===`); await sql.end({ timeout: 5 }); return; }
+  // 3b. Export-log (outbox) entries for the test docs. The earlier go-live wipes
+  //     DELETE a test document's source row but KEEP its outbox row, so after a
+  //     wipe the sync page still shows the test doc even though no header remains.
+  //     Match the SAME per-type test patterns (never a blanket %-2608-% — that
+  //     would catch real HC-I-2608 sales-invoice sends).
+  note(`\n=== EXPORT-LOG (outbox) rows for the test docs ===`);
+  const outKey = `scm.autocount_outbox`;
+  const outboxDocNos = [];
+  if (liveSet.has(outKey) && hasCol(outKey, 'doc_no') && hasCol(outKey, 'company_id')) {
+    const patterns = HEADER_FAMILIES.map((f) => f[3]);
+    let orFrag = null;
+    for (const p of patterns) { const f = sql`doc_no LIKE ${p}`; orFrag = orFrag === null ? f : sql`${orFrag} OR ${f}`; }
+    const rows = await sql`
+      SELECT doc_no,
+             ${hasCol(outKey, 'status') ? sql`status` : sql`NULL AS status`},
+             ${hasCol(outKey, 'op') ? sql`op` : sql`NULL AS op`}
+        FROM ${sql(qi('scm'))}.${sql(qi('autocount_outbox'))}
+       WHERE company_id = ${HC_ID} AND (${orFrag})
+       ORDER BY doc_no`;
+    for (const r of rows) { outboxDocNos.push(r.doc_no); note(`      ${r.doc_no}   status=${r.status ?? '-'}   op=${r.op ?? '-'}`); }
+    if (!rows.length) note(`  none`);
+    if (outboxDocNos.length) {
+      for (const d of outboxDocNos) if (!testDocNos.includes(d)) testDocNos.push(d);
+      if (!seedPreds.has(outKey)) seedPreds.set(outKey, []);
+      seedPreds.get(outKey).push(sql`(company_id = ${HC_ID} AND (${orFrag}))`);
+    }
+  } else { note(`  outbox table/columns absent — skipped`); }
 
-  // 4. Doc-number seeds (stock + outbox) — carry the number, not an FK.
+  if (!headerInfo.length && !outboxDocNos.length) { note(`\n=== NO TEST DOCUMENTS FOUND — nothing to do. ===`); await sql.end({ timeout: 5 }); return; }
+
+  // 4. Doc-number seeds (stock) — carry the number, not an FK.
   for (const [schema, table, col] of DOCNO_SEEDS) {
     const key = `${schema}.${table}`;
     if (!liveSet.has(key) || !hasCol(key, col)) continue;
@@ -360,6 +387,11 @@ async function main() {
       const [s, t] = h.key.split('.');
       const [{ n }] = await check`SELECT count(*)::int AS n FROM ${check(qi(s))}.${check(qi(t))} WHERE company_id = ${HC_ID} AND ${check(qi(h.docCol))} = ANY(${h.docNos})`;
       if (n !== 0) problems.push(`${h.label} ${h.key}: ${n} test header(s) still present`);
+    }
+    if (outboxDocNos.length) {
+      const [{ n }] = await check`SELECT count(*)::int AS n FROM ${check(qi('scm'))}.${check(qi('autocount_outbox'))} WHERE company_id = ${HC_ID} AND doc_no = ANY(${outboxDocNos})`;
+      note(`  export-log test rows remaining: ${n} (want 0)`);
+      if (n !== 0) problems.push(`autocount_outbox: ${n} test export-log row(s) still present`);
     }
     for (const h of headerInfo) {
       const [s, t] = h.key.split('.');
