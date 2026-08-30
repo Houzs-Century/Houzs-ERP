@@ -233,7 +233,7 @@ async function main() {
         const t = (r || "").toUpperCase();
         if (/MATTRESS/.test(t)) set.add("mattress");
         if (/BEDFRAME/.test(t)) set.add("bedframe");
-        if (/ACC/.test(t)) set.add("accessory");
+        if (/ACC/.test(t)) set.add("accessory");
         return set;
       }
       return c ? null : new Set();
@@ -260,7 +260,7 @@ async function main() {
       if (!acOnly.length && !erpOnly.length) bothAgree++;
       else if (acOnly.length && erpOnly.length) mixed++;
       else if (acOnly.length) { acMore++; for (const g of acOnly) acMoreByGroup[g] = (acMoreByGroup[g] || 0) + 1; }
-      else { erpMore++; for (const g of erpOnly) erpMoreByGroup[g] = (erpMoreByGroup[g] || 0) + 1; erpMoreDocs.push({ doc, erpOnly, imported: o.remark2 ?? "" }); }
+      else { erpMore++; for (const g of erpOnly) erpMoreByGroup[g] = (erpMoreByGroup[g] || 0) + 1; erpMoreDocs.push({ doc, erpOnly, imported: o.remark2 ?? "", debugCs: [...cs].join("+"), debugReady: [...ready].join("+"), debugC: String(classifyClaim(o.remark2)), debugCodes: [...(o.remark2 ?? "")].map((ch) => ch.charCodeAt(0)).join(",") }); }
     }
     log(`BIDIRECTIONAL category matrix (orders with a parseable claim incl. blank): agree ${bothAgree}; book-claims-more ${acMore}; ERP-ready-more ${erpMore}; both-directions ${mixed}`);
     log(`  book-claims-more by category: ${JSON.stringify(acMoreByGroup)}`);
@@ -271,7 +271,11 @@ async function main() {
       const path2 = await import("node:path");
       const url2 = await import("node:url");
       const here2 = path2.dirname(url2.fileURLToPath(import.meta.url));
-      const live = new Map(JSON.parse(zlib2.gunzipSync(fs2.readFileSync(path2.join(here2, "data", "ac-live-so-remark2.json.gz"))).toString("utf8")).map((r) => [String(r.DocNo).trim(), (r.Remark2 || "").trim()]));
+      /* Source switched 2026-08-30: ac-so-remarks.json.gz is the remark export
+         Phase 0 refreshes every round; the old ac-live-so-remark2 was a one-off
+         from the 08-29 night and would read as "still blank" for anything the
+         detector stamped since. */
+      const live = new Map(JSON.parse(zlib2.gunzipSync(fs2.readFileSync(path2.join(here2, "data", "ac-so-remarks.json.gz"))).toString("utf8")).map((r) => [String(r.DocNo).trim(), (r.Remark2 || "").trim()]));
       const buckets = { "BOOK-CAUGHT-UP": [], "BOOK-STILL-BLANK": [], "BOOK-SAYS-OTHER": [], "NOT-IN-LIVE": [] };
       for (const e of erpMoreDocs) {
         const ac = e.doc.replace(/^HC-/, "");
@@ -280,12 +284,47 @@ async function main() {
         const then = (e.imported || "").trim();
         if (now && now !== then) buckets["BOOK-CAUGHT-UP"].push(`${e.doc} now=${JSON.stringify(now)}`);
         else if (!now) buckets["BOOK-STILL-BLANK"].push(`${e.doc} erp-ready:{${e.erpOnly.join(",")}}`);
-        else buckets["BOOK-SAYS-OTHER"].push(`${e.doc} book=${JSON.stringify(now)} erp-extra:{${e.erpOnly.join(",")}}`);
+        else buckets["BOOK-SAYS-OTHER"].push(`${e.doc} book=${JSON.stringify(now)} imported=${JSON.stringify(e.imported)} cs={${e.debugCs}} c=${e.debugC} codes=[${e.debugCodes}] ready={${e.debugReady}} erp-extra:{${e.erpOnly.join(",")}}`);
       }
       for (const [k, v] of Object.entries(buckets)) {
         log(`  ERP-ahead cause ${k}: ${v.length}`);
         for (const x of v.slice(0, 6)) log(`     ${x}`);
       }
+    }
+    /* PER-LINE lighting attribution for EVERY ERP-ahead order (owner
+       2026-08-30: "查看这个75张是多了什么…找出问题 看怎么变tally" — after
+       HC-SO-013253, "harmless" needs per-line proof, the same rigor as the
+       bound census). Every line that makes an ahead category ready is named
+       with WHAT lit it; a line with no legitimate source is a RED flag. */
+    {
+      const isBoundL = (g, l) => BOUND.has(g) || (g === "mattress" && /\(SP\)\s*$/i.test(l.item_code || ""));
+      const srcCounts = {}; const red = []; const perOrder = [];
+      for (const e of erpMoreDocs) {
+        const o = byDoc.get(e.doc);
+        const parts = [];
+        for (const g of e.erpOnly) {
+          const ls = o.lines.filter((l) => (l.item_group || "").toLowerCase() === g);
+          for (const l of ls) {
+            let src;
+            if (Number(l.delivered) >= Number(l.qty)) src = "DELIVERED";
+            else if (isBoundL(g, l) && Number(l.recv) > 0) src = "OWN-PO-RECEIVED";
+            else if (isBoundL(g, l)) { src = "RED-BOUND-NO-RECEIPT"; red.push(`${e.doc} ${l.item_code}`); }
+            else {
+              const k = `${l.warehouse_id}|${norm(l.item_code)}`;
+              const cell = cellStock.get(k) ?? 0;
+              src = cell > 0 ? "POOLED-STOCK-ON-SHELF" : "POOLED-CELL-NOW-EMPTY";
+            }
+            srcCounts[src] = (srcCounts[src] || 0) + 1;
+            parts.push(`${l.item_code}[${g}]=${src}${src.startsWith("POOLED") ? `(cell ${cellStock.get(`${l.warehouse_id}|${norm(l.item_code)}`) ?? 0})` : ""}`);
+          }
+        }
+        perOrder.push(`${e.doc} ahead:{${e.erpOnly.join(",")}} ${parts.join(" | ")}`);
+      }
+      log(`  ERP-ahead PER-LINE lighting sources (${erpMoreDocs.length} orders):`);
+      for (const [k, v] of Object.entries(srcCounts).sort((a, b) => b[1] - a[1])) log(`     ${k}: ${v}`);
+      log(`     RED (no legitimate source): ${red.length}${red.length ? " -> " + red.slice(0, 10).join(", ") : ""}`);
+      log(`  ERP-ahead full list, line by line:`);
+      for (const x of perOrder) log(`     ${x}`);
     }
   }
   log(`orders where staff wrote a status: ${claimed}`);
