@@ -276,7 +276,12 @@ async function main() {
         // original text stays on the line, and a human finishes the pieces
         const ph = `${model}-1S`;
         const code = codeSet.has(ph.toUpperCase()) ? ph : l.erp;
-        const soItemId = takeSoLine(code) ?? takeSoLine(l.erp);
+        /* The ALIASED placeholder is tried FIRST and unconditionally: the SO
+           importer writes `${model}-1S` (alias applied), so when the catalog has
+           no row for it this branch would otherwise look up the SO line by the
+           raw mapped code only and lose a link the book actually states
+           (owner 2026-08-31, HC-SO-013389 / PO-010087). */
+        const soItemId = takeSoLine(ph) ?? takeSoLine(code) ?? takeSoLine(l.erp);
         if (!soItemId) noSoLine++;
         recvUnits += recv;
         items.push({

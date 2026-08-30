@@ -76,8 +76,19 @@ async function main() {
     let dest = tgt;
     if (norm(r.code) !== norm(tgt.item_code)) {
       const sib = so.filter((x) => x.doc_no === tgt.doc_no && norm(x.item_code) === norm(r.code));
-      if (sib.length !== 1) { pieceUnresolved++; continue; }
-      dest = sib[0];
+      if (sib.length === 1) dest = sib[0];
+      /* SOFA PLACEHOLDER (owner 2026-08-31, HC-SO-013389): when a build's
+         composition is not written in the book, BOTH sides land on a
+         `<model>-1S` placeholder — and the two sides can hold DIFFERENT model
+         spellings for the same physical build (the alias 5540 -> 8030 is
+         applied on one side and not the other). The codes then differ by
+         construction, and refusing on a code mismatch throws away the link the
+         book itself states. Accept AutoCount's own pointer when the SO line it
+         names is a placeholder and both sides are sofa: the DOCUMENT and the
+         line are the book's, and the compartment is what a human completes
+         later. Everything else still refuses on a code mismatch. */
+      else if (/-1S$/i.test(tgt.item_code ?? '') && /-1S$/i.test(r.code ?? '')) dest = tgt;
+      else { pieceUnresolved++; continue; }
     }
     if (!r.so_item_id) { create.push({ ...r, tgt: dest }); continue; }
     if (r.so_item_id === dest.id) { agree++; continue; }
@@ -105,7 +116,12 @@ async function main() {
         FROM scm.purchase_order_items i
         JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
         JOIN scm.mfg_sales_order_items s ON s.id = i.so_item_id
-       WHERE p.company_id = 1 AND upper(btrim(i.item_code)) <> upper(btrim(s.item_code))`;
+       WHERE p.company_id = 1 AND upper(btrim(i.item_code)) <> upper(btrim(s.item_code))
+         /* A placeholder-to-placeholder pair is a LEGITIMATE cross-code link:
+            an undecoded build carries a model-1S placeholder on both sides, and
+            the two model spellings can differ (alias 5540 -> 8030). Not a
+            mismatch to refuse - see the SOFA PLACEHOLDER note above. */
+         AND NOT (i.item_code ~* '-1S$' AND s.item_code ~* '-1S$')`;
     log(`\ncode check on CURRENT data: ${bad.length} dedication(s) already point at a different item code`);
     for (const b of bad.slice(0, 10)) log(`   ${b.po} "${b.po_code}" -> ${b.so} "${b.so_code}"`);
     log("DRY-RUN - set APPLY=1 to write.");
@@ -125,7 +141,12 @@ async function main() {
     const before = await tx`SELECT i.id FROM scm.purchase_order_items i
         JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
         JOIN scm.mfg_sales_order_items s ON s.id = i.so_item_id
-       WHERE p.company_id = 1 AND upper(btrim(i.item_code)) <> upper(btrim(s.item_code))`;
+       WHERE p.company_id = 1 AND upper(btrim(i.item_code)) <> upper(btrim(s.item_code))
+         /* A placeholder-to-placeholder pair is a LEGITIMATE cross-code link:
+            an undecoded build carries a model-1S placeholder on both sides, and
+            the two model spellings can differ (alias 5540 -> 8030). Not a
+            mismatch to refuse - see the SOFA PLACEHOLDER note above. */
+         AND NOT (i.item_code ~* '-1S$' AND s.item_code ~* '-1S$')`;
     const standing = new Set(before.map((r) => r.id));
     if (standing.size) log(`standing code-mismatch dedications (NOT this batch's, left alone): ${standing.size}`);
     for (const r of [...fix, ...create]) {
@@ -135,7 +156,12 @@ async function main() {
     const after = await tx`SELECT i.id FROM scm.purchase_order_items i
         JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
         JOIN scm.mfg_sales_order_items s ON s.id = i.so_item_id
-       WHERE p.company_id = 1 AND upper(btrim(i.item_code)) <> upper(btrim(s.item_code))`;
+       WHERE p.company_id = 1 AND upper(btrim(i.item_code)) <> upper(btrim(s.item_code))
+         /* A placeholder-to-placeholder pair is a LEGITIMATE cross-code link:
+            an undecoded build carries a model-1S placeholder on both sides, and
+            the two model spellings can differ (alias 5540 -> 8030). Not a
+            mismatch to refuse - see the SOFA PLACEHOLDER note above. */
+         AND NOT (i.item_code ~* '-1S$' AND s.item_code ~* '-1S$')`;
     const fresh = after.filter((r) => !standing.has(r.id));
     if (fresh.length) throw new Error(`REFUSED: this batch would create ${fresh.length} dedication(s) pointing at a different item code. Rolled back.`);
     log(`code check: this batch created 0 cross-code dedications (standing: ${standing.size})`);

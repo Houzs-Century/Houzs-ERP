@@ -66,7 +66,7 @@ import { SearchScopeHint } from "../../components/SearchScopeHint";
 import { useStaffLookup } from "../../hooks/useStaffLookup";
 import { useBranding } from "../../hooks/useBranding";
 import { shortCompanyName, getBrandingCompanyCode } from "../../lib/branding";
-import { brandingLabel } from "../../vendor/shared/so-branding-label";
+import { brandingLabel, isPlaceholderBrandText } from "../../vendor/shared/so-branding-label";
 import { soCanRaiseDo } from "../../vendor/shared/so-deliverable-states";
 import { useDebouncedSearchTerm, useSearchResultTransition } from "../../hooks/useServerSearch";
 import { useMfgSalesOrdersPaged, useUpdateMfgSalesOrderStatus, useMfgSalesOrderDetail, useEnrichedSoListRows } from "../../vendor/scm/lib/sales-order-queries";
@@ -207,7 +207,13 @@ const refOf = (r: SoRow): string =>
 // Branding badge tone. Spec: 2990 SOFA = success (green), AKEMI = neutral,
 // BEDFRAME = accent, other brands = warning (amber). brandOf's old `|| "—"`
 // dashed every sofa; the one shared rule cannot return blank (owner 2026-08-17).
-const brandOf = (r: SoRow): string => (r.branding ?? "").trim() || brandingLabel(r.first_item_category, r.first_item_branding, getBrandingCompanyCode());
+/* The header wins ONLY when it carries a real brand. The book's free-text
+   branding field is often a placeholder — "NONE" on 170 imported orders —
+   and a placeholder that out-ranks the derived label printed NONE on a
+   TRION bedframe (owner 2026-08-31, HC-SO-013402). isPlaceholderBrandText
+   is the shared rule; the mobile twin below uses the same one. */
+const brandOf = (r: SoRow): string => (isPlaceholderBrandText(r.branding) ? "" : (r.branding ?? "").trim())
+  || brandingLabel(r.first_item_category, r.first_item_branding, getBrandingCompanyCode());
 /* This surface carries the line's CATEGORY, so it uses the accurate entry
    point: colour and label then share one bucket rule and cannot disagree.
    ../../lib/brandingTone has the whole story. */
