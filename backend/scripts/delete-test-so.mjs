@@ -3,9 +3,15 @@
 //
 // Purpose: on 2990 POS you sometimes need to run a real handover to
 // smoke-test the flow, which mints a real doc_no + eats a sequence slot.
-// This removes that row so the sequence self-heals — the minter's
-// `.like('2990-SO-2607-%')` fetch reads max+1 fresh next time, and the
-// gap closes naturally.
+// This removes that row and every child it owns.
+//
+// IT DOES NOT GIVE THE NUMBER BACK. Since migration 0316 the doc_no comes
+// from scm.doc_number_counters, which only ever goes UP; the surviving rows
+// are a FLOOR, not the source. So the deleted number becomes a permanent
+// gap and the run says so at the end, reading the counter rather than
+// reasoning about it. To reclaim the number, run scripts/reclaim-doc-no.mjs
+// (Actions -> "Reclaim a document number"), which refuses unless the number
+// is genuinely free.
 //
 // SAFETY:
 //   - DRY-RUN by default (prints every row it would touch)
@@ -240,8 +246,7 @@ async function main() {
     if (r.count !== 1) throw new Error(`expected to delete exactly 1 SO row, deleted ${r.count} — rolled back`);
   });
 
-  // (6) After-state proof. If the parent is truly gone, the next minter's
-  // .like('2990-SO-YYMM-%') max will drop back and the sequence slot reopens.
+  // (6) After-state proof.
   const [check] = await db`SELECT count(*)::int AS n FROM scm.mfg_sales_orders WHERE doc_no = ${DOC_NO}`;
   console.log(`\nAfter   : ${DOC_NO} present? ${check.n > 0 ? "STILL PRESENT (delete failed?)" : "gone"}`);
   if (havePwp) {
@@ -251,14 +256,49 @@ async function main() {
     console.log(`After   : vouchers still pointing at ${DOC_NO}: ${pwpLeft.n}`);
   }
 
-  // Peek current max for the same month prefix so operator sees what the
-  // next mint will now be.
+  // (7) What the next save will ACTUALLY take. Read the counter, do not reason
+  // about it: since migration 0316 the number comes from
+  // scm.doc_number_counters and `scm.next_doc_no_n` returns
+  // GREATEST(next_n, liveMax + 1), so the surviving rows are only a FLOOR and a
+  // delete cannot pull the counter down.
+  //
+  // CORRECTED 2026-08-30. This block used to end "next mint reclaims the gap on
+  // its own", which was true before 0316 and false after it. It printed that
+  // sentence to the operator on the run that deleted 2990-SO-2608-067 while the
+  // counter sat at 68, so the number was skipped and the report said it was
+  // not. A stale claim a tool PRINTS is worse than one in a doc — nobody can
+  // ask the tool whether it checked.
   const prefix = DOC_NO.replace(/\d+$/, "%");
   const [maxRow] = await db.unsafe(
     `SELECT doc_no FROM scm.mfg_sales_orders WHERE doc_no LIKE $1 ORDER BY doc_no DESC LIMIT 1`,
     [prefix],
   );
-  console.log(`Highest ${prefix} now : ${maxRow?.doc_no ?? "(none)"} — next mint reclaims the gap on its own.`);
+  const liveMax = Number(/(\d+)$/.exec(maxRow?.doc_no ?? "")?.[1] ?? 0);
+  console.log(`Highest ${prefix} now : ${maxRow?.doc_no ?? "(none)"}`);
+
+  const series = DOC_NO.replace(/-\d+$/, "");
+  const [haveCounter] = await db`
+    SELECT count(*)::int AS n FROM information_schema.tables
+     WHERE table_schema = 'scm' AND table_name = 'doc_number_counters'`;
+  if (!haveCounter.n) {
+    console.log(`Counter : scm.doc_number_counters ABSENT (pre-migration 0316) — the next mint is max+1, so it reclaims ${DOC_NO}.`);
+    return;
+  }
+  const [counter] = await db`
+    SELECT next_n FROM scm.doc_number_counters WHERE series = ${series}`;
+  if (!counter) {
+    console.log(`Counter : no row for series ${series} — it self-seeds from the live max, so the next mint reclaims ${DOC_NO}.`);
+    return;
+  }
+  const nextSuffix = Math.max(Number(counter.next_n), liveMax + 1);
+  const nextDocNo = `${series}-${String(nextSuffix).padStart(3, "0")}`;
+  console.log(`Counter : ${series} next_n=${counter.next_n} — the NEXT save will take ${nextDocNo}.`);
+  if (nextDocNo !== DOC_NO) {
+    console.log(`WARNING : ${DOC_NO} is now a PERMANENT GAP. The counter only ever goes up (migration 0316),`);
+    console.log(`WARNING : so deleting the newest document of a month does NOT return its number.`);
+    console.log(`WARNING : To hand it back:  SERIES=${series} TARGET_N=${Number(/(\d+)$/.exec(DOC_NO)[1])} node scripts/reclaim-doc-no.mjs`);
+    console.log(`WARNING : (or Actions -> "Reclaim a document number"). It refuses unless the number is genuinely free.`);
+  }
 }
 
 main().then(() => db.end()).catch(async (e) => {
