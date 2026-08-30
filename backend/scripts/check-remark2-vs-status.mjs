@@ -161,7 +161,7 @@ async function main() {
   const MAIN = new Set(["bedframe", "sofa", "mattress"]);
   const BOUND = new Set(["bedframe", "sofa"]);
   const matrix = new Map();
-  const classes = { "DELIVERED-STALE": [], "NO-OWN-PO": [], GRANULARITY: [], "GATED-NO-PDATE": [], "ALGO-SUSPECT": [] };
+  const classes = { "DELIVERED-STALE": [], "NO-OWN-PO": [], "QUEUE-SHORT": [], "COARSE-VOCAB": [], "GATED-NO-PDATE": [], "ALGO-SUSPECT": [] };
   let claimed = 0, agree = 0;
   for (const [doc, o] of byDoc) {
     const claim = classifyClaim(o.remark2);
@@ -212,9 +212,30 @@ async function main() {
       return (cellStock.get(k) ?? 0) >= (cellDemand.get(k) ?? Infinity);
     });
     if (suspects.length === 0) {
-      const allDelivered = short.every((l) => Number(l.delivered) >= Number(l.qty));
-      const allNoPo = short.every((l) => BOUND.has((l.item_group || "").toLowerCase()) && Number(l.dedicated_po_lines) === 0);
-      classes[allDelivered ? "DELIVERED-STALE" : allNoPo ? "NO-OWN-PO" : "GRANULARITY"].push(doc);
+      /* 2026-08-30 third cut (owner: "账本亮了我们没亮的那些没解决?") — the old
+         GRANULARITY drawer mixed two different business answers: a pooled MAIN
+         line dark because the warehouse cell CANNOT cover its demand (the
+         first-come-first-served queue: procurement work, visible in MRP) and a
+         claim that merely speaks coarser than our per-line verdict (accessory
+         lines short while the mains are covered). Split them, and name the
+         short lines so each drawer is a work list, not a shrug. */
+      const lc = short.map((l) => {
+        const g = (l.item_group || "").toLowerCase();
+        if (Number(l.delivered) >= Number(l.qty)) return "delivered";
+        if (!MAIN.has(g)) return "nonmain";
+        if (BOUND.has(g)) return Number(l.dedicated_po_lines) === 0 ? "bound-no-po" : "bound-unreceived";
+        return "pool-short";
+      });
+      const cls = lc.every((c) => c === "delivered") ? "DELIVERED-STALE"
+        : lc.some((c) => c === "pool-short") ? "QUEUE-SHORT"
+        : lc.some((c) => c.startsWith("bound")) ? "NO-OWN-PO"
+        : "COARSE-VOCAB";
+      const tag = cls === "QUEUE-SHORT"
+        ? " <- " + short.filter((_, i) => lc[i] === "pool-short").map((l) => `${l.item_code}@${l.wh_name ?? l.warehouse_id ?? "?"}`).slice(0, 2).join(" , ")
+        : cls === "NO-OWN-PO"
+        ? " <- " + short.filter((_, i) => lc[i].startsWith("bound")).map((l) => `${l.item_code}${lc[short.indexOf(l)] === "bound-unreceived" ? "(PO未收货)" : "(无PO)"}`).slice(0, 3).join(" , ")
+        : "";
+      classes[cls].push(doc + tag);
     } else {
       classes["ALGO-SUSPECT"].push(`${doc} [${o.lines[0].so_status}] <- ${suspects.map((l) => `${l.item_code}[${l.item_group}]${l.stock_status} wh=${l.wh_name ?? l.warehouse_id ?? "NULL"} variants=${l.has_variants ? "YES" : "no"} leftover=${leftover(l)} blankKeyLeftover=${blankLeftover(l)} rawKeyLeftover=${rawLeftover(l)} line=${JSON.stringify(l.item_code)} stock=${spellings(l)}`).slice(0, 3).join(" | ")}`);
     }
@@ -332,8 +353,9 @@ async function main() {
   log(`READY claims that disagree, classified per the owner's protocol:`);
   for (const [cls, docs] of Object.entries(classes)) {
     log(`  ${cls.padEnd(16)} ${docs.length}${cls === "ALGO-SUSPECT" ? "   <-- MUST BE ZERO" : ""}`);
-    for (const d of docs.slice(0, cls === "ALGO-SUSPECT" ? 40 : 6)) log(`     ${d}`);
-    if (docs.length > (cls === "ALGO-SUSPECT" ? 30 : 6)) log(`     ... and ${docs.length - (cls === "ALGO-SUSPECT" ? 30 : 6)} more`);
+    const cap = { "ALGO-SUSPECT": 40, "NO-OWN-PO": 20, "GATED-NO-PDATE": 10, "QUEUE-SHORT": 60 }[cls] ?? 6;
+    for (const d of docs.slice(0, cap)) log(`     ${d}`);
+    if (docs.length > cap) log(`     ... and ${docs.length - cap} more`);
   }
   await sql.end();
 }
