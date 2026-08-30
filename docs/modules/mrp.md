@@ -377,6 +377,17 @@ mobile card, because `source === 'po'` now guarantees a number. Trace:
 - Sofa is grouped as per-SO-line SETS (section 8) drawing from the same pooled
   supply; set-level atomicity lives in `so-stock-allocation.ts` 7b (one
   covering batch or PENDING) and `ship-commitment.ts`, NOT here.
+- **Company-1 bound groups are EXCLUSIVELY PO-bound in the stored allocator
+  (2026-08-30,
+  `docs/bugs/0572-a-company-1-bound-line-with-no-receipt-fell-through-to-the-p.md`).**
+  `HARD_BOUND_COMPANY_ID = 1` in `lib/so-stock-allocation.ts`: a company-1
+  bedframe / sofa / `(SP)` mattress line (`isHardBoundLine`) lights only from
+  its own received PO — the pooled walk force-stamps it PENDING, never reads
+  its bucket. Company 2 keeps the soft pooled model. MRP's own pooled view
+  (this module) knows none of this, which is exactly why the display union's
+  promotion gate (`so-line-effective-stock.ts`) refuses to promote bound lines
+  on MRP's say-so; see sales-order.md §0.3 for the company-split table and the
+  `check-bound-exclusivity.mjs` census that re-measures the rule.
 
 ### "If the variants are different, will it still match my goods?" (owner, 2026-08-16)
 
