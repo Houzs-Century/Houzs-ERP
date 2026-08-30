@@ -3354,6 +3354,24 @@ are a VIEW; allocation is computed; SO readiness is binary.
   > refused them with `Primary Key Error` and was right. Once a number leaves
   > this system the surviving rows stop being a record of what was issued.
   > `docs/doc-number-reissue-coe.md`.
+
+- **When a gap has to be closed, there is now ONE tool that does it** —
+  `backend/scripts/reclaim-doc-no.mjs`, Actions -> **Reclaim a document
+  number**. It is the only thing in the tree that moves a counter DOWN, and it
+  exists because deleting the newest document of a month is a normal operation
+  (a POS smoke test) with no way back. `MODE=plan` prints the counter row, the
+  highest surviving suffix, what `scm.autocount_outbox` remembers, and the
+  verdict; `MODE=apply` also needs `CONFIRM_SERIES` to equal the series. It
+  REFUSES an `HC-` series with no override (those are the numbers the AED_HOUZS
+  book holds — the incident above), a target that is not below `next_n`, a
+  target any surviving row or any outbox row already carries, and a series type
+  it has no source table for. Reclaiming is for a number that never left the
+  system; a gap in the middle of a month is still normal and still permanent.
+
+  `delete-test-so.mjs` now READS the counter and names the doc number the next
+  save will take, with a WARNING and this command when the deleted number is
+  gone for good. It used to assert the opposite from `MAX()` alone —
+  `docs/bugs/0574-delete-test-so-told-the-operator-the-deleted-number-would-co.md`.
 - `doc_no` is the real PRIMARY KEY and **every FK pointing at it is
   `ON UPDATE NO ACTION`**, not CASCADE (`2990s-full-schema.sql:1652-1768`).
   `UPDATE ... SET doc_no = ...` is therefore REFUSED by Postgres while any child
