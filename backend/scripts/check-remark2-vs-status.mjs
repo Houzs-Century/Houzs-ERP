@@ -260,7 +260,7 @@ async function main() {
       if (!acOnly.length && !erpOnly.length) bothAgree++;
       else if (acOnly.length && erpOnly.length) mixed++;
       else if (acOnly.length) { acMore++; for (const g of acOnly) acMoreByGroup[g] = (acMoreByGroup[g] || 0) + 1; }
-      else { erpMore++; for (const g of erpOnly) erpMoreByGroup[g] = (erpMoreByGroup[g] || 0) + 1; erpMoreDocs.push({ doc, erpOnly, imported: o.remark2 ?? "", debugCs: [...cs].join("+"), debugReady: [...ready].join("+") }); }
+      else { erpMore++; for (const g of erpOnly) erpMoreByGroup[g] = (erpMoreByGroup[g] || 0) + 1; erpMoreDocs.push({ doc, erpOnly, imported: o.remark2 ?? "", debugCs: [...cs].join("+"), debugReady: [...ready].join("+"), debugC: String(classifyClaim(o.remark2)), debugCodes: [...(o.remark2 ?? "")].map((ch) => ch.charCodeAt(0)).join(",") }); }
     }
     log(`BIDIRECTIONAL category matrix (orders with a parseable claim incl. blank): agree ${bothAgree}; book-claims-more ${acMore}; ERP-ready-more ${erpMore}; both-directions ${mixed}`);
     log(`  book-claims-more by category: ${JSON.stringify(acMoreByGroup)}`);
@@ -284,7 +284,7 @@ async function main() {
         const then = (e.imported || "").trim();
         if (now && now !== then) buckets["BOOK-CAUGHT-UP"].push(`${e.doc} now=${JSON.stringify(now)}`);
         else if (!now) buckets["BOOK-STILL-BLANK"].push(`${e.doc} erp-ready:{${e.erpOnly.join(",")}}`);
-        else buckets["BOOK-SAYS-OTHER"].push(`${e.doc} book=${JSON.stringify(now)} imported=${JSON.stringify(e.imported)} cs={${e.debugCs}} ready={${e.debugReady}} erp-extra:{${e.erpOnly.join(",")}}`);
+        else buckets["BOOK-SAYS-OTHER"].push(`${e.doc} book=${JSON.stringify(now)} imported=${JSON.stringify(e.imported)} cs={${e.debugCs}} c=${e.debugC} codes=[${e.debugCodes}] ready={${e.debugReady}} erp-extra:{${e.erpOnly.join(",")}}`);
       }
       for (const [k, v] of Object.entries(buckets)) {
         log(`  ERP-ahead cause ${k}: ${v.length}`);
