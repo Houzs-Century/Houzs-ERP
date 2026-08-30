@@ -233,7 +233,7 @@ async function main() {
         const t = (r || "").toUpperCase();
         if (/MATTRESS/.test(t)) set.add("mattress");
         if (/BEDFRAME/.test(t)) set.add("bedframe");
-        if (/ACC/.test(t)) set.add("accessory");
+        if (/ACC/.test(t)) set.add("accessory");
         return set;
       }
       return c ? null : new Set();
