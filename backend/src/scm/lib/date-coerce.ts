@@ -31,6 +31,26 @@ export function dateOrNull(v: unknown): string | null {
   return s === '' ? null : s;
 }
 
+/**
+ * The value a PATCH LEAVES in a date column: the request's value when the
+ * request names the key at all, else the stored one.
+ *
+ * The absent/present split is `=== undefined`, and that is the whole point.
+ * Reading it as `typeof raw === 'string'` looks equivalent — an <input
+ * type="date"> posts `""` — but the forms send a cleared date as JSON `null`
+ * (`f.processingDate || null`), and `typeof null` is `'object'`. A clear then
+ * read as "key absent, keep what is stored", so every rule judging the row this
+ * save would leave behind judged the row it was replacing instead. Owner
+ * 2026-08-31, HC-SO-013393: clearing both dates was refused for being unpaired,
+ * while clearing only one was accepted and applied.
+ *
+ * Same coercion as `dateOrNull` on the value itself, so what the rules judge is
+ * exactly what the write stores.
+ */
+export function effectiveDateAfterPatch(raw: unknown, stored: string | null): string | null {
+  return raw === undefined ? stored : dateOrNull(raw);
+}
+
 /* Bug #10 — normalize a lifecycle event's business date to a single comparable
    representation. Inputs are a mix of plain 'YYYY-MM-DD' dates and full ISO
    timestamps; both share the leading 'YYYY-MM-DD', so truncating to the first 10

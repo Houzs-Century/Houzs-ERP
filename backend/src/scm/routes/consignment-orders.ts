@@ -33,7 +33,7 @@ import {
 } from '../lib/sales-doc-derive';
 import { escapeForOr } from '../lib/postgrest-search';
 import { createMixRefusal, lineMixRefusal } from '../lib/main-mix';
-import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
+import { dateOrNull, coerceEmptyDates, effectiveDateAfterPatch } from '../lib/date-coerce';
 import { resolveSalesScopeIds, salesDocOutOfScope, resolveCallerStaffId } from '../lib/salesScope';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { canViewAllSales, canViewScmFinance, hasHouzsPerm } from '../lib/houzs-perms';
@@ -1217,12 +1217,14 @@ consignmentOrders.patch('/:docNo', async (c) => {
     const deliv = body['customerDeliveryDate'];
     const origProc = (beforeRow?.['processing_date'] as string | null) ?? null;
     const origDeliv = (beforeRow?.['customer_delivery_date'] as string | null) ?? null;
-    const effProc  = typeof proc  === 'string' ? (proc  || null) : origProc;
-    const effDeliv = typeof deliv === 'string' ? (deliv || null) : origDeliv;
-    /* The pair rule — see "THE CO HEADER PATCH" in shared/so-processing-date.ts. */
+    const effProc  = effectiveDateAfterPatch(proc,  origProc);
+    const effDeliv = effectiveDateAfterPatch(deliv, origDeliv);
+    /* The pair rule — see "THE CO HEADER PATCH" in shared/so-processing-date.ts.
+       Absent vs cleared is `=== undefined`, never `typeof === 'string'`: the CO
+       edit page clears a date as JSON null, same as the SO one. */
     const coCascadeCols = soDatePairCascadeColumns({
-      procCleared: typeof proc === 'string' && (proc || null) === null && !!origProc,
-      delivInPatch: typeof deliv === 'string',
+      procCleared: proc !== undefined && dateOrNull(proc) === null && !!origProc,
+      delivInPatch: deliv !== undefined,
       origDeliv,
     });
     for (const col of coCascadeCols) updates[col] = null;

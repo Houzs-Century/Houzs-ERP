@@ -1391,6 +1391,23 @@ describe('the three fields the extract carries and the write-back did not send',
       const udf = (header(sb).UDF ?? {}) as Record<string, string>;
       expect(udf).toHaveProperty('PDate', '');
     });
+
+    /* Owner 2026-08-31: "你确保我 remove 了之后,它也是会 send 回去 AutoCount 的."
+       Removing the pair is ONE save that clears TWO fields living on two
+       different sides of the payload — the Processing Date is a UDF, the
+       Delivery Date is a header column — so the pair is asserted together. */
+    test('clearing the whole date pair blanks both the UDF and the header date', async () => {
+      const sb = linked({ processing_date: null, customer_delivery_date: null });
+      await enqueueEdit(client(sb), {
+        companyId: 1,
+        docType: 'SO',
+        docNo: 'HC-SO-B',
+        touchedFields: ['processing_date', 'customer_delivery_date'],
+      });
+      const h = header(sb);
+      expect((h.UDF ?? {}) as Record<string, string>).toHaveProperty('PDate', '');
+      expect(h).toHaveProperty('SalesExemptionExpiryDate', null);
+    });
   });
 
   /* ── PAYEMENT — the account sheet and approval code the cutover took OUT of
