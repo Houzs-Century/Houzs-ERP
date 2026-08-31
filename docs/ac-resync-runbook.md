@@ -77,6 +77,113 @@ run-prod`)。少数 workflow 不收 target(如 `refresh-so-tail-from-book.yml`�
 | 11 | `refresh-so-tail-from-book.yml` | apply 要 `confirm="REFRESH SO TAIL"`;头 7 字段+行交期,改值照账本、清空照清、人碰过的拒 |
 | 12 | `backfill-ac-line-keys.yml` + `backfill-ac-sofa-line-keys.yml` | plan 应报 to-set≈0(出生自带);>0 才 apply |
 
+## 阶段 3b — 照片(账本里的行照片 → R2 → 挂回 ERP 行)
+
+四步一条线:**导出 → 上传 → 挂回 → 验**。前两步只能在这台机器跑(账本走
+ZeroTier,只有这里连得到);后两步是已有的 workflow。
+
+> **为什么这轮要新写导出器**:第一轮(2026-08-09~12)的提取脚本**没留下来**
+> (`docs/autocount-further-description-photos.md` §2.1),照片再也拿不出来。
+> `backend/scripts/export-ac-line-photos.py` 就是补回来的那一半。
+>
+> 账本实测(2026-08-31,只读):**SO 2,723 行、PO 2,392 行**带照片,**全部是
+> `\wmetafile8`**(jpegblip/pngblip/emfblip/dibitmap 都是 0)。第一轮的 manifest
+> 只有 554 SO + 190 PO 张,而且是从 DtlKey 34553 才开始数的——**账本里绝大部分
+> 老单的照片从来没被拿出来过**。
+
+### 1. 导出(本机,只读账本)
+
+```bash
+AC_CRED_FILE=<scratchpad>/.ac-cred python backend/scripts/export-ac-line-photos.py
+```
+
+断线可直接重跑:它按 DtlKey 记断点(`<OUT_DIR>/<so|po>/.state.json`),**已经
+拿过的行不会再下载一次**——下载才是慢的那头(单行 RTF 实测有 458,878 字节)。
+先试小样:`SIDE=so LIMIT=20 ...`。
+
+成功长这样(每 100 行报一次进度)。⚠️ **下面这段是「长什么样」的示意,不是跑完的
+纪录**:到 2026-08-31 为止只**实跑过 20 行的小样**(SO,`LIMIT=20`,20 张全成、
+全走 dib、0 失败),整本 5,115 行**还没跑过**,PO 侧一行都还没跑过。整本的真实数字
+要以跑完那次的输出为准。
+
+```
+self-test: DIB scanner OK (2x2 metafile -> 355-byte JPEG via dib)
+== SO ==  already extracted: 0 image(s); resuming after DtlKey 0
+  ... 100 lines read, 100 images written (DtlKey 152114)
+  lines read this run: 2723; images written this run: 2723
+  picture forms: wmetafile8=2723
+  conversion:    dib=2723
+  manifest: .../ac-photo-manifest.json.gz (2723 image rows, ...)
+EXPORT DONE. SO: 2723 new image(s), 2723 in manifest, 0 failed line(s)
+```
+
+三个要看的数:`failed line(s)` **必须 0**;`conversion` 里出现 **`gdi-render`**
+就要警觉——那几张是我们自己画出来的像素、不是账本存的,先看图再决定上不上传;
+第一行的 `self-test` 没出现就说明解析器根本没跑起来,**别把 0 张当成"账本没照片"**。
+
+### 2. 上传 R2(本机;需要 owner 放好的 token 档)
+
+Token 由 owner 在 Cloudflare 后台开(R2 → API → Create API token,对 `houzs-erp`
+桶给 **Object Read & Write**),存成 `C:\Users\User\Desktop\.r2-token.txt`。
+**脚本只把它塞进子进程环境,从不打印**;账号必须是公司账号
+`816e457307d7fa0491c2a08a72ad5dcd`(本机 wrangler 登的是个人账号,没有 r2 权限,
+直接 403)。
+
+先把「文件 → key」的对照表跑出来(第 3 步的 workflow 默认就是这个 RESOLVE 模式,
+把 run log 存下来即可),再:
+
+```bash
+# 一)先看计划,什么都不传
+PLAN=so-resolve.log PHOTO_DIR=<OUT_DIR>/so node backend/scripts/upload-line-photos-r2.mjs
+# 二)确认无误才传
+PLAN=so-resolve.log PHOTO_DIR=<OUT_DIR>/so MODE=apply \
+  CONFIRM="I HAVE REVIEWED THE PLAN" node backend/scripts/upload-line-photos-r2.mjs
+# 三)另起一次,重新抽样下载回来核对
+PLAN=so-resolve.log PHOTO_DIR=<OUT_DIR>/so MODE=verify node backend/scripts/upload-line-photos-r2.mjs
+```
+
+key **不是这个脚本算的**——它只认第 3 步那两个脚本印出来的
+`UPLOAD <文件> -> <key>`,并且逐条对照第一轮的格式
+(`<so|po>-items/<单号>/<行 id>/ac-<DtlKey>-<n>.jpg`),**对不上就整个拒绝**,
+绝不猜一个前缀传上去。传成功的 key 逐条写进 `<PHOTO_DIR>/.uploaded.txt`,
+中途杀掉再跑会跳过它们(PO 侧同理,`PHOTO_DIR=<OUT_DIR>/po`)。
+
+成功长这样。⚠️ **同上,这是示意的形状,不是跑过的纪录**:到 2026-08-31 为止
+**一次 R2 上传都没做过**(token 档还没建),只验过 plan 模式和四道闸门会拒
+(错格式 key / 无确认句 / 错确认句 / 没 token 档,四个都实测 exit 2)。
+
+```
+APPLIED. uploaded: 2723; already in R2: 0; failed: 0
+VERIFY: re-reading 20 of 2723 uploaded key(s) from R2 on fresh processes
+VERIFY: 20 byte-identical to the manifest; 0 present but unverifiable; 0 missing; 0 wrong
+VERDICT: PASSED. Attach with import-so-line-photos.mjs / import-po-line-photos.mjs APPLY=1.
+```
+
+`VERDICT: PASSED` 之前**不要挂回**——验的是 **sha256 对得上**,不是"文件在不在":
+空档和被截断的档都"在"。
+
+### 3. 挂回 ERP 行(workflow,和第一轮同一套)
+
+| # | workflow | 备注 |
+|---|---|---|
+| 12b | `import-so-line-photos.yml` | 先默认(resolve,只印计划)→ 读数 → `apply=1`;**每次都带 `-f target=prod`** |
+| 12c | `import-po-line-photos.yml` | 同上 |
+
+resolve 那趟的 log 就是第 2 步要的 `PLAN` 档,顺序上是:**先 resolve 拿 key →
+上传 → 再 apply 挂回**。挂回是幂等的(已经在 `photo_urls` 里的 key 会跳过)。
+
+### 4. 验
+
+resolve 再跑一趟,`already attached` 应该等于上一趟的 `photo keys planned`;
+`unmapped` / `order-not-imported` / `line-missing` 三个数就是挂不上的名单,
+**照实列出来给 owner**,不要吞。
+
+> ⚠️ **账本里有一行挂两张以上照片**(2026-08-31 实测:SO 最多 2 张,PO 最多 5 张)。
+> 导出器按 `_1`/`_2` 全部拿,不会只取第一张;但**回写**(ERP → AutoCount)那条路
+> 是整个 `FurtherDescription` 字段覆盖式重写,所以在回写这类行之前必须先读回账本
+> 现有的值,否则第二张会被**抹掉**。详见
+> `docs/autocount-further-description-photos.md` §7 问题 8。
+
 ## 阶段 4 — 重算与终验(全绿才算完)
 
 | # | workflow | 通过标准 |
