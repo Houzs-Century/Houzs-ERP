@@ -640,6 +640,23 @@ declared-new line as `ErpLineIds` (a list: a sofa build is several rows).
 an edit answers with no line list and the ERP half is a no-op —
 `docs/bugs/0583-*`.
 
+**A document already held back is repaired by `POST
+/autocount-outbox/relink-lines`** — it reads the document out of the book
+(`/doc-read`, served since 2026-08-15) and stamps the keys onto our keyless
+lines. No host deploy. The matching rules and every refusal are in
+`scm/lib/autocount-relink-lines.ts` with their own tests: a book line another row
+already claims is not a candidate, a repeated code needs Desc2 to separate it
+(prefix-tolerant, the book truncates its own), and an ambiguous line refuses
+ITSELF while the rest still land. It matches on the RAW ERP code today, so a line
+whose code the bindings rewrite is refused rather than mis-assigned —
+`docs/bugs/0585-*`.
+
+**Clear-and-rebuild is NOT how to fix one of these**, though AutoCount's own docs
+sample it: it destroys every DtlKey — the identity behind `FromSODtlKey`, the
+transfer chain, the photographs and retirement — and on a TRANSFERRED document
+AutoCount's own troubleshooting page says the source is left pointing at nothing
+and the document goes grey and uneditable.
+
 **A new line also gets a stock location, and only a new one.** An existing line
 with no location omits the `Location` key so the account book keeps the value it
 owns; a new line has no such value, so the document's own warehouse stands in

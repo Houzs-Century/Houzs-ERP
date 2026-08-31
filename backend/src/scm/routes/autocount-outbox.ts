@@ -59,6 +59,7 @@ import {
   classifyAcSkip,
 } from '../lib/autocount-outbox-status';
 import { callAcRead } from '../../services/autocount-host-read';
+import { autocountRelinkLinesHandler } from './autocount-relink';
 import {
   AC_REQUEUE_MEANING,
   REQUEUE_DOC_TYPES,
@@ -686,6 +687,10 @@ export const autocountBookDocHandler = async (
 };
 
 autocountOutbox.get('/book-doc', autocountBookDocHandler);
+/* The WRITE half of /book-doc: match a held-back document's lines up against the
+   book so it can be saved again. Its own file (this one is at the size cap), and
+   its matching rules are a tested module of their own. */
+autocountOutbox.post('/relink-lines', autocountRelinkLinesHandler);
 autocountOutbox.get('/host-log', autocountHostLogHandler);
 autocountOutbox.get('/', listAutocountOutboxHandler);
 
