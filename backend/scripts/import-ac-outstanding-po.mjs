@@ -43,6 +43,7 @@ import { parseBedframe } from "./lib/parse-bedframe.mjs";
 import { SOFA_MODEL_ALIAS, parseSofa } from "./lib/parse-sofa.mjs";
 import { acDeliveryDate, acDtlKey, acFromSoDtlKey } from "./lib/ac-po-line.mjs";
 import { makeSoLineTaker } from "./lib/so-line-dedication.mjs";
+import { catalogPredicate, nonCatalogRefs, formatNonCatalogRefusal } from "./lib/catalog-code-guard.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -277,6 +278,24 @@ async function main() {
   if (s) {
     log(`\nSAMPLE ${s.poNo} <- ${s.acPo}  status=${s.status}`);
     for (const i of s.items) log(`   [${i.grp}] ${i.erp} (sku ${i.sku}) x${i.qty} recv${i.received} RM${(i.lt / 100).toFixed(2)} wh=${i.w ? "ok" : "-"} deliv=${i.deliv || "-"}${i.variants ? ` variants=${JSON.stringify(i.variants)}` : ""}`);
+  }
+
+  /* CATALOG GUARD — the last thing between the plan and the database.
+     `phCode` above falls back to the raw mapped code when the aliased
+     placeholder has no product row, and `erp` itself is only ever as good as
+     data/autocount-erp-mapping-1561.csv. A mapping row pointing at a code
+     nobody minted used to be written silently: item_code has no foreign key to
+     scm.mfg_products, so an orphan line looks fine until a screen tries to join
+     on it. Refuse the whole run and name every row (docs/bugs/0577). */
+  const badCodes = nonCatalogRefs(
+    built.flatMap((o) => o.items.map((i) => ({ code: i.erp, doc: o.poNo, acDoc: o.acPo, sku: i.sku }))),
+    catalogPredicate(codeSet),
+  );
+  if (badCodes.length) {
+    log("");
+    for (const line of formatNonCatalogRefusal(badCodes, { script: "import-ac-outstanding-po.mjs" })) log(line);
+    await sql.end();
+    process.exit(2);
   }
 
   if (!APPLY) { log("\nDRY-RUN — set APPLY=1 to import."); await sql.end(); return; }

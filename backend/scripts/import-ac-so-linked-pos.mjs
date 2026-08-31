@@ -34,6 +34,7 @@ import { SOFA_MODEL_ALIAS, parseSofa } from "./lib/parse-sofa.mjs";
 import { acDeliveryDate, acDtlKey } from "./lib/ac-po-line.mjs";
 import { RECEIVED_INDETERMINATE, buildGrQtyGroups, resolveReceivedQty } from "./lib/po-line-topup-core.mjs";
 import { makeSoLineTaker } from "./lib/so-line-dedication.mjs";
+import { catalogPredicate, nonCatalogRefs, formatNonCatalogRefusal } from "./lib/catalog-code-guard.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -323,6 +324,25 @@ async function main() {
     log("");
     log(`SOFA decode: ${ok.length} decomposed, ${sofaDecode.length - ok.length} placeholder (never guessed); read from the SO's own text: ${sofaDecode.filter((d) => d.usedSoText).length}; bound to a placeholder SO line: ${sofaPlaceholderBind}`);
     for (const d of sofaDecode) log(`   ${d.po} ${d.code} | ${JSON.stringify(d.d2 || "").slice(0, 60)} -> ${d.pieces ? d.pieces.join(" + ") : "PLACEHOLDER"}${d.why.length ? " (" + d.why.join("; ") + ")" : ""}`);
+  }
+
+  /* CATALOG GUARD — the last thing between the plan and the database.
+     Two silent routes reached an item_code nobody minted, and this refuses
+     both. `code` above falls back to the raw mapped code when the aliased
+     placeholder has no product row; and `group` is read from the CATALOG
+     (`prodCat.get(norm(l.erp))`), so a mapped code the catalog does not know
+     was classified "others" and skipped the sofa decomposition entirely — the
+     line then landed whole, under the unknown code, having never been offered
+     to the decoder. Refuse the run and name every row (docs/bugs/0577). */
+  const badCodes = nonCatalogRefs(
+    plan.flatMap((p) => p.items.map((i) => ({ code: i.code, doc: "HC-" + p.acDoc, acDoc: p.acDoc, sku: i.supplierSku }))),
+    catalogPredicate(codeSet),
+  );
+  if (badCodes.length) {
+    log("");
+    for (const line of formatNonCatalogRefusal(badCodes, { script: "import-ac-so-linked-pos.mjs" })) log(line);
+    await sql.end();
+    process.exit(2);
   }
 
   if (!APPLY) { log("DRY-RUN — set APPLY=1 to write. NOTE: no stock movements are created; the balance snapshot already holds these units."); await sql.end(); return; }
