@@ -11,7 +11,7 @@ FOR, which trees are dead, what must be changed in pairs — lives in
 
 ## 1. Backend route inventory
 
-153 route modules (44 in `backend/src/routes`, 109 in `backend/src/scm/routes`), 1107 endpoint registrations.
+154 route modules (44 in `backend/src/routes`, 110 in `backend/src/scm/routes`), 1111 endpoint registrations.
 
 An endpoint is a `router.<method>("/…")` registration. For the per-route authorization
 boundary see the sibling artifact `docs/generated/route-capability-matrix.csv`, which
@@ -65,15 +65,16 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/users.ts` | 22 | 2331 |
 | `backend/src/scm/routes/accounting-bank.ts` | 0 | 659 |
 | `backend/src/scm/routes/accounting-payouts.ts` | 0 | 196 |
-| `backend/src/scm/routes/accounting-settlement.ts` | 0 | 1203 |
-| `backend/src/scm/routes/accounting.ts` | 47 | 1195 |
+| `backend/src/scm/routes/accounting-settlement.ts` | 0 | 1222 |
+| `backend/src/scm/routes/accounting.ts` | 48 | 1196 |
 | `backend/src/scm/routes/addons.ts` | 4 | 215 |
 | `backend/src/scm/routes/amendment-mirror.ts` | 1 | 126 |
 | `backend/src/scm/routes/ar-reconciliation.ts` | 1 | 163 |
-| `backend/src/scm/routes/autocount-outbox.ts` | 5 | 955 |
+| `backend/src/scm/routes/autocount-outbox.ts` | 7 | 982 |
+| `backend/src/scm/routes/autocount-relink.ts` | 0 | 157 |
 | `backend/src/scm/routes/categories.ts` | 10 | 509 |
 | `backend/src/scm/routes/consignment-notes.ts` | 12 | 1262 |
-| `backend/src/scm/routes/consignment-orders.ts` | 19 | 2331 |
+| `backend/src/scm/routes/consignment-orders.ts` | 19 | 2332 |
 | `backend/src/scm/routes/consignment-returns.ts` | 9 | 1248 |
 | `backend/src/scm/routes/currencies.ts` | 3 | 148 |
 | `backend/src/scm/routes/customer-mirror.ts` | 1 | 103 |
@@ -116,11 +117,11 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/mfg-products.ts` | 11 | 1226 |
 | `backend/src/scm/routes/mfg-purchase-orders-list-enrichment.ts` | 1 | 82 |
 | `backend/src/scm/routes/mfg-purchase-orders.ts` | 24 | 4538 |
-| `backend/src/scm/routes/mfg-sales-orders-list-enrichment.ts` | 1 | 195 |
-| `backend/src/scm/routes/mfg-sales-orders.ts` | 42 | 11947 |
+| `backend/src/scm/routes/mfg-sales-orders-list-enrichment.ts` | 2 | 298 |
+| `backend/src/scm/routes/mfg-sales-orders.ts` | 42 | 11963 |
 | `backend/src/scm/routes/model-free-gifts.ts` | 3 | 147 |
 | `backend/src/scm/routes/mrp-lead-times.ts` | 2 | 95 |
-| `backend/src/scm/routes/mrp.ts` | 2 | 1688 |
+| `backend/src/scm/routes/mrp.ts` | 2 | 1763 |
 | `backend/src/scm/routes/outstanding.ts` | 2 | 321 |
 | `backend/src/scm/routes/payment-vouchers.ts` | 10 | 1251 |
 | `backend/src/scm/routes/personal-quick-picks.ts` | 3 | 212 |
@@ -137,12 +138,12 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/purchase-consignment-returns.ts` | 14 | 1151 |
 | `backend/src/scm/routes/purchase-invoices-list-enrichment.ts` | 1 | 73 |
 | `backend/src/scm/routes/purchase-invoices.ts` | 14 | 2416 |
-| `backend/src/scm/routes/purchase-order-item-photos.ts` | 2 | 214 |
+| `backend/src/scm/routes/purchase-order-item-photos.ts` | 2 | 227 |
 | `backend/src/scm/routes/purchase-returns.ts` | 14 | 1816 |
 | `backend/src/scm/routes/pwp-codes.ts` | 5 | 500 |
 | `backend/src/scm/routes/pwp-rules.ts` | 4 | 233 |
 | `backend/src/scm/routes/quotes.ts` | 4 | 321 |
-| `backend/src/scm/routes/reports.ts` | 6 | 1295 |
+| `backend/src/scm/routes/reports.ts` | 6 | 1308 |
 | `backend/src/scm/routes/sales-analysis.ts` | 2 | 551 |
 | `backend/src/scm/routes/sales-invoices.ts` | 15 | 2559 |
 | `backend/src/scm/routes/scan-lorry-invoice.ts` | 1 | 381 |
@@ -188,15 +189,15 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1818 files, 660904 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1832 files, 664931 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
 |---|---|
 | `frontend/src/pages/Projects.tsx` | 15054 |
-| `backend/src/scm/routes/mfg-sales-orders.ts` | 11947 |
+| `backend/src/scm/routes/mfg-sales-orders.ts` | 11963 |
 | `frontend/src/pages/ServiceCases.tsx` | 8816 |
-| `backend/src/services/autocount-sofa-corpus.ts` | 8389 |
+| `backend/src/services/autocount-sofa-corpus.ts` | 8401 |
 | `frontend/src/pages/Team.tsx` | 5686 |
 | `backend/src/scm/routes/delivery-orders-mfg.ts` | 5601 |
 | `frontend/src/pages/scm-v2/Products.tsx` | 5425 |
@@ -205,8 +206,8 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `backend/src/scm/routes/mfg-purchase-orders.ts` | 4538 |
 | `frontend/src/mobile/MobilePMS.tsx` | 4375 |
 | `frontend/src/pages/scm-v2/SupplierDetail.tsx` | 4326 |
-| `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | 4195 |
-| `frontend/src/mobile/MobileNewSO.tsx` | 3744 |
+| `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | 4205 |
+| `frontend/src/mobile/MobileNewSO.tsx` | 3742 |
 | `backend/src/scm/routes/grns.ts` | 3564 |
 | `frontend/src/components/DataTable.tsx` | 3545 |
 | `frontend/src/mobile/MobileServiceCase.tsx` | 3376 |
@@ -395,7 +396,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileAssistant.tsx` | 295 |
 | `frontend/src/mobile/MobileAssrCategoryChips.tsx` | 76 |
 | `frontend/src/mobile/MobileAssrSoField.tsx` | 76 |
-| `frontend/src/mobile/MobileAutoCountSync.tsx` | 814 |
+| `frontend/src/mobile/MobileAutoCountSync.tsx` | 837 |
 | `frontend/src/mobile/MobileAvatar.tsx` | 148 |
 | `frontend/src/mobile/MobileCalendar.tsx` | 792 |
 | `frontend/src/mobile/MobileConvertWizard.tsx` | 1199 |
@@ -414,7 +415,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileModuleForm.tsx` | 389 |
 | `frontend/src/mobile/MobileModuleList.tsx` | 2105 |
 | `frontend/src/mobile/MobileMyCaseDetail.tsx` | 326 |
-| `frontend/src/mobile/MobileNewSO.tsx` | 3744 |
+| `frontend/src/mobile/MobileNewSO.tsx` | 3742 |
 | `frontend/src/mobile/MobilePMS.tsx` | 4375 |
 | `frontend/src/mobile/MobilePOD.tsx` | 558 |
 | `frontend/src/mobile/MobilePmsDefectActions.tsx` | 109 |
