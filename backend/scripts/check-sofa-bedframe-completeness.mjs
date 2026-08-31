@@ -384,6 +384,11 @@ async function main() {
   const findings = [];
   const builds = new Map(); // so doc|po doc|model -> { so:Map(id->code), po:[code] }
   let orphan = 0, axisBad = 0, codeBad = 0;
+  const lineKind = { poBlank: 0, soBlank: 0, conflict: 0 };
+  const provSofa = { imported: 0, createdHere: 0 };
+  const provBed = { imported: 0, createdHere: 0 };
+  const linkedProv = { imported: 0, createdHere: 0 };
+  for (const p of linked) linkedProv[p.ac ? "imported" : "createdHere"]++;
   for (const p of linked) {
     const s = soAll.get(p.so_item_id);
     if (!s) { orphan++; continue; }
@@ -395,13 +400,28 @@ async function main() {
     }
     const diffs = [];
     if (norm(p.code) !== norm(s.code)) { diffs.push(`item code: SO ${s.code} vs PO ${p.code}`); codeBad++; }
+    /* WHICH SIDE IS EMPTY decides who can fix it, and the headline count cannot
+       say. "the SO knows the colour and the PO carries nothing" is a value to
+       carry forward; "they name different colours" is a question for a human.
+       Counting them together reads as 325 contradictions when most are
+       omissions. */
+    let poBlankHere = 0, soBlankHere = 0, conflictHere = 0;
     for (const [label, keys] of AXES) {
       const a = pick(s.variants, keys), b = pick(p.variants, keys);
       if (norm(a) === norm(b)) continue;
+      if (a && !b) poBlankHere++; else if (!a && b) soBlankHere++; else conflictHere++;
       diffs.push(`${label}: SO ${a || "-"} vs PO ${b || "-"}`);
     }
     if (!diffs.length) continue;
     axisBad++;
+    /* One bucket per LINE, worst-first: a line holding any real conflict is a
+       conflict line whatever else it also omits. */
+    if (conflictHere) lineKind.conflict++;
+    else if (poBlankHere && soBlankHere) lineKind.conflict++;
+    else if (poBlankHere) lineKind.poBlank++;
+    else lineKind.soBlank++;
+    const prov = p.ac ? "imported" : "createdHere";
+    (p.grp === "sofa" ? provSofa : provBed)[prov]++;
     findings.push(`  ${s.doc} -> ${p.doc}  ${p.grp} ${p.code}\n     ${diffs.join("\n     ")}`);
   }
   const compFindings = [];
@@ -418,6 +438,15 @@ async function main() {
   log("=== 5 SO -> PO ALIGNMENT");
   log(`  ${linked.length} dedicated PO lines (so_item_id set); ${poRows.length - linked.length} unlinked PO lines have no SO line to align against`);
   log(`  line-level: total ${linked.length - orphan} / aligned ${linked.length - orphan - axisBad} / disagree ${axisBad}  (of which ${codeBad} disagree on the item code itself)`);
+  log(`     by SHAPE — the PO is simply MISSING what the SO holds: ${lineKind.poBlank}`
+    + ` / the SO is missing what the PO holds: ${lineKind.soBlank}`
+    + ` / both hold a value and they CONFLICT: ${lineKind.conflict}`);
+  log(`     the first bucket is a carry-forward; only the third needs a person to decide.`);
+  log(`     by PROVENANCE — disagreeing sofa lines: ${provSofa.imported} on POs imported from AutoCount,`
+    + ` ${provSofa.createdHere} on POs raised in the ERP;`
+    + ` bedframe: ${provBed.imported} imported, ${provBed.createdHere} raised here`);
+  log(`     (for scale, of ALL ${linked.length} dedicated lines: ${linkedProv.imported} imported,`
+    + ` ${linkedProv.createdHere} raised here — a bucket can only be as big as its population)`);
   log(`  sofa builds: total ${builds.size} / compartment multiset agrees ${builds.size - compFindings.length} / disagrees ${compFindings.length}`);
   log(`  ${orphan} links point at an SO line that no longer exists`);
   if (LIST) {
