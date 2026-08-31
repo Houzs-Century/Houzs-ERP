@@ -1,0 +1,53 @@
+name: repair-proceeded-status (plan by default)
+
+# An order carrying a Processing Date has PROCEEDED, so its status should say so
+# — the owner's rule, already pinned in the IN_PRODUCTION transition's own code.
+# The AutoCount import wrote the dates and wrote CONFIRMED independently, so on
+# 2026-08-31 company 1 had 364 CONFIRMED orders carrying a Processing Date and an
+# empty IN PRODUCTION tab.
+#
+# PLAN BY DEFAULT. The apply path needs the confirmation phrase, writes the
+# `status` column and nothing else, and verifies the SHAPE on a fresh connection.
+# Manual trigger only, own concurrency group.
+on:
+  workflow_dispatch:
+    inputs:
+      company_id:
+        description: 'Company id (1 = HOUZS / Houzs Century)'
+        required: false
+        default: '1'
+        type: string
+      mode:
+        description: 'plan (read-only) or apply'
+        required: false
+        default: 'plan'
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: 'On apply, type exactly: PROCEEDED MEANS IN PRODUCTION'
+        required: false
+        default: ''
+        type: string
+
+concurrency:
+  group: repair-proceeded-status
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+        working-directory: backend
+      - name: plan or apply
+        working-directory: backend
+        env:
+          DATABASE_URL: "${{ secrets.DATABASE_URL }}"
+          COMPANY: "${{ inputs.company_id }}"
+          MODE: "${{ inputs.mode }}"
+          CONFIRM: "${{ inputs.confirm }}"
+        run: node scripts/repair-proceeded-status.mjs
