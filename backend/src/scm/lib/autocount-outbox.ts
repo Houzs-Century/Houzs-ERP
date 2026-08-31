@@ -108,7 +108,7 @@ import { backfillSoToPoKeys, poBodyForShape } from './autocount-so-to-po-keys';
 import { acParentlessCreateReason, acNotCarriedReason } from './autocount-outbox-status';
 /* Line identity, split out 2026-08-17 for the same cap reason as the two
    imports above. Same function, same call site in dispatchOne. */
-import { persistLineKeys } from './autocount-line-keys';
+import { persistLineKeys, persistNewLineKeys, newLineTargetOf } from './autocount-line-keys';
 import { readMfgProductBindings } from './supplier-bindings';
 import {
   soLine,
@@ -1905,6 +1905,21 @@ export async function dispatchOne(
        (or, before that refusal existed, appended duplicates into the book). */
     if (payload.lineWriteback) {
       await persistLineKeys(sb, row, payload.lineWriteback, result.lines);
+    }
+    /* AN EDIT THAT ADDED A LINE LEARNS THAT LINE'S KEY, and this is the half
+       that was missing until 2026-08-31. The add itself worked — AutoCount
+       appended the line — but nothing carried its DtlKey back, so the ERP row
+       stayed keyless and EVERY later edit of that document was refused by the
+       keyless-line guard. Measured on HC-SO-013394: 8 lines, 7 keyed, two edits
+       skipped, and "send again" could not clear it because a change has nothing
+       to re-create.
+       Derived from the payload rather than carried beside it: the body already
+       says which details were declared new (`IsNewLine`), which ERP rows are
+       behind each (`ErpLineIds`) and which keys we already held. An old service
+       answers with no lines and this is a no-op. */
+    if (row.op === 'edit') {
+      const target = newLineTargetOf(row.doc_type, payload);
+      if (target) await persistNewLineKeys(sb, row, target, result.lines);
     }
     return 'sent';
   }

@@ -822,6 +822,29 @@ describe('a line the ERP just added is declared, never inferred', () => {
     expect(lines.find((l) => l.ItemCode === AC_B)?.IsNewLine).toBe(true);
   });
 
+  /* Owner's own hypothesis, 2026-08-31, about HC-SO-013394: 「是因为我删了一行，
+     然后加了一行，所以导致这样子」. Worth a test rather than an argument — the
+     combination is the shape an operator actually produces, and the two halves
+     (Retire, IsNewLine) are computed by different code paths on the same
+     payload. If this ever goes red, the combination IS the fault. */
+  test('deleting one line and adding another in the same document: both travel', async () => {
+    const sb = withFlag('1', {
+      mfg_sales_orders: [{ ...so }],
+      mfg_sales_order_items: [{ ...keyed }, { ...fresh }],
+    });
+    expect(await enqueueEdit(sb as never, {
+      companyId: 1,
+      docType: 'SO',
+      docNo: 'HC-SO-9',
+      newLineIds: ['row-new'],
+      retire: [{ DtlKey: 4242, ItemCode: 'GONE-1' } as never],
+    })).toBe(true);
+    const lines = outbox(sb)[0].payload.body.Lines as Array<Record<string, unknown>>;
+    expect(lines.find((l) => l.ItemCode === AC_B)?.IsNewLine).toBe(true);
+    expect(lines.find((l) => Number(l.DtlKey) === 4242)?.Retire).toBe(true);
+    expect(lines.find((l) => Number(l.DtlKey) === 991)?.IsNewLine).toBeUndefined();
+  });
+
   test('NOT declared: refused, exactly as before — this is the whole guard', async () => {
     const sb = withFlag('1', { mfg_sales_orders: [{ ...so }], mfg_sales_order_items: [{ ...keyed }, { ...fresh }] });
     expect(await enqueueEdit(sb as never, { companyId: 1, docType: 'SO', docNo: 'HC-SO-9' })).toBe(false);

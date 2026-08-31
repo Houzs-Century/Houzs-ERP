@@ -94,6 +94,97 @@ describe('the drain', () => {
     expect(sb.tables.mfg_sales_order_items[1].linked_ac_dtlkey).toBe(5002);
   });
 
+  /* AN EDIT THAT ADDED A LINE has to learn that line's key too, and until
+     2026-08-31 it did not. HC-SO-013394: the add went through, AutoCount
+     appended the line and gave it a key, the ERP row stayed NULL — and every
+     later edit of that order was refused with "the ERP cannot tell which lines
+     AutoCount already has", which "send again" cannot clear.
+
+     The zip here is NOT the create path's by-position one. The book orders by
+     DtlKey (the document's original insertion order) and the payload is in ERP
+     line order, so the only sound reading is the DIFFERENCE: a key the payload
+     did not already carry is one this edit created. */
+  const editRow = () => row({
+    op: 'edit',
+    dedupe_key: null,
+    payload: {
+      body: {
+        DocNo: 'SO-000123',
+        Lines: [
+          { DtlKey: 5001, ItemCode: 'SKU-1' },
+          { ItemCode: 'SKU-NEW', IsNewLine: true, ErpLineIds: ['li-2'] },
+        ],
+      },
+    },
+  });
+
+  test('an edit that added a line stores the key AutoCount gave it', async () => {
+    const sb = withFlag('1', {
+      autocount_outbox: [{ id: 'ob-1', status: 'pending', attempts: 0 }],
+      mfg_sales_orders: [{ doc_no: 'HC-SO-9', linked_ac_docno: 'SO-000123' }],
+      mfg_sales_order_items: [
+        { id: 'li-1', item_code: 'SKU-1', linked_ac_dtlkey: 5001 },
+        { id: 'li-2', item_code: 'SKU-NEW', linked_ac_dtlkey: null },
+      ],
+    });
+    const fetchImpl = vi.fn(async () => jsonRes(200, {
+      ok: true,
+      lines: [
+        { Seq: 0, DtlKey: 5001, ItemCode: 'SKU-1' },
+        { Seq: 1, DtlKey: 5099, ItemCode: 'SKU-NEW' },
+      ],
+    })) as never;
+
+    expect(await dispatchOne(env as never, sb as never, editRow(), fetchImpl)).toBe('sent');
+    expect(sb.tables.mfg_sales_order_items[1].linked_ac_dtlkey).toBe(5099);
+    // The line that already had a key is left exactly as it was.
+    expect(sb.tables.mfg_sales_order_items[0].linked_ac_dtlkey).toBe(5001);
+  });
+
+  /* THE OLD EXE. A service built before this change answers an edit with no
+     line list at all. That must be a no-op, not a complaint and not a failure —
+     it is precisely today's behaviour, and the deploy happens on its own clock. */
+  test('an edit answered by a service that reports no lines stores nothing and still succeeds', async () => {
+    const sb = withFlag('1', {
+      autocount_outbox: [{ id: 'ob-1', status: 'pending', attempts: 0 }],
+      mfg_sales_orders: [{ doc_no: 'HC-SO-9', linked_ac_docno: 'SO-000123' }],
+      mfg_sales_order_items: [
+        { id: 'li-1', item_code: 'SKU-1', linked_ac_dtlkey: 5001 },
+        { id: 'li-2', item_code: 'SKU-NEW', linked_ac_dtlkey: null },
+      ],
+    });
+    const fetchImpl = vi.fn(async () => jsonRes(200, { ok: true })) as never;
+
+    expect(await dispatchOne(env as never, sb as never, editRow(), fetchImpl)).toBe('sent');
+    expect(sb.tables.mfg_sales_order_items[1].linked_ac_dtlkey).toBeNull();
+  });
+
+  /* Fails CLOSED. The book reports two keys the payload did not carry while the
+     ERP declared one new line: the two lists do not correspond, so nothing is
+     stored and the line stays keyless — refused loudly on the next edit rather
+     than silently pointed at somebody else's line. */
+  test('an edit whose new-line count disagrees with the book stores nothing', async () => {
+    const sb = withFlag('1', {
+      autocount_outbox: [{ id: 'ob-1', status: 'pending', attempts: 0 }],
+      mfg_sales_orders: [{ doc_no: 'HC-SO-9', linked_ac_docno: 'SO-000123' }],
+      mfg_sales_order_items: [
+        { id: 'li-1', item_code: 'SKU-1', linked_ac_dtlkey: 5001 },
+        { id: 'li-2', item_code: 'SKU-NEW', linked_ac_dtlkey: null },
+      ],
+    });
+    const fetchImpl = vi.fn(async () => jsonRes(200, {
+      ok: true,
+      lines: [
+        { Seq: 0, DtlKey: 5001, ItemCode: 'SKU-1' },
+        { Seq: 1, DtlKey: 5099, ItemCode: 'SKU-NEW' },
+        { Seq: 2, DtlKey: 5100, ItemCode: 'SOMEBODY-ELSE' },
+      ],
+    })) as never;
+
+    expect(await dispatchOne(env as never, sb as never, editRow(), fetchImpl)).toBe('sent');
+    expect(sb.tables.mfg_sales_order_items[1].linked_ac_dtlkey).toBeNull();
+  });
+
   /* A WRONG key is worse than no key: no key is refused loudly by composeEdit,
      a wrong key silently edits a different line in a live account book. So a
      zip that cannot be proven correct stores NOTHING. */

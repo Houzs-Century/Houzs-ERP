@@ -311,7 +311,18 @@ class AcSyncService {
       case "/do-to-iv":  docNo = Convert_("DO", "IV", p); dtlTable = "IVDTL"; break;
       case "/gr-to-pi":  docNo = Convert_("GR", "PI", p); dtlTable = "PIDTL"; break;
       case "/cancel":    Cancel(p); Json(ctx, 200, Ok(null)); return;
-      case "/edit":      Edit(p);   Json(ctx, 200, Ok(null)); return;
+      /* AN EDIT THAT ADDED A LINE ANSWERS WITH THE DOCUMENT'S LINE KEYS, for the
+         same reason a CREATE does (see CreatedLines): AutoCount assigns the
+         DtlKey, and if the ERP never learns it that line stays keyless forever
+         and the NEXT edit of the document is refused by the keyless-line guard
+         above. Measured on HC-SO-013394, 2026-08-31: one added line, two
+         subsequent edits skipped, and "send again" could not clear it.
+         An edit that added nothing answers exactly as before. */
+      case "/edit": {
+        var editedLines = Edit(p);
+        Json(ctx, 200, editedLines == null ? Ok(null) : Ok(Str(p, "DocNo"), editedLines));
+        return;
+      }
       case "/ensure-masters": Json(ctx, 200, EnsureMasters(p)); return;
       /* READ-ONLY. One SELECT for the column name, one for the value, no writes,
          no SDK session. See FurtherDescription() for why it exists. */
@@ -3003,11 +3014,16 @@ class AcSyncService {
   }
 
   // ── edit (header + lines, incl. variants in Desc2) ─────────────────────────
-  static void Edit(Dictionary<string, object> p) {
+  /* Returns the document's line keys when this edit ADDED at least one line,
+     null otherwise — the ERP stores them so the added line stops being keyless.
+     Null rather than an empty list on purpose: an empty list is a real answer
+     ("the document has no lines") and must not be confused with "not asked". */
+  static List<Dictionary<string, object>> Edit(Dictionary<string, object> p) {
     var s = Session();
     var type = Str(p, "DocType").ToUpper();
     var docNo = Str(p, "DocNo");
     if (string.IsNullOrEmpty(docNo)) throw new Exception("DocNo required");
+    var addedALine = false;
     dynamic doc;
     switch (type) {
       case "SO": doc = AutoCount.Invoicing.Sales.SalesOrder.SalesOrderCommand.Create(s, s.DBSetting).Edit(docNo); break;
@@ -3097,6 +3113,7 @@ class AcSyncService {
       } else {
         d = doc.AddDetail();
         Set(() => d.ItemCode = Str(it, "ItemCode"));
+        addedALine = true;
       }
 
       /* RETIREMENT. The owner's rule is that nothing is ever deleted, only
@@ -3160,6 +3177,27 @@ class AcSyncService {
       }
     }
     doc.Save();
+    /* Read the keys back AFTER the save — AutoCount assigns a DtlKey at save
+       time, so there is nothing to read before it. Same SQL read-back the create
+       path uses, so there is one implementation of "what are this document's
+       line keys" and not two. */
+    if (!addedALine) return null;
+    var editDtlTable = EditDetailTable(type);
+    return editDtlTable == null ? null : CreatedLines(editDtlTable, docNo);
+  }
+
+  /* The detail table behind each document type the edit route accepts — the
+     same mapping the create/convert routes carry inline at the router. */
+  static string EditDetailTable(string type) {
+    switch (type) {
+      case "SO": return "SODTL";
+      case "PO": return "PODTL";
+      case "DO": return "DODTL";
+      case "GR": return "GRDTL";
+      case "IV": return "IVDTL";
+      case "PI": return "PIDTL";
+      default:   return null;
+    }
   }
 
   // ── helpers ───────────────────────────────────────────────────────────────
