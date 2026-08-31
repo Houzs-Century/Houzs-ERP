@@ -202,3 +202,37 @@ would have measured Postgres, which is not the thing in question.
 **To get the number:** deploy, sign in as an owner, and call the route. If it
 returns `TRUNCATES_SILENTLY`, `paginateAll` is wrong and that is its own fix,
 not a footnote to this one.
+
+## `GET /live` — the secret-presence flags, and why one of them matters most
+
+`/live` reports the reachability probes (DB, KV, R2, SCM) and two
+**presence-only** flags for secrets: `anthropic.configured` and
+`sessionSigning.configured`. Neither ever carries a value; both answer only
+"is it set".
+
+`sessionSigning` is the one worth reading first when anybody says the system is
+slow. It is `sessionSigningSecret(env) !== null`, and it decides whether a
+request pays for authorization:
+
+| flag | what every API request does before the route body runs |
+| --- | --- |
+| **On** | `tryPassAuth` verifies a signed pass locally. No database read. |
+| **Off** | `getUserBySession` runs a six-table join AND a four-branch `UNION ALL` on the shared pool (`services/auth.ts`). |
+
+Off is why the CHEAPEST endpoints show up slow. `/api/presence`,
+`/api/announcements/banner` and `/api/branding` are all edge-cached, and the
+cache is INSIDE the handler — it saves the route's own query, never the two
+reads in front of it. `GET /api/auth/me` crossing 800ms is the clean proof,
+since it has no route work to blame.
+
+Two things not to do with this flag:
+
+- **Do not compute it as `!!env.SESSION_SIGNING_KEY`.** `sessionSigningSecret`
+  also rejects a key under 16 characters, so a placeholder would read On here
+  while the runtime still takes the DB path. Pinned by
+  `src/routes/systemHealthSessionSigning.test.ts`.
+- **Do not read it as a health verdict.** Off is not a fault; it is a switch
+  nobody has thrown. Turning it on is the owner setting one Worker secret, and
+  this card is how the change gets confirmed afterwards.
+
+Background: `docs/bugs/0592-nobody-could-tell-whether-signed-sessions-were-on-so-every-r.md`.

@@ -4,6 +4,7 @@ import { requirePermission, requirePageAccess } from "../middleware/auth";
 import { isSupabaseConfigured, getSupabaseService } from "../db/supabase";
 import { reconcileLedger } from "../scm/lib/reconcile-ledger";
 import { PAGE as PAGINATE_ALL_PAGE } from "../scm/lib/paginate-all";
+import { sessionSigningSecret } from "../services/session-pass";
 
 // ---------------------------------------------------------------------------
 // /api/admin/health — System Health, "real data" phase 1. Gated on the
@@ -98,6 +99,18 @@ app.get("/live", requirePageAccess("system_health"), async (c) => {
   // unset (a recurring cutover gap). Presence-only; we never call the API here.
   const anthropic = { configured: !!c.env.ANTHROPIC_API_KEY };
 
+  // Signed sessions — the ONE secret that decides whether every API request pays
+  // for two joined authorization reads. Unset, `tryPassAuth` is a no-op and
+  // `getUserBySession` runs a six-table join plus a four-branch UNION on the
+  // shared connection pool BEFORE any route body, which is what makes cheap
+  // endpoints (/api/presence, /api/branding) take about a second under load.
+  //
+  // PRESENCE ONLY, and computed through `sessionSigningSecret` rather than a
+  // truthiness test on the raw secret: that helper also rejects a key under 16
+  // characters, so a placeholder reads as OFF here exactly as it behaves at
+  // runtime. The value itself never leaves the worker.
+  const sessionSigning = { configured: sessionSigningSecret(c.env) !== null };
+
   // SCM-route liveness — the page must not show green while the SCM stack is
   // 500ing. Probe ONE bounded SCM read straight through PostgREST (suppliers,
   // head+count, zero rows) so a scm-schema / Supabase outage surfaces here.
@@ -176,6 +189,7 @@ app.get("/live", requirePageAccess("system_health"), async (c) => {
     kv,
     r2,
     anthropic,
+    sessionSigning,
     scm,
     counts,
   });

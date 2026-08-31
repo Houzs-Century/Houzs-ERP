@@ -45,6 +45,7 @@ type LivePayload = {
   // logic guards on presence.
   r2?: { bound: boolean; ok: boolean; latency_ms: number };
   anthropic?: { configured: boolean };
+  sessionSigning?: { configured: boolean };
   scm?: { configured: boolean; ok: boolean; latency_ms: number; error?: string };
   counts: {
     users_active: number;
@@ -410,6 +411,21 @@ export function SystemHealth() {
                       : "OCR /extract will 503"
                 }
                 tone={d.anthropic && !d.anthropic.configured ? "warning" : "neutral"}
+              />
+              {/* Signed sessions — unset, every API request pays for two joined
+                  authorization reads before the route runs. */}
+              <StatCard
+                icon={<KeyRound size={14} />}
+                label="Signed sessions"
+                value={d.sessionSigning ? (d.sessionSigning.configured ? "On" : "Off") : "—"}
+                sub={
+                  !d.sessionSigning
+                    ? "Unknown"
+                    : d.sessionSigning.configured
+                      ? "Requests skip the authorization re-read"
+                      : "Every request re-reads authorization from the database"
+                }
+                tone={d.sessionSigning && !d.sessionSigning.configured ? "warning" : "neutral"}
               />
             </div>
 
