@@ -371,7 +371,10 @@ async function queueAcSoEdit(
    than hand it straight to computeMrp, so there is no reason to turn the
    checker off for it. */
 type SoCoverage = { coverage: Map<string, { source: string; po: string | null; eta: string | null }>; mrp: MrpResult | null };
-async function soCoverage(c: any, sb: unknown): Promise<SoCoverage> {
+/* Exported for the deferred `GET /:docNo/coverage` handler, which lives in
+   mfg-sales-orders-list-enrichment.ts (this file is at its size ceiling). Same
+   engine, same call — it must not re-implement the MRP logic. */
+export async function soCoverage(c: any, sb: unknown): Promise<SoCoverage> {
   /* Best-effort, exactly as before: a failed allocation drops every line to
      Pending and the page still loads. */
   try {
@@ -2944,92 +2947,11 @@ mfgSalesOrders.get('/:docNo', async (c) => {
   return c.json({ salesOrder, items, pwpCodes });
 });
 
-/* GET /:docNo/coverage — the DEFERRED live Stock column (2026-09-01,
-   docs/bugs/…). The `/:docNo` detail used to run the GLOBAL company-wide MRP
-   allocation (`computeMrp`, ~105 DB round-trips) INLINE just to paint the
-   per-line badge, making a cold open ~4.7s. It no longer does; the client calls
-   this endpoint AFTER the doc renders and overlays the MRP-derived per-line
-   fields (stock_state / coverage_po / coverage_eta / ready_source_pos /
-   stock_status_effective). This is the EXACT code the detail removed — same MRP
-   run, same per-line rule (sofa/service special-casing + effectiveLineStockStatus
-   with the LIVE state) — moved off the critical path, not changed. Same company
-   scope + self-scoped-sales 404 guard the detail uses. Returns { coverage }. */
-mfgSalesOrders.get('/:docNo/coverage', async (c) => {
-  const sb = c.get('supabase'); const docNo = c.req.param('docNo');
-  const [h, i] = await Promise.all([
-    // Header read is company-scoped + minimal — exist check, salesperson_id for
-    // the same self-scoped-sales gate, and processing_date for the promotion gate.
-    scopeToCompany(sb.from('mfg_sales_orders').select('doc_no, salesperson_id, processing_date').eq('doc_no', docNo), c).maybeSingle(),
-    // Only the columns the MRP per-line rule needs, in line_no order (nulls last
-    // → pre-0165 fallback to created_at).
-    sb.from('mfg_sales_order_items').select('id, item_group, item_code, qty, stock_status, allocated_batch_no').eq('doc_no', docNo)
-      .order('line_no', { ascending: true, nullsFirst: false })
-      .order('created_at'),
-  ]);
-  if (h.error) return c.json({ error: 'load_failed', reason: h.error.message }, 500);
-  if (!h.data) return c.json({ error: 'not_found' }, 404);
-  /* Same tiering as the detail (lib/salesScope.ts): view-all roles pass; POS
-     sellers pass only their own; other reps are held to their subtree. An
-     out-of-scope doc_no answers 404 — indistinguishable from a missing one. */
-  {
-    const sp = (h.data as { salesperson_id?: number | string | null }).salesperson_id;
-    if (await salesDocOutOfScope(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c), sp)) {
-      return c.json({ error: 'not_found' }, 404);
-    }
-  }
-  const lineRows = (i.data ?? []) as Array<{ id: string; item_group?: string | null; item_code?: string | null; qty?: number | null; stock_status?: string | null; allocated_batch_no?: string | null }>;
-  /* Coverage from the SAME allocation engine the MRP page uses (Wei Siang
-     2026-05-31): stock first → earliest-ETA outstanding PO → shortage. The MRP
-     allocation is GLOBAL by design and cannot be narrowed to one order; a failed
-     allocation drops every line to Pending and this endpoint still returns.
-     READY trace (owner 2026-08-01): a READY (allocated, un-shipped) line resolves
-     the PO(s) it WILL draw from — sofa via its stored allocated_batch_no, non-sofa
-     by projecting the engine's own FIFO consumption order over the bucket's open
-     lots. Read-time derivation, no writes. */
-  const cov = await soCoverage(c, sb);
-  const coverageMap = cov.coverage;
-  const readyPosMap = await soLineReadySourcePos(sb, activeCompanyId(c) ?? null, cov.mrp, lineRows);
-  const orderProcessed = !!(h.data as { processing_date?: string | null }).processing_date;
-  const coverage = lineRows.map((it) => {
-    const lineCov = coverageMap.get(it.id);
-    const covered = lineCov?.source === 'po';
-    /* SOFA stock-coverage is decided by the batch-aware allocator (stock_status),
-       NOT the MRP SKU-pool: MRP doesn't know about dye-lot batches, so it would
-       wrongly report a sofa set as "stock" whenever same-SKU units exist in ANY
-       batch — even one that can't cover the whole set. For sofa, trust
-       stock_status (READY only when ONE batch covers the set); keep MRP's PO/ETA
-       if an outstanding PO is on the way. (Wei Siang 2026-06-03) */
-    const isSofaLine = String(it.item_group ?? '').toUpperCase().includes('SOFA');
-    /* SERVICE lines never enter the MRP allocator (mrp.ts skips them), so `cov`
-       is always undefined; a service is inherently available, so surface it as
-       READY ('stock'). (Owner Q2, 2026-07-24.) */
-    const isSvcLine = isServiceLine({ itemGroup: it.item_group ?? null, itemCode: it.item_code ?? null });
-    const stockState = isSvcLine
-      ? 'stock'
-      : isSofaLine
-      ? (it.stock_status === 'READY' ? 'stock' : (lineCov?.source === 'po' ? 'po' : 'shortage'))
-      : (lineCov?.source ?? null);
-    return {
-      id: it.id,
-      stock_state: stockState,
-      // What the PILL renders, decided here so it and the board agree (§0.4).
-      // Gated (2026-08-30): no processing date, or a hard-bound line, and the
-      // live-'stock' promotion is off — the stored engine verdict stands.
-      stock_status_effective: effectiveLineStockStatus(
-        it.stock_status ?? null,
-        stockState as LiveStockState,
-        {
-          orderProcessed,
-          lineHardBound: isHardBoundLine(it.item_group ?? null, it.item_code ?? null),
-        },
-      ),
-      coverage_po: covered ? lineCov?.po ?? null : null,
-      coverage_eta: covered ? lineCov?.eta ?? null : null,
-      ready_source_pos: readyPosMap.get(it.id) ?? [],
-    };
-  });
-  return c.json({ coverage });
-});
+/* GET /:docNo/coverage — the DEFERRED live Stock column — lives in
+   mfg-sales-orders-list-enrichment.ts, mounted at this same `/mfg-sales-orders`
+   prefix (this file is at its size ceiling). It runs the exact `soCoverage`
+   (exported above) + `soLineReadySourcePos` the `/:docNo` detail stopped running
+   inline. Final path is still `/api/scm/mfg-sales-orders/:docNo/coverage`. */
 
 /* GET /:docNo/items — cutover P3 (#389): the 2990 POS (apps/pos queries.ts)
    calls this dedicated items endpoint directly. Houzs only served items inside
