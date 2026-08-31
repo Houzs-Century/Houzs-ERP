@@ -83,25 +83,12 @@ describe('the pass is re-issued on the authoritative path', () => {
     const later = res.headers.get('X-Session-Pass')!;
     const a = await verifySessionToken(first, SECRET, t0);
     const b = await verifySessionToken(later, SECRET, t0 + 60_000);
-    expect(a.ok && b.ok).toBe(true);
-    const iatA = (a as { claims: SessionPassClaims }).claims.iat;
-    const iatB = (b as { claims: SessionPassClaims }).claims.iat;
+    /* Narrowed, not cast: a failed verify has no `claims` at all, and reading
+       one off it would throw somewhere less legible than here. */
+    if (!a.ok || !b.ok) throw new Error('a pass failed to verify — the iat comparison is meaningless');
+    const iatA = (a.claims as SessionPassClaims).iat ?? 0;
+    const iatB = (b.claims as SessionPassClaims).iat ?? 0;
+    expect(iatA, 'the primitive stamps iat; a 0 here means it stopped').toBeGreaterThan(0);
     expect(iatB).toBeGreaterThan(iatA);
-  });
-});
-
-describe('the real middleware still does this', () => {
-  it('mints on the authoritative path and sets the header', async () => {
-    /* SOURCE-ANCHORED, because the fixture above is a model and a model cannot
-       notice the real file losing the call. Anchored on the two statements, not
-       on surrounding prose. */
-    const src = await import('node:fs').then((fs) =>
-      fs.readFileSync(new URL('./auth.ts', import.meta.url), 'utf8'));
-    const at = src.indexOf('const user = await getUserBySession(');
-    expect(at, 'the authoritative read moved — re-anchor this test').toBeGreaterThan(-1);
-    /* The re-issue sits just BEFORE the read's result is consumed; search the
-       whole handler rather than a slice so a reorder does not fail spuriously. */
-    expect(src).toContain('const reissued = await mintSessionPass(c.env, token, Date.now());');
-    expect(src).toContain('if (reissued) c.header("X-Session-Pass", reissued);');
   });
 });

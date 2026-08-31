@@ -39,6 +39,16 @@ with no database read at all. It is INERT until `SESSION_SIGNING_KEY` is set —
 no-op (`services/session-pass.ts:45`, deliberate, so the code could ship before
 the secret existed).
 
+> **CORRECTED 2026-08-31, same day.** This entry reads as though the secret is
+> UNSET, and that was never observed — the sentence below about "a merged fix
+> sitting switched off" is a claim, not a finding, and the panel this entry adds
+> is the very thing that would settle it. Two things are known and neither is
+> that: the slowness is real (measured above), and the pass is **never renewed**,
+> so it covers only the first 8 hours of a 7-day session whatever the secret
+> says. That is the actual root cause and it has its own entry,
+> `docs/bugs/0593-*`. Read this entry as "nobody could tell", never as "it is
+> off".
+
 So the defect being fixed here is narrower and it is real: **the state of that
 secret was not observable from anywhere.** Not from the app, not from a check,
 and `wrangler secret list` needs an account this repo's sessions do not hold. The

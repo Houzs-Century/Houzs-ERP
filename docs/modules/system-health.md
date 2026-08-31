@@ -219,7 +219,12 @@ request pays for authorization:
 | **On** | `tryPassAuth` verifies a signed pass locally. No database read. |
 | **Off** | `getUserBySession` runs a six-table join AND a four-branch `UNION ALL` on the shared pool (`services/auth.ts`). |
 
-Off is why the CHEAPEST endpoints show up slow. `/api/presence`,
+Off is one reason the CHEAPEST endpoints show up slow — and as of 2026-08-31 it
+is NOT the one that was measured. The pass is never renewed: it lives 8 hours, a
+session lives 7 days, and nothing minted one outside the four login endpoints, so
+for most of every session the DB path ran whatever this card says
+(`docs/bugs/0593-*`). Read this card as "is the switch on", never as the
+explanation for a slow page. `/api/presence`,
 `/api/announcements/banner` and `/api/branding` are all edge-cached, and the
 cache is INSIDE the handler — it saves the route's own query, never the two
 reads in front of it. `GET /api/auth/me` crossing 800ms is the clean proof,
