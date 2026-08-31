@@ -108,7 +108,7 @@ import { backfillSoToPoKeys, poBodyForShape } from './autocount-so-to-po-keys';
 import { acParentlessCreateReason, acNotCarriedReason } from './autocount-outbox-status';
 /* Line identity, split out 2026-08-17 for the same cap reason as the two
    imports above. Same function, same call site in dispatchOne. */
-import { persistLineKeys } from './autocount-line-keys';
+import { persistLineKeys, persistNewLineKeys, newLineTargetOf } from './autocount-line-keys';
 import { readMfgProductBindings } from './supplier-bindings';
 import {
   soLine,
@@ -1908,6 +1908,12 @@ export async function dispatchOne(
        (or, before that refusal existed, appended duplicates into the book). */
     if (payload.lineWriteback) {
       await persistLineKeys(sb, row, payload.lineWriteback, result.lines);
+    }
+    /* AN EDIT THAT ADDED A LINE LEARNS THAT LINE'S KEY (docs/bugs/0583-*).
+       Without it the added row stays keyless and every LATER edit is refused. */
+    if (row.op === 'edit') {
+      const target = newLineTargetOf(row.doc_type, payload);
+      if (target) await persistNewLineKeys(sb, row, target, result.lines);
     }
     return 'sent';
   }

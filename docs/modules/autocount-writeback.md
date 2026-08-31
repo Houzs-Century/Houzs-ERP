@@ -629,6 +629,41 @@ ordinary line); the PO sites are `POST /:id/items` and `POST
 /:id/convert-from-so` in `mfg-purchase-orders.ts`. Search for `newLineIds`
 rather than trusting a line number — this file's citations rotted once already.
 
+**AND THE ADDED LINE LEARNS ITS KEY BACK — since 2026-08-31.** AutoCount assigns
+the DtlKey, so until the ERP is told it, the added row stays `linked_ac_dtlkey =
+NULL` and the NEXT edit of that document is refused by the very guard above (the
+declaration is per-REQUEST; a later edit declares nothing). `/edit` now answers
+with the document's line keys when it added a line — the same `CreatedLines()`
+read-back the CREATE path has always used — and `persistNewLineKeys` stores them.
+
+That store does NOT reuse the create path's by-position zip: the book orders by
+DtlKey, the payload is in ERP line order, and an added line is last in the book's
+order but anywhere in ours. It reasons on the DIFFERENCE — a key the payload did
+not already carry is one this edit created — re-checks the ItemCode, and stores
+nothing at all on any disagreement. `composeEdit` names the ERP rows behind each
+declared-new line as `ErpLineIds` (a list: a sofa build is several rows).
+
+**The service half needs a host deploy** (`deploy-on-host.ps1`). Until it lands,
+an edit answers with no line list and the ERP half is a no-op —
+`docs/bugs/0583-*`.
+
+**A document already held back is repaired by `POST
+/autocount-outbox/relink-lines`** — it reads the document out of the book
+(`/doc-read`, served since 2026-08-15) and stamps the keys onto our keyless
+lines. No host deploy. The matching rules and every refusal are in
+`scm/lib/autocount-relink-lines.ts` with their own tests: a book line another row
+already claims is not a candidate, a repeated code needs Desc2 to separate it
+(prefix-tolerant, the book truncates its own), and an ambiguous line refuses
+ITSELF while the rest still land. It matches on the RAW ERP code today, so a line
+whose code the bindings rewrite is refused rather than mis-assigned —
+`docs/bugs/0585-*`.
+
+**Clear-and-rebuild is NOT how to fix one of these**, though AutoCount's own docs
+sample it: it destroys every DtlKey — the identity behind `FromSODtlKey`, the
+transfer chain, the photographs and retirement — and on a TRANSFERRED document
+AutoCount's own troubleshooting page says the source is left pointing at nothing
+and the document goes grey and uneditable.
+
 **A new line also gets a stock location, and only a new one.** An existing line
 with no location omits the `Location` key so the account book keeps the value it
 owns; a new line has no such value, so the document's own warehouse stands in
