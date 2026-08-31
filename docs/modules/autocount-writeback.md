@@ -608,11 +608,18 @@ the new one, and the whole edit is still refused. Setting `IsNewLine` on a guess
 re-opens the duplicate-append defect one line at a time, and on a purchase order
 a duplicate cannot be removed at all.
 
-| document | add a line | remove a line |
-| --- | --- | --- |
-| SO | yes, since 2026-08-11 | yes (`Retire`) |
-| PO | yes, since 2026-08-31 | yes (`Retire`) |
-| DO / GR / IV / PI | **no** — the route declares nothing, so a new line is refused | yes (`Retire`) |
+| document | add a line | remove a line | line photographs |
+| --- | --- | --- | --- |
+| SO | yes, since 2026-08-11 | yes (`Retire`) | yes |
+| PO | yes, since 2026-08-31 | yes (`Retire`) | yes, since 2026-08-31 |
+| DO / GR / IV / PI | **no** — the route declares nothing, so a new line is refused | yes (`Retire`) | no |
+
+Photographs travel as KEYS in the outbox payload and are fetched at drain time;
+`photosOf` is document-type agnostic, the drain keys off the OP not the type, and
+`AcSyncService`'s line loop is `dynamic`, so `Photos` becomes `FurtherDescription`
+on a purchase detail exactly as on a sales one. What gated the purchase side was
+evidence, not code: the `\wmetafile8` shape had only been proven on the live book
+for sales orders.
 
 Where it is wired: `queueAcSoEdit` / `queueAcPoEdit` take `newLineIds` and pass
 them to `enqueueEdit`, which forwards them to `composeSoState` /
