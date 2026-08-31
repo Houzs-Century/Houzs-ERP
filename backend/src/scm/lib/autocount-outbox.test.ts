@@ -922,6 +922,20 @@ describe('a line the ERP just added is declared, never inferred', () => {
        line only. An existing line with no location omits the key so the account
        book keeps the value it owns — sending the document default there would
        silently relocate somebody else's stock. */
+    /* Owner 2026-08-31, asked whether purchase orders should send their line
+       photographs to the account book as sales orders do: 「要」. */
+    test('a purchase line photograph travels, keyed by the AutoCount line', async () => {
+      const sb = withFlag('1', {
+        purchase_orders: [{ ...poDoc }], suppliers: [{ ...sup }],
+        purchase_order_items: [{ ...oldLine, photo_urls: ['po-items/HC-PO-9/po-row-old/ac-7001-1.jpg'] }],
+        warehouses: wh,
+      }, poCols);
+      expect(await enqueueEdit(sb as never, { companyId: 1, docType: 'PO', docId: 'po-1' })).toBe(true);
+      expect(outbox(sb)[0].payload.photos).toEqual([
+        { dtlKey: 7001, keys: ['po-items/HC-PO-9/po-row-old/ac-7001-1.jpg'] },
+      ]);
+    });
+
     test('an EXISTING line with no location still sends no Location key', async () => {
       const sb = withFlag('1', {
         purchase_orders: [{ ...poDoc }], suppliers: [{ ...sup }],
