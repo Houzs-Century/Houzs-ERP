@@ -1803,7 +1803,7 @@ export const SalesOrderNew = () => {
                 onChange={(e) => setCustomerSoNo(e.target.value)}
               />
             </label>
-            <label className={styles.field}>
+            <label className={styles.field} style={{ gridColumn: 'span 2' }}>
               <span className={`${styles.fieldLabel} ${styles.fieldLabelReq}`}>Phone <span className={styles.req}>*</span></span>
               <PhoneInput
                 className={styles.fieldInput}
@@ -1944,7 +1944,7 @@ export const SalesOrderNew = () => {
                 </span>
               )}
             </label>
-            <label className={styles.field}>
+            <label className={styles.field} style={{ gridColumn: 'span 2' }}>
               <span className={styles.fieldLabel}>Processing Date</span>
               <DateField
                 fullWidth
@@ -1955,7 +1955,7 @@ export const SalesOrderNew = () => {
                 style={datesXor && !processingDate ? { borderColor: 'var(--c-festive-b, #B8331F)' } : undefined}
               />
             </label>
-            <label className={styles.field}>
+            <label className={styles.field} style={{ gridColumn: 'span 2' }}>
               <span className={styles.fieldLabel}>Delivery Date</span>
               <DateField
                 fullWidth

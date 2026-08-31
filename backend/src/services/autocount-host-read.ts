@@ -34,6 +34,11 @@ import { acServiceConfig } from './autocount-writeback';
 export const AC_READ_ROUTE = {
   last_errors: '/last-errors',
   doc_read: '/doc-read',
+  /* What columns a document table actually HAS. One SELECT on sys.columns,
+     names only. It exists to settle whether a document DETAIL can carry a
+     user-defined column — which decides whether line identity can be OURS
+     instead of AutoCount's (owner, 2026-08-31). */
+  table_columns: '/table-columns',
 } as const;
 
 export type AcReadOp = keyof typeof AC_READ_ROUTE;
