@@ -1,0 +1,55 @@
+name: repair-blanked-venue (plan by default)
+
+# Put back the venue name a save wiped, from the venue id that same save wrote.
+# Owner, 2026-09-01: 「为什么我的 Venue 又不见了？」 — PROVEN on 2990-SO-2608-070's
+# audit log: venue "2990s PJ" -> "" and venueId null -> a uuid, in ONE save.
+#
+# It writes the `venue` NAME only, only where the order already points at a venue
+# whose master row has a name. It never guesses one for an order that has no
+# venue id — that is the create path's deliberate NULL, and a guessed venue is a
+# wrong exhibition P&L figure paid to a real person.
+#
+# Plan by default; the apply path needs the confirmation phrase and verifies the
+# VALUES on a fresh connection. Manual trigger only, own concurrency group.
+on:
+  workflow_dispatch:
+    inputs:
+      company_id:
+        description: 'Company id (2 = 2990, where the mirror creates this state)'
+        required: false
+        default: '2'
+        type: string
+      mode:
+        description: 'plan (read-only) or apply'
+        required: false
+        default: 'plan'
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: 'On apply, type exactly: RESTORE THE VENUE NAME'
+        required: false
+        default: ''
+        type: string
+
+concurrency:
+  group: repair-blanked-venue
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+        working-directory: backend
+      - name: plan or apply
+        working-directory: backend
+        env:
+          DATABASE_URL: "${{ secrets.DATABASE_URL }}"
+          COMPANY: "${{ inputs.company_id }}"
+          MODE: "${{ inputs.mode }}"
+          CONFIRM: "${{ inputs.confirm }}"
+        run: node scripts/repair-blanked-venue.mjs

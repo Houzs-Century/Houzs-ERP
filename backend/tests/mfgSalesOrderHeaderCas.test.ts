@@ -73,6 +73,7 @@ function harness(options: { raceBeforeCas?: boolean; followerApplied?: boolean }
     }],
     mfg_so_audit_log: [],
     mfg_sales_order_items: [],
+    venues: [{ id: '5cafa0a2-f979-44da-9a76-5030158ebeb7', name: 'PJ SHOWROOM' }],
   };
   let raceInjected = false;
   let rpcCalls = 0;
@@ -297,6 +298,49 @@ describe('mandatory Sales Order header compare-and-swap', () => {
     });
     expect(response.status).toBe(409);
     expect(row).toMatchObject({ debtor_name: 'Original Customer', version: 1 });
+  });
+});
+
+/* Owner 2026-09-01: 「为什么我的 Venue 又不见了？」 — two 2990 orders showing "—"
+   where a venue had been. The audit log settled it on 2990-SO-2608-070:
+
+     2026-08-31 07:50:31  UPDATE_DETAILS  venue:   "2990s PJ" -> ""
+     2026-08-31 07:50:31  UPDATE_DETAILS  venueId: null       -> "5cafa0a2-…"
+
+   ONE save wrote both — a client that had resolved the id and not the name. The
+   create path already resolves the name from the id in that situation; this pins
+   the header PATCH doing the same, so no caller can leave the pair half-written.
+   Clearing stays possible: send BOTH empty. */
+describe('a venue id with no name is not a request to blank the venue', () => {
+  const withVenue = () => {
+    const h = harness();
+    h.row.venue = '2990s PJ';
+    h.row.venue_id = null;
+    h.row.address1 = '1 Jalan Test';
+    h.row.postcode = '47500';
+    return h;
+  };
+
+  test('an empty venue beside a venue id is resolved from the master, not stored', async () => {
+    const { app, row } = withVenue();
+
+    const res = await patchHeader(app, {
+      venue: '', venueId: '5cafa0a2-f979-44da-9a76-5030158ebeb7', version: 1,
+    });
+
+    expect(res.status).toBe(200);
+    expect(row.venue).toBe('PJ SHOWROOM');
+    expect(row.venue_id).toBe('5cafa0a2-f979-44da-9a76-5030158ebeb7');
+  });
+
+  test('BOTH empty still clears it — "this order has no venue" is an answer', async () => {
+    const { app, row } = withVenue();
+
+    const res = await patchHeader(app, { venue: '', venueId: '', version: 1 });
+
+    expect(res.status).toBe(200);
+    expect(row.venue).toBe('');
+    expect(row.venue_id).toBeNull();
   });
 });
 
