@@ -132,6 +132,12 @@ function parseCsvLine(line) {
  * at all (mig 0305 bought that lesson on mv_ar_aging), so this cannot claim to
  * cover one. The claim is exactly: every stored column in scm that could name a
  * product code.
+ *
+ * TWO column names, not four. `material_code` (purchasing) and `product_code`
+ * (inventory) were the drift and migration 0307 renamed 18 columns off them on
+ * 2026-08-19 — scripts/lib/vocabulary.mjs holds that ruling and the audit
+ * enforces it. Sweeping for names the schema no longer has would not have found
+ * anything; it would only have made the sweep look wider than it is.
  */
 async function shapeCheckOrphansAcrossSchema(client, codes) {
   if (!codes.length) return [];
@@ -142,7 +148,7 @@ async function shapeCheckOrphansAcrossSchema(client, codes) {
         ON t.table_schema = c.table_schema AND t.table_name = c.table_name
      WHERE c.table_schema = 'scm'
        AND t.table_type = 'BASE TABLE'
-       AND c.column_name IN ('item_code', 'sku_code', 'product_code', 'material_code')
+       AND c.column_name IN ('item_code', 'sku_code')
      ORDER BY c.table_name, c.column_name`;
   const out = [];
   for (const c of cols) {
