@@ -360,3 +360,32 @@ async function loadShowroom(
     return null;
   }
 }
+
+/**
+ * The venue NAME a half-written pair implies, or null when there is nothing to
+ * imply it from.
+ *
+ * A client that sends an empty `venue` beside a non-empty `venueId` has resolved
+ * the id and not the name — it is not asking for the venue to be cleared. Taking
+ * it literally wiped "2990s PJ" off a live order (`docs/bugs/0591-*`), and every
+ * mirrored 2990 order was one save away from the same thing.
+ *
+ * HERE, BESIDE THE BINDING RULE, and not inline in the route: the CREATE path
+ * already resolves a name from an id in exactly this situation, and two copies
+ * of one rule is how the two paths start disagreeing. This is the shared one.
+ *
+ * Clearing a venue stays possible and stays easy — send BOTH empty. That is what
+ * "this order has no venue" looks like, and it is a legitimate answer.
+ */
+export async function venueNameForHalfWrittenPair(
+  sb: { from: (t: string) => { select: (c: string) => { eq: (k: string, v: unknown) => { maybeSingle: () => Promise<{ data: unknown }> } } } },
+  venue: unknown,
+  venueId: unknown,
+): Promise<string | null> {
+  const nameEmpty = typeof venue === 'string' && !venue.trim();
+  const idGiven = typeof venueId === 'string' && !!venueId.trim();
+  if (!nameEmpty || !idGiven) return null;
+  const { data } = await sb.from('venues').select('name').eq('id', venueId).maybeSingle();
+  const name = (data as { name?: string } | null)?.name ?? null;
+  return name && name.trim() ? name : null;
+}
