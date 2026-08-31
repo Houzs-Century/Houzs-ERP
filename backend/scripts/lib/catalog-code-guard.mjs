@@ -58,6 +58,45 @@ export function aliasedCode(code, aliasTable) {
 }
 
 /**
+ * Which mapped codes have to be FOLDED before they are written, and to what.
+ *
+ * The mapping file names the sofa model the BOOK uses — `HOK-5540 SOFA` is
+ * mapped to `5540-1S` — and the ERP spells the four folded models by their
+ * alias. Every other sofa path applies SOFA_MODEL_ALIAS on the way in; the two
+ * places that did not are how `5540-1S` reached 31 production document lines.
+ *
+ * THE FOLD BELONGS HERE, NOT IN THE MAPPING FILE, and that is measured rather
+ * than preferred. `src/services/autocount-item-map.ts` is compiled from the
+ * same CSV and read in the OTHER direction, to decide which AutoCount item a
+ * document is written back as. Repointing the four rows there put a HOK
+ * candidate on `9028-1S` / `9058-1S`, which fires the owner's "prefer HOK"
+ * tie-break (autocount-item-code.ts, rule 4) on codes that rule 5 was written
+ * to own. Measured on the 697-line sofa corpus: 192 sales lines would have been
+ * written back naming the wrong AutoCount item (105 on 9028-1S, 87 on 9058-1S)
+ * and the purchase side went from 0 refusals to 18. Folding at READ time gives
+ * the importers the right internal code and leaves the write-back untouched.
+ *
+ * Only a code the catalog does NOT have is folded, and only onto one it does —
+ * so this can never move a code that already resolves.
+ *
+ * @param {Iterable<string>} erpCodes  the mapped codes, as the file spells them
+ * @param {(code: string) => boolean} exists
+ * @param {Record<string,string>} aliasTable
+ * @returns {Map<string,string>} only the codes that MOVE, so the caller can log them
+ */
+export function aliasFoldsForCatalog(erpCodes, exists, aliasTable) {
+  if (typeof exists !== 'function') throw new TypeError('aliasFoldsForCatalog needs an exists(code) predicate');
+  const moves = new Map();
+  for (const raw of new Set(erpCodes)) {
+    const c = String(raw ?? '').trim();
+    if (!c || exists(c)) continue;
+    const to = aliasedCode(c, aliasTable);
+    if (to && exists(to)) moves.set(c, to);
+  }
+  return moves;
+}
+
+/**
  * Build the `exists` predicate the two functions below take, from the set of
  * catalog codes an importer already reads out of scm.mfg_products.
  *

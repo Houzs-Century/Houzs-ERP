@@ -58,24 +58,54 @@ the same three arms and prints the rows.
 
 **Fix.** Three parts, all in this PR.
 
-- The four mapping rows now point at the aliased, real codes:
-  `HOK-5530 SOFA -> 9028-1S`, `5536 -> 9058-1S`, `5537 -> 8030-1S`,
-  `5540 -> 8030-1S`. `backend/tests/catalogCodeGuard.test.mjs` fails if any
-  mapping row ever names an alias KEY again — proved RED against the unfixed
-  CSV, which reported all four rows before the edit.
-- A write-time guard, `backend/scripts/lib/catalog-code-guard.mjs`, that both
-  importers now call after planning and before writing: any line whose
-  `item_code` is blank or absent from the catalog is listed with its document
-  and the run exits 2. It refuses instead of falling back.
+- **The alias is applied where the mapping is READ**, in both importers, through
+  the shared `aliasFoldsForCatalog` in
+  `backend/scripts/lib/catalog-code-guard.mjs`: a mapped code the catalog does
+  not carry is folded onto the one `SOFA_MODEL_ALIAS` names, before the line's
+  group is decided. Only a missing code is folded, and only onto a code that
+  exists, so it can never move one that already resolved.
+- **A write-time guard**, in the same module, that both importers call after
+  planning and before writing: a line whose `item_code` is blank or still absent
+  from the catalog is listed with its document number and the run exits 2. It
+  refuses instead of falling back.
 - `backend/scripts/repair-orphan-sofa-codes.mjs` +
   `.github/workflows/repair-orphan-sofa-codes.yml` repoint the rows already in
   production, `item_code` ONLY, on `purchase_order_items` / `grn_items` /
   `purchase_invoice_items`. `supplier_sku` is untouched by design — it holds the
   book's own `HOK-5540 SOFA`, the column that is supposed to differ — and the
-  verification re-reads `supplier_sku`, `qty`, `received_qty`,
-  `unit_price_sen` and `line_total_sen` per row on a fresh connection and fails
-  if any of them moved. A code the alias cannot resolve to a real catalog row is
-  REFUSED and printed, never guessed at.
+  verification re-reads the guarded money and quantity columns per row on a
+  fresh connection and fails if any of them moved. A code the alias cannot
+  resolve to a real catalog row is REFUSED and printed, never guessed at.
+
+**What the audit RULED OUT — and it is the more useful half.** The obvious fix
+is to repoint the four rows in the mapping CSV itself. That was built, run, and
+BACKED OUT, because the file is read in BOTH directions.
+
+`backend/src/services/autocount-item-map.ts` is compiled from that same CSV and
+`backend/src/services/autocount-item-code.ts` reads it backwards, to decide
+which AutoCount item a document is written back AS. Repointing the rows puts a
+`HOK-` candidate on `9028-1S` and `9058-1S`, which fires the owner's
+"prefer HOK, then NB" tie-break (rule 4, his ruling of 2026-08-13) on exactly
+the codes rule 5 was written to own — *"a SALES ORDER cannot choose, because it
+does not learn the brand until purchasing does"*.
+
+Measured with the repointed CSV, on the committed 697-line sofa corpus
+(`src/services/autocount-item-code.test.ts`, the D10 fidelity check):
+
+| | CSV as it is | CSV repointed |
+| --- | --- | --- |
+| sofa lines resolving to the item the book holds | 697 of 697 | 505 |
+| resolved to the WRONG AutoCount item | 0 | **192** (105 on `9028-1S` -> `HOK-5530 SOFA`, 87 on `9058-1S` -> `HOK-5536 SOFA`) |
+| purchase lines refused outright | 0 | **18** |
+
+The resolver had already been bitten by this exact shape once and says so in its
+own comment: *"the alias expansion gave a compartment of 9028 an extra HOK
+candidate the base never saw, and the HOK preference took it."*
+
+So the CSV keeps naming the model the BOOK uses, which is what it is for, and
+the fold happens on the way in. `backend/tests/catalogCodeGuard.test.mjs` pins
+both halves: the four rows are asserted UNCHANGED, with the reason, so the next
+person who repoints them finds this entry instead of rediscovering the 192.
 
 **Prior art, and why it did not cover this.**
 `docs/bugs/0567-seventeen-mapping-rows-carried-30-char-truncated-codes-four.md`

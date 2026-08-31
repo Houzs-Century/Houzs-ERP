@@ -43,7 +43,7 @@ import { parseBedframe } from "./lib/parse-bedframe.mjs";
 import { SOFA_MODEL_ALIAS, parseSofa } from "./lib/parse-sofa.mjs";
 import { acDeliveryDate, acDtlKey, acFromSoDtlKey } from "./lib/ac-po-line.mjs";
 import { makeSoLineTaker } from "./lib/so-line-dedication.mjs";
-import { catalogPredicate, nonCatalogRefs, formatNonCatalogRefusal } from "./lib/catalog-code-guard.mjs";
+import { aliasFoldsForCatalog, catalogPredicate, nonCatalogRefs, formatNonCatalogRefusal } from "./lib/catalog-code-guard.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -101,6 +101,26 @@ async function main() {
   const products = await sql`SELECT code, name FROM scm.mfg_products WHERE company_id = 1`;
   const prodByCode = new Map(products.map((p) => [p.code.toUpperCase(), p]));
   const codeSet = new Set(products.map((p) => p.code.toUpperCase()));
+
+  /* ALIAS FOLD (docs/bugs/0577). The mapping file names the sofa model the BOOK
+     uses — `HOK-5540 SOFA` -> `5540-1S` — and the ERP spells the four folded
+     models by their alias (SOFA_MODEL_ALIAS: 5530/5536/5537/5540 ->
+     9028/9058/8030/8030). Every other sofa path applies that on the way in.
+     This one did not, so an aliased model arrived as a code no product row has
+     and was written straight onto the line.
+
+     Folded HERE and not in the CSV on purpose: src/services/autocount-item-map.ts
+     is compiled from the same file and read in the OTHER direction, to choose
+     which AutoCount item a document is written back as. See the note on
+     aliasFoldsForCatalog for what repointing the rows costs there. */
+  {
+    const moves = aliasFoldsForCatalog([...byAc.values()].map((v) => v.erp), catalogPredicate(codeSet), SOFA_MODEL_ALIAS);
+    if (moves.size) {
+      log(`alias fold: ${moves.size} mapped code(s) the catalog does not carry resolve through SOFA_MODEL_ALIAS`);
+      for (const [from, to] of moves) log(`   ${from} -> ${to}`);
+      for (const v of byAc.values()) if (moves.has(v.erp)) v.erp = moves.get(v.erp);
+    }
+  }
   const fcRows = await sql`SELECT fabric_id, colour_id, label FROM scm.fabric_colours WHERE company_id = 1`;
   const { findColour } = buildFabricColourIndex(fcRows);
   // #1998 contract: an unlabelled colour is read only when the library CONFIRMS
