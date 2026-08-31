@@ -385,6 +385,7 @@ async function main() {
   const builds = new Map(); // so doc|po doc|model -> { so:Map(id->code), po:[code] }
   let orphan = 0, axisBad = 0, codeBad = 0;
   const lineKind = { poBlank: 0, soBlank: 0, conflict: 0 };
+  const poBlankKind = { inOwnD2: 0, notInOwnD2: 0 };
   const provSofa = { imported: 0, createdHere: 0 };
   const provBed = { imported: 0, createdHere: 0 };
   const linkedProv = { imported: 0, createdHere: 0 };
@@ -418,7 +419,26 @@ async function main() {
        conflict line whatever else it also omits. */
     if (conflictHere) lineKind.conflict++;
     else if (poBlankHere && soBlankHere) lineKind.conflict++;
-    else if (poBlankHere) lineKind.poBlank++;
+    else if (poBlankHere) {
+      lineKind.poBlank++;
+      /* AND THE QUESTION THAT DECIDES WHO MAY FIX IT. The owner's migration rule
+         is that we copy AutoCount's own value for a row and never infer one
+         (`migration-copy-never-compute`). So a PO line missing what the SO holds
+         is only OURS to repair if the PO's OWN AutoCount remark already carries
+         it and the decoder missed it — then it is a copy. If the book's purchase
+         line genuinely never said it, putting the SO's value there is a business
+         decision about what the supplier is told to build, and that is his, not
+         a data repair. This counts the two apart by asking whether the value the
+         SO holds appears verbatim in the PO's own Desc2. */
+      const own = String(p.d2 || "").toUpperCase();
+      let anyInOwnD2 = false;
+      for (const [, keys] of AXES) {
+        const a = pick(s.variants, keys), b = pick(p.variants, keys);
+        if (!a || b || norm(a) === norm(b)) continue;
+        if (own.includes(String(a).toUpperCase())) { anyInOwnD2 = true; break; }
+      }
+      if (anyInOwnD2) poBlankKind.inOwnD2++; else poBlankKind.notInOwnD2++;
+    }
     else lineKind.soBlank++;
     const prov = p.ac ? "imported" : "createdHere";
     (p.grp === "sofa" ? provSofa : provBed)[prov]++;
@@ -441,7 +461,9 @@ async function main() {
   log(`     by SHAPE — the PO is simply MISSING what the SO holds: ${lineKind.poBlank}`
     + ` / the SO is missing what the PO holds: ${lineKind.soBlank}`
     + ` / both hold a value and they CONFLICT: ${lineKind.conflict}`);
-  log(`     the first bucket is a carry-forward; only the third needs a person to decide.`);
+  log(`     of the PO-missing lines, the value IS in the PO's own AutoCount remark`
+    + ` (a decoder miss, ours to repair): ${poBlankKind.inOwnD2};`
+    + ` the book's purchase line never said it (his call, not a repair): ${poBlankKind.notInOwnD2}`);
   log(`     by PROVENANCE — disagreeing sofa lines: ${provSofa.imported} on POs imported from AutoCount,`
     + ` ${provSofa.createdHere} on POs raised in the ERP;`
     + ` bedframe: ${provBed.imported} imported, ${provBed.createdHere} raised here`);
