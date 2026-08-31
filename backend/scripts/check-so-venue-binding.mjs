@@ -84,6 +84,35 @@ async function main() {
   log('home venue and is parked under no showroom, or the order has no salesperson at');
   log('all. The fix is on the Members page, not in the order.');
 
+  /* DID IT EVER HAVE ONE? `venue_source = MANUAL` means a human's venue was
+     recorded at some point, so an EMPTY text beside it is a value that went
+     away, not one that was never set — which is exactly what the owner reported
+     (「又不见了」). The audit log records field changes, so it can say whether the
+     venue was written and then blanked, and when. Values are printed because a
+     venue name is a showroom, not a person. */
+  const docs = orders.map((o) => o.doc_no);
+  const trail = await sql`
+    SELECT so_doc_no, action, created_at, field_changes
+      FROM scm.mfg_so_audit_log
+     WHERE so_doc_no = ANY(${docs})
+     ORDER BY created_at`;
+  log('');
+  log(`AUDIT ENTRIES ON THESE ORDERS: ${trail.length}`);
+  for (const t of trail) {
+    const changes = Array.isArray(t.field_changes) ? t.field_changes : [];
+    const venueChange = changes.filter((c) => String(c?.field ?? '').toLowerCase().includes('venue'));
+    if (!venueChange.length) continue;
+    for (const c of venueChange) {
+      log(`  ${new Date(t.created_at).toISOString().slice(0, 19).replace('T', ' ')}  ${t.action}  `
+        + `${c.field}: ${JSON.stringify(c.from ?? c.old ?? null)} -> ${JSON.stringify(c.to ?? c.new ?? null)}`);
+    }
+  }
+  if (!trail.some((t) => (Array.isArray(t.field_changes) ? t.field_changes : [])
+      .some((c) => String(c?.field ?? '').toLowerCase().includes('venue')))) {
+    log('  NO venue change is recorded on any of them — so the text was never written,');
+    log('  and `venue_source` was stamped by a save that carried an empty venue.');
+  }
+
   await sql.end();
 }
 main().catch((e) => { console.error(e); process.exit(1); });
