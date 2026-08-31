@@ -103,7 +103,7 @@ const CS_CANCEL = slice('static void Cancel(', '// ── edit');
 /* The signature changed on 2026-08-31 — /edit now RETURNS the document's line
    keys when it added a line, so the ERP can store them (docs/bugs/0583-*). The
    anchor follows the name, not the return type. */
-const CS_EDIT = slice('> Edit(Dictionary<string, object> p)', '// ── helpers');
+const CS_EDIT = slice('Edit(Dictionary<string, object> p)', '// ── helpers');
 const CS_APPLY_UDF = slice('static void ApplyUdf(', 'static Dictionary<string, object> Ok(');
 
 /** The header allow-list the edit path iterates — the only header fields /edit

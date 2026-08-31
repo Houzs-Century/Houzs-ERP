@@ -63,7 +63,12 @@ const between = (hay: string, startAnchor: string, endAnchor: string): string =>
 function serviceHandles(fn: 'Cancel' | 'Edit'): string[] {
   const body = between(
     SERVICE,
-    `static void ${fn}(Dictionary<string, object> p) {`,
+    /* NAME AND PARAMETER LIST, not the return type — `Edit` stopped being `void`
+       on 2026-08-31 when it began answering with the line keys it assigned
+       (docs/bugs/0583-*), while `Cancel` is still void. The parameter list only
+       ever appears on the DECLARATION (a call site is `Edit(p)`), so dropping
+       the return type costs no precision. */
+    `${fn}(Dictionary<string, object> p) {`,
     'default: throw new Exception("unsupported DocType " + type);',
   );
   return [...body.matchAll(/case "([A-Z]{2})":/g)].map((m) => m[1]).sort();
