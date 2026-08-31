@@ -31,7 +31,7 @@ jobs:
       - uses: actions/setup-node@v6
         with: { node-version: 22 }
       - run: npm ci
-      - run: node scripts/diag-placeholder-photos.mjs
+      - run: node scripts/diag-so-013393.mjs
         env:
           DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
 
@@ -44,6 +44,6 @@ jobs:
       - uses: actions/setup-node@v6
         with: { node-version: 22 }
       - run: npm ci
-      - run: node scripts/diag-placeholder-photos.mjs
+      - run: node scripts/diag-so-013393.mjs
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
