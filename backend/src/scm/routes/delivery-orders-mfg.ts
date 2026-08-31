@@ -49,12 +49,12 @@ import { enqueueConvert, recordParentlessCreate, enqueueCancel, enqueueEdit, ret
    (AcSyncService.cs:442); what was missing was any way for the ERP to ASK, and
    a column to remember the line identity by (mig 0280). Never throws: a write
    to AutoCount must not fail a user's save. */
-async function queueAcDoEdit(c: any, id: string, retire: AcRetiredLine[] = []): Promise<void> {
+async function queueAcDoEdit(c: any, id: string, retire: AcRetiredLine[] = [], newLineIds: string[] = []): Promise<void> {  // newLineIds: docs/bugs/0588
   await enqueueEdit(c.get('supabase'), {
     companyId: activeCompanyId(c),
     docType: 'DO',
     docId: id,
-    retire,
+    retire, newLineIds,
     createdBy: c.get('houzsUser')?.id ?? null,
   });
 }
@@ -4759,7 +4759,7 @@ export const addDeliveryOrderItemHandler = async (c: Context<{ Bindings: Env; Va
     });
   }
 
-  await queueAcDoEdit(c, id);
+  await queueAcDoEdit(c, id, [], ((data as { id?: unknown } | null)?.id ? [String((data as { id?: unknown }).id)] : []));
   return c.json({ item: data }, 201);
 };
 deliveryOrdersMfg.post('/:id/items', addDeliveryOrderItemHandler);

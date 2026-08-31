@@ -1221,7 +1221,7 @@ export async function enqueueEdit(
       ? await composeSoState(sb, String(opts.docNo), retired, opts.newLineIds, opts.touchedFields)
       : opts.docType === 'PO'
         ? await composePoState(sb, String(opts.docId ?? opts.docNo), retired, opts.newLineIds)
-        : await composeDownstreamState(sb, opts.docType, String(opts.docId ?? opts.docNo), retired);
+        : await composeDownstreamState(sb, opts.docType, String(opts.docId ?? opts.docNo), retired, opts.newLineIds);
     if (!composed) return false;
     /* A PO route knows its id, not its number; the outbox row is keyed by the
        human document number so it lines up with the create row. */
@@ -1367,7 +1367,8 @@ async function findPendingOriginatingOp(
  * checks the correspondence and refuses rather than trusting it.
  */
 async function composeDownstreamState(
-  sb: Sb, docType: 'DO' | 'GR' | 'IV' | 'PI', id: string, retired: AcRetiredLine[] = [],
+  sb: Sb, docType: 'DO' | 'GR' | 'IV' | 'PI', id: string,
+  retired: AcRetiredLine[] = [], newLineIds?: string[],
 ) {
   const spec = DOWNSTREAM[docType];
   const header = await readOrThrow(`${spec.table} header`,
@@ -1391,9 +1392,10 @@ async function composeDownstreamState(
     create: null as (() => Record<string, unknown>) | null,
     /* The SAME master the conversion route projects, narrowed to /edit's own
        allow-list instead — see `AcDownstreamSpec.facts`. */
-    edit: () => composeEdit(
-      docType, String(h.linked_ac_docno ?? docNo), downstreamEditHeader(docType, h), lines, {}, retired,
-    ),
+    /* Add-a-line, same contract as the SO's and PO's — docs/bugs/0588-*. */
+    edit: () => composeEdit(docType, String(h.linked_ac_docno ?? docNo),
+      downstreamEditHeader(docType, h), lines,
+      newLineIds?.length ? { newLineIds: new Set(newLineIds) } : {}, retired),
   };
 }
 
