@@ -98,6 +98,36 @@ async function main() {
     log(`  lines: ${lc.total} total, ${lc.keyed} carry an AutoCount key, ${lc.keyless} do NOT`);
   }
 
+  /* PAYMENTS (owner 2026-08-31: 「我明明有 update 到 payment，可是为什么 payment
+     那边没有 save 成功呢」). Counts, dates and categories only — no amounts, no
+     names, no references. The two things that decide whether an EDIT could have
+     landed are here: the payment's own version (the PATCH sends it and loses on
+     a mismatch) and whether it was created on the current MYT day, because the
+     edit route is same-day-gated by design. */
+  if (so) {
+    const pays = await sql`SELECT id, created_at, paid_at, method::text AS method, version,
+               (slip_key IS NOT NULL) AS has_slip,
+               (created_at AT TIME ZONE 'Asia/Kuala_Lumpur')::date
+                 = (now() AT TIME ZONE 'Asia/Kuala_Lumpur')::date AS created_today_myt
+          FROM scm.mfg_sales_order_payments
+         WHERE so_doc_no = ${DOC}
+         ORDER BY created_at`;
+    log('');
+    log(`PAYMENTS ON THIS ORDER: ${pays.length}`);
+    for (const p of pays) {
+      log(`  ${String(new Date(p.created_at).toISOString()).slice(0, 19).replace('T', ' ')}  ${String(p.method ?? '?').padEnd(12)}`
+        + ` v${p.version ?? '?'}  slip=${p.has_slip ? 'yes' : 'no'}`
+        + `  ${p.created_today_myt ? 'CREATED TODAY (still editable)' : 'earlier day — the edit route refuses it by design'}`);
+    }
+
+    const acts = await sql`SELECT action, created_at FROM scm.mfg_so_audit_log
+       WHERE so_doc_no = ${DOC} AND action ILIKE '%PAYMENT%'
+       ORDER BY created_at DESC LIMIT 12`;
+    log(`PAYMENT ACTIONS IN THE AUDIT LOG (newest first): ${acts.length}`);
+    for (const a of acts) log(`  ${new Date(a.created_at).toISOString().slice(0, 19).replace('T', ' ')}  ${a.action}`);
+    if (!acts.length) log('  NONE — no payment was ever added, edited or deleted on this order.');
+  }
+
   const rows = await sql`SELECT op, doc_type, status, attempts, created_at, sent_at, last_error,
              (ac_doc_no IS NOT NULL) AS got_ac_doc_no
       FROM scm.autocount_outbox
