@@ -15,14 +15,14 @@ const items = await sql`SELECT line_no, item_code, item_group, qty, unit_price_s
     (variants::text) AS v FROM scm.mfg_sales_order_items WHERE doc_no=${DOC} AND cancelled=false ORDER BY line_no NULLS LAST`;
 console.log(`lines: ${items.length}`);
 for (const r of items) console.log(`   ${r.line_no ?? '-'} ${r.item_code} [${r.item_group}] qty=${r.qty} remark=${(r.remark ?? '').slice(0,20)} variants=${(r.v ?? 'null').slice(0,120)}`);
-const a = await sql`SELECT action, actor_name, created_at, (detail::text) AS d FROM scm.mfg_so_audit_log
-  WHERE doc_no=${DOC} ORDER BY created_at DESC LIMIT 8`;
-console.log(`audit (newest 8): ${a.length}`);
-for (const r of a) console.log(`   ${r.created_at?.toISOString?.().slice(0,19)} ${r.action} by ${r.actor_name ?? '-'} ${(r.d ?? '').slice(0,80)}`);
-const ob = await sql`SELECT id, doc_type, doc_no, status::text AS st, attempts, last_error, created_at
-  FROM scm.autocount_outbox WHERE doc_no LIKE ${'%013393%'} ORDER BY created_at DESC LIMIT 6`;
+const a = await sql`SELECT to_jsonb(t) AS j FROM scm.mfg_so_audit_log t
+  WHERE t.doc_no=${DOC} ORDER BY t.created_at DESC LIMIT 6`;
+console.log(`audit (newest ${a.length}):`);
+for (const r of a) console.log('   ' + JSON.stringify(r.j).slice(0, 220));
+const ob = await sql`SELECT to_jsonb(t) AS j FROM scm.autocount_outbox t
+  WHERE t.doc_no LIKE ${'%013393%'} ORDER BY t.created_at DESC LIMIT 6`;
 console.log(`autocount outbox rows for this doc: ${ob.length}`);
-for (const r of ob) console.log(`   ${r.created_at?.toISOString?.().slice(0,19)} ${r.doc_type} ${r.doc_no} ${r.st} attempts=${r.attempts} err=${(r.last_error ?? '').slice(0,60)}`);
+for (const r of ob) console.log('   ' + JSON.stringify(r.j).slice(0, 260));
 const cfg = await sql`SELECT key, value::text AS v FROM scm.app_config WHERE key ILIKE '%autocount%' ORDER BY key`;
 console.log('autocount switches:');
 for (const r of cfg) console.log(`   ${r.key} = ${r.v}`);
