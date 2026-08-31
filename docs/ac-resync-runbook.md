@@ -44,12 +44,23 @@ run-prod`)。少数 workflow 不收 target(如 `refresh-so-tail-from-book.yml`�
 | # | workflow | 备注 |
 |---|---|---|
 | 1 | `import-ac-outstanding-so.yml` | **两趟**:先默认(非沙发)再 `sofa=yes`;新单出生自带日期/Remark2-4/note/行键 |
-| 2 | `import-ac-outstanding-po.yml` | 一路(未收满整张) |
-| 3 | `import-ac-so-linked-pos.yml` | 二路(为在册 SO 开的,含已收满;行对行绑定) |
+| 2 | `import-ac-outstanding-po.yml` | 一路(未收满整张)。**exit 2 + `REFUSED …not in the catalog` 不是坏掉**——见下 |
+| 3 | `import-ac-so-linked-pos.yml` | 二路(为在册 SO 开的,含已收满;行对行绑定)。同上 |
 | 4 | `topup-ac-po-lines.yml` | apply 要 `confirm="I HAVE REVIEWED THE DRY-RUN"` |
 | 5 | `stamp-ac-grn-refs.yml` | 盖收货/采购发票号 |
 | 6 | `create-migrated-documents.yml` | `kind=both`;GRN+DO 镜像,**不动库存** |
 | 7 | `create-migrated-invoices.yml` | `mode=apply` + 同上确认句;金额一分不差才开,DIFFERS 名单呈 owner |
+
+⚠️ **两路 PO 导入现在会「拒绝写不存在的件号」**(2026-08-31,
+`docs/bugs/0577-a-purchase-order-carried-an-internal-sofa-code-no-product-ro.md`)。
+从前对照表指到一个产品清单里没有的件号时,它会**默默照写**——`5540-1S` 就是这样进了
+31 行单据,那张采购单因此接不回它自己的销售单。现在遇到这种行,它会把每一行连单号
+一起列出来,然后 **exit 2,一行都不写**。
+
+看到这个不要重试,先看它列的是什么:
+`backend/scripts/data/autocount-erp-mapping-1561.csv` 里把那个账本件号指到一个**真的
+存在**的 ERP 件号(或先把产品开出来),再重跑。旧单据的修补是另一支:
+`repair-orphan-sofa-codes.yml`,先 `mode=plan` 看清单。
 
 ## 阶段 2 — 库存(双向对平)
 
