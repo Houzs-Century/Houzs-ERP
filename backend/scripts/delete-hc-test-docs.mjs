@@ -90,7 +90,7 @@ if (APPLY && process.env.CONFIRM !== CONFIRM_PHRASE) {
 const HEADER_FAMILIES = [
   ['scm', 'sales_invoices',    'SI',  'HC-SI-2608-%', ['invoice_number', 'doc_no']],
   ['scm', 'purchase_invoices', 'PI',  'HC-PI-2608-%', ['invoice_number', 'doc_no']],
-  ['scm', 'grns',              'GRN', 'HC-GR-2608-%', ['grn_number', 'doc_no']],
+  ['scm', 'grns',              'GRN', 'HC-GRN-2608-%', ['grn_number', 'doc_no']],
   ['scm', 'delivery_orders',   'DO',  'HC-DO-2608-%', ['do_number', 'doc_no']],
   ['scm', 'purchase_orders',   'PO',  'HC-PO-2608-%', ['po_number', 'doc_no']],
   ['scm', 'mfg_sales_orders',  'SO',  'HC-SO-2608-%', ['doc_no']],
@@ -206,15 +206,16 @@ async function main() {
   // 3b. Export-log (outbox) entries for the test docs. The earlier go-live wipes
   //     DELETE a test document's source row but KEEP its outbox row, so after a
   //     wipe the sync page still shows the test doc even though no header remains.
-  //     Match the SAME per-type test patterns (never a blanket %-2608-% — that
-  //     would catch real HC-I-2608 sales-invoice sends).
+  //     SELECTOR: any ERP-minted -2608- number, EXCEPT real sales invoices whose
+  //     book number is HC-I-2608-… . This is robust to per-type prefix variation
+  //     (real GRN is HC-GR-…, but the minted test GRN is HC-GRN-2608-…, which a
+  //     hardcoded HC-GR-2608-% pattern missed). The literal `-2608-` with both
+  //     dashes cannot match a real 6-digit number like HC-SO-012608.
   note(`\n=== EXPORT-LOG (outbox) rows for the test docs ===`);
   const outKey = `scm.autocount_outbox`;
   const outboxDocNos = [];
   if (liveSet.has(outKey) && hasCol(outKey, 'doc_no') && hasCol(outKey, 'company_id')) {
-    const patterns = HEADER_FAMILIES.map((f) => f[3]);
-    let orFrag = null;
-    for (const p of patterns) { const f = sql`doc_no LIKE ${p}`; orFrag = orFrag === null ? f : sql`${orFrag} OR ${f}`; }
+    const orFrag = sql`doc_no LIKE ${'HC-%-2608-%'} AND doc_no NOT LIKE ${'HC-I-2608-%'}`;
     const rows = await sql`
       SELECT doc_no,
              ${hasCol(outKey, 'status') ? sql`status` : sql`NULL AS status`},
@@ -230,6 +231,14 @@ async function main() {
       seedPreds.get(outKey).push(sql`(company_id = ${HC_ID} AND (${orFrag}))`);
     }
   } else { note(`  outbox table/columns absent — skipped`); }
+
+  // Guard baseline: real sales-invoice sends (HC-I-2608-…) must be UNCHANGED.
+  let realSiOutboxBefore = null;
+  if (liveSet.has(outKey) && hasCol(outKey, 'doc_no') && hasCol(outKey, 'company_id')) {
+    const [{ n }] = await sql`SELECT count(*)::int AS n FROM ${sql(qi('scm'))}.${sql(qi('autocount_outbox'))} WHERE company_id = ${HC_ID} AND doc_no LIKE ${'HC-I-2608-%'}`;
+    realSiOutboxBefore = n;
+    note(`  (real HC-I-2608 sales-invoice log rows: ${n} — must stay ${n})`);
+  }
 
   if (!headerInfo.length && !outboxDocNos.length) { note(`\n=== NO TEST DOCUMENTS FOUND — nothing to do. ===`); await sql.end({ timeout: 5 }); return; }
 
@@ -392,6 +401,11 @@ async function main() {
       const [{ n }] = await check`SELECT count(*)::int AS n FROM ${check(qi('scm'))}.${check(qi('autocount_outbox'))} WHERE company_id = ${HC_ID} AND doc_no = ANY(${outboxDocNos})`;
       note(`  export-log test rows remaining: ${n} (want 0)`);
       if (n !== 0) problems.push(`autocount_outbox: ${n} test export-log row(s) still present`);
+    }
+    if (realSiOutboxBefore !== null) {
+      const [{ n }] = await check`SELECT count(*)::int AS n FROM ${check(qi('scm'))}.${check(qi('autocount_outbox'))} WHERE company_id = ${HC_ID} AND doc_no LIKE ${'HC-I-2608-%'}`;
+      note(`  real HC-I-2608 sales-invoice log rows: ${n} (want ${realSiOutboxBefore})`);
+      if (n !== realSiOutboxBefore) problems.push(`real HC-I-2608 outbox rows CHANGED: was ${realSiOutboxBefore}, now ${n}`);
     }
     for (const h of headerInfo) {
       const [s, t] = h.key.split('.');
