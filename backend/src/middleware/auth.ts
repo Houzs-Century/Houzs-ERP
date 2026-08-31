@@ -1,6 +1,6 @@
 import type { MiddlewareHandler } from "hono";
 import type { Env } from "../types";
-import { getUserBySession, timingSafeEqualStr, type AuthUser } from "../services/auth";
+import { getUserBySession, timingSafeEqualStr, type AuthUser, mintSessionPass } from "../services/auth";
 import { tryPassAuth } from "../services/session-pass";
 import { hasPermission } from "../services/permissions";
 import { isSalesDirectorUser, isSalesUser, isDirectorUser } from "../services/pmsAccess";
@@ -165,6 +165,27 @@ export const auth: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
   if (!user) {
     return c.json({ error: "Your session has expired. Please sign in again." }, 401);
   }
+  /* RE-ISSUE THE PASS HERE, because reaching this line means the caller has no
+     usable one — and until now the only way to get one was to LOG IN AGAIN.
+     A pass lives 8 hours (SESSION_PASS_TTL_MS); a session lives 7 days
+     (SESSION_TTL_SECONDS). Nothing minted a pass anywhere except the four login
+     endpoints, so from hour 9 to day 7 — about 95% of a session's life — every
+     request fell back to the two joined authorization reads above, exactly as if
+     the feature had never shipped. `docs/bugs/0593-*`.
+
+     Safe by the board's own design, which anticipated this: revocation compares
+     a pass's `iat` against the revoke timestamp, so "a pass minted AFTER the
+     event (a fresh login, OR A RE-ISSUE) has a newer iat and is honoured"
+     (services/session-revocation.ts header). A logout destroys the session row,
+     so getUserBySession fails and nothing is minted; a role change re-reads the
+     envelope HERE and the new pass carries the new one.
+
+     Costs one authoritative read per 8 hours per session instead of one per
+     request, and stays a no-op while SESSION_SIGNING_KEY is unset —
+     mintSessionPass returns null without it. */
+  const reissued = await mintSessionPass(c.env, token, Date.now());
+  if (reissued) c.header("X-Session-Pass", reissued);
+
   c.set("user", user);
   // ASSR routes (assr.ts + assrPortal.ts) read `c.get("userId")` for
   // audit columns (created_by, verified_by, etc.). Set it alongside
