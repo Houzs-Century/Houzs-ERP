@@ -90,6 +90,7 @@ import type { Env, Variables } from '../env';
 import { SO_TERMINAL_STATES } from '../shared/so-terminal-states';
 import { isDefaultMrpView, readMrpSnapshot, refreshMrpSnapshot } from '../lib/mrp-snapshot';
 import { allocSourceOf, allocSourceCoveringPo, type AllocSource } from '../shared/mrp-alloc-source';
+import { isHardBoundLine, HARD_BOUND_COMPANY_ID } from '../lib/so-stock-allocation';
 
 export const mrp = new Hono<{ Bindings: Env; Variables: Variables }>();
 mrp.use('*', supabaseAuth);
@@ -847,6 +848,40 @@ export async function computeMrp(
      set before anything is bucketed — a commitment is owed to a (bucket, PO)
      pair, and two PO lines can share one. */
   const poDrafts: PoSupplyEntry[] = [];
+  /* ── DEDICATED SUPPLY (owner 2026-08-31, option 甲; company 1 only) ─────────
+     A company-1 bedframe or `(SP)` mattress line is EXCLUSIVELY bound to its own
+     purchase order in the stored allocator (`HARD_BOUND_COMPANY_ID`, bug 0572) —
+     it lights from that PO's receipt and never from the pool. MRP did not know
+     that, so it planned the same line against pooled stock and pooled PO supply,
+     and the two engines answered differently about the same order.
+
+     Which one was wrong was not a matter of taste: the AutoCount stock snapshot
+     carries NO variant, so every migrated bedframe unit sits under a BLANK
+     variant key while its sales-order line carries colour + heights. MRP's
+     bucket key is exact, so the typed demand found an empty bucket and reported
+     a shortage for goods that are physically in the warehouse and already
+     spoken for. Owner: 「甲 可是针对的是 co1 而已 目前而已」.
+
+     So the binding is honoured on BOTH sides here:
+       · a bound PO line is DEDICATED — removed from the pool, because it belongs
+         to one sales-order line and cannot cover anybody else's;
+       · a bound demand line draws only from its own PO (received first, then its
+         outstanding quantity), and the units it takes from a receipt are
+         DECREMENTED from the pooled bucket so nothing is counted twice.
+
+     SOFA IS DELIBERATELY NOT HERE, and the shared predicate is not being
+     redefined — only narrowed at this call site. Sofa demand never enters the
+     general walk (`cat === 'SOFA'` is skipped in section 6); it is planned as
+     colour-matched SETS in section 8, whose supply model is its own. Excluding
+     sofa PO lines from the pool without rewriting that walk would starve it. */
+  const dedicatedReceivedByLine = new Map<string, number>();
+  const dedicatedOpenByLine = new Map<string, PoSupply[]>();
+  const boundCompany = companyId === HARD_BOUND_COMPANY_ID;
+  const isDedicated = (r: PoLineRow): boolean =>
+    boundCompany
+    && !!r.so_item_id
+    && (r.item_group ?? '').trim().toLowerCase() !== 'sofa'
+    && isHardBoundLine(r.item_group, r.item_code);
   for (const r of (poRaw ?? []) as unknown as PoLineRow[]) {
     if (!r.po || PO_DEAD.has(r.po.status)) continue;
     /* Migration 0180 — ETA is the EFFECTIVE (latest revised) delivery date: the
@@ -869,6 +904,21 @@ export async function computeMrp(
     );
     const eta = lineEta ?? headerEta ?? null;
     const left = (r.qty ?? 0) - (r.received_qty ?? 0);
+    /* The RECEIVED half is captured before the `left <= 0` exit below: a fully
+       received dedicated PO leaves nothing outstanding and is exactly the case
+       that must still cover its line. */
+    if (isDedicated(r)) {
+      const soItemId = String(r.so_item_id);
+      const got = Number(r.received_qty ?? 0);
+      if (got > 0) dedicatedReceivedByLine.set(soItemId, (dedicatedReceivedByLine.get(soItemId) ?? 0) + got);
+      if (left > 0) {
+        const open = dedicatedOpenByLine.get(soItemId) ?? [];
+        open.push({ poNumber: r.po.po_number, eta, qtyLeft: left, supplierId: r.po.supplier_id ?? null });
+        dedicatedOpenByLine.set(soItemId, open);
+        if (r.po.supplier_id) poSupplierIds.add(r.po.supplier_id);
+      }
+      continue;   // dedicated: never free supply for another line's bucket
+    }
     if (left <= 0) continue;
     const poWh = r.warehouse_id ?? r.po.purchase_location_id ?? null;
     if (whFilter && poWh !== whFilter) continue;
@@ -1118,20 +1168,36 @@ export async function computeMrp(
     for (const r of rows) {
       const eff = effQtyOf(r);                              // qty still to fulfil (ordered − delivered + returned)
       let need = eff;
-      const fromStock = drawBucketStock(bucketStock, batchClaims.qtyByLine.get(r.id) ?? 0, need);
+      /* BOUND LINE (company 1, bedframe / `(SP)` mattress): its own purchase
+         order is the only evidence, exactly as the stored allocator has it —
+         received quantity covers it now, outstanding quantity covers it on the
+         PO's ETA. It does NOT read this bucket.
+
+         AND IT DOES NOT DECREMENT IT EITHER, which is the part worth stating.
+         The allocator decrements because its pool is one shared walk across every
+         group; here the pool IS the bucket, and a company-1 bedframe bucket holds
+         only bedframe demand — every line of which is bound by the same rule and
+         therefore cannot draw it. Leaving the units in the bucket is what makes
+         the page honest about the migrated blank-variant stock: it is on hand,
+         and nothing on this plan is entitled to it. */
+      const bound = boundCompany && isHardBoundLine(r.item_group, r.item_code);
+      const fromStock = bound
+        ? Math.min(need, dedicatedReceivedByLine.get(r.id) ?? 0)
+        : drawBucketStock(bucketStock, batchClaims.qtyByLine.get(r.id) ?? 0, need);
       need -= fromStock;
 
       let poNumber: string | null = null;
       let poEta: string | null = null;
       let poSupplierId: string | null = null;
-      while (need > 0 && poQueue.length > 0) {
-        const front = poQueue[0];
+      const queue = bound ? (dedicatedOpenByLine.get(r.id) ?? []) : poQueue;
+      while (need > 0 && queue.length > 0) {
+        const front = queue[0];
         if (!front) break;
         const take = Math.min(front.qtyLeft, need);
         if (poNumber == null) { poNumber = front.poNumber; poEta = front.eta; poSupplierId = front.supplierId; }
         front.qtyLeft -= take;
         need -= take;
-        if (front.qtyLeft <= 0) poQueue.shift();
+        if (front.qtyLeft <= 0) queue.shift();
       }
 
       /* Audit D6 — the allocation above ALWAYS runs (undated rows sort last, so

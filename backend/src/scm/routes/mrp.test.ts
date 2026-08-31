@@ -1129,3 +1129,117 @@ describe('computeMrp — allocation ranks on the EFFECTIVE delivery date', () =>
     expect(l1.orderByDate).toBe('2026-10-01');
   });
 });
+
+/* HARD BINDING, COMPANY 1 (owner 2026-08-31, option 甲: 「甲 可是针对的是 co1 而已
+   目前而已」).
+
+   The stored allocator has bound company-1 bedframe / `(SP)` mattress lines to
+   their own purchase order since 2026-08-30 (bug 0572). MRP planned the same
+   lines against the pool, so the two engines disagreed about the same order —
+   and MRP was the one telling the owner to buy goods that were already standing
+   in the warehouse under a blank variant key with his own PO's name on them. */
+describe('company 1: a bound line is planned from its own purchase order only', () => {
+  const co1 = { ...opts, companyId: 1 };
+  const boundPo = (poNumber: string, qty: number, receivedQty: number, soItemId: string, variant: Row | null, eta: string): Row => ({
+    item_code: 'BF-100', item_group: 'bedframe', variants: variant ?? {}, qty, received_qty: receivedQty,
+    delivery_date: eta, supplier_delivery_date_2: null, supplier_delivery_date_3: null, supplier_delivery_date_4: null,
+    warehouse_id: 'W1', so_item_id: soItemId,
+    po: {
+      po_number: poNumber, status: 'SUBMITTED', expected_at: eta,
+      supplier_delivery_date_2: null, supplier_delivery_date_3: null, supplier_delivery_date_4: null,
+      purchase_location_id: 'W1', supplier_id: null,
+    },
+  });
+  /* Every per-company read is `.eq('company_id', …)`-scoped, and the fake filters
+     literally, so a fixture row without the column is invisible to a scoped run.
+     Stamped here rather than on each row: forgetting it does not fail loudly, it
+     just returns an empty plan. */
+  const stamp = (co: number) => (rows: Row[]): Row[] => rows.map((r) => ({ company_id: co, ...r }));
+  const world = (tables: Record<string, Row[]>, co = 1) => {
+    const add = stamp(co);
+    return fakeSb(Object.fromEntries(Object.entries({
+      ...BASE_TABLES,
+      warehouses: [{ id: 'W1', code: 'W1', name: 'Main', is_active: true }],
+      mfg_products: [{ id: 'p1', code: 'BF-100', name: 'Baron Bedframe', category: 'BEDFRAME' }],
+      ...tables,
+    }).map(([t, rows]) => [t, add(rows as Row[])])));
+  };
+
+  test('its own PO is RECEIVED: covered, even though the units landed under a blank variant', async () => {
+    /* THE OWNER'S CASE. The AutoCount stock snapshot carries no variant, so the
+       received units sit under '' while the sales-order line asks for RED. The
+       exact-key stock lookup finds nothing, and before this rule MRP reported a
+       shortage for goods that are in the warehouse with this line's name on
+       them. The receipt of its OWN purchase order is the evidence. */
+    const sb = world({
+      mfg_sales_order_items: [demandRed(5)],
+      purchase_order_items: [boundPo('PO-OWN', 5, 5, 'si-red', { fabricCode: 'RED' }, '2026-10-01')],
+      inventory_balances: [{ item_code: 'BF-100', warehouse_id: 'W1', variant_key: '', qty: 5 }],
+    });
+
+    const res = await computeMrp(asSb(sb), co1);
+
+    const row = res.skus.find((s) => s.variantKey === 'fabriccode=red')!;
+    expect(row.qtyNeeded).toBe(5);
+    expect(row.shortage).toBe(0);
+    expect(res.totals.shortageUnits).toBe(0);
+  });
+
+  test('its own PO is still OUTSTANDING: covered on that PO, and the PO is named', async () => {
+    const sb = world({
+      mfg_sales_order_items: [demandRed(5)],
+      purchase_order_items: [boundPo('PO-OWN', 5, 0, 'si-red', { fabricCode: 'RED' }, '2026-10-01')],
+    });
+
+    const res = await computeMrp(asSb(sb), co1);
+
+    const row = res.skus.find((s) => s.variantKey === 'fabriccode=red')!;
+    expect(row.shortage).toBe(0);
+    expect(row.lines[0]!.poNumber).toBe('PO-OWN');
+  });
+
+  test('NO purchase order of its own: short, even with matching stock sitting in its bucket', async () => {
+    /* The exclusivity half, and the one that changes an answer the old code was
+       happy with: exact-variant stock in the line's own bucket does NOT light a
+       bound line. Company 1 buys for the order; unattached stock belongs to
+       nobody until a purchase order says so. */
+    const sb = world({
+      mfg_sales_order_items: [demandRed(5)],
+      inventory_balances: [{ item_code: 'BF-100', warehouse_id: 'W1', variant_key: 'fabriccode=red', qty: 5 }],
+    });
+
+    const res = await computeMrp(asSb(sb), co1);
+
+    const row = res.skus.find((s) => s.variantKey === 'fabriccode=red')!;
+    expect(row.stock).toBe(5);      // the stock is real and still reported
+    expect(row.shortage).toBe(5);   // and none of it is this line's
+  });
+
+  test("another line's dedicated PO is not free supply", async () => {
+    /* A bound purchase order leaves the pool entirely. Before, a PO raised for
+       SO-2's line could cover SO-1's demand in the same bucket — which is the
+       duplicate-coverage mirror of the same mistake. */
+    const sb = world({
+      mfg_sales_order_items: [demandRed(5)],
+      purchase_order_items: [boundPo('PO-SOMEONE-ELSE', 5, 0, 'si-other', { fabricCode: 'RED' }, '2026-10-01')],
+    });
+
+    const res = await computeMrp(asSb(sb), co1);
+
+    const row = res.skus.find((s) => s.variantKey === 'fabriccode=red')!;
+    expect(row.poOutstanding).toBe(0);
+    expect(row.shortage).toBe(5);
+  });
+
+  test('company 2 keeps the pooled model — the rule is company-1 only, for now', async () => {
+    const sb = world({
+      mfg_sales_order_items: [demandRed(5)],
+      inventory_balances: [{ item_code: 'BF-100', warehouse_id: 'W1', variant_key: 'fabriccode=red', qty: 5 }],
+    }, 2);
+
+    const res = await computeMrp(asSb(sb), { ...opts, companyId: 2 });
+
+    const row = res.skus.find((s) => s.variantKey === 'fabriccode=red')!;
+    expect(row.shortage).toBe(0);   // pooled stock still covers it
+  });
+});
