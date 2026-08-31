@@ -39,6 +39,23 @@ const INSTRUCTION_TOKEN = /(ARMREST|ARMCHANGE|BACKREST|BACKCUSHION|HEADREST|CUSH
    confirm is a guess — and this migration does not guess. Sizes and piece
    lists are excluded before the library is consulted so a numeric coincidence
    can never be promoted to a colour. */
+/* O-vs-ZERO tolerance. The floor writes the same fabric code both ways —
+   "BO315-21" and "B0315-Pearl" are the same cloth — and a code the library
+   cannot confirm is FATAL to the structure segment, so one typed zero threw a
+   whole build to placeholder (SO-013121, owner review 2026-08-31). Try the
+   swapped spellings too; the LIBRARY still has to confirm one of them, so this
+   widens the lookup, never the guard. */
+function ohZeroVariants(t) {
+  const out = new Set([t]);
+  out.add(t.replace(/0/g, "O"));
+  out.add(t.replace(/O/gi, "0"));
+  return [...out];
+}
+const confirmColour = (knownColour, t) => {
+  for (const v of ohZeroVariants(t)) { const hit = knownColour(v); if (hit) return hit; }
+  return null;
+};
+
 function unlabelledColour(d2raw, knownColour) {
   for (const raw of String(d2raw || "").split(/[/\n]+/)) {
     const seg = raw.trim();
@@ -53,7 +70,7 @@ function unlabelledColour(d2raw, knownColour) {
     if (/^\d+\s*(?:"|”|inch|cm)?$/i.test(t)) continue;                // a bare size
     if (/^(?:size|seat)\b/i.test(t)) continue;                        // a labelled size
     if (/\+/.test(t) && /^[\d+ACLNPRSTacnprst()\s]+$/.test(t)) continue; // a piece list
-    const hit = knownColour(t) || knownColour(t.replace(/\s*\([^)]*\)\s*/g, "").trim());
+    const hit = confirmColour(knownColour, t) || confirmColour(knownColour, t.replace(/\s*\([^)]*\)\s*/g, "").trim());
     if (hit) return { value: typeof hit === "string" ? hit : t, evidence: seg };
   }
   return null;
@@ -266,10 +283,10 @@ function parseSofa(d2raw, model, recl = false, opts = {}) {
       }
       else if (t === model || SOFA_MODEL_ALIAS[t]) quiet.push(t);             // model rider ("back rest (5540)" SO-013312)
       else if (/^COLOU?R.+/.test(t)) quiet.push(t);                           // a glued colour mention — colour reads off the RAW text, never here
-      else if (/[A-Z]\d|\d[A-Z]/.test(t) && typeof opts.knownColour === "function" && opts.knownColour(t)) {
+      else if (/[A-Z]\d|\d[A-Z]/.test(t) && typeof opts.knownColour === "function" && confirmColour(opts.knownColour, t)) {
         // a library-CONFIRMED colour code inside the structure segment (SO-013121);
         // an unconfirmed code stays fatal — this migration does not guess colours
-        if (!o.color) { o.color = opts.knownColour(t); o.why.push(`colour token "${t}"`); }
+        if (!o.color) { o.color = confirmColour(opts.knownColour, t); o.why.push(`colour token "${t}"`); }
         quiet.push(t);
       }
       else if (t === "ARM" || t === "ARMREST" || (t.length >= 6 && INSTRUCTION_TOKEN.test(t))) {

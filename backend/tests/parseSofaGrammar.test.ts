@@ -400,3 +400,25 @@ describe('parse-sofa: the 2026-08-30 placeholder-sweep vocabulary', () => {
     expect((r.why as string[]).some((w: string) => w.startsWith('token'))).toBe(false);
   });
 });
+
+/* O-vs-ZERO — the floor writes one fabric code two ways (owner review
+   2026-08-31). "BO315-21" and "B0315-Pearl" are the same cloth, but an
+   unconfirmable code inside the structure segment is FATAL by design, so one
+   typed zero threw a whole build to placeholder (SO-013121, a real order). The
+   library still has to confirm a spelling — this widens the lookup, not the
+   guard. */
+describe('parse-sofa: the fabric code typed with a zero for the letter O', () => {
+  const known = (c: string) => (/^BO315[- ]?PEARL$/i.test(c.trim()) ? 'BO315-PEARL' : null);
+
+  test('SO-013121 decodes once the swapped spelling is tried', () => {
+    const r = parseSofa('2S[P+P](32”)B0315-Pearl', '8051', true, { knownColour: known });
+    expect(r.pieces).toEqual(['1A(P)(LHF)', '1A(P)(RHF)']);
+    expect(r.color).toBe('BO315-PEARL');
+  });
+
+  test('a code the library confirms in NEITHER spelling is still fatal — no guessing', () => {
+    const r = parseSofa('2S[P+P](32”)Q9999-Ghost', '8051', true, { knownColour: known });
+    expect(r.pieces).toEqual([]);
+    expect(r.conf).toBe('low');
+  });
+});
