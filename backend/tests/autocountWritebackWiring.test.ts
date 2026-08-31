@@ -200,8 +200,10 @@ describe('cancel and edit are hooked, and only where the downstream lock has alr
     expect(soSource).toBeTruthy();
     expect(between(poSource, 'header date cascade failed', 'return c.json({ purchaseOrder: data });'))
       .toContain('queueAcPoEdit(c, id)');
+    /* With the inserted row DECLARED as new, so AutoCount appends it instead of
+       refusing the document for carrying a line with no key (2026-08-31). */
     expect(between(poSource, 'Line added: ${String(it.itemCode', 'return c.json({ item: data }, 201);'))
-      .toContain('queueAcPoEdit(c, poId)');
+      .toContain('queueAcPoEdit(c, poId, [], data?.id');
     expect(between(poSource, "catch { /* don't fail the edit on a counter recount */ }", 'return c.json({ ok: true });'))
       .toContain('queueAcPoEdit(c, poId)');
     expect(between(poSource, "catch { /* line already deleted", 'return c.body(null, 204);'))

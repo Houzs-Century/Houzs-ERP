@@ -186,7 +186,10 @@ describe('the SO and PO mutation paths the named-anchor test did not cover', () 
 
   test('PO convert-from-SO — appending SO lines to an existing PO is an edit', () => {
     const tail = between(PO, "mfgPurchaseOrders.post('/:id/convert-from-so'", 'sourceDocNo: soDocNo,');
-    expect(tail).toContain('queueAcPoEdit(c, poId)');
+    /* The rows it just inserted are DECLARED as new (2026-08-31) — without that
+       fourth argument the append is refused as a document full of keyless lines,
+       which is what it did until then. */
+    expect(tail).toContain('queueAcPoEdit(c, poId, [], ((inserted ?? [])');
   });
 
   test('Sales Invoice partial transfer — folding a second DO into an existing invoice', () => {

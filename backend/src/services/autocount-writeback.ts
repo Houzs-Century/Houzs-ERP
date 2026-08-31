@@ -1391,11 +1391,11 @@ export function composeCreatePo(
  * that has not been rebuilt yet is also safe. This copy exists so the request is
  * never even sent.
  *
- * KNOWN LIMITATION, deliberate: a genuinely new line added to a document that
- * AutoCount already has is refused too, because the ERP cannot yet tell it apart
- * from a legacy line whose key was never stored. AcSyncService accepts an
- * explicit IsNewLine marker for that case and nothing sets it yet — see
- * docs/modules/autocount-writeback.md for what has to be true first.
+ * A GENUINELY NEW LINE IS THE EXCEPTION, DECLARED and never inferred: the route
+ * that inserted the row names it (`newLineIds`), believed only when every OTHER
+ * line already carries a key. Those go out `IsNewLine`, which AcSyncService turns
+ * into AddDetail(). SO 2026-08-11, PO 2026-08-31 — this said "nothing sets it
+ * yet" for the twenty days between them. docs/modules/autocount-writeback.md.
  *
  * LINE REMOVAL IS A RETIREMENT, NEVER AN OMISSION. Two things reach AutoCount as
  * `Retire: true` (Qty = 0, Transferable = false, an `[ERP-CANCELLED]` Desc2

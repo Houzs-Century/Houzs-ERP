@@ -838,6 +838,102 @@ describe('a line the ERP just added is declared, never inferred', () => {
     })).toBe(false);
     expect(outbox(sb)[0].last_error).toContain('refused, nothing sent');
   });
+
+  /* THE PURCHASE ORDER HALF, wired 2026-08-31. The contract is the sales
+     order's, and the reason it took longer is written into the route it unlocks:
+     a duplicate line on a purchase order cannot be removed in AutoCount, so
+     "declared, never inferred" had to be proved on the safer document first.
+     Owner 2026-08-31: 「给回写加"增行/删行"能力」 — delete already worked on all six
+     document types; this is the add half. */
+  describe('and the same contract on a purchase order', () => {
+    const poDoc = {
+      id: 'po-1', po_number: 'HC-PO-9', po_date: '2026-08-10', supplier_id: 'sup-1',
+      notes: 'a note', linked_ac_docno: 'PO-000042', purchase_location_id: 'wh-1',
+    };
+    const sup = { id: 'sup-1', code: '400-H004', name: 'Supplier' };
+    const poCols = { purchase_orders: ['creditor_code', 'creditor_name', 'agent', 'ref'] };
+    const oldLine = {
+      id: 'po-row-old', purchase_order_id: 'po-1', item_code: ERP_A, description: 'D',
+      qty: 3, unit_price_sen: 5000, linked_ac_dtlkey: 7001, warehouse_id: 'wh-1',
+    };
+    const newLine = {
+      id: 'po-row-new', purchase_order_id: 'po-1', item_code: ERP_B, description: 'added',
+      qty: 1, unit_price_sen: 900, linked_ac_dtlkey: null, warehouse_id: 'wh-1',
+    };
+    const wh = [{ id: 'wh-1', code: 'KL', name: 'KL WAREHOUSE' }];
+
+    test('declared by the route: the added line goes as IsNewLine, the keyed one does not', async () => {
+      const sb = withFlag('1', {
+        purchase_orders: [{ ...poDoc }], suppliers: [{ ...sup }],
+        purchase_order_items: [{ ...oldLine }, { ...newLine }], warehouses: wh,
+      }, poCols);
+      expect(await enqueueEdit(sb as never, {
+        companyId: 1, docType: 'PO', docId: 'po-1', newLineIds: ['po-row-new'],
+      })).toBe(true);
+      const lines = outbox(sb)[0].payload.body.Lines as Array<Record<string, unknown>>;
+      expect(lines).toHaveLength(2);
+      expect(lines.find((l) => l.DtlKey === 7001)?.IsNewLine).toBeUndefined();
+      expect(lines.find((l) => l.ItemCode === AC_B)?.IsNewLine).toBe(true);
+    });
+
+    test('NOT declared: still refused, so a legacy keyless line can never be appended twice', async () => {
+      const sb = withFlag('1', {
+        purchase_orders: [{ ...poDoc }], suppliers: [{ ...sup }],
+        purchase_order_items: [{ ...oldLine }, { ...newLine }], warehouses: wh,
+      }, poCols);
+      expect(await enqueueEdit(sb as never, { companyId: 1, docType: 'PO', docId: 'po-1' })).toBe(false);
+      expect(outbox(sb)[0].last_error).toContain('refused, nothing sent');
+    });
+
+    /* A new detail with no Location dies on FK_PODTL_Location, and the document
+       saves in ONE call — so it would take the edited lines down with it. The
+       document's own warehouse stands in. */
+    test('a new line with no warehouse of its own inherits the document\'s', async () => {
+      const sb = withFlag('1', {
+        purchase_orders: [{ ...poDoc }], suppliers: [{ ...sup }],
+        purchase_order_items: [{ ...oldLine }, { ...newLine, warehouse_id: null }], warehouses: wh,
+      }, poCols);
+      expect(await enqueueEdit(sb as never, {
+        companyId: 1, docType: 'PO', docId: 'po-1', newLineIds: ['po-row-new'],
+      })).toBe(true);
+      const lines = outbox(sb)[0].payload.body.Lines as Array<Record<string, unknown>>;
+      expect(lines.find((l) => l.ItemCode === AC_B)?.Location).toBe('KL');
+    });
+
+    /* When neither the line nor the document has one, the key is OMITTED and
+       AutoCount applies its own default. Not a refusal: the evidence that a
+       missing Location is fatal comes from the CREATE path, which assigns the
+       key unconditionally, and the edit path is ContainsKey-gated — a different
+       mechanism. Refusing here on the create's evidence would start rejecting
+       sales-order edits the book has accepted since 2026-08-11. */
+    test('and when neither the line nor the document has one, the key is omitted rather than guessed', async () => {
+      const sb = withFlag('1', {
+        purchase_orders: [{ ...poDoc, purchase_location_id: null }], suppliers: [{ ...sup }],
+        purchase_order_items: [{ ...oldLine }, { ...newLine, warehouse_id: null }], warehouses: wh,
+      }, poCols);
+      expect(await enqueueEdit(sb as never, {
+        companyId: 1, docType: 'PO', docId: 'po-1', newLineIds: ['po-row-new'],
+      })).toBe(true);
+      const lines = outbox(sb)[0].payload.body.Lines as Array<Record<string, unknown>>;
+      expect(lines.find((l) => l.ItemCode === AC_B)).not.toHaveProperty('Location');
+    });
+
+    /* The regression that would be invisible: the stand-in must reach the NEW
+       line only. An existing line with no location omits the key so the account
+       book keeps the value it owns — sending the document default there would
+       silently relocate somebody else's stock. */
+    test('an EXISTING line with no location still sends no Location key', async () => {
+      const sb = withFlag('1', {
+        purchase_orders: [{ ...poDoc }], suppliers: [{ ...sup }],
+        purchase_order_items: [{ ...oldLine, warehouse_id: null }, { ...newLine }], warehouses: wh,
+      }, poCols);
+      expect(await enqueueEdit(sb as never, {
+        companyId: 1, docType: 'PO', docId: 'po-1', newLineIds: ['po-row-new'],
+      })).toBe(true);
+      const lines = outbox(sb)[0].payload.body.Lines as Array<Record<string, unknown>>;
+      expect(lines.find((l) => l.DtlKey === 7001)).not.toHaveProperty('Location');
+    });
+  });
 });
 
 /* The ERP numbers its own documents, on every type. A create always sent its

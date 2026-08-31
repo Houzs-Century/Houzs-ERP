@@ -595,20 +595,41 @@ the document keeps NULL keys.
 Failing to record identity never changes the dispatch outcome: the document IS
 in AutoCount and the row IS `sent`. It is logged, not retried.
 
-### Known limitation — adding a line to a document AutoCount already has
+### Adding a line to a document AutoCount already has — DECLARED, never inferred
 
-A genuinely new line on an existing AutoCount document is refused too, because
-the ERP cannot yet tell it apart from a legacy line whose key was never stored.
+A new line on an existing AutoCount document carries no key, and a keyless line
+means two opposite things: just added, or never backfilled. The ERP does not
+guess. The route that did the inserting NAMES the rows it inserted
+(`newLineIds`), and `composeEdit` marks them `IsNewLine: true` — which
+`AcSyncService` turns into `AddDetail()` — **only when every other keyless line
+on the document is one of those declared rows.** A document with an
+undeclared keyless line has not been backfilled, so nothing on it can vouch for
+the new one, and the whole edit is still refused. Setting `IsNewLine` on a guess
+re-opens the duplicate-append defect one line at a time, and on a purchase order
+a duplicate cannot be removed at all.
 
-`AcSyncService` accepts an explicit `IsNewLine: true` marker on a line for
-exactly this case. **The SO side now sets it; the PO side does not.** The SO
-line-add routes pass the rows they just inserted as `newLineIds`
-(`mfg-sales-orders.ts:266-284`, `:8157`, `:8208`), and `composeEdit`
-(`autocount-writeback.ts:696-710`) marks a keyless line `IsNewLine` ONLY when
-every keyless line on the document is one of those declared-new rows — the
-positive evidence the guess would otherwise lack. The PO routes pass nothing, so
-a genuinely new PO line is still refused. Setting `IsNewLine` on a guess re-opens
-the duplicate-append defect one line at a time.
+| document | add a line | remove a line |
+| --- | --- | --- |
+| SO | yes, since 2026-08-11 | yes (`Retire`) |
+| PO | yes, since 2026-08-31 | yes (`Retire`) |
+| DO / GR / IV / PI | **no** — the route declares nothing, so a new line is refused | yes (`Retire`) |
+
+Where it is wired: `queueAcSoEdit` / `queueAcPoEdit` take `newLineIds` and pass
+them to `enqueueEdit`, which forwards them to `composeSoState` /
+`composePoState`; those spread them into `composeEdit`'s options. The SO sites
+are the two line-insert routes in `mfg-sales-orders.ts` (the sofa build and the
+ordinary line); the PO sites are `POST /:id/items` and `POST
+/:id/convert-from-so` in `mfg-purchase-orders.ts`. Search for `newLineIds`
+rather than trusting a line number — this file's citations rotted once already.
+
+**A new line also gets a stock location, and only a new one.** An existing line
+with no location omits the `Location` key so the account book keeps the value it
+owns; a new line has no such value, so the document's own warehouse stands in
+(`newLineLocation`, distinct from `defaultLocation`, which applies to every
+line). If neither exists the key is omitted and AutoCount applies its own
+default — not refused: the evidence that a missing Location is fatal comes from
+the CREATE path, which assigns the key unconditionally, and the edit path is
+`ContainsKey`-gated.
 
 ### Retirement — `Retire: true`
 

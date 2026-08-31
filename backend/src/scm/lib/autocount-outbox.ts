@@ -1220,7 +1220,7 @@ export async function enqueueEdit(
     const composed = opts.docType === 'SO'
       ? await composeSoState(sb, String(opts.docNo), retired, opts.newLineIds, opts.touchedFields)
       : opts.docType === 'PO'
-        ? await composePoState(sb, String(opts.docId ?? opts.docNo), retired)
+        ? await composePoState(sb, String(opts.docId ?? opts.docNo), retired, opts.newLineIds)
         : await composeDownstreamState(sb, opts.docType, String(opts.docId ?? opts.docNo), retired);
     if (!composed) return false;
     /* A PO route knows its id, not its number; the outbox row is keyed by the
@@ -1438,13 +1438,23 @@ async function composeSoState(sb: Sb, docNo: string, retired: AcRetiredLine[] = 
   };
 }
 
-async function composePoState(sb: Sb, poId: string, retired: AcRetiredLine[] = []) {
+async function composePoState(sb: Sb, poId: string, retired: AcRetiredLine[] = [], newLineIds?: string[]) {
   const header = await readPoHeader(sb, poId);
   if (!header) return null;
   const items = await readOrThrow('purchase_order_items',
     sb.from('purchase_order_items').select(PO_ITEM_COLS).eq('purchase_order_id', poId));
   const poRows = (items ?? []) as Record<string, unknown>[];
   const lines = await withLocations(sb, poRows, poRows.map(soLine));
+  /* A line this request just ADDED inherits the purchase order's own warehouse
+     when it has none of its own. Done HERE, on the line, rather than as an
+     option on composeEdit: an EXISTING line with no location must keep omitting
+     the key so the account book keeps the value it owns, and only this composer
+     knows which lines are new. AutoCount refuses a detail whose Location is not
+     in dbo.Location, and it saves the document in one call. */
+  const newIds = new Set(newLineIds ?? []);
+  if (newIds.size && header.purchase_location) {
+    for (const l of lines) if (!l.location && l.id && newIds.has(l.id)) l.location = header.purchase_location;
+  }
   const poBindings = await bindingsFor(sb, header.company_id ?? null, lines.map((l) => l.item_code), header.supplier_id);
   return {
     docNo: header.po_number || poId,
@@ -1462,7 +1472,20 @@ async function composePoState(sb: Sb, poId: string, retired: AcRetiredLine[] = [
     edit: () => composeEdit('PO', String(header.linked_ac_docno ?? header.po_number), present({
       CreditorName: header.creditor_name,
       Description: header.notes,
-    }), lines, { supplierCode: header.creditor_code, bindings: poBindings }, retired),
+    }), lines, {
+      supplierCode: header.creditor_code,
+      bindings: poBindings,
+      /* Add-a-line, same contract as the sales order's: the ROUTE names the row
+         it just inserted, and composeEdit honours it only when every other line
+         on the document already carries a key. Until this was wired, a line
+         added to a purchase order already in the account book refused the whole
+         document — correctly, because a keyless line is otherwise
+         indistinguishable from one the backfill missed, and guessing "new"
+         appends a duplicate into a live book (mfg-purchase-orders.ts, the
+         convert-from-SO append, says exactly this). Their stock location is
+         filled in above, on the line. */
+      ...(newLineIds && newLineIds.length ? { newLineIds: new Set(newLineIds) } : {}),
+    }, retired),
   };
 }
 
