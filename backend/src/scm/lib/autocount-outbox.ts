@@ -1909,11 +1909,8 @@ export async function dispatchOne(
     if (payload.lineWriteback) {
       await persistLineKeys(sb, row, payload.lineWriteback, result.lines);
     }
-    /* AN EDIT THAT ADDED A LINE LEARNS THAT LINE'S KEY (2026-08-31). Without it
-       the added row stays keyless and every LATER edit of the document is
-       refused — HC-SO-013394. Derived from the payload, which already says which
-       details were declared new and which keys we held; an old service answers
-       with no lines and this is a no-op. docs/bugs/0583-*. */
+    /* AN EDIT THAT ADDED A LINE LEARNS THAT LINE'S KEY (docs/bugs/0583-*).
+       Without it the added row stays keyless and every LATER edit is refused. */
     if (row.op === 'edit') {
       const target = newLineTargetOf(row.doc_type, payload);
       if (target) await persistNewLineKeys(sb, row, target, result.lines);
