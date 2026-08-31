@@ -998,3 +998,14 @@ its supply is bound to — in place, no navigation. The row already carries
 `purchase_order` and `assigned_sos`, so no payload change was required; an
 `assigned_sos` entry whose `source` is `'mrp'` builds no entry.
 `document-conversion.md` §8b has the rule.
+
+## A line added here reaches the account book (since 2026-08-31)
+
+Adding a line to a document AutoCount already holds used to refuse the WHOLE
+document's edit: a line with no AutoCount key is indistinguishable from one the
+backfill missed, and guessing "new" appends a duplicate into a live book. The
+route now DECLARES the row it inserted (`newLineIds` -> `IsNewLine`), so the book
+appends it. A keyless line the route did not name is still refused.
+
+Full rule and the matrix: `docs/modules/autocount-writeback.md`,
+`docs/bugs/0588-a-line-added-to-a-delivery-order-receipt-or-invoice-never-re.md`.
