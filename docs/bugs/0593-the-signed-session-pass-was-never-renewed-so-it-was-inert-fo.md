@@ -85,10 +85,34 @@ AssertionError: expected 'import type { MiddlewareHandler } fro…' to contain
 Tests  1 failed (1)
 ```
 
-**UNTESTED against production.** Nothing here has been measured on the live
-system. What would settle it: after deploy, the System Health "Signed sessions"
-card, and a re-run of the client-errors check — the `[slow …]` signature count on
-`/api/auth/me`, `/api/presence` and `/api/announcements/banner` is the number to
-compare.
+**VERIFIED LIVE — the wiring, not yet the effect.** Deployed 2026-08-31 (Deploy
+run 33426836520: run `success`, `backend` job `success`, `frontend` `success`).
+Two observations against `erp.houzscentury.com`, both taken after that deploy:
+
+* the CLIENT half is in the shipped bundle. `/assets3/initial-app-Chx9Iyq8.js`
+  contains `absorbSessionPass` minified — it reads the header, returns when it is
+  absent, and writes to whichever store holds the token:
+
+  ```
+  var Hr=`X-Session-Pass`;function Ur(e){try{let t=e.headers.get(Hr);
+    if(!t)return;Vr(t,!sessionStorage.getItem(Mr))}catch{}}
+  ```
+
+* the SERVER half exposes it, so the browser is allowed to read it —
+  `curl -D- https://erp.houzscentury.com/api/auth/status`:
+
+  ```
+  Access-Control-Expose-Headers: X-Request-Id,X-Company-Code,X-Session-Pass
+  ```
+
+**STILL UNMEASURED: whether it makes anything faster.** The renewal only fires on
+a request that reaches the authoritative path, and the evidence for the effect is
+the client-error log, whose window is DAYS — so a re-run now would mostly re-read
+pre-deploy data and any "improvement" read off it would be an artifact. Measure a
+day later, comparing the `[slow …]` signature counts on `/api/auth/me`,
+`/api/presence` and `/api/announcements/banner` from **Client errors check
+(read-only)** against the numbers at the top of this entry. The middleware minting
+a pass on a real authenticated request is also unobserved: it needs a live
+session, and this session does not handle credentials.
 
 **Ref.** fix/session-pass-renewal, 2026-08-31.
