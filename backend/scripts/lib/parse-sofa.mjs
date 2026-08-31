@@ -363,8 +363,14 @@ function parseSofa(d2raw, model, recl = false, opts = {}) {
             else if (end) { seatSide(u.n, end).forEach((x) => out.push(x)); if (u.n === "4") o._photo = "4S在连排,2A+2NA按端位—看图"; }
             else { out.push(`${u.n === "1" ? "1" : "2"}NA`); o._photo = (o._photo ? o._photo + "; " : "") + `中排 ${u.raw}=NA—看图核`; }
             break;
-          case "seat": // explicit nS: suite when standalone-ish, one-arm unit beside connectors
-            if (single || u.solo || !hasConn) { if (u.n === "4") out.push("2A(LHF)", "2A(RHF)"); else out.push(`${u.n}S`); } // owner: 4S=2A+2A
+          case "seat": /* explicit nS. Standalone only when it IS alone or the
+               suite rule marked it solo — NOT merely because no connector token
+               is present: owner 2026-08-31, 「1+2 这种大部分是 1A+2A」, and the
+               drawings agree (SO-006941's `2+1S` has two arms, at the two ends,
+               i.e. ONE run). `!hasConn` used to force standalone here, so
+               `2s+1s` came out as two sofas while the bare-digit `1+2` came out
+               as a run — the same order written two ways, decoded two ways. */
+            if (single || u.solo) { if (u.n === "4") out.push("2A(LHF)", "2A(RHF)"); else out.push(`${u.n}S`); } // owner: 4S=2A+2A
             else if (end) { seatSide(u.n, end).forEach((x) => out.push(x)); if (u.n === "4") o._photo = "4S在连排,2A+2NA按端位—看图"; }
             else { out.push(`${u.n === "1" ? "1" : "2"}NA`); o._photo = (o._photo ? o._photo + "; " : "") + `中排 ${u.raw}=NA—看图核`; }
             break;

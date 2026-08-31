@@ -441,3 +441,24 @@ describe('parse-sofa: two digits are a run, three are a suite', () => {
     expect(r).toContain('2S');
   });
 });
+
+/* The same order written two ways must decode ONE way (owner 2026-08-31).
+   `1+2` (bare digits) already produced a run; `2s+1s` and `2+1S` — the same
+   build with the seats spelled out — produced two standalone sofas, because the
+   explicit-nS branch treated "no connector token present" as "standalone". The
+   drawings settle it: SO-006941's `2+1S` has exactly two arms, at the two ends
+   of one run. */
+describe('parse-sofa: spelled-out seats join the same run as bare digits', () => {
+  test('2s+1s is one run', () => {
+    expect(pieces('2s+1s(28”)', '9028')).toEqual(['2A(LHF)', '1A(RHF)']);
+  });
+  test('2+1S is the same order, same answer (SO-006941)', () => {
+    expect(pieces('2+1S(28”)', '9028')).toEqual(['2A(LHF)', '1A(RHF)']);
+  });
+  test('a lone 2S is still one standalone sofa', () => {
+    expect(pieces('2S(28”)', '9028')).toEqual(['2S']);
+  });
+  test('3S at 24 inch (60cm) still does NOT split — the owner\'s exception', () => {
+    expect(pieces('3S(60cm)', '9028')).toEqual(['3S']);
+  });
+});
