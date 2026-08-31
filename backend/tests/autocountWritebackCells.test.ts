@@ -126,7 +126,9 @@ describe('the four downstream document types queue an edit on every line and hea
        became a named export (2026-08-23) so the outbound-category suite could
        drive it, which moved `deliveryOrdersMfg.post('/:id/items',` to a one-line
        registration BELOW the body. The pin still spans the same handler. */
-    expect(between(DO, 'export const addDeliveryOrderItemHandler', 'return c.json({ item: data }, 201);')).toContain('queueAcDoEdit(c, id)');
+    /* The add DECLARES the row it inserted (2026-08-31), so AutoCount appends it
+       instead of refusing the document for a line it cannot match. */
+    expect(between(DO, 'export const addDeliveryOrderItemHandler', 'return c.json({ item: data }, 201);')).toContain('queueAcDoEdit(c, id, [],');
     expect(between(DO, "deliveryOrdersMfg.patch('/:id/items/:itemId',", 'return c.json({ ok: true });')).toContain('queueAcDoEdit(c, id)');
     expect(between(DO, "deliveryOrdersMfg.delete('/:id/items/:itemId',", 'return c.json({ ok: true });')).toContain('queueAcDoEdit(c, id, retire)');
   });
@@ -137,7 +139,7 @@ describe('the four downstream document types queue an edit on every line and hea
      that visible here — a signature change cannot slip past this file. */
   test('GRN — header PATCH and line add / edit / delete', () => {
     expect(between(GRN, "grns.patch('/:id',", 'return c.json({ grn: data });')).toContain('queueAcGrnEdit(c, sb, id)');
-    expect(between(GRN, "grns.post('/:id/items',", 'return c.json({ item: data }, 201);')).toContain('queueAcGrnEdit(c, sb, grnId)');
+    expect(between(GRN, "grns.post('/:id/items',", 'return c.json({ item: data }, 201);')).toContain('queueAcGrnEdit(c, sb, grnId, [],');
     expect(between(GRN, "grns.patch('/:id/items/:itemId',", 'return c.json({ ok: true });')).toContain('queueAcGrnEdit(c, sb, grnId)');
     expect(between(GRN, "grns.delete('/:id/items/:itemId',", 'return c.body(null, 204);')).toContain('queueAcGrnEdit(c, sb, grnId, retire)');
   });
@@ -147,14 +149,14 @@ describe('the four downstream document types queue an edit on every line and hea
     /* Anchored on the DECLARATION, not the registration: this handler was extracted
      as a named export in 2026-08-19's company-scope fix so a test could mount it,
      which moved `salesInvoices.post('/:id/items', ...)` below the body. */
-  expect(between(SI, 'export const appendSalesInvoiceItemHandler =', 'return c.json(withPriceWarnings({ item: data }, priceWarnings), 201);')).toContain('queueAcSiEdit(c, id)');
+  expect(between(SI, 'export const appendSalesInvoiceItemHandler =', 'return c.json(withPriceWarnings({ item: data }, priceWarnings), 201);')).toContain('queueAcSiEdit(c, id, [],');
     expect(between(SI, "salesInvoices.patch('/:id/items/:itemId',", 'return c.json({ ok: true });')).toContain('queueAcSiEdit(c, id)');
     expect(between(SI, "salesInvoices.delete('/:id/items/:itemId',", 'return c.json({ ok: true });')).toContain('queueAcSiEdit(c, id, retire)');
   });
 
   test('Purchase Invoice — header PATCH and line add / edit / delete', () => {
     expect(between(PI, "purchaseInvoices.patch('/:id',", 'return c.json({ purchaseInvoice: data });')).toContain('queueAcPiEdit(c, id)');
-    expect(between(PI, "purchaseInvoices.post('/:id/items',", 'return c.json({ item: data }, 201);')).toContain('queueAcPiEdit(c, piId)');
+    expect(between(PI, "purchaseInvoices.post('/:id/items',", 'return c.json({ item: data }, 201);')).toContain('queueAcPiEdit(c, piId, [],');
     expect(between(PI, "purchaseInvoices.patch('/:id/items/:itemId',", 'return c.json({ ok: true });')).toContain('queueAcPiEdit(c, piId)');
     expect(between(PI, "purchaseInvoices.delete('/:id/items/:itemId',", 'return c.body(null, 204);')).toContain('queueAcPiEdit(c, piId, retire)');
   });

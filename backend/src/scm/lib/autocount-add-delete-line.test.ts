@@ -59,3 +59,51 @@ describe('one save that deletes a line and adds another', () => {
     expect(lines.find((l) => Number(l.DtlKey) === 991)?.IsNewLine).toBeUndefined();
   });
 });
+
+/* THE FOUR DOWNSTREAM DOCUMENTS, wired 2026-08-31 on the owner's word
+   (「全部都做完」). The same contract, and the same guard: an undeclared keyless
+   line still refuses the whole document, because guessing "new" appends a
+   duplicate into a live account book. */
+describe('a line added to a downstream document', () => {
+  const docCase = {
+    DO: {
+      header: 'delivery_orders',
+      items: 'delivery_order_items',
+      fk: 'delivery_order_id',
+      row: { id: 'do-1', do_number: 'HC-DO-9', do_date: '2026-08-10', debtor_name: 'ACME', ref: null, phone: null, note: null, linked_ac_docno: 'DO-000021' },
+    },
+  } as const;
+
+  test('declared by the route: the added line goes as IsNewLine', async () => {
+    const spec = docCase.DO;
+    const sb = withFlag({
+      [spec.header]: [{ ...spec.row }],
+      [spec.items]: [
+        { id: 'row-old', [spec.fk]: 'do-1', item_code: ERP_A, description: 'M', qty: 1, unit_price_sen: 100, linked_ac_dtlkey: 991, created_at: '2026-08-10T00:00:00Z' },
+        { id: 'row-new', [spec.fk]: 'do-1', item_code: ERP_B, description: 'added', qty: 1, unit_price_sen: 200, linked_ac_dtlkey: null, created_at: '2026-08-10T01:00:00Z' },
+      ],
+    });
+
+    expect(await enqueueEdit(sb as never, {
+      companyId: 1, docType: 'DO', docId: 'do-1', newLineIds: ['row-new'],
+    })).toBe(true);
+
+    const lines = (sb.tables.autocount_outbox ?? [])[0].payload.body.Lines as Array<Record<string, unknown>>;
+    expect(lines.find((l) => l.ItemCode === AC_B)?.IsNewLine).toBe(true);
+    expect(lines.find((l) => Number(l.DtlKey) === 991)?.IsNewLine).toBeUndefined();
+  });
+
+  test('NOT declared: still refused, so a legacy keyless line is never appended twice', async () => {
+    const spec = docCase.DO;
+    const sb = withFlag({
+      [spec.header]: [{ ...spec.row }],
+      [spec.items]: [
+        { id: 'row-old', [spec.fk]: 'do-1', item_code: ERP_A, description: 'M', qty: 1, unit_price_sen: 100, linked_ac_dtlkey: 991, created_at: '2026-08-10T00:00:00Z' },
+        { id: 'row-new', [spec.fk]: 'do-1', item_code: ERP_B, description: 'added', qty: 1, unit_price_sen: 200, linked_ac_dtlkey: null, created_at: '2026-08-10T01:00:00Z' },
+      ],
+    });
+
+    expect(await enqueueEdit(sb as never, { companyId: 1, docType: 'DO', docId: 'do-1' })).toBe(false);
+    expect((sb.tables.autocount_outbox ?? [])[0].last_error).toContain('refused, nothing sent');
+  });
+});
