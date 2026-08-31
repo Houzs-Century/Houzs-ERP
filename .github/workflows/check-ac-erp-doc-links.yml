@@ -31,8 +31,10 @@ jobs:
       - uses: actions/setup-node@v6
         with: { node-version: 22 }
       - run: npm ci
-      - run: node scripts/check-ac-erp-doc-links.mjs
+      - run: npx tsx scripts/backfill-zero-line-costs.ts
         env:
+          COMPANY: '2'
+          MODE: plan
           DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
 
   run-prod:
@@ -44,6 +46,8 @@ jobs:
       - uses: actions/setup-node@v6
         with: { node-version: 22 }
       - run: npm ci
-      - run: node scripts/check-ac-erp-doc-links.mjs
+      - run: npx tsx scripts/backfill-zero-line-costs.ts
         env:
+          COMPANY: '2'
+          MODE: plan
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
