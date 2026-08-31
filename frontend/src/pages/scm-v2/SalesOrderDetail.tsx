@@ -673,11 +673,7 @@ export const SalesOrderDetail = () => {
      Declared here with the other page state, ABOVE the early returns — same
      rule as payEditing and the print hook. */
   const [unsavedPayments, setUnsavedPayments] = useState(0);
-  /* The card hands this up so THIS page's Save can book the typed rows. Until
-     2026-08-31 it could not: Save saved the document and left the money rows
-     where they were, and the only warning about them is wired to Done and to
-     the back button, not to Save. The operator read that as "the payment did not
-     save" — and on HC-SO-013393 nothing had ever been recorded at all. */
+  /* The card hands this up so Save can book the typed rows (docs/bugs/0584-*). */
   const commitPaymentsRef = useRef<(() => Promise<PaymentCommitResult>) | null>(null);
   useEffect(() => {
     if (!header) return;
@@ -966,25 +962,14 @@ export const SalesOrderDetail = () => {
         },
       }))
       .then(saveHeader)
-      /* AND THE TYPED PAYMENT ROWS, as part of this Save. AFTER the document
-         write, deliberately: a payment must not be booked against a save that
-         did not happen. Each row carries its own idempotency key, so a retry
-         after a partial failure de-dupes rather than booking twice. */
-      .then(async () => {
-        const commit = commitPaymentsRef.current;
-        if (!commit) return { committed: 0, failed: 0, blocked: [] } as PaymentCommitResult;
-        return commit();
-      })
+      /* AND THE TYPED PAYMENT ROWS — AFTER the document write, deliberately: a
+         payment must not be booked against a save that did not happen. */
+      .then(async () => commitPaymentsRef.current?.() ?? { committed: 0, failed: 0, blocked: [] })
       .then((pay: PaymentCommitResult) => {
         setSavingOrder(false);
-        /* A row that could not be booked KEEPS THE PAGE OPEN — leaving discards
-           it, which is the failure this whole change exists to end. The wording
-           and the stay/leave decision are one rule, tested on their own. */
+        /* A row that could not be booked KEEPS THE PAGE OPEN — leaving discards it. */
         const outcome = paymentSaveOutcome(pay);
-        if (outcome.stay) {
-          setSaveError(outcome.message ?? 'Some payment rows were not saved.');
-          return;
-        }
+        if (outcome.stay) { setSaveError(outcome.message ?? 'Some payment rows were not saved.'); return; }
         endEditSession();
         // Same exit as Cancel — a completed Save is done with the edit route.
         // (The amendment path below deliberately stays put.)
