@@ -241,3 +241,36 @@ Two things not to do with this flag:
   this card is how the change gets confirmed afterwards.
 
 Background: `docs/bugs/0592-nobody-could-tell-whether-signed-sessions-were-on-so-every-r.md`.
+
+## The pass renews itself now — where the authorization cost actually goes
+
+The card above answers "is the switch on". It does not answer "why is this page
+slow", and until 2026-08-31 nothing did, because a second gap sat behind it.
+
+**A pass lives 8 hours; a session lives 7 days; nothing minted one outside the
+four login endpoints.** So the signed-session fix covered the first 8 hours of a
+session and then stopped applying — about 95% of a session's life ran the DB
+path, whatever the switch said. `docs/bugs/0593-*` has the trace and the two
+constants.
+
+`middleware/auth.ts` now re-issues on the authoritative path — reaching
+`getUserBySession` *means* the caller has no usable pass — and returns the new
+one on an `X-Session-Pass` response header, which is why that header is in
+`Access-Control-Expose-Headers` in `backend/src/index.ts` (both the `cors()`
+options and the hand-set error path; a header the browser hides is a renewal that
+silently never happens). The SPA absorbs it in `correlatedFetch`, the single
+funnel every authenticated transport goes through.
+
+Reading this pair together is the whole diagnostic:
+
+| card says | and requests are still slow | means |
+| --- | --- | --- |
+| On | yes | not authorization — look at the route, the pool, or Hyperdrive |
+| On | no | working as intended |
+| Off | yes | the switch, and it is one secret |
+
+What to measure rather than assume: the `[slow …]` signature counts on
+`/api/auth/me`, `/api/presence` and `/api/announcements/banner` from the
+**Client errors check (read-only)** workflow. `/api/auth/me` is the cleanest of
+the three — it returns the authenticated user and nothing else, so it has no
+route body to blame.
