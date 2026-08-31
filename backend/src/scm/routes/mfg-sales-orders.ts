@@ -6845,12 +6845,12 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
      actually knows where they are standing — a showroom rep sent to an
      exhibition, or an exhibition rep back on the floor, corrects it HERE, and
      that correction has to stick.
-     The change is already recorded who/when/from->to by the `['venue', 'venue']`
-     entry in the field map above. Clearing to blank is as deliberate as setting
-     one, so it is MANUAL too — but a blank arriving BESIDE a venue id is a
-     half-written pair, not a clear, and is resolved first (docs/bugs/0591-*). */
+     The change is already recorded by the `['venue', 'venue']` field-map entry,
+     and clearing to blank is as deliberate as setting one — but a blank BESIDE a
+     venue id is a half-written pair, not a clear. docs/bugs/0591-*. */
   const vFix = await venueNameForHalfWrittenPair(sb, body['venue'], body['venueId']);
-  if (vFix) { body['venue'] = vFix; updates['venue'] = vFix; }
+  if (vFix.kind === 'resolved') { body['venue'] = vFix.name; updates['venue'] = vFix.name; }
+  if (vFix.kind === 'unresolved') { delete body['venue']; delete updates['venue']; }
   if (body['venue'] !== undefined) {
     updates['venue_source'] = 'MANUAL' satisfies VenueSource;
   }

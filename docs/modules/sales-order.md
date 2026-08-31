@@ -768,6 +768,41 @@ every company's showrooms); guard for both halves is
 `backend/tests/showroomVenueCompanyScope.test.ts`. Owner 2026-08-19: *"我们的
 Venue、我们的 Warehouse、我们的 Showroom 等等，都是跟着看到自己公司的"*.
 
+**A BLANK VENUE BESIDE A VENUE ID IS NOT A CLEAR (2026-08-31).** A client that
+resolved the id and not the name sends `venue: ""` with a real `venueId`. Read
+literally that is "clear the venue", and it deleted a live order's venue: the
+audit log for `2990-SO-2608-070` records `venue: "2990s PJ" -> ""` and
+`venueId: null -> "5cafa0a2…"` in ONE save. Mirrored 2990 orders all START in
+that state — the mirror forces `venue_id: null` and keeps the text — so each one
+was a single save away from the same loss.
+
+Two places now refuse to write that blank, and they are not redundant: the client
+one stops it being sent, the server one stops it whatever sends it.
+
+- The desktop default-venue effect (`SalesOrderDetail.tsx`,
+  `ConsignmentOrderDetail.tsx`) returns instead of writing an unresolved name.
+  It is a one-shot — `if (form.venueId) return` — so a blank it writes can never
+  be repaired by a later pass, which is what made this permanent.
+- `PATCH /mfg-sales-orders/:docNo` resolves the pair through
+  `venueNameForHalfWrittenPair` (`scm/lib/venue-binding.ts`), beside the binding
+  rule the CREATE path already uses.
+
+**It has THREE answers, and the third is load-bearing.** `resolved` writes the
+name; `notApplicable` leaves the request alone; **`unresolved` — the venue master
+could not be read, or the id matches nothing — makes the route DROP the venue
+from the patch entirely** rather than write the blank. Collapsing that onto "no
+name" would mean a five-second database blip deletes the venue off whatever is
+being saved at the time, which is the same class of fault as the original bug.
+
+**Clearing a venue is still allowed and still easy: send BOTH empty.** That is
+what "this order has no venue" looks like, and `venue_required` at confirm is
+what stops it being shipped in that state.
+
+Tests: `src/scm/lib/venue-binding.test.ts` (the five outcomes) and
+`backend/tests/mfgSalesOrderHeaderCas.test.ts` (the route honours them).
+Ledger: `docs/bugs/0591-*`. Repair for orders already blanked:
+`backend/scripts/repair-blanked-venue.mjs`.
+
 The backend recomputes honest pricing and mints the `doc_no` server-side, so the
 client never sends a `doc_no`, and money crosses the wire as `*_sen` integers.
 

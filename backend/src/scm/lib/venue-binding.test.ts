@@ -3,8 +3,7 @@ import {
   resolveVenueBinding,
   canAutoResolveVenue,
   type PmsCandidate,
-  type ShowroomCandidate,
-} from './venue-binding';
+  type ShowroomCandidate, venueNameForHalfWrittenPair } from './venue-binding';
 import { todayMyt } from './my-time';
 
 /* ---------------------------------------------------------------------------
@@ -291,5 +290,52 @@ describe('canAutoResolveVenue — a human\'s pick survives a re-resolve', () => 
       ? resolved.venueName
       : persisted.venue;
     expect(nextVenue).toBe('Setia SPICE Arena');
+  });
+});
+
+/* A HALF-WRITTEN PAIR IS NOT A CLEAR — and "could not tell" is its own answer.
+ *
+ * A client that resolved the venue id and not the name sends `venue: ''` beside
+ * a real `venueId`. Read literally that is "clear the venue", and it wiped a
+ * live order's venue for good (docs/bugs/0591-*). The third case is the one that
+ * needs a test of its own: when the venue master cannot be READ, the answer must
+ * not collapse onto the same blank, or a database blip deletes the venue off
+ * whatever is being saved at that moment.
+ */
+describe('venueNameForHalfWrittenPair', () => {
+  const reader = (result: { data: unknown; error: unknown }) => ({
+    from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => result }) }) }),
+  });
+
+  it('resolves the name when the id names a venue', async () => {
+    const r = await venueNameForHalfWrittenPair(
+      reader({ data: { name: 'PJ SHOWROOM' }, error: null }), '', 'v-1');
+    expect(r).toEqual({ kind: 'resolved', name: 'PJ SHOWROOM' });
+  });
+
+  it('stands aside when BOTH are empty — that is a real clear, and it is allowed', async () => {
+    const r = await venueNameForHalfWrittenPair(
+      reader({ data: null, error: null }), '', '');
+    expect(r.kind).toBe('notApplicable');
+  });
+
+  it('stands aside when the name is present — nothing to imply', async () => {
+    const r = await venueNameForHalfWrittenPair(
+      reader({ data: null, error: null }), '2990s PJ', 'v-1');
+    expect(r.kind).toBe('notApplicable');
+  });
+
+  it('says UNRESOLVED when the read FAILS, never "no name"', async () => {
+    /* The distinction this type exists for. A caller handed a blank here would
+       write it, which is the deletion the whole rule is against. */
+    const r = await venueNameForHalfWrittenPair(
+      reader({ data: null, error: { message: 'connection reset' } }), '', 'v-1');
+    expect(r.kind).toBe('unresolved');
+  });
+
+  it('says UNRESOLVED when the id matches no venue', async () => {
+    const r = await venueNameForHalfWrittenPair(
+      reader({ data: null, error: null }), '', 'v-missing');
+    expect(r.kind).toBe('unresolved');
   });
 });
