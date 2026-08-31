@@ -87,6 +87,24 @@ const ARMS = [
    a statement, and the statement is not the evidence. */
 const UNTOUCHED = ['supplier_sku', 'qty', 'received_qty', 'unit_price_sen', 'line_total_sen'];
 
+/* The mapping file's own dialect, same reader both importers use. NOT
+   `line.split(',')`: three rows quote the ERP code because it holds an inch
+   mark — `DL-GENERASI (K),"DUNLOPILLO GENERASI 5"" MATT (K)",…` — and a naive
+   split hands back the code WITH its quotes, which no catalog row can match.
+   The audit below would then have reported three products that are perfectly
+   fine as missing, which is the shape of finding that gets a real one ignored. */
+function parseCsvLine(line) {
+  const out = []; let cur = ''; let q = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (q) { if (c === '"') { if (line[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += c; }
+    else if (c === '"') q = true;
+    else if (c === ',') { out.push(cur); cur = ''; }
+    else cur += c;
+  }
+  out.push(cur); return out;
+}
+
 /**
  * Rows on ANY scm BASE TABLE whose item-code column still names one of these
  * codes — the proof that repairing three arms repairs the whole reference, and
@@ -142,7 +160,7 @@ async function main() {
   csv.shift();
   const csvBad = [];
   for (const line of csv) {
-    const f = line.split(',');
+    const f = parseCsvLine(line);
     const acCode = (f[0] || '').trim();
     const erpCode = (f[1] || '').trim();
     if (!acCode || !erpCode) continue;
