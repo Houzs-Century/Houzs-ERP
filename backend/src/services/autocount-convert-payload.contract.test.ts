@@ -55,7 +55,10 @@ function slice(from: string, to: string): string {
 const CS_CONVERT = slice('static string Convert_(', '/* OVER-TRANSFER:');
 const CS_SALES_HEADER = slice('static void SalesHeader(', 'static void PurchaseHeader(');
 const CS_PURCHASE_HEADER = slice('static void PurchaseHeader(', '/* Source line keys');
-const CS_EDIT = slice('static void Edit(', '// ── helpers');
+/* The signature changed on 2026-08-31 — /edit now RETURNS the document's line
+   keys when it added a line, so the ERP can store them (docs/bugs/0583-*). The
+   anchor follows the name, not the return type. */
+const CS_EDIT = slice('> Edit(Dictionary<string, object> p)', '// ── helpers');
 
 /** Keys read off a JSON object in C#: Str(p,"X") / Dec / Date / Dict / List. */
 const keysRead = (body: string, bag: string): string[] => {
