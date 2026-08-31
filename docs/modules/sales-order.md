@@ -467,9 +467,12 @@ Stock Status column does not read this stored column alone — see §0.4.
 
 ### 0.4 LINE `stock_state` — the LIVE value, and why it disagrees with `stock_status`
 
-Computed per request in `mfg-sales-orders.ts`, in BOTH `GET /:docNo` and
-`GET /:docNo/items`, from the same `computeMrp` run that produces `coverage_po`.
-Values: `'stock' | 'po' | 'shortage' | null`.
+Computed per request in `mfg-sales-orders.ts`, from the same `computeMrp` run
+that produces `coverage_po`. Values: `'stock' | 'po' | 'shortage' | null`. It is
+live in `GET /:docNo/items` and in the deferred `GET /:docNo/coverage`; **`GET
+/:docNo` no longer runs MRP inline** (2026-09-01) — it returns `'stock'` for a
+service line and `null` for every other line, and the client heals the real value
+from `/:docNo/coverage` after the doc renders (see §2 and the perf note).
 
 | Line kind | Rule |
 |---|---|
@@ -540,12 +543,15 @@ Where it is used:
   are emitted from the STORED status alone on first paint (`null` live coverage,
   the fail-soft branch above), and the client heals them a beat later from
   `GET /mfg-sales-orders/list-mrp-enrichment` (see the LIST "PO No." column note
-  in §2 and §"why the list opens instantly"). The DETAIL endpoints below still
-  run `computeMrp` inline.
-- `GET /:docNo` and `GET /:docNo/items` stamp it on every line as
-  `stock_status_effective`. `stock_state` and `stock_status` both stay on the
-  payload — they are the two INPUTS, and the source chips and MRP page still read
-  them individually.
+  in §2 and §"why the list opens instantly"). `GET /:docNo/items` and
+  `GET /:docNo/coverage` still run `computeMrp` inline; `GET /:docNo` DOES NOT
+  (2026-09-01) — same deferral as the list.
+- All three of `GET /:docNo`, `GET /:docNo/items` and `GET /:docNo/coverage` stamp
+  it on every line as `stock_status_effective`. `stock_state` and `stock_status`
+  both stay on the payload — they are the two INPUTS, and the source chips and MRP
+  page still read them individually. On `GET /:docNo` the live state is passed as
+  `null` (no inline MRP), so the STORED verdict stands until `/:docNo/coverage`
+  overlays the recomputed one.
 
 `frontend/src/components/SoSourceChips.tsx`'s `soLineStockPill` (and its mobile
 twin `mobile/source-chips.tsx`) now PREFER `stock_status_effective`, falling back
@@ -1153,7 +1159,8 @@ Invalidation always wins over all three (mutation → invalidate → forced refe
 |--------|------|---------|---------|
 | GET | `/api/scm/mfg-sales-orders` | list handler | Grid rows (+ `?summary=1` lightweight bucket mode, `?status=`, `?debtor=`; `?page=` opts into the paginated contract) |
 | GET | `/api/scm/mfg-sales-orders/list-mrp-enrichment` | `mfg-sales-orders-list-enrichment.ts` | `?docNos=A,B,C` → `{ enrichment: { [docNo]: { sourcePoReady, sourcePoAdj, stockRemark, isMainReady, planningState } } }`. The deferred, MRP-derived half of the list (see §"why the list opens instantly"). Read-only, company + sales scoped, fail-soft. Registered before `/:docNo` so the static path is not captured as a doc number. |
-| GET | `/api/scm/mfg-sales-orders/:docNo` | detail | One SO header + lines |
+| GET | `/api/scm/mfg-sales-orders/:docNo` | detail | One SO header + lines. FAST — does NOT run MRP inline (2026-09-01); MRP-derived line fields (`stock_state`, `coverage_po`/`coverage_eta`, `ready_source_pos`, live `stock_status_effective`) return their no-MRP defaults and the client heals them from `/:docNo/coverage` |
+| GET | `/api/scm/mfg-sales-orders/:docNo/coverage` | detail | The DEFERRED live Stock column: runs the global `computeMrp` + `soLineReadySourcePos` (the code `/:docNo` stopped running inline) → `{ coverage: [{ id, stock_state, coverage_po, coverage_eta, ready_source_pos, stock_status_effective }] }`, one entry per line. Same company + self-scoped-sales 404 guard as the detail. Read-only, fail-soft. Client calls it after the doc renders |
 | GET | `/api/scm/mfg-sales-orders/my-mtd` | MTD scoreboard | Mobile Profile tiles |
 | GET | `/api/scm/mfg-sales-orders/mine` | POS board | Salesperson's own orders |
 | PATCH/POST | `…/:docNo/*` | mutations | proceed / cancel / amend / payments / etc. |
@@ -3471,12 +3478,15 @@ Optimized:
   Equivalence was proved against production by `probe-so-sweep-inversion`, not
   argued; the read shape is pinned by `tests/soAllocationReadShape.test.ts`,
   which asserts both the round-trip count and the allocation it produces.
-- **The SO detail's Stock column is a whole MRP run.** `GET /:docNo` and
-  `GET /:docNo/items` both call `computeMrp`, which walks every live SO line and
-  every open PO. It **cannot be narrowed to one order**: a line's coverage
-  depends on what higher-priority lines already claimed, so a single-order run
-  answers a different question. It is now started with, rather than in front of,
-  the three per-line reads beside it (`soCoverage`).
+- **The SO detail's Stock column is a whole MRP run — and `GET /:docNo` no longer
+  pays for it (2026-09-01).** `computeMrp` walks every live SO line and every open
+  PO (~105 DB round-trips) and **cannot be narrowed to one order**: a line's
+  coverage depends on what higher-priority lines already claimed, so a single-order
+  run answers a different question. Running it inline made a cold detail open ~4.7s.
+  The detail now returns FAST from the persisted `stock_status` alone, and the live
+  coverage moved to a deferred `GET /:docNo/coverage` the client calls after the
+  doc renders (docs/bugs/0589) — the same deferral the list took in 2026-08-18.
+  `GET /:docNo/items` (the POS items endpoint) still runs it inline.
 
 Watch as data grows:
 - The 500-row `limit` on the list — beyond that, page it server-side + push filter/
