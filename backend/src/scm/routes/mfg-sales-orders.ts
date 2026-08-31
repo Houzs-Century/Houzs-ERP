@@ -141,7 +141,7 @@ import { SO_FINANCE_KEYS, SO_ITEM_FINANCE_KEYS, stripAuditFinance } from '../lib
 import { resolveSalesScopeIds, salesDocOutOfScope, resolveCallerStaffId } from '../lib/salesScope';
 import {
   resolveVenueBinding,
-  loadVenueBindingInputs,
+  loadVenueBindingInputs, venueNameForHalfWrittenPair,
   type VenueSource,
   type VenueBindingSb,
 } from '../lib/venue-binding';
@@ -6833,12 +6833,12 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
      actually knows where they are standing — a showroom rep sent to an
      exhibition, or an exhibition rep back on the floor, corrects it HERE, and
      that correction has to stick.
-     The change itself is already recorded who/when/from->to by the existing
-     `['venue', 'venue']` entry in the field map above, which diffFields picks up
-     and recordSoAudit writes to mfg_so_audit_log — the house audit trail, not a
-     second one. Clearing the venue to blank is just as deliberate as setting
-     one, so it is marked MANUAL too: "this order has no venue" is an answer, and
-     a re-resolve must not treat it as an invitation to fill the gap. */
+     The change is already recorded by the `['venue', 'venue']` field-map entry,
+     and clearing to blank is as deliberate as setting one — but a blank BESIDE a
+     venue id is a half-written pair, not a clear. docs/bugs/0591-*. */
+  const vFix = await venueNameForHalfWrittenPair(sb, body['venue'], body['venueId']);
+  if (vFix.kind === 'resolved') { body['venue'] = vFix.name; updates['venue'] = vFix.name; }
+  if (vFix.kind === 'unresolved') { delete body['venue']; delete updates['venue']; }
   if (body['venue'] !== undefined) {
     updates['venue_source'] = 'MANUAL' satisfies VenueSource;
   }

@@ -834,6 +834,17 @@ link — and they had already begun to differ (`venue-binding.ts:1-16`). Desktop
 and mobile share it by construction: both hit the same HTTP endpoints, neither
 client re-implements it.
 
+**The same module also answers a question that is NOT resolution: what a
+HALF-WRITTEN pair means.** `venueNameForHalfWrittenPair()` — a client that
+resolved the venue id and not the name sends `venue: ""` beside a real
+`venueId`, and read literally that deletes the venue. It returns three answers,
+and `unresolved` (the master could not be read, or the id names nothing) makes
+the caller leave the stored venue ALONE rather than write the blank. It lives
+here, beside the binding rule, because the SO CREATE path already resolved a
+name from an id in exactly this situation and a second copy is how the two paths
+start disagreeing. Behaviour and repair: `docs/modules/sales-order.md` §Venue;
+ledger `docs/bugs/0591-*`.
+
 `resolveVenueBinding()` (`:176`), owner rule of 2026-07-19:
 
 1. **PMS / exhibition** (`:184-197`) — the rep is the PIC **or** on the project's

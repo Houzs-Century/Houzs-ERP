@@ -3028,8 +3028,8 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
     const picked = staffList.find((s) => s.id === form.salespersonId);
     const resolvedId = picked?.venueId ?? '';
     if (!resolvedId) return;
-    const resolvedName =
-      (venuesQ.data ?? []).find((v) => v.id === resolvedId)?.name ?? '';
+    const resolvedName = (venuesQ.data ?? []).find((v) => v.id === resolvedId)?.name;
+    if (!resolvedName) return; // 0591: `?? ''` blanked a loaded venue, permanently
     setForm((s) => ({ ...s, venueId: resolvedId, venue: resolvedName }));
   }, [form.salespersonId, staffList, venuesQ.data, form.venueId]);
 
