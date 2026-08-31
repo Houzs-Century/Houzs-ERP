@@ -509,19 +509,6 @@ export interface ComposeOptions {
    */
   requireLocation?: boolean;
   /**
-   * The document's own location, for a DECLARED-NEW line on an EDIT — and for
-   * nothing else.
-   *
-   * `defaultLocation` above cannot be used for this. It applies to every line,
-   * and on an edit an existing line with no location must keep OMITTING the key
-   * so the account book keeps the value it owns. A line this request just added
-   * has no value in the book to keep, and AutoCount refuses a detail whose
-   * Location is not in dbo.Location — which fails the whole save, since the
-   * document is written in one call. So the document's own location is applied
-   * to the new lines and to nothing else.
-   */
-  newLineLocation?: string | null;
-  /**
    * The composed details are for a TRANSFER, which does not send an ItemCode.
    *
    * `AddSOToPOTransferDetail(Int64)` takes a source line KEY and nothing else —
@@ -1404,16 +1391,11 @@ export function composeCreatePo(
  * that has not been rebuilt yet is also safe. This copy exists so the request is
  * never even sent.
  *
- * A GENUINELY NEW LINE IS THE ONE EXCEPTION, and it is DECLARED, never inferred.
- * The ERP cannot tell a just-added line from a legacy line whose key was never
- * stored, so it does not try: the route that did the inserting names the row
- * (`newLineIds`), and the declaration is believed only when every OTHER line on
- * the document already carries a key — a document with other keyless lines has
- * not been backfilled, so nothing there can vouch for this one. Those lines go
- * out marked `IsNewLine`, which AcSyncService turns into `AddDetail()`.
- *
- * Wired on the sales order 2026-08-11, on the purchase order 2026-08-31. This
- * paragraph said "nothing sets it yet" for the twenty days in between.
+ * A GENUINELY NEW LINE IS THE EXCEPTION, DECLARED and never inferred: the route
+ * that inserted the row names it (`newLineIds`), believed only when every OTHER
+ * line already carries a key. Those go out `IsNewLine`, which AcSyncService turns
+ * into AddDetail(). SO 2026-08-11, PO 2026-08-31 — this said "nothing sets it
+ * yet" for the twenty days between them. docs/modules/autocount-writeback.md.
  *
  * LINE REMOVAL IS A RETIREMENT, NEVER AN OMISSION. Two things reach AutoCount as
  * `Retire: true` (Qty = 0, Transferable = false, an `[ERP-CANCELLED]` Desc2
@@ -1545,26 +1527,8 @@ export function composeEdit(
       return id != null && declaredNew.has(String(id));
     };
     if (keyless.every(isDeclared)) {
-      /* An EXISTING line with no location omits the key on purpose — "leave the
-         account book's own value alone". A line this request just ADDED has no
-         value there to leave alone, so the document's own location stands in
-         when the caller offers one.
-
-         IT DOES NOT REFUSE when there is still none, and that restraint is
-         deliberate. The evidence behind MissingLocationError is a CREATE: that
-         path assigns Location unconditionally, so an absent one reaches
-         AutoCount as "" and dies on FK_SODTL_Location. The edit path is
-         ContainsKey-gated, so an omitted Location leaves AutoCount to apply its
-         own default instead — a different mechanism, and whether it defaults
-         from the header is UNKNOWN here. Refusing on the strength of the create
-         path's evidence would start rejecting sales-order edits the account book
-         has been accepting since 2026-08-11. If one ever does fail, it fails
-         loudly as a `failed` outbox row carrying the foreign-key name. */
-      const fallback = bookSpellingOrOwn(opts.newLineLocation ?? null, LOCATION_MAP);
       for (const i of keyless) {
-        const d = keyed[i] as AcDetail & { IsNewLine?: true };
-        d.IsNewLine = true;
-        if (!d.Location && fallback) d.Location = fallback;
+        (keyed[i] as AcDetail & { IsNewLine?: true }).IsNewLine = true;
       }
       keyless.length = 0;
     }

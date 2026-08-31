@@ -1445,6 +1445,16 @@ async function composePoState(sb: Sb, poId: string, retired: AcRetiredLine[] = [
     sb.from('purchase_order_items').select(PO_ITEM_COLS).eq('purchase_order_id', poId));
   const poRows = (items ?? []) as Record<string, unknown>[];
   const lines = await withLocations(sb, poRows, poRows.map(soLine));
+  /* A line this request just ADDED inherits the purchase order's own warehouse
+     when it has none of its own. Done HERE, on the line, rather than as an
+     option on composeEdit: an EXISTING line with no location must keep omitting
+     the key so the account book keeps the value it owns, and only this composer
+     knows which lines are new. AutoCount refuses a detail whose Location is not
+     in dbo.Location, and it saves the document in one call. */
+  const newIds = new Set(newLineIds ?? []);
+  if (newIds.size && header.purchase_location) {
+    for (const l of lines) if (!l.location && l.id && newIds.has(l.id)) l.location = header.purchase_location;
+  }
   const poBindings = await bindingsFor(sb, header.company_id ?? null, lines.map((l) => l.item_code), header.supplier_id);
   return {
     docNo: header.po_number || poId,
@@ -1472,19 +1482,9 @@ async function composePoState(sb: Sb, poId: string, retired: AcRetiredLine[] = [
          document — correctly, because a keyless line is otherwise
          indistinguishable from one the backfill missed, and guessing "new"
          appends a duplicate into a live book (mfg-purchase-orders.ts, the
-         convert-from-SO append, says exactly this).
-
-         `newLineLocation` comes with it, and is deliberately NOT
-         `defaultLocation`: that one applies to every line, and an EXISTING line
-         with no location must keep omitting the key so the account book keeps
-         its own value. A NEW line has no value in the book to keep, and a detail
-         with no Location dies on FK_PODTL_Location — taking the WHOLE save with
-         it, because AcSyncService saves the document in one call. The purchase
-         order's own ship-to warehouse is the same answer the create path gives
-         (composeCreatePo: `defaultLocation ?? purchaseLocation`). */
-      ...(newLineIds && newLineIds.length
-        ? { newLineIds: new Set(newLineIds), newLineLocation: header.purchase_location }
-        : {}),
+         convert-from-SO append, says exactly this). Their stock location is
+         filled in above, on the line. */
+      ...(newLineIds && newLineIds.length ? { newLineIds: new Set(newLineIds) } : {}),
     }, retired),
   };
 }
