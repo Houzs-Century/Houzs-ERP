@@ -828,6 +828,11 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
     const resolvedName =
       (venuesQ.data ?? []).find((v) => v.id === resolvedId)?.name ?? '';
     if (resolvedId === form.venueId && resolvedName === form.venue) return;
+    /* An unresolved name must NOT be written: `?? ''` would blank the venue the
+       order was loaded with, and `if (form.venueId) return` above makes this
+       effect a one-shot, so the blanking is permanent. Same defect, same fix as
+       SalesOrderDetail — docs/bugs/0589-*. */
+    if (!resolvedName) return;
     setForm((s) => ({ ...s, venueId: resolvedId, venue: resolvedName }));
   }, [form.salespersonId, staffList, venuesQ.data, form.venueId, form.venue]);
 
