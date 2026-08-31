@@ -262,17 +262,19 @@ export async function persistNewLineKeys(
   }
 }
 
-/* The line table behind each document type, for the new-line key store below.
-   The create paths name their table inline at the composer; an edit has only the
-   outbox row's doc_type to go on. */
-const LINE_TABLE_BY_DOC_TYPE: Record<string, AcLineTable> = {
+/* TWO ENTRIES, NOT SIX, and that is the point rather than an omission.
+ *
+ * This is not "the documents this ERP syncs with AutoCount" — that question has
+ * one home already (`REQUEUE_DOC_TYPES`) and `audit:duplicated-decisions`
+ * correctly refuses a second. It is the narrower one: **whose lines does a ROUTE
+ * insert by hand**. Only the sales order and the purchase order have such a
+ * route; a delivery order, a goods receipt and the two invoices are built by
+ * CONVERSION, where AutoCount chooses the lines from the parent and there is
+ * nothing for the ERP to declare as new. */
+export const NEW_LINE_TABLE = {
   SO: 'mfg_sales_order_items',
   PO: 'purchase_order_items',
-  DO: 'delivery_order_items',
-  GR: 'grn_items',
-  IV: 'sales_invoice_items',
-  PI: 'purchase_invoice_items',
-};
+} as const satisfies Record<string, AcLineTable>;
 
 /**
  * What an edit's declared-new lines were, read off the payload the edit SENT.
@@ -283,7 +285,7 @@ const LINE_TABLE_BY_DOC_TYPE: Record<string, AcLineTable> = {
  * when the edit added nothing, which is almost every edit.
  */
 export function newLineTargetOf(docType: string, payload: { body?: unknown }): NewLineKeyTarget | null {
-  const table = LINE_TABLE_BY_DOC_TYPE[String(docType).toUpperCase()];
+  const table = (NEW_LINE_TABLE as Record<string, AcLineTable | undefined>)[String(docType).toUpperCase()];
   if (!table) return null;
   const body = (payload.body ?? {}) as { Lines?: unknown };
   const lines = Array.isArray(body.Lines) ? (body.Lines as Array<Record<string, unknown>>) : [];

@@ -30,14 +30,18 @@ import { hasHouzsPerm } from '../lib/houzs-perms';
 import { activeCompanyId } from '../lib/companyScope';
 import { callAcRead } from '../../services/autocount-host-read';
 import { planLineRelink, type BookLine } from '../lib/autocount-relink-lines';
+import { NEW_LINE_TABLE } from '../lib/autocount-line-keys';
 
 /* The same keys as Send again and /book-doc, for the same reason: this reads a
    licensed account book, and it writes line identity. */
 const RELINK_KEYS = ['scm.autocount.requeue', '*'] as const;
 
+/* The line table comes from NEW_LINE_TABLE — the same two-entry answer the key
+   store uses, and for the same reason: these are the two documents whose lines a
+   route inserts by hand. Only the parent/header columns are local. */
 const DOC = {
-  SO: { lineTable: 'mfg_sales_order_items', parentCol: 'doc_no', headerTable: 'mfg_sales_orders', headerKey: 'doc_no' },
-  PO: { lineTable: 'purchase_order_items', parentCol: 'purchase_order_id', headerTable: 'purchase_orders', headerKey: 'po_number' },
+  SO: { lineTable: NEW_LINE_TABLE.SO, parentCol: 'doc_no', headerTable: 'mfg_sales_orders', headerKey: 'doc_no' },
+  PO: { lineTable: NEW_LINE_TABLE.PO, parentCol: 'purchase_order_id', headerTable: 'purchase_orders', headerKey: 'po_number' },
 } as const;
 
 type DocKind = keyof typeof DOC;
