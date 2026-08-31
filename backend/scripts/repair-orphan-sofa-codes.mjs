@@ -84,8 +84,24 @@ const ARMS = [
 
 /* The money and quantity columns this repair must leave EXACTLY alone. Read
    before and re-read after, per row: "I only wrote item_code" is a claim about
-   a statement, and the statement is not the evidence. */
+   a statement, and the statement is not the evidence.
+
+   RESOLVED PER ARM, never hard-coded into the SELECT. The three tables do not
+   carry the same columns — `received_qty` belongs to the purchase ORDER line,
+   and a receipt or an invoice line has no use for it — and a hard-coded select
+   fails the WHOLE run on the first arm that lacks one. That is not a
+   hypothetical: repair-array-shaped-variants.mjs took exactly that failure on
+   its first production plan, over `item_code` on inventory_movements. */
 const UNTOUCHED = ['supplier_sku', 'qty', 'received_qty', 'unit_price_sen', 'line_total_sen'];
+
+/** The guarded columns this arm actually has, in UNTOUCHED order. */
+async function untouchedColumnsFor(client, arm) {
+  const table = arm.t.replace(/^scm\./, '');
+  const have = new Set((await client`
+    SELECT column_name FROM information_schema.columns
+     WHERE table_schema = 'scm' AND table_name = ${table}`).map((r) => r.column_name));
+  return UNTOUCHED.filter((c) => have.has(c));
+}
 
 /* The mapping file's own dialect, same reader both importers use. NOT
    `line.split(',')`: three rows quote the ERP code because it holds an inch
@@ -177,9 +193,12 @@ async function main() {
 
   note('\n=== ORPHAN item codes on purchase-side documents ===');
   const rows = [];
+  const guarded = new Map();
   for (const arm of ARMS) {
+    const cols = await untouchedColumnsFor(sql, arm);
+    guarded.set(arm.name, cols);
     const r = await sql.unsafe(
-      `SELECT i.id::text AS id, i.item_code, ${UNTOUCHED.map((c) => `i.${c}`).join(', ')}
+      `SELECT i.id::text AS id, i.item_code${cols.length ? ', ' + cols.map((c) => `i.${c}`).join(', ') : ''}
          FROM ${arm.t} i
         WHERE EXISTS (${arm.ex})
           AND i.item_code IS NOT NULL AND btrim(i.item_code) <> ''
@@ -187,7 +206,9 @@ async function main() {
                            WHERE p.company_id = $1 AND upper(p.code) = upper(i.item_code))
         ORDER BY i.item_code, i.id`, [CO]);
     for (const x of r) rows.push({ arm: arm.name, t: arm.t, ...x });
-    note(`  ${arm.name}: ${r.length} orphan line(s) on ${new Set(r.map((x) => x.item_code)).size} code(s)`);
+    const absent = UNTOUCHED.filter((c) => !cols.includes(c));
+    note(`  ${arm.name}: ${r.length} orphan line(s) on ${new Set(r.map((x) => x.item_code)).size} code(s)`
+      + `; guarded columns ${cols.join(', ') || '(none)'}${absent.length ? ` — this table has no ${absent.join(', ')}` : ''}`);
   }
   note(`  total: ${rows.length}`);
   if (!rows.length) { note('\nNothing to repair.'); await sql.end({ timeout: 5 }); return; }
@@ -204,7 +225,8 @@ async function main() {
   note('\n=== EXACTLY WHICH ROWS, AND WHAT THEY BECOME ===');
   for (const r of fix) {
     note(`  ${r.arm.padEnd(3)} ${r.id}  ${String(r.item_code).padEnd(16)} -> ${String(r.target).padEnd(16)} (${r.targetName ?? '-'} / ${r.targetStatus ?? '-'})`);
-    note(`        supplier_sku "${r.supplier_sku ?? '(none)'}" STAYS; qty ${r.qty} recv ${r.received_qty} unit ${r.unit_price_sen} total ${r.line_total_sen} all STAY`);
+    const stays = (guarded.get(r.arm) ?? []).map((c) => `${c}=${JSON.stringify(r[c] ?? null)}`).join(' ');
+    note(`        STAYS: ${stays || '(this table carries none of the guarded columns)'}`);
   }
   for (const r of refuse) bad(`  ${r.arm.padEnd(3)} ${r.id}  ${String(r.item_code).padEnd(16)} REFUSED — ${r.why}`);
   note(`\n  repairable: ${fix.length}   refused: ${refuse.length}`);
@@ -255,8 +277,9 @@ async function main() {
        re-corrupting all 7. */
     let wrong = 0;
     for (const r of fix) {
+      const cols = guarded.get(r.arm) ?? [];
       const [row] = await check.unsafe(
-        `SELECT i.item_code, ${UNTOUCHED.map((c) => `i.${c}`).join(', ')},
+        `SELECT i.item_code${cols.length ? ', ' + cols.map((c) => `i.${c}`).join(', ') : ''},
                 (SELECT p.name FROM scm.mfg_products p
                   WHERE p.company_id = $2 AND upper(p.code) = upper(i.item_code)) AS product
            FROM ${r.t} i WHERE i.id = $1`, [r.id, CO]);
@@ -265,12 +288,12 @@ async function main() {
       /* (2) The columns this repair promised not to touch, compared VALUE by
          VALUE against what the plan read. Stringified so 0 and null cannot pass
          for each other. */
-      const moved = UNTOUCHED.filter((c) => JSON.stringify(row ? row[c] : undefined) !== JSON.stringify(r[c]));
+      const moved = cols.filter((c) => JSON.stringify(row ? row[c] : undefined) !== JSON.stringify(r[c]));
       if (!okCode || !known || moved.length) {
         wrong++;
         bad(`  ${r.arm} ${r.id}: item_code="${row?.item_code}" product=${JSON.stringify(row?.product ?? null)}${moved.length ? ` CHANGED ${moved.map((c) => `${c}: ${JSON.stringify(r[c])} -> ${JSON.stringify(row[c])}`).join(', ')}` : ''}`);
       } else {
-        note(`  ${r.arm} ${r.id}: item_code "${row.item_code}" resolves to "${row.product}"; supplier_sku "${row.supplier_sku ?? '(none)'}" and every money/qty column unchanged`);
+        note(`  ${r.arm} ${r.id}: item_code "${row.item_code}" resolves to "${row.product}"; unchanged — ${cols.map((c) => `${c}=${JSON.stringify(row[c] ?? null)}`).join(' ') || '(no guarded column on this table)'}`);
       }
     }
     /* (3) And the schema-wide sweep again: what is left must be exactly the
