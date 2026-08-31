@@ -1168,18 +1168,25 @@ export async function computeMrp(
     for (const r of rows) {
       const eff = effQtyOf(r);                              // qty still to fulfil (ordered − delivered + returned)
       let need = eff;
-      /* BOUND LINE (company 1, bedframe / `(SP)` mattress): its own purchase
-         order is the only evidence, exactly as the stored allocator has it —
-         received quantity covers it now, outstanding quantity covers it on the
-         PO's ETA. It does NOT read this bucket.
+      /* BOUND LINE (company 1, bedframe / `(SP)` mattress). The rule is drawn at
+         STOCK, and only at stock, and the distinction is the whole design:
 
-         AND IT DOES NOT DECREMENT IT EITHER, which is the part worth stating.
-         The allocator decrements because its pool is one shared walk across every
-         group; here the pool IS the bucket, and a company-1 bedframe bucket holds
-         only bedframe demand — every line of which is bound by the same rule and
-         therefore cannot draw it. Leaving the units in the bucket is what makes
-         the page honest about the migrated blank-variant stock: it is on hand,
-         and nothing on this plan is entitled to it. */
+           · STOCK IS A CLAIM ON GOODS THAT EXIST. The stored allocator decides
+             READY/PENDING from it, and for company 1 it decides that a bound line
+             lights only from its OWN received purchase order (bug 0572). So here
+             a bound line takes its own receipt and never the bucket — which is
+             what stops the migrated blank-variant units from covering a typed
+             line that will never actually be handed them, and equally what stops
+             a shortage being reported for goods already received on its own PO.
+           · A PURCHASE ORDER IS A PLAN. MRP exists to answer "what must I buy",
+             and a purchase order already on order for this exact bucket is a
+             legitimate answer to "you do not need to buy this again". Its own
+             dedicated PO is offered FIRST, then the pooled queue.
+
+         The narrower rule was found by a test, not by taste: excluding the pooled
+         PO queue as well made `po-so-coverage` answer that an unlinked purchase
+         order serves nobody, which is the screen the buyer uses to see who a PO
+         is for. A planning engine may not quietly delete that. */
       const bound = boundCompany && isHardBoundLine(r.item_group, r.item_code);
       const fromStock = bound
         ? Math.min(need, dedicatedReceivedByLine.get(r.id) ?? 0)
@@ -1189,15 +1196,17 @@ export async function computeMrp(
       let poNumber: string | null = null;
       let poEta: string | null = null;
       let poSupplierId: string | null = null;
-      const queue = bound ? (dedicatedOpenByLine.get(r.id) ?? []) : poQueue;
-      while (need > 0 && queue.length > 0) {
-        const front = queue[0];
-        if (!front) break;
-        const take = Math.min(front.qtyLeft, need);
-        if (poNumber == null) { poNumber = front.poNumber; poEta = front.eta; poSupplierId = front.supplierId; }
-        front.qtyLeft -= take;
-        need -= take;
-        if (front.qtyLeft <= 0) queue.shift();
+      const queues = bound ? [dedicatedOpenByLine.get(r.id) ?? [], poQueue] : [poQueue];
+      for (const queue of queues) {
+        while (need > 0 && queue.length > 0) {
+          const front = queue[0];
+          if (!front) break;
+          const take = Math.min(front.qtyLeft, need);
+          if (poNumber == null) { poNumber = front.poNumber; poEta = front.eta; poSupplierId = front.supplierId; }
+          front.qtyLeft -= take;
+          need -= take;
+          if (front.qtyLeft <= 0) queue.shift();
+        }
       }
 
       /* Audit D6 — the allocation above ALWAYS runs (undated rows sort last, so

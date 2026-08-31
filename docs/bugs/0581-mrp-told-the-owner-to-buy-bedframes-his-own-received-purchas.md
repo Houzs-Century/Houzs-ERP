@@ -27,10 +27,20 @@ MRP now honours the same binding, on both sides:
 
 * a bound PO line is DEDICATED — it leaves the pool, because it belongs to one
   sales-order line and cannot cover anybody else's;
-* a bound demand line draws only from its own PO: received quantity covers it
-  now, outstanding quantity covers it on that PO's ETA.
+* a bound demand line does not read the pooled STOCK at all. Its own PO's
+  received quantity covers it now; its own outstanding quantity covers it on that
+  PO's ETA.
 
-It deliberately does NOT decrement the pooled bucket the way the allocator does.
+**The rule is drawn at STOCK, and only at stock.** A first version also withheld
+the pooled PO queue from bound lines, and a test caught what that costs:
+`po-so-coverage` — the screen that answers "who is this purchase order for" —
+started reporting that an unlinked PO serves nobody. Stock is a claim on goods
+that exist, and that is where the allocator's exclusivity belongs; a purchase
+order is a PLAN, and one already on order for this exact bucket is a legitimate
+answer to "you do not need to buy this again". So a bound line is offered its own
+dedicated PO first, then the pooled queue.
+
+Its own receipt is NOT decremented from the pooled bucket the way the allocator does it.
 The allocator's pool is one shared walk across every group; here the pool IS the
 bucket, and a company-1 bedframe bucket holds only bedframe demand — every line
 of which is bound by the same rule and so cannot draw it. Leaving the units in

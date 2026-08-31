@@ -394,8 +394,12 @@ mobile card, because `source === 'po'` now guarantees a number. Trace:
   for goods already received on its own purchase order
   (`docs/bugs/0581-mrp-told-the-owner-to-buy-bedframes-his-own-received-purchas.md`).
   Both sides now honour the binding — a bound PO line is DEDICATED and leaves the
-  pool; a bound demand line draws only from its own PO (received first, then
-  outstanding). It does NOT decrement the bucket: here the pool IS the bucket,
+  pool; a bound demand line does not read pooled STOCK, and covers from its own
+  PO (received, then outstanding) before the pooled PO queue. **The rule is drawn
+  at stock and only at stock**: stock is a claim on goods that exist, a purchase
+  order is a plan, and withholding the pooled PO queue as well made
+  `po-so-coverage` report that an unlinked PO serves nobody. It does NOT
+  decrement the bucket either: here the pool IS the bucket,
   every line in a company-1 bedframe bucket is bound, so nothing else can draw
   it, and leaving the units visible is what keeps the on-hand figure honest.
   **SOFA is excluded at this call site** — sofa demand never enters section 7
