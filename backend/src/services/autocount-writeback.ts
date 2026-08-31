@@ -1511,13 +1511,10 @@ export function composeEdit(
    * did the adding, and even then only when the rest of the document proves the
    * backfill is complete.
    *
-   * Both halves are required:
-   *   1. the caller named this ERP row as one it just inserted, and
-   *   2. EVERY OTHER line on the document already carries a key.
-   *
-   * (2) is what makes (1) safe to believe. A document with other keyless lines
-   * has not been backfilled, so "the rest are keyed" cannot vouch for this one
-   * and the whole edit is refused as before. */
+   * Both halves are required: (1) the caller named this ERP row as one it just
+   * inserted, and (2) EVERY OTHER line already carries a key — which is what
+   * makes (1) safe to believe, because a document with other keyless lines has
+   * not been backfilled and nothing on it can vouch for this one. */
   const declaredNew = opts.newLineIds ?? null;
   if (declaredNew && declaredNew.size && keyless.length) {
     const isDeclared = (i: number) => {
@@ -1527,11 +1524,11 @@ export function composeEdit(
       return id != null && declaredNew.has(String(id));
     };
     if (keyless.every(isDeclared)) {
+      /* `ErpLineIds` names WHO the line is, so persistNewLineKeys can store the
+         key AutoCount assigns it. A LIST: a sofa build is several rows. */
       for (const i of keyless) {
         const d = keyed[i] as AcDetail & { IsNewLine?: true; ErpLineIds?: string[] };
         d.IsNewLine = true;
-        /* WHO this line is, so persistNewLineKeys can store the key AutoCount
-           assigns it. A LIST: a sofa build is several ERP rows behind one line. */
         const ids = collapsed[i].sourceIndexes.map((ix) => lines[ix]?.id)
           .filter((v): v is string => typeof v === 'string' && v.length > 0);
         if (ids.length) d.ErpLineIds = ids;
