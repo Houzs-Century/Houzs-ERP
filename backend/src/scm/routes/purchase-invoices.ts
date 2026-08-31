@@ -49,12 +49,12 @@ import { attachPiAssignedSos } from '../lib/pi-assigned-sos';
 
 /* ERP -> AutoCount Purchase Invoice edit. AcSyncService.cs:446 is `case "PI"`.
    See queueAcDoEdit for the shape. */
-async function queueAcPiEdit(c: any, id: string, retire: AcRetiredLine[] = []): Promise<void> {
+async function queueAcPiEdit(c: any, id: string, retire: AcRetiredLine[] = [], newLineIds: string[] = []): Promise<void> {  // newLineIds: docs/bugs/0588
   await enqueueEdit(c.get('supabase'), {
     companyId: activeCompanyId(c),
     docType: 'PI',
     docId: id,
-    retire,
+    retire, newLineIds,
     createdBy: c.get('houzsUser')?.id ?? null,
   });
 }
@@ -2148,7 +2148,7 @@ purchaseInvoices.post('/:id/items', async (c) => {
   await reallocatePiCharges(sb, piId, undefined, activeCompanyId(c));
   // Costing B — a newly added PI line bills a GRN line: re-cost its lots / DO / SI.
   await recostForPi(sb, piId);
-  await queueAcPiEdit(c, piId);
+  await queueAcPiEdit(c, piId, [], ((data as { id?: unknown } | null)?.id ? [String((data as { id?: unknown }).id)] : []));
   return c.json({ item: data }, 201);
 });
 

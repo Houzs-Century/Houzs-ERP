@@ -38,8 +38,17 @@ verification re-reads **the rows it moved** on a fresh connection and asserts th
 VALUES — the status text and that the date that justified the move is still there
 — not a count.
 
-**NOT APPLIED as of this entry.** The plan above is read-only. Applying moves 364
-live orders onto a tab staff will see the next morning, so it waits for the
-owner's word; this entry will be updated with the apply run when it happens.
+**APPLIED 2026-08-31**, on the owner's word (「都做完」), run 33407528329:
+
+```
+APPLIED — 364 order(s) moved CONFIRMED -> IN_PRODUCTION.
+VERIFY (fresh connection, values not counts): 364 of 364 rows re-read;
+  status is IN_PRODUCTION on 364; the Processing Date is still present on 364
+   and CONFIRMED orders still carrying a Processing Date: 0
+```
+
+The verification re-read every row it moved and asserted the VALUES, not a count.
+The 4 orders past CONFIRMED with no Processing Date are untouched and still open
+as the reverse disagreement.
 
 **Ref.** fix/proceeded-means-in-production, 2026-08-31.

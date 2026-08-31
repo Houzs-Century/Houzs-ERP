@@ -3082,7 +3082,7 @@ grns.post('/:id/items', async (c) => {
     } catch { /* best-effort */ }
   }
   } // end non-DRAFT line-add rollup/movement guard
-  await queueAcGrnEdit(c, sb, grnId);
+  await queueAcGrnEdit(c, sb, grnId, [], ((data as { id?: unknown } | null)?.id ? [String((data as { id?: unknown }).id)] : []));
   return c.json({ item: data }, 201);
 });
 
