@@ -383,11 +383,28 @@ mobile card, because `source === 'po'` now guarantees a number. Trace:
   `HARD_BOUND_COMPANY_ID = 1` in `lib/so-stock-allocation.ts`: a company-1
   bedframe / sofa / `(SP)` mattress line (`isHardBoundLine`) lights only from
   its own received PO — the pooled walk force-stamps it PENDING, never reads
-  its bucket. Company 2 keeps the soft pooled model. MRP's own pooled view
-  (this module) knows none of this, which is exactly why the display union's
+  its bucket. Company 2 keeps the soft pooled model. The display union's
   promotion gate (`so-line-effective-stock.ts`) refuses to promote bound lines
   on MRP's say-so; see sales-order.md §0.3 for the company-split table and the
   `check-bound-exclusivity.mjs` census that re-measures the rule.
+- **AND SO DOES THIS ENGINE, since 2026-08-31** (owner's option 甲, company 1
+  only). This bullet used to end "MRP's own pooled view knows none of this",
+  and that gap was not academic: the migrated stock snapshot carries no variant,
+  so a typed bedframe line looked into an empty bucket and reported a shortage
+  for goods already received on its own purchase order
+  (`docs/bugs/0581-mrp-told-the-owner-to-buy-bedframes-his-own-received-purchas.md`).
+  Both sides now honour the binding — a bound PO line is DEDICATED and leaves the
+  pool; a bound demand line does not read pooled STOCK, and covers from its own
+  PO (received, then outstanding) before the pooled PO queue. **The rule is drawn
+  at stock and only at stock**: stock is a claim on goods that exist, a purchase
+  order is a plan, and withholding the pooled PO queue as well made
+  `po-so-coverage` report that an unlinked PO serves nobody. It does NOT
+  decrement the bucket either: here the pool IS the bucket,
+  every line in a company-1 bedframe bucket is bound, so nothing else can draw
+  it, and leaving the units visible is what keeps the on-hand figure honest.
+  **SOFA is excluded at this call site** — sofa demand never enters section 7
+  (section 6 skips it) and section 8 has its own supply model; the shared
+  predicate is unchanged.
 
 ### "If the variants are different, will it still match my goods?" (owner, 2026-08-16)
 
