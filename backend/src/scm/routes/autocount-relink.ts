@@ -76,11 +76,15 @@ export const autocountRelinkLinesHandler = async (
   /* The document has to be OURS before we read it out of the book — the company
      predicate is the whole tenant boundary on this client (it is the service
      role, so no policy is evaluated). */
-  const { data: header } = await sb.from(spec.headerTable)
+  const { data: header, error: headerErr } = await sb.from(spec.headerTable)
     .select('id, linked_ac_docno')
     .eq(spec.headerKey, docNo)
     .eq('company_id', companyId)
     .maybeSingle();
+  /* BOUND AND BRANCHED, not `?? null`. A failed read and "no such document" are
+     opposite facts, and reporting the first as the second sends the operator
+     looking for a document that is right there. */
+  if (headerErr) return c.json({ error: 'read_failed', reason: headerErr.message }, 500);
   if (!header) return c.json({ error: 'not_found' }, 404);
 
   const bookDocNo = (header as { linked_ac_docno?: string | null }).linked_ac_docno ?? docNo;
@@ -98,9 +102,13 @@ export const autocountRelinkLinesHandler = async (
   const parentValue = spec.parentCol === 'purchase_order_id'
     ? String((header as { id?: unknown }).id ?? '')
     : docNo;
-  const { data: rows } = await sb.from(spec.lineTable)
+  const { data: rows, error: rowsErr } = await sb.from(spec.lineTable)
     .select('id, item_code, description2, linked_ac_dtlkey')
     .eq(spec.parentCol, parentValue);
+  /* Same rule, and it matters more here: an unbound failure would reach the
+     planner as "this document has no lines", which reports "nothing could be
+     matched" — a sentence that is indistinguishable from the honest answer. */
+  if (rowsErr) return c.json({ error: 'read_failed', reason: rowsErr.message }, 500);
 
   const erpLines = ((rows ?? []) as Array<Record<string, unknown>>).map((r) => ({
     id: String(r.id),
