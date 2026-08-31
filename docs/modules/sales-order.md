@@ -2191,6 +2191,16 @@ a line date the header no longer holds. The reverse is a REFUSAL, not a cascade:
 clearing the delivery date alone would have to clear the Processing Date, which
 is exactly the write `scm.so.remove_processing_date` guards.
 
+**"CLEARED" IS `=== undefined`, NEVER `typeof === 'string'`.** The forms send a
+cleared date as JSON `null` (`payloadFor`: `f.processingDate || null`), so a
+handler that decides "did this request name the key?" by asking whether the value
+is a string reads a clear as ABSENT and judges the pair against the row it is
+replacing rather than the one it will leave. Both header PATCHes now derive the
+effective value through `effectiveDateAfterPatch` (`scm/lib/date-coerce.ts`),
+which uses the same coercion the write does. Removing BOTH dates was refused for
+being unpaired, and removing only the delivery date was accepted and applied —
+`docs/bugs/0578-*` has the reproduction of each.
+
 **The one deliberate exclusion is the 2990 mirror** (`routes/so-mirror.ts`). It
 replicates rows 2990 already committed; a non-2xx keeps the row PENDING in
 2990's outbox and its pg_cron drainer retries forever, so one legacy unpaired

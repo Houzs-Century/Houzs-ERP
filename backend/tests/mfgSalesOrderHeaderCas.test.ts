@@ -76,6 +76,7 @@ function harness(options: { raceBeforeCas?: boolean; followerApplied?: boolean }
   };
   let raceInjected = false;
   let rpcCalls = 0;
+  let lastCasArgs: Record<string, unknown> | null = null;
   const app = new Hono();
   app.use('*', async (c, next) => {
     c.set('supabase' as never, {
@@ -92,6 +93,7 @@ function harness(options: { raceBeforeCas?: boolean; followerApplied?: boolean }
       rpc: async (name: string, args?: Record<string, unknown>) => {
         rpcCalls += 1;
         if (name === 'apply_so_header_cas') {
+          lastCasArgs = args ?? null;
           if (options.raceBeforeCas && !raceInjected) {
             raceInjected = true;
             Object.assign(tables.mfg_sales_orders[0]!, { note: 'racing writer', version: 2 });
@@ -133,7 +135,12 @@ function harness(options: { raceBeforeCas?: boolean; followerApplied?: boolean }
     await next();
   });
   app.patch('/mfg-sales-orders/:docNo', patchMfgSalesOrderHeaderHandler as never);
-  return { app, row: tables.mfg_sales_orders[0]!, getRpcCalls: () => rpcCalls };
+  return {
+    app,
+    row: tables.mfg_sales_orders[0]!,
+    getRpcCalls: () => rpcCalls,
+    getCasArgs: () => lastCasArgs,
+  };
 }
 
 const patchHeader = (app: Hono, body: Row) => app.request('/mfg-sales-orders/SO-CAS-1', {
@@ -290,5 +297,55 @@ describe('mandatory Sales Order header compare-and-swap', () => {
     });
     expect(response.status).toBe(409);
     expect(row).toMatchObject({ debtor_name: 'Original Customer', version: 1 });
+  });
+});
+
+/* Owner 2026-08-31, HC-SO-013393: "我要 remove 掉我的 processing date 跟 delivery
+   date，不能的吗?" — the edit page refused with the pair message even though
+   clearing BOTH is exactly what the pair rule allows.
+
+   The date fields are the one place the desktop edit page sends JSON `null`
+   rather than `""` (SalesOrderDetail's payloadFor: `f.processingDate || null`),
+   and the handler read "is this key in the patch?" as `typeof x === 'string'` —
+   which `null` is not. So a cleared date fell through to "key absent, keep the
+   stored value", and the pair rule was judged against dates the save was about
+   to delete. Both directions are pinned here because they fail OPPOSITE ways:
+   the legal save was refused, and the illegal one was allowed through. */
+describe('clearing the date pair from the edit page (null payload)', () => {
+  /* A complete header, so the only thing either save can fail on is the date
+     pair — the base fixture has no address, which the proceed gate reports as
+     its own 422 and would mask the shape under test. */
+  const withDates = () => {
+    const h = harness();
+    h.row.processing_date = '2026-12-01';
+    h.row.customer_delivery_date = '2026-12-15';
+    h.row.address1 = '1 Jalan Test';
+    h.row.postcode = '47500';
+    return h;
+  };
+
+  test('clearing BOTH dates saves and clears both columns', async () => {
+    const { app, row, getCasArgs } = withDates();
+
+    const response = await patchHeader(app, {
+      processingDate: null,
+      customerDeliveryDate: null,
+      version: 1,
+    });
+
+    expect(response.status).toBe(200);
+    expect(row.processing_date).toBeNull();
+    expect(getCasArgs()).toMatchObject({ p_apply_delivery_date: true, p_delivery_date: null });
+  });
+
+  test('clearing ONLY the Delivery Date is refused, not silently applied', async () => {
+    const { app, row, getCasArgs } = withDates();
+
+    const response = await patchHeader(app, { customerDeliveryDate: null, version: 1 });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: 'processing_delivery_must_pair' });
+    expect(row).toMatchObject({ processing_date: '2026-12-01', version: 1 });
+    expect(getCasArgs()).toBeNull();
   });
 });

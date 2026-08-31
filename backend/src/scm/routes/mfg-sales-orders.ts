@@ -30,7 +30,7 @@ import {
 export { deriveCountryFromState, deriveSalesLocationFromState };
 import { specialDeliveryFeesForLines, reconstructDeliveryRuleLines } from '../lib/special-delivery';
 import { soHasDownstream } from '../lib/downstream-lock';
-import { dateOrNull, isDateColumn } from '../lib/date-coerce';
+import { dateOrNull, effectiveDateAfterPatch, isDateColumn } from '../lib/date-coerce';
 import { soDocNosWithDownstream } from '../lib/downstream-lock'; // own line: autocountWritebackWiring asserts the import above verbatim
 import { doNosBySalesOrder, type DeliveryOrderNoRow } from '../lib/so-delivery-order-nos';
 import { soDownstreamRefs, NO_SO_DOWNSTREAM_REFS } from '../lib/downstream-doc-refs';
@@ -7081,8 +7081,8 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
        released to buy AFTER the goods were promised). Use the EFFECTIVE values: the patch value
        when this request sets the key, else the stored value — so editing only
        one date still validates against the other already on the row. */
-    const effProc  = typeof proc  === 'string' ? (proc  || null) : origProc;
-    const effDeliv = typeof deliv === 'string' ? (deliv || null) : origDeliv;
+    const effProc  = effectiveDateAfterPatch(proc,  origProc);
+    const effDeliv = effectiveDateAfterPatch(deliv, origDeliv);
     /* Owner 2026-07-04 — Processing + Delivery are all-or-nothing (both set or
        both empty). Kept as a SHORT-CIRCUIT (not aggregated): an unpaired date is a
        structurally-incomplete input, not one of several field-level fixes — there
@@ -7102,7 +7102,7 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
        Processing Date, which is exactly the write that permission guards. */
     const cascadeCols = soDatePairCascadeColumns({
       procCleared: superAdminClearsProc,
-      delivInPatch: typeof deliv === 'string',
+      delivInPatch: deliv !== undefined,
       origDeliv,
     });
     for (const col of cascadeCols) updates[col] = null;
