@@ -184,9 +184,13 @@ describe('the SO list rolls up the shared rule, not a raw stored column', () => 
     expect(listEnrichmentLib).not.toContain('stock_status: it.stock_status');
   });
 
-  it('both line-detail handlers publish the verdict, so the pill cannot compute its own', () => {
-    // GET /:docNo and GET /:docNo/items — two handlers, one rule.
-    expect(mfgSalesOrders.split('stock_status_effective:').length - 1).toBe(2);
+  it('every line-detail handler publishes the verdict, so the pill cannot compute its own', () => {
+    /* GET /:docNo (STORED verdict, null live state), GET /:docNo/items (live),
+       and GET /:docNo/coverage (the deferred live re-compute) — three handlers,
+       one rule. The detail defers the MRP run to /:docNo/coverage (2026-09-01),
+       so it now passes `null` for the live state; the shared helper is still the
+       only place the verdict is formed. */
+    expect(mfgSalesOrders.split('stock_status_effective:').length - 1).toBe(3);
   });
 
   it('the list no longer runs computeMrp — the deferred endpoint does, exactly once', () => {
