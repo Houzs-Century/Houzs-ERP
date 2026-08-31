@@ -21,7 +21,7 @@
 // across both modes.
 // ----------------------------------------------------------------------------
 
-import { memo, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { memo, useEffect, useRef, useState, type CSSProperties, type ReactNode, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   DollarSign, Plus, Trash2, Save, FileText, Image as ImageIcon,
@@ -171,6 +171,11 @@ const methodPillStyle = (m: PaymentMethod): CSSProperties => {
    installmentMonthsLabel is stored verbatim from the dropdown (e.g.
    'One-off', '3 months', '12 months') and parsed to an integer on
    persist (One-off → null/0; 'N months' → N). */
+/** What a page-driven commit did, per row. `blocked` names the rows that could
+ *  not be sent at all (no amount, missing sub-field) — RETURNED rather than
+ *  skipped, because skipping in silence is the defect this exists to fix. */
+export type PaymentCommitResult = { committed: number; failed: number; blocked: string[] };
+
 export type PaymentDraft = {
   uid:                      string;
   paidAt:                   string;             // YYYY-MM-DD
@@ -336,6 +341,11 @@ type SavedModeProps = {
   initialDrafts?: PaymentDraft[];
   /** Called only after a seeded/new draft is confirmed by the server. */
   onDraftCommitted?: (draft: PaymentDraft) => void;
+  /* Hands the page a way to BOOK the typed rows as part of its own Save. Called
+     with the function on mount and with null on unmount; the page keeps it in a
+     ref. Without this the page Save saved the document and silently left the
+     money rows behind (owner 2026-08-31). Must be a stable reference. */
+  onRegisterCommitAll?: (commit: (() => Promise<PaymentCommitResult>) | null) => void;
   /** How many rows are typed but NOT yet booked (owner 2026-08-07). The drafts
    *  live inside this component in SAVED mode, so the page cannot see them —
    *  and the page owns the exits (its back button, the payments Edit toggle)
@@ -813,6 +823,58 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
     });
   };
 
+  /* THE PAGE'S SAVE COMMITS THESE ROWS TOO (owner 2026-08-31).
+   *
+   * A typed payment row used to be booked ONLY by its own Save button. The page
+   * Save saved the document and left the row where it was — and the one warning
+   * that exists (`onUnsavedChange` -> the page's guard) is wired to the payments
+   * card's Done and to the page's BACK button, not to Save. So the operator
+   * pressed Save, the order saved, and the money row was silently dropped:
+   * 「我明明有 update 到 payment，可是为什么 payment 那边没有 save 成功呢」. On
+   * HC-SO-013393 the audit log held zero payment actions of any kind.
+   *
+   * AWAITABLE, and reports per row, because the page has to know whether to stay
+   * put. A row that cannot be committed (no amount, missing sub-field) is
+   * RETURNED as blocked rather than skipped — silently skipping is the bug.
+   * Each row keeps its own idempotency key, so a retry de-dupes against the
+   * first attempt instead of booking the money twice. */
+  const commitAllDrafts = useCallback(async (): Promise<PaymentCommitResult> => {
+    if (!isSaved) return { committed: 0, failed: 0, blocked: [] };
+    const pending = draftsRef.current.filter((d) => !d.editingPersistedId);
+    const blocked: string[] = [];
+    let committed = 0;
+    let failed = 0;
+    for (const d of pending) {
+      if (d.amountSen <= 0) { blocked.push(`${d.methodLabel}: no amount`); continue; }
+      const missing = missingMethodSubField(d);
+      if (missing) { blocked.push(`${d.methodLabel}: pick the ${missing}`); continue; }
+      const { method } = labelToApi(d.methodLabel);
+      try {
+        await addPayment.mutateAsync({
+          docNo:           (props as SavedModeProps).docNo,
+          paidAt:          d.paidAt,
+          method,
+          amountSen:       d.amountSen,
+          accountSheet:    d.accountSheet || null,
+          approvalCode:    d.approvalCode || null,
+          collectedBy:     d.collectedBy || null,
+          uploadSessionId: d.slipUploadSessionId,
+          idempotencyKey:  d.idempotencyKey,
+          ...draftMethodFields(method, d),
+        } as { docNo: string } & Record<string, unknown>);
+        removeDraft(d.uid);
+        (props as SavedModeProps).onDraftCommitted?.(d);
+        committed += 1;
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.error('[payment] add failed during page save:', e);
+        failed += 1;
+      }
+    }
+    return { committed, failed, blocked };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- props is read at call time by design
+  }, [isSaved, addPayment, removeDraft]);
+
   /* Summary maths — identical across modes. In DRAFT mode there are no
      persisted rows yet, so paid is just Σ drafts. In SAVED mode paid is
      Σ persisted (drafts only enter the total once committed via API). */
@@ -949,6 +1011,15 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
     window.addEventListener('beforeunload', warn);
     return () => window.removeEventListener('beforeunload', warn);
   }, [unsavedCount]);
+
+  /* Registered upward the same way the unsaved COUNT is, and nulled on unmount
+     for the same reason: the page outlives this card. */
+  const onRegisterCommitAll = (props as SavedModeProps).onRegisterCommitAll;
+  useEffect(() => {
+    if (!isSaved) return;
+    onRegisterCommitAll?.(commitAllDrafts);
+    return () => onRegisterCommitAll?.(null);
+  }, [isSaved, onRegisterCommitAll, commitAllDrafts]);
 
   const onUnsavedChange = props.onUnsavedChange;
   useEffect(() => {
