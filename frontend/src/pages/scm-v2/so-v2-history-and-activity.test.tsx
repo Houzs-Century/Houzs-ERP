@@ -29,6 +29,7 @@ vi.mock("../../vendor/scm/lib/sales-order-queries", () => ({
   useSalesOrderAuditLog: auditLog,
   useSalesOrderPayments: payments,
   useUpdateMfgSalesOrderStatus: updateStatus,
+  useSoLineCoverage: () => ({ data: undefined }),
 }));
 vi.mock("../../hooks/useBreadcrumbs", () => ({ useSetBreadcrumbs: () => undefined }));
 vi.mock("../../hooks/useStaffLookup", () => ({
