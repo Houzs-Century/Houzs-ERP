@@ -534,3 +534,45 @@ accessory」的不可能形状。逐字符定案:claimSet 的正则里嵌着**�
 "(PO未收货)"(到货即亮)。终局:28 送完+22 绑定待PO+34 排队缺货+21 口径+2 无
 日期+3 类别形=110,ALGO-SUSPECT 保持 0。判词:110 张无一张是系统算错;51 张
 (22+34)是真实的采购/到货事项,账本侦测器抢先打勾不足为凭。
+
+## 照片管道 (2026-08-31)
+
+第一轮把照片从账本里挖出来的那个脚本**没留下来**
+(`docs/autocount-further-description-photos.md` §2.1),所以照片这条路一直是断的:
+manifest 还在、R2 上的档还在、挂回的脚本还在,**唯独「再拿一次」做不到**。这次把
+缺的那一半补上,四步一条线:导出 → 上传 R2 → 挂回行 → 验。手册在
+`docs/ac-resync-runbook.md` 阶段 3b。
+
+**两个新脚本**
+
+| 脚本 | 做什么 |
+|---|---|
+| `backend/scripts/export-ac-line-photos.py` | 只读账本,把每一行的内嵌图抠成 JPEG + 写 manifest(`{DocNo, DtlKey, ItemCode, file, sha256, bytes, w, h}`,PO 多一个 `Desc2`)。按 DtlKey 记断点,断线重跑不重下。RTF 的解析**调用现成的** `further-description-rtf.mjs`(它带 `\*\blipuid` 和奇数 nibble 两个坑的守卫),没有另写一份 |
+| `backend/scripts/upload-line-photos-r2.mjs` | 传 R2。**自己不算 key**——只认挂回脚本 resolve 模式印出来的 `UPLOAD <档> -> <key>`,并逐条比对第一轮的格式,对不上整批拒。四道闸门:默认 plan / apply 要确认句 / verify 是**另起一次**抽样下载回来比 sha256 / 头部写了重跑会怎样 |
+
+**账本当场数出来的三件事(2026-08-31,只读直连)**
+
+1. 带照片的行:**SO 2,723 行、PO 2,392 行**。第一轮的 manifest 只有 554 + 190,
+   而且 SO 侧是从 DtlKey 34553 才开始的——**老单的照片绝大多数从来没被拿出来过**。
+   (交接时以为 SO 只有 594 行,实测不是,以 2,723 为准。)
+2. 图的形式**全部是 `\wmetafile8`**,jpegblip / pngblip / emfblip / dibitmap 全是 0。
+   仓库里**没有** WMF 转点阵的现成代码(`rtf-picture.mjs` 自己写着 wmetafile
+   `producible: false`),所以 `wmf_to_jpeg()` 是这次唯一的新解码:照第一轮写下的
+   `WMF -> DIB -> JPEG` 路子,把 DIB 直接从 metafile 记录里抠出来重编码,**原始像素
+   原始尺寸**,不经 GDI、不用挑 dpi。
+3. **一行可以挂不止一张**:SO 最多 2 张、PO 最多 5 张。这条正好是
+   `docs/autocount-further-description-photos.md` §7 问题 8 悬着的那个,答案是
+   「不止一张」——**回写那条路要小心**,它是整个字段覆盖式重写,不先读回来就会把
+   第二张抹掉。已回填进该文件。
+
+**小样实证(SO,`LIMIT=20`)**:20 行 → 20 张,全 `wmetafile8`、全走 dib、0 失败。
+其中 2 个 DtlKey 也在第一轮 manifest 里(34553、34737),**尺寸分毫不差**
+(240x159、240x50)——这是新旧两条提取路等价的凭据。图打开是手绘沙发规格纸,
+方向、颜色、字都正常。
+
+顺带一个**差异,没去圆它**:DtlKey 34737 第一轮记的货号是 `HOK-2009(A) (K)`,
+今天账本上是 `HOK-2008(A) (K)`(单号 SO-000383 两边一致,照片尺寸也一致)。
+**LIKELY** 是账本那边改过货号,但没查证,先记着。
+
+**还没做的**:整本 5,115 行一次都没跑过(只跑了 20 行小样),PO 侧一行没跑;
+R2 一次都没传过(token 档还没建)。
