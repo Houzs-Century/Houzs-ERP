@@ -63,6 +63,20 @@ async function main() {
     byDocCode.get(k).push(it);
   }
 
+  /* One photograph lands on ONE row, and on a row that has not already taken
+     one — an order can hold several builds of the same model, each its own book
+     line with its own photograph, and always taking pieces[0] piled them onto
+     one row while its siblings stayed blank (measured on the PO side
+     2026-08-31: 63 dedicated lines missing a photo the book plainly had).
+     Overflow falls back to the last row so a photograph is never dropped. */
+  const claimed = new Set();
+  const pickPiece = (rows) => {
+    const free = rows.find((r) => !claimed.has(r.id));
+    const chosen = free ?? rows[rows.length - 1];
+    claimed.add(chosen.id);
+    return [chosen];
+  };
+
   const plan = []; // {file, key, itemId, already}
   const seenN = new Map(); // itemId -> next n (photos per line keep manifest order)
   const byDocModel = new Map(); // "<ac doc>|<model>" -> sofa piece lines
@@ -95,7 +109,7 @@ async function main() {
          one build; copying it onto all N compartment rows stored the same image
          N times and made the operator scroll past duplicates. Anchor it on the
          FIRST piece - the same row the importer hangs the price on. */
-      for (const it of pieces.slice(0, 1)) {
+      for (const it of pickPiece(pieces)) {
         const n = (seenN.get(it.id) ?? 0) + 1; seenN.set(it.id, n);
         const key = `so-items/${it.doc_no}/${it.id}/ac-${m.DtlKey}-${n}.jpg`;
         plan.push({ file: m.file, key, itemId: it.id, already: (it.photo_urls ?? []).includes(key) });
@@ -112,7 +126,7 @@ async function main() {
     if (!cands) {
       const pieces = byDocModel.get(`${m.DocNo}|${sofaModelOf(erp)}`);
       if (pieces && pieces.length) {
-        for (const it of pieces.slice(0, 1)) {   // first piece only - see above
+        for (const it of pickPiece(pieces)) {   // first FREE piece — see above
           const n = (seenN.get(it.id) ?? 0) + 1; seenN.set(it.id, n);
           const key = `so-items/${it.doc_no}/${it.id}/ac-${m.DtlKey}-${n}.jpg`;
           plan.push({ file: m.file, key, itemId: it.id, already: (it.photo_urls ?? []).includes(key) });

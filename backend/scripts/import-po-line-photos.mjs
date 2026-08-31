@@ -70,6 +70,17 @@ async function main() {
     byDocModel.get(mk).push(it);
   }
 
+  /* One photograph lands on ONE row, and on a row that has not already taken
+     one: a document can hold several builds of the same model. Overflow (more
+     photos than rows) falls back to the last row rather than dropping it. */
+  const claimed = new Set();
+  const pickTarget = (rows) => {
+    const free = rows.find((r) => !claimed.has(r.id));
+    const chosen = free ?? rows[rows.length - 1];
+    claimed.add(chosen.id);
+    return chosen;
+  };
+
   const plan = [];
   const seenN = new Map();
   let sofaHeld = 0, noOrder = 0, noLine = 0, unmapped = 0;
@@ -87,16 +98,27 @@ async function main() {
       if (!targets || !targets.length) targets = byDocCode.get(`${m.DocNo}|${norm(erp)}`);
       if (!targets || !targets.length) { sofaHeld++; heldDocs.push(`${m.DocNo} ${m.ItemCode}`); continue; }
       /* Owner 2026-08-10: "我开 PO 每个 SKU 的照片都一样,留第一个就可以了" -
-         one AutoCount sofa line is one photograph of one build, so it belongs
-         on the first compartment row, not copied onto all of them. */
-      targets = targets.slice(0, 1);
+         one AutoCount line is one photograph of one build, so it belongs on the
+         FIRST compartment row, not copied onto all of them.
+
+         But "the first row" has to mean the first row NOT ALREADY SPOKEN FOR
+         (2026-08-31). A PO can carry two builds of the same model — PO-010083
+         has two 8030-1S lines, each its own book line with its own photograph —
+         and taking targets[0] every time piled both photos onto one row and left
+         its sibling blank. Measured: 63 dedicated PO lines whose source SO line
+         has a photo had none themselves, and every one sampled DID have a
+         picture in the book. Consume the group in order instead; when the
+         photos outnumber the rows the last row still takes the overflow, so a
+         photograph is never dropped. */
+      targets = [pickTarget(targets)];
     } else {
       const exact = byDocCode.get(`${m.DocNo}|${norm(erp)}`);
       /* Not every sofa's AutoCount code says SOFA — "THL-2379" is one too, and
          the literal path would look for a whole "2379-1S" line that a
          decomposed PO does not have. Fall back to the build's compartment
          lines before calling it missing. */
-      targets = exact && exact.length ? [exact[0]] : (byDocModel.get(`${m.DocNo}|${sofaModelOf(erp)}`) ?? []).slice(0, 1);
+      const pool = exact && exact.length ? exact : (byDocModel.get(`${m.DocNo}|${sofaModelOf(erp)}`) ?? []);
+      targets = pool.length ? [pickTarget(pool)] : [];
       if (!targets || !targets.length) {
         if (items.some((it) => it.linked_ac_docno === m.DocNo)) { noLine++; log(`  line not found: ${m.DocNo} ${m.ItemCode} -> ${erp}`); }
         else noOrder++;
