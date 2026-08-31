@@ -305,10 +305,15 @@ function parseSofa(d2raw, model, recl = false, opts = {}) {
     const anyConn = U.some((u) => ["chaise", "corner", "console", "nL", "box", "na"].includes(u.k));
     if (!anyConn && U.some((u) => u.k === "seat"))
       for (const u of U) if (u.k === "unit") u.k = "seat";
-    // suite notation: 1+2+3 / R+2+3 — distinct digits, nothing joining them
-    if (!anyConn && U.length >= 2 && U.every((u) => ["unit", "seat", "rc", "runit", "pw"].includes(u.k))) {
+    /* suite notation: 1+2+3 / R+2+3 — THREE or more distinct digits, nothing
+       joining them, is a SUITE of separate sofas. TWO digits is not: owner
+       2026-08-31, 「1+2 这种大部分是 1A+2A」 — a two-token run is one sofa whose
+       ends carry the arms, which is what the end-walk below produces. This
+       said `>= 2` until then and turned every `1+2` into two standalone
+       sofas. */
+    if (!anyConn && U.length >= 3 && U.every((u) => ["unit", "seat", "rc", "runit", "pw"].includes(u.k))) {
       const digits = U.filter((u) => u.k === "unit" || u.k === "seat").map((u) => u.n);
-      if (digits.length >= 2 && new Set(digits).size === digits.length) {
+      if (digits.length >= 3 && new Set(digits).size === digits.length) {
         for (const u of U) { if (u.k === "unit") u.k = "seat"; u.solo = true; }
       }
     }
