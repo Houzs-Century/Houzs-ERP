@@ -1231,3 +1231,63 @@ describe("AutoCountSync — days, the footer and the two lenses", () => {
     expect(screen.getByText("Sorted by When, newest first")).toBeTruthy();
   });
 });
+
+/* THE KEYLESS ROW'S OWN REPAIR.
+ *
+ * This screen has told the operator, on every one of these rows, that "the lines
+ * have to be matched up against AutoCount, and then the document saved again" —
+ * and there was no way to do it (docs/bugs/0585-*). The button is that way, and
+ * these pin the two things that make it honest: it is offered ONLY where that
+ * refusal is the reason, and it does not pretend the document has been sent.
+ */
+describe("AutoCountSync — matching a held-back document's lines up", () => {
+  /* ITS OWN PAYLOAD, not an extra row on the shared one: four tests above count
+     the chips and the per-type totals of `busy` exactly, and a sixth row there
+     would make them fail for a reason that has nothing to do with what they
+     assert. */
+  const keyless = payload({
+    rows: [
+      row({ id: "kl", doc_no: "SO-KL", doc_type: "SO", op: "edit", status: "skipped", state: "skipped",
+        needs_attention: true,
+        reason: "refused, nothing sent: 1 of 8 line(s) carry no AutoCount DtlKey",
+        reason_kind: "keyless-line", remedy: "backfill linked_ac_dtlkey" }),
+      row({ id: "k2", doc_no: "DO-K2", doc_type: "DO", op: "so_to_do", status: "skipped", state: "skipped",
+        needs_attention: true,
+        reason: "refused, nothing sent (MissingLocationError): line 2 carries no warehouse",
+        reason_kind: "missing-location", remedy: "set the warehouse on the line" }),
+    ],
+    counts: { pending: 0, sent: 0, failed: 0, skipped: 2, requeued: 0, attention: 2, total: 2 },
+  });
+
+  it("is offered on the keyless row and on no other", async () => {
+    await mount(keyless);
+    await screen.findByText("SO-KL");
+    expect(within(cardOf("SO-KL")).getByRole("button", { name: "Match up lines" })).toBeTruthy();
+    /* A missing warehouse is a different refusal with a different remedy — the
+       operator sets the warehouse; there is nothing to match. */
+    expect(within(cardOf("DO-K2")).queryByRole("button", { name: "Match up lines" })).toBeNull();
+  });
+
+  it("says what it matched, and tells the operator the save is still theirs to do", async () => {
+    apiPost.mockResolvedValue({
+      ok: true, matched: 1, alreadyKeyed: 7, bookLines: 8, couldNotMatch: [],
+      message: "1 line(s) matched up against the account book. Save the document again.",
+    });
+    await mount(keyless);
+    await screen.findByText("SO-KL");
+    await userEvent.click(within(cardOf("SO-KL")).getByRole("button", { name: "Match up lines" }));
+    expect(await within(cardOf("SO-KL")).findByText(/Save the document again/)).toBeTruthy();
+  });
+
+  it("NAMES the lines it could not match rather than counting them", async () => {
+    apiPost.mockResolvedValue({
+      ok: true, matched: 0, alreadyKeyed: 7, bookLines: 8,
+      couldNotMatch: ["'9058-1S' — 2 unclaimed lines in the account book carry that item code"],
+      message: "Nothing could be matched — the document is unchanged.",
+    });
+    await mount(keyless);
+    await screen.findByText("SO-KL");
+    await userEvent.click(within(cardOf("SO-KL")).getByRole("button", { name: "Match up lines" }));
+    expect(await within(cardOf("SO-KL")).findByText(/9058-1S/)).toBeTruthy();
+  });
+});

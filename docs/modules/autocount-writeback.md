@@ -647,8 +647,16 @@ declared-new line as `ErpLineIds` (a list: a sofa build is several rows).
 an edit answers with no line list and the ERP half is a no-op —
 `docs/bugs/0583-*`.
 
-**A document already held back is repaired by `POST
-/autocount-outbox/relink-lines`** — it reads the document out of the book
+**The operator presses "Match up lines"** on the held-back row — desktop
+(`pages/AutoCountSync.tsx`) and phone (`mobile/MobileAutoCountSync.tsx`), offered
+only where `reason_kind === 'keyless-line'`. It is a THIRD control beside Send
+again and Send now, and the only one that sends NOTHING: it repairs line
+identity, and the operator still has to save the document, which is why a
+successful match deliberately leaves the row's refusal standing and the answer
+says "Save the document again". The lines it could not match are NAMED in the
+note, not counted (`docs/bugs/0587-*`).
+
+**Under it, `POST /autocount-outbox/relink-lines`** — it reads the document out of the book
 (`/doc-read`, served since 2026-08-15) and stamps the keys onto our keyless
 lines. No host deploy. The matching rules and every refusal are in
 `scm/lib/autocount-relink-lines.ts` with their own tests: a book line another row
