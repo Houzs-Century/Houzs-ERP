@@ -64,6 +64,7 @@ async function main() {
   log(`imported PO bedframe lines: ${items.length}`);
 
   const updates = []; let gained = 0; let byKey = 0, byOwnText = 0, noSource = 0;
+  let fills = 0, changes = 0; const changeSamples = [];
   for (const it of items) {
     /* Fall back to the line's OWN Desc2 when the outstanding-PO export has no
        entry for it. The SO-linked PO import (already-received POs, which that
@@ -87,12 +88,28 @@ async function main() {
     const patch = buildBedframeVariantPatch(bf, fc);
     const had = it.variants || {};
     if (!had.colourId && patch.colourId) gained++;
+    /* FILLING A BLANK AND CHANGING AN ANSWER ARE NOT THE SAME RISK, and until
+       now this sweep reported only the first. A fill is a value the row never
+       had; a CHANGE overwrites something a person or an earlier parse already
+       put there, and that is the number you want in front of you before
+       APPLY=1. Counted per OWNED key, so one line can contribute to both. */
+    for (const k of Object.keys(patch)) {
+      const before = had[k], after = patch[k];
+      if (after == null || String(after) === "") continue;
+      if (before == null || String(before) === "") { fills++; continue; }
+      if (String(before) !== String(after)) {
+        changes++;
+        if (changeSamples.length < 15) changeSamples.push(`   ${it.item_code}  ${k}: "${before}" -> "${after}"`);
+      }
+    }
     updates.push({ id: it.id, patch, specials, geometry: { gap: bf.gap, divan: bf.divan, leg: bf.leg } });
   }
   const withColour = updates.filter((u) => u.patch.colourId).length;
   const withSpecials = updates.filter((u) => u.specials.length).length;
   log(`lines to refresh: ${updates.length}; with colour: ${withColour} (newly gained ${gained}); parsed special options (REPORT ONLY, not written): ${withSpecials}`);
   log(`source of truth: ${byKey} by AutoCount DtlKey, ${byOwnText} by the line's own description2, ${noSource} skipped for having neither`);
+  log(`WHAT THE WRITE WOULD DO, per owned key: ${fills} would FILL a blank; ${changes} would CHANGE a value that is already there`);
+  if (changes) { log(`the changes (up to 15) — read these before APPLY=1:`); for (const ln of changeSamples) log(ln); }
 
   if (!APPLY) { log("\nDRY-RUN — set APPLY=1 to write."); await sql.end(); return; }
   /* Merged, never replaced: `variants = variants || patch` overwrites only the
