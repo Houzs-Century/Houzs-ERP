@@ -809,6 +809,20 @@ Tests: `src/scm/lib/venue-binding.test.ts` (the five outcomes) and
 Ledger: `docs/bugs/0591-*`. Repair for orders already blanked:
 `backend/scripts/repair-blanked-venue.mjs`.
 
+**THE STORED VENUE IS NOT THE ONE YOU SENT.** Mig 0229 puts
+`trg_mfg_sales_orders_canonicalize_venue` on this table — BEFORE INSERT OR UPDATE
+OF venue — which folds known aliases to one spelling, because the same showroom
+kept re-appearing as both "PJ Showroom" and "2990s PJ" and three one-shot
+cleanups each drifted back. Canonical is **"2990s PJ"**.
+
+Anything that writes a venue and then checks its work must compare against
+`scm.canonicalize_venue(...)`, never the value it submitted. The venue repair
+did not, and reported VERIFY FAILED on five rows it had written correctly — the
+dangerous direction, because a red line in a log invites the next person to
+re-run or revert a repair that worked. `docs/bugs/0594-*`; the read-only
+`pg_trigger` probe that settled it is
+`backend/scripts/probe-venue-write-divergence.mjs`.
+
 The backend recomputes honest pricing and mints the `doc_no` server-side, so the
 client never sends a `doc_no`, and money crosses the wire as `*_sen` integers.
 

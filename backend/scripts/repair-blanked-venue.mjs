@@ -95,18 +95,42 @@ async function main() {
 
   /* VERIFY on a FRESH connection, on the VALUES: every row this run touched must
      now read the name its own venue_id names. A count would say "12 of 12" while
-     writing the wrong name into all twelve. */
+     writing the wrong name into all twelve.
+
+     THROUGH scm.canonicalize_venue(), and that is not a detail — the first APPLY
+     (run 33424502242) reported VERIFY FAILED on five rows it had written
+     CORRECTLY. Mig 0229 puts a BEFORE UPDATE OF venue trigger on this table that
+     folds known aliases, so the write of "PJ Showroom" (the venues master's
+     spelling) landed as "2990s PJ" (the canonical one) — the same showroom under
+     the name the rest of the system uses. Comparing the stored value against the
+     RAW master therefore cried failure on a success, which is the more dangerous
+     direction: the next person re-runs a repair that already worked, or reverts
+     it. Compare what the database would STORE, not what we handed it. */
   const v = postgres(url, { ssl: 'require', prepare: false, max: 1 });
   const docs = done.map((d) => d.doc_no);
   const after = await v`
-    SELECT h.doc_no, h.venue, ven.name AS should_be
+    SELECT h.doc_no, h.venue,
+           scm.canonicalize_venue(ven.name) AS should_be,
+           ven.name AS master_name
       FROM scm.mfg_sales_orders h
       JOIN scm.venues ven ON ven.id = h.venue_id
      WHERE h.doc_no = ANY(${docs}) AND h.company_id = ${COMPANY}`;
+  /* Reported, never repaired here: a venues row whose own name is a known alias
+     is a picker entry that keeps handing out the non-canonical spelling. Folding
+     it belongs to backfill-canonicalize-venue.mjs, which has its own dry run —
+     mig 0229 is explicit that it does no backfill of its own. */
+  const aliasMasters = [...new Set(after
+    .filter((r) => String(r.master_name ?? '').trim() !== String(r.should_be ?? '').trim())
+    .map((r) => `"${r.master_name}" -> "${r.should_be}"`))];
   const wrong = after.filter((r) => String(r.venue ?? '').trim() !== String(r.should_be ?? '').trim());
   log(`VERIFY (fresh connection, values not counts): ${after.length} of ${docs.length} re-read; `
     + `name matches the order's own venue id on ${after.length - wrong.length}`);
   for (const r of wrong.slice(0, 5)) log(`   UNEXPECTED ${r.doc_no}: venue="${r.venue}" should be "${r.should_be}"`);
+  if (aliasMasters.length) {
+    log(`   FYI — ${aliasMasters.length} venue master row(s) carry a non-canonical name; the trigger folded`
+      + ` it on write, so the ORDERS are right and the PICKER still is not: ${aliasMasters.join(', ')}`);
+    log('   Fold them with backfill-canonicalize-venue.mjs (dry-run gated). Not done here.');
+  }
   if (wrong.length || after.length !== docs.length) log('VERIFY FAILED — investigate before re-running.');
   await v.end();
   await sql.end();
