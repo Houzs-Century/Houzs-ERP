@@ -534,3 +534,8 @@ so-items/HC-SO-013168/2c30f989-fb46-4ffd-a0d7-222db773a94c/ac-893100-1.jpg
 so-items/HC-SO-013168/32a3ed2a-36ba-41d7-b15e-d30016a72cec/ac-893101-1.jpg
 so-items/HC-SO-013175/340ee05d-dea7-4a42-8b17-c58f582383b2/ac-893152-1.jpg
 so-items/HC-SO-013175/340ee05d-dea7-4a42-8b17-c58f582383b2/ac-893153-2.jpg
+# 2026-08-31: released from *-doubtful.txt after a REAL R2 read proved each object exists
+# (wrangler r2 object get --remote, company account 816e4573; 112 of 112 present, 0 missing)
+so-items/HC-SO-010882/c9cfa4b5-93b3-4a80-a8a8-ec660b770bba/ac-758395-1.jpg
+so-items/HC-SO-011660/81a0ed1d-72b4-440f-a390-c32e409fbb0d/ac-803503-1.jpg
+so-items/HC-SO-012629/41eb2770-8792-47b5-af1c-4e4bdd794a0c/ac-860757-1.jpg
