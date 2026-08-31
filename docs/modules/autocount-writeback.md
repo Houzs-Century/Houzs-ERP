@@ -666,6 +666,28 @@ ITSELF while the rest still land. It matches on the RAW ERP code today, so a lin
 whose code the bindings rewrite is refused rather than mis-assigned —
 `docs/bugs/0585-*`.
 
+### Whose name does a line have? (open, 2026-09-01)
+
+Owner, 2026-08-31: 「我们更改什么就 send 什么…为什么 AutoCount 要回传给我们呢?」 The
+question is a good one. Today a line's only name is the `DtlKey` AutoCount
+assigns, which is why the added line has to learn it back — and why RE-ORDERING
+lines reaches the book not at all: no `Seq` is ever sent, and `AcSyncService`
+never sets one.
+
+The durable answer is his: stamp the ERP's OWN line reference into the book and
+match on that. Then nothing has to come back, and order becomes ours to state.
+
+**It turns on one unmeasured fact** — can a document DETAIL carry a user-defined
+column? The reflected SDK dump cannot say: it was taken `DeclaredOnly`, so an
+inherited `UDF` member on a detail is invisible, and `PerformUDFTransfer(...,
+Boolean isDetail)` is a hint, not a fact. Two settable line fields exist either
+way (`YourPONo`, `Numbering` on `SalesOrderDetail`), both with business meanings
+of their own.
+
+`GET /autocount-outbox/table-columns?table=SODTL&like=UDF_` settles it against
+sys.columns on the live book — read-only, names only. **It needs the host deploy
+that `docs/bugs/0583-*` already needs**, and rides with it.
+
 **Clear-and-rebuild is NOT how to fix one of these**, though AutoCount's own docs
 sample it: it destroys every DtlKey — the identity behind `FromSODtlKey`, the
 transfer chain, the photographs and retirement — and on a TRANSFERRED document

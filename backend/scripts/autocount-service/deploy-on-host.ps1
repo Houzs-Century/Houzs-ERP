@@ -496,8 +496,13 @@ if (-not $preSrv -or -not $preUser) {
 try {
   $text = Get-Content $Source -Raw
   $before = ([regex]::Matches($text, '__DBLINE__')).Count
+  # FOUR since 2026-09-01 (/table-columns joined the three read paths). The
+  # guard is a FLOOR, not an equality: a new read that needs the connection is a
+  # normal change, and a count that has to be edited in step is a count that
+  # eventually lies. It still catches the real fault -- a source where the
+  # placeholder went missing entirely.
   if ($before -lt 3) {
-    Step "WARNING: __DBLINE__ appears $before time(s); it is documented as appearing in three methods"
+    Step "WARNING: __DBLINE__ appears $before time(s); it is documented as appearing in at least three methods"
   }
   # String.Replace, never -replace: the connection line contains backslashes and
   # a regex replacement would eat them.

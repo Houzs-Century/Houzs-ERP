@@ -107,3 +107,30 @@ describe('the document types the account book will read', () => {
     for (const t of REQUEUE_DOC_TYPES) expect(t).toMatch(/^[A-Z]{2}$/);
   });
 });
+
+/* THE ROUTE THAT SETTLES WHOSE NAME A LINE HAS.
+ *
+ * Owner, 2026-08-31: 「我们更改什么就 send 什么…为什么 AutoCount 要回传给我们呢?」
+ * He is right that line identity ought to be ours. The way to have it is to
+ * stamp our own reference INTO the account book and match on that — and whether
+ * that is possible turns on one fact the reflected SDK dump cannot show (it was
+ * taken DeclaredOnly, so an inherited `UDF` member on a detail is invisible):
+ * does a document DETAIL table carry user-defined columns?
+ *
+ * `/table-columns` asks sys.columns on the live book. Read-only, names only.
+ */
+describe('/table-columns — can a document detail carry our own column', () => {
+  test('asks the host for the detail table and passes the filter through', async () => {
+    const fetchImpl = vi.fn(async (_url: string, init?: { body?: string }) => {
+      const sent = JSON.parse(String(init?.body ?? '{}'));
+      expect(sent).toMatchObject({ Table: 'SODTL', Like: 'UDF_' });
+      return res(200, JSON.stringify({ ok: true, table: 'SODTL', columns: ['UDF_PDate'] }));
+    });
+
+    const r = await callAcRead(env as never, 'table_columns', { Table: 'SODTL', Like: 'UDF_' }, fetchImpl as never);
+
+    expect(r.ok).toBe(true);
+    expect(r.body?.columns).toEqual(['UDF_PDate']);
+    expect(String(fetchImpl.mock.calls[0]?.[0])).toContain('/table-columns');
+  });
+});
