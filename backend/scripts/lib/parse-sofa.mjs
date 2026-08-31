@@ -39,6 +39,23 @@ const INSTRUCTION_TOKEN = /(ARMREST|ARMCHANGE|BACKREST|BACKCUSHION|HEADREST|CUSH
    confirm is a guess — and this migration does not guess. Sizes and piece
    lists are excluded before the library is consulted so a numeric coincidence
    can never be promoted to a colour. */
+/* O-vs-ZERO tolerance. The floor writes the same fabric code both ways —
+   "BO315-21" and "B0315-Pearl" are the same cloth — and a code the library
+   cannot confirm is FATAL to the structure segment, so one typed zero threw a
+   whole build to placeholder (SO-013121, owner review 2026-08-31). Try the
+   swapped spellings too; the LIBRARY still has to confirm one of them, so this
+   widens the lookup, never the guard. */
+function ohZeroVariants(t) {
+  const out = new Set([t]);
+  out.add(t.replace(/0/g, "O"));
+  out.add(t.replace(/O/gi, "0"));
+  return [...out];
+}
+const confirmColour = (knownColour, t) => {
+  for (const v of ohZeroVariants(t)) { const hit = knownColour(v); if (hit) return hit; }
+  return null;
+};
+
 function unlabelledColour(d2raw, knownColour) {
   for (const raw of String(d2raw || "").split(/[/\n]+/)) {
     const seg = raw.trim();
@@ -53,7 +70,7 @@ function unlabelledColour(d2raw, knownColour) {
     if (/^\d+\s*(?:"|”|inch|cm)?$/i.test(t)) continue;                // a bare size
     if (/^(?:size|seat)\b/i.test(t)) continue;                        // a labelled size
     if (/\+/.test(t) && /^[\d+ACLNPRSTacnprst()\s]+$/.test(t)) continue; // a piece list
-    const hit = knownColour(t) || knownColour(t.replace(/\s*\([^)]*\)\s*/g, "").trim());
+    const hit = confirmColour(knownColour, t) || confirmColour(knownColour, t.replace(/\s*\([^)]*\)\s*/g, "").trim());
     if (hit) return { value: typeof hit === "string" ? hit : t, evidence: seg };
   }
   return null;
@@ -266,10 +283,10 @@ function parseSofa(d2raw, model, recl = false, opts = {}) {
       }
       else if (t === model || SOFA_MODEL_ALIAS[t]) quiet.push(t);             // model rider ("back rest (5540)" SO-013312)
       else if (/^COLOU?R.+/.test(t)) quiet.push(t);                           // a glued colour mention — colour reads off the RAW text, never here
-      else if (/[A-Z]\d|\d[A-Z]/.test(t) && typeof opts.knownColour === "function" && opts.knownColour(t)) {
+      else if (/[A-Z]\d|\d[A-Z]/.test(t) && typeof opts.knownColour === "function" && confirmColour(opts.knownColour, t)) {
         // a library-CONFIRMED colour code inside the structure segment (SO-013121);
         // an unconfirmed code stays fatal — this migration does not guess colours
-        if (!o.color) { o.color = opts.knownColour(t); o.why.push(`colour token "${t}"`); }
+        if (!o.color) { o.color = confirmColour(opts.knownColour, t); o.why.push(`colour token "${t}"`); }
         quiet.push(t);
       }
       else if (t === "ARM" || t === "ARMREST" || (t.length >= 6 && INSTRUCTION_TOKEN.test(t))) {
@@ -288,10 +305,15 @@ function parseSofa(d2raw, model, recl = false, opts = {}) {
     const anyConn = U.some((u) => ["chaise", "corner", "console", "nL", "box", "na"].includes(u.k));
     if (!anyConn && U.some((u) => u.k === "seat"))
       for (const u of U) if (u.k === "unit") u.k = "seat";
-    // suite notation: 1+2+3 / R+2+3 — distinct digits, nothing joining them
-    if (!anyConn && U.length >= 2 && U.every((u) => ["unit", "seat", "rc", "runit", "pw"].includes(u.k))) {
+    /* suite notation: 1+2+3 / R+2+3 — THREE or more distinct digits, nothing
+       joining them, is a SUITE of separate sofas. TWO digits is not: owner
+       2026-08-31, 「1+2 这种大部分是 1A+2A」 — a two-token run is one sofa whose
+       ends carry the arms, which is what the end-walk below produces. This
+       said `>= 2` until then and turned every `1+2` into two standalone
+       sofas. */
+    if (!anyConn && U.length >= 3 && U.every((u) => ["unit", "seat", "rc", "runit", "pw"].includes(u.k))) {
       const digits = U.filter((u) => u.k === "unit" || u.k === "seat").map((u) => u.n);
-      if (digits.length >= 2 && new Set(digits).size === digits.length) {
+      if (digits.length >= 3 && new Set(digits).size === digits.length) {
         for (const u of U) { if (u.k === "unit") u.k = "seat"; u.solo = true; }
       }
     }

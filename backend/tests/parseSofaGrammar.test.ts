@@ -400,3 +400,44 @@ describe('parse-sofa: the 2026-08-30 placeholder-sweep vocabulary', () => {
     expect((r.why as string[]).some((w: string) => w.startsWith('token'))).toBe(false);
   });
 });
+
+/* O-vs-ZERO — the floor writes one fabric code two ways (owner review
+   2026-08-31). "BO315-21" and "B0315-Pearl" are the same cloth, but an
+   unconfirmable code inside the structure segment is FATAL by design, so one
+   typed zero threw a whole build to placeholder (SO-013121, a real order). The
+   library still has to confirm a spelling — this widens the lookup, not the
+   guard. */
+describe('parse-sofa: the fabric code typed with a zero for the letter O', () => {
+  const known = (c: string) => (/^BO315[- ]?PEARL$/i.test(c.trim()) ? 'BO315-PEARL' : null);
+
+  test('SO-013121 decodes once the swapped spelling is tried', () => {
+    const r = parseSofa('2S[P+P](32”)B0315-Pearl', '8051', true, { knownColour: known });
+    expect(r.pieces).toEqual(['1A(P)(LHF)', '1A(P)(RHF)']);
+    expect(r.color).toBe('BO315-PEARL');
+  });
+
+  test('a code the library confirms in NEITHER spelling is still fatal — no guessing', () => {
+    const r = parseSofa('2S[P+P](32”)Q9999-Ghost', '8051', true, { knownColour: known });
+    expect(r.pieces).toEqual([]);
+    expect(r.conf).toBe('low');
+  });
+});
+
+/* SUITE vs RUN (owner 2026-08-31: 「1+2 这种大部分是 1A+2A」).
+   Distinct digits with nothing joining them used to mean "separate sofas" from
+   TWO tokens up, so `1+2` — a common way to write one two-piece run — came out
+   as a 1-seat sofa plus a 2-seat sofa, and the arms went missing. A suite is
+   THREE or more (1+2+3); two tokens are one sofa whose ends carry the arms. */
+describe('parse-sofa: two digits are a run, three are a suite', () => {
+  test('1+2 is one run: arm left, arm right (SO-010457)', () => {
+    expect(pieces('1+2(28”Inch)/Col:BO315-1', '9028')).toEqual(['1A(LHF)', '2A(RHF)']);
+  });
+  test('1+1 is still a run', () => {
+    expect(pieces('1+1(28”)', '8030')).toEqual(['1A(LHF)', '1A(RHF)']);
+  });
+  test('1+2+3 is still a SUITE — three separate sofas', () => {
+    const r = pieces('1+2+3(30”)', '9028');
+    expect(r).toContain('1S');
+    expect(r).toContain('2S');
+  });
+});
