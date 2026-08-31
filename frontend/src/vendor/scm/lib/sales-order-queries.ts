@@ -230,6 +230,38 @@ export const useMfgSalesOrderDetail = (docNo: string | null) => useQuery({
   enabled: Boolean(docNo), staleTime: 30_000, retry: retryUnlessClientError, retryDelay: 800,
 });
 
+/* Per-line LIVE stock coverage, fetched SEPARATELY from the SO detail so the
+   document + lines paint immediately on the fast GET /:docNo (which now returns
+   the stored verdict and null live-coverage fields) and the live Stock badge +
+   source-PO chips upgrade in place a moment later. Keyed by the line `id`, one
+   entry per line. The detail page overlays these onto its own lines when they
+   arrive — never a loading gate. */
+export type SoLineCoverage = {
+  id: string;
+  stock_state: 'stock' | 'po' | 'shortage' | null;
+  coverage_po: string | null;
+  coverage_eta: string | null;
+  ready_source_pos: Array<{ po: string | null; qty: number; kind: 'po' | 'adjustment' }>;
+  stock_status_effective: string | null;
+};
+
+export const useSoLineCoverage = (docNo: string | null) => useQuery({
+  queryKey: ['mfg-sales-order-coverage', docNo],
+  queryFn: async () => {
+    try {
+      return await authedFetch<{ coverage: SoLineCoverage[] }>(`/mfg-sales-orders/${docNo}/coverage`);
+    } catch (e) {
+      /* An older backend without this endpoint 404s — that is "no coverage yet",
+         not an error to surface. The lines keep the detail's stored verdict. */
+      if ((e as { status?: number } | null)?.status === 404) return { coverage: [] };
+      throw e;
+    }
+  },
+  enabled: Boolean(docNo),
+  staleTime: 30_000,
+  retry: retryUnlessClientError,
+});
+
 export type DebtorSuggestion = {
   debtor_code: string | null;
   debtor_name: string | null;
