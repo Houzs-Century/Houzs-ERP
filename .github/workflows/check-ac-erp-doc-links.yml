@@ -31,7 +31,7 @@ jobs:
       - uses: actions/setup-node@v6
         with: { node-version: 22 }
       - run: npm ci
-      - run: npx tsx scripts/backfill-zero-line-costs.ts
+      - run: node scripts/diag-5540.mjs
         env:
           COMPANY: '2'
           MODE: plan
@@ -46,7 +46,7 @@ jobs:
       - uses: actions/setup-node@v6
         with: { node-version: 22 }
       - run: npm ci
-      - run: npx tsx scripts/backfill-zero-line-costs.ts
+      - run: node scripts/diag-5540.mjs
         env:
           COMPANY: '2'
           MODE: plan
