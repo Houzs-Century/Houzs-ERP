@@ -16,6 +16,10 @@ import type { AcCreatedLine } from '../../services/autocount-writeback';
    that imports this one. The table union is the real contract — writing
    `string` here would let a caller name a table with no `linked_ac_dtlkey`. */
 import type { AcLineTable } from './autocount-outbox';
+/* VALUE import, not type-only: the four downstream item tables are read off it
+   rather than re-listed. No cycle — autocount-convert-lines imports types from
+   services/autocount-writeback, never from this file. */
+import { DOWNSTREAM } from './autocount-convert-lines';
 
 /**
  * The payload and row fields this function reads, named structurally rather than
@@ -262,19 +266,25 @@ export async function persistNewLineKeys(
   }
 }
 
-/* TWO ENTRIES, NOT SIX, and that is the point rather than an omission.
+/* CORRECTED 2026-08-31. This said "two entries, not six", on the reasoning that
+ * only the sales order and the purchase order have a route that inserts a line
+ * by hand — the others being built by conversion. That reasoning was never
+ * checked, and it is wrong: every one of the six carries a `POST /:id/items`.
+ * The owner asked for the remaining four to be wired (「全部都做完」), and this is
+ * the map they need.
  *
- * This is not "the documents this ERP syncs with AutoCount" — that question has
- * one home already (`REQUEUE_DOC_TYPES`) and `audit:duplicated-decisions`
- * correctly refuses a second. It is the narrower one: **whose lines does a ROUTE
- * insert by hand**. Only the sales order and the purchase order have such a
- * route; a delivery order, a goods receipt and the two invoices are built by
- * CONVERSION, where AutoCount chooses the lines from the parent and there is
- * nothing for the ERP to declare as new. */
-export const NEW_LINE_TABLE = {
+ * STILL NOT A SECOND COPY of "the documents this ERP syncs with AutoCount" —
+ * that question has one home (`REQUEUE_DOC_TYPES`) and `audit:duplicated-
+ * decisions` refuses another. The four downstream tables are DERIVED from
+ * `DOWNSTREAM`, which already had to name each one's item table for the
+ * conversions; only the two the ERP originates are written here. */
+export const NEW_LINE_TABLE: Record<string, AcLineTable> = {
   SO: 'mfg_sales_order_items',
   PO: 'purchase_order_items',
-} as const satisfies Record<string, AcLineTable>;
+  ...Object.fromEntries(
+    Object.entries(DOWNSTREAM).map(([docType, spec]) => [docType, spec.itemTable]),
+  ),
+};
 
 /**
  * What an edit's declared-new lines were, read off the payload the edit SENT.

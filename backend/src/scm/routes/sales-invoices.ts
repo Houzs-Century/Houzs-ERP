@@ -70,12 +70,12 @@ import { refuseMigratedSources } from '../lib/migrated-chain';
 
 /* ERP -> AutoCount Sales Invoice edit. AutoCount calls it IV
    (AcSyncService.cs:443). See queueAcDoEdit for the shape. */
-async function queueAcSiEdit(c: any, id: string, retire: AcRetiredLine[] = []): Promise<void> {
+async function queueAcSiEdit(c: any, id: string, retire: AcRetiredLine[] = [], newLineIds: string[] = []): Promise<void> {  // newLineIds: docs/bugs/0588
   await enqueueEdit(c.get('supabase'), {
     companyId: activeCompanyId(c),
     docType: 'IV',
     docId: id,
-    retire,
+    retire, newLineIds,
     createdBy: c.get('houzsUser')?.id ?? null,
   });
 }
@@ -1775,7 +1775,7 @@ export const appendSalesInvoiceItemHandler = async (c: any) => {
   try {
     await resyncSiRevenue(sb, (header as { invoice_number: string }).invoice_number);
   } catch (e) { /* eslint-disable-next-line no-console */ console.error('[si-revenue] post-add-line resync failed:', e); }
-  await queueAcSiEdit(c, id);
+  await queueAcSiEdit(c, id, [], data?.id ? [String(data.id)] : []);
   return c.json(withPriceWarnings({ item: data }, priceWarnings), 201);
 };
 salesInvoices.post('/:id/items', appendSalesInvoiceItemHandler);

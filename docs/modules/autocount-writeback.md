@@ -612,7 +612,7 @@ a duplicate cannot be removed at all.
 | --- | --- | --- | --- |
 | SO | yes, since 2026-08-11 | yes (`Retire`) | yes |
 | PO | yes, since 2026-08-31 | yes (`Retire`) | yes, since 2026-08-31 |
-| DO / GR / IV / PI | **no** — the route declares nothing, so a new line is refused | yes (`Retire`) | no |
+| DO / GR / IV / PI | yes, since 2026-08-31 | yes (`Retire`) | no |
 
 Photographs travel as KEYS in the outbox payload and are fetched at drain time;
 `photosOf` is document-type agnostic, the drain keys off the OP not the type, and
