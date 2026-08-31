@@ -184,17 +184,25 @@ describe('the SO list rolls up the shared rule, not a raw stored column', () => 
     expect(listEnrichmentLib).not.toContain('stock_status: it.stock_status');
   });
 
-  it('both line-detail handlers publish the verdict, so the pill cannot compute its own', () => {
-    // GET /:docNo and GET /:docNo/items — two handlers, one rule.
+  it('every line-detail handler publishes the verdict, so the pill cannot compute its own', () => {
+    /* In mfg-sales-orders.ts: GET /:docNo (STORED verdict, null live state) and
+       GET /:docNo/items (live) — two handlers. The detail defers the MRP run to
+       GET /:docNo/coverage (2026-09-01), so it now passes `null` for the live
+       state; the deferred re-compute lives in the enrichment route (below) and
+       stamps the verdict from the LIVE state. The shared helper is still the only
+       place the verdict is formed. */
     expect(mfgSalesOrders.split('stock_status_effective:').length - 1).toBe(2);
+    expect(listEnrichmentRoute.split('stock_status_effective:').length - 1).toBe(1);
   });
 
   it('the list no longer runs computeMrp — the deferred endpoint does, exactly once', () => {
     /* The whole point of the deferral: opening the list must not pay a full MRP
-       run. The list keeps only the detail-family computeMrp (soCoverage, for
-       GET /:docNo + /:docNo/items); the list-load call is gone. */
+       run. mfg-sales-orders.ts keeps a single computeMrp, inside the exported
+       soCoverage (called inline by GET /:docNo/items, and by the deferred
+       GET /:docNo/coverage that imports it); the list-load call is gone, and as
+       of 2026-09-01 so is GET /:docNo's inline call. */
     expect(mfgSalesOrders).not.toContain('mrpForListProm');
-    expect(mfgSalesOrders.split('computeMrp(').length - 1).toBe(1); // detail family only
+    expect(mfgSalesOrders.split('computeMrp(').length - 1).toBe(1); // soCoverage only
     /* The enrichment endpoint runs it once, OFF the list's critical path, and
        flattens it with the pure mrpLineCoverage — never a second computeMrp. */
     expect(listEnrichmentRoute.split('computeMrp(').length - 1).toBe(1);
