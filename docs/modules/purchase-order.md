@@ -596,6 +596,27 @@ above refused. Idempotent (linked or already-allocated lines skip); one SO
 line is never double-served (links and allocations both count as taken). Rule:
 `planFifoAttribution`, `backend/scripts/lib/doc-evidence-core.mjs`.
 
+### Write-back: a line ADDED here reaches the account book (since 2026-08-31)
+
+Every PO write queues an AutoCount edit through `queueAcPoEdit`. A line this
+request INSERTED carries no AutoCount key yet, and a keyless line means two
+opposite things — just added, or never backfilled — so the two routes that insert
+lines (`POST /:id/items`, `POST /:id/convert-from-so`) pass the row ids they just
+wrote as `newLineIds`. They go out marked `IsNewLine` and AutoCount appends them
+with `AddDetail`. A keyless line the route did NOT name still refuses the whole
+document: guessing a key would rewrite somebody else's line, and on a purchase
+order a duplicate line cannot be removed at all.
+
+Until this was wired, adding a line to a PO already in the account book refused
+that document and left a `skipped` outbox row nobody was watching. Removing a
+line has always worked — it goes as a RETIREMENT (`Qty = 0`), never a delete.
+
+A newly added line also needs a stock location or AutoCount refuses the detail
+and the whole save with it; when the line has no warehouse of its own, the
+purchase order's own is used (`composePoState`). An EXISTING line with no
+location still sends no location, so the book keeps the value it owns. Full rule:
+`docs/modules/autocount-writeback.md`, "Adding a line".
+
 ### The MIGRATED purchase orders — a fourth source of evidence, above all three
 
 The tiers above recover a link from what the ERP itself recorded. A purchase
