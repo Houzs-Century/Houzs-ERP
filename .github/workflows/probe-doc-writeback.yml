@@ -47,4 +47,4 @@ jobs:
           DATABASE_URL: "${{ secrets.DATABASE_URL }}"
           DOC_NO: "${{ inputs.doc_no }}"
           COMPANY_ID: "${{ inputs.company_id }}"
-        run: node scripts/probe-doc-writeback.mjs
+        run: node scripts/check-so-venue-binding.mjs
