@@ -1220,7 +1220,7 @@ export async function enqueueEdit(
     const composed = opts.docType === 'SO'
       ? await composeSoState(sb, String(opts.docNo), retired, opts.newLineIds, opts.touchedFields)
       : opts.docType === 'PO'
-        ? await composePoState(sb, String(opts.docId ?? opts.docNo), retired)
+        ? await composePoState(sb, String(opts.docId ?? opts.docNo), retired, opts.newLineIds)
         : await composeDownstreamState(sb, opts.docType, String(opts.docId ?? opts.docNo), retired);
     if (!composed) return false;
     /* A PO route knows its id, not its number; the outbox row is keyed by the
@@ -1438,7 +1438,7 @@ async function composeSoState(sb: Sb, docNo: string, retired: AcRetiredLine[] = 
   };
 }
 
-async function composePoState(sb: Sb, poId: string, retired: AcRetiredLine[] = []) {
+async function composePoState(sb: Sb, poId: string, retired: AcRetiredLine[] = [], newLineIds?: string[]) {
   const header = await readPoHeader(sb, poId);
   if (!header) return null;
   const items = await readOrThrow('purchase_order_items',
@@ -1462,7 +1462,30 @@ async function composePoState(sb: Sb, poId: string, retired: AcRetiredLine[] = [
     edit: () => composeEdit('PO', String(header.linked_ac_docno ?? header.po_number), present({
       CreditorName: header.creditor_name,
       Description: header.notes,
-    }), lines, { supplierCode: header.creditor_code, bindings: poBindings }, retired),
+    }), lines, {
+      supplierCode: header.creditor_code,
+      bindings: poBindings,
+      /* Add-a-line, same contract as the sales order's: the ROUTE names the row
+         it just inserted, and composeEdit honours it only when every other line
+         on the document already carries a key. Until this was wired, a line
+         added to a purchase order already in the account book refused the whole
+         document — correctly, because a keyless line is otherwise
+         indistinguishable from one the backfill missed, and guessing "new"
+         appends a duplicate into a live book (mfg-purchase-orders.ts, the
+         convert-from-SO append, says exactly this).
+
+         `newLineLocation` comes with it, and is deliberately NOT
+         `defaultLocation`: that one applies to every line, and an EXISTING line
+         with no location must keep omitting the key so the account book keeps
+         its own value. A NEW line has no value in the book to keep, and a detail
+         with no Location dies on FK_PODTL_Location — taking the WHOLE save with
+         it, because AcSyncService saves the document in one call. The purchase
+         order's own ship-to warehouse is the same answer the create path gives
+         (composeCreatePo: `defaultLocation ?? purchaseLocation`). */
+      ...(newLineIds && newLineIds.length
+        ? { newLineIds: new Set(newLineIds), newLineLocation: header.purchase_location }
+        : {}),
+    }, retired),
   };
 }
 

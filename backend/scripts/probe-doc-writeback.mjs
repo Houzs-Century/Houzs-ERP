@@ -110,10 +110,14 @@ async function main() {
     log('  happened, the push did not. Check the switch above, then the route: an');
     log('  enqueue that returns early writes nothing anywhere.');
   }
+  /* toISOString, NOT String(date).slice(0,19): postgres.js hands back a JS Date,
+     whose default string is "Mon Aug 31 2026 05:12:44 GMT+0000" — slicing that
+     to 19 chars cuts the minutes off and prints "Mon Aug 31 2026 05:". */
+  const stamp = (d) => (d ? new Date(d).toISOString().slice(0, 19).replace('T', ' ') : '');
   for (const r of rows) {
     const reason = classify(r.last_error);
-    log(`  ${String(r.created_at).slice(0, 19)}  ${r.op.padEnd(10)} ${r.doc_type}  ${r.status.padEnd(8)}`
-      + ` attempts=${r.attempts}${r.sent_at ? ` sent=${String(r.sent_at).slice(0, 19)}` : ''}`
+    log(`  ${stamp(r.created_at)}  ${r.op.padEnd(10)} ${r.doc_type}  ${r.status.padEnd(8)}`
+      + ` attempts=${r.attempts}${r.sent_at ? ` sent=${stamp(r.sent_at)}` : ''}`
       + `${r.got_ac_doc_no ? ' (AutoCount answered with a document number)' : ''}`);
     if (reason) log(`      why: ${reason}`);
   }
