@@ -16,7 +16,7 @@ const items = await sql`SELECT line_no, item_code, item_group, qty, unit_price_s
 console.log(`lines: ${items.length}`);
 for (const r of items) console.log(`   ${r.line_no ?? '-'} ${r.item_code} [${r.item_group}] qty=${r.qty} remark=${(r.remark ?? '').slice(0,20)} variants=${(r.v ?? 'null').slice(0,120)}`);
 const a = await sql`SELECT to_jsonb(t) AS j FROM scm.mfg_so_audit_log t
-  WHERE t.doc_no=${DOC} ORDER BY t.created_at DESC LIMIT 6`;
+  WHERE t.so_doc_no=${DOC} ORDER BY t.created_at DESC LIMIT 6`;
 console.log(`audit (newest ${a.length}):`);
 for (const r of a) console.log('   ' + JSON.stringify(r.j).slice(0, 220));
 const ob = await sql`SELECT to_jsonb(t) AS j FROM scm.autocount_outbox t
