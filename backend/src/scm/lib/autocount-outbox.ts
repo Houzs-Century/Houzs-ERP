@@ -393,7 +393,7 @@ const PO_HEADER_COLS =
    D9 collapse echoes back. Leaving the column out of this list is what made the
    PO side fall back to a variants blob and throw the original build away. */
 const PO_ITEM_COLS =
-  'id, item_code, item_group, description, description2, qty, unit_price_sen, variants, linked_ac_dtlkey, warehouse_id, delivery_date';
+  'id, item_code, item_group, description, description2, qty, unit_price_sen, variants, linked_ac_dtlkey, warehouse_id, delivery_date, photo_urls';
 
 /**
  * The four DOWNSTREAM document types, described once.
@@ -1459,11 +1459,14 @@ async function composePoState(sb: Sb, poId: string, retired: AcRetiredLine[] = [
   return {
     docNo: header.po_number || poId,
     linkedAcDocNo: header.linked_ac_docno,
-    /* PO line photographs exist (import-po-line-photos.mjs wrote them) and are
-       NOT sent yet: the sales order is the one shape proven against the live
-       book, and a purchase order's pictures are a second rollout with its own
-       evidence, not a free ride on this one. */
-    photos: undefined as AcOutboxPayload['photos'],
+    /* PO line photographs, as KEYS — same shape as the sales order's, opened
+       2026-08-31 on the owner's word (asked whether purchase orders should send
+       them too, he answered 「要」). Nothing else had to change: `photosOf` reads
+       `linked_ac_dtlkey` + `photo_urls` off the raw row, the drain fetches the
+       bytes for any edit that carries them, and AcSyncService's line loop is
+       document-type agnostic — `Photos` becomes FurtherDescription on a purchase
+       detail exactly as it does on a sales one. */
+    photos: photosOf(poRows),
     self: { table: 'purchase_orders', keyCol: 'id', key: poId } as AcDocRef,
     create: () => composeCreatePo(header, lines, { bindings: poBindings }) as unknown as Record<string, unknown>,
     /* No Ref: the ERP has no such field on a purchase order, and /edit applies
