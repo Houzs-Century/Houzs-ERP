@@ -1220,8 +1220,7 @@ consignmentOrders.patch('/:docNo', async (c) => {
     const effProc  = effectiveDateAfterPatch(proc,  origProc);
     const effDeliv = effectiveDateAfterPatch(deliv, origDeliv);
     /* The pair rule — see "THE CO HEADER PATCH" in shared/so-processing-date.ts.
-       Absent vs cleared is `=== undefined`, never `typeof === 'string'`: the CO
-       edit page clears a date as JSON null, same as the SO one. */
+       Absent vs cleared is `=== undefined`: this page clears a date as JSON null. */
     const coCascadeCols = soDatePairCascadeColumns({
       procCleared: proc !== undefined && dateOrNull(proc) === null && !!origProc,
       delivInPatch: deliv !== undefined,
