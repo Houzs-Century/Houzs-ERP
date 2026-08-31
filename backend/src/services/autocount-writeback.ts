@@ -1530,13 +1530,9 @@ export function composeEdit(
       for (const i of keyless) {
         const d = keyed[i] as AcDetail & { IsNewLine?: true; ErpLineIds?: string[] };
         d.IsNewLine = true;
-        /* WHO THIS LINE IS, so the key AutoCount assigns to it can be stored back
-           on the right ERP rows (persistNewLineKeys). AcSyncService applies only
-           the keys it knows, so an extra one is inert there — and the payload is
-           the record of what we sent, which is where this belongs. A LIST,
-           because a sofa build is several ERP rows behind one book line. */
-        const ids = collapsed[i].sourceIndexes
-          .map((ix) => lines[ix]?.id)
+        /* WHO this line is, so persistNewLineKeys can store the key AutoCount
+           assigns it. A LIST: a sofa build is several ERP rows behind one line. */
+        const ids = collapsed[i].sourceIndexes.map((ix) => lines[ix]?.id)
           .filter((v): v is string => typeof v === 'string' && v.length > 0);
         if (ids.length) d.ErpLineIds = ids;
       }
