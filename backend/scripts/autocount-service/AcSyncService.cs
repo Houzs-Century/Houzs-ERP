@@ -333,6 +333,8 @@ class AcSyncService {
       case "/last-errors": Json(ctx, 200, LastErrors(p)); return;
       /* READ-ONLY, one aggregate. See PictureCensus(). */
       case "/picture-census": Json(ctx, 200, PictureCensus(p)); return;
+      /* READ-ONLY, one SELECT on sys.columns. See TableColumns(). */
+      case "/table-columns": Json(ctx, 200, TableColumns(p)); return;
       default: Json(ctx, 404, Err("unknown route " + path)); return;
     }
     Json(ctx, 200, Ok(docNo, CreatedLines(dtlTable, docNo)));
@@ -691,6 +693,57 @@ class AcSyncService {
      APPENDED to `missing` rather than dropped silently: a caller asking "did
      the processing date update" needs to be told the difference between "it is
      null" and "there is no such column". */
+  /* ── /table-columns — what columns does this table actually have? ─────────
+     THE QUESTION IT SETTLES (owner, 2026-08-31): 「我们更改什么就 send 什么…为什么
+     AutoCount 要回传给我们呢?」 He is right that line identity ought to be OURS,
+     and the way to have that is to stamp our own line reference INTO AutoCount
+     and match on it — no key ever has to come back. Whether that is possible
+     turns on one fact nobody here can see: does a document DETAIL table carry
+     user-defined (UDF_) columns?
+
+     The reflected SDK dump cannot answer it — it was taken DeclaredOnly, so
+     inherited members are invisible, and `UDF` on a detail would be one of them.
+     `PerformUDFTransfer(..., Boolean isDetail)` hints that detail UDFs exist,
+     and a hint is not a fact. This is the fact: sys.columns on the real book.
+
+     READ-ONLY. One SELECT on a system view, no SDK session, no document opened.
+     Returns column NAMES only — no data, no customer, no amount. */
+  static Dictionary<string, object> TableColumns(Dictionary<string, object> p) {
+    var table = Str(p, "Table");
+    if (string.IsNullOrEmpty(table)) return Err("Table required");
+    /* An allow-list, not free text: this takes a table NAME and puts it in a
+       query, and the six detail tables plus their headers are the whole
+       legitimate question. */
+    var allowed = new List<string> {
+      "SODTL", "PODTL", "DODTL", "GRDTL", "IVDTL", "PIDTL",
+      "SO", "PO", "DO", "GRN", "IV", "PI",
+    };
+    if (!allowed.Contains(table.ToUpper())) return Err("Table must be one of " + string.Join(", ", allowed.ToArray()));
+    var like = Str(p, "Like");
+    var cols = new List<string>();
+    try {
+      __DBLINE__
+      using (var cn = new System.Data.SqlClient.SqlConnection(db.ConnectionString)) {
+        cn.Open();
+        using (var cmd = cn.CreateCommand()) {
+          cmd.CommandText = "SELECT name FROM sys.columns WHERE object_id = OBJECT_ID(@t) ORDER BY name";
+          var pt = cmd.CreateParameter(); pt.ParameterName = "@t"; pt.Value = table;
+          cmd.Parameters.Add(pt);
+          using (var rd = cmd.ExecuteReader()) {
+            while (rd.Read()) {
+              var n = rd.GetString(0);
+              if (like.Length == 0 || n.IndexOf(like, StringComparison.OrdinalIgnoreCase) >= 0) cols.Add(n);
+            }
+          }
+        }
+      }
+    } catch (Exception ex) {
+      return Err("table-columns failed: " + ex.Message);
+    }
+    var d = new Dictionary<string, object> { { "ok", true }, { "table", table }, { "columns", cols } };
+    return d;
+  }
+
   static List<string> ExistingColumns(System.Data.SqlClient.SqlConnection cn, string table, string[] wanted, List<string> missing) {
     var have = new List<string>();
     using (var cmd = cn.CreateCommand()) {
