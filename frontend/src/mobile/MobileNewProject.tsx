@@ -162,11 +162,11 @@ export function NewProjectSheet({
           <div style={{ display: "flex", gap: 9 }}>
             <div style={{ flex: 1 }}>
               <label style={labelStyle}>Start date</label>
-              <DateField value={startDate} onChange={(iso) => setStartDate(iso ?? "")} style={fieldStyle} aria-label="Start date" />
+              <DateField value={startDate} onChange={setStartDate} style={fieldStyle} aria-label="Start date" />
             </div>
             <div style={{ flex: 1 }}>
               <label style={labelStyle}>End date</label>
-              <DateField value={endDate} onChange={(iso) => setEndDate(iso ?? "")} style={fieldStyle} aria-label="End date" />
+              <DateField value={endDate} onChange={setEndDate} style={fieldStyle} aria-label="End date" />
             </div>
           </div>
           {dateInvalid && <div style={{ fontSize: 11.5, color: "#b23a3a" }}>End date must be on or after the start date.</div>}
