@@ -36,9 +36,17 @@ const norm = (s) => (s ?? "").toLowerCase().replace(/\s+/g, " ").trim();
 
 const GOD_POSITIONS = ["Super Admin", "Owner"].map(norm); // positionPolicy
 const MONEY_WRITE_POSITIONS = ["Finance Manager", "Super Admin"].map(norm);
+// ⚠ NOT a copy of positionPolicy's CONFIG_WRITE_POSITIONS set — it is every
+// position that RESOLVES to canWriteConfig: true, which is a strictly wider
+// question and the only one this column claims to answer. Sales Director gets
+// the flag from FLAGS_SALES_DIRECTOR (owner 2026-09-01 — he maintains product
+// master data), not from that set, so copying the set alone made this column
+// under-report him: it printed "no config-write" for someone who holds it.
+// Anything added to either place belongs here.
 const CONFIG_WRITE_POSITIONS = [
   "Procurement/Purchasing", "Operation Manager", "Operation Executive",
   "Logistic Admin", "Super Admin",
+  "Sales Director", // via the cohort flag, not the name set
 ].map(norm);
 const RESTRICTED_POSITIONS = ["Driver", "Helper", "Storekeeper", "Storekeeper Supervisor"].map(norm);
 const DIRECTOR_POSITION_NAMES = ["Super Admin", "Sales Director", "Finance Manager"].map(norm);
