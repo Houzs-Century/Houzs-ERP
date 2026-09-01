@@ -952,6 +952,19 @@ desktop passes `null` (every category cascades), mobile passes
 `{sofa, bedframe}` (the only variant panels it renders). `ConsignmentOrderNew`
 passes `null` too, matching the desktop SO page it is a clone of.
 
+#### `SalesOrderDetailV2` and the list drill-down share ONE coverage overlay
+
+Both render the Stock pill and the Incoming PO chips, and both must fetch
+`GET /:docNo/coverage` and merge it through
+`frontend/src/vendor/scm/lib/so-coverage-overlay.ts`. The detail page had the
+call and the drill-down did not, which blanked that column on the list
+(`docs/bugs/0598-*`); the merge is shared rather than copied because these are
+the same two surfaces that held two opinions in `docs/bugs/0269-*`.
+
+The overlay leaves a line UNTOUCHED when no coverage row matches it — the fast
+first paint and an older backend's 404 both arrive that way, and blanking on them
+would flicker the column off on every open. See §0.8 for the four chips.
+
 #### The `?edit=1` fork, and why leaving edit must leave the URL
 
 `/scm/sales-orders/:docNo` is ONE route (`App.tsx`). `SalesOrderDetailV2` is a
