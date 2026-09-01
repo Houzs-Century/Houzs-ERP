@@ -96,6 +96,16 @@ type is FORCED to MANUAL and the chart is validated), `POST
 parent must share the type, deactivation refused for parents-with-children
 and role accounts), `GET /control-check` (reconciliation layer 1: AR/AP
 control vs documents, drift named to the doc, foreign lines listed).
+`GET /accounts` also carries `acc_money`, so pickers can offer only the
+money set. **The roles window (2026-08-30)**: `GET /roles` answers the
+resolved role→account map for the active company (overrides first, seeded
+defaults where nothing is set, plus which are overridden); `PUT
+/roles/BANK_DEFAULT` repoints the default bank — money accounts only,
+active only, this company's chart only, GL-post permission — the owner's
+own lever (默认银行我可以自己maintenance), surfaced as the Default bank card
+on /scm/settlement-setup and pre-filling every voucher's Paid From
+(docs/modules/payment-voucher.md §0c). Contract:
+`backend/src/scm/routes/accountRoles.test.ts`.
 
 **Phase 1 (2026-08-16).** One AutoCount-style chart for every company
 (migration 0297; company 2 template copied to company 1, ledger lines
