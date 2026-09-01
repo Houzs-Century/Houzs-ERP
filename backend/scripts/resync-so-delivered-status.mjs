@@ -29,14 +29,18 @@
 // EVERY COMPANY by default — a per-company default is what left company 2 at
 // IN PRODUCTION 0 for a week (docs/bugs/0597-*).
 //
-// WHAT IT CANNOT DO, said plainly: the sync also RELEASES a DELIVERED order back
-// to READY_TO_SHIP when a return un-covers it. Re-offering every candidate means
-// that arm can fire too. That is the same function the app runs and is correct
-// by construction, but it means this is not a one-directional repair and the
-// plan prints both directions before anything is written.
+// ADVANCE ONLY BY DEFAULT, and this is the guard that matters. The sync is
+// two-directional: it also RELEASES a DELIVERED order back to READY_TO_SHIP when
+// a return has un-covered it. Offering every candidate would re-judge the orders
+// that are ALREADY delivered — measured 2026-09-02: 43 of the 111 candidates.
+// Fixing 7 stuck orders is not a licence to re-open 43 finished ones, however
+// correct the rule is. So an order already sitting in DELIVERED is SKIPPED and
+// COUNTED, and the release question stays visible instead of riding in on a
+// repair nobody asked to be two-directional. RELEASE=1 opts into it deliberately.
 //
 //   DATABASE_URL   required
 //   COMPANY        a company id, or `all` (default all)
+//   RELEASE        1 to ALSO re-judge orders already DELIVERED (default off)
 //   MODE           plan (default) | apply
 //   CONFIRM        on apply, exactly: LOADED MEANS THE GOODS ARE OUT
 //
@@ -65,7 +69,10 @@ const sql = postgres(url, { ssl: "require", prepare: false, max: 1 });
 /* The statuses the sync itself may move an order out of, restated here ONLY to
    pick candidates cheaply — the sync re-checks it, so a drift between the two
    costs a wasted call, never a wrong write. */
-const CANDIDATE_STATUSES = ["CONFIRMED", "IN_PRODUCTION", "READY_TO_SHIP", "DELIVERED"];
+const RELEASE = process.env.RELEASE === "1";
+const CANDIDATE_STATUSES = RELEASE
+  ? ["CONFIRMED", "IN_PRODUCTION", "READY_TO_SHIP", "DELIVERED"]
+  : ["CONFIRMED", "IN_PRODUCTION", "READY_TO_SHIP"];
 
 async function main() {
   log(`mode=${APPLY ? "APPLY" : "PLAN"} scope=${ALL ? "ALL COMPANIES" : `company ${RAW}`}`);
@@ -87,6 +94,17 @@ async function main() {
        AND upper(COALESCE(dh.status::text, '')) NOT IN ('DRAFT', 'CANCELLED')
      ORDER BY h.doc_no`;
   log(`orders with a non-draft delivery order, in a status the sync may move: ${cands.length}`);
+  /* The half deliberately NOT offered, named rather than omitted. */
+  if (!RELEASE) {
+    const [held] = await sql`
+      SELECT COUNT(DISTINCT h.doc_no)::int AS n
+        FROM scm.mfg_sales_orders h
+        JOIN scm.delivery_orders dh ON dh.so_doc_no = h.doc_no
+       WHERE h.company_id = ANY(${companies}) AND upper(h.status::text) = 'DELIVERED'
+         AND upper(COALESCE(dh.status::text, '')) NOT IN ('DRAFT', 'CANCELLED')`;
+    log(`ADVANCE ONLY — ${held.n} order(s) already DELIVERED are NOT offered, so this run`
+      + ' cannot release a finished order. RELEASE=1 includes them.');
+  }
 
   const before = new Map(cands.map((r) => [r.doc_no, r.status]));
 

@@ -26,6 +26,11 @@ on:
         default: "plan"
         type: choice
         options: [plan, apply]
+      release:
+        description: "1 to ALSO re-judge orders already DELIVERED (can release them)"
+        required: false
+        default: "0"
+        type: string
       confirm:
         description: "On apply, type exactly: LOADED MEANS THE GOODS ARE OUT"
         required: false
@@ -52,5 +57,6 @@ jobs:
           DATABASE_URL: "${{ secrets.DATABASE_URL }}"
           COMPANY: "${{ inputs.company }}"
           MODE: "${{ inputs.mode }}"
+          RELEASE: "${{ inputs.release }}"
           CONFIRM: "${{ inputs.confirm }}"
         run: npx tsx scripts/resync-so-delivered-status.mjs
