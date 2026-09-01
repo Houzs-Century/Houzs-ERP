@@ -330,9 +330,25 @@ const RESTRICTED_ROWS: ReadonlyMap<string, readonly PolicyRow[]> = new Map(
     ["Helper", DRIVER_HELPER_ROWS],
     ["Storekeeper", STOREKEEPER_ROWS],
     ["Storekeeper Supervisor", STOREKEEPER_SUPERVISOR_ROWS],
+    // Owner 2026-08-28: the warehouse crew position(s) the owner created in the
+    // admin UI ("Warehouse Crew KL", mixing Helper + Storekeeper roles). Same
+    // whitelist as Storekeeper — projects view + warehouse view. Without this
+    // entry the whole crew fell into the default-FULL cohort (finance pages
+    // included) AND lost every position-keyed crew behaviour. The PREFIX
+    // fallback in resolvePositionPolicy covers future regional variants
+    // ("Warehouse Crew JB", …) so a new region can't reopen the hole.
+    ["Warehouse Crew KL", STOREKEEPER_ROWS],
     ["Calendar Viewer", CALENDAR_VIEWER_ROWS],
   ].map(([name, rows]) => [normalisePosition(name as string), rows as readonly PolicyRow[]]),
 );
+
+/** Prefix rule for the owner's regional warehouse-crew positions — see the
+ *  RESTRICTED_ROWS note. Normalised-name prefix, not \b substring: the name
+ *  must START with "warehouse crew", so an office position that merely
+ *  mentions warehouse cannot be pulled into the restricted cohort. */
+export function isWarehouseCrewPosition(positionName: string | null | undefined): boolean {
+  return normalisePosition(positionName ?? "").startsWith("warehouse crew");
+}
 
 // ── The Sales cohort's page access — folded IN, no longer deferred ───────────
 //
@@ -648,8 +664,12 @@ export function resolvePositionPolicy(input: PositionPolicyInput): PositionPolic
   const name = normalisePosition(input.position_name ?? "");
 
   // Restricted whitelist wins first — an exact-name cohort, so a Sales position
-  // can never fall in here.
-  const rows = name ? RESTRICTED_ROWS.get(name) : undefined;
+  // can never fall in here. Regional warehouse-crew names fall back to the
+  // Warehouse Crew whitelist by prefix (see RESTRICTED_ROWS note).
+  const rows = name
+    ? RESTRICTED_ROWS.get(name) ??
+      (isWarehouseCrewPosition(name) ? RESTRICTED_ROWS.get(normalisePosition("Warehouse Crew KL")) : undefined)
+    : undefined;
   if (rows) {
     const meta: PageAccessMeta = { explicitScm: false };
     const pageAccess = resolvePositionAccessFromRows(rows, meta);

@@ -188,7 +188,12 @@ function corsOriginAllowed(origin: string | undefined | null): string | undefine
 // response header is INVISIBLE to a cross-origin reader unless it is exposed
 // here — omitting it would make the guard silently no-op in prod, where the
 // SPA and the worker are different origins.
-app.use("*", cors({ origin: corsOriginAllowed, exposeHeaders: ["X-Request-Id", "X-Company-Code"] }));
+/* X-Session-Pass is EXPOSED because the middleware re-issues a pass on the
+   authoritative path and the SPA has to be able to read it back — a header the
+   browser hides is a renewal that silently never happens. It carries no secret:
+   the pass is signed, token-bound and revocable, and the client already holds it.
+   docs/bugs/0593-*. */
+app.use("*", cors({ origin: corsOriginAllowed, exposeHeaders: ["X-Request-Id", "X-Company-Code", "X-Session-Pass"] }));
 
 // Baseline security headers on every Worker response. Deliberately conservative:
 // the cross-origin isolation family (CORP/COOP/COEP) is DISABLED because the API
@@ -441,7 +446,7 @@ app.onError((err, c) => {
   const res = new Response(base.body, base);
   const allowedOrigin = corsOriginAllowed(c.req.header("Origin"));
   if (allowedOrigin) res.headers.set("Access-Control-Allow-Origin", allowedOrigin);
-  res.headers.set("Access-Control-Expose-Headers", "X-Request-Id");
+  res.headers.set("Access-Control-Expose-Headers", "X-Request-Id, X-Session-Pass");
 
   // Error tracking. INERT until the owner sets the SENTRY_DSN secret — with no
   // DSN this call returns before doing anything (no fetch, no log, no latency),

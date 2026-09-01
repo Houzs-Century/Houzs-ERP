@@ -595,20 +595,113 @@ the document keeps NULL keys.
 Failing to record identity never changes the dispatch outcome: the document IS
 in AutoCount and the row IS `sent`. It is logged, not retried.
 
-### Known limitation — adding a line to a document AutoCount already has
+### Adding a line to a document AutoCount already has — DECLARED, never inferred
 
-A genuinely new line on an existing AutoCount document is refused too, because
-the ERP cannot yet tell it apart from a legacy line whose key was never stored.
+A new line on an existing AutoCount document carries no key, and a keyless line
+means two opposite things: just added, or never backfilled. The ERP does not
+guess. The route that did the inserting NAMES the rows it inserted
+(`newLineIds`), and `composeEdit` marks them `IsNewLine: true` — which
+`AcSyncService` turns into `AddDetail()` — **only when every other keyless line
+on the document is one of those declared rows.** A document with an
+undeclared keyless line has not been backfilled, so nothing on it can vouch for
+the new one, and the whole edit is still refused. Setting `IsNewLine` on a guess
+re-opens the duplicate-append defect one line at a time, and on a purchase order
+a duplicate cannot be removed at all.
 
-`AcSyncService` accepts an explicit `IsNewLine: true` marker on a line for
-exactly this case. **The SO side now sets it; the PO side does not.** The SO
-line-add routes pass the rows they just inserted as `newLineIds`
-(`mfg-sales-orders.ts:266-284`, `:8157`, `:8208`), and `composeEdit`
-(`autocount-writeback.ts:696-710`) marks a keyless line `IsNewLine` ONLY when
-every keyless line on the document is one of those declared-new rows — the
-positive evidence the guess would otherwise lack. The PO routes pass nothing, so
-a genuinely new PO line is still refused. Setting `IsNewLine` on a guess re-opens
-the duplicate-append defect one line at a time.
+| document | add a line | remove a line | line photographs |
+| --- | --- | --- | --- |
+| SO | yes, since 2026-08-11 | yes (`Retire`) | yes |
+| PO | yes, since 2026-08-31 | yes (`Retire`) | yes, since 2026-08-31 |
+| DO / GR / IV / PI | yes, since 2026-08-31 | yes (`Retire`) | no |
+
+Photographs travel as KEYS in the outbox payload and are fetched at drain time;
+`photosOf` is document-type agnostic, the drain keys off the OP not the type, and
+`AcSyncService`'s line loop is `dynamic`, so `Photos` becomes `FurtherDescription`
+on a purchase detail exactly as on a sales one. What gated the purchase side was
+evidence, not code: the `\wmetafile8` shape had only been proven on the live book
+for sales orders.
+
+Where it is wired: `queueAcSoEdit` / `queueAcPoEdit` take `newLineIds` and pass
+them to `enqueueEdit`, which forwards them to `composeSoState` /
+`composePoState`; those spread them into `composeEdit`'s options. The SO sites
+are the two line-insert routes in `mfg-sales-orders.ts` (the sofa build and the
+ordinary line); the PO sites are `POST /:id/items` and `POST
+/:id/convert-from-so` in `mfg-purchase-orders.ts`. Search for `newLineIds`
+rather than trusting a line number — this file's citations rotted once already.
+
+**AND THE ADDED LINE LEARNS ITS KEY BACK — since 2026-08-31.** AutoCount assigns
+the DtlKey, so until the ERP is told it, the added row stays `linked_ac_dtlkey =
+NULL` and the NEXT edit of that document is refused by the very guard above (the
+declaration is per-REQUEST; a later edit declares nothing). `/edit` now answers
+with the document's line keys when it added a line — the same `CreatedLines()`
+read-back the CREATE path has always used — and `persistNewLineKeys` stores them.
+
+That store does NOT reuse the create path's by-position zip: the book orders by
+DtlKey, the payload is in ERP line order, and an added line is last in the book's
+order but anywhere in ours. It reasons on the DIFFERENCE — a key the payload did
+not already carry is one this edit created — re-checks the ItemCode, and stores
+nothing at all on any disagreement. `composeEdit` names the ERP rows behind each
+declared-new line as `ErpLineIds` (a list: a sofa build is several rows).
+
+**The service half needs a host deploy** (`deploy-on-host.ps1`). Until it lands,
+an edit answers with no line list and the ERP half is a no-op —
+`docs/bugs/0583-*`.
+
+**The operator presses "Match up lines"** on the held-back row — desktop
+(`pages/AutoCountSync.tsx`) and phone (`mobile/MobileAutoCountSync.tsx`), offered
+only where `reason_kind === 'keyless-line'`. It is a THIRD control beside Send
+again and Send now, and the only one that sends NOTHING: it repairs line
+identity, and the operator still has to save the document, which is why a
+successful match deliberately leaves the row's refusal standing and the answer
+says "Save the document again". The lines it could not match are NAMED in the
+note, not counted (`docs/bugs/0587-*`).
+
+**Under it, `POST /autocount-outbox/relink-lines`** — it reads the document out of the book
+(`/doc-read`, served since 2026-08-15) and stamps the keys onto our keyless
+lines. No host deploy. The matching rules and every refusal are in
+`scm/lib/autocount-relink-lines.ts` with their own tests: a book line another row
+already claims is not a candidate, a repeated code needs Desc2 to separate it
+(prefix-tolerant, the book truncates its own), and an ambiguous line refuses
+ITSELF while the rest still land. It matches on the RAW ERP code today, so a line
+whose code the bindings rewrite is refused rather than mis-assigned —
+`docs/bugs/0585-*`.
+
+### Whose name does a line have? (open, 2026-09-01)
+
+Owner, 2026-08-31: 「我们更改什么就 send 什么…为什么 AutoCount 要回传给我们呢?」 The
+question is a good one. Today a line's only name is the `DtlKey` AutoCount
+assigns, which is why the added line has to learn it back — and why RE-ORDERING
+lines reaches the book not at all: no `Seq` is ever sent, and `AcSyncService`
+never sets one.
+
+The durable answer is his: stamp the ERP's OWN line reference into the book and
+match on that. Then nothing has to come back, and order becomes ours to state.
+
+**It turns on one unmeasured fact** — can a document DETAIL carry a user-defined
+column? The reflected SDK dump cannot say: it was taken `DeclaredOnly`, so an
+inherited `UDF` member on a detail is invisible, and `PerformUDFTransfer(...,
+Boolean isDetail)` is a hint, not a fact. Two settable line fields exist either
+way (`YourPONo`, `Numbering` on `SalesOrderDetail`), both with business meanings
+of their own.
+
+`GET /autocount-outbox/table-columns?table=SODTL&like=UDF_` settles it against
+sys.columns on the live book — read-only, names only. **It needs the host deploy
+that `docs/bugs/0583-*` already needs**, and rides with it.
+
+**Clear-and-rebuild is NOT how to fix one of these**, though AutoCount's own docs
+sample it: it destroys every DtlKey — the identity behind `FromSODtlKey`, the
+transfer chain, the photographs and retirement — and on a TRANSFERRED document
+AutoCount's own troubleshooting page says the source is left pointing at nothing
+and the document goes grey and uneditable.
+
+**A new line also gets a stock location, and only a new one.** An existing line
+with no location omits the `Location` key so the account book keeps the value it
+owns; a new line has no such value, so the document's own warehouse stands in
+(`newLineLocation`, distinct from `defaultLocation`, which applies to every
+line). If neither exists the key is omitted and AutoCount applies its own
+default — not refused: the evidence that a missing Location is fatal comes from
+the CREATE path, which assigns the key unconditionally, and the edit path is
+`ContainsKey`-gated.
 
 ### Retirement — `Retire: true`
 

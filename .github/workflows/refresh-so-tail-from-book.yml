@@ -1,0 +1,40 @@
+name: Refresh SO tail from the quiet book
+
+# Manual. The quiet-book tail sync: refreshes already-imported company-1 SO
+# header fields (processing/delivery dates, remark2/3/4, note, the header
+# delivery-date field) and per-line delivery dates to the FRESH committed
+# snapshot where they DIFFER — the book moved all day while staff worked; the
+# backfills fill blanks only. Docs a person touched are refused. PLAN default;
+# apply=1 + the confirm phrase writes. Convergent: a second run finds nothing.
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "1 to write, else PLAN"
+        required: false
+        default: "0"
+        type: string
+      confirm:
+        description: 'For apply ONLY, type exactly: REFRESH SO TAIL'
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: refresh-so-tail-from-book
+  cancel-in-progress: false
+
+jobs:
+  run-prod:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/refresh-so-tail-from-book.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          CONFIRM: ${{ inputs.confirm }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

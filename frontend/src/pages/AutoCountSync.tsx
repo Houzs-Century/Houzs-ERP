@@ -98,6 +98,8 @@ import {
   AC_SEND_AGAIN_BUSY_LABEL,
   AC_SEND_NOW_LABEL,
   AC_SEND_NOW_BUSY_LABEL,
+  AC_RELINK_LABEL,
+  AC_RELINK_BUSY_LABEL,
   AC_SEND_AGAIN_LABEL,
   AC_TECHNICAL_LABEL,
   acDocTypeLabel,
@@ -384,7 +386,7 @@ function EarlierSends({ sends, maxAttempts }: { sends: AcOutboxRow[]; maxAttempt
  * sentence, rather than in a column where it is a dash on every healthy row.
  */
 function RegisterRow(
-  { group, maxAttempts, sending, note, open, onToggle, historyOpen, onToggleHistory, onSendAgain, onSendNow }: {
+  { group, maxAttempts, sending, note, open, onToggle, historyOpen, onToggleHistory, onSendAgain, onSendNow, onRelink }: {
     group: AcDocGroup;
     maxAttempts: number;
     sending: boolean;
@@ -395,6 +397,7 @@ function RegisterRow(
     onToggleHistory: () => void;
     onSendAgain: () => void;
     onSendNow: () => void;
+    onRelink: () => void;
   },
 ) {
   const row = group.current;
@@ -492,6 +495,23 @@ function RegisterRow(
               onClick={onSendNow}
             >
               {sending ? AC_SEND_NOW_BUSY_LABEL : AC_SEND_NOW_LABEL}
+            </Button>
+          )}
+          {/* THE KEYLESS ROW'S CONTROL, and the only one on this screen that
+              SENDS NOTHING. The copy for this refusal has always ended "the
+              lines have to be matched up against AutoCount, and then the
+              document saved again" — an instruction nobody could carry out.
+              This is it: it reads the document out of the account book and
+              repairs the ERP's own line identity. Saving the document is still
+              what queues a change, which is why the row's refusal stays put. */}
+          {row.reason_kind === 'keyless-line' && (
+            <Button
+              variant="secondary"
+              className="!h-7 shrink-0 !px-2 !text-[11.5px]"
+              disabled={sending}
+              onClick={onRelink}
+            >
+              {sending ? AC_RELINK_BUSY_LABEL : AC_RELINK_LABEL}
             </Button>
           )}
         </Cell>
@@ -773,6 +793,7 @@ export function AutoCountSync() {
       onToggleHistory={() => sendHistory.toggle(g)}
       onSendAgain={() => void requeue.sendAgain(g.current.id)}
       onSendNow={() => void requeue.sendNow(g.current.id)}
+      onRelink={() => void requeue.relink(g.current.id, g.current.doc_type, g.current.doc_no)}
     />
   );
 

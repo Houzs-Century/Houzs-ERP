@@ -32,12 +32,13 @@ export async function queueAcGrnEdit(
   sb: any,
   id: string,
   retire: AcRetiredLine[] = [],
+  newLineIds: string[] = [],   // rows THIS request inserted — docs/bugs/0588
 ): Promise<void> {
   await enqueueEdit(sb, {
     companyId: activeCompanyId(c),
     docType: 'GR',
     docId: id,
-    retire,
+    retire, newLineIds,
     createdBy: c.get('houzsUser')?.id ?? null,
   });
 }

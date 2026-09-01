@@ -1,0 +1,27 @@
+name: Check SO dates + remarks truth (read-only)
+
+# Manual. Value-by-value comparison of the imported/backfilled SO header and
+# line fields against the committed round snapshots (the exact source they were
+# copied from): processing_date, customer_delivery_date, line_delivery_date,
+# sales_exemption_expiry, remark2/3/4, note. Prints MATCH / blank / DIFFER
+# counts per field with samples. SELECTs only; exit 0 for every legitimate
+# verdict.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: check-so-dates-truth
+  cancel-in-progress: false
+
+jobs:
+  check-prod:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/check-so-dates-truth.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

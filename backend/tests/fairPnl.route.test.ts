@@ -30,6 +30,15 @@ class FakeQuery {
   order() { return this; }
   eq(col: string, val: unknown) { this.preds.push((r) => String(r[col]) === String(val)); return this; }
   in(col: string, vals: unknown[]) { const s = new Set(vals.map(String)); this.preds.push((r) => s.has(String(r[col]))); return this; }
+  /* `.not(col,'in','(A,B)')` — the report's scope predicate since 2026-08-31
+     (draft/cancelled out, every other status in). Same shape the real client
+     sends; the fairReport suite's fake carries the twin. */
+  not(col: string, op: string, list: string) {
+    if (op !== 'in') throw new Error(`FakeQuery: unsupported .not(${op})`);
+    const set = new Set(String(list).replace(/^\(|\)$/g, '').split(',').map((x) => x.trim().replace(/^"|"$/g, '')));
+    this.preds.push((r) => !set.has(String(r[col] ?? '')));
+    return this;
+  }
   gte(col: string, val: any) { this.preds.push((r) => r[col] != null && r[col] >= val); return this; }
   lte(col: string, val: any) { this.preds.push((r) => r[col] != null && r[col] <= val); return this; }
   range(from: number, to: number) { this._range = [from, to]; return this; }

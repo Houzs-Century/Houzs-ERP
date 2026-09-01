@@ -82,7 +82,8 @@ import { todayMyt } from '../../vendor/scm/lib/dates';
    verbatim and pins the rest to Asia/Kuala_Lumpur. */
 import { formatDate } from '../../lib/utils';
 import { SoLineCard, emptySoLine, missingRequiredVariants, type SoLineDraft } from '../../vendor/scm/components/SoLineCard';
-import { PaymentsTable, type PaymentDraft } from '../../vendor/scm/components/PaymentsTable';
+import { PaymentsTable, type PaymentDraft, type PaymentCommitResult } from '../../vendor/scm/components/PaymentsTable';
+import { paymentSaveOutcome } from '../../vendor/scm/lib/payment-save-outcome';
 import { completePaymentRetryDraft, consumePaymentRetryNavigationState, readPaymentRetryHandoff, readPaymentRetryNavigationState } from '../../lib/paymentRetryHandoff';
 import { DocumentRelationshipMapModal, DocumentChoiceDialog } from '../../components/scm-v2/DocumentRelationshipMapModal';
 import { useSoRelationshipMap } from './so-relationship-map';
@@ -672,6 +673,8 @@ export const SalesOrderDetail = () => {
      Declared here with the other page state, ABOVE the early returns — same
      rule as payEditing and the print hook. */
   const [unsavedPayments, setUnsavedPayments] = useState(0);
+  /* The card hands this up so Save can book the typed rows (docs/bugs/0584-*). */
+  const commitPaymentsRef = useRef<(() => Promise<PaymentCommitResult>) | null>(null);
   useEffect(() => {
     if (!header) return;
     if (loadedVersionDocRef.current !== header.doc_no) {
@@ -959,8 +962,14 @@ export const SalesOrderDetail = () => {
         },
       }))
       .then(saveHeader)
-      .then(() => {
+      /* AND THE TYPED PAYMENT ROWS — AFTER the document write, deliberately: a
+         payment must not be booked against a save that did not happen. */
+      .then(async () => commitPaymentsRef.current?.() ?? { committed: 0, failed: 0, blocked: [] })
+      .then((pay: PaymentCommitResult) => {
         setSavingOrder(false);
+        /* A row that could not be booked KEEPS THE PAGE OPEN — leaving discards it. */
+        const outcome = paymentSaveOutcome(pay);
+        if (outcome.stay) { setSaveError(outcome.message ?? 'Some payment rows were not saved.'); return; }
         endEditSession();
         // Same exit as Cancel — a completed Save is done with the edit route.
         // (The amendment path below deliberately stays put.)
@@ -2534,6 +2543,7 @@ export const SalesOrderDetail = () => {
         initialDrafts={paymentRetryDrafts}
         onDraftCommitted={paymentRetryCommitted}
         onUnsavedChange={setUnsavedPayments}
+        onRegisterCommitAll={(fn) => { commitPaymentsRef.current = fn; }}
         headerAction={canOfferPayEdit ? (
           <Button variant="ghost" onClick={() => { void togglePayEditing(); }}>
             {payEditing ? <span>Done</span> : <><Pencil {...ICON} /><span>Edit payments</span></>}
@@ -3018,8 +3028,8 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
     const picked = staffList.find((s) => s.id === form.salespersonId);
     const resolvedId = picked?.venueId ?? '';
     if (!resolvedId) return;
-    const resolvedName =
-      (venuesQ.data ?? []).find((v) => v.id === resolvedId)?.name ?? '';
+    const resolvedName = (venuesQ.data ?? []).find((v) => v.id === resolvedId)?.name;
+    if (!resolvedName) return; // 0591: `?? ''` blanked a loaded venue, permanently
     setForm((s) => ({ ...s, venueId: resolvedId, venue: resolvedName }));
   }, [form.salespersonId, staffList, venuesQ.data, form.venueId]);
 

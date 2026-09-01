@@ -167,19 +167,29 @@ test("the zero-cost cutover layers cannot be costed from their own invoice", () 
 
   assert.equal(m.total, 315, "zero-cost cutover layers in the source data");
   assert.equal(m.units, 1068, "units sitting on those layers");
-  assert.equal(m.noInvoicePrice, 289, "their own receipt's invoice ALSO says 0.00");
+  /* RE-PINNED 2026-08-28 against the refreshed price extract, and the change
+     is the EVENT this test was built to catch, revisited on purpose: when the
+     extract was cut on 8-11 only 3 layers resolved to a real invoice price
+     (289 uninvoiced + 23 uncovered = 312 of 315 had no truthful number). The
+     book then received the suppliers' August invoices (PI-0078xx), so 61
+     layers now resolve — including the original three, still asserted below.
+     The refusal stands for the 216+23 that remain unpriced; the 61 resolved
+     are the population a deliberate costing pass may now write, from each
+     layer's OWN invoice, no borrowing. */
+  assert.equal(m.noInvoicePrice, 216, "their own receipt's invoice ALSO says 0.00");
   assert.equal(m.noSourceDoc, 23, "layer has no receipt at all (Src=UNCOVERED)");
-  assert.equal(m.ambiguous, 0);
-  assert.equal(m.resolved.length, 3, "only three layers resolve to a real invoice price");
+  assert.equal(m.ambiguous, 15, "several invoices for the receipt disagree — not guessed");
+  assert.equal(m.resolved.length, 61, "layers resolving to a real invoice price");
 
-  // Provenance for the three, so a human can open the invoices and check.
-  assert.deepEqual(
-    m.resolved.map((r) => `${r.grNo} ${r.piNo} ${r.centi}`).sort(),
-    ["GR-000368 PI-001040 101900", "GR-002122 PI-003419 323900", "GR-003937 PI-006240 28000"],
-  );
+  // The original three provenance rows must survive any re-cut — a human can
+  // still open those invoices and check.
+  const keys = m.resolved.map((r) => `${r.grNo} ${r.piNo} ${r.centi}`);
+  for (const k of ["GR-000368 PI-001040 101900", "GR-002122 PI-003419 323900", "GR-003937 PI-006240 28000"]) {
+    assert.ok(keys.includes(k), `provenance row lost: ${k}`);
+  }
 
-  // 289 + 23 = 312 of 315 have NO truthful number available anywhere on the
+  // 216 + 23 = 239 of 315 still have NO truthful number anywhere on the
   // invoice chain. Costing them would mean borrowing a price off a DIFFERENT
   // document, which is the inference this lane exists to remove.
-  assert.equal(m.noInvoicePrice + m.noSourceDoc, 312);
+  assert.equal(m.noInvoicePrice + m.noSourceDoc, 239);
 });

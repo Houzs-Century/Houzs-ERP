@@ -1391,11 +1391,11 @@ export function composeCreatePo(
  * that has not been rebuilt yet is also safe. This copy exists so the request is
  * never even sent.
  *
- * KNOWN LIMITATION, deliberate: a genuinely new line added to a document that
- * AutoCount already has is refused too, because the ERP cannot yet tell it apart
- * from a legacy line whose key was never stored. AcSyncService accepts an
- * explicit IsNewLine marker for that case and nothing sets it yet — see
- * docs/modules/autocount-writeback.md for what has to be true first.
+ * A GENUINELY NEW LINE IS THE EXCEPTION, DECLARED and never inferred: the route
+ * that inserted the row names it (`newLineIds`), believed only when every OTHER
+ * line already carries a key. Those go out `IsNewLine`, which AcSyncService turns
+ * into AddDetail(). SO 2026-08-11, PO 2026-08-31 — this said "nothing sets it
+ * yet" for the twenty days between them. docs/modules/autocount-writeback.md.
  *
  * LINE REMOVAL IS A RETIREMENT, NEVER AN OMISSION. Two things reach AutoCount as
  * `Retire: true` (Qty = 0, Transferable = false, an `[ERP-CANCELLED]` Desc2
@@ -1511,13 +1511,10 @@ export function composeEdit(
    * did the adding, and even then only when the rest of the document proves the
    * backfill is complete.
    *
-   * Both halves are required:
-   *   1. the caller named this ERP row as one it just inserted, and
-   *   2. EVERY OTHER line on the document already carries a key.
-   *
-   * (2) is what makes (1) safe to believe. A document with other keyless lines
-   * has not been backfilled, so "the rest are keyed" cannot vouch for this one
-   * and the whole edit is refused as before. */
+   * Both halves are required: (1) the caller named this ERP row as one it just
+   * inserted, and (2) EVERY OTHER line already carries a key — which is what
+   * makes (1) safe to believe, because a document with other keyless lines has
+   * not been backfilled and nothing on it can vouch for this one. */
   const declaredNew = opts.newLineIds ?? null;
   if (declaredNew && declaredNew.size && keyless.length) {
     const isDeclared = (i: number) => {
@@ -1527,8 +1524,14 @@ export function composeEdit(
       return id != null && declaredNew.has(String(id));
     };
     if (keyless.every(isDeclared)) {
+      /* `ErpLineIds` names WHO the line is, so persistNewLineKeys can store the
+         key AutoCount assigns it. A LIST: a sofa build is several rows. */
       for (const i of keyless) {
-        (keyed[i] as AcDetail & { IsNewLine?: true }).IsNewLine = true;
+        const d = keyed[i] as AcDetail & { IsNewLine?: true; ErpLineIds?: string[] };
+        d.IsNewLine = true;
+        const ids = collapsed[i].sourceIndexes.map((ix) => lines[ix]?.id)
+          .filter((v): v is string => typeof v === 'string' && v.length > 0);
+        if (ids.length) d.ErpLineIds = ids;
       }
       keyless.length = 0;
     }

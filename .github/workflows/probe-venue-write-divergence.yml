@@ -1,0 +1,46 @@
+name: probe-venue-write-divergence (read-only)
+
+# Why did repair-blanked-venue write one venue name and read back another?
+#
+# Run 33424502242 (APPLY, company 2) reported `APPLIED — 5 order(s)` and then, on
+# a fresh connection, that NONE of the five held the name its own venue id names:
+#   UNEXPECTED 2990-SO-2606-008: venue="2990s PJ" should be "PJ Showroom"
+#
+# The UPDATE and the verify joined the same primary key, so they cannot disagree
+# unless something between them changed the row. This asks what: triggers on the
+# table, which master `venue_id` actually references, and what both candidate
+# masters say about that id. The row is not damaged — "2990s PJ" is the name the
+# audit log shows the order carrying before the blanking — so this asks rather
+# than re-runs.
+#
+# READ-ONLY: SELECTs only, no DDL, no writes, no transaction. Manual trigger,
+# own concurrency group, exit 0 for every legitimate answer.
+on:
+  workflow_dispatch:
+    inputs:
+      company_id:
+        description: 'Company id (2 = 2990)'
+        required: false
+        default: '2'
+        type: string
+
+concurrency:
+  group: probe-venue-write-divergence
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+        working-directory: backend
+      - name: probe (read-only)
+        working-directory: backend
+        env:
+          DATABASE_URL: "${{ secrets.DATABASE_URL }}"
+          COMPANY: "${{ inputs.company_id }}"
+        run: node scripts/probe-venue-write-divergence.mjs

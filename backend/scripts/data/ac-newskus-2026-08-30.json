@@ -1,0 +1,317 @@
+{
+ "_note": "2026-08-30 quiet-book new codes: Winter/ARCTIC/NANO mattress families (family long-name convention) + HL-DT dining pieces. Stock landed 08-29; masters were missing. supplier_sku carries the (30-char-truncated where the book itself truncates) AutoCount code verbatim - docs/bugs/0567.",
+ "company_id": 1,
+ "suppliers": [],
+ "products": [
+  {
+   "code": "HL-DT-GERALD 114/109 (900X1800)",
+   "name": "HL-DT-GERALD 114/109 (900X1800)",
+   "category": "DINING",
+   "branding": "HL",
+   "status": "ACTIVE"
+  },
+  {
+   "code": "HL-DT-LOFTUS 102/112 (800X1500)",
+   "name": "HL-DT-LOFTUS 102/112 (800X1500)",
+   "category": "DINING",
+   "branding": "HL",
+   "status": "ACTIVE"
+  },
+  {
+   "code": "HL-DT-LOFTUS 102/112 (900X1800)",
+   "name": "HL-DT-LOFTUS 102/112 (900X1800)",
+   "category": "DINING",
+   "branding": "HL",
+   "status": "ACTIVE"
+  },
+  {
+   "code": "DUNLOPILLO COOLSILK 2.0 ARCTIC DREAM MATT (S)",
+   "name": "DUNLOPILLO COOLSILK 2.0 ARCTIC DREAM MATT (S)",
+   "category": "MATTRESS",
+   "branding": "DUNLOPILLO",
+   "status": "ACTIVE"
+  },
+  {
+   "code": "DUNLOPILLO COOLSILK 2.0 ARCTIC DREAM MATT (SS)",
+   "name": "DUNLOPILLO COOLSILK 2.0 ARCTIC DREAM MATT (SS)",
+   "category": "MATTRESS",
+   "branding": "DUNLOPILLO",
+   "status": "ACTIVE"
+  },
+  {
+   "code": "DUNLOPILLO COOLSILK 2.0 NANO BREEZE MATT (S)",
+   "name": "DUNLOPILLO COOLSILK 2.0 NANO BREEZE MATT (S)",
+   "category": "MATTRESS",
+   "branding": "DUNLOPILLO",
+   "status": "ACTIVE"
+  },
+  {
+   "code": "DUNLOPILLO COOLSILK 2.0 NANO BREEZE MATT (SS)",
+   "name": "DUNLOPILLO COOLSILK 2.0 NANO BREEZE MATT (SS)",
+   "category": "MATTRESS",
+   "branding": "DUNLOPILLO",
+   "status": "ACTIVE"
+  },
+  {
+   "code": "DUNLOPILLO COOLSILK 2.0 NANO-G WINTER FLOW MATT (SK)",
+   "name": "DUNLOPILLO COOLSILK 2.0 NANO-G WINTER FLOW MATT (SK)",
+   "category": "MATTRESS",
+   "branding": "DUNLOPILLO",
+   "status": "ACTIVE"
+  },
+  {
+   "code": "DUNLOPILLO COOLSILK 2.0 ARCTIC DREAM MATT (K)",
+   "name": "DUNLOPILLO COOLSILK 2.0 ARCTIC DREAM MATT (K)",
+   "category": "MATTRESS",
+   "branding": "DUNLOPILLO",
+   "status": "ACTIVE"
+  },
+  {
+   "code": "DUNLOPILLO COOLSILK 2.0 ARCTIC DREAM MATT (Q)",
+   "name": "DUNLOPILLO COOLSILK 2.0 ARCTIC DREAM MATT (Q)",
+   "category": "MATTRESS",
+   "branding": "DUNLOPILLO",
+   "status": "ACTIVE"
+  },
+  {
+   "code": "DUNLOPILLO COOLSILK 2.0 NANO BREEZE MATT (K)",
+   "name": "DUNLOPILLO COOLSILK 2.0 NANO BREEZE MATT (K)",
+   "category": "MATTRESS",
+   "branding": "DUNLOPILLO",
+   "status": "ACTIVE"
+  },
+  {
+   "code": "DUNLOPILLO COOLSILK 2.0 NANO BREEZE MATT (Q)",
+   "name": "DUNLOPILLO COOLSILK 2.0 NANO BREEZE MATT (Q)",
+   "category": "MATTRESS",
+   "branding": "DUNLOPILLO",
+   "status": "ACTIVE"
+  },
+  {
+   "code": "DUNLOPILLO COOLSILK 2.0 NANO-G WINTER DREAM MATT (K)",
+   "name": "DUNLOPILLO COOLSILK 2.0 NANO-G WINTER DREAM MATT (K)",
+   "category": "MATTRESS",
+   "branding": "DUNLOPILLO",
+   "status": "ACTIVE"
+  },
+  {
+   "code": "DUNLOPILLO COOLSILK 2.0 NANO-G WINTER DREAM MATT (Q)",
+   "name": "DUNLOPILLO COOLSILK 2.0 NANO-G WINTER DREAM MATT (Q)",
+   "category": "MATTRESS",
+   "branding": "DUNLOPILLO",
+   "status": "ACTIVE"
+  },
+  {
+   "code": "DUNLOPILLO COOLSILK 2.0 NANO-G WINTER FLOW MATT (K)",
+   "name": "DUNLOPILLO COOLSILK 2.0 NANO-G WINTER FLOW MATT (K)",
+   "category": "MATTRESS",
+   "branding": "DUNLOPILLO",
+   "status": "ACTIVE"
+  },
+  {
+   "code": "DUNLOPILLO COOLSILK 2.0 NANO-G WINTER FLOW MATT (Q)",
+   "name": "DUNLOPILLO COOLSILK 2.0 NANO-G WINTER FLOW MATT (Q)",
+   "category": "MATTRESS",
+   "branding": "DUNLOPILLO",
+   "status": "ACTIVE"
+  },
+  {
+   "code": "DUNLOPILLO COOLSILK 2.0 NANO-G WINTER FROST MATT (K)",
+   "name": "DUNLOPILLO COOLSILK 2.0 NANO-G WINTER FROST MATT (K)",
+   "category": "MATTRESS",
+   "branding": "DUNLOPILLO",
+   "status": "ACTIVE"
+  },
+  {
+   "code": "DUNLOPILLO COOLSILK 2.0 NANO-G WINTER FROST MATT (Q)",
+   "name": "DUNLOPILLO COOLSILK 2.0 NANO-G WINTER FROST MATT (Q)",
+   "category": "MATTRESS",
+   "branding": "DUNLOPILLO",
+   "status": "ACTIVE"
+  },
+  {
+   "code": "DUNLOPILLO COOLSILK 2.0 NANO-G WINTER REST MATT (K)",
+   "name": "DUNLOPILLO COOLSILK 2.0 NANO-G WINTER REST MATT (K)",
+   "category": "MATTRESS",
+   "branding": "DUNLOPILLO",
+   "status": "ACTIVE"
+  },
+  {
+   "code": "DUNLOPILLO COOLSILK 2.0 NANO-G WINTER REST MATT (Q)",
+   "name": "DUNLOPILLO COOLSILK 2.0 NANO-G WINTER REST MATT (Q)",
+   "category": "MATTRESS",
+   "branding": "DUNLOPILLO",
+   "status": "ACTIVE"
+  },
+  {
+   "code": "DUNLOPILLO COOLSILK 2.0 NANO-G WINTER SLEEP MATT (K)",
+   "name": "DUNLOPILLO COOLSILK 2.0 NANO-G WINTER SLEEP MATT (K)",
+   "category": "MATTRESS",
+   "branding": "DUNLOPILLO",
+   "status": "ACTIVE"
+  },
+  {
+   "code": "DUNLOPILLO COOLSILK 2.0 NANO-G WINTER SLEEP MATT (Q)",
+   "name": "DUNLOPILLO COOLSILK 2.0 NANO-G WINTER SLEEP MATT (Q)",
+   "category": "MATTRESS",
+   "branding": "DUNLOPILLO",
+   "status": "ACTIVE"
+  }
+ ],
+ "bindings": [
+  {
+   "item_code": "HL-DT-GERALD 114/109 (900X1800)",
+   "supplier_code": "400-H002",
+   "supplier_sku": "HL-DT-GERALD 114/109 (900X1800",
+   "category": "DINING",
+   "is_main": true
+  },
+  {
+   "item_code": "HL-DT-LOFTUS 102/112 (800X1500)",
+   "supplier_code": "400-H002",
+   "supplier_sku": "HL-DT-LOFTUS 102/112 (800X1500",
+   "category": "DINING",
+   "is_main": true
+  },
+  {
+   "item_code": "HL-DT-LOFTUS 102/112 (900X1800)",
+   "supplier_code": "400-H002",
+   "supplier_sku": "HL-DT-LOFTUS 102/112 (900X1800",
+   "category": "DINING",
+   "is_main": true
+  },
+  {
+   "item_code": "DUNLOPILLO COOLSILK 2.0 ARCTIC DREAM MATT (S)",
+   "supplier_code": "400-D001",
+   "supplier_sku": "DL-CS2 ARCTIC DREAM (S)",
+   "category": "MATTRESS",
+   "is_main": true
+  },
+  {
+   "item_code": "DUNLOPILLO COOLSILK 2.0 ARCTIC DREAM MATT (SS)",
+   "supplier_code": "400-D001",
+   "supplier_sku": "DL-CS2 ARCTIC DREAM (SS)",
+   "category": "MATTRESS",
+   "is_main": true
+  },
+  {
+   "item_code": "DUNLOPILLO COOLSILK 2.0 NANO BREEZE MATT (S)",
+   "supplier_code": "400-D001",
+   "supplier_sku": "DL-CS2 NANO BREEZE (S)",
+   "category": "MATTRESS",
+   "is_main": true
+  },
+  {
+   "item_code": "DUNLOPILLO COOLSILK 2.0 NANO BREEZE MATT (SS)",
+   "supplier_code": "400-D001",
+   "supplier_sku": "DL-CS2 NANO BREEZE (SS)",
+   "category": "MATTRESS",
+   "is_main": true
+  },
+  {
+   "item_code": "DUNLOPILLO COOLSILK 2.0 NANO-G WINTER FLOW MATT (SK)",
+   "supplier_code": "400-D001",
+   "supplier_sku": "DL-CS2 NN-WINTER FLOW MATT(SK)",
+   "category": "MATTRESS",
+   "is_main": true
+  },
+  {
+   "item_code": "DUNLOPILLO COOLSILK 2.0 ARCTIC DREAM MATT (K)",
+   "supplier_code": "400-D001",
+   "supplier_sku": "DL-CS2 ARCTIC DREAM (K)",
+   "category": "MATTRESS",
+   "is_main": true
+  },
+  {
+   "item_code": "DUNLOPILLO COOLSILK 2.0 ARCTIC DREAM MATT (Q)",
+   "supplier_code": "400-D001",
+   "supplier_sku": "DL-CS2 ARCTIC DREAM (Q)",
+   "category": "MATTRESS",
+   "is_main": true
+  },
+  {
+   "item_code": "DUNLOPILLO COOLSILK 2.0 NANO BREEZE MATT (K)",
+   "supplier_code": "400-D001",
+   "supplier_sku": "DL-CS2 NANO BREEZE (K)",
+   "category": "MATTRESS",
+   "is_main": true
+  },
+  {
+   "item_code": "DUNLOPILLO COOLSILK 2.0 NANO BREEZE MATT (Q)",
+   "supplier_code": "400-D001",
+   "supplier_sku": "DL-CS2 NANO BREEZE (Q)",
+   "category": "MATTRESS",
+   "is_main": true
+  },
+  {
+   "item_code": "DUNLOPILLO COOLSILK 2.0 NANO-G WINTER DREAM MATT (K)",
+   "supplier_code": "400-D001",
+   "supplier_sku": "DL-CS2 NN-WINTER DREAM MATT (K",
+   "category": "MATTRESS",
+   "is_main": true
+  },
+  {
+   "item_code": "DUNLOPILLO COOLSILK 2.0 NANO-G WINTER DREAM MATT (Q)",
+   "supplier_code": "400-D001",
+   "supplier_sku": "DL-CS2 NN-WINTER DREAM MATT (Q",
+   "category": "MATTRESS",
+   "is_main": true
+  },
+  {
+   "item_code": "DUNLOPILLO COOLSILK 2.0 NANO-G WINTER FLOW MATT (K)",
+   "supplier_code": "400-D001",
+   "supplier_sku": "DL-CS2 NN-WINTER FLOW MATT (K)",
+   "category": "MATTRESS",
+   "is_main": true
+  },
+  {
+   "item_code": "DUNLOPILLO COOLSILK 2.0 NANO-G WINTER FLOW MATT (Q)",
+   "supplier_code": "400-D001",
+   "supplier_sku": "DL-CS2 NN-WINTER FLOW MATT (Q)",
+   "category": "MATTRESS",
+   "is_main": true
+  },
+  {
+   "item_code": "DUNLOPILLO COOLSILK 2.0 NANO-G WINTER FROST MATT (K)",
+   "supplier_code": "400-D001",
+   "supplier_sku": "DL-CS2 NN-WINTER FROST MATT (K",
+   "category": "MATTRESS",
+   "is_main": true
+  },
+  {
+   "item_code": "DUNLOPILLO COOLSILK 2.0 NANO-G WINTER FROST MATT (Q)",
+   "supplier_code": "400-D001",
+   "supplier_sku": "DL-CS2 NN-WINTER FROST MATT (Q",
+   "category": "MATTRESS",
+   "is_main": true
+  },
+  {
+   "item_code": "DUNLOPILLO COOLSILK 2.0 NANO-G WINTER REST MATT (K)",
+   "supplier_code": "400-D001",
+   "supplier_sku": "DL-CS2 NN-WINTER REST MATT (K)",
+   "category": "MATTRESS",
+   "is_main": true
+  },
+  {
+   "item_code": "DUNLOPILLO COOLSILK 2.0 NANO-G WINTER REST MATT (Q)",
+   "supplier_code": "400-D001",
+   "supplier_sku": "DL-CS2 NN-WINTER REST MATT (Q)",
+   "category": "MATTRESS",
+   "is_main": true
+  },
+  {
+   "item_code": "DUNLOPILLO COOLSILK 2.0 NANO-G WINTER SLEEP MATT (K)",
+   "supplier_code": "400-D001",
+   "supplier_sku": "DL-CS2 NN-WINTER SLEEP MATT (K",
+   "category": "MATTRESS",
+   "is_main": true
+  },
+  {
+   "item_code": "DUNLOPILLO COOLSILK 2.0 NANO-G WINTER SLEEP MATT (Q)",
+   "supplier_code": "400-D001",
+   "supplier_sku": "DL-CS2 NN-WINTER SLEEP MATT (Q",
+   "category": "MATTRESS",
+   "is_main": true
+  }
+ ]
+}

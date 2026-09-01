@@ -128,9 +128,22 @@ export const PoLineCard = ({
   hidePoFields = false,
   identityReadOnly = false,
   soLinkOptions,
+  photos = null,
 }: {
   index: number;
   line: PoLineDraft;
+  /* THE PHOTO RAIL, and it is a RENDER SLOT rather than data.
+     Owner 2026-08-28: 「还是不能添加照片啊」. The Sales Order's line card has had
+     one since PR-F; this card was written as "the same SHAPE as SoLineCard" —
+     a copy of the layout, not a use of the component — so the rail SoLineCard
+     grew later never appeared here. #2759 had already given the server the
+     upload and delete routes; only the control was missing.
+
+     Passed as a node instead of props because the strip needs the document id,
+     the mutation helpers and the cohort gate, none of which this card has any
+     business knowing. Null = no rail, which is what every pre-existing caller
+     (the PI and PC cards) keeps getting. */
+  photos?: React.ReactNode;
   currency: string;
   /** Picked supplier id ('' when none yet). Gates the binding-filtered pickers. */
   supplierId: string;
@@ -661,6 +674,11 @@ export const PoLineCard = ({
         </label>
       </div>
       )}
+
+      {/* PHOTOS — last, because it is reference material rather than a field
+          the operator tabs through, and because a rail above the dates would
+          push the thing they came here to edit below the fold. */}
+      {photos}
     </div>
   );
 };

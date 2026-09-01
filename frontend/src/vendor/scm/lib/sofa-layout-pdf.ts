@@ -30,6 +30,7 @@ import {
   type Cell,
   type Depth,
 } from '@2990s/shared';
+import { cornerCompositeFromCells, drawCornerSofa } from './sofa-corner-pdf';
 
 type JsPdf = import('jspdf').jsPDF;
 
@@ -48,12 +49,12 @@ export function drawSofaLayout(
   y: number,
   maxW: number,
   maxH: number,
-  /** Real compartment photos keyed by module code ("2A(RHF)" → data-URL), the
-   *  same per-code hero photos POS Custom Builder uses. When a cell's code has a
-   *  photo it is drawn in place of the schematic rectangle; a code with no photo
-   *  (or a failed fetch) falls back to the drawn schematic, so this is safe to
-   *  omit and safe to pass partially. Optional because ABSENCE = draw the
-   *  schematic = the prior, always-correct behaviour. */
+  /** The module artwork keyed by module code ("2A(RHF)" → PNG data-URL) —
+   *  the SAME files POS Custom Builder tiles from, already cropped to their
+   *  silhouette by sofa-compartment-art.ts. A code with no art (or a failed
+   *  fetch, or one of the SVG-only power variants) falls back to the drawn
+   *  schematic, so this is safe to omit and safe to pass partially. Optional
+   *  because ABSENCE = draw the schematic = the prior behaviour. */
   photos?: Record<string, string>,
 ): number {
   if (!Array.isArray(cells) || cells.length === 0) return 0;
@@ -79,6 +80,26 @@ export function drawSofaLayout(
   const ox = x + Math.max(0, (maxW - sofaW) / 2);
   const oy = y;
 
+  /* ── A CORNER IS ONE SHAPE, NOT THREE TILES ──────────────────────────────
+     POS's rule, ported with it: "A corner sofa (corner + 2/3-seater + 1-seater
+     chaise) has NO single composite PNG, and tiling the three per-module PNGs
+     leaves a STEP + an INTERNAL ARM." On a supplier's sheet that step reads as a
+     real gap and that arm as a real arm — on the one document whose job is to
+     stop the sofa being built in the wrong pieces.
+
+     Detection returns null for anything that is not a clean three-piece L, so
+     every other arrangement falls through to the per-module path below and
+     nothing that used to work changes. */
+  const corner = cornerCompositeFromCells(cells, depth);
+  if (corner) {
+    /* The detector reports the group's rotation and POS CSS-rotates the SVG for
+       it; here a quarter turn simply swaps the box the natural-frame drawing is
+       scaled into, which is the same thing for a shape drawn from its own
+       geometry rather than from a bitmap. */
+    const quarter = ((Math.round(corner.rot / 90) % 4) + 4) % 4;
+    const swap = quarter === 1 || quarter === 3;
+    drawCornerSofa(doc, corner.geo, ox, oy, swap ? sofaH : sofaW, swap ? sofaW : sofaH);
+  } else
   // ── Cells: each module = a cream SEAT with a tan BACKREST strip on its back
   //    edge (the side away from the TV — the whole sofa faces the TV at the
   //    bottom/+y). Faithful positions → the L-shape notch + LHF/RHF come out
@@ -100,10 +121,27 @@ export function drawSofaLayout(
     // (or a failed image) still renders and a newly-uploaded photo appears
     // automatically. addImage can throw on a malformed data-URL — swallow it and
     // fall through to the schematic rather than aborting the whole PDF.
-    const photo = photos?.[c.moduleId];
-    if (photo) {
+    /* THE MODULE'S OWN ART, placed the way POS places it (2026-08-28, owner:
+       「跟着 POS 系统的做法做」). Two details are load-bearing and both come from
+       apps/pos/src/components/SofaCellsPreview.tsx:
+
+         · the art is CROPPED TO ITS SILHOUETTE before it gets here
+           (sofa-compartment-art.ts). The files are 1024² with the drawing padded
+           inside, so filling this rect with the raw file renders every module
+           small with gaps between them — POS's own "2WC card bug".
+         · the rect is the ROTATED footprint, and the rotation is already baked
+           into the bitmap, because jsPDF has no rotate-about-centre this repo can
+           rely on. POS rotates the DOM box instead; same result.
+
+       Codes with no PNG twin — the (P)/(R)/(L) power variants and Console-WC —
+       are absent from the map and fall through to the schematic below. POS does
+       not tile those either; it draws them through renderSeamlessSofa, which is
+       not ported yet. A drawn cell is visibly a drawing; a blank one would look
+       like a missing module. */
+    const art = photos?.[c.moduleId];
+    if (art) {
       try {
-        doc.addImage(photo, px, py, w, h);
+        doc.addImage(art, px, py, w, h);
         continue;
       } catch {
         /* fall through to the drawn schematic */

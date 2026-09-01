@@ -167,6 +167,16 @@ is no longer receivable. The customer side never changes: AR is knocked off by
 the full gross at the swipe (owner: 顾客还款确定到时是记录6000哦，不然knock off
 不到). A fee-free line confirms with no entry at all.
 
+**And the way back out (2026-08-29, the owner's 上传了能cancel 掉? made the gap
+loud): POST /settlement/rows/:id/unconfirm** — the door the ignore refusal has
+always pointed at, now with a button behind it (an Undo beside every "done"
+row on /scm/merchant-recon). It reverses the `SETTLE-<row id>` fee entry
+(never deletes), releases the payment links so the money is claimable again,
+and sends the row back to NEEDS_CONFIRM for a fresh decision — never silently
+back to matched. REFUSED while the statement has recorded receipts: undo those
+credits first (they have their own button). `unconfirmSettlementRow` in
+acc/settlement.ts; contract in tests/settlementRoutes.test.ts.
+
 **One statement, one or more credits** (owner, same day: 我实际收到的钱可能是多笔
 的哦). Hong Leong pays a multi-day statement one credit per trading day, Maybank
 credits each trading date separately, and Public Bank goes the other way — one

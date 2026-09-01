@@ -47,9 +47,11 @@ import {
 } from "../../components/DetailLayout";
 import {
   useMfgSalesOrderDetail,
+  useSoLineCoverage,
   useUpdateMfgSalesOrderStatus,
   useSalesOrderPayments,
   useSalesOrderAuditLog,
+  type SoLineCoverage,
 } from "../../vendor/scm/lib/sales-order-queries";
 /* The real audit trail — the same drawer and the same vocabulary the V1 detail
    page uses, so History means one thing across both (owner 2026-08-13). */
@@ -551,6 +553,10 @@ function SalesOrderDetailV2ReadOnly() {
   const navigate = useNavigate();
 
   const detail = useMfgSalesOrderDetail(docNo ?? null);
+  /* Live stock coverage is fetched SEPARATELY so this page paints on the fast
+     detail response (stored verdict, null live fields) and never blocks on it;
+     the badge + source-PO chips upgrade in place when this arrives. */
+  const coverage = useSoLineCoverage(docNo ?? null);
   const updateStatus = useUpdateMfgSalesOrderStatus();
   const { nameOf: salespersonNameOf } = useStaffLookup();
   const notify = useNotify();
@@ -568,10 +574,33 @@ function SalesOrderDetailV2ReadOnly() {
   ]);
 
   const salesOrder = (detail.data as { salesOrder?: SoHeader } | undefined)?.salesOrder ?? null;
-  const items: SoItem[] =
-    ((detail.data as { items?: SoItem[] } | undefined)?.items ?? []).filter(
-      (l) => !l.cancelled
-    );
+  // Coverage keyed by line id; empty until the async coverage query returns (or
+  // when the endpoint 404s on an older backend). Overlaid onto the lines below.
+  const coverageById = useMemo(() => {
+    const m = new Map<string, SoLineCoverage>();
+    for (const c of coverage.data?.coverage ?? []) m.set(c.id, c);
+    return m;
+  }, [coverage.data]);
+  const items: SoItem[] = useMemo(
+    () =>
+      ((detail.data as { items?: SoItem[] } | undefined)?.items ?? [])
+        .filter((l) => !l.cancelled)
+        .map((l) => {
+          // Overlay live coverage in place when the entry exists; otherwise keep
+          // the detail's own stored values (fast response / no coverage yet).
+          const cov = coverageById.get(l.id);
+          if (!cov) return l;
+          return {
+            ...l,
+            stock_state: cov.stock_state,
+            coverage_po: cov.coverage_po,
+            coverage_eta: cov.coverage_eta,
+            ready_source_pos: cov.ready_source_pos,
+            stock_status: cov.stock_status_effective ?? l.stock_status,
+          };
+        }),
+    [detail.data, coverageById]
+  );
 
   const st = salesOrder ? statusFor(salesOrder.status) : null;
 

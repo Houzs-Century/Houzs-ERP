@@ -1,0 +1,89 @@
+name: repair-orphan-sofa-codes
+
+# Purchase-side document lines carrying an internal item code that no product
+# row has.
+#
+# WHAT THE OWNER SAW. A purchase order for a HOK sofa showed the internal code
+# `5540-1S` while its own sales order showed `8030-*`, and the PO did not link
+# back to that order at all (HC-SO-013389). Asked on 2026-08-31 whether the two
+# are the same sofa, he said 对相同的 — one physical product. His rule:
+# 内部件号 SO 和 PO 必须一样，不同的只是供应商 SKU 那一栏.
+#
+# WHY. lib/parse-sofa.mjs holds the ERP's own statement of that identity —
+# SOFA_MODEL_ALIAS = { 5530: 9028, 5536: 9058, 5537: 8030, 5540: 8030 } — and
+# every sofa path applies it, so the catalog and the sales orders spell those
+# four models by their ALIAS. data/autocount-erp-mapping-1561.csv did not: it
+# mapped `HOK-5540 SOFA` onto `5540-1S`, a code scm.mfg_products never carried,
+# and the importers' silent placeholder fallback wrote it. item_code has NO
+# foreign key to scm.mfg_products, so nothing refused it.
+#
+# The CSV is fixed and both importers now REFUSE a non-catalog code, so no new
+# ones appear. This repairs the rows already in production.
+#
+# item_code ONLY, on purchase_order_items / grn_items / purchase_invoice_items.
+# supplier_sku is left alone on purpose — it holds the book's own
+# `HOK-5540 SOFA`, which is the column that is SUPPOSED to differ. No money, no
+# quantity, no stock movement, no lot. The verification re-reads every one of
+# those columns per row on a FRESH connection and fails if any moved.
+#
+# mode=plan prints the mapping-file audit, the exact rows, the per-table census
+# and a sweep over every scm column that could still name the orphan code. It
+# writes nothing.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Database"
+        required: true
+        default: "prod"
+        type: choice
+        options: [prod, staging]
+      mode:
+        description: "plan (writes nothing) or apply"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: 'apply ONLY: type exactly — I HAVE REVIEWED THE ORPHAN CODE PLAN'
+        required: false
+        default: ""
+        type: string
+      company:
+        description: "company_id (1 = HOUZS CENTURY, 2 = 2990)"
+        required: false
+        default: "1"
+        type: string
+
+# Its own group, never the deploy's: a repair must not queue behind — or
+# displace — a release.
+concurrency:
+  group: repair-orphan-sofa-codes
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm ci
+      - name: Repair orphan sofa codes (${{ inputs.mode }})
+        env:
+          DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY: ${{ inputs.company }}
+        # pipefail, or `tee` swallows the exit code and a half-finished run reports success
+        run: |
+          set -o pipefail
+          node scripts/repair-orphan-sofa-codes.mjs | tee orphan-sofa-codes.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: repair-orphan-sofa-codes-${{ inputs.mode }}
+          path: backend/orphan-sofa-codes.txt
+          retention-days: 90

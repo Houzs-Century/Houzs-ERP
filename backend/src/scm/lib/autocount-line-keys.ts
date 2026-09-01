@@ -16,6 +16,10 @@ import type { AcCreatedLine } from '../../services/autocount-writeback';
    that imports this one. The table union is the real contract — writing
    `string` here would let a caller name a table with no `linked_ac_dtlkey`. */
 import type { AcLineTable } from './autocount-outbox';
+/* VALUE import, not type-only: the four downstream item tables are read off it
+   rather than re-listed. No cycle — autocount-convert-lines imports types from
+   services/autocount-writeback, never from this file. */
+import { DOWNSTREAM } from './autocount-convert-lines';
 
 /**
  * The payload and row fields this function reads, named structurally rather than
@@ -165,4 +169,151 @@ export async function persistLineKeys(
     // eslint-disable-next-line no-console
     console.error(`${label}: not stored:`, e instanceof Error ? e.message : String(e));
   }
+}
+
+/**
+ * Store the key AutoCount assigned to a line the ERP ADDED on an edit.
+ *
+ * WHY THIS IS A SECOND FUNCTION AND NOT A FLAG ON THE FIRST. `persistLineKeys`
+ * zips the whole document by position, which is sound for a CREATE (payload
+ * order IS creation order IS DtlKey order) and unsound for an EDIT: the book
+ * orders by DtlKey, which is the document's ORIGINAL insertion order, while the
+ * payload is in ERP line order — an added line can sit anywhere in ours and is
+ * always last in the book's. Zipping those two would attach a key to the wrong
+ * line, and a WRONG key does not fail: it silently edits somebody else's line in
+ * a live account book on the next save.
+ *
+ * So this one does not zip the document at all. It takes the keys the payload
+ * ALREADY carried (`knownKeys`) and the lines it declared as new, and reasons
+ * only about the difference: the book's keys that were not in the payload are
+ * the ones this edit created. AddDetail is called in payload order and AutoCount
+ * hands out ascending keys, so the Nth unknown key belongs to the Nth declared
+ * line — and that is re-checked against the ItemCode before anything is written.
+ *
+ * FAILS CLOSED. Any disagreement leaves the rows keyless, which the next edit
+ * refuses loudly. Never throws; never changes the dispatch outcome.
+ *
+ * Bought on HC-SO-013394, 2026-08-31: one added line, its key never learned, and
+ * every later edit of that order held back with "the ERP cannot tell which lines
+ * AutoCount already has".
+ */
+export interface NewLineKeyTarget {
+  table: AcLineTable;
+  /** ERP row ids per declared-new line, in payload order (a sofa build is many). */
+  newIds: string[][];
+  /** The AutoCount ItemCode sent for each declared-new line, same order. */
+  newCodes: string[];
+  /** Every DtlKey the payload already carried — the book lines we did NOT add. */
+  knownKeys: number[];
+}
+
+export async function persistNewLineKeys(
+  sb: Sb,
+  row: LineKeyRowLabel,
+  target: NewLineKeyTarget,
+  lines: AcCreatedLine[],
+): Promise<void> {
+  const label = `[autocount-outbox] ${row.op} ${row.doc_no} new line keys`;
+  try {
+    if (!target.newIds.length) return;
+    /* An AcSyncService built before 2026-08-31 answers an edit with no lines at
+       all. That is not an error and not a degradation to shout about — it is the
+       old exe, and the behaviour is exactly what it was before this existed. */
+    if (!lines.length) return;
+
+    const known = new Set(target.knownKeys.map((k) => Number(k)));
+    const fresh = lines
+      .filter((l) => Number.isFinite(Number(l.DtlKey)) && !known.has(Number(l.DtlKey)))
+      .sort((a, b) => Number(a.DtlKey) - Number(b.DtlKey));
+
+    if (fresh.length !== target.newIds.length) {
+      // eslint-disable-next-line no-console
+      console.error(
+        `${label}: NOT STORED — the ERP added ${target.newIds.length} line(s) and the account book `
+        + `reports ${fresh.length} it did not already have. Storing by position would be a guess.`,
+      );
+      return;
+    }
+
+    const norm = (s: string | null | undefined) => String(s ?? '').trim().toUpperCase();
+    for (let i = 0; i < fresh.length; i += 1) {
+      const got = norm(fresh[i].ItemCode);
+      const want = norm(target.newCodes[i]);
+      if (got && want && got !== want) {
+        // eslint-disable-next-line no-console
+        console.error(
+          `${label}: NOT STORED — the new line at position ${i + 1} is '${fresh[i].ItemCode}' in `
+          + `AutoCount but '${target.newCodes[i]}' in the ERP.`,
+        );
+        return;
+      }
+    }
+
+    for (let i = 0; i < fresh.length; i += 1) {
+      for (const id of target.newIds[i]) {
+        const { error } = await sb.from(target.table)
+          .update({ linked_ac_dtlkey: fresh[i].DtlKey })
+          .eq('id', id);
+        if (error) {
+          // eslint-disable-next-line no-console
+          console.error(`${label}: partial — row ${id} failed: ${error.message}`);
+        }
+      }
+    }
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error(`${label}: not stored:`, e instanceof Error ? e.message : String(e));
+  }
+}
+
+/* CORRECTED 2026-08-31. This said "two entries, not six", on the reasoning that
+ * only the sales order and the purchase order have a route that inserts a line
+ * by hand — the others being built by conversion. That reasoning was never
+ * checked, and it is wrong: every one of the six carries a `POST /:id/items`.
+ * The owner asked for the remaining four to be wired (「全部都做完」), and this is
+ * the map they need.
+ *
+ * STILL NOT A SECOND COPY of "the documents this ERP syncs with AutoCount" —
+ * that question has one home (`REQUEUE_DOC_TYPES`) and `audit:duplicated-
+ * decisions` refuses another. The four downstream tables are DERIVED from
+ * `DOWNSTREAM`, which already had to name each one's item table for the
+ * conversions; only the two the ERP originates are written here. */
+export const NEW_LINE_TABLE: Record<string, AcLineTable> = {
+  SO: 'mfg_sales_order_items',
+  PO: 'purchase_order_items',
+  ...Object.fromEntries(
+    Object.entries(DOWNSTREAM).map(([docType, spec]) => [docType, spec.itemTable]),
+  ),
+};
+
+/**
+ * What an edit's declared-new lines were, read off the payload the edit SENT.
+ *
+ * Derived rather than carried: the body already states which details were
+ * declared new (`IsNewLine`), which ERP rows sit behind each (`ErpLineIds`, put
+ * there by composeEdit) and which keys the document already held. Returns null
+ * when the edit added nothing, which is almost every edit.
+ */
+export function newLineTargetOf(docType: string, payload: { body?: unknown }): NewLineKeyTarget | null {
+  const table = (NEW_LINE_TABLE as Record<string, AcLineTable | undefined>)[String(docType).toUpperCase()];
+  if (!table) return null;
+  const body = (payload.body ?? {}) as { Lines?: unknown };
+  const lines = Array.isArray(body.Lines) ? (body.Lines as Array<Record<string, unknown>>) : [];
+  const newIds: string[][] = [];
+  const newCodes: string[] = [];
+  const knownKeys: number[] = [];
+  for (const l of lines) {
+    const key = Number(l.DtlKey);
+    if (Number.isFinite(key) && key > 0) knownKeys.push(key);
+    if (l.IsNewLine !== true) continue;
+    const ids = Array.isArray(l.ErpLineIds)
+      ? (l.ErpLineIds as unknown[]).filter((v): v is string => typeof v === 'string' && !!v)
+      : [];
+    /* A declared-new line with no ids cannot be stored back, and storing the
+       OTHERS by position would then be a guess — refuse the whole batch. */
+    if (!ids.length) return null;
+    newIds.push(ids);
+    newCodes.push(String(l.ItemCode ?? ''));
+  }
+  return newIds.length ? { table, newIds, newCodes, knownKeys } : null;
 }

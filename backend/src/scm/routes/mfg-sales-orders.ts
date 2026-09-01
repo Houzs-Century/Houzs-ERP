@@ -30,7 +30,7 @@ import {
 export { deriveCountryFromState, deriveSalesLocationFromState };
 import { specialDeliveryFeesForLines, reconstructDeliveryRuleLines } from '../lib/special-delivery';
 import { soHasDownstream } from '../lib/downstream-lock';
-import { dateOrNull, isDateColumn } from '../lib/date-coerce';
+import { dateOrNull, effectiveDateAfterPatch, isDateColumn } from '../lib/date-coerce';
 import { soDocNosWithDownstream } from '../lib/downstream-lock'; // own line: autocountWritebackWiring asserts the import above verbatim
 import { doNosBySalesOrder, type DeliveryOrderNoRow } from '../lib/so-delivery-order-nos';
 import { soDownstreamRefs, NO_SO_DOWNSTREAM_REFS } from '../lib/downstream-doc-refs';
@@ -141,7 +141,7 @@ import { SO_FINANCE_KEYS, SO_ITEM_FINANCE_KEYS, stripAuditFinance } from '../lib
 import { resolveSalesScopeIds, salesDocOutOfScope, resolveCallerStaffId } from '../lib/salesScope';
 import {
   resolveVenueBinding,
-  loadVenueBindingInputs,
+  loadVenueBindingInputs, venueNameForHalfWrittenPair,
   type VenueSource,
   type VenueBindingSb,
 } from '../lib/venue-binding';
@@ -249,7 +249,7 @@ import {
   type SoCreatePayment,
 } from '../lib/so-create-payment-slips';
 import { pickCrossCategoryMatch, type AutoMatchCandidate } from '../lib/cross-category-match';
-import { recomputeSoStockAllocation } from '../lib/so-stock-allocation';
+import { recomputeSoStockAllocation, isHardBoundLine } from '../lib/so-stock-allocation';
 import { snapshotSoLineLinks, planSoLineRelink, applySoLineRelink } from '../lib/so-line-relink';
 import { advanceSoGeneration } from '../lib/so-generation';
 import { creditFromCancelledSo, getCustomerCreditBalance } from '../lib/customer-credits';
@@ -371,7 +371,10 @@ async function queueAcSoEdit(
    than hand it straight to computeMrp, so there is no reason to turn the
    checker off for it. */
 type SoCoverage = { coverage: Map<string, { source: string; po: string | null; eta: string | null }>; mrp: MrpResult | null };
-async function soCoverage(c: any, sb: unknown): Promise<SoCoverage> {
+/* Exported for the deferred `GET /:docNo/coverage` handler, which lives in
+   mfg-sales-orders-list-enrichment.ts (this file is at its size ceiling). Same
+   engine, same call — it must not re-implement the MRP logic. */
+export async function soCoverage(c: any, sb: unknown): Promise<SoCoverage> {
   /* Best-effort, exactly as before: a failed allocation drops every line to
      Pending and the page still loads. */
   try {
@@ -1676,7 +1679,10 @@ mfgSalesOrders.get('/', async (c) => {
        client overlays stock_remark / is_main_ready / planning_state then. Not
        running computeMrp here is the whole point of the deferral. */
     const readinessByDoc = new Map<string, ReturnType<typeof summariseReadiness>>();
-    const linesByDoc = readinessLinesByDoc(itemRows, null);
+    /* Third argument null: the list first-paint reads the payment-totals VIEW
+       (frozen column set, no processing_date) — and with null coverage the
+       promotion arm cannot fire anyway, so "cannot say" is exact. */
+    const linesByDoc = readinessLinesByDoc(itemRows, null, null);
     attachLineCategories(linesByDoc.values(), productCategory);
     for (const [docNo, ls] of linesByDoc) readinessByDoc.set(docNo, summariseReadiness(ls));
 
@@ -2832,73 +2838,67 @@ mfgSalesOrders.get('/:docNo', async (c) => {
     } catch { brandLogoKey = null; }
     (salesOrder as Record<string, unknown>).resolvedBrandLogoKey = brandLogoKey;
   }
-  /* Coverage comes from the SAME allocation engine the MRP page uses (Wei Siang
-     2026-05-31): stock first → earliest-ETA outstanding PO → shortage. A bare
-     FK-only PO lookup missed stock-replenishment POs (raised without a per-line
-     link), so genuinely-ordered lines showed "—". Running the MRP allocation
-     here keeps the Stock column and the MRP page in lock-step. Best-effort: if
-     the allocation fails the page still loads, lines just fall back to Pending. */
-  const [remainingMap, deliveriesMap, shippedTraceMap, cov] = await Promise.all([
+  /* PERF (2026-09-01, docs/bugs/…) — the live Stock column used to run the
+     GLOBAL company-wide MRP allocation (`soCoverage` → `computeMrp`, ~105 DB
+     round-trips) INLINE here, plus `soLineReadySourcePos`, only to paint the
+     per-line badge. On a cold DB connection that made opening any order ~4.7s.
+     The list already defers this; the detail now does too. The MRP-derived
+     values below fall back to their no-MRP defaults, the STORED `stock_status`
+     stands as the verdict, and the client fetches the live coverage from
+     `GET /:docNo/coverage` after the doc renders. The computation is UNCHANGED,
+     just moved off the critical path — see that endpoint below. */
+  const [remainingMap, deliveriesMap, shippedTraceMap] = await Promise.all([
     soDeliverableRemaining(sb, [docNo]),
     soLineDeliveries(sb, itemRows.map((it) => it.id)),
     /* Traceability — the source PO(s) each line's SHIPPED goods came from,
        recovered from the DO OUT movements' batch_no ∪ consumed lots (the ONE
-       shared resolver, GRN-healed + adjustment-classified). Lets the detail
-       keep showing the incoming/source PO even after the line is delivered
-       (MRP coverage drops off once the demand is satisfied). */
+       shared resolver, GRN-healed + adjustment-classified). Cheap batched query,
+       NOT MRP — stays inline so the detail keeps showing the source PO even
+       after the line is delivered (MRP coverage drops off once satisfied). */
     soLineShippedSources(sb, itemRows.map((it) => it.id)),
-    soCoverage(c, sb),
   ]);
-  const coverageMap = cov.coverage;
-  /* READY trace (owner 2026-08-01): a READY (allocated, un-shipped) line
-     resolves the PO(s) it WILL draw from — sofa via its stored
-     allocated_batch_no, non-sofa by projecting the SAME FIFO order the
-     engine consumes at DO time over the bucket's open lots, earlier claims
-     first. Read-time derivation, no writes. */
-  const readyPosMap = await soLineReadySourcePos(sb, activeCompanyId(c) ?? null, cov.mrp, itemRows as Array<{ id: string; item_group?: string | null; qty?: number | null; stock_status?: string | null; allocated_batch_no?: string | null }>);
   const items = itemRows.map((it) => {
     const rem = remainingMap.get(it.id);
     const deliveries = deliveriesMap.get(it.id) ?? [];
     const deliveredQty = deliveries.reduce((s, d) => s + d.qty, 0);
-    const cov = coverageMap.get(it.id);
-    const covered = cov?.source === 'po';
     const shippedTrace = shippedTraceMap.get(it.id);
     const shippedPos = shippedTrace?.pos ?? [];
-    /* SOFA stock-coverage is decided by the batch-aware allocator (stock_status),
-       NOT the MRP SKU-pool: MRP doesn't know about dye-lot batches, so it would
-       wrongly report a sofa set as "stock" whenever same-SKU units exist in ANY
-       batch — even one that can't cover the whole set. For sofa, trust
-       stock_status (READY only when ONE batch covers the set); keep MRP's PO/ETA
-       if an outstanding PO is on the way. (Wei Siang 2026-06-03) */
-    const isSofaLine = String((it as { item_group?: string | null }).item_group ?? '').toUpperCase().includes('SOFA');
-    /* SERVICE lines (delivery fee / dispose / lift) never enter the MRP
-       allocator — they create no purchase demand (mrp.ts skips them), so `cov`
-       is always undefined and stock_state would fall through to null, rendering
-       a blank Stock cell. A service is inherently available, so surface it as
-       READY ('stock') — matching the stored stock_status the SO create path
-       already stamps READY-from-birth. (Owner Q2, 2026-07-24.) */
+    /* SERVICE lines carry no inventory and are inherently available, so they
+       stay 'stock' with no MRP run needed. Every other line's live coverage is
+       UNKNOWN without MRP, so stock_state is null here and the client heals it
+       from GET /:docNo/coverage. (Owner Q2, 2026-07-24.) */
     const isSvcLine = isServiceLine({
       itemGroup: (it as { item_group?: string | null }).item_group ?? null,
       itemCode: (it as { item_code?: string | null }).item_code ?? null,
     });
-    const stockState = isSvcLine
-      ? 'stock'
-      : isSofaLine
-      ? (it.stock_status === 'READY' ? 'stock' : (cov?.source === 'po' ? 'po' : 'shortage'))
-      : (cov?.source ?? null);
+    const stockState = isSvcLine ? 'stock' : null;
     return {
       ...it,
       deliveries,
       delivered_qty: rem?.delivered ?? deliveredQty,
       remaining_qty: rem?.remaining ?? Number(it.qty ?? 0),
-      /* Incoming-stock coverage (Wei Siang 2026-05-31) — stock_state is the
-         allocation outcome (stock / po / shortage). coverage_po + eta are only
-         set when an outstanding PO covers the line, so the UI shows PO·ETA. */
+      /* Live allocation outcome. Without the inline MRP run it is 'stock' for a
+         service line and null (unknown) otherwise; GET /:docNo/coverage fills the
+         real value in a beat later. */
       stock_state: stockState,
-      // What the PILL renders, decided here so it and the board agree (§0.4).
-      stock_status_effective: effectiveLineStockStatus((it as { stock_status?: string | null }).stock_status ?? null, stockState as LiveStockState),
-      coverage_po: covered ? cov?.po ?? null : null,
-      coverage_eta: covered ? cov?.eta ?? null : null,
+      /* What the PILL renders, decided here so it and the board agree (§0.4).
+         Live state is passed as `null` so the STORED engine verdict stands
+         (so-line-effective-stock.ts: null live-state = stored verdict) — the
+         coverage endpoint recomputes it with the live state. */
+      stock_status_effective: effectiveLineStockStatus(
+        (it as { stock_status?: string | null }).stock_status ?? null,
+        null,
+        {
+          orderProcessed: !!(h.data as { processing_date?: string | null }).processing_date,
+          lineHardBound: isHardBoundLine(
+            (it as { item_group?: string | null }).item_group ?? null,
+            (it as { item_code?: string | null }).item_code ?? null,
+          ),
+        },
+      ),
+      // coverage_po / coverage_eta are MRP-derived — unknown without the run.
+      coverage_po: null,
+      coverage_eta: null,
       /* Source PO(s) the delivered goods actually shipped from (from the DO OUT
          batch_no). Populated once the line has shipped; empty for un-batched
          (plain-FIFO) stock. The detail shows these even after full delivery so
@@ -2907,11 +2907,8 @@ mfgSalesOrders.get('/:docNo', async (c) => {
       /* Shipped (at least partly) from a PO-less stock ADJUSTMENT lot (free
          gift / cancel add-back) — the UI renders "STOCK ADJ", never a blank. */
       shipped_source_adj: (shippedTrace?.adjQty ?? 0) > 0,
-      /* READY trace: the PO(s) this line's allocated on-hand stock sits in —
-         chips [{ po, qty, kind }], kind 'adjustment' → "STOCK ADJ". Sofa =
-         the stored allocated_batch_no; non-sofa = FIFO projection over the
-         bucket's open lots in the engine's own consumption order. */
-      ready_source_pos: readyPosMap.get(it.id) ?? [],
+      // READY trace is MRP-derived — filled by GET /:docNo/coverage.
+      ready_source_pos: [],
     };
   });
   const totalDelivered = items.reduce((s, it) => s + Number(it.delivered_qty ?? 0), 0);
@@ -2950,6 +2947,12 @@ mfgSalesOrders.get('/:docNo', async (c) => {
   return c.json({ salesOrder, items, pwpCodes });
 });
 
+/* GET /:docNo/coverage — the DEFERRED live Stock column — lives in
+   mfg-sales-orders-list-enrichment.ts, mounted at this same `/mfg-sales-orders`
+   prefix (this file is at its size ceiling). It runs the exact `soCoverage`
+   (exported above) + `soLineReadySourcePos` the `/:docNo` detail stopped running
+   inline. Final path is still `/api/scm/mfg-sales-orders/:docNo/coverage`. */
+
 /* GET /:docNo/items — cutover P3 (#389): the 2990 POS (apps/pos queries.ts)
    calls this dedicated items endpoint directly. Houzs only served items inside
    the /:docNo detail (alongside salesOrder + pwpCodes); the bare /:docNo/items
@@ -2962,9 +2965,10 @@ mfgSalesOrders.get('/:docNo', async (c) => {
 mfgSalesOrders.get('/:docNo/items', async (c) => {
   const sb = c.get('supabase'); const docNo = c.req.param('docNo');
   const [h, i] = await Promise.all([
-    // Header read is company-scoped + minimal — we only need it to exist +
-    // resolve salesperson_id for the same self-scoped-sales gate the detail uses.
-    scopeToCompany(sb.from('mfg_sales_orders').select('doc_no, salesperson_id').eq('doc_no', docNo), c).maybeSingle(),
+    // Header read is company-scoped + minimal — we only need it to exist,
+    // resolve salesperson_id for the same self-scoped-sales gate the detail
+    // uses, and carry processing_date for the promotion gate below.
+    scopeToCompany(sb.from('mfg_sales_orders').select('doc_no, salesperson_id, processing_date').eq('doc_no', docNo), c).maybeSingle(),
     // Same ITEM select + line_no ordering as the detail (nulls last → pre-0165
     // fallback to created_at, then the rule re-order below).
     sb.from('mfg_sales_order_items').select(ITEM).eq('doc_no', docNo)
@@ -3033,7 +3037,19 @@ mfgSalesOrders.get('/:docNo/items', async (c) => {
       remaining_qty: rem?.remaining ?? Number(it.qty ?? 0),
       stock_state: stockState,
       // What the PILL renders, decided here so it and the board agree (§0.4).
-      stock_status_effective: effectiveLineStockStatus((it as { stock_status?: string | null }).stock_status ?? null, stockState as LiveStockState),
+      // Gated (2026-08-30): no processing date, or a hard-bound line, and the
+      // live-'stock' promotion is off — the stored engine verdict stands.
+      stock_status_effective: effectiveLineStockStatus(
+        (it as { stock_status?: string | null }).stock_status ?? null,
+        stockState as LiveStockState,
+        {
+          orderProcessed: !!(h.data as { processing_date?: string | null }).processing_date,
+          lineHardBound: isHardBoundLine(
+            (it as { item_group?: string | null }).item_group ?? null,
+            (it as { item_code?: string | null }).item_code ?? null,
+          ),
+        },
+      ),
       coverage_po: covered ? cov?.po ?? null : null,
       coverage_eta: covered ? cov?.eta ?? null : null,
       shipped_source_pos: shippedPos,
@@ -6817,12 +6833,12 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
      actually knows where they are standing — a showroom rep sent to an
      exhibition, or an exhibition rep back on the floor, corrects it HERE, and
      that correction has to stick.
-     The change itself is already recorded who/when/from->to by the existing
-     `['venue', 'venue']` entry in the field map above, which diffFields picks up
-     and recordSoAudit writes to mfg_so_audit_log — the house audit trail, not a
-     second one. Clearing the venue to blank is just as deliberate as setting
-     one, so it is marked MANUAL too: "this order has no venue" is an answer, and
-     a re-resolve must not treat it as an invitation to fill the gap. */
+     The change is already recorded by the `['venue', 'venue']` field-map entry,
+     and clearing to blank is as deliberate as setting one — but a blank BESIDE a
+     venue id is a half-written pair, not a clear. docs/bugs/0591-*. */
+  const vFix = await venueNameForHalfWrittenPair(sb, body['venue'], body['venueId']);
+  if (vFix.kind === 'resolved') { body['venue'] = vFix.name; updates['venue'] = vFix.name; }
+  if (vFix.kind === 'unresolved') { delete body['venue']; delete updates['venue']; }
   if (body['venue'] !== undefined) {
     updates['venue_source'] = 'MANUAL' satisfies VenueSource;
   }
@@ -7053,8 +7069,8 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
        released to buy AFTER the goods were promised). Use the EFFECTIVE values: the patch value
        when this request sets the key, else the stored value — so editing only
        one date still validates against the other already on the row. */
-    const effProc  = typeof proc  === 'string' ? (proc  || null) : origProc;
-    const effDeliv = typeof deliv === 'string' ? (deliv || null) : origDeliv;
+    const effProc  = effectiveDateAfterPatch(proc,  origProc);
+    const effDeliv = effectiveDateAfterPatch(deliv, origDeliv);
     /* Owner 2026-07-04 — Processing + Delivery are all-or-nothing (both set or
        both empty). Kept as a SHORT-CIRCUIT (not aggregated): an unpaired date is a
        structurally-incomplete input, not one of several field-level fixes — there
@@ -7074,7 +7090,7 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
        Processing Date, which is exactly the write that permission guards. */
     const cascadeCols = soDatePairCascadeColumns({
       procCleared: superAdminClearsProc,
-      delivInPatch: typeof deliv === 'string',
+      delivInPatch: deliv !== undefined,
       origDeliv,
     });
     for (const col of cascadeCols) updates[col] = null;

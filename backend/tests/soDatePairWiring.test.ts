@@ -51,7 +51,7 @@ describe('every SO / CO write path that touches a date calls the shared predicat
   });
 
   test('SO header PATCH', () => {
-    const patchBlock = between(SO, 'const effDeliv = typeof deliv', 'collectProcessingGateProblems({');
+    const patchBlock = between(SO, 'const effDeliv = effectiveDateAfterPatch', 'collectProcessingGateProblems({');
     expect(patchBlock).toContain('soDatePairRefusal');
     /* The cascade half — clearing the Processing Date must take the Delivery
        Date with it, on the header AND on every line (p_apply_delivery_date). */
@@ -90,7 +90,7 @@ describe('every SO / CO write path that touches a date calls the shared predicat
   });
 
   test('CO header PATCH — the path that had no pair check at all', () => {
-    const coPatch = between(CO, 'const effDeliv = typeof deliv', 'collectProcessingGateProblems({');
+    const coPatch = between(CO, 'const effDeliv = effectiveDateAfterPatch', 'collectProcessingGateProblems({');
     expect(coPatch).toContain('soDatePairRefusal');
     expect(coPatch).toContain('soDatePairCascadeColumns');
   });

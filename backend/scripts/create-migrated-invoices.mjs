@@ -76,6 +76,21 @@ const n = (x) => Number(x || 0);
    reproduce a past verdict. */
 const REFS = gz("ac-invoice-refs.json.gz");
 
+/* The map's VALUES move in the book daily — new invoices are raised, so a
+   stale map both misses invoices (no_autocount_invoice inflates) and compares
+   totals against superseded numbers. On 2026-08-28 this file's mtime said that
+   day while _exportedAt said 2026-08-11, and the dry-run confidently planned
+   from a 17-day-old world (same trap as docs/bugs/0560). The date was printed
+   but nothing enforced it; a printed date nobody reads is not a guard. */
+{
+  const ageDays = (Date.now() - new Date(REFS._exportedAt).getTime()) / 86400000;
+  if (!(ageDays <= 2)) {
+    console.error(`REFUSED: ac-invoice-refs.json.gz was exported ${REFS._exportedAt} (${ageDays.toFixed(1)} days ago).`);
+    console.error("Invoices raised since are invisible to it and its totals are superseded. Re-export the map first (export-ac-reimport.py ONLY=ivrefs).");
+    process.exit(2);
+  }
+}
+
 /* AutoCount stores money as a decimal; the ERP stores sen. Round once, here, so
    the comparison against our integer sen is exact rather than float-fuzzy. */
 const acTotals = {};

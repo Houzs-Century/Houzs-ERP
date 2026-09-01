@@ -1,0 +1,49 @@
+name: AC vs ERP document-link graph (read-only)
+
+# Manual. Compares the BOOK's document-relationship graph (SO/PO/DO/GR/PI
+# presence, SO->PO line dedications, DO parents, invoiced-since-import) against
+# the ERP's imported mirrors, both directions, in one report — owner
+# 2026-08-30: cross-verify the documents against each other, list what is
+# missing. SELECT only, no writes. Book side = the committed export snapshots
+# (refuses when they are over 2 days old — re-run runbook Phase 0 first).
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+
+concurrency:
+  group: check-ac-erp-doc-links-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/diag-mrp-false-shortage.mjs
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/diag-mrp-false-shortage.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

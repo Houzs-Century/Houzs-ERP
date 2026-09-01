@@ -34,7 +34,7 @@ import { systemTakings, postCashOverShort } from '../../acc/daily-close';
 import { resolveRoles, piLines, DEFAULT_ROLE_CODES } from '../../acc/rules';
 import {
   settlementSetup, settlementSetupSave, settlementUpload, settlementBatches,
-  settlementBatchDetail, settlementConfirmRow, settlementConfirmMatched,
+  settlementBatchDetail, settlementConfirmRow, settlementConfirmMatched, settlementRowUnconfirm,
   settlementIgnoreRow, settlementWatchlist, settlementExport, settlementInTransit,
   settlementBatchReceived, settlementReceiptUndo,
   settlementMaintenance, settlementMaintenanceMerchant, settlementMaintenanceBank,
@@ -95,6 +95,7 @@ accounting.post('/settlement/batches/:id/confirm-matched', settlementConfirmMatc
 accounting.post('/settlement/batches/:id/received', settlementBatchReceived);
 accounting.post('/settlement/receipts/:id/undo', settlementReceiptUndo);
 accounting.post('/settlement/rows/:id/confirm', settlementConfirmRow);
+accounting.post('/settlement/rows/:id/unconfirm', settlementRowUnconfirm);
 accounting.post('/settlement/rows/:id/ignore', settlementIgnoreRow);
 accounting.get('/settlement/watchlist', settlementWatchlist);
 accounting.get('/settlement/in-transit', settlementInTransit);

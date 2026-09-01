@@ -107,6 +107,32 @@ export function writeAuthPass(pass: string, persistent = true): void {
   } catch {}
 }
 
+/** The response header the server re-issues a pass on. */
+export const SESSION_PASS_HEADER = "X-Session-Pass";
+
+/**
+ * Take a re-issued pass off any response and keep it.
+ *
+ * A pass expires after 8 hours; a session lasts 7 days. Nothing used to mint one
+ * except the four login endpoints, so for most of a session's life the client
+ * held an expired pass and every request paid for the server's authorization
+ * re-read. The server now re-issues on the authoritative path; this is the half
+ * that keeps it. `docs/bugs/0593-*`.
+ *
+ * WRITTEN TO WHICHEVER STORE THE TOKEN IS IN, never blindly to localStorage: a
+ * "don't remember me" login keeps its token in sessionStorage, and persisting
+ * the renewed pass would outlive the session the user asked to be temporary.
+ * Absent header (the feature is unkeyed, or the pass was still valid) does
+ * nothing at all.
+ */
+export function absorbSessionPass(res: { headers: { get(name: string): string | null } }): void {
+  try {
+    const next = res.headers.get(SESSION_PASS_HEADER);
+    if (!next) return;
+    writeAuthPass(next, !sessionStorage.getItem(AUTH_TOKEN_KEY));
+  } catch { /* header unreadable (opaque response) or storage denied — the DB path still authorizes */ }
+}
+
 /** Clear this tab's effective session, then notify session-scoped caches. */
 export function clearAuthToken(): void {
   try {

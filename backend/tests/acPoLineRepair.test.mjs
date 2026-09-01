@@ -108,12 +108,13 @@ test("FromSODtlKey reads as absent when AutoCount stores 0 or nothing", () => {
   assert.equal(acFromSoDtlKey({}), null);
   // The real export: a PO raised from nothing is normal, an unreadable one is not.
   // Pinned to the COMMITTED snapshots, so these move when the snapshots are
-  // re-cut. 2026-08-28 re-import cut (whole-document lanes): 938 merged lines,
-  // 685 carrying an SO origin. The 2026-08-10 cut read 738 / 595.
+  // re-cut. 2026-08-29 quiet-book tail cut (whole-document lanes): 941 merged
+  // lines (938 on the 08-28 cut; the book grew overnight),
+  // 696 carrying an SO origin on the 08-29 quiet-book cut (685 on 08-28; 738/595 on 08-10).
   const merged = [...mergeAcPoLines(SO_LINKED, OUTSTANDING).values()];
   const withOrigin = merged.filter((l) => acFromSoDtlKey(l));
-  assert.equal(merged.length, 938);
-  assert.equal(withOrigin.length, 685);
+  assert.equal(merged.length, 941);
+  assert.equal(withOrigin.length, 696);
 });
 
 // ── the dedication rule ─────────────────────────────────────────────────────
@@ -315,10 +316,10 @@ test("NO indistinguishable bucket in the committed exports supports a zip", () =
     buckets.get(k).push(l);
   }
   const ambiguous = [...buckets.values()].filter((v) => v.length > 1);
-  assert.equal(ambiguous.length, 7, "7 buckets survive the (qty, Desc2) split");
-  assert.equal(ambiguous.reduce((n, v) => n + v.length, 0), 14);
+  assert.equal(ambiguous.length, 9, "9 buckets survive the (qty, Desc2) split (7 on the 08-28 cut; two more same-item same-qty pairs arrived with the 08-29 quiet-book cut)");
+  assert.equal(ambiguous.reduce((n, v) => n + v.length, 0), 18);
   const keyed = ambiguous.filter((acs) => acs.some((a) => acFromSoDtlKey(a)));
-  assert.equal(keyed.length, 5, "5 buckets carry at least one origin key");
+  assert.equal(keyed.length, 7, "7 buckets carry at least one origin key (5 on the 08-28 cut)");
   for (const acs of keyed) {
     assert.ok(
       new Set(acs.map((a) => acFromSoDtlKey(a) ?? "-")).size > 1,
@@ -408,17 +409,21 @@ test("a row whose supplier_sku was never written still matches on the mapped ERP
 
 // ── the whole chain, on the real exports ────────────────────────────────────
 
-test("HC-PO-009830 walks back to its sales order, which is what the finding claimed", () => {
+/* RE-PINNED 2026-08-29: the original worked example PO-009830 completed and
+   left the outstanding exports with the quiet-book cut. PO-010093 has the same
+   shape on the fresh cut: three lines, every one carrying FromSODtlKey, all
+   resolving to one sales order, all dated. */
+test("HC-PO-010093 walks back to its sales order, which is what the finding claimed", () => {
   const merged = [...mergeAcPoLines(SO_LINKED, OUTSTANDING).values()];
-  const lines = merged.filter((l) => l.DocNo === "PO-009830");
-  assert.ok(lines.length > 0, "PO-009830 must be in the committed exports");
+  const lines = merged.filter((l) => l.DocNo === "PO-010093");
+  assert.ok(lines.length > 0, "PO-010093 must be in the committed exports");
   const soByDtl = new Map(gz("ac-outstanding-so.json.gz").map((r) => [String(r.DtlKey), r]));
   for (const l of lines) {
     const from = acFromSoDtlKey(l);
     assert.ok(from, "the line carries a FromSODtlKey");
     const so = soByDtl.get(from);
     assert.ok(so, `FromSODtlKey ${from} resolves to a snapshot sales-order line`);
-    assert.equal(so.DocNo, "SO-011207");
+    assert.equal(so.DocNo, "SO-013373");
     assert.ok(acDeliveryDate(l), "and it carries a delivery date");
   }
 });

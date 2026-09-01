@@ -137,4 +137,69 @@ describe('SoLinePhotoStrip', () => {
     // Not a button: a retry that repeats the same failing request is theatre.
     expect(screen.queryByRole('button', { name: /err/i })).toBeNull();
   });
+
+  /* Edit capability (owner 2026-08-28, PO add-ons): absent `edit` is the
+     stricter read-only default every pre-existing caller keeps; present, the
+     strip grows an add tile and a delete control ONLY on keys the surface
+     owns (canDeleteKey — PO passes its po-items/ prefix rule). */
+  it('read-only render offers no add tile and no delete control', async () => {
+    const key = freshKey();
+    fetchSoItemPhotoSignedUrl.mockResolvedValue(proxyPayload(key));
+    fetchSoItemPhotoBlob.mockResolvedValue(photoBytes());
+
+    render(<SoLinePhotoStrip source="so" docId={DOC_NO} itemId={ITEM_ID} photoKeys={[key]} />);
+
+    await screen.findByAltText('Line photo');
+    expect(screen.queryByTitle('Add photo')).toBeNull();
+    expect(screen.queryByLabelText('Delete photo')).toBeNull();
+  });
+
+  it('edit mode renders the add tile even with zero photos and uploads the picked file', async () => {
+    const onUpload = vi.fn().mockResolvedValue(undefined);
+    const { container } = render(
+      <SoLinePhotoStrip
+        source="so"
+        docId={DOC_NO}
+        itemId={ITEM_ID}
+        photoKeys={[]}
+        edit={{ onUpload, onDelete: vi.fn(), canDeleteKey: () => false }}
+      />,
+    );
+
+    // No dash: an editable empty line shows the add tile instead.
+    expect(screen.queryByText('—')).toBeNull();
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    expect(input).toBeTruthy();
+    const file = new File(['jpeg-bytes'], 'sample.jpg', { type: 'image/jpeg' });
+    await userEvent.upload(input, file);
+    await waitFor(() => expect(onUpload).toHaveBeenCalledTimes(1));
+    expect(onUpload.mock.calls[0]![0]).toBe(file);
+  });
+
+  it('offers delete only on keys the surface owns, and hands the key to the handler', async () => {
+    const carried = freshKey(); // so-items/... — carried, NOT deletable here
+    const owned = `po-items/po-1/${ITEM_ID}/addon-1.jpg`;
+    fetchSoItemPhotoSignedUrl.mockResolvedValue(proxyPayload(carried));
+    fetchSoItemPhotoBlob.mockResolvedValue(photoBytes());
+    const onDelete = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <SoLinePhotoStrip
+        source="so"
+        docId={DOC_NO}
+        itemId={ITEM_ID}
+        photoKeys={[carried, owned]}
+        edit={{
+          onUpload: vi.fn(),
+          onDelete,
+          canDeleteKey: (k) => k.startsWith('po-items/'),
+        }}
+      />,
+    );
+
+    const deletes = await screen.findAllByLabelText('Delete photo');
+    expect(deletes).toHaveLength(1);
+    await userEvent.click(deletes[0]!);
+    await waitFor(() => expect(onDelete).toHaveBeenCalledWith(owned));
+  });
 });

@@ -255,6 +255,8 @@ with no per-area level consulted.
 | DELETE | `/:id/items/:itemId/allocations/:allocationId` | | Remove a slice + resequence the survivors dense 1..n. |
 | GET | `/:id/items/:itemId/photos/:photoKey/signed` | | Trade one key from the line's `photo_urls` for a short-lived signed R2 GET URL (`{ mode:'signed', signedUrl, thumbUrl, expiresAt }`). Falls back to `{ mode:'proxy', proxyPath, … }` — never 500 — when signing is impossible. READ-ONLY — see §4 *Line photos*. |
 | GET | `/:id/items/:itemId/photos/:photoKey` | | PROXY: streams the object from the R2 binding, no S3 credential needed. Same authz as `/signed`, company scoping included. Behind the auth gate, so NOT usable as a bare `<img src>` — see §4 *Line photos*. |
+| POST | `/:id/items/:itemId/photos` | | Upload a PO-authored add-on photo (owner 2026-08-28; multipart `file` + optional client `thumb`). Key minted under `po-items/<poId>/<itemId>/`. Refused on a CANCELLED PO. Lives in `purchase-order-item-photos.ts` (the main router is at its size ceiling), mounted in `backend/src/scm/index.ts` on the SAME `/mfg-purchase-orders` prefix as the main router — the separate-router-same-prefix construction the DO scan token uses. |
+| DELETE | `/:id/items/:itemId/photos/:photoKey` | | Delete a PO-OWNED (`po-items/...`) key + its R2 object/thumb. A carried `so-items/...` key is refused 403 `carried_photo_readonly` — same R2 object as the SO's photo; manage it on the Sales Order. |
 | POST | `/` | `:911` | Create (`asDraft: true` → DRAFT, else SUBMITTED). SO-sourced lines (carrying `soItemId`, e.g. the desktop New-PO-from-SO flow) are capped at the SO line's remaining (`qty - po_qty_picked`): over-convert → 409 `qty_exceeds_remaining` unless `confirmOverConvert: true` (pre-write guard, marks idempotency no-write). Manual lines (no `soItemId`) unaffected. |
 | POST | `/from-sos` | `:2139` | Batch convert whole SOs, emitting N POs. The bucket key is per-CATEGORY (owner 2026-07-17, `po-grouping.ts:69-90`): sofa/bedframe per (warehouse, supplier, SO), mattress per (warehouse, supplier, 7-day delivery window), everything else per the caller's `combined \| per-so` toggle. Warehouse is always in the key, which is what keeps the header's `purchase_location_id` unambiguous. |
 | POST | `/:id/convert-from-so` | `:2694` | Append SO lines onto an existing PO. |
@@ -594,6 +596,27 @@ above refused. Idempotent (linked or already-allocated lines skip); one SO
 line is never double-served (links and allocations both count as taken). Rule:
 `planFifoAttribution`, `backend/scripts/lib/doc-evidence-core.mjs`.
 
+### Write-back: a line ADDED here reaches the account book (since 2026-08-31)
+
+Every PO write queues an AutoCount edit through `queueAcPoEdit`. A line this
+request INSERTED carries no AutoCount key yet, and a keyless line means two
+opposite things — just added, or never backfilled — so the two routes that insert
+lines (`POST /:id/items`, `POST /:id/convert-from-so`) pass the row ids they just
+wrote as `newLineIds`. They go out marked `IsNewLine` and AutoCount appends them
+with `AddDetail`. A keyless line the route did NOT name still refuses the whole
+document: guessing a key would rewrite somebody else's line, and on a purchase
+order a duplicate line cannot be removed at all.
+
+Until this was wired, adding a line to a PO already in the account book refused
+that document and left a `skipped` outbox row nobody was watching. Removing a
+line has always worked — it goes as a RETIREMENT (`Qty = 0`), never a delete.
+
+A newly added line also needs a stock location or AutoCount refuses the detail
+and the whole save with it; when the line has no warehouse of its own, the
+purchase order's own is used (`composePoState`). An EXISTING line with no
+location still sends no location, so the book keeps the value it owns. Full rule:
+`docs/modules/autocount-writeback.md`, "Adding a line".
+
 ### The MIGRATED purchase orders — a fourth source of evidence, above all three
 
 The tiers above recover a link from what the ERP itself recorded. A purchase
@@ -731,23 +754,57 @@ Owner 2026-08-10: an SO line can hold photos, a PO line must too, and converting
 an SO into a PO carries them across automatically. `photo_urls text[] NOT NULL
 DEFAULT '{}'` — the same column shape as `mfg_sales_order_items.photo_urls`.
 
-**Two producers, one column, and no key-shape rule anywhere.**
+**Three producers, one column — reads are shape-blind, DELETION is not.**
 
 | Producer | Key shape |
 |---|---|
 | SO->PO convert (copies the source line's array) | `so-items/<soDocNo>/<soItemId>/<uuid>.<ext>` |
 | AutoCount photo importer (appends its own) | `po-items/<po_number>/<po item id>/ac-<DtlKey>-<n>.jpg` |
+| PO add-on upload (owner 2026-08-28, `purchase-order-item-photos.ts`) | `po-items/<poId>/<itemId>/<uuid>.<ext>` |
 
-Both live in the SAME R2 bucket (binding `SO_ITEM_PHOTOS`). Nothing in the schema
-or the read path may depend on the prefix — no CHECK constraint, and the signed
-URL route authorises by MEMBERSHIP of the row's `photo_urls`, never by key shape.
-The importer's append (`ARRAY(SELECT DISTINCT unnest(COALESCE(photo_urls,'{}') ||
-<keys>))`) is why the column must stay NOT NULL with a `'{}'` default.
+All live in the SAME R2 bucket (binding `SO_ITEM_PHOTOS`). The READ path stays
+shape-blind — no CHECK constraint, and the signed/proxy routes authorise by
+MEMBERSHIP of the row's `photo_urls`, never by key shape. The importer's append
+(`ARRAY(SELECT DISTINCT unnest(COALESCE(photo_urls,'{}') || <keys>))`) is why
+the column must stay NOT NULL with a `'{}'` default.
+
+**TWO SCREENS OFFER THE CONTROL, AND THEY MUST NOT DRIFT (2026-08-28).** The
+strip is on the PO's TABLE view (`PurchaseOrderDetailV2`, a `Photos` column) AND
+in the rich LINE EDITOR (`PurchaseOrderDetail`, inside each `PoLineCard`). The
+editor was added second, hours after the owner said 「还是不能添加照片啊」 with
+the table version already shipped — he was on the screen a purchaser is actually
+on when specifying a line.
+
+The cause is worth remembering: `PoLineCard` was extracted as "the same SHAPE as
+SoLineCard" — a copy of the layout, not a use of the component — so the photo
+rail `SoLineCard` grew later had no mechanism by which to arrive here. The card
+now takes a `photos` RENDER SLOT (a node, not photo data) so it stays a layout
+and knows nothing about documents or permissions;
+`vendor/scm/components/po-line-card-photos.test.ts` asserts it never grows an
+upload of its own, and that BOTH surfaces use `canOperatePurchaseOrders` and
+`isPoOwnedPhotoKey` — two screens writing one column must not disagree about who
+may write or which keys they own.
+
+**An UNSAVED line has no address.** The key is `po-items/<poId>/<itemId>/…`, so
+the item id is not a detail — it is where the photo lives. A brand-new card says
+"Save this line first, then attach photos to it." rather than showing nothing:
+an absent rail is what sent the owner looking for it. **The SO stages instead**
+(`SoLineCard`'s `pendingPhotoFiles`, drained after save); the PO does not, so a
+photo on a not-yet-saved PO line costs one extra save. `docs/bugs/0555-…`.
+
+**The prefix IS the ownership rule on DELETE (since 2026-08-28).** `po-items/...`
+keys are PO-owned: the PO detail offers a delete control for them (add-on uploads
+and the importer's historical keys alike), and DELETE removes the key, the R2
+object and its `.thumb`. A carried `so-items/...` key is the SAME R2 object the
+SO line lists, so deleting it from the PO is refused (403
+`carried_photo_readonly`) — delete it on the Sales Order instead.
 
 **The convert copies KEYS, not objects.** SO line and PO line point at the same
 R2 objects — one photo, two documents, no duplicated bytes and no R2 round-trip
 inside the convert. Consequence, deliberate: deleting a photo from the SO line
-removes the object, so it also leaves any PO raised from that line.
+removes the object, so it also leaves any PO raised from that line. The reverse
+is false by design: a PO add-on lives only on the PO (its keys are never copied
+back), shows only on the PO detail, and prints only on the PO PDF.
 
 **Reading a photo: signed first, proxy fallback (2026-08-10).** There are two
 read routes and the difference is not cosmetic.
@@ -803,19 +860,121 @@ column, read-only strip — see §8) and the printed PO carries them too:
 
 **Line photos on the printed PO (owner mockup, 2026-08).**
 `frontend/src/vendor/scm/lib/purchase-order-pdf.ts` prints ONE
-"ITEM PHOTOS · 照片对照" block in the page-bottom zone — beside the
+"ITEM PHOTOS" block in the page-bottom zone — beside the
 "Sofa layout — front faces TV" section when the last diagram row leaves usable
 width, wrapping below it otherwise; a PO with no sofa renders the block alone,
-full width. Table rows carry NO image; a line with `photo_urls` appends " (图)"
-to its description instead. Groups are keyed by row position in the items table
-(`#3`, or `#2-4` when consecutive rows carry a deep-equal photo list — a sofa
-set's shared build photo prints once), with the SUPPLIER code beside the chip
-and ~26mm square thumbnails, max 6 per row; a group never splits across pages.
+full width. (Owner print QA 2026-08-28: generated strings are English-only —
+CJK in generated text re-fonted every photo-carrying PDF — and the labels and
+sizes here are the v2 ruling.) Table rows carry NO image; a line with
+`photo_urls` appends " (photo)" to its description instead. Groups are keyed by
+row position in the items table (`Item 3`, or `Item 2-4` when consecutive rows
+carry a deep-equal photo list — a sofa set's shared build photo prints once),
+with the SUPPLIER code beside the chip and ~52mm square thumbnails, max 3 per
+row; a group never splits across pages.
 The logic is the shared `frontend/src/vendor/scm/lib/pdf-item-photos.ts`
 module the SO PDF also prints through (unit-tested beside it). Only `.thumb`
 siblings are fetched (never originals — PDF size) via the authed PO proxy,
 keyed by the header's `id`; per-photo best-effort — a failed fetch or an
 undecodable format skips that photo, never the document.
+
+> **THE TILE IS SQUARE; THE PHOTO IS NOT CROPPED TO IT (2026-08-28).** Owner:
+> 「确保一下，当我就算 zoom 大这个照片，它也不会变模糊」. Two things changed
+> together and `docs/bugs/0554-…` carries the arithmetic:
+>
+> · `PDF_THUMB_PX` 512 → **1536**. 512 across a 52mm tile is ~250dpi, chosen for
+> PAPER and fine there — but a reader zooming to 400% on a screen is asking for
+> ~786 device pixels, so the photo softened exactly when somebody leaned in to
+> check a detail. That is the moment these photos exist for: a purchaser
+> photographs a tape measure against a panel. The cost is real and was accepted:
+> ~9× the pixels, a tile around 200-500 kB instead of 30-70 kB.
+>
+> · The transcode used to force a square by cropping to the shorter side, so
+> every PORTRAIT photo lost its top and bottom — and a tape-measure photo is
+> portrait BECAUSE it is a tape measure. It now keeps its aspect ratio,
+> letterboxed inside the still-52mm tile, so the grid and every height
+> calculation are untouched. `PdfPhotoImage` carries `w`/`h` for that: without
+> the encoded dimensions a portrait photo in a square tile comes out squashed,
+> which is a worse lie than the crop was.
+>
+> The encoder never UPSCALES — a 300px source re-encoded at 1536 is the same
+> 300px of detail in nine times the bytes.
+
+> **THE PLAN FOLLOWS THE LINES, SO THE LINES ARE ORDERED WHEN THEY ARE MADE
+> (2026-08-28).** `buildDefaultSofaCells` tiles modules left→right IN THE GIVEN
+> ORDER, and the given order is whatever the document lists — so a PO carrying
+> `L(RHF)` before `2A(LHF)` drew the right-hand chaise on the left. The fix is at
+> line creation, not in the drawing: `orderSofaCellsForNewLines` (shared) sorts
+> by the handedness the CODES carry — the owner: 「我们是看后面的 LHF RHF 啊 这才
+> 是方向」 — with real geometry breaking ties within one hand.
+>
+> It is separate from `orderSofaCellsLeftToRight` because that one runs at
+> DISPLAY time too, and reordering there would re-sequence every existing order
+> the next time it was opened (「只针对新的order生效 旧的就不理了」).
+> `docs/bugs/0564-…`.
+>
+> The plan's heading is now `Sofa layout — viewed from above, front faces the
+> TV`. It used to end `(orientation / LHF·RHF)` — a note to ourselves on a
+> document a supplier reads. LHF/RHF still print per line, where they identify a
+> part.
+
+> **THE COMPARTMENT DEFAULT IS DERIVED FROM THE CODE, NOT READ FROM CONFIG
+> (2026-08-28).** `loadSofaCompartmentArtForPrint(codes)` takes the module codes
+> THIS sheet needs and falls back to `sofa-modules/<code>`; the stored
+> `sofaCompartmentMeta` is consulted only for an OVERRIDE (an uploaded photo, or
+> a typed URL).
+>
+> It has to work that way because the stored config carries NO imageKey for the
+> defaults: `seedCompartmentMeta` in `Products.tsx` supplies them CLIENT-SIDE at
+> render time, so the Maintenance list shows a picture for every compartment
+> while the database holds nothing. The print path read the stored value, found
+> nothing, and drew schematics — pictures on screen, drawings on paper, no error
+> anywhere, and both observations true. `docs/bugs/0561-…`.
+>
+> **`seedCompartmentMeta` is still a second declaration of the same default** and
+> should move to the shared library both surfaces import. Today they agree only
+> because both happen to land on `sofa-modules/<code>`.
+
+> **FIVE BUTTONS PRINT THIS DOCUMENT; THERE IS ONE OF THE DOCUMENT (2026-08-28).**
+> The owner printed three POs and asked why they did not match, then asked the
+> question that names the confusion: 「我的 PO 的 documentation 不是应该只有一个
+> documentation 吗？」 There is. `purchase-order-pdf.ts` is the only generator and
+> the layout has never been duplicated. What there are five of is CALLERS —
+> `PurchaseOrderDetailV2`, `PurchaseOrderDetail` (the edit page),
+> `PurchaseOrdersListV2` (two exports) and `printDocumentPdf` (the right-click
+> chain print) — and the sofa artwork was an OPTIONAL ARGUMENT each had to
+> remember. Only the V2 detail did, so the other four printed the fallback
+> schematic.
+>
+> **The generator now fetches the artwork itself**
+> (`loadSofaCompartmentArtForPrint`, beside the supplier/fabric lookup it already
+> does at print time). A supplied `opts.sofaPhotos` still wins, so the V2 detail
+> spends no second request. Passing it at five call sites is the arrangement that
+> produced the defect; a sixth caller would have reproduced it.
+> `po-print-paths-draw-the-sofa.test.ts` COUNTS the callers that pass the map, so
+> it fails when a fifth appears. `docs/bugs/0556-…`.
+>
+> Note for diagnosis: the plan is drawn at PRINT time and nothing about it is
+> stored on the document, so an old PO and a new one print identically — which is
+> what ruled out the data when the owner asked whether only new orders were
+> affected.
+
+> **THE SOFA PLAN DRAWS THE OWNER'S OWN ARTWORK, POS'S WAY (2026-08-28).**
+> `sofa-compartment-art.ts` resolves the THREE shapes an `imageKey` takes — an
+> uploaded object, the seeded `sofa-modules/<code>` bundled art, or an http URL.
+> It previously sent all three to the uploaded-photo API, so every DEFAULT
+> compartment 404'd and the sheet drew its own schematic instead. The art is also
+> cropped to its alpha bbox before jsPDF sees it, because the files are 1024²
+> with the drawing padded inside and filling a cell with the raw file tiles the
+> modules small and gappy — POS's "2WC card bug".
+>
+> A corner sofa draws as ONE connected L (`sofa-corner-pdf.ts`, ported from POS):
+> tiling the three per-module PNGs "leaves a STEP + an INTERNAL ARM", and on a
+> supplier's sheet that step reads as a real gap.
+>
+> **NOT ported:** POS's `renderSeamlessSofa`, which joins a straight run
+> containing a power seat or a wide-arm 1B/2B. The 13 SVG-only codes fall back to
+> the drawn schematic — a drawing is visibly a drawing; a blank cell looks like a
+> missing module. `docs/bugs/0553-…`.
 
 ### Status vocabulary
 
@@ -1116,3 +1275,22 @@ Two exclusions are deliberate: an `assigned_sos` entry whose `source` is `'mrp'`
 builds NO entry (a live allocation binds nothing — the 2026-07-29 incident), and
 neither does a PRE-2026-07-31 bare-string GRN chip, which carries a number and
 no address. `document-conversion.md` §8b has both.
+
+### The PO PDF's sofa diagram draws REAL compartment photos (2026-08-28)
+
+The sofa-layout schematic on the PO PDF (`drawSofaLayout` in
+`vendor/scm/lib/sofa-layout-pdf.ts`) draws each module's real uploaded hero photo
+— the same per-code photos POS Custom Builder shows — in place of the hand-drawn
+cream rectangle, when one exists. It is an OPTIONAL overlay: a compartment with no
+uploaded photo, or one whose fetch fails, still renders the drawn schematic, so
+this is never a hard dependency and pre-existing behaviour is unchanged.
+
+Photos are keyed by compartment CODE, so a photo uploaded later in Backend → Sofa
+Compartments appears on the PO the next time it is printed, with no code change.
+The live `/scm/purchase-orders/:id` page (`PurchaseOrderDetailV2`) reads the master
+maintenance config's `sofaCompartmentMeta` and `loadSofaCompartmentPhotos`
+(`vendor/scm/lib/sales-order-queries.ts`) fetches each via the public
+`/maintenance-config/sofa-compartments/:code/photo/:key` proxy into a
+`{ code: dataURL }` map passed to `generatePurchaseOrderPdf`. Other PO print paths
+(list bulk-print, consignment, v1 detail) pass no photos and keep the schematic.
+Engine merged in #2754; wiring in #2758.

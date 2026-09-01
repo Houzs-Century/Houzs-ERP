@@ -311,7 +311,18 @@ class AcSyncService {
       case "/do-to-iv":  docNo = Convert_("DO", "IV", p); dtlTable = "IVDTL"; break;
       case "/gr-to-pi":  docNo = Convert_("GR", "PI", p); dtlTable = "PIDTL"; break;
       case "/cancel":    Cancel(p); Json(ctx, 200, Ok(null)); return;
-      case "/edit":      Edit(p);   Json(ctx, 200, Ok(null)); return;
+      /* AN EDIT THAT ADDED A LINE ANSWERS WITH THE DOCUMENT'S LINE KEYS, for the
+         same reason a CREATE does (see CreatedLines): AutoCount assigns the
+         DtlKey, and if the ERP never learns it that line stays keyless forever
+         and the NEXT edit of the document is refused by the keyless-line guard
+         above. Measured on HC-SO-013394, 2026-08-31: one added line, two
+         subsequent edits skipped, and "send again" could not clear it.
+         An edit that added nothing answers exactly as before. */
+      case "/edit": {
+        var editedLines = Edit(p);
+        Json(ctx, 200, editedLines == null ? Ok(null) : Ok(Str(p, "DocNo"), editedLines));
+        return;
+      }
       case "/ensure-masters": Json(ctx, 200, EnsureMasters(p)); return;
       /* READ-ONLY. One SELECT for the column name, one for the value, no writes,
          no SDK session. See FurtherDescription() for why it exists. */
@@ -322,6 +333,8 @@ class AcSyncService {
       case "/last-errors": Json(ctx, 200, LastErrors(p)); return;
       /* READ-ONLY, one aggregate. See PictureCensus(). */
       case "/picture-census": Json(ctx, 200, PictureCensus(p)); return;
+      /* READ-ONLY, one SELECT on sys.columns. See TableColumns(). */
+      case "/table-columns": Json(ctx, 200, TableColumns(p)); return;
       default: Json(ctx, 404, Err("unknown route " + path)); return;
     }
     Json(ctx, 200, Ok(docNo, CreatedLines(dtlTable, docNo)));
@@ -680,6 +693,57 @@ class AcSyncService {
      APPENDED to `missing` rather than dropped silently: a caller asking "did
      the processing date update" needs to be told the difference between "it is
      null" and "there is no such column". */
+  /* ── /table-columns — what columns does this table actually have? ─────────
+     THE QUESTION IT SETTLES (owner, 2026-08-31): 「我们更改什么就 send 什么…为什么
+     AutoCount 要回传给我们呢?」 He is right that line identity ought to be OURS,
+     and the way to have that is to stamp our own line reference INTO AutoCount
+     and match on it — no key ever has to come back. Whether that is possible
+     turns on one fact nobody here can see: does a document DETAIL table carry
+     user-defined (UDF_) columns?
+
+     The reflected SDK dump cannot answer it — it was taken DeclaredOnly, so
+     inherited members are invisible, and `UDF` on a detail would be one of them.
+     `PerformUDFTransfer(..., Boolean isDetail)` hints that detail UDFs exist,
+     and a hint is not a fact. This is the fact: sys.columns on the real book.
+
+     READ-ONLY. One SELECT on a system view, no SDK session, no document opened.
+     Returns column NAMES only — no data, no customer, no amount. */
+  static Dictionary<string, object> TableColumns(Dictionary<string, object> p) {
+    var table = Str(p, "Table");
+    if (string.IsNullOrEmpty(table)) return Err("Table required");
+    /* An allow-list, not free text: this takes a table NAME and puts it in a
+       query, and the six detail tables plus their headers are the whole
+       legitimate question. */
+    var allowed = new List<string> {
+      "SODTL", "PODTL", "DODTL", "GRDTL", "IVDTL", "PIDTL",
+      "SO", "PO", "DO", "GRN", "IV", "PI",
+    };
+    if (!allowed.Contains(table.ToUpper())) return Err("Table must be one of " + string.Join(", ", allowed.ToArray()));
+    var like = Str(p, "Like");
+    var cols = new List<string>();
+    try {
+      __DBLINE__
+      using (var cn = new System.Data.SqlClient.SqlConnection(db.ConnectionString)) {
+        cn.Open();
+        using (var cmd = cn.CreateCommand()) {
+          cmd.CommandText = "SELECT name FROM sys.columns WHERE object_id = OBJECT_ID(@t) ORDER BY name";
+          var pt = cmd.CreateParameter(); pt.ParameterName = "@t"; pt.Value = table;
+          cmd.Parameters.Add(pt);
+          using (var rd = cmd.ExecuteReader()) {
+            while (rd.Read()) {
+              var n = rd.GetString(0);
+              if (like.Length == 0 || n.IndexOf(like, StringComparison.OrdinalIgnoreCase) >= 0) cols.Add(n);
+            }
+          }
+        }
+      }
+    } catch (Exception ex) {
+      return Err("table-columns failed: " + ex.Message);
+    }
+    var d = new Dictionary<string, object> { { "ok", true }, { "table", table }, { "columns", cols } };
+    return d;
+  }
+
   static List<string> ExistingColumns(System.Data.SqlClient.SqlConnection cn, string table, string[] wanted, List<string> missing) {
     var have = new List<string>();
     using (var cmd = cn.CreateCommand()) {
@@ -3003,11 +3067,16 @@ class AcSyncService {
   }
 
   // ── edit (header + lines, incl. variants in Desc2) ─────────────────────────
-  static void Edit(Dictionary<string, object> p) {
+  /* Returns the document's line keys when this edit ADDED at least one line,
+     null otherwise — the ERP stores them so the added line stops being keyless.
+     Null rather than an empty list on purpose: an empty list is a real answer
+     ("the document has no lines") and must not be confused with "not asked". */
+  static List<Dictionary<string, object>> Edit(Dictionary<string, object> p) {
     var s = Session();
     var type = Str(p, "DocType").ToUpper();
     var docNo = Str(p, "DocNo");
     if (string.IsNullOrEmpty(docNo)) throw new Exception("DocNo required");
+    var addedALine = false;
     dynamic doc;
     switch (type) {
       case "SO": doc = AutoCount.Invoicing.Sales.SalesOrder.SalesOrderCommand.Create(s, s.DBSetting).Edit(docNo); break;
@@ -3097,6 +3166,7 @@ class AcSyncService {
       } else {
         d = doc.AddDetail();
         Set(() => d.ItemCode = Str(it, "ItemCode"));
+        addedALine = true;
       }
 
       /* RETIREMENT. The owner's rule is that nothing is ever deleted, only
@@ -3160,6 +3230,27 @@ class AcSyncService {
       }
     }
     doc.Save();
+    /* Read the keys back AFTER the save — AutoCount assigns a DtlKey at save
+       time, so there is nothing to read before it. Same SQL read-back the create
+       path uses, so there is one implementation of "what are this document's
+       line keys" and not two. */
+    if (!addedALine) return null;
+    var editDtlTable = EditDetailTable(type);
+    return editDtlTable == null ? null : CreatedLines(editDtlTable, docNo);
+  }
+
+  /* The detail table behind each document type the edit route accepts — the
+     same mapping the create/convert routes carry inline at the router. */
+  static string EditDetailTable(string type) {
+    switch (type) {
+      case "SO": return "SODTL";
+      case "PO": return "PODTL";
+      case "DO": return "DODTL";
+      case "GR": return "GRDTL";
+      case "IV": return "IVDTL";
+      case "PI": return "PIDTL";
+      default:   return null;
+    }
   }
 
   // ── helpers ───────────────────────────────────────────────────────────────

@@ -111,6 +111,21 @@ So the ground truth for "what a real `FurtherDescription` looks like" exists in
 exactly one place: **the live `AED_HOUZS` book**, on the 554 + 183 lines that
 still hold it. §5.1 is one query away from having it back.
 
+> **CLOSED 2026-08-31 — there is an extractor again.**
+> `backend/scripts/export-ac-line-photos.py` takes every picture-bearing line
+> out of the book to JPEG with a manifest, and it is IN this repository, which
+> is the whole point of it. It reuses `further-description-rtf.mjs` for the RTF
+> half and adds the `WMF -> DIB -> JPEG` step this repo never had. Cross-checked
+> against the two `DtlKey`s that appear in both the round-1 manifest and a
+> 20-line sample of its output — 34553 and 34737 — the pixel dimensions come
+> back identical (240x159 and 240x50), which is the evidence that the new path
+> and the lost one agree.
+>
+> The paragraph above is left standing because the LESSON is not closed: the
+> round-1 extractor was thrown away and cost months of not being able to take a
+> photograph out. The counts in this section are still round 1's, and they are
+> **not** the book's — see §7 item 8 for the census.
+
 ---
 
 ## 3. What a return trip would have to produce
@@ -637,8 +652,39 @@ answers 413.
 6. **What the nine large images weigh.** §6.4.
 7. **Whether the same treatment is wanted on DO / IV / GR / PI lines.** The
    field exists on all six (§1); only SO and PO were extracted.
-8. **Whether any line in the BOOK holds more than one picture.** Narrowed the
-   same day it was opened, and it is no longer about layout.
+8. ~~**Whether any line in the BOOK holds more than one picture.**~~
+   **ANSWERED 2026-08-31: YES. SO lines hold up to 2, PO lines up to 5.**
+   The aggregate at the bottom of this item was run against the live book,
+   read-only, and it is the answer this item said would be a finding:
+
+   ```
+   SO: lines_with_pict=2723 max_pictures=2 wmetafile=2723 jpegblip=0 pngblip=0 emfblip=0 dibitmap=0
+   PO: lines_with_pict=2392 max_pictures=5 wmetafile=2392 jpegblip=0 pngblip=0 emfblip=0 dibitmap=0
+   ```
+
+   **So the composer MUST read before it writes.** `max_pictures = 1` would
+   have closed this outright; it is 2 and 5, so a write that replaces
+   `FurtherDescription` wholesale on one of those lines **destroys the second
+   picture**, exactly as §6.3 warned. This is now a hard precondition on the
+   write-back, not a caution.
+
+   Two other things that read settles, both worth having here:
+
+   - **The form is uniform.** Every one of the 5,115 picture-bearing lines is
+     `\wmetafile8`. Not one `\jpegblip`, `\pngblip`, `\emfblip` or
+     `\dibitmap` in the book. §4.2 measured three lines; this is the census.
+   - **The population is far larger than the manifest.** 2,723 SO lines carry
+     a picture against the manifest's 554, and the manifest's lowest `DtlKey`
+     is 34553 — so §2.1's lost extractor did not sweep the book, and most of
+     the older orders' photographs were never taken out at all. The exporter
+     that closes that gap is `backend/scripts/export-ac-line-photos.py`
+     (added 2026-08-31); the runbook step is `docs/ac-resync-runbook.md`
+     阶段 3b.
+
+   The original wording of this item is kept below, because the reasoning that
+   made it worth asking is still the reasoning that makes the answer matter.
+
+   Narrowed the same day it was opened, and it is no longer about layout.
 
    The original question assumed the manifest had lines with up to five
    pictures. It does not — 554 rows, 554 distinct `DtlKey`s, every file a `_1`

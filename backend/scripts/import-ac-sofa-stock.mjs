@@ -358,11 +358,33 @@ async function main() {
   log("(projection mirrors sofa-set-coverage.findCoveringBatch; the real flip happens on the next allocation recompute)");
 
   /* ── 8. The accessory this import does NOT cover ─────────────────────────── */
+  /* The balance importer excludes sofa FURNITURE by the binding CSV's CATEGORY
+     since the 2026-08-10 pillow incident — a code merely SPELLING "SOFA" is not
+     excluded. So a pillow is only at risk when its CSV row is categorised
+     SOFA. The previous message here claimed 128 units "absent from the ERP"
+     without ever reading the ERP, blaming a /SOFA/ filter that no longer
+     exists — measured wrong on 2026-08-28: those 128 units had imported fine
+     (a delta re-run showed 0 cells left to write). Warn only on the real case. */
   const pillow = gz("ac-stock-balance.json.gz").filter((r) => r.BalQty !== 0 && /SOFA/i.test(r.ItemCode) && /PILLOW/i.test(r.ItemCode));
-  if (pillow.length) {
-    const pu = pillow.reduce((s, r) => s + Math.round(r.BalQty), 0);
+  // same parser + column as import-ac-stock-balance.mjs — names contain quoted commas
+  const parseCsvLine = (line) => {
+    const out = []; let cur = ""; let q = false;
+    for (let i = 0; i < line.length; i++) { const c = line[i];
+      if (q) { if (c === '"') { if (line[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += c; }
+      else { if (c === '"') q = true; else if (c === ",") { out.push(cur); cur = ""; } else cur += c; } }
+    out.push(cur); return out;
+  };
+  const sofaCodes = new Set(
+    fs.readFileSync(path.join(here, "data", "autocount-erp-mapping-1561.csv"), "utf8")
+      .split(/\r?\n/).slice(1).map(parseCsvLine)
+      .filter((f) => (f[3] || "").trim().toUpperCase() === "SOFA")
+      .map((f) => norm(f[0])),
+  );
+  const misCat = pillow.filter((r) => sofaCodes.has(norm(r.ItemCode)));
+  if (misCat.length) {
+    const pu = misCat.reduce((s, r) => s + Math.round(r.BalQty), 0);
     log("");
-    log(`SEPARATE FINDING — ${pu} units of ${new Set(pillow.map((r) => r.ItemCode)).size} SOFA PILLOW accessory are also absent from the ERP: import-ac-stock-balance.mjs excludes anything matching /SOFA/, which catches the pillow too. It is a plain FIFO accessory with no compartments and is NOT this script's job. Fix by narrowing that filter and re-running the balance import (it is delta-based, so it tops up rather than doubles).`);
+    log(`SEPARATE FINDING — ${pu} unit(s) of ${new Set(misCat.map((r) => r.ItemCode)).size} pillow code(s) are categorised SOFA in the mapping CSV, so the balance import EXCLUDES them as furniture. Fix the CSV category to ACC and re-run the balance import (delta-based, it tops up).`);
   }
 
   if (!APPLY) { log(""); log("DRY-RUN — set APPLY=1 to write."); await sql.end(); return; }

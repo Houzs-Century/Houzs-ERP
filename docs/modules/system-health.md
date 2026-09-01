@@ -202,3 +202,75 @@ would have measured Postgres, which is not the thing in question.
 **To get the number:** deploy, sign in as an owner, and call the route. If it
 returns `TRUNCATES_SILENTLY`, `paginateAll` is wrong and that is its own fix,
 not a footnote to this one.
+
+## `GET /live` — the secret-presence flags, and why one of them matters most
+
+`/live` reports the reachability probes (DB, KV, R2, SCM) and two
+**presence-only** flags for secrets: `anthropic.configured` and
+`sessionSigning.configured`. Neither ever carries a value; both answer only
+"is it set".
+
+`sessionSigning` is the one worth reading first when anybody says the system is
+slow. It is `sessionSigningSecret(env) !== null`, and it decides whether a
+request pays for authorization:
+
+| flag | what every API request does before the route body runs |
+| --- | --- |
+| **On** | `tryPassAuth` verifies a signed pass locally. No database read. |
+| **Off** | `getUserBySession` runs a six-table join AND a four-branch `UNION ALL` on the shared pool (`services/auth.ts`). |
+
+Off is one reason the CHEAPEST endpoints show up slow — and as of 2026-08-31 it
+is NOT the one that was measured. The pass is never renewed: it lives 8 hours, a
+session lives 7 days, and nothing minted one outside the four login endpoints, so
+for most of every session the DB path ran whatever this card says
+(`docs/bugs/0593-*`). Read this card as "is the switch on", never as the
+explanation for a slow page. `/api/presence`,
+`/api/announcements/banner` and `/api/branding` are all edge-cached, and the
+cache is INSIDE the handler — it saves the route's own query, never the two
+reads in front of it. `GET /api/auth/me` crossing 800ms is the clean proof,
+since it has no route work to blame.
+
+Two things not to do with this flag:
+
+- **Do not compute it as `!!env.SESSION_SIGNING_KEY`.** `sessionSigningSecret`
+  also rejects a key under 16 characters, so a placeholder would read On here
+  while the runtime still takes the DB path. Pinned by
+  `src/routes/systemHealthSessionSigning.test.ts`.
+- **Do not read it as a health verdict.** Off is not a fault; it is a switch
+  nobody has thrown. Turning it on is the owner setting one Worker secret, and
+  this card is how the change gets confirmed afterwards.
+
+Background: `docs/bugs/0592-nobody-could-tell-whether-signed-sessions-were-on-so-every-r.md`.
+
+## The pass renews itself now — where the authorization cost actually goes
+
+The card above answers "is the switch on". It does not answer "why is this page
+slow", and until 2026-08-31 nothing did, because a second gap sat behind it.
+
+**A pass lives 8 hours; a session lives 7 days; nothing minted one outside the
+four login endpoints.** So the signed-session fix covered the first 8 hours of a
+session and then stopped applying — about 95% of a session's life ran the DB
+path, whatever the switch said. `docs/bugs/0593-*` has the trace and the two
+constants.
+
+`middleware/auth.ts` now re-issues on the authoritative path — reaching
+`getUserBySession` *means* the caller has no usable pass — and returns the new
+one on an `X-Session-Pass` response header, which is why that header is in
+`Access-Control-Expose-Headers` in `backend/src/index.ts` (both the `cors()`
+options and the hand-set error path; a header the browser hides is a renewal that
+silently never happens). The SPA absorbs it in `correlatedFetch`, the single
+funnel every authenticated transport goes through.
+
+Reading this pair together is the whole diagnostic:
+
+| card says | and requests are still slow | means |
+| --- | --- | --- |
+| On | yes | not authorization — look at the route, the pool, or Hyperdrive |
+| On | no | working as intended |
+| Off | yes | the switch, and it is one secret |
+
+What to measure rather than assume: the `[slow …]` signature counts on
+`/api/auth/me`, `/api/presence` and `/api/announcements/banner` from the
+**Client errors check (read-only)** workflow. `/api/auth/me` is the cleanest of
+the three — it returns the authenticated user and nothing else, so it has no
+route body to blame.

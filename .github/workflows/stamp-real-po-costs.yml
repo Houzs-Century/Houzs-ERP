@@ -35,6 +35,11 @@ on:
         required: false
         default: "1"
         type: string
+      confirm:
+        description: 'For apply ONLY, type exactly: I HAVE REVIEWED THE DRY-RUN'
+        required: false
+        default: ""
+        type: string
 
 # Own concurrency group — must never queue behind or displace a release.
 concurrency:
@@ -60,6 +65,7 @@ jobs:
           DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
           APPLY: ${{ inputs.apply }}
           COMPANY_ID: ${{ inputs.company_id }}
+          CONFIRM: ${{ inputs.confirm }}
           # GitHub-hosted runners have no IPv6 egress; match the deploy jobs and
           # the sibling read-only checks.
           NODE_OPTIONS: --dns-result-order=ipv4first
@@ -79,4 +85,5 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           APPLY: ${{ inputs.apply }}
           COMPANY_ID: ${{ inputs.company_id }}
+          CONFIRM: ${{ inputs.confirm }}
           NODE_OPTIONS: --dns-result-order=ipv4first

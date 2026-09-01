@@ -166,15 +166,43 @@ describe('fairSoMoney — product/service split + per-category cost + margin', (
 
 describe('doCostTotal — COALESCE(ship_cost, unit_cost) × qty, legacy flag', () => {
   test('uses frozen ship cost when present', () => {
-    const r = doCostTotal([{ qty: 2, unit_cost_sen: 500, ship_cost_sen: 400 }]);
+    const r = doCostTotal([{ qty: 2, unit_cost_sen: 500, ship_cost_sen: 400, item_group: 'sofa' }]);
     expect(r.total_do_cost_sen).toBe(800);   // 400 × 2
     expect(r.qty).toBe(2);
     expect(r.is_legacy).toBe(false);
   });
-  test('falls back to unit cost and flags legacy when ship cost is null', () => {
-    const r = doCostTotal([{ qty: 3, unit_cost_sen: 500, ship_cost_sen: null }]);
+  test('falls back to unit cost and flags legacy when a STOCK line has no ship cost', () => {
+    const r = doCostTotal([{ qty: 3, unit_cost_sen: 500, ship_cost_sen: null, item_group: 'mattress' }]);
     expect(r.total_do_cost_sen).toBe(1500);
     expect(r.is_legacy).toBe(true);
+  });
+
+  /* 2026-08-31 (owner's Sales Report review): the delivery-fee line NEVER has a
+     ship-time frozen cost — it is not stock — yet it flipped the whole DO to
+     LEGACY, so 11 of the 14 rows on screen wore the chip and the "pre-FIFO"
+     KPI counted service lines. And a stock line the floor shipped BEFORE any
+     lot existed freezes at ZERO (the 2990 ship-anyway fingerprint), which the
+     report rendered as a naked 100% margin (2990-DO-2607-021). */
+  test('a SERVICE line with no ship cost does not make the DO legacy', () => {
+    const r = doCostTotal([
+      { qty: 1, unit_cost_sen: 98750, ship_cost_sen: 98750, item_group: 'sofa' },
+      { qty: 1, unit_cost_sen: 0, ship_cost_sen: null, item_group: 'service' },
+    ]);
+    expect(r.is_legacy).toBe(false);
+    expect(r.has_zero_frozen).toBe(false);
+  });
+  test('a stock line frozen at ZERO with a real order-time estimate flags ship-anyway (2990-DO-2607-021)', () => {
+    const r = doCostTotal([
+      { qty: 1, unit_cost_sen: 99514, ship_cost_sen: 0, item_group: 'sofa' },
+      { qty: 1, unit_cost_sen: 0, ship_cost_sen: null, item_group: 'service' },
+    ]);
+    expect(r.total_do_cost_sen).toBe(0);     // the frozen truth stands — no invention
+    expect(r.has_zero_frozen).toBe(true);    // ...but the row says WHY it is zero
+    expect(r.is_legacy).toBe(false);
+  });
+  test('a genuinely free line frozen at zero (no estimate either) is NOT ship-anyway', () => {
+    const r = doCostTotal([{ qty: 1, unit_cost_sen: 0, ship_cost_sen: 0, item_group: 'accessory' }]);
+    expect(r.has_zero_frozen).toBe(false);
   });
 });
 

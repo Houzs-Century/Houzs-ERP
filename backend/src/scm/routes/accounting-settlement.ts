@@ -34,7 +34,7 @@ import { parseStatement, type StatementColumnMap } from '../../acc/settlement-pa
 import { matchStatement, recordedNotArrived, type MatchBucket, type PaymentCandidate } from '../../acc/settlement-match';
 import {
   loadAcquirer, loadPaymentCandidates, loadSettledKeys, confirmSettlementRow, postStatementCharge,
-  postBatchReceipt, loadBatchReceipts, undoBatchReceipt,
+  postBatchReceipt, loadBatchReceipts, undoBatchReceipt, unconfirmSettlementRow,
 } from '../../acc/settlement';
 import { resolveRoles } from '../../acc/rules';
 
@@ -886,6 +886,25 @@ export const settlementReceiptUndo = guard(async (c) => {
   const r = await undoBatchReceipt(c.get('supabase'), co.companyId, receiptId);
   if (!r.ok) return c.json({ error: r.status, message: r.reason }, r.status === 'not_found' ? 404 : 500);
   return c.json(r);
+});
+
+/* POST /rows/:id/unconfirm — the journal way out the ignore refusal below
+   points at. Reverses the fee entry, releases the payments, sends the row
+   back to NEEDS_CONFIRM; refused while the statement has recorded receipts
+   (undo those first — they have their own button). */
+export const settlementRowUnconfirm = guard(async (c) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const rowId = Number(c.req.param('id'));
+  if (!Number.isInteger(rowId)) return c.json({ error: 'bad_id' }, 400);
+  const r = await unconfirmSettlementRow(c.get('supabase'), co.companyId, rowId);
+  if (!r.ok) {
+    const code = r.status === 'not_found' ? 404
+      : r.status === 'not_confirmed' || r.status === 'has_receipts' ? 409
+      : 500;
+    return c.json({ error: r.status, message: r.reason }, code);
+  }
+  return c.json({ ok: true, ...(r.jeNo ? { reversalJeNo: r.jeNo } : {}) });
 });
 
 /* POST /rows/:id/ignore — set a line aside (or put it back). A confirmed line

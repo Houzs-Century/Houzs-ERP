@@ -59,6 +59,7 @@ import {
   classifyAcSkip,
 } from '../lib/autocount-outbox-status';
 import { callAcRead } from '../../services/autocount-host-read';
+import { autocountRelinkLinesHandler } from './autocount-relink';
 import {
   AC_REQUEUE_MEANING,
   REQUEUE_DOC_TYPES,
@@ -685,7 +686,33 @@ export const autocountBookDocHandler = async (
   });
 };
 
+/* GET /table-columns — what columns a document table actually has, names only.
+   It answers ONE question and it is worth naming: can an AutoCount document
+   DETAIL carry a user-defined column? If it can, the ERP can stamp its OWN line
+   reference into the book and stop depending on the key AutoCount hands back —
+   which is what the owner asked for on 2026-08-31 (「为什么 AutoCount 要回传给我们
+   呢?」). The reflected SDK dump cannot answer it (taken DeclaredOnly, so an
+   inherited `UDF` member is invisible); sys.columns on the live book can. */
+export const autocountTableColumnsHandler = async (
+  c: Context<{ Bindings: Env; Variables: Variables }>,
+) => {
+  if (!REQUEUE_KEYS.some((k) => hasHouzsPerm(c, k))) {
+    return c.json({ error: 'forbidden', message: `Limited to ${REQUEUE_KEYS.join(' or ')}.` }, 403);
+  }
+  const table = (c.req.query('table') ?? '').trim().toUpperCase();
+  const like = (c.req.query('like') ?? '').trim();
+  if (!table) return c.json({ error: 'invalid_table', message: '`table` is required.' }, 400);
+  const r = await callAcRead(c.env, 'table_columns', { Table: table, Like: like });
+  if (!r.ok) return c.json({ ok: false, error: r.error, status: r.status }, 502);
+  return c.json({ ok: true, table: r.body?.table ?? table, columns: r.body?.columns ?? [] });
+};
+
 autocountOutbox.get('/book-doc', autocountBookDocHandler);
+autocountOutbox.get('/table-columns', autocountTableColumnsHandler);
+/* The WRITE half of /book-doc: match a held-back document's lines up against the
+   book so it can be saved again. Its own file (this one is at the size cap), and
+   its matching rules are a tested module of their own. */
+autocountOutbox.post('/relink-lines', autocountRelinkLinesHandler);
 autocountOutbox.get('/host-log', autocountHostLogHandler);
 autocountOutbox.get('/', listAutocountOutboxHandler);
 

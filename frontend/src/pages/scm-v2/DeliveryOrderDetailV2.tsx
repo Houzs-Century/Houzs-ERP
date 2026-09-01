@@ -52,6 +52,7 @@ import {
 import { DataTable, type Column } from "../../components/DataTable";
 import { DATA_TABLE_LAYOUT_FAMILIES } from "../../components/dataTableLayoutFamilies";
 import { CommittedBatchCell } from "../../components/DocumentLinesExpansion";
+import { DoLinePhotoStrip } from "../../components/scm-v2/DoLinePhotoStrip";
 import {
   DetailGrid,
   DetailMain,
@@ -187,6 +188,10 @@ type DoItem = {
      purchase-order.md 2026-08-06); returned by the detail GET's ITEM columns.
      Display-only here — rendered as an anchored CommittedBatchCell chip. */
   committed_po_batch_no?: string | null;
+  /* Mig 20260828T0746 — R2 photo keys carried from the source SO line on
+     convert (owner 2026-08-10: 送货时照片要跟着 line). Returned by the detail
+     GET's ITEM columns; rendered read-only via DoLinePhotoStrip. */
+  photo_urls?: string[];
 };
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -979,6 +984,23 @@ export function DeliveryOrderDetailV2() {
             {l.uom || ""}
           </span>
         </span>
+      ),
+    },
+    /* Photos (mig 20260828T0746) — the line's carried SO reference shots,
+       openable. Same column idiom as the SO detail's Photos column: getValue is
+       the COUNT so the column sorts/filters/exports as a number; a `render`
+       with no getValue is invisible to all three. */
+    {
+      key: "photos",
+      label: "Photos",
+      width: "110px",
+      getValue: (l) => (l.photo_urls ?? []).length,
+      render: (l) => (
+        <DoLinePhotoStrip
+          doId={id ?? ""}
+          itemId={l.id}
+          photoKeys={l.photo_urls ?? []}
+        />
       ),
     },
   ];

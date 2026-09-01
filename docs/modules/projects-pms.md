@@ -398,6 +398,20 @@ project the schedule dropped) is flagged as a possible postpone/cancel to check.
 
 The owner's FAIR REPORT is one `.xlsx` worksheet PER EVENT (`<date><BRAND>@<VENUE>`,
 per-order rows). Page `frontend/src/pages/FairReportFill.tsx` (route
+**SALES REPORT SCOPE — everything except DRAFT and CANCELLED (2026-08-31).**
+`fetchFairSos` (`scm/routes/reports.ts`) used to anchor on `status='CONFIRMED'`,
+so an order LEFT the report the moment the floor delivered it — measured on
+2990, **34 of its 49 delivery orders were invisible** and the DO tab showed 14
+(owner: 「很多单都没进得来…可能因为我还没 delivered」). A fair's completed
+business is still its business, so the predicate is now
+`.not('status','in','(DRAFT,CANCELLED)')` for all four stages. Two neighbours
+moved with it: the DO stage's LEGACY chip no longer counts SERVICE lines (the
+delivery fee never carries a frozen ship cost, and it was pinning the chip on
+11 of 14 rows), and a stock line frozen at ZERO against a real order-time
+estimate now sets `do_cost_ship_anyway` so a ship-before-arrival DO reads as
+"cost not captured at ship time" instead of a naked 100% margin. Bug
+`docs/bugs/0575-the-book-s-none-placeholder-outranked-the-derived-branding-a.md`.
+
 `/fair-report-fill`, nav "Fair Report Fill" under Projects) reads it in-browser
 with SheetJS and calls:
 
@@ -819,6 +833,17 @@ endpoint, the create-time venue text fallback, and the create-time `project_id`
 link — and they had already begun to differ (`venue-binding.ts:1-16`). Desktop
 and mobile share it by construction: both hit the same HTTP endpoints, neither
 client re-implements it.
+
+**The same module also answers a question that is NOT resolution: what a
+HALF-WRITTEN pair means.** `venueNameForHalfWrittenPair()` — a client that
+resolved the venue id and not the name sends `venue: ""` beside a real
+`venueId`, and read literally that deletes the venue. It returns three answers,
+and `unresolved` (the master could not be read, or the id names nothing) makes
+the caller leave the stored venue ALONE rather than write the blank. It lives
+here, beside the binding rule, because the SO CREATE path already resolved a
+name from an id in exactly this situation and a second copy is how the two paths
+start disagreeing. Behaviour and repair: `docs/modules/sales-order.md` §Venue;
+ledger `docs/bugs/0591-*`.
 
 `resolveVenueBinding()` (`:176`), owner rule of 2026-07-19:
 

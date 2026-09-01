@@ -12,7 +12,7 @@
    the assertion is a property over all of it. */
 import { describe, expect, test } from 'vitest';
 
-import { brandingLabel, brandingCategoryNoun, CATEGORY_SOURCES, NO_ITEMS_LABEL } from './so-branding-label';
+import { brandingLabel, isPlaceholderBrandText, brandingCategoryNoun, CATEGORY_SOURCES, NO_ITEMS_LABEL } from './so-branding-label';
 import { normCategory } from '../lib/so-readiness';
 
 const CO_2990 = '2990';
@@ -233,5 +233,25 @@ describe('brandingCategoryNoun — the superset, refereed against normCategory',
     expect([...CATEGORY_SOURCES.normBuckets]).toEqual([
       'SOFA', 'BEDFRAME', 'MATTRESS', 'ACCESSORY', 'SERVICE', 'OTHERS',
     ]);
+  });
+});
+
+/* 2026-08-31 (owner: 「我这个 BedFrame,它的 branding 不是 BedFrame 呢?」).
+   HC-SO-013402 is a TRION bedframe whose HEADER branding is the literal text
+   "NONE" — copied faithfully from the book, where 170 imported orders carry it.
+   Every reader treats a non-blank header as authoritative, so the derived
+   label ("BEDFRAME", or the product's own brand) never got a chance and the
+   screen printed NONE. The text is not a brand; it is the book's way of
+   writing "no brand". */
+describe('isPlaceholderBrandText — the book\'s ways of writing "no brand"', () => {
+  test('the placeholder spellings are all blank-equivalent', () => {
+    for (const s of ['NONE', 'none', ' None ', 'N/A', 'n.a.', 'NIL', '-', '--', 'TBC', ''])
+      expect(isPlaceholderBrandText(s)).toBe(true);
+    expect(isPlaceholderBrandText(null)).toBe(true);
+    expect(isPlaceholderBrandText(undefined)).toBe(true);
+  });
+  test('a real brand is never treated as blank', () => {
+    for (const s of ['AKEMI', 'ZANOTTI', 'DUNLOPILLO', 'ERGOTEX', 'MYLATEX', 'BEDFRAME', 'Nonesuch'])
+      expect(isPlaceholderBrandText(s)).toBe(false);
   });
 });
