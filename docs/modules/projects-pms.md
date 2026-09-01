@@ -695,6 +695,15 @@ to none — the anti-lockout guarantee (`positionPolicy.ts:12-19`). Project rows
 for the crew cohorts are `projects: view`, `projects.finances: none`,
 `projects.maintenance: none` (`:241-243`, `:253-255`, `:273-275`).
 
+⚠ **The file is not only about PMS pages.** Because it is the whole page-access
+authority for a positioned user, a non-PMS grant lands here too: the Sales
+Director's row carries `scm.procurement.products: edit` and his flags carry
+`canWriteConfig: true` (owner 2026-09-01 — he maintains product master data:
+retail price, sofa combos, Model activation / Modular toggles). Nothing in PMS
+moves, but a reader editing the sales cohort's rows for a projects reason is
+also holding that grant in their hands. The SCM side of the catalogue is
+`docs/PERMISSION-MATRIX.md`.
+
 **Calendar Viewer is narrower still — the calendar and nothing else** (owner
 2026-08-26, 「Calendar Viewer = 只有日历」). `CALENDAR_VIEWER_ROWS` grants
 `projects: view` + `projects.calendar: view` but sets an explicit `none` on

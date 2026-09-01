@@ -212,7 +212,9 @@ describe("positionPolicy — the resolved-access table over all 17 real position
       canMoveMoney: false,
       canWriteConfig: false,
     });
-    // The Sales Director tier within the cohort — view-all scope + margin visible.
+    // The Sales Director tier within the cohort — view-all scope + margin visible,
+    // and (owner 2026-09-01) the SCM master-data write. Money stays FALSE: the
+    // grant is about products/prices/combos, not cash.
     const dir = resolvePositionPolicy({ position_name: "Sales Director", department_name: "Sales Department" });
     expect(dir.flags).toEqual({
       orderScope: "all",
@@ -220,7 +222,7 @@ describe("positionPolicy — the resolved-access table over all 17 real position
       canSeeCommission: false,
       announcementScope: "dept",
       canMoveMoney: false,
-      canWriteConfig: false,
+      canWriteConfig: true,
     });
     const full = resolvePositionPolicy({ position_name: "HR Manager", department_name: "Management" });
     expect(full.flags).toEqual({
@@ -255,7 +257,12 @@ describe("positionPolicy — canWriteConfig is the owner-editable operation coho
     // holds the flat perm.
     "HR Manager": false,
     "Finance Manager": false, // config is not finance work
-    "Sales Director": false,
+    // Owner 2026-09-01, asked of Kris's account ("想让他能改"): the Sales Director
+    // maintains retail price, sofa combos and Model activation / Modular toggles.
+    // Paired with his scm.procurement.products row — the area guard admits the
+    // write and this flag satisfies the per-route canWriteScmConfig check. The
+    // rest of the sales cohort stays FALSE.
+    "Sales Director": true,
     "Sales Manager": false,
     "Sales Executive": false,
     "Sales Person": false,
@@ -281,15 +288,27 @@ describe("positionPolicy — canWriteConfig is the owner-editable operation coho
     },
   );
 
-  test("exactly five positions gain the write; the restricted/sales/HR cohorts do NOT", () => {
+  test("exactly six positions gain the write; the restricted/rest-of-sales/HR cohorts do NOT", () => {
     const granted = POSITION_ACCESS_SNAPSHOT.filter(
       (e) => resolvePositionPolicy(inputFor(e)).flags.canWriteConfig,
     ).map((e) => e.name).sort();
     expect(granted).toEqual(
-      ["Logistic Admin", "Operation Executive", "Operation Manager", "Procurement/Purchasing", "Super Admin"].sort(),
+      [
+        "Logistic Admin", "Operation Executive", "Operation Manager",
+        "Procurement/Purchasing", "Super Admin",
+        // 2026-09-01 — the sixth, and the ONLY sales-cohort member with it.
+        "Sales Director",
+      ].sort(),
     );
     // The safety line the owner asked to confirm: Storekeeper stays FALSE.
     expect(resolvePositionPolicy({ position_name: "Storekeeper", department_name: "Operation Department" }).flags.canWriteConfig).toBe(false);
+    // And the grant did NOT leak down the sales ladder.
+    for (const name of ["Sales Manager", "Sales Executive", "Sales Person"]) {
+      expect(
+        resolvePositionPolicy({ position_name: name, department_name: "Sales Department" }).flags.canWriteConfig,
+        name,
+      ).toBe(false);
+    }
   });
 
   test("an unclassified / renamed position fails to FALSE (no injection via free-text rename)", () => {
@@ -322,16 +341,31 @@ describe("positionPolicy — sales fold is byte-identical to the pre-fold resolu
     });
   }
 
+  /** DELIBERATE departures from the pre-fold photograph — a grant the owner made
+   *  AFTER the fold, which by definition cannot be in the prod-row snapshot. Each
+   *  one is asserted to actually differ from the pre-fold value, so a stale entry
+   *  here cannot quietly excuse a key that no longer departs. Everything not
+   *  listed must still match byte-for-byte: the proof keeps all of its power. */
+  const DELIBERATE_DEPARTURES: Record<string, Record<string, AccessLevel>> = {
+    // Owner 2026-09-01 — Products & Maintenance write for the Sales Director.
+    "Sales Director": { "scm.procurement.products": "edit" },
+  };
+
   test.each(
     POSITION_ACCESS_SNAPSHOT.filter((e) => EXPECTED_COHORT[e.name] === "sales").map((e) => [e.name, e] as const),
-  )("%s: policy map === pre-fold map on EVERY registry key", (_name, entry) => {
+  )("%s: policy map === pre-fold map on EVERY registry key except the documented grants", (_name, entry) => {
     const policyMap = resolvePositionPolicy(inputFor(entry)).pageAccess;
     const pre = preFoldMap(entry);
+    const departures = DELIBERATE_DEPARTURES[entry.name] ?? {};
+    for (const [key, level] of Object.entries(departures)) {
+      expect(pre[key], `${entry.name}:${key} no longer departs — drop it from the list`).not.toBe(level);
+    }
+    const expected = { ...pre, ...departures };
     for (const p of PAGES) {
-      expect(policyMap[p.key], `${entry.name}:${p.key}`).toBe(pre[p.key]);
+      expect(policyMap[p.key], `${entry.name}:${p.key}`).toBe(expected[p.key]);
     }
     // And the whole objects match (no key present in one but not the other).
-    expect(policyMap).toEqual(pre);
+    expect(policyMap).toEqual(expected);
   });
 
   test.each(
