@@ -111,6 +111,32 @@ counts into `pendingApprovalSen` and subtracts from the board's available
 money — money already asked for is not money the owner may still spend. MYR
 conversion per voucher mirrors posting: `round(total_sen × exchange_rate)`.
 
+## 0c. Two documents, AutoCount-style (2026-08-30)
+
+The owner, AutoCount in hand: 正常 auto count是可以选payment voucher / AP
+Payment. So the New page is TWO documents on one route:
+
+- **Payment Voucher** (`/scm/payment-vouchers/new`) — pays expenses. Free-text
+  payee, hand-written lines, **no supplier and no Apply-to-PI section**.
+  Purpose stored as `OTHER` (the old three-way purpose dropdown is gone; the
+  document type IS the purpose now).
+- **AP Payment** (`/scm/payment-vouchers/new?type=ap`) — settles a supplier.
+  Supplier required; **no hand-written lines at all**: tick an invoice to pay
+  it in full, type a figure for a partial, and the voucher total follows the
+  ticks. On save the page composes the ONE GL line itself — Dr the AP control
+  account (role `AP`, default 400-0000) for exactly what the ticks apply — so
+  a supplier payment can never be mis-booked to an expense account. Purpose
+  `SUPPLIER_PAYMENT`; same table, same PV number series, same approval cycle.
+
+**Paid From offers only money** (owner: paid from 应该只能选cash 和银行): the
+picker lists `acc_money` accounts, pre-filled from the company's
+`BANK_DEFAULT` role, and the server refuses any non-money credit account
+(`not_a_money_account`, guarded on create AND on draft edit). The default
+bank is the owner's to maintain — the "Default bank" card on
+/scm/settlement-setup writes `PUT /accounting/roles/BANK_DEFAULT` (money
+accounts only, per company). Contracts: `PaymentVoucherNew.test.tsx`
+(frontend), `backend/src/scm/routes/accountRoles.test.ts` (server half).
+
 ## 1. Frontend
 
 | Surface | File |

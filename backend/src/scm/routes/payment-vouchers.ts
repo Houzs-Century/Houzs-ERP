@@ -337,6 +337,30 @@ paymentVouchers.get('/:id', async (c) => {
 /* Exported for the same reason postPaymentVoucherHandler and
    cancelPaymentVoucherHandler are: the supabaseAuth bridge cannot run in the
    vitest harness, so the scope test mounts the handler on a bare Hono app. */
+/* Paid From must be a money account (bank / cash — the acc_money set Daily
+   Bank reads). Returns a Response to send on refusal, null when fine. Fails
+   CLOSED on a read error: an unverifiable account does not get to move money. */
+const requireMoneyAccount = async (c: any, code: string): Promise<Response | null> => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const sb = c.get('supabase');
+  const { data, error } = await scopeToCompanyId(
+    sb.from('accounts').select('account_code, account_name, acc_money, is_active').eq('account_code', code),
+    co.companyId,
+  ).maybeSingle();
+  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  if (!data) return c.json({ error: 'no_such_account', message: `${code} is not in this company's chart of accounts.` }, 400);
+  const a = data as { account_name: string; acc_money: boolean | null; is_active: boolean };
+  if (!a.is_active) return c.json({ error: 'account_inactive', message: `${code} ${a.account_name} is inactive.` }, 400);
+  if (a.acc_money !== true) {
+    return c.json({
+      error: 'not_a_money_account',
+      message: `${code} ${a.account_name} is not a bank / cash account. A voucher pays FROM money — pick one of the accounts Daily Bank shows.`,
+    }, 400);
+  }
+  return null;
+};
+
 export const createPaymentVoucherHandler = async (c: any) => {
   if (!hasHouzsPerm(c, 'scm.payment_voucher.create')) {
     return c.json({ error: "You don't have permission to do that." }, 403);
@@ -348,6 +372,13 @@ export const createPaymentVoucherHandler = async (c: any) => {
   if (!payeeName) return c.json({ error: 'payee_required' }, 400);
   const creditAccountCode = (body.creditAccountCode as string | undefined)?.trim();
   if (!creditAccountCode) return c.json({ error: 'credit_account_required' }, 400);
+  {
+    /* Paid From must BE money (owner, 2026-08-30: paid from 应该只能选cash 和
+       银行). Guarded here, not just in the picker: a voucher crediting an
+       expense account would "pay" without any money leaving. */
+    const moneyErr = await requireMoneyAccount(c, creditAccountCode);
+    if (moneyErr) return moneyErr;
+  }
 
   const built = buildLines(body.lines);
   if ('error' in built) return c.json({ error: built.error }, 400);
@@ -502,6 +533,8 @@ export const updatePaymentVoucherHandler = async (c: any) => {
   if (body.creditAccountCode !== undefined) {
     const v = String(body.creditAccountCode).trim();
     if (!v) return c.json({ error: 'credit_account_required' }, 400);
+    const moneyErr = await requireMoneyAccount(c, v);
+    if (moneyErr) return moneyErr;
     updates.credit_account_code = v;
   }
   /* voucher_date is `date NOT NULL DEFAULT current_date` (mig 0081), and the
