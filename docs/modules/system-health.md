@@ -274,3 +274,24 @@ What to measure rather than assume: the `[slow …]` signature counts on
 **Client errors check (read-only)** workflow. `/api/auth/me` is the cleanest of
 the three — it returns the authenticated user and nothing else, so it has no
 route body to blame.
+
+## `GET /health` — the build stamp, and why it is baked into the bundle
+
+`/health` returns `{ ok, sha }` where `sha` is the commit the live Worker was
+built from. The **Deploy watchdog** workflow reads it and compares it to `main`
+to catch a rogue/stale overwrite of prod — a null or unknown stamp is treated as
+a rogue deploy. The handler is `app.get("/health", …)` in
+`backend/src/index.ts`, and the value comes from `resolveBuildSha(GIT_SHA, …)`.
+
+**The stamp is a value COMPILED INTO the bundle, not a `--var GIT_SHA` env.**
+`backend/src/build-info.ts` exports `GIT_SHA` (the committed placeholder is
+`"dev"`); `.github/workflows/deploy.yml` and `deploy-staging.yml` `sed` the real
+commit sha onto that export line right before `wrangler deploy`. This replaced
+the fragile env stamp after 2026-09-01, when `wrangler secret bulk` (the separate
+secrets step that runs after the deploy) non-deterministically redeployed a
+Worker version WITHOUT the CLI-injected `--var`, leaving `/health`'s sha null and
+the watchdog false-alarming in a redeploy loop (`docs/bugs/0596-*`). A bundled
+constant survives every var/secret operation; `resolveBuildSha` still falls back
+to the legacy `c.env.GIT_SHA` and then null, so the watchdog's rogue-deploy
+detection is unchanged (a bare clone carries `"dev"`/an old sha). Pinned by
+`backend/tests/buildInfoSha.test.ts`.
