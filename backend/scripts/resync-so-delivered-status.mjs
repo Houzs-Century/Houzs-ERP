@@ -124,6 +124,31 @@ async function main() {
   const { syncSoDeliveredFromDo } = await import("../src/scm/lib/so-delivery-sync.ts");
   const sb = pgrestShim(sql, "scm");
 
+  /* PRE-FLIGHT, and it is the whole reason this script can be trusted.
+     `syncSoDeliveredFromDo` wraps each document in its own try/catch, so a read
+     that THROWS is swallowed and the document is silently left alone. Its
+     coverage read uses a PostgREST embedded select
+     (`delivery_orders!inner(status)`) and `pgrest-shim` does not implement those
+     — it throws `pgrest-shim GAP`. Put together, the first APPLY run of this
+     script offered 68 orders, moved 0, and reported SUCCESS: a verdict computed
+     over nothing, which CLAUDE.md names as the shape that must never read as a
+     pass. It nearly got reported as "nothing needed fixing".
+
+     So run that exact read HERE, outside the swallow, and REFUSE if it cannot
+     execute. A repair that cannot do its work must say so, not finish quietly. */
+  try {
+    await sb.from("delivery_order_items")
+      .select("id, so_item_id, qty, delivery_orders!inner(status)")
+      .in("so_item_id", []);
+  } catch (e) {
+    console.error(`REFUSED: the coverage read cannot execute through this client — ${(e && e.message) || e}`);
+    console.error("syncSoDeliveredFromDo swallows a throw per document, so running on would");
+    console.error("silently change nothing and report success. Use a real PostgREST client,");
+    console.error("or teach pgrest-shim embedded selects, first.");
+    await sql.end();
+    process.exit(3);
+  }
+
   /* One document at a time. The function is per-document already and a batch
      would hide which one threw. */
   let called = 0;
