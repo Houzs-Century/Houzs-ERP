@@ -1085,21 +1085,12 @@ export function stripSetupDismantle<
     section_progress?: any[];
   }
 >(detail: T): T {
-  // Crew editor blobs + scheduled times live on the project row — always blank
-  // them (they render only inside the now-hidden Setup & Dismantle panel).
-  const project = detail.project
-    ? {
-        ...detail.project,
-        setup_crew: null,
-        dismantle_crew: null,
-        // service_crew (owner 2026-07-22) is the same hidden logistics panel.
-        service_crew: null,
-        // schedule_remark (owner 2026-07-23) renders in the same panel too.
-        schedule_remark: null,
-        setup_start_at: null,
-        dismantle_start_at: null,
-      }
-    : detail.project;
+  // Owner 2026-07-28 ("all users can view the setup & dismantle part"): the
+  // crew blobs, service crew, schedule remark and scheduled times STAY on the
+  // wire for every viewer — the S&D card is view-for-all, and editing remains
+  // gated by the PATCH route + the UI's canWrite/canEdit tier. Only the
+  // DOCUMENT rows below stay role-filtered.
+  const project = detail.project;
 
   // Document rows are identified by their cloned section NAME. Owner
   // 2026-07-16: the sales PIC's OWN deliverables — the rows badged
