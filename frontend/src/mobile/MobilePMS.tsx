@@ -416,7 +416,7 @@ function ProjectListView({ onOpen, onBack }: { onOpen: (id: number) => void; onB
   const _pos = (user?.position_name ?? "").trim();
   const _dept = (user?.department_name ?? "").trim();
   const _isDirector = !!user?.permissions?.includes("*") || /\b(super admin|sales director|finance manager)\b/i.test(_pos);
-  const _isCrew = /\b(driver|helper)\b/i.test(_pos) || /storekeeper/i.test(_pos);
+  const _isCrew = /\b(driver|helper)\b/i.test(_pos) || /storekeeper/i.test(_pos) || /^warehouse crew/i.test(_pos);
   const _isSalesExec = (/sales/i.test(_dept) || /^sales/i.test(_pos)) && !_isDirector;
   const restrictedCohort = _isCrew || _isSalesExec;
   const visibleStageFilters = restrictedCohort
@@ -894,7 +894,9 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
   const isMgt = isOwnerAdmin || isDirectorPos || /^management$/i.test(_dept);
   const isBD = /bd\s*exec|business\s*develop/i.test(_roleName);
   const isDriverCrew = /\b(Driver|Helper)\b/i.test(_pos);
-  const isStorekeeper = /storekeeper/i.test(_pos);
+  // Owner 2026-08-28: the admin-created "Warehouse Crew KL" position (mixed
+  // Helper + Storekeeper roles) rides the storekeeper arm of every crew gate.
+  const isStorekeeper = /storekeeper/i.test(_pos) || /^warehouse crew/i.test(_pos);
   const isLogistic = /logistic/i.test(_pos);
   // Purchasers are matched by POSITION OR ROLE — the live purchasers (Farra,
   // Sim) hold the Purchaser ROLE on an "Operation Executive" position, so a

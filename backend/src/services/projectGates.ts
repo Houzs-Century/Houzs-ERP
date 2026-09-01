@@ -36,7 +36,11 @@ export function isCrewScopedUser(
   if (!user) return false;
   const granted = (user as any).permissions_set ?? user.permissions;
   if (hasPermission(granted, "*") || hasPermission(granted, "projects.write")) return false;
-  return CREW_SCOPED_POSITIONS.has((user.position_name ?? "").trim().toLowerCase());
+  const pos = (user.position_name ?? "").trim().toLowerCase();
+  // Owner 2026-08-28: the admin-created regional warehouse-crew positions
+  // ("Warehouse Crew KL", …) carry the whole helper/storekeeper cohort now —
+  // prefix match, mirroring positionPolicy.isWarehouseCrewPosition.
+  return CREW_SCOPED_POSITIONS.has(pos) || pos.startsWith("warehouse crew");
 }
 
 /** Is this project's state reviewed by the region warehouse (Ops Exec)? */
