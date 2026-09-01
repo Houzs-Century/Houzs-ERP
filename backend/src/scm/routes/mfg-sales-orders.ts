@@ -31,6 +31,7 @@ export { deriveCountryFromState, deriveSalesLocationFromState };
 import { specialDeliveryFeesForLines, reconstructDeliveryRuleLines } from '../lib/special-delivery';
 import { soHasDownstream } from '../lib/downstream-lock';
 import { dateOrNull, effectiveDateAfterPatch, isDateColumn } from '../lib/date-coerce';
+import { statusAfterProcessingDateSet } from '../shared/so-proceeded-status';
 import { soDocNosWithDownstream } from '../lib/downstream-lock'; // own line: autocountWritebackWiring asserts the import above verbatim
 import { doNosBySalesOrder, type DeliveryOrderNoRow } from '../lib/so-delivery-order-nos';
 import { soDownstreamRefs, NO_SO_DOWNSTREAM_REFS } from '../lib/downstream-doc-refs';
@@ -6833,9 +6834,8 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
      actually knows where they are standing — a showroom rep sent to an
      exhibition, or an exhibition rep back on the floor, corrects it HERE, and
      that correction has to stick.
-     The change is already recorded by the `['venue', 'venue']` field-map entry,
-     and clearing to blank is as deliberate as setting one — but a blank BESIDE a
-     venue id is a half-written pair, not a clear. docs/bugs/0591-*. */
+     The change is recorded by the `['venue', 'venue']` field-map entry, and a
+     blank BESIDE a venue id is a half-written pair, not a clear (0591). */
   const vFix = await venueNameForHalfWrittenPair(sb, body['venue'], body['venueId']);
   if (vFix.kind === 'resolved') { body['venue'] = vFix.name; updates['venue'] = vFix.name; }
   if (vFix.kind === 'unresolved') { delete body['venue']; delete updates['venue']; }
@@ -7072,22 +7072,20 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
     const effProc  = effectiveDateAfterPatch(proc,  origProc);
     const effDeliv = effectiveDateAfterPatch(deliv, origDeliv);
     /* Owner 2026-07-04 — Processing + Delivery are all-or-nothing (both set or
-       both empty). Kept as a SHORT-CIRCUIT (not aggregated): an unpaired date is a
-       structurally-incomplete input, not one of several field-level fixes — there
-       is no meaningful "and also" to report against half a date pair. The
-       predicate is shared/so-processing-date's, so this path, the create path,
-       the CO paths and both amendment paths state the rule ONCE; the grandfather
-       carve-out (a stored unpaired pair this save leaves alone) lives inside it
-       rather than in a `touchesDates` flag each caller re-derived.
+       both empty), kept as a SHORT-CIRCUIT rather than aggregated: half a date
+       pair is structurally incomplete, not one of several field-level fixes. The
+       predicate is shared/so-processing-date's — this path, create, the CO paths
+       and both amendment paths state the rule ONCE, and its grandfather carve-out
+       (a stored unpaired pair this save leaves alone) lives inside it rather than
+       in a `touchesDates` flag each caller re-derived.
 
        CLEARING ONE CLEARS BOTH (owner: 同时有或者同时没有). Removing the
-       Processing Date is already super-admin-only (superAdminClearsProc above);
-       once that removal is authorised the Delivery Date it was promised against
-       goes with it, so a caller that sends only `processingDate: ''` no longer
-       has to know to send the delivery key too. Computed BEFORE the refusal so
-       the cascade is what the refusal is judged against. The reverse — clearing
-       only the delivery date — deliberately does NOT cascade: it would clear the
-       Processing Date, which is exactly the write that permission guards. */
+       Processing Date is already super-admin-only (superAdminClearsProc above),
+       so once authorised the Delivery Date it was promised against goes with it
+       and a caller sending only `processingDate: ''` need not send the delivery
+       key. Computed BEFORE the refusal, so the cascade is what the refusal is
+       judged against. The reverse does NOT cascade: clearing only the delivery
+       date would clear the Processing Date, the write permission guards. */
     const cascadeCols = soDatePairCascadeColumns({
       procCleared: superAdminClearsProc,
       delivInPatch: deliv !== undefined,
@@ -7108,7 +7106,9 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
        Flagged here so the RPC call below applies both halves. */
     cascadedDeliveryClear = cascadeCols.length > 0;
     const effDelivAfterCascade = cascadedDeliveryClear ? null : effDeliv;
-    const pairRefusal = soDatePairRefusal({
+    /* PROCEEDED IS THE DATE — refusals in shared/so-proceeded-status, 0597. */
+    const proceeded = statusAfterProcessingDateSet({ currentStatus: beforeRecord['status'] as string | null, storedProcessingDate: origProc, effectiveProcessingDate: effProc });
+    if (proceeded) updates['status'] = proceeded;    const pairRefusal = soDatePairRefusal({
       nextProc: effProc,
       nextDeliv: effDelivAfterCascade,
       origProc,
