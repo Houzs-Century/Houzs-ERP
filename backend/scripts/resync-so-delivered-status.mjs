@@ -120,71 +120,80 @@ async function main() {
     return;
   }
 
-  const { pgrestShim } = await import("./lib/pgrest-shim.mjs");
-  const { syncSoDeliveredFromDo } = await import("../src/scm/lib/so-delivery-sync.ts");
-  const sb = pgrestShim(sql, "scm");
+  /* THE RULE, IMPORTED — not restated. `isSoFullyCovered` is the pure predicate
+     `syncSoDeliveredFromDo` itself decides with, so this repair cannot disagree
+     with the app about what "delivered" means. Only the PLUMBING is local.
 
-  /* PRE-FLIGHT, and it is the whole reason this script can be trusted.
-     `syncSoDeliveredFromDo` wraps each document in its own try/catch, so a read
-     that THROWS is swallowed and the document is silently left alone. Its
-     coverage read uses a PostgREST embedded select
-     (`delivery_orders!inner(status)`) and `pgrest-shim` does not implement those
-     — it throws `pgrest-shim GAP`. Put together, the first APPLY run of this
-     script offered 68 orders, moved 0, and reported SUCCESS: a verdict computed
-     over nothing, which CLAUDE.md names as the shape that must never read as a
-     pass. It nearly got reported as "nothing needed fixing".
+     Why the plumbing is local at all: the sync's own reads use PostgREST
+     embedded selects, `pgrest-shim` does not implement those, and the sync
+     swallows the throw per document — so calling it from here silently changed
+     nothing and reported success (docs/bugs/0599-*). The SQL below reads exactly
+     what it reads: delivery lines EXCLUDING {DRAFT, CANCELLED} orders, netted of
+     non-cancelled returns. That equivalence was checked against the probe before
+     this was written, and returns accounted for 0 of the shortfall. */
+  const { isSoFullyCovered } = await import("../src/scm/lib/so-delivery-sync.ts");
 
-     So run that exact read HERE, outside the swallow, and REFUSE if it cannot
-     execute. A repair that cannot do its work must say so, not finish quietly. */
-  try {
-    await sb.from("delivery_order_items")
-      .select("id, so_item_id, qty, delivery_orders!inner(status)")
-      .in("so_item_id", []);
-  } catch (e) {
-    console.error(`REFUSED: the coverage read cannot execute through this client — ${(e && e.message) || e}`);
-    console.error("syncSoDeliveredFromDo swallows a throw per document, so running on would");
-    console.error("silently change nothing and report success. Use a real PostgREST client,");
-    console.error("or teach pgrest-shim embedded selects, first.");
-    await sql.end();
-    process.exit(3);
-  }
+  const docs = cands.map((r) => r.doc_no);
+  const soLines = await sql`
+    SELECT i.id, i.doc_no, i.qty::numeric AS qty
+      FROM scm.mfg_sales_order_items i
+     WHERE i.doc_no = ANY(${docs}) AND COALESCE(i.cancelled, false) = false`;
+  const doLines = await sql`
+    SELECT di.id, di.so_item_id, di.qty::numeric AS qty, i.doc_no
+      FROM scm.delivery_order_items di
+      JOIN scm.delivery_orders dh ON dh.id = di.delivery_order_id
+      JOIN scm.mfg_sales_order_items i ON i.id = di.so_item_id
+     WHERE i.doc_no = ANY(${docs})
+       AND upper(COALESCE(dh.status::text, '')) NOT IN ('DRAFT', 'CANCELLED')`;
+  const retLines = await sql`
+    SELECT di.so_item_id, dri.qty_returned::numeric AS qty, i.doc_no
+      FROM scm.delivery_return_items dri
+      JOIN scm.delivery_returns dr ON dr.id = dri.delivery_return_id
+      JOIN scm.delivery_order_items di ON di.id = dri.do_item_id
+      JOIN scm.mfg_sales_order_items i ON i.id = di.so_item_id
+     WHERE i.doc_no = ANY(${docs})
+       AND upper(COALESCE(dr.status::text, '')) <> 'CANCELLED'`;
 
-  /* One document at a time. The function is per-document already and a batch
-     would hide which one threw. */
-  let called = 0;
+  const group = (rows) => {
+    const m = new Map();
+    for (const r of rows) {
+      if (!m.has(r.doc_no)) m.set(r.doc_no, []);
+      m.get(r.doc_no).push(r);
+    }
+    return m;
+  };
+  const soBy = group(soLines), doBy = group(doLines), retBy = group(retLines);
+
+  const toAdvance = [];
   for (const r of cands) {
-    await syncSoDeliveredFromDo(sb, [r.doc_no], null);
-    called += 1;
-    if (called % 200 === 0) log(`   ..${called}/${cands.length}`);
+    const lines = (soBy.get(r.doc_no) ?? []).map((l) => ({ id: l.id, qty: Number(l.qty) }));
+    if (lines.length === 0) continue;
+    const dls = (doBy.get(r.doc_no) ?? []).map((d) => ({ soItemId: d.so_item_id, qty: Number(d.qty) }));
+    const rls = (retBy.get(r.doc_no) ?? []).map((d) => ({ soItemId: d.so_item_id, qty: Number(d.qty) }));
+    if (isSoFullyCovered(lines, dls, rls)) toAdvance.push(r.doc_no);
   }
-  log(`offered ${called} order(s) to the auto-advance.`);
 
-  /* VERIFY on a FRESH connection, on the VALUES: what actually moved, in which
-     direction. The sync releases as well as advances, so a count of "changed"
-     would hide a release behind an advance. */
+  log(`fully covered and therefore to advance: ${toAdvance.length} of ${cands.length}`);
+  for (const d of toAdvance.slice(0, 25)) log(`   ${d} (${before.get(d)} -> DELIVERED)`);
+  if (toAdvance.length === 0) { log("nothing to advance."); await sql.end(); return; }
+
+  const moved = await sql`
+    UPDATE scm.mfg_sales_orders SET status = 'DELIVERED', updated_at = now()
+     WHERE doc_no = ANY(${toAdvance})
+       AND upper(status::text) = ANY(${CANDIDATE_STATUSES})
+   RETURNING doc_no, company_id`;
+  log(`APPLIED — ${moved.length} order(s) advanced to DELIVERED.`);
+
+  /* VERIFY on a FRESH connection, on the VALUES. */
   const v = postgres(url, { ssl: "require", prepare: false, max: 1 });
   const after = await v`
-    SELECT doc_no, status::text AS status FROM scm.mfg_sales_orders
-     WHERE doc_no = ANY(${cands.map((r) => r.doc_no)})`;
-  const advanced = [], released = [], other = [];
-  for (const row of after) {
-    const was = before.get(row.doc_no);
-    if (!was || was === row.status) continue;
-    if (row.status === "DELIVERED") advanced.push(`${row.doc_no} ${was}->DELIVERED`);
-    else if (was === "DELIVERED") released.push(`${row.doc_no} DELIVERED->${row.status}`);
-    else other.push(`${row.doc_no} ${was}->${row.status}`);
-  }
-  log("");
-  log(`VERIFY (fresh connection, values not counts): ${after.length} of ${cands.length} re-read`);
-  log(`   ADVANCED to DELIVERED: ${advanced.length}`);
-  for (const s of advanced.slice(0, 20)) log(`      ${s}`);
-  log(`   RELEASED out of DELIVERED (a return un-covered it): ${released.length}`);
-  for (const s of released.slice(0, 20)) log(`      ${s}`);
-  if (other.length) {
-    log(`   OTHER movement — unexpected, read these: ${other.length}`);
-    for (const s of other.slice(0, 20)) log(`      ${s}`);
-  }
-  if (after.length !== cands.length) log("VERIFY FAILED — not every order re-read.");
+    SELECT doc_no, company_id, status::text AS status FROM scm.mfg_sales_orders
+     WHERE doc_no = ANY(${moved.map((m) => m.doc_no)})`;
+  const wrong = after.filter((r) => String(r.status).toUpperCase() !== "DELIVERED");
+  log(`VERIFY (fresh connection, values not counts): ${after.length} of ${moved.length} re-read;`
+    + ` DELIVERED on ${after.length - wrong.length}`);
+  for (const r of wrong.slice(0, 5)) log(`   UNEXPECTED ${r.doc_no} (company ${r.company_id}): '${r.status}'`);
+  if (wrong.length || after.length !== moved.length) log("VERIFY FAILED — investigate before re-running.");
   await v.end();
   await sql.end();
 }
