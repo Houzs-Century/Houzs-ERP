@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api/client";
 import { composeDefaultProjectName } from "../lib/projectName";
+import { DateField } from "../vendor/scm/components/DateField";
 import "./mobile.css";
 
 type NotifyFn = (o: { title: string; body?: string; tone?: "info" | "error" }) => Promise<void>;
@@ -154,14 +155,18 @@ export function NewProjectSheet({
               </select>
             </div>
           )}
+          {/* DateField, not a native <input type="date">: the native control
+              renders in the viewer's OS locale, which is exactly what the
+              repo's one-date-format rule exists to prevent. It keeps the value
+              canonical ISO and displays dd/mm/yyyy. */}
           <div style={{ display: "flex", gap: 9 }}>
             <div style={{ flex: 1 }}>
               <label style={labelStyle}>Start date</label>
-              <input type="date" style={fieldStyle} value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+              <DateField value={startDate} onChange={(iso) => setStartDate(iso ?? "")} style={fieldStyle} aria-label="Start date" />
             </div>
             <div style={{ flex: 1 }}>
               <label style={labelStyle}>End date</label>
-              <input type="date" style={fieldStyle} value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+              <DateField value={endDate} onChange={(iso) => setEndDate(iso ?? "")} style={fieldStyle} aria-label="End date" />
             </div>
           </div>
           {dateInvalid && <div style={{ fontSize: 11.5, color: "#b23a3a" }}>End date must be on or after the start date.</div>}
