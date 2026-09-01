@@ -108,16 +108,10 @@ async function main() {
 
   const before = new Map(cands.map((r) => [r.doc_no, r.status]));
 
-  if (!APPLY) {
+  {
     const byStatus = new Map();
     for (const r of cands) byStatus.set(r.status, (byStatus.get(r.status) ?? 0) + 1);
     log(`   by status: ${[...byStatus].map(([s, n]) => `${s} ${n}`).join(", ")}`);
-    log("");
-    log(`PLAN ONLY — MODE=apply CONFIRM="${CONFIRM_PHRASE}" writes.`);
-    log("The sync decides per order; this plan cannot predict its verdict without");
-    log("running it, so the count above is the POPULATION offered, not the moves.");
-    await sql.end();
-    return;
   }
 
   /* THE RULE, IMPORTED — not restated. `isSoFullyCovered` is the pure predicate
@@ -174,7 +168,19 @@ async function main() {
   }
 
   log(`fully covered and therefore to advance: ${toAdvance.length} of ${cands.length}`);
-  for (const d of toAdvance.slice(0, 25)) log(`   ${d} (${before.get(d)} -> DELIVERED)`);
+  for (const d of toAdvance) log(`   ${d} (${before.get(d)} -> DELIVERED)`);
+  log(`the other ${cands.length - toAdvance.length} are NOT fully covered — correctly left alone.`);
+
+  /* THE PLAN NAMES EVERY ORDER IT WOULD MOVE. An earlier version returned before
+     computing anything and printed "this plan cannot predict its verdict" — a
+     plan that cannot say what it will do is not a plan, and it is exactly how the
+     silent no-op below it went unnoticed for a run (docs/bugs/0599-*). */
+  if (!APPLY) {
+    log("");
+    log(`PLAN ONLY — MODE=apply CONFIRM="${CONFIRM_PHRASE}" writes.`);
+    await sql.end();
+    return;
+  }
   if (toAdvance.length === 0) { log("nothing to advance."); await sql.end(); return; }
 
   const moved = await sql`
