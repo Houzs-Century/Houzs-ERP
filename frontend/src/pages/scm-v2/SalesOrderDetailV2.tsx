@@ -45,6 +45,7 @@ import {
   DetailAside,
   Section,
 } from "../../components/DetailLayout";
+import { overlaySoLineCoverage } from "../../vendor/scm/lib/so-coverage-overlay";
 import {
   useMfgSalesOrderDetail,
   useSoLineCoverage,
@@ -576,30 +577,15 @@ function SalesOrderDetailV2ReadOnly() {
   const salesOrder = (detail.data as { salesOrder?: SoHeader } | undefined)?.salesOrder ?? null;
   // Coverage keyed by line id; empty until the async coverage query returns (or
   // when the endpoint 404s on an older backend). Overlaid onto the lines below.
-  const coverageById = useMemo(() => {
-    const m = new Map<string, SoLineCoverage>();
-    for (const c of coverage.data?.coverage ?? []) m.set(c.id, c);
-    return m;
-  }, [coverage.data]);
+  /* The overlay is SHARED with the list drill-down (vendor/scm/lib/
+     so-coverage-overlay) — two hand-written merges is how the board and the
+     drill-down drifted apart in docs/bugs/0269-*. */
   const items: SoItem[] = useMemo(
-    () =>
-      ((detail.data as { items?: SoItem[] } | undefined)?.items ?? [])
-        .filter((l) => !l.cancelled)
-        .map((l) => {
-          // Overlay live coverage in place when the entry exists; otherwise keep
-          // the detail's own stored values (fast response / no coverage yet).
-          const cov = coverageById.get(l.id);
-          if (!cov) return l;
-          return {
-            ...l,
-            stock_state: cov.stock_state,
-            coverage_po: cov.coverage_po,
-            coverage_eta: cov.coverage_eta,
-            ready_source_pos: cov.ready_source_pos,
-            stock_status: cov.stock_status_effective ?? l.stock_status,
-          };
-        }),
-    [detail.data, coverageById]
+    () => overlaySoLineCoverage(
+      ((detail.data as { items?: SoItem[] } | undefined)?.items ?? []).filter((l) => !l.cancelled),
+      coverage.data?.coverage,
+    ),
+    [detail.data, coverage.data]
   );
 
   const st = salesOrder ? statusFor(salesOrder.status) : null;

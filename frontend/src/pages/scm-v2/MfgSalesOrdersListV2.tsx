@@ -46,6 +46,7 @@ import { fetchPrintBundle } from "../../lib/printDocumentPdf";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { PageHeader } from "../../components/Layout";
 import { SoListPoCell, SoSourceChips, SoStockPill } from "../../components/SoSourceChips";
+import { overlaySoLineCoverage } from "../../vendor/scm/lib/so-coverage-overlay";
 import { StockRemarkPill, stockRemarkSortScore } from "../../components/StockRemarkPill";
 import { SoListDoCell } from "../../components/SoListDoCell";
 import { StockAdjChip } from "../../components/DocumentLinesExpansion";
@@ -69,7 +70,7 @@ import { shortCompanyName, getBrandingCompanyCode } from "../../lib/branding";
 import { brandingLabel, isPlaceholderBrandText } from "../../vendor/shared/so-branding-label";
 import { soCanRaiseDo } from "../../vendor/shared/so-deliverable-states";
 import { useDebouncedSearchTerm, useSearchResultTransition } from "../../hooks/useServerSearch";
-import { useMfgSalesOrdersPaged, useUpdateMfgSalesOrderStatus, useMfgSalesOrderDetail, useEnrichedSoListRows } from "../../vendor/scm/lib/sales-order-queries";
+import { useMfgSalesOrdersPaged, useUpdateMfgSalesOrderStatus, useMfgSalesOrderDetail, useEnrichedSoListRows, useSoLineCoverage } from "../../vendor/scm/lib/sales-order-queries";
 import { useSetDocumentHold } from "../../vendor/scm/lib/document-hold-queries";
 import { holdPrompt } from "./use-hold-action";
 import { makeCloseAction } from "./use-close-action";
@@ -833,6 +834,9 @@ const SORT_COL_MAP: Record<string, string> = {
 // variant summary via buildVariantSummary, matching the drawer + SO full page.
 
 type DrillItem = {
+  /* The coverage overlay keys on it (vendor/scm/lib/so-coverage-overlay); the
+     detail payload has always carried it, this shape just never named it. */
+  id?: string;
   item_code?: string;
   description?: string;
   description2?: string | null;
@@ -863,9 +867,18 @@ type DrillItem = {
 
 function SoLinesExpansion({ docNo }: { docNo: string }) {
   const detailQ = useMfgSalesOrderDetail(docNo);
-  const items =
-    ((detailQ.data as { items?: unknown[] } | undefined)?.items as DrillItem[]) ??
-    [];
+  /* THE MRP-DERIVED HALF ARRIVES SEPARATELY. Since #2834 the detail payload
+     hard-codes `coverage_po: null` / `ready_source_pos: []` and fills them from
+     GET /:docNo/coverage. The detail PAGE made that call and this drill-down did
+     not, so its "Incoming PO" column went permanently blank — chips 3 and 4 both
+     read those fields (docs/modules/sales-order.md §0.8 documents all four).
+     Owner 2026-09-01: 「明明我的 PO No. 那边是有的，可是 Incoming PO 却没有」.
+     Same overlay as the detail page, deliberately — docs/bugs/0596-*. */
+  const coverageQ = useSoLineCoverage(docNo);
+  const items = overlaySoLineCoverage(
+    ((detailQ.data as { items?: unknown[] } | undefined)?.items as DrillItem[]) ?? [],
+    coverageQ.data?.coverage,
+  );
 
   if (detailQ.isLoading) {
     return (
