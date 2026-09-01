@@ -675,11 +675,28 @@ covered positions. `loadPageAccessForRole` survives as the **positionless**
 fallback only.
 
 The policy is **default-FULL**: except Driver, Helper, Storekeeper, Storekeeper
-Supervisor, Calendar Viewer and the four Sales tiers, a position resolves to
-`fullAccessMap()`, and a position the module cannot classify falls to FULL, never
-to none — the anti-lockout guarantee (`positionPolicy.ts:12-19`). Project rows
-for the crew cohorts are `projects: view`, `projects.finances: none`,
-`projects.maintenance: none` (`:241-243`, `:253-255`, `:273-275`).
+Supervisor, the **Warehouse Crew** positions, Calendar Viewer and the four Sales
+tiers, a position resolves to `fullAccessMap()`, and a position the module cannot
+classify falls to FULL, never to none — the anti-lockout guarantee
+(`positionPolicy.ts:12-19`). Project rows for the crew cohorts are
+`projects: view`, `projects.finances: none`, `projects.maintenance: none`
+(`:241-243`, `:253-255`, `:273-275`).
+
+**Warehouse Crew positions ride the Storekeeper whitelist by PREFIX** (owner
+2026-08-28). The owner created position "Warehouse Crew KL" in the admin UI and
+moved every helper + storekeeper onto it; being unknown to `RESTRICTED_ROWS`,
+the whole crew fell into the default-FULL cohort and out of every
+position-name-keyed crew gate at once (crew event scoping, the mobile crew
+view, phase-photo upload, and the `scm.sync_user_to_tms` trigger, which
+deactivated their `scm.helpers` rows). `RESTRICTED_ROWS` now carries an exact
+"Warehouse Crew KL" entry mapped to `STOREKEEPER_ROWS`, and
+`isWarehouseCrewPosition` (exported) prefix-matches any normalised name that
+STARTS with `warehouse crew`, so future regional variants ("Warehouse Crew JB",
+…) stay restricted without a code change. The same prefix rule lives in
+`projectGates.isCrewScopedUser`, the frontend `auth/crewScope.ts` twin (refereed
+by `duplicatedDecisionPins.test.ts`), MobilePMS's `isStorekeeper` arm, and the
+DB trigger (`pos LIKE 'warehouse crew%'`). A prefix, never a `\b` substring — an
+office position that merely mentions warehouse must not be caged.
 
 **Calendar Viewer is narrower still — the calendar and nothing else** (owner
 2026-08-26, 「Calendar Viewer = 只有日历」). `CALENDAR_VIEWER_ROWS` grants
