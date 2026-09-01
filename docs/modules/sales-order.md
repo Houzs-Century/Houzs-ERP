@@ -717,6 +717,26 @@ The LIST's "PO No." cell is a different cell with a different rule
 (`SoListPoCell`): SOLID = a goods source, MUTED = a raised PO. See the
 "LIST PO No. column" notes further down this file.
 
+**CHIPS 3 AND 4 ARRIVE ON A SECOND REQUEST (2026-09-01).** Since #2834 the SO
+detail payload defers its MRP run, so it returns `coverage_po: null`,
+`coverage_eta: null` and `ready_source_pos: []`, and `GET /:docNo/coverage` fills
+them. **Every surface that renders this column must make that second call** —
+`SalesOrderDetailV2` was given it and `MfgSalesOrdersListV2`'s drill-down was
+not, so the list's column was blank for a day (owner: 「明明我的 PO No. 那边是有
+的，可是 Incoming PO 却没有」; `docs/bugs/0598-*`).
+
+Chips 1 and 2 are NOT MRP-derived and kept working throughout, which is what made
+it look half-alive rather than obviously broken — worth knowing, because that is
+how the same fault will present next time.
+
+The merge is ONE shared function,
+`frontend/src/vendor/scm/lib/so-coverage-overlay.ts`, used by both surfaces. It
+is shared rather than copied because the board and the drill-down each writing
+their own is `docs/bugs/0269-*`, on these same two screens. An ABSENT or EMPTY
+overlay leaves the stored values alone — the fast first paint and an older
+backend's 404 both arrive that way, and blanking on them would flicker the column
+off on every open.
+
 ### 0.9 Where the neighbouring status systems are documented
 
 One home each — do not restate them here.
