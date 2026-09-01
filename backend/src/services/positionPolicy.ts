@@ -189,8 +189,26 @@ const FLAGS_SALES_DIRECTOR: PositionAccessFlags = {
   canSeeCommission: false,
   announcementScope: "dept",
   canMoveMoney: false,
-  // Sales Director does not manage SCM master data either.
-  canWriteConfig: false,
+  // SCM MASTER-DATA WRITE (owner 2026-09-01, asked of Kris's account: "想让他能改"
+  // — retail price, sofa combos, and Model activation / Modular toggles). Paired
+  // with the scm.procurement.products row below: the area guard admits the write
+  // and this flag satisfies the per-route canWriteScmConfig check that
+  // /mfg-products, /sofa-combos and /maintenance-config additionally impose.
+  // Granting only one half leaves every price + combo save 403'ing, which is the
+  // exact state this replaces (the POS showed him the full editor because its
+  // role is position-derived, and every save failed server-side).
+  //
+  // BREADTH, measured rather than assumed — canWriteScmConfig is `flat perm OR
+  // this flag`, so it reaches all 18 route files that call it. Every one of them
+  // is ALSO area-gated on scm.procurement.products except four, which is the
+  // whole of what this widens beyond the Products area:
+  //   · sales-analysis PUT /targets      — edits the sales target profile. A Sales
+  //                                        Director owning his own targets is the
+  //                                        intent, not a side effect.
+  //   · so-amendments GET /command-diag  — read-only 2990-connection diagnostic.
+  //   · localities, state-warehouse-mappings — ungated read-mostly master data.
+  // Money is untouched (canMoveMoney stays false) and no read is widened.
+  canWriteConfig: true,
 };
 
 // ── The restricted whitelists — the owner's manual, per position ─────────────
@@ -371,12 +389,25 @@ const SALES_JD_ROWS: readonly PolicyRow[] = Object.entries(SALES_JD).map(
 );
 
 // Sales Director (prod row scm.sales=full + the projects.calendar view his row
-// carries). Director tier: scm.sales=full, view-all scope, margin visible.
+// carries). Director tier: scm.sales=full, view-all scope, margin visible, and
+// — since 2026-09-01 — the Products & Maintenance area at `edit`.
+//
+// WHY THE PRODUCTS ROW IS HERE AND NOT IN Team > Positions. For the sales cohort
+// this array IS the page access: resolvePositionPolicy feeds it to the resolver
+// and the position_page_access rows in the DB are not read at all (the audit
+// prints them under "NO LONGER READ for a positioned user"). So the owner cannot
+// grant this from the Positions screen — the grant has to land here.
+//
+// `edit`, not `full`: every scmAreaGuard in the Products area defaults to
+// writeLevel "edit" and none asks for "full", so `edit` is exactly what the
+// price / combo / model writes need. The gap is deliberate — anything a later
+// route marks full-only stays out until someone decides it belongs here.
 const SALES_DIRECTOR_ROWS: readonly PolicyRow[] = [
   { page_key: "projects", level: "view" },
   { page_key: "projects.calendar", level: "view" },
   { page_key: "sales", level: "none" },
   { page_key: "scm.sales", level: "full" },
+  { page_key: "scm.procurement.products", level: "edit" },
   { page_key: "service_cases", level: "edit" },
   ...SALES_JD_ROWS,
 ];
