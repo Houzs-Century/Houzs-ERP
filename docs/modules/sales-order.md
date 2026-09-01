@@ -809,6 +809,26 @@ Tests: `src/scm/lib/venue-binding.test.ts` (the five outcomes) and
 Ledger: `docs/bugs/0591-*`. Repair for orders already blanked:
 `backend/scripts/repair-blanked-venue.mjs`.
 
+**PROCEEDED IS THE DATE — and the rule runs BOTH ways since 2026-09-01.**
+Moving to `IN_PRODUCTION` has always refused without a Processing Date, so the
+status implied the date. Nothing made the date imply the STATUS, so a header save
+could set a Processing Date and leave the order in `CONFIRMED` — invisible to the
+board the factory works from. The owner saw it as **IN PRODUCTION 0 beside
+CONFIRMED 108**: 「全套系统 而不是针对单一公式」.
+
+The header PATCH now calls `statusAfterProcessingDateSet()`
+(`scm/shared/so-proceeded-status.ts`). It moves CONFIRMED -> IN_PRODUCTION on the
+transition null -> date, and REFUSES everything else — an already-present date
+(editing is not a proceed), DRAFT, CANCELLED, anything further along, and a
+CLEARED date (what the status becomes then is an owner decision). Those refusals
+are the load-bearing half: a rule that fires too widely drags a delivered order
+back into production.
+
+The matching data repair is `backend/scripts/repair-proceeded-status.mjs`, which
+sweeps **every company by default** — it used to default to company 1, and that
+is exactly how company 2 sat at IN PRODUCTION 0 for a week after company 1 was
+fixed. Ledger `docs/bugs/0597-*`.
+
 **THE STORED VENUE IS NOT THE ONE YOU SENT.** Mig 0229 puts
 `trg_mfg_sales_orders_canonicalize_venue` on this table — BEFORE INSERT OR UPDATE
 OF venue — which folds known aliases to one spelling, because the same showroom
