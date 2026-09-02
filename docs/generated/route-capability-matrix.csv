@@ -1,5 +1,6 @@
 method,path,auth_boundary,company_boundary,mount_gate,router_gate,direct_gate,handler_guard,mutation,review_state,source
 GET,/api/admin/health/audit-feed,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePageAccess(""system_health"")",,NO,DECLARED_GATE,backend/src/routes/systemHealth.ts
+GET,/api/admin/health/autocount/host-build,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""*"")",,NO,DECLARED_GATE,backend/src/routes/systemHealth.ts
 POST,/api/admin/health/autocount/po-pull,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""*"")",,YES,DECLARED_GATE,backend/src/routes/systemHealth.ts
 GET,/api/admin/health/autocount/reconcile,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""*"")",,NO,DECLARED_GATE,backend/src/routes/systemHealth.ts
 POST,/api/admin/health/autocount/snapshot,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""*"")",,YES,DECLARED_GATE,backend/src/routes/systemHealth.ts

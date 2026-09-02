@@ -2567,6 +2567,9 @@ MISMATCH creditor:400-H004 erp=HOOKKA INDUSTRIES SDN. BHD. book=HAO HUA FURNITUR
 **An empty `mismatches` is NOT "clean".** A host running a build older than this
 field does not send it at all, and the ERP cannot tell the difference. `GET
 /health`'s `builtAt` / `mvid` is the only thing that says which build answered.
+**Ask it without walking to the machine:** `GET /api/admin/health/autocount/host-build`
+(gated `*`) proxies that `/health` and reports `builtAt` / `mvid` plus a verdict —
+see `docs/modules/system-health.md`.
 
 **CI cannot compile C#; this desktop can, and the difference matters.** The
 GitHub runner is Linux and the licensed AutoCount assemblies are a desktop
