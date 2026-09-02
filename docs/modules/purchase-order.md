@@ -1314,7 +1314,7 @@ and `:621-629` clears that flag whenever the operator changes a variant — so
 editing a spec re-derives the supplier cost through `computeMfgPoUnitCost`.
 
 **Which pool that reads matters, and it is not the picker's.** It sums
-`maintenance_config_history`'s `specials` pool (`mfg-pricing.ts:538`), NOT
+`maintenance_config_history`'s `specials` pool (`backend/src/scm/shared/mfg-pricing.ts:538`), NOT
 `scm.special_addons`. Measured on prod 2026-09-02 (read-only run **33659562235**)
 that pool DOES carry `priceSen` for the priced picker codes at master scope and
 at both supplier scopes, so adding one of those codes to a migrated PO line's

@@ -2895,7 +2895,7 @@ is money.
 `variants.specials` is a PICK: every pricing path reads it, and on a line whose
 add-on carries a price in `scm.special_addons` it feeds `unit_cost_sen`,
 `line_cost_sen`, `line_margin_sen` and `special_order_price_sen` the next time
-anybody edits that line (`mfg-pricing.ts:538/541/543` →
+anybody edits that line (`backend/src/scm/shared/mfg-pricing.ts:538/541/543` →
 `mfg-pricing-recompute.ts:579`, persisted at `mfg-sales-orders.ts:8522-8546`).
 The customer PRICE is separately protected on a migrated line —
 `mfg-pricing-recompute.ts:546-547` zeroes the chargeable surcharge under

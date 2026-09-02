@@ -252,14 +252,15 @@ export function buildVariantSummary(
   // foldRedundantSpecials: one request must print once — see the rule above.
   // The stored array is untouched; only this rendering drops the glued twin.
   /* RECORDED-ONLY specials (owner's choice 甲, 2026-09-03). An AutoCount-imported
-     line's Desc2 asked for a PRICED option; recording it must let the factory
-     see what to build without re-charging a historical document, so the codes
-     live in `variants.specialsRecorded` — a key NO pricing path reads — and are
-     rendered HERE beside the picked ones. Deliberately merged into the same
-     SPECIAL segment: the factory needs one list of what to build, not two.
-     A code the operator has since picked properly wins, so it is never printed
-     twice. See docs/bugs/ "recorded, not charged" and
-     backend/scripts/record-priced-specials-on-migrated-lines.mjs. */
+     line's Desc2 asked for a PRICED option; recording it must make that option
+     VISIBLE on every printed copy without re-charging a historical document, so
+     the codes live in `variants.specialsRecorded` — a key NO pricing path reads
+     — and are rendered HERE beside the picked ones. Deliberately merged into the
+     same SPECIAL segment: whoever makes the item needs ONE list of the customer's
+     requests, not two. A code the operator has since picked properly wins, so it
+     is never printed twice. See
+     docs/bugs/0621-298-migrated-lines-lost-their-special-order-because-recordin.md
+     and backend/scripts/record-priced-specials-on-migrated-lines.mjs. */
   const picked = foldRedundantSpecials(specialsList(variants.specials ?? variants.special));
   const recordedRaw = specialsList(variants.specialsRecorded)
     .filter((c) => !picked.some((p) => p.toLowerCase() === c.toLowerCase()));
