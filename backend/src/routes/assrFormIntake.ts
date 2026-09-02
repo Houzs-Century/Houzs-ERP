@@ -455,8 +455,15 @@ function sheetDetailStatus(
   if (stage === "pending_supplier_pickup") {
     const s = sub ?? "pending_supplier_pickup";
     if (s === "pending_supplier_return") return "Pending Supplier Return";
-    if (pickupBy === "customer") return "Pending Supplier Pickup (Customer Pickup)";
-    if (pickupBy === "supplier") return "Pending Supplier Pickup (Supplier Direct)";
+    if (s === "pending_customer_pickup") {
+      // The customer-pickup leg (third sub, Nico 2026-09-01) owns the
+      // collect-from-customer dispatch job, so the parenthesised trigger
+      // words moved here — the sheet's trigger map is unchanged (PICKUP
+      // still fires on the same "(Customer Pickup)" word).
+      if (pickupBy === "customer") return "Pending Supplier Pickup (Customer Pickup)";
+      if (pickupBy === "supplier") return "Pending Supplier Pickup (Supplier Direct)";
+      return "Pending Customer Pickup";
+    }
     return "Pending Supplier Pickup";
   }
   return undefined;
