@@ -101,6 +101,23 @@ const ERP_OWNS_THE_LINES: ReadonlySet<string> = new Set(['SO', 'PO']);
  *  An explicit `rebuild: true` from a caller does NOT override either. A caller
  *  asking is a preference; these two are facts about the account book.
  */
+/** The ERP row ids behind one composed detail — a sofa build is several rows.
+ *
+ *  Lives here because a REBUILD needs it for EVERY line: the details are cleared
+ *  and re-added, so every key the book returns is a new one and the ERP has to
+ *  learn all of them. Until it did, the ERP kept the keys of lines that no
+ *  longer existed and the NEXT edit of that document was guaranteed to fail with
+ *  "line <dead key> not found" (docs/bugs/0621).
+ */
+export function erpLineIdsOf(
+  sourceIndexes: readonly number[],
+  lines: ReadonlyArray<{ id?: unknown }>,
+): string[] {
+  return sourceIndexes
+    .map((ix) => lines[ix]?.id)
+    .filter((v): v is string => typeof v === 'string' && v.length > 0);
+}
+
 export function rebuildAllowed(
   opts: { rebuildBlocked?: string },
   docType: string,

@@ -23,7 +23,7 @@
 // resolver, so it unit-tests with no database and no AutoCount.
 // ----------------------------------------------------------------------------
 import type { Env } from '../types';
-import { shouldRebuild, type AcRetiredLine } from './ac-line-gone';
+import { erpLineIdsOf, shouldRebuild, type AcRetiredLine } from './ac-line-gone';
 import {
   ItemCodeError,
   resolveAcItemCode,
@@ -1458,7 +1458,7 @@ export function composeEdit(
       if (d.Desc2 != null) line.Desc2 = d.Desc2;
       return line;
     }
-    if (dtlKey == null) return d;
+    if (dtlKey == null) return (effOpts.rebuild ? { ...d, ErpLineIds: erpLineIdsOf(collapsed[i].sourceIndexes, lines) } : d) as AcEditLine;
     /* AUTOCOUNT OWNS THE ITEM ON A LINE IT ALREADY HOLDS — the same rule
      * Location runs under, applied to the item itself. Owner 2026-08-13: an
      * edit to an order that came in through the API changes its Description 2,
@@ -1486,7 +1486,7 @@ export function composeEdit(
      * A date the ERP DOES hold still travels — the ERP is master, and that is
      * the whole point of D8. */
     if (rest.DeliveryDate == null) delete rest.DeliveryDate;
-    return { ...rest, ...(effOpts.rebuild ? { ItemCode: acItemCode } : {}), DtlKey: dtlKey } as AcEditLine;
+    return { ...rest, ...(effOpts.rebuild ? { ItemCode: acItemCode, ErpLineIds: erpLineIdsOf(collapsed[i].sourceIndexes, lines) } : {}), DtlKey: dtlKey } as AcEditLine;
   });
 
   /* Refused BEFORE the keyless check, because a half-cancelled build is a
