@@ -225,7 +225,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     async (email: string, password: string, remember = true): Promise<LoginResult> => {
       const res = await api.post<{ token?: string; totp_required?: boolean; challenge?: string }>(
         "/api/auth/login",
-        { email, password },
+        // `remember` now reaches the SERVER too (owner 2026-09-02: "cant keep
+        // permanently?"). Ticked mints a rolling session that renews on use, so
+        // the device stays signed in; unticked keeps the fixed 7-day session.
+        // It used to be a client-only choice between localStorage and
+        // sessionStorage, which is why everyone was signed out weekly.
+        { email, password, remember },
       );
       // Remember the account (email ONLY, never the password) so the login screen
       // pre-fills it next time — or forget it when Remember me is unchecked.
