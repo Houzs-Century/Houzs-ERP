@@ -194,20 +194,13 @@ const inHouseLorries = (sb: { from: (t: string) => { select: (cols: string) => a
    would leave the dashboard listing a row that PATCH/DELETE then 404s. The gate
    that IS real is requireHouzsPerm("fleet.write").
 
-   THIS NOTE DESCRIBED THE FILE AGAIN ONLY ON 2026-09-02. For a period, twelve
-   by-id handlers on these same tables DID call scopeToCompany while /dashboard
-   did not — so the dashboard listed rows that PATCH/DELETE then 404'd, which is
-   the exact failure the paragraph above predicts in words. The note was right
-   and the code had drifted from it; a marker that states the intent is not a
-   marker that enforces it. Owner, 2026-09-02, asked which way to settle it:
-   「共用的，因为 TMS 是共用的。这个东西 TMS 就像我们的运输公司一样」. One
-   transport company, one fleet — so the twelve went, not the dashboard.
-   backend/tests/fleetMaintenanceUnifiedScope.test.ts is what enforces it now.
+   Twelve by-id handlers once scoped these tables while /dashboard did not — the
+   failure the paragraph above predicts. Owner 2026-09-02: 「共用的，因为 TMS 是
+   共用的」, so the twelve went. Enforced by
+   backend/tests/fleetMaintenanceUnifiedScope.test.ts; docs/bugs/0620-*.
 
-   EXCEPTION: scm.workshops IS per-company (mig 0241) and its handlers DO filter
-   on activeCompanyId — through scopeToCompany, which fails closed. Workshops is
-   the repair-shop MASTER, not a maintenance record, and the 2026-09-02 ruling
-   was about the records; it was not asked about and is deliberately unchanged. */
+   EXCEPTION: scm.workshops IS per-company (mig 0241) — the repair-shop MASTER,
+   not a maintenance record. Its handlers scope through scopeToCompany. */
 
 type Lorry = {
   id: string;
@@ -1145,12 +1138,8 @@ fleetMaintenance.put("/vehicles/:id/compliance/:docId/attachments", requireHouzs
 
   /* The document must exist AND belong to the lorry in the path - otherwise a
      known docId would let a caller hang a file off another lorry's renewal.
-     OWNER-CHECKED, not company-scoped: this paragraph used to end "the renewal
-     record itself is per-company", which contradicted the file's own UNIFIED
-     FLEET note and the four migration headers it cites. Owner, 2026-09-02:
-     「共用的，因为 TMS 是共用的。这个东西 TMS 就像我们的运输公司一样」 — one
-     transport company, one fleet, one set of maintenance records. The lorry
-     ownership check IS the boundary here. */
+     OWNER-CHECKED, not company-scoped (owner 2026-09-02, one shared fleet — see
+     the UNIFIED FLEET note). The lorry ownership check IS the boundary here. */
   const { data: doc, error: docErr } = await sb
     .from("lorry_compliance_documents").select("id, lorry_id").eq("id", docId).maybeSingle();
   if (docErr) return c.json({ error: "load_failed", reason: docErr.message }, 500);
@@ -2005,10 +1994,8 @@ async function mintWorkshopCode(sb: any, companyId: number | null): Promise<stri
      nextCode (scm/lib/fleet-code-mint) is the one parser every minted code in
      this system shares — it reads any padding, which is what stops a second
      numbering scheme forming the way DRV-05 formed beside DRV-050. */
-  /* The comment above is about not minting a duplicate, and `.eq("company_id",
-     null)` — a malformed filter that matches nothing — is the fastest way to
-     mint one: zero codes read, sequence restarts at 1. scopeToCompanyIdOrOpen
-     falls OPEN instead, so the mint sees more codes and skips past them. */
+  /* Same as mintRecordNo: a nullable id in .eq matched nothing and minted a
+     duplicate. docs/bugs/0618-* */
   const { data } = await scopeToCompanyIdOrOpen(sb.from("workshops").select("code"), companyId);
   return nextCode(CODE_PREFIX.WORKSHOP, ((data ?? []) as Array<{ code?: string | null }>).map((r) => r.code));
 }
@@ -2019,12 +2006,8 @@ async function mintWorkshopCode(sb: any, companyId: number | null): Promise<stri
  *  real guard so two racing creates cannot both win. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function mintRecordNo(sb: any, table: string, column: string, prefix: string, companyId: number | null): Promise<string> {
-  /* `.eq("company_id", null)` is a MALFORMED filter, not "no company": PostgREST
-     renders `company_id=eq.null`, which matches nothing. On a mint that is the
-     dangerous direction — reading zero existing codes restarts the sequence at 1
-     and issues a DUPLICATE. scopeToCompanyIdOrOpen (companyScope.ts:136) exists
-     for exactly this call shape and falls OPEN on an unresolved company, so the
-     mint sees MORE codes and skips past them rather than colliding. */
+  /* A nullable id straight into .eq matches NOTHING, so a mint read zero codes
+     and reissued a duplicate. scopeToCompanyIdOrOpen falls open. docs/bugs/0618-* */
   const { data } = await scopeToCompanyIdOrOpen(sb.from(table).select(column), companyId);
   return nextCode(prefix, ((data ?? []) as Array<Record<string, string | null>>).map((r) => r[column]));
 }
@@ -2034,11 +2017,8 @@ fleetMaintenance.get("/workshops", requireHouzsPerm("fleet.read"), async (c) => 
   const q = sb
     .from("workshops")
     .select("id, code, name, registration_no, contact_name, contact_phone, office_phone, email, address, notes, is_active");
-  /* scopeToCompany, not `.eq("company_id", activeCompanyId(c) ?? null)`. The raw
-     form renders `company_id=eq.null` on an unresolved company — a malformed
-     filter that matches NOTHING, so the page showed an empty workshop list
-     instead of either the rows or an honest refusal. The helper fails closed
-     when the context is resolved and open only in the legacy state. */
+  /* scopeToCompany fails closed; the raw nullable .eq matched nothing and showed
+     an empty list. docs/bugs/0618-* */
   const { data, error } = await scopeToCompany(q, c).order("name");
   if (error) return c.json({ error: "load_failed", reason: error.message }, 500);
   return c.json({
@@ -2112,9 +2092,8 @@ fleetMaintenance.patch("/workshops/:id", requireHouzsPerm("fleet.write"), async 
   /* `code` is minted, never edited — the whole point of generating it. */
   if (patch.name === null) return c.json({ error: "name_required" }, 400);
 
-  /* Same malformed-filter fix as the list above: `.eq("company_id", null)`
-     matched nothing, so an unresolved company turned every edit into a phantom
-     "workshop_not_found" 404 over a row that exists. */
+  /* Same fix as the list above — the raw nullable .eq turned every edit into a
+     phantom 404. */
   const { data, error } = await scopeToCompany(
     sb.from("workshops").update(patch).eq("id", c.req.param("id")), c,
   ).select("id").maybeSingle();
