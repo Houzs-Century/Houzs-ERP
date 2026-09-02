@@ -23,8 +23,7 @@
 // resolver, so it unit-tests with no database and no AutoCount.
 // ----------------------------------------------------------------------------
 import type { Env } from '../types';
-import { rebuildNeededToRemoveLine } from './ac-line-gone';
-import type { AcRetiredLine } from './ac-line-gone';
+import { rebuildNeededToRemoveLine, type AcRetiredLine } from './ac-line-gone';
 import {
   ItemCodeError,
   resolveAcItemCode,
@@ -491,7 +490,7 @@ export class KeylessLineError extends Error {
  * as refusals on the sales side rather than as guesses.
  */
 export interface ComposeOptions {
-  /** Clear the details and lay these Lines down instead of matching them — 0607. */
+  /** Clear the details and lay these Lines down, not match them — 0607. */
   rebuild?: boolean;
   supplierCode?: string | null;
   /** Test seam: an alternative cutover map. Defaults to the compiled one. */
@@ -1422,11 +1421,7 @@ export function composeEdit(
   opts: ComposeOptions = {},
   retired: AcRetiredLine[] = [],
 ): AcEditPayload {
-  /* THE ONE RULE (services/ac-line-gone.ts). A line the operator DELETED must
-     disappear from AutoCount. On a SALES ORDER the SDK removes that one line; on
-     the other five the only way to lose a line at all is to rebuild the details.
-     Derived, never decided per caller — a `rebuild` the caller passed is honoured
-     on top, so an explicit request still works on a sales order. */
+  /* THE ONE RULE — derived, never decided per caller (ac-line-gone.ts, 0608). */
   const anyDeleted = retired.some((r) => r.Gone === 'deleted');
   const effOpts: ComposeOptions = rebuildNeededToRemoveLine(docType, anyDeleted)
     ? { ...opts, rebuild: true }
