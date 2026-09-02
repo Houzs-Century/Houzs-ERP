@@ -3957,3 +3957,11 @@ while a print entry needs an address. `lib/downstream-doc-refs.ts` and
 `lib/so-delivery-order-nos.ts` hold that split; the full rule, the per-list
 enumeration and the one-to-many cap are in
 `document-conversion.md` §8b.
+
+## Drill-down columns and "still loading"
+
+A cell fed by a SECOND query renders **WORKING…** while that query is in flight
+and **NOT LOADED** if it fails — never `STOCK` or a bare dash, which are
+answers. `coverage` is a required prop on the shared drill-down; the rule, the
+five surfaces that fetch separately, and how to add a sixth are in
+`docs/modules/coverage-state.md` (trace: `docs/bugs/0603-a-drill-down-printed-stock-while-the-answer-was-still-loadin.md`).

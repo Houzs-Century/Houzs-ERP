@@ -1294,3 +1294,11 @@ maintenance config's `sofaCompartmentMeta` and `loadSofaCompartmentPhotos`
 `{ code: dataURL }` map passed to `generatePurchaseOrderPdf`. Other PO print paths
 (list bulk-print, consignment, v1 detail) pass no photos and keep the schematic.
 Engine merged in #2754; wiring in #2758.
+
+## Drill-down columns and "still loading"
+
+A cell fed by a SECOND query renders **WORKING…** while that query is in flight
+and **NOT LOADED** if it fails — never `STOCK` or a bare dash, which are
+answers. `coverage` is a required prop on the shared drill-down; the rule, the
+five surfaces that fetch separately, and how to add a sixth are in
+`docs/modules/coverage-state.md` (trace: `docs/bugs/0603-a-drill-down-printed-stock-while-the-answer-was-still-loadin.md`).

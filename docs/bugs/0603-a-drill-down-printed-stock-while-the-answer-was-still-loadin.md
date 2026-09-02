@@ -1,5 +1,6 @@
-<!-- area: Frontend + mobile -->
 ## A drill-down printed STOCK while the answer was still loading [high]
+
+<!-- area: Frontend + mobile -->
 
 **Symptom.** The owner sent two screenshots of the same purchase-order drill-down
 seconds apart, 2026-09-02. The first showed every line tagged **STOCK**. The
