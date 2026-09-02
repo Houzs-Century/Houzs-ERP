@@ -35,18 +35,30 @@ describe('the ERP asks; it never infers', () => {
   test('rebuild is an explicit option, off unless asked', () => {
     expect(WRITEBACK).toMatch(/rebuild\?: boolean;/);
     /* `effOpts`, not `opts` — composeEdit derives the rule (ac-line-gone.ts)
-       and must not reassign its own parameter to do it. */
-    expect(WRITEBACK).toMatch(/if \(effOpts\.rebuild\) return \{[^}]*Rebuild: true \}/);
+       and must not reassign its own parameter to do it. The escape is now
+       `effOpts.rebuild || !opts.rebuildBlocked` (0610), asserted in full below. */
+    expect(WRITEBACK).toMatch(/effOpts\.rebuild/);
   });
 
-  /* Inferring a rebuild from the failure would turn every future mismatch into a
-     silent teardown of a live document. The refusal must still be reachable. */
-  test('without the flag the keyless refusal still throws', () => {
+  /* A DOCUMENT THAT CANNOT BE MATCHED REBUILDS RATHER THAN BEING REFUSED FOREVER
+     (0610). Two book lines with the same item code can never be told apart, so
+     the refusal was permanent, not deferred. The escape must still sit ABOVE the
+     throw, and the throw must still be reachable — for a BLOCKED document. */
+  test('a keyless document rebuilds unless the rebuild is blocked', () => {
+    expect(WRITEBACK).toMatch(/if \(effOpts\.rebuild \|\| !opts\.rebuildBlocked\)/);
     expect(WRITEBACK).toMatch(/throw new KeylessLineError\(/);
-    const askIdx = WRITEBACK.indexOf('if (effOpts.rebuild) return');
+    const askIdx = WRITEBACK.indexOf('if (effOpts.rebuild || !opts.rebuildBlocked)');
     const throwIdx = WRITEBACK.indexOf('throw new KeylessLineError(');
-    expect(askIdx, 'the rebuild escape must come BEFORE the throw').toBeLessThan(throwIdx);
-    expect(askIdx).toBeGreaterThan(-1);
+    expect(askIdx, 'the rebuild escape must come BEFORE the throw').toBeGreaterThan(-1);
+    expect(askIdx).toBeLessThan(throwIdx);
+  });
+
+  /* The block is the whole safety of 0610: a PO raised from this SO holds its
+     DtlKeys through PODTL.FromSODtlKey, and reissuing them would void that link
+     (0609). A blocked document must still be refused. */
+  test('a blocked document is still refused, not rebuilt', () => {
+    expect(WRITEBACK).toMatch(/!opts\.rebuildBlocked/);
+    expect(WRITEBACK).not.toMatch(/if \(effOpts\.rebuild\) return \{ DocType/);
   });
 });
 
