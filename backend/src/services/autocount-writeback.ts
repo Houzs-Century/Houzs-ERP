@@ -446,8 +446,7 @@ export type AcEditLine =
 export interface AcEditPayload {
   DocType: AcDocType;
   DocNo: string;
-  /** Ask the host to clear the details and lay these Lines down in order. */
-  Rebuild?: true;
+  Rebuild?: true;   // clear the details, lay these Lines down in order — 0607
   /* `UDF` is a NESTED object, because that is how AcSyncService reads it
      (`ApplyUdf` -> `Dict(h, "UDF")`). A flat SOUDF_* key at header level is
      silently ignored — the connector's own decompiled source made the same
@@ -491,10 +490,7 @@ export class KeylessLineError extends Error {
  * as refusals on the sales side rather than as guesses.
  */
 export interface ComposeOptions {
-  /** Clear the details and lay these Lines down instead of matching them, for a
-   *  document that cannot be matched. OFF unless asked — it destroys every
-   *  DtlKey, and the HOST refuses it on a transferred document. 0607, and
-   *  autocount-writeback.md "REBUILD". */
+  /** Clear the details and lay these Lines down instead of matching them — 0607. */
   rebuild?: boolean;
   supplierCode?: string | null;
   /** Test seam: an alternative cutover map. Defaults to the compiled one. */
@@ -1544,8 +1540,7 @@ export function composeEdit(
     const which = keyless
       .map((i) => `${i + 1} (${keyed[i].ItemCode || 'no item code'}${cancelledOf(i) === true ? ', cancelled' : ''})`)
       .join(', ');
-    /* A rebuild appends to nothing, so everything below protects against a case
-       it cannot reach (0607). */
+    /* A rebuild appends to nothing — 0607. */
     if (opts.rebuild) return { DocType: docType, DocNo: docNo, Header: header, Lines: keyed, Rebuild: true };
     const anyCancelled = keyless.some((i) => cancelledOf(i) === true);
     throw new KeylessLineError(
