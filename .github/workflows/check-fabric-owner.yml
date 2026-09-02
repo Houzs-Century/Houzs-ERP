@@ -1,0 +1,45 @@
+name: Fabric owner check (read-only)
+
+# READ-ONLY. Locates fabric codes/series across companies (which company owns
+# each, active vs retired, when created) to diagnose a "409 belongs to another
+# organisation" import when the other company's list shows nothing.
+on:
+  workflow_dispatch:
+    inputs:
+      series:
+        description: 'Comma-separated fabric series, e.g. CASSNYE,COVE,HM001,HR801,HR806,HR923,HR924,HR926,TARONI'
+        type: string
+        required: false
+        default: ''
+      codes:
+        description: 'Optional comma-separated fabric codes (id) instead of / in addition to series'
+        type: string
+        required: false
+        default: ''
+
+concurrency:
+  group: check-fabric-owner
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - name: Locate fabrics (read-only)
+        run: node scripts/check-fabric-owner.mjs
+        env:
+          SERIES: ${{ github.event.inputs.series }}
+          CODES: ${{ github.event.inputs.codes }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
