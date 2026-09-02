@@ -65,7 +65,7 @@ Return ONLY a JSON object, no prose, with exactly these keys:
   "currency": the 3-letter currency printed (default "MYR"),
   "totalRm": the GRAND TOTAL payable as a plain number (e.g. 1234.56) or null,
   "sstRm": the SST/tax amount as a plain number, or null when not itemised,
-  "lines": up to 8 entries [{ "description": string, "amountRm": number|null }] — the bill's own line items, or ONE entry summarising the charge when the bill has no itemisation
+  "lines": EVERY line item printed on the bill, in order [{ "description": string, "amountRm": number|null }] — one entry per printed line however many there are, or ONE entry summarising the charge when the bill has no itemisation
 }
 
 Rules:
@@ -106,7 +106,10 @@ export function coerceBillJson(raw: unknown): BillExtraction {
     currency: /^[A-Za-z]{3}$/.test(String(o.currency ?? '')) ? String(o.currency).toUpperCase() : 'MYR',
     totalSen: rmToSen(o.totalRm),
     sstSen: rmToSen(o.sstRm),
-    lines: linesRaw.slice(0, 8).map((l) => {
+    /* 300 is a runaway guard against a confused model, not a reading limit —
+       the owner's rule is EVERY printed line (别限制最多只能读8行), and no real
+       bill approaches it; max_tokens below is sized to carry it. */
+    lines: linesRaw.slice(0, 300).map((l) => {
       const li = (l && typeof l === 'object' ? l : {}) as Record<string, unknown>;
       return {
         description: li.description ? String(li.description).slice(0, 160) : null,
@@ -149,7 +152,10 @@ export async function extractOneBill(
       },
       body: JSON.stringify({
         model: BILL_MODEL,
-        max_tokens: 1500,
+        /* Sized for a long itemised bill — at ~25 tokens per line entry, 1500
+           choked past ~50 lines and the cut JSON failed the parse, reading the
+           WHOLE bill as a failure. 8000 carries ~300 lines. */
+        max_tokens: 8000,
         messages: [{ role: 'user', content: [...blocks, { type: 'text', text: PROMPT }] }],
       }),
     });

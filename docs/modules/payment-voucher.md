@@ -186,6 +186,13 @@ bill 我也想要用ocr. Two doors, one reader:
   3. 多个supplier 多个单 — "pay each bill separately" splits a group; each
      bill opens as its own voucher.
 
+The pile takes drag-and-drop and pasted screenshots (Ctrl+V) as well as the
+picker, and each read bill renders tidy: number / dates / total on one
+aligned grid, the bill's own line items tabled under it — EVERY printed
+line is read, no line cap (owner 2026-09-02: 别限制最多只能读8行; the
+model's output budget is sized for ~300 lines and a 300-entry runaway
+guard sits in `coerceBillJson`, not in the prompt).
+
 The reading is POST `/payment-vouchers/extract` (perm
 `scm.payment_voucher.create`; 503 when `ANTHROPIC_API_KEY` is unset) →
 `backend/src/acc/bill-extract.ts`, the scan-so discipline verbatim: strict
