@@ -48,6 +48,12 @@ if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
 const CO = Number(process.env.COMPANY || 1);
 const LIST = process.env.LIST !== "0";
 const CAP = Number(process.env.CAP || 25); // per-cell detail cap
+/* The sales-order population is normally "orders that have a Processing Date" —
+   what the factory is building from. ALL_SO=1 drops that filter so the question
+   "is there any un-decoded build ANYWHERE" can be asked too: a placeholder on a
+   CONFIRMED order is invisible to the default population and becomes the
+   factory's problem the moment it proceeds. Default unchanged. */
+const ALL_SO = process.env.ALL_SO === "1";
 const log = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 const sql = postgres(DST, { ssl: "require", prepare: false, max: 1 });
 /* The ONE name of the Processing Date column, spliced as SQL text rather than
@@ -150,6 +156,7 @@ function multisetDiff(have, want) {
 
 async function main() {
   log(`READ-ONLY sofa + bedframe completeness audit — company ${CO}`);
+  if (ALL_SO) log("ALL_SO=1 — sales-order population is EVERY order, not only the proceeded ones");
 
   const prods = await sql`SELECT code FROM scm.mfg_products WHERE company_id = ${CO}`;
   const codeSet = new Set(prods.map((p) => norm(p.code)));
@@ -188,7 +195,7 @@ async function main() {
       FROM scm.mfg_sales_order_items i
       JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
      WHERE h.company_id = ${CO} AND i.item_group IN ('bedframe','sofa')
-       AND h.${PDATE} IS NOT NULL
+       AND (${ALL_SO} OR h.${PDATE} IS NOT NULL)
      ORDER BY h.doc_no, i.line_no`).map((r) => ({ ...r, dead: r.cancelled ? "CANCELLED line" : null }));
 
   for (const [pop, rows] of [["PO", poRows], ["SO", soRows]]) {

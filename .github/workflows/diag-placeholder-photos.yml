@@ -9,8 +9,6 @@ name: Sofa 1S placeholders + their photos (read-only)
 #
 # READ-ONLY: SELECTs only, no DDL, no writes.
 on:
-  push:
-    branches: [diag/photo-gap-split]   # TEMPORARY — removed before merge
   workflow_dispatch:
 
 concurrency:

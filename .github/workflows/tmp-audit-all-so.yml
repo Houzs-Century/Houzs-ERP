@@ -1,0 +1,26 @@
+name: TEMP — completeness audit over EVERY sales order
+
+# TEMPORARY, deleted before this branch merges. It exists because a
+# workflow_dispatch workflow can only be dispatched from the default branch, and
+# the number it produces is needed to answer the owner's question today.
+# READ-ONLY: the script it runs performs SELECTs only.
+on:
+  push:
+    branches: [diag/photo-gap-split]
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm ci
+      - run: node scripts/check-sofa-bedframe-completeness.mjs
+        env:
+          COMPANY: "1"
+          LIST: "1"
+          CAP: "500"
+          ALL_SO: "1"
+          DATABASE_URL: "${{ secrets.DATABASE_URL }}"
