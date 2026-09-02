@@ -2571,10 +2571,29 @@ field does not send it at all, and the ERP cannot tell the difference. `GET
 (gated `*`) proxies that `/health` and reports `builtAt` / `mvid` plus a verdict —
 see `docs/modules/system-health.md`.
 
-**This repo cannot compile C#.** `deploy-on-host.ps1` compiles with `csc` on the
-host and REFUSES to swap an exe that did not compile, then health-checks and rolls
-back to a hash-verified backup if the new one does not answer — that is the gate
-this change is proven by, and it has already caught a typo this way.
+**CI cannot compile C#; this desktop can, and the difference matters.** The
+GitHub runner is Linux and the licensed AutoCount assemblies are a desktop
+install, so no CI job builds `AcSyncService.cs`. That is routinely over-read into
+"there is no C# toolchain here", which is false: AutoCount 2.2 is installed on
+the development desktop and `csc.exe` ships with the .NET Framework, so
+`backend/scripts/autocount-service/build-local.ps1` answers in seconds, touches
+no database and needs no credential. Run on 2026-09-02 it printed
+`COMPILES CLEAN - 110592 bytes`. **Run it before writing UNCOMPILED anywhere** —
+that sentence was written twice in one day by a session that never ran the check.
+
+`deploy-on-host.ps1` is the other half and runs ON the host, because the SQL
+credentials live there. It REFUSES to swap an exe that did not compile, opens the
+database for real BEFORE anything is stopped, then health-checks and rolls back
+to a hash-verified backup if the new one does not answer — that is the gate a
+host change is proven by, and it has already caught a typo this way.
+
+**Deployed 2026-09-02**, from `2026-08-18T01:48:42Z` to `2026-09-02T13:52:36Z`
+(`builtAt`, read back from `GET /health`). Its dry run refused first and was
+right to: `C:\InistateConnector\setup.json` still names a SQL server this host
+can no longer reach, and the script will not repoint production write-back on its
+own because a restored backup can carry the same database name. The override was
+`-Server '.\A2006' -Book 'AED_HOUZS'`, taken only after that instance was shown
+to hold `SO-013442` dated 2026-09-02 — a document a stale copy could not have.
 
 ## 7f. A cancel that reached AutoCount is final
 
@@ -3025,6 +3044,7 @@ words. The owner reviewed a mockup and asked for five changes; all five live in
 | **Two filter strips, counts on the chips** | Status (Everything / Needs attention / Waiting / In AutoCount / Not accepted / Held back / Replaced — *"Sent again" until 2026-08-17*) and Document (Sales orders / Delivery orders / Invoices / Purchase orders / Goods received / Supplier invoices). Both are `<FilterPills>`, the same component the Sales Order list uses. The tiles are gone: the counts were the only useful thing about them and a tile cannot be clicked. |
 | **The reason, in three parts** | A headline, one sentence, and a **To fix** line, keyed by the server's `reason_kind` (`AC_REASON_COPY`). The headline is never behind a click — that was the owner's specific complaint. A `failed` row gets `AC_FAILED_COPY`, because the server deliberately does not classify those. *(The sentence and the To fix line moved behind opening the row the same day — see the section below.)* |
 | **Who was asked** | `acReplySource` labels the quote **AutoCount replied** (the row went through `dispatchOne`), **AutoCount was not asked** (every `skipped` row — all of them are decided at enqueue time or before `callAcService`, so no held-back document has ever reached the account book), or **The last send attempt reported** for a `pending` row, where the note may be either and nothing the server sends tells them apart. |
+| **Send again on a held-back EDIT** | Rebuilds the document rather than re-composing a keyed edit — `docs/bugs/0614`. An `edit` used to be refused by the ladder AND carry no button, so a document whose keyless line can never be matched had no way through at all. A rebuild clears the book's details and lays the ERP's lines down, so it needs none of the `retire` list a skipped row cannot recover — which was the whole reason for the old refusal. **Never automatic**: an ordinary save with a keyless line still refuses (`docs/bugs/0613`), because a rebuild reissues every line key. `rebuildAllowed` still refuses a converted document (`docs/bugs/0611`) and one whose keys a purchase order holds (`docs/bugs/0609`), and the host still refuses one its own tables say was transferred. |
 | **Send again, per row** | Offered only where the server's `can_requeue` says a re-send can mean anything, and driven by `useAcRequeue` — one hook, both surfaces. Since 2026-08-23 pressing it SENDS immediately and pushes the missing ancestors first, in order (SO → DO → SI, PO → GR → PI); the reply carries `sent_now` and `ancestors_sent`. |
 | **No coding words** | The page no longer prints the config key, the raw `op` values, the raw state values, or the server's `remedy` strings — those name columns, tables and an SDK primitive. The remedy still ships in the API response and is still what the health-check log prints. Plurals are spelled out in `AC_DOC_TYPE_PLURAL`, never built by appending an "s" — "Goods received" has none. *(NOT SUFFICIENT — the row below is the correction.)* |
 
@@ -3398,6 +3418,40 @@ the script could not disagree; that script now imports the mirror.) An
 unrecognised reason is printed rather than counted away, and a skip that has
 already been re-queued (below) is reported separately rather than counted as
 backlog.
+
+**ONE ROW, ONE CLASS — corrected 2026-09-02** (`docs/bugs/0606-the-outbox-health-report-counted-one-refusal-under-two-remed.md`).
+The report used to bucket skips by scanning for each kind's needle
+independently, so a stored reason containing two needles was printed under BOTH,
+with two different remedies. `KeylessLineError` writes *"N of M line(s) carry no
+AutoCount DtlKey"*, which holds the `keyless-line` needle and the
+`dtlkey-subset` needle — and run 33593927462 printed two rows of one document as
+`skipped 2` twice, the second telling the reader to backfill a SOURCE document
+that an `edit` does not have. `AC_SKIP_KINDS` is a PRIORITY order and
+`classifyAcSkip` honours it; the report now goes through
+`backend/scripts/lib/ac-skip-grouping.mjs`, which classifies each row once and
+returns the buckets in that order. Pinned by
+`backend/tests/acSkipGrouping.test.mjs`. **Add the buckets up and you get the
+row count now** — before this you could not.
+
+**WHICH document is held back, and does a number name a real one.** Actions ->
+**AutoCount held-back documents — identify (read-only)** -> Run workflow
+(`backend/scripts/check-autocount-held-back.mjs`). A different question from the
+health check above, and the one that gets asked in an incident: it lists every
+outbox row that is not `sent` as a document number, a reason CODE and an age;
+searches a doc_no fragment across every relation in `public` + `scm` carrying a
+`doc_no` column, views included, alongside a CONTROL fragment that MUST be found
+so a dead matcher cannot report a clean run; and reports one document in full —
+its `linked_ac_docno`, how many lines carry `linked_ac_dtlkey`, whether any
+purchase line or allocation names a line of it, what is live downstream, and the
+line deletions recorded against it. `DOC` / `SEARCH` / `CONTROL` are the inputs.
+
+It exists because on 2026-09-02 one held-back order was being discussed under two
+numbers, one of them outside the range AutoCount has ever issued, and a wrong
+document pushed into a licensed book cannot be taken back out. **Its output is
+public** (this repo's Actions logs are), so it prints numbers, counts, dates,
+reason codes and booleans only — stored error text is classified, never quoted.
+An unreadable count is reported as UNKNOWN and never spent as a zero: "I could
+not tell" and "no purchase order exists" are opposite facts.
 
 **IT RUNS EVERY DAY NOW, AND IT IS SILENT UNLESS SOMETHING IS STUCK**
 (2026-08-24, docs/bugs/0534). The workflow was manual-only and its header refused

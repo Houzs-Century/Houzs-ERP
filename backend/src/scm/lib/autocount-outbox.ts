@@ -1208,6 +1208,7 @@ export async function enqueueEdit(
      * delete route has to say so explicitly, and this is how.
      */
     retire?: AcRetiredLine[];
+    rebuild?: boolean;  // requeue only; ABSENT = keyed edit, the stricter answer - 0614
     /** ERP columns THIS REQUEST wrote — same contract as `newLineIds`: the
      *  composer reads the SAVED row and cannot tell a clear from a blank. */
     touchedFields?: readonly string[];
@@ -1219,9 +1220,9 @@ export async function enqueueEdit(
 
     const retired = (opts.retire ?? []).filter((r) => Number.isFinite(Number(r.DtlKey)));
     const composed = opts.docType === 'SO'
-      ? await composeSoState(sb, String(opts.docNo), retired, opts.newLineIds, opts.touchedFields)
+      ? await composeSoState(sb, String(opts.docNo), retired, opts.newLineIds, opts.touchedFields, opts.rebuild ?? false)
       : opts.docType === 'PO'
-        ? await composePoState(sb, String(opts.docId ?? opts.docNo), retired, opts.newLineIds)
+        ? await composePoState(sb, String(opts.docId ?? opts.docNo), retired, opts.newLineIds, opts.rebuild ?? false)
         : await composeDownstreamState(sb, opts.docType, String(opts.docId ?? opts.docNo), retired, opts.newLineIds);
     if (!composed) return false;
     /* A PO route knows its id, not its number; the outbox row is keyed by the
@@ -1399,7 +1400,7 @@ async function composeDownstreamState(
   };
 }
 
-async function composeSoState(sb: Sb, docNo: string, retired: AcRetiredLine[] = [], newLineIds?: string[], touchedFields: readonly string[] = []) {
+async function composeSoState(sb: Sb, docNo: string, retired: AcRetiredLine[] = [], newLineIds?: string[], touchedFields: readonly string[] = [], rebuild = false) {
   const header = await readOrThrow('mfg_sales_orders header',
     sb.from('mfg_sales_orders').select(SO_HEADER_COLS).eq('doc_no', docNo).maybeSingle());
   if (!header) return null;
@@ -1431,16 +1432,14 @@ async function composeSoState(sb: Sb, docNo: string, retired: AcRetiredLine[] = 
     edit: () => composeEdit(
       'SO', String(h.linked_ac_docno ?? docNo),
       soEditHeader(h, salespersonName, lines, outstandingSen, paymentRefs, touchedFields), lines,
-      {
-        bindings,   // 0609: a PO raised from this SO blocks the rebuild, never the edit
-        ...(newLineIds?.length ? { newLineIds: new Set(newLineIds) } : {}), ...(poRaised ? { rebuildBlocked: 'A PO was raised from this SO.' } : {})
-      },
+      { bindings,   // 0609: a PO raised from this SO blocks the rebuild, never the edit
+        ...(newLineIds?.length ? { newLineIds: new Set(newLineIds) } : {}), ...(poRaised ? { rebuildBlocked: 'A PO was raised from this SO.' } : {}), ...(rebuild ? { rebuild: true } : {}) },
       retired,
     ),
   };
 }
 
-async function composePoState(sb: Sb, poId: string, retired: AcRetiredLine[] = [], newLineIds?: string[]) {
+async function composePoState(sb: Sb, poId: string, retired: AcRetiredLine[] = [], newLineIds?: string[], rebuild = false) {
   const header = await readPoHeader(sb, poId);
   if (!header) return null;
   const items = await readOrThrow('purchase_order_items',
@@ -1489,7 +1488,7 @@ async function composePoState(sb: Sb, poId: string, retired: AcRetiredLine[] = [
          appends a duplicate into a live book (mfg-purchase-orders.ts, the
          convert-from-SO append, says exactly this). Their stock location is
          filled in above, on the line. */
-      ...(newLineIds && newLineIds.length ? { newLineIds: new Set(newLineIds) } : {}),
+      ...(newLineIds && newLineIds.length ? { newLineIds: new Set(newLineIds) } : {}), ...(rebuild ? { rebuild: true } : {}),
     }, retired),
   };
 }
