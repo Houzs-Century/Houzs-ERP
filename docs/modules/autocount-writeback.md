@@ -146,6 +146,45 @@ the other has never been established. The counter is seeded past the GRN number
 the ERP is evidenced to have issued, and that row says in words that it is not
 book evidence.
 
+### The book does NOT record where a goods receipt came from — the PO does
+
+*Answered 2026-09-02.* Every other detail table in the book carries the generic
+`FromDocType` / `FromDocNo` / `FromDocDtlKey` triple — `SODTL`, `DODTL`,
+`IVDTL`, `PODTL`, `PIDTL` all do (read live off the host under Windows auth).
+**`GRNDTL` carries none of them**, and that is not a gap in the export: it is
+how AutoCount models a receipt.
+
+AutoCount's own API says so. `Programmer:Goods_Received_Note_Transfer_from_Purchase_Order_v2`
+documents exactly two ways to make a GRN from a purchase order, and neither
+stores a parent key on the receipt:
+
+* `doc.FullTransfer(poDocNos[], TransferFrom.PurchaseOrder, FullTransferOption.FullDetails)`
+* `doc.PartialTransfer(TransferFrom.PurchaseOrder, poDocNo, itemCode, uom, qty, focQty)`
+
+The source is named at TRANSFER time and then consumed: what persists is the
+purchase-order line's own `PODTL.TransferedQty`, and "outstanding" is a REPORT
+(`PurchaseOrderOutstandingReportCommand`, `Programmer:Outstanding_Purchase_Order_(20)`),
+not a column read off the receipt.
+
+Three consequences, and the third is the one that bites:
+
+1. **Our side is richer, not poorer.** The ERP stores the GRN -> PO link
+   explicitly. Nothing needs adding.
+2. **`AddPartialTransferDetail` still takes DtlKeys**, so the write-back path in
+   `autocount-convert-lines.ts` is unaffected — the keys select the source lines
+   during the transfer; the receipt simply does not keep them afterwards.
+3. **A GRN -> PO comparison between the two sides is not possible as a link
+   comparison**, because the book has no link to compare. When Phase 0 asks
+   whether the two sides agree on goods receipts, the comparable figure is
+   `PODTL.TransferedQty` against our received quantity per PO line — not a
+   parent-key join. Writing that check as a join would report every row missing
+   and read as data loss.
+
+**Still UNKNOWN:** whether some OTHER book table holds a transfer log mapping
+receipt lines to purchase-order lines. What was read was `GRNDTL`'s columns, not
+the whole schema, and the wiki's own search index is known to miss content
+(`autocount-wiki-access`), so a nil search there proves nothing either way.
+
 ---
 
 ## 3. The table — `scm.autocount_outbox` (migration 0277)
