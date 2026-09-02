@@ -717,6 +717,26 @@ The LIST's "PO No." cell is a different cell with a different rule
 (`SoListPoCell`): SOLID = a goods source, MUTED = a raised PO. See the
 "LIST PO No. column" notes further down this file.
 
+**CHIPS 3 AND 4 ARRIVE ON A SECOND REQUEST (2026-09-01).** Since #2834 the SO
+detail payload defers its MRP run, so it returns `coverage_po: null`,
+`coverage_eta: null` and `ready_source_pos: []`, and `GET /:docNo/coverage` fills
+them. **Every surface that renders this column must make that second call** —
+`SalesOrderDetailV2` was given it and `MfgSalesOrdersListV2`'s drill-down was
+not, so the list's column was blank for a day (owner: 「明明我的 PO No. 那边是有
+的，可是 Incoming PO 却没有」; `docs/bugs/0598-*`).
+
+Chips 1 and 2 are NOT MRP-derived and kept working throughout, which is what made
+it look half-alive rather than obviously broken — worth knowing, because that is
+how the same fault will present next time.
+
+The merge is ONE shared function,
+`frontend/src/vendor/scm/lib/so-coverage-overlay.ts`, used by both surfaces. It
+is shared rather than copied because the board and the drill-down each writing
+their own is `docs/bugs/0269-*`, on these same two screens. An ABSENT or EMPTY
+overlay leaves the stored values alone — the fast first paint and an older
+backend's 404 both arrive that way, and blanking on them would flicker the column
+off on every open.
+
 ### 0.9 Where the neighbouring status systems are documented
 
 One home each — do not restate them here.
@@ -951,6 +971,19 @@ seeds from a hand-written memo.
 desktop passes `null` (every category cascades), mobile passes
 `{sofa, bedframe}` (the only variant panels it renders). `ConsignmentOrderNew`
 passes `null` too, matching the desktop SO page it is a clone of.
+
+#### `SalesOrderDetailV2` and the list drill-down share ONE coverage overlay
+
+Both render the Stock pill and the Incoming PO chips, and both must fetch
+`GET /:docNo/coverage` and merge it through
+`frontend/src/vendor/scm/lib/so-coverage-overlay.ts`. The detail page had the
+call and the drill-down did not, which blanked that column on the list
+(`docs/bugs/0598-*`); the merge is shared rather than copied because these are
+the same two surfaces that held two opinions in `docs/bugs/0269-*`.
+
+The overlay leaves a line UNTOUCHED when no coverage row matches it — the fast
+first paint and an older backend's 404 both arrive that way, and blanking on them
+would flicker the column off on every open. See §0.8 for the four chips.
 
 #### The `?edit=1` fork, and why leaving edit must leave the URL
 
