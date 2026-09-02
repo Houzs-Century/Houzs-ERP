@@ -3264,7 +3264,18 @@ class AcSyncService {
         if (d == null) throw new Exception("line " + it["DtlKey"] + " not found on " + docNo);
       } else {
         d = doc.AddDetail();
-        Set(() => d.ItemCode = Str(it, "ItemCode"));
+        /* NOT wrapped in Set(), and that is the whole point - 0615. Set()
+           swallows, and a swallowed ItemCode assignment adds a line with a
+           BLANK item code to a live account book with every log line green.
+           Measured on SO-013394 on 2026-09-02: seven of eight rebuilt lines
+           came back with ItemCode = '' and nothing anywhere said so. A new line
+           without an item code is not a line. */
+        var ic = Str(it, "ItemCode");
+        if (string.IsNullOrEmpty(ic)) {
+          throw new Exception("a new line on " + docNo + " carries no ItemCode; refusing rather than "
+            + "adding a blank line to the account book");
+        }
+        d.ItemCode = ic;
         addedALine = true;
       }
 

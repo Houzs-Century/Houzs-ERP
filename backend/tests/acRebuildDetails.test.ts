@@ -49,9 +49,9 @@ describe('the ERP asks; it never infers', () => {
      system makes. 0610 briefly made ANY unmatchable document rebuild and broke
      eight behavioural guards that nobody re-ran; retracted in docs/bugs/0613. */
   test('a keyless document rebuilds only when the rebuild was earned', () => {
-    expect(WRITEBACK).toMatch(/if \(effOpts\.rebuild && rebuildAllowed\(opts, docType\)\)/);
+    expect(WRITEBACK).toMatch(/if \(effOpts\.rebuild\) return \{ DocType/);
     expect(WRITEBACK).toMatch(/throw new KeylessLineError\(/);
-    const askIdx = WRITEBACK.indexOf('if (effOpts.rebuild && rebuildAllowed(opts, docType))');
+    const askIdx = WRITEBACK.indexOf('if (effOpts.rebuild) return { DocType');
     const throwIdx = WRITEBACK.indexOf('throw new KeylessLineError(');
     expect(askIdx, 'the rebuild escape must come BEFORE the throw').toBeGreaterThan(-1);
     expect(askIdx).toBeLessThan(throwIdx);
@@ -62,6 +62,19 @@ describe('the ERP asks; it never infers', () => {
      PODTL.FromSODtlKey holds its keys and reissuing them voids the link (0609).
      The document TYPE is the other: the four converted documents carry their
      incoming transfer link on the lines a rebuild would clear (0611). */
+  /* A REBUILT LINE CARRIES ITS ITEM CODE. The keyed path strips ItemCode on
+     purpose - sending it would move the 194 book lines the collapsed sofa codes
+     hold - and a rebuild ADDS the line instead, so stripping it there adds a
+     blank one. Seven of eight lines on SO-013394 reached the live book that way
+     (docs/bugs/0615). */
+  test('a rebuild puts the item code back, and only a rebuild', () => {
+    expect(WRITEBACK).toMatch(/\.\.\.\(effOpts\.rebuild \? \{ ItemCode: acItemCode \} : \{\}\)/);
+    expect(SERVICE).toMatch(/if \(string\.IsNullOrEmpty\(ic\)\)/);
+    /* NOT wrapped in Set(): Set swallows, and a swallowed assignment is exactly
+       how a blank line reached the account book with every log line green. */
+    expect(SERVICE).not.toMatch(/Set\(\(\) => d\.ItemCode = Str\(it, "ItemCode"\)\)/);
+  });
+
   test('a blocked or converted document is refused, never rebuilt', () => {
     expect(GONE).toMatch(/if \(opts\.rebuildBlocked\) return false;/);
     expect(GONE).toMatch(/ERP_OWNS_THE_LINES\.has\(String\(docType\)\.toUpperCase\(\)\)/);

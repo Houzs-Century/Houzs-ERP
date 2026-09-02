@@ -76,8 +76,17 @@ describe('composeEdit derives it — no caller can forget, none can disagree', (
     expect(GONE).toMatch(/if \(opts\.rebuildBlocked\) return false;/);
   });
 
-  test('an explicit request still survives the derivation', () => {
-    expect(WRITEBACK).toMatch(/\{ \.\.\.opts, rebuild: true \}/);
+  /* CHANGED 2026-09-02, docs/bugs/0615. `effOpts.rebuild` is now the WHOLE
+     answer rather than a hint that later code re-checks: a caller's explicit
+     rebuild is CLEARED when the document may not be rebuilt, so every reader
+     downstream can trust one field. It matters because a THIRD reader appeared
+     that day - the line mapper, which puts ItemCode back on a rebuild - and a
+     flag that means "asked for" rather than "happening" would have put an item
+     code on a document that was not being rebuilt. */
+  test('effOpts.rebuild is derived, and is the whole answer', () => {
+    expect(WRITEBACK).toMatch(/rebuild: shouldRebuild\(opts, docType, retired\)/);
+    /* A caller may ASK; it may not decide. */
+    expect(WRITEBACK).not.toMatch(/\{ \.\.\.opts, rebuild: true \}/);
   });
 
   test('the parameter is not reassigned', () => {
