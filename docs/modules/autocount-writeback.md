@@ -2567,6 +2567,9 @@ MISMATCH creditor:400-H004 erp=HOOKKA INDUSTRIES SDN. BHD. book=HAO HUA FURNITUR
 **An empty `mismatches` is NOT "clean".** A host running a build older than this
 field does not send it at all, and the ERP cannot tell the difference. `GET
 /health`'s `builtAt` / `mvid` is the only thing that says which build answered.
+**Ask it without walking to the machine:** `GET /api/admin/health/autocount/host-build`
+(gated `*`) proxies that `/health` and reports `builtAt` / `mvid` plus a verdict —
+see `docs/modules/system-health.md`.
 
 **CI cannot compile C#; this desktop can, and the difference matters.** The
 GitHub runner is Linux and the licensed AutoCount assemblies are a desktop
@@ -3415,6 +3418,40 @@ the script could not disagree; that script now imports the mirror.) An
 unrecognised reason is printed rather than counted away, and a skip that has
 already been re-queued (below) is reported separately rather than counted as
 backlog.
+
+**ONE ROW, ONE CLASS — corrected 2026-09-02** (`docs/bugs/0606-the-outbox-health-report-counted-one-refusal-under-two-remed.md`).
+The report used to bucket skips by scanning for each kind's needle
+independently, so a stored reason containing two needles was printed under BOTH,
+with two different remedies. `KeylessLineError` writes *"N of M line(s) carry no
+AutoCount DtlKey"*, which holds the `keyless-line` needle and the
+`dtlkey-subset` needle — and run 33593927462 printed two rows of one document as
+`skipped 2` twice, the second telling the reader to backfill a SOURCE document
+that an `edit` does not have. `AC_SKIP_KINDS` is a PRIORITY order and
+`classifyAcSkip` honours it; the report now goes through
+`backend/scripts/lib/ac-skip-grouping.mjs`, which classifies each row once and
+returns the buckets in that order. Pinned by
+`backend/tests/acSkipGrouping.test.mjs`. **Add the buckets up and you get the
+row count now** — before this you could not.
+
+**WHICH document is held back, and does a number name a real one.** Actions ->
+**AutoCount held-back documents — identify (read-only)** -> Run workflow
+(`backend/scripts/check-autocount-held-back.mjs`). A different question from the
+health check above, and the one that gets asked in an incident: it lists every
+outbox row that is not `sent` as a document number, a reason CODE and an age;
+searches a doc_no fragment across every relation in `public` + `scm` carrying a
+`doc_no` column, views included, alongside a CONTROL fragment that MUST be found
+so a dead matcher cannot report a clean run; and reports one document in full —
+its `linked_ac_docno`, how many lines carry `linked_ac_dtlkey`, whether any
+purchase line or allocation names a line of it, what is live downstream, and the
+line deletions recorded against it. `DOC` / `SEARCH` / `CONTROL` are the inputs.
+
+It exists because on 2026-09-02 one held-back order was being discussed under two
+numbers, one of them outside the range AutoCount has ever issued, and a wrong
+document pushed into a licensed book cannot be taken back out. **Its output is
+public** (this repo's Actions logs are), so it prints numbers, counts, dates,
+reason codes and booleans only — stored error text is classified, never quoted.
+An unreadable count is reported as UNKNOWN and never spent as a zero: "I could
+not tell" and "no purchase order exists" are opposite facts.
 
 **IT RUNS EVERY DAY NOW, AND IT IS SILENT UNLESS SOMETHING IS STUCK**
 (2026-08-24, docs/bugs/0534). The workflow was manual-only and its header refused
