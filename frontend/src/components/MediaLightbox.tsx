@@ -55,9 +55,13 @@ export function MediaLightbox({
   // particular) have no inline PDF viewer, so the iframe paints an EMPTY box:
   // reported as "sales can't see the file in Unfilled plan" (owner 2026-09-01).
   // On phone-sized screens fall back to the file card (name + Open/Download).
+  // `matchMedia` is optional-chained and falls back to innerWidth — the same
+  // shape hooks/useSmallViewport.ts uses — because the test DOM does not define
+  // it and an unguarded call threw for EVERY item type, PDF or not.
   const pdfInline =
     typeof window !== "undefined" &&
-    window.matchMedia("(min-width: 768px)").matches &&
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- lib.dom types matchMedia as always present; the test DOM does not define it and an unguarded call threw for every item type (CI run 33636445782).
+    (window.matchMedia?.("(min-width: 768px)").matches ?? window.innerWidth >= 768) &&
     !/Android|iPhone|iPad|Mobile/i.test(navigator.userAgent);
   const [url, setUrl] = useState<string | null>(null);
 
