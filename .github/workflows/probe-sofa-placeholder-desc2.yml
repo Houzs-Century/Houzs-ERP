@@ -33,14 +33,9 @@ on:
         required: false
         default: "200"
         type: string
-  # TEMPORARY (removed before merge, see PR body): a workflow_dispatch workflow
-  # cannot be dispatched until it is on main, and the numbers are needed to write
-  # the PR. Runs the same read-only probe, nothing else.
-  push:
-    branches: [diag/sofa-placeholder-decode]
 
 concurrency:
-  group: probe-sofa-placeholder-desc2-${{ inputs.target || 'prod' }}
+  group: probe-sofa-placeholder-desc2-${{ inputs.target }}
   cancel-in-progress: false
 
 jobs:
@@ -62,7 +57,7 @@ jobs:
           DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
 
   run-prod:
-    if: ${{ inputs.target != 'staging' }}
+    if: ${{ inputs.target == 'prod' }}
     runs-on: ubuntu-latest
     defaults: { run: { working-directory: backend } }
     steps:
