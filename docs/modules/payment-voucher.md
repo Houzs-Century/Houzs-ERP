@@ -196,11 +196,42 @@ server-side, and supplier matching in plain code — normalize both names
 NO match, because a wrong supplier pre-selected is worse than none. Caps:
 12 bills/call, 8 files/bill, 20MB/file, images + PDF (the image allowlist is
 `vision-blocks.ts`'s — one home). **Nothing on either door writes.** Every
-scan lands on the New page for a person to check, pick the account (empty on
-purpose until the vendor-memory PR has something honest to suggest) and save
+scan lands on the New page for a person to check, pick or confirm the
+account (§0f fills it only from what THIS operator saved before) and save
 through the untouched approval cycle. Contracts:
 `backend/src/acc/bill-extract.test.ts`,
 `frontend/src/pages/scm-v2/PaymentVoucherScan.test.tsx`.
+
+## 0f. Vendor memory (mig 0341, 2026-09-02)
+
+The owner's ask, his words: 我想要你要有记忆我下次submit 同个类型的invoice
+自动帮我填，选account 等等. `scm.acc_vendor_memory` — one row per
+(company, vendor) remembering what the operator **actually saved**: the
+payee's casing, the FIRST line's expense account, the purpose. NOT what the
+model guessed — only a human's save teaches.
+
+- **Learns on save**: `learnVendorMemory` runs after a successful PV create,
+  and after a DRAFT edit that replaced the lines (the correction signal —
+  usually the account the last prefill got wrong). AP payments teach
+  nothing: their one line debits the AP control, fixed by role.
+  Last-saved-wins; `times_seen` only grows. **Best-effort on purpose** —
+  both legs bind their failure and skip; a habit cache must never turn a
+  saved voucher into an error.
+- **Keyed by `normalizeVendor`** (the supplier matcher's own normalizer), so
+  "TNB", the OCR's reading of the printed name, and the matched supplier's
+  clean name all land on one row.
+- **Read back by POST /extract**: each read bill carries
+  `memory: { payeeName, debitAccountCode, purpose, timesSeen } | null` —
+  the printed name looked up first, the matched supplier's name as
+  fallback, the other company's habits never (company-scoped read).
+- **The form fills from it**: payee takes the operator's casing over the
+  print; every drafted line gets the remembered account, announced in the
+  scan note ("Account … filled from your last … voucher — check it") and
+  still editable. No memory → account stays empty and a person picks it.
+
+Contracts: `backend/tests/pvVendorMemory.test.ts` (teach / not-AP /
+correction / extract hand-back + company scope),
+`PaymentVoucherNew.test.tsx` (记忆自动帮我填 pin).
 
 ## 1. Frontend
 
@@ -258,7 +289,7 @@ Mounted at `/api/scm/payment-vouchers`, behind
 | GET | `/` | area guard | `limit(500)`, company-scoped, `?status=` |
 | GET | `/:id` | area guard | header + lines + allocations (joined PI number / total / paid) |
 | POST | `/` | `scm.payment_voucher.create` | creates **DRAFT**; allocations persisted but settle nothing yet |
-| POST | `/extract` | `scm.payment_voucher.create` | §0e — reads uploaded bills with Claude vision, returns extractions + supplier matches; writes NOTHING; 503 without `ANTHROPIC_API_KEY` |
+| POST | `/extract` | `scm.payment_voucher.create` | §0e — reads uploaded bills with Claude vision, returns extractions + supplier matches + the vendor memory (§0f); writes NOTHING; 503 without `ANTHROPIC_API_KEY` |
 | PATCH | `/:id` | `scm.payment_voucher.write` | **DRAFT only** (409 `not_editable`); a cleared Voucher Date is refused 400 `voucher_date_required` — §7 |
 | POST | `/:id/post` | `scm.payment_voucher.post` | writes the GL entry, DRAFT → POSTED, settles PIs, **adopts the FX rate** |
 | POST | `/:id/cancel` | `scm.payment_voucher.cancel` | reverses the GL entry, unwinds settlement, **retains the FX rate** |

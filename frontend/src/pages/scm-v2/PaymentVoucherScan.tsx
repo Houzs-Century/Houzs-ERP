@@ -19,7 +19,7 @@ import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Camera, FileText, X } from 'lucide-react';
 import { Button } from '@2990s/design-system';
-import { useExtractBills, fileToBase64, type ExtractedBill, type BillExtraction } from '../../vendor/scm/lib/payment-voucher-queries';
+import { useExtractBills, fileToBase64, type ExtractedBill, type BillExtraction, type VendorMemory } from '../../vendor/scm/lib/payment-voucher-queries';
 import { fmtDate } from '../../vendor/shared/format';
 import { PageHeader } from '../../components/Layout';
 import styles from './SalesOrderDetail.module.css';
@@ -107,17 +107,22 @@ export const PaymentVoucherScan = () => {
     return [...map.entries()].map(([key, g]) => ({ key, ...g }));
   }, [results]);
 
-  const openVoucher = (extraction: BillExtraction, lines?: Array<{ description: string | null; amountSen: number | null }>) => {
-    navigate('/scm/payment-vouchers/new', { state: { billPrefill: { extraction, ...(lines ? { lines } : {}) } } });
+  const openVoucher = (extraction: BillExtraction, extras?: { lines?: Array<{ description: string | null; amountSen: number | null }>; memory?: VendorMemory | null }) => {
+    navigate('/scm/payment-vouchers/new', { state: { billPrefill: { extraction, ...(extras?.lines ? { lines: extras.lines } : {}), memory: extras?.memory ?? null } } });
   };
 
   const openGroupAsOne = (g: { label: string; bills: Array<Extract<ExtractedBill, { ok: true }>> }) => {
-    const first = g.bills[0]!.extraction;
+    const first = g.bills[0]!;
     const lines = g.bills.map((b) => ({
       description: [g.label, b.extraction.invoiceNumber].filter(Boolean).join(' '),
       amountSen: b.extraction.totalSen,
     }));
-    openVoucher({ ...first, invoiceNumber: g.bills.map((b) => b.extraction.invoiceNumber).filter(Boolean).join(', ') || null }, lines);
+    /* One vendor per group by construction, so the first bill's memory IS the
+       group's. */
+    openVoucher(
+      { ...first.extraction, invoiceNumber: g.bills.map((b) => b.extraction.invoiceNumber).filter(Boolean).join(', ') || null },
+      { lines, memory: first.memory },
+    );
   };
 
   return (
@@ -182,6 +187,7 @@ export const PaymentVoucherScan = () => {
                   <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
                     {g.bills.length} bill(s) · {fmtRm(g.bills.reduce((s, b) => s + (b.extraction.totalSen ?? 0), 0))}
                     {g.supplierId ? ' · matched supplier' : ' · no supplier match'}
+                    {g.bills[0]?.memory?.debitAccountCode ? ` · account remembered (${g.bills[0].memory.debitAccountCode})` : ''}
                   </span>
                 </div>
                 <div className={styles.cardBody} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
@@ -192,7 +198,7 @@ export const PaymentVoucherScan = () => {
                       <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(b.extraction.totalSen)}</span>
                       {b.extraction.totalSen == null && <span style={{ color: 'var(--c-festive-b, #B8331F)', fontSize: 'var(--fs-12)' }}>total unreadable — will need typing</span>}
                       {split && (
-                        <Button variant="secondary" size="sm" onClick={() => openVoucher(b.extraction)}>
+                        <Button variant="secondary" size="sm" onClick={() => openVoucher(b.extraction, { memory: b.memory })}>
                           Open as voucher
                         </Button>
                       )}
