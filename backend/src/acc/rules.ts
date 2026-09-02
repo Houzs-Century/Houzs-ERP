@@ -40,20 +40,22 @@ export type AccountRole =
   | 'AR' | 'SALES' | 'INVENTORY' | 'AP'
   | 'CASH' | 'BANK_DEFAULT' | 'TRANSIT_EDC' | 'TRANSIT_ONLINE' | 'CUSTOMER_DEPOSITS' | 'OVER_SHORT';
 
-/* Fallback = the unified AutoCount-style chart (phase 1, migration 0297;
-   owner decision 2026-08-16). Every company carries these codes, so a company
-   whose roles rows are missing or unreadable still books onto real accounts. */
+/* Fallback = the accountant's own AutoCount codes (migration 0344; owner
+   decision 2026-09-02: 迁到 AutoCount 码). Every company carries these codes,
+   so a company whose roles rows are missing or unreadable still books onto
+   real accounts. 326/327 are the ERP-extension clearing codes parked in
+   AutoCount's free gap — the settlement layer's own accounts. */
 export const DEFAULT_ROLE_CODES: Record<AccountRole, string> = {
-  AR: '300-0000',                // Trade Debtor
-  SALES: '500-0000',             // Sales Revenue
-  INVENTORY: '310-0000',         // Inventory
-  AP: '400-0000',                // Trade Creditor
-  CASH: '335-0000',              // Cash on Hand
-  BANK_DEFAULT: '330-0000',      // Bank — Maybank Current
-  TRANSIT_EDC: '320-0000',       // Card Machine Clearing (EDC)
-  TRANSIT_ONLINE: '325-0000',    // Online Payment Clearing (FPX/e-wallet)
-  CUSTOMER_DEPOSITS: '410-0000', // Customer Deposits (reserved: advance-receipt refinement)
-  OVER_SHORT: '946-0000',        // Cash Over/Short (daily cashup differences)
+  AR: '300-0000',                // ACCOUNT RECEIVEABLE
+  SALES: '500-0000',             // Sales Revenue (template; refined by the chart import)
+  INVENTORY: '330-0000',         // STOCK
+  AP: '400-0000',                // ACCOUNT PAYABLE
+  CASH: '320-0000',              // CASH IN HAND
+  BANK_DEFAULT: '310-0010',      // CASH AT BANK - MAYBANK
+  TRANSIT_EDC: '326-0000',       // CARD MACHINE CLEARING (EDC)
+  TRANSIT_ONLINE: '327-0000',    // ONLINE PAYMENT CLEARING (FPX/E-WALLET)
+  CUSTOMER_DEPOSITS: '400-0001', // DEPOSIT (under ACCOUNT PAYABLE)
+  OVER_SHORT: '946-0000',        // Cash Over/Short (ERP extension)
 };
 
 /* Control accounts (brief §2.4): system-maintained, and a MANUAL journal may

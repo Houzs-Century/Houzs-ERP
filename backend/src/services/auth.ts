@@ -120,6 +120,15 @@ export function isoIn(seconds: number): string {
 // ── Session helpers ──────────────────────────────────────
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 7; // 7 days
 
+/** "Remember me on this device" (owner 2026-09-02: "cant keep permanently?").
+ *  A rolling window: the session lasts a year, and every request made with more
+ *  than half of it spent pushes the expiry back to a full year again. A device
+ *  in weekly use therefore never signs out; one nobody touches for a year does.
+ *  Permanent in practice, self-cleaning in the abandoned case — and still
+ *  revocable, since disabling the user or changing the password deletes their
+ *  session rows outright. */
+export const REMEMBER_TTL_SECONDS = 60 * 60 * 24 * 365; // 1 year, rolling
+
 // Bump whenever code changes the meaning/resolution of an AuthUser permission
 // envelope without a corresponding DB value changing. Including this revision
 // in the per-request fingerprint makes every pre-policy cache entry stale on
@@ -274,15 +283,49 @@ export async function createSession(
   userId: number,
   origin?: SessionOrigin,
   ttlSeconds: number = SESSION_TTL_SECONDS,
+  /** Seconds to roll the expiry forward by on use — "Remember me". Null (the
+   *  default) is a fixed session that runs out at `ttlSeconds` and is never
+   *  extended, which is every caller that does not opt in, the 1-hour
+   *  impersonation session included. */
+  renewSeconds: number | null = null,
 ): Promise<string> {
   const token = generateToken();
   const expires = isoIn(ttlSeconds);
   await env.DB.prepare(
-    `INSERT INTO sessions (token, user_id, expires_at, origin) VALUES (?, ?, ?, ?)`
+    `INSERT INTO sessions (token, user_id, expires_at, origin, renew_seconds) VALUES (?, ?, ?, ?, ?)`
   )
-    .bind(token, userId, expires, origin ?? null)
+    .bind(token, userId, expires, origin ?? null, renewSeconds)
     .run();
   return token;
+}
+
+/**
+ * Push a rolling session's expiry back to a full window, once it is more than
+ * halfway spent. Returns the new expiry, or null when nothing was written.
+ *
+ * Called from the authenticated read path, so it must stay CHEAP and it must
+ * never fail a request: at most one UPDATE per session per half-window (about
+ * one write every six months on a 1-year window), and any error is swallowed —
+ * a session that could not be extended is still valid until its stored expiry,
+ * and the next request tries again.
+ */
+async function renewRollingSession(
+  env: Env,
+  token: string,
+  expiresAt: string | null,
+  renewSeconds: number | null,
+): Promise<void> {
+  if (!renewSeconds || renewSeconds <= 0 || !expiresAt) return;
+  const remainingMs = Date.parse(expiresAt) - Date.now();
+  if (!Number.isFinite(remainingMs)) return;
+  if (remainingMs > (renewSeconds * 1000) / 2) return; // still fresh — no write
+  try {
+    await env.DB.prepare(`UPDATE sessions SET expires_at = ? WHERE token = ?`)
+      .bind(isoIn(renewSeconds), token)
+      .run();
+  } catch (e) {
+    console.warn("[auth] rolling session renewal failed", e);
+  }
 }
 
 /**
@@ -335,6 +378,10 @@ interface SessionAuthority {
   status: string;
   expires_at: string | null;
   origin: string | null;
+  /** Rolling-session window in seconds ("Remember me"), or null/absent for a
+   *  fixed session. Read defensively: a database that predates migration 0345
+   *  answers undefined here and every session simply stays fixed. */
+  renew_seconds?: number | null;
   role_id: number;
   position_id: number | null;
   department_id: number | null;
@@ -607,7 +654,7 @@ export async function getUserBySession(env: Env, token: string): Promise<AuthUse
   const settled = Promise.allSettled([
     getCachedUser(env, token),
     env.DB.prepare(
-      `SELECT s.user_id, s.expires_at, s.origin,
+      `SELECT s.user_id, s.expires_at, s.origin, s.renew_seconds,
               u.email, u.email_alias, u.name,
               u.status, u.role_id, u.position_id, u.department_id, u.manager_id,
               r.name AS role_name, r.permissions AS role_permissions,
@@ -705,6 +752,12 @@ export async function getUserBySession(env: Env, token: string): Promise<AuthUse
     await deleteSession(env, token);
     return null;
   }
+
+  // "Remember me" keeps rolling forward from here — after the session is proven
+  // live, so an expired or revoked token is never extended, and before the
+  // cached-envelope return below, so a cache HIT renews too (that is the common
+  // path for a daily user, and it is exactly the one that must not sign out).
+  await renewRollingSession(env, token, authority.expires_at, authority.renew_seconds ?? null);
 
   const authzFingerprint = buildAuthzFingerprint(
     authority,
