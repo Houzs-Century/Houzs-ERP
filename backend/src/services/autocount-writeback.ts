@@ -23,6 +23,7 @@
 // resolver, so it unit-tests with no database and no AutoCount.
 // ----------------------------------------------------------------------------
 import type { Env } from '../types';
+import { rebuildNeededToRemoveLine } from './ac-line-gone';
 import type { AcRetiredLine } from './ac-line-gone';
 import {
   ItemCodeError,
@@ -1421,7 +1422,16 @@ export function composeEdit(
   opts: ComposeOptions = {},
   retired: AcRetiredLine[] = [],
 ): AcEditPayload {
-  const { details, collapsed } = composeDetails(lines, opts);
+  /* THE ONE RULE (services/ac-line-gone.ts). A line the operator DELETED must
+     disappear from AutoCount. On a SALES ORDER the SDK removes that one line; on
+     the other five the only way to lose a line at all is to rebuild the details.
+     Derived, never decided per caller — a `rebuild` the caller passed is honoured
+     on top, so an explicit request still works on a sales order. */
+  const anyDeleted = retired.some((r) => r.Gone === 'deleted');
+  const effOpts: ComposeOptions = rebuildNeededToRemoveLine(docType, anyDeleted)
+    ? { ...opts, rebuild: true }
+    : opts;
+  const { details, collapsed } = composeDetails(lines, effOpts);
   /* The key is read off the COLLAPSED line, not the ERP line. One AutoCount
      line has one DtlKey, and a sofa build's compartments only carry line
      identity when every one of them holds the same key — anything else
@@ -1514,7 +1524,7 @@ export function composeEdit(
    * inserted, and (2) EVERY OTHER line already carries a key — which is what
    * makes (1) safe to believe, because a document with other keyless lines has
    * not been backfilled and nothing on it can vouch for this one. */
-  const declaredNew = opts.newLineIds ?? null;
+  const declaredNew = effOpts.newLineIds ?? null;
   if (declaredNew && declaredNew.size && keyless.length) {
     const isDeclared = (i: number) => {
       const id = collapsed[i].sourceIndexes
@@ -1541,7 +1551,7 @@ export function composeEdit(
       .map((i) => `${i + 1} (${keyed[i].ItemCode || 'no item code'}${cancelledOf(i) === true ? ', cancelled' : ''})`)
       .join(', ');
     /* A rebuild appends to nothing — 0607. */
-    if (opts.rebuild) return { DocType: docType, DocNo: docNo, Header: header, Lines: keyed, Rebuild: true };
+    if (effOpts.rebuild) return { DocType: docType, DocNo: docNo, Header: header, Lines: keyed, Rebuild: true };
     const anyCancelled = keyless.some((i) => cancelledOf(i) === true);
     throw new KeylessLineError(
       `${docType} ${docNo}: ${keyless.length} of ${keyed.length} line(s) carry no AutoCount `

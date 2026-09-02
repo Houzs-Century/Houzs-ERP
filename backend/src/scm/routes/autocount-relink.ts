@@ -160,8 +160,29 @@ export const autocountRelinkLinesHandler = async (
     /* NAMED, not counted. Each one is a line the operator still has to deal
        with, and "2 lines could not be matched" sends him hunting. */
     couldNotMatch: [...plan.refused, ...failed],
+    /* THE WAY OUT OF A DEAD END. Matching can be IMPOSSIBLE, not merely hard:
+       two book lines carrying the same item code with nothing to separate them
+       cannot be told apart by any matcher, ever. HC-SO-013394 is that shape, and
+       before this the operator was told "nothing could be matched" and left
+       there — the document could not be sent by ANY route.
+
+       Owner 2026-09-02: 「如果做得到 inistate 的东西，那就是我删或者 addline 都可以
+       sync 进去，就代表这张单也进得去了啊」. He is right: a REBUILD never has to
+       match anything, so it is exactly the escape this dead end needs.
+
+       OFFERED, NOT DONE. A rebuild destroys and reissues every DtlKey on the
+       document, so it is the operator's call and not a silent consequence of
+       pressing Match up lines. `canRebuild` is what the screen turns into that
+       choice; the host still refuses it on a document with a transferred line,
+       read from the book's own tables. */
+    canRebuild: stamped === 0 && plan.refused.length > 0,
     message: stamped > 0
       ? `${stamped} line(s) matched up against the account book. Save the document again.`
-      : 'Nothing could be matched — the document is unchanged.',
+      : plan.refused.length > 0
+        ? 'These lines cannot be told apart in the account book, so no matcher can '
+          + 'choose between them. The document can still be sent by REBUILDING its '
+          + 'lines from the ERP — that replaces the account book lines with these '
+          + 'ones and cannot be undone.'
+        : 'Nothing could be matched — the document is unchanged.',
   });
 };

@@ -34,14 +34,16 @@ describe('the ERP asks; it never infers', () => {
 
   test('rebuild is an explicit option, off unless asked', () => {
     expect(WRITEBACK).toMatch(/rebuild\?: boolean;/);
-    expect(WRITEBACK).toMatch(/if \(opts\.rebuild\) return \{[^}]*Rebuild: true \}/);
+    /* `effOpts`, not `opts` — composeEdit derives the rule (ac-line-gone.ts)
+       and must not reassign its own parameter to do it. */
+    expect(WRITEBACK).toMatch(/if \(effOpts\.rebuild\) return \{[^}]*Rebuild: true \}/);
   });
 
   /* Inferring a rebuild from the failure would turn every future mismatch into a
      silent teardown of a live document. The refusal must still be reachable. */
   test('without the flag the keyless refusal still throws', () => {
     expect(WRITEBACK).toMatch(/throw new KeylessLineError\(/);
-    const askIdx = WRITEBACK.indexOf('if (opts.rebuild) return');
+    const askIdx = WRITEBACK.indexOf('if (effOpts.rebuild) return');
     const throwIdx = WRITEBACK.indexOf('throw new KeylessLineError(');
     expect(askIdx, 'the rebuild escape must come BEFORE the throw').toBeLessThan(throwIdx);
     expect(askIdx).toBeGreaterThan(-1);
