@@ -203,6 +203,28 @@ async function docLevel(label, file, headerTable, acCol, docCol) {
   for (const s of wholeSamples) log(`        ${s}`);
 }
 
+/* ---------------------------------------------------------------------------
+   The measurement above finds an ERP line by `linked_ac_dtlkey`. A line whose
+   key was never stamped is therefore INVISIBLE to it and reads as "the book's
+   line is not in the ERP" — even when the row is sitting there carrying its
+   photograph, because the attach script matches on document + item code, not on
+   the key. So the two must be separated before anyone chases the difference.
+   --------------------------------------------------------------------------- */
+async function keyStamping(label, table, join, where) {
+  const [r] = await sql.unsafe(
+    `SELECT count(*)::int AS lines,
+            count(*) FILTER (WHERE i.linked_ac_dtlkey IS NULL)::int AS no_key,
+            count(*) FILTER (WHERE EXISTS (SELECT 1 FROM unnest(i.photo_urls) u WHERE u LIKE '%/ac-%'))::int AS with_pic,
+            count(*) FILTER (WHERE i.linked_ac_dtlkey IS NULL
+                               AND EXISTS (SELECT 1 FROM unnest(i.photo_urls) u WHERE u LIKE '%/ac-%'))::int AS pic_no_key
+       FROM scm.${table} i ${join} WHERE ${where}`);
+  log('');
+  log(`${label} — key stamping`);
+  log(`  lines in the ERP: ${r.lines}; of them with NO AutoCount line key: ${r.no_key}`);
+  log(`  lines carrying an AutoCount photograph: ${r.with_pic}`);
+  log(`  ... carrying one but with NO key, so the funnel above cannot see them: ${r.pic_no_key}`);
+}
+
 async function main() {
   log(`READ-ONLY line-photo GAP split — company ${COMPANY}`);
   await side('SALES ORDER lines', 'ac-photo-manifest.json.gz', 'mfg_sales_order_items', {
@@ -223,6 +245,12 @@ async function main() {
   await docLevel('PURCHASE ORDERS', 'ac-po-photo-manifest.json.gz', 'purchase_orders',
     { table: 'purchase_order_items', join: 'JOIN scm.purchase_orders h ON h.id = i.purchase_order_id', where: `h.company_id = ${COMPANY}` },
     'h.po_number');
+  log('');
+  log('============ can the funnel SEE every line? ============');
+  await keyStamping('SALES ORDER lines', 'mfg_sales_order_items',
+    'JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no', `h.company_id = ${COMPANY}`);
+  await keyStamping('PURCHASE ORDER lines', 'purchase_order_items',
+    'JOIN scm.purchase_orders h ON h.id = i.purchase_order_id', `h.company_id = ${COMPANY}`);
   await sql.end();
 }
 
