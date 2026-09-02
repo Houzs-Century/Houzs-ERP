@@ -20,6 +20,7 @@
 import { describe, expect, test, beforeEach } from 'vitest';
 import { requeueOneRow } from './autocount-requeue';
 import { enqueueEdit } from './autocount-outbox';
+import { newLineTargetOf } from './autocount-line-keys';
 import { fakeSb, type Row } from './fake-postgrest';
 import { resetWritebackFlagCache } from './autocount-writeback-flag';
 
@@ -173,5 +174,57 @@ describe('a rebuilt line is a NEW line, so it must carry its item code', () => {
     const body = (rows(sb)[0].payload as { body: { Lines: Array<Record<string, unknown>>; Rebuild?: unknown } }).body;
     expect(body.Rebuild).toBeUndefined();
     for (const line of body.Lines) expect(line).not.toHaveProperty('ItemCode');
+  });
+});
+
+describe('after a rebuild the ERP has to learn the reissued keys', () => {
+  /* THE LOOSE END THIS CLOSES, and it was live. A rebuild clears the details and
+     re-adds them, so every key the book returns is NEW - and the ERP went on
+     holding the keys of lines that no longer existed. Measured on HC-SO-013394
+     after two rebuilds: the ERP still reported "7 of 8 lines carry a key", the
+     same split as before, while the book's keys had moved to 919855-919862. The
+     next ordinary edit of that document would have sent EditDetail(<dead key>)
+     and failed. docs/bugs/0621. */
+  test('every rebuilt line names the ERP rows behind it', async () => {
+    const sb = world();
+    await requeueOneRow(sb as never, editSkip() as never, { apply: true, resendingThisRow: false });
+
+    const body = (queued(sb)[0].payload as { body: { Lines: Array<Record<string, unknown>> } }).body;
+    for (const [i, line] of body.Lines.entries()) {
+      expect(Array.isArray(line.ErpLineIds), `line ${i + 1} names no ERP row`).toBe(true);
+      expect((line.ErpLineIds as string[]).length, `line ${i + 1} names no ERP row`).toBeGreaterThan(0);
+    }
+  });
+
+  /* And the reader has to agree with the writer: on a rebuild EVERY line counts
+     as new and NOT ONE key the payload carried is still known, or
+     persistNewLineKeys would filter a genuinely fresh key out as "already had
+     it" and then bail on the count mismatch. */
+  test('newLineTargetOf treats a rebuild as all-new with no known keys', async () => {
+    const sb = world();
+    await requeueOneRow(sb as never, editSkip() as never, { apply: true, resendingThisRow: false });
+    const payload = queued(sb)[0].payload as { body: { Lines: Array<Record<string, unknown>> } };
+
+    const target = newLineTargetOf('SO', payload);
+    expect(target, 'a rebuild names no lines to store').not.toBeNull();
+    expect(target?.newIds).toHaveLength(payload.body.Lines.length);
+    expect(target?.knownKeys).toEqual([]);
+  });
+
+  /* THE HALF THAT MUST NOT MOVE. An ordinary edit still stores only what the
+     route DECLARED new - reading every line back would repoint keys the book
+     already owns. */
+  test('an ordinary edit still names nothing new', async () => {
+    const sb = fakeSb({
+      app_config: [{ key: 'scm.autocount_writeback', value: '1' }],
+      autocount_outbox: [],
+      staff: [{ id: 'staff-1', name: 'Nurul Hidayah' }],
+      mfg_sales_orders: [soHeader()],
+      mfg_sales_order_items: soItems().map((r) => ({ ...r, linked_ac_dtlkey: r.linked_ac_dtlkey ?? 917138 })),
+      supplier_material_bindings: [],
+    });
+
+    expect(await enqueueEdit(sb as never, { companyId: 1, docType: 'SO', docNo: SO_DOC })).toBe(true);
+    expect(newLineTargetOf('SO', rows(sb)[0].payload as { body?: unknown })).toBeNull();
   });
 });
