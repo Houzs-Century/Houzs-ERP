@@ -609,19 +609,19 @@ Total: 1103 route registrations across 146 files.
 - L1816  DELETE /:id/items/:itemId
 
 ## backend/src/routes/auth.ts  (13)
-- L52  GET    /status
-- L65  POST   /bootstrap
-- L103  POST   /login
-- L218  POST   /totp/login
-- L302  POST   /forgot-password
-- L461  GET    /invite/:token
-- L496  POST   /accept-invite
-- L572  POST   /logout
-- L583  GET    /me
-- L688  GET    /reset/:token
-- L721  POST   /reset/:token
-- L785  PATCH  /me
-- L811  POST   /me/password
+- L53  GET    /status
+- L66  POST   /bootstrap
+- L104  POST   /login
+- L230  POST   /totp/login
+- L318  POST   /forgot-password
+- L477  GET    /invite/:token
+- L512  POST   /accept-invite
+- L588  POST   /logout
+- L599  GET    /me
+- L704  GET    /reset/:token
+- L737  POST   /reset/:token
+- L801  PATCH  /me
+- L827  POST   /me/password
 
 ## backend/src/routes/sales.ts  (13)
 - L233  GET    /entries
@@ -898,13 +898,13 @@ Total: 1103 route registrations across 146 files.
 
 ## backend/src/routes/systemHealth.ts  (8)
 - L57  GET    /live
-- L327  GET    /rest-page-ceiling
-- L532  GET    /audit-feed
-- L632  GET    /ledger
-- L697  GET    /autocount/reconcile
-- L748  POST   /autocount/po-pull
-- L777  POST   /autocount/so-pull
-- L800  POST   /autocount/snapshot
+- L331  GET    /rest-page-ceiling
+- L536  GET    /audit-feed
+- L636  GET    /ledger
+- L701  GET    /autocount/reconcile
+- L752  POST   /autocount/po-pull
+- L781  POST   /autocount/so-pull
+- L804  POST   /autocount/snapshot
 
 ## backend/src/scm/routes/fabric-tier-addon.ts  (8)
 - L44  GET    /
