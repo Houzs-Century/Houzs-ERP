@@ -11,6 +11,7 @@ import {
   generateToken,
   isoIn,
   timingSafeEqualStr,
+  REMEMBER_TTL_SECONDS,
 } from "../services/auth";
 import { bustUserSessions } from "../services/sessionCache";
 import { isFinanceViewer, isProductCostViewer } from "../services/pmsAccess";
@@ -101,7 +102,13 @@ app.post("/bootstrap", async (c) => {
  * Public — exchanges email + password for a session token.
  */
 app.post("/login", async (c) => {
-  const body = await c.req.json<{ email: string; password: string }>();
+  const body = await c.req.json<{ email: string; password: string; remember?: boolean }>();
+  /* "Remember me on this device" (owner 2026-09-02). A ticked box mints a
+     ROLLING session that renews on use, so the device never signs itself out;
+     an unticked one keeps the fixed 7-day session. The flag is a preference,
+     not a permission — it can only choose between two lifetimes this endpoint
+     already grants the caller after a correct password. */
+  const remember = body.remember === true;
   if (!body.email || !body.password) {
     return c.json({ error: "email and password are required" }, 400);
   }
@@ -170,7 +177,10 @@ app.post("/login", async (c) => {
     }
     const challenge = generateToken();
     try {
-      await kv.put(`2fa:${challenge}`, String(user.id), {
+      // The challenge carries the remember choice through the 2FA step —
+      // "<userId>" (legacy, still parsed) or "<userId>:1" when the box was
+      // ticked — so a 2FA account gets the same rolling session as everyone else.
+      await kv.put(`2fa:${challenge}`, remember ? `${user.id}:1` : String(user.id), {
         expirationTtl: TOTP_CHALLENGE_TTL_SECONDS,
       });
     } catch (e) {
@@ -183,7 +193,9 @@ app.post("/login", async (c) => {
   await c.env.DB.prepare(`UPDATE users SET last_login_at = datetime('now') WHERE id = ?`)
     .bind(user.id)
     .run();
-  const token = await createSession(c.env, user.id);
+  const token = remember
+    ? await createSession(c.env, user.id, undefined, REMEMBER_TTL_SECONDS, REMEMBER_TTL_SECONDS)
+    : await createSession(c.env, user.id);
   const sessionPass = await mintSessionPass(c.env, token, Date.now());
   return c.json({ token, user_id: user.id, staffId: await lookupStaffId(c.env, user.id), ...(sessionPass ? { session_pass: sessionPass } : {}) });
 });
@@ -236,7 +248,9 @@ app.post("/totp/login", async (c) => {
   if (!userIdRaw) {
     return c.json({ error: "This sign-in attempt expired — start again." }, 401);
   }
-  const userId = parseInt(userIdRaw, 10);
+  const [userIdPart, rememberPart] = String(userIdRaw).split(":");
+  const userId = parseInt(userIdPart, 10);
+  const remember = rememberPart === "1";
 
   const row = await c.env.DB.prepare(
     `SELECT totp_secret, totp_enabled, totp_backup_codes, status FROM users WHERE id = ?`,
@@ -284,7 +298,9 @@ app.post("/totp/login", async (c) => {
   await c.env.DB.prepare(`UPDATE users SET last_login_at = datetime('now') WHERE id = ?`)
     .bind(userId)
     .run();
-  const token = await createSession(c.env, userId);
+  const token = remember
+    ? await createSession(c.env, userId, undefined, REMEMBER_TTL_SECONDS, REMEMBER_TTL_SECONDS)
+    : await createSession(c.env, userId);
   const sessionPass = await mintSessionPass(c.env, token, Date.now());
   // Same staffId contract as /login — the POS email path may be 2FA-gated.
   return c.json({ token, user_id: userId, staffId: await lookupStaffId(c.env, userId), ...(sessionPass ? { session_pass: sessionPass } : {}) });
