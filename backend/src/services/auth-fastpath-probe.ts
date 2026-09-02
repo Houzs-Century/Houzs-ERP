@@ -51,6 +51,14 @@ export type AuthFastPathReading = {
     /** What THIS request actually did. `unknown` means the middleware did not
      *  record it — never read that as either answer. */
     this_request: AuthFastPath;
+    /** Did the BROWSER send a pass at all? Observed off the request headers, so
+     *  `unknown` above stops being a dead end: no header means the client has
+     *  none to send (it expired, or was never absorbed) and the DB path is the
+     *  only thing that could have run; a header present with `unknown` means we
+     *  lost the record, which is a different bug entirely.
+     *
+     *  Presence ONLY — never the value, never a prefix, never a length. */
+    client_sent_pass: boolean;
   };
   config_cache: Record<string, CacheFamilyReading>;
   /** One plain sentence naming what to do, for a reader who is not an engineer
@@ -64,6 +72,7 @@ export function readingFor(
   configured: boolean,
   thisRequest: AuthFastPath,
   families: Record<string, CacheFamilyReading>,
+  clientSentPass: boolean,
 ): string {
   const structural = Object.entries(families)
     .filter(([, f]) => f.ttl_shorter_than_poll)
@@ -76,14 +85,32 @@ export function readingFor(
     return "Signed sessions are ON but THIS request still went to the database for authorization — "
       + "so the fast path is configured and not being taken. That is the thing to chase, not the caches.";
   }
+  /* UNKNOWN IS CHECKED BEFORE THE CACHES, and the order is the whole fix. It
+     used to sit BELOW, so `unknown` + a short TTL printed "Authorization took
+     the fast path" — a claim about the one thing the probe had just said it
+     could not see. The owner read the card saying "Not reported" beside a
+     sentence saying "took the fast path" (2026-09-02) and the probe built to
+     stop unevidenced claims had made one.
+
+     My own test missed it because it exercised `unknown` with a HEALTHY cache,
+     so this combination never ran: a branch covered on one arm only. Both arms
+     are asserted now. */
+  if (thisRequest === "unknown") {
+    const tail = structural.length
+      ? ` Separately, ${structural.join(" and ")} keep(s) its cached copy for less time `
+        + "than the browser waits before asking again — that part is a setting, and it holds "
+        + "whatever authorization turns out to be doing."
+      : "";
+    const why = clientSentPass
+      ? " The browser DID send a pass, so the record was lost rather than never made."
+      : " The browser sent no pass, so it has none to send — it expired, or it was never stored.";
+    return "Authorization did not report which path it took, so this reading cannot say. "
+      + "Do not read that as either answer." + why + tail;
+  }
   if (structural.length) {
     return `Authorization took the fast path. But ${structural.join(" and ")} keep(s) its cached copy for `
       + "less time than the browser waits before asking again, so a single user misses every time. "
       + "That is a setting, not a defect.";
-  }
-  if (thisRequest === "unknown") {
-    return "Authorization did not report which path it took, so this reading cannot say. "
-      + "Do not read that as either answer.";
   }
   return "Authorization took the fast path and every cache is set to outlive the browser's poll. "
     + "If pages are still slow, the cause is not on this page.";

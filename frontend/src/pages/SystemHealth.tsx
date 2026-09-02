@@ -51,7 +51,13 @@ type LivePayload = {
      endpoints behind ~90% of every slow request are hitting their caches.
      Backend: services/auth-fastpath-probe.ts. */
   authFastPath?: {
-    session_pass: { configured: boolean; this_request: "pass" | "session-db" | "unknown" };
+    session_pass: {
+      configured: boolean;
+      this_request: "pass" | "session-db" | "unknown";
+      /* Did the BROWSER send a pass at all — presence only, never the value.
+         It is what makes `unknown` actionable rather than a dead end. */
+      client_sent_pass?: boolean;
+    };
     config_cache: Record<string, {
       ttl_seconds: number; client_poll_seconds: number;
       state: "hit" | "miss" | "bypass"; ttl_shorter_than_poll: boolean;
@@ -458,7 +464,9 @@ export function SystemHealth() {
                       ? "It skipped the authorization re-read"
                       : d.authFastPath.session_pass.this_request === "session-db"
                         ? "It re-read authorization from the database"
-                        : "The server did not say — do not read this as either answer"
+                        : d.authFastPath.session_pass.client_sent_pass
+                          ? "The browser sent a pass but the server lost the record"
+                          : "The browser had no pass to send — expired, or never stored"
                 }
                 tone={
                   d.authFastPath?.session_pass.this_request === "session-db"
