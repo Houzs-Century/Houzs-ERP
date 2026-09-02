@@ -26,10 +26,37 @@ export type Account = {
   account_type: 'ASSET' | 'LIABILITY' | 'EQUITY' | 'INCOME' | 'EXPENSE';
   parent_code: string | null;
   is_active: boolean;
+  /** True for the money set (bank / cash / e-wallet — what Daily Bank shows).
+      The PV "Paid From" picker offers only these. */
+  acc_money?: boolean | null;
 };
 export const useAccounts = () => baseQuery<{ accounts: Account[] }>(
   ['accounts'], `/accounting/accounts`,
 );
+
+/* Which account plays which part for the ACTIVE company (resolveRoles server-
+   side: overrides first, seeded defaults where nothing is set). BANK_DEFAULT
+   pre-fills the PV "Paid From"; AP is the control account an AP Payment
+   debits. */
+export type AccountRoles = { roles: Record<string, string>; overridden: Record<string, string> };
+export const useAccountRoles = () => baseQuery<AccountRoles>(
+  ['account-roles'], `/accounting/roles`,
+);
+
+/* The owner's own lever (默认银行我可以自己maintenance): repoint BANK_DEFAULT to
+   another money account. The server refuses non-money / inactive / other-
+   company accounts by name. */
+export const useSaveBankDefault = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (accountCode: string) => authedFetch<{ ok: boolean; accountCode: string }>(
+      `/accounting/roles/BANK_DEFAULT`,
+      { method: 'PUT', body: JSON.stringify({ accountCode }) },
+    ),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['account-roles'] }); },
+    onError: writeFailedAs('Default bank not saved'),
+  });
+};
 
 export type JournalEntry = {
   id: string;

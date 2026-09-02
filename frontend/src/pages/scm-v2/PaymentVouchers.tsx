@@ -151,10 +151,19 @@ export const PaymentVouchers = () => {
         actions={
           <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
             {canCreate && (
-              <Button variant="primary" size="sm" onClick={() => navigate('/scm/payment-vouchers/new')}>
-                <Plus {...ICON} />
-                <span>New Payment Voucher</span>
-              </Button>
+              <>
+                {/* Two documents, AutoCount-style (owner 2026-08-30): the AP
+                    Payment settles a supplier's invoices with an automatic AP
+                    debit; the Payment Voucher pays expenses, lines by hand. */}
+                <Button variant="primary" size="sm" onClick={() => navigate('/scm/payment-vouchers/new?type=ap')}>
+                  <Plus {...ICON} />
+                  <span>New AP Payment</span>
+                </Button>
+                <Button variant="secondary" size="sm" onClick={() => navigate('/scm/payment-vouchers/new')}>
+                  <Plus {...ICON} />
+                  <span>New Payment Voucher</span>
+                </Button>
+              </>
             )}
           </div>
         }

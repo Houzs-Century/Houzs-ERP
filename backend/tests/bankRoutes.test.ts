@@ -19,6 +19,7 @@ import { fakeSb, type Row } from '../src/scm/lib/fake-postgrest';
 import {
   bankSetup, bankUpload, bankStatements, bankStatementDetail,
   bankLineReceipt, bankLineMatch, bankLineIgnore, bankLineUndo,
+  bankRulesList, bankRuleCreate, bankRuleUpdate,
 } from '../src/scm/routes/accounting-bank';
 
 const CO = 1;
@@ -117,6 +118,9 @@ function harness(tables: Record<string, Row[]> = {}, perms: readonly string[] = 
   app.post('/bank/lines/:id/match', bankLineMatch as never);
   app.post('/bank/lines/:id/ignore', bankLineIgnore as never);
   app.post('/bank/lines/:id/undo', bankLineUndo as never);
+  app.get('/bank/rules', bankRulesList as never);
+  app.post('/bank/rules', bankRuleCreate as never);
+  app.patch('/bank/rules/:id', bankRuleUpdate as never);
   return { app, sb };
 }
 
@@ -599,4 +603,66 @@ describe('which bank a payout is booked to', () => {
 
   /* The fallback — a credit typed in by hand, with no statement to read —
      is pinned where postBatchReceipt itself is tested: src/acc/settlement.test.ts. */
+});
+
+/* ── The recognition-rules maintenance window (2026-09-02) ───────────────────
+   Seed-only since 0336; now the owner's own screwdriver. The one hazard is a
+   BROKEN regex silently un-recognising an acquirer's money, so a bad one is
+   refused AT WRITE TIME with the engine's sentence. */
+describe('bank recognition rules — maintenance', () => {
+  test('lists every rule, off rows included', async () => {
+    const { app } = harness();
+    const res = await app.request('/bank/rules');
+    expect(res.status).toBe(200);
+    const body = await res.json() as { rules: Row[] };
+    expect(body.rules.length).toBeGreaterThan(0);
+  });
+
+  test('a new rule for a known acquirer lands; an unknown acquirer is refused by name', async () => {
+    const { app, sb } = harness();
+    sb.tables.acc_acquirer_config.push({ code: 'MBB', display_name: 'MBB' });
+    const ok = await post(app, '/bank/rules', { acquirerCode: 'MBB', pattern: 'CARD\s+SALES', matchField: 'both', sortOrder: 10 });
+    expect(ok.status).toBe(200);
+    expect(sb.tables.acc_bank_recognition_rules.some((r) => r.pattern === 'CARD\s+SALES')).toBe(true);
+
+    const ghost = await post(app, '/bank/rules', { acquirerCode: 'NOPE', pattern: 'X' });
+    expect(ghost.status).toBe(404);
+    expect(((await ghost.json()) as Row).error).toBe('no_such_acquirer');
+  });
+
+  test('a regex that does not compile is refused with the engine sentence — nothing written', async () => {
+    const { app, sb } = harness();
+    sb.tables.acc_acquirer_config.push({ code: 'MBB', display_name: 'MBB' });
+    const before = sb.tables.acc_bank_recognition_rules.length;
+    const res = await post(app, '/bank/rules', { acquirerCode: 'MBB', pattern: '([unclosed' });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as Row).error).toBe('invalid_rule');
+    expect(sb.tables.acc_bank_recognition_rules.length).toBe(before);
+  });
+
+  test('a date pattern without a capture group is refused — the group IS the value', async () => {
+    const { app, sb } = harness();
+    sb.tables.acc_acquirer_config.push({ code: 'MBB', display_name: 'MBB' });
+    const res = await post(app, '/bank/rules', { acquirerCode: 'MBB', pattern: 'X', tradingDatePattern: 'DATED \d{8}' });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as Row).message).toMatch(/capture group/);
+  });
+
+  test('the off switch: PATCH is_active=false keeps the row, and a blanked pattern is refused', async () => {
+    const { app, sb } = harness();
+    const rule = sb.tables.acc_bank_recognition_rules[0]!;
+    const off = await app.request(`/bank/rules/${rule.id}`, {
+      method: 'PATCH', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ isActive: false }),
+    });
+    expect(off.status).toBe(200);
+    expect(sb.tables.acc_bank_recognition_rules.find((r) => r.id === rule.id)!.is_active).toBe(false);
+
+    const blank = await app.request(`/bank/rules/${rule.id}`, {
+      method: 'PATCH', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ pattern: '' }),
+    });
+    expect(blank.status).toBe(400);
+    expect(((await blank.json()) as Row).error).toBe('pattern_required');
+  });
 });
