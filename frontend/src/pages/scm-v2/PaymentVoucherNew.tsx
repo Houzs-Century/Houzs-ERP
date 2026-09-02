@@ -36,6 +36,8 @@ import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
 import { ActionResultDialog } from '../../vendor/scm/components/ActionResultDialog';
 import { DateField } from '../../vendor/scm/components/DateField';
 import { AccountSelect } from '../../vendor/scm/components/AccountSelect';
+import { SearchCombo } from '../../vendor/scm/components/SearchCombo';
+import { fmtDate } from '../../vendor/shared/format';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { resolveFxRate, deriveRateFromMyrPaid } from './fx-rate';
@@ -73,6 +75,7 @@ type PiAlloc = {
   piId:               string;
   invoiceNumber:      string;
   supplierInvoiceRef: string | null;
+  invoiceDate:        string | null;
   outstandingSen:   number;
   amountSen:        number;
 };
@@ -201,7 +204,9 @@ export const PaymentVoucherNew = () => {
       if (st !== 'POSTED' && st !== 'PARTIALLY_PAID') return false;
       const outstanding = Number(r.total_sen ?? 0) - Number(r.paid_sen ?? 0);
       return outstanding > 0;
-    });
+    /* Oldest first — the order you settle a supplier in (the owner asked to
+       SEE the dates; the list endpoint sends newest-first for browsing). */
+    }).sort((a, b) => String(a.invoice_date ?? '').localeCompare(String(b.invoice_date ?? '')));
   }, [applyToPi, piListQ.data, supplierId]);
 
   // The per-PI amounts the operator has entered, keyed by PI id.
@@ -221,6 +226,7 @@ export const PaymentVoucherNew = () => {
         piId,
         invoiceNumber:      String(r.invoice_number ?? piId),
         supplierInvoiceRef: (r.supplier_invoice_ref ?? null) as string | null,
+        invoiceDate:        (r.invoice_date ?? null) as string | null,
         outstandingSen:   outstanding,
         amountSen,
       };
@@ -337,12 +343,13 @@ export const PaymentVoucherNew = () => {
             {isAp && (
               <label className={styles.field}>
                 <span className={styles.fieldLabel}>Supplier *</span>
-                <select value={supplierId} onChange={(e) => setSupplierId(e.target.value)} className={styles.fieldInput} disabled={suppliersQ.isLoading}>
-                  <option value="">{suppliersQ.isLoading ? 'Loading suppliers…' : '— Pick the supplier this pays —'}</option>
-                  {sortByText(suppliersQ.data ?? []).map((s) => (
-                    <option key={s.id} value={s.id}>{s.code} · {s.name}</option>
-                  ))}
-                </select>
+                <SearchCombo
+                  options={sortByText(suppliersQ.data ?? []).map((s) => ({ value: s.id, label: `${s.code} · ${s.name}` }))}
+                  value={supplierId}
+                  onChange={setSupplierId}
+                  className={styles.fieldInput}
+                  placeholder={suppliersQ.isLoading ? 'Loading suppliers…' : 'Type to find the supplier this pays'}
+                />
               </label>
             )}
             <label className={styles.field}>
@@ -501,6 +508,7 @@ export const PaymentVoucherNew = () => {
                     <tr style={{ textAlign: 'left', color: 'var(--fg-muted)', fontSize: 'var(--fs-11)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
                       <th style={{ padding: '6px 8px', width: 34 }} aria-label="Pay in full" />
                       <th style={{ padding: '6px 8px' }}>Invoice</th>
+                      <th style={{ padding: '6px 8px' }}>Date</th>
                       <th style={{ padding: '6px 8px' }}>Supplier Ref</th>
                       <th style={{ padding: '6px 8px', textAlign: 'right' }}>Outstanding</th>
                       <th style={{ padding: '6px 8px', textAlign: 'right' }}>Apply</th>
@@ -525,6 +533,7 @@ export const PaymentVoucherNew = () => {
                           />
                         </td>
                         <td style={{ padding: '6px 8px', fontFamily: 'var(--font-mono)' }}>{a.invoiceNumber}</td>
+                        <td style={{ padding: '6px 8px', whiteSpace: 'nowrap', color: 'var(--fg-muted)' }}>{fmtDate(a.invoiceDate)}</td>
                         <td style={{ padding: '6px 8px', color: a.supplierInvoiceRef ? 'var(--fg)' : 'var(--fg-muted)' }}>{a.supplierInvoiceRef || '—'}</td>
                         <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)', color: 'var(--fg-muted)' }}>{fmtRm(a.outstandingSen)}</td>
                         <td style={{ padding: '6px 8px', textAlign: 'right' }}>

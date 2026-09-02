@@ -128,6 +128,13 @@ Payment. So the New page is TWO documents on one route:
   a supplier payment can never be mis-booked to an expense account. Purpose
   `SUPPLIER_PAYMENT`; same table, same PV number series, same approval cycle.
 
+**Apply to PI shows each invoice's date, oldest first** (owner 2026-09-02:
+我也要看invoice 的日期) — the settle order, not the browse order. **Every
+account picker types-to-search** (同日: 我无法快速打关键字眼搜索account):
+`AccountSelect` is a `SearchCombo` underneath — every space-separated token
+must match the "code · name" label — and the AP Payment's supplier picker
+searches the same way.
+
 **Paid From offers only money** (owner: paid from 应该只能选cash 和银行): the
 picker lists `acc_money` accounts, pre-filled from the company's
 `BANK_DEFAULT` role, and the server refuses any non-money credit account

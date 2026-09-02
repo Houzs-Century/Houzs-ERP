@@ -29,8 +29,8 @@ vi.mock('../../vendor/scm/lib/accounting-queries', () => ({
 }));
 vi.mock('../../vendor/scm/lib/purchase-invoice-queries', () => ({
   usePurchaseInvoices: () => ({ data: { purchaseInvoices: [
-    { id: 'pi-1', invoice_number: '2990-PI-2609-001', supplier_invoice_ref: 'INV-77', supplier_id: 'sup-1', status: 'POSTED', total_sen: 255000, paid_sen: 0 },
-    { id: 'pi-2', invoice_number: '2990-PI-2609-002', supplier_invoice_ref: null, supplier_id: 'sup-1', status: 'POSTED', total_sen: 100000, paid_sen: 40000 },
+    { id: 'pi-1', invoice_number: '2990-PI-2609-001', supplier_invoice_ref: 'INV-77', supplier_id: 'sup-1', status: 'POSTED', total_sen: 255000, paid_sen: 0, invoice_date: '2026-09-01' },
+    { id: 'pi-2', invoice_number: '2990-PI-2609-002', supplier_invoice_ref: null, supplier_id: 'sup-1', status: 'POSTED', total_sen: 100000, paid_sen: 40000, invoice_date: '2026-08-15' },
   ] }, isLoading: false }),
 }));
 vi.mock('../../vendor/scm/lib/suppliers-queries', () => ({
@@ -56,7 +56,15 @@ describe('the AP Payment (?type=ap)', () => {
     /* No expense-lines card — the GL line is composed, not typed. */
     expect(screen.queryByText('Lines')).toBeNull();
 
-    fireEvent.change(screen.getByLabelText(/Supplier \*/), { target: { value: 'sup-1' } });
+    /* The supplier picker is a type-to-search combobox now — open and pick. */
+    fireEvent.focus(screen.getByLabelText(/Supplier \*/));
+    fireEvent.mouseDown(screen.getByText('S001 · Foshan Chairs'));
+    /* The list shows each invoice's DATE, oldest first — the order you settle
+       a supplier in (owner: 我也要看invoice 的日期). */
+    const numbers = screen.getAllByText(/2990-PI-26/).map((el) => el.textContent);
+    expect(numbers).toEqual(['2990-PI-2609-002', '2990-PI-2609-001']);
+    expect(screen.getByText('15/08/2026')).toBeTruthy();
+
     /* Tick the first invoice — the amount becomes its full outstanding, and
        the footer spells out the entry it will book. */
     fireEvent.click(screen.getByLabelText('Pay 2990-PI-2609-001 in full'));
@@ -77,7 +85,8 @@ describe('the AP Payment (?type=ap)', () => {
   test('unticking takes the invoice back out — nothing applied, save refused with a sentence', () => {
     mutateAsync.mockClear();
     draw('/scm/payment-vouchers/new?type=ap');
-    fireEvent.change(screen.getByLabelText(/Supplier \*/), { target: { value: 'sup-1' } });
+    fireEvent.focus(screen.getByLabelText(/Supplier \*/));
+    fireEvent.mouseDown(screen.getByText('S001 · Foshan Chairs'));
     const tick = screen.getByLabelText('Pay 2990-PI-2609-002 in full');
     fireEvent.click(tick);
     /* Partial outstanding: 1,000.00 − 400.00 already paid = 600.00 */
@@ -98,14 +107,25 @@ describe('the plain Payment Voucher (/new)', () => {
     expect(screen.queryByLabelText(/Supplier/)).toBeNull();
     expect(screen.queryByText('Apply to PI')).toBeNull();
 
-    /* The Paid From select: money accounts in, expense and AP out, and the
-       company's default bank already chosen. */
-    const paidFrom = screen.getByLabelText(/Paid From/) as HTMLSelectElement;
-    const codes = [...paidFrom.querySelectorAll('option')].map((o) => o.value).filter(Boolean);
-    expect(codes).toContain('330-0000');
-    expect(codes).toContain('320-1000');
-    expect(codes).not.toContain('900-A002');
-    expect(codes).not.toContain('400-0000');
-    expect(paidFrom.value).toBe('330-0000');
+    /* The Paid From combobox: pre-filled with the default bank's label, and
+       its open list offers money accounts only — expense and AP are gone. */
+    const paidFrom = screen.getByLabelText(/Paid From/) as HTMLInputElement;
+    expect(paidFrom.value).toBe('330-0000 · Bank — Maybank');
+    fireEvent.focus(paidFrom);
+    expect(screen.getByText('320-1000 · Cash in hand')).toBeTruthy();
+    expect(screen.queryByText(/900-A002/)).toBeNull();
+    expect(screen.queryByText(/400-0000/)).toBeNull();
+  });
+
+  test('the account search actually narrows — 打关键字眼 finds the account', () => {
+    draw('/scm/payment-vouchers/new');
+    const paidFrom = screen.getByLabelText(/Paid From/) as HTMLInputElement;
+    fireEvent.focus(paidFrom);
+    fireEvent.change(paidFrom, { target: { value: 'cash' } });
+    expect(screen.getByText('320-1000 · Cash in hand')).toBeTruthy();
+    expect(screen.queryByText(/Bank — Maybank/)).toBeNull();
+    /* Picking writes the VALUE and restores the full label. */
+    fireEvent.mouseDown(screen.getByText('320-1000 · Cash in hand'));
+    expect(paidFrom.value).toBe('320-1000 · Cash in hand');
   });
 });
