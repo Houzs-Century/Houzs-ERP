@@ -41,6 +41,7 @@ import {
 } from './accounting-settlement';
 import {
   bankSetup, bankUpload, bankStatements, bankStatementDetail,
+  bankRulesList, bankRuleCreate, bankRuleUpdate,
   bankLineReceipt, bankLineMatch, bankLineIgnore, bankLineUndo,
 } from './accounting-bank';
 import { payoutUpload, payoutList } from './accounting-payouts';
@@ -109,6 +110,9 @@ accounting.get('/settlement/payouts', payoutList);
    Owner, 2026-08-19: 我不是应该upload bank statement…然后你也自动核对吗 —
    整张月结单全部对. */
 accounting.get('/bank/setup', bankSetup);
+accounting.get('/bank/rules', bankRulesList);
+accounting.post('/bank/rules', bankRuleCreate);
+accounting.patch('/bank/rules/:id', bankRuleUpdate);
 accounting.post('/bank/statements', bankUpload);
 accounting.get('/bank/statements', bankStatements);
 accounting.get('/bank/statements/:id', bankStatementDetail);
