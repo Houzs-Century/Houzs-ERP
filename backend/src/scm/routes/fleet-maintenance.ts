@@ -194,13 +194,11 @@ const inHouseLorries = (sb: { from: (t: string) => { select: (cols: string) => a
    would leave the dashboard listing a row that PATCH/DELETE then 404s. The gate
    that IS real is requireHouzsPerm("fleet.write").
 
-   Twelve by-id handlers once scoped these tables while /dashboard did not — the
-   failure the paragraph above predicts. Owner 2026-09-02: 「共用的，因为 TMS 是
-   共用的」, so the twelve went. Enforced by
-   backend/tests/fleetMaintenanceUnifiedScope.test.ts; docs/bugs/0620-*.
-
+   Twelve by-id handlers once scoped these while /dashboard did not — the failure
+   above, predicted. Owner 2026-09-02: 「共用的，因为 TMS 是共用的」; the twelve
+   went. Pinned by tests/fleetMaintenanceUnifiedScope.test.ts, docs/bugs/0620-*.
    EXCEPTION: scm.workshops IS per-company (mig 0241) — the repair-shop MASTER,
-   not a maintenance record. Its handlers scope through scopeToCompany. */
+   not a maintenance record, so its handlers do scope. */
 
 type Lorry = {
   id: string;
@@ -1138,8 +1136,7 @@ fleetMaintenance.put("/vehicles/:id/compliance/:docId/attachments", requireHouzs
 
   /* The document must exist AND belong to the lorry in the path - otherwise a
      known docId would let a caller hang a file off another lorry's renewal.
-     OWNER-CHECKED, not company-scoped (owner 2026-09-02, one shared fleet — see
-     the UNIFIED FLEET note). The lorry ownership check IS the boundary here. */
+     OWNER-CHECKED, not company-scoped: one shared fleet (see the note above). */
   const { data: doc, error: docErr } = await sb
     .from("lorry_compliance_documents").select("id, lorry_id").eq("id", docId).maybeSingle();
   if (docErr) return c.json({ error: "load_failed", reason: docErr.message }, 500);
@@ -1994,8 +1991,7 @@ async function mintWorkshopCode(sb: any, companyId: number | null): Promise<stri
      nextCode (scm/lib/fleet-code-mint) is the one parser every minted code in
      this system shares — it reads any padding, which is what stops a second
      numbering scheme forming the way DRV-05 formed beside DRV-050. */
-  /* Same as mintRecordNo: a nullable id in .eq matched nothing and minted a
-     duplicate. docs/bugs/0618-* */
+  /* Nullable id in .eq matched nothing and minted a duplicate. docs/bugs/0618-* */
   const { data } = await scopeToCompanyIdOrOpen(sb.from("workshops").select("code"), companyId);
   return nextCode(CODE_PREFIX.WORKSHOP, ((data ?? []) as Array<{ code?: string | null }>).map((r) => r.code));
 }
@@ -2006,20 +2002,16 @@ async function mintWorkshopCode(sb: any, companyId: number | null): Promise<stri
  *  real guard so two racing creates cannot both win. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function mintRecordNo(sb: any, table: string, column: string, prefix: string, companyId: number | null): Promise<string> {
-  /* A nullable id straight into .eq matches NOTHING, so a mint read zero codes
-     and reissued a duplicate. scopeToCompanyIdOrOpen falls open. docs/bugs/0618-* */
+  /* Falls OPEN: a nullable id in .eq read zero codes and reissued a duplicate. */
   const { data } = await scopeToCompanyIdOrOpen(sb.from(table).select(column), companyId);
   return nextCode(prefix, ((data ?? []) as Array<Record<string, string | null>>).map((r) => r[column]));
 }
 
 fleetMaintenance.get("/workshops", requireHouzsPerm("fleet.read"), async (c) => {
   const sb = c.get("supabase");
-  const q = sb
-    .from("workshops")
-    .select("id, code, name, registration_no, contact_name, contact_phone, office_phone, email, address, notes, is_active");
-  /* scopeToCompany fails closed; the raw nullable .eq matched nothing and showed
-     an empty list. docs/bugs/0618-* */
-  const { data, error } = await scopeToCompany(q, c).order("name");
+  /* scopeToCompany fails closed; a raw nullable .eq showed an empty list. 0618-* */
+  const { data, error } = await scopeToCompany(sb.from("workshops")
+    .select("id, code, name, registration_no, contact_name, contact_phone, office_phone, email, address, notes, is_active"), c).order("name");
   if (error) return c.json({ error: "load_failed", reason: error.message }, 500);
   return c.json({
     workshops: (data ?? []).map((w: Record<string, unknown>) => ({
@@ -2092,8 +2084,7 @@ fleetMaintenance.patch("/workshops/:id", requireHouzsPerm("fleet.write"), async 
   /* `code` is minted, never edited — the whole point of generating it. */
   if (patch.name === null) return c.json({ error: "name_required" }, 400);
 
-  /* Same fix as the list above — the raw nullable .eq turned every edit into a
-     phantom 404. */
+  /* Same fix as the list — the raw nullable .eq made every edit a phantom 404. */
   const { data, error } = await scopeToCompany(
     sb.from("workshops").update(patch).eq("id", c.req.param("id")), c,
   ).select("id").maybeSingle();
