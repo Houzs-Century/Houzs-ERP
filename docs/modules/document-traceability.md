@@ -887,6 +887,16 @@ Amendments-on-map + clickability (`feat/relmap-clickable-amendment`, §2.3):
   `AmendmentChip` type, `actionable` flag + clickable-logic fix.
 - `frontend/src/pages/scm-v2/SalesOrderDetailV2.tsx`, `SalesOrderDetail.tsx` — pass amendments.
 
+> **2026-09-01, same file, the PROVENANCE chips:** the "Incoming PO" column is
+> where a sales line names the purchase order its goods came from or are coming
+> from — traceability the operator actually reads. Since #2834 those chips arrive
+> on a SECOND request, `GET /:docNo/coverage`, because the detail payload defers
+> its MRP run and returns `coverage_po: null` / `ready_source_pos: []`. Any
+> surface rendering them must make that call and merge through the one shared
+> overlay, `frontend/src/vendor/scm/lib/so-coverage-overlay.ts`. The list
+> drill-down did not, and its column was blank for a day —
+> `docs/bugs/0598-*`, chips catalogued in `docs/modules/sales-order.md` §0.8.
+
 > **2026-08-17, same two files, unrelated surface:** the detail page's Edit
 > affordance is no longer disabled outright on a hard-locked (DO/SI) order —
 > a caller holding `scm.so.attribute_other` can open it to change the

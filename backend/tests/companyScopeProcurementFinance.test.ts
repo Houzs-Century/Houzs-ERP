@@ -207,6 +207,12 @@ describe('payment voucher allocations (settle a purchase invoice at post time)',
     { id: 'pi-a', invoice_number: 'HC-PI-2608-010', company_id: CO_A, status: 'POSTED', paid_sen: 0, total_sen: 5000 },
     { id: 'pi-b', invoice_number: '2990-PI-2608-010', company_id: CO_B, status: 'POSTED', paid_sen: 0, total_sen: 5000 },
   ];
+  /* Paid From must be a MONEY account since the acc_money guard — each company
+     carries its own '1000' bank row, per-company like the real chart. */
+  const accts = (): Row[] => [
+    { account_code: '1000', account_name: 'Bank', account_type: 'ASSET', acc_money: true, is_active: true, company_id: CO_A },
+    { account_code: '1000', account_name: 'Bank', account_type: 'ASSET', acc_money: true, is_active: true, company_id: CO_B },
+  ];
   const body = (piId: string) => ({
     payeeName: 'Freight Co',
     creditAccountCode: '1000',
@@ -216,7 +222,7 @@ describe('payment voucher allocations (settle a purchase invoice at post time)',
   });
 
   test("A cannot raise a voucher applied to B's invoice, and no voucher is created", async () => {
-    const t: Record<string, Row[]> = { purchase_invoices: pis(), payment_vouchers: [], pv_allocations: [] };
+    const t: Record<string, Row[]> = { purchase_invoices: pis(), payment_vouchers: [], pv_allocations: [], accounts: accts() };
     const res = await jsonPost(harness(t, CO_A).app, '/payment-vouchers', body('pi-b'));
     expect(res.status).toBe(404);
     expect((await res.json() as Row).error).toBe('allocation_not_in_company');
@@ -226,7 +232,7 @@ describe('payment voucher allocations (settle a purchase invoice at post time)',
   });
 
   test('A CAN still raise a voucher applied to its own invoice', async () => {
-    const t: Record<string, Row[]> = { purchase_invoices: pis(), payment_vouchers: [], pv_allocations: [] };
+    const t: Record<string, Row[]> = { purchase_invoices: pis(), payment_vouchers: [], pv_allocations: [], accounts: accts() };
     const res = await jsonPost(harness(t, CO_A).app, '/payment-vouchers', body('pi-a'));
     expect(res.status).toBe(201);
     expect(t.pv_allocations).toHaveLength(1);
@@ -234,7 +240,7 @@ describe('payment voucher allocations (settle a purchase invoice at post time)',
   });
 
   test('a voucher with no allocations is unaffected by the guard', async () => {
-    const t: Record<string, Row[]> = { purchase_invoices: pis(), payment_vouchers: [], pv_allocations: [] };
+    const t: Record<string, Row[]> = { purchase_invoices: pis(), payment_vouchers: [], pv_allocations: [], accounts: accts() };
     const { allocations: _drop, ...noAlloc } = body('pi-a');
     const res = await jsonPost(harness(t, CO_A).app, '/payment-vouchers', { ...noAlloc, purpose: 'FREIGHT' });
     expect(res.status).toBe(201);

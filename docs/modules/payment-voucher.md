@@ -111,6 +111,62 @@ counts into `pendingApprovalSen` and subtracts from the board's available
 money — money already asked for is not money the owner may still spend. MYR
 conversion per voucher mirrors posting: `round(total_sen × exchange_rate)`.
 
+## 0c. Two documents, AutoCount-style (2026-08-30)
+
+The owner, AutoCount in hand: 正常 auto count是可以选payment voucher / AP
+Payment. So the New page is TWO documents on one route:
+
+- **Payment Voucher** (`/scm/payment-vouchers/new`) — pays expenses. Free-text
+  payee, hand-written lines, **no supplier and no Apply-to-PI section**.
+  Purpose stored as `OTHER` (the old three-way purpose dropdown is gone; the
+  document type IS the purpose now).
+- **AP Payment** (`/scm/payment-vouchers/new?type=ap`) — settles a supplier.
+  Supplier required; **no hand-written lines at all**: tick an invoice to pay
+  it in full, type a figure for a partial, and the voucher total follows the
+  ticks. On save the page composes the ONE GL line itself — Dr the AP control
+  account (role `AP`, default 400-0000) for exactly what the ticks apply — so
+  a supplier payment can never be mis-booked to an expense account. Purpose
+  `SUPPLIER_PAYMENT`; same table, same PV number series, same approval cycle.
+
+**Apply to PI shows each invoice's date, oldest first** (owner 2026-09-02:
+我也要看invoice 的日期) — the settle order, not the browse order. **Every
+account picker types-to-search** (同日: 我无法快速打关键字眼搜索account):
+`AccountSelect` is a `SearchCombo` underneath — every space-separated token
+must match the "code · name" label — and the AP Payment's supplier picker
+searches the same way.
+
+**Paid From offers only money** (owner: paid from 应该只能选cash 和银行): the
+picker lists `acc_money` accounts, pre-filled from the company's
+`BANK_DEFAULT` role, and the server refuses any non-money credit account
+(`not_a_money_account`, guarded on create AND on draft edit). The default
+bank is the owner's to maintain — the "Default bank" card on
+/scm/settlement-setup writes `PUT /accounting/roles/BANK_DEFAULT` (money
+accounts only, per company). Contracts: `PaymentVoucherNew.test.tsx`
+(frontend), `backend/src/scm/routes/accountRoles.test.ts` (server half).
+
+## 0d. 预付挂在 supplier (2026-09-02)
+
+The owner's design, in his words: 预付就不能直接挂在supplier 那边吗? An AP
+Payment may pay MORE than the invoices it ticks — type the extra in the
+**Prepay (advance)** field under the PI table. The voucher's one GL line
+debits AP for the WHOLE amount, so the supplier's AP subledger simply runs
+ahead; on post the server records the excess in `scm.acc_supplier_advances`
+(mig 0340 — one row per voucher, `amount_sen` written once, `applied_sen`
+only grows).
+
+**Spending it posts NOTHING.** Both legs already live in AP, so the
+knock-off (POST `/payment-vouchers/:id/apply-advance`, surfaced as the
+"Advance on this voucher" card on the posted voucher's detail page) only
+settles the invoices' `paid_sen` — same DB-clamped rule as a payment, what
+is recorded is what LANDED — and burns `applied_sen`. The applications ride
+`pv_allocations` rows flagged `from_advance`, so the linked-PI trail shows
+them; GET `/payment-vouchers/advances/list?supplierId=` answers what is
+still unspent, and the New AP Payment page points at the holding voucher(s)
+when the supplier already has money on account. A voucher whose advance HAS
+been spent refuses to cancel (`advance_applied`) — its value lives inside
+other documents now; an unspent advance cancels with its voucher, row and
+all. Contracts: `backend/tests/pvSupplierAdvance.test.ts`.
+
 ## 1. Frontend
 
 | Surface | File |
