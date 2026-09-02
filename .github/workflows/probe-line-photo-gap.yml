@@ -9,8 +9,6 @@ name: Line photo GAP split (read-only)
 #
 # READ-ONLY: SELECTs only, no DDL, no writes, no transaction.
 on:
-  push:
-    branches: [diag/photo-gap-split]   # TEMPORARY — removed before merge
   workflow_dispatch:
     inputs:
       company:
