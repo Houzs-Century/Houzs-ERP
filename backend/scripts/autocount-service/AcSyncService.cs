@@ -2665,6 +2665,43 @@ class AcSyncService {
     return outp.ToArray();
   }
 
+  /* HAS ANY LINE OF THIS DOCUMENT BEEN TRANSFERRED? Read from the book's own
+     tables, not from anything the ERP believes.
+
+     It is the gate on REBUILD (Edit, below). AutoCount's troubleshooting for a
+     document whose rows are deleted after transfer is that the source points at
+     nothing, the document goes grey and uneditable, and recovery needs raw SQL
+     plus Management Studio's "Fix Deleted Document Transfer Problem". The ERP's
+     downstream lock already refuses to edit such a document — but that lock is
+     the ERP's, and a person can transfer inside AutoCount without telling it.
+
+     `> 0`, not `IS NOT NULL`: AutoCount writes 0 rather than NULL on a line that
+     has never moved, so a NULL test would call every document transferred and
+     the rebuild would never run at all. */
+  static bool AnyLineTransferred(string type, string docNo) {
+    string dtl, hdr;
+    switch (type) {
+      case "SO": dtl = "SODTL"; hdr = "SO"; break;
+      case "PO": dtl = "PODTL"; hdr = "PO"; break;
+      case "DO": dtl = "DODTL"; hdr = "DO"; break;
+      case "GR": dtl = "GRDTL"; hdr = "GR"; break;
+      default: return true;   // unknown type -> refuse, never rebuild blind
+    }
+    __DBLINE__
+    var cs = db.ConnectionString;
+    using (var cn = new System.Data.SqlClient.SqlConnection(cs)) {
+      cn.Open();
+      using (var cmd = cn.CreateCommand()) {
+        cmd.CommandText =
+          "SELECT COUNT(*) FROM " + dtl + " d JOIN " + hdr + " h ON h.DocKey = d.DocKey " +
+          "WHERE h.DocNo = @no AND ISNULL(d.TransferedQty,0) > 0";
+        var pr = cmd.CreateParameter(); pr.ParameterName = "@no"; pr.Value = docNo;
+        cmd.Parameters.Add(pr);
+        return System.Convert.ToInt32(cmd.ExecuteScalar()) > 0;
+      }
+    }
+  }
+
   // ── cancel ────────────────────────────────────────────────────────────────
   static void Cancel(Dictionary<string, object> p) {
     var s = Session();
@@ -3145,11 +3182,43 @@ class AcSyncService {
        than half-applied and discarded. */
     var lines = new List<Dictionary<string, object>>();
     foreach (var od in List(p, "Lines")) lines.Add((Dictionary<string, object>) od);
+    var rebuild = false;
     for (var i = 0; i < lines.Count; i++) {
       var it = lines[i];
       var hasKey = it.ContainsKey("DtlKey") && it["DtlKey"] != null;
       if (hasKey) continue;
       if (Bool(it, "IsNewLine")) continue;
+      /* REBUILD INSTEAD OF REFUSING, when the ERP asks for it and the book is
+         safe. Owner 2026-09-02: 「全部跟着 inistate 一模一样」, and the argument
+         that settled it — 「如果做得到 inistate 的东西，那就是我删或者 addline 都
+         可以 sync 进去，就代表这张单也进得去了」.
+
+         He is right, and this is why. The refusal below exists because appending
+         a keyless line DUPLICATES it. A REBUILD does not append — it clears the
+         details and lays the ERP's list down in order, so the duplicate cannot
+         arise and the matching problem disappears with it. A document already
+         stuck because its keys cannot be matched (HC-SO-013394) is exactly the
+         case this recovers, and no amount of matching would have.
+
+         WHAT IT COSTS, stated because it is real: every DtlKey on the document
+         is destroyed and reissued. That is survivable ONLY because nothing
+         downstream holds them — which is what AnyLineTransferred proves, from
+         the book's own tables rather than from anything the ERP believes. The
+         keys are read back after the save exactly as the create path does.
+
+         THE ERP MUST ASK. `Rebuild:true` is never inferred here: a rebuild is
+         destructive, and inferring it from a failure would turn every future
+         mismatch into a silent teardown of a live document. */
+      if (Bool(p, "Rebuild")) {
+        if (AnyLineTransferred(type, docNo))
+          throw new Exception(
+            "REFUSED: " + type + " " + docNo + " has at least one line already transferred " +
+            "in AutoCount, so its details cannot be rebuilt — deleting a transferred row " +
+            "leaves the source pointing at nothing and the document uneditable. Match the " +
+            "lines up instead.");
+        rebuild = true;
+        break;
+      }
       throw new Exception(
         "REFUSED: line " + (i + 1) + " of " + lines.Count + " on " + type + " " + docNo +
         " (ItemCode '" + Str(it, "ItemCode") + "') carries no DtlKey and does not declare " +
@@ -3158,12 +3227,37 @@ class AcSyncService {
         "(scm.*_items.linked_ac_dtlkey) or mark the line IsNewLine, then retry.");
     }
 
+    /* THE REBUILD. Every existing detail goes, and the ERP's list is laid down
+       in the order it arrived — which is the ERP's own line order, because
+       `inAcLineOrder` (scm/lib/ac-line-order.ts) sorts every payload read.
+
+       Done HERE, before the per-line loop, so the loop that follows sees an
+       empty document and takes its AddDetail arm for every line. That is why
+       the loop needs no rebuild branch of its own: after ClearDetails there are
+       no keys left to edit, and a DtlKey in the payload is simply ignored.
+
+       ClearDetails is on the base document class, so this works for every type
+       — including the three the SDK gives no DeleteDetail. It is the only way a
+       purchase order can lose a line at all. */
+    if (rebuild) {
+      Log("REBUILD " + type + " " + docNo + ": clearing " + lines.Count +
+          " line(s) will be laid down in ERP order (no line transferred)");
+      doc.ClearDetails();
+    }
+
     /* Keys to DELETE after the loop — see the Retire branch below for why the
        removal cannot happen while the details are being enumerated. */
     var toDelete = new System.Collections.Generic.List<long>();
     foreach (var it in lines) {
+      /* ON A REBUILD, A LINE THE ERP NO LONGER HAS IS ALREADY ABSENT — the
+         document was cleared. It must be skipped HERE, before AddDetail: the
+         retire/delete branch sits further down, and reaching it would mean the
+         line had already been ADDED BACK as a blank row. Found by reading the
+         loop order after writing the branch, not by a test — there is no C#
+         toolchain in this environment to have caught it. */
+      if (rebuild && Bool(it, "Retire")) continue;
       dynamic d;
-      if (it.ContainsKey("DtlKey") && it["DtlKey"] != null) {
+      if (!rebuild && it.ContainsKey("DtlKey") && it["DtlKey"] != null) {
         d = doc.EditDetail(System.Convert.ToInt64(it["DtlKey"]));
         if (d == null) throw new Exception("line " + it["DtlKey"] + " not found on " + docNo);
       } else {

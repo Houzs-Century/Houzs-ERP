@@ -446,6 +446,8 @@ export type AcEditLine =
 export interface AcEditPayload {
   DocType: AcDocType;
   DocNo: string;
+  /** Ask the host to clear the details and lay these Lines down in order. */
+  Rebuild?: true;
   /* `UDF` is a NESTED object, because that is how AcSyncService reads it
      (`ApplyUdf` -> `Dict(h, "UDF")`). A flat SOUDF_* key at header level is
      silently ignored — the connector's own decompiled source made the same
@@ -489,6 +491,21 @@ export class KeylessLineError extends Error {
  * as refusals on the sales side rather than as guesses.
  */
 export interface ComposeOptions {
+  /**
+   * REBUILD the document's details instead of matching them line by line.
+   *
+   * Owner 2026-09-02: 「全部跟着 inistate 一模一样」, and the argument that
+   * settled it — if the connector can delete and add freely, a document that
+   * cannot be MATCHED can still be made to agree, because a rebuild never has to
+   * match anything.
+   *
+   * OFF unless the caller asks. A rebuild destroys and reissues every DtlKey on
+   * the document, so inferring it from a failure would turn every future
+   * mismatch into a silent teardown of a live document. The HOST still refuses
+   * it when any line has been transferred — read from the book's own tables,
+   * because that is the case AutoCount itself cannot recover from.
+   */
+  rebuild?: boolean;
   supplierCode?: string | null;
   /** Test seam: an alternative cutover map. Defaults to the compiled one. */
   itemIndex?: AcItemIndex;
@@ -1537,6 +1554,11 @@ export function composeEdit(
     const which = keyless
       .map((i) => `${i + 1} (${keyed[i].ItemCode || 'no item code'}${cancelledOf(i) === true ? ', cancelled' : ''})`)
       .join(', ');
+    /* THE REBUILD IS THE ANSWER TO THIS REFUSAL, when the caller asked for one.
+       Everything the refusal protects against — a duplicated line, an
+       un-removable PO duplicate — is a consequence of APPENDING to a document we
+       could not match. A rebuild appends to nothing. */
+    if (opts.rebuild) return { DocType: docType, DocNo: docNo, Header: header, Lines: keyed, Rebuild: true };
     const anyCancelled = keyless.some((i) => cancelledOf(i) === true);
     throw new KeylessLineError(
       `${docType} ${docNo}: ${keyless.length} of ${keyed.length} line(s) carry no AutoCount `

@@ -379,9 +379,15 @@ describe('layer 1 — the keys AcSyncService.cs parses, read out of its source',
        silently destroys whatever photographs the line was holding. This
        assertion is what makes adding a third way to write it impossible to do
        quietly. */
+    /* `Gone` joined 2026-09-02 and is declared here for exactly the reason this
+       list exists. It decides whether a line is DELETED out of a live account
+       book or marked in place, so a third way to set it — or a typo that stops
+       it being read — must not be possible to introduce quietly. Its values are
+       fixed by services/ac-line-gone.ts; absent means retire, the stricter
+       answer (docs/bugs/0606). */
     expect(detailKeys(CS_EDIT)).toEqual(
-      ['DeliveryDate', 'Desc2', 'Description', 'DtlKey', 'FurtherDescription', 'ItemCode',
-       'Location', 'Photos', 'Qty', 'UnitPrice'].sort(),
+      ['DeliveryDate', 'Desc2', 'Description', 'DtlKey', 'FurtherDescription', 'Gone',
+       'ItemCode', 'Location', 'Photos', 'Qty', 'UnitPrice'].sort(),
     );
   });
 

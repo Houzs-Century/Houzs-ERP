@@ -3512,6 +3512,38 @@ the test pins it against `AcSyncService.DocTypes` read out of the C# source with
 `?raw` — so a type the host drops fails a test here rather than becoming a 400
 for a document the book can read.
 
+### REBUILD — the answer to a document that cannot be MATCHED
+
+Owner 2026-09-02, on a document held back because two book lines share an item
+code and no matcher can choose between them:
+
+> 「如果做得到 inistate 的东西，那就是我删或者 addline 都可以 sync 进去，就代表这张
+> 单也进得去了啊」
+
+He is right. The keyless refusal protects against APPENDING a line we could not
+match. **A rebuild appends to nothing**: `doc.ClearDetails()` then the ERP's list
+laid down in payload order — which is the ERP's own line order, because
+`inAcLineOrder` sorts every payload read. The matching problem does not arise,
+and neither does the duplicate.
+
+| | |
+| --- | --- |
+| **ERP asks** | `ComposeOptions.rebuild` — OFF unless the caller says so. The escape sits ABOVE the `KeylessLineError`; without it the refusal still throws. Inferring a rebuild from a failure would turn every future mismatch into a silent teardown of a live document. |
+| **Host decides** | `AnyLineTransferred` reads `ISNULL(d.TransferedQty,0) > 0` from the book's own detail table. A person can transfer inside AutoCount without telling the ERP, so this is the one fact the ERP may not answer from its own copy. |
+| **Cost** | every DtlKey on the document is destroyed and reissued. Survivable only while nothing downstream holds them — which is exactly what the check above proves. The keys are read back after the save, as the create path already does. |
+| **Reach** | `ClearDetails` is on the base document class, so it works for the three types with no `DeleteDetail`. **It is the only way a purchase order can lose a line at all.** |
+
+`> 0`, not `IS NOT NULL`: AutoCount writes 0 on a line that never moved, so a
+NULL test would call every document transferred and the rebuild would be
+unreachable. An unknown document type returns `true` — refuse, never rebuild
+blind.
+
+**A deleted line is skipped BEFORE `AddDetail`,** not in the retire branch below
+it: the cleared document already lacks the line, and reaching the lower branch
+would mean it had been added back as a blank row. Pinned in
+`backend/tests/acRebuildDetails.test.ts`; trace in
+`docs/bugs/0607-a-document-whose-lines-cannot-be-matched-could-never-be-sent.md`.
+
 ### A DELETED LINE IS DELETED, WHERE THE BOOK ALLOWS (owner rule, 2026-09-02)
 
 Owner: 「我是要 autocount 的全部 line 都跟 ERP 一样」 · 「跟 inistate 一样」.
