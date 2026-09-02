@@ -17,7 +17,7 @@ import { useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Plus } from 'lucide-react';
 import { Button } from '@2990s/design-system';
-import { usePaymentVouchers, useCancelPaymentVoucher, useCheckPaymentVoucher, useApprovePaymentVoucher, type PaymentVoucherRow } from '../../vendor/scm/lib/payment-voucher-queries';
+import { usePaymentVouchers, useCancelPaymentVoucher, useSubmitPaymentVoucher, useCheckPaymentVoucher, useApprovePaymentVoucher, type PaymentVoucherRow } from '../../vendor/scm/lib/payment-voucher-queries';
 import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
 import { StatusPill } from '../../vendor/scm/components/StatusPill';
 import { statusLabel } from '../../vendor/scm/lib/status-pill';
@@ -130,6 +130,8 @@ function queueLabel(r: { status: string; submitted_at?: string | null; checked_a
    the tick can never offer what the door would refuse. Approvable includes
    the approved-but-still-DRAFT row: that is a post that died halfway, and
    re-approve resumes it (§0b). */
+const isPreparable = (r: PaymentVoucherRow): boolean =>
+  r.status === 'DRAFT' && r.submitted_at == null;
 const isCheckable = (r: PaymentVoucherRow): boolean =>
   r.status === 'DRAFT' && r.submitted_at != null && r.checked_at == null;
 const isApprovable = (r: PaymentVoucherRow): boolean =>
@@ -158,11 +160,13 @@ export const PaymentVouchers = () => {
 
   const { data, isLoading, error } = usePaymentVouchers();
   const cancelPv = useCancelPaymentVoucher();
+  const preparePv = useSubmitPaymentVoucher();
   const checkPv = useCheckPaymentVoucher();
   const approvePv = useApprovePaymentVoucher();
 
   const canCreate = can('scm.payment_voucher.create');
   const canCancel = can('scm.payment_voucher.cancel');
+  const canWrite = can('scm.payment_voucher.write');
   const canCheck = can('scm.payment_voucher.check');
   const canApprove = can('scm.payment_voucher.approve');
 
@@ -181,33 +185,40 @@ export const PaymentVouchers = () => {
   const [batchRunning, setBatchRunning] = useState(false);
   const byId = useMemo(() => new Map(allRows.map((r) => [r.id, r])), [allRows]);
   const rowEligible = (r: PaymentVoucherRow): boolean =>
-    (canCheck && isCheckable(r)) || (canApprove && isApprovable(r));
+    (canWrite && isPreparable(r)) || (canCheck && isCheckable(r)) || (canApprove && isApprovable(r));
   const tickedRows = useMemo(
     () => [...selected].map((k) => byId.get(k)).filter((r): r is PaymentVoucherRow => Boolean(r)),
     [selected, byId],
   );
+  const prepareTargets = canWrite ? tickedRows.filter(isPreparable) : [];
   const checkTargets = canCheck ? tickedRows.filter(isCheckable) : [];
   const approveTargets = canApprove ? tickedRows.filter(isApprovable) : [];
 
-  const runBatch = async (kind: 'check' | 'approve') => {
-    const targets = kind === 'check' ? checkTargets : approveTargets;
+  const runBatch = async (kind: 'prepare' | 'check' | 'approve') => {
+    const targets = kind === 'prepare' ? prepareTargets : kind === 'check' ? checkTargets : approveTargets;
     if (targets.length === 0) return;
-    const verb = kind === 'check' ? 'Check' : 'Approve & post';
-    const totalMyr = targets.reduce((s, r) => s + myrSen(r), 0);
-    const ok = await askConfirm({
-      title: `${verb} ${targets.length} voucher(s)?`,
-      body: kind === 'check'
-        ? `The first yes on each: they lock, and ≈ ${fmtMoney(totalMyr)} reserves against Daily Bank's available money.`
-        : `The second yes on each posts its journal entry to the GL — ≈ ${fmtMoney(totalMyr)} leaves the books now.`,
-      confirmLabel: verb,
-    });
-    if (!ok) return;
+    /* Prepare is freely reversible (withdraw, and the voucher stays editable)
+       so it runs without a dialog — same as the detail page's button. The two
+       yeses move money standing, so they keep theirs. */
+    if (kind !== 'prepare') {
+      const verb = kind === 'check' ? 'Check' : 'Approve & post';
+      const totalMyr = targets.reduce((s, r) => s + myrSen(r), 0);
+      const ok = await askConfirm({
+        title: `${verb} ${targets.length} voucher(s)?`,
+        body: kind === 'check'
+          ? `The first yes on each: they lock, and ≈ ${fmtMoney(totalMyr)} reserves against Daily Bank's available money.`
+          : `The second yes on each posts its journal entry to the GL — ≈ ${fmtMoney(totalMyr)} leaves the books now.`,
+        confirmLabel: verb,
+      });
+      if (!ok) return;
+    }
     setBatchRunning(true);
     const failures: string[] = [];
     let done = 0;
+    const mut = kind === 'prepare' ? preparePv : kind === 'check' ? checkPv : approvePv;
     for (const r of targets) {
       try {
-        await (kind === 'check' ? checkPv : approvePv).mutateAsync(r.id);
+        await mut.mutateAsync(r.id);
         done += 1;
       } catch (e) {
         failures.push(`${r.pv_number}: ${e instanceof Error ? e.message : 'Something went wrong.'}`);
@@ -216,7 +227,7 @@ export const PaymentVouchers = () => {
     setBatchRunning(false);
     setSelected(new Set());
     void notify({
-      title: `${done} of ${targets.length} ${kind === 'check' ? 'checked' : 'approved & posted'}`,
+      title: `${done} of ${targets.length} ${kind === 'prepare' ? 'prepared' : kind === 'check' ? 'checked' : 'approved & posted'}`,
       body: failures.length > 0 ? failures.join('\n') : 'Nothing refused.',
       tone: failures.length > 0 ? 'error' : 'info',
     });
@@ -283,6 +294,11 @@ export const PaymentVouchers = () => {
       {selected.size > 0 && (
         <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', padding: '6px 10px', border: '1px solid var(--c-secondary-a, #2F5D4F)', borderRadius: 8, background: 'rgba(47,93,79,0.08)', fontSize: 'var(--fs-13)' }}>
           <span>{selected.size} ticked</span>
+          {prepareTargets.length > 0 && (
+            <Button variant="secondary" size="sm" onClick={() => void runBatch('prepare')} disabled={batchRunning}>
+              Prepare {prepareTargets.length}
+            </Button>
+          )}
           {checkTargets.length > 0 && (
             <Button variant="secondary" size="sm" onClick={() => void runBatch('check')} disabled={batchRunning}>
               Check {checkTargets.length}
@@ -307,7 +323,7 @@ export const PaymentVouchers = () => {
         storageKey={PV_LIST_STORAGE_KEY}
         exportName="Payment Vouchers"
         rowKey={(r) => r.id}
-        selectable={(canCheck || canApprove) ? {
+        selectable={(canWrite || canCheck || canApprove) ? {
           selectedKeys: selected,
           onToggle: (k) => setSelected((p) => { const n = new Set(p); if (n.has(k)) n.delete(k); else n.add(k); return n; }),
           onToggleAll: (keys, allSel) => setSelected((p) => {
