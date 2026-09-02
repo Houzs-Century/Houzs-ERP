@@ -52,16 +52,25 @@ export function RefreshButton() {
       aria-label="Refresh data"
       title="Refresh data on this page"
       className={cn(
-        // Same boxed tile as PresenceButton / NotificationBell's navbar tone,
-        // so the utility cluster stays one row of matching controls.
-        "inline-flex h-9 w-9 items-center justify-center rounded-md border transition-colors",
+        // LABELLED, not an icon-only tile (owner 2026-09-02: "mana? tak ada
+        // pun"). Shipped icon-only first, matching PresenceButton /
+        // NotificationBell's navbar tone — and it was invisible in practice: a
+        // white tile with a faint border, sitting between the search field and
+        // two other bordered icon tiles. The word is what makes it findable;
+        // it is the only control in this cluster a user goes LOOKING for
+        // rather than glances at. Hidden below sm so a narrow MobileTopBar
+        // keeps the compact tile.
+        "inline-flex h-9 items-center gap-1.5 rounded-md border px-2.5 transition-colors",
         "focus:outline-none focus:ring-2 focus:ring-primary/40",
         busy
           ? "border-primary bg-primary-soft text-primary-ink"
           : "border-border bg-surface text-ink-secondary hover:border-border-strong hover:bg-surface-dim",
       )}
     >
-      <RefreshCw size={16} className={cn(busy && "animate-spin")} />
+      <RefreshCw size={16} className={cn("shrink-0", busy && "animate-spin")} />
+      <span className="hidden text-[12px] font-medium sm:inline">
+        {busy ? "Refreshing" : "Refresh"}
+      </span>
     </button>
   );
 }
