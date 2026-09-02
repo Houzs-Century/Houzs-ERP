@@ -200,8 +200,13 @@ export type BillExtraction = {
   currency: string; totalSen: number | null; sstSen: number | null;
   lines: Array<{ description: string | null; amountSen: number | null }>;
 };
+/* Vendor memory (mig 0341) — what the operator saved the LAST time this
+   vendor was paid; the reader hands it back so the form can pre-fill the
+   account (owner: 我想要你要有记忆…自动帮我填，选account 等等). */
+export type VendorMemory = { payeeName: string | null; debitAccountCode: string | null; purpose: string | null; timesSeen: number };
+
 export type ExtractedBill =
-  | { index: number; ok: true; extraction: BillExtraction; supplierMatch: { id: string; code: string | null; name: string; confidence: 'exact' | 'contains' } | null }
+  | { index: number; ok: true; extraction: BillExtraction; supplierMatch: { id: string; code: string | null; name: string; confidence: 'exact' | 'contains' } | null; memory: VendorMemory | null }
   | { index: number; ok: false; reason: string };
 
 /* FileReader, not buf→btoa: a chunked fromCharCode spread stack-overflows on a

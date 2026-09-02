@@ -152,6 +152,26 @@ describe('the plain Payment Voucher (/new)', () => {
     expect(screen.queryByText(/400-0000/)).toBeNull();
   });
 
+  test('a scanned bill with vendor memory pre-fills payee AND account — 记忆自动帮我填', () => {
+    render(
+      <MemoryRouter initialEntries={[{
+        pathname: '/scm/payment-vouchers/new',
+        state: { billPrefill: {
+          extraction: {
+            vendorName: 'TENAGA NASIONAL BERHAD', vendorRegNo: null, documentKind: 'bill' as const,
+            invoiceNumber: 'INV-77', invoiceDate: '2026-09-01', dueDate: null,
+            currency: 'MYR', totalSen: 15000, sstSen: null, lines: [],
+          },
+          memory: { payeeName: 'TNB', debitAccountCode: '900-A002', purpose: 'OTHER', timesSeen: 3 },
+        } },
+      }]}><PaymentVoucherNew /></MemoryRouter>,
+    );
+    /* The operator's own casing beats the print, and the account is what THEY
+       saved last time — shown resolved, still editable. */
+    expect((screen.getByLabelText(/Payee/) as HTMLInputElement).value).toBe('TNB');
+    expect((screen.getByLabelText('Account (Debit) *') as HTMLInputElement).value).toBe('900-A002 · Advertisement');
+  });
+
   test('the account search actually narrows — 打关键字眼 finds the account', () => {
     draw('/scm/payment-vouchers/new');
     const paidFrom = screen.getByLabelText(/Paid From/) as HTMLInputElement;
