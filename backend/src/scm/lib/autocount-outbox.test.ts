@@ -828,7 +828,7 @@ describe('a line the ERP just added is declared, never inferred', () => {
     expect(outbox(sb)[0].last_error).toContain('refused, nothing sent');
   });
 
-  /* SUPERSEDED BY THE REBUILD — 0608 carries the reasoning and the trade. */
+  // SUPERSEDED BY THE REBUILD — 0608 carries the reasoning and the trade.
   test('another line is ALSO keyless: the document REBUILDS instead of refusing', async () => {
     const sb = withFlag('1', {
       mfg_sales_orders: [{ ...so }],

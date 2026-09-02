@@ -46,7 +46,7 @@ import type { Env } from '../env';
 import { getSupabaseService } from '../../db/supabase';
 import { isWritebackEnabled } from './autocount-writeback-flag';
 import { inAcLineOrder } from './ac-line-order';
-import { poRaisedFromSo } from './so-po-raised';
+import { poRaisedFromSo } from './so-po-raised';   // 0609
 import { claimOutboxRow, releaseExpiredClaims } from './autocount-claim';
 import { splitSofaCode } from '../../services/autocount-sofa-collapse';
 import { SO_PROCESSING_DATE_COLUMN } from '../shared/so-processing-date';
@@ -1436,8 +1436,7 @@ async function composeSoState(sb: Sb, docNo: string, retired: AcRetiredLine[] = 
       {
         bindings,
         ...(newLineIds && newLineIds.length ? { newLineIds: new Set(newLineIds) } : {}),
-        // 0609 — a rebuild would void PODTL.FromSODtlKey on the purchase lines.
-        ...(poRaised ? { rebuildBlocked: 'A purchase order was raised from this sales order.' } : {}),
+        ...(poRaised ? { rebuildBlocked: 'A PO was raised from this SO.' } : {}),  // 0609
       },
       retired,
     ),

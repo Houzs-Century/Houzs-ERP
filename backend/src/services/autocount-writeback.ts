@@ -490,10 +490,8 @@ export class KeylessLineError extends Error {
  * as refusals on the sales side rather than as guesses.
  */
 export interface ComposeOptions {
-  /** Clear the details and lay these Lines down, not match them — 0607. */
-  rebuild?: boolean;
-  /** Present = take the keyed path, never rebuild — so-po-raised.ts, 0609. */
-  rebuildBlocked?: string;
+  rebuild?: boolean;        // clear the details, lay these Lines down — 0607
+  rebuildBlocked?: string;  // present = keyed path, never rebuild — 0609
   supplierCode?: string | null;
   /** Test seam: an alternative cutover map. Defaults to the compiled one. */
   itemIndex?: AcItemIndex;
@@ -1423,8 +1421,7 @@ export function composeEdit(
   opts: ComposeOptions = {},
   retired: AcRetiredLine[] = [],
 ): AcEditPayload {
-  // THE ONE RULE — derived, never per caller (ac-line-gone.ts, 0608).
-  const effOpts: ComposeOptions = shouldRebuild(opts, retired) ? { ...opts, rebuild: true } : opts;
+  const effOpts: ComposeOptions = shouldRebuild(opts, retired) ? { ...opts, rebuild: true } : opts;  // 0608
   const { details, collapsed } = composeDetails(lines, effOpts);
   /* The key is read off the COLLAPSED line, not the ERP line. One AutoCount
      line has one DtlKey, and a sofa build's compartments only carry line
