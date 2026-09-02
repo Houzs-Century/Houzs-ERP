@@ -1,6 +1,6 @@
 ## The healed stock verdict reached the browser and was thrown away [high]
 
-<!-- area: Sales Order -->
+<!-- area: Sales orders + pricing -->
 
 **Symptom.** The owner, 2026-09-02, on a Sales Order line: 「为什么明明还没有货，
 它却显示 ready？可是 Incoming PO 那边是有 PO 的，而且是有 date 的」 — a line
