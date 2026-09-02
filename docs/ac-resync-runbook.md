@@ -152,16 +152,31 @@ key **不是这个脚本算的**——它只认第 3 步那两个脚本印出来
 绝不猜一个前缀传上去。传成功的 key 逐条写进 `<PHOTO_DIR>/.uploaded.txt`,
 中途杀掉再跑会跳过它们(PO 侧同理,`PHOTO_DIR=<OUT_DIR>/po`)。
 
-成功长这样。⚠️ **同上,这是示意的形状,不是跑过的纪录**:到 2026-08-31 为止
-**一次 R2 上传都没做过**(token 档还没建),只验过 plan 模式和四道闸门会拒
-(错格式 key / 无确认句 / 错确认句 / 没 token 档,四个都实测 exit 2)。
+> **更正 2026-09-02。** 这一段原本写着「到 2026-08-31 为止**一次 R2 上传都没做过**
+> (token 档还没建)」,并把下面那个方块标成「示意的形状,不是跑过的纪录」。
+> **两句都是错的,而且这份文件从没被回来改过。** 上传在 2026-08-31 04:16-04:58 UTC
+> 跑完了,就在两趟挂回(04:44 / 05:05 UTC)之前 —— 顺序完全照这份手册。owner 的
+> token 档建立于 2026-08-31 10:28(本机时间),路径就是脚本预设的那个。
+>
+> 代价不是抽象的:2026-09-02 owner 问「照片都进来了吗」,这两句话让答复变成
+> 「有 207 行的图可能显示不出来,要你去开一张单看」—— **一个不存在的问题,一次
+> 白花的 owner 时间。** 下面是当天当场跑出来的,不是示意:
 
 ```
-APPLIED. uploaded: 2723; already in R2: 0; failed: 0
-VERIFY: re-reading 20 of 2723 uploaded key(s) from R2 on fresh processes
-VERIFY: 20 byte-identical to the manifest; 0 present but unverifiable; 0 missing; 0 wrong
+$ MODE=verify SAMPLE=25 PLAN=<resolve log> PHOTO_DIR=<OUT_DIR>/so \
+    node backend/scripts/upload-line-photos-r2.mjs
+local done-list: 602 key(s) already uploaded by an earlier run
+to upload: 0; already done locally: 602; file not exported: 0
+VERIFY: re-reading 25 of 602 uploaded key(s) from R2 on fresh processes
+VERIFY: 25 byte-identical to the manifest; 0 present but unverifiable; 0 missing; 0 wrong
 VERDICT: PASSED. Attach with import-so-line-photos.mjs / import-po-line-photos.mjs APPLY=1.
 ```
+
+对照过的还有 R2 的 REST API(`GET /accounts/<acct>/r2/buckets/houzs-erp/objects/<key>`,
+`HEAD` 回 405 所以要用 GET):8 月 31 日算出来的 840 个 key 全部 `200 image/jpeg`,
+随手编的假 key 回 `404 {"code":10007}` —— **判别器是活的,不是对什么都回 200。**
+
+四道闸门也实测过会拒(错格式 key / 无确认句 / 错确认句 / 没 token 档,四个都 exit 2)。
 
 `VERDICT: PASSED` 之前**不要挂回**——验的是 **sha256 对得上**,不是"文件在不在":
 空档和被截断的档都"在"。
