@@ -249,6 +249,20 @@ exactly, so the two states now render as two separate cards: *Signed sessions*
 (the setting) and *This request's authorization* (the behaviour). If the first
 says On and the second says Database, chase the pass, not the caches.
 
+**`unknown` is checked BEFORE the caches, and that order is a bug fix, not a
+style choice** (`docs/bugs/0605`). It used to sit below, so `unknown` beside a
+short TTL printed *"Authorization took the fast path"* — a claim about the one
+thing the card had just said it could not see. The owner read exactly that
+contradiction on the first live loading of this page. The cache finding is still
+reported under `unknown`, because it holds either way — but as a separate clause
+that claims nothing about the path.
+
+**`unknown` is not a dead end.** It carries `client_sent_pass` (presence of the
+header only — never the value, never a prefix, never a length), because the two
+causes need opposite fixes: **no header** means the browser has none to send (it
+expired, or was never stored); **header present and still no record** means we
+lost the record, which is a different bug.
+
 **`ttl_shorter_than_poll` uses `<=`, not `<`.** A TTL EQUAL to the poll expires
 exactly as the next poll arrives, which is the banner's measured 874-984ms case,
 not a near miss.

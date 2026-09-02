@@ -129,6 +129,10 @@ app.get("/live", requirePageAccess("system_health"), async (c) => {
      new fact belongs in `authFastPath` below, not smuggled in here; both read
      the same const, so they cannot disagree. */
   const sessionSigning = { configured: sessionSigningConfigured };
+  /* PRESENCE of the header, never its value — so `unknown` above is not a dead
+     end: no header means the browser has none to send, which is a different
+     finding from having sent one and losing the record. */
+  const clientSentPass = (c.req.header("X-Session-Pass") || "").length > 0;
 
   /* THE OTHER 90%. /api/presence and /api/announcements/banner are ~90% of every
      slow request in production (697 of 761 occurrences over three days,
@@ -162,9 +166,9 @@ app.get("/live", requirePageAccess("system_health"), async (c) => {
     ),
   };
   const authFastPath = {
-    session_pass: sessionSigning,
+    session_pass: { ...sessionSigning, this_request: thisRequestPath, client_sent_pass: clientSentPass },
     config_cache: configCache,
-    reading: readingFor(sessionSigningConfigured, thisRequestPath, configCache),
+    reading: readingFor(sessionSigningConfigured, thisRequestPath, configCache, clientSentPass),
   };
 
   // SCM-route liveness — the page must not show green while the SCM stack is
