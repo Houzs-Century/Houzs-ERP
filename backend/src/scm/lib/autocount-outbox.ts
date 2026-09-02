@@ -1432,9 +1432,9 @@ async function composeSoState(sb: Sb, docNo: string, retired: AcRetiredLine[] = 
       'SO', String(h.linked_ac_docno ?? docNo),
       soEditHeader(h, salespersonName, lines, outstandingSen, paymentRefs, touchedFields), lines,
       {
-        bindings,
+        bindings,   // 0609: a PO raised from this SO blocks the rebuild, never the edit
         ...(newLineIds && newLineIds.length ? { newLineIds: new Set(newLineIds) } : {}),
-        ...(poRaised ? { rebuildBlocked: 'A PO was raised from this SO.' } : {}),  // 0609
+        ...(poRaised ? { rebuildBlocked: 'A PO was raised from this SO.' } : {})
       },
       retired,
     ),
