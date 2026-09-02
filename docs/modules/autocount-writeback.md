@@ -3512,6 +3512,52 @@ the test pins it against `AcSyncService.DocTypes` read out of the C# source with
 `?raw` — so a type the host drops fails a test here rather than becoming a 400
 for a document the book can read.
 
+### A DELETED LINE IS DELETED, WHERE THE BOOK ALLOWS (owner rule, 2026-09-02)
+
+Owner: 「我是要 autocount 的全部 line 都跟 ERP 一样」 · 「跟 inistate 一样」.
+
+Line removal used to be ONE shape — `Retire: true` (Qty 0, `Transferable =
+false`, an `[ERP-CANCELLED]` marker) — because `PurchaseOrder` has no
+`DeleteDetail`. That uniformity cost the thing he could see: a line he deleted
+was still on the AutoCount document at quantity 0.
+
+**The ERP now says what happened; the HOST decides what the book can do.**
+
+| `Gone` | means | the book |
+| --- | --- | --- |
+| `'deleted'` | the operator removed the line from the ERP | deleted, if all three conditions below hold |
+| `'cancelled'` / absent | the line is still ON the ERP document | retired in place, marked — never deleted |
+
+**Absent means retire**, which is the stricter direction — the one case
+CLAUDE.md allows an optional flag for. `retiredLineOf` stamps `'deleted'` once,
+where the rows are read, because every caller of it is a DELETE route.
+
+**The host deletes only when all three hold**, and each is the book's own:
+
+1. the ERP said `deleted`;
+2. the document is a **SALES ORDER** — `DeleteDetail(Int64)` is on that class
+   and no other (`sdk-api-reference.txt`: `PurchaseOrder`,
+   `GoodsReceivedNote` and `DeliveryOrder` all lack it);
+3. the book's own `TransferedQty` is 0. AutoCount's troubleshooting for a
+   transferred document whose rows are deleted is that the source points at
+   nothing, the document goes grey and uneditable, and recovery needs raw SQL.
+   `scm/lib/downstream-lock.ts` already stops the ERP editing such a document,
+   but that lock is OURS — someone can transfer inside AutoCount without telling
+   us, so the BOOK's figure decides.
+
+Otherwise it falls through to the retirement. Nothing fails, nothing is held
+back.
+
+The deletes are applied AFTER the detail enumeration and DESCENDING: removing
+while enumerating skips the next line, and descending means one removal cannot
+move a key not yet removed.
+
+**An un-rebuilt host ignores it.** `AcSyncService` reads keys by name, so the
+flag is invisible to a binary that has never heard of it and the behaviour stays
+exactly as today. Our half is safe to ship first; the change takes effect when
+the office host is rebuilt. Trace:
+`docs/bugs/0606-a-deleted-line-stayed-in-autocount-at-quantity-zero.md`.
+
 ### LINE ORDER IS PART OF THE DOCUMENT (owner rule, 2026-09-02)
 
 > 「convert 了的 PO 一定要 remain 在同样的 line，就是例如第四个 item 就是第 4 个

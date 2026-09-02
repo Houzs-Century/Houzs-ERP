@@ -3158,6 +3158,9 @@ class AcSyncService {
         "(scm.*_items.linked_ac_dtlkey) or mark the line IsNewLine, then retry.");
     }
 
+    /* Keys to DELETE after the loop — see the Retire branch below for why the
+       removal cannot happen while the details are being enumerated. */
+    var toDelete = new System.Collections.Generic.List<long>();
     foreach (var it in lines) {
       dynamic d;
       if (it.ContainsKey("DtlKey") && it["DtlKey"] != null) {
@@ -3189,6 +3192,39 @@ class AcSyncService {
          printed document, marked; hiding it would be deletion wearing a
          different hat. */
       if (Bool(it, "Retire")) {
+        /* REALLY DELETE IT WHERE THE BOOK ALLOWS. Owner 2026-09-02, having seen
+           a deleted line still sitting in AutoCount at Qty 0: 「跟 inistate
+           一样」 — the connector this one replaces called DeleteDetail, and the
+           marked-in-place line is why the two sides did not look the same.
+
+           THREE CONDITIONS, and all three are the book's own, not a preference:
+
+           1. `Gone == "deleted"`. The ERP says the operator REMOVED the line. A
+              line still on the document and merely cancelled is not this, and
+              must stay visible — absent means retire.
+           2. SalesOrder only. `DeleteDetail(Int64)` is on that class and no
+              other (sdk-api-reference.txt: PurchaseOrder, GoodsReceivedNote and
+              DeliveryOrder all lack it). On those, retirement is not a choice.
+           3. NOT TRANSFERRED. AutoCount's own troubleshooting for a document
+              whose rows are deleted after transfer is that the source points at
+              nothing, the document goes grey and uneditable, and recovery needs
+              raw SQL. The ERP's downstream lock already stops us editing such a
+              document — but that lock is OURS, and someone can transfer inside
+              AutoCount without telling us. This reads the BOOK's own
+              TransferedQty, so the refusal survives that.
+
+           The delete is COLLECTED, not applied here: removing a detail while
+           enumerating the details is how a loop skips the next one. It runs
+           after the loop, and every line that does not qualify falls through to
+           the retirement below unchanged. */
+        var goneReason = it.ContainsKey("Gone") ? Str(it, "Gone") : "";
+        var transferred = 0m;
+        try { transferred = System.Convert.ToDecimal(d.TransferedQty ?? 0); } catch { transferred = 0m; }
+        if (goneReason == "deleted" && type == "SO" && transferred <= 0m
+            && it.ContainsKey("DtlKey") && it["DtlKey"] != null) {
+          toDelete.Add(System.Convert.ToInt64(it["DtlKey"]));
+          continue;
+        }
         d.Qty = 0;
         Set(() => d.Transferable = false);
         var keep = it.ContainsKey("Desc2") ? Str(it, "Desc2") : SafeDesc2(d);
@@ -3227,6 +3263,24 @@ class AcSyncService {
          itself. A date the ERP DOES hold still travels. */
       if (it.ContainsKey("DeliveryDate")) {
         var dd = Date(it, "DeliveryDate"); Set(() => d.DeliveryDate = dd);
+      }
+    }
+
+    /* THE DELETES, after the enumeration and before the save. Removing a detail
+       inside the foreach above skips the next one; doing it here removes them
+       from one settled collection.
+
+       DESCENDING, so each removal cannot disturb the position of one not yet
+       removed. NOT wrapped in Set(): Set swallows, and a silently-skipped
+       delete would leave a line in the book the ERP believes is gone — the
+       exact divergence this whole path exists to prevent, and the reason the
+       marked-in-place version was visible to the owner in the first place. */
+    if (toDelete.Count > 0) {
+      toDelete.Sort();
+      toDelete.Reverse();
+      foreach (var k in toDelete) {
+        doc.DeleteDetail(k);
+        Log("  DeleteDetail " + k + " (ERP deleted the line; SO, not transferred)");
       }
     }
     doc.Save();

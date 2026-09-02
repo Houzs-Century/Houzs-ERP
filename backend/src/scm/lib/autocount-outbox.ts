@@ -950,7 +950,20 @@ export async function retiredLineOf(
     const n = r.linked_ac_dtlkey == null ? NaN : Number(r.linked_ac_dtlkey);
     if (!Number.isFinite(n) || n <= 0) return [];
     const desc2 = r.description2 == null ? undefined : String(r.description2);
-    return [{ DtlKey: n, ItemCode: String(r[codeCol] ?? ''), ...(desc2 ? { Desc2: desc2 } : {}) }];
+    /* `Gone: 'deleted'` — every caller of this function is a DELETE route, so
+       the operator removed the line rather than cancelling it. AutoCount should
+       remove it too where the SDK allows (SalesOrder only); the host decides,
+       because only the host can see whether the book's own line has already
+       been transferred. Owner 2026-09-02: 「跟 inistate 一样」.
+
+       ABSENT means RETIRE, and that is the stricter direction — the one case
+       CLAUDE.md allows an optional flag for. A caller that says nothing keeps
+       today's mark-in-place behaviour rather than silently gaining the power to
+       delete a line out of a live account book. */
+    return [{
+      DtlKey: n, ItemCode: String(r[codeCol] ?? ''),
+      ...(desc2 ? { Desc2: desc2 } : {}), Gone: 'deleted' as const,
+    }];
   } catch {
     return [];
   }
