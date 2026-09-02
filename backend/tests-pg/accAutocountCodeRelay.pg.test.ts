@@ -56,15 +56,18 @@ async function resetToPreState(sql: Sql): Promise<void> {
   }
 
   await sql.unsafe(`
-    DROP TABLE IF EXISTS scm.acc_bank_statements;
-    DROP TABLE IF EXISTS scm.acc_bank_statement_config;
-    DROP TABLE IF EXISTS scm.acc_company_acquirers;
-    DROP TABLE IF EXISTS scm.acc_vendor_memory;
-    DROP TABLE IF EXISTS scm.acc_account_roles;
-    DROP TABLE IF EXISTS scm.payment_voucher_lines;
-    DROP TABLE IF EXISTS scm.payment_vouchers;
-    DROP TABLE IF EXISTS scm.journal_entry_lines;
-    DROP TABLE IF EXISTS scm.accounts;
+    -- CASCADE: the pg suite shares one disposable database across files, and
+    -- earlier files leave views (v_gl_entries) hanging off scm.accounts. Each
+    -- file rebuilds its own world; ours must be able to raze the last one's.
+    DROP TABLE IF EXISTS scm.acc_bank_statements CASCADE;
+    DROP TABLE IF EXISTS scm.acc_bank_statement_config CASCADE;
+    DROP TABLE IF EXISTS scm.acc_company_acquirers CASCADE;
+    DROP TABLE IF EXISTS scm.acc_vendor_memory CASCADE;
+    DROP TABLE IF EXISTS scm.acc_account_roles CASCADE;
+    DROP TABLE IF EXISTS scm.payment_voucher_lines CASCADE;
+    DROP TABLE IF EXISTS scm.payment_vouchers CASCADE;
+    DROP TABLE IF EXISTS scm.journal_entry_lines CASCADE;
+    DROP TABLE IF EXISTS scm.accounts CASCADE;
     CREATE SCHEMA IF NOT EXISTS scm;
 
     CREATE TABLE scm.accounts (
@@ -165,6 +168,7 @@ async function resetToPreState(sql: Sql): Promise<void> {
       (1,'900-A002','Advertisement','EXPENSE',NULL,false),
       (2,'330-0000','Bank - Maybank Current','ASSET',NULL,true),
       (2,'331-0000','Bank - Hong Leong Current','ASSET',NULL,true),
+      (2,'335-0000','Cash on Hand','ASSET',NULL,true),
       (2,'410-0000','Customer Deposits','LIABILITY',NULL,false);
 
     INSERT INTO scm.journal_entry_lines (company_id, account_code, debit_sen, credit_sen) VALUES
@@ -175,9 +179,6 @@ async function resetToPreState(sql: Sql): Promise<void> {
 
     INSERT INTO scm.payment_voucher_lines (company_id, pv_id, debit_account_code) VALUES
       (2,'pv-armedia','410-0000'), (2,'pv-kng','335-0000');
-
-    INSERT INTO scm.payment_voucher_lines (company_id, pv_id, debit_account_code)
-      SELECT 1,'pv-armedia','900-A002' WHERE false; -- keep shape obvious
 
     INSERT INTO scm.acc_account_roles (company_id, role, account_code) VALUES
       (1,'CASH','335-0000'), (1,'BANK_DEFAULT','330-0000'), (1,'TRANSIT_EDC','320-0000'),
