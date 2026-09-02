@@ -1132,6 +1132,7 @@ const COMPLIANCE_MIME: Record<string, string> = {
 
 // PUT /vehicles/:id/compliance/:docId/attachments?ext=pdf&name=roadtax.pdf
 fleetMaintenance.put("/vehicles/:id/compliance/:docId/attachments", requireHouzsPerm("fleet.write"), async (c) => {
+  // company-scope: unified fleet - see the UNIFIED FLEET note above inHouseLorries.
   const lorryId = c.req.param("id");
   const docId = c.req.param("docId");
   const sb = c.get("supabase");
@@ -1745,6 +1746,7 @@ fleetMaintenance.post("/work-orders/:woId/transition", requireHouzsPerm("fleet.w
 
 // ── POST /work-orders/:id/parts — add a part line ────────────────────────────
 fleetMaintenance.post("/work-orders/:woId/parts", requireHouzsPerm("fleet.write"), async (c) => {
+  // company-scope: unified fleet - see the UNIFIED FLEET note above inHouseLorries.
   const woId = c.req.param("woId");
   const sb = c.get("supabase");
 

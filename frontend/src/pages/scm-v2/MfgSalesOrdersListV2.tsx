@@ -21,8 +21,8 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { shippedProgressColumn, ShippedProgressPill } from "./so-list-shipped-column";
-import { SO_STATUS_TABS, statusFor, soRowStatus, type StatusTab } from "./so-list-status";
-import { soStatusDisplay } from "../../vendor/scm/lib/so-status";
+import { SO_STATUS_TABS, statusFor, type StatusTab } from "./so-list-status";
+import { SoListStatusCell } from "./SoListStatusCell";
 import { salesOrderRowMenu } from "./row-menus";
 import { brandingToneForCategory, type BrandTone } from "../../lib/brandingTone";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -1448,29 +1448,7 @@ export function MfgSalesOrdersListV2() {
       // Exempt from the cancelled-row fade — the pill is WHY the row is grey.
       className: "dt-cancel-keep",
       getValue: (r) => r.status,
-      render: (r) => {
-        /* THE ONE RULE (soRowStatus -> soStatusDisplay), the same one the SO
-           detail's editor renders, so this cell and the Delivered column beside
-           it can no longer answer "has it gone out?" two different ways. When
-           the derived answer disagrees with the STORED status — which is what
-           the tab strip still counts this row under — the disagreement is shown,
-           never quietly resolved. 0619. */
-        const st = soRowStatus(r, soStatusDisplay);
-        /* mig 0324 — the Hold marker sits BESIDE the real status pill. */
-        return (
-          <span className="inline-flex items-center gap-1">
-            <StatusWithHold tone={st.tone} label={st.label} row={r} />
-            {st.storedLabel && (
-              <span
-                title={`This order's own delivery records say ${st.label}, but its stored status is still ${st.storedLabel} — which is the tab it is counted under. The stored status is only rewritten when a delivery order changes through the app, so an imported or scripted delivery leaves it behind.`}
-                className="rounded border border-warning-text/40 bg-warning-bg px-1 text-[10px] font-semibold text-warning-text"
-              >
-                {st.storedLabel}
-              </span>
-            )}
-          </span>
-        );
-      },
+      render: (r) => <SoListStatusCell row={r} />,
     },
     {
       key: "amount",

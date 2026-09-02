@@ -314,3 +314,33 @@ two behaviour changes are both fixes the old code documented against itself:
 a PV reversal of a line-less entry now aborts loudly instead of posting a
 zero-line reversal header, and a manual JV naming an account the company
 chart cannot explain is now a 400.
+
+## Which company's masters a posting reads
+
+`acc/masters-company.ts` is the ONE place that answers it, and the three lookups
+call it: `checkAccounts` (the chart), `resolveRoles` (the account roles) and
+`transitFor` (the acquirer map).
+
+`accMastersCompanyId(companyId, where)` returns the entry's own company when it
+has one, and falls back to the base company when it does not — **logging at
+error level and naming the call site every time it substitutes.**
+
+**The fallback is not a rule anyone chose. It is debt with an owner decision
+attached.** Until 2026-09-02 the expression was written three times, inline and
+silently, and `engine.ts` used `companyId == null` to mean two different things
+inside one call: the WRITE path reads it as "stamp no company" (`:208`), the
+LOOKUP path read it as "company 1". So an entry whose company could not be
+resolved was validated against company 1's chart and then written with no
+company at all — and looked exactly like one validated against its own books.
+
+That contradicts the house rule for a write — `requireActiveCompanyId`
+(`scm/lib/companyScope.ts:114`) is documented *"Never degrades, never
+defaults"*. It was **not** changed to a refusal because null is reachable from
+real rows, not only from a degraded request: `scm/routes/accounting.ts:295`,
+`payment-vouchers.ts:694` and `:1409` all pass the DOCUMENT's own nullable
+`company_id`. Refusing today would stop those documents posting.
+
+The probe needed before flipping it, and the three options, are in
+`docs/bugs/0615-the-accounting-masters-fell-back-to-company-1-in-silence.md`.
+`backend/tests/accMastersOneHome.test.ts` fails the PR if any `acc/` module
+re-implements the fallback inline.
