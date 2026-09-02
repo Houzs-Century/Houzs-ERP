@@ -218,7 +218,7 @@ export const PaymentVouchers = () => {
     void notify({
       title: `${done} of ${targets.length} ${kind === 'check' ? 'checked' : 'approved & posted'}`,
       body: failures.length > 0 ? failures.join('\n') : 'Nothing refused.',
-      tone: failures.length > 0 ? 'error' : 'success',
+      tone: failures.length > 0 ? 'error' : 'info',
     });
   };
 
