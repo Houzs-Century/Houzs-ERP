@@ -134,6 +134,9 @@ export const ASSR_SUB_STATUSES: Record<string, AssrSubStatusDef[]> = {
     { key: "qc_issue_result", label: "QC Issue Result" },
   ],
   pending_supplier_pickup: [
+    // Customer-pickup leg first (Nico 2026-09-01): it is the stage's entry
+    // point (collect the item FROM the customer) and transitionStage seeds it.
+    { key: "pending_customer_pickup", label: "Pending Customer Pickup" },
     { key: "pending_supplier_pickup", label: "Pending Supplier Pickup" },
     { key: "pending_supplier_return", label: "Pending Supplier Return" },
   ],

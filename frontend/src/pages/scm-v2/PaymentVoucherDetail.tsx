@@ -26,10 +26,10 @@ import { fmtDate, fmtDateOrDash } from '../../vendor/shared/format';
 import {
   usePaymentVoucherDetail,
   useUpdatePaymentVoucher,
-  usePostPaymentVoucher,
   useCancelPaymentVoucher,
   useSubmitPaymentVoucher,
   useWithdrawPaymentVoucher,
+  useCheckPaymentVoucher,
   useApprovePaymentVoucher,
   useRejectPaymentVoucher,
   useSupplierAdvances, useApplyAdvance,
@@ -108,25 +108,27 @@ export const PaymentVoucherDetail = () => {
   const allocations = (detailQ.data?.allocations ?? []) as Array<Record<string, any>>;
 
   const update = useUpdatePaymentVoucher();
-  const post   = usePostPaymentVoucher();
   const cancel = useCancelPaymentVoucher();
   const submit   = useSubmitPaymentVoucher();
   const withdraw = useWithdrawPaymentVoucher();
+  const check    = useCheckPaymentVoucher();
   const approve  = useApprovePaymentVoucher();
   const reject   = useRejectPaymentVoucher();
-  const busy   = update.isPending || post.isPending || cancel.isPending
-    || submit.isPending || withdraw.isPending || approve.isPending || reject.isPending;
+  const busy   = update.isPending || cancel.isPending
+    || submit.isPending || withdraw.isPending || check.isPending || approve.isPending || reject.isPending;
 
   const canWrite   = can('scm.payment_voucher.write');
-  const canPost    = can('scm.payment_voucher.post');
   const canCancel  = can('scm.payment_voucher.cancel');
+  const canCheck   = can('scm.payment_voucher.check');
   const canApprove = can('scm.payment_voucher.approve');
 
-  /* Phase 3 — where in the approval cycle this voucher stands. Both marks
-     null: an editable draft. Submitted only: queued, frozen. Both: approved,
-     waiting for Post. The server enforces all of it; these only decide which
-     buttons are worth showing. */
-  const isSubmitted  = Boolean(pv?.submitted_at);
+  /* The owner's four layers (2026-09-02) — where this voucher stands. No
+     marks: raw Draft. Prepared: declared ready, STILL editable. Checked:
+     first yes, locked, on Daily Bank's pending. Approve is the second yes
+     and posts the GL itself. The server enforces all of it; these only
+     decide which buttons are worth showing. */
+  const isPrepared   = Boolean(pv?.submitted_at);
+  const isChecked    = Boolean(pv?.checked_at);
   const isApprovedPv = Boolean(pv?.approved_at);
   /* Reject wants a why the submitter will read — an inline note swaps in
      for the approve/reject pair while it is being typed. */
@@ -328,15 +330,9 @@ export const PaymentVoucherDetail = () => {
     }
   };
 
-  const onPost = async () => {
-    if (!(await askConfirm({ title: `Post voucher ${pv.pv_number}?`, body: 'This writes the journal entry to the General Ledger and locks the voucher.', confirmLabel: 'Post to GL' }))) return;
-    try {
-      await post.mutateAsync(id);
-    } catch (err) {
-      notify({ title: 'Post failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' });
-    }
-  };
-
+  /* There is no standalone Post button any more — the second yes posts
+     (owner 2026-09-02: 当approved 了才会进gl), and re-approving resumes a
+     post that died halfway. */
   const onCancel = async () => {
     if (!(await askConfirm({ title: `Cancel voucher ${pv.pv_number}?`, body: 'This sets status to CANCELLED and reverses the GL entry if it was posted.', confirmLabel: 'Cancel voucher', danger: true }))) return;
     try {
@@ -346,11 +342,12 @@ export const PaymentVoucherDetail = () => {
     }
   };
 
-  /* Phase 3 actions. Submit and withdraw are freely reversible so they carry
-     no dialog; approving is the decision, so it does. */
-  const onSubmitForApproval = async () => {
+  /* The four layers' actions. Prepare and withdraw are freely reversible so
+     they carry no dialog; checking reserves money and approving posts it, so
+     both do. */
+  const onPrepare = async () => {
     try { await submit.mutateAsync(id); } catch (err) {
-      void notify({ title: 'Submit failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' });
+      void notify({ title: 'Prepare failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' });
     }
   };
   const onWithdraw = async () => {
@@ -358,8 +355,14 @@ export const PaymentVoucherDetail = () => {
       void notify({ title: 'Withdraw failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' });
     }
   };
+  const onCheck = async () => {
+    if (!(await askConfirm({ title: `Check ${pv.pv_number}?`, body: 'The first yes: the voucher locks, and the amount reserves against Daily Bank’s available money until it is approved or rejected.', confirmLabel: 'Check' }))) return;
+    try { await check.mutateAsync(id); } catch (err) {
+      void notify({ title: 'Check failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' });
+    }
+  };
   const onApprove = async () => {
-    if (!(await askConfirm({ title: `Approve ${pv.pv_number}?`, body: 'Post to GL becomes available, and the amount reserves against Daily Bank’s available money until it is paid.', confirmLabel: 'Approve' }))) return;
+    if (!(await askConfirm({ title: `Approve ${pv.pv_number}?`, body: 'The second yes posts the journal entry to the General Ledger in the same step — money leaves the books now.', confirmLabel: 'Approve & post' }))) return;
     try { await approve.mutateAsync(id); } catch (err) {
       void notify({ title: 'Approve failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' });
     }
@@ -388,44 +391,53 @@ export const PaymentVoucherDetail = () => {
             </Button>
             {!isEditing ? (
               <>
-                {/* Phase 3: where the voucher stands, said once beside the pill. */}
-                {isDraft && isSubmitted && (
-                  <span style={{ fontSize: 'var(--fs-13)', color: isApprovedPv ? 'var(--c-green, #2c7a3f)' : 'var(--c-orange, #b06000)' }}>
-                    {isApprovedPv ? `Approved · ${String(pv.approved_by ?? '')}` : `Awaiting approval · ${String(pv.submitted_by ?? '')}`}
+                {/* The four layers: where the voucher stands, said once beside the pill. */}
+                {isDraft && isPrepared && (
+                  <span style={{ fontSize: 'var(--fs-13)', color: isChecked ? 'var(--c-green, #2c7a3f)' : 'var(--c-orange, #b06000)' }}>
+                    {isChecked ? `Checked · ${String(pv.checked_by ?? '')} — awaiting approval` : `Prepared · ${String(pv.submitted_by ?? '')}`}
                   </span>
                 )}
-                {isDraft && canWrite && !isSubmitted && (
+                {/* Editable until the FIRST YES — a merely prepared voucher
+                    still takes corrections (owner: prepare 还可以改). */}
+                {isDraft && canWrite && !isChecked && (
                   <Button variant="ghost" size="md" onClick={() => setIsEditing(true)} disabled={busy}>
                     <Pencil {...ICON} /> Edit
                   </Button>
                 )}
-                {isDraft && canWrite && !isSubmitted && (
-                  <Button variant="primary" size="md" onClick={() => void onSubmitForApproval()} disabled={busy}>
-                    <Send {...ICON} /> Submit for approval
+                {isDraft && canWrite && !isPrepared && (
+                  <Button variant="primary" size="md" onClick={() => void onPrepare()} disabled={busy}>
+                    <Send {...ICON} /> Prepare
                   </Button>
                 )}
-                {isDraft && canWrite && isSubmitted && (
+                {isDraft && canWrite && isPrepared && !isChecked && (
                   <Button variant="ghost" size="md" onClick={() => void onWithdraw()} disabled={busy}
-                    title="Back to editable — it will need approval again">
+                    title="Back out of the cycle — it will need preparing again">
                     <RotateCcw {...ICON} /> Withdraw
                   </Button>
                 )}
-                {isDraft && canApprove && isSubmitted && !isApprovedPv && rejectNote === null && (
-                  <>
-                    <Button variant="primary" size="md" onClick={() => void onApprove()} disabled={busy}>
-                      <CheckCircle2 {...ICON} /> Approve
-                    </Button>
-                    <Button variant="ghost" size="md" onClick={() => setRejectNote('')} disabled={busy}>
-                      <XCircle {...ICON} /> Reject
-                    </Button>
-                  </>
+                {isDraft && canCheck && isPrepared && !isChecked && rejectNote === null && (
+                  <Button variant="primary" size="md" onClick={() => void onCheck()} disabled={busy}>
+                    <CheckCircle2 {...ICON} /> Check
+                  </Button>
+                )}
+                {isDraft && canApprove && isChecked && !isApprovedPv && rejectNote === null && (
+                  <Button variant="primary" size="md" onClick={() => void onApprove()} disabled={busy}>
+                    <CheckCircle2 {...ICON} /> Approve & post
+                  </Button>
+                )}
+                {/* Reject opens to EITHER key, at either layer — back to raw
+                    draft with the why on the trail (一律退回 Draft). */}
+                {isDraft && (canCheck || canApprove) && isPrepared && rejectNote === null && (
+                  <Button variant="ghost" size="md" onClick={() => setRejectNote('')} disabled={busy}>
+                    <XCircle {...ICON} /> Reject
+                  </Button>
                 )}
                 {rejectNote !== null && (
                   <>
                     <input
                       value={rejectNote}
                       onChange={(e) => setRejectNote(e.target.value)}
-                      placeholder="Why it goes back (the submitter reads this)"
+                      placeholder="Why it goes back (the preparer reads this)"
                       aria-label="Rejection reason"
                       style={{ padding: '6px 10px', fontSize: 'var(--fs-13)', minWidth: 220 }}
                     />
@@ -436,11 +448,6 @@ export const PaymentVoucherDetail = () => {
                       <X {...ICON} /> Back
                     </Button>
                   </>
-                )}
-                {isDraft && canPost && isApprovedPv && (
-                  <Button variant="primary" size="md" onClick={onPost} disabled={busy}>
-                    <Send {...ICON} /> Post to GL
-                  </Button>
                 )}
                 {pv.status !== 'CANCELLED' && canCancel && rejectNote === null && (
                   <Button variant="ghost" size="md" onClick={onCancel} disabled={busy}>

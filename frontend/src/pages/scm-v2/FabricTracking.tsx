@@ -29,7 +29,7 @@ import {
 } from '../../vendor/scm/lib/fabric-queries';
 import { FabricsTable } from '../../vendor/scm/components/FabricsTable';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
-import { toCsv, parseCsv, triggerDownload, type ParsedImport } from '../../vendor/scm/lib/fabric-csv';
+import { toCsv, parseImportFile, importErrorDetail, triggerDownload, type ParsedImport } from '../../vendor/scm/lib/fabric-csv';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -81,8 +81,9 @@ export const FabricTracking = () => {
     const file = e.target.files?.[0];
     e.target.value = '';  // reset so picking same file again re-fires onChange
     if (!file) return;
-    const text = await file.text();
-    setImportPreview(parseCsv(text));
+    // Excel (.xlsx/.xls) or CSV — parseImportFile dispatches on extension and
+    // both formats land as the same row shape (owner: any file should import).
+    setImportPreview(await parseImportFile(file));
   };
 
   return (
@@ -97,7 +98,7 @@ export const FabricTracking = () => {
               Export CSV
             </Button>
             <Button variant="secondary" icon={<Upload {...ICON} />} onClick={onPickFile}>
-              Import CSV
+              Import
             </Button>
             <Button variant="primary" icon={<Plus {...ICON} />} onClick={() => setCreating(true)}>
               New Fabric
@@ -136,7 +137,8 @@ export const FabricTracking = () => {
             </span>
           </label>
         )}
-        <input ref={fileInputRef} type="file" accept=".csv,text/csv"
+        <input ref={fileInputRef} type="file"
+          accept=".xlsx,.xls,.csv,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
           style={{ display: 'none' }} onChange={onFileChosen} />
       </div>
 
@@ -302,12 +304,35 @@ const ImportPreviewDialog = ({
 
   const commit = () => {
     upsert.mutate(rows, {
+      // Some rows saved, some the server refused (200 OK, per-row `errors`). Show
+      // WHICH rows and WHY, not just a count — the owner needs the real reason.
       onSuccess: async (res) => {
-        const trailing = res.errors.length ? ` (${res.errors.length} row${res.errors.length === 1 ? '' : 's'} rejected server-side)` : '';
-        await notify({ title: `Imported ${res.upserted} fabric${res.upserted === 1 ? '' : 's'}.${trailing}` });
+        if (res.errors.length > 0) {
+          const shown = res.errors.slice(0, 30)
+            .map((e) => `Row ${e.index + 2}: ${e.reason}`);  // +2: 1-based, past the header
+          const more = res.errors.length > 30 ? `\n…and ${res.errors.length - 30} more.` : '';
+          await notify({
+            title: `Imported ${res.upserted} fabric${res.upserted === 1 ? '' : 's'}, ${res.errors.length} rejected.`,
+            body: <div style={{ whiteSpace: 'pre-wrap' }}>{`These rows were not saved:\n\n${shown.join('\n')}${more}`}</div>,
+            tone: res.upserted === 0 ? 'error' : 'info',
+          });
+        } else {
+          await notify({ title: `Imported ${res.upserted} fabric${res.upserted === 1 ? '' : 's'}.` });
+        }
         onClose();
       },
-      onError: (e) => notify({ title: 'Import failed', body: `${e instanceof Error ? e.message : 'Something went wrong.'}`, tone: 'error' }),
+      // Whole request refused (e.g. a 409). Surface the server's specific reason
+      // and any conflicting codes it named, not the generic "clashes with
+      // something" line — importErrorDetail reads them off the raw error body.
+      onError: (e) => {
+        const base = e instanceof Error ? e.message : 'Something went wrong.';
+        const detail = importErrorDetail(e);
+        void notify({
+          title: 'Import failed',
+          body: <div style={{ whiteSpace: 'pre-wrap' }}>{detail ? `${base}\n\n${detail}` : base}</div>,
+          tone: 'error',
+        });
+      },
     });
   };
 
@@ -317,7 +342,7 @@ const ImportPreviewDialog = ({
       <div onClick={(e) => e.stopPropagation()}
         className="w-[560px] max-w-[95vw] animate-modal-in rounded-lg border border-border bg-surface p-5 shadow-slab">
         <div className="flex items-center justify-between">
-          <h2 className="font-display text-[19px] font-extrabold leading-tight tracking-tight text-ink">Import CSV</h2>
+          <h2 className="font-display text-[19px] font-extrabold leading-tight tracking-tight text-ink">Import</h2>
           <IconButton icon={<X {...ICON} />} variant="ghost" size="sm" onClick={onClose} aria-label="Close" />
         </div>
 

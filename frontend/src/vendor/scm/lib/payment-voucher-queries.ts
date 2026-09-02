@@ -31,12 +31,16 @@ export type PaymentVoucherRow = Record<string, unknown> & {
   payee_name: string;
   total_sen?: number;
   currency?: string;
+  exchange_rate?: string | number | null;
   credit_account_code?: string;
   supplier?: { id: string; code: string; name: string } | null;
-  /* Phase 3 — the approval cycle's marks. Both null: an editable draft.
-     Submitted only: in the queue. Both set: approved, waiting to post. */
+  /* The owner's four layers (2026-09-02). No marks: raw Draft. submitted:
+     Prepared (still editable). checked: locked, on Daily Bank's pending.
+     approved: the approve posted the GL — status flips POSTED with it. */
   submitted_at?: string | null;
   submitted_by?: string | null;
+  checked_at?: string | null;
+  checked_by?: string | null;
   approved_at?: string | null;
   approved_by?: string | null;
 };
@@ -161,7 +165,7 @@ export const useCancelPaymentVoucher = () => {
 /* ── Phase 3: the approval cycle. Each mutation refreshes the list, the
    detail, and the Daily Bank board — a voucher entering or leaving the queue
    moves the board's "available" figure. */
-const approvalMutation = (path: 'submit' | 'withdraw' | 'approve') => () => {
+const approvalMutation = (path: 'submit' | 'withdraw' | 'check' | 'approve') => () => {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => authedFetch(`/payment-vouchers/${id}/${path}`, { method: 'POST' }),
@@ -174,6 +178,8 @@ const approvalMutation = (path: 'submit' | 'withdraw' | 'approve') => () => {
 };
 export const useSubmitPaymentVoucher = approvalMutation('submit');
 export const useWithdrawPaymentVoucher = approvalMutation('withdraw');
+export const useCheckPaymentVoucher = approvalMutation('check');
+/* Approve posts the GL in the same request — the response is the post's. */
 export const useApprovePaymentVoucher = approvalMutation('approve');
 
 export const useRejectPaymentVoucher = () => {
