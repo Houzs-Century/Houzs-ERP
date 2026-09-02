@@ -15,7 +15,7 @@
 // saves through the untouched approval cycle.
 // ----------------------------------------------------------------------------
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Camera, FileText, X } from 'lucide-react';
 import { Button } from '@2990s/design-system';
@@ -25,6 +25,8 @@ import { PageHeader } from '../../components/Layout';
 import styles from './SalesOrderDetail.module.css';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
+
+const ACCEPT_MIMES = 'image/jpeg,image/png,image/webp,application/pdf';
 
 const fmtRm = (sen: number | null | undefined): string =>
   sen == null ? '—' : `MYR ${(sen / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -43,13 +45,34 @@ export const PaymentVoucherScan = () => {
   const [splitGroups, setSplitGroups] = useState<Set<string>>(new Set());
   const [note, setNote] = useState<string | null>(null);
 
-  const addFiles = (list: FileList | null) => {
-    if (!list) return;
-    const next = [...list].map((f) => ({ rid: `f${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, file: f, merged: false }));
+  /* The same allowlist the server enforces — a dropped .docx is refused at the
+     door with a sentence, not uploaded to fail later. ONE home: the string
+     feeds both the picker's accept= and the drop/paste filter. */
+  const accepted = (f: File) => ACCEPT_MIMES.split(',').includes(f.type) || /\.pdf$/i.test(f.name);
+
+  const addFileArray = (files: File[]) => {
+    const usable = files.filter(accepted);
+    if (usable.length < files.length) setNote('Some files were skipped — JPEG / PNG / WebP / PDF only.');
+    if (usable.length === 0) return;
+    const next = usable.map((f) => ({ rid: `f${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, file: f, merged: false }));
     setPicked((prev) => [...prev, ...next]);
     setBillGroups((prev) => [...prev, ...next.map((p) => [p.rid])]);
     setResults(null);
   };
+  const addFiles = (list: FileList | null) => { if (list) addFileArray([...list]); };
+
+  /* 拖进来就收 (the owner, 2026-09-02: 我无法从我的folder 拖动进来upload) —
+     and Ctrl+V for a screenshot of a bill. */
+  const [dragOver, setDragOver] = useState(false);
+  useEffect(() => {
+    const onPaste = (e: ClipboardEvent) => {
+      const files = [...(e.clipboardData?.files ?? [])];
+      if (files.length > 0) addFileArray(files);
+    };
+    window.addEventListener('paste', onPaste);
+    return () => { window.removeEventListener('paste', onPaste); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   /* 合并所选 — the ticked files become ONE bill (case 1). */
   const mergeTicked = () => {
@@ -129,18 +152,27 @@ export const PaymentVoucherScan = () => {
     <div className="space-y-4">
       <PageHeader back eyebrow="Finance" title="Scan bills" />
 
-      <section className={styles.card}>
+      <section
+        className={styles.card}
+        onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+        onDragLeave={() => { setDragOver(false); }}
+        onDrop={(e) => { e.preventDefault(); setDragOver(false); addFileArray([...e.dataTransfer.files]); }}
+        style={dragOver ? { outline: '2px dashed var(--c-orange)', outlineOffset: -4 } : undefined}
+      >
         <div className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>The pile</h2>
           <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
-            one file = one bill · tick pages of the same bill and press Merge
+            one PDF = one bill, however many pages · Merge is only for a bill photographed as several images
           </span>
         </div>
         <div className={styles.cardBody} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+          <div style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
+            Drag files here, paste a screenshot (Ctrl+V), or
+          </div>
           <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap' }}>
             <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--c-orange)', fontWeight: 600, cursor: 'pointer', fontSize: 'var(--fs-13)' }}>
               <Camera {...ICON} /> Add bills
-              <input type="file" multiple accept="image/jpeg,image/png,image/webp,application/pdf"
+              <input type="file" multiple accept={ACCEPT_MIMES}
                 aria-label="Add bill files" style={{ display: 'none' }}
                 onChange={(e) => { addFiles(e.target.files); e.target.value = ''; }} />
             </label>
@@ -191,16 +223,38 @@ export const PaymentVoucherScan = () => {
                   </span>
                 </div>
                 <div className={styles.cardBody} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+                  {/* 多可以，但要整齐 (the owner, 2026-09-02): one aligned grid
+                      per bill — number / dates / total on a fixed template, the
+                      bill's own line items as a two-column table under it. */}
                   {g.bills.map((b) => (
-                    <div key={b.index} style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', fontSize: 'var(--fs-13)', flexWrap: 'wrap' }}>
-                      <span style={{ fontFamily: 'var(--font-mono)' }}>{b.extraction.invoiceNumber ?? '(no number)'}</span>
-                      <span style={{ color: 'var(--fg-muted)' }}>{fmtDate(b.extraction.invoiceDate)}</span>
-                      <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(b.extraction.totalSen)}</span>
-                      {b.extraction.totalSen == null && <span style={{ color: 'var(--c-festive-b, #B8331F)', fontSize: 'var(--fs-12)' }}>total unreadable — will need typing</span>}
-                      {split && (
-                        <Button variant="secondary" size="sm" onClick={() => openVoucher(b.extraction, { memory: b.memory })}>
-                          Open as voucher
-                        </Button>
+                    <div key={b.index} style={{ border: '1px solid var(--border-weak, #e3e1da)', borderRadius: 8, padding: 'var(--space-3)', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(120px, 180px) 100px 130px 1fr auto', gap: 'var(--space-3)', alignItems: 'center', fontSize: 'var(--fs-13)' }}>
+                        <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700 }}>{b.extraction.invoiceNumber ?? '(no number)'}</span>
+                        <span style={{ color: 'var(--fg-muted)' }}>{fmtDate(b.extraction.invoiceDate)}</span>
+                        <span style={{ color: 'var(--fg-muted)' }}>{b.extraction.dueDate ? `due ${fmtDate(b.extraction.dueDate)}` : ''}</span>
+                        <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmtRm(b.extraction.totalSen)}</span>
+                        {split ? (
+                          <Button variant="secondary" size="sm" onClick={() => openVoucher(b.extraction, { memory: b.memory })}>
+                            Open as voucher
+                          </Button>
+                        ) : <span />}
+                      </div>
+                      {(b.extraction.totalSen == null || b.extraction.sstSen != null || b.extraction.vendorRegNo) && (
+                        <div style={{ display: 'flex', gap: 'var(--space-3)', fontSize: 'var(--fs-12)', color: 'var(--fg-muted)', flexWrap: 'wrap' }}>
+                          {b.extraction.vendorRegNo && <span>Reg. no {b.extraction.vendorRegNo}</span>}
+                          {b.extraction.sstSen != null && <span>SST {fmtRm(b.extraction.sstSen)}</span>}
+                          {b.extraction.totalSen == null && <span style={{ color: 'var(--c-festive-b, #B8331F)' }}>total unreadable — will need typing</span>}
+                        </div>
+                      )}
+                      {b.extraction.lines.length > 0 && (
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 140px', rowGap: 2, columnGap: 'var(--space-3)', fontSize: 'var(--fs-12)', borderTop: '1px dashed var(--border-weak, #e3e1da)', paddingTop: 6 }}>
+                          {b.extraction.lines.map((l, i) => (
+                            <div key={i} style={{ display: 'contents' }}>
+                              <span style={{ color: 'var(--fg-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.description ?? '—'}</span>
+                              <span style={{ fontFamily: 'var(--font-mono)', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmtRm(l.amountSen)}</span>
+                            </div>
+                          ))}
+                        </div>
                       )}
                     </div>
                   ))}
