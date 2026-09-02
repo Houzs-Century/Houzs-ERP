@@ -36,43 +36,40 @@ export interface AcRetiredLine {
   Gone?: AcLineGoneReason;
 }
 
-/* WHICH DOCUMENT TYPES CAN LOSE ONE LINE, and which must be rebuilt to lose it.
-   Read off sdk-api-reference.txt, and pinned against that file by
-   backend/tests/acLineDeletedNotRetired.test.ts so a later SDK cannot make this
-   table quietly wrong.
+/* THE RULE, and it is ONE sentence for all six document types.
 
-   Owner 2026-09-02, on why iNiState only ever wrote sales orders: 「他只做 Sales
-   Order 是因为他那边只有 Sales Order 的 Data Entry，我们这里是有全部 Document 的
-   Data Entry 的（我们是 Full Set）。所以你需要把全部东西都 update 掉」.
+   Owner 2026-09-02, after the old connector's own API was read off the host:
 
-   So the connector this one replaces never met the problem below. We do, on five
-   of the six document types, and the answer cannot be "mark it and leave it
-   visible" — that is what he could see was wrong. */
-export const SDK_DELETES_ONE_LINE: Record<string, boolean> = {
-  /** SalesOrder.DeleteDetail(Int64) — the only class in the 2.2 SDK with it. */
-  SO: true,
-  PO: false,
-  GR: false,
-  DO: false,
-  IV: false,
-  PI: false,
-};
+     「如果只是 edit SKU、换东西或者添加 variants 等等，我们就直接照现在的模式去做。
+       那如果我们有 delete line、add line 导致了它的 line 不平整了，我们就整张重建」
 
-/** THE ONE RULE, in one place.
- *
- *  A line the operator DELETED must disappear from AutoCount. Where the SDK can
- *  remove a single line it removes that line; where it cannot, the only way to
- *  lose a line at all is to rebuild the details — `ClearDetails` is on the base
- *  document class, so it reaches every type.
- *
- *  Nothing here decides whether the book can SURVIVE it. The host refuses both
- *  on a document with a transferred line, read from the book's own tables,
- *  because a person can transfer inside AutoCount without telling the ERP.
- */
-export function rebuildNeededToRemoveLine(
-  docType: string,
+   So the axis is not the document TYPE and not the SDK's shape. It is whether
+   THE SET OF LINES CHANGED:
+
+     · the same lines, edited — SKU swapped, variants added, a price changed —
+       is matched line by line on the AutoCount key. That preserves every DtlKey,
+       which this system needs and the old connector never did: a purchase-order
+       line's key is held downstream by PODTL.FromSODtlKey, the transfer chain
+       and the line photographs.
+     · a line ADDED or REMOVED is a rebuild. The book is cleared and the ERP's
+       list is laid down in order, so the two sides finish identical — the same
+       thing `DocumentService.UpdateOrCreate` does in the connector this replaces,
+       which has no add/edit/delete-line API at all (read off
+       C:\InistateConnector\InistateConnector.exe through .NET reflection,
+       2026-09-02; see docs/bugs/0608).
+
+   WHY THIS REPLACED A PER-TYPE TABLE. The first version keyed off whether the
+   SDK exposes DeleteDetail — true for SalesOrder, false for the other five — so
+   one operator action had two behaviours decided by a detail nobody outside that
+   file could see. The owner's word for it was 「规则变形」. An SDK capability is a
+   MECHANISM; it may not be the rule.
+
+   THE HOST STILL DECIDES WHETHER THE BOOK CAN SURVIVE A REBUILD. It refuses on a
+   document with a transferred line, read from the book's own tables — the one
+   fact the ERP may not answer from its own copy. */
+export function rebuildNeededForLineSetChange(
+  anyLineAdded: boolean,
   anyLineDeleted: boolean,
 ): boolean {
-  if (!anyLineDeleted) return false;
-  return SDK_DELETES_ONE_LINE[docType] !== true;
+  return anyLineAdded || anyLineDeleted;
 }

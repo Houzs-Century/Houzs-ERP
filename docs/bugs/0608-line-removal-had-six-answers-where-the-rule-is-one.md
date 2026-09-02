@@ -22,17 +22,27 @@ because `PurchaseOrder` has no `DeleteDetail`; `docs/bugs/0606` then gave sales
 orders a real delete. The result was a rule that varied by document type with
 nothing naming the variation — exactly the "规则变形" he asked not to have.
 
-**Fix — one sentence, one place.** `services/ac-line-gone.ts` holds it:
+**Fix — one sentence, one place.** `services/ac-line-gone.ts` holds it, and the
+owner sharpened it once the old connector's own API had been read:
 
-> **A line the operator DELETED disappears from AutoCount.** Where the SDK can
-> remove one line it removes that line; where it cannot, the details are
-> REBUILT, because `ClearDetails` is the only way those types can lose a line at
-> all.
+> 「如果只是 edit SKU、换东西或者添加 variants 等等，我们就直接照现在的模式去做。那
+> 如果我们有 delete line、add line 导致了它的 line 不平整了，我们就整张重建」
 
-`rebuildNeededToRemoveLine(docType, anyLineDeleted)` is the whole decision, and
+> **The SET of lines decides.** The same lines, edited, are matched on the
+> AutoCount key — every DtlKey survives. A line ADDED or REMOVED is a rebuild:
+> the book is cleared and the ERP's list laid down, so the two sides finish
+> identical.
+
+`rebuildNeededForLineSetChange(anyAdded, anyDeleted)` is the whole decision, and
 `composeEdit` DERIVES it — no caller can forget it and no route can disagree.
-`SDK_DELETES_ONE_LINE` is the mechanism table, asserted against
-`sdk-api-reference.txt` itself so a later SDK cannot make it quietly wrong.
+
+**A first version keyed off the SDK instead, and was wrong in the way he named.**
+It rebuilt only where `DeleteDetail` is absent, so a delete removed one line on a
+SALES ORDER and rebuilt on the other five — one operator action, two behaviours,
+decided by a capability nobody outside one file could see. 「规则变形」. **An SDK
+capability is a MECHANISM; it may not be the rule.** `SDK_DELETES_ONE_LINE`, the
+per-type table, and the host's `DeleteDetail` branch are all gone rather than
+left as dead code that reads like a second rule.
 
 **What the connector it replaces actually does, read off the host today** — and
 it is not what I assumed twice before checking. `InistateConnector.exe` loaded

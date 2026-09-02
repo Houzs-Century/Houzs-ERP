@@ -1,112 +1,113 @@
 // ----------------------------------------------------------------------------
-// ONE RULE FOR ALL SIX DOCUMENT TYPES: a deleted line disappears.
+// ONE RULE, ALL SIX DOCUMENT TYPES: the SET of lines decides.
 //
-// Owner 2026-09-02, on why the connector this one replaces only ever wrote sales
-// orders:
+// Owner 2026-09-02, once the old connector's own API had been read off the host:
 //
-//   「他只做 Sales Order 是因为他那边只有 Sales Order 的 Data Entry，我们这里是
-//     有全部 Document 的 Data Entry 的（我们是 Full Set）。所以你需要把全部东西
-//     都 update 掉」
+//   「如果只是 edit SKU、换东西或者添加 variants 等等，我们就直接照现在的模式去做。
+//     那如果我们有 delete line、add line 导致了它的 line 不平整了，我们就整张重建」
 //
-// and then: 「不要有规则变形，或者说没有清楚规则的这种 business logic 问题」.
+// So the axis is not the document TYPE and not the SDK's shape:
 //
-// So the rule may not be "sales orders behave one way and the rest another
-// because of how the SDK happens to be shaped". The rule is ONE sentence — a
-// deleted line disappears — and the SDK decides only the MECHANISM: delete that
-// one line where it can, rebuild the details where it cannot.
+//   same lines, edited   -> match on the AutoCount key, edit in place. Every
+//                           DtlKey survives, which this system needs and the old
+//                           connector never did.
+//   a line ADDED/REMOVED -> rebuild. The book is cleared and the ERP's list laid
+//                           down, so the two sides finish identical.
 //
-// This file exists because that is exactly the kind of rule that rots into six
-// per-type special cases.
+// The first version of this rule keyed off whether the SDK exposes DeleteDetail
+// — true for SalesOrder, false for the other five — so one operator action had
+// two behaviours decided by a detail nobody outside one file could see. His word
+// for that was 「规则变形」. This file exists so it cannot come back.
 // ----------------------------------------------------------------------------
 import { describe, expect, test } from 'vitest';
-import {
-  SDK_DELETES_ONE_LINE, rebuildNeededToRemoveLine,
-} from '../src/services/ac-line-gone';
-import sdkRef from '../scripts/autocount-service/sdk-api-reference.txt?raw';
+import { rebuildNeededForLineSetChange } from '../src/services/ac-line-gone';
 import writebackSrc from '../src/services/autocount-writeback.ts?raw';
+import serviceSrc from '../scripts/autocount-service/AcSyncService.cs?raw';
+import outboxSrc from '../src/scm/lib/autocount-outbox.ts?raw';
 
-/* LINE ENDINGS ARE NORMALISED FIRST, and that is not tidiness. `core.autocrlf`
-   gives the working tree CRLF on Windows, so a matcher anchored on a bare
-   newline silently finds nothing and the test passes against the very source it
-   was written to reject. That has happened three times in one day in this repo:
-   here, in acLineOrderWiring, and in doStockLeavesOnConfirm — which still fails
-   locally for exactly this reason. Normalise once, then match on LF. */
+/* Line endings are normalised first. `core.autocrlf` gives the working tree CRLF
+   on Windows, so a matcher anchored on a bare newline silently finds nothing and
+   the test passes against the very source it was written to reject — which has
+   happened three times in one day in this repo. Normalise once, match on LF. */
 const lf = (s: string): string => s.split('\r\n').join('\n');
 const code = (s: string): string =>
   lf(s).replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
 const WRITEBACK = code(writebackSrc);
-const SDK = lf(sdkRef);
+const SERVICE = code(serviceSrc);
+const OUTBOX = code(outboxSrc);
 
-/** The six types the write-back handles. Written out, and asserted complete
- *  against the table itself so neither can drift alone. */
-const ALL_TYPES = ['SO', 'PO', 'GR', 'DO', 'IV', 'PI'] as const;
-
-/** The SDK class each type maps to, for reading the reference file. */
-const CLASS: Record<string, string> = {
-  SO: 'AutoCount.Invoicing.Sales.SalesOrder.SalesOrder',
-  PO: 'AutoCount.Invoicing.Purchase.PurchaseOrder.PurchaseOrder',
-  GR: 'AutoCount.Invoicing.Purchase.GoodsReceivedNote.GoodsReceivedNote',
-  DO: 'AutoCount.Invoicing.Sales.DeliveryOrder.DeliveryOrder',
-  IV: 'AutoCount.Invoicing.Sales.Invoice.Invoice',
-  PI: 'AutoCount.Invoicing.Purchase.PurchaseInvoice.PurchaseInvoice',
-};
-
-describe('every document type has an answer, and it is the same rule', () => {
-  test('the table covers all six and nothing else', () => {
-    expect(Object.keys(SDK_DELETES_ONE_LINE).sort()).toEqual([...ALL_TYPES].sort());
+describe('the rule is about the line SET, not the document type', () => {
+  test('every combination, and there are only four', () => {
+    expect(rebuildNeededForLineSetChange(false, false)).toBe(false); // edits only
+    expect(rebuildNeededForLineSetChange(true, false)).toBe(true);   // a line added
+    expect(rebuildNeededForLineSetChange(false, true)).toBe(true);   // a line removed
+    expect(rebuildNeededForLineSetChange(true, true)).toBe(true);    // both
   });
 
-  test.each(ALL_TYPES)('%s: a deleted line always leads to a removal', (t) => {
-    /* Either the SDK removes the one line, or the rebuild removes it by laying
-       the document down again. What must never happen is NEITHER — that is the
-       "marked at qty 0 and still visible" state the owner could see. */
-    const oneLine = SDK_DELETES_ONE_LINE[t] === true;
-    const rebuilds = rebuildNeededToRemoveLine(t, true);
-    expect(oneLine || rebuilds, `${t} would leave a deleted line in the book`).toBe(true);
-    expect(oneLine && rebuilds, `${t} would do BOTH, which is a contradiction`).toBe(false);
+  /* THE REGRESSION THIS FILE IS FOR. A per-type table is what made one action
+     behave two ways. The rule takes no document type at all now, and cannot. */
+  test('the rule cannot see the document type', () => {
+    expect(rebuildNeededForLineSetChange.length).toBe(2);
+    expect(WRITEBACK).not.toMatch(/SDK_DELETES_ONE_LINE/);
+    expect(WRITEBACK).not.toMatch(/rebuildNeededToRemoveLine/);
   });
 
-  test.each(ALL_TYPES)('%s: NO deletion never triggers a rebuild', (t) => {
-    /* A rebuild destroys every DtlKey. It may only ever be the price of removing
-       a line, never a side effect of an ordinary edit. */
-    expect(rebuildNeededToRemoveLine(t, false)).toBe(false);
-  });
-
-  /* The mechanism table is the SDK's fact, not ours. Asserted against the
-     reference file so a later SDK that adds DeleteDetail to PurchaseOrder fails
-     here rather than leaving five types rebuilding for no reason. */
-  test.each(ALL_TYPES)('%s: the table matches what the SDK reference says', (t) => {
-    const i = SDK.indexOf(`--- ${CLASS[t]}\n`);
-    if (i === -1) {
-      /* The reference does not carry this class. Say so rather than passing
-         quietly — an unfound class must not read as "no DeleteDetail". */
-      expect(SDK_DELETES_ONE_LINE[t], `${CLASS[t]} is absent from the SDK reference, `
-        + 'so it may only be listed as UNABLE to delete one line').toBe(false);
-      return;
-    }
-    const body = SDK.slice(i, i + 6000);
-    const meth = body.slice(body.indexOf('METH:'), body.indexOf('\n\n'));
-    expect(meth.length, `no METH: block found for ${CLASS[t]}`).toBeGreaterThan(20);
-    expect(meth.includes('DeleteDetail(')).toBe(SDK_DELETES_ONE_LINE[t] === true);
+  /* An edit that changes no line SET must NOT rebuild: a rebuild destroys and
+     reissues every DtlKey, and this system holds those downstream
+     (PODTL.FromSODtlKey, the transfer chain, the line photographs). Swapping a
+     SKU or adding variants may never cost that. */
+  test('editing the same lines never rebuilds', () => {
+    expect(rebuildNeededForLineSetChange(false, false)).toBe(false);
   });
 });
 
-describe('the rule is applied in ONE place, not per caller', () => {
-  test('composeEdit derives it — a caller cannot forget it', () => {
-    expect(WRITEBACK).toMatch(/rebuildNeededToRemoveLine\(docType, anyDeleted\)/);
+describe('composeEdit derives it — no caller can forget, none can disagree', () => {
+  test('both halves of the set change are read', () => {
+    expect(WRITEBACK).toMatch(/rebuildNeededForLineSetChange\(anyAdded, anyDeleted\)/);
     expect(WRITEBACK).toMatch(/retired\.some\(\(r\) => r\.Gone === 'deleted'\)/);
+    expect(WRITEBACK).toMatch(/anyAdded = \(opts\.newLineIds\?\.size \?\? 0\) > 0/);
   });
 
-  /* An explicit `rebuild` from the caller still works — the derived rule only
-     ever turns it ON, never off, so a sales order can still be rebuilt on
-     request, which is how a document nobody can match is recovered. */
-  test('an explicit request survives the derivation', () => {
+  test('an explicit request still survives the derivation', () => {
     expect(WRITEBACK).toMatch(/\{ \.\.\.opts, rebuild: true \}/);
   });
 
-  test('the parameter is not reassigned — the derived value is used throughout', () => {
+  test('the parameter is not reassigned', () => {
     expect(WRITEBACK).not.toMatch(/^\s*opts = effOpts;/m);
     expect(WRITEBACK).toMatch(/composeDetails\(lines, effOpts\)/);
-    expect(WRITEBACK).toMatch(/effOpts\.rebuild/);
+  });
+
+  /* Every DELETE route funnels through one reader, so "a line was removed" is
+     one fact with one source rather than six flags. */
+  test('the deleted stamp has exactly one source', () => {
+    expect(OUTBOX.match(/Gone: 'deleted'/g) ?? []).toHaveLength(1);
+  });
+});
+
+describe('the host carries no per-type special case any more', () => {
+  test('the source actually loaded', () => {
+    expect(SERVICE.length).toBeGreaterThan(1000);
+  });
+
+  /* DeleteDetail was the mechanism that varied by type. Under the set rule it is
+     unreachable — a removed line means a rebuild, and a rebuilt document never
+     carries the line at all — so it is gone rather than left as dead code that
+     reads like a second rule. */
+  test('nothing calls DeleteDetail, and nothing collects keys to delete', () => {
+    expect(SERVICE).not.toMatch(/doc\.DeleteDetail\(/);
+    expect(SERVICE).not.toMatch(/toDelete/);
+  });
+
+  test('the retire branch remains, for a line the ERP still HAS but cancelled', () => {
+    expect(SERVICE).toMatch(/if \(Bool\(it, "Retire"\)\) \{/);
+    expect(SERVICE).toMatch(/d\.Qty = 0;/);
+  });
+
+  /* The rebuild itself is untouched by this simplification, and still refuses on
+     a document the book says was transferred. */
+  test('the rebuild and its guard are still there', () => {
+    expect(SERVICE).toMatch(/doc\.ClearDetails\(\);/);
+    expect(SERVICE).toMatch(/if \(AnyLineTransferred\(type, docNo\)\)/);
   });
 });

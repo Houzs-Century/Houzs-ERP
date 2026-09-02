@@ -3245,9 +3245,6 @@ class AcSyncService {
       doc.ClearDetails();
     }
 
-    /* Keys to DELETE after the loop — see the Retire branch below for why the
-       removal cannot happen while the details are being enumerated. */
-    var toDelete = new System.Collections.Generic.List<long>();
     foreach (var it in lines) {
       /* ON A REBUILD, A LINE THE ERP NO LONGER HAS IS ALREADY ABSENT — the
          document was cleared. It must be skipped HERE, before AddDetail: the
@@ -3286,39 +3283,20 @@ class AcSyncService {
          printed document, marked; hiding it would be deletion wearing a
          different hat. */
       if (Bool(it, "Retire")) {
-        /* REALLY DELETE IT WHERE THE BOOK ALLOWS. Owner 2026-09-02, having seen
-           a deleted line still sitting in AutoCount at Qty 0: 「跟 inistate
-           一样」 — the connector this one replaces called DeleteDetail, and the
-           marked-in-place line is why the two sides did not look the same.
+        /* NOT DELETED HERE — REBUILT. Owner 2026-09-02: 「如果我们有 delete
+           line、add line 导致了它的 line 不平整了，我们就整张重建」.
 
-           THREE CONDITIONS, and all three are the book's own, not a preference:
+           A line the ERP removed reaches this branch only when the document is
+           NOT being rebuilt, and under that rule it cannot be: composeEdit turns
+           any change to the line SET into a rebuild, so the cleared document
+           simply never carries the line. What is left here is the other member
+           of `Gone` — a line still ON the ERP document and CANCELLED, which must
+           stay visible in the book, marked.
 
-           1. `Gone == "deleted"`. The ERP says the operator REMOVED the line. A
-              line still on the document and merely cancelled is not this, and
-              must stay visible — absent means retire.
-           2. SalesOrder only. `DeleteDetail(Int64)` is on that class and no
-              other (sdk-api-reference.txt: PurchaseOrder, GoodsReceivedNote and
-              DeliveryOrder all lack it). On those, retirement is not a choice.
-           3. NOT TRANSFERRED. AutoCount's own troubleshooting for a document
-              whose rows are deleted after transfer is that the source points at
-              nothing, the document goes grey and uneditable, and recovery needs
-              raw SQL. The ERP's downstream lock already stops us editing such a
-              document — but that lock is OURS, and someone can transfer inside
-              AutoCount without telling us. This reads the BOOK's own
-              TransferedQty, so the refusal survives that.
-
-           The delete is COLLECTED, not applied here: removing a detail while
-           enumerating the details is how a loop skips the next one. It runs
-           after the loop, and every line that does not qualify falls through to
-           the retirement below unchanged. */
-        var goneReason = it.ContainsKey("Gone") ? Str(it, "Gone") : "";
-        var transferred = 0m;
-        try { transferred = System.Convert.ToDecimal(d.TransferedQty ?? 0); } catch { transferred = 0m; }
-        if (goneReason == "deleted" && type == "SO" && transferred <= 0m
-            && it.ContainsKey("DtlKey") && it["DtlKey"] != null) {
-          toDelete.Add(System.Convert.ToInt64(it["DtlKey"]));
-          continue;
-        }
+           The earlier version called SalesOrder.DeleteDetail here, guarded on
+           the SDK. That made one operator action behave two ways depending on a
+           capability nobody outside this file could see — 「规则变形」 — and it is
+           gone. The mechanism is now the same for all six types. */
         d.Qty = 0;
         Set(() => d.Transferable = false);
         var keep = it.ContainsKey("Desc2") ? Str(it, "Desc2") : SafeDesc2(d);
@@ -3360,23 +3338,6 @@ class AcSyncService {
       }
     }
 
-    /* THE DELETES, after the enumeration and before the save. Removing a detail
-       inside the foreach above skips the next one; doing it here removes them
-       from one settled collection.
-
-       DESCENDING, so each removal cannot disturb the position of one not yet
-       removed. NOT wrapped in Set(): Set swallows, and a silently-skipped
-       delete would leave a line in the book the ERP believes is gone — the
-       exact divergence this whole path exists to prevent, and the reason the
-       marked-in-place version was visible to the owner in the first place. */
-    if (toDelete.Count > 0) {
-      toDelete.Sort();
-      toDelete.Reverse();
-      foreach (var k in toDelete) {
-        doc.DeleteDetail(k);
-        Log("  DeleteDetail " + k + " (ERP deleted the line; SO, not transferred)");
-      }
-    }
     doc.Save();
     /* Read the keys back AFTER the save — AutoCount assigns a DtlKey at save
        time, so there is nothing to read before it. Same SQL read-back the create

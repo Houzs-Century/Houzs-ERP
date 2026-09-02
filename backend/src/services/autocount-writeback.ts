@@ -23,7 +23,7 @@
 // resolver, so it unit-tests with no database and no AutoCount.
 // ----------------------------------------------------------------------------
 import type { Env } from '../types';
-import { rebuildNeededToRemoveLine, type AcRetiredLine } from './ac-line-gone';
+import { rebuildNeededForLineSetChange, type AcRetiredLine } from './ac-line-gone';
 import {
   ItemCodeError,
   resolveAcItemCode,
@@ -492,6 +492,10 @@ export class KeylessLineError extends Error {
 export interface ComposeOptions {
   /** Clear the details and lay these Lines down, not match them — 0607. */
   rebuild?: boolean;
+  /** WHY a rebuild may not happen on this document, in the operator's words.
+   *  Present = refuse the rebuild and take the ordinary keyed path; a change
+   *  still syncs, it just may not reissue the keys (scm/lib/so-po-raised.ts). */
+  rebuildBlocked?: string;
   supplierCode?: string | null;
   /** Test seam: an alternative cutover map. Defaults to the compiled one. */
   itemIndex?: AcItemIndex;
@@ -1421,11 +1425,16 @@ export function composeEdit(
   opts: ComposeOptions = {},
   retired: AcRetiredLine[] = [],
 ): AcEditPayload {
-  /* THE ONE RULE — derived, never decided per caller (ac-line-gone.ts, 0608). */
+  /* THE ONE RULE — derived, never decided per caller (ac-line-gone.ts, 0608).
+     The SET of lines changed, so the two sides can only be made identical by
+     laying the ERP's list down; an edit to the SAME lines still matches on the
+     key and keeps every DtlKey. */
   const anyDeleted = retired.some((r) => r.Gone === 'deleted');
-  const effOpts: ComposeOptions = rebuildNeededToRemoveLine(docType, anyDeleted)
-    ? { ...opts, rebuild: true }
-    : opts;
+  const anyAdded = (opts.newLineIds?.size ?? 0) > 0;
+  const effOpts: ComposeOptions =
+    rebuildNeededForLineSetChange(anyAdded, anyDeleted) && !opts.rebuildBlocked
+      ? { ...opts, rebuild: true }
+      : opts;
   const { details, collapsed } = composeDetails(lines, effOpts);
   /* The key is read off the COLLAPSED line, not the ERP line. One AutoCount
      line has one DtlKey, and a sofa build's compartments only carry line

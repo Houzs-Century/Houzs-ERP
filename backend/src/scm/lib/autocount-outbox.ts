@@ -46,6 +46,7 @@ import type { Env } from '../env';
 import { getSupabaseService } from '../../db/supabase';
 import { isWritebackEnabled } from './autocount-writeback-flag';
 import { inAcLineOrder } from './ac-line-order';
+import { poRaisedFromSo } from './so-po-raised';
 import { claimOutboxRow, releaseExpiredClaims } from './autocount-claim';
 import { splitSofaCode } from '../../services/autocount-sofa-collapse';
 import { SO_PROCESSING_DATE_COLUMN } from '../shared/so-processing-date';
@@ -1412,6 +1413,7 @@ async function composeSoState(sb: Sb, docNo: string, retired: AcRetiredLine[] = 
   const salespersonName = await readSalespersonName(sb, h.salesperson_id);
   const outstandingSen = await readSoOutstandingSen(sb, h);
   const paymentRefs = await readSoPaymentRefs(sb, docNo);
+  const poRaised = await poRaisedFromSo(sb, docNo);
   return {
     docNo,
     linkedAcDocNo: (h.linked_ac_docno as string | null) ?? null,
@@ -1434,6 +1436,12 @@ async function composeSoState(sb: Sb, docNo: string, retired: AcRetiredLine[] = 
       {
         bindings,
         ...(newLineIds && newLineIds.length ? { newLineIds: new Set(newLineIds) } : {}),
+        /* A rebuild would void PODTL.FromSODtlKey on every purchase line raised
+           from this order, and downstream-lock does NOT count purchase orders —
+           so this order is still editable. Refuse the MECHANISM, never the edit
+           (scm/lib/so-po-raised.ts). */
+        ...(poRaised ? { rebuildBlocked: 'A purchase order was raised from this sales order, so its '
+          + 'line keys are held by PODTL.FromSODtlKey and cannot be reissued.' } : {}),
       },
       retired,
     ),

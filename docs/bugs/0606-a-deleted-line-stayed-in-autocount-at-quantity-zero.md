@@ -71,9 +71,23 @@ host is rebuilt and redeployed.
 
 **UNTESTED against the account book, and UNCOMPILED.** There is no C# toolchain
 in this environment, so `AcSyncService.cs` has not been built, and no deletion
-has been performed on any document. `backend/tests/acLineDeletedNotRetired.test.ts`
+has been performed on any document. `backend/tests/acLineDeletedNotRetired.test.ts` [gone]
 (9 tests) pins the wiring on both sides and asserts the SDK table above against
 the reference file itself, so a later SDK that adds `DeleteDetail` to
 `PurchaseOrder` fails the test rather than leaving the guard quietly wrong.
+
+> **SUPERSEDED THE SAME DAY, by `docs/bugs/0608`.** The fix described above gave
+> SALES ORDERS a real `DeleteDetail` and left the other five retiring in place —
+> one operator action with two behaviours, decided by an SDK capability. The
+> owner's word for that was 「规则变形」, and he replaced the rule: **the SET of
+> lines decides.** A line added or removed rebuilds the document, on every type;
+> the same lines edited are still matched on the key.
+>
+> So `SDK_DELETES_ONE_LINE`, the per-type table, the host's `DeleteDetail`
+> branch and `backend/tests/acLineDeletedNotRetired.test.ts` [gone] were all
+> removed rather than left as dead code reading like a second rule. What SURVIVES
+> from this entry is the finding that started it — a deleted line was still
+> visible in the book at quantity 0 — and the `Gone` flag, which is now what
+> tells `composeEdit` the line set changed.
 
 **Ref.** fix/autocount-line-order-is-stable, 2026-09-02.
