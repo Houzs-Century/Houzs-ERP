@@ -491,20 +491,10 @@ export class KeylessLineError extends Error {
  * as refusals on the sales side rather than as guesses.
  */
 export interface ComposeOptions {
-  /**
-   * REBUILD the document's details instead of matching them line by line.
-   *
-   * Owner 2026-09-02: 「全部跟着 inistate 一模一样」, and the argument that
-   * settled it — if the connector can delete and add freely, a document that
-   * cannot be MATCHED can still be made to agree, because a rebuild never has to
-   * match anything.
-   *
-   * OFF unless the caller asks. A rebuild destroys and reissues every DtlKey on
-   * the document, so inferring it from a failure would turn every future
-   * mismatch into a silent teardown of a live document. The HOST still refuses
-   * it when any line has been transferred — read from the book's own tables,
-   * because that is the case AutoCount itself cannot recover from.
-   */
+  /** Clear the details and lay these Lines down instead of matching them, for a
+   *  document that cannot be matched. OFF unless asked — it destroys every
+   *  DtlKey, and the HOST refuses it on a transferred document. 0607, and
+   *  autocount-writeback.md "REBUILD". */
   rebuild?: boolean;
   supplierCode?: string | null;
   /** Test seam: an alternative cutover map. Defaults to the compiled one. */
@@ -1554,10 +1544,8 @@ export function composeEdit(
     const which = keyless
       .map((i) => `${i + 1} (${keyed[i].ItemCode || 'no item code'}${cancelledOf(i) === true ? ', cancelled' : ''})`)
       .join(', ');
-    /* THE REBUILD IS THE ANSWER TO THIS REFUSAL, when the caller asked for one.
-       Everything the refusal protects against — a duplicated line, an
-       un-removable PO duplicate — is a consequence of APPENDING to a document we
-       could not match. A rebuild appends to nothing. */
+    /* A rebuild appends to nothing, so everything below protects against a case
+       it cannot reach (0607). */
     if (opts.rebuild) return { DocType: docType, DocNo: docNo, Header: header, Lines: keyed, Rebuild: true };
     const anyCancelled = keyless.some((i) => cancelledOf(i) === true);
     throw new KeylessLineError(
