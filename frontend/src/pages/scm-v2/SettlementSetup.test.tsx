@@ -24,8 +24,8 @@ const DATA: MaintenanceData = {
       ready: true, autoMatchable: true,
       /* His own case: the same merchant, two companies, two banks. */
       byCompany: {
-        '1': { enabled: true, linked: true, bankAccountCode: '331-0000' },
-        '2': { enabled: true, linked: true, bankAccountCode: '330-0000' },
+        '1': { enabled: true, linked: true, bankAccountCode: '310-0020' },
+        '2': { enabled: true, linked: true, bankAccountCode: '310-0010' },
       },
     },
     {
@@ -40,14 +40,14 @@ const DATA: MaintenanceData = {
   ],
   banks: [
     {
-      account_code: '330-0000', account_name: 'Bank — Maybank Current',
+      account_code: '310-0010', account_name: 'Bank — Maybank Current',
       byCompany: {
         '1': { inChart: true, enabled: true, usedBy: [] },
         '2': { inChart: true, enabled: true, usedBy: ['PBB'] },
       },
     },
     {
-      account_code: '331-0000', account_name: 'Bank — Hong Leong Current',
+      account_code: '310-0020', account_name: 'Bank — Hong Leong Current',
       byCompany: {
         '1': { inChart: true, enabled: true, usedBy: ['PBB'] },
         /* 2990 does not carry this code at all — not a box it could tick. */
@@ -80,10 +80,10 @@ vi.mock('./bank-queries', () => ({
 const saveBankDefault = vi.fn();
 vi.mock('../../vendor/scm/lib/accounting-queries', () => ({
   useAccounts: () => ({ data: { accounts: [
-    { account_code: '330-0000', account_name: 'Bank — Maybank', account_type: 'ASSET', is_active: true, acc_money: true },
+    { account_code: '310-0010', account_name: 'Bank — Maybank', account_type: 'ASSET', is_active: true, acc_money: true },
     { account_code: '900-A002', account_name: 'Advertisement', account_type: 'EXPENSE', is_active: true, acc_money: false },
   ] }, isLoading: false }),
-  useAccountRoles: () => ({ data: { roles: { BANK_DEFAULT: '330-0000', AP: '400-0000' }, overridden: {} }, isLoading: false }),
+  useAccountRoles: () => ({ data: { roles: { BANK_DEFAULT: '310-0010', AP: '400-0000' }, overridden: {} }, isLoading: false }),
   useSaveBankDefault: () => ({ mutate: saveBankDefault, isPending: false }),
 }));
 
@@ -125,11 +125,11 @@ describe('the maintenance table', () => {
      2990 into Maybank, and both are on screen at once. */
   test('the same merchant can pay two companies into two different banks', () => {
     draw();
-    expect((screen.getByLabelText("PBB bank for Houzs Century") as HTMLSelectElement).value).toBe('331-0000');
-    expect((screen.getByLabelText("PBB bank for 2990's Home") as HTMLSelectElement).value).toBe('330-0000');
+    expect((screen.getByLabelText("PBB bank for Houzs Century") as HTMLSelectElement).value).toBe('310-0020');
+    expect((screen.getByLabelText("PBB bank for 2990's Home") as HTMLSelectElement).value).toBe('310-0010');
 
-    fireEvent.change(screen.getByLabelText("PBB bank for Houzs Century"), { target: { value: '330-0000' } });
-    expect(merchantMutate).toHaveBeenCalledWith({ companyId: 1, code: 'PBB', bankAccountCode: '330-0000' });
+    fireEvent.change(screen.getByLabelText("PBB bank for Houzs Century"), { target: { value: '310-0010' } });
+    expect(merchantMutate).toHaveBeenCalledWith({ companyId: 1, code: 'PBB', bankAccountCode: '310-0010' });
   });
 
   /* Only banks THAT company has can receive THAT company's money. */
@@ -152,15 +152,15 @@ describe('the maintenance table', () => {
 describe('the bank matrix', () => {
   test('ticking a bank names its company, and says who uses it', () => {
     draw();
-    fireEvent.click(screen.getByLabelText("330-0000 for Houzs Century"));
-    expect(bankMutate).toHaveBeenCalledWith({ companyId: 1, accountCode: '330-0000', enabled: false });
-    expect(within(screen.getByLabelText("331-0000 for Houzs Century").closest('td') as HTMLElement).getByText('PBB')).toBeTruthy();
+    fireEvent.click(screen.getByLabelText("310-0010 for Houzs Century"));
+    expect(bankMutate).toHaveBeenCalledWith({ companyId: 1, accountCode: '310-0010', enabled: false });
+    expect(within(screen.getByLabelText("310-0020 for Houzs Century").closest('td') as HTMLElement).getByText('PBB')).toBeTruthy();
   });
 
   /* A code a company does not carry is not an unticked box it could tick. */
   test('an account missing from a company chart says so instead of offering a tick', () => {
     draw();
-    expect(screen.queryByLabelText("331-0000 for 2990's Home")).toBeNull();
+    expect(screen.queryByLabelText("310-0020 for 2990's Home")).toBeNull();
     expect(screen.getByText('not in its chart')).toBeTruthy();
   });
 
