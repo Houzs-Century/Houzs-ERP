@@ -251,14 +251,26 @@ export function buildVariantSummary(
   // `variants` so no caller signature changes; missing → codes-only (old orders).
   // foldRedundantSpecials: one request must print once — see the rule above.
   // The stored array is untouched; only this rendering drops the glued twin.
-  const specials = foldRedundantSpecials(specialsList(variants.specials ?? variants.special));
+  /* RECORDED-ONLY specials (owner's choice 甲, 2026-09-03). An AutoCount-imported
+     line's Desc2 asked for a PRICED option; recording it must let the factory
+     see what to build without re-charging a historical document, so the codes
+     live in `variants.specialsRecorded` — a key NO pricing path reads — and are
+     rendered HERE beside the picked ones. Deliberately merged into the same
+     SPECIAL segment: the factory needs one list of what to build, not two.
+     A code the operator has since picked properly wins, so it is never printed
+     twice. See docs/bugs/ "recorded, not charged" and
+     backend/scripts/record-priced-specials-on-migrated-lines.mjs. */
+  const picked = foldRedundantSpecials(specialsList(variants.specials ?? variants.special));
+  const recordedRaw = specialsList(variants.specialsRecorded)
+    .filter((c) => !picked.some((p) => p.toLowerCase() === c.toLowerCase()));
+  const specials = [...picked, ...recordedRaw];
   const choicesMap =
     variants.specialChoices && typeof variants.specialChoices === 'object'
       ? (variants.specialChoices as Record<string, unknown>)
       : null;
   const specialBits = specials.map((code) => {
-    const picked = choicesMap ? specialsList(choicesMap[code]) : [];
-    return picked.length ? `${code} (${picked.join(', ')})` : code;
+    const chosen = choicesMap ? specialsList(choicesMap[code]) : [];
+    return chosen.length ? `${code} (${chosen.join(', ')})` : code;
   });
   // Loo 2026-06-13 — the POS product-page "special add-on" (note + extra charge,
   // variants.extraAddonNote + extraAddonAmountRM) is a FREE-TEXT Special Add-on.

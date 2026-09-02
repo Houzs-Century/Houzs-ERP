@@ -3,10 +3,10 @@
 // document's money move. Owner's choice 甲, 2026-09-03: 「记下来给工厂看，但单据的
 //钱不可以动」.
 //
-// RE-RUN: idempotent. The stamp is a MERGE on two variants keys — a code already
-// present is not re-added, and `specialsRecordedOnly` is rewritten as the union
-// of what it holds and what this run recorded. A second APPLY writes 0 rows and
-// its money proof is the same IDENTICAL block. Nothing is ever removed.
+// RE-RUN: idempotent. `variants.specialsRecorded` is rewritten as the UNION of
+// what the line already holds and what this run derived, so a second APPLY
+// re-writes the same value and its money proof is the same IDENTICAL block.
+// Nothing is ever removed, and `variants.specials` is never touched at all.
 //
 // ─── WHAT THE BACKFILL LEFT ───────────────────────────────────────────────────
 // `backfill-specials-into-variants.mjs` with SKIP_PRICED=1 stamped the 0/0-priced
@@ -55,20 +55,36 @@
 //     Whether those codes are priced THERE is a live fact, so this script reads
 //     it and prints it rather than assuming either way.
 //
-// So: writing variants.specials moves NOTHING at rest — and this run PROVES that
+// So a variants-only write moves NOTHING at rest — and this run PROVES that
 // rather than asserting it, by censusing pg_trigger and the generated columns of
-// both line tables (a write and its read-back disagreeing because of a trigger
-// is a real trap here: migration 0229 canonicalises `venue` that way).
-// What it does is ARM the next genuine line edit, on the COST side.
+// both line tables and classifying each trigger by whether it can fire on an
+// UPDATE of the variants column (a write and its read-back disagreeing because
+// of a trigger is a real trap here: migration 0229 canonicalises venue that way).
+// What a PLAIN stamp into variants.specials would do is ARM the next genuine
+// line edit — on the SO COST side and on the PO price. This run measures that
+// exposure in sen and then declines to take it.
 //
-// ─── SO THE STAMP CARRIES ITS OWN "DO NOT CHARGE" ─────────────────────────────
-// Alongside `variants.specials` this writes `variants.specialsRecordedOnly` —
-// the exact codes THIS backfill recorded, never anything a human picked. It is
-// the line-level statement that these options are a RECORD of what AutoCount had
-// already priced into the imported figure, not a new charge. The pricing engine
-// honours it by dropping those codes from both surcharge sums, so the tick shows
-// in the picker and prints on the slip while contributing 0 to selling AND cost,
-// on every future recompute, on the SO server path and the PO client path alike.
+// ─── WHY A SEPARATE KEY, AND NOT variants.specials ───────────────────────────
+// This writes `variants.specialsRecorded` and DOES NOT TOUCH `variants.specials`.
+//
+// The alternative — stamp the code into `variants.specials` and teach the
+// pricing engine to skip it — was measured and rejected. There are EIGHT places
+// that price a line off `variants.specials`: the SO server recompute, the SO
+// line-editor preview, `poVariantPricingInput` (two backend PO callers), and the
+// five frontend inline builders in PurchaseOrderNew / PurchaseOrderDetail /
+// PurchaseInvoiceDetail / PurchaseConsignmentOrderNew / PurchaseConsignmentOrderDetail.
+// Missing ONE of them charges a historical document, silently, on somebody's
+// next edit. And this run MEASURED that the PO half is live, not theoretical:
+// the supplier maintenance pool carries priceSen for these very codes at master
+// scope and at both supplier scopes.
+//
+// A key no pricing path reads cannot move money even if a future author misses a
+// site. The failure mode of the design chosen here is that an option is not
+// DISPLAYED somewhere; the failure mode of the other is that money moves on a
+// document the owner already closed. Two surfaces render it — `variant-summary.ts`
+// (Description 2, so it reaches every print, the PO/DO/SI copies and the Detail
+// Listing) and `SpecialOrders.tsx` (a ticked, locked row reading "from AutoCount
+// — already in this document's price, not charged again").
 //
 // MODE=plan is the default and writes nothing. MODE=apply additionally requires
 // CONFIRM=RECORD-NOT-CHARGE.
@@ -116,9 +132,20 @@ async function moneySums(tx, table, ids) {
    that to `venue`, and a repair that compared its own write against the raw
    master once cried FAILED over it. Read pg_catalog, not the migration files. */
 async function derivationCensus(db) {
+  /* `relevant` is the whole point: a trigger that fires only on DELETE, or only
+     on UPDATE OF a named column that is not `variants`, cannot see this write.
+     tgtype bit 4 (=16) is UPDATE; an EMPTY tgattr means "any column". Classified
+     in SQL so the verdict is a measurement, not a human reading a definition. */
   const rows = await db`
     SELECT c.relname::text AS table_name, t.tgname::text AS trigger_name,
-           pg_get_triggerdef(t.oid)::text AS def
+           pg_get_triggerdef(t.oid)::text AS def,
+           ((t.tgtype & 16) <> 0) AS on_update,
+           (COALESCE(array_length(t.tgattr::int2[], 1), 0) = 0) AS any_column,
+           EXISTS (
+             SELECT 1 FROM pg_attribute a
+              WHERE a.attrelid = c.oid AND a.attname = 'variants'
+                AND a.attnum = ANY (t.tgattr::int2[])
+           ) AS names_variants
       FROM pg_trigger t
       JOIN pg_class c ON c.oid = t.tgrelid
       JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -135,6 +162,7 @@ async function derivationCensus(db) {
        AND a.attgenerated <> ''
        AND c.relname IN ('mfg_sales_order_items', 'purchase_order_items')
      ORDER BY c.relname, a.attname`;
+  for (const r of rows) r.relevant = r.on_update && (r.any_column || r.names_variants);
   return { triggers: rows, generated: gen };
 }
 
@@ -231,12 +259,12 @@ async function main() {
       for (const c of pricedNow) byCode.set(c, (byCode.get(c) || 0) + 1);
       for (const c of zeroNow) zeroRidingAlong.set(c, (zeroRidingAlong.get(c) || 0) + 1);
 
-      /* The record-only marker is the UNION of what the line already declares
-         and what this run recorded — never a replacement, so a rerun (or a
-         second pass over a line the owner has since edited) cannot silently
-         drop a code from the no-charge list. Only codes THIS backfill added go
-         in; a code a human picked stays chargeable. */
-      const declared = asArray(v0.specialsRecordedOnly).map((x) => String(x).trim()).filter(Boolean);
+      /* UNION, never a replacement, so a rerun — or a second pass over a line the
+         owner has since edited — cannot silently drop a code from the recorded
+         list. Only codes the slip asks for and the line does NOT already carry
+         go in: a code a human has picked properly lives in variants.specials,
+         stays fully chargeable, and is excluded here by `addedNow`. */
+      const declared = asArray(v0.specialsRecorded).map((x) => String(x).trim()).filter(Boolean);
       const recordedOnly = [...new Set([...declared, ...cls.addedNow])];
 
       updates[which].push({
@@ -245,7 +273,7 @@ async function main() {
       });
       if (samples.length < SHOW)
         samples.push(`   ${which.toUpperCase()} ${String(r.doc ?? "").padEnd(14)} ${String(r.code ?? "").padEnd(20)} ` +
-                     `${JSON.stringify(cls.had)} + ${JSON.stringify(cls.addedNow)}  recordOnly=${JSON.stringify(recordedOnly)}`);
+                     `specials=${JSON.stringify(cls.had)} (untouched)  records=${JSON.stringify(recordedOnly)}`);
     }
   }
 
@@ -284,12 +312,15 @@ async function main() {
   log("");
   log(`DERIVATION CENSUS (pg_catalog, live — not the migration files):`);
   log(`   non-internal triggers on the two line tables: ${census.triggers.length}`);
-  for (const t of census.triggers) log(`   TRIGGER  ${t.table_name}.${t.trigger_name}: ${t.def.slice(0, 160)}`);
+  for (const t of census.triggers)
+    log(`   TRIGGER  ${t.relevant ? "CAN FIRE " : "cannot fire"}  ${t.table_name}.${t.trigger_name}: ${t.def.slice(0, 170)}`);
   log(`   GENERATED columns on the two line tables: ${census.generated.length}`);
   for (const g of census.generated) log(`   GENERATED  ${g.table_name}.${g.column_name}`);
-  const writeIsInert = census.triggers.length === 0 && census.generated.length === 0;
+  const firing = census.triggers.filter((t) => t.relevant);
+  const writeIsInert = firing.length === 0 && census.generated.length === 0;
+  log(`   of those, able to fire on an UPDATE that touches the variants column: ${firing.length}`);
   log(`   -> a variants-only UPDATE ${writeIsInert
-    ? "cannot move a money column: nothing derives one from variants."
+    ? "cannot move a money column: nothing on these tables derives one from variants."
     : "MUST be re-checked against the definitions above before it is applied."}`);
 
   // ── the PO side's real pool ─────────────────────────────────────────────────
@@ -319,13 +350,14 @@ async function main() {
   }
   for (const u of updates.po) for (const c of u.addedNow) poCostIfPooled += poolCostOf.get(c) ?? 0;
   log("");
-  log(`LATENT EXPOSURE — what the NEXT genuine line edit would add, if the code were recorded PLAIN:`);
-  log(`   SO unit_price_sen (customer price)   +0 sen — suppressed structurally for a migrated line`);
+  log(`EXPOSURE NOT TAKEN — what the NEXT genuine line edit WOULD add if these codes were`);
+  log(`stamped into variants.specials instead. This run writes variants.specialsRecorded, which`);
+  log(`no pricing path reads, so every figure below stays 0:`);
+  log(`   SO unit_price_sen (customer price)   +0 sen — already suppressed for a migrated line`);
   log(`                                        (mfg-pricing-recompute.ts:546-547 and :725-730)`);
   log(`   SO unit_cost_sen (per unit)          +${soCost} sen (RM ${(soCost / 100).toFixed(2)}) over ${updates.so.length} lines`);
   log(`   SO special_order_price_sen           +${soSpecialCol} sen (RM ${(soSpecialCol / 100).toFixed(2)})`);
   log(`   PO unit_price_sen (client re-price)  +${poCostIfPooled} sen from the maintenance pool above`);
-  log(`   The record-only marker this run writes drives every one of those to 0 and keeps them there.`);
 
   // ── the money proof ─────────────────────────────────────────────────────────
   if (!APPLY) {
@@ -341,8 +373,10 @@ async function main() {
       }
       log("");
     }
-    log(`PLAN — nothing was written. MODE=apply CONFIRM=${CONFIRM_PHRASE} writes,`);
-    log(`and that run repeats this proof INSIDE the transaction and rolls back on any difference.`);
+    log(`PLAN — nothing was written. The UPDATE an apply would run touches ONE jsonb key,`);
+    log(`variants.specialsRecorded, and no money column appears in its SET list. MODE=apply`);
+    log(`CONFIRM=${CONFIRM_PHRASE} writes, and that run repeats this proof INSIDE the`);
+    log(`transaction and rolls the whole thing back on any difference.`);
     await sql.end();
     return;
   }
@@ -369,12 +403,11 @@ async function main() {
          (docs/jsonb-double-encoding-coe.md). */
       const res = await tx.unsafe(
         `UPDATE scm.${table}
-            SET variants = jsonb_set(
-                  jsonb_set(COALESCE(variants, '{}'::jsonb), '{specials}', $1::jsonb, true),
-                  '{specialsRecordedOnly}', $2::jsonb, true)
-          WHERE id = $3
+            SET variants = jsonb_set(COALESCE(variants, '{}'::jsonb),
+                                     '{specialsRecorded}', $1::jsonb, true)
+          WHERE id = $2
             AND (variants IS NULL OR jsonb_typeof(variants) = 'object')`,
-        [tx.json(u.next), tx.json(u.recordedOnly), u.id]);
+        [tx.json(u.recordedOnly), u.id]);
       touched += res.count ?? 0;
     }
     return touched;
@@ -429,10 +462,9 @@ async function main() {
         const b = list.slice(i, i + 500);
         const rows = await v.unsafe(
           `SELECT id::text AS id,
-                  jsonb_typeof(variants->'specials')             AS specials_type,
-                  jsonb_typeof(variants->'specialsRecordedOnly') AS record_type,
-                  COALESCE(variants->'specials', '[]'::jsonb)             AS specials,
-                  COALESCE(variants->'specialsRecordedOnly', '[]'::jsonb) AS recorded
+                  jsonb_typeof(variants->'specialsRecorded') AS record_type,
+                  COALESCE(variants->'specials', '[]'::jsonb)         AS specials,
+                  COALESCE(variants->'specialsRecorded', '[]'::jsonb) AS recorded
              FROM scm.${table} WHERE id = ANY($1::uuid[])`, [b.map((u) => u.id)]);
         const got = new Map(rows.map((r) => [r.id, r]));
         for (const u of b) {
@@ -440,11 +472,14 @@ async function main() {
           const have = asArray(row?.specials).map((x) => K(x));
           const rec = asArray(row?.recorded).map((x) => K(x));
           const problems = [];
-          if (row?.specials_type !== "array") problems.push(`specials is jsonb ${row?.specials_type}`);
-          if (row?.record_type !== "array") problems.push(`specialsRecordedOnly is jsonb ${row?.record_type}`);
-          for (const c of u.next) if (!have.includes(K(c))) problems.push(`missing ${c}`);
-          for (const c of u.had) if (!have.includes(K(c))) problems.push(`DROPPED ${c}`);
+          /* SHAPE, not a row count: `UPDATE 1` was true while a jsonb value was
+             being double-encoded into a STRING that every Array.isArray reader
+             skips (docs/jsonb-double-encoding-coe.md). */
+          if (row?.record_type !== "array") problems.push(`specialsRecorded is jsonb ${row?.record_type}`);
           for (const c of u.recordedOnly) if (!rec.includes(K(c))) problems.push(`not recorded ${c}`);
+          /* variants.specials is NOT ours to change — assert it came back untouched. */
+          for (const c of u.had) if (!have.includes(K(c))) problems.push(`DROPPED from specials: ${c}`);
+          if (have.length !== u.had.length) problems.push(`specials length moved ${u.had.length} -> ${have.length}`);
           if (problems.length) {
             bad++;
             if (badSamples.length < 10) badSamples.push(`   ${which} ${u.id} ${problems.join(", ")}`);
@@ -465,7 +500,7 @@ async function main() {
   }
   log("");
   log(`APPLIED — SO ${updates.so.length} lines, PO ${updates.po.length} lines recorded as NOT chargeable, ` +
-      `PROVEN by read-back. custom_specials untouched.`);
+      `PROVEN by read-back. variants.specials and custom_specials both untouched.`);
   await sql.end();
 }
 main().catch((e) => { console.error(e); process.exit(1); });
