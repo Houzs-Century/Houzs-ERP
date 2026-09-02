@@ -74,7 +74,7 @@ checks. Those read `paid_sen`, so a partly-paid invoice later put on hold would
 have shown "Partially paid" and the hold would have been invisible on the one
 screen a person opens to decide whether to pay the rest.
 
-## 0b. The four layers (owner 2026-09-02; migs 0339 + 0342)
+## 0b. The four layers (owner 2026-09-02; migs 0339 + 0343)
 
 The owner's design in his own words: draft 就是 raw draft… 然后prepare 后会
 多两层checking, 一层是checked，一层是approved, 当approved 了才会进gl. Whether
@@ -82,7 +82,7 @@ the money truly left the bank stays **bank reconciliation's** question.
 This replaced phase 3's submit→approve→post (2026-08-28) same-week, at his
 correction. **Marker columns, not new statuses** — the 0324 lesson, third
 time running: `submitted_at/by` (the Prepared mark), `checked_at/by` (mig
-0342) and `approved_at/by` live on the voucher; `status` stays `DRAFT`
+0343) and `approved_at/by` live on the voucher; `status` stays `DRAFT`
 until approval posts it.
 
 The state machine is a pure table in `backend/src/scm/lib/pv-approval.ts`
