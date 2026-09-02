@@ -194,8 +194,20 @@ const inHouseLorries = (sb: { from: (t: string) => { select: (cols: string) => a
    would leave the dashboard listing a row that PATCH/DELETE then 404s. The gate
    that IS real is requireHouzsPerm("fleet.write").
 
+   THIS NOTE DESCRIBED THE FILE AGAIN ONLY ON 2026-09-02. For a period, twelve
+   by-id handlers on these same tables DID call scopeToCompany while /dashboard
+   did not — so the dashboard listed rows that PATCH/DELETE then 404'd, which is
+   the exact failure the paragraph above predicts in words. The note was right
+   and the code had drifted from it; a marker that states the intent is not a
+   marker that enforces it. Owner, 2026-09-02, asked which way to settle it:
+   「共用的，因为 TMS 是共用的。这个东西 TMS 就像我们的运输公司一样」. One
+   transport company, one fleet — so the twelve went, not the dashboard.
+   backend/tests/fleetMaintenanceUnifiedScope.test.ts is what enforces it now.
+
    EXCEPTION: scm.workshops IS per-company (mig 0241) and its handlers DO filter
-   on activeCompanyId. */
+   on activeCompanyId — through scopeToCompany, which fails closed. Workshops is
+   the repair-shop MASTER, not a maintenance record, and the 2026-09-02 ruling
+   was about the records; it was not asked about and is deliberately unchanged. */
 
 type Lorry = {
   id: string;
@@ -1132,11 +1144,14 @@ fleetMaintenance.put("/vehicles/:id/compliance/:docId/attachments", requireHouzs
 
   /* The document must exist AND belong to the lorry in the path - otherwise a
      known docId would let a caller hang a file off another lorry's renewal.
-     Scoped as well as owner-checked: the lorry master is unified across
-     companies (see the vehicle-exists checks below), so "same lorry" alone does
-     not mean "same books" - the renewal record itself is per-company. */
-  const { data: doc, error: docErr } = await scopeToCompany(sb
-    .from("lorry_compliance_documents").select("id, lorry_id").eq("id", docId), c).maybeSingle();
+     OWNER-CHECKED, not company-scoped: this paragraph used to end "the renewal
+     record itself is per-company", which contradicted the file's own UNIFIED
+     FLEET note and the four migration headers it cites. Owner, 2026-09-02:
+     「共用的，因为 TMS 是共用的。这个东西 TMS 就像我们的运输公司一样」 — one
+     transport company, one fleet, one set of maintenance records. The lorry
+     ownership check IS the boundary here. */
+  const { data: doc, error: docErr } = await sb
+    .from("lorry_compliance_documents").select("id, lorry_id").eq("id", docId).maybeSingle();
   if (docErr) return c.json({ error: "load_failed", reason: docErr.message }, 500);
   if (!doc) return c.json({ error: "document_not_found" }, 404);
   const owner = String((doc as Record<string, unknown>).lorryId ?? (doc as Record<string, unknown>).lorry_id ?? "");
@@ -1174,14 +1189,14 @@ fleetMaintenance.delete("/compliance-attachments/:attId", requireHouzsPerm("flee
   const attId = c.req.param("attId");
   const sb = c.get("supabase");
 
-  const { data: row, error: loadErr } = await scopeToCompany(sb
-    .from("lorry_compliance_attachments").select("id, r2_key").eq("id", attId), c).maybeSingle();
+  const { data: row, error: loadErr } = await sb
+    .from("lorry_compliance_attachments").select("id, r2_key").eq("id", attId).maybeSingle();
   if (loadErr) return c.json({ error: "load_failed", reason: loadErr.message }, 500);
   if (!row) return c.json({ error: "attachment_not_found" }, 404);
 
   /* Scoped on the DELETE itself, not only on the load above: the client is
      service-role, so RLS re-checks nothing between the two statements. */
-  const { error } = await scopeToCompany(sb.from("lorry_compliance_attachments").delete().eq("id", attId), c);
+  const { error } = await sb.from("lorry_compliance_attachments").delete().eq("id", attId);
   if (error) return c.json({ error: "delete_failed", reason: error.message }, 500);
 
   /* Row first, object second. If the object delete fails the bucket keeps an
@@ -1305,10 +1320,10 @@ fleetMaintenance.patch("/plans/:planId", requireHouzsPerm("fleet.write"), async 
   if ("notes" in body) patch.notes = (body.notes as string)?.trim() || null;
   if ("active" in body) patch.active = Boolean(body.active);
 
-  const { data: updated, error } = await scopeToCompany(sb
+  const { data: updated, error } = await sb
     .from("lorry_maintenance_plans")
     .update(patch)
-    .eq("id", planId), c)
+    .eq("id", planId)
     .select("id")
     .maybeSingle();
   if (error) return c.json({ error: "update_failed", reason: error.message }, 500);
@@ -1563,7 +1578,7 @@ fleetMaintenance.patch("/breakdowns/:caseId", requireHouzsPerm("fleet.write"), a
     patch.recovery_time = v.value;
   }
 
-  const { data: updated, error } = await scopeToCompany(sb.from("lorry_breakdown_cases").update(patch).eq("id", caseId), c).select("id").maybeSingle();
+  const { data: updated, error } = await sb.from("lorry_breakdown_cases").update(patch).eq("id", caseId).select("id").maybeSingle();
   if (error) return c.json({ error: "update_failed", reason: error.message }, 500);
   if (!updated) return c.json({ error: "case_not_found" }, 404);
   return c.json({ id: updated.id });
@@ -1689,7 +1704,7 @@ fleetMaintenance.patch("/work-orders/:woId", requireHouzsPerm("fleet.write"), as
   }
   if ("componentId" in body) patch.component_id = (body.componentId as string)?.trim() || null;
 
-  const { data: updated, error } = await scopeToCompany(sb.from("lorry_work_orders").update(patch).eq("id", woId), c).select("id").maybeSingle();
+  const { data: updated, error } = await sb.from("lorry_work_orders").update(patch).eq("id", woId).select("id").maybeSingle();
   if (error) return c.json({ error: "update_failed", reason: error.message }, 500);
   if (!updated) return c.json({ error: "work_order_not_found" }, 404);
   return c.json({ id: updated.id });
@@ -1709,7 +1724,7 @@ fleetMaintenance.post("/work-orders/:woId/transition", requireHouzsPerm("fleet.w
   const to = String(body.to ?? "").trim().toUpperCase();
   if (!WORK_ORDER_STATE_SET.has(to)) return c.json({ error: "invalid_target_state" }, 400);
 
-  const { data: cur, error: curErr } = await scopeToCompany(sb.from("lorry_work_orders").select("id, status").eq("id", woId), c).maybeSingle();
+  const { data: cur, error: curErr } = await sb.from("lorry_work_orders").select("id, status").eq("id", woId).maybeSingle();
   if (curErr) return c.json({ error: "load_failed", reason: curErr.message }, 500);
   if (!cur) return c.json({ error: "work_order_not_found" }, 404);
   const from = cur.status as WorkOrderState;
@@ -1722,7 +1737,7 @@ fleetMaintenance.post("/work-orders/:woId/transition", requireHouzsPerm("fleet.w
   if (to === "VERIFIED") patch.verified_by = c.get("houzsUser")?.id ?? null;
   if (to === "COMPLETED") patch.actual_complete = new Date().toISOString();
 
-  const { data: updated, error } = await scopeToCompany(sb.from("lorry_work_orders").update(patch).eq("id", woId), c).select("id").maybeSingle();
+  const { data: updated, error } = await sb.from("lorry_work_orders").update(patch).eq("id", woId).select("id").maybeSingle();
   if (error) return c.json({ error: "update_failed", reason: error.message }, 500);
   if (!updated) return c.json({ error: "work_order_not_found" }, 404);
   return c.json({ id: updated.id, status: to });
@@ -1755,7 +1770,7 @@ fleetMaintenance.post("/work-orders/:woId/parts", requireHouzsPerm("fleet.write"
   const section = String(body.section ?? "PART").toUpperCase();
   if (section !== "PART" && section !== "LABOUR") return c.json({ error: "invalid_section" }, 400);
 
-  const { data: wo, error: woErr } = await scopeToCompany(sb.from("lorry_work_orders").select("id, labour_sen").eq("id", woId), c).maybeSingle();
+  const { data: wo, error: woErr } = await sb.from("lorry_work_orders").select("id, labour_sen").eq("id", woId).maybeSingle();
   if (woErr) return c.json({ error: "load_failed", reason: woErr.message }, 500);
   if (!wo) return c.json({ error: "work_order_not_found" }, 404);
 
@@ -1799,11 +1814,11 @@ fleetMaintenance.post("/work-orders/:woId/parts", requireHouzsPerm("fleet.write"
 fleetMaintenance.delete("/work-orders/:woId/parts/:partId", requireHouzsPerm("fleet.write"), async (c) => {
   // company-scope: unified fleet - see the UNIFIED FLEET note above inHouseLorries.
   const sb = c.get("supabase");
-  const { data: deleted, error } = await scopeToCompany(sb
+  const { data: deleted, error } = await sb
     .from("lorry_work_order_parts")
     .delete()
     .eq("id", c.req.param("partId"))
-    .eq("work_order_id", c.req.param("woId")), c)
+    .eq("work_order_id", c.req.param("woId"))
     .select("id")
     .maybeSingle();
   if (error) return c.json({ error: "delete_failed", reason: error.message }, 500);
@@ -1913,7 +1928,7 @@ fleetMaintenance.patch("/components/:componentId", requireHouzsPerm("fleet.write
   if ("serial" in body) patch.serial = (body.serial as string)?.trim() || null;
   if ("notes" in body) patch.notes = (body.notes as string)?.trim() || null;
 
-  const { data: updated, error } = await scopeToCompany(sb.from("lorry_components").update(patch).eq("id", componentId), c).select("id").maybeSingle();
+  const { data: updated, error } = await sb.from("lorry_components").update(patch).eq("id", componentId).select("id").maybeSingle();
   if (error) {
     if (error.code === "23505") return c.json({ error: "position_occupied" }, 409);
     return c.json({ error: "update_failed", reason: error.message }, 500);
@@ -1943,7 +1958,7 @@ fleetMaintenance.post("/components/:componentId/events", requireHouzsPerm("fleet
     if (!COMPONENT_POSITION_SET.has(toPosition)) return c.json({ error: "invalid_to_position" }, 400);
   }
 
-  const { data: comp, error: compErr } = await scopeToCompany(sb.from("lorry_components").select("id").eq("id", componentId), c).maybeSingle();
+  const { data: comp, error: compErr } = await sb.from("lorry_components").select("id").eq("id", componentId).maybeSingle();
   if (compErr) return c.json({ error: "load_failed", reason: compErr.message }, 500);
   if (!comp) return c.json({ error: "component_not_found" }, 404);
 
