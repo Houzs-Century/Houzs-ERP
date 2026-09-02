@@ -642,16 +642,16 @@ leak while collapsing the second into the first is an empty-list outage.
 Two gates, deliberately different:
 
 - `requireServiceCaseAccess(perms)` wraps `canAccessServiceCases`: pass if the
-  caller holds any of the listed permissions **OR** holds the **HOUZS company
-  grant** (`holdsHouzsCompanyGrant`) **OR** is a director (`isDirectorUser` =
+  caller holds any of the listed permissions **OR** holds **any company grant**
+  (`holdsAnyCompanyGrant`) **OR** is a director (`isDirectorUser` =
   `*` / Super Admin / Sales Director / Finance Manager). Applied only to READS
   and to CREATE.
 
   The middle term was `isSalesUser` — a job-title test — until 2026-08-20.
-  `holdsHouzsCompanyGrant` reads `allowedCompanyIds` with the usual three-state
-  sentinel: `undefined` (unresolved company context) degrades to YES, exactly as
-  `allowedCompaniesSql` degrades to no predicate, so a cold start does not 403
-  everyone; `[]` is NO; a resolved set is YES only when HOUZS is in it.
+  It reads `allowedCompanyIds` with the usual three-state sentinel: `undefined`
+  (unresolved company context) degrades to YES, exactly as `allowedCompaniesSql`
+  degrades to no predicate, so a cold start does not 403 everyone; `[]` (granted
+  nothing) is NO; any non-empty resolved set is YES.
 
   **Known consequence, measured, not guessed.** Census run 32351722894
   (2026-08-20, production): admittance goes 49 -> 77 active users, **+28 gained,
@@ -659,12 +659,22 @@ Two gates, deliberately different:
   Outsource Transporters — plus HR and an Operation Executive. That is what
   "不看职称" means in this data.
 
-  **Known future gap, also measured.** Six Sales-titled active users hold no
-  HOUZS grant (the 2990-only cohort). None of them loses access today, because
-  each is admitted by the permission or director term as well — but a FUTURE
-  2990-only rep with neither would be refused by this gate. If 2990 grows its own
-  sales team, this term needs a second company, or it needs to become "holds any
-  granted company".
+  **That gap is CLOSED, 2026-09-03** — by the second option this paragraph named.
+  The middle term is now `holdsAnyCompanyGrant(c)`: holds a company grant at
+  all. The ruling replaced a job TITLE with a company GRANT (「不看职称」); the
+  HOUZS literal came from the incident being about HOUZS, and it was narrower
+  than the rule already recorded in this file's 2026-07-20 trail ("a future 2990
+  rep's is {2990}"). `census-service-case-visibility.mjs` §1 had even named the
+  stranded cohort in the PR that shipped the literal. Nobody lost access in
+  between — the six were each admitted by the permission or director term too —
+  so this is prevention, not repair. `holdsHouzsCompanyGrant` STAYS: the
+  AutoCount mirror arm still needs the HOUZS-specific question, because
+  `sales_orders` holds only HOUZS rows. Trace:
+  `docs/bugs/0621-the-company-grant-rule-shipped-with-a-company-literal.md`.
+
+  **Admitting is not showing.** Every read is already scoped by `assrCompanySql`
+  → `allowedCompaniesSql`, so a 2990 grantee admitted here sees 2990's cases and
+  nothing else.
 - `requirePermission("service_cases.<verb>")` — plain, for every write /
   manage / approve route. Owner rule 8 widened intake for Sales; it never
   widened mutation access (comment `:52-65`).

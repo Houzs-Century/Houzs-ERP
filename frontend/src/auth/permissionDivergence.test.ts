@@ -84,15 +84,20 @@ describe("/assr/:id — the route guard matches requireServiceCaseAccess", () =>
     // Verify the premise before trusting it. Two things must hold: the endpoint
     // uses requireServiceCaseAccess, and that gate admits a rank-and-file rep.
     //
-    // The MECHANISM of that second half changed and the assertion moved with it.
-    // It used to read `isSalesUser(user)` — Sales by job title. A batch of reps
-    // lost every case when a name-shaped signal missed, so the gate now ORs in
-    // the HOUZS COMPANY GRANT instead. The invariant is unchanged and is what is
-    // asserted here: a rep the API would serve is never Forbidden. Only the
-    // thing that makes them a rep is different, so match the grant, not a title.
+    // The MECHANISM of that second half has changed TWICE and the assertion moved
+    // with it. It read `isSalesUser(user)` — Sales by job title — until a batch
+    // of reps lost every case when a name-shaped signal missed; the gate then
+    // ORed in the HOUZS company grant; and on 2026-09-03 that literal widened to
+    // ANY company grant, because the ruling had replaced the TITLE and the
+    // single-company literal was narrower than the rule (docs/bugs/0621-*).
+    //
+    // The INVARIANT is unchanged and is the only thing worth asserting: a rep
+    // the API would serve is never Forbidden. So match the GRANT TERM, not which
+    // company it names — pinning the company is what made this assertion need
+    // editing on a change that did not alter the invariant at all.
     const assr = beSrc("routes/assr.ts");
     expect(assr).toMatch(/app\.get\(\s*["']\/:id\{\[0-9\]\+\}["']\s*,\s*requireServiceCaseAccess\(\)/);
-    expect(assr).toMatch(/function canAccessServiceCases[\s\S]{0,600}holdsHouzsCompanyGrant\(c\)/);
+    expect(assr).toMatch(/function canAccessServiceCases[\s\S]{0,600}holds\w*CompanyGrant\(c\)/);
     expect(assr).toMatch(/function requireServiceCaseAccess[\s\S]{0,400}canAccessServiceCases/);
   });
 
