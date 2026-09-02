@@ -4,6 +4,7 @@ import { ArrowLeft, ShieldAlert } from "lucide-react";
 import { Sidebar } from "./Sidebar";
 import { GlobalSearchTrigger } from "./GlobalSearch";
 import { TopNavbar } from "./TopNavbar";
+import { RefreshButton } from "./RefreshButton";
 import { MobileTabBar } from "./MobileTabBar";
 import { PullToRefresh, PullToRefreshGuardProvider } from "./PullToRefresh";
 import { RowActionsMenu, type MenuItem } from "./RowActionsMenu";
@@ -116,6 +117,10 @@ function MobileTopBar() {
       />
       <div className="ml-auto flex min-w-0 items-center gap-1.5">
         <GlobalSearchTrigger collapsed />
+        {/* Same control as the lg+ bar. This bar is what a PHONE on the 2990
+            host gets (AuthGate builds the mobile product for HOUZS only), so
+            without it that whole company would have no refresh on a phone. */}
+        <RefreshButton />
       </div>
     </div>
   );
