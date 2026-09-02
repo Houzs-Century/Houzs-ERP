@@ -21,7 +21,7 @@ const ok = (ttl: number, poll: number) => cacheFamilyReading(ttl, poll, 'hit');
 
 describe('the sentence follows the numbers', () => {
   test('key OFF is the headline, ahead of any cache reading', () => {
-    const r = readingFor(false, 'session-db', { presence: ok(15, 60) });
+    const r = readingFor(false, 'session-db', { presence: ok(15, 60) }, true);
     expect(r).toContain('OFF');
     expect(r).not.toContain('fast path.');
   });
@@ -29,7 +29,7 @@ describe('the sentence follows the numbers', () => {
   /* THE CASE THE PROBE EXISTS FOR. 0593 shipped configured-and-inert, and
      nothing on any screen could tell the two apart. */
   test('ON but still hitting the database says exactly that', () => {
-    const r = readingFor(true, 'session-db', { presence: ok(15, 60) });
+    const r = readingFor(true, 'session-db', { presence: ok(15, 60) }, true);
     expect(r).toContain('configured and not being taken');
   });
 
@@ -37,7 +37,7 @@ describe('the sentence follows the numbers', () => {
     const r = readingFor(true, 'pass', {
       presence: cacheFamilyReading(15, 60, 'miss'),
       banner: cacheFamilyReading(300, 180, 'hit'),
-    });
+    }, true);
     expect(r).toContain('presence');
     expect(r).not.toContain('banner');
   });
@@ -45,12 +45,33 @@ describe('the sentence follows the numbers', () => {
   /* `unknown` must never collapse onto either answer — the same rule
      coverage-state.tsx applies on the frontend. */
   test('an unrecorded path refuses to answer', () => {
-    const r = readingFor(true, 'unknown', { presence: ok(300, 60) });
+    const r = readingFor(true, 'unknown', { presence: ok(300, 60) }, true);
     expect(r).toContain('cannot say');
   });
 
+  /* THE COMBINATION THAT SHIPPED THE BUG. `unknown` beside a SHORT TTL used to
+     print "Authorization took the fast path" — the cache branch sat above the
+     unknown one — so the probe built to stop unevidenced claims made one, and
+     the owner read it on the card (2026-09-02). The old test only ever paired
+     `unknown` with a HEALTHY cache, so this arm never ran. */
+  test('unknown NEVER claims the fast path, not even beside a short TTL', () => {
+    const r = readingFor(true, 'unknown', { presence: cacheFamilyReading(15, 60, 'miss') }, true);
+    expect(r).toContain('cannot say');
+    expect(r).not.toContain('took the fast path');
+    /* ...and the cache finding is still reported, because it holds either way. */
+    expect(r).toContain('presence');
+  });
+
+  /* `unknown` is no longer a dead end: the two causes need different fixes. */
+  test('unknown says WHICH of its two causes applies', () => {
+    const sent = readingFor(true, 'unknown', { presence: ok(300, 60) }, true);
+    expect(sent).toContain('lost rather than never made');
+    const notSent = readingFor(true, 'unknown', { presence: ok(300, 60) }, false);
+    expect(notSent).toContain('none to send');
+  });
+
   test('all clear says so without inventing a cause', () => {
-    const r = readingFor(true, 'pass', { presence: ok(300, 60) });
+    const r = readingFor(true, 'pass', { presence: ok(300, 60) }, true);
     expect(r).toContain('not on this page');
   });
 });
