@@ -18,6 +18,14 @@ name: AutoCount held-back documents — identify (read-only)
 # codes and booleans only, and classifies stored error text into shared reason
 # codes rather than quoting it.
 on:
+  # TEMPORARY, REMOVED BEFORE REVIEW. `gh workflow run` answers
+  # `HTTP 404: workflow autocount-held-back.yml not found on the default branch`
+  # for a workflow that has never been on `main`, and CLAUDE.md will not call a
+  # workflow_dispatch workflow shipped until it has run once and reported
+  # success. This is how the job gets proven before the merge that would let it
+  # be dispatched.
+  push:
+    branches: [chore/ac-held-back-identity]
   workflow_dispatch:
     inputs:
       doc:
