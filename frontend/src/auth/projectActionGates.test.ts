@@ -205,3 +205,23 @@ describe("Projects.tsx — Attach is offered to every role the server admits (05
     expect(projects()).toContain("canManage && !readOnlyAttach && a.id > 0");
   });
 });
+
+// Source-scanned here because this file already reads Projects.tsx, and the
+// list is a module-level const inside a ~15,000-line component that must not be
+// imported into a test (see the header above).
+describe("Projects.tsx — every list filter param is sticky", () => {
+  it("PROJECTS_LIST_FILTER_KEYS covers each param the toolbar reads", () => {
+    const text = projects();
+    const keys = text.slice(
+      text.indexOf("const PROJECTS_LIST_FILTER_KEYS = ["),
+      text.indexOf("] as const;", text.indexOf("const PROJECTS_LIST_FILTER_KEYS = [")),
+    );
+    // Owner 2026-08-24: "once i filter here and click in project, then i back to
+    // project list back all my filter gone". from/to (the date range that
+    // replaced year+month) were missing, so useStickyFilters' pluck() dropped
+    // them and the range alone did not survive the round-trip.
+    for (const p of ["section", "task", "brand", "from", "to", "status", "page"]) {
+      expect(keys, `${p} is read from the URL but never mirrored`).toContain(`"${p}"`);
+    }
+  });
+});
