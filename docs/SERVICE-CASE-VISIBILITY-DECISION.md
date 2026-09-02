@@ -152,3 +152,53 @@ Caveat on what the census proves: the ERP-vs-AutoCount split it reports (4 vs
 858) is distorted by the HC transaction wipe earlier the same day — a case whose
 SO no longer exists in `scm.mfg_sales_orders` counts as "unresolvable". The §6
 figures above do not read `scm` at all, so they are unaffected.
+
+---
+
+## Correction — 2026-09-03: the rule is A company grant, not THE HOUZS grant
+
+**What shipped on 2026-08-20 was narrower than what this document decided.**
+"What to change" item 1 above says: replace `isSalesUser(user)` with **holds the
+HOUZS company grant**, and that is exactly what `#2538` implemented. The owner's
+words it quotes are 「我们不 control Agent，可是我们 control Company」 and 「有
+Houzs 这家公司的授权 就好（**不看职称**）」 — and the load-bearing half is the
+parenthesis. The ruling took the JOB TITLE out of the decision. It was written
+while HOUZS agents were losing access, so it named HOUZS, and the literal came
+along with it.
+
+That literal contradicts the rule already recorded in `routes/assr.ts`'s own
+decision trail from **2026-07-20**:
+
+> Service Cases now follow the caller's GRANTED companies like the rest of the
+> SCM portal — no ASSR-specific role pin. A rank-and-file rep sees ONLY their own
+> company (a HOUZS rep's grant is {HOUZS}; **a future 2990 rep's is {2990}**).
+
+**The census had already named the stranded cohort, in advance.** §1 of
+`census-service-case-visibility.mjs` carried, in the same PR that shipped the
+literal:
+
+> `Sales-titled active users WITHOUT the HOUZS grant = N` *(the 2990-only cohort
+> the literal rule would strand)*
+
+It was measured and the literal shipped anyway. That line is now widened to every
+active grant-holder with no HOUZS in it, and §1 compares the SHIPPED gate against
+the current one rather than against the retired `isSalesUser`.
+
+**And 2990 is not hypothetical.** The 2026-08-21 census (run 32463589829) counted
+862 non-archived cases: **HOUZS 854 / 2990 8**.
+
+**The gate now asks whether the caller holds a company grant at all**
+(`holdsAnyCompanyGrant`), and `holdsHouzsCompanyGrant` stays — the AutoCount
+mirror arm still needs the HOUZS-specific question, because that table holds only
+HOUZS rows.
+
+**Admitting is not showing, and that is why the door can widen safely.** Every
+read in the module is already scoped by `assrCompanySql` →
+`allowedCompaniesSql`, so a 2990 grantee admitted here sees 2990's cases and
+nothing else. Nothing about row visibility, the subtree, `assrUnrestricted`, My
+Cases, or the write/manage/approve/delete gates changes.
+
+**The "measure who gains access" requirement above still stands** and is one
+dispatch away: **Census: service case visibility (read-only)**, §1, which now
+prints the cohort by name. Trace:
+`docs/bugs/0621-the-company-grant-rule-shipped-with-a-company-literal.md`.

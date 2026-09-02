@@ -102,7 +102,7 @@ app.use("/:id{[0-9]+}/*", enforceCaseScope);
 //
 // `canAccessServiceCases` passes when the caller holds ANY of the given
 // permissions (the legacy path — unchanged for existing ASSR staff), OR holds
-// the HOUZS company grant, OR is a director (Owner/IT `*`, Super Admin, Sales
+// ANY company grant, OR is a director (Owner/IT `*`, Super Admin, Sales
 // Director, Finance Manager). It is applied ONLY to the read + create endpoints
 // — NOT to write / manage / approve / delete, which keep their original
 // `requirePermission` gate so this never widens mutation access.
@@ -119,7 +119,40 @@ export function canAccessServiceCases(
   if (!user) return false;
   const granted = user.permissions_set ?? user.permissions ?? [];
   if (perms.some((p) => hasPermission(granted, p))) return true;
-  return holdsHouzsCompanyGrant(c) || isDirectorUser(user);
+  return holdsAnyCompanyGrant(c) || isDirectorUser(user);
+}
+
+/**
+ * Does this caller hold a company grant AT ALL?
+ *
+ * THE GATE ASKS "WHICH COMPANY", NOT "WHICH COMPANY IS IT". The 2026-08-20
+ * ruling (docs/SERVICE-CASE-VISIBILITY-DECISION.md) replaced a JOB TITLE with a
+ * COMPANY GRANT — 「我们不 control Agent，可是我们 control Company」,
+ * 「有 Houzs 这家公司的授权 就好（不看职称）」. The load-bearing half is the
+ * parenthesis: the title stops deciding. The fix shipped with the HOUZS literal
+ * because the incident was HOUZS agents losing access, and that literal is
+ * NARROWER than the rule it implements — the 2026-07-20 trail below already
+ * said Service Cases follow the caller's GRANTED companies and anticipated
+ * "a future 2990 rep's is {2990}".
+ *
+ * census-service-case-visibility.mjs §1 had even named the cohort in advance:
+ * "the 2990-only cohort the literal rule would strand". It was measured and
+ * the literal shipped anyway.
+ *
+ * ADMITTING IS NOT SHOWING. Every read in this module is already scoped by
+ * assrCompanySql -> allowedCompaniesSql, so a 2990 grantee admitted here sees
+ * 2990's cases and nothing else; and the AutoCount mirror arm keeps its OWN
+ * HOUZS test (that table holds only HOUZS rows), so opening the door does not
+ * open that book.
+ *
+ * Same three-state sentinel as holdsHouzsCompanyGrant, and it must stay that
+ * way: `undefined` (unresolved / pre-migration / cold start) degrades to YES so
+ * a blip cannot 403 everyone, `[]` (granted nothing) is NO.
+ */
+export function holdsAnyCompanyGrant(c: CompanyScopeCtx): boolean {
+  const allowed = allowedCompanyIds(c);
+  if (allowed === undefined) return true; // unresolved -> legacy single-company
+  return allowed.length > 0;
 }
 
 /**
