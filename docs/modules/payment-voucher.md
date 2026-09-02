@@ -136,9 +136,10 @@ split Draft / Prepared / Checked / Approved / Cancelled by the marks.
 DataGrid's first-class multi-select for holders of the check or approve
 key. Only rows whose yes is YOURS to give can be ticked (a raw draft and a
 posted voucher render disabled; the header checkbox never sweeps them in);
-a bar counts each button's own targets — "Check n" / "Approve & post n" —
-and the approve dialog states the ticked rows' MYR-equivalent before
-anything moves. The run stamps ONE BY ONE through the same routes as the
+a bar counts each button's own targets — "Prepare n" (write key, raw
+drafts; no dialog — freely reversible, 我draft 也要批量去prepared) /
+"Check n" / "Approve & post n" — and the check/approve dialogs state the
+ticked rows' MYR-equivalent before anything moves. The run stamps ONE BY ONE through the same routes as the
 detail buttons (own permission, own gate, own audit; approve carries its
 whole post), so a refused voucher names itself in the summary and the rest
 carry on. No batch reject — a reject wants its own note. Contract:
