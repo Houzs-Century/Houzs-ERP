@@ -78,4 +78,12 @@ reported, not repaired. Whether a migrated line's COST should re-add a specials
 surcharge at all is an open owner question that this entry does not settle.
 
 **Ref.** fix/record-priced-specials-money-neutral, 2026-09-03. Plan run
-**33659562235** (prod, read-only).
+**33663208619** (prod, read-only).
+
+**Re-measured after `parse-sofa.mjs` changed under it.** #2899's leg-note fix
+(`0622`) altered the regex that pushes a sofa leg phrase into `specials`, and
+this population is derived from that parser — so the numbers above were re-taken
+on the merged tree rather than carried over. Run **33663208619** reproduces run
+33659562235 exactly: SO 228 + PO 110, the same nine codes with the same counts,
+the same RM 16,820 / RM 16,820 / RM 7,380, and the same money columns. The
+earlier run is superseded, not contradicted.
