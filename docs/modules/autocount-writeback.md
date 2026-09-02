@@ -2956,6 +2956,43 @@ to; a keyless line is refused by `composeEdit` long before this matters.
 wrote them). The sales order is the shape with live-book evidence behind it; the
 purchase order is a second rollout that needs its own.
 
+> **A DEAD ADDRESS IN `photo_urls` SILENCES THE WHOLE LINE.** *Added
+> 2026-09-03.* `photosOf` takes `photo_urls` verbatim
+> (`scm/lib/autocount-outbox.ts`), and the materialiser throws on the first key
+> the bucket cannot answer — `if (!obj) throw new Error('photo not in the
+> bucket: ...')` — so `line.Photos` is never set and the line sends nothing,
+> even when its other addresses are perfectly readable. That is the correct
+> behaviour (a short list would delete pictures from the book) and it makes a
+> broken address in the column a WRITE-BACK problem, not only a cosmetic one.
+>
+> Measured on prod 2026-09-03: 64 addresses answer `404 {"code":10007}`, spread
+> over 62 lines. Six of those lines are SALES ORDER lines, which is the side
+> that sends today — four carry a dead address next to a working one
+> (`HC-SO-012907`, `HC-SO-012107`, `HC-SO-012636`, `HC-SO-009031`) and two carry
+> only a dead one (`HC-SO-009031` line 628420, `HC-SO-012907` line 893019). Each
+> of the six would send no photographs on an `/edit`. The other 56 lines are
+> purchase orders, which do not send yet.
+>
+> **This is LIVE, not latent, and the earlier draft of this note said the
+> opposite.** `SELECT value FROM scm.app_config WHERE key =
+> 'scm.autocount_writeback'` returned **`1`** on 2026-09-03 — the
+> comma-separated form, meaning company 1 only, which is the company these
+> documents are in. The switch has NOT been off since some time before then; do
+> not repeat "writeback is off" from any note, run the query.
+>
+> No damage has happened yet: `scm.autocount_outbox` holds 21 `edit` rows in
+> `sent` (newest 2026-09-02T17:12Z) and **none of them is one of the four
+> documents above**, so those lines have not been pushed since the addresses
+> went dead. The first edit on one of them is when a picture stops reaching the
+> book. `backend/scripts/prune-dead-line-photo-keys.mjs` clears it; the full
+> trace is in
+> `docs/bugs/0625-a-backfill-replayed-the-round-1-photo-key-log-without-asking.md`.
+>
+> **The address is trusted; the row id inside it is not authority.** A key
+> naming a row id that no longer exists is FINE — 686 such addresses serve
+> today, because every read route authorises by MEMBERSHIP of `photo_urls`, not
+> by key shape. What matters is only whether the object is in the bucket.
+
 ## 8. Configuration
 
 | Name | Kind | Notes |
