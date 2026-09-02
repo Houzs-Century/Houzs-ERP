@@ -1,0 +1,65 @@
+name: AutoCount held-back documents — identify (read-only)
+
+# WHICH document is held back, and does a number somebody just said name a real
+# one? The daily outbox-health check answers "is anything stuck"; this answers
+# "which, and is that the number you think it is".
+#
+# It exists because on 2026-09-02 one Houzs Century order had been held back
+# since 2026-08-31 and was being discussed under two different numbers, one of
+# them outside the range AutoCount has ever issued. A wrong document pushed into
+# a licensed account book cannot be taken back out, so the number gets settled
+# by rows.
+#
+# Manual trigger only — a production DB read on a schedule turns a real question
+# into CI noise nobody reads. Own concurrency group, never the deploy's: a
+# diagnostic must not queue behind, or displace, a release.
+#
+# The log is PUBLIC. The script prints document numbers, counts, dates, reason
+# codes and booleans only, and classifies stored error text into shared reason
+# codes rather than quoting it.
+on:
+  workflow_dispatch:
+    inputs:
+      doc:
+        description: "ERP document number to report in full"
+        required: false
+        default: "HC-SO-013394"
+      search:
+        description: "Document number fragment to look for everywhere"
+        required: false
+        default: "013884"
+      control:
+        description: "Fragment that MUST be found — proves the search matcher works"
+        required: false
+        default: "013394"
+
+concurrency:
+  group: autocount-held-back
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    # DATABASE_URL is the only database credential this repo holds.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-autocount-held-back.mjs
+        env:
+          DOC: ${{ inputs.doc }}
+          SEARCH: ${{ inputs.search }}
+          CONTROL: ${{ inputs.control }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first
