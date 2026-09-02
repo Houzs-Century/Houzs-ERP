@@ -1,0 +1,45 @@
+name: Line photo GAP split (read-only)
+
+# The follow-up to "Line photo coverage": that one counts ROWS, and a sofa build
+# is several rows for one AutoCount line with the photograph deliberately on the
+# first piece, so its siblings read as a gap. This asks the question per
+# AutoCount LINE instead, and separately reports which shape of key each row is
+# standing on (round-1, whose object was listed in R2, vs the 2026-08-31 minted
+# key whose upload step has no recorded run).
+#
+# READ-ONLY: SELECTs only, no DDL, no writes, no transaction.
+on:
+  workflow_dispatch:
+    inputs:
+      company:
+        description: "company_id"
+        required: false
+        default: "1"
+        type: string
+      show:
+        description: "how many document numbers to name per bucket"
+        required: false
+        default: "20"
+        type: string
+
+concurrency:
+  group: probe-line-photo-gap
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+        working-directory: backend
+      - name: probe (read-only)
+        working-directory: backend
+        env:
+          DATABASE_URL: "${{ secrets.DATABASE_URL }}"
+          COMPANY: "${{ inputs.company }}"
+          SHOW: "${{ inputs.show }}"
+        run: node scripts/probe-line-photo-gap.mjs
