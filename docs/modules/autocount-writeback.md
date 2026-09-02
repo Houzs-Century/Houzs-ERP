@@ -2567,6 +2567,9 @@ MISMATCH creditor:400-H004 erp=HOOKKA INDUSTRIES SDN. BHD. book=HAO HUA FURNITUR
 **An empty `mismatches` is NOT "clean".** A host running a build older than this
 field does not send it at all, and the ERP cannot tell the difference. `GET
 /health`'s `builtAt` / `mvid` is the only thing that says which build answered.
+**Ask it without walking to the machine:** `GET /api/admin/health/autocount/host-build`
+(gated `*`) proxies that `/health` and reports `builtAt` / `mvid` plus a verdict —
+see `docs/modules/system-health.md`.
 
 **This repo cannot compile C#.** `deploy-on-host.ps1` compiles with `csc` on the
 host and REFUSES to swap an exe that did not compile, then health-checks and rolls
