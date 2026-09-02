@@ -7,11 +7,11 @@ import { describe, it, expect } from 'vitest';
 import { computeDailyBank, type GlLine } from './daily-bank';
 
 const MONEY = [
-  { account_code: '330-0000', account_name: 'Bank — Maybank Current' },
-  { account_code: '335-0000', account_name: 'Cash on Hand' },
+  { account_code: '310-0010', account_name: 'Bank — Maybank Current' },
+  { account_code: '320-0000', account_name: 'CASH IN HAND' },
 ];
 const TRANSIT = [
-  { acquirerCode: 'MBB', account_code: '320-0000', account_name: 'Card Machine Clearing (EDC)' },
+  { acquirerCode: 'MBB', account_code: '326-0000', account_name: 'Card Machine Clearing (EDC)' },
 ];
 
 const L = (over: Partial<GlLine>): GlLine => ({
@@ -19,7 +19,7 @@ const L = (over: Partial<GlLine>): GlLine => ({
   je_no: 'JE-2608-0001',
   source_type: 'SOPAY',
   source_doc_no: 'pay-1',
-  account_code: '330-0000',
+  account_code: '310-0010',
   debit_sen: 0,
   credit_sen: 0,
   notes: null,
@@ -43,9 +43,9 @@ describe('computeDailyBank', () => {
 
   it('transit is an as-of balance (≤ date) and is NOT part of available', () => {
     const board = computeDailyBank('2026-08-16', MONEY, TRANSIT, [
-      L({ account_code: '320-0000', entry_date: '2026-08-14', debit_sen: 70000 }),
-      L({ account_code: '320-0000', entry_date: '2026-08-16', debit_sen: 30000 }),
-      L({ account_code: '330-0000', entry_date: '2026-08-16', debit_sen: 10000 }),
+      L({ account_code: '326-0000', entry_date: '2026-08-14', debit_sen: 70000 }),
+      L({ account_code: '326-0000', entry_date: '2026-08-16', debit_sen: 30000 }),
+      L({ account_code: '310-0010', entry_date: '2026-08-16', debit_sen: 10000 }),
     ]);
     expect(board.transit[0].balanceSen).toBe(100000);
     expect(board.totalTransitSen).toBe(100000);

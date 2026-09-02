@@ -142,7 +142,7 @@ export const settlementSetupSave = guard(async (c) => {
 
   const link: Record<string, unknown> = {};
   if (body.bankAccountCode !== undefined) link.bank_account_code = body.bankAccountCode || null;
-  if (body.transitAccountCode !== undefined) link.transit_account_code = String(body.transitAccountCode || '320-0000');
+  if (body.transitAccountCode !== undefined) link.transit_account_code = String(body.transitAccountCode || '326-0000');
   if (body.feeAccountCode !== undefined) link.fee_account_code = String(body.feeAccountCode || '930-0000');
   if (body.isActive !== undefined) link.is_active = Boolean(body.isActive);
   if (Object.keys(link).length > 0) {
@@ -317,7 +317,7 @@ export const settlementMaintenanceMerchant = guard(async (c) => {
     const { error } = await sb.from('acc_company_acquirers').insert({
       company_id: companyId,
       acquirer_code: code,
-      transit_account_code: '320-0000',
+      transit_account_code: '326-0000',
       fee_account_code: '930-0000',
       bank_account_code: body.bankAccountCode || null,
       is_active: body.enabled === undefined ? true : Boolean(body.enabled),
