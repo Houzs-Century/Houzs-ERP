@@ -68,7 +68,11 @@ describe('the ERP asks; it never infers', () => {
      blank one. Seven of eight lines on SO-013394 reached the live book that way
      (docs/bugs/0615). */
   test('a rebuild puts the item code back, and only a rebuild', () => {
-    expect(WRITEBACK).toMatch(/\.\.\.\(effOpts\.rebuild \? \{ ItemCode: acItemCode \} : \{\}\)/);
+    expect(WRITEBACK).toMatch(/effOpts\.rebuild \? \{ ItemCode: acItemCode, ErpLineIds:/);
+    /* The KEYLESS branch returns the raw detail and skipped the stamping, so a
+       rebuilt document named its ERP rows on every line but that one and the
+       whole batch was refused. docs/bugs/0621. */
+    expect(WRITEBACK).toMatch(/if \(dtlKey == null\) return \(effOpts\.rebuild/);
     expect(SERVICE).toMatch(/if \(string\.IsNullOrEmpty\(ic\)\)/);
     /* NOT wrapped in Set(): Set swallows, and a swallowed assignment is exactly
        how a blank line reached the account book with every log line green. */
