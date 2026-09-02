@@ -1436,12 +1436,8 @@ async function composeSoState(sb: Sb, docNo: string, retired: AcRetiredLine[] = 
       {
         bindings,
         ...(newLineIds && newLineIds.length ? { newLineIds: new Set(newLineIds) } : {}),
-        /* A rebuild would void PODTL.FromSODtlKey on every purchase line raised
-           from this order, and downstream-lock does NOT count purchase orders —
-           so this order is still editable. Refuse the MECHANISM, never the edit
-           (scm/lib/so-po-raised.ts). */
-        ...(poRaised ? { rebuildBlocked: 'A purchase order was raised from this sales order, so its '
-          + 'line keys are held by PODTL.FromSODtlKey and cannot be reissued.' } : {}),
+        // 0609 — a rebuild would void PODTL.FromSODtlKey on the purchase lines.
+        ...(poRaised ? { rebuildBlocked: 'A purchase order was raised from this sales order.' } : {}),
       },
       retired,
     ),

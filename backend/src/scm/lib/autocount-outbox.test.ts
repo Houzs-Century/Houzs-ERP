@@ -828,21 +828,9 @@ describe('a line the ERP just added is declared, never inferred', () => {
     expect(outbox(sb)[0].last_error).toContain('refused, nothing sent');
   });
 
-  /* SUPERSEDED BY THE REBUILD, 2026-09-02 — and the change of behaviour is
-     recorded here rather than by deleting the case.
-
-     This used to REFUSE: a declared-new line beside another keyless line meant
-     the document was not backfilled, so appending could duplicate the keyless
-     one. Under the owner's rule 「如果我们有 delete line、add line 导致了它的 line
-     不平整了，我们就整张重建」 an ADDED line is a rebuild, and a rebuild appends
-     nothing — the book is cleared and the ERP's list laid down — so the
-     duplicate this guarded against cannot occur.
-
-     WHAT IT GIVES UP, stated because it is real: a rebuild makes the ERP the
-     source of truth for the whole line set, so a line that exists ONLY in the
-     account book is removed. That is what he asked for (「全部 line 要一样」), and
-     the blast radius is bounded by the host's own check — a document with any
-     transferred line is refused outright, read from the book's tables. */
+  /* SUPERSEDED BY THE REBUILD (0608): an ADDED line rebuilds, and a rebuild
+     appends nothing, so the duplicate this guarded against cannot occur. What it
+     gives up — a book-only line is removed — is written up in 0608. */
   test('another line is ALSO keyless: the document REBUILDS instead of refusing', async () => {
     const sb = withFlag('1', {
       mfg_sales_orders: [{ ...so }],
