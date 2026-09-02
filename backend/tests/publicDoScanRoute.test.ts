@@ -186,6 +186,28 @@ const advance = (t: string, to: unknown) =>
     body: JSON.stringify({ to }),
   }, env);
 
+const batchLookup = (tokens: unknown) =>
+  publicDoScan.request('/batch/lookup', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ tokens }),
+  }, env);
+const batchAdvance = (tokens: unknown, to: unknown) =>
+  publicDoScan.request('/batch/advance', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ tokens, to }),
+  }, env);
+
+/** A second and third delivery order, each with its own token. */
+const TOKEN_2 = 'c'.repeat(64);
+const TOKEN_3 = 'd'.repeat(64);
+const doRow = (id: string, token: string, over: Row = {}): Row => ({
+  id, do_number: `HC-DO-2608-${id}`, company_id: CO, status: 'LOADED', on_hold: false,
+  debtor_name: 'A Customer', city: 'Klang', state: 'Selangor',
+  qr_token: token, qr_revoked_at: null, so_doc_no: null, ...over,
+});
+
 beforeEach(() => seed());
 
 describe('the token is the whole credential', () => {
@@ -546,5 +568,165 @@ describe('the trip token behaves like the delivery-order one', () => {
     seedRun();
     tables.trips[0].company_id = null;
     expect((await get(TRIP_TOKEN)).status).toBe(404);
+  });
+});
+
+describe('a basket of papers, scanned in a row, moved with one press', () => {
+  /* THE OWNER, 2026-08-26: 「我不能 scan 好几个 DO，然后一起点 load 吗？包括我的
+     dispatch 也是一样」. Everything below is a property of what happens when the
+     pile is NOT uniform, because a uniform pile is not what a storekeeper picks
+     up. */
+
+  test('only the documents on the pressed rung move; the rest each say why', async () => {
+    seed({}, [
+      // Behind: still LOADED, so DISPATCHED is exactly its next rung.
+      doRow('do-2', TOKEN_2),
+      // Ahead: already IN_TRANSIT, so DISPATCHED is behind it.
+      doRow('do-3', TOKEN_3, { status: 'IN_TRANSIT' }),
+    ]);
+    // do-1 is LOADED from the seed; do-2 LOADED; do-3 IN_TRANSIT.
+    const res = await batchAdvance([TOKEN, TOKEN_2, TOKEN_3], 'DISPATCHED');
+    expect(res.status).toBe(200);
+    const body = await res.json() as any;
+
+    const by = (n: string) => body.lines.find((l: any) => l.doNumber === n);
+    expect(by('HC-DO-2608-001').outcome).toBe('DONE');
+    expect(by('HC-DO-2608-do-2').outcome).toBe('DONE');
+    /* The one that was already past it is ALREADY_DONE — an answer, not an
+       error, and crucially NOT dragged on to the next rung. */
+    expect(by('HC-DO-2608-do-3').outcome).toBe('ALREADY_DONE');
+
+    // And the row itself did not move.
+    const three = tables.delivery_orders.find((r) => r.id === 'do-3');
+    expect(three!.status).toBe('IN_TRANSIT');
+
+    expect(body.outcome).toBe('DONE');
+    expect(body.moved).toBe(2);
+    expect(body.already).toBe(1);
+  });
+
+  test('a held or cancelled paper in the pile blocks only itself, and the headline says so', async () => {
+    seed({}, [
+      doRow('do-2', TOKEN_2, { on_hold: true }),
+      doRow('do-3', TOKEN_3, { status: 'CANCELLED' }),
+    ]);
+    const body = await (await batchAdvance([TOKEN, TOKEN_2, TOKEN_3], 'DISPATCHED')).json() as any;
+
+    const by = (n: string) => body.lines.find((l: any) => l.doNumber === n);
+    expect(by('HC-DO-2608-001').outcome).toBe('DONE');
+    expect(by('HC-DO-2608-do-2').outcome).toBe('BLOCKED');
+    expect(by('HC-DO-2608-do-2').message).toContain('on hold');
+    expect(by('HC-DO-2608-do-3').outcome).toBe('BLOCKED');
+    expect(by('HC-DO-2608-do-3').message).toContain('cancelled');
+
+    /* ONE REFUSAL OUTRANKS TWENTY SUCCESSES. A storekeeper who reads "all done"
+       and walks away from a paper that did not move is the failure this
+       wording exists to prevent. */
+    expect(body.outcome).toBe('PARTIAL');
+    expect(body.message).toContain('not moved');
+
+    for (const id of ['do-2', 'do-3']) {
+      const row = tables.delivery_orders.find((r) => r.id === id)!;
+      expect(row.status).not.toBe('DISPATCHED');
+    }
+  });
+
+  test('the writes are STRICTLY SEQUENTIAL — the deadlock Hookka paid for', async () => {
+    /* Two delivery orders frequently share one sales order, and the DELIVERED
+       hop updates that shared row. peakConcurrentWrites is a MEASUREMENT: make
+       the loop concurrent and this goes above 1. */
+    seed({ status: 'IN_TRANSIT' }, [
+      doRow('do-2', TOKEN_2, { status: 'IN_TRANSIT' }),
+      doRow('do-3', TOKEN_3, { status: 'IN_TRANSIT' }),
+    ]);
+    const body = await (await batchAdvance([TOKEN, TOKEN_2, TOKEN_3], 'DELIVERED')).json() as any;
+    expect(body.moved).toBe(3);
+    expect(peakConcurrentWrites).toBe(1);
+  });
+
+  test('a token repeated in one basket is walked once, not twice', async () => {
+    /* A held paper decodes every frame. If the basket reached the loop with the
+       same token twice, the second walk would find the document one rung on and
+       report ALREADY_DONE against a line nobody scanned twice. */
+    seed();
+    const body = await (await batchAdvance([TOKEN, TOKEN, TOKEN], 'DISPATCHED')).json() as any;
+    expect(body.lines).toHaveLength(1);
+    expect(body.lines[0].outcome).toBe('DONE');
+    expect(body.moved).toBe(1);
+  });
+
+  test('one bad decode does not cost the operator the rest of the pile', async () => {
+    seed({}, [doRow('do-2', TOKEN_2)]);
+    const body = await (await batchAdvance(
+      [TOKEN, 'not-a-token', 42, null, TOKEN_2], 'DISPATCHED',
+    )).json() as any;
+    /* The junk is DROPPED, not refused — two real papers still move. */
+    expect(body.lines).toHaveLength(2);
+    expect(body.moved).toBe(2);
+  });
+
+  test('an unknown token reports as unknown and the pile continues', async () => {
+    seed({}, [doRow('do-2', TOKEN_2)]);
+    const body = await (await batchAdvance([TOKEN, 'e'.repeat(64), TOKEN_2], 'DISPATCHED')).json() as any;
+    const unknown = body.lines.filter((l: any) => l.outcome === 'UNKNOWN');
+    expect(unknown).toHaveLength(1);
+    expect(unknown[0].doNumber).toBeNull();
+    expect(body.moved).toBe(2);
+    expect(body.outcome).toBe('PARTIAL');
+  });
+
+  test('a rung the ladder does not have is refused before any query', async () => {
+    seed();
+    for (const bad of ['ON_HOLD', 'SIGNED', 'DRAFT', 'INVOICED', '', 'nonsense']) {
+      touched = [];
+      const res = await batchAdvance([TOKEN], bad);
+      expect(res.status, `to=${bad}`).toBe(400);
+      expect(touched, `to=${bad} queried ${touched.join()}`).toEqual([]);
+    }
+  });
+
+  test('an empty basket is refused rather than reported as a success', async () => {
+    seed();
+    const res = await batchAdvance([], 'DISPATCHED');
+    expect(res.status).toBe(400);
+    expect((await res.json() as any).error).toBe('nothing_scanned');
+  });
+
+  test('lookup reports each paper WITHOUT moving anything', async () => {
+    seed({}, [doRow('do-2', TOKEN_2, { status: 'IN_TRANSIT' })]);
+    const before = tables.delivery_orders.map((r) => r.status);
+    const body = await (await batchLookup([TOKEN, TOKEN_2])).json() as any;
+
+    expect(body.lines).toHaveLength(2);
+    expect(body.lines[0].step.status).toBe('DISPATCHED');
+    expect(body.lines[1].step.status).toBe('DELIVERED');
+    expect(tables.delivery_orders.map((r) => r.status)).toEqual(before);
+  });
+
+  test('lookup leaks no more than the single-paper read does', async () => {
+    seed();
+    const text = await (await batchLookup([TOKEN])).text();
+    for (const secret of ['Jalan Something', '+60123456789', '123456', 'total_sen']) {
+      expect(text, `leaked ${secret}`).not.toContain(secret);
+    }
+  });
+
+  test('a packing list dropped into a basket is named, not silently skipped', async () => {
+    seed();
+    tables.trips.push({
+      id: 'trip-1', trip_no: 'TR-2608-001', company_id: CO, status: 'PLANNED',
+      trip_date: '2026-08-26', qr_token: TOKEN_2, qr_revoked_at: null,
+    });
+    const body = await (await batchAdvance([TOKEN_2], 'DISPATCHED')).json() as any;
+    expect(body.lines[0].outcome).toBe('BLOCKED');
+    expect(body.lines[0].message).toContain('packing list');
+  });
+
+  test('a basket larger than the cap is refused with a number the operator can act on', async () => {
+    seed();
+    const many = Array.from({ length: 61 }, (_, i) => String(i).padStart(64, 'f'));
+    const res = await batchAdvance(many, 'DISPATCHED');
+    expect(res.status).toBe(400);
+    expect((await res.json() as any).message).toContain('60');
   });
 });

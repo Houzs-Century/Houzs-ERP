@@ -71,6 +71,13 @@ export function computeDailyBank(
   moneyAccounts: MoneyAccount[],
   transitAccounts: TransitAccount[],
   lines: GlLine[],
+  /** Phase 3: every DRAFT voucher sitting in the approval cycle (submitted,
+      not yet posted or cancelled) on or before the board date. Money already
+      asked for is not money the owner may still spend — it subtracts from
+      available whether the yes has been said or not, because saying yes is
+      the plan. Amounts are document-currency sen; the rate converts to MYR
+      the same way posting will (round per voucher). */
+  pendingVouchers: Array<{ total_sen: number; exchange_rate: string | number | null }> = [],
 ): DailyBankBoard {
   const byAccount = new Map<string, GlLine[]>();
   for (const l of lines) {
@@ -127,7 +134,11 @@ export function computeDailyBank(
 
   const totalClosingSen = blocks.reduce((s, b) => s + b.closingSen, 0);
   const totalTransitSen = transit.reduce((s, t) => s + t.balanceSen, 0);
-  const pendingApprovalSen = 0; // phase 3: submitted-not-yet-approved PVs subtract here
+  const pendingApprovalSen = pendingVouchers.reduce((s, v) => {
+    const raw = Number(v.exchange_rate ?? 1);
+    const rate = Number.isFinite(raw) && raw > 0 ? raw : 1;
+    return s + Math.round(Number(v.total_sen ?? 0) * rate);
+  }, 0);
 
   return {
     date,
@@ -137,6 +148,6 @@ export function computeDailyBank(
     totalTransitSen,
     pendingApprovalSen,
     availableSen: totalClosingSen - pendingApprovalSen,
-    note: 'Computed live from the ledger (posted, non-reversed). Transit money is swiped but not yet remitted - visible, not counted as movable. Pending-approval vouchers subtract once the phase-3 approval flow exists.',
+    note: 'Computed live from the ledger (posted, non-reversed). Transit money is swiped but not yet remitted - visible, not counted as movable. Pending-approval vouchers are money already asked for - subtracted from available until they post or leave the queue.',
   };
 }

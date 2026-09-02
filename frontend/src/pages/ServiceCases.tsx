@@ -609,9 +609,8 @@ function CasesView({
       filterable: true,
       label: "Stage",
       render: (r) => {
-        // Sub-status rides a second muted line (Nick 2026-07-15). Owner 2026-07-16:
-        // hide a sub that merely restates its stage — except the combined Supplier
-        // stage, where naming the leg is the point (Nico 2026-08-22, chase list).
+        // Sub-status rides a second muted line (Nick 2026-07-15); hidden when it
+        // restates its stage, except the Supplier stage's legs (Nico 2026-08-22).
         const stageText = caseStageLabel(r.stage);
         const sub = assrSubStatus(r.stage, r.sub_status ?? null);
         const subText =
@@ -1225,7 +1224,7 @@ function CasesView({
 // One-line captions under the Stage-funnel filter cards (Nick
 // 2026-07-23: 每个 stage 下面加 description, e.g. Verification → QC
 // issue inspection). Same wording as the detail Workflow funnel.
-type StageFunnelRow = { stage: string; total: number; breached: number; sub_return?: number };
+type StageFunnelRow = { stage: string; total: number; breached: number; sub_return?: number; sub_customer?: number };
 type AssrSummary = {
   total?: number;
   active_count?: number;
@@ -1327,11 +1326,13 @@ function StageStatStrip({
             { value: "ALL" as StageFilter, label: "All", desc: "All stages", total: allTotal, breached: 0 },
             ...stages.map((s) => {
               const row = byStage.get(s.value);
-              // Supplier bucket names its two legs (Nico 2026-08-22) so ops sees
-              // at a glance how many suppliers to chase for pickup vs return.
+              // Supplier bucket names its three legs (Nico 2026-08-22 / 09-01):
+              // one chase count per leg — customer / supplier / return.
+              const cust = row?.sub_customer ?? 0;
+              const ret = row?.sub_return ?? 0;
               const desc =
                 s.value === "pending_supplier_pickup" && ready && row?.total
-                  ? `${row.total - (row.sub_return ?? 0)} await pickup · ${row.sub_return ?? 0} await return`
+                  ? `${cust} customer · ${row.total - cust - ret} supplier · ${ret} return`
                   : STAGE_FUNNEL_DESC[s.value] ?? "";
               return {
                 value: s.value as StageFilter,

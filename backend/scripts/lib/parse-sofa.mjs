@@ -21,6 +21,12 @@ const CM_TO_INCH = { 60: 24, 66: 26, 70: 28, 75: 30, 80: 32 };
 const SPECIAL_WORD = /depth|\b(?:bottom|bttm|umbrella|umb|nylon|nilon|cover\w*|back\s*rest|backrest|back\s*cushion|backcushion|head\s*rest|headrest|cushion|firm\w*|soft\w*|harder|notch|stitch\w*|stich\w*|holes?|push\s*back|extend\w*|separate|packing|bracket|wood\w*|arm\s*rest|armrest|arm|adj\w*table|slider|plane|plain|legs?|height|seating|in\s?front|feeling|stopper|microgel|movable)\b/i;
 // "CH141-4 WOOD" is a fabric colour, not a request for a wooden anything
 const COLOUR_LIKE = /^[A-Z]{1,6}\s?\d{2,5}\s*[-#]?\s*\d{0,3}\s*\(?[A-Z0-9 ]{0,20}\)?$/i;
+/* Instruction phrases that GLUE into one token (spaces are stripped inside a
+   segment) and carry digits or the ARM/SEAT letters, so neither the rider rule
+   nor SPECIAL_WORD could claim them — each then read as unknown STRUCTURE and
+   killed its whole segment ("token \"HEADRESTCHANGETO8030\""). All harvested
+   from the 2026-08-30 placeholder sweep; every one is a request, never a piece. */
+const INSTRUCTION_TOKEN = /(ARMREST|ARMCHANGE|BACKREST|BACKCUSHION|HEADREST|CUSHION|SEATHEIGHT|SEATERDEPTH|SEATEXTEND|EXTENDTO|FEELING|CUSTOMIZE|READYSTOCK|ADJUSTABLE|INCLINER|PUSHBACK|WOODENPLATE|TAKEOFF|REPLACETO|FOLLOWTHE|SITTINGAREA|SITAREA|SEATAREA|SEATCHANGE|RESTCHANGE)/;
 /* An UNLABELLED colour code — "BO315-21 (PEARL)/28"/2L" — was read as an
    unrecognised structure token and thrown away, so the colour never reached the
    line. That is the whole missing-Fabrics bucket on sofa: 85 of 86 blank colour
@@ -33,6 +39,23 @@ const COLOUR_LIKE = /^[A-Z]{1,6}\s?\d{2,5}\s*[-#]?\s*\d{0,3}\s*\(?[A-Z0-9 ]{0,20
    confirm is a guess — and this migration does not guess. Sizes and piece
    lists are excluded before the library is consulted so a numeric coincidence
    can never be promoted to a colour. */
+/* O-vs-ZERO tolerance. The floor writes the same fabric code both ways —
+   "BO315-21" and "B0315-Pearl" are the same cloth — and a code the library
+   cannot confirm is FATAL to the structure segment, so one typed zero threw a
+   whole build to placeholder (SO-013121, owner review 2026-08-31). Try the
+   swapped spellings too; the LIBRARY still has to confirm one of them, so this
+   widens the lookup, never the guard. */
+function ohZeroVariants(t) {
+  const out = new Set([t]);
+  out.add(t.replace(/0/g, "O"));
+  out.add(t.replace(/O/gi, "0"));
+  return [...out];
+}
+const confirmColour = (knownColour, t) => {
+  for (const v of ohZeroVariants(t)) { const hit = knownColour(v); if (hit) return hit; }
+  return null;
+};
+
 function unlabelledColour(d2raw, knownColour) {
   for (const raw of String(d2raw || "").split(/[/\n]+/)) {
     const seg = raw.trim();
@@ -47,7 +70,7 @@ function unlabelledColour(d2raw, knownColour) {
     if (/^\d+\s*(?:"|”|inch|cm)?$/i.test(t)) continue;                // a bare size
     if (/^(?:size|seat)\b/i.test(t)) continue;                        // a labelled size
     if (/\+/.test(t) && /^[\d+ACLNPRSTacnprst()\s]+$/.test(t)) continue; // a piece list
-    const hit = knownColour(t) || knownColour(t.replace(/\s*\([^)]*\)\s*/g, "").trim());
+    const hit = confirmColour(knownColour, t) || confirmColour(knownColour, t.replace(/\s*\([^)]*\)\s*/g, "").trim());
     if (hit) return { value: typeof hit === "string" ? hit : t, evidence: seg };
   }
   return null;
@@ -92,6 +115,10 @@ function parseSofa(d2raw, model, recl = false, opts = {}) {
   }
   // protect composite tokens from the slash-splitter
   d2 = d2.replace(/\bCUSTOM\b/gi, " ").replace(/([123])S?\s*P\s*\+\s*P\b/gi, "$1PP")
+    /* "1R(P)+1R(P)" (SO-011530) — a recliner unit with a POWER mechanism.
+       Rewrite before the bracket→'+' conversion frees the P into its own
+       mid-row token, which the grammar rightly holds as ambiguous. */
+    .replace(/\b([123])R\s*\(\s*P\s*\)/gi, "$1P")
     .replace(/\bCORNER\s*\((?=[^)]*[A-Za-z])/gi, "(").replace(/NO\s*CONSOLE/gi, " NOCONS ")
     .replace(/\bC\s+TABLE\b\.?/gi, "+CT+").replace(/([12])B\/S/gi, "$1B")
     .replace(/\bC\/?T\s*TABLE\.?/gi, "CT").replace(/CONSOLE\s*TABLE\.?/gi, "CT")
@@ -110,6 +137,10 @@ function parseSofa(d2raw, model, recl = false, opts = {}) {
     const u = unlabelledColour(d2raw, opts.knownColour);
     if (u) { o.color = u.value; o.colorEvidence = u.evidence; o.why.push(`colour from an unlabelled code "${u.evidence}"`); }
   }
+  /* Colour-first with NO label ("CH141-11 (SILVER)/28”/1A(LHF)+…") stays on
+     the #1998 contract: unlabelledColour above reads it ONLY when the fabric
+     library confirms the code. An unconfirmed code is left blank, never
+     copied — parseSofaUnlabelledColour.test.ts pins both directions. */
   // seat size: inches or cm anywhere (also "(28'Inch)" / "28''" / "28'" / "Size:28")
   const sm = /(\d{2,3})\s*(cm)\b/i.exec(d2) || /(\d{2})\s*(?:['"]{1,2}\s*inch(?:es)?\b|"|''|'(?!\w)|\s*inch(?:es)?\b)/i.exec(d2) || /size\s*[:：]\s*(\d{2})/i.exec(d2);
   if (sm) {
@@ -154,13 +185,33 @@ function parseSofa(d2raw, model, recl = false, opts = {}) {
     // a label followed by a parenthesised BUILD is just a title: the bracket
     // wins (owner 2026-08-10: "2R(1+1) 就是 1A+1A"; "2 seater (1EL+1ER)").
     // Guarded to brackets holding a '+', so "4S (corner)+L" keeps its label.
-    const seg = rawSeg.replace(/^\s*[1-4]\s*[A-Za-z]{0,8}\s*\(([^)]*\+[^)]*)\)\s*$/, "$1");
+    // The title may be letter-led too — "L2L(L+1NA+1NA+L)" (SO-008166).
+    const seg = rawSeg.replace(/^\s*[A-Za-z0-9]{1,8}\s*\(([^)]*\+[^)]*)\)\s*$/, "$1")
+      .replace(/^\s*[1-4]\s*[A-Za-z]{0,8}\s*\(([^)]*\+[^)]*)\)\s*$/, "$1");
     // spaces glue ("3 SEATER"->3SEATER) but paren notes become their own
     // tokens ("(HANDLE MOVABLE)"->+HANDLEMOVABLE+); quotes are residue
     let s = seg.replace(/\s+/g, "").toUpperCase().replace(/[()]/g, "+").replace(/["'*]/g, "").replace(/:/g, "+").replace(/\.(?![5])/g, "+");
     // owner layout rule: bare "n+L" == "nL"; "L+n" == "Ln"
     if (s.split("+").filter(Boolean).length === 2)
       s = s.replace(/(^|\+)([123])\+L(?=$|\+)/, "$1$2L").replace(/(^|\+)L\+([123])(?=$|\+)/, "$1L$2");
+    /* NEW-STYLE tokens (staff entries since ~2026-08, SO-0131xx onward, mirror
+       the ERP's own compartment spelling): "1A(LHF)+C+2A(RHF)" and bare-end
+       chains "2A+1A(30')". After ()->+ the side rides as its own token, so
+       fold A+side into the E-notation the grammar already speaks — 1A+LHF is
+       1EL — and give a BARE A-piece its side by POSITION, the owner's sketch
+       rule (草图两端阴影=扶手: the chain's two ends are the armed ends): first
+       faces LEFT, last faces RIGHT. A bare A-piece in the MIDDLE stays
+       unclassified and holds the line — an arm mid-row is a real ambiguity,
+       not a spelling. A side marker after 1B/NA has no sided grammar class;
+       position already places those, so the marker is dropped. */
+    s = s.replace(/^\++|\++$/g, ""); // stripped sizes/notes leave dangling '+', which breaks the end anchors below
+    s = s
+      .replace(/(^|\+)([12])A\+(?:LHF|LHS|LF)(?=$|\+)/g, "$1$2EL")
+      .replace(/(^|\+)([12])A\+(?:RHF|RHS|RF)(?=$|\+)/g, "$1$2ER")
+      .replace(/(^|\+)([12])(B|NA)\+(?:LHF|LHS|RHF|RHS)(?=$|\+)/g, "$1$2$3");
+    if (s.includes("+")) {
+      s = s.replace(/^([12])A(?=\+)/, "$1EL").replace(/\+([12])A$/, "+$1ER");
+    }
     if (!s || /^[\d.]+\+*$/.test(s)) continue;
     /* The single-letter arm of NOISE must exclude EVERY letter the grammar
        classifies on its own: C (corner), L (chaise), P (power), R (recliner).
@@ -216,6 +267,31 @@ function parseSofa(d2raw, model, recl = false, opts = {}) {
       else if (t === "P") U.push({ k: "pw", raw: t });
       else if (t === "R" && recl) U.push({ k: "rc", raw: t });
       else if (t === "LSHAPE") { U.push({ k: "nL", n: "2", dir: "R", raw: t }); o._photo = "L-shape≈2L,左右随放—看图可换"; }
+      /* ── 2026-08-30 placeholder-sweep vocabulary ─────────────────────────
+         Every arm below is a real book spelling from the 103-placeholder
+         audit (run 33251287997); the gold cases live in
+         parseSofaGrammar.test.ts under the same date. */
+      else if (/^([12])CT$/.test(t)) U.push({ k: "console", raw: t });        // "1Console"→1CT (SO-012695)
+      else if ((m = /^([12])EF([LR])$/.exec(t))) U.push({ k: "armed", n: m[1], side: m[2], raw: t }); // 1EFL=1EL (SO-010324)
+      else if ((m = /^([12])BSEATERS?$/.exec(t))) U.push({ k: "bseat", n: m[1], raw: t }); // "1B/S seater" glued (SO-013329)
+      else if ((m = /^([123])POWER(?:RE|IN)CLINERS?$/.exec(t)) && recl) U.push({ k: "mech", n: m[1], M: "P", raw: t });
+      else if (/^([23]\d)$/.test(t)) {
+        // an orphan size whose unit was stripped ("(26/28'Inch)" SO-010015) — never a piece
+        if (!o.size) { o.size = t; o.why.push(`size from bare "${t}"`); }
+        else if (t !== o.size) o._multiSize = true;
+        quiet.push(t);
+      }
+      else if (t === model || SOFA_MODEL_ALIAS[t]) quiet.push(t);             // model rider ("back rest (5540)" SO-013312)
+      else if (/^COLOU?R.+/.test(t)) quiet.push(t);                           // a glued colour mention — colour reads off the RAW text, never here
+      else if (/[A-Z]\d|\d[A-Z]/.test(t) && typeof opts.knownColour === "function" && confirmColour(opts.knownColour, t)) {
+        // a library-CONFIRMED colour code inside the structure segment (SO-013121);
+        // an unconfirmed code stays fatal — this migration does not guess colours
+        if (!o.color) { o.color = confirmColour(opts.knownColour, t); o.why.push(`colour token "${t}"`); }
+        quiet.push(t);
+      }
+      else if (t === "ARM" || t === "ARMREST" || (t.length >= 6 && INSTRUCTION_TOKEN.test(t))) {
+        rider.push(t);                                                        // digit-bearing instruction — a request, never a piece
+      }
       else if (!/\d/.test(t) && t.length >= 3 && !/(ARM|SEAT|CUSTOM|RECLIN|WOOD|SHAPE|CORNER|CHAISE)/.test(t)
                && !/^(CT|CNR|STOOL|NA)/.test(t)) rider.push(t);
       else { bad = `token "${t}"`; break; }
@@ -229,10 +305,15 @@ function parseSofa(d2raw, model, recl = false, opts = {}) {
     const anyConn = U.some((u) => ["chaise", "corner", "console", "nL", "box", "na"].includes(u.k));
     if (!anyConn && U.some((u) => u.k === "seat"))
       for (const u of U) if (u.k === "unit") u.k = "seat";
-    // suite notation: 1+2+3 / R+2+3 — distinct digits, nothing joining them
-    if (!anyConn && U.length >= 2 && U.every((u) => ["unit", "seat", "rc", "runit", "pw"].includes(u.k))) {
+    /* suite notation: 1+2+3 / R+2+3 — THREE or more distinct digits, nothing
+       joining them, is a SUITE of separate sofas. TWO digits is not: owner
+       2026-08-31, 「1+2 这种大部分是 1A+2A」 — a two-token run is one sofa whose
+       ends carry the arms, which is what the end-walk below produces. This
+       said `>= 2` until then and turned every `1+2` into two standalone
+       sofas. */
+    if (!anyConn && U.length >= 3 && U.every((u) => ["unit", "seat", "rc", "runit", "pw"].includes(u.k))) {
       const digits = U.filter((u) => u.k === "unit" || u.k === "seat").map((u) => u.n);
-      if (digits.length >= 2 && new Set(digits).size === digits.length) {
+      if (digits.length >= 3 && new Set(digits).size === digits.length) {
         for (const u of U) { if (u.k === "unit") u.k = "seat"; u.solo = true; }
       }
     }

@@ -1,0 +1,57 @@
+name: Backfill zero line costs (Product Maintenance)
+
+# Manual. Fills the cost on sales-order lines that were written while their
+# product had no cost in Product Maintenance, then re-rolls the affected order
+# headers through the route's OWN recomputeTotals. Never re-prices a line that
+# already carries a cost. PLAN by default; apply needs the confirm phrase.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [prod, staging]
+      company:
+        description: "Company id (1 = Houzs Century, 2 = 2990)"
+        required: true
+        default: "1"
+        type: string
+      since:
+        description: "Optional: only orders on/after this date (YYYY-MM-DD)"
+        required: false
+        default: ""
+        type: string
+      mode:
+        description: "plan (report only) or apply (write)"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: 'For apply ONLY, type exactly: BACKFILL ZERO LINE COSTS'
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: backfill-zero-line-costs-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: npx tsx scripts/backfill-zero-line-costs.ts
+        env:
+          DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
+          COMPANY: ${{ inputs.company }}
+          SINCE: ${{ inputs.since }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}

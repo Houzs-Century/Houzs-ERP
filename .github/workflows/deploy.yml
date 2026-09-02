@@ -213,6 +213,21 @@ jobs:
       - run: node scripts/pg-migrate.mjs
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      # Bake the commit sha INTO the Worker bundle (src/build-info.ts) so
+      # GET /health reports it. This is the RELIABLE stamp: the `wrangler secret
+      # bulk` step below can non-deterministically drop the CLI `--var GIT_SHA`
+      # (null-stamp incident 2026-09-01 — see src/build-info.ts), but a value
+      # compiled into the bundle survives every var/secret operation. The `--var`
+      # on the deploy command is kept only as a fallback. Fails loudly if the
+      # stamp did not land, so a silent un-stamped deploy can't reach prod.
+      - name: Stamp the build with the commit sha
+        run: |
+          set -euo pipefail
+          # Replace ONLY the placeholder value on the export line — never the whole
+          # file, so resolveBuildSha() and the header survive. Fails loudly if the
+          # anchor drifts (the grep) so a silent un-stamped deploy can't reach prod.
+          sed -i 's|^export const GIT_SHA: string = "dev";$|export const GIT_SHA: string = "'"$GITHUB_SHA"'";|' src/build-info.ts
+          grep -qF "\"$GITHUB_SHA\"" src/build-info.ts || { echo "::error title=Build stamp failed::src/build-info.ts export line did not become $GITHUB_SHA — did the anchor change?"; exit 1; }
       # DEPLOY FIRST, SECRETS SECOND. These used to be ONE wrangler-action step,
       # and `wrangler-action` uploads `secrets:` BEFORE it runs `command:`. That
       # ordering took production down for 8 hours on 2026-08-17/18:

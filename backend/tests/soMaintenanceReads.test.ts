@@ -178,16 +178,22 @@ describe("the write gate the page's banner reads", () => {
     expect(userCanWriteScmConfig({ permissions_set: new Set(["*"]) })).toBe(true);
   });
 
-  test("this is not blanket access — Sales and the restricted cohort stay out", () => {
+  test("this is not blanket access — the sales REPS and the restricted cohort stay out", () => {
     for (const [pos, dept] of [
       ["Sales Executive", "Sales Department"],
-      ["Sales Director", "Sales Department"],
+      ["Sales Manager", "Sales Department"],
       ["Storekeeper", "Operation Department"],
       ["Driver", "Operation Department"],
       ["Finance Manager", "Management"],
     ] as const) {
       expect(userCanWriteScmConfig(withPosition(pos, dept)), pos).toBe(false);
     }
+    // The one sales position that DOES hold it (owner 2026-09-01) — asserted
+    // here so the exclusion list above can never quietly re-swallow him.
+    expect(
+      userCanWriteScmConfig(withPosition("Sales Director", "Sales Department")),
+      "Sales Director",
+    ).toBe(true);
   });
 
   test("an unidentifiable caller fails CLOSED", () => {

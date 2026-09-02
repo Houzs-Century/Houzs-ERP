@@ -310,6 +310,44 @@ export interface AcRequeueResult {
   new_row_id: string | null;
   /** The ERP's own words, present only when the composer refused it again. */
   reason: string | null;
+  /**
+   * The ancestors this press caused, in the order they were sent.
+   *
+   * The server has returned this since the cascade was written and NOTHING HERE
+   * READ IT (#0552): pressing Send on an invoice could put a sales order and a
+   * delivery order into the account book and the operator saw one line about the
+   * invoice. `reason` says which of the two things happened to each — `missing`
+   * (AutoCount did not have it) or `stale` (AutoCount had an older version) —
+   * and those are different enough that a document number alone cannot carry it.
+   */
+  ancestors_sent?: AcAncestorSent[] | null;
+}
+
+/** One ancestor the press sent, as the server names it. */
+export interface AcAncestorSent {
+  doc_type: string;
+  doc_no: string;
+  /** The outcome code, from the same catalogue as the pressed row's. */
+  code: string;
+  /** Why it had to go first: `missing` or `stale`. */
+  reason?: string;
+}
+
+/**
+ * What the page SAYS about each ancestor, in the operator's words.
+ *
+ * The reason and the outcome are two facts and they are combined here rather
+ * than in the component, so the mobile and desktop pages cannot come to word
+ * this differently — the same argument `AC_SEND_NOW_LABEL` and `useAcRequeue`
+ * already make for the button and the note.
+ */
+export function acAncestorLine(a: AcAncestorSent): string {
+  const what = a.reason === 'stale'
+    ? 'AutoCount had an older version'
+    : 'AutoCount did not have it yet';
+  const ok = a.code === 'sent' || a.code === 'accepted';
+  const how = ok ? 'sent' : `not sent — ${a.code}`;
+  return `${a.doc_no} — ${what}, ${how}.`;
 }
 
 /**
@@ -345,6 +383,42 @@ export async function sendNowAcOutboxRow(rowId: string): Promise<AcRequeueResult
 }
 
 /** The word on the button, in both places, so the two cannot drift apart. */
+/**
+ * Match a held-back document's lines up against AutoCount, so it can be saved
+ * again.
+ *
+ * THE SCREEN HAS BEEN TELLING THE OPERATOR TO DO THIS with no way to do it: the
+ * keyless-line copy says "the lines have to be matched up against AutoCount, and
+ * then the document saved again. Send again cannot do it — a change has nothing
+ * to re-create." That instruction named an action nobody could take.
+ *
+ * A DIFFERENT ACT FROM BOTH BUTTONS BESIDE IT, which is why it is a third door
+ * rather than a flag on one of them: Send again re-queues a document, Send now
+ * dispatches a waiting one, and this one SENDS NOTHING. It reads the document
+ * out of the account book and repairs the ERP's own line identity; the operator
+ * then saves the document, which is what actually queues a change.
+ */
+export async function relinkAcLines(
+  docType: string,
+  docNo: string,
+): Promise<AcRelinkResult> {
+  return api.post<AcRelinkResult>('/api/scm/autocount-outbox/relink-lines', { docType, docNo });
+}
+
+export interface AcRelinkResult {
+  ok: boolean;
+  matched?: number;
+  alreadyKeyed?: number;
+  bookLines?: number;
+  /** One sentence per line that could not be matched — NAMED, never counted. */
+  couldNotMatch?: string[];
+  message?: string;
+  error?: string | null;
+}
+
+export const AC_RELINK_LABEL = "Match up lines";
+export const AC_RELINK_BUSY_LABEL = "Matching";
+
 export const AC_SEND_AGAIN_LABEL = "Send again";
 export const AC_SEND_AGAIN_BUSY_LABEL = "Sending";
 
@@ -440,6 +514,14 @@ export interface AcRequeueNote {
   /** The quote's own machinery, behind the technical disclosure. */
   quoteTechnical: string | null;
   /**
+   * The ancestors this press caused, already worded — one line each.
+   *
+   * ON THE ROW, like everything else here. A press on an invoice can move three
+   * documents, and the operator has to be able to see which, on the row they
+   * pressed, rather than by re-reading the whole table for what changed.
+   */
+  ancestors: string[];
+  /**
    * The document is on its way again, so the OLD refusal on this row is no
    * longer true and comes off it.
    *
@@ -499,6 +581,7 @@ export function useAcRequeue(onAccepted: () => void) {
             todo: acRequeueTodo(r.code),
             quote: quoted?.said ?? null,
             quoteTechnical: quoted?.detail ?? null,
+            ancestors: (r.ancestors_sent ?? []).map(acAncestorLine),
             clearsReason: r.accepted,
           },
         }));
@@ -518,6 +601,9 @@ export function useAcRequeue(onAccepted: () => void) {
             todo: null,
             quote: e instanceof Error ? e.message : String(e),
             quoteTechnical: null,
+            /* The call was never answered, so nothing is known to have been sent
+               — an ancestor list here would be an invention. */
+            ancestors: [],
             /* The old refusal still stands — nothing was sent. */
             clearsReason: false,
           },
@@ -529,10 +615,60 @@ export function useAcRequeue(onAccepted: () => void) {
     [onAccepted],
   );
 
+  /* THE THIRD DOOR, and it shares the notes map on purpose: whatever a row's
+     button did, its answer appears in the same place, in the page's own voice.
+     It is NOT routed through `run` — that helper's contract is "call an endpoint
+     with a ROW id and read an AcRequeueResult back", and this one takes a
+     DOCUMENT and answers a different shape. Forcing them together would mean a
+     union type and a branch inside the shared body, which is the drift this
+     file's own comment warns about, pointing the other way. */
+  const relink = useCallback(async (rowId: string, docType: string, docNo: string) => {
+    setSendingId(rowId);
+    try {
+      const r = await relinkAcLines(docType, docNo);
+      const matched = r.matched ?? 0;
+      const stuck = r.couldNotMatch ?? [];
+      setNotes((prev) => ({
+        ...prev,
+        [rowId]: {
+          tone: matched > 0 && stuck.length === 0 ? "good" : matched > 0 ? "wait" : "bad",
+          text: r.message ?? (matched > 0
+            ? `${matched} line(s) matched up. Open the document and save it again.`
+            : "Nothing could be matched — the document is unchanged."),
+          /* The lines that could not be matched are the WORK, so they are the
+             to-do, spelled out one per line rather than counted. */
+          todo: stuck.length ? stuck.join("; ") : null,
+          quote: null,
+          quoteTechnical: null,
+          ancestors: [],
+          /* The refusal on the row still stands until the document is saved
+             again — matching the lines does not queue anything by itself. */
+          clearsReason: false,
+        },
+      }));
+      if (matched > 0) onAccepted();
+    } catch (e) {
+      setNotes((prev) => ({
+        ...prev,
+        [rowId]: {
+          tone: "bad",
+          text: "Nothing was matched — the request never got through.",
+          todo: null,
+          quote: e instanceof Error ? e.message : String(e),
+          quoteTechnical: null,
+          ancestors: [],
+          clearsReason: false,
+        },
+      }));
+    } finally {
+      setSendingId(null);
+    }
+  }, [onAccepted]);
+
   const sendAgain = useCallback((rowId: string) => run(rowId, requeueAcOutboxRow), [run]);
   const sendNow = useCallback((rowId: string) => run(rowId, sendNowAcOutboxRow), [run]);
 
-  return { sendingId, notes, sendAgain, sendNow };
+  return { sendingId, notes, sendAgain, sendNow, relink };
 }
 
 /**

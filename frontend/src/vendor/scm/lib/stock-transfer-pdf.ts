@@ -29,6 +29,10 @@ import {
 } from './pdf-common';
 import { warehouseLabel, type WarehouseLabelSource } from './warehouse-label';
 import { variantKeyLabel } from './variant-key-label';
+/* The status WORD comes from the one home for it, never from a caser here:
+   what this document prints and what the screen shows must be the same word.
+   docs/modules/document-status-vocabulary.md §1. */
+import { statusLabel } from './status-pill';
 
 type StWarehouse = WarehouseLabelSource & { name?: string | null };
 
@@ -70,9 +74,6 @@ const whSubLabel = (w: StWarehouse | null | undefined): string => {
   const name = (w?.name ?? '').trim();
   return name && name !== warehouseLabel(w) ? name : '';
 };
-
-const titleCase = (s: string): string =>
-  s.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, (ch) => ch.toUpperCase());
 
 /* Draw ONE transfer's content into `doc` (letterhead → movement band → info →
    table → qty total → signatures → footer). Split out from the single-file
@@ -174,7 +175,7 @@ export async function renderStockTransferInto(
       rows: [
         ['ST No', header.transfer_no],
         ['Date', fmtDocDate(header.transfer_date)],
-        ['Status', titleCase(header.status)],
+        ['Status', statusLabel('stockTransfer', header.status)],
         ['Posted', header.posted_at ? fmtDocDate(header.posted_at) : null],
         ['Cancelled', header.cancelled_at ? fmtDocDate(header.cancelled_at) : null],
         ['Lines', String(lines.length)],

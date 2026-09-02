@@ -65,6 +65,31 @@ describe('standalone SO versioned mutation coordinator', () => {
     expect(mockedFetch).toHaveBeenCalledTimes(1);
   });
 
+  /* Owner 2026-08-31: 「但我 edit 了之后，我 upload 的一些照片好像都会出现这样子的
+     问题」 — the second photo of a batch answered "Someone else updated this
+     order while you were editing" with nobody else involved.
+
+     The reservation ITSELF advances the version (the header CAS bumps it), and
+     the detail cache is only INVALIDATED afterwards — invalidation marks the
+     entry, it does not erase it, so the next upload read the same number back
+     and reserved against a version the server had already left behind. The
+     order's own edits had done the same thing one step earlier. */
+  test('a second line mutation reserves from the version the first one advanced to', async () => {
+    const qc = queryClient();
+    mockedFetch
+      .mockResolvedValueOnce({ version: 8, leaseToken: 'lease-1' })
+      .mockResolvedValueOnce({ ok: true })
+      .mockResolvedValueOnce({ version: 9, leaseToken: 'lease-2' })
+      .mockResolvedValueOnce({ ok: true });
+
+    await runSoVersionedMutation(qc, 'SO-1', 'photo-upload', async () => ({}));
+    await runSoVersionedMutation(qc, 'SO-1', 'photo-upload', async () => ({}));
+
+    expect(mockedFetch).toHaveBeenCalledTimes(4);
+    expect(JSON.parse(String(mockedFetch.mock.calls[0]?.[1]?.body))).toMatchObject({ version: 7 });
+    expect(JSON.parse(String(mockedFetch.mock.calls[2]?.[1]?.body))).toMatchObject({ version: 8 });
+  });
+
   test('an action failure is rethrown after a best-effort matching release', async () => {
     mockedFetch
       .mockResolvedValueOnce({ version: 8, leaseToken: 'lease-from-server' })

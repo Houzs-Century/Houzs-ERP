@@ -2214,14 +2214,12 @@ export function MobileNewSO({
                 <Field label="Customer Name *" error={touched && nameErr} scanned={scanned("name", name)}>
                   <input className="fld-i" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Lim Mei Hua" />
                 </Field>
-                <div style={{ display: "flex", gap: 9 }}>
-                  <Field label="Phone *" style={{ flex: 1 }} error={touched && phoneErr} scanned={scanned("phone", phone)}>
-                    <PhoneInput className="fld-i" value={phone} onChange={setPhone} placeholder="1X-XXX XXXX" />
-                  </Field>
-                  <Field label="Email" style={{ flex: 1 }} error={touched && emailErr}>
-                    <input className="fld-i" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Optional" />
-                  </Field>
-                </div>
+                <Field label="Phone *" error={touched && phoneErr} scanned={scanned("phone", phone)}>
+                  <PhoneInput className="fld-i" value={phone} onChange={setPhone} placeholder="1X-XXX XXXX" />
+                </Field>
+                <Field label="Email" error={touched && emailErr}>
+                  <input className="fld-i" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Optional" />
+                </Field>
                 <div style={{ display: "flex", gap: 9 }}>
                   {/* FIX A — Customer Type from so_dropdown_options (was hardcoded). */}
                   <Field label="Customer Type" style={{ flex: 1 }} scanned={scanned("custType", custType)}>
@@ -2331,33 +2329,31 @@ export function MobileNewSO({
                         : "Auto-filled"}
                   </div>
                 )}
-                <div style={{ display: "flex", gap: 9 }}>
-                  {/* FIX D3 — once the processing date has passed the SO is locked
-                      (it's what we PO to the supplier); the date inputs freeze.
-                      Owner 2026-07-16 — UNLESS the order is amendment-eligible:
-                      then both dates are editable and go out as an amendment
-                      request for approval instead of saving directly. */}
-                  <Field label="Processing Date" style={{ flex: 1 }} error={touched && dateXorErr} scanned={scanned("procDate", procDate)} onClear={procDate && !scheduleDatesLocked ? () => setProcDate("") : undefined}>
-                    <DateField
-                      fullWidth
-                      className="fld-i"
-                      value={procDate}
-                      disabled={scheduleDatesLocked}
-                      min={procLocked ? undefined : today}
-                      onChange={(iso) => setProcDate(iso)}
-                    />
-                  </Field>
-                  <Field label="Delivery Date" style={{ flex: 1 }} error={touched && dateXorErr} scanned={scanned("delivDate", delivDate)} onClear={delivDate && !scheduleDatesLocked ? () => setDelivDate("") : undefined}>
-                    <DateField
-                      fullWidth
-                      className="fld-i"
-                      value={delivDate}
-                      disabled={scheduleDatesLocked}
-                      min={today}
-                      onChange={(iso) => setDelivDate(iso)}
-                    />
-                  </Field>
-                </div>
+                {/* FIX D3 — once the processing date has passed the SO is locked
+                    (it's what we PO to the supplier); the date inputs freeze.
+                    Owner 2026-07-16 — UNLESS the order is amendment-eligible:
+                    then both dates are editable and go out as an amendment
+                    request for approval instead of saving directly. */}
+                <Field label="Processing Date" error={touched && dateXorErr} scanned={scanned("procDate", procDate)} onClear={procDate && !scheduleDatesLocked ? () => setProcDate("") : undefined}>
+                  <DateField
+                    fullWidth
+                    className="fld-i"
+                    value={procDate}
+                    disabled={scheduleDatesLocked}
+                    min={procLocked ? undefined : today}
+                    onChange={(iso) => setProcDate(iso)}
+                  />
+                </Field>
+                <Field label="Delivery Date" error={touched && dateXorErr} scanned={scanned("delivDate", delivDate)} onClear={delivDate && !scheduleDatesLocked ? () => setDelivDate("") : undefined}>
+                  <DateField
+                    fullWidth
+                    className="fld-i"
+                    value={delivDate}
+                    disabled={scheduleDatesLocked}
+                    min={today}
+                    onChange={(iso) => setDelivDate(iso)}
+                  />
+                </Field>
                 <div style={{ fontSize: 10, color: "#9aa093", marginTop: -3 }}>
                   {amendmentMode
                     ? "Changing a date here submits an amendment request — it applies once approved."
@@ -3069,10 +3065,10 @@ function LineCard({
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 7, padding: 10 }}>
         <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
-          <Field label="Qty" style={{ flex: 0.55 }}>
+          <Field label="Qty" style={{ flex: 0.5 }}>
             <input className="fld-i" inputMode="numeric" value={line.qty} onChange={(e) => onChange({ qty: e.target.value })} />
           </Field>
-          <Field label="Unit Price" style={{ flex: 1.1 }}>
+          <Field label="Unit Price" style={{ flex: 1 }}>
             <input
               className="fld-i money"
               value={line.price}
@@ -3081,7 +3077,9 @@ function LineCard({
               onChange={(e) => onChange({ price: e.target.value, priceAuthored: true })}
             />
           </Field>
-          <Field label="Line Delivery Date" style={{ flex: 1.1 }} onClear={line.ddate ? () => onDdateChange("") : undefined}>
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
+          <Field label="Line Delivery Date" style={{ flex: 1 }} onClear={line.ddate ? () => onDdateChange("") : undefined}>
             <DateField fullWidth className="fld-i" value={line.ddate} onChange={(iso) => onDdateChange(iso)}/>
           </Field>
         </div>

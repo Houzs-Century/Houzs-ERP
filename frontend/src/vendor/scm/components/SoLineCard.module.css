@@ -110,9 +110,9 @@
   font-variant-numeric: tabular-nums;
   height: 32px;
   padding: 0 10px;
-  font-family: var(--font-mark);
-  font-size: var(--fs-13);
-  font-weight: 700;
+  font-family: var(--font-sans);
+  font-size: var(--fs-12);
+  font-weight: 500;
   color: var(--c-burnt);
   background: color-mix(in srgb, var(--c-accent-soft, #f5ecd8) 55%, var(--c-paper));
   border-color: color-mix(in srgb, var(--c-orange, #a16a2e) 45%, var(--line));

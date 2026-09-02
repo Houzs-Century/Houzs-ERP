@@ -1,6 +1,10 @@
 // ----------------------------------------------------------------------------
-// SoLinePhotoStrip — read-only line-photo thumbnails for the V2 SO detail,
-// with a click-to-open full-size viewer.
+// SoLinePhotoStrip — read-only line-photo thumbnails with a click-to-open
+// full-size viewer. Born on the V2 SO detail; since the mig-0274 carry it also
+// serves the PO detail through the same state machine — `source` picks the
+// endpoint pair, nothing else differs (the PO strip is read-only BY DESIGN:
+// photos are authored on the SO and carried across, so there is no upload or
+// delete UI to add here).
 //
 // Owner 2026-08-10: "我在外面的 UI 看不到照片了吗?不能点开照片来看吗?" — the
 // V2 read-only detail carried `photo_urls` on the wire the whole time
@@ -27,23 +31,31 @@
 // holds THUMB bytes. MediaLightbox therefore re-fetches the FULL object from
 // the same authed proxy route — which is the point, not waste.
 // ----------------------------------------------------------------------------
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { MediaLightbox } from "../MediaLightbox";
 import {
   photoContentType,
+  poLinePhotoLightboxBase,
   soLinePhotoLightboxBase,
-  useSoLinePhoto,
+  useScmLinePhoto,
+  type LinePhotoSource,
 } from "../../vendor/scm/lib/so-line-photo";
 
+/* `source` decides which document family's routes serve the keys — REQUIRED,
+   because a strip that silently defaulted to 'so' would 404 every thumb the
+   day a PO surface forgot to pass it (the optional-param-noop bug class).
+   `docId` is the SO doc_no or the PO row id, whichever the routes key on. */
+
 function Thumb({
-  docNo, itemId, photoKey, onOpen,
+  source, docId, itemId, photoKey, onOpen,
 }: {
-  docNo: string;
+  source: LinePhotoSource;
+  docId: string;
   itemId: string;
   photoKey: string;
   onOpen: () => void;
 }) {
-  const { src, error, onImgError } = useSoLinePhoto(photoKey, docNo, itemId);
+  const { src, error, onImgError } = useScmLinePhoto(source, photoKey, docId, itemId);
 
   /* "err" survives here for the same reason it does on the edit card: when the
      proxy ALSO fails (404 missing object, 401/403 refused) a missing photo must
@@ -81,16 +93,32 @@ function Thumb({
   );
 }
 
+export type LinePhotoEdit = {
+  /** Upload one image onto this line; the caller owns errors + refetch. */
+  onUpload: (file: File) => Promise<void>;
+  /** Delete one key from this line; only offered where canDeleteKey passes. */
+  onDelete: (photoKey: string) => Promise<void>;
+  /** Which keys THIS surface owns (PO: `po-items/...`; carried SO keys stay
+   *  read-only here and are managed on the Sales Order). */
+  canDeleteKey: (photoKey: string) => boolean;
+};
+
 export function SoLinePhotoStrip({
-  docNo, itemId, photoKeys,
+  source, docId, itemId, photoKeys, edit = null,
 }: {
-  docNo: string;
+  source: LinePhotoSource;
+  docId: string;
   itemId: string;
   photoKeys: string[];
+  /** Optional is the STRICTER direction here (CLAUDE.md optional-param rule):
+   *  absent = read-only display, exactly what every pre-existing caller gets. */
+  edit?: LinePhotoEdit | null;
 }) {
   const [openAt, setOpenAt] = useState<number | null>(null);
+  const [busy, setBusy] = useState(false);
+  const fileRef = useRef<HTMLInputElement | null>(null);
 
-  if (!docNo || !itemId || photoKeys.length === 0) {
+  if (!docId || !itemId || (photoKeys.length === 0 && !edit)) {
     return <span className="text-[11px] text-ink-muted">—</span>;
   }
 
@@ -111,14 +139,58 @@ export function SoLinePhotoStrip({
     <>
       <span className="flex flex-wrap items-center gap-1">
         {photoKeys.map((k, i) => (
-          <Thumb
-            key={k}
-            docNo={docNo}
-            itemId={itemId}
-            photoKey={k}
-            onOpen={() => setOpenAt(i)}
-          />
+          <span key={k} className="relative inline-flex">
+            <Thumb
+              source={source}
+              docId={docId}
+              itemId={itemId}
+              photoKey={k}
+              onOpen={() => setOpenAt(i)}
+            />
+            {edit && edit.canDeleteKey(k) && (
+              <button
+                type="button"
+                aria-label="Delete photo"
+                title="Delete photo"
+                disabled={busy}
+                className="absolute -right-1 -top-1 h-4 w-4 rounded-full border border-line bg-white text-[10px] leading-none text-ink-secondary hover:text-red-600 disabled:opacity-50"
+                onClick={async (e) => {
+                  e.stopPropagation();
+                  setBusy(true);
+                  try { await edit.onDelete(k); } finally { setBusy(false); }
+                }}
+              >
+                x
+              </button>
+            )}
+          </span>
         ))}
+        {edit && (
+          <>
+            <button
+              type="button"
+              disabled={busy}
+              title="Add photo"
+              className="inline-flex h-9 w-9 items-center justify-center rounded border border-dashed border-line text-[16px] leading-none text-ink-muted hover:text-ink disabled:opacity-50"
+              onClick={() => fileRef.current?.click()}
+            >
+              +
+            </button>
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={async (e) => {
+                const file = e.target.files?.[0];
+                e.target.value = "";
+                if (!file) return;
+                setBusy(true);
+                try { await edit.onUpload(file); } finally { setBusy(false); }
+              }}
+            />
+          </>
+        )}
       </span>
       {openAt !== null && (
         <MediaLightbox
@@ -126,7 +198,11 @@ export function SoLinePhotoStrip({
           index={openAt}
           onChange={setOpenAt}
           onClose={() => setOpenAt(null)}
-          baseUrl={soLinePhotoLightboxBase(docNo, itemId)}
+          baseUrl={
+            source === "po"
+              ? poLinePhotoLightboxBase(docId, itemId)
+              : soLinePhotoLightboxBase(docId, itemId)
+          }
           badge="Line photo"
         />
       )}

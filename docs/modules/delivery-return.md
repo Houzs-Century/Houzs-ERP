@@ -366,3 +366,11 @@ row already carries `so_doc_no` and `delivery_order_id` + `do_doc_no`, so no
 payload change was required. The list's batch export now reads its bundle from
 `lib/printDocumentPdf.ts`'s `deliveryReturnPdfBundle`, the one home for the
 DR-record → DR-generator mapping. `document-conversion.md` §8b has the rule.
+
+## Drill-down columns and "still loading"
+
+A cell fed by a SECOND query renders **WORKING…** while that query is in flight
+and **NOT LOADED** if it fails — never `STOCK` or a bare dash, which are
+answers. `coverage` is a required prop on the shared drill-down; the rule, the
+five surfaces that fetch separately, and how to add a sixth are in
+`docs/modules/coverage-state.md` (trace: `docs/bugs/0603-a-drill-down-printed-stock-while-the-answer-was-still-loadin.md`).

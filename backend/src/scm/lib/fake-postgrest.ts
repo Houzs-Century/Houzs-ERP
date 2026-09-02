@@ -38,8 +38,15 @@ export function fakeSb(
   tables: Record<string, Row[]>,
   missing: Record<string, string[]> = {},
   unique: FakeUniqueIndex[] = [],
+  /* Tables whose primary key is a BIGINT identity rather than a uuid/text id.
+     Their minted ids are NUMBERS, because handlers over such a table validate
+     the path parameter with Number.isInteger — a `row-1` id would make every
+     one of those handlers answer 400 in tests and pass in production, which is
+     the wrong way round for a fake to be wrong. */
+  numericIdTables: string[] = [],
 ) {
   const from = (table: string) => {
+    const mintId = (n: number): string | number => (numericIdTables.includes(table) ? n : `row-${n}`);
     tables[table] ??= [];
     const filters: Array<(r: Row) => boolean> = [];
     const sorts: Array<{ col: string; asc: boolean }> = [];
@@ -52,6 +59,7 @@ export function fakeSb(
     /** What the last UPDATE actually touched, for `.update(...).select(...)`. */
     let updated: Row[] | null = null;
     let wantCount = false;
+    let selectCalled = false;
     let lastInserted: Row | null = null;
     /* ORDER BY is applied for real, not ignored. `nextJeNo` mints the next
        accounting voucher number from `.order('je_no', { ascending: false })
@@ -120,10 +128,15 @@ export function fakeSb(
           const violated = uniqueViolation(row);
           if (violated) return { data: null, error: violated };
         }
-        const written = pendingRows.map((row, i) => ({ id: `row-${tables[table].length + i + 1}`, ...row }));
+        const written = pendingRows.map((row, i) => ({ id: mintId(tables[table].length + i + 1), ...row }));
         tables[table].push(...written);
         lastInserted = written[0] ?? null;
-        return { data: null, error: null };
+        /* PostgREST returns the written rows when the insert asks for them
+           (`.insert([...]).select('id, line_no')`) and nothing when it does
+           not. The settlement upload needs the new ids to link each statement
+           line to its payments, so a fake that always answered null would
+           force that code into a shape production does not use. */
+        return { data: selectCalled ? written : null, error: null };
       }
       if (pendingInsert) {
         const violated = uniqueViolation(pendingInsert);
@@ -133,7 +146,7 @@ export function fakeSb(
            that chain and writes the JE's lines against it, so a fake that
            returned null there would fail on the happy path for a reason that has
            nothing to do with the rule under test. */
-        const written = { id: `row-${tables[table].length + 1}`, ...pendingInsert };
+        const written = { id: mintId(tables[table].length + 1), ...pendingInsert };
         tables[table].push(written);
         lastInserted = written;
         /* data stays null on the bare `await sb.from(t).insert(x)` path — three
@@ -170,11 +183,33 @@ export function fakeSb(
         const gone = (missing[table] ?? []).filter((c) => (cols ?? '').split(',').map((x) => x.trim()).includes(c));
         if (gone.length) columnError = { code: '42703', message: `column ${table}.${gone[0]} does not exist` };
         if (opts?.count) wantCount = true;
+        selectCalled = true;
         return builder;
       },
       insert(payload: Row | Row[]) {
         if (Array.isArray(payload)) pendingRows = payload;
         else pendingInsert = payload;
+        return builder;
+      },
+      /* PostgREST upsert — insert, or update the row the onConflict columns
+         already name. Modeled the way supabase-js sends it: the conflict key
+         is a comma-joined column list; a hit updates IN PLACE, a miss falls
+         through to the normal insert path (unique checks included). */
+      upsert(payload: Row | Row[], opts?: { onConflict?: string }) {
+        const rows = Array.isArray(payload) ? payload : [payload];
+        const keys = String(opts?.onConflict ?? '').split(',').map((k) => k.trim()).filter(Boolean);
+        const leftover: Row[] = [];
+        for (const r of rows) {
+          const hit = keys.length > 0
+            ? tables[table].find((t) => keys.every((k) => String(t[k]) === String(r[k])))
+            : undefined;
+          if (hit) Object.assign(hit, r);
+          else leftover.push(r);
+        }
+        if (leftover.length > 0) {
+          if (Array.isArray(payload)) pendingRows = leftover;
+          else pendingInsert = leftover[0]!;
+        }
         return builder;
       },
       update(patch: Row) { pendingUpdate = patch; return builder; },

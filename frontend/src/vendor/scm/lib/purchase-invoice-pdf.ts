@@ -15,6 +15,10 @@ import { formatPhone } from '@2990s/shared/phone';
 import { COMPANY, DOC_TABLE_HEAD_STYLES, DOC_TABLE_STYLES, deliverPdf, drawHeader, drawInfoColumns, ensurePdfCjkFont, fmtRm, safeName, fmtDocDate, type PdfAction } from './pdf-common';
 import { supplierBlock } from './pdf-party-blocks';
 import { loadSupplierDocData, supplierCodeFor, docVariantLine } from './supplier-doc-data';
+/* The status WORD comes from the one home for it, never from a caser here:
+   what this document prints and what the screen shows must be the same word.
+   docs/modules/document-status-vocabulary.md §1. */
+import { statusLabel } from './status-pill';
 
 type PiHeader = {
   invoice_number: string; supplier_invoice_ref: string | null; status: string;
@@ -82,7 +86,7 @@ export async function renderPurchaseInvoiceInto(
     sFull?.country,
   ].filter(Boolean) as string[];
 
-  const statusText = header.status.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
+  const statusText = statusLabel('pi', header.status);
   y = drawInfoColumns(doc, y,
     /* Canonical supplier block via the shared helper — Company, Code,
        Address, Tel, Fax, Email, Attn, Terms, Note. Previously the PI printed

@@ -288,7 +288,8 @@ still need `edit` on `scm.sales.delivery`.
 | POST/PATCH/DELETE | `/:id/items[/:itemId]` | `:3636` / `:3784` / `:4005` | Line CRUD. |
 | GET/POST/DELETE | `/:id/payments[/:paymentId]` | `:4075` / `:4118` / `:4155` | Payments ledger. |
 | PATCH | `/:id/status` | `:4359` (handler `:4166`) | **The stock chokepoint.** |
-| GET | `/:id/scan-token` | `backend/src/scm/routes/delivery-order-scan-token.ts` | Mint-if-missing the 64-hex token the printed QR encodes (mig 0328). A SEPARATE router on the same prefix, because `delivery-orders-mfg.ts` is past its file-size ceiling. A **GET** although it can write: the write is an idempotent create-if-missing, and a POST would deny the QR to somebody who may print a delivery order but not edit one. Scoped to the SESSION's company; the public route can never reach it. |
+| GET | `/:id/scan-token` | `backend/src/scm/routes/delivery-order-scan-token.ts` | Mint-if-missing the token the printed QR encodes (mig 0328). **10 characters since 2026-08-27** — the length is a print setting, see `docs/bugs/0552-…`; the 64-hex form every sheet already printed carries still resolves. A SEPARATE router on the same prefix, because `delivery-orders-mfg.ts` is past its file-size ceiling. A **GET** although it can write: the write is an idempotent create-if-missing, and a POST would deny the QR to somebody who may print a delivery order but not edit one. Scoped to the SESSION's company; the public route can never reach it. |
+| GET | `/:id/items/:itemId/photos/:photoKey` and `…/signed` | `backend/src/scm/routes/delivery-order-item-photos.ts` | **Per-line photo read path (mig `20260828T0746_do_item_photo_urls.sql`).** A DO line raised from an SO line carries that line's `photo_urls` (R2 keys, SAME objects — owner 2026-08-10: 送货时照片要跟着 line), and these two routes are how a client views them: `/signed` mints a presigned URL and falls back to the proxy payload (production has no R2 S3 creds — 2026-08-10 incident), the bare route streams the bytes from the R2 binding. Read-only; authz is MEMBERSHIP (key listed in THIS line's `photo_urls`, line on THIS DO, active company via `scopeToCompany`) — never key shape; a `.thumb` sibling is authorised against its base key. Same separate-router-same-prefix construction as the scan token, same reason. The exact contract the SO and PO photo routes already serve, so `DoLinePhotoStrip` (desktop DO detail) mirrors `SoLinePhotoStrip`. |
 
 ### The PUBLIC surface — `/api/public/do-scan/*` (2026-08-26)
 
@@ -297,8 +298,67 @@ still need `edit` on `scm.sales.delivery`.
 
 | Method | Path | Purpose |
 |--------|------|---------|
+| POST | `/api/public/do-scan/batch/lookup` | `{ tokens }` — summarise a whole basket in ONE read |
+| POST | `/api/public/do-scan/batch/advance` | `{ tokens, to }` — move a basket, one document at a time |
 | GET | `/api/public/do-scan/:token` | Minimal summary + the ONE next rung |
 | POST | `/api/public/do-scan/:token/advance` | `{ to }` — move exactly one rung |
+
+**THE BATCH ROUTES ARE LISTED FIRST BECAUSE THEY ARE REGISTERED FIRST.** Hono
+matches in registration order, and `/batch/advance` declared after
+`/:token/advance` would be captured with `token = "batch"`. It would still be
+refused — `DO_SCAN_TOKEN_RE` admits only a 10- or 64-character token — but a 404
+for a route that exists is a confusing way to discover the ordering.
+`publicDoScanSurface.test.ts` pins both the order and the exact set of four.
+
+**The basket (2026-08-26).** The owner: 「我不能 scan 好几个 DO，然后一起点 load
+吗？…它应该可以支持连续扚描的。」 A storekeeper loading a lorry holds thirty
+papers. Two things made that impossible before: every "scan" was the phone's own
+camera app, which NAVIGATES AWAY and takes any basket with it, and the read limit
+was 30 per quarter-hour for what is one public IP for a whole warehouse floor.
+So the page grew its own camera (`frontend/src/lib/use-qr-scanner.ts`) and the
+basket spends ONE read for a whole pile.
+
+**One decision function, not a third copy.** Three surfaces now move a delivery
+order with nobody logged in — one paper, a packing list, a basket — and the five
+checks that decide whether one document may move live once, in
+`advanceOneDocument`. Only the off-rung SENTENCE varies per caller: a driver
+holding one paper, a driver holding a packing list and a storekeeper holding a
+pile need different words for the same fact.
+
+**The pile is uniform BY CONSTRUCTION, and that is a page rule rather than a
+server rule.** The owner, 2026-08-27: 「不同状态你就不要给它扫描进来吧，就当做它
+还没扫描到。」 The first paper scanned sets the rung; a paper on a different rung
+is not added at all — the optimistically-drawn row is removed and the count does
+not move. That collapses three buttons to ONE. The server keeps every one of its
+own checks regardless, because a document can move between the scan and the
+press; what the page rule buys is that the refusal happens at the lorry with the
+paper still in hand instead of afterwards in a list of reasons.
+
+**THE PAGE AND THE SERVER MUST AGREE ON WHAT A TOKEN LOOKS LIKE.** The basket
+parses the token out of a decoded QR (`TOKEN_IN_URL` in
+`frontend/src/pages/PublicDoScanBasket.tsx`) before anything is sent; the server
+re-checks the shape (`DO_SCAN_TOKEN_RE`) before any query. Two regexes, two
+files, one fact — and the drift is silent in the worst possible way: the page
+would simply DROP a scan the server would have resolved perfectly, and the
+operator would see a code that "does not scan".
+`frontend/src/pages/public-do-scan-token-shape.test.ts` reads BOTH FILES and
+asserts they accept the same set. Both live shapes are in that set: the
+10-character token minted since 2026-08-27, and the 64-hex one every sheet
+already on a lorry still carries.
+
+**A basket is refused, never truncated,** above 60 documents. The first version
+of the token parser stopped at the cap and returned what it had, so eighty papers
+would have moved sixty and reported success — a silent cap on a delivery floor is
+worse than a refusal because the refusal is visible.
+
+**`DRAFT` → `LOADED` cannot be batched.** That rung confirms the delivery order
+and takes the goods out of stock; doing it to a pile at once from a page with no
+login is a different class of risk from moving papers that already left.
+
+**Sequential, never parallel** — the same rule the packing list follows, and for
+the reason written up in the route header: two delivery orders frequently share
+one sales order, and Hookka deadlocked doing this in parallel.
+`publicDoScanRoute.test.ts` MEASURES it rather than asserting a comment.
 
 **The owner chose this**, after being shown the risk twice: 「就跟hookka一样」 —
 a public, no-login QR exactly like Hookka's, where the unguessable token printed
@@ -472,7 +532,7 @@ column lists are `HEADER` (`delivery-orders-mfg.ts:292-310`), `ITEM` (`:333-337`
 | Table | Role |
 |-------|------|
 | `scm.delivery_orders` | DO header. `do_number`, `so_doc_no`, `debtor_code/name`, `do_date`, `expected_delivery_at`, `customer_delivery_date`, `dispatched_at` / `signed_at` / `delivered_at`, `driver_id/name`, `vehicle`, `m3_total_milli`, address block, `salesperson_id`, `branding`, `venue_id`, per-category revenue + cost subtotals, `local_total_sen`, `total_cost_sen`, `total_margin_sen`, `line_count`, `warehouse_id`, `is_dropship`, `arrives_em_warehouse_date`, `pod_r2_key`, `signature_data`, `status`, `company_id`. |
-| `scm.delivery_order_items` | DO lines. `so_item_id` (the SO link that drives warehouse resolution + remaining-qty caps), `item_code`, `item_group`, `qty`, `m3_milli`, `unit_price_sen`, `discount_sen`, `line_total_sen`, `unit_cost_sen`, `line_cost_sen`, `line_margin_sen`, **`ship_cost_sen`**, `variants`, `line_delivery_date`, `line_delivery_date_overridden`, `rack_id`, **`committed_po_batch_no`** (mig 0230 — the incoming PO this line shipped against before its goods arrived; the per-line claim signal the receipt reconcile reads). |
+| `scm.delivery_order_items` | DO lines. `so_item_id` (the SO link that drives warehouse resolution + remaining-qty caps), `item_code`, `item_group`, `qty`, `m3_milli`, `unit_price_sen`, `discount_sen`, `line_total_sen`, `unit_cost_sen`, `line_cost_sen`, `line_margin_sen`, **`ship_cost_sen`**, `variants`, `line_delivery_date`, `line_delivery_date_overridden`, `rack_id`, **`committed_po_batch_no`** (mig 0230 — the incoming PO this line shipped against before its goods arrived; the per-line claim signal the receipt reconcile reads), **`photo_urls`** (mig `20260828T0746_do_item_photo_urls.sql` — `text[] NOT NULL DEFAULT '{}'`, the source SO line's R2 photo keys carried on convert/add; SHARED keys not copies, per line never deduplicated, `[]` never null; every insert path derives it server-side via `loadCarriedSoLinePhotos` + `carriedPhotoUrls` in `backend/src/scm/lib/do-item-row.ts`, ad-hoc lines get `[]`). |
 | `scm.delivery_order_payments` | Payments taken at delivery. `method`, `merchant_provider`, `installment_months`, `online_type`, `approval_code`, `amount_sen`, `account_sheet`, `collected_by`. |
 | `scm.delivery_order_crew` | One row per DO (UNIQUE `do_id`): driver/helper/lorry FKs plus the assign-time name/IC/contact/plate snapshot. |
 | `scm.inventory_movements` | Where the OUT lands. Keyed `(source_doc_type='DO', source_doc_id, item_code, variant_key, COALESCE(correction_seq,0))` by `uq_inv_mov_do_source_v2` (migration 0279; before that, `uq_inv_mov_do_source` without the correction slot), the partial unique index the reversal has to route around (`:4322-4328`). Full definition in §on idempotency below. |
@@ -925,6 +985,20 @@ DELIVERY ORDER's status. The three DO surfaces (detail, list export, mobile)
 stamp it; `ConsignmentNoteDetail` deliberately does not. Vector-drawn via
 `vendor/scm/lib/pdf-qr.ts` (frontend twin of the ASSR print's `qrSvg`).
 Pinned by `pages/scm-v2/do-load-scan.test.ts` + `lib/pdf-qr.test.ts`.
+
+**Line photos on the printed DO (owner spec 2026-08).** The same ITEM PHOTOS
+block the SO and PO PDFs print (shared `vendor/scm/lib/pdf-item-photos.ts` —
+`Item N` chips, ~52mm thumbnails, max 3 per row, English-only generated text,
+a group never splits across pages): one block after the items table, before
+the bottom-pinned signature; a photo-carrying row appends " (photo)" to its
+description and carries no image itself. Keys are the SO-carried
+`delivery_order_items.photo_urls`; only `.thumb` siblings are fetched, through
+the per-line proxy route above, keyed by `DoHeader.id` + line `id` — the CN
+reuse passes no header id, so it fetches nothing by construction. Every photo
+is best-effort: a failed fetch or decode is skipped and can never fail the
+PDF (pinned in `delivery-order-template.test.ts`). Photos imported from
+AutoCount (`ac-*.jpg`) have no `.thumb` sibling yet, so they show on screen
+but print nothing — same caveat as SO/PO.
 | `COMPLETED` | **nothing writes it.** Still in the code vocabulary (`DO_STOCK_OUT_STATES`, `DO_STATUSES`) but NOT a member of the `do_status` enum in any schema file or migration. Removed from the `delivered` filter bucket 2026-08-17. **CORRECTED 2026-08-18** — this cell used to end "the JS-side sets compare a status already in hand, where a value that can never occur is inert", and that was FALSE: `services/agents/delivery-agent.ts` mapped `DO_STATUSES` into one `.eq('status', st)` query per entry, so `COMPLETED` *was* being handed to Postgres to parse. That consumer no longer enumerates the list at all (it counts the rows it reads), so the claim is now true of every remaining reader — but it was a second live 22P02 for a day, and it was found by a reviewer, not by the sweep that wrote the sentence | read-only |
 | `CANCELLED` | `PATCH /:id/status`, atomic branch | **FINAL.** `A cancelled Delivery Order cannot be reactivated — its stock was already returned. Create a new DO to deliver again.` (409 `do_cancelled_final`) |
 
@@ -1825,3 +1899,22 @@ fetched by address (`GET /delivery-orders-mfg/:id` is `.eq('id', id)`), so an
 entry built from one would 404. The fix is one column on two selects already in
 flight in `routes/delivery-orders-mfg.ts`, and it is not in that change because
 the file is over its size ceiling — `document-conversion.md` §8b sizes it.
+
+## A line added here reaches the account book (since 2026-08-31)
+
+Adding a line to a document AutoCount already holds used to refuse the WHOLE
+document's edit: a line with no AutoCount key is indistinguishable from one the
+backfill missed, and guessing "new" appends a duplicate into a live book. The
+route now DECLARES the row it inserted (`newLineIds` -> `IsNewLine`), so the book
+appends it. A keyless line the route did not name is still refused.
+
+Full rule and the matrix: `docs/modules/autocount-writeback.md`,
+`docs/bugs/0588-a-line-added-to-a-delivery-order-receipt-or-invoice-never-re.md`.
+
+## Drill-down columns and "still loading"
+
+A cell fed by a SECOND query renders **WORKING…** while that query is in flight
+and **NOT LOADED** if it fails — never `STOCK` or a bare dash, which are
+answers. `coverage` is a required prop on the shared drill-down; the rule, the
+five surfaces that fetch separately, and how to add a sixth are in
+`docs/modules/coverage-state.md` (trace: `docs/bugs/0603-a-drill-down-printed-stock-while-the-answer-was-still-loadin.md`).

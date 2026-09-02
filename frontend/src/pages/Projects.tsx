@@ -1043,6 +1043,12 @@ const PROJECTS_LIST_FILTER_KEYS = [
   "brand",
   "year",
   "month",
+  // `from` / `to` — the date-range filter that replaced the year+month
+  // dropdowns (owner 2026-08-14). They were missed off this list when it
+  // shipped, so the range was the ONE filter that did not survive opening a
+  // project and coming back: `pluck()` mirrors only the keys named here.
+  "from",
+  "to",
   "status",
   "page",
 ] as const;
@@ -1520,7 +1526,14 @@ function ProjectsListView() {
             phase: restrictedCohort && phase ? phase : undefined,
             assigned_to_me: sendAssignedToMe ? 1 : undefined,
             exclude_done: restrictedCohort ? undefined : excludeDoneParam,
-            // my_pending intentionally OMITTED — export is the full filtered list.
+            // my_pending is sent, like every other chip. It used to be omitted
+            // "because export is the full filtered list", which made EXPORT
+            // disagree with the screen: owner 2026-09-02 filtered Setup &
+            // Dismantle + My pending tasks down to 10 rows, exported, and got
+            // every confirmed event instead. The rule is now simply: the export
+            // is what the toolbar says, and an unfiltered toolbar still exports
+            // everything.
+            my_pending: restrictedCohort ? undefined : myPending ? 1 : undefined,
             search,
             status: restrictedCohort ? undefined : status || undefined,
             page: pg,

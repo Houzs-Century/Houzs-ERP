@@ -100,7 +100,10 @@ const CS_SALES_HEADER = slice('static void SalesHeader(', 'static void PurchaseH
 const CS_PURCHASE_HEADER = slice('static void PurchaseHeader(', '/* Source line keys');
 const CS_DTLKEYS = slice('static long[] DtlKeys(', '// ── cancel');
 const CS_CANCEL = slice('static void Cancel(', '// ── edit');
-const CS_EDIT = slice('static void Edit(', '// ── helpers');
+/* The signature changed on 2026-08-31 — /edit now RETURNS the document's line
+   keys when it added a line, so the ERP can store them (docs/bugs/0583-*). The
+   anchor follows the name, not the return type. */
+const CS_EDIT = slice('Edit(Dictionary<string, object> p)', '// ── helpers');
 const CS_APPLY_UDF = slice('static void ApplyUdf(', 'static Dictionary<string, object> Ok(');
 
 /** The header allow-list the edit path iterates — the only header fields /edit
@@ -376,9 +379,17 @@ describe('layer 1 — the keys AcSyncService.cs parses, read out of its source',
        silently destroys whatever photographs the line was holding. This
        assertion is what makes adding a third way to write it impossible to do
        quietly. */
+    /* `Gone` was in this list for part of 2026-09-02 and is deliberately NOT any
+       more. It is an ERP-side fact — composeEdit reads it to decide whether the
+       line SET changed and therefore whether to rebuild (services/ac-line-gone.ts,
+       docs/bugs/0608) — and the host stopped reading it when the per-type
+       DeleteDetail branch was removed. It still rides along in Lines and is
+       ignored, which is why it must be absent HERE: this list is what the SERVICE
+       parses, and listing a key it does not read would make the contract lie in
+       the direction that reads as safe. */
     expect(detailKeys(CS_EDIT)).toEqual(
-      ['DeliveryDate', 'Desc2', 'Description', 'DtlKey', 'FurtherDescription', 'ItemCode',
-       'Location', 'Photos', 'Qty', 'UnitPrice'].sort(),
+      ['DeliveryDate', 'Desc2', 'Description', 'DtlKey', 'FurtherDescription',
+       'ItemCode', 'Location', 'Photos', 'Qty', 'UnitPrice'].sort(),
     );
   });
 
@@ -436,8 +447,8 @@ const LATER_MIGRATIONS: Record<string, string[]> = {
     'revision', 'company_id', 'po_email_sent_at', 'po_email_sent_to',
     'linked_ac_grn_docnos', 'linked_ac_pinv_docnos', 'linked_ac_docno',
   ],
-  // 0083 (company_id), 0273 (linked_ac_dtlkey — PR #1819)
-  purchase_order_items: ['company_id', 'linked_ac_dtlkey'],
+  // 0083 (company_id), 0273 (linked_ac_dtlkey — PR #1819), 0274 (photo_urls)
+  purchase_order_items: ['company_id', 'linked_ac_dtlkey', 'photo_urls'],
   suppliers: ['company_id'],
 };
 

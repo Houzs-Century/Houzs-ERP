@@ -611,6 +611,39 @@ describe("MobileAutoCountSync — Send now", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Send now" }));
     expect(await screen.findByText(/Nothing was sent/)).toBeTruthy();
   });
+
+  /* THE SAME SENTENCES AS THE DESKTOP, and asserted here rather than assumed:
+     both screens read `note.ancestors`, which `acAncestorLine` words once, so a
+     wording that drifted would have to break this test to do it. #0552. */
+  it("names every ancestor the press sent, and why each had to go first", async () => {
+    apiPost.mockResolvedValue(answer({
+      ancestors_sent: [
+        { doc_type: "SO", doc_no: "SO-A", code: "sent", reason: "stale" },
+        { doc_type: "DO", doc_no: "DO-B", code: "sent", reason: "missing" },
+      ],
+    }));
+    await mount(waiting);
+    await userEvent.click(await screen.findByRole("button", { name: "Send now" }));
+    expect(await screen.findByText(/SO-A — AutoCount had an older version, sent\./)).toBeTruthy();
+    expect(screen.getByText(/DO-B — AutoCount did not have it yet, sent\./)).toBeTruthy();
+  });
+
+  it("shows an ancestor that failed, not only the ones that worked", async () => {
+    apiPost.mockResolvedValue(answer({
+      ancestors_sent: [{ doc_type: "SO", doc_no: "SO-A", code: "still-refused", reason: "missing" }],
+    }));
+    await mount(waiting);
+    await userEvent.click(await screen.findByRole("button", { name: "Send now" }));
+    expect(await screen.findByText(/SO-A .*not sent — still-refused/)).toBeTruthy();
+  });
+
+  it("says nothing about ancestors when the press moved none", async () => {
+    apiPost.mockResolvedValue(answer({ ancestors_sent: [] }));
+    await mount(waiting);
+    await userEvent.click(await screen.findByRole("button", { name: "Send now" }));
+    await screen.findByText(/in the account book now/i);
+    expect(screen.queryByText(/Sent first/i)).toBeNull();
+  });
 });
 
 /* ───────────────────────────────────────────────────────────────────────────

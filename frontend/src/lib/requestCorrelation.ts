@@ -3,6 +3,8 @@
 // while errors prefer the server's safe echoed id and fall back to the exact id
 // sent for that attempt.
 
+import { absorbSessionPass } from "./authToken";
+
 const SAFE_REQUEST_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,63}$/;
 
 const responseClientIds = new WeakMap<Response, string>();
@@ -86,6 +88,10 @@ export async function correlatedFetch(input: RequestInfo | URL, init: RequestIni
   try {
     const response = await fetch(input, { ...init, headers });
     responseClientIds.set(response, clientRequestId);
+    /* Every authenticated call in the app funnels through here, which is why the
+       renewal is absorbed at this level rather than per call site — one missed
+       site is a user who silently never renews. */
+    absorbSessionPass(response);
     return response;
   } catch (error) {
     throw correlateError(error, clientRequestId);

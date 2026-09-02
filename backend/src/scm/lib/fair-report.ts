@@ -263,23 +263,48 @@ export type DoCostLine = {
   qty: number | null;
   unit_cost_sen: number | null;
   ship_cost_sen: number | null;   // frozen ship-time FIFO (mig 0143); NULL on legacy DOs
+  /** The line's category. SERVICE lines (delivery fee, installation) are not
+   *  stock and never carry a frozen cost, so they must not decide the LEGACY
+   *  verdict — see the note on `is_legacy`. Absent/unknown counts as stock. */
+  item_group?: string | null;
 };
+
+const isServiceGroup = (g: string | null | undefined): boolean => (g ?? '').trim().toLowerCase() === 'service';
 
 /** total_do_cost = Σ COALESCE(ship_cost_sen, unit_cost_sen) × qty over the
  *  DO's lines (reuse of the Fulfillment Costing ② rule, #800). Also reports the
- *  delivered qty and whether any line fell back to the live unit cost. */
-export function doCostTotal(lines: readonly DoCostLine[]): { total_do_cost_sen: number; qty: number; is_legacy: boolean } {
+ *  delivered qty and two flags the report shows as chips:
+ *
+ *  `is_legacy` — a STOCK line fell back to the order-time estimate because it
+ *  carries no frozen ship cost (a DO written before mig 0143). Owner's Sales
+ *  Report review 2026-08-31: this used to be set by ANY null, and the delivery
+ *  fee line is null by nature, so 11 of 14 rows on screen wore the chip and the
+ *  "pre-FIFO" KPI counted service lines. Service lines are now excluded from
+ *  the verdict; their cost still sums exactly as before.
+ *
+ *  `has_zero_frozen` — a stock line froze at ZERO while its order-time estimate
+ *  was non-zero: the ship-anyway fingerprint (goods left before any lot existed,
+ *  so FIFO had nothing to consume — 2990-DO-2607-021). The zero is the truth and
+ *  is NOT patched over; the flag exists so a naked 100% margin does not read as
+ *  a free sale. A line that is genuinely free (no estimate either) is not
+ *  flagged. */
+export function doCostTotal(lines: readonly DoCostLine[]): {
+  total_do_cost_sen: number; qty: number; is_legacy: boolean; has_zero_frozen: boolean;
+} {
   let total = 0;
   let qty = 0;
   let legacy = false;
+  let zeroFrozen = false;
   for (const l of lines) {
     const q = n(l.qty);
     qty += q;
+    const service = isServiceGroup(l.item_group);
     const unit = l.ship_cost_sen != null ? n(l.ship_cost_sen) : n(l.unit_cost_sen);
-    if (l.ship_cost_sen == null) legacy = true;
+    if (l.ship_cost_sen == null && !service) legacy = true;
+    if (!service && l.ship_cost_sen != null && n(l.ship_cost_sen) === 0 && n(l.unit_cost_sen) > 0) zeroFrozen = true;
     total += unit * q;
   }
-  return { total_do_cost_sen: total, qty, is_legacy: legacy };
+  return { total_do_cost_sen: total, qty, is_legacy: legacy, has_zero_frozen: zeroFrozen };
 }
 
 // ── stage=invoice cost progression ───────────────────────────────────────────

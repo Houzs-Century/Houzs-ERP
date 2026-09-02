@@ -45,6 +45,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Env } from '../env';
 import { getSupabaseService } from '../../db/supabase';
 import { isWritebackEnabled } from './autocount-writeback-flag';
+import { inAcLineOrder } from './ac-line-order'; import { poRaisedFromSo } from './so-po-raised';
 import { claimOutboxRow, releaseExpiredClaims } from './autocount-claim';
 import { splitSofaCode } from '../../services/autocount-sofa-collapse';
 import { SO_PROCESSING_DATE_COLUMN } from '../shared/so-processing-date';
@@ -100,6 +101,7 @@ import { soEditHeader } from './so-edit-header';
 import {
   AcReadError, readOrThrow, readSoOutstandingSen, readSoPaymentRefs, readPoEnqueueShape,
   readWarehouseCode,
+  withLocations,
 } from './autocount-read';
 import { backfillSoToPoKeys, poBodyForShape } from './autocount-so-to-po-keys';
 /* The reason a parentless create records, kept beside the needle that
@@ -107,7 +109,7 @@ import { backfillSoToPoKeys, poBodyForShape } from './autocount-so-to-po-keys';
 import { acParentlessCreateReason, acNotCarriedReason } from './autocount-outbox-status';
 /* Line identity, split out 2026-08-17 for the same cap reason as the two
    imports above. Same function, same call site in dispatchOne. */
-import { persistLineKeys } from './autocount-line-keys';
+import { persistLineKeys, persistNewLineKeys, newLineTargetOf } from './autocount-line-keys';
 import { readMfgProductBindings } from './supplier-bindings';
 import {
   soLine,
@@ -392,7 +394,7 @@ const PO_HEADER_COLS =
    D9 collapse echoes back. Leaving the column out of this list is what made the
    PO side fall back to a variants blob and throw the original build away. */
 const PO_ITEM_COLS =
-  'id, item_code, item_group, description, description2, qty, unit_price_sen, variants, linked_ac_dtlkey, warehouse_id, delivery_date';
+  'id, item_code, item_group, description, description2, qty, unit_price_sen, variants, linked_ac_dtlkey, warehouse_id, delivery_date, photo_urls';
 
 /**
  * The four DOWNSTREAM document types, described once.
@@ -422,38 +424,6 @@ const PO_ITEM_COLS =
  *     document the ERP is not the authority for.
  */
 
-/**
- * Hang the AutoCount stock location on each line.
- *
- * `warehouse_id` is a `scm.warehouses` UUID; AutoCount's `dbo.Location` is
- * keyed by the short code (KL, PG, HQ...), so one lookup per document turns
- * the ids into codes. Lines share warehouses, so this is one `in` query, not
- * one per line.
- *
- * A line with no warehouse keeps `location: null` and the caller decides:
- * a create refuses it (MissingLocationError), an edit simply omits the key so
- * the account book keeps its own value.
- */
-async function withLocations(
-  sb: Sb,
-  rows: Record<string, unknown>[],
-  lines: ErpLine[],
-): Promise<ErpLine[]> {
-  const ids = [...new Set(rows.map((r) => r.warehouse_id).filter((v): v is string => typeof v === 'string' && v !== ''))];
-  if (!ids.length) return lines;
-  const wh = await readOrThrow('warehouses',
-    sb.from('warehouses').select('id, code, name').in('id', ids));
-  const byId = new Map<string, string>();
-  for (const w of (wh ?? []) as Array<Record<string, unknown>>) {
-    const code = (w.code as string | null) ?? (w.name as string | null);
-    if (w.id && code) byId.set(String(w.id), code);
-  }
-  return lines.map((l, i) => {
-    const id = rows[i]?.warehouse_id;
-    const code = typeof id === 'string' ? byId.get(id) ?? null : null;
-    return code ? { ...l, location: code } : l;
-  });
-}
 
 /**
  * The salesperson's NAME, for the AutoCount Sales Agent.
@@ -592,7 +562,7 @@ export async function enqueueSoCreate(
        again would duplicate the order in the live book. */
     if ((header as { linked_ac_docno?: string | null }).linked_ac_docno) return AC_ENQUEUE_SILENT;
     const items = await readOrThrow('mfg_sales_order_items',
-      sb.from('mfg_sales_order_items').select(SO_ITEM_COLS).eq('doc_no', opts.docNo));
+      inAcLineOrder(sb.from('mfg_sales_order_items').select(SO_ITEM_COLS).eq('doc_no', opts.docNo)));
     const rows = (items ?? []) as Record<string, unknown>[];
     const lines = await withLocations(sb, rows, rows.map(soLine));
     /* Composed TWICE on purpose: once to learn which ERP rows produced which
@@ -699,7 +669,7 @@ export async function enqueuePoCreate(
     poNumber = header.po_number || opts.poId;
     if (header.linked_ac_docno) return AC_ENQUEUE_SILENT;
     const items = await readOrThrow('purchase_order_items',
-      sb.from('purchase_order_items').select(PO_ITEM_COLS).eq('purchase_order_id', opts.poId));
+      inAcLineOrder(sb.from('purchase_order_items').select(PO_ITEM_COLS).eq('purchase_order_id', opts.poId)));
     const rows = (items ?? []) as Record<string, unknown>[];
     const lines = await withLocations(sb, rows, rows.map(soLine));
     const bindings = await bindingsFor(sb, opts.companyId, lines.map((l) => l.item_code), header.supplier_id);
@@ -980,7 +950,7 @@ export async function retiredLineOf(
     const n = r.linked_ac_dtlkey == null ? NaN : Number(r.linked_ac_dtlkey);
     if (!Number.isFinite(n) || n <= 0) return [];
     const desc2 = r.description2 == null ? undefined : String(r.description2);
-    return [{ DtlKey: n, ItemCode: String(r[codeCol] ?? ''), ...(desc2 ? { Desc2: desc2 } : {}) }];
+    return [{ DtlKey: n, ItemCode: String(r[codeCol] ?? ''), ...(desc2 ? { Desc2: desc2 } : {}), Gone: 'deleted' as const }];
   } catch {
     return [];
   }
@@ -1251,8 +1221,8 @@ export async function enqueueEdit(
     const composed = opts.docType === 'SO'
       ? await composeSoState(sb, String(opts.docNo), retired, opts.newLineIds, opts.touchedFields)
       : opts.docType === 'PO'
-        ? await composePoState(sb, String(opts.docId ?? opts.docNo), retired)
-        : await composeDownstreamState(sb, opts.docType, String(opts.docId ?? opts.docNo), retired);
+        ? await composePoState(sb, String(opts.docId ?? opts.docNo), retired, opts.newLineIds)
+        : await composeDownstreamState(sb, opts.docType, String(opts.docId ?? opts.docNo), retired, opts.newLineIds);
     if (!composed) return false;
     /* A PO route knows its id, not its number; the outbox row is keyed by the
        human document number so it lines up with the create row. */
@@ -1398,7 +1368,8 @@ async function findPendingOriginatingOp(
  * checks the correspondence and refuses rather than trusting it.
  */
 async function composeDownstreamState(
-  sb: Sb, docType: 'DO' | 'GR' | 'IV' | 'PI', id: string, retired: AcRetiredLine[] = [],
+  sb: Sb, docType: 'DO' | 'GR' | 'IV' | 'PI', id: string,
+  retired: AcRetiredLine[] = [], newLineIds?: string[],
 ) {
   const spec = DOWNSTREAM[docType];
   const header = await readOrThrow(`${spec.table} header`,
@@ -1406,8 +1377,7 @@ async function composeDownstreamState(
   if (!header) return null;
   const h = header as unknown as Record<string, unknown>;
   const items = await readOrThrow(spec.itemTable,
-    sb.from(spec.itemTable).select(spec.itemCols).eq(spec.itemFk, id)
-      .order('created_at', { ascending: true }).order('id', { ascending: true }));
+    inAcLineOrder(sb.from(spec.itemTable).select(spec.itemCols).eq(spec.itemFk, id)));
   const lines = ((items ?? []) as unknown as Record<string, unknown>[]).map(spec.line);
   const docNo = spec.docNoOf(h);
   return {
@@ -1422,9 +1392,10 @@ async function composeDownstreamState(
     create: null as (() => Record<string, unknown>) | null,
     /* The SAME master the conversion route projects, narrowed to /edit's own
        allow-list instead — see `AcDownstreamSpec.facts`. */
-    edit: () => composeEdit(
-      docType, String(h.linked_ac_docno ?? docNo), downstreamEditHeader(docType, h), lines, {}, retired,
-    ),
+    /* Add-a-line, same contract as the SO's and PO's — docs/bugs/0588-*. */
+    edit: () => composeEdit(docType, String(h.linked_ac_docno ?? docNo),
+      downstreamEditHeader(docType, h), lines,
+      newLineIds?.length ? { newLineIds: new Set(newLineIds) } : {}, retired),
   };
 }
 
@@ -1433,14 +1404,14 @@ async function composeSoState(sb: Sb, docNo: string, retired: AcRetiredLine[] = 
     sb.from('mfg_sales_orders').select(SO_HEADER_COLS).eq('doc_no', docNo).maybeSingle());
   if (!header) return null;
   const items = await readOrThrow('mfg_sales_order_items',
-    sb.from('mfg_sales_order_items').select(SO_ITEM_COLS).eq('doc_no', docNo));
+    inAcLineOrder(sb.from('mfg_sales_order_items').select(SO_ITEM_COLS).eq('doc_no', docNo)));
   const soRows = (items ?? []) as Record<string, unknown>[];
   const lines = await withLocations(sb, soRows, soRows.map(soLine));
   const h = header as Record<string, unknown>;
   const bindings = await bindingsFor(sb, (h.company_id as number | null) ?? null, lines.map((l) => l.item_code));
-  const salespersonName = await readSalespersonName(sb, h.salesperson_id);
-  const outstandingSen = await readSoOutstandingSen(sb, h);
-  const paymentRefs = await readSoPaymentRefs(sb, docNo);
+  const [salespersonName, outstandingSen, paymentRefs, poRaised] = await Promise.all([
+    readSalespersonName(sb, h.salesperson_id), readSoOutstandingSen(sb, h),
+    readSoPaymentRefs(sb, docNo), poRaisedFromSo(sb, docNo)]);   // batched; 0609
   return {
     docNo,
     linkedAcDocNo: (h.linked_ac_docno as string | null) ?? null,
@@ -1461,30 +1432,43 @@ async function composeSoState(sb: Sb, docNo: string, retired: AcRetiredLine[] = 
       'SO', String(h.linked_ac_docno ?? docNo),
       soEditHeader(h, salespersonName, lines, outstandingSen, paymentRefs, touchedFields), lines,
       {
-        bindings,
-        ...(newLineIds && newLineIds.length ? { newLineIds: new Set(newLineIds) } : {}),
+        bindings,   // 0609: a PO raised from this SO blocks the rebuild, never the edit
+        ...(newLineIds?.length ? { newLineIds: new Set(newLineIds) } : {}), ...(poRaised ? { rebuildBlocked: 'A PO was raised from this SO.' } : {})
       },
       retired,
     ),
   };
 }
 
-async function composePoState(sb: Sb, poId: string, retired: AcRetiredLine[] = []) {
+async function composePoState(sb: Sb, poId: string, retired: AcRetiredLine[] = [], newLineIds?: string[]) {
   const header = await readPoHeader(sb, poId);
   if (!header) return null;
   const items = await readOrThrow('purchase_order_items',
-    sb.from('purchase_order_items').select(PO_ITEM_COLS).eq('purchase_order_id', poId));
+    inAcLineOrder(sb.from('purchase_order_items').select(PO_ITEM_COLS).eq('purchase_order_id', poId)));
   const poRows = (items ?? []) as Record<string, unknown>[];
   const lines = await withLocations(sb, poRows, poRows.map(soLine));
+  /* A line this request just ADDED inherits the purchase order's own warehouse
+     when it has none of its own. Done HERE, on the line, rather than as an
+     option on composeEdit: an EXISTING line with no location must keep omitting
+     the key so the account book keeps the value it owns, and only this composer
+     knows which lines are new. AutoCount refuses a detail whose Location is not
+     in dbo.Location, and it saves the document in one call. */
+  const newIds = new Set(newLineIds ?? []);
+  if (newIds.size && header.purchase_location) {
+    for (const l of lines) if (!l.location && l.id && newIds.has(l.id)) l.location = header.purchase_location;
+  }
   const poBindings = await bindingsFor(sb, header.company_id ?? null, lines.map((l) => l.item_code), header.supplier_id);
   return {
     docNo: header.po_number || poId,
     linkedAcDocNo: header.linked_ac_docno,
-    /* PO line photographs exist (import-po-line-photos.mjs wrote them) and are
-       NOT sent yet: the sales order is the one shape proven against the live
-       book, and a purchase order's pictures are a second rollout with its own
-       evidence, not a free ride on this one. */
-    photos: undefined as AcOutboxPayload['photos'],
+    /* PO line photographs, as KEYS — same shape as the sales order's, opened
+       2026-08-31 on the owner's word (asked whether purchase orders should send
+       them too, he answered 「要」). Nothing else had to change: `photosOf` reads
+       `linked_ac_dtlkey` + `photo_urls` off the raw row, the drain fetches the
+       bytes for any edit that carries them, and AcSyncService's line loop is
+       document-type agnostic — `Photos` becomes FurtherDescription on a purchase
+       detail exactly as it does on a sales one. */
+    photos: photosOf(poRows),
     self: { table: 'purchase_orders', keyCol: 'id', key: poId } as AcDocRef,
     create: () => composeCreatePo(header, lines, { bindings: poBindings }) as unknown as Record<string, unknown>,
     /* No Ref: the ERP has no such field on a purchase order, and /edit applies
@@ -1493,7 +1477,20 @@ async function composePoState(sb: Sb, poId: string, retired: AcRetiredLine[] = [
     edit: () => composeEdit('PO', String(header.linked_ac_docno ?? header.po_number), present({
       CreditorName: header.creditor_name,
       Description: header.notes,
-    }), lines, { supplierCode: header.creditor_code, bindings: poBindings }, retired),
+    }), lines, {
+      supplierCode: header.creditor_code,
+      bindings: poBindings,
+      /* Add-a-line, same contract as the sales order's: the ROUTE names the row
+         it just inserted, and composeEdit honours it only when every other line
+         on the document already carries a key. Until this was wired, a line
+         added to a purchase order already in the account book refused the whole
+         document — correctly, because a keyless line is otherwise
+         indistinguishable from one the backfill missed, and guessing "new"
+         appends a duplicate into a live book (mfg-purchase-orders.ts, the
+         convert-from-SO append, says exactly this). Their stock location is
+         filled in above, on the line. */
+      ...(newLineIds && newLineIds.length ? { newLineIds: new Set(newLineIds) } : {}),
+    }, retired),
   };
 }
 
@@ -1913,6 +1910,12 @@ export async function dispatchOne(
        (or, before that refusal existed, appended duplicates into the book). */
     if (payload.lineWriteback) {
       await persistLineKeys(sb, row, payload.lineWriteback, result.lines);
+    }
+    /* AN EDIT THAT ADDED A LINE LEARNS THAT LINE'S KEY (docs/bugs/0583-*).
+       Without it the added row stays keyless and every LATER edit is refused. */
+    if (row.op === 'edit') {
+      const target = newLineTargetOf(row.doc_type, payload);
+      if (target) await persistNewLineKeys(sb, row, target, result.lines);
     }
     return 'sent';
   }

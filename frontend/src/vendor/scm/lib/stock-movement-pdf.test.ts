@@ -189,8 +189,13 @@ describe('Stock Transfer PDF', () => {
     const text = draws.map((d) => d.text);
     expect(text).toContain('ST No: HC-ST-2608-001');
     expect(text).toContain('Date: 20/08/2026');
-    // Right-hand detail rail: drawInfoColumns paints the value as ": <value>".
-    expect(text).toContain(': Posted');
+    /* Right-hand detail rail: drawInfoColumns paints the value as ": <value>".
+       The word is CONFIRMED, not the stored `POSTED`: since 2026-08-26 the
+       status comes from statusLabel('stockTransfer', …), the same map the
+       screen reads, so the sheet and the list cannot say different words for
+       the same row. It said ": Posted" until then — the whole vocabulary is
+       pinned in pdf-status-label.test.ts. */
+    expect(text).toContain(': Confirmed');
     /* And the footer carries the doc no on every page of THIS document's span
        — the bare number, at the footer baseline the nine other generators use. */
     const footers = draws.filter((d) => d.text === 'HC-ST-2608-001' && d.y === 290);

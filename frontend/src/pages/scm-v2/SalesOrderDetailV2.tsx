@@ -18,6 +18,7 @@
 // swap on /scm/sales-orders/:docNo decides which one users see.
 
 import { lazy, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { coverageStateOf } from "../../components/coverage-state";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { LazySlot } from "../../components/LazySlot";
 import { scmListReturnTo } from "../../lib/scmListReturn";
@@ -45,11 +46,14 @@ import {
   DetailAside,
   Section,
 } from "../../components/DetailLayout";
+import { overlaySoLineCoverage } from "../../vendor/scm/lib/so-coverage-overlay";
 import {
   useMfgSalesOrderDetail,
+  useSoLineCoverage,
   useUpdateMfgSalesOrderStatus,
   useSalesOrderPayments,
   useSalesOrderAuditLog,
+  type SoLineCoverage,
 } from "../../vendor/scm/lib/sales-order-queries";
 /* The real audit trail — the same drawer and the same vocabulary the V1 detail
    page uses, so History means one thing across both (owner 2026-08-13). */
@@ -551,6 +555,10 @@ function SalesOrderDetailV2ReadOnly() {
   const navigate = useNavigate();
 
   const detail = useMfgSalesOrderDetail(docNo ?? null);
+  /* Live stock coverage is fetched SEPARATELY so this page paints on the fast
+     detail response (stored verdict, null live fields) and never blocks on it;
+     the badge + source-PO chips upgrade in place when this arrives. */
+  const coverage = useSoLineCoverage(docNo ?? null);
   const updateStatus = useUpdateMfgSalesOrderStatus();
   const { nameOf: salespersonNameOf } = useStaffLookup();
   const notify = useNotify();
@@ -568,10 +576,18 @@ function SalesOrderDetailV2ReadOnly() {
   ]);
 
   const salesOrder = (detail.data as { salesOrder?: SoHeader } | undefined)?.salesOrder ?? null;
-  const items: SoItem[] =
-    ((detail.data as { items?: SoItem[] } | undefined)?.items ?? []).filter(
-      (l) => !l.cancelled
-    );
+  // Coverage keyed by line id; empty until the async coverage query returns (or
+  // when the endpoint 404s on an older backend). Overlaid onto the lines below.
+  /* The overlay is SHARED with the list drill-down (vendor/scm/lib/
+     so-coverage-overlay) — two hand-written merges is how the board and the
+     drill-down drifted apart in docs/bugs/0269-*. */
+  const items: SoItem[] = useMemo(
+    () => overlaySoLineCoverage(
+      ((detail.data as { items?: SoItem[] } | undefined)?.items ?? []).filter((l) => !l.cancelled),
+      coverage.data?.coverage,
+    ),
+    [detail.data, coverage.data]
+  );
 
   const st = salesOrder ? statusFor(salesOrder.status) : null;
 
@@ -920,7 +936,8 @@ function SalesOrderDetailV2ReadOnly() {
       getValue: (l) => (l.photo_urls ?? []).length,
       render: (l) => (
         <SoLinePhotoStrip
-          docNo={docNo ?? ""}
+          source="so"
+          docId={docNo ?? ""}
           itemId={l.id}
           photoKeys={l.photo_urls ?? []}
         />
@@ -948,7 +965,7 @@ function SalesOrderDetailV2ReadOnly() {
           ...(l.ready_source_pos ?? []).map((r) => r.po ?? "STOCK ADJ"),
           ...(l.coverage_po ? [l.coverage_po] : []),
         ].join(", "),
-      render: (l) => <SoSourceChips line={l} />,
+      render: (l) => <SoSourceChips line={l} coverage={coverageStateOf(coverage)} />,
     },
   ];
 

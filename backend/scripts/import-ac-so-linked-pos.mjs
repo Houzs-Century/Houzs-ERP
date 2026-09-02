@@ -34,6 +34,7 @@ import { SOFA_MODEL_ALIAS, parseSofa } from "./lib/parse-sofa.mjs";
 import { acDeliveryDate, acDtlKey } from "./lib/ac-po-line.mjs";
 import { RECEIVED_INDETERMINATE, buildGrQtyGroups, resolveReceivedQty } from "./lib/po-line-topup-core.mjs";
 import { makeSoLineTaker } from "./lib/so-line-dedication.mjs";
+import { aliasFoldsForCatalog, catalogPredicate, nonCatalogRefs, formatNonCatalogRefusal } from "./lib/catalog-code-guard.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -90,12 +91,36 @@ async function main() {
   const prodByCode = new Map(products.map((p) => [p.code.toUpperCase(), p]));
   const codeSet = new Set(products.map((p) => p.code.toUpperCase()));
 
+
+  /* ALIAS FOLD (docs/bugs/0577). The mapping file names the sofa model the BOOK
+     uses — `HOK-5540 SOFA` -> `5540-1S` — and the ERP spells the four folded
+     models by their alias (SOFA_MODEL_ALIAS: 5530/5536/5537/5540 ->
+     9028/9058/8030/8030). Every other sofa path applies that on the way in.
+     This one did not, so an aliased model arrived as a code no product row has
+     and was written straight onto the line.
+
+     Folded HERE and not in the CSV on purpose: src/services/autocount-item-map.ts
+     is compiled from the same file and read in the OTHER direction, to choose
+     which AutoCount item a document is written back as. See the note on
+     aliasFoldsForCatalog for what repointing the rows costs there. */
+  {
+    const moves = aliasFoldsForCatalog([...byAc.values()], catalogPredicate(codeSet), SOFA_MODEL_ALIAS);
+    if (moves.size) {
+      log(`alias fold: ${moves.size} mapped code(s) the catalog does not carry resolve through SOFA_MODEL_ALIAS`);
+      for (const [from, to] of moves) log(`   ${from} -> ${to}`);
+      for (const [ac, erp] of byAc) if (moves.has(erp)) byAc.set(ac, moves.get(erp));
+    }
+  }
   /* Colour resolver — same folding rules as the SO/outstanding-PO importers, so
      one AutoCount colour string lands on the same fabric_colours row whichever
      document carries it. Ambiguity is not resolved by guessing: no hit means the
      colour rides as a label only. */
   const fcRows = await sql`SELECT fabric_id, colour_id, label FROM scm.fabric_colours WHERE company_id = 1`;
   const { findColour } = buildFabricColourIndex(fcRows);
+  // #1998 contract: an unlabelled colour is read only when the library CONFIRMS
+  // the code. The predicate was built for the backfill and the importers never
+  // passed it, so colour-first Desc2 lost even library-known codes.
+  const knownColour = (c) => { const h = findColour(c); return h ? h.colour_id : null; };
   const suppliers = await sql`SELECT id, code FROM scm.suppliers WHERE company_id = 1`;
   const supByCode = new Map(suppliers.map((s) => [norm(s.code), s.id]));
   const whs = await sql`SELECT id, code FROM scm.warehouses WHERE company_id = 1`;
@@ -180,7 +205,15 @@ async function main() {
   for (const [doc, lines] of toCreate) {
     const first = lines[0];
     const supId = supByCode.get(norm(first.CreditorCode)) ?? null;
-    if (!supId) noSupplier++;
+    if (!supId) {
+      /* Same refusal the outstanding-PO import carries. Counting alone let a
+         null supplier_id reach the INSERT and the NOT NULL constraint killed
+         the whole run mid-loop (PO-009555, creditor 400-R002 — docs/bugs/0557).
+         A missing master skips ITS document, loudly, and the rest still land. */
+      noSupplier++;
+      log(`   SKIP ${doc}: supplier ${first.CreditorCode} (${first.CreditorName || "?"}) has no scm.suppliers row — open it, then re-run`);
+      continue;
+    }
     const items = [];
     for (const l of lines) {
       const src = soLineByDtl.get(String(l.FromSODtlKey));
@@ -216,10 +249,10 @@ async function main() {
         const reclOK = ["-1S(R)", "-1A(R)(LHF)", "-1A(P)(LHF)", "-1S(P)"]
           .some((sfx) => codeSet.has((model + sfx).toUpperCase()));
         // the PO's own spec first, then the order it was raised from
-        let ps = parseSofa(l.Desc2, model, reclOK);
+        let ps = parseSofa(l.Desc2, model, reclOK, { knownColour });
         let usedSoText = false;
         if ((ps.conf === "low" || !ps.pieces.length) && src && src.d2) {
-          const alt = parseSofa(src.d2, model, reclOK);
+          const alt = parseSofa(src.d2, model, reclOK, { knownColour });
           if (alt.pieces.length && alt.conf !== "low") { ps = alt; usedSoText = true; }
         }
         const codes = ps.pieces.map((cmp) => `${model}-${cmp}`);
@@ -264,7 +297,12 @@ async function main() {
         // original text stays on the line, and a human finishes the pieces
         const ph = `${model}-1S`;
         const code = codeSet.has(ph.toUpperCase()) ? ph : l.erp;
-        const soItemId = takeSoLine(code) ?? takeSoLine(l.erp);
+        /* The ALIASED placeholder is tried FIRST and unconditionally: the SO
+           importer writes `${model}-1S` (alias applied), so when the catalog has
+           no row for it this branch would otherwise look up the SO line by the
+           raw mapped code only and lose a link the book actually states
+           (owner 2026-08-31, HC-SO-013389 / PO-010087). */
+        const soItemId = takeSoLine(ph) ?? takeSoLine(code) ?? takeSoLine(l.erp);
         if (!soItemId) noSoLine++;
         recvUnits += recv;
         items.push({
@@ -306,6 +344,25 @@ async function main() {
     log("");
     log(`SOFA decode: ${ok.length} decomposed, ${sofaDecode.length - ok.length} placeholder (never guessed); read from the SO's own text: ${sofaDecode.filter((d) => d.usedSoText).length}; bound to a placeholder SO line: ${sofaPlaceholderBind}`);
     for (const d of sofaDecode) log(`   ${d.po} ${d.code} | ${JSON.stringify(d.d2 || "").slice(0, 60)} -> ${d.pieces ? d.pieces.join(" + ") : "PLACEHOLDER"}${d.why.length ? " (" + d.why.join("; ") + ")" : ""}`);
+  }
+
+  /* CATALOG GUARD — the last thing between the plan and the database.
+     Two silent routes reached an item_code nobody minted, and this refuses
+     both. `code` above falls back to the raw mapped code when the aliased
+     placeholder has no product row; and `group` is read from the CATALOG
+     (`prodCat.get(norm(l.erp))`), so a mapped code the catalog does not know
+     was classified "others" and skipped the sofa decomposition entirely — the
+     line then landed whole, under the unknown code, having never been offered
+     to the decoder. Refuse the run and name every row (docs/bugs/0577). */
+  const badCodes = nonCatalogRefs(
+    plan.flatMap((p) => p.items.map((i) => ({ code: i.code, doc: "HC-" + p.acDoc, acDoc: p.acDoc, sku: i.supplierSku }))),
+    catalogPredicate(codeSet),
+  );
+  if (badCodes.length) {
+    log("");
+    for (const line of formatNonCatalogRefusal(badCodes, { script: "import-ac-so-linked-pos.mjs" })) log(line);
+    await sql.end();
+    process.exit(2);
   }
 
   if (!APPLY) { log("DRY-RUN — set APPLY=1 to write. NOTE: no stock movements are created; the balance snapshot already holds these units."); await sql.end(); return; }

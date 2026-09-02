@@ -1,5 +1,6 @@
 // Vendored SLICE of apps/backend/src/lib/flow-queries.ts — ONLY the Sales-Order
 import { writeFailed } from './mutation-error';
+import { resolveCompartmentArtUrl, loadCompartmentArt } from './sofa-compartment-art';
 // read / detail / status / mutation hooks the vendored SO list + detail pages
 // use. The full source module (~2000 lines) carries the entire SO/DO/SI/DR
 // query surface; the DO/SI/DR hooks are intentionally NOT vendored here.
@@ -227,6 +228,38 @@ export const useMfgSalesOrderDetail = (docNo: string | null) => useQuery({
   queryKey: ['mfg-sales-order-detail', docNo],
   queryFn: () => authedFetch<{ salesOrder: any; items: any[] }>(`/mfg-sales-orders/${docNo}`),
   enabled: Boolean(docNo), staleTime: 30_000, retry: retryUnlessClientError, retryDelay: 800,
+});
+
+/* Per-line LIVE stock coverage, fetched SEPARATELY from the SO detail so the
+   document + lines paint immediately on the fast GET /:docNo (which now returns
+   the stored verdict and null live-coverage fields) and the live Stock badge +
+   source-PO chips upgrade in place a moment later. Keyed by the line `id`, one
+   entry per line. The detail page overlays these onto its own lines when they
+   arrive — never a loading gate. */
+export type SoLineCoverage = {
+  id: string;
+  stock_state: 'stock' | 'po' | 'shortage' | null;
+  coverage_po: string | null;
+  coverage_eta: string | null;
+  ready_source_pos: Array<{ po: string | null; qty: number; kind: 'po' | 'adjustment' }>;
+  stock_status_effective: string | null;
+};
+
+export const useSoLineCoverage = (docNo: string | null) => useQuery({
+  queryKey: ['mfg-sales-order-coverage', docNo],
+  queryFn: async () => {
+    try {
+      return await authedFetch<{ coverage: SoLineCoverage[] }>(`/mfg-sales-orders/${docNo}/coverage`);
+    } catch (e) {
+      /* An older backend without this endpoint 404s — that is "no coverage yet",
+         not an error to surface. The lines keep the detail's stored verdict. */
+      if ((e as { status?: number } | null)?.status === 404) return { coverage: [] };
+      throw e;
+    }
+  },
+  enabled: Boolean(docNo),
+  staleTime: 30_000,
+  retry: retryUnlessClientError,
 });
 
 export type DebtorSuggestion = {
@@ -831,6 +864,18 @@ export async function fetchSoItemPhotoBlob(
   itemId: string,
   photoKey: string,
 ): Promise<Blob> {
+  return fetchItemPhotoBlobAt(
+    `/mfg-sales-orders/${encodeURIComponent(docNo)}/items/${encodeURIComponent(itemId)}`,
+    photoKey,
+  );
+}
+
+/* One transport for every line-photo proxy read. `itemBase` is the
+   API-client-relative document/item prefix ("/mfg-sales-orders/:docNo/items/
+   :itemId" or "/mfg-purchase-orders/:id/items/:itemId") — the routes mirror
+   each other by design (mig 0274: the PO photo read path was built to the SO
+   contract so one client code path drives both surfaces). */
+async function fetchItemPhotoBlobAt(itemBase: string, photoKey: string): Promise<Blob> {
   const token = readAuthToken();
   if (!token) throw new PhotoProxyError(401, 'Your session has expired — please sign in again.');
 
@@ -840,8 +885,7 @@ export async function fetchSoItemPhotoBlob(
   let res: Response;
   try {
     res = await correlatedFetch(
-      `${API_URL}/mfg-sales-orders/${encodeURIComponent(docNo)}/items/${encodeURIComponent(itemId)}`
-        + `/photos/${encodeURIComponent(photoKey)}`,
+      `${API_URL}${itemBase}/photos/${encodeURIComponent(photoKey)}`,
       { headers: { authorization: `Bearer ${token}`, ...companyHeader() }, signal },
     );
   } catch (e) {
@@ -865,4 +909,262 @@ export async function fetchSoItemPhotoBlob(
   }
 
   return consumeCorrelated(res, () => res.blob());
+}
+
+/* ── PO twins ──────────────────────────────────────────────────────────────
+   Purchase-order lines carry the SAME photo keys (an SO→PO convert copies the
+   key list; both point at one R2 object), served by mirrored routes on
+   /mfg-purchase-orders/:id/items/:itemId (mig 0274). They live HERE because
+   this file owns the photo wire contract — the payload union, PhotoProxyError
+   and the proxy transport above — and a second copy of that contract is how
+   the SO side originally shipped a surface that rendered nothing. */
+
+export async function fetchPoItemPhotoSignedUrl(
+  poId: string,
+  itemId: string,
+  photoKey: string,
+): Promise<PhotoUrlPayload> {
+  return authedFetch<PhotoUrlPayload>(
+    `/mfg-purchase-orders/${encodeURIComponent(poId)}/items/${encodeURIComponent(itemId)}`
+      + `/photos/${encodeURIComponent(photoKey)}/signed`,
+  );
+}
+
+export async function fetchPoItemPhotoBlob(
+  poId: string,
+  itemId: string,
+  photoKey: string,
+): Promise<Blob> {
+  return fetchItemPhotoBlobAt(
+    `/mfg-purchase-orders/${encodeURIComponent(poId)}/items/${encodeURIComponent(itemId)}`,
+    photoKey,
+  );
+}
+
+/* DO twin of the two above — same proxy contract, mounted by
+   routes/delivery-order-item-photos.ts (keys are SO-carried, mig 20260828T0746). */
+export async function fetchDoItemPhotoBlob(
+  doId: string,
+  itemId: string,
+  photoKey: string,
+): Promise<Blob> {
+  return fetchItemPhotoBlobAt(
+    `/delivery-orders-mfg/${encodeURIComponent(doId)}/items/${encodeURIComponent(itemId)}`,
+    photoKey,
+  );
+}
+
+/* PO WRITE twins (owner 2026-08-28: 如果我要 add on 照片在 PO 而已 — a purchaser
+   attaches photos DIRECTLY on a PO line). Two ownership classes share the
+   photo_urls column, told apart by key prefix: carried `so-items/...` keys are
+   SO-owned (the server refuses deleting them here — manage on the SO);
+   `po-items/...` keys are PO-authored, live only on the PO, and print only on
+   the PO PDF. */
+export const PO_OWNED_PHOTO_PREFIX = 'po-items/';
+export const isPoOwnedPhotoKey = (key: string): boolean => key.startsWith(PO_OWNED_PHOTO_PREFIX);
+
+export type UploadPoItemPhotoResult = { photoKey: string; photoUrls: string[] };
+
+export async function uploadPoItemPhoto(
+  poId: string,
+  itemId: string,
+  file: File,
+): Promise<UploadPoItemPhotoResult> {
+  /* WO-7 — downscale/re-encode + thumbnail in one decode pass. The thumb is
+     what the PO PDF prints (pdf-item-photos fetches thumbs only), so sending
+     it is not cosmetic. */
+  const prepared = await prepareImageForUpload(file);
+  const fd = new FormData();
+  fd.append('file', prepared.file);
+  if (prepared.thumb) fd.append('thumb', prepared.thumb);
+  return authedFetch<UploadPoItemPhotoResult>(
+    `/mfg-purchase-orders/${encodeURIComponent(poId)}/items/${encodeURIComponent(itemId)}/photos`,
+    { method: 'POST', body: fd },
+  );
+}
+
+export async function deletePoItemPhoto(
+  poId: string,
+  itemId: string,
+  photoKey: string,
+): Promise<{ photoUrls: string[] }> {
+  return authedFetch<{ photoUrls: string[] }>(
+    `/mfg-purchase-orders/${encodeURIComponent(poId)}/items/${encodeURIComponent(itemId)}`
+      + `/photos/${encodeURIComponent(photoKey)}`,
+    { method: 'DELETE' },
+  );
+}
+
+/* Sofa Compartment hero photo — a DIFFERENT wire than the per-line item photos
+   above: keyed by compartment CODE, served by the public
+   /maintenance-config/sofa-compartments/:code/photo/:key proxy (singular
+   "photo"), so it does not go through fetchItemPhotoBlobAt (which appends
+   "/photos/:key"). Used to paint the real compartment picture into the PO's
+   sofa-layout schematic. The auth header is sent when present but the route is
+   public, so a signed-out preview still resolves. */
+export async function fetchSofaCompartmentPhotoBlob(code: string, photoKey: string): Promise<Blob> {
+  let signal: AbortSignal | undefined;
+  try { signal = AbortSignal.timeout(PHOTO_PROXY_TIMEOUT_MS); } catch { signal = undefined; }
+  const token = readAuthToken();
+  const res = await correlatedFetch(
+    `${API_URL}/maintenance-config/sofa-compartments/${encodeURIComponent(code)}`
+      + `/photo/${encodeURIComponent(photoKey)}`,
+    { headers: { ...(token ? { authorization: `Bearer ${token}` } : {}), ...companyHeader() }, signal },
+  );
+  if (!res.ok) {
+    const text = await res.text().catch(() => '<no body>');
+    throw new PhotoProxyError(res.status, humanApiError(res.status, text));
+  }
+  return consumeCorrelated(res, () => res.blob());
+}
+
+function blobToDataUrl(blob: Blob): Promise<string | null> {
+  return new Promise((resolve) => {
+    const r = new FileReader();
+    r.onload = () => resolve(typeof r.result === 'string' ? r.result : null);
+    r.onerror = () => resolve(null);
+    r.readAsDataURL(blob);
+  });
+}
+
+/* Fetch every sofa compartment's ART into a `{ code: dataURL }` map for the PO
+   PDF's plan view.
+ *
+ * REWRITTEN 2026-08-28 to follow POS, at the owner's instruction. The previous
+ * version fetched every imageKey through the uploaded-photo API, which is one of
+ * the THREE shapes a key can take and not the common one: the seeded default is
+ * `sofa-modules/<code>.svg`, bundled art served from /public. Every default
+ * compartment 404'd, the catch below swallowed it, and the sheet drew its own
+ * schematic — which is what the owner was looking at when he said the plan still
+ * did not look like his sofas.
+ *
+ * The art also arrives PADDED inside a 1024² frame, so it is cropped to its
+ * silhouette before it is handed to jsPDF — POS's technique, ported in
+ * sofa-compartment-art.ts, without which the modules tile small and gappy.
+ *
+ * Per-compartment best-effort: anything that cannot be resolved, fetched or
+ * measured is simply absent from the map and the engine draws that one cell's
+ * schematic. */
+/* THE PRINT PATH LOADS ITS OWN ART — one lookup, not five call sites, and it
+ * does NOT depend on the stored config carrying an imageKey.
+ *
+ * WHY IT IS KEYED BY THE CODES THE SHEET NEEDS (owner, 2026-08-28, still looking
+ * at a schematic after two fixes: 「还是一样的问题啊」). The earlier version walked
+ * `sofaCompartmentMeta` and used only entries that HAD an `imageKey`. The stored
+ * config has none: `seedCompartmentMeta` in Products.tsx supplies the default
+ * `sofa-modules/<id>.svg` CLIENT-SIDE, so the Maintenance list shows a thumbnail
+ * for every compartment while the database holds nothing. Two places, one
+ * default, and only one of them had it — which is why the owner could see the
+ * pictures on screen and never on paper, and why neither of us was wrong.
+ *
+ * So the default is derived from the CODE rather than looked up: a compartment's
+ * code IS the name of its artwork. The stored config is consulted only for an
+ * OVERRIDE — an uploaded photo, or an external URL somebody typed in. A missing
+ * config is now a non-event rather than the difference between a picture and a
+ * drawing.
+ *
+ * Fail-soft throughout: anything that cannot be resolved, fetched or measured is
+ * simply absent, and that cell draws its schematic. A print must never fail for
+ * want of a picture. */
+/* How long the whole artwork lookup may take before the sheet prints without it.
+   Generous enough for a warehouse connection, short enough that nobody stares at
+   a blank tab wondering whether Print worked. */
+const ART_DEADLINE_MS = 6000;
+
+/** Resolve `p`, or `fallback` if it has not settled within `ms`. Never rejects. */
+async function withDeadline<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      p.catch(() => fallback),
+      new Promise<T>((resolve) => { timer = setTimeout(() => resolve(fallback), ms); }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+export async function loadSofaCompartmentArtForPrint(
+  codes: readonly string[],
+): Promise<Record<string, string>> {
+  /* `String(c)` rather than `c ?? ''` — the array is `readonly string[]`, so the
+     compiler is right that the coalesce is dead. String() still guards a stray
+     non-string arriving from untyped cell data at runtime. */
+  const wanted = [...new Set(codes.map((c) => String(c).trim()).filter(Boolean))];
+  if (wanted.length === 0) return {};
+
+  /* The override map, best-effort AND TIME-BOUNDED. A company with no config
+     yet, a failed read, or a slow one all mean the same thing: every code falls
+     back to its bundled art.
+
+     THE DEADLINE IS THE POINT. Artwork is decoration on a document whose job is
+     to tell a supplier what to build — a print must never sit waiting for it.
+     CI found this the honest way: the PO sofa test hung for fifteen seconds on a
+     fetch that never answered, which is exactly what a purchaser on a bad
+     connection would have experienced with no test to catch it. */
+  const meta = await withDeadline(
+    (async () => {
+      const resolved = await authedFetch<{ data?: { sofaCompartmentMeta?: Record<string, { imageKey?: string }> } }>(
+        '/maintenance-config/resolved?scope=master',
+      );
+      return resolved.data?.sofaCompartmentMeta ?? {};
+    })(),
+    ART_DEADLINE_MS,
+    {} as Record<string, { imageKey?: string }>,
+  );
+
+  const out: Record<string, string> = {};
+  /* The per-code loads share one deadline as well: thirty compartments each
+     waiting on their own timeout would still be thirty times too long. */
+  await withDeadline(Promise.all(wanted.map(async (code) => {
+    try {
+      /* An UPLOADED override needs the session; anything else is a plain file
+         on this origin and must NOT carry a bearer token. Absent override →
+         `sofa-modules/<code>` is the seed, exactly what the Maintenance list
+         shows. */
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- a Record index is typed as always present and is not; `meta` comes off the wire and carries an entry only for a compartment somebody overrode, which is the common case for NONE of them.
+      const key = meta[code]?.imageKey || `sofa-modules/${code}`;
+      const url = resolveCompartmentArtUrl(code, key, API_URL);
+      if (!url) return;
+      if (url.startsWith(`${API_URL}/`)) {
+        const blob = await fetchSofaCompartmentPhotoBlob(code, key);
+        const dataUrl = await blobToDataUrl(blob);
+        if (dataUrl) out[code] = dataUrl;
+        return;
+      }
+      const art = await loadCompartmentArt(url);
+      if (art) out[code] = art.dataUrl;
+    } catch {
+      /* this one cell draws its schematic */
+    }
+  })), ART_DEADLINE_MS, [] as unknown[]);
+  return out;
+}
+
+export async function loadSofaCompartmentPhotos(
+  meta: Record<string, { imageKey?: string }> | undefined | null,
+): Promise<Record<string, string>> {
+  if (!meta) return {};
+  const entries = Object.entries(meta)
+    .filter((e): e is [string, { imageKey: string }] => typeof e[1].imageKey === 'string' && e[1].imageKey.length > 0);
+  const out: Record<string, string> = {};
+  await Promise.all(entries.map(async ([code, m]) => {
+    try {
+      const url = resolveCompartmentArtUrl(code, m.imageKey, API_URL);
+      if (!url) return;
+      /* An UPLOADED photo needs the session; a bundled one is a plain static
+         file on this origin and must NOT carry a bearer token. */
+      if (url.startsWith(`${API_URL}/`)) {
+        const blob = await fetchSofaCompartmentPhotoBlob(code, m.imageKey);
+        const dataUrl = await blobToDataUrl(blob);
+        if (dataUrl) out[code] = dataUrl;
+        return;
+      }
+      const art = await loadCompartmentArt(url);
+      if (art) out[code] = art.dataUrl;
+    } catch {
+      /* skip this compartment — the engine draws its schematic instead */
+    }
+  }));
+  return out;
 }

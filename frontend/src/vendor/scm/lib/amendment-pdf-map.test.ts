@@ -2,6 +2,10 @@
 // detail shapes fold into the shared AmendmentPdfInput the way the owner's
 // before/after change table expects: one row per changed field, ADD/REMOVE as a
 // single tinted row, and the revision old -> new pair.
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import { describe, it, expect } from 'vitest';
 import { soAmendmentToPdfInput, poAmendmentToPdfInput } from './amendment-pdf-map';
 
@@ -154,5 +158,94 @@ describe('soAmendmentToPdfInput — the discount row (mig 0317)', () => {
     const disc = out.changes.find((r) => r.field === 'Discount')!;
     expect(disc.before).toBe('RM 15.00');
     expect(disc.after).toBe('RM 0.00');
+  });
+});
+
+/* THE PRINTED STATUS. `amendment-pdf.ts` draws `input.status` verbatim into the
+   header's Status row, so what the mapper puts here is exactly what lands on
+   paper. Until 2026-08-26 the four callers each hand-wrote
+   `applied ? "Approved" : "Requested"` and a REJECTED amendment therefore
+   printed **Requested** — the word that says nobody has decided yet — on a
+   document handed to a supplier or filed as the decision record. */
+describe('the amendment document prints the status the amendment lists show', () => {
+  const so = (status: string) => soAmendmentToPdfInput({
+    amendment: { amendment_no: 'SO-1/A1', status, created_at: '2026-08-20' },
+    lines: [], salesOrder: { doc_no: 'SO-1', revision: 1 },
+  }).status;
+  const po = (status: string) => poAmendmentToPdfInput({
+    amendment: { amendment_no: 'PO-1/A1', status, created_at: '2026-08-20' },
+    lines: [], purchaseOrder: { po_number: 'PO-1', revision: 1 },
+  }).status;
+
+  it('a REJECTED amendment prints Rejected, on both kinds', () => {
+    expect(so('REJECTED')).toBe('Rejected');
+    expect(po('REJECTED')).toBe('Rejected');
+  });
+
+  it('every other state keeps the collapse the amendment lists use', () => {
+    for (const [stored, word] of [
+      ['REQUESTED', 'Requested'],
+      ['SUPPLIER_PENDING', 'Requested'],
+      ['SO_APPROVED', 'Approved'],
+      ['PO_APPROVED', 'Approved'],
+      ['SENT', 'Approved'],
+    ] as Array<[string, string]>) {
+      expect(so(stored), stored).toBe(word);
+    }
+    expect(po('REQUESTED')).toBe('Requested');
+    expect(po('APPROVED')).toBe('Approved');
+  });
+
+  /* No caller may hand the document its own word again: the input shape no
+     longer carries one, so this is the compiler's job, and the assertion here
+     is that the mapper does NOT read one off the detail object. */
+  it('ignores a status word supplied by the caller', () => {
+    const withLegacyWord = {
+      amendment: { amendment_no: 'SO-1/A1', status: 'REJECTED', created_at: '2026-08-20' },
+      lines: [], salesOrder: { doc_no: 'SO-1', revision: 1 },
+      statusLabel: 'Approved',
+    };
+    expect(soAmendmentToPdfInput(withLegacyWord).status).toBe('Rejected');
+  });
+});
+
+/* THE PREVIEW AND THE DOCUMENT MUST NOT DISAGREE. `PrintPreviewModal` shows a
+   Status row on the screen the operator presses Print from, and all four
+   amendment surfaces hand-wrote the SAME `applied ? "Approved" : "Requested"`
+   there too — so fixing only the PDF would have made the preview say Requested
+   over a document saying Rejected, which is this whole class again one screen
+   later. Both now call amendmentPrintedStatus.
+
+   A source scan, because the four surfaces are page components in the suite
+   that cannot render on this machine, and because it covers a FIFTH surface
+   nobody has written yet. */
+describe('no amendment surface hand-writes the printed status', () => {
+  const SRC = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+  const SURFACES = [
+    'pages/scm-v2/AmendmentDetailV2.tsx',
+    'pages/scm-v2/PoAmendmentDetailV2.tsx',
+    'mobile/MobileSODetail.tsx',
+    'mobile/MobilePoAmendmentDetail.tsx',
+  ];
+  /* `? "Approved" : "Requested"`, however the ternary is spaced or wrapped. */
+  const HAND_WRITTEN = /\?\s*"Approved"\s*:\s*"Requested"/s;
+
+  it('the matcher fires on the expression this change removed', () => {
+    for (const line of [
+      '      statusLabel: soApplied ? "Approved" : "Requested",',
+      '          { label: "Status", value: applied ? "Approved" : "Requested" },',
+      '{ label: "Status", value: status === "APPROVED"\n ? "Approved"\n : "Requested" },',
+    ]) {
+      expect(HAND_WRITTEN.test(line), line).toBe(true);
+    }
+    expect(HAND_WRITTEN.test('value: amendmentPrintedStatus(status)')).toBe(false);
+  });
+
+  it('every amendment surface is clean', () => {
+    for (const f of SURFACES) {
+      const src = readFileSync(join(SRC, f), 'utf8');
+      expect(src.length).toBeGreaterThan(1000);
+      expect(HAND_WRITTEN.test(src), `${f} hand-writes the amendment status — use amendmentPrintedStatus`).toBe(false);
+    }
   });
 });

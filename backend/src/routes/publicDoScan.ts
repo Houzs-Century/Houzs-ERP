@@ -157,7 +157,20 @@ const unknownToken = (c: Context<{ Bindings: Env }>) =>
    document cannot be hammered from rotating addresses — which no existing
    surface does, because none of them writes to a document identified by the
    credential itself. checkRateLimit fails OPEN when KV is unbound (tests/dev). */
-const READ_MAX = 30;
+/* RAISED FROM 30 ON 2026-08-26, and the reason is NAT rather than generosity.
+   `clientIp` is the PUBLIC address, and a warehouse is ONE public address for
+   every phone inside it — so 30 reads per quarter-hour was 30 reads for the
+   whole floor, not per person. A storekeeper loading a single lorry scans
+   thirty papers; the second person to pick up a phone found the code dead. The
+   basket endpoint below spends one read for a whole pile, which is the real fix,
+   but the single-paper page still spends one per scan and shares this bucket.
+
+   What keeps it safe is not this number: DO_SCAN_TOKEN_RE admits two fixed
+   shapes and nothing else, and the smaller of them is 50 bits — enumeration is
+   hopeless at any rate — and the WRITE limits — which are what
+   actually move a document — are untouched at 20 per address and 10 per
+   document. */
+const READ_MAX = 300;
 const WRITE_MAX = 20;
 const PER_TOKEN_MAX = 10;
 const WINDOW_SEC = 900;
@@ -301,6 +314,374 @@ async function buildTripSummary(
   };
 }
 
+/* THE OFF-RUNG SENTENCE, one per caller, because the same fact needs different
+   words depending on what the person is holding. Everything ELSE about the
+   decision is shared — see advanceOneDocument. */
+const OFF_RUNG_SINGLE =
+  'This delivery order has moved on since this page was opened. Reload the page to see its next step.';
+const OFF_RUNG_RUN =
+  'This drop is at a different step from the rest of the run. Scan its own delivery order to move it.';
+const OFF_RUNG_BATCH =
+  'This delivery order is at a different step from the one you pressed, so it was not moved.';
+
+/** What happened to ONE delivery order. Shared by all three callers. */
+type DocOutcome = {
+  outcome: 'DONE' | 'ALREADY_DONE' | 'BLOCKED' | 'FAILED';
+  from: string;
+  to?: string;
+  code?: string;
+  message: string;
+};
+
+/**
+ * DECIDE AND, IF THE LADDER ALLOWS IT, WRITE — for exactly one delivery order.
+ *
+ * THE POINT OF THIS FUNCTION IS THAT THERE IS ONLY ONE OF IT. Three surfaces
+ * move a delivery order without a login — one paper, a whole packing list, and
+ * (2026-08-26) a basket of papers scanned in a row — and before this extraction
+ * two of them carried their own hand-written copy of the same five checks in the
+ * same order. That is the duplicated-decision class this repo gates on, and the
+ * ladder is the worst thing in the system to hold twice: a copy that gains a
+ * check the other has not is a delivery order that moves on the phone and not in
+ * the books. The batch endpoint would have been the THIRD copy.
+ *
+ * The order of the checks is load-bearing and is the single-document path's
+ * original order, kept exactly:
+ *
+ *   1. ALREADY AT OR PAST the asked-for rung → an ANSWER, not an error, and
+ *      FIRST because it is the common case on a dock (a double press, a replayed
+ *      request, a re-scanned sheet). Checking it before the ladder is what stops
+ *      a second press from silently taking the NEXT rung instead.
+ *   2. NO STEP AT ALL (held, cancelled, closed, unknown status) → the sentence
+ *      the person reads instead of a button. Never silence.
+ *   3. OFF-RUNG — the ladder computed a different next step from the one asked
+ *      for. Not moved, and said so, rather than pushed onto a rung the ladder
+ *      did not compute for it.
+ *   4. FORWARD ONLY, asserted rather than assumed. Check 3 already pins the
+ *      target to the ladder's own computation and the ladder only points
+ *      forward; this is the second, independent fact, so a future edit that made
+ *      a rung point backwards fails here instead of writing.
+ *   5. Write through the office's own status handler.
+ *
+ * `offRung` is the ONLY thing the callers vary, and it is a sentence rather than
+ * a flag on purpose: a driver holding one paper, a driver holding a packing
+ * list, and a storekeeper holding a pile need different words for the same fact.
+ */
+async function advanceOneDocument(
+  c: Context<{ Bindings: Env }>,
+  sb: unknown,
+  resolved: ResolvedDoScan,
+  wanted: string,
+  offRung: string,
+): Promise<DocOutcome> {
+  const from = String(resolved.status ?? '');
+  const wantedIdx = doScanRungIndex(wanted);
+  const currentIdx = doScanRungIndex(from);
+
+  if (wantedIdx >= 0 && currentIdx >= wantedIdx) {
+    return {
+      outcome: 'ALREADY_DONE',
+      from,
+      /* Safe cast: every caller pins `wanted` to doScanLadderOrder() before
+         calling, so it is a DoScanStep['status'] by here and the switch inside
+         doScanConfirmation is total. */
+      message: doScanConfirmation(wanted as DoScanStep['status']),
+    };
+  }
+
+  const step = doScanStep(resolved.status, resolved.onHold);
+  if (!step) {
+    return {
+      outcome: 'BLOCKED',
+      from,
+      message: doScanBlockReason(resolved.status, resolved.onHold) ?? '',
+    };
+  }
+  if (step.status !== wanted) {
+    return { outcome: 'BLOCKED', from, message: offRung };
+  }
+  if (!(wantedIdx > currentIdx)) {
+    return {
+      outcome: 'BLOCKED',
+      from,
+      message: 'This step would move the delivery order backwards, so it was not recorded.',
+    };
+  }
+
+  const written = await advanceThroughOfficeWriter(c, sb, resolved, step.status);
+  if (!written.ok) {
+    /* The office writer's own refusal bodies quote the caller's input and name
+       internal fields; none of that goes to a public page. The stable error
+       CODE does — it carries no data and it is what the office needs to be told
+       — and the full body is logged. */
+    console.warn('[public-do-scan] advance refused', {
+      status: written.status, code: written.code, doNumber: resolved.doNumber,
+    });
+    return {
+      outcome: 'FAILED',
+      from,
+      code: written.code,
+      message: 'The office system would not record this step. Please call the office and quote this delivery order number.',
+    };
+  }
+
+  return { outcome: 'DONE', from, to: step.status, message: doScanConfirmation(step.status) };
+}
+
+// ── THE BASKET: several papers scanned in a row, then ONE press ─────────────
+//
+// THE OWNER, 2026-08-26: 「我不能 scan 好几个 DO，然后一起点 load 吗？包括我的
+// dispatch 也是一样，它应该可以支持连续扫描的。」 A storekeeper loading a lorry
+// holds a pile of papers, not one; walking each of them through its own page is
+// the work the QR was supposed to remove.
+//
+// TWO ENDPOINTS, AND THEY ARE REGISTERED BEFORE `/:token` ON PURPOSE. Hono
+// matches in registration order, so `/batch/advance` declared after
+// `/:token/advance` would be captured with token = "batch". It would still be
+// refused — DO_SCAN_TOKEN_RE admits a 10-character or a 64-character token and
+// "batch" is neither — so this is
+// belt and braces rather than the only guard, but a 404 for a route that exists
+// is a confusing way to find that out. publicDoScan.batch.test.ts pins the
+// order by calling both.
+//
+// ONE REQUEST FOR THE WHOLE BASKET, not one per paper, and the reason is the
+// rate limiter rather than tidiness: a warehouse is ONE public IP for every
+// phone in it, so a per-paper read would spend the IP's whole allowance on a
+// single lorry. See READ_MAX.
+//
+// WHY A CROSS-COMPANY BASKET IS SAFE HERE AND IS NOT ON A PACKING LIST. Each
+// token in the basket IS the credential for its own document and resolves to
+// its own row and its own company_id — scanning two companies' papers means
+// holding two companies' papers. A packing list is the opposite shape: ONE sheet
+// naming documents it does not authorise, which is why loadTripScanMembers
+// refuses a foreign member and this does not have to.
+const BATCH_MAX = 60;
+
+const batchTooBig = (c: Context<{ Bindings: Env }>) =>
+  c.json(
+    {
+      error: 'too_many',
+      message: `Too many delivery orders in one go — scan up to ${BATCH_MAX}, press the button, then carry on.`,
+    },
+    400,
+  );
+
+/**
+ * The tokens of a request body, shape-checked and de-duplicated.
+ *
+ * DE-DUPLICATION IS NOT COSMETIC. A held paper decodes every frame; the page
+ * de-dupes too, but a basket that reached here with the same token twice would
+ * be walked twice, and the second walk would find the document one rung further
+ * on and report ALREADY_DONE against a line the operator never scanned twice.
+ * Cheaper and more honest to collapse it here as well.
+ *
+ * A token of the wrong SHAPE is dropped rather than refused: one bad decode in a
+ * pile of thirty must not cost the operator the other twenty-nine. It comes back
+ * as an unknown line in the answer, because `unknown` is exactly what it is.
+ */
+function batchTokens(raw: unknown): { ok: true; tokens: string[] } | { ok: false } {
+  if (!Array.isArray(raw)) return { ok: false };
+  const seen = new Set<string>();
+  for (const t of raw) {
+    if (typeof t !== 'string') continue;
+    const trimmed = t.trim();
+    if (DO_SCAN_TOKEN_RE.test(trimmed)) seen.add(trimmed);
+  }
+  /* REFUSED, NEVER TRUNCATED, and the first version of this function got it
+     wrong: it stopped adding at the cap and returned what it had, so a basket of
+     eighty papers would have moved sixty and reported success — the operator
+     reads "60 recorded", walks away, and twenty papers are still sitting on the
+     lorry with the wrong status. A silent cap on a delivery floor is worse than
+     a refusal, because the refusal is visible. Counted AFTER de-duplication so a
+     paper that decoded twice does not eat the allowance. */
+  if (seen.size > BATCH_MAX) return { ok: false };
+  return { ok: true, tokens: [...seen] };
+}
+
+/** One line in a basket answer — what the operator reads beside a document. */
+type BatchLine = {
+  token: string;
+  doNumber: string | null;
+  customerName?: string;
+  area?: string;
+  status: string | null;
+  step: { status: string; label: string; note: string } | null;
+  blockReason: string | null;
+  outcome?: DocOutcome['outcome'] | 'UNKNOWN';
+  from?: string;
+  to?: string;
+  message?: string;
+};
+
+/* A packing list scanned INTO a basket. Not an error and not silently dropped:
+   the sheet has its own whole-run button on its own page, and saying so is more
+   use than a shrug. */
+const TRIP_IN_BATCH_REASON =
+  'This is a packing list, not a delivery order. Open it on its own to move the whole run at once.';
+
+// ── POST /batch/lookup ──────────────────────────────────────────────────────
+publicDoScan.post('/batch/lookup', async (c) => {
+  const limited = await checkRateLimit(c, 'do_scan_read', clientIp(c), READ_MAX, WINDOW_SEC);
+  if (limited) return limited;
+
+  const body = (await c.req.json().catch(() => ({}))) as { tokens?: unknown };
+  const parsed = batchTokens(body.tokens);
+  if (!parsed.ok) return batchTooBig(c);
+
+  const sb = getSupabaseService(c.env);
+  const lines: BatchLine[] = [];
+  for (const token of parsed.tokens) {
+    const found = await resolveScanToken(sb, token);
+    if (found.status === 'read_failed') {
+      /* A BLIP IS NOT A DEAD CODE — the same rule the single read follows. The
+         basket keeps going so one hiccup does not blank the other lines, and
+         this line says "try again" rather than "unknown". */
+      lines.push({
+        token, doNumber: null, status: null, step: null,
+        blockReason: 'We could not reach this delivery order just now. Scan it again in a moment.',
+        outcome: 'UNKNOWN',
+      });
+      continue;
+    }
+    if (found.status === 'unknown') {
+      lines.push({
+        token, doNumber: null, status: null, step: null,
+        blockReason: 'Unknown or expired QR code. Ask the office for a freshly printed delivery order.',
+        outcome: 'UNKNOWN',
+      });
+      continue;
+    }
+    if (found.kind === 'trip') {
+      lines.push({
+        token, doNumber: found.row.tripNo, status: String(found.row.status ?? ''),
+        step: null, blockReason: TRIP_IN_BATCH_REASON, outcome: 'BLOCKED',
+      });
+      continue;
+    }
+    const summary = await buildSummary(sb, found.row);
+    lines.push({
+      token,
+      doNumber: summary.doNumber,
+      customerName: summary.customerName,
+      area: summary.area,
+      status: summary.status,
+      step: summary.step,
+      blockReason: summary.blockReason,
+    });
+  }
+  return c.json({ kind: 'batch', lines });
+});
+
+// ── POST /batch/advance ─────────────────────────────────────────────────────
+publicDoScan.post('/batch/advance', async (c) => {
+  const ipLimited = await checkRateLimit(c, 'do_scan_write', clientIp(c), WRITE_MAX, WINDOW_SEC);
+  if (ipLimited) return ipLimited;
+
+  const body = (await c.req.json().catch(() => ({}))) as { tokens?: unknown; to?: unknown };
+  const wanted = typeof body.to === 'string' ? body.to.trim().toUpperCase() : '';
+  /* THE SAME DERIVED TARGET LIST the single paper checks against — the ladder's
+     own order minus DRAFT, which nothing scans to. Bug 0530 is why a rung the
+     enum does not define is refused here instead of reaching a query. */
+  const TARGETS = doScanLadderOrder().slice(1);
+  if (!wanted || !TARGETS.includes(wanted.toLowerCase())) {
+    return c.json({
+      error: 'step_required',
+      message: 'That is not a step a delivery order can take. Reload the page and try again.',
+    }, 400);
+  }
+
+  const parsed = batchTokens(body.tokens);
+  if (!parsed.ok) return batchTooBig(c);
+  if (parsed.tokens.length === 0) {
+    return c.json({
+      error: 'nothing_scanned',
+      message: 'Nothing was scanned. Scan at least one delivery order first.',
+    }, 400);
+  }
+
+  const sb = getSupabaseService(c.env);
+  const lines: BatchLine[] = [];
+
+  /* SEQUENTIALLY, NEVER IN PARALLEL — the same reason the packing list walks its
+     drops one at a time, written up at the top of this file: two delivery orders
+     frequently share one sales order, and syncSoDeliveredFromDo updates that
+     shared row on every DELIVERED hop. Hookka deadlocked doing this in parallel.
+     A basket is MORE exposed than a run, not less: a run is one customer's day,
+     a basket is whatever the storekeeper picked up. */
+  for (const token of parsed.tokens) {
+    const perToken = await checkRateLimit(c, 'do_scan_doc', token, PER_TOKEN_MAX, WINDOW_SEC);
+    if (perToken) {
+      /* The per-document limiter survives the batch: a basket must not become
+         the way to hammer one document from one address. It reports as a line
+         rather than failing the request, so the other papers still move. */
+      lines.push({
+        token, doNumber: null, status: null, step: null, blockReason: null,
+        outcome: 'BLOCKED',
+        message: 'This delivery order has been scanned too many times just now. Wait a few minutes.',
+      });
+      continue;
+    }
+
+    const found = await resolveScanToken(sb, token);
+    if (found.status === 'read_failed') {
+      lines.push({
+        token, doNumber: null, status: null, step: null, blockReason: null,
+        outcome: 'UNKNOWN',
+        message: 'We could not reach this delivery order just now. Scan it again in a moment.',
+      });
+      continue;
+    }
+    if (found.status === 'unknown') {
+      lines.push({
+        token, doNumber: null, status: null, step: null, blockReason: null,
+        outcome: 'UNKNOWN',
+        message: 'Unknown or expired QR code. Ask the office for a freshly printed delivery order.',
+      });
+      continue;
+    }
+    if (found.kind === 'trip') {
+      lines.push({
+        token, doNumber: found.row.tripNo, status: String(found.row.status ?? ''),
+        step: null, blockReason: null, outcome: 'BLOCKED', message: TRIP_IN_BATCH_REASON,
+      });
+      continue;
+    }
+
+    const decided = await advanceOneDocument(c, sb, found.row, wanted, OFF_RUNG_BATCH);
+    lines.push({
+      token,
+      doNumber: found.row.doNumber,
+      status: decided.to ?? decided.from,
+      step: null,
+      blockReason: null,
+      outcome: decided.outcome,
+      from: decided.from,
+      ...(decided.to ? { to: decided.to } : {}),
+      message: decided.message,
+    });
+  }
+
+  const moved = lines.filter((l) => l.outcome === 'DONE').length;
+  const already = lines.filter((l) => l.outcome === 'ALREADY_DONE').length;
+  const stuck = lines.filter(
+    (l) => l.outcome === 'BLOCKED' || l.outcome === 'FAILED' || l.outcome === 'UNKNOWN',
+  ).length;
+  /* THE HEADLINE IS ABOUT WHAT THE OPERATOR STILL HAS TO DO, so one refusal
+     outranks twenty successes — the same rule the packing list follows. A
+     storekeeper who reads "all done" and walks away from a paper that did not
+     move is the failure this wording exists to prevent. */
+  const outcome = stuck > 0 ? 'PARTIAL' as const : moved > 0 ? 'DONE' as const : 'NOTHING' as const;
+  const message =
+    outcome === 'DONE'
+      ? `${moved} ${moved === 1 ? 'delivery order' : 'delivery orders'} recorded.`
+      : outcome === 'PARTIAL'
+        ? `${moved} recorded, ${stuck} not moved — check the list and call the office about those.`
+        : already > 0
+          ? 'Everything scanned was already past this step. Nothing was changed.'
+          : 'Nothing needed this step.';
+  return c.json({ kind: 'batch', outcome, to: wanted, moved, already, stuck, message, lines });
+});
+
 // ── GET /:token ─────────────────────────────────────────────────────────────
 publicDoScan.get('/:token', async (c) => {
   const token = (c.req.param('token') || '').trim();
@@ -363,87 +744,11 @@ publicDoScan.post('/:token/advance', async (c) => {
 
   const resolved = found.row;
 
-  const from = String(resolved.status ?? '');
-  const wantedIdx = doScanRungIndex(wanted);
-  const currentIdx = doScanRungIndex(from);
-
-  /* IDEMPOTENCE, and it is the FIRST thing checked because it is the common
-     case on a dock: the driver presses twice, or the phone replays the request.
-     "The document is already at or past the rung you asked for" is an ANSWER,
-     not an error — and checking it before the ladder is what stops a second
-     press from silently taking the NEXT rung instead, which is the shape of the
-     defect a naive re-scan would produce. */
-  if (wantedIdx >= 0 && currentIdx >= wantedIdx) {
-    return c.json({
-      outcome: 'ALREADY_DONE',
-      doNumber: resolved.doNumber,
-      from,
-      /* Safe cast: TARGETS above admits only the ladder's own step targets, so
-         `wanted` is a DoScanStep['status'] by then and the switch is total. */
-      message: doScanConfirmation(wanted as DoScanStep['status']),
-    });
-  }
-
-  const step = doScanStep(resolved.status, resolved.onHold);
-  if (!step) {
-    /* Held, cancelled, already closed, or a status the ladder does not know.
-       200 with a sentence, not an error: the person is standing at a lorry and
-       needs to read what to do, and doScanBlockReason is the same sentence the
-       logged-in page shows. It never returns null when doScanStep is null. */
-    return c.json({
-      outcome: 'BLOCKED',
-      doNumber: resolved.doNumber,
-      from,
-      message: doScanBlockReason(resolved.status, resolved.onHold) ?? '',
-    });
-  }
-  if (step.status !== wanted) {
-    return c.json({
-      outcome: 'BLOCKED',
-      doNumber: resolved.doNumber,
-      from,
-      message: 'This delivery order has moved on since this page was opened. Reload the page to see its next step.',
-    });
-  }
-  /* FORWARD ONLY, asserted rather than assumed. The line above already pins the
-     target to what the ladder computed from the row's own status, and the
-     ladder only ever points forward — this is the second, independent fact, so
-     a future edit that made a rung point backwards fails here instead of
-     writing. Unreachable today, and that is what the test proves. */
-  if (!(wantedIdx > currentIdx)) {
-    return c.json({
-      outcome: 'BLOCKED',
-      doNumber: resolved.doNumber,
-      from,
-      message: 'This step would move the delivery order backwards, so it was not recorded.',
-    });
-  }
-
-  const written = await advanceThroughOfficeWriter(c, sb, resolved, step.status);
-  if (!written.ok) {
-    /* The office writer's own refusal bodies quote the caller's input and name
-       internal fields; none of that goes to a public page. The stable error
-       CODE does — it carries no data and it is what the office needs to be told
-       — and the full body is logged. */
-    console.warn('[public-do-scan] advance refused', {
-      status: written.status, code: written.code, doNumber: resolved.doNumber,
-    });
-    return c.json({
-      outcome: 'FAILED',
-      doNumber: resolved.doNumber,
-      from,
-      code: written.code,
-      message: 'The office system would not record this step. Please call the office and quote this delivery order number.',
-    }, 409);
-  }
-
-  return c.json({
-    outcome: 'DONE',
-    doNumber: resolved.doNumber,
-    from,
-    to: step.status,
-    message: doScanConfirmation(step.status),
-  });
+  const decided = await advanceOneDocument(c, sb, resolved, wanted, OFF_RUNG_SINGLE);
+  return c.json(
+    { doNumber: resolved.doNumber, ...decided },
+    decided.outcome === 'FAILED' ? 409 : 200,
+  );
 });
 
 /**
@@ -559,65 +864,29 @@ async function advanceWholeRun(
       });
       continue;
     }
-    const from = String(m.status ?? '');
-    const wantedIdx = doScanRungIndex(wanted);
-    const currentIdx = doScanRungIndex(from);
-
-    /* Already at or past this rung — an ANSWER, not an error, and checked first
-       so a second scan of the sheet cannot drag a drop that already moved on to
-       the NEXT rung. This is the property that makes re-scanning a run safe. */
-    if (wantedIdx >= 0 && currentIdx >= wantedIdx) {
-      results.push({
-        stopNo: m.stopNo, doNumber: m.doNumber, outcome: 'ALREADY_DONE', from,
-        message: doScanConfirmation(wanted as DoScanStep['status']),
-      });
-      continue;
-    }
-
-    const step = doScanStep(m.status, m.onHold);
-    if (!step) {
-      results.push({
-        stopNo: m.stopNo, doNumber: m.doNumber, outcome: 'BLOCKED', from,
-        message: doScanBlockReason(m.status, m.onHold) ?? '',
-      });
-      continue;
-    }
-    /* This drop is on a different rung from the one the sheet asked for — it is
-       behind or ahead of its neighbours. Not moved, and said so, rather than
-       being pushed onto a rung the ladder did not compute for it. */
-    if (step.status !== wanted) {
-      results.push({
-        stopNo: m.stopNo, doNumber: m.doNumber, outcome: 'BLOCKED', from,
-        message: 'This drop is at a different step from the rest of the run. Scan its own delivery order to move it.',
-      });
-      continue;
-    }
-    if (!(wantedIdx > currentIdx)) {
-      results.push({
-        stopNo: m.stopNo, doNumber: m.doNumber, outcome: 'BLOCKED', from,
-        message: 'This step would move the delivery order backwards, so it was not recorded.',
-      });
-      continue;
-    }
-
-    /* THE COMPANY IS THE RUN'S, taken from the trip row the token resolved to.
-       A member that did not match it never reaches this line. */
-    const written = await advanceThroughOfficeWriter(
-      c, sb, { ...memberAsDo(m), companyId: trip.companyId }, step.status,
+    /* ONE DECISION FUNCTION, shared with the single paper and the batch — see
+       advanceOneDocument. This loop's only remaining job is to turn the answer
+       into a line the driver reads beside a STOP NUMBER, and to say "drop"
+       where the shared wording says "delivery order". */
+    const decided = await advanceOneDocument(
+      c, sb, { ...memberAsDo(m), companyId: trip.companyId }, wanted, OFF_RUNG_RUN,
     );
-    if (!written.ok) {
+    if (decided.outcome === 'FAILED') {
+      /* The shared function already logged the document; this adds the run
+         context, which is what the office is asked about. */
       console.warn('[public-do-scan] run member refused', {
-        tripNo: trip.tripNo, stopNo: m.stopNo, status: written.status, code: written.code,
+        tripNo: trip.tripNo, stopNo: m.stopNo, code: decided.code,
       });
-      results.push({
-        stopNo: m.stopNo, doNumber: m.doNumber, outcome: 'FAILED', from,
-        message: 'The office system would not record this drop. Call the office and quote this delivery order number.',
-      });
-      continue;
     }
     results.push({
-      stopNo: m.stopNo, doNumber: m.doNumber, outcome: 'DONE', from, to: step.status,
-      message: doScanConfirmation(step.status),
+      stopNo: m.stopNo,
+      doNumber: m.doNumber,
+      outcome: decided.outcome,
+      from: decided.from,
+      ...(decided.to ? { to: decided.to } : {}),
+      message: decided.outcome === 'FAILED'
+        ? 'The office system would not record this drop. Call the office and quote this delivery order number.'
+        : decided.message,
     });
   }
 

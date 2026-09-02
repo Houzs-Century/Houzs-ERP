@@ -360,3 +360,61 @@ async function loadShowroom(
     return null;
   }
 }
+
+/**
+ * What a half-written venue pair implies, or `unresolved` when the answer could
+ * not be established.
+ *
+ * A client that sends an empty `venue` beside a non-empty `venueId` has resolved
+ * the id and not the name — it is not asking for the venue to be cleared. Taking
+ * it literally wiped "2990s PJ" off a live order (`docs/bugs/0591-*`), and every
+ * mirrored 2990 order was one save away from the same thing.
+ *
+ * HERE, BESIDE THE BINDING RULE, and not inline in the route: the CREATE path
+ * already resolves a name from an id in exactly this situation, and two copies
+ * of one rule is how the two paths start disagreeing. This is the shared one.
+ *
+ * THREE OUTCOMES, NOT TWO, and the third is the reason this returns an object.
+ * `unresolved` means the venue master could not be read — NOT that the venue has
+ * no name. Collapsing those onto one `null` hands the caller a blank it will
+ * write, which is the very deletion this function exists to stop: a five-second
+ * database blip would wipe the venue off whatever was being saved at the time.
+ * On `unresolved` the caller must leave the stored venue alone.
+ *
+ * Clearing a venue stays possible and stays easy — send BOTH empty. That is what
+ * "this order has no venue" looks like, and it is a legitimate answer; it never
+ * reaches here, because `notApplicable` is what an empty id produces.
+ */
+export type HalfWrittenVenue =
+  | { kind: 'notApplicable' }
+  | { kind: 'resolved'; name: string }
+  | { kind: 'unresolved' };
+
+type VenueNameReader = {
+  from: (t: string) => {
+    select: (c: string) => {
+      eq: (k: string, v: unknown) => {
+        maybeSingle: () => Promise<{ data: unknown; error: unknown }>;
+      };
+    };
+  };
+};
+
+export async function venueNameForHalfWrittenPair(
+  sb: VenueNameReader,
+  venue: unknown,
+  venueId: unknown,
+): Promise<HalfWrittenVenue> {
+  const nameEmpty = typeof venue === 'string' && !venue.trim();
+  const idGiven = typeof venueId === 'string' && !!venueId.trim();
+  if (!nameEmpty || !idGiven) return { kind: 'notApplicable' };
+  const { data, error } = await sb.from('venues').select('name').eq('id', venueId).maybeSingle();
+  /* BOUND AND BRANCHED. supabase-js does not throw, so an unbound read reports a
+     failed query and an id that matches nothing as the same empty answer. */
+  if (error) return { kind: 'unresolved' };
+  const name = (data as { name?: string } | null)?.name ?? null;
+  /* An id that matches NO venue is also unresolved rather than "no name": the
+     order carries a venue id the master does not know, and blanking the text is
+     not the repair for that. */
+  return name && name.trim() ? { kind: 'resolved', name } : { kind: 'unresolved' };
+}

@@ -48,7 +48,10 @@ const line = (over: Partial<ErpLine>): ErpLine => ({
 describe('the cutover map', () => {
   it('is compiled in and complete', () => {
     const idx = acItemIndex();
-    expect(AC_ITEM_MAP_ROWS).toBe(1561);
+    // 1,561 at the 2026-08-05 cut; +16 on 2026-08-28 (the codes the owner
+    // opened in the book since — DL-CLASSIC mattresses, HOK-1056 -> FLAT,
+    // 5562 sofa, RC charges).
+    expect(AC_ITEM_MAP_ROWS).toBe(1577);
     expect(idx.rows).toBe(AC_ITEM_MAP_ROWS);
     // one bucket per DISTINCT erp code; several AutoCount items may share one
     expect(idx.byErp.size).toBeGreaterThan(1300);
@@ -439,14 +442,26 @@ describe("the owner's chain for a code no sales order can disambiguate", () => {
     if (r.ok) { expect(r.acItemCode).toBe('HB709NL'); expect(r.via).toBe('same-name'); }
   });
 
-  test('3 — and it beats the alphabet where the alphabet would be WRONG', () => {
-    /* 'DL-CS2 ARCTIC DREAM (K)' sorts first, but the book also holds a row
-       named exactly like the ERP code. The mis-mapped row must not win. */
-    const r = resolveAcItemCode('DL-CS2 NN-WINTER DREAM MATT (K', {});
+  test('3 — the mis-mapped Winter merge is HEALED: ARCTIC resolves to its own code', () => {
+    /* Until 2026-08-29 this test exercised rule 3 on broken data: the mapping
+       pointed 'DL-CS2 ARCTIC DREAM (K)' at the 30-char-truncated Winter name,
+       so the ERP code carried two candidate rows and the same-name match had
+       to beat the alphabetically-first mis-mapped one. docs/bugs/0567 rebuilt
+       those 17 rows — each family owns its own name again, no ERP code in the
+       healed map has a same-named row that is not alphabetically first, and
+       the wrong-alphabet scenario cannot be built from committed data any
+       more. Rule 3's positive case stays pinned by the HB709NL test above;
+       THIS test now pins the healed state instead: the ARCTIC family resolves
+       to itself, one candidate, no merge.
+
+       2026-08-30: the ERP side of the row was renamed to the family long name
+       (scripts/rename-new-code-rows.mjs, this PR), so the INPUT here follows
+       it. The pinned ANSWER does not move — the book's Item master holds
+       'DL-CS2 ARCTIC DREAM (K)', measured live (no MATT in the AC code). */
+    const r = resolveAcItemCode('DUNLOPILLO COOLSILK 2.0 ARCTIC DREAM MATT (K)', {});
     expect(r.ok).toBe(true);
     if (r.ok) {
-      expect(r.acItemCode).toBe('DL-CS2 NN-WINTER DREAM MATT (K');
-      expect(r.via).toBe('same-name');
+      expect(r.acItemCode).toBe('DL-CS2 ARCTIC DREAM (K)');
     }
   });
 

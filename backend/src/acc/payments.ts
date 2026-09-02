@@ -294,3 +294,108 @@ export async function postUnpostedSiPayments(
   }
   return { ok: true, posted, failed };
 }
+
+/* ── Payments that never reached the ledger ────────────────────────────────
+   A booking failure does NOT fail the operator's save: sales must be able to
+   record money whatever the accounting module is doing (so-payment-row.ts logs
+   and carries on). The cost of that choice is that a failure is INVISIBLE —
+   the money is on the order and not in the books, and only a server log knows.
+
+   Owner, asked whether the accounting page should say so: 要.
+
+   THE CUTOFF IS THE WHOLE PROBLEM. About 2,700 historical payments are
+   deliberately unbooked — the owner's decision during the trial period, no
+   backfill until he names an official start date — so a list of "everything
+   unbooked" would open on 2,700 rows and be read as noise on day one. A panel
+   nobody reads is worse than no panel: it is a silenced alarm.
+
+   So the cutoff is DERIVED: the earliest date this company ever booked a
+   payment. Before that date the module was not running here, and unbooked is
+   the expected state; on or after it, unbooked means something failed. The
+   date is returned so the screen can show it — a derived boundary that nobody
+   can see is its own kind of lie. When the owner sets an official start date,
+   that replaces this derivation and the rest of this function is unchanged. */
+
+export type UnbookedPayment = {
+  source: 'SOPAY' | 'SIPAY';
+  id: string;
+  docNo: string;
+  paidOn: string;
+  amountSen: number;
+  method: string;
+};
+
+export async function unbookedPayments(
+  sb: any,
+  companyId: number,
+): Promise<
+  | { ok: true; since: string | null; rows: UnbookedPayment[]; totalSen: number }
+  | { ok: false; reason: string }
+> {
+  /* Every payment id that already carries an ACTIVE entry, and the earliest
+     date any of them was booked on. One read serves both. */
+  const booked = new Set<string>();
+  let since: string | null = null;
+  {
+    let from = 0;
+    const page = 1000;
+    for (;;) {
+      const { data, error } = await sb.from('journal_entries')
+        .select('source_doc_no, entry_date, reversed, source_type')
+        .eq('company_id', companyId)
+        .in('source_type', ['SOPAY', 'SIPAY'])
+        .range(from, from + page - 1);
+      if (error) return { ok: false, reason: `journal scan: ${error.message}` };
+      const rows = (data ?? []) as Array<{ source_doc_no: string | null; entry_date: string | null; reversed: boolean | null }>;
+      for (const r of rows) {
+        if (r.reversed || !r.source_doc_no) continue;
+        booked.add(r.source_doc_no);
+        const day = String(r.entry_date ?? '').slice(0, 10);
+        if (day && (since == null || day < since)) since = day;
+      }
+      if (rows.length < page) break;
+      from += page;
+    }
+  }
+
+  /* No payment has EVER been booked here, so there is no boundary to draw and
+     every payment would be listed. Report the state instead of the list. */
+  if (since == null) return { ok: true, since: null, rows: [], totalSen: 0 };
+
+  const rows: UnbookedPayment[] = [];
+  const take = (
+    source: 'SOPAY' | 'SIPAY',
+    raw: Array<Record<string, any>>,
+    docOf: (r: Record<string, any>) => string,
+  ) => {
+    for (const r of raw) {
+      const id = String(r.id ?? '');
+      if (!id || booked.has(id)) continue;
+      /* The same three the poster itself skips, or the panel would report as
+         failures the rows it was told to leave alone. */
+      const method = String(r.method ?? '');
+      if (method === 'imported') continue;
+      const amountSen = Number(r.amount_sen ?? 0);
+      if (!Number.isInteger(amountSen) || amountSen <= 0) continue;
+      const paidOn = String(r.paid_at ?? '').slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(paidOn) || paidOn < since!) continue;
+      rows.push({ source, id, docNo: docOf(r), paidOn, amountSen, method });
+    }
+  };
+
+  const { data: soRaw, error: soErr } = await sb.from('mfg_sales_order_payments')
+    .select('id, so_doc_no, paid_at, amount_sen, method')
+    .eq('company_id', companyId).gte('paid_at', since);
+  if (soErr) return { ok: false, reason: `SO payments: ${soErr.message}` };
+  take('SOPAY', (soRaw ?? []) as Array<Record<string, any>>, (r) => String(r.so_doc_no ?? ''));
+
+  const { data: siRaw, error: siErr } = await sb.from('sales_invoice_payments')
+    .select('id, sales_invoice_id, paid_at, amount_sen, method')
+    .eq('company_id', companyId).gte('paid_at', since);
+  if (siErr) return { ok: false, reason: `SI payments: ${siErr.message}` };
+  take('SIPAY', (siRaw ?? []) as Array<Record<string, any>>, (r) => String(r.sales_invoice_id ?? ''));
+
+  /* Oldest first: the one that has been wrong longest is the one to chase. */
+  rows.sort((a, b) => a.paidOn.localeCompare(b.paidOn));
+  return { ok: true, since, rows, totalSen: rows.reduce((s, r) => s + r.amountSen, 0) };
+}

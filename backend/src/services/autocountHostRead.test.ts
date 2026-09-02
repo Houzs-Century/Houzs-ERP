@@ -1,5 +1,7 @@
 import { describe, expect, test, vi } from 'vitest';
 import { callAcRead, AC_READ_ROUTE } from './autocount-host-read';
+import { REQUEUE_DOC_TYPES } from '../scm/lib/autocount-requeue';
+import acSyncSrc from '../../scripts/autocount-service/AcSyncService.cs?raw';
 import { AC_ROUTE } from './autocount-writeback';
 
 const env = { AC_SYNC_URL: 'http://ac.local:8900/', AC_SYNC_KEY: 'k' } as never;
@@ -64,5 +66,71 @@ describe('callAcRead — the read-only host routes', () => {
     const r = await callAcRead(env, 'last_errors', {}, f);
     expect(r.ok).toBe(false);
     expect(r.error).toContain('could not be reached');
+  });
+});
+
+/* ---------------------------------------------------------------------------
+   REQUEUE_DOC_TYPES — the ERP's ONE list of AutoCount document types, pinned
+   against the host's own.
+
+   Named for the sweep because that is where it was first needed, but the
+   question it answers is "which six documents does this ERP sync with
+   AutoCount", and `/book-doc` asks the same one. The first draft of that route
+   declared a `BOOK_DOC_TYPES` of its own; `audit:duplicated-decisions` refused
+   it as a fifth home for one decision, correctly. This test is what makes the
+   shared list safe to share: it proves the single answer still matches the
+   book's.
+
+   `/doc-read` turns this value into a TABLE NAME (`SO` -> `SO` + `SODTL`), so a
+   list that drifts from the host's is not a cosmetic mismatch: it is either a
+   400 for a document type the book can read, or a request the host has to
+   refuse. The host guards itself; this pins that the ERP's copy still says the
+   same thing, which is what makes the route's own 400 a real answer rather than
+   a guess forwarded to a 500.
+   ------------------------------------------------------------------------ */
+describe('the document types the account book will read', () => {
+  test('the ERP list matches AcSyncService.DocTypes exactly, in order', () => {
+    /* READ OFF THE HOST'S SOURCE, not retyped. `?raw` rather than node:fs —
+       backend/tsconfig.json types Workers only. */
+    const m = acSyncSrc.match(/static readonly string\[\] DocTypes = \{([^}]*)\}/);
+    expect(m, 'AcSyncService.DocTypes not found — did the host rename it?').toBeTruthy();
+    const theirs = (m as RegExpMatchArray)[1]
+      .split(',').map((t) => t.trim().replace(/^"|"$/g, '')).filter(Boolean);
+    expect([...REQUEUE_DOC_TYPES]).toEqual(theirs);
+  });
+
+  test('every type is a table the host can name', () => {
+    /* No lower case, no spaces, no punctuation: the host concatenates this into
+       `[" + docType + "DTL]`, so anything else is a SQL identifier it never
+       meant to build. The host also upper-cases the caller's value, and the
+       route does the same, so the stored list must already be upper. */
+    for (const t of REQUEUE_DOC_TYPES) expect(t).toMatch(/^[A-Z]{2}$/);
+  });
+});
+
+/* THE ROUTE THAT SETTLES WHOSE NAME A LINE HAS.
+ *
+ * Owner, 2026-08-31: 「我们更改什么就 send 什么…为什么 AutoCount 要回传给我们呢?」
+ * He is right that line identity ought to be ours. The way to have it is to
+ * stamp our own reference INTO the account book and match on that — and whether
+ * that is possible turns on one fact the reflected SDK dump cannot show (it was
+ * taken DeclaredOnly, so an inherited `UDF` member on a detail is invisible):
+ * does a document DETAIL table carry user-defined columns?
+ *
+ * `/table-columns` asks sys.columns on the live book. Read-only, names only.
+ */
+describe('/table-columns — can a document detail carry our own column', () => {
+  test('asks the host for the detail table and passes the filter through', async () => {
+    const fetchImpl = vi.fn(async (_url: string, init?: { body?: string }) => {
+      const sent = JSON.parse(String(init?.body ?? '{}'));
+      expect(sent).toMatchObject({ Table: 'SODTL', Like: 'UDF_' });
+      return res(200, JSON.stringify({ ok: true, table: 'SODTL', columns: ['UDF_PDate'] }));
+    });
+
+    const r = await callAcRead(env as never, 'table_columns', { Table: 'SODTL', Like: 'UDF_' }, fetchImpl as never);
+
+    expect(r.ok).toBe(true);
+    expect(r.body?.columns).toEqual(['UDF_PDate']);
+    expect(String(fetchImpl.mock.calls[0]?.[0])).toContain('/table-columns');
   });
 });

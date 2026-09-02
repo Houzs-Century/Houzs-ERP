@@ -1,0 +1,44 @@
+name: Backfill SO remarks + stock-status text (re-import)
+
+# Manual. Backfills the five SO header fields the 2026-08-28 re-import omitted,
+# onto the already-imported company-1 Sales Orders, verbatim from the book:
+#   Remark2                  -> remark2  (staff stock status: READY / ACC / ...)
+#   Remark3 / Remark4        -> remark3 / remark4
+#   Note                     -> note     (RTF unwrapped to plain words)
+#   SalesExemptionExpiryDate -> sales_exemption_expiry
+# DRY-RUN by default; apply=1 + the confirm phrase writes.
+#
+# RE-RUN: inert — every UPDATE re-asserts the column IS NULL, and any document
+# whose audit trail shows a person edited one of these fields is refused.
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "1 to write, else DRY-RUN"
+        required: false
+        default: "0"
+        type: string
+      confirm:
+        description: 'For apply ONLY, type exactly: BACKFILL SO REMARKS'
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: backfill-so-remarks
+  cancel-in-progress: false
+
+jobs:
+  run-prod:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/backfill-so-remarks.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          CONFIRM: ${{ inputs.confirm }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

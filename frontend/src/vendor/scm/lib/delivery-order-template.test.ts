@@ -156,7 +156,7 @@ function capture(doc: JsPdf): { spans: Span[]; fills: Fill[] } {
   return { spans, fills };
 }
 
-async function renderDo(items: ReturnType<typeof itemAt>[], header = HEADER) {
+async function renderDo(items: ReturnType<typeof itemAt>[], header: typeof HEADER = HEADER) {
   const [{ jsPDF }, { default: autoTable }, { renderDeliveryOrderInto }] = await Promise.all([
     import('jspdf'),
     import('jspdf-autotable'),
@@ -200,6 +200,61 @@ describe('Delivery Order — Theme C template', () => {
     // The company block sits BESIDE the logo — that indent is what narrows the
     // measure, so losing it would hide the bug rather than fix it.
     expect(Math.min(...company.map((s) => s.left))).toBeGreaterThan(20);
+  });
+
+  test('the debtor code never runs into the delivery-details column', async () => {
+    /* The code is drawn AFTER the customer name, at name-width + 3mm. The name
+       is wrapped to the left column's width, so a name whose last line ends
+       near the column edge left the code nowhere to go — and jsPDF does not
+       clip: it drew straight over "SO No" in the right column. Seen on a real
+       Houzs sheet, 2026-08-26 (docs/bugs/0550).
+
+       SWEPT rather than pinned to one magic name: the overflow only happens in
+       the narrow band where the last line nearly fills the column, and a single
+       fixture sits in that band only by luck — the first version of this test
+       passed with the fix REMOVED because its name happened to wrap early.
+       Growing the name one character at a time crosses the band for certain.
+
+       Measured against the right column's OWN spans rather than a hardcoded
+       81mm, so re-proportioning the panel cannot quietly retire the check. */
+    const LABELS = ['SO No', 'Ref No.', 'Issued Date', 'Delivery Date', 'Status'];
+    let crossedTheBand = false;
+
+    for (let n = 18; n <= 46; n += 1) {
+      const { spans } = await renderDo([itemAt(1)], {
+        ...HEADER,
+        debtor_name: `${'Evergreen Living Furniture Trading Sdn Bhd'.slice(0, n)}`,
+        debtor_code: 'C-01427',
+      });
+
+      const code = spans.find((s) => s.text === 'C-01427');
+      expect(code).toBeDefined();
+
+      const details = spans.filter((s) => LABELS.includes(s.text.trim()));
+      expect(details.length).toBeGreaterThanOrEqual(3);
+      const detailsLeft = Math.min(...details.map((s) => s.left));
+
+      const name = spans.filter((s) => s.text.startsWith('Customer :') || s.y === code!.y);
+      const nameRight = Math.max(...name.filter((s) => s !== code).map((s) => s.right), 0);
+      if (nameRight > detailsLeft - 14) crossedTheBand = true;
+
+      expect(code!.right, `debtor name of ${n} chars`).toBeLessThan(detailsLeft);
+    }
+
+    // The sweep is only a proof if it actually reached the tight cases.
+    expect(crossedTheBand).toBe(true);
+  });
+
+  test('a debtor code that fits still rides on the name, costing no height', async () => {
+    /* The fix must not push EVERY code onto its own line — the short-name case
+       is the common one, and the panel would grow a row on every sheet. */
+    const { spans } = await renderDo([itemAt(1)]);
+    const name = spans.find((s) => s.text.startsWith('Customer :'));
+    const code = spans.find((s) => s.text === 'C-001');
+    expect(name).toBeDefined();
+    expect(code).toBeDefined();
+    expect(code!.y).toBe(name!.y);
+    expect(code!.left).toBeGreaterThan(name!.right);
   });
 
   test('nothing on the page is a dark fill', async () => {
@@ -493,5 +548,38 @@ describe('Delivery Order — Theme C template', () => {
     expect(spans.some((s) => s.text === 'SOURCE PO')).toBe(false);
     expect(spans.some((s) => s.text === 'RACK')).toBe(false);
     expect(spans.some((s) => s.text === 'QTY')).toBe(true);
+  });
+
+  /* Photos follow the line (owner spec 2026-08). The block's grouping, layout
+     and page-fit are unit-tested in pdf-item-photos.test.ts; what belongs to
+     THIS file is the DO wiring: the marker on the row, and best-effort — a
+     photo that cannot be fetched must cost the sheet nothing. The fetch is
+     mocked to fail, so the marker prints while the block (empty) does not. */
+  test('a photo-carrying line is marked, and a failed fetch never breaks the sheet', async () => {
+    const queries = await import('./sales-order-queries');
+    vi.spyOn(queries, 'fetchDoItemPhotoBlob').mockRejectedValue(new Error('offline'));
+
+    const withPhoto = [
+      { ...itemAt(1), id: 'line-1', photo_urls: ['so-items/SO-1/line-1/a.jpg'] },
+      itemAt(2),
+    ] as unknown as ReturnType<typeof itemAt>[];
+    const { spans } = await renderDo(withPhoto, { ...HEADER, id: 'do-row-1' } as typeof HEADER);
+
+    /* autoTable wraps the long description, so "(photo)" can start a wrapped
+       line rather than end the first one — assert presence, not position. */
+    expect(spans.some((s) => s.text.includes('(photo)'))).toBe(true);
+    expect(spans.some((s) => s.text === 'ITEM PHOTOS')).toBe(false);
+  });
+
+  test('without a header id (the CN reuse) no photo fetch is even attempted', async () => {
+    const queries = await import('./sales-order-queries');
+    const spy = vi.spyOn(queries, 'fetchDoItemPhotoBlob').mockRejectedValue(new Error('offline'));
+
+    const withPhoto = [
+      { ...itemAt(1), id: 'line-1', photo_urls: ['so-items/SO-1/line-1/a.jpg'] },
+    ] as unknown as ReturnType<typeof itemAt>[];
+    await renderDo(withPhoto);
+
+    expect(spy).not.toHaveBeenCalled();
   });
 });

@@ -840,7 +840,10 @@ export async function transitionStage(
     newStage === "under_verification"
       ? "pending_inspection"
       : newStage === "pending_supplier_pickup"
-        ? "pending_supplier_pickup"
+        ? // Customer-pickup leg first (Nico 2026-09-01): the stage begins by
+          // collecting the item FROM the customer; ops advances the sub to
+          // supplier pickup / return as the item moves.
+          "pending_customer_pickup"
         : null;
   sets.push("sub_status = ?");
   binds.push(subDefault);

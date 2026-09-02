@@ -23,7 +23,6 @@ const prefix = (candidate: string) => (key: string) => key.startsWith(candidate)
 const IDENTITY_PREFERENCE_BASES = [
   "announcements:",
   "assr:",
-  "filters:",
   "houzs-mail-prefs:",
   "houzs:assistant-launcher-pos",
   "notifications:",
@@ -62,6 +61,14 @@ export const BROWSER_STORAGE_KEY_REGISTRY: readonly StorageKeyRegistration[] = [
   { id: "workspace-tabs", classification: "TRANSIENT", storage: ["sessionStorage"], keyFamily: "houzs.workspaceTabs.v1 (per-window strip; blob records its {user,company} owner)", matches: exact("houzs.workspaceTabs.v1") },
   { id: "scm-list-return", classification: "TRANSIENT", storage: ["sessionStorage"], keyFamily: "houzs.scmListReturn.v1 (per-section last filtered list URL, for detail Back)", matches: exact("houzs.scmListReturn.v1") },
   { id: "assr-list-filter", classification: "TRANSIENT", storage: ["sessionStorage"], keyFamily: "houzs.assrListFilter.v1 (per-tab Service Cases search + stage, for detail Back)", matches: exact("houzs.assrListFilter.v1") },
+  // Owner 2026-08-24: "i want make it my filter didnt close until i manually
+  // clear filter or close erp then filter will auto clear". Session-scoped for
+  // exactly that reason — it survives opening a project and coming back, and
+  // dies with the tab — the same shape scm-list-return and assr-list-filter
+  // above already use for their detail-Back. It was localStorage (an
+  // IDENTITY_PREF), which kept last week's filters alive on the next login.
+  // The legacy localStorage copies are cleaned up by useStickyFilters.
+  { id: "list-filters", classification: "TRANSIENT", storage: ["localStorage", "sessionStorage"], keyFamily: "filters:<page>:u<user>:c<company> (per-tab list filters; localStorage listed for cleanup of the pre-2026-08-24 copies only)", matches: (key) => /^filters:.+:u\d+:c\d+$/.test(key) },
   { id: "mobile-mode-override", classification: "TRANSIENT", storage: ["localStorage", "sessionStorage"], keyFamily: "hz_force_mobile (session + legacy local cleanup)", matches: exact("hz_force_mobile") },
   { id: "legacy-notification-preference", classification: "TRANSIENT", storage: ["localStorage"], keyFamily: "notifications:browserPush (ownerless cleanup only)", matches: exact("notifications:browserPush") },
   { id: "scan-toast-acks", classification: "TRANSIENT", storage: ["localStorage"], keyFamily: "houzs:scan-draft-acked:u<user>:c<company>", matches: prefix("houzs:scan-draft-acked:") },

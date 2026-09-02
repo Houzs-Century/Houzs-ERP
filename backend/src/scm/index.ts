@@ -29,6 +29,7 @@ import { fabricTracking } from "./routes/fabric-tracking";
 import { suppliers } from "./routes/suppliers";
 import { mfgPurchaseOrders } from "./routes/mfg-purchase-orders";
 import { mfgPurchaseOrdersListEnrichment } from "./routes/mfg-purchase-orders-list-enrichment";
+import { purchaseOrderItemPhotos } from "./routes/purchase-order-item-photos";
 import { grns } from "./routes/grns";
 import { grnsListEnrichment } from "./routes/grns-list-enrichment";
 import { purchaseInvoices } from "./routes/purchase-invoices";
@@ -45,6 +46,7 @@ import { poAmendments } from "./routes/po-amendments";
 import { stateWarehouseMappings } from "./routes/state-warehouse-mappings";
 import { deliveryOrdersMfg } from "./routes/delivery-orders-mfg";
 import { deliveryOrderScanToken } from "./routes/delivery-order-scan-token";
+import { deliveryOrderItemPhotos } from "./routes/delivery-order-item-photos";
 import { salesInvoices } from "./routes/sales-invoices";
 import { deliveryReturns } from "./routes/delivery-returns";
 import { purchaseReturns } from "./routes/purchase-returns";
@@ -281,6 +283,9 @@ scm.use("/mfg-purchase-orders/*", scmAreaGuard("scm.procurement.po"));
 // `/:id`. Shares the guard above via the path prefix.
 scm.route("/mfg-purchase-orders", mfgPurchaseOrdersListEnrichment);
 scm.route("/mfg-purchase-orders", mfgPurchaseOrders);
+// Per-line photo WRITES (upload / delete PO-owned keys) — separate file because
+// the main router is at its size ceiling; same prefix, same area guard.
+scm.route("/mfg-purchase-orders", purchaseOrderItemPhotos);
 // PO amendment / revision workflow — PO-centric, so it rides the same L2 area
 // guard as Purchase Orders (GET=view, PATCH=edit); the finer scm.po_amendment.*
 // gates layer on inside the handlers (mig 0192).
@@ -358,6 +363,10 @@ scm.use(
    its file-size ceiling and a ceiling may only fall. Mounted FIRST so its one
    route is matched before the main router's /:id patterns can shadow it. */
 scm.route("/delivery-orders-mfg", deliveryOrderScanToken);
+// Per-line photo read path (mig 20260828T0746) — same new-file-same-prefix
+// reasoning as the scan token directly above. Shares the DO area guard via the
+// path prefix, so GET here needs exactly what the DO detail GET needs.
+scm.route("/delivery-orders-mfg", deliveryOrderItemPhotos);
 scm.route("/delivery-orders-mfg", deliveryOrdersMfg);
 // Ported 2026-06-20 — SI backend (skipped in the earlier sync; the vendored SI
 // pages 404'd on /sales-invoices). NEEDS scm.sales_invoice_payments +

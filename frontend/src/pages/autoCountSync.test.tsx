@@ -1023,6 +1023,55 @@ describe("AutoCountSync — Send now", () => {
        nobody reads as "the button does nothing". */
     expect(await within(cardOf("SO-P")).findByText(/never got through/i)).toBeTruthy();
   });
+
+  /* ONE PRESS CAN MOVE THREE DOCUMENTS, and until #0552 the page reported one.
+     Every ancestor the cascade sends is a write into a licensed account book on
+     the operator's behalf; showing them only the row they pressed is showing
+     them the wrong thing. */
+  it("names every ancestor the press sent, and WHY each had to go first", async () => {
+    apiPost.mockResolvedValue(sendNowAnswer({
+      ancestors_sent: [
+        { doc_type: "SO", doc_no: "SO-A", code: "sent", reason: "stale" },
+        { doc_type: "DO", doc_no: "DO-B", code: "sent", reason: "missing" },
+      ],
+    }));
+    await mount(busy);
+    await userEvent.click(await screen.findByRole("button", { name: "Send now" }));
+    const card = cardOf("SO-P");
+    /* The two reasons are different facts and the page must not flatten them:
+       one document was BEHIND, the other was ABSENT. */
+    expect(await within(card).findByText(/SO-A — AutoCount had an older version, sent\./)).toBeTruthy();
+    expect(within(card).getByText(/DO-B — AutoCount did not have it yet, sent\./)).toBeTruthy();
+  });
+
+  it("shows an ancestor that FAILED, not only the ones that worked", async () => {
+    /* The dangerous shape: the pressed row succeeds while an ancestor did not.
+       Reporting only the press would read as "all done". */
+    apiPost.mockResolvedValue(sendNowAnswer({
+      ancestors_sent: [{ doc_type: "SO", doc_no: "SO-A", code: "still-refused", reason: "missing" }],
+    }));
+    await mount(busy);
+    await userEvent.click(await screen.findByRole("button", { name: "Send now" }));
+    expect(await within(cardOf("SO-P")).findByText(/SO-A .*not sent — still-refused/)).toBeTruthy();
+  });
+
+  it("says nothing about ancestors when the press moved none", async () => {
+    /* An empty heading on every ordinary press would be noise, and noise is how
+       the useful case stops being read. */
+    apiPost.mockResolvedValue(sendNowAnswer({ ancestors_sent: [] }));
+    await mount(busy);
+    await userEvent.click(await screen.findByRole("button", { name: "Send now" }));
+    await within(cardOf("SO-P")).findByText(/in the account book now/i);
+    expect(within(cardOf("SO-P")).queryByText(/Sent first/i)).toBeNull();
+  });
+
+  it("invents no ancestor list when the call never got through", async () => {
+    apiPost.mockRejectedValue(new Error("Network request failed"));
+    await mount(busy);
+    await userEvent.click(await screen.findByRole("button", { name: "Send now" }));
+    await within(cardOf("SO-P")).findByText(/never got through/i);
+    expect(within(cardOf("SO-P")).queryByText(/Sent first/i)).toBeNull();
+  });
 });
 
 /* ───────────────────────────────────────────────────────────────────────────
@@ -1180,5 +1229,65 @@ describe("AutoCountSync — days, the footer and the two lenses", () => {
     await screen.findAllByText("SO-A");
     expect(screen.getByText("Showing 1–3 of 3 documents")).toBeTruthy();
     expect(screen.getByText("Sorted by When, newest first")).toBeTruthy();
+  });
+});
+
+/* THE KEYLESS ROW'S OWN REPAIR.
+ *
+ * This screen has told the operator, on every one of these rows, that "the lines
+ * have to be matched up against AutoCount, and then the document saved again" —
+ * and there was no way to do it (docs/bugs/0585-*). The button is that way, and
+ * these pin the two things that make it honest: it is offered ONLY where that
+ * refusal is the reason, and it does not pretend the document has been sent.
+ */
+describe("AutoCountSync — matching a held-back document's lines up", () => {
+  /* ITS OWN PAYLOAD, not an extra row on the shared one: four tests above count
+     the chips and the per-type totals of `busy` exactly, and a sixth row there
+     would make them fail for a reason that has nothing to do with what they
+     assert. */
+  const keyless = payload({
+    rows: [
+      row({ id: "kl", doc_no: "SO-KL", doc_type: "SO", op: "edit", status: "skipped", state: "skipped",
+        needs_attention: true,
+        reason: "refused, nothing sent: 1 of 8 line(s) carry no AutoCount DtlKey",
+        reason_kind: "keyless-line", remedy: "backfill linked_ac_dtlkey" }),
+      row({ id: "k2", doc_no: "DO-K2", doc_type: "DO", op: "so_to_do", status: "skipped", state: "skipped",
+        needs_attention: true,
+        reason: "refused, nothing sent (MissingLocationError): line 2 carries no warehouse",
+        reason_kind: "missing-location", remedy: "set the warehouse on the line" }),
+    ],
+    counts: { pending: 0, sent: 0, failed: 0, skipped: 2, requeued: 0, attention: 2, total: 2 },
+  });
+
+  it("is offered on the keyless row and on no other", async () => {
+    await mount(keyless);
+    await screen.findByText("SO-KL");
+    expect(within(cardOf("SO-KL")).getByRole("button", { name: "Match up lines" })).toBeTruthy();
+    /* A missing warehouse is a different refusal with a different remedy — the
+       operator sets the warehouse; there is nothing to match. */
+    expect(within(cardOf("DO-K2")).queryByRole("button", { name: "Match up lines" })).toBeNull();
+  });
+
+  it("says what it matched, and tells the operator the save is still theirs to do", async () => {
+    apiPost.mockResolvedValue({
+      ok: true, matched: 1, alreadyKeyed: 7, bookLines: 8, couldNotMatch: [],
+      message: "1 line(s) matched up against the account book. Save the document again.",
+    });
+    await mount(keyless);
+    await screen.findByText("SO-KL");
+    await userEvent.click(within(cardOf("SO-KL")).getByRole("button", { name: "Match up lines" }));
+    expect(await within(cardOf("SO-KL")).findByText(/Save the document again/)).toBeTruthy();
+  });
+
+  it("NAMES the lines it could not match rather than counting them", async () => {
+    apiPost.mockResolvedValue({
+      ok: true, matched: 0, alreadyKeyed: 7, bookLines: 8,
+      couldNotMatch: ["'9058-1S' — 2 unclaimed lines in the account book carry that item code"],
+      message: "Nothing could be matched — the document is unchanged.",
+    });
+    await mount(keyless);
+    await screen.findByText("SO-KL");
+    await userEvent.click(within(cardOf("SO-KL")).getByRole("button", { name: "Match up lines" }));
+    expect(await within(cardOf("SO-KL")).findByText(/9058-1S/)).toBeTruthy();
   });
 });

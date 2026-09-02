@@ -10,7 +10,8 @@ import { SearchProgress } from "../components/SearchProgress";
 import { SearchScopeHint } from "../components/SearchScopeHint";
 import { useSearchResultTransition } from "../hooks/useServerSearch";
 import { useAuth } from "../auth/AuthContext";
-import { isSalesNonDirector, isSalesDirectorUser, canLogSalesEntry } from "../auth/salesAccess";
+import { isSalesNonDirector, isSalesDirectorUser, canLogSalesEntry, canCreateEvent } from "../auth/salesAccess";
+import { NewProjectSheet } from "./MobileNewProject";
 import { capability } from "../auth/capabilities";
 import { readProjectAccess, projectAccessUnresolved, holdsChecklistApproval } from "../auth/projectAccess";
 import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
@@ -410,13 +411,16 @@ function ProjectListView({ onOpen, onBack }: { onOpen: (id: number) => void; onB
   // saying WHY each row is the caller's; a completed/submitted task drops the
   // row server-side.
   const [myPendingOn, setMyPendingOn] = useState(false);
+  // New-event sheet (owner 2026-07-31), gated by canCreateEvent below.
+  const [creating, setCreating] = useState(false);
+  const notify = useNotify();
   // Owner 2026-07-21: field/sales roles (Sales Executive/Manager except Sales
   // Director, plus Driver/Helper/Storekeeper) get a slimmed filter bar — only
   // "My events", "Setup", "Dismantle" (no All / Draft / Live / Completed).
   const _pos = (user?.position_name ?? "").trim();
   const _dept = (user?.department_name ?? "").trim();
   const _isDirector = !!user?.permissions?.includes("*") || /\b(super admin|sales director|finance manager)\b/i.test(_pos);
-  const _isCrew = /\b(driver|helper)\b/i.test(_pos) || /storekeeper/i.test(_pos);
+  const _isCrew = /\b(driver|helper)\b/i.test(_pos) || /storekeeper/i.test(_pos) || /^warehouse crew/i.test(_pos);
   const _isSalesExec = (/sales/i.test(_dept) || /^sales/i.test(_pos)) && !_isDirector;
   const restrictedCohort = _isCrew || _isSalesExec;
   const visibleStageFilters = restrictedCohort
@@ -531,6 +535,17 @@ function ProjectListView({ onOpen, onBack }: { onOpen: (id: number) => void; onB
               <div className="scr-title">Projects</div>
             </div>
           </div>
+          {/* New event (owner 2026-07-31) — same gate as the desktop button:
+              BD / Owner position / weisiang, which the backend re-checks. */}
+          {canCreateEvent(user) && (
+            <button
+              className="tinybtn"
+              style={{ marginLeft: "auto", background: "var(--brand)", borderColor: "var(--brand)", color: "#fff", fontWeight: 700 }}
+              onClick={() => setCreating(true)}
+            >
+              + New
+            </button>
+          )}
         </div>
         <div className="hdr-row" style={{ marginTop: 11 }}>
           <div className="searchbar">
@@ -667,6 +682,13 @@ function ProjectListView({ onOpen, onBack }: { onOpen: (id: number) => void; onB
           </>
         )}
       </div>
+      {creating && (
+        <NewProjectSheet
+          notify={notify}
+          onClose={() => setCreating(false)}
+          onCreated={(id) => { setCreating(false); onOpen(id); }}
+        />
+      )}
     </div>
   );
 }
@@ -894,7 +916,9 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
   const isMgt = isOwnerAdmin || isDirectorPos || /^management$/i.test(_dept);
   const isBD = /bd\s*exec|business\s*develop/i.test(_roleName);
   const isDriverCrew = /\b(Driver|Helper)\b/i.test(_pos);
-  const isStorekeeper = /storekeeper/i.test(_pos);
+  // Owner 2026-08-28: the admin-created "Warehouse Crew KL" position (mixed
+  // Helper + Storekeeper roles) rides the storekeeper arm of every crew gate.
+  const isStorekeeper = /storekeeper/i.test(_pos) || /^warehouse crew/i.test(_pos);
   const isLogistic = /logistic/i.test(_pos);
   // Purchasers are matched by POSITION OR ROLE — the live purchasers (Farra,
   // Sim) hold the Purchaser ROLE on an "Operation Executive" position, so a

@@ -61,6 +61,38 @@ import { enqueueStockAllocationRecompute } from './stock-allocation-queue';
 import { SO_TERMINAL_STATES_PGREST } from '../shared/so-terminal-states';
 import { SO_PROCESSING_DATE_COLUMN } from '../shared/so-processing-date';
 
+/* Only the variant-bearing categories run bound. Owner 2026-08-10:
+   "SOFA 和 BEDFRAME 因为有变体的问题,所以要走 Convert to PO 的那个模式.
+    可是 MATTRESS 跟 Accessories 都是没有变体的 ... 走回我们正常 MRP 的模式".
+   Owner 2026-08-29: special-order mattresses follow hard binding too —
+   "如果是specialorder的话 也是像bedframe这样指定的 hard binding的"; the book's
+   own convention marks them with an (SP) suffix. Standard mattresses stay
+   pooled (the 2026-08-10 ruling, unchanged).
+
+   EXPORTED because the rule now has two consumers and they must not drift:
+   this engine's bound-needs filter, and the display union's promotion gate
+   (so-line-effective-stock.ts) — a hard-bound line's live-MRP 'stock' verdict
+   is variant-blind and must never promote it (HC-SO-013367, 2026-08-30). */
+const HARD_BOUND_GROUPS = new Set(['bedframe', 'sofa']);
+export function isHardBoundLine(
+  itemGroup: string | null | undefined,
+  itemCode: string | null | undefined,
+): boolean {
+  const g = (itemGroup ?? '').toLowerCase();
+  if (HARD_BOUND_GROUPS.has(g)) return true;
+  return g === 'mattress' && /\(SP\)\s*$/i.test(itemCode ?? '');
+}
+
+/* The company whose bound groups are EXCLUSIVELY PO-bound (owner, ruled three
+   times — 2026-08-10, 2026-08-29, 2026-08-30 "他明明都没有 PO,怎么会 ready 呢
+   …它一定是根据 PO…Company 1 跟 Company 2 机制是不一样的"): a company-1
+   bedframe / sofa / (SP) mattress line lights ONLY through its own received
+   purchase order; the pooled walk is never its evidence. Company 2 (2990)
+   pools. When company-1 stock has grown variants and the migrated blanks have
+   washed out, the owner's stated plan is to switch this company to the pooled
+   model too — that switch is THIS constant. */
+export const HARD_BOUND_COMPANY_ID = 1;
+
 export type AllocationResult = {
   ok: boolean;
   linesFlipped: number;
@@ -301,6 +333,9 @@ async function runSoStockAllocation(
     const allocGated = new Set(
       orders.filter((o) => !o[SO_PROCESSING_DATE_COLUMN]).map((o) => o.doc_no),
     );
+    /* Which company each document belongs to — the pooled walk needs it to
+       enforce HARD_BOUND_COMPANY_ID's exclusivity (see the constant's note). */
+    const companyByDoc = new Map(orders.map((o) => [o.doc_no, Number(o.company_id ?? 0)]));
 
     // 2. Non-cancelled lines on those SOs. Pull qty + variant fields so we
     //    can compute variant_key and the bucket.
@@ -491,7 +526,7 @@ async function runSoStockAllocation(
           line's existing stock_qty_ready — used to compute "did the value
           change". */
     const WH_NONE = 'NOWH';
-    type LineNeed = { id: string; doc_no: string; bucket: string; whId: string | null; need: number; current: string; curReady: number; group: string };
+    type LineNeed = { id: string; doc_no: string; bucket: string; whId: string | null; need: number; current: string; curReady: number; group: string; item_code: string };
     const needs: LineNeed[] = [];
     /* Sofa lines walk the batch-bound path instead of the per-line bucket
        fill. Keep the SKU + variant + remaining so we can check each module's
@@ -532,6 +567,7 @@ async function runSoStockAllocation(
         need: remaining, current: l.stock_status,
         curReady: Number(l.stock_qty_ready ?? 0),
         group: (l.item_group ?? '').toLowerCase(),
+        item_code: l.item_code,
       });
     }
     if (needs.length === 0 && sofaLineRecs.length === 0) return { ok: true, linesFlipped: 0, ordersAdvanced: 0, ordersRegressed: 0 };
@@ -615,15 +651,20 @@ async function runSoStockAllocation(
            variant first, then the blank-variant bucket the migration created),
            so a dedicated receipt can never be counted twice — once for its own
            SO here, and again for somebody else's line in the pooled walk below. */
-    /* Only the variant-bearing categories run bound. Owner 2026-08-10:
-       "SOFA 和 BEDFRAME 因为有变体的问题,所以要走 Convert to PO 的那个模式.
-        可是 MATTRESS 跟 Accessories 都是没有变体的 ... 走回我们正常 MRP 的模式".
-       Mattress and accessories are common stock: pooling them is correct and
-       is what the floor already expects, so they must NOT be diverted. */
-    const BOUND_GROUPS = new Set(['bedframe', 'sofa']);
+    /* Which lines run bound is `isHardBoundLine` (module top) — one home for
+       the two owner rulings (2026-08-10 bedframe/sofa, 2026-08-29 (SP)
+       mattresses), shared with the display union's promotion gate. Mattress
+       and accessories are common stock: pooling them is correct and is what
+       the floor already expects, so they must NOT be diverted. */
     const dedicatedReady = new Map<string, number>();
-    const boundNeeds = needs.filter((n) => BOUND_GROUPS.has(n.group));
-    if (boundNeeds.length > 0) {
+    const boundNeeds = needs.filter((n) => isHardBoundLine(n.group, n.item_code));
+    /* Sofa lines were diverted into sofaLineRecs before `needs` was built, so
+       for three months this read never saw them and the bound rule the comment
+       above NAMES sofa into never fired for sofa — every migrated set with no
+       exact-multiset dye lot stayed PENDING with its own PO fully received
+       (11 lines on 2026-08-29, run 33233660301). Their ids join the read here;
+       the sofa set walk below consults dedicatedReady when no batch covers. */
+    if (boundNeeds.length > 0 || sofaLineRecs.length > 0) {
       /* INVERTED, for the same reason and by the same shape as the DO-line read
          above: chunking the 3,520 bedframe/sofa line ids cost 18 serial
          requests on production. `!inner` on the PO link means only lines that
@@ -635,7 +676,7 @@ async function runSoStockAllocation(
          case-insensitively there, and a SQL predicate that had to reproduce
          that could answer differently. Reading a superset and intersecting is
          exact — `dedicatedReady` is only ever consulted for bound line ids. */
-      const boundIds = new Set(boundNeeds.map((n) => n.id));
+      const boundIds = new Set([...boundNeeds.map((n) => n.id), ...sofaLineRecs.map((s) => s.id)]);
       const { data: poLinkRows } = await paginateAll<{
         id: string; po_items: Array<{ qty: number; received_qty: number | null }> | null;
       }>((from, to) => sb
@@ -685,6 +726,16 @@ async function runSoStockAllocation(
     for (const n of needs) {
       if (targetById.has(n.id)) continue; // settled by its dedicated PO above
       if (allocGated.has(n.doc_no)) {
+        targetById.set(n.id, { status: 'PENDING', qtyReady: 0 });
+        continue;
+      }
+      /* HARD BINDING IS EXCLUSIVE for HARD_BOUND_COMPANY_ID: an un-receipted
+         bound line must NOT fall through to the pool. Dormant while variant
+         buckets mismatched; the moment BOTH sides were blank it fired —
+         HC-SO-013253 JAGER-(Q) read READY with no PO against blank-variant
+         migrated stock (census run 33287776781, owner report 2026-08-30).
+         docs/bugs/0572. Company 2 (2990) keeps pooling past this guard. */
+      if (companyByDoc.get(n.doc_no) === HARD_BOUND_COMPANY_ID && isHardBoundLine(n.group, n.item_code)) {
         targetById.set(n.id, { status: 'PENDING', qtyReady: 0 });
         continue;
       }
@@ -748,7 +799,24 @@ async function runSoStockAllocation(
         if (batch && whId) claimSofaBatch(whId, batch, lines, sofaStock);
         for (const s of group) {
           batchTargetByLine.set(s.id, batch);
-          targetById.set(s.id, batch ? { status: 'READY', qtyReady: s.need } : { status: 'PENDING', qtyReady: 0 });
+          if (batch) {
+            targetById.set(s.id, { status: 'READY', qtyReady: s.need });
+            continue;
+          }
+          /* No covering dye lot — the owner's hard binding takes over
+             (2026-08-29, re-ruling his 2026-08-10 call): a sofa piece whose
+             OWN converted PO has received is READY per line, min(received,
+             need), exactly the bedframe arithmetic above. No batch is claimed
+             — the migrated stock this serves rarely forms an exact multiset,
+             and the DO flow lets the operator pick the physical batch at
+             dispatch, which is the shipping rule already in force. */
+          const got = dedicatedReady.get(s.id) ?? 0;
+          const fill = Math.min(got, s.need);
+          targetById.set(s.id, fill >= s.need
+            ? { status: 'READY', qtyReady: s.need }
+            : fill > 0
+              ? { status: 'PARTIAL', qtyReady: fill }
+              : { status: 'PENDING', qtyReady: 0 });
         }
       }
     }

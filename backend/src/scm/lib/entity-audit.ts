@@ -86,7 +86,12 @@ export function isEntityType(v: unknown): v is EntityType {
    the shadow's own try/catch, so persistence can never touch shipping; read
    back by scripts/check-bind-shadow.mjs, never by the History drawer (the
    frontend's AuditEntityType union does not include DELIVERY_ORDER). */
-export const AUDIT_ACTIONS = ['CREATE', 'UPDATE', 'POST', 'CANCEL', 'REVERSE', 'DELETE', 'SEND', 'AMENDMENT_PO_APPROVED', 'RECOUNT_FAILED', 'BIND_SHADOW'] as const;
+/* The phase-3 approval verbs (payment vouchers, 2026-08-28): SUBMIT_FOR_APPROVAL
+   and WITHDRAW_FROM_APPROVAL are the requester's half, APPROVE and REJECT the
+   decider's. They answer "who asked for this money, who said yes/no, and when" —
+   the question the 决定 trail exists for. A REJECT row carries the why as a
+   field change (rejection_note), where the submitter reads it. */
+export const AUDIT_ACTIONS = ['CREATE', 'UPDATE', 'POST', 'CANCEL', 'REVERSE', 'DELETE', 'SEND', 'AMENDMENT_PO_APPROVED', 'RECOUNT_FAILED', 'BIND_SHADOW', 'SUBMIT_FOR_APPROVAL', 'WITHDRAW_FROM_APPROVAL', 'CHECK', 'APPROVE', 'REJECT'] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 
 /* The Houzs caller, as middleware/auth.ts stashes it. Deliberately structural:

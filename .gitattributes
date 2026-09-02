@@ -38,3 +38,13 @@
 # so a clone that has not run it is no worse off, only no better.
 docs/generated/*.md  merge=regen
 docs/generated/*.csv merge=regen
+
+# The demo payment-advice PDF is all-ASCII (uncompressed streams), so git's
+# text auto-detection claims it and autocrlf rewrites its line endings on
+# checkout — which shifts every /Length and xref offset and cuts the last
+# batch row off the stream. That exact corruption happened in the working
+# tree on 2026-08-24: the reader refused the file ("2 batch rows come to
+# RM 2,548.87" against a printed RM 11,814.44). A PDF is bytes, whatever it
+# happens to contain; tests/pbbAdviceFixture.test.mjs reads the shipped file
+# and fails loudly if it ever rots again.
+demo-statements/*.pdf -text

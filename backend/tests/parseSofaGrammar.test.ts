@@ -286,3 +286,158 @@ describe('special-order phrase map: the notch family', () => {
         .toBe(`${phrase}: json=${mapped(phrase)} lib=${mapped(phrase)}`);
   });
 });
+
+describe('parse-sofa: the 2026-08 new-style spelling (ERP compartment names, colour-first order)', () => {
+  /* Staff entries from ~SO-0131xx onward write the ERP's own vocabulary —
+     1A(LHF)+C+2A(RHF) — and put the colour FIRST with no COL: label. Every
+     case here is a REAL Desc2 from the 2026-08-28 snapshot that the parser
+     held before it learned the style (round ledger §4c). */
+  const CASES: Array<[string, string, string[], string | null]> = [
+    ['TBC/28”/1A(LHF)+C+2A(RHF)', '9028', ['1A(LHF)', 'CNR', '2A(RHF)'], null],
+    ['TBC/35”/1A(LHF)+1A(RHF)', '8030', ['1A(LHF)', '1A(RHF)'], null],
+    ["2A+1A(28'INCH)/COL:KIV/BOTTOM USE UMBRELLA FABIRC", '8030', ['2A(LHF)', '1A(RHF)'], 'KIV'],
+    ["1A+1A(35'INCH)/COL:BOO315-01/BOTTOM USE UMBRELLA FABIRC", '8030', ['1A(LHF)', '1A(RHF)'], 'BOO315-01'],
+    // colour-first with no label: pieces decode; the colour stays on the
+    // #1998 library-confirmation contract (blank here, no predicate given)
+    ['CH141-11 (SILVER)/28”/1A(LHF)+1NA+1A(RHF)', '9028', ['1A(LHF)', '1NA', '1A(RHF)'], null],
+    ["1B+C TABLE+1A+WOODEN ARM(28'INCH)/COL:GD2502#20", '8060', ['1B(LHF)', 'Console', '1A(RHF)'], 'GD2502#20'],
+    ['2A+L (30”)/Col:B0315-25', '5535', ['2A(LHF)', 'L(RHF)'], 'B0315-25'],
+  ];
+  for (const [d2, model, pieces, colour] of CASES)
+    test(`"${d2}" decodes`, () => {
+      const r = parseSofa(d2, model, false);
+      expect(r.pieces).toEqual(pieces);
+      expect(r.conf).not.toBe('low');
+      if (colour) expect(r.color).toBe(colour);
+      else expect(r.color).toBeNull();
+    });
+
+  test('a bare A-piece in the MIDDLE still holds the line — an arm mid-row is real ambiguity', () => {
+    const r = parseSofa('1A(LHF)+1A+1A(RHF)', '9028', false);
+    expect(r.pieces).toEqual([]);
+    expect(r.conf).toBe('low');
+  });
+
+  test('colour-first + new-style pieces: the library-confirmed path still reads the code', () => {
+    const known = (c: string) => (/^CH141-11$/i.test(c.trim()) ? 'CH141-11' : null);
+    const r = parseSofa('CH141-11 (SILVER)/28”/1A(LHF)+1A(RHF)', '9028', false, { knownColour: known });
+    expect(r.pieces).toEqual(['1A(LHF)', '1A(RHF)']);
+    expect(r.color).toBe('CH141-11');
+  });
+
+  test('colour-first with a code the library does not know decodes its pieces and leaves colour blank', () => {
+    const r = parseSofa('MODENZA-03 (BROWN)/28”/1A(LHF)+1A(RHF)', '8060', false);
+    expect(r.pieces).toEqual(['1A(LHF)', '1A(RHF)']);
+    expect(r.color).toBeNull();
+  });
+});
+
+/* 2026-08-30 vocabulary sweep — every case below is a REAL Desc2 from the
+   re-import round's 103 sofa placeholders (run 33251287997), quoted verbatim.
+   Eight of them carry true structure that one unrecognised token was killing;
+   the rest pin that digit-bearing INSTRUCTION words now ride as specials with
+   an honest "no structure tokens" reason instead of a scary token error. */
+describe('parse-sofa: the 2026-08-30 placeholder-sweep vocabulary', () => {
+  test('a numbered console is a console — (1P+1Console+1P) (SO-012695)', () => {
+    const r = parseSofa('(1P+1Console+1P)32inch/Col:ZL-11\n2Power Incliner', '8038', true);
+    expect(r.pieces).toEqual(['1A(P)(LHF)', 'Console', '1A(P)(RHF)']);
+    expect(r.conf).not.toBe('low');
+  });
+
+  test('1EL+1C+1Console+1NA+1ER keeps corner AND console (SO-013226)', () => {
+    const r = parseSofa('(1EL+1C+1Console+1NA+1ER)28inch/Col:ZL-12', '8030', false);
+    expect(r.pieces).toEqual(['1A(LHF)', 'CNR', 'Console', '1NA', '1A(RHF)']);
+  });
+
+  test('1EFL / 1EFR spell 1EL / 1ER (SO-010324)', () => {
+    const r = parseSofa("1EFL+1NA+C+1EFR (32'Inch)/Col:HR805-90/Bottom upgrade to umbrella fabric", '9050', false);
+    expect(r.pieces).toEqual(['1A(LHF)', '1NA', 'CNR', '1A(RHF)']);
+  });
+
+  test('1R(P)+1R(P) is a power pair, not a held mid-row P (SO-011530)', () => {
+    const r = parseSofa('BO315-5 (FOSSIL)/32”/1R(P)+1R(P)', '8051', true);
+    expect(r.pieces).toEqual(['1A(P)(LHF)', '1A(P)(RHF)']);
+  });
+
+  test('the bracket title may be letter-led — L2L(L+1NA+1NA+L) (SO-008166)', () => {
+    const r = parseSofa('L2L(L+1NA+1NA+L)/Col:CH141-2 Beige', '9058', false);
+    expect(r.pieces).toEqual(['L(LHF)', '1NA', '1NA', 'L(RHF)']);
+  });
+
+  test('an orphan second size number does not kill the chain (SO-010015)', () => {
+    const r = parseSofa('1+1NA+L(26/28’Inch)/Col:KIV/Bottom upgrade to umbrella fabric ', '9028', false);
+    expect(r.pieces).toEqual(['1A(LHF)', '1NA', 'L(RHF)']);
+    expect(r.size).toBe('28');
+  });
+
+  test('1B/S seater survives its own label (SO-013329)', () => {
+    const r = parseSofa('Size:30”/Col:BO315-4 Sand/Bottom wrap nylon/1B/S seater 26”', '8069', false);
+    expect(r.pieces).toEqual(['1B(LHF)']);
+  });
+
+  test('a library-confirmed colour token inside the structure segment is consumed, not fatal (SO-013121)', () => {
+    const known = (c: string) => (/^B0315[\s-]*PEARL$/i.test(c.trim()) ? 'B0315-PEARL' : null);
+    const r = parseSofa('2S[P+P](32”)B0315-Pearl', '8051', true, { knownColour: known });
+    expect(r.pieces).toEqual(['1A(P)(LHF)', '1A(P)(RHF)']);
+  });
+
+  test('digit-bearing instructions ride as specials instead of reading as unknown structure (SO-011446)', () => {
+    const r = parseSofa('headrest change to 8030 \ncolour : CH141-1 \nchange bottom to Nilon ', '9058', false);
+    expect(r.pieces).toEqual([]); // the book truly wrote no structure — placeholder is faithful
+    expect((r.why as string[]).some((w: string) => w.startsWith('token'))).toBe(false);
+    expect(r.specials.join(' ').toLowerCase()).toContain('headrest change to 8030');
+  });
+
+  test('ALL SEAT CHANGE 8030 BACK CUSHION is an instruction, never a token error (SO-008542)', () => {
+    const r = parseSofa('(30”)/col:tbc/“All Seat Change 8030 Back Cushion”', '9058', false);
+    expect(r.pieces).toEqual([]);
+    expect((r.why as string[]).some((w: string) => w.startsWith('token'))).toBe(false);
+  });
+
+  test('a bare model-number rider (back rest (5540)) stays quiet (SO-013312)', () => {
+    const r = parseSofa('32 inch \nback rest  (5540)\nfully cover after push back \nNilon bottom', '9058', false);
+    expect(r.pieces).toEqual([]);
+    expect((r.why as string[]).some((w: string) => w.startsWith('token'))).toBe(false);
+  });
+});
+
+/* O-vs-ZERO — the floor writes one fabric code two ways (owner review
+   2026-08-31). "BO315-21" and "B0315-Pearl" are the same cloth, but an
+   unconfirmable code inside the structure segment is FATAL by design, so one
+   typed zero threw a whole build to placeholder (SO-013121, a real order). The
+   library still has to confirm a spelling — this widens the lookup, not the
+   guard. */
+describe('parse-sofa: the fabric code typed with a zero for the letter O', () => {
+  const known = (c: string) => (/^BO315[- ]?PEARL$/i.test(c.trim()) ? 'BO315-PEARL' : null);
+
+  test('SO-013121 decodes once the swapped spelling is tried', () => {
+    const r = parseSofa('2S[P+P](32”)B0315-Pearl', '8051', true, { knownColour: known });
+    expect(r.pieces).toEqual(['1A(P)(LHF)', '1A(P)(RHF)']);
+    expect(r.color).toBe('BO315-PEARL');
+  });
+
+  test('a code the library confirms in NEITHER spelling is still fatal — no guessing', () => {
+    const r = parseSofa('2S[P+P](32”)Q9999-Ghost', '8051', true, { knownColour: known });
+    expect(r.pieces).toEqual([]);
+    expect(r.conf).toBe('low');
+  });
+});
+
+/* SUITE vs RUN (owner 2026-08-31: 「1+2 这种大部分是 1A+2A」).
+   Distinct digits with nothing joining them used to mean "separate sofas" from
+   TWO tokens up, so `1+2` — a common way to write one two-piece run — came out
+   as a 1-seat sofa plus a 2-seat sofa, and the arms went missing. A suite is
+   THREE or more (1+2+3); two tokens are one sofa whose ends carry the arms. */
+describe('parse-sofa: two digits are a run, three are a suite', () => {
+  test('1+2 is one run: arm left, arm right (SO-010457)', () => {
+    expect(pieces('1+2(28”Inch)/Col:BO315-1', '9028')).toEqual(['1A(LHF)', '2A(RHF)']);
+  });
+  test('1+1 is still a run', () => {
+    expect(pieces('1+1(28”)', '8030')).toEqual(['1A(LHF)', '1A(RHF)']);
+  });
+  test('1+2+3 is still a SUITE — three separate sofas', () => {
+    const r = pieces('1+2+3(30”)', '9028');
+    expect(r).toContain('1S');
+    expect(r).toContain('2S');
+  });
+});

@@ -20,14 +20,19 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { ChevronDown, History, Pencil, Plus, Save, Send, Ban, Trash2, X } from 'lucide-react';
+import { CheckCircle2, ChevronDown, History, Pencil, Plus, RotateCcw, Save, Send, Ban, Trash2, X, XCircle } from 'lucide-react';
 import { Button } from '@2990s/design-system';
-import { fmtDateOrDash } from '../../vendor/shared/format';
+import { fmtDate, fmtDateOrDash } from '../../vendor/shared/format';
 import {
   usePaymentVoucherDetail,
   useUpdatePaymentVoucher,
-  usePostPaymentVoucher,
   useCancelPaymentVoucher,
+  useSubmitPaymentVoucher,
+  useWithdrawPaymentVoucher,
+  useCheckPaymentVoucher,
+  useApprovePaymentVoucher,
+  useRejectPaymentVoucher,
+  useSupplierAdvances, useApplyAdvance,
 } from '../../vendor/scm/lib/payment-voucher-queries';
 import { useAccounts, type Account } from '../../vendor/scm/lib/accounting-queries';
 import { usePurchaseInvoices } from '../../vendor/scm/lib/purchase-invoice-queries';
@@ -103,13 +108,31 @@ export const PaymentVoucherDetail = () => {
   const allocations = (detailQ.data?.allocations ?? []) as Array<Record<string, any>>;
 
   const update = useUpdatePaymentVoucher();
-  const post   = usePostPaymentVoucher();
   const cancel = useCancelPaymentVoucher();
-  const busy   = update.isPending || post.isPending || cancel.isPending;
+  const submit   = useSubmitPaymentVoucher();
+  const withdraw = useWithdrawPaymentVoucher();
+  const check    = useCheckPaymentVoucher();
+  const approve  = useApprovePaymentVoucher();
+  const reject   = useRejectPaymentVoucher();
+  const busy   = update.isPending || cancel.isPending
+    || submit.isPending || withdraw.isPending || check.isPending || approve.isPending || reject.isPending;
 
-  const canWrite  = can('scm.payment_voucher.write');
-  const canPost   = can('scm.payment_voucher.post');
-  const canCancel = can('scm.payment_voucher.cancel');
+  const canWrite   = can('scm.payment_voucher.write');
+  const canCancel  = can('scm.payment_voucher.cancel');
+  const canCheck   = can('scm.payment_voucher.check');
+  const canApprove = can('scm.payment_voucher.approve');
+
+  /* The owner's four layers (2026-09-02) — where this voucher stands. No
+     marks: raw Draft. Prepared: declared ready, STILL editable. Checked:
+     first yes, locked, on Daily Bank's pending. Approve is the second yes
+     and posts the GL itself. The server enforces all of it; these only
+     decide which buttons are worth showing. */
+  const isPrepared   = Boolean(pv?.submitted_at);
+  const isChecked    = Boolean(pv?.checked_at);
+  const isApprovedPv = Boolean(pv?.approved_at);
+  /* Reject wants a why the submitter will read — an inline note swaps in
+     for the approve/reject pair while it is being typed. */
+  const [rejectNote, setRejectNote] = useState<string | null>(null);
 
   const accountsQ = useAccounts();
   const accounts  = useMemo<Account[]>(() => (accountsQ.data?.accounts ?? []).filter((a) => a.is_active), [accountsQ.data]);
@@ -307,21 +330,49 @@ export const PaymentVoucherDetail = () => {
     }
   };
 
-  const onPost = async () => {
-    if (!(await askConfirm({ title: `Post voucher ${pv.pv_number}?`, body: 'This writes the journal entry to the General Ledger and locks the voucher.', confirmLabel: 'Post to GL' }))) return;
-    try {
-      await post.mutateAsync(id);
-    } catch (err) {
-      notify({ title: 'Post failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' });
-    }
-  };
-
+  /* There is no standalone Post button any more — the second yes posts
+     (owner 2026-09-02: 当approved 了才会进gl), and re-approving resumes a
+     post that died halfway. */
   const onCancel = async () => {
     if (!(await askConfirm({ title: `Cancel voucher ${pv.pv_number}?`, body: 'This sets status to CANCELLED and reverses the GL entry if it was posted.', confirmLabel: 'Cancel voucher', danger: true }))) return;
     try {
       await cancel.mutateAsync(id);
     } catch (err) {
       notify({ title: 'Cancel failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' });
+    }
+  };
+
+  /* The four layers' actions. Prepare and withdraw are freely reversible so
+     they carry no dialog; checking reserves money and approving posts it, so
+     both do. */
+  const onPrepare = async () => {
+    try { await submit.mutateAsync(id); } catch (err) {
+      void notify({ title: 'Prepare failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' });
+    }
+  };
+  const onWithdraw = async () => {
+    try { await withdraw.mutateAsync(id); } catch (err) {
+      void notify({ title: 'Withdraw failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' });
+    }
+  };
+  const onCheck = async () => {
+    if (!(await askConfirm({ title: `Check ${pv.pv_number}?`, body: 'The first yes: the voucher locks, and the amount reserves against Daily Bank’s available money until it is approved or rejected.', confirmLabel: 'Check' }))) return;
+    try { await check.mutateAsync(id); } catch (err) {
+      void notify({ title: 'Check failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' });
+    }
+  };
+  const onApprove = async () => {
+    if (!(await askConfirm({ title: `Approve ${pv.pv_number}?`, body: 'The second yes posts the journal entry to the General Ledger in the same step — money leaves the books now.', confirmLabel: 'Approve & post' }))) return;
+    try { await approve.mutateAsync(id); } catch (err) {
+      void notify({ title: 'Approve failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' });
+    }
+  };
+  const onRejectConfirm = async () => {
+    try {
+      await reject.mutateAsync({ id, note: rejectNote ?? '' });
+      setRejectNote(null);
+    } catch (err) {
+      void notify({ title: 'Reject failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' });
     }
   };
 
@@ -340,17 +391,65 @@ export const PaymentVoucherDetail = () => {
             </Button>
             {!isEditing ? (
               <>
-                {isDraft && canWrite && (
+                {/* The four layers: where the voucher stands, said once beside the pill. */}
+                {isDraft && isPrepared && (
+                  <span style={{ fontSize: 'var(--fs-13)', color: isChecked ? 'var(--c-green, #2c7a3f)' : 'var(--c-orange, #b06000)' }}>
+                    {isChecked ? `Checked · ${String(pv.checked_by ?? '')} — awaiting approval` : `Prepared · ${String(pv.submitted_by ?? '')}`}
+                  </span>
+                )}
+                {/* Editable until the FIRST YES — a merely prepared voucher
+                    still takes corrections (owner: prepare 还可以改). */}
+                {isDraft && canWrite && !isChecked && (
                   <Button variant="ghost" size="md" onClick={() => setIsEditing(true)} disabled={busy}>
                     <Pencil {...ICON} /> Edit
                   </Button>
                 )}
-                {isDraft && canPost && (
-                  <Button variant="primary" size="md" onClick={onPost} disabled={busy}>
-                    <Send {...ICON} /> Post to GL
+                {isDraft && canWrite && !isPrepared && (
+                  <Button variant="primary" size="md" onClick={() => void onPrepare()} disabled={busy}>
+                    <Send {...ICON} /> Prepare
                   </Button>
                 )}
-                {pv.status !== 'CANCELLED' && canCancel && (
+                {isDraft && canWrite && isPrepared && !isChecked && (
+                  <Button variant="ghost" size="md" onClick={() => void onWithdraw()} disabled={busy}
+                    title="Back out of the cycle — it will need preparing again">
+                    <RotateCcw {...ICON} /> Withdraw
+                  </Button>
+                )}
+                {isDraft && canCheck && isPrepared && !isChecked && rejectNote === null && (
+                  <Button variant="primary" size="md" onClick={() => void onCheck()} disabled={busy}>
+                    <CheckCircle2 {...ICON} /> Check
+                  </Button>
+                )}
+                {isDraft && canApprove && isChecked && !isApprovedPv && rejectNote === null && (
+                  <Button variant="primary" size="md" onClick={() => void onApprove()} disabled={busy}>
+                    <CheckCircle2 {...ICON} /> Approve & post
+                  </Button>
+                )}
+                {/* Reject opens to EITHER key, at either layer — back to raw
+                    draft with the why on the trail (一律退回 Draft). */}
+                {isDraft && (canCheck || canApprove) && isPrepared && rejectNote === null && (
+                  <Button variant="ghost" size="md" onClick={() => setRejectNote('')} disabled={busy}>
+                    <XCircle {...ICON} /> Reject
+                  </Button>
+                )}
+                {rejectNote !== null && (
+                  <>
+                    <input
+                      value={rejectNote}
+                      onChange={(e) => setRejectNote(e.target.value)}
+                      placeholder="Why it goes back (the preparer reads this)"
+                      aria-label="Rejection reason"
+                      style={{ padding: '6px 10px', fontSize: 'var(--fs-13)', minWidth: 220 }}
+                    />
+                    <Button variant="primary" size="md" onClick={() => void onRejectConfirm()} disabled={busy}>
+                      <XCircle {...ICON} /> Reject it
+                    </Button>
+                    <Button variant="ghost" size="md" onClick={() => setRejectNote(null)} disabled={busy}>
+                      <X {...ICON} /> Back
+                    </Button>
+                  </>
+                )}
+                {pv.status !== 'CANCELLED' && canCancel && rejectNote === null && (
                   <Button variant="ghost" size="md" onClick={onCancel} disabled={busy}>
                     <Ban {...ICON} /> Cancel
                   </Button>
@@ -632,6 +731,13 @@ export const PaymentVoucherDetail = () => {
         </section>
       )}
 
+      {/* ── The advance this voucher holds, and the knock-off that spends it
+          (预付挂在 supplier, 2026-09-02). Rendered only when a posted supplier
+          voucher paid ahead and money remains on it. */}
+      {pv.status === 'POSTED' && pv.supplier_id && (
+        <AdvanceCard pvId={String(pv.id)} supplierId={String(pv.supplier_id)} />
+      )}
+
       {/* ── Totals ────────────────────────────────────────────────────── */}
       <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
         <section className={styles.card} style={{ maxWidth: 360, width: '100%' }}>
@@ -665,5 +771,105 @@ export const PaymentVoucherDetail = () => {
         />
       )}
     </div>
+  );
+};
+
+/* ── The advance card — money this voucher paid ahead, spent from HERE ──────
+   Knock-off only: applying settles the invoice's paid_sen and burns the
+   advance; NOTHING posts, because both legs already live in AP. The card
+   disappears when the advance is spent to zero. */
+const AdvanceCard = ({ pvId, supplierId }: { pvId: string; supplierId: string }) => {
+  const advancesQ = useSupplierAdvances(supplierId);
+  const applyM = useApplyAdvance();
+  const piListQ = usePurchaseInvoices();
+  const [amounts, setAmounts] = useState<Record<string, number>>({});
+  const [note, setNote] = useState<string | null>(null);
+
+  const mine = (advancesQ.data?.advances ?? []).find((a: { pv_id: string }) => a.pv_id === pvId) ?? null;
+
+  const outstanding = useMemo(() => {
+    return ((piListQ.data?.purchaseInvoices ?? []) as Array<{
+      id: string; invoice_number?: string | null; supplier_id?: string | null;
+      supplier?: { id?: string | null } | null; status?: string | null;
+      total_sen?: number | null; paid_sen?: number | null; invoice_date?: string | null;
+    }>)
+      .filter((r) => {
+        const sid = String(r.supplier_id ?? r.supplier?.id ?? '');
+        const st = String(r.status ?? '').toUpperCase();
+        return sid === supplierId && (st === 'POSTED' || st === 'PARTIALLY_PAID')
+          && Number(r.total_sen ?? 0) - Number(r.paid_sen ?? 0) > 0;
+      })
+      .sort((a, b) => String(a.invoice_date ?? '').localeCompare(String(b.invoice_date ?? '')));
+  }, [piListQ.data, supplierId]);
+
+  if (!mine) return null;
+  const remaining = mine.remaining_sen;
+  const asked = Object.values(amounts).reduce((s, v) => s + v, 0);
+  const over = asked > remaining;
+
+  return (
+    <section className={styles.card}>
+      <div className={styles.cardHeader}>
+        <h2 className={styles.cardTitle}>Advance on this voucher</h2>
+        <span style={{ fontSize: 'var(--fs-12)', color: over ? 'var(--c-festive-b, #B8331F)' : 'var(--fg-muted)' }}>
+          {fmtRm(remaining)} unspent{asked > 0 ? ` · applying ${fmtRm(asked)}` : ''}
+        </span>
+      </div>
+      <div className={styles.cardBody} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+        <p style={{ fontSize: 'var(--fs-13)', color: 'var(--fg-muted)', margin: 0 }}>
+          This voucher paid ahead of any invoice. Knock the remainder off the supplier&rsquo;s
+          outstanding invoices below — no money moves; both legs are already in AP.
+        </p>
+        {outstanding.length === 0 ? (
+          <p style={{ fontSize: 'var(--fs-13)', color: 'var(--fg-muted)', margin: 0 }}>No outstanding invoice from this supplier yet — the advance waits.</p>
+        ) : (
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
+            <thead>
+              <tr style={{ textAlign: 'left', color: 'var(--fg-muted)', fontSize: 'var(--fs-11)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                <th style={{ padding: '6px 8px' }}>Invoice</th>
+                <th style={{ padding: '6px 8px' }}>Date</th>
+                <th style={{ padding: '6px 8px', textAlign: 'right' }}>Outstanding</th>
+                <th style={{ padding: '6px 8px', textAlign: 'right' }}>Knock off</th>
+              </tr>
+            </thead>
+            <tbody>
+              {outstanding.map((r) => {
+                const piId = String(r.id);
+                const out = Number(r.total_sen ?? 0) - Number(r.paid_sen ?? 0);
+                return (
+                  <tr key={piId} style={{ borderTop: '1px solid var(--line)' }}>
+                    <td style={{ padding: '6px 8px', fontFamily: 'var(--font-mono)' }}>{String(r.invoice_number ?? piId)}</td>
+                    <td style={{ padding: '6px 8px', whiteSpace: 'nowrap', color: 'var(--fg-muted)' }}>{fmtDate(r.invoice_date as string | null)}</td>
+                    <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)', color: 'var(--fg-muted)' }}>{fmtRm(out)}</td>
+                    <td style={{ padding: '6px 8px', textAlign: 'right' }}>
+                      <MoneyInput bare valueSen={amounts[piId] ?? 0}
+                        onCommit={(sen) => setAmounts((prev) => ({ ...prev, [piId]: Math.max(0, Math.min(out, sen ?? 0)) }))}
+                        inputClassName={styles.fieldInput} selectOnFocus />
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
+          <span style={{ flex: 1, fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>{note}</span>
+          <Button variant="primary" size="sm"
+            disabled={applyM.isPending || asked === 0 || over}
+            onClick={() => {
+              setNote(null);
+              const allocations = Object.entries(amounts)
+                .filter(([, v]) => v > 0)
+                .map(([piId, amountSen]) => ({ piId, amountSen }));
+              applyM.mutate({ pvId, allocations }, {
+                onSuccess: (d: { appliedSen: number; remainingSen: number }) => { setAmounts({}); setNote(`Knocked off ${fmtRm(d.appliedSen)} — ${fmtRm(d.remainingSen)} of the advance remains.`); },
+                onError: (e) => setNote(e instanceof Error ? e.message : 'Not applied.'),
+              });
+            }}>
+            {applyM.isPending ? 'Applying…' : 'Apply advance'}
+          </Button>
+        </div>
+      </div>
+    </section>
   );
 };

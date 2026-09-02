@@ -3,6 +3,7 @@ import type { MiddlewareHandler } from "hono";
 import { cors } from "hono/cors";
 import { secureHeaders } from "hono/secure-headers";
 import type { Env } from "./types";
+import { GIT_SHA, resolveBuildSha } from "./build-info";
 import { auth, requirePermission, requireAnyPermission, requireScmAccess } from "./middleware/auth";
 import { TRANSIENT_CONN_RE } from "./db/d1-compat";
 // Ported 2990's SCM modules (furniture supply chain). Talk to the `scm` Postgres
@@ -188,7 +189,12 @@ function corsOriginAllowed(origin: string | undefined | null): string | undefine
 // response header is INVISIBLE to a cross-origin reader unless it is exposed
 // here — omitting it would make the guard silently no-op in prod, where the
 // SPA and the worker are different origins.
-app.use("*", cors({ origin: corsOriginAllowed, exposeHeaders: ["X-Request-Id", "X-Company-Code"] }));
+/* X-Session-Pass is EXPOSED because the middleware re-issues a pass on the
+   authoritative path and the SPA has to be able to read it back — a header the
+   browser hides is a renewal that silently never happens. It carries no secret:
+   the pass is signed, token-bound and revocable, and the client already holds it.
+   docs/bugs/0593-*. */
+app.use("*", cors({ origin: corsOriginAllowed, exposeHeaders: ["X-Request-Id", "X-Company-Code", "X-Session-Pass"] }));
 
 // Baseline security headers on every Worker response. Deliberately conservative:
 // the cross-origin isolation family (CORP/COOP/COEP) is DISABLED because the API
@@ -219,11 +225,14 @@ app.use(
 app.use("*", dbInject);
 
 app.get("/", (c) => c.json({ ok: true, service: "autocount-sync-api" }));
-// `sha` is the commit this Worker was deployed from — stamped by deploy.yml
-// via `wrangler deploy --var GIT_SHA:<sha>`. A bare local `wrangler deploy`
-// carries no stamp (null), which is exactly what the deploy-watchdog workflow
-// keys on to detect and revert rogue/stale overwrites of the prod Worker.
-app.get("/health", (c) => c.json({ ok: true, sha: c.env.GIT_SHA ?? null }));
+// `sha` is the commit this Worker was built from — the deploy-watchdog compares
+// it to main to catch a rogue/stale overwrite of prod. It now comes from the
+// bundled build stamp (build-info.ts, baked at deploy time), which — unlike the
+// old `--var GIT_SHA` env var — cannot be dropped by the post-deploy secret step
+// (see build-info.ts for the 2026-09-01 null-stamp incident). The env var is
+// kept as a fallback for any Worker still on the old mechanism; "dev" is the
+// un-stamped local placeholder and reports as no stamp (null).
+app.get("/health", (c) => c.json({ ok: true, sha: resolveBuildSha(GIT_SHA, c.env.GIT_SHA) }));
 
 // /api/auth/* is unauthenticated (login, bootstrap, accept-invite, status,
 // me, logout). It must be mounted BEFORE the auth middleware below.
@@ -441,7 +450,7 @@ app.onError((err, c) => {
   const res = new Response(base.body, base);
   const allowedOrigin = corsOriginAllowed(c.req.header("Origin"));
   if (allowedOrigin) res.headers.set("Access-Control-Allow-Origin", allowedOrigin);
-  res.headers.set("Access-Control-Expose-Headers", "X-Request-Id");
+  res.headers.set("Access-Control-Expose-Headers", "X-Request-Id, X-Session-Pass");
 
   // Error tracking. INERT until the owner sets the SENTRY_DSN secret — with no
   // DSN this call returns before doing anything (no fetch, no log, no latency),

@@ -115,20 +115,44 @@ async function main() {
   const hasCo = mvCols.includes("company_id");
 
   let unmapped = 0, unWh = 0, zeroCost = 0;
-  const plan = []; const negs = [];
+  /* AGGREGATE FIRST (2026-08-29, docs/bugs/0566). Several AutoCount codes can
+     map to ONE ERP code (35 such cells carried balance that day: the four
+     DIVAN ONLY supplier families, HOK/NB bedframe twins, two pillow codes...).
+     The first version computed one delta PER AC ROW against the same ERP
+     cell's on-hand, so with NEG=1 every extra AC row re-subtracted the whole
+     cell: SQUARE PILLOW @ Balakong took -173 and -180 for a true -173 and
+     landed on -161. One cell, one delta: sum the AC rows first. */
+  const cells = new Map(); // `${norm(erp)}|${wh.id}` -> {erp, wh, acQty, acs:[], costSen}
   for (const r of bal) {
     const erp = byAc.get(norm(r.ItemCode));
     if (!erp) { unmapped++; log(`  unmapped AC item: ${r.ItemCode} (${r.Location} ${r.BalQty})`); continue; }
+    /* an ERP code with unbalanced parentheses is a truncated 30-char AutoCount
+       code that leaked through the mapping (docs/bugs/0567) — creating stock
+       under it would mint a garbage product code. Refuse loudly. */
+    if ((erp.match(/\(/g) ?? []).length !== (erp.match(/\)/g) ?? []).length) {
+      unmapped++; log(`  REFUSED unbalanced-paren ERP code for AC ${r.ItemCode}: ${JSON.stringify(erp)} — fix the mapping row`); continue;
+    }
     const wh = locMap.get(norm(r.Location));
     if (!wh) { unWh++; continue; }
-    const p = prodBy.get(norm(erp));
-    const cur = ohBy.get(`${norm(erp)}|${wh.id}`) ?? 0;
-    const delta = Math.round(r.BalQty) - cur;
+    const k = `${norm(erp)}|${wh.id}`;
+    const c = cells.get(k) ?? { erp, wh, acQty: 0, acs: [], costSen: 0 };
+    c.acQty += Math.round(r.BalQty);
+    c.acs.push(r.ItemCode);
+    if (!c.costSen) {
+      const costRm = utdCost.get(norm(r.ItemCode)) ?? iucCost.get(norm(r.ItemCode)) ?? 0;
+      c.costSen = Math.round(costRm * 100);
+    }
+    cells.set(k, c);
+  }
+  const plan = []; const negs = [];
+  for (const c of cells.values()) {
+    const p = prodBy.get(norm(c.erp));
+    if (!c.costSen && p?.cost_sen) c.costSen = p.cost_sen;
+    const cur = ohBy.get(`${norm(c.erp)}|${c.wh.id}`) ?? 0;
+    const delta = c.acQty - cur;
     if (delta === 0) continue;
-    const costRm = utdCost.get(norm(r.ItemCode)) ?? iucCost.get(norm(r.ItemCode)) ?? (p?.cost_sen ? p.cost_sen / 100 : 0);
-    const costSen = Math.round(costRm * 100);
-    if (delta > 0 && costSen === 0) zeroCost++;
-    (delta > 0 ? plan : negs).push({ code: erp, name: p?.name ?? erp, wh, delta, costSen, ac: r.ItemCode, loc: r.Location, acQty: Math.round(r.BalQty), cur });
+    if (delta > 0 && c.costSen === 0) zeroCost++;
+    (delta > 0 ? plan : negs).push({ code: c.erp, name: p?.name ?? c.erp, wh: c.wh, delta, costSen: c.costSen, ac: c.acs.join("+"), loc: "", acQty: c.acQty, cur });
   }
   const units = plan.reduce((s, x) => s + x.delta, 0);
   log(`positive adjustments: ${plan.length} cells / +${units} units (zero-cost: ${zeroCost}); negative deltas: ${negs.length}${NEG ? " (WILL APPLY)" : " (report-only)"}; unmapped items: ${unmapped}; unresolved-warehouse rows: ${unWh}`);

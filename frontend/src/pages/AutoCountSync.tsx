@@ -98,6 +98,8 @@ import {
   AC_SEND_AGAIN_BUSY_LABEL,
   AC_SEND_NOW_LABEL,
   AC_SEND_NOW_BUSY_LABEL,
+  AC_RELINK_LABEL,
+  AC_RELINK_BUSY_LABEL,
   AC_SEND_AGAIN_LABEL,
   AC_TECHNICAL_LABEL,
   acDocTypeLabel,
@@ -384,7 +386,7 @@ function EarlierSends({ sends, maxAttempts }: { sends: AcOutboxRow[]; maxAttempt
  * sentence, rather than in a column where it is a dash on every healthy row.
  */
 function RegisterRow(
-  { group, maxAttempts, sending, note, open, onToggle, historyOpen, onToggleHistory, onSendAgain, onSendNow }: {
+  { group, maxAttempts, sending, note, open, onToggle, historyOpen, onToggleHistory, onSendAgain, onSendNow, onRelink }: {
     group: AcDocGroup;
     maxAttempts: number;
     sending: boolean;
@@ -395,6 +397,7 @@ function RegisterRow(
     onToggleHistory: () => void;
     onSendAgain: () => void;
     onSendNow: () => void;
+    onRelink: () => void;
   },
 ) {
   const row = group.current;
@@ -494,6 +497,23 @@ function RegisterRow(
               {sending ? AC_SEND_NOW_BUSY_LABEL : AC_SEND_NOW_LABEL}
             </Button>
           )}
+          {/* THE KEYLESS ROW'S CONTROL, and the only one on this screen that
+              SENDS NOTHING. The copy for this refusal has always ended "the
+              lines have to be matched up against AutoCount, and then the
+              document saved again" — an instruction nobody could carry out.
+              This is it: it reads the document out of the account book and
+              repairs the ERP's own line identity. Saving the document is still
+              what queues a change, which is why the row's refusal stays put. */}
+          {row.reason_kind === 'keyless-line' && (
+            <Button
+              variant="secondary"
+              className="!h-7 shrink-0 !px-2 !text-[11.5px]"
+              disabled={sending}
+              onClick={onRelink}
+            >
+              {sending ? AC_RELINK_BUSY_LABEL : AC_RELINK_LABEL}
+            </Button>
+          )}
         </Cell>
       </div>
 
@@ -573,6 +593,28 @@ function RegisterRow(
               </span>
               {note.todo}
             </p>
+          )}
+          {/* WHAT ELSE THIS PRESS MOVED. One press can put three documents into
+              the account book — the invoice and both its ancestors — and until
+              #0552 the page reported one. An operator who cannot see that a
+              sales order was sent on their behalf has no way to know it
+              happened, and every one of those is a write to a licensed book. */}
+          {note.ancestors.length > 0 && (
+            <div className="mt-1.5">
+              <p
+                className={cn(
+                  "text-[11px] font-bold uppercase tracking-wide",
+                  TONE_TEXT[note.tone],
+                )}
+              >
+                Sent first
+              </p>
+              <ul className="mt-0.5 max-w-[84ch] space-y-0.5 text-ink">
+                {note.ancestors.map((line) => (
+                  <li key={line}>{line}</li>
+                ))}
+              </ul>
+            </div>
           )}
           {note.quote && (
             <p className="mt-1 whitespace-pre-wrap break-words font-mono text-[11.5px] text-ink">
@@ -751,6 +793,7 @@ export function AutoCountSync() {
       onToggleHistory={() => sendHistory.toggle(g)}
       onSendAgain={() => void requeue.sendAgain(g.current.id)}
       onSendNow={() => void requeue.sendNow(g.current.id)}
+      onRelink={() => void requeue.relink(g.current.id, g.current.doc_type, g.current.doc_no)}
     />
   );
 

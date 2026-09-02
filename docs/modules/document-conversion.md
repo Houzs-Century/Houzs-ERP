@@ -539,6 +539,14 @@ The two generators are `frontend/src/vendor/scm/lib/stock-transfer-pdf.ts` and
 which prints a blank sheet because `index.css`'s `@media print` block hides
 `body *`.
 
+**Both print their status through `statusLabel(docType, status)`** since
+2026-08-26 — `stockTransfer` and `stockTake` — rather than title-casing the
+stored `POSTED`, which printed *Posted* against a screen saying **Confirmed**.
+Every printed document in this repo is held to that by
+`frontend/src/vendor/scm/lib/pdf-status-label.test.ts`; the rule is
+`docs/modules/document-status-vocabulary.md` §1 and the trace is
+`docs/bugs/0548-every-printed-document-title-cased-the-raw-stored-status-ins.md`.
+
 **The menu entry navigates; it does not render.** `Print` goes to the detail
 page with `?print=1`, which `useOpenPrintPreviewFromUrl` consumes — the same
 contract the other eight lists' Print entries use. It could not work any other
@@ -1992,3 +2000,11 @@ kept rendering the whole time.
 `setHold` is a REQUIRED parameter on `purchaseInvoiceRowMenu`, so the next
 document to grow a menu cannot repeat it silently — the compiler names the call
 site. See `docs/bugs/0525-the-purchase-invoice-had-an-on-hold-tab-and-no-way-to-reach.md`.
+
+## Drill-down columns and "still loading"
+
+A cell fed by a SECOND query renders **WORKING…** while that query is in flight
+and **NOT LOADED** if it fails — never `STOCK` or a bare dash, which are
+answers. `coverage` is a required prop on the shared drill-down; the rule, the
+five surfaces that fetch separately, and how to add a sixth are in
+`docs/modules/coverage-state.md` (trace: `docs/bugs/0603-a-drill-down-printed-stock-while-the-answer-was-still-loadin.md`).

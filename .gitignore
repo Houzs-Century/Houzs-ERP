@@ -68,3 +68,15 @@ FRONTEND_PROMPT.md
 # `npm --prefix backend run gen:bug-index` / `gen:bug-history`.
 docs/generated/bug-index.md
 docs/generated/bug-history.md
+
+# The extracted AutoCount line photographs (export-ac-line-photos.py) and the
+# resume sidecars beside them. Thousands of JPEGs whose home is R2, not git —
+# and a half-finished export must never look like a reviewable diff.
+# The MANIFESTS at the top of that directory are deliberately NOT ignored: they
+# are the snapshot the attach scripts read, and swapping one in is a reviewed
+# commit (the same rule export-ac-reimport.py's snapshots follow).
+backend/scripts/data/line-photos/*/
+
+# Python bytecode from the backend/scripts/*.py exporters. The runbook now tells
+# people to run those, and nobody should be able to commit a .pyc by accident.
+backend/scripts/__pycache__/

@@ -117,10 +117,14 @@ export function assembleSoListMrpEnrichment(input: {
   delivered: Map<string, number>;
   remaining: Map<string, number>;
   today: string;
+  /** doc_nos whose order has a processing date — the promotion gate
+   *  readinessLinesByDoc enforces. `null` = caller cannot say (strict: the
+   *  live-'stock' promotion is then off for every line). */
+  processedDocs: ReadonlySet<string> | null;
 }): Map<string, SoListMrpEnrichment> {
   const {
     docNos, items, coverage, categoryByCode, readyByItem,
-    fullyShippedItemIds, headers, delivered, remaining, today,
+    fullyShippedItemIds, headers, delivered, remaining, today, processedDocs,
   } = input;
 
   // READY-arm source-PO union per doc — the SHIPPED map is intentionally empty:
@@ -136,7 +140,7 @@ export function assembleSoListMrpEnrichment(input: {
 
   // Readiness — the SAME two calls the list makes, but with the LIVE coverage so
   // the label reflects goods the stored status has not caught up to yet.
-  const linesByDoc = readinessLinesByDoc(items, coverage);
+  const linesByDoc = readinessLinesByDoc(items, coverage, processedDocs);
   attachLineCategories(linesByDoc.values(), categoryByCode);
 
   const out = new Map<string, SoListMrpEnrichment>();

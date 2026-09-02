@@ -162,6 +162,17 @@ jobs:
           # because it points at a direct-connection hostname that resolves
           # IPv4-only; the pooler is different DNS territory.
           NODE_OPTIONS: --dns-result-order=ipv4first
+      # Bake the commit sha INTO the bundle (src/build-info.ts) — the same
+      # reliable stamp prod uses. GET /health reads this bundled constant, which
+      # no var/secret operation can drop (see backend/src/build-info.ts). The
+      # --var below is kept as a fallback.
+      - name: Stamp the build with the commit sha
+        run: |
+          set -euo pipefail
+          # Replace ONLY the placeholder value — never the whole file, so
+          # resolveBuildSha() survives. Fails loudly if the anchor drifts.
+          sed -i 's|^export const GIT_SHA: string = "dev";$|export const GIT_SHA: string = "'"$GITHUB_SHA"'";|' src/build-info.ts
+          grep -qF "\"$GITHUB_SHA\"" src/build-info.ts || { echo "::error title=Build stamp failed::src/build-info.ts export line did not become $GITHUB_SHA — did the anchor change?"; exit 1; }
       # Deploy the Worker to the staging env block in wrangler.toml
       # ([env.staging] → name autocount-sync-api-staging, isolated Hyperdrive,
       # crons=[]). Same Cloudflare account as prod, so the existing

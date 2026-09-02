@@ -34,7 +34,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { generateAmendmentPdf } from "../../vendor/scm/lib/amendment-pdf";
-import { soAmendmentToPdfInput } from "../../vendor/scm/lib/amendment-pdf-map";
+import { amendmentPrintedStatus, soAmendmentToPdfInput } from "../../vendor/scm/lib/amendment-pdf-map";
 import { fmtDateTime, fmtMoneySen } from "@2990s/shared";
 import { Button } from "../../components/Button";
 import {
@@ -722,7 +722,6 @@ export function AmendmentDetailV2() {
      mechanism as the SO/PO PDFs — the operator downloads / prints / WhatsApps it.
      Status label is the SIMPLIFIED Requested / Approved the owner asked for
      (the multi-step backend states collapse to those two on the document). */
-  const soApplied = ["SO_APPROVED", "PO_APPROVED", "SENT", "APPROVED"].includes(status);
   const deliverPrintPdf = (action: PdfAction) => {
     if (!amendment) return;
     const input = soAmendmentToPdfInput({
@@ -738,7 +737,6 @@ export function AmendmentDetailV2() {
       lines: (data?.lines ?? []) as never,
       salesOrder: salesOrder as never,
       customerName: (salesOrder as { customer_name?: string | null } | null)?.customer_name ?? null,
-      statusLabel: soApplied ? "Approved" : "Requested",
     });
     return Promise.resolve(generateAmendmentPdf(input, { action })).catch((e: unknown) =>
       notify({ title: "PDF generation failed", body: e instanceof Error ? e.message : "Something went wrong.", tone: "error" }),
@@ -1382,7 +1380,7 @@ export function AmendmentDetailV2() {
         docNo={amendmentNo ?? "Amendment"}
         rows={[
           { label: "Against SO", value: soDocNo || "—" },
-          { label: "Status", value: soApplied ? "Approved" : "Requested" },
+          { label: "Status", value: amendmentPrintedStatus(status) },
           { label: "Reason", value: reason || "—" },
           {
             label: "Changes",

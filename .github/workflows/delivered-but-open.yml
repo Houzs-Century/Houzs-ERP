@@ -1,0 +1,47 @@
+name: check-delivered-but-open (read-only, CSV artifact)
+
+# The orders AutoCount considers DELIVERED that are still open demand in the ERP.
+# Owner, 2026-08-31: 「那么久了的单确定没有 DO？没有出货？」 — asked of the BOOK's own
+# TransferedQty rather than of our links, because unlinked delivery lines exist.
+#
+# The LOG gets counts; the document numbers go to a CSV artifact, because this
+# repository and its Actions logs are public.
+#
+# It writes nothing to the database, and it deliberately does not close anything:
+# marking an order delivered here without the stock movements a delivery makes
+# would put the warehouse figure wrong.
+on:
+  workflow_dispatch:
+    inputs:
+      company_id:
+        description: 'Company id (1 = HOUZS / Houzs Century)'
+        required: false
+        default: '1'
+        type: string
+
+concurrency:
+  group: check-delivered-but-open
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+        working-directory: backend
+      - name: measure (read-only)
+        working-directory: backend
+        env:
+          DATABASE_URL: "${{ secrets.DATABASE_URL }}"
+          COMPANY_ID: "${{ inputs.company_id }}"
+          OUT: delivered-but-open.csv
+        run: node scripts/check-delivered-but-open.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: delivered-but-open
+          path: backend/delivered-but-open.csv
+          if-no-files-found: warn

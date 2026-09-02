@@ -23,7 +23,8 @@
     "test:perf-local": "playwright test --config perf-lab/playwright.config.ts",
     "test:perf-local:list": "playwright test --config perf-lab/playwright.config.ts --list",
     "smoke": "node scripts/smoke-check.mjs",
-    "deploy": "npm run build && wrangler pages deploy --commit-dirty=true"
+    "deploy": "npm run build && wrangler pages deploy --commit-dirty=true",
+    "dev:settlement-demo": "node demo/dev.mjs"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.101.0",
@@ -31,6 +32,7 @@
     "@vis.gl/react-google-maps": "^1.9.0",
     "jspdf": "^4.2.1",
     "jspdf-autotable": "^5.0.8",
+    "jsqr": "^1.4.0",
     "leaflet": "^1.9.4",
     "lucide-react": "^0.460.0",
     "qrcode-generator": "^2.0.4",

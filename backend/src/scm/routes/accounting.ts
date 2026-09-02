@@ -28,10 +28,23 @@ import { safeRate, toMyrSen } from '../lib/fx';
 import { todayMyt } from '../lib/my-time';
 import { hasHouzsPerm } from '../lib/houzs-perms';
 import { postJournal, reverseJournal } from '../../acc/engine';
-import { backfillSoPayments } from '../../acc/payments';
+import { backfillSoPayments, unbookedPayments } from '../../acc/payments';
 import { computeDailyBank } from '../../acc/daily-bank';
 import { systemTakings, postCashOverShort } from '../../acc/daily-close';
 import { resolveRoles, piLines, DEFAULT_ROLE_CODES } from '../../acc/rules';
+import {
+  settlementSetup, settlementSetupSave, settlementUpload, settlementBatches,
+  settlementBatchDetail, settlementConfirmRow, settlementConfirmMatched, settlementRowUnconfirm,
+  settlementIgnoreRow, settlementWatchlist, settlementExport, settlementInTransit,
+  settlementBatchReceived, settlementReceiptUndo,
+  settlementMaintenance, settlementMaintenanceMerchant, settlementMaintenanceBank,
+} from './accounting-settlement';
+import {
+  bankSetup, bankUpload, bankStatements, bankStatementDetail,
+  bankRulesList, bankRuleCreate, bankRuleUpdate,
+  bankLineReceipt, bankLineMatch, bankLineIgnore, bankLineUndo,
+} from './accounting-bank';
+import { payoutUpload, payoutList } from './accounting-payouts';
 import { dateOrNull } from '../lib/date-coerce';
 
 /* THE GENERAL LEDGER HAD NO PERMISSION CHECK AT ALL — eleven routes, zero
@@ -63,6 +76,51 @@ import {
 export const accounting = new Hono<{ Bindings: Env; Variables: Variables }>();
 accounting.use('*', supabaseAuth);
 
+/* Layer 3 — acquirer settlement reconciliation (brief §3.5). The handlers live
+   in accounting-settlement.ts because it is a feature, not an endpoint; they
+   are registered HERE, one path each, so every one of them appears in the
+   route-capability matrix with its gate. Each handler carries its own
+   permission check (the file's `guard`). */
+accounting.get('/settlement/setup', settlementSetup);
+accounting.patch('/settlement/setup/:code', settlementSetupSave);
+// Maintenance takes the company as a parameter (owner: 我会 overall 维护) — the
+// handlers re-check it against the caller's own grants.
+accounting.get('/settlement/maintenance', settlementMaintenance);
+accounting.patch('/settlement/maintenance/merchant', settlementMaintenanceMerchant);
+accounting.patch('/settlement/maintenance/bank', settlementMaintenanceBank);
+accounting.post('/settlement/batches', settlementUpload);
+accounting.get('/settlement/batches', settlementBatches);
+accounting.get('/settlement/batches/:id', settlementBatchDetail);
+accounting.get('/settlement/batches/:id/export', settlementExport);
+accounting.post('/settlement/batches/:id/confirm-matched', settlementConfirmMatched);
+accounting.post('/settlement/batches/:id/received', settlementBatchReceived);
+accounting.post('/settlement/receipts/:id/undo', settlementReceiptUndo);
+accounting.post('/settlement/rows/:id/confirm', settlementConfirmRow);
+accounting.post('/settlement/rows/:id/unconfirm', settlementRowUnconfirm);
+accounting.post('/settlement/rows/:id/ignore', settlementIgnoreRow);
+accounting.get('/settlement/watchlist', settlementWatchlist);
+accounting.get('/settlement/in-transit', settlementInTransit);
+/* The acquirer's own payment advice — Public Bank's IBG, which says which
+   reports one bank credit pays (owner: 几份 excel 对一份 pdf). */
+accounting.post('/settlement/payouts', payoutUpload);
+accounting.get('/settlement/payouts', payoutList);
+
+/* Layer 4 — reconciling the BANK's own statement (brief §3.5). Registered the
+   same way and for the same reason: one path each, every one in the matrix.
+   Owner, 2026-08-19: 我不是应该upload bank statement…然后你也自动核对吗 —
+   整张月结单全部对. */
+accounting.get('/bank/setup', bankSetup);
+accounting.get('/bank/rules', bankRulesList);
+accounting.post('/bank/rules', bankRuleCreate);
+accounting.patch('/bank/rules/:id', bankRuleUpdate);
+accounting.post('/bank/statements', bankUpload);
+accounting.get('/bank/statements', bankStatements);
+accounting.get('/bank/statements/:id', bankStatementDetail);
+accounting.post('/bank/lines/:id/receipt', bankLineReceipt);
+accounting.post('/bank/lines/:id/match', bankLineMatch);
+accounting.post('/bank/lines/:id/ignore', bankLineIgnore);
+accounting.post('/bank/lines/:id/undo', bankLineUndo);
+
 /* ════════════════════════════════════════════════════════════════════════
    Helpers
    ════════════════════════════════════════════════════════════════════════ */
@@ -87,12 +145,65 @@ accounting.get('/accounts', async (c) => {
   // — scope so one company can't see the other's account codes/names.
   let q = sb
     .from('accounts')
-    .select('account_code, account_name, account_type, parent_code, is_active');
+    /* acc_money marks the accounts that ARE money (bank / cash / e-wallet —
+       the Daily Bank set). The PV "Paid From" picker offers only these; the
+       flag rides along so screens don't hardcode code ranges. */
+    .select('account_code, account_name, account_type, parent_code, is_active, acc_money');
   q = scopeToCompany(q, c);
   const { data, error } = await q.order('account_code');
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   return c.json({ accounts: data ?? [] });
 });
+
+/* ── Account roles — which account plays which part ─────────────────────────
+   resolveRoles is what the posting rules read; this pair is the OWNER'S window
+   onto it. GET answers "which bank is my default, which account is AP" per
+   company; PUT repoints ONE role. Only BANK_DEFAULT is repointable from here
+   for now (the owner: 默认银行我可以自己maintenance) — the control roles (AR /
+   AP) stay code-seeded until there is a reason to move them. */
+export const accountRolesGet = async (c: any): Promise<Response> => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const sb = c.get('supabase');
+  const roles = await resolveRoles(sb, co.companyId);
+  const { data: overrides, error } = await sb.from('acc_account_roles')
+    .select('role, account_code').eq('company_id', co.companyId);
+  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  const overridden = Object.fromEntries(((overrides ?? []) as Array<{ role: string; account_code: string }>).map((r) => [r.role, r.account_code]));
+  return c.json({ roles, overridden });
+};
+accounting.get('/roles', accountRolesGet);
+
+export const accountRolesPutBankDefault = async (c: any): Promise<Response> => {
+  if (!requireGlPost(c)) return c.json({ error: "You don't have permission to manage account roles." }, 403);
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const sb = c.get('supabase');
+  let body: any;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
+  const code = String(body.accountCode ?? '').trim();
+  if (!code) return c.json({ error: 'account_required' }, 400);
+
+  /* The default bank must actually BE money — an expense account set here
+     would silently mis-book every transfer payment and daily-bank line. */
+  const { data: acct, error: aErr } = await scopeToCompanyId(
+    sb.from('accounts').select('account_code, account_name, acc_money, is_active').eq('account_code', code),
+    co.companyId,
+  ).maybeSingle();
+  if (aErr) return c.json({ error: 'load_failed', reason: aErr.message }, 500);
+  if (!acct) return c.json({ error: 'no_such_account', message: `${code} is not in this company's chart.` }, 404);
+  const a = acct as { account_name: string; acc_money: boolean | null; is_active: boolean };
+  if (!a.is_active) return c.json({ error: 'account_inactive', message: `${code} ${a.account_name} is inactive.` }, 409);
+  if (a.acc_money !== true) {
+    return c.json({ error: 'not_a_money_account', message: `${code} ${a.account_name} is not a bank / cash account. The default bank must be one of the money accounts Daily Bank shows.` }, 409);
+  }
+
+  const { error: upErr } = await sb.from('acc_account_roles')
+    .upsert({ company_id: co.companyId, role: 'BANK_DEFAULT', account_code: code }, { onConflict: 'company_id,role' });
+  if (upErr) return c.json({ error: 'save_failed', reason: upErr.message }, 500);
+  return c.json({ ok: true, role: 'BANK_DEFAULT', accountCode: code });
+};
+accounting.put('/roles/BANK_DEFAULT', accountRolesPutBankDefault);
 
 /* ════════════════════════════════════════════════════════════════════════
    Journal Entries
@@ -765,7 +876,10 @@ accounting.post('/journal-entries/:id/reverse', async (c) => {
    FOREIGN lines (control-account lines from a source no rule maps there).
    Sums run over POSTED, non-reversed entries — the same predicate every
    balance view uses. */
-accounting.get('/control-check', async (c) => {
+/* Exported so a test can mount it on a bare app, the same reason
+   postJournalEntryHandler above is: the router carries supabaseAuth, which
+   cannot run without Worker bindings. */
+export const controlCheckHandler = async (c: any) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   const sb = c.get('supabase');
@@ -877,8 +991,24 @@ accounting.get('/control-check', async (c) => {
   };
 
   const checks = [await runCheck('AR', roles.AR), await runCheck('AP', roles.AP)];
-  return c.json({ checks });
-});
+
+  /* THE THIRD FINDING: money recorded on a document that never reached the
+     ledger at all. A booking failure does not fail the operator's save (sales
+     must be able to record money whatever accounting is doing), so until now
+     the only trace was a server log. Owner, asked whether this page should say
+     so: 要. `since` is the derived boundary — see acc/payments.ts — and it is
+     returned so the screen can show which period it is speaking about. */
+  const unbooked = await unbookedPayments(sb, companyId);
+
+  return c.json({
+    checks,
+    payments: unbooked.ok
+      ? { since: unbooked.since, rows: unbooked.rows, totalSen: unbooked.totalSen, ok: unbooked.rows.length === 0 }
+      : { since: null, rows: [], totalSen: 0, ok: false, error: unbooked.reason },
+  });
+};
+
+accounting.get('/control-check', controlCheckHandler);
 
 /* ════════════════════════════════════════════════════════════════════════
    Phase 2A — acquirer master + customer-payment backfill
@@ -955,9 +1085,25 @@ accounting.get('/daily-bank', async (c) => {
     account_name: nameOf.get(code) ?? code,
   }));
 
+  /* Phase 3: DRAFT vouchers sitting in the approval cycle — money already
+     asked for. Submitted on or before the board date, still undecided-or-
+     approved (posting clears the pending by flipping status; withdraw/reject
+     clear the marks). The error is bound: a failed read must not dress up as
+     "nothing pending" on the one board that answers how much can move. */
+  const { data: pendingRaw, error: pErr } = await sb.from('payment_vouchers')
+    .select('total_sen, exchange_rate')
+    /* daily bank 的pending 就是第一层的checked (the owner, 2026-09-02): a
+       voucher reserves the board's money once the FIRST yes is on it — a
+       merely prepared one is still the preparer's business. */
+    .eq('company_id', co.companyId).eq('status', 'DRAFT')
+    .not('checked_at', 'is', null)
+    .lte('checked_at', `${date}T23:59:59.999`);
+  if (pErr) return c.json({ error: 'load_failed', reason: pErr.message }, 500);
+  const pending = (pendingRaw ?? []) as Array<{ total_sen: number; exchange_rate: string | number | null }>;
+
   const allCodes = [...money.map((m) => m.account_code), ...transitCodes];
   if (allCodes.length === 0) {
-    return c.json(computeDailyBank(date, [], [], []));
+    return c.json(computeDailyBank(date, [], [], [], pending));
   }
   const { data: lines, error: lErr } = await paginateAll<Record<string, unknown>>((from, to) =>
     sb.from('v_gl_entries').select('entry_date, je_no, source_type, source_doc_no, account_code, debit_sen, credit_sen, notes')
@@ -968,7 +1114,7 @@ accounting.get('/daily-bank', async (c) => {
       .range(from, to));
   if (lErr) return c.json({ error: 'load_failed', reason: lErr.message }, 500);
 
-  return c.json(computeDailyBank(date, money, transitAccounts, (lines ?? []) as never));
+  return c.json(computeDailyBank(date, money, transitAccounts, (lines ?? []) as never, pending));
 });
 
 /* ════════════════════════════════════════════════════════════════════════

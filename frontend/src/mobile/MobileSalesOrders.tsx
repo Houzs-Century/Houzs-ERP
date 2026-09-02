@@ -10,7 +10,7 @@ import { MobileVirtualList } from "./MobileVirtualList";
 import { invalidateSoShared } from "./sharedInvalidate";
 import { confirmSoWithFreshVersion } from "./mobile-so-concurrency";
 import { fmtSen } from "../lib/scm";
-import { brandingLabel } from "../vendor/shared/so-branding-label";
+import { brandingLabel, isPlaceholderBrandText } from "../vendor/shared/so-branding-label";
 import { getBrandingCompanyCode } from "../lib/branding";
 import { resolveSoLocation } from "../lib/soLocation";
 import { formatDate } from "../lib/utils";
@@ -74,7 +74,7 @@ const soDate = (r: SoRow) => r.so_date ?? r.created_at ?? null;
    while the rule that turns a category into a label lived on other pages. One
    shared rule now, and it cannot return blank (owner 2026-08-17). */
 const brandOf = (r: SoRow): string =>
-  (r.branding ?? "").trim() ||
+  (isPlaceholderBrandText(r.branding) ? "" : (r.branding ?? "").trim()) ||
   brandingLabel(r.first_item_category, r.first_item_branding, getBrandingCompanyCode());
 /* This surface carries the line's CATEGORY, so it uses the accurate entry
    point: colour and label then share one bucket rule and cannot disagree.

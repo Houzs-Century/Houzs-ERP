@@ -179,11 +179,14 @@ const PO_AMENDMENT: Record<string, Entry> = {
   REJECTED:  { label: 'Rejected',  tone: 'danger' },
 };
 
-// Payment Voucher (Phase 1-B). DRAFT reads as pending; POSTED is the terminal
-// happy path (posted to the GL); CANCELLED closes it (danger/red).
+// Payment Voucher. The owner's four layers (2026-09-02): Draft → Prepared →
+// Checked → Approved — the middle two live as MARKS on a DRAFT row (the list
+// says them beside the pill), and POSTED is what the second yes leaves
+// behind, so its label is the owner's word for it: Approved. CANCELLED
+// closes it (danger/red).
 const PV: Record<string, Entry> = {
-  DRAFT:     { label: 'Draft',     tone: 'pending' },
-  POSTED:    { label: 'Confirmed', tone: 'success' },
+  DRAFT:     { label: 'Draft',    tone: 'pending' },
+  POSTED:    { label: 'Approved', tone: 'success' },
   CANCELLED: { label: 'Cancelled', tone: 'danger' },
 };
 
@@ -228,6 +231,15 @@ export function resolveStatusPill(docType: StatusDocType, status: string | null 
  *  chips, where the pill JSX isn't wanted but the text must match. */
 export function statusLabel(docType: StatusDocType, status: string | null | undefined): string {
   return resolveStatusPill(docType, status).label;
+}
+
+/** Every status this document type's canonical map carries. Exported so a
+ *  caller that must cover a WHOLE vocabulary — the printed-document label test
+ *  is the one today — enumerates it from here instead of re-typing the list.
+ *  A hand-copied vocabulary is the drift this file exists to stop, and the copy
+ *  in a test is the one nobody notices has gone stale. */
+export function statusVocabulary(docType: StatusDocType): string[] {
+  return Object.keys(MAPS[docType]);
 }
 
 // ── Simplified amendment status buckets (owner 2026-07-24) ───────────────────

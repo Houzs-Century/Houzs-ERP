@@ -73,6 +73,9 @@ const ScmPurchaseOrderDetailV2 = lazy(() => import("./pages/scm-v2/PurchaseOrder
 const ScmMrpV2 = lazy(() => import("./pages/scm-v2/Mrp").then((m) => ({ default: m.Mrp })));
 const ScmAccountingV2 = lazy(() => import("./pages/scm-v2/Accounting").then((m) => ({ default: m.Accounting })));
 const ScmDailyBank = lazy(() => import("./pages/scm-v2/DailyBank").then((m) => ({ default: m.DailyBank })));
+const ScmMerchantRecon = lazy(() => import("./pages/scm-v2/MerchantRecon").then((m) => ({ default: m.MerchantRecon })));
+const ScmBankRecon = lazy(() => import("./pages/scm-v2/BankRecon").then((m) => ({ default: m.BankRecon })));
+const ScmSettlementSetup = lazy(() => import("./pages/scm-v2/SettlementSetup").then((m) => ({ default: m.SettlementSetup })));
 const ScmOutstandingV2 = lazy(() => import("./pages/scm-v2/Outstanding").then((m) => ({ default: m.Outstanding })));
 const ScmUnbilledDeliveriesV2 = lazy(() => import("./pages/scm-v2/UnbilledDeliveriesV2").then((m) => ({ default: m.UnbilledDeliveriesV2 })));
 const ScmFabricTrackingV2 = lazy(() => import("./pages/scm-v2/FabricTracking").then((m) => ({ default: m.FabricTracking })));
@@ -92,6 +95,7 @@ const ScmPurchaseInvoiceFromGrnV2 = lazy(() => import("./pages/scm-v2/PurchaseIn
 const ScmPurchaseInvoiceDetailV2 = lazy(() => import("./pages/scm-v2/PurchaseInvoiceDetailV2").then((m) => ({ default: m.PurchaseInvoiceDetailV2 })));
 const ScmPaymentVouchersV2 = lazy(() => import("./pages/scm-v2/PaymentVouchers").then((m) => ({ default: m.PaymentVouchers })));
 const ScmPaymentVoucherNewV2 = lazy(() => import("./pages/scm-v2/PaymentVoucherNew").then((m) => ({ default: m.PaymentVoucherNew })));
+const ScmPaymentVoucherScanV2 = lazy(() => import("./pages/scm-v2/PaymentVoucherScan").then((m) => ({ default: m.PaymentVoucherScan })));
 const ScmPaymentVoucherDetailV2 = lazy(() => import("./pages/scm-v2/PaymentVoucherDetail").then((m) => ({ default: m.PaymentVoucherDetail })));
 const ScmStockAdjustmentsV2 = lazy(() => import("./pages/scm-v2/StockAdjustments").then((m) => ({ default: m.StockAdjustments })));
 const ScmStockAdjustmentNewV2 = lazy(() => import("./pages/scm-v2/StockAdjustmentNew").then((m) => ({ default: m.StockAdjustmentNew })));
@@ -637,6 +641,9 @@ export default function App() {
         <Route path="/scm/mrp" element={<ScmGuard area="scm.procurement.mrp"><Scm2990Shell><ScmMrpV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/accounting" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmAccountingV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/daily-bank" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmDailyBank /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/merchant-recon" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmMerchantRecon /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/bank-recon" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmBankRecon /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/settlement-setup" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmSettlementSetup /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/outstanding" element={<ScmGuard area="scm.finance.outstanding"><Scm2990Shell><ScmOutstandingV2 /></Scm2990Shell></ScmGuard>} />
         {/* Delivered-but-not-billed, aged. Same area key as Outstanding — it is the
             money answer to the question that page's DO tab asks with a status flag. */}
@@ -668,6 +675,7 @@ export default function App() {
             Phase 1-B MYR). Gated on the finance area; /new precedes /:id. */}
         <Route path="/scm/payment-vouchers" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmPaymentVouchersV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/payment-vouchers/new" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmPaymentVoucherNewV2 /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/payment-vouchers/scan" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmPaymentVoucherScanV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/payment-vouchers/:id" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmPaymentVoucherDetailV2 /></Scm2990Shell></ScmGuard>} />
         {/* TEMP — vendored 2990's stock-movement pages (wave 4: Adjustments /
             Transfers / Takes), parallel to the native /scm/* below. Each wrapped

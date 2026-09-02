@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Backfill the two AutoCount dates the first export omitted, onto the already
 // imported company-1 Sales Orders:
-//   UDF_PDate (header)   -> proceeded_at      (processing date — this is what
+//   UDF_PDate (header)   -> processing_date      (processing date — this is what
 //                                              gates MRP; owner: "SO 有 processing
 //                                              date, MRP 就能跑")
 //   SODTL.DeliveryDate   -> item.line_delivery_date  and, on the header, the
@@ -15,10 +15,10 @@
 // AutoCount's dates back over whatever the ERP held - and all three of these
 // columns are things people legitimately change. customer_delivery_date and
 // line_delivery_date are edited on the order screen when a customer moves a
-// date, and proceeded_at is CLEARED by the Super Admin "Remove Processing
+// date, and processing_date is CLEARED by the Super Admin "Remove Processing
 // Date" action, which is the sanctioned way to pull an order back out of
 // Proceed. A blind second pass silently undid all of it, and worse: it would
-// re-manufacture the proceeded_at-vs-AutoCount agreement that
+// re-manufacture the processing_date-vs-AutoCount agreement that
 // unify-processing-date.mjs uses as its migration key, so a date a person had
 // deliberately removed could then be promoted into internal_expected_dd as if
 // the source had proved it.
@@ -62,6 +62,8 @@ const norm = (s) => (s || "").trim().toUpperCase().replace(/\s+/g, " ");
    the backfill would have written the date straight back. Over-refusing costs
    nothing; re-writing a date somebody removed costs a production decision. */
 const TOUCHED_BY_A_PERSON = [
+  /* the RETIRED pair stays matched on purpose: an audit row written while the
+     date lived in proceeded_at still marks a human decision */
   "proceeded_at",
   "proceededAt",
   SO_PROCESSING_DATE_COLUMN,
@@ -107,7 +109,7 @@ async function main() {
   }
   log(`orders with processing date: ${proc.size}; orders with a delivery date: ${earliest.size}; line-level delivery dates: ${lineDates.size}`);
 
-  const orders = await sql`SELECT doc_no, linked_ac_docno, proceeded_at, customer_delivery_date
+  const orders = await sql`SELECT doc_no, linked_ac_docno, processing_date, customer_delivery_date
     FROM scm.mfg_sales_orders WHERE company_id = 1 AND linked_ac_docno IS NOT NULL`;
   log(`imported company-1 orders: ${orders.length}`);
 
@@ -132,15 +134,15 @@ async function main() {
     /* Only a blank column is a backfill target. A value already there was put
        there by the import, by a person, or by an earlier run of this script -
        and none of those is ours to overwrite. */
-    const p = o.proceeded_at == null ? (proc.get(o.linked_ac_docno) || null) : null;
+    const p = o.processing_date == null ? (proc.get(o.linked_ac_docno) || null) : null;
     const d = o.customer_delivery_date == null ? (earliest.get(o.linked_ac_docno) || null) : null;
-    if (o.proceeded_at != null || o.customer_delivery_date != null) alreadySet++;
+    if (o.processing_date != null || o.customer_delivery_date != null) alreadySet++;
     if (p || d) { hdrUpdates.push({ doc: o.doc_no, p, d }); if (p) hdr++; if (d) hdrDel++; }
   }
   log(`headers REFUSED, the audit trail shows a person changed one of these dates: ${humanTouched}`);
   log(`headers with a date already stored, left exactly as they are: ${alreadySet}`);
   log(`headers to update: ${hdrUpdates.length} (processing ${hdr}, delivery ${hdrDel})`);
-  for (const u of hdrUpdates.slice(0, 5)) log(`   ${u.doc}: proceeded_at=${u.p || "-"} customer_delivery_date=${u.d || "-"}`);
+  for (const u of hdrUpdates.slice(0, 5)) log(`   ${u.doc}: processing_date=${u.p || "-"} customer_delivery_date=${u.d || "-"}`);
 
   if (APPLY) {
     /* Counted from RETURNING, not from the loop. Now that the UPDATEs carry an
@@ -156,12 +158,12 @@ async function main() {
            order screen, by another script - must win over a backfill. */
         for (const u of b) {
           const r = u.p && u.d
-            ? await tx`UPDATE scm.mfg_sales_orders SET proceeded_at = ${u.p}::date, customer_delivery_date = ${u.d}::date
-                 WHERE doc_no = ${u.doc} AND company_id = 1 AND proceeded_at IS NULL AND customer_delivery_date IS NULL
+            ? await tx`UPDATE scm.mfg_sales_orders SET processing_date = ${u.p}::date, customer_delivery_date = ${u.d}::date
+                 WHERE doc_no = ${u.doc} AND company_id = 1 AND processing_date IS NULL AND customer_delivery_date IS NULL
                 RETURNING doc_no`
             : u.p
-            ? await tx`UPDATE scm.mfg_sales_orders SET proceeded_at = ${u.p}::date
-                 WHERE doc_no = ${u.doc} AND company_id = 1 AND proceeded_at IS NULL
+            ? await tx`UPDATE scm.mfg_sales_orders SET processing_date = ${u.p}::date
+                 WHERE doc_no = ${u.doc} AND company_id = 1 AND processing_date IS NULL
                 RETURNING doc_no`
             : await tx`UPDATE scm.mfg_sales_orders SET customer_delivery_date = ${u.d}::date
                  WHERE doc_no = ${u.doc} AND company_id = 1 AND customer_delivery_date IS NULL

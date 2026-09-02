@@ -14,6 +14,8 @@ import {
   AC_SEND_AGAIN_BUSY_LABEL,
   AC_SEND_NOW_LABEL,
   AC_SEND_NOW_BUSY_LABEL,
+  AC_RELINK_LABEL,
+  AC_RELINK_BUSY_LABEL,
   AC_SEND_AGAIN_LABEL,
   AC_TECHNICAL_LABEL,
   acDocTypePlural,
@@ -301,7 +303,7 @@ function DaySeparator({ label }: { label: string }) {
 }
 
 function OutboxCard(
-  { group, maxAttempts, sending, note, open, onToggle, historyOpen, onToggleHistory, onSendAgain, onSendNow }: {
+  { group, maxAttempts, sending, note, open, onToggle, historyOpen, onToggleHistory, onSendAgain, onSendNow, onRelink }: {
     group: AcDocGroup;
     maxAttempts: number;
     sending: boolean;
@@ -312,6 +314,7 @@ function OutboxCard(
     onToggleHistory: () => void;
     onSendAgain: () => void;
     onSendNow: () => void;
+    onRelink: () => void;
   },
 ) {
   /* The card is the DOCUMENT and its newest send says where it stands — same
@@ -369,6 +372,25 @@ function OutboxCard(
               }}
             >
               {sending ? AC_SEND_NOW_BUSY_LABEL : AC_SEND_NOW_LABEL}
+            </button>
+          )}
+          {/* And the keyless row's repair, for the same reason the push above is
+              here: the owner uses the phone on the floor, and a control on one
+              surface only is the bug class this repo keeps paying for. This one
+              sends nothing — it matches the document's lines up against the
+              account book so the document can be SAVED again. */}
+          {row.reason_kind === 'keyless-line' && (
+            <button
+              onClick={onRelink}
+              disabled={sending}
+              style={{
+                marginLeft: "auto", fontFamily: "inherit", fontSize: 11, fontWeight: 700,
+                borderRadius: 7, padding: "3px 8px", cursor: sending ? "default" : "pointer",
+                border: "1px solid var(--brand)", background: "var(--brand-bg)", color: "var(--brand-d)",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {sending ? AC_RELINK_BUSY_LABEL : AC_RELINK_LABEL}
             </button>
           )}
         </div>
@@ -490,6 +512,21 @@ function OutboxCard(
               {note.todo}
             </div>
           )}
+          {/* WHAT ELSE THIS PRESS MOVED — the same block the desktop page shows,
+              worded by `acAncestorLine` so the two cannot come to say it
+              differently. One press can write three documents into a licensed
+              account book; reporting one of them is reporting the wrong thing
+              (#0552). */}
+          {note.ancestors.length > 0 && (
+            <div style={{ marginTop: 5, fontWeight: 400, color: "var(--ink2)" }}>
+              <b style={{ fontSize: 10, letterSpacing: 0.5, textTransform: "uppercase", color: TONE_COLOR[note.tone].fg }}>
+                Sent first
+              </b>
+              {note.ancestors.map((line) => (
+                <div key={line} style={{ marginTop: 2 }}>{line}</div>
+              ))}
+            </div>
+          )}
           {note.quote && (
             <div style={{ marginTop: 4, fontWeight: 400, fontFamily: "ui-monospace, monospace", color: "var(--ink2)", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
               {note.quote}
@@ -551,6 +588,7 @@ export function MobileAutoCountSync({ onBack }: { onBack: () => void }) {
       onToggleHistory={() => sendHistory.toggle(g)}
       onSendAgain={() => void requeue.sendAgain(g.current.id)}
       onSendNow={() => void requeue.sendNow(g.current.id)}
+      onRelink={() => void requeue.relink(g.current.id, g.current.doc_type, g.current.doc_no)}
     />
   );
 

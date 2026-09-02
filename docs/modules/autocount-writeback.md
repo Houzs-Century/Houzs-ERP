@@ -146,6 +146,45 @@ the other has never been established. The counter is seeded past the GRN number
 the ERP is evidenced to have issued, and that row says in words that it is not
 book evidence.
 
+### The book does NOT record where a goods receipt came from — the PO does
+
+*Answered 2026-09-02.* Every other detail table in the book carries the generic
+`FromDocType` / `FromDocNo` / `FromDocDtlKey` triple — `SODTL`, `DODTL`,
+`IVDTL`, `PODTL`, `PIDTL` all do (read live off the host under Windows auth).
+**`GRNDTL` carries none of them**, and that is not a gap in the export: it is
+how AutoCount models a receipt.
+
+AutoCount's own API says so. `Programmer:Goods_Received_Note_Transfer_from_Purchase_Order_v2`
+documents exactly two ways to make a GRN from a purchase order, and neither
+stores a parent key on the receipt:
+
+* `doc.FullTransfer(poDocNos[], TransferFrom.PurchaseOrder, FullTransferOption.FullDetails)`
+* `doc.PartialTransfer(TransferFrom.PurchaseOrder, poDocNo, itemCode, uom, qty, focQty)`
+
+The source is named at TRANSFER time and then consumed: what persists is the
+purchase-order line's own `PODTL.TransferedQty`, and "outstanding" is a REPORT
+(`PurchaseOrderOutstandingReportCommand`, `Programmer:Outstanding_Purchase_Order_(20)`),
+not a column read off the receipt.
+
+Three consequences, and the third is the one that bites:
+
+1. **Our side is richer, not poorer.** The ERP stores the GRN -> PO link
+   explicitly. Nothing needs adding.
+2. **`AddPartialTransferDetail` still takes DtlKeys**, so the write-back path in
+   `autocount-convert-lines.ts` is unaffected — the keys select the source lines
+   during the transfer; the receipt simply does not keep them afterwards.
+3. **A GRN -> PO comparison between the two sides is not possible as a link
+   comparison**, because the book has no link to compare. When Phase 0 asks
+   whether the two sides agree on goods receipts, the comparable figure is
+   `PODTL.TransferedQty` against our received quantity per PO line — not a
+   parent-key join. Writing that check as a join would report every row missing
+   and read as data loss.
+
+**Still UNKNOWN:** whether some OTHER book table holds a transfer log mapping
+receipt lines to purchase-order lines. What was read was `GRNDTL`'s columns, not
+the whole schema, and the wiki's own search index is known to miss content
+(`autocount-wiki-access`), so a nil search there proves nothing either way.
+
 ---
 
 ## 3. The table — `scm.autocount_outbox` (migration 0277)
@@ -595,20 +634,113 @@ the document keeps NULL keys.
 Failing to record identity never changes the dispatch outcome: the document IS
 in AutoCount and the row IS `sent`. It is logged, not retried.
 
-### Known limitation — adding a line to a document AutoCount already has
+### Adding a line to a document AutoCount already has — DECLARED, never inferred
 
-A genuinely new line on an existing AutoCount document is refused too, because
-the ERP cannot yet tell it apart from a legacy line whose key was never stored.
+A new line on an existing AutoCount document carries no key, and a keyless line
+means two opposite things: just added, or never backfilled. The ERP does not
+guess. The route that did the inserting NAMES the rows it inserted
+(`newLineIds`), and `composeEdit` marks them `IsNewLine: true` — which
+`AcSyncService` turns into `AddDetail()` — **only when every other keyless line
+on the document is one of those declared rows.** A document with an
+undeclared keyless line has not been backfilled, so nothing on it can vouch for
+the new one, and the whole edit is still refused. Setting `IsNewLine` on a guess
+re-opens the duplicate-append defect one line at a time, and on a purchase order
+a duplicate cannot be removed at all.
 
-`AcSyncService` accepts an explicit `IsNewLine: true` marker on a line for
-exactly this case. **The SO side now sets it; the PO side does not.** The SO
-line-add routes pass the rows they just inserted as `newLineIds`
-(`mfg-sales-orders.ts:266-284`, `:8157`, `:8208`), and `composeEdit`
-(`autocount-writeback.ts:696-710`) marks a keyless line `IsNewLine` ONLY when
-every keyless line on the document is one of those declared-new rows — the
-positive evidence the guess would otherwise lack. The PO routes pass nothing, so
-a genuinely new PO line is still refused. Setting `IsNewLine` on a guess re-opens
-the duplicate-append defect one line at a time.
+| document | add a line | remove a line | line photographs |
+| --- | --- | --- | --- |
+| SO | yes, since 2026-08-11 | yes (`Retire`) | yes |
+| PO | yes, since 2026-08-31 | yes (`Retire`) | yes, since 2026-08-31 |
+| DO / GR / IV / PI | yes, since 2026-08-31 | yes (`Retire`) | no |
+
+Photographs travel as KEYS in the outbox payload and are fetched at drain time;
+`photosOf` is document-type agnostic, the drain keys off the OP not the type, and
+`AcSyncService`'s line loop is `dynamic`, so `Photos` becomes `FurtherDescription`
+on a purchase detail exactly as on a sales one. What gated the purchase side was
+evidence, not code: the `\wmetafile8` shape had only been proven on the live book
+for sales orders.
+
+Where it is wired: `queueAcSoEdit` / `queueAcPoEdit` take `newLineIds` and pass
+them to `enqueueEdit`, which forwards them to `composeSoState` /
+`composePoState`; those spread them into `composeEdit`'s options. The SO sites
+are the two line-insert routes in `mfg-sales-orders.ts` (the sofa build and the
+ordinary line); the PO sites are `POST /:id/items` and `POST
+/:id/convert-from-so` in `mfg-purchase-orders.ts`. Search for `newLineIds`
+rather than trusting a line number — this file's citations rotted once already.
+
+**AND THE ADDED LINE LEARNS ITS KEY BACK — since 2026-08-31.** AutoCount assigns
+the DtlKey, so until the ERP is told it, the added row stays `linked_ac_dtlkey =
+NULL` and the NEXT edit of that document is refused by the very guard above (the
+declaration is per-REQUEST; a later edit declares nothing). `/edit` now answers
+with the document's line keys when it added a line — the same `CreatedLines()`
+read-back the CREATE path has always used — and `persistNewLineKeys` stores them.
+
+That store does NOT reuse the create path's by-position zip: the book orders by
+DtlKey, the payload is in ERP line order, and an added line is last in the book's
+order but anywhere in ours. It reasons on the DIFFERENCE — a key the payload did
+not already carry is one this edit created — re-checks the ItemCode, and stores
+nothing at all on any disagreement. `composeEdit` names the ERP rows behind each
+declared-new line as `ErpLineIds` (a list: a sofa build is several rows).
+
+**The service half needs a host deploy** (`deploy-on-host.ps1`). Until it lands,
+an edit answers with no line list and the ERP half is a no-op —
+`docs/bugs/0583-*`.
+
+**The operator presses "Match up lines"** on the held-back row — desktop
+(`pages/AutoCountSync.tsx`) and phone (`mobile/MobileAutoCountSync.tsx`), offered
+only where `reason_kind === 'keyless-line'`. It is a THIRD control beside Send
+again and Send now, and the only one that sends NOTHING: it repairs line
+identity, and the operator still has to save the document, which is why a
+successful match deliberately leaves the row's refusal standing and the answer
+says "Save the document again". The lines it could not match are NAMED in the
+note, not counted (`docs/bugs/0587-*`).
+
+**Under it, `POST /autocount-outbox/relink-lines`** — it reads the document out of the book
+(`/doc-read`, served since 2026-08-15) and stamps the keys onto our keyless
+lines. No host deploy. The matching rules and every refusal are in
+`scm/lib/autocount-relink-lines.ts` with their own tests: a book line another row
+already claims is not a candidate, a repeated code needs Desc2 to separate it
+(prefix-tolerant, the book truncates its own), and an ambiguous line refuses
+ITSELF while the rest still land. It matches on the RAW ERP code today, so a line
+whose code the bindings rewrite is refused rather than mis-assigned —
+`docs/bugs/0585-*`.
+
+### Whose name does a line have? (open, 2026-09-01)
+
+Owner, 2026-08-31: 「我们更改什么就 send 什么…为什么 AutoCount 要回传给我们呢?」 The
+question is a good one. Today a line's only name is the `DtlKey` AutoCount
+assigns, which is why the added line has to learn it back — and why RE-ORDERING
+lines reaches the book not at all: no `Seq` is ever sent, and `AcSyncService`
+never sets one.
+
+The durable answer is his: stamp the ERP's OWN line reference into the book and
+match on that. Then nothing has to come back, and order becomes ours to state.
+
+**It turns on one unmeasured fact** — can a document DETAIL carry a user-defined
+column? The reflected SDK dump cannot say: it was taken `DeclaredOnly`, so an
+inherited `UDF` member on a detail is invisible, and `PerformUDFTransfer(...,
+Boolean isDetail)` is a hint, not a fact. Two settable line fields exist either
+way (`YourPONo`, `Numbering` on `SalesOrderDetail`), both with business meanings
+of their own.
+
+`GET /autocount-outbox/table-columns?table=SODTL&like=UDF_` settles it against
+sys.columns on the live book — read-only, names only. **It needs the host deploy
+that `docs/bugs/0583-*` already needs**, and rides with it.
+
+**Clear-and-rebuild is NOT how to fix one of these**, though AutoCount's own docs
+sample it: it destroys every DtlKey — the identity behind `FromSODtlKey`, the
+transfer chain, the photographs and retirement — and on a TRANSFERRED document
+AutoCount's own troubleshooting page says the source is left pointing at nothing
+and the document goes grey and uneditable.
+
+**A new line also gets a stock location, and only a new one.** An existing line
+with no location omits the `Location` key so the account book keeps the value it
+owns; a new line has no such value, so the document's own warehouse stands in
+(`newLineLocation`, distinct from `defaultLocation`, which applies to every
+line). If neither exists the key is omitted and AutoCount applies its own
+default — not refused: the evidence that a missing Location is fatal comes from
+the CREATE path, which assigns the key unconditionally, and the edit path is
+`ContainsKey`-gated.
 
 ### Retirement — `Retire: true`
 
@@ -1360,6 +1492,29 @@ stock location for the same reason it opens `SalesLocation`: it is applied
 through `Set()`, which **swallows**, so a warehouse code `dbo.Location` does not
 hold would leave the purchase order looking saved and carrying no location at
 all.
+
+**AND FOR EIGHT DAYS IT DID** (#0549, fixed 2026-08-26). `Set()` swallowing was
+written down here; what was not, is that the value being swallowed was one this
+ERP sends on *every* purchase order. `readWarehouseCode` returned
+`scm.warehouses.code` RAW — `KL WAREHOUSE`, twelve characters against a
+`LocationCode` of eight — so AutoCount skipped both `PurchaseLocation` and every
+line `Location` and saved the order anyway:
+
+```
+set skipped: Cannot set column 'PurchaseLocation'. The value violates the
+             MaxLength limit of this column.
+```
+
+Owner 2026-08-24: *「我的 PO 明明应该是 Bintang Warehouse，但去到 AutoCount 里面
+它却变成了 HQ」* — the book's default, showing because nothing was written.
+
+The table at §the create's location ladder has said *"then through
+`LOCATION_MAP`"* since it was written. **The document was right and the code was
+not**: `withLocations` (the line resolver) and `readWarehouseCode` (the PO
+header) both skipped the map. The conversion header was fixed on 2026-08-25, but
+that fix reads `warehouse_id` and a purchase order has no such column — its
+warehouse is `purchase_location_id` — so the whole PO path was untouched by it.
+*A fix for "the same bug" does not reach a path it never runs on.*
 
 **TWO ASSIGNMENTS, AND THE FIRST DRAFT OF THIS FIX HAD ONE.** `CreatePo` does
 not call `PurchaseHeader`; it sets `DocNo`, `DocDate`, the creditor, `Agent`,
@@ -3331,6 +3486,135 @@ It goes through `callAcRead` (`services/autocount-host-read.ts`), NOT
 names something an outbox ROW can be — a document with a status, attempts and a
 retry policy — and a log read is none of those.
 
+**`GET /api/scm/autocount-outbox/book-doc`** (2026-08-26, docs/bugs/0550) is the
+second of those four routes to be wired up: `?docType=SO|PO|DO|GR|IV|PI` and
+`?docNo=`, returning the header, every line, and `missingColumns` — the wanted
+columns the book does not have, passed through rather than dropped, because
+*"AutoCount has no such field"* is itself the answer to several of the questions
+this route exists for. Same permission keys again; it returns debtor codes,
+prices and addresses out of a licensed account book.
+
+**IT ANSWERS THE ONE QUESTION NOTHING ELSE HERE CAN.** Every other route reports
+what the ERP SENT or what the host SAID BACK, and neither is evidence about the
+book. `Set()` on the host swallows a refused assignment and still reports
+success, so *sent* has never meant *landed* — #0549 is eight days of purchase
+orders carrying no warehouse with the queue, the page and the log all green.
+Owner 2026-08-26: 「我 edit 了之后，怎么没输入回去给 AutoCount 呢?」 — a question
+about the book, which no reading of our own payload can answer.
+
+`DetailWanted` is chosen for exactly these questions: `FromDocType` /
+`FromDocNo` / `FromDocDtlKey` / `FullTransferFromDocList` on the downstream side
+and `FromSODtlKey` / `FromSODocList` on a PO answer *is the convert-from link
+there*; `Location` answers *which warehouse did this line really get*.
+
+`BOOK_DOC_TYPES` lives in `autocount-host-read.ts` beside `AC_READ_ROUTE`, and
+the test pins it against `AcSyncService.DocTypes` read out of the C# source with
+`?raw` — so a type the host drops fails a test here rather than becoming a 400
+for a document the book can read.
+
+### REBUILD — the answer to a document that cannot be MATCHED
+
+Owner 2026-09-02, on a document held back because two book lines share an item
+code and no matcher can choose between them:
+
+> 「如果做得到 inistate 的东西，那就是我删或者 addline 都可以 sync 进去，就代表这张
+> 单也进得去了啊」
+
+He is right. The keyless refusal protects against APPENDING a line we could not
+match. **A rebuild appends to nothing**: `doc.ClearDetails()` then the ERP's list
+laid down in payload order — which is the ERP's own line order, because
+`inAcLineOrder` sorts every payload read. The matching problem does not arise,
+and neither does the duplicate.
+
+| | |
+| --- | --- |
+| **ERP asks** | `ComposeOptions.rebuild` — OFF unless the caller says so. The escape sits ABOVE the `KeylessLineError`; without it the refusal still throws. Inferring a rebuild from a failure would turn every future mismatch into a silent teardown of a live document. |
+| **Host decides** | `AnyLineTransferred` reads `ISNULL(d.TransferedQty,0) > 0` from the book's own detail table. A person can transfer inside AutoCount without telling the ERP, so this is the one fact the ERP may not answer from its own copy. |
+| **Cost** | every DtlKey on the document is destroyed and reissued. Survivable only while nothing downstream holds them — which is exactly what the check above proves. The keys are read back after the save, as the create path already does. |
+| **Reach** | `ClearDetails` is on the base document class, so it works for the three types with no `DeleteDetail`. **It is the only way a purchase order can lose a line at all.** |
+
+`> 0`, not `IS NOT NULL`: AutoCount writes 0 on a line that never moved, so a
+NULL test would call every document transferred and the rebuild would be
+unreachable. An unknown document type returns `true` — refuse, never rebuild
+blind.
+
+**A deleted line is skipped BEFORE `AddDetail`,** not in the retire branch below
+it: the cleared document already lacks the line, and reaching the lower branch
+would mean it had been added back as a blank row. Pinned in
+`backend/tests/acRebuildDetails.test.ts`; trace in
+`docs/bugs/0607-a-document-whose-lines-cannot-be-matched-could-never-be-sent.md`.
+
+### A DELETED LINE IS DELETED, WHERE THE BOOK ALLOWS (owner rule, 2026-09-02)
+
+Owner: 「我是要 autocount 的全部 line 都跟 ERP 一样」 · 「跟 inistate 一样」.
+
+Line removal used to be ONE shape — `Retire: true` (Qty 0, `Transferable =
+false`, an `[ERP-CANCELLED]` marker) — because `PurchaseOrder` has no
+`DeleteDetail`. That uniformity cost the thing he could see: a line he deleted
+was still on the AutoCount document at quantity 0.
+
+**The ERP now says what happened; the HOST decides what the book can do.**
+
+| `Gone` | means | the book |
+| --- | --- | --- |
+| `'deleted'` | the operator removed the line from the ERP | deleted, if all three conditions below hold |
+| `'cancelled'` / absent | the line is still ON the ERP document | retired in place, marked — never deleted |
+
+**Absent means retire**, which is the stricter direction — the one case
+CLAUDE.md allows an optional flag for. `retiredLineOf` stamps `'deleted'` once,
+where the rows are read, because every caller of it is a DELETE route.
+
+**The host deletes only when all three hold**, and each is the book's own:
+
+1. the ERP said `deleted`;
+2. the document is a **SALES ORDER** — `DeleteDetail(Int64)` is on that class
+   and no other (`sdk-api-reference.txt`: `PurchaseOrder`,
+   `GoodsReceivedNote` and `DeliveryOrder` all lack it);
+3. the book's own `TransferedQty` is 0. AutoCount's troubleshooting for a
+   transferred document whose rows are deleted is that the source points at
+   nothing, the document goes grey and uneditable, and recovery needs raw SQL.
+   `scm/lib/downstream-lock.ts` already stops the ERP editing such a document,
+   but that lock is OURS — someone can transfer inside AutoCount without telling
+   us, so the BOOK's figure decides.
+
+Otherwise it falls through to the retirement. Nothing fails, nothing is held
+back.
+
+The deletes are applied AFTER the detail enumeration and DESCENDING: removing
+while enumerating skips the next line, and descending means one removal cannot
+move a key not yet removed.
+
+**An un-rebuilt host ignores it.** `AcSyncService` reads keys by name, so the
+flag is invisible to a binary that has never heard of it and the behaviour stays
+exactly as today. Our half is safe to ship first; the change takes effect when
+the office host is rebuilt. Trace:
+`docs/bugs/0606-a-deleted-line-stayed-in-autocount-at-quantity-zero.md`.
+
+### LINE ORDER IS PART OF THE DOCUMENT (owner rule, 2026-09-02)
+
+> 「convert 了的 PO 一定要 remain 在同样的 line，就是例如第四个 item 就是第 4 个
+> item，不可以高或低」
+
+Every read whose rows become an AutoCount payload goes through
+`inAcLineOrder` (`scm/lib/ac-line-order.ts`): `created_at` ASC, then `id` ASC.
+
+`created_at` is the order a person entered the lines. `id` is not decoration —
+it makes the sort TOTAL, because a bulk insert gives several rows the same
+timestamp and Postgres may then return those in any order.
+
+**Until 2026-09-02 the SO and PO reads had no `ORDER BY` at all**, so the same
+document could serialize its lines differently after any edit. Two paths made
+that a real defect: a CREATE sends `AddDetail` in payload order, and a new line
+learns its DtlKey POSITIONALLY (`autocount-line-keys.ts`). Trace:
+`docs/bugs/0605-lines-reached-autocount-in-whatever-order-postgres-felt-like.md`.
+
+It changes nothing in the book — an edit still matches by DtlKey. It makes OUR
+side deterministic, which is what the two positional paths depend on.
+
+`backend/tests/acLineOrderWiring.test.ts` fails the build if a payload read is
+added without it. It is the reason `readConvertSourceKeys` is ordered too: that
+read returns the transfer's DtlKeys and pairs quantities with them positionally.
+
 **A PENDING ANCESTOR IS SENT, NOT RE-QUEUED** (2026-08-26, docs/bugs/0542).
 `sendAncestorsFirst` always went through `requeueOutboxRow`, which refuses a
 pending row outright — `row-pending`, and rightly, since the sweep is already
@@ -3341,6 +3625,47 @@ Owner: 「顺着点完…就没问题。但…直接去点 Sales Invoice…就�
 by hand worked because that sends its own pending row directly, which is
 precisely what the cascade omitted. Failed and skipped ancestors still take the
 re-queue path.
+
+**AN ANCESTOR IN THE BOOK CAN STILL BE THE WRONG VERSION OF ITSELF**
+(2026-08-27, docs/bugs/0551). The walk used to stop at the first ancestor
+carrying a `linked_ac_docno`, reasoning that presence propagates upward — which
+it does: a document only reaches the book by way of its parent. **Freshness does
+not.** A sales order edited after its delivery order was raised is in the book,
+sits above a document that is also in the book, and is still not what the
+operator is looking at; the conversion then carried the old lines into a live
+account book with nothing reporting it. Owner: 「如果我 edit 了之后直接开 DO/SI，
+然后我的 edit 还没进到 AutoCount，我点 send now，它也会把这个最新 version send
+进去了…对吗?」
+
+`ancestorsNeedingSend` replaces `ancestorsMissingFromBook` (deleted, not kept —
+one question, one home) and walks to the TOP of the chain, classifying each
+ancestor `missing` (not in the book) or `stale` (in the book, holding an unsent
+edit). **"Stale" is an unsent edit, not a diff against the book**: the ERP
+already queues an edit on every change, so an edit still in the queue IS the
+statement that the book is behind — no second call to the host, no second opinion
+about what "different" means. `pending` and `failed` both count; from the
+operator's side both mean *AutoCount does not have my change*. The step carries
+the EDIT's row id rather than the newest row, because a re-queued create is
+newer and sending that would leave the change behind; `unsentEditFor` returns the
+OLDEST unsent edit, since two edits are two changes in order. Order stays
+outermost-first, which matters most when a `stale` ancestor sits above a
+`missing` one — refreshing the order *after* transferring it would leave the
+delivery carrying lines the order no longer has.
+
+**AND THE PAGE NOW RENDERS IT** (2026-08-28, docs/bugs/0552). The server had
+returned `ancestors_sent` since the cascade was written and a grep found no
+reader in `frontend/src` at all: a press on an invoice could write a sales order
+and a delivery order into a licensed account book on the operator's behalf and
+report one line about the invoice. It lands on the pressed ROW under `Sent
+first`, one line per document, worded once by `acAncestorLine` so the desktop
+table and the mobile cards cannot drift — the same argument `AC_SEND_NOW_LABEL`
+and `useAcRequeue` already make. The `reason` is carried through rather than
+flattened, because *AutoCount did not have it yet* and *AutoCount had an older
+version* are different things to be told. **Ancestors that FAILED are shown too**,
+which is the point: the dangerous shape is a pressed row that succeeded above an
+ancestor that did not, and reporting only the press reads as "all done". A throw
+lists nothing — what was sent is unknown, and a list there would be an
+invention.
 
 **A PURCHASE ORDER WAITS FOR ITS SALES ORDER RATHER THAN BECOMING A CREATE**
 (2026-08-26, docs/bugs/0543). `poTransferShape` decides transfer-or-create on

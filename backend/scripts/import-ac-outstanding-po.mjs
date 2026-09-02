@@ -43,6 +43,7 @@ import { parseBedframe } from "./lib/parse-bedframe.mjs";
 import { SOFA_MODEL_ALIAS, parseSofa } from "./lib/parse-sofa.mjs";
 import { acDeliveryDate, acDtlKey, acFromSoDtlKey } from "./lib/ac-po-line.mjs";
 import { makeSoLineTaker } from "./lib/so-line-dedication.mjs";
+import { aliasFoldsForCatalog, catalogPredicate, nonCatalogRefs, formatNonCatalogRefusal } from "./lib/catalog-code-guard.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -100,8 +101,32 @@ async function main() {
   const products = await sql`SELECT code, name FROM scm.mfg_products WHERE company_id = 1`;
   const prodByCode = new Map(products.map((p) => [p.code.toUpperCase(), p]));
   const codeSet = new Set(products.map((p) => p.code.toUpperCase()));
+
+  /* ALIAS FOLD (docs/bugs/0577). The mapping file names the sofa model the BOOK
+     uses — `HOK-5540 SOFA` -> `5540-1S` — and the ERP spells the four folded
+     models by their alias (SOFA_MODEL_ALIAS: 5530/5536/5537/5540 ->
+     9028/9058/8030/8030). Every other sofa path applies that on the way in.
+     This one did not, so an aliased model arrived as a code no product row has
+     and was written straight onto the line.
+
+     Folded HERE and not in the CSV on purpose: src/services/autocount-item-map.ts
+     is compiled from the same file and read in the OTHER direction, to choose
+     which AutoCount item a document is written back as. See the note on
+     aliasFoldsForCatalog for what repointing the rows costs there. */
+  {
+    const moves = aliasFoldsForCatalog([...byAc.values()].map((v) => v.erp), catalogPredicate(codeSet), SOFA_MODEL_ALIAS);
+    if (moves.size) {
+      log(`alias fold: ${moves.size} mapped code(s) the catalog does not carry resolve through SOFA_MODEL_ALIAS`);
+      for (const [from, to] of moves) log(`   ${from} -> ${to}`);
+      for (const v of byAc.values()) if (moves.has(v.erp)) v.erp = moves.get(v.erp);
+    }
+  }
   const fcRows = await sql`SELECT fabric_id, colour_id, label FROM scm.fabric_colours WHERE company_id = 1`;
   const { findColour } = buildFabricColourIndex(fcRows);
+  // #1998 contract: an unlabelled colour is read only when the library CONFIRMS
+  // the code. The predicate was built for the backfill and the importers never
+  // passed it, so colour-first Desc2 lost even library-known codes.
+  const knownColour = (c) => { const h = findColour(c); return h ? h.colour_id : null; };
   log(`suppliers=${sup.length} warehouses=${wh.length} products=${products.length} fabric_colours=${fcRows.length}`);
 
   /* DEDICATION. AutoCount SO DtlKey -> the order it sits on, so a PO line can
@@ -162,7 +187,7 @@ async function main() {
   let pos = [...groups.entries()];
   if (LIMIT) pos = pos.slice(0, LIMIT);
 
-  const built = []; const exceptions = []; const sofaDecode = []; let noWh = 0, bfCol = 0, bfPending = 0;
+  const built = []; const exceptions = []; const sofaDecode = []; let noWh = 0, bfCol = 0, bfPending = 0, codelessLines = 0;
   for (const [acPo, ls] of pos) {
     skipDedication = existingDocs.has(acPo);
     const h = ls[0];
@@ -173,8 +198,32 @@ async function main() {
       const hit = byAc.get(norm(l.ItemCode));
       let erp = hit ? hit.erp : null; let cat = hit ? hit.cat : null;
       if (erp && !codeSet.has(erp.toUpperCase()) && C1_ALIAS[erp.toUpperCase()]) erp = C1_ALIAS[erp.toUpperCase()];
-      if (!erp) { exceptions.push({ po: acPo, code: l.ItemCode, reason: "no material mapping" }); continue; }
-      const grp = CATG[cat] || "others";
+      /* A LINE WITH NO ITEM CODE IS STILL 20 PILLOW CASES. AutoCount allows a
+         purchase line that carries only a description, and this importer used to
+         drop the whole line — so PO-009979's "ERGOTEX PILLOW CASE - FAIR" x20 was
+         on the book and absent from the ERP, silently. Owner 2026-09-02, asked
+         whether such a line should come in: 「要进 accessories」.
+
+         It is IMPORTED AS AN ACCESSORY, carrying the book's own description,
+         quantity and price. Nothing is invented: the description is copied, and
+         a line that HAS a code the mapping cannot resolve is still an exception —
+         that one is a mapping gap to fix, not a code-less line to accept. The two
+         are separated so accepting the second cannot hide the first. */
+      const codeless = !String(l.ItemCode ?? "").trim();
+      if (!erp && !codeless) {
+        exceptions.push({ po: acPo, code: l.ItemCode, reason: "no material mapping" });
+        continue;
+      }
+      if (!erp && codeless) {
+        const desc = String(l.Description ?? "").trim();
+        if (!desc) {
+          exceptions.push({ po: acPo, code: null, reason: "no item code AND no description — nothing to carry" });
+          continue;
+        }
+        codelessLines++;
+        log(`  code-less line imported as accessory: ${acPo} "${desc.slice(0, 40)}" x${Math.round(num(l.Qty)) || 1}`);
+      }
+      const grp = codeless ? "accessories" : (CATG[cat] || "others");
       const qty = Math.round(num(l.Qty)) || 1;
       const done = Math.round(num(l.TransferedQty)) || 0;
       if (done > 0) anyReceived = true;
@@ -201,7 +250,7 @@ async function main() {
         model = SOFA_MODEL_ALIAS[model] || model;
         const RECL_PROBE = ["-1S(R)", "-1A(R)(LHF)", "-1A(P)(LHF)", "-1S(P)"];
         const reclOK = RECL_PROBE.some((sfx) => codeSet.has((model + sfx).toUpperCase()));
-        const ps = parseSofa(l.Desc2, model, reclOK);
+        const ps = parseSofa(l.Desc2, model, reclOK, { knownColour });
         const codes = ps.pieces.map((c) => `${model}-${c}`);
         const allExist = codes.length > 0 && codes.every((c) => codeSet.has(c.toUpperCase()));
         const colour = isPendingColour(ps.color) ? null : ps.color;
@@ -228,7 +277,15 @@ async function main() {
           const ph = `${model}-1S`;
           const pr = prodByCode.get(ph.toUpperCase());
           const phCode = codeSet.has(ph.toUpperCase()) ? ph : erp;
-          const soItemId = dedicate(l, phCode, erp);
+          /* ALWAYS try the ALIASED placeholder first, even when the catalog has
+             no row for it and the line is written under `erp` (owner 2026-08-31,
+             HC-SO-013389 / PO-010087). The SO importer's placeholder branch
+             writes `${model}-1S` with the alias applied (5540 -> 8030); this
+             branch fell back to the raw mapped code and then looked the SO line
+             up by that same fallback TWICE, so an aliased model could never
+             match its own order line and the PO arrived unlinked — the book's
+             own SO->PO link was there all along. */
+          const soItemId = dedicate(l, ph, phCode, erp);
           if (!soItemId && !skipDedication) noSoLine++;
           items.push({ erp: phCode, grp,
             name: (pr && pr.name) || ph, sku: l.ItemCode, desc: l.Description, d2: l.Desc2,
@@ -241,7 +298,18 @@ async function main() {
       const prod = prodByCode.get(erp.toUpperCase());
       const soItemId = dedicate(l, erp);
       if (!soItemId && !skipDedication) noSoLine++;
-      items.push({ erp, grp, name: (prod && prod.name) || l.Description || erp, sku: l.ItemCode, desc: l.Description, d2: l.Desc2, qty, received: done, soItemId, dtlKey: acDtlKey(l), up, lt, w, deliv: acDeliveryDate(l), bf, variants });
+      /* A code-less line carries item_code NULL — the book HAS no code for it and
+         minting one would be inventing a fact (the owner's migration rule). Its
+         identity is the description the book does carry, which goes to
+         material_name and to description. If the column turns out to be NOT NULL
+         the insert fails LOUDLY on that one line, which is the honest outcome and
+         better than a placeholder code nobody can trace. UNVERIFIED against the
+         live column until the first APPLY. */
+      items.push({ erp: codeless ? null : erp, grp,
+        name: codeless ? String(l.Description ?? "").trim() : ((prod && prod.name) || l.Description || erp),
+        sku: codeless ? null : l.ItemCode,
+        desc: l.Description, d2: l.Desc2, qty, received: done, soItemId, dtlKey: acDtlKey(l),
+        up, lt, w, deliv: acDeliveryDate(l), bf, variants });
     }
     if (!items.length) continue;
     built.push({ poNo: "HC-" + acPo, acPo, supId, poDate: h.DocDate, locWh: whId(h.Location), subtotal, status: anyReceived ? "PARTIALLY_RECEIVED" : "SUBMITTED", items });
@@ -259,12 +327,31 @@ async function main() {
   const dated = built.reduce((a, o) => a + o.items.filter((i) => i.deliv).length, 0);
   log(`POs already in the ERP (dedication left to the repair): ${built.length - fresh.length}`);
   log(`dedicated to an SO line: ${dedicated} of ${fresh.reduce((a, o) => a + o.items.length, 0)} new lines; no SO line found: ${noSoLine}; lines carrying a delivery date: ${dated}`);
+  log(`code-less lines imported as ACCESSORIES (owner 2026-09-02 「要进 accessories」): ${codelessLines}`);
   log(`exceptions: ${exceptions.length}`);
   for (const e of exceptions.slice(0, 15)) log(`   PO ${e.po} ${e.code ? `code="${e.code}" ` : ""}${e.reason}`);
   const s = built.find((o) => o.items.some((i) => i.grp === "bedframe" && i.variants && i.variants.colourId)) || built[0];
   if (s) {
     log(`\nSAMPLE ${s.poNo} <- ${s.acPo}  status=${s.status}`);
     for (const i of s.items) log(`   [${i.grp}] ${i.erp} (sku ${i.sku}) x${i.qty} recv${i.received} RM${(i.lt / 100).toFixed(2)} wh=${i.w ? "ok" : "-"} deliv=${i.deliv || "-"}${i.variants ? ` variants=${JSON.stringify(i.variants)}` : ""}`);
+  }
+
+  /* CATALOG GUARD — the last thing between the plan and the database.
+     `phCode` above falls back to the raw mapped code when the aliased
+     placeholder has no product row, and `erp` itself is only ever as good as
+     data/autocount-erp-mapping-1561.csv. A mapping row pointing at a code
+     nobody minted used to be written silently: item_code has no foreign key to
+     scm.mfg_products, so an orphan line looks fine until a screen tries to join
+     on it. Refuse the whole run and name every row (docs/bugs/0577). */
+  const badCodes = nonCatalogRefs(
+    built.flatMap((o) => o.items.map((i) => ({ code: i.erp, doc: o.poNo, acDoc: o.acPo, sku: i.sku }))),
+    catalogPredicate(codeSet),
+  );
+  if (badCodes.length) {
+    log("");
+    for (const line of formatNonCatalogRefusal(badCodes, { script: "import-ac-outstanding-po.mjs" })) log(line);
+    await sql.end();
+    process.exit(2);
   }
 
   if (!APPLY) { log("\nDRY-RUN — set APPLY=1 to import."); await sql.end(); return; }

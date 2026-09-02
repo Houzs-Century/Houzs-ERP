@@ -107,10 +107,14 @@ test("FromSODtlKey reads as absent when AutoCount stores 0 or nothing", () => {
   assert.equal(acFromSoDtlKey({ FromSODtlKey: "" }), null);
   assert.equal(acFromSoDtlKey({}), null);
   // The real export: a PO raised from nothing is normal, an unreadable one is not.
+  // Pinned to the COMMITTED snapshots, so these move when the snapshots are
+  // re-cut. 2026-08-29 quiet-book tail cut (whole-document lanes): 941 merged
+  // lines (938 on the 08-28 cut; the book grew overnight),
+  // 696 carrying an SO origin on the 08-29 quiet-book cut (685 on 08-28; 738/595 on 08-10).
   const merged = [...mergeAcPoLines(SO_LINKED, OUTSTANDING).values()];
   const withOrigin = merged.filter((l) => acFromSoDtlKey(l));
-  assert.equal(merged.length, 738);
-  assert.equal(withOrigin.length, 595);
+  assert.equal(merged.length, 941);
+  assert.equal(withOrigin.length, 696);
 });
 
 // ── the dedication rule ─────────────────────────────────────────────────────
@@ -294,10 +298,14 @@ test("two AutoCount lines that disagree on DeliveryDate are REFUSED, never zippe
   assert.match(m.refused[0].reason, /DeliveryDate/);
 });
 
-test("EVERY indistinguishable bucket in the committed exports disagrees on FromSODtlKey", () => {
+test("NO indistinguishable bucket in the committed exports supports a zip", () => {
   // This is the fact that refutes the zip's original premise, pinned against
-  // the real snapshots rather than a fixture. 5 buckets, 10 AutoCount lines,
-  // all 5 disagreeing — so the correct repair count for them is ZERO.
+  // the real snapshots rather than a fixture. On the 2026-08-10 cut: 5 buckets,
+  // 10 lines, all 5 disagreeing on FromSODtlKey. The 2026-08-28 re-import cut
+  // adds 2 buckets (4 lines) where NO line carries an origin key at all — new
+  // POs raised since, two same-code same-spec mattress lines each. Either way
+  // the zip has nothing to stand on: a keyed bucket disagrees, a keyless bucket
+  // has no key to zip by — so the correct repair count is still ZERO.
   const merged = [...mergeAcPoLines(SO_LINKED, OUTSTANDING).values()];
   const nrm = (s) => (s || "").trim().toUpperCase().replace(/\s+/g, " ");
   const buckets = new Map();
@@ -308,15 +316,20 @@ test("EVERY indistinguishable bucket in the committed exports disagrees on FromS
     buckets.get(k).push(l);
   }
   const ambiguous = [...buckets.values()].filter((v) => v.length > 1);
-  assert.equal(ambiguous.length, 5, "5 buckets survive the (qty, Desc2) split");
-  assert.equal(ambiguous.reduce((n, v) => n + v.length, 0), 10);
-  for (const acs of ambiguous) {
+  assert.equal(ambiguous.length, 9, "9 buckets survive the (qty, Desc2) split (7 on the 08-28 cut; two more same-item same-qty pairs arrived with the 08-29 quiet-book cut)");
+  assert.equal(ambiguous.reduce((n, v) => n + v.length, 0), 18);
+  const keyed = ambiguous.filter((acs) => acs.some((a) => acFromSoDtlKey(a)));
+  assert.equal(keyed.length, 7, "7 buckets carry at least one origin key (5 on the 08-28 cut)");
+  for (const acs of keyed) {
     assert.ok(
       new Set(acs.map((a) => acFromSoDtlKey(a) ?? "-")).size > 1,
       `${acs[0].DocNo} "${acs[0].ItemCode}" must disagree on FromSODtlKey — the zip's premise was that it would not`,
     );
   }
-  // and the matcher must refuse all of them rather than zip any
+  // and the matcher answers each bucket by its own contract: zip ONLY when the
+  // lines agree on everything the repair writes (FromSODtlKey + DeliveryDate)
+  // — the 2 keyless twin buckets, where either bijection records the same
+  // facts — and refuse whole where they disagree — the 5 keyed ones.
   for (const acs of ambiguous) {
     const shaped = acs.map((l) => ({
       key: acDtlKey(l), itemCode: l.ItemCode, qty: Number(l.Qty) || 0, desc2: l.Desc2,
@@ -324,8 +337,14 @@ test("EVERY indistinguishable bucket in the committed exports disagrees on FromS
     }));
     const rows = shaped.map((s, i) => erp(`row${i}`, s.itemCode, "ANY", { qty: s.qty, description2: s.desc2 }));
     const m = matchAcLinesToErpRows(shaped, rows);
-    assert.equal(m.pairs.length, 0, `${acs[0].DocNo} must repair 0 rows`);
-    assert.equal(m.refused.length, 1);
+    const agrees = new Set(shaped.map((s) => `${s.fromSoKey ?? "-"}|${s.deliveryDate ?? "-"}`)).size === 1;
+    if (agrees) {
+      assert.equal(m.pairs.length, acs.length, `${acs[0].DocNo} identical twins zip — same facts either way`);
+      assert.equal(m.refused.length, 0);
+    } else {
+      assert.equal(m.pairs.length, 0, `${acs[0].DocNo} must repair 0 rows`);
+      assert.equal(m.refused.length, 1);
+    }
   }
 });
 
@@ -390,17 +409,21 @@ test("a row whose supplier_sku was never written still matches on the mapped ERP
 
 // ── the whole chain, on the real exports ────────────────────────────────────
 
-test("HC-PO-009830 walks back to its sales order, which is what the finding claimed", () => {
+/* RE-PINNED 2026-08-29: the original worked example PO-009830 completed and
+   left the outstanding exports with the quiet-book cut. PO-010093 has the same
+   shape on the fresh cut: three lines, every one carrying FromSODtlKey, all
+   resolving to one sales order, all dated. */
+test("HC-PO-010093 walks back to its sales order, which is what the finding claimed", () => {
   const merged = [...mergeAcPoLines(SO_LINKED, OUTSTANDING).values()];
-  const lines = merged.filter((l) => l.DocNo === "PO-009830");
-  assert.ok(lines.length > 0, "PO-009830 must be in the committed exports");
+  const lines = merged.filter((l) => l.DocNo === "PO-010093");
+  assert.ok(lines.length > 0, "PO-010093 must be in the committed exports");
   const soByDtl = new Map(gz("ac-outstanding-so.json.gz").map((r) => [String(r.DtlKey), r]));
   for (const l of lines) {
     const from = acFromSoDtlKey(l);
     assert.ok(from, "the line carries a FromSODtlKey");
     const so = soByDtl.get(from);
     assert.ok(so, `FromSODtlKey ${from} resolves to a snapshot sales-order line`);
-    assert.equal(so.DocNo, "SO-011207");
+    assert.equal(so.DocNo, "SO-013373");
     assert.ok(acDeliveryDate(l), "and it carries a delivery date");
   }
 });

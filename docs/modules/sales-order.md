@@ -402,6 +402,22 @@ Column: `scm.mfg_sales_order_items.stock_status`. **Three values**, not two:
 `summariseReadiness` treats `PARTIAL` as **not ready** — `isReady` is strictly
 `stock_status === 'READY'`.
 
+**The two allocation mechanisms are COMPANY-SPLIT (2026-08-30, owner ruling —
+bug `docs/bugs/0572-a-company-1-bound-line-with-no-receipt-fell-through-to-the-p.md`).**
+`HARD_BOUND_COMPANY_ID = 1` in `so-stock-allocation.ts`:
+
+| company | bedframe / sofa / `(SP)` mattress (`isHardBoundLine`) | everything else |
+|---|---|---|
+| 1 (Houzs) | **exclusively PO-bound**: lights `min(received, need)` from its OWN dedicated PO (sofa: covering dye-lot batch first, then dedication). The pooled walk force-stamps PENDING — the pool is never its evidence, however well the bucket matches | pooled FIFO by (warehouse, code, variant_key) |
+| 2 (2990) | dedication lights first if present, then the pooled walk — the soft model | pooled FIFO |
+
+Before this split the un-receipted bound line FELL THROUGH to the pool for both
+companies; it only looked hard-bound because typed variant keys never match the
+blank-variant migrated stock, and it fired the moment both sides were blank
+(HC-SO-013253). `check-bound-exclusivity.mjs` (workflow: *Bound exclusivity
+census*) re-measures the rule on demand — company-1 "LIT WITH NO PO" must be 0.
+Flipping company 1 to the pooled end-state later is that one constant.
+
 > **Do not confuse this column with the delivery-planning board's field of the
 > same name.** `scm/lib/so-readiness-row.ts` emits a per-ROW `stock_status` that
 > is `'READY' | 'PENDING'` — TWO values, derived from `isFullyReady`. Same name,
@@ -451,14 +467,17 @@ Stock Status column does not read this stored column alone — see §0.4.
 
 ### 0.4 LINE `stock_state` — the LIVE value, and why it disagrees with `stock_status`
 
-Computed per request in `mfg-sales-orders.ts`, in BOTH `GET /:docNo` and
-`GET /:docNo/items`, from the same `computeMrp` run that produces `coverage_po`.
-Values: `'stock' | 'po' | 'shortage' | null`.
+Computed per request in `mfg-sales-orders.ts`, from the same `computeMrp` run
+that produces `coverage_po`. Values: `'stock' | 'po' | 'shortage' | null`. It is
+live in `GET /:docNo/items` and in the deferred `GET /:docNo/coverage`; **`GET
+/:docNo` no longer runs MRP inline** (2026-09-01) — it returns `'stock'` for a
+service line and `null` for every other line, and the client heals the real value
+from `/:docNo/coverage` after the doc renders (see §2 and the perf note).
 
 | Line kind | Rule |
 |---|---|
 | SERVICE (`isServiceLine`) | always `'stock'` — a service carries no inventory, so it is inherently available |
-| SOFA | `stock_status === 'READY' ? 'stock' : (MRP says po ? 'po' : 'shortage')` — sofa coverage is decided by the batch-aware allocator, because MRP does not know about dye lots |
+| SOFA | `stock_status === 'READY' ? 'stock' : (MRP says po ? 'po' : 'shortage')` — sofa coverage is decided by the batch-aware allocator, because MRP does not know about dye lots. Since 2026-08-29 that allocator answers in two steps: a single covering dye lot wins and stamps `allocated_batch_no`; with NO covering lot, the owner's hard binding takes over — a piece whose OWN converted PO has received lights `min(received, need)` per line, batch left null for the operator to pick at dispatch. Until then sofa lines never reached bound mode at all (docs/bugs/0565): they were diverted to the batch pass before `needs` was built, and every migrated set without an exact-multiset lot sat PENDING with its PO fully received |
 | everything else | `cov?.source ?? null` — **whatever MRP says**, with no reference to the stored column at all |
 
 **So for a non-sofa, non-service line, `stock_state` and `stock_status` are
@@ -483,19 +502,38 @@ not following the rule I set". It is one: two engines, one screen.
 ### `stock_status_effective` — the verdict BOTH surfaces answer from
 
 `backend/src/scm/lib/so-line-effective-stock.ts`. `effectiveLineStockStatus(storedStatus,
-liveState)`, a UNION:
+liveState, gates)`, a UNION whose promotion arm is GATED (2026-08-30):
 
 | stored | live | effective | why |
 |---|---|---|---|
-| `PENDING` | `stock` | **READY** | the stale-projection case — the goods are physically there |
-| `READY` | `shortage` / `po` | **READY** | the allocator knows BOUND MODE and dye-lot batches; MRP structurally cannot see either |
+| `PENDING` | `stock` (gates open) | **READY** | the stale-projection case — the goods are physically there |
+| `PENDING` | `stock` (either gate closed) | `PENDING` | see the two gates below — the live verdict is answering a different question |
+| `READY` | anything | **READY** | the allocator knows BOUND MODE and dye-lot batches; MRP structurally cannot see either. The gates never veto a stored READY |
 | `PENDING` | `po` / `shortage` | `PENDING` | an incoming PO is not stock |
-| `PARTIAL` | anything but `stock` | `PARTIAL` | |
+| `PARTIAL` | anything but gates-open `stock` | `PARTIAL` | |
 | anything | `null` | the stored value | MRP had no verdict, or `computeMrp` threw — fail-soft to the pre-2026-08-17 behaviour exactly |
 
+**The two promotion gates** (`gates: { orderProcessed, lineHardBound } | null`,
+bug `docs/bugs/0569-the-display-union-promoted-pending-lines-to-ready-past-the-p.md`,
+owner report HC-SO-013367):
+
+1. `orderProcessed` — the order carries a processing date. The allocator refuses
+   to allocate to a date-less order (`allocGated`, "no processing date = the
+   goods are not needed yet"), so the display must not light one either. This is
+   how "accessories Ready" appeared on an order with no dates.
+2. `lineHardBound` — `isHardBoundLine(item_group, item_code)` from
+   `so-stock-allocation.ts`, the allocator's OWN bound predicate (bedframe /
+   sofa / `(SP)` special-order mattress). Those buckets key on the VARIANT; MRP
+   pools by SKU and is variant-blind, so its `stock` can be migrated blank-variant
+   units the line's colour can never be served from. JAGER-(Q) read READY with
+   no processing date, no linked PO and no matching stock — both gates open.
+
 Neither engine may VETO the other; a line is short only when both say so. `null`
-is a REQUIRED argument, not an omitted one — a new caller has to type it and
-thereby say the stored value is standing alone.
+is a REQUIRED argument on all three parameters, not an omitted one — a caller
+with no MRP result types `liveState: null` (the stored value stands), and a
+caller that cannot establish the gate context types `gates: null`, which fails
+in the STRICT direction: the promotion arm is off, the stored value still
+stands.
 
 Where it is used:
 
@@ -505,12 +543,15 @@ Where it is used:
   are emitted from the STORED status alone on first paint (`null` live coverage,
   the fail-soft branch above), and the client heals them a beat later from
   `GET /mfg-sales-orders/list-mrp-enrichment` (see the LIST "PO No." column note
-  in §2 and §"why the list opens instantly"). The DETAIL endpoints below still
-  run `computeMrp` inline.
-- `GET /:docNo` and `GET /:docNo/items` stamp it on every line as
-  `stock_status_effective`. `stock_state` and `stock_status` both stay on the
-  payload — they are the two INPUTS, and the source chips and MRP page still read
-  them individually.
+  in §2 and §"why the list opens instantly"). `GET /:docNo/items` and
+  `GET /:docNo/coverage` still run `computeMrp` inline; `GET /:docNo` DOES NOT
+  (2026-09-01) — same deferral as the list.
+- All three of `GET /:docNo`, `GET /:docNo/items` and `GET /:docNo/coverage` stamp
+  it on every line as `stock_status_effective`. `stock_state` and `stock_status`
+  both stay on the payload — they are the two INPUTS, and the source chips and MRP
+  page still read them individually. On `GET /:docNo` the live state is passed as
+  `null` (no inline MRP), so the STORED verdict stands until `/:docNo/coverage`
+  overlays the recomputed one.
 
 `frontend/src/components/SoSourceChips.tsx`'s `soLineStockPill` (and its mobile
 twin `mobile/source-chips.tsx`) now PREFER `stock_status_effective`, falling back
@@ -518,6 +559,50 @@ to the client-side `stock_state === 'stock' || stock_status === 'READY'`
 expression only for a payload that predates the field. The fallback is
 byte-identical to the old rule; the point is that the authority moved to the
 server, where the list reads it too.
+
+### 0.4b ARRIVAL and SHIPPING are two columns (owner 2026-09-02)
+
+**Stock Status answers ARRIVAL. Delivered answers SHIPPING. They are not the
+same question and no longer share a cell.**
+
+Until 2026-09-02 shipping was visible only at its two ENDS — a line read
+`DELIVERED` once everything had left, and nothing before that. So an order with
+5 units arrived and 2 shipped read plain `READY`, and "we still owe this
+customer 3" was on no screen. The owner asked what to do about partial delivery
+(「partialy delivery 该怎么办呢 / 看一下那个 column 进入适合」) and chose splitting
+the two facts apart over adding a fifth value to the arrival column.
+
+| column | question | values |
+|---|---|---|
+| **Stock Status** (`stock_remark`, §0.5) | has the supplier's goods come IN | `''` / `READY` / `PARTIAL` / `BEDFRAME/ACC` |
+| **Delivered** (`shipped_qty` / `deliverable_qty`) | how much has gone OUT | `2 / 5`, toned none / partial / full |
+
+`deliverable_qty` is `shipped + still owed` from the SAME deliverable engine the
+delivery picker uses — **not** a sum of ordered line quantities, which would
+count cancelled lines and overstate what the customer is owed. Both numbers were
+already computed on the list and the detail; only the `none|partial|full`
+verdict was ever emitted, which is why the column could not exist before.
+
+**A MISSING figure is `unknown`, never zero.** An older payload carries neither
+field, and reading that as "nothing has shipped" is a claim about an order that
+may be fully out — the same class of lie as rendering `STOCK` while a query is
+still loading (`docs/modules/coverage-state.md` [planned] — lands with #2862).
+The cell renders a dash and
+says so in its tooltip.
+
+**Do NOT name anything here `delivery_*`.** That prefix is already two different
+things: the STORED scheduling override on `mfg_sales_orders.delivery_state`
+(`PENDING_SCHEDULE` — `scm/lib/tripReconcile.ts`, `scm/lib/arrangement-stage.ts`)
+and the COMPUTED `none|partial|full` shipping verdict that shadows it on the
+detail response. Two exported types are likewise both called `DeliveryState`
+(`vendor/scm/lib/so-status.ts` and `vendor/scm/lib/delivery-planning-queries.ts`).
+A third meaning under that prefix is how the next reader picks the wrong one.
+
+The rule lives in `frontend/src/vendor/scm/lib/shipped-progress.ts` and renders
+through `frontend/src/components/ShippedProgressPill.tsx` — one module, so the
+list row and the drill-down line cannot grow two vocabularies for one fact (the
+exact way `READY (PARTIAL)` once appeared on a board header and its own rows in
+the same moment, §0.5).
 
 ### 0.5 `stock_remark`, `is_main_ready`, `is_ship_ready`
 
@@ -676,6 +761,26 @@ The LIST's "PO No." cell is a different cell with a different rule
 (`SoListPoCell`): SOLID = a goods source, MUTED = a raised PO. See the
 "LIST PO No. column" notes further down this file.
 
+**CHIPS 3 AND 4 ARRIVE ON A SECOND REQUEST (2026-09-01).** Since #2834 the SO
+detail payload defers its MRP run, so it returns `coverage_po: null`,
+`coverage_eta: null` and `ready_source_pos: []`, and `GET /:docNo/coverage` fills
+them. **Every surface that renders this column must make that second call** —
+`SalesOrderDetailV2` was given it and `MfgSalesOrdersListV2`'s drill-down was
+not, so the list's column was blank for a day (owner: 「明明我的 PO No. 那边是有
+的，可是 Incoming PO 却没有」; `docs/bugs/0598-*`).
+
+Chips 1 and 2 are NOT MRP-derived and kept working throughout, which is what made
+it look half-alive rather than obviously broken — worth knowing, because that is
+how the same fault will present next time.
+
+The merge is ONE shared function,
+`frontend/src/vendor/scm/lib/so-coverage-overlay.ts`, used by both surfaces. It
+is shared rather than copied because the board and the drill-down each writing
+their own is `docs/bugs/0269-*`, on these same two screens. An ABSENT or EMPTY
+overlay leaves the stored values alone — the fast first paint and an older
+backend's 404 both arrive that way, and blanking on them would flicker the column
+off on every open.
+
 ### 0.9 Where the neighbouring status systems are documented
 
 One home each — do not restate them here.
@@ -732,6 +837,94 @@ unchanged. Same sweep as the venue PICKER fix in `docs/modules/projects-pms.md`
 every company's showrooms); guard for both halves is
 `backend/tests/showroomVenueCompanyScope.test.ts`. Owner 2026-08-19: *"我们的
 Venue、我们的 Warehouse、我们的 Showroom 等等，都是跟着看到自己公司的"*.
+
+**A BLANK VENUE BESIDE A VENUE ID IS NOT A CLEAR (2026-08-31).** A client that
+resolved the id and not the name sends `venue: ""` with a real `venueId`. Read
+literally that is "clear the venue", and it deleted a live order's venue: the
+audit log for `2990-SO-2608-070` records `venue: "2990s PJ" -> ""` and
+`venueId: null -> "5cafa0a2…"` in ONE save. Mirrored 2990 orders all START in
+that state — the mirror forces `venue_id: null` and keeps the text — so each one
+was a single save away from the same loss.
+
+Two places now refuse to write that blank, and they are not redundant: the client
+one stops it being sent, the server one stops it whatever sends it.
+
+- The desktop default-venue effect (`SalesOrderDetail.tsx`,
+  `ConsignmentOrderDetail.tsx`) returns instead of writing an unresolved name.
+  It is a one-shot — `if (form.venueId) return` — so a blank it writes can never
+  be repaired by a later pass, which is what made this permanent.
+- `PATCH /mfg-sales-orders/:docNo` resolves the pair through
+  `venueNameForHalfWrittenPair` (`scm/lib/venue-binding.ts`), beside the binding
+  rule the CREATE path already uses.
+
+**It has THREE answers, and the third is load-bearing.** `resolved` writes the
+name; `notApplicable` leaves the request alone; **`unresolved` — the venue master
+could not be read, or the id matches nothing — makes the route DROP the venue
+from the patch entirely** rather than write the blank. Collapsing that onto "no
+name" would mean a five-second database blip deletes the venue off whatever is
+being saved at the time, which is the same class of fault as the original bug.
+
+**Clearing a venue is still allowed and still easy: send BOTH empty.** That is
+what "this order has no venue" looks like, and `venue_required` at confirm is
+what stops it being shipped in that state.
+
+Tests: `src/scm/lib/venue-binding.test.ts` (the five outcomes) and
+`backend/tests/mfgSalesOrderHeaderCas.test.ts` (the route honours them).
+Ledger: `docs/bugs/0591-*`. Repair for orders already blanked:
+`backend/scripts/repair-blanked-venue.mjs`.
+
+**A TYPED SELLING PRICE IS NOT THE SYSTEM'S TO CHANGE (owner, 2026-09-02).**
+「我们的 selling price 是根据我们 manually 填入的，不应该被这种影响」— and
+「fabric 不需要」 with it. Neither the special-order surcharge nor the fabric
+surcharge may move a price a person entered, and on an AutoCount-imported line
+the STORED price is that answer.
+
+`erpLineTrust(posTablet, unitPriceSen, zeroPriceIntended, soIsMigrated)` returns
+`'including-zero'` for an imported order, which is the mode that both suppresses
+the chargeable-surcharge arm AND persists the stored price — zero included. The
+amendment path derived that from `linked_ac_docno` already; the plain line PATCH
+passed a bare `true` and therefore did neither, so a migrated line priced 0 (most
+of them are) could be handed base + surcharges by an ordinary edit
+(`docs/bugs/0600-*`).
+
+`soIsMigrated` is REQUIRED, not optional — an optional flag lets a new call site
+keep the unprotected answer silently, which is how the gap survived. **An ADD
+line always passes `false`**, on a migrated order too: a line typed today has no
+AutoCount price to protect.
+
+**PROCEEDED IS THE DATE — and the rule runs BOTH ways since 2026-09-01.**
+Moving to `IN_PRODUCTION` has always refused without a Processing Date, so the
+status implied the date. Nothing made the date imply the STATUS, so a header save
+could set a Processing Date and leave the order in `CONFIRMED` — invisible to the
+board the factory works from. The owner saw it as **IN PRODUCTION 0 beside
+CONFIRMED 108**: 「全套系统 而不是针对单一公式」.
+
+The header PATCH now calls `statusAfterProcessingDateSet()`
+(`scm/shared/so-proceeded-status.ts`). It moves CONFIRMED -> IN_PRODUCTION on the
+transition null -> date, and REFUSES everything else — an already-present date
+(editing is not a proceed), DRAFT, CANCELLED, anything further along, and a
+CLEARED date (what the status becomes then is an owner decision). Those refusals
+are the load-bearing half: a rule that fires too widely drags a delivered order
+back into production.
+
+The matching data repair is `backend/scripts/repair-proceeded-status.mjs`, which
+sweeps **every company by default** — it used to default to company 1, and that
+is exactly how company 2 sat at IN PRODUCTION 0 for a week after company 1 was
+fixed. Ledger `docs/bugs/0597-*`.
+
+**THE STORED VENUE IS NOT THE ONE YOU SENT.** Mig 0229 puts
+`trg_mfg_sales_orders_canonicalize_venue` on this table — BEFORE INSERT OR UPDATE
+OF venue — which folds known aliases to one spelling, because the same showroom
+kept re-appearing as both "PJ Showroom" and "2990s PJ" and three one-shot
+cleanups each drifted back. Canonical is **"2990s PJ"**.
+
+Anything that writes a venue and then checks its work must compare against
+`scm.canonicalize_venue(...)`, never the value it submitted. The venue repair
+did not, and reported VERIFY FAILED on five rows it had written correctly — the
+dangerous direction, because a red line in a log invites the next person to
+re-run or revert a repair that worked. `docs/bugs/0594-*`; the read-only
+`pg_trigger` probe that settled it is
+`backend/scripts/probe-venue-write-divergence.mjs`.
 
 The backend recomputes honest pricing and mints the `doc_no` server-side, so the
 client never sends a `doc_no`, and money crosses the wire as `*_sen` integers.
@@ -842,6 +1035,19 @@ desktop passes `null` (every category cascades), mobile passes
 `{sofa, bedframe}` (the only variant panels it renders). `ConsignmentOrderNew`
 passes `null` too, matching the desktop SO page it is a clone of.
 
+#### `SalesOrderDetailV2` and the list drill-down share ONE coverage overlay
+
+Both render the Stock pill and the Incoming PO chips, and both must fetch
+`GET /:docNo/coverage` and merge it through
+`frontend/src/vendor/scm/lib/so-coverage-overlay.ts`. The detail page had the
+call and the drill-down did not, which blanked that column on the list
+(`docs/bugs/0598-*`); the merge is shared rather than copied because these are
+the same two surfaces that held two opinions in `docs/bugs/0269-*`.
+
+The overlay leaves a line UNTOUCHED when no coverage row matches it — the fast
+first paint and an older backend's 404 both arrive that way, and blanking on them
+would flicker the column off on every open. See §0.8 for the four chips.
+
 #### The `?edit=1` fork, and why leaving edit must leave the URL
 
 `/scm/sales-orders/:docNo` is ONE route (`App.tsx`). `SalesOrderDetailV2` is a
@@ -945,6 +1151,39 @@ with no `signedUrl` at all, so a hand-rolled loader that reads `signedUrl`
 renders a permanent loading placeholder — indistinguishable from "still
 loading", which is exactly how it ships. See §"Why photos need the proxy" in
 `backend/src/scm/lib/photoProxyFallback.ts`.
+
+Since 2026-08-28 that state machine is source-parameterised
+(`useScmLinePhoto('so' | 'po', …)` — `useSoLinePhoto` is the unchanged SO-shaped
+wrapper) and the strip takes a required `source` prop, because the PO detail now
+renders the carried copies of these photos through the same component. Same
+keys, same R2 objects, shared byte cache — a thumb loaded on the SO detail is
+free on the PO detail.
+
+#### Line photos on the printed SO (owner mockup, 2026-08)
+
+`sales-order-pdf.ts` prints photos as ONE "ITEM PHOTOS" block after
+the items table and before PAYMENTS RECEIVED — table rows carry NO image; a
+line with `photo_urls` appends " (photo)" to its first description line
+instead. (Owner print QA 2026-08-28: every generated string is English-only —
+a CJK char in generated text made `ensurePdfCjkFont` re-font EVERY
+photo-carrying PDF off helvetica — and the labels/sizes below are the v2
+ruling.) Each group in the block is keyed by the printed row number (`Item 3`,
+or a range `Item 2-4` when consecutive rows carry a deep-equal photo list —
+the sofa-set shared build photo prints once per set), with the item code
+beside the chip and ~52mm square thumbnails, max 3 per row. A group never splits across pages: one
+that does not fit moves whole to the next page under a continued heading. The
+grouping/packing/page-fit logic and the drawing live in the shared
+`vendor/scm/lib/pdf-item-photos.ts` (unit-tested beside it); the PO and DO
+PDFs print through the same module (the per-document blob fetchers —
+`fetchSoItemPhotoBlob` / `fetchPoItemPhotoBlob` / `fetchDoItemPhotoBlob` —
+sit together in `sales-order-queries.ts`, one proxy contract). Only `.thumb`
+siblings are fetched (never originals —
+PDF size), through the authed proxy, collected before drawing, and every photo
+is best-effort: a key whose fetch or decode fails is skipped silently, so a
+missing photo can never fail the PDF. Thumbs uploaded by the client pipeline
+are mostly WebP (which jsPDF cannot embed), so the module re-encodes each to a
+small square JPEG via canvas. An empty block — no photos, or nothing fetched —
+renders nothing at all.
 
 ### The delivery address block — both directions, shared layer
 
@@ -1050,7 +1289,8 @@ Invalidation always wins over all three (mutation → invalidate → forced refe
 |--------|------|---------|---------|
 | GET | `/api/scm/mfg-sales-orders` | list handler | Grid rows (+ `?summary=1` lightweight bucket mode, `?status=`, `?debtor=`; `?page=` opts into the paginated contract) |
 | GET | `/api/scm/mfg-sales-orders/list-mrp-enrichment` | `mfg-sales-orders-list-enrichment.ts` | `?docNos=A,B,C` → `{ enrichment: { [docNo]: { sourcePoReady, sourcePoAdj, stockRemark, isMainReady, planningState } } }`. The deferred, MRP-derived half of the list (see §"why the list opens instantly"). Read-only, company + sales scoped, fail-soft. Registered before `/:docNo` so the static path is not captured as a doc number. |
-| GET | `/api/scm/mfg-sales-orders/:docNo` | detail | One SO header + lines |
+| GET | `/api/scm/mfg-sales-orders/:docNo` | detail | One SO header + lines. FAST — does NOT run MRP inline (2026-09-01); MRP-derived line fields (`stock_state`, `coverage_po`/`coverage_eta`, `ready_source_pos`, live `stock_status_effective`) return their no-MRP defaults and the client heals them from `/:docNo/coverage` |
+| GET | `/api/scm/mfg-sales-orders/:docNo/coverage` | detail | The DEFERRED live Stock column: runs the global `computeMrp` + `soLineReadySourcePos` (the code `/:docNo` stopped running inline) → `{ coverage: [{ id, stock_state, coverage_po, coverage_eta, ready_source_pos, stock_status_effective }] }`, one entry per line. Same company + self-scoped-sales 404 guard as the detail. Read-only, fail-soft. Client calls it after the doc renders |
 | GET | `/api/scm/mfg-sales-orders/my-mtd` | MTD scoreboard | Mobile Profile tiles |
 | GET | `/api/scm/mfg-sales-orders/mine` | POS board | Salesperson's own orders |
 | PATCH/POST | `…/:docNo/*` | mutations | proceed / cancel / amend / payments / etc. |
@@ -2123,6 +2363,16 @@ a line date the header no longer holds. The reverse is a REFUSAL, not a cascade:
 clearing the delivery date alone would have to clear the Processing Date, which
 is exactly the write `scm.so.remove_processing_date` guards.
 
+**"CLEARED" IS `=== undefined`, NEVER `typeof === 'string'`.** The forms send a
+cleared date as JSON `null` (`payloadFor`: `f.processingDate || null`), so a
+handler that decides "did this request name the key?" by asking whether the value
+is a string reads a clear as ABSENT and judges the pair against the row it is
+replacing rather than the one it will leave. Both header PATCHes now derive the
+effective value through `effectiveDateAfterPatch` (`scm/lib/date-coerce.ts`),
+which uses the same coercion the write does. Removing BOTH dates was refused for
+being unpaired, and removing only the delivery date was accepted and applied —
+`docs/bugs/0578-*` has the reproduction of each.
+
 **The one deliberate exclusion is the 2990 mirror** (`routes/so-mirror.ts`). It
 replicates rows 2990 already committed; a non-2xx keeps the row PENDING in
 2990's outbox and its pg_cron drainer retries forever, so one legacy unpaired
@@ -3182,6 +3432,19 @@ Flow:
    'Houzs'/blank rows are repaired by **HC sofa branding fix (Zanotti)**
    (`fix-hc-sofa-branding.mjs`, DRY-RUN gated, #1723).
 
+   **A HEADER BRANDING THAT IS A PLACEHOLDER IS NOT A BRAND (2026-08-31).**
+   Every surface prefers the SO header's own `branding` text over the derived
+   label, and AutoCount's branding field is free text the floor fills with a
+   placeholder rather than leaving empty: **170 imported company-1 orders carry
+   the literal `NONE`** (measured), so a TRION bedframe printed "NONE" where
+   the catalog plainly says BEDFRAME (owner, HC-SO-013402). The import keeps
+   copying the book faithfully; the READERS now ask
+   `isPlaceholderBrandText(header)` first — a small CLOSED list (NONE / N/A /
+   NIL / TBC / KIV / dashes / blank), never a heuristic, so a real brand
+   ("Nonesuch") is never swallowed. Consumers: `MfgSalesOrdersListV2.tsx`
+   (`brandOf`), `mobile/MobileSalesOrders.tsx`, and the Sales/Fair report's
+   derive-blank pass. Bug `docs/bugs/0575-the-book-s-none-placeholder-outranked-the-derived-branding-a.md`.
+
    **The LABEL rule is `scm/shared/so-branding-label.ts`, and since 2026-08-18
    the sofa half of it no longer depends on that data being repaired.** The
    owner restated the same 2026-08-08 rule as two equations —「houzs
@@ -3221,6 +3484,21 @@ Flow:
    wrong. `"2990s Sofa"` exists as a 2990 brand row with no `logo_r2_key`, so
    2990 sofa orders print the 2990 company letterhead until the owner uploads
    one. Entry `docs/bugs/0489-a-2990-sales-order-pdf-printed-houzs-s-zanotti-logo.md`.
+
+   **And the PDF's STATUS word is a third path again, fixed 2026-08-26.**
+   `sales-order-pdf.ts` title-cased the stored value with its own hand-rolled
+   caser, so the sheet printed `Ready To Ship` where the screen says
+   **Ready to Ship**, and `In Production` where `status-pill.ts` says
+   **Proceed**. It now calls `statusLabel('so', header.status)` — the one home
+   the owner's 2026-08-21 ruling put those words in — and
+   `frontend/src/vendor/scm/lib/pdf-status-label.test.ts` renders this document
+   for every status in the SO vocabulary and compares what was drawn.
+   **`IN_PRODUCTION` is the one word still unsettled**: `status-pill.ts` says
+   *Proceed*, `frontend/src/pages/scm-v2/so-list-status.ts` says *In Production*
+   while claiming the two match, and both are live on screens. The sheet follows
+   `status-pill.ts`; picking the word is the owner's call. Entry
+   `docs/bugs/0548-every-printed-document-title-cased-the-raw-stored-status-ins.md`,
+   rule `docs/modules/document-status-vocabulary.md` §1.
 
 `?summary=1` skips the view join + item read entirely (dashboard only needs status
 buckets) — do not fully-hydrate 500 rows for a count.
@@ -3271,6 +3549,24 @@ are a VIEW; allocation is computed; SO readiness is binary.
   > refused them with `Primary Key Error` and was right. Once a number leaves
   > this system the surviving rows stop being a record of what was issued.
   > `docs/doc-number-reissue-coe.md`.
+
+- **When a gap has to be closed, there is now ONE tool that does it** —
+  `backend/scripts/reclaim-doc-no.mjs`, Actions -> **Reclaim a document
+  number**. It is the only thing in the tree that moves a counter DOWN, and it
+  exists because deleting the newest document of a month is a normal operation
+  (a POS smoke test) with no way back. `MODE=plan` prints the counter row, the
+  highest surviving suffix, what `scm.autocount_outbox` remembers, and the
+  verdict; `MODE=apply` also needs `CONFIRM_SERIES` to equal the series. It
+  REFUSES an `HC-` series with no override (those are the numbers the AED_HOUZS
+  book holds — the incident above), a target that is not below `next_n`, a
+  target any surviving row or any outbox row already carries, and a series type
+  it has no source table for. Reclaiming is for a number that never left the
+  system; a gap in the middle of a month is still normal and still permanent.
+
+  `delete-test-so.mjs` now READS the counter and names the doc number the next
+  save will take, with a WARNING and this command when the deleted number is
+  gone for good. It used to assert the opposite from `MAX()` alone —
+  `docs/bugs/0574-delete-test-so-told-the-operator-the-deleted-number-would-co.md`.
 - `doc_no` is the real PRIMARY KEY and **every FK pointing at it is
   `ON UPDATE NO ACTION`**, not CASCADE (`2990s-full-schema.sql:1652-1768`).
   `UPDATE ... SET doc_no = ...` is therefore REFUSED by Postgres while any child
@@ -3312,12 +3608,15 @@ Optimized:
   Equivalence was proved against production by `probe-so-sweep-inversion`, not
   argued; the read shape is pinned by `tests/soAllocationReadShape.test.ts`,
   which asserts both the round-trip count and the allocation it produces.
-- **The SO detail's Stock column is a whole MRP run.** `GET /:docNo` and
-  `GET /:docNo/items` both call `computeMrp`, which walks every live SO line and
-  every open PO. It **cannot be narrowed to one order**: a line's coverage
-  depends on what higher-priority lines already claimed, so a single-order run
-  answers a different question. It is now started with, rather than in front of,
-  the three per-line reads beside it (`soCoverage`).
+- **The SO detail's Stock column is a whole MRP run — and `GET /:docNo` no longer
+  pays for it (2026-09-01).** `computeMrp` walks every live SO line and every open
+  PO (~105 DB round-trips) and **cannot be narrowed to one order**: a line's
+  coverage depends on what higher-priority lines already claimed, so a single-order
+  run answers a different question. Running it inline made a cold detail open ~4.7s.
+  The detail now returns FAST from the persisted `stock_status` alone, and the live
+  coverage moved to a deferred `GET /:docNo/coverage` the client calls after the
+  doc renders (docs/bugs/0589) — the same deferral the list took in 2026-08-18.
+  `GET /:docNo/items` (the POS items endpoint) still runs it inline.
 
 Watch as data grows:
 - The 500-row `limit` on the list — beyond that, page it server-side + push filter/
@@ -3702,3 +4001,11 @@ while a print entry needs an address. `lib/downstream-doc-refs.ts` and
 `lib/so-delivery-order-nos.ts` hold that split; the full rule, the per-list
 enumeration and the one-to-many cap are in
 `document-conversion.md` §8b.
+
+## Drill-down columns and "still loading"
+
+A cell fed by a SECOND query renders **WORKING…** while that query is in flight
+and **NOT LOADED** if it fails — never `STOCK` or a bare dash, which are
+answers. `coverage` is a required prop on the shared drill-down; the rule, the
+five surfaces that fetch separately, and how to add a sixth are in
+`docs/modules/coverage-state.md` (trace: `docs/bugs/0603-a-drill-down-printed-stock-while-the-answer-was-still-loadin.md`).

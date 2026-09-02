@@ -424,3 +424,15 @@ Invoice）；`do_status` 不在里面 —— 现在也不会进去。）
 - `docs/modules/purchase-consignment-order.md` — 目前唯一一份 consignment 的模组说明
   （只涵盖 PC Order）
 - `backend/scripts/check-consignment-status-census.mjs` — 这份提案的数字来源
+
+## 日期成对：清空是 `null`，不是空字串（2026-08-31）
+
+寄卖单的表头 PATCH 跟销售单共用同一条「Processing Date 与 Delivery Date 同时有或
+同时没有」的规则，也共用同一个坑：编辑页把「清掉的日期」送成 JSON `null`
+（`f.processingDate || null`），而判断「这次请求有没有提到这个栏位」原本问的是
+「它是不是字串」—— `null` 不是字串，于是一次清空被当成「没提到」，规则拿旧的那一
+行去判断新的那一行。
+
+两边现在都走 `effectiveDateAfterPatch`（`scm/lib/date-coerce.ts`），跟真正写进
+资料库的那个转换是同一个：`undefined` 才是「没提到」，其余（`null`、空字串）都是
+「清掉」。销售单那边两个方向的实测都在 `docs/bugs/0578-*`。

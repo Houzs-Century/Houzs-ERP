@@ -45,6 +45,7 @@ import { scopeToCompany, activeCompanyId } from '../lib/companyScope';
 import { stampOrderDeposit } from '../lib/si-list-stamps';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { deriveDisplayBrandingByDoc } from '../lib/so-display-branding';
+import { isPlaceholderBrandText } from '../shared/so-branding-label';
 import { canViewAllSales, canViewScmFinance } from '../lib/houzs-perms';
 import { salesJdDenial } from '../../services/salesJdAccess';
 import { resolveSalesScopeIds } from '../lib/salesScope';
@@ -698,7 +699,14 @@ async function fetchFairSos(
   const sb = c.get('supabase');
   const { from, to } = resolveDateWindow(filters);
   const { data, error } = await paginateAll((pFrom: number, pTo: number) => {
-    let q = sb.from('mfg_sales_orders').select(FAIR_SO_COLS).eq('status', 'CONFIRMED');
+    /* SCOPE (owner 2026-08-31: 「很多单都没进得来…可能因为我还没 delivered」).
+       This read anchored on status='CONFIRMED' alone, so an order LEFT the
+       report the moment the floor delivered it: measured on 2990, 34 of 49
+       delivery orders were invisible for exactly that reason, and doing more
+       business made the report emptier. A fair's completed business is still
+       its business — only a DRAFT (not yet a sale) and a CANCELLED order are
+       out. */
+    let q = sb.from('mfg_sales_orders').select(FAIR_SO_COLS).not('status', 'in', '(DRAFT,CANCELLED)');
     if (filters.project != null) q = q.eq('project_id', filters.project);
     /* Filter by the venue TEXT, not venue_id. mfg_sales_orders.venue_id is a UUID
        FK to the empty/unused scm.venues; the SO write path NULLs it for every
@@ -856,11 +864,13 @@ export const fairReportHandler = async (c: FairCtx) => {
      bedframe-only "BEDFRAME"), and apply the branding FILTER against the
      derived value — the old SQL eq on the raw header column matched nothing. */
   {
-    const blank = soRowsAll.filter((r) => !r.branding || !String(r.branding).trim()).map((r) => r.doc_no);
+    /* "Blank" includes the book's PLACEHOLDER spellings — "NONE" sits on 170
+       imported orders and is not a brand (owner 2026-08-31, HC-SO-013402). */
+    const blank = soRowsAll.filter((r) => isPlaceholderBrandText(r.branding)).map((r) => r.doc_no);
     if (blank.length > 0) {
       const derived = await deriveDisplayBrandingByDoc(sb, c, blank);
       for (const r of soRowsAll) {
-        if ((!r.branding || !String(r.branding).trim()) && derived.has(r.doc_no)) {
+        if (isPlaceholderBrandText(r.branding) && derived.has(r.doc_no)) {
           r.branding = derived.get(r.doc_no)!;
         }
       }
@@ -954,14 +964,14 @@ export const fairReportHandler = async (c: FairCtx) => {
       if (doIds.length > 0) {
         const { data: liData, error: liErr } = await chunkIn(doIds, (batch: string[], pFrom: number, pTo: number) => scopeToCompany(sb
           .from('delivery_order_items')
-          .select('delivery_order_id, qty, unit_cost_sen, ship_cost_sen')
+          .select('delivery_order_id, qty, unit_cost_sen, ship_cost_sen, item_group')
           .in('delivery_order_id', batch), c)
           .range(pFrom, pTo));
         if (liErr) return c.json({ error: 'load_failed', reason: liErr.message }, 500);
-        const linesByDo = new Map<string, Array<{ qty: number | null; unit_cost_sen: number | null; ship_cost_sen: number | null }>>();
-        for (const l of (liData ?? []) as Array<{ delivery_order_id: string; qty: number | null; unit_cost_sen: number | null; ship_cost_sen: number | null }>) {
+        const linesByDo = new Map<string, Array<{ qty: number | null; unit_cost_sen: number | null; ship_cost_sen: number | null; item_group: string | null }>>();
+        for (const l of (liData ?? []) as Array<{ delivery_order_id: string; qty: number | null; unit_cost_sen: number | null; ship_cost_sen: number | null; item_group: string | null }>) {
           const arr = linesByDo.get(l.delivery_order_id) ?? [];
-          arr.push({ qty: l.qty, unit_cost_sen: l.unit_cost_sen, ship_cost_sen: l.ship_cost_sen });
+          arr.push({ qty: l.qty, unit_cost_sen: l.unit_cost_sen, ship_cost_sen: l.ship_cost_sen, item_group: l.item_group });
           linesByDo.set(l.delivery_order_id, arr);
         }
         for (const [doId, lines] of linesByDo) {
@@ -1107,6 +1117,9 @@ export const fairReportHandler = async (c: FairCtx) => {
         total_so_cost_sen: totalSoCost,
         total_do_cost_sen: doCost.total_do_cost_sen,
         do_cost_is_legacy: doCost.is_legacy,
+        /* Stock left before any lot existed, so FIFO froze it at zero — the row
+           would otherwise read as a naked 100% margin (2990-DO-2607-021). */
+        do_cost_ship_anyway: doCost.has_zero_frozen,
         cost_delta_sen: costDelta,
         so_margin_pct: marginPct(Number(h?.local_total_sen ?? 0), totalSoCost),
         do_margin_pct: marginPct(Number(h?.local_total_sen ?? 0), doCost.total_do_cost_sen),

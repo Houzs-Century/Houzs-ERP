@@ -33,7 +33,10 @@
  *   DATABASE_URL   required
  *   APPLY=1        write. Dry-run otherwise.
  *
- * RE-RUN: convergent. Writes AutoCount's own qty/received_qty/delivery_date, which do not move between runs.
+ * RE-RUN: convergent against ONE snapshot — a second run over the same file
+ * writes nothing new. But the snapshot's values DO move in the book between
+ * days (TransferedQty rises as goods arrive), so a fresh-enough snapshot is a
+ * precondition, enforced below (docs/bugs/0560).
  */
 import fs from "node:fs";
 import zlib from "node:zlib";
@@ -51,6 +54,20 @@ const day = (v) => (v == null ? null : String(v).slice(0, 10));
 
 async function main() {
   const snap = JSON.parse(zlib.gunzipSync(fs.readFileSync(path.join(here, "data", "ac-line-truth.json.gz"))).toString("utf8"));
+  /* The snapshot's VALUES move in the book every day — TransferedQty rises as
+     goods arrive. On 2026-08-28 this file's mtime was that day (a checkout)
+     while its exportedAt was 2026-08-11, and the dry-run proposed resetting
+     five correctly-imported received quantities to a 17-day-old zero
+     (docs/bugs/0560). A repair copying "AutoCount's own value" is only faithful
+     while the copy is fresh; the file's generator is not in the tree, so a
+     stale file cannot be quietly refreshed either. */
+  const ageDays = (Date.now() - new Date(snap.exportedAt).getTime()) / 86400000;
+  if (!(ageDays <= 2)) {
+    log(`REFUSED: ac-line-truth.json.gz was exported ${snap.exportedAt} (${ageDays.toFixed(1)} days ago).`);
+    log(`Its values (received qty, delivery dates) move in the book daily; repairing from a stale copy overwrites correct data with old data. Re-export the snapshot first.`);
+    await sql.end();
+    process.exit(2);
+  }
   const acPo = new Map(snap.po.map((r) => [String(r.k), r]));
   log(`mode=${APPLY ? "APPLY" : "DRY-RUN"}; AutoCount snapshot ${snap.exportedAt}, ${snap.po.length} PO lines`);
 

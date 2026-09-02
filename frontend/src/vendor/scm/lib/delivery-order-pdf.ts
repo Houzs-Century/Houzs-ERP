@@ -37,8 +37,32 @@ import {
 import { DO_THEME as T, MONO, SANS, charSpace, monoFor, pt, type Rgb } from './delivery-order-theme';
 import { docVariantLine, loadCustomerFabricMaps } from './supplier-doc-data';
 import { drawQrIntoPdf } from './pdf-qr';
+/* Owner spec 2026-08 — photos follow the line onto the printed document
+   (SO → PO → DO). Same shared block the SO/PO PDFs print through; keys are
+   the SO-carried `photo_urls` (mig 20260828T0746). All generated strings are
+   WinAnsi by rule (pdf-item-photos.ts header). */
+import {
+  appendPhotoMarker,
+  blobToSquarePdfImage,
+  buildPhotoGroups,
+  collectPhotoImages,
+  drawItemPhotosBlock,
+  photoKeyOwners,
+  photoKeysOf,
+  type PdfPhotoImage,
+} from './pdf-item-photos';
+import { fetchDoItemPhotoBlob } from './sales-order-queries';
+import { THUMB_KEY_SUFFIX } from '../../../lib/imagePipeline';
+/* The status WORD comes from the one home for it, never from a caser here:
+   what this document prints and what the screen shows must be the same word.
+   docs/modules/document-status-vocabulary.md §1. */
+import { statusLabel } from './status-pill';
 
 type DoHeader = {
+  /* Row id — the photo proxy route is keyed by it. Optional so the
+     Consignment Note reuse (which has no DO row) stays valid; absent is the
+     STRICTER direction: no photo fetch, the block simply does not print. */
+  id?: string | null;
   do_number: string;
   status: string;
   /* When set, the header carries a "scan to mark loaded" QR encoding
@@ -77,6 +101,9 @@ type DoHeader = {
 };
 
 type DoItem = {
+  /* Line row id — pairs with DoHeader.id on the photo proxy route. Optional
+     for the same CN reuse; absent = that line fetches no photos (stricter). */
+  id?: string | null;
   item_code: string;
   description: string | null;
   qty: number;
@@ -91,6 +118,12 @@ type DoItem = {
      stored on. Both optional / possibly empty → the cell shows a dash. */
   source_pos?: string[] | null;
   racks?: string[] | null;
+  /* Line reference photos (R2 keys, delivery_order_items.photo_urls — carried
+     from the SO line, mig 20260828T0746). Optional so the Consignment Note
+     reuse stays valid. When present the row's first description line gains
+     the " (photo)" marker and the ITEM PHOTOS block prints the `.thumb`
+     siblings. */
+  photo_urls?: string[] | null;
 };
 
 type Doc = import('jspdf').jsPDF;
@@ -257,7 +290,17 @@ function drawDoHeader(
      Right column only — the header rule clears whichever column ran longer, so
      growing this column is layout-safe by construction. */
   if (header.scanToken && typeof window !== 'undefined') {
-    const QR = 16;
+    /* 14mm, DOWN FROM 16 (owner, 2026-08-27: 「我不要 16mm，只想要 10mm，太大了可能
+       会有影响」). 10mm was measured and refused back to him: the smallest QR that
+       exists is 21 modules square, so 10mm cannot carry a URL at a readable module
+       size no matter how short the link — it lands at 0.303mm, WORSE than the 16mm
+       it replaced. 14mm with the shortened token is 0.424mm, which is both smaller
+       on the sheet than today AND better to scan than today.
+
+       This number is a FLOOR, not a promise: drawQrIntoPdf grows the code when the
+       payload needs more room, so a delivery order still carrying a legacy 64-char
+       token prints readable instead of silently unscannable. */
+    const QR = 14;
     const qrTop = rightBottom + 2.5;
     const url = `${window.location.origin}/d/${encodeURIComponent(header.scanToken)}`;
     drawQrIntoPdf(doc, url, rightEdge - QR, qrTop, QR);
@@ -399,6 +442,8 @@ function drawInfoPanel(
   const PAD_X = 6;
   const PAD_Y = 5;
   const GAP = 8;
+  /* Space between the customer name and the debtor code that follows it. */
+  const CODE_GAP = 3;
   const innerW = CONTENT_W - PAD_X * 2;
   const colW = (innerW - GAP) / 2;
   const leftX = M + PAD_X;
@@ -431,18 +476,43 @@ function drawInfoPanel(
       y += pt(12) * 1.2;
       if (draw) { setInk(doc, T.ink); doc.text(line, leftX, y); }
     }
-    // The debtor code rides on the name's last line — it is how the warehouse
-    // and the customer's own AP team match the account, and it costs no height
-    // there. Omitted rather than dashed when a record has none.
-    if (draw && header.debtor_code) {
+    /* The debtor code rides on the name's last line — it is how the warehouse
+       and the customer's own AP team match the account, and it costs no height
+       there. Omitted rather than dashed when a record has none.
+
+       IT ONLY RIDES IF IT FITS. `splitTextToSize` wraps the NAME to colW, so a
+       name whose last line ends near the column edge left no room, and the code
+       was drawn past it — straight over "SO No" in the details column
+       (docs/bugs/0550). When it does not fit it takes its own line instead, and
+       the MEASURE pass counts that line too, so the panel grows with it rather
+       than the code falling out of the bottom. */
+    const codeFits = (): boolean => {
+      if (!header.debtor_code) return true;
       const lastLine = nameLines[nameLines.length - 1] ?? '';
       doc.setFont(SANS, 'bold');
       doc.setFontSize(12);
       const nameW = doc.getTextWidth(lastLine);
       doc.setFont(monoFor(header.debtor_code), 'normal');
       doc.setFontSize(9);
-      setInk(doc, T.inkMuted);
-      doc.text(header.debtor_code, leftX + nameW + 3, y);
+      return nameW + CODE_GAP + doc.getTextWidth(header.debtor_code) <= colW;
+    };
+    if (header.debtor_code) {
+      const inline = codeFits();
+      const lastLine = nameLines[nameLines.length - 1] ?? '';
+      let codeX = leftX;
+      if (inline) {
+        doc.setFont(SANS, 'bold');
+        doc.setFontSize(12);
+        codeX = leftX + doc.getTextWidth(lastLine) + CODE_GAP;
+      } else {
+        y += pt(9) * 1.2;
+      }
+      if (draw) {
+        doc.setFont(monoFor(header.debtor_code), 'normal');
+        doc.setFontSize(9);
+        setInk(doc, T.inkMuted);
+        doc.text(header.debtor_code, codeX, y);
+      }
     }
 
     doc.setFont(SANS, 'normal');
@@ -518,9 +588,7 @@ function drawInfoPanel(
     ...(header.vehicle ? [{ label: 'Vehicle', value: header.vehicle }] : []),
     {
       label: 'Status',
-      value: header.status
-        ? header.status.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase())
-        : null,
+      value: header.status ? statusLabel('do', header.status) : null,
       chip: true,
     },
   ];
@@ -674,6 +742,32 @@ export async function renderDeliveryOrderInto(
   const docNoLabel = opts?.docNoLabel ?? 'DO No';
   const startPage = doc.getNumberOfPages();
 
+  /* Photos follow the line (owner spec 2026-08): fetch the `.thumb` siblings
+     of every carried photo key up front, best-effort — a key whose fetch or
+     decode fails is skipped and the PDF renders without it. The CN reuse has
+     no header id, so it fetches nothing by construction. */
+  const doId = header.id ?? null;
+  const photoGroups = doId
+    ? buildPhotoGroups(items.map((it) => ({
+        code: it.item_code,
+        photoKeys: photoKeysOf(it.photo_urls),
+      })))
+    : [];
+  const photoOwners = photoKeyOwners(
+    items.flatMap((it) => (it.id ? [{ id: it.id, photoKeys: photoKeysOf(it.photo_urls) }] : [])),
+  );
+  const photoImages: Map<string, PdfPhotoImage> = doId && photoGroups.length > 0
+    ? await collectPhotoImages(
+        photoGroups,
+        (key) => {
+          const ownerId = photoOwners.get(key);
+          if (!ownerId) return Promise.reject(new Error('photo_owner_missing'));
+          return fetchDoItemPhotoBlob(doId, ownerId, key + THUMB_KEY_SUFFIX);
+        },
+        blobToSquarePdfImage,
+      )
+    : new Map<string, PdfPhotoImage>();
+
   const ruleY = drawDoHeader(doc, header, {
     docTitle: opts?.docTitle ?? 'DELIVERY ORDER',
     docNoLabel,
@@ -690,8 +784,15 @@ export async function renderDeliveryOrderInto(
   // volume, not money. The unit_price_sen still flows to the Sales Invoice.
   const listCell = (vals?: string[] | null): string =>
     vals && vals.length > 0 ? vals.join('\n') : EM_DASH;
-  const descOf = (it: DoItem): string =>
-    [it.description, docVariantLine(it, fabric.ext, fabric.desc)].filter(Boolean).join('\n') || EM_DASH;
+  const descOf = (it: DoItem): string => {
+    const composed = [it.description, docVariantLine(it, fabric.ext, fabric.desc)]
+      .filter((s): s is string => Boolean(s));
+    if (composed.length === 0) return EM_DASH;
+    /* Owner spec: a row carries NO image — the " (photo)" marker on the first
+       description line points the reader at the ITEM PHOTOS block below. */
+    const lines = photoKeysOf(it.photo_urls).length > 0 ? appendPhotoMarker(composed) : composed;
+    return lines.join('\n');
+  };
   const m3Of = (it: DoItem): string => (it.m3_milli != null ? (it.m3_milli / 1000).toFixed(3) : EM_DASH);
 
   const rows = items.map((it, idx) => {
@@ -773,6 +874,14 @@ export async function renderDeliveryOrderInto(
       const isDescription = data.column.index === 2;
       if (data.section === 'body') {
         if (isDescription) data.cell.styles.font = SANS;
+        /* Owner 2026-08-28: Source PO reads in the normal face, bold — the
+           typewriter mono the identifier columns default to was hard to read
+           on the printed sheet. Body cells only, so the head row stays on one
+           face; the column exists only on the warehouse (showPicking) face. */
+        if (showPicking && data.column.index === 3) {
+          data.cell.styles.font = SANS;
+          data.cell.styles.fontStyle = 'bold';
+        }
         // The em-dash placeholder is deliberately fainter than a real value —
         // "nothing here" should not read as loudly as a rack number.
         if (String((data.cell as unknown as { text: string[] }).text?.join('') ?? '') === EM_DASH) {
@@ -826,8 +935,30 @@ export async function renderDeliveryOrderInto(
     },
   });
 
+  // ── ITEM PHOTOS (owner spec 2026-08) ───────────────────────────────
+  /* One block per document, AFTER the items table and BEFORE the pinned
+     signature/footer. Row-number chips key each group back to the table
+     above; a group never splits across pages (it moves whole, under a
+     continued heading). Pages the block adds are swept up by the closing
+     loop below, so they get the footer like any table spill page. The
+     block draws in jsPDF's built-in helvetica — deliberate: the Ink &
+     Petrol faces are display fonts, and the block must read identically
+     on SO/PO/DO. Absent entirely when no photo actually fetched. */
+  let finalY = ((doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? panelBottom);
+  if (photoImages.size > 0) {
+    const photoRes = drawItemPhotosBlock(doc, photoGroups, photoImages, {
+      margin: M,
+      contentW: CONTENT_W,
+      startY: finalY + 6,
+      pageBottom: PAGE_H - PAD_BOTTOM - 12, // the items table's own bottom rail
+      pageTop: M,
+      side: null,
+      onNewPage: null,
+    });
+    if (photoRes.drew) finalY = photoRes.endY;
+  }
+
   // ── Closing: signature + footer, pinned to the bottom ──────────────
-  const finalY = ((doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? panelBottom);
   const CLOSING_TOP = PAGE_H - PAD_BOTTOM - 6 - 6 - (24 + 2.5 + pt(10) + 2 + (pt(8) + 3.2) * 2);
   if (finalY > CLOSING_TOP) doc.addPage();
 

@@ -63,5 +63,11 @@ export function isCrewScopedUser(user: CrewScopeCarrier | null | undefined): boo
   if (!user) return false;
   const granted = user.permissions ?? [];
   if (granted.includes("*") || granted.includes("projects.write")) return false;
-  return CREW_SCOPED_POSITIONS.includes((user.position_name ?? "").trim().toLowerCase());
+  const pos = (user.position_name ?? "").trim().toLowerCase();
+  // Owner 2026-08-28: the admin-created regional warehouse-crew positions
+  // ("Warehouse Crew KL", …) carry the whole helper/storekeeper cohort now.
+  // PREFIX match (name STARTS with "warehouse crew"), not a substring — an
+  // office position merely mentioning warehouse cannot be caged. Mirrors
+  // backend projectGates.ts.
+  return CREW_SCOPED_POSITIONS.includes(pos) || pos.startsWith("warehouse crew");
 }

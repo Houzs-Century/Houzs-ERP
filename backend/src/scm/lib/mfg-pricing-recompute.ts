@@ -276,8 +276,32 @@ export const erpLineTrust = (
   posTablet: boolean,
   unitPriceSen: number,
   zeroPriceIntended: unknown,
-): TrustSelling =>
-  !posTablet && unitPriceSen === 0 && zeroPriceIntended === true ? 'operator-zero' : !posTablet;
+  /* MIGRATED ORDER? Required, not optional, because it DECIDES (CLAUDE.md): a
+     caller that says nothing would silently keep the old answer, and that is the
+     hole this parameter closes.
+
+     Owner, 2026-09-02: 「我们的 selling price 是根据我们 manually 填入的，不应该
+     被这种影响」 — the specials surcharge, and the fabric surcharge with it, must
+     not move a price a person typed. On an AutoCount-imported line the price is
+     the BOOK's, which is the same statement, and `so-revision.ts` already says
+     it on the amendment path by deriving 'including-zero' from
+     `linked_ac_docno IS NOT NULL`. The plain line PATCH passed a bare `true` and
+     therefore did NOT set `isMigratedTrust` — so on a migrated line priced 0
+     (10,856 of 13,909 of them) an edit could hand it base + surcharges. Two edit
+     paths, two answers about the same order.
+
+     ADD is deliberately excluded by the CALLER, not here: a line typed today has
+     no AutoCount history, and so-revision.ts refuses 'including-zero' on its own
+     ADD arm for the same reason. */
+  soIsMigrated: boolean,
+): TrustSelling => {
+  if (posTablet) return false;
+  /* A migrated line's stored price stands, ZERO INCLUDED — that is the whole
+     difference between this mode and a bare `true`, and it also switches off the
+     chargeable-surcharge arm (see isMigratedTrust). */
+  if (soIsMigrated) return 'including-zero';
+  return unitPriceSen === 0 && zeroPriceIntended === true ? 'operator-zero' : true;
+};
 
 /** Pure mapper from a (product, fabric, variants) snapshot to the
  *  breakdown + DB column values. Used by tests + the route helpers below

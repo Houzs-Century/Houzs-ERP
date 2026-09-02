@@ -1,0 +1,40 @@
+name: Enqueue SO allocation recompute (Worker-native)
+
+# Manual. Writes the singleton repair-request row the Worker's five-minute cron
+# drains to run the canonical allocation recompute with its own client — the
+# production path, used when the Actions-side borrow (recompute-so-allocation)
+# is unavailable (its pgrest shim died mid-sweep on 2026-08-28). PLAN prints
+# the current queue row + company-1 line-status counts; apply=1 + the confirm
+# phrase writes the request. Idempotent: upsert on the singleton.
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "1 to write the request, else PLAN"
+        required: false
+        default: "0"
+        type: string
+      confirm:
+        description: 'For apply ONLY, type exactly: ENQUEUE ALLOCATION RECOMPUTE'
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: enqueue-so-allocation-recompute
+  cancel-in-progress: false
+
+jobs:
+  run-prod:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/enqueue-so-allocation-recompute.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          CONFIRM: ${{ inputs.confirm }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

@@ -263,12 +263,15 @@ mfgPurchaseOrders.use('*', supabaseAuth);
    add/edit/delete alike. Only ever reached for a PO the downstream lock let
    through, which is the same rule AutoCount enforces on its side. Never
    throws. */
-async function queueAcPoEdit(c: any, poId: string, retire: AcRetiredLine[] = []): Promise<void> {
+/* `newLineIds` = rows THIS request inserted, same contract as queueAcSoEdit's:
+   only the inserting route can tell a new line from a backfill miss. */
+async function queueAcPoEdit(c: any, poId: string, retire: AcRetiredLine[] = [], newLineIds: string[] = []): Promise<void> {
   await enqueueEdit(c.get('supabase'), {
     companyId: activeCompanyId(c),
     docType: 'PO',
     docId: poId,
     retire,
+    newLineIds,
     createdBy: c.get('houzsUser')?.id ?? null,
   });
 }
@@ -3120,7 +3123,7 @@ mfgPurchaseOrders.post('/:id/items', async (c) => {
     });
   }
 
-  await queueAcPoEdit(c, poId);
+  await queueAcPoEdit(c, poId, [], data?.id ? [String(data.id)] : []);
 
   return c.json({ item: data }, 201);
 });
@@ -3956,15 +3959,12 @@ mfgPurchaseOrders.post('/:id/convert-from-so', async (c) => {
      APPENDS lines to a purchase order that may already exist in the account
      book, which is an edit of that document.
 
-     What happens next is deliberately loud rather than clever. A PO still in
-     DRAFT has no AutoCount counterpart, so this folds into the create that
-     confirm will queue. A PO already in the book gets a real edit — and because
-     these lines are brand new they carry no DtlKey, so composeEdit refuses the
-     whole document and writes a visible skipped row naming it. That refusal is
-     correct until IsNewLine is implemented: guessing a key would make
-     AcSyncService rewrite somebody else's line in a live book, and 0273's own
-     header says a wrong key is strictly worse than NULL. */
-  await queueAcPoEdit(c, poId);
+     A DRAFT PO has no AutoCount counterpart, so this folds into the create that
+     confirm will queue. One already in the book gets a real edit, and these lines
+     are brand new, so they are DECLARED: composeEdit marks them IsNewLine and
+     AcSyncService appends them with AddDetail. A keyless line the route did NOT
+     name is still refused. (Until 2026-08-31 nothing declared them here.) */
+  await queueAcPoEdit(c, poId, [], ((inserted ?? []) as Array<{ id?: unknown }>).map((r) => String(r?.id ?? '')).filter(Boolean));
 
   return c.json({
     copied: rows.length,

@@ -149,21 +149,31 @@ cover of a drift fix would have made that decision silently.
   (Intake / Repair / Return, `PHASE_DEFS` `:83-87`) are keyed by stage, so the
   whole Repair phase disappears for an internal-resolution case (`:1279-1285`).
 
-Two **sub-statuses** (小类) live inside two stages only — `ASSR_SUB_STATUSES`
-(`stages.ts:112-121`): Under Verification → `pending_inspection` /
-`qc_issue_result`; Supplier Pickup → `pending_supplier_pickup` /
-`pending_supplier_return`. They are directly switchable by ops (desktop select
-at `ServiceCases.tsx:5241-5252`), stored on `assr_cases.sub_status`, and
-`assrSubStatusAddsInfo()` (`stages.ts:156-161`) hides one that merely restates
-its stage label — with one exception (Nico 2026-08-22): under the combined
+**Sub-statuses** (小类) live inside two stages only — `ASSR_SUB_STATUSES`
+(`stages.ts`): Under Verification → `pending_inspection` / `qc_issue_result`;
+Supplier Pickup → `pending_customer_pickup` / `pending_supplier_pickup` /
+`pending_supplier_return` — THREE legs since Nico 2026-09-01: the stage now
+ENTERS on the customer-pickup leg (`transitionStage` seeds it) because
+collecting the item FROM the customer comes first; ops advances the sub as the
+item moves. The collect-from-customer dispatch words moved with that leg:
+`sheetDetailStatus` (assrFormIntake.ts) emits the sheet's unchanged PICKUP
+trigger word "Pending Supplier Pickup (Customer Pickup)" only while the sub is
+`pending_customer_pickup` AND Pickup by = Customer pickup. The sheet's
+column-A vocabulary is FROZEN (Nico 2026-09-01: A列不要修改), so the bare
+customer-pickup leg exports the stage's bare word — the finer
+"Pending Customer Pickup" label exists in the ERP UI only, and the export
+never emits a word the sheet's validation would reject. Subs are directly switchable
+by ops (desktop select), stored on `assr_cases.sub_status`, and
+`assrSubStatusAddsInfo()` (`stages.ts`) hides one that merely restates its
+stage label — with one exception (Nico 2026-08-22): under the combined
 "Supplier Pickup / Return" stage the list's stage cell shows the sub line on
-BOTH legs, because naming the leg is how ops splits its supplier chase list.
-The same split reaches the other two read surfaces: the stage column's
-`getValue` appends the sub label ("Supplier Pickup / Return — Pending Supplier
-Return"), so the column filter menu and the CSV export isolate one leg; and the
-`/api/assr/summary` `stage_funnel` rows carry a `sub_return` count so the
-Supplier funnel card's caption reads "X await pickup · Y await return" instead
-of the static description.
+EVERY leg, because naming the leg is how ops splits its supplier chase list.
+The same split reaches the other read surfaces: the stage column's `getValue`
+appends the sub label ("Supplier Pickup / Return — Pending Supplier Return"),
+so the column filter menu and the CSV export isolate one leg; and the
+`/api/assr/summary` `stage_funnel` rows carry `sub_customer` + `sub_return`
+counts so the Supplier funnel card's caption reads
+"X customer · Y supplier · Z return" instead of the static description.
 
 > `frontend/src/components/ServiceProgressTracker.tsx` [gone] **was DELETED** (with its
 > unused `ServiceCases.tsx` import) after this audit: it was never rendered
@@ -258,7 +268,7 @@ byte-identical to an honest empty answer. That matters because `GET
 | --- | --- | --- |
 | 1 | `requireServiceCaseAccess()` 403s the caller | see the gate note below |
 | 2 | the caller does not hold HOUZS, so `assr.ts:1256` skips the AutoCount mirror where a bare `SO-XXXXXX` lives | grant it on the Team screen |
-| 3 | the order is not in the mirror, or its `doc_no` is spelled differently | `?since=` backfill — see `docs/modules/system-health.md` |
+| 3 | the order is not in the mirror, or its `doc_no` is spelled differently | `?since=` backfill — see `docs/modules/system-health.md`. Since 2026-08-28 a migrated/写回 SCM order is also found by its AutoCount number directly (`linked_ac_docno`, SCM arm), so the backfill is only for mirror-only orders |
 
 The hook now returns `error` and the picker renders it **instead of** the
 not-found line. `check-silent-mutations` enforces this for `useMutation`, not

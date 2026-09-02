@@ -51,12 +51,37 @@ describe('the public surface is mounted where it has to be', () => {
     expect(mount, 'the public scan router must be mounted before the auth gate').toBeLessThan(gate);
   });
 
-  test('exactly two public endpoints — a read and a one-rung advance', () => {
-    const routes = codeOf(ROUTE).match(/publicDoScan\.(get|post|put|patch|delete)\(/g) ?? [];
-    expect(routes.sort()).toEqual(['publicDoScan.get(', 'publicDoScan.post(']);
-    /* Both of them tell a blip apart from an unknown code. */
-    expect((codeOf(ROUTE).match(/found\.status === 'read_failed'/g) ?? []).length).toBe(2);
-    expect((codeOf(ROUTE).match(/found\.status === 'unknown'/g) ?? []).length).toBe(2);
+  test('FOUR public endpoints and no more — and every one of them is named here', () => {
+    /* Was two until 2026-08-26, when the owner asked to scan a pile of papers
+       and press once: 「我不能 scan 好几个 DO，然后一起点 load 吗？」. The count is
+       pinned rather than bounded because this is the repo's ONLY no-login write
+       surface — a fifth endpoint appearing without a line in this test is
+       exactly the review this file exists to force. */
+    const code = codeOf(ROUTE);
+    const verbs = code.match(/publicDoScan\.(get|post|put|patch|delete)\(/g) ?? [];
+    expect(verbs.sort()).toEqual([
+      'publicDoScan.get(', 'publicDoScan.post(', 'publicDoScan.post(', 'publicDoScan.post(',
+    ]);
+    const paths = [...code.matchAll(/publicDoScan\.(?:get|post)\('([^']+)'/g)].map((m) => m[1]);
+    expect(paths.sort()).toEqual(['/:token', '/:token/advance', '/batch/advance', '/batch/lookup']);
+
+    /* THE BATCH ROUTES ARE REGISTERED FIRST. Hono matches in registration
+       order, so '/batch/advance' declared after '/:token/advance' would be
+       captured with token = "batch". */
+    expect(code.indexOf("publicDoScan.post('/batch/lookup'")).toBeLessThan(
+      code.indexOf("publicDoScan.get('/:token'"),
+    );
+    expect(code.indexOf("publicDoScan.post('/batch/advance'")).toBeLessThan(
+      code.indexOf("publicDoScan.post('/:token/advance'"),
+    );
+
+    /* EVERY ONE of them tells a blip apart from an unknown code — the property,
+       not the count, is what matters, so it is asserted per resolve rather than
+       against a number that drifts with the file. */
+    const resolves = (code.match(/await resolveScanToken\(/g) ?? []).length;
+    expect(resolves).toBeGreaterThanOrEqual(4);
+    expect((code.match(/found\.status === 'read_failed'/g) ?? []).length).toBe(resolves);
+    expect((code.match(/found\.status === 'unknown'/g) ?? []).length).toBe(resolves);
   });
 });
 
@@ -77,10 +102,48 @@ describe('minting stays behind the session', () => {
     expect(MINT_ROUTE).toContain("deliveryOrderScanToken.use('*', supabaseAuth)");
   });
 
-  test('the token is unguessable — two UUIDs, 64 hex chars', () => {
-    expect(TOKEN_LIB).toMatch(/crypto\.randomUUID\(\)\s*\+\s*crypto\.randomUUID\(\)/);
-    expect(TOKEN_LIB).toMatch(/\.replace\(\/-\/g,\s*''\)/);
-    expect(TOKEN_LIB).toMatch(/DO_SCAN_TOKEN_RE\s*=\s*\/\^\[0-9a-f\]\{64\}\$\/i/);
+  test('the token is unguessable, and it is the MINTER that is asked, not its source text', async () => {
+    /* REWRITTEN 2026-08-27, when the token went from 64 hex to 10 characters so
+       the printed QR could shrink to 14mm and still scan. The old version
+       asserted the exact expression that built it — which meant the check had
+       to be rewritten to change an implementation detail, and told you nothing
+       about the value that comes out. This asks the function instead.
+
+       50 bits is enough HERE and would not be everywhere: this credential is not
+       offline-attackable. Guessing means asking the server, which admits 300
+       reads per quarter-hour per address and answers a miss exactly as it
+       answers a revoked token. */
+    const { newDoScanToken, DO_SCAN_TOKEN_RE } = await import('../src/scm/lib/do-scan-token');
+
+    const minted = Array.from({ length: 500 }, () => newDoScanToken());
+    for (const t of minted) {
+      expect(t, `minted a token the gate would refuse: ${t}`).toMatch(DO_SCAN_TOKEN_RE);
+      expect(t).toHaveLength(10);
+      /* The letters Crockford drops, because a warehouse reads these off paper
+         and phones them in when a code will not scan. */
+      expect(t).not.toMatch(/[ilou]/);
+    }
+    /* 500 draws from 32^10 collide with probability ~1e-10. A repeat here means
+       the source is not random, which is the failure that matters. */
+    expect(new Set(minted).size).toBe(500);
+
+    /* Every position varies — a bug that fixed one character would still pass
+       the uniqueness check above. */
+    for (let i = 0; i < 10; i += 1) {
+      expect(new Set(minted.map((t) => t[i])).size, `position ${i} never varied`).toBeGreaterThan(8);
+    }
+
+    /* AND THE SOURCE IS A CSPRNG. Behaviour cannot tell getRandomValues from a
+       good-looking Math.random, and this is the one thing worth reading the
+       file for. */
+    expect(TOKEN_LIB).toContain('crypto.getRandomValues');
+    expect(TOKEN_LIB).not.toContain('Math.random');
+  });
+
+  test('the shape gate still admits every paper already printed', () => {
+    /* The 64-hex form is not history: it is on every sheet on a lorry today, and
+       dropping it from the gate would kill them all at once. */
+    expect(TOKEN_LIB).toMatch(/DO_SCAN_TOKEN_RE\s*=.*\[0-9a-f\]\{64\}/);
   });
 
   test('the mint is claimed ATOMICALLY, and the claim carries the company too', () => {
@@ -171,17 +234,35 @@ describe('data minimisation', () => {
 });
 
 describe('rate limiting', () => {
-  test('both endpoints are limited, no looser than the existing public surfaces', () => {
+  test('every endpoint is limited, and the WRITE limits never loosen', () => {
     const code = codeOf(ROUTE);
-    expect((code.match(/checkRateLimit\(/g) ?? []).length).toBe(3);
-    /* survey_read is 30/900 and survey_submit / track are 20/900
-       (routes/survey.ts, routes/track.ts). Nothing here may be looser. */
+    /* One per endpoint, plus the per-document cap on each of the two writes. */
+    expect((code.match(/checkRateLimit\(/g) ?? []).length).toBe(6);
+
+    /* THE READ LIMIT LEFT survey_read's NUMBER ON 2026-08-26, deliberately, and
+       this test says so rather than being deleted. `clientIp` is the PUBLIC
+       address and a warehouse is ONE public address for every phone in it, so
+       30 reads per quarter-hour was 30 for the whole floor — the second person
+       to pick up a phone found the code dead. What makes that safe is not the
+       number: DO_SCAN_TOKEN_RE admits only 64 hex, so enumeration is hopeless
+       at any rate.
+
+       The WRITES are what move a document, and they are pinned to the tighter
+       of the existing public surfaces (survey_submit / track are 20/900) with
+       no room to drift. */
+    expect(code).toContain('const READ_MAX = 300;');
     const survey = read('src/routes/survey.ts');
-    const surveyRead = Number(/checkRateLimit\(c, "survey_read", clientIp\(c\), (\d+), (\d+)\)/.exec(survey)?.[1]);
-    expect(code).toContain(`const READ_MAX = ${surveyRead};`);
-    expect(code).toContain('const WRITE_MAX = 20;');
-    // The extra one nothing else has: a per-DOCUMENT cap, keyed by the token.
+    const surveySubmit = Number(
+      /checkRateLimit\(c, "survey_submit", clientIp\(c\), (\d+), (\d+)\)/.exec(survey)?.[1],
+    );
+    expect(Number.isFinite(surveySubmit)).toBe(true);
+    expect(code).toContain(`const WRITE_MAX = ${surveySubmit};`);
+    expect(code).toContain('const PER_TOKEN_MAX = 10;');
+
+    // The cap nothing else has: per-DOCUMENT, keyed by the token — and the
+    // BASKET does not escape it. It is charged per token inside the loop.
     expect(code).toContain("checkRateLimit(c, 'do_scan_doc', token, PER_TOKEN_MAX, WINDOW_SEC)");
+    expect((code.match(/'do_scan_doc'/g) ?? []).length).toBe(2);
   });
 });
 
