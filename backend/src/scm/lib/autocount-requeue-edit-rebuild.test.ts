@@ -130,3 +130,48 @@ describe('the two refusals a rebuild must never get past', () => {
     expect(String(written[0].last_error)).toContain('DtlKey');
   });
 });
+
+describe('a rebuilt line is a NEW line, so it must carry its item code', () => {
+  /* THE DEFECT THIS EXISTS FOR, and it reached a live account book. composeEdit
+     strips ItemCode from every keyed line on purpose: the ERP's answer for the
+     collapsed sofa codes is a POLICY, and sending it would silently move the 194
+     real book lines those two brand items hold. Right for an EDIT. A REBUILD is
+     not an edit - it clears the details and ADDS the lines - so a line with no
+     item code is added blank.
+
+     Measured on SO-013394 on 2026-09-02, after the first rebuild reached the
+     book: seven of eight lines came back with ItemCode = '' and every log line
+     was green, because the host wrapped the assignment in Set(), which swallows.
+     docs/bugs/0615. */
+  test('every line in a rebuild payload carries an ItemCode', async () => {
+    const sb = world();
+    await requeueOneRow(sb as never, editSkip() as never, { apply: true, resendingThisRow: false });
+
+    const body = (queued(sb)[0].payload as { body: { Lines: Array<Record<string, unknown>>; Rebuild?: unknown } }).body;
+    expect(body.Rebuild).toBe(true);
+    expect(body.Lines.length).toBeGreaterThan(0);
+    for (const [i, line] of body.Lines.entries()) {
+      expect(String(line.ItemCode ?? ''), `line ${i + 1} would be added blank`).not.toBe('');
+    }
+  });
+
+  /* THE HALF THAT MUST NOT MOVE. An ordinary keyed edit still omits ItemCode -
+     that strip is the only thing standing between an edit and 194 silently
+     re-pointed lines, and this fix must not have widened it. */
+  test('an ordinary keyed edit still sends no ItemCode at all', async () => {
+    const sb = fakeSb({
+      app_config: [{ key: 'scm.autocount_writeback', value: '1' }],
+      autocount_outbox: [],
+      staff: [{ id: 'staff-1', name: 'Nurul Hidayah' }],
+      mfg_sales_orders: [soHeader()],
+      /* Every line KEYED, so the edit composes instead of refusing. */
+      mfg_sales_order_items: soItems().map((r) => ({ ...r, linked_ac_dtlkey: r.linked_ac_dtlkey ?? 917138 })),
+      supplier_material_bindings: [],
+    });
+
+    expect(await enqueueEdit(sb as never, { companyId: 1, docType: 'SO', docNo: SO_DOC })).toBe(true);
+    const body = (rows(sb)[0].payload as { body: { Lines: Array<Record<string, unknown>>; Rebuild?: unknown } }).body;
+    expect(body.Rebuild).toBeUndefined();
+    for (const line of body.Lines) expect(line).not.toHaveProperty('ItemCode');
+  });
+});

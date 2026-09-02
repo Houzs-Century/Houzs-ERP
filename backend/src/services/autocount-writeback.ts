@@ -23,7 +23,7 @@
 // resolver, so it unit-tests with no database and no AutoCount.
 // ----------------------------------------------------------------------------
 import type { Env } from '../types';
-import { rebuildAllowed, shouldRebuild, type AcRetiredLine } from './ac-line-gone';
+import { shouldRebuild, type AcRetiredLine } from './ac-line-gone';
 import {
   ItemCodeError,
   resolveAcItemCode,
@@ -1417,7 +1417,7 @@ export function composeEdit(
   opts: ComposeOptions = {},
   retired: AcRetiredLine[] = [],
 ): AcEditPayload {
-  const effOpts: ComposeOptions = shouldRebuild(opts, docType, retired) ? { ...opts, rebuild: true } : opts;  // 0608
+  const effOpts: ComposeOptions = { ...opts, rebuild: shouldRebuild(opts, docType, retired) };  // 0608, authoritative - 0615
   const { details, collapsed } = composeDetails(lines, effOpts);
   /* The key is read off the COLLAPSED line, not the ERP line. One AutoCount
      line has one DtlKey, and a sofa build's compartments only carry line
@@ -1476,7 +1476,7 @@ export function composeEdit(
      * added row has no DtlKey, so it keeps its ItemCode and is appended. Only
      * an in-place item change on a line the book owns is dropped, and the ERP
      * has no such operation. */
-    const { ItemCode: _ownedByAutoCount, ...rest } = d;
+    const { ItemCode: acItemCode, ...rest } = d;  // put back on a REBUILD - 0615
     /* AN EXPLICIT BLANK IS A CREATE'S PRIVILEGE. On a create there is nothing
      * to preserve and AutoCount's default would invent the document date; on a
      * line the book already holds, sending null would ERASE a delivery date an
@@ -1486,7 +1486,7 @@ export function composeEdit(
      * A date the ERP DOES hold still travels — the ERP is master, and that is
      * the whole point of D8. */
     if (rest.DeliveryDate == null) delete rest.DeliveryDate;
-    return { ...rest, DtlKey: dtlKey } as AcEditLine;
+    return { ...rest, ...(effOpts.rebuild ? { ItemCode: acItemCode } : {}), DtlKey: dtlKey } as AcEditLine;
   });
 
   /* Refused BEFORE the keyless check, because a half-cancelled build is a
@@ -1539,7 +1539,7 @@ export function composeEdit(
       .join(', ');
     /* Only an EARNED rebuild goes through here — the line set changed, or a caller
        asked (0608). Rebuilding any unmatchable document was retracted: 0613. */
-    if (effOpts.rebuild && rebuildAllowed(opts, docType)) return { DocType: docType, DocNo: docNo, Header: header, Lines: keyed, Rebuild: true };
+    if (effOpts.rebuild) return { DocType: docType, DocNo: docNo, Header: header, Lines: keyed, Rebuild: true };
     const anyCancelled = keyless.some((i) => cancelledOf(i) === true);
     throw new KeylessLineError(
       `${docType} ${docNo}: ${keyless.length} of ${keyed.length} line(s) carry no AutoCount `
