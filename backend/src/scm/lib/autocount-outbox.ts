@@ -46,7 +46,7 @@ import type { Env } from '../env';
 import { getSupabaseService } from '../../db/supabase';
 import { isWritebackEnabled } from './autocount-writeback-flag';
 import { inAcLineOrder } from './ac-line-order';
-import { poRaisedFromSo } from './so-po-raised';   // 0609
+import { poRaisedFromSo } from './so-po-raised';
 import { claimOutboxRow, releaseExpiredClaims } from './autocount-claim';
 import { splitSofaCode } from '../../services/autocount-sofa-collapse';
 import { SO_PROCESSING_DATE_COLUMN } from '../shared/so-processing-date';
@@ -1410,8 +1410,7 @@ async function composeSoState(sb: Sb, docNo: string, retired: AcRetiredLine[] = 
   const lines = await withLocations(sb, soRows, soRows.map(soLine));
   const h = header as Record<string, unknown>;
   const bindings = await bindingsFor(sb, (h.company_id as number | null) ?? null, lines.map((l) => l.item_code));
-  /* Four INDEPENDENT reads, batched — they were sequential round-trips on a path
-     that runs on every sales-order edit. `poRaisedFromSo` gates the rebuild (0609). */
+  // Four INDEPENDENT reads, batched; poRaisedFromSo gates the rebuild (0609).
   const [salespersonName, outstandingSen, paymentRefs, poRaised] = await Promise.all([
     readSalespersonName(sb, h.salesperson_id), readSoOutstandingSen(sb, h),
     readSoPaymentRefs(sb, docNo), poRaisedFromSo(sb, docNo)]);
