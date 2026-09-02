@@ -729,6 +729,7 @@ function DrLinesExpansion({ id }: { id: string }) {
   return (
     <DocumentLinesExpansion
       isLoading={detailQ.isLoading}
+      coverage="ready" /* one query fills this drill-down — coverage-state.tsx */
       isError={Boolean(detailQ.error)}
       errorMessage={detailQ.error instanceof Error ? detailQ.error.message : null}
       lines={lines}

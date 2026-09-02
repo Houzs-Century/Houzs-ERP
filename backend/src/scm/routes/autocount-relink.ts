@@ -40,8 +40,15 @@ const RELINK_KEYS = ['scm.autocount.requeue', '*'] as const;
    store uses, and for the same reason: these are the two documents whose lines a
    route inserts by hand. Only the parent/header columns are local. */
 const DOC = {
-  SO: { lineTable: NEW_LINE_TABLE.SO, parentCol: 'doc_no', headerTable: 'mfg_sales_orders', headerKey: 'doc_no' },
-  PO: { lineTable: NEW_LINE_TABLE.PO, parentCol: 'purchase_order_id', headerTable: 'purchase_orders', headerKey: 'po_number' },
+  /* `headerCols` is per-document and REQUIRED, because the two headers are not
+     shaped alike: scm.purchase_orders is keyed by a uuid `id` that its lines
+     carry, and scm.mfg_sales_orders has NO `id` column at all — its lines carry
+     `doc_no`. Selecting a common column list asked the sales-order header for a
+     column that does not exist, and PostgREST refused the whole read, so the
+     operator's "Match up lines" reported `column mfg_sales_orders.id does not
+     exist` and nothing was ever matched (docs/bugs/0601). */
+  SO: { lineTable: NEW_LINE_TABLE.SO, parentCol: 'doc_no', headerTable: 'mfg_sales_orders', headerKey: 'doc_no', headerCols: 'linked_ac_docno', parentFrom: 'docNo' },
+  PO: { lineTable: NEW_LINE_TABLE.PO, parentCol: 'purchase_order_id', headerTable: 'purchase_orders', headerKey: 'po_number', headerCols: 'id, linked_ac_docno', parentFrom: 'headerId' },
 } as const;
 
 type DocKind = keyof typeof DOC;
@@ -77,7 +84,7 @@ export const autocountRelinkLinesHandler = async (
      predicate is the whole tenant boundary on this client (it is the service
      role, so no policy is evaluated). */
   const { data: header, error: headerErr } = await sb.from(spec.headerTable)
-    .select('id, linked_ac_docno')
+    .select(spec.headerCols)
     .eq(spec.headerKey, docNo)
     .eq('company_id', companyId)
     .maybeSingle();
@@ -99,7 +106,10 @@ export const autocountRelinkLinesHandler = async (
   }
   const bookLines = Array.isArray(read.body?.lines) ? (read.body?.lines as BookLine[]) : [];
 
-  const parentValue = spec.parentCol === 'purchase_order_id'
+  /* Read off the spec for the same reason `headerCols` is: a per-document fact
+     settled by testing a column NAME silently takes the wrong branch the moment
+     a third document type is added, and nothing fails to compile. */
+  const parentValue = spec.parentFrom === 'headerId'
     ? String((header as { id?: unknown }).id ?? '')
     : docNo;
   const { data: rows, error: rowsErr } = await sb.from(spec.lineTable)

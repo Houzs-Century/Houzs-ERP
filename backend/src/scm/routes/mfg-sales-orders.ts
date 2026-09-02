@@ -32,6 +32,7 @@ import { specialDeliveryFeesForLines, reconstructDeliveryRuleLines } from '../li
 import { soHasDownstream } from '../lib/downstream-lock';
 import { dateOrNull, effectiveDateAfterPatch, isDateColumn } from '../lib/date-coerce';
 import { statusAfterProcessingDateSet } from '../shared/so-proceeded-status';
+import { soIsMigrated } from '../lib/so-is-migrated';
 import { soDocNosWithDownstream } from '../lib/downstream-lock'; // own line: autocountWritebackWiring asserts the import above verbatim
 import { doNosBySalesOrder, type DeliveryOrderNoRow } from '../lib/so-delivery-order-nos';
 import { soDownstreamRefs, NO_SO_DOWNSTREAM_REFS } from '../lib/downstream-doc-refs';
@@ -4131,7 +4132,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     // change. PWP always wins if both somehow apply (a gift is non-sofa, no code).
     const pwpBaseSen = pwpBaseByIdx.get(idx) ?? freeGiftBaseByIdx.get(idx) ?? null;
     const pwpSofaComboIds = pwpSofaByIdx.get(idx) ?? null;
-    return recomputeFromSnapshot(draft, product, fabric, cachedConfig, cachedCombos, sofaModulePrices, sellingTiers, cachedFabricAddonConfig, pwpBaseSen, pwpSofaComboIds, cachedSpecialAddons, sofaModuleCostRows, cachedModelOverrides, cachedCompartmentOverrides, erpLineTrust(createPosTablet, Number(it.unitPriceSen ?? 0), it.zeroPriceIntended));
+    return recomputeFromSnapshot(draft, product, fabric, cachedConfig, cachedCombos, sofaModulePrices, sellingTiers, cachedFabricAddonConfig, pwpBaseSen, pwpSofaComboIds, cachedSpecialAddons, sofaModuleCostRows, cachedModelOverrides, cachedCompartmentOverrides, erpLineTrust(createPosTablet, Number(it.unitPriceSen ?? 0), it.zeroPriceIntended, false));
   }));
   /* Commander 2026-05-29 (system-wide) — the SELLING unit price is now
      operator-authored on every SO line. The product price tables are COST,
@@ -7073,11 +7074,9 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
     const effDeliv = effectiveDateAfterPatch(deliv, origDeliv);
     /* Owner 2026-07-04 — Processing + Delivery are all-or-nothing (both set or
        both empty), kept as a SHORT-CIRCUIT rather than aggregated: half a date
-       pair is structurally incomplete, not one of several field-level fixes. The
-       predicate is shared/so-processing-date's — this path, create, the CO paths
-       and both amendment paths state the rule ONCE, and its grandfather carve-out
-       (a stored unpaired pair this save leaves alone) lives inside it rather than
-       in a `touchesDates` flag each caller re-derived.
+       pair is structurally incomplete. The predicate is shared/so-processing-date's
+       — this path, create, the CO paths and both amendment paths state it ONCE,
+       and its grandfather carve-out lives inside it, not in a `touchesDates` flag.
 
        CLEARING ONE CLEARS BOTH (owner: 同时有或者同时没有). Removing the
        Processing Date is already super-admin-only (superAdminClearsProc above),
@@ -7917,7 +7916,7 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
     modelOverridesLite,      // migration 0175 — per-Model Δ
     compartmentOverridesLite, // migration 0025 — per-compartment Δ
     // owner ruling — non-POS author prices freely; see erpLineTrust.
-    erpLineTrust(addLinePosTablet, Number(it.unitPriceSen ?? 0), it.zeroPriceIntended),
+    erpLineTrust(addLinePosTablet, Number(it.unitPriceSen ?? 0), it.zeroPriceIntended, false),
   );
   /* Pricing trust boundary (Owner 2026-05-31, see isPosTabletCaller). POS tablet
      roles are drift-rejected + take the server price; Backend / office authors
@@ -8229,6 +8228,7 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
 
 mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
   const sb = c.get('supabase'); const docNo = c.req.param('docNo'); const itemId = c.req.param('itemId'); const user = c.get('user');
+  const patchSoIsMigrated = await soIsMigrated((d) => sb.from('mfg_sales_orders').select('linked_ac_docno').eq('doc_no', d).maybeSingle(), docNo);
   let it: Record<string, unknown>;
   try { it = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
 
@@ -8455,7 +8455,7 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
       modelOverridesPatch, // migration 0175 — per-Model Δ
       compartmentOverridesPatch, // migration 0025 — per-compartment Δ
       // owner ruling — non-POS author prices freely; see erpLineTrust.
-      erpLineTrust(posTablet, clientUnit, it.zeroPriceIntended),
+      erpLineTrust(posTablet, clientUnit, it.zeroPriceIntended, patchSoIsMigrated),
     );
     /* Task 6 — grandfathering: a line already carrying variants.freeItem was
        made free at create time and must STAY at RM 0 on edit recompute, even

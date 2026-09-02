@@ -282,3 +282,11 @@ Unlike Delivery Return, there is **no sales-scope row filter** here — procurem
 `Print`, `Print Purchase Order <no>` and `Print Goods Received <no>` in place —
 the row already carries `purchase_order` and `grn`, so no payload change was
 required. `document-conversion.md` §8b has the rule.
+
+## Drill-down columns and "still loading"
+
+A cell fed by a SECOND query renders **WORKING…** while that query is in flight
+and **NOT LOADED** if it fails — never `STOCK` or a bare dash, which are
+answers. `coverage` is a required prop on the shared drill-down; the rule, the
+five surfaces that fetch separately, and how to add a sixth are in
+`docs/modules/coverage-state.md` (trace: `docs/bugs/0603-a-drill-down-printed-stock-while-the-answer-was-still-loadin.md`).

@@ -46,6 +46,7 @@ import { fetchPrintBundle } from "../../lib/printDocumentPdf";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { PageHeader } from "../../components/Layout";
 import { SoListPoCell, SoSourceChips, SoStockPill } from "../../components/SoSourceChips";
+import { coverageStateOf } from "../../components/coverage-state";
 import { overlaySoLineCoverage } from "../../vendor/scm/lib/so-coverage-overlay";
 import { StockRemarkPill, stockRemarkSortScore } from "../../components/StockRemarkPill";
 import { SoListDoCell } from "../../components/SoListDoCell";
@@ -958,7 +959,7 @@ function SoLinesExpansion({ docNo }: { docNo: string }) {
                   un-arrived remainder the MRP coverage PO + ETA — the ONE
                   shared renderer, identical to the SO detail page. */}
               <span className="min-w-0">
-                <SoSourceChips line={l} />
+                <SoSourceChips line={l} coverage={coverageStateOf(coverageQ)} />
               </span>
             </div>
           );

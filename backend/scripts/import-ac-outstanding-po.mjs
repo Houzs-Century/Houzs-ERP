@@ -187,7 +187,7 @@ async function main() {
   let pos = [...groups.entries()];
   if (LIMIT) pos = pos.slice(0, LIMIT);
 
-  const built = []; const exceptions = []; const sofaDecode = []; let noWh = 0, bfCol = 0, bfPending = 0;
+  const built = []; const exceptions = []; const sofaDecode = []; let noWh = 0, bfCol = 0, bfPending = 0, codelessLines = 0;
   for (const [acPo, ls] of pos) {
     skipDedication = existingDocs.has(acPo);
     const h = ls[0];
@@ -198,8 +198,32 @@ async function main() {
       const hit = byAc.get(norm(l.ItemCode));
       let erp = hit ? hit.erp : null; let cat = hit ? hit.cat : null;
       if (erp && !codeSet.has(erp.toUpperCase()) && C1_ALIAS[erp.toUpperCase()]) erp = C1_ALIAS[erp.toUpperCase()];
-      if (!erp) { exceptions.push({ po: acPo, code: l.ItemCode, reason: "no material mapping" }); continue; }
-      const grp = CATG[cat] || "others";
+      /* A LINE WITH NO ITEM CODE IS STILL 20 PILLOW CASES. AutoCount allows a
+         purchase line that carries only a description, and this importer used to
+         drop the whole line — so PO-009979's "ERGOTEX PILLOW CASE - FAIR" x20 was
+         on the book and absent from the ERP, silently. Owner 2026-09-02, asked
+         whether such a line should come in: 「要进 accessories」.
+
+         It is IMPORTED AS AN ACCESSORY, carrying the book's own description,
+         quantity and price. Nothing is invented: the description is copied, and
+         a line that HAS a code the mapping cannot resolve is still an exception —
+         that one is a mapping gap to fix, not a code-less line to accept. The two
+         are separated so accepting the second cannot hide the first. */
+      const codeless = !String(l.ItemCode ?? "").trim();
+      if (!erp && !codeless) {
+        exceptions.push({ po: acPo, code: l.ItemCode, reason: "no material mapping" });
+        continue;
+      }
+      if (!erp && codeless) {
+        const desc = String(l.Description ?? "").trim();
+        if (!desc) {
+          exceptions.push({ po: acPo, code: null, reason: "no item code AND no description — nothing to carry" });
+          continue;
+        }
+        codelessLines++;
+        log(`  code-less line imported as accessory: ${acPo} "${desc.slice(0, 40)}" x${Math.round(num(l.Qty)) || 1}`);
+      }
+      const grp = codeless ? "accessories" : (CATG[cat] || "others");
       const qty = Math.round(num(l.Qty)) || 1;
       const done = Math.round(num(l.TransferedQty)) || 0;
       if (done > 0) anyReceived = true;
@@ -274,7 +298,18 @@ async function main() {
       const prod = prodByCode.get(erp.toUpperCase());
       const soItemId = dedicate(l, erp);
       if (!soItemId && !skipDedication) noSoLine++;
-      items.push({ erp, grp, name: (prod && prod.name) || l.Description || erp, sku: l.ItemCode, desc: l.Description, d2: l.Desc2, qty, received: done, soItemId, dtlKey: acDtlKey(l), up, lt, w, deliv: acDeliveryDate(l), bf, variants });
+      /* A code-less line carries item_code NULL — the book HAS no code for it and
+         minting one would be inventing a fact (the owner's migration rule). Its
+         identity is the description the book does carry, which goes to
+         material_name and to description. If the column turns out to be NOT NULL
+         the insert fails LOUDLY on that one line, which is the honest outcome and
+         better than a placeholder code nobody can trace. UNVERIFIED against the
+         live column until the first APPLY. */
+      items.push({ erp: codeless ? null : erp, grp,
+        name: codeless ? String(l.Description ?? "").trim() : ((prod && prod.name) || l.Description || erp),
+        sku: codeless ? null : l.ItemCode,
+        desc: l.Description, d2: l.Desc2, qty, received: done, soItemId, dtlKey: acDtlKey(l),
+        up, lt, w, deliv: acDeliveryDate(l), bf, variants });
     }
     if (!items.length) continue;
     built.push({ poNo: "HC-" + acPo, acPo, supId, poDate: h.DocDate, locWh: whId(h.Location), subtotal, status: anyReceived ? "PARTIALLY_RECEIVED" : "SUBMITTED", items });
@@ -292,6 +327,7 @@ async function main() {
   const dated = built.reduce((a, o) => a + o.items.filter((i) => i.deliv).length, 0);
   log(`POs already in the ERP (dedication left to the repair): ${built.length - fresh.length}`);
   log(`dedicated to an SO line: ${dedicated} of ${fresh.reduce((a, o) => a + o.items.length, 0)} new lines; no SO line found: ${noSoLine}; lines carrying a delivery date: ${dated}`);
+  log(`code-less lines imported as ACCESSORIES (owner 2026-09-02 「要进 accessories」): ${codelessLines}`);
   log(`exceptions: ${exceptions.length}`);
   for (const e of exceptions.slice(0, 15)) log(`   PO ${e.po} ${e.code ? `code="${e.code}" ` : ""}${e.reason}`);
   const s = built.find((o) => o.items.some((i) => i.grp === "bedframe" && i.variants && i.variants.colourId)) || built[0];

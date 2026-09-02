@@ -965,3 +965,11 @@ The DO/delivery STATUS derivation and delivery-planning state logic remain
 owned separately and are sensitive — the R8 relationship work above is
 read-only and never touches status. Confirm the DO status strip live before
 merging any change near these files.
+
+## Drill-down columns and "still loading"
+
+A cell fed by a SECOND query renders **WORKING…** while that query is in flight
+and **NOT LOADED** if it fails — never `STOCK` or a bare dash, which are
+answers. `coverage` is a required prop on the shared drill-down; the rule, the
+five surfaces that fetch separately, and how to add a sixth are in
+`docs/modules/coverage-state.md` (trace: `docs/bugs/0603-a-drill-down-printed-stock-while-the-answer-was-still-loadin.md`).

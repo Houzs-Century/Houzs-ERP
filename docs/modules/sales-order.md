@@ -829,6 +829,25 @@ Tests: `src/scm/lib/venue-binding.test.ts` (the five outcomes) and
 Ledger: `docs/bugs/0591-*`. Repair for orders already blanked:
 `backend/scripts/repair-blanked-venue.mjs`.
 
+**A TYPED SELLING PRICE IS NOT THE SYSTEM'S TO CHANGE (owner, 2026-09-02).**
+「我们的 selling price 是根据我们 manually 填入的，不应该被这种影响」— and
+「fabric 不需要」 with it. Neither the special-order surcharge nor the fabric
+surcharge may move a price a person entered, and on an AutoCount-imported line
+the STORED price is that answer.
+
+`erpLineTrust(posTablet, unitPriceSen, zeroPriceIntended, soIsMigrated)` returns
+`'including-zero'` for an imported order, which is the mode that both suppresses
+the chargeable-surcharge arm AND persists the stored price — zero included. The
+amendment path derived that from `linked_ac_docno` already; the plain line PATCH
+passed a bare `true` and therefore did neither, so a migrated line priced 0 (most
+of them are) could be handed base + surcharges by an ordinary edit
+(`docs/bugs/0600-*`).
+
+`soIsMigrated` is REQUIRED, not optional — an optional flag lets a new call site
+keep the unprotected answer silently, which is how the gap survived. **An ADD
+line always passes `false`**, on a migrated order too: a line typed today has no
+AutoCount price to protect.
+
 **PROCEEDED IS THE DATE — and the rule runs BOTH ways since 2026-09-01.**
 Moving to `IN_PRODUCTION` has always refused without a Processing Date, so the
 status implied the date. Nothing made the date imply the STATUS, so a header save
@@ -3938,3 +3957,11 @@ while a print entry needs an address. `lib/downstream-doc-refs.ts` and
 `lib/so-delivery-order-nos.ts` hold that split; the full rule, the per-list
 enumeration and the one-to-many cap are in
 `document-conversion.md` §8b.
+
+## Drill-down columns and "still loading"
+
+A cell fed by a SECOND query renders **WORKING…** while that query is in flight
+and **NOT LOADED** if it fails — never `STOCK` or a bare dash, which are
+answers. `coverage` is a required prop on the shared drill-down; the rule, the
+five surfaces that fetch separately, and how to add a sixth are in
+`docs/modules/coverage-state.md` (trace: `docs/bugs/0603-a-drill-down-printed-stock-while-the-answer-was-still-loadin.md`).

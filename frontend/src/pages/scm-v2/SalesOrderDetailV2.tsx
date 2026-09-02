@@ -18,6 +18,7 @@
 // swap on /scm/sales-orders/:docNo decides which one users see.
 
 import { lazy, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { coverageStateOf } from "../../components/coverage-state";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { LazySlot } from "../../components/LazySlot";
 import { scmListReturnTo } from "../../lib/scmListReturn";
@@ -964,7 +965,7 @@ function SalesOrderDetailV2ReadOnly() {
           ...(l.ready_source_pos ?? []).map((r) => r.po ?? "STOCK ADJ"),
           ...(l.coverage_po ? [l.coverage_po] : []),
         ].join(", "),
-      render: (l) => <SoSourceChips line={l} />,
+      render: (l) => <SoSourceChips line={l} coverage={coverageStateOf(coverage)} />,
     },
   ];
 

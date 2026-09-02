@@ -2000,3 +2000,11 @@ kept rendering the whole time.
 `setHold` is a REQUIRED parameter on `purchaseInvoiceRowMenu`, so the next
 document to grow a menu cannot repeat it silently — the compiler names the call
 site. See `docs/bugs/0525-the-purchase-invoice-had-an-on-hold-tab-and-no-way-to-reach.md`.
+
+## Drill-down columns and "still loading"
+
+A cell fed by a SECOND query renders **WORKING…** while that query is in flight
+and **NOT LOADED** if it fails — never `STOCK` or a bare dash, which are
+answers. `coverage` is a required prop on the shared drill-down; the rule, the
+five surfaces that fetch separately, and how to add a sixth are in
+`docs/modules/coverage-state.md` (trace: `docs/bugs/0603-a-drill-down-printed-stock-while-the-answer-was-still-loadin.md`).

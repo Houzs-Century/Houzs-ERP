@@ -65,6 +65,18 @@ let bankError: unknown = null;
 /* The default-bank card's hooks (vendor accounting-queries) — stubbed so this
    file stays about the maintenance matrix; the card's own contract is the
    PaymentVoucherNew tests' business. */
+/* The recognition-rules card's hooks — stubbed with one live rule so the card
+   renders; its write contract is tests/bankRoutes.test.ts. */
+const saveRule = vi.fn();
+const createRule = vi.fn();
+vi.mock('./bank-queries', () => ({
+  useBankRules: () => ({ data: { rules: [
+    { id: 1, acquirer_code: 'PBB', pattern: 'PBB-PBCS', match_field: 'both', trading_date_pattern: null, merchant_pattern: null, sort_order: 20, is_active: true },
+  ] }, isLoading: false }),
+  useSaveBankRule: () => ({ mutate: saveRule, isPending: false }),
+  useCreateBankRule: () => ({ mutate: createRule, isPending: false }),
+}));
+
 const saveBankDefault = vi.fn();
 vi.mock('../../vendor/scm/lib/accounting-queries', () => ({
   useAccounts: () => ({ data: { accounts: [
@@ -180,5 +192,30 @@ describe('the report layout — the shared half', () => {
     fireEvent.click(screen.getByText('Save'));
     expect(screen.getByText(/Fill in the Date heading/)).toBeTruthy();
     expect(saveLayout).not.toHaveBeenCalled();
+  });
+});
+
+describe('the bank recognition rules card', () => {
+  test('a rule edits in place and saves only what changed; a new rule needs acquirer + pattern', () => {
+    draw();
+    /* Edit the live PBB rule's pattern — the row's Save wakes up. */
+    const pattern = screen.getByLabelText('Pattern for PBB rule 1') as HTMLInputElement;
+    expect(pattern.value).toBe('PBB-PBCS');
+    fireEvent.change(pattern, { target: { value: 'PBB-PBCS|PBCS-IBG' } });
+    const saves = screen.getAllByText('Save').map((el) => el.closest('button')!).filter((b) => !b.disabled);
+    fireEvent.click(saves[saves.length - 1]!);
+    expect(saveRule).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 1, pattern: 'PBB-PBCS|PBCS-IBG' }),
+      expect.anything(),
+    );
+
+    /* The add row: acquirer + pattern then Add. */
+    fireEvent.change(screen.getByLabelText('New rule acquirer'), { target: { value: 'PBB' } });
+    fireEvent.change(screen.getByLabelText('New rule pattern'), { target: { value: 'IBG CREDIT' } });
+    fireEvent.click(screen.getByText('Add'));
+    expect(createRule).toHaveBeenCalledWith(
+      { acquirerCode: 'PBB', pattern: 'IBG CREDIT' },
+      expect.anything(),
+    );
   });
 });
