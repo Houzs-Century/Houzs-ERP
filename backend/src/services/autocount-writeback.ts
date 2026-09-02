@@ -1396,17 +1396,13 @@ export function composeCreatePo(
  * into AddDetail(). SO 2026-08-11, PO 2026-08-31 — this said "nothing sets it
  * yet" for the twenty days between them. docs/modules/autocount-writeback.md.
  *
- * LINE REMOVAL IS A RETIREMENT, NEVER AN OMISSION. Two things reach AutoCount as
- * `Retire: true` (Qty = 0, Transferable = false, an `[ERP-CANCELLED]` Desc2
- * marker — the only shape the 2.2 SDK allows, since no detail class has a
- * line-level Cancelled and only SalesOrder has DeleteDetail):
- *
- *   • a RETAINED line the ERP has cancelled (`ErpLine.cancelled`), and
- *   • `retired` — a line the ERP HARD-DELETED, named by the AutoCount key the
- *     row carried before it went. Simply leaving it out of `Lines` is what the
- *     naive version did, and /edit applies only the lines it is GIVEN: the
- *     account book would keep the line live, outstanding, and transferable into
- *     a later DO. The delete routes therefore have to say so explicitly.
+ * LINE REMOVAL — CORRECTED 2026-09-02 (0608). This said removal is ALWAYS a
+ * retirement. It is not: a HARD-DELETED line changes the line SET, which
+ * rebuilds the document, so the cleared book never carries it. `Retire: true`
+ * (Qty = 0, Transferable = false, an `[ERP-CANCELLED]` Desc2 marker) is now for
+ * the other case only — a line the ERP still HAS and has cancelled, which must
+ * stay visible. Either way it is never an OMISSION: /edit applies only the lines
+ * it is GIVEN, so a line simply left out would stay live and transferable.
  *
  * A CANCELLED LINE WITH NO KEY IS REFUSED like any other keyless line, and for
  * a sharper reason: it means the ERP wants a line retired in the account book
