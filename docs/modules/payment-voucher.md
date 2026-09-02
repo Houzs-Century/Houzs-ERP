@@ -167,12 +167,48 @@ been spent refuses to cancel (`advance_applied`) — its value lives inside
 other documents now; an unspent advance cancels with its voucher, row and
 all. Contracts: `backend/tests/pvSupplierAdvance.test.ts`.
 
+## 0e. The bill reader (OCR, 2026-09-02)
+
+The owner's ask, his words: 我想要把ocr 功能放去payment 那边，还有就是coming 的
+bill 我也想要用ocr. Two doors, one reader:
+
+- **In the form** — "📷 Scan bill (OCR)" in the New PV Lines card header.
+  Multi-select = the PAGES of one bill; the form prefills payee, date, notes
+  and lines from what was read.
+- **The pile** — `/scm/payment-vouchers/scan` ("📷 Scan bills" on the list).
+  Many files at once, the owner's three cases, his taxonomy exactly:
+  1. 一张bill 几页 — tick the pages, press Merge: ONE bill. The rule that
+     keeps it honest: **one file = one bill unless a human merged pages** —
+     the reader never guesses whether two files are one document.
+  2. 一个supplier 多张单 — read bills group by matched supplier (unmatched
+     ones by printed vendor name) and a group opens as ONE voucher, one line
+     per bill.
+  3. 多个supplier 多个单 — "pay each bill separately" splits a group; each
+     bill opens as its own voucher.
+
+The reading is POST `/payment-vouchers/extract` (perm
+`scm.payment_voucher.create`; 503 when `ANTHROPIC_API_KEY` is unset) →
+`backend/src/acc/bill-extract.ts`, the scan-so discipline verbatim: strict
+JSON, unreadable fields are **null and never invented** (an unreadable TOTAL
+renders "total unreadable — will need typing", not RM 0.00), RM→sen once
+server-side, and supplier matching in plain code — normalize both names
+(SDN BHD / S\/B / ENTERPRISE tails stripped), exact → contains, below that
+NO match, because a wrong supplier pre-selected is worse than none. Caps:
+12 bills/call, 8 files/bill, 20MB/file, images + PDF (the image allowlist is
+`vision-blocks.ts`'s — one home). **Nothing on either door writes.** Every
+scan lands on the New page for a person to check, pick the account (empty on
+purpose until the vendor-memory PR has something honest to suggest) and save
+through the untouched approval cycle. Contracts:
+`backend/src/acc/bill-extract.test.ts`,
+`frontend/src/pages/scm-v2/PaymentVoucherScan.test.tsx`.
+
 ## 1. Frontend
 
 | Surface | File |
 |---------|------|
 | Desktop list | `frontend/src/pages/scm-v2/PaymentVouchers.tsx` |
 | Desktop new | `frontend/src/pages/scm-v2/PaymentVoucherNew.tsx` |
+| Desktop scan (the bill pile) | `frontend/src/pages/scm-v2/PaymentVoucherScan.tsx` |
 | Desktop detail + edit | `frontend/src/pages/scm-v2/PaymentVoucherDetail.tsx` |
 
 **There is NO mobile surface.** Nothing under `frontend/src/mobile` mentions a
@@ -183,7 +219,8 @@ mobile PV is ever added, it must carry §4 and §6 with it.
 Data hooks: `frontend/src/vendor/scm/lib/payment-voucher-queries.ts` —
 `usePaymentVouchers(status?)`, `usePaymentVoucherDetail(id)`,
 `useCreatePaymentVoucher`, `useUpdatePaymentVoucher`, `usePostPaymentVoucher`,
-`useCancelPaymentVoucher`. Query keys `['payment-vouchers', …]` and
+`useCancelPaymentVoucher`; the bill reader's `useExtractBills` + `fileToBase64`
+(§0e). Query keys `['payment-vouchers', …]` and
 `['payment-voucher-detail', id]`.
 
 Shared components: `CurrencySelect` (`frontend/src/vendor/scm/components/`) draws the
@@ -221,6 +258,7 @@ Mounted at `/api/scm/payment-vouchers`, behind
 | GET | `/` | area guard | `limit(500)`, company-scoped, `?status=` |
 | GET | `/:id` | area guard | header + lines + allocations (joined PI number / total / paid) |
 | POST | `/` | `scm.payment_voucher.create` | creates **DRAFT**; allocations persisted but settle nothing yet |
+| POST | `/extract` | `scm.payment_voucher.create` | §0e — reads uploaded bills with Claude vision, returns extractions + supplier matches; writes NOTHING; 503 without `ANTHROPIC_API_KEY` |
 | PATCH | `/:id` | `scm.payment_voucher.write` | **DRAFT only** (409 `not_editable`); a cleared Voucher Date is refused 400 `voucher_date_required` — §7 |
 | POST | `/:id/post` | `scm.payment_voucher.post` | writes the GL entry, DRAFT → POSTED, settles PIs, **adopts the FX rate** |
 | POST | `/:id/cancel` | `scm.payment_voucher.cancel` | reverses the GL entry, unwinds settlement, **retains the FX rate** |

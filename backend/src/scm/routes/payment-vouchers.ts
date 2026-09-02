@@ -60,6 +60,7 @@ import { todayMyt } from '../lib/my-time';
 import { recordEntityAudit, diffFields, compactChanges, fieldChange, statusChange, assertAuditWritable, auditUnavailableBody } from '../lib/entity-audit';
 import { pvCanEdit, pvCanSubmit, pvCanDecide, pvCanWithdraw, pvCanPost } from '../lib/pv-approval';
 import { settlePiPaidSen } from '../lib/pi-settlement';
+import { extractOneBill, matchSupplier, BILL_IMAGE_MIMES, MAX_BILLS_PER_CALL, MAX_FILES_PER_BILL, MAX_BILL_FILE_BYTES } from '../../acc/bill-extract';
 import { planPvRateAdoption, isRateRetainedFromPv, roundRate6 } from '../lib/pv-rate-adoption';
 import { recostFromGrn } from '../lib/recost';
 
@@ -1447,6 +1448,76 @@ export const applyAdvanceHandler = async (c: any) => {
   });
 };
 paymentVouchers.post('/:id/apply-advance', applyAdvanceHandler);
+
+/* ── Bill OCR — read incoming bills into voucher pre-fills (2026-09-02) ──────
+   我想要把ocr 功能放去payment 那边. Each `bills` entry is ONE document (its
+   files are its pages — the human said so at upload; the server never guesses
+   whether two files are one bill). One vision call per bill, supplier matched
+   server-side, and NOTHING written: the answer pre-fills a form a person
+   still checks, saves, and sends through the untouched approval cycle. */
+export const extractBillsHandler = async (c: any) => {
+  if (!hasHouzsPerm(c, 'scm.payment_voucher.create')) {
+    return c.json({ error: "You don't have permission to do that." }, 403);
+  }
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const apiKey = c.env?.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    return c.json({ error: 'anthropic_key_missing', reason: 'Run: npx wrangler secret put ANTHROPIC_API_KEY' }, 503);
+  }
+
+  let body: any;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
+  const bills = Array.isArray(body.bills) ? body.bills : [];
+  if (bills.length === 0) return c.json({ error: 'no_bills', message: 'Send at least one bill.' }, 400);
+  if (bills.length > MAX_BILLS_PER_CALL) {
+    return c.json({ error: 'too_many_bills', message: `At most ${MAX_BILLS_PER_CALL} bills per batch — split the pile.` }, 400);
+  }
+  for (const [i, b] of bills.entries()) {
+    const files = Array.isArray(b?.files) ? b.files : [];
+    if (files.length === 0) return c.json({ error: 'empty_bill', message: `Bill ${i + 1} has no files.` }, 400);
+    if (files.length > MAX_FILES_PER_BILL) {
+      return c.json({ error: 'too_many_pages', message: `Bill ${i + 1} has more than ${MAX_FILES_PER_BILL} pages.` }, 400);
+    }
+    for (const f of files) {
+      const mime = String(f?.mime ?? '');
+      if (!BILL_IMAGE_MIMES.has(mime) && mime !== 'application/pdf') {
+        return c.json({ error: 'bad_file_type', message: `Bill ${i + 1}: ${mime || 'unknown type'} — JPEG / PNG / WebP / PDF only.` }, 400);
+      }
+      const size = Math.floor(String(f?.dataBase64 ?? '').length * 0.75);
+      if (size > MAX_BILL_FILE_BYTES) {
+        return c.json({ error: 'file_too_big', message: `Bill ${i + 1}: a file is over ${Math.round(MAX_BILL_FILE_BYTES / 1024 / 1024)}MB.` }, 400);
+      }
+    }
+  }
+
+  /* Suppliers once for the whole batch — matching is per bill, in code. */
+  const sb = c.get('supabase');
+  const { data: supRaw, error: supErr } = await scopeToCompany(
+    sb.from('suppliers').select('id, code, name').eq('status', 'ACTIVE'), c,
+  );
+  if (supErr) return c.json({ error: 'load_failed', reason: supErr.message }, 500);
+  const suppliers = (supRaw ?? []) as Array<{ id: string; code: string | null; name: string }>;
+
+  const out = [] as Array<Record<string, unknown>>;
+  for (const [i, b] of bills.entries()) {
+    const files = (b.files as Array<{ name?: unknown; mime?: unknown; dataBase64?: unknown }>).map((f) => ({
+      name: String(f.name ?? `file-${i}`), mime: String(f.mime ?? ''), dataBase64: String(f.dataBase64 ?? ''),
+    }));
+    const r = await extractOneBill(apiKey, files);
+    if (!r.ok) {
+      out.push({ index: i, ok: false, reason: r.reason });
+      continue;
+    }
+    const match = matchSupplier(r.extraction.vendorName, suppliers);
+    out.push({
+      index: i, ok: true, extraction: r.extraction,
+      supplierMatch: match ? { id: match.supplier.id, code: match.supplier.code, name: match.supplier.name, confidence: match.confidence } : null,
+    });
+  }
+  return c.json({ bills: out });
+};
+paymentVouchers.post('/extract', extractBillsHandler);
 
 /* ── reversePvAccounting — contra the active PV JE (mirror reversePiAccounting).
    Loads the original lines + swaps Dr/Cr so the reversal nets the original to
