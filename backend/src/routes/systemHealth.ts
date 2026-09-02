@@ -5,6 +5,13 @@ import { isSupabaseConfigured, getSupabaseService } from "../db/supabase";
 import { reconcileLedger } from "../scm/lib/reconcile-ledger";
 import { PAGE as PAGINATE_ALL_PAGE } from "../scm/lib/paginate-all";
 import { sessionSigningSecret } from "../services/session-pass";
+import {
+  cacheFamilyReading, readingFor, CLIENT_POLL_SECONDS, type AuthFastPath,
+} from "../services/auth-fastpath-probe";
+import {
+  CONFIG_CACHE_TTL_SECONDS, configCacheKeyUrl, configCacheMatch,
+} from "../services/configCache";
+import { allowedCompanyIds } from "../scm/lib/companyScope";
 
 // ---------------------------------------------------------------------------
 // /api/admin/health — System Health, "real data" phase 1. Gated on the
@@ -109,7 +116,54 @@ app.get("/live", requirePageAccess("system_health"), async (c) => {
   // truthiness test on the raw secret: that helper also rejects a key under 16
   // characters, so a placeholder reads as OFF here exactly as it behaves at
   // runtime. The value itself never leaves the worker.
-  const sessionSigning = { configured: sessionSigningSecret(c.env) !== null };
+  //
+  // CONFIGURED IS NOT FIRING, and reporting only the first is what `0593` cost:
+  // the feature shipped, read as working from the source, and was inert for ~95%
+  // of every session's life. `authPath` is what the middleware OBSERVED doing on
+  // this very request (services/auth-fastpath-probe.ts).
+  const sessionSigningConfigured = sessionSigningSecret(c.env) !== null;
+  const thisRequestPath: AuthFastPath = c.get("authPath") ?? "unknown";
+  const sessionSigning = {
+    configured: sessionSigningConfigured,
+    this_request: thisRequestPath,
+  };
+
+  /* THE OTHER 90%. /api/presence and /api/announcements/banner are ~90% of every
+     slow request in production (697 of 761 occurrences over three days,
+     2026-09-02), and both cache — so the question is whether the caches HIT.
+     Presence rides the edge tier and can be asked directly for this caller's
+     scope; the banner is keyed per USER and per version, so it is reported by
+     its SETTING rather than probed, which is stated in the payload rather than
+     dressed as a measurement. */
+  const presenceScopeKey = (() => {
+    const cos = allowedCompanyIds(c);
+    return cos === undefined
+      ? "scope=all"
+      : `scope=co:${[...cos].sort((a, b) => a - b).join(",")}`;
+  })();
+  const presenceKeyUrl = configCacheKeyUrl(
+    new URL(c.req.url).origin, "presence", presenceScopeKey, 1,
+  );
+  let presenceState: "hit" | "miss" | "bypass" = "bypass";
+  if (presenceKeyUrl) {
+    presenceState = (await configCacheMatch(presenceKeyUrl)) ? "hit" : "miss";
+  }
+  const configCache = {
+    presence: cacheFamilyReading(
+      CONFIG_CACHE_TTL_SECONDS.presence, CLIENT_POLL_SECONDS.presence, presenceState,
+    ),
+    /* NOT PROBED — the banner key carries the user id and the family version, so
+       a lookup here would answer about a key nobody polls. `bypass` says "not
+       measured", never "missing". */
+    banner: cacheFamilyReading(
+      CONFIG_CACHE_TTL_SECONDS.banner, CLIENT_POLL_SECONDS.banner, "bypass",
+    ),
+  };
+  const authFastPath = {
+    session_pass: sessionSigning,
+    config_cache: configCache,
+    reading: readingFor(sessionSigningConfigured, thisRequestPath, configCache),
+  };
 
   // SCM-route liveness — the page must not show green while the SCM stack is
   // 500ing. Probe ONE bounded SCM read straight through PostgREST (suppliers,
@@ -190,6 +244,9 @@ app.get("/live", requirePageAccess("system_health"), async (c) => {
     r2,
     anthropic,
     sessionSigning,
+    /* WHETHER IT IS FIRING, and whether the two endpoints that are ~90% of every
+       slow request are actually hitting their caches — auth-fastpath-probe.ts. */
+    authFastPath,
     scm,
     counts,
   });

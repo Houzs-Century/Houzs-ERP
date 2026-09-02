@@ -46,6 +46,18 @@ type LivePayload = {
   r2?: { bound: boolean; ok: boolean; latency_ms: number };
   anthropic?: { configured: boolean };
   sessionSigning?: { configured: boolean };
+  /* CONFIGURED IS NOT FIRING. The card above reads the SETTING; this reads what
+     the request that fetched this page actually DID, plus whether the two
+     endpoints behind ~90% of every slow request are hitting their caches.
+     Backend: services/auth-fastpath-probe.ts. */
+  authFastPath?: {
+    session_pass: { configured: boolean; this_request: "pass" | "session-db" | "unknown" };
+    config_cache: Record<string, {
+      ttl_seconds: number; client_poll_seconds: number;
+      state: "hit" | "miss" | "bypass"; ttl_shorter_than_poll: boolean;
+    }>;
+    reading: string;
+  };
   scm?: { configured: boolean; ok: boolean; latency_ms: number; error?: string };
   counts: {
     users_active: number;
@@ -427,7 +439,49 @@ export function SystemHealth() {
                 }
                 tone={d.sessionSigning && !d.sessionSigning.configured ? "warning" : "neutral"}
               />
+              {/* ...and whether it FIRED. A key can be set while every request
+                  still pays the database — that is docs/bugs/0593 exactly, and
+                  nothing on any screen could tell the two apart. */}
+              <StatCard
+                icon={<KeyRound size={14} />}
+                label="This request's authorization"
+                value={
+                  !d.authFastPath ? "—"
+                    : d.authFastPath.session_pass.this_request === "pass" ? "Fast path"
+                      : d.authFastPath.session_pass.this_request === "session-db" ? "Database"
+                        : "Not reported"
+                }
+                sub={
+                  !d.authFastPath
+                    ? "Unknown"
+                    : d.authFastPath.session_pass.this_request === "pass"
+                      ? "It skipped the authorization re-read"
+                      : d.authFastPath.session_pass.this_request === "session-db"
+                        ? "It re-read authorization from the database"
+                        : "The server did not say — do not read this as either answer"
+                }
+                tone={
+                  d.authFastPath?.session_pass.this_request === "session-db"
+                    ? "warning"
+                    : "neutral"
+                }
+              />
             </div>
+
+            {/* The plain sentence, derived from the numbers above rather than
+                written beside them, so it cannot drift away from them. */}
+            {d.authFastPath && (
+              <p className="mt-3 text-[12.5px] leading-relaxed text-ink-secondary">
+                {d.authFastPath.reading}
+                {Object.entries(d.authFastPath.config_cache)
+                  .filter(([, f]) => f.ttl_shorter_than_poll)
+                  .map(([name, f]) => (
+                    <span key={name} className="ml-1 text-warning-text">
+                      {name}: kept {f.ttl_seconds}s, asked for every {f.client_poll_seconds}s.
+                    </span>
+                  ))}
+              </p>
+            )}
 
             {/* DB / connection health explainer — the cold-start signal. */}
             <div className="rounded-lg border border-border bg-surface px-5 py-5 shadow-stone">
