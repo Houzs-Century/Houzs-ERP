@@ -20,6 +20,7 @@
 // the tree; App.tsx route swap decides which one users see.
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { shippedProgressColumn, ShippedProgressPill } from "./so-list-shipped-column";
 import { SO_STATUS_TABS, statusFor, type StatusTab } from "./so-list-status";
 import { salesOrderRowMenu } from "./row-menus";
 import { brandingToneForCategory, type BrandTone } from "../../lib/brandingTone";
@@ -145,6 +146,8 @@ type SoRow = HoldFields & {
   customer_type: string | null;
   building_type: string | null;
   customer_country: string | null;
+  shipped_qty?: number | null;   // §0.4b — how much has LEFT
+  deliverable_qty?: number | null;
   do_nos?: string[] | null;
   /** The same delivery orders and the sales invoices raised against this order,
    *  each with the id the right-click "Print Delivery Order" needs — a PDF is
@@ -900,7 +903,7 @@ function SoLinesExpansion({ docNo }: { docNo: string }) {
      and the covering incoming PO + ETA belong ON the line — the payload has
      carried them all along. Min-width + horizontal scroll keeps the grid
      honest on narrow desktop panes. */
-  const grid = "grid grid-cols-[92px_minmax(220px,1fr)_56px_100px_110px_96px_190px] items-start gap-2";
+  const grid = "grid grid-cols-[92px_minmax(220px,1fr)_56px_100px_110px_96px_92px_190px] items-start gap-2";
   return (
     <div className="overflow-x-auto rounded-lg border border-border bg-surface">
       <div className="min-w-[880px]">
@@ -911,6 +914,7 @@ function SoLinesExpansion({ docNo }: { docNo: string }) {
           <span className="text-right">Unit</span>
           <span className="text-right">Amount</span>
           <span>Stock</span>
+          <span>Delivered</span>
           <span>Incoming PO</span>
         </div>
         {items.map((l, i) => {
@@ -954,10 +958,9 @@ function SoLinesExpansion({ docNo }: { docNo: string }) {
               <span>
                 <SoStockPill line={l} />
               </span>
-              {/* Shipped lines show the ACTUAL source PO(s) (batch trail, GRN-
-                  healed); READY lines the FIFO-projected PO(s) / STOCK ADJ;
-                  un-arrived remainder the MRP coverage PO + ETA — the ONE
-                  shared renderer, identical to the SO detail page. */}
+              <span><ShippedProgressPill line={l} /></span>
+              {/* The ONE shared renderer, identical to the SO detail page —
+                  the four chips are documented at sales-order.md §0.8. */}
               <span className="min-w-0">
                 <SoSourceChips line={l} coverage={coverageStateOf(coverageQ)} />
               </span>
@@ -1673,6 +1676,7 @@ export function MfgSalesOrdersListV2() {
       sortValue: (r) => stockRemarkSortScore(r.stock_remark),  // fullest first
       render: (r) => <StockRemarkPill remark={r.stock_remark} />,  // was grey text
     },
+    shippedProgressColumn<SoRow>(),
     {
       key: "processing_date",
       group: "Logistics",
