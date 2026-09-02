@@ -22,7 +22,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { CheckCircle2, ChevronDown, History, Pencil, Plus, RotateCcw, Save, Send, Ban, Trash2, X, XCircle } from 'lucide-react';
 import { Button } from '@2990s/design-system';
-import { fmtDateOrDash } from '../../vendor/shared/format';
+import { fmtDate, fmtDateOrDash } from '../../vendor/shared/format';
 import {
   usePaymentVoucherDetail,
   useUpdatePaymentVoucher,
@@ -32,6 +32,7 @@ import {
   useWithdrawPaymentVoucher,
   useApprovePaymentVoucher,
   useRejectPaymentVoucher,
+  useSupplierAdvances, useApplyAdvance,
 } from '../../vendor/scm/lib/payment-voucher-queries';
 import { useAccounts, type Account } from '../../vendor/scm/lib/accounting-queries';
 import { usePurchaseInvoices } from '../../vendor/scm/lib/purchase-invoice-queries';
@@ -723,6 +724,13 @@ export const PaymentVoucherDetail = () => {
         </section>
       )}
 
+      {/* ── The advance this voucher holds, and the knock-off that spends it
+          (预付挂在 supplier, 2026-09-02). Rendered only when a posted supplier
+          voucher paid ahead and money remains on it. */}
+      {pv.status === 'POSTED' && pv.supplier_id && (
+        <AdvanceCard pvId={String(pv.id)} supplierId={String(pv.supplier_id)} />
+      )}
+
       {/* ── Totals ────────────────────────────────────────────────────── */}
       <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
         <section className={styles.card} style={{ maxWidth: 360, width: '100%' }}>
@@ -756,5 +764,105 @@ export const PaymentVoucherDetail = () => {
         />
       )}
     </div>
+  );
+};
+
+/* ── The advance card — money this voucher paid ahead, spent from HERE ──────
+   Knock-off only: applying settles the invoice's paid_sen and burns the
+   advance; NOTHING posts, because both legs already live in AP. The card
+   disappears when the advance is spent to zero. */
+const AdvanceCard = ({ pvId, supplierId }: { pvId: string; supplierId: string }) => {
+  const advancesQ = useSupplierAdvances(supplierId);
+  const applyM = useApplyAdvance();
+  const piListQ = usePurchaseInvoices();
+  const [amounts, setAmounts] = useState<Record<string, number>>({});
+  const [note, setNote] = useState<string | null>(null);
+
+  const mine = (advancesQ.data?.advances ?? []).find((a: { pv_id: string }) => a.pv_id === pvId) ?? null;
+
+  const outstanding = useMemo(() => {
+    return ((piListQ.data?.purchaseInvoices ?? []) as Array<{
+      id: string; invoice_number?: string | null; supplier_id?: string | null;
+      supplier?: { id?: string | null } | null; status?: string | null;
+      total_sen?: number | null; paid_sen?: number | null; invoice_date?: string | null;
+    }>)
+      .filter((r) => {
+        const sid = String(r.supplier_id ?? r.supplier?.id ?? '');
+        const st = String(r.status ?? '').toUpperCase();
+        return sid === supplierId && (st === 'POSTED' || st === 'PARTIALLY_PAID')
+          && Number(r.total_sen ?? 0) - Number(r.paid_sen ?? 0) > 0;
+      })
+      .sort((a, b) => String(a.invoice_date ?? '').localeCompare(String(b.invoice_date ?? '')));
+  }, [piListQ.data, supplierId]);
+
+  if (!mine) return null;
+  const remaining = mine.remaining_sen;
+  const asked = Object.values(amounts).reduce((s, v) => s + v, 0);
+  const over = asked > remaining;
+
+  return (
+    <section className={styles.card}>
+      <div className={styles.cardHeader}>
+        <h2 className={styles.cardTitle}>Advance on this voucher</h2>
+        <span style={{ fontSize: 'var(--fs-12)', color: over ? 'var(--c-festive-b, #B8331F)' : 'var(--fg-muted)' }}>
+          {fmtRm(remaining)} unspent{asked > 0 ? ` · applying ${fmtRm(asked)}` : ''}
+        </span>
+      </div>
+      <div className={styles.cardBody} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+        <p style={{ fontSize: 'var(--fs-13)', color: 'var(--fg-muted)', margin: 0 }}>
+          This voucher paid ahead of any invoice. Knock the remainder off the supplier&rsquo;s
+          outstanding invoices below — no money moves; both legs are already in AP.
+        </p>
+        {outstanding.length === 0 ? (
+          <p style={{ fontSize: 'var(--fs-13)', color: 'var(--fg-muted)', margin: 0 }}>No outstanding invoice from this supplier yet — the advance waits.</p>
+        ) : (
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
+            <thead>
+              <tr style={{ textAlign: 'left', color: 'var(--fg-muted)', fontSize: 'var(--fs-11)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                <th style={{ padding: '6px 8px' }}>Invoice</th>
+                <th style={{ padding: '6px 8px' }}>Date</th>
+                <th style={{ padding: '6px 8px', textAlign: 'right' }}>Outstanding</th>
+                <th style={{ padding: '6px 8px', textAlign: 'right' }}>Knock off</th>
+              </tr>
+            </thead>
+            <tbody>
+              {outstanding.map((r) => {
+                const piId = String(r.id);
+                const out = Number(r.total_sen ?? 0) - Number(r.paid_sen ?? 0);
+                return (
+                  <tr key={piId} style={{ borderTop: '1px solid var(--line)' }}>
+                    <td style={{ padding: '6px 8px', fontFamily: 'var(--font-mono)' }}>{String(r.invoice_number ?? piId)}</td>
+                    <td style={{ padding: '6px 8px', whiteSpace: 'nowrap', color: 'var(--fg-muted)' }}>{fmtDate(r.invoice_date as string | null)}</td>
+                    <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)', color: 'var(--fg-muted)' }}>{fmtRm(out)}</td>
+                    <td style={{ padding: '6px 8px', textAlign: 'right' }}>
+                      <MoneyInput bare valueSen={amounts[piId] ?? 0}
+                        onCommit={(sen) => setAmounts((prev) => ({ ...prev, [piId]: Math.max(0, Math.min(out, sen ?? 0)) }))}
+                        inputClassName={styles.fieldInput} selectOnFocus />
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
+          <span style={{ flex: 1, fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>{note}</span>
+          <Button variant="primary" size="sm"
+            disabled={applyM.isPending || asked === 0 || over}
+            onClick={() => {
+              setNote(null);
+              const allocations = Object.entries(amounts)
+                .filter(([, v]) => v > 0)
+                .map(([piId, amountSen]) => ({ piId, amountSen }));
+              applyM.mutate({ pvId, allocations }, {
+                onSuccess: (d: { appliedSen: number; remainingSen: number }) => { setAmounts({}); setNote(`Knocked off ${fmtRm(d.appliedSen)} — ${fmtRm(d.remainingSen)} of the advance remains.`); },
+                onError: (e) => setNote(e instanceof Error ? e.message : 'Not applied.'),
+              });
+            }}>
+            {applyM.isPending ? 'Applying…' : 'Apply advance'}
+          </Button>
+        </div>
+      </div>
+    </section>
   );
 };

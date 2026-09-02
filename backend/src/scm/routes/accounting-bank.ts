@@ -657,3 +657,109 @@ export const bankLineMatch = guard(async (c) => {
 
   return c.json({ ok: true, status: 'matched', jeNo });
 });
+
+/* ── Bank recognition rules — the maintenance window (2026-09-02) ────────────
+   The rules that say "this credit is PBB's payout" have been seed-only since
+   0336; when a bank rewords its narration, the owner had to come to us. These
+   three handlers are his screwdriver: list everything (off rows included),
+   fix a rule, add one. GLOBAL like the table — a payout reads the same in
+   every company's statement, so there is nothing per-company to scope.
+
+   The one real hazard is a BROKEN regex: loadRecognitionRules compiles each
+   pattern at match time, and a pattern that does not compile silently stops
+   recognising that acquirer's money — the 系统3 disease with extra steps. So
+   every regex is compiled HERE, at write time, and a bad one is refused with
+   the engine's own sentence. No DELETE: is_active=false is the off switch,
+   and history stays. */
+
+const RULE_FIELDS = 'id, acquirer_code, pattern, match_field, trading_date_pattern, merchant_pattern, sort_order, is_active';
+
+const ruleValidationError = (body: Record<string, unknown>): string | null => {
+  for (const key of ['pattern', 'tradingDatePattern', 'merchantPattern'] as const) {
+    const v = body[key];
+    if (v == null || v === '') continue;
+    try { void new RegExp(String(v), 'i'); } catch (e) {
+      return `${key} is not a valid regular expression: ${e instanceof Error ? e.message : String(e)}`;
+    }
+    if (key !== 'pattern' && !String(v).includes('(')) {
+      return `${key} needs a capture group — its FIRST group is the value being extracted.`;
+    }
+  }
+  if (body.matchField != null && !['description', 'reference', 'both'].includes(String(body.matchField))) {
+    return `matchField must be description, reference or both.`;
+  }
+  return null;
+};
+
+export const bankRulesList = guard(async (c) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const sb = c.get('supabase');
+  const { data, error } = await sb.from('acc_bank_recognition_rules')
+    .select(RULE_FIELDS)
+    .order('acquirer_code').order('sort_order');
+  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  return c.json({ rules: data ?? [] });
+});
+
+export const bankRuleCreate = guard(async (c) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const sb = c.get('supabase');
+  let body: Record<string, unknown>;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
+
+  const acquirerCode = String(body.acquirerCode ?? '').trim();
+  const pattern = String(body.pattern ?? '').trim();
+  if (!acquirerCode) return c.json({ error: 'acquirer_required' }, 400);
+  if (!pattern) return c.json({ error: 'pattern_required', message: 'A rule with no pattern matches nothing.' }, 400);
+  const bad = ruleValidationError({ ...body, pattern });
+  if (bad) return c.json({ error: 'invalid_rule', message: bad }, 400);
+
+  const { data: acq, error: acqErr } = await sb.from('acc_acquirer_config')
+    .select('code').eq('code', acquirerCode).maybeSingle();
+  if (acqErr) return c.json({ error: 'load_failed', reason: acqErr.message }, 500);
+  if (!acq) return c.json({ error: 'no_such_acquirer', message: `${acquirerCode} is not an acquirer this system knows.` }, 404);
+
+  const { data, error } = await sb.from('acc_bank_recognition_rules').insert({
+    acquirer_code: acquirerCode,
+    pattern,
+    match_field: ['description', 'reference', 'both'].includes(String(body.matchField)) ? String(body.matchField) : 'both',
+    trading_date_pattern: body.tradingDatePattern ? String(body.tradingDatePattern) : null,
+    merchant_pattern: body.merchantPattern ? String(body.merchantPattern) : null,
+    sort_order: Number.isFinite(Number(body.sortOrder)) ? Math.round(Number(body.sortOrder)) : 100,
+    is_active: body.isActive !== false,
+  }).select(RULE_FIELDS).single();
+  if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);
+  return c.json({ ok: true, rule: data });
+});
+
+export const bankRuleUpdate = guard(async (c) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const sb = c.get('supabase');
+  const ruleId = Number(c.req.param('id'));
+  if (!Number.isInteger(ruleId)) return c.json({ error: 'bad_id' }, 400);
+  let body: Record<string, unknown>;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
+
+  const bad = ruleValidationError(body);
+  if (bad) return c.json({ error: 'invalid_rule', message: bad }, 400);
+  if (body.pattern !== undefined && !String(body.pattern).trim()) {
+    return c.json({ error: 'pattern_required', message: 'A rule with no pattern matches nothing — switch it off instead.' }, 400);
+  }
+
+  const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  if (body.pattern !== undefined) updates.pattern = String(body.pattern).trim();
+  if (body.matchField !== undefined) updates.match_field = String(body.matchField);
+  if (body.tradingDatePattern !== undefined) updates.trading_date_pattern = body.tradingDatePattern ? String(body.tradingDatePattern) : null;
+  if (body.merchantPattern !== undefined) updates.merchant_pattern = body.merchantPattern ? String(body.merchantPattern) : null;
+  if (body.sortOrder !== undefined) updates.sort_order = Math.round(Number(body.sortOrder));
+  if (body.isActive !== undefined) updates.is_active = body.isActive === true;
+
+  const { data, error } = await sb.from('acc_bank_recognition_rules')
+    .update(updates).eq('id', ruleId).select(RULE_FIELDS).maybeSingle();
+  if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);
+  if (!data) return c.json({ error: 'not_found', message: `rule ${ruleId} does not exist` }, 404);
+  return c.json({ ok: true, rule: data });
+});
