@@ -802,6 +802,32 @@ match because a position rename could otherwise silently grant director access.
 The frontend copies in `frontend/src/auth/salesAccess.ts` must stay in lockstep
 and are pinned by tests.
 
+### Setup & Dismantle is VIEW-FOR-ALL — only its DOCUMENTS are role-filtered
+
+Owner 2026-07-28: *"all users can view the setup & dismantle part."* The S&D card
+is a read surface for every viewer of the project, on desktop and on mobile.
+
+`stripSetupDismantle` (`backend/src/services/projects.ts:1083`) still runs for a
+caller whose PMS role lacks `SETUP_DISMANTLE` — called from
+`routes/projects.ts:2352` and `routes/projects_print.ts:332` — but what it
+removes is now narrower than its name suggests:
+
+| field | reaches a caller without `SETUP_DISMANTLE` |
+| --- | --- |
+| `setup_crew` / `dismantle_crew` / `service_crew` | YES (was NULLed until 2026-07-28) |
+| `schedule_remark`, `setup_start_at`, `dismantle_start_at` | YES (was NULLed) |
+| "SETUP & DISMANTLE DOCUMENTS" checklist rows badged DRIVER / PURCHASER | no — still stripped |
+| the same rows badged `SALES PIC*` | YES (owner 2026-07-16 / 2026-07-29) |
+| those rows' comments, attachments, sections, section-progress | stripped with their rows |
+
+So the crew/schedule half of the card is no longer a server-side secret, and the
+boundary that matters for it is the WRITE path: the PATCH route plus the UI's
+`canWrite` / `canEdit` tier. The mobile surface matches — `MobilePMS.tsx` renders
+`<SetupDismantle>` for every cohort but 5 and loads `phase-photos` for every
+viewer — `GET /:id/phase-photos` (`routes/projects.ts:3188`) admits any
+holder of `projects.read` or `projects.write`, and falls back to a crew phase
+assignment for everyone else.
+
 ### Permission keys that do not mean what their labels say
 
 - **`stock_transfer.approve` is dead; `agreement.approve` is NOT.**
