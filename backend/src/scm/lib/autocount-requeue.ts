@@ -118,10 +118,11 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Env } from '../env';
 import type { AcDocType, AcOp } from '../../services/autocount-writeback';
 import {
-  dispatchOne, enqueueAcOp, enqueueConvert, enqueuePoCreate, enqueueSoCreate,
+  dispatchOne, enqueueAcOp, enqueueConvert, enqueueEdit, enqueuePoCreate, enqueueSoCreate,
   MAX_ATTEMPTS,
   type AcDocRef, type AcOutboxPayload, type AcOutboxRow,
 } from './autocount-outbox';
+import { rebuildAllowed } from '../../services/ac-line-gone';
 import { claimOutboxRow } from './autocount-claim';
 import { reresolveConvertSource } from './convert-parent';
 import { AC_TRANSFER_OPS, REQUEUE_NOTE_PREFIX } from './autocount-outbox-status';
@@ -465,12 +466,11 @@ function outboxInsert(writes: CapturedWrite[]): Record<string, unknown> | null {
   return w?.values ?? null;
 }
 
+/* NO `edit` BRANCH ANY MORE. It said an edit is never re-queued here, and since
+   docs/bugs/0614 it is - as a REBUILD, which is the one shape that does not need
+   the unrecoverable retire list. editRebuildVerdict answers for it, so a sentence
+   here would be dead text describing a rule that no longer exists. */
 function reasonFor(op: string): string {
-  if (op === 'edit') {
-    return 'an edit refusal is not re-queued here: the document IS in AutoCount, so fixing the cause '
-      + 'and saving the document again really does re-queue it. Re-composing it from a script would '
-      + 'also drop any line RETIREMENTS the original save carried, which a skipped row does not record.';
-  }
   if (op === 'cancel') {
     return 'a cancel refusal is not re-queued here: either the document was withdrawn before it ever '
       + 'reached AutoCount, in which case there is nothing to cancel there, or the ERP is holding the '
@@ -601,6 +601,103 @@ interface Verdict {
   outcome: RequeueOutcome;
   detail: string;
   newRowId?: string | null;
+}
+
+/**
+ * MAY THIS EDIT BE SENT AGAIN - as a REBUILD, and only ever as one.
+ *
+ * THE REFUSAL THIS REPLACES WAS RIGHT ABOUT ITS FACTS AND WRONG IN ITS
+ * CONCLUSION. A skipped edit's payload is `{}`, so the `retire` entries the
+ * original save carried - the lines it hard-DELETED - cannot be recovered from
+ * the row, and a re-composed KEYED edit would leave those lines live and
+ * transferable in the account book. Every word of that is still true.
+ *
+ * A REBUILD DOES NOT NEED THAT LIST. It clears the document's details and lays
+ * the ERP's current lines down, so the two sides finish identical - which is
+ * what the retire entries were approximating in the first place, and it is the
+ * owner's rule in his own words: the AutoCount lines are to match the ERP's.
+ * The one thing the old refusal protected against is the one thing a rebuild
+ * cannot do.
+ *
+ * IT IS NEVER AUTOMATIC. `docs/bugs/0613` retracted the version that rebuilt any
+ * unmatchable document on save: a rebuild destroys and reissues every DtlKey,
+ * and an ordinary edit must not pay that to avoid backfilling one key. This runs
+ * only when an operator re-sends a document that is ALREADY held back - a
+ * deliberate act on a document that is otherwise going nowhere.
+ *
+ * TWO REFUSALS SURVIVE AND NEITHER IS RE-IMPLEMENTED HERE. `rebuildAllowed`
+ * refuses a document built by conversion and one whose keys a purchase order
+ * holds (`docs/bugs/0611`, `docs/bugs/0609`); the HOST refuses a document its
+ * own tables say was transferred. This function asks the question - those two
+ * answer it, and a refusal comes back as `still-refused` carrying their words.
+ */
+async function editRebuildVerdict(
+  sb: Sb,
+  raw: SkippedRow,
+  companyId: number,
+  apply: boolean,
+): Promise<Verdict> {
+  const docType = String(raw.doc_type).toUpperCase();
+  /* Asked with an EMPTY opts on purpose: this rung is about the document TYPE.
+     `rebuildBlocked` is derived inside the composer from the live document, not
+     from anything this row remembers, and it is answered a few lines below when
+     the probe runs. */
+  if (!rebuildAllowed({}, docType)) {
+    return {
+      outcome: 'not-recoverable',
+      detail: `a ${docType} is built by conversion, and its lines are where AutoCount records what it `
+        + 'was converted FROM. A rebuild clears exactly those lines, and the host cannot catch it - its '
+        + 'guard reads TransferedQty, which is the ONWARD direction. Only a sales order or a purchase '
+        + 'order may be re-sent this way (docs/bugs/0611).',
+    };
+  }
+
+  const editOpts = {
+    companyId,
+    docType: docType as AcDocType,
+    ...(docType === 'SO' ? { docNo: raw.doc_no } : { docId: raw.doc_id ?? raw.doc_no }),
+    rebuild: true,
+  };
+  /* Composed against a THROWAWAY client first, exactly as the create path does:
+     the composer is the only thing that knows whether this document can be sent
+     today, and asking it must not write a row on a dry run. */
+  const probe = captureWrites(sb);
+  await enqueueEdit(probe.sb, editOpts);
+  const attempted = outboxInsert(probe.writes);
+  if (!attempted) {
+    return {
+      outcome: 'declined',
+      detail: 'the enqueue composed nothing and wrote no note. The commonest cause is that the document '
+        + 'carries no linked_ac_docno - it never reached AutoCount, so there is nothing there to rebuild.',
+    };
+  }
+  if ((attempted.status ?? 'pending') === 'skipped') {
+    return { outcome: 'still-refused', detail: String(attempted.last_error ?? 'refused, no reason recorded') };
+  }
+  if (!apply) {
+    return {
+      outcome: 'would-requeue',
+      detail: 'the composer accepts it as a REBUILD. APPLY would queue an edit that REPLACES this '
+        + "document's lines in the account book with the ERP's. Every AutoCount line key on it is "
+        + 'reissued, which is safe here and is why nothing does this on an ordinary save.',
+    };
+  }
+  if (!(await enqueueEdit(sb, editOpts))) {
+    return {
+      outcome: 'declined',
+      detail: 'the probe accepted this document and the real enqueue declined it. Either another run '
+        + 'queued it first, or the document changed in between and the composer refused it - re-run '
+        + 'this to see which.',
+    };
+  }
+  const newRowId = await findQueuedRowId(sb, raw);
+  await annotate(sb, raw, newRowId);
+  return {
+    outcome: 'requeued',
+    detail: `queued as a REBUILD${newRowId ? ` (outbox ${newRowId})` : ''}. The 5-minute cron sends it, `
+      + "and the account book finishes holding exactly the ERP's lines, in the ERP's order.",
+    newRowId,
+  };
 }
 
 /**
@@ -888,7 +985,7 @@ export async function requeueOneRow(
       + 'the ERP document number, and an accepted document cannot simply be deleted there.');
   }
 
-  if (raw.op !== 'create_so' && raw.op !== 'create_po' && !isTransfer) {
+  if (raw.op !== 'create_so' && raw.op !== 'create_po' && raw.op !== 'edit' && !isTransfer) {
     return say('not-recoverable', reasonFor(raw.op));
   }
   if ((raw.last_error ?? '').startsWith(REQUEUE_NOTE_PREFIX)) {
@@ -907,6 +1004,11 @@ export async function requeueOneRow(
 
   if (isTransfer) {
     const v = await transferVerdict(sb, raw, status, opts.apply);
+    return { ...base, outcome: v.outcome, detail: v.detail, newRowId: v.newRowId ?? null };
+  }
+
+  if (raw.op === 'edit') {
+    const v = await editRebuildVerdict(sb, raw, companyId, opts.apply);
     return { ...base, outcome: v.outcome, detail: v.detail, newRowId: v.newRowId ?? null };
   }
 

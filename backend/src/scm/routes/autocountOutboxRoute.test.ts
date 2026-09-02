@@ -748,7 +748,11 @@ describe('POST /autocount-outbox/:id/requeue — the answer it gives', () => {
 
   it('never returns a raw exception string in place of an outcome', async () => {
     const { app } = requeueHarness({
-      outbox: [row({ id: 'ob-edit', op: 'edit', status: 'skipped' })],
+      /* A DELIVERY ORDER's edit: since docs/bugs/0614 a sales order's edit is
+         re-queueable as a rebuild, and a converted document is what still
+         answers not-recoverable. The property under test is unchanged - no raw
+         exception string may reach the caller in place of an outcome. */
+      outbox: [row({ id: 'ob-edit', op: 'edit', doc_type: 'DO', status: 'skipped' })],
       flag: '1',
     });
     const { body } = await post(app, 'ob-edit');

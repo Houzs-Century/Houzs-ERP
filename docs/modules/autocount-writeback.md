@@ -2568,10 +2568,29 @@ MISMATCH creditor:400-H004 erp=HOOKKA INDUSTRIES SDN. BHD. book=HAO HUA FURNITUR
 field does not send it at all, and the ERP cannot tell the difference. `GET
 /health`'s `builtAt` / `mvid` is the only thing that says which build answered.
 
-**This repo cannot compile C#.** `deploy-on-host.ps1` compiles with `csc` on the
-host and REFUSES to swap an exe that did not compile, then health-checks and rolls
-back to a hash-verified backup if the new one does not answer — that is the gate
-this change is proven by, and it has already caught a typo this way.
+**CI cannot compile C#; this desktop can, and the difference matters.** The
+GitHub runner is Linux and the licensed AutoCount assemblies are a desktop
+install, so no CI job builds `AcSyncService.cs`. That is routinely over-read into
+"there is no C# toolchain here", which is false: AutoCount 2.2 is installed on
+the development desktop and `csc.exe` ships with the .NET Framework, so
+`backend/scripts/autocount-service/build-local.ps1` answers in seconds, touches
+no database and needs no credential. Run on 2026-09-02 it printed
+`COMPILES CLEAN - 110592 bytes`. **Run it before writing UNCOMPILED anywhere** —
+that sentence was written twice in one day by a session that never ran the check.
+
+`deploy-on-host.ps1` is the other half and runs ON the host, because the SQL
+credentials live there. It REFUSES to swap an exe that did not compile, opens the
+database for real BEFORE anything is stopped, then health-checks and rolls back
+to a hash-verified backup if the new one does not answer — that is the gate a
+host change is proven by, and it has already caught a typo this way.
+
+**Deployed 2026-09-02**, from `2026-08-18T01:48:42Z` to `2026-09-02T13:52:36Z`
+(`builtAt`, read back from `GET /health`). Its dry run refused first and was
+right to: `C:\InistateConnector\setup.json` still names a SQL server this host
+can no longer reach, and the script will not repoint production write-back on its
+own because a restored backup can carry the same database name. The override was
+`-Server '.\A2006' -Book 'AED_HOUZS'`, taken only after that instance was shown
+to hold `SO-013442` dated 2026-09-02 — a document a stale copy could not have.
 
 ## 7f. A cancel that reached AutoCount is final
 
@@ -3022,6 +3041,7 @@ words. The owner reviewed a mockup and asked for five changes; all five live in
 | **Two filter strips, counts on the chips** | Status (Everything / Needs attention / Waiting / In AutoCount / Not accepted / Held back / Replaced — *"Sent again" until 2026-08-17*) and Document (Sales orders / Delivery orders / Invoices / Purchase orders / Goods received / Supplier invoices). Both are `<FilterPills>`, the same component the Sales Order list uses. The tiles are gone: the counts were the only useful thing about them and a tile cannot be clicked. |
 | **The reason, in three parts** | A headline, one sentence, and a **To fix** line, keyed by the server's `reason_kind` (`AC_REASON_COPY`). The headline is never behind a click — that was the owner's specific complaint. A `failed` row gets `AC_FAILED_COPY`, because the server deliberately does not classify those. *(The sentence and the To fix line moved behind opening the row the same day — see the section below.)* |
 | **Who was asked** | `acReplySource` labels the quote **AutoCount replied** (the row went through `dispatchOne`), **AutoCount was not asked** (every `skipped` row — all of them are decided at enqueue time or before `callAcService`, so no held-back document has ever reached the account book), or **The last send attempt reported** for a `pending` row, where the note may be either and nothing the server sends tells them apart. |
+| **Send again on a held-back EDIT** | Rebuilds the document rather than re-composing a keyed edit — `docs/bugs/0614`. An `edit` used to be refused by the ladder AND carry no button, so a document whose keyless line can never be matched had no way through at all. A rebuild clears the book's details and lays the ERP's lines down, so it needs none of the `retire` list a skipped row cannot recover — which was the whole reason for the old refusal. **Never automatic**: an ordinary save with a keyless line still refuses (`docs/bugs/0613`), because a rebuild reissues every line key. `rebuildAllowed` still refuses a converted document (`docs/bugs/0611`) and one whose keys a purchase order holds (`docs/bugs/0609`), and the host still refuses one its own tables say was transferred. |
 | **Send again, per row** | Offered only where the server's `can_requeue` says a re-send can mean anything, and driven by `useAcRequeue` — one hook, both surfaces. Since 2026-08-23 pressing it SENDS immediately and pushes the missing ancestors first, in order (SO → DO → SI, PO → GR → PI); the reply carries `sent_now` and `ancestors_sent`. |
 | **No coding words** | The page no longer prints the config key, the raw `op` values, the raw state values, or the server's `remedy` strings — those name columns, tables and an SDK primitive. The remedy still ships in the API response and is still what the health-check log prints. Plurals are spelled out in `AC_DOC_TYPE_PLURAL`, never built by appending an "s" — "Goods received" has none. *(NOT SUFFICIENT — the row below is the correction.)* |
 
