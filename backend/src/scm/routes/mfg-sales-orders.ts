@@ -1803,6 +1803,19 @@ mfgSalesOrders.get('/', async (c) => {
       const dRemaining = remainingTotal.get(docNo) ?? 0;
       (r as Record<string, unknown>).delivery_state =
         dDelivered <= 0 ? 'none' : dRemaining > 0 ? 'partial' : 'full';
+      /* THE NUMBERS, not only the verdict (owner 2026-09-02). `delivery_state`
+         says none / partial / full, which cannot answer "how many are still
+         owed" — the question the Delivery column exists for. Both are already
+         summed above from the SAME deliverable engine the picker uses, so this
+         costs no extra read; only the verdict was ever emitted.
+
+         DELIBERATELY NOT called delivery_*: `delivery_state` is ALREADY two
+         different things in this system — the stored scheduling override on
+         mfg_sales_orders (PENDING_SCHEDULE, tripReconcile.ts) and this computed
+         shipping verdict, which shadows it on the response object. A third
+         meaning under that prefix is how the next reader picks the wrong one. */
+      (r as Record<string, unknown>).shipped_qty = dDelivered;
+      (r as Record<string, unknown>).deliverable_qty = dDelivered + dRemaining;
       (r as Record<string, unknown>).lifecycle_state = lifecycleByDoc.get(docNo) ?? 'none';
       (r as Record<string, unknown>).current_doc_no = currentByDoc.get(docNo) ?? (docNo || null);
       (r as Record<string, unknown>).do_nos = doNosBySo.get(docNo) ?? [];
@@ -2917,6 +2930,10 @@ mfgSalesOrders.get('/:docNo', async (c) => {
   const totalRemaining = items.reduce((s, it) => s + Number(it.remaining_qty ?? 0), 0);
   (salesOrder as Record<string, unknown>).delivery_state =
     totalDelivered <= 0 ? 'none' : totalRemaining > 0 ? 'partial' : 'full';
+  /* The same two numbers the LIST emits, from this surface's own totals — one
+     order must not read "2 of 5" on the list and something else when opened. */
+  (salesOrder as Record<string, unknown>).shipped_qty = totalDelivered;
+  (salesOrder as Record<string, unknown>).deliverable_qty = totalDelivered + totalRemaining;
   /* Status badge driver — same "latest event wins" engine as the list. */
   const [lifecycleByDoc, currentByDoc] = await Promise.all([
     computeSoLifecycle(sb, [docNo]),

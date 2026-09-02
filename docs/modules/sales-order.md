@@ -560,6 +560,50 @@ expression only for a payload that predates the field. The fallback is
 byte-identical to the old rule; the point is that the authority moved to the
 server, where the list reads it too.
 
+### 0.4b ARRIVAL and SHIPPING are two columns (owner 2026-09-02)
+
+**Stock Status answers ARRIVAL. Delivered answers SHIPPING. They are not the
+same question and no longer share a cell.**
+
+Until 2026-09-02 shipping was visible only at its two ENDS — a line read
+`DELIVERED` once everything had left, and nothing before that. So an order with
+5 units arrived and 2 shipped read plain `READY`, and "we still owe this
+customer 3" was on no screen. The owner asked what to do about partial delivery
+(「partialy delivery 该怎么办呢 / 看一下那个 column 进入适合」) and chose splitting
+the two facts apart over adding a fifth value to the arrival column.
+
+| column | question | values |
+|---|---|---|
+| **Stock Status** (`stock_remark`, §0.5) | has the supplier's goods come IN | `''` / `READY` / `PARTIAL` / `BEDFRAME/ACC` |
+| **Delivered** (`shipped_qty` / `deliverable_qty`) | how much has gone OUT | `2 / 5`, toned none / partial / full |
+
+`deliverable_qty` is `shipped + still owed` from the SAME deliverable engine the
+delivery picker uses — **not** a sum of ordered line quantities, which would
+count cancelled lines and overstate what the customer is owed. Both numbers were
+already computed on the list and the detail; only the `none|partial|full`
+verdict was ever emitted, which is why the column could not exist before.
+
+**A MISSING figure is `unknown`, never zero.** An older payload carries neither
+field, and reading that as "nothing has shipped" is a claim about an order that
+may be fully out — the same class of lie as rendering `STOCK` while a query is
+still loading (`docs/modules/coverage-state.md` [planned] — lands with #2862).
+The cell renders a dash and
+says so in its tooltip.
+
+**Do NOT name anything here `delivery_*`.** That prefix is already two different
+things: the STORED scheduling override on `mfg_sales_orders.delivery_state`
+(`PENDING_SCHEDULE` — `scm/lib/tripReconcile.ts`, `scm/lib/arrangement-stage.ts`)
+and the COMPUTED `none|partial|full` shipping verdict that shadows it on the
+detail response. Two exported types are likewise both called `DeliveryState`
+(`vendor/scm/lib/so-status.ts` and `vendor/scm/lib/delivery-planning-queries.ts`).
+A third meaning under that prefix is how the next reader picks the wrong one.
+
+The rule lives in `frontend/src/vendor/scm/lib/shipped-progress.ts` and renders
+through `frontend/src/components/ShippedProgressPill.tsx` — one module, so the
+list row and the drill-down line cannot grow two vocabularies for one fact (the
+exact way `READY (PARTIAL)` once appeared on a board header and its own rows in
+the same moment, §0.5).
+
 ### 0.5 `stock_remark`, `is_main_ready`, `is_ship_ready`
 
 All three come out of `summariseReadiness` (`scm/lib/so-readiness.ts`).

@@ -20,6 +20,8 @@
 // the tree; App.tsx route swap decides which one users see.
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { ShippedProgressPill } from "../../components/ShippedProgressPill";
+import { shippedProgressOf, shippedProgressLabel } from "../../vendor/scm/lib/shipped-progress";
 import { SO_STATUS_TABS, statusFor, type StatusTab } from "./so-list-status";
 import { salesOrderRowMenu } from "./row-menus";
 import { brandingToneForCategory, type BrandTone } from "../../lib/brandingTone";
@@ -144,6 +146,11 @@ type SoRow = HoldFields & {
   customer_type: string | null;
   building_type: string | null;
   customer_country: string | null;
+  /* HOW MUCH HAS LEFT — the numbers, not only none/partial/full. Fills the
+     Delivered column beside Stock Status, which answers ARRIVAL and cannot
+     answer this (vendor/scm/lib/shipped-progress.ts). */
+  shipped_qty?: number | null;
+  deliverable_qty?: number | null;
   do_nos?: string[] | null;
   /** The same delivery orders and the sales invoices raised against this order,
    *  each with the id the right-click "Print Delivery Order" needs — a PDF is
@@ -899,7 +906,7 @@ function SoLinesExpansion({ docNo }: { docNo: string }) {
      and the covering incoming PO + ETA belong ON the line — the payload has
      carried them all along. Min-width + horizontal scroll keeps the grid
      honest on narrow desktop panes. */
-  const grid = "grid grid-cols-[92px_minmax(220px,1fr)_56px_100px_110px_96px_190px] items-start gap-2";
+  const grid = "grid grid-cols-[92px_minmax(220px,1fr)_56px_100px_110px_96px_92px_190px] items-start gap-2";
   return (
     <div className="overflow-x-auto rounded-lg border border-border bg-surface">
       <div className="min-w-[880px]">
@@ -910,6 +917,7 @@ function SoLinesExpansion({ docNo }: { docNo: string }) {
           <span className="text-right">Unit</span>
           <span className="text-right">Amount</span>
           <span>Stock</span>
+          <span>Delivered</span>
           <span>Incoming PO</span>
         </div>
         {items.map((l, i) => {
@@ -952,6 +960,10 @@ function SoLinesExpansion({ docNo }: { docNo: string }) {
               </span>
               <span>
                 <SoStockPill line={l} />
+              </span>
+              {/* Stock says ARRIVED; this says LEFT. Two facts, two cells. */}
+              <span>
+                <ShippedProgressPill line={l} />
               </span>
               {/* Shipped lines show the ACTUAL source PO(s) (batch trail, GRN-
                   healed); READY lines the FIFO-projected PO(s) / STOCK ADJ;
@@ -1671,6 +1683,32 @@ export function MfgSalesOrdersListV2() {
       getValue: (r) => r.stock_remark ?? "",   // raw remark for CSV + the funnel
       sortValue: (r) => stockRemarkSortScore(r.stock_remark),  // fullest first
       render: (r) => <StockRemarkPill remark={r.stock_remark} />,  // was grey text
+    },
+    {
+      /* DELIVERED — how much has LEFT. Stock Status one column over answers
+         ARRIVAL; the two were one column until 2026-09-02, so an order with
+         everything arrived and half shipped read plain READY and the shortfall
+         was on no screen (owner: 「partialy delivery 该怎么办呢」). */
+      key: "shipped_progress",
+      group: "Logistics",
+      label: "Delivered",
+      width: "120px",
+      defaultHidden: true,
+      disableSort: true,
+      getValue: (r) => {
+        const p = shippedProgressOf(r);
+        return p.state === "unknown" ? "" : (shippedProgressLabel(p) ?? "");
+      },
+      sortValue: (r) => {
+        const p = shippedProgressOf(r);
+        /* Least-complete first, so the orders still owing goods sort to the
+           top. `unknown` sorts last — it is not a small number, it is no
+           number, and putting it first would head the list with rows that say
+           nothing. */
+        if (p.state === "unknown") return 2;
+        return p.deliverable > 0 ? p.shipped / p.deliverable : 1;
+      },
+      render: (r) => <ShippedProgressPill row={r} />,
     },
     {
       key: "processing_date",
