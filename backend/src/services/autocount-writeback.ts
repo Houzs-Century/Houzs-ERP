@@ -23,7 +23,7 @@
 // resolver, so it unit-tests with no database and no AutoCount.
 // ----------------------------------------------------------------------------
 import type { Env } from '../types';
-import { rebuildNeededForLineSetChange, type AcRetiredLine } from './ac-line-gone';
+import { shouldRebuild, type AcRetiredLine } from './ac-line-gone';
 import {
   ItemCodeError,
   resolveAcItemCode,
@@ -1423,13 +1423,8 @@ export function composeEdit(
   opts: ComposeOptions = {},
   retired: AcRetiredLine[] = [],
 ): AcEditPayload {
-  /* THE ONE RULE — derived, never per caller (ac-line-gone.ts, 0608). */
-  const anyDeleted = retired.some((r) => r.Gone === 'deleted');
-  const anyAdded = (opts.newLineIds?.size ?? 0) > 0;
-  const effOpts: ComposeOptions =
-    rebuildNeededForLineSetChange(anyAdded, anyDeleted) && !opts.rebuildBlocked
-      ? { ...opts, rebuild: true }
-      : opts;
+  // THE ONE RULE — derived, never per caller (ac-line-gone.ts, 0608).
+  const effOpts: ComposeOptions = shouldRebuild(opts, retired) ? { ...opts, rebuild: true } : opts;
   const { details, collapsed } = composeDetails(lines, effOpts);
   /* The key is read off the COLLAPSED line, not the ERP line. One AutoCount
      line has one DtlKey, and a sofa build's compartments only carry line

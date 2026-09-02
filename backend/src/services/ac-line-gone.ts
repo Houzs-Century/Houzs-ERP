@@ -73,3 +73,21 @@ export function rebuildNeededForLineSetChange(
 ): boolean {
   return anyLineAdded || anyLineDeleted;
 }
+
+/** The whole decision, so `composeEdit` carries one line and no arithmetic.
+ *
+ *  `rebuildBlocked` wins over the derived answer and never the other way round:
+ *  it names a document whose keys are held by something downstream, and no line
+ *  change can make reissuing them safe (scm/lib/so-po-raised.ts, docs/bugs/0609).
+ */
+export function shouldRebuild(
+  opts: { newLineIds?: ReadonlySet<string>; rebuild?: boolean; rebuildBlocked?: string },
+  retired: readonly AcRetiredLine[],
+): boolean {
+  if (opts.rebuildBlocked) return false;
+  if (opts.rebuild) return true;
+  return rebuildNeededForLineSetChange(
+    (opts.newLineIds?.size ?? 0) > 0,
+    retired.some((r) => r.Gone === 'deleted'),
+  );
+}
