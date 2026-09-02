@@ -13,8 +13,11 @@ import { describe, expect, test, vi } from 'vitest';
 
 const mutateAsync = vi.fn(async (_body: Record<string, unknown>) => ({ id: 'pv-1', pvNumber: 'PV-2609-001' }));
 
+const extractAsync = vi.fn(async () => ({ bills: [] }));
 vi.mock('../../vendor/scm/lib/payment-voucher-queries', () => ({
   useCreatePaymentVoucher: () => ({ mutateAsync, isPending: false }),
+  useExtractBills: () => ({ mutateAsync: extractAsync, isPending: false }),
+  fileToBase64: async (f: File) => `b64:${f.name}`,
   useSupplierAdvances: () => ({ data: { advances: [
     { id: 1, supplier_id: 'sup-1', pv_id: 'pv-old', pv_number: 'PV-2608-777', amount_sen: 80000, applied_sen: 30000, remaining_sen: 50000, created_at: '2026-08-20' },
   ], totalRemainingSen: 50000 }, isLoading: false }),

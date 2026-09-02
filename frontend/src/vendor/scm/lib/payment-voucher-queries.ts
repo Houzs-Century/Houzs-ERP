@@ -188,3 +188,34 @@ export const useRejectPaymentVoucher = () => {
     },
   });
 };
+
+/* ── Bill OCR (2026-09-02) — read incoming bills into voucher pre-fills.
+   Each `bills` entry is ONE document; its files are its pages (the human
+   groups pages at upload — the server never guesses). Nothing is written by
+   this call. */
+export type BillExtraction = {
+  vendorName: string | null; vendorRegNo: string | null;
+  documentKind: 'invoice' | 'bill' | 'receipt' | 'statement' | 'unknown';
+  invoiceNumber: string | null; invoiceDate: string | null; dueDate: string | null;
+  currency: string; totalSen: number | null; sstSen: number | null;
+  lines: Array<{ description: string | null; amountSen: number | null }>;
+};
+export type ExtractedBill =
+  | { index: number; ok: true; extraction: BillExtraction; supplierMatch: { id: string; code: string | null; name: string; confidence: 'exact' | 'contains' } | null }
+  | { index: number; ok: false; reason: string };
+
+/* FileReader, not buf→btoa: a chunked fromCharCode spread stack-overflows on a
+   multi-megabyte PDF, and readAsDataURL hands back base64 in one move. */
+export const fileToBase64 = (f: File): Promise<string> => new Promise((resolve, reject) => {
+  const r = new FileReader();
+  r.onerror = () => { reject(new Error(`${f.name} could not be read from disk.`)); };
+  r.onload = () => { resolve(String(r.result).split(',')[1] ?? ''); };
+  r.readAsDataURL(f);
+});
+
+export const useExtractBills = () => useMutation({
+  mutationFn: (bills: Array<{ files: Array<{ name: string; mime: string; dataBase64: string }> }>) =>
+    authedFetch<{ bills: ExtractedBill[] }>(`/payment-vouchers/extract`, {
+      method: 'POST', body: JSON.stringify({ bills }),
+    }),
+});

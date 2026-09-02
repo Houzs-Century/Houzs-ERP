@@ -20,10 +20,10 @@
 // ----------------------------------------------------------------------------
 
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { Save, Trash2, X } from 'lucide-react';
 import { Button } from '@2990s/design-system';
-import { useCreatePaymentVoucher, useSupplierAdvances } from '../../vendor/scm/lib/payment-voucher-queries';
+import { useCreatePaymentVoucher, useSupplierAdvances, useExtractBills, fileToBase64, type BillExtraction } from '../../vendor/scm/lib/payment-voucher-queries';
 import { useIdempotencyKey } from '../../lib/idempotency';
 import { useAccounts, useAccountRoles, type Account } from '../../vendor/scm/lib/accounting-queries';
 import { usePurchaseInvoices } from '../../vendor/scm/lib/purchase-invoice-queries';
@@ -127,6 +127,64 @@ export const PaymentVoucherNew = () => {
   }, [rolesQ.data, moneyAccounts]);
   const [voucherDate, setVoucherDate]             = useState<string>(() => todayMyt());
   const [notes, setNotes]                         = useState<string>('');
+
+  /* ── Bill OCR (2026-09-02) ──────────────────────────────────────────────
+     "Scan bill": pick the bill's page(s) — MULTI-SELECT MEANS ONE BILL — and
+     the reader pre-fills payee / date / lines. Everything stays editable;
+     nothing saves until the person presses save. The batch screen
+     (/scm/payment-vouchers/scan) hands its per-group prefill in via
+     location.state through the same applyExtraction. */
+  const location = useLocation();
+  const extract = useExtractBills();
+  const [scanNote, setScanNote] = useState<string | null>(null);
+  const applyExtraction = (ex: BillExtraction, extras?: { lines?: Array<{ description: string | null; amountSen: number | null }> }) => {
+    if (ex.vendorName) setPayeeName((prev) => prev.trim() ? prev : ex.vendorName!);
+    if (ex.invoiceDate) setVoucherDate(ex.invoiceDate);
+    const noteBits = [
+      ex.invoiceNumber ? `Bill ${ex.invoiceNumber}` : null,
+      ex.dueDate ? `due ${ex.dueDate}` : null,
+    ].filter(Boolean).join(' · ');
+    if (noteBits) setNotes((prev) => prev.trim() ? prev : noteBits);
+    const srcLines = extras?.lines ?? ex.lines;
+    const drafts = srcLines
+      .filter((l) => l.amountSen != null && l.amountSen > 0)
+      .map((l) => ({ ...newLine(), description: l.description ?? '', amountSen: l.amountSen! }));
+    /* A bill with no readable lines still carries its total — one line. */
+    if (drafts.length === 0 && ex.totalSen != null && ex.totalSen > 0) {
+      drafts.push({ ...newLine(), description: ex.invoiceNumber ? `Bill ${ex.invoiceNumber}` : 'As per bill', amountSen: ex.totalSen });
+    }
+    if (drafts.length > 0) setLines(drafts);
+    /* The lines' account stays EMPTY on purpose until the vendor memory
+       (next PR) has something honest to suggest — an operator picks it. */
+  };
+  /* The batch screen's hand-off. */
+  useEffect(() => {
+    const st = location.state as { billPrefill?: { extraction: BillExtraction; lines?: Array<{ description: string | null; amountSen: number | null }> } } | null;
+    if (st?.billPrefill) applyExtraction(st.billPrefill.extraction, { lines: st.billPrefill.lines });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const onScanFiles = async (list: FileList | null) => {
+    if (!list || list.length === 0) return;
+    setScanNote('Reading the bill…');
+    try {
+      const files = await Promise.all([...list].map(async (f) => ({
+        name: f.name, mime: f.type || 'application/pdf',
+        dataBase64: await fileToBase64(f),
+      })));
+      const res = await extract.mutateAsync([{ files }]);
+      const bill = res.bills[0];
+      if (!bill) { setScanNote('The bill could not be read.'); return; }
+      if (!bill.ok) { setScanNote(bill.reason); return; }
+      applyExtraction(bill.extraction);
+      setScanNote([
+        'Read — check every figure before saving.',
+        bill.supplierMatch ? `Looks like supplier ${bill.supplierMatch.name}.` : null,
+        bill.extraction.totalSen == null ? 'The TOTAL was not readable — enter it yourself.' : null,
+      ].filter(Boolean).join(' '));
+    } catch (e) {
+      setScanNote(e instanceof Error ? e.message : 'The bill could not be read.');
+    }
+  };
   /* Multi-currency (Phase 1-A) — MYR per 1 unit of the PV currency, string-typed.
      Shown only for a foreign currency; MYR posts 1:1 (no-op). */
   const [exchangeRate, setExchangeRate]           = useState<string>('1');
@@ -434,11 +492,23 @@ export const PaymentVoucherNew = () => {
       <section className={styles.card}>
         <div className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Lines</h2>
+          {/* Scan bill — pick the bill's page(s); MULTI-SELECT = ONE BILL.
+              A pile of different bills goes through the batch screen. */}
+          <label style={{ fontSize: 'var(--fs-12)', color: 'var(--c-orange)', cursor: 'pointer', fontWeight: 600 }}>
+            📷 Scan bill (OCR)
+            <input type="file" multiple accept="image/jpeg,image/png,image/webp,application/pdf"
+              aria-label="Scan bill files"
+              style={{ display: 'none' }}
+              onChange={(e) => { void onScanFiles(e.target.files); e.target.value = ''; }} />
+          </label>
           <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
             {lines.length} line{lines.length === 1 ? '' : 's'} · total {fmtRm(totalSen)}
           </span>
         </div>
         <div className={styles.cardBody} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+          {scanNote && (
+            <div style={{ fontSize: 'var(--fs-12)', color: extract.isPending ? 'var(--fg-muted)' : 'var(--c-orange)' }}>{scanNote}</div>
+          )}
           {lines.map((l, idx) => (
             <div key={l.rid} style={{
               background: 'var(--c-paper)', border: '1px solid var(--line)',
