@@ -1526,7 +1526,14 @@ function ProjectsListView() {
             phase: restrictedCohort && phase ? phase : undefined,
             assigned_to_me: sendAssignedToMe ? 1 : undefined,
             exclude_done: restrictedCohort ? undefined : excludeDoneParam,
-            // my_pending intentionally OMITTED — export is the full filtered list.
+            // my_pending is sent, like every other chip. It used to be omitted
+            // "because export is the full filtered list", which made EXPORT
+            // disagree with the screen: owner 2026-09-02 filtered Setup &
+            // Dismantle + My pending tasks down to 10 rows, exported, and got
+            // every confirmed event instead. The rule is now simply: the export
+            // is what the toolbar says, and an unfiltered toolbar still exports
+            // everything.
+            my_pending: restrictedCohort ? undefined : myPending ? 1 : undefined,
             search,
             status: restrictedCohort ? undefined : status || undefined,
             page: pg,
