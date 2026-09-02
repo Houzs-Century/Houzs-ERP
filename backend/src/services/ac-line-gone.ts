@@ -22,3 +22,16 @@
    Deciding it HERE would be deciding from a copy of the book rather than the
    book. */
 export type AcLineGoneReason = 'deleted' | 'cancelled';
+
+/** A line the ERP no longer holds, named by the AutoCount key it carried.
+ *  Lives here rather than in autocount-writeback.ts because the REASON above is
+ *  the only thing that makes `Gone` readable, and a type split from the sentence
+ *  that explains it is how the two drift. */
+export interface AcRetiredLine {
+  DtlKey: number;
+  ItemCode: string;
+  /** Omitted rather than nulled, so AcSyncService keeps the book's own text. */
+  Desc2?: string | null;
+  /** Absent means RETIRE — the stricter answer. */
+  Gone?: AcLineGoneReason;
+}

@@ -23,6 +23,7 @@
 // resolver, so it unit-tests with no database and no AutoCount.
 // ----------------------------------------------------------------------------
 import type { Env } from '../types';
+import type { AcRetiredLine } from './ac-line-gone';
 import {
   ItemCodeError,
   resolveAcItemCode,
@@ -309,14 +310,7 @@ export interface ErpLine {
 }
 
 /** A line the ERP removed, named by the AutoCount key it still points at. */
-export interface AcRetiredLine {
-  DtlKey: number;
-  ItemCode: string;
-  /** Omitted rather than nulled, so AcSyncService keeps the book's own text. */
-  Desc2?: string | null;
-  /** ac-line-gone.ts — absent means RETIRE, the stricter answer. */
-  Gone?: 'deleted' | 'cancelled';
-}
+export type { AcLineGoneReason, AcRetiredLine } from './ac-line-gone';
 
 // ── AcSyncService payload shapes ────────────────────────────────────────────
 

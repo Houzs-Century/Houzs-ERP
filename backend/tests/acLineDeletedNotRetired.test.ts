@@ -28,8 +28,12 @@ const SERVICE = code(serviceSrc);
 
 describe('a deleted line is declared as deleted, not as a retirement', () => {
   test('the payload carries the reason, and ABSENT means retire', () => {
-    expect(WRITEBACK).toMatch(/Gone\?: AcLineGoneReason;/);
+    /* Both the reason AND the line shape live in ac-line-gone.ts: the type is
+       only readable beside the sentence that explains it, and autocount-writeback
+       sits at the 2000-line cap. */
+    expect(GONE).toMatch(/Gone\?: AcLineGoneReason;/);
     expect(GONE).toMatch(/AcLineGoneReason = 'deleted' \| 'cancelled'/);
+    expect(WRITEBACK).toMatch(/export type \{ AcLineGoneReason, AcRetiredLine \}/);
   });
 
   /* Every caller of `retiredLineOf` is a DELETE route, so the stamp belongs at
