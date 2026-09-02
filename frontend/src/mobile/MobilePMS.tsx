@@ -26,6 +26,7 @@ import "./mobile.css";
 import { fmtTime } from "../vendor/shared/format";
 import { DateField } from "../vendor/scm/components/DateField";
 import { DefectActionsCtx, DefectFileActions, type AttachmentAction } from "./MobilePmsDefectActions";
+import { PlanFileChips } from "./MobilePmsPlanFileChips";
 
 /* ------------------------------------------------------------------ *
  * Mobile Project (PMS) — list + detail.
@@ -3850,21 +3851,6 @@ function FloorPlans({
       if (filledRef.current) filledRef.current.value = "";
     }
   };
-  // Remove one file from a plan tile (owner 2026-08-24). Same endpoint the
-  // tasklist chip and the stock-transfer row use — the file belongs to the
-  // checklist task either way, so all three surfaces stay one file.
-  const removePlanFile = async (attId: number, name: string | null | undefined) => {
-    if (confirm && !(await confirm({ title: `Remove ${name || "this file"}?`, confirmLabel: "Remove", danger: true }))) return;
-    setBusy(true);
-    try {
-      await api.del(`/api/projects/checklist/attachments/${attId}`);
-      reload();
-    } catch (e) {
-      await notify({ title: "Remove failed", body: e instanceof Error ? e.message : "Please try again.", tone: "error" });
-    } finally {
-      setBusy(false);
-    }
-  };
   // Upload straight onto the Display floor plan task — the replace half of the
   // same complaint: with no upload here, removing a wrong plan left the tile
   // empty and the phone with no way to put the right one back.
@@ -3985,38 +3971,15 @@ function FloorPlans({
                       {files.length ? "+ Add / replace" : "Upload"}
                     </button>
                   )}
-                  {/* One chip per file with its × (owner 2026-08-24). Only for
-                      real task attachments — the legacy project-level plans the
-                      Unfilled/Filled tiles fall back to are a different store
-                      and this endpoint would not find them. stopPropagation, or
-                      the tap opens the lightbox instead of removing. */}
-                  {canDeleteFiles && t.atts.length > 0 && (
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 6 }}>
-                      {t.atts.map((a) => (
-                        <span
-                          key={a.id}
-                          style={{
-                            display: "inline-flex", alignItems: "center", gap: 4, maxWidth: "100%",
-                            border: "1px solid #e3e6e0", borderRadius: 7, padding: "2px 4px 2px 6px",
-                            fontSize: 10, color: "#414539", background: "#fbfcfa",
-                          }}
-                        >
-                          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 128 }}>
-                            {a.file_name || "file"}
-                          </span>
-                          <button
-                            className="tinybtn"
-                            disabled={busy}
-                            aria-label={`Remove ${a.file_name || "file"}`}
-                            title="Remove file"
-                            style={{ color: "#a13a34", padding: "1px 6px", fontWeight: 700 }}
-                            onClick={(e) => { e.stopPropagation(); void removePlanFile(a.id, a.file_name); }}
-                          >
-                            ×
-                          </button>
-                        </span>
-                      ))}
-                    </div>
+                  {canDeleteFiles && (
+                    <PlanFileChips
+                      files={t.atts}
+                      busy={busy}
+                      setBusy={setBusy}
+                      confirm={confirm}
+                      notify={notify}
+                      reload={reload}
+                    />
                   )}
                   {tileCanReview && tileItem && (
                     <ReviewButtons item={tileItem} busy={busy} setBusy={setBusy} prompt={prompt} notify={notify} reload={reload} />
