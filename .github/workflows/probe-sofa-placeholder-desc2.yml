@@ -1,0 +1,78 @@
+name: Sofa "-1S" placeholder Desc2 probe (read-only)
+
+# The completeness audit COUNTS the sofa lines still on a bare `-1S`
+# placeholder; it never prints the text behind them, so the number has never had
+# a cause attached to it. This runs the real decoder over the Desc2 each of those
+# rows holds today and buckets WHY it fell back — no build in the text (a photo
+# job) vs a token the grammar rejected (a spelling we can teach it) — and lists
+# every rejected token with its count.
+#
+# READ-ONLY: SELECTs only, no DDL, no writes, no transaction, and deliberately
+# no APPLY input.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      company:
+        description: "company_id"
+        required: false
+        default: "1"
+        type: string
+      all_so:
+        description: "1 = every sales order, not only the ones with a Processing Date"
+        required: false
+        default: "1"
+        type: string
+      show:
+        description: "how many placeholder lines to print per side"
+        required: false
+        default: "200"
+        type: string
+  # TEMPORARY (removed before merge, see PR body): a workflow_dispatch workflow
+  # cannot be dispatched until it is on main, and the numbers are needed to write
+  # the PR. Runs the same read-only probe, nothing else.
+  push:
+    branches: [diag/sofa-placeholder-decode]
+
+concurrency:
+  group: probe-sofa-placeholder-desc2-${{ inputs.target || 'prod' }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/probe-sofa-placeholder-desc2.mjs
+        env:
+          COMPANY: ${{ inputs.company }}
+          ALL_SO: ${{ inputs.all_so }}
+          SHOW: ${{ inputs.show }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target != 'staging' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/probe-sofa-placeholder-desc2.mjs
+        env:
+          COMPANY: ${{ inputs.company }}
+          ALL_SO: ${{ inputs.all_so }}
+          SHOW: ${{ inputs.show }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
