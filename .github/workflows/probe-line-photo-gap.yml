@@ -9,6 +9,8 @@ name: Line photo GAP split (read-only)
 #
 # READ-ONLY: SELECTs only, no DDL, no writes, no transaction.
 on:
+  push:
+    branches: [diag/photo-doc-level]   # TEMPORARY - removed before merge
   workflow_dispatch:
     inputs:
       company:
@@ -40,6 +42,6 @@ jobs:
         working-directory: backend
         env:
           DATABASE_URL: "${{ secrets.DATABASE_URL }}"
-          COMPANY: "${{ inputs.company }}"
-          SHOW: "${{ inputs.show }}"
+          COMPANY: "${{ inputs.company || 1 }}"
+          SHOW: "${{ inputs.show || 30 }}"
         run: node scripts/probe-line-photo-gap.mjs
