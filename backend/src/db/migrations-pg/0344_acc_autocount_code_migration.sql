@@ -7,6 +7,17 @@
 --   Every step is a keyed, invertible mapping — nothing is deleted except
 --   the parent rows this file inserted.
 --
+-- CORRECTED 2026-09-02, BEFORE this file was ever applied anywhere. The
+-- first version named scm.acc_bank_configs, a table that has never existed in
+-- any tree or any environment (0336 calls it acc_bank_statement_config), so
+-- the whole DO block aborted and pg-migrate reported
+--   FAILED 0344_acc_autocount_code_migration.sql: relation "scm.acc_bank_configs"
+--   does not exist
+-- on the production deploy (run 33640908643). A migration runs in ONE
+-- transaction, so nothing was written and no tracker row exists for the old
+-- checksum — editing the body here is therefore safe and is NOT the
+-- "never edit an applied file" case CLAUDE.md warns about.
+--
 -- acc_autocount_code_migration — the owner's chart, the owner's codes
 -- (2026-09-02: 迁到 AutoCount 码 — so ERP↔AutoCount reconciliation reads the
 -- same code as the same account, no translation table in anyone's head).
@@ -29,7 +40,7 @@
 --   scm.payment_voucher_lines.debit_account_code,
 --   scm.acc_vendor_memory.debit_account_code,
 --   scm.acc_company_acquirers (transit/fee/bank; acc_acquirers is its VIEW),
---   scm.acc_bank_configs.account_code (the owner's MBB/PBB statement
+--   scm.acc_bank_statement_config.account_code (the owner's MBB/PBB statement
 --   configs hang here), scm.acc_bank_statements.account_code (his uploaded
 --   statements), scm.acc_account_roles.
 -- The mapping is identical for every company, so the updates are global.
@@ -70,7 +81,11 @@ BEGIN
     UPDATE scm.acc_company_acquirers    SET transit_account_code = hop.new_code WHERE transit_account_code = hop.old_code;
     UPDATE scm.acc_company_acquirers    SET fee_account_code     = hop.new_code WHERE fee_account_code     = hop.old_code;
     UPDATE scm.acc_company_acquirers    SET bank_account_code    = hop.new_code WHERE bank_account_code    = hop.old_code;
-    UPDATE scm.acc_bank_configs         SET account_code         = hop.new_code WHERE account_code         = hop.old_code;
+    /* The table is acc_bank_statement_config (0336). The first version of
+       this file said scm.acc_bank_configs, which has never existed, and the
+       whole DO block aborted on the production deploy — see
+       docs/bugs/ for the entry. */
+    UPDATE scm.acc_bank_statement_config SET account_code         = hop.new_code WHERE account_code         = hop.old_code;
     UPDATE scm.acc_bank_statements      SET account_code         = hop.new_code WHERE account_code         = hop.old_code;
     UPDATE scm.acc_account_roles        SET account_code         = hop.new_code WHERE account_code         = hop.old_code;
   END LOOP;
