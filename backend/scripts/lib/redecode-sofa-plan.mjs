@@ -49,13 +49,33 @@ export function isPlaceholderLine({ itemCode, remark }) {
   return /SOFA UNPARSED/.test(String(remark ?? '')) && /^1S$/i.test(compartmentOf(itemCode));
 }
 
-/** `['1A(LHF)','CNR']` + model -> `['8030-1A(LHF)','8030-CNR']`. */
+/**
+ * `['1A(LHF)','CNR']` + model -> `['8030-1A(LHF)','8030-CNR']`.
+ *
+ * CASE IS PRESERVED, and the prefix test is case-insensitive. The decoder emits
+ * `Console`, and so does the catalogue (`8038-Console`) — upper-casing on the
+ * way through would write an item_code that no longer matches the product master
+ * it was checked against. Existence is asked case-insensitively; what gets
+ * WRITTEN is the master's own spelling, via canonicaliser() below.
+ */
 export function pieceCodes(model, pieces) {
-  const m = String(model ?? '').trim().toUpperCase();
+  const m = String(model ?? '').trim();
   return (pieces ?? []).map((p) => {
-    const c = String(p ?? '').trim().toUpperCase();
-    return c.startsWith(`${m}-`) ? c : `${m}-${c}`;
+    const c = String(p ?? '').trim();
+    return c.toUpperCase().startsWith(`${m.toUpperCase()}-`) ? c : `${m}-${c}`;
   });
+}
+
+/**
+ * The product master spells its own codes. Hand it every `scm.mfg_products.code`
+ * and it hands back a function that turns any casing of a code into the one the
+ * catalogue actually holds — so a decoded `8038-CONSOLE` is written as
+ * `8038-Console`. A code the master does not have comes back untouched; deciding
+ * that a piece is missing is the caller's job, not this function's.
+ */
+export function canonicaliser(codes) {
+  const byUpper = new Map((codes ?? []).map((c) => [String(c).trim().toUpperCase(), c]));
+  return (code) => byUpper.get(String(code ?? '').trim().toUpperCase()) ?? code;
 }
 
 /**
@@ -102,10 +122,12 @@ export function multiset(codes) {
  *                       dedication that bound-mode readiness reads.
  */
 export function planRow({ currentCode, targetCodes }) {
-  const want = (targetCodes ?? []).map((c) => String(c).trim().toUpperCase());
+  /* Compared case-insensitively, RETURNED verbatim: what goes into item_code is
+     the catalogue's own spelling, and normalising it here would undo that. */
+  const want = (targetCodes ?? []).map((c) => String(c).trim());
   if (!want.length) return { kind: 'refuse', why: 'the decode produced no pieces' };
   const now = String(currentCode ?? '').trim().toUpperCase();
-  if (want.length === 1 && want[0] === now) return { kind: 'noop' };
+  if (want.length === 1 && want[0].toUpperCase() === now) return { kind: 'noop' };
   return { kind: 'expand', update: want[0], inserts: want.slice(1) };
 }
 

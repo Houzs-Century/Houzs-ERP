@@ -69,8 +69,8 @@ import postgres from 'postgres';
 import { SOFA_MODEL_ALIAS, parseSofa } from './lib/parse-sofa.mjs';
 import { buildFabricColourIndex, isPendingColour } from './lib/fabric-colour-match.mjs';
 import {
-  buildCloneInsert, compartmentOf, isPlaceholderLine, mergeVariants, modelOf,
-  multiset, pieceCodes, planRow, sameBuild, senColumns,
+  buildCloneInsert, canonicaliser, compartmentOf, isPlaceholderLine, mergeVariants,
+  modelOf, multiset, pieceCodes, planRow, sameBuild, senColumns,
 } from './lib/redecode-sofa-plan.mjs';
 
 const DSN = process.env.DATABASE_URL;
@@ -129,6 +129,12 @@ async function main() {
   const prods = await sql`SELECT code, name FROM scm.mfg_products WHERE company_id = ${CO}`;
   const nameOf = new Map(prods.map((p) => [K(p.code), p.name]));
   const codeSet = new Set(prods.map((p) => K(p.code)));
+  /* The MASTER spells its own codes. The decoder emits `Console` and so does the
+     catalogue (`8038-Console`); a piece written as `8038-CONSOLE` would be an
+     item_code that matches no product row by equality, having been checked for
+     existence case-insensitively. Found by reading the first production dry-run,
+     not by reasoning about it. */
+  const canonical = canonicaliser(prods.map((p) => p.code));
   const RECL = ['-1S(R)', '-1A(R)(LHF)', '-1A(P)(LHF)', '-1S(P)'];
   const reclOf = (m) => RECL.some((s) => codeSet.has(K(m + s)));
 
@@ -165,7 +171,7 @@ async function main() {
   const decode = (r) => {
     const model = modelOf(r.code, SOFA_MODEL_ALIAS);
     const ps = parseSofa(r.d2, model, reclOf(model), { knownColour });
-    const codes = pieceCodes(model, ps.pieces);
+    const codes = pieceCodes(model, ps.pieces).map(canonical);
     const missing = codes.filter((c) => !codeSet.has(K(c)));
     const readable = codes.length > 0 && ps.conf !== 'low';
     return { model, ps, codes, missing, readable, clean: readable && missing.length === 0 };
@@ -243,7 +249,7 @@ async function main() {
       refuse(`the two documents are on different models (${[...new Set(speakers.map((m) => m.model))].join(', ')})`);
       continue;
     }
-    const target = pieceCodes(first.model, first.ps.pieces);
+    const target = pieceCodes(first.model, first.ps.pieces).map(canonical);
 
     // A purchase-order line dedicated to this order line that is NOT a
     // placeholder already states a build of its own; re-coding the order line
