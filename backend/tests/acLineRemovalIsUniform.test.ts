@@ -22,6 +22,7 @@
 import { describe, expect, test } from 'vitest';
 import { rebuildNeededForLineSetChange } from '../src/services/ac-line-gone';
 import writebackSrc from '../src/services/autocount-writeback.ts?raw';
+import goneSrc from '../src/services/ac-line-gone.ts?raw';
 import serviceSrc from '../scripts/autocount-service/AcSyncService.cs?raw';
 import outboxSrc from '../src/scm/lib/autocount-outbox.ts?raw';
 
@@ -34,6 +35,7 @@ const code = (s: string): string =>
   lf(s).replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 
 const WRITEBACK = code(writebackSrc);
+const GONE = code(goneSrc);
 const SERVICE = code(serviceSrc);
 const OUTBOX = code(outboxSrc);
 
@@ -63,10 +65,15 @@ describe('the rule is about the line SET, not the document type', () => {
 });
 
 describe('composeEdit derives it — no caller can forget, none can disagree', () => {
-  test('both halves of the set change are read', () => {
-    expect(WRITEBACK).toMatch(/rebuildNeededForLineSetChange\(anyAdded, anyDeleted\)/);
-    expect(WRITEBACK).toMatch(/retired\.some\(\(r\) => r\.Gone === 'deleted'\)/);
-    expect(WRITEBACK).toMatch(/anyAdded = \(opts\.newLineIds\?\.size \?\? 0\) > 0/);
+  /* The whole decision lives in ac-line-gone.ts — composeEdit asks, it does not
+     compute. Both halves of the set change are read THERE, which is why the
+     assertions point at that module. */
+  test('both halves of the set change are read, in one place', () => {
+    expect(WRITEBACK).toMatch(/shouldRebuild\(opts, retired\)/);
+    expect(GONE).toMatch(/retired\.some\(\(r\) => r\.Gone === 'deleted'\)/);
+    expect(GONE).toMatch(/\(opts\.newLineIds\?\.size \?\? 0\) > 0/);
+    /* A blocked document never rebuilds, whatever the line set did — 0609. */
+    expect(GONE).toMatch(/if \(opts\.rebuildBlocked\) return false;/);
   });
 
   test('an explicit request still survives the derivation', () => {
