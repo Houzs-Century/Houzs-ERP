@@ -1695,10 +1695,8 @@ mfgSalesOrders.get('/', async (c) => {
        deleted and closes once every line is fully delivered. Replaces the old
        status-only gate that hid the action at SHIPPED/DELIVERED. */
     const hasUndelivered = new Set<string>();
-    /* Per-SO delivery progress — drives the "Partially Delivered" / "Delivered"
-       badge (Wei Siang 2026-05-31). Aggregated from the same live engine: a SO
-       is 'partial' once any qty has shipped but some remains, 'full' once
-       nothing remains, 'none' before the first DO. */
+    /* Per-SO delivery progress, off the same live engine the picker uses —
+       the verdict AND the two numbers below (sales-order.md §0.4b). */
     const deliveredTotal = new Map<string, number>();
     const remainingTotal = new Map<string, number>();
     /* Fully-shipped LINE ids — the union below suppresses READY chips for them,
@@ -1803,10 +1801,7 @@ mfgSalesOrders.get('/', async (c) => {
       const dRemaining = remainingTotal.get(docNo) ?? 0;
       (r as Record<string, unknown>).delivery_state =
         dDelivered <= 0 ? 'none' : dRemaining > 0 ? 'partial' : 'full';
-      /* THE NUMBERS, not only the verdict — a verdict cannot answer "how many
-         are still owed". No extra read: both are summed above. NOT named
-         delivery_*, which already means two other things here (sales-order.md
-         §0.4b). */
+      /* The NUMBERS too — a verdict cannot say how many are still owed. §0.4b. */
       (r as Record<string, unknown>).shipped_qty = dDelivered;
       (r as Record<string, unknown>).deliverable_qty = dDelivered + dRemaining;
       (r as Record<string, unknown>).lifecycle_state = lifecycleByDoc.get(docNo) ?? 'none';
@@ -2923,7 +2918,6 @@ mfgSalesOrders.get('/:docNo', async (c) => {
   const totalRemaining = items.reduce((s, it) => s + Number(it.remaining_qty ?? 0), 0);
   (salesOrder as Record<string, unknown>).delivery_state =
     totalDelivered <= 0 ? 'none' : totalRemaining > 0 ? 'partial' : 'full';
-  /* As the LIST emits, from this surface's totals — §0.4b. */
   (salesOrder as Record<string, unknown>).shipped_qty = totalDelivered;
   (salesOrder as Record<string, unknown>).deliverable_qty = totalDelivered + totalRemaining;
   /* Status badge driver — same "latest event wins" engine as the list. */
