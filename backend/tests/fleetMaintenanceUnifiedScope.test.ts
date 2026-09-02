@@ -74,8 +74,8 @@ describe('fleet maintenance is one shared fleet', () => {
   it('the matcher is not dead — it still recognises the call shape', () => {
     expect(scopedTables('await scopeToCompany(sb.from("lorry_work_orders").update(p).eq("id", x), c).select("id")'))
       .toEqual(['lorry_work_orders']);
-    expect(scopedTables('const q = sb.from("workshops").select("*");\nawait scopeToCompany(q, c).order("name")'))
-      .toEqual([]); // a pre-built query names no table inline — see the note below
+    expect(scopedTables('await scopeToCompany(sb.from("workshops").select("*"), c).order("name")'))
+      .toEqual(['workshops']);
   });
 
   it('no maintenance record is company-scoped — the dashboard reads them all', () => {
@@ -87,11 +87,14 @@ describe('fleet maintenance is one shared fleet', () => {
   });
 
   it('workshops stays per-company — mig 0241, and the ruling did not reach it', () => {
-    /* Named by its own handler rather than by the helper call, because the
-       workshops list builds its query first and passes the variable. */
-    const body = source().replace(/\/\*[\s\S]*?\*\//g, '');
-    expect(body).toContain('scopeToCompany(q, c).order("name")');
-    expect(PER_COMPANY_TABLES).toContain('workshops');
+    /* Asserted on the TABLE the helper scopes, not on the call's exact text: an
+       earlier version pinned the string `scopeToCompany(q, c).order("name")` and
+       broke the moment the query was folded back inline, which says nothing
+       about whether workshops is still scoped. */
+    const scoped = new Set(scopedTables(source()));
+    for (const t of PER_COMPANY_TABLES) {
+      expect(scoped, `${t} must stay company-scoped (mig 0241)`).toContain(t);
+    }
   });
 
   it('company_id is still STAMPED on insert — provenance, which the migrations require', () => {

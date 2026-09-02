@@ -194,11 +194,10 @@ const inHouseLorries = (sb: { from: (t: string) => { select: (cols: string) => a
    would leave the dashboard listing a row that PATCH/DELETE then 404s. The gate
    that IS real is requireHouzsPerm("fleet.write").
 
-   Twelve by-id handlers once scoped these while /dashboard did not — the failure
-   above, predicted. Owner 2026-09-02: 「共用的，因为 TMS 是共用的」; the twelve
-   went. Pinned by tests/fleetMaintenanceUnifiedScope.test.ts, docs/bugs/0620-*.
-   EXCEPTION: scm.workshops IS per-company (mig 0241) — the repair-shop MASTER,
-   not a maintenance record, so its handlers do scope. */
+   Twelve by-id handlers once scoped these while /dashboard did not. Owner
+   2026-09-02: 「共用的，因为 TMS 是共用的」; they went. Pinned by
+   tests/fleetMaintenanceUnifiedScope.test.ts. EXCEPTION: scm.workshops IS
+   per-company (mig 0241) — the repair-shop MASTER. docs/bugs/0620-* */
 
 type Lorry = {
   id: string;
@@ -1991,7 +1990,6 @@ async function mintWorkshopCode(sb: any, companyId: number | null): Promise<stri
      nextCode (scm/lib/fleet-code-mint) is the one parser every minted code in
      this system shares — it reads any padding, which is what stops a second
      numbering scheme forming the way DRV-05 formed beside DRV-050. */
-  /* Nullable id in .eq matched nothing and minted a duplicate. docs/bugs/0618-* */
   const { data } = await scopeToCompanyIdOrOpen(sb.from("workshops").select("code"), companyId);
   return nextCode(CODE_PREFIX.WORKSHOP, ((data ?? []) as Array<{ code?: string | null }>).map((r) => r.code));
 }
@@ -2002,7 +2000,7 @@ async function mintWorkshopCode(sb: any, companyId: number | null): Promise<stri
  *  real guard so two racing creates cannot both win. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function mintRecordNo(sb: any, table: string, column: string, prefix: string, companyId: number | null): Promise<string> {
-  /* Falls OPEN: a nullable id in .eq read zero codes and reissued a duplicate. */
+  /* Falls OPEN: a nullable id in .eq read zero codes and minted a duplicate (0618-*). */
   const { data } = await scopeToCompanyIdOrOpen(sb.from(table).select(column), companyId);
   return nextCode(prefix, ((data ?? []) as Array<Record<string, string | null>>).map((r) => r[column]));
 }
