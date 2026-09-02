@@ -123,10 +123,12 @@ app.get("/live", requirePageAccess("system_health"), async (c) => {
   // this very request (services/auth-fastpath-probe.ts).
   const sessionSigningConfigured = sessionSigningSecret(c.env) !== null;
   const thisRequestPath: AuthFastPath = c.get("authPath") ?? "unknown";
-  const sessionSigning = {
-    configured: sessionSigningConfigured,
-    this_request: thisRequestPath,
-  };
+  /* LEFT AT EXACTLY `{ configured }`. systemHealthSessionSigning.test.ts
+     deep-equals this object across three secret states, and that strictness is
+     the point — it exists to stop the panel reading On for a placeholder. The
+     new fact belongs in `authFastPath` below, not smuggled in here; both read
+     the same const, so they cannot disagree. */
+  const sessionSigning = { configured: sessionSigningConfigured };
 
   /* THE OTHER 90%. /api/presence and /api/announcements/banner are ~90% of every
      slow request in production (697 of 761 occurrences over three days,
