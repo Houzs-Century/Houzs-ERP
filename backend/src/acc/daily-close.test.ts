@@ -8,7 +8,7 @@ import { fakeSb, type Row } from '../scm/lib/fake-postgrest';
 import { bucketPayments, systemTakings, postCashOverShort } from './daily-close';
 import { DEFAULT_ROLE_CODES } from './rules';
 
-const CHART: Row[] = ['335-0000', '946-0000'].map((code) => ({
+const CHART: Row[] = ['320-0000', '946-0000'].map((code) => ({
   account_code: code, account_name: code, account_type: 'EXPENSE', parent_code: null, is_active: true, company_id: 1,
 }));
 
