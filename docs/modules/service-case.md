@@ -158,8 +158,11 @@ collecting the item FROM the customer comes first; ops advances the sub as the
 item moves. The collect-from-customer dispatch words moved with that leg:
 `sheetDetailStatus` (assrFormIntake.ts) emits the sheet's unchanged PICKUP
 trigger word "Pending Supplier Pickup (Customer Pickup)" only while the sub is
-`pending_customer_pickup` AND Pickup by = Customer pickup; the bare
-"Pending Customer Pickup" fires no Delivery job. Subs are directly switchable
+`pending_customer_pickup` AND Pickup by = Customer pickup. The sheet's
+column-A vocabulary is FROZEN (Nico 2026-09-01: A列不要修改), so the bare
+customer-pickup leg exports the stage's bare word — the finer
+"Pending Customer Pickup" label exists in the ERP UI only, and the export
+never emits a word the sheet's validation would reject. Subs are directly switchable
 by ops (desktop select), stored on `assr_cases.sub_status`, and
 `assrSubStatusAddsInfo()` (`stages.ts`) hides one that merely restates its
 stage label — with one exception (Nico 2026-08-22): under the combined
