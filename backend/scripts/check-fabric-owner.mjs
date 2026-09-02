@@ -31,10 +31,10 @@ async function main() {
   const whereSeries = series.length ? sql`series = ANY(${series})` : sql`false`;
   const whereCodes = codes.length ? sql`id = ANY(${codes})` : sql`false`;
 
-  // fabric_trackings: the table the import's 409 check reads
+  // fabric_trackings: the table the import's 409 check reads.
+  // (no created_at column on this table -- group by company + active only)
   const grp = await sql`
-    SELECT company_id::text AS cid, is_active, count(*)::int AS n,
-           min(created_at) AS first, max(created_at) AS last
+    SELECT company_id::text AS cid, is_active, count(*)::int AS n
       FROM scm.fabric_trackings
      WHERE ${whereSeries} OR ${whereCodes}
      GROUP BY company_id, is_active
@@ -42,17 +42,17 @@ async function main() {
   note(`\n=== fabric_trackings -- where these fabrics live (series=[${series.join(',')}]) ===`);
   if (!grp.length) note('  NONE found in fabric_trackings. The codes are not here at all.');
   for (const r of grp) {
-    note(`  company ${r.cid} (${cmap.get(r.cid) || 'UNKNOWN/orphan'})  active=${r.is_active}  count=${r.n}  created ${String(r.first).slice(0, 19)} .. ${String(r.last).slice(0, 19)}`);
+    note(`  company ${r.cid} (${cmap.get(r.cid) || 'UNKNOWN/orphan'})  active=${r.is_active}  count=${r.n}`);
   }
 
   const sample = await sql`
-    SELECT id, series, company_id::text AS cid, is_active, created_at
+    SELECT id, series, company_id::text AS cid, is_active
       FROM scm.fabric_trackings
      WHERE ${whereSeries} OR ${whereCodes}
-     ORDER BY company_id, id LIMIT 25`;
-  note(`\n=== sample rows (up to 25) ===`);
+     ORDER BY company_id, id LIMIT 40`;
+  note(`\n=== sample rows (up to 40) ===`);
   for (const r of sample) {
-    note(`  ${String(r.id).padEnd(14)} series=${String(r.series ?? '').padEnd(10)} company ${r.cid}(${cmap.get(r.cid) || '?'})  active=${r.is_active}  ${String(r.created_at).slice(0, 19)}`);
+    note(`  ${String(r.id).padEnd(14)} series=${String(r.series ?? '').padEnd(10)} company ${r.cid}(${cmap.get(r.cid) || '?'})  active=${r.is_active}`);
   }
 
   // selling library mirrors, best-effort
