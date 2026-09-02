@@ -25,8 +25,9 @@
  */
 import { describe, expect, test } from 'vitest';
 import {
-  COLOUR_KEYS, NEVER_CLONE, buildCloneInsert, compartmentOf, isPlaceholderLine,
-  mergeVariants, modelOf, multiset, pieceCodes, planRow, quoteIdent, sameBuild, senColumns,
+  COLOUR_KEYS, NEVER_CLONE, buildCloneInsert, canonicaliser, compartmentOf,
+  isPlaceholderLine, mergeVariants, modelOf, multiset, pieceCodes, planRow,
+  quoteIdent, sameBuild, senColumns,
 } from '../scripts/lib/redecode-sofa-plan.mjs';
 
 const SO_COLUMNS = [
@@ -63,6 +64,34 @@ describe('model and compartment', () => {
   test('pieceCodes does not double the model when the decode already carries it', () => {
     expect(pieceCodes('8030', ['1A(LHF)', 'CNR'])).toEqual(['8030-1A(LHF)', '8030-CNR']);
     expect(pieceCodes('8030', ['8030-1A(LHF)'])).toEqual(['8030-1A(LHF)']);
+    // the prefix test is case-insensitive; the CASE of the piece survives it
+    expect(pieceCodes('8038', ['8038-Console'])).toEqual(['8038-Console']);
+  });
+
+  /* THE CATALOGUE SPELLS ITS OWN CODES, and this is not hypothetical: the
+     decoder emits `Console` and `scm.mfg_products` holds `8038-Console`, so an
+     upper-cased `8038-CONSOLE` is an item_code that matches no product row by
+     equality — having been checked for EXISTENCE case-insensitively and passed.
+     Caught by reading the first production dry-run (run 33664350222), which
+     planned `1A(P)(LHF)+CONSOLE+1A(P)(RHF)` on HC-SO-012695. */
+  test('a piece is written in the catalogue\'s own spelling, whatever case it decoded in', () => {
+    const canon = canonicaliser(['8038-1A(P)(LHF)', '8038-Console', '8030-CNR']);
+    expect(canon('8038-CONSOLE')).toBe('8038-Console');
+    expect(canon('8038-console')).toBe('8038-Console');
+    expect(canon('8030-cnr')).toBe('8030-CNR');
+  });
+
+  test('a code the master does not hold comes back untouched — deciding it is missing is the caller\'s job', () => {
+    const canon = canonicaliser(['8038-Console']);
+    expect(canon('8038-1NA')).toBe('8038-1NA');
+    expect(canon(null)).toBe(null);
+  });
+
+  test('planRow compares case-insensitively and returns the target VERBATIM', () => {
+    expect(planRow({ currentCode: '8038-1S', targetCodes: ['8038-Console', '8038-1NA'] }))
+      .toEqual({ kind: 'expand', update: '8038-Console', inserts: ['8038-1NA'] });
+    // a row already on the piece, spelled differently, is still a no-op
+    expect(planRow({ currentCode: '8069-1s', targetCodes: ['8069-1S'] })).toEqual({ kind: 'noop' });
   });
 });
 
