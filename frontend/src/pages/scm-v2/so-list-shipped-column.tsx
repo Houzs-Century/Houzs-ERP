@@ -15,6 +15,10 @@ import {
   type ShippedProgressFields,
 } from "../../vendor/scm/lib/shipped-progress";
 
+/* Re-exported so a surface that renders the CELL (the drill-down line) and
+   the COLUMN (the list row) takes one import, not two. */
+export { ShippedProgressPill };
+
 export function shippedProgressColumn<R extends ShippedProgressFields>(): Column<R> {
   return {
     key: "shipped_progress",

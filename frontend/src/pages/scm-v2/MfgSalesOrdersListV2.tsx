@@ -20,8 +20,7 @@
 // the tree; App.tsx route swap decides which one users see.
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { shippedProgressColumn } from "./so-list-shipped-column";
-import { ShippedProgressPill } from "../../components/ShippedProgressPill";
+import { shippedProgressColumn, ShippedProgressPill } from "./so-list-shipped-column";
 import { SO_STATUS_TABS, statusFor, type StatusTab } from "./so-list-status";
 import { salesOrderRowMenu } from "./row-menus";
 import { brandingToneForCategory, type BrandTone } from "../../lib/brandingTone";
@@ -146,8 +145,7 @@ type SoRow = HoldFields & {
   customer_type: string | null;
   building_type: string | null;
   customer_country: string | null;
-  /* HOW MUCH HAS LEFT — sales-order.md §0.4b. */
-  shipped_qty?: number | null;
+  shipped_qty?: number | null;   // §0.4b — how much has LEFT
   deliverable_qty?: number | null;
   do_nos?: string[] | null;
   /** The same delivery orders and the sales invoices raised against this order,
@@ -959,13 +957,9 @@ function SoLinesExpansion({ docNo }: { docNo: string }) {
               <span>
                 <SoStockPill line={l} />
               </span>
-              <span>
-                <ShippedProgressPill line={l} />
-              </span>
-              {/* Shipped lines show the ACTUAL source PO(s) (batch trail, GRN-
-                  healed); READY lines the FIFO-projected PO(s) / STOCK ADJ;
-                  un-arrived remainder the MRP coverage PO + ETA — the ONE
-                  shared renderer, identical to the SO detail page. */}
+              <span><ShippedProgressPill line={l} /></span>
+              {/* The ONE shared renderer, identical to the SO detail page —
+                  the four chips are documented at sales-order.md §0.8. */}
               <span className="min-w-0">
                 <SoSourceChips line={l} />
               </span>
