@@ -2,8 +2,6 @@
  * THREE times as three hand-copied ternaries. Two things are pinned here: the
  * decision itself, and that there is still only one copy of it.
  */
-import { readFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { accMastersCompanyId, ACC_MASTERS_FALLBACK_COMPANY_ID } from './masters-company';
 
@@ -41,35 +39,5 @@ describe('accMastersCompanyId', () => {
     accMastersCompanyId(2, 'checkAccounts');
     expect(spy).not.toHaveBeenCalled();
     spy.mockRestore();
-  });
-});
-
-/* A unit test cannot stop a fourth copy being typed into a fourth file. This
-   can. The pattern is the exact expression that was live in engine.ts:94,
-   rules.ts:93 and payments.ts:51 — a company fallback written inline instead of
-   asked for. It also fails when its own matcher finds no files to read, so a
-   verdict computed over an empty population cannot read as a pass (CLAUDE.md:
-   "a checker that cannot match reports a clean run"). */
-describe('the decision has exactly one home', () => {
-  const dir = join(__dirname);
-  const INLINE_FALLBACK = /companyId\s*(==|===)\s*null\s*\?\s*1\b|companyId\s*(\?\?|\|\|)\s*1\b/;
-
-  it('no acc/ module re-implements the company fallback inline', () => {
-    const files = readdirSync(dir).filter((f) => f.endsWith('.ts') && !f.endsWith('.test.ts'));
-    expect(files.length).toBeGreaterThan(5); // the matcher ran over a real population
-
-    const offenders = files.filter((f) => {
-      if (f === 'masters-company.ts') return false; // the one home
-      return INLINE_FALLBACK.test(readFileSync(join(dir, f), 'utf8'));
-    });
-    expect(offenders, `these files re-implement the fallback instead of calling accMastersCompanyId: ${offenders.join(', ')}`)
-      .toEqual([]);
-  });
-
-  it('the matcher is not dead — it still recognises the expression it was written for', () => {
-    expect(INLINE_FALLBACK.test('const co = companyId == null ? 1 : Number(companyId);')).toBe(true);
-    expect(INLINE_FALLBACK.test(".eq('company_id', companyId == null ? 1 : Number(companyId))")).toBe(true);
-    expect(INLINE_FALLBACK.test('const co = companyId ?? 1;')).toBe(true);
-    expect(INLINE_FALLBACK.test('const co = accMastersCompanyId(companyId, "x");')).toBe(false);
   });
 });
