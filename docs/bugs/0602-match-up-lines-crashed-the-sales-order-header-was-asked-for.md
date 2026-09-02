@@ -1,5 +1,6 @@
-<!-- area: AutoCount sync + write-back -->
 ## Match up lines crashed: the sales-order header was asked for an id column it does not have [high]
+
+<!-- area: AutoCount sync + write-back -->
 
 **Symptom.** HC-SO-013394 sat HELD BACK with "The ERP cannot tell which lines
 AutoCount already has". That screen tells the operator what to do — *"The lines
