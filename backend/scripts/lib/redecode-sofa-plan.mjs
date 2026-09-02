@@ -31,9 +31,24 @@ export function modelOf(code, alias = {}) {
   return alias[base] || base;
 }
 
-/** `8030-1A(LHF)` -> `1A(LHF)`; a code with no dash has no compartment. */
+/**
+ * `8030-1A(LHF)` -> `1A(LHF)`; a code with no dash has no compartment.
+ *
+ * UPPER-CASED, so it is for COMPARING and never for anything that gets written
+ * or printed as evidence — `8038-Console` comes back as `CONSOLE` here, which is
+ * a real product code spelled wrong. Use compartmentOfVerbatim() for a value
+ * that lands in a column or in a log somebody will read as proof.
+ */
 export function compartmentOf(code) {
   const c = String(code ?? '').trim().toUpperCase();
+  const dash = c.indexOf('-');
+  return dash < 0 ? '' : c.slice(dash + 1);
+}
+
+/** The same suffix, spelled as the code spells it. Feeds `supplier_sku`, which
+ *  the PO importer writes as `<AutoCount item code> <compartment>`. */
+export function compartmentOfVerbatim(code) {
+  const c = String(code ?? '').trim();
   const dash = c.indexOf('-');
   return dash < 0 ? '' : c.slice(dash + 1);
 }
