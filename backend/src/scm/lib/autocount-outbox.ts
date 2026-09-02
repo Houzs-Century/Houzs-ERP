@@ -42,6 +42,7 @@
 // on shared/so-processing-date.ts for exactly that reason.
 // ----------------------------------------------------------------------------
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { inAcLineOrder } from './ac-line-order';
 import type { Env } from '../env';
 import { getSupabaseService } from '../../db/supabase';
 import { isWritebackEnabled } from './autocount-writeback-flag';
@@ -561,7 +562,7 @@ export async function enqueueSoCreate(
        again would duplicate the order in the live book. */
     if ((header as { linked_ac_docno?: string | null }).linked_ac_docno) return AC_ENQUEUE_SILENT;
     const items = await readOrThrow('mfg_sales_order_items',
-      sb.from('mfg_sales_order_items').select(SO_ITEM_COLS).eq('doc_no', opts.docNo));
+      inAcLineOrder(sb.from('mfg_sales_order_items').select(SO_ITEM_COLS).eq('doc_no', opts.docNo)));
     const rows = (items ?? []) as Record<string, unknown>[];
     const lines = await withLocations(sb, rows, rows.map(soLine));
     /* Composed TWICE on purpose: once to learn which ERP rows produced which
@@ -668,7 +669,7 @@ export async function enqueuePoCreate(
     poNumber = header.po_number || opts.poId;
     if (header.linked_ac_docno) return AC_ENQUEUE_SILENT;
     const items = await readOrThrow('purchase_order_items',
-      sb.from('purchase_order_items').select(PO_ITEM_COLS).eq('purchase_order_id', opts.poId));
+      inAcLineOrder(sb.from('purchase_order_items').select(PO_ITEM_COLS).eq('purchase_order_id', opts.poId)));
     const rows = (items ?? []) as Record<string, unknown>[];
     const lines = await withLocations(sb, rows, rows.map(soLine));
     const bindings = await bindingsFor(sb, opts.companyId, lines.map((l) => l.item_code), header.supplier_id);
@@ -1376,8 +1377,7 @@ async function composeDownstreamState(
   if (!header) return null;
   const h = header as unknown as Record<string, unknown>;
   const items = await readOrThrow(spec.itemTable,
-    sb.from(spec.itemTable).select(spec.itemCols).eq(spec.itemFk, id)
-      .order('created_at', { ascending: true }).order('id', { ascending: true }));
+    inAcLineOrder(sb.from(spec.itemTable).select(spec.itemCols).eq(spec.itemFk, id)));
   const lines = ((items ?? []) as unknown as Record<string, unknown>[]).map(spec.line);
   const docNo = spec.docNoOf(h);
   return {
@@ -1404,7 +1404,7 @@ async function composeSoState(sb: Sb, docNo: string, retired: AcRetiredLine[] = 
     sb.from('mfg_sales_orders').select(SO_HEADER_COLS).eq('doc_no', docNo).maybeSingle());
   if (!header) return null;
   const items = await readOrThrow('mfg_sales_order_items',
-    sb.from('mfg_sales_order_items').select(SO_ITEM_COLS).eq('doc_no', docNo));
+    inAcLineOrder(sb.from('mfg_sales_order_items').select(SO_ITEM_COLS).eq('doc_no', docNo)));
   const soRows = (items ?? []) as Record<string, unknown>[];
   const lines = await withLocations(sb, soRows, soRows.map(soLine));
   const h = header as Record<string, unknown>;
@@ -1444,7 +1444,7 @@ async function composePoState(sb: Sb, poId: string, retired: AcRetiredLine[] = [
   const header = await readPoHeader(sb, poId);
   if (!header) return null;
   const items = await readOrThrow('purchase_order_items',
-    sb.from('purchase_order_items').select(PO_ITEM_COLS).eq('purchase_order_id', poId));
+    inAcLineOrder(sb.from('purchase_order_items').select(PO_ITEM_COLS).eq('purchase_order_id', poId)));
   const poRows = (items ?? []) as Record<string, unknown>[];
   const lines = await withLocations(sb, poRows, poRows.map(soLine));
   /* A line this request just ADDED inherits the purchase order's own warehouse

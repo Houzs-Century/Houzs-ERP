@@ -3512,6 +3512,31 @@ the test pins it against `AcSyncService.DocTypes` read out of the C# source with
 `?raw` — so a type the host drops fails a test here rather than becoming a 400
 for a document the book can read.
 
+### LINE ORDER IS PART OF THE DOCUMENT (owner rule, 2026-09-02)
+
+> 「convert 了的 PO 一定要 remain 在同样的 line，就是例如第四个 item 就是第 4 个
+> item，不可以高或低」
+
+Every read whose rows become an AutoCount payload goes through
+`inAcLineOrder` (`scm/lib/ac-line-order.ts`): `created_at` ASC, then `id` ASC.
+
+`created_at` is the order a person entered the lines. `id` is not decoration —
+it makes the sort TOTAL, because a bulk insert gives several rows the same
+timestamp and Postgres may then return those in any order.
+
+**Until 2026-09-02 the SO and PO reads had no `ORDER BY` at all**, so the same
+document could serialize its lines differently after any edit. Two paths made
+that a real defect: a CREATE sends `AddDetail` in payload order, and a new line
+learns its DtlKey POSITIONALLY (`autocount-line-keys.ts`). Trace:
+`docs/bugs/0605-lines-reached-autocount-in-whatever-order-postgres-felt-like.md`.
+
+It changes nothing in the book — an edit still matches by DtlKey. It makes OUR
+side deterministic, which is what the two positional paths depend on.
+
+`backend/tests/acLineOrderWiring.test.ts` fails the build if a payload read is
+added without it. It is the reason `readConvertSourceKeys` is ordered too: that
+read returns the transfer's DtlKeys and pairs quantities with them positionally.
+
 **A PENDING ANCESTOR IS SENT, NOT RE-QUEUED** (2026-08-26, docs/bugs/0542).
 `sendAncestorsFirst` always went through `requeueOutboxRow`, which refuses a
 pending row outright — `row-pending`, and rightly, since the sweep is already
