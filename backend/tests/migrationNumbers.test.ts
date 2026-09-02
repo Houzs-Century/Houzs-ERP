@@ -53,7 +53,13 @@ const KNOWN_DUPLICATES: Record<string, string[]> = {
   //      not the tip you branched from.
   // Two 0175 files now on main, both applied under their own filenames in
   // `_pg_migrations`. Frozen here so the ratchet catches the NEXT one.
-  "src/db/migrations-pg": ["0029", "0091", "0092", "0093", "0094", "0104", "0108", "0112", "0123"],
+  // 0344 is DELIBERATE, not historical accident (2026-09-02): 0344_acc was
+  // applied on staging (checksum locked) but pending on production, failing
+  // on per-statement FK checks. The only position that runs BEFORE a pending
+  // file is a name that sorts before it — 0344_aaa_defer_account_fks marks
+  // the accounts FKs deferrable so 0344_acc's relay checks at commit. See
+  // both files' headers.
+  "src/db/migrations-pg": ["0029", "0091", "0092", "0093", "0094", "0104", "0108", "0112", "0123", "0344"],
   "src/db/migrations": ["010"],
 };
 
