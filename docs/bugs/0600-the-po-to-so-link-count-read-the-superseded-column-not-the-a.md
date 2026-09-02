@@ -1,5 +1,6 @@
-<!-- area: Purchase orders + GRN + PI -->
 ## The PO-to-SO link count read the superseded column, not the allocations [low]
+
+<!-- area: Purchase orders + GRN + PI -->
 
 **Symptom.** `probe-doc-link-matrix.mjs` reported the PO -> SO edge at
 1005 / 1301 lines and the remaining 296 were carried in the handoff as
