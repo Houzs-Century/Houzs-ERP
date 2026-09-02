@@ -79,6 +79,16 @@ BEGIN
       ('420-0000', '460-0000', 'LOAN/BORROWING',                        NULL)
     ) AS m(old_code, new_code, new_name, new_parent)
   LOOP
+    /* IDEMPOTENCE GUARD, proved necessary by the evidence test's second
+       replay: on a tree that already migrated (staging), hop 330→310-0010
+       would otherwise match the NEW 330-0000 (STOCK, placed by a later hop)
+       and collide with the existing 310-0010. A hop whose new code already
+       exists has already happened — skip it whole, children included (they
+       already carry the new code too). Within one fresh run the relay order
+       guarantees the new code never pre-exists. */
+    IF EXISTS (SELECT 1 FROM scm.accounts WHERE account_code = hop.new_code) THEN
+      CONTINUE;
+    END IF;
     UPDATE scm.accounts
        SET account_code = hop.new_code, account_name = hop.new_name,
            parent_code = hop.new_parent

@@ -210,7 +210,26 @@ async function connect(): Promise<Sql> {
 const DANGLING = `INSERT INTO scm.payment_vouchers (id, company_id, credit_account_code) VALUES ('pv-bad', 2, '999-9999')`;
 
 describePg('0346 — the AutoCount code relay, proved against a real Postgres', () => {
-  afterAll(async () => { await admin?.end(); });
+  afterAll(async () => {
+    /* Leave the shared database razeable: this file runs FIRST (alphabetical)
+       and its FK children would otherwise block the next file's plain
+       `DROP TABLE scm.accounts` — which is exactly what round one did to
+       glViewsScopeToCompany. Raze our own world on the way out. */
+    if (admin) {
+      await admin.unsafe(`
+        DROP TABLE IF EXISTS scm.acc_bank_statements CASCADE;
+        DROP TABLE IF EXISTS scm.acc_bank_statement_config CASCADE;
+        DROP TABLE IF EXISTS scm.acc_company_acquirers CASCADE;
+        DROP TABLE IF EXISTS scm.acc_vendor_memory CASCADE;
+        DROP TABLE IF EXISTS scm.acc_account_roles CASCADE;
+        DROP TABLE IF EXISTS scm.payment_voucher_lines CASCADE;
+        DROP TABLE IF EXISTS scm.payment_vouchers CASCADE;
+        DROP TABLE IF EXISTS scm.journal_entry_lines CASCADE;
+        DROP TABLE IF EXISTS scm.accounts CASCADE;
+      `);
+      await admin.end();
+    }
+  });
 
   beforeEach(async () => {
     admin ??= await connect();
