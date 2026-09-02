@@ -1700,8 +1700,7 @@ mfgSalesOrders.get('/', async (c) => {
     const deliveredTotal = new Map<string, number>();
     const remainingTotal = new Map<string, number>();
     /* Fully-shipped LINE ids — the union below suppresses READY chips for them,
-       exactly as the drill's SoSourceChips does (shipped trace is the durable
-       answer once a line has fully left). */
+       exactly as the drill's SoSourceChips does. */
     const fullyShippedItemIds = new Set<string>();
     {
       const deliverableMap = await deliverableProm;
@@ -1801,8 +1800,7 @@ mfgSalesOrders.get('/', async (c) => {
       const dRemaining = remainingTotal.get(docNo) ?? 0;
       (r as Record<string, unknown>).delivery_state =
         dDelivered <= 0 ? 'none' : dRemaining > 0 ? 'partial' : 'full';
-      /* The NUMBERS too — a verdict cannot say how many are still owed. §0.4b. */
-      (r as Record<string, unknown>).shipped_qty = dDelivered;
+      (r as Record<string, unknown>).shipped_qty = dDelivered;          // §0.4b
       (r as Record<string, unknown>).deliverable_qty = dDelivered + dRemaining;
       (r as Record<string, unknown>).lifecycle_state = lifecycleByDoc.get(docNo) ?? 'none';
       (r as Record<string, unknown>).current_doc_no = currentByDoc.get(docNo) ?? (docNo || null);
@@ -2918,7 +2916,7 @@ mfgSalesOrders.get('/:docNo', async (c) => {
   const totalRemaining = items.reduce((s, it) => s + Number(it.remaining_qty ?? 0), 0);
   (salesOrder as Record<string, unknown>).delivery_state =
     totalDelivered <= 0 ? 'none' : totalRemaining > 0 ? 'partial' : 'full';
-  (salesOrder as Record<string, unknown>).shipped_qty = totalDelivered;
+  (salesOrder as Record<string, unknown>).shipped_qty = totalDelivered;       // §0.4b
   (salesOrder as Record<string, unknown>).deliverable_qty = totalDelivered + totalRemaining;
   /* Status badge driver — same "latest event wins" engine as the list. */
   const [lifecycleByDoc, currentByDoc] = await Promise.all([
