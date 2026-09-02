@@ -97,3 +97,12 @@ jobs:
           COMPANY: ${{ inputs.company }}
           SHOW: ${{ inputs.show }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      # TEMPORARY (this branch only) — record-priced-specials.yml is not yet on
+      # the default branch, so it cannot be workflow_dispatch'd. Runs PLAN only:
+      # MODE defaults to plan and plan writes nothing.
+      - run: node scripts/record-priced-specials-on-migrated-lines.mjs
+        env:
+          MODE: plan
+          COMPANY: ${{ inputs.company }}
+          SHOW: "60"
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
