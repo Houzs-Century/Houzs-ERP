@@ -132,6 +132,18 @@ layer that posted it); a DRAFT wears "prepared — awaiting check" or
 "checked — awaiting approval" beside the pill, and the list's filter chips
 split Draft / Prepared / Checked / Approved / Cancelled by the marks.
 
+**批量tick yes** (owner, same day: 这个批量的功能肯定需要): the list grows
+DataGrid's first-class multi-select for holders of the check or approve
+key. Only rows whose yes is YOURS to give can be ticked (a raw draft and a
+posted voucher render disabled; the header checkbox never sweeps them in);
+a bar counts each button's own targets — "Check n" / "Approve & post n" —
+and the approve dialog states the ticked rows' MYR-equivalent before
+anything moves. The run stamps ONE BY ONE through the same routes as the
+detail buttons (own permission, own gate, own audit; approve carries its
+whole post), so a refused voucher names itself in the summary and the rest
+carry on. No batch reject — a reject wants its own note. Contract:
+`frontend/src/pages/scm-v2/PaymentVouchers.test.tsx`.
+
 ## 0c. Two documents, AutoCount-style (2026-08-30)
 
 The owner, AutoCount in hand: 正常 auto count是可以选payment voucher / AP
