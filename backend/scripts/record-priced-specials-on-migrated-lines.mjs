@@ -68,15 +68,20 @@
 // This writes `variants.specialsRecorded` and DOES NOT TOUCH `variants.specials`.
 //
 // The alternative — stamp the code into `variants.specials` and teach the
-// pricing engine to skip it — was measured and rejected. There are EIGHT places
-// that price a line off `variants.specials`: the SO server recompute, the SO
-// line-editor preview, `poVariantPricingInput` (two backend PO callers), and the
-// five frontend inline builders in PurchaseOrderNew / PurchaseOrderDetail /
-// PurchaseInvoiceDetail / PurchaseConsignmentOrderNew / PurchaseConsignmentOrderDetail.
-// Missing ONE of them charges a historical document, silently, on somebody's
-// next edit. And this run MEASURED that the PO half is live, not theoretical:
-// the supplier maintenance pool carries priceSen for these very codes at master
-// scope and at both supplier scopes.
+// pricing engine to skip it — was measured and rejected. TEN call sites across
+// NINE files feed that array into a price or a cost: the SO server recompute,
+// the SO line-editor preview, `poVariantPricingInput` and its three callers, and
+// the five frontend inline builders in PurchaseOrderNew / PurchaseOrderDetail /
+// PurchaseInvoiceDetail / PurchaseConsignmentOrderNew /
+// PurchaseConsignmentOrderDetail. Enumerated in the PR body; re-run it with
+//
+//   git grep -nE "poVariantPricingInput\(category|Array\.isArray\(v\.specials\)|buildSpecialsPoolFromAddons\(special" -- backend/src frontend/src
+//
+// (that also matches scan-sample-review.ts:416, which reads the array and prices
+// nothing). Missing ONE of them charges a historical document, silently, on
+// somebody's next edit. And this run MEASURED that the PO half is live, not
+// theoretical: the supplier maintenance pool carries priceSen for these very
+// codes at master scope and at both supplier scopes.
 //
 // A key no pricing path reads cannot move money even if a future author misses a
 // site. The failure mode of the design chosen here is that an option is not

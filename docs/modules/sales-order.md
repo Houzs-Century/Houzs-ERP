@@ -2902,6 +2902,11 @@ The customer PRICE is separately protected on a migrated line —
 `trustOperatorSelling === 'including-zero'` and `:725-730` keeps the stored
 figure — but the COST side has no such exemption.
 
+Ten call sites across nine files read `variants.specials` into a price or a
+cost — re-list them with
+`git grep -nE "poVariantPricingInput\(category|Array\.isArray\(v\.specials\)|buildSpecialsPoolFromAddons\(special" -- backend/src frontend/src`
+(the eleventh hit, `scan-sample-review.ts`, reads the array and prices nothing).
+
 `variants.specialsRecorded` is a RECORD: an option recovered from an
 AutoCount-imported line's own Desc2, whose surcharge the imported figure already
 contains. **No pricing path reads it, and none may.** That is enforced, not

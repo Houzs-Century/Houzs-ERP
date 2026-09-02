@@ -50,9 +50,10 @@ default, `CONFIRM=RECORD-NOT-CHARGE` on apply) writes the codes to
 **`variants.specialsRecorded`** and never touches `variants.specials`.
 
 The obvious alternative — stamp into `variants.specials` and teach the engine to
-skip those codes — was rejected for failing OPEN: eight places price a line off
-`variants.specials`, and missing one reprices a closed document silently. A key
-no pricing path reads cannot do that even if a future author misses a site. Two
+skip those codes — was rejected for failing OPEN: **ten call sites across nine
+files** feed that array into a price or a cost, and missing one reprices a
+closed document silently. A key no pricing path reads cannot do that even if a
+future author misses a site. Two
 DISPLAY surfaces render it: `variant-summary.ts` (Description 2, so it reaches
 every print and the Detail Listing) and `SpecialOrders.tsx` (a ticked, locked
 row reading "from AutoCount — already in this document's price, not charged
