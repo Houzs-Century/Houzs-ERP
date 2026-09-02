@@ -23,6 +23,7 @@
 // resolver, so it unit-tests with no database and no AutoCount.
 // ----------------------------------------------------------------------------
 import type { Env } from '../types';
+import { rebuildAllowed, shouldRebuild, type AcRetiredLine } from './ac-line-gone';
 import {
   ItemCodeError,
   resolveAcItemCode,
@@ -309,12 +310,7 @@ export interface ErpLine {
 }
 
 /** A line the ERP removed, named by the AutoCount key it still points at. */
-export interface AcRetiredLine {
-  DtlKey: number;
-  ItemCode: string;
-  /** Omitted rather than nulled, so AcSyncService keeps the book's own text. */
-  Desc2?: string | null;
-}
+export type { AcLineGoneReason, AcRetiredLine } from './ac-line-gone';
 
 // ── AcSyncService payload shapes ────────────────────────────────────────────
 
@@ -450,6 +446,7 @@ export type AcEditLine =
 export interface AcEditPayload {
   DocType: AcDocType;
   DocNo: string;
+  Rebuild?: true;   // clear the details, lay these Lines down in order — 0607
   /* `UDF` is a NESTED object, because that is how AcSyncService reads it
      (`ApplyUdf` -> `Dict(h, "UDF")`). A flat SOUDF_* key at header level is
      silently ignored — the connector's own decompiled source made the same
@@ -493,6 +490,8 @@ export class KeylessLineError extends Error {
  * as refusals on the sales side rather than as guesses.
  */
 export interface ComposeOptions {
+  rebuild?: boolean;        // clear the details, lay these Lines down — 0607
+  rebuildBlocked?: string;  // present = keyed path, never rebuild — 0609
   supplierCode?: string | null;
   /** Test seam: an alternative cutover map. Defaults to the compiled one. */
   itemIndex?: AcItemIndex;
@@ -1397,17 +1396,13 @@ export function composeCreatePo(
  * into AddDetail(). SO 2026-08-11, PO 2026-08-31 — this said "nothing sets it
  * yet" for the twenty days between them. docs/modules/autocount-writeback.md.
  *
- * LINE REMOVAL IS A RETIREMENT, NEVER AN OMISSION. Two things reach AutoCount as
- * `Retire: true` (Qty = 0, Transferable = false, an `[ERP-CANCELLED]` Desc2
- * marker — the only shape the 2.2 SDK allows, since no detail class has a
- * line-level Cancelled and only SalesOrder has DeleteDetail):
- *
- *   • a RETAINED line the ERP has cancelled (`ErpLine.cancelled`), and
- *   • `retired` — a line the ERP HARD-DELETED, named by the AutoCount key the
- *     row carried before it went. Simply leaving it out of `Lines` is what the
- *     naive version did, and /edit applies only the lines it is GIVEN: the
- *     account book would keep the line live, outstanding, and transferable into
- *     a later DO. The delete routes therefore have to say so explicitly.
+ * LINE REMOVAL — CORRECTED 2026-09-02 (0608). This said removal is ALWAYS a
+ * retirement. It is not: a HARD-DELETED line changes the line SET, which
+ * rebuilds the document, so the cleared book never carries it. `Retire: true`
+ * (Qty = 0, Transferable = false, an `[ERP-CANCELLED]` Desc2 marker) is now for
+ * the other case only — a line the ERP still HAS and has cancelled, which must
+ * stay visible. Either way it is never an OMISSION: /edit applies only the lines
+ * it is GIVEN, so a line simply left out would stay live and transferable.
  *
  * A CANCELLED LINE WITH NO KEY IS REFUSED like any other keyless line, and for
  * a sharper reason: it means the ERP wants a line retired in the account book
@@ -1422,7 +1417,8 @@ export function composeEdit(
   opts: ComposeOptions = {},
   retired: AcRetiredLine[] = [],
 ): AcEditPayload {
-  const { details, collapsed } = composeDetails(lines, opts);
+  const effOpts: ComposeOptions = shouldRebuild(opts, docType, retired) ? { ...opts, rebuild: true } : opts;  // 0608
+  const { details, collapsed } = composeDetails(lines, effOpts);
   /* The key is read off the COLLAPSED line, not the ERP line. One AutoCount
      line has one DtlKey, and a sofa build's compartments only carry line
      identity when every one of them holds the same key — anything else
@@ -1515,7 +1511,7 @@ export function composeEdit(
    * inserted, and (2) EVERY OTHER line already carries a key — which is what
    * makes (1) safe to believe, because a document with other keyless lines has
    * not been backfilled and nothing on it can vouch for this one. */
-  const declaredNew = opts.newLineIds ?? null;
+  const declaredNew = effOpts.newLineIds ?? null;
   if (declaredNew && declaredNew.size && keyless.length) {
     const isDeclared = (i: number) => {
       const id = collapsed[i].sourceIndexes
@@ -1541,6 +1537,9 @@ export function composeEdit(
     const which = keyless
       .map((i) => `${i + 1} (${keyed[i].ItemCode || 'no item code'}${cancelledOf(i) === true ? ', cancelled' : ''})`)
       .join(', ');
+    /* Only an EARNED rebuild goes through here — the line set changed, or a caller
+       asked (0608). Rebuilding any unmatchable document was retracted: 0613. */
+    if (effOpts.rebuild && rebuildAllowed(opts, docType)) return { DocType: docType, DocNo: docNo, Header: header, Lines: keyed, Rebuild: true };
     const anyCancelled = keyless.some((i) => cancelledOf(i) === true);
     throw new KeylessLineError(
       `${docType} ${docNo}: ${keyless.length} of ${keyed.length} line(s) carry no AutoCount `
@@ -1565,7 +1564,9 @@ export function composeEdit(
     keyed.push({ ...r, Retire: true });
   }
 
-  return { DocType: docType, DocNo: docNo, Header: header, Lines: keyed };
+  /* `Rebuild` rides the ORDINARY return too: set only on the keyless branch, a
+     deleted line on a fully-keyed document derived a rebuild nobody carried — 0612. */
+  return { DocType: docType, DocNo: docNo, Header: header, Lines: keyed, ...(effOpts.rebuild ? { Rebuild: true as const } : {}) };
 }
 
 // ── the HTTP client ─────────────────────────────────────────────────────────

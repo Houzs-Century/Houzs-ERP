@@ -160,8 +160,20 @@ export const autocountRelinkLinesHandler = async (
     /* NAMED, not counted. Each one is a line the operator still has to deal
        with, and "2 lines could not be matched" sends him hunting. */
     couldNotMatch: [...plan.refused, ...failed],
+    /* NO `canRebuild` FLAG. It was here for part of 2026-09-02, so the screen
+       could offer the operator a rebuild — and `docs/bugs/0610` removed the need
+       for the offer entirely: a document whose lines cannot be matched now
+       rebuilds on its next save, because refusing it was permanent rather than
+       deferred. A flag with no consumer reads like a feature that exists; this
+       one never had one. Owner: 「不需要 match up line 啊，这个 button 都没必要用
+       了」. */
     message: stamped > 0
       ? `${stamped} line(s) matched up against the account book. Save the document again.`
-      : 'Nothing could be matched — the document is unchanged.',
+      : plan.refused.length > 0
+        ? 'These lines cannot be told apart in the account book, so no matcher can '
+          + 'choose between them. The document can still be sent by REBUILDING its '
+          + 'lines from the ERP — that replaces the account book lines with these '
+          + 'ones and cannot be undone.'
+        : 'Nothing could be matched — the document is unchanged.',
   });
 };
