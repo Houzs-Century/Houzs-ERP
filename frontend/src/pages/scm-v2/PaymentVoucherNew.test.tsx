@@ -13,8 +13,11 @@ import { describe, expect, test, vi } from 'vitest';
 
 const mutateAsync = vi.fn(async (_body: Record<string, unknown>) => ({ id: 'pv-1', pvNumber: 'PV-2609-001' }));
 
+const extractAsync = vi.fn(async () => ({ bills: [] }));
 vi.mock('../../vendor/scm/lib/payment-voucher-queries', () => ({
   useCreatePaymentVoucher: () => ({ mutateAsync, isPending: false }),
+  useExtractBills: () => ({ mutateAsync: extractAsync, isPending: false }),
+  fileToBase64: async (f: File) => `b64:${f.name}`,
   useSupplierAdvances: () => ({ data: { advances: [
     { id: 1, supplier_id: 'sup-1', pv_id: 'pv-old', pv_number: 'PV-2608-777', amount_sen: 80000, applied_sen: 30000, remaining_sen: 50000, created_at: '2026-08-20' },
   ], totalRemainingSen: 50000 }, isLoading: false }),
@@ -147,6 +150,26 @@ describe('the plain Payment Voucher (/new)', () => {
     expect(screen.getByText('320-1000 · Cash in hand')).toBeTruthy();
     expect(screen.queryByText(/900-A002/)).toBeNull();
     expect(screen.queryByText(/400-0000/)).toBeNull();
+  });
+
+  test('a scanned bill with vendor memory pre-fills payee AND account — 记忆自动帮我填', () => {
+    render(
+      <MemoryRouter initialEntries={[{
+        pathname: '/scm/payment-vouchers/new',
+        state: { billPrefill: {
+          extraction: {
+            vendorName: 'TENAGA NASIONAL BERHAD', vendorRegNo: null, documentKind: 'bill' as const,
+            invoiceNumber: 'INV-77', invoiceDate: '2026-09-01', dueDate: null,
+            currency: 'MYR', totalSen: 15000, sstSen: null, lines: [],
+          },
+          memory: { payeeName: 'TNB', debitAccountCode: '900-A002', purpose: 'OTHER', timesSeen: 3 },
+        } },
+      }]}><PaymentVoucherNew /></MemoryRouter>,
+    );
+    /* The operator's own casing beats the print, and the account is what THEY
+       saved last time — shown resolved, still editable. */
+    expect((screen.getByLabelText(/Payee/) as HTMLInputElement).value).toBe('TNB');
+    expect((screen.getByLabelText('Account (Debit) *') as HTMLInputElement).value).toBe('900-A002 · Advertisement');
   });
 
   test('the account search actually narrows — 打关键字眼 finds the account', () => {

@@ -230,6 +230,54 @@ cache is INSIDE the handler — it saves the route's own query, never the two
 reads in front of it. `GET /api/auth/me` crossing 800ms is the clean proof,
 since it has no route work to blame.
 
+### The second card: what the request in hand actually DID
+
+*Added 2026-09-02, `docs/bugs/0604`.* The paragraph above ends by telling you not
+to read the On/Off card as an explanation — and until now there was nothing else
+to read. **`authFastPath` is that something**, and it reports observations rather
+than settings:
+
+| field | answers |
+| --- | --- |
+| `session_pass.this_request` | `pass` / `session-db` / `unknown` — what the request that fetched THIS page did. `unknown` means the middleware did not record it and is never collapsed onto either answer. |
+| `config_cache.<family>` | the TTL beside the browser's poll interval, the hit/miss for this request, and `ttl_shorter_than_poll`. |
+| `reading` | one plain sentence, DERIVED from those numbers so it cannot drift away from them. |
+
+**On is not firing.** A key can be set while every request still pays the two
+joined reads — the pass may be absent, expired, or never sent. That is `0593`
+exactly, so the two states now render as two separate cards: *Signed sessions*
+(the setting) and *This request's authorization* (the behaviour). If the first
+says On and the second says Database, chase the pass, not the caches.
+
+**`ttl_shorter_than_poll` uses `<=`, not `<`.** A TTL EQUAL to the poll expires
+exactly as the next poll arrives, which is the banner's measured 874-984ms case,
+not a near miss.
+
+Presence is structurally short today — **kept 15s, asked for every 60s** — so one
+user alone misses every poll. `backend/tests/authFastPathProbe.test.ts` asserts
+that, so the day it is fixed the test is what says so. It also PINS both mirrored
+poll intervals against the hooks' source: `configCache.ts` said the banner poll
+was 60s and reasoned "300s (5 polls)" from a value that has been 180_000 for some
+time (1.67 polls). Proved red by moving the constant.
+
+### What the client-error dump measured, 2026-09-02
+
+3-day window, from **Client errors dump (read-only)** — occurrences, not
+signatures:
+
+| endpoint | slow occurrences |
+| --- | --- |
+| `/api/presence` | 354 |
+| `/api/announcements/banner` | 343 |
+| everything else | 64 |
+
+**`GET /api/auth/me` does not appear at all.** The paragraph above names it as
+the clean proof of the DB path being paid, so its absence is the closest thing to
+evidence that the renewal fix (`0593`, deployed 2026-08-31 18:41 UTC) did what it
+was meant to. It is NOT proof: the dump groups by signature with a last-seen
+date, so it cannot be split into before and after that deploy. Recorded as
+LIKELY, and the probe above is what will settle it.
+
 Two things not to do with this flag:
 
 - **Do not compute it as `!!env.SESSION_SIGNING_KEY`.** `sessionSigningSecret`
