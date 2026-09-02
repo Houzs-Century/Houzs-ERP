@@ -26,8 +26,8 @@
 import { describe, expect, test } from 'vitest';
 import {
   COLOUR_KEYS, NEVER_CLONE, buildCloneInsert, canonicaliser, compartmentOf,
-  isPlaceholderLine, mergeVariants, modelOf, multiset, pieceCodes, planRow,
-  quoteIdent, sameBuild, senColumns,
+  compartmentOfVerbatim, isPlaceholderLine, mergeVariants, modelOf, multiset,
+  pieceCodes, planRow, quoteIdent, sameBuild, senColumns,
 } from '../scripts/lib/redecode-sofa-plan.mjs';
 
 const SO_COLUMNS = [
@@ -59,6 +59,17 @@ describe('model and compartment', () => {
     expect(modelOf('9058-1A(LHF)')).toBe('9058');
     expect(compartmentOf('9058-1A(LHF)')).toBe('1A(LHF)');
     expect(compartmentOf('9058')).toBe('');
+  });
+
+  /* compartmentOf() UPPER-CASES, so it is for comparing only. It is also what
+     the plan printer used to call, and after the casing fix landed the very next
+     production dry-run printed `insert CONSOLE` again — from the display helper,
+     not from the plan. A log that renders the right answer and the wrong answer
+     identically is not evidence for either. */
+  test('the VERBATIM compartment is available for anything written or shown as proof', () => {
+    expect(compartmentOf('8038-Console')).toBe('CONSOLE');
+    expect(compartmentOfVerbatim('8038-Console')).toBe('Console');
+    expect(compartmentOfVerbatim('9058')).toBe('');
   });
 
   test('pieceCodes does not double the model when the decode already carries it', () => {

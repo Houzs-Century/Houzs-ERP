@@ -69,8 +69,8 @@ import postgres from 'postgres';
 import { SOFA_MODEL_ALIAS, parseSofa } from './lib/parse-sofa.mjs';
 import { buildFabricColourIndex, isPendingColour } from './lib/fabric-colour-match.mjs';
 import {
-  buildCloneInsert, canonicaliser, compartmentOf, isPlaceholderLine, mergeVariants,
-  modelOf, multiset, pieceCodes, planRow, sameBuild, senColumns,
+  buildCloneInsert, canonicaliser, compartmentOfVerbatim, isPlaceholderLine,
+  mergeVariants, modelOf, multiset, pieceCodes, planRow, sameBuild, senColumns,
 } from './lib/redecode-sofa-plan.mjs';
 
 const DSN = process.env.DATABASE_URL;
@@ -310,18 +310,25 @@ async function main() {
     builds.push({ label, target, model: first.model, rows, why: first.ps.why });
   }
 
-  // ── the plan, in full ────────────────────────────────────────────────────
+  /* ── the plan, in full ─────────────────────────────────────────────────────
+     THE ITEM CODE IS PRINTED VERBATIM, not through compartmentOf(), which
+     UPPER-CASES. The first production dry-run (run 33664350222) showed
+     `insert CONSOLE` for a piece the catalogue spells `8038-Console`, and after
+     that was fixed the very next run printed `CONSOLE` again — from the display
+     helper, not from the plan. A log that renders the right answer and the wrong
+     answer identically cannot be evidence for either, which is this repo's
+     "check that answers a different question" wearing a different hat. */
   log('');
   log(`=== ${builds.length} BUILD(S) THE BOOK'S OWN TEXT CAN ANSWER ===`);
   let nUpd = 0, nIns = 0;
   for (const b of builds) {
-    log(`  ${b.label}  [${b.model}]  ${b.target.map(compartmentOf).join('+')}`);
+    log(`  ${b.label}  [${b.model}]  ${b.target.join(' + ')}`);
     for (const r of b.rows) {
       log(`     ${r.side} ${r.row.doc}  ${JSON.stringify(oneLine(r.row.d2))}${r.borrowed ? '   (pieces taken from the paired document — this side\'s own text does not decode)' : ''}`);
       if (r.plan.kind === 'noop') { log('        already states this piece — untouched'); continue; }
-      log(`        re-code  ${compartmentOf(r.row.code)} -> ${compartmentOf(r.plan.update)}   (money untouched)`);
+      log(`        re-code  ${r.row.code} -> ${r.plan.update}   (money untouched)`);
       nUpd++;
-      for (const c of r.plan.inserts) { log(`        insert   ${compartmentOf(c)}   (every money column 0)`); nIns++; }
+      for (const c of r.plan.inserts) { log(`        insert   ${c}   (every money column 0)`); nIns++; }
       const seat = r.variants.seatHeight;
       log(`        variants seatHeight=${seat ?? '(none)'} colour=${r.variants.colourLabel ?? '(none)'}${r.colourResolved ? ' [library-confirmed]' : ''} specials=${(r.variants.specials || []).length}`);
     }
@@ -399,7 +406,7 @@ async function main() {
           const codes = [poRow.plan.update, ...poRow.plan.inserts];
           const notes = `${poRow.row.d2 ? poRow.row.d2 + ' | ' : ''}sofa: re-decoded from the AutoCount text ${STAMP}`;
           const v = mergeVariants(poRow.row.variants, poRow.variants, { colourResolved: poRow.colourResolved });
-          const skuOf = (code) => (poRow.row.supplier_sku ? `${poRow.row.supplier_sku} ${compartmentOf(code)}` : null);
+          const skuOf = (code) => (poRow.row.supplier_sku ? `${poRow.row.supplier_sku} ${compartmentOfVerbatim(code)}` : null);
           await tx`UPDATE scm.purchase_order_items
                       SET item_code = ${codes[0]}, material_name = ${nameOf.get(K(codes[0])) ?? codes[0]},
                           supplier_sku = ${skuOf(codes[0])},
