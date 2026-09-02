@@ -9,7 +9,7 @@ import { fakeSb, type Row } from '../scm/lib/fake-postgrest';
 import { postSoPayment, postSiPayment, reverseSoPayment, backfillSoPayments, unbookedPayments } from './payments';
 import { DEFAULT_ROLE_CODES } from './rules';
 
-const CHART: Row[] = ['300-0000', '500-0000', '320-0000', '310-0010', '326-0000', '327-0000', '888-0000'].map((code) => ({
+const CHART: Row[] = ['300-0000', '500-0000', '335-0000', '330-0000', '320-0000', '325-0000', '888-0000'].map((code) => ({
   account_code: code, account_name: code, account_type: 'ASSET', parent_code: null, is_active: true, company_id: 1,
 }));
 

@@ -510,5 +510,14 @@ export function acRowIsRequeueable(
   if ((AC_TRANSFER_OPS as readonly string[]).includes(op)) {
     return state === 'failed' || state === 'skipped';
   }
+  /* AN EDIT GETS THE BUTTON TOO, and pressing it REBUILDS the document rather
+     than re-composing a keyed edit - docs/bugs/0614. Until then an edit was the
+     one op with no control at all, which is how HC-SO-013394 sat held back for
+     two days: its single keyless line can never be matched (the account book
+     holds three lines under that item code), so the remedy the screen named was
+     one nobody could carry out. The LADDER still decides whether it may
+     actually go - a document built by conversion may not - and being told why
+     beats a row with no button on it. */
+  if (op === 'edit') return state === 'failed' || state === 'skipped';
   return false;
 }

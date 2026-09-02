@@ -25,13 +25,13 @@ import {
 const CO = 1;
 const GL_PERM = 'scm.payment_voucher.post';
 
-const CHART: Row[] = ['326-0000', '310-0010', '930-0000'].map((code) => ({
+const CHART: Row[] = ['320-0000', '330-0000', '930-0000'].map((code) => ({
   account_code: code, account_name: code, account_type: 'ASSET', parent_code: null, is_active: true, company_id: CO,
 }));
 
 const MBB: Row = {
   company_id: CO, code: 'MBB', display_name: 'MBB',
-  transit_account_code: '326-0000', fee_account_code: '930-0000', bank_account_code: '310-0010',
+  transit_account_code: '320-0000', fee_account_code: '930-0000', bank_account_code: '330-0000',
   statement_format: 'CSV', has_unique_ref: true, fee_method: 'stated',
   date_tolerance_days: 3, is_active: true,
   column_map: { date: 'Txn Date', ref: 'Approval Code', gross: 'Gross', fee: 'MDR' },
@@ -126,12 +126,12 @@ describe('one merchant, two companies, two banks', () => {
     const { app, sb } = harness({
       accounts: [
         ...CHART,
-        { account_code: '310-0020', account_name: 'Bank — Hong Leong', account_type: 'ASSET', parent_code: null, is_active: true, company_id: CO, acc_money: true },
-        { account_code: '310-0010', account_name: 'Bank — Maybank', account_type: 'ASSET', parent_code: null, is_active: true, company_id: CO, acc_money: true },
+        { account_code: '331-0000', account_name: 'Bank — Hong Leong', account_type: 'ASSET', parent_code: null, is_active: true, company_id: CO, acc_money: true },
+        { account_code: '330-0000', account_name: 'Bank — Maybank', account_type: 'ASSET', parent_code: null, is_active: true, company_id: CO, acc_money: true },
       ],
       acc_acquirers: [
-        { ...MBB, code: 'PBB', display_name: 'PBB', bank_account_code: '310-0010' },
-        { ...MBB, code: 'PBB', display_name: 'PBB', company_id: OTHER, bank_account_code: '310-0020' },
+        { ...MBB, code: 'PBB', display_name: 'PBB', bank_account_code: '330-0000' },
+        { ...MBB, code: 'PBB', display_name: 'PBB', company_id: OTHER, bank_account_code: '331-0000' },
       ],
     });
     const body = await (await app.request('/settlement/setup')).json() as {
@@ -140,10 +140,10 @@ describe('one merchant, two companies, two banks', () => {
     };
     /* This company sees ITS row, and only its own money accounts to choose from. */
     expect(body.acquirers).toHaveLength(1);
-    expect(body.acquirers[0]).toMatchObject({ code: 'PBB', bank_account_code: '310-0010', bankReady: true });
-    expect(body.bankAccounts.map((b) => b.account_code)).toEqual(['310-0010', '310-0020']);
+    expect(body.acquirers[0]).toMatchObject({ code: 'PBB', bank_account_code: '330-0000', bankReady: true });
+    expect(body.bankAccounts.map((b) => b.account_code)).toEqual(['330-0000', '331-0000']);
     /* And the other company's link is untouched by any of it. */
-    expect(sb.tables.acc_acquirers.find((r) => r.company_id === OTHER)).toMatchObject({ bank_account_code: '310-0020' });
+    expect(sb.tables.acc_acquirers.find((r) => r.company_id === OTHER)).toMatchObject({ bank_account_code: '331-0000' });
   });
 
   test('a merchant with no receiving bank is READY to read but not ready to bank', async () => {
@@ -158,9 +158,9 @@ describe('one merchant, two companies, two banks', () => {
    择？ — so the company is a parameter, checked against his grants. */
 describe('maintenance — one screen, every company', () => {
   const CHART_MONEY: Row[] = [
-    { account_code: '310-0010', account_name: 'Bank — Maybank', account_type: 'ASSET', parent_code: null, is_active: true, acc_money: true, company_id: CO },
-    { account_code: '310-0020', account_name: 'Bank — Hong Leong', account_type: 'ASSET', parent_code: null, is_active: true, acc_money: true, company_id: CO },
-    { account_code: '310-0010', account_name: 'Bank — Maybank', account_type: 'ASSET', parent_code: null, is_active: true, acc_money: true, company_id: 2 },
+    { account_code: '330-0000', account_name: 'Bank — Maybank', account_type: 'ASSET', parent_code: null, is_active: true, acc_money: true, company_id: CO },
+    { account_code: '331-0000', account_name: 'Bank — Hong Leong', account_type: 'ASSET', parent_code: null, is_active: true, acc_money: true, company_id: CO },
+    { account_code: '330-0000', account_name: 'Bank — Maybank', account_type: 'ASSET', parent_code: null, is_active: true, acc_money: true, company_id: 2 },
   ];
   const CONFIG: Row[] = [
     { code: 'MBB', display_name: 'MBB', statement_format: 'CSV', has_unique_ref: true, fee_method: 'stated', date_tolerance_days: 3, column_map: { date: 'Txn Date', gross: 'Gross', fee: 'MDR' }, is_active: true },
@@ -170,7 +170,7 @@ describe('maintenance — one screen, every company', () => {
   test('answers for EVERY company at once — the rows are merchants, the columns are companies', async () => {
     const { app } = harness({
       accounts: CHART_MONEY, acc_acquirer_config: CONFIG,
-      acc_company_acquirers: [{ company_id: CO, acquirer_code: 'MBB', bank_account_code: '310-0020', is_active: true }],
+      acc_company_acquirers: [{ company_id: CO, acquirer_code: 'MBB', bank_account_code: '331-0000', is_active: true }],
     });
     const body = await (await app.request('/settlement/maintenance')).json() as {
       companies: Array<{ id: number }>;
@@ -183,7 +183,7 @@ describe('maintenance — one screen, every company', () => {
        link row anywhere — a row all the same, unticked, because that is how a
        company starts using it. */
     const mbb = body.merchants.find((m) => m.code === 'MBB')!;
-    expect(mbb.byCompany['1']).toMatchObject({ enabled: true, linked: true, bankAccountCode: '310-0020' });
+    expect(mbb.byCompany['1']).toMatchObject({ enabled: true, linked: true, bankAccountCode: '331-0000' });
     expect(mbb.byCompany['2']).toMatchObject({ enabled: false, linked: false, bankAccountCode: null });
     const cimb = body.merchants.find((m) => m.code === 'CIMB')!;
     expect(cimb.byCompany['1']).toMatchObject({ enabled: false, linked: false });
@@ -191,8 +191,8 @@ describe('maintenance — one screen, every company', () => {
     /* One row per account CODE, with what each company does with it — and an
        account a company does not carry reads as 'not in its chart', never as
        an unticked box it could tick. */
-    expect(body.banks.map((b) => b.account_code)).toEqual(['310-0010', '310-0020']);
-    const hlb = body.banks.find((b) => b.account_code === '310-0020')!;
+    expect(body.banks.map((b) => b.account_code)).toEqual(['330-0000', '331-0000']);
+    const hlb = body.banks.find((b) => b.account_code === '331-0000')!;
     expect(hlb.byCompany['1']).toMatchObject({ inChart: true, enabled: true, usedBy: ['MBB'] });
     expect(hlb.byCompany['2']).toMatchObject({ inChart: false, enabled: false, usedBy: [] });
   });
@@ -204,7 +204,7 @@ describe('maintenance — one screen, every company', () => {
     expect(write.status).toBe(409);
     expect(await write.json()).toMatchObject({ error: 'company_not_granted' });
 
-    const bank = await patch(app, '/settlement/maintenance/bank', { companyId: 99, accountCode: '310-0010', enabled: false });
+    const bank = await patch(app, '/settlement/maintenance/bank', { companyId: 99, accountCode: '330-0000', enabled: false });
     expect(bank.status).toBe(409);
   });
 
@@ -217,27 +217,27 @@ describe('maintenance — one screen, every company', () => {
     expect(sb.tables.acc_company_acquirers[0]).toMatchObject({ company_id: 2, acquirer_code: 'MBB', is_active: true });
 
     /* And pointing it at a bank updates the same row rather than making another. */
-    const again = await patch(app, '/settlement/maintenance/merchant', { companyId: 2, code: 'MBB', bankAccountCode: '310-0010' });
+    const again = await patch(app, '/settlement/maintenance/merchant', { companyId: 2, code: 'MBB', bankAccountCode: '330-0000' });
     expect(await again.json()).toMatchObject({ created: false });
     expect(sb.tables.acc_company_acquirers).toHaveLength(1);
-    expect(sb.tables.acc_company_acquirers[0]).toMatchObject({ bank_account_code: '310-0010' });
+    expect(sb.tables.acc_company_acquirers[0]).toMatchObject({ bank_account_code: '330-0000' });
   });
 
   test('a bank a merchant still pays into cannot be unticked, and the refusal names it', async () => {
     const { app, sb } = harness({
       accounts: CHART_MONEY, acc_acquirer_config: CONFIG,
-      acc_company_acquirers: [{ company_id: CO, acquirer_code: 'MBB', bank_account_code: '310-0020', is_active: true }],
+      acc_company_acquirers: [{ company_id: CO, acquirer_code: 'MBB', bank_account_code: '331-0000', is_active: true }],
     });
-    const res = await patch(app, '/settlement/maintenance/bank', { companyId: 1, accountCode: '310-0020', enabled: false });
+    const res = await patch(app, '/settlement/maintenance/bank', { companyId: 1, accountCode: '331-0000', enabled: false });
     expect(res.status).toBe(409);
     expect(await res.json()).toMatchObject({ error: 'bank_in_use', message: expect.stringContaining('MBB') });
-    expect(sb.tables.accounts.find((a) => a.account_code === '310-0020' && a.company_id === 1)).toMatchObject({ is_active: true });
+    expect(sb.tables.accounts.find((a) => a.account_code === '331-0000' && a.company_id === 1)).toMatchObject({ is_active: true });
 
     /* Free it first, then it goes. */
     await patch(app, '/settlement/maintenance/merchant', { companyId: 1, code: 'MBB', bankAccountCode: null });
-    const ok = await patch(app, '/settlement/maintenance/bank', { companyId: 1, accountCode: '310-0020', enabled: false });
+    const ok = await patch(app, '/settlement/maintenance/bank', { companyId: 1, accountCode: '331-0000', enabled: false });
     expect(ok.status).toBe(200);
-    expect(sb.tables.accounts.find((a) => a.account_code === '310-0020' && a.company_id === 1)).toMatchObject({ is_active: false });
+    expect(sb.tables.accounts.find((a) => a.account_code === '331-0000' && a.company_id === 1)).toMatchObject({ is_active: false });
   });
 });
 
@@ -320,8 +320,8 @@ describe('confirming is the moment of posting', () => {
     const lines = sb.tables.journal_entry_lines;
     expect(lines).toHaveLength(2);
     expect(lines.find((l) => l.account_code === '930-0000')).toMatchObject({ debit_sen: 1500 });
-    expect(lines.find((l) => l.account_code === '326-0000')).toMatchObject({ credit_sen: 1500 });
-    expect(lines.some((l) => l.account_code === '310-0010')).toBe(false);
+    expect(lines.find((l) => l.account_code === '320-0000')).toMatchObject({ credit_sen: 1500 });
+    expect(lines.some((l) => l.account_code === '330-0000')).toBe(false);
     expect(sb.tables.journal_entries[0]).toMatchObject({ source_type: 'SETTLE', entry_date: '2026-08-01' });
   });
 
@@ -341,7 +341,7 @@ describe('confirming is the moment of posting', () => {
     expect(adj).toBeTruthy();
     const adjLines = sb.tables.journal_entry_lines.filter((l) => l.journal_entry_id === adj!.id);
     expect(adjLines.find((l) => l.account_code === '930-0000')).toMatchObject({ debit_sen: 25416 });
-    expect(adjLines.find((l) => l.account_code === '326-0000')).toMatchObject({ credit_sen: 25416 });
+    expect(adjLines.find((l) => l.account_code === '320-0000')).toMatchObject({ credit_sen: 25416 });
   });
 
   test('confirming a line whose selection does not add up is refused with the difference', async () => {
@@ -384,8 +384,8 @@ describe('POST /settlement/batches/:id/received — the money arrives', () => {
     expect(receipt).toMatchObject({ entry_date: '2026-08-05' });
     const lines = sb.tables.journal_entry_lines.filter((l) => l.journal_entry_id === receipt.id);
     /* The statement's net: 1,777.00 gross less 26.00 of fees. */
-    expect(lines.find((l) => l.account_code === '310-0010')).toMatchObject({ debit_sen: 175100 });
-    expect(lines.find((l) => l.account_code === '326-0000')).toMatchObject({ credit_sen: 175100 });
+    expect(lines.find((l) => l.account_code === '330-0000')).toMatchObject({ debit_sen: 175100 });
+    expect(lines.find((l) => l.account_code === '320-0000')).toMatchObject({ credit_sen: 175100 });
     expect(sb.tables.acc_settlement_receipts[0]).toMatchObject({ batch_id: up.batchId, received_on: '2026-08-05', amount_sen: 175100 });
   });
 
@@ -470,7 +470,7 @@ describe('GET /settlement/in-transit — whose money is still out there', () => 
     expect(body.lines[0].amountSen).toBe(100000 - 1500 - 25416);
 
     const transit = sb.tables.journal_entry_lines
-      .filter((l) => l.account_code === '326-0000')
+      .filter((l) => l.account_code === '320-0000')
       .reduce((s, l) => s + Number(l.debit_sen ?? 0) - Number(l.credit_sen ?? 0), 0);
     /* The swipe itself is booked by phase 2A, not here, so what this suite can
        compare is the movement: everything taken out of in-transit so far is
@@ -491,7 +491,7 @@ describe('GET /settlement/in-transit — whose money is still out there', () => 
     expect(body.lines[0]).toMatchObject({ state: 'RECONCILED_NOT_PAID', amountSen: 100000 - 1500 - 50000 });
 
     const transit = sb.tables.journal_entry_lines
-      .filter((l) => l.account_code === '326-0000')
+      .filter((l) => l.account_code === '320-0000')
       .reduce((s, l) => s + Number(l.debit_sen ?? 0) - Number(l.credit_sen ?? 0), 0);
     expect(body.totalSen).toBe(100000 + transit);
   });
@@ -587,12 +587,12 @@ describe('taking a confirmed line back — the door the ignore refusal points at
 describe('the batch detail and the watchlists', () => {
   test('the detail names the bank this merchant pays THIS company into', async () => {
     const { app } = harness({
-      accounts: CHART.map((r) => (r.account_code === '310-0010' ? { ...r, account_name: 'Bank — Maybank' } : r)),
+      accounts: CHART.map((r) => (r.account_code === '330-0000' ? { ...r, account_name: 'Bank — Maybank' } : r)),
       mfg_sales_order_payments: [soPayment()],
     });
     const up = await (await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT })).json() as { batchId: number };
     const body = await (await app.request(`/settlement/batches/${up.batchId}`)).json() as { batch: { receiving_bank: Record<string, unknown> } };
-    expect(body.batch.receiving_bank).toMatchObject({ code: '310-0010', name: 'Bank — Maybank', configured: true });
+    expect(body.batch.receiving_bank).toMatchObject({ code: '330-0000', name: 'Bank — Maybank', configured: true });
   });
 
   /* Unset does not stop the books — it falls back to the company default — but
@@ -601,7 +601,7 @@ describe('the batch detail and the watchlists', () => {
     const { app } = harness({ acc_acquirers: [{ ...MBB, bank_account_code: null }], mfg_sales_order_payments: [soPayment()] });
     const up = await (await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT })).json() as { batchId: number };
     const body = await (await app.request(`/settlement/batches/${up.batchId}`)).json() as { batch: { receiving_bank: Record<string, unknown> } };
-    expect(body.batch.receiving_bank).toMatchObject({ code: '310-0010', configured: false });
+    expect(body.batch.receiving_bank).toMatchObject({ code: '330-0000', configured: false });
   });
 
   /* The owner, looking at an auto-matched line: 出现的这个是什么？ The screen

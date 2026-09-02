@@ -60,12 +60,12 @@ describe('the writes', () => {
   test('useUploadBankStatement posts the file to the statements endpoint', async () => {
     mockedFetch.mockResolvedValueOnce({ ok: true, statementId: 3, lines: 9 });
     const { result } = renderHook(() => useUploadBankStatement(), { wrapper });
-    result.current.mutate({ accountCode: '310-0010', fileName: 'aug.csv', content: 'a|b' });
+    result.current.mutate({ accountCode: '330-0000', fileName: 'aug.csv', content: 'a|b' });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     const [path, init] = mockedFetch.mock.calls[0]!;
     expect(path).toBe('/accounting/bank/statements');
     expect(init?.method).toBe('POST');
-    expect(JSON.parse(String(init?.body))).toMatchObject({ accountCode: '310-0010', fileName: 'aug.csv' });
+    expect(JSON.parse(String(init?.body))).toMatchObject({ accountCode: '330-0000', fileName: 'aug.csv' });
   });
 
   test('useBookBankReceipt sends the allocations, with the line in the path', async () => {

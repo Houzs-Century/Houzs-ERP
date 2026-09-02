@@ -135,9 +135,7 @@ zero-difference self-check tile), AR/AP Aging, and Self-check (layer 1).
 **Phase 2B part 2 (2026-08-16): Daily close (layer 2).** GET/PUT /accounting/daily-close + POST /daily-close/confirm: each day each company counts the drawer against the system takings (both sales panels, bucketed cash / transfer / per-acquirer; imported rows never count). Confirming freezes the day (scm.acc_daily_closes, migration 0300) and posts the CASH over/short THAT DAY through the gate (946-0000, source CASHUP, idempotent per company+date); card/transfer differences are settlement timing owned by layer 3 - recorded, never posted here. UI: the Daily close view on the Daily Bank page. Confirmed buckets refuse edits - corrections are manual journals, on the record.
 
 **Phase 2B part 3 (2026-08-16): acquirer settlement reconciliation (layer 3).**
-The layer that empties `326-0000` (the EDC clearing code since mig 0344 —
-the owner's AutoCount code migration, 2026-09-02: 迁到 AutoCount 码; the
-whole relay map lives in that migration's header). The acquirer master follows the owner's
+The layer that empties `320-0000`. The acquirer master follows the owner's
 "define once, all companies share" principle: `scm.acc_acquirer_config` is
 GLOBAL (statement format, unique-ref flag, fee method, date tolerance, column
 map — 决定4, taught once) and `scm.acc_company_acquirers` is the per-company
