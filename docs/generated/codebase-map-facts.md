@@ -11,7 +11,7 @@ FOR, which trees are dead, what must be changed in pairs — lives in
 
 ## 1. Backend route inventory
 
-154 route modules (44 in `backend/src/routes`, 110 in `backend/src/scm/routes`), 1115 endpoint registrations.
+154 route modules (44 in `backend/src/routes`, 110 in `backend/src/scm/routes`), 1119 endpoint registrations.
 
 An endpoint is a `router.<method>("/…")` registration. For the per-route authorization
 boundary see the sibling artifact `docs/generated/route-capability-matrix.csv`, which
@@ -63,10 +63,10 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/track.ts` | 1 | 44 |
 | `backend/src/routes/udf.ts` | 4 | 251 |
 | `backend/src/routes/users.ts` | 22 | 2331 |
-| `backend/src/scm/routes/accounting-bank.ts` | 0 | 659 |
+| `backend/src/scm/routes/accounting-bank.ts` | 0 | 765 |
 | `backend/src/scm/routes/accounting-payouts.ts` | 0 | 196 |
 | `backend/src/scm/routes/accounting-settlement.ts` | 0 | 1222 |
-| `backend/src/scm/routes/accounting.ts` | 50 | 1249 |
+| `backend/src/scm/routes/accounting.ts` | 53 | 1253 |
 | `backend/src/scm/routes/addons.ts` | 4 | 215 |
 | `backend/src/scm/routes/amendment-mirror.ts` | 1 | 126 |
 | `backend/src/scm/routes/ar-reconciliation.ts` | 1 | 163 |
@@ -123,7 +123,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/mrp-lead-times.ts` | 2 | 95 |
 | `backend/src/scm/routes/mrp.ts` | 2 | 1763 |
 | `backend/src/scm/routes/outstanding.ts` | 2 | 321 |
-| `backend/src/scm/routes/payment-vouchers.ts` | 12 | 1470 |
+| `backend/src/scm/routes/payment-vouchers.ts` | 13 | 1541 |
 | `backend/src/scm/routes/personal-quick-picks.ts` | 3 | 212 |
 | `backend/src/scm/routes/po-amendments.ts` | 6 | 673 |
 | `backend/src/scm/routes/po-gates.ts` | 0 | 90 |
@@ -189,12 +189,12 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1845 files, 667155 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1849 files, 668239 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
 |---|---|
-| `frontend/src/pages/Projects.tsx` | 15060 |
+| `frontend/src/pages/Projects.tsx` | 15054 |
 | `backend/src/scm/routes/mfg-sales-orders.ts` | 11963 |
 | `frontend/src/pages/ServiceCases.tsx` | 8816 |
 | `backend/src/services/autocount-sofa-corpus.ts` | 8401 |
@@ -212,12 +212,12 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `frontend/src/components/DataTable.tsx` | 3545 |
 | `frontend/src/mobile/MobileServiceCase.tsx` | 3376 |
 | `backend/src/routes/assr.ts` | 3326 |
-| `backend/src/services/projects.ts` | 3141 |
+| `backend/src/services/projects.ts` | 3135 |
 | `frontend/src/pages/MailCenter/Inbox.tsx` | 3013 |
 
 ## 4. Frontend desktop routes
 
-149 `<Route>` declarations in `frontend/src/App.tsx` (aliases from
+150 `<Route>` declarations in `frontend/src/App.tsx` (aliases from
 `frontend/src/lib/routeAliases.ts` are expanded at runtime and not counted here).
 
 | path | page module |
@@ -305,6 +305,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `/scm/payment-vouchers` | `frontend/src/pages/scm-v2/PaymentVouchers` |
 | `/scm/payment-vouchers/:id` | `frontend/src/pages/scm-v2/PaymentVoucherDetail` |
 | `/scm/payment-vouchers/new` | `frontend/src/pages/scm-v2/PaymentVoucherNew` |
+| `/scm/payment-vouchers/scan` | `frontend/src/pages/scm-v2/PaymentVoucherScan` |
 | `/scm/po-amendments` | `frontend/src/pages/scm-v2/PoAmendments` |
 | `/scm/po-amendments/:id` | `frontend/src/pages/scm-v2/PoAmendmentDetailV2` |
 | `/scm/procurement` | `frontend/src/pages/ScmSubgroupHub` |
@@ -378,7 +379,7 @@ Page files by directory:
 |---|---|
 | `frontend/src/pages` | 35 |
 | `frontend/src/pages/MailCenter` | 3 |
-| `frontend/src/pages/scm-v2` | 130 |
+| `frontend/src/pages/scm-v2` | 131 |
 | `frontend/src/pages/scm-v2/products` | 1 |
 | `frontend/src/pages/team` | 10 |
 

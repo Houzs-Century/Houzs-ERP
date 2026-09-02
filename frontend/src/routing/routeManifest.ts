@@ -65,6 +65,7 @@ export const STAFF_ROUTE_PATTERNS = [
   "/scm/purchase-invoices/:id",
   "/scm/payment-vouchers",
   "/scm/payment-vouchers/new",
+  "/scm/payment-vouchers/scan",
   "/scm/payment-vouchers/:id",
   "/scm/stock-adjustments",
   "/scm/stock-adjustments/new",

@@ -163,6 +163,11 @@ export const PaymentVouchers = () => {
                   <Plus {...ICON} />
                   <span>New Payment Voucher</span>
                 </Button>
+                {/* The bill pile: drop many bills, they come back read and
+                    grouped by supplier (owner's three cases, 2026-09-02). */}
+                <Button variant="ghost" size="sm" onClick={() => navigate('/scm/payment-vouchers/scan')}>
+                  <span>📷 Scan bills</span>
+                </Button>
               </>
             )}
           </div>
