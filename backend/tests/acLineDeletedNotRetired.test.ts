@@ -12,6 +12,7 @@
 import { describe, expect, test } from 'vitest';
 import outboxSrc from '../src/scm/lib/autocount-outbox.ts?raw';
 import writebackSrc from '../src/services/autocount-writeback.ts?raw';
+import goneSrc from '../src/services/ac-line-gone.ts?raw';
 import serviceSrc from '../scripts/autocount-service/AcSyncService.cs?raw';
 import sdkRef from '../scripts/autocount-service/sdk-api-reference.txt?raw';
 
@@ -20,12 +21,15 @@ const code = (s: string): string =>
 
 const OUTBOX = code(outboxSrc);
 const WRITEBACK = code(writebackSrc);
+/* The reason type lives in its own module — autocount-writeback.ts sits at the
+   2000-line cap, so the explanation could not go there. */
+const GONE = code(goneSrc);
 const SERVICE = code(serviceSrc);
 
 describe('a deleted line is declared as deleted, not as a retirement', () => {
   test('the payload carries the reason, and ABSENT means retire', () => {
     expect(WRITEBACK).toMatch(/Gone\?: AcLineGoneReason;/);
-    expect(WRITEBACK).toMatch(/AcLineGoneReason = 'deleted' \| 'cancelled'/);
+    expect(GONE).toMatch(/AcLineGoneReason = 'deleted' \| 'cancelled'/);
   });
 
   /* Every caller of `retiredLineOf` is a DELETE route, so the stamp belongs at
