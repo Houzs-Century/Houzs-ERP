@@ -1537,14 +1537,8 @@ export function composeEdit(
     const which = keyless
       .map((i) => `${i + 1} (${keyed[i].ItemCode || 'no item code'}${cancelledOf(i) === true ? ', cancelled' : ''})`)
       .join(', ');
-    /* A rebuild appends to nothing — 0607. And a document that CANNOT be matched
-       takes it without being asked: refusing such a document forever achieves
-       nothing, because no matcher can ever fix it (0610). `rebuildBlocked` still
-       wins — shouldRebuild has already refused when a PO was raised from this
-       order, and that refusal must survive here too. */
-    if (effOpts.rebuild || !opts.rebuildBlocked) {
-      return { DocType: docType, DocNo: docNo, Header: header, Lines: keyed, Rebuild: true };
-    }
+    /* Unmatchable rebuilds rather than refusing forever; blocked still refuses — 0610. */
+    if (effOpts.rebuild || !opts.rebuildBlocked) return { DocType: docType, DocNo: docNo, Header: header, Lines: keyed, Rebuild: true };
     const anyCancelled = keyless.some((i) => cancelledOf(i) === true);
     throw new KeylessLineError(
       `${docType} ${docNo}: ${keyless.length} of ${keyed.length} line(s) carry no AutoCount `
