@@ -1,4 +1,4 @@
-## Migration 0344 named a bank table that has never existed and blocked the production deploy [high]
+## The AutoCount chart relay named a bank table that has never existed and blocked the production deploy [high]
 
 **Symptom.** The Deploy run for #2881 (run 33640908643, 2026-09-02 14:19Z)
 concluded `failure` with the `backend` job `failure`. Nothing shipped, and
@@ -35,5 +35,11 @@ a header note recording that the file was edited BEFORE it had ever been applied
 anywhere. That matters: CLAUDE.md forbids editing an APPLIED migration's body,
 and this one is not applied — a migration runs in one transaction, so the failure
 rolled the tracker insert back with it and no row carries the old checksum.
+
+**SUPERSEDED, same day.** The corrected file failed the NEXT production
+deploy on a foreign-key fault, #2881 was reverted, and
+`0344_acc_autocount_code_migration.sql` [gone] is no longer in the tree. The
+second fault, and what the redo needs, are in
+`docs/bugs/0615-the-chart-relay-renames-a-natural-key-three-foreign-keys-poi.md`.
 
 **Ref.** fix/mig-0344-bank-config-table-name, 2026-09-02.
