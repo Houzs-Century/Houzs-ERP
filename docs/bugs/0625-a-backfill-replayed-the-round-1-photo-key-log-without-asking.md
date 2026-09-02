@@ -57,7 +57,7 @@ The decision is pinned in `backend/scripts/lib/line-photo-keys.test.mjs` —
 "prune NEVER drops the last copy" fails if the guard is loosened.
 
 The nine blanks are the SAME defect as
-`docs/bugs/0622-autocount-line-photos-were-matched-by-item-code-so-a-repeate.md`:
+`docs/bugs/0624-autocount-line-photos-were-matched-by-item-code-so-a-repeate.md`:
 their photograph is in R2 under a sibling row's path, so
 `repoint-line-photos-to-owning-line.mjs` recovers all nine with no upload.
 

@@ -56,7 +56,7 @@ async function main() {
   const items = await sql`SELECT i.id, i.item_code, i.photo_urls, i.linked_ac_dtlkey, p.po_number, p.linked_ac_docno
     FROM scm.purchase_order_items i JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
     WHERE p.company_id = 1 AND p.linked_ac_docno IS NOT NULL ORDER BY i.id`;
-  /* THE LINE KEY, and why it goes first (bug 0587). Everything below finds the
+  /* THE LINE KEY, and why it goes first (bug 0624). Everything below finds the
      ERP row by ITEM CODE and takes the first match. The book identifies a
      photograph by LINE (DtlKey), not by item code, so a PO carrying the same
      code — or the same sofa model — twice sent BOTH photographs to the first

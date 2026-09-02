@@ -2986,7 +2986,7 @@ purchase order is a second rollout that needs its own.
 > went dead. The first edit on one of them is when a picture stops reaching the
 > book. `backend/scripts/prune-dead-line-photo-keys.mjs` clears it; the full
 > trace is in
-> `docs/bugs/0623-a-backfill-replayed-the-round-1-photo-key-log-without-asking.md`.
+> `docs/bugs/0625-a-backfill-replayed-the-round-1-photo-key-log-without-asking.md`.
 >
 > **The address is trusted; the row id inside it is not authority.** A key
 > naming a row id that no longer exists is FINE — 686 such addresses serve

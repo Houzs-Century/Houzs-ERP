@@ -62,7 +62,7 @@ async function main() {
     if (!byDocCode.has(k)) byDocCode.set(k, []);
     byDocCode.get(k).push(it);
   }
-  /* THE LINE KEY, and why it goes first (bug 0587). Everything below finds the
+  /* THE LINE KEY, and why it goes first (bug 0624). Everything below finds the
      ERP row by ITEM CODE and takes cands[0]. The book does not identify a
      photograph by item code — it identifies it by LINE (DtlKey) — so a document
      carrying the same code, or the same sofa model, on two lines sent BOTH
