@@ -147,8 +147,12 @@ async function main() {
   log("same relationships GENERICALLY on the detail line — FromDocType / FromDocNo /");
   log("FromDocDtlKey on SODTL, DODTL, IVDTL, PODTL and PIDTL, plus PODTL.FromSODtlKey,");
   log("PODTL.FromSODocList and IVDTL.ValueXferSODocKey (read live off the host with");
-  log("Windows auth, 2026-09-02). GRNDTL carries NONE of them, which is its own");
-  log("finding. Comparing the two sides needs a fresh export.");
+  log("Windows auth, 2026-09-02). GRNDTL carries NONE of them, and that is not a");
+  log("gap: AutoCount names the source at TRANSFER time (FullTransfer /");
+  log("PartialTransfer, its own wiki) and keeps only PODTL.TransferedQty, so a");
+  log("GRN->PO comparison must compare QUANTITY, never a parent key — as a join it");
+  log("would report every row missing. See docs/modules/autocount-writeback.md.");
+  log("Comparing the rest of the two sides still needs a fresh export.");
   await sql.end();
 }
 
