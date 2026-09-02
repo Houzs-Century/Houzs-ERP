@@ -35,7 +35,7 @@ describe('SO CREATE decides trust PER LINE, through the shared helper', () => {
 
   test('create passes erpLineTrust with THIS line price and THIS line claim', () => {
     expect(SO).toMatch(
-      /erpLineTrust\(createPosTablet, Number\(it\.unitPriceSen \?\? 0\), it\.zeroPriceIntended\)/,
+      /erpLineTrust\(createPosTablet, Number\(it\.unitPriceSen \?\? 0\), it\.zeroPriceIntended, false\)/,
     );
   });
 
