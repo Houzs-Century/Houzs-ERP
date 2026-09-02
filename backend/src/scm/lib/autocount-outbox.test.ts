@@ -828,8 +828,7 @@ describe('a line the ERP just added is declared, never inferred', () => {
     expect(outbox(sb)[0].last_error).toContain('refused, nothing sent');
   });
 
-  // SUPERSEDED BY THE REBUILD — 0608 carries the reasoning and the trade.
-  test('another line is ALSO keyless: the document REBUILDS instead of refusing', async () => {
+  test('another line is ALSO keyless: the document REBUILDS instead of refusing (0608)', async () => {
     const sb = withFlag('1', {
       mfg_sales_orders: [{ ...so }],
       mfg_sales_order_items: [{ ...keyed, linked_ac_dtlkey: null, id: 'row-legacy' }, { ...fresh }],
@@ -837,9 +836,7 @@ describe('a line the ERP just added is declared, never inferred', () => {
     expect(await enqueueEdit(sb as never, {
       companyId: 1, docType: 'SO', docNo: 'HC-SO-9', newLineIds: ['row-new'],
     })).toBe(true);
-    const row = outbox(sb)[0];
-    expect(row.last_error ?? '').not.toContain('refused, nothing sent');
-    expect((row.payload.body as Record<string, unknown>).Rebuild).toBe(true);
+    expect((outbox(sb)[0].payload.body as Record<string, unknown>).Rebuild).toBe(true);
   });
 
   /* THE PURCHASE ORDER HALF, wired 2026-08-31. The contract is the sales

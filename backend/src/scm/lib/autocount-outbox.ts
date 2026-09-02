@@ -1410,10 +1410,11 @@ async function composeSoState(sb: Sb, docNo: string, retired: AcRetiredLine[] = 
   const lines = await withLocations(sb, soRows, soRows.map(soLine));
   const h = header as Record<string, unknown>;
   const bindings = await bindingsFor(sb, (h.company_id as number | null) ?? null, lines.map((l) => l.item_code));
-  const salespersonName = await readSalespersonName(sb, h.salesperson_id);
-  const outstandingSen = await readSoOutstandingSen(sb, h);
-  const paymentRefs = await readSoPaymentRefs(sb, docNo);
-  const poRaised = await poRaisedFromSo(sb, docNo);
+  /* Four INDEPENDENT reads, batched — they were sequential round-trips on a path
+     that runs on every sales-order edit. `poRaisedFromSo` gates the rebuild (0609). */
+  const [salespersonName, outstandingSen, paymentRefs, poRaised] = await Promise.all([
+    readSalespersonName(sb, h.salesperson_id), readSoOutstandingSen(sb, h),
+    readSoPaymentRefs(sb, docNo), poRaisedFromSo(sb, docNo)]);
   return {
     docNo,
     linkedAcDocNo: (h.linked_ac_docno as string | null) ?? null,
