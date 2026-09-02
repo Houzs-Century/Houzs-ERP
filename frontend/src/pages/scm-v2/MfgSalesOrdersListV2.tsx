@@ -149,11 +149,8 @@ type SoRow = HoldFields & {
   customer_country: string | null;
   shipped_qty?: number | null;   // §0.4b — how much has LEFT
   deliverable_qty?: number | null;
-  /* Server-derived on this same response (mfg-sales-orders.ts:1800-1806) and
-     until 0619 UNDECLARED here, so the Status column could not read them and
-     fell back to the stored column while the Delivered column beside it used
-     the live figures. Optional: an older cached bundle carries neither, and
-     that must read as "nothing derived to say", never as "nothing shipped". */
+  /* Server-derived here (mfg-sales-orders.ts:1800-1806); optional because an
+     older bundle carries neither. sales-order.md §0.4c and SoListStatusCell. */
   delivery_state?: "none" | "partial" | "full" | null;
   lifecycle_state?: "none" | "delivered" | "invoiced" | "returned" | null;
   do_nos?: string[] | null;

@@ -5655,14 +5655,9 @@ export async function createDraftSalesOrder(
   },
 ): Promise<SoCreateOutcome> {
   const svc = getSupabaseService(env);
-  /* RESOLVE THE CODE, DO NOT LET THE MINTER GUESS IT. This context knows the
-     company id (captured on the scan_jobs row) and not its code, and
-     companyDocPrefix's missing-code branch degrades to the BASE company — which
-     since 2026-08-07 mints `HC-`, not the bare number the comment below used to
-     promise. A 2990 scan therefore minted `HC-SO-…` against company_id 2, and a
-     document number cannot be renamed afterwards. companyCodeById fails closed,
-     which is the right direction: a refused scan job is retried, a permanently
-     mis-numbered sales order is not. */
+  /* RESOLVE THE CODE, DO NOT LET THE MINTER GUESS IT — companyDocPrefix's
+     missing-code branch mints `HC-`, so a 2990 scan named the wrong company
+     permanently. docs/bugs/0616-a-2990-scan-minted-a-houzs-century-document-number.md */
   const resolvedCompanyCode = await companyCodeById(svc, opts.companyId ?? null);
   const syntheticGet = (key: 'supabase' | 'user' | 'houzsUser' | 'companyId' | 'companyCode' | 'sessionOrigin'): unknown => {
     if (key === 'supabase') return svc;
@@ -5670,15 +5665,10 @@ export async function createDraftSalesOrder(
     // enqueue time so the draft (header + lines + payments + audit) lands under
     // the uploader's company, not the 0091 HOUZS default.
     if (key === 'companyId') return opts.companyId ?? undefined;
-    // The company CODE, resolved above from the id captured at enqueue. EXPLICIT
-    // branch, not a fallthrough: the default below returns houzsUser, so
-    // companyDocPrefix's `c.get('companyCode')` used to receive that object and
-    // stringify it into the doc number as "[object Object]-SO-YYMM-NNN"
-    // (surfaced in the "Sales order saved — …" scan announcement). It then
-    // returned `undefined` for a while, which the comment here called "bare
-    // HOUZS numbering" — true until 2026-08-07 and false after it, so a 2990
-    // scan minted `HC-`. Undefined only survives for a legacy row that captured
-    // no company at all, where the base-company default is the honest answer.
+    // Resolved above from the id captured at enqueue. EXPLICIT branch, not a
+    // fallthrough: the default below returns houzsUser, which companyDocPrefix
+    // once stringified into "[object Object]-SO-YYMM-NNN". `undefined` now
+    // survives only for a legacy row that captured no company at all.
     if (key === 'companyCode') return resolvedCompanyCode ?? undefined;
     // There is no session here at all (this runs after the HTTP response, off
     // waitUntil), so the draft is NOT-POS and is never drift-rejected — its
