@@ -39,14 +39,14 @@ const draw = () => render(
 
 const pdf = (name: string) => new File(['%PDF-1.4 x'], name, { type: 'application/pdf' });
 
-const readBill = (index: number, over: Partial<{ invoiceNumber: string | null; totalSen: number | null; vendorName: string | null }>,
+const readBill = (index: number, over: Partial<{ invoiceNumber: string | null; totalSen: number | null; vendorName: string | null; lines: Array<{ description: string | null; amountSen: number | null }> }>,
   match: { id: string; name: string } | null,
   memory: { payeeName: string; debitAccountCode: string } | null = null): ExtractedBill => ({
   index, ok: true,
   extraction: {
     vendorName: over.vendorName ?? 'FOSHAN CHAIRS SDN BHD', vendorRegNo: null, documentKind: 'invoice',
     invoiceNumber: over.invoiceNumber ?? null, invoiceDate: '2026-09-01', dueDate: null,
-    currency: 'MYR', totalSen: over.totalSen ?? null, sstSen: null, lines: [],
+    currency: 'MYR', totalSen: over.totalSen ?? null, sstSen: null, lines: over.lines ?? [],
   },
   supplierMatch: match ? { id: match.id, code: 'S001', name: match.name, confidence: 'exact' } : null,
   memory: memory ? { ...memory, purpose: 'OTHER', timesSeen: 2 } : null,
@@ -100,6 +100,27 @@ describe('the bill pile', () => {
     ]);
     /* The habit rides along — the New page fills the account from it. */
     expect(state.billPrefill.memory).toMatchObject({ debitAccountCode: '900-F002' });
+  });
+
+  test('a read bill shows its own line items, and dropped files join the pile', async () => {
+    extractAsync.mockClear();
+    extractAsync.mockResolvedValueOnce({ bills: [
+      readBill(0, { invoiceNumber: 'INV-9', totalSen: 30000, lines: [
+        { description: 'Design retainer — August', amountSen: 20000 },
+        { description: 'Extra artwork', amountSen: 10000 },
+      ] }, null),
+    ] });
+    draw();
+    /* Files arrive by DROP, not the picker (owner: 我无法从我的folder 拖动进来). */
+    fireEvent.drop(screen.getByText('The pile').closest('section')!, {
+      dataTransfer: { files: [pdf('dropped.pdf')] },
+    });
+    expect(screen.getByText('dropped.pdf')).toBeTruthy();
+    fireEvent.click(screen.getByText('Read 1 bill(s)'));
+    await waitFor(() => expect(screen.getByText('INV-9')).toBeTruthy());
+    expect(screen.getByText('Design retainer — August')).toBeTruthy();
+    expect(screen.getByText('Extra artwork')).toBeTruthy();
+    expect(screen.getByText('MYR 100.00')).toBeTruthy();
   });
 
   test('case 3: "pay each bill separately" splits the group; unreadable totals and failures are named', async () => {

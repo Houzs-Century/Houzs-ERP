@@ -780,7 +780,8 @@ app.get("/summary", requirePermission("service_cases.read"), async (c) => {
                   WHEN h.target_days IS NOT NULL AND h.target_days > 0
                    AND (julianday('now') - julianday(h.entered_at)) / h.target_days >= 1
                   THEN 1 ELSE 0 END) AS breached,
-            SUM(CASE WHEN COALESCE(c.sub_status, 'none') = 'pending_supplier_return' THEN 1 ELSE 0 END) AS sub_return
+            SUM(CASE WHEN COALESCE(c.sub_status, 'none') = 'pending_supplier_return' THEN 1 ELSE 0 END) AS sub_return,
+            SUM(CASE WHEN COALESCE(c.sub_status, 'none') = 'pending_customer_pickup' THEN 1 ELSE 0 END) AS sub_customer
        FROM assr_cases c
        LEFT JOIN assr_stage_history h
               ON h.assr_id = c.id AND h.exited_at IS NULL
@@ -789,7 +790,7 @@ app.get("/summary", requirePermission("service_cases.read"), async (c) => {
       GROUP BY c.stage`
     )
       .bind(...visC.binds)
-      .all<{ stage: string; total: number; breached: number; sub_return: number }>(),
+      .all<{ stage: string; total: number; breached: number; sub_return: number; sub_customer: number }>(),
 
     // v3.1 — CSAT 13-week rolling trend (weekly average ratings)
     c.env.DB.prepare(

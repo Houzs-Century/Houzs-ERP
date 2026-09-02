@@ -29,7 +29,7 @@ different time and each one picked its own:
 | Purchase Return | `POSTED` | Confirmed |
 | Stock Transfer | `POSTED` | Confirmed |
 | Stock Take | `POSTED` | Confirmed |
-| Payment Voucher | `POSTED` | Confirmed |
+| Payment Voucher | `POSTED` | **Approved** — the one exception since 2026-09-02: the owner's four layers (payment-voucher.md §0b) make approval the step that posts, so the pill wears his word for it; the stored value stays `POSTED` like the rest of this table |
 | Sales Invoice | `SENT` | Confirmed |
 | Delivery Order | `LOADED` | Confirmed |
 
