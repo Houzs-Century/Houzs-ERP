@@ -69,9 +69,18 @@ has not been rebuilt has never heard of `Gone` and retires exactly as today.
 Our half is therefore zero-risk to merge; the behaviour changes when the office
 host is rebuilt and redeployed.
 
-**UNTESTED against the account book, and UNCOMPILED.** There is no C# toolchain
-in this environment, so `AcSyncService.cs` has not been built, and no deletion
-has been performed on any document. `backend/tests/acLineDeletedNotRetired.test.ts` [gone]
+**UNTESTED against the account book.** No deletion has been performed on any
+document.
+
+> **CORRECTED 2026-09-02.** This paragraph opened "**UNTESTED against the
+> account book, and UNCOMPILED.** There is no C# toolchain in this environment"
+> — and the second half was simply false. This desktop has AutoCount 2.2
+> installed and `csc.exe` ships with the .NET Framework, which is exactly what
+> `backend/scripts/autocount-service/build-local.ps1` says and was written for.
+> Run against the tree that day it answered `COMPILES CLEAN - 110592 bytes`.
+> The claim was never checked, and it was repeated into `docs/bugs/0610` the
+> same afternoon, so a runnable gate was skipped twice on the strength of an
+> assumption about the environment. Check the environment; do not narrate it. `backend/tests/acLineDeletedNotRetired.test.ts` [gone]
 (9 tests) pins the wiring on both sides and asserts the SDK table above against
 the reference file itself, so a later SDK that adds `DeleteDetail` to
 `PurchaseOrder` fails the test rather than leaving the guard quietly wrong.

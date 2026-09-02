@@ -56,8 +56,18 @@ than from anything the ERP believes.
 
 **What this means for the stuck document.** HC-SO-013394 is a sales order with
 no purchase order raised from it and nothing transferred, so on its next save it
-rebuilds and goes across. **UNTESTED against the account book** — the host still
-has to be rebuilt from `AcSyncService.cs`, which has not been compiled here.
+rebuilds and goes across. **UNTESTED against the account book**, and that is
+still the honest label: the office host is still running the OLD binary, which
+has never heard of `Rebuild` and would APPEND the keyless lines rather than
+rebuild them. Nothing changes for this document until the host is swapped
+(`deploy-on-host.ps1`, which must run there because the SQL credentials live
+there).
+
+What IS now proven is the half that was blocking review: `AcSyncService.cs`
+**compiles**. `build-local.ps1` on the development desktop, 2026-09-02 —
+`COMPILES CLEAN - 110592 bytes`. This entry previously said it "has not been
+compiled here" and gave the reason as there being no C# toolchain in this
+environment; there is one, and the check takes seconds.
 
 **Verified.** `backend/tests/acRebuildDetails.test.ts` covers the escape and the
 refusal's survival; `acLineRemovalIsUniform.test.ts` covers the rule. Backend
