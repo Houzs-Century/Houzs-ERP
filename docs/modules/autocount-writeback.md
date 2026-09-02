@@ -3515,6 +3515,109 @@ the test pins it against `AcSyncService.DocTypes` read out of the C# source with
 `?raw` — so a type the host drops fails a test here rather than becoming a 400
 for a document the book can read.
 
+### REBUILD — the answer to a document that cannot be MATCHED
+
+Owner 2026-09-02, on a document held back because two book lines share an item
+code and no matcher can choose between them:
+
+> 「如果做得到 inistate 的东西，那就是我删或者 addline 都可以 sync 进去，就代表这张
+> 单也进得去了啊」
+
+He is right. The keyless refusal protects against APPENDING a line we could not
+match. **A rebuild appends to nothing**: `doc.ClearDetails()` then the ERP's list
+laid down in payload order — which is the ERP's own line order, because
+`inAcLineOrder` sorts every payload read. The matching problem does not arise,
+and neither does the duplicate.
+
+| | |
+| --- | --- |
+| **ERP asks** | `ComposeOptions.rebuild` — OFF unless the caller says so. The escape sits ABOVE the `KeylessLineError`; without it the refusal still throws. Inferring a rebuild from a failure would turn every future mismatch into a silent teardown of a live document. |
+| **Host decides** | `AnyLineTransferred` reads `ISNULL(d.TransferedQty,0) > 0` from the book's own detail table. A person can transfer inside AutoCount without telling the ERP, so this is the one fact the ERP may not answer from its own copy. |
+| **Cost** | every DtlKey on the document is destroyed and reissued. Survivable only while nothing downstream holds them — which is exactly what the check above proves. The keys are read back after the save, as the create path already does. |
+| **Reach** | `ClearDetails` is on the base document class, so it works for the three types with no `DeleteDetail`. **It is the only way a purchase order can lose a line at all.** |
+
+`> 0`, not `IS NOT NULL`: AutoCount writes 0 on a line that never moved, so a
+NULL test would call every document transferred and the rebuild would be
+unreachable. An unknown document type returns `true` — refuse, never rebuild
+blind.
+
+**A deleted line is skipped BEFORE `AddDetail`,** not in the retire branch below
+it: the cleared document already lacks the line, and reaching the lower branch
+would mean it had been added back as a blank row. Pinned in
+`backend/tests/acRebuildDetails.test.ts`; trace in
+`docs/bugs/0607-a-document-whose-lines-cannot-be-matched-could-never-be-sent.md`.
+
+### A DELETED LINE IS DELETED, WHERE THE BOOK ALLOWS (owner rule, 2026-09-02)
+
+Owner: 「我是要 autocount 的全部 line 都跟 ERP 一样」 · 「跟 inistate 一样」.
+
+Line removal used to be ONE shape — `Retire: true` (Qty 0, `Transferable =
+false`, an `[ERP-CANCELLED]` marker) — because `PurchaseOrder` has no
+`DeleteDetail`. That uniformity cost the thing he could see: a line he deleted
+was still on the AutoCount document at quantity 0.
+
+**The ERP now says what happened; the HOST decides what the book can do.**
+
+| `Gone` | means | the book |
+| --- | --- | --- |
+| `'deleted'` | the operator removed the line from the ERP | deleted, if all three conditions below hold |
+| `'cancelled'` / absent | the line is still ON the ERP document | retired in place, marked — never deleted |
+
+**Absent means retire**, which is the stricter direction — the one case
+CLAUDE.md allows an optional flag for. `retiredLineOf` stamps `'deleted'` once,
+where the rows are read, because every caller of it is a DELETE route.
+
+**The host deletes only when all three hold**, and each is the book's own:
+
+1. the ERP said `deleted`;
+2. the document is a **SALES ORDER** — `DeleteDetail(Int64)` is on that class
+   and no other (`sdk-api-reference.txt`: `PurchaseOrder`,
+   `GoodsReceivedNote` and `DeliveryOrder` all lack it);
+3. the book's own `TransferedQty` is 0. AutoCount's troubleshooting for a
+   transferred document whose rows are deleted is that the source points at
+   nothing, the document goes grey and uneditable, and recovery needs raw SQL.
+   `scm/lib/downstream-lock.ts` already stops the ERP editing such a document,
+   but that lock is OURS — someone can transfer inside AutoCount without telling
+   us, so the BOOK's figure decides.
+
+Otherwise it falls through to the retirement. Nothing fails, nothing is held
+back.
+
+The deletes are applied AFTER the detail enumeration and DESCENDING: removing
+while enumerating skips the next line, and descending means one removal cannot
+move a key not yet removed.
+
+**An un-rebuilt host ignores it.** `AcSyncService` reads keys by name, so the
+flag is invisible to a binary that has never heard of it and the behaviour stays
+exactly as today. Our half is safe to ship first; the change takes effect when
+the office host is rebuilt. Trace:
+`docs/bugs/0606-a-deleted-line-stayed-in-autocount-at-quantity-zero.md`.
+
+### LINE ORDER IS PART OF THE DOCUMENT (owner rule, 2026-09-02)
+
+> 「convert 了的 PO 一定要 remain 在同样的 line，就是例如第四个 item 就是第 4 个
+> item，不可以高或低」
+
+Every read whose rows become an AutoCount payload goes through
+`inAcLineOrder` (`scm/lib/ac-line-order.ts`): `created_at` ASC, then `id` ASC.
+
+`created_at` is the order a person entered the lines. `id` is not decoration —
+it makes the sort TOTAL, because a bulk insert gives several rows the same
+timestamp and Postgres may then return those in any order.
+
+**Until 2026-09-02 the SO and PO reads had no `ORDER BY` at all**, so the same
+document could serialize its lines differently after any edit. Two paths made
+that a real defect: a CREATE sends `AddDetail` in payload order, and a new line
+learns its DtlKey POSITIONALLY (`autocount-line-keys.ts`). Trace:
+`docs/bugs/0605-lines-reached-autocount-in-whatever-order-postgres-felt-like.md`.
+
+It changes nothing in the book — an edit still matches by DtlKey. It makes OUR
+side deterministic, which is what the two positional paths depend on.
+
+`backend/tests/acLineOrderWiring.test.ts` fails the build if a payload read is
+added without it. It is the reason `readConvertSourceKeys` is ordered too: that
+read returns the transfer's DtlKeys and pairs quantities with them positionally.
+
 **A PENDING ANCESTOR IS SENT, NOT RE-QUEUED** (2026-08-26, docs/bugs/0542).
 `sendAncestorsFirst` always went through `requeueOutboxRow`, which refuses a
 pending row outright — `row-pending`, and rightly, since the sweep is already

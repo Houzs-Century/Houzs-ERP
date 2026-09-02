@@ -71,6 +71,13 @@ words because a broken connection and "this line has no order" are opposite
 facts — the same rule `backend/src/scm/lib/venue-binding.ts` and
 `backend/src/scm/routes/autocount-relink.ts` apply on the server.
 
+That route no longer offers a rebuild flag of its own. It carried a
+`canRebuild` field for part of 2026-09-02 so the screen could offer the
+operator a choice; `docs/bugs/0610` removed the need for the offer — a
+document whose lines cannot be matched now rebuilds on its next save,
+because refusing it was permanent rather than deferred. A flag with no
+consumer reads like a feature that exists, and that one never had one.
+
 ## Adding a sixth surface
 
 1. Fetch the coverage query as the five above do.
