@@ -950,9 +950,7 @@ export async function retiredLineOf(
     const n = r.linked_ac_dtlkey == null ? NaN : Number(r.linked_ac_dtlkey);
     if (!Number.isFinite(n) || n <= 0) return [];
     const desc2 = r.description2 == null ? undefined : String(r.description2);
-    /* Every caller here is a DELETE route, so the line was REMOVED, not
-       cancelled — the host decides what the book can do (services/ac-line-gone,
-       autocount-writeback.md). Absent would mean retire, the stricter answer. */
+    // Every caller here is a DELETE route — services/ac-line-gone.ts.
     return [{ DtlKey: n, ItemCode: String(r[codeCol] ?? ''),
       ...(desc2 ? { Desc2: desc2 } : {}), Gone: 'deleted' as const }];
   } catch {
