@@ -224,4 +224,26 @@ describe("Projects.tsx — every list filter param is sticky", () => {
       expect(keys, `${p} is read from the URL but never mirrored`).toContain(`"${p}"`);
     }
   });
+
+  it("EXPORT sends every filter the on-screen list sends", () => {
+    // Owner 2026-09-02: filtered Setup & Dismantle + My pending tasks to 10
+    // rows, exported, and got every confirmed event — the export omitted
+    // my_pending on purpose ("export is the full filtered list"). An export
+    // that disagrees with the screen is a wrong document, so the two parameter
+    // sets are now asserted equal rather than kept in step by hand.
+    const text = projects();
+    const between = (a: string, b: string) => {
+      const i = text.indexOf(a);
+      expect(i, `anchor disappeared: ${a}`).toBeGreaterThan(-1);
+      return text.slice(i, text.indexOf(b, i));
+    };
+    const keysOf = (block: string) =>
+      [...new Set((block.match(/^\s{10,14}([a-z_]+):/gm) ?? []).map((k) => k.trim().replace(":", "")))];
+    const listKeys = keysOf(between("const list = useQuery", "per_page: perPage,"));
+    const exportKeys = keysOf(between("const exportProjects = async", "per_page: per,"));
+    expect(listKeys.length).toBeGreaterThan(8);
+    for (const k of listKeys) {
+      expect(exportKeys, `the export drops "${k}", so its rows differ from the screen`).toContain(k);
+    }
+  });
 });
