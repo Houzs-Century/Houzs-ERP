@@ -32,6 +32,7 @@ import {
 } from './settlement-queries';
 import { ICON, btn, softText, danger, refusalText } from './settlement-ui';
 import { useAccounts, useAccountRoles, useSaveBankDefault } from '../../vendor/scm/lib/accounting-queries';
+import { useBankRules, useSaveBankRule, useCreateBankRule, type BankRule } from './bank-queries';
 import css from './SettlementSetup.module.css';
 import { PageHeader } from '../../components/Layout';
 
@@ -71,7 +72,137 @@ export const SettlementSetup = () => {
       )}
 
       <DefaultBankCard />
+      <BankRulesCard />
     </div>
+  );
+};
+
+/* ── Bank recognition rules — how a statement credit is known to be a payout
+   (2026-09-02). Seed-only since layer 4; now the owner fixes a reworded bank
+   narration himself. GLOBAL like the report layouts — a payout reads the same
+   in every company's statement. The server compiles every regex at write time
+   and its refusal sentence is shown verbatim; switching a rule off keeps the
+   row (nothing vanishes). */
+const BankRulesCard = () => {
+  const rulesQ = useBankRules();
+  const save = useSaveBankRule();
+  const createM = useCreateBankRule();
+  const [drafts, setDrafts] = useState<Record<number, Partial<BankRule> | undefined>>({});
+  const [note, setNote] = useState<string | null>(null);
+  const [newRule, setNewRule] = useState<{ acquirerCode: string; pattern: string }>({ acquirerCode: '', pattern: '' });
+
+  const rules = rulesQ.data?.rules ?? [];
+  const acquirers = [...new Set(rules.map((r) => r.acquirer_code))];
+
+  const rowValue = (r: BankRule): BankRule => ({ ...r, ...(drafts[r.id] ?? ({} as Partial<BankRule>)) });
+  const edit = (id: number, patch: Partial<BankRule>) =>
+    setDrafts((prev) => ({ ...prev, [id]: { ...(prev[id] ?? {}), ...patch } }));
+
+  return (
+    <section className={css.card}>
+      <div className={css.cardHead}>
+        <span className={css.cardTitle}>Bank recognition rules</span>
+        <span className={css.hint}>How a statement credit is known to be an acquirer&rsquo;s payout. Shared by every company; a broken pattern is refused, not saved.</span>
+      </div>
+      <div className={css.scroll}>
+        <table className={css.grid}>
+          <thead>
+            <tr>
+              <th className={css.head}>Acquirer</th>
+              <th className={css.head}>Pattern (regex, case-insensitive)</th>
+              <th className={css.head}>Looks in</th>
+              <th className={css.head}>Order</th>
+              <th className={css.head}>Active</th>
+              <th className={css.head} />
+            </tr>
+          </thead>
+          <tbody>
+            {rules.map((r) => {
+              const v = rowValue(r);
+              const dirty = drafts[r.id] != null && Object.keys(drafts[r.id]!).length > 0;
+              return (
+                <tr key={r.id} className={css.row}>
+                  <td className={css.label}><b>{r.acquirer_code}</b></td>
+                  <td style={{ padding: '4px 8px' }}>
+                    <input
+                      aria-label={`Pattern for ${r.acquirer_code} rule ${r.id}`}
+                      value={v.pattern}
+                      onChange={(e) => edit(r.id, { pattern: e.target.value })}
+                      style={{ width: '100%', minWidth: 220, fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-12)', padding: '4px 8px' }}
+                    />
+                  </td>
+                  <td style={{ padding: '4px 8px' }}>
+                    <select value={v.match_field} onChange={(e) => edit(r.id, { match_field: e.target.value as BankRule['match_field'] })} style={{ fontSize: 'var(--fs-12)', padding: '4px 6px' }}>
+                      <option value="both">both</option>
+                      <option value="description">description</option>
+                      <option value="reference">reference</option>
+                    </select>
+                  </td>
+                  <td style={{ padding: '4px 8px' }}>
+                    <input type="number" value={v.sort_order}
+                      onChange={(e) => edit(r.id, { sort_order: Number(e.target.value) })}
+                      style={{ width: 64, fontSize: 'var(--fs-12)', padding: '4px 6px' }} />
+                  </td>
+                  <td style={{ padding: '4px 8px', textAlign: 'center' }}>
+                    <input type="checkbox" checked={v.is_active}
+                      aria-label={`${r.acquirer_code} rule ${r.id} active`}
+                      onChange={(e) => edit(r.id, { is_active: e.target.checked })}
+                      style={{ width: 16, height: 16, accentColor: 'var(--c-orange)' }} />
+                  </td>
+                  <td style={{ padding: '4px 8px' }}>
+                    <button type="button" style={btn(dirty, save.isPending)} disabled={!dirty || save.isPending}
+                      onClick={() => {
+                        const d = drafts[r.id]!;
+                        save.mutate({
+                          id: r.id,
+                          ...(d.pattern !== undefined ? { pattern: d.pattern } : {}),
+                          ...(d.match_field !== undefined ? { matchField: d.match_field } : {}),
+                          ...(d.sort_order !== undefined ? { sortOrder: d.sort_order } : {}),
+                          ...(d.is_active !== undefined ? { isActive: d.is_active } : {}),
+                        }, {
+                          onSuccess: () => { setDrafts((prev) => { const { [r.id]: _gone, ...rest } = prev; return rest; }); setNote(null); },
+                          onError: (e) => setNote(refusalText(e, 'Rule not saved.')),
+                        });
+                      }}>
+                      Save
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+            {/* Add a rule — the acquirer and the pattern are the essentials;
+                everything else starts at its default and is edited above. */}
+            <tr className={css.row}>
+              <td className={css.label}>
+                <select aria-label="New rule acquirer" value={newRule.acquirerCode}
+                  onChange={(e) => setNewRule((p) => ({ ...p, acquirerCode: e.target.value }))}
+                  style={{ fontSize: 'var(--fs-12)', padding: '4px 6px' }}>
+                  <option value="">+ add…</option>
+                  {acquirers.map((a) => <option key={a} value={a}>{a}</option>)}
+                </select>
+              </td>
+              <td style={{ padding: '4px 8px' }} colSpan={4}>
+                <input aria-label="New rule pattern" placeholder="e.g. PBB-PBCS"
+                  value={newRule.pattern}
+                  onChange={(e) => setNewRule((p) => ({ ...p, pattern: e.target.value }))}
+                  style={{ width: '100%', fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-12)', padding: '4px 8px' }} />
+              </td>
+              <td style={{ padding: '4px 8px' }}>
+                <button type="button" style={btn(!!newRule.acquirerCode && !!newRule.pattern.trim(), createM.isPending)}
+                  disabled={!newRule.acquirerCode || !newRule.pattern.trim() || createM.isPending}
+                  onClick={() => createM.mutate({ acquirerCode: newRule.acquirerCode, pattern: newRule.pattern.trim() }, {
+                    onSuccess: () => { setNewRule({ acquirerCode: '', pattern: '' }); setNote(null); },
+                    onError: (e) => setNote(refusalText(e, 'Rule not added.')),
+                  })}>
+                  Add
+                </button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      {note && <div style={{ color: danger, fontSize: 'var(--fs-12)', padding: 'var(--space-2) var(--space-3)' }}>{note}</div>}
+    </section>
   );
 };
 
