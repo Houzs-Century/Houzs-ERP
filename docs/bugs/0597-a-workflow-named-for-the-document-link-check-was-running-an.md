@@ -1,6 +1,6 @@
 ## A workflow named for the document-link check was running an unrelated MRP diagnostic and reporting success [high]
 
-<!-- area: Tooling -->
+<!-- area: Deploy, CI, migrations -->
 
 **Symptom.** The owner asked whether the relationships between SO / DO / GR / PO /
 SI / PI had actually been checked. The workflow that answers that —
