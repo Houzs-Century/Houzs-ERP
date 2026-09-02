@@ -1043,6 +1043,12 @@ const PROJECTS_LIST_FILTER_KEYS = [
   "brand",
   "year",
   "month",
+  // `from` / `to` — the date-range filter that replaced the year+month
+  // dropdowns (owner 2026-08-14). They were missed off this list when it
+  // shipped, so the range was the ONE filter that did not survive opening a
+  // project and coming back: `pluck()` mirrors only the keys named here.
+  "from",
+  "to",
   "status",
   "page",
 ] as const;
