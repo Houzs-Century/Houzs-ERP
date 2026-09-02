@@ -39,10 +39,28 @@ describe("operator-zero wiring", () => {
     expect(SO.match(/'operator-zero'/g) ?? []).toHaveLength(0);
   });
 
+  /* 2026-09-02 — the helper gained a fourth arm, `soIsMigrated`, so the shape
+     changed from one ternary to three guarded returns. The three failure modes
+     in the header are unchanged and each still has its own assertion; the POS
+     guard is now pinned as the FIRST statement, because it has to short-circuit
+     the migrated arm too. */
   test('the helper demands a strict claim, at a zero price, off the POS', () => {
     expect(RECOMPUTE).toMatch(
-      /!posTablet && unitPriceSen === 0 && zeroPriceIntended === true \? 'operator-zero' : !posTablet/,
+      /\): TrustSelling => \{\s*if \(posTablet\) return false;/,
     );
+    expect(RECOMPUTE).toMatch(
+      /return unitPriceSen === 0 && zeroPriceIntended === true \? 'operator-zero' : true;/,
+    );
+  });
+
+  /* 2026-09-02 — a MIGRATED order's stored price stands, zero included: the
+     specials/fabric surcharge must not move a price AutoCount already carries.
+     Pinned here because it is the arm that decides, and it must sit BELOW the
+     POS guard — a POS session can state no intent about a migrated document. */
+  test('a migrated order takes including-zero, and never from the POS', () => {
+    expect(RECOMPUTE).toMatch(/if \(soIsMigrated\) return 'including-zero';/);
+    expect(RECOMPUTE.indexOf('if (posTablet) return false;'))
+      .toBeLessThan(RECOMPUTE.indexOf("if (soIsMigrated) return 'including-zero';"));
   });
 
   /* 2026-08-20 — SO CREATE joined them. It was the third path that prices a
@@ -50,9 +68,13 @@ describe("operator-zero wiring", () => {
      request; a line marked RM 0 on a NEW order therefore took the catalogue
      price on both surfaces. Trace in zeroPriceCreatePath.test.ts. */
   test('ALL THREE line-pricing paths go through it — CREATE, ADD and PATCH', () => {
-    expect(SO).toMatch(/erpLineTrust\(posTablet, clientUnit, it\.zeroPriceIntended\)/);
-    expect(SO).toMatch(/erpLineTrust\(addLinePosTablet, Number\(it\.unitPriceSen \?\? 0\), it\.zeroPriceIntended\)/);
-    expect(SO).toMatch(/erpLineTrust\(createPosTablet, Number\(it\.unitPriceSen \?\? 0\), it\.zeroPriceIntended\)/);
+    expect(SO).toMatch(/erpLineTrust\(posTablet, clientUnit, it\.zeroPriceIntended, patchSoIsMigrated\)/);
+    expect(SO).toMatch(/erpLineTrust\(addLinePosTablet, Number\(it\.unitPriceSen \?\? 0\), it\.zeroPriceIntended, false\)/);
+    expect(SO).toMatch(/erpLineTrust\(createPosTablet, Number\(it\.unitPriceSen \?\? 0\), it\.zeroPriceIntended, false\)/);
+    /* CREATE and ADD pass a LITERAL false, and that is the assertion: a line
+       typed today has no AutoCount history, so its 0 means "not provided". Only
+       the PATCH reads the order (`patchSoIsMigrated`), because only an existing
+       order can be a migrated one. */
     expect(SO.match(/erpLineTrust\(/g) ?? []).toHaveLength(3);
   });
 

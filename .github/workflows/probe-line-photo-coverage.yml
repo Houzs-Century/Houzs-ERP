@@ -1,0 +1,44 @@
+name: Line photo coverage (read-only)
+
+# The owner's two questions, 2026-09-01: are all the FurtherDescription photos IN,
+# and were they all decoded? They are different questions and this answers them
+# as a funnel — decoded out of the book, the ERP line exists, the line carries a
+# photo — so no step can be mistaken for another.
+#
+# READ-ONLY: SELECTs only, no DDL, no writes, no transaction. Manual trigger,
+# own concurrency group, exit 0 for every legitimate answer.
+on:
+  workflow_dispatch:
+    inputs:
+      company:
+        description: "company_id"
+        required: false
+        default: "1"
+        type: string
+      show:
+        description: "how many missing document numbers to name"
+        required: false
+        default: "15"
+        type: string
+
+concurrency:
+  group: probe-line-photo-coverage
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+        working-directory: backend
+      - name: probe (read-only)
+        working-directory: backend
+        env:
+          DATABASE_URL: "${{ secrets.DATABASE_URL }}"
+          COMPANY: "${{ inputs.company }}"
+          SHOW: "${{ inputs.show }}"
+        run: node scripts/probe-line-photo-coverage.mjs
