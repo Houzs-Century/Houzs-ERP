@@ -17,15 +17,15 @@ name: AutoCount held-back documents — identify (read-only)
 # The log is PUBLIC. The script prints document numbers, counts, dates, reason
 # codes and booleans only, and classifies stored error text into shared reason
 # codes rather than quoting it.
+# HOW THIS WAS PROVEN BEFORE MERGE, since it could not be dispatched by name:
+# `gh workflow run autocount-held-back.yml --ref chore/ac-held-back-identity`
+# answers `HTTP 404: workflow autocount-held-back.yml not found on the default
+# branch` — the API resolves a workflow by its path on `main`, so a file that
+# has never been there cannot be dispatched at all. A branch-scoped `push:`
+# trigger was added temporarily, the job ran twice against production
+# (runs 33634105546 and 33635685315, both success), and the trigger was then
+# removed. What is left is the manual trigger below.
 on:
-  # TEMPORARY, REMOVED BEFORE REVIEW. `gh workflow run` answers
-  # `HTTP 404: workflow autocount-held-back.yml not found on the default branch`
-  # for a workflow that has never been on `main`, and CLAUDE.md will not call a
-  # workflow_dispatch workflow shipped until it has run once and reported
-  # success. This is how the job gets proven before the merge that would let it
-  # be dispatched.
-  push:
-    branches: [chore/ac-held-back-identity]
   workflow_dispatch:
     inputs:
       doc:
