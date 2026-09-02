@@ -38,12 +38,13 @@
 // asserting it.
 //
 // DRY-RUN by default; APPLY=1 writes.
-import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import postgres from "postgres";
-import { parseSofa, SOFA_MODEL_ALIAS } from "./lib/parse-sofa.mjs";
-import { parseBedframe } from "./lib/parse-bedframe.mjs";
+/* The phrase -> picker-code rules moved to scripts/lib/special-order-phrase-mapper.mjs
+   so the follow-up that records the HELD-BACK priced options derives the SAME
+   population by construction rather than by a second author re-deriving it. */
+import {
+  K, asArray, loadPhraseMap, buildLiveIndex, classifyLine, variantsShape,
+} from "./lib/special-order-phrase-mapper.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -55,72 +56,7 @@ const SHOW = Number(process.env.SHOW || 40); // per-line change lines to print
 const log = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 const sql = postgres(DST, { ssl: "require", prepare: false, max: 1 });
 
-const here = path.dirname(fileURLToPath(import.meta.url));
-const MAP = JSON.parse(fs.readFileSync(path.join(here, "data", "special-order-phrase-map.json"), "utf8"));
-
-const K = (s) => String(s ?? "").trim().toUpperCase().replace(/\s+/g, " ");
-// the parser's own dedupe identity: letters and digits only, nilon = nylon
-const skey = (s) => String(s ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "").replace(/NILON/g, "NYLON");
-// match on words, so "BACK REST", "BACKREST" and "back-rest" are one thing
-const flat = (s) => " " + String(s ?? "").toLowerCase().replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim() + " ";
-const rx = (src) => (src ? new RegExp(src) : null);
-
-const FAMILIES = MAP.families.map((f) => ({ ...f, _yes: rx(f.yes), _no: rx(f.no) }));
-const EXCLUDED = MAP.excluded.map((e) => ({ ...e, _m: rx(e.match) }));
-const SWAPS = MAP.cushionSwapModels;
-
-/* One phrase -> the picker codes it means. `live` is the LIVE code index; a
-   family whose code is not in it contributes nothing (reported separately). */
-function mapPhrase(raw, live, cat) {
-  const s = flat(raw);
-  const out = new Set();
-  for (const f of FAMILIES) {
-    if (!f.categories.includes(cat)) continue;
-    if (f._no && f._no.test(s)) continue;
-    if (!f._yes.test(s)) continue;
-    const code = live.get(K(f.code));
-    if (code) out.add(code);
-  }
-  if (cat === "SOFA" && /\bback ?rest\b|\bback ?cushion\b/.test(s) && !/\b(5537|5540)\b/.test(s)) {
-    for (const [model, want] of SWAPS) {
-      if (!new RegExp(`\\b${model}\\b`).test(s)) continue;
-      // "9058 sofa backrest change 9028" names the sofa first: the model being
-      // changed TO is the last number mentioned
-      const nums = s.match(/\b\d{4}\b/g) || [];
-      if (nums.length > 1 && nums[nums.length - 1] !== model) continue;
-      const code = live.get(K(want));
-      if (code) out.add(code);
-    }
-  }
-  return [...out];
-}
-
-const excludedBy = (raw) => {
-  const s = flat(raw);
-  for (const e of EXCLUDED) if (e._m.test(s)) return e;
-  return null;
-};
-
-/* Union the phrases a line asks for, using the SAME containment dedupe the
-   parsers use so "BACKRESTCHANGE8030" and "BACK REST CHANGE 8030" are one. */
-function phrasesOf(list) {
-  const phrases = [];
-  for (const t of list) {
-    const v = String(t ?? "").replace(/\s+/g, " ").trim();
-    const k = skey(v);
-    if (!k) continue;
-    let merged = false;
-    for (let i = 0; i < phrases.length; i++) {
-      const e = skey(phrases[i]);
-      if (e.includes(k)) { merged = true; break; }
-      if (k.includes(e)) { phrases[i] = v; merged = true; break; }
-    }
-    if (!merged) phrases.push(v);
-  }
-  return phrases;
-}
-
-const asArray = (v) => (Array.isArray(v) ? v : v == null || v === "" ? [] : [v]);
+const MAP = loadPhraseMap();
 
 /* The money columns of the two line tables. NOTE the name: the authoritative
    selling figure the recompute calls `unit_price_sen`
@@ -171,23 +107,11 @@ async function main() {
         `  ${r.active === false ? "  no  " : " yes  "}  ${(r.categories || []).join("+").padEnd(16)}  [${r.code}]`);
   }
 
-  const liveByCat = new Map();       // 'SOFA' -> Map(K(code|label) -> code)
-  for (const cat of ["SOFA", "BEDFRAME"]) {
-    const m = new Map();
-    for (const r of addons) {
-      if (!(r.categories || []).some((c) => String(c).toUpperCase() === cat)) continue;
-      m.set(K(r.code), r.code);
-      if (r.label) m.set(K(r.label), r.code);
-    }
-    liveByCat.set(cat, m);
-    log(`${cat} picker codes: ${new Set([...m.values()]).size}`);
-  }
-  const priceOf = new Map(addons.map((r) => [r.code, {
-    sell: Number(r.selling_price_sen ?? 0), cost: Number(r.cost_price_sen ?? 0),
-  }]));
   /* Priced-ness comes from THIS live read every run — never a list in the
      source. A code the owner prices tomorrow starts being skipped tomorrow. */
-  const isPriced = (c) => { const p = priceOf.get(c) || { sell: 0, cost: 0 }; return p.sell !== 0 || p.cost !== 0; };
+  const { liveByCat, priceOf, isPriced } = buildLiveIndex(addons);
+  for (const cat of ["SOFA", "BEDFRAME"])
+    log(`${cat} picker codes: ${new Set([...liveByCat.get(cat).values()]).size}`);
   const livePriced = addons.filter((r) => isPriced(r.code));
   log("");
   log(`live price split of scm.special_addons: ${addons.length - livePriced.length} zero-priced, ${livePriced.length} priced`);
@@ -196,10 +120,10 @@ async function main() {
 
   // families whose code the owner has not created (or has re-categorised away)
   const missing = [];
-  for (const f of FAMILIES)
+  for (const f of MAP.families)
     for (const cat of f.categories)
       if (!liveByCat.get(cat).has(K(f.code))) missing.push(`${cat}  ${f.code}`);
-  for (const [, want] of SWAPS)
+  for (const [, want] of MAP.swaps)
     if (!liveByCat.get("SOFA").has(K(want))) missing.push(`SOFA  ${want}`);
   if (missing.length) {
     log("");
@@ -235,21 +159,11 @@ async function main() {
 
   for (const [which, rows] of [["so", soLines], ["po", poLines]]) {
     for (const r of rows) {
-      const cat = r.grp === "sofa" ? "SOFA" : "BEDFRAME";
-      const live = liveByCat.get(cat);
-      let raw = [];
-      if (r.d2) {
-        if (cat === "SOFA") {
-          let model = String(r.code || "").split("-")[0].toUpperCase();
-          model = SOFA_MODEL_ALIAS[model] || model;
-          // both recliner states decode the same specials — the sweep runs
-          // before any model logic, so one pass is enough
-          raw = parseSofa(r.d2, model, false).specials || [];
-        } else {
-          raw = parseBedframe(r.d2).specials || [];
-        }
-      }
-      const phrases = phrasesOf(raw);
+      /* ONE classifier, shared with record-priced-specials-on-migrated-lines.mjs
+         (scripts/lib/special-order-phrase-mapper.mjs) so the two scripts cannot
+         disagree about which lines are in which half of the split. */
+      const cls = classifyLine(r, MAP, liveByCat);
+      const { cat, phrases } = cls;
       if (!phrases.length) continue;
 
       /* HYDRAULIC is the biggest unmapped phrase. It is not obviously an
@@ -268,17 +182,9 @@ async function main() {
         });
       }
 
-      const gained = new Set();
-      for (const p of phrases) {
-        // already a real picker code (the parser emits several verbatim)
-        if (live.has(K(p))) { gained.add(live.get(K(p))); continue; }
-        const hit = mapPhrase(p, live, cat);
-        if (hit.length) { for (const c of hit) gained.add(c); continue; }
-        const ex = excludedBy(p);
-        if (ex) { excludedHits.set(ex.why, (excludedHits.get(ex.why) || 0) + 1); continue; }
-        unmapped.set(K(p), (unmapped.get(K(p)) || 0) + 1);
-      }
-      if (!gained.size) continue;
+      for (const why of cls.excludedHits) excludedHits.set(why, (excludedHits.get(why) || 0) + 1);
+      for (const u of cls.unmapped) unmapped.set(u, (unmapped.get(u) || 0) + 1);
+      if (!cls.gained.length) continue;
 
       /* `variants` is not always a JSON OBJECT in production. jsonb_set's path
          addresses object keys, so on a row holding a jsonb ARRAY it fails the
@@ -287,9 +193,7 @@ async function main() {
          row to '{}' would DELETE whatever it holds, which the owner's
          不可以删只可以 cancel rule forbids, so the line is skipped and reported
          for a human to look at. */
-      const vtype = r.variants == null ? "null"
-        : Array.isArray(r.variants) ? "array"
-        : typeof r.variants === "object" ? "object" : typeof r.variants;
+      const vtype = variantsShape(r.variants);
       if (vtype !== "object" && vtype !== "null") {
         oddVariants.push(`   ${which.toUpperCase()} ${String(r.doc ?? "").padEnd(14)} ${String(r.code ?? "").padEnd(18)} ` +
                          `jsonb is ${vtype}: ${JSON.stringify(r.variants).slice(0, 120)}`);
@@ -299,11 +203,7 @@ async function main() {
       /* MERGE, never replace: keep every other key in the variants jsonb and
          every code the line already carries. `special` is the HOOKKA-compatible
          singular the picker also reads (SpecialOrders.tsx:91). */
-      const v = (r.variants && typeof r.variants === "object" && !Array.isArray(r.variants)) ? r.variants : {};
-      const had = [...new Set([...asArray(v.specials), ...asArray(v.special)].map((x) => String(x).trim()).filter(Boolean))];
-      const next = [...had];
-      const addedNow = [];
-      for (const c of gained) if (!next.some((x) => K(x) === K(c))) { next.push(c); addedNow.push(c); }
+      const { had, next, addedNow } = cls;
       if (!addedNow.length) continue;
 
       /* THE SPLIT. "Would receive" is addedNow, not gained: a line that ALREADY
