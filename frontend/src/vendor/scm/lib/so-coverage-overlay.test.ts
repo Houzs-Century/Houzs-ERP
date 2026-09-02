@@ -11,6 +11,7 @@
 import { describe, expect, it } from 'vitest';
 import { overlaySoLineCoverage, type CoverageOverlayFields } from './so-coverage-overlay';
 import type { SoLineCoverage } from './sales-order-queries';
+import { soLineStockPill, type SoLineSourceFields } from '../../../components/SoSourceChips';
 
 /* Typed as the overlay's own field set so the assertions below read the fields
    the overlay WRITES, not only the ones this fixture happened to seed. */
@@ -59,5 +60,46 @@ describe('overlaySoLineCoverage', () => {
     const [r] = overlaySoLineCoverage([line('a', { stock_status: 'READY' })],
       [cov('a', { stock_status_effective: null })]);
     expect(r.stock_status).toBe('READY');
+  });
+
+  /* THE INVARIANT IS WHAT THE PILL RENDERS, NOT WHICH FIELD WAS WRITTEN.
+   *
+   * Every assertion above reads the overlay's output fields, and all of them
+   * were green while the healed verdict never reached the screen: the overlay
+   * wrote `stock_status`, the pill reads `stock_status_effective` FIRST, and
+   * the base payload always populates that field (effectiveLineStockStatus
+   * returns one of three strings, never null), so the `??` short-circuited and
+   * the fallback branch reading `stock_status` was dead on both call sites.
+   *
+   * A test that pins the field name cannot see that. These pin the pill. */
+  describe('the healed verdict reaches the pill', () => {
+    /* The real payload shape: the base detail response carries a NON-NULL
+       stale verdict, which is precisely what made the `??` short-circuit. */
+    const staleReady = (): Line =>
+      line('a', { stock_status: 'READY', stock_status_effective: 'READY' });
+
+    it('a stale READY is corrected to PENDING when live coverage says so', () => {
+      const [r] = overlaySoLineCoverage([staleReady()],
+        [cov('a', { stock_state: 'po', stock_status_effective: 'PENDING' })]);
+      expect(soLineStockPill(r as SoLineSourceFields)?.label).toBe('PENDING');
+    });
+
+    it('a stale PENDING is promoted to READY when live coverage says so', () => {
+      const src = line('a', { stock_status: 'PENDING', stock_status_effective: 'PENDING' });
+      const [r] = overlaySoLineCoverage([src],
+        [cov('a', { stock_state: 'stock', stock_status_effective: 'READY' })]);
+      expect(soLineStockPill(r as SoLineSourceFields)?.label).toBe('READY');
+    });
+
+    it('no coverage yet leaves the stored verdict standing — the first paint', () => {
+      const [r] = overlaySoLineCoverage([staleReady()], undefined);
+      expect(soLineStockPill(r as SoLineSourceFields)?.label).toBe('READY');
+    });
+
+    it('coverage with no verdict of its own does not blank the stored one', () => {
+      const [r] = overlaySoLineCoverage([staleReady()],
+        [cov('a', { stock_status_effective: null })]);
+      expect(soLineStockPill(r as SoLineSourceFields)?.label).toBe('READY');
+    });
   });
 });

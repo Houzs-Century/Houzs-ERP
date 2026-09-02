@@ -78,6 +78,28 @@ document whose lines cannot be matched now rebuilds on its next save,
 because refusing it was permanent rather than deferred. A flag with no
 consumer reads like a feature that exists, and that one never had one.
 
+## Arriving is not the same as being read (`0614`)
+
+The three states above govern whether the cell may answer yet. They say nothing
+about whether the answer, once it arrives, actually reaches the screen — and on
+2026-09-02 it did not.
+
+`overlaySoLineCoverage` applies the resolved coverage onto the lines. It wrote
+the recomputed verdict into `stock_status`, while `soLineStockPill` reads
+**`stock_status_effective` first** and only falls through to `stock_status` when
+that is nullish. The base payload always populates `stock_status_effective`
+(`effectiveLineStockStatus` returns one of three strings, never null), so the
+`??` always short-circuited and the healed verdict was fetched and discarded on
+both surfaces. The pill was permanently the stored snapshot beside a purely live
+Incoming chip.
+
+**So when you add a field to the overlay, name the field the CONSUMER reads.**
+The overlay's own field list is not the contract — the renderer's is. And pin it
+the same way: `so-coverage-overlay.test.ts` had six green assertions over the
+overlay's output fields, and every one of them passes when the right value is
+written to the wrong key. The tests that catch it assert
+`soLineStockPill(overlay(...)).label`.
+
 ## Adding a sixth surface
 
 1. Fetch the coverage query as the five above do.
