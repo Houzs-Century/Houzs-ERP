@@ -45,8 +45,8 @@ import { fileURLToPath } from 'node:url';
 
 const url = process.env.DATABASE_URL;
 if (!url) { console.error('DATABASE_URL required'); process.exit(2); }
-const COMPANY = Number(process.env.COMPANY ?? 1);
-const SHOW = Number(process.env.SHOW ?? 20);
+const COMPANY = Number(process.env.COMPANY || 1);
+const SHOW = Number(process.env.SHOW || 20);
 const log = (m = '') => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 const here = path.dirname(fileURLToPath(import.meta.url));
 
