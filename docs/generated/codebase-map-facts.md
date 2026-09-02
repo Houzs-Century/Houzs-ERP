@@ -11,7 +11,7 @@ FOR, which trees are dead, what must be changed in pairs — lives in
 
 ## 1. Backend route inventory
 
-154 route modules (44 in `backend/src/routes`, 110 in `backend/src/scm/routes`), 1119 endpoint registrations.
+154 route modules (44 in `backend/src/routes`, 110 in `backend/src/scm/routes`), 1120 endpoint registrations.
 
 An endpoint is a `router.<method>("/…")` registration. For the per-route authorization
 boundary see the sibling artifact `docs/generated/route-capability-matrix.csv`, which
@@ -66,7 +66,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/accounting-bank.ts` | 0 | 765 |
 | `backend/src/scm/routes/accounting-payouts.ts` | 0 | 196 |
 | `backend/src/scm/routes/accounting-settlement.ts` | 0 | 1222 |
-| `backend/src/scm/routes/accounting.ts` | 53 | 1253 |
+| `backend/src/scm/routes/accounting.ts` | 53 | 1256 |
 | `backend/src/scm/routes/addons.ts` | 4 | 215 |
 | `backend/src/scm/routes/amendment-mirror.ts` | 1 | 126 |
 | `backend/src/scm/routes/ar-reconciliation.ts` | 1 | 163 |
@@ -123,7 +123,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/mrp-lead-times.ts` | 2 | 95 |
 | `backend/src/scm/routes/mrp.ts` | 2 | 1763 |
 | `backend/src/scm/routes/outstanding.ts` | 2 | 321 |
-| `backend/src/scm/routes/payment-vouchers.ts` | 13 | 1635 |
+| `backend/src/scm/routes/payment-vouchers.ts` | 14 | 1689 |
 | `backend/src/scm/routes/personal-quick-picks.ts` | 3 | 212 |
 | `backend/src/scm/routes/po-amendments.ts` | 6 | 673 |
 | `backend/src/scm/routes/po-gates.ts` | 0 | 90 |
@@ -183,13 +183,13 @@ scripts, never assumed: each runner declares its own directory, and
 | tree | runner | *.sql | highest | applied to PRODUCTION by deploy.yml | read by backend vitest |
 |---|---|---|---|---|---|
 | `backend/src/db/migrations` | `backend/scripts/migrate.mjs` | 151 | `152_departments_lead_and_headcount.sql` (152) | no | yes |
-| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 340 | `0341_acc_vendor_memory.sql` (0341) | YES | no |
+| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 341 | `0342_scm_pv_checked.sql` (0342) | YES | no |
 
 Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its number): `0136_capture_compat_views_trips_lorries.sql.TEMPLATE`
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1860 files, 669262 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1860 files, 669443 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |

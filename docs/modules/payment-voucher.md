@@ -74,42 +74,63 @@ checks. Those read `paid_sen`, so a partly-paid invoice later put on hold would
 have shown "Partially paid" and the hold would have been invisible on the one
 screen a person opens to decide whether to pay the rest.
 
-## 0b. Money leaves only after a yes (phase 3, mig 0339, 2026-08-28)
+## 0b. The four layers (owner 2026-09-02; migs 0339 + 0342)
 
-The accounting brief's phase 3, delivered against the placeholder Daily Bank
-carried since phase 2B. **Marker columns, not new statuses** — the 0324 lesson
-one section up applies verbatim: `submitted_at/by` and `approved_at/by` live on
-the voucher, `status` stays `DRAFT` through the whole cycle, and every
-`.eq('status', ...)` filter in the tree is untouched.
+The owner's design in his own words: draft 就是 raw draft… 然后prepare 后会
+多两层checking, 一层是checked，一层是approved, 当approved 了才会进gl. Whether
+the money truly left the bank stays **bank reconciliation's** question.
+This replaced phase 3's submit→approve→post (2026-08-28) same-week, at his
+correction. **Marker columns, not new statuses** — the 0324 lesson, third
+time running: `submitted_at/by` (the Prepared mark), `checked_at/by` (mig
+0342) and `approved_at/by` live on the voucher; `status` stays `DRAFT`
+until approval posts it.
 
 The state machine is a pure table in `backend/src/scm/lib/pv-approval.ts`
 (tests beside it; the route half is `backend/tests/pvApproval.test.ts`):
 
-| Voucher is…            | Edit | Submit | Approve/Reject | Withdraw | Post |
-|------------------------|------|--------|----------------|----------|------|
-| DRAFT, unsubmitted     | ✓    | ✓      | —              | —        | ✗ refused |
-| DRAFT, submitted       | ✗ frozen | ✗  | ✓              | ✓        | ✗ refused |
-| DRAFT, approved        | ✗ frozen | ✗  | ✗ (already)    | ✓        | ✓    |
-| POSTED / CANCELLED     | ✗    | ✗      | ✗              | ✗        | (idempotent echo only) |
+| Voucher is…      | Edit | Prepare | Check | Approve | Reject | Withdraw |
+|------------------|------|---------|-------|---------|--------|----------|
+| Draft (no marks) | ✓    | ✓       | —     | —       | —      | —        |
+| Prepared         | **✓ still** | ✗ | ✓   | ✗ first yes first | ✓ | ✓ |
+| Checked          | ✗ locked | ✗   | ✗     | ✓ **= posts GL** | ✓ | ✗ reject-back only |
+| POSTED (label "Approved") / CANCELLED | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
 
-Routes: `POST /:id/submit`, `/:id/withdraw` (write permission),
-`/:id/approve`, `/:id/reject` (the new `scm.payment_voucher.approve` key —
-held by nobody but `*` until the owner grants it per position). A reject's
-`note` lands on the entity-audit trail (`REJECT` + `rejection_note`), where
-the submitter reads the why; every step writes its own audit verb
-(`SUBMIT_FOR_APPROVAL` / `WITHDRAW_FROM_APPROVAL` / `APPROVE` / `REJECT`).
+The deliberate oddities, each the owner's call:
+- **Prepared still edits** (prepare 还可以改) — the first yes is what locks.
+- **Approve IS the posting** (当approved 了才会进gl): the approve route
+  stamps the yes then walks straight into `postPaymentVoucherHandler` in the
+  same request — its response is the post's (`jeNo` and all), and the
+  standalone Post button is gone from the UI. If posting dies after the
+  stamp, **approving again resumes** (the stamp is not rewritten, the post's
+  idempotency echo makes the retry safe). The post route stays mounted and
+  its gate (`not_approved` 409) stays the wall nothing else can climb; the
+  approve key opens the post door alongside the post key.
+- **Any reject → raw Draft** (一律退回 Draft), every mark cleared, the note
+  on the audit trail (`REJECT` + `rejection_note`).
+- **No fast path** — he refused one; everyone walks the layers. Check and
+  approve are separate keys (`scm.payment_voucher.check` new,
+  `scm.payment_voucher.approve`) but the same person MAY hold both
+  (可以同一个人，可以不同人).
+- **Withdraw** (the preparer's own back-out) works only BEFORE the first
+  yes; after checked it is the checkers' document — ask for a reject.
 
-The post GATE sits in `postPaymentVoucherHandler` AFTER the idempotency echo:
-a voucher whose active JE already exists has already paid, and re-posting
-stays an echo whatever its marks say; a FRESH post without `approved_at` is
-refused 409 `not_approved`. Editing a queued voucher is refused the same way
-— what was approved is what gets paid, or it goes back through the queue
-(withdraw clears BOTH marks).
+Routes: `POST /:id/submit` (the Prepare action — the path kept its old name
+so nothing external broke), `/:id/withdraw` (write key), `/:id/check`
+(check key), `/:id/approve` (approve key; posts), `/:id/reject` (either
+key). Audit verbs: `SUBMIT_FOR_APPROVAL` / `WITHDRAW_FROM_APPROVAL` /
+`CHECK` / `APPROVE` / `REJECT`.
 
-**Daily Bank effect**: every DRAFT with `submitted_at` set (approved or not)
-counts into `pendingApprovalSen` and subtracts from the board's available
-money — money already asked for is not money the owner may still spend. MYR
-conversion per voucher mirrors posting: `round(total_sen × exchange_rate)`.
+**Daily Bank effect** (his sentence verbatim: daily bank 的pending 就是第一
+层的checked): every DRAFT with `checked_at` set counts into
+`pendingApprovalSen` and subtracts from the board's available money — a
+merely prepared voucher does NOT reserve yet. MYR conversion per voucher
+mirrors posting: `round(total_sen × exchange_rate)`. The board card reads
+"Checked, awaiting approval".
+
+**List labels**: POSTED's pill now reads **Approved** (his word for the
+layer that posted it); a DRAFT wears "prepared — awaiting check" or
+"checked — awaiting approval" beside the pill, and the list's filter chips
+split Draft / Prepared / Checked / Approved / Cancelled by the marks.
 
 ## 0c. Two documents, AutoCount-style (2026-08-30)
 
@@ -291,7 +312,8 @@ Mounted at `/api/scm/payment-vouchers`, behind
 | POST | `/` | `scm.payment_voucher.create` | creates **DRAFT**; allocations persisted but settle nothing yet |
 | POST | `/extract` | `scm.payment_voucher.create` | §0e — reads uploaded bills with Claude vision, returns extractions + supplier matches + the vendor memory (§0f); writes NOTHING; 503 without `ANTHROPIC_API_KEY` |
 | PATCH | `/:id` | `scm.payment_voucher.write` | **DRAFT only** (409 `not_editable`); a cleared Voucher Date is refused 400 `voucher_date_required` — §7 |
-| POST | `/:id/post` | `scm.payment_voucher.post` | writes the GL entry, DRAFT → POSTED, settles PIs, **adopts the FX rate** |
+| POST | `/:id/check` | `scm.payment_voucher.check` | §0b — the first yes: locks the voucher, joins Daily Bank's pending |
+| POST | `/:id/post` | `scm.payment_voucher.post` **or** `.approve` | writes the GL entry, DRAFT → POSTED, settles PIs, **adopts the FX rate**; normally reached THROUGH approve (§0b) |
 | POST | `/:id/cancel` | `scm.payment_voucher.cancel` | reverses the GL entry, unwinds settlement, **retains the FX rate** |
 
 `postPaymentVoucherHandler` and `cancelPaymentVoucherHandler` are **exported** so the

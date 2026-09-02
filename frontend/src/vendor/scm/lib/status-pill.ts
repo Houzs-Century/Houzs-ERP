@@ -179,11 +179,14 @@ const PO_AMENDMENT: Record<string, Entry> = {
   REJECTED:  { label: 'Rejected',  tone: 'danger' },
 };
 
-// Payment Voucher (Phase 1-B). DRAFT reads as pending; POSTED is the terminal
-// happy path (posted to the GL); CANCELLED closes it (danger/red).
+// Payment Voucher. The owner's four layers (2026-09-02): Draft → Prepared →
+// Checked → Approved — the middle two live as MARKS on a DRAFT row (the list
+// says them beside the pill), and POSTED is what the second yes leaves
+// behind, so its label is the owner's word for it: Approved. CANCELLED
+// closes it (danger/red).
 const PV: Record<string, Entry> = {
-  DRAFT:     { label: 'Draft',     tone: 'pending' },
-  POSTED:    { label: 'Confirmed', tone: 'success' },
+  DRAFT:     { label: 'Draft',    tone: 'pending' },
+  POSTED:    { label: 'Approved', tone: 'success' },
   CANCELLED: { label: 'Cancelled', tone: 'danger' },
 };
 
