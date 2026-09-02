@@ -756,7 +756,8 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
     queryKey: ["mobile-pms-phase-photos", id],
     queryFn: () => api.get<{ photos: PhasePhoto[] }>(`/api/projects/${id}/phase-photos`),
     staleTime: 15_000,
-    enabled: canSetupDismantle,
+    // Owner 2026-07-28: the S&D card is view-for-all — every viewer loads the
+    // phase photos (the endpoint admits any projects.read holder).
     retry: false,
   });
   const photos = photoData?.photos ?? [];
@@ -1484,8 +1485,11 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
             )}
 
             {/* setup & dismantle (logistic) — office-cohort position, below
-                Operation (owner 2026-07-23). */}
-            {!cohort5 && canSetupDismantle && !isPurchaserView && (
+                Operation (owner 2026-07-23). Owner 2026-07-28: view-for-ALL
+                users (incl. purchasers and PMS tiers lacking SETUP_DISMANTLE)
+                — the backend now sends the schedule/crew data to every
+                viewer; editing stays tiered as before. */}
+            {!cohort5 && (
               <SetupDismantle
                 projectId={id}
                 project={p}
@@ -3511,7 +3515,12 @@ function SalesDocsCard({
       <div className="pbody">
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 9 }}>
           {tiles.map((t) => {
-            const latest = t.files[t.files.length - 1];
+            // Tile cover (owner 2026-08-28): prefer the newest IMAGE so a PDF
+            // uploaded after the photos doesn't blank the thumbnail — users
+            // read the hatched placeholder as "nothing here".
+            const latest =
+              [...t.files].reverse().find((f) => /^image\//.test(f.content_type ?? "")) ??
+              t.files[t.files.length - 1];
             const hasContent = t.remarkTile ? !!(t.item?.notes ?? "").trim()
               : t.remarkWithFiles ? (t.files.length > 0 || !!(t.item?.notes ?? "").trim())
               : t.files.length > 0;
@@ -3926,7 +3935,11 @@ function FloorPlans({
             !(hidePlanTiles && (t.key === "Unfilled" || t.key === "Filled"))
           ).map((t) => {
             const files = t.files;
-            const latest = files[files.length - 1];
+            // Cover = newest IMAGE (owner 2026-08-28): a PDF uploaded after the
+            // photos must not blank the thumbnail into the hatched placeholder.
+            const latest =
+              [...files].reverse().find((f) => /^image\//.test(f.content_type ?? "")) ??
+              files[files.length - 1];
             // Display / 3D / 2D are reviewable (owner 2026-07-29); the
             // Unfilled / Filled plan tiles are not.
             const tileItem = t.item;
