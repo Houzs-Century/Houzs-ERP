@@ -62,6 +62,19 @@ const bankMutate = vi.fn();
 const saveLayout = vi.fn();
 let bankError: unknown = null;
 
+/* The default-bank card's hooks (vendor accounting-queries) — stubbed so this
+   file stays about the maintenance matrix; the card's own contract is the
+   PaymentVoucherNew tests' business. */
+const saveBankDefault = vi.fn();
+vi.mock('../../vendor/scm/lib/accounting-queries', () => ({
+  useAccounts: () => ({ data: { accounts: [
+    { account_code: '330-0000', account_name: 'Bank — Maybank', account_type: 'ASSET', is_active: true, acc_money: true },
+    { account_code: '900-A002', account_name: 'Advertisement', account_type: 'EXPENSE', is_active: true, acc_money: false },
+  ] }, isLoading: false }),
+  useAccountRoles: () => ({ data: { roles: { BANK_DEFAULT: '330-0000', AP: '400-0000' }, overridden: {} }, isLoading: false }),
+  useSaveBankDefault: () => ({ mutate: saveBankDefault, isPending: false }),
+}));
+
 vi.mock('./settlement-queries', () => ({
   useSettlementMaintenance: () => ({ data: DATA, isLoading: false }),
   useSaveMaintenanceMerchant: () => ({ mutate: merchantMutate, isPending: false }),

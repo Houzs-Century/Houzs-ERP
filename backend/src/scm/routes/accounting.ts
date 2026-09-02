@@ -141,12 +141,65 @@ accounting.get('/accounts', async (c) => {
   // — scope so one company can't see the other's account codes/names.
   let q = sb
     .from('accounts')
-    .select('account_code, account_name, account_type, parent_code, is_active');
+    /* acc_money marks the accounts that ARE money (bank / cash / e-wallet —
+       the Daily Bank set). The PV "Paid From" picker offers only these; the
+       flag rides along so screens don't hardcode code ranges. */
+    .select('account_code, account_name, account_type, parent_code, is_active, acc_money');
   q = scopeToCompany(q, c);
   const { data, error } = await q.order('account_code');
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   return c.json({ accounts: data ?? [] });
 });
+
+/* ── Account roles — which account plays which part ─────────────────────────
+   resolveRoles is what the posting rules read; this pair is the OWNER'S window
+   onto it. GET answers "which bank is my default, which account is AP" per
+   company; PUT repoints ONE role. Only BANK_DEFAULT is repointable from here
+   for now (the owner: 默认银行我可以自己maintenance) — the control roles (AR /
+   AP) stay code-seeded until there is a reason to move them. */
+export const accountRolesGet = async (c: any): Promise<Response> => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const sb = c.get('supabase');
+  const roles = await resolveRoles(sb, co.companyId);
+  const { data: overrides, error } = await sb.from('acc_account_roles')
+    .select('role, account_code').eq('company_id', co.companyId);
+  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  const overridden = Object.fromEntries(((overrides ?? []) as Array<{ role: string; account_code: string }>).map((r) => [r.role, r.account_code]));
+  return c.json({ roles, overridden });
+};
+accounting.get('/roles', accountRolesGet);
+
+export const accountRolesPutBankDefault = async (c: any): Promise<Response> => {
+  if (!requireGlPost(c)) return c.json({ error: "You don't have permission to manage account roles." }, 403);
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const sb = c.get('supabase');
+  let body: any;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
+  const code = String(body.accountCode ?? '').trim();
+  if (!code) return c.json({ error: 'account_required' }, 400);
+
+  /* The default bank must actually BE money — an expense account set here
+     would silently mis-book every transfer payment and daily-bank line. */
+  const { data: acct, error: aErr } = await scopeToCompanyId(
+    sb.from('accounts').select('account_code, account_name, acc_money, is_active').eq('account_code', code),
+    co.companyId,
+  ).maybeSingle();
+  if (aErr) return c.json({ error: 'load_failed', reason: aErr.message }, 500);
+  if (!acct) return c.json({ error: 'no_such_account', message: `${code} is not in this company's chart.` }, 404);
+  const a = acct as { account_name: string; acc_money: boolean | null; is_active: boolean };
+  if (!a.is_active) return c.json({ error: 'account_inactive', message: `${code} ${a.account_name} is inactive.` }, 409);
+  if (a.acc_money !== true) {
+    return c.json({ error: 'not_a_money_account', message: `${code} ${a.account_name} is not a bank / cash account. The default bank must be one of the money accounts Daily Bank shows.` }, 409);
+  }
+
+  const { error: upErr } = await sb.from('acc_account_roles')
+    .upsert({ company_id: co.companyId, role: 'BANK_DEFAULT', account_code: code }, { onConflict: 'company_id,role' });
+  if (upErr) return c.json({ error: 'save_failed', reason: upErr.message }, 500);
+  return c.json({ ok: true, role: 'BANK_DEFAULT', accountCode: code });
+};
+accounting.put('/roles/BANK_DEFAULT', accountRolesPutBankDefault);
 
 /* ════════════════════════════════════════════════════════════════════════
    Journal Entries

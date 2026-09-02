@@ -31,6 +31,7 @@ import {
   type MaintenanceMerchant, type MaintenanceBank, type MaintenanceCompany,
 } from './settlement-queries';
 import { ICON, btn, softText, danger, refusalText } from './settlement-ui';
+import { useAccounts, useAccountRoles, useSaveBankDefault } from '../../vendor/scm/lib/accounting-queries';
 import css from './SettlementSetup.module.css';
 import { PageHeader } from '../../components/Layout';
 
@@ -68,7 +69,63 @@ export const SettlementSetup = () => {
           <BankMatrix companies={companies} banks={banks} />
         </>
       )}
+
+      <DefaultBankCard />
     </div>
+  );
+};
+
+/* ── The company's default bank (BANK_DEFAULT) ──────────────────────────────
+   The owner's own lever (2026-08-30: 默认银行我可以自己maintenance): where a
+   transfer payment lands, and what the PV / AP Payment "Paid From" pre-fills.
+   Per company — switch companies in the top bar to set the other one's. Only
+   money accounts are offered, and the server refuses anything else anyway. */
+const DefaultBankCard = () => {
+  const rolesQ = useAccountRoles();
+  const accountsQ = useAccounts();
+  const save = useSaveBankDefault();
+  const [choice, setChoice] = useState<string>('');
+  const [note, setNote] = useState<string | null>(null);
+
+  const money = (accountsQ.data?.accounts ?? []).filter((a) => a.is_active && a.acc_money === true);
+  const current = rolesQ.data?.roles.BANK_DEFAULT ?? '';
+  const value = choice || current;
+  const dirty = !!choice && choice !== current;
+
+  return (
+    <section className={css.card}>
+      <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap', padding: 'var(--space-3)' }}>
+        <b style={{ fontSize: 'var(--fs-14)' }}>Default bank (this company)</b>
+        <span style={softText}>pre-fills every voucher&rsquo;s Paid From; transfer payments land here</span>
+        <span style={{ flex: 1 }} />
+        <select
+          aria-label="Default bank account"
+          value={value}
+          onChange={(e) => { setChoice(e.target.value); setNote(null); }}
+          style={{ padding: '6px 10px', fontSize: 'var(--fs-13)', minWidth: 260 }}
+          disabled={rolesQ.isLoading || accountsQ.isLoading}
+        >
+          {!value && <option value="">{rolesQ.isLoading ? 'Loading…' : '— pick a bank / cash account —'}</option>}
+          {money.map((a) => (
+            <option key={a.account_code} value={a.account_code}>{a.account_code} · {a.account_name}</option>
+          ))}
+        </select>
+        <button
+          type="button"
+          style={btn(dirty, save.isPending)}
+          disabled={!dirty || save.isPending}
+          onClick={() => {
+            save.mutate(choice, {
+              onSuccess: () => { setNote('Saved — vouchers now pre-fill this bank.'); setChoice(''); },
+              onError: (e) => setNote(e instanceof Error ? e.message : 'Not saved.'),
+            });
+          }}
+        >
+          {save.isPending ? 'Saving…' : 'Save'}
+        </button>
+      </div>
+      {note && <div style={{ ...softText, padding: '0 var(--space-3) var(--space-3)' }}>{note}</div>}
+    </section>
   );
 };
 

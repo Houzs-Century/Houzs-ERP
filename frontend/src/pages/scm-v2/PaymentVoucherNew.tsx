@@ -20,12 +20,12 @@
 // ----------------------------------------------------------------------------
 
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { ChevronDown, Save, Trash2, X } from 'lucide-react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Save, Trash2, X } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { useCreatePaymentVoucher } from '../../vendor/scm/lib/payment-voucher-queries';
 import { useIdempotencyKey } from '../../lib/idempotency';
-import { useAccounts, type Account } from '../../vendor/scm/lib/accounting-queries';
+import { useAccounts, useAccountRoles, type Account } from '../../vendor/scm/lib/accounting-queries';
 import { usePurchaseInvoices } from '../../vendor/scm/lib/purchase-invoice-queries';
 import { useSuppliers, useSupplierDetail } from '../../vendor/scm/lib/suppliers-queries';
 import { useActiveCurrencies, rateFor } from '../../vendor/scm/lib/currencies-queries';
@@ -79,6 +79,14 @@ type PiAlloc = {
 
 export const PaymentVoucherNew = () => {
   const navigate = useNavigate();
+  /* TWO DOCUMENTS, ONE PAGE (the owner, 2026-08-30, AutoCount in hand: 正常
+     auto count是可以选payment voucher / AP Payment). ?type=ap is the AP
+     Payment: supplier required, the PI list IS the document (tick to pay in
+     full, type for partial), and the GL debit is the AP control account —
+     written by the page, never picked by hand. Without ?type it is the plain
+     Payment Voucher: expense lines only, no supplier, no PI section. */
+  const [searchParams] = useSearchParams();
+  const isAp = searchParams.get('type') === 'ap';
   const create   = useCreatePaymentVoucher();
   /* One key for the one voucher this page is open to raise (lib/idempotency.ts).
      Minted once by useState's lazy init: stable across re-renders and across a
@@ -93,13 +101,27 @@ export const PaymentVoucherNew = () => {
 
   const accountsQ = useAccounts();
   const accounts  = useMemo<Account[]>(() => (accountsQ.data?.accounts ?? []).filter((a) => a.is_active), [accountsQ.data]);
+  /* Paid From offers MONEY only (owner: paid from 应该只能选cash 和银行) — the
+     server refuses anything else anyway; the picker just stops offering it. */
+  const moneyAccounts = useMemo<Account[]>(() => accounts.filter((a) => a.acc_money === true), [accounts]);
+  const rolesQ = useAccountRoles();
 
   const suppliersQ = useSuppliers({ status: 'ACTIVE' });
 
   const [payeeName, setPayeeName]                 = useState<string>('');
   const [supplierId, setSupplierId]               = useState<string>('');
-  const [purpose, setPurpose]                     = useState<PvPurpose>('SUPPLIER_PAYMENT');
+  /* Fixed by the document type — AP Payment settles PIs, Payment Voucher is
+     plain cash-out. The old three-way dropdown is gone with the split. */
+  const purpose: PvPurpose = isAp ? 'SUPPLIER_PAYMENT' : 'OTHER';
   const [creditAccountCode, setCreditAccountCode] = useState<string>('');
+  /* Pre-fill Paid From with the company's own default bank (BANK_DEFAULT —
+     the role the owner maintains in Recon Setup). Only while untouched. */
+  useEffect(() => {
+    const dflt = rolesQ.data?.roles.BANK_DEFAULT;
+    if (!dflt || creditAccountCode) return;
+    if (moneyAccounts.some((a) => a.account_code === dflt)) setCreditAccountCode(dflt);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rolesQ.data, moneyAccounts]);
   const [voucherDate, setVoucherDate]             = useState<string>(() => todayMyt());
   const [notes, setNotes]                         = useState<string>('');
   /* Multi-currency (Phase 1-A) — MYR per 1 unit of the PV currency, string-typed.
@@ -152,7 +174,7 @@ export const PaymentVoucherNew = () => {
   const dropLine = (rid: string) => setLines((prev) => (prev.length <= 1 ? prev : prev.filter((l) => l.rid !== rid)));
   const addLine  = () => setLines((prev) => [...prev, newLine()]);
 
-  const totalSen = useMemo(() => lines.reduce((s, l) => s + l.amountSen, 0), [lines]);
+  const linesTotalSen = useMemo(() => lines.reduce((s, l) => s + l.amountSen, 0), [lines]);
 
   /* RINGGIT IN, RATE OUT. The rate is derived from the MYR actually paid divided by
      the foreign face total, and RE-derived when either side moves — editing a line
@@ -160,21 +182,15 @@ export const PaymentVoucherNew = () => {
      what was paid. deriveRateFromMyrPaid returns null for a zero/blank figure on
      EITHER side (the divide-by-zero included), and null leaves the rate alone rather
      than blanking it to something resolveFxRate would fold back to 1. */
-  const derivedRate = useMemo(
-    () => (isForeign ? deriveRateFromMyrPaid(myrPaidSen, totalSen) : null),
-    [isForeign, myrPaidSen, totalSen],
-  );
-  useEffect(() => {
-    if (rateSource !== 'myr' || derivedRate === null) return;
-    setExchangeRate(String(derivedRate));
-  }, [rateSource, derivedRate]);
+  /* Defined below, after the voucher total exists (the total now follows the
+     document type — see totalSen). */
 
   /* ── Apply to PI (migration 0202) ─────────────────────────────────────────
      Only for a SUPPLIER_PAYMENT voucher with a supplier chosen: list that
      supplier's outstanding PIs (derived client-side from the PI list — POSTED /
      PARTIALLY_PAID with total − paid > 0) and let the operator apply an amount
      per PI. The allocations settle AP at face value (MYR). */
-  const applyToPi = purpose === 'SUPPLIER_PAYMENT' && !!supplierId;
+  const applyToPi = isAp && !!supplierId;
   const piListQ = usePurchaseInvoices();
   const outstandingPiRows = useMemo(() => {
     if (!applyToPi) return [] as Array<Record<string, any>>;
@@ -188,22 +204,19 @@ export const PaymentVoucherNew = () => {
     });
   }, [applyToPi, piListQ.data, supplierId]);
 
-  // The per-PI amounts the operator has entered, keyed by PI id. Seeded lazily
-  // (defaults below) the first time a PI row renders, so a manual 0 sticks.
+  // The per-PI amounts the operator has entered, keyed by PI id.
   const [allocAmounts, setAllocAmounts] = useState<Record<string, number>>({});
-  // Wipe allocations whenever we leave SUPPLIER_PAYMENT or change supplier.
-  useEffect(() => { setAllocAmounts({}); }, [purpose, supplierId]);
+  // Wipe allocations whenever the supplier changes.
+  useEffect(() => { setAllocAmounts({}); }, [supplierId]);
 
-  // Default an unentered row to min(remaining PV total, this PI's outstanding).
+  /* AP Payment: every row starts at 0 — TICK pays an invoice in full, typing
+     pays part of it, and the voucher total FOLLOWS the ticks (the reverse of
+     the old cascade, where lines drove a guessed spread). */
   const allocations: PiAlloc[] = useMemo(() => {
-    let remaining = totalSen;
     return outstandingPiRows.map((r) => {
       const piId = String(r.id ?? '');
       const outstanding = Number(r.total_sen ?? 0) - Number(r.paid_sen ?? 0);
-      const entered = allocAmounts[piId];
-      const dflt = Math.max(0, Math.min(remaining, outstanding));
-      const amountSen = entered != null ? entered : dflt;
-      remaining = Math.max(0, remaining - amountSen);
+      const amountSen = Math.max(0, Math.min(allocAmounts[piId] ?? 0, outstanding));
       return {
         piId,
         invoiceNumber:      String(r.invoice_number ?? piId),
@@ -212,24 +225,48 @@ export const PaymentVoucherNew = () => {
         amountSen,
       };
     });
-  }, [outstandingPiRows, allocAmounts, totalSen]);
+  }, [outstandingPiRows, allocAmounts]);
 
   const allocatedSen = useMemo(() => allocations.reduce((s, a) => s + a.amountSen, 0), [allocations]);
-  const overAllocated  = applyToPi && allocatedSen > totalSen;
 
+  /* The voucher total: an AP Payment IS its ticks; a Payment Voucher is its
+     lines. Nothing to over-allocate in either shape. */
+  const totalSen = isAp ? allocatedSen : linesTotalSen;
+
+  /* RINGGIT IN, RATE OUT — re-derived when either side moves (see the header
+     comment on the MYR-paid field). */
+  const derivedRate = useMemo(
+    () => (isForeign ? deriveRateFromMyrPaid(myrPaidSen, totalSen) : null),
+    [isForeign, myrPaidSen, totalSen],
+  );
+  useEffect(() => {
+    if (rateSource !== 'myr' || derivedRate === null) return;
+    setExchangeRate(String(derivedRate));
+  }, [rateSource, derivedRate]);
+
+  const apAccountCode = rolesQ.data?.roles.AP ?? '';
   const realLines = lines.filter((l) => l.debitAccountCode && l.amountSen > 0);
-  const canSave = !!payeeName.trim() && !!creditAccountCode && realLines.length > 0 && !overAllocated;
+  const canSave = isAp
+    ? !!payeeName.trim() && !!supplierId && !!creditAccountCode && allocatedSen > 0 && !!apAccountCode
+    : !!payeeName.trim() && !!creditAccountCode && realLines.length > 0;
 
   const onSave = async () => {
     if (!payeeName.trim()) { setDialog({ title: 'Enter a payee', body: 'Who is this voucher paying?' }); return; }
-    if (!creditAccountCode) { setDialog({ title: 'Pick a “Paid From” account', body: 'Choose the bank / cash / payables account the money leaves.' }); return; }
-    if (realLines.length === 0) { setDialog({ title: 'Add at least one line', body: 'Each line needs a debit account and an amount > 0.' }); return; }
-    if (overAllocated) {
-      setDialog({ title: 'Applied more than the voucher total', body: `You've applied ${fmtRm(allocatedSen)} to PIs but the voucher total is only ${fmtRm(totalSen)}. Reduce the applied amounts or raise the voucher total.` });
-      return;
-    }
-    // Only send allocations for a SUPPLIER_PAYMENT voucher, and only rows the
-    // operator actually applied (amount > 0). FREIGHT / OTHER send none.
+    if (!creditAccountCode) { setDialog({ title: 'Pick a “Paid From” account', body: 'Choose the bank / cash account the money leaves.' }); return; }
+    if (isAp && !supplierId) { setDialog({ title: 'Pick a supplier', body: 'An AP Payment settles a supplier — choose whose invoices this pays.' }); return; }
+    if (isAp && allocatedSen === 0) { setDialog({ title: 'Nothing applied yet', body: 'Tick an invoice to pay it in full, or type a partial amount.' }); return; }
+    if (!isAp && realLines.length === 0) { setDialog({ title: 'Add at least one line', body: 'Each line needs a debit account and an amount > 0.' }); return; }
+
+    /* AP Payment: the ONE GL line is written here — Dr the AP control account
+       for exactly what the ticks apply. The operator never touches a debit
+       account on this document, so it cannot be mis-booked. */
+    const sendLines = isAp
+      ? [{ description: `Settle ${allocations.filter((a) => a.amountSen > 0).length} invoice(s) — ${payeeName.trim()}`, debitAccountCode: apAccountCode, amountSen: allocatedSen }]
+      : realLines.map((l) => ({
+        description:      l.description || undefined,
+        debitAccountCode: l.debitAccountCode,
+        amountSen:      l.amountSen,
+      }));
     const sendAllocations = applyToPi
       ? allocations.filter((a) => a.amountSen > 0).map((a) => ({ piId: a.piId, amountSen: a.amountSen }))
       : [];
@@ -248,11 +285,7 @@ export const PaymentVoucherNew = () => {
         exchangeRate:      isForeign
           ? resolveFxRate(exchangeRate)
           : 1,
-        lines: realLines.map((l) => ({
-          description:      l.description || undefined,
-          debitAccountCode: l.debitAccountCode,
-          amountSen:      l.amountSen,
-        })),
+        lines: sendLines,
         ...(sendAllocations.length > 0 ? { allocations: sendAllocations } : {}),
       });
       setDialog({
@@ -269,7 +302,7 @@ export const PaymentVoucherNew = () => {
     <div className="space-y-4">
       <PageHeader back
         eyebrow="Finance"
-        title="New Payment Voucher"
+        title={isAp ? 'New AP Payment' : 'New Payment Voucher'}
         actions={
           <div className={styles.actions}>
             <Button variant="ghost" size="md" onClick={() => navigate('/scm/payment-vouchers')}>
@@ -277,7 +310,7 @@ export const PaymentVoucherNew = () => {
             </Button>
             <Button variant="primary" size="md" onClick={onSave} disabled={saving || !canSave}>
               <Save {...ICON} />
-              {saving ? 'Saving…' : 'Create Voucher'}
+              {saving ? 'Saving…' : isAp ? 'Create AP Payment' : 'Create Voucher'}
             </Button>
           </div>
         }
@@ -298,40 +331,33 @@ export const PaymentVoucherNew = () => {
                 style={{ background: 'var(--c-cream)', color: 'var(--fg-muted)' }} />
             </label>
 
-            <label className={styles.field}>
-              <span className={styles.fieldLabel}>Supplier {purpose === 'SUPPLIER_PAYMENT' ? '*' : '(optional)'}</span>
-              <select value={supplierId} onChange={(e) => setSupplierId(e.target.value)} className={styles.fieldInput} disabled={suppliersQ.isLoading}>
-                <option value="">{suppliersQ.isLoading ? 'Loading suppliers…' : '— None (free-text payee) —'}</option>
-                {sortByText(suppliersQ.data ?? []).map((s) => (
-                  <option key={s.id} value={s.id}>{s.code} · {s.name}</option>
-                ))}
-              </select>
-            </label>
-
-            <label className={styles.field}>
-              <span className={styles.fieldLabel}>Purpose</span>
-              <span className={styles.selectWrap}>
-                <select className={styles.fieldSelect} value={purpose} onChange={(e) => setPurpose(e.target.value as PvPurpose)}>
-                  <option value="SUPPLIER_PAYMENT">Supplier payment (settle PI)</option>
-                  <option value="FREIGHT">Freight</option>
-                  <option value="OTHER">Other</option>
+            {/* Supplier: the WHOLE POINT of an AP Payment; gone from a plain
+                voucher (expenses pay a free-text payee — a supplier bill is
+                what the other document is for). */}
+            {isAp && (
+              <label className={styles.field}>
+                <span className={styles.fieldLabel}>Supplier *</span>
+                <select value={supplierId} onChange={(e) => setSupplierId(e.target.value)} className={styles.fieldInput} disabled={suppliersQ.isLoading}>
+                  <option value="">{suppliersQ.isLoading ? 'Loading suppliers…' : '— Pick the supplier this pays —'}</option>
+                  {sortByText(suppliersQ.data ?? []).map((s) => (
+                    <option key={s.id} value={s.id}>{s.code} · {s.name}</option>
+                  ))}
                 </select>
-                <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
-              </span>
-            </label>
+              </label>
+            )}
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Voucher Date *</span>
-              <DateField fullWidth value={voucherDate ?? ''} onChange={(iso) => setVoucherDate(iso)} className={styles.fieldInput} />
+              <DateField fullWidth value={voucherDate} onChange={(iso) => setVoucherDate(iso)} className={styles.fieldInput} />
             </label>
 
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Paid From (Credit) *</span>
               <AccountSelect
-                accounts={accounts}
+                accounts={moneyAccounts}
                 value={creditAccountCode}
                 onChange={setCreditAccountCode}
                 className={styles.fieldInput}
-                placeholder={accountsQ.isLoading ? 'Loading accounts…' : '— Bank / cash / payables —'}
+                placeholder={accountsQ.isLoading ? 'Loading accounts…' : '— Bank / cash —'}
               />
             </label>
             <label className={styles.field}>
@@ -378,6 +404,10 @@ export const PaymentVoucherNew = () => {
         </div>
       </section>
 
+      {/* Expense lines — the Payment Voucher's body. An AP Payment has no
+          hand-written lines at all: its one GL line (Dr the AP control) is
+          composed on save from the ticks below. */}
+      {!isAp && (
       <section className={styles.card}>
         <div className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Lines</h2>
@@ -440,18 +470,18 @@ export const PaymentVoucherNew = () => {
           </button>
         </div>
       </section>
+      )}
 
-      {/* ── Apply to PI (migration 0202) — settle the supplier's outstanding PIs
-          at face value. Only for a SUPPLIER_PAYMENT voucher with a supplier
-          chosen; the operator applies an amount per PI (defaults to the lesser
-          of the remaining voucher total and that PI's outstanding balance). ── */}
-      {purpose === 'SUPPLIER_PAYMENT' && (
+      {/* ── Apply to PI — the AP Payment's body (migration 0202). Tick pays an
+          invoice in full, a typed figure pays part of it, and the voucher
+          total follows the ticks. ── */}
+      {isAp && (
         <section className={styles.card}>
           <div className={styles.cardHeader}>
             <h2 className={styles.cardTitle}>Apply to PI</h2>
-            <span style={{ fontSize: 'var(--fs-12)', color: overAllocated ? 'var(--c-festive-b, #B8331F)' : 'var(--fg-muted)' }}>
+            <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
               {applyToPi
-                ? `Allocated ${fmtRm(allocatedSen)} / PV total ${fmtRm(totalSen)}`
+                ? `Applying ${fmtRm(allocatedSen)}`
                 : 'Pick a supplier above to list outstanding invoices'}
             </span>
           </div>
@@ -466,14 +496,10 @@ export const PaymentVoucherNew = () => {
               <p style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-13)' }}>This supplier has no outstanding purchase invoices.</p>
             ) : (
               <>
-                {overAllocated && (
-                  <div style={{ fontSize: 'var(--fs-12)', color: 'var(--c-festive-b, #B8331F)' }}>
-                    You've applied more than the voucher total — reduce the amounts below or raise the voucher total before saving.
-                  </div>
-                )}
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
                   <thead>
                     <tr style={{ textAlign: 'left', color: 'var(--fg-muted)', fontSize: 'var(--fs-11)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                      <th style={{ padding: '6px 8px', width: 34 }} aria-label="Pay in full" />
                       <th style={{ padding: '6px 8px' }}>Invoice</th>
                       <th style={{ padding: '6px 8px' }}>Supplier Ref</th>
                       <th style={{ padding: '6px 8px', textAlign: 'right' }}>Outstanding</th>
@@ -483,6 +509,21 @@ export const PaymentVoucherNew = () => {
                   <tbody>
                     {allocations.map((a) => (
                       <tr key={a.piId} style={{ borderTop: '1px solid var(--line)' }}>
+                        <td style={{ padding: '6px 8px' }}>
+                          {/* Tick = pay this invoice in full; untick clears it.
+                              A typed partial shows an indeterminate-looking
+                              unchecked box — the AMOUNT is the truth. */}
+                          <input
+                            type="checkbox"
+                            aria-label={`Pay ${a.invoiceNumber} in full`}
+                            checked={a.amountSen === a.outstandingSen && a.outstandingSen > 0}
+                            onChange={(e) => {
+                              const v = e.target.checked ? a.outstandingSen : 0;
+                              setAllocAmounts((prev) => ({ ...prev, [a.piId]: v }));
+                            }}
+                            style={{ width: 16, height: 16, accentColor: 'var(--c-orange)' }}
+                          />
+                        </td>
                         <td style={{ padding: '6px 8px', fontFamily: 'var(--font-mono)' }}>{a.invoiceNumber}</td>
                         <td style={{ padding: '6px 8px', color: a.supplierInvoiceRef ? 'var(--fg)' : 'var(--fg-muted)' }}>{a.supplierInvoiceRef || '—'}</td>
                         <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)', color: 'var(--fg-muted)' }}>{fmtRm(a.outstandingSen)}</td>
@@ -498,6 +539,11 @@ export const PaymentVoucherNew = () => {
                     ))}
                   </tbody>
                 </table>
+                {/* What the save will book — spelled out so the automatic AP
+                    debit is never a surprise. */}
+                <div style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
+                  Books: Dr {apAccountCode || 'AP'} Account Payable {fmtRm(allocatedSen)} · Cr {creditAccountCode || 'Paid From'} {fmtRm(allocatedSen)}
+                </div>
               </>
             )}
           </div>
