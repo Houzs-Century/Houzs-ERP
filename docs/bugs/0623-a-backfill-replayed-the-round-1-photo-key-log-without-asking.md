@@ -1,10 +1,24 @@
-## A backfill replayed the round-1 photo key log without asking R2, attaching 64 addresses with no object [medium]
+## A backfill replayed the round-1 photo key log without asking R2, attaching 64 addresses with no object [high]
 
 **Symptom.** 53 rows on 50 documents show a broken photo tile next to a working
 one — the same photograph twice, one of which will not open. Nine further rows
 show only the broken tile and nothing else: `HC-SO-009031`, `HC-SO-012907`,
 `HC-PO-008483`, `HC-PO-008461`, `HC-PO-008944`, `HC-PO-009018`, `HC-PO-009024`,
 `HC-PO-009034`, `HC-PO-009709`.
+
+**It is not only cosmetic, which is why this is `high`.** The write-back sends a
+line's pictures to AutoCount by reading `photo_urls` verbatim (`photosOf`,
+`scm/lib/autocount-outbox.ts`) and the materialiser throws on the first key the
+bucket cannot answer — `if (!obj) throw new Error('photo not in the bucket:
+...')` — so `line.Photos` is never set and the line sends NOTHING, even though
+its other addresses are readable. That is correct behaviour on its own (a short
+list would delete pictures from the account book); the dead address is what
+turns it into a loss. Six SALES ORDER lines are in that state, and the sales
+side is the side that sends. `SELECT value FROM scm.app_config WHERE key =
+'scm.autocount_writeback'` returned **`1`** on 2026-09-03 — ON for company 1,
+which is these documents' company. Nothing has been lost yet:
+`scm.autocount_outbox` holds 21 `edit` rows in `sent` (newest
+2026-09-02T17:12Z) and none is one of the four affected documents.
 
 **Root cause (traced).** `backend/scripts/backfill-photo-urls-from-keys.mjs`
 re-attaches the round-1 (2026-08-10) photo addresses after the 2026-08-28
