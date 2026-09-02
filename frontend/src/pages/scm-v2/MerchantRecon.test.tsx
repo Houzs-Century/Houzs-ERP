@@ -16,7 +16,7 @@ import type { AcquirerSetup, SettlementRow } from './settlement-queries';
 const MBB: AcquirerSetup = {
   code: 'MBB', display_name: 'MBB', statement_format: 'CSV', has_unique_ref: true,
   fee_method: 'stated', date_tolerance_days: 3, column_map: { date: 'Txn Date', gross: 'Gross' },
-  transit_account_code: '326-0000', fee_account_code: '930-0000', bank_account_code: '310-0010',
+  transit_account_code: '320-0000', fee_account_code: '930-0000', bank_account_code: '330-0000',
   is_active: true, ready: true, autoMatchable: true,
 };
 const GHL: AcquirerSetup = { ...MBB, code: 'GHL', display_name: 'GHL', has_unique_ref: false, autoMatchable: false, dates_have_no_year: true, bank_account_code: null, bankReady: false };
@@ -81,7 +81,7 @@ let batchList: Array<Record<string, unknown>> = [BATCH];
 const setBatchList = (b: Array<Record<string, unknown>>) => { batchList = b; };
 
 vi.mock('./settlement-queries', () => ({
-  useAcquirerSetup: () => ({ data: { acquirers: [MBB, GHL], bankAccounts: [{ account_code: '310-0010', account_name: 'Bank — Maybank Current' }] }, isLoading: false }),
+  useAcquirerSetup: () => ({ data: { acquirers: [MBB, GHL], bankAccounts: [{ account_code: '330-0000', account_name: 'Bank — Maybank Current' }] }, isLoading: false }),
   useSaveAcquirerSetup: () => ({ mutate: saveMutate, isPending: false }),
   useSettlementBatches: () => ({ data: { batches: batchList }, isLoading: false }),
   useSettlementBatch: () => ({

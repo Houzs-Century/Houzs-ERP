@@ -24,7 +24,7 @@ import { postJournal } from './engine';
    (brief §2.4), and the manual journal is the path this bug arrives on. */
 const CHART: Row[] = [
   { account_code: '905-0000', account_name: 'Rental Expense', account_type: 'EXPENSE', parent_code: null, is_active: true, company_id: 1 },
-  { account_code: '310-0010', account_name: 'Bank', account_type: 'ASSET', parent_code: null, is_active: true, company_id: 1 },
+  { account_code: '330-0000', account_name: 'Bank', account_type: 'ASSET', parent_code: null, is_active: true, company_id: 1 },
 ];
 
 const world = () => fakeSb({
@@ -36,7 +36,7 @@ const world = () => fakeSb({
 
 const LINES = [
   { accountCode: '905-0000', debitSen: 100000, creditSen: 0 },
-  { accountCode: '310-0010', debitSen: 0, creditSen: 100000 },
+  { accountCode: '330-0000', debitSen: 0, creditSen: 100000 },
 ];
 
 const base = { companyId: 1, sourceType: 'MANUAL', sourceDocNo: null, narration: 'manual JV', lines: LINES };
