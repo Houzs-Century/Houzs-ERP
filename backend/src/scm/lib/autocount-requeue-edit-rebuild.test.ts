@@ -147,7 +147,7 @@ describe('a rebuilt line is a NEW line, so it must carry its item code', () => {
     const sb = world();
     await requeueOneRow(sb as never, editSkip() as never, { apply: true, resendingThisRow: false });
 
-    const body = (queued(sb)[0].payload as { body: { Lines: Array<Record<string, unknown>> } }).body;
+    const body = (queued(sb)[0].payload as { body: { Lines: Array<Record<string, unknown>>; Rebuild?: unknown } }).body;
     expect(body.Rebuild).toBe(true);
     expect(body.Lines.length).toBeGreaterThan(0);
     for (const [i, line] of body.Lines.entries()) {
