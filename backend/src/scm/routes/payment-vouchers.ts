@@ -958,8 +958,52 @@ export const postPaymentVoucherHandler = async (c: any) => {
     });
   }
 
+  /* ── 预付挂在 supplier (the owner, 2026-08-30) ─────────────────────────────
+     Whatever this supplier voucher paid BEYOND its allocations is an advance:
+     the GL already debited the whole amount into AP, so the supplier's ledger
+     runs ahead — record by how much, on the voucher that did it. Written
+     AFTER the GL and the settles because it is bookkeeping about them; the
+     UNIQUE(pv_id) makes a re-post echo harmless. */
+  let advanceSen = 0;
+  {
+    const supplierId = (pvRaw as { supplier_id?: string | null }).supplier_id ?? null;
+    if (normalizePurpose(pv.purpose) === 'SUPPLIER_PAYMENT' && supplierId) {
+      const { data: allocRows, error: alErr } = await sb.from('pv_allocations')
+        .select('amount_sen').eq('pv_id', id).eq('from_advance', false);
+      if (alErr) {
+        /* eslint-disable-next-line no-console */
+        console.error('[pv-advance] allocation read failed — advance NOT recorded:', pv.pv_number, alErr.message);
+      } else {
+        const allocatedSen = ((allocRows ?? []) as Array<{ amount_sen: number }>)
+          .reduce((s, r) => s + Number(r.amount_sen || 0), 0);
+        advanceSen = Math.max(0, Number(pv.total_sen) - allocatedSen);
+        if (advanceSen > 0) {
+          const { error: advErr } = await sb.from('acc_supplier_advances').insert({
+            company_id: companyId, supplier_id: supplierId,
+            pv_id: id, pv_number: pv.pv_number, amount_sen: advanceSen, applied_sen: 0,
+          });
+          const dup = advErr && (String(advErr.code ?? '') === '23505' || /duplicate key/i.test(String(advErr.message ?? '')));
+          if (advErr && !dup) {
+            /* eslint-disable-next-line no-console */
+            console.error('[pv-advance] advance NOT recorded:', pv.pv_number, advErr.message);
+            advanceSen = 0;
+          } else if (!dup) {
+            await recordEntityAudit(sb, {
+              entityType: 'PAYMENT_VOUCHER', entityId: id, entityDocNo: pv.pv_number,
+              action: 'UPDATE', actor: c.get('houzsUser'), companyId,
+              statusSnapshot: 'POSTED',
+              note: `Paid ${(advanceSen / 100).toFixed(2)} ahead of any invoice — recorded as this supplier's advance, to knock off against invoices to come`,
+              fieldChanges: compactChanges([fieldChange('supplierAdvanceSen', null, advanceSen)]),
+            });
+          }
+        }
+      }
+    }
+  }
+
   return c.json({
     ok: true, jeNo: je.je_no, jeId: je.id, totalSen,
+    ...(advanceSen > 0 ? { advanceSen } : {}),
     ...(overAllocated.length > 0 ? { overAllocated } : {}),
     ...(rateAdopted.length > 0 ? { rateAdopted } : {}),
     ...(rateMismatch.length > 0 ? { rateMismatch } : {}),
@@ -1114,6 +1158,24 @@ export const cancelPaymentVoucherHandler = async (c: any) => {
   // Idempotent — already cancelled, echo back.
   if (head.status === 'CANCELLED') return c.json({ paymentVoucher: { id, status: 'CANCELLED' } });
 
+  /* An advance that has been SPENT pins its voucher: the knock-offs settled
+     real invoices with this voucher's money, and cancelling would reverse a
+     payment whose value is now inside other documents. Un-apply first (not
+     built yet — deliberately: it has not been needed), or leave the voucher
+     standing. An UNSPENT advance cancels fine — the row is removed with it. */
+  {
+    const { data: adv, error: advErr } = await sb.from('acc_supplier_advances')
+      .select('id, applied_sen').eq('pv_id', id).maybeSingle();
+    if (advErr) return c.json({ error: 'load_failed', reason: advErr.message }, 500);
+    const a = adv as { applied_sen: number } | null;
+    if (a && Number(a.applied_sen) > 0) {
+      return c.json({
+        error: 'advance_applied',
+        message: `This voucher's advance has already knocked off ${(Number(a.applied_sen) / 100).toFixed(2)} of invoices. A payment whose value now lives inside other documents cannot be cancelled.`,
+      }, 409);
+    }
+  }
+
   /* One probe covers BOTH history rows this handler writes (the CANCEL and the
      REVERSE): they share a sink, and past this point the flip has happened, so a
      second check further down could only report a failure it can no longer undo. */
@@ -1135,6 +1197,9 @@ export const cancelPaymentVoucherHandler = async (c: any) => {
     return c.json({ error: 'cannot_cancel' }, 409);
   }
   const cancelled = data as { id: string; status: string; pv_number: string };
+
+  /* The (unspent — the guard above) advance goes with its voucher. */
+  await sb.from('acc_supplier_advances').delete().eq('pv_id', id).eq('applied_sen', 0);
 
   /* Recorded immediately after the ATOMIC flip won the race, so exactly one
      CANCEL row is ever written for a voucher — the losing concurrent call
@@ -1261,6 +1326,127 @@ export const cancelPaymentVoucherHandler = async (c: any) => {
   });
 };
 paymentVouchers.post('/:id/cancel', cancelPaymentVoucherHandler);
+
+/* ── Supplier advances — 预付挂在 supplier (owner, 2026-08-30) ────────────────
+   The ledger of vouchers that paid AHEAD of any invoice, and the knock-off
+   that spends them. Applying an advance posts NOTHING: the money already
+   debited AP when the voucher posted, the invoice already credited AP when it
+   posted — this only settles the invoice's paid_sen and burns the advance. */
+
+/* GET /advances/list?supplierId=… — the open advances (remaining > 0),
+   newest first, plus the total still unspent. No supplierId = the company's
+   whole list (the screen's per-supplier ask filters). */
+export const supplierAdvancesHandler = async (c: any) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const sb = c.get('supabase');
+  let q = sb.from('acc_supplier_advances')
+    .select('id, supplier_id, pv_id, pv_number, amount_sen, applied_sen, created_at')
+    .order('created_at', { ascending: false });
+  const supplierId = c.req.query('supplierId');
+  if (supplierId) q = q.eq('supplier_id', supplierId);
+  const { data, error } = await scopeToCompanyId(q, co.companyId);
+  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  const rows = ((data ?? []) as Array<{ id: number; supplier_id: string; pv_id: string; pv_number: string; amount_sen: number; applied_sen: number; created_at: string }>)
+    .map((r) => ({ ...r, remaining_sen: Number(r.amount_sen) - Number(r.applied_sen) }))
+    .filter((r) => r.remaining_sen > 0);
+  return c.json({
+    advances: rows,
+    totalRemainingSen: rows.reduce((s, r) => s + r.remaining_sen, 0),
+  });
+};
+paymentVouchers.get('/advances/list', supplierAdvancesHandler);
+
+/* POST /:id/apply-advance { allocations: [{ piId, amountSen }] } — knock the
+   voucher's remaining advance off real invoices. Gated like posting (it
+   settles invoices); refuses another company's or a held invoice by name;
+   Σ may not exceed what remains; each settle is DB-clamped exactly like a
+   payment's, and what is recorded is what was APPLIED, never what was asked. */
+export const applyAdvanceHandler = async (c: any) => {
+  if (!hasHouzsPerm(c, 'scm.payment_voucher.post')) {
+    return c.json({ error: "You don't have permission to do that." }, 403);
+  }
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const sb = c.get('supabase'); const id = c.req.param('id');
+
+  let body: any;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
+  const wants = (Array.isArray(body.allocations) ? body.allocations : [])
+    .map((a: any) => ({ piId: String(a.piId ?? ''), amountSen: Math.round(Number(a.amountSen ?? 0)) }))
+    .filter((a: { piId: string; amountSen: number }) => a.piId && Number.isFinite(a.amountSen) && a.amountSen > 0);
+  if (wants.length === 0) return c.json({ error: 'nothing_to_apply', message: 'Name at least one invoice and a positive amount.' }, 400);
+
+  const { data: advRaw, error: advErr } = await scopeToCompanyId(
+    sb.from('acc_supplier_advances').select('id, supplier_id, pv_number, amount_sen, applied_sen').eq('pv_id', id), co.companyId,
+  ).maybeSingle();
+  if (advErr) return c.json({ error: 'load_failed', reason: advErr.message }, 500);
+  if (!advRaw) return c.json({ error: 'no_advance', message: 'This voucher holds no advance — nothing was paid ahead on it.' }, 404);
+  const adv = advRaw as { id: number; supplier_id: string; pv_number: string; amount_sen: number; applied_sen: number };
+  const remaining = Number(adv.amount_sen) - Number(adv.applied_sen);
+  const askedSen = wants.reduce((s: number, w: { amountSen: number }) => s + w.amountSen, 0);
+  if (askedSen > remaining) {
+    return c.json({
+      error: 'exceeds_advance',
+      message: `That applies ${(askedSen / 100).toFixed(2)} but only ${(remaining / 100).toFixed(2)} of this advance remains.`,
+    }, 409);
+  }
+
+  const piIds = wants.map((w: { piId: string }) => w.piId);
+  const outside = await allocationPisOutsideCompany(sb, c, piIds);
+  if (outside.length > 0) return c.json(ALLOCATION_NOT_THIS_COMPANY(outside), 404);
+  const held = await allocationPisOnHold(sb, c, piIds);
+  if (held.length > 0) return c.json(ALLOCATION_ON_HOLD(held), 409);
+
+  let appliedSen = 0;
+  const results: Array<{ piId: string; askedSen: number; appliedSen: number }> = [];
+  for (const w of wants as Array<{ piId: string; amountSen: number }>) {
+    const settled = await settlePiPaidSen(sb, w.piId, w.amountSen);
+    const got = settled.ok ? settled.appliedSen : 0;
+    appliedSen += got;
+    results.push({ piId: w.piId, askedSen: w.amountSen, appliedSen: got });
+    if (got > 0) {
+      await sb.from('pv_allocations').insert({
+        company_id: co.companyId, pv_id: id, pi_id: w.piId,
+        amount_sen: got, applied_sen: got, from_advance: true,
+      });
+    }
+  }
+
+  /* Burn the advance by what actually landed — optimistic, so two concurrent
+     applies cannot both spend the same ringgit: the second one's guard misses
+     and it reports instead of overdrawing. */
+  if (appliedSen > 0) {
+    const { data: burned, error: burnErr } = await sb.from('acc_supplier_advances')
+      .update({ applied_sen: Number(adv.applied_sen) + appliedSen, updated_at: new Date().toISOString() })
+      .eq('id', adv.id).eq('applied_sen', adv.applied_sen)
+      .select('id').maybeSingle();
+    if (burnErr || !burned) {
+      /* eslint-disable-next-line no-console */
+      console.error('[pv-advance] burn write missed (concurrent apply?) — invoices settled, advance NOT decremented:', adv.pv_number, burnErr?.message ?? 'row moved');
+      return c.json({
+        error: 'burn_conflict',
+        message: 'The invoices were settled but the advance record was updated by someone else at the same moment — refresh and check the remaining figure before applying more.',
+      }, 409);
+    }
+    await recordEntityAudit(sb, {
+      entityType: 'PAYMENT_VOUCHER', entityId: id, entityDocNo: adv.pv_number,
+      action: 'UPDATE', actor: c.get('houzsUser'), companyId: co.companyId,
+      note: `Advance knocked off ${(appliedSen / 100).toFixed(2)} against ${results.filter((r) => r.appliedSen > 0).length} invoice(s) — no money moved, both legs were already in AP`,
+      fieldChanges: compactChanges([
+        fieldChange('advanceAppliedSen', adv.applied_sen, Number(adv.applied_sen) + appliedSen),
+      ]),
+    });
+  }
+
+  return c.json({
+    ok: true,
+    appliedSen,
+    remainingSen: remaining - appliedSen,
+    results,
+  });
+};
+paymentVouchers.post('/:id/apply-advance', applyAdvanceHandler);
 
 /* ── reversePvAccounting — contra the active PV JE (mirror reversePiAccounting).
    Loads the original lines + swaps Dr/Cr so the reversal nets the original to

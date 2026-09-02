@@ -23,7 +23,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Save, Trash2, X } from 'lucide-react';
 import { Button } from '@2990s/design-system';
-import { useCreatePaymentVoucher } from '../../vendor/scm/lib/payment-voucher-queries';
+import { useCreatePaymentVoucher, useSupplierAdvances } from '../../vendor/scm/lib/payment-voucher-queries';
 import { useIdempotencyKey } from '../../lib/idempotency';
 import { useAccounts, useAccountRoles, type Account } from '../../vendor/scm/lib/accounting-queries';
 import { usePurchaseInvoices } from '../../vendor/scm/lib/purchase-invoice-queries';
@@ -235,9 +235,19 @@ export const PaymentVoucherNew = () => {
 
   const allocatedSen = useMemo(() => allocations.reduce((s, a) => s + a.amountSen, 0), [allocations]);
 
-  /* The voucher total: an AP Payment IS its ticks; a Payment Voucher is its
-     lines. Nothing to over-allocate in either shape. */
-  const totalSen = isAp ? allocatedSen : linesTotalSen;
+  /* 预付 — pay AHEAD of any invoice (owner, 2026-08-30: 也可以advance payment
+     先). Typed under the PI table; it rides the same voucher, the same auto
+     AP debit, and on post the server records it as this supplier's advance. */
+  const [advanceSen, setAdvanceSen] = useState<number>(0);
+  useEffect(() => { setAdvanceSen(0); }, [supplierId]);
+  /* What this supplier is ALREADY owed from earlier prepayments — informational
+     here; the knock-off lives on the voucher that holds the advance. */
+  const advancesQ = useSupplierAdvances(isAp && supplierId ? supplierId : null);
+  const existingAdvanceSen = advancesQ.data?.totalRemainingSen ?? 0;
+
+  /* The voucher total: an AP Payment IS its ticks plus any prepay; a Payment
+     Voucher is its lines. Nothing to over-allocate in either shape. */
+  const totalSen = isAp ? allocatedSen + advanceSen : linesTotalSen;
 
   /* RINGGIT IN, RATE OUT — re-derived when either side moves (see the header
      comment on the MYR-paid field). */
@@ -253,21 +263,27 @@ export const PaymentVoucherNew = () => {
   const apAccountCode = rolesQ.data?.roles.AP ?? '';
   const realLines = lines.filter((l) => l.debitAccountCode && l.amountSen > 0);
   const canSave = isAp
-    ? !!payeeName.trim() && !!supplierId && !!creditAccountCode && allocatedSen > 0 && !!apAccountCode
+    ? !!payeeName.trim() && !!supplierId && !!creditAccountCode && totalSen > 0 && !!apAccountCode
     : !!payeeName.trim() && !!creditAccountCode && realLines.length > 0;
 
   const onSave = async () => {
     if (!payeeName.trim()) { setDialog({ title: 'Enter a payee', body: 'Who is this voucher paying?' }); return; }
     if (!creditAccountCode) { setDialog({ title: 'Pick a “Paid From” account', body: 'Choose the bank / cash account the money leaves.' }); return; }
     if (isAp && !supplierId) { setDialog({ title: 'Pick a supplier', body: 'An AP Payment settles a supplier — choose whose invoices this pays.' }); return; }
-    if (isAp && allocatedSen === 0) { setDialog({ title: 'Nothing applied yet', body: 'Tick an invoice to pay it in full, or type a partial amount.' }); return; }
+    if (isAp && totalSen === 0) { setDialog({ title: 'Nothing to pay yet', body: 'Tick an invoice, type a partial amount, or enter a prepay figure.' }); return; }
     if (!isAp && realLines.length === 0) { setDialog({ title: 'Add at least one line', body: 'Each line needs a debit account and an amount > 0.' }); return; }
 
     /* AP Payment: the ONE GL line is written here — Dr the AP control account
        for exactly what the ticks apply. The operator never touches a debit
        account on this document, so it cannot be mis-booked. */
     const sendLines = isAp
-      ? [{ description: `Settle ${allocations.filter((a) => a.amountSen > 0).length} invoice(s) — ${payeeName.trim()}`, debitAccountCode: apAccountCode, amountSen: allocatedSen }]
+      ? [{
+        description: [
+          allocations.filter((a) => a.amountSen > 0).length > 0 ? `Settle ${allocations.filter((a) => a.amountSen > 0).length} invoice(s)` : null,
+          advanceSen > 0 ? `prepay ${(advanceSen / 100).toFixed(2)}` : null,
+        ].filter(Boolean).join(' + ') + ` — ${payeeName.trim()}`,
+        debitAccountCode: apAccountCode, amountSen: totalSen,
+      }]
       : realLines.map((l) => ({
         description:      l.description || undefined,
         debitAccountCode: l.debitAccountCode,
@@ -548,10 +564,32 @@ export const PaymentVoucherNew = () => {
                     ))}
                   </tbody>
                 </table>
+                {/* 预付 — money for this supplier AHEAD of any invoice. Rides
+                    the same voucher; the server records it as their advance,
+                    knocked off later from the voucher that holds it. */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', flexWrap: 'wrap', borderTop: '1px solid var(--line)', paddingTop: 'var(--space-3)' }}>
+                  <b style={{ fontSize: 'var(--fs-13)' }}>Prepay (advance)</b>
+                  <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>pay ahead of any invoice — hangs on this supplier until knocked off</span>
+                  <span style={{ flex: 1 }} />
+                  <label style={{ width: 160 }}>
+                    <span style={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden', clip: 'rect(0 0 0 0)' }}>Prepay amount</span>
+                    <MoneyInput bare valueSen={advanceSen}
+                      onCommit={(sen) => setAdvanceSen(Math.max(0, sen ?? 0))}
+                      inputClassName={styles.fieldInput} selectOnFocus />
+                  </label>
+                </div>
+                {existingAdvanceSen > 0 && (
+                  <div style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
+                    This supplier already holds {fmtRm(existingAdvanceSen)} of unspent advance — knock it off from the voucher(s) that paid it
+                    {(advancesQ.data?.advances ?? []).slice(0, 3).map((a) => (
+                      <span key={a.pv_id}> · <a href={`/scm/payment-vouchers/${a.pv_id}`} style={{ color: 'var(--c-orange)' }}>{a.pv_number}</a></span>
+                    ))}
+                  </div>
+                )}
                 {/* What the save will book — spelled out so the automatic AP
                     debit is never a surprise. */}
                 <div style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
-                  Books: Dr {apAccountCode || 'AP'} Account Payable {fmtRm(allocatedSen)} · Cr {creditAccountCode || 'Paid From'} {fmtRm(allocatedSen)}
+                  Books: Dr {apAccountCode || 'AP'} Account Payable {fmtRm(totalSen)}{advanceSen > 0 ? ` (incl. prepay ${fmtRm(advanceSen)})` : ''} · Cr {creditAccountCode || 'Paid From'} {fmtRm(totalSen)}
                 </div>
               </>
             )}

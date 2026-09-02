@@ -94,8 +94,8 @@ export const useUpdatePaymentVoucher = () => {
     mutationFn: ({ id, ...body }: { id: string } & Record<string, unknown>) =>
       authedFetch<{ paymentVoucher: Record<string, unknown> }>(`/payment-vouchers/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
     onSuccess: (_d, vars) => {
-      qc.invalidateQueries({ queryKey: ['payment-voucher-detail', vars.id] });
-      qc.invalidateQueries({ queryKey: ['payment-vouchers'] });
+      void qc.invalidateQueries({ queryKey: ['payment-voucher-detail', vars.id] });
+      void qc.invalidateQueries({ queryKey: ['payment-vouchers'] });
     },
   });
 };
@@ -105,10 +105,43 @@ export const usePostPaymentVoucher = () => {
   return useMutation({
     mutationFn: (id: string) => authedFetch<{ ok: true; jeNo?: string }>(`/payment-vouchers/${id}/post`, { method: 'POST' }),
     onSuccess: (_d, id) => {
-      qc.invalidateQueries({ queryKey: ['payment-vouchers'] });
-      qc.invalidateQueries({ queryKey: ['payment-voucher-detail', id] });
+      void qc.invalidateQueries({ queryKey: ['payment-vouchers'] });
+      void qc.invalidateQueries({ queryKey: ['payment-voucher-detail', id] });
       // A post settles linked PIs — refresh the PI list/detail too.
-      qc.invalidateQueries({ queryKey: ['purchase-invoices'] });
+      void qc.invalidateQueries({ queryKey: ['purchase-invoices'] });
+    },
+  });
+};
+
+/* ── 预付挂在 supplier (2026-09-02) ───────────────────────────────────────────
+   The open advances (vouchers that paid ahead, with money still on them) and
+   the knock-off that spends one against real invoices. Applying posts
+   NOTHING — both legs already live in AP — so only the PI side refreshes. */
+export type SupplierAdvance = {
+  id: number; supplier_id: string; pv_id: string; pv_number: string;
+  amount_sen: number; applied_sen: number; remaining_sen: number; created_at: string;
+};
+export const useSupplierAdvances = (supplierId: string | null) => useQuery({
+  queryKey: ['supplier-advances', supplierId ?? 'all'],
+  queryFn: () => authedFetch<{ advances: SupplierAdvance[]; totalRemainingSen: number }>(
+    `/payment-vouchers/advances/list${supplierId ? `?supplierId=${encodeURIComponent(supplierId)}` : ''}`,
+  ),
+  staleTime: 15_000,
+  retry: retryUnlessClientError,
+});
+
+export const useApplyAdvance = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ pvId, allocations }: { pvId: string; allocations: Array<{ piId: string; amountSen: number }> }) =>
+      authedFetch<{ ok: true; appliedSen: number; remainingSen: number }>(
+        `/payment-vouchers/${pvId}/apply-advance`,
+        { method: 'POST', body: JSON.stringify({ allocations }) },
+      ),
+    onSuccess: (_d, { pvId }) => {
+      void qc.invalidateQueries({ queryKey: ['supplier-advances'] });
+      void qc.invalidateQueries({ queryKey: ['payment-voucher-detail', pvId] });
+      void qc.invalidateQueries({ queryKey: ['purchase-invoices'] });
     },
   });
 };
@@ -118,9 +151,9 @@ export const useCancelPaymentVoucher = () => {
   return useMutation({
     mutationFn: (id: string) => authedFetch(`/payment-vouchers/${id}/cancel`, { method: 'POST' }),
     onSuccess: (_d, id) => {
-      qc.invalidateQueries({ queryKey: ['payment-vouchers'] });
-      qc.invalidateQueries({ queryKey: ['payment-voucher-detail', id] });
-      qc.invalidateQueries({ queryKey: ['purchase-invoices'] });
+      void qc.invalidateQueries({ queryKey: ['payment-vouchers'] });
+      void qc.invalidateQueries({ queryKey: ['payment-voucher-detail', id] });
+      void qc.invalidateQueries({ queryKey: ['purchase-invoices'] });
     },
   });
 };

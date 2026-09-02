@@ -144,6 +144,29 @@ bank is the owner's to maintain — the "Default bank" card on
 accounts only, per company). Contracts: `PaymentVoucherNew.test.tsx`
 (frontend), `backend/src/scm/routes/accountRoles.test.ts` (server half).
 
+## 0d. 预付挂在 supplier (2026-09-02)
+
+The owner's design, in his words: 预付就不能直接挂在supplier 那边吗? An AP
+Payment may pay MORE than the invoices it ticks — type the extra in the
+**Prepay (advance)** field under the PI table. The voucher's one GL line
+debits AP for the WHOLE amount, so the supplier's AP subledger simply runs
+ahead; on post the server records the excess in `scm.acc_supplier_advances`
+(mig 0340 — one row per voucher, `amount_sen` written once, `applied_sen`
+only grows).
+
+**Spending it posts NOTHING.** Both legs already live in AP, so the
+knock-off (POST `/payment-vouchers/:id/apply-advance`, surfaced as the
+"Advance on this voucher" card on the posted voucher's detail page) only
+settles the invoices' `paid_sen` — same DB-clamped rule as a payment, what
+is recorded is what LANDED — and burns `applied_sen`. The applications ride
+`pv_allocations` rows flagged `from_advance`, so the linked-PI trail shows
+them; GET `/payment-vouchers/advances/list?supplierId=` answers what is
+still unspent, and the New AP Payment page points at the holding voucher(s)
+when the supplier already has money on account. A voucher whose advance HAS
+been spent refuses to cancel (`advance_applied`) — its value lives inside
+other documents now; an unspent advance cancels with its voucher, row and
+all. Contracts: `backend/tests/pvSupplierAdvance.test.ts`.
+
 ## 1. Frontend
 
 | Surface | File |
