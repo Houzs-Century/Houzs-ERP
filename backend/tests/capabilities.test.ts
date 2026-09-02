@@ -250,10 +250,15 @@ describe("scm.maintenance.open — the divergence this PR closes", () => {
     });
   }
 
-  test("Sales Director opens the page READ-ONLY — in, but no config write", () => {
+  /* Owner 2026-09-01 — the Sales Director now MAINTAINS product master data
+     (retail price, sofa combos, Model activation / Modular toggles), so the page
+     he could already open is no longer read-only for him. Finance Manager below
+     is the unchanged read-only case, and is why this test is not simply deleted:
+     "opens but cannot write" is still a real state, just not his. */
+  test("Sales Director opens the page AND may write config", () => {
     const u = positioned("Sales Director");
     expect(resolveCapabilities(u)["scm.maintenance.open"]).toBe(true);
-    expect(resolveCapabilities(u)["scm.config.write"]).toBe(false);
+    expect(resolveCapabilities(u)["scm.config.write"]).toBe(true);
   });
 
   test("Finance Manager opens the page READ-ONLY", () => {

@@ -58,8 +58,9 @@ import { hasHouzsPerm } from '../lib/houzs-perms';
 import { normalizeCurrency, normalizeExchangeRate, masterRateForCurrency } from '../lib/fx';
 import { todayMyt } from '../lib/my-time';
 import { recordEntityAudit, diffFields, compactChanges, fieldChange, statusChange, assertAuditWritable, auditUnavailableBody } from '../lib/entity-audit';
-import { pvCanEdit, pvCanSubmit, pvCanDecide, pvCanWithdraw, pvCanPost } from '../lib/pv-approval';
+import { pvCanEdit, pvCanPrepare, pvCanCheck, pvCanApprove, pvCanReject, pvCanWithdraw, pvCanPost, type PvApprovalShape } from '../lib/pv-approval';
 import { settlePiPaidSen } from '../lib/pi-settlement';
+import { extractOneBill, matchSupplier, normalizeVendor, BILL_IMAGE_MIMES, MAX_BILLS_PER_CALL, MAX_FILES_PER_BILL, MAX_BILL_FILE_BYTES } from '../../acc/bill-extract';
 import { planPvRateAdoption, isRateRetainedFromPv, roundRate6 } from '../lib/pv-rate-adoption';
 import { recostFromGrn } from '../lib/recost';
 
@@ -81,7 +82,7 @@ const PV_AUDIT_FIELDS: Array<[string, string]> = [
 ];
 
 const HEADER =
-  'id, pv_number, voucher_date, payee_name, supplier_id, credit_account_code, currency, exchange_rate, purpose, notes, total_sen, status, posted_at, created_at, created_by, updated_at, company_id, submitted_at, submitted_by, approved_at, approved_by';
+  'id, pv_number, voucher_date, payee_name, supplier_id, credit_account_code, currency, exchange_rate, purpose, notes, total_sen, status, posted_at, created_at, created_by, updated_at, company_id, submitted_at, submitted_by, checked_at, checked_by, approved_at, approved_by';
 
 const LINE = 'id, pv_id, line_no, description, debit_account_code, amount_sen, created_at';
 
@@ -337,6 +338,90 @@ paymentVouchers.get('/:id', async (c) => {
 /* Exported for the same reason postPaymentVoucherHandler and
    cancelPaymentVoucherHandler are: the supabaseAuth bridge cannot run in the
    vitest harness, so the scope test mounts the handler on a bare Hono app. */
+/* Paid From must be a money account (bank / cash — the acc_money set Daily
+   Bank reads). Returns a Response to send on refusal, null when fine. Fails
+   CLOSED on a read error: an unverifiable account does not get to move money. */
+const requireMoneyAccount = async (c: any, code: string): Promise<Response | null> => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const sb = c.get('supabase');
+  const { data, error } = await scopeToCompanyId(
+    sb.from('accounts').select('account_code, account_name, acc_money, is_active').eq('account_code', code),
+    co.companyId,
+  ).maybeSingle();
+  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  if (!data) return c.json({ error: 'no_such_account', message: `${code} is not in this company's chart of accounts.` }, 400);
+  const a = data as { account_name: string; acc_money: boolean | null; is_active: boolean };
+  if (!a.is_active) return c.json({ error: 'account_inactive', message: `${code} ${a.account_name} is inactive.` }, 400);
+  if (a.acc_money !== true) {
+    return c.json({
+      error: 'not_a_money_account',
+      message: `${code} ${a.account_name} is not a bank / cash account. A voucher pays FROM money — pick one of the accounts Daily Bank shows.`,
+    }, 400);
+  }
+  return null;
+};
+
+/* ── Vendor memory (mig 0341) — 我想要你要有记忆我下次submit 同个类型的invoice
+   自动帮我填，选account 等等 (the owner, 2026-09-02).
+
+   Remember what the operator ACTUALLY saved — the payee's casing, the FIRST
+   line's expense account, the purpose — keyed by the same normalizeVendor()
+   the supplier matcher uses, so the OCR's reading of the next same-vendor
+   bill finds it. NOT learned: AP payments (their one line debits the AP
+   control, fixed by role — nothing to remember) and model guesses (only a
+   human's save teaches). last-saved-wins; times_seen only grows.
+
+   BEST-EFFORT ON PURPOSE: this rides a voucher save that already succeeded,
+   and a habit cache must never turn a saved voucher into an error — both
+   legs bind their failure and simply skip; the habit is relearned on the
+   next save. */
+export async function learnVendorMemory(
+  sb: any,
+  c: any,
+  input: {
+    payeeName: string | null | undefined;
+    purpose: string | null;
+    lines: Array<{ line_no: number; debit_account_code: string }>;
+  },
+): Promise<void> {
+  const coId = activeCompanyId(c);
+  if (coId == null) return;
+  if (normalizePurpose(input.purpose) === 'SUPPLIER_PAYMENT') return;
+  const payee = (input.payeeName ?? '').trim();
+  if (!payee) return;
+  const key = normalizeVendor(payee);
+  if (!key) return;
+  const first = [...input.lines].sort((a, b) => a.line_no - b.line_no)[0];
+  if (!first?.debit_account_code) return;
+
+  /* try/catch around BOTH legs, not just bound errors: a client that THROWS
+     (a rejected fetch, a harness without upsert) must be as skippable as one
+     that answers { error } — the voucher this rides on has already saved. */
+  try {
+    const { data: existing, error: readErr } = await sb
+      .from('acc_vendor_memory')
+      .select('times_seen')
+      .eq('company_id', coId)
+      .eq('vendor_key', key)
+      .maybeSingle();
+    if (readErr) return; // best-effort: an unreadable habit is skipped, not raised
+
+    const { error: writeErr } = await sb.from('acc_vendor_memory').upsert({
+      company_id: coId,
+      vendor_key: key,
+      payee_name: payee,
+      debit_account_code: first.debit_account_code,
+      purpose: normalizePurpose(input.purpose),
+      times_seen: ((existing as { times_seen?: number } | null)?.times_seen ?? 0) + 1,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'company_id,vendor_key' });
+    if (writeErr) return; // best-effort: the voucher saved; next save teaches again
+  } catch {
+    /* best-effort: same rule as the bound errors above. */
+  }
+}
+
 export const createPaymentVoucherHandler = async (c: any) => {
   if (!hasHouzsPerm(c, 'scm.payment_voucher.create')) {
     return c.json({ error: "You don't have permission to do that." }, 403);
@@ -348,6 +433,13 @@ export const createPaymentVoucherHandler = async (c: any) => {
   if (!payeeName) return c.json({ error: 'payee_required' }, 400);
   const creditAccountCode = (body.creditAccountCode as string | undefined)?.trim();
   if (!creditAccountCode) return c.json({ error: 'credit_account_required' }, 400);
+  {
+    /* Paid From must BE money (owner, 2026-08-30: paid from 应该只能选cash 和
+       银行). Guarded here, not just in the picker: a voucher crediting an
+       expense account would "pay" without any money leaving. */
+    const moneyErr = await requireMoneyAccount(c, creditAccountCode);
+    if (moneyErr) return moneyErr;
+  }
 
   const built = buildLines(body.lines);
   if ('error' in built) return c.json({ error: built.error }, 400);
@@ -449,6 +541,10 @@ export const createPaymentVoucherHandler = async (c: any) => {
     ]),
   });
 
+  /* Vendor memory (0341) — after every rollback path, so only a voucher that
+     actually stands teaches. */
+  await learnVendorMemory(sb, c, { payeeName, purpose, lines: built.rows });
+
   return c.json({ id: h.id, pvNumber: h.pv_number }, 201);
 };
 paymentVouchers.post('/', createPaymentVoucherHandler);
@@ -490,7 +586,7 @@ export const updatePaymentVoucherHandler = async (c: any) => {
   }
   /* Phase 3: a voucher in the approval cycle is frozen — what was approved is
      what gets paid. Withdraw first; it then needs approval again. */
-  const editable = pvCanEdit(before as { status: string; submitted_at?: string | null; approved_at?: string | null });
+  const editable = pvCanEdit(before as PvApprovalShape);
   if (!editable.ok) return c.json({ error: editable.error, message: editable.message }, 409);
 
   const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
@@ -502,6 +598,8 @@ export const updatePaymentVoucherHandler = async (c: any) => {
   if (body.creditAccountCode !== undefined) {
     const v = String(body.creditAccountCode).trim();
     if (!v) return c.json({ error: 'credit_account_required' }, 400);
+    const moneyErr = await requireMoneyAccount(c, v);
+    if (moneyErr) return moneyErr;
     updates.credit_account_code = v;
   }
   /* voucher_date is `date NOT NULL DEFAULT current_date` (mig 0081), and the
@@ -538,6 +636,7 @@ export const updatePaymentVoucherHandler = async (c: any) => {
 
   // Lines (optional) — full replace + recompute total when supplied.
   let newTotal: number | undefined;
+  let newLines: Array<{ line_no: number; debit_account_code: string }> | undefined;
   if (body.lines !== undefined) {
     const built = buildLines(body.lines);
     if ('error' in built) return c.json({ error: built.error }, 400);
@@ -546,6 +645,7 @@ export const updatePaymentVoucherHandler = async (c: any) => {
     if (lErr) return c.json({ error: 'lines_update_failed', reason: lErr.message }, 500);
     updates.total_sen = built.total;
     newTotal = built.total;
+    newLines = built.rows;
   }
 
   // Allocations (optional, 0202) — full replace. Σ ≤ the effective PV total.
@@ -596,6 +696,18 @@ export const updatePaymentVoucherHandler = async (c: any) => {
     fieldChanges: diffFields(before, auditPatch, PV_AUDIT_FIELDS),
   });
 
+  /* Vendor memory (0341) — an edit that replaced the lines is the operator
+     CORRECTING the answer (often the account the last prefill got wrong), the
+     strongest signal there is. Effective values, not just the patch: the
+     payee/purpose may be unchanged while the account moved. */
+  if (newLines !== undefined) {
+    await learnVendorMemory(sb, c, {
+      payeeName: (updates.payee_name as string | undefined) ?? ((before.payee_name as string | null) ?? null),
+      purpose: (updates.purpose as string | undefined) ?? ((before.purpose as string | null) ?? null),
+      lines: newLines,
+    });
+  }
+
   return c.json({ paymentVoucher: data });
 };
 paymentVouchers.patch('/:id', updatePaymentVoucherHandler);
@@ -608,7 +720,10 @@ paymentVouchers.patch('/:id', updatePaymentVoucherHandler);
    bridge cannot run in the vitest harness, so the tests mount the handler on a bare
    Hono app with a fake PostgREST client (precedent: tests/companyScopeHardening.test.ts). */
 export const postPaymentVoucherHandler = async (c: any) => {
-  if (!hasHouzsPerm(c, 'scm.payment_voucher.post')) {
+  /* The approve key implies the post door — approval IS the posting now
+     (owner 2026-09-02: 当approved 了才会进gl), and approvePaymentVoucherHandler
+     walks straight in here. The standalone post key still opens it alone. */
+  if (!hasHouzsPerm(c, 'scm.payment_voucher.post') && !hasHouzsPerm(c, 'scm.payment_voucher.approve')) {
     return c.json({ error: "You don't have permission to do that." }, 403);
   }
   const sb = c.get('supabase'); const id = c.req.param('id');
@@ -671,7 +786,7 @@ export const postPaymentVoucherHandler = async (c: any) => {
      exists has already paid, and re-posting it must stay an echo whatever
      its approval marks say. A fresh post, though, does not start without a
      recorded yes. */
-  const gate = pvCanPost(pv as unknown as { status: string; submitted_at?: string | null; approved_at?: string | null });
+  const gate = pvCanPost(pv as unknown as PvApprovalShape);
   if (!gate.ok) return c.json({ error: gate.error, message: gate.message }, 409);
 
   const { data: linesRaw } = await sb.from('payment_voucher_lines')
@@ -925,8 +1040,52 @@ export const postPaymentVoucherHandler = async (c: any) => {
     });
   }
 
+  /* ── 预付挂在 supplier (the owner, 2026-08-30) ─────────────────────────────
+     Whatever this supplier voucher paid BEYOND its allocations is an advance:
+     the GL already debited the whole amount into AP, so the supplier's ledger
+     runs ahead — record by how much, on the voucher that did it. Written
+     AFTER the GL and the settles because it is bookkeeping about them; the
+     UNIQUE(pv_id) makes a re-post echo harmless. */
+  let advanceSen = 0;
+  {
+    const supplierId = (pvRaw as { supplier_id?: string | null }).supplier_id ?? null;
+    if (normalizePurpose(pv.purpose) === 'SUPPLIER_PAYMENT' && supplierId) {
+      const { data: allocRows, error: alErr } = await sb.from('pv_allocations')
+        .select('amount_sen').eq('pv_id', id).eq('from_advance', false);
+      if (alErr) {
+        /* eslint-disable-next-line no-console */
+        console.error('[pv-advance] allocation read failed — advance NOT recorded:', pv.pv_number, alErr.message);
+      } else {
+        const allocatedSen = ((allocRows ?? []) as Array<{ amount_sen: number }>)
+          .reduce((s, r) => s + Number(r.amount_sen || 0), 0);
+        advanceSen = Math.max(0, Number(pv.total_sen) - allocatedSen);
+        if (advanceSen > 0) {
+          const { error: advErr } = await sb.from('acc_supplier_advances').insert({
+            company_id: companyId, supplier_id: supplierId,
+            pv_id: id, pv_number: pv.pv_number, amount_sen: advanceSen, applied_sen: 0,
+          });
+          const dup = advErr && (String(advErr.code ?? '') === '23505' || /duplicate key/i.test(String(advErr.message ?? '')));
+          if (advErr && !dup) {
+            /* eslint-disable-next-line no-console */
+            console.error('[pv-advance] advance NOT recorded:', pv.pv_number, advErr.message);
+            advanceSen = 0;
+          } else if (!dup) {
+            await recordEntityAudit(sb, {
+              entityType: 'PAYMENT_VOUCHER', entityId: id, entityDocNo: pv.pv_number,
+              action: 'UPDATE', actor: c.get('houzsUser'), companyId,
+              statusSnapshot: 'POSTED',
+              note: `Paid ${(advanceSen / 100).toFixed(2)} ahead of any invoice — recorded as this supplier's advance, to knock off against invoices to come`,
+              fieldChanges: compactChanges([fieldChange('supplierAdvanceSen', null, advanceSen)]),
+            });
+          }
+        }
+      }
+    }
+  }
+
   return c.json({
     ok: true, jeNo: je.je_no, jeId: je.id, totalSen,
+    ...(advanceSen > 0 ? { advanceSen } : {}),
     ...(overAllocated.length > 0 ? { overAllocated } : {}),
     ...(rateAdopted.length > 0 ? { rateAdopted } : {}),
     ...(rateMismatch.length > 0 ? { rateMismatch } : {}),
@@ -957,6 +1116,10 @@ const loadPvForApproval = async (c: any) => {
 const approvalActor = (c: any): string =>
   String((c.get('houzsUser') as { name?: string } | undefined)?.name ?? 'unknown');
 
+/* PREPARE — the old /submit route keeps its path (nothing external breaks)
+   but carries the owner's word: the voucher is declared ready and enters the
+   checker's queue. It stays EDITABLE (owner: prepare 还可以改) — the first
+   yes is what locks it. */
 export const submitPaymentVoucherHandler = async (c: any) => {
   if (!hasHouzsPerm(c, 'scm.payment_voucher.write')) {
     return c.json({ error: "You don't have permission to do that." }, 403);
@@ -964,7 +1127,7 @@ export const submitPaymentVoucherHandler = async (c: any) => {
   const loaded = await loadPvForApproval(c);
   if ('refusal' in loaded) return loaded.refusal;
   const { sb, id, pv, companyId } = loaded;
-  const v = pvCanSubmit(pv as { status: string; submitted_at?: string | null; approved_at?: string | null });
+  const v = pvCanPrepare(pv as PvApprovalShape);
   if (!v.ok) return c.json({ error: v.error, message: v.message }, 409);
   const who = approvalActor(c);
   const at = new Date().toISOString();
@@ -980,6 +1143,9 @@ export const submitPaymentVoucherHandler = async (c: any) => {
 };
 paymentVouchers.post('/:id/submit', submitPaymentVoucherHandler);
 
+/* WITHDRAW — the preparer pulls their own voucher back, only BEFORE the
+   first yes; a checked voucher belongs to the checkers and comes back via
+   reject. */
 export const withdrawPaymentVoucherHandler = async (c: any) => {
   if (!hasHouzsPerm(c, 'scm.payment_voucher.write')) {
     return c.json({ error: "You don't have permission to do that." }, 403);
@@ -987,10 +1153,10 @@ export const withdrawPaymentVoucherHandler = async (c: any) => {
   const loaded = await loadPvForApproval(c);
   if ('refusal' in loaded) return loaded.refusal;
   const { sb, id, pv, companyId } = loaded;
-  const v = pvCanWithdraw(pv as { status: string; submitted_at?: string | null; approved_at?: string | null });
+  const v = pvCanWithdraw(pv as PvApprovalShape);
   if (!v.ok) return c.json({ error: v.error, message: v.message }, 409);
   const { error } = await scopeToCompanyId(sb.from('payment_vouchers')
-    .update({ submitted_at: null, submitted_by: null, approved_at: null, approved_by: null, updated_at: new Date().toISOString() })
+    .update({ submitted_at: null, submitted_by: null, updated_at: new Date().toISOString() })
     .eq('id', id), companyId);
   if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);
   await recordEntityAudit(sb, {
@@ -1002,6 +1168,37 @@ export const withdrawPaymentVoucherHandler = async (c: any) => {
 };
 paymentVouchers.post('/:id/withdraw', withdrawPaymentVoucherHandler);
 
+/* CHECK — the first of the owner's two yeses (2026-09-02: prepare 后会多
+   两层checking). Locks the voucher and puts it on Daily Bank's pending.
+   Its own key; the same person MAY also hold approve (可以同一个人). */
+export const checkPaymentVoucherHandler = async (c: any) => {
+  if (!hasHouzsPerm(c, 'scm.payment_voucher.check')) {
+    return c.json({ error: "You don't have permission to do that." }, 403);
+  }
+  const loaded = await loadPvForApproval(c);
+  if ('refusal' in loaded) return loaded.refusal;
+  const { sb, id, pv, companyId } = loaded;
+  const v = pvCanCheck(pv as PvApprovalShape);
+  if (!v.ok) return c.json({ error: v.error, message: v.message }, 409);
+  const who = approvalActor(c);
+  const at = new Date().toISOString();
+  const { error } = await scopeToCompanyId(sb.from('payment_vouchers')
+    .update({ checked_at: at, checked_by: who, updated_at: at }).eq('id', id), companyId);
+  if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);
+  await recordEntityAudit(sb, {
+    entityType: 'PAYMENT_VOUCHER', entityId: id, entityDocNo: pv.pv_number,
+    action: 'CHECK', actor: c.get('houzsUser'), statusSnapshot: 'DRAFT',
+    fieldChanges: compactChanges([fieldChange('checked_by', null, who)]),
+  });
+  return c.json({ id, checkedAt: at, checkedBy: who });
+};
+paymentVouchers.post('/:id/check', checkPaymentVoucherHandler);
+
+/* APPROVE — the second yes IS the posting (owner: 当approved 了才会进gl).
+   Stamps approval, then walks straight through the post door in the same
+   request; the response is the post's (jeNo and all). If posting dies after
+   the stamp, approving again resumes it — the stamp is not rewritten, and
+   the post handler's idempotency echo makes the retry safe. */
 export const approvePaymentVoucherHandler = async (c: any) => {
   if (!hasHouzsPerm(c, 'scm.payment_voucher.approve')) {
     return c.json({ error: "You don't have permission to do that." }, 403);
@@ -1009,38 +1206,44 @@ export const approvePaymentVoucherHandler = async (c: any) => {
   const loaded = await loadPvForApproval(c);
   if ('refusal' in loaded) return loaded.refusal;
   const { sb, id, pv, companyId } = loaded;
-  const v = pvCanDecide(pv as { status: string; submitted_at?: string | null; approved_at?: string | null });
-  if (!v.ok) return c.json({ error: v.error, message: v.message }, 409);
-  const who = approvalActor(c);
-  const at = new Date().toISOString();
-  const { error } = await scopeToCompanyId(sb.from('payment_vouchers')
-    .update({ approved_at: at, approved_by: who, updated_at: at }).eq('id', id), companyId);
-  if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);
-  await recordEntityAudit(sb, {
-    entityType: 'PAYMENT_VOUCHER', entityId: id, entityDocNo: pv.pv_number,
-    action: 'APPROVE', actor: c.get('houzsUser'), statusSnapshot: 'DRAFT',
-    fieldChanges: compactChanges([fieldChange('approved_by', null, who)]),
-  });
-  return c.json({ id, approvedAt: at, approvedBy: who });
+  const resume = pv.status === 'DRAFT' && pv.approved_at != null;
+  if (!resume) {
+    const v = pvCanApprove(pv as PvApprovalShape);
+    if (!v.ok) return c.json({ error: v.error, message: v.message }, 409);
+    const who = approvalActor(c);
+    const at = new Date().toISOString();
+    const { error } = await scopeToCompanyId(sb.from('payment_vouchers')
+      .update({ approved_at: at, approved_by: who, updated_at: at }).eq('id', id), companyId);
+    if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);
+    await recordEntityAudit(sb, {
+      entityType: 'PAYMENT_VOUCHER', entityId: id, entityDocNo: pv.pv_number,
+      action: 'APPROVE', actor: c.get('houzsUser'), statusSnapshot: 'DRAFT',
+      fieldChanges: compactChanges([fieldChange('approved_by', null, who)]),
+    });
+  }
+  return postPaymentVoucherHandler(c);
 };
 paymentVouchers.post('/:id/approve', approvePaymentVoucherHandler);
 
+/* REJECT — at EITHER checking layer, by either key; everything comes off
+   and the voucher is a raw draft again (owner: 一律退回 Draft), the why on
+   its audit trail. */
 export const rejectPaymentVoucherHandler = async (c: any) => {
-  if (!hasHouzsPerm(c, 'scm.payment_voucher.approve')) {
+  if (!hasHouzsPerm(c, 'scm.payment_voucher.approve') && !hasHouzsPerm(c, 'scm.payment_voucher.check')) {
     return c.json({ error: "You don't have permission to do that." }, 403);
   }
   const loaded = await loadPvForApproval(c);
   if ('refusal' in loaded) return loaded.refusal;
   const { sb, id, pv, companyId } = loaded;
-  const v = pvCanDecide(pv as { status: string; submitted_at?: string | null; approved_at?: string | null });
+  const v = pvCanReject(pv as PvApprovalShape);
   if (!v.ok) return c.json({ error: v.error, message: v.message }, 409);
   let note = '';
   try { note = String(((await c.req.json()) as { note?: unknown })?.note ?? '').trim(); } catch { /* empty body is a valid no-note reject */ }
   const { error } = await scopeToCompanyId(sb.from('payment_vouchers')
-    .update({ submitted_at: null, submitted_by: null, approved_at: null, approved_by: null, updated_at: new Date().toISOString() })
+    .update({ submitted_at: null, submitted_by: null, checked_at: null, checked_by: null, approved_at: null, approved_by: null, updated_at: new Date().toISOString() })
     .eq('id', id), companyId);
   if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);
-  /* The reason lives on the audit trail, where the submitter reads it — a
+  /* The reason lives on the audit trail, where the preparer reads it — a
      rejected voucher goes back to editable with the WHY on its history. */
   await recordEntityAudit(sb, {
     entityType: 'PAYMENT_VOUCHER', entityId: id, entityDocNo: pv.pv_number,
@@ -1081,6 +1284,24 @@ export const cancelPaymentVoucherHandler = async (c: any) => {
   // Idempotent — already cancelled, echo back.
   if (head.status === 'CANCELLED') return c.json({ paymentVoucher: { id, status: 'CANCELLED' } });
 
+  /* An advance that has been SPENT pins its voucher: the knock-offs settled
+     real invoices with this voucher's money, and cancelling would reverse a
+     payment whose value is now inside other documents. Un-apply first (not
+     built yet — deliberately: it has not been needed), or leave the voucher
+     standing. An UNSPENT advance cancels fine — the row is removed with it. */
+  {
+    const { data: adv, error: advErr } = await sb.from('acc_supplier_advances')
+      .select('id, applied_sen').eq('pv_id', id).maybeSingle();
+    if (advErr) return c.json({ error: 'load_failed', reason: advErr.message }, 500);
+    const a = adv as { applied_sen: number } | null;
+    if (a && Number(a.applied_sen) > 0) {
+      return c.json({
+        error: 'advance_applied',
+        message: `This voucher's advance has already knocked off ${(Number(a.applied_sen) / 100).toFixed(2)} of invoices. A payment whose value now lives inside other documents cannot be cancelled.`,
+      }, 409);
+    }
+  }
+
   /* One probe covers BOTH history rows this handler writes (the CANCEL and the
      REVERSE): they share a sink, and past this point the flip has happened, so a
      second check further down could only report a failure it can no longer undo. */
@@ -1102,6 +1323,9 @@ export const cancelPaymentVoucherHandler = async (c: any) => {
     return c.json({ error: 'cannot_cancel' }, 409);
   }
   const cancelled = data as { id: string; status: string; pv_number: string };
+
+  /* The (unspent — the guard above) advance goes with its voucher. */
+  await sb.from('acc_supplier_advances').delete().eq('pv_id', id).eq('applied_sen', 0);
 
   /* Recorded immediately after the ATOMIC flip won the race, so exactly one
      CANCEL row is ever written for a voucher — the losing concurrent call
@@ -1228,6 +1452,220 @@ export const cancelPaymentVoucherHandler = async (c: any) => {
   });
 };
 paymentVouchers.post('/:id/cancel', cancelPaymentVoucherHandler);
+
+/* ── Supplier advances — 预付挂在 supplier (owner, 2026-08-30) ────────────────
+   The ledger of vouchers that paid AHEAD of any invoice, and the knock-off
+   that spends them. Applying an advance posts NOTHING: the money already
+   debited AP when the voucher posted, the invoice already credited AP when it
+   posted — this only settles the invoice's paid_sen and burns the advance. */
+
+/* GET /advances/list?supplierId=… — the open advances (remaining > 0),
+   newest first, plus the total still unspent. No supplierId = the company's
+   whole list (the screen's per-supplier ask filters). */
+export const supplierAdvancesHandler = async (c: any) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const sb = c.get('supabase');
+  let q = sb.from('acc_supplier_advances')
+    .select('id, supplier_id, pv_id, pv_number, amount_sen, applied_sen, created_at')
+    .order('created_at', { ascending: false });
+  const supplierId = c.req.query('supplierId');
+  if (supplierId) q = q.eq('supplier_id', supplierId);
+  const { data, error } = await scopeToCompanyId(q, co.companyId);
+  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  const rows = ((data ?? []) as Array<{ id: number; supplier_id: string; pv_id: string; pv_number: string; amount_sen: number; applied_sen: number; created_at: string }>)
+    .map((r) => ({ ...r, remaining_sen: Number(r.amount_sen) - Number(r.applied_sen) }))
+    .filter((r) => r.remaining_sen > 0);
+  return c.json({
+    advances: rows,
+    totalRemainingSen: rows.reduce((s, r) => s + r.remaining_sen, 0),
+  });
+};
+paymentVouchers.get('/advances/list', supplierAdvancesHandler);
+
+/* POST /:id/apply-advance { allocations: [{ piId, amountSen }] } — knock the
+   voucher's remaining advance off real invoices. Gated like posting (it
+   settles invoices); refuses another company's or a held invoice by name;
+   Σ may not exceed what remains; each settle is DB-clamped exactly like a
+   payment's, and what is recorded is what was APPLIED, never what was asked. */
+export const applyAdvanceHandler = async (c: any) => {
+  if (!hasHouzsPerm(c, 'scm.payment_voucher.post')) {
+    return c.json({ error: "You don't have permission to do that." }, 403);
+  }
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const sb = c.get('supabase'); const id = c.req.param('id');
+
+  let body: any;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
+  const wants = (Array.isArray(body.allocations) ? body.allocations : [])
+    .map((a: any) => ({ piId: String(a.piId ?? ''), amountSen: Math.round(Number(a.amountSen ?? 0)) }))
+    .filter((a: { piId: string; amountSen: number }) => a.piId && Number.isFinite(a.amountSen) && a.amountSen > 0);
+  if (wants.length === 0) return c.json({ error: 'nothing_to_apply', message: 'Name at least one invoice and a positive amount.' }, 400);
+
+  const { data: advRaw, error: advErr } = await scopeToCompanyId(
+    sb.from('acc_supplier_advances').select('id, supplier_id, pv_number, amount_sen, applied_sen').eq('pv_id', id), co.companyId,
+  ).maybeSingle();
+  if (advErr) return c.json({ error: 'load_failed', reason: advErr.message }, 500);
+  if (!advRaw) return c.json({ error: 'no_advance', message: 'This voucher holds no advance — nothing was paid ahead on it.' }, 404);
+  const adv = advRaw as { id: number; supplier_id: string; pv_number: string; amount_sen: number; applied_sen: number };
+  const remaining = Number(adv.amount_sen) - Number(adv.applied_sen);
+  const askedSen = wants.reduce((s: number, w: { amountSen: number }) => s + w.amountSen, 0);
+  if (askedSen > remaining) {
+    return c.json({
+      error: 'exceeds_advance',
+      message: `That applies ${(askedSen / 100).toFixed(2)} but only ${(remaining / 100).toFixed(2)} of this advance remains.`,
+    }, 409);
+  }
+
+  const piIds = wants.map((w: { piId: string }) => w.piId);
+  const outside = await allocationPisOutsideCompany(sb, c, piIds);
+  if (outside.length > 0) return c.json(ALLOCATION_NOT_THIS_COMPANY(outside), 404);
+  const held = await allocationPisOnHold(sb, c, piIds);
+  if (held.length > 0) return c.json(ALLOCATION_ON_HOLD(held), 409);
+
+  let appliedSen = 0;
+  const results: Array<{ piId: string; askedSen: number; appliedSen: number }> = [];
+  for (const w of wants as Array<{ piId: string; amountSen: number }>) {
+    const settled = await settlePiPaidSen(sb, w.piId, w.amountSen);
+    const got = settled.ok ? settled.appliedSen : 0;
+    appliedSen += got;
+    results.push({ piId: w.piId, askedSen: w.amountSen, appliedSen: got });
+    if (got > 0) {
+      await sb.from('pv_allocations').insert({
+        company_id: co.companyId, pv_id: id, pi_id: w.piId,
+        amount_sen: got, applied_sen: got, from_advance: true,
+      });
+    }
+  }
+
+  /* Burn the advance by what actually landed — optimistic, so two concurrent
+     applies cannot both spend the same ringgit: the second one's guard misses
+     and it reports instead of overdrawing. */
+  if (appliedSen > 0) {
+    const { data: burned, error: burnErr } = await sb.from('acc_supplier_advances')
+      .update({ applied_sen: Number(adv.applied_sen) + appliedSen, updated_at: new Date().toISOString() })
+      .eq('id', adv.id).eq('applied_sen', adv.applied_sen)
+      .select('id').maybeSingle();
+    if (burnErr || !burned) {
+      /* eslint-disable-next-line no-console */
+      console.error('[pv-advance] burn write missed (concurrent apply?) — invoices settled, advance NOT decremented:', adv.pv_number, burnErr?.message ?? 'row moved');
+      return c.json({
+        error: 'burn_conflict',
+        message: 'The invoices were settled but the advance record was updated by someone else at the same moment — refresh and check the remaining figure before applying more.',
+      }, 409);
+    }
+    await recordEntityAudit(sb, {
+      entityType: 'PAYMENT_VOUCHER', entityId: id, entityDocNo: adv.pv_number,
+      action: 'UPDATE', actor: c.get('houzsUser'), companyId: co.companyId,
+      note: `Advance knocked off ${(appliedSen / 100).toFixed(2)} against ${results.filter((r) => r.appliedSen > 0).length} invoice(s) — no money moved, both legs were already in AP`,
+      fieldChanges: compactChanges([
+        fieldChange('advanceAppliedSen', adv.applied_sen, Number(adv.applied_sen) + appliedSen),
+      ]),
+    });
+  }
+
+  return c.json({
+    ok: true,
+    appliedSen,
+    remainingSen: remaining - appliedSen,
+    results,
+  });
+};
+paymentVouchers.post('/:id/apply-advance', applyAdvanceHandler);
+
+/* ── Bill OCR — read incoming bills into voucher pre-fills (2026-09-02) ──────
+   我想要把ocr 功能放去payment 那边. Each `bills` entry is ONE document (its
+   files are its pages — the human said so at upload; the server never guesses
+   whether two files are one bill). One vision call per bill, supplier matched
+   server-side, and NOTHING written: the answer pre-fills a form a person
+   still checks, saves, and sends through the untouched approval cycle. */
+export const extractBillsHandler = async (c: any) => {
+  if (!hasHouzsPerm(c, 'scm.payment_voucher.create')) {
+    return c.json({ error: "You don't have permission to do that." }, 403);
+  }
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const apiKey = c.env?.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    return c.json({ error: 'anthropic_key_missing', reason: 'Run: npx wrangler secret put ANTHROPIC_API_KEY' }, 503);
+  }
+
+  let body: any;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
+  const bills = Array.isArray(body.bills) ? body.bills : [];
+  if (bills.length === 0) return c.json({ error: 'no_bills', message: 'Send at least one bill.' }, 400);
+  if (bills.length > MAX_BILLS_PER_CALL) {
+    return c.json({ error: 'too_many_bills', message: `At most ${MAX_BILLS_PER_CALL} bills per batch — split the pile.` }, 400);
+  }
+  for (const [i, b] of bills.entries()) {
+    const files = Array.isArray(b?.files) ? b.files : [];
+    if (files.length === 0) return c.json({ error: 'empty_bill', message: `Bill ${i + 1} has no files.` }, 400);
+    if (files.length > MAX_FILES_PER_BILL) {
+      return c.json({ error: 'too_many_pages', message: `Bill ${i + 1} has more than ${MAX_FILES_PER_BILL} pages.` }, 400);
+    }
+    for (const f of files) {
+      const mime = String(f?.mime ?? '');
+      if (!BILL_IMAGE_MIMES.has(mime) && mime !== 'application/pdf') {
+        return c.json({ error: 'bad_file_type', message: `Bill ${i + 1}: ${mime || 'unknown type'} — JPEG / PNG / WebP / PDF only.` }, 400);
+      }
+      const size = Math.floor(String(f?.dataBase64 ?? '').length * 0.75);
+      if (size > MAX_BILL_FILE_BYTES) {
+        return c.json({ error: 'file_too_big', message: `Bill ${i + 1}: a file is over ${Math.round(MAX_BILL_FILE_BYTES / 1024 / 1024)}MB.` }, 400);
+      }
+    }
+  }
+
+  /* Suppliers once for the whole batch — matching is per bill, in code. */
+  const sb = c.get('supabase');
+  const { data: supRaw, error: supErr } = await scopeToCompany(
+    sb.from('suppliers').select('id, code, name').eq('status', 'ACTIVE'), c,
+  );
+  if (supErr) return c.json({ error: 'load_failed', reason: supErr.message }, 500);
+  const suppliers = (supRaw ?? []) as Array<{ id: string; code: string | null; name: string }>;
+
+  /* Vendor memory (0341), once for the batch — what the operator saved the
+     last time each vendor was paid. Small by construction: one row per
+     distinct vendor per company. */
+  const { data: memRaw, error: memErr } = await scopeToCompany(
+    sb.from('acc_vendor_memory').select('vendor_key, payee_name, debit_account_code, purpose, times_seen'), c,
+  );
+  if (memErr) return c.json({ error: 'load_failed', reason: memErr.message }, 500);
+  type MemRow = { vendor_key: string; payee_name: string | null; debit_account_code: string | null; purpose: string | null; times_seen: number };
+  const memByKey = new Map(((memRaw ?? []) as MemRow[]).map((m) => [m.vendor_key, m]));
+  /* The printed name first; the MATCHED supplier's name second — a bill
+     reading "TENAGA NASIONAL" still finds the habit saved under "TNB" when
+     both normalize onto the supplier the matcher agreed on. */
+  const memoryFor = (vendorName: string | null, matchedName: string | null): MemRow | null => {
+    for (const raw of [vendorName, matchedName]) {
+      if (!raw) continue;
+      const hit = memByKey.get(normalizeVendor(raw));
+      if (hit) return hit;
+    }
+    return null;
+  };
+
+  const out = [] as Array<Record<string, unknown>>;
+  for (const [i, b] of bills.entries()) {
+    const files = (b.files as Array<{ name?: unknown; mime?: unknown; dataBase64?: unknown }>).map((f) => ({
+      name: String(f.name ?? `file-${i}`), mime: String(f.mime ?? ''), dataBase64: String(f.dataBase64 ?? ''),
+    }));
+    const r = await extractOneBill(apiKey, files);
+    if (!r.ok) {
+      out.push({ index: i, ok: false, reason: r.reason });
+      continue;
+    }
+    const match = matchSupplier(r.extraction.vendorName, suppliers);
+    const mem = memoryFor(r.extraction.vendorName, match?.supplier.name ?? null);
+    out.push({
+      index: i, ok: true, extraction: r.extraction,
+      supplierMatch: match ? { id: match.supplier.id, code: match.supplier.code, name: match.supplier.name, confidence: match.confidence } : null,
+      memory: mem ? { payeeName: mem.payee_name, debitAccountCode: mem.debit_account_code, purpose: mem.purpose, timesSeen: mem.times_seen } : null,
+    });
+  }
+  return c.json({ bills: out });
+};
+paymentVouchers.post('/extract', extractBillsHandler);
 
 /* ── reversePvAccounting — contra the active PV JE (mirror reversePiAccounting).
    Loads the original lines + swaps Dr/Cr so the reversal nets the original to

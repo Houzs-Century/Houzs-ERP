@@ -1,67 +1,105 @@
-// The phase-3 rule table, question by question. Every cell of the state
-// machine in pv-approval.ts is asserted here so a route can never quietly
-// disagree with the screen about what a voucher in the queue may do.
+// The owner's four layers (2026-09-02), question by question. Every cell of
+// the state machine in pv-approval.ts is asserted here so a route can never
+// quietly disagree with the screen about what a voucher in the cycle may do.
+//
+//   Draft -> Prepared (still editable) -> Checked (locked) -> Approved (=GL)
+//   any reject -> Draft. Bank truth stays with reconciliation.
 
 import { describe, expect, test } from 'vitest';
-import { pvCanEdit, pvCanSubmit, pvCanDecide, pvCanWithdraw, pvCanPost } from './pv-approval';
+import { pvCanEdit, pvCanPrepare, pvCanCheck, pvCanApprove, pvCanReject, pvCanWithdraw, pvCanPost } from './pv-approval';
 
-const draft = { status: 'DRAFT', submitted_at: null, approved_at: null };
-const submitted = { status: 'DRAFT', submitted_at: '2026-08-28T01:00:00Z', approved_at: null };
-const approved = { status: 'DRAFT', submitted_at: '2026-08-28T01:00:00Z', approved_at: '2026-08-28T02:00:00Z' };
-const posted = { status: 'POSTED', submitted_at: '2026-08-28T01:00:00Z', approved_at: '2026-08-28T02:00:00Z' };
-const cancelled = { status: 'CANCELLED', submitted_at: null, approved_at: null };
+const draft = { status: 'DRAFT', submitted_at: null, checked_at: null, approved_at: null };
+const prepared = { status: 'DRAFT', submitted_at: '2026-09-02T01:00:00Z', checked_at: null, approved_at: null };
+const checked = { status: 'DRAFT', submitted_at: '2026-09-02T01:00:00Z', checked_at: '2026-09-02T02:00:00Z', approved_at: null };
+const approved = { status: 'DRAFT', submitted_at: '2026-09-02T01:00:00Z', checked_at: '2026-09-02T02:00:00Z', approved_at: '2026-09-02T03:00:00Z' };
+const posted = { status: 'POSTED', submitted_at: '2026-09-02T01:00:00Z', checked_at: '2026-09-02T02:00:00Z', approved_at: '2026-09-02T03:00:00Z' };
+const cancelled = { status: 'CANCELLED', submitted_at: null, checked_at: null, approved_at: null };
 
 describe('editing', () => {
-  test('a fresh draft is editable', () => {
+  test('a raw draft is editable', () => {
     expect(pvCanEdit(draft).ok).toBe(true);
   });
-  test('a submitted voucher is frozen, and the refusal says withdraw', () => {
-    const v = pvCanEdit(submitted);
-    expect(v.ok).toBe(false);
-    if (!v.ok) expect(v.message).toMatch(/Withdraw it to edit/);
+  test('a PREPARED voucher is STILL editable — the owner kept it so (prepare 还可以改)', () => {
+    expect(pvCanEdit(prepared).ok).toBe(true);
   });
-  test('an approved voucher is frozen harder — what was approved is what gets paid', () => {
+  test('the first yes locks it — checked is frozen, and the refusal says reject-back', () => {
+    const v = pvCanEdit(checked);
+    expect(v.ok).toBe(false);
+    if (!v.ok) expect(v.message).toMatch(/Reject it back to draft/);
+  });
+  test('approved is frozen harder — what was approved is what gets paid', () => {
     const v = pvCanEdit(approved);
     expect(v.ok).toBe(false);
     if (!v.ok) expect(v.message).toMatch(/what was approved is what gets paid/);
   });
 });
 
-describe('submitting', () => {
-  test('a fresh draft may enter the queue', () => {
-    expect(pvCanSubmit(draft).ok).toBe(true);
+describe('preparing', () => {
+  test('a raw draft may be prepared', () => {
+    expect(pvCanPrepare(draft).ok).toBe(true);
   });
   test('twice is refused', () => {
-    const v = pvCanSubmit(submitted);
+    const v = pvCanPrepare(prepared);
     expect(v.ok).toBe(false);
-    if (!v.ok) expect(v.error).toBe('already_submitted');
+    if (!v.ok) expect(v.error).toBe('already_prepared');
   });
   test('posted and cancelled vouchers are history', () => {
-    expect(pvCanSubmit(posted).ok).toBe(false);
-    expect(pvCanSubmit(cancelled).ok).toBe(false);
+    expect(pvCanPrepare(posted).ok).toBe(false);
+    expect(pvCanPrepare(cancelled).ok).toBe(false);
   });
 });
 
-describe('deciding (approve / reject)', () => {
-  test('only a submitted voucher can be decided', () => {
-    expect(pvCanDecide(submitted).ok).toBe(true);
-    const v = pvCanDecide(draft);
+describe('checking (the first yes)', () => {
+  test('only a prepared voucher can be checked', () => {
+    expect(pvCanCheck(prepared).ok).toBe(true);
+    const v = pvCanCheck(draft);
     expect(v.ok).toBe(false);
-    if (!v.ok) expect(v.error).toBe('not_submitted');
+    if (!v.ok) expect(v.error).toBe('not_prepared');
   });
-  test('deciding twice is refused', () => {
-    const v = pvCanDecide(approved);
+  test('checking twice is refused', () => {
+    const v = pvCanCheck(checked);
+    expect(v.ok).toBe(false);
+    if (!v.ok) expect(v.error).toBe('already_checked');
+  });
+});
+
+describe('approving (the second yes IS the posting)', () => {
+  test('only a checked voucher can be approved — the first yes comes first', () => {
+    expect(pvCanApprove(checked).ok).toBe(true);
+    const early = pvCanApprove(prepared);
+    expect(early.ok).toBe(false);
+    if (!early.ok) expect(early.message).toMatch(/first yes comes before yours/);
+    const never = pvCanApprove(draft);
+    expect(never.ok).toBe(false);
+    if (!never.ok) expect(never.error).toBe('not_checked');
+  });
+  test('approving twice is refused by the table (the route resumes a died post itself)', () => {
+    const v = pvCanApprove(approved);
     expect(v.ok).toBe(false);
     if (!v.ok) expect(v.error).toBe('already_approved');
   });
 });
 
-describe('withdrawing', () => {
-  test('submitted and approved vouchers can both come back', () => {
-    expect(pvCanWithdraw(submitted).ok).toBe(true);
-    expect(pvCanWithdraw(approved).ok).toBe(true);
+describe('rejecting — 一律退回 Draft', () => {
+  test('either layer may reject: prepared, checked, even approved-but-unposted', () => {
+    expect(pvCanReject(prepared).ok).toBe(true);
+    expect(pvCanReject(checked).ok).toBe(true);
+    expect(pvCanReject(approved).ok).toBe(true);
   });
-  test('a voucher never in the queue has nothing to withdraw', () => {
+  test('a raw draft has nothing to reject; history is history', () => {
+    expect(pvCanReject(draft).ok).toBe(false);
+    expect(pvCanReject(posted).ok).toBe(false);
+  });
+});
+
+describe('withdrawing', () => {
+  test('the preparer may pull back only BEFORE the first yes', () => {
+    expect(pvCanWithdraw(prepared).ok).toBe(true);
+    const late = pvCanWithdraw(checked);
+    expect(late.ok).toBe(false);
+    if (!late.ok) expect(late.message).toMatch(/only be rejected back/);
+  });
+  test('a voucher never in the cycle has nothing to withdraw', () => {
     expect(pvCanWithdraw(draft).ok).toBe(false);
   });
 });
@@ -70,8 +108,8 @@ describe('the gate money leaves through', () => {
   test('unapproved never posts, and the sentence names the path', () => {
     const fresh = pvCanPost(draft);
     expect(fresh.ok).toBe(false);
-    if (!fresh.ok) expect(fresh.message).toMatch(/Submit it, get it approved/);
-    const waiting = pvCanPost(submitted);
+    if (!fresh.ok) expect(fresh.message).toMatch(/Prepare it, have it checked/);
+    const waiting = pvCanPost(checked);
     expect(waiting.ok).toBe(false);
     if (!waiting.ok) expect(waiting.message).toMatch(/awaiting approval/);
   });

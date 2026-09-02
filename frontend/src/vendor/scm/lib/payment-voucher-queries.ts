@@ -31,12 +31,16 @@ export type PaymentVoucherRow = Record<string, unknown> & {
   payee_name: string;
   total_sen?: number;
   currency?: string;
+  exchange_rate?: string | number | null;
   credit_account_code?: string;
   supplier?: { id: string; code: string; name: string } | null;
-  /* Phase 3 — the approval cycle's marks. Both null: an editable draft.
-     Submitted only: in the queue. Both set: approved, waiting to post. */
+  /* The owner's four layers (2026-09-02). No marks: raw Draft. submitted:
+     Prepared (still editable). checked: locked, on Daily Bank's pending.
+     approved: the approve posted the GL — status flips POSTED with it. */
   submitted_at?: string | null;
   submitted_by?: string | null;
+  checked_at?: string | null;
+  checked_by?: string | null;
   approved_at?: string | null;
   approved_by?: string | null;
 };
@@ -94,8 +98,8 @@ export const useUpdatePaymentVoucher = () => {
     mutationFn: ({ id, ...body }: { id: string } & Record<string, unknown>) =>
       authedFetch<{ paymentVoucher: Record<string, unknown> }>(`/payment-vouchers/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
     onSuccess: (_d, vars) => {
-      qc.invalidateQueries({ queryKey: ['payment-voucher-detail', vars.id] });
-      qc.invalidateQueries({ queryKey: ['payment-vouchers'] });
+      void qc.invalidateQueries({ queryKey: ['payment-voucher-detail', vars.id] });
+      void qc.invalidateQueries({ queryKey: ['payment-vouchers'] });
     },
   });
 };
@@ -105,10 +109,43 @@ export const usePostPaymentVoucher = () => {
   return useMutation({
     mutationFn: (id: string) => authedFetch<{ ok: true; jeNo?: string }>(`/payment-vouchers/${id}/post`, { method: 'POST' }),
     onSuccess: (_d, id) => {
-      qc.invalidateQueries({ queryKey: ['payment-vouchers'] });
-      qc.invalidateQueries({ queryKey: ['payment-voucher-detail', id] });
+      void qc.invalidateQueries({ queryKey: ['payment-vouchers'] });
+      void qc.invalidateQueries({ queryKey: ['payment-voucher-detail', id] });
       // A post settles linked PIs — refresh the PI list/detail too.
-      qc.invalidateQueries({ queryKey: ['purchase-invoices'] });
+      void qc.invalidateQueries({ queryKey: ['purchase-invoices'] });
+    },
+  });
+};
+
+/* ── 预付挂在 supplier (2026-09-02) ───────────────────────────────────────────
+   The open advances (vouchers that paid ahead, with money still on them) and
+   the knock-off that spends one against real invoices. Applying posts
+   NOTHING — both legs already live in AP — so only the PI side refreshes. */
+export type SupplierAdvance = {
+  id: number; supplier_id: string; pv_id: string; pv_number: string;
+  amount_sen: number; applied_sen: number; remaining_sen: number; created_at: string;
+};
+export const useSupplierAdvances = (supplierId: string | null) => useQuery({
+  queryKey: ['supplier-advances', supplierId ?? 'all'],
+  queryFn: () => authedFetch<{ advances: SupplierAdvance[]; totalRemainingSen: number }>(
+    `/payment-vouchers/advances/list${supplierId ? `?supplierId=${encodeURIComponent(supplierId)}` : ''}`,
+  ),
+  staleTime: 15_000,
+  retry: retryUnlessClientError,
+});
+
+export const useApplyAdvance = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ pvId, allocations }: { pvId: string; allocations: Array<{ piId: string; amountSen: number }> }) =>
+      authedFetch<{ ok: true; appliedSen: number; remainingSen: number }>(
+        `/payment-vouchers/${pvId}/apply-advance`,
+        { method: 'POST', body: JSON.stringify({ allocations }) },
+      ),
+    onSuccess: (_d, { pvId }) => {
+      void qc.invalidateQueries({ queryKey: ['supplier-advances'] });
+      void qc.invalidateQueries({ queryKey: ['payment-voucher-detail', pvId] });
+      void qc.invalidateQueries({ queryKey: ['purchase-invoices'] });
     },
   });
 };
@@ -118,9 +155,9 @@ export const useCancelPaymentVoucher = () => {
   return useMutation({
     mutationFn: (id: string) => authedFetch(`/payment-vouchers/${id}/cancel`, { method: 'POST' }),
     onSuccess: (_d, id) => {
-      qc.invalidateQueries({ queryKey: ['payment-vouchers'] });
-      qc.invalidateQueries({ queryKey: ['payment-voucher-detail', id] });
-      qc.invalidateQueries({ queryKey: ['purchase-invoices'] });
+      void qc.invalidateQueries({ queryKey: ['payment-vouchers'] });
+      void qc.invalidateQueries({ queryKey: ['payment-voucher-detail', id] });
+      void qc.invalidateQueries({ queryKey: ['purchase-invoices'] });
     },
   });
 };
@@ -128,7 +165,7 @@ export const useCancelPaymentVoucher = () => {
 /* ── Phase 3: the approval cycle. Each mutation refreshes the list, the
    detail, and the Daily Bank board — a voucher entering or leaving the queue
    moves the board's "available" figure. */
-const approvalMutation = (path: 'submit' | 'withdraw' | 'approve') => () => {
+const approvalMutation = (path: 'submit' | 'withdraw' | 'check' | 'approve') => () => {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => authedFetch(`/payment-vouchers/${id}/${path}`, { method: 'POST' }),
@@ -141,6 +178,8 @@ const approvalMutation = (path: 'submit' | 'withdraw' | 'approve') => () => {
 };
 export const useSubmitPaymentVoucher = approvalMutation('submit');
 export const useWithdrawPaymentVoucher = approvalMutation('withdraw');
+export const useCheckPaymentVoucher = approvalMutation('check');
+/* Approve posts the GL in the same request — the response is the post's. */
 export const useApprovePaymentVoucher = approvalMutation('approve');
 
 export const useRejectPaymentVoucher = () => {
@@ -155,3 +194,39 @@ export const useRejectPaymentVoucher = () => {
     },
   });
 };
+
+/* ── Bill OCR (2026-09-02) — read incoming bills into voucher pre-fills.
+   Each `bills` entry is ONE document; its files are its pages (the human
+   groups pages at upload — the server never guesses). Nothing is written by
+   this call. */
+export type BillExtraction = {
+  vendorName: string | null; vendorRegNo: string | null;
+  documentKind: 'invoice' | 'bill' | 'receipt' | 'statement' | 'unknown';
+  invoiceNumber: string | null; invoiceDate: string | null; dueDate: string | null;
+  currency: string; totalSen: number | null; sstSen: number | null;
+  lines: Array<{ description: string | null; amountSen: number | null }>;
+};
+/* Vendor memory (mig 0341) — what the operator saved the LAST time this
+   vendor was paid; the reader hands it back so the form can pre-fill the
+   account (owner: 我想要你要有记忆…自动帮我填，选account 等等). */
+export type VendorMemory = { payeeName: string | null; debitAccountCode: string | null; purpose: string | null; timesSeen: number };
+
+export type ExtractedBill =
+  | { index: number; ok: true; extraction: BillExtraction; supplierMatch: { id: string; code: string | null; name: string; confidence: 'exact' | 'contains' } | null; memory: VendorMemory | null }
+  | { index: number; ok: false; reason: string };
+
+/* FileReader, not buf→btoa: a chunked fromCharCode spread stack-overflows on a
+   multi-megabyte PDF, and readAsDataURL hands back base64 in one move. */
+export const fileToBase64 = (f: File): Promise<string> => new Promise((resolve, reject) => {
+  const r = new FileReader();
+  r.onerror = () => { reject(new Error(`${f.name} could not be read from disk.`)); };
+  r.onload = () => { resolve(String(r.result).split(',')[1] ?? ''); };
+  r.readAsDataURL(f);
+});
+
+export const useExtractBills = () => useMutation({
+  mutationFn: (bills: Array<{ files: Array<{ name: string; mime: string; dataBase64: string }> }>) =>
+    authedFetch<{ bills: ExtractedBill[] }>(`/payment-vouchers/extract`, {
+      method: 'POST', body: JSON.stringify({ bills }),
+    }),
+});

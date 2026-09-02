@@ -1,0 +1,46 @@
+name: SO delivered but not advanced (read-only)
+
+# "Some orders look Delivered but are still in In Production — why?"
+# (owner, 2026-09-01). The auto-advance ALREADY exists in
+# scm/lib/so-delivery-sync.ts; it fires when a DELIVERY ORDER changes status, so
+# an order whose goods are all out but whose DO never reached a delivered status
+# was never offered to it. Only the DO's own status separates "missing rule" from
+# "never re-evaluated", so this prints both.
+#
+# READ-ONLY: SELECTs only, no DDL, no writes, no transaction. Manual trigger,
+# own concurrency group, exit 0 for every legitimate answer.
+on:
+  workflow_dispatch:
+    inputs:
+      company:
+        description: "a company id, or all"
+        required: false
+        default: "all"
+        type: string
+      show:
+        description: "document numbers to name"
+        required: false
+        default: "10"
+        type: string
+
+concurrency:
+  group: probe-so-delivered-not-advanced
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+        working-directory: backend
+      - name: probe (read-only)
+        working-directory: backend
+        env:
+          DATABASE_URL: "${{ secrets.DATABASE_URL }}"
+          COMPANY: "${{ inputs.company }}"
+          SHOW: "${{ inputs.show }}"
+        run: node scripts/probe-so-delivered-not-advanced.mjs

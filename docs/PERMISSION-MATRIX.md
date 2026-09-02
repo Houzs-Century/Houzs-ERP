@@ -31,7 +31,8 @@ each child. Any page not listed for a position = **none**.
 - **Admin Assistant**: overview V · projects V, projects.calendar E · team V, team.members V.  🚫 finances, cost, admin.
 
 ### SALES  (rule: only own/assigned projects+customers; never cost/profit-per-item/others' data)
-- **Sales Director**: overview F · projects F · projects.finances V (profit summary) · orders F · sales F · sales_team F · service_cases V · team V, team.members V.  🚫 SKU/per-item cost, settings.
+- **Sales Director**: overview F · projects F · projects.finances V (profit summary) · orders F · sales F · sales_team F · service_cases V · team V, team.members V · **scm.procurement.products E** (owner 2026-09-01 — he maintains product master data: retail price, sofa combos, Model activation / Modular toggles; paired with `canWriteConfig: true`, since those routes gate on BOTH).  🚫 per-item cost, settings.
+  - ⚠ His page access is NOT read from `position_page_access` — the sales cohort's map is defined in code (`positionPolicy.ts` `SALES_DIRECTOR_ROWS`), so this row cannot be granted or revoked from the Team > Positions screen.
 - **Sales Manager**: overview V · projects V, projects.list E, projects.calendar V (own team via upline scope) · orders V, orders.sales_orders V · sales_team V (org, no tiers edit).  🚫 finances, cost, other teams.
 - **Sales Executive**: overview V · projects V, projects.list V, projects.calendar V (only assigned) · orders V, orders.sales_orders V (own, scoped).  🚫 finances, cost, sales_team, others' orders.
 - **Sales Person**: same as Sales Executive.

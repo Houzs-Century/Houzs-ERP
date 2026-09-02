@@ -230,6 +230,68 @@ cache is INSIDE the handler — it saves the route's own query, never the two
 reads in front of it. `GET /api/auth/me` crossing 800ms is the clean proof,
 since it has no route work to blame.
 
+### The second card: what the request in hand actually DID
+
+*Added 2026-09-02, `docs/bugs/0604`.* The paragraph above ends by telling you not
+to read the On/Off card as an explanation — and until now there was nothing else
+to read. **`authFastPath` is that something**, and it reports observations rather
+than settings:
+
+| field | answers |
+| --- | --- |
+| `session_pass.this_request` | `pass` / `session-db` / `unknown` — what the request that fetched THIS page did. `unknown` means the middleware did not record it and is never collapsed onto either answer. |
+| `config_cache.<family>` | the TTL beside the browser's poll interval, the hit/miss for this request, and `ttl_shorter_than_poll`. |
+| `reading` | one plain sentence, DERIVED from those numbers so it cannot drift away from them. |
+
+**On is not firing.** A key can be set while every request still pays the two
+joined reads — the pass may be absent, expired, or never sent. That is `0593`
+exactly, so the two states now render as two separate cards: *Signed sessions*
+(the setting) and *This request's authorization* (the behaviour). If the first
+says On and the second says Database, chase the pass, not the caches.
+
+**`unknown` is checked BEFORE the caches, and that order is a bug fix, not a
+style choice** (`docs/bugs/0605`). It used to sit below, so `unknown` beside a
+short TTL printed *"Authorization took the fast path"* — a claim about the one
+thing the card had just said it could not see. The owner read exactly that
+contradiction on the first live loading of this page. The cache finding is still
+reported under `unknown`, because it holds either way — but as a separate clause
+that claims nothing about the path.
+
+**`unknown` is not a dead end.** It carries `client_sent_pass` (presence of the
+header only — never the value, never a prefix, never a length), because the two
+causes need opposite fixes: **no header** means the browser has none to send (it
+expired, or was never stored); **header present and still no record** means we
+lost the record, which is a different bug.
+
+**`ttl_shorter_than_poll` uses `<=`, not `<`.** A TTL EQUAL to the poll expires
+exactly as the next poll arrives, which is the banner's measured 874-984ms case,
+not a near miss.
+
+Presence is structurally short today — **kept 15s, asked for every 60s** — so one
+user alone misses every poll. `backend/tests/authFastPathProbe.test.ts` asserts
+that, so the day it is fixed the test is what says so. It also PINS both mirrored
+poll intervals against the hooks' source: `configCache.ts` said the banner poll
+was 60s and reasoned "300s (5 polls)" from a value that has been 180_000 for some
+time (1.67 polls). Proved red by moving the constant.
+
+### What the client-error dump measured, 2026-09-02
+
+3-day window, from **Client errors dump (read-only)** — occurrences, not
+signatures:
+
+| endpoint | slow occurrences |
+| --- | --- |
+| `/api/presence` | 354 |
+| `/api/announcements/banner` | 343 |
+| everything else | 64 |
+
+**`GET /api/auth/me` does not appear at all.** The paragraph above names it as
+the clean proof of the DB path being paid, so its absence is the closest thing to
+evidence that the renewal fix (`0593`, deployed 2026-08-31 18:41 UTC) did what it
+was meant to. It is NOT proof: the dump groups by signature with a last-seen
+date, so it cannot be split into before and after that deploy. Recorded as
+LIKELY, and the probe above is what will settle it.
+
 Two things not to do with this flag:
 
 - **Do not compute it as `!!env.SESSION_SIGNING_KEY`.** `sessionSigningSecret`
@@ -274,3 +336,24 @@ What to measure rather than assume: the `[slow …]` signature counts on
 **Client errors check (read-only)** workflow. `/api/auth/me` is the cleanest of
 the three — it returns the authenticated user and nothing else, so it has no
 route body to blame.
+
+## `GET /health` — the build stamp, and why it is baked into the bundle
+
+`/health` returns `{ ok, sha }` where `sha` is the commit the live Worker was
+built from. The **Deploy watchdog** workflow reads it and compares it to `main`
+to catch a rogue/stale overwrite of prod — a null or unknown stamp is treated as
+a rogue deploy. The handler is `app.get("/health", …)` in
+`backend/src/index.ts`, and the value comes from `resolveBuildSha(GIT_SHA, …)`.
+
+**The stamp is a value COMPILED INTO the bundle, not a `--var GIT_SHA` env.**
+`backend/src/build-info.ts` exports `GIT_SHA` (the committed placeholder is
+`"dev"`); `.github/workflows/deploy.yml` and `deploy-staging.yml` `sed` the real
+commit sha onto that export line right before `wrangler deploy`. This replaced
+the fragile env stamp after 2026-09-01, when `wrangler secret bulk` (the separate
+secrets step that runs after the deploy) non-deterministically redeployed a
+Worker version WITHOUT the CLI-injected `--var`, leaving `/health`'s sha null and
+the watchdog false-alarming in a redeploy loop (`docs/bugs/0596-*`). A bundled
+constant survives every var/secret operation; `resolveBuildSha` still falls back
+to the legacy `c.env.GIT_SHA` and then null, so the watchdog's rogue-deploy
+detection is unchanged (a bare clone carries `"dev"`/an old sha). Pinned by
+`backend/tests/buildInfoSha.test.ts`.

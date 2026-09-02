@@ -205,3 +205,45 @@ describe("Projects.tsx — Attach is offered to every role the server admits (05
     expect(projects()).toContain("canManage && !readOnlyAttach && a.id > 0");
   });
 });
+
+// Source-scanned here because this file already reads Projects.tsx, and the
+// list is a module-level const inside a ~15,000-line component that must not be
+// imported into a test (see the header above).
+describe("Projects.tsx — every list filter param is sticky", () => {
+  it("PROJECTS_LIST_FILTER_KEYS covers each param the toolbar reads", () => {
+    const text = projects();
+    const keys = text.slice(
+      text.indexOf("const PROJECTS_LIST_FILTER_KEYS = ["),
+      text.indexOf("] as const;", text.indexOf("const PROJECTS_LIST_FILTER_KEYS = [")),
+    );
+    // Owner 2026-08-24: "once i filter here and click in project, then i back to
+    // project list back all my filter gone". from/to (the date range that
+    // replaced year+month) were missing, so useStickyFilters' pluck() dropped
+    // them and the range alone did not survive the round-trip.
+    for (const p of ["section", "task", "brand", "from", "to", "status", "page"]) {
+      expect(keys, `${p} is read from the URL but never mirrored`).toContain(`"${p}"`);
+    }
+  });
+
+  it("EXPORT sends every filter the on-screen list sends", () => {
+    // Owner 2026-09-02: filtered Setup & Dismantle + My pending tasks to 10
+    // rows, exported, and got every confirmed event — the export omitted
+    // my_pending on purpose ("export is the full filtered list"). An export
+    // that disagrees with the screen is a wrong document, so the two parameter
+    // sets are now asserted equal rather than kept in step by hand.
+    const text = projects();
+    const between = (a: string, b: string) => {
+      const i = text.indexOf(a);
+      expect(i, `anchor disappeared: ${a}`).toBeGreaterThan(-1);
+      return text.slice(i, text.indexOf(b, i));
+    };
+    const keysOf = (block: string) =>
+      [...new Set((block.match(/^\s{10,14}([a-z_]+):/gm) ?? []).map((k) => k.trim().replace(":", "")))];
+    const listKeys = keysOf(between("const list = useQuery", "per_page: perPage,"));
+    const exportKeys = keysOf(between("const exportProjects = async", "per_page: per,"));
+    expect(listKeys.length).toBeGreaterThan(8);
+    for (const k of listKeys) {
+      expect(exportKeys, `the export drops "${k}", so its rows differ from the screen`).toContain(k);
+    }
+  });
+});

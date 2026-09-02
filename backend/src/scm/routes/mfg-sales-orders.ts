@@ -31,6 +31,8 @@ export { deriveCountryFromState, deriveSalesLocationFromState };
 import { specialDeliveryFeesForLines, reconstructDeliveryRuleLines } from '../lib/special-delivery';
 import { soHasDownstream } from '../lib/downstream-lock';
 import { dateOrNull, effectiveDateAfterPatch, isDateColumn } from '../lib/date-coerce';
+import { statusAfterProcessingDateSet } from '../shared/so-proceeded-status';
+import { soIsMigrated } from '../lib/so-is-migrated';
 import { soDocNosWithDownstream } from '../lib/downstream-lock'; // own line: autocountWritebackWiring asserts the import above verbatim
 import { doNosBySalesOrder, type DeliveryOrderNoRow } from '../lib/so-delivery-order-nos';
 import { soDownstreamRefs, NO_SO_DOWNSTREAM_REFS } from '../lib/downstream-doc-refs';
@@ -1693,15 +1695,11 @@ mfgSalesOrders.get('/', async (c) => {
        deleted and closes once every line is fully delivered. Replaces the old
        status-only gate that hid the action at SHIPPED/DELIVERED. */
     const hasUndelivered = new Set<string>();
-    /* Per-SO delivery progress — drives the "Partially Delivered" / "Delivered"
-       badge (Wei Siang 2026-05-31). Aggregated from the same live engine: a SO
-       is 'partial' once any qty has shipped but some remains, 'full' once
-       nothing remains, 'none' before the first DO. */
+    /* Per-SO delivery progress — the verdict AND the numbers, §0.4b. */
     const deliveredTotal = new Map<string, number>();
     const remainingTotal = new Map<string, number>();
     /* Fully-shipped LINE ids — the union below suppresses READY chips for them,
-       exactly as the drill's SoSourceChips does (shipped trace is the durable
-       answer once a line has fully left). */
+       exactly as the drill's SoSourceChips does. */
     const fullyShippedItemIds = new Set<string>();
     {
       const deliverableMap = await deliverableProm;
@@ -1801,6 +1799,8 @@ mfgSalesOrders.get('/', async (c) => {
       const dRemaining = remainingTotal.get(docNo) ?? 0;
       (r as Record<string, unknown>).delivery_state =
         dDelivered <= 0 ? 'none' : dRemaining > 0 ? 'partial' : 'full';
+      (r as Record<string, unknown>).shipped_qty = dDelivered;          // §0.4b
+      (r as Record<string, unknown>).deliverable_qty = dDelivered + dRemaining;
       (r as Record<string, unknown>).lifecycle_state = lifecycleByDoc.get(docNo) ?? 'none';
       (r as Record<string, unknown>).current_doc_no = currentByDoc.get(docNo) ?? (docNo || null);
       (r as Record<string, unknown>).do_nos = doNosBySo.get(docNo) ?? [];
@@ -2915,6 +2915,8 @@ mfgSalesOrders.get('/:docNo', async (c) => {
   const totalRemaining = items.reduce((s, it) => s + Number(it.remaining_qty ?? 0), 0);
   (salesOrder as Record<string, unknown>).delivery_state =
     totalDelivered <= 0 ? 'none' : totalRemaining > 0 ? 'partial' : 'full';
+  (salesOrder as Record<string, unknown>).shipped_qty = totalDelivered;       // §0.4b
+  (salesOrder as Record<string, unknown>).deliverable_qty = totalDelivered + totalRemaining;
   /* Status badge driver — same "latest event wins" engine as the list. */
   const [lifecycleByDoc, currentByDoc] = await Promise.all([
     computeSoLifecycle(sb, [docNo]),
@@ -4130,7 +4132,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     // change. PWP always wins if both somehow apply (a gift is non-sofa, no code).
     const pwpBaseSen = pwpBaseByIdx.get(idx) ?? freeGiftBaseByIdx.get(idx) ?? null;
     const pwpSofaComboIds = pwpSofaByIdx.get(idx) ?? null;
-    return recomputeFromSnapshot(draft, product, fabric, cachedConfig, cachedCombos, sofaModulePrices, sellingTiers, cachedFabricAddonConfig, pwpBaseSen, pwpSofaComboIds, cachedSpecialAddons, sofaModuleCostRows, cachedModelOverrides, cachedCompartmentOverrides, erpLineTrust(createPosTablet, Number(it.unitPriceSen ?? 0), it.zeroPriceIntended));
+    return recomputeFromSnapshot(draft, product, fabric, cachedConfig, cachedCombos, sofaModulePrices, sellingTiers, cachedFabricAddonConfig, pwpBaseSen, pwpSofaComboIds, cachedSpecialAddons, sofaModuleCostRows, cachedModelOverrides, cachedCompartmentOverrides, erpLineTrust(createPosTablet, Number(it.unitPriceSen ?? 0), it.zeroPriceIntended, false));
   }));
   /* Commander 2026-05-29 (system-wide) — the SELLING unit price is now
      operator-authored on every SO line. The product price tables are COST,
@@ -6833,9 +6835,8 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
      actually knows where they are standing — a showroom rep sent to an
      exhibition, or an exhibition rep back on the floor, corrects it HERE, and
      that correction has to stick.
-     The change is already recorded by the `['venue', 'venue']` field-map entry,
-     and clearing to blank is as deliberate as setting one — but a blank BESIDE a
-     venue id is a half-written pair, not a clear. docs/bugs/0591-*. */
+     The change is recorded by the `['venue', 'venue']` field-map entry, and a
+     blank BESIDE a venue id is a half-written pair, not a clear (0591). */
   const vFix = await venueNameForHalfWrittenPair(sb, body['venue'], body['venueId']);
   if (vFix.kind === 'resolved') { body['venue'] = vFix.name; updates['venue'] = vFix.name; }
   if (vFix.kind === 'unresolved') { delete body['venue']; delete updates['venue']; }
@@ -7072,22 +7073,18 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
     const effProc  = effectiveDateAfterPatch(proc,  origProc);
     const effDeliv = effectiveDateAfterPatch(deliv, origDeliv);
     /* Owner 2026-07-04 — Processing + Delivery are all-or-nothing (both set or
-       both empty). Kept as a SHORT-CIRCUIT (not aggregated): an unpaired date is a
-       structurally-incomplete input, not one of several field-level fixes — there
-       is no meaningful "and also" to report against half a date pair. The
-       predicate is shared/so-processing-date's, so this path, the create path,
-       the CO paths and both amendment paths state the rule ONCE; the grandfather
-       carve-out (a stored unpaired pair this save leaves alone) lives inside it
-       rather than in a `touchesDates` flag each caller re-derived.
+       both empty), kept as a SHORT-CIRCUIT rather than aggregated: half a date
+       pair is structurally incomplete. The predicate is shared/so-processing-date's
+       — this path, create, the CO paths and both amendment paths state it ONCE,
+       and its grandfather carve-out lives inside it, not in a `touchesDates` flag.
 
        CLEARING ONE CLEARS BOTH (owner: 同时有或者同时没有). Removing the
-       Processing Date is already super-admin-only (superAdminClearsProc above);
-       once that removal is authorised the Delivery Date it was promised against
-       goes with it, so a caller that sends only `processingDate: ''` no longer
-       has to know to send the delivery key too. Computed BEFORE the refusal so
-       the cascade is what the refusal is judged against. The reverse — clearing
-       only the delivery date — deliberately does NOT cascade: it would clear the
-       Processing Date, which is exactly the write that permission guards. */
+       Processing Date is already super-admin-only (superAdminClearsProc above),
+       so once authorised the Delivery Date it was promised against goes with it
+       and a caller sending only `processingDate: ''` need not send the delivery
+       key. Computed BEFORE the refusal, so the cascade is what the refusal is
+       judged against. The reverse does NOT cascade: clearing only the delivery
+       date would clear the Processing Date, the write permission guards. */
     const cascadeCols = soDatePairCascadeColumns({
       procCleared: superAdminClearsProc,
       delivInPatch: deliv !== undefined,
@@ -7108,7 +7105,9 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
        Flagged here so the RPC call below applies both halves. */
     cascadedDeliveryClear = cascadeCols.length > 0;
     const effDelivAfterCascade = cascadedDeliveryClear ? null : effDeliv;
-    const pairRefusal = soDatePairRefusal({
+    /* PROCEEDED IS THE DATE — refusals in shared/so-proceeded-status, 0597. */
+    const proceeded = statusAfterProcessingDateSet({ currentStatus: beforeRecord['status'] as string | null, storedProcessingDate: origProc, effectiveProcessingDate: effProc });
+    if (proceeded) updates['status'] = proceeded;    const pairRefusal = soDatePairRefusal({
       nextProc: effProc,
       nextDeliv: effDelivAfterCascade,
       origProc,
@@ -7917,7 +7916,7 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
     modelOverridesLite,      // migration 0175 — per-Model Δ
     compartmentOverridesLite, // migration 0025 — per-compartment Δ
     // owner ruling — non-POS author prices freely; see erpLineTrust.
-    erpLineTrust(addLinePosTablet, Number(it.unitPriceSen ?? 0), it.zeroPriceIntended),
+    erpLineTrust(addLinePosTablet, Number(it.unitPriceSen ?? 0), it.zeroPriceIntended, false),
   );
   /* Pricing trust boundary (Owner 2026-05-31, see isPosTabletCaller). POS tablet
      roles are drift-rejected + take the server price; Backend / office authors
@@ -8229,6 +8228,7 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
 
 mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
   const sb = c.get('supabase'); const docNo = c.req.param('docNo'); const itemId = c.req.param('itemId'); const user = c.get('user');
+  const patchSoIsMigrated = await soIsMigrated((d) => sb.from('mfg_sales_orders').select('linked_ac_docno').eq('doc_no', d).maybeSingle(), docNo);
   let it: Record<string, unknown>;
   try { it = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
 
@@ -8455,7 +8455,7 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
       modelOverridesPatch, // migration 0175 — per-Model Δ
       compartmentOverridesPatch, // migration 0025 — per-compartment Δ
       // owner ruling — non-POS author prices freely; see erpLineTrust.
-      erpLineTrust(posTablet, clientUnit, it.zeroPriceIntended),
+      erpLineTrust(posTablet, clientUnit, it.zeroPriceIntended, patchSoIsMigrated),
     );
     /* Task 6 — grandfathering: a line already carrying variants.freeItem was
        made free at create time and must STAY at RM 0 on edit recompute, even

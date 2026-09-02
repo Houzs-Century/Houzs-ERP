@@ -8,8 +8,15 @@ import { identityStorageKey } from "../lib/storageIdentity";
  * Layered persistence:
  *   1. URL (useSearchParams) is authoritative — survives refresh,
  *      back / forward, and is shareable as a link.
- *   2. localStorage mirrors the URL per scope so navigating away via
- *      the navbar and coming back restores the last view.
+ *   2. sessionStorage mirrors the URL per scope so navigating away via
+ *      the navbar (or into a detail page and back) restores the last view.
+ *
+ * SESSION-scoped, not local (owner 2026-08-24: "i want make it my filter didnt
+ * close until i manually clear filter or close erp then filter will auto
+ * clear"). So a filter survives every navigation inside the app and is dropped
+ * when the tab closes; Clear-all still empties it immediately. This matches
+ * `houzs.scmListReturn.v1` / `houzs.assrListFilter.v1`, which already keep a
+ * filtered list across a detail round-trip in sessionStorage.
  *
  * Restore happens once per mount and only when the URL has no params.
  * A user landing on a bookmarked /sales?status=draft therefore always
@@ -49,7 +56,10 @@ export function useStickyFilters(
     if (current.toString() !== "") return;
     try {
       if (!storageKey) return;
-      const saved = localStorage.getItem(storageKey);
+      // Drop the pre-2026-08-24 localStorage copy: it is the one that used to
+      // resurrect a filter set from a previous day / previous login.
+      localStorage.removeItem(storageKey);
+      const saved = sessionStorage.getItem(storageKey);
       if (!saved) return;
       // Pluck on restore too — legacy entries that contained keys
       // since renamed (e.g. an old `tab=` from before a sub-tab key
@@ -73,8 +83,8 @@ export function useStickyFilters(
     try {
       if (!storageKey) return;
       const snap = pluck(params).toString();
-      if (snap === "") localStorage.removeItem(storageKey);
-      else localStorage.setItem(storageKey, snap);
+      if (snap === "") sessionStorage.removeItem(storageKey);
+      else sessionStorage.setItem(storageKey, snap);
     } catch {
       // ignore quota / privacy errors
     }

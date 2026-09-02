@@ -13,6 +13,7 @@
 // presentational so no list's field mapping leaks into another's.
 
 import { useState, type ReactNode } from "react";
+import { type CoverageState, coveragePlaceholder } from "./coverage-state";
 import { buildVariantSummary, fmtSen, orderLineIdentity } from "@2990s/shared";
 import { ItemGroupPill } from "../vendor/scm/lib/category-badges";
 import type { OriginAssignment } from "../vendor/scm/lib/flow-queries";
@@ -356,13 +357,17 @@ const isAccessoryLine = (group: string | null | undefined): boolean =>
 function AccessoryAssignmentSummary({
   assigned,
   delivered,
+  coverage,
 }: {
   assigned: OriginAssignment[];
   delivered: Array<{ doNo: string; qty: number; soDocNo?: string | null }>;
+  coverage: CoverageState;
 }) {
   const orders = new Set(assigned.map((a) => a.soDocNo)).size;
   const dos = new Set(delivered.map((d) => d.doNo)).size;
-  if (orders === 0 && dos === 0) return <StockTag />;
+  /* BEFORE the empty answer, never after: an unresolved read must not render as
+     "no order wanted these goods" (coverage-state.tsx). */
+  if (orders === 0 && dos === 0) return coveragePlaceholder(coverage) ?? <StockTag />;
   return (
     <span
       className="text-[11px] leading-snug text-ink-secondary"
@@ -381,11 +386,13 @@ function PairedSoCell({
   delivered,
   sourceLinked,
   provenance,
+  coverage,
   onOpenSo,
   onOpenDo,
 }: {
   assigned: OriginAssignment[];
   delivered: Array<{ doNo: string; qty: number; soDocNo?: string | null }>;
+  coverage: CoverageState;
   sourceLinked?: boolean;
   /* PR-3: the parallel stored-origin slot. Extra "bought for" chips render as
      one trailing muted row — chip + delivery date, NO status pill (DELIVERED /
@@ -398,7 +405,7 @@ function PairedSoCell({
 }) {
   const rows = buildPairedSoRows(assigned, delivered);
   const provExtra = provenanceExtras(provenance, rows.map((r) => r.soDocNo));
-  if (rows.length === 0 && provExtra.length === 0) return <StockTag />;
+  if (rows.length === 0 && provExtra.length === 0) return coveragePlaceholder(coverage) ?? <StockTag />;
   const chipBase = "rounded px-1.5 py-0.5 font-docno text-[11px] font-semibold";
   return (
     <div className="flex min-w-0 flex-col gap-1">
@@ -507,6 +514,7 @@ function PairedSoCell({
 
 export function DocumentLinesExpansion({
   isLoading,
+  coverage,
   isError,
   errorMessage,
   lines,
@@ -518,6 +526,11 @@ export function DocumentLinesExpansion({
   onOpenDo,
 }: {
   isLoading: boolean;
+  /* REQUIRED, and required is the point (coverage-state.tsx). The columns below
+     are filled by a SECOND query; a caller that says nothing about it used to
+     render "STOCK" — a confident wrong answer — for as long as that query took.
+     A surface with nothing extra to fetch passes "ready" and says so. */
+  coverage: CoverageState;
   isError?: boolean;
   errorMessage?: string | null;
   lines: DocumentDrillLine[];
@@ -633,20 +646,21 @@ export function DocumentLinesExpansion({
               </span>
               {paired && (
                 accessory
-                  ? <AccessoryAssignmentSummary assigned={assigned} delivered={delivered} />
+                  ? <AccessoryAssignmentSummary assigned={assigned} delivered={delivered} coverage={coverage} />
                   : (
                     <PairedSoCell
                       assigned={assigned}
                       delivered={delivered}
                       sourceLinked={l.sourceLinked}
                       provenance={l.provenance}
+                      coverage={coverage}
                       onOpenSo={onOpenSo}
                       onOpenDo={onOpenDo}
                     />
                   )
               )}
               {!paired && showAssignment && accessory && (
-                <AccessoryAssignmentSummary assigned={assigned} delivered={delivered} />
+                <AccessoryAssignmentSummary assigned={assigned} delivered={delivered} coverage={coverage} />
               )}
               {!paired && showAssignment && !accessory && (
                 <span className="flex min-w-0 flex-col gap-1">
@@ -679,7 +693,7 @@ export function DocumentLinesExpansion({
                       );
                     })
                   ) : provExtra.length === 0 ? (
-                    <StockTag />
+                    coveragePlaceholder(coverage) ?? <StockTag />
                   ) : null}
                   {/* PR-3: the muted "bought for" chips, side by side with the
                       precedence chips above (no "~", never "Locked"). */}

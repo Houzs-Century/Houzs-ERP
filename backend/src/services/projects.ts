@@ -1756,19 +1756,25 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
       );
     }
     if (names.length) {
-      // Match the active section (lowest sort_order with open tasks).
+      // Keep events that still OWE work in the picked section — not events whose
+      // ACTIVE section is that one. Owner 2026-08-24: "why once i click task on
+      // expo map on whole sept to see my pending floorplan not appear at all".
+      // The old predicate compared against the lowest-sort_order section that
+      // still had an open task, so ONE unfinished early section hid every later
+      // one: measured on production that day, all 25 September events reported
+      // CONTRACT as their active section while 23 of them had open EXPO MAP
+      // tasks, so the filter answered "no results" for every section except
+      // CONTRACT. EXISTS is also what the chip now promises — it is labelled
+      // Task, lists a task COUNT per section, and paints a badge per open task
+      // of the picked section (section_tasks_map below).
       ors.push(
-        `(
-           SELECT s.name FROM project_checklist_sections s
-            WHERE s.project_id = p.id
-              AND EXISTS (
-                SELECT 1 FROM project_checklist c
-                 WHERE c.project_id = p.id
-                   AND c.section_id = s.id
-                   AND c.status NOT IN ('done','na')
-              )
-            ORDER BY s.sort_order LIMIT 1
-         ) IN (${names.map(() => "?").join(",")})`
+        `EXISTS (
+           SELECT 1 FROM project_checklist c
+             JOIN project_checklist_sections s ON s.id = c.section_id
+            WHERE c.project_id = p.id
+              AND c.status NOT IN ('done','na')
+              AND s.name IN (${names.map(() => "?").join(",")})
+         )`
       );
     }
     where.push(`(${ors.join(" OR ")})`);

@@ -10,7 +10,8 @@ import { SearchProgress } from "../components/SearchProgress";
 import { SearchScopeHint } from "../components/SearchScopeHint";
 import { useSearchResultTransition } from "../hooks/useServerSearch";
 import { useAuth } from "../auth/AuthContext";
-import { isSalesNonDirector, isSalesDirectorUser, canLogSalesEntry } from "../auth/salesAccess";
+import { isSalesNonDirector, isSalesDirectorUser, canLogSalesEntry, canCreateEvent } from "../auth/salesAccess";
+import { NewProjectSheet } from "./MobileNewProject";
 import { capability } from "../auth/capabilities";
 import { readProjectAccess, projectAccessUnresolved, holdsChecklistApproval } from "../auth/projectAccess";
 import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
@@ -410,6 +411,9 @@ function ProjectListView({ onOpen, onBack }: { onOpen: (id: number) => void; onB
   // saying WHY each row is the caller's; a completed/submitted task drops the
   // row server-side.
   const [myPendingOn, setMyPendingOn] = useState(false);
+  // New-event sheet (owner 2026-07-31), gated by canCreateEvent below.
+  const [creating, setCreating] = useState(false);
+  const notify = useNotify();
   // Owner 2026-07-21: field/sales roles (Sales Executive/Manager except Sales
   // Director, plus Driver/Helper/Storekeeper) get a slimmed filter bar — only
   // "My events", "Setup", "Dismantle" (no All / Draft / Live / Completed).
@@ -531,6 +535,17 @@ function ProjectListView({ onOpen, onBack }: { onOpen: (id: number) => void; onB
               <div className="scr-title">Projects</div>
             </div>
           </div>
+          {/* New event (owner 2026-07-31) — same gate as the desktop button:
+              BD / Owner position / weisiang, which the backend re-checks. */}
+          {canCreateEvent(user) && (
+            <button
+              className="tinybtn"
+              style={{ marginLeft: "auto", background: "var(--brand)", borderColor: "var(--brand)", color: "#fff", fontWeight: 700 }}
+              onClick={() => setCreating(true)}
+            >
+              + New
+            </button>
+          )}
         </div>
         <div className="hdr-row" style={{ marginTop: 11 }}>
           <div className="searchbar">
@@ -667,6 +682,13 @@ function ProjectListView({ onOpen, onBack }: { onOpen: (id: number) => void; onB
           </>
         )}
       </div>
+      {creating && (
+        <NewProjectSheet
+          notify={notify}
+          onClose={() => setCreating(false)}
+          onCreated={(id) => { setCreating(false); onOpen(id); }}
+        />
+      )}
     </div>
   );
 }

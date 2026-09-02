@@ -455,8 +455,19 @@ function sheetDetailStatus(
   if (stage === "pending_supplier_pickup") {
     const s = sub ?? "pending_supplier_pickup";
     if (s === "pending_supplier_return") return "Pending Supplier Return";
-    if (pickupBy === "customer") return "Pending Supplier Pickup (Customer Pickup)";
-    if (pickupBy === "supplier") return "Pending Supplier Pickup (Supplier Direct)";
+    if (s === "pending_customer_pickup") {
+      // The customer-pickup leg (third sub, Nico 2026-09-01) owns the
+      // collect-from-customer dispatch job, so the parenthesised trigger
+      // words moved here — the sheet's trigger map is unchanged (PICKUP
+      // still fires on the same "(Customer Pickup)" word). The bare leg
+      // exports the stage's bare word: Nico ruled the sheet's column-A
+      // vocabulary must not change, and an unknown word would be rejected
+      // by that column's validation (the 2026-08-07 disease). The finer
+      // "Pending Customer Pickup" label lives in the ERP UI only.
+      if (pickupBy === "customer") return "Pending Supplier Pickup (Customer Pickup)";
+      if (pickupBy === "supplier") return "Pending Supplier Pickup (Supplier Direct)";
+      return "Pending Supplier Pickup";
+    }
     return "Pending Supplier Pickup";
   }
   return undefined;

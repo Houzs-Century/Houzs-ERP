@@ -74,42 +74,205 @@ checks. Those read `paid_sen`, so a partly-paid invoice later put on hold would
 have shown "Partially paid" and the hold would have been invisible on the one
 screen a person opens to decide whether to pay the rest.
 
-## 0b. Money leaves only after a yes (phase 3, mig 0339, 2026-08-28)
+## 0b. The four layers (owner 2026-09-02; migs 0339 + 0343)
 
-The accounting brief's phase 3, delivered against the placeholder Daily Bank
-carried since phase 2B. **Marker columns, not new statuses** — the 0324 lesson
-one section up applies verbatim: `submitted_at/by` and `approved_at/by` live on
-the voucher, `status` stays `DRAFT` through the whole cycle, and every
-`.eq('status', ...)` filter in the tree is untouched.
+The owner's design in his own words: draft 就是 raw draft… 然后prepare 后会
+多两层checking, 一层是checked，一层是approved, 当approved 了才会进gl. Whether
+the money truly left the bank stays **bank reconciliation's** question.
+This replaced phase 3's submit→approve→post (2026-08-28) same-week, at his
+correction. **Marker columns, not new statuses** — the 0324 lesson, third
+time running: `submitted_at/by` (the Prepared mark), `checked_at/by` (mig
+0343) and `approved_at/by` live on the voucher; `status` stays `DRAFT`
+until approval posts it.
 
 The state machine is a pure table in `backend/src/scm/lib/pv-approval.ts`
 (tests beside it; the route half is `backend/tests/pvApproval.test.ts`):
 
-| Voucher is…            | Edit | Submit | Approve/Reject | Withdraw | Post |
-|------------------------|------|--------|----------------|----------|------|
-| DRAFT, unsubmitted     | ✓    | ✓      | —              | —        | ✗ refused |
-| DRAFT, submitted       | ✗ frozen | ✗  | ✓              | ✓        | ✗ refused |
-| DRAFT, approved        | ✗ frozen | ✗  | ✗ (already)    | ✓        | ✓    |
-| POSTED / CANCELLED     | ✗    | ✗      | ✗              | ✗        | (idempotent echo only) |
+| Voucher is…      | Edit | Prepare | Check | Approve | Reject | Withdraw |
+|------------------|------|---------|-------|---------|--------|----------|
+| Draft (no marks) | ✓    | ✓       | —     | —       | —      | —        |
+| Prepared         | **✓ still** | ✗ | ✓   | ✗ first yes first | ✓ | ✓ |
+| Checked          | ✗ locked | ✗   | ✗     | ✓ **= posts GL** | ✓ | ✗ reject-back only |
+| POSTED (label "Approved") / CANCELLED | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
 
-Routes: `POST /:id/submit`, `/:id/withdraw` (write permission),
-`/:id/approve`, `/:id/reject` (the new `scm.payment_voucher.approve` key —
-held by nobody but `*` until the owner grants it per position). A reject's
-`note` lands on the entity-audit trail (`REJECT` + `rejection_note`), where
-the submitter reads the why; every step writes its own audit verb
-(`SUBMIT_FOR_APPROVAL` / `WITHDRAW_FROM_APPROVAL` / `APPROVE` / `REJECT`).
+The deliberate oddities, each the owner's call:
+- **Prepared still edits** (prepare 还可以改) — the first yes is what locks.
+- **Approve IS the posting** (当approved 了才会进gl): the approve route
+  stamps the yes then walks straight into `postPaymentVoucherHandler` in the
+  same request — its response is the post's (`jeNo` and all), and the
+  standalone Post button is gone from the UI. If posting dies after the
+  stamp, **approving again resumes** (the stamp is not rewritten, the post's
+  idempotency echo makes the retry safe). The post route stays mounted and
+  its gate (`not_approved` 409) stays the wall nothing else can climb; the
+  approve key opens the post door alongside the post key.
+- **Any reject → raw Draft** (一律退回 Draft), every mark cleared, the note
+  on the audit trail (`REJECT` + `rejection_note`).
+- **No fast path** — he refused one; everyone walks the layers. Check and
+  approve are separate keys (`scm.payment_voucher.check` new,
+  `scm.payment_voucher.approve`) but the same person MAY hold both
+  (可以同一个人，可以不同人).
+- **Withdraw** (the preparer's own back-out) works only BEFORE the first
+  yes; after checked it is the checkers' document — ask for a reject.
 
-The post GATE sits in `postPaymentVoucherHandler` AFTER the idempotency echo:
-a voucher whose active JE already exists has already paid, and re-posting
-stays an echo whatever its marks say; a FRESH post without `approved_at` is
-refused 409 `not_approved`. Editing a queued voucher is refused the same way
-— what was approved is what gets paid, or it goes back through the queue
-(withdraw clears BOTH marks).
+Routes: `POST /:id/submit` (the Prepare action — the path kept its old name
+so nothing external broke), `/:id/withdraw` (write key), `/:id/check`
+(check key), `/:id/approve` (approve key; posts), `/:id/reject` (either
+key). Audit verbs: `SUBMIT_FOR_APPROVAL` / `WITHDRAW_FROM_APPROVAL` /
+`CHECK` / `APPROVE` / `REJECT`.
 
-**Daily Bank effect**: every DRAFT with `submitted_at` set (approved or not)
-counts into `pendingApprovalSen` and subtracts from the board's available
-money — money already asked for is not money the owner may still spend. MYR
-conversion per voucher mirrors posting: `round(total_sen × exchange_rate)`.
+**Daily Bank effect** (his sentence verbatim: daily bank 的pending 就是第一
+层的checked): every DRAFT with `checked_at` set counts into
+`pendingApprovalSen` and subtracts from the board's available money — a
+merely prepared voucher does NOT reserve yet. MYR conversion per voucher
+mirrors posting: `round(total_sen × exchange_rate)`. The board card reads
+"Checked, awaiting approval".
+
+**List labels**: POSTED's pill now reads **Approved** (his word for the
+layer that posted it); a DRAFT wears "prepared — awaiting check" or
+"checked — awaiting approval" beside the pill, and the list's filter chips
+split Draft / Prepared / Checked / Approved / Cancelled by the marks.
+
+**批量tick yes** (owner, same day: 这个批量的功能肯定需要): the list grows
+DataGrid's first-class multi-select for holders of the check or approve
+key. Only rows whose yes is YOURS to give can be ticked (a raw draft and a
+posted voucher render disabled; the header checkbox never sweeps them in);
+a bar counts each button's own targets — "Prepare n" (write key, raw
+drafts; no dialog — freely reversible, 我draft 也要批量去prepared) /
+"Check n" / "Approve & post n" — and the check/approve dialogs state the
+ticked rows' MYR-equivalent before anything moves. The run stamps ONE BY ONE through the same routes as the
+detail buttons (own permission, own gate, own audit; approve carries its
+whole post), so a refused voucher names itself in the summary and the rest
+carry on. No batch reject — a reject wants its own note. Contract:
+`frontend/src/pages/scm-v2/PaymentVouchers.test.tsx`.
+
+## 0c. Two documents, AutoCount-style (2026-08-30)
+
+The owner, AutoCount in hand: 正常 auto count是可以选payment voucher / AP
+Payment. So the New page is TWO documents on one route:
+
+- **Payment Voucher** (`/scm/payment-vouchers/new`) — pays expenses. Free-text
+  payee, hand-written lines, **no supplier and no Apply-to-PI section**.
+  Purpose stored as `OTHER` (the old three-way purpose dropdown is gone; the
+  document type IS the purpose now).
+- **AP Payment** (`/scm/payment-vouchers/new?type=ap`) — settles a supplier.
+  Supplier required; **no hand-written lines at all**: tick an invoice to pay
+  it in full, type a figure for a partial, and the voucher total follows the
+  ticks. On save the page composes the ONE GL line itself — Dr the AP control
+  account (role `AP`, default 400-0000) for exactly what the ticks apply — so
+  a supplier payment can never be mis-booked to an expense account. Purpose
+  `SUPPLIER_PAYMENT`; same table, same PV number series, same approval cycle.
+
+**Apply to PI shows each invoice's date, oldest first** (owner 2026-09-02:
+我也要看invoice 的日期) — the settle order, not the browse order. **Every
+account picker types-to-search** (同日: 我无法快速打关键字眼搜索account):
+`AccountSelect` is a `SearchCombo` underneath — every space-separated token
+must match the "code · name" label — and the AP Payment's supplier picker
+searches the same way.
+
+**Paid From offers only money** (owner: paid from 应该只能选cash 和银行): the
+picker lists `acc_money` accounts, pre-filled from the company's
+`BANK_DEFAULT` role, and the server refuses any non-money credit account
+(`not_a_money_account`, guarded on create AND on draft edit). The default
+bank is the owner's to maintain — the "Default bank" card on
+/scm/settlement-setup writes `PUT /accounting/roles/BANK_DEFAULT` (money
+accounts only, per company). Contracts: `PaymentVoucherNew.test.tsx`
+(frontend), `backend/src/scm/routes/accountRoles.test.ts` (server half).
+
+## 0d. 预付挂在 supplier (2026-09-02)
+
+The owner's design, in his words: 预付就不能直接挂在supplier 那边吗? An AP
+Payment may pay MORE than the invoices it ticks — type the extra in the
+**Prepay (advance)** field under the PI table. The voucher's one GL line
+debits AP for the WHOLE amount, so the supplier's AP subledger simply runs
+ahead; on post the server records the excess in `scm.acc_supplier_advances`
+(mig 0340 — one row per voucher, `amount_sen` written once, `applied_sen`
+only grows).
+
+**Spending it posts NOTHING.** Both legs already live in AP, so the
+knock-off (POST `/payment-vouchers/:id/apply-advance`, surfaced as the
+"Advance on this voucher" card on the posted voucher's detail page) only
+settles the invoices' `paid_sen` — same DB-clamped rule as a payment, what
+is recorded is what LANDED — and burns `applied_sen`. The applications ride
+`pv_allocations` rows flagged `from_advance`, so the linked-PI trail shows
+them; GET `/payment-vouchers/advances/list?supplierId=` answers what is
+still unspent, and the New AP Payment page points at the holding voucher(s)
+when the supplier already has money on account. A voucher whose advance HAS
+been spent refuses to cancel (`advance_applied`) — its value lives inside
+other documents now; an unspent advance cancels with its voucher, row and
+all. Contracts: `backend/tests/pvSupplierAdvance.test.ts`.
+
+## 0e. The bill reader (OCR, 2026-09-02)
+
+The owner's ask, his words: 我想要把ocr 功能放去payment 那边，还有就是coming 的
+bill 我也想要用ocr. Two doors, one reader:
+
+- **In the form** — "📷 Scan bill (OCR)" in the New PV Lines card header.
+  Multi-select = the PAGES of one bill; the form prefills payee, date, notes
+  and lines from what was read.
+- **The pile** — `/scm/payment-vouchers/scan` ("📷 Scan bills" on the list).
+  Many files at once, the owner's three cases, his taxonomy exactly:
+  1. 一张bill 几页 — tick the pages, press Merge: ONE bill. The rule that
+     keeps it honest: **one file = one bill unless a human merged pages** —
+     the reader never guesses whether two files are one document.
+  2. 一个supplier 多张单 — read bills group by matched supplier (unmatched
+     ones by printed vendor name) and a group opens as ONE voucher, one line
+     per bill.
+  3. 多个supplier 多个单 — "pay each bill separately" splits a group; each
+     bill opens as its own voucher.
+
+The pile takes drag-and-drop and pasted screenshots (Ctrl+V) as well as the
+picker, and each read bill renders tidy: number / dates / total on one
+aligned grid, the bill's own line items tabled under it — EVERY printed
+line is read, no line cap (owner 2026-09-02: 别限制最多只能读8行; the
+model's output budget is sized for ~300 lines and a 300-entry runaway
+guard sits in `coerceBillJson`, not in the prompt).
+
+The reading is POST `/payment-vouchers/extract` (perm
+`scm.payment_voucher.create`; 503 when `ANTHROPIC_API_KEY` is unset) →
+`backend/src/acc/bill-extract.ts`, the scan-so discipline verbatim: strict
+JSON, unreadable fields are **null and never invented** (an unreadable TOTAL
+renders "total unreadable — will need typing", not RM 0.00), RM→sen once
+server-side, and supplier matching in plain code — normalize both names
+(SDN BHD / S\/B / ENTERPRISE tails stripped), exact → contains, below that
+NO match, because a wrong supplier pre-selected is worse than none. Caps:
+12 bills/call, 8 files/bill, 20MB/file, images + PDF (the image allowlist is
+`vision-blocks.ts`'s — one home). **Nothing on either door writes.** Every
+scan lands on the New page for a person to check, pick or confirm the
+account (§0f fills it only from what THIS operator saved before) and save
+through the untouched approval cycle. Contracts:
+`backend/src/acc/bill-extract.test.ts`,
+`frontend/src/pages/scm-v2/PaymentVoucherScan.test.tsx`.
+
+## 0f. Vendor memory (mig 0341, 2026-09-02)
+
+The owner's ask, his words: 我想要你要有记忆我下次submit 同个类型的invoice
+自动帮我填，选account 等等. `scm.acc_vendor_memory` — one row per
+(company, vendor) remembering what the operator **actually saved**: the
+payee's casing, the FIRST line's expense account, the purpose. NOT what the
+model guessed — only a human's save teaches.
+
+- **Learns on save**: `learnVendorMemory` runs after a successful PV create,
+  and after a DRAFT edit that replaced the lines (the correction signal —
+  usually the account the last prefill got wrong). AP payments teach
+  nothing: their one line debits the AP control, fixed by role.
+  Last-saved-wins; `times_seen` only grows. **Best-effort on purpose** —
+  both legs bind their failure and skip; a habit cache must never turn a
+  saved voucher into an error.
+- **Keyed by `normalizeVendor`** (the supplier matcher's own normalizer), so
+  "TNB", the OCR's reading of the printed name, and the matched supplier's
+  clean name all land on one row.
+- **Read back by POST /extract**: each read bill carries
+  `memory: { payeeName, debitAccountCode, purpose, timesSeen } | null` —
+  the printed name looked up first, the matched supplier's name as
+  fallback, the other company's habits never (company-scoped read).
+- **The form fills from it**: payee takes the operator's casing over the
+  print; every drafted line gets the remembered account, announced in the
+  scan note ("Account … filled from your last … voucher — check it") and
+  still editable. No memory → account stays empty and a person picks it.
+
+Contracts: `backend/tests/pvVendorMemory.test.ts` (teach / not-AP /
+correction / extract hand-back + company scope),
+`PaymentVoucherNew.test.tsx` (记忆自动帮我填 pin).
 
 ## 1. Frontend
 
@@ -117,6 +280,7 @@ conversion per voucher mirrors posting: `round(total_sen × exchange_rate)`.
 |---------|------|
 | Desktop list | `frontend/src/pages/scm-v2/PaymentVouchers.tsx` |
 | Desktop new | `frontend/src/pages/scm-v2/PaymentVoucherNew.tsx` |
+| Desktop scan (the bill pile) | `frontend/src/pages/scm-v2/PaymentVoucherScan.tsx` |
 | Desktop detail + edit | `frontend/src/pages/scm-v2/PaymentVoucherDetail.tsx` |
 
 **There is NO mobile surface.** Nothing under `frontend/src/mobile` mentions a
@@ -127,7 +291,8 @@ mobile PV is ever added, it must carry §4 and §6 with it.
 Data hooks: `frontend/src/vendor/scm/lib/payment-voucher-queries.ts` —
 `usePaymentVouchers(status?)`, `usePaymentVoucherDetail(id)`,
 `useCreatePaymentVoucher`, `useUpdatePaymentVoucher`, `usePostPaymentVoucher`,
-`useCancelPaymentVoucher`. Query keys `['payment-vouchers', …]` and
+`useCancelPaymentVoucher`; the bill reader's `useExtractBills` + `fileToBase64`
+(§0e). Query keys `['payment-vouchers', …]` and
 `['payment-voucher-detail', id]`.
 
 Shared components: `CurrencySelect` (`frontend/src/vendor/scm/components/`) draws the
@@ -165,8 +330,10 @@ Mounted at `/api/scm/payment-vouchers`, behind
 | GET | `/` | area guard | `limit(500)`, company-scoped, `?status=` |
 | GET | `/:id` | area guard | header + lines + allocations (joined PI number / total / paid) |
 | POST | `/` | `scm.payment_voucher.create` | creates **DRAFT**; allocations persisted but settle nothing yet |
+| POST | `/extract` | `scm.payment_voucher.create` | §0e — reads uploaded bills with Claude vision, returns extractions + supplier matches + the vendor memory (§0f); writes NOTHING; 503 without `ANTHROPIC_API_KEY` |
 | PATCH | `/:id` | `scm.payment_voucher.write` | **DRAFT only** (409 `not_editable`); a cleared Voucher Date is refused 400 `voucher_date_required` — §7 |
-| POST | `/:id/post` | `scm.payment_voucher.post` | writes the GL entry, DRAFT → POSTED, settles PIs, **adopts the FX rate** |
+| POST | `/:id/check` | `scm.payment_voucher.check` | §0b — the first yes: locks the voucher, joins Daily Bank's pending |
+| POST | `/:id/post` | `scm.payment_voucher.post` **or** `.approve` | writes the GL entry, DRAFT → POSTED, settles PIs, **adopts the FX rate**; normally reached THROUGH approve (§0b) |
 | POST | `/:id/cancel` | `scm.payment_voucher.cancel` | reverses the GL entry, unwinds settlement, **retains the FX rate** |
 
 `postPaymentVoucherHandler` and `cancelPaymentVoucherHandler` are **exported** so the
