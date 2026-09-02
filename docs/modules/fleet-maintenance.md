@@ -763,3 +763,34 @@ tables come from `pg_constraint` at run time, never from the migration tree.**
 
 If you add a table with a `lorry_id` FK, the script picks it up automatically. Do
 NOT hand-maintain a list here.
+
+## Company scope — one transport company, one fleet
+
+**Nothing in this module scopes a maintenance record to a company.** Not the
+dashboard, not the by-id reads, not the by-id writes.
+
+Owner, 2026-09-02, asked directly whether the records are shared or per-company:
+
+> 「共用的，因为 TMS 是共用的。这个东西 TMS 就像我们的运输公司一样」
+
+That covers the compliance vault and its attachments, maintenance plans, mileage
+readings, breakdown cases, work orders and their parts, and components — the
+same answer the vehicles, drivers and helpers already had.
+
+`company_id` is still **STAMPED on insert**, because migs 0202 / 0203 / 0204 /
+0238 require it for provenance. Stamped is not scoped, and
+`backend/tests/fleetMaintenanceUnifiedScope.test.ts` pins both halves: no shared
+table may be company-scoped, and the stamp may not be tidied away.
+
+**`scm.workshops` is the ONE exception** and IS per-company (mig 0241). It is the
+repair-shop master, not a maintenance record; the ruling was about the records
+and did not reach it. Its handlers scope through `scopeToCompany`, which fails
+closed — not through a hand-rolled `.eq("company_id", … ?? null)`, which matches
+nothing and, on the code minters, reissued duplicate numbers
+(`docs/bugs/0618-a-nullable-company-id-in-eq-matched-nothing-and-minted-dupli.md`).
+
+**What this replaced.** Twelve by-id handlers had been scoping these tables while
+`GET /dashboard` did not, so the dashboard listed rows that PATCH/DELETE then
+404'd — the exact failure this file's own `company-scope-file:` marker predicted
+in words. Trace, and the two docs that had disagreed with each other about it, in
+`docs/bugs/0620-the-fleet-dashboard-listed-rows-nobody-could-open.md`.

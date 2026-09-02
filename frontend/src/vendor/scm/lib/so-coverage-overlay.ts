@@ -31,6 +31,14 @@ export type CoverageOverlayFields = {
   coverage_eta?: string | null;
   ready_source_pos?: Array<{ po: string | null; qty: number; kind: 'po' | 'adjustment' }>;
   stock_status?: string | null;
+  /** THE FIELD THE PILL ACTUALLY READS. `soLineStockPill` opens with
+   *  `l.stock_status_effective ?? (…fallback…)`, and the base detail payload
+   *  ALWAYS populates it — `effectiveLineStockStatus` returns one of three
+   *  strings and never null — so the `??` always short-circuits and the
+   *  fallback branch that reads `stock_status` is dead on these two surfaces.
+   *  Absent from this type, the overlay could not write it and the healed
+   *  verdict was fetched over the wire and discarded. */
+  stock_status_effective?: string | null;
 };
 
 /**
@@ -56,6 +64,11 @@ export function overlaySoLineCoverage<T extends CoverageOverlayFields>(
       coverage_po: cov.coverage_po,
       coverage_eta: cov.coverage_eta,
       ready_source_pos: cov.ready_source_pos,
+      /* BOTH, on purpose. `stock_status_effective` is what the pill reads and
+         is the fix; `stock_status` stays written because SalesOrderDetailV2's
+         Stock column sorts and exports on `stock_state ?? stock_status`, and
+         dropping it there would silently re-stale that column instead. */
+      stock_status_effective: cov.stock_status_effective ?? l.stock_status_effective,
       stock_status: cov.stock_status_effective ?? l.stock_status,
     };
   });

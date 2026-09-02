@@ -36,6 +36,8 @@
 // books — it books exactly what the system booked before roles existed.
 // ----------------------------------------------------------------------------
 
+import { accMastersCompanyId } from './masters-company';
+
 export type AccountRole =
   | 'AR' | 'SALES' | 'INVENTORY' | 'AP'
   | 'CASH' | 'BANK_DEFAULT' | 'TRANSIT_EDC' | 'TRANSIT_ONLINE' | 'CUSTOMER_DEPOSITS' | 'OVER_SHORT';
@@ -92,7 +94,7 @@ export async function resolveRoles(sb: any, companyId: number | null): Promise<R
   const { data, error } = await sb
     .from('acc_account_roles')
     .select('role, account_code')
-    .eq('company_id', companyId == null ? 1 : Number(companyId));
+    .eq('company_id', accMastersCompanyId(companyId, 'resolveRoles'));
   if (error) {
     /* eslint-disable-next-line no-console */
     console.error('[acc/rules] roles read failed — using default codes:', error.message);

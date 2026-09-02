@@ -315,6 +315,38 @@ export const jePrefixForCode = (code: string | null | undefined): string => {
  * id; an unresolved company degrades to the base company's bare '' — the same
  * base-fallback companyDocPrefix uses for an unresolved code.
  */
+/**
+ * The company CODE for an id, read from the master. Extracted from
+ * jePrefixForCompany so the doc-number minters can resolve a code they were
+ * never handed instead of GUESSING one — the headless scan job knows the
+ * company id and not the code, and companyDocPrefix's missing-code branch
+ * degrades to the BASE company, which since 2026-08-07 means a 2990 document
+ * minted `HC-…`. A document number cannot be renamed once it exists
+ * (companyScope.ts:535), so guessing here is permanent.
+ *
+ * Fails closed for the same reason jePrefixForCompany does: minting under the
+ * wrong prefix is the collision this whole mechanism exists to prevent.
+ */
+export const companyCodeById = async (
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- PostgREST client; `sb` is `any` throughout this file, no exported client type
+  sb: any,
+  companyId: number | null | undefined,
+): Promise<string | null> => {
+  if (companyId == null) return null;
+  /* `.schema('public')` — the companies MASTER is `public.companies`; the SCM
+     client is pinned to the `scm` schema. See jePrefixForCompany below, which
+     paid five days of an unwritten general ledger for this line. */
+  const { data, error } = await sb
+    .schema('public')
+    .from('companies')
+    .select('code')
+    .eq('id', companyId)
+    .maybeSingle();
+  if (error) throw new Error(`companyCodeById: could not read company ${companyId}: ${error.message ?? String(error)}`);
+  const code = (data as { code?: string | null } | null)?.code;
+  return typeof code === 'string' && code.trim() ? code : null;
+};
+
 export const jePrefixForCompany = async (
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- PostgREST client; `sb` is `any` throughout this file and acc/engine.ts, no exported client type
   sb: any,

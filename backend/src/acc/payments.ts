@@ -20,6 +20,7 @@
 
 import { postJournal, reverseJournal } from './engine';
 import { resolveRoles, customerPaymentLines } from './rules';
+import { accMastersCompanyId } from './masters-company';
 
 export type SoPaymentRow = {
   id: string;
@@ -48,7 +49,7 @@ async function transitFor(
   const { data, error } = await sb
     .from('acc_acquirers')
     .select('transit_account_code, is_active')
-    .eq('company_id', companyId == null ? 1 : Number(companyId))
+    .eq('company_id', accMastersCompanyId(companyId, 'transitFor'))
     .eq('display_name', merchantProvider.trim())
     .maybeSingle();
   if (error) {

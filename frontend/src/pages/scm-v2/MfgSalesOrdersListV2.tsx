@@ -22,6 +22,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { shippedProgressColumn, ShippedProgressPill } from "./so-list-shipped-column";
 import { SO_STATUS_TABS, statusFor, type StatusTab } from "./so-list-status";
+import { SoListStatusCell } from "./SoListStatusCell";
 import { salesOrderRowMenu } from "./row-menus";
 import { brandingToneForCategory, type BrandTone } from "../../lib/brandingTone";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -148,6 +149,10 @@ type SoRow = HoldFields & {
   customer_country: string | null;
   shipped_qty?: number | null;   // §0.4b — how much has LEFT
   deliverable_qty?: number | null;
+  /* Server-derived here (mfg-sales-orders.ts:1800-1806); optional because an
+     older bundle carries neither. sales-order.md §0.4c and SoListStatusCell. */
+  delivery_state?: "none" | "partial" | "full" | null;
+  lifecycle_state?: "none" | "delivered" | "invoiced" | "returned" | null;
   do_nos?: string[] | null;
   /** The same delivery orders and the sales invoices raised against this order,
    *  each with the id the right-click "Print Delivery Order" needs — a PDF is
@@ -1440,11 +1445,7 @@ export function MfgSalesOrdersListV2() {
       // Exempt from the cancelled-row fade — the pill is WHY the row is grey.
       className: "dt-cancel-keep",
       getValue: (r) => r.status,
-      render: (r) => {
-        const st = statusFor(r.status);
-        /* mig 0324 — the Hold marker sits BESIDE the real status pill. */
-        return <StatusWithHold tone={st.tone} label={st.label} row={r} />;
-      },
+      render: (r) => <SoListStatusCell row={r} />,
     },
     {
       key: "amount",
