@@ -51,6 +51,14 @@ export function MediaLightbox({
   const isImage = !!item && (item.content_type || "").startsWith("image/");
   const isVideo = !!item && (item.content_type || "").startsWith("video/");
   const isPdf = !!item && ((item.content_type || "").includes("pdf") || /\.pdf$/i.test(item.r2_key));
+  // PDFs render inline via <iframe> — but MOBILE browsers (Android Chrome in
+  // particular) have no inline PDF viewer, so the iframe paints an EMPTY box:
+  // reported as "sales can't see the file in Unfilled plan" (owner 2026-09-01).
+  // On phone-sized screens fall back to the file card (name + Open/Download).
+  const pdfInline =
+    typeof window !== "undefined" &&
+    window.matchMedia("(min-width: 768px)").matches &&
+    !/Android|iPhone|iPad|Mobile/i.test(navigator.userAgent);
   const [url, setUrl] = useState<string | null>(null);
 
   const go = useCallback(
@@ -209,7 +217,7 @@ export function MediaLightbox({
               Loading…
             </div>
           )
-        ) : isPdf ? (
+        ) : isPdf && pdfInline ? (
           url ? (
             <iframe
               src={url}
