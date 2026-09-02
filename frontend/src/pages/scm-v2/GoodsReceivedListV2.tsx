@@ -38,6 +38,7 @@ import {
   type DocumentDrillLine,
   type DrillItemFields,
 } from "../../components/DocumentLinesExpansion";
+import { coverageStateOf } from "../../components/coverage-state";
 import { usePoSoCoverage, originsByCode, provenanceByCode, storedLinkSkus, deliveredByCode, type OriginAssignment } from "../../vendor/scm/lib/flow-queries";
 import { ListPager } from "../../components/ListPager";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
@@ -486,6 +487,7 @@ function GrnLinesExpansion({ id }: { id: string }) {
     <div className="flex flex-col gap-2">
       <DocumentLinesExpansion
         isLoading={detailQ.isLoading}
+        coverage={coverageStateOf(covQ)}
         isError={Boolean(detailQ.error)}
         errorMessage={detailQ.error instanceof Error ? detailQ.error.message : null}
         lines={lines}

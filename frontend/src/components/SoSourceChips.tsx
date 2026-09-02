@@ -23,6 +23,7 @@
 // rule applies to LIST header cells only).
 
 import { showDeliveredQty, sourcePoTitle, StockAdjChip } from "./DocumentLinesExpansion";
+import { type CoverageState, coveragePlaceholder } from "./coverage-state";
 import { cn, formatDate } from "../lib/utils";
 import { PO_CELL_MAX, poCellChips, type SoPoChipRow } from "../lib/soPoChips";
 
@@ -101,7 +102,18 @@ const chipBase =
 const floatingChipBase =
   "rounded border border-dashed border-border px-1.5 py-0.5 font-docno text-[11px] font-semibold text-ink-secondary";
 
-export function SoSourceChips({ line }: { line: SoLineSourceFields }) {
+export function SoSourceChips({
+  line,
+  coverage,
+}: {
+  line: SoLineSourceFields;
+  /* REQUIRED (coverage-state.tsx). Chips 3 and 4 read `ready_source_pos` and
+     `coverage_po`, which the detail payload hard-codes empty and a SECOND query
+     fills (docs/bugs/0596). Until it lands this cell used to print a bare dash —
+     "nothing is on the way" — which is a claim, not a blank. Owner 2026-09-02:
+     「我以为是 bugs」. */
+  coverage: CoverageState;
+}) {
   const shippedPos = line.shipped_source_pos ?? [];
   const shippedSet = new Set(shippedPos);
   const fullyShipped = (line.delivered_qty ?? 0) > 0 && (line.remaining_qty ?? null) === 0;
@@ -119,7 +131,8 @@ export function SoSourceChips({ line }: { line: SoLineSourceFields }) {
   const showIncoming = incomingPo && !shippedSet.has(incomingPo) && !readyPoChips.some((r) => r.po === incomingPo);
 
   if (shippedPos.length === 0 && readyPoChips.length === 0 && !anyAdj && !incomingPo) {
-    return <span className="text-[11px] text-ink-muted">—</span>;
+    /* BEFORE the dash: an unresolved read is not "nothing on the way". */
+    return coveragePlaceholder(coverage) ?? <span className="text-[11px] text-ink-muted">—</span>;
   }
   return (
     <span className="flex min-w-0 flex-wrap items-center gap-1">

@@ -764,6 +764,7 @@ function DoLinesExpansion({ doId }: { doId: string }) {
     <div className="flex flex-col gap-2">
       <DocumentLinesExpansion
         isLoading={detailQ.isLoading}
+        coverage="ready" /* one query fills this drill-down — coverage-state.tsx */
         isError={Boolean(detailQ.error)}
         errorMessage={detailQ.error instanceof Error ? detailQ.error.message : null}
         lines={lines}
