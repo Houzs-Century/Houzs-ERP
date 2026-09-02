@@ -275,7 +275,8 @@ async function doDos() {
       byDo.get(r.DoNo).items.push({ code: t.item_code, name: r.LineDesc, qty: Math.round(Number(r.Qty || 0)),
         soItemId: t.id, group: t.item_group ?? null, variants: t.variants ?? null, desc2: t.description2 ?? null,
         /* The MONEY, from the same row the normal create path reads it from.
-           Omitted until 0617 while the GRN writer above always carried it. */
+           Omitted until docs/bugs/0617-the-migrated-delivery-orders-carried-no-money-at-all.md
+           while the GRN writer above always carried it. */
         unitPriceSen: t.unit_price_sen ?? 0, discountSen: t.discount_sen ?? 0, unitCostSen: t.unit_cost_sen ?? 0 });
     }
   }
@@ -331,7 +332,8 @@ async function doDos() {
          SalesInvoiceFromDo.tsx:321), the SI price-drift guard skips a zero by
          design ("no ratio to drift from"), and migrated_no_stock gates the SI
          and the PI but NOT the DO->SI path. An operator invoicing one of these
-         would have been prefilled RM 0.00 with nothing said. See docs/bugs/0617.
+         would have been prefilled RM 0.00 with nothing said. See
+         docs/bugs/0617-the-migrated-delivery-orders-carried-no-money-at-all.md.
          The source is the SO line, which is exactly where the normal create path
          takes it from (delivery-orders-mfg.ts:4058, fed by
          soDeliverableRemaining). */

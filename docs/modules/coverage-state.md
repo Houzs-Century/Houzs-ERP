@@ -78,7 +78,12 @@ document whose lines cannot be matched now rebuilds on its next save,
 because refusing it was permanent rather than deferred. A flag with no
 consumer reads like a feature that exists, and that one never had one.
 
-## Arriving is not the same as being read (`0614`)
+## Arriving is not the same as being read
+
+Traced in `docs/bugs/0614-the-healed-stock-verdict-reached-the-browser-and-was-thrown.md`
+(cited by FILENAME, not by number: three unrelated entries carry `0614` — parallel
+branches pick the same next number and the one-file-per-entry layout is what lets
+them, so a bare number is ambiguous).
 
 The three states above govern whether the cell may answer yet. They say nothing
 about whether the answer, once it arrives, actually reaches the screen — and on

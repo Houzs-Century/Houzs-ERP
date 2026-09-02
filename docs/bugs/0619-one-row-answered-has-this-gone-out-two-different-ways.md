@@ -31,7 +31,8 @@ re-derivation, no cron, and no database trigger. So a delivery order created by
 an import script, a backfill or hand-run SQL never advances its sales order — and
 nothing ever will. That is not a hypothetical: `create-migrated-documents.mjs`
 inserts delivery orders at `'DELIVERED'` with raw SQL and never calls the sync
-(see `0617`, which fixes that script's money and records this).
+(see `docs/bugs/0617-the-migrated-delivery-orders-carried-no-money-at-all.md`, which
+fixes that script's money and records this).
 
 **The fix does not resolve the disagreement. It shows it.** That is deliberate,
 and it is the part worth reading before "simplifying" this later.
