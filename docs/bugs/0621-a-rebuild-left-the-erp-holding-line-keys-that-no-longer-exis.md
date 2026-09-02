@@ -60,7 +60,9 @@ AutoCount area. Backend typecheck exit 0.
 
 **Still outstanding for the document already rebuilt.** HC-SO-013394's stored
 keys are dead TODAY — this fix applies to the next rebuild, not retroactively.
-Re-running the rebuild once this is deployed is what repairs it, and the run is
-recorded in the PR.
+The intended repair is one more rebuild after this deploys. **UNTESTED**: at the
+time of writing that has not been run, so nothing here should be read as a
+promise that it works. The run and its result belong in this entry once it
+happens.
 
 **Ref.** fix/ac-rebuild-persists-line-keys, 2026-09-03.
