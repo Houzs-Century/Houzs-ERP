@@ -40,7 +40,8 @@ const draw = () => render(
 const pdf = (name: string) => new File(['%PDF-1.4 x'], name, { type: 'application/pdf' });
 
 const readBill = (index: number, over: Partial<{ invoiceNumber: string | null; totalSen: number | null; vendorName: string | null }>,
-  match: { id: string; name: string } | null): ExtractedBill => ({
+  match: { id: string; name: string } | null,
+  memory: { payeeName: string; debitAccountCode: string } | null = null): ExtractedBill => ({
   index, ok: true,
   extraction: {
     vendorName: over.vendorName ?? 'FOSHAN CHAIRS SDN BHD', vendorRegNo: null, documentKind: 'invoice',
@@ -48,6 +49,7 @@ const readBill = (index: number, over: Partial<{ invoiceNumber: string | null; t
     currency: 'MYR', totalSen: over.totalSen ?? null, sstSen: null, lines: [],
   },
   supplierMatch: match ? { id: match.id, code: 'S001', name: match.name, confidence: 'exact' } : null,
+  memory: memory ? { ...memory, purpose: 'OTHER', timesSeen: 2 } : null,
 });
 
 describe('the bill pile', () => {
@@ -78,24 +80,26 @@ describe('the bill pile', () => {
     extractAsync.mockClear();
     landedState = null;
     extractAsync.mockResolvedValueOnce({ bills: [
-      readBill(0, { invoiceNumber: 'INV-1', totalSen: 100000 }, { id: 'sup-1', name: 'Foshan Chairs' }),
-      readBill(1, { invoiceNumber: 'INV-2', totalSen: 50000 }, { id: 'sup-1', name: 'Foshan Chairs' }),
+      readBill(0, { invoiceNumber: 'INV-1', totalSen: 100000 }, { id: 'sup-1', name: 'Foshan Chairs' }, { payeeName: 'Foshan Chairs', debitAccountCode: '900-F002' }),
+      readBill(1, { invoiceNumber: 'INV-2', totalSen: 50000 }, { id: 'sup-1', name: 'Foshan Chairs' }, { payeeName: 'Foshan Chairs', debitAccountCode: '900-F002' }),
     ] });
     draw();
     fireEvent.change(screen.getByLabelText('Add bill files'), { target: { files: [pdf('a.pdf'), pdf('b.pdf')] } });
     fireEvent.click(screen.getByText('Read 2 bill(s)'));
 
     await waitFor(() => expect(screen.getByText('Foshan Chairs')).toBeTruthy());
-    expect(screen.getByText(/2 bill\(s\) · MYR 1,500\.00 · matched supplier/)).toBeTruthy();
+    expect(screen.getByText(/2 bill\(s\) · MYR 1,500\.00 · matched supplier · account remembered \(900-F002\)/)).toBeTruthy();
 
     fireEvent.click(screen.getByText('Open as ONE voucher (2 lines)'));
     await waitFor(() => expect(screen.getByText('NEW PAGE')).toBeTruthy());
-    const state = landedState as { billPrefill: { extraction: { invoiceNumber: string | null }; lines: Array<{ description: string | null; amountSen: number | null }> } };
+    const state = landedState as { billPrefill: { extraction: { invoiceNumber: string | null }; lines: Array<{ description: string | null; amountSen: number | null }>; memory: { debitAccountCode: string | null } | null } };
     expect(state.billPrefill.extraction.invoiceNumber).toBe('INV-1, INV-2');
     expect(state.billPrefill.lines).toEqual([
       { description: 'Foshan Chairs INV-1', amountSen: 100000 },
       { description: 'Foshan Chairs INV-2', amountSen: 50000 },
     ]);
+    /* The habit rides along — the New page fills the account from it. */
+    expect(state.billPrefill.memory).toMatchObject({ debitAccountCode: '900-F002' });
   });
 
   test('case 3: "pay each bill separately" splits the group; unreadable totals and failures are named', async () => {

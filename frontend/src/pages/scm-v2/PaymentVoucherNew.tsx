@@ -23,7 +23,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { Save, Trash2, X } from 'lucide-react';
 import { Button } from '@2990s/design-system';
-import { useCreatePaymentVoucher, useSupplierAdvances, useExtractBills, fileToBase64, type BillExtraction } from '../../vendor/scm/lib/payment-voucher-queries';
+import { useCreatePaymentVoucher, useSupplierAdvances, useExtractBills, fileToBase64, type BillExtraction, type VendorMemory } from '../../vendor/scm/lib/payment-voucher-queries';
 import { useIdempotencyKey } from '../../lib/idempotency';
 import { useAccounts, useAccountRoles, type Account } from '../../vendor/scm/lib/accounting-queries';
 import { usePurchaseInvoices } from '../../vendor/scm/lib/purchase-invoice-queries';
@@ -137,30 +137,35 @@ export const PaymentVoucherNew = () => {
   const location = useLocation();
   const extract = useExtractBills();
   const [scanNote, setScanNote] = useState<string | null>(null);
-  const applyExtraction = (ex: BillExtraction, extras?: { lines?: Array<{ description: string | null; amountSen: number | null }> }) => {
-    if (ex.vendorName) setPayeeName((prev) => prev.trim() ? prev : ex.vendorName!);
+  const applyExtraction = (ex: BillExtraction, extras?: { lines?: Array<{ description: string | null; amountSen: number | null }>; memory?: VendorMemory | null }) => {
+    /* Vendor memory FIRST for the payee — the operator's own casing beats the
+       print ("TNB" over "TENAGA NASIONAL BERHAD"); the print fills the gap. */
+    const payee = extras?.memory?.payeeName ?? ex.vendorName;
+    if (payee) setPayeeName((prev) => prev.trim() ? prev : payee);
     if (ex.invoiceDate) setVoucherDate(ex.invoiceDate);
     const noteBits = [
       ex.invoiceNumber ? `Bill ${ex.invoiceNumber}` : null,
       ex.dueDate ? `due ${ex.dueDate}` : null,
     ].filter(Boolean).join(' · ');
     if (noteBits) setNotes((prev) => prev.trim() ? prev : noteBits);
+    /* The account: ONLY what this operator saved for this vendor before
+       (mig 0341) — never a model guess. Absent a memory it stays empty and a
+       person picks it. */
+    const rememberedAccount = extras?.memory?.debitAccountCode ?? '';
     const srcLines = extras?.lines ?? ex.lines;
     const drafts = srcLines
       .filter((l) => l.amountSen != null && l.amountSen > 0)
-      .map((l) => ({ ...newLine(), description: l.description ?? '', amountSen: l.amountSen! }));
+      .map((l) => ({ ...newLine(), description: l.description ?? '', amountSen: l.amountSen!, debitAccountCode: rememberedAccount }));
     /* A bill with no readable lines still carries its total — one line. */
     if (drafts.length === 0 && ex.totalSen != null && ex.totalSen > 0) {
-      drafts.push({ ...newLine(), description: ex.invoiceNumber ? `Bill ${ex.invoiceNumber}` : 'As per bill', amountSen: ex.totalSen });
+      drafts.push({ ...newLine(), description: ex.invoiceNumber ? `Bill ${ex.invoiceNumber}` : 'As per bill', amountSen: ex.totalSen, debitAccountCode: rememberedAccount });
     }
     if (drafts.length > 0) setLines(drafts);
-    /* The lines' account stays EMPTY on purpose until the vendor memory
-       (next PR) has something honest to suggest — an operator picks it. */
   };
   /* The batch screen's hand-off. */
   useEffect(() => {
-    const st = location.state as { billPrefill?: { extraction: BillExtraction; lines?: Array<{ description: string | null; amountSen: number | null }> } } | null;
-    if (st?.billPrefill) applyExtraction(st.billPrefill.extraction, { lines: st.billPrefill.lines });
+    const st = location.state as { billPrefill?: { extraction: BillExtraction; lines?: Array<{ description: string | null; amountSen: number | null }>; memory?: VendorMemory | null } } | null;
+    if (st?.billPrefill) applyExtraction(st.billPrefill.extraction, { lines: st.billPrefill.lines, memory: st.billPrefill.memory });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const onScanFiles = async (list: FileList | null) => {
@@ -175,10 +180,13 @@ export const PaymentVoucherNew = () => {
       const bill = res.bills[0];
       if (!bill) { setScanNote('The bill could not be read.'); return; }
       if (!bill.ok) { setScanNote(bill.reason); return; }
-      applyExtraction(bill.extraction);
+      applyExtraction(bill.extraction, { memory: bill.memory });
       setScanNote([
         'Read — check every figure before saving.',
         bill.supplierMatch ? `Looks like supplier ${bill.supplierMatch.name}.` : null,
+        bill.memory?.debitAccountCode
+          ? `Account ${bill.memory.debitAccountCode} filled from your last ${bill.memory.payeeName ?? 'same-vendor'} voucher — check it.`
+          : null,
         bill.extraction.totalSen == null ? 'The TOTAL was not readable — enter it yourself.' : null,
       ].filter(Boolean).join(' '));
     } catch (e) {

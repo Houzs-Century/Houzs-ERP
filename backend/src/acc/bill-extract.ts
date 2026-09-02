@@ -179,7 +179,7 @@ export async function extractOneBill(
    tails every Malaysian company name drags around) and score:
    exact normalized = 1, one contains the other = 0.8. Below that, no match —
    a wrong supplier pre-selected is worse than none. */
-const normalizeVendor = (s: string): string =>
+export const normalizeVendor = (s: string): string =>
   s.toUpperCase()
     .replace(/\b(SDN\.?\s*BHD\.?|BHD\.?|S\/B|PLT|ENTERPRISE|TRADING|COMPANY|CO\.?)\b/g, ' ')
     .replace(/[^A-Z0-9一-鿿]+/g, ' ')
