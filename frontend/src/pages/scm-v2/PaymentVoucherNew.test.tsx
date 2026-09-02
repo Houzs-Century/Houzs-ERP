@@ -15,6 +15,9 @@ const mutateAsync = vi.fn(async (_body: Record<string, unknown>) => ({ id: 'pv-1
 
 vi.mock('../../vendor/scm/lib/payment-voucher-queries', () => ({
   useCreatePaymentVoucher: () => ({ mutateAsync, isPending: false }),
+  useSupplierAdvances: () => ({ data: { advances: [
+    { id: 1, supplier_id: 'sup-1', pv_id: 'pv-old', pv_number: 'PV-2608-777', amount_sen: 80000, applied_sen: 30000, remaining_sen: 50000, created_at: '2026-08-20' },
+  ], totalRemainingSen: 50000 }, isLoading: false }),
 }));
 vi.mock('../../lib/idempotency', () => ({ useIdempotencyKey: () => 'idem-1' }));
 vi.mock('../../vendor/scm/lib/accounting-queries', () => ({
@@ -96,6 +99,35 @@ describe('the AP Payment (?type=ap)', () => {
     /* Nothing applied -> the save is not even offered. */
     expect((screen.getByText('Create AP Payment').closest('button') as HTMLButtonElement).disabled).toBe(true);
     expect(mutateAsync).not.toHaveBeenCalled();
+  });
+});
+
+describe('paying ahead (预付) on the AP Payment', () => {
+  test('a prepay figure joins the total, the payload, and the Books line; the old advance is pointed at', async () => {
+    mutateAsync.mockClear();
+    draw('/scm/payment-vouchers/new?type=ap');
+    fireEvent.focus(screen.getByLabelText(/Supplier \*/));
+    fireEvent.mouseDown(screen.getByText('S001 · Foshan Chairs'));
+
+    /* The banner names the supplier's UNSPENT advance and its holding voucher. */
+    expect(screen.getByText(/already holds MYR 500\.00 of unspent advance/)).toBeTruthy();
+    expect(screen.getByText('PV-2608-777')).toBeTruthy();
+
+    /* Tick one invoice + type a prepay — the composed AP line carries BOTH. */
+    fireEvent.click(screen.getByLabelText('Pay 2990-PI-2609-002 in full'));
+    const prepay = screen.getByLabelText('Prepay amount') as HTMLInputElement;
+    fireEvent.focus(prepay);
+    fireEvent.change(prepay, { target: { value: '1000.00' } });
+    fireEvent.blur(prepay);
+    expect(screen.getByText(/incl\. prepay MYR 1,000\.00/)).toBeTruthy();
+
+    fireEvent.click(screen.getByText('Create AP Payment'));
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
+    const payload = mutateAsync.mock.calls[0]![0];
+    expect(payload.lines).toEqual([
+      expect.objectContaining({ debitAccountCode: '400-0000', amountSen: 60000 + 100000 }),
+    ]);
+    expect(payload.allocations).toEqual([{ piId: 'pi-2', amountSen: 60000 }]);
   });
 });
 
