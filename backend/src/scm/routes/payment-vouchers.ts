@@ -58,7 +58,7 @@ import { hasHouzsPerm } from '../lib/houzs-perms';
 import { normalizeCurrency, normalizeExchangeRate, masterRateForCurrency } from '../lib/fx';
 import { todayMyt } from '../lib/my-time';
 import { recordEntityAudit, diffFields, compactChanges, fieldChange, statusChange, assertAuditWritable, auditUnavailableBody } from '../lib/entity-audit';
-import { pvCanEdit, pvCanSubmit, pvCanDecide, pvCanWithdraw, pvCanPost } from '../lib/pv-approval';
+import { pvCanEdit, pvCanPrepare, pvCanCheck, pvCanApprove, pvCanReject, pvCanWithdraw, pvCanPost, type PvApprovalShape } from '../lib/pv-approval';
 import { settlePiPaidSen } from '../lib/pi-settlement';
 import { extractOneBill, matchSupplier, normalizeVendor, BILL_IMAGE_MIMES, MAX_BILLS_PER_CALL, MAX_FILES_PER_BILL, MAX_BILL_FILE_BYTES } from '../../acc/bill-extract';
 import { planPvRateAdoption, isRateRetainedFromPv, roundRate6 } from '../lib/pv-rate-adoption';
@@ -82,7 +82,7 @@ const PV_AUDIT_FIELDS: Array<[string, string]> = [
 ];
 
 const HEADER =
-  'id, pv_number, voucher_date, payee_name, supplier_id, credit_account_code, currency, exchange_rate, purpose, notes, total_sen, status, posted_at, created_at, created_by, updated_at, company_id, submitted_at, submitted_by, approved_at, approved_by';
+  'id, pv_number, voucher_date, payee_name, supplier_id, credit_account_code, currency, exchange_rate, purpose, notes, total_sen, status, posted_at, created_at, created_by, updated_at, company_id, submitted_at, submitted_by, checked_at, checked_by, approved_at, approved_by';
 
 const LINE = 'id, pv_id, line_no, description, debit_account_code, amount_sen, created_at';
 
@@ -586,7 +586,7 @@ export const updatePaymentVoucherHandler = async (c: any) => {
   }
   /* Phase 3: a voucher in the approval cycle is frozen — what was approved is
      what gets paid. Withdraw first; it then needs approval again. */
-  const editable = pvCanEdit(before as { status: string; submitted_at?: string | null; approved_at?: string | null });
+  const editable = pvCanEdit(before as PvApprovalShape);
   if (!editable.ok) return c.json({ error: editable.error, message: editable.message }, 409);
 
   const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
@@ -720,7 +720,10 @@ paymentVouchers.patch('/:id', updatePaymentVoucherHandler);
    bridge cannot run in the vitest harness, so the tests mount the handler on a bare
    Hono app with a fake PostgREST client (precedent: tests/companyScopeHardening.test.ts). */
 export const postPaymentVoucherHandler = async (c: any) => {
-  if (!hasHouzsPerm(c, 'scm.payment_voucher.post')) {
+  /* The approve key implies the post door — approval IS the posting now
+     (owner 2026-09-02: 当approved 了才会进gl), and approvePaymentVoucherHandler
+     walks straight in here. The standalone post key still opens it alone. */
+  if (!hasHouzsPerm(c, 'scm.payment_voucher.post') && !hasHouzsPerm(c, 'scm.payment_voucher.approve')) {
     return c.json({ error: "You don't have permission to do that." }, 403);
   }
   const sb = c.get('supabase'); const id = c.req.param('id');
@@ -783,7 +786,7 @@ export const postPaymentVoucherHandler = async (c: any) => {
      exists has already paid, and re-posting it must stay an echo whatever
      its approval marks say. A fresh post, though, does not start without a
      recorded yes. */
-  const gate = pvCanPost(pv as unknown as { status: string; submitted_at?: string | null; approved_at?: string | null });
+  const gate = pvCanPost(pv as unknown as PvApprovalShape);
   if (!gate.ok) return c.json({ error: gate.error, message: gate.message }, 409);
 
   const { data: linesRaw } = await sb.from('payment_voucher_lines')
@@ -1113,6 +1116,10 @@ const loadPvForApproval = async (c: any) => {
 const approvalActor = (c: any): string =>
   String((c.get('houzsUser') as { name?: string } | undefined)?.name ?? 'unknown');
 
+/* PREPARE — the old /submit route keeps its path (nothing external breaks)
+   but carries the owner's word: the voucher is declared ready and enters the
+   checker's queue. It stays EDITABLE (owner: prepare 还可以改) — the first
+   yes is what locks it. */
 export const submitPaymentVoucherHandler = async (c: any) => {
   if (!hasHouzsPerm(c, 'scm.payment_voucher.write')) {
     return c.json({ error: "You don't have permission to do that." }, 403);
@@ -1120,7 +1127,7 @@ export const submitPaymentVoucherHandler = async (c: any) => {
   const loaded = await loadPvForApproval(c);
   if ('refusal' in loaded) return loaded.refusal;
   const { sb, id, pv, companyId } = loaded;
-  const v = pvCanSubmit(pv as { status: string; submitted_at?: string | null; approved_at?: string | null });
+  const v = pvCanPrepare(pv as PvApprovalShape);
   if (!v.ok) return c.json({ error: v.error, message: v.message }, 409);
   const who = approvalActor(c);
   const at = new Date().toISOString();
@@ -1136,6 +1143,9 @@ export const submitPaymentVoucherHandler = async (c: any) => {
 };
 paymentVouchers.post('/:id/submit', submitPaymentVoucherHandler);
 
+/* WITHDRAW — the preparer pulls their own voucher back, only BEFORE the
+   first yes; a checked voucher belongs to the checkers and comes back via
+   reject. */
 export const withdrawPaymentVoucherHandler = async (c: any) => {
   if (!hasHouzsPerm(c, 'scm.payment_voucher.write')) {
     return c.json({ error: "You don't have permission to do that." }, 403);
@@ -1143,10 +1153,10 @@ export const withdrawPaymentVoucherHandler = async (c: any) => {
   const loaded = await loadPvForApproval(c);
   if ('refusal' in loaded) return loaded.refusal;
   const { sb, id, pv, companyId } = loaded;
-  const v = pvCanWithdraw(pv as { status: string; submitted_at?: string | null; approved_at?: string | null });
+  const v = pvCanWithdraw(pv as PvApprovalShape);
   if (!v.ok) return c.json({ error: v.error, message: v.message }, 409);
   const { error } = await scopeToCompanyId(sb.from('payment_vouchers')
-    .update({ submitted_at: null, submitted_by: null, approved_at: null, approved_by: null, updated_at: new Date().toISOString() })
+    .update({ submitted_at: null, submitted_by: null, updated_at: new Date().toISOString() })
     .eq('id', id), companyId);
   if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);
   await recordEntityAudit(sb, {
@@ -1158,6 +1168,37 @@ export const withdrawPaymentVoucherHandler = async (c: any) => {
 };
 paymentVouchers.post('/:id/withdraw', withdrawPaymentVoucherHandler);
 
+/* CHECK — the first of the owner's two yeses (2026-09-02: prepare 后会多
+   两层checking). Locks the voucher and puts it on Daily Bank's pending.
+   Its own key; the same person MAY also hold approve (可以同一个人). */
+export const checkPaymentVoucherHandler = async (c: any) => {
+  if (!hasHouzsPerm(c, 'scm.payment_voucher.check')) {
+    return c.json({ error: "You don't have permission to do that." }, 403);
+  }
+  const loaded = await loadPvForApproval(c);
+  if ('refusal' in loaded) return loaded.refusal;
+  const { sb, id, pv, companyId } = loaded;
+  const v = pvCanCheck(pv as PvApprovalShape);
+  if (!v.ok) return c.json({ error: v.error, message: v.message }, 409);
+  const who = approvalActor(c);
+  const at = new Date().toISOString();
+  const { error } = await scopeToCompanyId(sb.from('payment_vouchers')
+    .update({ checked_at: at, checked_by: who, updated_at: at }).eq('id', id), companyId);
+  if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);
+  await recordEntityAudit(sb, {
+    entityType: 'PAYMENT_VOUCHER', entityId: id, entityDocNo: pv.pv_number,
+    action: 'CHECK', actor: c.get('houzsUser'), statusSnapshot: 'DRAFT',
+    fieldChanges: compactChanges([fieldChange('checked_by', null, who)]),
+  });
+  return c.json({ id, checkedAt: at, checkedBy: who });
+};
+paymentVouchers.post('/:id/check', checkPaymentVoucherHandler);
+
+/* APPROVE — the second yes IS the posting (owner: 当approved 了才会进gl).
+   Stamps approval, then walks straight through the post door in the same
+   request; the response is the post's (jeNo and all). If posting dies after
+   the stamp, approving again resumes it — the stamp is not rewritten, and
+   the post handler's idempotency echo makes the retry safe. */
 export const approvePaymentVoucherHandler = async (c: any) => {
   if (!hasHouzsPerm(c, 'scm.payment_voucher.approve')) {
     return c.json({ error: "You don't have permission to do that." }, 403);
@@ -1165,38 +1206,44 @@ export const approvePaymentVoucherHandler = async (c: any) => {
   const loaded = await loadPvForApproval(c);
   if ('refusal' in loaded) return loaded.refusal;
   const { sb, id, pv, companyId } = loaded;
-  const v = pvCanDecide(pv as { status: string; submitted_at?: string | null; approved_at?: string | null });
-  if (!v.ok) return c.json({ error: v.error, message: v.message }, 409);
-  const who = approvalActor(c);
-  const at = new Date().toISOString();
-  const { error } = await scopeToCompanyId(sb.from('payment_vouchers')
-    .update({ approved_at: at, approved_by: who, updated_at: at }).eq('id', id), companyId);
-  if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);
-  await recordEntityAudit(sb, {
-    entityType: 'PAYMENT_VOUCHER', entityId: id, entityDocNo: pv.pv_number,
-    action: 'APPROVE', actor: c.get('houzsUser'), statusSnapshot: 'DRAFT',
-    fieldChanges: compactChanges([fieldChange('approved_by', null, who)]),
-  });
-  return c.json({ id, approvedAt: at, approvedBy: who });
+  const resume = pv.status === 'DRAFT' && pv.approved_at != null;
+  if (!resume) {
+    const v = pvCanApprove(pv as PvApprovalShape);
+    if (!v.ok) return c.json({ error: v.error, message: v.message }, 409);
+    const who = approvalActor(c);
+    const at = new Date().toISOString();
+    const { error } = await scopeToCompanyId(sb.from('payment_vouchers')
+      .update({ approved_at: at, approved_by: who, updated_at: at }).eq('id', id), companyId);
+    if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);
+    await recordEntityAudit(sb, {
+      entityType: 'PAYMENT_VOUCHER', entityId: id, entityDocNo: pv.pv_number,
+      action: 'APPROVE', actor: c.get('houzsUser'), statusSnapshot: 'DRAFT',
+      fieldChanges: compactChanges([fieldChange('approved_by', null, who)]),
+    });
+  }
+  return postPaymentVoucherHandler(c);
 };
 paymentVouchers.post('/:id/approve', approvePaymentVoucherHandler);
 
+/* REJECT — at EITHER checking layer, by either key; everything comes off
+   and the voucher is a raw draft again (owner: 一律退回 Draft), the why on
+   its audit trail. */
 export const rejectPaymentVoucherHandler = async (c: any) => {
-  if (!hasHouzsPerm(c, 'scm.payment_voucher.approve')) {
+  if (!hasHouzsPerm(c, 'scm.payment_voucher.approve') && !hasHouzsPerm(c, 'scm.payment_voucher.check')) {
     return c.json({ error: "You don't have permission to do that." }, 403);
   }
   const loaded = await loadPvForApproval(c);
   if ('refusal' in loaded) return loaded.refusal;
   const { sb, id, pv, companyId } = loaded;
-  const v = pvCanDecide(pv as { status: string; submitted_at?: string | null; approved_at?: string | null });
+  const v = pvCanReject(pv as PvApprovalShape);
   if (!v.ok) return c.json({ error: v.error, message: v.message }, 409);
   let note = '';
   try { note = String(((await c.req.json()) as { note?: unknown })?.note ?? '').trim(); } catch { /* empty body is a valid no-note reject */ }
   const { error } = await scopeToCompanyId(sb.from('payment_vouchers')
-    .update({ submitted_at: null, submitted_by: null, approved_at: null, approved_by: null, updated_at: new Date().toISOString() })
+    .update({ submitted_at: null, submitted_by: null, checked_at: null, checked_by: null, approved_at: null, approved_by: null, updated_at: new Date().toISOString() })
     .eq('id', id), companyId);
   if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);
-  /* The reason lives on the audit trail, where the submitter reads it — a
+  /* The reason lives on the audit trail, where the preparer reads it — a
      rejected voucher goes back to editable with the WHY on its history. */
   await recordEntityAudit(sb, {
     entityType: 'PAYMENT_VOUCHER', entityId: id, entityDocNo: pv.pv_number,

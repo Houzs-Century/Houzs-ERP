@@ -1092,9 +1092,12 @@ accounting.get('/daily-bank', async (c) => {
      "nothing pending" on the one board that answers how much can move. */
   const { data: pendingRaw, error: pErr } = await sb.from('payment_vouchers')
     .select('total_sen, exchange_rate')
+    /* daily bank 的pending 就是第一层的checked (the owner, 2026-09-02): a
+       voucher reserves the board's money once the FIRST yes is on it — a
+       merely prepared one is still the preparer's business. */
     .eq('company_id', co.companyId).eq('status', 'DRAFT')
-    .not('submitted_at', 'is', null)
-    .lte('submitted_at', `${date}T23:59:59.999`);
+    .not('checked_at', 'is', null)
+    .lte('checked_at', `${date}T23:59:59.999`);
   if (pErr) return c.json({ error: 'load_failed', reason: pErr.message }, 500);
   const pending = (pendingRaw ?? []) as Array<{ total_sen: number; exchange_rate: string | number | null }>;
 

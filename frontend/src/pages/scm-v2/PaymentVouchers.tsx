@@ -31,8 +31,24 @@ import { FilterPills } from '../../components/FilterPills';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
-// payment_voucher_status enum: DRAFT / POSTED / CANCELLED.
-const STATUS_CHIPS = ['all', 'DRAFT', 'POSTED', 'CANCELLED'] as const;
+/* The owner's four layers as chips (2026-09-02). The enum underneath stays
+   DRAFT/POSTED/CANCELLED — Prepared and Checked are DRAFTs wearing marks, so
+   the chip filter reads the marks, not just the status. */
+const STATUS_CHIPS = ['all', 'DRAFT', 'PREPARED', 'CHECKED', 'POSTED', 'CANCELLED'] as const;
+
+const chipMatches = (chip: string, r: PaymentVoucherRow): boolean => {
+  switch (chip) {
+    case 'DRAFT':    return r.status === 'DRAFT' && r.submitted_at == null;
+    case 'PREPARED': return r.status === 'DRAFT' && r.submitted_at != null && r.checked_at == null;
+    case 'CHECKED':  return r.status === 'DRAFT' && r.checked_at != null;
+    default:         return r.status === chip;
+  }
+};
+
+const CHIP_LABELS: Record<string, string> = {
+  all: 'All', DRAFT: 'Draft', PREPARED: 'Prepared', CHECKED: 'Checked',
+  POSTED: 'Approved', CANCELLED: 'Cancelled',
+};
 
 const fmtMoney = (centi: number, currency = 'MYR'): string => fmtMoneySen(centi, currency);
 
@@ -79,18 +95,18 @@ const buildPvColumns = (): DataGridColumn<PaymentVoucherRow>[] => [
   },
   {
     key: 'status', label: 'Status', width: 160, sortable: true, groupable: true,
-    /* Phase 3: the approval marks ride BESIDE the pill, never inside the
-       status enum (the 0324 lesson). A DRAFT in the queue reads differently
-       from a DRAFT still being written, and the list is where the approver
-       finds what is waiting for them. */
+    /* The four layers' marks ride BESIDE the pill, never inside the status
+       enum (the 0324 lesson). A checked DRAFT reads differently from a
+       prepared one, and the list is where each layer finds what is waiting
+       for them. */
     accessor: (r) => (
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
         <StatusPill docType="pv" status={r.status} />
-        {r.status === 'DRAFT' && r.approved_at != null && (
-          <span style={{ fontSize: 'var(--fs-12, 12px)', color: 'var(--c-green, #2c7a3f)' }}>approved</span>
+        {r.status === 'DRAFT' && r.checked_at != null && (
+          <span style={{ fontSize: 'var(--fs-12, 12px)', color: 'var(--c-green, #2c7a3f)' }}>checked — awaiting approval</span>
         )}
-        {r.status === 'DRAFT' && r.submitted_at != null && r.approved_at == null && (
-          <span style={{ fontSize: 'var(--fs-12, 12px)', color: 'var(--c-orange, #b06000)' }}>awaiting approval</span>
+        {r.status === 'DRAFT' && r.submitted_at != null && r.checked_at == null && (
+          <span style={{ fontSize: 'var(--fs-12, 12px)', color: 'var(--c-orange, #b06000)' }}>prepared — awaiting check</span>
         )}
       </span>
     ),
@@ -102,11 +118,11 @@ const buildPvColumns = (): DataGridColumn<PaymentVoucherRow>[] => [
 ];
 
 /* The searchable/groupable text mirrors what the cell SHOWS — a grouped list
-   splits queued drafts from plain ones the same way the eye does. */
-function queueLabel(r: { status: string; submitted_at?: string | null; approved_at?: string | null }): string {
+   splits the layers the same way the eye does. */
+function queueLabel(r: { status: string; submitted_at?: string | null; checked_at?: string | null; approved_at?: string | null }): string {
   if (r.status !== 'DRAFT') return statusLabel('pv', r.status);
-  if (r.approved_at != null) return `${statusLabel('pv', r.status)} · approved`;
-  if (r.submitted_at != null) return `${statusLabel('pv', r.status)} · awaiting approval`;
+  if (r.checked_at != null) return `${statusLabel('pv', r.status)} · checked`;
+  if (r.submitted_at != null) return `${statusLabel('pv', r.status)} · prepared`;
   return statusLabel('pv', r.status);
 }
 
@@ -131,7 +147,7 @@ export const PaymentVouchers = () => {
 
   const allRows = useMemo<PaymentVoucherRow[]>(() => (data?.paymentVouchers ?? []) as PaymentVoucherRow[], [data]);
   const rows = useMemo<PaymentVoucherRow[]>(
-    () => (statusChip === 'all' ? allRows : allRows.filter((r) => r.status === statusChip)),
+    () => (statusChip === 'all' ? allRows : allRows.filter((r) => chipMatches(statusChip, r))),
     [allRows, statusChip],
   );
   const columns = useMemo(() => buildPvColumns(), []);
@@ -187,7 +203,7 @@ export const PaymentVouchers = () => {
 
       {/* The SO strip's own FilterPills slab (owner 2026-07-26). */}
       <FilterPills
-        options={STATUS_CHIPS.map((s) => ({ value: s as string, label: s === 'all' ? 'All' : statusLabel('pv', s) }))}
+        options={STATUS_CHIPS.map((s) => ({ value: s as string, label: CHIP_LABELS[s] ?? s }))}
         value={statusChip}
         onChange={(v) => setStatusChip(v)}
       />
