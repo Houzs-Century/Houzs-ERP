@@ -23,7 +23,7 @@ import { Hono } from "hono";
 import { supabaseAuth } from "../middleware/auth";
 import { requireHouzsPerm } from "../lib/houzs-perms";
 import { nextCode, CODE_PREFIX } from "../lib/fleet-code-mint";
-import { activeCompanyId, scopeToCompany } from "../lib/companyScope";
+import { activeCompanyId, scopeToCompany, scopeToCompanyIdOrOpen } from "../lib/companyScope";
 import { todayMyt } from "../lib/my-time";
 import {
   dateOrNull, floatOrNull, intOrNull, iso, normPlate, numOrNull, refsOrNull, tsOrNull,
@@ -1988,7 +1988,11 @@ async function mintWorkshopCode(sb: any, companyId: number | null): Promise<stri
      nextCode (scm/lib/fleet-code-mint) is the one parser every minted code in
      this system shares — it reads any padding, which is what stops a second
      numbering scheme forming the way DRV-05 formed beside DRV-050. */
-  const { data } = await sb.from("workshops").select("code").eq("company_id", companyId);
+  /* The comment above is about not minting a duplicate, and `.eq("company_id",
+     null)` — a malformed filter that matches nothing — is the fastest way to
+     mint one: zero codes read, sequence restarts at 1. scopeToCompanyIdOrOpen
+     falls OPEN instead, so the mint sees more codes and skips past them. */
+  const { data } = await scopeToCompanyIdOrOpen(sb.from("workshops").select("code"), companyId);
   return nextCode(CODE_PREFIX.WORKSHOP, ((data ?? []) as Array<{ code?: string | null }>).map((r) => r.code));
 }
 
@@ -1998,17 +2002,27 @@ async function mintWorkshopCode(sb: any, companyId: number | null): Promise<stri
  *  real guard so two racing creates cannot both win. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function mintRecordNo(sb: any, table: string, column: string, prefix: string, companyId: number | null): Promise<string> {
-  const { data } = await sb.from(table).select(column).eq("company_id", companyId);
+  /* `.eq("company_id", null)` is a MALFORMED filter, not "no company": PostgREST
+     renders `company_id=eq.null`, which matches nothing. On a mint that is the
+     dangerous direction — reading zero existing codes restarts the sequence at 1
+     and issues a DUPLICATE. scopeToCompanyIdOrOpen (companyScope.ts:136) exists
+     for exactly this call shape and falls OPEN on an unresolved company, so the
+     mint sees MORE codes and skips past them rather than colliding. */
+  const { data } = await scopeToCompanyIdOrOpen(sb.from(table).select(column), companyId);
   return nextCode(prefix, ((data ?? []) as Array<Record<string, string | null>>).map((r) => r[column]));
 }
 
 fleetMaintenance.get("/workshops", requireHouzsPerm("fleet.read"), async (c) => {
   const sb = c.get("supabase");
-  const { data, error } = await sb
+  const q = sb
     .from("workshops")
-    .select("id, code, name, registration_no, contact_name, contact_phone, office_phone, email, address, notes, is_active")
-    .eq("company_id", activeCompanyId(c) ?? null)
-    .order("name");
+    .select("id, code, name, registration_no, contact_name, contact_phone, office_phone, email, address, notes, is_active");
+  /* scopeToCompany, not `.eq("company_id", activeCompanyId(c) ?? null)`. The raw
+     form renders `company_id=eq.null` on an unresolved company — a malformed
+     filter that matches NOTHING, so the page showed an empty workshop list
+     instead of either the rows or an honest refusal. The helper fails closed
+     when the context is resolved and open only in the legacy state. */
+  const { data, error } = await scopeToCompany(q, c).order("name");
   if (error) return c.json({ error: "load_failed", reason: error.message }, 500);
   return c.json({
     workshops: (data ?? []).map((w: Record<string, unknown>) => ({
@@ -2081,10 +2095,12 @@ fleetMaintenance.patch("/workshops/:id", requireHouzsPerm("fleet.write"), async 
   /* `code` is minted, never edited — the whole point of generating it. */
   if (patch.name === null) return c.json({ error: "name_required" }, 400);
 
-  const { data, error } = await sb
-    .from("workshops").update(patch)
-    .eq("id", c.req.param("id")).eq("company_id", activeCompanyId(c) ?? null)
-    .select("id").maybeSingle();
+  /* Same malformed-filter fix as the list above: `.eq("company_id", null)`
+     matched nothing, so an unresolved company turned every edit into a phantom
+     "workshop_not_found" 404 over a row that exists. */
+  const { data, error } = await scopeToCompany(
+    sb.from("workshops").update(patch).eq("id", c.req.param("id")), c,
+  ).select("id").maybeSingle();
   if (error) {
     if (error.code === "23505") return c.json({ error: "duplicate_workshop", reason: error.message }, 409);
     return c.json({ error: "update_failed", reason: error.message }, 500);
