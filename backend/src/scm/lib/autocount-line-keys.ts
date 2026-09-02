@@ -297,15 +297,20 @@ export const NEW_LINE_TABLE: Record<string, AcLineTable> = {
 export function newLineTargetOf(docType: string, payload: { body?: unknown }): NewLineKeyTarget | null {
   const table = (NEW_LINE_TABLE as Record<string, AcLineTable | undefined>)[String(docType).toUpperCase()];
   if (!table) return null;
-  const body = (payload.body ?? {}) as { Lines?: unknown };
+  const body = (payload.body ?? {}) as { Lines?: unknown; Rebuild?: unknown };
+  /* A REBUILD cleared the details, so every line came back NEW and not one key
+     the payload carried still exists. Reading it the ordinary way stored
+     nothing — `IsNewLine` is absent — and left the ERP holding dead keys that
+     the next edit would send to EditDetail. docs/bugs/0621. */
+  const rebuilt = body.Rebuild === true;
   const lines = Array.isArray(body.Lines) ? (body.Lines as Array<Record<string, unknown>>) : [];
   const newIds: string[][] = [];
   const newCodes: string[] = [];
   const knownKeys: number[] = [];
   for (const l of lines) {
     const key = Number(l.DtlKey);
-    if (Number.isFinite(key) && key > 0) knownKeys.push(key);
-    if (l.IsNewLine !== true) continue;
+    if (!rebuilt && Number.isFinite(key) && key > 0) knownKeys.push(key);
+    if (!rebuilt && l.IsNewLine !== true) continue;
     const ids = Array.isArray(l.ErpLineIds)
       ? (l.ErpLineIds as unknown[]).filter((v): v is string => typeof v === 'string' && !!v)
       : [];

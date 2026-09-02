@@ -147,8 +147,19 @@ try {
           (isRequeuedNote(r.last_error) ? "  [already re-queued — history, not an open item]" : ""),
       );
     }
-    const docs = [...new Set(held.map((r) => `${r.doc_type} ${r.doc_no}`))];
-    out(`   DISTINCT DOCUMENTS HELD BACK: ${docs.length} -> ${docs.join(", ")}`);
+    /* A ROW ALREADY RE-QUEUED IS HISTORY, and counting it as backlog made this
+       report contradict itself in the same breath: it printed "[already
+       re-queued - history, not an open item]" against each row and then a
+       DISTINCT-DOCUMENTS count that included them. Owner, reading it:
+       "不是矛盾的?" - it was. docs/bugs/0621. */
+    const open = held.filter((r) => !isRequeuedNote(r.last_error));
+    const docs = [...new Set(open.map((r) => `${r.doc_type} ${r.doc_no}`))];
+    const seen = [...new Set(held.map((r) => `${r.doc_type} ${r.doc_no}`))];
+    out(`   DISTINCT DOCUMENTS HELD BACK: ${docs.length}` +
+      (docs.length ? ` -> ${docs.join(", ")}` : " (nothing is waiting)") +
+      (seen.length > docs.length
+        ? `   [${seen.length - docs.length} more appear above as ALREADY RE-QUEUED history]`
+        : ""));
     if (docs.length === 1) {
       out("   Exactly one. Any other number being discussed is not this document.");
     }
