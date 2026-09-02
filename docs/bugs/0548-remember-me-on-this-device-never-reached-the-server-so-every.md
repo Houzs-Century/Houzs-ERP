@@ -25,7 +25,7 @@ any login, every member of staff was signed out and had to type a password
 again, which is the moment a missing browser-saved password is felt.
 
 **Fix.** A ticked box now mints a ROLLING session. `sessions.renew_seconds`
-(migrations-pg/0332 + D1 parity 153) carries the session's own renewal window:
+(migrations-pg/0345 + D1 parity 153) carries the session's own renewal window:
 NULL keeps today's fixed 7-day session, and `REMEMBER_TTL_SECONDS` (1 year) is
 written for a remembered login. `renewRollingSession`, called from
 `getUserBySession` AFTER the session is proven live and BEFORE the cached-envelope

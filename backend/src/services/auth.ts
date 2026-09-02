@@ -379,7 +379,7 @@ interface SessionAuthority {
   expires_at: string | null;
   origin: string | null;
   /** Rolling-session window in seconds ("Remember me"), or null/absent for a
-   *  fixed session. Read defensively: a database that predates migration 0332
+   *  fixed session. Read defensively: a database that predates migration 0345
    *  answers undefined here and every session simply stays fixed. */
   renew_seconds?: number | null;
   role_id: number;

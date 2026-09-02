@@ -1,4 +1,4 @@
--- 0332_sessions_stay_signed_in — let "Remember me on this device" mean it.
+-- 0345_sessions_stay_signed_in — let "Remember me on this device" mean it.
 --
 -- Every session has been a flat 7 days (SESSION_TTL_SECONDS), and the login
 -- screen's "Remember me on this device" never reached the server: it only chose
