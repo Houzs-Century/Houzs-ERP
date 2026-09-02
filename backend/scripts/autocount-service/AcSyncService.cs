@@ -2694,7 +2694,12 @@ class AcSyncService {
       using (var cmd = cn.CreateCommand()) {
         cmd.CommandText =
           "SELECT COUNT(*) FROM " + dtl + " d JOIN " + hdr + " h ON h.DocKey = d.DocKey " +
-          "WHERE h.DocNo = @no AND ISNULL(d.TransferedQty,0) > 0";
+          // TransferedQty is what this document passed ONWARD. A purchase order
+          // raised FROM a sales order records that incoming link in its own
+          // column, and reissuing its keys voids it - 10,338 of 18,148 PODTL
+          // rows in this book carry one (DetailWanted, above). Refuse those too.
+          "WHERE h.DocNo = @no AND (ISNULL(d.TransferedQty,0) > 0" +
+          (type == "PO" ? " OR d.FromSODtlKey IS NOT NULL" : "") + ")";
         var pr = cmd.CreateParameter(); pr.ParameterName = "@no"; pr.Value = docNo;
         cmd.Parameters.Add(pr);
         return System.Convert.ToInt32(cmd.ExecuteScalar()) > 0;

@@ -73,4 +73,17 @@ environment; there is one, and the check takes seconds.
 refusal's survival; `acLineRemovalIsUniform.test.ts` covers the rule. Backend
 typecheck exit 0.
 
+
+> **RETRACTED IN PART THE SAME DAY, by `docs/bugs/0613-rebuilding-any-unmatchable-document-went-further-than-the-ru.md`.**
+> The fix above rebuilt ANY unmatchable document. That broke eight behavioural
+> guards of the keyless refusal, which were not re-run, and it went further than
+> the owner's own rule: a plain edit changes no line set, so it should not
+> rebuild. The escape is now an EARNED rebuild only. What SURVIVES from this
+> entry is the reasoning that a rebuild appends to nothing and so cannot
+> duplicate a line, and the requirement that `rebuildBlocked` wins - both are
+> still true and still in the code.
+>
+> `docs/bugs/0611-a-converted-document-could-be-rebuilt-which-destroys-its-tra.md`
+> records the hazard this entry opened on the four converted document types.
+
 **Ref.** fix/autocount-line-order-is-stable, 2026-09-02.

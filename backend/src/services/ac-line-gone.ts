@@ -74,17 +74,48 @@ export function rebuildNeededForLineSetChange(
   return anyLineAdded || anyLineDeleted;
 }
 
-/** The whole decision, so `composeEdit` carries one line and no arithmetic.
+/* THE TWO DOCUMENTS WHOSE LINES THE ERP CREATES.
+   A rebuild clears the book's details and lays ours down, so it may only ever
+   be asked for a document whose lines are OURS to lay down. These two are; the
+   other four are built by conversion, and their lines are where AutoCount
+   records what they were converted FROM — `FromDocType` / `FromDocNo`, listed
+   in `AcSyncService.DetailWanted` as "the DOWNSTREAM shape".
+
+   REBUILDING ONE OF THOSE FOUR DESTROYS THE CONVERSION, SILENTLY. The host's
+   own guard cannot catch it: `AnyLineTransferred` reads `TransferedQty`, which
+   is what the document passed ONWARD, and a delivery order that has not been
+   invoiced yet reads as untransferred right up to the moment its incoming link
+   is cleared. AutoCount's recovery for that state is raw SQL plus Management
+   Studio's Fix Deleted Document Transfer Problem (docs/bugs/0606). So the ERP
+   does not ask — docs/bugs/0611. */
+const ERP_OWNS_THE_LINES: ReadonlySet<string> = new Set(['SO', 'PO']);
+
+/** Whether a rebuild is permissible AT ALL for this document.
  *
- *  `rebuildBlocked` wins over the derived answer and never the other way round:
- *  it names a document whose keys are held by something downstream, and no line
- *  change can make reissuing them safe (scm/lib/so-po-raised.ts, docs/bugs/0609).
+ *  Two independent reasons to refuse, and both are absolute: the document was
+ *  built by conversion (above), or something downstream holds its keys —
+ *  `rebuildBlocked` names a sales order with a purchase order raised from it,
+ *  whose `PODTL.FromSODtlKey` links would be voided by reissuing them
+ *  (scm/lib/so-po-raised.ts, docs/bugs/0609).
+ *
+ *  An explicit `rebuild: true` from a caller does NOT override either. A caller
+ *  asking is a preference; these two are facts about the account book.
  */
-export function shouldRebuild(
-  opts: { newLineIds?: ReadonlySet<string>; rebuild?: boolean; rebuildBlocked?: string },
-  retired: readonly AcRetiredLine[],
+export function rebuildAllowed(
+  opts: { rebuildBlocked?: string },
+  docType: string,
 ): boolean {
   if (opts.rebuildBlocked) return false;
+  return ERP_OWNS_THE_LINES.has(String(docType).toUpperCase());
+}
+
+/** The whole decision, so `composeEdit` carries one line and no arithmetic. */
+export function shouldRebuild(
+  opts: { newLineIds?: ReadonlySet<string>; rebuild?: boolean; rebuildBlocked?: string },
+  docType: string,
+  retired: readonly AcRetiredLine[],
+): boolean {
+  if (!rebuildAllowed(opts, docType)) return false;
   if (opts.rebuild) return true;
   return rebuildNeededForLineSetChange(
     (opts.newLineIds?.size ?? 0) > 0,

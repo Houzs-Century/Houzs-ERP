@@ -19,12 +19,14 @@
 import { describe, expect, test } from 'vitest';
 import writebackSrc from '../src/services/autocount-writeback.ts?raw';
 import serviceSrc from '../scripts/autocount-service/AcSyncService.cs?raw';
+import goneSrc from '../src/services/ac-line-gone.ts?raw';
 
 const code = (s: string): string =>
   s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 
 const WRITEBACK = code(writebackSrc);
 const SERVICE = code(serviceSrc);
+const GONE = code(goneSrc);
 
 describe('the ERP asks; it never infers', () => {
   test('the sources actually loaded — an empty scan must not read as a pass', () => {
@@ -40,25 +42,34 @@ describe('the ERP asks; it never infers', () => {
     expect(WRITEBACK).toMatch(/effOpts\.rebuild/);
   });
 
-  /* A DOCUMENT THAT CANNOT BE MATCHED REBUILDS RATHER THAN BEING REFUSED FOREVER
-     (0610). Two book lines with the same item code can never be told apart, so
-     the refusal was permanent, not deferred. The escape must still sit ABOVE the
-     throw, and the throw must still be reachable — for a BLOCKED document. */
-  test('a keyless document rebuilds unless the rebuild is blocked', () => {
-    expect(WRITEBACK).toMatch(/if \(effOpts\.rebuild \|\| !opts\.rebuildBlocked\)/);
+  /* A KEYLESS DOCUMENT REBUILDS ONLY WHEN THE REBUILD WAS EARNED — the line SET
+     changed, or a caller asked (0608). The escape must sit ABOVE the throw, and
+     the throw must stay reachable, because a plain edit of a keyless line still
+     refuses: reissuing every DtlKey to avoid backfilling one is not a trade this
+     system makes. 0610 briefly made ANY unmatchable document rebuild and broke
+     eight behavioural guards that nobody re-ran; retracted in docs/bugs/0613. */
+  test('a keyless document rebuilds only when the rebuild was earned', () => {
+    expect(WRITEBACK).toMatch(/if \(effOpts\.rebuild && rebuildAllowed\(opts, docType\)\)/);
     expect(WRITEBACK).toMatch(/throw new KeylessLineError\(/);
-    const askIdx = WRITEBACK.indexOf('if (effOpts.rebuild || !opts.rebuildBlocked)');
+    const askIdx = WRITEBACK.indexOf('if (effOpts.rebuild && rebuildAllowed(opts, docType))');
     const throwIdx = WRITEBACK.indexOf('throw new KeylessLineError(');
     expect(askIdx, 'the rebuild escape must come BEFORE the throw').toBeGreaterThan(-1);
     expect(askIdx).toBeLessThan(throwIdx);
   });
 
-  /* The block is the whole safety of 0610: a PO raised from this SO holds its
-     DtlKeys through PODTL.FromSODtlKey, and reissuing them would void that link
-     (0609). A blocked document must still be refused. */
-  test('a blocked document is still refused, not rebuilt', () => {
-    expect(WRITEBACK).toMatch(/!opts\.rebuildBlocked/);
-    expect(WRITEBACK).not.toMatch(/if \(effOpts\.rebuild\) return \{ DocType/);
+  /* TWO absolute refusals, and neither may be overridden by a caller asking.
+     `rebuildBlocked` names a sales order with a purchase order raised from it —
+     PODTL.FromSODtlKey holds its keys and reissuing them voids the link (0609).
+     The document TYPE is the other: the four converted documents carry their
+     incoming transfer link on the lines a rebuild would clear (0611). */
+  test('a blocked or converted document is refused, never rebuilt', () => {
+    expect(GONE).toMatch(/if \(opts\.rebuildBlocked\) return false;/);
+    expect(GONE).toMatch(/ERP_OWNS_THE_LINES\.has\(String\(docType\)\.toUpperCase\(\)\)/);
+    expect(GONE).toMatch(/new Set\(\['SO', 'PO'\]\)/);
+    /* An explicit request is checked AFTER both refusals, never before. */
+    const gate = GONE.slice(GONE.indexOf('export function shouldRebuild'));
+    expect(gate.indexOf('rebuildAllowed(opts, docType)'))
+      .toBeLessThan(gate.indexOf('if (opts.rebuild) return true;'));
   });
 });
 

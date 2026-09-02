@@ -69,7 +69,7 @@ describe('composeEdit derives it — no caller can forget, none can disagree', (
      compute. Both halves of the set change are read THERE, which is why the
      assertions point at that module. */
   test('both halves of the set change are read, in one place', () => {
-    expect(WRITEBACK).toMatch(/shouldRebuild\(opts, retired\)/);
+    expect(WRITEBACK).toMatch(/shouldRebuild\(opts, docType, retired\)/);
     expect(GONE).toMatch(/retired\.some\(\(r\) => r\.Gone === 'deleted'\)/);
     expect(GONE).toMatch(/\(opts\.newLineIds\?\.size \?\? 0\) > 0/);
     /* A blocked document never rebuilds, whatever the line set did — 0609. */

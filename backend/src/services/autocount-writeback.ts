@@ -23,7 +23,7 @@
 // resolver, so it unit-tests with no database and no AutoCount.
 // ----------------------------------------------------------------------------
 import type { Env } from '../types';
-import { shouldRebuild, type AcRetiredLine } from './ac-line-gone';
+import { rebuildAllowed, shouldRebuild, type AcRetiredLine } from './ac-line-gone';
 import {
   ItemCodeError,
   resolveAcItemCode,
@@ -1417,7 +1417,7 @@ export function composeEdit(
   opts: ComposeOptions = {},
   retired: AcRetiredLine[] = [],
 ): AcEditPayload {
-  const effOpts: ComposeOptions = shouldRebuild(opts, retired) ? { ...opts, rebuild: true } : opts;  // 0608
+  const effOpts: ComposeOptions = shouldRebuild(opts, docType, retired) ? { ...opts, rebuild: true } : opts;  // 0608
   const { details, collapsed } = composeDetails(lines, effOpts);
   /* The key is read off the COLLAPSED line, not the ERP line. One AutoCount
      line has one DtlKey, and a sofa build's compartments only carry line
@@ -1537,8 +1537,9 @@ export function composeEdit(
     const which = keyless
       .map((i) => `${i + 1} (${keyed[i].ItemCode || 'no item code'}${cancelledOf(i) === true ? ', cancelled' : ''})`)
       .join(', ');
-    /* Unmatchable rebuilds rather than refusing forever; blocked still refuses — 0610. */
-    if (effOpts.rebuild || !opts.rebuildBlocked) return { DocType: docType, DocNo: docNo, Header: header, Lines: keyed, Rebuild: true };
+    /* Only an EARNED rebuild goes through here — the line set changed, or a caller
+       asked (0608). Rebuilding any unmatchable document was retracted: 0613. */
+    if (effOpts.rebuild && rebuildAllowed(opts, docType)) return { DocType: docType, DocNo: docNo, Header: header, Lines: keyed, Rebuild: true };
     const anyCancelled = keyless.some((i) => cancelledOf(i) === true);
     throw new KeylessLineError(
       `${docType} ${docNo}: ${keyless.length} of ${keyed.length} line(s) carry no AutoCount `
@@ -1563,7 +1564,9 @@ export function composeEdit(
     keyed.push({ ...r, Retire: true });
   }
 
-  return { DocType: docType, DocNo: docNo, Header: header, Lines: keyed };
+  /* `Rebuild` rides the ORDINARY return too: set only on the keyless branch, a
+     deleted line on a fully-keyed document derived a rebuild nobody carried — 0612. */
+  return { DocType: docType, DocNo: docNo, Header: header, Lines: keyed, ...(effOpts.rebuild ? { Rebuild: true as const } : {}) };
 }
 
 // ── the HTTP client ─────────────────────────────────────────────────────────
