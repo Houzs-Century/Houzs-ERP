@@ -20,8 +20,8 @@
 // the tree; App.tsx route swap decides which one users see.
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { shippedProgressColumn } from "./so-list-shipped-column";
 import { ShippedProgressPill } from "../../components/ShippedProgressPill";
-import { shippedProgressOf, shippedProgressLabel } from "../../vendor/scm/lib/shipped-progress";
 import { SO_STATUS_TABS, statusFor, type StatusTab } from "./so-list-status";
 import { salesOrderRowMenu } from "./row-menus";
 import { brandingToneForCategory, type BrandTone } from "../../lib/brandingTone";
@@ -146,9 +146,7 @@ type SoRow = HoldFields & {
   customer_type: string | null;
   building_type: string | null;
   customer_country: string | null;
-  /* HOW MUCH HAS LEFT — the numbers, not only none/partial/full. Fills the
-     Delivered column beside Stock Status, which answers ARRIVAL and cannot
-     answer this (vendor/scm/lib/shipped-progress.ts). */
+  /* HOW MUCH HAS LEFT — sales-order.md §0.4b. */
   shipped_qty?: number | null;
   deliverable_qty?: number | null;
   do_nos?: string[] | null;
@@ -961,7 +959,6 @@ function SoLinesExpansion({ docNo }: { docNo: string }) {
               <span>
                 <SoStockPill line={l} />
               </span>
-              {/* Stock says ARRIVED; this says LEFT. Two facts, two cells. */}
               <span>
                 <ShippedProgressPill line={l} />
               </span>
@@ -1684,32 +1681,7 @@ export function MfgSalesOrdersListV2() {
       sortValue: (r) => stockRemarkSortScore(r.stock_remark),  // fullest first
       render: (r) => <StockRemarkPill remark={r.stock_remark} />,  // was grey text
     },
-    {
-      /* DELIVERED — how much has LEFT. Stock Status one column over answers
-         ARRIVAL; the two were one column until 2026-09-02, so an order with
-         everything arrived and half shipped read plain READY and the shortfall
-         was on no screen (owner: 「partialy delivery 该怎么办呢」). */
-      key: "shipped_progress",
-      group: "Logistics",
-      label: "Delivered",
-      width: "120px",
-      defaultHidden: true,
-      disableSort: true,
-      getValue: (r) => {
-        const p = shippedProgressOf(r);
-        return p.state === "unknown" ? "" : (shippedProgressLabel(p) ?? "");
-      },
-      sortValue: (r) => {
-        const p = shippedProgressOf(r);
-        /* Least-complete first, so the orders still owing goods sort to the
-           top. `unknown` sorts last — it is not a small number, it is no
-           number, and putting it first would head the list with rows that say
-           nothing. */
-        if (p.state === "unknown") return 2;
-        return p.deliverable > 0 ? p.shipped / p.deliverable : 1;
-      },
-      render: (r) => <ShippedProgressPill row={r} />,
-    },
+    shippedProgressColumn<SoRow>(),
     {
       key: "processing_date",
       group: "Logistics",
