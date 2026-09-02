@@ -101,6 +101,11 @@ token 的书写顺序 = 面对沙发时的实际摆位。解析器最后有一�
   (`Leg Change 101Middle Leg(8')` 里的 8' 是脚高)。没写脚 = 用默认(owner:"脚全部找不到就直接选 default")。
   **导入器从来没写过 `variants.legHeight`**,所以已导入的行脚位是空的 —— 补法见 §7 的
   `backfill-sofa-leg-default.mjs`:只补两个 key 都空的行,**原文写了脚的不补**,单独列出来等人挑
+  **但这一句往回抓到哪里为止,是有边界的**(2026-09-02 修):以前两边都是「除了 / 和换行以外什么都吃」,
+  也就是**整个 slash 段**,所以脚的备注写在件表**后面同一段**时,件表跟着被删掉,整行掉回
+  `{model}-1S` 占位 —— `2+C+1(35'INCH)FULLY COVER NO LEG` 就是这样丢的(HC-SO-011755)。
+  现在往回抓遇到 `+` 或 `)` 就停:件表只会以这两个字符收尾,所以书里现有的 20 种写法
+  一种都没变,只有坏掉的那一条变了。同一类的坑见 `docs/bugs/0001-a-bare-c-corner-was-filtered-as-noise-so-49-sofa-builds-lost.md`(NOISE 吞掉裸 C / 裸 R)
 - **颜色**:`COL:` / `Colour:` / `COL-`,支持分件颜色 `colour (2s): X`;
   `TBC` / `KIV` = 还没选,留空不算错
 - **special order**:nylon 底、伞布、`backrest change to 8030`、`fully cover replace the leg`

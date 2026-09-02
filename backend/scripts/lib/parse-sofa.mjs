@@ -158,12 +158,24 @@ function parseSofa(d2raw, model, recl = false, opts = {}) {
   d2 = d2.replace(/\b(TBC|KIV|RANDOM\s*COLOU?R)\b/gi, " "); // noise words glue onto piece tokens ("L2 TBC")
   // owner 2026-08-10: 脚找不到就用 default — leg text never sets a size, it
   // rides as a special so the factory sheet still shows the request.
+  /* THE BACKWARD REACH STOPS AT STRUCTURE PUNCTUATION. It used to be
+     `[^\/\n]*` on BOTH sides — the whole slash segment — so when the floor wrote
+     the leg note AFTER the build in the SAME segment, the build was deleted with
+     it and the line fell to the bare `-1S` placeholder reporting "no structure
+     tokens": "2+C+1(35'INCH)FULLY COVER NO LEG" lost its 2+C+1 (HC-SO-011755,
+     found by probe-sofa-placeholder-desc2.mjs on prod, run 33657880776). Same
+     class as the NOISE regex that swallowed a bare C and a bare R — a sweep
+     meant for prose reaching into the piece list.
+     A piece list only ever ends on '+' or ')', so refusing to cross either
+     keeps every leg phrase in the book intact: measured over all 20 distinct
+     leg-bearing segments in the committed corpus, exactly one match changes and
+     it is the broken one. */
   {
-    const lg = /[^\/\n]*\bleg\b[^\/\n]*/gi.exec(d2);
+    const lg = /[^\/\n+)]*\bleg\b[^\/\n]*/gi.exec(d2);
     /* The sweep has already taken this sentence off the ORIGINAL text. Only
        fall back to the mangled copy when it did not, or the size cleanup's
        leftovers land beside the clean wording ("ADD 1INCH LEG" + "ADD 1 LEG"). */
-    if (lg) { if (!o.specials.some((s) => /leg/i.test(s))) addSpecial(lg[0]); d2 = d2.replace(/[^\/\n]*\bleg\b[^\/\n]*/gi, " "); }
+    if (lg) { if (!o.specials.some((s) => /leg/i.test(s))) addSpecial(lg[0]); d2 = d2.replace(/[^\/\n+)]*\bleg\b[^\/\n]*/gi, " "); }
   }
   // specials that ride along
   if (/nylon|nilon/i.test(d2)) addSpecial("nylon");
