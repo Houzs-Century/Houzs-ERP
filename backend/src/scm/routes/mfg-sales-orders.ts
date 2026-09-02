@@ -1695,8 +1695,7 @@ mfgSalesOrders.get('/', async (c) => {
        deleted and closes once every line is fully delivered. Replaces the old
        status-only gate that hid the action at SHIPPED/DELIVERED. */
     const hasUndelivered = new Set<string>();
-    /* Per-SO delivery progress, off the same live engine the picker uses —
-       the verdict AND the two numbers below (sales-order.md §0.4b). */
+    /* Per-SO delivery progress — the verdict AND the numbers, §0.4b. */
     const deliveredTotal = new Map<string, number>();
     const remainingTotal = new Map<string, number>();
     /* Fully-shipped LINE ids — the union below suppresses READY chips for them,
