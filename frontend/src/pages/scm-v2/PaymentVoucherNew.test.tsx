@@ -25,12 +25,12 @@ vi.mock('../../vendor/scm/lib/payment-voucher-queries', () => ({
 vi.mock('../../lib/idempotency', () => ({ useIdempotencyKey: () => 'idem-1' }));
 vi.mock('../../vendor/scm/lib/accounting-queries', () => ({
   useAccounts: () => ({ data: { accounts: [
-    { account_code: '330-0000', account_name: 'Bank — Maybank', account_type: 'ASSET', is_active: true, acc_money: true },
+    { account_code: '310-0010', account_name: 'Bank — Maybank', account_type: 'ASSET', is_active: true, acc_money: true },
     { account_code: '320-1000', account_name: 'Cash in hand', account_type: 'ASSET', is_active: true, acc_money: true },
     { account_code: '900-A002', account_name: 'Advertisement', account_type: 'EXPENSE', is_active: true, acc_money: false },
     { account_code: '400-0000', account_name: 'Account Payable', account_type: 'LIABILITY', is_active: true, acc_money: false },
   ] }, isLoading: false }),
-  useAccountRoles: () => ({ data: { roles: { BANK_DEFAULT: '330-0000', AP: '400-0000' }, overridden: {} }, isLoading: false }),
+  useAccountRoles: () => ({ data: { roles: { BANK_DEFAULT: '310-0010', AP: '400-0000' }, overridden: {} }, isLoading: false }),
   useSaveBankDefault: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 vi.mock('../../vendor/scm/lib/purchase-invoice-queries', () => ({
@@ -145,7 +145,7 @@ describe('the plain Payment Voucher (/new)', () => {
     /* The Paid From combobox: pre-filled with the default bank's label, and
        its open list offers money accounts only — expense and AP are gone. */
     const paidFrom = screen.getByLabelText(/Paid From/) as HTMLInputElement;
-    expect(paidFrom.value).toBe('330-0000 · Bank — Maybank');
+    expect(paidFrom.value).toBe('310-0010 · Bank — Maybank');
     fireEvent.focus(paidFrom);
     expect(screen.getByText('320-1000 · Cash in hand')).toBeTruthy();
     expect(screen.queryByText(/900-A002/)).toBeNull();
