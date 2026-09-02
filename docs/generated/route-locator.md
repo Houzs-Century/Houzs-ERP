@@ -609,19 +609,19 @@ Total: 1104 route registrations across 146 files.
 - L1816  DELETE /:id/items/:itemId
 
 ## backend/src/routes/auth.ts  (13)
-- L52  GET    /status
-- L65  POST   /bootstrap
-- L103  POST   /login
-- L218  POST   /totp/login
-- L302  POST   /forgot-password
-- L461  GET    /invite/:token
-- L496  POST   /accept-invite
-- L572  POST   /logout
-- L583  GET    /me
-- L688  GET    /reset/:token
-- L721  POST   /reset/:token
-- L785  PATCH  /me
-- L811  POST   /me/password
+- L53  GET    /status
+- L66  POST   /bootstrap
+- L104  POST   /login
+- L230  POST   /totp/login
+- L318  POST   /forgot-password
+- L477  GET    /invite/:token
+- L512  POST   /accept-invite
+- L588  POST   /logout
+- L599  GET    /me
+- L704  GET    /reset/:token
+- L737  POST   /reset/:token
+- L801  PATCH  /me
+- L827  POST   /me/password
 
 ## backend/src/routes/sales.ts  (13)
 - L233  GET    /entries
