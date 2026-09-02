@@ -42,10 +42,10 @@
 // on shared/so-processing-date.ts for exactly that reason.
 // ----------------------------------------------------------------------------
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { inAcLineOrder } from './ac-line-order';
 import type { Env } from '../env';
 import { getSupabaseService } from '../../db/supabase';
 import { isWritebackEnabled } from './autocount-writeback-flag';
+import { inAcLineOrder } from './ac-line-order';
 import { claimOutboxRow, releaseExpiredClaims } from './autocount-claim';
 import { splitSofaCode } from '../../services/autocount-sofa-collapse';
 import { SO_PROCESSING_DATE_COLUMN } from '../shared/so-processing-date';
@@ -950,8 +950,7 @@ export async function retiredLineOf(
     const n = r.linked_ac_dtlkey == null ? NaN : Number(r.linked_ac_dtlkey);
     if (!Number.isFinite(n) || n <= 0) return [];
     const desc2 = r.description2 == null ? undefined : String(r.description2);
-    // Every caller here is a DELETE route — services/ac-line-gone.ts.
-    return [{ DtlKey: n, ItemCode: String(r[codeCol] ?? ''), ...(desc2 ? { Desc2: desc2 } : {}), Gone: 'deleted' as const }];
+    return [{ DtlKey: n,  // a DELETE route — services/ac-line-gone.ts ItemCode: String(r[codeCol] ?? ''), ...(desc2 ? { Desc2: desc2 } : {}), Gone: 'deleted' as const }];
   } catch {
     return [];
   }

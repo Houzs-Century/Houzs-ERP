@@ -309,14 +309,13 @@ export interface ErpLine {
 }
 
 /** A line the ERP removed, named by the AutoCount key it still points at. */
-export type { AcLineGoneReason } from './ac-line-gone';
 export interface AcRetiredLine {
   DtlKey: number;
   ItemCode: string;
   /** Omitted rather than nulled, so AcSyncService keeps the book's own text. */
   Desc2?: string | null;
-  /** ac-line-gone.ts. Absent means RETIRE — the stricter answer. */
-  Gone?: import('./ac-line-gone').AcLineGoneReason;
+  /** ac-line-gone.ts — absent means RETIRE, the stricter answer. */
+  Gone?: 'deleted' | 'cancelled';
 }
 
 // ── AcSyncService payload shapes ────────────────────────────────────────────
