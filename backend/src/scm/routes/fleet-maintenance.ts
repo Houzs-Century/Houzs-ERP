@@ -195,9 +195,8 @@ const inHouseLorries = (sb: { from: (t: string) => { select: (cols: string) => a
    that IS real is requireHouzsPerm("fleet.write").
 
    Twelve by-id handlers once scoped these while /dashboard did not. Owner
-   2026-09-02: 「共用的，因为 TMS 是共用的」; they went. Pinned by
-   tests/fleetMaintenanceUnifiedScope.test.ts. EXCEPTION: scm.workshops IS
-   per-company (mig 0241) — the repair-shop MASTER. docs/bugs/0620-* */
+   2026-09-02: 「共用的，因为 TMS 是共用的」; they went. EXCEPTION: workshops IS
+   per-company (mig 0241). Pinned by fleetMaintenanceUnifiedScope; bugs/0620-* */
 
 type Lorry = {
   id: string;
@@ -1135,7 +1134,7 @@ fleetMaintenance.put("/vehicles/:id/compliance/:docId/attachments", requireHouzs
 
   /* The document must exist AND belong to the lorry in the path - otherwise a
      known docId would let a caller hang a file off another lorry's renewal.
-     OWNER-CHECKED, not company-scoped: one shared fleet (see the note above). */
+     OWNER-CHECKED, not scoped: one shared fleet (see the UNIFIED FLEET note). */
   const { data: doc, error: docErr } = await sb
     .from("lorry_compliance_documents").select("id, lorry_id").eq("id", docId).maybeSingle();
   if (docErr) return c.json({ error: "load_failed", reason: docErr.message }, 500);
