@@ -627,8 +627,8 @@ function ContractorPicker({
       await q.reload();
       onChange(name);
       toast.success(`Added ${name}`);
-    } catch (e: any) {
-      toast.error(e?.message || "Failed to add");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to add");
     }
   }
 

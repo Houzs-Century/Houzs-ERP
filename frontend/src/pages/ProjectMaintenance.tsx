@@ -340,8 +340,8 @@ function ContractorManager() {
       setName("");
       q.reload();
       toast.success(`Added ${trimmed}`);
-    } catch (e: any) {
-      toast.error(e?.message || "Something went wrong. Please try again.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Something went wrong. Please try again.");
     } finally {
       setAdding(false);
     }
@@ -361,8 +361,8 @@ function ContractorManager() {
       await api.del(`/api/projects/contractors/${o.id}`);
       toast.success("Contractor removed");
       q.reload();
-    } catch (e: any) {
-      toast.error(e?.message || "Something went wrong. Please try again.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Something went wrong. Please try again.");
     }
   }
 

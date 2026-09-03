@@ -48,7 +48,7 @@ from a Sales Order back to the fair it was written at. Same structure as
 | Surface | File | Lines |
 |---|---|---|
 | Every desktop PMS view except maintenance | `frontend/src/pages/Projects.tsx` | 12,404 |
-| Lookup masters (brands, event types, organizers, venues, default checklist) | `frontend/src/pages/ProjectMaintenance.tsx` | 2,099 |
+| Lookup masters (brands, event types, organizers, contractors, venues, default checklist) | `frontend/src/pages/ProjectMaintenance.tsx` | 2,099 |
 | Activity / chat panel | `frontend/src/components/ProjectChat.tsx` | 472 |
 | Gantt sub-view | `frontend/src/components/ProjectGantt.tsx` | 474 |
 | P&L calendar (Finances tab) | `frontend/src/components/PnlCalendar.tsx` | 709 |
@@ -268,7 +268,7 @@ here, and it is highly regular:**
 | Class | Gate | Examples |
 |---|---|---|
 | Reads of project data | `requirePageAccess("projects.list")` | `GET /` `:722`, `GET /summary` `:670`, `GET /:id` `:1497`, `GET /:id/activity` `:1848`, `GET /checklist-templates` `:1094` |
-| Reads of lookups | `requirePageAccess("projects")` | `GET /organizers` `:887`, `GET /venues` `:939`, `GET /sections-distinct` `:869` |
+| Reads of lookups | `requirePageAccess("projects")` | `GET /organizers` `:887`, `GET /contractors`, `GET /venues` `:939`, `GET /sections-distinct` `:869` |
 | Calendar | `requirePageAccess("projects.calendar")` | `GET /calendar/events` `:3756` |
 | Money reads | `requirePageAccess("projects.finances")` | `GET /cost-rates` `:559`, `GET /finance/by-project` `:2001`, `GET /finance/lines` `:2209`, `GET /analytics/profitability`, `GET /analytics/profitability/drill` (L2 months / L3 projects drill-down) |
 | Ordinary writes | `requirePermission("projects.write")` | finance lines, payments, stock transfers, defects, team, sales attendees, attachments, sections. Current count is in `docs/generated/route-capability-matrix.csv` — do not type it here |
@@ -276,6 +276,16 @@ here, and it is highly regular:**
 | Checklist ticking | `requireAnyPermission(["projects.write","projects.checklist.tick"])` | `PATCH /checklist/:itemId` `:2792`, `/status` `:2843`, `/review` `:2887`, attachments `:3071`, `:3170`, `:3215` |
 | Chat | `requireAnyPermission(["projects.write","projects.chat"])` | `POST /:id/notes` `:1832` |
 | Unguarded by middleware | — | small public lookups (`/states` `:858`, `/payment-statuses` `:859`, `/brands` `:204`, `/event-types` `:104`, `/finance/categories` `:1987`), the attachment stream `:3690`, and the **phase-photo** routes `:2427`, `:2472`, `:2507`, `:2539`, which carry an inline permission-OR-crew check instead |
+
+**Contractor field (2026-09-02).** Each project carries a free-text `contractor`
+(`projects.contractor`, mig `20260902T1224_projects_contractor.sql`) — the booth
+setup/dismantle contractor, chosen on the Detail page (`ContractorPicker` in
+`Projects.tsx`) and accepted by `PATCH /:id` via `PATCH_FIELDS` in
+`services/projects.ts`. Options come from a `project_contractors` picker table on
+the exact organizer pattern: `GET /contractors` (read), `POST /contractors`
+(`projects.write`), `DELETE /contractors/:id` (`projects.manage`), managed by
+`ContractorManager` in `ProjectMaintenance.tsx`. Feeds the planned per-contractor
+calendar share links.
 
 **The attachment stream (`GET /attachments/:key{.+}`) sends
 `X-Content-Type-Options: nosniff` (PR #2522)** so its R2 object's server-derived
