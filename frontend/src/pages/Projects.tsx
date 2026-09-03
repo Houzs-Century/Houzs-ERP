@@ -204,6 +204,7 @@ interface ProjectRow {
 interface ProjectDetail {
   project: ProjectRow & {
     organizer: string | null;
+    contractor: string | null;
     venue_address: string | null;
     event_type_id: number | null;
     notion_url: string | null;
@@ -587,6 +588,79 @@ function OrganizerPicker({
         </option>
       ))}
       <option value={SENTINEL_NEW}>＋ Add new organizer…</option>
+    </select>
+  );
+}
+
+// Same pattern as OrganizerPicker but for the booth setup/dismantle contractor.
+// Picks land in projects.contractor (free text) and get recorded in
+// project_contractors so the next project sees them. Also feeds the
+// per-contractor share links.
+function ContractorPicker({
+  value,
+  onChange,
+  className,
+}: {
+  value: string | null | undefined;
+  onChange: (next: string | null) => void;
+  className?: string;
+}) {
+  const dialog = useDialog();
+  const toast = useToast();
+  const q = useQuery<{ data: { id: number; name: string }[] }>("/api/projects/contractors",
+    () => api.get("/api/projects/contractors"),
+    []
+  );
+  const options = q.data?.data ?? [];
+
+  async function addNew() {
+    const name = await dialog.prompt({
+      title: "Add contractor",
+      message: "Add a new contractor to the picker. Subsequent projects will see it too.",
+      placeholder: "e.g. DREAM ART (M) SDN BHD",
+      required: true,
+      confirmLabel: "Add",
+    });
+    if (!name) return;
+    try {
+      await api.post("/api/projects/contractors", { name });
+      await q.reload();
+      onChange(name);
+      toast.success(`Added ${name}`);
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to add");
+    }
+  }
+
+  const SENTINEL_NEW = "__add_new__";
+
+  return (
+    <select
+      value={value || ""}
+      onChange={(e) => {
+        const v = e.target.value;
+        if (v === SENTINEL_NEW) {
+          void addNew();
+          return;
+        }
+        onChange(v || null);
+      }}
+      className={
+        className ??
+        "w-full appearance-none rounded-md border border-border bg-surface px-3 py-2 text-[13px]"
+      }
+    >
+      <option value="">— select contractor —</option>
+      {/* Surface legacy values that aren't in the lookup yet */}
+      {value && !options.some((o) => o.name === value) && (
+        <option value={value}>{value}</option>
+      )}
+      {options.map((o) => (
+        <option key={o.id} value={o.name}>
+          {o.name}
+        </option>
+      ))}
+      <option value={SENTINEL_NEW}>＋ Add new contractor…</option>
     </select>
   );
 }
@@ -7300,6 +7374,17 @@ function ProjectSpecStrip({
             />
           ) : (
             <SpecValue>{p.organizer ?? "—"}</SpecValue>
+          )}
+        </SpecCell>
+        <SpecCell label="Contractor">
+          {editing ? (
+            <ContractorPicker
+              value={p.contractor}
+              onChange={(v) => patch({ contractor: v })}
+              className={SPEC_INPUT_CLASS}
+            />
+          ) : (
+            <SpecValue>{p.contractor ?? "—"}</SpecValue>
           )}
         </SpecCell>
         {editing && (<>
