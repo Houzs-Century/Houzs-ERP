@@ -7545,6 +7545,7 @@ function TaskAttachmentRow({
   canManage,
   showRemark,
   itemTitle,
+  roleLabel,
   onDelete,
   toast,
 }: {
@@ -7554,6 +7555,9 @@ function TaskAttachmentRow({
   /** Title of the checklist item this file belongs to — gates the defect
    *  action timeline to Defect List rows. */
   itemTitle?: string;
+  /** Role badge of the checklist item — a tick-only role may remove files from
+   *  a task badged for ITS OWN function (owner 2026-09-02). */
+  roleLabel?: string | null;
   onDelete: () => void;
   toast?: ReturnType<typeof useToast>;
 }) {
@@ -7561,8 +7565,21 @@ function TaskAttachmentRow({
   // Owner 2026-08-04: deleting a file is a MANAGER action. projects.write (held
   // by Logistic — e.g. Syu — and Sales) can upload and edit, but must NOT remove
   // files; only projects.manage (BD / managers / directors) sees the trash.
-  const { can } = useAuth();
+  const { can, user } = useAuth();
   const canDeleteFile = can("projects.manage");
+  // Owner 2026-09-02 ("check user sim why she cant see button delete for file
+  // ... add for sim task only, same with farra"). The purchasers hold neither
+  // projects.write nor projects.manage since 0489, so the trash was hidden on
+  // the very documents they file. The DELETE endpoint has always allowed
+  // projects.write OR projects.checklist.tick + roleLabelAdmits, so this only
+  // catches the affordance up — and ONLY on rows badged for their own function,
+  // which is why a BD-badged Display Floor Plan still shows no trash for them.
+  // attachment.id < 0 is a merged crew phase photo (view/download only); that
+  // guard used to ride on canManage, so it is asserted here directly.
+  const mayDeleteFile =
+    attachment.id > 0 &&
+    ((!!canManage && canDeleteFile) ||
+      (can("projects.checklist.tick") && roleLabelAdmitsRole(roleLabel, user?.role_name)));
   const isDefectFile = /^defect (list|item)/i.test((itemTitle ?? "").trim());
   const fileActions = isDefectFile && defectCtx
     ? defectCtx.actions.filter((x) => x.attachment_id === attachment.id)
@@ -7741,7 +7758,7 @@ function TaskAttachmentRow({
           >
             <Download size={10} /> Download
           </button>
-          {canManage && canDeleteFile && (
+          {mayDeleteFile && (
             <button
               onClick={(e) => { e.stopPropagation(); onDelete(); }}
               className="rounded p-0.5 text-ink-muted hover:bg-err/10 hover:text-err"
@@ -9314,6 +9331,7 @@ function DocRow({
                       canManage={canManage && a.id > 0}
                       showRemark={remarkOpen}
                       itemTitle={item.title}
+                      roleLabel={item.role_label}
                       onDelete={() => { if (a.id > 0) removeAtt(a.id); }}
                       toast={toast}
                     />
@@ -9855,8 +9873,10 @@ function ChecklistRow({
                   </span>
                 </button>
                 {/* Remove file — shown to whoever can attach here (owner
-                    2026-08-11). id < 0 = merged crew photo, never removable. */}
-                {canManage && !readOnlyAttach && a.id > 0 && (
+                    2026-08-11), which since 2026-09-02 includes a tick-only role
+                    on a task badged for its own function. id < 0 = merged crew
+                    photo, never removable. */}
+                {mayAttachRow && !readOnlyAttach && a.id > 0 && (
                   <button
                     type="button"
                     onClick={(e) => { e.stopPropagation(); void removeAttachment(a); }}
@@ -9997,6 +10017,7 @@ function ChecklistRow({
                         canManage={canManage && a.id > 0}
                         showRemark={expanded}
                         itemTitle={item.title}
+                        roleLabel={item.role_label}
                         onDelete={() => { if (a.id > 0) deleteAttachment(a.id); }}
                         toast={toast}
                       />

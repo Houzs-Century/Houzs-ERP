@@ -199,10 +199,29 @@ describe("Projects.tsx — Attach is offered to every role the server admits (05
     expect(w).toContain("isSalesDirectorPos");
   });
 
-  it("file DELETE is NOT widened by this — it stays on projects.write", () => {
-    // Mobile requires projects.manage to remove a file; widening attach must not
-    // hand a tick-only role the ability to delete someone's evidence.
-    expect(projects()).toContain("canManage && !readOnlyAttach && a.id > 0");
+  it("file DELETE is role-scoped too (owner 2026-09-02), never blanket", () => {
+    // 0546 left delete on projects.write; the owner then asked for it on the
+    // purchasers' OWN rows ("add for sim task only, same with farra"). Both
+    // desktop trash gates must therefore read a role-aware predicate — and the
+    // manager rule (projects.manage) must survive beside it, not be replaced.
+    const text = projects();
+    const w = windowBefore("aria-label=\"Remove attachment\"", 900);
+    expect(w).toContain("mayDeleteFile");
+    expect(text).toContain("canDeleteFile"); // projects.manage still consulted
+    expect(text).toContain("roleLabelAdmitsRole(roleLabel, user?.role_name)");
+    // The card-section chip trash follows the same capability as its Attach.
+    expect(text).toContain("mayAttachRow && !readOnlyAttach && a.id > 0");
+    // A merged crew photo (id < 0) is never removable from either surface.
+    expect(text).toContain("attachment.id > 0 &&");
+  });
+
+  it("the file-card knows which task badge it is rendering", () => {
+    // mayDeleteFile is only as good as the badge it is given: both
+    // TaskAttachmentRow call sites must pass the item's role_label, or the
+    // predicate silently answers false and the trash stays hidden.
+    const uses = (projects().match(/<TaskAttachmentRow/g) ?? []).length;
+    const passes = (projects().match(/roleLabel=\{item\.role_label\}/g) ?? []).length;
+    expect(passes, "a TaskAttachmentRow renders without its role badge").toBe(uses);
   });
 });
 
