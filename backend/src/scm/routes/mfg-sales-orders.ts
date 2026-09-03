@@ -141,6 +141,7 @@ import { SESSION_ORIGIN_POS } from '../../services/auth';
 import { loadLeadBuffers } from '../../services/agents/procurement-learning';
 import { SO_FINANCE_KEYS, SO_ITEM_FINANCE_KEYS, stripAuditFinance } from '../lib/finance-keys';
 import { resolveSalesScopeIds, salesDocOutOfScope, resolveCallerStaffId } from '../lib/salesScope';
+import { recordAmendmentRequested, notifyAmendmentsRaised } from '../lib/amendment-raised-effects';
 import {
   resolveVenueBinding,
   loadVenueBindingInputs, venueNameForHalfWrittenPair,
@@ -11931,26 +11932,20 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
       }
     }
 
-    await recordSoAudit(sb, {
-      docNo,
-      action: 'AMENDMENT_REQUESTED',
-      actorId: user.id,
+    /* History row now, per lane; the notice after the loop, once every half has
+       landed. Both live in lib/amendment-raised-effects. */
+    await recordAmendmentRequested(sb, {
+      docNo, amendmentNo, lane: laneKey, actorId: user.id, reason: body.reason,
       actorName: (user.user_metadata as { name?: string } | undefined)?.name ?? null,
-      fieldChanges: [
-        { field: 'amendment', from: null, to: amendmentNo },
-        { field: 'lane', to: laneKey },
-        // Requested header changes are audited at REQUEST time (not just at
-        // apply) so the History timeline shows what was asked for even if it's
-        // rejected.
-        ...half.headerKeys.map((k) => ({
-          field: `requested_${AMENDABLE_HEADER_FIELDS[k]}`,
-          from:  oldHeaderSnapshot[k],
-          to:    half.headerChanges[k],
-        })),
-      ],
-      note: body.reason ?? undefined,
+      headerKeys: half.headerKeys, headerChanges: half.headerChanges,
+      oldHeaderSnapshot, columnOf: AMENDABLE_HEADER_FIELDS,
     });
   }
+
+  await notifyAmendmentsRaised(c, sb, {
+    docNo, reason: body.reason, created: createdAmendments,
+    salespersonStaffId: (soRow as { salesperson_id?: string | null }).salesperson_id,
+  });
 
   /* `amendment` (singular) keeps the pre-split response contract for existing
      callers; `amendments` carries the full split so the UI can say "this was
