@@ -34,18 +34,23 @@ vi.mock('../../vendor/scm/lib/accounting-queries', () => ({
     { account_code: '320-1000', account_name: 'Cash in hand', account_type: 'ASSET', is_active: true, acc_money: true },
     { account_code: '900-A002', account_name: 'Advertisement', account_type: 'EXPENSE', is_active: true, acc_money: false },
     { account_code: '400-0000', account_name: 'Account Payable', account_type: 'LIABILITY', is_active: true, acc_money: false },
+    { account_code: '405-0000', account_name: 'Other Creditos', account_type: 'LIABILITY', is_active: true, acc_money: false },
   ] }, isLoading: false }),
-  useAccountRoles: () => ({ data: { roles: { BANK_DEFAULT: '310-0010', AP: '400-0000' }, overridden: {} }, isLoading: false }),
+  useAccountRoles: () => ({ data: { roles: { BANK_DEFAULT: '310-0010', AP: '400-0000', AP_OTHER: '405-0000' }, overridden: {} }, isLoading: false }),
   useSaveBankDefault: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 vi.mock('../../vendor/scm/lib/purchase-invoice-queries', () => ({
   usePurchaseInvoices: () => ({ data: { purchaseInvoices: [
     { id: 'pi-1', invoice_number: '2990-PI-2609-001', supplier_invoice_ref: 'INV-77', supplier_id: 'sup-1', status: 'POSTED', total_sen: 255000, paid_sen: 0, invoice_date: '2026-09-01' },
     { id: 'pi-2', invoice_number: '2990-PI-2609-002', supplier_invoice_ref: null, supplier_id: 'sup-1', status: 'POSTED', total_sen: 100000, paid_sen: 40000, invoice_date: '2026-08-15' },
+    { id: 'pi-9', invoice_number: '2990-PI-2608-018', supplier_invoice_ref: null, supplier_id: 'sup-405', status: 'POSTED', total_sen: 1644000, paid_sen: 0, invoice_date: '2026-08-20' },
   ] }, isLoading: false }),
 }));
 vi.mock('../../vendor/scm/lib/suppliers-queries', () => ({
-  useSuppliers: () => ({ data: [{ id: 'sup-1', code: 'S001', name: 'Foshan Chairs', currency: 'MYR' }], isLoading: false }),
+  useSuppliers: () => ({ data: [
+    { id: 'sup-1', code: 'S001', name: 'Foshan Chairs', currency: 'MYR' },
+    { id: 'sup-405', code: '405-Z002', name: 'Zhejiang Ju Miao', currency: 'MYR' },
+  ], isLoading: false }),
   useSupplierDetail: () => ({ data: { supplier: { id: 'sup-1', currency: 'MYR' } } }),
 }));
 vi.mock('../../vendor/scm/lib/currencies-queries', async (importOriginal) => ({
@@ -91,6 +96,24 @@ describe('the AP Payment (?type=ap)', () => {
       expect.objectContaining({ debitAccountCode: '400-0000', amountSen: 255000 }),
     ]);
     expect(payload.allocations).toEqual([{ piId: 'pi-1', amountSen: 255000 }]);
+  });
+
+  test('a 405-x supplier debits AP_OTHER — the split follows the code, not the screen', async () => {
+    mutateAsync.mockClear();
+    draw('/scm/payment-vouchers/new?type=ap');
+    fireEvent.focus(screen.getByLabelText(/Supplier \*/));
+    fireEvent.mouseDown(screen.getByText('405-Z002 · Zhejiang Ju Miao'));
+    fireEvent.click(screen.getByLabelText('Pay 2990-PI-2608-018 in full'));
+    const books = String(screen.getByText(/Books:/).textContent);
+    expect(books).toContain('Dr 405-0000');
+    expect(books).toContain('16,440.00');
+    fireEvent.click(screen.getByText('Create AP Payment'));
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
+    const payload = mutateAsync.mock.calls[0]![0];
+    expect(payload.supplierId).toBe('sup-405');
+    expect(payload.lines).toEqual([
+      expect.objectContaining({ debitAccountCode: '405-0000', amountSen: 1644000 }),
+    ]);
   });
 
   test('unticking takes the invoice back out — nothing applied, save refused with a sentence', () => {

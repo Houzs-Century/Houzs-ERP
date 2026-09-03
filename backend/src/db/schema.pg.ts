@@ -155,6 +155,9 @@ export const projects = pgTable("projects", {
   venue: text("venue"),
   venue_address: text("venue_address"),
   brand: text("brand"),
+  // Booth setup/dismantle contractor (free text, mirrors organizer). Picker-backed
+  // by project_contractors; raw-SQL read/write paths reference it by name.
+  contractor: text("contractor"),
   pic_id: integer("pic_id"),
   created_by: integer("created_by"),
   created_at: text("created_at").default(nowText),

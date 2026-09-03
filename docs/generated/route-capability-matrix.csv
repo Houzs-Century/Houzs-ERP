@@ -327,6 +327,9 @@ POST,/api/projects/checklist/:itemId/status,AUTHENTICATED_MIDDLEWARE,COMPANY_CON
 DELETE,/api/projects/checklist/attachments/:attId,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requireAnyPermission([""projects.write"", ""projects.checklist.tick""])",,YES,DECLARED_GATE,backend/src/routes/projects.ts
 PATCH,/api/projects/checklist/attachments/:attId,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requireAnyPermission([""projects.write"", ""projects.checklist.tick""])",,YES,DECLARED_GATE,backend/src/routes/projects.ts
 POST,/api/projects/checklist/attachments/:attId/actions,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requireAnyPermission([""projects.write"", ""projects.checklist.tick""])",,YES,DECLARED_GATE,backend/src/routes/projects.ts
+GET,/api/projects/contractors,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePageAccess(""projects"")",,NO,DECLARED_GATE,backend/src/routes/projects.ts
+POST,/api/projects/contractors,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""projects.write"")",,YES,DECLARED_GATE,backend/src/routes/projects.ts
+DELETE,/api/projects/contractors/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""projects.manage"")",,YES,DECLARED_GATE,backend/src/routes/projects.ts
 GET,/api/projects/cost-rates,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePageAccess(""projects.finances"")",,NO,DECLARED_GATE,backend/src/routes/projects.ts
 PUT,/api/projects/cost-rates/:brand,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""projects.manage"")",,YES,DECLARED_GATE,backend/src/routes/projects.ts
 DELETE,/api/projects/defects/:defectId,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""projects.write"")",,YES,DECLARED_GATE,backend/src/routes/projects.ts
