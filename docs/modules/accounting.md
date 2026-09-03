@@ -235,7 +235,10 @@ elsewhere is a tick, changing it is a rename). The Chart page carries the
 "Add account" form (code / name / type / optional parent / money flag /
 company ticks); the OLD Accounting tab's add-and-edit went read-only with a
 link over — it used to create the row in whichever company the caller stood
-in, which is exactly the two-doors drift the owner called out. Detail
+in, which is exactly the two-doors drift the owner called out. Its
+read-only tree got legible the same day (the owner, that table in hand:
+父子account不是很明显): headers render BOLD with a `header` tag like the
+union page's, children step in behind a └ glyph, parents column muted. Detail
 accounts for other debtors/creditors are children under the 305-0000 /
 405-0000 controls, one per counterparty, opened through this same door.
 
