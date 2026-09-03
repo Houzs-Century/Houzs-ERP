@@ -242,6 +242,57 @@ describe('POST /chart/account — one door, definition lands per tick', () => {
     }
   });
 
+  test('an SFA brings its SAD twin in the same call — same parent, same companies; SBK forces money', async () => {
+    const tables = { accounts: [acct(1, '201-0000', { account_name: 'FURNITURE & FITTINGS' })] };
+    const app = harness(tables);
+    const res = await app.request('/chart/account', {
+      method: 'POST',
+      body: JSON.stringify({
+        code: '201-3000', name: 'F&F (HOSTEL)', accountType: 'ASSET', parentCode: '201-0000',
+        specialType: 'SFA', depreciation: { code: '201-3005', name: 'ACCUM. DEPRN. - F&F (HOSTEL)' },
+        companyIds: [1, 2],
+      }),
+      headers: { 'content-type': 'application/json' },
+    });
+    expect(res.status, JSON.stringify(await res.clone().json())).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true, depreciationCode: '201-3005' });
+    for (const co of [1, 2]) {
+      expect(tables.accounts.find((r) => r.company_id === co && r.account_code === '201-3000'))
+        .toMatchObject({ special_type: 'SFA', parent_code: '201-0000' });
+      expect(tables.accounts.find((r) => r.company_id === co && r.account_code === '201-3005'))
+        .toMatchObject({ special_type: 'SAD', parent_code: '201-0000', account_type: 'ASSET' });
+    }
+
+    const bank = await app.request('/chart/account', {
+      method: 'POST',
+      body: JSON.stringify({ code: '310-0110', name: 'CASH AT BANK - RHB', accountType: 'ASSET', specialType: 'SBK', accMoney: false, companyIds: [1] }),
+      headers: { 'content-type': 'application/json' },
+    });
+    expect(bank.status).toBe(200);
+    expect(tables.accounts.find((r) => r.account_code === '310-0110'))
+      .toMatchObject({ acc_money: true, special_type: 'SBK' });
+  });
+
+  test('a depreciation twin without SFA refuses; a twin whose code lives already refuses whole', async () => {
+    const tables = { accounts: [acct(1, '201-3005')] };
+    const app = harness(tables);
+    const notSfa = await app.request('/chart/account', {
+      method: 'POST',
+      body: JSON.stringify({ code: '906-0000', name: 'X', accountType: 'EXPENSE', depreciation: { code: '906-0005', name: 'Y' } }),
+      headers: { 'content-type': 'application/json' },
+    });
+    expect(notSfa.status).toBe(400);
+    expect((await notSfa.json() as { error: string }).error).toBe('bad_depreciation');
+
+    const taken = await app.request('/chart/account', {
+      method: 'POST',
+      body: JSON.stringify({ code: '201-3000', name: 'X', accountType: 'ASSET', specialType: 'SFA', depreciation: { code: '201-3005', name: 'Y' } }),
+      headers: { 'content-type': 'application/json' },
+    });
+    expect(taken.status).toBe(409);
+    expect(tables.accounts.some((r) => r.account_code === '201-3000'), 'nothing half-created').toBe(false);
+  });
+
   test('an existing code is refused toward the tick column; bad shapes and foreign companies refuse too', async () => {
     const tables = { accounts: [acct(1, '905-0000')] };
     const app = harness(tables);
@@ -338,6 +389,69 @@ describe('PUT /chart/update — one definition, every company', () => {
       headers: { 'content-type': 'application/json' },
     });
     expect(empty.status).toBe(400);
+  });
+});
+
+describe('PUT /chart/update parentCode — 拖动改父户, the target carries the rule', () => {
+  const put = (app: ReturnType<typeof harness>, body: Row) => app.request('/chart/update', {
+    method: 'PUT', body: JSON.stringify(body), headers: { 'content-type': 'application/json' },
+  });
+
+  test('re-parents in every company and instantiates the header where missing', async () => {
+    const tables: Record<string, Row[]> = { accounts: [
+      acct(1, '360-0000', { account_name: 'PREPAYMENT & ADVANCE' }),
+      acct(1, '370-0000', { account_name: 'ACCRUAL - GIK' }),
+      acct(2, '370-0000', { account_name: 'ACCRUAL - GIK' }),
+    ] };
+    const app = harness(tables);
+    const res = await put(app, { code: '370-0000', parentCode: '360-0000' });
+    expect(res.status, JSON.stringify(await res.clone().json())).toBe(200);
+    for (const co of [1, 2]) {
+      expect(tables.accounts.find((r) => r.company_id === co && r.account_code === '370-0000'))
+        .toMatchObject({ parent_code: '360-0000' });
+    }
+    /* Company 2 had no 360-0000 — the header was instantiated for it. */
+    expect(tables.accounts.find((r) => r.company_id === 2 && r.account_code === '360-0000'))
+      .toMatchObject({ is_active: true });
+  });
+
+  test('an empty parent moves the account back to the root', async () => {
+    const tables = { accounts: [acct(1, '360-0010', { parent_code: '360-0000' }), acct(1, '360-0000')] };
+    const app = harness(tables);
+    const res = await put(app, { code: '360-0010', parentCode: null });
+    expect(res.status).toBe(200);
+    expect(tables.accounts.find((r) => r.account_code === '360-0010')!.parent_code).toBeNull();
+  });
+
+  test('cycles, cross-type parents and self-parenting refuse', async () => {
+    const tables = { accounts: [
+      acct(1, '360-0000'),
+      acct(1, '360-0010', { parent_code: '360-0000' }),
+      acct(1, '905-0000', { account_type: 'EXPENSE' }),
+    ] };
+    const app = harness(tables);
+    expect((await put(app, { code: '360-0000', parentCode: '360-0010' })).status).toBe(400); // loop
+    expect((await put(app, { code: '360-0000', parentCode: '905-0000' })).status).toBe(400); // type
+    expect((await put(app, { code: '360-0000', parentCode: '360-0000' })).status).toBe(400); // self
+  });
+
+  test('a target with postings refuses (父户不记账); a target already a header passes as-is', async () => {
+    const tables: Record<string, Row[]> = {
+      accounts: [
+        acct(1, '360-0050'),
+        acct(1, '370-0000'),
+        acct(1, '380-0000'),
+        acct(1, '380-0010', { parent_code: '380-0000' }),
+      ],
+      journal_entry_lines: [{ company_id: 1, account_code: '360-0050' }],
+    };
+    const app = harness(tables);
+    const refused = await put(app, { code: '370-0000', parentCode: '360-0050' });
+    expect(refused.status).toBe(409);
+    expect((await refused.json() as { error: string }).error).toBe('parent_has_postings');
+
+    const header = await put(app, { code: '370-0000', parentCode: '380-0000' });
+    expect(header.status).toBe(200);
   });
 });
 

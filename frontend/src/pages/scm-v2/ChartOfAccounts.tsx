@@ -166,24 +166,52 @@ export const ChartOfAccounts = () => {
     });
   };
 
+  /* ── 拖动改父户 (the owner, 2026-09-03: 我希望可以拖动式 put account under
+     别的 account). Drop A onto B → confirm → B becomes A's header. The moved
+     account keeps its GL (lines hang on its own code); the SERVER holds the
+     rule — a target with postings or references refuses (父户不记账), same
+     type only, no cycles — and its sentence lands in the dialog on refusal. */
+  const [dragCode, setDragCode] = useState<string | null>(null);
+  const onDropInto = async (target: ChartRow) => {
+    const src = dragCode;
+    setDragCode(null);
+    if (!src || src === target.code) return;
+    const srcRow = accounts.find((x) => x.code === src);
+    if (!srcRow || (srcRow.parentCode ?? '') === target.code) return;
+    const ok = await askConfirm({
+      title: `把 ${src} 挂到 ${target.code} 下？`,
+      body: `${srcRow.name} → under ${target.name}. A target that carries postings or references refuses (父户不记账); the move itself never touches the GL.`,
+      confirmLabel: 'Move',
+    });
+    if (!ok) return;
+    try {
+      await doUpdate.mutateAsync({ code: src, parentCode: target.code });
+    } catch (e) {
+      void notify({ title: 'Move failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
+    }
+  };
+
   /* ── 改码/改名 (owner point 1): edit panel above the table. A changed code
      goes through the rename RPC (改码全账跟); name/type ride the update. ── */
   const [editing, setEditing] = useState<ChartRow | null>(null);
   const [editCode, setEditCode] = useState('');
   const [editName, setEditName] = useState('');
   const [editType, setEditType] = useState<ChartRow['type']>('ASSET');
+  const [editParent, setEditParent] = useState('');
   const openEdit = (row: ChartRow) => {
     setEditing(row);
     setEditCode(row.code);
     setEditName(row.name);
     setEditType(row.type);
+    setEditParent(row.parentCode ?? '');
   };
   const saveEdit = async () => {
     if (!editing) return;
     const codeChanged = editCode.trim() !== editing.code;
     const nameChanged = editName.trim() !== editing.name;
     const typeChanged = editType !== editing.type;
-    if (!codeChanged && !nameChanged && !typeChanged) { setEditing(null); return; }
+    const parentChanged = editParent.trim() !== (editing.parentCode ?? '');
+    if (!codeChanged && !nameChanged && !typeChanged && !parentChanged) { setEditing(null); return; }
     if (codeChanged) {
       const ok = await askConfirm({
         title: `Rename ${editing.code} → ${editCode.trim()}?`,
@@ -199,11 +227,12 @@ export const ChartOfAccounts = () => {
           .map(([k, n]) => `${k}: ${n}`).join(', ');
         void notify({ title: `${editing.code} → ${editCode.trim()}`, body: moved ? `Moved — ${moved}.` : 'Renamed.', tone: 'info' });
       }
-      if (nameChanged || typeChanged) {
+      if (nameChanged || typeChanged || parentChanged) {
         await doUpdate.mutateAsync({
           code: codeChanged ? editCode.trim() : editing.code,
           ...(nameChanged ? { name: editName.trim() } : {}),
           ...(typeChanged ? { accountType: editType } : {}),
+          ...(parentChanged ? { parentCode: editParent.trim() || null } : {}),
         });
       }
       setEditing(null);
@@ -221,26 +250,46 @@ export const ChartOfAccounts = () => {
   const [newType, setNewType] = useState<ChartRow['type']>('ASSET');
   const [newParent, setNewParent] = useState('');
   const [newMoney, setNewMoney] = useState(false);
+  const [newSpecial, setNewSpecial] = useState('');
+  const [depOn, setDepOn] = useState(true);
+  const [depCode, setDepCode] = useState('');
+  const [depName, setDepName] = useState('');
   const [newCompanies, setNewCompanies] = useState<Set<number>>(new Set());
   const openAdd = () => {
     setAddingNew(true);
     setNewCode(''); setNewName(''); setNewType('ASSET'); setNewParent(''); setNewMoney(false);
+    setNewSpecial(''); setDepOn(true); setDepCode(''); setDepName('');
     setNewCompanies(new Set(companies.map((co) => co.id)));
+  };
+  /* His chart's own SFA/SAD convention: the twin is the asset's code with the
+     last digit +5 (201-1000 → 201-1005), named ACCUM. DEPRN. - <asset>. */
+  const deriveDep = (assetCode: string, assetName: string) => {
+    const m = /^(\d{3}-\d{3})(\d)$/.exec(assetCode.trim());
+    setDepCode(m && Number(m[2]) < 5 ? `${m[1]}${Number(m[2]) + 5}` : '');
+    setDepName(assetName.trim() ? `ACCUM. DEPRN. - ${assetName.trim()}` : '');
+  };
+  const pickSpecial = (sp: string) => {
+    setNewSpecial(sp);
+    if (sp === 'SBK' || sp === 'SCH') setNewMoney(true);
+    if (sp === 'SFA') deriveDep(newCode, newName);
   };
   const saveNew = async () => {
     try {
+      const withDep = newSpecial === 'SFA' && depOn && depCode.trim() && depName.trim();
       const res = await doCreate.mutateAsync({
         code: newCode.trim(),
         name: newName.trim(),
         accountType: newType,
         parentCode: newParent.trim() || null,
         accMoney: newMoney,
+        ...(newSpecial ? { specialType: newSpecial } : {}),
+        ...(withDep ? { depreciation: { code: depCode.trim(), name: depName.trim() } } : {}),
         companyIds: [...newCompanies],
       });
       setAddingNew(false);
       void notify({
         title: `${res.code} created`,
-        body: `Live in ${res.companies.length} company(ies)${newParent.trim() ? ` under ${newParent.trim()}` : ''}. Adjust the ticks any time.`,
+        body: `Live in ${res.companies.length} company(ies)${newParent.trim() ? ` under ${newParent.trim()}` : ''}${res.depreciationCode ? ` — depreciation twin ${res.depreciationCode} created beside it` : ''}. Adjust the ticks any time.`,
         tone: 'info',
       });
     } catch (e) {
@@ -344,6 +393,10 @@ export const ChartOfAccounts = () => {
         ) : undefined}
       />
 
+      <datalist id="chart-parent-codes">
+        {accounts.map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}
+      </datalist>
+
       {addingNew && (
         <section className={styles.card}>
           <div className={styles.cardHeader}>
@@ -371,14 +424,53 @@ export const ChartOfAccounts = () => {
               <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>Parent (optional)</span>
               <input value={newParent} onChange={(e) => setNewParent(e.target.value)} list="chart-parent-codes" placeholder="305-0000"
                 style={{ fontFamily: 'var(--font-mono)', padding: '6px 8px', border: '1px solid var(--border-weak, #d8d5cd)', borderRadius: 6, width: 150 }} />
-              <datalist id="chart-parent-codes">
-                {accounts.map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}
-              </datalist>
+            </label>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>Special type</span>
+              <select value={newSpecial} onChange={(e) => pickSpecial(e.target.value)} aria-label="Special type"
+                style={{ padding: '6px 8px', border: '1px solid var(--border-weak, #d8d5cd)', borderRadius: 6 }}>
+                <option value="">— none —</option>
+                <option value="SBK">SBK · 银行</option>
+                <option value="SCH">SCH · 现金</option>
+                <option value="SOP">SOP · 电子钱包/其他</option>
+                <option value="SFA">SFA · 固定资产 (带折旧对)</option>
+                <option value="SAD">SAD · 累计折旧</option>
+                <option value="SRE">SRE · Retained earning</option>
+                <option value="SDP">SDP · Deferred</option>
+                <option value="SOS">SOS · 期初存货</option>
+                <option value="SCS">SCS · 期末存货</option>
+                <option value="SDC">SDC · Debtor control (由模块过账)</option>
+                <option value="SCC">SCC · Creditor control (由模块过账)</option>
+                <option value="SBS">SBS · Stock control (由模块过账)</option>
+              </select>
             </label>
             <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
               <input type="checkbox" checked={newMoney} onChange={(e) => setNewMoney(e.target.checked)} />
               money (bank/cash/wallet)
             </label>
+            {newSpecial === 'SFA' && (
+              <div style={{ flexBasis: '100%', display: 'flex', flexWrap: 'wrap', gap: 'var(--space-3)', alignItems: 'flex-end', padding: 'var(--space-2)', border: '1px dashed var(--border-weak, #d8d5cd)', borderRadius: 8 }}>
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  <input type="checkbox" checked={depOn} onChange={(e) => setDepOn(e.target.checked)} />
+                  同时开折旧户 (SAD)
+                </label>
+                {depOn && (<>
+                  <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>Depreciation code</span>
+                    <input value={depCode} onChange={(e) => setDepCode(e.target.value)} aria-label="Depreciation code"
+                      style={{ fontFamily: 'var(--font-mono)', padding: '6px 8px', border: '1px solid var(--border-weak, #d8d5cd)', borderRadius: 6, width: 130 }} />
+                  </label>
+                  <label style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: '1 1 240px' }}>
+                    <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>Depreciation name</span>
+                    <input value={depName} onChange={(e) => setDepName(e.target.value)} aria-label="Depreciation name"
+                      style={{ padding: '6px 8px', border: '1px solid var(--border-weak, #d8d5cd)', borderRadius: 6 }} />
+                  </label>
+                  <Button variant="ghost" size="sm" onClick={() => deriveDep(newCode, newName)}>
+                    照惯例填 (+5 / ACCUM. DEPRN.)
+                  </Button>
+                </>)}
+              </div>
+            )}
             <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
               {companies.map((co) => (
                 <label key={co.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
@@ -465,6 +557,11 @@ export const ChartOfAccounts = () => {
                 {Object.keys(TYPE_TONE).map((t) => <option key={t} value={t}>{t}</option>)}
               </select>
             </label>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>Under (parent — 留空 = 根)</span>
+              <input value={editParent} onChange={(e) => setEditParent(e.target.value)} list="chart-parent-codes" aria-label="Edit parent"
+                style={{ fontFamily: 'var(--font-mono)', padding: '6px 8px', border: '1px solid var(--border-weak, #d8d5cd)', borderRadius: 6, width: 150 }} />
+            </label>
             <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
               <Button variant="primary" size="sm" onClick={() => void saveEdit()} disabled={doRename.isPending || doUpdate.isPending}>
                 {doRename.isPending || doUpdate.isPending ? 'Saving…' : 'Save'}
@@ -515,7 +612,14 @@ export const ChartOfAccounts = () => {
                   if (isHidden(a.code)) return null;
                   const isControl = isControlSpecial(a.special);
                   return (
-                    <tr key={a.code} style={{ borderBottom: '1px solid var(--border-weak, #f0eee8)' }}>
+                    <tr
+                      key={a.code}
+                      draggable={canManage}
+                      onDragStart={() => setDragCode(a.code)}
+                      onDragOver={(e) => { if (canManage && dragCode && dragCode !== a.code) e.preventDefault(); }}
+                      onDrop={(e) => { e.preventDefault(); void onDropInto(a); }}
+                      style={{ borderBottom: '1px solid var(--border-weak, #f0eee8)', cursor: canManage ? 'grab' : undefined }}
+                    >
                       <td style={{ padding: '4px 8px', fontFamily: 'var(--font-mono)', paddingLeft: a.parentCode ? 28 : 8, fontWeight: isParent ? 700 : 400, whiteSpace: 'nowrap' }}>
                         {isParent ? (
                           <button

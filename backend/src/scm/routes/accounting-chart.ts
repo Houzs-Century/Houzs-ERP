@@ -345,6 +345,7 @@ export const chartCreateHandler = async (c: any): Promise<Response> => {
   const name = String(body.name ?? '').trim();
   const type = String(body.accountType ?? '').trim().toUpperCase();
   const parent = body.parentCode ? String(body.parentCode).trim() : null;
+  const special = body.specialType ? String(body.specialType).trim().toUpperCase() : null;
   const targets: number[] = Array.isArray(body.companyIds) && body.companyIds.length > 0
     ? body.companyIds.map(Number) : ids;
   if (!ACCOUNT_CODE_RE.test(code)) {
@@ -354,22 +355,47 @@ export const chartCreateHandler = async (c: any): Promise<Response> => {
   if (!ACCOUNT_TYPES.has(type)) {
     return c.json({ error: 'bad_type', message: 'accountType must be ASSET / LIABILITY / EQUITY / INCOME / EXPENSE.' }, 400);
   }
+  if (special && !SPECIAL_RE.test(special)) {
+    return c.json({ error: 'bad_special', message: `${special} is not a 2-4 letter AutoCount special code.` }, 400);
+  }
   if (parent === code) return c.json({ error: 'bad_parent', message: 'An account cannot be its own parent.' }, 400);
   for (const t of targets) {
     if (!Number.isInteger(t) || !ids.includes(t)) {
       return c.json({ error: 'company_not_yours', message: `Company ${t} is not in your grants.` }, 403);
     }
   }
-  const sb = c.get('supabase');
 
-  const { data: exists, error: exErr } = await sb
-    .from('accounts').select('company_id').eq('account_code', code).limit(1);
-  if (exErr) return c.json({ error: 'load_failed', reason: exErr.message }, 500);
-  if (((exists ?? []) as unknown[]).length > 0) {
-    return c.json({
-      error: 'code_exists',
-      message: `${code} already exists — tick it on for a company instead, or rename it if the number is wrong.`,
-    }, 409);
+  /* 固定资产带折旧 (the owner, 2026-09-03, the SFA/SAD pairs in hand: create
+     new fixed assets 时照理就需要 create depreciation account): an SFA may
+     bring its SAD twin in the SAME call — both validated up front, both
+     created into the same companies, so a fixed asset never lands without
+     somewhere for its depreciation to accumulate. */
+  let dep: { code: string; name: string } | null = null;
+  if (body.depreciation != null) {
+    if (special !== 'SFA') {
+      return c.json({ error: 'bad_depreciation', message: 'A depreciation twin rides only on an SFA (fixed asset) account.' }, 400);
+    }
+    const dCode = String(body.depreciation.code ?? '').trim();
+    const dName = String(body.depreciation.name ?? '').trim();
+    if (!ACCOUNT_CODE_RE.test(dCode)) {
+      return c.json({ error: 'bad_code', message: `${dCode || '(empty)'} is not in the NNN-XXXX account-code shape.` }, 400);
+    }
+    if (!dName) return c.json({ error: 'bad_name', message: 'The depreciation account name cannot be empty.' }, 400);
+    if (dCode === code) return c.json({ error: 'bad_depreciation', message: 'The depreciation account needs its own code.' }, 400);
+    dep = { code: dCode, name: dName };
+  }
+
+  const sb = c.get('supabase');
+  for (const candidate of dep ? [code, dep.code] : [code]) {
+    const { data: exists, error: exErr } = await sb
+      .from('accounts').select('company_id').eq('account_code', candidate).limit(1);
+    if (exErr) return c.json({ error: 'load_failed', reason: exErr.message }, 500);
+    if (((exists ?? []) as unknown[]).length > 0) {
+      return c.json({
+        error: 'code_exists',
+        message: `${candidate} already exists — tick it on for a company instead, or rename it if the number is wrong.`,
+      }, 409);
+    }
   }
 
   /* The parent chain, from the master definition (lowest company carrying
@@ -391,6 +417,10 @@ export const chartCreateHandler = async (c: any): Promise<Response> => {
     cursor = (lookRes.data as AccountRow).parent_code;
   }
 
+  /* SBK/SCH ARE money — the import applies the same equivalence; a manual
+     create must not be able to disagree with the vocabulary. */
+  const money = special === 'SBK' || special === 'SCH' ? true : body.accMoney === true;
+
   for (const companyId of targets) {
     for (const d of chain) {
       const { error: upErr } = await sb.from('accounts').upsert({
@@ -411,13 +441,27 @@ export const chartCreateHandler = async (c: any): Promise<Response> => {
       account_name: name,
       account_type: type,
       parent_code: parent,
-      acc_money: body.accMoney === true,
-      special_type: null,
+      acc_money: money,
+      special_type: special,
       is_active: true,
     }, { onConflict: 'company_id,account_code' });
     if (insErr) return c.json({ error: 'save_failed', reason: insErr.message }, 500);
+    if (dep) {
+      /* The twin lives beside the asset — same parent, same type, SAD. */
+      const { error: depErr } = await sb.from('accounts').upsert({
+        company_id: companyId,
+        account_code: dep.code,
+        account_name: dep.name,
+        account_type: type,
+        parent_code: parent,
+        acc_money: false,
+        special_type: 'SAD',
+        is_active: true,
+      }, { onConflict: 'company_id,account_code' });
+      if (depErr) return c.json({ error: 'save_failed', reason: depErr.message }, 500);
+    }
   }
-  return c.json({ ok: true, code, companies: targets });
+  return c.json({ ok: true, code, companies: targets, ...(dep ? { depreciationCode: dep.code } : {}) });
 };
 
 /* ── PUT /accounting/chart/rename — {oldCode, newCode}, 改码全账跟 ──────────
@@ -475,18 +519,127 @@ export const chartUpdateHandler = async (c: any): Promise<Response> => {
     patch.account_type = type;
   }
   if (body.accMoney !== undefined) patch.acc_money = body.accMoney === true;
-  if (Object.keys(patch).length === 0) return c.json({ error: 'nothing_to_change' }, 400);
 
   const sb = c.get('supabase');
+
+  /* ── 改父户 (the owner, 2026-09-03: 我希望可以拖动式 put account under 别的
+     account 前提是那个 account 没有 transaction). The moved account keeps its
+     own GL — lines hang on ITS code, the tree is presentation — so IT may
+     carry history freely. The constraint sits on the TARGET: 父户不记账, so
+     an account that has postings (or any reference) cannot BECOME a header.
+     A target that already IS a header (active children) passes as-is. */
+  let newParent: string | null | undefined;
+  if (body.parentCode !== undefined) {
+    const parent = body.parentCode == null ? '' : String(body.parentCode).trim();
+    if (parent === '') {
+      newParent = null; // move to root
+    } else {
+      if (parent === code) return c.json({ error: 'bad_parent', message: 'An account cannot be its own parent.' }, 400);
+      const { data: pRow, error: pErr } = await sb.from('accounts')
+        .select('account_code, account_type, parent_code')
+        .eq('account_code', parent).order('company_id').limit(1).maybeSingle();
+      if (pErr) return c.json({ error: 'load_failed', reason: pErr.message }, 500);
+      if (!pRow) return c.json({ error: 'parent_unknown', message: `Parent ${parent} exists in no company's chart.` }, 404);
+      const { data: selfRow, error: sErr } = await sb.from('accounts')
+        .select('account_type').eq('account_code', code).order('company_id').limit(1).maybeSingle();
+      if (sErr) return c.json({ error: 'load_failed', reason: sErr.message }, 500);
+      if (!selfRow) return c.json({ error: 'code_unknown', message: `${code} exists in no company's chart.` }, 404);
+      const selfType = patch.account_type ?? (selfRow as { account_type: string }).account_type;
+      if ((pRow as { account_type: string }).account_type !== selfType) {
+        return c.json({ error: 'bad_parent', message: `A parent shares the child's type — ${parent} is ${(pRow as { account_type: string }).account_type}, ${code} is ${String(selfType)}.` }, 400);
+      }
+      /* No cycles: the target may not sit anywhere BELOW the moved code. */
+      let cursor: string | null = (pRow as { parent_code: string | null }).parent_code;
+      for (let depth = 0; cursor && depth < 6; depth += 1) {
+        if (cursor === code) return c.json({ error: 'bad_parent', message: `${parent} sits under ${code} — that loop would swallow the tree.` }, 400);
+        const { data: up, error: upErr } = await sb.from('accounts')
+          .select('parent_code').eq('account_code', cursor).order('company_id').limit(1).maybeSingle();
+        if (upErr) return c.json({ error: 'load_failed', reason: upErr.message }, 500);
+        cursor = (up as { parent_code: string | null } | null)?.parent_code ?? null;
+      }
+      /* Already a header? Then it already takes no postings — pass. */
+      const { data: kids, error: kErr } = await sb.from('accounts')
+        .select('account_code').eq('parent_code', parent).eq('is_active', true).limit(1);
+      if (kErr) return c.json({ error: 'load_failed', reason: kErr.message }, 500);
+      if (((kids ?? []) as unknown[]).length === 0) {
+        const probes: Array<{ table: string; column: string; label: string }> = [
+          { table: 'journal_entry_lines', column: 'account_code', label: 'GL journal lines' },
+          { table: 'payment_vouchers', column: 'credit_account_code', label: 'payment vouchers (credit side)' },
+          { table: 'payment_voucher_lines', column: 'debit_account_code', label: 'payment voucher lines' },
+          { table: 'acc_vendor_memory', column: 'debit_account_code', label: 'vendor memory' },
+          { table: 'acc_company_acquirers', column: 'transit_account_code', label: 'acquirer transit link' },
+          { table: 'acc_company_acquirers', column: 'fee_account_code', label: 'acquirer fee link' },
+          { table: 'acc_company_acquirers', column: 'bank_account_code', label: 'acquirer bank link' },
+          { table: 'acc_bank_statement_config', column: 'account_code', label: 'bank statement setup' },
+          { table: 'acc_bank_statements', column: 'account_code', label: 'imported bank statements' },
+          { table: 'acc_account_roles', column: 'account_code', label: 'system role bindings' },
+        ];
+        const used: string[] = [];
+        for (const p of probes) {
+          const { data: hit, error: hErr } = await sb.from(p.table).select(p.column).eq(p.column, parent).limit(1);
+          if (hErr) return c.json({ error: 'load_failed', reason: `${p.table}: ${hErr.message}` }, 500);
+          if (((hit ?? []) as unknown[]).length > 0 && !used.includes(p.label)) used.push(p.label);
+        }
+        if (used.length > 0) {
+          return c.json({
+            error: 'parent_has_postings',
+            message: `${parent} cannot become a header — 父户不记账, and it is referenced by: ${used.join(', ')}.`,
+            used,
+          }, 409);
+        }
+      }
+      newParent = parent;
+    }
+    patch.parent_code = newParent;
+  }
+
+  if (Object.keys(patch).length === 0) return c.json({ error: 'nothing_to_change' }, 400);
+
   const { data, error } = await sb
     .from('accounts')
     .update(patch)
     .eq('account_code', code)
     .select('company_id');
   if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);
-  const touched = ((data ?? []) as unknown[]).length;
-  if (touched === 0) return c.json({ error: 'code_unknown', message: `${code} exists in no company's chart.` }, 404);
-  return c.json({ ok: true, code, companies: touched });
+  const touched = ((data ?? []) as Array<{ company_id: number }>);
+  if (touched.length === 0) return c.json({ error: 'code_unknown', message: `${code} exists in no company's chart.` }, 404);
+
+  /* A re-parented child must find its header in EVERY company it lives in —
+     instantiate the parent chain from the master definition where missing
+     (the tick-ON walk, reused in spirit). */
+  if (typeof newParent === 'string') {
+    for (const t of touched) {
+      const chain: string[] = [];
+      let cur: string | null = newParent;
+      for (let depth = 0; cur && depth < 4; depth += 1) {
+        chain.unshift(cur);
+        const walkRes: { data: unknown; error: { message: string } | null } = await sb.from('accounts')
+          .select('parent_code').eq('account_code', cur).order('company_id').limit(1).maybeSingle();
+        if (walkRes.error) return c.json({ error: 'load_failed', reason: walkRes.error.message }, 500);
+        cur = (walkRes.data as { parent_code: string | null } | null)?.parent_code ?? null;
+      }
+      for (const step of chain) {
+        const { data: def, error: dErr } = await sb.from('accounts')
+          .select('account_code, account_name, account_type, parent_code, acc_money, special_type')
+          .eq('account_code', step).order('company_id').limit(1).maybeSingle();
+        if (dErr) return c.json({ error: 'load_failed', reason: dErr.message }, 500);
+        if (!def) continue;
+        const d = def as AccountRow;
+        const { error: upErr } = await sb.from('accounts').upsert({
+          company_id: t.company_id,
+          account_code: d.account_code,
+          account_name: d.account_name,
+          account_type: d.account_type,
+          parent_code: d.parent_code,
+          acc_money: d.acc_money === true,
+          special_type: d.special_type ?? null,
+          is_active: true,
+        }, { onConflict: 'company_id,account_code' });
+        if (upErr) return c.json({ error: 'save_failed', reason: upErr.message }, 500);
+      }
+    }
+  }
+  return c.json({ ok: true, code, companies: touched.length });
 };
 
 /* ── DELETE /accounting/chart/account?code=… — only a NEVER-USED code dies ──

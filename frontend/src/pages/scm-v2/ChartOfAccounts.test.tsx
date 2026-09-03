@@ -135,6 +135,32 @@ describe('fold / edit / delete — the owner points 1, 2 and 4', () => {
     expect(renameAsync).not.toHaveBeenCalled();
   });
 
+  test('SFA derives its SAD twin by the +5 convention and the payload carries both', async () => {
+    createAsync.mockClear();
+    draw();
+    fireEvent.click(screen.getByText('Add account'));
+    fireEvent.change(screen.getByPlaceholderText('305-0010'), { target: { value: '201-3000' } });
+    const name = screen.getAllByDisplayValue('').find((el) => String(el.closest('label')?.textContent).includes('Name'))!;
+    fireEvent.change(name, { target: { value: 'F&F (HOSTEL)' } });
+    fireEvent.change(screen.getByLabelText('Special type'), { target: { value: 'SFA' } });
+    expect(screen.getByLabelText('Depreciation code')).toHaveProperty('value', '201-3005');
+    expect(screen.getByLabelText('Depreciation name')).toHaveProperty('value', 'ACCUM. DEPRN. - F&F (HOSTEL)');
+    fireEvent.click(screen.getByText('Create'));
+    await waitFor(() => expect(createAsync).toHaveBeenCalledWith(expect.objectContaining({
+      code: '201-3000',
+      specialType: 'SFA',
+      depreciation: { code: '201-3005', name: 'ACCUM. DEPRN. - F&F (HOSTEL)' },
+    })));
+  });
+
+  test('picking SBK auto-ticks money — the import equivalence, live on the form', () => {
+    draw();
+    fireEvent.click(screen.getByText('Add account'));
+    fireEvent.change(screen.getByLabelText('Special type'), { target: { value: 'SBK' } });
+    const box = screen.getByText(/money \(bank\/cash\/wallet\)/).closest('label')!.querySelector('input')!;
+    expect(box.checked).toBe(true);
+  });
+
   test('Add account creates once with the ticked companies and the parent', async () => {
     createAsync.mockClear();
     draw();
@@ -149,6 +175,27 @@ describe('fold / edit / delete — the owner points 1, 2 and 4', () => {
       code: '305-0010', name: 'AHMAD BIN ALI', accountType: 'ASSET',
       parentCode: '305-0000', accMoney: false, companyIds: [1],
     }));
+  });
+
+  test('dropping a row onto another confirms, then re-parents through the update', async () => {
+    updateAsync.mockClear(); confirmFn.mockClear();
+    draw();
+    const src = screen.getByText('900-A002').closest('tr')!;
+    const target = screen.getByText('310-0000').closest('tr')!;
+    fireEvent.dragStart(src);
+    fireEvent.dragOver(target);
+    fireEvent.drop(target);
+    await waitFor(() => expect(updateAsync).toHaveBeenCalledWith({ code: '900-A002', parentCode: '310-0000' }));
+    expect(JSON.stringify(confirmFn.mock.calls[0]![0])).toMatch(/挂到 310-0000 下/);
+  });
+
+  test('the edit panel moves an account under a parent (and 留空 = root)', async () => {
+    updateAsync.mockClear();
+    draw();
+    fireEvent.click(screen.getByLabelText('Edit 310-0010'));
+    fireEvent.change(screen.getByLabelText('Edit parent'), { target: { value: '' } });
+    fireEvent.click(screen.getByText('Save'));
+    await waitFor(() => expect(updateAsync).toHaveBeenCalledWith({ code: '310-0010', parentCode: null }));
   });
 
   test('delete confirms, then sends the code', async () => {
