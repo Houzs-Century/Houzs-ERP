@@ -18,6 +18,7 @@ import * as XLSX from 'xlsx';
 const tickAsync = vi.fn(async (_b: unknown) => ({}));
 const importAsync = vi.fn(async (_b: unknown) => ({ ok: true, imported: 3, shared: 2, sharedTo: [2] }));
 const renameAsync = vi.fn(async (_b: unknown) => ({ ok: true, moved: { accounts: 2, journal_lines: 3 } }));
+const createAsync = vi.fn(async (_b: unknown) => ({ ok: true, code: '305-0010', companies: [1, 2] }));
 const updateAsync = vi.fn(async (_b: unknown) => ({ ok: true, companies: 2 }));
 const deleteAsync = vi.fn(async (_c: unknown) => ({ ok: true, companies: 2 }));
 vi.mock('../../vendor/scm/lib/accounting-queries', () => ({
@@ -33,6 +34,7 @@ vi.mock('../../vendor/scm/lib/accounting-queries', () => ({
   useChartRename: () => ({ mutateAsync: renameAsync, isPending: false }),
   useChartUpdate: () => ({ mutateAsync: updateAsync, isPending: false }),
   useChartDelete: () => ({ mutateAsync: deleteAsync, isPending: false }),
+  useChartCreate: () => ({ mutateAsync: createAsync, isPending: false }),
 }));
 vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ can: () => true }) }));
 const confirmFn = vi.fn(async (_a: unknown) => true);
@@ -131,6 +133,22 @@ describe('fold / edit / delete — the owner points 1, 2 and 4', () => {
     fireEvent.click(screen.getByText('Save'));
     await waitFor(() => expect(updateAsync).toHaveBeenCalledWith({ code: '900-A002', name: 'ADVERTISING' }));
     expect(renameAsync).not.toHaveBeenCalled();
+  });
+
+  test('Add account creates once with the ticked companies and the parent', async () => {
+    createAsync.mockClear();
+    draw();
+    fireEvent.click(screen.getByText('Add account'));
+    fireEvent.change(screen.getByPlaceholderText('305-0010'), { target: { value: '305-0010' } });
+    const name = screen.getAllByDisplayValue('').find((el) => String(el.closest('label')?.textContent).includes('Name'))!;
+    fireEvent.change(name, { target: { value: 'AHMAD BIN ALI' } });
+    fireEvent.change(screen.getByPlaceholderText('305-0000'), { target: { value: '305-0000' } });
+    fireEvent.click(screen.getByLabelText('new account for 2990')); // untick 2990 → HOUZS only
+    fireEvent.click(screen.getByText('Create'));
+    await waitFor(() => expect(createAsync).toHaveBeenCalledWith({
+      code: '305-0010', name: 'AHMAD BIN ALI', accountType: 'ASSET',
+      parentCode: '305-0000', accMoney: false, companyIds: [1],
+    }));
   });
 
   test('delete confirms, then sends the code', async () => {

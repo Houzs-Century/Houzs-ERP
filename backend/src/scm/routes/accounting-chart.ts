@@ -326,6 +326,100 @@ export const requireLeafAccount = async (
   return null;
 };
 
+/* ── POST /accounting/chart/account — ONE door to open an account ───────────
+   The owner (2026-09-03): 照理说应该维护 overall chart of account 罢了. The
+   old Accounting tab created the row in whichever company the caller stood
+   in; this creates the DEFINITION once and lands it in every company the
+   caller ticks (granted only, parents instantiated per company so the tree
+   stays whole everywhere). A code that exists anywhere is refused — turning
+   it on elsewhere is the tick column's job, changing it is rename's. */
+export const chartCreateHandler = async (c: any): Promise<Response> => {
+  if (!requireChartPerm(c)) {
+    return c.json({ error: "You don't have permission to manage the chart of accounts." }, 403);
+  }
+  let body: any;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
+  const ids = allowedIds(c);
+  if (ids.length === 0) return c.json({ error: 'no_companies', message: 'No company grants resolve for this session.' }, 409);
+  const code = String(body.code ?? '').trim();
+  const name = String(body.name ?? '').trim();
+  const type = String(body.accountType ?? '').trim().toUpperCase();
+  const parent = body.parentCode ? String(body.parentCode).trim() : null;
+  const targets: number[] = Array.isArray(body.companyIds) && body.companyIds.length > 0
+    ? body.companyIds.map(Number) : ids;
+  if (!ACCOUNT_CODE_RE.test(code)) {
+    return c.json({ error: 'bad_code', message: `${code || '(empty)'} is not in the NNN-XXXX account-code shape.` }, 400);
+  }
+  if (!name) return c.json({ error: 'bad_name', message: 'The account name cannot be empty.' }, 400);
+  if (!ACCOUNT_TYPES.has(type)) {
+    return c.json({ error: 'bad_type', message: 'accountType must be ASSET / LIABILITY / EQUITY / INCOME / EXPENSE.' }, 400);
+  }
+  if (parent === code) return c.json({ error: 'bad_parent', message: 'An account cannot be its own parent.' }, 400);
+  for (const t of targets) {
+    if (!Number.isInteger(t) || !ids.includes(t)) {
+      return c.json({ error: 'company_not_yours', message: `Company ${t} is not in your grants.` }, 403);
+    }
+  }
+  const sb = c.get('supabase');
+
+  const { data: exists, error: exErr } = await sb
+    .from('accounts').select('company_id').eq('account_code', code).limit(1);
+  if (exErr) return c.json({ error: 'load_failed', reason: exErr.message }, 500);
+  if (((exists ?? []) as unknown[]).length > 0) {
+    return c.json({
+      error: 'code_exists',
+      message: `${code} already exists — tick it on for a company instead, or rename it if the number is wrong.`,
+    }, 409);
+  }
+
+  /* The parent chain, from the master definition (lowest company carrying
+     each code) — same walk as tick-ON, so a child never lands without its
+     header in ANY company that receives it. */
+  const chain: AccountRow[] = [];
+  let cursor: string | null = parent;
+  for (let depth = 0; cursor && depth < 4; depth += 1) {
+    const lookRes: { data: unknown; error: { message: string } | null } = await sb
+      .from('accounts')
+      .select('account_code, account_name, account_type, parent_code, acc_money, special_type')
+      .eq('account_code', cursor)
+      .order('company_id')
+      .limit(1)
+      .maybeSingle();
+    if (lookRes.error) return c.json({ error: 'load_failed', reason: lookRes.error.message }, 500);
+    if (!lookRes.data) return c.json({ error: 'parent_unknown', message: `Parent ${cursor} exists in no company's chart.` }, 400);
+    chain.unshift(lookRes.data as AccountRow);
+    cursor = (lookRes.data as AccountRow).parent_code;
+  }
+
+  for (const companyId of targets) {
+    for (const d of chain) {
+      const { error: upErr } = await sb.from('accounts').upsert({
+        company_id: companyId,
+        account_code: d.account_code,
+        account_name: d.account_name,
+        account_type: d.account_type,
+        parent_code: d.parent_code,
+        acc_money: d.acc_money === true,
+        special_type: d.special_type ?? null,
+        is_active: true,
+      }, { onConflict: 'company_id,account_code' });
+      if (upErr) return c.json({ error: 'save_failed', reason: upErr.message }, 500);
+    }
+    const { error: insErr } = await sb.from('accounts').upsert({
+      company_id: companyId,
+      account_code: code,
+      account_name: name,
+      account_type: type,
+      parent_code: parent,
+      acc_money: body.accMoney === true,
+      special_type: null,
+      is_active: true,
+    }, { onConflict: 'company_id,account_code' });
+    if (insErr) return c.json({ error: 'save_failed', reason: insErr.message }, 500);
+  }
+  return c.json({ ok: true, code, companies: targets });
+};
+
 /* ── PUT /accounting/chart/rename — {oldCode, newCode}, 改码全账跟 ──────────
    One call to scm.acc_rename_account (migration 0347): the accounts rows of
    every company, children's parent_code, and all nine reference homes move in

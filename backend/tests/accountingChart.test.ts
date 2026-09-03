@@ -20,7 +20,7 @@ import { Hono } from 'hono';
 import { describe, expect, test } from 'vitest';
 import {
   chartUnionHandler, chartTickHandler, chartImportHandler, requireLeafAccount,
-  chartRenameHandler, chartUpdateHandler, chartDeleteHandler,
+  chartRenameHandler, chartUpdateHandler, chartDeleteHandler, chartCreateHandler,
 } from '../src/scm/routes/accounting-chart';
 
 type Row = Record<string, any>;
@@ -108,6 +108,7 @@ function harness(
   app.post('/chart/import', chartImportHandler as never);
   app.put('/chart/rename', chartRenameHandler as never);
   app.put('/chart/update', chartUpdateHandler as never);
+  app.post('/chart/account', chartCreateHandler as never);
   app.delete('/chart/account', chartDeleteHandler as never);
   return app;
 }
@@ -217,6 +218,55 @@ describe('POST /chart/import', () => {
     });
     expect(res.status).toBe(400);
     expect((await res.json() as { message: string }).message).toMatch(/201-1000 names parent 201-0000/);
+  });
+});
+
+describe('POST /chart/account — one door, definition lands per tick', () => {
+  test('creates in the chosen companies with the parent chain riding along', async () => {
+    const tables = { accounts: [
+      acct(1, '305-0000', { account_name: 'OTHER DEBTOR', special_type: 'SDC' }),
+    ] };
+    const app = harness(tables);
+    const res = await app.request('/chart/account', {
+      method: 'POST',
+      body: JSON.stringify({ code: '305-0010', name: 'AHMAD BIN ALI', accountType: 'asset', parentCode: '305-0000', companyIds: [1, 2] }),
+      headers: { 'content-type': 'application/json' },
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true, code: '305-0010', companies: [1, 2] });
+    for (const co of [1, 2]) {
+      const child = tables.accounts.find((r) => r.company_id === co && r.account_code === '305-0010');
+      expect(child, `child in company ${co}`).toMatchObject({ account_type: 'ASSET', parent_code: '305-0000', is_active: true });
+      const parent = tables.accounts.find((r) => r.company_id === co && r.account_code === '305-0000');
+      expect(parent, `parent in company ${co}`).toMatchObject({ special_type: 'SDC', is_active: true });
+    }
+  });
+
+  test('an existing code is refused toward the tick column; bad shapes and foreign companies refuse too', async () => {
+    const tables = { accounts: [acct(1, '905-0000')] };
+    const app = harness(tables);
+    const dup = await app.request('/chart/account', {
+      method: 'POST', body: JSON.stringify({ code: '905-0000', name: 'X', accountType: 'EXPENSE' }),
+      headers: { 'content-type': 'application/json' },
+    });
+    expect(dup.status).toBe(409);
+    expect((await dup.json() as { error: string }).error).toBe('code_exists');
+    const bad = await app.request('/chart/account', {
+      method: 'POST', body: JSON.stringify({ code: 'nope', name: 'X', accountType: 'EXPENSE' }),
+      headers: { 'content-type': 'application/json' },
+    });
+    expect(bad.status).toBe(400);
+    const foreign = await app.request('/chart/account', {
+      method: 'POST', body: JSON.stringify({ code: '906-0000', name: 'X', accountType: 'EXPENSE', companyIds: [3] }),
+      headers: { 'content-type': 'application/json' },
+    });
+    expect(foreign.status).toBe(403);
+    const orphan = await app.request('/chart/account', {
+      method: 'POST', body: JSON.stringify({ code: '906-0000', name: 'X', accountType: 'EXPENSE', parentCode: '999-0000' }),
+      headers: { 'content-type': 'application/json' },
+    });
+    expect(orphan.status).toBe(400);
+    expect((await orphan.json() as { error: string }).error).toBe('parent_unknown');
   });
 });
 
