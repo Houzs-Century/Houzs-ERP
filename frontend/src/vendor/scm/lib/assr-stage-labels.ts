@@ -49,7 +49,10 @@ export const ASSR_STAGE_LABEL: Record<string, string> = {
   pending_review: "Pending Review",
   pending_solution: "Pending Solution",
   under_verification: "Under Verification",
-  pending_supplier_pickup: "Supplier Pickup / Return",
+  // Renamed from "Supplier Pickup / Return" (Nico 2026-09-04): the stage now
+  // spans three legs — customer pickup, supplier pickup, supplier return — so
+  // the name stays neutral and the sub-status names the actor.
+  pending_supplier_pickup: "Pickup / Return",
   pending_item_ready: "Pending Item Ready",
   pending_delivery_service: "Pending Delivery / Service",
   completed: "Completed",
@@ -59,7 +62,7 @@ export const ASSR_STAGE_LABEL: Record<string, string> = {
   voided: "Voided — Not Valid",
   // Retired stage values — see the doc comment above.
   pending_inspection: "Under Verification",
-  pending_item_pickup: "Supplier Pickup / Return",
+  pending_item_pickup: "Pickup / Return",
   registration: "Pending Review",
   triage: "Under Verification",
   action: "Pending Solution",
