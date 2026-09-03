@@ -794,7 +794,6 @@ the Worker when files exist. The list
 the established `?print=1` route: land on the detail, its preview opens
 itself.
 
-<<<<<<< HEAD
 **Batch** (owner: 可选多张 pv + document, 就 pv+document, pv+document…): the
 list's tick now means "include in the batch" — EVERY row ticks (the old
 isDisabled gate fell away; the approval buttons still count only the rows
@@ -806,8 +805,14 @@ OWN jsPDF (its own page numbering), and posts the parts to the same
 voucher B's, B's, list order, one PDF back. One voucher failing to load
 fails the WHOLE print with its number.
 
-=======
->>>>>>> origin/main
+**The tick itself** (owner: 这个我一点就直接tick 了…做成一定要点那个tick 的
+格子, 然后我要点开 pv 时就是点两次打开): the grid takes
+`selectable.checkboxOnly` (`frontend/src/vendor/scm/components/DataGrid.tsx`)
+— with it, a row click only highlights, the tick lives in the checkbox cell
+alone, a double-click opens, right-click menus. Default OFF, so the Commander
+rule (点行=multi-select) stands on every other list; the PV list opts in.
+Every step chip is the same grid, so 接下来的 step 同理 comes free.
+
 **Tests**: `frontend/src/vendor/scm/lib/payment-voucher-pdf.test.ts` (text
 draws — strip names, status word from the one home, MYR-words vs foreign
 line); `backend/tests/pdfAttach.test.ts` (real pdf-lib: 2-page bill
@@ -815,9 +820,7 @@ contributes both pages, image gets a page, corrupt/webp costs a notice page
 and never a throw, batch interleave pinned by page widths);
 `backend/tests/pvFiles.test.ts`'s print-bundle case (voucher page first, its
 files after, missing R2 object → notice page, unknown pv → 404 for the whole
-<<<<<<< HEAD
 bundle); `frontend/src/pages/scm-v2/PaymentVouchers.test.tsx` pins that
-every row ticks and a POSTED row offers Print and no approval button.
-=======
-bundle).
->>>>>>> origin/main
+every row ticks, a POSTED row offers Print and no approval button, and a
+ROW click ticks nothing; `frontend/src/vendor/scm/components/DataGrid.test.tsx`
+pins both sides of `checkboxOnly` (the default row-click tick stays).

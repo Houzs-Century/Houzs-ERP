@@ -222,6 +222,13 @@ export type DataGridProps<T> = {
         DO-from-SO picker, where picking one customer locks out every other
         customer's lines (one Delivery Order ships to ONE customer). */
     isDisabled?: (key: string) => boolean;
+    /** Tick ONLY via the checkbox cell (owner 2026-09-03, on the PV list:
+        这个我一点就直接tick 了…做成一定要点那个tick 的格子, 然后我要点开
+        pv 时就是点两次打开). With this set, a row click just highlights —
+        selection needs the checkbox, opening needs the double-click /
+        right-click the page wires. Default OFF: the Commander rule
+        (点行=multi-select) stands everywhere that hasn't asked. */
+    checkboxOnly?: boolean;
   };
   /**
    * Compact mode for grids embedded inside another grid's expansion row
@@ -1544,8 +1551,10 @@ function DataGridInner<T>({
           style={{ ...(rowStyle?.(row)), ...((selectable || onRowClick || expandKey != null) ? { cursor: 'pointer' } : {}) }}
           /* Row-click = multi-select (Commander rule: "点行=multi-select"); L2
              drill-down opens ONLY via the left ▸ chevron (its own handler below,
-             with stopPropagation). Row-click no longer expands. */
-          onClick={() => { setSelectedKey(key); onRowClick?.(row); if (selectable) selectable.onToggle(key); }}
+             with stopPropagation). Row-click no longer expands. checkboxOnly
+             (owner 2026-09-03) turns the toggle half off: the tick then lives
+             in the checkbox cell alone. */
+          onClick={() => { setSelectedKey(key); onRowClick?.(row); if (selectable && !selectable.checkboxOnly) selectable.onToggle(key); }}
           onDoubleClick={() => onRowDoubleClick?.(row)}
           onContextMenu={(e) => {
             if (!contextMenu) return;
