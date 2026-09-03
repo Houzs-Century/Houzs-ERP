@@ -3719,6 +3719,42 @@ SO-specific wiring:
   note on the `AMENDMENT_SO_APPROVED` row recording which departments the single
   approval covered.
 
+### Who gets told (2026-09-02)
+
+Until this date an amendment was raised in SILENCE. The row appeared in Sales
+Order Amendment and waited for somebody to happen to open the screen — the
+approver is the one person who has to act, and they were the one person nothing
+told. Owner: *"在 erp 有 amendment 的话需要让相关人员收到 notice, 需要有红色号码
+notice."*
+
+Notices ride the existing announcements machinery (`postPersonalNotice` → the
+notification bell's `?scope=system` slice, `source='so_amendment'`); the full
+producer model is in [`announcements.md`](./announcements.md). What is
+SO-specific:
+
+| Event | Told | Where |
+|---|---|---|
+| raised | the LANE's approvers + each one's `manager_id` upline; **separately** the SO's `salesperson_id` | `lib/amendment-raised-effects.ts`, called from `POST /:docNo/amendments` |
+| approved | `requested_by` + the salesperson | `routes/so-amendments.ts` `approveSoCommandHandler`, deferred to after commit |
+| rejected | same pair, carrying the rejection reason | `routes/so-amendments.ts` `PATCH /:id/reject` |
+| PO follow-up auto-raised by an approved LINES lane | the purchasing desk | same handler, same deferred block |
+
+Three things worth knowing before changing any of it:
+
+- **One notice per LANE, not per submission.** A mixed submission is two
+  independent approvals on two different desks; a single card would tell
+  whichever desk read it second that the work was already someone else's.
+- **The approver audience is derived from `LANE_APPROVE_KEY`** — the same table
+  the apply gate checks (`shared/amendment-lane.ts`). `amendmentNotify.ts` keeps
+  its own copy (a Houzs-side service must not import the SCM bundle), and
+  `amendmentNotify.test.ts` asserts the two agree. A drift sends the notice to
+  people who cannot act on it, which looks like working software from every
+  angle except the one that matters.
+- **Withdraw is silent on purpose**, and nobody is told about their own action.
+- **Nothing here can fail a write.** Every notify entry point swallows its own
+  errors, and the two in-transaction call sites go through
+  `deferScmAfterCommit`, so a rolled-back approval is never announced.
+
 ### What an approved amendment does to the LINE PRICE
 
 **Owner ruling, 2026-08-16:** *"Any amount can be edited, unless it is locked. If

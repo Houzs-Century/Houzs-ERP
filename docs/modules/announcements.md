@@ -24,6 +24,11 @@ screen down to the database. Same structure as
 > no longer pop a banner on either shell — the `/banner` default is now the
 > HUMAN slice, and the desktop bell (`NotificationBell`) gained a System-notices
 > section. Sections 0-2 and 5-6 below are updated for that change.
+> **2026-09-02 (amendment notices):** the SO / PO amendment workflow became the
+> third and fourth system-notice producer (`'so_amendment'` / `'po_amendment'`),
+> and the desktop bell's unread affordance went from the quiet dot back to the
+> NUMBER — the owner routed approvals here, and a dot cannot say how many are
+> waiting. §0 and §"System notices" below carry the detail.
 
 > Convention: the row is one table, `public.announcements`. Timestamps are
 > stored as **ISO text**, `is_active` is an **integer 0/1** (not boolean), and
@@ -39,7 +44,12 @@ keys off it:
 | `source` | Called | Written by | Where it surfaces |
 |---|---|---|---|
 | `NULL` | **human post** | the composer, `POST /api/announcements` | desktop page + list, mobile list, both pop-ups (`/banner` default = `?scope=human`) |
-| `'scan'` / `'service_case'` | **system notice** | `services/personalNotice.ts` | `?scope=system` only — the BELL on both shells (desktop `NotificationBell` System-notices section, mobile Announcements bell) + the unread badge. **Never the pop-up** (owner 2026-08-08) |
+| `'scan'` / `'service_case'` / `'so_amendment'` / `'po_amendment'` | **system notice** | `services/personalNotice.ts` | `?scope=system` only — the BELL on both shells (desktop `NotificationBell` System-notices section, mobile Announcements bell) + the unread badge. **Never the pop-up** (owner 2026-08-08) |
+
+The `source` values are not a whitelist anywhere: the bell slice asks only for
+`source IS NOT NULL`, so a new producer starts surfacing the moment it picks a
+tag. That is why adding the amendment notices (2026-09-02) needed no change to
+this route, this table's schema, or either shell's reader.
 
 A system notice is a *private* announcement (`target_type='USER_IDS'`,
 `created_by NULL`) riding the announcements machinery so it inherits the unread
@@ -63,7 +73,7 @@ system notices never clutter the office composer list.
 | Shared pop-up logic | `frontend/src/components/useAnnouncementBanner.ts` | the feed read, the ack, the dismiss rules — **both** shells consume it |
 | Mobile list + system bell | `frontend/src/mobile/MobileAnnouncements.tsx` | READER feed + system bell. **Publishers read the LEDGER instead** — see *The mobile list has two sources* below |
 | Shared status rule (Live / Hidden / Expired) | `frontend/src/lib/announcementStatus.ts` | imported by BOTH the desktop row and the phone card; neither re-derives it |
-| **Desktop system bell** | `frontend/src/components/NotificationBell.tsx` | System-notices section reading `?scope=system` (2026-08-08); mounted in `TopNavbar.tsx` + the sidebar's mobile drawer |
+| **Desktop system bell** | `frontend/src/components/NotificationBell.tsx` | System-notices section reading `?scope=system` (2026-08-08); mounted in `TopNavbar.tsx` + the sidebar's mobile drawer. Unread renders as a red COUNT (system notices + the per-project aggregate, capped `99+`) at every mount — the navbar's quiet-dot variant was removed 2026-09-02 when amendment approvals started arriving here |
 | Media renderers | `frontend/src/components/AnnouncementMedia.tsx` (lazy) / `frontend/src/mobile/MobileAnnouncementMedia.tsx` | |
 | Unread badge hook | `frontend/src/mobile/useAnnouncementUnread.ts` | |
 
@@ -327,7 +337,7 @@ all filtering happens in JS in the Worker (`:543-547`, `:628-630`).
   filtered through `userCanSee` (`:713-726`), so the denominator is the notice's
   real audience, not the whole company.
 
-### System notices — the only two producers
+### System notices — the producers
 
 Single insert path: `postPersonalNotice()`,
 `backend/src/services/personalNotice.ts:34-123` (insert `:94-111`). It never
@@ -338,10 +348,29 @@ de-dupes an identical still-unread notice (`:68-87`).
 |---|---|---|---|
 | Slip-scan completion | `backend/src/scm/routes/scan-so.ts:3581` (wrapper `postScanNotice`) | `'scan'` | 7 days |
 | Service-case create / reassign | `backend/src/services/assrNotify.ts:148-155` | `'service_case'` | 14 days (default) |
+| SO amendment raised / approved / rejected | `backend/src/services/amendmentNotify.ts` | `'so_amendment'` | 14 days (default) |
+| PO amendment raised / approved / rejected | `backend/src/services/amendmentNotify.ts` | `'po_amendment'` | 14 days (default) |
 
-Grep confirms exactly **two** `INSERT INTO announcements` statements in the whole
-tree: `personalNotice.ts` (the one helper both producers above call) and the
-human composer in `announcements.ts`. Two producers, one insert path.
+Grep still confirms exactly **two** `INSERT INTO announcements` statements in the
+whole tree: `personalNotice.ts` (the one helper every producer above calls) and
+the human composer in `announcements.ts`. Four producers, one insert path.
+
+**How the amendment producer picks its audience** (2026-09-02) is the part that
+is not like the other two. `scan` and `service_case` are addressed at people a
+row already NAMES; an amendment is addressed at whoever can SIGN it, which is a
+permission, not a column. `services/permissionHolders.ts` answers the forward
+gate question backwards — roles holding the lane's key, their active users,
+narrowed by `user_companies` — with two rules worth knowing before you reuse it:
+
+* **The `*` wildcard is excluded.** Owner and IT Admin can approve anything, so
+  a literal reading would put them on every amendment ever raised. The helper
+  answers "whose desk is this on", not "who is technically able".
+* **A zero-grant user is kept, not dropped.** On a single-company install
+  `user_companies` is empty and `companyContext` never consults it; filtering on
+  an empty grant set would silence the channel entirely.
+
+The audience then expands UP each approver's `manager_id` chain, the same
+`uplineUserIds` rule `assrNotify` uses.
 
 ---
 

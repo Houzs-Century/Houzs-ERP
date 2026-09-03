@@ -107,16 +107,28 @@ async function resolvedAmendmentAudience(
   sb: any, c: Context<any>,
   amendment: AmendmentForWrite,
 ): Promise<{ requesterUserId: number | null; salespersonUserId: number | null }> {
-  const { data: soRow } = await scopeToCompany(
+  const { data: soRow, error: soErr } = await scopeToCompany(
     sb.from('mfg_sales_orders').select('salesperson_id').eq('doc_no', amendment.so_doc_no),
     c,
   ).maybeSingle();
+  /* A FAILED read is not "this order has no salesperson" — supabase-js does not
+     throw, so an unbound error would silently narrow the audience to one person
+     and look exactly like an order sold by nobody. Say so, and still tell the
+     REQUESTER: their id comes off the amendment row we already hold, so the
+     half of the audience this read cannot reach is the only half we lose. */
+  if (soErr) {
+    console.error(
+      `[amendment-notify] salesperson lookup failed for ${amendment.so_doc_no}: ${soErr.message}`,
+    );
+  }
   return {
     requesterUserId: await resolveUserIdByStaffId(sb, amendment.requested_by),
-    salespersonUserId: await resolveUserIdByStaffId(
-      sb,
-      (soRow as { salesperson_id?: string | null } | null)?.salesperson_id,
-    ),
+    salespersonUserId: soErr
+      ? null
+      : await resolveUserIdByStaffId(
+          sb,
+          (soRow as { salesperson_id?: string | null } | null)?.salesperson_id,
+        ),
   };
 }
 
