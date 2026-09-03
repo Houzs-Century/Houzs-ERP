@@ -45,5 +45,8 @@ jobs:
       - run: node scripts/seed-chart-of-accounts.mjs
         env:
           DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
+          # Runners have no IPv6 route to Supabase; force the A record like
+          # staging-migrate.yml does (ENETUNREACH on the AAAA otherwise).
+          NODE_OPTIONS: --dns-result-order=ipv4first
           MODE: ${{ inputs.mode }}
           CONFIRM: ${{ inputs.confirm }}
