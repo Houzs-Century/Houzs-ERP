@@ -466,8 +466,11 @@ export const createPaymentVoucherHandler = async (c: any) => {
   if (normalizePurpose(body.purpose) === 'SUPPLIER_PAYMENT' && body.supplierId) {
     const coId = activeCompanyId(c);
     const sbGuard = c.get('supabase');
-    const { data: sup } = await sbGuard.from('suppliers')
+    const { data: sup, error: supErr } = await sbGuard.from('suppliers')
       .select('code').eq('id', String(body.supplierId)).maybeSingle();
+    /* Fails CLOSED like requireLeafAccount: a supplier we cannot read is a
+       control we cannot verify, and an unverifiable debt does not book. */
+    if (supErr) return c.json({ error: 'load_failed', reason: supErr.message }, 500);
     const supplierCode = (sup as { code?: string | null } | null)?.code ?? null;
     if (supplierCode && coId != null) {
       const roles = await resolveRoles(sbGuard, coId);

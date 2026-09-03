@@ -104,7 +104,7 @@ describe('the AP Payment (?type=ap)', () => {
     fireEvent.focus(screen.getByLabelText(/Supplier \*/));
     fireEvent.mouseDown(screen.getByText('405-Z002 · Zhejiang Ju Miao'));
     fireEvent.click(screen.getByLabelText('Pay 2990-PI-2608-018 in full'));
-    const books = screen.getByText(/Books:/).textContent ?? '';
+    const books = String(screen.getByText(/Books:/).textContent);
     expect(books).toContain('Dr 405-0000');
     expect(books).toContain('16,440.00');
     fireEvent.click(screen.getByText('Create AP Payment'));

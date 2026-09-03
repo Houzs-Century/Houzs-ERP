@@ -366,7 +366,7 @@ export const PaymentVoucherNew = () => {
      its payment debits AP_OTHER (405-0000), everyone else AP (400-0000). The
      authoritative prefix rule lives server-side (acc/rules.ts apControlRole;
      create refuses the wrong control) — this is the display mirror. */
-  const apAccountCode = (supplierRow?.code?.startsWith('405-')
+  const apAccountCode = (supplierRow?.code.startsWith('405-')
     ? rolesQ.data?.roles.AP_OTHER
     : rolesQ.data?.roles.AP) ?? '';
   const realLines = lines.filter((l) => l.debitAccountCode && l.amountSen > 0);
