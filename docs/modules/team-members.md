@@ -260,9 +260,13 @@ whole no-login surface: `/survey/:token`, `/track` + `/portal/*`,
 `/reset/:token`, `/invite/:token`, `/privacy`, **`/d/:token`** — the printed
 delivery-order QR (`frontend/src/pages/PublicDoScan.tsx`) — and, since
 2026-08-27, **`/d/scan`**, the pile scanner
-(`frontend/src/pages/PublicDoScanBasket.tsx`). The QR one is the owner's
-decision: the driver has no account, so the token printed on the paper is the
-credential. It is 10 characters since 2026-08-27 — the length is a print setting,
+(`frontend/src/pages/PublicDoScanBasket.tsx`). Since 2026-09-03 the list also
+carries **`/c/:token`** — a booth contractor's own confirmed calendar
+(`frontend/src/pages/ContractorCalendar.tsx`), same no-login token rule, served
+by `backend/src/routes/publicContractorCalendar.ts` mounted before the auth gate
+in `index.ts`; see `docs/modules/projects-pms.md` for the token lifecycle. The QR
+one is the owner's decision: the driver has no account, so the token printed on
+the paper is the credential. It is 10 characters since 2026-08-27 — the length is a print setting,
 see `docs/bugs/0552-…` — and the 64-hex form on every sheet already printed still
 resolves.
 
