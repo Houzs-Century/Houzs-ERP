@@ -213,7 +213,8 @@ on their own page) and the customer sales payments (read-only mirrors —
 顾客的钱 keeps the sales flow it always had; nothing is re-entered).
 Handlers in `receipts.ts` (mounted beside other-debtors in
 `backend/src/scm/index.ts`, mirrored in `scm-areas.ts`, nav entry in
-`Sidebar.tsx`; PV key family). A GENERAL receipt is the no-registry case:
+`Sidebar.tsx`, route in `frontend/src/routing/routeManifest.ts`; PV key
+family). A GENERAL receipt is the no-registry case:
 payer typed free, a money landing account (guarded), lines that free-pick
 their credit accounts through `requireLeafAccount` — and it POSTS DIRECTLY
 on create (his call: 不需要走四层，就录入就好), source RCT
