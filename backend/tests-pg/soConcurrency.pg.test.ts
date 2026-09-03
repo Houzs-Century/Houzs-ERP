@@ -120,6 +120,10 @@ async function resetFixture(sql: Sql): Promise<void> {
     END $fn$;
   `);
   await sql.unsafe(await migration('0172_scm_so_edit_lease_and_followers.sql'));
+  /* 0348 adds the lock HOLDER. Replayed here because this fixture builds its
+     own tables and then applies named migrations - a column added later is
+     invisible to it until it is named, and lockSoCommandLease now SELECTs it. */
+  await sql.unsafe(await migration('0348_scm_so_edit_lease_holder.sql'));
   await sql.unsafe(await migration('0173_scm_so_concurrency_domain_closure.sql'));
   await sql.unsafe(await migration('0174_scm_stock_allocation_recompute_queue.sql'));
 }
