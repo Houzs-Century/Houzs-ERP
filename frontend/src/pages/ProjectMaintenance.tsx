@@ -366,10 +366,11 @@ function ContractorManager() {
     }
   }
 
+  const rows = q.data?.data ?? [];
   return (
     <CollapsibleSection
       title="Contractors"
-      count={q.data?.data?.length}
+      count={rows.length}
       description="Picker values for the project Contractor field (booth setup/dismantle). Soft delete — existing project rows still display whatever name they were saved with."
     >
       <div className="mb-3 flex gap-2">
@@ -395,13 +396,10 @@ function ContractorManager() {
             ))}
           </>
         )}
-        {q.data?.data?.length === 0 && (
+        {rows.length === 0 && (
           <li className="px-3 py-3 text-[11.5px] text-ink-muted">No contractors yet.</li>
         )}
-        {(expanded
-          ? q.data?.data ?? []
-          : (q.data?.data ?? []).slice(0, PICKER_PREVIEW_ROWS)
-        ).map((o) => (
+        {(expanded ? rows : rows.slice(0, PICKER_PREVIEW_ROWS)).map((o) => (
           <li
             key={o.id}
             className="flex items-center justify-between gap-3 px-3 py-2"
@@ -422,7 +420,7 @@ function ContractorManager() {
         ))}
       </ul>
       <ExpandToggle
-        total={q.data?.data?.length ?? 0}
+        total={rows.length}
         expanded={expanded}
         onToggle={() => setExpanded((v) => !v)}
       />
