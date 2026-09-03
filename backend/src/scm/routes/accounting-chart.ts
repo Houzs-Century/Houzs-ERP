@@ -345,6 +345,7 @@ export const chartCreateHandler = async (c: any): Promise<Response> => {
   const name = String(body.name ?? '').trim();
   const type = String(body.accountType ?? '').trim().toUpperCase();
   const parent = body.parentCode ? String(body.parentCode).trim() : null;
+  const special = body.specialType ? String(body.specialType).trim().toUpperCase() : null;
   const targets: number[] = Array.isArray(body.companyIds) && body.companyIds.length > 0
     ? body.companyIds.map(Number) : ids;
   if (!ACCOUNT_CODE_RE.test(code)) {
@@ -354,22 +355,47 @@ export const chartCreateHandler = async (c: any): Promise<Response> => {
   if (!ACCOUNT_TYPES.has(type)) {
     return c.json({ error: 'bad_type', message: 'accountType must be ASSET / LIABILITY / EQUITY / INCOME / EXPENSE.' }, 400);
   }
+  if (special && !SPECIAL_RE.test(special)) {
+    return c.json({ error: 'bad_special', message: `${special} is not a 2-4 letter AutoCount special code.` }, 400);
+  }
   if (parent === code) return c.json({ error: 'bad_parent', message: 'An account cannot be its own parent.' }, 400);
   for (const t of targets) {
     if (!Number.isInteger(t) || !ids.includes(t)) {
       return c.json({ error: 'company_not_yours', message: `Company ${t} is not in your grants.` }, 403);
     }
   }
-  const sb = c.get('supabase');
 
-  const { data: exists, error: exErr } = await sb
-    .from('accounts').select('company_id').eq('account_code', code).limit(1);
-  if (exErr) return c.json({ error: 'load_failed', reason: exErr.message }, 500);
-  if (((exists ?? []) as unknown[]).length > 0) {
-    return c.json({
-      error: 'code_exists',
-      message: `${code} already exists — tick it on for a company instead, or rename it if the number is wrong.`,
-    }, 409);
+  /* 固定资产带折旧 (the owner, 2026-09-03, the SFA/SAD pairs in hand: create
+     new fixed assets 时照理就需要 create depreciation account): an SFA may
+     bring its SAD twin in the SAME call — both validated up front, both
+     created into the same companies, so a fixed asset never lands without
+     somewhere for its depreciation to accumulate. */
+  let dep: { code: string; name: string } | null = null;
+  if (body.depreciation != null) {
+    if (special !== 'SFA') {
+      return c.json({ error: 'bad_depreciation', message: 'A depreciation twin rides only on an SFA (fixed asset) account.' }, 400);
+    }
+    const dCode = String(body.depreciation.code ?? '').trim();
+    const dName = String(body.depreciation.name ?? '').trim();
+    if (!ACCOUNT_CODE_RE.test(dCode)) {
+      return c.json({ error: 'bad_code', message: `${dCode || '(empty)'} is not in the NNN-XXXX account-code shape.` }, 400);
+    }
+    if (!dName) return c.json({ error: 'bad_name', message: 'The depreciation account name cannot be empty.' }, 400);
+    if (dCode === code) return c.json({ error: 'bad_depreciation', message: 'The depreciation account needs its own code.' }, 400);
+    dep = { code: dCode, name: dName };
+  }
+
+  const sb = c.get('supabase');
+  for (const candidate of dep ? [code, dep.code] : [code]) {
+    const { data: exists, error: exErr } = await sb
+      .from('accounts').select('company_id').eq('account_code', candidate).limit(1);
+    if (exErr) return c.json({ error: 'load_failed', reason: exErr.message }, 500);
+    if (((exists ?? []) as unknown[]).length > 0) {
+      return c.json({
+        error: 'code_exists',
+        message: `${candidate} already exists — tick it on for a company instead, or rename it if the number is wrong.`,
+      }, 409);
+    }
   }
 
   /* The parent chain, from the master definition (lowest company carrying
@@ -391,6 +417,10 @@ export const chartCreateHandler = async (c: any): Promise<Response> => {
     cursor = (lookRes.data as AccountRow).parent_code;
   }
 
+  /* SBK/SCH ARE money — the import applies the same equivalence; a manual
+     create must not be able to disagree with the vocabulary. */
+  const money = special === 'SBK' || special === 'SCH' ? true : body.accMoney === true;
+
   for (const companyId of targets) {
     for (const d of chain) {
       const { error: upErr } = await sb.from('accounts').upsert({
@@ -411,13 +441,27 @@ export const chartCreateHandler = async (c: any): Promise<Response> => {
       account_name: name,
       account_type: type,
       parent_code: parent,
-      acc_money: body.accMoney === true,
-      special_type: null,
+      acc_money: money,
+      special_type: special,
       is_active: true,
     }, { onConflict: 'company_id,account_code' });
     if (insErr) return c.json({ error: 'save_failed', reason: insErr.message }, 500);
+    if (dep) {
+      /* The twin lives beside the asset — same parent, same type, SAD. */
+      const { error: depErr } = await sb.from('accounts').upsert({
+        company_id: companyId,
+        account_code: dep.code,
+        account_name: dep.name,
+        account_type: type,
+        parent_code: parent,
+        acc_money: false,
+        special_type: 'SAD',
+        is_active: true,
+      }, { onConflict: 'company_id,account_code' });
+      if (depErr) return c.json({ error: 'save_failed', reason: depErr.message }, 500);
+    }
   }
-  return c.json({ ok: true, code, companies: targets });
+  return c.json({ ok: true, code, companies: targets, ...(dep ? { depreciationCode: dep.code } : {}) });
 };
 
 /* ── PUT /accounting/chart/rename — {oldCode, newCode}, 改码全账跟 ──────────

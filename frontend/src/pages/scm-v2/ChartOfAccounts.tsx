@@ -221,26 +221,46 @@ export const ChartOfAccounts = () => {
   const [newType, setNewType] = useState<ChartRow['type']>('ASSET');
   const [newParent, setNewParent] = useState('');
   const [newMoney, setNewMoney] = useState(false);
+  const [newSpecial, setNewSpecial] = useState('');
+  const [depOn, setDepOn] = useState(true);
+  const [depCode, setDepCode] = useState('');
+  const [depName, setDepName] = useState('');
   const [newCompanies, setNewCompanies] = useState<Set<number>>(new Set());
   const openAdd = () => {
     setAddingNew(true);
     setNewCode(''); setNewName(''); setNewType('ASSET'); setNewParent(''); setNewMoney(false);
+    setNewSpecial(''); setDepOn(true); setDepCode(''); setDepName('');
     setNewCompanies(new Set(companies.map((co) => co.id)));
+  };
+  /* His chart's own SFA/SAD convention: the twin is the asset's code with the
+     last digit +5 (201-1000 → 201-1005), named ACCUM. DEPRN. - <asset>. */
+  const deriveDep = (assetCode: string, assetName: string) => {
+    const m = /^(\d{3}-\d{3})(\d)$/.exec(assetCode.trim());
+    setDepCode(m && Number(m[2]) < 5 ? `${m[1]}${Number(m[2]) + 5}` : '');
+    setDepName(assetName.trim() ? `ACCUM. DEPRN. - ${assetName.trim()}` : '');
+  };
+  const pickSpecial = (sp: string) => {
+    setNewSpecial(sp);
+    if (sp === 'SBK' || sp === 'SCH') setNewMoney(true);
+    if (sp === 'SFA') deriveDep(newCode, newName);
   };
   const saveNew = async () => {
     try {
+      const withDep = newSpecial === 'SFA' && depOn && depCode.trim() && depName.trim();
       const res = await doCreate.mutateAsync({
         code: newCode.trim(),
         name: newName.trim(),
         accountType: newType,
         parentCode: newParent.trim() || null,
         accMoney: newMoney,
+        ...(newSpecial ? { specialType: newSpecial } : {}),
+        ...(withDep ? { depreciation: { code: depCode.trim(), name: depName.trim() } } : {}),
         companyIds: [...newCompanies],
       });
       setAddingNew(false);
       void notify({
         title: `${res.code} created`,
-        body: `Live in ${res.companies.length} company(ies)${newParent.trim() ? ` under ${newParent.trim()}` : ''}. Adjust the ticks any time.`,
+        body: `Live in ${res.companies.length} company(ies)${newParent.trim() ? ` under ${newParent.trim()}` : ''}${res.depreciationCode ? ` — depreciation twin ${res.depreciationCode} created beside it` : ''}. Adjust the ticks any time.`,
         tone: 'info',
       });
     } catch (e) {
@@ -375,10 +395,52 @@ export const ChartOfAccounts = () => {
                 {accounts.map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}
               </datalist>
             </label>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>Special type</span>
+              <select value={newSpecial} onChange={(e) => pickSpecial(e.target.value)} aria-label="Special type"
+                style={{ padding: '6px 8px', border: '1px solid var(--border-weak, #d8d5cd)', borderRadius: 6 }}>
+                <option value="">— none —</option>
+                <option value="SBK">SBK · 银行</option>
+                <option value="SCH">SCH · 现金</option>
+                <option value="SOP">SOP · 电子钱包/其他</option>
+                <option value="SFA">SFA · 固定资产 (带折旧对)</option>
+                <option value="SAD">SAD · 累计折旧</option>
+                <option value="SRE">SRE · Retained earning</option>
+                <option value="SDP">SDP · Deferred</option>
+                <option value="SOS">SOS · 期初存货</option>
+                <option value="SCS">SCS · 期末存货</option>
+                <option value="SDC">SDC · Debtor control (由模块过账)</option>
+                <option value="SCC">SCC · Creditor control (由模块过账)</option>
+                <option value="SBS">SBS · Stock control (由模块过账)</option>
+              </select>
+            </label>
             <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
               <input type="checkbox" checked={newMoney} onChange={(e) => setNewMoney(e.target.checked)} />
               money (bank/cash/wallet)
             </label>
+            {newSpecial === 'SFA' && (
+              <div style={{ flexBasis: '100%', display: 'flex', flexWrap: 'wrap', gap: 'var(--space-3)', alignItems: 'flex-end', padding: 'var(--space-2)', border: '1px dashed var(--border-weak, #d8d5cd)', borderRadius: 8 }}>
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  <input type="checkbox" checked={depOn} onChange={(e) => setDepOn(e.target.checked)} />
+                  同时开折旧户 (SAD)
+                </label>
+                {depOn && (<>
+                  <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>Depreciation code</span>
+                    <input value={depCode} onChange={(e) => setDepCode(e.target.value)} aria-label="Depreciation code"
+                      style={{ fontFamily: 'var(--font-mono)', padding: '6px 8px', border: '1px solid var(--border-weak, #d8d5cd)', borderRadius: 6, width: 130 }} />
+                  </label>
+                  <label style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: '1 1 240px' }}>
+                    <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>Depreciation name</span>
+                    <input value={depName} onChange={(e) => setDepName(e.target.value)} aria-label="Depreciation name"
+                      style={{ padding: '6px 8px', border: '1px solid var(--border-weak, #d8d5cd)', borderRadius: 6 }} />
+                  </label>
+                  <Button variant="ghost" size="sm" onClick={() => deriveDep(newCode, newName)}>
+                    照惯例填 (+5 / ACCUM. DEPRN.)
+                  </Button>
+                </>)}
+              </div>
+            )}
             <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
               {companies.map((co) => (
                 <label key={co.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>

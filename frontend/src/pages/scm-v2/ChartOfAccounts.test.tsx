@@ -135,6 +135,32 @@ describe('fold / edit / delete — the owner points 1, 2 and 4', () => {
     expect(renameAsync).not.toHaveBeenCalled();
   });
 
+  test('SFA derives its SAD twin by the +5 convention and the payload carries both', async () => {
+    createAsync.mockClear();
+    draw();
+    fireEvent.click(screen.getByText('Add account'));
+    fireEvent.change(screen.getByPlaceholderText('305-0010'), { target: { value: '201-3000' } });
+    const name = screen.getAllByDisplayValue('').find((el) => String(el.closest('label')?.textContent).includes('Name'))!;
+    fireEvent.change(name, { target: { value: 'F&F (HOSTEL)' } });
+    fireEvent.change(screen.getByLabelText('Special type'), { target: { value: 'SFA' } });
+    expect(screen.getByLabelText('Depreciation code')).toHaveProperty('value', '201-3005');
+    expect(screen.getByLabelText('Depreciation name')).toHaveProperty('value', 'ACCUM. DEPRN. - F&F (HOSTEL)');
+    fireEvent.click(screen.getByText('Create'));
+    await waitFor(() => expect(createAsync).toHaveBeenCalledWith(expect.objectContaining({
+      code: '201-3000',
+      specialType: 'SFA',
+      depreciation: { code: '201-3005', name: 'ACCUM. DEPRN. - F&F (HOSTEL)' },
+    })));
+  });
+
+  test('picking SBK auto-ticks money — the import equivalence, live on the form', () => {
+    draw();
+    fireEvent.click(screen.getByText('Add account'));
+    fireEvent.change(screen.getByLabelText('Special type'), { target: { value: 'SBK' } });
+    const box = screen.getByText(/money \(bank\/cash\/wallet\)/).closest('label')!.querySelector('input')!;
+    expect(box.checked).toBe(true);
+  });
+
   test('Add account creates once with the ticked companies and the parent', async () => {
     createAsync.mockClear();
     draw();
