@@ -45,6 +45,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Env } from '../env';
 import { getSupabaseService } from '../../db/supabase';
 import { isWritebackEnabled } from './autocount-writeback-flag';
+import { inAcLineOrder } from './ac-line-order'; import { poRaisedFromSo } from './so-po-raised';
 import { claimOutboxRow, releaseExpiredClaims } from './autocount-claim';
 import { splitSofaCode } from '../../services/autocount-sofa-collapse';
 import { SO_PROCESSING_DATE_COLUMN } from '../shared/so-processing-date';
@@ -561,7 +562,7 @@ export async function enqueueSoCreate(
        again would duplicate the order in the live book. */
     if ((header as { linked_ac_docno?: string | null }).linked_ac_docno) return AC_ENQUEUE_SILENT;
     const items = await readOrThrow('mfg_sales_order_items',
-      sb.from('mfg_sales_order_items').select(SO_ITEM_COLS).eq('doc_no', opts.docNo));
+      inAcLineOrder(sb.from('mfg_sales_order_items').select(SO_ITEM_COLS).eq('doc_no', opts.docNo)));
     const rows = (items ?? []) as Record<string, unknown>[];
     const lines = await withLocations(sb, rows, rows.map(soLine));
     /* Composed TWICE on purpose: once to learn which ERP rows produced which
@@ -668,7 +669,7 @@ export async function enqueuePoCreate(
     poNumber = header.po_number || opts.poId;
     if (header.linked_ac_docno) return AC_ENQUEUE_SILENT;
     const items = await readOrThrow('purchase_order_items',
-      sb.from('purchase_order_items').select(PO_ITEM_COLS).eq('purchase_order_id', opts.poId));
+      inAcLineOrder(sb.from('purchase_order_items').select(PO_ITEM_COLS).eq('purchase_order_id', opts.poId)));
     const rows = (items ?? []) as Record<string, unknown>[];
     const lines = await withLocations(sb, rows, rows.map(soLine));
     const bindings = await bindingsFor(sb, opts.companyId, lines.map((l) => l.item_code), header.supplier_id);
@@ -949,7 +950,7 @@ export async function retiredLineOf(
     const n = r.linked_ac_dtlkey == null ? NaN : Number(r.linked_ac_dtlkey);
     if (!Number.isFinite(n) || n <= 0) return [];
     const desc2 = r.description2 == null ? undefined : String(r.description2);
-    return [{ DtlKey: n, ItemCode: String(r[codeCol] ?? ''), ...(desc2 ? { Desc2: desc2 } : {}) }];
+    return [{ DtlKey: n, ItemCode: String(r[codeCol] ?? ''), ...(desc2 ? { Desc2: desc2 } : {}), Gone: 'deleted' as const }];
   } catch {
     return [];
   }
@@ -1207,6 +1208,7 @@ export async function enqueueEdit(
      * delete route has to say so explicitly, and this is how.
      */
     retire?: AcRetiredLine[];
+    rebuild?: boolean;  // requeue only; ABSENT = keyed edit, the stricter answer - 0614
     /** ERP columns THIS REQUEST wrote — same contract as `newLineIds`: the
      *  composer reads the SAVED row and cannot tell a clear from a blank. */
     touchedFields?: readonly string[];
@@ -1218,9 +1220,9 @@ export async function enqueueEdit(
 
     const retired = (opts.retire ?? []).filter((r) => Number.isFinite(Number(r.DtlKey)));
     const composed = opts.docType === 'SO'
-      ? await composeSoState(sb, String(opts.docNo), retired, opts.newLineIds, opts.touchedFields)
+      ? await composeSoState(sb, String(opts.docNo), retired, opts.newLineIds, opts.touchedFields, opts.rebuild ?? false)
       : opts.docType === 'PO'
-        ? await composePoState(sb, String(opts.docId ?? opts.docNo), retired, opts.newLineIds)
+        ? await composePoState(sb, String(opts.docId ?? opts.docNo), retired, opts.newLineIds, opts.rebuild ?? false)
         : await composeDownstreamState(sb, opts.docType, String(opts.docId ?? opts.docNo), retired, opts.newLineIds);
     if (!composed) return false;
     /* A PO route knows its id, not its number; the outbox row is keyed by the
@@ -1376,8 +1378,7 @@ async function composeDownstreamState(
   if (!header) return null;
   const h = header as unknown as Record<string, unknown>;
   const items = await readOrThrow(spec.itemTable,
-    sb.from(spec.itemTable).select(spec.itemCols).eq(spec.itemFk, id)
-      .order('created_at', { ascending: true }).order('id', { ascending: true }));
+    inAcLineOrder(sb.from(spec.itemTable).select(spec.itemCols).eq(spec.itemFk, id)));
   const lines = ((items ?? []) as unknown as Record<string, unknown>[]).map(spec.line);
   const docNo = spec.docNoOf(h);
   return {
@@ -1399,19 +1400,19 @@ async function composeDownstreamState(
   };
 }
 
-async function composeSoState(sb: Sb, docNo: string, retired: AcRetiredLine[] = [], newLineIds?: string[], touchedFields: readonly string[] = []) {
+async function composeSoState(sb: Sb, docNo: string, retired: AcRetiredLine[] = [], newLineIds?: string[], touchedFields: readonly string[] = [], rebuild = false) {
   const header = await readOrThrow('mfg_sales_orders header',
     sb.from('mfg_sales_orders').select(SO_HEADER_COLS).eq('doc_no', docNo).maybeSingle());
   if (!header) return null;
   const items = await readOrThrow('mfg_sales_order_items',
-    sb.from('mfg_sales_order_items').select(SO_ITEM_COLS).eq('doc_no', docNo));
+    inAcLineOrder(sb.from('mfg_sales_order_items').select(SO_ITEM_COLS).eq('doc_no', docNo)));
   const soRows = (items ?? []) as Record<string, unknown>[];
   const lines = await withLocations(sb, soRows, soRows.map(soLine));
   const h = header as Record<string, unknown>;
   const bindings = await bindingsFor(sb, (h.company_id as number | null) ?? null, lines.map((l) => l.item_code));
-  const salespersonName = await readSalespersonName(sb, h.salesperson_id);
-  const outstandingSen = await readSoOutstandingSen(sb, h);
-  const paymentRefs = await readSoPaymentRefs(sb, docNo);
+  const [salespersonName, outstandingSen, paymentRefs, poRaised] = await Promise.all([
+    readSalespersonName(sb, h.salesperson_id), readSoOutstandingSen(sb, h),
+    readSoPaymentRefs(sb, docNo), poRaisedFromSo(sb, docNo)]);   // batched; 0609
   return {
     docNo,
     linkedAcDocNo: (h.linked_ac_docno as string | null) ?? null,
@@ -1431,20 +1432,18 @@ async function composeSoState(sb: Sb, docNo: string, retired: AcRetiredLine[] = 
     edit: () => composeEdit(
       'SO', String(h.linked_ac_docno ?? docNo),
       soEditHeader(h, salespersonName, lines, outstandingSen, paymentRefs, touchedFields), lines,
-      {
-        bindings,
-        ...(newLineIds && newLineIds.length ? { newLineIds: new Set(newLineIds) } : {}),
-      },
+      { bindings,   // 0609: a PO raised from this SO blocks the rebuild, never the edit
+        ...(newLineIds?.length ? { newLineIds: new Set(newLineIds) } : {}), ...(poRaised ? { rebuildBlocked: 'A PO was raised from this SO.' } : {}), ...(rebuild ? { rebuild: true } : {}) },
       retired,
     ),
   };
 }
 
-async function composePoState(sb: Sb, poId: string, retired: AcRetiredLine[] = [], newLineIds?: string[]) {
+async function composePoState(sb: Sb, poId: string, retired: AcRetiredLine[] = [], newLineIds?: string[], rebuild = false) {
   const header = await readPoHeader(sb, poId);
   if (!header) return null;
   const items = await readOrThrow('purchase_order_items',
-    sb.from('purchase_order_items').select(PO_ITEM_COLS).eq('purchase_order_id', poId));
+    inAcLineOrder(sb.from('purchase_order_items').select(PO_ITEM_COLS).eq('purchase_order_id', poId)));
   const poRows = (items ?? []) as Record<string, unknown>[];
   const lines = await withLocations(sb, poRows, poRows.map(soLine));
   /* A line this request just ADDED inherits the purchase order's own warehouse
@@ -1489,7 +1488,7 @@ async function composePoState(sb: Sb, poId: string, retired: AcRetiredLine[] = [
          appends a duplicate into a live book (mfg-purchase-orders.ts, the
          convert-from-SO append, says exactly this). Their stock location is
          filled in above, on the line. */
-      ...(newLineIds && newLineIds.length ? { newLineIds: new Set(newLineIds) } : {}),
+      ...(newLineIds && newLineIds.length ? { newLineIds: new Set(newLineIds) } : {}), ...(rebuild ? { rebuild: true } : {}),
     }, retired),
   };
 }

@@ -11,7 +11,7 @@ FOR, which trees are dead, what must be changed in pairs — lives in
 
 ## 1. Backend route inventory
 
-154 route modules (44 in `backend/src/routes`, 110 in `backend/src/scm/routes`), 1123 endpoint registrations.
+155 route modules (44 in `backend/src/routes`, 111 in `backend/src/scm/routes`), 1127 endpoint registrations.
 
 An endpoint is a `router.<method>("/…")` registration. For the per-route authorization
 boundary see the sibling artifact `docs/generated/route-capability-matrix.csv`, which
@@ -22,12 +22,12 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/agent-console.ts` | 33 | 1304 |
 | `backend/src/routes/announcements.ts` | 11 | 1421 |
 | `backend/src/routes/assistant.ts` | 4 | 225 |
-| `backend/src/routes/assr.ts` | 62 | 3326 |
-| `backend/src/routes/assrFormIntake.ts` | 6 | 954 |
+| `backend/src/routes/assr.ts` | 62 | 3360 |
+| `backend/src/routes/assrFormIntake.ts` | 6 | 965 |
 | `backend/src/routes/assrPortal.ts` | 14 | 540 |
 | `backend/src/routes/assr_print.ts` | 1 | 1218 |
 | `backend/src/routes/audit.ts` | 1 | 74 |
-| `backend/src/routes/auth.ts` | 13 | 846 |
+| `backend/src/routes/auth.ts` | 13 | 862 |
 | `backend/src/routes/branding.ts` | 5 | 294 |
 | `backend/src/routes/clientErrors.ts` | 2 | 232 |
 | `backend/src/routes/companies.ts` | 1 | 48 |
@@ -57,21 +57,22 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/stockItems.ts` | 1 | 28 |
 | `backend/src/routes/supplierPortal.ts` | 9 | 440 |
 | `backend/src/routes/survey.ts` | 2 | 147 |
-| `backend/src/routes/systemHealth.ts` | 8 | 812 |
+| `backend/src/routes/systemHealth.ts` | 9 | 994 |
 | `backend/src/routes/tableLayouts.ts` | 11 | 636 |
 | `backend/src/routes/totp.ts` | 4 | 161 |
 | `backend/src/routes/track.ts` | 1 | 44 |
 | `backend/src/routes/udf.ts` | 4 | 251 |
 | `backend/src/routes/users.ts` | 22 | 2331 |
 | `backend/src/scm/routes/accounting-bank.ts` | 0 | 765 |
+| `backend/src/scm/routes/accounting-chart.ts` | 0 | 290 |
 | `backend/src/scm/routes/accounting-payouts.ts` | 0 | 196 |
 | `backend/src/scm/routes/accounting-settlement.ts` | 0 | 1222 |
-| `backend/src/scm/routes/accounting.ts` | 53 | 1256 |
+| `backend/src/scm/routes/accounting.ts` | 56 | 1262 |
 | `backend/src/scm/routes/addons.ts` | 4 | 215 |
 | `backend/src/scm/routes/amendment-mirror.ts` | 1 | 126 |
 | `backend/src/scm/routes/ar-reconciliation.ts` | 1 | 163 |
 | `backend/src/scm/routes/autocount-outbox.ts` | 7 | 982 |
-| `backend/src/scm/routes/autocount-relink.ts` | 0 | 167 |
+| `backend/src/scm/routes/autocount-relink.ts` | 0 | 179 |
 | `backend/src/scm/routes/categories.ts` | 10 | 509 |
 | `backend/src/scm/routes/consignment-notes.ts` | 12 | 1262 |
 | `backend/src/scm/routes/consignment-orders.ts` | 19 | 2332 |
@@ -123,7 +124,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/mrp-lead-times.ts` | 2 | 95 |
 | `backend/src/scm/routes/mrp.ts` | 2 | 1763 |
 | `backend/src/scm/routes/outstanding.ts` | 2 | 321 |
-| `backend/src/scm/routes/payment-vouchers.ts` | 14 | 1689 |
+| `backend/src/scm/routes/payment-vouchers.ts` | 14 | 1709 |
 | `backend/src/scm/routes/personal-quick-picks.ts` | 3 | 212 |
 | `backend/src/scm/routes/po-amendments.ts` | 6 | 673 |
 | `backend/src/scm/routes/po-gates.ts` | 0 | 90 |
@@ -182,21 +183,21 @@ scripts, never assumed: each runner declares its own directory, and
 
 | tree | runner | *.sql | highest | applied to PRODUCTION by deploy.yml | read by backend vitest |
 |---|---|---|---|---|---|
-| `backend/src/db/migrations` | `backend/scripts/migrate.mjs` | 151 | `152_departments_lead_and_headcount.sql` (152) | no | yes |
-| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 343 | `0343_scm_pv_checked.sql` (0343) | YES | no |
+| `backend/src/db/migrations` | `backend/scripts/migrate.mjs` | 152 | `153_sessions_stay_signed_in.sql` (153) | no | yes |
+| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 345 | `0346_acc_autocount_code_relay.sql` (0346) | YES | no |
 
 Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its number): `0136_capture_compat_views_trips_lorries.sql.TEMPLATE`
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1862 files, 670245 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1878 files, 673345 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
 |---|---|
 | `frontend/src/pages/Projects.tsx` | 15152 |
 | `backend/src/scm/routes/mfg-sales-orders.ts` | 11963 |
-| `frontend/src/pages/ServiceCases.tsx` | 8816 |
+| `frontend/src/pages/ServiceCases.tsx` | 8817 |
 | `backend/src/services/autocount-sofa-corpus.ts` | 8401 |
 | `frontend/src/pages/Team.tsx` | 5686 |
 | `backend/src/scm/routes/delivery-orders-mfg.ts` | 5601 |
@@ -204,20 +205,20 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `backend/src/routes/projects.ts` | 5105 |
 | `backend/src/scm/routes/scan-so.ts` | 4865 |
 | `backend/src/scm/routes/mfg-purchase-orders.ts` | 4538 |
-| `frontend/src/mobile/MobilePMS.tsx` | 4399 |
+| `frontend/src/mobile/MobilePMS.tsx` | 4487 |
 | `frontend/src/pages/scm-v2/SupplierDetail.tsx` | 4326 |
 | `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | 4205 |
 | `frontend/src/mobile/MobileNewSO.tsx` | 3742 |
 | `backend/src/scm/routes/grns.ts` | 3564 |
 | `frontend/src/components/DataTable.tsx` | 3545 |
 | `frontend/src/mobile/MobileServiceCase.tsx` | 3376 |
-| `backend/src/routes/assr.ts` | 3326 |
-| `backend/src/services/projects.ts` | 3141 |
+| `backend/src/routes/assr.ts` | 3360 |
+| `backend/src/services/projects.ts` | 3137 |
 | `frontend/src/pages/MailCenter/Inbox.tsx` | 3013 |
 
 ## 4. Frontend desktop routes
 
-150 `<Route>` declarations in `frontend/src/App.tsx` (aliases from
+151 `<Route>` declarations in `frontend/src/App.tsx` (aliases from
 `frontend/src/lib/routeAliases.ts` are expanded at runtime and not counted here).
 
 | path | page module |
@@ -252,6 +253,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `/scm/auto-schedule` | `frontend/src/pages/scm-v2/AutoSchedule` |
 | `/scm/bank-recon` | `frontend/src/pages/scm-v2/BankRecon` |
 | `/scm/categories` | `frontend/src/pages/scm-v2/Categories` |
+| `/scm/chart-of-accounts` | `frontend/src/pages/scm-v2/ChartOfAccounts` |
 | `/scm/consignment` | `frontend/src/pages/ScmSubgroupHub` |
 | `/scm/consignment-notes` | `frontend/src/pages/scm-v2/ConsignmentNotes` |
 | `/scm/consignment-notes/:id` | `frontend/src/pages/scm-v2/ConsignmentNoteDetail` |
@@ -379,13 +381,13 @@ Page files by directory:
 |---|---|
 | `frontend/src/pages` | 35 |
 | `frontend/src/pages/MailCenter` | 3 |
-| `frontend/src/pages/scm-v2` | 132 |
+| `frontend/src/pages/scm-v2` | 134 |
 | `frontend/src/pages/scm-v2/products` | 1 |
 | `frontend/src/pages/team` | 10 |
 
 ## 5. Mobile screen inventory
 
-47 screen/component modules in `frontend/src/mobile`.
+48 screen/component modules in `frontend/src/mobile`.
 
 | file | lines |
 |---|---|
@@ -418,9 +420,10 @@ Page files by directory:
 | `frontend/src/mobile/MobileMyCaseDetail.tsx` | 326 |
 | `frontend/src/mobile/MobileNewProject.tsx` | 196 |
 | `frontend/src/mobile/MobileNewSO.tsx` | 3742 |
-| `frontend/src/mobile/MobilePMS.tsx` | 4399 |
+| `frontend/src/mobile/MobilePMS.tsx` | 4487 |
 | `frontend/src/mobile/MobilePOD.tsx` | 558 |
 | `frontend/src/mobile/MobilePmsDefectActions.tsx` | 109 |
+| `frontend/src/mobile/MobilePmsPlanFileChips.tsx` | 96 |
 | `frontend/src/mobile/MobilePoAmendmentDetail.tsx` | 447 |
 | `frontend/src/mobile/MobilePoAmendments.tsx` | 137 |
 | `frontend/src/mobile/MobileProfile.tsx` | 1002 |

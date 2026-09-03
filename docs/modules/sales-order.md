@@ -4009,3 +4009,43 @@ and **NOT LOADED** if it fails — never `STOCK` or a bare dash, which are
 answers. `coverage` is a required prop on the shared drill-down; the rule, the
 five surfaces that fetch separately, and how to add a sixth are in
 `docs/modules/coverage-state.md` (trace: `docs/bugs/0603-a-drill-down-printed-stock-while-the-answer-was-still-loadin.md`).
+
+## §0.4c The Status cell and the Delivered cell answer the same question
+
+They did not always agree. Status rendered `statusFor(row.status)` — the STORED
+`mfg_sales_orders.status` — while the Delivered cell beside it rendered
+`shipped_qty / deliverable_qty`, derived live from delivery-order coverage on the
+SAME response. One row, one question, two answers, and nothing saying which to
+believe.
+
+`so-list-status.ts` → `soRowStatus` is now the one resolver, and it delegates to
+`soStatusDisplay`, the rule the SO detail's editor already renders. The cell
+itself is `pages/scm-v2/SoListStatusCell.tsx`.
+
+**It shows the disagreement rather than resolving it, and that is deliberate.**
+The stored value still decides which TAB counts the row — the strip is a
+server-side aggregate over that column — so rendering only the derived answer
+would file a row under a tab its own pill contradicts. When the two differ the
+cell prints the derived label plus a marker naming the stored status, with a
+tooltip for why.
+
+A payload carrying neither `delivery_state` nor `lifecycle_state` (an older
+cached bundle) falls back to the stored status with **no** marker: *"predates the
+field"* must read as nothing-derived, never as nothing-shipped — the same refusal
+`shipped-progress.ts` makes with its own `unknown`.
+
+**Why the stored column drifts.** It is a cache with exactly one writer,
+`syncSoDeliveredFromDo`, and all nine of its call sites are event hooks on a
+delivery-order write *through a route*. No read-path re-derivation, no cron, no
+trigger — so a delivery order written by an import script never advances its
+sales order, and nothing ever will.
+
+**Still open:** `SalesOrderDetailV2.tsx:260` has its own third local `statusFor`
+over the stored column, and there are twelve hand-written copies across
+`pages/scm-v2/`. Trace:
+`docs/bugs/0619-one-row-answered-has-this-gone-out-two-different-ways.md`.
+
+Separately, the live stock verdict the coverage endpoint returns is now actually
+read by the pill — it was being written to a field the renderer does not consult
+and silently discarded
+(`docs/bugs/0614-the-healed-stock-verdict-reached-the-browser-and-was-thrown.md`).

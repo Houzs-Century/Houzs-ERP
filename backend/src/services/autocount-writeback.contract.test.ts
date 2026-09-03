@@ -379,9 +379,17 @@ describe('layer 1 — the keys AcSyncService.cs parses, read out of its source',
        silently destroys whatever photographs the line was holding. This
        assertion is what makes adding a third way to write it impossible to do
        quietly. */
+    /* `Gone` was in this list for part of 2026-09-02 and is deliberately NOT any
+       more. It is an ERP-side fact — composeEdit reads it to decide whether the
+       line SET changed and therefore whether to rebuild (services/ac-line-gone.ts,
+       docs/bugs/0608) — and the host stopped reading it when the per-type
+       DeleteDetail branch was removed. It still rides along in Lines and is
+       ignored, which is why it must be absent HERE: this list is what the SERVICE
+       parses, and listing a key it does not read would make the contract lie in
+       the direction that reads as safe. */
     expect(detailKeys(CS_EDIT)).toEqual(
-      ['DeliveryDate', 'Desc2', 'Description', 'DtlKey', 'FurtherDescription', 'ItemCode',
-       'Location', 'Photos', 'Qty', 'UnitPrice'].sort(),
+      ['DeliveryDate', 'Desc2', 'Description', 'DtlKey', 'FurtherDescription',
+       'ItemCode', 'Location', 'Photos', 'Qty', 'UnitPrice'].sort(),
     );
   });
 

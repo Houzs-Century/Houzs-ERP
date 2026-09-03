@@ -107,3 +107,60 @@ describe('a line added to a downstream document', () => {
     expect((sb.tables.autocount_outbox ?? [])[0].last_error).toContain('refused, nothing sent');
   });
 });
+
+/* THE LINE SET DECIDES — and it has to reach the PAYLOAD, not just be computed.
+ *
+ * Owner 2026-09-02: 「如果我们有 delete line、add line 导致了它的 line 不平整了，我们
+ * 就整张重建」. `shouldRebuild` derives that correctly, and until these two tests
+ * were written NOTHING carried the answer out of composeEdit unless the document
+ * ALSO had an unmatchable line — so the ordinary case, deleting one line from a
+ * fully-keyed document, went out as a plain keyed edit and the book kept the
+ * line at Qty 0. That is the exact symptom docs/bugs/0606 opened with.
+ */
+describe('a changed line set reaches the payload', () => {
+  const SO_HEADER = {
+    doc_no: 'HC-SO-9', so_date: null, debtor_name: 'ACME', agent: null,
+    salesperson_id: 'staff-1', sales_location: 'KL', branding: null, venue: null,
+    address1: null, address2: null, address3: null, address4: null,
+    phone: null, ref: null, po_doc_no: null, linked_ac_docno: 'SO-000021',
+  };
+
+  test('deleting a line rebuilds, even when every remaining line is keyed', async () => {
+    const sb = withFlag({
+      mfg_sales_orders: [{ ...SO_HEADER }],
+      mfg_sales_order_items: [
+        { id: 'row-keep', doc_no: 'HC-SO-9', item_code: ERP_A, description: 'M', qty: 1, unit_price_sen: 100, linked_ac_dtlkey: 991 },
+      ],
+    });
+
+    expect(await enqueueEdit(sb as never, {
+      companyId: 1, docType: 'SO', docNo: 'HC-SO-9',
+      retire: [{ DtlKey: 992, ItemCode: AC_B, Gone: 'deleted' }],
+    })).toBe(true);
+
+    expect((sb.tables.autocount_outbox ?? [])[0].payload.body.Rebuild).toBe(true);
+  });
+
+  /* THE OTHER HALF, and it is the dangerous direction. A delivery order was
+     CREATED BY TRANSFER, and its lines are where AutoCount records that -
+     FromDocType / FromDocNo, listed in AcSyncService.DetailWanted with the note
+     that these four are the DOWNSTREAM shape. ClearDetails() destroys them, and
+     the host's own guard cannot see it: AnyLineTransferred reads TransferedQty,
+     which is what this document transferred ONWARD, not what it came from. So
+     the ERP must never ask. */
+  test('a converted document is never rebuilt, whatever its line set did', async () => {
+    const sb = withFlag({
+      delivery_orders: [{ id: 'do-1', do_number: 'HC-DO-9', do_date: '2026-08-10', debtor_name: 'ACME', ref: null, phone: null, note: null, linked_ac_docno: 'DO-000021' }],
+      delivery_order_items: [
+        { id: 'row-keep', delivery_order_id: 'do-1', item_code: ERP_A, description: 'M', qty: 1, unit_price_sen: 100, linked_ac_dtlkey: 991, created_at: '2026-08-10T00:00:00Z' },
+      ],
+    });
+
+    expect(await enqueueEdit(sb as never, {
+      companyId: 1, docType: 'DO', docId: 'do-1',
+      retire: [{ DtlKey: 992, ItemCode: AC_B, Gone: 'deleted' }],
+    })).toBe(true);
+
+    expect((sb.tables.autocount_outbox ?? [])[0].payload.body.Rebuild).toBeUndefined();
+  });
+});

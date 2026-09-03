@@ -201,18 +201,28 @@ number after the next change.
     `/journal-entries`, `/gl` routes all `scopeToCompany` — every company has its
     own chart. 2990's 31 accounts were imported under `company_id=2`. See
     `MULTICOMPANY-SCALING.md`.
-  - CORRECTION (2026-08-13): the FLEET entry above ("drivers / helpers / lorries
-    (global fleet)") is right about the MASTERS and was being read as covering
-    the whole Fleet Maintenance module. It does not. `scm.lorries`,
+  - **SUPERSEDED 2026-09-02 — Fleet Maintenance is SHARED, records included.**
+    The owner, asked directly which way to settle it:
+    「共用的，因为 TMS 是共用的。这个东西 TMS 就像我们的运输公司一样」. One
+    transport company, one fleet, one set of maintenance records. `scm.lorries`,
     `scm.drivers`, `scm.helpers`, `scm.lorry_maintenance` windows and
-    `scm.lorry_service_records` are SHARED — one vehicle, one crew roster, one
-    workshop history, deliberately visible and editable from both companies (the
-    routes now carry a comment naming that). But the Fleet Maintenance module's
-    OWN records — compliance vault + attachments, maintenance plans, mileage
-    readings, breakdown cases, work orders + parts, components + events,
-    workshops — are **SEPARATE**: they stamp `company_id` on insert and their
-    writes are `scopeToCompany`d as of the unscoped-write sweep. Their LIST reads
-    are still unscoped; that gap is open and tracked in the sweep PR.
+    `scm.lorry_service_records` are SHARED — and so are the module's OWN records:
+    compliance vault + attachments, maintenance plans, mileage readings,
+    breakdown cases, work orders + parts, components + events. `company_id` is
+    still STAMPED on insert for provenance (migs 0202/0203/0204/0238 say exactly
+    that) and is NOT used to scope reads or by-id writes.
+    `backend/tests/fleetMaintenanceUnifiedScope.test.ts` enforces it.
+  - **`scm.workshops` remains the ONE exception** and IS per-company (mig 0241).
+    It is the repair-shop MASTER, not a maintenance record; the ruling was about
+    the records and did not reach it.
+  - *The 2026-08-13 correction this replaces said those records were SEPARATE and
+    that their writes had been `scopeToCompany`d "as of the unscoped-write
+    sweep", with the LIST reads left unscoped and the gap "open and tracked".
+    That gap was the defect: `GET /dashboard` listed rows the by-id handlers then
+    404'd, which is precisely what `fleet-maintenance.ts`'s own file marker warned
+    would happen. Recorded rather than deleted, because the sweep's reasoning was
+    sound and only its answer was wrong — see
+    `docs/bugs/0620-the-fleet-dashboard-listed-rows-nobody-could-open.md`.*
 
 ## UNIFIED MODULE + PER-COMPANY TARGETING
 - **Team** — ONE unified interface (Members / Positions / Org Chart / Departments /

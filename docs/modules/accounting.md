@@ -107,6 +107,28 @@ on /scm/settlement-setup and pre-filling every voucher's Paid From
 (docs/modules/payment-voucher.md §0c). Contract:
 `backend/src/scm/routes/accountRoles.test.ts`.
 
+**The chart maintenance surface (2026-09-03, roadmap A)**: `GET
+/accounting/chart` unions every GRANTED company's accounts into one row per
+code (definition led by the lowest company id, per-company active map;
+grants fail closed), `PUT /accounting/chart/tick` turns one code on/off for
+one company — ON instantiates the row from the master definition with its
+parent riding along (the tree stays whole), OFF cascades down the children
+(the owner's rule; the confirm lives in the UI) — and `POST
+/accounting/chart/import` upserts the accountant's parsed rows into the
+target company and copies rows marked `shared` to every other granted
+company, parents included. The owner's design verbatim: 可能类似recon setup
+我tick 后选择这个公司要不要用 — a future company is a new tick column.
+All three behind the same GL-post key as the rest of the chart surface;
+handlers in `accounting-chart.ts`, contract
+`backend/tests/accountingChart.test.ts`. The page (/scm/chart-of-accounts,
+Finance menu) parses the AutoCount xlsx IN THE BROWSER — digit and letter
+code series, 4-space indent → parent, section headings → account_type,
+Special Acc Type SBK/SCH → acc_money, banks / related-party loans /
+directors / HP+borrowings pre-classified company-specific — so the file
+never enters the repo. 父户不记账 is enforced three-deep: the GL gate
+(engine rule 3), `requireLeafAccount` at PV create/patch (typing time), and
+AccountSelect simply not offering a header with children.
+
 **The recognition-rules window (2026-09-02)**: `GET /bank/rules` (every rule,
 off rows included), `POST /bank/rules`, `PATCH /bank/rules/:id` — the rules
 that say "this credit is PBB's payout", seed-only since 0336, now the owner's
@@ -135,7 +157,10 @@ zero-difference self-check tile), AR/AP Aging, and Self-check (layer 1).
 **Phase 2B part 2 (2026-08-16): Daily close (layer 2).** GET/PUT /accounting/daily-close + POST /daily-close/confirm: each day each company counts the drawer against the system takings (both sales panels, bucketed cash / transfer / per-acquirer; imported rows never count). Confirming freezes the day (scm.acc_daily_closes, migration 0300) and posts the CASH over/short THAT DAY through the gate (946-0000, source CASHUP, idempotent per company+date); card/transfer differences are settlement timing owned by layer 3 - recorded, never posted here. UI: the Daily close view on the Daily Bank page. Confirmed buckets refuse edits - corrections are manual journals, on the record.
 
 **Phase 2B part 3 (2026-08-16): acquirer settlement reconciliation (layer 3).**
-The layer that empties `320-0000`. The acquirer master follows the owner's
+The layer that empties `326-0000` (the EDC clearing code since mig 0346 —
+the owner's AutoCount code relay, 2026-09-02: 迁到 AutoCount 码; the whole
+relay map lives in that migration's header, and the two production
+failures that shaped its defer-sandwich are docs/bugs/0614 + 0615). The acquirer master follows the owner's
 "define once, all companies share" principle: `scm.acc_acquirer_config` is
 GLOBAL (statement format, unique-ref flag, fee method, date tolerance, column
 map — 决定4, taught once) and `scm.acc_company_acquirers` is the per-company
@@ -314,3 +339,33 @@ two behaviour changes are both fixes the old code documented against itself:
 a PV reversal of a line-less entry now aborts loudly instead of posting a
 zero-line reversal header, and a manual JV naming an account the company
 chart cannot explain is now a 400.
+
+## Which company's masters a posting reads
+
+`acc/masters-company.ts` is the ONE place that answers it, and the three lookups
+call it: `checkAccounts` (the chart), `resolveRoles` (the account roles) and
+`transitFor` (the acquirer map).
+
+`accMastersCompanyId(companyId, where)` returns the entry's own company when it
+has one, and falls back to the base company when it does not — **logging at
+error level and naming the call site every time it substitutes.**
+
+**The fallback is not a rule anyone chose. It is debt with an owner decision
+attached.** Until 2026-09-02 the expression was written three times, inline and
+silently, and `engine.ts` used `companyId == null` to mean two different things
+inside one call: the WRITE path reads it as "stamp no company" (`:208`), the
+LOOKUP path read it as "company 1". So an entry whose company could not be
+resolved was validated against company 1's chart and then written with no
+company at all — and looked exactly like one validated against its own books.
+
+That contradicts the house rule for a write — `requireActiveCompanyId`
+(`scm/lib/companyScope.ts:114`) is documented *"Never degrades, never
+defaults"*. It was **not** changed to a refusal because null is reachable from
+real rows, not only from a degraded request: `scm/routes/accounting.ts:295`,
+`payment-vouchers.ts:694` and `:1409` all pass the DOCUMENT's own nullable
+`company_id`. Refusing today would stop those documents posting.
+
+The probe needed before flipping it, and the three options, are in
+`docs/bugs/0615-the-accounting-masters-fell-back-to-company-1-in-silence.md`.
+`backend/tests/accMastersOneHome.test.ts` fails the PR if any `acc/` module
+re-implements the fallback inline.

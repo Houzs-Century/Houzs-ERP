@@ -649,6 +649,7 @@ export const NAV_TABS: NavTab[] = [
       { to: "/scm/bank-recon", label: "Bank Recon", icon: Banknote, anyPerm: ["*", "scm.access", "scm.payment_voucher.post"], anyAccess: ["scm.finance.accounting"] },
       // Maintained across companies from one screen (owner, 2026-08-18).
       { to: "/scm/settlement-setup", label: "Recon Setup", icon: SettingsIcon, anyPerm: ["*", "scm.access", "scm.payment_voucher.post"], anyAccess: ["scm.finance.accounting"] },
+      { to: "/scm/chart-of-accounts", label: "Chart of Accounts", icon: SettingsIcon, anyPerm: ["*", "scm.access", "scm.payment_voucher.post"], anyAccess: ["scm.finance.accounting"] },
       { to: "/scm/payment-vouchers", label: "Payment Vouchers", icon: Wallet, anyPerm: ["*", "scm.access", "scm.payment_voucher.create", "scm.payment_voucher.write", "scm.payment_voucher.post", "scm.payment_voucher.cancel"], anyAccess: ["scm.finance.accounting"] },
       { to: "/scm/outstanding", label: "Outstanding", icon: AlertCircle, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.outstanding"] },
       // Delivered-but-not-billed, aged. Sits next to Outstanding and on the

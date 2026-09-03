@@ -1,5 +1,6 @@
 method,path,auth_boundary,company_boundary,mount_gate,router_gate,direct_gate,handler_guard,mutation,review_state,source
 GET,/api/admin/health/audit-feed,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePageAccess(""system_health"")",,NO,DECLARED_GATE,backend/src/routes/systemHealth.ts
+GET,/api/admin/health/autocount/host-build,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""*"")",,NO,DECLARED_GATE,backend/src/routes/systemHealth.ts
 POST,/api/admin/health/autocount/po-pull,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""*"")",,YES,DECLARED_GATE,backend/src/routes/systemHealth.ts
 GET,/api/admin/health/autocount/reconcile,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""*"")",,NO,DECLARED_GATE,backend/src/routes/systemHealth.ts
 POST,/api/admin/health/autocount/snapshot,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""*"")",,YES,DECLARED_GATE,backend/src/routes/systemHealth.ts
@@ -415,6 +416,9 @@ GET,/api/scm/accounting/bank/setup,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"aut
 GET,/api/scm/accounting/bank/statements,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/accounting.ts
 POST,/api/scm/accounting/bank/statements,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/accounting.ts
 GET,/api/scm/accounting/bank/statements/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/accounting.ts
+GET,/api/scm/accounting/chart,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/accounting.ts
+POST,/api/scm/accounting/chart/import,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/accounting.ts
+PUT,/api/scm/accounting/chart/tick,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/accounting.ts
 GET,/api/scm/accounting/control-check,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/accounting.ts
 GET,/api/scm/accounting/daily-bank,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/accounting.ts
 GET,/api/scm/accounting/daily-close,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/accounting.ts

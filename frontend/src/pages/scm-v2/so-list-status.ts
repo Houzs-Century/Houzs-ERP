@@ -119,3 +119,70 @@ export const statusFor = (
   s: string | null | undefined,
 ): { tone: "success" | "warning" | "error" | "neutral"; label: string } =>
   STATUS_TONE[(s ?? "").toLowerCase()] ?? { tone: "neutral", label: s || "—" };
+
+/* ── ONE STATUS ANSWER PER ROW ──────────────────────────────────────────────
+   The list used to render `statusFor(row.status)` — the STORED column — while
+   the Delivered column beside it (§0.4b, #2864) rendered `shipped_qty /
+   deliverable_qty`, derived LIVE from delivery-order coverage on the same
+   response. One row, one question ("has this order gone out?"), two answers:
+   the owner was looking at a Status cell reading In Production next to a
+   Delivered cell reading 5 / 5.
+
+   The stored column is a CACHE with exactly one writer (syncSoDeliveredFromDo),
+   and that writer only ever fires from inside a delivery-order route — so an
+   import script, a backfill or a hand-run SQL leaves it stale for ever, because
+   nothing recomputes it on read, on a schedule, or in the database (0619).
+
+   This resolves the pill through `soStatusDisplay`, the rule the SO detail's
+   editor already uses, so the two surfaces cannot hold two opinions — and when
+   the derived answer DISAGREES with the stored one, it says so instead of
+   quietly picking a side. The stored value still decides which TAB counts the
+   row (the tab strip is a server-side aggregate over that column), so hiding
+   the disagreement would leave a row visibly filed under a tab its own pill
+   contradicts.
+
+   `deliveryState` / `lifecycleState` are OPTIONAL because a cached page from an
+   older bundle carries neither, and "the payload predates the field" must read
+   as "nothing derived to say" — never as "nothing has shipped". That is the
+   same refusal shape shipped-progress.ts uses for its own `unknown`. */
+export type SoRowStatusFields = {
+  status: string;
+  delivery_state?: "none" | "partial" | "full" | null;
+  lifecycle_state?: "none" | "delivered" | "invoiced" | "returned" | null;
+};
+
+export type SoRowStatus = {
+  tone: "success" | "warning" | "error" | "neutral";
+  label: string;
+  /** The STORED status this row is filed under, and only when it differs from
+   *  the label above. `null` when they agree, or when nothing could be derived
+   *  — so a caller renders the marker on exactly the rows that disagree. */
+  storedLabel: string | null;
+};
+
+export function soRowStatus(
+  row: SoRowStatusFields,
+  /** The shared rule, injected so this module stays free of a vendor import and
+   *  the test can prove the wiring rather than re-implement it. */
+  derive: (
+    status: string,
+    deliveryState: "none" | "partial" | "full" | undefined,
+    lifecycleState?: "none" | "delivered" | "invoiced" | "returned",
+  ) => { label: string | null; classKey: string },
+): SoRowStatus {
+  const stored = statusFor(row.status);
+  const d = derive(
+    row.status,
+    row.delivery_state ?? undefined,
+    row.lifecycle_state ?? undefined,
+  );
+  /* `label: null` is soStatusDisplay saying "the stored status IS the answer" —
+     a terminal state, or nothing derived. Not a disagreement. */
+  if (!d.label) return { tone: stored.tone, label: stored.label, storedLabel: null };
+  const tone = statusFor(d.classKey).tone;
+  return {
+    tone,
+    label: d.label,
+    storedLabel: d.label === stored.label ? null : stored.label,
+  };
+}

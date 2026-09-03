@@ -132,6 +132,19 @@ layer that posted it); a DRAFT wears "prepared — awaiting check" or
 "checked — awaiting approval" beside the pill, and the list's filter chips
 split Draft / Prepared / Checked / Approved / Cancelled by the marks.
 
+**批量tick yes** (owner, same day: 这个批量的功能肯定需要): the list grows
+DataGrid's first-class multi-select for holders of the check or approve
+key. Only rows whose yes is YOURS to give can be ticked (a raw draft and a
+posted voucher render disabled; the header checkbox never sweeps them in);
+a bar counts each button's own targets — "Prepare n" (write key, raw
+drafts; no dialog — freely reversible, 我draft 也要批量去prepared) /
+"Check n" / "Approve & post n" — and the check/approve dialogs state the
+ticked rows' MYR-equivalent before anything moves. The run stamps ONE BY ONE through the same routes as the
+detail buttons (own permission, own gate, own audit; approve carries its
+whole post), so a refused voucher names itself in the summary and the rest
+carry on. No batch reject — a reject wants its own note. Contract:
+`frontend/src/pages/scm-v2/PaymentVouchers.test.tsx`.
+
 ## 0c. Two documents, AutoCount-style (2026-08-30)
 
 The owner, AutoCount in hand: 正常 auto count是可以选payment voucher / AP
@@ -164,6 +177,14 @@ bank is the owner's to maintain — the "Default bank" card on
 /scm/settlement-setup writes `PUT /accounting/roles/BANK_DEFAULT` (money
 accounts only, per company). Contracts: `PaymentVoucherNew.test.tsx`
 (frontend), `backend/src/scm/routes/accountRoles.test.ts` (server half).
+
+**And lines take only LEAVES** (owner 2026-09-03, 父户不记账): create and
+draft-edit run every debit code through `requireLeafAccount`
+(accounting-chart.ts) — a header with active sub-accounts refuses
+`not_a_leaf_account` at typing time, before the GL gate would refuse the
+same header at approval. AccountSelect does its half by not offering
+headers at all. Contract: the leaf block of
+`backend/tests/accountingChart.test.ts`.
 
 ## 0d. 预付挂在 supplier (2026-09-02)
 

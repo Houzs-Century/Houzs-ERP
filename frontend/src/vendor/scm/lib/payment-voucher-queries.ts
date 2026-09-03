@@ -31,6 +31,7 @@ export type PaymentVoucherRow = Record<string, unknown> & {
   payee_name: string;
   total_sen?: number;
   currency?: string;
+  exchange_rate?: string | number | null;
   credit_account_code?: string;
   supplier?: { id: string; code: string; name: string } | null;
   /* The owner's four layers (2026-09-02). No marks: raw Draft. submitted:

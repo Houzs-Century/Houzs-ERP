@@ -89,6 +89,30 @@ describe('autocount-outbox-status', () => {
     expect(ts.acOutboxState('skipped', quoted)).toBe('skipped');
   });
 
+  /* THE SENTENCE THAT MATCHES TWO NEEDLES. `KeylessLineError` writes "N of M
+     line(s) carry no AutoCount DtlKey", which contains the `keyless-line`
+     needle AND the `dtlkey-subset` needle ("carry no AutoCount DtlKey"). The
+     order of AC_SKIP_KINDS is a PRIORITY order — `classifyAcSkip` returns the
+     FIRST match — and this pins that the priority actually resolves this pair,
+     because a reporter that classified per-needle instead printed the losing
+     class as a second, differently-remedied entry (docs/bugs/0606-the-outbox-health-report-counted-one-refusal-under-two-remed.md).
+
+     The two remedies are opposites in practice: keyless-line says backfill THIS
+     document's line keys; dtlkey-subset says backfill the SOURCE document's,
+     and an edit has no source document. */
+  it('a reason matching two needles resolves to ONE kind, the higher-priority one', () => {
+    const both =
+      'refused, nothing sent (KeylessLineError): SO SO-000000: 1 of 8 line(s) '
+      + 'carry no AutoCount DtlKey — line(s) 1.';
+    const keyless = ts.AC_SKIP_KINDS.findIndex((k) => k.kind === 'keyless-line');
+    const subset = ts.AC_SKIP_KINDS.findIndex((k) => k.kind === 'dtlkey-subset');
+    expect(keyless).toBeGreaterThanOrEqual(0);
+    expect(subset).toBeGreaterThan(keyless);
+    expect(both).toContain(ts.AC_SKIP_KINDS[subset].needle);
+    expect(ts.classifyAcSkip(both).kind).toBe('keyless-line');
+    expect(mjs.classifyAcSkip(both)).toEqual(ts.classifyAcSkip(both));
+  });
+
   it('an unrecognised reason is named as such, never folded into a neighbour', () => {
     const { kind, remedy } = ts.classifyAcSkip('a refusal class written next month');
     expect(kind).toBe(ts.AC_SKIP_UNRECOGNISED);

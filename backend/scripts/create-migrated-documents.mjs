@@ -191,7 +191,8 @@ async function doDos() {
      set. The GRN writer above (:145) always copied them, which is exactly why
      nobody noticed. Do not drop them again. */
   const soItems = await sql`SELECT i.id, i.item_code, i.line_no, i.qty, i.item_group, i.variants,
-      i.description2, h.doc_no, h.linked_ac_docno ac
+      i.description2, i.unit_price_sen, i.discount_sen, i.unit_cost_sen,
+      h.doc_no, h.linked_ac_docno ac
     FROM scm.mfg_sales_order_items i JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
     WHERE h.company_id = ${CO} AND h.linked_ac_docno IS NOT NULL ORDER BY i.line_no`;
   const soByKey = new Map();
@@ -272,7 +273,11 @@ async function doDos() {
       debtorCode: r.DebtorCode || null, debtorName: (r.DebtorName || "").trim() || null, items: [] });
     for (const t of targets) {
       byDo.get(r.DoNo).items.push({ code: t.item_code, name: r.LineDesc, qty: Math.round(Number(r.Qty || 0)),
-        soItemId: t.id, group: t.item_group ?? null, variants: t.variants ?? null, desc2: t.description2 ?? null });
+        soItemId: t.id, group: t.item_group ?? null, variants: t.variants ?? null, desc2: t.description2 ?? null,
+        /* The MONEY, from the same row the normal create path reads it from.
+           Omitted until docs/bugs/0617-the-migrated-delivery-orders-carried-no-money-at-all.md
+           while the GRN writer above always carried it. */
+        unitPriceSen: t.unit_price_sen ?? 0, discountSen: t.discount_sen ?? 0, unitCostSen: t.unit_cost_sen ?? 0 });
     }
   }
   /* The invariant, asserted rather than inferred. Whatever the mapping above
@@ -319,13 +324,55 @@ async function doDos() {
                 ${`mirrors AutoCount delivery ${d.doNo}. No stock movement: the balance snapshot already counts these units as delivered.`},
                 true, ${d.doNo})
         RETURNING id`;
+      /* THE PRICE COLUMNS ARE NOT OPTIONAL. They were omitted here while the GRN
+         half of this same script (doGrns, above) wrote unit_price_sen and
+         line_total_sen — one file, two answers. They default to 0 NOT NULL, so
+         the omission is silent, and it is NOT cosmetic: the DO line's price
+         prefills a new Sales Invoice (do-line-remaining.ts:326 ->
+         SalesInvoiceFromDo.tsx:321), the SI price-drift guard skips a zero by
+         design ("no ratio to drift from"), and migrated_no_stock gates the SI
+         and the PI but NOT the DO->SI path. An operator invoicing one of these
+         would have been prefilled RM 0.00 with nothing said. See
+         docs/bugs/0617-the-migrated-delivery-orders-carried-no-money-at-all.md.
+         The source is the SO line, which is exactly where the normal create path
+         takes it from (delivery-orders-mfg.ts:4058, fed by
+         soDeliverableRemaining). */
+      let hdrTotal = 0;
       for (const it of d.items) {
+        const unit = Math.round(Number(it.unitPriceSen ?? 0));
+        const cost = Math.round(Number(it.unitCostSen ?? 0));
+        /* THE DISCOUNT IS DELIBERATELY NOT CARRIED, and this is the one place
+           this writer departs from the interactive create path
+           (delivery-orders-mfg.ts:4048 does `(qty * unit) - discount`).
+           `mfg_sales_order_items.discount_sen` is a LINE-level amount, not a
+           per-unit one, and one migrated SO line is routinely split across
+           several AutoCount delivery notes (that is what `taken`/`used` above
+           is counting). Copying the whole discount onto each split would deduct
+           it once per delivery. Dividing it needs a rule nobody has written.
+           A per-UNIT price is well defined and is what the invoice prefill
+           needs; the discount stays 0 and the operator sees the undiscounted
+           figure rather than an invented one. Say it out loud rather than
+           quietly picking a split. */
+        const disc = 0;
+        const lineTotal = Math.max(0, Math.round(Number(it.qty) * unit));
+        hdrTotal += lineTotal;
         await tx`INSERT INTO scm.delivery_order_items
             (delivery_order_id, so_item_id, item_code, description, uom, qty, company_id,
-             item_group, variants, description2)
+             item_group, variants, description2,
+             unit_price_sen, discount_sen, line_total_sen, unit_cost_sen, line_cost_sen)
           VALUES (${hdr.id}, ${it.soItemId}, ${it.code}, ${it.name || null}, 'UNIT', ${it.qty}, ${CO},
-                  ${it.group}, ${it.variants ? sql.json(it.variants) : null}, ${it.desc2})`;
+                  ${it.group}, ${it.variants ? sql.json(it.variants) : null}, ${it.desc2},
+                  ${unit}, ${disc}, ${lineTotal}, ${cost}, ${Math.round(Number(it.qty) * cost)})`;
       }
+      /* The header total is Sigma line_total_sen everywhere else
+         (delivery-orders-mfg.ts:461). Written here so the list's Amount column
+         and its Revenue tile do not read RM 0.00 over priced lines. The category
+         buckets and margin are deliberately left to the app's own recompute —
+         restating that split here would be a second copy of a rule that already
+         has one home. */
+      await tx`UPDATE scm.delivery_orders
+                  SET local_total_sen = ${hdrTotal}, line_count = ${d.items.length}
+                WHERE id = ${hdr.id}`;
     });
     made += 1;
   }

@@ -12,6 +12,7 @@ import {
   CONFIG_CACHE_TTL_SECONDS, configCacheKeyUrl, configCacheMatch,
 } from "../services/configCache";
 import { allowedCompanyIds } from "../scm/lib/companyScope";
+import { acServiceConfig, callAcService } from "../services/autocount-writeback";
 
 // ---------------------------------------------------------------------------
 // /api/admin/health — System Health, "real data" phase 1. Gated on the
@@ -129,6 +130,10 @@ app.get("/live", requirePageAccess("system_health"), async (c) => {
      new fact belongs in `authFastPath` below, not smuggled in here; both read
      the same const, so they cannot disagree. */
   const sessionSigning = { configured: sessionSigningConfigured };
+  /* PRESENCE of the header, never its value — so `unknown` above is not a dead
+     end: no header means the browser has none to send, which is a different
+     finding from having sent one and losing the record. */
+  const clientSentPass = (c.req.header("X-Session-Pass") || "").length > 0;
 
   /* THE OTHER 90%. /api/presence and /api/announcements/banner are ~90% of every
      slow request in production (697 of 761 occurrences over three days,
@@ -162,9 +167,9 @@ app.get("/live", requirePageAccess("system_health"), async (c) => {
     ),
   };
   const authFastPath = {
-    session_pass: sessionSigning,
+    session_pass: { ...sessionSigning, this_request: thisRequestPath, client_sent_pass: clientSentPass },
     config_cache: configCache,
-    reading: readingFor(sessionSigningConfigured, thisRequestPath, configCache),
+    reading: readingFor(sessionSigningConfigured, thisRequestPath, configCache, clientSentPass),
   };
 
   // SCM-route liveness — the page must not show green while the SCM stack is
@@ -807,6 +812,183 @@ app.post("/autocount/snapshot", requirePermission("*"), async (c) => {
     // Plain-language rule: never surface raw exception text to the user.
     return c.json({ error: "Couldn't reach AutoCount to build the snapshot. Try again shortly." }, 502);
   }
+});
+
+// ---------------------------------------------------------------------------
+// GET /autocount/host-build — WHICH BUILD OF AcSyncService IS THE OFFICE HOST
+// ACTUALLY RUNNING? Read-only: one proxied GET of the service's own /health,
+// and the response carries the build identity plus a verdict — never a URL,
+// never a key, never a document.
+//
+// WHY THIS LIVES IN THE WORKER AND NOT IN A SCRIPT. Same reason as
+// /rest-page-ceiling one screen up, with a second reason on top. The
+// credentials first: `AC_SYNC_URL` + `AC_SYNC_KEY` are WORKER secrets and are
+// deliberately not GitHub ones, so a workflow cannot ask the host at all. And
+// the transport: AcSyncService binds `http://localhost:<port>/` on the office
+// machine (`AcSyncService.cs`, port from `C:\Temp\ac-svc-port.txt`), so an
+// IP-addressed request over ZeroTier is answered by http.sys before the handler
+// ever sees it. The Worker reaches it through the tunnel, so the Worker is the
+// only thing in this system that can ask the question.
+//
+// WHAT IT SETTLES. A change to `AcSyncService.cs` ships INERT: the exe is
+// rebuilt on the host by `deploy-on-host.ps1`, not by our deploy, so until
+// somebody walks to that machine our half of a change is merged and doing
+// nothing. `builtAt` (the assembly's own file timestamp) and `mvid` (the module
+// version id, which is unique per COMPILATION) are the only things that say
+// which bytes are answering. Compare `builtAt` against the last commit that
+// touched the C#:
+//
+//   git log -1 --format=%ad --date=short -- backend/scripts/autocount-service/AcSyncService.cs
+//
+// builtAt earlier than that date means the host is behind, full stop. That
+// command is not run here on purpose — a date compiled into the Worker would be
+// a hand-maintained fact with an expiry date, which is the thing this endpoint
+// exists to replace.
+//
+// FOUR FAILURES THAT LOOK ALIKE AND ARE NOT. The host's key check is fail-CLOSED
+// and sits ABOVE its /health branch, so "the host has no key file" (503),
+// "the host rejected OUR key" (401), "the tunnel answered for a stopped
+// service" (a gateway status with no JSON body) and "nothing answered at all"
+// are four different jobs for whoever reads this. Collapsing them into one
+// "AutoCount is down" is the exact mistake #2686 cost a day to: a Cloudflare
+// `error code: 502` was reported as AutoCount refusing a document.
+// ---------------------------------------------------------------------------
+
+/* No URL may reach the caller. `AC_SYNC_URL` is a Worker secret, and a transport
+   failure's message is written by the fetch implementation — it can legitimately
+   quote the address it failed to reach. Applied to every string this route
+   passes through from anywhere other than its own source. */
+export function stripUrls(s: string): string {
+  return s.replace(/\b[a-z][a-z0-9+.-]*:\/\/\S+/gi, "[address removed]");
+}
+
+type HostBuildVerdict =
+  | "REPORTED"
+  | "BUILD_UNREADABLE"
+  | "BUILD_NOT_REPORTED"
+  | "HOST_REFUSED_OUR_KEY"
+  | "HOST_HAS_NO_KEY"
+  | "HOST_DID_NOT_ANSWER"
+  | "HOST_ERROR";
+
+/* One sentence per verdict, in the words the owner's rule asks for: what it
+   means for the business first, and what to do about it. Kept beside the
+   verdict rather than in the reader's head — this payload gets pasted. */
+const HOST_BUILD_MEANING: Record<HostBuildVerdict, string> = {
+  REPORTED:
+    "The office AutoCount machine answered and named the build it is running. Compare builtAt against the date of the last change to the service.",
+  BUILD_UNREADABLE:
+    "The machine answered and it IS a build that reports its identity, but it could not read its own file — so which build is running stays unknown.",
+  BUILD_NOT_REPORTED:
+    "The machine answered but sent no build identity at all, which only an exe built before 2026-08-15 does. It is behind and needs rebuilding on the host.",
+  HOST_REFUSED_OUR_KEY:
+    "The machine is running and refused us: the key on the host and the key in this Worker are not the same. Nothing is wrong with AutoCount itself.",
+  HOST_HAS_NO_KEY:
+    "The machine is running but has no key file, so it is refusing every request including ours. Somebody removed or never wrote C:\\Temp\\ac-svc-key.txt.",
+  HOST_DID_NOT_ANSWER:
+    "Nothing reached the machine — the tunnel answered instead. The sync service is not running on that machine, or the machine is off.",
+  HOST_ERROR:
+    "The machine answered with an error of its own. Read hostError for its words.",
+};
+
+app.get("/autocount/host-build", requirePermission("*"), async (c) => {
+  const label = "AcSyncService build running on the AutoCount host";
+  if (!acServiceConfig(c.env)) {
+    return c.json(
+      {
+        check: "autocount_host_build",
+        label,
+        time: new Date().toISOString(),
+        status: "unknown",
+        configured: false,
+        verdict: "NOT_CONFIGURED",
+        error:
+          "AC_SYNC_URL is not set on this Worker, so there is no AutoCount host to ask. "
+          + "Nothing about the office machine can be concluded from this.",
+      },
+      503,
+    );
+  }
+
+  const t0 = Date.now();
+  const res = await callAcService(c.env, "health", {});
+  const latencyMs = Date.now() - t0;
+
+  /* The service's OWN JSON. `callAcService` parses it on the failure path too
+     and leaves `{}` when the body was not JSON at all — which is the signal
+     that separates the service speaking from the tunnel speaking. */
+  const body: Record<string, unknown> = res.body ?? {};
+  const sent = (k: string) => Object.prototype.hasOwnProperty.call(body, k);
+  const text = (k: string): string | null => {
+    const v = body[k];
+    return typeof v === "string" && v.trim() ? v.trim() : null;
+  };
+
+  const builtAt = text("builtAt");
+  const mvid = text("mvid");
+
+  let verdict: HostBuildVerdict;
+  if (res.ok) {
+    /* ABSENT AND NULL ARE DIFFERENT ANSWERS, and the C# is written so they stay
+       different: it sets both keys to null rather than omitting them when its
+       own reflection fails. So a payload with NEITHER key is an exe built before
+       the fields existed — the honest reading of a missing key, and the one this
+       endpoint exists to make sayable. */
+    if (!sent("builtAt") && !sent("mvid")) verdict = "BUILD_NOT_REPORTED";
+    else if (builtAt == null && mvid == null) verdict = "BUILD_UNREADABLE";
+    else verdict = "REPORTED";
+  } else if (res.status === 401) {
+    verdict = "HOST_REFUSED_OUR_KEY";
+  } else if (res.status === 503 && sent("error")) {
+    // The one place the service answers 503 is its fail-closed no-key check.
+    verdict = "HOST_HAS_NO_KEY";
+  } else if (res.status === 0 || ((res.status === 502 || res.status === 503 || res.status === 504) && !sent("error"))) {
+    verdict = "HOST_DID_NOT_ANSWER";
+  } else {
+    verdict = "HOST_ERROR";
+  }
+
+  return c.json({
+    check: "autocount_host_build",
+    label,
+    time: new Date().toISOString(),
+    status: verdict === "REPORTED" ? "ok" : "unknown",
+    configured: true,
+    verdict,
+    meaning: HOST_BUILD_MEANING[verdict],
+    /* 0 when the host was never reached — `callAcService`'s own convention for
+       a transport failure, kept rather than translated. */
+    hostStatus: res.status,
+    latencyMs,
+    builtAt,
+    mvid,
+    /* The rest of what the service says about itself. `book` is substituted at
+       BUILD time from the same value that builds its connection line, so a build
+       pointed at a test book cannot announce the live one. */
+    book: text("book"),
+    service: text("service"),
+    /* Names only, no values: a field a newer host sends that this route does not
+       read yet is worth seeing, and blind-forwarding a host-controlled payload
+       into an admin response is not. */
+    otherKeys: Object.keys(body).filter(
+      (k) => !["ok", "book", "service", "builtAt", "mvid", "error"].includes(k),
+    ),
+    /* The service's own words when it refused, stripped of any address. Null
+       when it answered, so an operator never reads a stale error beside a
+       healthy build. */
+    hostError: res.error ? stripUrls(res.error) : null,
+    howToCompare:
+      "builtAt is the exe's file timestamp on the host. Run "
+      + "`git log -1 --format=%ad --date=short -- backend/scripts/autocount-service/AcSyncService.cs`; "
+      + "a builtAt earlier than that date means the host has not been rebuilt since the last change "
+      + "and every change in between is inert. mvid changes on every recompile, so two readings with "
+      + "the same mvid are the same bytes.",
+    scopeNotes: [
+      "This reports the build ANSWERING RIGHT NOW. It says nothing about whether that build is the one this repo's main branch contains — only the builtAt comparison above does that, and it is done by the reader.",
+      "A rebuild is done on the office machine by deploy-on-host.ps1; our deploy cannot do it, because the SQL credentials live there and are compiled into the exe.",
+      "Read-only. This route sends no document, queues nothing and writes nothing — it proxies the service's /health and reports it.",
+    ],
+  });
 });
 
 export default app;

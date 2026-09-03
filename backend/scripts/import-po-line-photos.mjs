@@ -53,9 +53,27 @@ async function main() {
   const byAc = new Map();
   for (const ln of csv) { const f = parseCsvLine(ln); if (f[0]) byAc.set(norm(f[0]), (f[1] || "").trim()); }
 
-  const items = await sql`SELECT i.id, i.item_code, i.photo_urls, p.po_number, p.linked_ac_docno
+  const items = await sql`SELECT i.id, i.item_code, i.photo_urls, i.linked_ac_dtlkey, p.po_number, p.linked_ac_docno
     FROM scm.purchase_order_items i JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
     WHERE p.company_id = 1 AND p.linked_ac_docno IS NOT NULL ORDER BY i.id`;
+  /* THE LINE KEY, and why it goes first (bug 0624). Everything below finds the
+     ERP row by ITEM CODE and takes the first match. The book identifies a
+     photograph by LINE (DtlKey), not by item code, so a PO carrying the same
+     code — or the same sofa model — twice sent BOTH photographs to the first
+     row and left the second line blank. Measured on prod 2026-09-03: 34
+     AutoCount lines on 30 documents, 22 of them on the purchase side.
+     Sofa is unchanged: a build is one AutoCount line held as several
+     compartment rows sharing the key, and the photo still lands on the first of
+     them (ORDER BY i.id above). The item-code path stays as the FALLBACK for
+     lines with no AutoCount key stamped. */
+  const byDocDtl = new Map();
+  for (const it of items) {
+    if (it.linked_ac_dtlkey === null || it.linked_ac_dtlkey === undefined) continue;
+    const k = `${it.linked_ac_docno}|${String(it.linked_ac_dtlkey)}`;
+    if (!byDocDtl.has(k)) byDocDtl.set(k, []);
+    byDocDtl.get(k).push(it);
+  }
+  const ownerOf = (m) => (byDocDtl.get(`${m.DocNo}|${String(m.DtlKey)}`) ?? [])[0] ?? null;
   const byDocCode = new Map();
   const byDocModel = new Map();
   for (const it of items) {
@@ -75,6 +93,15 @@ async function main() {
   let sofaHeld = 0, noOrder = 0, noLine = 0, unmapped = 0;
   const heldDocs = []; // named, not just counted — a silent count hid a real bug on the SO side
   for (const m of manifest) {
+    /* The line the book actually photographed, when the ERP knows it — the only
+       branch that cannot put a picture on the wrong line. See byDocDtl above. */
+    const owner = ownerOf(m);
+    if (owner) {
+      const n = (seenN.get(owner.id) ?? 0) + 1; seenN.set(owner.id, n);
+      const key = `po-items/${owner.po_number}/${owner.id}/ac-${m.DtlKey}-${n}.jpg`;
+      plan.push({ file: m.file, key, itemId: owner.id, already: (owner.photo_urls ?? []).includes(key) });
+      continue;
+    }
     const erp = byAc.get(norm(m.ItemCode));
     if (!erp) { unmapped++; log(`  unmapped AC code: ${m.ItemCode} (${m.DocNo})`); continue; }
     let targets = null;

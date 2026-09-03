@@ -1,0 +1,32 @@
+name: Sofa 1S placeholders + their photos (read-only)
+
+# `check-sofa-bedframe-completeness` measures sales-order lines only on orders
+# that have a Processing Date, which is the right population for "what is the
+# factory building from" but not for "is there any 1S left anywhere". This runs
+# the existing diag over EVERY company-1 sofa line whose code still ends -1S,
+# and says which of them now carry the photograph the compartments must be read
+# off — i.e. the work list, and whether the work is even possible yet.
+#
+# READ-ONLY: SELECTs only, no DDL, no writes.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: diag-placeholder-photos
+  cancel-in-progress: false
+
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+        working-directory: backend
+      - name: diag (read-only)
+        working-directory: backend
+        env:
+          DATABASE_URL: "${{ secrets.DATABASE_URL }}"
+        run: node scripts/diag-placeholder-photos.mjs

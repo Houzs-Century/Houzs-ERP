@@ -180,13 +180,22 @@ try {
     const set = new Set(granted);
     return activeCompanyIds.filter((id) => set.has(id));
   }
-  /** The gate this PR installs: holds the HOUZS company grant. `undefined`
+  /** The gate SHIPPED on 2026-08-20: holds the HOUZS company grant. `undefined`
    *  (unresolved company context) degrades to the legacy single-company yes. */
   function holdsHouzsGrant(u) {
     const allowed = allowedCompanies(u);
     if (allowed === null) return true;
     if (houzsId == null) return false;
     return allowed.includes(Number(houzsId));
+  }
+  /** The gate the CURRENT change installs: holds ANY company grant. The ruling
+   *  replaced a job TITLE with a company GRANT; the HOUZS literal that shipped
+   *  with it is narrower than the rule, which is the cohort §1 below already
+   *  named in advance. */
+  function holdsAnyGrant(u) {
+    const allowed = allowedCompanies(u);
+    if (allowed === null) return true;
+    return allowed.length > 0;
   }
 
   // ── Reporting subtree (services/orgScope.ts subtreeUserIds) ────────────────
@@ -273,8 +282,12 @@ try {
   const admitAfter = [];
   for (const u of activeUsers) {
     const permOk = hasPerm(u.perms, "service_cases.read");
-    const today = permOk || isSalesUser(u) || isDirectorUser(u);
-    const after = permOk || holdsHouzsGrant(u) || isDirectorUser(u);
+    /* TODAY is what production runs: the 2026-08-20 HOUZS literal. AFTER is the
+       current change, ANY company grant. The isSalesUser comparison this
+       section shipped with is history — it measured the 2026-08-20 change and
+       would now report a difference nobody is proposing. */
+    const today = permOk || holdsHouzsGrant(u) || isDirectorUser(u);
+    const after = permOk || holdsAnyGrant(u) || isDirectorUser(u);
     if (today) admitToday.push(u);
     if (after) admitAfter.push(u);
   }
@@ -300,15 +313,19 @@ try {
     );
   }
 
-  // The specific cohort the HOUZS-grant test can strand: Sales-titled, active,
-  // holds grants, none of them HOUZS.
-  const salesNoHouzs = activeUsers.filter(
-    (u) => isSalesUser(u) && !holdsHouzsGrant(u),
-  );
+  /* THE COHORT THIS SECTION NAMED IN ADVANCE AND THE LITERAL SHIPPED ANYWAY.
+     Now widened from "Sales-titled" to EVERY active user holding a grant with
+     no HOUZS in it — the title is not the point and never was. These are the
+     people the current change admits. */
+  const noHouzsGrant = activeUsers.filter((u) => !holdsHouzsGrant(u) && holdsAnyGrant(u));
   say(
-    `Sales-titled active users WITHOUT the HOUZS grant = ${salesNoHouzs.length}` +
-      ` (the 2990-only cohort the literal rule would strand)`,
+    `active users holding a grant but NOT the HOUZS one = ${noHouzsGrant.length}` +
+      ` (the cohort the literal rule stranded)`,
   );
+  for (const u of noHouzsGrant) {
+    say(`   · #${u.id} ${u.name} granted=${JSON.stringify(allowedCompanies(u))}` +
+        ` [pos=${u.position_name ?? "-"} dept=${u.department_name ?? "-"}]`);
+  }
 
   // ── §2 + §4 Row visibility ────────────────────────────────────────────────
   // Only SCOPED callers change: assrUnrestricted keeps seeing everything, which

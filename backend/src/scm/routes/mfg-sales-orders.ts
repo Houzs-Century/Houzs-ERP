@@ -259,7 +259,7 @@ import { summariseReadiness, type ReadinessLine } from '../lib/so-readiness';
 import { effectiveLineStockStatus, readinessLinesByDoc, type LiveStockState } from '../lib/so-line-effective-stock';
 import { attachLineCategories, resolveLineCategories } from '../lib/so-readiness-category';
 import { deriveDisplayBrandingRowByDoc } from '../lib/so-display-branding';
-import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
+import { mintMonthlyDocNo, insertWithDocNoRetry, companyCodeById } from '../lib/doc-no';
 import { soDeliverableRemaining, soLineDeliveries, computeSoLifecycle, soCurrentDocNo, soLineShippedSources } from './delivery-orders-mfg';
 import { soLineReadySourcePos, unionSoLineChips } from '../lib/source-po-trace';
 /* Shared 4-state delivery-planning derivation — the SO list emits planning_state
@@ -5655,21 +5655,21 @@ export async function createDraftSalesOrder(
   },
 ): Promise<SoCreateOutcome> {
   const svc = getSupabaseService(env);
+  /* RESOLVE THE CODE, DO NOT LET THE MINTER GUESS IT — companyDocPrefix's
+     missing-code branch mints `HC-`, so a 2990 scan named the wrong company
+     permanently. docs/bugs/0616-a-2990-scan-minted-a-houzs-century-document-number.md */
+  const resolvedCompanyCode = await companyCodeById(svc, opts.companyId ?? null);
   const syntheticGet = (key: 'supabase' | 'user' | 'houzsUser' | 'companyId' | 'companyCode' | 'sessionOrigin'): unknown => {
     if (key === 'supabase') return svc;
     // Headless scan job — replay the company captured on the scan_jobs row at
     // enqueue time so the draft (header + lines + payments + audit) lands under
     // the uploader's company, not the 0091 HOUZS default.
     if (key === 'companyId') return opts.companyId ?? undefined;
-    // No company CODE is resolved in this reconstructed context (only the id was
-    // captured at enqueue). EXPLICIT branch, not a fallthrough: the default
-    // below returns houzsUser, so companyDocPrefix's `c.get('companyCode')`
-    // used to receive that object and stringify it into the doc number as
-    // "[object Object]-SO-YYMM-NNN" (surfaced in the "Sales order saved — …"
-    // scan announcement). Returning undefined makes companyDocPrefix fall back
-    // to bare HOUZS numbering honestly, at the source rather than only via its
-    // downstream typeof guard.
-    if (key === 'companyCode') return undefined;
+    // Resolved above from the id captured at enqueue. EXPLICIT branch, not a
+    // fallthrough: the default below returns houzsUser, which companyDocPrefix
+    // once stringified into "[object Object]-SO-YYMM-NNN". `undefined` now
+    // survives only for a legacy row that captured no company at all.
+    if (key === 'companyCode') return resolvedCompanyCode ?? undefined;
     // There is no session here at all (this runs after the HTTP response, off
     // waitUntil), so the draft is NOT-POS and is never drift-rejected — its
     // prices come off a handwritten slip. EXPLICIT branch, not a fallthrough:
