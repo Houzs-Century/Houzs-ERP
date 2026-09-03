@@ -37,7 +37,11 @@ import { planStockRelease, type AllocationRow } from '../lib/po-allocations';
 import { reviseBoundPo } from '../lib/so-revision';
 import { enqueueEdit } from '../lib/autocount-outbox';
 import { hasHouzsPerm } from '../lib/houzs-perms';
-import { resolveCallerStaffId } from '../lib/salesScope';
+import { resolveCallerStaffId, resolveUserIdByStaffId } from '../lib/salesScope';
+import {
+  notifyPoAmendmentRaised,
+  notifyPoAmendmentResolved,
+} from '../../services/amendmentNotify';
 import {
   recordEntityAudit,
   assertAuditWritable,
@@ -49,7 +53,7 @@ import {
   requireActiveCompanyId,
   stampCompany,
 } from '../lib/companyScope';
-import { runScmPgCommand } from '../lib/pg-supabase-transaction';
+import { deferScmAfterCommit, runScmPgCommand } from '../lib/pg-supabase-transaction';
 import { dateOrNull } from '../lib/date-coerce';
 
 export const poAmendments = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -274,6 +278,19 @@ poAmendments.post('/', async (c) => {
     }
   }
 
+  /* Tell the desk that has to confirm it (owner 2026-09-02) — a PO amendment
+     used to appear in the module and wait for somebody to look. Best-effort:
+     notifyPoAmendmentRaised never throws, so a notify outage cannot 500 a
+     created amendment. */
+  await notifyPoAmendmentRaised(c.env, {
+    amendmentNo: amendment.amendment_no,
+    poNumber: amendment.po_number,
+    companyId: activeCompanyId(c),
+    reason: body.reason ?? null,
+    requesterName: c.get('houzsUser')?.name ?? null,
+    requesterUserId: c.get('houzsUser')?.id ?? null,
+  });
+
   return c.json({ amendment: created }, 201);
 });
 
@@ -445,6 +462,25 @@ export async function approvePoAmendmentHandler(c: any, sb: any): Promise<Respon
     createdBy: c.get('houzsUser')?.id ?? null,
   });
 
+  /* Notice AFTER COMMIT — the requester learns their PO revision went through
+     (owner 2026-09-02). The staff -> user lookup runs here, inside the
+     transaction, because `sb` does not outlive the deferred callback. */
+  {
+    const requesterUserId = await resolveUserIdByStaffId(sb, amendment.requested_by);
+    const actorUserId = c.get('houzsUser')?.id ?? null;
+    const actorLabel = c.get('houzsUser')?.name ?? null;
+    deferScmAfterCommit(c, async () => {
+      await notifyPoAmendmentResolved(c.env, {
+        amendmentNo: amendment.amendment_no ?? '',
+        poNumber: amendment.po_number,
+        outcome: 'approved',
+        actorName: actorLabel,
+        actorUserId,
+        requesterUserId,
+      });
+    });
+  }
+
   return c.json({ amendment: updated, revision: appliedRevision, warnings: appliedWarnings });
 }
 poAmendments.patch('/:id/approve', (c) => {
@@ -586,6 +622,23 @@ poAmendments.patch('/:id/reject', async (c) => {
       console.error('[po-amendment] stock release after reject failed:', e);
       releaseWarnings.push(e instanceof Error ? e.message : 'stock release failed');
     }
+  }
+
+  /* The reason is required precisely so the requester knows what to change —
+     carry it to them instead of leaving it on a screen they have no reason to
+     reopen (owner 2026-09-02). Plain route, so this fires inline; it never
+     throws. */
+  {
+    const requesterUserId = await resolveUserIdByStaffId(sb, amendment.requested_by);
+    await notifyPoAmendmentResolved(c.env, {
+      amendmentNo: amendment.amendment_no ?? '',
+      poNumber: amendment.po_number,
+      outcome: 'rejected',
+      reason,
+      actorName: c.get('houzsUser')?.name ?? null,
+      actorUserId: c.get('houzsUser')?.id ?? null,
+      requesterUserId,
+    });
   }
 
   return c.json({
