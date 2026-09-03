@@ -178,6 +178,14 @@ bank is the owner's to maintain — the "Default bank" card on
 accounts only, per company). Contracts: `PaymentVoucherNew.test.tsx`
 (frontend), `backend/src/scm/routes/accountRoles.test.ts` (server half).
 
+**And lines take only LEAVES** (owner 2026-09-03, 父户不记账): create and
+draft-edit run every debit code through `requireLeafAccount`
+(accounting-chart.ts) — a header with active sub-accounts refuses
+`not_a_leaf_account` at typing time, before the GL gate would refuse the
+same header at approval. AccountSelect does its half by not offering
+headers at all. Contract: the leaf block of
+`backend/tests/accountingChart.test.ts`.
+
 ## 0d. 预付挂在 supplier (2026-09-02)
 
 The owner's design, in his words: 预付就不能直接挂在supplier 那边吗? An AP
