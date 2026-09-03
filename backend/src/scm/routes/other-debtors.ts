@@ -128,7 +128,7 @@ export const updateDebtorHandler = async (c: any): Promise<Response> => {
   if (body.isActive !== undefined) patch.is_active = body.isActive === true;
   if (Object.keys(patch).length === 0) return c.json({ error: 'nothing_to_change' }, 400);
   const sb = c.get('supabase');
-  const { error } = await sb.from('acc_debtors').update(patch).eq('id', found.debtor.id);
+  const { error } = await sb.from('acc_debtors').update(patch).eq('company_id', found.debtor.company_id).eq('id', found.debtor.id);
   if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);
   return c.json({ ok: true });
 };
@@ -212,7 +212,7 @@ export const createDebtorBillHandler = async (c: any): Promise<Response> => {
     amount_sen: l.amountSen,
   })));
   if (lineErr) {
-    await sb.from('acc_debtor_bills').delete().eq('id', bill.id);
+    await sb.from('acc_debtor_bills').delete().eq('company_id', coId).eq('id', bill.id);
     return c.json({ error: 'save_failed', reason: lineErr.message }, 500);
   }
 
@@ -239,8 +239,8 @@ export const createDebtorBillHandler = async (c: any): Promise<Response> => {
   });
   if (!r.ok) {
     /* The bill does not exist without its journal — direct-post means BOTH. */
-    await sb.from('acc_debtor_bill_lines').delete().eq('bill_id', bill.id);
-    await sb.from('acc_debtor_bills').delete().eq('id', bill.id);
+    await sb.from('acc_debtor_bill_lines').delete().eq('company_id', coId).eq('bill_id', bill.id);
+    await sb.from('acc_debtor_bills').delete().eq('company_id', coId).eq('id', bill.id);
     return c.json({ error: 'post_failed', reason: (r as { reason?: string }).reason ?? r.status }, 500);
   }
   return c.json({ ok: true, bill: { id: bill.id, billNumber: bill.bill_number, totalSen } }, 201);
@@ -267,7 +267,7 @@ export const cancelDebtorBillHandler = async (c: any): Promise<Response> => {
     narration: (orig) => `Cancel debtor bill ${bill.bill_number} — voids ${orig.je_no}`,
   });
   if (!rev.ok) return c.json({ error: 'reverse_failed', reason: (rev as { reason?: string }).reason ?? rev.status }, 500);
-  const { error: upErr } = await sb.from('acc_debtor_bills').update({ status: 'CANCELLED' }).eq('id', bill.id);
+  const { error: upErr } = await sb.from('acc_debtor_bills').update({ status: 'CANCELLED' }).eq('company_id', bill.company_id).eq('id', bill.id);
   if (upErr) return c.json({ error: 'save_failed', reason: upErr.message }, 500);
   return c.json({ ok: true });
 };
@@ -337,7 +337,7 @@ export const createDebtorReceiptHandler = async (c: any): Promise<Response> => {
     company_id: coId, receipt_id: receipt.id, bill_id: a.billId, amount_sen: a.amountSen,
   })));
   if (aErr) {
-    await sb.from('acc_debtor_receipts').delete().eq('id', receipt.id);
+    await sb.from('acc_debtor_receipts').delete().eq('company_id', coId).eq('id', receipt.id);
     return c.json({ error: 'save_failed', reason: aErr.message }, 500);
   }
   return c.json({ ok: true, receipt: { id: receipt.id, receiptNumber: receipt.receipt_number, totalSen } }, 201);
@@ -366,7 +366,7 @@ export const submitDebtorReceiptHandler = async (c: any): Promise<Response> => {
   if (r.submitted_at) return c.json({ error: 'already_prepared' }, 409);
   const s = stamp(c);
   const { error } = await c.get('supabase').from('acc_debtor_receipts')
-    .update({ submitted_at: s.at, submitted_by: s.by }).eq('id', r.id);
+    .update({ submitted_at: s.at, submitted_by: s.by }).eq('company_id', r.company_id).eq('id', r.id);
   if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);
   return c.json({ ok: true });
 };
@@ -380,7 +380,7 @@ export const withdrawDebtorReceiptHandler = async (c: any): Promise<Response> =>
   const r = found.receipt;
   if (!r.submitted_at || r.checked_at) return c.json({ error: 'not_withdrawable', message: 'Only a prepared, not-yet-checked receipt can be withdrawn.' }, 409);
   const { error } = await c.get('supabase').from('acc_debtor_receipts')
-    .update({ submitted_at: null, submitted_by: null }).eq('id', r.id);
+    .update({ submitted_at: null, submitted_by: null }).eq('company_id', r.company_id).eq('id', r.id);
   if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);
   return c.json({ ok: true });
 };
@@ -396,7 +396,7 @@ export const checkDebtorReceiptHandler = async (c: any): Promise<Response> => {
   if (r.checked_at) return c.json({ error: 'already_checked' }, 409);
   const s = stamp(c);
   const { error } = await c.get('supabase').from('acc_debtor_receipts')
-    .update({ checked_at: s.at, checked_by: s.by }).eq('id', r.id);
+    .update({ checked_at: s.at, checked_by: s.by }).eq('company_id', r.company_id).eq('id', r.id);
   if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);
   return c.json({ ok: true });
 };
@@ -417,7 +417,7 @@ export const rejectDebtorReceiptHandler = async (c: any): Promise<Response> => {
   const { error } = await c.get('supabase').from('acc_debtor_receipts').update({
     submitted_at: null, submitted_by: null, checked_at: null, checked_by: null,
     notes: note ? `${r.notes ? `${r.notes}\n` : ''}[rejected] ${note}` : r.notes,
-  }).eq('id', r.id);
+  }).eq('company_id', r.company_id).eq('id', r.id);
   if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);
   return c.json({ ok: true });
 };
@@ -442,11 +442,11 @@ export const approveDebtorReceiptHandler = async (c: any): Promise<Response> => 
   if (!r.approved_at) {
     const s = stamp(c);
     const { error } = await sb.from('acc_debtor_receipts')
-      .update({ approved_at: s.at, approved_by: s.by }).eq('id', r.id);
+      .update({ approved_at: s.at, approved_by: s.by }).eq('company_id', r.company_id).eq('id', r.id);
     if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);
   }
 
-  const { data: debtor } = await sb.from('acc_debtors').select('name').eq('id', r.debtor_id).maybeSingle();
+  const { data: debtor } = await sb.from('acc_debtors').select('name').eq('company_id', coId).eq('id', r.debtor_id).maybeSingle();
   const roles = await resolveRoles(sb, coId);
   const lines: RuleLine[] = [
     {
@@ -473,11 +473,11 @@ export const approveDebtorReceiptHandler = async (c: any): Promise<Response> => 
   /* Knock the ticked bills off — clamped at each bill's outstanding, the
      pv-settle shape (a concurrent receipt may have landed first). */
   const { data: allocs, error: aErr } = await sb.from('acc_debtor_receipt_allocations')
-    .select('bill_id, amount_sen').eq('receipt_id', r.id);
+    .select('bill_id, amount_sen').eq('company_id', coId).eq('receipt_id', r.id);
   if (aErr) return c.json({ error: 'load_failed', reason: aErr.message }, 500);
   for (const a of (allocs ?? []) as Row[]) {
     const { data: bill } = await sb.from('acc_debtor_bills')
-      .select('id, total_sen, received_sen').eq('id', a.bill_id).maybeSingle();
+      .select('id, total_sen, received_sen').eq('company_id', coId).eq('id', a.bill_id).maybeSingle();
     if (!bill) continue;
     const room = Number(bill.total_sen) - Number(bill.received_sen ?? 0);
     const applied = Math.min(room, Number(a.amount_sen));
@@ -489,12 +489,12 @@ export const approveDebtorReceiptHandler = async (c: any): Promise<Response> => 
     const { error: upErr } = await sb.from('acc_debtor_bills').update({
       received_sen: nextReceived,
       status: nextReceived >= Number(bill.total_sen) ? 'PAID' : 'POSTED',
-    }).eq('id', bill.id);
+    }).eq('company_id', coId).eq('id', bill.id);
     if (upErr) return c.json({ error: 'save_failed', reason: upErr.message }, 500);
   }
 
   const { error: doneErr } = await sb.from('acc_debtor_receipts')
-    .update({ status: 'POSTED', posted_at: now() }).eq('id', r.id);
+    .update({ status: 'POSTED', posted_at: now() }).eq('company_id', coId).eq('id', r.id);
   if (doneErr) return c.json({ error: 'save_failed', reason: doneErr.message }, 500);
   return c.json({ ok: true, jeNo: (post as Row).jeNo });
 };

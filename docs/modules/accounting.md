@@ -175,9 +175,12 @@ the AP_OTHER block of
 **Other Debtors (2026-09-03, the owner confirming the design line by line:
 other debtor 主要就是我会开 bill 其他和生意性质没有关系的人或公司收回钱)**:
 a counterparty REGISTRY plus two documents, at /scm/other-debtors
-(handlers in `other-debtors.ts`, mounted like the PV router under the same
-finance area; permission keys are the PV family's on purpose — the same
-people raise, prepare, check and approve money documents). 资料 lives in
+(handlers in `other-debtors.ts`; the mount sits beside the PV router in
+`backend/src/scm/index.ts` under the finance area guard, mirrored in
+`backend/src/scm/lib/scm-areas.ts`'s SCM_AREA_MOUNTS table, and the nav
+entry joins Finance in `frontend/src/components/Sidebar.tsx`; permission
+keys are the PV family's on purpose — the same people raise, prepare,
+check and approve money documents). 资料 lives in
 the registry, never as chart sub-accounts: the GL keeps ONE control,
 305-0000, as role AR_OTHER (default in acc/rules.ts, CONTROL_ROLES member,
 so manual journals refuse it and the self-check runs a fourth scan-only arm
