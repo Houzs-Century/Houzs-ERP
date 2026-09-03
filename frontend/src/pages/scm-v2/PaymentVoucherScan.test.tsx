@@ -11,6 +11,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { describe, expect, test, vi } from 'vitest';
 import type { ExtractedBill } from '../../vendor/scm/lib/payment-voucher-queries';
+import { takePvFiles } from '../../vendor/scm/lib/pv-file-handoff';
 
 const extractAsync = vi.fn(async (_bills: Array<{ files: Array<{ name: string; mime: string; dataBase64: string }> }>) =>
   ({ bills: [] as ExtractedBill[] }));
@@ -107,6 +108,10 @@ describe('the bill pile', () => {
     ]);
     /* The habit rides along — the New page fills the account from it. */
     expect(state.billPrefill.memory).toMatchObject({ debitAccountCode: '900-F002' });
+    /* And the bills' own BYTES ride the module stash (never location.state —
+       a big PDF would blow the history-entry cap): every member's pages, in
+       bill order, for the New page to attach after save. */
+    expect(takePvFiles().map((f) => f.name)).toEqual(['a.pdf', 'b.pdf']);
   });
 
   test('a read bill shows its own line items, and dropped files join the pile', async () => {
@@ -152,6 +157,11 @@ describe('the bill pile', () => {
     expect(screen.getByText('total unreadable — will need typing')).toBeTruthy();
     expect(screen.getByText(/Bill 3 could not be read: The reader answered/)).toBeTruthy();
     expect(screen.getByText(/1 bill\(s\) could not be read/)).toBeTruthy();
+
+    /* A SPLIT bill stashes only ITS OWN file — never a sibling's. */
+    fireEvent.click(screen.getAllByText('Open as voucher')[0]!);
+    await waitFor(() => expect(screen.getByText('NEW PAGE')).toBeTruthy());
+    expect(takePvFiles().map((f) => f.name)).toEqual(['a.pdf']);
   });
 });
 

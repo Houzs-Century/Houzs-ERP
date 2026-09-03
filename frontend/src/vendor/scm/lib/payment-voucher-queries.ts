@@ -7,7 +7,15 @@
 // settlement).
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { authedFetch } from './authed-fetch';
+import { API_URL, authedFetch, humanApiError } from './authed-fetch';
+import { readAuthToken } from '../../../lib/authToken';
+import { companyHeader } from '../../../lib/activeCompany';
+import {
+  consumeCorrelated,
+  correlateError,
+  correlatedFetch,
+  requestIdFromResponse,
+} from '../../../lib/requestCorrelation';
 import { idempotentInit } from '../../../lib/idempotency';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
 
@@ -230,3 +238,75 @@ export const useExtractBills = () => useMutation({
       method: 'POST', body: JSON.stringify({ bills }),
     }),
 });
+
+/* ── PV attachments (2026-09-03) — the bill LIVES with its voucher. Before
+   this the scan flow read the bill and kept nothing, so there was no evidence
+   to show or to print (owner: 我希望可以 print pv include ocr 的文件一起).
+   Bytes stream through the Worker's R2 binding; scm.acc_pv_files (0352) is
+   the index, sort_no = attach order = print order. */
+export type PvFile = {
+  id: string; file_name: string; mime: string;
+  size_bytes: number; sort_no: number; created_at: string;
+};
+/* One file as the scan/upload paths carry it (same shape useExtractBills
+   sends) — built once from the File and reused for read + attach. */
+export type PvFilePayload = { name: string; mime: string; dataBase64: string };
+/* What a voucher file may be — the server's PV_FILE_MIMES (pv-files.ts),
+   as an <input accept>. */
+export const PV_FILE_ACCEPT = 'image/jpeg,image/png,image/webp,application/pdf';
+
+export const usePvFiles = (pvId: string | null) => useQuery({
+  queryKey: ['pv-files', pvId],
+  queryFn: () => authedFetch<{ files: PvFile[] }>(`/payment-vouchers/${pvId}/files`),
+  enabled: !!pvId,
+  retry: retryUnlessClientError,
+});
+
+export const useUploadPvFile = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ pvId, file }: { pvId: string; file: PvFilePayload }) =>
+      authedFetch<{ ok: true; file: PvFile }>(`/payment-vouchers/${pvId}/files`, {
+        method: 'POST',
+        body: JSON.stringify({ fileName: file.name, mime: file.mime, dataBase64: file.dataBase64 }),
+      }),
+    onSuccess: (_d, vars) => {
+      void qc.invalidateQueries({ queryKey: ['pv-files', vars.pvId] });
+    },
+  });
+};
+
+export const useDeletePvFile = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ pvId, fileId }: { pvId: string; fileId: string }) =>
+      authedFetch<{ ok: true }>(`/payment-vouchers/${pvId}/files/${fileId}`, { method: 'DELETE' }),
+    onSuccess: (_d, vars) => {
+      void qc.invalidateQueries({ queryKey: ['pv-files', vars.pvId] });
+    },
+  });
+};
+
+/* View one attachment: authed byte fetch → blob object URL (authedFetch
+   JSON-parses, so it can't carry these). Same Worker-proxy pattern as
+   slip.ts's fetchSlipAsObjectUrl, reusing the exported API_URL instead of
+   declaring another copy. The caller revokes the URL when done viewing. */
+export async function fetchPvFileBlobUrl(pvId: string, fileId: string): Promise<{ url: string; contentType: string }> {
+  const token = readAuthToken();
+  if (!token) throw new Error('Your session has expired — please sign in again.');
+  let signal: AbortSignal | undefined;
+  try { signal = AbortSignal.timeout(60_000); } catch { signal = undefined; } // pre-2022 browsers
+  const res = await correlatedFetch(`${API_URL}/payment-vouchers/${pvId}/files/${fileId}`, {
+    headers: { authorization: `Bearer ${token}`, ...companyHeader() },
+    signal,
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '<no body>');
+    throw correlateError(new Error(humanApiError(res.status, text)), requestIdFromResponse(res));
+  }
+  const contentType = res.headers.get('content-type') ?? 'application/octet-stream';
+  return consumeCorrelated(res, async () => ({
+    url: URL.createObjectURL(await res.blob()),
+    contentType,
+  }));
+}
