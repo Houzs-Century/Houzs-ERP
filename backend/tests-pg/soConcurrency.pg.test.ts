@@ -258,7 +258,7 @@ describePg('Sales Order PostgreSQL concurrency migration', () => {
       RETURNING id, item_code
     `;
     await expect(admin.begin(async (tx) => {
-      const lease = await lockSoCommandLease(tx as unknown as Sql, 'SO-PG-1', 'lease-a');
+      const lease = await lockSoCommandLease(tx as unknown as Sql, 'SO-PG-1', 'lease-a', null, null);
       expect(lease.ok).toBe(true);
       const sb = pgTransactionSupabase(tx as unknown as Sql);
       await sb.from('mfg_sales_order_items').update({ total_sen: 20 }).eq('id', inserted[0]!.id);
@@ -283,7 +283,7 @@ describePg('Sales Order PostgreSQL concurrency migration', () => {
     const left = postgres(url, { max: 1 });
     const right = postgres(url, { max: 1 });
     const attempt = (sql: Sql, amount: number) => sql.begin(async (tx) => {
-      const lease = await lockSoCommandLease(tx as unknown as Sql, 'SO-PG-1', 'lease-a');
+      const lease = await lockSoCommandLease(tx as unknown as Sql, 'SO-PG-1', 'lease-a', null, null);
       if (!lease.ok) return false;
       const sb = pgTransactionSupabase(tx as unknown as Sql);
       await sb.from('mfg_sales_order_items').update({ total_sen: amount }).eq('doc_no', 'SO-PG-1');
@@ -310,9 +310,9 @@ describePg('Sales Order PostgreSQL concurrency migration', () => {
       VALUES ('SO-PG-1', 7, 'lease-company', now() + interval '5 minutes')
     `;
     await admin.begin(async (tx) => {
-      expect(await lockSoCommandLease(tx as unknown as Sql, 'SO-PG-1', 'lease-company', 8))
+      expect(await lockSoCommandLease(tx as unknown as Sql, 'SO-PG-1', 'lease-company', 8, null))
         .toEqual({ ok: false, reason: 'not_found' });
-      expect(await lockSoCommandLease(tx as unknown as Sql, 'SO-PG-1', 'lease-company', 7))
+      expect(await lockSoCommandLease(tx as unknown as Sql, 'SO-PG-1', 'lease-company', 7, null))
         .toMatchObject({ ok: true, version: 1 });
     });
   });

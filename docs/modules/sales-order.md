@@ -1733,6 +1733,34 @@ into DRAFT (below). So the route also asks:
 | a row in `mfg_sales_order_payments` | `409 so_has_payments` | The cascade takes the payment ledger with it and the DO/SI that could have explained it are gone too. A real draft CAN carry a POS deposit, so this is a refusal with an instruction — void the payments, or cancel instead of discarding. Fails CLOSED: an unreadable ledger is not an empty one. |
 | `version` CAS + edit lease | `428` / `409` | Unchanged. |
 
+## The save lock — one minute, and it knows whose it is
+
+**It covers ONE SAVE, not an editing session.** Opening an order takes no lock at
+all; `runSoVersionedMutation` reserves it, saves, and releases it in a `finally`.
+So the expiry only has to outlast one round trip, and everything beyond that is
+time a document spends locked for nothing after a save dies.
+
+It was five minutes until 2026-09-03, and that cost the owner an hour: a save of
+his timed out (a 504), the lock stayed, and every retry for the next five minutes
+told him the order was being saved on another screen. He was working alone.
+
+| what changed | now |
+| --- | --- |
+| lifetime | **60s** — `SO_EDIT_LEASE_MS` in `backend/src/scm/lib/so-edit-lease.ts`, the one place that owns it |
+| holder | recorded (`edit_lease_user_id`, mig 0348). **The same person takes their own lock back** rather than waiting it out. A lock with NO holder — pre-0348, or a path with no authenticated user — is never taken over |
+| the refusal | says WHICH of three: `held` (somebody else), `expired` (the lock lapsed), `missing` (this screen never took one). Only `held` may name another person, and since the holder is recorded that is the one case where it is true |
+
+**It is NOT a liveness check and never was.** Nothing confirms the other screen
+exists — the row holds a token and a timestamp. The holder settles the case that
+actually hurt (your own crashed save); a lock held by somebody else is still only
+a timestamp, and the minute is the whole of that guarantee.
+
+**What it still protects, so nobody removes it:** a composite save is several
+requests — reserve, line writes, header commit — and version CAS alone cannot see
+a half-applied set of line writes. Dropping the lock and relying on CAS alone was
+offered as an option and NOT taken. Full trace:
+`docs/bugs/0630-one-person-editing-alone-was-locked-out-of-their-own-order-f.md`.
+
 **ON_HOLD is not a route back to DRAFT (2026-08-14).**
 `soStatusTransitionError` (`scm/lib/so-lifecycle-guards.ts`) treats ON_HOLD as unranked so an order can be paused
 from anywhere and resumed to wherever the operator needs — but that was written
