@@ -51,7 +51,7 @@ import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { isDocumentHeld } from '../lib/document-hold';
 import { dateOrNull } from '../lib/date-coerce';
 import { postJournal, reverseJournal } from '../../acc/engine';
-import { pvLines } from '../../acc/rules';
+import { apControlRole, pvLines, resolveRoles } from '../../acc/rules';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
 import { hasHouzsPerm } from '../lib/houzs-perms';
@@ -454,6 +454,33 @@ export const createPaymentVoucherHandler = async (c: any) => {
       for (const dCode of [...new Set(built.rows.map((r) => r.debit_account_code))]) {
         const leafErr = await requireLeafAccount(c, coIdForLeaf, dCode);
         if (leafErr) return leafErr;
+      }
+    }
+  }
+
+  /* The AP split (owner 2026-09-03): a 405-x supplier's paper belongs to
+     AP_OTHER (405-0000), everyone else's to AP (400-0000) — apControlRole in
+     acc/rules.ts is the ONE home. The page picks the right control; this
+     guard refuses the WRONG one, so an out-of-date client cannot book a
+     405 supplier's debt into the trade-creditor control or vice versa. */
+  if (normalizePurpose(body.purpose) === 'SUPPLIER_PAYMENT' && body.supplierId) {
+    const coId = activeCompanyId(c);
+    const sbGuard = c.get('supabase');
+    const { data: sup, error: supErr } = await sbGuard.from('suppliers')
+      .select('code').eq('id', String(body.supplierId)).maybeSingle();
+    /* Fails CLOSED like requireLeafAccount: a supplier we cannot read is a
+       control we cannot verify, and an unverifiable debt does not book. */
+    if (supErr) return c.json({ error: 'load_failed', reason: supErr.message }, 500);
+    const supplierCode = (sup as { code?: string | null } | null)?.code ?? null;
+    if (supplierCode && coId != null) {
+      const roles = await resolveRoles(sbGuard, coId);
+      const right = roles[apControlRole(supplierCode)];
+      const wrong = apControlRole(supplierCode) === 'AP_OTHER' ? roles.AP : roles.AP_OTHER;
+      if (built.rows.some((r) => r.debit_account_code === wrong)) {
+        return c.json({
+          error: 'wrong_ap_control',
+          message: `Supplier ${supplierCode} books to ${right} (${apControlRole(supplierCode) === 'AP_OTHER' ? 'Other Creditors' : 'Account Payable'}) — not ${wrong}. Refresh the page and raise the payment again.`,
+        }, 400);
       }
     }
   }

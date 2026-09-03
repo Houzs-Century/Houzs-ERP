@@ -697,7 +697,9 @@ const ControlCheckCard = ({ check }: { check: ControlCheckRow }) => {
   return (
     <div style={{ ...cardStyle, borderColor: ok ? 'var(--c-secondary-a, #2F5D4F)' : 'var(--c-festive-b, #B8331F)' }} className="space-y-2">
       <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap' }}>
-        <b>{check.role === 'AR' ? 'Accounts Receivable control' : 'Accounts Payable control'}</b>
+        <b>{check.role === 'AR' ? 'Accounts Receivable control'
+          : check.role === 'AP_OTHER' ? 'Other Creditors control'
+          : 'Accounts Payable control'}</b>
         <span className={styles.codeChip}>{check.accountCode}</span>
         <span>GL balance {fmt(check.glBalanceSen)}</span>
         <span style={{
