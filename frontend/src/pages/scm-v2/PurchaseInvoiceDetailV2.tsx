@@ -699,7 +699,7 @@ function PurchaseInvoiceDetailV2ReadOnly() {
             {/* Copy as new (owner 2026-09-03): content as template, identity
                 fresh — any status; the New page does the pre-fill. */}
             <Button variant="ghost" icon={<Copy size={14} />}
-              onClick={() => navigate(`/scm/purchase-invoices/new?copyFrom=${id ?? ""}`)}>
+              onClick={() => navigate(`/scm/purchase-invoices/new?copyFrom=${id}`)}>
               Copy as new
             </Button>
             <Button variant="secondary" icon={<Printer size={14} />} onClick={print.openPreview}>Print PDF</Button>
