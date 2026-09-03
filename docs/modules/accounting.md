@@ -252,6 +252,18 @@ created in the SAME call, same parent, same companies, or refused whole
 (`bad_depreciation` off an SFA-less twin; a taken twin code 409s before
 anything lands). Contract: the SFA/SBK blocks of
 `backend/tests/accountingChart.test.ts` and `ChartOfAccounts.test.tsx`.
+**And the tree re-arranges by hand (2026-09-03: 我希望可以拖动式 put
+account under 别的 account 前提是那个 account 没有 transaction)**: drag a
+row onto another on the Chart page (or set Under in the ✎ panel; 留空 =
+root) and `PUT /chart/update` carries `parentCode` — the moved account
+keeps its own GL untouched (lines hang on its code; the tree is
+presentation), while the rule sits on the TARGET: 父户不记账, so a target
+with postings or any reference refuses `parent_has_postings` (a target
+already serving as a header passes as-is); parents share the child's type,
+cycles refuse, and the new header is instantiated into every company the
+child lives in. Contract: the parentCode block of
+`backend/tests/accountingChart.test.ts` and the drag/edit-panel tests of
+`ChartOfAccounts.test.tsx`.
 
 **The recognition-rules window (2026-09-02)**: `GET /bank/rules` (every rule,
 off rows included), `POST /bank/rules`, `PATCH /bank/rules/:id` — the rules
