@@ -615,7 +615,7 @@ export const ChartOfAccounts = () => {
                     <tr
                       key={a.code}
                       draggable={canManage}
-                      onDragStart={(e) => { setDragCode(a.code); e.dataTransfer.effectAllowed = 'move'; }}
+                      onDragStart={() => setDragCode(a.code)}
                       onDragOver={(e) => { if (canManage && dragCode && dragCode !== a.code) e.preventDefault(); }}
                       onDrop={(e) => { e.preventDefault(); void onDropInto(a); }}
                       style={{ borderBottom: '1px solid var(--border-weak, #f0eee8)', cursor: canManage ? 'grab' : undefined }}
