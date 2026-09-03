@@ -174,14 +174,45 @@ const CoaTab = () => {
         groupBy={{ key: 'type' }}
         columns={[
           { key: 'type', label: 'Type', width: '110px', defaultHidden: true, getValue: (r) => r.account_type, render: (r) => r.account_type },
-          { key: 'code', label: 'Code', width: '130px', getValue: (r) => r.account_code, render: (r) => <span className={styles.codeChip}>{r.account_code}</span> },
+          {
+            key: 'code', label: 'Code', width: '130px', getValue: (r) => r.account_code,
+            render: (r) => (
+              <span className={styles.codeChip} style={parents.has(r.account_code) ? { fontWeight: 700 } : undefined}>
+                {r.account_code}
+              </span>
+            ),
+          },
           {
             key: 'name', label: 'Name',
             getValue: (r) => r.account_name,
-            // Children indent under their parent so the hierarchy reads as a tree.
-            render: (r) => <span style={{ paddingLeft: r.parent_code ? 18 : 0 }}>{r.account_name}</span>,
+            /* 父子 account 不是很明显 (the owner, 2026-09-03, this very table
+               in hand): headers now carry WEIGHT like the union page's —
+               bold, tagged — and children step in behind a tree glyph
+               instead of a barely-there 18px. */
+            render: (r) => (
+              parents.has(r.account_code)
+                ? (
+                  <span style={{ fontWeight: 700 }}>
+                    {r.account_name}
+                    <span style={{ marginLeft: 6, fontSize: 'var(--fs-11)', fontWeight: 400, color: 'var(--c-ink-soft, #666)' }}>header</span>
+                  </span>
+                )
+                : r.parent_code
+                  ? (
+                    <span style={{ paddingLeft: 26, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                      <span aria-hidden style={{ color: 'var(--c-ink-soft, #999)' }}>└</span>
+                      {r.account_name}
+                    </span>
+                  )
+                  : <span>{r.account_name}</span>
+            ),
           },
-          { key: 'parent', label: 'Parent', width: '120px', getValue: (r) => r.parent_code ?? '', render: (r) => r.parent_code ?? '—' },
+          {
+            key: 'parent', label: 'Parent', width: '120px', getValue: (r) => r.parent_code ?? '',
+            render: (r) => r.parent_code
+              ? <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--c-ink-soft, #666)' }}>{r.parent_code}</span>
+              : '—',
+          },
           {
             key: 'kind', label: 'Posting', width: '110px',
             getValue: (r) => (parents.has(r.account_code) ? 'HEADER' : 'POSTABLE'),
