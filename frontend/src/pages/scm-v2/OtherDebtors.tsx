@@ -249,7 +249,9 @@ export const OtherDebtors = () => {
             <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
               {canWrite && (
                 <Button variant="ghost" size="sm"
-                  onClick={() => void updateDebtor.mutateAsync({ id: selectedId, isActive: !detail.debtor.is_active }).catch(() => {})}>
+                  onClick={() => void updateDebtor.mutateAsync({ id: selectedId, isActive: !detail.debtor.is_active }).catch((e: unknown) => {
+                    void notify({ title: 'Update failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
+                  })}>
                   <Pencil {...ICON} /> {detail.debtor.is_active ? 'Deactivate' : 'Reactivate'}
                 </Button>
               )}

@@ -446,7 +446,8 @@ export const approveDebtorReceiptHandler = async (c: any): Promise<Response> => 
     if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);
   }
 
-  const { data: debtor } = await sb.from('acc_debtors').select('name').eq('company_id', coId).eq('id', r.debtor_id).maybeSingle();
+  const { data: debtor, error: dErr } = await sb.from('acc_debtors').select('name').eq('company_id', coId).eq('id', r.debtor_id).maybeSingle();
+  if (dErr) return c.json({ error: 'load_failed', reason: dErr.message }, 500);
   const roles = await resolveRoles(sb, coId);
   const lines: RuleLine[] = [
     {
@@ -476,8 +477,11 @@ export const approveDebtorReceiptHandler = async (c: any): Promise<Response> => 
     .select('bill_id, amount_sen').eq('company_id', coId).eq('receipt_id', r.id);
   if (aErr) return c.json({ error: 'load_failed', reason: aErr.message }, 500);
   for (const a of (allocs ?? []) as Row[]) {
-    const { data: bill } = await sb.from('acc_debtor_bills')
+    const { data: bill, error: billErr } = await sb.from('acc_debtor_bills')
       .select('id, total_sen, received_sen').eq('company_id', coId).eq('id', a.bill_id).maybeSingle();
+    /* Fail LOUD: the journal already posted; a bill we cannot read is a
+       knock-off we cannot prove — the operator re-approves and it resumes. */
+    if (billErr) return c.json({ error: 'load_failed', reason: billErr.message }, 500);
     if (!bill) continue;
     const room = Number(bill.total_sen) - Number(bill.received_sen ?? 0);
     const applied = Math.min(room, Number(a.amount_sen));
