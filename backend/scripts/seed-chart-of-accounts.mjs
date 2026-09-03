@@ -58,7 +58,28 @@ const sharedCodes = new Set(rows.filter((r) => r.shared).map((r) => r.code));
 for (const r of rows) if (r.shared && r.parentCode) sharedCodes.add(r.parentCode);
 const sharedRows = rows.filter((r) => sharedCodes.has(r.code));
 
-const sql = postgres(DSN, { ssl: "require", prepare: false, max: 1 });
+/* staging-migrate.yml's own remedy, in-script: the staging Supabase sleeps
+   between uses and the first strike lands on a waking (or IPv6-only-
+   answering) instance — pg-migrate retries three times for exactly this.
+   Connect with the same patience. */
+async function connectWithRetry() {
+  let last;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const client = postgres(DSN, { ssl: "require", prepare: false, max: 1, connect_timeout: 20 });
+    try {
+      await client`SELECT 1`;
+      return client;
+    } catch (e) {
+      last = e;
+      console.error(`connect attempt ${attempt}/3 failed: ${e?.message ?? e}`);
+      await client.end({ timeout: 1 }).catch(() => {});
+      if (attempt < 3) await new Promise((r) => setTimeout(r, 10_000));
+    }
+  }
+  throw last;
+}
+
+const sql = await connectWithRetry();
 
 const toDbRow = (companyId, r) => ({
   company_id: companyId,
