@@ -61,6 +61,7 @@ import { recordEntityAudit, diffFields, compactChanges, fieldChange, statusChang
 import { pvCanEdit, pvCanPrepare, pvCanCheck, pvCanApprove, pvCanReject, pvCanWithdraw, pvCanPost, type PvApprovalShape } from '../lib/pv-approval';
 import { settlePiPaidSen } from '../lib/pi-settlement';
 import { extractOneBill, matchSupplier, normalizeVendor, BILL_IMAGE_MIMES, MAX_BILLS_PER_CALL, MAX_FILES_PER_BILL, MAX_BILL_FILE_BYTES } from '../../acc/bill-extract';
+import { requireLeafAccount } from './accounting-chart';
 import { planPvRateAdoption, isRateRetainedFromPv, roundRate6 } from '../lib/pv-rate-adoption';
 import { recostFromGrn } from '../lib/recost';
 
@@ -444,6 +445,19 @@ export const createPaymentVoucherHandler = async (c: any) => {
   const built = buildLines(body.lines);
   if ('error' in built) return c.json({ error: built.error }, 400);
 
+  /* 父户不记账 (owner 2026-09-02) at TYPING time — the GL gate (engine rule 3)
+     would refuse the same header at approval, but the operator should hear it
+     while the form is still open. */
+  {
+    const coIdForLeaf = activeCompanyId(c);
+    if (coIdForLeaf != null) {
+      for (const dCode of [...new Set(built.rows.map((r) => r.debit_account_code))]) {
+        const leafErr = await requireLeafAccount(c, coIdForLeaf, dCode);
+        if (leafErr) return leafErr;
+      }
+    }
+  }
+
   // PV→PI settlement (migration 0202) — optional allocations + purpose.
   const allocBuilt = buildAllocations(body.allocations);
   if ('error' in allocBuilt) return c.json({ error: allocBuilt.error }, 400);
@@ -640,6 +654,12 @@ export const updatePaymentVoucherHandler = async (c: any) => {
   if (body.lines !== undefined) {
     const built = buildLines(body.lines);
     if ('error' in built) return c.json({ error: built.error }, 400);
+    /* 父户不记账 — the same typing-time door the create path holds, BEFORE the
+       old lines are deleted, so a refused edit changes nothing. */
+    for (const dCode of [...new Set(built.rows.map((r) => r.debit_account_code))]) {
+      const leafErr = await requireLeafAccount(c, co.companyId, dCode);
+      if (leafErr) return leafErr;
+    }
     await sb.from('payment_voucher_lines').delete().eq('pv_id', id);
     const { error: lErr } = await sb.from('payment_voucher_lines').insert(stampCompany(built.rows.map((r) => ({ ...r, pv_id: id })), c));
     if (lErr) return c.json({ error: 'lines_update_failed', reason: lErr.message }, 500);

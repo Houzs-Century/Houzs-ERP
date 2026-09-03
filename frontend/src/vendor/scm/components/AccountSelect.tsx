@@ -41,8 +41,14 @@ export function AccountSelect({
   disabled?: boolean;
 }) {
   const options = useMemo<ComboOption[]>(() => {
+    /* 父户不记账 (the owner, 2026-09-02): a header with children in this list
+       is a grouping, not a bookable account — it does not appear here at all.
+       The server refuses it too (requireLeafAccount + the GL gate); hiding it
+       is the picker doing its half. The full tree lives on the Chart page. */
+    const parents = new Set(accounts.map((a) => a.parent_code).filter(Boolean));
+    const leaves = accounts.filter((a) => !parents.has(a.account_code));
     const by = new Map<Account['account_type'], Account[]>();
-    for (const a of accounts) {
+    for (const a of leaves) {
       const list = by.get(a.account_type) ?? [];
       list.push(a);
       by.set(a.account_type, list);
