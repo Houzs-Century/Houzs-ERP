@@ -59,6 +59,12 @@ describe('批量 tick yes', () => {
     expect(screen.queryByText(/^Prepare \d/)).toBeNull();
     expect(screen.queryByText(/^Check \d/)).toBeNull();
     expect(screen.queryByText(/Approve & post \d/)).toBeNull();
+
+    /* And the tick lives in the CHECKBOX alone (owner: 我一点就直接tick 了)
+       — clicking the row itself must tick nothing. */
+    fireEvent.click(screen.getByText('Raw Draft Co'));
+    expect(screen.getByText('1 ticked')).toBeTruthy();
+    expect(screen.queryByText('2 ticked')).toBeNull();
   });
 
   test('batch Prepare runs WITHOUT a dialog — freely reversible, same as the detail button', async () => {

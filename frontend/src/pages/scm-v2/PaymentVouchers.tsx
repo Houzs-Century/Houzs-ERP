@@ -389,6 +389,10 @@ export const PaymentVouchers = () => {
              buttons still count only the rows THEIR yes applies to
              (prepareTargets/checkTargets/approveTargets filter per door), so
              the old isDisabled gate protected nothing the buttons don't. */
+          /* And the tick lives in the CHECKBOX alone (owner: 我一点就直接
+             tick 了…做成一定要点那个tick 的格子) — a row click highlights,
+             a double-click opens, right-click menus; nothing else ticks. */
+          checkboxOnly: true,
         }}
         searchPlaceholder="Search voucher no, payee…"
         loadedSearchLimit={500}
