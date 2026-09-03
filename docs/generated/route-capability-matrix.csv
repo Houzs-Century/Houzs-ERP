@@ -470,6 +470,7 @@ POST,/api/scm/autocount-outbox/:id/requeue,AUTHENTICATED_MIDDLEWARE,COMPANY_CONT
 POST,/api/scm/autocount-outbox/:id/send-now,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/autocount-outbox.ts
 GET,/api/scm/autocount-outbox/book-doc,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/autocount-outbox.ts
 GET,/api/scm/autocount-outbox/host-log,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/autocount-outbox.ts
+POST,/api/scm/autocount-outbox/line-order-sweep,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/autocount-outbox.ts
 POST,/api/scm/autocount-outbox/relink-lines,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/autocount-outbox.ts
 GET,/api/scm/autocount-outbox/table-columns,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/autocount-outbox.ts
 GET,/api/scm/categories,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/categories.ts
