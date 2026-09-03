@@ -182,9 +182,15 @@ accounts only, per company). Contracts: `PaymentVoucherNew.test.tsx`
 draft-edit run every debit code through `requireLeafAccount`
 (accounting-chart.ts) — a header with active sub-accounts refuses
 `not_a_leaf_account` at typing time, before the GL gate would refuse the
-same header at approval. AccountSelect does its half by not offering
-headers at all. Contract: the leaf block of
-`backend/tests/accountingChart.test.ts`.
+same header at approval. The same door also refuses CONTROL accounts
+(AutoCount special SDC/SCC/SBS — AR, AP + customer deposits, stock; the
+owner's 锁): their balances post through modules, never through a
+hand-picked line, so `control_account_locked` comes back with 由模块自动过账.
+AccountSelect does its half by not offering headers OR control accounts at
+all (the credit side was already safe — `requireMoneyAccount` only admits
+the money set). Contract: the leaf + control blocks of
+`backend/tests/accountingChart.test.ts` and
+`frontend/src/vendor/scm/components/AccountSelect.test.tsx`.
 
 ## 0d. 预付挂在 supplier (2026-09-02)
 

@@ -30,6 +30,15 @@ const requireChartPerm = (c: any): boolean => hasHouzsPerm(c, 'scm.payment_vouch
 
 const ACCOUNT_TYPES = new Set(['ASSET', 'LIABILITY', 'EQUITY', 'INCOME', 'EXPENSE']);
 
+/* AutoCount's special-account vocabulary, from the accountant's own export
+   (column 9). The three CONTROL kinds are the ones whose balances belong to a
+   module, not to a hand: SDC debtor control (AR), SCC creditor control (AP +
+   customer deposits), SBS balance-sheet stock. The owner's 2026-09-03 call:
+   lock them — 由模块自动过账. */
+const SPECIAL_RE = /^[A-Z]{2,4}$/;
+const CONTROL_SPECIALS = new Set(['SDC', 'SCC', 'SBS']);
+const ACCOUNT_CODE_RE = /^\d{3}-[A-Za-z0-9]{4}$/;
+
 type AccountRow = {
   company_id: number;
   account_code: string;
@@ -38,6 +47,7 @@ type AccountRow = {
   parent_code: string | null;
   is_active: boolean;
   acc_money: boolean | null;
+  special_type: string | null;
 };
 
 /** The caller's company allow-list, fail-CLOSED like every scoping helper:
@@ -59,14 +69,14 @@ export const chartUnionHandler = async (c: any): Promise<Response> => {
   const sb = c.get('supabase');
   const { data, error } = await sb
     .from('accounts')
-    .select('company_id, account_code, account_name, account_type, parent_code, is_active, acc_money')
+    .select('company_id, account_code, account_name, account_type, parent_code, is_active, acc_money, special_type')
     .in('company_id', ids);
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
 
   /* One row per code. Definition fields prefer the LOWEST company id that
      carries the code (company 1 = the master book where the accountant's
      import lands), so a rename there leads the union. */
-  const byCode = new Map<string, { code: string; name: string; type: string; parentCode: string | null; accMoney: boolean; definedBy: number; perCompany: Record<number, { active: boolean }> }>();
+  const byCode = new Map<string, { code: string; name: string; type: string; parentCode: string | null; accMoney: boolean; special: string | null; definedBy: number; perCompany: Record<number, { active: boolean }> }>();
   for (const raw of (data ?? []) as AccountRow[]) {
     const cur = byCode.get(raw.account_code);
     if (!cur || raw.company_id < cur.definedBy) {
@@ -76,6 +86,7 @@ export const chartUnionHandler = async (c: any): Promise<Response> => {
         type: raw.account_type,
         parentCode: raw.parent_code,
         accMoney: raw.acc_money === true,
+        special: raw.special_type ?? null,
         definedBy: raw.company_id,
         perCompany: { ...(cur?.perCompany ?? {}), [raw.company_id]: { active: raw.is_active } },
       });
@@ -119,7 +130,7 @@ export const chartTickHandler = async (c: any): Promise<Response> => {
       chain.unshift(cursor);
       const lookRes: { data: unknown; error: { message: string } | null } = await sb
         .from('accounts')
-        .select('company_id, account_code, account_name, account_type, parent_code, acc_money')
+        .select('company_id, account_code, account_name, account_type, parent_code, acc_money, special_type')
         .eq('account_code', cursor)
         .order('company_id')
         .limit(1)
@@ -131,7 +142,7 @@ export const chartTickHandler = async (c: any): Promise<Response> => {
     for (const step of chain) {
       const defRes = await sb
         .from('accounts')
-        .select('account_code, account_name, account_type, parent_code, acc_money')
+        .select('account_code, account_name, account_type, parent_code, acc_money, special_type')
         .eq('account_code', step)
         .order('company_id')
         .limit(1)
@@ -145,6 +156,7 @@ export const chartTickHandler = async (c: any): Promise<Response> => {
         account_type: d.account_type,
         parent_code: d.parent_code,
         acc_money: d.acc_money === true,
+        special_type: d.special_type ?? null,
         is_active: true,
       }, { onConflict: 'company_id,account_code' });
       if (upErr) return c.json({ error: 'save_failed', reason: upErr.message }, 500);
@@ -194,7 +206,7 @@ export const chartImportHandler = async (c: any): Promise<Response> => {
   if (rows.length === 0) return c.json({ error: 'no_rows' }, 400);
   if (rows.length > 1000) return c.json({ error: 'too_many_rows', message: 'At most 1000 accounts per import.' }, 400);
 
-  const clean: Array<{ code: string; name: string; type: string; parent: string | null; money: boolean; shared: boolean }> = [];
+  const clean: Array<{ code: string; name: string; type: string; parent: string | null; money: boolean; special: string | null; shared: boolean }> = [];
   const seen = new Set<string>();
   for (const [i, r] of rows.entries()) {
     const code = String(r?.code ?? '').trim();
@@ -203,11 +215,16 @@ export const chartImportHandler = async (c: any): Promise<Response> => {
     if (!code || !name) return c.json({ error: 'bad_row', message: `Row ${i + 1} is missing code or name.` }, 400);
     if (!ACCOUNT_TYPES.has(type)) return c.json({ error: 'bad_row', message: `Row ${i + 1} (${code}): accountType must be ASSET / LIABILITY / EQUITY / INCOME / EXPENSE.` }, 400);
     if (seen.has(code)) return c.json({ error: 'bad_row', message: `Row ${i + 1}: ${code} appears twice in the file.` }, 400);
+    const special = r?.specialType ? String(r.specialType).trim().toUpperCase() : null;
+    if (special && !SPECIAL_RE.test(special)) {
+      return c.json({ error: 'bad_row', message: `Row ${i + 1} (${code}): specialType ${special} is not a 2-4 letter AutoCount special code.` }, 400);
+    }
     seen.add(code);
     clean.push({
       code, name, type,
       parent: r?.parentCode ? String(r.parentCode).trim() : null,
       money: r?.accMoney === true,
+      special,
       shared: r?.shared === true,
     });
   }
@@ -227,6 +244,7 @@ export const chartImportHandler = async (c: any): Promise<Response> => {
     account_type: r.type,
     parent_code: r.parent,
     acc_money: r.money,
+    special_type: r.special,
     is_active: true,
   }));
 
@@ -264,8 +282,12 @@ export const chartImportHandler = async (c: any): Promise<Response> => {
 
 /* ── The early leaf door for voucher drafts ──────────────────────────────────
    The GL gate (engine rule 3) refuses a parent at posting; this refuses it at
-   TYPING, where the operator can still just pick the child. Fails CLOSED on a
-   read error — an unverifiable account does not get onto a money document. */
+   TYPING, where the operator can still just pick the child. Two refusals live
+   behind the same door: a header with active children (父户不记账) and a
+   CONTROL account (SDC/SCC/SBS — AR, AP + deposits, stock), whose balance
+   belongs to a module, never to a hand-picked line (owner 2026-09-03: 锁).
+   Fails CLOSED on a read error — an unverifiable account does not get onto a
+   money document. */
 export const requireLeafAccount = async (
   c: any,
   companyId: number,
@@ -286,5 +308,141 @@ export const requireLeafAccount = async (
       message: `${code} is a header with sub-accounts — 父户不记账: pick the specific sub-account instead.`,
     }, 400);
   }
+  const selfRes: { data: unknown; error: { message: string } | null } = await sb
+    .from('accounts')
+    .select('special_type')
+    .eq('company_id', companyId)
+    .eq('account_code', code)
+    .limit(1)
+    .maybeSingle();
+  if (selfRes.error) return c.json({ error: 'load_failed', reason: selfRes.error.message }, 500);
+  const special = (selfRes.data as { special_type?: string | null } | null)?.special_type ?? null;
+  if (special && CONTROL_SPECIALS.has(special)) {
+    return c.json({
+      error: 'control_account_locked',
+      message: `${code} is a control account (${special}) — 由模块自动过账 (AR/AP/stock post through their own flows); pick an ordinary account instead.`,
+    }, 400);
+  }
   return null;
+};
+
+/* ── PUT /accounting/chart/rename — {oldCode, newCode}, 改码全账跟 ──────────
+   One call to scm.acc_rename_account (migration 0347): the accounts rows of
+   every company, children's parent_code, and all nine reference homes move in
+   ONE transaction — or none of them do. The function refuses a collision (it
+   would merge two books) and an unknown or malformed code; those surface here
+   as 400s with the database's own sentence. */
+export const chartRenameHandler = async (c: any): Promise<Response> => {
+  if (!requireChartPerm(c)) {
+    return c.json({ error: "You don't have permission to manage the chart of accounts." }, 403);
+  }
+  let body: any;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
+  const oldCode = String(body.oldCode ?? '').trim();
+  const newCode = String(body.newCode ?? '').trim();
+  if (!oldCode || !newCode) return c.json({ error: 'codes_required', message: 'Both oldCode and newCode are required.' }, 400);
+  if (!ACCOUNT_CODE_RE.test(newCode)) {
+    return c.json({ error: 'bad_code', message: `${newCode} is not in the NNN-XXXX account-code shape.` }, 400);
+  }
+  const sb = c.get('supabase');
+  const { data, error } = await sb.rpc('acc_rename_account', { p_old: oldCode, p_new: newCode });
+  if (error) {
+    const msg = String(error.message ?? '');
+    const refused = /already exists|does not exist|account-code shape|two different codes/.test(msg);
+    return c.json({ error: refused ? 'rename_refused' : 'rename_failed', message: msg }, refused ? 400 : 500);
+  }
+  return c.json({ ok: true, oldCode, newCode, moved: data ?? {} });
+};
+
+/* ── PUT /accounting/chart/update — {code, name?, accountType?, accMoney?} ──
+   Definition edits that DON'T change identity: they apply to the code in
+   EVERY company carrying it, because the union screen shows one definition
+   per code and two companies disagreeing about what 310-0010 is called would
+   be a lie in both books. */
+export const chartUpdateHandler = async (c: any): Promise<Response> => {
+  if (!requireChartPerm(c)) {
+    return c.json({ error: "You don't have permission to manage the chart of accounts." }, 403);
+  }
+  let body: any;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
+  const code = String(body.code ?? '').trim();
+  if (!code) return c.json({ error: 'code_required' }, 400);
+  const patch: Record<string, unknown> = {};
+  if (body.name !== undefined) {
+    const name = String(body.name ?? '').trim();
+    if (!name) return c.json({ error: 'bad_name', message: 'The account name cannot be empty.' }, 400);
+    patch.account_name = name;
+  }
+  if (body.accountType !== undefined) {
+    const type = String(body.accountType ?? '').trim().toUpperCase();
+    if (!ACCOUNT_TYPES.has(type)) {
+      return c.json({ error: 'bad_type', message: 'accountType must be ASSET / LIABILITY / EQUITY / INCOME / EXPENSE.' }, 400);
+    }
+    patch.account_type = type;
+  }
+  if (body.accMoney !== undefined) patch.acc_money = body.accMoney === true;
+  if (Object.keys(patch).length === 0) return c.json({ error: 'nothing_to_change' }, 400);
+
+  const sb = c.get('supabase');
+  const { data, error } = await sb
+    .from('accounts')
+    .update(patch)
+    .eq('account_code', code)
+    .select('company_id');
+  if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);
+  const touched = ((data ?? []) as unknown[]).length;
+  if (touched === 0) return c.json({ error: 'code_unknown', message: `${code} exists in no company's chart.` }, 404);
+  return c.json({ ok: true, code, companies: touched });
+};
+
+/* ── DELETE /accounting/chart/account?code=… — only a NEVER-USED code dies ──
+   The owner's rule (2026-09-03): 零交易零引用的才可以真删；有交易的不给删.
+   Every reference home is checked — one hit anywhere and the answer is a 409
+   naming the holdouts, with deactivation (the tick column) as the offered
+   path. A delete removes the code from EVERY company: the code is one
+   identity, half-deleting it would fork the union. */
+export const chartDeleteHandler = async (c: any): Promise<Response> => {
+  if (!requireChartPerm(c)) {
+    return c.json({ error: "You don't have permission to manage the chart of accounts." }, 403);
+  }
+  const code = String(c.req.query('code') ?? '').trim();
+  if (!code) return c.json({ error: 'code_required' }, 400);
+  const sb = c.get('supabase');
+
+  const used: string[] = [];
+  const probes: Array<{ table: string; column: string; label: string }> = [
+    { table: 'journal_entry_lines', column: 'account_code', label: 'GL journal lines' },
+    { table: 'payment_vouchers', column: 'credit_account_code', label: 'payment vouchers (credit side)' },
+    { table: 'payment_voucher_lines', column: 'debit_account_code', label: 'payment voucher lines' },
+    { table: 'acc_vendor_memory', column: 'debit_account_code', label: 'vendor memory' },
+    { table: 'acc_company_acquirers', column: 'transit_account_code', label: 'acquirer transit link' },
+    { table: 'acc_company_acquirers', column: 'fee_account_code', label: 'acquirer fee link' },
+    { table: 'acc_company_acquirers', column: 'bank_account_code', label: 'acquirer bank link' },
+    { table: 'acc_bank_statement_config', column: 'account_code', label: 'bank statement setup' },
+    { table: 'acc_bank_statements', column: 'account_code', label: 'imported bank statements' },
+    { table: 'acc_account_roles', column: 'account_code', label: 'system role bindings' },
+    { table: 'accounts', column: 'parent_code', label: 'sub-accounts under it' },
+  ];
+  for (const p of probes) {
+    const { data, error } = await sb.from(p.table).select(p.column).eq(p.column, code).limit(1);
+    if (error) return c.json({ error: 'load_failed', reason: `${p.table}: ${error.message}` }, 500);
+    if (((data ?? []) as unknown[]).length > 0 && !used.includes(p.label)) used.push(p.label);
+  }
+  if (used.length > 0) {
+    return c.json({
+      error: 'account_in_use',
+      message: `${code} cannot be deleted — it is referenced by: ${used.join(', ')}. Untick it instead to hide it.`,
+      used,
+    }, 409);
+  }
+
+  const { data: gone, error: delErr } = await sb
+    .from('accounts')
+    .delete()
+    .eq('account_code', code)
+    .select('company_id');
+  if (delErr) return c.json({ error: 'delete_failed', reason: delErr.message }, 500);
+  const removed = ((gone ?? []) as unknown[]).length;
+  if (removed === 0) return c.json({ error: 'code_unknown', message: `${code} exists in no company's chart.` }, 404);
+  return c.json({ ok: true, code, companies: removed });
 };
