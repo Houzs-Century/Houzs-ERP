@@ -1733,6 +1733,29 @@ into DRAFT (below). So the route also asks:
 | a row in `mfg_sales_order_payments` | `409 so_has_payments` | The cascade takes the payment ledger with it and the DO/SI that could have explained it are gone too. A real draft CAN carry a POS deposit, so this is a refusal with an instruction — void the payments, or cancel instead of discarding. Fails CLOSED: an unreadable ledger is not an empty one. |
 | `version` CAS + edit lease | `428` / `409` | Unchanged. |
 
+## The Processing Date decides IN_PRODUCTION — both ways
+
+Owner's rule: 「只要有 Processing Date, 就代表他 Proceed 了」, sharpened on
+2026-09-03 to 「其实就看有没有 date 就知道了」. The date IS the status.
+
+| the save | the status |
+| --- | --- |
+| a date APPEARS on a `CONFIRMED` order | -> `IN_PRODUCTION` (`statusAfterProcessingDateSet`) |
+| the date is CLEARED on an `IN_PRODUCTION` order | -> `CONFIRMED` (`statusAfterProcessingDateCleared`) |
+| the date is cleared but a live delivery order or sales invoice exists | **left alone** — it is not "not in production", it is further along |
+| any other status, or a date that never existed / still exists | left alone |
+
+Both are pure and live in `backend/src/scm/shared/so-proceeded-status.ts`. The
+save asks ONE question — `soStatusAfterProcessingDateChange` in
+`backend/src/scm/lib/so-proceed-status-change.ts` — which supplies the only fact
+neither rule can compute for itself: whether anything downstream exists. **That
+read is issued only when a date was actually cleared**; every other save pays
+nothing.
+
+The backward half did not exist until 2026-09-03, and the forward rule's own
+header had recorded the gap as an open owner decision rather than a bug. Trace:
+`docs/bugs/0631-clearing-the-processing-date-left-the-order-in-production.md`.
+
 **ON_HOLD is not a route back to DRAFT (2026-08-14).**
 `soStatusTransitionError` (`scm/lib/so-lifecycle-guards.ts`) treats ON_HOLD as unranked so an order can be paused
 from anywhere and resumed to wherever the operator needs — but that was written
