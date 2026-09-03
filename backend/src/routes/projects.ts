@@ -1342,6 +1342,59 @@ app.delete("/organizers/:id", requirePermission("projects.manage"), async (c) =>
   return c.json({ ok: true });
 });
 
+// ── Contractors (lookup) ─────────────────────────────────────
+// Booth setup/dismantle contractors. Same shape as organizers: the
+// projects.contractor column stays free text — this table just keeps the
+// Project Detail picker (and the per-contractor share links) clean.
+
+app.get("/contractors", requirePageAccess("projects"), async (c) => {
+  const rows = await c.env.DB.prepare(
+    `SELECT id, name, notes, active FROM project_contractors
+      WHERE active = 1 ORDER BY name`
+  ).all();
+  return c.json({ data: rows.results ?? [] });
+});
+
+app.post("/contractors", requirePermission("projects.write"), async (c) => {
+  const user = c.get("user");
+  const body = await c.req.json<{ name?: string; notes?: string }>();
+  const name = (body.name || "").trim();
+  if (!name) return c.json({ error: "name required" }, 400);
+  // Idempotent on (name) — return the existing row if it already exists.
+  const existing = await c.env.DB.prepare(
+    `SELECT id, name FROM project_contractors WHERE LOWER(name) = LOWER(?)`
+  )
+    .bind(name)
+    .first<{ id: number; name: string }>();
+  if (existing) {
+    // Reactivate if previously archived.
+    await c.env.DB.prepare(
+      `UPDATE project_contractors SET active = 1 WHERE id = ?`
+    )
+      .bind(existing.id)
+      .run();
+    return c.json({ id: existing.id, name: existing.name }, 200);
+  }
+  const r = await c.env.DB.prepare(
+    `INSERT INTO project_contractors (name, notes, created_by)
+     VALUES (?, ?, ?)`
+  )
+    .bind(name, body.notes ?? null, user?.id ?? null)
+    .run();
+  return c.json({ id: r.meta.last_row_id, name }, 201);
+});
+
+app.delete("/contractors/:id", requirePermission("projects.manage"), async (c) => {
+  const id = parseInt(c.req.param("id"), 10);
+  if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
+  await c.env.DB.prepare(
+    `UPDATE project_contractors SET active = 0 WHERE id = ?`
+  )
+    .bind(id)
+    .run();
+  return c.json({ ok: true });
+});
+
 // ── Venues ────────────────────────────────────────────────────
 // Same shape as organizers — picker-backed lookup, free-text column on
 // `projects.venue` stays valid so legacy data still renders.
