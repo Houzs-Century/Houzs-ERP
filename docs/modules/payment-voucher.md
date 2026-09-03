@@ -281,6 +281,17 @@ through the untouched approval cycle. Contracts:
 `backend/src/acc/bill-extract.test.ts`,
 `frontend/src/pages/scm-v2/PaymentVoucherScan.test.tsx`.
 
+**扫 → bill (2026-09-03, the owner confirming the flow himself: 他是扫
+bill, 然后帮我录入 bill. 几时要还是我会开 ap payment 去还 — 对)**: beside
+every "Open as voucher" sits **Open as bill** (and "Open as ONE bill" on a
+grouped supplier), which lands on New Purchase Invoice instead — the
+matched supplier pre-picked when the reader recognised one, the supplier's
+own invoice number and date carried, one manual line per read line (or per
+bill, on a group). This only RECORDS the debt into AP; paying stays a
+separate AP Payment, whenever he chooses — the knock-off flow other
+creditors ride too. Same discipline: nothing saves until a person does.
+Contract: the 扫 → bill block of `PaymentVoucherScan.test.tsx`.
+
 ## 0f. Vendor memory (mig 0341, 2026-09-02)
 
 The owner's ask, his words: 我想要你要有记忆我下次submit 同个类型的invoice
