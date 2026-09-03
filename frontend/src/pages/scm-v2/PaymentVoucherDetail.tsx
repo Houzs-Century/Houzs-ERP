@@ -20,7 +20,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { CheckCircle2, ChevronDown, Copy, History, Pencil, Plus, RotateCcw, Save, Send, Ban, Trash2, X, XCircle } from 'lucide-react';
+import { CheckCircle2, ChevronDown, Copy, History, Pencil, Plus, Printer, RotateCcw, Save, Send, Ban, Trash2, X, XCircle } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { fmtDate, fmtDateOrDash } from '../../vendor/shared/format';
 import {
@@ -35,6 +35,8 @@ import {
   useSupplierAdvances, useApplyAdvance,
   usePvFiles, useUploadPvFile, useDeletePvFile, fetchPvFileBlobUrl, fileToBase64, PV_FILE_ACCEPT,
 } from '../../vendor/scm/lib/payment-voucher-queries';
+import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
+import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
 import { useAccounts, type Account } from '../../vendor/scm/lib/accounting-queries';
 import { usePurchaseInvoices } from '../../vendor/scm/lib/purchase-invoice-queries';
 import { useSuppliers, useSupplierDetail } from '../../vendor/scm/lib/suppliers-queries';
@@ -145,6 +147,34 @@ export const PaymentVoucherDetail = () => {
   };
 
   const suppliersQ = useSuppliers({ status: 'ACTIVE' });
+
+  /* ── Print — the voucher WITH its evidence (owner 2026-09-03: print pv
+     include ocr 的文件一起). The client renders the voucher page; the Worker
+     appends the stored files where they live (print-bundle) and hands back
+     one PDF. The file LIST must be an answer before anything renders:
+     printing a voucher quietly missing its bills is the dishonest branch,
+     so an unloaded/failed list aborts with a sentence. */
+  const filesQ = usePvFiles(id || null);
+  const deliverPrintPdf = (action: PdfAction) => {
+    if (!pv) return;
+    return (async () => {
+      const rows = filesQ.data ? filesQ.data.files : (await filesQ.refetch()).data?.files;
+      if (!rows) throw new Error("The voucher's file list could not be loaded — nothing was printed. Try again.");
+      const { generatePaymentVoucherPdf } = await import('../../vendor/scm/lib/payment-voucher-pdf');
+      type A = Parameters<typeof generatePaymentVoucherPdf>;
+      await generatePaymentVoucherPdf(
+        pv as unknown as A[0],
+        lines as unknown as A[1],
+        allocations as unknown as A[2],
+        accountLabel,
+        { action, withFilesOf: rows.length > 0 ? id : null },
+      );
+    })().catch((e: unknown) => {
+      notify({ title: 'PDF generation failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
+    });
+  };
+  const print = usePrintPreview(deliverPrintPdf);
+  useOpenPrintPreviewFromUrl(print.openPreview, !!pv);
 
   const isDraft = pv?.status === 'DRAFT';
   const [isEditing, setIsEditing] = useState(() => searchParams.get('edit') === '1');
@@ -390,6 +420,10 @@ export const PaymentVoucherDetail = () => {
                 ungated: whoever may open the voucher may see who changed it. */}
             <Button variant="ghost" size="md" onClick={() => setHistoryOpen(true)}>
               <History {...ICON} /> History
+            </Button>
+            {/* Print — the voucher page plus every stored file after it. */}
+            <Button variant="ghost" size="md" onClick={print.openPreview}>
+              <Printer {...ICON} /> Print
             </Button>
             {/* Copy as new (owner 2026-09-03): content as template, identity
                 fresh — any status, the New page does the pre-fill. */}
@@ -773,6 +807,24 @@ export const PaymentVoucherDetail = () => {
           </div>
         </section>
       </div>
+
+      <PrintPreviewModal
+        open={print.open}
+        onClose={print.close}
+        docTitle="Payment Voucher"
+        docNo={pv.pv_number}
+        rows={[
+          { label: 'Payee', value: String(pv.payee_name ?? '') },
+          { label: 'Date', value: pv.voucher_date ? fmtDateOrDash(pv.voucher_date) : '—' },
+          { label: 'Paid From', value: accountLabel(pv.credit_account_code) },
+          { label: 'Total', value: fmtRm(totalSen, viewCurrency) },
+          {
+            label: 'Files',
+            value: `${filesQ.data?.files.length ?? 0} attached — printed after the voucher page`,
+          },
+        ]}
+        {...print.handlers}
+      />
 
       {/* History drawer — portals to <body>, so its position here is only
           about lifecycle, not layout. */}

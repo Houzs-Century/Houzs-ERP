@@ -7,8 +7,9 @@
 
 import { Hono } from 'hono';
 import { describe, expect, test } from 'vitest';
+import { PDFDocument } from 'pdf-lib';
 import {
-  uploadPvFileHandler, listPvFilesHandler, streamPvFileHandler, deletePvFileHandler,
+  uploadPvFileHandler, listPvFilesHandler, streamPvFileHandler, deletePvFileHandler, printPvBundleHandler,
 } from '../src/scm/routes/pv-files';
 
 type Row = Record<string, any>;
@@ -82,6 +83,7 @@ function harness(tables: Record<string, Row[]>, r2 = fakeR2()) {
   app.get('/pv/:id/files', (c) => listPvFilesHandler(c));
   app.get('/pv/:id/files/:fileId', (c) => streamPvFileHandler(c));
   app.delete('/pv/:id/files/:fileId', (c) => deletePvFileHandler(c));
+  app.post('/print-bundle', (c) => printPvBundleHandler(c));
   return { app: { request: (path: string, init?: RequestInit) => app.request(path, init, { SLIPS: r2 } as never) }, r2 };
 }
 
@@ -128,6 +130,48 @@ describe('PV attachments — the bill lives with its voucher', () => {
     const refused = await upload(app);
     expect(refused.status).toBe(409);
     expect((await refused.json() as { error: string }).error).toBe('voucher_cancelled');
+  });
+
+  test('print-bundle: voucher page first, then ITS stored files in sort order; a missing R2 object costs a notice page, an unknown pv fails the WHOLE bundle', async () => {
+    const tables: Record<string, Row[]> = { payment_vouchers: [PV()], acc_pv_files: [] };
+    const r2 = fakeR2();
+    const { app } = harness(tables, r2);
+
+    /* Two stored files: a real 2-page PDF and an index row whose object is
+       GONE from the bucket. */
+    const bill = await PDFDocument.create();
+    bill.addPage([595.28, 841.89]); bill.addPage([595.28, 841.89]);
+    const billBytes = await bill.save();
+    tables.acc_pv_files.push(
+      { id: 'f1', company_id: CO, pv_id: 'pv-9', file_key: 'pv-files/1/pv-9/a.pdf', file_name: 'bill.pdf', mime: 'application/pdf', sort_no: 1 },
+      { id: 'f2', company_id: CO, pv_id: 'pv-9', file_key: 'pv-files/1/pv-9/gone.jpg', file_name: 'gone.jpg', mime: 'image/jpeg', sort_no: 2 },
+    );
+    r2.store.set('pv-files/1/pv-9/a.pdf', { bytes: billBytes.buffer.slice(billBytes.byteOffset, billBytes.byteOffset + billBytes.byteLength) as ArrayBuffer, contentType: 'application/pdf' });
+
+    const voucherDoc = await PDFDocument.create();
+    voucherDoc.addPage([500, 841.89]); // width marks the voucher page
+    const voucherBytes = await voucherDoc.save();
+    const voucherBase64 = btoa(String.fromCharCode(...voucherBytes));
+
+    const res = await app.request('/print-bundle', {
+      method: 'POST',
+      body: JSON.stringify({ parts: [{ pvId: 'pv-9', voucherBase64 }] }),
+      headers: { 'content-type': 'application/json' },
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('application/pdf');
+    const merged = await PDFDocument.load(await res.arrayBuffer());
+    /* voucher (500-wide) + bill's 2 pages + the missing file's NOTICE page. */
+    expect(merged.getPageCount()).toBe(4);
+    expect(Math.round(merged.getPages()[0]!.getWidth())).toBe(500);
+
+    const missing = await app.request('/print-bundle', {
+      method: 'POST',
+      body: JSON.stringify({ parts: [{ pvId: 'pv-9', voucherBase64 }, { pvId: 'nope', voucherBase64 }] }),
+      headers: { 'content-type': 'application/json' },
+    });
+    expect(missing.status).toBe(404);
+    expect((await missing.json() as { message: string }).message).toContain('nothing was printed');
   });
 
   test('delete works while DRAFT-unchecked, removes the R2 object too, and locks once CHECKED', async () => {

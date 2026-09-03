@@ -700,9 +700,32 @@ export function deliverPdf(
     doc.save(filename);
     return;
   }
-  const blobUrl = URL.createObjectURL(doc.output('blob'));
+  deliverPdfBlob(doc.output('blob'), filename, action);
+}
+
+/** The same three exits for a PDF that exists only as BYTES — a jsPDF page
+ *  merged with stored attachments (pdf-attach.ts) is no longer a jsPDF doc,
+ *  and re-parsing it into one just to deliver it would be a lossy detour.
+ *  'save' mirrors doc.save(): an <a download> click. */
+export function deliverPdfBlob(
+  blob: Blob,
+  filename: string,
+  action: PdfAction = 'save',
+): void {
+  if (action === 'save') {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.setTimeout(() => { URL.revokeObjectURL(url); }, 60_000);
+    return;
+  }
+  const blobUrl = URL.createObjectURL(blob);
   if (action === 'preview') {
-    openPdfPreviewTab(doc, blobUrl, filename);
+    openPdfPreviewTab(blob, blobUrl, filename);
     return;
   }
   renderViaIframe(blobUrl, true);
@@ -729,7 +752,7 @@ export function deliverPdf(
  *
  * The tab is opened SYNCHRONOUSLY, before any await: a `window.open` that
  * follows an await has lost the user gesture and is blocked as a popup. */
-function openPdfPreviewTab(doc: import('jspdf').jsPDF, blobUrl: string, filename: string): void {
+function openPdfPreviewTab(blob: Blob, blobUrl: string, filename: string): void {
   const tab = window.open('', '_blank');
   if (!tab) {
     // Popup blocked — the raw blob is still better than nothing.
@@ -738,7 +761,7 @@ function openPdfPreviewTab(doc: import('jspdf').jsPDF, blobUrl: string, filename
   }
   void (async () => {
     try {
-      const path = await putPrintPreview(doc, filename);
+      const path = await putPrintPreview(blob, filename);
       if (path) {
         tab.location.replace(path);
         return;
@@ -758,7 +781,7 @@ const PRINT_KEEP = 5;
 /* Put the PDF where the service worker can serve it, and return the path — or
    null when the worker is not in control (see openPdfPreviewTab). */
 async function putPrintPreview(
-  doc: import('jspdf').jsPDF,
+  blob: Blob,
   filename: string,
 ): Promise<string | null> {
   if (typeof caches === 'undefined' || !navigator.serviceWorker?.controller) return null;
@@ -774,7 +797,7 @@ async function putPrintPreview(
   const path = PRINT_PREFIX + encodeURIComponent(filename);
   await cache.put(
     path,
-    new Response(doc.output('blob'), {
+    new Response(blob, {
       headers: {
         'Content-Type': 'application/pdf',
         /* `inline` so the browser RENDERS it rather than downloading; the

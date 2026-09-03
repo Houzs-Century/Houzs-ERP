@@ -388,6 +388,7 @@ Mounted at `/api/scm/payment-vouchers`, behind
 | GET | `/:id/files` | area guard | §10 — the index rows, in `sort_no` (= attach = print) order |
 | GET | `/:id/files/:fileId` | area guard | §10 — streams the bytes from R2 with the stored mime, `content-disposition: inline` |
 | DELETE | `/:id/files/:fileId` | `scm.payment_voucher.write` | §10 — removes row + object; 409 `evidence_locked` once the voucher is **checked** |
+| POST | `/print-bundle` | area guard | §11 — `{ parts: [{ pvId, voucherBase64 }] }` → ONE merged PDF (each voucher's page, then its stored files); 404 fails the whole bundle when a pv can't load; ≤30 parts |
 
 `postPaymentVoucherHandler` and `cancelPaymentVoucherHandler` are **exported** so the
 vitest harness can mount them on a bare Hono app (the `supabaseAuth` bridge cannot
@@ -736,6 +737,68 @@ the checker looked at. Reading rides the voucher (area guard).
   beside the `usePvFiles` / `useUploadPvFile` / `useDeletePvFile` hooks) —
   there is no public URL to leak.
 
-**What this is FOR next**: the print pipeline (§ pending) appends these files
-to the voucher PDF — PV page first, then its files in `sort_no` order; batch
-print concatenates `pv+files, pv+files…`.
+**What this is FOR**: §11 — the print appends these files to the voucher PDF,
+PV page first, then its files in `sort_no` order.
+
+---
+
+## 11. Print — the voucher WITH its evidence (2026-09-03)
+
+The owner: *我发现没有办法 print pv？我希望可以 print pv include ocr 的文件一起*.
+Layout is my draft on his 就你做吧，不满意到时我改.
+
+**The voucher page.** `frontend/src/vendor/scm/lib/payment-voucher-pdf.ts` —
+`renderPaymentVoucherInto(doc, autoTable, header, lines, allocations,
+accountLabel)` in the unified Hookka-tidy family (letterhead `drawHeader`,
+`drawInfoColumns` PAY TO / VOUCHER DETAILS, plain B&W lines table, settled-PI
+table when any, footer `pv_number · portal · page n of m`). Specifics of THIS
+document:
+- **the four-layer strip is the signature block** — four dashed boxes
+  (Prepared / Checked / Approved / Received by); the first three print the
+  RECORDED `*_by` name and `*_at` date, Received by stays blank for the
+  payee's pen;
+- the **status word** comes from `statusLabel('pv', …)` (POSTED prints
+  "Approved" — the owner's vocabulary, never the raw enum);
+- **amount in words is MYR-only** (`amountInWordsMyr`); a foreign voucher
+  prints `CNY @ rate` and the `≈ posted to GL` MYR line instead — spelling
+  yuan as RINGGIT would be a false sentence;
+- accounts print through the CALLER's labeller (code · name), so the paper
+  matches the screen.
+
+**The evidence merges ON THE WORKER.** jsPDF can only draw — it cannot absorb
+an existing PDF's pages, and his bills are mostly PDFs; pdf-lib does that one
+job but costs ~200KB gzip, and the frontend bundle gate allows one change
++60KB. The files also already LIVE server-side, in the SLIPS bucket. So:
+`POST /payment-vouchers/print-bundle` (`backend/src/scm/routes/pv-files.ts`,
+mounted before `/:id`) takes `{ parts: [{ pvId, voucherBase64 }] }` — each
+part one voucher's RENDERED page(s) — and `backend/src/scm/lib/pdf-attach.ts`
+(pdf-lib, a backend dependency) appends that voucher's stored files after its
+page, `sort_no` order, part after part, one PDF back. Per file: a PDF's pages
+copy across; JPEG/PNG sits centred on its own A4 page; a file that cannot
+embed (corrupt, truly locked, webp — Workers have no canvas) becomes a
+**notice page naming it**, and so does an index row whose R2 object is gone —
+visible failure on paper, never a silently missing bill, never a failed
+print. A part whose voucher cannot load fails the WHOLE request by pv. The
+client half is `fetchPvPrintBundle` + `pdfBytesToBase64`
+(`frontend/src/vendor/scm/lib/payment-voucher-queries.ts` /
+`payment-voucher-pdf.ts`); the returned blob exits through `deliverPdfBlob`
+(`frontend/src/vendor/scm/lib/pdf-common.ts`), the blob twin of `deliverPdf`.
+
+**Where it fires.** The detail page
+(`frontend/src/pages/scm-v2/PaymentVoucherDetail.tsx`): a Print button →
+`PrintPreviewModal` (`usePrintPreview` / `useOpenPrintPreviewFromUrl`);
+`deliverPrintPdf` refuses to print when the file LIST cannot be answered — a
+voucher quietly missing its bills is the dishonest branch — and bundles via
+the Worker when files exist. The list
+(`frontend/src/pages/scm-v2/PaymentVouchers.tsx`) context menu's Print rides
+the established `?print=1` route: land on the detail, its preview opens
+itself.
+
+**Tests**: `frontend/src/vendor/scm/lib/payment-voucher-pdf.test.ts` (text
+draws — strip names, status word from the one home, MYR-words vs foreign
+line); `backend/tests/pdfAttach.test.ts` (real pdf-lib: 2-page bill
+contributes both pages, image gets a page, corrupt/webp costs a notice page
+and never a throw, batch interleave pinned by page widths);
+`backend/tests/pvFiles.test.ts`'s print-bundle case (voucher page first, its
+files after, missing R2 object → notice page, unknown pv → 404 for the whole
+bundle).

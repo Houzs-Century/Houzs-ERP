@@ -358,6 +358,11 @@ export const PaymentVouchers = () => {
             label: 'Copy as new',
             onClick: () => navigate(`/scm/payment-vouchers/new?copyFrom=${r.id}${(r as Record<string, unknown>).purpose === 'SUPPLIER_PAYMENT' ? '&type=ap' : ''}`),
           });
+          /* Print (owner 2026-09-03: print pv include ocr 的文件一起) — the
+             established list→print route: land on the detail with ?print=1
+             and its preview opens itself; the PDF carries the voucher page
+             plus every stored file after it. */
+          menu.push({ label: 'Print', onClick: () => navigate(`/scm/payment-vouchers/${r.id}?print=1`) });
           if (r.status !== 'CANCELLED' && canCancel) {
             menu.push({ divider: true as const });
             menu.push({ label: 'Cancel', danger: true, onClick: () => doCancelPv(r) });
