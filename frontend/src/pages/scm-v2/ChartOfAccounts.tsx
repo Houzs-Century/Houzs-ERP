@@ -19,11 +19,11 @@
 
 import { useMemo, useRef, useState } from 'react';
 import * as XLSX from 'xlsx';
-import { ChevronDown, ChevronRight, Pencil, Trash2, Upload } from 'lucide-react';
+import { ChevronDown, ChevronRight, Pencil, Plus, Trash2, Upload } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import {
   useChartUnion, useChartTick, useChartImport,
-  useChartRename, useChartUpdate, useChartDelete, isControlSpecial,
+  useChartRename, useChartUpdate, useChartDelete, useChartCreate, isControlSpecial,
   type ChartRow, type ChartImportRow,
 } from '../../vendor/scm/lib/accounting-queries';
 import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
@@ -135,6 +135,7 @@ export const ChartOfAccounts = () => {
   const doRename = useChartRename();
   const doUpdate = useChartUpdate();
   const doDelete = useChartDelete();
+  const doCreate = useChartCreate();
   const fileRef = useRef<HTMLInputElement>(null);
 
   const companies = unionQ.data?.companies ?? [];
@@ -208,6 +209,42 @@ export const ChartOfAccounts = () => {
       setEditing(null);
     } catch (e) {
       void notify({ title: 'Save failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
+    }
+  };
+
+  /* ── 一个门开户 (owner 2026-09-03: 照理说应该维护 overall chart 罢了):
+     the definition is created once, lands in every ticked company, parent
+     chain riding along per company. ── */
+  const [addingNew, setAddingNew] = useState(false);
+  const [newCode, setNewCode] = useState('');
+  const [newName, setNewName] = useState('');
+  const [newType, setNewType] = useState<ChartRow['type']>('ASSET');
+  const [newParent, setNewParent] = useState('');
+  const [newMoney, setNewMoney] = useState(false);
+  const [newCompanies, setNewCompanies] = useState<Set<number>>(new Set());
+  const openAdd = () => {
+    setAddingNew(true);
+    setNewCode(''); setNewName(''); setNewType('ASSET'); setNewParent(''); setNewMoney(false);
+    setNewCompanies(new Set(companies.map((co) => co.id)));
+  };
+  const saveNew = async () => {
+    try {
+      const res = await doCreate.mutateAsync({
+        code: newCode.trim(),
+        name: newName.trim(),
+        accountType: newType,
+        parentCode: newParent.trim() || null,
+        accMoney: newMoney,
+        companyIds: [...newCompanies],
+      });
+      setAddingNew(false);
+      void notify({
+        title: `${res.code} created`,
+        body: `Live in ${res.companies.length} company(ies)${newParent.trim() ? ` under ${newParent.trim()}` : ''}. Adjust the ticks any time.`,
+        tone: 'info',
+      });
+    } catch (e) {
+      void notify({ title: 'Create failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
     }
   };
 
@@ -290,13 +327,87 @@ export const ChartOfAccounts = () => {
         eyebrow="Finance"
         title="Chart of Accounts"
         actions={canManage ? (
-          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--c-orange)', fontWeight: 600, cursor: 'pointer', fontSize: 'var(--fs-13)' }}>
-            <Upload {...ICON} /> Upload AutoCount chart
-            <input ref={fileRef} type="file" accept=".xlsx,.xls" style={{ display: 'none' }}
-              onChange={(e) => { void onFile(e.target.files?.[0]); e.target.value = ''; }} />
-          </label>
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-3)' }}>
+            <button
+              type="button"
+              onClick={openAdd}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--c-orange)', fontWeight: 600, cursor: 'pointer', fontSize: 'var(--fs-13)', background: 'none', border: 'none', padding: 0 }}
+            >
+              <Plus {...ICON} /> Add account
+            </button>
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--c-orange)', fontWeight: 600, cursor: 'pointer', fontSize: 'var(--fs-13)' }}>
+              <Upload {...ICON} /> Upload AutoCount chart
+              <input ref={fileRef} type="file" accept=".xlsx,.xls" style={{ display: 'none' }}
+                onChange={(e) => { void onFile(e.target.files?.[0]); e.target.value = ''; }} />
+            </label>
+          </div>
         ) : undefined}
       />
+
+      {addingNew && (
+        <section className={styles.card}>
+          <div className={styles.cardHeader}>
+            <h2 className={styles.cardTitle}>New account</h2>
+          </div>
+          <div className={styles.cardBody} style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-3)', alignItems: 'flex-end', fontSize: 'var(--fs-13)' }}>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>Code (NNN-XXXX)</span>
+              <input value={newCode} onChange={(e) => setNewCode(e.target.value)} placeholder="305-0010"
+                style={{ fontFamily: 'var(--font-mono)', padding: '6px 8px', border: '1px solid var(--border-weak, #d8d5cd)', borderRadius: 6, width: 130 }} />
+            </label>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: '1 1 220px' }}>
+              <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>Name</span>
+              <input value={newName} onChange={(e) => setNewName(e.target.value)}
+                style={{ padding: '6px 8px', border: '1px solid var(--border-weak, #d8d5cd)', borderRadius: 6 }} />
+            </label>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>Type</span>
+              <select value={newType} onChange={(e) => setNewType(e.target.value as ChartRow['type'])}
+                style={{ padding: '6px 8px', border: '1px solid var(--border-weak, #d8d5cd)', borderRadius: 6 }}>
+                {Object.keys(TYPE_TONE).map((t) => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </label>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>Parent (optional)</span>
+              <input value={newParent} onChange={(e) => setNewParent(e.target.value)} list="chart-parent-codes" placeholder="305-0000"
+                style={{ fontFamily: 'var(--font-mono)', padding: '6px 8px', border: '1px solid var(--border-weak, #d8d5cd)', borderRadius: 6, width: 150 }} />
+              <datalist id="chart-parent-codes">
+                {accounts.map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}
+              </datalist>
+            </label>
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              <input type="checkbox" checked={newMoney} onChange={(e) => setNewMoney(e.target.checked)} />
+              money (bank/cash/wallet)
+            </label>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+              {companies.map((co) => (
+                <label key={co.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                  <input
+                    type="checkbox"
+                    aria-label={`new account for ${co.code}`}
+                    checked={newCompanies.has(co.id)}
+                    onChange={(e) => setNewCompanies((prev) => {
+                      const next = new Set(prev);
+                      if (e.target.checked) next.add(co.id); else next.delete(co.id);
+                      return next;
+                    })}
+                  />
+                  {co.code}
+                </label>
+              ))}
+            </div>
+            <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
+              <Button variant="primary" size="sm" onClick={() => void saveNew()}
+                disabled={doCreate.isPending || !newCode.trim() || !newName.trim() || newCompanies.size === 0}>
+                {doCreate.isPending ? 'Creating…' : 'Create'}
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => setAddingNew(false)} disabled={doCreate.isPending}>
+                Cancel
+              </Button>
+            </div>
+          </div>
+        </section>
+      )}
 
       {parsed && (
         <section className={styles.card}>

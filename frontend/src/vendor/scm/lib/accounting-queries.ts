@@ -289,6 +289,26 @@ export const useChartImport = () => {
   });
 };
 
+/* ONE door to open an account (owner 2026-09-03: 照理说应该维护 overall
+   chart of account 罢了): the definition is created once and lands in every
+   ticked company, parent chain riding along per company. */
+export const useChartCreate = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: {
+      code: string; name: string; accountType: string;
+      parentCode?: string | null; accMoney?: boolean; companyIds?: number[];
+    }) =>
+      authedFetch<{ ok: boolean; code: string; companies: number[] }>(
+        `/accounting/chart/account`, { method: 'POST', body: JSON.stringify(body) },
+      ),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['chart-union'] });
+      void qc.invalidateQueries({ queryKey: ['accounts'] });
+    },
+  });
+};
+
 /* 改码全账跟 (owner 2026-09-03): one call, and the GL, vouchers, settlement
    config and role bindings all carry the new code — or the database refuses
    and NOTHING moved. The refusal sentence comes back verbatim for the dialog. */

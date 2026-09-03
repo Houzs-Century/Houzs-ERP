@@ -47,7 +47,7 @@ import {
 import { payoutUpload, payoutList } from './accounting-payouts';
 import {
   chartUnionHandler, chartTickHandler, chartImportHandler,
-  chartRenameHandler, chartUpdateHandler, chartDeleteHandler,
+  chartRenameHandler, chartUpdateHandler, chartDeleteHandler, chartCreateHandler,
 } from './accounting-chart';
 import { dateOrNull } from '../lib/date-coerce';
 
@@ -121,6 +121,7 @@ accounting.put('/chart/tick', chartTickHandler);
 accounting.post('/chart/import', chartImportHandler);
 accounting.put('/chart/rename', chartRenameHandler);
 accounting.put('/chart/update', chartUpdateHandler);
+accounting.post('/chart/account', chartCreateHandler);
 accounting.delete('/chart/account', chartDeleteHandler);
 accounting.get('/bank/rules', bankRulesList);
 accounting.post('/bank/rules', bankRuleCreate);
