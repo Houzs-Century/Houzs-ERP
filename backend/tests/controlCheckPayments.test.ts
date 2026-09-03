@@ -90,7 +90,7 @@ describe('the self-check reports payments that never reached the ledger', () => 
     expect(body.payments.rows).toHaveLength(0);
   });
 
-  test('the control-account checks still answer alongside it — AR, AP, and the 0348 split’s AP_OTHER', async () => {
+  test('the control-account checks still answer alongside it — AR, AP, and the 0349 split’s AP_OTHER', async () => {
     const body = await (await harness({}).request('/control-check')).json() as any;
     expect(body.checks.map((c: any) => c.role)).toEqual(['AR', 'AP', 'AP_OTHER']);
   });

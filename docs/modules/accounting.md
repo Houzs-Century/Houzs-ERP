@@ -163,7 +163,7 @@ mis-book), and mirrored by the AP Payment page for display. AP_OTHER joins
 CONTROL_ROLES (manual journals refuse it) and the self-check grows a third
 arm — balance + foreign-line scan on 405-0000 only, because the
 per-document drift walk is control-agnostic and the AP arm already reports
-each PI once. History moved by migration 0348: exactly one journal
+each PI once. History moved by migration 0349: exactly one journal
 (2990-PI-2608-018, RM 16,440, the only 405-supplier bill that ever posted)
 reclassed 400-0000 → 405-0000; its July sibling predates the GL foundation
 and has no journal. The supplier LIST and every screen stay exactly as they
