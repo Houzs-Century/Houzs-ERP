@@ -3187,8 +3187,30 @@ class AcSyncService {
        than half-applied and discarded. */
     var lines = new List<Dictionary<string, object>>();
     foreach (var od in List(p, "Lines")) lines.Add((Dictionary<string, object>) od);
+    /* THE ERP ASKED FOR A REBUILD - decided ONCE, before the pre-flight loop.
+       It used to be checked INSIDE that loop, in the arm that only runs for a
+       line carrying no DtlKey. So a document whose lines ALL had keys never
+       reached it: `rebuild` stayed false, ClearDetails never ran, and an
+       explicit Rebuild:true was silently downgraded to an ordinary keyed edit.
+       SO-013361 was rebuilt three times that way and kept its deleted line at
+       Qty 0 in the owner's own screen, while the outbox said `sent`. The one
+       document it DID work on had a keyless line, which is the only reason the
+       defect looked like a working feature - docs/bugs/0633.
+
+       A REBUILD NEEDS NO KEY PRE-FLIGHT AT ALL: ClearDetails destroys every key
+       a moment later, so the loop below is skipped entirely rather than run and
+       ignored. */
     var rebuild = false;
-    for (var i = 0; i < lines.Count; i++) {
+    if (Bool(p, "Rebuild")) {
+      if (AnyLineTransferred(type, docNo))
+        throw new Exception(
+          "REFUSED: " + type + " " + docNo + " has at least one line already transferred " +
+          "in AutoCount, so its details cannot be rebuilt - deleting a transferred row " +
+          "leaves the source pointing at nothing and the document uneditable. Match the " +
+          "lines up instead.");
+      rebuild = true;
+    }
+    for (var i = 0; i < lines.Count && !rebuild; i++) {
       var it = lines[i];
       var hasKey = it.ContainsKey("DtlKey") && it["DtlKey"] != null;
       if (hasKey) continue;
@@ -3214,16 +3236,8 @@ class AcSyncService {
          THE ERP MUST ASK. `Rebuild:true` is never inferred here: a rebuild is
          destructive, and inferring it from a failure would turn every future
          mismatch into a silent teardown of a live document. */
-      if (Bool(p, "Rebuild")) {
-        if (AnyLineTransferred(type, docNo))
-          throw new Exception(
-            "REFUSED: " + type + " " + docNo + " has at least one line already transferred " +
-            "in AutoCount, so its details cannot be rebuilt — deleting a transferred row " +
-            "leaves the source pointing at nothing and the document uneditable. Match the " +
-            "lines up instead.");
-        rebuild = true;
-        break;
-      }
+      /* The rebuild escape used to live HERE. It is decided above now, and this
+         loop no longer runs at all when one was asked for - 0633. */
       throw new Exception(
         "REFUSED: line " + (i + 1) + " of " + lines.Count + " on " + type + " " + docNo +
         " (ItemCode '" + Str(it, "ItemCode") + "') carries no DtlKey and does not declare " +
