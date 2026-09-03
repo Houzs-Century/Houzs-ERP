@@ -129,6 +129,29 @@ never enters the repo. 父户不记账 is enforced three-deep: the GL gate
 (engine rule 3), `requireLeafAccount` at PV create/patch (typing time), and
 AccountSelect simply not offering a header with children.
 
+**Chart management arms (2026-09-03, the owner's six-point review)**:
+`accounts.special_type` stores the AutoCount special column verbatim
+(migration 0347 backfills the export's 56; import/tick/seed carry it
+forward). Three more doors, same GL-post key, handlers in
+`accounting-chart.ts`: `PUT /accounting/chart/rename` is 改码全账跟 — one
+call to `scm.acc_rename_account(old, new)` (0347) moves the code in every
+company's accounts row, the children's parent_code and all nine reference
+homes 0346 relayed, in ONE transaction, insert-move-delete so 0188's
+composite FKs hold at every step; a collision refuses (renaming onto a live
+code would merge two books) and nothing half-moves. `PUT
+/accounting/chart/update` changes name/type/money for the code in EVERY
+company at once — one definition per code, two books never disagree. And
+`DELETE /accounting/chart/account` kills ONLY a never-used code (the
+owner's rule: 零交易零引用的才可以真删) — eleven reference probes, one hit
+anywhere and the 409 names the holdouts, with the tick column as the
+offered path. CONTROL accounts (special SDC/SCC/SBS — AR, AP + deposits,
+stock) are locked out of manual picks: `requireLeafAccount` refuses them
+(由模块自动过账) and AccountSelect hides them. Contracts:
+`backend/tests/accountingChart.test.ts` (handlers + lock),
+`backend/tests-pg/accChartRename.pg.test.ts` (the rename function against a
+real Postgres with the 0188 FKs verbatim). The page grows fold/expand
+chevrons on headers, an edit panel (code/name/type) and per-row delete.
+
 **The recognition-rules window (2026-09-02)**: `GET /bank/rules` (every rule,
 off rows included), `POST /bank/rules`, `PATCH /bank/rules/:id` — the rules
 that say "this credit is PBB's payout", seed-only since 0336, now the owner's

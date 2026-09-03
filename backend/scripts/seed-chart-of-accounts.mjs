@@ -111,6 +111,7 @@ const toDbRow = (companyId, r) => ({
   account_type: r.accountType,
   parent_code: r.parentCode,
   acc_money: r.accMoney === true,
+  special_type: r.special ?? null,
   is_active: true,
 });
 
@@ -140,12 +141,13 @@ try {
       for (let i = 0; i < ordered.length; i += 100) {
         const chunk = ordered.slice(i, i + 100).map((r) => toDbRow(co, r));
         await sql`
-          INSERT INTO scm.accounts ${sql(chunk, "company_id", "account_code", "account_name", "account_type", "parent_code", "acc_money", "is_active")}
+          INSERT INTO scm.accounts ${sql(chunk, "company_id", "account_code", "account_name", "account_type", "parent_code", "acc_money", "special_type", "is_active")}
           ON CONFLICT (company_id, account_code) DO UPDATE SET
             account_name = EXCLUDED.account_name,
             account_type = EXCLUDED.account_type,
             parent_code  = EXCLUDED.parent_code,
             acc_money    = EXCLUDED.acc_money,
+            special_type = EXCLUDED.special_type,
             is_active    = TRUE`;
       }
       console.log(`company ${co}: applied.`);
@@ -169,10 +171,11 @@ try {
         const probe = subset.find((r) => r.code === "310-0010") ?? subset.find((r) => r.parentCode);
         if (probe) {
           const [row] = await v`
-            SELECT account_name, account_type, parent_code, acc_money FROM scm.accounts
+            SELECT account_name, account_type, parent_code, acc_money, special_type FROM scm.accounts
             WHERE company_id = ${co} AND account_code = ${probe.code}`;
           if (!row || row.account_name !== probe.name || row.account_type !== probe.accountType
-            || row.parent_code !== probe.parentCode || row.acc_money !== (probe.accMoney === true)) {
+            || row.parent_code !== probe.parentCode || row.acc_money !== (probe.accMoney === true)
+            || row.special_type !== (probe.special ?? null)) {
             throw new Error(`company ${co}: ${probe.code} shape mismatch: ${JSON.stringify(row)}`);
           }
         }
