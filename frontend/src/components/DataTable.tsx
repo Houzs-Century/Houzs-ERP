@@ -79,17 +79,12 @@ export interface Column<T> {
   /** Raw value for CSV export, the funnel and sorting; without it a column is skipped by export and cannot be sorted. `sortValue` overrides the ORDER only, where alphabetical is the wrong priority (Stock Status) — CSV and the funnel stay on `getValue`, so omitting it sorts exactly as it did before `sortValue` existed. */
   getValue?: (row: T) => string | number | boolean | null | undefined;
   sortValue?: (row: T) => string | number | boolean | null | undefined;
-  /** For cells that hold SEVERAL values (a service case can be both Bedframe
-   *  and Mattress). The funnel then lists each value on its own line, counts
-   *  it against every row that carries it, and a row matches when ANY of its
-   *  values is ticked. Without this a multi-value cell shows up as one
-   *  composite entry ("Bedframe, Mattress") that ticking "Bedframe" misses.
-   *  `getValue` is still required — sort and CSV export use it. */
+  /** For cells holding SEVERAL values (Bedframe AND Mattress): the menu lists
+   *  each value separately, counts it per carrying row, and a row matches when
+   *  ANY ticked value hits. `getValue` still required (sort + CSV). */
   getFilterValues?: (row: T) => (string | number | null | undefined)[];
-  /** Values the filter menu should ALWAYS list, even when no loaded row
-   *  carries them (shown with a 0 count). For enum-shaped columns whose
-   *  vocabulary the user needs to see in full — e.g. the Service-case stage
-   *  legs (Nico 2026-09-04: an empty leg must still be pickable). */
+  /** Values the filter menu ALWAYS lists, 0-count included — for enum-shaped
+   *  columns whose full vocabulary must stay pickable (Nico 2026-09-04). */
   filterSeedValues?: readonly string[];
   /** If true, the column is excluded from the column chooser AND pinned
    *  to the front of the render order (can't be reordered past). */
@@ -3156,16 +3151,12 @@ function DataTableInner<T>({
         </div>
       )}
 
-      {/* ── Header right-click context menu ──────────────────────
-          Portalled to <body> so it escapes the table's overflow clip
-          and sticky-header stacking context. Acts on the clicked
-          column. Closes on outside click / Esc / scroll (effect above). */}
-      {/* ── Column filter + sort popover ─────────────────────────────
-          On EVERY `getValue` column (owner 2026-07-24). Portalled to <body>
-          like the header menu. Top: sort A→Z / Z→A. Then a live search over
-          the distinct getValue results across the LOADED rows (pre-filter, so
-          unticking works), Select all / Invert / Clear, and the value checklist
-          with counts. Ticking narrows rows client-side. */}
+      {/* ── Header right-click context menu — portalled to <body> (escapes
+          overflow clip + sticky stacking); closes on outside/Esc/scroll. */}
+      {/* ── Column filter + sort popover — every getValue column (owner
+          2026-07-24), portalled like the menu. Sort A→Z/Z→A, live search over
+          distinct getValue results across LOADED rows (pre-filter so unticking
+          works), Select all / Invert / Clear, checklist with counts. */}
       {filterMenu &&
         (() => {
           const col = allColumns.find((c) => c.key === filterMenu.colKey);
