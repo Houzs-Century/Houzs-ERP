@@ -14,8 +14,12 @@ import { describe, expect, test, vi } from 'vitest';
 const mutateAsync = vi.fn(async (_body: Record<string, unknown>) => ({ id: 'pv-1', pvNumber: 'PV-2609-001' }));
 
 const extractAsync = vi.fn(async () => ({ bills: [] }));
+/* Set by the copy-as-new test; undefined everywhere else (no ?copyFrom → the
+   detail hook is disabled and the page never sees it). */
+let copySourceDetail: { paymentVoucher: Record<string, unknown>; lines: Array<Record<string, unknown>>; allocations: unknown[] } | undefined;
 vi.mock('../../vendor/scm/lib/payment-voucher-queries', () => ({
   useCreatePaymentVoucher: () => ({ mutateAsync, isPending: false }),
+  usePaymentVoucherDetail: (id: string | null) => ({ data: id ? copySourceDetail : undefined, isLoading: false }),
   useExtractBills: () => ({ mutateAsync: extractAsync, isPending: false }),
   fileToBase64: async (f: File) => `b64:${f.name}`,
   useSupplierAdvances: () => ({ data: { advances: [
@@ -132,6 +136,33 @@ describe('paying ahead (预付) on the AP Payment', () => {
       expect.objectContaining({ debitAccountCode: '400-0000', amountSen: 60000 + 100000 }),
     ]);
     expect(payload.allocations).toEqual([{ piId: 'pi-2', amountSen: 60000 }]);
+  });
+});
+
+describe('copy as new (?copyFrom=…)', () => {
+  test('content rides over — payee, Paid From, lines — while date stays today and nothing is applied', async () => {
+    copySourceDetail = {
+      paymentVoucher: {
+        id: 'pv-9', pv_number: 'PV-2608-009', payee_name: 'TNB', voucher_date: '2026-08-01',
+        credit_account_code: '320-1000', notes: 'august bill', currency: 'MYR', exchange_rate: 1, purpose: 'OTHER',
+      },
+      lines: [
+        { description: 'Electricity Aug', debit_account_code: '900-A002', amount_sen: 45000 },
+        { description: 'Deposit topup', debit_account_code: '900-A002', amount_sen: 5000 },
+      ],
+      allocations: [],
+    };
+    try {
+      draw('/scm/payment-vouchers/new?copyFrom=pv-9');
+      await waitFor(() => expect(screen.getByDisplayValue('TNB')).toBeTruthy());
+      expect(screen.getByText(/Copied from PV-2608-009/)).toBeTruthy();
+      expect(screen.getByDisplayValue('Electricity Aug')).toBeTruthy();
+      expect(screen.getByDisplayValue('Deposit topup')).toBeTruthy();
+      /* Identity is NOT copied: the source's August date never appears. */
+      expect(screen.queryByDisplayValue('2026-08-01')).toBeNull();
+    } finally {
+      copySourceDetail = undefined;
+    }
   });
 });
 

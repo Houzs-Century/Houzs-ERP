@@ -166,20 +166,33 @@ never emits a word the sheet's validation would reject. Subs are directly switch
 by ops (desktop select), stored on `assr_cases.sub_status`, and
 `assrSubStatusAddsInfo()` (`stages.ts`) hides one that merely restates its
 stage label — with one exception (Nico 2026-08-22): under the combined
-"Supplier Pickup / Return" stage the list's stage cell shows the sub line on
-EVERY leg, because naming the leg is how ops splits its supplier chase list.
-The same split reaches the other read surfaces: the stage column's `getValue`
-appends the sub label ("Supplier Pickup / Return — Pending Supplier Return"),
-so the column filter menu and the CSV export isolate one leg; and the
-`/api/assr/summary` `stage_funnel` rows carry `sub_customer` + `sub_return`
-counts so the Supplier funnel card's caption reads
-"X customer · Y supplier · Z return" instead of the static description.
+"Pickup / Return" stage the list's stage cell shows the sub line on EVERY leg,
+because naming the leg is how ops splits its chase list. The same split reaches
+the other read surfaces: the stage column's `getValue` appends the sub label
+("Pickup / Return — Pending Supplier Return"), so the column filter menu and
+the CSV export isolate one leg; and the `/api/assr/summary` `stage_funnel`
+rows carry `sub_customer` + `sub_return` counts so the funnel card's caption
+reads "X customer pickup · Y supplier pickup · Z supplier return" instead of
+the static description.
+
+The stage itself was RENAMED "Supplier Pickup / Return" → **"Pickup / Return"**
+(Nico 2026-09-04, canonical tables both sides + the six hand-copy pill maps):
+with the customer-pickup leg the stage is no longer supplier-specific, so the
+name went neutral and the sub-status names the actor. The same decision emptied
+`ASSR_SUPPLIER_ONLY_STAGES` — an own-team repair also collects and returns the
+item and has its own QC phase, so **EVERY case now runs the full 7-stage
+pipeline** and the old internal-vs-supplier 7-vs-5 filtering is retired (the
+`isStageActive` machinery survives as an identity filter). The customer-portal
+wording ("Pending Supplier Pickup") stays deliberately unchanged. The sheet's
+frozen column-A words are untouched by the rename — they live in
+`ASSR_SHEET_STATUS`, a separate table.
 
 > `frontend/src/components/ServiceProgressTracker.tsx` [gone] **was DELETED** (with its
 > unused `ServiceCases.tsx` import) after this audit: it was never rendered
 > anywhere in the tree, and it carried its own 7-stage copy with **no** resolution
-> filter, so wiring it up would have regressed the 7-vs-5 rule. Any future stepper
-> must derive its stages from `stages.ts`.
+> filter, so wiring it up would have regressed the then-current 7-vs-5 rule
+> (retired 2026-09-04 — see above). Any future stepper must derive its stages
+> from `stages.ts`.
 >
 > `backend/src/services/printTracker.ts` still carries the same unfiltered
 > 7-stage copy for the PDF stepper. It has **no importer** either at this commit,

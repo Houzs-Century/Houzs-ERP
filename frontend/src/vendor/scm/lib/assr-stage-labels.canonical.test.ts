@@ -96,7 +96,7 @@ describe('ASSR_STAGES owns the ORDER, not the words', () => {
       'Pending Review',
       'Pending Solution',
       'Under Verification',
-      'Supplier Pickup / Return',
+      'Pickup / Return',
       'Pending Item Ready',
       'Pending Delivery / Service',
       'Completed',
@@ -106,7 +106,7 @@ describe('ASSR_STAGES owns the ORDER, not the words', () => {
   test('stages.ts spells no stage label of its own any more', () => {
     const source = code('src/vendor/scm/lib/assr/stages.ts');
     expect(source).toContain('assr-stage-labels');
-    for (const label of ['Pending Review', 'Under Verification', 'Supplier Pickup / Return']) {
+    for (const label of ['Pending Review', 'Under Verification', 'Pickup / Return']) {
       expect(source.includes(`"${label}"`), `stages.ts still spells "${label}"`).toBe(false);
     }
   });

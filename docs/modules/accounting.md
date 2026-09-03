@@ -152,6 +152,20 @@ stock) are locked out of manual picks: `requireLeafAccount` refuses them
 real Postgres with the 0188 FKs verbatim). The page grows fold/expand
 chevrons on headers, an edit panel (code/name/type) and per-row delete.
 
+**One door to open an account (2026-09-03, the owner: 照理说应该维护
+overall chart of account 罢了)**: `POST /accounting/chart/account` creates
+the definition ONCE and lands it in every company the caller ticks (granted
+only; the parent chain instantiates per company via the same master-def
+walk as tick-ON, so no company ever receives a child without its header).
+A code that exists anywhere refuses toward the tick column (turning it on
+elsewhere is a tick, changing it is a rename). The Chart page carries the
+"Add account" form (code / name / type / optional parent / money flag /
+company ticks); the OLD Accounting tab's add-and-edit went read-only with a
+link over — it used to create the row in whichever company the caller stood
+in, which is exactly the two-doors drift the owner called out. Detail
+accounts for other debtors/creditors are children under the 305-0000 /
+405-0000 controls, one per counterparty, opened through this same door.
+
 **The recognition-rules window (2026-09-02)**: `GET /bank/rules` (every rule,
 off rows included), `POST /bank/rules`, `PATCH /bank/rules/:id` — the rules
 that say "this credit is PBB's payout", seed-only since 0336, now the owner's

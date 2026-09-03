@@ -149,7 +149,7 @@ const STAGE_OPTIONS: { value: StageFilter; label: string }[] = [
   { value: "pending_review", label: "Review" },
   { value: "pending_solution", label: "Solution" },
   { value: "under_verification", label: "Verification" },
-  { value: "pending_supplier_pickup", label: "Supplier Pickup / Return" },
+  { value: "pending_supplier_pickup", label: "Pickup / Return" },
   { value: "pending_item_ready", label: "Pending Item Ready" },
   { value: "pending_delivery_service", label: "Delivery / Service" },
   { value: "completed", label: "Completed" },
@@ -1332,7 +1332,7 @@ function StageStatStrip({
               const ret = row?.sub_return ?? 0;
               const desc =
                 s.value === "pending_supplier_pickup" && ready && row?.total
-                  ? `${cust} customer · ${row.total - cust - ret} supplier · ${ret} return`
+                  ? `${cust} customer pickup · ${row.total - cust - ret} supplier pickup · ${ret} supplier return`
                   : STAGE_FUNNEL_DESC[s.value] ?? "";
               return {
                 value: s.value as StageFilter,
@@ -4238,7 +4238,7 @@ function DetailContent({
               c={c}
               priorityMap={priorityMap}
               stageId="pending_supplier_pickup"
-              title="Supplier Pickup / Return"
+              title="Pickup / Return"
               summary={
                 c.supplier_pickup_at
                   ? `Supplier collected ${formatDate(c.supplier_pickup_at)}`

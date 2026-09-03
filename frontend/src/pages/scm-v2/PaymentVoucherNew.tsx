@@ -19,11 +19,11 @@
 // the PI list (Houzs has no supplier-filtered outstanding endpoint yet).
 // ----------------------------------------------------------------------------
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { Save, Trash2, X } from 'lucide-react';
 import { Button } from '@2990s/design-system';
-import { useCreatePaymentVoucher, useSupplierAdvances, useExtractBills, fileToBase64, type BillExtraction, type VendorMemory } from '../../vendor/scm/lib/payment-voucher-queries';
+import { useCreatePaymentVoucher, usePaymentVoucherDetail, useSupplierAdvances, useExtractBills, fileToBase64, type BillExtraction, type VendorMemory } from '../../vendor/scm/lib/payment-voucher-queries';
 import { useIdempotencyKey } from '../../lib/idempotency';
 import { useAccounts, useAccountRoles, type Account } from '../../vendor/scm/lib/accounting-queries';
 import { usePurchaseInvoices } from '../../vendor/scm/lib/purchase-invoice-queries';
@@ -212,6 +212,42 @@ export const PaymentVoucherNew = () => {
   const [currencyOverride, setCurrencyOverride]   = useState<string | null>(null);
   const [lines, setLines]                         = useState<DraftLine[]>([newLine()]);
   const [dialog, setDialog] = useState<{ title: string; body: string; goTo?: string } | null>(null);
+
+  /* ── Copy as new (the owner, 2026-09-03, AutoCount in hand) ─────────────
+     ?copyFrom=<pvId> pre-fills CONTENT from an existing voucher — payee,
+     supplier, Paid From, lines, notes, currency+rate — and NOTHING with an
+     identity: fresh number, today's date, approvals restart at raw Draft,
+     no PI applied (the source's bills may already be knocked off). The list
+     row / detail button choose ?type=ap when the source is an AP Payment,
+     so an AP copies to an AP. */
+  const copyFrom = searchParams.get('copyFrom');
+  const copyQ = usePaymentVoucherDetail(copyFrom);
+  const copyApplied = useRef(false);
+  useEffect(() => {
+    if (!copyFrom || copyApplied.current || !copyQ.data) return;
+    copyApplied.current = true;
+    const v = copyQ.data.paymentVoucher as Record<string, unknown>;
+    setPayeeName(String(v.payee_name ?? ''));
+    if (v.supplier_id) setSupplierId(String(v.supplier_id));
+    if (v.credit_account_code) setCreditAccountCode(String(v.credit_account_code));
+    if (v.notes) setNotes(String(v.notes));
+    const cur = typeof v.currency === 'string' ? v.currency : null;
+    if (cur && cur !== 'MYR') {
+      setCurrencyOverride(cur);
+      const rate = v.exchange_rate == null ? '' : String(v.exchange_rate);
+      if (rate) { setExchangeRate(rate); setRateSource('rate'); }
+    }
+    const copied = copyQ.data.lines
+      .map((l) => ({
+        ...newLine(),
+        description: String((l as Record<string, unknown>).description ?? ''),
+        amountSen: Number((l as Record<string, unknown>).amount_sen ?? 0),
+        debitAccountCode: String((l as Record<string, unknown>).debit_account_code ?? ''),
+      }));
+    if (copied.length > 0) setLines(copied);
+    setScanNote(`Copied from ${String(v.pv_number ?? 'voucher')} — new number, today's date, approvals restart; nothing is applied to bills yet.`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [copyFrom, copyQ.data]);
 
   // Supplier link is optional. When set, auto-fill the payee (if blank) + adopt
   // the supplier's default currency (e.g. a China vendor billing RMB).

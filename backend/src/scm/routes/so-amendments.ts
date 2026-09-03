@@ -27,7 +27,11 @@ import {
 import { applySoAmendment, reviseBoundPo, ReceivedFloorError } from '../lib/so-revision';
 import { raisePoFollowUps } from '../lib/amendment-po-followup';
 import { hasHouzsPerm, canViewAllSales, canWriteScmConfig } from '../lib/houzs-perms';
-import { resolveSalesScopeIds, salesDocOutOfScope, resolveCallerStaffId } from '../lib/salesScope';
+import { resolveSalesScopeIds, salesDocOutOfScope, resolveCallerStaffId, resolveUserIdByStaffId } from '../lib/salesScope';
+import {
+  notifySoAmendmentResolved,
+  notifyPoAmendmentRaised,
+} from '../../services/amendmentNotify';
 import { collectProcessingGateProblems } from '../shared/so-save-problems';
 import { canonicaliseSoHeaderChanges, soDatePairRefusal } from '../shared/so-processing-date';
 import { recordSoAudit } from '../lib/so-audit';
@@ -81,11 +85,52 @@ type AmendmentForWrite = {
   apply_lease_expires_at?: string | null;
   /* Needed by the approve-time date-pair re-check (owner 2026-07-28). */
   header_changes?: Record<string, unknown> | null;
+  /* scm.staff uuid of whoever raised it — the audience of the approved /
+     rejected notice (services/amendmentNotify.ts). */
+  requested_by?: string | null;
 };
 
 /** Lane of a loaded row — narrowed to the two known values, else legacy. */
 const laneOf = (a: AmendmentForWrite): AmendmentLane | null =>
   a.lane === 'LINES' || a.lane === 'DELIVERY' ? a.lane : null;
+
+/* People a RESOLVED amendment is news to (owner 2026-09-02): the person who
+   raised it, and the salesperson whose Sales Order it changes. Both are
+   scm.staff uuids on the documents; the announcements machinery addresses
+   integer public.users ids, so they are translated here — inside the command
+   transaction, because the deferred notice runs after `sb` is gone.
+
+   Fail-soft by construction: an unlinked staff row (AutoCount-imported, no
+   user_id) simply drops out and the notice goes to whoever is left. */
+async function resolvedAmendmentAudience(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SCM client and Hono context are untyped across this router (dispatchMirroredCommand, approveSoCommandHandler); one typed signature here would not make the rest true.
+  sb: any, c: Context<any>,
+  amendment: AmendmentForWrite,
+): Promise<{ requesterUserId: number | null; salespersonUserId: number | null }> {
+  const { data: soRow, error: soErr } = await scopeToCompany(
+    sb.from('mfg_sales_orders').select('salesperson_id').eq('doc_no', amendment.so_doc_no),
+    c,
+  ).maybeSingle();
+  /* A FAILED read is not "this order has no salesperson" — supabase-js does not
+     throw, so an unbound error would silently narrow the audience to one person
+     and look exactly like an order sold by nobody. Say so, and still tell the
+     REQUESTER: their id comes off the amendment row we already hold, so the
+     half of the audience this read cannot reach is the only half we lose. */
+  if (soErr) {
+    console.error(
+      `[amendment-notify] salesperson lookup failed for ${amendment.so_doc_no}: ${soErr.message}`,
+    );
+  }
+  return {
+    requesterUserId: await resolveUserIdByStaffId(sb, amendment.requested_by),
+    salespersonUserId: soErr
+      ? null
+      : await resolveUserIdByStaffId(
+          sb,
+          (soRow as { salesperson_id?: string | null } | null)?.salesperson_id,
+        ),
+  };
+}
 
 /* The refusal every legacy-only gate answers when pointed at a lane row. */
 const NOT_IN_LANE_FLOW = (what: string) => ({
@@ -127,7 +172,7 @@ async function loadAmendmentForWrite(
 ): Promise<AmendmentWriteLoad> {
   const { data } = await scopeToCompany(
     sb.from('so_amendments')
-      .select('id, so_doc_no, amendment_no, status, version, lane, reason, apply_lease_token, apply_lease_expires_at, header_changes')
+      .select('id, so_doc_no, amendment_no, status, version, lane, reason, apply_lease_token, apply_lease_expires_at, header_changes, requested_by')
       .eq('id', id),
     c,
   ).maybeSingle();
@@ -830,6 +875,44 @@ export async function approveSoCommandHandler(c: any, sb: any): Promise<Response
     createdBy: c.get('houzsUser')?.id ?? null,
   });
 
+  /* Notices (owner 2026-09-02). AFTER COMMIT — an approval that rolls back
+     must not leave people told their amendment went through. The audience is
+     resolved HERE, inside the transaction, because `sb` does not outlive it;
+     the deferred half only touches env.DB via the announcements helper, which
+     never throws. */
+  {
+    const audience = await resolvedAmendmentAudience(sb, c, amendment);
+    const actorUserId = c.get('houzsUser')?.id ?? null;
+    const actorLabel = c.get('houzsUser')?.name ?? actorName(user);
+    const followUps = poFollowUps.followUps.map((f) => ({
+      amendmentNo: f.amendmentNo,
+      poNumber: f.poNumber,
+    }));
+    deferScmAfterCommit(c, async () => {
+      await notifySoAmendmentResolved(c.env, {
+        amendmentNo: amendment.amendment_no ?? '',
+        soDocNo: amendment.so_doc_no,
+        outcome: 'approved',
+        actorName: actorLabel,
+        actorUserId,
+        requesterUserId: audience.requesterUserId,
+        salespersonUserId: audience.salespersonUserId,
+      });
+      /* The LINES lane's second signature: each follow-up is a fresh to-do on
+         the purchaser's desk that nobody asked for by hand, so it is exactly
+         the kind of row that used to sit unseen. */
+      for (const f of followUps) {
+        await notifyPoAmendmentRaised(c.env, {
+          amendmentNo: f.amendmentNo,
+          poNumber: f.poNumber,
+          companyId: activeCompanyId(c),
+          requesterUserId: actorUserId,
+          sourceSoAmendmentNo: amendment.amendment_no ?? null,
+        });
+      }
+    });
+  }
+
   await scheduleStockAllocationAfterCommand(c, sb, `amendment-approve-so:${amendment.so_doc_no}`);
   return c.json({
     amendment: updated,
@@ -1131,6 +1214,25 @@ soAmendments.patch('/:id/reject', async (c) => {
     ],
     note: reason,
   });
+
+  /* Tell the requester WHY (owner 2026-09-02). The reject gate already insists
+     on a reason "because the person who raised it needs to know what to
+     change" — until now that reason lived only on a screen they had no cause
+     to reopen. This route writes outside runScmPgCommand, so the notice fires
+     inline; it never throws. */
+  {
+    const audience = await resolvedAmendmentAudience(sb, c, amendment);
+    await notifySoAmendmentResolved(c.env, {
+      amendmentNo: amendment.amendment_no ?? '',
+      soDocNo: amendment.so_doc_no,
+      outcome: 'rejected',
+      reason,
+      actorName: c.get('houzsUser')?.name ?? actorName(user),
+      actorUserId: c.get('houzsUser')?.id ?? null,
+      requesterUserId: audience.requesterUserId,
+      salespersonUserId: audience.salespersonUserId,
+    });
+  }
 
   return c.json({ amendment: updated });
 });
