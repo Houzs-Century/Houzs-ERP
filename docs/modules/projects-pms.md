@@ -287,15 +287,23 @@ task admits nobody on this path. That population is not theoretical: the
 Purchaser role (330) lost `projects.write` on purpose in bug 0489 so exactly
 this scoping would apply to it.
 
-The desktop is a THIRD copy of that rule and has twice disagreed with the server
-by omitting it — the Attach button (bug 0546) and then the file-delete trash
-(bug 0628) asked `projects.write` alone, so the purchasers saw no control on the
-documents they themselves file while the API accepted the request. The desktop
-copy now lives in `frontend/src/auth/roleLabelAdmits.ts` (mobile keeps its own in
-`MobilePMS.tsx`). **When adding a control that the tick path can reach, gate it
-on the badge, not on `projects.write`.** Deleting a file on the PHONE remains
-`projects.manage` by owner decision (2026-08-05), so the two surfaces differ on
-that one control deliberately.
+The desktop had twice disagreed with the server by omitting it — the Attach
+button (bug 0546) and then the file-delete trash (bug 0628) asked
+`projects.write` alone, so the purchasers saw no control on the documents they
+themselves file while the API accepted the request. The rule now lives once, in
+`frontend/src/auth/roleLabelAdmits.ts`, imported by BOTH desktop and mobile.
+**When adding a control the tick path can reach, gate it on the badge, not on
+`projects.write`.**
+
+**Removing a file follows ATTACH on both surfaces** (owner 2026-09-03: *"every
+user can delete/remove file or image from their own task, both pc and mobile
+pms"*), retiring the 2026-08-05 managers-only rule. Whoever may put a file on a
+task may take one off it; `projects.manage` is no longer consulted for deletion
+anywhere. Mobile carries THREE such gates — the file chip (`canRemoveFile =
+canAttach`), the document tiles (`canDeleteFiles = canTick`, each use site also
+ANDing `!t.readOnly`) and the floor-plan card (`canDeleteFiles = canWrite`) —
+so a change here must visit all three, plus the desktop's `TaskAttachmentRow`
+(`mayDeleteFile`) and `ChecklistRow` chip (`mayAttachRow`).
 
 **The attachment stream (`GET /attachments/:key{.+}`) sends
 `X-Content-Type-Options: nosniff` (PR #2522)** so its R2 object's server-derived

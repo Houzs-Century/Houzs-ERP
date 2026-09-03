@@ -52,10 +52,23 @@ badge (the predicate silently answers false without it). **Proved RED against
 `origin/main`**: 4 of the 5 assertions failed there, the manager rule being the
 one that legitimately passed on both trees.
 
-**Deliberately NOT changed: mobile.** `MobilePMS` keeps
-`canRemoveFile = canAttach && can("projects.manage")` because the owner asked for
-PC and because manager-only deletion on the phone was itself an owner decision
-(2026-08-05). The two surfaces now differ on this one control **on purpose** —
-raised with the owner rather than silently aligned.
+**Widened mid-flight, before this merged.** Shown the PC-only scoping, the owner
+replaced the rule outright: *"every user can delete/remove file or image from
+their own task, both pc and mobile pms"* (2026-09-03). That **retires the
+2026-08-05 managers-only rule** on both surfaces, so the divergence flagged in
+the first draft of this entry no longer exists.
+
+Delete now simply follows ATTACH: the task you may put a file on is the task you
+may take one off, which is what "their own task" means for either kind of caller
+— `projects.write` edits the row, a tick-only role is scoped to its own badge.
+Mobile turned out to carry **three** delete gates, not one, each now on its own
+edit right: the file chip (`canRemoveFile = canAttach`), the document tiles
+(`canDeleteFiles = canTick`, with `!t.readOnly` already applied at every use
+site) and the floor-plan card (`canDeleteFiles = canWrite`). The old rule had
+left crew and sales able to upload a wrong photo they could not then remove.
+
+Mobile's own inline copy of the badge rule collapsed into the shared
+`auth/roleLabelAdmits` at the same time, which is what kept `MobilePMS.tsx`
+under its 4491 ceiling (4487 → 4483) while gaining this behaviour.
 
 **Ref.** `fix/purchaser-delete-own-files`, 2026-09-02.

@@ -199,20 +199,39 @@ describe("Projects.tsx — Attach is offered to every role the server admits (05
     expect(w).toContain("isSalesDirectorPos");
   });
 
-  it("file DELETE is role-scoped too (owner 2026-09-02), never blanket", () => {
-    // 0546 left delete on projects.write; the owner then asked for it on the
-    // purchasers' OWN rows ("add for sim task only, same with farra"). Both
-    // desktop trash gates must therefore read a role-aware predicate — and the
-    // manager rule (projects.manage) must survive beside it, not be replaced.
+  it("file DELETE follows ATTACH on BOTH surfaces (owner 2026-09-03)", () => {
+    // "every user can delete/remove file or image from their own task, both pc
+    // and mobile pms" — replacing the 2026-08-05 managers-only rule. The point
+    // is the EQUIVALENCE: whoever may put a file on a task may take one off, so
+    // neither surface may re-introduce a projects.manage term here.
     const text = projects();
     const w = windowBefore("aria-label=\"Remove attachment\"", 900);
     expect(w).toContain("mayDeleteFile");
-    expect(text).toContain("canDeleteFile"); // projects.manage still consulted
     expect(text).toContain("roleLabelAdmitsRole(roleLabel, user?.role_name)");
-    // The card-section chip trash follows the same capability as its Attach.
+    // The card-section chip trash IS the attach capability, verbatim.
     expect(text).toContain("mayAttachRow && !readOnlyAttach && a.id > 0");
-    // A merged crew photo (id < 0) is never removable from either surface.
+    // A merged crew photo (id < 0) is never removable.
     expect(text).toContain("attachment.id > 0 &&");
+
+    // Mobile has THREE delete gates, not one — the file chip, the document
+    // tiles and the floor-plan card. All follow the caller's edit right now.
+    const mobile = src("mobile/MobilePMS.tsx");
+    const mobileCode = mobile
+      .split(/\r?\n/)
+      .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
+      .join("\n");
+    expect(mobileCode).toContain("const canRemoveFile = canAttach;");
+    expect(mobileCode).toContain("const canDeleteFiles = canTick;");
+    expect(mobileCode).toContain("const canDeleteFiles = canWrite;");
+    const mobileDeleteGates =
+      mobileCode.match(/const (?:canDeleteFiles|canRemoveFile) = [^;]*/g) ?? [];
+    expect(mobileDeleteGates.length).toBe(3);
+    for (const gate of mobileDeleteGates) {
+      expect(
+        gate,
+        "a mobile delete gate re-introduced projects.manage — the surfaces have drifted again",
+      ).not.toContain("projects.manage");
+    }
   });
 
   it("the file-card knows which task badge it is rendering", () => {

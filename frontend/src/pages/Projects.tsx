@@ -7563,17 +7563,16 @@ function TaskAttachmentRow({
   toast?: ReturnType<typeof useToast>;
 }) {
   const defectCtx = useContext(DefectActionsCtx);
-  // Owner 2026-08-04: deleting a file is a MANAGER action. projects.write (held
-  // by Logistic — e.g. Syu — and Sales) can upload and edit, but must NOT remove
-  // files; only projects.manage (BD / managers / directors) sees the trash.
   const { can, user } = useAuth();
-  const canDeleteFile = can("projects.manage");
-  // Manager path, OR a tick-only role on a task badged for its own function —
-  // what the DELETE endpoint has always allowed (bug 0628). id < 0 is a merged
-  // crew photo; that guard used to ride on canManage, so it is asserted here.
+  // Owner 2026-09-03: "every user can delete/remove file or image from their own
+  // task, both pc and mobile pms" — this REPLACES the 2026-08-05 managers-only
+  // rule. Delete now follows ATTACH: the task you may put a file on is the task
+  // you may take one off, which is what "their own task" means for both kinds of
+  // caller — projects.write edits the row, a tick-only role is scoped to its own
+  // badge. id < 0 is a merged crew photo, never removable from here.
   const mayDeleteFile =
     attachment.id > 0 &&
-    ((!!canManage && canDeleteFile) ||
+    (!!canManage ||
       (can("projects.checklist.tick") && roleLabelAdmitsRole(roleLabel, user?.role_name)));
   const isDefectFile = /^defect (list|item)/i.test((itemTitle ?? "").trim());
   const fileActions = isDefectFile && defectCtx
