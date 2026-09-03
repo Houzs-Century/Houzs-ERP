@@ -63,18 +63,41 @@ const sharedRows = rows.filter((r) => sharedCodes.has(r.code));
    answering) instance — pg-migrate retries three times for exactly this.
    Connect with the same patience. */
 async function connectWithRetry() {
+  /* Runs 33705859454 / 33706489206 / 33707525935: every strike hit the AAAA
+     record and ENETUNREACH'd — NODE_OPTIONS=--dns-result-order=ipv4first did
+     not reach postgres.js's own resolution, while pg-migrate connected first
+     try in the same minute. So resolve the A record OURSELVES and hand the
+     client the IPv4 literal (ssl:'require' does not verify the certificate
+     chain, so an IP host is fine); the hostname path stays as the fallback. */
+  const { lookup } = await import("node:dns/promises");
+  const parsed = new URL(DSN);
+  let hosts = [{ label: parsed.hostname, opts: {} }];
+  if (!/^\d+\.\d+\.\d+\.\d+$/.test(parsed.hostname)) {
+    try {
+      const { address } = await lookup(parsed.hostname, { family: 4 });
+      hosts = [
+        { label: `${address} (A record of ${parsed.hostname})`, opts: { host: address, port: Number(parsed.port || 5432) } },
+        { label: parsed.hostname, opts: {} },
+      ];
+    } catch (e) {
+      console.error(`no A record for ${parsed.hostname} (${e?.message ?? e}) — using the hostname as-is`);
+    }
+  }
   let last;
   for (let attempt = 1; attempt <= 3; attempt += 1) {
-    const client = postgres(DSN, { ssl: "require", prepare: false, max: 1, connect_timeout: 20 });
-    try {
-      await client`SELECT 1`;
-      return client;
-    } catch (e) {
-      last = e;
-      console.error(`connect attempt ${attempt}/3 failed: ${e?.message ?? e}`);
-      await client.end({ timeout: 1 }).catch(() => {});
-      if (attempt < 3) await new Promise((r) => setTimeout(r, 10_000));
+    for (const h of hosts) {
+      const client = postgres(DSN, { ssl: "require", prepare: false, max: 1, ...h.opts });
+      try {
+        await client`SELECT 1`;
+        console.log(`connected via ${h.label}`);
+        return client;
+      } catch (e) {
+        last = e;
+        console.error(`connect attempt ${attempt}/3 via ${h.label} failed: ${e?.message ?? e}`);
+        await client.end({ timeout: 1 }).catch(() => {});
+      }
     }
+    if (attempt < 3) await new Promise((r) => setTimeout(r, 10_000));
   }
   throw last;
 }
