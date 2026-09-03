@@ -297,9 +297,12 @@ export const useChartCreate = () => {
   return useMutation({
     mutationFn: (body: {
       code: string; name: string; accountType: string;
-      parentCode?: string | null; accMoney?: boolean; companyIds?: number[];
+      parentCode?: string | null; accMoney?: boolean; specialType?: string | null;
+      /** SFA only: the SAD twin created in the same call (固定资产带折旧). */
+      depreciation?: { code: string; name: string };
+      companyIds?: number[];
     }) =>
-      authedFetch<{ ok: boolean; code: string; companies: number[] }>(
+      authedFetch<{ ok: boolean; code: string; companies: number[]; depreciationCode?: string }>(
         `/accounting/chart/account`, { method: 'POST', body: JSON.stringify(body) },
       ),
     onSuccess: () => {
