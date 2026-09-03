@@ -1,6 +1,6 @@
 ## One person editing alone was locked out of their own order for five minutes [high]
 
-<!-- area: Sales Order -->
+<!-- area: Sales orders + pricing -->
 
 **Symptom, in the owner's words.** He was the only person touching HC-SO-013361.
 Every Save came back:
