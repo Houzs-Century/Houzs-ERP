@@ -1022,6 +1022,11 @@
     },
     {
       "check": "D1",
+      "key": "ASSET,EQUITY,EXPENSE,INCOME,LIABILITY|backend/src/scm/routes/accounting-chart.ts backend/src/scm/routes/accounting.ts frontend/src/pages/scm-v2/Accounting.tsx frontend/src/pages/scm-v2/ChartOfAccounts.tsx frontend/src/vendor/scm/components/AccountSelect.tsx",
+      "why": "THE FIVE ACCOUNT TYPES — a closed vocabulary fixed by double-entry accounting itself, not a business rule that can drift (an unknown type is refused by every validator). Five homes: two server validators (accounting.ts POST /accounts, accounting-chart.ts import), two pickers' display order (Accounting.tsx, AccountSelect.tsx) and the chart page's section→type map (ChartOfAccounts.tsx). Recorded rather than collapsed for the PRICE_TIERS reason: the validators must stay server-side and the label/order maps must stay renderable client-side."
+    },
+    {
+      "check": "D1",
       "key": "HELPER,STOREKEEPER,STOREKEEPER SUPERVISOR|backend/src/services/projectGates.ts frontend/src/auth/crewScope.ts",
       "why": "THE CREW-SCOPED POSITIONS, and this twin is DELIBERATE: the projects filter bar has to render before any round-trip, so the client cannot wait to be told. It is also the twin that had already drifted — the desktop copy substring-matched the position name and carried no permission escape, so an owner-created \"Warehouse Helper\" caged the UI while the server returned everything, and an admin holding the Storekeeper position lost controls the server would have allowed. PINNED by backend/tests/duplicatedDecisionPins.test.ts, which imports BOTH implementations and runs one corpus of (position, permissions) pairs through them. Added by the same change that created the second home — this gate flagged its own author, which is the behaviour it is for."
     },

@@ -242,7 +242,7 @@ export type ChartRow = {
   type: 'ASSET' | 'LIABILITY' | 'EQUITY' | 'INCOME' | 'EXPENSE';
   parentCode: string | null;
   accMoney: boolean;
-  perCompany: Record<number, { active: boolean }>;
+  perCompany: Partial<Record<number, { active: boolean }>>;
 };
 export const useChartUnion = () => baseQuery<{ companies: ChartCompany[]; accounts: ChartRow[] }>(
   ['chart-union'], `/accounting/chart`,

@@ -107,6 +107,28 @@ on /scm/settlement-setup and pre-filling every voucher's Paid From
 (docs/modules/payment-voucher.md §0c). Contract:
 `backend/src/scm/routes/accountRoles.test.ts`.
 
+**The chart maintenance surface (2026-09-03, roadmap A)**: `GET
+/accounting/chart` unions every GRANTED company's accounts into one row per
+code (definition led by the lowest company id, per-company active map;
+grants fail closed), `PUT /accounting/chart/tick` turns one code on/off for
+one company — ON instantiates the row from the master definition with its
+parent riding along (the tree stays whole), OFF cascades down the children
+(the owner's rule; the confirm lives in the UI) — and `POST
+/accounting/chart/import` upserts the accountant's parsed rows into the
+target company and copies rows marked `shared` to every other granted
+company, parents included. The owner's design verbatim: 可能类似recon setup
+我tick 后选择这个公司要不要用 — a future company is a new tick column.
+All three behind the same GL-post key as the rest of the chart surface;
+handlers in `accounting-chart.ts`, contract
+`backend/tests/accountingChart.test.ts`. The page (/scm/chart-of-accounts,
+Finance menu) parses the AutoCount xlsx IN THE BROWSER — digit and letter
+code series, 4-space indent → parent, section headings → account_type,
+Special Acc Type SBK/SCH → acc_money, banks / related-party loans /
+directors / HP+borrowings pre-classified company-specific — so the file
+never enters the repo. 父户不记账 is enforced three-deep: the GL gate
+(engine rule 3), `requireLeafAccount` at PV create/patch (typing time), and
+AccountSelect simply not offering a header with children.
+
 **The recognition-rules window (2026-09-02)**: `GET /bank/rules` (every rule,
 off rows included), `POST /bank/rules`, `PATCH /bank/rules/:id` — the rules
 that say "this credit is PBB's payout", seed-only since 0336, now the owner's
