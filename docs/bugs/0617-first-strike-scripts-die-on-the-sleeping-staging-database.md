@@ -29,3 +29,17 @@ Supabase database (seed, probe, repair) carries the three-attempt connect
 from day one — the first strike against staging lands on a sleeping
 instance more often than not, and a one-shot connect turns a nap into a red
 workflow.
+
+**Second act (same day): the retry was not enough either.** Run
+33707525935 spent all three attempts on the SAME AAAA address —
+`NODE_OPTIONS=--dns-result-order=ipv4first` never reached postgres.js's own
+name resolution, while pg-migrate (same secret, same runner pool, same
+minute, run 33707616420) connected on its first try. The sleeping-database
+theory was wrong for THIS failure; the address family was the whole story.
+The durable fix: the script resolves the A record itself
+(`dns.lookup(hostname, { family: 4 })`) and hands the client the IPv4
+literal — `ssl: 'require'` performs no certificate-chain verification, so
+an IP host connects fine — with the hostname kept as a fallback and the
+retry loop retained for the genuine nap case. **The amended rule: a
+direct-DB script pins the address family itself; environment-level DNS
+knobs are advisory to whichever resolver a library happens to use.**
