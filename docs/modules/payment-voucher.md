@@ -794,6 +794,17 @@ the Worker when files exist. The list
 the established `?print=1` route: land on the detail, its preview opens
 itself.
 
+**Batch** (owner: 可选多张 pv + document, 就 pv+document, pv+document…): the
+list's tick now means "include in the batch" — EVERY row ticks (the old
+isDisabled gate fell away; the approval buttons still count only the rows
+their yes applies to), and the batch bar gains **Print N + files** / **Save
+PDF**. `printSelected` in `frontend/src/pages/scm-v2/PaymentVouchers.tsx`
+loads each ticked voucher fresh (`fetchPvPrintDetail`), renders each as its
+OWN jsPDF (its own page numbering), and posts the parts to the same
+`print-bundle` route — the Worker interleaves voucher A's pages, A's files,
+voucher B's, B's, list order, one PDF back. One voucher failing to load
+fails the WHOLE print with its number.
+
 **Tests**: `frontend/src/vendor/scm/lib/payment-voucher-pdf.test.ts` (text
 draws — strip names, status word from the one home, MYR-words vs foreign
 line); `backend/tests/pdfAttach.test.ts` (real pdf-lib: 2-page bill
@@ -801,4 +812,5 @@ contributes both pages, image gets a page, corrupt/webp costs a notice page
 and never a throw, batch interleave pinned by page widths);
 `backend/tests/pvFiles.test.ts`'s print-bundle case (voucher page first, its
 files after, missing R2 object → notice page, unknown pv → 404 for the whole
-bundle).
+bundle); `frontend/src/pages/scm-v2/PaymentVouchers.test.tsx` pins that
+every row ticks and a POSTED row offers Print and no approval button.
