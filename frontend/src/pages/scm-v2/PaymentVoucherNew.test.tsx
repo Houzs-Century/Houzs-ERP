@@ -14,6 +14,7 @@ import { describe, expect, test, vi } from 'vitest';
 const mutateAsync = vi.fn(async (_body: Record<string, unknown>) => ({ id: 'pv-1', pvNumber: 'PV-2609-001' }));
 
 const extractAsync = vi.fn(async () => ({ bills: [] }));
+const uploadPvAsync = vi.fn(async (_v: { pvId: string; file: { name: string } }) => ({ ok: true, file: { id: 'f1' } }));
 /* Set by the copy-as-new test; undefined everywhere else (no ?copyFrom → the
    detail hook is disabled and the page never sees it). */
 let copySourceDetail: { paymentVoucher: Record<string, unknown>; lines: Array<Record<string, unknown>>; allocations: unknown[] } | undefined;
@@ -21,6 +22,7 @@ vi.mock('../../vendor/scm/lib/payment-voucher-queries', () => ({
   useCreatePaymentVoucher: () => ({ mutateAsync, isPending: false }),
   usePaymentVoucherDetail: (id: string | null) => ({ data: id ? copySourceDetail : undefined, isLoading: false }),
   useExtractBills: () => ({ mutateAsync: extractAsync, isPending: false }),
+  useUploadPvFile: () => ({ mutateAsync: uploadPvAsync, isPending: false }),
   fileToBase64: async (f: File) => `b64:${f.name}`,
   useSupplierAdvances: () => ({ data: { advances: [
     { id: 1, supplier_id: 'sup-1', pv_id: 'pv-old', pv_number: 'PV-2608-777', amount_sen: 80000, applied_sen: 30000, remaining_sen: 50000, created_at: '2026-08-20' },
@@ -60,6 +62,7 @@ vi.mock('../../vendor/scm/lib/currencies-queries', async (importOriginal) => ({
 }));
 
 import { PaymentVoucherNew } from './PaymentVoucherNew';
+import { stashPvFiles, takePvFiles } from '../../vendor/scm/lib/pv-file-handoff';
 
 const draw = (url: string) => render(
   <MemoryRouter initialEntries={[url]}><PaymentVoucherNew /></MemoryRouter>,
@@ -225,6 +228,41 @@ describe('the plain Payment Voucher (/new)', () => {
        saved last time — shown resolved, still editable. */
     expect((screen.getByLabelText(/Payee/) as HTMLInputElement).value).toBe('TNB');
     expect((screen.getByLabelText('Account (Debit) *') as HTMLInputElement).value).toBe('900-A002 · Advertisement');
+  });
+
+  test('a scanned bill\'s FILES ride the stash and attach right after the save (print pv include ocr 的文件一起)', async () => {
+    mutateAsync.mockClear();
+    uploadPvAsync.mockClear();
+    stashPvFiles([
+      { name: 'tnb-page-1.pdf', mime: 'application/pdf', dataBase64: 'b64:tnb-page-1.pdf' },
+      { name: 'tnb-page-2.jpg', mime: 'image/jpeg', dataBase64: 'b64:tnb-page-2.jpg' },
+    ]);
+    render(
+      <MemoryRouter initialEntries={[{
+        pathname: '/scm/payment-vouchers/new',
+        state: { billPrefill: {
+          extraction: {
+            vendorName: 'TENAGA NASIONAL BERHAD', vendorRegNo: null, documentKind: 'bill' as const,
+            invoiceNumber: 'INV-77', invoiceDate: '2026-09-01', dueDate: null,
+            currency: 'MYR', totalSen: 15000, sstSen: null, lines: [],
+          },
+          memory: { payeeName: 'TNB', debitAccountCode: '900-A002', purpose: 'OTHER', timesSeen: 3 },
+        } },
+      }]}><PaymentVoucherNew /></MemoryRouter>,
+    );
+    /* The page took the stash (cleared for the next voucher) and says so. */
+    expect(takePvFiles()).toEqual([]);
+    expect(screen.getByText(/2 scanned file\(s\) will be attached/)).toBeTruthy();
+    expect(screen.getByText(/tnb-page-1\.pdf, tnb-page-2\.jpg/)).toBeTruthy();
+
+    fireEvent.click(screen.getByText('Create Voucher'));
+    await waitFor(() => expect(uploadPvAsync).toHaveBeenCalledTimes(2));
+    /* AFTER the create, onto ITS id, in scan order — sort_no is print order. */
+    expect(uploadPvAsync.mock.calls.map((c) => [c[0].pvId, c[0].file.name])).toEqual([
+      ['pv-1', 'tnb-page-1.pdf'],
+      ['pv-1', 'tnb-page-2.jpg'],
+    ]);
+    await waitFor(() => expect(screen.getByText(/2 scanned file\(s\) attached/)).toBeTruthy());
   });
 
   test('the account search actually narrows — 打关键字眼 finds the account', () => {

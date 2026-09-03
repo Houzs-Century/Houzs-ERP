@@ -384,6 +384,10 @@ Mounted at `/api/scm/payment-vouchers`, behind
 | POST | `/:id/check` | `scm.payment_voucher.check` | §0b — the first yes: locks the voucher, joins Daily Bank's pending |
 | POST | `/:id/post` | `scm.payment_voucher.post` **or** `.approve` | writes the GL entry, DRAFT → POSTED, settles PIs, **adopts the FX rate**; normally reached THROUGH approve (§0b) |
 | POST | `/:id/cancel` | `scm.payment_voucher.cancel` | reverses the GL entry, unwinds settlement, **retains the FX rate** |
+| POST | `/:id/files` | `scm.payment_voucher.write` | §10 — attach one file (JSON `{fileName, mime, dataBase64}`; JPEG/PNG/WebP/PDF, ≤20MB); 409 `voucher_cancelled` on a CANCELLED voucher |
+| GET | `/:id/files` | area guard | §10 — the index rows, in `sort_no` (= attach = print) order |
+| GET | `/:id/files/:fileId` | area guard | §10 — streams the bytes from R2 with the stored mime, `content-disposition: inline` |
+| DELETE | `/:id/files/:fileId` | `scm.payment_voucher.write` | §10 — removes row + object; 409 `evidence_locked` once the voucher is **checked** |
 
 `postPaymentVoucherHandler` and `cancelPaymentVoucherHandler` are **exported** so the
 vitest harness can mount them on a bare Hono app (the `supabaseAuth` bridge cannot
@@ -657,6 +661,8 @@ because all-MYR is the overwhelming majority of documents in this system.
 | `backend/tests/fulfillmentCosting.test.ts` | `parseAmountCenti` / `buildLines` / `buildAllocations` — negative and fractional amounts are REFUSED, not clamped to 0 |
 | `backend/tests/companyScopeHardening.test.ts` | the cancel cannot reverse another company's GL entry |
 | `frontend/src/pages/scm-v2/fx-rate.test.ts` | `resolveFxRate` and `deriveRateFromMyrPaid` (13 cases) |
+| `backend/tests/pvFiles.test.ts` | §10 against a fake R2 binding: upload order/mime/size gates, list walks `sort_no`, stream returns the stored mime and bytes, delete removes the R2 object too and 409s `evidence_locked` once checked |
+| `frontend/src/pages/scm-v2/PaymentVoucherScan.test.tsx` + `PaymentVoucherNew.test.tsx` | §10's carry: the stash holds each bill's own pages (group = all members, split = its own file only), and the New page attaches them onto the created voucher's id, in scan order |
 
 `vi.mock` is **not** used in the route suite: it does not reliably intercept module
 imports under the Cloudflare Workers pool (`so-revision.reviseBoundPo.test.ts`
@@ -679,3 +685,57 @@ not that the adopted rate reached the inventory basis.
   (HOOKKA BUG-2026-05-20-002).
 - **`CurrencySelect` is shared with GRN and PI.** Changing it changes three documents.
 - **No mobile surface** (§1) — do not assume a counterpart file exists.
+
+---
+
+## 10. Attachments — the bill lives with its voucher (2026-09-03)
+
+The owner, planning printing: *我希望可以 print pv include ocr 的文件一起* — and
+the audit before it found the scan flow READ the bill and kept **nothing**, so
+there was no evidence to show, let alone print. Now the file lives with the
+voucher.
+
+**Storage.** Bytes go to the **SLIPS R2 binding** (the one bucket that exists —
+the Worker-proxy story is in `frontend/src/vendor/scm/lib/slip.ts`'s header)
+under `pv-files/<company>/<pv>/<uuid>.<ext>`; the index is `scm.acc_pv_files`
+(mig `backend/src/db/migrations-pg/0352_acc_pv_files.sql`): one row per file,
+`file_key UNIQUE`, `pv_id` FK `ON DELETE CASCADE`, and `sort_no` = attach order
+= the order printing will append the files after the voucher page. Routes live
+in `backend/src/scm/routes/pv-files.ts` (handlers exported bare for the vitest
+harness) and are mounted in `backend/src/scm/routes/payment-vouchers.ts`
+**before** `GET /:id`, so `/:id/files` never falls into the detail matcher.
+
+**The four-layer rule applies to evidence.** Upload/delete take
+`scm.payment_voucher.write`; a **CANCELLED** voucher takes no more files
+(409 `voucher_cancelled`); delete is refused with 409 `evidence_locked` once
+`checked_at` is stamped — checked 的人就不可以改了, and that includes the bill
+the checker looked at. Reading rides the voucher (area guard).
+
+**How files arrive.**
+- **Scan → voucher**: the batch screen (`frontend/src/pages/scm-v2/PaymentVoucherScan.tsx`)
+  keeps each read bill's payload by bill index and stashes it on *Open as
+  voucher* / *Open as ONE voucher* (a group stashes every member's pages, in
+  bill order; a split bill stashes only its own). The stash is **module
+  memory** — `frontend/src/vendor/scm/lib/pv-file-handoff.ts` — never
+  `location.state`, because `history.pushState` serializes its state and
+  browsers cap an entry around 16MB: a scanned PDF could make the navigation
+  itself throw. `takePvFiles()` clears, so a stale pile cannot attach to an
+  unrelated voucher.
+- **The New page** (`frontend/src/pages/scm-v2/PaymentVoucherNew.tsx`) takes
+  the stash (and its own *Scan bill* keeps the pages it read), shows a 📎
+  pending line, and after `create` succeeds uploads **sequentially** so
+  `sort_no` is the scan order. A failed upload never un-saves the voucher: the
+  dialog names how many attached and how many did not, and only the unattached
+  remainder stays pending — a re-press replays the same voucher via the
+  idempotency key and must not attach the first files twice.
+- **Manually**: the detail page's **Files card**
+  (`frontend/src/pages/scm-v2/PaymentVoucherDetail.tsx`, `PvFilesCard`) lists
+  in `sort_no` order, attaches (`PV_FILE_ACCEPT`), views, and deletes until
+  checked. *View* is an authed byte fetch → blob object URL
+  (`fetchPvFileBlobUrl` in `frontend/src/vendor/scm/lib/payment-voucher-queries.ts`,
+  beside the `usePvFiles` / `useUploadPvFile` / `useDeletePvFile` hooks) —
+  there is no public URL to leak.
+
+**What this is FOR next**: the print pipeline (§ pending) appends these files
+to the voucher PDF — PV page first, then its files in `sort_no` order; batch
+print concatenates `pv+files, pv+files…`.

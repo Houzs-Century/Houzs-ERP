@@ -52,8 +52,8 @@
     },
     {
       "check": "D1",
-      "key": "APPLICATION/PDF,IMAGE/JPEG,IMAGE/PNG,IMAGE/WEBP|backend/src/scm/routes/lorry-service-records.ts backend/src/scm/routes/slips.ts backend/src/scm/shared/schemas/slip.schema.ts frontend/src/vendor/scm/lib/slip.ts",
-      "why": "AN UPLOAD WHITELIST, per endpoint, and deliberately not one list: each surface decides what IT accepts (portal vs staff vs mail vs OCR). 4 homes: ALLOWED_SLIP_MIMES. Divergence costs a refused upload, never money or stock."
+      "key": "APPLICATION/PDF,IMAGE/JPEG,IMAGE/PNG,IMAGE/WEBP|backend/src/scm/routes/lorry-service-records.ts backend/src/scm/routes/pv-files.ts backend/src/scm/routes/slips.ts backend/src/scm/shared/schemas/slip.schema.ts frontend/src/vendor/scm/lib/slip.ts",
+      "why": "AN UPLOAD WHITELIST, per endpoint, and deliberately not one list: each surface decides what IT accepts (portal vs staff vs mail vs OCR vs the PV evidence store). 5 homes: ALLOWED_SLIP_MIMES, PV_FILE_MIMES. Divergence costs a refused upload, never money or stock."
     },
     {
       "check": "D1",
@@ -114,11 +114,6 @@
       "check": "D1",
       "key": "ARRIVES EM WAREHOUSE,CONFIRM,DONE DELIVERED,DONE SHIPOUT,HOUSE NOT READY,PENDING PICKUP,REQUEST HOLD|backend/src/scm/routes/delivery-orders-mfg.ts backend/src/scm/routes/delivery-planning.ts frontend/src/vendor/scm/lib/delivery-planning-queries.ts",
       "why": "THE HC DELIVERY SUB-STATUS VALUES — the owner's own words, carried on the DO, the planning board and the frontend query layer (HC_SUBSTATUS_VALUES). Free text to the business, a closed set to the code; three homes and no referee."
-    },
-    {
-      "check": "D1",
-      "key": "ASSET,EQUITY,EXPENSE,INCOME,LIABILITY|backend/src/scm/routes/accounting.ts frontend/src/pages/scm-v2/Accounting.tsx frontend/src/vendor/scm/components/AccountSelect.tsx",
-      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 3 homes: ACCOUNT_TYPES, ACCOUNT_TYPE_ORDER, TYPE_ORDER, TYPE_LABEL. Cost of divergence is a blank chip, not a wrong number."
     },
     {
       "check": "D1",
@@ -893,11 +888,6 @@
     {
       "check": "D2",
       "key": "ALL,CANCELLED,COMPLETED,POSTED ~ CANCELLED,COMPLETED,POSTED",
-      "why": "A STATUS SET VERSUS THE FILTER CHIPS OVER IT PLUS \"ALL\". The pseudo-value is the filter's, not the document's."
-    },
-    {
-      "check": "D2",
-      "key": "ALL,CANCELLED,DRAFT,POSTED ~ CANCELLED,DRAFT,POSTED",
       "why": "A STATUS SET VERSUS THE FILTER CHIPS OVER IT PLUS \"ALL\". The pseudo-value is the filter's, not the document's."
     },
     {
