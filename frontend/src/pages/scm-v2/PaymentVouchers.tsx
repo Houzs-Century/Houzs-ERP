@@ -17,7 +17,9 @@ import { useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Plus } from 'lucide-react';
 import { Button } from '@2990s/design-system';
-import { usePaymentVouchers, useCancelPaymentVoucher, useSubmitPaymentVoucher, useCheckPaymentVoucher, useApprovePaymentVoucher, type PaymentVoucherRow } from '../../vendor/scm/lib/payment-voucher-queries';
+import { usePaymentVouchers, useCancelPaymentVoucher, useSubmitPaymentVoucher, useCheckPaymentVoucher, useApprovePaymentVoucher, fetchPvPrintDetail, fetchPvPrintBundle, type PaymentVoucherRow } from '../../vendor/scm/lib/payment-voucher-queries';
+import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
+import { deliverPdfBlob, type PdfAction } from '../../vendor/scm/lib/pdf-common';
 import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
 import { StatusPill } from '../../vendor/scm/components/StatusPill';
 import { statusLabel } from '../../vendor/scm/lib/status-pill';
@@ -184,8 +186,6 @@ export const PaymentVouchers = () => {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [batchRunning, setBatchRunning] = useState(false);
   const byId = useMemo(() => new Map(allRows.map((r) => [r.id, r])), [allRows]);
-  const rowEligible = (r: PaymentVoucherRow): boolean =>
-    (canWrite && isPreparable(r)) || (canCheck && isCheckable(r)) || (canApprove && isApprovable(r));
   const tickedRows = useMemo(
     () => [...selected].map((k) => byId.get(k)).filter((r): r is PaymentVoucherRow => Boolean(r)),
     [selected, byId],
@@ -231,6 +231,51 @@ export const PaymentVouchers = () => {
       body: failures.length > 0 ? failures.join('\n') : 'Nothing refused.',
       tone: failures.length > 0 ? 'error' : 'info',
     });
+  };
+
+  /* ── Batch print (owner 2026-09-03: 可选多张 pv + document, 就 pv+document,
+     pv+document…) — ONE merged PDF in LIST order. Each ticked voucher loads
+     fresh and renders as its OWN jsPDF (its own page numbering); the Worker
+     appends each one's stored files where they live (print-bundle) and hands
+     the finished PDF back. One voucher failing to load fails the WHOLE print
+     with its number — a batch quietly missing a voucher is the dishonest
+     branch. */
+  const [printing, setPrinting] = useState(false);
+  const printSelected = async (action: PdfAction) => {
+    const targets = rows.filter((r) => selected.has(r.id));
+    if (targets.length === 0 || printing) return;
+    setPrinting(true);
+    try {
+      const [{ jsPDF }, { default: autoTable }, { renderPaymentVoucherInto, pdfBytesToBase64 }, accountsRes] = await Promise.all([
+        import('jspdf'),
+        import('jspdf-autotable'),
+        import('../../vendor/scm/lib/payment-voucher-pdf'),
+        authedFetch<{ accounts: Array<{ account_code: string; account_name: string }> }>('/accounting/accounts'),
+      ]);
+      const names = new Map(accountsRes.accounts.map((a) => [a.account_code, a.account_name]));
+      const label = (code: string) => (names.has(code) ? `${code} · ${names.get(code)!}` : code);
+
+      const parts: Array<{ pvId: string; voucherBase64: string }> = [];
+      for (const r of targets) {
+        const detail = await fetchPvPrintDetail(r.id);
+        const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+        type A = Parameters<typeof renderPaymentVoucherInto>;
+        await renderPaymentVoucherInto(
+          doc, autoTable,
+          detail.paymentVoucher as unknown as A[2],
+          detail.lines as unknown as A[3],
+          detail.allocations as unknown as A[4],
+          label,
+        );
+        parts.push({ pvId: r.id, voucherBase64: pdfBytesToBase64(doc.output('arraybuffer') as ArrayBuffer) });
+      }
+      const blob = await fetchPvPrintBundle(parts);
+      deliverPdfBlob(blob, 'payment-vouchers.pdf', action);
+    } catch (e) {
+      void notify({ title: 'Batch print failed — nothing was printed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
+    } finally {
+      setPrinting(false);
+    }
   };
 
   const doCancelPv = async (r: PaymentVoucherRow) => {
@@ -309,6 +354,14 @@ export const PaymentVouchers = () => {
               Approve & post {approveTargets.length}
             </Button>
           )}
+          {/* Print rides the SAME ticks (owner 2026-09-03): the ticked
+              vouchers, list order, one PDF of pv+files, pv+files… */}
+          <Button variant="secondary" size="sm" onClick={() => void printSelected('print')} disabled={printing || batchRunning}>
+            {printing ? 'Preparing…' : `Print ${selected.size} + files`}
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => void printSelected('save')} disabled={printing || batchRunning}>
+            Save PDF
+          </Button>
           {batchRunning && <span style={{ color: 'var(--fg-muted)' }}>stamping…</span>}
           <span style={{ flex: 1 }} />
           <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())} disabled={batchRunning}>
@@ -323,7 +376,7 @@ export const PaymentVouchers = () => {
         storageKey={PV_LIST_STORAGE_KEY}
         exportName="Payment Vouchers"
         rowKey={(r) => r.id}
-        selectable={(canWrite || canCheck || canApprove) ? {
+        selectable={{
           selectedKeys: selected,
           onToggle: (k) => setSelected((p) => { const n = new Set(p); if (n.has(k)) n.delete(k); else n.add(k); return n; }),
           onToggleAll: (keys, allSel) => setSelected((p) => {
@@ -331,10 +384,12 @@ export const PaymentVouchers = () => {
             if (allSel) { for (const k of keys) n.delete(k); } else { for (const k of keys) n.add(k); }
             return n;
           }),
-          /* Only rows whose yes is YOURS to give can be ticked — the header
-             checkbox never sweeps in a row the door would refuse. */
-          isDisabled: (k) => { const r = byId.get(k); return !r || !rowEligible(r); },
-        } : undefined}
+          /* EVERY row ticks now — a tick means "include in the batch", and
+             printing (owner 2026-09-03) applies to any voucher. The approval
+             buttons still count only the rows THEIR yes applies to
+             (prepareTargets/checkTargets/approveTargets filter per door), so
+             the old isDisabled gate protected nothing the buttons don't. */
+        }}
         searchPlaceholder="Search voucher no, payee…"
         loadedSearchLimit={500}
         groupBanner={false}

@@ -1,6 +1,8 @@
 /* 批量tick yes (the owner, 2026-09-02: 这个批量的功能肯定需要). What is pinned:
-     • only rows whose yes is YOURS to give can be ticked — a raw draft and a
-       posted voucher render DISABLED checkboxes;
+     • EVERY row ticks (since 2026-09-03 a tick also means "include in the
+       batch print", which applies to any voucher — a POSTED one most of
+       all); each approval button still counts only the rows ITS yes
+       applies to;
      • the bar counts each button's own targets (Check n / Approve & post n);
      • the run stamps ONE BY ONE through the real hooks, a failure names its
        voucher and the rest carry on, and the summary says both.
@@ -26,6 +28,10 @@ vi.mock('../../vendor/scm/lib/payment-voucher-queries', () => ({
   useSubmitPaymentVoucher: () => ({ mutateAsync: prepareAsync, isPending: false }),
   useCheckPaymentVoucher: () => ({ mutateAsync: checkAsync, isPending: false }),
   useApprovePaymentVoucher: () => ({ mutateAsync: approveAsync, isPending: false }),
+  /* Batch-print fetches — never called here (no test clicks Print), stubbed
+     because this factory replaces the WHOLE module. */
+  fetchPvPrintDetail: vi.fn(),
+  fetchPvPrintBundle: vi.fn(),
 }));
 vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ can: () => true }) }));
 const confirmFn = vi.fn(async (_a: unknown) => true);
@@ -38,13 +44,21 @@ import { PaymentVouchers } from './PaymentVouchers';
 const draw = () => render(<MemoryRouter><PaymentVouchers /></MemoryRouter>);
 
 describe('批量 tick yes', () => {
-  test('only the rows whose next step is yours can be ticked; posted renders disabled', () => {
+  test('EVERY row ticks — a POSTED voucher joins the batch print, and only Print applies to it', () => {
     draw();
     const boxes = screen.getAllByLabelText('Select row') as HTMLInputElement[];
     expect(boxes).toHaveLength(4);
-    /* Row order mirrors the data: raw / prepared / checked / posted. A raw
-       draft ticks too since 我draft 也要批量去prepared (owner, 2026-09-02). */
-    expect(boxes.map((b) => b.disabled)).toEqual([false, false, false, true]);
+    /* Row order mirrors the data: raw / prepared / checked / posted. All
+       tickable since a tick now also means "include in the batch print"
+       (owner 2026-09-03: 可选多张 pv + document). */
+    expect(boxes.map((b) => b.disabled)).toEqual([false, false, false, false]);
+
+    fireEvent.click(boxes[3]!); // posted — printable, not approvable
+    expect(screen.getByText('Print 1 + files')).toBeTruthy();
+    expect(screen.getByText('Save PDF')).toBeTruthy();
+    expect(screen.queryByText(/^Prepare \d/)).toBeNull();
+    expect(screen.queryByText(/^Check \d/)).toBeNull();
+    expect(screen.queryByText(/Approve & post \d/)).toBeNull();
   });
 
   test('batch Prepare runs WITHOUT a dialog — freely reversible, same as the detail button', async () => {

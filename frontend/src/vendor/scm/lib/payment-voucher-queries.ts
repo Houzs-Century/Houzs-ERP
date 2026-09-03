@@ -341,3 +341,14 @@ export async function fetchPvPrintBundle(parts: Array<{ pvId: string; voucherBas
   }
   return consumeCorrelated(res, () => res.blob());
 }
+
+/* Imperative twin of usePaymentVoucherDetail for the batch print (owner:
+   可选多张 pv + document) — a loop over ticked rows has no hook to call, and
+   each voucher must be CURRENT at print time, not a stale cache. */
+export async function fetchPvPrintDetail(pvId: string): Promise<{
+  paymentVoucher: Record<string, unknown>;
+  lines: Array<Record<string, unknown>>;
+  allocations: PaymentVoucherAllocation[];
+}> {
+  return authedFetch(`/payment-vouchers/${pvId}`);
+}
