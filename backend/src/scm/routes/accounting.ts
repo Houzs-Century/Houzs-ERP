@@ -45,6 +45,7 @@ import {
   bankLineReceipt, bankLineMatch, bankLineIgnore, bankLineUndo,
 } from './accounting-bank';
 import { payoutUpload, payoutList } from './accounting-payouts';
+import { chartUnionHandler, chartTickHandler, chartImportHandler } from './accounting-chart';
 import { dateOrNull } from '../lib/date-coerce';
 
 /* THE GENERAL LEDGER HAD NO PERMISSION CHECK AT ALL — eleven routes, zero
@@ -110,6 +111,11 @@ accounting.get('/settlement/payouts', payoutList);
    Owner, 2026-08-19: 我不是应该upload bank statement…然后你也自动核对吗 —
    整张月结单全部对. */
 accounting.get('/bank/setup', bankSetup);
+/* The chart maintenance surface (roadmap A) — union + per-company ticks +
+   the accountant's import. Handlers in accounting-chart.ts. */
+accounting.get('/chart', chartUnionHandler);
+accounting.put('/chart/tick', chartTickHandler);
+accounting.post('/chart/import', chartImportHandler);
 accounting.get('/bank/rules', bankRulesList);
 accounting.post('/bank/rules', bankRuleCreate);
 accounting.patch('/bank/rules/:id', bankRuleUpdate);

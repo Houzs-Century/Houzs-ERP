@@ -231,3 +231,49 @@ export type ApAgingRow = {
 export const useApAging = () => baseQuery<{ apAging: ApAgingRow[] }>(
   ['ap-aging'], `/accounting/ap-aging`,
 );
+
+/* ── The Chart of Accounts maintenance surface (roadmap A, 2026-09-03) ──────
+   The owner's selective sharing: one union across the granted companies, a
+   tick per company per code, and the accountant's xlsx upserted whole. */
+export type ChartCompany = { id: number; code: string };
+export type ChartRow = {
+  code: string;
+  name: string;
+  type: 'ASSET' | 'LIABILITY' | 'EQUITY' | 'INCOME' | 'EXPENSE';
+  parentCode: string | null;
+  accMoney: boolean;
+  perCompany: Partial<Record<number, { active: boolean }>>;
+};
+export const useChartUnion = () => baseQuery<{ companies: ChartCompany[]; accounts: ChartRow[] }>(
+  ['chart-union'], `/accounting/chart`,
+);
+
+export const useChartTick = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { companyId: number; code: string; active: boolean }) =>
+      authedFetch(`/accounting/chart/tick`, { method: 'PUT', body: JSON.stringify(body) }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['chart-union'] });
+      void qc.invalidateQueries({ queryKey: ['accounts'] });
+    },
+  });
+};
+
+export type ChartImportRow = {
+  code: string; name: string; accountType: string;
+  parentCode: string | null; accMoney: boolean; shared: boolean;
+};
+export const useChartImport = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { companyId: number; rows: ChartImportRow[] }) =>
+      authedFetch<{ ok: boolean; imported: number; shared: number; sharedTo: number[] }>(
+        `/accounting/chart/import`, { method: 'POST', body: JSON.stringify(body) },
+      ),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['chart-union'] });
+      void qc.invalidateQueries({ queryKey: ['accounts'] });
+    },
+  });
+};
