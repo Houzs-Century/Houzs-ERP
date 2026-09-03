@@ -351,6 +351,13 @@ export const PaymentVouchers = () => {
           if (r.status === 'DRAFT') {
             menu.push({ label: 'Edit', onClick: () => navigate(`/scm/payment-vouchers/${r.id}?edit=1`) });
           }
+          /* Copy as new (the owner, 2026-09-03: 我 right click 就能直接 copy) —
+             any status, cancelled included: the CONTENT is the template, the
+             identity is fresh. An AP Payment copies to an AP Payment. */
+          menu.push({
+            label: 'Copy as new',
+            onClick: () => navigate(`/scm/payment-vouchers/new?copyFrom=${r.id}${(r as Record<string, unknown>).purpose === 'SUPPLIER_PAYMENT' ? '&type=ap' : ''}`),
+          });
           if (r.status !== 'CANCELLED' && canCancel) {
             menu.push({ divider: true as const });
             menu.push({ label: 'Cancel', danger: true, onClick: () => doCancelPv(r) });

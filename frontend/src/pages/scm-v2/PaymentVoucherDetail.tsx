@@ -19,8 +19,8 @@
 // ----------------------------------------------------------------------------
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { CheckCircle2, ChevronDown, History, Pencil, Plus, RotateCcw, Save, Send, Ban, Trash2, X, XCircle } from 'lucide-react';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { CheckCircle2, ChevronDown, Copy, History, Pencil, Plus, RotateCcw, Save, Send, Ban, Trash2, X, XCircle } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { fmtDate, fmtDateOrDash } from '../../vendor/shared/format';
 import {
@@ -100,6 +100,7 @@ export const PaymentVoucherDetail = () => {
      re-render on every keystroke in the edit form. */
   const [historyOpen, setHistoryOpen] = useState(false);
   const closeHistory = useCallback(() => setHistoryOpen(false), []);
+  const navigate = useNavigate();
 
   const detailQ = usePaymentVoucherDetail(id || null);
   const pv    = detailQ.data?.paymentVoucher as Record<string, any> | undefined;
@@ -389,6 +390,14 @@ export const PaymentVoucherDetail = () => {
             <Button variant="ghost" size="md" onClick={() => setHistoryOpen(true)}>
               <History {...ICON} /> History
             </Button>
+            {/* Copy as new (owner 2026-09-03): content as template, identity
+                fresh — any status, the New page does the pre-fill. */}
+            {canWrite && (
+              <Button variant="ghost" size="md"
+                onClick={() => navigate(`/scm/payment-vouchers/new?copyFrom=${String(pv.id)}${pv.purpose === 'SUPPLIER_PAYMENT' ? '&type=ap' : ''}`)}>
+                <Copy {...ICON} /> Copy as new
+              </Button>
+            )}
             {!isEditing ? (
               <>
                 {/* The four layers: where the voucher stands, said once beside the pill. */}

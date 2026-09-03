@@ -9,6 +9,7 @@ import { LazySlot } from "../../components/LazySlot";
 import { scmListReturnTo } from "../../lib/scmListReturn";
 import {
   ArrowLeft,
+  Copy,
   History,
   Printer,
   XCircle,
@@ -695,6 +696,12 @@ function PurchaseInvoiceDetailV2ReadOnly() {
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Button variant="ghost" icon={<History size={14} />} onClick={goHistory}>History</Button>
+            {/* Copy as new (owner 2026-09-03): content as template, identity
+                fresh — any status; the New page does the pre-fill. */}
+            <Button variant="ghost" icon={<Copy size={14} />}
+              onClick={() => navigate(`/scm/purchase-invoices/new?copyFrom=${id}`)}>
+              Copy as new
+            </Button>
             <Button variant="secondary" icon={<Printer size={14} />} onClick={print.openPreview}>Print PDF</Button>
             {!isCancelled && (
               <Button variant="danger" icon={<XCircle size={14} />} onClick={doCancel}>Cancel PI</Button>
