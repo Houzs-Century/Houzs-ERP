@@ -103,6 +103,7 @@ import { useAuth } from "../auth/AuthContext";
 import { usePageAccess } from "../auth/PageGuard";
 import { isSalesStaff, isDirectorUser, isSalesDirectorUser, canCreateEvent, canLogSalesEntry, canWriteProjectFinance } from "../auth/salesAccess";
 import { readProjectAccess, projectAccessUnresolved, holdsChecklistApproval } from "../auth/projectAccess";
+import { roleLabelAdmitsRole } from "../auth/roleLabelAdmits";
 import { isCrewScopedUser } from "../auth/crewScope";
 import { PMS_STAGE_LABEL, pmsStageVariant } from "../vendor/scm/lib/pms-status";
 import { LEDGER_COST_CATS, LEDGER_INCOME_CATS, ledgerCategoryLabel } from "../vendor/scm/lib/pms-ledger-categories";
@@ -7567,15 +7568,9 @@ function TaskAttachmentRow({
   // files; only projects.manage (BD / managers / directors) sees the trash.
   const { can, user } = useAuth();
   const canDeleteFile = can("projects.manage");
-  // Owner 2026-09-02 ("check user sim why she cant see button delete for file
-  // ... add for sim task only, same with farra"). The purchasers hold neither
-  // projects.write nor projects.manage since 0489, so the trash was hidden on
-  // the very documents they file. The DELETE endpoint has always allowed
-  // projects.write OR projects.checklist.tick + roleLabelAdmits, so this only
-  // catches the affordance up — and ONLY on rows badged for their own function,
-  // which is why a BD-badged Display Floor Plan still shows no trash for them.
-  // attachment.id < 0 is a merged crew phase photo (view/download only); that
-  // guard used to ride on canManage, so it is asserted here directly.
+  // Manager path, OR a tick-only role on a task badged for its own function —
+  // what the DELETE endpoint has always allowed (bug 0628). id < 0 is a merged
+  // crew photo; that guard used to ride on canManage, so it is asserted here.
   const mayDeleteFile =
     attachment.id > 0 &&
     ((!!canManage && canDeleteFile) ||
@@ -10739,23 +10734,6 @@ function roleLabelParts(label: string): string[] {
   return label.split("&").map((s) => s.trim()).filter(Boolean);
 }
 
-/** Does the task's role badge admit this user's role? MIRRORS the backend
- *  `roleLabelAdmits` (backend/src/services/projectGates.ts) and the mobile copy
- *  in MobilePMS.tsx: exact match on each "&"-separated part, plus DRIVER-badged
- *  field tasks admitting HELPER / STOREKEEPER (no task is ever badged those).
- *  Desktop had no copy of this rule, which is why a tick-only role saw no
- *  Attach button on its OWN badged documents while mobile and the API allowed
- *  the upload — see attachAdmitsRole below. */
-function roleLabelAdmitsRole(
-  label: string | null | undefined,
-  roleName: string | null | undefined,
-): boolean {
-  const r = (roleName ?? "").trim().toUpperCase();
-  if (!r) return false;
-  return roleLabelParts((label ?? "").toUpperCase()).some(
-    (l) => l === r || (l === "DRIVER" && (r === "HELPER" || r === "STOREKEEPER")),
-  );
-}
 
 /** THE Attach / Remark / N/A button shape for the whole desktop PMS (owner
  *  2026-08-11: "one consistent button style for this action group across the

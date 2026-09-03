@@ -41,6 +41,11 @@ the BD-badged Display Floor Plan in the screenshot correctly still has none.
 `attachment.id < 0` (a merged crew phase photo) stays non-removable; that guard
 used to ride on `canManage` and is now asserted directly.
 
+The rule itself moved out of the 15,000-line component into
+`frontend/src/auth/roleLabelAdmits.ts` with unit tests, which is also what let
+this land: the file-size ratchet charges GROWTH, and extracting the helper took
+`Projects.tsx` to **-1** line against its merge base instead of +21.
+
 Pinned by two source-scans in `frontend/src/auth/projectActionGates.test.ts` —
 one on the trash gates, one asserting every `<TaskAttachmentRow` is handed its
 badge (the predicate silently answers false without it). **Proved RED against

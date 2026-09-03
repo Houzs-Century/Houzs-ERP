@@ -277,6 +277,26 @@ here, and it is highly regular:**
 | Chat | `requireAnyPermission(["projects.write","projects.chat"])` | `POST /:id/notes` `:1832` |
 | Unguarded by middleware | — | small public lookups (`/states` `:858`, `/payment-statuses` `:859`, `/brands` `:204`, `/event-types` `:104`, `/finance/categories` `:1987`), the attachment stream `:3690`, and the **phase-photo** routes `:2427`, `:2472`, `:2507`, `:2539`, which carry an inline permission-OR-crew check instead |
 
+**The role BADGE is the second half of the checklist-tick gate, and the UI must
+ask it too.** A caller holding `projects.checklist.tick` but **not**
+`projects.write` may attach, edit, delete and status-change only on tasks whose
+`role_label` admits their role — `roleLabelAdmits(label, role_name)` in
+`backend/src/services/projectGates.ts`: any "&"-separated part equal to the
+role, plus DRIVER-badged field work admitting HELPER / STOREKEEPER. An unbadged
+task admits nobody on this path. That population is not theoretical: the
+Purchaser role (330) lost `projects.write` on purpose in bug 0489 so exactly
+this scoping would apply to it.
+
+The desktop is a THIRD copy of that rule and has twice disagreed with the server
+by omitting it — the Attach button (bug 0546) and then the file-delete trash
+(bug 0628) asked `projects.write` alone, so the purchasers saw no control on the
+documents they themselves file while the API accepted the request. The desktop
+copy now lives in `frontend/src/auth/roleLabelAdmits.ts` (mobile keeps its own in
+`MobilePMS.tsx`). **When adding a control that the tick path can reach, gate it
+on the badge, not on `projects.write`.** Deleting a file on the PHONE remains
+`projects.manage` by owner decision (2026-08-05), so the two surfaces differ on
+that one control deliberately.
+
 **The attachment stream (`GET /attachments/:key{.+}`) sends
 `X-Content-Type-Options: nosniff` (PR #2522)** so its R2 object's server-derived
 content-type cannot be MIME-sniffed into html/svg — parity with
