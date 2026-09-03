@@ -241,6 +241,18 @@ read-only tree got legible the same day (the owner, that table in hand:
 union page's, children step in behind a └ glyph, parents column muted. Detail
 accounts for other debtors/creditors are children under the 305-0000 /
 405-0000 controls, one per counterparty, opened through this same door.
+**And the tree re-arranges by hand (2026-09-03: 我希望可以拖动式 put
+account under 别的 account 前提是那个 account 没有 transaction)**: drag a
+row onto another on the Chart page (or set Under in the ✎ panel; 留空 =
+root) and `PUT /chart/update` carries `parentCode` — the moved account
+keeps its own GL untouched (lines hang on its code; the tree is
+presentation), while the rule sits on the TARGET: 父户不记账, so a target
+with postings or any reference refuses `parent_has_postings` (a target
+already serving as a header passes as-is); parents share the child's type,
+cycles refuse, and the new header is instantiated into every company the
+child lives in. Contract: the parentCode block of
+`backend/tests/accountingChart.test.ts` and the drag/edit-panel tests of
+`ChartOfAccounts.test.tsx`.
 
 **The recognition-rules window (2026-09-02)**: `GET /bank/rules` (every rule,
 off rows included), `POST /bank/rules`, `PATCH /bank/rules/:id` — the rules

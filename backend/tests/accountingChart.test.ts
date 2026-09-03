@@ -341,6 +341,69 @@ describe('PUT /chart/update — one definition, every company', () => {
   });
 });
 
+describe('PUT /chart/update parentCode — 拖动改父户, the target carries the rule', () => {
+  const put = (app: ReturnType<typeof harness>, body: Row) => app.request('/chart/update', {
+    method: 'PUT', body: JSON.stringify(body), headers: { 'content-type': 'application/json' },
+  });
+
+  test('re-parents in every company and instantiates the header where missing', async () => {
+    const tables: Record<string, Row[]> = { accounts: [
+      acct(1, '360-0000', { account_name: 'PREPAYMENT & ADVANCE' }),
+      acct(1, '370-0000', { account_name: 'ACCRUAL - GIK' }),
+      acct(2, '370-0000', { account_name: 'ACCRUAL - GIK' }),
+    ] };
+    const app = harness(tables);
+    const res = await put(app, { code: '370-0000', parentCode: '360-0000' });
+    expect(res.status, JSON.stringify(await res.clone().json())).toBe(200);
+    for (const co of [1, 2]) {
+      expect(tables.accounts.find((r) => r.company_id === co && r.account_code === '370-0000'))
+        .toMatchObject({ parent_code: '360-0000' });
+    }
+    /* Company 2 had no 360-0000 — the header was instantiated for it. */
+    expect(tables.accounts.find((r) => r.company_id === 2 && r.account_code === '360-0000'))
+      .toMatchObject({ is_active: true });
+  });
+
+  test('an empty parent moves the account back to the root', async () => {
+    const tables = { accounts: [acct(1, '360-0010', { parent_code: '360-0000' }), acct(1, '360-0000')] };
+    const app = harness(tables);
+    const res = await put(app, { code: '360-0010', parentCode: null });
+    expect(res.status).toBe(200);
+    expect(tables.accounts.find((r) => r.account_code === '360-0010')!.parent_code).toBeNull();
+  });
+
+  test('cycles, cross-type parents and self-parenting refuse', async () => {
+    const tables = { accounts: [
+      acct(1, '360-0000'),
+      acct(1, '360-0010', { parent_code: '360-0000' }),
+      acct(1, '905-0000', { account_type: 'EXPENSE' }),
+    ] };
+    const app = harness(tables);
+    expect((await put(app, { code: '360-0000', parentCode: '360-0010' })).status).toBe(400); // loop
+    expect((await put(app, { code: '360-0000', parentCode: '905-0000' })).status).toBe(400); // type
+    expect((await put(app, { code: '360-0000', parentCode: '360-0000' })).status).toBe(400); // self
+  });
+
+  test('a target with postings refuses (父户不记账); a target already a header passes as-is', async () => {
+    const tables: Record<string, Row[]> = {
+      accounts: [
+        acct(1, '360-0050'),
+        acct(1, '370-0000'),
+        acct(1, '380-0000'),
+        acct(1, '380-0010', { parent_code: '380-0000' }),
+      ],
+      journal_entry_lines: [{ company_id: 1, account_code: '360-0050' }],
+    };
+    const app = harness(tables);
+    const refused = await put(app, { code: '370-0000', parentCode: '360-0050' });
+    expect(refused.status).toBe(409);
+    expect((await refused.json() as { error: string }).error).toBe('parent_has_postings');
+
+    const header = await put(app, { code: '370-0000', parentCode: '380-0000' });
+    expect(header.status).toBe(200);
+  });
+});
+
 describe('DELETE /chart/account — only a never-used code dies', () => {
   test('one journal line anywhere blocks the delete and names the holdout', async () => {
     const tables: Record<string, Row[]> = {

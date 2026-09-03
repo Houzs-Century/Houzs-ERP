@@ -475,18 +475,127 @@ export const chartUpdateHandler = async (c: any): Promise<Response> => {
     patch.account_type = type;
   }
   if (body.accMoney !== undefined) patch.acc_money = body.accMoney === true;
-  if (Object.keys(patch).length === 0) return c.json({ error: 'nothing_to_change' }, 400);
 
   const sb = c.get('supabase');
+
+  /* ── 改父户 (the owner, 2026-09-03: 我希望可以拖动式 put account under 别的
+     account 前提是那个 account 没有 transaction). The moved account keeps its
+     own GL — lines hang on ITS code, the tree is presentation — so IT may
+     carry history freely. The constraint sits on the TARGET: 父户不记账, so
+     an account that has postings (or any reference) cannot BECOME a header.
+     A target that already IS a header (active children) passes as-is. */
+  let newParent: string | null | undefined;
+  if (body.parentCode !== undefined) {
+    const parent = body.parentCode == null ? '' : String(body.parentCode).trim();
+    if (parent === '') {
+      newParent = null; // move to root
+    } else {
+      if (parent === code) return c.json({ error: 'bad_parent', message: 'An account cannot be its own parent.' }, 400);
+      const { data: pRow, error: pErr } = await sb.from('accounts')
+        .select('account_code, account_type, parent_code')
+        .eq('account_code', parent).order('company_id').limit(1).maybeSingle();
+      if (pErr) return c.json({ error: 'load_failed', reason: pErr.message }, 500);
+      if (!pRow) return c.json({ error: 'parent_unknown', message: `Parent ${parent} exists in no company's chart.` }, 404);
+      const { data: selfRow, error: sErr } = await sb.from('accounts')
+        .select('account_type').eq('account_code', code).order('company_id').limit(1).maybeSingle();
+      if (sErr) return c.json({ error: 'load_failed', reason: sErr.message }, 500);
+      if (!selfRow) return c.json({ error: 'code_unknown', message: `${code} exists in no company's chart.` }, 404);
+      const selfType = patch.account_type ?? (selfRow as { account_type: string }).account_type;
+      if ((pRow as { account_type: string }).account_type !== selfType) {
+        return c.json({ error: 'bad_parent', message: `A parent shares the child's type — ${parent} is ${(pRow as { account_type: string }).account_type}, ${code} is ${String(selfType)}.` }, 400);
+      }
+      /* No cycles: the target may not sit anywhere BELOW the moved code. */
+      let cursor: string | null = (pRow as { parent_code: string | null }).parent_code;
+      for (let depth = 0; cursor && depth < 6; depth += 1) {
+        if (cursor === code) return c.json({ error: 'bad_parent', message: `${parent} sits under ${code} — that loop would swallow the tree.` }, 400);
+        const { data: up, error: upErr } = await sb.from('accounts')
+          .select('parent_code').eq('account_code', cursor).order('company_id').limit(1).maybeSingle();
+        if (upErr) return c.json({ error: 'load_failed', reason: upErr.message }, 500);
+        cursor = (up as { parent_code: string | null } | null)?.parent_code ?? null;
+      }
+      /* Already a header? Then it already takes no postings — pass. */
+      const { data: kids, error: kErr } = await sb.from('accounts')
+        .select('account_code').eq('parent_code', parent).eq('is_active', true).limit(1);
+      if (kErr) return c.json({ error: 'load_failed', reason: kErr.message }, 500);
+      if (((kids ?? []) as unknown[]).length === 0) {
+        const probes: Array<{ table: string; column: string; label: string }> = [
+          { table: 'journal_entry_lines', column: 'account_code', label: 'GL journal lines' },
+          { table: 'payment_vouchers', column: 'credit_account_code', label: 'payment vouchers (credit side)' },
+          { table: 'payment_voucher_lines', column: 'debit_account_code', label: 'payment voucher lines' },
+          { table: 'acc_vendor_memory', column: 'debit_account_code', label: 'vendor memory' },
+          { table: 'acc_company_acquirers', column: 'transit_account_code', label: 'acquirer transit link' },
+          { table: 'acc_company_acquirers', column: 'fee_account_code', label: 'acquirer fee link' },
+          { table: 'acc_company_acquirers', column: 'bank_account_code', label: 'acquirer bank link' },
+          { table: 'acc_bank_statement_config', column: 'account_code', label: 'bank statement setup' },
+          { table: 'acc_bank_statements', column: 'account_code', label: 'imported bank statements' },
+          { table: 'acc_account_roles', column: 'account_code', label: 'system role bindings' },
+        ];
+        const used: string[] = [];
+        for (const p of probes) {
+          const { data: hit, error: hErr } = await sb.from(p.table).select(p.column).eq(p.column, parent).limit(1);
+          if (hErr) return c.json({ error: 'load_failed', reason: `${p.table}: ${hErr.message}` }, 500);
+          if (((hit ?? []) as unknown[]).length > 0 && !used.includes(p.label)) used.push(p.label);
+        }
+        if (used.length > 0) {
+          return c.json({
+            error: 'parent_has_postings',
+            message: `${parent} cannot become a header — 父户不记账, and it is referenced by: ${used.join(', ')}.`,
+            used,
+          }, 409);
+        }
+      }
+      newParent = parent;
+    }
+    patch.parent_code = newParent;
+  }
+
+  if (Object.keys(patch).length === 0) return c.json({ error: 'nothing_to_change' }, 400);
+
   const { data, error } = await sb
     .from('accounts')
     .update(patch)
     .eq('account_code', code)
     .select('company_id');
   if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);
-  const touched = ((data ?? []) as unknown[]).length;
-  if (touched === 0) return c.json({ error: 'code_unknown', message: `${code} exists in no company's chart.` }, 404);
-  return c.json({ ok: true, code, companies: touched });
+  const touched = ((data ?? []) as Array<{ company_id: number }>);
+  if (touched.length === 0) return c.json({ error: 'code_unknown', message: `${code} exists in no company's chart.` }, 404);
+
+  /* A re-parented child must find its header in EVERY company it lives in —
+     instantiate the parent chain from the master definition where missing
+     (the tick-ON walk, reused in spirit). */
+  if (typeof newParent === 'string') {
+    for (const t of touched) {
+      const chain: string[] = [];
+      let cur: string | null = newParent;
+      for (let depth = 0; cur && depth < 4; depth += 1) {
+        chain.unshift(cur);
+        const walkRes: { data: unknown; error: { message: string } | null } = await sb.from('accounts')
+          .select('parent_code').eq('account_code', cur).order('company_id').limit(1).maybeSingle();
+        if (walkRes.error) return c.json({ error: 'load_failed', reason: walkRes.error.message }, 500);
+        cur = (walkRes.data as { parent_code: string | null } | null)?.parent_code ?? null;
+      }
+      for (const step of chain) {
+        const { data: def, error: dErr } = await sb.from('accounts')
+          .select('account_code, account_name, account_type, parent_code, acc_money, special_type')
+          .eq('account_code', step).order('company_id').limit(1).maybeSingle();
+        if (dErr) return c.json({ error: 'load_failed', reason: dErr.message }, 500);
+        if (!def) continue;
+        const d = def as AccountRow;
+        const { error: upErr } = await sb.from('accounts').upsert({
+          company_id: t.company_id,
+          account_code: d.account_code,
+          account_name: d.account_name,
+          account_type: d.account_type,
+          parent_code: d.parent_code,
+          acc_money: d.acc_money === true,
+          special_type: d.special_type ?? null,
+          is_active: true,
+        }, { onConflict: 'company_id,account_code' });
+        if (upErr) return c.json({ error: 'save_failed', reason: upErr.message }, 500);
+      }
+    }
+  }
+  return c.json({ ok: true, code, companies: touched.length });
 };
 
 /* ── DELETE /accounting/chart/account?code=… — only a NEVER-USED code dies ──

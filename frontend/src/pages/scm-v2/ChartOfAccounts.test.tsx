@@ -151,6 +151,27 @@ describe('fold / edit / delete — the owner points 1, 2 and 4', () => {
     }));
   });
 
+  test('dropping a row onto another confirms, then re-parents through the update', async () => {
+    updateAsync.mockClear(); confirmFn.mockClear();
+    draw();
+    const src = screen.getByText('900-A002').closest('tr')!;
+    const target = screen.getByText('310-0000').closest('tr')!;
+    fireEvent.dragStart(src);
+    fireEvent.dragOver(target);
+    fireEvent.drop(target);
+    await waitFor(() => expect(updateAsync).toHaveBeenCalledWith({ code: '900-A002', parentCode: '310-0000' }));
+    expect(JSON.stringify(confirmFn.mock.calls[0]![0])).toMatch(/挂到 310-0000 下/);
+  });
+
+  test('the edit panel moves an account under a parent (and 留空 = root)', async () => {
+    updateAsync.mockClear();
+    draw();
+    fireEvent.click(screen.getByLabelText('Edit 310-0010'));
+    fireEvent.change(screen.getByLabelText('Edit parent'), { target: { value: '' } });
+    fireEvent.click(screen.getByText('Save'));
+    await waitFor(() => expect(updateAsync).toHaveBeenCalledWith({ code: '310-0010', parentCode: null }));
+  });
+
   test('delete confirms, then sends the code', async () => {
     deleteAsync.mockClear(); confirmFn.mockClear();
     draw();
