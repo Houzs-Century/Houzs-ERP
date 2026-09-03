@@ -3643,6 +3643,30 @@ would mean it had been added back as a blank row. Pinned in
 `backend/tests/acRebuildDetails.test.ts`; trace in
 `docs/bugs/0607-a-document-whose-lines-cannot-be-matched-could-never-be-sent.md`.
 
+### WHICH documents still disagree — `POST /autocount-outbox/line-order-sweep`
+
+Owner, 2026-09-03, after finding a third migrated document by opening it:
+「之后有问题吗？我不要每次都来 fix 啊」. He chose to measure the population rather
+than keep repairing one document at a time.
+
+**It is not a defect in the sync.** A document the ERP CREATES is laid down in the
+ERP's own line order, and an add or delete rebuilds the whole document. The
+MIGRATED ones were written by AutoCount before the ERP ever saw them, and a keyed
+edit deliberately does not reorder anything in the book. They were never going to
+match, and nothing had ever counted them.
+
+| | |
+| --- | --- |
+| **Gate** | `scm.autocount.read` or `settings.manage` — the READ keys. It writes nothing on either side, so it does not take the narrower requeue gate. |
+| **Book side** | `/line-fingerprints` on the host: ONE SELECT returning every document's number, line count and ordered ItemCodes. `/doc-read` per document is ~2,700 round trips and no single Worker request survives that — this system has measured the ceiling at 503 `Worker exceeded resource limits` after 39 seconds. |
+| **ERP side** | `composeDetails` over `live()` lines, with `bindingsFor` (exported from `scm/lib/autocount-outbox.ts` for this) and the `created_at, id` order `inAcLineOrder` defines. The SEND'S OWN machinery, not a copy of it: a hand-written binding read got `material_kind`, `ac_item_code` precedence and `is_main_supplier` all wrong on the first attempt. |
+| **Verdicts** | `match` · `order` · `extra_in_book` (the deleted line still at Qty 0) · `missing_in_book` · `different` · `not_in_book` · `cannot_compose`. |
+| **`cannot_compose` is not a finding** | A sofa build the gate refuses, or an item code the cutover map does not carry. It means we cannot say what a send WOULD do — counted, and deliberately kept off the list of documents to rebuild. Reporting it as a mismatch would invent a defect out of our own inability. |
+
+Rules in `scm/lib/ac-line-order-sweep.ts`, tests in
+`backend/tests/acLineOrderSweep.test.ts`, trace in
+`docs/bugs/0634-nothing-had-ever-counted-how-many-migrated-documents-disagre.md`.
+
 ### A DELETED LINE IS DELETED, WHERE THE BOOK ALLOWS (owner rule, 2026-09-02)
 
 Owner: 「我是要 autocount 的全部 line 都跟 ERP 一样」 · 「跟 inistate 一样」.
