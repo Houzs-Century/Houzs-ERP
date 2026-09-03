@@ -86,8 +86,7 @@ export interface Column<T> {
   /** Values the filter menu ALWAYS lists, 0-count included — for enum-shaped
    *  columns whose full vocabulary must stay pickable (Nico 2026-09-04). */
   filterSeedValues?: readonly string[];
-  /** If true, the column is excluded from the column chooser AND pinned
-   *  to the front of the render order (can't be reordered past). */
+  /** Excluded from the column chooser AND pinned to the front (unreorderable). */
   alwaysVisible?: boolean;
   /** Opt-out of sort for columns that have getValue but aren't meaningfully
    *  sortable (e.g. a selection checkbox column).
