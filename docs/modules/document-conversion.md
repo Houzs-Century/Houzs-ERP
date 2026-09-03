@@ -469,7 +469,8 @@ row that does not qualify never renders a stray separator.
 Open, Edit, and one print entry per document the row can reach. §8b has the
 whole of that. Since 2026-09-03 the Purchase Invoice list adds **Copy as new**
 between Edit and Print (the owner, AutoCount in hand: 我 right click 就能直接
-copy): it only NAVIGATES — to `/scm/purchase-invoices/new?copyFrom=<id>`,
+copy; entry in `purchaseInvoiceRowMenu`, wired by `PurchaseInvoicesListV2.tsx`'s
+`piContextMenu`): it only NAVIGATES — to `/scm/purchase-invoices/new?copyFrom=<id>`,
 where the New page pre-fills content and never identity (fresh number,
 today's date, no GRN links, no supplier invoice ref) — so the no-new-behaviour
 rule above holds. Offered on ANY status: a posted or cancelled document is
