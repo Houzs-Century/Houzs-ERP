@@ -11,7 +11,7 @@ FOR, which trees are dead, what must be changed in pairs — lives in
 
 ## 1. Backend route inventory
 
-155 route modules (44 in `backend/src/routes`, 111 in `backend/src/scm/routes`), 1127 endpoint registrations.
+155 route modules (44 in `backend/src/routes`, 111 in `backend/src/scm/routes`), 1131 endpoint registrations.
 
 An endpoint is a `router.<method>("/…")` registration. For the per-route authorization
 boundary see the sibling artifact `docs/generated/route-capability-matrix.csv`, which
@@ -64,10 +64,10 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/udf.ts` | 4 | 251 |
 | `backend/src/routes/users.ts` | 22 | 2331 |
 | `backend/src/scm/routes/accounting-bank.ts` | 0 | 765 |
-| `backend/src/scm/routes/accounting-chart.ts` | 0 | 290 |
+| `backend/src/scm/routes/accounting-chart.ts` | 0 | 542 |
 | `backend/src/scm/routes/accounting-payouts.ts` | 0 | 196 |
 | `backend/src/scm/routes/accounting-settlement.ts` | 0 | 1222 |
-| `backend/src/scm/routes/accounting.ts` | 56 | 1262 |
+| `backend/src/scm/routes/accounting.ts` | 60 | 1271 |
 | `backend/src/scm/routes/addons.ts` | 4 | 215 |
 | `backend/src/scm/routes/amendment-mirror.ts` | 1 | 126 |
 | `backend/src/scm/routes/ar-reconciliation.ts` | 1 | 163 |
@@ -184,13 +184,13 @@ scripts, never assumed: each runner declares its own directory, and
 | tree | runner | *.sql | highest | applied to PRODUCTION by deploy.yml | read by backend vitest |
 |---|---|---|---|---|---|
 | `backend/src/db/migrations` | `backend/scripts/migrate.mjs` | 152 | `153_sessions_stay_signed_in.sql` (153) | no | yes |
-| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 345 | `0346_acc_autocount_code_relay.sql` (0346) | YES | no |
+| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 346 | `0347_acc_chart_manage.sql` (0347) | YES | no |
 
 Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its number): `0136_capture_compat_views_trips_lorries.sql.TEMPLATE`
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1878 files, 673345 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1879 files, 674002 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |

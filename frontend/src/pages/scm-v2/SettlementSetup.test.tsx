@@ -79,6 +79,7 @@ vi.mock('./bank-queries', () => ({
 
 const saveBankDefault = vi.fn();
 vi.mock('../../vendor/scm/lib/accounting-queries', () => ({
+  isControlSpecial: (s: string | null | undefined) => s === 'SDC' || s === 'SCC' || s === 'SBS',
   useAccounts: () => ({ data: { accounts: [
     { account_code: '310-0010', account_name: 'Bank — Maybank', account_type: 'ASSET', is_active: true, acc_money: true },
     { account_code: '900-A002', account_name: 'Advertisement', account_type: 'EXPENSE', is_active: true, acc_money: false },

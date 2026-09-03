@@ -20,6 +20,7 @@ import { Hono } from 'hono';
 import { describe, expect, test } from 'vitest';
 import {
   chartUnionHandler, chartTickHandler, chartImportHandler, requireLeafAccount,
+  chartRenameHandler, chartUpdateHandler, chartDeleteHandler, chartCreateHandler,
 } from '../src/scm/routes/accounting-chart';
 
 type Row = Record<string, any>;
@@ -53,6 +54,7 @@ class FakeQuery {
     this.preds.push((r) => s.has(String(r[col])));
     return this;
   }
+  delete() { this.op = 'delete'; return this; }
   private run(): Row[] {
     if (this.op === 'insert') {
       const withIds = this.inserted.map((r, i) => ({ id: r.id ?? `${this.table}-${this.rows.length + i + 1}`, ...r }));
@@ -63,6 +65,12 @@ class FakeQuery {
     if (this.orderCol) hit = [...hit].sort((a, b) => Number(a[this.orderCol!]) - Number(b[this.orderCol!]));
     if (this.limitN != null) hit = hit.slice(0, this.limitN);
     if (this.op === 'update') for (const r of hit) Object.assign(r, this.patch);
+    if (this.op === 'delete') {
+      for (const r of hit) {
+        const at = this.rows.indexOf(r);
+        if (at >= 0) this.rows.splice(at, 1);
+      }
+    }
     return hit;
   }
   maybeSingle() { const h = this.run(); return Promise.resolve({ data: h[0] ?? null, error: null }); }
@@ -71,12 +79,21 @@ class FakeQuery {
   }
 }
 
-function harness(tables: Record<string, Row[]>, opts?: { allowed?: number[] }) {
+function harness(
+  tables: Record<string, Row[]>,
+  opts?: { allowed?: number[]; rpcError?: string; rpcCalls?: Array<{ fn: string; args: Row }> },
+) {
   const app = new Hono();
   app.use('*', async (c, next) => {
     c.set('supabase' as never, {
       from: (t: string) => new FakeQuery((tables[t] ||= []), t),
       schema(_s: string) { return this; },
+      rpc(fn: string, args: Row) {
+        opts?.rpcCalls?.push({ fn, args });
+        return Promise.resolve(opts?.rpcError
+          ? { data: null, error: { message: opts.rpcError } }
+          : { data: { accounts: 2, journal_lines: 3 }, error: null });
+      },
     } as never);
     c.set('companyId' as never, 1 as never);
     c.set('allowedCompanyIds' as never, (opts?.allowed ?? [1, 2]) as never);
@@ -89,6 +106,10 @@ function harness(tables: Record<string, Row[]>, opts?: { allowed?: number[] }) {
   app.get('/chart', chartUnionHandler as never);
   app.put('/chart/tick', chartTickHandler as never);
   app.post('/chart/import', chartImportHandler as never);
+  app.put('/chart/rename', chartRenameHandler as never);
+  app.put('/chart/update', chartUpdateHandler as never);
+  app.post('/chart/account', chartCreateHandler as never);
+  app.delete('/chart/account', chartDeleteHandler as never);
   return app;
 }
 
@@ -200,6 +221,165 @@ describe('POST /chart/import', () => {
   });
 });
 
+describe('POST /chart/account — one door, definition lands per tick', () => {
+  test('creates in the chosen companies with the parent chain riding along', async () => {
+    const tables = { accounts: [
+      acct(1, '305-0000', { account_name: 'OTHER DEBTOR', special_type: 'SDC' }),
+    ] };
+    const app = harness(tables);
+    const res = await app.request('/chart/account', {
+      method: 'POST',
+      body: JSON.stringify({ code: '305-0010', name: 'AHMAD BIN ALI', accountType: 'asset', parentCode: '305-0000', companyIds: [1, 2] }),
+      headers: { 'content-type': 'application/json' },
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true, code: '305-0010', companies: [1, 2] });
+    for (const co of [1, 2]) {
+      const child = tables.accounts.find((r) => r.company_id === co && r.account_code === '305-0010');
+      expect(child, `child in company ${co}`).toMatchObject({ account_type: 'ASSET', parent_code: '305-0000', is_active: true });
+      const parent = tables.accounts.find((r) => r.company_id === co && r.account_code === '305-0000');
+      expect(parent, `parent in company ${co}`).toMatchObject({ special_type: 'SDC', is_active: true });
+    }
+  });
+
+  test('an existing code is refused toward the tick column; bad shapes and foreign companies refuse too', async () => {
+    const tables = { accounts: [acct(1, '905-0000')] };
+    const app = harness(tables);
+    const dup = await app.request('/chart/account', {
+      method: 'POST', body: JSON.stringify({ code: '905-0000', name: 'X', accountType: 'EXPENSE' }),
+      headers: { 'content-type': 'application/json' },
+    });
+    expect(dup.status).toBe(409);
+    expect((await dup.json() as { error: string }).error).toBe('code_exists');
+    const bad = await app.request('/chart/account', {
+      method: 'POST', body: JSON.stringify({ code: 'nope', name: 'X', accountType: 'EXPENSE' }),
+      headers: { 'content-type': 'application/json' },
+    });
+    expect(bad.status).toBe(400);
+    const foreign = await app.request('/chart/account', {
+      method: 'POST', body: JSON.stringify({ code: '906-0000', name: 'X', accountType: 'EXPENSE', companyIds: [3] }),
+      headers: { 'content-type': 'application/json' },
+    });
+    expect(foreign.status).toBe(403);
+    const orphan = await app.request('/chart/account', {
+      method: 'POST', body: JSON.stringify({ code: '906-0000', name: 'X', accountType: 'EXPENSE', parentCode: '999-0000' }),
+      headers: { 'content-type': 'application/json' },
+    });
+    expect(orphan.status).toBe(400);
+    expect((await orphan.json() as { error: string }).error).toBe('parent_unknown');
+  });
+});
+
+describe('PUT /chart/rename — 改码全账跟 through one RPC', () => {
+  test('a clean rename calls the database function with both codes and reports its counts', async () => {
+    const rpcCalls: Array<{ fn: string; args: Row }> = [];
+    const app = harness({ accounts: [] }, { rpcCalls });
+    const res = await app.request('/chart/rename', {
+      method: 'PUT', body: JSON.stringify({ oldCode: '310-0010', newCode: '311-0010' }),
+      headers: { 'content-type': 'application/json' },
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true, oldCode: '310-0010', newCode: '311-0010', moved: { accounts: 2 } });
+    expect(rpcCalls).toEqual([{ fn: 'acc_rename_account', args: { p_old: '310-0010', p_new: '311-0010' } }]);
+  });
+
+  test("the function's own refusals come back as 400 with the database sentence", async () => {
+    const app = harness({ accounts: [] }, { rpcError: 'account 311-0010 already exists — renaming onto a live code would merge two books; refused' });
+    const res = await app.request('/chart/rename', {
+      method: 'PUT', body: JSON.stringify({ oldCode: '310-0010', newCode: '311-0010' }),
+      headers: { 'content-type': 'application/json' },
+    });
+    expect(res.status).toBe(400);
+    expect((await res.json() as { error: string }).error).toBe('rename_refused');
+  });
+
+  test('a malformed new code never reaches the database', async () => {
+    const rpcCalls: Array<{ fn: string; args: Row }> = [];
+    const app = harness({ accounts: [] }, { rpcCalls });
+    const res = await app.request('/chart/rename', {
+      method: 'PUT', body: JSON.stringify({ oldCode: '310-0010', newCode: 'nope' }),
+      headers: { 'content-type': 'application/json' },
+    });
+    expect(res.status).toBe(400);
+    expect(rpcCalls).toHaveLength(0);
+  });
+});
+
+describe('PUT /chart/update — one definition, every company', () => {
+  test('name and type change on the code in BOTH companies at once', async () => {
+    const tables = { accounts: [
+      acct(1, '905-0000', { account_name: 'Rent', account_type: 'EXPENSE' }),
+      acct(2, '905-0000', { account_name: 'Rent', account_type: 'EXPENSE' }),
+      acct(1, '910-0000', { account_name: 'Utilities' }),
+    ] };
+    const app = harness(tables);
+    const res = await app.request('/chart/update', {
+      method: 'PUT', body: JSON.stringify({ code: '905-0000', name: 'RENTAL', accountType: 'expense' }),
+      headers: { 'content-type': 'application/json' },
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true, companies: 2 });
+    for (const co of [1, 2]) {
+      expect(tables.accounts.find((r) => r.company_id === co && r.account_code === '905-0000'))
+        .toMatchObject({ account_name: 'RENTAL', account_type: 'EXPENSE' });
+    }
+    expect(tables.accounts.find((r) => r.account_code === '910-0000')!.account_name).toBe('Utilities');
+  });
+
+  test('an unknown code is a 404, an empty patch a 400', async () => {
+    const app = harness({ accounts: [acct(1, '905-0000')] });
+    const miss = await app.request('/chart/update', {
+      method: 'PUT', body: JSON.stringify({ code: '888-0000', name: 'X' }),
+      headers: { 'content-type': 'application/json' },
+    });
+    expect(miss.status).toBe(404);
+    const empty = await app.request('/chart/update', {
+      method: 'PUT', body: JSON.stringify({ code: '905-0000' }),
+      headers: { 'content-type': 'application/json' },
+    });
+    expect(empty.status).toBe(400);
+  });
+});
+
+describe('DELETE /chart/account — only a never-used code dies', () => {
+  test('one journal line anywhere blocks the delete and names the holdout', async () => {
+    const tables: Record<string, Row[]> = {
+      accounts: [acct(1, '905-0000'), acct(2, '905-0000')],
+      journal_entry_lines: [{ company_id: 2, account_code: '905-0000' }],
+    };
+    const app = harness(tables);
+    const res = await app.request('/chart/account?code=905-0000', { method: 'DELETE' });
+    expect(res.status).toBe(409);
+    const body = await res.json() as { error: string; used: string[] };
+    expect(body.error).toBe('account_in_use');
+    expect(body.used).toEqual(['GL journal lines']);
+    expect(tables.accounts).toHaveLength(2); // nothing died
+  });
+
+  test('a child under it blocks too — the tree never loses a floor', async () => {
+    const tables: Record<string, Row[]> = {
+      accounts: [acct(1, '310-0000'), acct(1, '310-0010', { parent_code: '310-0000' })],
+    };
+    const app = harness(tables);
+    const res = await app.request('/chart/account?code=310-0000', { method: 'DELETE' });
+    expect(res.status).toBe(409);
+    expect((await res.json() as { used: string[] }).used).toEqual(['sub-accounts under it']);
+  });
+
+  test('a clean code disappears from EVERY company; an unknown one is a 404', async () => {
+    const tables: Record<string, Row[]> = {
+      accounts: [acct(1, '2990-4100'), acct(2, '2990-4100'), acct(1, '905-0000')],
+    };
+    const app = harness(tables);
+    const res = await app.request('/chart/account?code=2990-4100', { method: 'DELETE' });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true, companies: 2 });
+    expect(tables.accounts.map((r) => r.account_code)).toEqual(['905-0000']);
+    const miss = await app.request('/chart/account?code=2990-4100', { method: 'DELETE' });
+    expect(miss.status).toBe(404);
+  });
+});
+
 describe('requireLeafAccount — 父户不记账 at typing time', () => {
   const ctx = (tables: Record<string, Row[]>) => ({
     get: (k: string) => (k === 'supabase' ? { from: (t: string) => new FakeQuery((tables[t] ||= []), t) } : undefined),
@@ -224,5 +404,20 @@ describe('requireLeafAccount — 父户不记账 at typing time', () => {
       acct(1, '310-0010', { parent_code: '310-0000', is_active: false }),
     ] };
     expect(await requireLeafAccount(ctx(tables), 1, '310-0000')).toBeNull();
+  });
+
+  test('a control account (SDC/SCC/SBS) refuses even as a leaf — 由模块自动过账; SBK books on', async () => {
+    const tables = { accounts: [
+      acct(1, '300-0000', { special_type: 'SDC' }),
+      acct(1, '400-0000', { account_type: 'LIABILITY', special_type: 'SCC' }),
+      acct(1, '330-0000', { special_type: 'SBS' }),
+      acct(1, '310-0010', { acc_money: true, special_type: 'SBK' }),
+    ] };
+    for (const code of ['300-0000', '400-0000', '330-0000']) {
+      const refusal = await requireLeafAccount(ctx(tables), 1, code);
+      expect(refusal, `${code} should refuse`).not.toBeNull();
+      expect((await refusal!.json() as { error: string }).error).toBe('control_account_locked');
+    }
+    expect(await requireLeafAccount(ctx(tables), 1, '310-0010')).toBeNull();
   });
 });

@@ -29,7 +29,17 @@ export type Account = {
   /** True for the money set (bank / cash / e-wallet — what Daily Bank shows).
       The PV "Paid From" picker offers only these. */
   acc_money?: boolean | null;
+  /** AutoCount's special-account column (0347). SDC/SCC/SBS are CONTROL
+      accounts — pickers hide them, the server refuses them (由模块自动过账). */
+  special_type?: string | null;
 };
+
+/* The CONTROL specials — AR (SDC), AP + customer deposits (SCC), stock (SBS).
+   ONE frontend home on purpose; the server's requireLeafAccount holds the
+   enforcing copy (a browser cannot import the Worker's), and this one only
+   decides what the pickers and the Chart page SHOW. */
+export const isControlSpecial = (special: string | null | undefined): boolean =>
+  special === 'SDC' || special === 'SCC' || special === 'SBS';
 export const useAccounts = () => baseQuery<{ accounts: Account[] }>(
   ['accounts'], `/accounting/accounts`,
 );
@@ -242,6 +252,7 @@ export type ChartRow = {
   type: 'ASSET' | 'LIABILITY' | 'EQUITY' | 'INCOME' | 'EXPENSE';
   parentCode: string | null;
   accMoney: boolean;
+  special: string | null;
   perCompany: Partial<Record<number, { active: boolean }>>;
 };
 export const useChartUnion = () => baseQuery<{ companies: ChartCompany[]; accounts: ChartRow[] }>(
@@ -262,7 +273,7 @@ export const useChartTick = () => {
 
 export type ChartImportRow = {
   code: string; name: string; accountType: string;
-  parentCode: string | null; accMoney: boolean; shared: boolean;
+  parentCode: string | null; accMoney: boolean; specialType?: string | null; shared: boolean;
 };
 export const useChartImport = () => {
   const qc = useQueryClient();
@@ -270,6 +281,74 @@ export const useChartImport = () => {
     mutationFn: (body: { companyId: number; rows: ChartImportRow[] }) =>
       authedFetch<{ ok: boolean; imported: number; shared: number; sharedTo: number[] }>(
         `/accounting/chart/import`, { method: 'POST', body: JSON.stringify(body) },
+      ),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['chart-union'] });
+      void qc.invalidateQueries({ queryKey: ['accounts'] });
+    },
+  });
+};
+
+/* ONE door to open an account (owner 2026-09-03: 照理说应该维护 overall
+   chart of account 罢了): the definition is created once and lands in every
+   ticked company, parent chain riding along per company. */
+export const useChartCreate = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: {
+      code: string; name: string; accountType: string;
+      parentCode?: string | null; accMoney?: boolean; companyIds?: number[];
+    }) =>
+      authedFetch<{ ok: boolean; code: string; companies: number[] }>(
+        `/accounting/chart/account`, { method: 'POST', body: JSON.stringify(body) },
+      ),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['chart-union'] });
+      void qc.invalidateQueries({ queryKey: ['accounts'] });
+    },
+  });
+};
+
+/* 改码全账跟 (owner 2026-09-03): one call, and the GL, vouchers, settlement
+   config and role bindings all carry the new code — or the database refuses
+   and NOTHING moved. The refusal sentence comes back verbatim for the dialog. */
+export const useChartRename = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { oldCode: string; newCode: string }) =>
+      authedFetch<{ ok: boolean; moved: Record<string, number> }>(
+        `/accounting/chart/rename`, { method: 'PUT', body: JSON.stringify(body) },
+      ),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['chart-union'] });
+      void qc.invalidateQueries({ queryKey: ['accounts'] });
+    },
+  });
+};
+
+export const useChartUpdate = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { code: string; name?: string; accountType?: string; accMoney?: boolean }) =>
+      authedFetch<{ ok: boolean; companies: number }>(
+        `/accounting/chart/update`, { method: 'PUT', body: JSON.stringify(body) },
+      ),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['chart-union'] });
+      void qc.invalidateQueries({ queryKey: ['accounts'] });
+    },
+  });
+};
+
+/* Only a NEVER-used code deletes; anything referenced comes back as a 409
+   naming the holdouts — the page shows that sentence and offers the tick
+   column instead. */
+export const useChartDelete = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (code: string) =>
+      authedFetch<{ ok: boolean; companies: number }>(
+        `/accounting/chart/account?code=${encodeURIComponent(code)}`, { method: 'DELETE' },
       ),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['chart-union'] });

@@ -45,7 +45,10 @@ import {
   bankLineReceipt, bankLineMatch, bankLineIgnore, bankLineUndo,
 } from './accounting-bank';
 import { payoutUpload, payoutList } from './accounting-payouts';
-import { chartUnionHandler, chartTickHandler, chartImportHandler } from './accounting-chart';
+import {
+  chartUnionHandler, chartTickHandler, chartImportHandler,
+  chartRenameHandler, chartUpdateHandler, chartDeleteHandler, chartCreateHandler,
+} from './accounting-chart';
 import { dateOrNull } from '../lib/date-coerce';
 
 /* THE GENERAL LEDGER HAD NO PERMISSION CHECK AT ALL — eleven routes, zero
@@ -116,6 +119,10 @@ accounting.get('/bank/setup', bankSetup);
 accounting.get('/chart', chartUnionHandler);
 accounting.put('/chart/tick', chartTickHandler);
 accounting.post('/chart/import', chartImportHandler);
+accounting.put('/chart/rename', chartRenameHandler);
+accounting.put('/chart/update', chartUpdateHandler);
+accounting.post('/chart/account', chartCreateHandler);
+accounting.delete('/chart/account', chartDeleteHandler);
 accounting.get('/bank/rules', bankRulesList);
 accounting.post('/bank/rules', bankRuleCreate);
 accounting.patch('/bank/rules/:id', bankRuleUpdate);
@@ -153,8 +160,10 @@ accounting.get('/accounts', async (c) => {
     .from('accounts')
     /* acc_money marks the accounts that ARE money (bank / cash / e-wallet —
        the Daily Bank set). The PV "Paid From" picker offers only these; the
-       flag rides along so screens don't hardcode code ranges. */
-    .select('account_code, account_name, account_type, parent_code, is_active, acc_money');
+       flag rides along so screens don't hardcode code ranges. special_type is
+       the AutoCount special column (0347) — pickers hide the SDC/SCC/SBS
+       control accounts by it. */
+    .select('account_code, account_name, account_type, parent_code, is_active, acc_money, special_type');
   q = scopeToCompany(q, c);
   const { data, error } = await q.order('account_code');
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);

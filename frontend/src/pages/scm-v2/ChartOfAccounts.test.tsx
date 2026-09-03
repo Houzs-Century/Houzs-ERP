@@ -17,14 +17,24 @@ import * as XLSX from 'xlsx';
 
 const tickAsync = vi.fn(async (_b: unknown) => ({}));
 const importAsync = vi.fn(async (_b: unknown) => ({ ok: true, imported: 3, shared: 2, sharedTo: [2] }));
+const renameAsync = vi.fn(async (_b: unknown) => ({ ok: true, moved: { accounts: 2, journal_lines: 3 } }));
+const createAsync = vi.fn(async (_b: unknown) => ({ ok: true, code: '305-0010', companies: [1, 2] }));
+const updateAsync = vi.fn(async (_b: unknown) => ({ ok: true, companies: 2 }));
+const deleteAsync = vi.fn(async (_c: unknown) => ({ ok: true, companies: 2 }));
 vi.mock('../../vendor/scm/lib/accounting-queries', () => ({
+  isControlSpecial: (s: string | null | undefined) => s === 'SDC' || s === 'SCC' || s === 'SBS',
   useChartUnion: () => ({ data: { companies: [{ id: 1, code: 'HOUZS' }, { id: 2, code: '2990' }], accounts: [
-    { code: '310-0000', name: 'CASH AT BANK', type: 'ASSET', parentCode: null, accMoney: false, perCompany: { 1: { active: true } } },
-    { code: '310-0010', name: 'CASH AT BANK - MAYBANK', type: 'ASSET', parentCode: '310-0000', accMoney: true, perCompany: { 1: { active: true } } },
-    { code: '900-A002', name: 'ADVERTISEMENT', type: 'EXPENSE', parentCode: null, accMoney: false, perCompany: { 1: { active: true }, 2: { active: true } } },
+    { code: '310-0000', name: 'CASH AT BANK', type: 'ASSET', parentCode: null, accMoney: false, special: null, perCompany: { 1: { active: true } } },
+    { code: '310-0010', name: 'CASH AT BANK - MAYBANK', type: 'ASSET', parentCode: '310-0000', accMoney: true, special: 'SBK', perCompany: { 1: { active: true } } },
+    { code: '400-0000', name: 'ACCOUNT PAYABLE', type: 'LIABILITY', parentCode: null, accMoney: false, special: 'SCC', perCompany: { 1: { active: true } } },
+    { code: '900-A002', name: 'ADVERTISEMENT', type: 'EXPENSE', parentCode: null, accMoney: false, special: null, perCompany: { 1: { active: true }, 2: { active: true } } },
   ] }, isLoading: false, error: null }),
   useChartTick: () => ({ mutateAsync: tickAsync, isPending: false }),
   useChartImport: () => ({ mutateAsync: importAsync, isPending: false }),
+  useChartRename: () => ({ mutateAsync: renameAsync, isPending: false }),
+  useChartUpdate: () => ({ mutateAsync: updateAsync, isPending: false }),
+  useChartDelete: () => ({ mutateAsync: deleteAsync, isPending: false }),
+  useChartCreate: () => ({ mutateAsync: createAsync, isPending: false }),
 }));
 vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ can: () => true }) }));
 const confirmFn = vi.fn(async (_a: unknown) => true);
@@ -56,7 +66,7 @@ describe('parseChartXlsx — the AutoCount report shape', () => {
 
     expect(p.rows).toHaveLength(5);
     const mbb = p.rows.find((r) => r.code === '310-0010')!;
-    expect(mbb).toMatchObject({ parentCode: '310-0000', accMoney: true, accountType: 'ASSET', shared: false });
+    expect(mbb).toMatchObject({ parentCode: '310-0000', accMoney: true, accountType: 'ASSET', shared: false, specialType: 'SBK' });
     const parent = p.rows.find((r) => r.code === '310-0000')!;
     expect(parent).toMatchObject({ parentCode: null, accMoney: false, shared: true });
     expect(p.rows.find((r) => r.code === '900-A002')).toMatchObject({ accountType: 'EXPENSE', shared: true });
@@ -85,6 +95,68 @@ describe('the tick grid', () => {
     await waitFor(() => expect(confirmFn).toHaveBeenCalled());
     expect(JSON.stringify(confirmFn.mock.calls[0]![0])).toMatch(/1 active sub-account/);
     await waitFor(() => expect(tickAsync).toHaveBeenCalledWith({ companyId: 1, code: '310-0000', active: false }));
+  });
+});
+
+describe('fold / edit / delete — the owner points 1, 2 and 4', () => {
+  test('collapsing a header hides its subtree; expanding brings it back', () => {
+    draw();
+    expect(screen.getByText('310-0010')).toBeTruthy();
+    fireEvent.click(screen.getByLabelText('Collapse 310-0000'));
+    expect(screen.queryByText('310-0010')).toBeNull();
+    fireEvent.click(screen.getByLabelText('Expand 310-0000'));
+    expect(screen.getByText('310-0010')).toBeTruthy();
+  });
+
+  test('a control account wears its badge', () => {
+    draw();
+    expect(screen.getByText(/SCC · control/)).toBeTruthy();
+  });
+
+  test('changing the code confirms 改码全账跟 and calls the rename with both codes', async () => {
+    renameAsync.mockClear(); confirmFn.mockClear();
+    draw();
+    fireEvent.click(screen.getByLabelText('Edit 310-0010'));
+    const codeInput = screen.getByDisplayValue('310-0010');
+    fireEvent.change(codeInput, { target: { value: '311-0010' } });
+    fireEvent.click(screen.getByText('Save'));
+    await waitFor(() => expect(confirmFn).toHaveBeenCalled());
+    expect(JSON.stringify(confirmFn.mock.calls[0]![0])).toMatch(/改码全账跟/);
+    await waitFor(() => expect(renameAsync).toHaveBeenCalledWith({ oldCode: '310-0010', newCode: '311-0010' }));
+  });
+
+  test('a name-only change skips the rename and rides the update', async () => {
+    renameAsync.mockClear(); updateAsync.mockClear();
+    draw();
+    fireEvent.click(screen.getByLabelText('Edit 900-A002'));
+    fireEvent.change(screen.getByDisplayValue('ADVERTISEMENT'), { target: { value: 'ADVERTISING' } });
+    fireEvent.click(screen.getByText('Save'));
+    await waitFor(() => expect(updateAsync).toHaveBeenCalledWith({ code: '900-A002', name: 'ADVERTISING' }));
+    expect(renameAsync).not.toHaveBeenCalled();
+  });
+
+  test('Add account creates once with the ticked companies and the parent', async () => {
+    createAsync.mockClear();
+    draw();
+    fireEvent.click(screen.getByText('Add account'));
+    fireEvent.change(screen.getByPlaceholderText('305-0010'), { target: { value: '305-0010' } });
+    const name = screen.getAllByDisplayValue('').find((el) => String(el.closest('label')?.textContent).includes('Name'))!;
+    fireEvent.change(name, { target: { value: 'AHMAD BIN ALI' } });
+    fireEvent.change(screen.getByPlaceholderText('305-0000'), { target: { value: '305-0000' } });
+    fireEvent.click(screen.getByLabelText('new account for 2990')); // untick 2990 → HOUZS only
+    fireEvent.click(screen.getByText('Create'));
+    await waitFor(() => expect(createAsync).toHaveBeenCalledWith({
+      code: '305-0010', name: 'AHMAD BIN ALI', accountType: 'ASSET',
+      parentCode: '305-0000', accMoney: false, companyIds: [1],
+    }));
+  });
+
+  test('delete confirms, then sends the code', async () => {
+    deleteAsync.mockClear(); confirmFn.mockClear();
+    draw();
+    fireEvent.click(screen.getByLabelText('Delete 900-A002'));
+    await waitFor(() => expect(deleteAsync).toHaveBeenCalledWith('900-A002'));
+    expect(JSON.stringify(confirmFn.mock.calls[0]![0])).toMatch(/NO transactions/);
   });
 });
 
