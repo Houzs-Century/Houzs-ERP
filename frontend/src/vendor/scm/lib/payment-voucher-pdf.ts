@@ -26,7 +26,7 @@ import {
 /* The status WORD comes from the one home for it (POSTED prints "Approved" —
    the four-layer vocabulary, docs/modules/document-status-vocabulary.md). */
 import { statusLabel } from './status-pill';
-import { mergePdfWithAttachments, type PdfAttachment } from './pdf-attach';
+import { fetchPvPrintBundle } from './payment-voucher-queries';
 
 export type PvPdfHeader = {
   pv_number: string; status: string; voucher_date: string | null;
@@ -211,25 +211,40 @@ export async function renderPaymentVoucherInto(
   }
 }
 
-/* Single voucher → its own file; attachments (when given) merge AFTER the
-   voucher page, in the order handed in (= sort_no = attach order). */
+/* jsPDF output → base64, chunked: fromCharCode over one spread stack-overflows
+   on a multi-page voucher, and the payload here is the RENDERED page (small),
+   not the bills — those never leave the server. */
+export function pdfBytesToBase64(buf: ArrayBuffer): string {
+  const bytes = new Uint8Array(buf);
+  let bin = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(bin);
+}
+
+/* Single voucher → its own file. `withFilesOf` = the pv id whose STORED files
+   should follow the page: the merge happens on the Worker (print-bundle —
+   the files live there; see fetchPvPrintBundle), and the finished PDF comes
+   back for the same three exits. */
 export async function generatePaymentVoucherPdf(
   header: PvPdfHeader,
   lines: PvPdfLine[],
   allocations: PvPdfAllocation[],
   accountLabel: AccountLabeller,
-  opts?: { action?: PdfAction; attachments?: PdfAttachment[] },
+  opts?: { action?: PdfAction; withFilesOf?: string | null },
 ): Promise<void> {
   const { jsPDF } = await import('jspdf');
   const autoTable = (await import('jspdf-autotable')).default;
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
   await renderPaymentVoucherInto(doc, autoTable, header, lines, allocations, accountLabel);
   const fileName = `${header.pv_number}-${safeName(header.payee_name)}.pdf`;
-  const attachments = opts?.attachments ?? [];
-  if (attachments.length === 0) {
+  if (!opts?.withFilesOf) {
     deliverPdf(doc, fileName, opts?.action);
     return;
   }
-  const merged = await mergePdfWithAttachments(doc.output('arraybuffer'), attachments);
-  deliverPdfBlob(new Blob([merged as unknown as BlobPart], { type: 'application/pdf' }), fileName, opts?.action);
+  const blob = await fetchPvPrintBundle([
+    { pvId: opts.withFilesOf, voucherBase64: pdfBytesToBase64(doc.output('arraybuffer') as ArrayBuffer) },
+  ]);
+  deliverPdfBlob(blob, fileName, opts?.action);
 }

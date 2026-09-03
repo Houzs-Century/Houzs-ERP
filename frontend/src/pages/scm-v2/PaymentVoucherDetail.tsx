@@ -33,11 +33,10 @@ import {
   useApprovePaymentVoucher,
   useRejectPaymentVoucher,
   useSupplierAdvances, useApplyAdvance,
-  usePvFiles, useUploadPvFile, useDeletePvFile, fetchPvFileBlobUrl, fetchPvFileBytes, fileToBase64, PV_FILE_ACCEPT,
+  usePvFiles, useUploadPvFile, useDeletePvFile, fetchPvFileBlobUrl, fileToBase64, PV_FILE_ACCEPT,
 } from '../../vendor/scm/lib/payment-voucher-queries';
 import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
 import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
-import type { PdfAttachment } from '../../vendor/scm/lib/pdf-attach';
 import { useAccounts, type Account } from '../../vendor/scm/lib/accounting-queries';
 import { usePurchaseInvoices } from '../../vendor/scm/lib/purchase-invoice-queries';
 import { useSuppliers, useSupplierDetail } from '../../vendor/scm/lib/suppliers-queries';
@@ -150,21 +149,17 @@ export const PaymentVoucherDetail = () => {
   const suppliersQ = useSuppliers({ status: 'ACTIVE' });
 
   /* ── Print — the voucher WITH its evidence (owner 2026-09-03: print pv
-     include ocr 的文件一起). The stored files stream down and merge AFTER the
-     voucher page, in sort_no order. The file list must be an ANSWER before
-     anything renders: printing a voucher quietly missing its bills is the
-     dishonest branch, so an unloaded/failed list aborts with a sentence. */
+     include ocr 的文件一起). The client renders the voucher page; the Worker
+     appends the stored files where they live (print-bundle) and hands back
+     one PDF. The file LIST must be an answer before anything renders:
+     printing a voucher quietly missing its bills is the dishonest branch,
+     so an unloaded/failed list aborts with a sentence. */
   const filesQ = usePvFiles(id || null);
   const deliverPrintPdf = (action: PdfAction) => {
     if (!pv) return;
     return (async () => {
       const rows = filesQ.data ? filesQ.data.files : (await filesQ.refetch()).data?.files;
       if (!rows) throw new Error("The voucher's file list could not be loaded — nothing was printed. Try again.");
-      const attachments: PdfAttachment[] = [];
-      for (const f of rows) {
-        const { bytes, mime } = await fetchPvFileBytes(id, f.id);
-        attachments.push({ fileName: f.file_name, mime, bytes });
-      }
       const { generatePaymentVoucherPdf } = await import('../../vendor/scm/lib/payment-voucher-pdf');
       type A = Parameters<typeof generatePaymentVoucherPdf>;
       await generatePaymentVoucherPdf(
@@ -172,7 +167,7 @@ export const PaymentVoucherDetail = () => {
         lines as unknown as A[1],
         allocations as unknown as A[2],
         accountLabel,
-        { action, attachments },
+        { action, withFilesOf: rows.length > 0 ? id : null },
       );
     })().catch((e: unknown) => {
       notify({ title: 'PDF generation failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });

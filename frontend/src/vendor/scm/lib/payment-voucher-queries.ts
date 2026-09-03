@@ -317,10 +317,27 @@ export async function fetchPvFileBlobUrl(pvId: string, fileId: string): Promise<
   }));
 }
 
-/* One attachment's raw bytes — what the print pipeline feeds pdf-attach.ts.
-   The mime comes from the stored index row via the stream's content-type. */
-export async function fetchPvFileBytes(pvId: string, fileId: string): Promise<{ bytes: ArrayBuffer; mime: string }> {
-  const res = await fetchPvFileResponse(pvId, fileId);
-  const mime = res.headers.get('content-type') ?? 'application/octet-stream';
-  return consumeCorrelated(res, async () => ({ bytes: await res.arrayBuffer(), mime }));
+/* The print's merge lives ON THE WORKER (backend pv-files.ts print-bundle +
+   lib/pdf-attach.ts): the stored bills are in R2 next door, and pdf-lib in
+   the browser would cost ~200KB gzip against a bundle gate that allows one
+   change +60. So the client posts the RENDERED voucher page(s) up — one
+   part per voucher — and receives one finished PDF back: voucher A, A's
+   files in sort order, voucher B, B's… Raw fetch (binary response;
+   authedFetch JSON-parses). */
+export async function fetchPvPrintBundle(parts: Array<{ pvId: string; voucherBase64: string }>): Promise<Blob> {
+  const token = readAuthToken();
+  if (!token) throw new Error('Your session has expired — please sign in again.');
+  let signal: AbortSignal | undefined;
+  try { signal = AbortSignal.timeout(120_000); } catch { signal = undefined; } // pre-2022 browsers
+  const res = await correlatedFetch(`${API_URL}/payment-vouchers/print-bundle`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', ...companyHeader() },
+    body: JSON.stringify({ parts }),
+    signal,
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '<no body>');
+    throw correlateError(new Error(humanApiError(res.status, text)), requestIdFromResponse(res));
+  }
+  return consumeCorrelated(res, () => res.blob());
 }

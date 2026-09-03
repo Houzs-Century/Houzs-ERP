@@ -18,6 +18,7 @@
 
 import { hasHouzsPerm } from '../lib/houzs-perms';
 import { requireActiveCompanyId, scopeToCompany } from '../lib/companyScope';
+import { assemblePvBatchPdf, type PdfAttachment } from '../lib/pdf-attach';
 
 type Row = Record<string, any>;
 
@@ -125,6 +126,95 @@ export const streamPvFileHandler = async (c: any): Promise<Response> => {
       'content-type': (row as Row).mime,
       'content-disposition': `inline; filename="${String((row as Row).file_name).replace(/"/g, '')}"`,
       'cache-control': 'private, max-age=300',
+    },
+  });
+};
+
+/* ── POST /payment-vouchers/print-bundle ────────────────────────────────────
+   The print's merge, done WHERE THE FILES LIVE (see lib/pdf-attach.ts for
+   why not the browser). Body: { parts: [{ pvId, voucherBase64 }] } — each
+   part is ONE voucher's rendered page(s) (jsPDF output, client-side, so the
+   letterhead/CJK pipeline stays where it is); the response is one PDF:
+   voucher A, A's stored files in sort_no order, voucher B, B's… A part
+   whose voucher cannot be loaded fails the WHOLE request by pv — a bundle
+   quietly missing a voucher is the dishonest branch. A stored file whose R2
+   object is gone becomes a notice page (the index said it existed; paper
+   must say it didn't print). Reading rides the voucher (area guard). */
+const MAX_BUNDLE_PARTS = 30;
+const MAX_VOUCHER_BYTES = 10 * 1024 * 1024;
+
+const decodeB64 = (b64: string): Uint8Array | null => {
+  try {
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
+    return bytes;
+  } catch { return null; }
+};
+
+export const printPvBundleHandler = async (c: any): Promise<Response> => {
+  const bucket = (c.env as { SLIPS?: { get: (k: string) => Promise<any> } }).SLIPS;
+  if (!bucket) return c.json({ error: 'r2_not_configured', reason: 'R2 binding SLIPS not configured' }, 500);
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json({ error: 'no_company' }, 409);
+  const sb = c.get('supabase');
+
+  let body: any;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
+  const parts = Array.isArray(body?.parts) ? body.parts : [];
+  if (parts.length === 0) return c.json({ error: 'no_parts', message: 'Nothing to print.' }, 400);
+  if (parts.length > MAX_BUNDLE_PARTS) {
+    return c.json({ error: 'too_many_parts', message: `A bundle is capped at ${MAX_BUNDLE_PARTS} vouchers.` }, 400);
+  }
+
+  const assembled: Array<{ voucher: ArrayBuffer; files: PdfAttachment[] }> = [];
+  let firstPvNumber = '';
+  for (const part of parts as Array<{ pvId?: unknown; voucherBase64?: unknown }>) {
+    const pvId = String(part.pvId ?? '');
+    const { data: pv, error: pvErr } = await scopeToCompany(
+      sb.from('payment_vouchers').select('id, pv_number, company_id').eq('id', pvId), c,
+    ).maybeSingle();
+    if (pvErr) return c.json({ error: 'load_failed', reason: pvErr.message }, 500);
+    if (!pv) return c.json({ error: 'not_found', message: `Voucher ${pvId} could not be loaded — nothing was printed.` }, 404);
+    firstPvNumber ||= String((pv as Row).pv_number ?? '');
+
+    const voucherBytes = decodeB64(String(part.voucherBase64 ?? ''));
+    if (!voucherBytes || voucherBytes.byteLength === 0) {
+      return c.json({ error: 'bad_voucher_page', message: `${(pv as Row).pv_number}'s rendered page did not arrive intact.` }, 400);
+    }
+    if (voucherBytes.byteLength > MAX_VOUCHER_BYTES) {
+      return c.json({ error: 'voucher_page_too_large' }, 400);
+    }
+
+    const { data: fileRows, error: listErr } = await scopeToCompany(
+      sb.from('acc_pv_files').select('file_key, file_name, mime, sort_no').eq('pv_id', (pv as Row).id), c,
+    ).order('sort_no');
+    if (listErr) return c.json({ error: 'load_failed', reason: listErr.message }, 500);
+
+    const files: PdfAttachment[] = [];
+    for (const row of (fileRows ?? []) as Row[]) {
+      const obj = await bucket.get(String(row.file_key));
+      if (!obj) {
+        /* The index row exists, the object is gone — the notice-page path
+           makes the absence visible on paper instead of silent. */
+        files.push({ fileName: `${String(row.file_name)} (stored file missing)`, mime: 'application/x-missing', bytes: new ArrayBuffer(0) });
+        continue;
+      }
+      const bytes: ArrayBuffer = typeof obj.arrayBuffer === 'function'
+        ? await obj.arrayBuffer()
+        : await new Response(obj.body).arrayBuffer();
+      files.push({ fileName: String(row.file_name), mime: String(row.mime), bytes });
+    }
+    assembled.push({ voucher: voucherBytes.buffer as ArrayBuffer, files });
+  }
+
+  const merged = await assemblePvBatchPdf(assembled);
+  const name = parts.length === 1 ? `${firstPvNumber || 'payment-voucher'}.pdf` : 'payment-vouchers.pdf';
+  return new Response(merged as unknown as BodyInit, {
+    headers: {
+      'content-type': 'application/pdf',
+      'content-disposition': `inline; filename="${name.replace(/"/g, '')}"`,
+      'cache-control': 'no-store',
     },
   });
 };
