@@ -97,6 +97,7 @@ const ScmPaymentVouchersV2 = lazy(() => import("./pages/scm-v2/PaymentVouchers")
 const ScmPaymentVoucherNewV2 = lazy(() => import("./pages/scm-v2/PaymentVoucherNew").then((m) => ({ default: m.PaymentVoucherNew })));
 const ScmPaymentVoucherScanV2 = lazy(() => import("./pages/scm-v2/PaymentVoucherScan").then((m) => ({ default: m.PaymentVoucherScan })));
 const ScmChartOfAccountsV2 = lazy(() => import("./pages/scm-v2/ChartOfAccounts").then((m) => ({ default: m.ChartOfAccounts })));
+const ScmOtherDebtorsV2 = lazy(() => import("./pages/scm-v2/OtherDebtors").then((m) => ({ default: m.OtherDebtors })));
 const ScmPaymentVoucherDetailV2 = lazy(() => import("./pages/scm-v2/PaymentVoucherDetail").then((m) => ({ default: m.PaymentVoucherDetail })));
 const ScmStockAdjustmentsV2 = lazy(() => import("./pages/scm-v2/StockAdjustments").then((m) => ({ default: m.StockAdjustments })));
 const ScmStockAdjustmentNewV2 = lazy(() => import("./pages/scm-v2/StockAdjustmentNew").then((m) => ({ default: m.StockAdjustmentNew })));
@@ -678,6 +679,7 @@ export default function App() {
         <Route path="/scm/payment-vouchers/new" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmPaymentVoucherNewV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/payment-vouchers/scan" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmPaymentVoucherScanV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/chart-of-accounts" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmChartOfAccountsV2 /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/other-debtors" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmOtherDebtorsV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/payment-vouchers/:id" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmPaymentVoucherDetailV2 /></Scm2990Shell></ScmGuard>} />
         {/* TEMP — vendored 2990's stock-movement pages (wave 4: Adjustments /
             Transfers / Takes), parallel to the native /scm/* below. Each wrapped

@@ -172,6 +172,39 @@ were — only the GL landing follows the code. Contracts:
 the AP_OTHER block of
 `backend/src/scm/routes/apControlCheckUnpostedPi.test.ts`.
 
+**Other Debtors (2026-09-03, the owner confirming the design line by line:
+other debtor 主要就是我会开 bill 其他和生意性质没有关系的人或公司收回钱)**:
+a counterparty REGISTRY plus two documents, at /scm/other-debtors
+(handlers in `other-debtors.ts`; the mount sits beside the PV router in
+`backend/src/scm/index.ts` under the finance area guard, mirrored in
+`backend/src/scm/lib/scm-areas.ts`'s SCM_AREA_MOUNTS table, and the nav
+entry joins Finance in `frontend/src/components/Sidebar.tsx`; permission
+keys are the PV family's on purpose — the same people raise, prepare,
+check and approve money documents). 资料 lives in
+the registry, never as chart sub-accounts: the GL keeps ONE control,
+305-0000, as role AR_OTHER (default in acc/rules.ts, CONTROL_ROLES member,
+so manual journals refuse it and the self-check runs a fourth scan-only arm
+on it — family ODB/ODR). A **Debtor Bill** posts DIRECTLY on create (his
+call: bill 直接过账): Dr AR_OTHER / Cr each line's own account (明细行自由
+选户口 — every credit line walks `requireLeafAccount`, so headers and
+control accounts refuse), source ODB, minted `<prefix>ODB-yymm-nnn`, and
+the create is atomic — a failed journal takes the bill back out with it.
+Cancel reverses the journal (ODB_REVERSAL) and refuses once any money was
+received. A **Receipt** walks the PV's four layers verbatim (Draft →
+Prepared → Checked → Approved, reject 一律退回 Draft clearing every mark,
+withdraw only before checked, approve stamps once and a resume never
+rewrites it): approve posts Dr bank / Cr AR_OTHER (source ODR) and knocks
+the ticked bills off AP-Payment-style — tick pays in full, type for
+partial, over-allocation refuses at raise time and the approve clamps at
+each bill's live outstanding (a concurrent receipt may have landed first);
+a fully-knocked bill flips PAID. Receipts reach Daily Bank for free: the
+posted ODR debits a money account and Daily Bank reads the GL — display
+polish deferred at the owner's word (具体要显示什么到时再决定).
+Contracts: `backend/tests/otherDebtors.test.ts` (the route contract with
+the REAL engine posting into the harness), `OtherDebtors.test.tsx`
+(registry, bill lines, tick-full/type-partial, the four-layer buttons).
+Tables land in migration 0350.
+
 **One door to open an account (2026-09-03, the owner: 照理说应该维护
 overall chart of account 罢了)**: `POST /accounting/chart/account` creates
 the definition ONCE and lands it in every company the caller ticks (granted

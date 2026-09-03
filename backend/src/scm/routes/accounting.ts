@@ -906,14 +906,15 @@ export const controlCheckHandler = async (c: any) => {
   type CheckOk = { role: string; accountCode: string; glBalanceSen: number; driftDocs: Drift[]; foreignLines: Foreign[]; ok: boolean };
   type CheckErr = { role: string; accountCode: string; error: string };
 
-  const runCheck = async (role: 'AR' | 'AP' | 'AP_OTHER', accountCode: string): Promise<CheckOk | CheckErr> => {
+  const runCheck = async (role: 'AR' | 'AP' | 'AP_OTHER' | 'AR_OTHER', accountCode: string): Promise<CheckOk | CheckErr> => {
     const expectedSource = role === 'AR' ? 'SI' : 'PI';
-    /* AP_OTHER (405-0000, the 2026-09-03 split): the document↔journal drift
-       walk below is per-DOCUMENT and control-agnostic — the AP arm already
-       covers every PI once, and running it again here would list the same
-       drift twice. This arm contributes what IS control-specific: the GL
-       balance of 405-0000 and any foreign line parked on it. */
-    const docDrift = role !== 'AP_OTHER';
+    /* AP_OTHER (405-0000, the 2026-09-03 split) and AR_OTHER (305-0000, the
+       Other Debtors module): the document↔journal drift walk below is
+       per-DOCUMENT and control-agnostic — the AP arm already covers every PI
+       once, and a debtor bill cannot exist without its journal (the create is
+       atomic). These arms contribute what IS control-specific: the GL balance
+       and any foreign line parked on the control. */
+    const docDrift = role !== 'AP_OTHER' && role !== 'AR_OTHER';
 
     const jeByDoc = new Map<string, { jeTotal: number }>();
     if (docDrift) {
@@ -1002,7 +1003,9 @@ export const controlCheckHandler = async (c: any) => {
        the finding. */
     const family = role === 'AR'
       ? new Set(['SI', 'SI_REVERSAL', 'SOPAY', 'SOPAY_REVERSAL', 'SIPAY', 'SIPAY_REVERSAL'])
-      : new Set(['PI', 'PI_REVERSAL', 'PV', 'PV_REVERSAL']);
+      : role === 'AR_OTHER'
+        ? new Set(['ODB', 'ODB_REVERSAL', 'ODR', 'ODR_REVERSAL'])
+        : new Set(['PI', 'PI_REVERSAL', 'PV', 'PV_REVERSAL']);
     for (const l of (lines ?? []) as Array<{ je_no: string; source_type: string; debit_sen: number; credit_sen: number }>) {
       bal += Number(l.debit_sen ?? 0) - Number(l.credit_sen ?? 0);
       if (!family.has(l.source_type)) {
@@ -1015,6 +1018,7 @@ export const controlCheckHandler = async (c: any) => {
 
   const checks = [
     await runCheck('AR', roles.AR),
+    await runCheck('AR_OTHER', roles.AR_OTHER),
     await runCheck('AP', roles.AP),
     await runCheck('AP_OTHER', roles.AP_OTHER),
   ];
