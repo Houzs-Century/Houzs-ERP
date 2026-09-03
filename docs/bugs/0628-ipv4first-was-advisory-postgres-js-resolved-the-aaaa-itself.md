@@ -38,4 +38,13 @@ happens to use. Sibling of [0617](0617-first-strike-scripts-die-on-the-sleeping-
 the retry cures the nap, the pinned family cures the route, and a script
 first striking a Supabase database wants both.
 
+**Correction (same day).** The mechanism above is wrong. The very next run
+(33708950277) — first with the in-script resolver — printed `getaddrinfo
+ENOTFOUND` for the A record: the host had NO IPv4 address for any knob or
+resolver to prefer, because the DSN pointed at the wrong database's
+direct host entirely. The knob was never the story; the secret was. The
+pinned-family lookup stays (it is how the truth surfaced, and it serves
+the dual-stack staging host), but the actual bug is
+[0629](0629-the-seed-job-read-shadow-secrets-environment-was-the-load-be.md).
+
 **Ref.** fix/seed-chart-params, 2026-09-03.
