@@ -63,18 +63,41 @@ const sharedRows = rows.filter((r) => sharedCodes.has(r.code));
    answering) instance — pg-migrate retries three times for exactly this.
    Connect with the same patience. */
 async function connectWithRetry() {
+  /* Runs 33705859454 / 33706489206 / 33707525935: every strike hit the AAAA
+     record and ENETUNREACH'd — NODE_OPTIONS=--dns-result-order=ipv4first did
+     not reach postgres.js's own resolution, while pg-migrate connected first
+     try in the same minute. So resolve the A record OURSELVES and hand the
+     client the IPv4 literal (ssl:'require' does not verify the certificate
+     chain, so an IP host is fine); the hostname path stays as the fallback. */
+  const { lookup } = await import("node:dns/promises");
+  const parsed = new URL(DSN);
+  let hosts = [{ label: parsed.hostname, opts: {} }];
+  if (!/^\d+\.\d+\.\d+\.\d+$/.test(parsed.hostname)) {
+    try {
+      const { address } = await lookup(parsed.hostname, { family: 4 });
+      hosts = [
+        { label: `${address} (A record of ${parsed.hostname})`, opts: { host: address, port: Number(parsed.port || 5432) } },
+        { label: parsed.hostname, opts: {} },
+      ];
+    } catch (e) {
+      console.error(`no A record for ${parsed.hostname} (${e?.message ?? e}) — using the hostname as-is`);
+    }
+  }
   let last;
   for (let attempt = 1; attempt <= 3; attempt += 1) {
-    const client = postgres(DSN, { ssl: "require", prepare: false, max: 1, connect_timeout: 20 });
-    try {
-      await client`SELECT 1`;
-      return client;
-    } catch (e) {
-      last = e;
-      console.error(`connect attempt ${attempt}/3 failed: ${e?.message ?? e}`);
-      await client.end({ timeout: 1 }).catch(() => {});
-      if (attempt < 3) await new Promise((r) => setTimeout(r, 10_000));
+    for (const h of hosts) {
+      const client = postgres(DSN, { ssl: "require", prepare: false, max: 1, ...h.opts });
+      try {
+        await client`SELECT 1`;
+        console.log(`connected via ${h.label}`);
+        return client;
+      } catch (e) {
+        last = e;
+        console.error(`connect attempt ${attempt}/3 via ${h.label} failed: ${e?.message ?? e}`);
+        await client.end({ timeout: 1 }).catch(() => {});
+      }
     }
+    if (attempt < 3) await new Promise((r) => setTimeout(r, 10_000));
   }
   throw last;
 }
@@ -88,6 +111,7 @@ const toDbRow = (companyId, r) => ({
   account_type: r.accountType,
   parent_code: r.parentCode,
   acc_money: r.accMoney === true,
+  special_type: r.special ?? null,
   is_active: true,
 });
 
@@ -117,12 +141,13 @@ try {
       for (let i = 0; i < ordered.length; i += 100) {
         const chunk = ordered.slice(i, i + 100).map((r) => toDbRow(co, r));
         await sql`
-          INSERT INTO scm.accounts ${sql(chunk, "company_id", "account_code", "account_name", "account_type", "parent_code", "acc_money", "is_active")}
+          INSERT INTO scm.accounts ${sql(chunk, "company_id", "account_code", "account_name", "account_type", "parent_code", "acc_money", "special_type", "is_active")}
           ON CONFLICT (company_id, account_code) DO UPDATE SET
             account_name = EXCLUDED.account_name,
             account_type = EXCLUDED.account_type,
             parent_code  = EXCLUDED.parent_code,
             acc_money    = EXCLUDED.acc_money,
+            special_type = EXCLUDED.special_type,
             is_active    = TRUE`;
       }
       console.log(`company ${co}: applied.`);
@@ -146,10 +171,11 @@ try {
         const probe = subset.find((r) => r.code === "310-0010") ?? subset.find((r) => r.parentCode);
         if (probe) {
           const [row] = await v`
-            SELECT account_name, account_type, parent_code, acc_money FROM scm.accounts
+            SELECT account_name, account_type, parent_code, acc_money, special_type FROM scm.accounts
             WHERE company_id = ${co} AND account_code = ${probe.code}`;
           if (!row || row.account_name !== probe.name || row.account_type !== probe.accountType
-            || row.parent_code !== probe.parentCode || row.acc_money !== (probe.accMoney === true)) {
+            || row.parent_code !== probe.parentCode || row.acc_money !== (probe.accMoney === true)
+            || row.special_type !== (probe.special ?? null)) {
             throw new Error(`company ${co}: ${probe.code} shape mismatch: ${JSON.stringify(row)}`);
           }
         }

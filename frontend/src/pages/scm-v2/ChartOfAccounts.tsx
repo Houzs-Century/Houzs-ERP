@@ -19,10 +19,11 @@
 
 import { useMemo, useRef, useState } from 'react';
 import * as XLSX from 'xlsx';
-import { Upload } from 'lucide-react';
+import { ChevronDown, ChevronRight, Pencil, Trash2, Upload } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import {
   useChartUnion, useChartTick, useChartImport,
+  useChartRename, useChartUpdate, useChartDelete, isControlSpecial,
   type ChartRow, type ChartImportRow,
 } from '../../vendor/scm/lib/accounting-queries';
 import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
@@ -87,6 +88,7 @@ export function parseChartXlsx(wb: XLSX.WorkBook): ParsedChart {
       accountType: SECTION_TYPE[section] ?? 'EXPENSE',
       parentCode: depth > 0 ? (prevByDepth[depth - 1] ?? null) : null,
       accMoney: special === 'SBK' || special === 'SCH',
+      specialType: special || null,
       shared: !isExclusive(code, special),
     });
   }
@@ -130,12 +132,101 @@ export const ChartOfAccounts = () => {
   const unionQ = useChartUnion();
   const tick = useChartTick();
   const doImport = useChartImport();
+  const doRename = useChartRename();
+  const doUpdate = useChartUpdate();
+  const doDelete = useChartDelete();
   const fileRef = useRef<HTMLInputElement>(null);
 
   const companies = unionQ.data?.companies ?? [];
   const accounts = useMemo(() => treeOrder(unionQ.data?.accounts ?? []), [unionQ.data]);
   const [parsed, setParsed] = useState<ParsedChart | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
+
+  /* ── 展开/收缩 (owner point 4): fold a header, its whole subtree hides. ── */
+  const [folded, setFolded] = useState<Set<string>>(new Set());
+  const parentOf = useMemo(() => {
+    const m = new Map<string, string | null>();
+    for (const a of accounts) m.set(a.code, a.parentCode);
+    return m;
+  }, [accounts]);
+  const isHidden = (code: string): boolean => {
+    let cursor = parentOf.get(code) ?? null;
+    for (let depth = 0; cursor && depth < 6; depth += 1) {
+      if (folded.has(cursor)) return true;
+      cursor = parentOf.get(cursor) ?? null;
+    }
+    return false;
+  };
+  const toggleFold = (code: string) => {
+    setFolded((prev) => {
+      const next = new Set(prev);
+      if (next.has(code)) next.delete(code); else next.add(code);
+      return next;
+    });
+  };
+
+  /* ── 改码/改名 (owner point 1): edit panel above the table. A changed code
+     goes through the rename RPC (改码全账跟); name/type ride the update. ── */
+  const [editing, setEditing] = useState<ChartRow | null>(null);
+  const [editCode, setEditCode] = useState('');
+  const [editName, setEditName] = useState('');
+  const [editType, setEditType] = useState<ChartRow['type']>('ASSET');
+  const openEdit = (row: ChartRow) => {
+    setEditing(row);
+    setEditCode(row.code);
+    setEditName(row.name);
+    setEditType(row.type);
+  };
+  const saveEdit = async () => {
+    if (!editing) return;
+    const codeChanged = editCode.trim() !== editing.code;
+    const nameChanged = editName.trim() !== editing.name;
+    const typeChanged = editType !== editing.type;
+    if (!codeChanged && !nameChanged && !typeChanged) { setEditing(null); return; }
+    if (codeChanged) {
+      const ok = await askConfirm({
+        title: `Rename ${editing.code} → ${editCode.trim()}?`,
+        body: '改码全账跟: every journal line, voucher, settlement link and role binding moves to the new code in one transaction — or none of it does.',
+        confirmLabel: 'Rename everywhere',
+      });
+      if (!ok) return;
+    }
+    try {
+      if (codeChanged) {
+        const res = await doRename.mutateAsync({ oldCode: editing.code, newCode: editCode.trim() });
+        const moved = Object.entries(res.moved).filter(([, n]) => Number(n) > 0)
+          .map(([k, n]) => `${k}: ${n}`).join(', ');
+        void notify({ title: `${editing.code} → ${editCode.trim()}`, body: moved ? `Moved — ${moved}.` : 'Renamed.', tone: 'info' });
+      }
+      if (nameChanged || typeChanged) {
+        await doUpdate.mutateAsync({
+          code: codeChanged ? editCode.trim() : editing.code,
+          ...(nameChanged ? { name: editName.trim() } : {}),
+          ...(typeChanged ? { accountType: editType } : {}),
+        });
+      }
+      setEditing(null);
+    } catch (e) {
+      void notify({ title: 'Save failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
+    }
+  };
+
+  /* ── 删除 (owner point 2): only a never-used code dies; the server names
+     every holdout otherwise — that sentence goes straight to the dialog. ── */
+  const onDelete = async (row: ChartRow) => {
+    const ok = await askConfirm({
+      title: `Delete ${row.code} · ${row.name}?`,
+      body: 'Only an account with NO transactions and NO references anywhere can be deleted — otherwise untick it instead. This removes it from every company.',
+      confirmLabel: 'Delete',
+    });
+    if (!ok) return;
+    try {
+      await doDelete.mutateAsync(row.code);
+      void notify({ title: `${row.code} deleted`, body: 'It existed in no ledger — gone from every company.', tone: 'info' });
+    } catch (e) {
+      void notify({ title: 'Cannot delete', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
+    }
+  };
 
   const onTick = async (companyId: number, row: ChartRow, next: boolean) => {
     if (!next) {
@@ -240,6 +331,41 @@ export const ChartOfAccounts = () => {
         </section>
       )}
 
+      {editing && (
+        <section className={styles.card}>
+          <div className={styles.cardHeader}>
+            <h2 className={styles.cardTitle}>Edit {editing.code}</h2>
+          </div>
+          <div className={styles.cardBody} style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-3)', alignItems: 'flex-end', fontSize: 'var(--fs-13)' }}>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>Code — 改码全账跟</span>
+              <input value={editCode} onChange={(e) => setEditCode(e.target.value)}
+                style={{ fontFamily: 'var(--font-mono)', padding: '6px 8px', border: '1px solid var(--border-weak, #d8d5cd)', borderRadius: 6, width: 130 }} />
+            </label>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: '1 1 240px' }}>
+              <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>Name</span>
+              <input value={editName} onChange={(e) => setEditName(e.target.value)}
+                style={{ padding: '6px 8px', border: '1px solid var(--border-weak, #d8d5cd)', borderRadius: 6 }} />
+            </label>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>Type</span>
+              <select value={editType} onChange={(e) => setEditType(e.target.value as ChartRow['type'])}
+                style={{ padding: '6px 8px', border: '1px solid var(--border-weak, #d8d5cd)', borderRadius: 6 }}>
+                {Object.keys(TYPE_TONE).map((t) => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </label>
+            <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
+              <Button variant="primary" size="sm" onClick={() => void saveEdit()} disabled={doRename.isPending || doUpdate.isPending}>
+                {doRename.isPending || doUpdate.isPending ? 'Saving…' : 'Save'}
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => setEditing(null)} disabled={doRename.isPending || doUpdate.isPending}>
+                Cancel
+              </Button>
+            </div>
+          </div>
+        </section>
+      )}
+
       <section className={styles.card}>
         <div className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Every account, every company</h2>
@@ -269,20 +395,40 @@ export const ChartOfAccounts = () => {
                   {companies.map((co) => (
                     <th key={co.id} style={{ padding: '6px 8px', textAlign: 'center' }}>{co.code}</th>
                   ))}
+                  {canManage && <th style={{ padding: '6px 8px' }} aria-label="actions" />}
                 </tr>
               </thead>
               <tbody>
                 {accounts.map((a) => {
                   const isParent = accounts.some((x) => x.parentCode === a.code);
+                  if (isHidden(a.code)) return null;
+                  const isControl = isControlSpecial(a.special);
                   return (
                     <tr key={a.code} style={{ borderBottom: '1px solid var(--border-weak, #f0eee8)' }}>
-                      <td style={{ padding: '4px 8px', fontFamily: 'var(--font-mono)', paddingLeft: a.parentCode ? 28 : 8, fontWeight: isParent ? 700 : 400 }}>
+                      <td style={{ padding: '4px 8px', fontFamily: 'var(--font-mono)', paddingLeft: a.parentCode ? 28 : 8, fontWeight: isParent ? 700 : 400, whiteSpace: 'nowrap' }}>
+                        {isParent ? (
+                          <button
+                            type="button"
+                            aria-label={`${folded.has(a.code) ? 'Expand' : 'Collapse'} ${a.code}`}
+                            onClick={() => toggleFold(a.code)}
+                            style={{ background: 'none', border: 'none', padding: 0, marginRight: 4, cursor: 'pointer', verticalAlign: 'middle', color: 'var(--fg-muted)' }}
+                          >
+                            {folded.has(a.code) ? <ChevronRight size={14} strokeWidth={2} /> : <ChevronDown size={14} strokeWidth={2} />}
+                          </button>
+                        ) : (
+                          <span style={{ display: 'inline-block', width: 18 }} />
+                        )}
                         {a.code}
                       </td>
                       <td style={{ padding: '4px 8px', fontWeight: isParent ? 700 : 400 }}>
                         {a.name}
                         {a.accMoney && <span style={{ marginLeft: 6, fontSize: 'var(--fs-11)', color: 'var(--c-secondary-a, #2F5D4F)' }}>money</span>}
                         {isParent && <span style={{ marginLeft: 6, fontSize: 'var(--fs-11)', color: 'var(--fg-muted)' }}>header</span>}
+                        {a.special != null && a.special !== '' && (
+                          <span style={{ marginLeft: 6, fontSize: 'var(--fs-11)', fontFamily: 'var(--font-mono)', color: isControl ? 'var(--c-festive-b, #B8331F)' : 'var(--fg-muted)' }}>
+                            {a.special}{isControl ? ' · control' : ''}
+                          </span>
+                        )}
                       </td>
                       <td style={{ padding: '4px 8px', fontSize: 'var(--fs-11)', color: TYPE_TONE[a.type] ?? 'inherit' }}>{a.type}</td>
                       {companies.map((co) => {
@@ -301,6 +447,27 @@ export const ChartOfAccounts = () => {
                           </td>
                         );
                       })}
+                      {canManage && (
+                        <td style={{ padding: '4px 8px', whiteSpace: 'nowrap', textAlign: 'right' }}>
+                          <button
+                            type="button"
+                            aria-label={`Edit ${a.code}`}
+                            onClick={() => openEdit(a)}
+                            style={{ background: 'none', border: 'none', padding: 2, cursor: 'pointer', color: 'var(--fg-muted)' }}
+                          >
+                            <Pencil size={14} strokeWidth={1.75} />
+                          </button>
+                          <button
+                            type="button"
+                            aria-label={`Delete ${a.code}`}
+                            onClick={() => void onDelete(a)}
+                            disabled={doDelete.isPending}
+                            style={{ background: 'none', border: 'none', padding: 2, cursor: 'pointer', color: 'var(--fg-muted)' }}
+                          >
+                            <Trash2 size={14} strokeWidth={1.75} />
+                          </button>
+                        </td>
+                      )}
                     </tr>
                   );
                 })}
