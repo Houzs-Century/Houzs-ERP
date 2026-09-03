@@ -102,7 +102,7 @@ describe('AP control check — a confirmed PI with no journal', () => {
 describe('the third arm — AP_OTHER (the 2026-09-03 split)', () => {
   it('runs on 405-0000 and does NOT repeat the per-document drift the AP arm owns', async () => {
     const checks = await allChecks();
-    expect(checks.map((x: any) => x.role)).toEqual(['AR', 'AP', 'AP_OTHER']);
+    expect(checks.map((x: any) => x.role)).toEqual(['AR', 'AR_OTHER', 'AP', 'AP_OTHER']);
     const other = checks.find((x: any) => x.role === 'AP_OTHER')!;
     expect(other.accountCode).toBe('405-0000'); // DEFAULT_ROLE_CODES — no roles rows seeded here
     /* HC-PI-2608-003's missing journal is the AP arm's finding, once. */

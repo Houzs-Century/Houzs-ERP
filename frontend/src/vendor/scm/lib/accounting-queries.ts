@@ -356,3 +356,99 @@ export const useChartDelete = () => {
     },
   });
 };
+
+/* ── Other Debtors (owner 2026-09-03) ───────────────────────────────────────
+   Counterparty registry + Debtor Bills (post directly) + Receipts (the PV's
+   four layers, AP-Payment-style knock-off, partial included). The GL keeps
+   one control (305-0000); per-party truth lives in these tables. */
+export type OtherDebtor = {
+  id: string; name: string; phone: string | null; notes: string | null;
+  is_active: boolean; outstanding_sen: number;
+};
+export type DebtorBill = {
+  id: string; bill_number: string; bill_date: string;
+  total_sen: number; received_sen: number; status: string; notes: string | null;
+};
+export type DebtorReceipt = {
+  id: string; receipt_number: string; receipt_date: string;
+  bank_account_code: string; total_sen: number; status: string;
+  submitted_at: string | null; submitted_by: string | null;
+  checked_at: string | null; checked_by: string | null;
+  approved_at: string | null; approved_by: string | null;
+  posted_at: string | null; notes: string | null;
+};
+
+export const useOtherDebtors = () => baseQuery<{ debtors: OtherDebtor[] }>(
+  ['other-debtors'], `/other-debtors`,
+);
+export const useDebtorDetail = (id: string | null) => useQuery({
+  queryKey: ['other-debtor-detail', id],
+  queryFn: () => authedFetch<{ debtor: OtherDebtor; bills: DebtorBill[]; receipts: DebtorReceipt[] }>(`/other-debtors/${id}`),
+  enabled: !!id,
+});
+
+const invalidateDebtors = (qc: ReturnType<typeof useQueryClient>) => {
+  void qc.invalidateQueries({ queryKey: ['other-debtors'] });
+  void qc.invalidateQueries({ queryKey: ['other-debtor-detail'] });
+};
+
+export const useCreateDebtor = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { name: string; phone?: string; notes?: string }) =>
+      authedFetch<{ ok: boolean; debtor: { id: string } }>(`/other-debtors`, { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: () => invalidateDebtors(qc),
+  });
+};
+export const useUpdateDebtor = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...body }: { id: string; name?: string; phone?: string; notes?: string; isActive?: boolean }) =>
+      authedFetch(`/other-debtors/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+    onSuccess: () => invalidateDebtors(qc),
+  });
+};
+export const useCreateDebtorBill = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ debtorId, ...body }: {
+      debtorId: string; billDate?: string; notes?: string;
+      lines: Array<{ description?: string; creditAccountCode: string; amountSen: number }>;
+    }) => authedFetch<{ ok: boolean; bill: { billNumber: string; totalSen: number } }>(
+      `/other-debtors/${debtorId}/bills`, { method: 'POST', body: JSON.stringify(body) },
+    ),
+    onSuccess: () => invalidateDebtors(qc),
+  });
+};
+export const useCancelDebtorBill = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (billId: string) =>
+      authedFetch(`/other-debtors/bills/${billId}/cancel`, { method: 'POST' }),
+    onSuccess: () => invalidateDebtors(qc),
+  });
+};
+export const useCreateDebtorReceipt = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ debtorId, ...body }: {
+      debtorId: string; receiptDate?: string; bankAccountCode: string; notes?: string;
+      allocations: Array<{ billId: string; amountSen: number }>;
+    }) => authedFetch<{ ok: boolean; receipt: { receiptNumber: string } }>(
+      `/other-debtors/${debtorId}/receipts`, { method: 'POST', body: JSON.stringify(body) },
+    ),
+    onSuccess: () => invalidateDebtors(qc),
+  });
+};
+/* One hook, five doors — the receipt's four-layer actions mirror the PV's. */
+export const useDebtorReceiptAction = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ receiptId, action, note }: {
+      receiptId: string; action: 'submit' | 'withdraw' | 'check' | 'reject' | 'approve'; note?: string;
+    }) => authedFetch(`/other-debtors/receipts/${receiptId}/${action}`, {
+      method: 'POST', body: JSON.stringify(note ? { note } : {}),
+    }),
+    onSuccess: () => invalidateDebtors(qc),
+  });
+};

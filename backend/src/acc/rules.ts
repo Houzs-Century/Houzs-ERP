@@ -39,7 +39,7 @@
 import { accMastersCompanyId } from './masters-company';
 
 export type AccountRole =
-  | 'AR' | 'SALES' | 'INVENTORY' | 'AP' | 'AP_OTHER'
+  | 'AR' | 'AR_OTHER' | 'SALES' | 'INVENTORY' | 'AP' | 'AP_OTHER'
   | 'CASH' | 'BANK_DEFAULT' | 'TRANSIT_EDC' | 'TRANSIT_ONLINE' | 'CUSTOMER_DEPOSITS' | 'OVER_SHORT';
 
 /* Fallback = the accountant's own AutoCount codes (migration 0344; owner
@@ -49,6 +49,7 @@ export type AccountRole =
    AutoCount's free gap — the settlement layer's own accounts. */
 export const DEFAULT_ROLE_CODES: Record<AccountRole, string> = {
   AR: '300-0000',                // ACCOUNT RECEIVEABLE
+  AR_OTHER: '305-0000',          // OTHER DEBTOR (the Other Debtors module's control)
   SALES: '500-0000',             // Sales Revenue (template; refined by the chart import)
   INVENTORY: '330-0000',         // STOCK
   AP: '400-0000',                // ACCOUNT PAYABLE
@@ -64,7 +65,7 @@ export const DEFAULT_ROLE_CODES: Record<AccountRole, string> = {
 /* Control accounts (brief §2.4): system-maintained, and a MANUAL journal may
    not touch them — the engine enforces this. AR and AP today; the
    settlement-in-transit roles join in phase 2. */
-export const CONTROL_ROLES: AccountRole[] = ['AR', 'AP', 'AP_OTHER'];
+export const CONTROL_ROLES: AccountRole[] = ['AR', 'AR_OTHER', 'AP', 'AP_OTHER'];
 
 /** Which AP control a supplier's paper belongs to. 405-x supplier codes are
     AutoCount's OTHER CREDITORS — their bills and payments land on AP_OTHER
@@ -86,6 +87,8 @@ export const REVERSAL_SOURCE: Record<string, string> = {
   SIPAY: 'SIPAY_REVERSAL',
   SETTLE: 'SETTLE_REVERSAL',
   SETTLEADJ: 'SETTLEADJ_REVERSAL',
+  ODB: 'ODB_REVERSAL',
+  ODR: 'ODR_REVERSAL',
 };
 
 export type RoleCodes = Record<AccountRole, string>;

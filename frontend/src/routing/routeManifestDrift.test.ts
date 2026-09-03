@@ -51,7 +51,9 @@ describe("executable route contract", () => {
     // 144 since 2026-08-25: /scm/loading-list, the warehouse no-price loading queue.
     // (143 since 2026-08-25: driver POD; 143 since 2026-08-21: /scm/do-load.)
     // (142 since 2026-08-16: /scm/daily-bank; 141 since 2026-08-15: /autocount-sync.)
-    expect(STAFF_ROUTE_PATTERNS).toHaveLength(149);
+    // 150 since 2026-09-03 evening: /scm/other-debtors — the counterparty
+    // registry, its direct-post bills and its four-layer receipts.
+    expect(STAFF_ROUTE_PATTERNS).toHaveLength(150);
     expect(new Set(STAFF_ROUTE_PATTERNS).size).toBe(STAFF_ROUTE_PATTERNS.length);
     expect([...STAFF_ROUTE_PATTERNS].sort()).toEqual([...appPages].sort());
   });
@@ -77,7 +79,8 @@ describe("executable route contract", () => {
     // (156 since 2026-08-25.)
     // (153 since 2026-08-25: /scm/loading-list.)
     // (152 since 2026-08-21.) (151 since 2026-08-16.) (150 since 2026-08-15.)
-    expect(ROUTE_CONTRACT).toHaveLength(158);
+    // 159 since 2026-09-03 evening — /scm/other-debtors; see the staff-route count above.
+    expect(ROUTE_CONTRACT).toHaveLength(159);
   });
 
   it("keeps every desktop nav destination on a live staff route", () => {
