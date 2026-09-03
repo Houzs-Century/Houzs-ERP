@@ -152,6 +152,26 @@ stock) are locked out of manual picks: `requireLeafAccount` refuses them
 real Postgres with the 0188 FKs verbatim). The page grows fold/expand
 chevrons on headers, an edit panel (code/name/type) and per-row delete.
 
+**The AP split (2026-09-03, the owner deciding with the blast radius on the
+table: 会影响到现在运作的东西吗? → checked → 做)**: 405-x supplier codes are
+AutoCount's OTHER CREDITORS, and their paper books to the AP_OTHER control
+(role default 405-0000) instead of AP (400-0000). ONE home for the prefix —
+`apControlRole` in acc/rules.ts — used by `piLines` (the bill's credit), by
+the AP-payment create guard (`wrong_ap_control` refuses a voucher debiting
+the other supplier-class's control, so an out-of-date client cannot
+mis-book), and mirrored by the AP Payment page for display. AP_OTHER joins
+CONTROL_ROLES (manual journals refuse it) and the self-check grows a third
+arm — balance + foreign-line scan on 405-0000 only, because the
+per-document drift walk is control-agnostic and the AP arm already reports
+each PI once. History moved by migration 0348: exactly one journal
+(2990-PI-2608-018, RM 16,440, the only 405-supplier bill that ever posted)
+reclassed 400-0000 → 405-0000; its July sibling predates the GL foundation
+and has no journal. The supplier LIST and every screen stay exactly as they
+were — only the GL landing follows the code. Contracts:
+`backend/src/acc/apSplit.test.ts`, `backend/tests/pvApControlGuard.test.ts`,
+the AP_OTHER block of
+`backend/src/scm/routes/apControlCheckUnpostedPi.test.ts`.
+
 **One door to open an account (2026-09-03, the owner: 照理说应该维护
 overall chart of account 罢了)**: `POST /accounting/chart/account` creates
 the definition ONCE and lands it in every company the caller ticks (granted

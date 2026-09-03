@@ -192,6 +192,14 @@ the money set). Contract: the leaf + control blocks of
 `backend/tests/accountingChart.test.ts` and
 `frontend/src/vendor/scm/components/AccountSelect.test.tsx`.
 
+**The AP Payment debits the supplier's OWN control (2026-09-03 split)**: a
+405-x supplier is an OTHER CREDITOR — the page composes its GL debit onto
+AP_OTHER (405-0000), everyone else onto AP (400-0000). The prefix rule's one
+home is `apControlRole` (acc/rules.ts); the page's pick is a display mirror
+and the server is the authority: create refuses `wrong_ap_control` when a
+SUPPLIER_PAYMENT debits the wrong class's control. Contracts: the 405 block
+of `PaymentVoucherNew.test.tsx`, `backend/tests/pvApControlGuard.test.ts`.
+
 **Copy as new (2026-09-03, the owner with AutoCount in hand: 我 right click
 就能直接 copy)**: the list row's context menu and the detail header both
 carry "Copy as new", on ANY status — a posted or cancelled voucher is the

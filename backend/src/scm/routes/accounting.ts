@@ -906,17 +906,25 @@ export const controlCheckHandler = async (c: any) => {
   type CheckOk = { role: string; accountCode: string; glBalanceSen: number; driftDocs: Drift[]; foreignLines: Foreign[]; ok: boolean };
   type CheckErr = { role: string; accountCode: string; error: string };
 
-  const runCheck = async (role: 'AR' | 'AP', accountCode: string): Promise<CheckOk | CheckErr> => {
+  const runCheck = async (role: 'AR' | 'AP' | 'AP_OTHER', accountCode: string): Promise<CheckOk | CheckErr> => {
     const expectedSource = role === 'AR' ? 'SI' : 'PI';
+    /* AP_OTHER (405-0000, the 2026-09-03 split): the document↔journal drift
+       walk below is per-DOCUMENT and control-agnostic — the AP arm already
+       covers every PI once, and running it again here would list the same
+       drift twice. This arm contributes what IS control-specific: the GL
+       balance of 405-0000 and any foreign line parked on it. */
+    const docDrift = role !== 'AP_OTHER';
 
-    const { data: jes, error: jesErr } = await sb.from('journal_entries')
-      .select('id, je_no, source_doc_no, total_debit_sen')
-      .eq('company_id', companyId).eq('source_type', expectedSource)
-      .eq('posted', true).eq('reversed', false);
-    if (jesErr) return { role, accountCode, error: jesErr.message };
     const jeByDoc = new Map<string, { jeTotal: number }>();
-    for (const j of (jes ?? []) as Array<{ source_doc_no: string | null; total_debit_sen: number }>) {
-      if (j.source_doc_no) jeByDoc.set(j.source_doc_no, { jeTotal: Number(j.total_debit_sen ?? 0) });
+    if (docDrift) {
+      const { data: jes, error: jesErr } = await sb.from('journal_entries')
+        .select('id, je_no, source_doc_no, total_debit_sen')
+        .eq('company_id', companyId).eq('source_type', expectedSource)
+        .eq('posted', true).eq('reversed', false);
+      if (jesErr) return { role, accountCode, error: jesErr.message };
+      for (const j of (jes ?? []) as Array<{ source_doc_no: string | null; total_debit_sen: number }>) {
+        if (j.source_doc_no) jeByDoc.set(j.source_doc_no, { jeTotal: Number(j.total_debit_sen ?? 0) });
+      }
     }
 
     const drift: Drift[] = [];
@@ -941,7 +949,7 @@ export const controlCheckHandler = async (c: any) => {
           jeByDoc.delete(d.invoice_number);
         }
       }
-    } else {
+    } else if (docDrift) {
       const { data: docs, error } = await sb.from('purchase_invoices')
         .select('invoice_number, total_sen, exchange_rate, status, migrated_no_stock')
         .eq('company_id', companyId);
@@ -1005,7 +1013,11 @@ export const controlCheckHandler = async (c: any) => {
     return { role, accountCode, glBalanceSen: bal, driftDocs: drift, foreignLines: foreign, ok: drift.length === 0 && foreign.length === 0 };
   };
 
-  const checks = [await runCheck('AR', roles.AR), await runCheck('AP', roles.AP)];
+  const checks = [
+    await runCheck('AR', roles.AR),
+    await runCheck('AP', roles.AP),
+    await runCheck('AP_OTHER', roles.AP_OTHER),
+  ];
 
   /* THE THIRD FINDING: money recorded on a document that never reached the
      ledger at all. A booking failure does not fail the operator's save (sales
