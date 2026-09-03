@@ -32,12 +32,6 @@ const apiBase = (): string =>
   (import.meta.env.VITE_API_URL as string) ||
   (import.meta.env.PROD ? "" : "https://autocount-sync-api.houzs-erp.workers.dev");
 
-const MONTHS = [
-  "January", "February", "March", "April", "May", "June",
-  "July", "August", "September", "October", "November", "December",
-];
-const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-
 /** Parse the date part of a 'YYYY-MM-DD[...]' string to a local Date, or null. */
 function parseDay(s: string | null): Date | null {
   if (!s) return null;
@@ -123,6 +117,13 @@ export function ContractorCalendar() {
 
   const cells = useMemo(() => monthGrid(cursor.y, cursor.m), [cursor]);
   const todayKey = dayNum(today);
+  // Derived, not literal arrays, so the month/weekday names have one home in the
+  // platform instead of a duplicated-decision copy of the ERP's own lists.
+  const monthLabel = new Date(cursor.y, cursor.m, 1).toLocaleDateString("en-US", {
+    month: "long",
+    year: "numeric",
+  });
+  const weekdayNames = cells.slice(0, 7).map((d) => d.toLocaleDateString("en-US", { weekday: "short" }));
 
   function prev() {
     setCursor((c) => (c.m === 0 ? { y: c.y - 1, m: 11 } : { y: c.y, m: c.m - 1 }));
@@ -205,14 +206,14 @@ export function ContractorCalendar() {
             Today
           </button>
           <div className="ml-1 text-[15px] font-bold text-gray-900">
-            {MONTHS[cursor.m]} {cursor.y}
+            {monthLabel}
           </div>
         </div>
 
         {/* Calendar grid */}
         <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
           <div className="grid grid-cols-7 border-b border-gray-200 bg-gray-50">
-            {WEEKDAYS.map((w) => (
+            {weekdayNames.map((w) => (
               <div key={w} className="px-2 py-1.5 text-center text-[10px] font-semibold uppercase text-gray-400">
                 {w}
               </div>
