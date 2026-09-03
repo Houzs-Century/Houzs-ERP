@@ -233,48 +233,48 @@ Total: 1114 route registrations across 146 files.
 - L1225  POST   /daily-close/confirm
 
 ## backend/src/scm/routes/mfg-sales-orders.ts  (42)
-- L1150  GET    /
-- L1934  GET    /customers
-- L2011  GET    /my-mtd
-- L2052  GET    /mine
-- L2231  GET    /:docNo/slip-url
-- L2337  GET    /cross-category-eligibility
-- L2360  GET    /cross-category-match
-- L2414  GET    /customer-search
-- L2531  GET    /active-venue
-- L2588  GET    /:docNo
-- L2967  GET    /:docNo/items
-- L3072  GET    /customer-credit/:debtorCode
-- L3137  POST   /backfill-warehouses
-- L5619  POST   /
-- L5705  POST   /recompute-allocation
-- L6060  PATCH  /:docNo/status
-- L6087  DELETE /:docNo
-- L6179  GET    /:docNo/audit-log
-- L6201  GET    /:docNo/status-changes
-- L6217  GET    /:docNo/revisions
-- L6228  GET    /:docNo/price-overrides
-- L6240  POST   /:docNo/items/:itemId/override
-- L7365  PATCH  /:docNo
-- L7625  POST   /:docNo/items
-- L8229  PATCH  /:docNo/items/:itemId
-- L8663  DELETE /:docNo/items/:itemId
-- L9042  POST   /:docNo/items/:itemId/tbc-update
-- L9513  POST   /:docNo/items/:itemId/tbc-swap
-- L10334  POST   /:docNo/items/:itemId/tbc-swap-sofa
-- L10379  POST   /:docNo/items/:itemId/photos
-- L10573  GET    /:docNo/items/:itemId/photos/:photoKey/signed
-- L10588  GET    /:docNo/items/:itemId/photos/:photoKey
-- L10637  DELETE /:docNo/items/:itemId/photos/:photoKey
-- L10704  GET    /:docNo/payments
-- L10757  POST   /:docNo/payments
-- L10945  PATCH  /:docNo/payments/:id
-- L11149  DELETE /:docNo/payments/:id
-- L11266  GET    /:docNo/payments/:id/slip-url
-- L11320  POST   /:docNo/payments/:id/slip
-- L11417  GET    /debtors/search
-- L11447  PATCH  /:docNo/items/:itemId/stock-status
-- L11587  POST   /:docNo/amendments
+- L1143  GET    /
+- L1927  GET    /customers
+- L2004  GET    /my-mtd
+- L2045  GET    /mine
+- L2224  GET    /:docNo/slip-url
+- L2330  GET    /cross-category-eligibility
+- L2353  GET    /cross-category-match
+- L2407  GET    /customer-search
+- L2524  GET    /active-venue
+- L2581  GET    /:docNo
+- L2960  GET    /:docNo/items
+- L3065  GET    /customer-credit/:debtorCode
+- L3130  POST   /backfill-warehouses
+- L5612  POST   /
+- L5698  POST   /recompute-allocation
+- L6053  PATCH  /:docNo/status
+- L6080  DELETE /:docNo
+- L6172  GET    /:docNo/audit-log
+- L6194  GET    /:docNo/status-changes
+- L6210  GET    /:docNo/revisions
+- L6221  GET    /:docNo/price-overrides
+- L6233  POST   /:docNo/items/:itemId/override
+- L7359  PATCH  /:docNo
+- L7619  POST   /:docNo/items
+- L8223  PATCH  /:docNo/items/:itemId
+- L8657  DELETE /:docNo/items/:itemId
+- L9036  POST   /:docNo/items/:itemId/tbc-update
+- L9507  POST   /:docNo/items/:itemId/tbc-swap
+- L10328  POST   /:docNo/items/:itemId/tbc-swap-sofa
+- L10373  POST   /:docNo/items/:itemId/photos
+- L10567  GET    /:docNo/items/:itemId/photos/:photoKey/signed
+- L10582  GET    /:docNo/items/:itemId/photos/:photoKey
+- L10631  DELETE /:docNo/items/:itemId/photos/:photoKey
+- L10698  GET    /:docNo/payments
+- L10751  POST   /:docNo/payments
+- L10939  PATCH  /:docNo/payments/:id
+- L11143  DELETE /:docNo/payments/:id
+- L11260  GET    /:docNo/payments/:id/slip-url
+- L11314  POST   /:docNo/payments/:id/slip
+- L11411  GET    /debtors/search
+- L11441  PATCH  /:docNo/items/:itemId/stock-status
+- L11581  POST   /:docNo/amendments
 
 ## backend/src/routes/agent-console.ts  (33)
 - L119  GET    /status
@@ -897,15 +897,15 @@ Total: 1114 route registrations across 146 files.
 - L772  DELETE /locks/:id
 
 ## backend/src/scm/routes/so-amendments.ts  (9)
-- L242  GET    /
-- L323  GET    /command-diag
-- L348  GET    /:id
-- L440  PATCH  /:id/supplier-confirm
-- L841  PATCH  /:id/approve-so
-- L962  PATCH  /:id/approve-po
-- L974  PATCH  /:id/send
-- L1056  PATCH  /:id/reject
-- L1153  PATCH  /:id/withdraw
+- L287  GET    /
+- L368  GET    /command-diag
+- L393  GET    /:id
+- L485  PATCH  /:id/supplier-confirm
+- L924  PATCH  /:id/approve-so
+- L1045  PATCH  /:id/approve-po
+- L1057  PATCH  /:id/send
+- L1139  PATCH  /:id/reject
+- L1255  PATCH  /:id/withdraw
 
 ## backend/src/routes/roles.ts  (8)
 - L25  GET    /permissions
@@ -999,12 +999,12 @@ Total: 1114 route registrations across 146 files.
 - L300  GET    /:id/invoice
 
 ## backend/src/scm/routes/po-amendments.ts  (6)
-- L102  GET    /
-- L115  GET    /:id
-- L149  POST   /
-- L450  PATCH  /:id/approve
-- L460  PATCH  /:id/reject
-- L603  PATCH  /:id/withdraw
+- L106  GET    /
+- L119  GET    /:id
+- L153  POST   /
+- L486  PATCH  /:id/approve
+- L496  PATCH  /:id/reject
+- L656  PATCH  /:id/withdraw
 
 ## backend/src/scm/routes/reports.ts  (6)
 - L84  GET    /sales-order-detail-listing

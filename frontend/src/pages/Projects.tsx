@@ -103,6 +103,7 @@ import { useAuth } from "../auth/AuthContext";
 import { usePageAccess } from "../auth/PageGuard";
 import { isSalesStaff, isDirectorUser, isSalesDirectorUser, canCreateEvent, canLogSalesEntry, canWriteProjectFinance } from "../auth/salesAccess";
 import { readProjectAccess, projectAccessUnresolved, holdsChecklistApproval } from "../auth/projectAccess";
+import { roleLabelAdmitsRole } from "../auth/roleLabelAdmits";
 import { isCrewScopedUser } from "../auth/crewScope";
 import { PMS_STAGE_LABEL, pmsStageVariant } from "../vendor/scm/lib/pms-status";
 import { LEDGER_COST_CATS, LEDGER_INCOME_CATS, ledgerCategoryLabel } from "../vendor/scm/lib/pms-ledger-categories";
@@ -7630,6 +7631,7 @@ function TaskAttachmentRow({
   canManage,
   showRemark,
   itemTitle,
+  roleLabel,
   onDelete,
   toast,
 }: {
@@ -7639,15 +7641,24 @@ function TaskAttachmentRow({
   /** Title of the checklist item this file belongs to — gates the defect
    *  action timeline to Defect List rows. */
   itemTitle?: string;
+  /** Role badge of the checklist item — a tick-only role may remove files from
+   *  a task badged for ITS OWN function (owner 2026-09-02). */
+  roleLabel?: string | null;
   onDelete: () => void;
   toast?: ReturnType<typeof useToast>;
 }) {
   const defectCtx = useContext(DefectActionsCtx);
-  // Owner 2026-08-04: deleting a file is a MANAGER action. projects.write (held
-  // by Logistic — e.g. Syu — and Sales) can upload and edit, but must NOT remove
-  // files; only projects.manage (BD / managers / directors) sees the trash.
-  const { can } = useAuth();
-  const canDeleteFile = can("projects.manage");
+  const { can, user } = useAuth();
+  // Owner 2026-09-03: "every user can delete/remove file or image from their own
+  // task, both pc and mobile pms" — this REPLACES the 2026-08-05 managers-only
+  // rule. Delete now follows ATTACH: the task you may put a file on is the task
+  // you may take one off, which is what "their own task" means for both kinds of
+  // caller — projects.write edits the row, a tick-only role is scoped to its own
+  // badge. id < 0 is a merged crew photo, never removable from here.
+  const mayDeleteFile =
+    attachment.id > 0 &&
+    (!!canManage ||
+      (can("projects.checklist.tick") && roleLabelAdmitsRole(roleLabel, user?.role_name)));
   const isDefectFile = /^defect (list|item)/i.test((itemTitle ?? "").trim());
   const fileActions = isDefectFile && defectCtx
     ? defectCtx.actions.filter((x) => x.attachment_id === attachment.id)
@@ -7826,7 +7837,7 @@ function TaskAttachmentRow({
           >
             <Download size={10} /> Download
           </button>
-          {canManage && canDeleteFile && (
+          {mayDeleteFile && (
             <button
               onClick={(e) => { e.stopPropagation(); onDelete(); }}
               className="rounded p-0.5 text-ink-muted hover:bg-err/10 hover:text-err"
@@ -9399,6 +9410,7 @@ function DocRow({
                       canManage={canManage && a.id > 0}
                       showRemark={remarkOpen}
                       itemTitle={item.title}
+                      roleLabel={item.role_label}
                       onDelete={() => { if (a.id > 0) removeAtt(a.id); }}
                       toast={toast}
                     />
@@ -9940,8 +9952,10 @@ function ChecklistRow({
                   </span>
                 </button>
                 {/* Remove file — shown to whoever can attach here (owner
-                    2026-08-11). id < 0 = merged crew photo, never removable. */}
-                {canManage && !readOnlyAttach && a.id > 0 && (
+                    2026-08-11), which since 2026-09-02 includes a tick-only role
+                    on a task badged for its own function. id < 0 = merged crew
+                    photo, never removable. */}
+                {mayAttachRow && !readOnlyAttach && a.id > 0 && (
                   <button
                     type="button"
                     onClick={(e) => { e.stopPropagation(); void removeAttachment(a); }}
@@ -10082,6 +10096,7 @@ function ChecklistRow({
                         canManage={canManage && a.id > 0}
                         showRemark={expanded}
                         itemTitle={item.title}
+                        roleLabel={item.role_label}
                         onDelete={() => { if (a.id > 0) deleteAttachment(a.id); }}
                         toast={toast}
                       />
@@ -10803,23 +10818,6 @@ function roleLabelParts(label: string): string[] {
   return label.split("&").map((s) => s.trim()).filter(Boolean);
 }
 
-/** Does the task's role badge admit this user's role? MIRRORS the backend
- *  `roleLabelAdmits` (backend/src/services/projectGates.ts) and the mobile copy
- *  in MobilePMS.tsx: exact match on each "&"-separated part, plus DRIVER-badged
- *  field tasks admitting HELPER / STOREKEEPER (no task is ever badged those).
- *  Desktop had no copy of this rule, which is why a tick-only role saw no
- *  Attach button on its OWN badged documents while mobile and the API allowed
- *  the upload — see attachAdmitsRole below. */
-function roleLabelAdmitsRole(
-  label: string | null | undefined,
-  roleName: string | null | undefined,
-): boolean {
-  const r = (roleName ?? "").trim().toUpperCase();
-  if (!r) return false;
-  return roleLabelParts((label ?? "").toUpperCase()).some(
-    (l) => l === r || (l === "DRIVER" && (r === "HELPER" || r === "STOREKEEPER")),
-  );
-}
 
 /** THE Attach / Remark / N/A button shape for the whole desktop PMS (owner
  *  2026-08-11: "one consistent button style for this action group across the

@@ -119,14 +119,14 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/mfg-purchase-orders-list-enrichment.ts` | 1 | 82 |
 | `backend/src/scm/routes/mfg-purchase-orders.ts` | 24 | 4538 |
 | `backend/src/scm/routes/mfg-sales-orders-list-enrichment.ts` | 2 | 298 |
-| `backend/src/scm/routes/mfg-sales-orders.ts` | 42 | 11963 |
+| `backend/src/scm/routes/mfg-sales-orders.ts` | 42 | 11951 |
 | `backend/src/scm/routes/model-free-gifts.ts` | 3 | 147 |
 | `backend/src/scm/routes/mrp-lead-times.ts` | 2 | 95 |
 | `backend/src/scm/routes/mrp.ts` | 2 | 1763 |
 | `backend/src/scm/routes/outstanding.ts` | 2 | 321 |
 | `backend/src/scm/routes/payment-vouchers.ts` | 14 | 1709 |
 | `backend/src/scm/routes/personal-quick-picks.ts` | 3 | 212 |
-| `backend/src/scm/routes/po-amendments.ts` | 6 | 673 |
+| `backend/src/scm/routes/po-amendments.ts` | 6 | 726 |
 | `backend/src/scm/routes/po-gates.ts` | 0 | 90 |
 | `backend/src/scm/routes/po-so-coverage.ts` | 1 | 1140 |
 | `backend/src/scm/routes/pos-cart.ts` | 2 | 157 |
@@ -151,7 +151,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/scan-payment.ts` | 1 | 587 |
 | `backend/src/scm/routes/scan-so.ts` | 11 | 4865 |
 | `backend/src/scm/routes/slips.ts` | 3 | 246 |
-| `backend/src/scm/routes/so-amendments.ts` | 9 | 1231 |
+| `backend/src/scm/routes/so-amendments.ts` | 9 | 1333 |
 | `backend/src/scm/routes/so-dropdown-options.ts` | 4 | 318 |
 | `backend/src/scm/routes/so-handover.ts` | 2 | 214 |
 | `backend/src/scm/routes/so-mirror.ts` | 1 | 333 |
@@ -184,19 +184,19 @@ scripts, never assumed: each runner declares its own directory, and
 | tree | runner | *.sql | highest | applied to PRODUCTION by deploy.yml | read by backend vitest |
 |---|---|---|---|---|---|
 | `backend/src/db/migrations` | `backend/scripts/migrate.mjs` | 152 | `153_sessions_stay_signed_in.sql` (153) | no | yes |
-| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 346 | `0347_acc_chart_manage.sql` (0347) | YES | no |
+| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 347 | `0348_scm_so_edit_lease_holder.sql` (0348) | YES | no |
 
 Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its number): `0136_capture_compat_views_trips_lorries.sql.TEMPLATE`
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1879 files, 674002 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1888 files, 675552 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
 |---|---|
-| `frontend/src/pages/Projects.tsx` | 15152 |
-| `backend/src/scm/routes/mfg-sales-orders.ts` | 11963 |
+| `frontend/src/pages/Projects.tsx` | 15150 |
+| `backend/src/scm/routes/mfg-sales-orders.ts` | 11951 |
 | `frontend/src/pages/ServiceCases.tsx` | 8817 |
 | `backend/src/services/autocount-sofa-corpus.ts` | 8401 |
 | `frontend/src/pages/Team.tsx` | 5686 |
@@ -205,7 +205,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `backend/src/routes/projects.ts` | 5105 |
 | `backend/src/scm/routes/scan-so.ts` | 4865 |
 | `backend/src/scm/routes/mfg-purchase-orders.ts` | 4538 |
-| `frontend/src/mobile/MobilePMS.tsx` | 4487 |
+| `frontend/src/mobile/MobilePMS.tsx` | 4483 |
 | `frontend/src/pages/scm-v2/SupplierDetail.tsx` | 4326 |
 | `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | 4205 |
 | `frontend/src/mobile/MobileNewSO.tsx` | 3742 |
@@ -420,7 +420,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileMyCaseDetail.tsx` | 326 |
 | `frontend/src/mobile/MobileNewProject.tsx` | 196 |
 | `frontend/src/mobile/MobileNewSO.tsx` | 3742 |
-| `frontend/src/mobile/MobilePMS.tsx` | 4487 |
+| `frontend/src/mobile/MobilePMS.tsx` | 4483 |
 | `frontend/src/mobile/MobilePOD.tsx` | 558 |
 | `frontend/src/mobile/MobilePmsDefectActions.tsx` | 109 |
 | `frontend/src/mobile/MobilePmsPlanFileChips.tsx` | 96 |

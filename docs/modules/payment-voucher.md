@@ -192,6 +192,22 @@ the money set). Contract: the leaf + control blocks of
 `backend/tests/accountingChart.test.ts` and
 `frontend/src/vendor/scm/components/AccountSelect.test.tsx`.
 
+**Copy as new (2026-09-03, the owner with AutoCount in hand: 我 right click
+就能直接 copy)**: the list row's context menu and the detail header both
+carry "Copy as new", on ANY status — a posted or cancelled voucher is the
+best template. It opens `/scm/payment-vouchers/new?copyFrom=<id>`
+(`&type=ap` when the source purpose is SUPPLIER_PAYMENT, so an AP Payment
+copies to an AP Payment) and the New page pre-fills CONTENT ONLY: payee,
+supplier, Paid From, lines, notes, currency+rate. Identity never rides:
+fresh number, today's date, approvals restart at raw Draft, and nothing is
+applied to PIs — the source's bills may already be knocked off, so the
+Apply-to-PI section starts empty against the live outstanding list. The
+same pattern lives on Purchase Invoices (`?copyFrom` on
+/scm/purchase-invoices/new; the copy is an independent MANUAL bill — no
+GRN links, no supplier invoice ref, that paper belongs to the source).
+Contracts: the copy block of `PaymentVoucherNew.test.tsx`, the label pins
+of `row-menus-remaining-lists.test.ts`.
+
 ## 0d. 预付挂在 supplier (2026-09-02)
 
 The owner's design, in his words: 预付就不能直接挂在supplier 那边吗? An AP

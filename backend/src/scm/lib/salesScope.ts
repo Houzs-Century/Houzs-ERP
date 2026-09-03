@@ -113,3 +113,33 @@ export async function resolveCallerStaffId(
     .maybeSingle();
   return ((data as { id?: string } | null)?.id as string | undefined) ?? null;
 }
+
+/**
+ * The REVERSE of resolveCallerStaffId: the public.users id behind one scm.staff
+ * uuid, or null when there is none — an AutoCount-imported staff row carries no
+ * `user_id`, and so does a deleted account.
+ *
+ * Used to address a NOTIFICATION at the people a document names: its
+ * `requested_by` / `salesperson_id` are staff uuids, while the announcements
+ * machinery targets integer user ids. Returns null (never throws) on a DB
+ * error — every caller is a best-effort notifier, none of them a gate, so a
+ * failed lookup must cost a notice and nothing else.
+ */
+export async function resolveUserIdByStaffId(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SCM PostgREST client is untyped throughout this module (see the four functions above); typing it here alone would describe a contract the rest of the file does not keep.
+  sb: any,
+  staffId: string | null | undefined,
+): Promise<number | null> {
+  if (!staffId) return null;
+  const { data, error } = await sb
+    .from("staff")
+    .select("user_id")
+    .eq("id", staffId)
+    .maybeSingle();
+  if (error) {
+    console.log(`[salesScope] staff -> user lookup failed for ${staffId}: ${error.message}`);
+    return null;
+  }
+  const uid = Number((data as { user_id?: number | string | null } | null)?.user_id);
+  return Number.isFinite(uid) && uid > 0 ? uid : null;
+}

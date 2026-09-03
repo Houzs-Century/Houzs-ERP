@@ -1,3 +1,6 @@
+import {
+  soEditLeaseRefusal, soEditLeaseTakeoverAllowed, type SoEditLeaseRefusal,
+} from './so-edit-lease';
 import type { Sql } from 'postgres';
 import { getSql, resolveDatabaseUrl } from '../../db/pg';
 
@@ -408,7 +411,10 @@ export function deferScmAfterCommit(c: any, effect: () => Promise<void>): void {
 
 export type SoCommandLeaseCheck =
   | { ok: true; version: number }
-  | { ok: false; reason: 'not_found' | 'lease' };
+  | { ok: false; reason: 'not_found' }
+  /* WHICH of the three, because one message for four states sent the owner
+     looking for a colleague who was not there - see so-edit-lease.ts. */
+  | { ok: false; reason: 'lease'; lease: SoEditLeaseRefusal };
 
 /** Lock the SO generation row and prove the lease on that same connection. */
 export async function lockSoCommandLease(
@@ -416,13 +422,18 @@ export async function lockSoCommandLease(
   docNo: string,
   leaseToken: string | null | undefined,
   companyId: number | null | undefined,
+  /* REQUIRED, not optional: its absence decides whether a caller may take a
+     lock back, so a call site that forgot it must not silently get the old
+     behaviour. Pass an explicit null where there is no authenticated user. */
+  callerUserId: number | null,
 ): Promise<SoCommandLeaseCheck> {
   const locked = await sql.unsafe<Array<{
     version: number;
     edit_lease_token: string | null;
     edit_lease_expires_at: string | Date | null;
+    edit_lease_user_id: number | string | null;
   }>>(
-    `SELECT version, edit_lease_token, edit_lease_expires_at
+    `SELECT version, edit_lease_token, edit_lease_expires_at, edit_lease_user_id
        FROM scm.mfg_sales_orders
       WHERE doc_no = $1
         AND ($2::bigint IS NULL OR company_id = $2::bigint)
@@ -434,11 +445,21 @@ export async function lockSoCommandLease(
   const expiry = row.edit_lease_expires_at instanceof Date
     ? row.edit_lease_expires_at.getTime()
     : Date.parse(String(row.edit_lease_expires_at ?? ''));
-  if (!leaseToken
-      || row.edit_lease_token !== leaseToken
+  const heldByAnother = Boolean(row.edit_lease_token)
+    && Number.isFinite(expiry) && expiry > Date.now()
+    && row.edit_lease_token !== leaseToken;
+  if (!leaseToken) return { ok: false, reason: 'lease', lease: 'missing' };
+  /* THE SAME PERSON TAKES THEIR OWN LOCK BACK - mig 0348. A lock left by the
+     caller's own crashed save is not a colleague editing, and making them wait
+     it out protects nobody. Version CAS still decides who wins the write. */
+  if (heldByAnother && soEditLeaseTakeoverAllowed(row.edit_lease_user_id, callerUserId)) {
+    return { ok: true, version: Number(row.version ?? 1) };
+  }
+  if (heldByAnother) return { ok: false, reason: 'lease', lease: 'held' };
+  if (row.edit_lease_token !== leaseToken
       || !Number.isFinite(expiry)
       || expiry <= Date.now()) {
-    return { ok: false, reason: 'lease' };
+    return { ok: false, reason: 'lease', lease: 'expired' };
   }
   return { ok: true, version: Number(row.version ?? 1) };
 }
@@ -453,7 +474,7 @@ export async function lockSoCommandLease(
 export async function runScmPgCommand(
   c: any,
   command: (sb: ReturnType<typeof pgTransactionSupabase>) => Promise<Response>,
-  options?: { docNo?: string; leaseToken?: string | null; companyId?: number },
+  options?: { docNo?: string; leaseToken?: string | null; companyId?: number; userId?: number | null },
 ): Promise<Response> {
   const url = resolveDatabaseUrl(c.env);
   if (!url) {
@@ -472,15 +493,13 @@ export async function runScmPgCommand(
           options.docNo,
           options.leaseToken,
           options.companyId,
+          options.userId ?? null,
         );
         if (!lease.ok && lease.reason === 'not_found') {
           throw new CommandRollback(c.json({ error: 'not_found' }, 404));
         }
         if (!lease.ok) {
-          throw new CommandRollback(c.json({
-            error: 'so_edit_lease_conflict',
-            message: 'This order is being saved on another screen. Your changes are still here; wait a moment and try again.',
-          }, 409));
+          throw new CommandRollback(c.json(soEditLeaseRefusal(lease.lease), 409));
         }
       }
       const response = await command(pgTransactionSupabase(tx as unknown as Sql));
