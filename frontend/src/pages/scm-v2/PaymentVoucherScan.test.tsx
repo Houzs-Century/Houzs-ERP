@@ -28,11 +28,18 @@ const NewProbe = () => {
   return <div>NEW PAGE</div>;
 };
 
+let piLandedState: unknown = null;
+const PiProbe = () => {
+  piLandedState = useLocation().state;
+  return <div>PI NEW PAGE</div>;
+};
+
 const draw = () => render(
   <MemoryRouter initialEntries={['/scm/payment-vouchers/scan']}>
     <Routes>
       <Route path="/scm/payment-vouchers/scan" element={<PaymentVoucherScan />} />
       <Route path="/scm/payment-vouchers/new" element={<NewProbe />} />
+      <Route path="/scm/purchase-invoices/new" element={<PiProbe />} />
     </Routes>
   </MemoryRouter>,
 );
@@ -145,5 +152,49 @@ describe('the bill pile', () => {
     expect(screen.getByText('total unreadable — will need typing')).toBeTruthy();
     expect(screen.getByText(/Bill 3 could not be read: The reader answered/)).toBeTruthy();
     expect(screen.getByText(/1 bill\(s\) could not be read/)).toBeTruthy();
+  });
+});
+
+describe('扫 → bill (owner 2026-09-03: 他是扫 bill, 然后帮我录入 bill)', () => {
+  test('a grouped pair opens as ONE bill — matched supplier, joined numbers, one line per bill', async () => {
+    extractAsync.mockClear();
+    piLandedState = null;
+    extractAsync.mockResolvedValueOnce({ bills: [
+      readBill(0, { invoiceNumber: 'ZJM-88', totalSen: 1644000 }, { id: 'sup-405', name: 'Zhejiang Ju Miao' }),
+      readBill(1, { invoiceNumber: 'ZJM-89', totalSen: 100000 }, { id: 'sup-405', name: 'Zhejiang Ju Miao' }),
+    ] });
+    draw();
+    fireEvent.change(screen.getByLabelText('Add bill files'), { target: { files: [pdf('a.pdf'), pdf('b.pdf')] } });
+    fireEvent.click(screen.getByText('Read 2 bill(s)'));
+
+    await waitFor(() => expect(screen.getByText('Open as ONE bill')).toBeTruthy());
+    fireEvent.click(screen.getByText('Open as ONE bill'));
+    await waitFor(() => expect(screen.getByText('PI NEW PAGE')).toBeTruthy());
+    const state = piLandedState as { scanBill: { supplierId: string | null; extraction: { invoiceNumber: string | null }; lines: Array<{ description: string | null; amountSen: number | null }> } };
+    expect(state.scanBill.supplierId).toBe('sup-405');
+    expect(state.scanBill.extraction.invoiceNumber).toBe('ZJM-88, ZJM-89');
+    expect(state.scanBill.lines).toEqual([
+      { description: 'Zhejiang Ju Miao ZJM-88', amountSen: 1644000 },
+      { description: 'Zhejiang Ju Miao ZJM-89', amountSen: 100000 },
+    ]);
+  });
+
+  test('a split (or single) bill offers its own Open as bill, carrying the extraction alone', async () => {
+    extractAsync.mockClear();
+    piLandedState = null;
+    extractAsync.mockResolvedValueOnce({ bills: [
+      readBill(0, { invoiceNumber: 'ZJM-90', totalSen: 50000 }, { id: 'sup-405', name: 'Zhejiang Ju Miao' }),
+    ] });
+    draw();
+    fireEvent.change(screen.getByLabelText('Add bill files'), { target: { files: [pdf('c.pdf')] } });
+    fireEvent.click(screen.getByText('Read 1 bill(s)'));
+
+    await waitFor(() => expect(screen.getByText('Open as bill')).toBeTruthy());
+    fireEvent.click(screen.getByText('Open as bill'));
+    await waitFor(() => expect(screen.getByText('PI NEW PAGE')).toBeTruthy());
+    const state = piLandedState as { scanBill: { supplierId: string | null; extraction: { invoiceNumber: string | null }; lines?: unknown } };
+    expect(state.scanBill.supplierId).toBe('sup-405');
+    expect(state.scanBill.extraction.invoiceNumber).toBe('ZJM-90');
+    expect(state.scanBill.lines).toBeUndefined();
   });
 });

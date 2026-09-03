@@ -134,6 +134,19 @@ export const PaymentVoucherScan = () => {
     navigate('/scm/payment-vouchers/new', { state: { billPrefill: { extraction, ...(extras?.lines ? { lines: extras.lines } : {}), memory: extras?.memory ?? null } } });
   };
 
+  /* 扫 → bill (the owner, 2026-09-03, confirming the flow himself: 他是扫
+     bill, 然后帮我录入 bill. 几时要还是我会开 ap payment 去还 — 对). This
+     button only RECORDS the debt: it lands on New Purchase Invoice with the
+     extraction (and the matched supplier when the reader recognised one);
+     paying stays a separate AP Payment, whenever he chooses. */
+  const openBill = (
+    extraction: BillExtraction,
+    supplierId: string | null,
+    lines?: Array<{ description: string | null; amountSen: number | null }>,
+  ) => {
+    navigate('/scm/purchase-invoices/new', { state: { scanBill: { extraction, supplierId, ...(lines ? { lines } : {}) } } });
+  };
+
   const openGroupAsOne = (g: { label: string; bills: Array<Extract<ExtractedBill, { ok: true }>> }) => {
     const first = g.bills[0]!;
     const lines = g.bills.map((b) => ({
@@ -234,9 +247,14 @@ export const PaymentVoucherScan = () => {
                         <span style={{ color: 'var(--fg-muted)' }}>{b.extraction.dueDate ? `due ${fmtDate(b.extraction.dueDate)}` : ''}</span>
                         <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmtRm(b.extraction.totalSen)}</span>
                         {split ? (
-                          <Button variant="secondary" size="sm" onClick={() => openVoucher(b.extraction, { memory: b.memory })}>
-                            Open as voucher
-                          </Button>
+                          <span style={{ display: 'inline-flex', gap: 6 }}>
+                            <Button variant="secondary" size="sm" onClick={() => openVoucher(b.extraction, { memory: b.memory })}>
+                              Open as voucher
+                            </Button>
+                            <Button variant="ghost" size="sm" onClick={() => openBill(b.extraction, g.supplierId)}>
+                              Open as bill
+                            </Button>
+                          </span>
                         ) : <span />}
                       </div>
                       {(b.extraction.totalSen == null || b.extraction.sstSen != null || b.extraction.vendorRegNo) && (
@@ -267,11 +285,24 @@ export const PaymentVoucherScan = () => {
                           style={{ width: 15, height: 15, accentColor: 'var(--c-orange)' }} />
                         pay each bill separately
                       </label>
-                      {!split && (
+                      {!split && (<>
                         <Button variant="primary" size="sm" onClick={() => openGroupAsOne(g)}>
                           Open as ONE voucher ({g.bills.length} lines)
                         </Button>
-                      )}
+                        <Button variant="ghost" size="sm" onClick={() => {
+                          const first = g.bills[0]!;
+                          openBill(
+                            { ...first.extraction, invoiceNumber: g.bills.map((b) => b.extraction.invoiceNumber).filter(Boolean).join(', ') || null },
+                            g.supplierId,
+                            g.bills.map((b) => ({
+                              description: [g.label, b.extraction.invoiceNumber].filter(Boolean).join(' '),
+                              amountSen: b.extraction.totalSen,
+                            })),
+                          );
+                        }}>
+                          Open as ONE bill
+                        </Button>
+                      </>)}
                     </div>
                   )}
                 </div>
