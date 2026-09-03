@@ -180,10 +180,18 @@ const allWindowsBefore = (needle: string, chars: number): string[] => {
 };
 
 describe("Projects.tsx — Attach is offered to every role the server admits (0546)", () => {
-  it("desktop carries a mirror of the backend roleLabelAdmits rule", () => {
+  it("both surfaces read the badge rule from the one shared module", () => {
     // Backend original: backend/src/services/projectGates.ts roleLabelAdmits.
-    // Mobile's copy lives in MobilePMS.tsx; desktop had none, which is the bug.
-    expect(projects()).toContain("function roleLabelAdmitsRole(");
+    // Desktop had NO copy of it (bug 0546) and mobile had its own inline one;
+    // both now import auth/roleLabelAdmits, which is unit-tested next door.
+    // Asserting the IMPORT, not a local definition, is the point — a re-inlined
+    // third copy is how these two surfaces drifted from the server twice.
+    for (const f of ["pages/Projects.tsx", "mobile/MobilePMS.tsx"]) {
+      expect(src(f), `${f} no longer imports the shared badge rule`)
+        .toContain('from "../auth/roleLabelAdmits"');
+      expect(src(f), `${f} re-inlined its own copy of the rule`)
+        .not.toContain("function roleLabelAdmitsRole(");
+    }
   });
 
   it("every desktop Attach button reads a role-aware predicate, not projects.write alone", () => {
