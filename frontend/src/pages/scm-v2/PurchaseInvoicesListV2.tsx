@@ -889,6 +889,7 @@ export function PurchaseInvoicesListV2() {
   const piContextMenu = purchaseInvoiceRowMenu<PiRow>({
     open: goFullPage,
     edit: goEdit,
+    copyAsNew: (r) => navigate(`/scm/purchase-invoices/new?copyFrom=${r.id}`),
     print: printDocument,
     confirm: doConfirm,
     setHold: setPiHold,

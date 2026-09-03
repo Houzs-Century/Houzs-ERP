@@ -509,6 +509,9 @@ export function salesInvoiceRowMenu<R extends StatusRow & SiChainRow>(h: {
 export function purchaseInvoiceRowMenu<R extends StatusRow & PiChainRow>(h: {
   open: (r: R) => void;
   edit: (r: R) => void;
+  /* Copy as new (owner 2026-09-03, AutoCount in hand: right click 就能直接
+     copy) — content as a template, identity fresh; any status qualifies. */
+  copyAsNew: (r: R) => void;
   print: (t: PrintTarget) => void;
   confirm: (r: R) => void;
   setHold: (r: R, onHold: boolean) => void;
@@ -528,6 +531,7 @@ export function purchaseInvoiceRowMenu<R extends StatusRow & PiChainRow>(h: {
     [
       { label: "Open", onClick: () => h.open(r) },
       { label: "Edit", onClick: () => h.edit(r) },
+      { label: "Copy as new", onClick: () => h.copyAsNew(r) },
       ...printEntries(purchaseInvoicePrintChain(r), { print: h.print, open: () => h.open(r) }),
     ],
     [h.canConfirm(r) && { label: "Confirm", onClick: () => h.confirm(r) }],
