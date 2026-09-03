@@ -956,6 +956,9 @@ GET,/api/scm/quotes,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmA
 POST,/api/scm/quotes,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.sales.orders"", { writeLevel: ""view"" })",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/quotes.ts
 PATCH,/api/scm/quotes/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.sales.orders"", { writeLevel: ""view"" })",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/quotes.ts
 PATCH,/api/scm/quotes/:id/cancel,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.sales.orders"", { writeLevel: ""view"" })",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/quotes.ts
+GET,/api/scm/receipts,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",,,,NO,DECLARED_GATE,backend/src/scm/routes/receipts.ts
+POST,/api/scm/receipts,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",,,,YES,DECLARED_GATE,backend/src/scm/routes/receipts.ts
+POST,/api/scm/receipts/:id/void,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",,,,YES,DECLARED_GATE,backend/src/scm/routes/receipts.ts
 GET,/api/scm/reports/delivery-order-detail-listing,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/reports.ts
 GET,/api/scm/reports/delivery-return-detail-listing,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/reports.ts
 GET,/api/scm/reports/fair-report,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/reports.ts

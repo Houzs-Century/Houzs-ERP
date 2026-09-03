@@ -36,6 +36,7 @@ import { purchaseInvoices } from "./routes/purchase-invoices";
 import { purchaseInvoicesListEnrichment } from "./routes/purchase-invoices-list-enrichment";
 import { paymentVouchers } from "./routes/payment-vouchers";
 import { otherDebtors } from "./routes/other-debtors";
+import { receipts } from "./routes/receipts";
 import { entityAuditLog } from "./routes/entity-audit-log";
 import { autocountOutbox } from "./routes/autocount-outbox";
 import { currencies } from "./routes/currencies";
@@ -453,6 +454,10 @@ scm.route("/payment-vouchers", paymentVouchers);
 // same area and the same PV permission family gate the handlers inside.
 scm.use("/other-debtors/*", scmAreaGuard("scm.finance.accounting"));
 scm.route("/other-debtors", otherDebtors);
+// Receipts (owner 2026-09-03, later the same day) — the unified money-in list
+// plus general receipts that post directly; same area, same key family.
+scm.use("/receipts/*", scmAreaGuard("scm.finance.accounting"));
+scm.route("/receipts", receipts);
 // Payment Audit Log — Finance's payment TRAIL (port of 2990's /admin/audit-log):
 // one row per mfg_sales_order_payments entry + its SO header context. Read-only.
 // Same L2 area as Accounting: it is the money ledger's read side, not a new
