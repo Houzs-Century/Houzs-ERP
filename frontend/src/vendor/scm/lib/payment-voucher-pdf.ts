@@ -246,5 +246,5 @@ export async function generatePaymentVoucherPdf(
   const blob = await fetchPvPrintBundle([
     { pvId: opts.withFilesOf, voucherBase64: pdfBytesToBase64(doc.output('arraybuffer') as ArrayBuffer) },
   ]);
-  deliverPdfBlob(blob, fileName, opts?.action);
+  deliverPdfBlob(blob, fileName, opts.action);
 }
