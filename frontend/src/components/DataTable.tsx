@@ -86,6 +86,11 @@ export interface Column<T> {
    *  composite entry ("Bedframe, Mattress") that ticking "Bedframe" misses.
    *  `getValue` is still required — sort and CSV export use it. */
   getFilterValues?: (row: T) => (string | number | null | undefined)[];
+  /** Values the filter menu should ALWAYS list, even when no loaded row
+   *  carries them (shown with a 0 count). For enum-shaped columns whose
+   *  vocabulary the user needs to see in full — e.g. the Service-case stage
+   *  legs (Nico 2026-09-04: an empty leg must still be pickable). */
+  filterSeedValues?: readonly string[];
   /** If true, the column is excluded from the column chooser AND pinned
    *  to the front of the render order (can't be reordered past). */
   alwaysVisible?: boolean;
@@ -3175,6 +3180,11 @@ function DataTableInner<T>({
             for (const k of multi ? filterKeysOf(multi(r)) : [filterKeyOf(getter(r))]) {
               counts.set(k, (counts.get(k) ?? 0) + 1);
             }
+          }
+          // Seed the always-listed vocabulary (0-count entries stay pickable).
+          for (const seed of col.filterSeedValues ?? []) {
+            const k = filterKeyOf(seed);
+            if (!counts.has(k)) counts.set(k, 0);
           }
           const values = [...counts.entries()].sort((a, b) =>
             a[0].localeCompare(b[0], undefined, { numeric: true })
