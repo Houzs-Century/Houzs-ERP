@@ -32,7 +32,7 @@ export { deriveCountryFromState, deriveSalesLocationFromState };
 import { specialDeliveryFeesForLines, reconstructDeliveryRuleLines } from '../lib/special-delivery';
 import { soHasDownstream } from '../lib/downstream-lock';
 import { dateOrNull, effectiveDateAfterPatch, isDateColumn } from '../lib/date-coerce';
-import { statusAfterProcessingDateSet } from '../shared/so-proceeded-status';
+import { soStatusAfterProcessingDateChange } from '../lib/so-proceed-status-change';
 import { soIsMigrated } from '../lib/so-is-migrated';
 import { soDocNosWithDownstream } from '../lib/downstream-lock'; // own line: autocountWritebackWiring asserts the import above verbatim
 import { doNosBySalesOrder, type DeliveryOrderNoRow } from '../lib/so-delivery-order-nos';
@@ -7098,9 +7098,9 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
        Flagged here so the RPC call below applies both halves. */
     cascadedDeliveryClear = cascadeCols.length > 0;
     const effDelivAfterCascade = cascadedDeliveryClear ? null : effDeliv;
-    /* PROCEEDED IS THE DATE — refusals in shared/so-proceeded-status, 0597. */
-    const proceeded = statusAfterProcessingDateSet({ currentStatus: beforeRecord['status'] as string | null, storedProcessingDate: origProc, effectiveProcessingDate: effProc });
-    if (proceeded) updates['status'] = proceeded;    const pairRefusal = soDatePairRefusal({
+    /* THE DATE IS THE ANSWER, BOTH WAYS — shared/so-proceeded-status, 0597/0631. */
+    const nextStatus = await soStatusAfterProcessingDateChange(sb, docNo, { currentStatus: beforeRecord['status'] as string | null, storedProcessingDate: origProc, effectiveProcessingDate: effProc });
+    if (nextStatus) updates['status'] = nextStatus;    const pairRefusal = soDatePairRefusal({
       nextProc: effProc,
       nextDeliv: effDelivAfterCascade,
       origProc,
