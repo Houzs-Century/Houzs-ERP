@@ -31,6 +31,7 @@
 // every legitimate answer — including a completely empty queue, which is the
 // correct state today — because a red job reads as "the check broke" and the
 // ANSWER is the output. Only an unreachable database exits non-zero.
+import { acFailedHeadingLine, acQueueTotalsLine } from './lib/ac-queue-report-lines.mjs';
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
 
@@ -273,15 +274,7 @@ try {
           : "which is the expected state while scm.autocount_writeback is off."),
     );
   } else {
-    notice(
-      `queue: ${total} row(s) — ` +
-        ["pending", "sent", "failed", "skipped"]
-          .map((s) => `${s} ${by[s] ?? 0}`)
-          .join(" / ") +
-        (settled.length + requeuedFailed.length
-          ? ` (${settled.length + requeuedFailed.length} of those have been re-queued)`
-          : ""),
-    );
+    notice(acQueueTotalsLine(total, by, settled.length + requeuedFailed.length));
   }
 
   /* PER OPERATION — the question the totals cannot answer.
@@ -328,7 +321,7 @@ try {
      A re-queued failure is history and is listed under RE-QUEUED below. */
   if (failedOutstanding > 0) {
     if (failedLive.length) {
-      notice(`FAILED: ${failedLive.length} — each is a document that is in the ERP and NOT in AutoCount.`);
+      notice(acFailedHeadingLine(failedLive));
       for (const r of failedLive) {
         notice(`  ${r.doc_type} ${r.doc_no} (${r.op}, ${r.attempts} attempts): ${String(r.last_error ?? "").slice(0, 300)}`);
       }
@@ -656,7 +649,7 @@ if (process.env.ALARM === '1') {
   const reasons = [];
   if (alarm.failedOutstanding > 0) {
     reasons.push(
-      `${alarm.failedOutstanding} document(s) are in the ERP and NOT in AutoCount, ` +
+      `${alarm.failedOutstanding} document(s) carry an operation the account book did not complete, ` +
         'with no retries left. Open AutoCount Sync and press Send again on each.',
     );
   }
