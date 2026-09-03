@@ -104,6 +104,7 @@ import { supplierTrack } from "./middleware/supplierTrack";
 import { dbInject, withPgDb } from "./middleware/db";
 import { companyContext } from "./middleware/companyContext";
 import { publicDoScan } from "./routes/publicDoScan";
+import { publicContractorCalendar } from "./routes/publicContractorCalendar";
 import { drainEmailOutbox } from "./services/email";
 import { runClientErrorDigest } from "./services/clientErrors";
 import { runSlaEscalation } from "./services/assrEscalation";
@@ -313,6 +314,14 @@ app.route("/api/scm", publicScmImages);
 // company is taken from the row the token resolves to, never from the request.
 // See routes/publicDoScan.ts and backend/tests/publicDoScan*.test.ts.
 app.route("/api/public/do-scan", publicDoScan);
+
+// PUBLIC no-login CONTRACTOR CALENDAR — also mounted BEFORE the `auth` gate: a
+// booth-setup contractor opens their link with no Houzs account. The gate is the
+// unguessable token in the URL (services/contractorShare.ts) plus the revoke
+// kill switch. The route returns ONLY the confirmed schedule (venue + booth +
+// dates) for the ONE contractor the token resolves to — never finance or any
+// other contractor's events. See routes/publicContractorCalendar.ts.
+app.route("/api/public/contractor-calendar", publicContractorCalendar);
 
 app.use("/api/*", auth);
 

@@ -330,6 +330,8 @@ POST,/api/projects/checklist/attachments/:attId/actions,AUTHENTICATED_MIDDLEWARE
 GET,/api/projects/contractors,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePageAccess(""projects"")",,NO,DECLARED_GATE,backend/src/routes/projects.ts
 POST,/api/projects/contractors,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""projects.write"")",,YES,DECLARED_GATE,backend/src/routes/projects.ts
 DELETE,/api/projects/contractors/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""projects.manage"")",,YES,DECLARED_GATE,backend/src/routes/projects.ts
+DELETE,/api/projects/contractors/:id/share-link,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""projects.manage"")",,YES,DECLARED_GATE,backend/src/routes/projects.ts
+POST,/api/projects/contractors/:id/share-link,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""projects.write"")",,YES,DECLARED_GATE,backend/src/routes/projects.ts
 GET,/api/projects/cost-rates,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePageAccess(""projects.finances"")",,NO,DECLARED_GATE,backend/src/routes/projects.ts
 PUT,/api/projects/cost-rates/:brand,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""projects.manage"")",,YES,DECLARED_GATE,backend/src/routes/projects.ts
 DELETE,/api/projects/defects/:defectId,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""projects.write"")",,YES,DECLARED_GATE,backend/src/routes/projects.ts
@@ -370,6 +372,7 @@ GET,/api/projects/venues,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"require
 POST,/api/projects/venues,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""projects.write"")",,YES,DECLARED_GATE,backend/src/routes/projects.ts
 DELETE,/api/projects/venues/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""projects.manage"")",,YES,DECLARED_GATE,backend/src/routes/projects.ts
 PATCH,/api/projects/venues/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""projects.manage"")",,YES,DECLARED_GATE,backend/src/routes/projects.ts
+GET,/api/public/contractor-calendar/:token,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,NO,INHERITED_ONLY,backend/src/routes/publicContractorCalendar.ts
 GET,/api/public/do-scan/:token,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,NO,INHERITED_ONLY,backend/src/routes/publicDoScan.ts
 POST,/api/public/do-scan/:token/advance,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/publicDoScan.ts
 POST,/api/public/do-scan/batch/advance,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/publicDoScan.ts
