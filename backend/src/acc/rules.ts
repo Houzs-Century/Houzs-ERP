@@ -89,6 +89,7 @@ export const REVERSAL_SOURCE: Record<string, string> = {
   SETTLEADJ: 'SETTLEADJ_REVERSAL',
   ODB: 'ODB_REVERSAL',
   ODR: 'ODR_REVERSAL',
+  RCT: 'RCT_REVERSAL',
 };
 
 export type RoleCodes = Record<AccountRole, string>;

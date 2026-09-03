@@ -452,3 +452,35 @@ export const useDebtorReceiptAction = () => {
     onSuccess: () => invalidateDebtors(qc),
   });
 };
+
+/* ── Receipts — every ringgit IN, one list (owner 2026-09-03) ───────────────
+   GENERAL posts directly (不需要走四层) and voids by reversal; DEBTOR rows
+   mirror /scm/other-debtors; CUSTOMER rows mirror the sales payments. */
+export type ReceiptRow = {
+  kind: 'GENERAL' | 'DEBTOR' | 'CUSTOMER';
+  id: string; number: string; date: string; payer: string;
+  moneyAccount: string; totalSen: number; status: string;
+  debtorId?: string; notes?: string | null;
+};
+export const useReceipts = (month?: string) => baseQuery<{ month: string; receipts: ReceiptRow[] }>(
+  ['receipts', month ?? 'current'], `/receipts${month ? `?month=${month}` : ''}`,
+);
+export const useCreateReceipt = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: {
+      payerName: string; receiptDate?: string; bankAccountCode: string; notes?: string;
+      lines: Array<{ description?: string; creditAccountCode: string; amountSen: number }>;
+    }) => authedFetch<{ ok: boolean; receipt: { receiptNumber: string; totalSen: number } }>(
+      `/receipts`, { method: 'POST', body: JSON.stringify(body) },
+    ),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['receipts'] }); },
+  });
+};
+export const useVoidReceipt = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => authedFetch(`/receipts/${id}/void`, { method: 'POST' }),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['receipts'] }); },
+  });
+};

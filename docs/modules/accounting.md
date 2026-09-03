@@ -205,6 +205,25 @@ the REAL engine posting into the harness), `OtherDebtors.test.tsx`
 (registry, bill lines, tick-full/type-partial, the four-layer buttons).
 Tables land in migration 0350.
 
+**Receipts (2026-09-03, later the same day: 未来如果我收到其他的钱不是
+under other debtor 的呢? 就我只想开 receipt 罢了)**: /scm/receipts is the
+unified money-in list — one month-windowed table holding GENERAL receipts
+(raised here), the Other Debtor receipts (read-only mirrors, four-layered
+on their own page) and the customer sales payments (read-only mirrors —
+顾客的钱 keeps the sales flow it always had; nothing is re-entered).
+Handlers in `receipts.ts` (mounted beside other-debtors in
+`backend/src/scm/index.ts`, mirrored in `scm-areas.ts`, nav entry in
+`Sidebar.tsx`; PV key family). A GENERAL receipt is the no-registry case:
+payer typed free, a money landing account (guarded), lines that free-pick
+their credit accounts through `requireLeafAccount` — and it POSTS DIRECTLY
+on create (his call: 不需要走四层，就录入就好), source RCT
+(`<prefix>OR-yymm`), create-and-journal atomic. The only undo is VOID
+(错就 delete 或 void): RCT_REVERSAL plus status CANCELLED — a posted
+document leaves the ledger by reversal, never by vanishing. Tables in
+migration 0351. Contracts: `backend/tests/receipts.test.ts` (post shape,
+control/money refusals, void semantics, the three-kind month list),
+`Receipts.test.tsx` (kinds + links + raise payload + void gating).
+
 **One door to open an account (2026-09-03, the owner: 照理说应该维护
 overall chart of account 罢了)**: `POST /accounting/chart/account` creates
 the definition ONCE and lands it in every company the caller ticks (granted
