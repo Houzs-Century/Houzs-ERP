@@ -287,11 +287,11 @@ export const useDeletePvFile = () => {
   });
 };
 
-/* View one attachment: authed byte fetch → blob object URL (authedFetch
+/* The authed byte fetch behind both attachment readers (authedFetch
    JSON-parses, so it can't carry these). Same Worker-proxy pattern as
    slip.ts's fetchSlipAsObjectUrl, reusing the exported API_URL instead of
-   declaring another copy. The caller revokes the URL when done viewing. */
-export async function fetchPvFileBlobUrl(pvId: string, fileId: string): Promise<{ url: string; contentType: string }> {
+   declaring another copy. */
+async function fetchPvFileResponse(pvId: string, fileId: string): Promise<Response> {
   const token = readAuthToken();
   if (!token) throw new Error('Your session has expired — please sign in again.');
   let signal: AbortSignal | undefined;
@@ -304,9 +304,23 @@ export async function fetchPvFileBlobUrl(pvId: string, fileId: string): Promise<
     const text = await res.text().catch(() => '<no body>');
     throw correlateError(new Error(humanApiError(res.status, text)), requestIdFromResponse(res));
   }
+  return res;
+}
+
+/* View one attachment as a blob object URL. The caller revokes it. */
+export async function fetchPvFileBlobUrl(pvId: string, fileId: string): Promise<{ url: string; contentType: string }> {
+  const res = await fetchPvFileResponse(pvId, fileId);
   const contentType = res.headers.get('content-type') ?? 'application/octet-stream';
   return consumeCorrelated(res, async () => ({
     url: URL.createObjectURL(await res.blob()),
     contentType,
   }));
+}
+
+/* One attachment's raw bytes — what the print pipeline feeds pdf-attach.ts.
+   The mime comes from the stored index row via the stream's content-type. */
+export async function fetchPvFileBytes(pvId: string, fileId: string): Promise<{ bytes: ArrayBuffer; mime: string }> {
+  const res = await fetchPvFileResponse(pvId, fileId);
+  const mime = res.headers.get('content-type') ?? 'application/octet-stream';
+  return consumeCorrelated(res, async () => ({ bytes: await res.arrayBuffer(), mime }));
 }

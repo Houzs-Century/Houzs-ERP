@@ -736,6 +736,58 @@ the checker looked at. Reading rides the voucher (area guard).
   beside the `usePvFiles` / `useUploadPvFile` / `useDeletePvFile` hooks) —
   there is no public URL to leak.
 
-**What this is FOR next**: the print pipeline (§ pending) appends these files
-to the voucher PDF — PV page first, then its files in `sort_no` order; batch
-print concatenates `pv+files, pv+files…`.
+**What this is FOR**: §11 — the print appends these files to the voucher PDF,
+PV page first, then its files in `sort_no` order.
+
+---
+
+## 11. Print — the voucher WITH its evidence (2026-09-03)
+
+The owner: *我发现没有办法 print pv？我希望可以 print pv include ocr 的文件一起*.
+Layout is my draft on his 就你做吧，不满意到时我改.
+
+**The voucher page.** `frontend/src/vendor/scm/lib/payment-voucher-pdf.ts` —
+`renderPaymentVoucherInto(doc, autoTable, header, lines, allocations,
+accountLabel)` in the unified Hookka-tidy family (letterhead `drawHeader`,
+`drawInfoColumns` PAY TO / VOUCHER DETAILS, plain B&W lines table, settled-PI
+table when any, footer `pv_number · portal · page n of m`). Specifics of THIS
+document:
+- **the four-layer strip is the signature block** — four dashed boxes
+  (Prepared / Checked / Approved / Received by); the first three print the
+  RECORDED `*_by` name and `*_at` date, Received by stays blank for the
+  payee's pen;
+- the **status word** comes from `statusLabel('pv', …)` (POSTED prints
+  "Approved" — the owner's vocabulary, never the raw enum);
+- **amount in words is MYR-only** (`amountInWordsMyr`); a foreign voucher
+  prints `CNY @ rate` and the `≈ posted to GL` MYR line instead — spelling
+  yuan as RINGGIT would be a false sentence;
+- accounts print through the CALLER's labeller (code · name), so the paper
+  matches the screen.
+
+**The evidence.** `frontend/src/vendor/scm/lib/pdf-attach.ts` —
+`mergePdfWithAttachments(baseBytes, attachments)` on **pdf-lib** (the one new
+dependency; jsPDF can only draw, it cannot absorb an existing PDF's pages,
+and the owner's bills are mostly PDFs). Per file, in the order given
+(= `sort_no`): a PDF's pages copy across; a JPEG/PNG sits centred on its own
+A4 page; webp re-encodes through canvas. A file that cannot embed (corrupt,
+truly locked, webp with no canvas) becomes a **notice page naming it** —
+visible failure on paper, never a silently missing bill, never a failed
+print. Delivery of merged BYTES goes through `deliverPdfBlob`
+(`frontend/src/vendor/scm/lib/pdf-common.ts`), the blob twin of `deliverPdf`
+with the same three exits.
+
+**Where it fires.** The detail page
+(`frontend/src/pages/scm-v2/PaymentVoucherDetail.tsx`): a Print button →
+`PrintPreviewModal` (`usePrintPreview` / `useOpenPrintPreviewFromUrl`);
+`deliverPrintPdf` streams every stored file down (`fetchPvFileBytes`) and
+refuses to print when the file LIST cannot be answered — a voucher quietly
+missing its bills is the dishonest branch. The list
+(`frontend/src/pages/scm-v2/PaymentVouchers.tsx`) context menu's Print rides
+the established `?print=1` route: land on the detail, its preview opens
+itself.
+
+**Tests**: `frontend/src/vendor/scm/lib/payment-voucher-pdf.test.ts` (text
+draws — strip names, status word from the one home, MYR-words vs foreign
+line) and `frontend/src/vendor/scm/lib/pdf-attach.test.ts` (real pdf-lib:
+2-page bill contributes both pages, image gets a page, corrupt file costs a
+notice page and never a throw).
