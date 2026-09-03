@@ -150,3 +150,33 @@ describe('the rebuilt document holds exactly what the ERP sent', () => {
     expect(clear).not.toMatch(/type == "SO"/);
   });
 });
+
+describe('the host decides the rebuild BEFORE the key pre-flight', () => {
+  /* THE DEFECT THIS EXISTS FOR, and it survived three rebuilds of a live
+     document. `if (Bool(p, "Rebuild"))` sat INSIDE the loop that only runs for a
+     line carrying no DtlKey, so a document whose lines all had keys never
+     reached it: rebuild stayed false, ClearDetails never ran, and an explicit
+     Rebuild:true became an ordinary keyed edit. The outbox said `sent` every
+     time and the owner kept seeing his deleted line at Qty 0.
+
+     The one document it DID work on had a keyless line — which is the only
+     reason the defect looked like a working feature. docs/bugs/0633. */
+  test('the Rebuild check comes before the keyless loop, not inside it', () => {
+    const decide = SERVICE.indexOf('if (Bool(p, "Rebuild")) {');
+    const loop = SERVICE.indexOf('for (var i = 0; i < lines.Count');
+    expect(decide, 'the Rebuild check is gone').toBeGreaterThan(-1);
+    expect(loop, 'the pre-flight loop is gone').toBeGreaterThan(-1);
+    expect(decide, 'the Rebuild check is INSIDE the loop again').toBeLessThan(loop);
+  });
+
+  /* A rebuild destroys every key a moment later, so the key pre-flight has
+     nothing to protect — running it would only re-introduce a way to refuse a
+     rebuild for the wrong reason. */
+  test('the key pre-flight is skipped entirely when a rebuild was asked for', () => {
+    expect(SERVICE).toMatch(/for \(var i = 0; i < lines\.Count && !rebuild; i\+\+\)/);
+  });
+
+  test('there is exactly ONE place that turns the rebuild on', () => {
+    expect(SERVICE.match(/rebuild = true;/g) ?? []).toHaveLength(1);
+  });
+});
