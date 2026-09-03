@@ -30,6 +30,12 @@ interface OrganizerRow {
   notes: string | null;
   active: number;
 }
+interface ContractorRow {
+  id: number;
+  name: string;
+  notes: string | null;
+  active: number;
+}
 interface VenueRow {
   id: number;
   name: string;
@@ -108,6 +114,7 @@ export function ProjectMaintenanceView() {
         <BrandManager />
         <EventTypeManager />
         <OrganizerManager />
+        <ContractorManager />
         <VenueManager />
       </div>
       {canProjectFinance && (
@@ -307,6 +314,113 @@ function OrganizerManager() {
       </ul>
       <ExpandToggle
         total={q.data?.data?.length ?? 0}
+        expanded={expanded}
+        onToggle={() => setExpanded((v) => !v)}
+      />
+    </CollapsibleSection>
+  );
+}
+
+function ContractorManager() {
+  const toast = useToast();
+  const dialog = useDialog();
+  const q = useQuery<{ data: ContractorRow[] }>("/api/projects/contractors",
+    () => api.get("/api/projects/contractors")
+  );
+  const [adding, setAdding] = useState(false);
+  const [name, setName] = useState("");
+  const [expanded, setExpanded] = useState(false);
+
+  async function add() {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    setAdding(true);
+    try {
+      await api.post("/api/projects/contractors", { name: trimmed });
+      setName("");
+      q.reload();
+      toast.success(`Added ${trimmed}`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Something went wrong. Please try again.");
+    } finally {
+      setAdding(false);
+    }
+  }
+
+  async function remove(o: ContractorRow) {
+    if (
+      !(await dialog.confirm({
+        title: "Remove contractor",
+        message: `Remove contractor "${o.name}"? Existing projects keep the value.`,
+        danger: true,
+        confirmLabel: "Remove",
+      }))
+    )
+      return;
+    try {
+      await api.del(`/api/projects/contractors/${o.id}`);
+      toast.success("Contractor removed");
+      q.reload();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Something went wrong. Please try again.");
+    }
+  }
+
+  const rows = q.data?.data ?? [];
+  return (
+    <CollapsibleSection
+      title="Contractors"
+      count={rows.length}
+      description="Picker values for the project Contractor field (booth setup/dismantle). Soft delete — existing project rows still display whatever name they were saved with."
+    >
+      <div className="mb-3 flex gap-2">
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && add()}
+          placeholder="Add contractor name…"
+          className="h-9 flex-1 rounded-md border border-border bg-surface px-3 text-[12.5px] outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
+        />
+        <Button variant="primary" onClick={add} disabled={adding || !name.trim()}>
+          Add
+        </Button>
+      </div>
+
+      <ul className="divide-y divide-border-subtle rounded-md border border-border bg-bg/40">
+        {q.loading && (
+          <>
+            {Array.from({ length: 3 }).map((_, i) => (
+              <li key={i} className="px-3 py-2">
+                <Skeleton className="h-4 w-2/3" />
+              </li>
+            ))}
+          </>
+        )}
+        {rows.length === 0 && (
+          <li className="px-3 py-3 text-[11.5px] text-ink-muted">No contractors yet.</li>
+        )}
+        {(expanded ? rows : rows.slice(0, PICKER_PREVIEW_ROWS)).map((o) => (
+          <li
+            key={o.id}
+            className="flex items-center justify-between gap-3 px-3 py-2"
+          >
+            <span className="flex-1 text-[13px] font-medium text-ink">{o.name}</span>
+            <RowActionsMenu
+              items={[
+                {
+                  type: "action",
+                  icon: Trash2,
+                  label: "Remove",
+                  danger: true,
+                  onClick: () => remove(o),
+                },
+              ]}
+            />
+          </li>
+        ))}
+      </ul>
+      <ExpandToggle
+        total={rows.length}
         expanded={expanded}
         onToggle={() => setExpanded((v) => !v)}
       />
