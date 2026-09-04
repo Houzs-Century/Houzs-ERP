@@ -132,7 +132,18 @@ repairs travel as repair workflows beside the seed (plan/apply + CONFIRM):
 .github/workflows/reparent-900-expenses.yml +
 backend/scripts/reparent-900-expenses.mjs hung the flat AutoCount 900-x
 expense roots under 900-0000 (owner 2026-09-04: 批量挂, 全部挂到 900-0000
-下), replicating chartUpdateHandler's reparent guards.
+下), replicating chartUpdateHandler's reparent guards. The income split
+(owner 2026-09-04: 就做一个 header 分类就好, 不要放 code — 4xx reads as
+liability; other income 挂在 700-0000; 530，592都挂other income; 别乱分类)
+is ONE header and zero new codes: .github/workflows/reparent-other-income.yml
++ backend/scripts/reparent-other-income.mjs hang the owner's ENUMERATED
+other-income roots (530/540/550/560/570/580/590/591/592/598/599-series)
+under 700-0000; trading revenue (500/501/502/509/510/520) is deliberately
+untouched — "not under 700-0000" IS the definition of 生意 income. The
+Chart page DERIVES the badge from the tree (INCOME · Other for the 700-0000
+subtree, one source of truth, never a stored flag), and the Add form says
+where the choice lives when Type = INCOME. 700-0000 therefore LEFT the
+deletable-legacy list.
 
 **Chart management arms (2026-09-03, the owner's six-point review)**:
 `accounts.special_type` stores the AutoCount special column verbatim
