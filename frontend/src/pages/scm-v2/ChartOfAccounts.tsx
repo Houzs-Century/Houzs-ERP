@@ -142,6 +142,9 @@ export const ChartOfAccounts = () => {
   const accounts = useMemo(() => treeOrder(unionQ.data?.accounts ?? []), [unionQ.data]);
   const [parsed, setParsed] = useState<ParsedChart | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
+  /* 快速模式 — session-only, never persisted: every visit starts with the
+     confirms back on (see the toggle's comment in the header). */
+  const [quickMode, setQuickMode] = useState(false);
 
   /* ── 展开/收缩 (owner point 4): fold a header, its whole subtree hides. ── */
   const [folded, setFolded] = useState<Set<string>>(new Set());
@@ -300,12 +303,17 @@ export const ChartOfAccounts = () => {
   /* ── 删除 (owner point 2): only a never-used code dies; the server names
      every holdout otherwise — that sentence goes straight to the dialog. ── */
   const onDelete = async (row: ChartRow) => {
-    const ok = await askConfirm({
-      title: `Delete ${row.code} · ${row.name}?`,
-      body: 'Only an account with NO transactions and NO references anywhere can be deleted — otherwise untick it instead. This removes it from every company.',
-      confirmLabel: 'Delete',
-    });
-    if (!ok) return;
+    /* Quick mode goes straight through — safely: the SERVER's 11-probe guard
+       still refuses any account with a record or reference anywhere, so the
+       only thing a stray click can delete is a never-used code. */
+    if (!quickMode) {
+      const ok = await askConfirm({
+        title: `Delete ${row.code} · ${row.name}?`,
+        body: 'Only an account with NO transactions and NO references anywhere can be deleted — otherwise untick it instead. This removes it from every company.',
+        confirmLabel: 'Delete',
+      });
+      if (!ok) return;
+    }
     try {
       await doDelete.mutateAsync(row.code);
       void notify({ title: `${row.code} deleted`, body: 'It existed in no ledger — gone from every company.', tone: 'info' });
@@ -317,14 +325,19 @@ export const ChartOfAccounts = () => {
   const onTick = async (companyId: number, row: ChartRow, next: boolean) => {
     if (!next) {
       const kids = accounts.filter((a) => a.parentCode === row.code && a.perCompany[companyId]?.active);
-      const ok = await askConfirm({
-        title: `Untick ${row.code} for ${companies.find((c) => c.id === companyId)?.code ?? companyId}?`,
-        body: kids.length > 0
-          ? `This is a header — its ${kids.length} active sub-account(s) go off with it.`
-          : 'The account is kept (history stays); it just stops being offered in this company.',
-        confirmLabel: 'Untick',
-      });
-      if (!ok) return;
+      /* Quick mode silences the LEAF untick only — a header sweep still
+         asks, whatever the toggle says (its children do not come back by
+         re-ticking the header). */
+      if (!quickMode || kids.length > 0) {
+        const ok = await askConfirm({
+          title: `Untick ${row.code} for ${companies.find((c) => c.id === companyId)?.code ?? companyId}?`,
+          body: kids.length > 0
+            ? `This is a header — its ${kids.length} active sub-account(s) go off with it.`
+            : 'The account is kept (history stays); it just stops being offered in this company.',
+          confirmLabel: 'Untick',
+        });
+        if (!ok) return;
+      }
     }
     setBusyKey(`${companyId}:${row.code}`);
     try {
@@ -388,6 +401,22 @@ export const ChartOfAccounts = () => {
               <Upload {...ICON} /> Upload AutoCount chart
               <input ref={fileRef} type="file" accept=".xlsx,.xls" style={{ display: 'none' }}
                 onChange={(e) => { void onFile(e.target.files?.[0]); e.target.value = ''; }} />
+            </label>
+            {/* 快速模式 (owner 2026-09-04, mid tidy-up: tick 和 untick 的可以
+                做到就不要 pop out notice 吗? delete 同理, 就 for 先阶段…过后
+                这个 function 还是要有). The toggle IS the "afterwards": it
+                resets to OFF on every visit (his 默认都是要弹的), so the
+                confirms return by themselves — no second change needed. ON
+                skips the confirm for LEAF unticks and deletes only; a HEADER
+                untick still asks (it sweeps the children, and re-ticking the
+                header does not bring them back), and the server's delete
+                guard still refuses any account with records. */}
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 'var(--fs-13)', color: quickMode ? 'var(--c-festive-b, #B8331F)' : 'var(--fg-muted)', fontWeight: 600 }}>
+              <input type="checkbox" checked={quickMode}
+                aria-label="Quick mode — untick and delete without confirms"
+                onChange={(e) => setQuickMode(e.target.checked)}
+                style={{ width: 14, height: 14, accentColor: 'var(--c-festive-b, #B8331F)' }} />
+              ⚡ Quick mode · 免确认
             </label>
           </div>
         ) : undefined}

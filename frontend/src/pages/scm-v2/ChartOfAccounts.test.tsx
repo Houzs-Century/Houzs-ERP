@@ -138,6 +138,29 @@ describe('fold / edit / delete — the owner points 1, 2 and 4', () => {
     }
   });
 
+  test('⚡ quick mode: leaf untick and delete skip the confirm; a HEADER untick still asks; default is confirms ON', async () => {
+    tickAsync.mockClear(); deleteAsync.mockClear(); confirmFn.mockClear();
+    draw();
+    const quick = screen.getByLabelText('Quick mode — untick and delete without confirms') as HTMLInputElement;
+    expect(quick.checked).toBe(false); // 默认都是要弹的 (owner 2026-09-04)
+    fireEvent.click(quick);
+
+    /* Leaf untick — straight through, no dialog. */
+    fireEvent.click(screen.getByLabelText('310-0010 for HOUZS'));
+    await waitFor(() => expect(tickAsync).toHaveBeenCalledWith({ companyId: 1, code: '310-0010', active: false }));
+    expect(confirmFn).not.toHaveBeenCalled();
+
+    /* Delete — straight through too; the server's guard is the net. */
+    fireEvent.click(screen.getByLabelText('Delete 310-0010'));
+    await waitFor(() => expect(deleteAsync).toHaveBeenCalledWith('310-0010'));
+    expect(confirmFn).not.toHaveBeenCalled();
+
+    /* A HEADER untick sweeps children — it asks even in quick mode. */
+    fireEvent.click(screen.getByLabelText('310-0000 for HOUZS'));
+    await waitFor(() => expect(confirmFn).toHaveBeenCalled());
+    expect(JSON.stringify(confirmFn.mock.calls[0]![0])).toMatch(/sub-account/);
+  });
+
   test('edit is a POP-OUT dialog (owner: 做成一个 pop out 出来 edit) — and a backdrop click does not eat the form', () => {
     draw();
     expect(screen.queryByRole('dialog')).toBeNull();
