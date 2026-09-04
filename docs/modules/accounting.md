@@ -244,6 +244,11 @@ in, which is exactly the two-doors drift the owner called out. Its
 read-only tree got legible the same day (the owner, that table in hand:
 父子account不是很明显): headers render BOLD with a `header` tag like the
 union page's, children step in behind a └ glyph, parents column muted.
+The union page itself learned the same lesson on 2026-09-04 (owner, with
+78 accounts now under 900-0000: 父子account 不清楚): the NAME column
+indents per level too (the old indent was code-column-only and a
+has-parent boolean, so grandchildren sat flush), children wear └, and the
+depth walk shares isHidden's 6-level cap.
 Since 2026-09-04 (owner, three rounds: 按 edit 时要跑回上去 / 往下滑时看不
 到 header / 不好看…做成一个 pop out) the union LIST scrolls inside its card
 (`frontend/src/pages/scm-v2/ChartOfAccounts.tsx` cardBody: maxHeight +
