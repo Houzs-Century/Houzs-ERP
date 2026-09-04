@@ -23,10 +23,16 @@ Both were refuted by the same check in the same run, which is the argument for
 having built it rather than reasoning further.
 
 **Root cause, traced.** `syncSoDeliveredFromDo` is what advances a sales order
-once its delivery order covers it. Every caller of it is an ERP DELIVERY-ORDER
-ROUTE — `delivery-orders-mfg.ts` (six call sites), `delivery-order-revert.ts`,
-and the public DO scan. **A delivery order that arrived by IMPORT never travelled
-a route**, so the reconciliation never ran for it — not once, for any of the 71.
+once its delivery order covers it, and it is called from NINE places, all of them
+under `backend/src/scm/routes/` — `delivery-orders-mfg.ts` (seven),
+`delivery-order-revert.ts`, `delivery-returns.ts`. **A delivery order that
+arrived by IMPORT never travelled a route**, so the reconciliation never ran for
+it — not once, for any of the 71.
+
+(This paragraph first said "six call sites" across three files, from reading
+rather than counting. The `completeness-claim` gate refused the PR and the
+enumeration in its body is the corrected list — a small error, and exactly the
+one that gate exists to catch.)
 
 Nothing is wrong with the delivery orders, and nothing is wrong with the rule.
 They were never introduced to each other. That is why the same import into
