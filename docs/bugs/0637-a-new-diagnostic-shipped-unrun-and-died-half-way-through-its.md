@@ -34,8 +34,27 @@ knows.
 the delivery-order one, and the script header names the trap so the next reader
 does not re-find it.
 
-**Verified.** PENDING — being dispatched from the BRANCH before this merges,
-which is the entry's own remedy. `node --check` parses the script.
+**Verified.** Dispatched from the BRANCH before merging — the entry's own remedy —
+run 33850492738, `success`, all five sections printed:
+
+```
+IN PRODUCTION WITH NO PROCESSING DATE: 1        (company 1, HC-SO-013361)
+CONFIRMED BUT CARRYING A PROCESSING DATE: company 1 = 5, company 2 = 1
+DELIVERY ORDERS THAT EXIST AT ALL: company 1 = 71, company 2 = 58
+SHIPPED BUT NOT MARKED DELIVERED: 61
+```
+
+`node --check` parses the script.
+
+**AND THE CHECK IMMEDIATELY EARNED ITSELF, by refuting the person who wrote it.**
+Before running it I told the owner that Houzs Century's empty DELIVERED tile was
+probably a tile over an empty table — no delivery orders had been migrated, so
+the count could not be anything but zero. **Company 1 has 71 delivery orders.**
+The tile is empty for a different reason, and 61 sales orders carry a live
+delivery order while still sitting earlier on the board. That is a real finding
+and it needs its own entry once the shape is measured; recorded here because the
+refutation is the strongest argument for building the check rather than
+reasoning.
 
 **The lesson, and it is not "be careful".** A diagnostic is code, and code that
 has never executed is not shipped. The cheapest guard is to dispatch it BEFORE
