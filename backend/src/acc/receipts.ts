@@ -47,7 +47,14 @@ export type ReceiptPaymentInput = {
 };
 
 async function digitsOf(sb: any, companyId: number): Promise<number> {
-  const { data } = await sb.from('acc_numbering').select('doc_digits').eq('company_id', companyId).maybeSingle();
+  const { data, error } = await sb.from('acc_numbering').select('doc_digits').eq('company_id', companyId).maybeSingle();
+  /* Width is cosmetic (the parser reads any length) — a blip here must not
+     block a money confirmation, so the default width answers, out loud. */
+  if (error) {
+    // eslint-disable-next-line no-console
+    console.error('[receipts] width read failed, defaulting to 3:', error.message);
+    return 3;
+  }
   return Number((data as { doc_digits?: number } | null)?.doc_digits ?? 3);
 }
 
@@ -117,8 +124,9 @@ export async function createReceiptForPayment(
     }
     const dupPayment = /payment_source|payment_id/.test(String(error.message ?? '')) && /duplicate key/i.test(String(error.message ?? ''));
     if (dupPayment) {
-      const { data: again } = await sb.from('acc_receipts')
+      const { data: again, error: againErr } = await sb.from('acc_receipts')
         .select('id, or_number, status').eq('payment_source', p.source).eq('payment_id', p.paymentId).maybeSingle();
+      if (againErr) return { ok: false, reason: `receipt exists but could not be read back: ${againErr.message}` };
       if (again) {
         const cur = again as { id: number; or_number: string; status: string };
         return { ok: true, id: cur.id, orNumber: cur.or_number, status: cur.status };
@@ -243,9 +251,12 @@ export async function formaliseReceiptsForSettlement(
   const out: Array<{ paymentId: string; outcome: string }> = [];
   if (!bankAccountCode) return payments.map((p) => ({ paymentId: p.id, outcome: 'no_bank_configured' }));
   for (const p of payments) {
-    const { data } = await sb.from('acc_receipts')
+    const { data, error } = await sb.from('acc_receipts')
       .select('id, status')
       .eq('payment_source', p.source).eq('payment_id', p.id).maybeSingle();
+    /* A blip is NOT "no receipt" — reported as its own outcome so the sweep's
+       answer never lies about what it saw. */
+    if (error) { out.push({ paymentId: p.id, outcome: 'read_failed' }); continue; }
     const r = data as { id: number; status: string } | null;
     if (!r) { out.push({ paymentId: p.id, outcome: 'no_receipt' }); continue; }
     if (r.status === 'FORMAL') { out.push({ paymentId: p.id, outcome: 'already_formal' }); continue; }
