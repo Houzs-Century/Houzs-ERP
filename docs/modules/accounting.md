@@ -377,6 +377,30 @@ the reason, for a human to confirm. Offered, never taken: two possible answers i
 a question, so nothing is ticked and he chooses;
 `acc/settlement.ts` confirms, which POSTS that moment.
 
+**Which payments are candidates (2026-09-04, the owner's first real uploads
+made the gap loud: four MBB lines all UNMATCHED while their sales sat in the
+ERP).** `couldBeAcquirers` in acc/settlement.ts is the one rule: a card payment
+(merchant / installment) tagged with THIS acquirer, a card payment tagged with
+nothing, or an `imported` payment tagged with nothing — migration-era rows all
+look like that, and the payout still lands in this system's bank, so the
+statement must be able to find them. A payment tagged with a DIFFERENT acquirer
+is never offered (someone else's stream), and cash/transfer never settle
+through one. An untagged candidate reaches the screen marked 未标 merchant — a
+question, not an answer: the matcher still auto-takes only on a unique
+reference. Confirming STAMPS the tag onto the payment row (NULL only, never
+over a tag chosen at the till), so the next statement finds it named. Note the
+phase-2A posting rule is unchanged: `imported` rows still never book — being a
+candidate is about RECONCILING the payout, not re-posting the sale.
+
+**A half-failed upload cannot hold its file hostage.** The upload writes the
+batch head first and its lines after; a failure between the two used to leave
+a batch with no lines still owning the file hash, so the SAME file was refused
+as "already uploaded" for ever (the owner's PBB statement of 2026-08-01 sat
+exactly like this). Now every failure after the head is written takes the head
+back out, and `clearOrphanBatch` clears any such wreck at the next upload of
+its file — a batch WITH lines keeps the duplicate refusal, because that one
+really was uploaded.
+
 **Two events, two entries** (owner, 2026-08-17: 全部卡机都是隔几天收到的。应该是
 先对卡机报告，然后 match 了就会去 match bank statement). Reconciling the card
 machine and receiving the money are days apart, so the ledger keeps them apart:
