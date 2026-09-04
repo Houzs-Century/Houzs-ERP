@@ -14,7 +14,7 @@
 //   - The coverage DECISION is the pure `isSoFullyCovered` below (unit-tested);
 //     this module's async wrapper is the thin Supabase glue around it.
 
-import { DO_NOT_DELIVERED_IN_LIST } from '../shared/do-shipped-states';
+import { DO_NOT_DELIVERED_IN_LIST, doCountsAsDelivered } from '../shared/do-shipped-states';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { isServiceLine } from '../shared';
 import { recordSoAudit } from './so-audit';
@@ -23,6 +23,119 @@ import { loadUnlinkedDoCoverage } from './do-unlinked-coverage';
 
 export type SoLineQty = { id: string; qty: number };
 export type DoLineQty = { soItemId: string | null; qty: number };
+
+/** One delivery order of the SO, as the release guard sees it: its status,
+ *  the header's own line_count, and how many rows delivery_order_items
+ *  actually holds for it right now. */
+export type DoLineCensus = {
+  doNumber: string;
+  status: string | null;
+  lineCount: number | null;
+  rowCount: number;
+};
+
+/** THE RELEASE GUARD'S DECISION (2026-09-04). Returns the delivery orders
+ *  that COUNT as delivered (`doCountsAsDelivered`: every state but DRAFT and
+ *  CANCELLED) yet hold ZERO line rows.
+ *
+ *  Such a document is not a delivery that un-happened; it is broken evidence.
+ *  On 2026-09-02 three 2990 delivery orders (2607-016/018/019) carried
+ *  line_count, money and OUT movements from 2026-07-23 while their 8 rows sat
+ *  under three header ids that no longer existed. A QR-scan batch marked 24
+ *  deliveries DELIVERED, this module re-derived coverage for each SO, read the
+ *  empty documents as "nothing delivered", and released three delivered orders
+ *  back to READY_TO_SHIP — where MRP planned sofas already in the customers'
+ *  homes and handed a real PO to the wrong order. The release arm may only
+ *  fire on POSITIVE evidence (a cancelled DO, a reduced line, a return); an
+ *  empty live document is the signature of corruption and must HOLD the
+ *  order, loudly, until a person looks. `line_count` is reported, not
+ *  trusted: the rows are the evidence, and a null count on an empty shipped
+ *  document is still an empty shipped document. Pure, so it is unit-tested. */
+export function emptyLiveDeliveries(dos: DoLineCensus[]): string[] {
+  return dos
+    .filter((d) => doCountsAsDelivered(d.status) && d.rowCount === 0)
+    .map((d) => d.doNumber);
+}
+
+/** Census of every delivery order whose header names this SO. Best-effort by
+ *  construction: a failed read yields [] and the release arm behaves exactly
+ *  as it did before the guard existed. */
+async function loadEmptyLiveDeliveries(sb: SupabaseClient, docNo: string): Promise<string[]> {
+  try {
+    const { data: dosRaw, error } = await sb
+      .from('delivery_orders')
+      .select('id, do_number, status, line_count')
+      .eq('so_doc_no', docNo);
+    if (error || !dosRaw || dosRaw.length === 0) return [];
+    const dos = dosRaw as Array<{ id: string; do_number: string; status: string | null; line_count: number | null }>;
+    const { data: rowsRaw, error: rowsErr } = await sb
+      .from('delivery_order_items')
+      .select('delivery_order_id')
+      .in('delivery_order_id', dos.map((d) => d.id));
+    if (rowsErr) return [];
+    const rowsByDo = new Map<string, number>();
+    for (const r of (rowsRaw ?? []) as Array<{ delivery_order_id: string | null }>) {
+      if (!r.delivery_order_id) continue;
+      rowsByDo.set(r.delivery_order_id, (rowsByDo.get(r.delivery_order_id) ?? 0) + 1);
+    }
+    return emptyLiveDeliveries(dos.map((d) => ({
+      doNumber: d.do_number,
+      status: d.status,
+      lineCount: d.line_count,
+      rowCount: rowsByDo.get(d.id) ?? 0,
+    })));
+  } catch {
+    return [];
+  }
+}
+
+const RELEASE_REFUSED_ACTION = 'RELEASE_REFUSED';
+const RELEASE_REFUSED_QUIET_MS = 24 * 60 * 60 * 1000;
+
+/** The hold is not silent — silent is how the 2026-08-17 shape went unseen for
+ *  three weeks — but it must not spam either: the sync runs on every DO
+ *  mutation, and a scan batch touches one SO many times. One audit row per SO
+ *  per day, then quiet until a person acts. */
+async function recordReleaseRefused(
+  sb: SupabaseClient,
+  docNo: string,
+  actorId: string | null | undefined,
+  brokenDos: string[],
+): Promise<void> {
+  try {
+    const note = `Kept at DELIVERED: ${brokenDos.join(', ')} count(s) as delivered but hold NO line rows. `
+      + 'That is broken delivery evidence, not an un-delivery. The order is NOT released to re-ship; '
+      + 'restore the delivery order lines (see docs/bugs, 2026-09-04) and the next sync clears this.';
+    /* The Worker log always gets the line; only the audit ROW is rate-limited. */
+    /* eslint-disable-next-line no-console */
+    console.warn(`[so-delivery-sync] ${docNo}: ${note}`);
+    const since = new Date(Date.now() - RELEASE_REFUSED_QUIET_MS).toISOString();
+    const { data: recent, error: recentErr } = await sb
+      .from('mfg_so_audit_log')
+      .select('id')
+      .eq('so_doc_no', docNo)
+      .eq('action', RELEASE_REFUSED_ACTION)
+      .gte('created_at', since)
+      .limit(1);
+    /* A failed de-dup read is not "no recent row": writing on it would let a
+       database blip turn one hold into a row per scan. Skip the note; the log
+       line above already carries it. */
+    if (recentErr) return;
+    if ((recent ?? []).length > 0) return;
+    await recordSoAudit(sb, {
+      docNo,
+      action: RELEASE_REFUSED_ACTION,
+      actorId: actorId ?? null,
+      actorName: 'System (delivery sync)',
+      source: 'automation',
+      statusSnapshot: 'DELIVERED',
+      fieldChanges: [{ field: 'status', from: 'DELIVERED', to: 'DELIVERED' }],
+      note,
+    });
+  } catch {
+    /* best-effort — the hold itself already happened; the note is a courtesy */
+  }
+}
 
 /** Pure coverage decision. `soLines` must already EXCLUDE cancelled SO lines;
  *  `doLines` should EXCLUDE lines belonging to cancelled DOs; `returnLines`
@@ -254,7 +367,19 @@ export async function syncSoDeliveredFromDo(
       // Decide the reconciled status. No-op when it already matches (idempotent).
       let target: string | null = null;
       if (fullyCovered && canAdvance) target = 'DELIVERED';
-      else if (!fullyCovered && canRelease) target = RELEASE_TO;
+      else if (!fullyCovered && canRelease) {
+        /* RELEASE ONLY ON POSITIVE EVIDENCE (2026-09-04). "Not covered" can
+           mean a cancelled DO, a reduced line, a return — or a shipped
+           delivery order whose line rows are simply GONE. The last one is the
+           corruption this module turned into three re-orders on 2026-09-02;
+           it is held here, named in the SO's history, and never released. */
+        const broken = await loadEmptyLiveDeliveries(sb, docNo);
+        if (broken.length > 0) {
+          await recordReleaseRefused(sb, docNo, actorId, broken);
+          continue;
+        }
+        target = RELEASE_TO;
+      }
       if (!target || target === status) continue;
 
       const note = target === 'DELIVERED'

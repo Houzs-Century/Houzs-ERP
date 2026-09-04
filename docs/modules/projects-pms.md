@@ -88,6 +88,20 @@ Landmarks worth grepping to:
 | 11530 | `AddFinanceLineForm` | 11891 | `AttachmentsSection` |
 | 12263 | `ImportCsvPanel` | | |
 
+**`ProjectSpecStrip` — what shows at rest vs behind Edit.** The strip under the
+"Project Detail" header is two layers gated by one `editing` flag. At rest it
+renders exactly **Start · End · Size · sqm · Rental · RM** in a 4-column grid —
+the two dates and the two numbers the owner reads at a glance (owner 2026-09-03:
+"frontend only should have start date / end date / rental / size, other details
+keep hidden behind edit"). Everything else — Brand, Event Type, Created,
+Duration, Booth, Venue, State, Organizer, Contractor, Name, Add-to-Calendar —
+lives inside `{editing && (<>…</>)}` blocks and appears only after the Edit
+button (`fullAccess` only). When adding a field, put it in an edit-only block
+unless the owner has asked for it on the resting row; the resting set is pinned
+by `projectDetailEdit.test.tsx` ("shows only Start, End, Size and Rental until
+Edit is clicked"). Size keeps its `DetectSizeButton` and Rental its
+`QuickRentalField` in both modes — those two write on their own, without Edit.
+
 Per-view access is resolved at `:811-816` with `usePageAccess("projects.list" |
 ".calendar" | ".finances" | ".maintenance")`, ANDed with
 `user.project_finance_viewer` for Finances (`:802`). Maintenance is
