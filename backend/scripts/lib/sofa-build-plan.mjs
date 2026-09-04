@@ -71,13 +71,22 @@ export function seatHeightToWrite(seat) {
  * Split the rows the matcher selected for ONE correction into the sofas they
  * actually are.
  *
- * A row whose code is not one of the target pieces is a PLACEHOLDER waiting for
- * the build. One placeholder is one sofa. Two placeholders under one Desc2 are
- * two identical sofas, and each takes the whole build.
+ * HOW MANY SOFAS: count each code. A code the target list does not use is a
+ * PLACEHOLDER, and one placeholder is one sofa. A code the target list DOES use
+ * is one sofa's worth per occurrence in that list — a build whose pieces are
+ * `1A+1NA+CNR+1NA+1A` may hold two `1NA` rows and still be a single sofa. The
+ * number of sofas is therefore the largest `count / how many the build uses`,
+ * and it only stands if EVERY code divides that way exactly. Anything else is
+ * refused rather than guessed.
  *
- * It refuses rather than guesses in the one case it cannot read: several
- * placeholders sitting next to rows that are ALREADY correct pieces, where
- * nothing in the data says which sofa those correct pieces belong to.
+ * The "already a target piece" arm is not hypothetical, and the first shape of
+ * this function got it wrong. It counted PLACEHOLDERS only, and refused as soon
+ * as any row was already a target piece. HC-PO-009024's two lines had been
+ * carried from their sales order — the SO half of the correction runs first and
+ * its downstream carry set both PO lines to `9050-1A(LHF)` — so by the time the
+ * PO half read them neither was a placeholder, while the document still held
+ * two sofas. Measured on prod, run 33891638140: the build was refused and the
+ * purchase order was left half corrected.
  *
  * @param {any[]} rows the build's rows, in document order
  * @param {string[]} want the target piece codes, fully qualified and upper-cased
@@ -86,23 +95,44 @@ export function seatHeightToWrite(seat) {
  */
 export function splitBuildCopies(rows, want, codeOf = (r) => r.code) {
   const all = Array.isArray(rows) ? rows.slice() : [];
-  const target = new Set(want.map(K));
-  const placeholders = all.filter((r) => !target.has(K(codeOf(r))));
-  const already = all.filter((r) => target.has(K(codeOf(r))));
+  if (all.length <= 1) return { ok: true, copies: [all], how: "one sofa on this build" };
 
-  if (placeholders.length <= 1)
-    return { ok: true, copies: [all], how: "one sofa on this build" };
+  /** how many of each code the target list uses; 0 for a placeholder code */
+  const uses = new Map();
+  for (const w of want) uses.set(K(w), (uses.get(K(w)) ?? 0) + 1);
 
-  if (already.length)
-    return {
-      ok: false,
-      why: `${placeholders.length} placeholder lines AND ${already.length} line(s) that are already target pieces — which sofa the correct pieces belong to is not written down anywhere, and picking one is not this script's call`,
-    };
+  const have = new Map();
+  for (const r of all) {
+    const c = K(codeOf(r));
+    if (!have.has(c)) have.set(c, []);
+    have.get(c).push(r);
+  }
 
+  let copies = 1;
+  for (const [c, rs] of have) copies = Math.max(copies, Math.ceil(rs.length / Math.max(1, uses.get(c) ?? 0)));
+  if (copies === 1) return { ok: true, copies: [all], how: "one sofa on this build" };
+
+  for (const [c, rs] of have) {
+    const per = uses.get(c) ?? 0;
+    const owed = per === 0 ? copies : copies * per;
+    if (rs.length !== owed)
+      return {
+        ok: false,
+        why: `this looks like ${copies} identical sofas, but ${c} appears ${rs.length} time(s) where ${copies} sofa(s) would need ${owed} — the document does not divide evenly and which line belongs to which sofa is not written down anywhere`,
+      };
+  }
+
+  /* Deal each code's rows out one per sofa, in document order. */
+  const out = Array.from({ length: copies }, () => []);
+  for (const [c, rs] of have) {
+    const per = uses.get(c) ?? 0;
+    const each = per === 0 ? 1 : per;
+    rs.forEach((r, i) => out[Math.floor(i / each)].push(r));
+  }
   return {
     ok: true,
-    copies: placeholders.map((r) => [r]),
-    how: `${placeholders.length} identical sofas on this build — each takes the whole build`,
+    copies: out,
+    how: `${copies} identical sofas on this build — each takes the whole build`,
   };
 }
 
