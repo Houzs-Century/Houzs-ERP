@@ -485,3 +485,73 @@ describe('parse-sofa: a leg note written beside the build keeps the build', () =
     expect(pieces('Size:28\u201d/Col:CHINO-01/Bottom wrap nylon/+2\u201d leg', '5535')).toEqual([]);
   });
 });
+
+/* THE SHOP FLOOR'S OWN SHORTHAND (owner readings, 2026-09-04).
+   He read a line the decoder refused — HC-SO-000814 / HC-PO-000254,
+   "[ (1 ELT / T + NA +2ER) (28") / COL: J9883-1-1 PAMA]", whose remark says
+   `token "NA"; token "1ELT"` — and named what the floor meant:
+
+     ELT   is L, the chaise. "1 ELT" at the LEFT of the string is L(LHF).
+     ER    is the end on the RIGHT, so 2ER is 2A(RHF)  (already the grammar's
+           reading; pinned here so a later sweep cannot quietly change it).
+     NA    with no leading digit is 1NA.
+
+   He named ELT and 2ER only. The "T" in that string is NOT explained, and this
+   file does not invent one for it — see the last test in this block. */
+describe('parse-sofa: the shorthand the floor writes (owner 2026-09-04)', () => {
+  test('ELT is the chaise: "1 ELT" written first is L(LHF)', () => {
+    expect(pieces('1 ELT + NA + 2ER (28")', '5526')).toEqual([
+      'L(LHF)', '1NA', '2A(RHF)',
+    ]);
+  });
+
+  test('a bare ELT is the same chaise', () => {
+    expect(pieces('ELT + 1NA + 1ER (28")', '5526')).toEqual([
+      'L(LHF)', '1NA', '1A(RHF)',
+    ]);
+  });
+
+  test('ELT written LAST closes the other end', () => {
+    expect(pieces('1EL + 1NA + 1ELT (28")', '5526')).toEqual([
+      '1A(LHF)', '1NA', 'L(RHF)',
+    ]);
+  });
+
+  test('a bare NA is 1NA', () => {
+    expect(pieces('1EL+NA+1ER(30")')).toEqual(['1A(LHF)', '1NA', '1A(RHF)']);
+  });
+
+  test('two bare NAs are two 1NAs', () => {
+    expect(pieces('1EL+NA+C+NA+1ER(30")')).toEqual([
+      '1A(LHF)', '1NA', 'CNR', '1NA', '1A(RHF)',
+    ]);
+  });
+
+  /* The already-approved precedent this family was confirmed against:
+     sofa-compartment-corrections-2026-08.json's HC-PO-007709 entry reads
+     "1EL + 1NA + C + 1NA + 1ER" as 1A(LHF)+1NA+CNR+1NA+1A(RHF). */
+  test('the approved precedent still decodes the same way', () => {
+    expect(pieces('1EL + 1NA + C + 1NA + 1ER (30")')).toEqual([
+      '1A(LHF)', '1NA', 'CNR', '1NA', '1A(RHF)',
+    ]);
+  });
+
+  test('2ER is 2A(RHF) — the owner’s confirmation, pinned', () => {
+    expect(pieces('1EL+1NA+2ER(28")')).toEqual(['1A(LHF)', '1NA', '2A(RHF)']);
+  });
+
+  /* THE LINE HE ASKED US TO LEAVE ALONE. Its build is written across a slash
+     INSIDE the bracket — "(1 ELT / T + NA +2ER)" — so the segment splitter sees
+     two pieces of one build, and the grammar can only ever read one of them.
+     With ELT and NA taught, the "T + NA +2ER" half now decodes on its own, and
+     shipping that half would be a two-piece sofa with the chaise silently gone,
+     at HIGH confidence — the exact failure the split guard exists to stop. It
+     must stay a placeholder: the "T" is unexplained and the owner has the
+     photograph. */
+  test('HC-SO-000814 stays a placeholder — the build is split and "T" is unexplained', () => {
+    const r = parseSofa('[ (1 ELT / T + NA +2ER) (28") / COL: J9883-1-1 PAMA]', '5526', false);
+    expect(r.pieces).toEqual([]);
+    expect(r.conf).toBe('low');
+    expect((r.why as string[]).some((w) => /structure split across segments/.test(w))).toBe(true);
+  });
+});

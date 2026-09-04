@@ -267,7 +267,10 @@ function parseSofa(d2raw, model, recl = false, opts = {}) {
       else if ((m = /^([1234])S(?:EATER|ETEAR)?$/.exec(t))) U.push({ k: "seat", n: m[1], raw: t });
       else if (/^(TO|USE)?8030$/.test(t)) rider.push(t);
       else if (/^2\.5S?$/.test(t)) U.push({ k: "seat", n: "2", raw: t, note: "2.5S→2S(owner:座深照写)" });
-      else if ((m = /^([12])NA$/.exec(t))) U.push({ k: "na", n: m[1], raw: t });
+      /* owner 2026-09-04: a bare "NA" with no leading digit is 1NA. It was the
+         only unlabelled piece in the vocabulary and it read as an unknown
+         structure token, which killed the whole segment (HC-SO-000814). */
+      else if ((m = /^([12])?NA$/.exec(t))) U.push({ k: "na", n: m[1] || "1", raw: t });
       else if ((m = /^([12])B$/.exec(t))) U.push({ k: "bseat", n: m[1], raw: t }); // owner: 1B 我们有
       else if (t === "1C") U.push({ k: "corner", raw: t });                        // owner: 1C 是 corner
       else if (t === "2G1F") U.push({ k: "g2f1", raw: t });                        // owner: 2G1F = 2A+C+1A
@@ -283,6 +286,10 @@ function parseSofa(d2raw, model, recl = false, opts = {}) {
       else if (/^([12])E$/.test(t)) U.push({ k: "eside", raw: t }); // owner: E 少了 L/R
       else if (t === "1P") U.push({ k: "pw", raw: t });
       else if (t === "L") U.push({ k: "chaise", raw: t });
+      /* owner 2026-09-04: "ELT" is L, the chaise — "1 ELT" written first is
+         L(LHF). Sided by position exactly like a bare L. He named ELT and 2ER
+         and nothing else, so no "ERT" arm is invented here. */
+      else if (/^1?ELT$/.test(t)) U.push({ k: "chaise", raw: t });
       else if (t === "C" || t === "CNR" || t === "CORNER") U.push({ k: "corner", raw: t });
       else if (t === "CT" || t === "C-T") U.push({ k: "console", raw: t });
       else if (/^STOOL/.test(t)) U.push({ k: "stool", raw: t });
@@ -484,11 +491,18 @@ function parseSofa(d2raw, model, recl = false, opts = {}) {
     // GUARD (owner: proceed 单件必须对) — if any OTHER segment still contains
     // piece-looking tokens, the structure was split by punctuation and we may
     // have silently dropped pieces. Never half-parse: demote to placeholder.
-    const PIECE_RE = /(^|[+\s(])(?:[123]S?|[12]NA|[12]E?[LR]|L[123]?|CT|CNR|C|STOOL|P|R)(\)|[+\s]|$)/;
+    /* The leftover segment is normalised the SAME way a token is — brackets
+       become '+' — because the token pipeline does that and this guard has to
+       see what the pipeline would have seen. It did not, so a build written
+       across a slash INSIDE a bracket ("(1 ELT / T + NA +2ER)") left "(1 ELT"
+       looking like prose: no '+' in the raw text, guard silent, and the other
+       half shipped as a whole sofa with the chaise gone, at HIGH confidence.
+       HC-SO-000814 / HC-PO-000254, owner review 2026-09-04. */
+    const PIECE_RE = /(^|[+\s(])(?:[123]S?|[12]?NA|1?ELT|[12]E?[LR]|L[123]?|CT|CNR|C|STOOL|P|R)(\)|[+\s]|$)/;
     for (const seg of segs) {
       if (seg === o._seg) continue;
-      const s = seg.replace(/\s+/g, "").toUpperCase();
-      if (/^[\d."']+$/.test(s)) continue;
+      const s = seg.replace(/\s+/g, "").toUpperCase().replace(/[()]/g, "+");
+      if (/^[+\d."']+$/.test(s)) continue;
       if (s.includes("+") && PIECE_RE.test(s)) { o.pieces = []; o.conf = "low"; o.why.push(`structure split across segments ("${seg}")`); matched = false; break; }
     }
   }
