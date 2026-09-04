@@ -15,9 +15,49 @@
 // closes.
 // ----------------------------------------------------------------------------
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 export type ComboOption = { value: string; label: string; group?: string };
+
+/* Where the list lives, opens, and how tall it may be.
+
+   Round 1 (owner 2026-09-04: 为什么我能选的这么少 / 选account 时会无法看到
+   下面的): the panel opened DOWN unconditionally at 280px — viewport math
+   was added so it could flip up. Round 2, same day, 还是一样 — because the
+   REAL clipper was never the viewport: the panel rendered absolute INSIDE
+   the form card, and .card carries overflow:hidden for its rounded corners
+   (SalesOrderDetail.module.css), so anything past the card's edge was cut,
+   scrollbar included, whatever the viewport said. Eight "adver" matches
+   existed; the card showed four.
+
+   So the panel now PORTALS to document.body and positions FIXED off the
+   input's live rect: no ancestor overflow, transform or stacking context
+   can clip it. While open it re-measures on scroll (capture phase, so any
+   scroller counts) and on resize; it flips UP when the space below can't
+   fit the panel and above offers more, and caps its height to the side
+   actually available — the whole list, its own scrollbar included, always
+   on screen. */
+const PANEL_MAX = 280;
+const PANEL_MIN = 120;
+const EDGE_GAP = 8;
+
+type PanelPos = { up: boolean; maxH: number; left: number; width: number; top: number; bottom: number };
+
+function measurePanel(input: HTMLElement): PanelPos {
+  const r = input.getBoundingClientRect();
+  const below = window.innerHeight - r.bottom - EDGE_GAP;
+  const above = r.top - EDGE_GAP;
+  const up = below < PANEL_MAX && above > below;
+  return {
+    up,
+    maxH: Math.max(PANEL_MIN, Math.min(PANEL_MAX, up ? above : below)),
+    left: r.left,
+    width: r.width,
+    top: r.top,
+    bottom: r.bottom,
+  };
+}
 
 export function SearchCombo({
   options,
@@ -43,6 +83,26 @@ export function SearchCombo({
   const [query, setQuery] = useState<string | null>(null); // null = showing the chosen label
   const [highlight, setHighlight] = useState(0);
   const wrapRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  /* Measured at open (layout effect: before paint, so the panel never
+     flashes on the wrong side) and KEPT true while open — a scroll in any
+     ancestor (capture phase) or a resize moves the input, and a fixed
+     panel must follow it. */
+  const [pos, setPos] = useState<PanelPos | null>(null);
+  useLayoutEffect(() => {
+    if (!open) { setPos(null); return; }
+    const el = inputRef.current;
+    if (!el) return;
+    const update = () => { setPos(measurePanel(el)); };
+    update();
+    window.addEventListener('scroll', update, true);
+    window.addEventListener('resize', update);
+    return () => {
+      window.removeEventListener('scroll', update, true);
+      window.removeEventListener('resize', update);
+    };
+  }, [open]);
 
   const shown = query ?? chosen?.label ?? '';
 
@@ -90,6 +150,7 @@ export function SearchCombo({
       }}
     >
       <input
+        ref={inputRef}
         id={id}
         type="text"
         role="combobox"
@@ -109,12 +170,19 @@ export function SearchCombo({
           else if (e.key === 'Escape') { close(true); }
         }}
       />
-      {open && !disabled && (
+      {open && !disabled && pos && createPortal(
         <div
           role="listbox"
+          /* preventDefault on the CONTAINER too: grabbing the panel's own
+             scrollbar must not steal focus from the input — a blur here
+             closes the panel mid-scroll. */
+          onMouseDown={(e) => { e.preventDefault(); }}
           style={{
-            position: 'absolute', zIndex: 30, top: '100%', left: 0, right: 0, marginTop: 2,
-            maxHeight: 280, overflowY: 'auto',
+            position: 'fixed', zIndex: 1000, left: pos.left, width: pos.width,
+            ...(pos.up
+              ? { bottom: window.innerHeight - pos.top + 2 }
+              : { top: pos.bottom + 2 }),
+            maxHeight: pos.maxH, overflowY: 'auto',
             background: 'var(--c-paper, #fff)', border: '1px solid var(--line, rgba(34,31,32,0.2))',
             borderRadius: 'var(--radius-md, 8px)', boxShadow: '0 8px 24px rgba(0,0,0,0.12)',
             fontSize: 'var(--fs-13)',
@@ -145,7 +213,8 @@ export function SearchCombo({
               {r.o.label}
             </div>
           ))}
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );

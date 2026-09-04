@@ -46,6 +46,33 @@ function splitAddressLines(address: string): string[] {
   return [line1, line2];
 }
 
+/** Wrap one letterhead line to `maxW`, breaking ONLY after a comma.
+ *
+ *  splitTextToSize breaks between WORDS, and an address is not prose: it cut
+ *  "…KL Gateway, No. 2," into "…No." / "2," on the owner's 2990 voucher
+ *  (2026-09-04: 地址整齐一点). A comma-delimited chunk ("No. 2,", "Menara
+ *  SUEZCAP 2,") is the unit a reader parses, so chunks pack greedily into
+ *  lines and never split — except a single chunk that alone exceeds the
+ *  width, which the CALLER word-wraps as the lesser evil. Exported for its
+ *  test. `measure` is the current font's text-width fn, so the wrap always
+ *  matches what will actually be painted. */
+export function wrapAtCommas(line: string, maxW: number, measure: (s: string) => number): string[] {
+  const chunks = (line.match(/[^,]+,?/g) ?? [line]).map((s) => s.trim()).filter(Boolean);
+  const out: string[] = [];
+  let cur = '';
+  for (const chunk of chunks) {
+    const candidate = cur ? `${cur} ${chunk}` : chunk;
+    if (cur && measure(candidate) > maxW) {
+      out.push(cur);
+      cur = chunk;
+    } else {
+      cur = candidate;
+    }
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+
 export const COMPANY = {
   get name(): string {
     return getBrandingCache().companyName;
@@ -451,8 +478,14 @@ export function drawHeader(
   const nameLines = doc.splitTextToSize(COMPANY.name, leftMaxW) as string[];
   doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
   const regLines = doc.splitTextToSize(COMPANY.reg, leftMaxW) as string[];
-  const addressLines = COMPANY.addressLines.flatMap(
-    (line) => doc.splitTextToSize(line, leftMaxW) as string[],
+  /* Comma-aware (see wrapAtCommas): the width wrap must not cut inside a
+     chunk like "No. 2,". Only a chunk that ALONE overflows the measure falls
+     back to the word wrap. Shared letterhead — every document tidies up
+     together. */
+  const addressLines = COMPANY.addressLines.flatMap((line) =>
+    wrapAtCommas(line, leftMaxW, (s) => doc.getTextWidth(s)).flatMap((l) =>
+      doc.getTextWidth(l) > leftMaxW ? (doc.splitTextToSize(l, leftMaxW) as string[]) : [l],
+    ),
   );
 
   let logoBottomY = 0;
@@ -700,9 +733,32 @@ export function deliverPdf(
     doc.save(filename);
     return;
   }
-  const blobUrl = URL.createObjectURL(doc.output('blob'));
+  deliverPdfBlob(doc.output('blob'), filename, action);
+}
+
+/** The same three exits for a PDF that exists only as BYTES — a jsPDF page
+ *  merged with stored attachments (pdf-attach.ts) is no longer a jsPDF doc,
+ *  and re-parsing it into one just to deliver it would be a lossy detour.
+ *  'save' mirrors doc.save(): an <a download> click. */
+export function deliverPdfBlob(
+  blob: Blob,
+  filename: string,
+  action: PdfAction = 'save',
+): void {
+  if (action === 'save') {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.setTimeout(() => { URL.revokeObjectURL(url); }, 60_000);
+    return;
+  }
+  const blobUrl = URL.createObjectURL(blob);
   if (action === 'preview') {
-    openPdfPreviewTab(doc, blobUrl, filename);
+    openPdfPreviewTab(blob, blobUrl, filename);
     return;
   }
   renderViaIframe(blobUrl, true);
@@ -729,7 +785,7 @@ export function deliverPdf(
  *
  * The tab is opened SYNCHRONOUSLY, before any await: a `window.open` that
  * follows an await has lost the user gesture and is blocked as a popup. */
-function openPdfPreviewTab(doc: import('jspdf').jsPDF, blobUrl: string, filename: string): void {
+function openPdfPreviewTab(blob: Blob, blobUrl: string, filename: string): void {
   const tab = window.open('', '_blank');
   if (!tab) {
     // Popup blocked — the raw blob is still better than nothing.
@@ -738,7 +794,7 @@ function openPdfPreviewTab(doc: import('jspdf').jsPDF, blobUrl: string, filename
   }
   void (async () => {
     try {
-      const path = await putPrintPreview(doc, filename);
+      const path = await putPrintPreview(blob, filename);
       if (path) {
         tab.location.replace(path);
         return;
@@ -758,7 +814,7 @@ const PRINT_KEEP = 5;
 /* Put the PDF where the service worker can serve it, and return the path — or
    null when the worker is not in control (see openPdfPreviewTab). */
 async function putPrintPreview(
-  doc: import('jspdf').jsPDF,
+  blob: Blob,
   filename: string,
 ): Promise<string | null> {
   if (typeof caches === 'undefined' || !navigator.serviceWorker?.controller) return null;
@@ -774,7 +830,7 @@ async function putPrintPreview(
   const path = PRINT_PREFIX + encodeURIComponent(filename);
   await cache.put(
     path,
-    new Response(doc.output('blob'), {
+    new Response(blob, {
       headers: {
         'Content-Type': 'application/pdf',
         /* `inline` so the browser RENDERS it rather than downloading; the

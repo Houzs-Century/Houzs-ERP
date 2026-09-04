@@ -142,6 +142,9 @@ export const ChartOfAccounts = () => {
   const accounts = useMemo(() => treeOrder(unionQ.data?.accounts ?? []), [unionQ.data]);
   const [parsed, setParsed] = useState<ParsedChart | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
+  /* 快速模式 — session-only, never persisted: every visit starts with the
+     confirms back on (see the toggle's comment in the header). */
+  const [quickMode, setQuickMode] = useState(false);
 
   /* ── 展开/收缩 (owner point 4): fold a header, its whole subtree hides. ── */
   const [folded, setFolded] = useState<Set<string>>(new Set());
@@ -166,24 +169,52 @@ export const ChartOfAccounts = () => {
     });
   };
 
+  /* ── 拖动改父户 (the owner, 2026-09-03: 我希望可以拖动式 put account under
+     别的 account). Drop A onto B → confirm → B becomes A's header. The moved
+     account keeps its GL (lines hang on its own code); the SERVER holds the
+     rule — a target with postings or references refuses (父户不记账), same
+     type only, no cycles — and its sentence lands in the dialog on refusal. */
+  const [dragCode, setDragCode] = useState<string | null>(null);
+  const onDropInto = async (target: ChartRow) => {
+    const src = dragCode;
+    setDragCode(null);
+    if (!src || src === target.code) return;
+    const srcRow = accounts.find((x) => x.code === src);
+    if (!srcRow || (srcRow.parentCode ?? '') === target.code) return;
+    const ok = await askConfirm({
+      title: `把 ${src} 挂到 ${target.code} 下？`,
+      body: `${srcRow.name} → under ${target.name}. A target that carries postings or references refuses (父户不记账); the move itself never touches the GL.`,
+      confirmLabel: 'Move',
+    });
+    if (!ok) return;
+    try {
+      await doUpdate.mutateAsync({ code: src, parentCode: target.code });
+    } catch (e) {
+      void notify({ title: 'Move failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
+    }
+  };
+
   /* ── 改码/改名 (owner point 1): edit panel above the table. A changed code
      goes through the rename RPC (改码全账跟); name/type ride the update. ── */
   const [editing, setEditing] = useState<ChartRow | null>(null);
   const [editCode, setEditCode] = useState('');
   const [editName, setEditName] = useState('');
   const [editType, setEditType] = useState<ChartRow['type']>('ASSET');
+  const [editParent, setEditParent] = useState('');
   const openEdit = (row: ChartRow) => {
     setEditing(row);
     setEditCode(row.code);
     setEditName(row.name);
     setEditType(row.type);
+    setEditParent(row.parentCode ?? '');
   };
   const saveEdit = async () => {
     if (!editing) return;
     const codeChanged = editCode.trim() !== editing.code;
     const nameChanged = editName.trim() !== editing.name;
     const typeChanged = editType !== editing.type;
-    if (!codeChanged && !nameChanged && !typeChanged) { setEditing(null); return; }
+    const parentChanged = editParent.trim() !== (editing.parentCode ?? '');
+    if (!codeChanged && !nameChanged && !typeChanged && !parentChanged) { setEditing(null); return; }
     if (codeChanged) {
       const ok = await askConfirm({
         title: `Rename ${editing.code} → ${editCode.trim()}?`,
@@ -199,11 +230,12 @@ export const ChartOfAccounts = () => {
           .map(([k, n]) => `${k}: ${n}`).join(', ');
         void notify({ title: `${editing.code} → ${editCode.trim()}`, body: moved ? `Moved — ${moved}.` : 'Renamed.', tone: 'info' });
       }
-      if (nameChanged || typeChanged) {
+      if (nameChanged || typeChanged || parentChanged) {
         await doUpdate.mutateAsync({
           code: codeChanged ? editCode.trim() : editing.code,
           ...(nameChanged ? { name: editName.trim() } : {}),
           ...(typeChanged ? { accountType: editType } : {}),
+          ...(parentChanged ? { parentCode: editParent.trim() || null } : {}),
         });
       }
       setEditing(null);
@@ -271,12 +303,17 @@ export const ChartOfAccounts = () => {
   /* ── 删除 (owner point 2): only a never-used code dies; the server names
      every holdout otherwise — that sentence goes straight to the dialog. ── */
   const onDelete = async (row: ChartRow) => {
-    const ok = await askConfirm({
-      title: `Delete ${row.code} · ${row.name}?`,
-      body: 'Only an account with NO transactions and NO references anywhere can be deleted — otherwise untick it instead. This removes it from every company.',
-      confirmLabel: 'Delete',
-    });
-    if (!ok) return;
+    /* Quick mode goes straight through — safely: the SERVER's 11-probe guard
+       still refuses any account with a record or reference anywhere, so the
+       only thing a stray click can delete is a never-used code. */
+    if (!quickMode) {
+      const ok = await askConfirm({
+        title: `Delete ${row.code} · ${row.name}?`,
+        body: 'Only an account with NO transactions and NO references anywhere can be deleted — otherwise untick it instead. This removes it from every company.',
+        confirmLabel: 'Delete',
+      });
+      if (!ok) return;
+    }
     try {
       await doDelete.mutateAsync(row.code);
       void notify({ title: `${row.code} deleted`, body: 'It existed in no ledger — gone from every company.', tone: 'info' });
@@ -288,14 +325,19 @@ export const ChartOfAccounts = () => {
   const onTick = async (companyId: number, row: ChartRow, next: boolean) => {
     if (!next) {
       const kids = accounts.filter((a) => a.parentCode === row.code && a.perCompany[companyId]?.active);
-      const ok = await askConfirm({
-        title: `Untick ${row.code} for ${companies.find((c) => c.id === companyId)?.code ?? companyId}?`,
-        body: kids.length > 0
-          ? `This is a header — its ${kids.length} active sub-account(s) go off with it.`
-          : 'The account is kept (history stays); it just stops being offered in this company.',
-        confirmLabel: 'Untick',
-      });
-      if (!ok) return;
+      /* Quick mode silences the LEAF untick only — a header sweep still
+         asks, whatever the toggle says (its children do not come back by
+         re-ticking the header). */
+      if (!quickMode || kids.length > 0) {
+        const ok = await askConfirm({
+          title: `Untick ${row.code} for ${companies.find((c) => c.id === companyId)?.code ?? companyId}?`,
+          body: kids.length > 0
+            ? `This is a header — its ${kids.length} active sub-account(s) go off with it.`
+            : 'The account is kept (history stays); it just stops being offered in this company.',
+          confirmLabel: 'Untick',
+        });
+        if (!ok) return;
+      }
     }
     setBusyKey(`${companyId}:${row.code}`);
     try {
@@ -360,9 +402,29 @@ export const ChartOfAccounts = () => {
               <input ref={fileRef} type="file" accept=".xlsx,.xls" style={{ display: 'none' }}
                 onChange={(e) => { void onFile(e.target.files?.[0]); e.target.value = ''; }} />
             </label>
+            {/* 快速模式 (owner 2026-09-04, mid tidy-up: tick 和 untick 的可以
+                做到就不要 pop out notice 吗? delete 同理, 就 for 先阶段…过后
+                这个 function 还是要有). The toggle IS the "afterwards": it
+                resets to OFF on every visit (his 默认都是要弹的), so the
+                confirms return by themselves — no second change needed. ON
+                skips the confirm for LEAF unticks and deletes only; a HEADER
+                untick still asks (it sweeps the children, and re-ticking the
+                header does not bring them back), and the server's delete
+                guard still refuses any account with records. */}
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 'var(--fs-13)', color: quickMode ? 'var(--c-festive-b, #B8331F)' : 'var(--fg-muted)', fontWeight: 600 }}>
+              <input type="checkbox" checked={quickMode}
+                aria-label="Quick mode — untick and delete without confirms"
+                onChange={(e) => setQuickMode(e.target.checked)}
+                style={{ width: 14, height: 14, accentColor: 'var(--c-festive-b, #B8331F)' }} />
+              ⚡ Quick mode · 免确认
+            </label>
           </div>
         ) : undefined}
       />
+
+      <datalist id="chart-parent-codes">
+        {accounts.map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}
+      </datalist>
 
       {addingNew && (
         <section className={styles.card}>
@@ -391,9 +453,6 @@ export const ChartOfAccounts = () => {
               <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>Parent (optional)</span>
               <input value={newParent} onChange={(e) => setNewParent(e.target.value)} list="chart-parent-codes" placeholder="305-0000"
                 style={{ fontFamily: 'var(--font-mono)', padding: '6px 8px', border: '1px solid var(--border-weak, #d8d5cd)', borderRadius: 6, width: 150 }} />
-              <datalist id="chart-parent-codes">
-                {accounts.map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}
-              </datalist>
             </label>
             <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
               <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>Special type</span>
@@ -504,8 +563,17 @@ export const ChartOfAccounts = () => {
         </section>
       )}
 
+      {/* Edit is a POP-OUT (owner 2026-09-04, third round on this panel:
+          edit 不能做成一个 pop out 出来 edit? — a dialog appears wherever you
+          are, the list never moves). Backdrop deliberately does NOT close:
+          a stray click must not eat a half-typed rename; Cancel is the way
+          out. Styling mirrors ConfirmDialog's backdrop/card so the two read
+          as one family. */}
       {editing && (
-        <section className={styles.card}>
+        <div role="presentation"
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.28)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 'var(--space-4)' }}>
+        <section role="dialog" aria-label={`Edit ${editing.code}`} className={styles.card}
+          style={{ width: 'min(560px, 95vw)', boxShadow: 'var(--shadow-3, 0 18px 48px rgba(0,0,0,0.25))' }}>
           <div className={styles.cardHeader}>
             <h2 className={styles.cardTitle}>Edit {editing.code}</h2>
           </div>
@@ -527,6 +595,11 @@ export const ChartOfAccounts = () => {
                 {Object.keys(TYPE_TONE).map((t) => <option key={t} value={t}>{t}</option>)}
               </select>
             </label>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>Under (parent — 留空 = 根)</span>
+              <input value={editParent} onChange={(e) => setEditParent(e.target.value)} list="chart-parent-codes" aria-label="Edit parent"
+                style={{ fontFamily: 'var(--font-mono)', padding: '6px 8px', border: '1px solid var(--border-weak, #d8d5cd)', borderRadius: 6, width: 150 }} />
+            </label>
             <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
               <Button variant="primary" size="sm" onClick={() => void saveEdit()} disabled={doRename.isPending || doUpdate.isPending}>
                 {doRename.isPending || doUpdate.isPending ? 'Saving…' : 'Save'}
@@ -537,6 +610,7 @@ export const ChartOfAccounts = () => {
             </div>
           </div>
         </section>
+        </div>
       )}
 
       <section className={styles.card}>
@@ -546,7 +620,15 @@ export const ChartOfAccounts = () => {
             tick = the company uses it · unticking a header takes its children · headers never book (父户不记账)
           </span>
         </div>
-        <div className={styles.cardBody} style={{ overflowX: 'auto' }}>
+        {/* The LIST scrolls inside the card, not the page (owner 2026-09-04:
+            按 edit 时要跑回上去 / 往下滑时看不到 header). With the page short,
+            the Edit/Add panels above this card stay in sight wherever you are
+            in the list — press ✎ on row 400 and the panel is right there, and
+            saving leaves the list where you were. And a scroll container of
+            its OWN is what lets the header row stick: .card carries
+            overflow:hidden (its rounded corners), which would swallow a
+            page-scroll sticky. */}
+        <div className={styles.cardBody} style={{ overflowX: 'auto', overflowY: 'auto', maxHeight: 'calc(100vh - 260px)', padding: 0 }}>
           {unionQ.isLoading && <div style={{ fontSize: 'var(--fs-13)' }}>Loading the chart…</div>}
           {unionQ.error != null && (
             <div className={styles.bannerWarn}>
@@ -559,16 +641,34 @@ export const ChartOfAccounts = () => {
             </div>
           )}
           {accounts.length > 0 && (
-            <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 'var(--fs-13)' }}>
+            <table style={{ borderCollapse: 'separate', borderSpacing: 0, width: '100%', fontSize: 'var(--fs-13)' }}>
               <thead>
-                <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--border-weak, #e3e1da)' }}>
-                  <th style={{ padding: '6px 8px' }}>Code</th>
-                  <th style={{ padding: '6px 8px' }}>Name</th>
-                  <th style={{ padding: '6px 8px' }}>Type</th>
-                  {companies.map((co) => (
-                    <th key={co.id} style={{ padding: '6px 8px', textAlign: 'center' }}>{co.code}</th>
-                  ))}
-                  {canManage && <th style={{ padding: '6px 8px' }} aria-label="actions" />}
+                {/* Sticky INSIDE the card's scroll (see the cardBody note).
+                    Solid background + inset shadow instead of the old tr
+                    border — a border on the <tr> does not travel with sticky
+                    cells, the shadow does. borderCollapse SEPARATE, not
+                    collapse: Chromium offsets sticky th cells under collapsed
+                    borders, which is the strip the owner called 不好看. */}
+                <tr style={{ textAlign: 'left' }}>
+                  {(() => {
+                    const stickyTh = {
+                      position: 'sticky' as const, top: 0, zIndex: 5,
+                      background: 'var(--c-paper, #fff)',
+                      boxShadow: 'inset 0 -1px var(--border-weak, #e3e1da)',
+                      padding: '6px 8px',
+                    };
+                    return (
+                      <>
+                        <th style={stickyTh}>Code</th>
+                        <th style={stickyTh}>Name</th>
+                        <th style={stickyTh}>Type</th>
+                        {companies.map((co) => (
+                          <th key={co.id} style={{ ...stickyTh, textAlign: 'center' }}>{co.code}</th>
+                        ))}
+                        {canManage && <th style={stickyTh} aria-label="actions" />}
+                      </>
+                    );
+                  })()}
                 </tr>
               </thead>
               <tbody>
@@ -577,7 +677,14 @@ export const ChartOfAccounts = () => {
                   if (isHidden(a.code)) return null;
                   const isControl = isControlSpecial(a.special);
                   return (
-                    <tr key={a.code} style={{ borderBottom: '1px solid var(--border-weak, #f0eee8)' }}>
+                    <tr
+                      key={a.code}
+                      draggable={canManage}
+                      onDragStart={() => setDragCode(a.code)}
+                      onDragOver={(e) => { if (canManage && dragCode && dragCode !== a.code) e.preventDefault(); }}
+                      onDrop={(e) => { e.preventDefault(); void onDropInto(a); }}
+                      style={{ borderBottom: '1px solid var(--border-weak, #f0eee8)', cursor: canManage ? 'grab' : undefined }}
+                    >
                       <td style={{ padding: '4px 8px', fontFamily: 'var(--font-mono)', paddingLeft: a.parentCode ? 28 : 8, fontWeight: isParent ? 700 : 400, whiteSpace: 'nowrap' }}>
                         {isParent ? (
                           <button

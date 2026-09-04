@@ -17,7 +17,9 @@ import { useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Plus } from 'lucide-react';
 import { Button } from '@2990s/design-system';
-import { usePaymentVouchers, useCancelPaymentVoucher, useSubmitPaymentVoucher, useCheckPaymentVoucher, useApprovePaymentVoucher, type PaymentVoucherRow } from '../../vendor/scm/lib/payment-voucher-queries';
+import { usePaymentVouchers, useCancelPaymentVoucher, useSubmitPaymentVoucher, useCheckPaymentVoucher, useApprovePaymentVoucher, fetchPvPrintDetail, fetchPvPrintBundle, type PaymentVoucherRow } from '../../vendor/scm/lib/payment-voucher-queries';
+import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
+import { deliverPdfBlob, type PdfAction } from '../../vendor/scm/lib/pdf-common';
 import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
 import { StatusPill } from '../../vendor/scm/components/StatusPill';
 import { statusLabel } from '../../vendor/scm/lib/status-pill';
@@ -184,8 +186,6 @@ export const PaymentVouchers = () => {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [batchRunning, setBatchRunning] = useState(false);
   const byId = useMemo(() => new Map(allRows.map((r) => [r.id, r])), [allRows]);
-  const rowEligible = (r: PaymentVoucherRow): boolean =>
-    (canWrite && isPreparable(r)) || (canCheck && isCheckable(r)) || (canApprove && isApprovable(r));
   const tickedRows = useMemo(
     () => [...selected].map((k) => byId.get(k)).filter((r): r is PaymentVoucherRow => Boolean(r)),
     [selected, byId],
@@ -231,6 +231,75 @@ export const PaymentVouchers = () => {
       body: failures.length > 0 ? failures.join('\n') : 'Nothing refused.',
       tone: failures.length > 0 ? 'error' : 'info',
     });
+  };
+
+  /* ── Batch print (owner 2026-09-03: 可选多张 pv + document, 就 pv+document,
+     pv+document…) — ONE merged PDF in LIST order. Each ticked voucher loads
+     fresh and renders as its OWN jsPDF (its own page numbering); the Worker
+     appends each one's stored files where they live (print-bundle) and hands
+     the finished PDF back. One voucher failing to load fails the WHOLE print
+     with its number — a batch quietly missing a voucher is the dishonest
+     branch. */
+  const [printing, setPrinting] = useState(false);
+  /* Files or not is the OPERATOR's call per batch too (owner 2026-09-04:
+     批量那边也要有这个选) — default ON. Without files nothing needs the
+     Worker: the vouchers render into ONE shared jsPDF client-side, the
+     combined-PI pattern. */
+  const [batchWithFiles, setBatchWithFiles] = useState(true);
+  const printSelected = async (action: PdfAction) => {
+    const targets = rows.filter((r) => selected.has(r.id));
+    if (targets.length === 0 || printing) return;
+    setPrinting(true);
+    try {
+      const [{ jsPDF }, { default: autoTable }, { renderPaymentVoucherInto, pdfBytesToBase64 }, accountsRes] = await Promise.all([
+        import('jspdf'),
+        import('jspdf-autotable'),
+        import('../../vendor/scm/lib/payment-voucher-pdf'),
+        authedFetch<{ accounts: Array<{ account_code: string; account_name: string }> }>('/accounting/accounts'),
+      ]);
+      const names = new Map(accountsRes.accounts.map((a) => [a.account_code, a.account_name]));
+      const nameOf = (code: string) => names.get(code) ?? null;
+
+      if (!batchWithFiles) {
+        /* Vouchers only — one shared doc, each starting on a fresh page. */
+        const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+        for (let i = 0; i < targets.length; i += 1) {
+          if (i > 0) doc.addPage();
+          const detail = await fetchPvPrintDetail(targets[i]!.id);
+          type A = Parameters<typeof renderPaymentVoucherInto>;
+          await renderPaymentVoucherInto(
+            doc, autoTable,
+            detail.paymentVoucher as unknown as A[2],
+            detail.lines as unknown as A[3],
+            detail.allocations as unknown as A[4],
+            nameOf,
+          );
+        }
+        deliverPdfBlob(doc.output('blob'), 'payment-vouchers.pdf', action);
+        return;
+      }
+
+      const parts: Array<{ pvId: string; voucherBase64: string }> = [];
+      for (const r of targets) {
+        const detail = await fetchPvPrintDetail(r.id);
+        const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+        type A = Parameters<typeof renderPaymentVoucherInto>;
+        await renderPaymentVoucherInto(
+          doc, autoTable,
+          detail.paymentVoucher as unknown as A[2],
+          detail.lines as unknown as A[3],
+          detail.allocations as unknown as A[4],
+          nameOf,
+        );
+        parts.push({ pvId: r.id, voucherBase64: pdfBytesToBase64(doc.output('arraybuffer') as ArrayBuffer) });
+      }
+      const blob = await fetchPvPrintBundle(parts);
+      deliverPdfBlob(blob, 'payment-vouchers.pdf', action);
+    } catch (e) {
+      void notify({ title: 'Batch print failed — nothing was printed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
+    } finally {
+      setPrinting(false);
+    }
   };
 
   const doCancelPv = async (r: PaymentVoucherRow) => {
@@ -309,6 +378,23 @@ export const PaymentVouchers = () => {
               Approve & post {approveTargets.length}
             </Button>
           )}
+          {/* Print rides the SAME ticks (owner 2026-09-03): the ticked
+              vouchers, list order, one PDF — with each voucher's files
+              interleaved, or vouchers only (owner 2026-09-04: 批量那边也要
+              有这个选). */}
+          <Button variant="secondary" size="sm" onClick={() => void printSelected('print')} disabled={printing || batchRunning}>
+            {printing ? 'Preparing…' : `Print ${selected.size}${batchWithFiles ? ' + files' : ''}`}
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => void printSelected('save')} disabled={printing || batchRunning}>
+            Save PDF
+          </Button>
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 5, cursor: 'pointer' }}>
+            <input type="checkbox" checked={batchWithFiles}
+              aria-label="Include each voucher's attached files"
+              onChange={(e) => setBatchWithFiles(e.target.checked)}
+              style={{ width: 14, height: 14, accentColor: 'var(--c-orange)' }} />
+            with files
+          </label>
           {batchRunning && <span style={{ color: 'var(--fg-muted)' }}>stamping…</span>}
           <span style={{ flex: 1 }} />
           <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())} disabled={batchRunning}>
@@ -323,7 +409,7 @@ export const PaymentVouchers = () => {
         storageKey={PV_LIST_STORAGE_KEY}
         exportName="Payment Vouchers"
         rowKey={(r) => r.id}
-        selectable={(canWrite || canCheck || canApprove) ? {
+        selectable={{
           selectedKeys: selected,
           onToggle: (k) => setSelected((p) => { const n = new Set(p); if (n.has(k)) n.delete(k); else n.add(k); return n; }),
           onToggleAll: (keys, allSel) => setSelected((p) => {
@@ -331,10 +417,16 @@ export const PaymentVouchers = () => {
             if (allSel) { for (const k of keys) n.delete(k); } else { for (const k of keys) n.add(k); }
             return n;
           }),
-          /* Only rows whose yes is YOURS to give can be ticked — the header
-             checkbox never sweeps in a row the door would refuse. */
-          isDisabled: (k) => { const r = byId.get(k); return !r || !rowEligible(r); },
-        } : undefined}
+          /* EVERY row ticks now — a tick means "include in the batch", and
+             printing (owner 2026-09-03) applies to any voucher. The approval
+             buttons still count only the rows THEIR yes applies to
+             (prepareTargets/checkTargets/approveTargets filter per door), so
+             the old isDisabled gate protected nothing the buttons don't. */
+          /* And the tick lives in the CHECKBOX alone (owner: 我一点就直接
+             tick 了…做成一定要点那个tick 的格子) — a row click highlights,
+             a double-click opens, right-click menus; nothing else ticks. */
+          checkboxOnly: true,
+        }}
         searchPlaceholder="Search voucher no, payee…"
         loadedSearchLimit={500}
         groupBanner={false}
@@ -358,6 +450,11 @@ export const PaymentVouchers = () => {
             label: 'Copy as new',
             onClick: () => navigate(`/scm/payment-vouchers/new?copyFrom=${r.id}${(r as Record<string, unknown>).purpose === 'SUPPLIER_PAYMENT' ? '&type=ap' : ''}`),
           });
+          /* Print (owner 2026-09-03: print pv include ocr 的文件一起) — the
+             established list→print route: land on the detail with ?print=1
+             and its preview opens itself; the PDF carries the voucher page
+             plus every stored file after it. */
+          menu.push({ label: 'Print', onClick: () => navigate(`/scm/payment-vouchers/${r.id}?print=1`) });
           if (r.status !== 'CANCELLED' && canCancel) {
             menu.push({ divider: true as const });
             menu.push({ label: 'Cancel', danger: true, onClick: () => doCancelPv(r) });

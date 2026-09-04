@@ -167,7 +167,20 @@ Payment. So the New page is TWO documents on one route:
 account picker types-to-search** (同日: 我无法快速打关键字眼搜索account):
 `AccountSelect` is a `SearchCombo` underneath — every space-separated token
 must match the "code · name" label — and the AP Payment's supplier picker
-searches the same way.
+searches the same way. Since 2026-09-04 the panel is a **BODY PORTAL,
+positioned fixed** off the input's live rect
+(`frontend/src/vendor/scm/components/SearchCombo.tsx`, pinned in
+`SearchCombo.test.tsx`) — two rounds of the owner's same report (为什么我能
+选的这么少 / 选account 时会无法看到下面的, then 还是一样) taught the real
+lesson: the clipper was never the viewport but the form CARD's
+`overflow:hidden` (SalesOrderDetail.module.css `.card`, there for the
+rounded corners), which cut the absolute panel at the card's edge —
+scrollbar included — however much screen remained. Portaled to
+`document.body`, no ancestor overflow/transform can touch it; while open it
+re-measures on scroll (capture) and resize, flips UP when the space below
+can't fit it and above offers more, and caps its height to the side
+actually available. The list itself is NEVER truncated: few visible rows
+must only ever mean few matches.
 
 **Paid From offers only money** (owner: paid from 应该只能选cash 和银行): the
 picker lists `acc_money` accounts, pre-filled from the company's
@@ -384,6 +397,11 @@ Mounted at `/api/scm/payment-vouchers`, behind
 | POST | `/:id/check` | `scm.payment_voucher.check` | §0b — the first yes: locks the voucher, joins Daily Bank's pending |
 | POST | `/:id/post` | `scm.payment_voucher.post` **or** `.approve` | writes the GL entry, DRAFT → POSTED, settles PIs, **adopts the FX rate**; normally reached THROUGH approve (§0b) |
 | POST | `/:id/cancel` | `scm.payment_voucher.cancel` | reverses the GL entry, unwinds settlement, **retains the FX rate** |
+| POST | `/:id/files` | `scm.payment_voucher.write` | §10 — attach one file (JSON `{fileName, mime, dataBase64}`; JPEG/PNG/WebP/PDF, ≤20MB); 409 `voucher_cancelled` on a CANCELLED voucher |
+| GET | `/:id/files` | area guard | §10 — the index rows, in `sort_no` (= attach = print) order |
+| GET | `/:id/files/:fileId` | area guard | §10 — streams the bytes from R2 with the stored mime, `content-disposition: inline` |
+| DELETE | `/:id/files/:fileId` | `scm.payment_voucher.write` | §10 — removes row + object; 409 `evidence_locked` once the voucher is **checked** |
+| POST | `/print-bundle` | area guard | §11 — `{ parts: [{ pvId, voucherBase64 }] }` → ONE merged PDF (each voucher's page, then its stored files); 404 fails the whole bundle when a pv can't load; ≤30 parts |
 
 `postPaymentVoucherHandler` and `cancelPaymentVoucherHandler` are **exported** so the
 vitest harness can mount them on a bare Hono app (the `supabaseAuth` bridge cannot
@@ -657,6 +675,8 @@ because all-MYR is the overwhelming majority of documents in this system.
 | `backend/tests/fulfillmentCosting.test.ts` | `parseAmountCenti` / `buildLines` / `buildAllocations` — negative and fractional amounts are REFUSED, not clamped to 0 |
 | `backend/tests/companyScopeHardening.test.ts` | the cancel cannot reverse another company's GL entry |
 | `frontend/src/pages/scm-v2/fx-rate.test.ts` | `resolveFxRate` and `deriveRateFromMyrPaid` (13 cases) |
+| `backend/tests/pvFiles.test.ts` | §10 against a fake R2 binding: upload order/mime/size gates, list walks `sort_no`, stream returns the stored mime and bytes, delete removes the R2 object too and 409s `evidence_locked` once checked |
+| `frontend/src/pages/scm-v2/PaymentVoucherScan.test.tsx` + `PaymentVoucherNew.test.tsx` | §10's carry: the stash holds each bill's own pages (group = all members, split = its own file only), and the New page attaches them onto the created voucher's id, in scan order |
 
 `vi.mock` is **not** used in the route suite: it does not reliably intercept module
 imports under the Cloudflare Workers pool (`so-revision.reviseBoundPo.test.ts`
@@ -679,3 +699,154 @@ not that the adopted rate reached the inventory basis.
   (HOOKKA BUG-2026-05-20-002).
 - **`CurrencySelect` is shared with GRN and PI.** Changing it changes three documents.
 - **No mobile surface** (§1) — do not assume a counterpart file exists.
+
+---
+
+## 10. Attachments — the bill lives with its voucher (2026-09-03)
+
+The owner, planning printing: *我希望可以 print pv include ocr 的文件一起* — and
+the audit before it found the scan flow READ the bill and kept **nothing**, so
+there was no evidence to show, let alone print. Now the file lives with the
+voucher.
+
+**Storage.** Bytes go to the **SLIPS R2 binding** (the one bucket that exists —
+the Worker-proxy story is in `frontend/src/vendor/scm/lib/slip.ts`'s header)
+under `pv-files/<company>/<pv>/<uuid>.<ext>`; the index is `scm.acc_pv_files`
+(mig `backend/src/db/migrations-pg/0352_acc_pv_files.sql`): one row per file,
+`file_key UNIQUE`, `pv_id` FK `ON DELETE CASCADE`, and `sort_no` = attach order
+= the order printing will append the files after the voucher page. Routes live
+in `backend/src/scm/routes/pv-files.ts` (handlers exported bare for the vitest
+harness) and are mounted in `backend/src/scm/routes/payment-vouchers.ts`
+**before** `GET /:id`, so `/:id/files` never falls into the detail matcher.
+
+**The four-layer rule applies to evidence.** Upload/delete take
+`scm.payment_voucher.write`; a **CANCELLED** voucher takes no more files
+(409 `voucher_cancelled`); delete is refused with 409 `evidence_locked` once
+`checked_at` is stamped — checked 的人就不可以改了, and that includes the bill
+the checker looked at. Reading rides the voucher (area guard).
+
+**How files arrive.**
+- **Scan → voucher**: the batch screen (`frontend/src/pages/scm-v2/PaymentVoucherScan.tsx`)
+  keeps each read bill's payload by bill index and stashes it on *Open as
+  voucher* / *Open as ONE voucher* (a group stashes every member's pages, in
+  bill order; a split bill stashes only its own). The stash is **module
+  memory** — `frontend/src/vendor/scm/lib/pv-file-handoff.ts` — never
+  `location.state`, because `history.pushState` serializes its state and
+  browsers cap an entry around 16MB: a scanned PDF could make the navigation
+  itself throw. `takePvFiles()` clears, so a stale pile cannot attach to an
+  unrelated voucher.
+- **The New page** (`frontend/src/pages/scm-v2/PaymentVoucherNew.tsx`) takes
+  the stash (and its own *Scan bill* keeps the pages it read), shows a 📎
+  pending line, and after `create` succeeds uploads **sequentially** so
+  `sort_no` is the scan order. A failed upload never un-saves the voucher: the
+  dialog names how many attached and how many did not, and only the unattached
+  remainder stays pending — a re-press replays the same voucher via the
+  idempotency key and must not attach the first files twice.
+- **Manually**: the detail page's **Files card**
+  (`frontend/src/pages/scm-v2/PaymentVoucherDetail.tsx`, `PvFilesCard`) lists
+  in `sort_no` order, attaches (`PV_FILE_ACCEPT`), views, and deletes until
+  checked. *View* is an authed byte fetch → blob object URL
+  (`fetchPvFileBlobUrl` in `frontend/src/vendor/scm/lib/payment-voucher-queries.ts`,
+  beside the `usePvFiles` / `useUploadPvFile` / `useDeletePvFile` hooks) —
+  there is no public URL to leak.
+
+**What this is FOR**: §11 — the print appends these files to the voucher PDF,
+PV page first, then its files in `sort_no` order.
+
+---
+
+## 11. Print — the voucher WITH its evidence (2026-09-03)
+
+The owner: *我发现没有办法 print pv？我希望可以 print pv include ocr 的文件一起*.
+Layout is my draft on his 就你做吧，不满意到时我改.
+
+**The voucher page.** `frontend/src/vendor/scm/lib/payment-voucher-pdf.ts` —
+`renderPaymentVoucherInto(doc, autoTable, header, lines, allocations,
+accountLabel)` in the unified Hookka-tidy family (letterhead `drawHeader`,
+`drawInfoColumns` PAY TO / VOUCHER DETAILS, plain B&W lines table, settled-PI
+table when any, footer `pv_number · portal · page n of m`). Specifics of THIS
+document:
+- **the four-layer strip is the signature block** — four dashed boxes
+  (Prepared / Checked / Approved / Received by); the first three print the
+  RECORDED `*_by` name and `*_at` date, Received by stays blank for the
+  payee's pen;
+- the **status word** comes from `statusLabel('pv', …)` (POSTED prints
+  "Approved" — the owner's vocabulary, never the raw enum);
+- **amount in words is MYR-only** (`amountInWordsMyr`); a foreign voucher
+  prints `CNY @ rate` and the `≈ posted to GL` MYR line instead — spelling
+  yuan as RINGGIT would be a false sentence;
+- accounts print through the CALLER's NAMER: the lines table gives
+  **Account Code and Account Name their own columns**, ahead of Description
+  (owner 2026-09-04); Paid From stays one joined string. The namer must read
+  the UNFILTERED chart — an old voucher on a now-inactive account still
+  deserves its name on paper.
+
+**Owner's 2026-09-04 print polish.** The letterhead address wraps at COMMAS
+now (`wrapAtCommas` in `frontend/src/vendor/scm/lib/pdf-common.ts` —
+splitTextToSize had cut "No. 2," into "No." / "2,"; it lives in the shared
+`drawHeader`, so every document's letterhead tidies together; pinned in
+`frontend/src/vendor/scm/lib/pdf-address-wrap.test.ts`). The signature strip
+sits a little lower (breathing room). And **including the files is the
+operator's call per print**: a checkbox on the detail preview card (default
+ON) and a "with files" tick on the batch bar (default ON; off = vouchers
+only, rendered into one shared jsPDF client-side, no Worker round-trip).
+
+**The evidence merges ON THE WORKER.** jsPDF can only draw — it cannot absorb
+an existing PDF's pages, and his bills are mostly PDFs; pdf-lib does that one
+job but costs ~200KB gzip, and the frontend bundle gate allows one change
++60KB. The files also already LIVE server-side, in the SLIPS bucket. So:
+`POST /payment-vouchers/print-bundle` (`backend/src/scm/routes/pv-files.ts`,
+mounted before `/:id`) takes `{ parts: [{ pvId, voucherBase64 }] }` — each
+part one voucher's RENDERED page(s) — and `backend/src/scm/lib/pdf-attach.ts`
+(pdf-lib, a backend dependency) appends that voucher's stored files after its
+page, `sort_no` order, part after part, one PDF back. Per file: a PDF's pages
+copy across; JPEG/PNG sits centred on its own A4 page; a file that cannot
+embed (corrupt, truly locked, webp — Workers have no canvas) becomes a
+**notice page naming it**, and so does an index row whose R2 object is gone —
+visible failure on paper, never a silently missing bill, never a failed
+print. A part whose voucher cannot load fails the WHOLE request by pv. The
+client half is `fetchPvPrintBundle` + `pdfBytesToBase64`
+(`frontend/src/vendor/scm/lib/payment-voucher-queries.ts` /
+`payment-voucher-pdf.ts`); the returned blob exits through `deliverPdfBlob`
+(`frontend/src/vendor/scm/lib/pdf-common.ts`), the blob twin of `deliverPdf`.
+
+**Where it fires.** The detail page
+(`frontend/src/pages/scm-v2/PaymentVoucherDetail.tsx`): a Print button →
+`PrintPreviewModal` (`usePrintPreview` / `useOpenPrintPreviewFromUrl`);
+`deliverPrintPdf` refuses to print when the file LIST cannot be answered — a
+voucher quietly missing its bills is the dishonest branch — and bundles via
+the Worker when files exist. The list
+(`frontend/src/pages/scm-v2/PaymentVouchers.tsx`) context menu's Print rides
+the established `?print=1` route: land on the detail, its preview opens
+itself.
+
+**Batch** (owner: 可选多张 pv + document, 就 pv+document, pv+document…): the
+list's tick now means "include in the batch" — EVERY row ticks (the old
+isDisabled gate fell away; the approval buttons still count only the rows
+their yes applies to), and the batch bar gains **Print N + files** / **Save
+PDF**. `printSelected` in `frontend/src/pages/scm-v2/PaymentVouchers.tsx`
+loads each ticked voucher fresh (`fetchPvPrintDetail`), renders each as its
+OWN jsPDF (its own page numbering), and posts the parts to the same
+`print-bundle` route — the Worker interleaves voucher A's pages, A's files,
+voucher B's, B's, list order, one PDF back. One voucher failing to load
+fails the WHOLE print with its number.
+
+**The tick itself** (owner: 这个我一点就直接tick 了…做成一定要点那个tick 的
+格子, 然后我要点开 pv 时就是点两次打开): the grid takes
+`selectable.checkboxOnly` (`frontend/src/vendor/scm/components/DataGrid.tsx`)
+— with it, a row click only highlights, the tick lives in the checkbox cell
+alone, a double-click opens, right-click menus. Default OFF, so the Commander
+rule (点行=multi-select) stands on every other list; the PV list opts in.
+Every step chip is the same grid, so 接下来的 step 同理 comes free.
+
+**Tests**: `frontend/src/vendor/scm/lib/payment-voucher-pdf.test.ts` (text
+draws — strip names, status word from the one home, MYR-words vs foreign
+line); `backend/tests/pdfAttach.test.ts` (real pdf-lib: 2-page bill
+contributes both pages, image gets a page, corrupt/webp costs a notice page
+and never a throw, batch interleave pinned by page widths);
+`backend/tests/pvFiles.test.ts`'s print-bundle case (voucher page first, its
+files after, missing R2 object → notice page, unknown pv → 404 for the whole
+bundle); `frontend/src/pages/scm-v2/PaymentVouchers.test.tsx` pins that
+every row ticks, a POSTED row offers Print and no approval button, and a
+ROW click ticks nothing; `frontend/src/vendor/scm/components/DataGrid.test.tsx`
+pins both sides of `checkboxOnly` (the default row-click tick stays).

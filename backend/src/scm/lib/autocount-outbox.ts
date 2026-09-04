@@ -1528,7 +1528,7 @@ async function composePoState(sb: Sb, poId: string, retired: AcRetiredLine[] = [
  * amount of data entry. Expanding the query with each line's sofa base code
  * costs nothing for a non-sofa line (splitSofaCode returns null).
  */
-async function bindingsFor(
+export async function bindingsFor(
   sb: Sb,
   companyId: number | null | undefined,
   codes: string[],

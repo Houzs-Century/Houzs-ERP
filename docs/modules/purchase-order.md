@@ -1302,3 +1302,24 @@ and **NOT LOADED** if it fails — never `STOCK` or a bare dash, which are
 answers. `coverage` is a required prop on the shared drill-down; the rule, the
 five surfaces that fetch separately, and how to add a sixth are in
 `docs/modules/coverage-state.md` (trace: `docs/bugs/0603-a-drill-down-printed-stock-while-the-answer-was-still-loadin.md`).
+
+## Special orders on a PO line: the price is recomputed in the BROWSER
+
+`PATCH /mfg-purchase-orders/:id/items/:itemId` (`mfg-purchase-orders.ts:3131`)
+runs NO server-side pricing recompute. `unit_price_sen`, `unit_cost_sen` and
+`special_order_price_sen` are persisted exactly as the client sends them
+(`:3164-3172`, `:3204-3208`). The re-pricing lives in the ERP UI:
+`PurchaseOrderDetail.tsx:415` re-prices every line whose `priceTouched` is false,
+and `:621-629` clears that flag whenever the operator changes a variant — so
+editing a spec re-derives the supplier cost through `computeMfgPoUnitCost`.
+
+**Which pool that reads matters, and it is not the picker's.** It sums
+`maintenance_config_history`'s `specials` pool (`backend/src/scm/shared/mfg-pricing.ts:538`), NOT
+`scm.special_addons`. Measured on prod 2026-09-02 (read-only run **33659562235**)
+that pool DOES carry `priceSen` for the priced picker codes at master scope and
+at both supplier scopes, so adding one of those codes to a migrated PO line's
+`variants.specials` moves that PO's price on the operator's next spec edit.
+
+That is why the migrated-line backfill writes `variants.specialsRecorded`
+instead — a key no pricing path reads. Full rule and the surfaces that render it:
+`docs/modules/sales-order.md` §`variants.specialsRecorded`.

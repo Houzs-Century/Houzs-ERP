@@ -20,7 +20,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { CheckCircle2, ChevronDown, Copy, History, Pencil, Plus, RotateCcw, Save, Send, Ban, Trash2, X, XCircle } from 'lucide-react';
+import { CheckCircle2, ChevronDown, Copy, History, Pencil, Plus, Printer, RotateCcw, Save, Send, Ban, Trash2, X, XCircle } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { fmtDate, fmtDateOrDash } from '../../vendor/shared/format';
 import {
@@ -33,7 +33,10 @@ import {
   useApprovePaymentVoucher,
   useRejectPaymentVoucher,
   useSupplierAdvances, useApplyAdvance,
+  usePvFiles, useUploadPvFile, useDeletePvFile, fetchPvFileBlobUrl, fileToBase64, PV_FILE_ACCEPT,
 } from '../../vendor/scm/lib/payment-voucher-queries';
+import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
+import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
 import { useAccounts, type Account } from '../../vendor/scm/lib/accounting-queries';
 import { usePurchaseInvoices } from '../../vendor/scm/lib/purchase-invoice-queries';
 import { useSuppliers, useSupplierDetail } from '../../vendor/scm/lib/suppliers-queries';
@@ -144,6 +147,41 @@ export const PaymentVoucherDetail = () => {
   };
 
   const suppliersQ = useSuppliers({ status: 'ACTIVE' });
+
+  /* ── Print — the voucher WITH its evidence (owner 2026-09-03: print pv
+     include ocr 的文件一起). The client renders the voucher page; the Worker
+     appends the stored files where they live (print-bundle) and hands back
+     one PDF. The file LIST must be an answer before anything renders:
+     printing a voucher quietly missing its bills is the dishonest branch,
+     so an unloaded/failed list aborts with a sentence. */
+  const filesQ = usePvFiles(id || null);
+  /* Attach or not is the OPERATOR's call per print (owner 2026-09-04: 可以
+     选择 exclude pdf) — default ON, the toggle lives in the preview card. */
+  const [includeFiles, setIncludeFiles] = useState(true);
+  /* The print's namer reads the UNFILTERED chart — an old voucher on a
+     now-inactive account must still print that account's name. */
+  const accountNameOf = (code: string): string | null =>
+    (accountsQ.data?.accounts ?? []).find((x) => x.account_code === code)?.account_name ?? null;
+  const deliverPrintPdf = (action: PdfAction) => {
+    if (!pv) return;
+    return (async () => {
+      const rows = filesQ.data ? filesQ.data.files : (await filesQ.refetch()).data?.files;
+      if (!rows) throw new Error("The voucher's file list could not be loaded — nothing was printed. Try again.");
+      const { generatePaymentVoucherPdf } = await import('../../vendor/scm/lib/payment-voucher-pdf');
+      type A = Parameters<typeof generatePaymentVoucherPdf>;
+      await generatePaymentVoucherPdf(
+        pv as unknown as A[0],
+        lines as unknown as A[1],
+        allocations as unknown as A[2],
+        accountNameOf,
+        { action, withFilesOf: includeFiles && rows.length > 0 ? id : null },
+      );
+    })().catch((e: unknown) => {
+      notify({ title: 'PDF generation failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
+    });
+  };
+  const print = usePrintPreview(deliverPrintPdf);
+  useOpenPrintPreviewFromUrl(print.openPreview, !!pv);
 
   const isDraft = pv?.status === 'DRAFT';
   const [isEditing, setIsEditing] = useState(() => searchParams.get('edit') === '1');
@@ -389,6 +427,10 @@ export const PaymentVoucherDetail = () => {
                 ungated: whoever may open the voucher may see who changed it. */}
             <Button variant="ghost" size="md" onClick={() => setHistoryOpen(true)}>
               <History {...ICON} /> History
+            </Button>
+            {/* Print — the voucher page plus every stored file after it. */}
+            <Button variant="ghost" size="md" onClick={print.openPreview}>
+              <Printer {...ICON} /> Print
             </Button>
             {/* Copy as new (owner 2026-09-03): content as template, identity
                 fresh — any status, the New page does the pre-fill. */}
@@ -740,6 +782,13 @@ export const PaymentVoucherDetail = () => {
         </section>
       )}
 
+      {/* ── Files — the bill behind this voucher (owner 2026-09-03: 我希望可以
+          print pv include ocr 的文件一起, which first needs the file to LIVE
+          here). Scan attaches automatically; this card takes manual adds,
+          views, and deletes — deleting only until CHECKED: evidence locks
+          with the document (server enforces both). */}
+      <PvFilesCard pvId={String(pv.id)} canWrite={canWrite} locked={isChecked} cancelled={pv.status === 'CANCELLED'} />
+
       {/* ── The advance this voucher holds, and the knock-off that spends it
           (预付挂在 supplier, 2026-09-02). Rendered only when a posted supplier
           voucher paid ahead and money remains on it. */}
@@ -765,6 +814,34 @@ export const PaymentVoucherDetail = () => {
           </div>
         </section>
       </div>
+
+      <PrintPreviewModal
+        open={print.open}
+        onClose={print.close}
+        docTitle="Payment Voucher"
+        docNo={pv.pv_number}
+        rows={[
+          { label: 'Payee', value: String(pv.payee_name ?? '') },
+          { label: 'Date', value: pv.voucher_date ? fmtDateOrDash(pv.voucher_date) : '—' },
+          { label: 'Paid From', value: accountLabel(pv.credit_account_code) },
+          { label: 'Total', value: fmtRm(totalSen, viewCurrency) },
+          {
+            label: 'Files',
+            /* The exclude toggle (owner 2026-09-04) sits where the decision
+               is made — on the card the operator reads before printing. */
+            value: (filesQ.data?.files.length ?? 0) > 0 ? (
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                <input type="checkbox" checked={includeFiles}
+                  aria-label="Include attached files in the print"
+                  onChange={(e) => setIncludeFiles(e.target.checked)}
+                  style={{ width: 14, height: 14, accentColor: 'var(--c-orange)' }} />
+                include the {filesQ.data?.files.length} attached file(s) after the voucher page
+              </label>
+            ) : 'none attached',
+          },
+        ]}
+        {...print.handlers}
+      />
 
       {/* History drawer — portals to <body>, so its position here is only
           about lifecycle, not layout. */}
@@ -878,6 +955,114 @@ const AdvanceCard = ({ pvId, supplierId }: { pvId: string; supplierId: string })
             {applyM.isPending ? 'Applying…' : 'Apply advance'}
           </Button>
         </div>
+      </div>
+    </section>
+  );
+};
+
+/* ── Files card — the bill pages behind this voucher (mig 0352). sort_no =
+   attach order = the order printing appends them after the voucher page.
+   View streams the bytes through the Worker (authed) into a blob tab —
+   there is no public URL to leak. Add/delete follow the four-layer rule:
+   a CHECKED voucher's evidence stays (delete hidden, server refuses too),
+   a CANCELLED one takes no more files. */
+const fmtSize = (bytes: number): string =>
+  bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
+
+const PvFilesCard = ({ pvId, canWrite, locked, cancelled }: { pvId: string; canWrite: boolean; locked: boolean; cancelled: boolean }) => {
+  const notify = useNotify();
+  const askConfirm = useConfirm();
+  const filesQ = usePvFiles(pvId);
+  const upload = useUploadPvFile();
+  const remove = useDeletePvFile();
+  const [viewingId, setViewingId] = useState<string | null>(null);
+
+  const files = filesQ.data?.files ?? [];
+
+  const view = async (fileId: string, fileName: string) => {
+    setViewingId(fileId);
+    try {
+      const { url } = await fetchPvFileBlobUrl(pvId, fileId);
+      window.open(url, '_blank', 'noopener');
+      /* Revoke AFTER the new tab has loaded the blob — immediate revocation
+         races the open and shows a blank tab. */
+      setTimeout(() => { URL.revokeObjectURL(url); }, 60_000);
+    } catch (e) {
+      void notify({ title: `Couldn't open ${fileName}`, body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
+    } finally {
+      setViewingId(null);
+    }
+  };
+
+  const onPick = async (list: FileList | null) => {
+    if (!list || list.length === 0) return;
+    for (const f of [...list]) {
+      try {
+        await upload.mutateAsync({
+          pvId,
+          file: { name: f.name, mime: f.type || 'application/pdf', dataBase64: await fileToBase64(f) },
+        });
+      } catch (e) {
+        void notify({ title: `${f.name} did not attach`, body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
+        break;
+      }
+    }
+  };
+
+  const onDelete = async (fileId: string, fileName: string) => {
+    if (!(await askConfirm({ title: `Remove ${fileName}?`, body: 'The stored file is deleted with its row. A checked voucher refuses this — evidence locks with the document.', confirmLabel: 'Remove file', danger: true }))) return;
+    try {
+      await remove.mutateAsync({ pvId, fileId });
+    } catch (e) {
+      void notify({ title: 'Not removed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
+    }
+  };
+
+  return (
+    <section className={styles.card}>
+      <div className={styles.cardHeader}>
+        <h2 className={styles.cardTitle}>Files</h2>
+        {canWrite && !cancelled && (
+          <label style={{ fontSize: 'var(--fs-12)', color: 'var(--c-orange)', cursor: 'pointer', fontWeight: 600 }}>
+            📎 {upload.isPending ? 'Attaching…' : 'Attach file'}
+            <input type="file" multiple accept={PV_FILE_ACCEPT}
+              aria-label="Attach voucher files" style={{ display: 'none' }}
+              disabled={upload.isPending}
+              onChange={(e) => { void onPick(e.target.files); e.target.value = ''; }} />
+          </label>
+        )}
+        <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
+          {files.length} file{files.length === 1 ? '' : 's'}{locked ? ' · locked with the checked voucher' : ''}
+        </span>
+      </div>
+      <div className={styles.cardBody}>
+        {files.length === 0 ? (
+          <p style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-13)', margin: 0 }}>
+            No files yet. A voucher opened from Scan bills attaches its scans here by itself; use Attach file for anything else.
+          </p>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {files.map((f) => (
+              <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', fontSize: 'var(--fs-13)', padding: '4px 0' }}>
+                <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--fg-muted)', width: 18, textAlign: 'right' }}>{f.sort_no}</span>
+                <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.file_name}</span>
+                <span style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-12)', whiteSpace: 'nowrap' }}>
+                  {f.mime === 'application/pdf' ? 'PDF' : 'image'} · {fmtSize(f.size_bytes)} · {fmtDate(f.created_at)}
+                </span>
+                <Button variant="secondary" size="sm" disabled={viewingId === f.id} onClick={() => void view(f.id, f.file_name)}>
+                  {viewingId === f.id ? 'Opening…' : 'View'}
+                </Button>
+                {canWrite && !locked && !cancelled && (
+                  <button type="button" aria-label={`Remove ${f.file_name}`} disabled={remove.isPending}
+                    onClick={() => void onDelete(f.id, f.file_name)}
+                    style={{ border: 'none', background: 'none', cursor: 'pointer', color: 'var(--fg-muted)', padding: 2 }}>
+                    <Trash2 size={14} strokeWidth={1.75} />
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </section>
   );

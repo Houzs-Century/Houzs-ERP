@@ -52,6 +52,7 @@ import { isDocumentHeld } from '../lib/document-hold';
 import { dateOrNull } from '../lib/date-coerce';
 import { postJournal, reverseJournal } from '../../acc/engine';
 import { apControlRole, pvLines, resolveRoles } from '../../acc/rules';
+import { uploadPvFileHandler, listPvFilesHandler, streamPvFileHandler, deletePvFileHandler, printPvBundleHandler } from './pv-files';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
 import { hasHouzsPerm } from '../lib/houzs-perms';
@@ -296,6 +297,15 @@ paymentVouchers.get('/', async (c) => {
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   return c.json({ paymentVouchers: data ?? [] });
 });
+
+/* PV attachments (0352) — the bill lives with its voucher. Registered BEFORE
+   GET /:id so /:id/files never falls into the detail matcher. */
+/* print-bundle sits with the other literal paths, BEFORE '/:id'. */
+paymentVouchers.post('/print-bundle', printPvBundleHandler);
+paymentVouchers.post('/:id/files', uploadPvFileHandler);
+paymentVouchers.get('/:id/files', listPvFilesHandler);
+paymentVouchers.get('/:id/files/:fileId', streamPvFileHandler);
+paymentVouchers.delete('/:id/files/:fileId', deletePvFileHandler);
 
 paymentVouchers.get('/:id', async (c) => {
   const sb = c.get('supabase'); const id = c.req.param('id');
