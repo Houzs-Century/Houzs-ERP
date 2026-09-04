@@ -256,6 +256,16 @@
       "file": "frontend/src/pages/scm-v2/PurchaseInvoiceNew.tsx",
       "text": "setDueDate(d.toLocaleDateString('en-CA'));",
       "why": "ISO VALUE PRODUCER, not a display: en-CA renders YYYY-MM-DD, which is what the date input / API payload wants. Storage stays ISO and is outside this rule. (Separate known bug, unchanged here: en-CA reads the DEVICE clock, so a machine outside GMT+8 produces the wrong Malaysian day — todayMY() is the timezone-stable fix.)"
+    },
+    {
+      "file": "frontend/src/pages/ContractorCalendar.tsx",
+      "text": "const monthLabel = new Date(cursor.y, cursor.m, 1).toLocaleDateString(\"en-US\", { month: \"long\", year: \"numeric\" });",
+      "why": "Month + year heading on the public contractor calendar grid — a MONTH NAME LABEL (README case 2), not a date value; fmtDate has no month-heading form and the grandfathered Projects.tsx / MobileCalendar.tsx month headers spell it the same way."
+    },
+    {
+      "file": "frontend/src/pages/ContractorCalendar.tsx",
+      "text": "const weekdayNames = cells.slice(0, 7).map((d) => d.toLocaleDateString(\"en-US\", { weekday: \"short\" }));",
+      "why": "Weekday column headers (Mon-Sun) on the public calendar grid — a WEEKDAY NAME LABEL (README case 2) derived from the grid own Monday-first cells; not a date value and fmtDate has no weekday-header form."
     }
   ]
 }

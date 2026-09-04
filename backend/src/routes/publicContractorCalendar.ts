@@ -78,6 +78,10 @@ publicContractorCalendar.get("/:token", async (c) => {
 
   // The contractor comes from the token, never the request. Confirmed + live
   // rows only. Whitelisted columns only.
+  // company-scope: intentionally cross-company — a pre-auth public route has no session
+  // and no companyContext, so there is no company value to scope by; the tenant boundary
+  // is the unguessable token resolving to ONE contractor name (filtered below), and
+  // only confirmed, non-archived, whitelisted columns leave the route. Verified 2026-09-04.
   const rows = await c.env.DB.prepare(
     `SELECT brand, organizer, state, venue, booth_no, start_date, end_date, name
        FROM projects

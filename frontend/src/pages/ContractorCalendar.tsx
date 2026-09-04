@@ -119,10 +119,7 @@ export function ContractorCalendar() {
   const todayKey = dayNum(today);
   // Derived, not literal arrays, so the month/weekday names have one home in the
   // platform instead of a duplicated-decision copy of the ERP's own lists.
-  const monthLabel = new Date(cursor.y, cursor.m, 1).toLocaleDateString("en-US", {
-    month: "long",
-    year: "numeric",
-  });
+  const monthLabel = new Date(cursor.y, cursor.m, 1).toLocaleDateString("en-US", { month: "long", year: "numeric" });
   const weekdayNames = cells.slice(0, 7).map((d) => d.toLocaleDateString("en-US", { weekday: "short" }));
 
   function prev() {
