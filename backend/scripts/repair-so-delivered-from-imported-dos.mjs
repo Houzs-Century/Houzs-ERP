@@ -52,6 +52,7 @@ import { readFileSync } from 'node:fs';
 import postgres from 'postgres';
 import { pgrestShim } from './lib/pgrest-shim.mjs';
 import { syncSoDeliveredFromDo } from '../src/scm/lib/so-delivery-sync';
+import { isServiceLine } from '../src/scm/shared/service-sku';
 
 const APPLY = process.env.APPLY === '1';
 const COMPANY = Number(process.env.COMPANY || 1);
@@ -272,6 +273,65 @@ async function main() {
       + ` ${r.delivered_qty} of ${r.ordered_qty} unit(s) delivered`);
   }
   if (short.length > 10) notice(`  ... and ${short.length - 10} more`);
+
+  /* IS THE SHORT LINE A SERVICE LINE? — the hypothesis the quantities produced.
+
+     The shortfall did not look like ordinary partial delivery. Almost every
+     order was short by ONE line and usually ONE unit: 9 of 10, 16 of 17, 20 of
+     21, 11 of 12. Real partial deliveries do not cluster like that; something
+     systematic does.
+
+     The candidate: a SERVICE line — a delivery fee, a disposal, a lift charge —
+     sits on the sales order and never appears on a delivery order, because there
+     is no goods to deliver. `isSoFullyCovered` requires EVERY non-cancelled line
+     to be covered and does not exclude service lines, while the READY-stamp loop
+     three lines above it DOES exclude them. If that is the cause, an order
+     carrying any service line can never be marked delivered, whatever shipped.
+
+     CLASSIFIED BY THE REAL FUNCTION, not by a pattern written here:
+     `isServiceLine` reads item group, item code prefix and category, and a
+     second copy of that judgement is how the answer would come out wrong. */
+  const shortLines = await pg`
+    WITH ordered AS (
+      SELECT i.doc_no, i.id, i.item_code, i.item_group, coalesce(i.qty, 0) AS qty
+        FROM scm.mfg_sales_order_items i
+       WHERE i.doc_no = ANY(${docNos}) AND coalesce(i.cancelled, false) = false
+    ), delivered AS (
+      SELECT di.so_item_id AS id, sum(coalesce(di.qty, 0)) AS qty
+        FROM scm.delivery_order_items di
+        JOIN scm.delivery_orders d2 ON d2.id = di.delivery_order_id
+       WHERE d2.so_doc_no = ANY(${docNos})
+         AND di.so_item_id IS NOT NULL
+         AND upper(coalesce(d2.status::text, '')) NOT IN ('CANCELLED', 'DRAFT')
+       GROUP BY di.so_item_id
+    )
+    SELECT o.doc_no, o.item_code, o.item_group, o.qty,
+           coalesce(dl.qty, 0) AS delivered
+      FROM ordered o LEFT JOIN delivered dl ON dl.id = o.id
+     WHERE coalesce(dl.qty, 0) < o.qty
+     ORDER BY o.doc_no`;
+  const svc = shortLines.filter((r) => isServiceLine({ itemGroup: r.item_group, itemCode: r.item_code }));
+  const goods = shortLines.filter((r) => !isServiceLine({ itemGroup: r.item_group, itemCode: r.item_code }));
+  const ordersAllService = new Set(shortLines.map((r) => r.doc_no)).size
+    - new Set(goods.map((r) => r.doc_no)).size;
+  notice('IS THE SHORT LINE A SERVICE LINE? — classified by the real isServiceLine:');
+  notice(`  ${shortLines.length} short line(s) in total`);
+  notice(`  ${svc.length} are SERVICE lines (a fee that never ships)`);
+  notice(`  ${goods.length} are GOODS lines (genuinely not delivered)`);
+  notice(`  ${ordersAllService} order(s) are short ONLY on service lines — those would advance`
+    + ' if coverage excluded service lines, and are the population the hypothesis predicts.');
+  /* Item GROUPS, not codes: a group name is a category, not a customer's
+     purchase. It is what tells a reader whether the classifier is seeing what
+     they would see. */
+  const groups = new Map();
+  for (const r of goods) {
+    const k = String(r.item_group ?? '(none)');
+    groups.set(k, (groups.get(k) ?? 0) + 1);
+  }
+  notice('  GOODS short lines by item group:');
+  for (const [g, n] of [...groups].sort((a, b) => b[1] - a[1]).slice(0, 10)) {
+    notice(`    ${g}: ${n}`);
+  }
 
   if (!APPLY) {
     notice('PLAN only — nothing was written. Re-run with APPLY=1 and CONFIRM_COMPANY='
