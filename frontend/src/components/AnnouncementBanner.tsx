@@ -11,7 +11,6 @@ import {
   ArrowRight,
 } from "lucide-react";
 import { LazySlot } from "./LazySlot";
-import { AnnouncementRichBody } from "./AnnouncementRichBody";
 import { cn } from "../lib/utils";
 import {
   bannerSecondaryKind,
@@ -26,6 +25,11 @@ import { fmtDate } from "../vendor/shared/format";
 // text-only, so the media code only loads when a notice actually carries media.
 const AnnouncementMedia = lazy(() =>
   import("./AnnouncementMedia").then((m) => ({ default: m.AnnouncementMedia })),
+);
+// Same reasoning for the rich-body renderer: its canonicaliser is ~4 KB that
+// only a formatted notice needs, and the banner is in the initial bundle.
+const AnnouncementRichBody = lazy(() =>
+  import("./AnnouncementRichBody").then((m) => ({ default: m.AnnouncementRichBody })),
 );
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -244,11 +248,34 @@ export function AnnouncementBanner() {
           <div className="text-[15px] font-semibold leading-snug text-ink">
             {current.title}
           </div>
-          <AnnouncementRichBody
-            html={current.bodyHtml}
-            text={current.body}
-            className="mt-1 text-[13px] leading-relaxed text-ink-secondary"
-          />
+          {/* The banner sits in the INITIAL bundle (mounted at the app root),
+              so the rich renderer + its canonicaliser load lazily and only for
+              a notice that actually carries formatting; a plain notice renders
+              inline exactly as it always has. Same LazySlot discipline as the
+              media below, keyed on the notice id. While the chunk loads (and if
+              it ever fails) the plain-text shadow stands in — never a blank. */}
+          {current.bodyHtml ? (
+            <LazySlot
+              resetKey={`ann-rich:${current.id}`}
+              fallback={
+                <p className="mt-1 whitespace-pre-wrap text-[13px] leading-relaxed text-ink-secondary">
+                  {current.body}
+                </p>
+              }
+            >
+              <AnnouncementRichBody
+                html={current.bodyHtml}
+                text={current.body}
+                className="mt-1 text-[13px] leading-relaxed text-ink-secondary"
+              />
+            </LazySlot>
+          ) : (
+            current.body && (
+              <p className="mt-1 whitespace-pre-wrap text-[13px] leading-relaxed text-ink-secondary">
+                {current.body}
+              </p>
+            )
+          )}
           {/* Scoped, not bare: App.tsx renders <AnnouncementBanner /> TEN lines
               ABOVE the RouteCrashBoundary that wraps the route table, so a
               failed media chunk here had no boundary between it and main.tsx's
