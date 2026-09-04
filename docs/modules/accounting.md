@@ -674,3 +674,23 @@ stamps `journal_class` per row and filters on `?journal=`; the JE tab carries
 the five chips and a Journal column. The manual JV is simply the GENERAL
 journal — the owner's own vocabulary, unchanged. Pinned by
 tests/journalClasses.test.ts.
+
+**Official Receipts (GL redesign item 9).** Every customer payment births a
+receipt (`scm.acc_receipts`, one per payment forever — a reprint reprints,
+never re-issues): DRAFT on the `{co}DraftOR-YYMM` series at recording, FORMAL
+the moment the money is CONFIRMED — cash immediately on `{co}COR-YYMM`
+(钱当场在手), card when merchant reconciliation confirms that payment (the
+settlement hook formalises on the acquirer's payout bank, best-effort so a
+missing letter leaves the OR in draft for the manual button and never unwinds
+a settlement), transfer by the manual confirm — which any human can also use
+after verifying a slip (客户催收据). Channel letters are the PV letter table
+(`scm.acc_bank_letters`; **C reserved for cash**, the numbering PUT refuses
+it for banks) so a bank is one letter on voucher and receipt alike; formal
+order per channel = the order money was confirmed, and a slow recon never
+scrambles the cash run. No approvals (his call). Born inside the payment
+writers (so-payment-row.ts hook, the SI payment route) with
+`ensureReceiptForPayment` healing history and unhooked paths on demand.
+Surface: `GET /accounting/receipts`, `POST /accounting/receipts/ensure`,
+`POST /accounting/receipts/:id/formalise` (accounting-receipts.ts). Printing
+and the SO/SI screen buttons are item 9b. Pinned by
+tests/officialReceipts.test.ts.

@@ -79,6 +79,11 @@ export const numberingPut = async (c: any): Promise<Response> => {
       if (!/^[A-Z]{1,3}$/.test(letter)) {
         return c.json({ error: 'bad_letter', message: `${accountCode}: the letter must be 1-3 letters (A-Z).` }, 400);
       }
+      /* C is the CASH channel on the receipt side ({co}COR-…) — a bank on C
+         would collide with the drawer's own series. */
+      if (letter === 'C') {
+        return c.json({ error: 'letter_reserved', message: `C is reserved for the cash receipt series (COR) — pick another letter for ${accountCode}.` }, 400);
+      }
       /* Two banks on one letter would SHARE a number series — refuse before
          the database does, with the two named. */
       if (seen.has(letter)) return c.json({ error: 'letter_taken', message: `Letter ${letter} is used twice in this save.` }, 400);

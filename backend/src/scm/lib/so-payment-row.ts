@@ -16,6 +16,8 @@
 import { enqueueEdit } from './autocount-outbox';
 import { recordSoAudit, type FieldChange } from './so-audit';
 import { postSoPayment, reverseSoPayment } from '../../acc/payments';
+import { createReceiptForPayment } from '../../acc/receipts';
+import { companyCodeById } from './doc-no';
 import { recomputeSiPaidForOrder } from './si-order-deposit';
 
 /* Account Sheet auto-fill (Loo 2026-06-07) — "where did the money land".
@@ -137,6 +139,25 @@ export async function recordSoPaymentRow(
     ...(p.isDeposit === true ? { is_deposit: true } : {}),
   }).select(PAYMENT_COLS).single();
   if (error) return { payment: null, errorMessage: error.message };
+
+  /* The Official Receipt is born with the payment (GL redesign item 9) —
+     DRAFT for card/transfer, formal at once for cash. BEST-EFFORT: the money
+     is recorded; a receipt hiccup must never un-record it, and
+     ensureReceiptForPayment heals the gap at the next print. */
+  try {
+    const paymentId = String((data as { id?: unknown } | null)?.id ?? '');
+    const code = companyId != null ? await companyCodeById(sb, companyId) : null;
+    if (paymentId && companyId != null && code) {
+      await createReceiptForPayment(sb, {
+        source: 'SOPAY', paymentId, companyId, companyCode: code,
+        docNo: p.docNo, method: p.method, amountSen: p.amountSen,
+        paidAt: String(p.paidAt ?? '').slice(0, 10) || null, createdBy: p.createdBy ?? null,
+      });
+    }
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error('[receipts] draft OR not created for SO payment:', e);
+  }
 
   /* Post-merge stitch — wire ADD_PAYMENT into the PR-D audit ledger.
      Field-changes list mirrors what the user typed so the History panel
