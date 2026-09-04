@@ -1174,6 +1174,16 @@
       "check": "D1",
       "key": "-,--,KIV,N.A.,N/A,NA,NIL,NONE,TBC,—|backend/src/scm/shared/so-branding-label.ts frontend/src/vendor/shared/so-branding-label.ts",
       "why": "THE MIRROR ITSELF, not a second decision. PLACEHOLDER_BRAND_TEXTS is declared ONCE in scm/shared/ and frontend/src/vendor/shared/ is its byte-identical copy, which check-shared-mirrors.mjs --strict fails the build over if the two ever differ - the opposite of the drift this check exists to catch."
+    },
+    {
+      "check": "D1",
+      "key": "EMBED,HEAD,IFRAME,MATH,NOSCRIPT,OBJECT,SCRIPT,STYLE,SVG,TEMPLATE,TEXTAREA,TITLE|backend/src/lib/announcementRichText.ts frontend/src/lib/announcementRichText.ts",
+      "why": "THE ANNOUNCEMENT RICH-BODY GRAMMAR, a deliberate cross-tree TWIN: backend/src/lib/announcementRichText.ts is the original and frontend/src/lib/announcementRichText.ts is its byte-identical copy (the two packages share no build). Both sides run the SAME canonicaliser, the Worker on write and the browser on render, so the sets must be equal; backend/tests/announcementRichText.test.ts and frontend/src/lib/announcementRichText.test.ts pin the same fixtures so a drift is a red test on one side. 2 homes: RAW_DROP, RICH_SIZES."
+    },
+    {
+      "check": "D1",
+      "key": "LG,SM,XL|backend/src/lib/announcementRichText.ts frontend/src/lib/announcementRichText.ts",
+      "why": "THE ANNOUNCEMENT RICH-BODY GRAMMAR, a deliberate cross-tree TWIN: backend/src/lib/announcementRichText.ts is the original and frontend/src/lib/announcementRichText.ts is its byte-identical copy (the two packages share no build). Both sides run the SAME canonicaliser, the Worker on write and the browser on render, so the sets must be equal; backend/tests/announcementRichText.test.ts and frontend/src/lib/announcementRichText.test.ts pin the same fixtures so a drift is a red test on one side. 2 homes: RAW_DROP, RICH_SIZES."
     }
   ]
 }

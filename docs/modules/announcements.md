@@ -29,6 +29,11 @@ screen down to the database. Same structure as
 > and the desktop bell's unread affordance went from the quiet dot back to the
 > NUMBER — the owner routed approvals here, and a dot cannot say how many are
 > waiting. §0 and §"System notices" below carry the detail.
+> **2026-09-04 (rich body):** the composer gained bold / italic / underline,
+> three extra text sizes and numbered + bulleted lists (owner ask). The
+> formatted body lives in a new `body_html` column as a strictly
+> canonicalised fragment; `body` is now its plain-text shadow. §1 "Rich
+> body", §3 "Write path" and §4 carry the contract.
 
 > Convention: the row is one table, `public.announcements`. Timestamps are
 > stored as **ISO text**, `is_active` is an **integer 0/1** (not boolean), and
@@ -320,6 +325,23 @@ all filtering happens in JS in the Worker (`:543-547`, `:628-630`).
 - **Create** `:785` — inserts at `:873`, auto-translates via
   `backend/src/lib/translate-announcement.ts`, then bumps the banner cache
   family version (`:908`).
+- **Rich body (2026-09-04)** — `readBodyHtml()` next to `toPublic()`. A
+  `bodyHtml` in the request is run through
+  `backend/src/lib/announcementRichText.ts` (allow-list canonicaliser:
+  `p br b i u s ol ul li` + `span[data-size=sm|lg|xl]`, hard cap 20k chars →
+  400). If the result carries no formatting it is stored as **NULL** and the
+  notice stays on the plain path. When it IS stored, `body` is **derived**
+  from it server-side (`richTextToPlain`) — the client's `body` is ignored,
+  so the two columns can never disagree. A request with only `body` is the
+  pre-feature contract, untouched. On **PATCH**, whichever of `bodyHtml` /
+  `body` was sent last defines the format: `bodyHtml` rewrites both columns,
+  a plain `body` clears `body_html`. Translation is sent the HTML instead of
+  the text when there is one; the reply is re-canonicalised and split into
+  `{title, body, bodyHtml}` per language (`splitRichTranslations`), so a
+  translated notice keeps its formatting and a translation that lost its tags
+  degrades to plain rather than to garbage. Pinned by
+  `tests/announcementsRichBody.test.ts`, `tests/announcementRichText.test.ts`
+  and `tests/translateAnnouncementRich.test.ts`.
 - **Sales Director restriction** — `salesDirectorScope()` `:412-425`,
   `enforceSalesDirectorScope()` `:431-497`. A Sales Director may address only
   their own Sales department as a whole, or named people inside it. Position
@@ -387,6 +409,7 @@ There is also no announcements migration in the D1 tree.
 | `0093_native_tables_company_id.sql:76,79` | `+ company_id bigint NOT NULL DEFAULT <HOUZS>` + FK + index on both tables |
 | `0113_announcement_target_company.sql` | `+ target_company_ids text` + one-time backfill from `company_id` |
 | `0140_announcement_media_layout.sql` | `+ media_layout text` (no backfill; NULL = derive default) |
+| `20260904T1700_announcement_body_html.sql` | `+ body_html text` (no backfill; NULL = plain notice, renders exactly as before) |
 
 Columns that matter:
 
@@ -403,7 +426,8 @@ Columns that matter:
 | `category` | text | CHECK ∈ `GENERAL`/`WARNING`/`SOP`/`LEARNING` — this is the closest thing to a priority; there is **no** `priority` column |
 | `source` | text | NULL = human, `'scan'`/`'service_case'` = system |
 | `company_id` | bigint NOT NULL | **authoring** company; no longer the visibility gate (that is `target_company_ids`) |
-| `translations`, `attachments`, `media_layout` | text | JSON blobs |
+| `translations`, `attachments`, `media_layout` | text | JSON blobs; a translation pair is `{title, body, bodyHtml?}` since 2026-09-04 |
+| `body_html` | text | canonical rich fragment (`lib/announcementRichText.ts` grammar only) or NULL; `body` is always its plain-text shadow, so plain-only readers (bell excerpt, search, old builds) need no branch |
 
 `announcement_acks`: `(announcement_id, user_id)` composite **primary key** — the
 idempotency guard for the fire-and-forget ack — plus `acked_at` and
@@ -467,6 +491,9 @@ still 403 for that reader (`:146, 157, 164, 171, 180`).
 | Live / Hidden / Expired badge | **`lib/announcementStatus.ts`** — the shared rule; both surfaces import it, neither re-derives it | — |
 | Publisher row actions (hide/show, delete, remind, reset) | `pages/Announcements.tsx` row | `mobile/MobileAnnouncements.tsx` `Detail` + `Receipts` |
 | Media rendering (mig 0140 layout hint) | `components/AnnouncementMedia.tsx` | `mobile/MobileAnnouncementMedia.tsx` |
+| Rich body — editing | **`components/AnnouncementRichEditor.tsx`** — one editor, both composers mount it | (same file) |
+| Rich body — rendering | **`components/AnnouncementRichBody.tsx`** — the only place `body_html` reaches `innerHTML`; list row + `AnnouncementBanner.tsx` use it | `MobileAnnouncements.tsx` `Detail` + `MobileAnnouncementPopup.tsx` use it; `mobileI18n.ts` `localizeAnnouncement()` picks the translated `bodyHtml` |
+| Rich body — grammar | **`lib/announcementRichText.ts`** — byte-identical twin of `backend/src/lib/announcementRichText.ts`; the two test files pin the same fixtures | — |
 | Nav visibility | `components/Sidebar.tsx:666-672` | `mobile/MobileApp.tsx:360` (test-pinned) |
 | Read gate | `frontend/src/App.tsx:481` | — must agree with `backend/src/routes/announcements.ts:530`; the #957 bug was these two disagreeing |
 | Badge | — (none today) | `mobile/MobileApp.tsx:440`+`:805`, `mobile/MobileProfile.tsx:198`+`:345` |

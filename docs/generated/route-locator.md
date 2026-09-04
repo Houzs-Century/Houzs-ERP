@@ -841,15 +841,15 @@ Total: 1138 route registrations across 149 files.
 - L713  PATCH  /:id/cancel
 
 ## backend/src/routes/announcements.ts  (9)
-- L531  GET    /
-- L588  GET    /banner
-- L745  GET    /:id/acks
-- L832  POST   /
-- L967  PATCH  /:id
-- L1151  POST   /:id/remind
-- L1211  DELETE /:id
-- L1241  POST   /:id/ack
-- L1358  GET    /:id/attachments/:key{.+}
+- L558  GET    /
+- L615  GET    /banner
+- L772  GET    /:id/acks
+- L859  POST   /
+- L1009  PATCH  /:id
+- L1214  POST   /:id/remind
+- L1274  DELETE /:id
+- L1304  POST   /:id/ack
+- L1421  GET    /:id/attachments/:key{.+}
 
 ## backend/src/routes/pos.ts  (9)
 - L54  POST   /pin-login
