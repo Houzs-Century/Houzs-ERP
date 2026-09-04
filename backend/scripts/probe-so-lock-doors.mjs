@@ -133,7 +133,7 @@ async function main() {
   const auto = await sql`
     SELECT date_trunc('day', created_at)::date AS day,
            count(*)::int                       AS bumps,
-           count(DISTINCT doc_no)::int         AS orders
+           count(DISTINCT so_doc_no)::int      AS orders
       FROM scm.mfg_so_audit_log
      WHERE source = 'automation'
        AND created_at > now() - interval '14 days'
