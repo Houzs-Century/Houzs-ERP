@@ -654,3 +654,14 @@ The probe needed before flipping it, and the three options, are in
 `docs/bugs/0615-the-accounting-masters-fell-back-to-company-1-in-silence.md`.
 `backend/tests/accMastersOneHome.test.ts` fails the PR if any `acc/` module
 re-implements the fallback inline.
+
+**The five journals (GL redesign item 7).** Every entry is labelled the
+AutoCount way — SALES / PURCHASE / BANK / CASH / GENERAL — derived, never
+stored: `classifyJournal` (acc/journal-class.ts) maps the source type
+(reversals ride their originals), and the money-side documents
+(SOPAY/SIPAY/PV) split CASH vs BANK by which money account their lines
+actually touch, via the company's CASH role. `GET /accounting/journal-entries`
+stamps `journal_class` per row and filters on `?journal=`; the JE tab carries
+the five chips and a Journal column. The manual JV is simply the GENERAL
+journal — the owner's own vocabulary, unchanged. Pinned by
+tests/journalClasses.test.ts.
