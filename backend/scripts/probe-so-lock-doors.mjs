@@ -91,19 +91,35 @@ async function main() {
     raw(`    edit lease held now: ${leaseLive ? `YES (expires ${so.edit_lease_expires_at})` : "no"}`);
   }
 
+  /* ── [L] the lines as they stand, with what would mark an AUTO-ADDED one ── */
+  raw(`
+================ [L] THE LINES, AND WHETHER EACH IS A GIFT ================`);
+  const lines = await sql`
+    SELECT line_no, item_code, description, qty, unit_price_sen, cancelled, created_at,
+           variants->>'freeGift' AS free_gift, variants->>'pwpCode' AS pwp_code
+      FROM scm.mfg_sales_order_items
+     WHERE doc_no = ${DOC}
+     ORDER BY line_no NULLS LAST, created_at`;
+  if (!lines.length) raw(`  no lines`);
+  for (const l of lines) {
+    raw(`  #${String(l.line_no ?? "-").padEnd(3)} ${String(l.item_code ?? "").padEnd(22)} qty=${String(l.qty).padEnd(4)} unit=RM${(Number(l.unit_price_sen ?? 0) / 100).toFixed(2).padStart(9)}  freeGift=${l.free_gift ?? "-"}  pwpCode=${l.pwp_code ?? "-"}  cancelled=${l.cancelled}  created=${String(l.created_at).slice(0, 19)}  ${String(l.description ?? "").slice(0, 40)}`);
+  }
+  raw(`  READ THIS AS: freeGift=true at RM0.00 is a line the campaign trigger treated as a gift;`);
+  raw(`  a priced line with no tag was picked and priced like any other item.`);
+
   /* ── [E1 vs E2] the audit trail — WHO has been writing this order ──────── */
   raw(`\n================ [E1 vs E2] WHO WROTE THIS ORDER ================`);
   const trail = await sql`
     SELECT created_at, action, actor_name_snapshot, source, note, field_changes
       FROM scm.mfg_so_audit_log
-     WHERE doc_no = ${DOC}
+     WHERE so_doc_no = ${DOC}
      ORDER BY created_at DESC LIMIT 40`;
   if (!trail.length) raw(`  no audit rows at all`);
   for (const r of trail) {
     const fc = Array.isArray(r.field_changes)
       ? r.field_changes.map((f) => `${f.field}:${f.from}->${f.to}`).join(" ")
       : "";
-    raw(`  ${String(r.created_at).slice(0, 19)}  ${String(r.action).padEnd(16)} ${String(r.actor_name_snapshot ?? "-").padEnd(24)} ${String(r.source ?? "-").padEnd(11)} ${fc.slice(0, 70)}`);
+    raw(`  ${String(r.created_at).slice(0, 19)}  ${String(r.action).padEnd(16)} ${String(r.actor_name_snapshot ?? "-").padEnd(24)} ${String(r.source ?? "-").padEnd(11)} ${fc.slice(0, 220)}`);
     if (r.note) raw(`      note: ${String(r.note).slice(0, 110)}`);
   }
   raw(`\n  READ THIS AS: rows with source='automation' / 'System (auto-allocate)' are E1`);
@@ -127,7 +143,7 @@ async function main() {
 
   const [{ n: autoThisDoc }] = await sql`
     SELECT count(*)::int AS n FROM scm.mfg_so_audit_log
-     WHERE doc_no = ${DOC} AND source = 'automation'`;
+     WHERE so_doc_no = ${DOC} AND source = 'automation'`;
   raw(`  automation bumps on ${DOC}: ${autoThisDoc}`);
 
   /* ── [D] how many other orders sit in the same both-doors-shut shape ───── */
