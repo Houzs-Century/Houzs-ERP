@@ -54,6 +54,7 @@ import { itemGroupsList, itemGroupCreate, itemGroupBind, itemGroupPatch } from '
 import { piPeriodicBackfill } from './accounting-pi-backfill';
 import { stockCloseStatus, stockCloseRun } from './accounting-stock-close';
 import { pnlReport, balanceSheetReport } from './accounting-reports';
+import { numberingGet, numberingPut } from './accounting-numbering';
 import { dateOrNull } from '../lib/date-coerce';
 
 /* THE GENERAL LEDGER HAD NO PERMISSION CHECK AT ALL — eleven routes, zero
@@ -137,6 +138,10 @@ accounting.post('/stock-close/run', stockCloseRun);
    AutoCount arithmetic; handlers in accounting-reports.ts. */
 accounting.get('/reports/pnl', pnlReport);
 accounting.get('/reports/balance-sheet', balanceSheetReport);
+/* Voucher numbering — the owner's own levers (GL redesign item 8a): per-bank
+   letters + suffix width. Handlers in accounting-numbering.ts. */
+accounting.get('/numbering', numberingGet);
+accounting.put('/numbering', numberingPut);
 accounting.post('/item-groups', itemGroupCreate);
 accounting.put('/item-groups/:code/accounts', itemGroupBind);
 accounting.patch('/item-groups/:code', itemGroupPatch);

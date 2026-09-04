@@ -78,6 +78,10 @@ vi.mock('./bank-queries', () => ({
 }));
 
 const saveBankDefault = vi.fn();
+vi.mock('./accounting-phase1-queries', () => ({
+  useVoucherNumbering: () => ({ isLoading: false, data: { digits: 3, accounts: [] } }),
+  useSaveVoucherNumbering: () => ({ mutate: vi.fn(), isPending: false }),
+}));
 vi.mock('../../vendor/scm/lib/accounting-queries', () => ({
   isControlSpecial: (s: string | null | undefined) => s === 'SDC' || s === 'SCC' || s === 'SBS',
   useAccounts: () => ({ data: { accounts: [
