@@ -32,6 +32,7 @@ import { supabaseAuth } from '../middleware/auth';
 import { escapeForOr } from '../lib/postgrest-search';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { reconcileLedger } from '../lib/reconcile-ledger';
+import { inventoryValuationHandler } from './inventory-valuation';
 import {
   activeCompanyId, scopeToCompany,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY,
@@ -415,6 +416,9 @@ export const listInventoryHandler = async (c: any) => {
 };
 
 inventory.get('/', listInventoryHandler);
+/* The as-of-date photograph (GL redesign item 5) — handler in
+   inventory-valuation.ts, replay shared with the month-end close. */
+inventory.get('/valuation', inventoryValuationHandler);
 
 /* Σ delivered / Σ returned per SO line id (net-of-delivered). Only
    non-cancelled AND non-draft DOs count as delivered (a DRAFT DO hasn't

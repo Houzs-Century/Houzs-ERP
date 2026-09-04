@@ -127,6 +127,12 @@ PATCH `:267-271`), but the trigger has the last word: a create sent as
 
 Owned by `backend/src/scm/routes/inventory.ts`:
 
+- `GET /inventory/valuation?asOf=YYYY-MM-DD` — the as-of photograph (GL
+  redesign item 5, 2026-09-05; handler in `inventory-valuation.ts`): per-item
+  qty + value replayed on the BUSINESS date (`stockBreakdownAsOf` in
+  acc/stock-close.ts, the same engine the month-end close reads), joined to
+  the product master. Feeds the Inventory page's 选日期 view with category
+  subtotals; deliberately carries none of the live list's planning columns.
 - `GET  /inventory/warehouses?includeInactive=true` — list. Company-scoped via
   `scopeToCompany(...)` (`:42-52`).
 - `POST /inventory/warehouses` — create. Company required (`requireActiveCompanyId`

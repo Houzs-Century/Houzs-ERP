@@ -107,6 +107,48 @@ export async function stockValueAsOf(
   return { ok: true, valueSen };
 }
 
+/**
+ * The as-of value PER ITEM — the Inventory page's 选日期 view (GL redesign
+ * item 5). Same replay, same signs, same dateless-window fallback as
+ * stockValueAsOf; grouped by item_code so the screen can show each product's
+ * quantity and value on that day.
+ */
+export async function stockBreakdownAsOf(
+  sb: any,
+  companyId: number,
+  date: string,
+): Promise<{ ok: true; items: Map<string, { qty: number; valueSen: number }> } | { ok: false; reason: string }> {
+  const { data, error } = await paginateAll((from, to) => sb
+    .from('inventory_movements')
+    .select('item_code, movement_type, qty, total_cost_sen')
+    .eq('company_id', companyId)
+    .lte('movement_date', date)
+    .range(from, to));
+  if (error) return { ok: false, reason: (error as { message?: string }).message ?? String(error) };
+  const { data: dateless, error: dlErr } = await sb
+    .from('inventory_movements')
+    .select('item_code, movement_type, qty, total_cost_sen')
+    .eq('company_id', companyId)
+    .is('movement_date', null)
+    .lte('created_at', `${date}T23:59:59.999`);
+  if (dlErr) return { ok: false, reason: dlErr.message };
+
+  const items = new Map<string, { qty: number; valueSen: number }>();
+  for (const r of [...((data ?? []) as Array<Record<string, unknown>>), ...((dateless ?? []) as Array<Record<string, unknown>>)]) {
+    const code = String(r.item_code ?? '');
+    if (!code) continue;
+    const at = items.get(code) ?? { qty: 0, valueSen: 0 };
+    const cost = Math.abs(Number(r.total_cost_sen ?? 0));
+    const q = Number(r.qty ?? 0);
+    const type = String(r.movement_type);
+    if (type === 'IN') { at.qty += Math.abs(q); at.valueSen += cost; }
+    else if (type === 'OUT') { at.qty -= Math.abs(q); at.valueSen -= cost; }
+    else { at.qty += q; at.valueSen += q >= 0 ? cost : -cost; }
+    items.set(code, at);
+  }
+  return { ok: true, items };
+}
+
 export type CloseOutcome = {
   companyId: number;
   month: string;
