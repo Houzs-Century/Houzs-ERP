@@ -153,6 +153,20 @@ export const ChartOfAccounts = () => {
     for (const a of accounts) m.set(a.code, a.parentCode);
     return m;
   }, [accounts]);
+  /* Other income = anything hanging under 700-0000 — the owner's one-header
+     split (2026-09-04: other income 我想挂在 700-0000; 就做一个 header 分类).
+     DERIVED from the tree, never a second stored flag, so the badge can't
+     contradict where the account actually hangs. Not under it = 正常生意
+     income, deliberately unlabelled (别乱分类). */
+  const OTHER_INCOME_HEADER = '700-0000';
+  const isOtherIncome = (code: string): boolean => {
+    let cursor: string | null = code;
+    for (let d = 0; cursor && d < 7; d += 1) {
+      if (cursor === OTHER_INCOME_HEADER) return true;
+      cursor = parentOf.get(cursor) ?? null;
+    }
+    return false;
+  };
   const isHidden = (code: string): boolean => {
     let cursor = parentOf.get(code) ?? null;
     for (let depth = 0; cursor && depth < 6; depth += 1) {
@@ -453,6 +467,14 @@ export const ChartOfAccounts = () => {
               <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>Parent (optional)</span>
               <input value={newParent} onChange={(e) => setNewParent(e.target.value)} list="chart-parent-codes" placeholder="305-0000"
                 style={{ fontFamily: 'var(--font-mono)', padding: '6px 8px', border: '1px solid var(--border-weak, #d8d5cd)', borderRadius: 6, width: 150 }} />
+              {/* The owner's income split lives in the TREE (2026-09-04:
+                  create account 那边同理) — creating is where the choice is
+                  made, so say it exactly here. */}
+              {newType === 'INCOME' && (
+                <span style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)', maxWidth: 220 }}>
+                  Other income? Set Parent to 700-0000 — 不挂 = 正常生意收入
+                </span>
+              )}
             </label>
             <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
               <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>Special type</span>
@@ -710,7 +732,12 @@ export const ChartOfAccounts = () => {
                           </span>
                         )}
                       </td>
-                      <td style={{ padding: '4px 8px', fontSize: 'var(--fs-11)', color: TYPE_TONE[a.type] ?? 'inherit' }}>{a.type}</td>
+                      <td style={{ padding: '4px 8px', fontSize: 'var(--fs-11)', color: TYPE_TONE[a.type] ?? 'inherit', whiteSpace: 'nowrap' }}>
+                        {a.type}
+                        {a.type === 'INCOME' && isOtherIncome(a.code) && (
+                          <span style={{ color: 'var(--fg-muted)' }}> · Other</span>
+                        )}
+                      </td>
                       {companies.map((co) => {
                         const active = a.perCompany[co.id]?.active === true;
                         const key = `${co.id}:${a.code}`;
