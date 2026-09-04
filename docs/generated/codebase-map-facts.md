@@ -11,7 +11,7 @@ FOR, which trees are dead, what must be changed in pairs — lives in
 
 ## 1. Backend route inventory
 
-158 route modules (44 in `backend/src/routes`, 114 in `backend/src/scm/routes`), 1147 endpoint registrations.
+159 route modules (44 in `backend/src/routes`, 115 in `backend/src/scm/routes`), 1152 endpoint registrations.
 
 An endpoint is a `router.<method>("/…")` registration. For the per-route authorization
 boundary see the sibling artifact `docs/generated/route-capability-matrix.csv`, which
@@ -64,7 +64,7 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/udf.ts` | 4 | 251 |
 | `backend/src/routes/users.ts` | 22 | 2331 |
 | `backend/src/scm/routes/accounting-bank.ts` | 0 | 765 |
-| `backend/src/scm/routes/accounting-chart.ts` | 0 | 542 |
+| `backend/src/scm/routes/accounting-chart.ts` | 0 | 695 |
 | `backend/src/scm/routes/accounting-payouts.ts` | 0 | 196 |
 | `backend/src/scm/routes/accounting-settlement.ts` | 0 | 1222 |
 | `backend/src/scm/routes/accounting.ts` | 60 | 1287 |
@@ -126,7 +126,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/mrp.ts` | 2 | 1763 |
 | `backend/src/scm/routes/other-debtors.ts` | 12 | 520 |
 | `backend/src/scm/routes/outstanding.ts` | 2 | 321 |
-| `backend/src/scm/routes/payment-vouchers.ts` | 14 | 1736 |
+| `backend/src/scm/routes/payment-vouchers.ts` | 19 | 1746 |
 | `backend/src/scm/routes/personal-quick-picks.ts` | 3 | 212 |
 | `backend/src/scm/routes/po-amendments.ts` | 6 | 726 |
 | `backend/src/scm/routes/po-gates.ts` | 0 | 90 |
@@ -143,6 +143,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/purchase-invoices.ts` | 14 | 2416 |
 | `backend/src/scm/routes/purchase-order-item-photos.ts` | 2 | 227 |
 | `backend/src/scm/routes/purchase-returns.ts` | 14 | 1816 |
+| `backend/src/scm/routes/pv-files.ts` | 0 | 245 |
 | `backend/src/scm/routes/pwp-codes.ts` | 5 | 500 |
 | `backend/src/scm/routes/pwp-rules.ts` | 4 | 233 |
 | `backend/src/scm/routes/quotes.ts` | 4 | 321 |
@@ -154,7 +155,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/scan-payment.ts` | 1 | 587 |
 | `backend/src/scm/routes/scan-so.ts` | 11 | 4865 |
 | `backend/src/scm/routes/slips.ts` | 3 | 246 |
-| `backend/src/scm/routes/so-amendments.ts` | 9 | 1333 |
+| `backend/src/scm/routes/so-amendments.ts` | 9 | 1351 |
 | `backend/src/scm/routes/so-dropdown-options.ts` | 4 | 318 |
 | `backend/src/scm/routes/so-handover.ts` | 2 | 214 |
 | `backend/src/scm/routes/so-mirror.ts` | 1 | 333 |
@@ -187,18 +188,18 @@ scripts, never assumed: each runner declares its own directory, and
 | tree | runner | *.sql | highest | applied to PRODUCTION by deploy.yml | read by backend vitest |
 |---|---|---|---|---|---|
 | `backend/src/db/migrations` | `backend/scripts/migrate.mjs` | 152 | `153_sessions_stay_signed_in.sql` (153) | no | yes |
-| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 350 | `0351_acc_general_receipts.sql` (0351) | YES | no |
+| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 351 | `0352_acc_pv_files.sql` (0352) | YES | no |
 
 Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its number): `0136_capture_compat_views_trips_lorries.sql.TEMPLATE`
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1899 files, 678194 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1906 files, 680437 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
 |---|---|
-| `frontend/src/pages/Projects.tsx` | 15150 |
+| `frontend/src/pages/Projects.tsx` | 15144 |
 | `backend/src/scm/routes/mfg-sales-orders.ts` | 11951 |
 | `frontend/src/pages/ServiceCases.tsx` | 8817 |
 | `backend/src/services/autocount-sofa-corpus.ts` | 8401 |
