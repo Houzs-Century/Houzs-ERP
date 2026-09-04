@@ -42,6 +42,9 @@ import {
 } from "../components/AnnouncementMedia";
 import { fmtDateTime } from "../vendor/shared/format";
 import { DateTimeField } from "../vendor/scm/components/DateTimeField";
+import { AnnouncementRichBody } from "../components/AnnouncementRichBody";
+import { AnnouncementRichEditor } from "../components/AnnouncementRichEditor";
+import { richTextToPlain } from "../lib/announcementRichText";
 import {
   ANNOUNCEMENT_STATUS_LABEL,
   announcementStatus,
@@ -70,6 +73,9 @@ type Announcement = {
   id: string;
   title: string;
   body: string;
+  /** Canonical rich fragment, or null for a plain notice (see
+   *  lib/announcementRichText.ts). `body` is always its plain-text shadow. */
+  bodyHtml?: string | null;
   isActive: boolean;
   expiresAt: string | null;
   createdAt: string | null;
@@ -479,6 +485,9 @@ function Composer({
 }) {
   const toast = useToast();
   const [title, setTitle] = useState("");
+  // The message as the canonical rich fragment (lib/announcementRichText.ts);
+  // "" when the box is empty. The plain-text `body` is derived from it at post
+  // time — and re-derived server-side, which is the copy that counts.
   const [text, setText] = useState("");
   const [category, setCategory] = useState<AnnouncementCategory>("GENERAL");
   const [bucket, setBucket] = useState<Bucket>(salesDirOnly ? "DEPT" : "ALL");
@@ -600,7 +609,8 @@ function Composer({
     try {
       const body: Record<string, unknown> = {
         title: cleanTitle,
-        body: text.trim(),
+        body: richTextToPlain(text),
+        bodyHtml: text,
         category,
         attachments,
       };
@@ -678,12 +688,11 @@ function Composer({
           <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-ink-secondary">
             Message
           </label>
-          <textarea
+          <AnnouncementRichEditor
             value={text}
-            onChange={(e) => setText(e.target.value)}
-            rows={6}
+            onChange={setText}
             placeholder="Add the details (optional)"
-            className="w-full resize-y rounded-md border border-border bg-surface px-3 py-2 text-[13px] outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+            disabled={posting}
           />
         </div>
 
@@ -1317,11 +1326,11 @@ function AnnouncementRow({
               {statusText}
             </span>
           </div>
-          {a.body && (
-            <p className="whitespace-pre-wrap text-[12.5px] text-ink-secondary">
-              {a.body}
-            </p>
-          )}
+          <AnnouncementRichBody
+            html={a.bodyHtml}
+            text={a.body}
+            className="text-[12.5px] text-ink-secondary"
+          />
 
           {a.attachments && a.attachments.length > 0 && (
             <AnnouncementMedia

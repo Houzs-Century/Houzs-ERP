@@ -11,6 +11,7 @@ import {
   ArrowRight,
 } from "lucide-react";
 import { LazySlot } from "./LazySlot";
+import { AnnouncementRichBody } from "./AnnouncementRichBody";
 import { cn } from "../lib/utils";
 import {
   bannerSecondaryKind,
@@ -243,11 +244,11 @@ export function AnnouncementBanner() {
           <div className="text-[15px] font-semibold leading-snug text-ink">
             {current.title}
           </div>
-          {current.body && (
-            <p className="mt-1 whitespace-pre-wrap text-[13px] leading-relaxed text-ink-secondary">
-              {current.body}
-            </p>
-          )}
+          <AnnouncementRichBody
+            html={current.bodyHtml}
+            text={current.body}
+            className="mt-1 text-[13px] leading-relaxed text-ink-secondary"
+          />
           {/* Scoped, not bare: App.tsx renders <AnnouncementBanner /> TEN lines
               ABOVE the RouteCrashBoundary that wraps the route table, so a
               failed media chunk here had no boundary between it and main.tsx's

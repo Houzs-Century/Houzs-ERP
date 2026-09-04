@@ -13,6 +13,12 @@
 // key MUST NEVER prevent posting an announcement.
 // ---------------------------------------------------------------------------
 
+import {
+  hasRichFormatting,
+  richTextToPlain,
+  sanitizeAnnouncementHtml,
+} from "./announcementRichText";
+
 const CLAUDE_MODEL = "claude-sonnet-4-6";
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 
@@ -59,8 +65,11 @@ async function anthropicFetchWithRetry(
 export const ANNOUNCEMENT_LANGS = ["en", "ms", "zh", "bn"] as const;
 export type AnnouncementLang = (typeof ANNOUNCEMENT_LANGS)[number];
 
-// One translated pair.
-export type TranslationPair = { title: string; body: string };
+// One translated pair. `bodyHtml` is present only when the SOURCE notice was
+// composed with formatting (announcements.body_html): it is the translated
+// body re-canonicalised through announcementRichText.ts, and `body` is then
+// the plain-text shadow of it — the same body/body_html contract as the row.
+export type TranslationPair = { title: string; body: string; bodyHtml?: string };
 
 // The full stored shape — title+body for every supported language.
 export type AnnouncementTranslations = Record<AnnouncementLang, TranslationPair>;
@@ -86,6 +95,7 @@ Rules:
   - For the language the notice is ALREADY in, return its original text unchanged.
   - PRESERVE all numbers, dates, times, money amounts, product codes, SKUs, and proper names verbatim.
   - PRESERVE line breaks in the body (keep \\n where the original had them).
+  - The BODY may be a small HTML fragment using only <p> <br> <b> <i> <u> <s> <ol> <ul> <li> and <span data-size="..."> tags. When it is, keep EVERY tag and attribute exactly as given, in the same order and nesting, and translate ONLY the text between the tags. Never add, remove or rename a tag. Never turn HTML into Markdown.
   - If the BODY is empty, return an empty string for body in every language.
   - The very first character of your response must be "{". Anything else corrupts the stored data.`;
 
@@ -130,6 +140,27 @@ export function parseTranslationsText(
 }
 
 /**
+ * When the source body was rich HTML, the model was asked to return HTML back
+ * in `body`. Re-canonicalise it (the model's output is untrusted input like any
+ * other) and split it into the row's body / body_html pair. A language whose
+ * translation came back with the tags stripped simply has no `bodyHtml` and
+ * renders as plain text — honest, and never unsafe.
+ */
+export function splitRichTranslations(
+  t: AnnouncementTranslations,
+): AnnouncementTranslations {
+  const out = {} as AnnouncementTranslations;
+  for (const lang of ANNOUNCEMENT_LANGS) {
+    const pair = t[lang];
+    const html = sanitizeAnnouncementHtml(pair.body);
+    out[lang] = hasRichFormatting(html)
+      ? { title: pair.title, body: richTextToPlain(html), bodyHtml: html }
+      : { title: pair.title, body: richTextToPlain(html) || pair.body };
+  }
+  return out;
+}
+
+/**
  * Translate a posted announcement's title + body into all four supported
  * languages with ONE Claude call.
  *
@@ -141,13 +172,18 @@ export function parseTranslationsText(
 export async function translateAnnouncement(args: {
   title: string;
   body: string;
+  /** The canonicalised rich body, when the notice has one. Sent INSTEAD of
+   *  `body` so the translation keeps the author's formatting; the returned
+   *  HTML is re-canonicalised and split back into body / bodyHtml per language. */
+  bodyHtml?: string | null;
   apiKey: string | undefined;
 }): Promise<AnnouncementTranslations | null> {
   const { title, body, apiKey } = args;
+  const bodyHtml = args.bodyHtml ? sanitizeAnnouncementHtml(args.bodyHtml) : "";
   if (!apiKey) return null;
-  if (!title.trim() && !body.trim()) return null;
+  if (!title.trim() && !body.trim() && !bodyHtml) return null;
 
-  const userPayload = JSON.stringify({ title, body });
+  const userPayload = JSON.stringify({ title, body: bodyHtml || body });
 
   try {
     const resp = await anthropicFetchWithRetry({
@@ -187,7 +223,8 @@ export async function translateAnnouncement(args: {
     if (parsedResp.error) return null;
     const firstText =
       parsedResp.content?.find((b) => b.type === "text")?.text ?? "";
-    return parseTranslationsText(firstText);
+    const parsed = parseTranslationsText(firstText);
+    return parsed && bodyHtml ? splitRichTranslations(parsed) : parsed;
   } catch {
     return null;
   }

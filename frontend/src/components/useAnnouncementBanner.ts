@@ -41,7 +41,7 @@ export type AnnouncementCategory = "GENERAL" | "WARNING" | "SOP" | "LEARNING";
 // is what localizeAnnouncement() consumes. Absent for pre-translation rows and
 // for any row whose translate call failed — that helper falls back to the
 // author's original words.
-export type BannerTranslationPair = { title: string; body: string };
+export type BannerTranslationPair = { title: string; body: string; bodyHtml?: string };
 export type BannerTranslations = {
   en?: BannerTranslationPair | null;
   ms?: BannerTranslationPair | null;
@@ -53,6 +53,8 @@ export type BannerAnnouncement = {
   id: string;
   title: string;
   body: string;
+  /** Canonical rich fragment (lib/announcementRichText.ts) or null = plain. */
+  bodyHtml?: string | null;
   createdAt: string | null;
   remindedAt: string | null;
   category?: AnnouncementCategory;
