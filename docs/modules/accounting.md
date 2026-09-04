@@ -24,7 +24,7 @@ books which entry":
 | action | entry | source_type | reversal |
 |---|---|---|---|
 | Sales invoice issued | Dr AR / Cr SALES | `SI` | `SI_REVERSAL` |
-| Purchase invoice posted | Dr INVENTORY / Cr AP | `PI` | `PI_REVERSAL` |
+| Purchase invoice posted | Dr each group's purchase account (601-x/602 by scm.acc_item_group_accounts; unbound group REFUSES) / Cr AP | `PI` | `PI_REVERSAL` |
 | Payment voucher posted | Dr expense legs / Cr bank-or-AP header | `PV` | `PV_REVERSAL` |
 | Manual journal (JV) | operator lines, draft first | `MANUAL` | `MANUAL_REVERSAL` |
 | Customer payment collected | Dr CASH/BANK/transit / Cr AR | `SOPAY` / `SIPAY` | `*_REVERSAL` |
@@ -411,6 +411,22 @@ the SUGGESTED defaults marked 建议·unsaved, and nothing writes until the owne
 presses Save (his sign-off, row by row). Routes in
 backend/src/scm/routes/accounting-item-groups.ts (guard: the GL permission),
 pinned by tests/itemGroups.test.ts + ItemGroups.test.tsx.
+
+**PI posts the periodic way (GL redesign item 2, 2026-09-05).**
+`postPiAccounting` reads the invoice's LINES, folds each line's `item_group`
+(lower-case from the sales panels) up to the registry's code, sums per group
+in the invoice's own currency, converts per group (the rounding remainder —
+a sen or two, foreign invoices only — lands on the largest group so the
+debits sum EXACTLY to the header's MYR), and debits each group's
+`purchase_account` from `scm.acc_item_group_accounts`; the credit stays on
+the supplier's AP control (400/405 by apControlRole). An invoice with an
+UNBOUND group refuses with the group named (400 at the manual endpoint;
+best-effort at confirm, with the entity-audit note as the trail) — never
+silently into a default account. 330-0000 is no longer touched by documents;
+stock value reaches the GL as the month-end adjustment (item 4). Entries
+posted before this change carry Dr 330-0000 and are re-shaped by the item-3
+backfill (reversal + re-post under the new rule). Pinned by
+tests/piPeriodicPosting.test.ts and the re-shaped apSplit.test.ts.
 
 **A half-failed upload cannot hold its file hostage.** The upload writes the
 batch head first and its lines after; a failure between the two used to leave
