@@ -1,0 +1,169 @@
+name: Apply line photo repair (from a plan file)
+
+# The APPLY half of the two AutoCount line-photo repairs. It holds ONE
+# credential — the database — and it can hold no other.
+#
+# WHY THIS WORKFLOW EXISTS. Both repairs decide what to do by asking R2: for the
+# prune, "is this address dead?"; for the re-point, "is this photograph really
+# in the bucket?". Neither question can be answered here. This repository is
+# PUBLIC, non-admin collaborators can read repository secrets, and the R2 API
+# token reads every photograph the company owns — so it must never become an
+# Actions secret. The operator machine can ask R2 but its DSN is read-only.
+# Neither side can run the repair alone.
+#
+# So the decision is made where the bucket can be asked, written to a PLAN FILE,
+# and applied here:
+#
+#   1. on the operator machine, with the R2 token and the read-only DSN:
+#        MODE=plan PLAN_OUT=backend/scripts/data/photo-repair-plans/<name>.json \
+#          node backend/scripts/<script>.mjs
+#   2. commit that ONE file on a short-lived branch and push it;
+#   3. run this workflow, selecting THAT BRANCH in the Run workflow dialog, so
+#      the checkout contains the plan;
+#   4. delete the branch afterwards. A spent plan is not a document.
+#
+# THE PLAN FILE IS A KEY LOG, AND REPLAYING A STALE KEY LOG IS THE FAILURE THIS
+# REPO ALREADY PAID FOR. backfill-photo-urls-from-keys.mjs replayed the round-1
+# (2026-08-10) attach log on 2026-08-28 and attached 64 addresses whose object
+# was never uploaded — see
+# docs/bugs/0625-a-backfill-replayed-the-round-1-photo-key-log-without-asking.md.
+# The log was not wrong when it was written; it was wrong eighteen days later.
+# That is why steps 1-3 above are meant to take MINUTES, and why the script
+# refuses a plan older than 120 minutes, one that does not match its own digest,
+# one for another company or bucket, and — row by row — any row whose
+# photo_urls is no longer what the plan saw. Every refusal is printed and
+# counted and the run exits 1; nothing is skipped in silence.
+#
+# WHAT IS IN A PLAN FILE, since this repository is public: document numbers, ERP
+# row ids and R2 object keys. No customer name, address or price — nothing an
+# operator would recognise as a person.
+on:
+  workflow_dispatch:
+    inputs:
+      script:
+        description: "Which repair"
+        required: true
+        type: choice
+        options:
+          - prune-dead-line-photo-keys
+          - repoint-line-photos-to-owning-line
+      plan:
+        description: "Plan file, path from the repo root (must be committed on the branch you run from)"
+        required: true
+        type: string
+      confirm:
+        description: 'CONFIRM phrase — "PRUNE DEAD PHOTO KEYS" or "REPOINT LINE PHOTOS"'
+        required: true
+        type: string
+      target:
+        description: "Which DB"
+        required: true
+        default: "staging"
+        type: choice
+        options: [staging, prod]
+      company:
+        description: "company_id"
+        required: false
+        default: "1"
+        type: string
+      max_age_minutes:
+        description: "Lower the 120-minute freshness ceiling (it can never be raised)"
+        required: false
+        default: ""
+        type: string
+
+# One repair at a time per database, and never cancelled mid-write.
+concurrency:
+  group: apply-line-photo-repair-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  apply-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      # PLAN reaches the shell through the ENVIRONMENT, never through `${{ }}`
+      # interpolation into the script body — a dispatch input is attacker-shaped
+      # text and `${{ inputs.plan }}` inside a `run:` is a shell injection.
+      - name: The plan file
+        env:
+          PLAN: ${{ inputs.plan }}
+        run: |
+          FILE="$GITHUB_WORKSPACE/$PLAN"
+          test -f "$FILE" || {
+            echo "::error::no plan file at $PLAN on this ref. Commit the plan on the branch you are running from."
+            exit 2
+          }
+          jq '{kind, generatedAt, account, bucket, company, count, digest}' "$FILE"
+      - run: npm ci
+        working-directory: backend
+      - name: Apply
+        working-directory: backend
+        env:
+          # The ONLY credential this workflow has. There is deliberately no
+          # R2_API_TOKEN here and there must never be one.
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          MODE: apply
+          CONFIRM: ${{ inputs.confirm }}
+          PLAN_IN: ${{ github.workspace }}/${{ inputs.plan }}
+          COMPANY: ${{ inputs.company || 1 }}
+          PLAN_MAX_AGE_MINUTES: ${{ inputs.max_age_minutes }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
+          NODE_OPTIONS: --dns-result-order=ipv4first
+          # A `choice` input, so GitHub itself rejects anything off the list —
+          # and it still reaches the shell as an environment value, not as
+          # interpolated script text.
+          SCRIPT: ${{ inputs.script }}
+        run: node "scripts/$SCRIPT.mjs"
+
+  apply-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      # PLAN reaches the shell through the ENVIRONMENT, never through `${{ }}`
+      # interpolation into the script body — a dispatch input is attacker-shaped
+      # text and `${{ inputs.plan }}` inside a `run:` is a shell injection.
+      - name: The plan file
+        env:
+          PLAN: ${{ inputs.plan }}
+        run: |
+          FILE="$GITHUB_WORKSPACE/$PLAN"
+          test -f "$FILE" || {
+            echo "::error::no plan file at $PLAN on this ref. Commit the plan on the branch you are running from."
+            exit 2
+          }
+          jq '{kind, generatedAt, account, bucket, company, count, digest}' "$FILE"
+      - run: npm ci
+        working-directory: backend
+      - name: Apply
+        working-directory: backend
+        env:
+          # Repo-level DATABASE_URL, the same shape import-po-line-photos.yml's
+          # prod job uses — which has run green as recently as 2026-09-01.
+          # There is deliberately no R2_API_TOKEN here and there must never be
+          # one: this repository is public.
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MODE: apply
+          CONFIRM: ${{ inputs.confirm }}
+          PLAN_IN: ${{ github.workspace }}/${{ inputs.plan }}
+          COMPANY: ${{ inputs.company || 1 }}
+          PLAN_MAX_AGE_MINUTES: ${{ inputs.max_age_minutes }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+          # A `choice` input, so GitHub itself rejects anything off the list —
+          # and it still reaches the shell as an environment value, not as
+          # interpolated script text.
+          SCRIPT: ${{ inputs.script }}
+        run: node "scripts/$SCRIPT.mjs"

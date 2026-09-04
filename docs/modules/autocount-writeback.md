@@ -2992,6 +2992,29 @@ purchase order is a second rollout that needs its own.
 > naming a row id that no longer exists is FINE — 686 such addresses serve
 > today, because every read route authorises by MEMBERSHIP of `photo_urls`, not
 > by key shape. What matters is only whether the object is in the bucket.
+>
+> **WHERE THE REPAIR ACTUALLY RUNS.** *Added 2026-09-04.* It cannot run on one
+> machine: deciding what to remove needs the R2 token (deadness is a fact about
+> the bucket) and writing needs a writing `DATABASE_URL`, and this repository is
+> PUBLIC so the R2 token must never become an Actions secret. So the plan is
+> computed where the bucket can be asked and applied where the database can be
+> written, and a PLAN FILE crosses between them:
+>
+> 1. on a machine holding the R2 token and a read-only DSN —
+>    `MODE=plan PLAN_OUT=backend/scripts/data/photo-repair-plans/<name>.json node backend/scripts/prune-dead-line-photo-keys.mjs`
+>    (same for `repoint-line-photos-to-owning-line.mjs`);
+> 2. commit that ONE file on a short-lived branch and push it;
+> 3. Actions -> **Apply line photo repair (from a plan file)** -> Run workflow,
+>    selecting that branch, with the CONFIRM phrase;
+> 4. delete the branch. A spent plan is not a document.
+>
+> Steps 1-3 are meant to take MINUTES. The apply refuses a plan older than 120
+> minutes, one that does not match its own digest, one for another company or
+> bucket, and — row by row — any row whose `photo_urls` is no longer what the
+> plan saw. A plan file is a key log, and replaying a stale key log is exactly
+> what put those 64 dead addresses there in the first place. Every refusal is
+> printed and counted and the run exits 1. Trace:
+> `docs/bugs/0637-two-photo-repairs-could-be-planned-but-never-applied-anywher.md`.
 
 ## 8. Configuration
 
