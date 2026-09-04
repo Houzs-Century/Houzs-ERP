@@ -1,0 +1,48 @@
+name: Sales order board — is the status telling the truth (read-only)
+
+# The owner, 2026-09-04, looking at the Houzs Century board:
+#   「为什么这一个明明没有 processing date，却是在 in production 的地方？」
+#   「为什么我全部都是 ready to ship 的？我没有单是已经送货了的吗？」
+#
+# Neither question can be answered by opening one order, and neither should cost
+# him an interruption to ask somebody to run a query (CLAUDE.md). This is that
+# query, as a check.
+#
+# READ-ONLY: SELECTs on one connection, no DDL, no writes, no transaction.
+# Manual trigger only — a production read on a schedule is CI noise nobody reads.
+# Its own concurrency group, so a diagnostic never queues behind a release.
+# Exit 0 for every legitimate answer; non-zero only for an unreachable database.
+#
+# The output is document numbers and counts. No customer, no item code, no
+# amount — this repository is public and its logs are readable.
+
+on:
+  workflow_dispatch:
+    inputs:
+      sample:
+        description: "How many document numbers to name per finding (counts are always whole)"
+        required: false
+        default: "12"
+        type: string
+
+concurrency:
+  group: check-so-status-truth
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/check-so-status-truth.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SAMPLE: ${{ inputs.sample }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first
