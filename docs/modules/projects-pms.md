@@ -298,8 +298,26 @@ setup/dismantle contractor, chosen on the Detail page (`ContractorPicker` in
 `services/projects.ts`. Options come from a `project_contractors` picker table on
 the exact organizer pattern: `GET /contractors` (read), `POST /contractors`
 (`projects.write`), `DELETE /contractors/:id` (`projects.manage`), managed by
-`ContractorManager` in `ProjectMaintenance.tsx`. Feeds the planned per-contractor
-calendar share links.
+`ContractorManager` in `ProjectMaintenance.tsx`.
+
+**Contractor share links (2026-09-03).** Each contractor has a public, no-login
+calendar at `/c/<token>` — a view-only month grid of only THEIR confirmed events
+with booth numbers, so Houzs stops exporting/screenshotting schedules to
+contractors. The token IS the credential (`contractor_share_tokens`, mig
+`20260903T1237_contractor_share_tokens.sql`; `revoked_at` kill switch — pattern
+mig 0126); minted against the contractor NAME. `services/contractorShare.ts` does
+get-or-create / resolve / revoke. The **public read**
+`GET /api/public/contractor-calendar/:token` (`routes/publicContractorCalendar.ts`)
+is mounted BEFORE the `auth` gate in `index.ts` and returns ONLY whitelisted
+confirmed columns (brand/organizer/state/venue/booth_no/start/end/name) through
+`c.env.DB` — never finance, never another contractor, never the anon PostgREST
+path (RLS is off prod-wide, so the WHERE clause is the boundary; the contractor
+comes off the token row, never the request). Admin generates/revokes a link per
+contractor via `POST`/`DELETE /contractors/:id/share-link` (authed,
+`projects.write`/`projects.manage`), surfaced as row actions in `ContractorManager`.
+The page `frontend/src/pages/ContractorCalendar.tsx` is a self-contained public
+surface (own month grid, no import from `Projects.tsx`), routed by
+`routing/appSurface.ts` (`/c/` → `contractor`) outside `AuthGate` in `main.tsx`.
 **The role BADGE is the second half of the checklist-tick gate, and the UI must
 ask it too.** A caller holding `projects.checklist.tick` but **not**
 `projects.write` may attach, edit, delete and status-change only on tasks whose
