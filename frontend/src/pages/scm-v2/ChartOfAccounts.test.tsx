@@ -118,8 +118,12 @@ describe('fold / edit / delete — the owner points 1, 2 and 4', () => {
     /* The child's name cell is indented one step past its header's — the
        old layout indented only the code column, so every name sat flush
        and the hierarchy vanished exactly where the eye scans. */
-    const headerName = screen.getByText('CASH AT BANK').closest('td') as HTMLElement;
-    const childName = screen.getByText('CASH AT BANK - MAYBANK').closest('td') as HTMLElement;
+    /* getAllByText: the parent-codes <datalist> repeats every name as an
+       <option>; the TABLE cell is the one inside a <td>. */
+    const inTd = (name: string) =>
+      screen.getAllByText(name).map((e) => e.closest('td')).find((td) => td != null) as HTMLElement;
+    const headerName = inTd('CASH AT BANK');
+    const childName = inTd('CASH AT BANK - MAYBANK');
     expect(headerName.style.paddingLeft).toBe('8px');
     expect(childName.style.paddingLeft).toBe('30px'); // 8 + depth 1 × 22
     expect(childName.textContent).toContain('└');
