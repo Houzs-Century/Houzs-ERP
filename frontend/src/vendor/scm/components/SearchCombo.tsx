@@ -15,9 +15,31 @@
 // closes.
 // ----------------------------------------------------------------------------
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 export type ComboOption = { value: string; label: string; group?: string };
+
+/* Where the list opens, and how tall it may be. The panel used to open DOWN
+   unconditionally at maxHeight 280 — on a form low on the page it ran off the
+   bottom of the viewport, taking its own scrollbar with it, and the operator
+   could only pick from the rows that happened to be visible (the owner,
+   2026-09-04, typing "adver" into a PV line: 为什么我能选的这么少 / 选account
+   时会无法看到下面的 — eight matches existed, four were on screen). Now the
+   OPEN measures the input against the viewport: flip UP when below can't fit
+   the full panel and above offers more room, and cap the height to the side
+   actually available — so the whole list, scrollbar included, always sits on
+   screen. */
+const PANEL_MAX = 280;
+const PANEL_MIN = 120;
+const EDGE_GAP = 8;
+
+function measureDrop(input: HTMLElement): { up: boolean; maxH: number } {
+  const r = input.getBoundingClientRect();
+  const below = window.innerHeight - r.bottom - EDGE_GAP;
+  const above = r.top - EDGE_GAP;
+  const up = below < PANEL_MAX && above > below;
+  return { up, maxH: Math.max(PANEL_MIN, Math.min(PANEL_MAX, up ? above : below)) };
+}
 
 export function SearchCombo({
   options,
@@ -43,6 +65,16 @@ export function SearchCombo({
   const [query, setQuery] = useState<string | null>(null); // null = showing the chosen label
   const [highlight, setHighlight] = useState(0);
   const wrapRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  /* Measured at open (layout effect: before paint, so the panel never flashes
+     on the wrong side). Closed-state default matches the historic downward
+     panel, which is also what jsdom's zero-rect measures back to. */
+  const [drop, setDrop] = useState<{ up: boolean; maxH: number }>({ up: false, maxH: PANEL_MAX });
+  useLayoutEffect(() => {
+    if (!open || !inputRef.current) return;
+    setDrop(measureDrop(inputRef.current));
+  }, [open]);
 
   const shown = query ?? chosen?.label ?? '';
 
@@ -90,6 +122,7 @@ export function SearchCombo({
       }}
     >
       <input
+        ref={inputRef}
         id={id}
         type="text"
         role="combobox"
@@ -113,8 +146,9 @@ export function SearchCombo({
         <div
           role="listbox"
           style={{
-            position: 'absolute', zIndex: 30, top: '100%', left: 0, right: 0, marginTop: 2,
-            maxHeight: 280, overflowY: 'auto',
+            position: 'absolute', zIndex: 30, left: 0, right: 0,
+            ...(drop.up ? { bottom: '100%', marginBottom: 2 } : { top: '100%', marginTop: 2 }),
+            maxHeight: drop.maxH, overflowY: 'auto',
             background: 'var(--c-paper, #fff)', border: '1px solid var(--line, rgba(34,31,32,0.2))',
             borderRadius: 'var(--radius-md, 8px)', boxShadow: '0 8px 24px rgba(0,0,0,0.12)',
             fontSize: 'var(--fs-13)',
