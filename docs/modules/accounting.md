@@ -127,7 +127,12 @@ Special Acc Type SBK/SCH → acc_money, banks / related-party loans /
 directors / HP+borrowings pre-classified company-specific — so the file
 never enters the repo. 父户不记账 is enforced three-deep: the GL gate
 (engine rule 3), `requireLeafAccount` at PV create/patch (typing time), and
-AccountSelect simply not offering a header with children.
+AccountSelect simply not offering a header with children. One-off chart
+repairs travel as repair workflows beside the seed (plan/apply + CONFIRM):
+.github/workflows/reparent-900-expenses.yml +
+backend/scripts/reparent-900-expenses.mjs hung the flat AutoCount 900-x
+expense roots under 900-0000 (owner 2026-09-04: 批量挂, 全部挂到 900-0000
+下), replicating chartUpdateHandler's reparent guards.
 
 **Chart management arms (2026-09-03, the owner's six-point review)**:
 `accounts.special_type` stores the AutoCount special column verbatim
