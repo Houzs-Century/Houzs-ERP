@@ -103,20 +103,25 @@ async function recordReleaseRefused(
   brokenDos: string[],
 ): Promise<void> {
   try {
+    const note = `Kept at DELIVERED: ${brokenDos.join(', ')} count(s) as delivered but hold NO line rows. `
+      + 'That is broken delivery evidence, not an un-delivery. The order is NOT released to re-ship; '
+      + 'restore the delivery order lines (see docs/bugs, 2026-09-04) and the next sync clears this.';
+    /* The Worker log always gets the line; only the audit ROW is rate-limited. */
+    /* eslint-disable-next-line no-console */
+    console.warn(`[so-delivery-sync] ${docNo}: ${note}`);
     const since = new Date(Date.now() - RELEASE_REFUSED_QUIET_MS).toISOString();
-    const { data: recent } = await sb
+    const { data: recent, error: recentErr } = await sb
       .from('mfg_so_audit_log')
       .select('id')
       .eq('so_doc_no', docNo)
       .eq('action', RELEASE_REFUSED_ACTION)
       .gte('created_at', since)
       .limit(1);
+    /* A failed de-dup read is not "no recent row": writing on it would let a
+       database blip turn one hold into a row per scan. Skip the note; the log
+       line above already carries it. */
+    if (recentErr) return;
     if ((recent ?? []).length > 0) return;
-    const note = `Kept at DELIVERED: ${brokenDos.join(', ')} count(s) as delivered but hold NO line rows. `
-      + 'That is broken delivery evidence, not an un-delivery. The order is NOT released to re-ship; '
-      + 'restore the delivery order lines (see docs/bugs, 2026-09-04) and the next sync clears this.';
-    /* eslint-disable-next-line no-console */
-    console.warn(`[so-delivery-sync] ${docNo}: ${note}`);
     await recordSoAudit(sb, {
       docNo,
       action: RELEASE_REFUSED_ACTION,
