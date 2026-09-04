@@ -35,9 +35,14 @@ const line = (over: Partial<PoLineDraft> = {}): PoLineDraft => ({
   ...over,
 });
 
-const props = (over: Record<string, unknown>) => ({
+const props = (
+  draft: PoLineDraft,
+  onChange: (patch: Partial<PoLineDraft>) => void,
+  showRemarks?: boolean,
+) => ({
   index: 0,
-  currency: "MYR" as const,
+  line: draft,
+  currency: "MYR",
   supplierId: "",
   bindings: [],
   allSkus: [],
@@ -45,11 +50,12 @@ const props = (over: Record<string, unknown>) => ({
   maint: null,
   fabrics: [],
   specialsPools: { bedframe: [], sofa: [] },
+  onChange,
   onPickBinding: () => {},
   onSetVariant: () => {},
   onPendingItemPick: () => {},
   onRemove: () => {},
-  ...over,
+  showRemarks,
 });
 
 describe("the PO line card's Remarks box", () => {
@@ -57,11 +63,7 @@ describe("the PO line card's Remarks box", () => {
     const onChange = vi.fn();
     render(
       <PoLineCard
-        {...props({
-          line: line({ notes: "col:PC-151-03/m.gap:12inch/divan:8inch+2inchleg" }),
-          onChange,
-          showRemarks: true,
-        })}
+        {...props(line({ notes: "col:PC-151-03/m.gap:12inch/divan:8inch+2inchleg" }), onChange, true)}
       />,
     );
 
@@ -78,7 +80,7 @@ describe("the PO line card's Remarks box", () => {
   });
 
   it("renders NO box at all unless the parent opted in", () => {
-    render(<PoLineCard {...props({ line: line({ notes: "book wording" }), onChange: () => {} })} />);
+    render(<PoLineCard {...props(line({ notes: "book wording" }), () => {})} />);
     // Not merely hidden — absent. A parent that does not send `notes` must not
     // offer a field that looks like it saves.
     expect(screen.queryByPlaceholderText("Type remarks…")).toBeNull();
