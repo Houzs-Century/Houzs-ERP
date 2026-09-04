@@ -26,6 +26,12 @@
  * health check already prints — and never a customer, an item code, an address
  * or an amount.
  *
+ * `status` IS AN ENUM (`scm.mfg_so_status`), not text, so every comparison casts
+ * it: `upper(status::text)`. Without the cast Postgres answers
+ * `function upper(scm.mfg_so_status) does not exist` and the check dies AFTER
+ * printing its first section, which reads like a partial answer rather than a
+ * broken query.
+ *
  * RE-RUN: idempotent. It reads and prints, and holds no state between runs.
  */
 import { readFileSync } from 'node:fs';
@@ -69,7 +75,7 @@ try {
   const noDate = await pg`
     SELECT company_id, doc_no
       FROM scm.mfg_sales_orders
-     WHERE upper(status) = 'IN_PRODUCTION'
+     WHERE upper(status::text) = 'IN_PRODUCTION'
        AND coalesce(trim(processing_date::text), '') = ''
      ORDER BY company_id, doc_no`;
   note(`IN PRODUCTION WITH NO PROCESSING DATE: ${noDate.length} — the status was never`
@@ -82,7 +88,7 @@ try {
   const datedConfirmed = await pg`
     SELECT company_id, count(*)::int AS n
       FROM scm.mfg_sales_orders
-     WHERE upper(status) = 'CONFIRMED'
+     WHERE upper(status::text) = 'CONFIRMED'
        AND coalesce(trim(processing_date::text), '') <> ''
      GROUP BY company_id ORDER BY company_id`;
   note('CONFIRMED BUT CARRYING A PROCESSING DATE (the forward rule\'s misses):');
@@ -106,10 +112,10 @@ try {
   const shipped = await pg`
     SELECT s.company_id, s.doc_no, s.status
       FROM scm.mfg_sales_orders s
-     WHERE upper(s.status) IN ('CONFIRMED', 'IN_PRODUCTION', 'READY_TO_SHIP')
+     WHERE upper(s.status::text) IN ('CONFIRMED', 'IN_PRODUCTION', 'READY_TO_SHIP')
        AND EXISTS (SELECT 1 FROM scm.delivery_orders d
                     WHERE d.so_doc_no = s.doc_no
-                      AND upper(coalesce(d.status, '')) NOT IN ('CANCELLED', 'DRAFT'))
+                      AND upper(coalesce(d.status::text, '')) NOT IN ('CANCELLED', 'DRAFT'))
      ORDER BY s.company_id, s.doc_no`;
   note(`SHIPPED BUT NOT MARKED DELIVERED: ${shipped.length} — these have a live`
     + ' delivery order and the sales order still sits earlier on the board.');
