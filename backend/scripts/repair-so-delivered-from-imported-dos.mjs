@@ -226,6 +226,53 @@ async function main() {
   }
   if (why.length > 10) notice(`  ... and ${why.length - 10} more`);
 
+  /* AND THE QUANTITIES, which is where the answer actually lives.
+
+     The line-count section above ruled out the two structural explanations —
+     no delivery-order lines, and lines with no sales-order pointer — by
+     measuring both at zero. What it cannot see is a line that WAS delivered,
+     just not in full: `isSoFullyCovered` compares QUANTITY per line, so an
+     order with eight lines and eight delivery lines still does not advance if
+     one of them shipped 1 of 3.
+
+     Reported as the SHORTFALL count per order, because that is the number that
+     says whether these are ordinary partial deliveries (the rule working) or
+     something systematic (a defect). Quantities only — no item codes, no
+     customer, no amounts; this log is public. */
+  const short = await pg`
+    WITH ordered AS (
+      SELECT i.doc_no, i.id, coalesce(i.qty, 0) AS qty
+        FROM scm.mfg_sales_order_items i
+       WHERE i.doc_no = ANY(${docNos}) AND coalesce(i.cancelled, false) = false
+    ), delivered AS (
+      SELECT di.so_item_id AS id, sum(coalesce(di.qty, 0)) AS qty
+        FROM scm.delivery_order_items di
+        JOIN scm.delivery_orders d2 ON d2.id = di.delivery_order_id
+       WHERE d2.so_doc_no = ANY(${docNos})
+         AND di.so_item_id IS NOT NULL
+         AND upper(coalesce(d2.status::text, '')) NOT IN ('CANCELLED', 'DRAFT')
+       GROUP BY di.so_item_id
+    )
+    SELECT o.doc_no,
+           count(*)::int AS lines,
+           count(*) FILTER (WHERE coalesce(dl.qty, 0) < o.qty)::int AS short_lines,
+           sum(o.qty)::numeric AS ordered_qty,
+           sum(least(coalesce(dl.qty, 0), o.qty))::numeric AS delivered_qty
+      FROM ordered o LEFT JOIN delivered dl ON dl.id = o.id
+     GROUP BY o.doc_no ORDER BY o.doc_no`;
+  const fullyShort = short.filter((r) => Number(r.delivered_qty) === 0);
+  const partly = short.filter((r) => Number(r.delivered_qty) > 0 && r.short_lines > 0);
+  const covered = short.filter((r) => r.short_lines === 0);
+  notice('AND THE QUANTITIES — where the answer actually lives:');
+  notice(`  ${covered.length} order(s) have every line fully delivered by quantity`);
+  notice(`  ${partly.length} are genuinely PARTIAL — some delivered, some still owed`);
+  notice(`  ${fullyShort.length} have delivery-order lines but ZERO delivered quantity attributed`);
+  for (const r of short.slice(0, 10)) {
+    notice(`  ${r.doc_no}: ${r.short_lines} of ${r.lines} line(s) short,`
+      + ` ${r.delivered_qty} of ${r.ordered_qty} unit(s) delivered`);
+  }
+  if (short.length > 10) notice(`  ... and ${short.length - 10} more`);
+
   if (!APPLY) {
     notice('PLAN only — nothing was written. Re-run with APPLY=1 and CONFIRM_COMPANY='
       + `${COMPANY} to commit.`);
