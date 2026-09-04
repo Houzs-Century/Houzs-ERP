@@ -241,6 +241,11 @@ export const PaymentVouchers = () => {
      with its number — a batch quietly missing a voucher is the dishonest
      branch. */
   const [printing, setPrinting] = useState(false);
+  /* Files or not is the OPERATOR's call per batch too (owner 2026-09-04:
+     批量那边也要有这个选) — default ON. Without files nothing needs the
+     Worker: the vouchers render into ONE shared jsPDF client-side, the
+     combined-PI pattern. */
+  const [batchWithFiles, setBatchWithFiles] = useState(true);
   const printSelected = async (action: PdfAction) => {
     const targets = rows.filter((r) => selected.has(r.id));
     if (targets.length === 0 || printing) return;
@@ -253,7 +258,26 @@ export const PaymentVouchers = () => {
         authedFetch<{ accounts: Array<{ account_code: string; account_name: string }> }>('/accounting/accounts'),
       ]);
       const names = new Map(accountsRes.accounts.map((a) => [a.account_code, a.account_name]));
-      const label = (code: string) => (names.has(code) ? `${code} · ${names.get(code)!}` : code);
+      const nameOf = (code: string) => names.get(code) ?? null;
+
+      if (!batchWithFiles) {
+        /* Vouchers only — one shared doc, each starting on a fresh page. */
+        const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+        for (let i = 0; i < targets.length; i += 1) {
+          if (i > 0) doc.addPage();
+          const detail = await fetchPvPrintDetail(targets[i]!.id);
+          type A = Parameters<typeof renderPaymentVoucherInto>;
+          await renderPaymentVoucherInto(
+            doc, autoTable,
+            detail.paymentVoucher as unknown as A[2],
+            detail.lines as unknown as A[3],
+            detail.allocations as unknown as A[4],
+            nameOf,
+          );
+        }
+        deliverPdfBlob(doc.output('blob'), 'payment-vouchers.pdf', action);
+        return;
+      }
 
       const parts: Array<{ pvId: string; voucherBase64: string }> = [];
       for (const r of targets) {
@@ -265,7 +289,7 @@ export const PaymentVouchers = () => {
           detail.paymentVoucher as unknown as A[2],
           detail.lines as unknown as A[3],
           detail.allocations as unknown as A[4],
-          label,
+          nameOf,
         );
         parts.push({ pvId: r.id, voucherBase64: pdfBytesToBase64(doc.output('arraybuffer') as ArrayBuffer) });
       }
@@ -355,13 +379,22 @@ export const PaymentVouchers = () => {
             </Button>
           )}
           {/* Print rides the SAME ticks (owner 2026-09-03): the ticked
-              vouchers, list order, one PDF of pv+files, pv+files… */}
+              vouchers, list order, one PDF — with each voucher's files
+              interleaved, or vouchers only (owner 2026-09-04: 批量那边也要
+              有这个选). */}
           <Button variant="secondary" size="sm" onClick={() => void printSelected('print')} disabled={printing || batchRunning}>
-            {printing ? 'Preparing…' : `Print ${selected.size} + files`}
+            {printing ? 'Preparing…' : `Print ${selected.size}${batchWithFiles ? ' + files' : ''}`}
           </Button>
           <Button variant="ghost" size="sm" onClick={() => void printSelected('save')} disabled={printing || batchRunning}>
             Save PDF
           </Button>
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 5, cursor: 'pointer' }}>
+            <input type="checkbox" checked={batchWithFiles}
+              aria-label="Include each voucher's attached files"
+              onChange={(e) => setBatchWithFiles(e.target.checked)}
+              style={{ width: 14, height: 14, accentColor: 'var(--c-orange)' }} />
+            with files
+          </label>
           {batchRunning && <span style={{ color: 'var(--fg-muted)' }}>stamping…</span>}
           <span style={{ flex: 1 }} />
           <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())} disabled={batchRunning}>

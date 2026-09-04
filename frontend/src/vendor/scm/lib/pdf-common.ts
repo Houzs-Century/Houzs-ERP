@@ -46,6 +46,33 @@ function splitAddressLines(address: string): string[] {
   return [line1, line2];
 }
 
+/** Wrap one letterhead line to `maxW`, breaking ONLY after a comma.
+ *
+ *  splitTextToSize breaks between WORDS, and an address is not prose: it cut
+ *  "…KL Gateway, No. 2," into "…No." / "2," on the owner's 2990 voucher
+ *  (2026-09-04: 地址整齐一点). A comma-delimited chunk ("No. 2,", "Menara
+ *  SUEZCAP 2,") is the unit a reader parses, so chunks pack greedily into
+ *  lines and never split — except a single chunk that alone exceeds the
+ *  width, which the CALLER word-wraps as the lesser evil. Exported for its
+ *  test. `measure` is the current font's text-width fn, so the wrap always
+ *  matches what will actually be painted. */
+export function wrapAtCommas(line: string, maxW: number, measure: (s: string) => number): string[] {
+  const chunks = (line.match(/[^,]+,?/g) ?? [line]).map((s) => s.trim()).filter(Boolean);
+  const out: string[] = [];
+  let cur = '';
+  for (const chunk of chunks) {
+    const candidate = cur ? `${cur} ${chunk}` : chunk;
+    if (cur && measure(candidate) > maxW) {
+      out.push(cur);
+      cur = chunk;
+    } else {
+      cur = candidate;
+    }
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+
 export const COMPANY = {
   get name(): string {
     return getBrandingCache().companyName;
@@ -451,8 +478,14 @@ export function drawHeader(
   const nameLines = doc.splitTextToSize(COMPANY.name, leftMaxW) as string[];
   doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
   const regLines = doc.splitTextToSize(COMPANY.reg, leftMaxW) as string[];
-  const addressLines = COMPANY.addressLines.flatMap(
-    (line) => doc.splitTextToSize(line, leftMaxW) as string[],
+  /* Comma-aware (see wrapAtCommas): the width wrap must not cut inside a
+     chunk like "No. 2,". Only a chunk that ALONE overflows the measure falls
+     back to the word wrap. Shared letterhead — every document tidies up
+     together. */
+  const addressLines = COMPANY.addressLines.flatMap((line) =>
+    wrapAtCommas(line, leftMaxW, (s) => doc.getTextWidth(s)).flatMap((l) =>
+      doc.getTextWidth(l) > leftMaxW ? (doc.splitTextToSize(l, leftMaxW) as string[]) : [l],
+    ),
   );
 
   let logoBottomY = 0;

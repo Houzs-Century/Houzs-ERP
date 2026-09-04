@@ -762,8 +762,21 @@ document:
 - **amount in words is MYR-only** (`amountInWordsMyr`); a foreign voucher
   prints `CNY @ rate` and the `≈ posted to GL` MYR line instead — spelling
   yuan as RINGGIT would be a false sentence;
-- accounts print through the CALLER's labeller (code · name), so the paper
-  matches the screen.
+- accounts print through the CALLER's NAMER: the lines table gives
+  **Account Code and Account Name their own columns**, ahead of Description
+  (owner 2026-09-04); Paid From stays one joined string. The namer must read
+  the UNFILTERED chart — an old voucher on a now-inactive account still
+  deserves its name on paper.
+
+**Owner's 2026-09-04 print polish.** The letterhead address wraps at COMMAS
+now (`wrapAtCommas` in `frontend/src/vendor/scm/lib/pdf-common.ts` —
+splitTextToSize had cut "No. 2," into "No." / "2,"; it lives in the shared
+`drawHeader`, so every document's letterhead tidies together; pinned in
+`frontend/src/vendor/scm/lib/pdf-address-wrap.test.ts`). The signature strip
+sits a little lower (breathing room). And **including the files is the
+operator's call per print**: a checkbox on the detail preview card (default
+ON) and a "with files" tick on the batch bar (default ON; off = vouchers
+only, rendered into one shared jsPDF client-side, no Worker round-trip).
 
 **The evidence merges ON THE WORKER.** jsPDF can only draw — it cannot absorb
 an existing PDF's pages, and his bills are mostly PDFs; pdf-lib does that one
