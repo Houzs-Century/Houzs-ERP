@@ -249,7 +249,13 @@ th under collapsed borders; `.card{overflow:hidden}` would swallow a
 page-scroll sticky anyway). **✎ Edit is a pop-out dialog** in the
 ConfirmDialog family style — it appears wherever you are, the list never
 moves, and the backdrop deliberately does NOT close it (a stray click must
-not eat a half-typed rename; Cancel is the way out). Pinned in
+not eat a half-typed rename; Cancel is the way out). A ⚡ **Quick mode**
+toggle (owner, mid tidy-up: 就 for 先阶段…过后这个 function 还是要有;
+默认都是要弹的) lives in the page header — session-only, OFF on every
+visit, so the confirms come back by themselves. ON: a LEAF untick and a
+delete run without a dialog (the server's 11-probe delete guard is the
+net); a HEADER untick still asks — it sweeps the children and re-ticking
+the header does not bring them back. Pinned in
 `ChartOfAccounts.test.tsx`. Detail
 accounts for other debtors/creditors are children under the 305-0000 /
 405-0000 controls, one per counterparty, opened through this same door.
