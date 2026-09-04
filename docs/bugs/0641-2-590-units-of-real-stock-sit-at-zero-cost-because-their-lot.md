@@ -69,5 +69,28 @@ write. Plan against production: **34 lots, 2,590 units, +RM 196,212.21**;
 company 1 inventory RM 2,052,554.18 -> RM 2,248,766.39, units on hand unchanged
 at 9,975. The 140 gift/demo/display lots are untouched by design.
 
-**Ref.** `fix/split-partly-shipped-zero-cost-lots`, 2026-09-04. Apply is the
-owner's to run.
+**APPLIED — the owner ran it, 2026-09-04 14:51Z, run `33886103995`.** This
+paragraph replaces "Apply is the owner's to run", which was true for four
+minutes and would otherwise have been believed by the next reader.
+
+What the run reported: `applied: 34 lot(s), 2590 units, RM 196,212.21`, zero
+`::error::` lines, zero rollbacks, and its own fresh-connection read-back — all
+34 pairs correct, company units on hand `9975 -> 9975`, value moved by RM
+196,212.21 against a plan of RM 196,212.21.
+
+Re-measured afterwards on the live database with the read-only `claude_ro` role,
+because a script's own account of itself is not independent evidence:
+
+| what was asserted | measured after | verdict |
+| --- | --- | --- |
+| the split produced two rows per lot | 68 rows across the 34 affected movements, 34 of them carrying the `split from lot` marker | as designed |
+| B1, `qty_remaining = qty_received - consumed`, per layer | **0** rows broken, out of 68 | holds |
+| received quantity must not move | 2,709 before, **2,709** after | unchanged |
+| on-hand quantity must not move | 2,590 before, **2,590** after | unchanged |
+| nothing already shipped may change | 119 units consumed, **RM 0.00** settled COGS, same as before | unchanged |
+| FIFO position inherited | **0** open halves sit at a different `received_at` from their closed half | holds |
+| value moves by exactly the plan | 205,255,418 -> 224,876,639 sen = **+RM 196,212.21** | exact |
+| B6 zero-cost open layers | 174 layers / 2,827 units -> **140 layers / 237 units** | the gift/demo/display pieces, and nothing else |
+
+**Ref.** `fix/split-partly-shipped-zero-cost-lots` (#2967), 2026-09-04; applied
+by the owner in run `33886103995` the same day.
