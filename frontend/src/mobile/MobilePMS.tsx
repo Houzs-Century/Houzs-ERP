@@ -13,6 +13,7 @@ import { useAuth } from "../auth/AuthContext";
 import { isSalesNonDirector, isSalesDirectorUser, canLogSalesEntry, canCreateEvent } from "../auth/salesAccess";
 import { NewProjectSheet } from "./MobileNewProject";
 import { capability } from "../auth/capabilities";
+import { roleLabelAdmitsRole } from "../auth/roleLabelAdmits";
 import { readProjectAccess, projectAccessUnresolved, holdsChecklistApproval } from "../auth/projectAccess";
 import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
@@ -2180,18 +2181,9 @@ function TaskRow({
   // drivers, so they attach on DRIVER-badged rows too (owner 2026-07-13) —
   // no task is ever badged HELPER/STOREKEEPER.
   const tickOnly = canTick && !can("projects.write");
-  const badge = (it.role_label ?? "").trim().toUpperCase();
-  const userRole = (user?.role_name ?? "").trim().toUpperCase();
-  // A combined badge ("SALES PIC & DRIVER" — the Defect List pair, owner
-  // 2026-07-29) admits every listed role; each part keeps the DRIVER →
-  // helper/storekeeper extension. Mirrors backend roleLabelAdmits.
-  const roleMatchesUser =
-    !!badge && !!userRole &&
-    badge.split("&").some((part) => {
-      const l = part.trim();
-      return !!l && (l === userRole ||
-        (l === "DRIVER" && (userRole === "HELPER" || userRole === "STOREKEEPER")));
-    });
+  // Shared with the desktop and mirroring backend roleLabelAdmits: a combined
+  // badge admits every listed role, DRIVER also admitting helper/storekeeper.
+  const roleMatchesUser = roleLabelAdmitsRole(it.role_label, user?.role_name);
   // Gated row, no approval key, but the row is badged for THIS user's function
   // (the purchaser on her own Exchange List / Stock In / Stock Out): since
   // 2026-08-17 the backend lets the owner function toggle N/A — only
@@ -2200,11 +2192,14 @@ function TaskRow({
   const naOnly = permBlocked && canTick && roleMatchesUser;
   const canRowTick = canTick && (!permBlocked || naOnly);
   const canAttach = canTick && (!tickOnly || roleMatchesUser);
-  // Owner 2026-08-05: file DELETE follows the PC rule — managers only
-  // (projects.manage: BD / managers / directors). Crew and sales keep upload
-  // (canAttach) but no longer see the × on file chips. canAttach folds in the
-  // row-edit + !archived gate, so a manager still can't delete a locked row.
-  const canRemoveFile = canAttach && can("projects.manage");
+  // Owner 2026-09-03: "every user can delete/remove file or image from their own
+  // task, both pc and mobile pms" — REPLACES the 2026-08-05 managers-only rule
+  // (`canAttach && can("projects.manage")`), which had left crew and sales able
+  // to upload a wrong photo they could not then take off. Delete now follows
+  // ATTACH on both surfaces: canAttach is already scoped to the row the caller
+  // may work on (tick-only roles to their own badge) and folds in the row-edit +
+  // !archived gate, so a locked row still refuses.
+  const canRemoveFile = canAttach;
 
   const cycle = async () => {
     if (!canRowTick || busy) return;
@@ -3364,10 +3359,11 @@ function SalesDocsCard({
   // be approved on a phone. Gate + endpoint match the desktop DocRow exactly
   // (shared checklistReviewVisible / ReviewButtons); user drives the perm check.
   const { user, can } = useAuth();
-  // Owner 2026-08-05: file DELETE follows the PC rule — managers only
-  // (projects.manage). canTick already folds in !archived, so a manager still
-  // can't delete on an archived project; upload/remark stay on canTick.
-  const canDeleteFiles = can("projects.manage") && canTick;
+  // Owner 2026-09-03: every user may remove a file from THEIR OWN task, so this
+  // follows the tile's own edit right instead of projects.manage. canTick folds
+  // in !archived, and each use site already ANDs `!t.readOnly`, which is what
+  // marks a tile as not this cohort's to work on.
+  const canDeleteFiles = canTick;
 
   const tiles = tileDefs.map((t) => {
     const item = (checklist ?? []).find(
@@ -3725,10 +3721,10 @@ function FloorPlans({
   // mobile". These tiles were VIEW-only — tap opens the lightbox and that was
   // the whole interaction — while the tasklist rows that carry the file chips
   // (with their ×) are hidden for every mobile cohort. So on a phone there was
-  // no way to remove, or replace, a plan already uploaded. Same DELETE rule as
-  // the PC and the doc tiles: managers only (projects.manage), on top of the
-  // card's own write gate.
-  const canDeleteFiles = canWrite && can("projects.manage");
+  // no way to remove, or replace, a plan already uploaded. Owner 2026-09-03:
+  // every user may remove a file from their own task, so this is now the card's
+  // own write gate alone — projects.manage no longer required.
+  const canDeleteFiles = canWrite;
   const itemByPrefix = (prefix: RegExp): ChecklistItem | undefined =>
     (checklist ?? []).find((it) => prefix.test((it.title || "").trim()));
   const threeDItem = itemByPrefix(/^3d\s*(design|render)/i);

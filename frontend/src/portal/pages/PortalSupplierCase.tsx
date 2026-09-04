@@ -99,7 +99,7 @@ const STAGE_LABEL: Record<string, string> = {
   pending_review: "Review",
   under_verification: "Verification",
   pending_solution: "Solution",
-  pending_supplier_pickup: "Supplier Pickup / Return",
+  pending_supplier_pickup: "Pickup / Return",
   pending_item_ready: "Pending Item Ready",
   pending_delivery_service: "Delivery / Service",
   completed: "Completed",

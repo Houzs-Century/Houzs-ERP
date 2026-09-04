@@ -166,20 +166,33 @@ never emits a word the sheet's validation would reject. Subs are directly switch
 by ops (desktop select), stored on `assr_cases.sub_status`, and
 `assrSubStatusAddsInfo()` (`stages.ts`) hides one that merely restates its
 stage label — with one exception (Nico 2026-08-22): under the combined
-"Supplier Pickup / Return" stage the list's stage cell shows the sub line on
-EVERY leg, because naming the leg is how ops splits its supplier chase list.
-The same split reaches the other read surfaces: the stage column's `getValue`
-appends the sub label ("Supplier Pickup / Return — Pending Supplier Return"),
-so the column filter menu and the CSV export isolate one leg; and the
-`/api/assr/summary` `stage_funnel` rows carry `sub_customer` + `sub_return`
-counts so the Supplier funnel card's caption reads
-"X customer · Y supplier · Z return" instead of the static description.
+"Pickup / Return" stage the list's stage cell shows the sub line on EVERY leg,
+because naming the leg is how ops splits its chase list. The same split reaches
+the other read surfaces: the stage column's `getValue` appends the sub label
+("Pickup / Return — Pending Supplier Return"), so the column filter menu and
+the CSV export isolate one leg; and the `/api/assr/summary` `stage_funnel`
+rows carry `sub_customer` + `sub_return` counts so the funnel card's caption
+reads "X customer pickup · Y supplier pickup · Z supplier return" instead of
+the static description.
+
+The stage itself was RENAMED "Supplier Pickup / Return" → **"Pickup / Return"**
+(Nico 2026-09-04, canonical tables both sides + the six hand-copy pill maps):
+with the customer-pickup leg the stage is no longer supplier-specific, so the
+name went neutral and the sub-status names the actor. The same decision emptied
+`ASSR_SUPPLIER_ONLY_STAGES` — an own-team repair also collects and returns the
+item and has its own QC phase, so **EVERY case now runs the full 7-stage
+pipeline** and the old internal-vs-supplier 7-vs-5 filtering is retired (the
+`isStageActive` machinery survives as an identity filter). The customer-portal
+wording ("Pending Supplier Pickup") stays deliberately unchanged. The sheet's
+frozen column-A words are untouched by the rename — they live in
+`ASSR_SHEET_STATUS`, a separate table.
 
 > `frontend/src/components/ServiceProgressTracker.tsx` [gone] **was DELETED** (with its
 > unused `ServiceCases.tsx` import) after this audit: it was never rendered
 > anywhere in the tree, and it carried its own 7-stage copy with **no** resolution
-> filter, so wiring it up would have regressed the 7-vs-5 rule. Any future stepper
-> must derive its stages from `stages.ts`.
+> filter, so wiring it up would have regressed the then-current 7-vs-5 rule
+> (retired 2026-09-04 — see above). Any future stepper must derive its stages
+> from `stages.ts`.
 >
 > `backend/src/services/printTracker.ts` still carries the same unfiltered
 > 7-stage copy for the PDF stepper. It has **no importer** either at this commit,
@@ -642,16 +655,16 @@ leak while collapsing the second into the first is an empty-list outage.
 Two gates, deliberately different:
 
 - `requireServiceCaseAccess(perms)` wraps `canAccessServiceCases`: pass if the
-  caller holds any of the listed permissions **OR** holds the **HOUZS company
-  grant** (`holdsHouzsCompanyGrant`) **OR** is a director (`isDirectorUser` =
+  caller holds any of the listed permissions **OR** holds **any company grant**
+  (`holdsAnyCompanyGrant`) **OR** is a director (`isDirectorUser` =
   `*` / Super Admin / Sales Director / Finance Manager). Applied only to READS
   and to CREATE.
 
   The middle term was `isSalesUser` — a job-title test — until 2026-08-20.
-  `holdsHouzsCompanyGrant` reads `allowedCompanyIds` with the usual three-state
-  sentinel: `undefined` (unresolved company context) degrades to YES, exactly as
-  `allowedCompaniesSql` degrades to no predicate, so a cold start does not 403
-  everyone; `[]` is NO; a resolved set is YES only when HOUZS is in it.
+  It reads `allowedCompanyIds` with the usual three-state sentinel: `undefined`
+  (unresolved company context) degrades to YES, exactly as `allowedCompaniesSql`
+  degrades to no predicate, so a cold start does not 403 everyone; `[]` (granted
+  nothing) is NO; any non-empty resolved set is YES.
 
   **Known consequence, measured, not guessed.** Census run 32351722894
   (2026-08-20, production): admittance goes 49 -> 77 active users, **+28 gained,
@@ -659,12 +672,22 @@ Two gates, deliberately different:
   Outsource Transporters — plus HR and an Operation Executive. That is what
   "不看职称" means in this data.
 
-  **Known future gap, also measured.** Six Sales-titled active users hold no
-  HOUZS grant (the 2990-only cohort). None of them loses access today, because
-  each is admitted by the permission or director term as well — but a FUTURE
-  2990-only rep with neither would be refused by this gate. If 2990 grows its own
-  sales team, this term needs a second company, or it needs to become "holds any
-  granted company".
+  **That gap is CLOSED, 2026-09-03** — by the second option this paragraph named.
+  The middle term is now `holdsAnyCompanyGrant(c)`: holds a company grant at
+  all. The ruling replaced a job TITLE with a company GRANT (「不看职称」); the
+  HOUZS literal came from the incident being about HOUZS, and it was narrower
+  than the rule already recorded in this file's 2026-07-20 trail ("a future 2990
+  rep's is {2990}"). `census-service-case-visibility.mjs` §1 had even named the
+  stranded cohort in the PR that shipped the literal. Nobody lost access in
+  between — the six were each admitted by the permission or director term too —
+  so this is prevention, not repair. `holdsHouzsCompanyGrant` STAYS: the
+  AutoCount mirror arm still needs the HOUZS-specific question, because
+  `sales_orders` holds only HOUZS rows. Trace:
+  `docs/bugs/0621-the-company-grant-rule-shipped-with-a-company-literal.md`.
+
+  **Admitting is not showing.** Every read is already scoped by `assrCompanySql`
+  → `allowedCompaniesSql`, so a 2990 grantee admitted here sees 2990's cases and
+  nothing else.
 - `requirePermission("service_cases.<verb>")` — plain, for every write /
   manage / approve route. Owner rule 8 widened intake for Sales; it never
   widened mutation access (comment `:52-65`).

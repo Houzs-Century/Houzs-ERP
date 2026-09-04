@@ -1,6 +1,7 @@
 // /mfg-sales-orders — B2B sales orders (HOUZS pattern).
 // Separate from retail `orders` (POS) — different lifecycle, different ID format.
 
+import { activeSoEditLease, soCallerUserId, soLineWriteLeaseMatches, soEditLeaseExpiryIso, soEditLeaseRefusal, soEditLeaseTakeoverAllowed, type SoEditLeaseRow } from '../lib/so-edit-lease';
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { z } from 'zod';
@@ -31,7 +32,7 @@ export { deriveCountryFromState, deriveSalesLocationFromState };
 import { specialDeliveryFeesForLines, reconstructDeliveryRuleLines } from '../lib/special-delivery';
 import { soHasDownstream } from '../lib/downstream-lock';
 import { dateOrNull, effectiveDateAfterPatch, isDateColumn } from '../lib/date-coerce';
-import { statusAfterProcessingDateSet } from '../shared/so-proceeded-status';
+import { soStatusAfterProcessingDateChange } from '../lib/so-proceed-status-change';
 import { soIsMigrated } from '../lib/so-is-migrated';
 import { soDocNosWithDownstream } from '../lib/downstream-lock'; // own line: autocountWritebackWiring asserts the import above verbatim
 import { doNosBySalesOrder, type DeliveryOrderNoRow } from '../lib/so-delivery-order-nos';
@@ -141,6 +142,7 @@ import { SESSION_ORIGIN_POS } from '../../services/auth';
 import { loadLeadBuffers } from '../../services/agents/procurement-learning';
 import { SO_FINANCE_KEYS, SO_ITEM_FINANCE_KEYS, stripAuditFinance } from '../lib/finance-keys';
 import { resolveSalesScopeIds, salesDocOutOfScope, resolveCallerStaffId } from '../lib/salesScope';
+import { recordAmendmentRequested, notifyAmendmentsRaised } from '../lib/amendment-raised-effects';
 import {
   resolveVenueBinding,
   loadVenueBindingInputs, venueNameForHalfWrittenPair,
@@ -463,26 +465,13 @@ export const soCasGrace = (c: any): SoCasGraceWindow => ({
   until: (c?.env?.SO_CAS_GRACE_UNTIL as string | undefined) ?? null,
 });
 
-const SO_EDIT_LEASE_CONFLICT = {
-  error: 'so_edit_lease_conflict',
-  message: 'This order is being saved on another screen. Your changes are still here; wait a moment and try again.',
-} as const;
+/* 'held' is all its two callers can be in: both read a LIVE lease first. The
+   three-way lives in requireSoLineWriteLease below - docs/bugs/0630. */
+const SO_EDIT_LEASE_CONFLICT = soEditLeaseRefusal('held');
 
-type SoEditLeaseRow = {
-  edit_lease_token?: string | null;
-  edit_lease_expires_at?: string | null;
-};
-
-const activeSoEditLease = (row: SoEditLeaseRow | null | undefined): string | null => {
-  const token = row?.edit_lease_token ?? null;
-  const expires = row?.edit_lease_expires_at ? Date.parse(row.edit_lease_expires_at) : NaN;
-  return token && Number.isFinite(expires) && expires > Date.now() ? token : null;
-};
-
-export const soLineWriteLeaseMatches = (
-  row: SoEditLeaseRow | null | undefined,
-  supplied: string,
-): boolean => Boolean(supplied) && activeSoEditLease(row) === supplied;
+/* The lock's rules live in scm/lib/so-edit-lease.ts. Re-exported because two
+   suites import this one from here. */
+export { soLineWriteLeaseMatches } from '../lib/so-edit-lease';
 
 /* Every direct line mutation belongs to an acquired header lease. This is the
    enforceable half of the multi-request composite save: a caller cannot bypass
@@ -490,13 +479,17 @@ export const soLineWriteLeaseMatches = (
 async function requireSoLineWriteLease(sb: any, docNo: string, c: any): Promise<Response | null> {
   const supplied = c.req.header('X-SO-Edit-Lease')?.trim() ?? '';
   const { data, error } = await sb.from('mfg_sales_orders')
-    .select('edit_lease_token, edit_lease_expires_at')
+    .select('edit_lease_token, edit_lease_expires_at, edit_lease_user_id')
     .eq('doc_no', docNo)
     .maybeSingle();
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   if (!data) return c.json({ error: 'not_found' }, 404);
   if (!soLineWriteLeaseMatches(data as SoEditLeaseRow, supplied)) {
-    return c.json(SO_EDIT_LEASE_CONFLICT, 409);
+    const live = activeSoEditLease(data as SoEditLeaseRow);
+    const holder = (data as { edit_lease_user_id?: number | string | null }).edit_lease_user_id;
+    // The same person takes their own lock back - 0348, as the composite path does.
+    if (live && supplied && soEditLeaseTakeoverAllowed(holder, soCallerUserId(c))) return null;
+    return c.json(soEditLeaseRefusal(!supplied ? 'missing' : live ? 'held' : 'expired'), 409);
   }
   return null;
 }
@@ -7105,9 +7098,9 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
        Flagged here so the RPC call below applies both halves. */
     cascadedDeliveryClear = cascadeCols.length > 0;
     const effDelivAfterCascade = cascadedDeliveryClear ? null : effDeliv;
-    /* PROCEEDED IS THE DATE — refusals in shared/so-proceeded-status, 0597. */
-    const proceeded = statusAfterProcessingDateSet({ currentStatus: beforeRecord['status'] as string | null, storedProcessingDate: origProc, effectiveProcessingDate: effProc });
-    if (proceeded) updates['status'] = proceeded;    const pairRefusal = soDatePairRefusal({
+    /* THE DATE IS THE ANSWER, BOTH WAYS — shared/so-proceeded-status, 0597/0631. */
+    const nextStatus = await soStatusAfterProcessingDateChange(sb, docNo, { currentStatus: beforeRecord['status'] as string | null, storedProcessingDate: origProc, effectiveProcessingDate: effProc });
+    if (nextStatus) updates['status'] = nextStatus;    const pairRefusal = soDatePairRefusal({
       nextProc: effProc,
       nextDeliv: effDelivAfterCascade,
       origProc,
@@ -7212,13 +7205,14 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
     }
   }
 
-  const leaseExpiryIso = new Date(Date.now() + 5 * 60_000).toISOString();
+  const leaseExpiryIso = soEditLeaseExpiryIso();
   /* Keep a durable lease through every post-CAS follower. Composite saves reuse
      the caller token; a header-only save gets a short internal token. The lease
      is released only after followers/audit/recompute finish below. */
   const operationLeaseToken = requestedLeaseToken || crypto.randomUUID();
   updates.edit_lease_token = operationLeaseToken;
   updates.edit_lease_expires_at = leaseExpiryIso;
+  updates.edit_lease_user_id = soCallerUserId(c);  // WHO holds it - 0348, docs/bugs/0630
 
   const casCo = requireActiveCompanyId(c); if (!casCo.ok) return c.json(casCo.refusal, 409);  // HAZARD 1
   /* The header CAS and every version-bound follower commit in ONE PostgreSQL
@@ -7330,7 +7324,7 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
     .select('version')
     .maybeSingle();
   if (releaseLeaseError) {
-    return c.json({ error: 'so_edit_lease_release_failed', message: 'The order saved, but the edit lock could not be released. Wait five minutes before editing again.' }, 500);
+    return c.json({ error: 'so_edit_lease_release_failed', message: 'The order saved, but the edit lock could not be released. It clears itself within a minute — wait, then edit again.' }, 500);
   }
   /* The header CAS ALREADY COMMITTED above. A 0-row lease release means our
      lease was rotated/expired underneath us, NOT that the save lost a race —
@@ -9044,7 +9038,7 @@ mfgSalesOrders.post('/:docNo/items/:itemId/tbc-update', async (c) => {
   if (!company.ok) return c.json(company.refusal, 409);
   return queueAcSoEditAfter(c, c.req.param('docNo'), await runScmPgCommand(c, (sb) => tbcUpdateCommandHandler(c, sb), {
     docNo: c.req.param('docNo'),
-    leaseToken: c.req.header('X-SO-Edit-Lease')?.trim() ?? null,
+    leaseToken: c.req.header('X-SO-Edit-Lease')?.trim() ?? null, userId: soCallerUserId(c),
     companyId: company.companyId,
   }));
 });
@@ -9515,7 +9509,7 @@ mfgSalesOrders.post('/:docNo/items/:itemId/tbc-swap', async (c) => {
   if (!company.ok) return c.json(company.refusal, 409);
   return queueAcSoEditAfter(c, c.req.param('docNo'), await runScmPgCommand(c, (sb) => tbcSwapCommandHandler(c, sb), {
     docNo: c.req.param('docNo'),
-    leaseToken: c.req.header('X-SO-Edit-Lease')?.trim() ?? null,
+    leaseToken: c.req.header('X-SO-Edit-Lease')?.trim() ?? null, userId: soCallerUserId(c),
     companyId: company.companyId,
   }));
 });
@@ -10336,7 +10330,7 @@ mfgSalesOrders.post('/:docNo/items/:itemId/tbc-swap-sofa', async (c) => {
   if (!company.ok) return c.json(company.refusal, 409);
   return queueAcSoEditAfter(c, c.req.param('docNo'), await runScmPgCommand(c, (sb) => tbcSwapSofaCommandHandler(c, sb), {
     docNo: c.req.param('docNo'),
-    leaseToken: c.req.header('X-SO-Edit-Lease')?.trim() ?? null,
+    leaseToken: c.req.header('X-SO-Edit-Lease')?.trim() ?? null, userId: soCallerUserId(c),
     companyId: company.companyId,
   }));
 });
@@ -11931,26 +11925,20 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
       }
     }
 
-    await recordSoAudit(sb, {
-      docNo,
-      action: 'AMENDMENT_REQUESTED',
-      actorId: user.id,
+    /* History row now, per lane; the notice after the loop, once every half has
+       landed. Both live in lib/amendment-raised-effects. */
+    await recordAmendmentRequested(sb, {
+      docNo, amendmentNo, lane: laneKey, actorId: user.id, reason: body.reason,
       actorName: (user.user_metadata as { name?: string } | undefined)?.name ?? null,
-      fieldChanges: [
-        { field: 'amendment', from: null, to: amendmentNo },
-        { field: 'lane', to: laneKey },
-        // Requested header changes are audited at REQUEST time (not just at
-        // apply) so the History timeline shows what was asked for even if it's
-        // rejected.
-        ...half.headerKeys.map((k) => ({
-          field: `requested_${AMENDABLE_HEADER_FIELDS[k]}`,
-          from:  oldHeaderSnapshot[k],
-          to:    half.headerChanges[k],
-        })),
-      ],
-      note: body.reason ?? undefined,
+      headerKeys: half.headerKeys, headerChanges: half.headerChanges,
+      oldHeaderSnapshot, columnOf: AMENDABLE_HEADER_FIELDS,
     });
   }
+
+  await notifyAmendmentsRaised(c, sb, {
+    docNo, reason: body.reason, created: createdAmendments,
+    salespersonStaffId: (soRow as { salesperson_id?: string | null }).salesperson_id,
+  });
 
   /* `amendment` (singular) keeps the pre-split response contract for existing
      callers; `amendments` carries the full split so the UI can say "this was

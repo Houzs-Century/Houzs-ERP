@@ -51,7 +51,8 @@ import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { isDocumentHeld } from '../lib/document-hold';
 import { dateOrNull } from '../lib/date-coerce';
 import { postJournal, reverseJournal } from '../../acc/engine';
-import { pvLines } from '../../acc/rules';
+import { apControlRole, pvLines, resolveRoles } from '../../acc/rules';
+import { uploadPvFileHandler, listPvFilesHandler, streamPvFileHandler, deletePvFileHandler, printPvBundleHandler } from './pv-files';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
 import { hasHouzsPerm } from '../lib/houzs-perms';
@@ -61,6 +62,7 @@ import { recordEntityAudit, diffFields, compactChanges, fieldChange, statusChang
 import { pvCanEdit, pvCanPrepare, pvCanCheck, pvCanApprove, pvCanReject, pvCanWithdraw, pvCanPost, type PvApprovalShape } from '../lib/pv-approval';
 import { settlePiPaidSen } from '../lib/pi-settlement';
 import { extractOneBill, matchSupplier, normalizeVendor, BILL_IMAGE_MIMES, MAX_BILLS_PER_CALL, MAX_FILES_PER_BILL, MAX_BILL_FILE_BYTES } from '../../acc/bill-extract';
+import { requireLeafAccount } from './accounting-chart';
 import { planPvRateAdoption, isRateRetainedFromPv, roundRate6 } from '../lib/pv-rate-adoption';
 import { recostFromGrn } from '../lib/recost';
 
@@ -296,6 +298,15 @@ paymentVouchers.get('/', async (c) => {
   return c.json({ paymentVouchers: data ?? [] });
 });
 
+/* PV attachments (0352) — the bill lives with its voucher. Registered BEFORE
+   GET /:id so /:id/files never falls into the detail matcher. */
+/* print-bundle sits with the other literal paths, BEFORE '/:id'. */
+paymentVouchers.post('/print-bundle', printPvBundleHandler);
+paymentVouchers.post('/:id/files', uploadPvFileHandler);
+paymentVouchers.get('/:id/files', listPvFilesHandler);
+paymentVouchers.get('/:id/files/:fileId', streamPvFileHandler);
+paymentVouchers.delete('/:id/files/:fileId', deletePvFileHandler);
+
 paymentVouchers.get('/:id', async (c) => {
   const sb = c.get('supabase'); const id = c.req.param('id');
   const [h, i, a] = await Promise.all([
@@ -443,6 +454,46 @@ export const createPaymentVoucherHandler = async (c: any) => {
 
   const built = buildLines(body.lines);
   if ('error' in built) return c.json({ error: built.error }, 400);
+
+  /* 父户不记账 (owner 2026-09-02) at TYPING time — the GL gate (engine rule 3)
+     would refuse the same header at approval, but the operator should hear it
+     while the form is still open. */
+  {
+    const coIdForLeaf = activeCompanyId(c);
+    if (coIdForLeaf != null) {
+      for (const dCode of [...new Set(built.rows.map((r) => r.debit_account_code))]) {
+        const leafErr = await requireLeafAccount(c, coIdForLeaf, dCode);
+        if (leafErr) return leafErr;
+      }
+    }
+  }
+
+  /* The AP split (owner 2026-09-03): a 405-x supplier's paper belongs to
+     AP_OTHER (405-0000), everyone else's to AP (400-0000) — apControlRole in
+     acc/rules.ts is the ONE home. The page picks the right control; this
+     guard refuses the WRONG one, so an out-of-date client cannot book a
+     405 supplier's debt into the trade-creditor control or vice versa. */
+  if (normalizePurpose(body.purpose) === 'SUPPLIER_PAYMENT' && body.supplierId) {
+    const coId = activeCompanyId(c);
+    const sbGuard = c.get('supabase');
+    const { data: sup, error: supErr } = await sbGuard.from('suppliers')
+      .select('code').eq('id', String(body.supplierId)).maybeSingle();
+    /* Fails CLOSED like requireLeafAccount: a supplier we cannot read is a
+       control we cannot verify, and an unverifiable debt does not book. */
+    if (supErr) return c.json({ error: 'load_failed', reason: supErr.message }, 500);
+    const supplierCode = (sup as { code?: string | null } | null)?.code ?? null;
+    if (supplierCode && coId != null) {
+      const roles = await resolveRoles(sbGuard, coId);
+      const right = roles[apControlRole(supplierCode)];
+      const wrong = apControlRole(supplierCode) === 'AP_OTHER' ? roles.AP : roles.AP_OTHER;
+      if (built.rows.some((r) => r.debit_account_code === wrong)) {
+        return c.json({
+          error: 'wrong_ap_control',
+          message: `Supplier ${supplierCode} books to ${right} (${apControlRole(supplierCode) === 'AP_OTHER' ? 'Other Creditors' : 'Account Payable'}) — not ${wrong}. Refresh the page and raise the payment again.`,
+        }, 400);
+      }
+    }
+  }
 
   // PV→PI settlement (migration 0202) — optional allocations + purpose.
   const allocBuilt = buildAllocations(body.allocations);
@@ -640,6 +691,12 @@ export const updatePaymentVoucherHandler = async (c: any) => {
   if (body.lines !== undefined) {
     const built = buildLines(body.lines);
     if ('error' in built) return c.json({ error: built.error }, 400);
+    /* 父户不记账 — the same typing-time door the create path holds, BEFORE the
+       old lines are deleted, so a refused edit changes nothing. */
+    for (const dCode of [...new Set(built.rows.map((r) => r.debit_account_code))]) {
+      const leafErr = await requireLeafAccount(c, co.companyId, dCode);
+      if (leafErr) return leafErr;
+    }
     await sb.from('payment_voucher_lines').delete().eq('pv_id', id);
     const { error: lErr } = await sb.from('payment_voucher_lines').insert(stampCompany(built.rows.map((r) => ({ ...r, pv_id: id })), c));
     if (lErr) return c.json({ error: 'lines_update_failed', reason: lErr.message }, 500);

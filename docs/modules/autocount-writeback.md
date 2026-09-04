@@ -2956,6 +2956,43 @@ to; a keyless line is refused by `composeEdit` long before this matters.
 wrote them). The sales order is the shape with live-book evidence behind it; the
 purchase order is a second rollout that needs its own.
 
+> **A DEAD ADDRESS IN `photo_urls` SILENCES THE WHOLE LINE.** *Added
+> 2026-09-03.* `photosOf` takes `photo_urls` verbatim
+> (`scm/lib/autocount-outbox.ts`), and the materialiser throws on the first key
+> the bucket cannot answer — `if (!obj) throw new Error('photo not in the
+> bucket: ...')` — so `line.Photos` is never set and the line sends nothing,
+> even when its other addresses are perfectly readable. That is the correct
+> behaviour (a short list would delete pictures from the book) and it makes a
+> broken address in the column a WRITE-BACK problem, not only a cosmetic one.
+>
+> Measured on prod 2026-09-03: 64 addresses answer `404 {"code":10007}`, spread
+> over 62 lines. Six of those lines are SALES ORDER lines, which is the side
+> that sends today — four carry a dead address next to a working one
+> (`HC-SO-012907`, `HC-SO-012107`, `HC-SO-012636`, `HC-SO-009031`) and two carry
+> only a dead one (`HC-SO-009031` line 628420, `HC-SO-012907` line 893019). Each
+> of the six would send no photographs on an `/edit`. The other 56 lines are
+> purchase orders, which do not send yet.
+>
+> **This is LIVE, not latent, and the earlier draft of this note said the
+> opposite.** `SELECT value FROM scm.app_config WHERE key =
+> 'scm.autocount_writeback'` returned **`1`** on 2026-09-03 — the
+> comma-separated form, meaning company 1 only, which is the company these
+> documents are in. The switch has NOT been off since some time before then; do
+> not repeat "writeback is off" from any note, run the query.
+>
+> No damage has happened yet: `scm.autocount_outbox` holds 21 `edit` rows in
+> `sent` (newest 2026-09-02T17:12Z) and **none of them is one of the four
+> documents above**, so those lines have not been pushed since the addresses
+> went dead. The first edit on one of them is when a picture stops reaching the
+> book. `backend/scripts/prune-dead-line-photo-keys.mjs` clears it; the full
+> trace is in
+> `docs/bugs/0625-a-backfill-replayed-the-round-1-photo-key-log-without-asking.md`.
+>
+> **The address is trusted; the row id inside it is not authority.** A key
+> naming a row id that no longer exists is FINE — 686 such addresses serve
+> today, because every read route authorises by MEMBERSHIP of `photo_urls`, not
+> by key shape. What matters is only whether the object is in the bucket.
+
 ## 8. Configuration
 
 | Name | Kind | Notes |
@@ -3044,6 +3081,7 @@ words. The owner reviewed a mockup and asked for five changes; all five live in
 | **Two filter strips, counts on the chips** | Status (Everything / Needs attention / Waiting / In AutoCount / Not accepted / Held back / Replaced — *"Sent again" until 2026-08-17*) and Document (Sales orders / Delivery orders / Invoices / Purchase orders / Goods received / Supplier invoices). Both are `<FilterPills>`, the same component the Sales Order list uses. The tiles are gone: the counts were the only useful thing about them and a tile cannot be clicked. |
 | **The reason, in three parts** | A headline, one sentence, and a **To fix** line, keyed by the server's `reason_kind` (`AC_REASON_COPY`). The headline is never behind a click — that was the owner's specific complaint. A `failed` row gets `AC_FAILED_COPY`, because the server deliberately does not classify those. *(The sentence and the To fix line moved behind opening the row the same day — see the section below.)* |
 | **Who was asked** | `acReplySource` labels the quote **AutoCount replied** (the row went through `dispatchOne`), **AutoCount was not asked** (every `skipped` row — all of them are decided at enqueue time or before `callAcService`, so no held-back document has ever reached the account book), or **The last send attempt reported** for a `pending` row, where the note may be either and nothing the server sends tells them apart. |
+| **The queue report's two summary sentences are TESTED** | They live in `backend/scripts/lib/ac-queue-report-lines.mjs`, not inline in the reporter, because both were wrong for months and only a person ever noticed. The totals clause names the set the re-queued rows sit INSIDE and calls them history — it used to append "(3 of those have been re-queued)" to "skipped 3", counting the same rows as outstanding and as history in one sentence. The FAILED heading reads the OPS of the rows it covers — a create means the document is not in the book, an edit or convert means it IS there and the change did not land — where it used to assert the create's meaning over every failure, and was printed over a failed EDIT of a document the owner had open in AutoCount at the time. `docs/bugs/0632-the-queue-report-contradicted-itself-and-blamed-the-wrong-sh.md`. |
 | **A rebuild teaches the ERP the keys it reissued** | A rebuild clears the details and re-adds them, so every key the host returns is NEW. `newLineTargetOf` used to decide what to store back from `IsNewLine` — which only the declared-new branch sets — and to treat the payload's own `DtlKey`s as already known, so on a rebuild it stored nothing and the ERP went on holding dead keys. The next ordinary edit of that document would then send `EditDetail(<dead key>)`. It now reads `Rebuild`: every line is new, no key is known, and `erpLineIdsOf` names the ERP rows on BOTH mapper branches — the keyless one returns the raw detail and was skipping the stamp. An ordinary edit is unchanged and still stores only what the route DECLARED. `docs/bugs/0621-a-rebuild-left-the-erp-holding-line-keys-that-no-longer-exis.md`. |
 | **The held-back report counts OPEN rows only** | `backend/scripts/check-autocount-held-back.mjs` printed "[already re-queued - history, not an open item]" against a row and then counted that same row in its DISTINCT DOCUMENTS HELD BACK total, so it reported a document as stuck while the document was demonstrably fine. Re-queued rows are excluded from the count and reported separately as history. Same entry. |
 | **A REBUILT line carries its ItemCode; an edited one never does** | The keyed edit path strips `ItemCode` from every line on purpose, and that must not change: the ERP's answer for the collapsed sofa codes is a POLICY, so sending it would silently re-point the 194 real book lines those two brand items hold. A REBUILD is not an edit — it clears the details and ADDS the lines — so stripping it there adds a line with a BLANK item code. That reached the live book on 2026-09-02: seven of eight lines on `SO-013394` came back with `ItemCode = ''`, and nothing failed, because the host wrapped the assignment in `Set()`, which swallows. Now: `effOpts.rebuild` is DERIVED and authoritative (a caller may ask, it may not decide), the mapper puts the code back on a rebuild only, and the host THROWS on a new line with no item code rather than adding a blank one. `docs/bugs/0615-a-rebuild-added-lines-with-a-blank-item-code.md`. |
@@ -3590,6 +3628,7 @@ and neither does the duplicate.
 | --- | --- |
 | **ERP asks** | `ComposeOptions.rebuild` — OFF unless the caller says so. The escape sits ABOVE the `KeylessLineError`; without it the refusal still throws. Inferring a rebuild from a failure would turn every future mismatch into a silent teardown of a live document. |
 | **Host decides** | `AnyLineTransferred` reads `ISNULL(d.TransferedQty,0) > 0` from the book's own detail table. A person can transfer inside AutoCount without telling the ERP, so this is the one fact the ERP may not answer from its own copy. |
+| **Host decides FIRST** | The host reads `Rebuild` **before** its key pre-flight, and skips that pre-flight entirely when one was asked for. It used to read it INSIDE the loop, on the branch that only runs for a line carrying no `DtlKey` — so a document whose lines were ALL keyed never reached it, `ClearDetails()` never ran, and an explicit rebuild silently became an ordinary keyed edit that answered 200. The deleted line stayed in the book at Qty 0 and the outbox said `sent`. `docs/bugs/0633-the-host-only-rebuilt-when-a-line-happened-to-be-keyless.md`. A rebuild destroys every key a moment later, so the pre-flight has nothing left to protect; `AnyLineTransferred` still refuses first. |
 | **Cost** | every DtlKey on the document is destroyed and reissued. Survivable only while nothing downstream holds them — which is exactly what the check above proves. The keys are read back after the save, as the create path already does. |
 | **Reach** | `ClearDetails` is on the base document class, so it works for the three types with no `DeleteDetail`. **It is the only way a purchase order can lose a line at all.** |
 
@@ -3603,6 +3642,30 @@ it: the cleared document already lacks the line, and reaching the lower branch
 would mean it had been added back as a blank row. Pinned in
 `backend/tests/acRebuildDetails.test.ts`; trace in
 `docs/bugs/0607-a-document-whose-lines-cannot-be-matched-could-never-be-sent.md`.
+
+### WHICH documents still disagree — `POST /autocount-outbox/line-order-sweep`
+
+Owner, 2026-09-03, after finding a third migrated document by opening it:
+「之后有问题吗？我不要每次都来 fix 啊」. He chose to measure the population rather
+than keep repairing one document at a time.
+
+**It is not a defect in the sync.** A document the ERP CREATES is laid down in the
+ERP's own line order, and an add or delete rebuilds the whole document. The
+MIGRATED ones were written by AutoCount before the ERP ever saw them, and a keyed
+edit deliberately does not reorder anything in the book. They were never going to
+match, and nothing had ever counted them.
+
+| | |
+| --- | --- |
+| **Gate** | `scm.autocount.read` or `settings.manage` — the READ keys. It writes nothing on either side, so it does not take the narrower requeue gate. |
+| **Book side** | `/line-fingerprints` on the host: ONE SELECT returning every document's number, line count and ordered ItemCodes. `/doc-read` per document is ~2,700 round trips and no single Worker request survives that — this system has measured the ceiling at 503 `Worker exceeded resource limits` after 39 seconds. |
+| **ERP side** | `composeDetails` over `live()` lines, with `bindingsFor` (exported from `scm/lib/autocount-outbox.ts` for this) and the `created_at, id` order `inAcLineOrder` defines. The SEND'S OWN machinery, not a copy of it: a hand-written binding read got `material_kind`, `ac_item_code` precedence and `is_main_supplier` all wrong on the first attempt. |
+| **Verdicts** | `match` · `order` · `extra_in_book` (the deleted line still at Qty 0) · `missing_in_book` · `different` · `not_in_book` · `cannot_compose`. |
+| **`cannot_compose` is not a finding** | A sofa build the gate refuses, or an item code the cutover map does not carry. It means we cannot say what a send WOULD do — counted, and deliberately kept off the list of documents to rebuild. Reporting it as a mismatch would invent a defect out of our own inability. |
+
+Rules in `scm/lib/ac-line-order-sweep.ts`, tests in
+`backend/tests/acLineOrderSweep.test.ts`, trace in
+`docs/bugs/0634-nothing-had-ever-counted-how-many-migrated-documents-disagre.md`.
 
 ### A DELETED LINE IS DELETED, WHERE THE BOOK ALLOWS (owner rule, 2026-09-02)
 

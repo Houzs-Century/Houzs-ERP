@@ -334,6 +334,8 @@ class AcSyncService {
       /* READ-ONLY, one aggregate. See PictureCensus(). */
       case "/picture-census": Json(ctx, 200, PictureCensus(p)); return;
       /* READ-ONLY, one SELECT on sys.columns. See TableColumns(). */
+      /* READ-ONLY, one SELECT. See LineFingerprints(). */
+      case "/line-fingerprints": Json(ctx, 200, LineFingerprints(p)); return;
       case "/table-columns": Json(ctx, 200, TableColumns(p)); return;
       default: Json(ctx, 404, Err("unknown route " + path)); return;
     }
@@ -742,6 +744,85 @@ class AcSyncService {
     }
     var d = new Dictionary<string, object> { { "ok", true }, { "table", table }, { "columns", cols } };
     return d;
+  }
+
+  /* ── /line-fingerprints — WHICH documents disagree with the ERP, in ONE call ──
+     WHY IT EXISTS. The owner, on finding a third migrated document whose
+     AutoCount lines were in a different order from the ERP's with a deleted line
+     still sitting at Qty 0:
+
+         「之后有问题吗？我不要每次都来 fix 啊」
+
+     He chose to measure the whole population rather than keep fixing one
+     document at a time. The ERP's AutoCount mirror is HEADER-ONLY, so the line
+     order lives nowhere but the account book, and asking `/doc-read` per
+     document is ~2,700 round trips through the tunnel — far past what one Worker
+     request survives. This answers the whole question in one SELECT.
+
+     WHAT IT RETURNS, and why that is the smallest thing that answers it: the
+     document number, its line COUNT, and the ordered ItemCodes joined by `|`.
+     The caller composes the ERP's own expected list (`composeDetails`, which
+     collapses sofa compartments the way a real send does) and compares. A count
+     alone cannot see a re-ORDER, which is half of what is being asked.
+
+     CANCELLED LINES ARE INCLUDED ON PURPOSE. A line the ERP deleted and the book
+     still holds at Qty 0 is exactly one of the mismatches being counted;
+     dropping it would hide the case this was written for.
+
+     READ-ONLY, and mechanically so: one SELECT on one connection, no SDK
+     session, no transaction, and the table names come from an ALLOW-LIST keyed
+     by document type rather than from the caller's string. */
+  static readonly Dictionary<string, string[]> FingerprintTables = new Dictionary<string, string[]> {
+    { "SO", new[] { "SO", "SODTL" } },
+    { "PO", new[] { "PO", "PODTL" } },
+  };
+  /* A ceiling so one call cannot make the service build an unbounded response.
+     The live book holds ~2,700 sales orders, so this is roughly 3x headroom and
+     the caller is TOLD when it bites rather than silently reading a short list. */
+  const int MaxFingerprintDocs = 8000;
+
+  static Dictionary<string, object> LineFingerprints(Dictionary<string, object> p) {
+    var type = Or(Str(p, "Type"), "SO").ToUpperInvariant();
+    if (!FingerprintTables.ContainsKey(type))
+      return Err("Type must be one of SO, PO (got '" + type + "')");
+    var hdr = FingerprintTables[type][0];
+    var dtl = FingerprintTables[type][1];
+
+    var docs = new List<object>();
+    var truncated = false;
+    try {
+      __DBLINE__
+      using (var cn = new System.Data.SqlClient.SqlConnection(db.ConnectionString)) {
+        cn.Open();
+        using (var cmd = cn.CreateCommand()) {
+          cmd.CommandTimeout = 120;
+          /* Seq is AutoCount's own line order — the same order a person sees
+             when they open the document, which is what the owner compared. */
+          cmd.CommandText =
+            "SELECT TOP (" + (MaxFingerprintDocs + 1) + ") h.DocNo, COUNT(*) AS Lines, " +
+            "STUFF((SELECT '|' + ISNULL(d2.ItemCode, '') FROM " + dtl + " d2 " +
+            "WHERE d2.DocKey = h.DocKey ORDER BY d2.Seq FOR XML PATH('')), 1, 1, '') AS Codes " +
+            "FROM " + hdr + " h JOIN " + dtl + " d ON d.DocKey = h.DocKey " +
+            "GROUP BY h.DocNo, h.DocKey ORDER BY h.DocNo";
+          using (var rd = cmd.ExecuteReader()) {
+            while (rd.Read()) {
+              if (docs.Count >= MaxFingerprintDocs) { truncated = true; break; }
+              docs.Add(new Dictionary<string, object> {
+                { "DocNo", rd.IsDBNull(0) ? "" : rd.GetString(0) },
+                { "Lines", rd.IsDBNull(1) ? 0 : rd.GetInt32(1) },
+                { "Codes", rd.IsDBNull(2) ? "" : rd.GetString(2) },
+              });
+            }
+          }
+        }
+      }
+    } catch (Exception ex) {
+      return Err("line-fingerprints failed: " + ex.Message);
+    }
+    return new Dictionary<string, object> {
+      { "ok", true }, { "type", type }, { "count", docs.Count },
+      { "truncated", truncated }, { "docs", docs },
+    };
   }
 
   static List<string> ExistingColumns(System.Data.SqlClient.SqlConnection cn, string table, string[] wanted, List<string> missing) {
@@ -3187,8 +3268,30 @@ class AcSyncService {
        than half-applied and discarded. */
     var lines = new List<Dictionary<string, object>>();
     foreach (var od in List(p, "Lines")) lines.Add((Dictionary<string, object>) od);
+    /* THE ERP ASKED FOR A REBUILD - decided ONCE, before the pre-flight loop.
+       It used to be checked INSIDE that loop, in the arm that only runs for a
+       line carrying no DtlKey. So a document whose lines ALL had keys never
+       reached it: `rebuild` stayed false, ClearDetails never ran, and an
+       explicit Rebuild:true was silently downgraded to an ordinary keyed edit.
+       SO-013361 was rebuilt three times that way and kept its deleted line at
+       Qty 0 in the owner's own screen, while the outbox said `sent`. The one
+       document it DID work on had a keyless line, which is the only reason the
+       defect looked like a working feature - docs/bugs/0633.
+
+       A REBUILD NEEDS NO KEY PRE-FLIGHT AT ALL: ClearDetails destroys every key
+       a moment later, so the loop below is skipped entirely rather than run and
+       ignored. */
     var rebuild = false;
-    for (var i = 0; i < lines.Count; i++) {
+    if (Bool(p, "Rebuild")) {
+      if (AnyLineTransferred(type, docNo))
+        throw new Exception(
+          "REFUSED: " + type + " " + docNo + " has at least one line already transferred " +
+          "in AutoCount, so its details cannot be rebuilt - deleting a transferred row " +
+          "leaves the source pointing at nothing and the document uneditable. Match the " +
+          "lines up instead.");
+      rebuild = true;
+    }
+    for (var i = 0; i < lines.Count && !rebuild; i++) {
       var it = lines[i];
       var hasKey = it.ContainsKey("DtlKey") && it["DtlKey"] != null;
       if (hasKey) continue;
@@ -3214,16 +3317,8 @@ class AcSyncService {
          THE ERP MUST ASK. `Rebuild:true` is never inferred here: a rebuild is
          destructive, and inferring it from a failure would turn every future
          mismatch into a silent teardown of a live document. */
-      if (Bool(p, "Rebuild")) {
-        if (AnyLineTransferred(type, docNo))
-          throw new Exception(
-            "REFUSED: " + type + " " + docNo + " has at least one line already transferred " +
-            "in AutoCount, so its details cannot be rebuilt — deleting a transferred row " +
-            "leaves the source pointing at nothing and the document uneditable. Match the " +
-            "lines up instead.");
-        rebuild = true;
-        break;
-      }
+      /* The rebuild escape used to live HERE. It is decided above now, and this
+         loop no longer runs at all when one was asked for - 0633. */
       throw new Exception(
         "REFUSED: line " + (i + 1) + " of " + lines.Count + " on " + type + " " + docNo +
         " (ItemCode '" + Str(it, "ItemCode") + "') carries no DtlKey and does not declare " +

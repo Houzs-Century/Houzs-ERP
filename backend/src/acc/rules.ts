@@ -39,7 +39,7 @@
 import { accMastersCompanyId } from './masters-company';
 
 export type AccountRole =
-  | 'AR' | 'SALES' | 'INVENTORY' | 'AP'
+  | 'AR' | 'AR_OTHER' | 'SALES' | 'INVENTORY' | 'AP' | 'AP_OTHER'
   | 'CASH' | 'BANK_DEFAULT' | 'TRANSIT_EDC' | 'TRANSIT_ONLINE' | 'CUSTOMER_DEPOSITS' | 'OVER_SHORT';
 
 /* Fallback = the accountant's own AutoCount codes (migration 0344; owner
@@ -49,9 +49,11 @@ export type AccountRole =
    AutoCount's free gap — the settlement layer's own accounts. */
 export const DEFAULT_ROLE_CODES: Record<AccountRole, string> = {
   AR: '300-0000',                // ACCOUNT RECEIVEABLE
+  AR_OTHER: '305-0000',          // OTHER DEBTOR (the Other Debtors module's control)
   SALES: '500-0000',             // Sales Revenue (template; refined by the chart import)
   INVENTORY: '330-0000',         // STOCK
   AP: '400-0000',                // ACCOUNT PAYABLE
+  AP_OTHER: '405-0000',          // OTHER CREDITOS (the accountant's spelling)
   CASH: '320-0000',              // CASH IN HAND
   BANK_DEFAULT: '310-0010',      // CASH AT BANK - MAYBANK
   TRANSIT_EDC: '326-0000',       // CARD MACHINE CLEARING (EDC)
@@ -63,7 +65,17 @@ export const DEFAULT_ROLE_CODES: Record<AccountRole, string> = {
 /* Control accounts (brief §2.4): system-maintained, and a MANUAL journal may
    not touch them — the engine enforces this. AR and AP today; the
    settlement-in-transit roles join in phase 2. */
-export const CONTROL_ROLES: AccountRole[] = ['AR', 'AP'];
+export const CONTROL_ROLES: AccountRole[] = ['AR', 'AR_OTHER', 'AP', 'AP_OTHER'];
+
+/** Which AP control a supplier's paper belongs to. 405-x supplier codes are
+    AutoCount's OTHER CREDITORS — their bills and payments land on AP_OTHER
+    (405-0000), everyone else on AP (400-0000). The owner's call, 2026-09-03,
+    with the split's blast radius on the table: the supplier LIST and every
+    screen stay exactly as they are; only the GL landing follows the code.
+    ONE home for the prefix — the PV page mirrors the pick for display, and
+    the server validates against THIS. */
+export const apControlRole = (supplierCode: string | null | undefined): 'AP' | 'AP_OTHER' =>
+  supplierCode != null && supplierCode.startsWith('405-') ? 'AP_OTHER' : 'AP';
 
 /** source_type of the contra entry that voids a given source_type. */
 export const REVERSAL_SOURCE: Record<string, string> = {
@@ -75,6 +87,9 @@ export const REVERSAL_SOURCE: Record<string, string> = {
   SIPAY: 'SIPAY_REVERSAL',
   SETTLE: 'SETTLE_REVERSAL',
   SETTLEADJ: 'SETTLEADJ_REVERSAL',
+  ODB: 'ODB_REVERSAL',
+  ODR: 'ODR_REVERSAL',
+  RCT: 'RCT_REVERSAL',
 };
 
 export type RoleCodes = Record<AccountRole, string>;
@@ -146,7 +161,9 @@ export function siLines(
   ];
 }
 
-/** Purchase invoice posted: Dr INVENTORY / Cr AP for the MYR total. */
+/** Purchase invoice posted: Dr INVENTORY / Cr the supplier's AP control for
+    the MYR total — AP for trade creditors, AP_OTHER for 405-x suppliers
+    (apControlRole above). */
 export function piLines(
   roles: RoleCodes,
   pi: { invoice_number: string },
@@ -164,7 +181,7 @@ export function piLines(
       notes: `Inventory from ${pi.invoice_number}`,
     },
     {
-      accountCode: roles.AP,
+      accountCode: roles[apControlRole(supplier.code)],
       debitSen: 0,
       creditSen: totalSen,
       partyType: 'SUPPLIER',

@@ -13,7 +13,7 @@
 // ----------------------------------------------------------------------------
 
 import { useMemo } from 'react';
-import type { Account } from '../lib/accounting-queries';
+import { isControlSpecial, type Account } from '../lib/accounting-queries';
 import { SearchCombo, type ComboOption } from './SearchCombo';
 
 const TYPE_ORDER: Account['account_type'][] = ['ASSET', 'LIABILITY', 'EQUITY', 'INCOME', 'EXPENSE'];
@@ -41,8 +41,18 @@ export function AccountSelect({
   disabled?: boolean;
 }) {
   const options = useMemo<ComboOption[]>(() => {
+    /* 父户不记账 (the owner, 2026-09-02): a header with children in this list
+       is a grouping, not a bookable account — it does not appear here at all.
+       And a CONTROL account (AutoCount SDC/SCC/SBS — AR, AP + deposits,
+       stock; the owner 2026-09-03: 锁) posts only through its module, never
+       by hand — hidden too. The server refuses both (requireLeafAccount + the
+       GL gate); hiding is the picker doing its half. The full tree lives on
+       the Chart page. */
+    const parents = new Set(accounts.map((a) => a.parent_code).filter(Boolean));
+    const leaves = accounts.filter((a) => !parents.has(a.account_code)
+      && !isControlSpecial(a.special_type));
     const by = new Map<Account['account_type'], Account[]>();
-    for (const a of accounts) {
+    for (const a of leaves) {
       const list = by.get(a.account_type) ?? [];
       list.push(a);
       by.set(a.account_type, list);

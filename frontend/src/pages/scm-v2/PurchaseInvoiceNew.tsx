@@ -29,8 +29,8 @@
 
 import { transferFromLabel } from '../../lib/convertScope';
 import { todayMyt } from '../../vendor/scm/lib/dates';
-import { useEffect, useMemo, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { Save, Trash2, X, ChevronDown, ArrowRightLeft } from 'lucide-react';
 import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
 import { Button } from '@2990s/design-system';
@@ -39,6 +39,7 @@ import { activeOptions, buildVariantSummary, isServiceLine, maintPickerValues } 
 import {
   useCreatePurchaseInvoice,
   usePostPurchaseInvoice,
+  usePurchaseInvoiceDetail,
 } from '../../vendor/scm/lib/purchase-invoice-queries';
 import { useIdempotencyKey } from '../../lib/idempotency';
 import { readScmHandoff, removeScmHandoff } from '../../lib/scmHandoffStorage';
@@ -256,6 +257,84 @@ export const PurchaseInvoiceNew = () => {
       notes:          '',
     }]);
   }, [isManual]);
+
+  /* ── 扫 → bill (the owner, 2026-09-03: 他是扫 bill, 然后帮我录入 bill.
+     几时要还是我会开 ap payment 去还) ──────────────────────────────────────
+     The scan page hands the extraction over via location.state: supplier
+     (when the reader matched one), the supplier's own invoice number and
+     date, and one manual line per read line — RECORDING the debt only;
+     paying stays an AP Payment, later, his call. */
+  const location = useLocation();
+  const scanApplied = useRef(false);
+  useEffect(() => {
+    const scan = (location.state as {
+      scanBill?: {
+        supplierId: string | null;
+        extraction: { invoiceNumber: string | null; invoiceDate: string | null; lines: Array<{ description: string | null; amountSen: number | null }> };
+        lines?: Array<{ description: string | null; amountSen: number | null }>;
+      };
+    } | null)?.scanBill;
+    if (!scan || scanApplied.current || !isManual) return;
+    scanApplied.current = true;
+    if (scan.supplierId) setManualSupplierId(scan.supplierId);
+    if (scan.extraction.invoiceNumber) setSupplierInvoiceRef(scan.extraction.invoiceNumber);
+    if (scan.extraction.invoiceDate) setInvoiceDate(scan.extraction.invoiceDate);
+    const src = (scan.lines ?? scan.extraction.lines).filter((l) => l.amountSen != null && l.amountSen > 0);
+    if (src.length > 0) {
+      setLines(src.map((l, i) => ({
+        rid:          `s${Date.now()}-${i}`,
+        grnItemId:    null,
+        materialKind: 'mfg_product',
+        itemCode:     '',
+        materialName: l.description ?? 'As per bill',
+        itemGroup:    null,
+        variants:     null,
+        qty:          1,
+        unitPriceSen: l.amountSen ?? 0,
+        notes:        '',
+      })));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.state, isManual]);
+
+  /* ── Copy as new (the owner, 2026-09-03, AutoCount in hand) ─────────────
+     ?copyFrom=<piId> pre-fills CONTENT from an existing bill — supplier,
+     lines (category + variants riding along), notes, currency+rate — and
+     NOTHING with an identity: fresh number, today's date, no supplier
+     invoice ref (that belongs to the SOURCE bill's paper), no GRN links
+     (the copy is an independent manual bill). */
+  const copyFrom = params.get('copyFrom');
+  const copyQ = usePurchaseInvoiceDetail(copyFrom);
+  const copyApplied = useRef(false);
+  useEffect(() => {
+    if (!copyFrom || copyApplied.current || !copyQ.data) return;
+    copyApplied.current = true;
+    const v = copyQ.data.purchaseInvoice as Record<string, unknown>;
+    if (v.supplier_id) setManualSupplierId(String(v.supplier_id));
+    if (v.notes) setNotes(String(v.notes));
+    const cur = typeof v.currency === 'string' ? v.currency : null;
+    if (cur && cur !== 'MYR') {
+      setCurrencyOverride(cur);
+      const rate = v.exchange_rate == null ? '' : String(v.exchange_rate);
+      if (rate) { setExchangeRate(rate); setRateTouched(true); }
+    }
+    const items = copyQ.data.items as Array<Record<string, unknown>>;
+    if (items.length > 0) {
+      setLines(items.map((it, i) => ({
+        rid:          `c${Date.now()}-${i}`,
+        grnItemId:    null,
+        materialKind: String(it.material_kind ?? 'mfg_product'),
+        itemCode:     String(it.item_code ?? ''),
+        materialName: String(it.material_name ?? ''),
+        itemGroup:    (it.item_group as string | null) ?? null,
+        variants:     (it.variants as Record<string, unknown> | null) ?? null,
+        qty:          Number(it.qty ?? 1),
+        unitPriceSen: Number(it.unit_price_sen ?? 0),
+        notes:        String(it.notes ?? ''),
+      })));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [copyFrom, copyQ.data]);
 
   const setLine  = (rid: string, patch: Partial<DraftLine>) =>
     setLines((prev) => prev.map((l) => (l.rid === rid ? { ...l, ...patch } : l)));

@@ -19,7 +19,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Camera, FileText, X } from 'lucide-react';
 import { Button } from '@2990s/design-system';
-import { useExtractBills, fileToBase64, type ExtractedBill, type BillExtraction, type VendorMemory } from '../../vendor/scm/lib/payment-voucher-queries';
+import { useExtractBills, fileToBase64, type ExtractedBill, type BillExtraction, type VendorMemory, type PvFilePayload } from '../../vendor/scm/lib/payment-voucher-queries';
+import { stashPvFiles } from '../../vendor/scm/lib/pv-file-handoff';
 import { fmtDate } from '../../vendor/shared/format';
 import { PageHeader } from '../../components/Layout';
 import styles from './SalesOrderDetail.module.css';
@@ -42,6 +43,10 @@ export const PaymentVoucherScan = () => {
   /* bills[i] = the rids that form bill i (merged pages share an entry). */
   const [billGroups, setBillGroups] = useState<string[][]>([]);
   const [results, setResults] = useState<ExtractedBill[] | null>(null);
+  /* The read payload, kept by bill index — the voucher created from a bill
+     carries these as attachments (owner 2026-09-03: print pv include ocr 的
+     文件一起 — nothing to print if nothing was kept). */
+  const [billFiles, setBillFiles] = useState<PvFilePayload[][]>([]);
   const [splitGroups, setSplitGroups] = useState<Set<string>>(new Set());
   const [note, setNote] = useState<string | null>(null);
 
@@ -103,6 +108,7 @@ export const PaymentVoucherScan = () => {
           return { name: f.name, mime: f.type || 'application/pdf', dataBase64: await fileToBase64(f) };
         })),
       })));
+      setBillFiles(bills.map((b) => b.files));
       const res = await extract.mutateAsync(bills);
       setResults(res.bills);
       const failed = res.bills.filter((b) => !b.ok).length;
@@ -130,8 +136,26 @@ export const PaymentVoucherScan = () => {
     return [...map.entries()].map(([key, g]) => ({ key, ...g }));
   }, [results]);
 
-  const openVoucher = (extraction: BillExtraction, extras?: { lines?: Array<{ description: string | null; amountSen: number | null }>; memory?: VendorMemory | null }) => {
+  const openVoucher = (extraction: BillExtraction, extras?: { lines?: Array<{ description: string | null; amountSen: number | null }>; memory?: VendorMemory | null; files?: PvFilePayload[] }) => {
+    /* The bill's own bytes ride ALONG (module stash, not location.state — see
+       pv-file-handoff.ts): the New page attaches them once the voucher saves,
+       so the evidence lives with the document instead of dying with this tab.
+       Stashed even when empty, so a stale earlier pile can't attach here. */
+    stashPvFiles(extras?.files ?? []);
     navigate('/scm/payment-vouchers/new', { state: { billPrefill: { extraction, ...(extras?.lines ? { lines: extras.lines } : {}), memory: extras?.memory ?? null } } });
+  };
+
+  /* 扫 → bill (the owner, 2026-09-03, confirming the flow himself: 他是扫
+     bill, 然后帮我录入 bill. 几时要还是我会开 ap payment 去还 — 对). This
+     button only RECORDS the debt: it lands on New Purchase Invoice with the
+     extraction (and the matched supplier when the reader recognised one);
+     paying stays a separate AP Payment, whenever he chooses. */
+  const openBill = (
+    extraction: BillExtraction,
+    supplierId: string | null,
+    lines?: Array<{ description: string | null; amountSen: number | null }>,
+  ) => {
+    navigate('/scm/purchase-invoices/new', { state: { scanBill: { extraction, supplierId, ...(lines ? { lines } : {}) } } });
   };
 
   const openGroupAsOne = (g: { label: string; bills: Array<Extract<ExtractedBill, { ok: true }>> }) => {
@@ -144,7 +168,9 @@ export const PaymentVoucherScan = () => {
        group's. */
     openVoucher(
       { ...first.extraction, invoiceNumber: g.bills.map((b) => b.extraction.invoiceNumber).filter(Boolean).join(', ') || null },
-      { lines, memory: first.memory },
+      /* Every member bill's pages, in bill order — the ONE voucher carries the
+         whole statement's evidence. */
+      { lines, memory: first.memory, files: g.bills.flatMap((b) => billFiles[b.index] ?? []) },
     );
   };
 
@@ -234,9 +260,14 @@ export const PaymentVoucherScan = () => {
                         <span style={{ color: 'var(--fg-muted)' }}>{b.extraction.dueDate ? `due ${fmtDate(b.extraction.dueDate)}` : ''}</span>
                         <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmtRm(b.extraction.totalSen)}</span>
                         {split ? (
-                          <Button variant="secondary" size="sm" onClick={() => openVoucher(b.extraction, { memory: b.memory })}>
-                            Open as voucher
-                          </Button>
+                          <span style={{ display: 'inline-flex', gap: 6 }}>
+                            <Button variant="secondary" size="sm" onClick={() => openVoucher(b.extraction, { memory: b.memory, files: billFiles[b.index] ?? [] })}>
+                              Open as voucher
+                            </Button>
+                            <Button variant="ghost" size="sm" onClick={() => openBill(b.extraction, g.supplierId)}>
+                              Open as bill
+                            </Button>
+                          </span>
                         ) : <span />}
                       </div>
                       {(b.extraction.totalSen == null || b.extraction.sstSen != null || b.extraction.vendorRegNo) && (
@@ -267,11 +298,24 @@ export const PaymentVoucherScan = () => {
                           style={{ width: 15, height: 15, accentColor: 'var(--c-orange)' }} />
                         pay each bill separately
                       </label>
-                      {!split && (
+                      {!split && (<>
                         <Button variant="primary" size="sm" onClick={() => openGroupAsOne(g)}>
                           Open as ONE voucher ({g.bills.length} lines)
                         </Button>
-                      )}
+                        <Button variant="ghost" size="sm" onClick={() => {
+                          const first = g.bills[0]!;
+                          openBill(
+                            { ...first.extraction, invoiceNumber: g.bills.map((b) => b.extraction.invoiceNumber).filter(Boolean).join(', ') || null },
+                            g.supplierId,
+                            g.bills.map((b) => ({
+                              description: [g.label, b.extraction.invoiceNumber].filter(Boolean).join(' '),
+                              amountSen: b.extraction.totalSen,
+                            })),
+                          );
+                        }}>
+                          Open as ONE bill
+                        </Button>
+                      </>)}
                     </div>
                   )}
                 </div>

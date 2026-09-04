@@ -107,6 +107,182 @@ on /scm/settlement-setup and pre-filling every voucher's Paid From
 (docs/modules/payment-voucher.md §0c). Contract:
 `backend/src/scm/routes/accountRoles.test.ts`.
 
+**The chart maintenance surface (2026-09-03, roadmap A)**: `GET
+/accounting/chart` unions every GRANTED company's accounts into one row per
+code (definition led by the lowest company id, per-company active map;
+grants fail closed), `PUT /accounting/chart/tick` turns one code on/off for
+one company — ON instantiates the row from the master definition with its
+parent riding along (the tree stays whole), OFF cascades down the children
+(the owner's rule; the confirm lives in the UI) — and `POST
+/accounting/chart/import` upserts the accountant's parsed rows into the
+target company and copies rows marked `shared` to every other granted
+company, parents included. The owner's design verbatim: 可能类似recon setup
+我tick 后选择这个公司要不要用 — a future company is a new tick column.
+All three behind the same GL-post key as the rest of the chart surface;
+handlers in `accounting-chart.ts`, contract
+`backend/tests/accountingChart.test.ts`. The page (/scm/chart-of-accounts,
+Finance menu) parses the AutoCount xlsx IN THE BROWSER — digit and letter
+code series, 4-space indent → parent, section headings → account_type,
+Special Acc Type SBK/SCH → acc_money, banks / related-party loans /
+directors / HP+borrowings pre-classified company-specific — so the file
+never enters the repo. 父户不记账 is enforced three-deep: the GL gate
+(engine rule 3), `requireLeafAccount` at PV create/patch (typing time), and
+AccountSelect simply not offering a header with children.
+
+**Chart management arms (2026-09-03, the owner's six-point review)**:
+`accounts.special_type` stores the AutoCount special column verbatim
+(migration 0347 backfills the export's 56; import/tick/seed carry it
+forward). Three more doors, same GL-post key, handlers in
+`accounting-chart.ts`: `PUT /accounting/chart/rename` is 改码全账跟 — one
+call to `scm.acc_rename_account(old, new)` (0347) moves the code in every
+company's accounts row, the children's parent_code and all nine reference
+homes 0346 relayed, in ONE transaction, insert-move-delete so 0188's
+composite FKs hold at every step; a collision refuses (renaming onto a live
+code would merge two books) and nothing half-moves. `PUT
+/accounting/chart/update` changes name/type/money for the code in EVERY
+company at once — one definition per code, two books never disagree. And
+`DELETE /accounting/chart/account` kills ONLY a never-used code (the
+owner's rule: 零交易零引用的才可以真删) — eleven reference probes, one hit
+anywhere and the 409 names the holdouts, with the tick column as the
+offered path. CONTROL accounts (special SDC/SCC/SBS — AR, AP + deposits,
+stock) are locked out of manual picks: `requireLeafAccount` refuses them
+(由模块自动过账) and AccountSelect hides them. Contracts:
+`backend/tests/accountingChart.test.ts` (handlers + lock),
+`backend/tests-pg/accChartRename.pg.test.ts` (the rename function against a
+real Postgres with the 0188 FKs verbatim). The page grows fold/expand
+chevrons on headers, an edit panel (code/name/type) and per-row delete.
+
+**The AP split (2026-09-03, the owner deciding with the blast radius on the
+table: 会影响到现在运作的东西吗? → checked → 做)**: 405-x supplier codes are
+AutoCount's OTHER CREDITORS, and their paper books to the AP_OTHER control
+(role default 405-0000) instead of AP (400-0000). ONE home for the prefix —
+`apControlRole` in acc/rules.ts — used by `piLines` (the bill's credit), by
+the AP-payment create guard (`wrong_ap_control` refuses a voucher debiting
+the other supplier-class's control, so an out-of-date client cannot
+mis-book), and mirrored by the AP Payment page for display. AP_OTHER joins
+CONTROL_ROLES (manual journals refuse it) and the self-check grows a third
+arm — balance + foreign-line scan on 405-0000 only, because the
+per-document drift walk is control-agnostic and the AP arm already reports
+each PI once. History moved by migration 0349: exactly one journal
+(2990-PI-2608-018, RM 16,440, the only 405-supplier bill that ever posted)
+reclassed 400-0000 → 405-0000; its July sibling predates the GL foundation
+and has no journal. The supplier LIST and every screen stay exactly as they
+were — only the GL landing follows the code. Contracts:
+`backend/src/acc/apSplit.test.ts`, `backend/tests/pvApControlGuard.test.ts`,
+the AP_OTHER block of
+`backend/src/scm/routes/apControlCheckUnpostedPi.test.ts`.
+
+**Other Debtors (2026-09-03, the owner confirming the design line by line:
+other debtor 主要就是我会开 bill 其他和生意性质没有关系的人或公司收回钱)**:
+a counterparty REGISTRY plus two documents, at /scm/other-debtors
+(handlers in `other-debtors.ts`; the mount sits beside the PV router in
+`backend/src/scm/index.ts` under the finance area guard, mirrored in
+`backend/src/scm/lib/scm-areas.ts`'s SCM_AREA_MOUNTS table, and the nav
+entry joins Finance in `frontend/src/components/Sidebar.tsx`; permission
+keys are the PV family's on purpose — the same people raise, prepare,
+check and approve money documents). 资料 lives in
+the registry, never as chart sub-accounts: the GL keeps ONE control,
+305-0000, as role AR_OTHER (default in acc/rules.ts, CONTROL_ROLES member,
+so manual journals refuse it and the self-check runs a fourth scan-only arm
+on it — family ODB/ODR). A **Debtor Bill** posts DIRECTLY on create (his
+call: bill 直接过账): Dr AR_OTHER / Cr each line's own account (明细行自由
+选户口 — every credit line walks `requireLeafAccount`, so headers and
+control accounts refuse), source ODB, minted `<prefix>ODB-yymm-nnn`, and
+the create is atomic — a failed journal takes the bill back out with it.
+Cancel reverses the journal (ODB_REVERSAL) and refuses once any money was
+received. A **Receipt** walks the PV's four layers verbatim (Draft →
+Prepared → Checked → Approved, reject 一律退回 Draft clearing every mark,
+withdraw only before checked, approve stamps once and a resume never
+rewrites it): approve posts Dr bank / Cr AR_OTHER (source ODR) and knocks
+the ticked bills off AP-Payment-style — tick pays in full, type for
+partial, over-allocation refuses at raise time and the approve clamps at
+each bill's live outstanding (a concurrent receipt may have landed first);
+a fully-knocked bill flips PAID. Receipts reach Daily Bank for free: the
+posted ODR debits a money account and Daily Bank reads the GL — display
+polish deferred at the owner's word (具体要显示什么到时再决定).
+Contracts: `backend/tests/otherDebtors.test.ts` (the route contract with
+the REAL engine posting into the harness), `OtherDebtors.test.tsx`
+(registry, bill lines, tick-full/type-partial, the four-layer buttons).
+Tables land in migration 0350.
+
+**Receipts (2026-09-03, later the same day: 未来如果我收到其他的钱不是
+under other debtor 的呢? 就我只想开 receipt 罢了)**: /scm/receipts is the
+unified money-in list — one month-windowed table holding GENERAL receipts
+(raised here), the Other Debtor receipts (read-only mirrors, four-layered
+on their own page) and the customer sales payments (read-only mirrors —
+顾客的钱 keeps the sales flow it always had; nothing is re-entered).
+Handlers in `receipts.ts` (mounted beside other-debtors in
+`backend/src/scm/index.ts`, mirrored in `scm-areas.ts`, nav entry in
+`Sidebar.tsx`, route in `frontend/src/routing/routeManifest.ts`; PV key
+family). A GENERAL receipt is the no-registry case:
+payer typed free, a money landing account (guarded), lines that free-pick
+their credit accounts through `requireLeafAccount` — and it POSTS DIRECTLY
+on create (his call: 不需要走四层，就录入就好), source RCT
+(`<prefix>OR-yymm`), create-and-journal atomic. The only undo is VOID
+(错就 delete 或 void): RCT_REVERSAL plus status CANCELLED — a posted
+document leaves the ledger by reversal, never by vanishing. Tables in
+migration 0351. Contracts: `backend/tests/receipts.test.ts` (post shape,
+control/money refusals, void semantics, the three-kind month list),
+`Receipts.test.tsx` (kinds + links + raise payload + void gating).
+
+**One door to open an account (2026-09-03, the owner: 照理说应该维护
+overall chart of account 罢了)**: `POST /accounting/chart/account` creates
+the definition ONCE and lands it in every company the caller ticks (granted
+only; the parent chain instantiates per company via the same master-def
+walk as tick-ON, so no company ever receives a child without its header).
+A code that exists anywhere refuses toward the tick column (turning it on
+elsewhere is a tick, changing it is a rename). The Chart page carries the
+"Add account" form (code / name / type / optional parent / money flag /
+company ticks); the OLD Accounting tab's add-and-edit went read-only with a
+link over — it used to create the row in whichever company the caller stood
+in, which is exactly the two-doors drift the owner called out. Its
+read-only tree got legible the same day (the owner, that table in hand:
+父子account不是很明显): headers render BOLD with a `header` tag like the
+union page's, children step in behind a └ glyph, parents column muted.
+Since 2026-09-04 (owner, three rounds: 按 edit 时要跑回上去 / 往下滑时看不
+到 header / 不好看…做成一个 pop out) the union LIST scrolls inside its card
+(`frontend/src/pages/scm-v2/ChartOfAccounts.tsx` cardBody: maxHeight +
+overflowY, padding 0 so the stuck header sits FLUSH — no strip of scrolled
+rows above it) and the header row sticks inside that scroll (th sticky,
+solid background, `borderCollapse: separate` — Chromium mis-offsets sticky
+th under collapsed borders; `.card{overflow:hidden}` would swallow a
+page-scroll sticky anyway). **✎ Edit is a pop-out dialog** in the
+ConfirmDialog family style — it appears wherever you are, the list never
+moves, and the backdrop deliberately does NOT close it (a stray click must
+not eat a half-typed rename; Cancel is the way out). A ⚡ **Quick mode**
+toggle (owner, mid tidy-up: 就 for 先阶段…过后这个 function 还是要有;
+默认都是要弹的) lives in the page header — session-only, OFF on every
+visit, so the confirms come back by themselves. ON: a LEAF untick and a
+delete run without a dialog (the server's 11-probe delete guard is the
+net); a HEADER untick still asks — it sweeps the children and re-ticking
+the header does not bring them back. Pinned in
+`ChartOfAccounts.test.tsx`. Detail
+accounts for other debtors/creditors are children under the 305-0000 /
+405-0000 controls, one per counterparty, opened through this same door.
+The Add form also speaks the vocabulary (the owner, SFA/SAD pairs in hand:
+create new fixed assets 时照理就需要 create depreciation account; special
+account add account 如何选?): a Special-type select carries the export's
+twelve codes (SBK/SCH force the money flag — the import's equivalence,
+live on the form; the control trio labelled 由模块过账), and picking SFA
+offers the SAD twin pre-derived by his own chart's convention — the
+asset's code with the last digit +5, named `ACCUM. DEPRN. - <asset>` —
+created in the SAME call, same parent, same companies, or refused whole
+(`bad_depreciation` off an SFA-less twin; a taken twin code 409s before
+anything lands). Contract: the SFA/SBK blocks of
+`backend/tests/accountingChart.test.ts` and `ChartOfAccounts.test.tsx`.
+**And the tree re-arranges by hand (2026-09-03: 我希望可以拖动式 put
+account under 别的 account 前提是那个 account 没有 transaction)**: drag a
+row onto another on the Chart page (or set Under in the ✎ panel; 留空 =
+root) and `PUT /chart/update` carries `parentCode` — the moved account
+keeps its own GL untouched (lines hang on its code; the tree is
+presentation), while the rule sits on the TARGET: 父户不记账, so a target
+with postings or any reference refuses `parent_has_postings` (a target
+already serving as a header passes as-is); parents share the child's type,
+cycles refuse, and the new header is instantiated into every company the
+child lives in. Contract: the parentCode block of
+`backend/tests/accountingChart.test.ts` and the drag/edit-panel tests of
+`ChartOfAccounts.test.tsx`.
+
 **The recognition-rules window (2026-09-02)**: `GET /bank/rules` (every rule,
 off rows included), `POST /bank/rules`, `PATCH /bank/rules/:id` — the rules
 that say "this credit is PBB's payout", seed-only since 0336, now the owner's

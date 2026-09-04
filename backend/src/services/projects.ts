@@ -379,7 +379,7 @@ const PATCH_FIELDS = [
   "name", "stage", "status",
   "start_date", "end_date",
   "organizer", "state", "venue", "venue_address",
-  "brand", "event_type_id",
+  "brand", "contractor", "event_type_id",
   "booth_no", "size_sqm",
   "notion_url", "notes",
   "pic_id",

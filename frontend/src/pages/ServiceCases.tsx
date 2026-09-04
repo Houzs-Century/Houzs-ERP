@@ -149,7 +149,7 @@ const STAGE_OPTIONS: { value: StageFilter; label: string }[] = [
   { value: "pending_review", label: "Review" },
   { value: "pending_solution", label: "Solution" },
   { value: "under_verification", label: "Verification" },
-  { value: "pending_supplier_pickup", label: "Supplier Pickup / Return" },
+  { value: "pending_supplier_pickup", label: "Pickup / Return" },
   { value: "pending_item_ready", label: "Pending Item Ready" },
   { value: "pending_delivery_service", label: "Delivery / Service" },
   { value: "completed", label: "Completed" },
@@ -609,8 +609,7 @@ function CasesView({
       filterable: true,
       label: "Stage",
       render: (r) => {
-        // Sub-status rides a second muted line (Nick 2026-07-15); hidden when it
-        // restates its stage, except the Supplier stage's legs (Nico 2026-08-22).
+        // Sub rides a muted second line; legs always show (Nico 2026-08-22).
         const stageText = caseStageLabel(r.stage);
         const sub = assrSubStatus(r.stage, r.sub_status ?? null);
         const subText =
@@ -658,11 +657,15 @@ function CasesView({
         );
       },
       // caseStageLabel, plus the sub label so the column FILTER and CSV split
-      // the legs (pickup vs return, inspection vs QC issue result).
+      // the legs. All Pickup/Return legs stay listed even at 0 cases (Nico
+      // 2026-09-04: an empty leg must still be pickable in the filter).
       getValue: (r) => {
         const sub = assrSubStatus(r.stage, r.sub_status ?? null);
         return sub ? `${caseStageLabel(r.stage)} — ${sub.label}` : caseStageLabel(r.stage);
       },
+      filterSeedValues: ASSR_SUB_STATUSES.pending_supplier_pickup.map(
+        (s) => `${caseStageLabel("pending_supplier_pickup")} — ${s.label}`,
+      ),
     },
     {
       key: "assr_no",
@@ -698,9 +701,8 @@ function CasesView({
       key: "ref_no",
       filterable: true,
       label: "Ref No",
-      // The SO's customer reference (HC/ZNT/PG…) — what the branches
-      // and suppliers quote back, so it earns a default-visible slot
-      // next to SO No.
+      // The SO's customer reference (HC/ZNT/PG…) — what the branches and
+      // suppliers quote back, so it sits default-visible next to SO No.
       render: (r) => <span className="font-mono text-xs">{r.ref_no || "—"}</span>,
       getValue: (r) => r.ref_no,
     },
@@ -709,10 +711,8 @@ function CasesView({
       filterable: true,
       label: "DO No",
       // Hand-entered DO on the case wins; the server merge fills the rest
-      // ("DO1 · DO2" when the order shipped in parts): Houzs cases from
-      // AutoCount — the SO's own transfer_to chain, widened by the
-      // ref-matched DO mirror — 2990 from the SCM module. Most cases
-      // never get the manual field.
+      // ("DO1 · DO2" when shipped in parts) — AutoCount transfer_to chain +
+      // DO mirror for Houzs, the SCM module for 2990.
       render: (r) => (
         <span className="font-mono text-xs">{r.delivery_order || r.do_numbers || "—"}</span>
       ),
@@ -1332,7 +1332,7 @@ function StageStatStrip({
               const ret = row?.sub_return ?? 0;
               const desc =
                 s.value === "pending_supplier_pickup" && ready && row?.total
-                  ? `${cust} customer · ${row.total - cust - ret} supplier · ${ret} return`
+                  ? `${cust} customer pickup · ${row.total - cust - ret} supplier pickup · ${ret} supplier return`
                   : STAGE_FUNNEL_DESC[s.value] ?? "";
               return {
                 value: s.value as StageFilter,
@@ -4238,7 +4238,7 @@ function DetailContent({
               c={c}
               priorityMap={priorityMap}
               stageId="pending_supplier_pickup"
-              title="Supplier Pickup / Return"
+              title="Pickup / Return"
               summary={
                 c.supplier_pickup_at
                   ? `Supplier collected ${formatDate(c.supplier_pickup_at)}`

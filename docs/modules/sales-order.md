@@ -1733,6 +1733,57 @@ into DRAFT (below). So the route also asks:
 | a row in `mfg_sales_order_payments` | `409 so_has_payments` | The cascade takes the payment ledger with it and the DO/SI that could have explained it are gone too. A real draft CAN carry a POS deposit, so this is a refusal with an instruction — void the payments, or cancel instead of discarding. Fails CLOSED: an unreadable ledger is not an empty one. |
 | `version` CAS + edit lease | `428` / `409` | Unchanged. |
 
+| `version` CAS + edit lease | `428` / `409` | Unchanged. |
+## The save lock — one minute, and it knows whose it is
+
+**It covers ONE SAVE, not an editing session.** Opening an order takes no lock at
+all; `runSoVersionedMutation` reserves it, saves, and releases it in a `finally`.
+So the expiry only has to outlast one round trip, and everything beyond that is
+time a document spends locked for nothing after a save dies.
+
+It was five minutes until 2026-09-03, and that cost the owner an hour: a save of
+his timed out (a 504), the lock stayed, and every retry for the next five minutes
+told him the order was being saved on another screen. He was working alone.
+
+| what changed | now |
+| --- | --- |
+| lifetime | **60s** — `SO_EDIT_LEASE_MS` in `backend/src/scm/lib/so-edit-lease.ts`, the one place that owns it |
+| holder | recorded (`edit_lease_user_id`, mig 0348). **The same person takes their own lock back** rather than waiting it out. A lock with NO holder — pre-0348, or a path with no authenticated user — is never taken over |
+| the refusal | says WHICH of three: `held` (somebody else), `expired` (the lock lapsed), `missing` (this screen never took one). Only `held` may name another person, and since the holder is recorded that is the one case where it is true |
+
+**It is NOT a liveness check and never was.** Nothing confirms the other screen
+exists — the row holds a token and a timestamp. The holder settles the case that
+actually hurt (your own crashed save); a lock held by somebody else is still only
+a timestamp, and the minute is the whole of that guarantee.
+
+**What it still protects, so nobody removes it:** a composite save is several
+requests — reserve, line writes, header commit — and version CAS alone cannot see
+a half-applied set of line writes. Dropping the lock and relying on CAS alone was
+offered as an option and NOT taken. Full trace:
+`docs/bugs/0630-one-person-editing-alone-was-locked-out-of-their-own-order-f.md`.
+## The Processing Date decides IN_PRODUCTION — both ways
+
+Owner's rule: 「只要有 Processing Date, 就代表他 Proceed 了」, sharpened on
+2026-09-03 to 「其实就看有没有 date 就知道了」. The date IS the status.
+
+| the save | the status |
+| --- | --- |
+| a date APPEARS on a `CONFIRMED` order | -> `IN_PRODUCTION` (`statusAfterProcessingDateSet`) |
+| the date is CLEARED on an `IN_PRODUCTION` order | -> `CONFIRMED` (`statusAfterProcessingDateCleared`) |
+| the date is cleared but a live delivery order or sales invoice exists | **left alone** — it is not "not in production", it is further along |
+| any other status, or a date that never existed / still exists | left alone |
+
+Both are pure and live in `backend/src/scm/shared/so-proceeded-status.ts`. The
+save asks ONE question — `soStatusAfterProcessingDateChange` in
+`backend/src/scm/lib/so-proceed-status-change.ts` — which supplies the only fact
+neither rule can compute for itself: whether anything downstream exists. **That
+read is issued only when a date was actually cleared**; every other save pays
+nothing.
+
+The backward half did not exist until 2026-09-03, and the forward rule's own
+header had recorded the gap as an open owner decision rather than a bug. Trace:
+`docs/bugs/0631-clearing-the-processing-date-left-the-order-in-production.md`.
+
 **ON_HOLD is not a route back to DRAFT (2026-08-14).**
 `soStatusTransitionError` (`scm/lib/so-lifecycle-guards.ts`) treats ON_HOLD as unranked so an order can be paused
 from anywhere and resumed to wherever the operator needs — but that was written
@@ -3758,6 +3809,42 @@ SO-specific wiring:
 - **Audit:** `lib/so-revision.ts` stamps a `routing` field-change + a `routing …`
   note on the `AMENDMENT_SO_APPROVED` row recording which departments the single
   approval covered.
+
+### Who gets told (2026-09-02)
+
+Until this date an amendment was raised in SILENCE. The row appeared in Sales
+Order Amendment and waited for somebody to happen to open the screen — the
+approver is the one person who has to act, and they were the one person nothing
+told. Owner: *"在 erp 有 amendment 的话需要让相关人员收到 notice, 需要有红色号码
+notice."*
+
+Notices ride the existing announcements machinery (`postPersonalNotice` → the
+notification bell's `?scope=system` slice, `source='so_amendment'`); the full
+producer model is in [`announcements.md`](./announcements.md). What is
+SO-specific:
+
+| Event | Told | Where |
+|---|---|---|
+| raised | the LANE's approvers + each one's `manager_id` upline; **separately** the SO's `salesperson_id` | `lib/amendment-raised-effects.ts`, called from `POST /:docNo/amendments` |
+| approved | `requested_by` + the salesperson | `routes/so-amendments.ts` `approveSoCommandHandler`, deferred to after commit |
+| rejected | same pair, carrying the rejection reason | `routes/so-amendments.ts` `PATCH /:id/reject` |
+| PO follow-up auto-raised by an approved LINES lane | the purchasing desk | same handler, same deferred block |
+
+Three things worth knowing before changing any of it:
+
+- **One notice per LANE, not per submission.** A mixed submission is two
+  independent approvals on two different desks; a single card would tell
+  whichever desk read it second that the work was already someone else's.
+- **The approver audience is derived from `LANE_APPROVE_KEY`** — the same table
+  the apply gate checks (`shared/amendment-lane.ts`). `amendmentNotify.ts` keeps
+  its own copy (a Houzs-side service must not import the SCM bundle), and
+  `amendmentNotify.test.ts` asserts the two agree. A drift sends the notice to
+  people who cannot act on it, which looks like working software from every
+  angle except the one that matters.
+- **Withdraw is silent on purpose**, and nobody is told about their own action.
+- **Nothing here can fail a write.** Every notify entry point swallows its own
+  errors, and the two in-transaction call sites go through
+  `deferScmAfterCommit`, so a rolled-back approval is never announced.
 
 ### What an approved amendment does to the LINE PRICE
 

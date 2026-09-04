@@ -55,7 +55,7 @@ const CALLER = {
 
 const { accounting } = await import('./accounting');
 
-async function controlCheck() {
+async function allChecks() {
   const app = new Hono<{ Bindings: Env; Variables: Variables }>();
   app.use('*', async (c, next) => {
     c.set('user', CALLER);
@@ -66,7 +66,11 @@ async function controlCheck() {
   app.route('/', accounting);
   const res = await app.request('/control-check');
   const body = await res.json() as { checks: Array<Record<string, any>> };
-  return body.checks.find((x) => x.role === 'AP')!;
+  return body.checks;
+}
+
+async function controlCheck() {
+  return (await allChecks()).find((x) => x.role === 'AP')!;
 }
 
 describe('AP control check — a confirmed PI with no journal', () => {
@@ -92,5 +96,18 @@ describe('AP control check — a confirmed PI with no journal', () => {
     const ap = await controlCheck();
     const flagged = new Set((ap.driftDocs ?? []).map((d: any) => d.docNo));
     expect(flagged.has('HC-PI-2608-012')).toBe(false);
+  });
+});
+
+describe('the third arm — AP_OTHER (the 2026-09-03 split)', () => {
+  it('runs on 405-0000 and does NOT repeat the per-document drift the AP arm owns', async () => {
+    const checks = await allChecks();
+    expect(checks.map((x: any) => x.role)).toEqual(['AR', 'AR_OTHER', 'AP', 'AP_OTHER']);
+    const other = checks.find((x: any) => x.role === 'AP_OTHER')!;
+    expect(other.accountCode).toBe('405-0000'); // DEFAULT_ROLE_CODES — no roles rows seeded here
+    /* HC-PI-2608-003's missing journal is the AP arm's finding, once. */
+    expect(other.driftDocs).toEqual([]);
+    expect(other.foreignLines).toEqual([]);
+    expect(other.ok).toBe(true);
   });
 });

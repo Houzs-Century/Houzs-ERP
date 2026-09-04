@@ -44,13 +44,16 @@ const allMobile: MobileDestination[] = [
 
 describe("executable route contract", () => {
   it("matches every canonical staff page mounted by App.tsx, with no extras", () => {
+    // 149 since 2026-09-03: /scm/chart-of-accounts — every account, every company, one tick each.
     // 148 since 2026-09-02: /scm/payment-vouchers/scan — the bill pile, read and grouped.
     // 147 since 2026-08-25 (feat/acc-settlement merged main again): /scm/merchant-recon,
     //     /scm/bank-recon and /scm/settlement-setup — the settlement screens, +3 on main's 144.
     // 144 since 2026-08-25: /scm/loading-list, the warehouse no-price loading queue.
     // (143 since 2026-08-25: driver POD; 143 since 2026-08-21: /scm/do-load.)
     // (142 since 2026-08-16: /scm/daily-bank; 141 since 2026-08-15: /autocount-sync.)
-    expect(STAFF_ROUTE_PATTERNS).toHaveLength(148);
+    // 151 since 2026-09-03 night: /scm/receipts — every ringgit in, one list
+    // (general + other-debtor + customer). (150 that evening: /scm/other-debtors.)
+    expect(STAFF_ROUTE_PATTERNS).toHaveLength(151);
     expect(new Set(STAFF_ROUTE_PATTERNS).size).toBe(STAFF_ROUTE_PATTERNS.length);
     expect([...STAFF_ROUTE_PATTERNS].sort()).toEqual([...appPages].sort());
   });
@@ -71,11 +74,13 @@ describe("executable route contract", () => {
       .filter((path) => path !== "*");
     expect([...new Set(["/survey/:token", ...mountedPublic])].sort())
       .toEqual([...PUBLIC_ROUTE_PATTERNS].sort());
-    // 157 since 2026-09-02 — /scm/payment-vouchers/scan; see the staff-route count above.
+    // 158 since 2026-09-03 — /scm/chart-of-accounts; see the staff-route count above.
+    // (157 since 2026-09-02.)
     // (156 since 2026-08-25.)
     // (153 since 2026-08-25: /scm/loading-list.)
     // (152 since 2026-08-21.) (151 since 2026-08-16.) (150 since 2026-08-15.)
-    expect(ROUTE_CONTRACT).toHaveLength(157);
+    // 160 since 2026-09-03 night — /scm/receipts; see the staff-route count above.
+    expect(ROUTE_CONTRACT).toHaveLength(160);
   });
 
   it("keeps every desktop nav destination on a live staff route", () => {

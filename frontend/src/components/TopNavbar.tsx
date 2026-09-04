@@ -64,7 +64,11 @@ export function TopNavbar() {
                 every page — see RefreshButton for why it drops two caches. */}
             <RefreshButton />
             <PresenceButton />
-            <NotificationBell collapsed direction="down" align="end" tone="navbar" unread="dot" />
+            {/* Count, not the 2b dot (owner 2026-09-02, "需要有红色号码
+                notice"): a dot says something happened, a number says how
+                much is waiting — which is the whole point of routing
+                amendment approvals here. */}
+            <NotificationBell collapsed direction="down" align="end" tone="navbar" />
             <span aria-hidden className="mx-0.5 h-6 w-px bg-border-subtle" />
             <ProfileMenu />
           </>

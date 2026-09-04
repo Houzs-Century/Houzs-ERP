@@ -45,6 +45,10 @@ import {
   bankLineReceipt, bankLineMatch, bankLineIgnore, bankLineUndo,
 } from './accounting-bank';
 import { payoutUpload, payoutList } from './accounting-payouts';
+import {
+  chartUnionHandler, chartTickHandler, chartImportHandler,
+  chartRenameHandler, chartUpdateHandler, chartDeleteHandler, chartCreateHandler,
+} from './accounting-chart';
 import { dateOrNull } from '../lib/date-coerce';
 
 /* THE GENERAL LEDGER HAD NO PERMISSION CHECK AT ALL — eleven routes, zero
@@ -110,6 +114,15 @@ accounting.get('/settlement/payouts', payoutList);
    Owner, 2026-08-19: 我不是应该upload bank statement…然后你也自动核对吗 —
    整张月结单全部对. */
 accounting.get('/bank/setup', bankSetup);
+/* The chart maintenance surface (roadmap A) — union + per-company ticks +
+   the accountant's import. Handlers in accounting-chart.ts. */
+accounting.get('/chart', chartUnionHandler);
+accounting.put('/chart/tick', chartTickHandler);
+accounting.post('/chart/import', chartImportHandler);
+accounting.put('/chart/rename', chartRenameHandler);
+accounting.put('/chart/update', chartUpdateHandler);
+accounting.post('/chart/account', chartCreateHandler);
+accounting.delete('/chart/account', chartDeleteHandler);
 accounting.get('/bank/rules', bankRulesList);
 accounting.post('/bank/rules', bankRuleCreate);
 accounting.patch('/bank/rules/:id', bankRuleUpdate);
@@ -147,8 +160,10 @@ accounting.get('/accounts', async (c) => {
     .from('accounts')
     /* acc_money marks the accounts that ARE money (bank / cash / e-wallet —
        the Daily Bank set). The PV "Paid From" picker offers only these; the
-       flag rides along so screens don't hardcode code ranges. */
-    .select('account_code, account_name, account_type, parent_code, is_active, acc_money');
+       flag rides along so screens don't hardcode code ranges. special_type is
+       the AutoCount special column (0347) — pickers hide the SDC/SCC/SBS
+       control accounts by it. */
+    .select('account_code, account_name, account_type, parent_code, is_active, acc_money, special_type');
   q = scopeToCompany(q, c);
   const { data, error } = await q.order('account_code');
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
@@ -891,17 +906,26 @@ export const controlCheckHandler = async (c: any) => {
   type CheckOk = { role: string; accountCode: string; glBalanceSen: number; driftDocs: Drift[]; foreignLines: Foreign[]; ok: boolean };
   type CheckErr = { role: string; accountCode: string; error: string };
 
-  const runCheck = async (role: 'AR' | 'AP', accountCode: string): Promise<CheckOk | CheckErr> => {
+  const runCheck = async (role: 'AR' | 'AP' | 'AP_OTHER' | 'AR_OTHER', accountCode: string): Promise<CheckOk | CheckErr> => {
     const expectedSource = role === 'AR' ? 'SI' : 'PI';
+    /* AP_OTHER (405-0000, the 2026-09-03 split) and AR_OTHER (305-0000, the
+       Other Debtors module): the document↔journal drift walk below is
+       per-DOCUMENT and control-agnostic — the AP arm already covers every PI
+       once, and a debtor bill cannot exist without its journal (the create is
+       atomic). These arms contribute what IS control-specific: the GL balance
+       and any foreign line parked on the control. */
+    const docDrift = role !== 'AP_OTHER' && role !== 'AR_OTHER';
 
-    const { data: jes, error: jesErr } = await sb.from('journal_entries')
-      .select('id, je_no, source_doc_no, total_debit_sen')
-      .eq('company_id', companyId).eq('source_type', expectedSource)
-      .eq('posted', true).eq('reversed', false);
-    if (jesErr) return { role, accountCode, error: jesErr.message };
     const jeByDoc = new Map<string, { jeTotal: number }>();
-    for (const j of (jes ?? []) as Array<{ source_doc_no: string | null; total_debit_sen: number }>) {
-      if (j.source_doc_no) jeByDoc.set(j.source_doc_no, { jeTotal: Number(j.total_debit_sen ?? 0) });
+    if (docDrift) {
+      const { data: jes, error: jesErr } = await sb.from('journal_entries')
+        .select('id, je_no, source_doc_no, total_debit_sen')
+        .eq('company_id', companyId).eq('source_type', expectedSource)
+        .eq('posted', true).eq('reversed', false);
+      if (jesErr) return { role, accountCode, error: jesErr.message };
+      for (const j of (jes ?? []) as Array<{ source_doc_no: string | null; total_debit_sen: number }>) {
+        if (j.source_doc_no) jeByDoc.set(j.source_doc_no, { jeTotal: Number(j.total_debit_sen ?? 0) });
+      }
     }
 
     const drift: Drift[] = [];
@@ -926,7 +950,7 @@ export const controlCheckHandler = async (c: any) => {
           jeByDoc.delete(d.invoice_number);
         }
       }
-    } else {
+    } else if (docDrift) {
       const { data: docs, error } = await sb.from('purchase_invoices')
         .select('invoice_number, total_sen, exchange_rate, status, migrated_no_stock')
         .eq('company_id', companyId);
@@ -979,7 +1003,9 @@ export const controlCheckHandler = async (c: any) => {
        the finding. */
     const family = role === 'AR'
       ? new Set(['SI', 'SI_REVERSAL', 'SOPAY', 'SOPAY_REVERSAL', 'SIPAY', 'SIPAY_REVERSAL'])
-      : new Set(['PI', 'PI_REVERSAL', 'PV', 'PV_REVERSAL']);
+      : role === 'AR_OTHER'
+        ? new Set(['ODB', 'ODB_REVERSAL', 'ODR', 'ODR_REVERSAL'])
+        : new Set(['PI', 'PI_REVERSAL', 'PV', 'PV_REVERSAL']);
     for (const l of (lines ?? []) as Array<{ je_no: string; source_type: string; debit_sen: number; credit_sen: number }>) {
       bal += Number(l.debit_sen ?? 0) - Number(l.credit_sen ?? 0);
       if (!family.has(l.source_type)) {
@@ -990,7 +1016,12 @@ export const controlCheckHandler = async (c: any) => {
     return { role, accountCode, glBalanceSen: bal, driftDocs: drift, foreignLines: foreign, ok: drift.length === 0 && foreign.length === 0 };
   };
 
-  const checks = [await runCheck('AR', roles.AR), await runCheck('AP', roles.AP)];
+  const checks = [
+    await runCheck('AR', roles.AR),
+    await runCheck('AR_OTHER', roles.AR_OTHER),
+    await runCheck('AP', roles.AP),
+    await runCheck('AP_OTHER', roles.AP_OTHER),
+  ];
 
   /* THE THIRD FINDING: money recorded on a document that never reached the
      ledger at all. A booking failure does not fail the operator's save (sales

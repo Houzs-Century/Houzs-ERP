@@ -19,11 +19,12 @@
 // the PI list (Houzs has no supplier-filtered outstanding endpoint yet).
 // ----------------------------------------------------------------------------
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { Save, Trash2, X } from 'lucide-react';
 import { Button } from '@2990s/design-system';
-import { useCreatePaymentVoucher, useSupplierAdvances, useExtractBills, fileToBase64, type BillExtraction, type VendorMemory } from '../../vendor/scm/lib/payment-voucher-queries';
+import { useCreatePaymentVoucher, usePaymentVoucherDetail, useSupplierAdvances, useExtractBills, useUploadPvFile, fileToBase64, type BillExtraction, type VendorMemory, type PvFilePayload } from '../../vendor/scm/lib/payment-voucher-queries';
+import { takePvFiles } from '../../vendor/scm/lib/pv-file-handoff';
 import { useIdempotencyKey } from '../../lib/idempotency';
 import { useAccounts, useAccountRoles, type Account } from '../../vendor/scm/lib/accounting-queries';
 import { usePurchaseInvoices } from '../../vendor/scm/lib/purchase-invoice-queries';
@@ -137,6 +138,13 @@ export const PaymentVoucherNew = () => {
   const location = useLocation();
   const extract = useExtractBills();
   const [scanNote, setScanNote] = useState<string | null>(null);
+  /* The scanned bill's own bytes, waiting to ATTACH once the voucher exists
+     (owner 2026-09-03: print pv include ocr 的文件一起 — so the file must
+     live with the voucher, not die with this tab). Filled by the batch
+     screen's hand-off or by this page's own Scan bill; uploaded after a
+     successful save, in scan order. */
+  const [pendingFiles, setPendingFiles] = useState<PvFilePayload[]>([]);
+  const uploadPvFile = useUploadPvFile();
   const applyExtraction = (ex: BillExtraction, extras?: { lines?: Array<{ description: string | null; amountSen: number | null }>; memory?: VendorMemory | null }) => {
     /* Vendor memory FIRST for the payee — the operator's own casing beats the
        print ("TNB" over "TENAGA NASIONAL BERHAD"); the print fills the gap. */
@@ -162,10 +170,17 @@ export const PaymentVoucherNew = () => {
     }
     if (drafts.length > 0) setLines(drafts);
   };
-  /* The batch screen's hand-off. */
+  /* The batch screen's hand-off. Its files come via the module stash, not
+     location.state (a big PDF would blow the history-entry size cap — see
+     pv-file-handoff.ts); take() clears, so only set when something was
+     actually taken (a double-run effect must not wipe the first take). */
   useEffect(() => {
     const st = location.state as { billPrefill?: { extraction: BillExtraction; lines?: Array<{ description: string | null; amountSen: number | null }>; memory?: VendorMemory | null } } | null;
-    if (st?.billPrefill) applyExtraction(st.billPrefill.extraction, { lines: st.billPrefill.lines, memory: st.billPrefill.memory });
+    if (st?.billPrefill) {
+      applyExtraction(st.billPrefill.extraction, { lines: st.billPrefill.lines, memory: st.billPrefill.memory });
+      const carried = takePvFiles();
+      if (carried.length > 0) setPendingFiles(carried);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const onScanFiles = async (list: FileList | null) => {
@@ -181,6 +196,10 @@ export const PaymentVoucherNew = () => {
       if (!bill) { setScanNote('The bill could not be read.'); return; }
       if (!bill.ok) { setScanNote(bill.reason); return; }
       applyExtraction(bill.extraction, { memory: bill.memory });
+      /* The read pages become the voucher's attachments on save. The LAST
+         successful read wins, matching applyExtraction overwriting the lines
+         — this page reads ONE bill at a time. */
+      setPendingFiles(files);
       setScanNote([
         'Read — check every figure before saving.',
         bill.supplierMatch ? `Looks like supplier ${bill.supplierMatch.name}.` : null,
@@ -212,6 +231,42 @@ export const PaymentVoucherNew = () => {
   const [currencyOverride, setCurrencyOverride]   = useState<string | null>(null);
   const [lines, setLines]                         = useState<DraftLine[]>([newLine()]);
   const [dialog, setDialog] = useState<{ title: string; body: string; goTo?: string } | null>(null);
+
+  /* ── Copy as new (the owner, 2026-09-03, AutoCount in hand) ─────────────
+     ?copyFrom=<pvId> pre-fills CONTENT from an existing voucher — payee,
+     supplier, Paid From, lines, notes, currency+rate — and NOTHING with an
+     identity: fresh number, today's date, approvals restart at raw Draft,
+     no PI applied (the source's bills may already be knocked off). The list
+     row / detail button choose ?type=ap when the source is an AP Payment,
+     so an AP copies to an AP. */
+  const copyFrom = searchParams.get('copyFrom');
+  const copyQ = usePaymentVoucherDetail(copyFrom);
+  const copyApplied = useRef(false);
+  useEffect(() => {
+    if (!copyFrom || copyApplied.current || !copyQ.data) return;
+    copyApplied.current = true;
+    const v = copyQ.data.paymentVoucher as Record<string, unknown>;
+    setPayeeName(String(v.payee_name ?? ''));
+    if (v.supplier_id) setSupplierId(String(v.supplier_id));
+    if (v.credit_account_code) setCreditAccountCode(String(v.credit_account_code));
+    if (v.notes) setNotes(String(v.notes));
+    const cur = typeof v.currency === 'string' ? v.currency : null;
+    if (cur && cur !== 'MYR') {
+      setCurrencyOverride(cur);
+      const rate = v.exchange_rate == null ? '' : String(v.exchange_rate);
+      if (rate) { setExchangeRate(rate); setRateSource('rate'); }
+    }
+    const copied = copyQ.data.lines
+      .map((l) => ({
+        ...newLine(),
+        description: String((l as Record<string, unknown>).description ?? ''),
+        amountSen: Number((l as Record<string, unknown>).amount_sen ?? 0),
+        debitAccountCode: String((l as Record<string, unknown>).debit_account_code ?? ''),
+      }));
+    if (copied.length > 0) setLines(copied);
+    setScanNote(`Copied from ${String(v.pv_number ?? 'voucher')} — new number, today's date, approvals restart; nothing is applied to bills yet.`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [copyFrom, copyQ.data]);
 
   // Supplier link is optional. When set, auto-fill the payee (if blank) + adopt
   // the supplier's default currency (e.g. a China vendor billing RMB).
@@ -326,7 +381,13 @@ export const PaymentVoucherNew = () => {
     setExchangeRate(String(derivedRate));
   }, [rateSource, derivedRate]);
 
-  const apAccountCode = rolesQ.data?.roles.AP ?? '';
+  /* The AP split (owner 2026-09-03): a 405-x supplier is an OTHER CREDITOR —
+     its payment debits AP_OTHER (405-0000), everyone else AP (400-0000). The
+     authoritative prefix rule lives server-side (acc/rules.ts apControlRole;
+     create refuses the wrong control) — this is the display mirror. */
+  const apAccountCode = (supplierRow?.code.startsWith('405-')
+    ? rolesQ.data?.roles.AP_OTHER
+    : rolesQ.data?.roles.AP) ?? '';
   const realLines = lines.filter((l) => l.debitAccountCode && l.amountSen > 0);
   const canSave = isAp
     ? !!payeeName.trim() && !!supplierId && !!creditAccountCode && totalSen > 0 && !!apAccountCode
@@ -376,9 +437,31 @@ export const PaymentVoucherNew = () => {
         lines: sendLines,
         ...(sendAllocations.length > 0 ? { allocations: sendAllocations } : {}),
       });
+      /* Attach the scanned bill AFTER the voucher exists — sequentially, so
+         sort_no (= print order) is the scan order. A failed upload never
+         un-saves the voucher: the dialog says which files still need adding
+         (the detail page's Files card takes them), and only the UNATTACHED
+         remainder stays pending — a re-press replays the same voucher via the
+         idempotency key and must not attach the first files twice. */
+      let attached = 0;
+      let attachErr: string | null = null;
+      for (const f of pendingFiles) {
+        try {
+          await uploadPvFile.mutateAsync({ pvId: res.id, file: f });
+          attached += 1;
+        } catch (e) {
+          attachErr = e instanceof Error ? e.message : 'The file could not be uploaded.';
+          break;
+        }
+      }
+      if (attached > 0) setPendingFiles((prev) => prev.slice(attached));
       setDialog({
         title: `Voucher ${res.pvNumber} created`,
-        body: 'Saved as a draft — open it to post to the GL.',
+        body: [
+          'Saved as a draft — open it to post to the GL.',
+          attached > 0 ? `${attached} scanned file(s) attached.` : null,
+          attachErr ? `${pendingFiles.length - attached} file(s) did not attach (${attachErr}) — add them from the voucher's Files card.` : null,
+        ].filter(Boolean).join(' '),
         goTo: `/scm/payment-vouchers/${res.id}`,
       });
     } catch (err) {
@@ -516,6 +599,12 @@ export const PaymentVoucherNew = () => {
         <div className={styles.cardBody} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
           {scanNote && (
             <div style={{ fontSize: 'var(--fs-12)', color: extract.isPending ? 'var(--fg-muted)' : 'var(--c-orange)' }}>{scanNote}</div>
+          )}
+          {pendingFiles.length > 0 && (
+            <div style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
+              📎 {pendingFiles.length} scanned file(s) will be attached to this voucher on save:{' '}
+              {pendingFiles.map((f) => f.name).join(', ')}
+            </div>
           )}
           {lines.map((l, idx) => (
             <div key={l.rid} style={{
