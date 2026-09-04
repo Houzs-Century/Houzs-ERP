@@ -121,6 +121,12 @@ describe('fold / edit / delete — the owner points 1, 2 and 4', () => {
     const scroller = container.querySelector('table')!.parentElement as HTMLElement;
     expect(scroller.style.overflowY).toBe('auto');
     expect(scroller.style.maxHeight).not.toBe('');
+    /* Flush: the scroller has no padding, so the stuck header sits tight
+       under the card header with no strip of scrolled rows peeking above it
+       (the owner's 不好看). And borderCollapse must stay SEPARATE — Chromium
+       mis-offsets sticky th cells under collapsed borders. */
+    expect(scroller.style.padding).toBe('0px');
+    expect((container.querySelector('table') as HTMLElement).style.borderCollapse).toBe('separate');
     /* Every header cell sticks with a solid background — a transparent
        sticky th lets rows show through it. */
     const ths = [...container.querySelectorAll('thead th')] as HTMLElement[];
@@ -130,6 +136,19 @@ describe('fold / edit / delete — the owner points 1, 2 and 4', () => {
       expect(th.style.top).toBe('0px');
       expect(th.style.background).not.toBe('');
     }
+  });
+
+  test('edit is a POP-OUT dialog (owner: 做成一个 pop out 出来 edit) — and a backdrop click does not eat the form', () => {
+    draw();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    fireEvent.click(screen.getByLabelText('Edit 310-0010'));
+    const dialog = screen.getByRole('dialog');
+    expect(dialog.getAttribute('aria-label')).toBe('Edit 310-0010');
+    /* A stray click outside must not discard a half-typed rename. */
+    fireEvent.click(dialog.parentElement as HTMLElement);
+    expect(screen.getByRole('dialog')).toBeTruthy();
+    fireEvent.click(screen.getByText('Cancel'));
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
 
   test('changing the code confirms 改码全账跟 and calls the rename with both codes', async () => {
