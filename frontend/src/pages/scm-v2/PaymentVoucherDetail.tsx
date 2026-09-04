@@ -155,6 +155,13 @@ export const PaymentVoucherDetail = () => {
      printing a voucher quietly missing its bills is the dishonest branch,
      so an unloaded/failed list aborts with a sentence. */
   const filesQ = usePvFiles(id || null);
+  /* Attach or not is the OPERATOR's call per print (owner 2026-09-04: 可以
+     选择 exclude pdf) — default ON, the toggle lives in the preview card. */
+  const [includeFiles, setIncludeFiles] = useState(true);
+  /* The print's namer reads the UNFILTERED chart — an old voucher on a
+     now-inactive account must still print that account's name. */
+  const accountNameOf = (code: string): string | null =>
+    (accountsQ.data?.accounts ?? []).find((x) => x.account_code === code)?.account_name ?? null;
   const deliverPrintPdf = (action: PdfAction) => {
     if (!pv) return;
     return (async () => {
@@ -166,8 +173,8 @@ export const PaymentVoucherDetail = () => {
         pv as unknown as A[0],
         lines as unknown as A[1],
         allocations as unknown as A[2],
-        accountLabel,
-        { action, withFilesOf: rows.length > 0 ? id : null },
+        accountNameOf,
+        { action, withFilesOf: includeFiles && rows.length > 0 ? id : null },
       );
     })().catch((e: unknown) => {
       notify({ title: 'PDF generation failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
@@ -820,7 +827,17 @@ export const PaymentVoucherDetail = () => {
           { label: 'Total', value: fmtRm(totalSen, viewCurrency) },
           {
             label: 'Files',
-            value: `${filesQ.data?.files.length ?? 0} attached — printed after the voucher page`,
+            /* The exclude toggle (owner 2026-09-04) sits where the decision
+               is made — on the card the operator reads before printing. */
+            value: (filesQ.data?.files.length ?? 0) > 0 ? (
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                <input type="checkbox" checked={includeFiles}
+                  aria-label="Include attached files in the print"
+                  onChange={(e) => setIncludeFiles(e.target.checked)}
+                  style={{ width: 14, height: 14, accentColor: 'var(--c-orange)' }} />
+                include the {filesQ.data?.files.length} attached file(s) after the voucher page
+              </label>
+            ) : 'none attached',
           },
         ]}
         {...print.handlers}

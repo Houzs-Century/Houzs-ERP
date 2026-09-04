@@ -56,6 +56,13 @@ describe('批量 tick yes', () => {
     fireEvent.click(boxes[3]!); // posted — printable, not approvable
     expect(screen.getByText('Print 1 + files')).toBeTruthy();
     expect(screen.getByText('Save PDF')).toBeTruthy();
+    /* The files toggle (owner 2026-09-04: 批量那边也要有这个选) — default ON;
+       unticking flips the button to vouchers-only. */
+    fireEvent.click(screen.getByLabelText("Include each voucher's attached files"));
+    expect(screen.getByText('Print 1')).toBeTruthy();
+    expect(screen.queryByText('Print 1 + files')).toBeNull();
+    fireEvent.click(screen.getByLabelText("Include each voucher's attached files"));
+    expect(screen.getByText('Print 1 + files')).toBeTruthy();
     expect(screen.queryByText(/^Prepare \d/)).toBeNull();
     expect(screen.queryByText(/^Check \d/)).toBeNull();
     expect(screen.queryByText(/Approve & post \d/)).toBeNull();

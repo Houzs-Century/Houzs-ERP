@@ -11,8 +11,9 @@
  *   3. MONEY WORDS ARE MYR-ONLY. A MYR voucher spells its total (RINGGIT
  *      MALAYSIA …); a CNY voucher must NOT — spelling yuan as ringgit is a
  *      false sentence — and shows the ≈ posted-to-GL line instead.
- *   4. ACCOUNTS PRINT THROUGH THE CALLER'S LABELLER — code · name, so the GL
- *      address on paper matches the screen. */
+ *   4. ACCOUNTS PRINT THROUGH THE CALLER'S NAMER — the table gives code and
+ *      name their own columns (owner 2026-09-04), Paid From stays one joined
+ *      string, and the GL address on paper matches the screen. */
 
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import {
@@ -67,8 +68,8 @@ const ALLOCS: PvPdfAllocation[] = [
   { invoiceNumber: '2990-PI-2609-001', supplierInvoiceRef: 'INV-88', amountSen: 100000 },
 ];
 
-const label = (code: string) => (code === '310-0010' ? '310-0010 · Bank — Maybank'
-  : code === '900-A002' ? '900-A002 · Advertisement' : code);
+const nameOf = (code: string) => (code === '310-0010' ? 'Bank — Maybank'
+  : code === '900-A002' ? 'Advertisement' : null);
 
 async function render(over: Partial<PvPdfHeader> = {}, allocations: PvPdfAllocation[] = ALLOCS): Promise<TextDraw[]> {
   setUpBranding();
@@ -79,7 +80,7 @@ async function render(over: Partial<PvPdfHeader> = {}, allocations: PvPdfAllocat
   ]);
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
   const draws = captureTextDraws(doc);
-  await renderPaymentVoucherInto(doc, autoTable, { ...HEADER, ...over }, LINES, allocations, label);
+  await renderPaymentVoucherInto(doc, autoTable, { ...HEADER, ...over }, LINES, allocations, nameOf);
   return draws;
 }
 
@@ -107,8 +108,15 @@ describe('the payment voucher sheet', () => {
     expect(has(draws, 'PAYMENT VOUCHER')).toBe(true);
     expect(has(draws, 'HC-PV-2609-012')).toBe(true);
     expect(has(draws, 'ABC Freight Forwarding')).toBe(true);
+    /* Paid From stays ONE joined string… */
     expect(has(draws, '310-0010 · Bank — Maybank')).toBe(true);
-    expect(has(draws, '900-A002 · Advertisement')).toBe(true);
+    /* …but the TABLE gives code and name their OWN columns (owner
+       2026-09-04): both drawn, never as the joined pair. */
+    expect(has(draws, 'Account Code')).toBe(true);
+    expect(has(draws, 'Account Name')).toBe(true);
+    expect(has(draws, '900-A002')).toBe(true);
+    expect(has(draws, 'Advertisement')).toBe(true);
+    expect(has(draws, '900-A002 · Advertisement')).toBe(false);
     expect(has(draws, '2990-PI-2609-001')).toBe(true);
   });
 

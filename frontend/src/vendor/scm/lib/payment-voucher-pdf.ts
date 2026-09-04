@@ -42,9 +42,12 @@ export type PvPdfHeader = {
 export type PvPdfLine = { description?: string | null; debit_account_code: string; amount_sen: number };
 export type PvPdfAllocation = { invoiceNumber: string | null; supplierInvoiceRef: string | null; amountSen: number };
 
-/* account code -> "code · name", from whatever account list the caller has;
-   an unknown code prints as itself (never blank — it IS the GL address). */
-export type AccountLabeller = (code: string) => string;
+/* account code -> its NAME, from whatever account list the caller has (null
+   when the chart doesn't know it). The table prints code and name in their
+   OWN columns (owner 2026-09-04: account code 和 account name 各一个
+   header); where one string is wanted (Paid From) the generator joins them
+   itself. An unknown code still prints as itself — it IS the GL address. */
+export type AccountNamer = (code: string) => string | null;
 
 /* The four-layer strip: one dashed box per layer, the recorded name + date
    INSIDE the box where a wet signature would go. drawSignatureBoxes is the
@@ -90,7 +93,7 @@ export async function renderPaymentVoucherInto(
   header: PvPdfHeader,
   lines: PvPdfLine[],
   allocations: PvPdfAllocation[],
-  accountLabel: AccountLabeller,
+  accountName: AccountNamer,
 ): Promise<void> {
   await ensurePdfCjkFont(doc, [header, lines, allocations]);
 
@@ -126,22 +129,28 @@ export async function renderPaymentVoucherInto(
       rows: [
         ['PV No', header.pv_number],
         ['Date', fmtDocDate(header.voucher_date)],
-        ['Paid From', accountLabel(header.credit_account_code)],
+        ['Paid From', (() => {
+          const n = accountName(header.credit_account_code);
+          return n ? `${header.credit_account_code} · ${n}` : header.credit_account_code;
+        })()],
         ['Currency', isForeign ? `${currency} @ ${rate}` : 'MYR'],
         ['Status', statusLabel('pv', header.status)],
       ],
     },
   );
 
+  /* Column order is the owner's (2026-09-04): the GL address first — code
+     and name in their own columns — then what the money was for. */
   const rows = lines.map((l, idx) => [
     String(idx + 1),
+    l.debit_account_code,
+    accountName(l.debit_account_code) ?? '—',
     l.description?.trim() ? l.description : '—',
-    accountLabel(l.debit_account_code),
     fmtRm(Number(l.amount_sen), currency),
   ]);
   autoTable(doc, {
     startY: y,
-    head: [['#', 'Description', 'Account (Debit)', 'Amount']],
+    head: [['#', 'Account Code', 'Account Name', 'Description', 'Amount']],
     body: rows,
     theme: 'plain',
     rowPageBreak: 'avoid',
@@ -149,9 +158,10 @@ export async function renderPaymentVoucherInto(
     headStyles: DOC_TABLE_HEAD_STYLES,
     columnStyles: {
       0: { cellWidth: 8, halign: 'right' },
-      1: { cellWidth: 84 },
-      2: { cellWidth: 56 },
-      3: { cellWidth: 34, halign: 'right' },
+      1: { cellWidth: 26, fontStyle: 'bold' },
+      2: { cellWidth: 42 },
+      3: { cellWidth: 72 },
+      4: { cellWidth: 34, halign: 'right' },
     },
     margin: { left: margin, right: margin },
   });
@@ -198,7 +208,7 @@ export async function renderPaymentVoucherInto(
     ty = ((doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? ty) + 6;
   }
 
-  drawFourLayerStrip(doc, ty + 4, header);
+  drawFourLayerStrip(doc, ty + 12, header);
 
   const pageCount = doc.getNumberOfPages();
   for (let p = startPage; p <= pageCount; p += 1) {
@@ -231,13 +241,13 @@ export async function generatePaymentVoucherPdf(
   header: PvPdfHeader,
   lines: PvPdfLine[],
   allocations: PvPdfAllocation[],
-  accountLabel: AccountLabeller,
+  accountName: AccountNamer,
   opts?: { action?: PdfAction; withFilesOf?: string | null },
 ): Promise<void> {
   const { jsPDF } = await import('jspdf');
   const autoTable = (await import('jspdf-autotable')).default;
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
-  await renderPaymentVoucherInto(doc, autoTable, header, lines, allocations, accountLabel);
+  await renderPaymentVoucherInto(doc, autoTable, header, lines, allocations, accountName);
   const fileName = `${header.pv_number}-${safeName(header.payee_name)}.pdf`;
   if (!opts?.withFilesOf) {
     deliverPdf(doc, fileName, opts?.action);
