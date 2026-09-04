@@ -13,6 +13,14 @@
 // This component is the single source of that UI. It reads + writes the
 // UNCHANGED variant keys (no schema change):
 //   - variants.specials        string[]  (add-on CODES; the array is canonical)
+//   - variants.specialsRecorded string[] (READ-ONLY. Options recovered from an
+//     AutoCount-imported line's own Desc2 by
+//     backend/scripts/record-priced-specials-on-migrated-lines.mjs. They are
+//     shown ticked and locked so the factory sees what to build, and they live
+//     in their OWN key because the imported figure already paid for them —
+//     owner's choice 甲, 2026-09-03. NO pricing path reads this key, which is
+//     what makes recording them unable to move a historical document's money.
+//     Ticking the same code in the picker above makes it a normal, charged pick.)
 //   - variants.specialChoices  { code: [chosen option-group labels] }
 //   - variants.specialLabels   string[]  (display snapshot of the picked labels)
 //   - variants.extraAddonNote  string    (Custom / other free text)
@@ -96,8 +104,12 @@ export const SpecialOrders = ({
   const extraNote = String(variants.extraAddonNote ?? '');
   const extraAmountRM = Number(variants.extraAddonAmountRM ?? 0);
   const hasCustom = Boolean(extraNote.trim()) || extraAmountRM > 0;
+  /* Recorded-only options (owner 甲, 2026-09-03) — read, never written here, and
+     hidden when the operator has since picked the same code properly. */
+  const recorded = specialsList(variants.specialsRecorded)
+    .filter((c) => !picked.some((p) => p.toLowerCase() === c.toLowerCase()));
 
-  const [openInternal, setOpenInternal] = useState(picked.length > 0 || hasCustom);
+  const [openInternal, setOpenInternal] = useState(picked.length > 0 || recorded.length > 0 || hasCustom);
   const isOpen = open ?? openInternal;
   const toggleOpen = onToggle ?? (() => setOpenInternal((o) => !o));
 
@@ -152,7 +164,7 @@ export const SpecialOrders = ({
      still show as removable rows — invisible-but-stuck picks were how the old
      editor leaked RM 0 specials onto orders. */
   const retired = picked.filter((c) => !options.some((o) => o.code === c));
-  const selectedCount = picked.length + (hasCustom ? 1 : 0);
+  const selectedCount = picked.length + recorded.length + (hasCustom ? 1 : 0);
 
   return (
     <div className={styles.specials}>
@@ -210,6 +222,17 @@ export const SpecialOrders = ({
               </label>
             );
           })}
+          {recorded.map((code) => (
+            <label key={`recorded-${code}`} className={styles.specialsItem}>
+              <input type="checkbox" className={styles.specialsCheckbox} checked disabled readOnly />
+              <div>
+                <div className={styles.specialsLabel}>{labelFor(code)}</div>
+                <div className={styles.specialsSurcharge}>
+                  from AutoCount — already in this document's price, not charged again
+                </div>
+              </div>
+            </label>
+          ))}
           {retired.map((code) => (
             <label key={`retired-${code}`} className={styles.specialsItem}>
               <input

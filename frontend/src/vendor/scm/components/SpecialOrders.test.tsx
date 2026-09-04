@@ -56,6 +56,27 @@ describe('SpecialOrders', () => {
     expect(onPatch).toHaveBeenCalledWith({ extraAddonNote: 'X' });
   });
 
+  /* Owner's choice 甲, 2026-09-03 — an option recovered from an AutoCount slip is
+     SHOWN so the factory can build it, and is not a pick: it lives in its own
+     variants key that no pricing path reads, so it can never move the imported
+     document's money. See backend/tests/specialsRecordedNeverPriced.test.ts. */
+  it('a recorded-only option shows ticked and locked, and emits no patch', async () => {
+    const user = userEvent.setup();
+    const onPatch = vi.fn();
+    render(<SpecialOrders options={OPTIONS} variants={{ specialsRecorded: ['HB_FULL'] }} onPatch={onPatch} showPrices={false} open />);
+    const boxes = screen.getAllByRole('checkbox', { name: /HB Fully Cover/i }) as HTMLInputElement[];
+    const locked = boxes.find((b) => b.disabled);
+    expect(locked, 'the recorded option renders as a locked ticked row').toBeTruthy();
+    expect(locked!.checked).toBe(true);
+    await user.click(locked!);
+    expect(onPatch).not.toHaveBeenCalled();
+  });
+
+  it('a recorded option the operator has since PICKED is not shown twice', () => {
+    render(<SpecialOrders options={OPTIONS} variants={{ specials: ['HB_FULL'], specialsRecorded: ['HB_FULL'] }} onPatch={() => {}} showPrices={false} open />);
+    expect(screen.getAllByRole('checkbox', { name: /HB Fully Cover/i })).toHaveLength(1);
+  });
+
   it('source-linked block is read-only until Override is pressed', async () => {
     const user = userEvent.setup();
     render(<SpecialOrders options={OPTIONS} variants={{ specials: ['HB_FULL'] }} onPatch={() => {}} showPrices={false} sourceLinked sourceLabel="Sales Order" open />);
