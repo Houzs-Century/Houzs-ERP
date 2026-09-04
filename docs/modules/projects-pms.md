@@ -298,8 +298,26 @@ setup/dismantle contractor, chosen on the Detail page (`ContractorPicker` in
 `services/projects.ts`. Options come from a `project_contractors` picker table on
 the exact organizer pattern: `GET /contractors` (read), `POST /contractors`
 (`projects.write`), `DELETE /contractors/:id` (`projects.manage`), managed by
-`ContractorManager` in `ProjectMaintenance.tsx`. Feeds the planned per-contractor
-calendar share links.
+`ContractorManager` in `ProjectMaintenance.tsx`.
+
+**Contractor share links (2026-09-03).** Each contractor has a public, no-login
+calendar at `/c/<token>` — a view-only month grid of only THEIR confirmed events
+with booth numbers, so Houzs stops exporting/screenshotting schedules to
+contractors. The token IS the credential (`contractor_share_tokens`, mig
+`20260903T1237_contractor_share_tokens.sql`; `revoked_at` kill switch — pattern
+mig 0126); minted against the contractor NAME. `services/contractorShare.ts` does
+get-or-create / resolve / revoke. The **public read**
+`GET /api/public/contractor-calendar/:token` (`routes/publicContractorCalendar.ts`)
+is mounted BEFORE the `auth` gate in `index.ts` and returns ONLY whitelisted
+confirmed columns (brand/organizer/state/venue/booth_no/start/end/name) through
+`c.env.DB` — never finance, never another contractor, never the anon PostgREST
+path (RLS is off prod-wide, so the WHERE clause is the boundary; the contractor
+comes off the token row, never the request). Admin generates/revokes a link per
+contractor via `POST`/`DELETE /contractors/:id/share-link` (authed,
+`projects.write`/`projects.manage`), surfaced as row actions in `ContractorManager`.
+The page `frontend/src/pages/ContractorCalendar.tsx` is a self-contained public
+surface (own month grid, no import from `Projects.tsx`), routed by
+`routing/appSurface.ts` (`/c/` → `contractor`) outside `AuthGate` in `main.tsx`.
 **The role BADGE is the second half of the checklist-tick gate, and the UI must
 ask it too.** A caller holding `projects.checklist.tick` but **not**
 `projects.write` may attach, edit, delete and status-change only on tasks whose
@@ -1202,10 +1220,25 @@ Three traps this table exists to stop:
   refuses, and hid it from a finance user holding `projects.write`.
 
 `canWriteProjectFinance` mirrors `denyFinance` -> `financeHiddenForUser`
-(`position_id == null` OR `project_finance_viewer`), NOT the per-project
-`_access.pms.canFinancial` flag. The flag is the DIRECTOR-only section tier and
-is a strict subset: it excludes the granular `projects.finance.view` holders
-(the BD role, owner 2026-07-23) that the write route accepts.
+(`position_id == null` OR `project_finance_viewer`), and since 2026-09-04
+`_access.pms.canFinancial` AGREES with it: the flag is
+`sections.includes("FINANCIAL") || permissions_set.has("projects.finance.view")`,
+the same additive shape `canEdit` and `canSensitive` already had.
+
+**It used to be the DIRECTOR-only section tier — a strict subset that excluded
+the granular `projects.finance.view` holders (the BD role, owner 2026-07-23).
+That divergence was a money bug, not a nuance.** `GET /projects/:id` strips
+`finance` + `finance_lines` on `!canFinancial`, so a holder of the permission was
+served an EMPTY ledger; `QuickRentalField` picks PATCH vs CREATE by counting the
+rental lines it can see, took the CREATE branch every time, and blanked its own
+input from the same empty list — so each retype booked another line. Twelve on
+one project, a Rental box reading 201,195 against a real 18,126
+(`docs/bugs/0637-projects-finance-view-was-ignored-by-the-project-detail-stri.md`).
+The write gate and the read gate must not disagree about who may see money.
+
+Still NOT closed: the Rental box is never gated on `canRental` (declared in
+`Projects.tsx`, never read), so a user who genuinely cannot see finance can still
+type into it and duplicate lines the same way.
 
 ### Desktop and mobile files that must change together
 

@@ -268,11 +268,28 @@ export function getPmsAccess(user: AuthUser | null | undefined, project: Project
   // EDIT via their role sections; this only newly admits the management tier.
   const canEdit =
     sections.includes("EDIT") || !!user?.permissions_set?.has("projects.manage");
+  /* Granular FINANCIAL grant — the same additive shape as canSensitive and
+     canEdit above, and it was the one missing. `projects.finance.view` has
+     existed since 2026-07-23 for exactly this ("a specific non-director role
+     may be given finance-view explicitly, e.g. the BD role"), isFinanceViewer
+     honours it, and the BD Exec role HOLDS it — but this flag read the section
+     list alone, so the project-detail GET stripped `finance` + `finance_lines`
+     from a user the system had already granted finance view. A permission that
+     three of its four readers ignore is not a permission.
+
+     The damage was not a blank panel. QuickRentalField decides between PATCH
+     and CREATE by counting the rental lines it can SEE, so a holder of this
+     permission typed a rental, got an empty box back, retyped — and booked a
+     duplicate line every time: 12 lines on one project, a rental box reading
+     201,195 for an event whose rental was 18,126 (owner, 2026-09-04, "why
+     since yesterday i key in rental amount suddenly auto deleted"). */
+  const canFinancial =
+    sections.includes("FINANCIAL") || !!user?.permissions_set?.has("projects.finance.view");
   return {
     role,
     canOpen: role !== "NONE",
     canEdit,
-    canFinancial: sections.includes("FINANCIAL"),
+    canFinancial,
     canRental: sections.includes("RENTAL"),
     canPayment: sections.includes("PAYMENT"),
     canSensitive,
