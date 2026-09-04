@@ -252,11 +252,13 @@ async function main() {
   // ── what each bucket looks like NOW, and what the plan says it becomes ────
   note('');
   note('=== BEFORE / AFTER, per lot (read now; re-read and re-asserted inside each write txn) ===');
-  const before = new Map();
+  /* Read for the OPERATOR, not for the assertion. The apply path re-takes this
+     snapshot inside each lot's own transaction and asserts against THAT one —
+     a number read out here, minutes and a connection earlier, is a picture, not
+     a guarantee. */
   for (const p of plan) {
     const l = byLot.get(p.lotId);
     const snap = await snapshot(sql, l);
-    before.set(p.lotId, snap);
     note(`  ${String(p.itemCode).slice(0, 30).padEnd(30)} on hand ${String(snap.qtyRemaining).padStart(5)} -> ${String(snap.qtyRemaining).padStart(5)} | value ${rm(snap.valueSen).padStart(14)} -> ${rm(snap.valueSen + p.valueDeltaSen).padStart(14)} | settled COGS ${snap.cogsRows} row(s), ${snap.cogsQty} units, ${rm(snap.cogsCostSen)} -> unchanged`);
   }
   const [tot] = await sql`
