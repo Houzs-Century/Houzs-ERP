@@ -180,6 +180,52 @@ async function main() {
       + ' line to be fully delivered, so a partial delivery correctly does not advance.');
   }
 
+  /* WHY THEY STAYED — the section this script did not have on its first run, and
+     needed within the hour.
+
+     PLAN reported "0 of 61 would advance" and that refuted the account of the
+     defect I had just written. A plan that says only how many moved cannot tell
+     a conservative rule doing its job from an engine with nothing to read. The
+     two are opposite findings and they look identical from the outside, so the
+     script has to distinguish them itself.
+
+     `isSoFullyCovered` sums DO line QUANTITIES per sales-order line — and an
+     unlinked DO line is attributed by item code first (do-unlinked-coverage), so
+     a missing `so_item_id` is NOT the explanation on its own. What no attribution
+     can survive is a delivery order with NO LINE ROWS AT ALL: a header-only
+     import leaves nothing to attribute, coverage is zero for every line, and the
+     order can never advance however complete the shipment really was. */
+  const why = await pg`
+    SELECT s.doc_no,
+           (SELECT count(*) FROM scm.mfg_sales_order_items i
+             WHERE i.doc_no = s.doc_no AND coalesce(i.cancelled, false) = false)::int AS so_lines,
+           (SELECT count(*) FROM scm.delivery_order_items di
+              JOIN scm.delivery_orders d2 ON d2.id = di.delivery_order_id
+             WHERE d2.so_doc_no = s.doc_no
+               AND upper(coalesce(d2.status::text, '')) NOT IN ('CANCELLED', 'DRAFT'))::int AS do_lines,
+           (SELECT count(*) FROM scm.delivery_order_items di
+              JOIN scm.delivery_orders d2 ON d2.id = di.delivery_order_id
+             WHERE d2.so_doc_no = s.doc_no
+               AND di.so_item_id IS NOT NULL
+               AND upper(coalesce(d2.status::text, '')) NOT IN ('CANCELLED', 'DRAFT'))::int AS do_lines_linked
+      FROM scm.mfg_sales_orders s
+     WHERE s.doc_no = ANY(${docNos})
+     ORDER BY s.doc_no`;
+  const noDoLines = why.filter((r) => r.do_lines === 0);
+  const someUnlinked = why.filter((r) => r.do_lines > 0 && r.do_lines_linked < r.do_lines);
+  notice('WHY THEY STAYED:');
+  notice(`  ${noDoLines.length} of ${why.length} have a delivery order with NO LINE ROWS AT ALL —`
+    + ' nothing to attribute, so coverage is zero however complete the shipment was.'
+    + ' A header-only import looks exactly like this.');
+  notice(`  ${someUnlinked.length} have delivery-order lines that carry no sales-order line`
+    + ' pointer (attributed by item code, so not fatal on their own).');
+  notice(`  ${why.length - noDoLines.length} have delivery-order lines to read.`);
+  for (const r of why.slice(0, 10)) {
+    notice(`  ${r.doc_no}: ${r.so_lines} SO line(s), ${r.do_lines} DO line(s)`
+      + ` (${r.do_lines_linked} linked)`);
+  }
+  if (why.length > 10) notice(`  ... and ${why.length - 10} more`);
+
   if (!APPLY) {
     notice('PLAN only — nothing was written. Re-run with APPLY=1 and CONFIRM_COMPANY='
       + `${COMPANY} to commit.`);
