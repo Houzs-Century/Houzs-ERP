@@ -850,3 +850,19 @@ bundle); `frontend/src/pages/scm-v2/PaymentVouchers.test.tsx` pins that
 every row ticks, a POSTED row offers Print and no approval button, and a
 ROW click ticks nothing; `frontend/src/vendor/scm/components/DataGrid.test.tsx`
 pins both sides of `checkboxOnly` (the default row-click tick stays).
+
+## §12 Voucher numbering — the owner's levers (GL redesign item 8a, 2026-09-05)
+
+`scm.acc_bank_letters` (one prefix letter per money account — Maybank M means
+the `{co}-MPV-YYMM-NNN` series; UNIQUE per company+letter, because two banks on
+one letter would share a series) and `scm.acc_numbering` (suffix width 3-5 —
+his 如果到时我要 2990-MPV-2609-0001 呢; width is display-only, the parsers take
+any length, so changing it renumbers nothing). Maintained by the owner on the
+**Voucher numbering** card of /scm/settlement-setup (`GET/PUT
+/accounting/numbering`, handlers in accounting-numbering.ts) — a new bank is a
+letter typed there, never a deploy. `mintMonthlyDocNo` / `nextMonthlyDocNo`
+take the width as a parameter (default 3, callers unchanged). The migration
+also parked the only two existing vouchers (both DRAFT) on the
+`2990-Draft-YYMM-NNN` series — draft 不占正式号; item 8b mints the formal
+per-bank number at CHECKED. The OR channels (item 9) and transfers (item 10)
+read the SAME letter table. Pinned by backend/tests/voucherNumbering.test.ts.

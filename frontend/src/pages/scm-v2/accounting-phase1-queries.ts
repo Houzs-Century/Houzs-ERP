@@ -222,3 +222,25 @@ export const useRunStockClose = () => {
     onError: writeFailedAs('Month-end run failed'),
   });
 };
+
+/* ── Voucher numbering (GL redesign item 8a) — per-bank letters + width. ── */
+
+export type NumberingAccount = { accountCode: string; accountName: string; letter: string | null };
+
+export const useVoucherNumbering = () => useQuery({
+  queryKey: ['voucher-numbering'],
+  queryFn: () => authedFetch<{ digits: number; accounts: NumberingAccount[] }>(`/accounting/numbering`),
+  staleTime: 30_000,
+  retry: retryUnlessClientError,
+  retryDelay: 800,
+});
+
+export const useSaveVoucherNumbering = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { digits?: number; letters?: Array<{ accountCode: string; letter: string }> }) =>
+      authedFetch<{ ok: boolean }>(`/accounting/numbering`, { method: 'PUT', body: JSON.stringify(body) }),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['voucher-numbering'] }); },
+    onError: writeFailedAs('Numbering not saved'),
+  });
+};
