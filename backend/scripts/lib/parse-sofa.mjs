@@ -65,8 +65,18 @@ function unlabelledColour(d2raw, knownColour) {
        M2402, SL0095, HR 805. A piece token reads the other way round (2L, 1NA,
        3S), and a size has no letters at all. That one asymmetry separates them
        without having to enumerate the piece vocabulary, which would rot the
-       moment a new compartment is minted. */
-    if (!/[A-Z]\s?\d/i.test(t)) continue;
+       moment a new compartment is minted.
+
+       The SEPARATOR between the two halves is what this used to miss. A series
+       that is a WORD numbers itself with a DASH - MODENZA-05, CHINO-06,
+       GARFIELD-01, GUARDIAN-05, TARONI-01, NV-01 - and "letter IMMEDIATELY
+       before digit" excluded every one of them, so a document that leads with
+       "MODENZA-05 (DARK OLIVE)/35inch/1R+1R" reached the ERP carrying no colour
+       at all while the library held the row. A piece token still cannot pass:
+       it reads digit-then-letter whichever separator is allowed. And this is a
+       PRE-FILTER in front of knownColour, never the guard - the library still
+       has to confirm whatever gets through. */
+    if (!/[A-Z]\s?[-#]?\s?\d/i.test(t)) continue;
     if (/^\d+\s*(?:"|”|inch|cm)?$/i.test(t)) continue;                // a bare size
     if (/^(?:size|seat)\b/i.test(t)) continue;                        // a labelled size
     if (/\+/.test(t) && /^[\d+ACLNPRSTacnprst()\s]+$/.test(t)) continue; // a piece list
