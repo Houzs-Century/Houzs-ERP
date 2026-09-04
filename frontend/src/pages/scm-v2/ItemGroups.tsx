@@ -196,7 +196,7 @@ export const ItemGroupsTab = () => {
 
       {(bind.isError || create.isError || patchGroup.isError) && (
         <div style={{ fontSize: 'var(--fs-13)', color: 'var(--c-danger, #a33)' }}>
-          {String((bind.error ?? create.error ?? patchGroup.error as { message?: string } | null)?.message ?? 'The change was not saved.')}
+          {String(((bind.error ?? create.error ?? patchGroup.error) as { message?: string } | null)?.message ?? 'The change was not saved.')}
         </div>
       )}
 
