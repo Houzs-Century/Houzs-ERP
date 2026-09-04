@@ -1136,6 +1136,50 @@ blank).` It is not part of the lifecycle above.
 > the case matches. The same hole is open on `delivery-returns.ts` and
 > `consignment-returns.ts`.
 
+### A shipped delivery order keeps its line rows — the integrity lock (2026-09-04)
+
+**The invariant.** A delivery order that counts as delivered (`doCountsAsDelivered`:
+every state but DRAFT and CANCELLED) holds at least one row in
+`delivery_order_items`, and a header with an inventory OUT movement is never
+deleted. An empty shipped document is not "a delivery that un-happened"; it is
+broken evidence, and every reader that meets it gets the wrong answer.
+
+**Why it is written down.** Three 2990 delivery orders (2607-016/018/019) carried
+`line_count`, money and OUT movements from 2026-07-23 while their 8 rows sat
+under three header ids that no longer existed — the FK is ON DELETE CASCADE and
+validated, so the writer bypassed it, and that writer is not in this repository.
+Nothing noticed for six weeks because the SOs were already DELIVERED. On
+2026-09-02 a QR-scan batch (`publicDoScan.ts`, actor = the pinned system staff)
+marked 24 deliveries DELIVERED one after another; `syncSoDeliveredFromDo` re-derived
+coverage for each SO, read the three empty documents as "nothing delivered", and
+released 2990-SO-2606-003/018/033 from DELIVERED to READY_TO_SHIP. MRP then
+planned sofas already in the customers' homes, and SO-2606-003's ghost demand
+(delivery 24/07, earliest in the pool) took PO-2608-035 away from SO-2606-011, the
+order it was raised for. The same shape had been hand-repaired once already
+(DO-2607-017, 2026-08-17, "DO line rebuild"). Owner: 「这个问题修了很多次了」.
+Ledger: `docs/bugs/0637`.
+
+**The three locks, and which layer each covers.**
+
+| Lock | Where | What it refuses / reports |
+|---|---|---|
+| Database | mig `20260904T0800_scm_do_line_integrity_lock.sql` — `trg_do_header_delete_lock` (BEFORE DELETE on `delivery_orders`), `trg_do_line_integrity_lock` (deferred CONSTRAINT TRIGGER on `delivery_order_items`, AFTER DELETE OR UPDATE OF `delivery_order_id`) | Deleting a header that has an OUT movement; ending a transaction with a shipped document (past LOADED, or LOADED with an OUT movement) at zero rows. `check_violation`, message `do_header_integrity: …` / `do_line_integrity: …`. Deferred, so delete-then-reinsert inside one transaction is still legal. |
+| Sync | `lib/so-delivery-sync.ts` — `emptyLiveDeliveries` (pure, tested in `so-delivery-sync.test.ts`) in front of the release arm | The DELIVERED → READY_TO_SHIP release fires only on positive evidence. If any delivery order naming the SO counts as delivered and holds no rows, the SO is HELD at DELIVERED and one `RELEASE_REFUSED` audit row per SO per day names the document. Best-effort: a failed census behaves as before. |
+| Watch | `scripts/do-link-orphan-sentinel.mjs` (hourly, alarms) and `scripts/check-do-integrity.mjs` R5/R5b (on demand) | Shipped documents with zero rows, and line rows whose header does not exist. Baseline ZERO for both — an empty shipped document is never an answer. |
+
+**Repairing one when it happens anyway.** Find the rows by the SO's line ids
+(`delivery_order_items.so_item_id`), which survive the header swap; re-parent them
+with `UPDATE … SET delivery_order_id = <live header>`; then restore the SO to
+DELIVERED with a `mfg_so_status_changes` + `mfg_so_audit_log` pair, `source =
+'repair'`. A repair that must genuinely empty or delete a shipped document runs
+`SET session_replication_role = replica` for its transaction and says so in the
+audit row — the triggers are ordinary, not ENABLE ALWAYS.
+
+**The scan batch was not the bug.** `publicDoScan.ts` did what a driver's scan
+does; the delivered_at it stamped is the scan time (the DOs were created
+DISPATCHED-style on 2026-07-23 and never closed). It was the reader that turned a
+missing row into an un-delivery, and that reader is now the one that holds.
+
 ### `delivery_state` means THREE different things — do not read across them
 
 | Field | Where | Values | Computed by |
