@@ -306,7 +306,7 @@ async function main() {
                  ${p.splitQty}, ${p.splitQty}, ${p.splitUnitCostSen},
                  received_at, source_doc_type, source_doc_id, source_doc_no,
                  movement_id, batch_no,
-                 LTRIM(COALESCE(notes, '') || E'\n' || ${marker}, E'\n'),
+                 LTRIM(COALESCE(notes, '') || CHR(10) || ${marker}, CHR(10)),
                  created_by, company_id
             FROM scm.inventory_lots WHERE id = ${p.lotId}
           RETURNING id, received_at`;
