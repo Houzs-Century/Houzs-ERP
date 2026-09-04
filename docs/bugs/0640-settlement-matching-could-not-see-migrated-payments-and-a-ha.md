@@ -1,6 +1,6 @@
 ## Settlement matching could not see migrated payments, and a half-failed upload held its file hostage [high]
 
-<!-- area: Merchant reconciliation -->
+<!-- area: Accounting + GL -->
 
 **Symptom.** The owner, 2026-09-04: 「我发现我 upload 了好像对不上，你可以帮我
 确定现在他会链接 sales order 那边输入的资料吗？」. His first four real MBB
