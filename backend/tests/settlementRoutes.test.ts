@@ -278,6 +278,24 @@ describe('POST /settlement/batches — a bad upload is loud', () => {
     expect(await again.json()).toMatchObject({ error: 'already_uploaded' });
     expect(sb.tables.acc_settlement_batches).toHaveLength(1);
   });
+
+  /* An upload that wrote its batch head and then died left a batch with NO
+     lines still holding the file hash — and told the operator "already
+     uploaded" about an upload that never finished (the owner's PBB statement
+     of 2026-08-01 sat exactly like this). The retry must be let in. */
+  test('a half-failed upload does not hold its file hostage — the retry replaces the wreck', async () => {
+    const { app, sb } = harness({ mfg_sales_order_payments: [soPayment()] });
+    expect((await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT })).status).toBe(200);
+    // Simulate the half-failure: the lines vanish, the batch head remains.
+    sb.tables.acc_settlement_rows = [];
+    sb.tables.acc_settlement_matches = [];
+
+    const retry = await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT });
+    expect(retry.status).toBe(200);
+    // One batch — the retry's, whole this time — never the wreck plus a twin.
+    expect(sb.tables.acc_settlement_batches).toHaveLength(1);
+    expect(sb.tables.acc_settlement_rows).toHaveLength(2);
+  });
 });
 
 describe('POST /settlement/batches — the four piles', () => {
