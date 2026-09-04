@@ -353,28 +353,37 @@ async function main() {
        NOT in that shape is the assertion; a count of rows touched would have
        passed even if every cost had landed on the wrong half. */
     const assertShape = async () => {
-      const closedWrong = await check`
-        SELECT id, qty_received, qty_remaining, unit_cost_sen FROM scm.inventory_lots
-         WHERE id = ANY(${done.map((p) => p.lotId)})
-           AND NOT (qty_remaining = 0 AND COALESCE(unit_cost_sen, 0) = 0)`;
-      const openWrong = await check`
-        SELECT n.id, n.qty_received, n.qty_remaining, n.unit_cost_sen, n.received_at, o.received_at AS origin_received_at
-          FROM scm.inventory_lots n JOIN scm.inventory_lots o ON o.id = ANY(${done.map((p) => p.lotId)})
-         WHERE n.id = ANY(${done.map((p) => p.newLotId)}) AND n.movement_id = o.movement_id
-           AND NOT (n.qty_received = n.qty_remaining AND n.unit_cost_sen > 0 AND n.received_at = o.received_at)`;
-      return { closedWrong, openWrong };
+      /* Both halves are fetched by id and paired in JS against the plan, never
+         joined to each other in SQL. A join that matches nothing reports zero
+         wrong rows and reads as a pass — the failure mode this repo keeps
+         paying for. Here a missing row is itself a violation. */
+      const rows = await check`
+        SELECT id::text AS id, qty_received, qty_remaining, COALESCE(unit_cost_sen, 0) AS unit_cost_sen,
+               received_at
+          FROM scm.inventory_lots
+         WHERE id = ANY(${[...done.map((p) => p.lotId), ...done.map((p) => p.newLotId)]})`;
+      const seen = new Map(rows.map((r) => [String(r.id), r]));
+      const wrong = [];
+      for (const p of done) {
+        const closed = seen.get(String(p.lotId));
+        const open = seen.get(String(p.newLotId));
+        if (!closed) { wrong.push(`${p.itemCode}: the closed half ${p.lotId} is GONE`); continue; }
+        if (!open) { wrong.push(`${p.itemCode}: the open half ${p.newLotId} is GONE`); continue; }
+        if (Number(closed.qty_remaining) !== 0 || Number(closed.unit_cost_sen) !== 0 || Number(closed.qty_received) !== p.keepQty) {
+          wrong.push(`${p.itemCode}: closed half is received ${closed.qty_received} / on hand ${closed.qty_remaining} @ ${closed.unit_cost_sen}, expected ${p.keepQty} / 0 @ 0`);
+        }
+        if (Number(open.qty_received) !== p.splitQty || Number(open.qty_remaining) !== p.splitQty || Number(open.unit_cost_sen) !== p.splitUnitCostSen) {
+          wrong.push(`${p.itemCode}: open half is received ${open.qty_received} / on hand ${open.qty_remaining} @ ${open.unit_cost_sen}, expected ${p.splitQty} / ${p.splitQty} @ ${p.splitUnitCostSen}`);
+        }
+        if (String(open.received_at) !== String(closed.received_at)) {
+          wrong.push(`${p.itemCode}: the open half sits at ${open.received_at}, the original at ${closed.received_at} — FIFO position MOVED`);
+        }
+      }
+      return wrong;
     };
-    const { closedWrong, openWrong } = await assertShape();
-    if (closedWrong.length) bad(`${closedWrong.length} closed half/halves are not (on hand 0, cost 0): ${closedWrong.map((r) => r.id).join(', ')}`);
-    else note(`  every one of the ${done.length} closed halves reads on hand 0 at cost 0 — settled COGS untouched`);
-    if (openWrong.length) bad(`${openWrong.length} open half/halves are not (received = on hand, cost > 0, same received_at): ${openWrong.map((r) => r.id).join(', ')}`);
-    else note(`  every one of the ${done.length} open halves reads received = on hand, at a real cost, at the original received_at`);
-
-    const wrongCost = await check`
-      SELECT id, item_code, unit_cost_sen FROM scm.inventory_lots
-       WHERE id = ANY(${done.map((p) => p.newLotId)})
-         AND unit_cost_sen <> ANY(${[...new Set(done.map((p) => p.splitUnitCostSen))]})`;
-    note(`  ${wrongCost.length === 0 ? 'every' : `${done.length - wrongCost.length} of ${done.length}`} open half carries a cost the plan actually chose`);
+    const wrongShape = await assertShape();
+    if (wrongShape.length) for (const w of wrongShape) bad(`  ${w}`);
+    else note(`  all ${done.length} pair(s) read back correctly: the closed half on hand 0 at cost 0, the open half received = on hand at the planned cost, both at the same received_at`);
 
     const [after] = await check`
       SELECT COALESCE(SUM(qty_remaining::bigint * unit_cost_sen), 0)::bigint AS value_sen,
