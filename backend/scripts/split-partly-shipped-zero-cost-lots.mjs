@@ -47,6 +47,17 @@
        open lot at the same instant, so the id tiebreak never decides anything
        here — measured, not assumed.
 
+   THE ONE THING THAT IS RESTATED, said plainly rather than buried. The original
+   row's `qty_received` goes from 633 to 5. It has to: check-stock-truth.mjs's
+   B1 invariant is `qty_remaining = qty_received - consumed` per layer, so a row
+   left at "received 633, consumed 5, on hand 0" would be BROKEN by exactly the
+   628 units that moved to the sibling. Nothing about the receipt is lost — the
+   two rows still sum to 633, the movement still records 633 units, and the
+   consumption rows are untouched — but the number on THAT row changes, and the
+   schema offers no way to split a layer without it. If that is not acceptable,
+   the alternative is to leave these 2,590 units at zero cost, which is what
+   today already does.
+
    THE RECEIPT MOVEMENT is re-valued at what is actually capitalised — on-hand x
    cost — NOT at received x cost. The consumed units left at zero and that is
    settled, so booking the whole receipt would put money on the books that no

@@ -44,6 +44,16 @@ assumed, are what make the split safe:
 | the FIFO trigger is `AFTER INSERT ON scm.inventory_movements` only | `pg_trigger` | inserting a LOT fires nothing; UPDATEing a movement fires nothing |
 | FIFO is `received_at ASC, id ASC`, and 0 of the 34 buckets has another open lot at the same instant | `scm.fn_consume_fifo`; measured | inheriting `received_at` is sufficient — the id tiebreak never decides anything here |
 
+**What the schema would NOT let us do cleanly, said plainly.** The original
+row's `qty_received` is RESTATED, 633 -> 5. `check-stock-truth.mjs`'s B1
+invariant is `qty_remaining = qty_received - consumed` per layer, so leaving the
+row at "received 633, consumed 5, on hand 0" would break it by exactly the 628
+units that moved to the sibling. Nothing about the receipt is lost — the two
+rows still sum to 633, the movement still records 633 units, the consumption
+rows are untouched — but that one number on that one row changes, and the schema
+offers no way to split a layer without it. The alternative is to leave the 2,590
+units at zero, which is what today already does.
+
 Pinned by `backend/scripts/lib/split-partly-shipped-lots.test.mjs`, 15 tests
 over production numbers, **proved RED on the unfixed tree first** (15 tests, 1
 pass, 14 fail against a stub). They fix the split arithmetic, every refusal
