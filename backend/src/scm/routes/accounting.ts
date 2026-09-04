@@ -52,6 +52,7 @@ import {
 import { itemGroupsList, itemGroupCreate, itemGroupBind, itemGroupPatch } from './accounting-item-groups';
 import { piPeriodicBackfill } from './accounting-pi-backfill';
 import { stockCloseStatus, stockCloseRun } from './accounting-stock-close';
+import { pnlReport, balanceSheetReport } from './accounting-reports';
 import { dateOrNull } from '../lib/date-coerce';
 
 /* THE GENERAL LEDGER HAD NO PERMISSION CHECK AT ALL — eleven routes, zero
@@ -131,6 +132,10 @@ accounting.post('/backfill/pi-periodic', piPeriodicBackfill);
    the manual run — the nightly close itself fires from the cron. */
 accounting.get('/stock-close', stockCloseStatus);
 accounting.post('/stock-close/run', stockCloseRun);
+/* The standard statements (GL redesign item 6) — one source (v_gl_entries),
+   AutoCount arithmetic; handlers in accounting-reports.ts. */
+accounting.get('/reports/pnl', pnlReport);
+accounting.get('/reports/balance-sheet', balanceSheetReport);
 accounting.post('/item-groups', itemGroupCreate);
 accounting.put('/item-groups/:code/accounts', itemGroupBind);
 accounting.patch('/item-groups/:code', itemGroupPatch);

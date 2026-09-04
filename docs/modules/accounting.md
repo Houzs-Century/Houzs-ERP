@@ -462,6 +462,22 @@ accounting-stock-close.ts, cron branch `5 16 * * *` in index.ts; pinned by
 acc/stock-close.test.ts. Month-close LOCKING is deliberately later — the
 owner signs that design off separately.
 
+**The standard statements (GL redesign item 6).** P&L and Balance Sheet tabs
+on /scm/accounting, standard layout first (the owner iterates the 样板 later
+— his call; the NUMBERS ship now). One source — `v_gl_entries`, posted and
+not reversed — so they can never argue with the Journal/GL/TB tabs beside
+them. The P&L follows his AutoCount arithmetic under the periodic scheme:
+trading income = INCOME outside the 700-0000 tree (the chart badge's own
+walker), cost of sales = the 6xx EXPENSE codes with the month-close 620 pair
+included (gross profit therefore reads purchases + opening − closing with no
+stock arithmetic in the report itself), other income = the 700 tree, expenses
+= the rest; the balance sheet cuts the same read at a date, shows cumulative
+earnings inside equity, and carries its own self-check line — assets −
+liabilities − equity − earnings prints BALANCED at zero or the difference in
+red, never absorbed. Handlers in accounting-reports.ts
+(`GET /accounting/reports/pnl?from&to`, `/reports/balance-sheet?asOf`), UI in
+Reports.tsx; pinned by tests/accountingReports.test.ts + Reports.test.tsx.
+
 **A half-failed upload cannot hold its file hostage.** The upload writes the
 batch head first and its lines after; a failure between the two used to leave
 a batch with no lines still owning the file hash, so the SAME file was refused
