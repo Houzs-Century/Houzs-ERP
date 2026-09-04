@@ -113,6 +113,25 @@ describe('fold / edit / delete — the owner points 1, 2 and 4', () => {
     expect(screen.getByText(/SCC · control/)).toBeTruthy();
   });
 
+  test('the LIST scrolls inside its card and the header row sticks (owner 2026-09-04: 往下滑时看不到 header / 按 edit 时要跑回上去)', () => {
+    const { container } = draw();
+    /* The table's scroll container is the card body, not the page — that is
+       what keeps the Edit/Add panels above it always in sight, and what
+       gives sticky a scroll context .card{overflow:hidden} can't swallow. */
+    const scroller = container.querySelector('table')!.parentElement as HTMLElement;
+    expect(scroller.style.overflowY).toBe('auto');
+    expect(scroller.style.maxHeight).not.toBe('');
+    /* Every header cell sticks with a solid background — a transparent
+       sticky th lets rows show through it. */
+    const ths = [...container.querySelectorAll('thead th')] as HTMLElement[];
+    expect(ths.length).toBeGreaterThan(0);
+    for (const th of ths) {
+      expect(th.style.position).toBe('sticky');
+      expect(th.style.top).toBe('0px');
+      expect(th.style.background).not.toBe('');
+    }
+  });
+
   test('changing the code confirms 改码全账跟 and calls the rename with both codes', async () => {
     renameAsync.mockClear(); confirmFn.mockClear();
     draw();
