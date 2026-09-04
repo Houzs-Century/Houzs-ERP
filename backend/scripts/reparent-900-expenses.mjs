@@ -23,7 +23,11 @@
 
    MODE=plan (default) writes NOTHING — it lists what would move, per
    company. MODE=apply needs the CONFIRM sentence, like every repair
-   workflow here. Idempotent: a second apply matches zero rows. */
+   workflow here.
+
+   RE-RUN: a second apply matches ZERO rows (everything already carries
+   parent_code = 900-0000, and the WHERE takes only parentless rows) — pure
+   idempotence; plan can be run any number of times. */
 
 import postgres from "postgres";
 
@@ -90,10 +94,33 @@ try {
     RETURNING company_id`;
   console.log(`APPLIED — ${updated.length} row(s) re-parented under ${TARGET}.`);
 
-  const left = await sql`
-    SELECT count(*)::int AS n FROM scm.accounts
-    WHERE parent_code IS NULL AND account_code LIKE '900-%' AND account_code <> ${TARGET}`;
-  console.log(`verify: ${left[0].n} 900-x root(s) remain outside ${TARGET} (expected 0).`);
+  /* FRESH-CONNECTION verification, asserting the SHAPE the chart must now
+     have — not a row count. A row that dodged the UPDATE (or a write that
+     silently landed elsewhere) is what this catches. */
+  const fresh = postgres(DSN, { ssl: "require", prepare: false, max: 1 });
+  try {
+    const stray = await fresh`
+      SELECT company_id, account_code, COALESCE(parent_code, '(root)') AS parent_code
+      FROM scm.accounts
+      WHERE account_code LIKE '900-%'
+        AND account_code <> ${TARGET}
+        AND account_type = 'EXPENSE'
+        AND parent_code IS NULL`;
+    const under = await fresh`
+      SELECT company_id, count(*)::int AS n
+      FROM scm.accounts
+      WHERE parent_code = ${TARGET}
+      GROUP BY company_id ORDER BY company_id`;
+    for (const r of under) console.log(`fresh verify: company ${r.company_id} now has ${r.n} account(s) under ${TARGET}`);
+    if (stray.length > 0) {
+      console.error(`FRESH VERIFY FAILED — ${stray.length} 900-x EXPENSE root(s) still parentless:`);
+      for (const r of stray) console.error(`  co${r.company_id} ${r.account_code} parent=${r.parent_code}`);
+      process.exit(1);
+    }
+    console.log("fresh verify: 0 parentless 900-x EXPENSE roots remain — the family hangs whole.");
+  } finally {
+    await fresh.end({ timeout: 5 });
+  }
 } finally {
   await sql.end({ timeout: 5 });
 }
