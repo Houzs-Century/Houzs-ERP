@@ -50,6 +50,7 @@ import {
   chartRenameHandler, chartUpdateHandler, chartDeleteHandler, chartCreateHandler,
 } from './accounting-chart';
 import { itemGroupsList, itemGroupCreate, itemGroupBind, itemGroupPatch } from './accounting-item-groups';
+import { piPeriodicBackfill } from './accounting-pi-backfill';
 import { dateOrNull } from '../lib/date-coerce';
 
 /* THE GENERAL LEDGER HAD NO PERMISSION CHECK AT ALL — eleven routes, zero
@@ -121,6 +122,10 @@ accounting.get('/bank/setup', bankSetup);
    decide WHICH purchase/sales account a document line posts to. Handlers in
    accounting-item-groups.ts. */
 accounting.get('/item-groups', itemGroupsList);
+/* One-shot ledger repair (GL redesign item 3): every posted PI reaches the
+   periodic shape — missing journals posted, Dr-330 journals reversed and
+   re-posted — through the SAME functions live documents use. dryRun first. */
+accounting.post('/backfill/pi-periodic', piPeriodicBackfill);
 accounting.post('/item-groups', itemGroupCreate);
 accounting.put('/item-groups/:code/accounts', itemGroupBind);
 accounting.patch('/item-groups/:code', itemGroupPatch);
