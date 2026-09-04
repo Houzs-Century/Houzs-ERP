@@ -17,7 +17,7 @@
 // where a person adjusts afterwards. The file itself never enters the repo.
 // ----------------------------------------------------------------------------
 
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import * as XLSX from 'xlsx';
 import { ChevronDown, ChevronRight, Pencil, Plus, Trash2, Upload } from 'lucide-react';
 import { Button } from '@2990s/design-system';
@@ -198,6 +198,14 @@ export const ChartOfAccounts = () => {
   const [editName, setEditName] = useState('');
   const [editType, setEditType] = useState<ChartRow['type']>('ASSET');
   const [editParent, setEditParent] = useState('');
+  /* With the list scrolling inside its card the panel is normally already on
+     screen; this nudge covers the remainder (a small window, the Add form
+     open too). Optional-called — jsdom has no scrollIntoView. */
+  const editPanelRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- lib.dom types scrollIntoView as always-present; jsdom (the test runtime) has none
+    if (editing) editPanelRef.current?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
+  }, [editing]);
   const openEdit = (row: ChartRow) => {
     setEditing(row);
     setEditCode(row.code);
@@ -535,7 +543,7 @@ export const ChartOfAccounts = () => {
       )}
 
       {editing && (
-        <section className={styles.card}>
+        <section className={styles.card} ref={editPanelRef}>
           <div className={styles.cardHeader}>
             <h2 className={styles.cardTitle}>Edit {editing.code}</h2>
           </div>
@@ -581,7 +589,15 @@ export const ChartOfAccounts = () => {
             tick = the company uses it · unticking a header takes its children · headers never book (父户不记账)
           </span>
         </div>
-        <div className={styles.cardBody} style={{ overflowX: 'auto' }}>
+        {/* The LIST scrolls inside the card, not the page (owner 2026-09-04:
+            按 edit 时要跑回上去 / 往下滑时看不到 header). With the page short,
+            the Edit/Add panels above this card stay in sight wherever you are
+            in the list — press ✎ on row 400 and the panel is right there, and
+            saving leaves the list where you were. And a scroll container of
+            its OWN is what lets the header row stick: .card carries
+            overflow:hidden (its rounded corners), which would swallow a
+            page-scroll sticky. */}
+        <div className={styles.cardBody} style={{ overflowX: 'auto', overflowY: 'auto', maxHeight: 'calc(100vh - 260px)' }}>
           {unionQ.isLoading && <div style={{ fontSize: 'var(--fs-13)' }}>Loading the chart…</div>}
           {unionQ.error != null && (
             <div className={styles.bannerWarn}>
@@ -596,14 +612,30 @@ export const ChartOfAccounts = () => {
           {accounts.length > 0 && (
             <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 'var(--fs-13)' }}>
               <thead>
-                <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--border-weak, #e3e1da)' }}>
-                  <th style={{ padding: '6px 8px' }}>Code</th>
-                  <th style={{ padding: '6px 8px' }}>Name</th>
-                  <th style={{ padding: '6px 8px' }}>Type</th>
-                  {companies.map((co) => (
-                    <th key={co.id} style={{ padding: '6px 8px', textAlign: 'center' }}>{co.code}</th>
-                  ))}
-                  {canManage && <th style={{ padding: '6px 8px' }} aria-label="actions" />}
+                {/* Sticky INSIDE the card's scroll (see the cardBody note).
+                    Solid background + inset shadow instead of the old tr
+                    border — a border on the <tr> does not travel with sticky
+                    cells, the shadow does. */}
+                <tr style={{ textAlign: 'left' }}>
+                  {(() => {
+                    const stickyTh = {
+                      position: 'sticky' as const, top: 0, zIndex: 5,
+                      background: 'var(--c-paper, #fff)',
+                      boxShadow: 'inset 0 -1px var(--border-weak, #e3e1da)',
+                      padding: '6px 8px',
+                    };
+                    return (
+                      <>
+                        <th style={stickyTh}>Code</th>
+                        <th style={stickyTh}>Name</th>
+                        <th style={stickyTh}>Type</th>
+                        {companies.map((co) => (
+                          <th key={co.id} style={{ ...stickyTh, textAlign: 'center' }}>{co.code}</th>
+                        ))}
+                        {canManage && <th style={stickyTh} aria-label="actions" />}
+                      </>
+                    );
+                  })()}
                 </tr>
               </thead>
               <tbody>

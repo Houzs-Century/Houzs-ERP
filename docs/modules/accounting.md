@@ -238,7 +238,15 @@ link over — it used to create the row in whichever company the caller stood
 in, which is exactly the two-doors drift the owner called out. Its
 read-only tree got legible the same day (the owner, that table in hand:
 父子account不是很明显): headers render BOLD with a `header` tag like the
-union page's, children step in behind a └ glyph, parents column muted. Detail
+union page's, children step in behind a └ glyph, parents column muted.
+Since 2026-09-04 (owner: 按 edit 时要跑回上去 / 往下滑时看不到 header) the
+union LIST scrolls inside its card (`frontend/src/pages/scm-v2/ChartOfAccounts.tsx`
+cardBody: maxHeight + overflowY) — the page stays short so the Edit/Add
+panels above the card are always in sight, and the card's own scroll is
+what lets the header row stick (th sticky, solid background;
+`.card{overflow:hidden}` would swallow a page-scroll sticky). Opening ✎
+also nudges the panel into view (`scrollIntoView`, optional-called — jsdom
+has none). Pinned in `ChartOfAccounts.test.tsx`. Detail
 accounts for other debtors/creditors are children under the 305-0000 /
 405-0000 controls, one per counterparty, opened through this same door.
 The Add form also speaks the vocabulary (the owner, SFA/SAD pairs in hand:
