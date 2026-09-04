@@ -259,7 +259,7 @@ export function buildVariantSummary(
      same SPECIAL segment: whoever makes the item needs ONE list of the customer's
      requests, not two. A code the operator has since picked properly wins, so it
      is never printed twice. See
-     docs/bugs/0624-298-migrated-lines-lost-their-special-order-because-recordin.md
+     docs/bugs/0636-298-migrated-lines-lost-their-special-order-because-recordin.md
      and backend/scripts/record-priced-specials-on-migrated-lines.mjs. */
   const picked = foldRedundantSpecials(specialsList(variants.specials ?? variants.special));
   const recordedRaw = specialsList(variants.specialsRecorded)
