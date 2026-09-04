@@ -1,4 +1,3 @@
-// @vitest-project light
 // The announcement rich-body canonicaliser (src/lib/announcementRichText.ts).
 //
 // The renderer hands the stored HTML to innerHTML, so the ONLY thing standing

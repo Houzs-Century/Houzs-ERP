@@ -1,4 +1,3 @@
-// @vitest-project light
 // translate-announcement.ts — the rich-body leg.
 //
 // When a notice was composed with formatting, the translator is sent the
