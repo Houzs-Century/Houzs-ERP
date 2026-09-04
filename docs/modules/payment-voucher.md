@@ -167,17 +167,20 @@ Payment. So the New page is TWO documents on one route:
 account picker types-to-search** (同日: 我无法快速打关键字眼搜索account):
 `AccountSelect` is a `SearchCombo` underneath — every space-separated token
 must match the "code · name" label — and the AP Payment's supplier picker
-searches the same way. Since 2026-09-04 the panel is VIEWPORT-AWARE
+searches the same way. Since 2026-09-04 the panel is a **BODY PORTAL,
+positioned fixed** off the input's live rect
 (`frontend/src/vendor/scm/components/SearchCombo.tsx`, pinned in
-`SearchCombo.test.tsx`): it used to open DOWN unconditionally at 280px, so
-on a form low on the page it ran off the bottom of the screen, scrollbar
-and all, and the operator could only pick from the rows that happened to be
-visible (owner: 为什么我能选的这么少 / 选account 时会无法看到下面的 — eight
-"adver" matches existed, four were on screen). The open now measures the
-input against the viewport, flips UP when below can't fit the panel and
-above offers more, and caps the height to the side actually available —
-the whole list, scrollbar included, always on screen. The list itself is
-NEVER truncated: few visible rows must only ever mean few matches.
+`SearchCombo.test.tsx`) — two rounds of the owner's same report (为什么我能
+选的这么少 / 选account 时会无法看到下面的, then 还是一样) taught the real
+lesson: the clipper was never the viewport but the form CARD's
+`overflow:hidden` (SalesOrderDetail.module.css `.card`, there for the
+rounded corners), which cut the absolute panel at the card's edge —
+scrollbar included — however much screen remained. Portaled to
+`document.body`, no ancestor overflow/transform can touch it; while open it
+re-measures on scroll (capture) and resize, flips UP when the space below
+can't fit it and above offers more, and caps its height to the side
+actually available. The list itself is NEVER truncated: few visible rows
+must only ever mean few matches.
 
 **Paid From offers only money** (owner: paid from 应该只能选cash 和银行): the
 picker lists `acc_money` accounts, pre-filled from the company's

@@ -2395,7 +2395,7 @@ message, but nothing depends on it.
 | SO header PATCH | `routes/mfg-sales-orders.ts` | 400, and the aggregated 422 report re-states it |
 | SO `/status` → IN_PRODUCTION (proceed writes the date) | `routes/mfg-sales-orders.ts` | 400 |
 | SO amendment SUBMIT | `routes/mfg-sales-orders.ts` | 400 `amendment_dates_xor` |
-| SO amendment APPROVE | `routes/so-amendments.ts` | 409 `amendment_dates_pair_stale` |
+| SO amendment APPROVE | `routes/so-amendments.ts` | 409 `amendment_dates_pair_stale` / `amendment_dates_order_stale` — reads the stored dates through the PG command shim, which returns **Date objects**, so it normalises with `soDateDay` (never `String(v).slice(0, 10)`: that is `'Fri Aug 28'`, docs/bugs/0636) and ships a `message` under 200 chars so the frontend renders it |
 | CO create | `routes/consignment-orders.ts` | 400 |
 | CO header PATCH | `routes/consignment-orders.ts` | 400 |
 | aggregated save report (both directions) | `shared/so-save-problems.ts` | 422 problem |
@@ -2937,6 +2937,46 @@ script-free: `backfill-sofa-special-orders.mjs:132` and
 `apply-variant-patch.mjs:56,:82` both write the column (union / `COALESCE`, never
 wholesale replace, DRY-RUN by default). Anything written there is still liable to
 be rewritten by the next recompute.
+
+### `variants.specialsRecorded` — recorded, never priced (owner choice 甲, 2026-09-03)
+
+A THIRD specials key exists, and the difference between it and `variants.specials`
+is money.
+
+`variants.specials` is a PICK: every pricing path reads it, and on a line whose
+add-on carries a price in `scm.special_addons` it feeds `unit_cost_sen`,
+`line_cost_sen`, `line_margin_sen` and `special_order_price_sen` the next time
+anybody edits that line (`backend/src/scm/shared/mfg-pricing.ts:538/541/543` →
+`mfg-pricing-recompute.ts:579`, persisted at `mfg-sales-orders.ts:8522-8546`).
+The customer PRICE is separately protected on a migrated line —
+`mfg-pricing-recompute.ts:546-547` zeroes the chargeable surcharge under
+`trustOperatorSelling === 'including-zero'` and `:725-730` keeps the stored
+figure — but the COST side has no such exemption.
+
+Ten call sites across nine files read `variants.specials` into a price or a
+cost — re-list them with
+`git grep -nE "poVariantPricingInput\(category|Array\.isArray\(v\.specials\)|buildSpecialsPoolFromAddons\(special" -- backend/src frontend/src`
+(the eleventh hit, `scan-sample-review.ts`, reads the array and prices nothing).
+
+`variants.specialsRecorded` is a RECORD: an option recovered from an
+AutoCount-imported line's own Desc2, whose surcharge the imported figure already
+contains. **No pricing path reads it, and none may.** That is enforced, not
+asked for: `backend/tests/specialsRecordedNeverPriced.test.ts` scans both trees
+and fails if the identifier reaches anything outside its allow-list. It runs in
+the LIGHT vitest project, which `backend-typecheck` executes, so it blocks a
+merge rather than only a deploy.
+
+Two surfaces render it, and they are the whole point of writing it at all:
+
+| surface | what it does |
+| --- | --- |
+| `scm/shared/variant-summary.ts` (+ the byte-identical frontend copy) | folds the recorded codes into the same `SPECIAL:` segment of Description 2, after the picked ones, skipping any the operator has since picked properly — so it reaches every print, the PO/DO/SI copies and the Detail Listing |
+| `vendor/scm/components/SpecialOrders.tsx` | one ticked, DISABLED row per recorded code, subtitled "from AutoCount — already in this document's price, not charged again", and it counts toward `(N selected)` |
+
+Only `backend/scripts/record-priced-specials-on-migrated-lines.mjs` writes it, and
+only for codes the line does not already carry. Ticking the same code in the
+picker makes it a normal, charged pick — `addedNow` excludes anything already in
+`variants.specials`, so a human's choice is never quietly made free.
 
 Drafts stay freely saveable — the scan pipeline still lands imperfect drafts;
 what changed is that they can no longer BECOME orders until resolved.

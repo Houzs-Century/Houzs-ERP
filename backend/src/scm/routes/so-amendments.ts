@@ -33,7 +33,7 @@ import {
   notifyPoAmendmentRaised,
 } from '../../services/amendmentNotify';
 import { collectProcessingGateProblems } from '../shared/so-save-problems';
-import { canonicaliseSoHeaderChanges, soDatePairRefusal } from '../shared/so-processing-date';
+import { canonicaliseSoHeaderChanges, soDateDay, soDatePairRefusal } from '../shared/so-processing-date';
 import { recordSoAudit } from '../lib/so-audit';
 import { scopeToCompany, isMirroredDocNo, houzsOwns2990, MIRRORED_SO_READONLY, activeCompanyId, requireActiveCompanyId } from '../lib/companyScope';
 import {
@@ -624,8 +624,14 @@ export async function approveSoCommandHandler(c: any, sb: any): Promise<Response
       .select('processing_date, customer_delivery_date, debtor_name, address1, postcode')
       .eq('doc_no', amendment.so_doc_no)
       .maybeSingle();
-    const cur = (soDates ?? {}) as { processing_date?: string | null; customer_delivery_date?: string | null };
-    const ymd = (v: unknown): string => (v == null ? '' : String(v).slice(0, 10));
+    const cur = (soDates ?? {}) as { processing_date?: string | Date | null; customer_delivery_date?: string | Date | null };
+    /* soDateDay, NOT `String(v).slice(0, 10)`. This handler runs inside
+       runScmPgCommand, whose postgres.js shim returns a DATE column as a JS
+       Date object; `String(date).slice(0, 10)` is 'Fri Aug 28', which sorts
+       after every '2026-…' string, so the order re-check below refused a legal
+       Delivery Date amendment on 2990-SO-2606-011 (2026-09-04) with a message
+       the frontend then dropped as too long. See docs/bugs/0636. */
+    const ymd = soDateDay;
     const nextProc = 'processingDate' in headerChanges
       ? ymd(headerChanges['processingDate'])
       : ymd(cur.processing_date);
@@ -648,8 +654,17 @@ export async function approveSoCommandHandler(c: any, sb: any): Promise<Response
       origDeliv: ymd(cur.customer_delivery_date),
     });
     if (stalePair) {
+      /* `message` is the sentence the operator SEES: authed-fetch's hygiene
+         filter only renders a candidate under 200 characters, and `reason`
+         below is longer than that — so until 2026-09-04 this refusal rendered
+         as the generic "clashes with something already in the system". Keep
+         `message` short; `reason` carries the full explanation for logs. */
       return c.json({
         error: 'amendment_dates_pair_stale',
+        message:
+          `Approving this would leave the order with only one date ` +
+          `(Processing ${nextProc || '—'}, Delivery ${nextDeliv || '—'}). ` +
+          'Reject it and re-request both dates together.',
         reason:
           `Approving this would leave the order with only one of the two dates ` +
           `(Processing ${nextProc || '—'}, Delivery ${nextDeliv || '—'}). ` +
@@ -660,6 +675,9 @@ export async function approveSoCommandHandler(c: any, sb: any): Promise<Response
     if (nextProc !== '' && nextDeliv !== '' && nextProc > nextDeliv) {
       return c.json({
         error: 'amendment_dates_order_stale',
+        message:
+          `Approving this would put the Processing Date (${nextProc}) after the Delivery Date (${nextDeliv}). ` +
+          'Reject it and re-request both dates together.',
         reason:
           `Approving this would put the Processing Date (${nextProc}) after the Delivery Date (${nextDeliv}). ` +
           'The other half of the paired reschedule was rejected, or the order\'s dates have moved since this ' +

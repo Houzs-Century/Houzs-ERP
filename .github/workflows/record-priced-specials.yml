@@ -1,0 +1,93 @@
+name: Record priced specials on migrated lines
+
+# Manual. The follow-up to "Backfill specials into variants", for the lines that
+# pass HELD BACK because the code they would gain carries a PRICE (prod run
+# 33517835461: 338 lines, RM 27,900 of selling surcharge not taken).
+#
+# Owner's choice 甲, 2026-09-03: record the option on the line so the factory can
+# see what to build, and the document's money must NOT change. The stamp writes
+# variants.specials (what the picker reads) PLUS variants.specialsRecordedOnly —
+# the line-level statement that those codes are a RECORD of what AutoCount had
+# already priced in, not a new charge. The pricing engine drops a recorded-only
+# code from both the selling and the cost surcharge, so the tick shows and the
+# money stays put.
+#
+# PLAN by default and PLAN writes nothing. The plan report carries: the exact
+# lines, the live scm.special_addons prices, a pg_catalog census proving no
+# trigger or generated column derives money from `variants`, the supplier
+# maintenance pool the PO client re-price actually reads, and a before/after
+# money proof per column over exactly the rows the apply would touch.
+#
+# mode=apply additionally requires confirm=RECORD-NOT-CHARGE, and repeats the
+# money proof INSIDE the transaction, rolling the whole write back on any
+# difference.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      mode:
+        description: "plan (default, writes nothing) or apply"
+        required: false
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: "type RECORD-NOT-CHARGE to allow mode=apply"
+        required: false
+        default: ""
+        type: string
+      company:
+        description: "company_id"
+        required: false
+        default: "1"
+        type: string
+      show:
+        description: "how many per-line changes to print"
+        required: false
+        default: "40"
+        type: string
+
+concurrency:
+  group: record-priced-specials-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/record-priced-specials-on-migrated-lines.mjs
+        env:
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY: ${{ inputs.company }}
+          SHOW: ${{ inputs.show }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/record-priced-specials-on-migrated-lines.mjs
+        env:
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY: ${{ inputs.company }}
+          SHOW: ${{ inputs.show }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
