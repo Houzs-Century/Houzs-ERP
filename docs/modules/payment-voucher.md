@@ -881,3 +881,23 @@ carrying a formal number (a reject → re-check round) keeps it: a slot is
 never burned twice for the same paper. Journals cannot see draft numbers by
 construction — posting happens at approve, after the mint. Pinned by
 backend/tests/pvDraftNumbering.test.ts.
+
+## §13 Internal transfers ride the PV (GL redesign item 10)
+
+The owner's call verbatim: 不能直接在 pv 那边开转账就好吗. A transfer is the
+same paper: the New-PV screen (non-AP mode) carries a 付款/内部转账 toggle —
+transfer mode swaps the payee for a "Transfer to" pick of OUR OWN money
+accounts (Paid From excluded) and the lines for one amount box; the payload
+is a normal voucher whose single line debits the destination
+(payee_name = "Internal transfer to <code> <name>", the marker everything
+else keys on). Same Draft→Checked→Approved chain, same per-bank number
+series, same GL door (approve posts Dr destination / Cr Paid From — a money
+move, not an expense); the PRINT re-titles itself TRANSFER VOUCHER off the
+payee marker, batch printing included. The route refuses a line debiting the
+Paid From account itself (`same_account`, create AND edit, the edit checked
+against the EFFECTIVE Paid From) — a transfer into itself is meaningless and
+an expense line on the paying bank is a typo. Cash bank-ins are the same
+document (drawer → bank). Supplier-payment reports stay clean by
+construction: a transfer's debit leg is a money account, not an expense or
+AP control. Pinned by backend/tests/pvTransfer.test.ts + the same_account
+refusals in the route.
