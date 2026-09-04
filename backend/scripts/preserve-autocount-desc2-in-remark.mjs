@@ -62,30 +62,46 @@
    name, and it is the column the write-back reads. It writes no money column,
    no quantity, no status, and no header field.
 
-   It NEVER overwrites an existing remark. The 651 migrated lines that already
-   carry one carry OUR OWN IMPORTER DIAGNOSTICS, not customer text — for
-   example a sofa seat-depth substitution note, or an UNPARSED token list —
-   and those are the notes that say where the importer had to guess. They are
-   appended to, never replaced.
+   ── WHAT ALREADY OCCUPIES `remark`, AND THE OWNER'S RULING ON IT ─────────
+   663 migrated lines already carry a remark. EVERY ONE OF THEM IS OUR OWN
+   MACHINE NOTE — measured on production 2026-09-04, grouping all 663 by value
+   (129 distinct strings):
 
-   ── TWO WRITE SHAPES ─────────────────────────────────────────────────────
-   SHAPE=append (default) — fill the empty remarks AND append the book text
-     under a 账本原文: label to the lines that already carry an importer note.
-     Recommended: the lines with an importer diagnostic are exactly the lines
-     whose parse was uncertain, so they are where the original wording is worth
-     the most. Measured 2026-09-04: 3,474 fills + 651 appends = 4,125 lines.
+       548  sofa: <importer seat-depth / arm substitution note>
+        95  ... UNPARSED — 按图/原文补件: token "..."
+        13  compartment corrected 2026-08-10
+         7  name-matched from free-text
+
+   Not one is customer text, and not one was typed by a person into the ERP.
+   Told exactly that, the owner ruled on 2026-09-04: 「如果是我们导入的就不需要」
+   — if it is our own import's note, it does not need keeping.
+
+   ── THREE WRITE SHAPES ───────────────────────────────────────────────────
+   SHAPE=overwrite (DEFAULT — the owner's ruling) — every line that has book
+     text gets `账本原文: <book text>` as its remark, whether the field was
+     empty or held one of the machine notes above. Measured 2026-09-04:
+     3,474 empty + 654 machine-note lines = 4,128 lines. The machine note is
+     replaced, not kept: that is what the ruling says to do. Every replaced
+     value is printed in full in the run log before it is written, so the run
+     itself is the record of what was discarded.
+   SHAPE=append — keep the machine note first and add the book text under the
+     label on a new line. Same 4,128 lines, nothing discarded. This was the
+     recommendation BEFORE the owner ruled; it survives as an option.
    SHAPE=fill-only — write only where remark is empty. 3,474 lines, and the
-     651 hardest-to-parse lines keep no copy of the book's words.
+     654 hardest-to-parse lines keep no copy of the book's words.
 
-   The label is 账本原文: on both shapes, so a reader of the line card can tell
-   the book's words from the machine's, and so a second run can recognise its
-   own work.
+   The label is 账本原文: on all three shapes, so a reader of the line card can
+   tell the book's words from the machine's, and so a second run can recognise
+   its own work.
 
    RE-RUN: safe and inert. Every write is guarded by the 账本原文: label — a
    line whose remark already carries it is skipped, so a second run writes
-   zero rows and reports them as already-done rather than appending the text a
-   second time. Changing SHAPE from fill-only to append on a later run adds
-   only the 651 append rows; it never revisits a line it has already labelled.
+   zero rows and reports them as already-done rather than writing the text a
+   second time. Running fill-only first and overwrite later adds only the 654
+   remaining rows; it never revisits a line it has already labelled. And every
+   UPDATE re-asserts the exact remark the decision was made against, so a
+   remark a person types between the SELECT and the UPDATE does not match, the
+   row count check fails, and the whole run refuses rather than clobbering it.
 
    USAGE (under tsx — it imports the canonical buildVariantSummary from src/):
      npx tsx scripts/preserve-autocount-desc2-in-remark.mjs
@@ -104,7 +120,8 @@ if (!DSN) { console.log('::error::DATABASE_URL is not set'); process.exit(1); }
 const APPLY = (process.env.MODE || 'plan').toLowerCase() === 'apply';
 const CONFIRM_PHRASE = 'I HAVE REVIEWED THE DRY-RUN';
 const CO = Number(process.env.COMPANY || 1);
-const SHAPE = (process.env.SHAPE || 'append').toLowerCase();
+const SHAPE = (process.env.SHAPE || 'overwrite').toLowerCase();
+const SHAPES = ['overwrite', 'append', 'fill-only'];
 const LABEL = '账本原文:';
 
 const note = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
@@ -116,8 +133,8 @@ if (APPLY && process.env.CONFIRM !== CONFIRM_PHRASE) {
   bad(`MODE=apply requires CONFIRM="${CONFIRM_PHRASE}"`);
   process.exit(2);
 }
-if (SHAPE !== 'append' && SHAPE !== 'fill-only') {
-  bad(`SHAPE must be "append" or "fill-only", got "${SHAPE}"`);
+if (!SHAPES.includes(SHAPE)) {
+  bad(`SHAPE must be one of ${SHAPES.join(' / ')}, got "${SHAPE}"`);
   process.exit(2);
 }
 
@@ -160,6 +177,12 @@ function decide(row, generated, book) {
   if (remark.includes(text)) return { action: 'skip', reason: 'the remark already contains this text' };
   if (!remark) return { action: 'fill', origin, text, prior: '', next: `${LABEL} ${text}` };
   if (SHAPE === 'fill-only') return { action: 'skip', reason: 'remark occupied and SHAPE=fill-only' };
+  /* SHAPE=overwrite is the owner's ruling of 2026-09-04: every one of the 663
+     occupied remarks on these lines is our own importer's machine note (see
+     the header for the measured breakdown), and 「如果是我们导入的就不需要」.
+     The discarded value is carried on the plan as `prior`, so it is printed in
+     full before the write AND re-asserted in the UPDATE predicate. */
+  if (SHAPE === 'overwrite') return { action: 'replace', origin, text, prior: remark, next: `${LABEL} ${text}` };
   return { action: 'append', origin, text, prior: remark, next: `${remark}\n${LABEL} ${text}` };
 }
 
@@ -199,10 +222,12 @@ async function main() {
   }
   const fills = plan.filter((p) => p.action === 'fill').length;
   const appends = plan.filter((p) => p.action === 'append').length;
+  const replaces = plan.filter((p) => p.action === 'replace');
 
   note(`\n=== PLAN (shape=${SHAPE}) ===`);
-  note(`  fill   — remark was empty            : ${fills}`);
-  note(`  append — importer note kept first    : ${appends}`);
+  note(`  fill    — remark was empty                 : ${fills}`);
+  note(`  replace — machine note dropped for the book: ${replaces.length}`);
+  note(`  append  — machine note kept, book added    : ${appends}`);
   note(`  source = description2 (2026-08-28 pull) : ${plan.filter((p) => p.origin === 'description2').length}`);
   note(`  source = ac-line-desc2.json.gz snapshot : ${plan.filter((p) => p.origin === 'snapshot').length}`);
   note(`  TOTAL rows this run would write      : ${plan.length}`);
@@ -214,9 +239,29 @@ async function main() {
   note(`  remark labelled   ${before.labelled} -> ${before.labelled + plan.length}`);
   note(`  description2 non-empty ${before.with_description2} -> ${before.with_description2}   (unchanged, asserted below)`);
 
+  /* THE RECORD OF WHAT IS DISCARDED. SHAPE=overwrite drops a value, so every
+     dropped value is printed here IN FULL, before any write happens, and the
+     PLAN run prints exactly the same list as the APPLY run. The run log is
+     therefore a complete transcript of what the machine note used to say. */
+  if (replaces.length) {
+    const grouped = new Map();
+    for (const p of replaces) grouped.set(p.prior, (grouped.get(p.prior) ?? 0) + 1);
+    note(`\n=== DISCARDED BY shape=overwrite — ${replaces.length} machine notes, ${grouped.size} distinct values ===`);
+    note(`    (the owner's ruling 2026-09-04: 「如果是我们导入的就不需要」)`);
+    if (process.env.GITHUB_ACTIONS) console.log('::group::every discarded remark, in full');
+    for (const p of replaces) console.log(`  ${p.doc_no} line ${p.line_no}  was: ${JSON.stringify(p.prior)}`);
+    if (process.env.GITHUB_ACTIONS) console.log('::endgroup::');
+  }
+
   note(`\n=== SAMPLE (first 5) ===`);
   for (const p of plan.slice(0, 5)) {
     note(`  ${p.doc_no} line ${p.line_no} [${p.action}, from ${p.origin}]`);
+    note(`     remark -> ${JSON.stringify(p.next).slice(0, 220)}`);
+  }
+  const sampleReplace = replaces.slice(0, 3);
+  for (const p of sampleReplace) {
+    note(`  ${p.doc_no} line ${p.line_no} [replace, from ${p.origin}]`);
+    note(`     was    ${JSON.stringify(p.prior).slice(0, 220)}`);
     note(`     remark -> ${JSON.stringify(p.next).slice(0, 220)}`);
   }
 

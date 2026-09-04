@@ -22,9 +22,17 @@ name: Preserve AutoCount Desc2 in the line remark (PLAN by default)
 # phrase, which is not defaulted here — it has to be typed into the dispatch.
 #
 # The script writes ONE column, scm.mfg_sales_order_items.remark. It never
-# writes description2, never a money column, and never overwrites an existing
-# remark: the 651 migrated lines that already carry one carry our own importer
-# diagnostics, and those are appended to under a 账本原文: label, never replaced.
+# writes description2, never a money column, and never touches a header field.
+#
+# The 663 migrated lines whose remark is already occupied hold OUR OWN IMPORTER
+# MACHINE NOTES and nothing else — measured 2026-09-04, all 663 grouped by
+# value: 548 sofa substitution notes, 95 UNPARSED token lists, 13 "compartment
+# corrected", 7 name-matched. Told that, the owner ruled 2026-09-04
+# 「如果是我们导入的就不需要」, so shape=overwrite is the DEFAULT: the book's
+# wording replaces the machine note under a 账本原文: label. Every replaced
+# value is printed IN FULL in the run log before the write, in the plan run and
+# the apply run alike, so the log is the record. shape=append (keep the machine
+# note, add the book text under it) and shape=fill-only remain available.
 #
 # Manual trigger only, own concurrency group — a diagnostic must never queue
 # behind or displace a release. Never scheduled.
@@ -39,11 +47,11 @@ on:
         type: choice
         options: [plan, apply]
       shape:
-        description: "append = also append to lines that carry an importer note; fill-only = write only empty remarks"
+        description: "overwrite = book text replaces our importer note (owner's ruling); append = keep the note and add the book text below it; fill-only = write only empty remarks"
         required: false
-        default: "append"
+        default: "overwrite"
         type: choice
-        options: [append, fill-only]
+        options: [overwrite, append, fill-only]
       company:
         description: "company id (1 = Houzs Century; company 2 has no migrated lines)"
         required: false

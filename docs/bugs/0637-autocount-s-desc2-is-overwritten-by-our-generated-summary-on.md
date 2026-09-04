@@ -29,7 +29,7 @@ book's copy as well. There is no third copy.
 **How much has already been lost: ZERO, measured, and that is the finding.**
 `buildVariantSummary` was re-run per line against production on 2026-09-04, from
 each line's own `item_group` + `variants`, and compared to the stored
-`description2`. Across all 14,445 migrated SO lines of company 1, **not one**
+`description2`. Across all 14,450 migrated SO lines of company 1, **not one**
 line's `description2` equals what the generator would produce for it. 3,362 of
 them are byte-identical to the book's own snapshot; 125 differ from the
 2026-08-11 snapshot but are still human book-style text from the later
@@ -48,11 +48,21 @@ outbox reads off the ERP line, `backend/src/scm/lib/autocount-outbox.ts:382-383`
 `autocount-writeback.ts` and `autocount-outbox.ts` returns nothing.
 
 The script writes ONE column. It never writes `description2` (re-deriving it is
-the bug), never a money column, and never overwrites an existing remark: the 649
-migrated lines that already carry one carry our own importer diagnostics, and the
-book text is appended under a `账本原文:` label. Plan by default, rolled back in
-one transaction, verified on a fresh connection that asserts the value shape and
-that `description2` did not move.
+the bug), never a money column, never a header field. Plan by default, rolled
+back in one transaction, verified on a fresh connection that asserts the value
+shape and that `description2` did not move.
+
+**The write shape is the owner's, not the script's.** 663 of these lines already
+carry a remark, and every one of them is our own importer's machine note —
+measured on production 2026-09-04 by grouping all 663 by value (129 distinct
+strings): 548 `sofa:` substitution notes, 95 `UNPARSED` token lists, 13
+`compartment corrected 2026-08-10`, 7 `name-matched from free-text`. Not one is
+customer text and not one was typed by a person. Told exactly that, the owner
+ruled 2026-09-04: 「如果是我们导入的就不需要」. So `SHAPE=overwrite` is the
+default — the book's wording replaces the machine note under a `账本原文:`
+label — and every replaced value is printed in full in the run log before the
+write, in the plan run and the apply run alike. `SHAPE=append` (keep the machine
+note, add the book text under it) and `SHAPE=fill-only` remain selectable.
 
 **Root fix still open, and named so it is not mistaken for done:** the two
 assignments above should not overwrite a line whose `description2` came from the
