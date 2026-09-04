@@ -191,6 +191,27 @@ export function fakeSb(
         else pendingInsert = payload;
         return builder;
       },
+      /* PostgREST upsert — insert, or update the row the onConflict columns
+         already name. Modeled the way supabase-js sends it: the conflict key
+         is a comma-joined column list; a hit updates IN PLACE, a miss falls
+         through to the normal insert path (unique checks included). */
+      upsert(payload: Row | Row[], opts?: { onConflict?: string }) {
+        const rows = Array.isArray(payload) ? payload : [payload];
+        const keys = String(opts?.onConflict ?? '').split(',').map((k) => k.trim()).filter(Boolean);
+        const leftover: Row[] = [];
+        for (const r of rows) {
+          const hit = keys.length > 0
+            ? tables[table].find((t) => keys.every((k) => String(t[k]) === String(r[k])))
+            : undefined;
+          if (hit) Object.assign(hit, r);
+          else leftover.push(r);
+        }
+        if (leftover.length > 0) {
+          if (Array.isArray(payload)) pendingRows = leftover;
+          else pendingInsert = leftover[0]!;
+        }
+        return builder;
+      },
       update(patch: Row) { pendingUpdate = patch; return builder; },
       delete() { pendingDelete = true; return builder; },
       eq(col: string, val: unknown) { filters.push((r) => String(r[col]) === String(val)); return builder; },

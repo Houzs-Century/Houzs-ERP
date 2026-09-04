@@ -1,0 +1,37 @@
+name: Why a PO line has no SO link (read-only)
+
+# The 36-cell matrix reported PO->SO at 1005/1301 lines and left 296 as
+# "unverified whether the rest are legitimate stock-buys". That count reads
+# `purchase_order_items.so_item_id` alone, which mig 0235 says is the WRONG
+# artifact: a consolidated PO line serving several customers has no correct
+# single value, so the answer lives in purchase_order_item_allocations and
+# SUPERSEDES the column, and an allocation with so_item_id NULL states "for
+# stock" explicitly.
+#
+# This classifies every unlinked line into WHY, so the residue is the only
+# thing a person has to read.
+#
+# READ-ONLY: SELECTs only, no DDL, no writes, no transaction. Manual trigger,
+# own concurrency group, exit 0 for every legitimate answer.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: probe-po-so-link-provenance
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+        working-directory: backend
+      - name: probe (read-only)
+        working-directory: backend
+        env:
+          DATABASE_URL: "${{ secrets.DATABASE_URL }}"
+        run: node scripts/probe-po-so-link-provenance.mjs

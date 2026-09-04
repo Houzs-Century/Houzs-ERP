@@ -812,6 +812,31 @@ doing your scoping: mig 0061 enabled RLS with NO policies and the SCM client is
 the SERVICE-ROLE client, which bypasses RLS. The only boundary is the predicate
 in the route.
 
+## ⚠️ The C# AutoCount service DOES compile here — check before writing UNCOMPILED
+
+`backend/scripts/autocount-service/AcSyncService.cs` is the one file CI cannot
+build: the runner is Linux and the licensed AutoCount assemblies are a desktop
+install. That is true, and it is routinely over-read into "there is no C#
+toolchain in this environment", which is false and has been for as long as
+anyone has checked. This desktop has AutoCount 2.2 installed and `csc.exe` ships
+with the .NET Framework, so:
+
+```
+powershell -ExecutionPolicy Bypass -File backend/scripts/autocount-service/build-local.ps1
+```
+
+answers in seconds, touches no database and needs no credential. On 2026-09-02
+it printed `COMPILES CLEAN - 110592 bytes`. Run it before you write UNCOMPILED
+in a PR body or a ledger entry — that sentence was written twice in one day by a
+session that never ran the check, and it made a whole afternoon of C# changes
+look unreviewable.
+
+**Compiling is not deploying.** The swap happens on the office host
+(`deploy-on-host.ps1`), because the SQL credentials live there and are compiled
+into the exe. Until that runs, the host is executing the OLD binary and reads
+none of the new payload keys — so our half of any change ships INERT, which is
+safe to merge and changes nothing until somebody rebuilds the host.
+
 ## There IS a linter now — since 2026-08-13, and it is a RATCHET
 
 Until this date the repo had none: no `.eslintrc`, no `eslint.config.*`, no

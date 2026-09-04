@@ -60,6 +60,7 @@ import {
 } from '../lib/autocount-outbox-status';
 import { callAcRead } from '../../services/autocount-host-read';
 import { autocountRelinkLinesHandler } from './autocount-relink';
+import { autocountLineSweepHandler } from './autocount-line-sweep';
 import {
   AC_REQUEUE_MEANING,
   REQUEUE_DOC_TYPES,
@@ -713,6 +714,7 @@ autocountOutbox.get('/table-columns', autocountTableColumnsHandler);
    book so it can be saved again. Its own file (this one is at the size cap), and
    its matching rules are a tested module of their own. */
 autocountOutbox.post('/relink-lines', autocountRelinkLinesHandler);
+autocountOutbox.post('/line-order-sweep', autocountLineSweepHandler);
 autocountOutbox.get('/host-log', autocountHostLogHandler);
 autocountOutbox.get('/', listAutocountOutboxHandler);
 

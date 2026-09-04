@@ -560,6 +560,50 @@ expression only for a payload that predates the field. The fallback is
 byte-identical to the old rule; the point is that the authority moved to the
 server, where the list reads it too.
 
+### 0.4b ARRIVAL and SHIPPING are two columns (owner 2026-09-02)
+
+**Stock Status answers ARRIVAL. Delivered answers SHIPPING. They are not the
+same question and no longer share a cell.**
+
+Until 2026-09-02 shipping was visible only at its two ENDS — a line read
+`DELIVERED` once everything had left, and nothing before that. So an order with
+5 units arrived and 2 shipped read plain `READY`, and "we still owe this
+customer 3" was on no screen. The owner asked what to do about partial delivery
+(「partialy delivery 该怎么办呢 / 看一下那个 column 进入适合」) and chose splitting
+the two facts apart over adding a fifth value to the arrival column.
+
+| column | question | values |
+|---|---|---|
+| **Stock Status** (`stock_remark`, §0.5) | has the supplier's goods come IN | `''` / `READY` / `PARTIAL` / `BEDFRAME/ACC` |
+| **Delivered** (`shipped_qty` / `deliverable_qty`) | how much has gone OUT | `2 / 5`, toned none / partial / full |
+
+`deliverable_qty` is `shipped + still owed` from the SAME deliverable engine the
+delivery picker uses — **not** a sum of ordered line quantities, which would
+count cancelled lines and overstate what the customer is owed. Both numbers were
+already computed on the list and the detail; only the `none|partial|full`
+verdict was ever emitted, which is why the column could not exist before.
+
+**A MISSING figure is `unknown`, never zero.** An older payload carries neither
+field, and reading that as "nothing has shipped" is a claim about an order that
+may be fully out — the same class of lie as rendering `STOCK` while a query is
+still loading (`docs/modules/coverage-state.md` [planned] — lands with #2862).
+The cell renders a dash and
+says so in its tooltip.
+
+**Do NOT name anything here `delivery_*`.** That prefix is already two different
+things: the STORED scheduling override on `mfg_sales_orders.delivery_state`
+(`PENDING_SCHEDULE` — `scm/lib/tripReconcile.ts`, `scm/lib/arrangement-stage.ts`)
+and the COMPUTED `none|partial|full` shipping verdict that shadows it on the
+detail response. Two exported types are likewise both called `DeliveryState`
+(`vendor/scm/lib/so-status.ts` and `vendor/scm/lib/delivery-planning-queries.ts`).
+A third meaning under that prefix is how the next reader picks the wrong one.
+
+The rule lives in `frontend/src/vendor/scm/lib/shipped-progress.ts` and renders
+through `frontend/src/components/ShippedProgressPill.tsx` — one module, so the
+list row and the drill-down line cannot grow two vocabularies for one fact (the
+exact way `READY (PARTIAL)` once appeared on a board header and its own rows in
+the same moment, §0.5).
+
 ### 0.5 `stock_remark`, `is_main_ready`, `is_ship_ready`
 
 All three come out of `summariseReadiness` (`scm/lib/so-readiness.ts`).
@@ -717,6 +761,26 @@ The LIST's "PO No." cell is a different cell with a different rule
 (`SoListPoCell`): SOLID = a goods source, MUTED = a raised PO. See the
 "LIST PO No. column" notes further down this file.
 
+**CHIPS 3 AND 4 ARRIVE ON A SECOND REQUEST (2026-09-01).** Since #2834 the SO
+detail payload defers its MRP run, so it returns `coverage_po: null`,
+`coverage_eta: null` and `ready_source_pos: []`, and `GET /:docNo/coverage` fills
+them. **Every surface that renders this column must make that second call** —
+`SalesOrderDetailV2` was given it and `MfgSalesOrdersListV2`'s drill-down was
+not, so the list's column was blank for a day (owner: 「明明我的 PO No. 那边是有
+的，可是 Incoming PO 却没有」; `docs/bugs/0598-*`).
+
+Chips 1 and 2 are NOT MRP-derived and kept working throughout, which is what made
+it look half-alive rather than obviously broken — worth knowing, because that is
+how the same fault will present next time.
+
+The merge is ONE shared function,
+`frontend/src/vendor/scm/lib/so-coverage-overlay.ts`, used by both surfaces. It
+is shared rather than copied because the board and the drill-down each writing
+their own is `docs/bugs/0269-*`, on these same two screens. An ABSENT or EMPTY
+overlay leaves the stored values alone — the fast first paint and an older
+backend's 404 both arrive that way, and blanking on them would flicker the column
+off on every open.
+
 ### 0.9 Where the neighbouring status systems are documented
 
 One home each — do not restate them here.
@@ -808,6 +872,45 @@ Tests: `src/scm/lib/venue-binding.test.ts` (the five outcomes) and
 `backend/tests/mfgSalesOrderHeaderCas.test.ts` (the route honours them).
 Ledger: `docs/bugs/0591-*`. Repair for orders already blanked:
 `backend/scripts/repair-blanked-venue.mjs`.
+
+**A TYPED SELLING PRICE IS NOT THE SYSTEM'S TO CHANGE (owner, 2026-09-02).**
+「我们的 selling price 是根据我们 manually 填入的，不应该被这种影响」— and
+「fabric 不需要」 with it. Neither the special-order surcharge nor the fabric
+surcharge may move a price a person entered, and on an AutoCount-imported line
+the STORED price is that answer.
+
+`erpLineTrust(posTablet, unitPriceSen, zeroPriceIntended, soIsMigrated)` returns
+`'including-zero'` for an imported order, which is the mode that both suppresses
+the chargeable-surcharge arm AND persists the stored price — zero included. The
+amendment path derived that from `linked_ac_docno` already; the plain line PATCH
+passed a bare `true` and therefore did neither, so a migrated line priced 0 (most
+of them are) could be handed base + surcharges by an ordinary edit
+(`docs/bugs/0600-*`).
+
+`soIsMigrated` is REQUIRED, not optional — an optional flag lets a new call site
+keep the unprotected answer silently, which is how the gap survived. **An ADD
+line always passes `false`**, on a migrated order too: a line typed today has no
+AutoCount price to protect.
+
+**PROCEEDED IS THE DATE — and the rule runs BOTH ways since 2026-09-01.**
+Moving to `IN_PRODUCTION` has always refused without a Processing Date, so the
+status implied the date. Nothing made the date imply the STATUS, so a header save
+could set a Processing Date and leave the order in `CONFIRMED` — invisible to the
+board the factory works from. The owner saw it as **IN PRODUCTION 0 beside
+CONFIRMED 108**: 「全套系统 而不是针对单一公式」.
+
+The header PATCH now calls `statusAfterProcessingDateSet()`
+(`scm/shared/so-proceeded-status.ts`). It moves CONFIRMED -> IN_PRODUCTION on the
+transition null -> date, and REFUSES everything else — an already-present date
+(editing is not a proceed), DRAFT, CANCELLED, anything further along, and a
+CLEARED date (what the status becomes then is an owner decision). Those refusals
+are the load-bearing half: a rule that fires too widely drags a delivered order
+back into production.
+
+The matching data repair is `backend/scripts/repair-proceeded-status.mjs`, which
+sweeps **every company by default** — it used to default to company 1, and that
+is exactly how company 2 sat at IN PRODUCTION 0 for a week after company 1 was
+fixed. Ledger `docs/bugs/0597-*`.
 
 **THE STORED VENUE IS NOT THE ONE YOU SENT.** Mig 0229 puts
 `trg_mfg_sales_orders_canonicalize_venue` on this table — BEFORE INSERT OR UPDATE
@@ -931,6 +1034,19 @@ seeds from a hand-written memo.
 desktop passes `null` (every category cascades), mobile passes
 `{sofa, bedframe}` (the only variant panels it renders). `ConsignmentOrderNew`
 passes `null` too, matching the desktop SO page it is a clone of.
+
+#### `SalesOrderDetailV2` and the list drill-down share ONE coverage overlay
+
+Both render the Stock pill and the Incoming PO chips, and both must fetch
+`GET /:docNo/coverage` and merge it through
+`frontend/src/vendor/scm/lib/so-coverage-overlay.ts`. The detail page had the
+call and the drill-down did not, which blanked that column on the list
+(`docs/bugs/0598-*`); the merge is shared rather than copied because these are
+the same two surfaces that held two opinions in `docs/bugs/0269-*`.
+
+The overlay leaves a line UNTOUCHED when no coverage row matches it — the fast
+first paint and an older backend's 404 both arrive that way, and blanking on them
+would flicker the column off on every open. See §0.8 for the four chips.
 
 #### The `?edit=1` fork, and why leaving edit must leave the URL
 
@@ -1616,6 +1732,57 @@ into DRAFT (below). So the route also asks:
 | `soHasDownstream(sb, docNo)` | `409` (the lock's own payload) | The same lock CANCELLED consults. `delivery_orders.so_doc_no` / `sales_invoices.so_doc_no` are `ON DELETE SET NULL`, so a delete leaves a real DO and a real invoice pointing at nothing. |
 | a row in `mfg_sales_order_payments` | `409 so_has_payments` | The cascade takes the payment ledger with it and the DO/SI that could have explained it are gone too. A real draft CAN carry a POS deposit, so this is a refusal with an instruction — void the payments, or cancel instead of discarding. Fails CLOSED: an unreadable ledger is not an empty one. |
 | `version` CAS + edit lease | `428` / `409` | Unchanged. |
+
+| `version` CAS + edit lease | `428` / `409` | Unchanged. |
+## The save lock — one minute, and it knows whose it is
+
+**It covers ONE SAVE, not an editing session.** Opening an order takes no lock at
+all; `runSoVersionedMutation` reserves it, saves, and releases it in a `finally`.
+So the expiry only has to outlast one round trip, and everything beyond that is
+time a document spends locked for nothing after a save dies.
+
+It was five minutes until 2026-09-03, and that cost the owner an hour: a save of
+his timed out (a 504), the lock stayed, and every retry for the next five minutes
+told him the order was being saved on another screen. He was working alone.
+
+| what changed | now |
+| --- | --- |
+| lifetime | **60s** — `SO_EDIT_LEASE_MS` in `backend/src/scm/lib/so-edit-lease.ts`, the one place that owns it |
+| holder | recorded (`edit_lease_user_id`, mig 0348). **The same person takes their own lock back** rather than waiting it out. A lock with NO holder — pre-0348, or a path with no authenticated user — is never taken over |
+| the refusal | says WHICH of three: `held` (somebody else), `expired` (the lock lapsed), `missing` (this screen never took one). Only `held` may name another person, and since the holder is recorded that is the one case where it is true |
+
+**It is NOT a liveness check and never was.** Nothing confirms the other screen
+exists — the row holds a token and a timestamp. The holder settles the case that
+actually hurt (your own crashed save); a lock held by somebody else is still only
+a timestamp, and the minute is the whole of that guarantee.
+
+**What it still protects, so nobody removes it:** a composite save is several
+requests — reserve, line writes, header commit — and version CAS alone cannot see
+a half-applied set of line writes. Dropping the lock and relying on CAS alone was
+offered as an option and NOT taken. Full trace:
+`docs/bugs/0630-one-person-editing-alone-was-locked-out-of-their-own-order-f.md`.
+## The Processing Date decides IN_PRODUCTION — both ways
+
+Owner's rule: 「只要有 Processing Date, 就代表他 Proceed 了」, sharpened on
+2026-09-03 to 「其实就看有没有 date 就知道了」. The date IS the status.
+
+| the save | the status |
+| --- | --- |
+| a date APPEARS on a `CONFIRMED` order | -> `IN_PRODUCTION` (`statusAfterProcessingDateSet`) |
+| the date is CLEARED on an `IN_PRODUCTION` order | -> `CONFIRMED` (`statusAfterProcessingDateCleared`) |
+| the date is cleared but a live delivery order or sales invoice exists | **left alone** — it is not "not in production", it is further along |
+| any other status, or a date that never existed / still exists | left alone |
+
+Both are pure and live in `backend/src/scm/shared/so-proceeded-status.ts`. The
+save asks ONE question — `soStatusAfterProcessingDateChange` in
+`backend/src/scm/lib/so-proceed-status-change.ts` — which supplies the only fact
+neither rule can compute for itself: whether anything downstream exists. **That
+read is issued only when a date was actually cleared**; every other save pays
+nothing.
+
+The backward half did not exist until 2026-09-03, and the forward rule's own
+header had recorded the gap as an open owner decision rather than a bug. Trace:
+`docs/bugs/0631-clearing-the-processing-date-left-the-order-in-production.md`.
 
 **ON_HOLD is not a route back to DRAFT (2026-08-14).**
 `soStatusTransitionError` (`scm/lib/so-lifecycle-guards.ts`) treats ON_HOLD as unranked so an order can be paused
@@ -3603,6 +3770,42 @@ SO-specific wiring:
   note on the `AMENDMENT_SO_APPROVED` row recording which departments the single
   approval covered.
 
+### Who gets told (2026-09-02)
+
+Until this date an amendment was raised in SILENCE. The row appeared in Sales
+Order Amendment and waited for somebody to happen to open the screen — the
+approver is the one person who has to act, and they were the one person nothing
+told. Owner: *"在 erp 有 amendment 的话需要让相关人员收到 notice, 需要有红色号码
+notice."*
+
+Notices ride the existing announcements machinery (`postPersonalNotice` → the
+notification bell's `?scope=system` slice, `source='so_amendment'`); the full
+producer model is in [`announcements.md`](./announcements.md). What is
+SO-specific:
+
+| Event | Told | Where |
+|---|---|---|
+| raised | the LANE's approvers + each one's `manager_id` upline; **separately** the SO's `salesperson_id` | `lib/amendment-raised-effects.ts`, called from `POST /:docNo/amendments` |
+| approved | `requested_by` + the salesperson | `routes/so-amendments.ts` `approveSoCommandHandler`, deferred to after commit |
+| rejected | same pair, carrying the rejection reason | `routes/so-amendments.ts` `PATCH /:id/reject` |
+| PO follow-up auto-raised by an approved LINES lane | the purchasing desk | same handler, same deferred block |
+
+Three things worth knowing before changing any of it:
+
+- **One notice per LANE, not per submission.** A mixed submission is two
+  independent approvals on two different desks; a single card would tell
+  whichever desk read it second that the work was already someone else's.
+- **The approver audience is derived from `LANE_APPROVE_KEY`** — the same table
+  the apply gate checks (`shared/amendment-lane.ts`). `amendmentNotify.ts` keeps
+  its own copy (a Houzs-side service must not import the SCM bundle), and
+  `amendmentNotify.test.ts` asserts the two agree. A drift sends the notice to
+  people who cannot act on it, which looks like working software from every
+  angle except the one that matters.
+- **Withdraw is silent on purpose**, and nobody is told about their own action.
+- **Nothing here can fail a write.** Every notify entry point swallows its own
+  errors, and the two in-transaction call sites go through
+  `deferScmAfterCommit`, so a rolled-back approval is never announced.
+
 ### What an approved amendment does to the LINE PRICE
 
 **Owner ruling, 2026-08-16:** *"Any amount can be edited, unless it is locked. If
@@ -3885,3 +4088,51 @@ while a print entry needs an address. `lib/downstream-doc-refs.ts` and
 `lib/so-delivery-order-nos.ts` hold that split; the full rule, the per-list
 enumeration and the one-to-many cap are in
 `document-conversion.md` §8b.
+
+## Drill-down columns and "still loading"
+
+A cell fed by a SECOND query renders **WORKING…** while that query is in flight
+and **NOT LOADED** if it fails — never `STOCK` or a bare dash, which are
+answers. `coverage` is a required prop on the shared drill-down; the rule, the
+five surfaces that fetch separately, and how to add a sixth are in
+`docs/modules/coverage-state.md` (trace: `docs/bugs/0603-a-drill-down-printed-stock-while-the-answer-was-still-loadin.md`).
+
+## §0.4c The Status cell and the Delivered cell answer the same question
+
+They did not always agree. Status rendered `statusFor(row.status)` — the STORED
+`mfg_sales_orders.status` — while the Delivered cell beside it rendered
+`shipped_qty / deliverable_qty`, derived live from delivery-order coverage on the
+SAME response. One row, one question, two answers, and nothing saying which to
+believe.
+
+`so-list-status.ts` → `soRowStatus` is now the one resolver, and it delegates to
+`soStatusDisplay`, the rule the SO detail's editor already renders. The cell
+itself is `pages/scm-v2/SoListStatusCell.tsx`.
+
+**It shows the disagreement rather than resolving it, and that is deliberate.**
+The stored value still decides which TAB counts the row — the strip is a
+server-side aggregate over that column — so rendering only the derived answer
+would file a row under a tab its own pill contradicts. When the two differ the
+cell prints the derived label plus a marker naming the stored status, with a
+tooltip for why.
+
+A payload carrying neither `delivery_state` nor `lifecycle_state` (an older
+cached bundle) falls back to the stored status with **no** marker: *"predates the
+field"* must read as nothing-derived, never as nothing-shipped — the same refusal
+`shipped-progress.ts` makes with its own `unknown`.
+
+**Why the stored column drifts.** It is a cache with exactly one writer,
+`syncSoDeliveredFromDo`, and all nine of its call sites are event hooks on a
+delivery-order write *through a route*. No read-path re-derivation, no cron, no
+trigger — so a delivery order written by an import script never advances its
+sales order, and nothing ever will.
+
+**Still open:** `SalesOrderDetailV2.tsx:260` has its own third local `statusFor`
+over the stored column, and there are twelve hand-written copies across
+`pages/scm-v2/`. Trace:
+`docs/bugs/0619-one-row-answered-has-this-gone-out-two-different-ways.md`.
+
+Separately, the live stock verdict the coverage endpoint returns is now actually
+read by the pill — it was being written to a field the renderer does not consult
+and silently discarded
+(`docs/bugs/0614-the-healed-stock-verdict-reached-the-browser-and-was-thrown.md`).

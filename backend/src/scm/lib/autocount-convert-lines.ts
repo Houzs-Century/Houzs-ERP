@@ -16,6 +16,7 @@
 //
 // ONE-WAY BY CONSTRUCTION. autocount-outbox.ts imports the values here; this
 // module takes only TYPES back from it, and a type import is erased at compile
+import { inAcLineOrder } from './ac-line-order';
 // time, so the two cannot form a runtime cycle.
 // ----------------------------------------------------------------------------
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -563,8 +564,12 @@ export async function readConvertSourceKeys(
   if (!docId) return {};
   try {
     const spec = DOWNSTREAM[CONVERT_TARGET[op]];
-    const { data, error } = await sb.from(spec.itemTable)
-      .select(`id, ${spec.sourceFk}, ${spec.itemQtyCol}`).eq(spec.itemFk, docId);
+    /* ORDERED for the same reason the payload reads are: the KEYS this returns
+       are handed to the transfer in this order, and `details` pairs a quantity
+       with each one positionally. An unordered read makes that pairing depend
+       on whatever order Postgres felt like — ac-line-order.ts. */
+    const { data, error } = await inAcLineOrder(sb.from(spec.itemTable)
+      .select(`id, ${spec.sourceFk}, ${spec.itemQtyCol}`).eq(spec.itemFk, docId));
     if (error || !data) return {};
     const rows = data as unknown as Record<string, unknown>[];
     if (!rows.length) return {};
@@ -740,9 +745,8 @@ export async function readConvertTargetLines(
   if (!docId) return undefined;
   try {
     const spec = DOWNSTREAM[CONVERT_TARGET[op]];
-    const { data, error } = await sb.from(spec.itemTable).select(spec.itemCols)
-      .eq(spec.itemFk, docId)
-      .order('created_at', { ascending: true }).order('id', { ascending: true });
+    const { data, error } = await inAcLineOrder(
+      sb.from(spec.itemTable).select(spec.itemCols).eq(spec.itemFk, docId));
     if (error || !data) return undefined;
     const rows = data as unknown as Record<string, unknown>[];
     if (!rows.length) return undefined;

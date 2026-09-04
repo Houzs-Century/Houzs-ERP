@@ -13,6 +13,7 @@ import { usePresence } from "../hooks/usePresence";
 import { GlobalSearchTrigger } from "./GlobalSearch";
 import { NotificationBell } from "./NotificationBell";
 import { PresenceButton } from "./PresenceButton";
+import { RefreshButton } from "./RefreshButton";
 import { WorkspaceTabs } from "./WorkspaceTabs";
 import { Avatar } from "./Avatar";
 import { cn } from "../lib/utils";
@@ -58,8 +59,16 @@ export function TopNavbar() {
         </div>
         {user && (
           <>
+            {/* Refresh leads the icon tiles (owner 2026-09-02, "button refresh
+                apply for all pages"). One control in the shared chrome reaches
+                every page — see RefreshButton for why it drops two caches. */}
+            <RefreshButton />
             <PresenceButton />
-            <NotificationBell collapsed direction="down" align="end" tone="navbar" unread="dot" />
+            {/* Count, not the 2b dot (owner 2026-09-02, "需要有红色号码
+                notice"): a dot says something happened, a number says how
+                much is waiting — which is the whole point of routing
+                amendment approvals here. */}
+            <NotificationBell collapsed direction="down" align="end" tone="navbar" />
             <span aria-hidden className="mx-0.5 h-6 w-px bg-border-subtle" />
             <ProfileMenu />
           </>

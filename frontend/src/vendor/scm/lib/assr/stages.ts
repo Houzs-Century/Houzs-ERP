@@ -58,7 +58,7 @@ export const ASSR_STAGES: AssrStageDef[] = [
   // decide the fix first, then inspect/verify.
   { key: "pending_solution",         short: "Solution",    long: ASSR_STAGE_LABEL.pending_solution,         owner: "Service Admin", desc: "Decide fix & assign supplier" },
   { key: "under_verification",       short: "Verify",      long: ASSR_STAGE_LABEL.under_verification,       owner: "Service Admin", desc: "Inspect & verify the issue" },
-  { key: "pending_supplier_pickup",  short: "Supplier",    long: ASSR_STAGE_LABEL.pending_supplier_pickup,  owner: "Service Admin", desc: "Item with supplier for repair" },
+  { key: "pending_supplier_pickup",  short: "Pickup",      long: ASSR_STAGE_LABEL.pending_supplier_pickup,  owner: "Service Admin", desc: "Customer pickup · supplier pickup · supplier return" },
   { key: "pending_item_ready",       short: "Pending Item Ready", long: ASSR_STAGE_LABEL.pending_item_ready, owner: "Service Admin", desc: "Repair done — QC check" },
   { key: "pending_delivery_service", short: "Delivery",    long: ASSR_STAGE_LABEL.pending_delivery_service, owner: "Logistic Admin", desc: "Schedule return delivery" },
   { key: "completed",                short: "Completed",   long: ASSR_STAGE_LABEL.completed,                owner: "System", desc: "Closed & rated" },
@@ -68,11 +68,15 @@ export const ASSR_STAGE_INDEX: Record<string, number> = Object.fromEntries(
   ASSR_STAGES.map((s, i) => [s.key, i]),
 );
 
-/** The two stages that exist only when a supplier is in the loop. */
-export const ASSR_SUPPLIER_ONLY_STAGES: readonly string[] = [
-  "pending_supplier_pickup",
-  "pending_item_ready",
-];
+/** Stages that drop out of the pipeline for the internal resolution route.
+ *  EMPTY since Nico 2026-09-04: with the customer-pickup leg, an own-team
+ *  repair also collects the item and returns it (Pickup / Return is no longer
+ *  supplier-specific), and it has its own "repair done — QC check" phase — so
+ *  EVERY case runs the full 7-stage pipeline. The filtering machinery
+ *  (isStageActive / filterActiveStages / activeAssrStages) stays wired for the
+ *  day a route genuinely skips a stage again; with this list empty it is the
+ *  identity filter. Was: pending_supplier_pickup + pending_item_ready. */
+export const ASSR_SUPPLIER_ONLY_STAGES: readonly string[] = [];
 
 /**
  * Which side of the flow a resolution method routes to. `internal` = own team
@@ -134,6 +138,9 @@ export const ASSR_SUB_STATUSES: Record<string, AssrSubStatusDef[]> = {
     { key: "qc_issue_result", label: "QC Issue Result" },
   ],
   pending_supplier_pickup: [
+    // Customer-pickup leg first (Nico 2026-09-01): it is the stage's entry
+    // point (collect the item FROM the customer) and transitionStage seeds it.
+    { key: "pending_customer_pickup", label: "Pending Customer Pickup" },
     { key: "pending_supplier_pickup", label: "Pending Supplier Pickup" },
     { key: "pending_supplier_return", label: "Pending Supplier Return" },
   ],

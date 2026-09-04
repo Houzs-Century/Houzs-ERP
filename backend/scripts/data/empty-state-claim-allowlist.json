@@ -280,6 +280,11 @@
       "file": "backend/src/acc/settlement.ts",
       "text": "reason: `This statement is already fully received — ${(payableSen / 100).toFixed(2)} across ${already.receipts.length} credit(s). If the bank shows more, it belongs to another statement.`,",
       "why": "A refusal spoken over receipts that were read and summed to the statement payable - the amount and credit count in the sentence are that evidence; an empty receipts read cannot reach it, since nothing sums to a non-zero payable."
+    },
+    {
+      "file": "backend/src/scm/routes/other-debtors.ts",
+      "text": "return c.json({ error: 'bill_has_receipts', message: 'Money was already received against this bill — it cannot be cancelled.' }, 409);",
+      "why": "The refusal states THIS bill's own received_sen > 0 — the document's status, not an empty read reported as finished work; the cancel is being refused, not claimed done."
     }
   ]
 }

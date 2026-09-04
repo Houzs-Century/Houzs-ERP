@@ -1,14 +1,21 @@
-// Phase 3 through the ROUTES — the rule table is pv-approval.test.ts; what
-// this file proves is what a pure function cannot:
-//   · submit / approve / withdraw / reject actually move the marks on the row
-//     and each leaves an audit entry naming who;
-//   · the approve/reject door checks scm.payment_voucher.approve, not write —
-//     a writer without the key is turned away;
-//   · the EDIT door refuses a voucher in the queue;
-//   · the POST door refuses an unapproved voucher (the gate in the handler,
-//     not just the table);
-//   · a reject carries its note onto the audit trail, where the submitter
-//     reads the why.
+// The owner's four layers through the ROUTES (2026-09-02) — the rule table
+// is pv-approval.test.ts; what this file proves is what a pure function
+// cannot:
+//   · prepare / check / approve / withdraw / reject actually move the marks
+//     on the row and each leaves an audit entry naming who;
+//   · the check door wants scm.payment_voucher.check, the approve door
+//     scm.payment_voucher.approve, and reject opens to EITHER key — a writer
+//     holding neither is turned away;
+//   · a PREPARED voucher still edits (the owner kept it so); a CHECKED one
+//     is locked;
+//   · APPROVE walks straight into the post door in the same request — the
+//     approver's response is the post's own (here: this trimmed world's
+//     no_lines), and approving again after a died post resumes WITHOUT
+//     rewriting the first approval's stamp;
+//   · the standalone POST door still refuses an unapproved voucher, and the
+//     approve key alone opens it;
+//   · a reject at either layer clears EVERY mark (一律退回 Draft) and
+//     carries its note onto the trail.
 //
 // Same bare-Hono + fake-PostgREST harness as tests/pvRateFromPayment.test.ts,
 // trimmed to the tables these handlers touch. NO vi.mock, deliberately.
@@ -17,8 +24,9 @@ import { Hono } from 'hono';
 import { beforeEach, describe, expect, test } from 'vitest';
 import {
   submitPaymentVoucherHandler, withdrawPaymentVoucherHandler,
-  approvePaymentVoucherHandler, rejectPaymentVoucherHandler,
-  updatePaymentVoucherHandler, postPaymentVoucherHandler,
+  checkPaymentVoucherHandler, approvePaymentVoucherHandler,
+  rejectPaymentVoucherHandler, updatePaymentVoucherHandler,
+  postPaymentVoucherHandler,
 } from '../src/scm/routes/payment-vouchers';
 
 const CO = 1;
@@ -62,10 +70,11 @@ class FakeQuery {
 const world = () => {
   const tables: Record<string, Row[]> = {
     payment_vouchers: [{
-      id: 'pv-1', pv_number: 'HC-PV-2608-001', company_id: CO, status: 'DRAFT',
-      voucher_date: '2026-08-28', payee_name: 'Freight Co', credit_account_code: '330-0000',
+      id: 'pv-1', pv_number: 'HC-PV-2609-001', company_id: CO, status: 'DRAFT',
+      voucher_date: '2026-09-02', payee_name: 'Freight Co', credit_account_code: '330-0000',
       currency: 'MYR', exchange_rate: 1, purpose: 'EXPENSE', total_sen: 50_000,
-      submitted_at: null, submitted_by: null, approved_at: null, approved_by: null,
+      submitted_at: null, submitted_by: null, checked_at: null, checked_by: null,
+      approved_at: null, approved_by: null,
     }],
     payment_voucher_lines: [],
     entity_audit_log: [],
@@ -89,6 +98,7 @@ function makeApp(tables: Record<string, Row[]>, perms: string[]) {
   });
   app.post('/pv/:id/submit', submitPaymentVoucherHandler as never);
   app.post('/pv/:id/withdraw', withdrawPaymentVoucherHandler as never);
+  app.post('/pv/:id/check', checkPaymentVoucherHandler as never);
   app.post('/pv/:id/approve', approvePaymentVoucherHandler as never);
   app.post('/pv/:id/reject', rejectPaymentVoucherHandler as never);
   app.patch('/pv/:id', updatePaymentVoucherHandler as never);
@@ -96,8 +106,9 @@ function makeApp(tables: Record<string, Row[]>, perms: string[]) {
   return app;
 }
 
-const WRITER = ['scm.payment_voucher.write', 'scm.payment_voucher.post'];
-const APPROVER = [...WRITER, 'scm.payment_voucher.approve'];
+const WRITER = ['scm.payment_voucher.write'];
+const CHECKER = [...WRITER, 'scm.payment_voucher.check'];
+const FULL = [...CHECKER, 'scm.payment_voucher.approve'];
 
 let tables: Record<string, Row[]>;
 beforeEach(() => { tables = world(); });
@@ -106,96 +117,140 @@ const post = (app: Hono, path: string, body?: unknown) =>
   app.request(path, { method: 'POST', ...(body === undefined ? {} : { body: JSON.stringify(body), headers: { 'content-type': 'application/json' } }) });
 
 describe('the cycle moves the marks and writes the trail', () => {
-  test('submit stamps who and when; approve stamps the yes; post then passes the gate', async () => {
-    const app = makeApp(tables, APPROVER);
+  test('prepare stamps who; check stamps the first yes; approve stamps the second AND walks into post', async () => {
+    const app = makeApp(tables, FULL);
     expect((await post(app, '/pv/pv-1/submit')).status).toBe(200);
     const pv = tables.payment_vouchers[0];
     expect(pv.submitted_by).toBe('Tester');
     expect(pv.submitted_at).toBeTruthy();
 
-    expect((await post(app, '/pv/pv-1/approve')).status).toBe(200);
-    expect(pv.approved_by).toBe('Tester');
+    expect((await post(app, '/pv/pv-1/check')).status).toBe(200);
+    expect(pv.checked_by).toBe('Tester');
+    expect(pv.checked_at).toBeTruthy();
 
-    /* The gate passes — the handler then fails on this trimmed world's empty
-       lines table, which is the assertion: the refusal is no_lines, no longer
-       not_approved. */
-    const res = await post(app, '/pv/pv-1/post');
+    /* Approve = post in the same breath. This trimmed world has no lines, so
+       the response is the POST handler's own refusal — which is exactly the
+       proof that approval reached the post door without a second click. */
+    const res = await post(app, '/pv/pv-1/approve');
     expect(res.status).toBe(400);
     expect((await res.json() as { error: string }).error).toBe('no_lines');
+    expect(pv.approved_by).toBe('Tester');
+    expect(pv.approved_at).toBeTruthy();
+
+    /* The stamp survives a died post: approving again RESUMES (post door
+       again, same refusal) and does not rewrite who said yes. */
+    const firstYes = pv.approved_at;
+    const again = await post(app, '/pv/pv-1/approve');
+    expect(again.status).toBe(400);
+    expect(pv.approved_at).toBe(firstYes);
 
     const actions = tables.entity_audit_log.map((r) => r.action);
     expect(actions).toContain('SUBMIT_FOR_APPROVAL');
-    expect(actions).toContain('APPROVE');
+    expect(actions).toContain('CHECK');
+    /* One APPROVE only — the resume did not double-log the yes. */
+    expect(actions.filter((a) => a === 'APPROVE')).toHaveLength(1);
   });
 
-  test('submitting twice is refused', async () => {
-    const app = makeApp(tables, APPROVER);
+  test('preparing twice is refused; approving an unchecked voucher is refused with the first-yes sentence', async () => {
+    const app = makeApp(tables, FULL);
     await post(app, '/pv/pv-1/submit');
-    const res = await post(app, '/pv/pv-1/submit');
-    expect(res.status).toBe(409);
-    expect((await res.json() as { error: string }).error).toBe('already_submitted');
+    const twice = await post(app, '/pv/pv-1/submit');
+    expect(twice.status).toBe(409);
+    expect((await twice.json() as { error: string }).error).toBe('already_prepared');
+
+    const early = await post(app, '/pv/pv-1/approve');
+    expect(early.status).toBe(409);
+    const body = await early.json() as { error: string; message: string };
+    expect(body.error).toBe('not_checked');
+    expect(body.message).toMatch(/first yes comes before yours/);
   });
 });
 
 describe('the doors check the right keys', () => {
-  test('a writer without the approve key is turned away from approve and reject', async () => {
-    const app = makeApp(tables, WRITER);
-    await post(app, '/pv/pv-1/submit');
-    expect((await post(app, '/pv/pv-1/approve')).status).toBe(403);
-    expect((await post(app, '/pv/pv-1/reject')).status).toBe(403);
+  test('a plain writer is turned away from check, approve AND reject; a checker from approve', async () => {
+    const writerApp = makeApp(tables, WRITER);
+    await post(writerApp, '/pv/pv-1/submit');
+    expect((await post(writerApp, '/pv/pv-1/check')).status).toBe(403);
+    expect((await post(writerApp, '/pv/pv-1/approve')).status).toBe(403);
+    expect((await post(writerApp, '/pv/pv-1/reject')).status).toBe(403);
+
+    const checkerApp = makeApp(tables, CHECKER);
+    expect((await post(checkerApp, '/pv/pv-1/check')).status).toBe(200);
+    expect((await post(checkerApp, '/pv/pv-1/approve')).status).toBe(403);
+    /* …but the checker MAY reject — either key opens that door. */
+    expect((await post(checkerApp, '/pv/pv-1/reject')).status).toBe(200);
   });
 });
 
-describe('frozen while queued', () => {
-  test('editing a submitted voucher is refused with the withdraw sentence', async () => {
-    const app = makeApp(tables, APPROVER);
+describe('editability follows the first yes, not the queue', () => {
+  test('a PREPARED voucher still edits — the owner kept it so', async () => {
+    const app = makeApp(tables, FULL);
     await post(app, '/pv/pv-1/submit');
+    const res = await app.request('/pv/pv-1', {
+      method: 'PATCH', body: JSON.stringify({ payeeName: 'Corrected Payee' }),
+      headers: { 'content-type': 'application/json' },
+    });
+    expect(res.status).toBe(200);
+    expect(tables.payment_vouchers[0].payee_name).toBe('Corrected Payee');
+  });
+
+  test('a CHECKED voucher is locked, and the refusal says reject-back', async () => {
+    const app = makeApp(tables, FULL);
+    await post(app, '/pv/pv-1/submit');
+    await post(app, '/pv/pv-1/check');
     const res = await app.request('/pv/pv-1', {
       method: 'PATCH', body: JSON.stringify({ payeeName: 'Someone Else' }),
       headers: { 'content-type': 'application/json' },
     });
     expect(res.status).toBe(409);
     const body = await res.json() as { error: string; message: string };
-    expect(body.error).toBe('awaiting_approval');
-    expect(body.message).toMatch(/Withdraw it to edit/);
+    expect(body.error).toBe('already_checked');
+    expect(body.message).toMatch(/Reject it back to draft/);
     expect(tables.payment_vouchers[0].payee_name).toBe('Freight Co');
   });
 });
 
-describe('the post gate', () => {
-  test('an unapproved voucher cannot post — the fee for skipping the queue is a sentence, not money gone', async () => {
-    const app = makeApp(tables, APPROVER);
+describe('the standalone post door', () => {
+  test('an unapproved voucher cannot post — a sentence, not money gone', async () => {
+    const app = makeApp(tables, FULL);
     const res = await post(app, '/pv/pv-1/post');
     expect(res.status).toBe(409);
-    const body = await res.json() as { error: string };
-    expect(body.error).toBe('not_approved');
+    expect((await res.json() as { error: string }).error).toBe('not_approved');
+  });
+
+  test('the approve key alone opens the post door (approval IS the posting)', async () => {
+    const app = makeApp(tables, [...WRITER, 'scm.payment_voucher.approve']);
+    /* No scm.payment_voucher.post in the set — 409 (gate), not 403 (door). */
+    const res = await post(app, '/pv/pv-1/post');
+    expect(res.status).toBe(409);
   });
 });
 
-describe('coming back out of the queue', () => {
-  test('withdraw clears both marks and the voucher is editable again', async () => {
-    const app = makeApp(tables, APPROVER);
+describe('coming back out of the cycle — 一律退回 Draft', () => {
+  test('withdraw works while merely prepared, and is refused after the first yes', async () => {
+    const app = makeApp(tables, FULL);
     await post(app, '/pv/pv-1/submit');
-    await post(app, '/pv/pv-1/approve');
     expect((await post(app, '/pv/pv-1/withdraw')).status).toBe(200);
-    const pv = tables.payment_vouchers[0];
-    expect(pv.submitted_at).toBeNull();
-    expect(pv.approved_at).toBeNull();
-    const res = await app.request('/pv/pv-1', {
-      method: 'PATCH', body: JSON.stringify({ payeeName: 'Corrected Payee' }),
-      headers: { 'content-type': 'application/json' },
-    });
-    expect(res.status).toBe(200);
-    expect(pv.payee_name).toBe('Corrected Payee');
+    expect(tables.payment_vouchers[0].submitted_at).toBeNull();
+
+    await post(app, '/pv/pv-1/submit');
+    await post(app, '/pv/pv-1/check');
+    const late = await post(app, '/pv/pv-1/withdraw');
+    expect(late.status).toBe(409);
+    expect((await late.json() as { message: string }).message).toMatch(/only be rejected back/);
   });
 
-  test('reject clears the marks and carries its note onto the trail', async () => {
-    const app = makeApp(tables, APPROVER);
+  test('reject at the approve layer clears EVERY mark and carries its note onto the trail', async () => {
+    const app = makeApp(tables, FULL);
     await post(app, '/pv/pv-1/submit');
+    await post(app, '/pv/pv-1/check');
     const res = await post(app, '/pv/pv-1/reject', { note: 'wrong payee — this is the freight forwarder, not the supplier' });
     expect(res.status).toBe(200);
     const pv = tables.payment_vouchers[0];
     expect(pv.submitted_at).toBeNull();
+    expect(pv.checked_at).toBeNull();
+    expect(pv.checked_by).toBeNull();
+    expect(pv.approved_at).toBeNull();
     const reject = tables.entity_audit_log.find((r) => r.action === 'REJECT');
     expect(JSON.stringify(reject)).toMatch(/wrong payee/);
   });

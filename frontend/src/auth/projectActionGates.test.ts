@@ -180,10 +180,18 @@ const allWindowsBefore = (needle: string, chars: number): string[] => {
 };
 
 describe("Projects.tsx — Attach is offered to every role the server admits (0546)", () => {
-  it("desktop carries a mirror of the backend roleLabelAdmits rule", () => {
+  it("both surfaces read the badge rule from the one shared module", () => {
     // Backend original: backend/src/services/projectGates.ts roleLabelAdmits.
-    // Mobile's copy lives in MobilePMS.tsx; desktop had none, which is the bug.
-    expect(projects()).toContain("function roleLabelAdmitsRole(");
+    // Desktop had NO copy of it (bug 0546) and mobile had its own inline one;
+    // both now import auth/roleLabelAdmits, which is unit-tested next door.
+    // Asserting the IMPORT, not a local definition, is the point — a re-inlined
+    // third copy is how these two surfaces drifted from the server twice.
+    for (const f of ["pages/Projects.tsx", "mobile/MobilePMS.tsx"]) {
+      expect(src(f), `${f} no longer imports the shared badge rule`)
+        .toContain('from "../auth/roleLabelAdmits"');
+      expect(src(f), `${f} re-inlined its own copy of the rule`)
+        .not.toContain("function roleLabelAdmitsRole(");
+    }
   });
 
   it("every desktop Attach button reads a role-aware predicate, not projects.write alone", () => {
@@ -199,9 +207,89 @@ describe("Projects.tsx — Attach is offered to every role the server admits (05
     expect(w).toContain("isSalesDirectorPos");
   });
 
-  it("file DELETE is NOT widened by this — it stays on projects.write", () => {
-    // Mobile requires projects.manage to remove a file; widening attach must not
-    // hand a tick-only role the ability to delete someone's evidence.
-    expect(projects()).toContain("canManage && !readOnlyAttach && a.id > 0");
+  it("file DELETE follows ATTACH on BOTH surfaces (owner 2026-09-03)", () => {
+    // "every user can delete/remove file or image from their own task, both pc
+    // and mobile pms" — replacing the 2026-08-05 managers-only rule. The point
+    // is the EQUIVALENCE: whoever may put a file on a task may take one off, so
+    // neither surface may re-introduce a projects.manage term here.
+    const text = projects();
+    const w = windowBefore("aria-label=\"Remove attachment\"", 900);
+    expect(w).toContain("mayDeleteFile");
+    expect(text).toContain("roleLabelAdmitsRole(roleLabel, user?.role_name)");
+    // The card-section chip trash IS the attach capability, verbatim.
+    expect(text).toContain("mayAttachRow && !readOnlyAttach && a.id > 0");
+    // A merged crew photo (id < 0) is never removable.
+    expect(text).toContain("attachment.id > 0 &&");
+
+    // Mobile has THREE delete gates, not one — the file chip, the document
+    // tiles and the floor-plan card. All follow the caller's edit right now.
+    const mobile = src("mobile/MobilePMS.tsx");
+    const mobileCode = mobile
+      .split(/\r?\n/)
+      .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
+      .join("\n");
+    expect(mobileCode).toContain("const canRemoveFile = canAttach;");
+    expect(mobileCode).toContain("const canDeleteFiles = canTick;");
+    expect(mobileCode).toContain("const canDeleteFiles = canWrite;");
+    const mobileDeleteGates =
+      mobileCode.match(/const (?:canDeleteFiles|canRemoveFile) = [^;]*/g) ?? [];
+    expect(mobileDeleteGates.length).toBe(3);
+    for (const gate of mobileDeleteGates) {
+      expect(
+        gate,
+        "a mobile delete gate re-introduced projects.manage — the surfaces have drifted again",
+      ).not.toContain("projects.manage");
+    }
+  });
+
+  it("the file-card knows which task badge it is rendering", () => {
+    // mayDeleteFile is only as good as the badge it is given: both
+    // TaskAttachmentRow call sites must pass the item's role_label, or the
+    // predicate silently answers false and the trash stays hidden.
+    const uses = (projects().match(/<TaskAttachmentRow/g) ?? []).length;
+    const passes = (projects().match(/roleLabel=\{item\.role_label\}/g) ?? []).length;
+    expect(passes, "a TaskAttachmentRow renders without its role badge").toBe(uses);
+  });
+});
+
+// Source-scanned here because this file already reads Projects.tsx, and the
+// list is a module-level const inside a ~15,000-line component that must not be
+// imported into a test (see the header above).
+describe("Projects.tsx — every list filter param is sticky", () => {
+  it("PROJECTS_LIST_FILTER_KEYS covers each param the toolbar reads", () => {
+    const text = projects();
+    const keys = text.slice(
+      text.indexOf("const PROJECTS_LIST_FILTER_KEYS = ["),
+      text.indexOf("] as const;", text.indexOf("const PROJECTS_LIST_FILTER_KEYS = [")),
+    );
+    // Owner 2026-08-24: "once i filter here and click in project, then i back to
+    // project list back all my filter gone". from/to (the date range that
+    // replaced year+month) were missing, so useStickyFilters' pluck() dropped
+    // them and the range alone did not survive the round-trip.
+    for (const p of ["section", "task", "brand", "from", "to", "status", "page"]) {
+      expect(keys, `${p} is read from the URL but never mirrored`).toContain(`"${p}"`);
+    }
+  });
+
+  it("EXPORT sends every filter the on-screen list sends", () => {
+    // Owner 2026-09-02: filtered Setup & Dismantle + My pending tasks to 10
+    // rows, exported, and got every confirmed event — the export omitted
+    // my_pending on purpose ("export is the full filtered list"). An export
+    // that disagrees with the screen is a wrong document, so the two parameter
+    // sets are now asserted equal rather than kept in step by hand.
+    const text = projects();
+    const between = (a: string, b: string) => {
+      const i = text.indexOf(a);
+      expect(i, `anchor disappeared: ${a}`).toBeGreaterThan(-1);
+      return text.slice(i, text.indexOf(b, i));
+    };
+    const keysOf = (block: string) =>
+      [...new Set((block.match(/^\s{10,14}([a-z_]+):/gm) ?? []).map((k) => k.trim().replace(":", "")))];
+    const listKeys = keysOf(between("const list = useQuery", "per_page: perPage,"));
+    const exportKeys = keysOf(between("const exportProjects = async", "per_page: per,"));
+    expect(listKeys.length).toBeGreaterThan(8);
+    for (const k of listKeys) {
+      expect(exportKeys, `the export drops "${k}", so its rows differ from the screen`).toContain(k);
+    }
   });
 });

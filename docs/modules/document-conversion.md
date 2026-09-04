@@ -467,7 +467,15 @@ row that does not qualify never renders a stray separator.
 
 **The first group is no longer three fixed entries** — since 2026-08-23 it is
 Open, Edit, and one print entry per document the row can reach. §8b has the
-whole of that.
+whole of that. Since 2026-09-03 the Purchase Invoice list adds **Copy as new**
+between Edit and Print (the owner, AutoCount in hand: 我 right click 就能直接
+copy; entry in `purchaseInvoiceRowMenu`, wired by `PurchaseInvoicesListV2.tsx`'s
+`piContextMenu`): it only NAVIGATES — to `/scm/purchase-invoices/new?copyFrom=<id>`,
+where the New page pre-fills content and never identity (fresh number,
+today's date, no GRN links, no supplier invoice ref) — so the no-new-behaviour
+rule above holds. Offered on ANY status: a posted or cancelled document is
+the best template. The Payment Vouchers list (its own inline menu,
+payment-voucher.md) carries the same entry.
 
 ### What each list offers, and what it deliberately does not
 
@@ -484,7 +492,7 @@ On Hold 状态的，全部都可以右键 Cancel 或 On Hold。」
 | Purchase Order | Open · Edit · Print | Goods Received | — | yes |
 | GRN | Open · Edit · Print | Purchase Invoice · Purchase Return | Confirm (post) | yes |
 | Sales Invoice | Open · Edit · Print | — (SO → SI does not exist, §4a) | Record payment | **none** |
-| Purchase Invoice | Open · Edit · Print | — (end of the purchase chain) | Confirm (draft only) | yes |
+| Purchase Invoice | Open · Edit · Copy as new · Print | — (end of the purchase chain) | Confirm (draft only) | yes |
 | Purchase Return | Open · Edit · Print | — | Confirm (draft only) | yes |
 | Delivery Return | Open · Edit · Print | — | **none** — no draft step to confirm | yes |
 | Stock Transfer | Open · **Print** — no Edit | — | **none** — posted on create | yes (posted only) |
@@ -2000,3 +2008,11 @@ kept rendering the whole time.
 `setHold` is a REQUIRED parameter on `purchaseInvoiceRowMenu`, so the next
 document to grow a menu cannot repeat it silently — the compiler names the call
 site. See `docs/bugs/0525-the-purchase-invoice-had-an-on-hold-tab-and-no-way-to-reach.md`.
+
+## Drill-down columns and "still loading"
+
+A cell fed by a SECOND query renders **WORKING…** while that query is in flight
+and **NOT LOADED** if it fails — never `STOCK` or a bare dash, which are
+answers. `coverage` is a required prop on the shared drill-down; the rule, the
+five surfaces that fetch separately, and how to add a sixth are in
+`docs/modules/coverage-state.md` (trace: `docs/bugs/0603-a-drill-down-printed-stock-while-the-answer-was-still-loadin.md`).

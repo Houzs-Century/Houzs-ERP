@@ -48,7 +48,7 @@ from a Sales Order back to the fair it was written at. Same structure as
 | Surface | File | Lines |
 |---|---|---|
 | Every desktop PMS view except maintenance | `frontend/src/pages/Projects.tsx` | 12,404 |
-| Lookup masters (brands, event types, organizers, venues, default checklist) | `frontend/src/pages/ProjectMaintenance.tsx` | 2,099 |
+| Lookup masters (brands, event types, organizers, contractors, venues, default checklist) | `frontend/src/pages/ProjectMaintenance.tsx` | 2,099 |
 | Activity / chat panel | `frontend/src/components/ProjectChat.tsx` | 472 |
 | Gantt sub-view | `frontend/src/components/ProjectGantt.tsx` | 474 |
 | P&L calendar (Finances tab) | `frontend/src/components/PnlCalendar.tsx` | 709 |
@@ -268,7 +268,7 @@ here, and it is highly regular:**
 | Class | Gate | Examples |
 |---|---|---|
 | Reads of project data | `requirePageAccess("projects.list")` | `GET /` `:722`, `GET /summary` `:670`, `GET /:id` `:1497`, `GET /:id/activity` `:1848`, `GET /checklist-templates` `:1094` |
-| Reads of lookups | `requirePageAccess("projects")` | `GET /organizers` `:887`, `GET /venues` `:939`, `GET /sections-distinct` `:869` |
+| Reads of lookups | `requirePageAccess("projects")` | `GET /organizers` `:887`, `GET /contractors`, `GET /venues` `:939`, `GET /sections-distinct` `:869` |
 | Calendar | `requirePageAccess("projects.calendar")` | `GET /calendar/events` `:3756` |
 | Money reads | `requirePageAccess("projects.finances")` | `GET /cost-rates` `:559`, `GET /finance/by-project` `:2001`, `GET /finance/lines` `:2209`, `GET /analytics/profitability`, `GET /analytics/profitability/drill` (L2 months / L3 projects drill-down) |
 | Ordinary writes | `requirePermission("projects.write")` | finance lines, payments, stock transfers, defects, team, sales attendees, attachments, sections. Current count is in `docs/generated/route-capability-matrix.csv` — do not type it here |
@@ -276,6 +276,43 @@ here, and it is highly regular:**
 | Checklist ticking | `requireAnyPermission(["projects.write","projects.checklist.tick"])` | `PATCH /checklist/:itemId` `:2792`, `/status` `:2843`, `/review` `:2887`, attachments `:3071`, `:3170`, `:3215` |
 | Chat | `requireAnyPermission(["projects.write","projects.chat"])` | `POST /:id/notes` `:1832` |
 | Unguarded by middleware | — | small public lookups (`/states` `:858`, `/payment-statuses` `:859`, `/brands` `:204`, `/event-types` `:104`, `/finance/categories` `:1987`), the attachment stream `:3690`, and the **phase-photo** routes `:2427`, `:2472`, `:2507`, `:2539`, which carry an inline permission-OR-crew check instead |
+
+**Contractor field (2026-09-02).** Each project carries a free-text `contractor`
+(`projects.contractor`, mig `20260902T1224_projects_contractor.sql`) — the booth
+setup/dismantle contractor, chosen on the Detail page (`ContractorPicker` in
+`Projects.tsx`) and accepted by `PATCH /:id` via `PATCH_FIELDS` in
+`services/projects.ts`. Options come from a `project_contractors` picker table on
+the exact organizer pattern: `GET /contractors` (read), `POST /contractors`
+(`projects.write`), `DELETE /contractors/:id` (`projects.manage`), managed by
+`ContractorManager` in `ProjectMaintenance.tsx`. Feeds the planned per-contractor
+calendar share links.
+**The role BADGE is the second half of the checklist-tick gate, and the UI must
+ask it too.** A caller holding `projects.checklist.tick` but **not**
+`projects.write` may attach, edit, delete and status-change only on tasks whose
+`role_label` admits their role — `roleLabelAdmits(label, role_name)` in
+`backend/src/services/projectGates.ts`: any "&"-separated part equal to the
+role, plus DRIVER-badged field work admitting HELPER / STOREKEEPER. An unbadged
+task admits nobody on this path. That population is not theoretical: the
+Purchaser role (330) lost `projects.write` on purpose in bug 0489 so exactly
+this scoping would apply to it.
+
+The desktop had twice disagreed with the server by omitting it — the Attach
+button (bug 0546) and then the file-delete trash (bug 0628) asked
+`projects.write` alone, so the purchasers saw no control on the documents they
+themselves file while the API accepted the request. The rule now lives once, in
+`frontend/src/auth/roleLabelAdmits.ts`, imported by BOTH desktop and mobile.
+**When adding a control the tick path can reach, gate it on the badge, not on
+`projects.write`.**
+
+**Removing a file follows ATTACH on both surfaces** (owner 2026-09-03: *"every
+user can delete/remove file or image from their own task, both pc and mobile
+pms"*), retiring the 2026-08-05 managers-only rule. Whoever may put a file on a
+task may take one off it; `projects.manage` is no longer consulted for deletion
+anywhere. Mobile carries THREE such gates — the file chip (`canRemoveFile =
+canAttach`), the document tiles (`canDeleteFiles = canTick`, each use site also
+ANDing `!t.readOnly`) and the floor-plan card (`canDeleteFiles = canWrite`) —
+so a change here must visit all three, plus the desktop's `TaskAttachmentRow`
+(`mayDeleteFile`) and `ChecklistRow` chip (`mayAttachRow`).
 
 **The attachment stream (`GET /attachments/:key{.+}`) sends
 `X-Content-Type-Options: nosniff` (PR #2522)** so its R2 object's server-derived
@@ -801,6 +838,32 @@ Manager}` plus `*`, matched on **exact normalised names**. It used to be a
 match because a position rename could otherwise silently grant director access.
 The frontend copies in `frontend/src/auth/salesAccess.ts` must stay in lockstep
 and are pinned by tests.
+
+### Setup & Dismantle is VIEW-FOR-ALL — only its DOCUMENTS are role-filtered
+
+Owner 2026-07-28: *"all users can view the setup & dismantle part."* The S&D card
+is a read surface for every viewer of the project, on desktop and on mobile.
+
+`stripSetupDismantle` (`backend/src/services/projects.ts:1083`) still runs for a
+caller whose PMS role lacks `SETUP_DISMANTLE` — called from
+`routes/projects.ts:2352` and `routes/projects_print.ts:332` — but what it
+removes is now narrower than its name suggests:
+
+| field | reaches a caller without `SETUP_DISMANTLE` |
+| --- | --- |
+| `setup_crew` / `dismantle_crew` / `service_crew` | YES (was NULLed until 2026-07-28) |
+| `schedule_remark`, `setup_start_at`, `dismantle_start_at` | YES (was NULLed) |
+| "SETUP & DISMANTLE DOCUMENTS" checklist rows badged DRIVER / PURCHASER | no — still stripped |
+| the same rows badged `SALES PIC*` | YES (owner 2026-07-16 / 2026-07-29) |
+| those rows' comments, attachments, sections, section-progress | stripped with their rows |
+
+So the crew/schedule half of the card is no longer a server-side secret, and the
+boundary that matters for it is the WRITE path: the PATCH route plus the UI's
+`canWrite` / `canEdit` tier. The mobile surface matches — `MobilePMS.tsx` renders
+`<SetupDismantle>` for every cohort but 5 and loads `phase-photos` for every
+viewer — `GET /:id/phase-photos` (`routes/projects.ts:3188`) admits any
+holder of `projects.read` or `projects.write`, and falls back to a crew phase
+assignment for everyone else.
 
 ### Permission keys that do not mean what their labels say
 

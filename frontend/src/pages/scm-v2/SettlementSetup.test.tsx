@@ -24,8 +24,8 @@ const DATA: MaintenanceData = {
       ready: true, autoMatchable: true,
       /* His own case: the same merchant, two companies, two banks. */
       byCompany: {
-        '1': { enabled: true, linked: true, bankAccountCode: '331-0000' },
-        '2': { enabled: true, linked: true, bankAccountCode: '330-0000' },
+        '1': { enabled: true, linked: true, bankAccountCode: '310-0020' },
+        '2': { enabled: true, linked: true, bankAccountCode: '310-0010' },
       },
     },
     {
@@ -40,14 +40,14 @@ const DATA: MaintenanceData = {
   ],
   banks: [
     {
-      account_code: '330-0000', account_name: 'Bank — Maybank Current',
+      account_code: '310-0010', account_name: 'Bank — Maybank Current',
       byCompany: {
         '1': { inChart: true, enabled: true, usedBy: [] },
         '2': { inChart: true, enabled: true, usedBy: ['PBB'] },
       },
     },
     {
-      account_code: '331-0000', account_name: 'Bank — Hong Leong Current',
+      account_code: '310-0020', account_name: 'Bank — Hong Leong Current',
       byCompany: {
         '1': { inChart: true, enabled: true, usedBy: ['PBB'] },
         /* 2990 does not carry this code at all — not a box it could tick. */
@@ -61,6 +61,32 @@ const merchantMutate = vi.fn();
 const bankMutate = vi.fn();
 const saveLayout = vi.fn();
 let bankError: unknown = null;
+
+/* The default-bank card's hooks (vendor accounting-queries) — stubbed so this
+   file stays about the maintenance matrix; the card's own contract is the
+   PaymentVoucherNew tests' business. */
+/* The recognition-rules card's hooks — stubbed with one live rule so the card
+   renders; its write contract is tests/bankRoutes.test.ts. */
+const saveRule = vi.fn();
+const createRule = vi.fn();
+vi.mock('./bank-queries', () => ({
+  useBankRules: () => ({ data: { rules: [
+    { id: 1, acquirer_code: 'PBB', pattern: 'PBB-PBCS', match_field: 'both', trading_date_pattern: null, merchant_pattern: null, sort_order: 20, is_active: true },
+  ] }, isLoading: false }),
+  useSaveBankRule: () => ({ mutate: saveRule, isPending: false }),
+  useCreateBankRule: () => ({ mutate: createRule, isPending: false }),
+}));
+
+const saveBankDefault = vi.fn();
+vi.mock('../../vendor/scm/lib/accounting-queries', () => ({
+  isControlSpecial: (s: string | null | undefined) => s === 'SDC' || s === 'SCC' || s === 'SBS',
+  useAccounts: () => ({ data: { accounts: [
+    { account_code: '310-0010', account_name: 'Bank — Maybank', account_type: 'ASSET', is_active: true, acc_money: true },
+    { account_code: '900-A002', account_name: 'Advertisement', account_type: 'EXPENSE', is_active: true, acc_money: false },
+  ] }, isLoading: false }),
+  useAccountRoles: () => ({ data: { roles: { BANK_DEFAULT: '310-0010', AP: '400-0000' }, overridden: {} }, isLoading: false }),
+  useSaveBankDefault: () => ({ mutate: saveBankDefault, isPending: false }),
+}));
 
 vi.mock('./settlement-queries', () => ({
   useSettlementMaintenance: () => ({ data: DATA, isLoading: false }),
@@ -100,11 +126,11 @@ describe('the maintenance table', () => {
      2990 into Maybank, and both are on screen at once. */
   test('the same merchant can pay two companies into two different banks', () => {
     draw();
-    expect((screen.getByLabelText("PBB bank for Houzs Century") as HTMLSelectElement).value).toBe('331-0000');
-    expect((screen.getByLabelText("PBB bank for 2990's Home") as HTMLSelectElement).value).toBe('330-0000');
+    expect((screen.getByLabelText("PBB bank for Houzs Century") as HTMLSelectElement).value).toBe('310-0020');
+    expect((screen.getByLabelText("PBB bank for 2990's Home") as HTMLSelectElement).value).toBe('310-0010');
 
-    fireEvent.change(screen.getByLabelText("PBB bank for Houzs Century"), { target: { value: '330-0000' } });
-    expect(merchantMutate).toHaveBeenCalledWith({ companyId: 1, code: 'PBB', bankAccountCode: '330-0000' });
+    fireEvent.change(screen.getByLabelText("PBB bank for Houzs Century"), { target: { value: '310-0010' } });
+    expect(merchantMutate).toHaveBeenCalledWith({ companyId: 1, code: 'PBB', bankAccountCode: '310-0010' });
   });
 
   /* Only banks THAT company has can receive THAT company's money. */
@@ -127,15 +153,15 @@ describe('the maintenance table', () => {
 describe('the bank matrix', () => {
   test('ticking a bank names its company, and says who uses it', () => {
     draw();
-    fireEvent.click(screen.getByLabelText("330-0000 for Houzs Century"));
-    expect(bankMutate).toHaveBeenCalledWith({ companyId: 1, accountCode: '330-0000', enabled: false });
-    expect(within(screen.getByLabelText("331-0000 for Houzs Century").closest('td') as HTMLElement).getByText('PBB')).toBeTruthy();
+    fireEvent.click(screen.getByLabelText("310-0010 for Houzs Century"));
+    expect(bankMutate).toHaveBeenCalledWith({ companyId: 1, accountCode: '310-0010', enabled: false });
+    expect(within(screen.getByLabelText("310-0020 for Houzs Century").closest('td') as HTMLElement).getByText('PBB')).toBeTruthy();
   });
 
   /* A code a company does not carry is not an unticked box it could tick. */
   test('an account missing from a company chart says so instead of offering a tick', () => {
     draw();
-    expect(screen.queryByLabelText("331-0000 for 2990's Home")).toBeNull();
+    expect(screen.queryByLabelText("310-0020 for 2990's Home")).toBeNull();
     expect(screen.getByText('not in its chart')).toBeTruthy();
   });
 
@@ -167,5 +193,30 @@ describe('the report layout — the shared half', () => {
     fireEvent.click(screen.getByText('Save'));
     expect(screen.getByText(/Fill in the Date heading/)).toBeTruthy();
     expect(saveLayout).not.toHaveBeenCalled();
+  });
+});
+
+describe('the bank recognition rules card', () => {
+  test('a rule edits in place and saves only what changed; a new rule needs acquirer + pattern', () => {
+    draw();
+    /* Edit the live PBB rule's pattern — the row's Save wakes up. */
+    const pattern = screen.getByLabelText('Pattern for PBB rule 1') as HTMLInputElement;
+    expect(pattern.value).toBe('PBB-PBCS');
+    fireEvent.change(pattern, { target: { value: 'PBB-PBCS|PBCS-IBG' } });
+    const saves = screen.getAllByText('Save').map((el) => el.closest('button')!).filter((b) => !b.disabled);
+    fireEvent.click(saves[saves.length - 1]!);
+    expect(saveRule).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 1, pattern: 'PBB-PBCS|PBCS-IBG' }),
+      expect.anything(),
+    );
+
+    /* The add row: acquirer + pattern then Add. */
+    fireEvent.change(screen.getByLabelText('New rule acquirer'), { target: { value: 'PBB' } });
+    fireEvent.change(screen.getByLabelText('New rule pattern'), { target: { value: 'IBG CREDIT' } });
+    fireEvent.click(screen.getByText('Add'));
+    expect(createRule).toHaveBeenCalledWith(
+      { acquirerCode: 'PBB', pattern: 'IBG CREDIT' },
+      expect.anything(),
+    );
   });
 });

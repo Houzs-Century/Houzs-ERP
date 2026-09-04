@@ -13,6 +13,7 @@ import { useAuth } from "../auth/AuthContext";
 import { isSalesNonDirector, isSalesDirectorUser, canLogSalesEntry, canCreateEvent } from "../auth/salesAccess";
 import { NewProjectSheet } from "./MobileNewProject";
 import { capability } from "../auth/capabilities";
+import { roleLabelAdmitsRole } from "../auth/roleLabelAdmits";
 import { readProjectAccess, projectAccessUnresolved, holdsChecklistApproval } from "../auth/projectAccess";
 import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
@@ -26,6 +27,7 @@ import "./mobile.css";
 import { fmtTime } from "../vendor/shared/format";
 import { DateField } from "../vendor/scm/components/DateField";
 import { DefectActionsCtx, DefectFileActions, type AttachmentAction } from "./MobilePmsDefectActions";
+import { PlanFileChips } from "./MobilePmsPlanFileChips";
 
 /* ------------------------------------------------------------------ *
  * Mobile Project (PMS) — list + detail.
@@ -755,7 +757,8 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
     queryKey: ["mobile-pms-phase-photos", id],
     queryFn: () => api.get<{ photos: PhasePhoto[] }>(`/api/projects/${id}/phase-photos`),
     staleTime: 15_000,
-    enabled: canSetupDismantle,
+    // Owner 2026-07-28: the S&D card is view-for-all — every viewer loads the
+    // phase photos (the endpoint admits any projects.read holder).
     retry: false,
   });
   const photos = photoData?.photos ?? [];
@@ -1483,8 +1486,11 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
             )}
 
             {/* setup & dismantle (logistic) — office-cohort position, below
-                Operation (owner 2026-07-23). */}
-            {!cohort5 && canSetupDismantle && !isPurchaserView && (
+                Operation (owner 2026-07-23). Owner 2026-07-28: view-for-ALL
+                users (incl. purchasers and PMS tiers lacking SETUP_DISMANTLE)
+                — the backend now sends the schedule/crew data to every
+                viewer; editing stays tiered as before. */}
+            {!cohort5 && (
               <SetupDismantle
                 projectId={id}
                 project={p}
@@ -2175,18 +2181,9 @@ function TaskRow({
   // drivers, so they attach on DRIVER-badged rows too (owner 2026-07-13) —
   // no task is ever badged HELPER/STOREKEEPER.
   const tickOnly = canTick && !can("projects.write");
-  const badge = (it.role_label ?? "").trim().toUpperCase();
-  const userRole = (user?.role_name ?? "").trim().toUpperCase();
-  // A combined badge ("SALES PIC & DRIVER" — the Defect List pair, owner
-  // 2026-07-29) admits every listed role; each part keeps the DRIVER →
-  // helper/storekeeper extension. Mirrors backend roleLabelAdmits.
-  const roleMatchesUser =
-    !!badge && !!userRole &&
-    badge.split("&").some((part) => {
-      const l = part.trim();
-      return !!l && (l === userRole ||
-        (l === "DRIVER" && (userRole === "HELPER" || userRole === "STOREKEEPER")));
-    });
+  // Shared with the desktop and mirroring backend roleLabelAdmits: a combined
+  // badge admits every listed role, DRIVER also admitting helper/storekeeper.
+  const roleMatchesUser = roleLabelAdmitsRole(it.role_label, user?.role_name);
   // Gated row, no approval key, but the row is badged for THIS user's function
   // (the purchaser on her own Exchange List / Stock In / Stock Out): since
   // 2026-08-17 the backend lets the owner function toggle N/A — only
@@ -2195,11 +2192,14 @@ function TaskRow({
   const naOnly = permBlocked && canTick && roleMatchesUser;
   const canRowTick = canTick && (!permBlocked || naOnly);
   const canAttach = canTick && (!tickOnly || roleMatchesUser);
-  // Owner 2026-08-05: file DELETE follows the PC rule — managers only
-  // (projects.manage: BD / managers / directors). Crew and sales keep upload
-  // (canAttach) but no longer see the × on file chips. canAttach folds in the
-  // row-edit + !archived gate, so a manager still can't delete a locked row.
-  const canRemoveFile = canAttach && can("projects.manage");
+  // Owner 2026-09-03: "every user can delete/remove file or image from their own
+  // task, both pc and mobile pms" — REPLACES the 2026-08-05 managers-only rule
+  // (`canAttach && can("projects.manage")`), which had left crew and sales able
+  // to upload a wrong photo they could not then take off. Delete now follows
+  // ATTACH on both surfaces: canAttach is already scoped to the row the caller
+  // may work on (tick-only roles to their own badge) and folds in the row-edit +
+  // !archived gate, so a locked row still refuses.
+  const canRemoveFile = canAttach;
 
   const cycle = async () => {
     if (!canRowTick || busy) return;
@@ -3359,10 +3359,11 @@ function SalesDocsCard({
   // be approved on a phone. Gate + endpoint match the desktop DocRow exactly
   // (shared checklistReviewVisible / ReviewButtons); user drives the perm check.
   const { user, can } = useAuth();
-  // Owner 2026-08-05: file DELETE follows the PC rule — managers only
-  // (projects.manage). canTick already folds in !archived, so a manager still
-  // can't delete on an archived project; upload/remark stay on canTick.
-  const canDeleteFiles = can("projects.manage") && canTick;
+  // Owner 2026-09-03: every user may remove a file from THEIR OWN task, so this
+  // follows the tile's own edit right instead of projects.manage. canTick folds
+  // in !archived, and each use site already ANDs `!t.readOnly`, which is what
+  // marks a tile as not this cohort's to work on.
+  const canDeleteFiles = canTick;
 
   const tiles = tileDefs.map((t) => {
     const item = (checklist ?? []).find(
@@ -3510,7 +3511,12 @@ function SalesDocsCard({
       <div className="pbody">
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 9 }}>
           {tiles.map((t) => {
-            const latest = t.files[t.files.length - 1];
+            // Tile cover (owner 2026-08-28): prefer the newest IMAGE so a PDF
+            // uploaded after the photos doesn't blank the thumbnail — users
+            // read the hatched placeholder as "nothing here".
+            const latest =
+              [...t.files].reverse().find((f) => /^image\//.test(f.content_type ?? "")) ??
+              t.files[t.files.length - 1];
             const hasContent = t.remarkTile ? !!(t.item?.notes ?? "").trim()
               : t.remarkWithFiles ? (t.files.length > 0 || !!(t.item?.notes ?? "").trim())
               : t.files.length > 0;
@@ -3709,8 +3715,16 @@ function FloorPlans({
   // Approve/Reject on the reviewable Floor-Plans docs (owner 2026-07-29): Stock
   // Out Transfer Record (stock_transfer.approve), 3D / 2D Design + Display Floor
   // Plan (no perm → submit-then-review). Shared gate/buttons with the doc cards.
-  const { user } = useAuth();
+  const { user, can } = useAuth();
   const prompt = usePrompt();
+  // Owner 2026-08-24: "display floorplan i cant remove existing file using
+  // mobile". These tiles were VIEW-only — tap opens the lightbox and that was
+  // the whole interaction — while the tasklist rows that carry the file chips
+  // (with their ×) are hidden for every mobile cohort. So on a phone there was
+  // no way to remove, or replace, a plan already uploaded. Owner 2026-09-03:
+  // every user may remove a file from their own task, so this is now the card's
+  // own write gate alone — projects.manage no longer required.
+  const canDeleteFiles = canWrite;
   const itemByPrefix = (prefix: RegExp): ChecklistItem | undefined =>
     (checklist ?? []).find((it) => prefix.test((it.title || "").trim()));
   const threeDItem = itemByPrefix(/^3d\s*(design|render)/i);
@@ -3726,35 +3740,42 @@ function FloorPlans({
   // mobile browsers popup-block window.open once an await has broken the
   // user-gesture chain, which made these tiles dead on phones.
   const plans = (attachments ?? []).filter((a) => (a.category || "").toLowerCase() === "floorplan");
-  const taskPlanFiles = (prefix: RegExp): MediaItem[] => {
+  /** The tile's live attachment ROWS — the lightbox only needs r2_key, but
+   *  removing a file needs its id, so keep the rows and derive the media. */
+  const taskPlanAtts = (prefix: RegExp): TaskAttachment[] => {
     const ids = new Set(
       (checklist ?? []).filter((it) => prefix.test((it.title || "").trim())).map((it) => it.id)
     );
-    return (checklistAttachments ?? [])
-      .filter((a) => !a.archived_at && ids.has(a.item_id))
-      .map((a): MediaItem => ({
-        r2_key: a.r2_key,
-        content_type: a.mime_type ?? mimeFromKey(a.r2_key),
-        caption: a.file_name,
-      }));
+    return (checklistAttachments ?? []).filter((a) => !a.archived_at && ids.has(a.item_id));
   };
+  const asMedia = (a: TaskAttachment): MediaItem => ({
+    r2_key: a.r2_key,
+    content_type: a.mime_type ?? mimeFromKey(a.r2_key),
+    caption: a.file_name,
+  });
+  const taskPlanFiles = (prefix: RegExp): MediaItem[] => taskPlanAtts(prefix).map(asMedia);
   const legacyItem = (a: ProjectAttachment | undefined): MediaItem[] => {
     const k = a ? pick(a.r2_key, a.r2Key) : undefined;
     return a && k
       ? [{ r2_key: k, content_type: pick(a.mime_type, a.mimeType) ?? mimeFromKey(k), caption: pick(a.file_name, a.fileName) }]
       : [];
   };
-  const unfilledFiles = (() => { const t = taskPlanFiles(/^blank\s*floor\s*plan/i); return t.length ? t : legacyItem(plans[0]); })();
-  const filledFiles = (() => { const t = taskPlanFiles(/^filled\s*floor\s*plan/i); return t.length ? t : legacyItem(plans[1]); })();
+  const unfilledAtts = taskPlanAtts(/^blank\s*floor\s*plan/i);
+  const filledAtts = taskPlanAtts(/^filled\s*floor\s*plan/i);
+  const unfilledFiles = unfilledAtts.length ? unfilledAtts.map(asMedia) : legacyItem(plans[0]);
+  const filledFiles = filledAtts.length ? filledAtts.map(asMedia) : legacyItem(plans[1]);
   // Owner 2026-07-23: 3D + 2D design tiles join this card (view/download via
   // the lightbox) — their booth-layout tasklist rows are gone on mobile.
-  const threeDFiles = taskPlanFiles(/^3d\s*(design|render)/i);
-  const twoDFiles = taskPlanFiles(/^2d\s*design/i);
+  const threeDAtts = taskPlanAtts(/^3d\s*(design|render)/i);
+  const twoDAtts = taskPlanAtts(/^2d\s*design/i);
+  const threeDFiles = threeDAtts.map(asMedia);
+  const twoDFiles = twoDAtts.map(asMedia);
   // Black banner (owner 2026-07-17 v2): shows the "Display Floor Plan" task
   // attachments in the lightbox (which carries a Download button). Was the 3D
   // placeholder, then briefly wired to 3D Design; the owner wants the booth's
   // display floorplan here instead.
-  const displayPlanFiles = taskPlanFiles(/^display\s*floor\s*plan/i);
+  const displayPlanAtts = taskPlanAtts(/^display\s*floor\s*plan/i);
+  const displayPlanFiles = displayPlanAtts.map(asMedia);
   // Checklist task ids by title prefix — used to attach uploads to the right task.
   const taskIdByPrefix = (prefix: RegExp): number | null =>
     (checklist ?? []).find((it) => prefix.test((it.title || "").trim()))?.id ?? null;
@@ -3835,6 +3856,44 @@ function FloorPlans({
       if (filledRef.current) filledRef.current.value = "";
     }
   };
+  // Upload straight onto the Display floor plan task — the replace half of the
+  // same complaint: with no upload here, removing a wrong plan left the tile
+  // empty and the phone with no way to put the right one back.
+  const displayRef = useRef<HTMLInputElement | null>(null);
+  const displayPlanTaskId = displayItem?.id ?? null;
+  const uploadDisplayPlan = async (file: File) => {
+    if (displayPlanTaskId == null) {
+      await notify({ title: "No Display Floor Plan task", body: "This event has no Display Floor Plan task to attach to.", tone: "error" });
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      await notify({ title: "File too large", body: "Max 10MB.", tone: "error" });
+      return;
+    }
+    const ext = (file.name.split(".").pop() || "").toLowerCase();
+    if (!ext) {
+      await notify({ title: "Missing extension", body: "The file needs an extension.", tone: "error" });
+      return;
+    }
+    setBusy(true);
+    try {
+      const buf = await file.arrayBuffer();
+      await api.putBinary(
+        `/api/projects/checklist/${displayPlanTaskId}/attachments?ext=${encodeURIComponent(ext)}&name=${encodeURIComponent(file.name)}`,
+        buf,
+        file.type || "application/octet-stream",
+      );
+      // Display Floor Plan is reviewable — mirror the doc tiles so the
+      // approver's Approve/Reject reappear after a re-upload.
+      await autoSubmitReviewable(displayPlanTaskId, displayItem?.title ?? "Display Floor Plan");
+      reload();
+    } catch (e) {
+      await notify({ title: "Upload failed", body: e instanceof Error ? e.message : "Please try again.", tone: "error" });
+    } finally {
+      setBusy(false);
+      if (displayRef.current) displayRef.current.value = "";
+    }
+  };
   const [planView, setPlanView] = useState<{ items: MediaItem[]; idx: number } | null>(null);
   const [docView, setDocView] = useState<MediaItem | null>(null);
   const openPlan = async (files: MediaItem[], which: string) => {
@@ -3862,17 +3921,21 @@ function FloorPlans({
             (owner 2026-07-23: sales/SD/mgt/BD only). */}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 9 }}>
           {([
-            { key: "Display", label: "Display floor plan", files: displayPlanFiles, badge: "PLAN", bg: "#f3ece0", col: "#a16a2e", item: displayItem, full: true, mediaH: 140 },
-            { key: "3D Design", label: "3D Design", files: threeDFiles, badge: "3D", bg: "#e9e6f4", col: "#5b4b8a", item: threeDItem, full: false, mediaH: 80 },
-            { key: "2D Design", label: "2D Design", files: twoDFiles, badge: "2D", bg: "#e2ecf5", col: "#2f5c8a", item: twoDItem, full: false, mediaH: 80 },
-            { key: "Unfilled", label: "Unfilled plan", files: unfilledFiles, badge: "DRAFT", bg: "#f6efd9", col: "#6e4d12", item: undefined, full: false, mediaH: 80 },
-            { key: "Filled", label: "Filled plan", files: filledFiles, badge: "PLACED", bg: "#e2f0e9", col: "#2f8a5b", item: undefined, full: false, mediaH: 80 },
+            { key: "Display", label: "Display floor plan", files: displayPlanFiles, atts: displayPlanAtts, badge: "PLAN", bg: "#f3ece0", col: "#a16a2e", item: displayItem, full: true, mediaH: 140 },
+            { key: "3D Design", label: "3D Design", files: threeDFiles, atts: threeDAtts, badge: "3D", bg: "#e9e6f4", col: "#5b4b8a", item: threeDItem, full: false, mediaH: 80 },
+            { key: "2D Design", label: "2D Design", files: twoDFiles, atts: twoDAtts, badge: "2D", bg: "#e2ecf5", col: "#2f5c8a", item: twoDItem, full: false, mediaH: 80 },
+            { key: "Unfilled", label: "Unfilled plan", files: unfilledFiles, atts: unfilledAtts, badge: "DRAFT", bg: "#f6efd9", col: "#6e4d12", item: undefined, full: false, mediaH: 80 },
+            { key: "Filled", label: "Filled plan", files: filledFiles, atts: filledAtts, badge: "PLACED", bg: "#e2f0e9", col: "#2f8a5b", item: undefined, full: false, mediaH: 80 },
           ] as const).filter((t) =>
             !(hideFilledPlan && t.key === "Filled") &&
             !(hidePlanTiles && (t.key === "Unfilled" || t.key === "Filled"))
           ).map((t) => {
             const files = t.files;
-            const latest = files[files.length - 1];
+            // Cover = newest IMAGE (owner 2026-08-28): a PDF uploaded after the
+            // photos must not blank the thumbnail into the hatched placeholder.
+            const latest =
+              [...files].reverse().find((f) => /^image\//.test(f.content_type ?? "")) ??
+              files[files.length - 1];
             // Display / 3D / 2D are reviewable (owner 2026-07-29); the
             // Unfilled / Filled plan tiles are not.
             const tileItem = t.item;
@@ -3907,6 +3970,26 @@ function FloorPlans({
                       {files.length ? "+ Add / replace" : "Upload"}
                     </button>
                   )}
+                  {t.key === "Display" && canWrite && displayPlanTaskId != null && (
+                    <button
+                      className="tinybtn"
+                      style={{ marginTop: 6, width: "100%" }}
+                      disabled={busy}
+                      onClick={(e) => { e.stopPropagation(); displayRef.current?.click(); }}
+                    >
+                      {files.length ? "+ Add / replace" : "Upload"}
+                    </button>
+                  )}
+                  {canDeleteFiles && (
+                    <PlanFileChips
+                      files={t.atts}
+                      busy={busy}
+                      setBusy={setBusy}
+                      confirm={confirm}
+                      notify={notify}
+                      reload={reload}
+                    />
+                  )}
                   {tileCanReview && tileItem && (
                     <ReviewButtons item={tileItem} busy={busy} setBusy={setBusy} prompt={prompt} notify={notify} reload={reload} />
                   )}
@@ -3916,6 +3999,7 @@ function FloorPlans({
           })}
         </div>
         <input ref={filledRef} type="file" accept="image/*,.pdf" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) void uploadFilledPlan(f); }} />
+        <input ref={displayRef} type="file" accept="image/*,.pdf" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) void uploadDisplayPlan(f); }} />
 
         <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "#9aa093", margin: "10px 0 6px" }}>Stock transfer record</div>
         {stockOutAtts.length === 0 && <div style={{ fontSize: 12, color: "#9aa093", marginBottom: 8 }}>No stock transfer recorded yet.</div>}

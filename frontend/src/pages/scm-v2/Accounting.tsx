@@ -2,7 +2,8 @@
 // Accounting page — the ledger's face (accounting module, phase 1).
 //
 // Tab strip:
-//   1. Chart of Accounts — the account tree: add / rename / deactivate
+//   1. Chart of Accounts — the ACTIVE company's tree, read-only (maintenance
+//      lives on the union page /scm/chart-of-accounts — one door only)
 //   2. Journal Entries — list w/ filter, drill into lines, NEW manual journal,
 //      post a draft, reverse a posted manual journal
 //   3. General Ledger — flat GL stream, filter by account / date
@@ -14,6 +15,7 @@
 // ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { BookOpen, FileText, ListTree, Receipt, ShieldCheck, TrendingDown, TrendingUp } from 'lucide-react';
 import {
   useJournalEntries,
@@ -32,8 +34,6 @@ import {
   type JeLineIn,
 } from '../../vendor/scm/lib/accounting-queries';
 import {
-  useCreateAccount,
-  useUpdateAccount,
   useReverseJournalEntry,
   useControlCheck,
   type ControlCheckRow,
@@ -132,11 +132,7 @@ const ACCOUNT_TYPE_ORDER = ['ASSET', 'LIABILITY', 'EQUITY', 'INCOME', 'EXPENSE']
 
 const CoaTab = () => {
   const q = useAccounts();
-  const createM = useCreateAccount();
-  const updateM = useUpdateAccount();
   const [showInactive, setShowInactive] = useState(false);
-  const [editing, setEditing] = useState<Account | null>(null);
-  const [adding, setAdding] = useState(false);
 
   const all = useMemo(() => q.data?.accounts ?? [], [q.data]);
   const parents = useMemo(() => new Set(all.map((a) => a.parent_code).filter(Boolean) as string[]), [all]);
@@ -152,39 +148,20 @@ const CoaTab = () => {
 
   return (
     <div className="space-y-3">
-      <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center' }}>
-        <button type="button" style={btnStyle(true)} onClick={() => { setAdding(true); setEditing(null); }}>
-          Add account
-        </button>
+      <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
+        {/* This tab is the ACTIVE company's ledger view. The chart is
+            MAINTAINED in one place only — the union page with the per-company
+            ticks (the owner, 2026-09-03: 照理说应该维护 overall chart of
+            account 罢了). Adding here used to create the row in whichever
+            company you happened to be standing in; that door is closed. */}
+        <Link to="/scm/chart-of-accounts" style={{ fontSize: 'var(--fs-13)', fontWeight: 600, color: 'var(--c-orange)' }}>
+          Maintain the chart (all companies) →
+        </Link>
         <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 'var(--fs-13)' }}>
           <input type="checkbox" checked={showInactive} onChange={(e) => setShowInactive(e.target.checked)} />
           Show deactivated (legacy codes)
         </label>
       </div>
-
-      {(adding || editing) && (
-        <AccountForm
-          key={editing?.account_code ?? 'new'}
-          existing={editing}
-          accounts={all}
-          busy={createM.isPending || updateM.isPending}
-          onCancel={() => { setAdding(false); setEditing(null); }}
-          onSubmit={(v) => {
-            const done = () => { setAdding(false); setEditing(null); };
-            if (editing) {
-              updateM.mutate(
-                { code: editing.account_code, accountName: v.name, parentCode: v.parent || null, isActive: v.active },
-                { onSuccess: done },
-              );
-            } else {
-              createM.mutate(
-                { accountCode: v.code, accountName: v.name, accountType: v.type, parentCode: v.parent || null },
-                { onSuccess: done },
-              );
-            }
-          }}
-        />
-      )}
 
       <DataTable<Account>
         tableId="accounting-coa"
@@ -195,17 +172,47 @@ const CoaTab = () => {
         emptyLabel="No accounts."
         getRowKey={(r) => r.account_code}
         groupBy={{ key: 'type' }}
-        onRowClick={(r) => { setEditing(r); setAdding(false); }}
         columns={[
           { key: 'type', label: 'Type', width: '110px', defaultHidden: true, getValue: (r) => r.account_type, render: (r) => r.account_type },
-          { key: 'code', label: 'Code', width: '130px', getValue: (r) => r.account_code, render: (r) => <span className={styles.codeChip}>{r.account_code}</span> },
+          {
+            key: 'code', label: 'Code', width: '130px', getValue: (r) => r.account_code,
+            render: (r) => (
+              <span className={styles.codeChip} style={parents.has(r.account_code) ? { fontWeight: 700 } : undefined}>
+                {r.account_code}
+              </span>
+            ),
+          },
           {
             key: 'name', label: 'Name',
             getValue: (r) => r.account_name,
-            // Children indent under their parent so the hierarchy reads as a tree.
-            render: (r) => <span style={{ paddingLeft: r.parent_code ? 18 : 0 }}>{r.account_name}</span>,
+            /* 父子 account 不是很明显 (the owner, 2026-09-03, this very table
+               in hand): headers now carry WEIGHT like the union page's —
+               bold, tagged — and children step in behind a tree glyph
+               instead of a barely-there 18px. */
+            render: (r) => (
+              parents.has(r.account_code)
+                ? (
+                  <span style={{ fontWeight: 700 }}>
+                    {r.account_name}
+                    <span style={{ marginLeft: 6, fontSize: 'var(--fs-11)', fontWeight: 400, color: 'var(--c-ink-soft, #666)' }}>header</span>
+                  </span>
+                )
+                : r.parent_code
+                  ? (
+                    <span style={{ paddingLeft: 26, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                      <span aria-hidden style={{ color: 'var(--c-ink-soft, #999)' }}>└</span>
+                      {r.account_name}
+                    </span>
+                  )
+                  : <span>{r.account_name}</span>
+            ),
           },
-          { key: 'parent', label: 'Parent', width: '120px', getValue: (r) => r.parent_code ?? '', render: (r) => r.parent_code ?? '—' },
+          {
+            key: 'parent', label: 'Parent', width: '120px', getValue: (r) => r.parent_code ?? '',
+            render: (r) => r.parent_code
+              ? <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--c-ink-soft, #666)' }}>{r.parent_code}</span>
+              : '—',
+          },
           {
             key: 'kind', label: 'Posting', width: '110px',
             getValue: (r) => (parents.has(r.account_code) ? 'HEADER' : 'POSTABLE'),
@@ -224,55 +231,6 @@ const CoaTab = () => {
           },
         ] satisfies Column<Account>[]}
       />
-    </div>
-  );
-};
-
-const AccountForm = ({
-  existing, accounts, busy, onSubmit, onCancel,
-}: {
-  existing: Account | null;
-  accounts: Account[];
-  busy: boolean;
-  onSubmit: (v: { code: string; name: string; type: string; parent: string; active: boolean }) => void;
-  onCancel: () => void;
-}) => {
-  const [code, setCode] = useState(existing?.account_code ?? '');
-  const [name, setName] = useState(existing?.account_name ?? '');
-  const [type, setType] = useState(existing?.account_type ?? 'EXPENSE');
-  const [parent, setParent] = useState(existing?.parent_code ?? '');
-  const [active, setActive] = useState(existing?.is_active ?? true);
-
-  const parentOptions = accounts.filter((a) => a.is_active && a.account_type === type && a.account_code !== existing?.account_code);
-
-  return (
-    <div style={cardStyle} className="space-y-3">
-      <div style={{ fontWeight: 700 }}>{existing ? `Edit ${existing.account_code}` : 'New account'}</div>
-      <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
-        <input style={{ ...fieldStyle, width: 130 }} placeholder="Code (e.g. 950-0000)" value={code}
-          disabled={Boolean(existing)} onChange={(e) => setCode(e.target.value)} />
-        <input style={{ ...fieldStyle, width: 260 }} placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} />
-        <select style={fieldStyle} value={type} disabled={Boolean(existing)} onChange={(e) => { setType(e.target.value as Account['account_type']); setParent(''); }}>
-          {ACCOUNT_TYPE_ORDER.map((t) => <option key={t} value={t}>{t}</option>)}
-        </select>
-        <select style={fieldStyle} value={parent} onChange={(e) => setParent(e.target.value)}>
-          <option value="">No parent</option>
-          {parentOptions.map((a) => <option key={a.account_code} value={a.account_code}>{a.account_code} — {a.account_name}</option>)}
-        </select>
-        {existing && (
-          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 'var(--fs-13)' }}>
-            <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} />
-            Active
-          </label>
-        )}
-      </div>
-      <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
-        <button type="button" style={btnStyle(true)} disabled={busy || !name.trim() || (!existing && !code.trim())}
-          onClick={() => onSubmit({ code: code.trim(), name: name.trim(), type, parent, active })}>
-          {busy ? 'Saving…' : existing ? 'Save changes' : 'Create account'}
-        </button>
-        <button type="button" style={btnStyle()} onClick={onCancel}>Cancel</button>
-      </div>
     </div>
   );
 };
@@ -770,7 +728,10 @@ const ControlCheckCard = ({ check }: { check: ControlCheckRow }) => {
   return (
     <div style={{ ...cardStyle, borderColor: ok ? 'var(--c-secondary-a, #2F5D4F)' : 'var(--c-festive-b, #B8331F)' }} className="space-y-2">
       <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap' }}>
-        <b>{check.role === 'AR' ? 'Accounts Receivable control' : 'Accounts Payable control'}</b>
+        <b>{check.role === 'AR' ? 'Accounts Receivable control'
+          : check.role === 'AR_OTHER' ? 'Other Debtors control'
+          : check.role === 'AP_OTHER' ? 'Other Creditors control'
+          : 'Accounts Payable control'}</b>
         <span className={styles.codeChip}>{check.accountCode}</span>
         <span>GL balance {fmt(check.glBalanceSen)}</span>
         <span style={{

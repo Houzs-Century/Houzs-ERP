@@ -1,0 +1,33 @@
+name: Document-link matrix, our side (read-only)
+
+# The owner, 2026-09-01: 「6 种相互组合就是 36 个审查方式了」. The existing
+# AC-vs-ERP check covers seven edges; this prints the whole 6x6 grid for the
+# ERP's own data — which pairs link, how much is filled, how much dangles.
+#
+# It needs NO AutoCount snapshot, which is why it exists separately: the book
+# comparison is blocked on a fresh export and this half is not.
+#
+# READ-ONLY: SELECTs only, no DDL, no writes, no transaction. Manual trigger,
+# own concurrency group, exit 0 for every legitimate answer.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: probe-doc-link-matrix
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+        working-directory: backend
+      - name: probe (read-only)
+        working-directory: backend
+        env:
+          DATABASE_URL: "${{ secrets.DATABASE_URL }}"
+        run: node scripts/probe-doc-link-matrix.mjs

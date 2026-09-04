@@ -32,6 +32,7 @@ import { nextJeNo, jePrefixForCompany } from '../scm/lib/doc-no';
 import { todayMyt } from '../scm/lib/my-time';
 import { dateOrNull } from '../scm/lib/date-coerce';
 import { REVERSAL_SOURCE, CONTROL_ROLES, resolveRoles } from './rules';
+import { accMastersCompanyId } from './masters-company';
 import type { RuleLine } from './rules';
 
 export type EngineLine = RuleLine;
@@ -91,7 +92,7 @@ async function checkAccounts(
   companyId: number | null,
   codes: string[],
 ): Promise<{ ok: true } | { ok: false; status: 'account_invalid' | 'account_check_failed'; reason: string }> {
-  const co = companyId == null ? 1 : Number(companyId);
+  const co = accMastersCompanyId(companyId, 'checkAccounts');
   const { data, error } = await sb
     .from('accounts')
     .select('account_code, parent_code, is_active')

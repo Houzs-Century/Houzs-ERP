@@ -203,6 +203,91 @@ would have measured Postgres, which is not the thing in question.
 returns `TRUNCATES_SILENTLY`, `paginateAll` is wrong and that is its own fix,
 not a footnote to this one.
 
+## `GET /autocount/host-build` — which build the office machine is running
+
+**Read-only. Gated on `*`**, the same gate the other `/autocount/*` routes in
+this module carry. One proxied call of the AutoCount service's own `/health`;
+it sends no document, queues nothing and writes nothing.
+
+### What it answers
+
+A change to `backend/scripts/autocount-service/AcSyncService.cs` ships **inert**.
+The exe is rebuilt on the office machine by `deploy-on-host.ps1` — our deploy
+cannot do it, because the SQL credentials live there and are compiled in — so a
+merged C# change does nothing at all until somebody walks over and rebuilds. Two
+fields settle whether that has happened:
+
+| field | what it is | what it settles |
+| --- | --- | --- |
+| `builtAt` | the assembly's own file timestamp, UTC | earlier than the last commit that touched the C# = the host is behind |
+| `mvid` | the module version id, unique per **compilation** | two readings with the same `mvid` are the same bytes; a rebuild always changes it |
+
+The service has answered both since 2026-08-15. Until this route, the only thing
+that read them was the outbox drain, which stamps them onto rows it dispatches
+(`readHostBuild`, mig 0304) — an answer available *after* a document went, about
+the build that sent it, not an answer to "what is running right now".
+
+**The comparison is done by the reader, on purpose:**
+
+```sh
+git log -1 --format=%ad --date=short -- backend/scripts/autocount-service/AcSyncService.cs
+```
+
+A date compiled into the Worker would be a hand-maintained fact with an expiry
+date, which is the thing the two fields exist to replace. The route ships that
+command in its own `howToCompare` string so the payload is self-explaining.
+
+### The verdicts, and why they are not one verdict
+
+The host's API-key check is **fail-closed and sits above its `/health` branch**,
+so several very different situations all look like "AutoCount is down" if they
+are collapsed. Each is a different job for whoever reads this:
+
+| verdict | what actually happened | what to do |
+| --- | --- | --- |
+| `REPORTED` | the host answered and named its build | compare `builtAt` with the command above |
+| `BUILD_UNREADABLE` | it IS a build that reports its identity, but could not stat its own file | which build is running stays UNKNOWN — say so, do not guess |
+| `BUILD_NOT_REPORTED` | it sent no build keys at all — only an exe built before 2026-08-15 does that | the host is behind; rebuild it |
+| `HOST_REFUSED_OUR_KEY` | HTTP 401 — the service is **running** and our key does not match its `C:\Temp\ac-svc-key.txt` | fix the key, not AutoCount |
+| `HOST_HAS_NO_KEY` | HTTP 503 **with** the service's own JSON — it has no key file and is refusing everybody | put the key file back on the host |
+| `HOST_DID_NOT_ANSWER` | nothing reached the machine: a gateway status with a non-JSON body, or no response at all (`hostStatus: 0`) | the service is stopped or the machine is off |
+| `HOST_ERROR` | the host answered with an error of its own | read `hostError` for its words |
+| `NOT_CONFIGURED` | `AC_SYNC_URL` is not set on this Worker (HTTP 503) | nothing about the office machine may be concluded from this |
+
+`BUILD_NOT_REPORTED` versus `BUILD_UNREADABLE` is the distinction the C# is
+written to preserve: it sets both keys to `null` rather than omitting them when
+its own reflection fails, so a payload carrying **neither key** is an old exe and
+a payload carrying **two nulls** is a new one that could not read itself. Absent
+never reads as "asked and compared".
+
+The gateway split is the one #2686 paid for: Cloudflare answers an unreachable
+origin with `text/plain` containing `error code: 502`, and reporting that as
+AutoCount refusing something sent a reader to look at the account book for a
+stopped Windows service.
+
+### Why it lives in the Worker
+
+Two reasons, and both are hard:
+
+- **Credentials.** `AC_SYNC_URL` + `AC_SYNC_KEY` are **Worker** secrets and
+  deliberately not GitHub ones, so a `workflow_dispatch` check cannot ask the
+  host at all. Same posture, same reasoning as `/rest-page-ceiling` above.
+- **Transport.** `AcSyncService` binds `http://localhost:<port>/` (port from
+  `C:\Temp\ac-svc-port.txt`, default 8900), so an IP-addressed request over
+  ZeroTier is answered by `http.sys` — 400, or 403 `Forbidden URL` if the Host
+  header is spoofed — before the handler ever sees it. The Worker reaches the
+  service through the tunnel, so the Worker is the only thing in this system that
+  can ask.
+
+### What never reaches the response
+
+No URL and no key. `AC_SYNC_URL` is a secret and a transport failure's message is
+written by the fetch implementation, which legitimately quotes the address it
+could not reach — so every string this route passes through from anywhere but its
+own source goes through `stripUrls` first. Host fields are picked by name rather
+than forwarded wholesale; a key a newer host sends that this route does not read
+is reported in `otherKeys` **by name only**.
+
 ## `GET /live` — the secret-presence flags, and why one of them matters most
 
 `/live` reports the reachability probes (DB, KV, R2, SCM) and two
@@ -229,6 +314,68 @@ explanation for a slow page. `/api/presence`,
 cache is INSIDE the handler — it saves the route's own query, never the two
 reads in front of it. `GET /api/auth/me` crossing 800ms is the clean proof,
 since it has no route work to blame.
+
+### The second card: what the request in hand actually DID
+
+*Added 2026-09-02, `docs/bugs/0604`.* The paragraph above ends by telling you not
+to read the On/Off card as an explanation — and until now there was nothing else
+to read. **`authFastPath` is that something**, and it reports observations rather
+than settings:
+
+| field | answers |
+| --- | --- |
+| `session_pass.this_request` | `pass` / `session-db` / `unknown` — what the request that fetched THIS page did. `unknown` means the middleware did not record it and is never collapsed onto either answer. |
+| `config_cache.<family>` | the TTL beside the browser's poll interval, the hit/miss for this request, and `ttl_shorter_than_poll`. |
+| `reading` | one plain sentence, DERIVED from those numbers so it cannot drift away from them. |
+
+**On is not firing.** A key can be set while every request still pays the two
+joined reads — the pass may be absent, expired, or never sent. That is `0593`
+exactly, so the two states now render as two separate cards: *Signed sessions*
+(the setting) and *This request's authorization* (the behaviour). If the first
+says On and the second says Database, chase the pass, not the caches.
+
+**`unknown` is checked BEFORE the caches, and that order is a bug fix, not a
+style choice** (`docs/bugs/0605`). It used to sit below, so `unknown` beside a
+short TTL printed *"Authorization took the fast path"* — a claim about the one
+thing the card had just said it could not see. The owner read exactly that
+contradiction on the first live loading of this page. The cache finding is still
+reported under `unknown`, because it holds either way — but as a separate clause
+that claims nothing about the path.
+
+**`unknown` is not a dead end.** It carries `client_sent_pass` (presence of the
+header only — never the value, never a prefix, never a length), because the two
+causes need opposite fixes: **no header** means the browser has none to send (it
+expired, or was never stored); **header present and still no record** means we
+lost the record, which is a different bug.
+
+**`ttl_shorter_than_poll` uses `<=`, not `<`.** A TTL EQUAL to the poll expires
+exactly as the next poll arrives, which is the banner's measured 874-984ms case,
+not a near miss.
+
+Presence is structurally short today — **kept 15s, asked for every 60s** — so one
+user alone misses every poll. `backend/tests/authFastPathProbe.test.ts` asserts
+that, so the day it is fixed the test is what says so. It also PINS both mirrored
+poll intervals against the hooks' source: `configCache.ts` said the banner poll
+was 60s and reasoned "300s (5 polls)" from a value that has been 180_000 for some
+time (1.67 polls). Proved red by moving the constant.
+
+### What the client-error dump measured, 2026-09-02
+
+3-day window, from **Client errors dump (read-only)** — occurrences, not
+signatures:
+
+| endpoint | slow occurrences |
+| --- | --- |
+| `/api/presence` | 354 |
+| `/api/announcements/banner` | 343 |
+| everything else | 64 |
+
+**`GET /api/auth/me` does not appear at all.** The paragraph above names it as
+the clean proof of the DB path being paid, so its absence is the closest thing to
+evidence that the renewal fix (`0593`, deployed 2026-08-31 18:41 UTC) did what it
+was meant to. It is NOT proof: the dump groups by signature with a last-seen
+date, so it cannot be split into before and after that deploy. Recorded as
+LIKELY, and the probe above is what will settle it.
 
 Two things not to do with this flag:
 

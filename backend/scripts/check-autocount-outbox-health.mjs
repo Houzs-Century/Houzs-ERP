@@ -31,6 +31,7 @@
 // every legitimate answer — including a completely empty queue, which is the
 // correct state today — because a red job reads as "the check broke" and the
 // ANSWER is the output. Only an unreachable database exits non-zero.
+import { acFailedHeadingLine, acQueueTotalsLine } from './lib/ac-queue-report-lines.mjs';
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
 
@@ -40,7 +41,11 @@ import postgres from "postgres";
    start disagreeing about the same row. src/scm/lib/autocount-outbox-status.ts
    is the source; this is its plain-node mirror, and a canonical test fails if
    they drift. */
-import { AC_SKIP_KINDS, REQUEUE_NOTE_PREFIX } from "./lib/autocount-skip-kinds.mjs";
+import { REQUEUE_NOTE_PREFIX } from "./lib/autocount-skip-kinds.mjs";
+/* The grouping is a MODULE because this file used to re-implement the
+   classification rule inline and got the priority order wrong — see
+   docs/bugs/0606-the-outbox-health-report-counted-one-refusal-under-two-remed.md and tests/acSkipGrouping.test.mjs. */
+import { groupAcSkipsByKind } from "./lib/ac-skip-grouping.mjs";
 
 function resolveUrl() {
   if (process.env.DATABASE_URL) return process.env.DATABASE_URL;
@@ -269,15 +274,7 @@ try {
           : "which is the expected state while scm.autocount_writeback is off."),
     );
   } else {
-    notice(
-      `queue: ${total} row(s) — ` +
-        ["pending", "sent", "failed", "skipped"]
-          .map((s) => `${s} ${by[s] ?? 0}`)
-          .join(" / ") +
-        (settled.length + requeuedFailed.length
-          ? ` (${settled.length + requeuedFailed.length} of those have been re-queued)`
-          : ""),
-    );
+    notice(acQueueTotalsLine(total, by, settled.length + requeuedFailed.length));
   }
 
   /* PER OPERATION — the question the totals cannot answer.
@@ -324,7 +321,7 @@ try {
      A re-queued failure is history and is listed under RE-QUEUED below. */
   if (failedOutstanding > 0) {
     if (failedLive.length) {
-      notice(`FAILED: ${failedLive.length} — each is a document that is in the ERP and NOT in AutoCount.`);
+      notice(acFailedHeadingLine(failedLive));
       for (const r of failedLive) {
         notice(`  ${r.doc_type} ${r.doc_no} (${r.op}, ${r.attempts} attempts): ${String(r.last_error ?? "").slice(0, 300)}`);
       }
@@ -377,11 +374,24 @@ try {
      away: a reason this script does not recognise is a code path that grew a
      new refusal, and rolling it into 'other' is how it stays invisible. */
   if (outstanding.length > 0) {
-    const seen = new Set();
-    for (const { needle, remedy: meaning } of AC_SKIP_KINDS) {
-      const hits = outstanding.filter((r) => r.last_error.includes(needle));
-      hits.forEach((r) => seen.add(r.doc_no + r.op));
-      if (!hits.length) continue;
+    /* ONE ROW, ONE CLASS — through the shared classifier, not a second copy of
+       the matching rule. This loop used to re-implement the classification as
+       `outstanding.filter(r => r.last_error.includes(needle))` once per kind,
+       with nothing excluding a row an earlier kind had already claimed. Every
+       needle a stored sentence contains therefore reported it again, under a
+       DIFFERENT remedy.
+
+       AC_SKIP_KINDS is a PRIORITY order and says so in its own comments — the
+       transport needle sits before the masters one deliberately, because "the
+       host is not answering" reading as bad master data sends whoever
+       investigates to the wrong subsystem, and that cost a day on 2026-08-23.
+       `classifyAcSkip` honours the priority by returning the FIRST match; this
+       report did not, so it printed the losing class as well. Measured on
+       production run 33593927462 (2026-09-02): TWO skipped rows, on ONE
+       document, reported as `skipped 2` twice under two different remedies —
+       four lines, and a reader summing the buckets counts four. */
+    const { ordered, unrecognised } = groupAcSkipsByKind(outstanding);
+    for (const { remedy: meaning, rows: hits } of ordered) {
       notice(`  skipped ${hits.length}: ${meaning}`);
       /* NAME THE DOCUMENTS AND QUOTE THE REASON. A bare count tells an operator
          that something was refused but not what to open, and the message body
@@ -392,8 +402,11 @@ try {
         notice(`    - ${r.doc_type} ${r.doc_no} (${r.op}): ${r.last_error.slice(0, 400)}`);
       }
     }
-    const rest = outstanding.filter((r) => !seen.has(r.doc_no + r.op));
-    for (const r of rest) {
+    /* The unrecognised bucket comes from the same classification pass. It used
+       to be `outstanding` minus a Set keyed on `doc_no + op`, which collapses
+       two rows of one document into one key — so a second unrecognised row on
+       the same document could be dropped from the report entirely. */
+    for (const r of unrecognised) {
       notice(`  skipped (UNRECOGNISED reason): ${r.doc_type} ${r.doc_no} (${r.op}): ${r.last_error.slice(0, 200)}`);
     }
   } else {
@@ -636,7 +649,7 @@ if (process.env.ALARM === '1') {
   const reasons = [];
   if (alarm.failedOutstanding > 0) {
     reasons.push(
-      `${alarm.failedOutstanding} document(s) are in the ERP and NOT in AutoCount, ` +
+      `${alarm.failedOutstanding} document(s) carry an operation the account book did not complete, ` +
         'with no retries left. Open AutoCount Sync and press Send again on each.',
     );
   }

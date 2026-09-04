@@ -1910,3 +1910,11 @@ appends it. A keyless line the route did not name is still refused.
 
 Full rule and the matrix: `docs/modules/autocount-writeback.md`,
 `docs/bugs/0588-a-line-added-to-a-delivery-order-receipt-or-invoice-never-re.md`.
+
+## Drill-down columns and "still loading"
+
+A cell fed by a SECOND query renders **WORKING…** while that query is in flight
+and **NOT LOADED** if it fails — never `STOCK` or a bare dash, which are
+answers. `coverage` is a required prop on the shared drill-down; the rule, the
+five surfaces that fetch separately, and how to add a sixth are in
+`docs/modules/coverage-state.md` (trace: `docs/bugs/0603-a-drill-down-printed-stock-while-the-answer-was-still-loadin.md`).

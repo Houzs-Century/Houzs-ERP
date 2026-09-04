@@ -57,10 +57,17 @@ So an undeclared key cannot be granted through the UI, cannot be stored through
 the API, and is thrown away if it is already in the row. **None of those three
 produces a log, an error, or anything a human sees.**
 
-**`scm.payment_voucher.approve`** (phase 3, 2026-08-28) is the decision half
-of the PV approval cycle — an unapproved voucher cannot post, and a submitted
-one reserves against Daily Bank's available money (docs/modules/payment-voucher.md
-§0b). Declared like every key, deliberately granted to **no** seed role: only
+**`scm.payment_voucher.check`** (the owner's four layers, 2026-09-02) is the
+FIRST of the two yeses — checking a prepared voucher locks it and reserves it
+against Daily Bank's available money; a checker may also reject back to
+draft (docs/modules/payment-voucher.md §0b). Separate key from approve on
+purpose (可以同一个人，可以不同人): the owner may hand the first yes to the
+finance manager and keep the second. Granted to **no** seed role.
+
+**`scm.payment_voucher.approve`** (phase 3, 2026-08-28; re-scoped by the four
+layers 2026-09-02) is the SECOND yes — and since the four layers it POSTS the
+GL in the same request, so this key also opens the standalone post door
+(docs/modules/payment-voucher.md §0b). Declared like every key, deliberately granted to **no** seed role: only
 `*` (Owner / IT Admin) can approve until the owner assigns it to a position.
 
 `EXPLICIT_APPROVAL_KEYS` is a separate rule on top: the four checklist-approval

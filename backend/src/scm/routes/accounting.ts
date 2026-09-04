@@ -41,9 +41,14 @@ import {
 } from './accounting-settlement';
 import {
   bankSetup, bankUpload, bankStatements, bankStatementDetail,
+  bankRulesList, bankRuleCreate, bankRuleUpdate,
   bankLineReceipt, bankLineMatch, bankLineIgnore, bankLineUndo,
 } from './accounting-bank';
 import { payoutUpload, payoutList } from './accounting-payouts';
+import {
+  chartUnionHandler, chartTickHandler, chartImportHandler,
+  chartRenameHandler, chartUpdateHandler, chartDeleteHandler, chartCreateHandler,
+} from './accounting-chart';
 import { dateOrNull } from '../lib/date-coerce';
 
 /* THE GENERAL LEDGER HAD NO PERMISSION CHECK AT ALL — eleven routes, zero
@@ -109,6 +114,18 @@ accounting.get('/settlement/payouts', payoutList);
    Owner, 2026-08-19: 我不是应该upload bank statement…然后你也自动核对吗 —
    整张月结单全部对. */
 accounting.get('/bank/setup', bankSetup);
+/* The chart maintenance surface (roadmap A) — union + per-company ticks +
+   the accountant's import. Handlers in accounting-chart.ts. */
+accounting.get('/chart', chartUnionHandler);
+accounting.put('/chart/tick', chartTickHandler);
+accounting.post('/chart/import', chartImportHandler);
+accounting.put('/chart/rename', chartRenameHandler);
+accounting.put('/chart/update', chartUpdateHandler);
+accounting.post('/chart/account', chartCreateHandler);
+accounting.delete('/chart/account', chartDeleteHandler);
+accounting.get('/bank/rules', bankRulesList);
+accounting.post('/bank/rules', bankRuleCreate);
+accounting.patch('/bank/rules/:id', bankRuleUpdate);
 accounting.post('/bank/statements', bankUpload);
 accounting.get('/bank/statements', bankStatements);
 accounting.get('/bank/statements/:id', bankStatementDetail);
@@ -141,12 +158,67 @@ accounting.get('/accounts', async (c) => {
   // — scope so one company can't see the other's account codes/names.
   let q = sb
     .from('accounts')
-    .select('account_code, account_name, account_type, parent_code, is_active');
+    /* acc_money marks the accounts that ARE money (bank / cash / e-wallet —
+       the Daily Bank set). The PV "Paid From" picker offers only these; the
+       flag rides along so screens don't hardcode code ranges. special_type is
+       the AutoCount special column (0347) — pickers hide the SDC/SCC/SBS
+       control accounts by it. */
+    .select('account_code, account_name, account_type, parent_code, is_active, acc_money, special_type');
   q = scopeToCompany(q, c);
   const { data, error } = await q.order('account_code');
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   return c.json({ accounts: data ?? [] });
 });
+
+/* ── Account roles — which account plays which part ─────────────────────────
+   resolveRoles is what the posting rules read; this pair is the OWNER'S window
+   onto it. GET answers "which bank is my default, which account is AP" per
+   company; PUT repoints ONE role. Only BANK_DEFAULT is repointable from here
+   for now (the owner: 默认银行我可以自己maintenance) — the control roles (AR /
+   AP) stay code-seeded until there is a reason to move them. */
+export const accountRolesGet = async (c: any): Promise<Response> => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const sb = c.get('supabase');
+  const roles = await resolveRoles(sb, co.companyId);
+  const { data: overrides, error } = await sb.from('acc_account_roles')
+    .select('role, account_code').eq('company_id', co.companyId);
+  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  const overridden = Object.fromEntries(((overrides ?? []) as Array<{ role: string; account_code: string }>).map((r) => [r.role, r.account_code]));
+  return c.json({ roles, overridden });
+};
+accounting.get('/roles', accountRolesGet);
+
+export const accountRolesPutBankDefault = async (c: any): Promise<Response> => {
+  if (!requireGlPost(c)) return c.json({ error: "You don't have permission to manage account roles." }, 403);
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const sb = c.get('supabase');
+  let body: any;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
+  const code = String(body.accountCode ?? '').trim();
+  if (!code) return c.json({ error: 'account_required' }, 400);
+
+  /* The default bank must actually BE money — an expense account set here
+     would silently mis-book every transfer payment and daily-bank line. */
+  const { data: acct, error: aErr } = await scopeToCompanyId(
+    sb.from('accounts').select('account_code, account_name, acc_money, is_active').eq('account_code', code),
+    co.companyId,
+  ).maybeSingle();
+  if (aErr) return c.json({ error: 'load_failed', reason: aErr.message }, 500);
+  if (!acct) return c.json({ error: 'no_such_account', message: `${code} is not in this company's chart.` }, 404);
+  const a = acct as { account_name: string; acc_money: boolean | null; is_active: boolean };
+  if (!a.is_active) return c.json({ error: 'account_inactive', message: `${code} ${a.account_name} is inactive.` }, 409);
+  if (a.acc_money !== true) {
+    return c.json({ error: 'not_a_money_account', message: `${code} ${a.account_name} is not a bank / cash account. The default bank must be one of the money accounts Daily Bank shows.` }, 409);
+  }
+
+  const { error: upErr } = await sb.from('acc_account_roles')
+    .upsert({ company_id: co.companyId, role: 'BANK_DEFAULT', account_code: code }, { onConflict: 'company_id,role' });
+  if (upErr) return c.json({ error: 'save_failed', reason: upErr.message }, 500);
+  return c.json({ ok: true, role: 'BANK_DEFAULT', accountCode: code });
+};
+accounting.put('/roles/BANK_DEFAULT', accountRolesPutBankDefault);
 
 /* ════════════════════════════════════════════════════════════════════════
    Journal Entries
@@ -834,17 +906,26 @@ export const controlCheckHandler = async (c: any) => {
   type CheckOk = { role: string; accountCode: string; glBalanceSen: number; driftDocs: Drift[]; foreignLines: Foreign[]; ok: boolean };
   type CheckErr = { role: string; accountCode: string; error: string };
 
-  const runCheck = async (role: 'AR' | 'AP', accountCode: string): Promise<CheckOk | CheckErr> => {
+  const runCheck = async (role: 'AR' | 'AP' | 'AP_OTHER' | 'AR_OTHER', accountCode: string): Promise<CheckOk | CheckErr> => {
     const expectedSource = role === 'AR' ? 'SI' : 'PI';
+    /* AP_OTHER (405-0000, the 2026-09-03 split) and AR_OTHER (305-0000, the
+       Other Debtors module): the document↔journal drift walk below is
+       per-DOCUMENT and control-agnostic — the AP arm already covers every PI
+       once, and a debtor bill cannot exist without its journal (the create is
+       atomic). These arms contribute what IS control-specific: the GL balance
+       and any foreign line parked on the control. */
+    const docDrift = role !== 'AP_OTHER' && role !== 'AR_OTHER';
 
-    const { data: jes, error: jesErr } = await sb.from('journal_entries')
-      .select('id, je_no, source_doc_no, total_debit_sen')
-      .eq('company_id', companyId).eq('source_type', expectedSource)
-      .eq('posted', true).eq('reversed', false);
-    if (jesErr) return { role, accountCode, error: jesErr.message };
     const jeByDoc = new Map<string, { jeTotal: number }>();
-    for (const j of (jes ?? []) as Array<{ source_doc_no: string | null; total_debit_sen: number }>) {
-      if (j.source_doc_no) jeByDoc.set(j.source_doc_no, { jeTotal: Number(j.total_debit_sen ?? 0) });
+    if (docDrift) {
+      const { data: jes, error: jesErr } = await sb.from('journal_entries')
+        .select('id, je_no, source_doc_no, total_debit_sen')
+        .eq('company_id', companyId).eq('source_type', expectedSource)
+        .eq('posted', true).eq('reversed', false);
+      if (jesErr) return { role, accountCode, error: jesErr.message };
+      for (const j of (jes ?? []) as Array<{ source_doc_no: string | null; total_debit_sen: number }>) {
+        if (j.source_doc_no) jeByDoc.set(j.source_doc_no, { jeTotal: Number(j.total_debit_sen ?? 0) });
+      }
     }
 
     const drift: Drift[] = [];
@@ -869,7 +950,7 @@ export const controlCheckHandler = async (c: any) => {
           jeByDoc.delete(d.invoice_number);
         }
       }
-    } else {
+    } else if (docDrift) {
       const { data: docs, error } = await sb.from('purchase_invoices')
         .select('invoice_number, total_sen, exchange_rate, status, migrated_no_stock')
         .eq('company_id', companyId);
@@ -922,7 +1003,9 @@ export const controlCheckHandler = async (c: any) => {
        the finding. */
     const family = role === 'AR'
       ? new Set(['SI', 'SI_REVERSAL', 'SOPAY', 'SOPAY_REVERSAL', 'SIPAY', 'SIPAY_REVERSAL'])
-      : new Set(['PI', 'PI_REVERSAL', 'PV', 'PV_REVERSAL']);
+      : role === 'AR_OTHER'
+        ? new Set(['ODB', 'ODB_REVERSAL', 'ODR', 'ODR_REVERSAL'])
+        : new Set(['PI', 'PI_REVERSAL', 'PV', 'PV_REVERSAL']);
     for (const l of (lines ?? []) as Array<{ je_no: string; source_type: string; debit_sen: number; credit_sen: number }>) {
       bal += Number(l.debit_sen ?? 0) - Number(l.credit_sen ?? 0);
       if (!family.has(l.source_type)) {
@@ -933,7 +1016,12 @@ export const controlCheckHandler = async (c: any) => {
     return { role, accountCode, glBalanceSen: bal, driftDocs: drift, foreignLines: foreign, ok: drift.length === 0 && foreign.length === 0 };
   };
 
-  const checks = [await runCheck('AR', roles.AR), await runCheck('AP', roles.AP)];
+  const checks = [
+    await runCheck('AR', roles.AR),
+    await runCheck('AR_OTHER', roles.AR_OTHER),
+    await runCheck('AP', roles.AP),
+    await runCheck('AP_OTHER', roles.AP_OTHER),
+  ];
 
   /* THE THIRD FINDING: money recorded on a document that never reached the
      ledger at all. A booking failure does not fail the operator's save (sales
@@ -1035,9 +1123,12 @@ accounting.get('/daily-bank', async (c) => {
      "nothing pending" on the one board that answers how much can move. */
   const { data: pendingRaw, error: pErr } = await sb.from('payment_vouchers')
     .select('total_sen, exchange_rate')
+    /* daily bank 的pending 就是第一层的checked (the owner, 2026-09-02): a
+       voucher reserves the board's money once the FIRST yes is on it — a
+       merely prepared one is still the preparer's business. */
     .eq('company_id', co.companyId).eq('status', 'DRAFT')
-    .not('submitted_at', 'is', null)
-    .lte('submitted_at', `${date}T23:59:59.999`);
+    .not('checked_at', 'is', null)
+    .lte('checked_at', `${date}T23:59:59.999`);
   if (pErr) return c.json({ error: 'load_failed', reason: pErr.message }, 500);
   const pending = (pendingRaw ?? []) as Array<{ total_sen: number; exchange_rate: string | number | null }>;
 

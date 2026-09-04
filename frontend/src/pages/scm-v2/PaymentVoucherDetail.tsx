@@ -19,20 +19,24 @@
 // ----------------------------------------------------------------------------
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { CheckCircle2, ChevronDown, History, Pencil, Plus, RotateCcw, Save, Send, Ban, Trash2, X, XCircle } from 'lucide-react';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { CheckCircle2, ChevronDown, Copy, History, Pencil, Plus, Printer, RotateCcw, Save, Send, Ban, Trash2, X, XCircle } from 'lucide-react';
 import { Button } from '@2990s/design-system';
-import { fmtDateOrDash } from '../../vendor/shared/format';
+import { fmtDate, fmtDateOrDash } from '../../vendor/shared/format';
 import {
   usePaymentVoucherDetail,
   useUpdatePaymentVoucher,
-  usePostPaymentVoucher,
   useCancelPaymentVoucher,
   useSubmitPaymentVoucher,
   useWithdrawPaymentVoucher,
+  useCheckPaymentVoucher,
   useApprovePaymentVoucher,
   useRejectPaymentVoucher,
+  useSupplierAdvances, useApplyAdvance,
+  usePvFiles, useUploadPvFile, useDeletePvFile, fetchPvFileBlobUrl, fileToBase64, PV_FILE_ACCEPT,
 } from '../../vendor/scm/lib/payment-voucher-queries';
+import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
+import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
 import { useAccounts, type Account } from '../../vendor/scm/lib/accounting-queries';
 import { usePurchaseInvoices } from '../../vendor/scm/lib/purchase-invoice-queries';
 import { useSuppliers, useSupplierDetail } from '../../vendor/scm/lib/suppliers-queries';
@@ -99,6 +103,7 @@ export const PaymentVoucherDetail = () => {
      re-render on every keystroke in the edit form. */
   const [historyOpen, setHistoryOpen] = useState(false);
   const closeHistory = useCallback(() => setHistoryOpen(false), []);
+  const navigate = useNavigate();
 
   const detailQ = usePaymentVoucherDetail(id || null);
   const pv    = detailQ.data?.paymentVoucher as Record<string, any> | undefined;
@@ -107,25 +112,27 @@ export const PaymentVoucherDetail = () => {
   const allocations = (detailQ.data?.allocations ?? []) as Array<Record<string, any>>;
 
   const update = useUpdatePaymentVoucher();
-  const post   = usePostPaymentVoucher();
   const cancel = useCancelPaymentVoucher();
   const submit   = useSubmitPaymentVoucher();
   const withdraw = useWithdrawPaymentVoucher();
+  const check    = useCheckPaymentVoucher();
   const approve  = useApprovePaymentVoucher();
   const reject   = useRejectPaymentVoucher();
-  const busy   = update.isPending || post.isPending || cancel.isPending
-    || submit.isPending || withdraw.isPending || approve.isPending || reject.isPending;
+  const busy   = update.isPending || cancel.isPending
+    || submit.isPending || withdraw.isPending || check.isPending || approve.isPending || reject.isPending;
 
   const canWrite   = can('scm.payment_voucher.write');
-  const canPost    = can('scm.payment_voucher.post');
   const canCancel  = can('scm.payment_voucher.cancel');
+  const canCheck   = can('scm.payment_voucher.check');
   const canApprove = can('scm.payment_voucher.approve');
 
-  /* Phase 3 — where in the approval cycle this voucher stands. Both marks
-     null: an editable draft. Submitted only: queued, frozen. Both: approved,
-     waiting for Post. The server enforces all of it; these only decide which
-     buttons are worth showing. */
-  const isSubmitted  = Boolean(pv?.submitted_at);
+  /* The owner's four layers (2026-09-02) — where this voucher stands. No
+     marks: raw Draft. Prepared: declared ready, STILL editable. Checked:
+     first yes, locked, on Daily Bank's pending. Approve is the second yes
+     and posts the GL itself. The server enforces all of it; these only
+     decide which buttons are worth showing. */
+  const isPrepared   = Boolean(pv?.submitted_at);
+  const isChecked    = Boolean(pv?.checked_at);
   const isApprovedPv = Boolean(pv?.approved_at);
   /* Reject wants a why the submitter will read — an inline note swaps in
      for the approve/reject pair while it is being typed. */
@@ -140,6 +147,41 @@ export const PaymentVoucherDetail = () => {
   };
 
   const suppliersQ = useSuppliers({ status: 'ACTIVE' });
+
+  /* ── Print — the voucher WITH its evidence (owner 2026-09-03: print pv
+     include ocr 的文件一起). The client renders the voucher page; the Worker
+     appends the stored files where they live (print-bundle) and hands back
+     one PDF. The file LIST must be an answer before anything renders:
+     printing a voucher quietly missing its bills is the dishonest branch,
+     so an unloaded/failed list aborts with a sentence. */
+  const filesQ = usePvFiles(id || null);
+  /* Attach or not is the OPERATOR's call per print (owner 2026-09-04: 可以
+     选择 exclude pdf) — default ON, the toggle lives in the preview card. */
+  const [includeFiles, setIncludeFiles] = useState(true);
+  /* The print's namer reads the UNFILTERED chart — an old voucher on a
+     now-inactive account must still print that account's name. */
+  const accountNameOf = (code: string): string | null =>
+    (accountsQ.data?.accounts ?? []).find((x) => x.account_code === code)?.account_name ?? null;
+  const deliverPrintPdf = (action: PdfAction) => {
+    if (!pv) return;
+    return (async () => {
+      const rows = filesQ.data ? filesQ.data.files : (await filesQ.refetch()).data?.files;
+      if (!rows) throw new Error("The voucher's file list could not be loaded — nothing was printed. Try again.");
+      const { generatePaymentVoucherPdf } = await import('../../vendor/scm/lib/payment-voucher-pdf');
+      type A = Parameters<typeof generatePaymentVoucherPdf>;
+      await generatePaymentVoucherPdf(
+        pv as unknown as A[0],
+        lines as unknown as A[1],
+        allocations as unknown as A[2],
+        accountNameOf,
+        { action, withFilesOf: includeFiles && rows.length > 0 ? id : null },
+      );
+    })().catch((e: unknown) => {
+      notify({ title: 'PDF generation failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
+    });
+  };
+  const print = usePrintPreview(deliverPrintPdf);
+  useOpenPrintPreviewFromUrl(print.openPreview, !!pv);
 
   const isDraft = pv?.status === 'DRAFT';
   const [isEditing, setIsEditing] = useState(() => searchParams.get('edit') === '1');
@@ -327,15 +369,9 @@ export const PaymentVoucherDetail = () => {
     }
   };
 
-  const onPost = async () => {
-    if (!(await askConfirm({ title: `Post voucher ${pv.pv_number}?`, body: 'This writes the journal entry to the General Ledger and locks the voucher.', confirmLabel: 'Post to GL' }))) return;
-    try {
-      await post.mutateAsync(id);
-    } catch (err) {
-      notify({ title: 'Post failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' });
-    }
-  };
-
+  /* There is no standalone Post button any more — the second yes posts
+     (owner 2026-09-02: 当approved 了才会进gl), and re-approving resumes a
+     post that died halfway. */
   const onCancel = async () => {
     if (!(await askConfirm({ title: `Cancel voucher ${pv.pv_number}?`, body: 'This sets status to CANCELLED and reverses the GL entry if it was posted.', confirmLabel: 'Cancel voucher', danger: true }))) return;
     try {
@@ -345,11 +381,12 @@ export const PaymentVoucherDetail = () => {
     }
   };
 
-  /* Phase 3 actions. Submit and withdraw are freely reversible so they carry
-     no dialog; approving is the decision, so it does. */
-  const onSubmitForApproval = async () => {
+  /* The four layers' actions. Prepare and withdraw are freely reversible so
+     they carry no dialog; checking reserves money and approving posts it, so
+     both do. */
+  const onPrepare = async () => {
     try { await submit.mutateAsync(id); } catch (err) {
-      void notify({ title: 'Submit failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' });
+      void notify({ title: 'Prepare failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' });
     }
   };
   const onWithdraw = async () => {
@@ -357,8 +394,14 @@ export const PaymentVoucherDetail = () => {
       void notify({ title: 'Withdraw failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' });
     }
   };
+  const onCheck = async () => {
+    if (!(await askConfirm({ title: `Check ${pv.pv_number}?`, body: 'The first yes: the voucher locks, and the amount reserves against Daily Bank’s available money until it is approved or rejected.', confirmLabel: 'Check' }))) return;
+    try { await check.mutateAsync(id); } catch (err) {
+      void notify({ title: 'Check failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' });
+    }
+  };
   const onApprove = async () => {
-    if (!(await askConfirm({ title: `Approve ${pv.pv_number}?`, body: 'Post to GL becomes available, and the amount reserves against Daily Bank’s available money until it is paid.', confirmLabel: 'Approve' }))) return;
+    if (!(await askConfirm({ title: `Approve ${pv.pv_number}?`, body: 'The second yes posts the journal entry to the General Ledger in the same step — money leaves the books now.', confirmLabel: 'Approve & post' }))) return;
     try { await approve.mutateAsync(id); } catch (err) {
       void notify({ title: 'Approve failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' });
     }
@@ -385,46 +428,67 @@ export const PaymentVoucherDetail = () => {
             <Button variant="ghost" size="md" onClick={() => setHistoryOpen(true)}>
               <History {...ICON} /> History
             </Button>
+            {/* Print — the voucher page plus every stored file after it. */}
+            <Button variant="ghost" size="md" onClick={print.openPreview}>
+              <Printer {...ICON} /> Print
+            </Button>
+            {/* Copy as new (owner 2026-09-03): content as template, identity
+                fresh — any status, the New page does the pre-fill. */}
+            {canWrite && (
+              <Button variant="ghost" size="md"
+                onClick={() => navigate(`/scm/payment-vouchers/new?copyFrom=${String(pv.id)}${pv.purpose === 'SUPPLIER_PAYMENT' ? '&type=ap' : ''}`)}>
+                <Copy {...ICON} /> Copy as new
+              </Button>
+            )}
             {!isEditing ? (
               <>
-                {/* Phase 3: where the voucher stands, said once beside the pill. */}
-                {isDraft && isSubmitted && (
-                  <span style={{ fontSize: 'var(--fs-13)', color: isApprovedPv ? 'var(--c-green, #2c7a3f)' : 'var(--c-orange, #b06000)' }}>
-                    {isApprovedPv ? `Approved · ${String(pv.approved_by ?? '')}` : `Awaiting approval · ${String(pv.submitted_by ?? '')}`}
+                {/* The four layers: where the voucher stands, said once beside the pill. */}
+                {isDraft && isPrepared && (
+                  <span style={{ fontSize: 'var(--fs-13)', color: isChecked ? 'var(--c-green, #2c7a3f)' : 'var(--c-orange, #b06000)' }}>
+                    {isChecked ? `Checked · ${String(pv.checked_by ?? '')} — awaiting approval` : `Prepared · ${String(pv.submitted_by ?? '')}`}
                   </span>
                 )}
-                {isDraft && canWrite && !isSubmitted && (
+                {/* Editable until the FIRST YES — a merely prepared voucher
+                    still takes corrections (owner: prepare 还可以改). */}
+                {isDraft && canWrite && !isChecked && (
                   <Button variant="ghost" size="md" onClick={() => setIsEditing(true)} disabled={busy}>
                     <Pencil {...ICON} /> Edit
                   </Button>
                 )}
-                {isDraft && canWrite && !isSubmitted && (
-                  <Button variant="primary" size="md" onClick={() => void onSubmitForApproval()} disabled={busy}>
-                    <Send {...ICON} /> Submit for approval
+                {isDraft && canWrite && !isPrepared && (
+                  <Button variant="primary" size="md" onClick={() => void onPrepare()} disabled={busy}>
+                    <Send {...ICON} /> Prepare
                   </Button>
                 )}
-                {isDraft && canWrite && isSubmitted && (
+                {isDraft && canWrite && isPrepared && !isChecked && (
                   <Button variant="ghost" size="md" onClick={() => void onWithdraw()} disabled={busy}
-                    title="Back to editable — it will need approval again">
+                    title="Back out of the cycle — it will need preparing again">
                     <RotateCcw {...ICON} /> Withdraw
                   </Button>
                 )}
-                {isDraft && canApprove && isSubmitted && !isApprovedPv && rejectNote === null && (
-                  <>
-                    <Button variant="primary" size="md" onClick={() => void onApprove()} disabled={busy}>
-                      <CheckCircle2 {...ICON} /> Approve
-                    </Button>
-                    <Button variant="ghost" size="md" onClick={() => setRejectNote('')} disabled={busy}>
-                      <XCircle {...ICON} /> Reject
-                    </Button>
-                  </>
+                {isDraft && canCheck && isPrepared && !isChecked && rejectNote === null && (
+                  <Button variant="primary" size="md" onClick={() => void onCheck()} disabled={busy}>
+                    <CheckCircle2 {...ICON} /> Check
+                  </Button>
+                )}
+                {isDraft && canApprove && isChecked && !isApprovedPv && rejectNote === null && (
+                  <Button variant="primary" size="md" onClick={() => void onApprove()} disabled={busy}>
+                    <CheckCircle2 {...ICON} /> Approve & post
+                  </Button>
+                )}
+                {/* Reject opens to EITHER key, at either layer — back to raw
+                    draft with the why on the trail (一律退回 Draft). */}
+                {isDraft && (canCheck || canApprove) && isPrepared && rejectNote === null && (
+                  <Button variant="ghost" size="md" onClick={() => setRejectNote('')} disabled={busy}>
+                    <XCircle {...ICON} /> Reject
+                  </Button>
                 )}
                 {rejectNote !== null && (
                   <>
                     <input
                       value={rejectNote}
                       onChange={(e) => setRejectNote(e.target.value)}
-                      placeholder="Why it goes back (the submitter reads this)"
+                      placeholder="Why it goes back (the preparer reads this)"
                       aria-label="Rejection reason"
                       style={{ padding: '6px 10px', fontSize: 'var(--fs-13)', minWidth: 220 }}
                     />
@@ -435,11 +499,6 @@ export const PaymentVoucherDetail = () => {
                       <X {...ICON} /> Back
                     </Button>
                   </>
-                )}
-                {isDraft && canPost && isApprovedPv && (
-                  <Button variant="primary" size="md" onClick={onPost} disabled={busy}>
-                    <Send {...ICON} /> Post to GL
-                  </Button>
                 )}
                 {pv.status !== 'CANCELLED' && canCancel && rejectNote === null && (
                   <Button variant="ghost" size="md" onClick={onCancel} disabled={busy}>
@@ -723,6 +782,20 @@ export const PaymentVoucherDetail = () => {
         </section>
       )}
 
+      {/* ── Files — the bill behind this voucher (owner 2026-09-03: 我希望可以
+          print pv include ocr 的文件一起, which first needs the file to LIVE
+          here). Scan attaches automatically; this card takes manual adds,
+          views, and deletes — deleting only until CHECKED: evidence locks
+          with the document (server enforces both). */}
+      <PvFilesCard pvId={String(pv.id)} canWrite={canWrite} locked={isChecked} cancelled={pv.status === 'CANCELLED'} />
+
+      {/* ── The advance this voucher holds, and the knock-off that spends it
+          (预付挂在 supplier, 2026-09-02). Rendered only when a posted supplier
+          voucher paid ahead and money remains on it. */}
+      {pv.status === 'POSTED' && pv.supplier_id && (
+        <AdvanceCard pvId={String(pv.id)} supplierId={String(pv.supplier_id)} />
+      )}
+
       {/* ── Totals ────────────────────────────────────────────────────── */}
       <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
         <section className={styles.card} style={{ maxWidth: 360, width: '100%' }}>
@@ -742,6 +815,34 @@ export const PaymentVoucherDetail = () => {
         </section>
       </div>
 
+      <PrintPreviewModal
+        open={print.open}
+        onClose={print.close}
+        docTitle="Payment Voucher"
+        docNo={pv.pv_number}
+        rows={[
+          { label: 'Payee', value: String(pv.payee_name ?? '') },
+          { label: 'Date', value: pv.voucher_date ? fmtDateOrDash(pv.voucher_date) : '—' },
+          { label: 'Paid From', value: accountLabel(pv.credit_account_code) },
+          { label: 'Total', value: fmtRm(totalSen, viewCurrency) },
+          {
+            label: 'Files',
+            /* The exclude toggle (owner 2026-09-04) sits where the decision
+               is made — on the card the operator reads before printing. */
+            value: (filesQ.data?.files.length ?? 0) > 0 ? (
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                <input type="checkbox" checked={includeFiles}
+                  aria-label="Include attached files in the print"
+                  onChange={(e) => setIncludeFiles(e.target.checked)}
+                  style={{ width: 14, height: 14, accentColor: 'var(--c-orange)' }} />
+                include the {filesQ.data?.files.length} attached file(s) after the voucher page
+              </label>
+            ) : 'none attached',
+          },
+        ]}
+        {...print.handlers}
+      />
+
       {/* History drawer — portals to <body>, so its position here is only
           about lifecycle, not layout. */}
       {historyOpen && (
@@ -756,5 +857,213 @@ export const PaymentVoucherDetail = () => {
         />
       )}
     </div>
+  );
+};
+
+/* ── The advance card — money this voucher paid ahead, spent from HERE ──────
+   Knock-off only: applying settles the invoice's paid_sen and burns the
+   advance; NOTHING posts, because both legs already live in AP. The card
+   disappears when the advance is spent to zero. */
+const AdvanceCard = ({ pvId, supplierId }: { pvId: string; supplierId: string }) => {
+  const advancesQ = useSupplierAdvances(supplierId);
+  const applyM = useApplyAdvance();
+  const piListQ = usePurchaseInvoices();
+  const [amounts, setAmounts] = useState<Record<string, number>>({});
+  const [note, setNote] = useState<string | null>(null);
+
+  const mine = (advancesQ.data?.advances ?? []).find((a: { pv_id: string }) => a.pv_id === pvId) ?? null;
+
+  const outstanding = useMemo(() => {
+    return ((piListQ.data?.purchaseInvoices ?? []) as Array<{
+      id: string; invoice_number?: string | null; supplier_id?: string | null;
+      supplier?: { id?: string | null } | null; status?: string | null;
+      total_sen?: number | null; paid_sen?: number | null; invoice_date?: string | null;
+    }>)
+      .filter((r) => {
+        const sid = String(r.supplier_id ?? r.supplier?.id ?? '');
+        const st = String(r.status ?? '').toUpperCase();
+        return sid === supplierId && (st === 'POSTED' || st === 'PARTIALLY_PAID')
+          && Number(r.total_sen ?? 0) - Number(r.paid_sen ?? 0) > 0;
+      })
+      .sort((a, b) => String(a.invoice_date ?? '').localeCompare(String(b.invoice_date ?? '')));
+  }, [piListQ.data, supplierId]);
+
+  if (!mine) return null;
+  const remaining = mine.remaining_sen;
+  const asked = Object.values(amounts).reduce((s, v) => s + v, 0);
+  const over = asked > remaining;
+
+  return (
+    <section className={styles.card}>
+      <div className={styles.cardHeader}>
+        <h2 className={styles.cardTitle}>Advance on this voucher</h2>
+        <span style={{ fontSize: 'var(--fs-12)', color: over ? 'var(--c-festive-b, #B8331F)' : 'var(--fg-muted)' }}>
+          {fmtRm(remaining)} unspent{asked > 0 ? ` · applying ${fmtRm(asked)}` : ''}
+        </span>
+      </div>
+      <div className={styles.cardBody} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+        <p style={{ fontSize: 'var(--fs-13)', color: 'var(--fg-muted)', margin: 0 }}>
+          This voucher paid ahead of any invoice. Knock the remainder off the supplier&rsquo;s
+          outstanding invoices below — no money moves; both legs are already in AP.
+        </p>
+        {outstanding.length === 0 ? (
+          <p style={{ fontSize: 'var(--fs-13)', color: 'var(--fg-muted)', margin: 0 }}>No outstanding invoice from this supplier yet — the advance waits.</p>
+        ) : (
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
+            <thead>
+              <tr style={{ textAlign: 'left', color: 'var(--fg-muted)', fontSize: 'var(--fs-11)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                <th style={{ padding: '6px 8px' }}>Invoice</th>
+                <th style={{ padding: '6px 8px' }}>Date</th>
+                <th style={{ padding: '6px 8px', textAlign: 'right' }}>Outstanding</th>
+                <th style={{ padding: '6px 8px', textAlign: 'right' }}>Knock off</th>
+              </tr>
+            </thead>
+            <tbody>
+              {outstanding.map((r) => {
+                const piId = String(r.id);
+                const out = Number(r.total_sen ?? 0) - Number(r.paid_sen ?? 0);
+                return (
+                  <tr key={piId} style={{ borderTop: '1px solid var(--line)' }}>
+                    <td style={{ padding: '6px 8px', fontFamily: 'var(--font-mono)' }}>{String(r.invoice_number ?? piId)}</td>
+                    <td style={{ padding: '6px 8px', whiteSpace: 'nowrap', color: 'var(--fg-muted)' }}>{fmtDate(r.invoice_date as string | null)}</td>
+                    <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)', color: 'var(--fg-muted)' }}>{fmtRm(out)}</td>
+                    <td style={{ padding: '6px 8px', textAlign: 'right' }}>
+                      <MoneyInput bare valueSen={amounts[piId] ?? 0}
+                        onCommit={(sen) => setAmounts((prev) => ({ ...prev, [piId]: Math.max(0, Math.min(out, sen ?? 0)) }))}
+                        inputClassName={styles.fieldInput} selectOnFocus />
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
+          <span style={{ flex: 1, fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>{note}</span>
+          <Button variant="primary" size="sm"
+            disabled={applyM.isPending || asked === 0 || over}
+            onClick={() => {
+              setNote(null);
+              const allocations = Object.entries(amounts)
+                .filter(([, v]) => v > 0)
+                .map(([piId, amountSen]) => ({ piId, amountSen }));
+              applyM.mutate({ pvId, allocations }, {
+                onSuccess: (d: { appliedSen: number; remainingSen: number }) => { setAmounts({}); setNote(`Knocked off ${fmtRm(d.appliedSen)} — ${fmtRm(d.remainingSen)} of the advance remains.`); },
+                onError: (e) => setNote(e instanceof Error ? e.message : 'Not applied.'),
+              });
+            }}>
+            {applyM.isPending ? 'Applying…' : 'Apply advance'}
+          </Button>
+        </div>
+      </div>
+    </section>
+  );
+};
+
+/* ── Files card — the bill pages behind this voucher (mig 0352). sort_no =
+   attach order = the order printing appends them after the voucher page.
+   View streams the bytes through the Worker (authed) into a blob tab —
+   there is no public URL to leak. Add/delete follow the four-layer rule:
+   a CHECKED voucher's evidence stays (delete hidden, server refuses too),
+   a CANCELLED one takes no more files. */
+const fmtSize = (bytes: number): string =>
+  bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
+
+const PvFilesCard = ({ pvId, canWrite, locked, cancelled }: { pvId: string; canWrite: boolean; locked: boolean; cancelled: boolean }) => {
+  const notify = useNotify();
+  const askConfirm = useConfirm();
+  const filesQ = usePvFiles(pvId);
+  const upload = useUploadPvFile();
+  const remove = useDeletePvFile();
+  const [viewingId, setViewingId] = useState<string | null>(null);
+
+  const files = filesQ.data?.files ?? [];
+
+  const view = async (fileId: string, fileName: string) => {
+    setViewingId(fileId);
+    try {
+      const { url } = await fetchPvFileBlobUrl(pvId, fileId);
+      window.open(url, '_blank', 'noopener');
+      /* Revoke AFTER the new tab has loaded the blob — immediate revocation
+         races the open and shows a blank tab. */
+      setTimeout(() => { URL.revokeObjectURL(url); }, 60_000);
+    } catch (e) {
+      void notify({ title: `Couldn't open ${fileName}`, body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
+    } finally {
+      setViewingId(null);
+    }
+  };
+
+  const onPick = async (list: FileList | null) => {
+    if (!list || list.length === 0) return;
+    for (const f of [...list]) {
+      try {
+        await upload.mutateAsync({
+          pvId,
+          file: { name: f.name, mime: f.type || 'application/pdf', dataBase64: await fileToBase64(f) },
+        });
+      } catch (e) {
+        void notify({ title: `${f.name} did not attach`, body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
+        break;
+      }
+    }
+  };
+
+  const onDelete = async (fileId: string, fileName: string) => {
+    if (!(await askConfirm({ title: `Remove ${fileName}?`, body: 'The stored file is deleted with its row. A checked voucher refuses this — evidence locks with the document.', confirmLabel: 'Remove file', danger: true }))) return;
+    try {
+      await remove.mutateAsync({ pvId, fileId });
+    } catch (e) {
+      void notify({ title: 'Not removed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
+    }
+  };
+
+  return (
+    <section className={styles.card}>
+      <div className={styles.cardHeader}>
+        <h2 className={styles.cardTitle}>Files</h2>
+        {canWrite && !cancelled && (
+          <label style={{ fontSize: 'var(--fs-12)', color: 'var(--c-orange)', cursor: 'pointer', fontWeight: 600 }}>
+            📎 {upload.isPending ? 'Attaching…' : 'Attach file'}
+            <input type="file" multiple accept={PV_FILE_ACCEPT}
+              aria-label="Attach voucher files" style={{ display: 'none' }}
+              disabled={upload.isPending}
+              onChange={(e) => { void onPick(e.target.files); e.target.value = ''; }} />
+          </label>
+        )}
+        <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
+          {files.length} file{files.length === 1 ? '' : 's'}{locked ? ' · locked with the checked voucher' : ''}
+        </span>
+      </div>
+      <div className={styles.cardBody}>
+        {files.length === 0 ? (
+          <p style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-13)', margin: 0 }}>
+            No files yet. A voucher opened from Scan bills attaches its scans here by itself; use Attach file for anything else.
+          </p>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {files.map((f) => (
+              <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', fontSize: 'var(--fs-13)', padding: '4px 0' }}>
+                <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--fg-muted)', width: 18, textAlign: 'right' }}>{f.sort_no}</span>
+                <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.file_name}</span>
+                <span style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-12)', whiteSpace: 'nowrap' }}>
+                  {f.mime === 'application/pdf' ? 'PDF' : 'image'} · {fmtSize(f.size_bytes)} · {fmtDate(f.created_at)}
+                </span>
+                <Button variant="secondary" size="sm" disabled={viewingId === f.id} onClick={() => void view(f.id, f.file_name)}>
+                  {viewingId === f.id ? 'Opening…' : 'View'}
+                </Button>
+                {canWrite && !locked && !cancelled && (
+                  <button type="button" aria-label={`Remove ${f.file_name}`} disabled={remove.isPending}
+                    onClick={() => void onDelete(f.id, f.file_name)}
+                    style={{ border: 'none', background: 'none', cursor: 'pointer', color: 'var(--fg-muted)', padding: 2 }}>
+                    <Trash2 size={14} strokeWidth={1.75} />
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </section>
   );
 };

@@ -2430,7 +2430,7 @@ export const SalesOrderDetail = () => {
                       const coverage = hasTrace
                         ? (
                           <div style={{ display: 'inline-block', marginTop: hasDeliveries ? 3 : 0 }}>
-                            <SoSourceChips line={it} />
+                            <SoSourceChips line={it} coverage="ready" />
                           </div>
                         )
                         : null;

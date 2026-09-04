@@ -35,6 +35,7 @@ import {
   type DocumentDrillLine,
   type DrillItemFields,
 } from "../../components/DocumentLinesExpansion";
+import { coverageStateOf } from "../../components/coverage-state";
 import { usePoSoCoverage, originsByCode, provenanceByCode, storedLinkSkus, deliveredByCode, type OriginAssignment } from "../../vendor/scm/lib/flow-queries";
 import { ListPager } from "../../components/ListPager";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
@@ -583,6 +584,7 @@ function PiLinesExpansion({ id }: { id: string }) {
     <div className="flex flex-col gap-2">
       <DocumentLinesExpansion
         isLoading={detailQ.isLoading}
+        coverage={coverageStateOf(covQ)}
         isError={Boolean(detailQ.error)}
         errorMessage={detailQ.error instanceof Error ? detailQ.error.message : null}
         lines={lines}
@@ -887,6 +889,7 @@ export function PurchaseInvoicesListV2() {
   const piContextMenu = purchaseInvoiceRowMenu<PiRow>({
     open: goFullPage,
     edit: goEdit,
+    copyAsNew: (r) => navigate(`/scm/purchase-invoices/new?copyFrom=${r.id}`),
     print: printDocument,
     confirm: doConfirm,
     setHold: setPiHold,

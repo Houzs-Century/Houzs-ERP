@@ -29,10 +29,6 @@ interface Props {
    *  sidebar has always used; "navbar" is the light top-chrome variant
    *  (2b redesign): ink icon on a quiet surface-2 hover. */
   tone?: "sidebar" | "navbar";
-  /** Unread affordance. "count" (default) renders the numeric pill;
-   *  "dot" renders the 2b red presence-style dot — the popover still
-   *  carries the numbers, the chrome stays quiet. */
-  unread?: "count" | "dot";
 }
 
 /**
@@ -55,7 +51,6 @@ export function NotificationBell({
   direction = "down",
   align = "start",
   tone = "sidebar",
-  unread = "count",
 }: Props) {
   const { feed, totalUnread, loadFailed } = useNotifications();
   const { user } = useAuth();
@@ -151,23 +146,23 @@ export function NotificationBell({
             Notifications
           </span>
         )}
-        {combinedUnread > 0 &&
-          (unread === "dot" ? (
-            // 2b: a quiet presence-style dot — the count lives in the
-            // aria-label and the popover, not the chrome.
-            <span className="absolute right-1.5 top-1.5 h-[7px] w-[7px] rounded-full bg-err ring-[1.5px] ring-surface" />
-          ) : (
-            <span
-              className={cn(
-                "flex items-center justify-center rounded-full bg-err font-mono text-[9px] font-bold text-white shadow-sm",
-                collapsed
-                  ? "absolute right-1.5 top-1.5 h-4 min-w-[16px] px-1"
-                  : "h-4 min-w-[18px] px-1"
-              )}
-            >
-              {countLabel}
-            </span>
-          ))}
+        {/* Always the NUMBER. The top navbar carried a quiet 2b dot until
+            2026-09-02, when amendment approvals started landing here: a dot
+            tells you something arrived, a count tells you how much is waiting
+            for your signature, and that difference is the reason the channel
+            exists. Owner: "需要有红色号码 notice". */}
+        {combinedUnread > 0 && (
+          <span
+            className={cn(
+              "flex items-center justify-center rounded-full bg-err font-mono text-[9px] font-bold text-white shadow-sm",
+              collapsed
+                ? "absolute right-1.5 top-1.5 h-4 min-w-[16px] px-1"
+                : "h-4 min-w-[18px] px-1"
+            )}
+          >
+            {countLabel}
+          </span>
+        )}
       </button>
 
       {open && (

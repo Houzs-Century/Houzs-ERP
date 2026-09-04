@@ -36,30 +36,46 @@
 // books — it books exactly what the system booked before roles existed.
 // ----------------------------------------------------------------------------
 
+import { accMastersCompanyId } from './masters-company';
+
 export type AccountRole =
-  | 'AR' | 'SALES' | 'INVENTORY' | 'AP'
+  | 'AR' | 'AR_OTHER' | 'SALES' | 'INVENTORY' | 'AP' | 'AP_OTHER'
   | 'CASH' | 'BANK_DEFAULT' | 'TRANSIT_EDC' | 'TRANSIT_ONLINE' | 'CUSTOMER_DEPOSITS' | 'OVER_SHORT';
 
-/* Fallback = the unified AutoCount-style chart (phase 1, migration 0297;
-   owner decision 2026-08-16). Every company carries these codes, so a company
-   whose roles rows are missing or unreadable still books onto real accounts. */
+/* Fallback = the accountant's own AutoCount codes (migration 0344; owner
+   decision 2026-09-02: 迁到 AutoCount 码). Every company carries these codes,
+   so a company whose roles rows are missing or unreadable still books onto
+   real accounts. 326/327 are the ERP-extension clearing codes parked in
+   AutoCount's free gap — the settlement layer's own accounts. */
 export const DEFAULT_ROLE_CODES: Record<AccountRole, string> = {
-  AR: '300-0000',                // Trade Debtor
-  SALES: '500-0000',             // Sales Revenue
-  INVENTORY: '310-0000',         // Inventory
-  AP: '400-0000',                // Trade Creditor
-  CASH: '335-0000',              // Cash on Hand
-  BANK_DEFAULT: '330-0000',      // Bank — Maybank Current
-  TRANSIT_EDC: '320-0000',       // Card Machine Clearing (EDC)
-  TRANSIT_ONLINE: '325-0000',    // Online Payment Clearing (FPX/e-wallet)
-  CUSTOMER_DEPOSITS: '410-0000', // Customer Deposits (reserved: advance-receipt refinement)
-  OVER_SHORT: '946-0000',        // Cash Over/Short (daily cashup differences)
+  AR: '300-0000',                // ACCOUNT RECEIVEABLE
+  AR_OTHER: '305-0000',          // OTHER DEBTOR (the Other Debtors module's control)
+  SALES: '500-0000',             // Sales Revenue (template; refined by the chart import)
+  INVENTORY: '330-0000',         // STOCK
+  AP: '400-0000',                // ACCOUNT PAYABLE
+  AP_OTHER: '405-0000',          // OTHER CREDITOS (the accountant's spelling)
+  CASH: '320-0000',              // CASH IN HAND
+  BANK_DEFAULT: '310-0010',      // CASH AT BANK - MAYBANK
+  TRANSIT_EDC: '326-0000',       // CARD MACHINE CLEARING (EDC)
+  TRANSIT_ONLINE: '327-0000',    // ONLINE PAYMENT CLEARING (FPX/E-WALLET)
+  CUSTOMER_DEPOSITS: '400-0001', // DEPOSIT (under ACCOUNT PAYABLE)
+  OVER_SHORT: '946-0000',        // Cash Over/Short (ERP extension)
 };
 
 /* Control accounts (brief §2.4): system-maintained, and a MANUAL journal may
    not touch them — the engine enforces this. AR and AP today; the
    settlement-in-transit roles join in phase 2. */
-export const CONTROL_ROLES: AccountRole[] = ['AR', 'AP'];
+export const CONTROL_ROLES: AccountRole[] = ['AR', 'AR_OTHER', 'AP', 'AP_OTHER'];
+
+/** Which AP control a supplier's paper belongs to. 405-x supplier codes are
+    AutoCount's OTHER CREDITORS — their bills and payments land on AP_OTHER
+    (405-0000), everyone else on AP (400-0000). The owner's call, 2026-09-03,
+    with the split's blast radius on the table: the supplier LIST and every
+    screen stay exactly as they are; only the GL landing follows the code.
+    ONE home for the prefix — the PV page mirrors the pick for display, and
+    the server validates against THIS. */
+export const apControlRole = (supplierCode: string | null | undefined): 'AP' | 'AP_OTHER' =>
+  supplierCode != null && supplierCode.startsWith('405-') ? 'AP_OTHER' : 'AP';
 
 /** source_type of the contra entry that voids a given source_type. */
 export const REVERSAL_SOURCE: Record<string, string> = {
@@ -71,6 +87,9 @@ export const REVERSAL_SOURCE: Record<string, string> = {
   SIPAY: 'SIPAY_REVERSAL',
   SETTLE: 'SETTLE_REVERSAL',
   SETTLEADJ: 'SETTLEADJ_REVERSAL',
+  ODB: 'ODB_REVERSAL',
+  ODR: 'ODR_REVERSAL',
+  RCT: 'RCT_REVERSAL',
 };
 
 export type RoleCodes = Record<AccountRole, string>;
@@ -90,7 +109,7 @@ export async function resolveRoles(sb: any, companyId: number | null): Promise<R
   const { data, error } = await sb
     .from('acc_account_roles')
     .select('role, account_code')
-    .eq('company_id', companyId == null ? 1 : Number(companyId));
+    .eq('company_id', accMastersCompanyId(companyId, 'resolveRoles'));
   if (error) {
     /* eslint-disable-next-line no-console */
     console.error('[acc/rules] roles read failed — using default codes:', error.message);
@@ -142,7 +161,9 @@ export function siLines(
   ];
 }
 
-/** Purchase invoice posted: Dr INVENTORY / Cr AP for the MYR total. */
+/** Purchase invoice posted: Dr INVENTORY / Cr the supplier's AP control for
+    the MYR total — AP for trade creditors, AP_OTHER for 405-x suppliers
+    (apControlRole above). */
 export function piLines(
   roles: RoleCodes,
   pi: { invoice_number: string },
@@ -160,7 +181,7 @@ export function piLines(
       notes: `Inventory from ${pi.invoice_number}`,
     },
     {
-      accountCode: roles.AP,
+      accountCode: roles[apControlRole(supplier.code)],
       debitSen: 0,
       creditSen: totalSen,
       partyType: 'SUPPLIER',

@@ -75,8 +75,10 @@ export const PENDING_STATE = 'PENDING';
 /* A DEFERRAL is not a failure: some SO header could not be advanced because a
    human holds its edit lease. Those are counted separately so a busy shop can
    never dead-letter a perfectly healthy projection. The deferral backoff is
-   deliberately NOT a multiple of five minutes: the SO edit lease is 5 min and
-   the cron is 5 min, and two equal timers can beat against each other forever.
+   deliberately NOT a multiple of five minutes: the cron is 5 min, and two equal
+   timers can beat against each other forever. The SO edit lease was 5 min too
+   until 2026-09-03 and is now 60s (scm/lib/so-edit-lease.ts), which only makes
+   a deferral rarer - the lock is usually gone before the first retry.
    A jittered 45-105s next_attempt_at breaks the resonance, and the next cron
    tick picks the row up regardless. */
 const DEFER_BACKOFF_BASE_MS = 45_000;

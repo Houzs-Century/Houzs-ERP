@@ -441,3 +441,47 @@ describe('parse-sofa: two digits are a run, three are a suite', () => {
     expect(r).toContain('2S');
   });
 });
+
+/* THE LEG SWEEP MAY NOT EAT THE BUILD (prod probe run 33657880776).
+   docs/sofa-import-handoff.md §2.5: a sentence carrying `leg` is lifted out whole as
+   a special order so it can never be read as a seat depth. It was lifted with
+   `[^/
+]*` on BOTH sides — the whole slash segment — so when the floor
+   wrote the leg note AFTER the build in the SAME segment, the build went with
+   it and the line fell to the bare `-1S` placeholder reporting "no structure
+   tokens". Same class as the NOISE regex that swallowed a bare C and a bare R:
+   a sweep meant for prose reaching into the piece list. A piece list only ever
+   ends on '+' or ')', so the backward reach now stops at either — measured over
+   all 20 distinct leg-bearing segments in the committed corpus, exactly one
+   changes, and it is the broken one. */
+describe('parse-sofa: a leg note written beside the build keeps the build', () => {
+  test('HC-SO-011755: "2+C+1(35\'INCH)FULLY COVER NO LEG" still decodes to 2A+C+1A', () => {
+    expect(pieces("2+C+1(35'INCH)FULLY COVER NO LEG/COL:BOOBOO315-1/25")).toEqual([
+      '2A(LHF)', 'CNR', '1A(RHF)',
+    ]);
+  });
+
+  test('a leg note after a chaise build keeps the chaise build', () => {
+    expect(pieces('2S+L(28") ADD 2 INCH LEG')).toEqual(['2A(LHF)', 'L(RHF)']);
+  });
+
+  test('the leg request is still carried as a special order, never deleted', () => {
+    expect(specials("2+C+1(35'INCH)FULLY COVER NO LEG/COL:BOOBOO315-1/25")
+      .some((s) => /leg/i.test(s))).toBe(true);
+    expect(specials('2S+L(28") ADD 2 INCH LEG').some((s) => /leg/i.test(s))).toBe(true);
+  });
+
+  /* The shape that already worked keeps working: a leg note in its OWN segment
+     is lifted whole and the build is untouched. */
+  test('a leg note in its own segment is unchanged', () => {
+    expect(pieces('1EL+C+1NA+1ER(28")/ADD 1 INCH LEG/COL:TBC')).toEqual([
+      '1A(LHF)', 'CNR', '1NA', '1A(RHF)',
+    ]);
+    expect(specials('1EL+C+1NA+1ER(28")/ADD 1 INCH LEG/COL:TBC')).toContain('ADD 1 INCH LEG');
+  });
+
+  /* And a leg segment that OPENS with a '+' is still a leg request, not a build. */
+  test('"+2\u201d leg" alone is a leg request, not a piece', () => {
+    expect(pieces('Size:28\u201d/Col:CHINO-01/Bottom wrap nylon/+2\u201d leg', '5535')).toEqual([]);
+  });
+});

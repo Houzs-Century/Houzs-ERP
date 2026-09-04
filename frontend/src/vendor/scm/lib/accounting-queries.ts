@@ -26,10 +26,47 @@ export type Account = {
   account_type: 'ASSET' | 'LIABILITY' | 'EQUITY' | 'INCOME' | 'EXPENSE';
   parent_code: string | null;
   is_active: boolean;
+  /** True for the money set (bank / cash / e-wallet — what Daily Bank shows).
+      The PV "Paid From" picker offers only these. */
+  acc_money?: boolean | null;
+  /** AutoCount's special-account column (0347). SDC/SCC/SBS are CONTROL
+      accounts — pickers hide them, the server refuses them (由模块自动过账). */
+  special_type?: string | null;
 };
+
+/* The CONTROL specials — AR (SDC), AP + customer deposits (SCC), stock (SBS).
+   ONE frontend home on purpose; the server's requireLeafAccount holds the
+   enforcing copy (a browser cannot import the Worker's), and this one only
+   decides what the pickers and the Chart page SHOW. */
+export const isControlSpecial = (special: string | null | undefined): boolean =>
+  special === 'SDC' || special === 'SCC' || special === 'SBS';
 export const useAccounts = () => baseQuery<{ accounts: Account[] }>(
   ['accounts'], `/accounting/accounts`,
 );
+
+/* Which account plays which part for the ACTIVE company (resolveRoles server-
+   side: overrides first, seeded defaults where nothing is set). BANK_DEFAULT
+   pre-fills the PV "Paid From"; AP is the control account an AP Payment
+   debits. */
+export type AccountRoles = { roles: Record<string, string>; overridden: Record<string, string> };
+export const useAccountRoles = () => baseQuery<AccountRoles>(
+  ['account-roles'], `/accounting/roles`,
+);
+
+/* The owner's own lever (默认银行我可以自己maintenance): repoint BANK_DEFAULT to
+   another money account. The server refuses non-money / inactive / other-
+   company accounts by name. */
+export const useSaveBankDefault = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (accountCode: string) => authedFetch<{ ok: boolean; accountCode: string }>(
+      `/accounting/roles/BANK_DEFAULT`,
+      { method: 'PUT', body: JSON.stringify({ accountCode }) },
+    ),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['account-roles'] }); },
+    onError: writeFailedAs('Default bank not saved'),
+  });
+};
 
 export type JournalEntry = {
   id: string;
@@ -204,3 +241,249 @@ export type ApAgingRow = {
 export const useApAging = () => baseQuery<{ apAging: ApAgingRow[] }>(
   ['ap-aging'], `/accounting/ap-aging`,
 );
+
+/* ── The Chart of Accounts maintenance surface (roadmap A, 2026-09-03) ──────
+   The owner's selective sharing: one union across the granted companies, a
+   tick per company per code, and the accountant's xlsx upserted whole. */
+export type ChartCompany = { id: number; code: string };
+export type ChartRow = {
+  code: string;
+  name: string;
+  type: 'ASSET' | 'LIABILITY' | 'EQUITY' | 'INCOME' | 'EXPENSE';
+  parentCode: string | null;
+  accMoney: boolean;
+  special: string | null;
+  perCompany: Partial<Record<number, { active: boolean }>>;
+};
+export const useChartUnion = () => baseQuery<{ companies: ChartCompany[]; accounts: ChartRow[] }>(
+  ['chart-union'], `/accounting/chart`,
+);
+
+export const useChartTick = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { companyId: number; code: string; active: boolean }) =>
+      authedFetch(`/accounting/chart/tick`, { method: 'PUT', body: JSON.stringify(body) }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['chart-union'] });
+      void qc.invalidateQueries({ queryKey: ['accounts'] });
+    },
+  });
+};
+
+export type ChartImportRow = {
+  code: string; name: string; accountType: string;
+  parentCode: string | null; accMoney: boolean; specialType?: string | null; shared: boolean;
+};
+export const useChartImport = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { companyId: number; rows: ChartImportRow[] }) =>
+      authedFetch<{ ok: boolean; imported: number; shared: number; sharedTo: number[] }>(
+        `/accounting/chart/import`, { method: 'POST', body: JSON.stringify(body) },
+      ),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['chart-union'] });
+      void qc.invalidateQueries({ queryKey: ['accounts'] });
+    },
+  });
+};
+
+/* ONE door to open an account (owner 2026-09-03: 照理说应该维护 overall
+   chart of account 罢了): the definition is created once and lands in every
+   ticked company, parent chain riding along per company. */
+export const useChartCreate = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: {
+      code: string; name: string; accountType: string;
+      parentCode?: string | null; accMoney?: boolean; specialType?: string | null;
+      /** SFA only: the SAD twin created in the same call (固定资产带折旧). */
+      depreciation?: { code: string; name: string };
+      companyIds?: number[];
+    }) =>
+      authedFetch<{ ok: boolean; code: string; companies: number[]; depreciationCode?: string }>(
+        `/accounting/chart/account`, { method: 'POST', body: JSON.stringify(body) },
+      ),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['chart-union'] });
+      void qc.invalidateQueries({ queryKey: ['accounts'] });
+    },
+  });
+};
+
+/* 改码全账跟 (owner 2026-09-03): one call, and the GL, vouchers, settlement
+   config and role bindings all carry the new code — or the database refuses
+   and NOTHING moved. The refusal sentence comes back verbatim for the dialog. */
+export const useChartRename = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { oldCode: string; newCode: string }) =>
+      authedFetch<{ ok: boolean; moved: Record<string, number> }>(
+        `/accounting/chart/rename`, { method: 'PUT', body: JSON.stringify(body) },
+      ),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['chart-union'] });
+      void qc.invalidateQueries({ queryKey: ['accounts'] });
+    },
+  });
+};
+
+export const useChartUpdate = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { code: string; name?: string; accountType?: string; accMoney?: boolean; parentCode?: string | null }) =>
+      authedFetch<{ ok: boolean; companies: number }>(
+        `/accounting/chart/update`, { method: 'PUT', body: JSON.stringify(body) },
+      ),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['chart-union'] });
+      void qc.invalidateQueries({ queryKey: ['accounts'] });
+    },
+  });
+};
+
+/* Only a NEVER-used code deletes; anything referenced comes back as a 409
+   naming the holdouts — the page shows that sentence and offers the tick
+   column instead. */
+export const useChartDelete = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (code: string) =>
+      authedFetch<{ ok: boolean; companies: number }>(
+        `/accounting/chart/account?code=${encodeURIComponent(code)}`, { method: 'DELETE' },
+      ),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['chart-union'] });
+      void qc.invalidateQueries({ queryKey: ['accounts'] });
+    },
+  });
+};
+
+/* ── Other Debtors (owner 2026-09-03) ───────────────────────────────────────
+   Counterparty registry + Debtor Bills (post directly) + Receipts (the PV's
+   four layers, AP-Payment-style knock-off, partial included). The GL keeps
+   one control (305-0000); per-party truth lives in these tables. */
+export type OtherDebtor = {
+  id: string; name: string; phone: string | null; notes: string | null;
+  is_active: boolean; outstanding_sen: number;
+};
+export type DebtorBill = {
+  id: string; bill_number: string; bill_date: string;
+  total_sen: number; received_sen: number; status: string; notes: string | null;
+};
+export type DebtorReceipt = {
+  id: string; receipt_number: string; receipt_date: string;
+  bank_account_code: string; total_sen: number; status: string;
+  submitted_at: string | null; submitted_by: string | null;
+  checked_at: string | null; checked_by: string | null;
+  approved_at: string | null; approved_by: string | null;
+  posted_at: string | null; notes: string | null;
+};
+
+export const useOtherDebtors = () => baseQuery<{ debtors: OtherDebtor[] }>(
+  ['other-debtors'], `/other-debtors`,
+);
+export const useDebtorDetail = (id: string | null) => useQuery({
+  queryKey: ['other-debtor-detail', id],
+  queryFn: () => authedFetch<{ debtor: OtherDebtor; bills: DebtorBill[]; receipts: DebtorReceipt[] }>(`/other-debtors/${id}`),
+  enabled: !!id,
+});
+
+const invalidateDebtors = (qc: ReturnType<typeof useQueryClient>) => {
+  void qc.invalidateQueries({ queryKey: ['other-debtors'] });
+  void qc.invalidateQueries({ queryKey: ['other-debtor-detail'] });
+};
+
+export const useCreateDebtor = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { name: string; phone?: string; notes?: string }) =>
+      authedFetch<{ ok: boolean; debtor: { id: string } }>(`/other-debtors`, { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: () => invalidateDebtors(qc),
+  });
+};
+export const useUpdateDebtor = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...body }: { id: string; name?: string; phone?: string; notes?: string; isActive?: boolean }) =>
+      authedFetch(`/other-debtors/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+    onSuccess: () => invalidateDebtors(qc),
+  });
+};
+export const useCreateDebtorBill = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ debtorId, ...body }: {
+      debtorId: string; billDate?: string; notes?: string;
+      lines: Array<{ description?: string; creditAccountCode: string; amountSen: number }>;
+    }) => authedFetch<{ ok: boolean; bill: { billNumber: string; totalSen: number } }>(
+      `/other-debtors/${debtorId}/bills`, { method: 'POST', body: JSON.stringify(body) },
+    ),
+    onSuccess: () => invalidateDebtors(qc),
+  });
+};
+export const useCancelDebtorBill = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (billId: string) =>
+      authedFetch(`/other-debtors/bills/${billId}/cancel`, { method: 'POST' }),
+    onSuccess: () => invalidateDebtors(qc),
+  });
+};
+export const useCreateDebtorReceipt = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ debtorId, ...body }: {
+      debtorId: string; receiptDate?: string; bankAccountCode: string; notes?: string;
+      allocations: Array<{ billId: string; amountSen: number }>;
+    }) => authedFetch<{ ok: boolean; receipt: { receiptNumber: string } }>(
+      `/other-debtors/${debtorId}/receipts`, { method: 'POST', body: JSON.stringify(body) },
+    ),
+    onSuccess: () => invalidateDebtors(qc),
+  });
+};
+/* One hook, five doors — the receipt's four-layer actions mirror the PV's. */
+export const useDebtorReceiptAction = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ receiptId, action, note }: {
+      receiptId: string; action: 'submit' | 'withdraw' | 'check' | 'reject' | 'approve'; note?: string;
+    }) => authedFetch(`/other-debtors/receipts/${receiptId}/${action}`, {
+      method: 'POST', body: JSON.stringify(note ? { note } : {}),
+    }),
+    onSuccess: () => invalidateDebtors(qc),
+  });
+};
+
+/* ── Receipts — every ringgit IN, one list (owner 2026-09-03) ───────────────
+   GENERAL posts directly (不需要走四层) and voids by reversal; DEBTOR rows
+   mirror /scm/other-debtors; CUSTOMER rows mirror the sales payments. */
+export type ReceiptRow = {
+  kind: 'GENERAL' | 'DEBTOR' | 'CUSTOMER';
+  id: string; number: string; date: string; payer: string;
+  moneyAccount: string; totalSen: number; status: string;
+  debtorId?: string; notes?: string | null;
+};
+export const useReceipts = (month?: string) => baseQuery<{ month: string; receipts: ReceiptRow[] }>(
+  ['receipts', month ?? 'current'], `/receipts${month ? `?month=${month}` : ''}`,
+);
+export const useCreateReceipt = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: {
+      payerName: string; receiptDate?: string; bankAccountCode: string; notes?: string;
+      lines: Array<{ description?: string; creditAccountCode: string; amountSen: number }>;
+    }) => authedFetch<{ ok: boolean; receipt: { receiptNumber: string; totalSen: number } }>(
+      `/receipts`, { method: 'POST', body: JSON.stringify(body) },
+    ),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['receipts'] }); },
+  });
+};
+export const useVoidReceipt = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => authedFetch(`/receipts/${id}/void`, { method: 'POST' }),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['receipts'] }); },
+  });
+};

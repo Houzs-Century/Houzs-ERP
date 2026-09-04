@@ -220,3 +220,44 @@ export const useUndoBankLine = () => {
     onError: writeFailedAs('Movement not put back'),
   });
 };
+
+/* ── Recognition rules maintenance (2026-09-02) — the owner's screwdriver for
+   "this credit is PBB's payout". Server-validated: a regex is compiled at
+   write time and refused with the engine's sentence, so a broken one can
+   never silently un-recognise an acquirer's money. */
+export type BankRule = {
+  id: number; acquirer_code: string; pattern: string;
+  match_field: 'description' | 'reference' | 'both';
+  trading_date_pattern: string | null; merchant_pattern: string | null;
+  sort_order: number; is_active: boolean;
+};
+export const useBankRules = () => useQuery({
+  queryKey: ['bank-rules'],
+  queryFn: () => authedFetch<{ rules: BankRule[] }>(`/accounting/bank/rules`),
+  staleTime: 30_000,
+  retry: retryUnlessClientError,
+});
+
+export const useSaveBankRule = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...patch }: { id: number } & Partial<{
+      pattern: string; matchField: string; tradingDatePattern: string | null;
+      merchantPattern: string | null; sortOrder: number; isActive: boolean;
+    }>) => authedFetch<{ ok: boolean; rule: BankRule }>(
+      `/accounting/bank/rules/${id}`, { method: 'PATCH', body: JSON.stringify(patch) },
+    ),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['bank-rules'] }); },
+  });
+};
+
+export const useCreateBankRule = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { acquirerCode: string; pattern: string; matchField?: string; sortOrder?: number }) =>
+      authedFetch<{ ok: boolean; rule: BankRule }>(
+        `/accounting/bank/rules`, { method: 'POST', body: JSON.stringify(body) },
+      ),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['bank-rules'] }); },
+  });
+};

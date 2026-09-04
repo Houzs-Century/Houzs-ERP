@@ -39,9 +39,17 @@
 // visible either way.
 //
 //   DATABASE_URL   required
-//   COMPANY        company id (default 1)
+//   COMPANY        a company id, or `all` for EVERY company (default all)
 //   MODE           plan (default) | apply
 //   CONFIRM        on apply, must be exactly: PROCEEDED MEANS IN PRODUCTION
+//
+// ALL COMPANIES BY DEFAULT, and that default is the point. Owner 2026-09-01,
+// after company 2 was found with IN PRODUCTION = 0 and 44 dated CONFIRMED
+// orders — a full week after the identical repair ran on company 1:
+//   「这是全套系统 而不是 单一organisation」
+// A per-company switch means somebody has to REMEMBER the other companies, and
+// on 2026-08-31 nobody did. The company list is read from the data, so a company
+// added tomorrow is swept without anyone editing this file.
 //
 // RE-RUN: convergent. A second run finds nothing — the rows it moved are no
 // longer CONFIRMED, and it never touches a status other than CONFIRMED.
@@ -50,7 +58,8 @@ import postgres from 'postgres';
 
 const url = process.env.DATABASE_URL;
 if (!url) { console.error('DATABASE_URL required'); process.exit(2); }
-const COMPANY = Number(process.env.COMPANY ?? 1);
+const COMPANY_RAW = String(process.env.COMPANY ?? 'all').trim().toLowerCase();
+const ALL_COMPANIES = COMPANY_RAW === 'all' || COMPANY_RAW === '';
 const MODE = (process.env.MODE ?? 'plan').trim().toLowerCase();
 const APPLY = MODE === 'apply';
 const CONFIRM_PHRASE = 'PROCEEDED MEANS IN PRODUCTION';
@@ -64,39 +73,54 @@ if (APPLY && (process.env.CONFIRM ?? '').trim() !== CONFIRM_PHRASE) {
 const sql = postgres(url, { ssl: 'require', prepare: false, max: 1 });
 
 async function main() {
-  log(`mode=${APPLY ? 'APPLY' : 'PLAN'} company=${COMPANY}`);
+  log(`mode=${APPLY ? 'APPLY' : 'PLAN'} scope=${ALL_COMPANIES ? 'ALL COMPANIES' : `company ${COMPANY_RAW}`}`);
 
-  const [before] = await sql`
-    SELECT COUNT(*)::int AS confirmed,
-           COUNT(*) FILTER (WHERE processing_date IS NOT NULL)::int AS to_move
-      FROM scm.mfg_sales_orders
-     WHERE company_id = ${COMPANY} AND upper(status::text) = 'CONFIRMED'`;
-  log(`CONFIRMED orders: ${before.confirmed}; of those carrying a Processing Date: ${before.to_move}`);
+  /* The list comes from the DATA, never from a constant here — a company added
+     later must be swept without anyone remembering to edit this file. */
+  const companies = ALL_COMPANIES
+    ? (await sql`SELECT DISTINCT company_id AS id FROM scm.mfg_sales_orders
+                  WHERE company_id IS NOT NULL ORDER BY 1`).map((r) => Number(r.id))
+    : [Number(COMPANY_RAW)];
+  log(`companies in scope: ${companies.join(', ')}`);
 
-  /* The OTHER disagreement, reported and never touched: an order further along
-     than production that never got a release date at all. */
-  const [ahead] = await sql`
-    SELECT COUNT(*)::int AS n FROM scm.mfg_sales_orders
-     WHERE company_id = ${COMPANY}
-       AND upper(status::text) NOT IN ('CONFIRMED', 'DRAFT', 'CANCELLED')
-       AND processing_date IS NULL`;
-  log(`FYI (not touched): ${ahead.n} order(s) are past CONFIRMED with NO Processing Date — the reverse`
-    + ' disagreement, and a separate decision.');
+  const movedAll = [];
+  for (const CO of companies) {
+    const [before] = await sql`
+      SELECT COUNT(*)::int AS confirmed,
+             COUNT(*) FILTER (WHERE processing_date IS NOT NULL)::int AS to_move
+        FROM scm.mfg_sales_orders
+       WHERE company_id = ${CO} AND upper(status::text) = 'CONFIRMED'`;
+    const [ahead] = await sql`
+      SELECT COUNT(*)::int AS n FROM scm.mfg_sales_orders
+       WHERE company_id = ${CO}
+         AND upper(status::text) NOT IN ('CONFIRMED', 'DRAFT', 'CANCELLED')
+         AND processing_date IS NULL`;
+    const [gated] = await sql`
+      SELECT COUNT(DISTINCT h.doc_no)::int AS n
+        FROM scm.mfg_sales_orders h
+       WHERE h.company_id = ${CO} AND upper(h.status::text) = 'CONFIRMED'
+         AND h.processing_date IS NOT NULL
+         AND (COALESCE(btrim(h.debtor_name), '') = ''
+           OR COALESCE(btrim(h.address1), '') = ''
+           OR COALESCE(btrim(h.postcode), '') = ''
+           OR h.customer_delivery_date IS NULL)`;
+    log('');
+    log(`COMPANY ${CO} — CONFIRMED: ${before.confirmed}; of those carrying a Processing Date: ${before.to_move}`);
+    log(`   FYI (not touched): ${ahead.n} past CONFIRMED with NO Processing Date — the reverse disagreement.`);
+    log(`   of the movable, ${gated.n} would FAIL today's customer/address/delivery-date gate if done`
+      + ' interactively. They proceeded in AutoCount before the import, so this repair does not re-gate them.');
 
-  /* What the interactive transition would ALSO check. Reported so the number is
-     visible rather than quietly bypassed. */
-  const [gated] = await sql`
-    SELECT COUNT(DISTINCT h.doc_no)::int AS n
-      FROM scm.mfg_sales_orders h
-     WHERE h.company_id = ${COMPANY} AND upper(h.status::text) = 'CONFIRMED'
-       AND h.processing_date IS NOT NULL
-       AND (COALESCE(btrim(h.debtor_name), '') = ''
-         OR COALESCE(btrim(h.address1), '') = ''
-         OR COALESCE(btrim(h.postcode), '') = ''
-         OR h.customer_delivery_date IS NULL)`;
-  log(`of those, ${gated.n} would FAIL today's customer/address/delivery-date completeness gate if the`
-    + ' transition were performed interactively. They proceeded in AutoCount before the import, so this'
-    + ' repair does not re-gate them — the number is here so nobody has to guess it.');
+    if (!APPLY || before.to_move === 0) continue;
+    const moved = await sql`
+      UPDATE scm.mfg_sales_orders
+         SET status = 'IN_PRODUCTION', updated_at = now()
+       WHERE company_id = ${CO}
+         AND upper(status::text) = 'CONFIRMED'
+         AND processing_date IS NOT NULL
+     RETURNING doc_no, company_id`;
+    log(`   APPLIED — ${moved.length} order(s) moved CONFIRMED -> IN_PRODUCTION.`);
+    movedAll.push(...moved);
+  }
 
   if (!APPLY) {
     log('');
@@ -104,44 +128,32 @@ async function main() {
     await sql.end();
     return;
   }
-  if (before.to_move === 0) { log('nothing to do.'); await sql.end(); return; }
+  if (!movedAll.length) { log('nothing to do.'); await sql.end(); return; }
 
-  const moved = await sql`
-    UPDATE scm.mfg_sales_orders
-       SET status = 'IN_PRODUCTION', updated_at = now()
-     WHERE company_id = ${COMPANY}
-       AND upper(status::text) = 'CONFIRMED'
-       AND processing_date IS NOT NULL
-   RETURNING doc_no`;
-  log(`APPLIED — ${moved.length} order(s) moved CONFIRMED -> IN_PRODUCTION.`);
-
-  /* VERIFY on a FRESH connection, asserting the SHAPE rather than a count: no
-     CONFIRMED order may still carry a Processing Date, and every row we moved
-     must hold BOTH the new status and the date that justified the move. */
+  /* VERIFY on a FRESH connection, asserting the VALUES, across EVERY company
+     touched — a per-company verify would have been just as forgettable as the
+     per-company repair. */
   const v = postgres(url, { ssl: 'require', prepare: false, max: 1 });
-  /* THE VALUES, not a count. Re-read the very rows this run moved and assert
-     what they now ARE — the status text and that the date that justified the
-     move is still there. A count would have reported success while writing the
-     wrong value into every one of them, which is exactly how the jsonb
-     double-encoding repair passed its own check. */
-  const docs = moved.map((m) => m.doc_no);
+  const docs = movedAll.map((m) => m.doc_no);
   const after = await v`
-    SELECT doc_no, status::text AS status, (processing_date IS NOT NULL) AS has_date
-      FROM scm.mfg_sales_orders WHERE doc_no = ANY(${docs}) AND company_id = ${COMPANY}`;
+    SELECT doc_no, company_id, status::text AS status, (processing_date IS NOT NULL) AS has_date
+      FROM scm.mfg_sales_orders WHERE doc_no = ANY(${docs})`;
   const wrongStatus = after.filter((r) => String(r.status).toUpperCase() !== 'IN_PRODUCTION');
   const lostDate = after.filter((r) => r.has_date !== true);
+  log('');
   log(`VERIFY (fresh connection, values not counts): ${after.length} of ${docs.length} rows re-read;`
     + ` status is IN_PRODUCTION on ${after.length - wrongStatus.length};`
     + ` the Processing Date is still present on ${after.length - lostDate.length}`);
   for (const r of [...wrongStatus, ...lostDate].slice(0, 5)) {
-    log(`   UNEXPECTED ${r.doc_no}: status='${r.status}' hasProcessingDate=${r.has_date}`);
+    log(`   UNEXPECTED ${r.doc_no} (company ${r.company_id}): status='${r.status}' hasProcessingDate=${r.has_date}`);
   }
-  const [chk] = await v`
-    SELECT COUNT(*) FILTER (WHERE upper(status::text) = 'CONFIRMED'
-                              AND processing_date IS NOT NULL)::int AS left_behind
-      FROM scm.mfg_sales_orders WHERE company_id = ${COMPANY}`;
-  log(`   and CONFIRMED orders still carrying a Processing Date: ${chk.left_behind}`);
-  if (wrongStatus.length || lostDate.length || after.length !== docs.length || chk.left_behind !== 0) {
+  const left = await v`
+    SELECT company_id, COUNT(*)::int AS n FROM scm.mfg_sales_orders
+     WHERE upper(status::text) = 'CONFIRMED' AND processing_date IS NOT NULL
+     GROUP BY 1 ORDER BY 1`;
+  log(`   CONFIRMED orders still carrying a Processing Date, EVERY company: `
+    + (left.length ? left.map((r) => `company ${r.company_id}: ${r.n}`).join(', ') : 'none'));
+  if (wrongStatus.length || lostDate.length || after.length !== docs.length || left.length) {
     log('VERIFY FAILED — investigate before re-running.');
   }
   await v.end();

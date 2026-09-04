@@ -1,0 +1,61 @@
+name: Repair migrated DO prices (plan by default)
+
+# The delivery orders carried over from AutoCount read RM 0.00, and so does the
+# Revenue tile above the list. `create-migrated-documents.mjs` doDos() inserted
+# the lines without any price column while doGrns() in the SAME file always
+# wrote them; both columns are DEFAULT 0 NOT NULL, so the omission was silent.
+#
+# It is not cosmetic: the DO line's unit price prefills a NEW Sales Invoice, the
+# SI price-drift guard skips a zero on purpose, and migrated_no_stock gates the
+# SI and the PI but not the DO -> SI path. See docs/bugs/0617.
+#
+# The price comes from mfg_sales_order_items through the so_item_id the migrated
+# line already carries — the same source the interactive create path reads.
+# Nothing is invented, and a line with no so_item_id is reported, never guessed.
+#
+# Plan by default; apply needs the confirmation phrase and then verifies the
+# SHAPE on a fresh connection (no repaired line still zero, no negative, every
+# touched header equal to the sum of its own lines). Manual trigger only, own
+# concurrency group so a repair can never queue behind or displace a release.
+on:
+  workflow_dispatch:
+    inputs:
+      company:
+        description: "a company id, or all"
+        required: false
+        default: "all"
+        type: string
+      mode:
+        description: "plan (read-only) or apply"
+        required: false
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: "On apply, type exactly: THE PRICE COMES FROM THE SALES ORDER"
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: repair-migrated-do-prices
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+        working-directory: backend
+      - name: plan or apply
+        working-directory: backend
+        env:
+          DATABASE_URL: "${{ secrets.DATABASE_URL }}"
+          COMPANY: "${{ inputs.company }}"
+          MODE: "${{ inputs.mode }}"
+          CONFIRM: "${{ inputs.confirm }}"
+        run: node scripts/repair-migrated-do-prices.mjs
