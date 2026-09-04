@@ -3,7 +3,7 @@
 // would be the screen arguing with itself.
 
 import { describe, expect, test } from 'vitest';
-import { categorySubtotals } from './Inventory';
+import { categorySubtotals } from './InventoryAsOf';
 
 const row = (item_code: string, category: string | null, qty: number, value_sen: number) =>
   ({ item_code, product_name: item_code, category, qty, value_sen });
