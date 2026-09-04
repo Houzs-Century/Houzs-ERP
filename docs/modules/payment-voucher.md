@@ -866,3 +866,18 @@ also parked the only two existing vouchers (both DRAFT) on the
 `2990-Draft-YYMM-NNN` series — draft 不占正式号; item 8b mints the formal
 per-bank number at CHECKED. The OR channels (item 9) and transfers (item 10)
 read the SAME letter table. Pinned by backend/tests/voucherNumbering.test.ts.
+
+### §12b The Draft → formal flow (item 8b)
+
+A new voucher mints on the Draft series — `{co}Draft-YYMM-NNN`
+(`nextPvDraftNo`) — and earns its formal number at **CHECKED**:
+`checkPaymentVoucherHandler` reads the credit account's letter and the
+company width, mints `{co}{letter}PV-YYMM-NNN` (`mintFormalPvNo`,
+collision-retried the way inserts are), records the renumber on the audit
+trail, and answers `pvNumber` so the screen can say so. A bank with no letter
+REFUSES the check (409 `bank_letter_missing`) with the setup card named — a
+voucher must never mint into a series nobody configured. A voucher already
+carrying a formal number (a reject → re-check round) keeps it: a slot is
+never burned twice for the same paper. Journals cannot see draft numbers by
+construction — posting happens at approve, after the mint. Pinned by
+backend/tests/pvDraftNumbering.test.ts.

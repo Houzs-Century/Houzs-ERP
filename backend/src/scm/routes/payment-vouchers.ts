@@ -102,13 +102,53 @@ const normalizePurpose = (raw: unknown): 'SUPPLIER_PAYMENT' | 'FREIGHT' | 'OTHER
    MYR ⇒ rate 1, a foreign rate must be finite > 0 else 1 — the GL post can never
    be zeroed). */
 
-/* Next PV-YYMM-NNN (company-prefixed). Mirrors the sibling scm minters —
-   max(suffix)+1 via mintMonthlyDocNo (self-healing; never count+1). */
-const nextPvNo = async (sb: any, c: any): Promise<string> => {
+/* A NEW voucher is born on the Draft series — {co}Draft-YYMM-NNN — and only
+   earns a formal number at CHECKED (GL redesign item 8b, the owner's
+   numbering rule: draft 不占正式号,checked 才有 numbering; the formal series
+   is per BANK, so the sequence = the sequence of real vouchers, with no holes
+   from deleted drafts). Mirrors the sibling scm minters — max(suffix)+1 via
+   mintMonthlyDocNo (self-healing; never count+1). */
+const pvYymm = (): string => {
   const d = new Date();
-  const yymm = `${String(d.getFullYear()).slice(2)}${String(d.getMonth() + 1).padStart(2, '0')}`;
-  const p = companyDocPrefix(c);
-  return mintMonthlyDocNo(sb, 'payment_vouchers', 'pv_number', `${p}PV-${yymm}`);
+  return `${String(d.getFullYear()).slice(2)}${String(d.getMonth() + 1).padStart(2, '0')}`;
+};
+const nextPvDraftNo = async (sb: any, c: any): Promise<string> =>
+  mintMonthlyDocNo(sb, 'payment_vouchers', 'pv_number', `${companyDocPrefix(c)}Draft-${pvYymm()}`);
+
+const isDraftNumber = (no: string | null | undefined): boolean => /-Draft-/.test(String(no ?? ''));
+
+/**
+ * The FORMAL number, minted at CHECKED from the credit account's bank letter
+ * (scm.acc_bank_letters — the owner's own table) and the company's suffix
+ * width. Refuses, with the setup screen named, when the bank has no letter
+ * yet: a voucher must never mint into a series nobody configured.
+ */
+const mintFormalPvNo = async (
+  sb: any,
+  c: any,
+  companyId: number,
+  creditAccountCode: string,
+): Promise<{ ok: true; pvNo: string } | { ok: false; status: number; body: Record<string, unknown> }> => {
+  const [letterRes, digitsRes] = await Promise.all([
+    sb.from('acc_bank_letters').select('letter').eq('company_id', companyId).eq('account_code', creditAccountCode).maybeSingle(),
+    sb.from('acc_numbering').select('doc_digits').eq('company_id', companyId).maybeSingle(),
+  ]);
+  if (letterRes.error) return { ok: false, status: 500, body: { error: 'load_failed', reason: letterRes.error.message } };
+  if (digitsRes.error) return { ok: false, status: 500, body: { error: 'load_failed', reason: digitsRes.error.message } };
+  const letter = (letterRes.data as { letter?: string } | null)?.letter;
+  if (!letter) {
+    return {
+      ok: false,
+      status: 409,
+      body: {
+        error: 'bank_letter_missing',
+        message: `${creditAccountCode} has no series letter yet — set one on the Voucher numbering card (Reconciliation setup), then check again.`,
+      },
+    };
+  }
+  const digits = Number((digitsRes.data as { doc_digits?: number } | null)?.doc_digits ?? 3);
+  const pvNo = await mintMonthlyDocNo(sb, 'payment_vouchers', 'pv_number', `${companyDocPrefix(c)}${letter}PV-${pvYymm()}`, digits);
+  return { ok: true, pvNo };
 };
 
 /* ── Money in, from the wire ─────────────────────────────────────────────────
@@ -529,7 +569,7 @@ export const createPaymentVoucherHandler = async (c: any) => {
   if (!pf.ok) return c.json(auditUnavailableBody(), 409);
 
   const { data: header, error: hErr } = await insertWithDocNoRetry<{ id: string; pv_number: string }>(
-    () => nextPvNo(sb, c),
+    () => nextPvDraftNo(sb, c),
     (pvNumber) => sb.from('payment_vouchers').insert({
       company_id:          activeCompanyId(c), // multi-company: stamp the active company
       pv_number:           pvNumber,
@@ -1239,15 +1279,41 @@ export const checkPaymentVoucherHandler = async (c: any) => {
   if (!v.ok) return c.json({ error: v.error, message: v.message }, 409);
   const who = approvalActor(c);
   const at = new Date().toISOString();
+
+  /* THE FIRST YES MINTS THE NUMBER (item 8b). A voucher still on the Draft
+     series takes its formal per-bank number here — {co}{letter}PV-YYMM-NNN
+     from the credit account's letter — so the formal sequence is the sequence
+     of vouchers a checker actually accepted. One already carrying a formal
+     number (a reject → re-check round) KEEPS it: the number was minted, and
+     re-minting would burn a slot for the same paper. Collision-retried the
+     way inserts are — the loser of a same-second race re-mints. */
+  const oldPvNo = String(pv.pv_number ?? '');
+  let newPvNo: string | null = null;
+  if (isDraftNumber(oldPvNo)) {
+    for (let attempt = 0; attempt < 8 && newPvNo == null; attempt += 1) {
+      const minted = await mintFormalPvNo(sb, c, companyId, String(pv.credit_account_code ?? ''));
+      if (!minted.ok) return c.json(minted.body, minted.status as 409);
+      const { error: numErr } = await scopeToCompanyId(sb.from('payment_vouchers')
+        .update({ pv_number: minted.pvNo, updated_at: at }).eq('id', id), companyId);
+      if (!numErr) { newPvNo = minted.pvNo; break; }
+      const collided = String(numErr.code ?? '') === '23505' || /duplicate key/i.test(String(numErr.message ?? ''));
+      if (!collided) return c.json({ error: 'save_failed', reason: numErr.message }, 500);
+    }
+    if (newPvNo == null) return c.json({ error: 'save_failed', reason: 'could not mint a formal voucher number after 8 attempts' }, 500);
+  }
+
   const { error } = await scopeToCompanyId(sb.from('payment_vouchers')
     .update({ checked_at: at, checked_by: who, updated_at: at }).eq('id', id), companyId);
   if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);
   await recordEntityAudit(sb, {
-    entityType: 'PAYMENT_VOUCHER', entityId: id, entityDocNo: pv.pv_number,
+    entityType: 'PAYMENT_VOUCHER', entityId: id, entityDocNo: newPvNo ?? oldPvNo,
     action: 'CHECK', actor: c.get('houzsUser'), statusSnapshot: 'DRAFT',
-    fieldChanges: compactChanges([fieldChange('checked_by', null, who)]),
+    fieldChanges: compactChanges([
+      fieldChange('checked_by', null, who),
+      ...(newPvNo ? [fieldChange('pv_number', oldPvNo, newPvNo)] : []),
+    ]),
   });
-  return c.json({ id, checkedAt: at, checkedBy: who });
+  return c.json({ id, checkedAt: at, checkedBy: who, ...(newPvNo ? { pvNumber: newPvNo } : {}) });
 };
 paymentVouchers.post('/:id/check', checkPaymentVoucherHandler);
 
