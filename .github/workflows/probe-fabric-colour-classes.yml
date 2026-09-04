@@ -7,6 +7,11 @@ name: Fabric colour classes (read-only)
 # READ-ONLY: SELECTs only, no DDL, no writes, no transaction. There is no APPLY
 # path anywhere in the script - filling these lines is a separate backfill.
 on:
+  # TEMPORARY, removed before merge. A workflow_dispatch workflow cannot be
+  # dispatched until it is on main, and CLAUDE.md forbids shipping one that has
+  # never run once and reported success.
+  push:
+    branches: [fix/fabric-colour-normalisation-classes]
   workflow_dispatch:
     inputs:
       company:
