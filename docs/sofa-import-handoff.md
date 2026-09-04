@@ -45,8 +45,9 @@ token 的书写顺序 = 面对沙发时的实际摆位。解析器最后有一�
 | `1S` / `2S` / `3S` | 整张 1/2/3 座(两端都有扶手) | — |
 | `1A` / `2A` | 一个位 / 两个位,**带一个扶手** | owner:"我们沙发有分一个位一个扶手和两个位一个扶手" |
 | `1NA` / `2NA` | 无扶手 | — |
-| `1EL` / `1ER` / `2EL` / `2ER` | E = 扶手在左/右 → `1A(LHF)` / `1A(RHF)` / `2A(...)` | owner:"EL 或 ER 代表左边或右边" |
-| `L` | 贵妃(chaise) | — |
+| `1EL` / `1ER` / `2EL` / `2ER` | E = 扶手在左/右 → `1A(LHF)` / `1A(RHF)` / `2A(...)` | owner:"EL 或 ER 代表左边或右边";2026-09-04 再确认「ER 就是右边那一端,2ER = 2A(RHF)」 |
+| `L` / `ELT` / `1ELT` | 贵妃(chaise);写在最左 = `L(LHF)`,写在最右 = `L(RHF)` | owner 2026-09-04:「ELT 就是 L」 |
+| `NA`(没有前面的数字) | 就是 `1NA` | owner 2026-09-04 |
 | `C` / `1C` / `CNR` / `CORNER` | 角位 | owner:"1c 是 corner" |
 | `CT` / `C/T` / `CS` / `CONSOLE` / `C TABLE` | Console(中间小几) | owner:"CS 就是 console" |
 | `1B` / `2B` | Bench(**不做扶手**),**分左右** `1B(LHF)/1B(RHF)` | owner:"Bench 就是不做扶手";"1b 要分","2b 也是有的" |
@@ -263,6 +264,8 @@ HR805-31/-40、NX007/010/011、ZL-6/-20、Garfield、Wowsons、Chantic、J9883-2
 | **补 SO 行的 warehouse** | `backfill-so-line-warehouse.mjs` | 同名 yml |
 | **special order 落到 SO/PO 行** | `backfill-sofa-special-orders.mjs` | 同名 yml |
 | **补脚高 = Default(见 2.5)** | `backfill-sofa-leg-default.mjs` | 同名 yml |
+| **占位行为什么解不出(只读)** | `probe-sofa-placeholder-desc2.mjs` | 同名 yml |
+| **完整度体检(只读)** | `check-sofa-bedframe-completeness.mjs` | 同名 yml |
 
 ### 体检脚本的 7 项
 
@@ -275,6 +278,37 @@ HR805-31/-40、NX007/010/011、ZL-6/-20、Garfield、Wowsons、Chantic、J9883-2
 7. **真漏拆 vs 正常占位**(靠备注签名区分)
 
 改动之后一定重跑这个脚本;`gh run view <id> --log` 里 `##[notice]` 就是报告。
+
+### `-1S` 的两种意思,体检报告分开数(owner 2026-09-04)
+
+单据行的码结尾是 `-1S`,有两个完全不同的情况:
+
+- **书上就写一个位,ERP 也是一个位** —— 对的,不是缺口
+- **解不出这套沙发的组合,importer 退回一个位的占位** —— 这才是要人补的
+
+两个数加在一起,老板看到的待办就被撑大了。`check-sofa-bedframe-completeness.mjs`
+现在把 `-1S` 的行做一次普查,总数照印,再拆开:
+
+```
+of which — bare "1S" lines, all told: 26
+of which — bare "1S" — WE COULD NOT READ THE BUILD (the real backlog): 20
+of which — bare "1S" — the book says a single seater and we agree: 5
+of which — bare "1S" — carries a different compartment finding: 1
+```
+
+(prod、company 1、已 proceed 的销售单,2026-09-04 实测。)
+
+**判断标准是两半,缺一不可**,理由都写在
+`backend/scripts/lib/sofa-single-seat.mjs` 里,两条都是 prod 的真实行:
+
+1. **Desc2 自己要写出一个位**。只问解析器不行 —— HC-SO-013327 的
+   `Seater depth +1”` 是座深指示,那个 `+1` 会被语法读成一个裸件,于是一条完全
+   没有组合的文字被读成「一个位」。
+2. **解析器要把整套读成刚好那一件**。只看字串不行 —— HC-SO-001472 的
+   `3S+2S+1S` 是三张沙发成套,它的 `1S` 行是对的,但对的理由不一样。
+
+备注(`remark`)**不参与判断**:它是自由文字,本来就是它把行归到占位那一支的,
+而且别的工作正在改写它。
 
 ### 改解析器的规矩
 
