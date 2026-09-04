@@ -13,6 +13,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { fmtSen, fmtQty } from '@2990s/shared';
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
+import { DateField } from '../../vendor/scm/components/DateField';
 import { StatCard } from '../../components/StatCard';
 import styles from './Inventory.module.css';
 
@@ -49,8 +50,7 @@ export const AsOfSection = ({
   <>
     <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', marginBottom: 'var(--space-2)' }}>
       <label htmlFor="inv-asof" style={soft}>As of date</label>
-      <input id="inv-asof" type="date" value={asOf} onChange={(e) => onChange(e.target.value)}
-        style={{ padding: '4px 8px', border: '1px solid var(--c-line, rgba(34,31,32,0.2))', borderRadius: 'var(--radius-sm, 6px)', fontSize: 'var(--fs-13)', background: 'white' }} />
+      <DateField id="inv-asof" value={asOf} onChange={onChange} aria-label="As of date" />
       {asOf && (
         <button type="button" className={styles.chip} onClick={() => onChange('')}>Back to live</button>
       )}
