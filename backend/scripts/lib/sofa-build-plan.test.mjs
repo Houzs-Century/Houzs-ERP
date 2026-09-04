@@ -69,7 +69,7 @@ test("a build with no placeholder at all is still one sofa (re-run stays inert)"
   assert.deepEqual(surplus, []);
 });
 
-test("REFUSES several placeholders mixed with already-correct pieces", () => {
+test("REFUSES a document that does not divide evenly into sofas", () => {
   const rows = [
     { id: "p1", code: "8030-1S" },
     { id: "p2", code: "8030-1S" },
@@ -77,7 +77,56 @@ test("REFUSES several placeholders mixed with already-correct pieces", () => {
   ];
   const got = splitBuildCopies(rows, WANT_8030_3);
   assert.equal(got.ok, false);
-  assert.match(got.why, /not written down anywhere/);
+  assert.match(got.why, /does not divide evenly/);
+});
+
+test("HC-PO-009024 after the SO carry: two lines that are ALREADY the first piece", () => {
+  /* The SO half of the correction ran first and its downstream carry set both
+     PO lines to 9050-1A(LHF). Neither is a placeholder any more, and the
+     placeholders-only rule refused the build and left the purchase order half
+     corrected — measured on prod, run 33891638140. */
+  const want = ["9050-1A(LHF)", "9050-1NA", "9050-CNR", "9050-1A(RHF)"];
+  const rows = [
+    { id: "49671284", code: "9050-1A(LHF)", qty: 1, unit_price_sen: 95000, total: 0 },
+    { id: "29315341", code: "9050-1A(LHF)", qty: 1, unit_price_sen: 95000, total: 0 },
+  ];
+  const got = splitBuildCopies(rows, want);
+  assert.equal(got.ok, true, got.ok ? "" : got.why);
+  assert.equal(got.copies.length, 2);
+  assert.deepEqual(got.copies.map((c) => c.map((r) => r.id)), [["49671284"], ["29315341"]]);
+  for (const c of got.copies) {
+    const m = planCopyMoney(c);
+    assert.equal(m.ok, true, m.ok ? "" : m.why);
+    assert.equal(m.price, 95000, "each sofa keeps its own 95000");
+    assert.equal(m.total, 0);
+  }
+});
+
+test("a piece the build uses TWICE does not read as two sofas", () => {
+  /* HC-SO-011008 is 1A+1NA+CNR+1NA+1A — one sofa with two 1NA rows. */
+  const want = ["9058-1A(LHF)", "9058-1NA", "9058-CNR", "9058-1NA", "9058-1A(RHF)"];
+  const rows = [
+    { id: "a", code: "9058-1A(LHF)" },
+    { id: "b", code: "9058-1NA" },
+    { id: "c", code: "9058-CNR" },
+    { id: "d", code: "9058-1NA" },
+    { id: "e", code: "9058-1A(RHF)" },
+  ];
+  const got = splitBuildCopies(rows, want);
+  assert.equal(got.ok, true);
+  assert.equal(got.copies.length, 1, "two 1NA rows are the build's own two, not two sofas");
+});
+
+test("two whole sofas already written stay two, and each keeps its own rows", () => {
+  const rows = [
+    { id: "a1", code: "8030-1A(LHF)" }, { id: "a2", code: "8030-1A(LHF)" },
+    { id: "b1", code: "8030-1NA" }, { id: "b2", code: "8030-1NA" },
+    { id: "c1", code: "8030-1A(RHF)" }, { id: "c2", code: "8030-1A(RHF)" },
+  ];
+  const got = splitBuildCopies(rows, WANT_8030_3);
+  assert.equal(got.ok, true);
+  assert.equal(got.copies.length, 2);
+  assert.deepEqual(got.copies.map((c) => c.map((r) => r.id).sort()), [["a1", "b1", "c1"], ["a2", "b2", "c2"]]);
 });
 
 test("HC-SO-013384 money: the priced line leads its own sofa, the other is free", () => {
