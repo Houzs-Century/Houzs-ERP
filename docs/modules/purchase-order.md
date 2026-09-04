@@ -1149,7 +1149,7 @@ reused by `PurchaseInvoiceDetail`, `PurchaseInvoiceDetailV2` and
 `PurchaseConsignmentOrderDetail`, and each of those parents enumerates the fields
 it sends on add/update — a box they do not send would accept typing and discard
 it on save. Turn it on in a parent only when that parent also carries `notes` in
-BOTH payloads. Ledger: `docs/bugs/0638-*`; sales-side twin `docs/bugs/0639-*`.
+BOTH payloads. Ledger: `docs/bugs/0640-*`; sales-side twin `docs/bugs/0639-*`.
 
 **Line photos render on the desktop V2 detail since 2026-08-28** — a read-only
 Photos column between Supplier SKU and Ordered, tiles opening the shared
