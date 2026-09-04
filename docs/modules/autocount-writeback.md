@@ -3014,7 +3014,7 @@ purchase order is a second rollout that needs its own.
 > plan saw. A plan file is a key log, and replaying a stale key log is exactly
 > what put those 64 dead addresses there in the first place. Every refusal is
 > printed and counted and the run exits 1. Trace:
-> `docs/bugs/0637-two-photo-repairs-could-be-planned-but-never-applied-anywher.md`.
+> `docs/bugs/0638-two-photo-repairs-could-be-planned-but-never-applied-anywher.md`.
 
 ## 8. Configuration
 
