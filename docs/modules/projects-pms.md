@@ -318,6 +318,10 @@ contractor via `POST`/`DELETE /contractors/:id/share-link` (authed,
 The page `frontend/src/pages/ContractorCalendar.tsx` is a self-contained public
 surface (own month grid, no import from `Projects.tsx`), routed by
 `routing/appSurface.ts` (`/c/` → `contractor`) outside `AuthGate` in `main.tsx`.
+It renders each event as ONE Houzs-teal bar SPANNING its days (label shown once,
+lane-packed per week — a multi-day event does not repeat per day), on a teal
+frame/header/grid (owner 2026-09-04: the plain version read as empty and the
+per-day repetition confused contractors).
 **The role BADGE is the second half of the checklist-tick gate, and the UI must
 ask it too.** A caller holding `projects.checklist.tick` but **not**
 `projects.write` may attach, edit, delete and status-change only on tasks whose
