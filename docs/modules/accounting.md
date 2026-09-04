@@ -428,6 +428,19 @@ posted before this change carry Dr 330-0000 and are re-shaped by the item-3
 backfill (reversal + re-post under the new rule). Pinned by
 tests/piPeriodicPosting.test.ts and the re-shaped apSplit.test.ts.
 
+**The one-shot PI ledger repair (GL redesign item 3).**
+`POST /accounting/backfill/pi-periodic` brings every posted PI of the active
+company into the periodic shape: an invoice with NO journal (the 33 the
+pre-hook era left, docs/bugs/0640) is posted; one with an active Dr-330
+journal is REVERSED (a contra pair, never a delete) and re-posted under the
+item-2 rule; one already periodic is left alone. Nothing is re-implemented —
+each invoice walks through reversePiAccounting + postPiAccounting, so the
+entry is dated by the INVOICE (money lands back in its own month), engine
+idempotency holds, and an unbound group fails THAT invoice by name instead of
+dying. `?dryRun=1` lists the plan without writing; the write pass batches
+(limit ≤ 25 per call, `remaining` in the response) and re-running is a no-op.
+Handler in accounting-pi-backfill.ts; pinned by tests/piPeriodicBackfill.test.ts.
+
 **A half-failed upload cannot hold its file hostage.** The upload writes the
 batch head first and its lines after; a failure between the two used to leave
 a batch with no lines still owning the file hash, so the SAME file was refused
