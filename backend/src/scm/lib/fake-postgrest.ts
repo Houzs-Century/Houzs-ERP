@@ -296,16 +296,47 @@ export function fakeSb(
      fake throws `sb.schema is not a function` and the test would be measuring
      the fake, not the code. See docs/bugs/0522. */
   const schemaCalls: string[] = [];
+  /* `.rpc(name, args)` — Postgres functions the code calls through PostgREST
+     (scm.acc_register_item_group extends the category enums, which no DML can
+     model). Every call is RECORDED for assertions. A function with no handler
+     answers the way PostgREST answers for a function that IS NOT THERE —
+     PGRST202 — because that is a real production state every rpc caller
+     already has a lane for: doc-no's counter degrades to its pre-counter path
+     on exactly this code (lib/rpc-missing.ts), and inventing a different
+     error here made 25 tests about CONFIRMING SETTLEMENTS fail inside the JE
+     minter. A test ABOUT an rpc registers a handler in `rpcHandlers`; the
+     handler's return value is the `data`, a throw becomes the error. */
+  const rpcCalls: Array<{ fn: string; args: Record<string, unknown> }> = [];
   const api: {
     from: (t: string) => any;
     tables: Record<string, Row[]>;
     schema: (s: string) => any;
     schemaCalls: string[];
+    rpc: (fn: string, args?: Record<string, unknown>) => Promise<{ data: unknown; error: { code?: string; message: string } | null }>;
+    rpcCalls: Array<{ fn: string; args: Record<string, unknown> }>;
+    rpcHandlers: Record<string, (args: Record<string, unknown>) => unknown>;
   } = {
     from,
     tables,
     schema: (s: string) => { schemaCalls.push(s); return api; },
     schemaCalls,
+    rpcCalls,
+    rpcHandlers: {},
+    rpc: async (fn: string, args: Record<string, unknown> = {}) => {
+      rpcCalls.push({ fn, args });
+      const handler = api.rpcHandlers[fn];
+      if (!handler) {
+        return {
+          data: null,
+          error: { code: 'PGRST202', message: `Could not find the function public.${fn} in the schema cache` },
+        };
+      }
+      try {
+        return { data: handler(args) ?? null, error: null };
+      } catch (e) {
+        return { data: null, error: { message: String((e as Error)?.message ?? e) } };
+      }
+    },
   };
   return api as never as typeof api;
 }
