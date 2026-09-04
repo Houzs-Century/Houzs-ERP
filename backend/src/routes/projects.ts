@@ -58,6 +58,7 @@ import { scopeSalesReportsForUser } from "../services/orgScope";
 import { audit } from "../services/audit";
 import { hasPermission, holdsChecklistApproval, EXPLICIT_APPROVAL_KEYS } from "../services/permissions";
 import { recomputeAutoCostLines } from "../services/projectCostRates";
+import { issueShareToken, revokeShareTokens } from "../services/contractorShare";
 import { todayMyt } from "../scm/lib/my-time";
 import { canonicalizeVenue } from "../scm/lib/canonical-venue";
 import { getDb } from "../db/client";
@@ -1392,6 +1393,40 @@ app.delete("/contractors/:id", requirePermission("projects.manage"), async (c) =
   )
     .bind(id)
     .run();
+  return c.json({ ok: true });
+});
+
+// ── Contractor share links ───────────────────────────────────
+// Generate/copy or revoke the unguessable token behind a contractor's public,
+// no-login calendar (routes/publicContractorCalendar.ts). Minted against the
+// contractor NAME — the value projects.contractor stores and the public route
+// filters on — so a rename would need a fresh link, which is correct.
+
+app.post("/contractors/:id/share-link", requirePermission("projects.write"), async (c) => {
+  const user = c.get("user");
+  const id = parseInt(c.req.param("id"), 10);
+  if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
+  const row = await c.env.DB.prepare(
+    `SELECT name FROM project_contractors WHERE id = ?`
+  )
+    .bind(id)
+    .first<{ name: string }>();
+  if (!row) return c.json({ error: "Contractor not found" }, 404);
+  // Get-or-create: repeated clicks reuse the same live token.
+  const token = await issueShareToken(c.env, row.name, user?.id ?? null);
+  return c.json({ token });
+});
+
+app.delete("/contractors/:id/share-link", requirePermission("projects.manage"), async (c) => {
+  const id = parseInt(c.req.param("id"), 10);
+  if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
+  const row = await c.env.DB.prepare(
+    `SELECT name FROM project_contractors WHERE id = ?`
+  )
+    .bind(id)
+    .first<{ name: string }>();
+  if (!row) return c.json({ error: "Contractor not found" }, 404);
+  await revokeShareTokens(c.env, row.name);
   return c.json({ ok: true });
 });
 

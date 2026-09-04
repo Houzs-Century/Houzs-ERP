@@ -123,6 +123,26 @@ describe("pmsAccess — project-detail section gating", () => {
     expect(a.canRental).toBe(false);
   });
 
+  test("projects.finance.view grants canFinancial to a non-director — the flag the project-detail strip reads (owner 2026-09-04)", () => {
+    const bd = user({
+      position_name: "Operation Executive",
+      perms: ["projects.write", "projects.manage", "projects.finance.view"],
+    });
+    const a = getPmsAccess(bd, { pic_id: 99 });
+    // isFinanceViewer honoured this permission from the day it was added;
+    // canFinancial did not, so GET /projects/:id still stripped `finance` +
+    // `finance_lines` from a holder. The two must agree — otherwise the
+    // Rental box renders, accepts a number, and cannot read back the line it
+    // just wrote, so every retype books ANOTHER line (12 on one project).
+    expect(isFinanceViewer(bd)).toBe(true);
+    expect(a.canFinancial).toBe(true);
+    expect(financeHiddenForUser(bd)).toBe(false);
+    // Still not a director, and the grant is finance-only.
+    expect(a.role).toBe("OTHER");
+    expect(isDirectorUser(bd)).toBe(false);
+    expect(a.canPayment).toBe(false);
+  });
+
   test("projects.write ALONE does not grant EDIT or WF_SENSITIVE — a Sales Person stays read-only (over-grant guard)", () => {
     const salesPerson = user({ id: 7, position_name: "Sales Executive", perms: ["projects.write"] });
     const a = getPmsAccess(salesPerson, { pic_id: 7 });

@@ -13,7 +13,6 @@
   ],
   "unscoped": [
     "backend/src/routes/assr.ts :: DELETE /lookups/:kind/:id",
-    "backend/src/routes/projects.ts :: GET /venues",
     "backend/src/routes/systemHealth.ts :: GET /autocount/reconcile",
     "backend/src/scm/routes/driver-leave.ts :: POST /",
     "backend/src/scm/routes/fleet-maintenance.ts :: GET /vehicles/:id",
@@ -23,11 +22,7 @@
     "backend/src/scm/routes/hr.ts :: GET /commission",
     "backend/src/scm/routes/lorry-service-records.ts :: GET /",
     "backend/src/scm/routes/lorry-service-records.ts :: GET /:id/invoice",
-    "backend/src/scm/routes/mfg-sales-orders.ts :: GET /active-venue",
     "backend/src/scm/routes/product-models.ts :: GET /:id/photo/:key",
-    "backend/src/scm/routes/scan-so.ts :: GET /jobs/:id",
-    "backend/src/scm/routes/sofa-combos.ts :: PUT /:id",
-    "backend/src/scm/routes/suppliers.ts :: POST /:id/bindings/batch",
-    "backend/src/scm/routes/warehouse.ts :: POST /racks"
+    "backend/src/scm/routes/scan-so.ts :: GET /jobs/:id"
   ]
 }

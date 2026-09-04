@@ -65,6 +65,7 @@ const ResetPassword = lazy(() => import("./pages/ResetPassword").then((m) => ({ 
 // auth/AuthGate.tsx) — same split, same reason: staff sessions never load it.
 const AcceptInviteScreen = lazy(() => import("./auth/AuthScreens").then((m) => ({ default: m.AcceptInviteScreen })));
 const PrivacyPolicy = lazy(() => import("./pages/PrivacyPolicy").then((m) => ({ default: m.PrivacyPolicy })));
+const ContractorCalendar = lazy(() => import("./pages/ContractorCalendar").then((m) => ({ default: m.ContractorCalendar })));
 
 function PublicFallback() {
   return <div className="flex min-h-screen items-center justify-center text-sm text-ink-muted">Loading</div>;
@@ -192,6 +193,15 @@ function RootApp() {
     return (
       <LazySlot resetKey={`public:${surface}`} fallback={<PublicFallback />}>
         <PublicDoScanBasket />
+      </LazySlot>
+    );
+  }
+  if (surface === "contractor") {
+    /* A booth contractor's own confirmed schedule, outside AuthGate for the same
+       reason /d/:token is: the contractor has no Houzs account. */
+    return (
+      <LazySlot resetKey={`public:${surface}`} fallback={<PublicFallback />}>
+        <ContractorCalendar />
       </LazySlot>
     );
   }
