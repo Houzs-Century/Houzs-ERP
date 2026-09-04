@@ -35,6 +35,12 @@ import {
   translateAnnouncement,
   type AnnouncementTranslations,
 } from "../lib/translate-announcement";
+import {
+  RICH_HTML_MAX,
+  hasRichFormatting,
+  richTextToPlain,
+  sanitizeAnnouncementHtml,
+} from "../lib/announcementRichText";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -113,6 +119,11 @@ type AnnouncementRow = {
   id: string;
   title: string;
   body: string;
+  // Rich body (mig 20260904T1700). Canonical HTML fragment — see
+  // lib/announcementRichText.ts — or NULL for a plain-text notice. `body` is
+  // ALWAYS the plain-text shadow of it, so plain-only readers need no branch.
+  body_html?: string | null;
+  bodyHtml?: string | null;
   is_active?: number | boolean | null;
   isActive?: number | boolean | null;
   expires_at?: string | null;
@@ -279,11 +290,27 @@ function deriveTargetType(
   return "USER_IDS";
 }
 
+// The rich body as the client may send it. Returns the canonical HTML, or null
+// when there is nothing a plain string could not carry (no marks, no lists, no
+// sizes) — that keeps every unformatted notice on the pre-feature plain path.
+// `error` is set only for a fragment past the hard cap; the caller 400s it.
+function readBodyHtml(
+  v: unknown,
+): { html: string | null; error?: string } {
+  if (typeof v !== "string" || !v.trim()) return { html: null };
+  if (v.length > RICH_HTML_MAX) {
+    return { html: null, error: `Message too long (${RICH_HTML_MAX} max)` };
+  }
+  const html = sanitizeAnnouncementHtml(v);
+  return { html: hasRichFormatting(html) ? html : null };
+}
+
 function toPublic(r: AnnouncementRow) {
   return {
     id: r.id,
     title: r.title,
     body: r.body ?? "",
+    bodyHtml: r.bodyHtml ?? r.body_html ?? null,
     isActive: isActiveFlag(r.isActive ?? r.is_active ?? null),
     expiresAt: r.expiresAt ?? r.expires_at ?? null,
     createdAt: r.createdAt ?? r.created_at ?? null,
@@ -836,13 +863,26 @@ app.post("/", requirePermissionOrSalesDirector("announcements.write"), async (c)
     .catch(() => ({}))) as Record<string, unknown>;
 
   const title = String(body.title ?? "").trim();
-  const text = String(body.body ?? "").trim();
   if (!title) {
     return c.json({ success: false, error: "Title is required" }, 400);
   }
   if (title.length > 200) {
     return c.json({ success: false, error: "Title too long (200 max)" }, 400);
   }
+  // Rich body wins when present: `body` is then DERIVED from it server-side
+  // (never trusted from the client) so the two columns can never disagree. A
+  // client that sends only `body` — the phone, a script, an old build — takes
+  // the plain path exactly as before.
+  const rawHtml = body.bodyHtml ?? body.body_html;
+  const rich = readBodyHtml(rawHtml);
+  if (rich.error) return c.json({ success: false, error: rich.error }, 400);
+  const bodyHtml = rich.html;
+  // Any html at all (even one that folded to plain and stores NULL) is the
+  // source of truth for the plain text; `body` is read only when no html came.
+  const text =
+    typeof rawHtml === "string" && rawHtml.trim()
+      ? richTextToPlain(rawHtml)
+      : String(body.body ?? "").trim();
 
   let expiresAt: string | null = null;
   if (body.expiresAt != null && String(body.expiresAt).trim() !== "") {
@@ -913,21 +953,23 @@ app.post("/", requirePermissionOrSalesDirector("announcements.write"), async (c)
   const translations = await translateAnnouncement({
     title,
     body: text,
+    bodyHtml,
     apiKey: c.env.ANTHROPIC_API_KEY,
   });
 
   await c.env.DB.prepare(
     `INSERT INTO announcements
-       (id, title, body, is_active, expires_at, created_by, created_at,
+       (id, title, body, body_html, is_active, expires_at, created_by, created_at,
         translations, attachments, media_layout, target_type,
         target_dept_ids, target_position_ids, target_user_ids,
         target_company_ids, category${stampCo ? ", company_id" : ""})
-     VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?${stampCo ? ", ?" : ""})`,
+     VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?${stampCo ? ", ?" : ""})`,
   )
     .bind(
       id,
       title,
       text,
+      bodyHtml,
       expiresAt,
       user?.id ?? null,
       nowIso,
@@ -984,6 +1026,7 @@ app.patch("/:id", requirePermissionOrSalesDirector("announcements.write"), async
   let textChanged = false;
   let nextTitle = existing.title;
   let nextText = existing.body ?? "";
+  let nextHtml: string | null = existing.bodyHtml ?? existing.body_html ?? null;
 
   if ("isActive" in body) {
     sets.push("is_active = ?");
@@ -1002,10 +1045,29 @@ app.patch("/:id", requirePermissionOrSalesDirector("announcements.write"), async
     nextTitle = title;
     textChanged = true;
   }
-  if (typeof body.body === "string") {
+  // Whoever edits last defines the format: a `bodyHtml` edit rewrites both
+  // columns (plain derived from rich); a plain `body` edit clears body_html so
+  // a phone editing a formatted notice cannot leave stale formatting behind.
+  if ("bodyHtml" in body || "body_html" in body) {
+    const rawHtml = body.bodyHtml ?? body.body_html;
+    const rich = readBodyHtml(rawHtml);
+    if (rich.error) return c.json({ success: false, error: rich.error }, 400);
+    const text =
+      typeof rawHtml === "string" && rawHtml.trim()
+        ? richTextToPlain(rawHtml)
+        : typeof body.body === "string"
+          ? String(body.body).trim()
+          : "";
+    sets.push("body_html = ?", "body = ?");
+    binds.push(rich.html, text);
+    nextHtml = rich.html;
+    nextText = text;
+    textChanged = true;
+  } else if (typeof body.body === "string") {
     const text = String(body.body).trim();
-    sets.push("body = ?");
-    binds.push(text);
+    sets.push("body = ?", "body_html = ?");
+    binds.push(text, null);
+    nextHtml = null;
     nextText = text;
     textChanged = true;
   }
@@ -1116,6 +1178,7 @@ app.patch("/:id", requirePermissionOrSalesDirector("announcements.write"), async
     const retranslated = await translateAnnouncement({
       title: nextTitle,
       body: nextText,
+      bodyHtml: nextHtml,
       apiKey: c.env.ANTHROPIC_API_KEY,
     });
     sets.push("translations = ?");

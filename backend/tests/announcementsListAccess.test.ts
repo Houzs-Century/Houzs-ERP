@@ -65,7 +65,7 @@ describe("GET /api/announcements — open to every authed user, audience-filtere
   beforeAll(async () => {
     await env.DB.prepare(
       `CREATE TABLE IF NOT EXISTS announcements (
-         id TEXT PRIMARY KEY, title TEXT, body TEXT, is_active INTEGER,
+         id TEXT PRIMARY KEY, title TEXT, body TEXT, body_html TEXT, is_active INTEGER,
          expires_at TEXT, reminded_at TEXT, created_by INTEGER, created_at TEXT,
          updated_at TEXT, translations TEXT, attachments TEXT, media_layout TEXT,
          target_type TEXT, target_dept_ids TEXT, target_position_ids TEXT,

@@ -15,6 +15,9 @@ import {
   type VideoLayout,
 } from "./MobileAnnouncementMedia";
 import { MobileVirtualList } from "./MobileVirtualList";
+import { AnnouncementRichBody } from "../components/AnnouncementRichBody";
+import { AnnouncementRichEditor } from "../components/AnnouncementRichEditor";
+import { richTextToPlain } from "../lib/announcementRichText";
 import { useAuth } from "../auth/AuthContext";
 import { isSalesDirectorUser } from "../auth/salesAccess";
 import { formatDate } from "../lib/utils";
@@ -60,6 +63,9 @@ type Announcement = {
   id: string;
   title: string;
   body: string;
+  /** Canonical rich fragment (lib/announcementRichText.ts) or null = plain;
+   *  `body` is always its plain-text shadow. */
+  bodyHtml?: string | null;
   isActive: boolean;
   /** ISO instant after which the notice stops being served to readers, or NULL
    *  for "never". The phone COMPOSED without ever sending this until
@@ -810,8 +816,8 @@ function Detail({
   const [showOriginal, setShowOriginal] = useState(false);
   useEffect(() => { setShowOriginal(false); }, [lang, ann.id]);
   const shown = showOriginal
-    ? { title: ann.title, body: ann.body }
-    : { title: loc.title, body: loc.body };
+    ? { title: ann.title, body: ann.body, bodyHtml: ann.bodyHtml ?? null }
+    : { title: loc.title, body: loc.body, bodyHtml: loc.bodyHtml };
 
   const ack = async () => {
     if (isAcked || acking) return;
@@ -892,7 +898,7 @@ function Detail({
           </div>
         )}
 
-        <div id="ann-d-body" style={{ fontSize: 13.5, lineHeight: 1.7, color: "#414539", marginTop: 14, whiteSpace: "pre-wrap" }}>{shown.body}</div>
+        <AnnouncementRichBody id="ann-d-body" html={shown.bodyHtml} text={shown.body} style={{ fontSize: 13.5, lineHeight: 1.7, color: "#414539", marginTop: 14 }} />
         <div id="ann-d-atts" style={{ marginTop: 16 }}>
           <Attachments ann={ann} />
         </div>
@@ -1057,9 +1063,13 @@ function Compose({
       // Real audience targeting — one bucket at a time (mirrors desktop). ALL
       // sends no target arrays (backend derives ALL_USERS). Empty arrays on a
       // non-selected bucket keep the other buckets from being wiped on edit.
+      // Rich body (same editor as the desktop composer): `bodyHtml` is the
+      // canonical fragment, `body` its plain shadow; the server re-derives the
+      // latter and stores NULL html when nothing was actually formatted.
       const payload: Record<string, unknown> = {
         title: t,
-        body: body.trim(),
+        body: richTextToPlain(body),
+        bodyHtml: body,
         category,
       };
       if (bucket === "DEPT") payload.targetDeptIds = Array.from(selDepts);
@@ -1230,10 +1240,12 @@ function Compose({
           <span className="fld-l">Title</span>
           <input className="fld-i" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Announcement title" maxLength={200} />
         </label>
-        <label className="fld" style={{ marginBottom: 12 }}>
+        {/* A div, not a <label>: a contenteditable box is not labelable, so a
+            label wrapper would only steal the first tap. */}
+        <div className="fld" style={{ marginBottom: 12 }}>
           <span className="fld-l">Body</span>
-          <textarea className="fld-i" value={body} onChange={(e) => setBody(e.target.value)} rows={6} style={{ resize: "none" }} placeholder="Write the announcement…" />
-        </label>
+          <AnnouncementRichEditor value={body} onChange={setBody} placeholder="Write the announcement…" minHeight={120} disabled={saving} />
+        </div>
 
         {/* Expiry — the same control and the same label as the desktop
             composer, and the SHARED DateTimeField rather than a native

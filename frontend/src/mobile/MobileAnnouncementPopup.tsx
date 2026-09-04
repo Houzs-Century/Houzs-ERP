@@ -1,5 +1,6 @@
 import { useAnnouncementBanner, bannerSecondaryKind } from "../components/useAnnouncementBanner";
 import { Attachments } from "./MobileAnnouncementMedia";
+import { AnnouncementRichBody } from "../components/AnnouncementRichBody";
 import { localizeAnnouncement, useMobileLang } from "./mobileI18n";
 import { formatDate } from "../lib/utils";
 import "./mobile.css";
@@ -116,9 +117,7 @@ export function MobileAnnouncementPopup({ onOpenList }: {
           )}
         </div>
         <div className="sheet-scroll" style={{ gap: 12 }}>
-          {loc.body && (
-            <div style={{ fontSize: 13.5, lineHeight: 1.7, color: "#414539", whiteSpace: "pre-wrap" }}>{loc.body}</div>
-          )}
+          <AnnouncementRichBody html={loc.bodyHtml} text={loc.body} style={{ fontSize: 13.5, lineHeight: 1.7, color: "#414539" }} />
           <Attachments ann={current} />
         </div>
         <footer className="sheet-foot">
