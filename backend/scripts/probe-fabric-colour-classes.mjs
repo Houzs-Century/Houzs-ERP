@@ -152,8 +152,12 @@ async function main() {
   log(`    TBC/KIV and nothing else named             ${String(B.pendingOnly.length).padStart(5)}   correct as it stands - not chosen yet`);
   log(`    TBC/KIV BESIDE a colour the library holds  ${String(B.pendingQualified.length).padStart(5)}   OWNER DECISION - a code is written; nothing is filled here`);
   log(`    the matcher resolves it                    ${String(B.resolvesToday.length + B.resolvesOnlyNow.length).padStart(5)}   a sweep would stamp these; this probe does not`);
-  log(`       of which resolved before this change    ${String(B.resolvesToday.length).padStart(5)}`);
-  log(`       of which resolve ONLY with the fix      ${String(B.resolvesOnlyNow.length).padStart(5)}   <- the gain`);
+  /* Deliberately NOT called "resolved before this change". This split is over
+     MATCHER mechanisms only, and some of these lines reach the matcher at all
+     only because the DECODER stopped dropping their colour. The honest
+     before/after is the same probe run against origin/main's modules. */
+  log(`       of which the matcher answers unwidened  ${String(B.resolvesToday.length).padStart(5)}`);
+  log(`       of which need the widened matcher       ${String(B.resolvesOnlyNow.length).padStart(5)}   <- see the PR for the whole-pipeline before/after`);
   log(`    the matcher REFUSES                        ${String(B.miss.length).padStart(5)}   left empty on purpose`);
 
   log('');
