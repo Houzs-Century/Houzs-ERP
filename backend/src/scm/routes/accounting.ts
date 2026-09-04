@@ -32,6 +32,7 @@ import { backfillSoPayments, unbookedPayments } from '../../acc/payments';
 import { computeDailyBank } from '../../acc/daily-bank';
 import { systemTakings, postCashOverShort } from '../../acc/daily-close';
 import { resolveRoles, piLines, DEFAULT_ROLE_CODES } from '../../acc/rules';
+import { classifyJournal } from '../../acc/journal-class';
 import {
   settlementSetup, settlementSetupSave, settlementUpload, settlementBatches,
   settlementBatchDetail, settlementConfirmRow, settlementConfirmMatched, settlementRowUnconfirm,
@@ -247,7 +248,7 @@ accounting.put('/roles/BANK_DEFAULT', accountRolesPutBankDefault);
    Journal Entries
    ════════════════════════════════════════════════════════════════════════ */
 
-accounting.get('/journal-entries', async (c) => {
+export const journalEntriesList = async (c: any): Promise<Response> => {
   const sb = c.get('supabase');
   const sourceType = c.req.query('sourceType');
   const sourceDocNo = c.req.query('sourceDocNo');
@@ -270,8 +271,38 @@ accounting.get('/journal-entries', async (c) => {
 
   const { data, error } = await q.limit(500);
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  return c.json({ journalEntries: data ?? [] });
-});
+
+  /* THE FIVE JOURNALS (GL redesign item 7) — each entry labelled the
+     AutoCount way (SALES/PURCHASE/BANK/CASH/GENERAL), derived per request
+     from its source type and, for the money-side documents, from which money
+     account its lines actually touch (acc/journal-class.ts). One lines read
+     for the whole page, never one per entry. */
+  const rows = (data ?? []) as Array<Record<string, unknown>>;
+  const jeIds = rows.map((r) => r.id);
+  const codesByJe = new Map<unknown, string[]>();
+  if (jeIds.length > 0) {
+    const { data: lineRows, error: lnErr } = await sb
+      .from('journal_entry_lines')
+      .select('journal_entry_id, account_code')
+      .in('journal_entry_id', jeIds);
+    if (lnErr) return c.json({ error: 'load_failed', reason: lnErr.message }, 500);
+    for (const l of (lineRows ?? []) as Array<{ journal_entry_id: unknown; account_code: string }>) {
+      const list = codesByJe.get(l.journal_entry_id) ?? [];
+      list.push(l.account_code);
+      codesByJe.set(l.journal_entry_id, list);
+    }
+  }
+  const roles = await resolveRoles(sb, activeCompanyId(c) ?? null);
+  const classed = rows.map((r) => ({
+    ...r,
+    journal_class: classifyJournal(String(r.source_type ?? ''), codesByJe.get(r.id) ?? [], roles.CASH),
+  }));
+  const journal = String(c.req.query('journal') ?? '').trim().toUpperCase();
+  return c.json({
+    journalEntries: journal ? classed.filter((r) => r.journal_class === journal) : classed,
+  });
+};
+accounting.get('/journal-entries', journalEntriesList);
 
 accounting.get('/journal-entries/:id', async (c) => {
   const id = c.req.param('id');

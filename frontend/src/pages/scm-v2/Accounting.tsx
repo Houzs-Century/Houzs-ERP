@@ -252,8 +252,17 @@ const CoaTab = () => {
 const jeStatus = (r: JournalEntry): string =>
   r.reversed ? 'REVERSED' : r.posted ? 'POSTED' : 'DRAFT';
 
+/* The five journals (GL redesign item 7) — the AutoCount way the owner reads
+   his books. The class arrives on each row from the server (derived from the
+   source type and, for money documents, from which money account the lines
+   touch); the chips are a client filter over the loaded page. */
+const JOURNAL_CHIPS = ['SALES', 'PURCHASE', 'BANK', 'CASH', 'GENERAL'] as const;
+const journalClassOf = (r: JournalEntry): string =>
+  String((r as { journal_class?: string }).journal_class ?? 'GENERAL');
+
 const JeTab = () => {
   const [sourceType, setSourceType] = useState<string>('');
+  const [journal, setJournal] = useState<string>('');
   const q = useJournalEntries(sourceType ? { sourceType } : undefined);
   const rows = useMemo(() => q.data?.journalEntries ?? [], [q.data]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -261,14 +270,15 @@ const JeTab = () => {
 
   const [search, setSearch] = useState('');
   const visible = useMemo(() => {
+    const inJournal = journal ? rows.filter((r) => journalClassOf(r) === journal) : rows;
     const term = search.trim().toLowerCase();
-    if (!term) return rows;
-    return rows.filter((r) =>
-      `${r.je_no} ${r.entry_date} ${r.source_type} ${r.source_doc_no ?? ''} ${jeStatus(r)}`
+    if (!term) return inJournal;
+    return inJournal.filter((r) =>
+      `${r.je_no} ${r.entry_date} ${r.source_type} ${r.source_doc_no ?? ''} ${journalClassOf(r)} ${jeStatus(r)}`
         .toLowerCase()
         .includes(term),
     );
-  }, [rows, search]);
+  }, [rows, search, journal]);
 
   return (
     <div className="space-y-3">
@@ -291,6 +301,13 @@ const JeTab = () => {
           <option value="MANUAL">Manual</option>
           <option value="MANUAL_REVERSAL">Manual Reversal</option>
         </select>
+        {/* The five journals, AutoCount's own vocabulary. */}
+        <button type="button" style={btnStyle(journal === '')} onClick={() => setJournal('')}>All journals</button>
+        {JOURNAL_CHIPS.map((jc) => (
+          <button key={jc} type="button" style={btnStyle(journal === jc)} onClick={() => setJournal(journal === jc ? '' : jc)}>
+            {jc}
+          </button>
+        ))}
       </div>
 
       {creating && <NewJournalForm onDone={() => setCreating(false)} />}
@@ -317,6 +334,7 @@ const JeTab = () => {
         columns={[
           { key: 'je_no', label: 'JE No', width: '140px', getValue: (r) => r.je_no, render: (r) => <span className={styles.codeChip}>{r.je_no}</span> },
           { key: 'entry_date', label: 'Date', width: '110px', getValue: (r) => r.entry_date, render: (r) => fmtDateOrDash(r.entry_date) },
+          { key: 'journal', label: 'Journal', width: '100px', getValue: (r) => journalClassOf(r), render: (r) => journalClassOf(r) },
           { key: 'source', label: 'Source', width: '110px', getValue: (r) => r.source_type, render: (r) => r.source_type },
           { key: 'doc', label: 'Doc', width: '140px', getValue: (r) => r.source_doc_no ?? '', render: (r) => r.source_doc_no ?? '—' },
           { key: 'debit', label: 'Debit', align: 'right', width: '130px', getValue: (r) => r.total_debit_sen / 100, render: (r) => fmt(r.total_debit_sen) },
