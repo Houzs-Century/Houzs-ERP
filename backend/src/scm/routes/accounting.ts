@@ -49,6 +49,7 @@ import {
   chartUnionHandler, chartTickHandler, chartImportHandler,
   chartRenameHandler, chartUpdateHandler, chartDeleteHandler, chartCreateHandler,
 } from './accounting-chart';
+import { itemGroupsList, itemGroupCreate, itemGroupBind, itemGroupPatch } from './accounting-item-groups';
 import { dateOrNull } from '../lib/date-coerce';
 
 /* THE GENERAL LEDGER HAD NO PERMISSION CHECK AT ALL — eleven routes, zero
@@ -116,6 +117,13 @@ accounting.get('/settlement/payouts', payoutList);
 accounting.get('/bank/setup', bankSetup);
 /* The chart maintenance surface (roadmap A) — union + per-company ticks +
    the accountant's import. Handlers in accounting-chart.ts. */
+/* The product-group ↔ account registry (GL redesign item 1) — the rules that
+   decide WHICH purchase/sales account a document line posts to. Handlers in
+   accounting-item-groups.ts. */
+accounting.get('/item-groups', itemGroupsList);
+accounting.post('/item-groups', itemGroupCreate);
+accounting.put('/item-groups/:code/accounts', itemGroupBind);
+accounting.patch('/item-groups/:code', itemGroupPatch);
 accounting.get('/chart', chartUnionHandler);
 accounting.put('/chart/tick', chartTickHandler);
 accounting.post('/chart/import', chartImportHandler);

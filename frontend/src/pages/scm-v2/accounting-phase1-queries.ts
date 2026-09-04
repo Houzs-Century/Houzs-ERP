@@ -128,3 +128,61 @@ export const useConfirmDailyClose = () => {
     onError: writeFailedAs('Daily close not confirmed'),
   });
 };
+
+/* ── Item groups — the product-group ↔ ledger-account registry (GL redesign
+   item 1). The binding decides which purchase/sales account a document line
+   posts to; an unbound group refuses to post, so this screen is where the
+   owner keeps the map. ─────────────────────────────────────────────────── */
+
+export type ItemGroupBinding = {
+  purchase: string;
+  sales: string;
+  salesReturn: string;
+  purchaseReturn: string;
+};
+
+export type ItemGroup = {
+  code: string;
+  name: string;
+  isActive: boolean;
+  /** companyId → the four accounts; a missing key means UNBOUND there. */
+  bindings: Record<string, ItemGroupBinding>;
+};
+
+export const useItemGroups = () => useQuery({
+  queryKey: ['item-groups'],
+  queryFn: () => authedFetch<{ companies: Array<{ id: number; code: string }>; groups: ItemGroup[] }>(`/accounting/item-groups`),
+  staleTime: 15_000,
+  retry: retryUnlessClientError,
+  retryDelay: 800,
+});
+
+export const useCreateItemGroup = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { code: string; name: string; companyId: number; accounts: ItemGroupBinding }) =>
+      authedFetch<{ ok: boolean; code: string }>(`/accounting/item-groups`, { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['item-groups'] }); },
+    onError: writeFailedAs('Group not created'),
+  });
+};
+
+export const useBindItemGroup = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ code, ...body }: { code: string; companyId: number; accounts: ItemGroupBinding }) =>
+      authedFetch<{ ok: boolean }>(`/accounting/item-groups/${encodeURIComponent(code)}/accounts`, { method: 'PUT', body: JSON.stringify(body) }),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['item-groups'] }); },
+    onError: writeFailedAs('Binding not saved'),
+  });
+};
+
+export const usePatchItemGroup = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ code, ...body }: { code: string; name?: string; isActive?: boolean }) =>
+      authedFetch<{ ok: boolean }>(`/accounting/item-groups/${encodeURIComponent(code)}`, { method: 'PATCH', body: JSON.stringify(body) }),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['item-groups'] }); },
+    onError: writeFailedAs('Group not updated'),
+  });
+};

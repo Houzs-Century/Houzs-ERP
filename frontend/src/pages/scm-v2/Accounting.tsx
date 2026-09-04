@@ -16,7 +16,7 @@
 
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { BookOpen, FileText, ListTree, Receipt, ShieldCheck, TrendingDown, TrendingUp } from 'lucide-react';
+import { BookOpen, Boxes, FileText, ListTree, Receipt, ShieldCheck, TrendingDown, TrendingUp } from 'lucide-react';
 import {
   useJournalEntries,
   useJournalEntryDetail,
@@ -40,6 +40,7 @@ import {
   type UnbookedPayments,
 } from './accounting-phase1-queries';
 import { DataTable, type Column } from '../../components/DataTable';
+import { ItemGroupsTab } from './ItemGroups';
 import { fmtSen } from '../../vendor/shared/format';
 import { byText } from '../../vendor/scm/lib/sort-options';
 import styles from './Suppliers.module.css';
@@ -53,7 +54,7 @@ const ICON = { size: 16, strokeWidth: 1.75 } as const;
 // amount, never "RM NaN". Kept under the local name so callsites are unchanged.
 const fmt = (sen: number | null | undefined) => fmtSen(sen);
 
-type Tab = 'coa' | 'je' | 'gl' | 'tb' | 'ar' | 'ap' | 'check';
+type Tab = 'coa' | 'groups' | 'je' | 'gl' | 'tb' | 'ar' | 'ap' | 'check';
 
 export const Accounting = () => {
   const [tab, setTab] = useState<Tab>('je');
@@ -64,6 +65,7 @@ export const Accounting = () => {
 
       <div className={styles.statusChips} style={{ gap: 'var(--space-2)' }}>
         <TabBtn label="Chart of Accounts" icon={<ListTree {...ICON} />} active={tab === 'coa'} onClick={() => setTab('coa')} />
+        <TabBtn label="Item Groups"     icon={<Boxes {...ICON} />}    active={tab === 'groups'} onClick={() => setTab('groups')} />
         <TabBtn label="Journal Entries" icon={<BookOpen {...ICON} />} active={tab === 'je'}    onClick={() => setTab('je')} />
         <TabBtn label="General Ledger"  icon={<FileText {...ICON} />} active={tab === 'gl'}    onClick={() => setTab('gl')} />
         <TabBtn label="Trial Balance"   icon={<Receipt {...ICON} />}  active={tab === 'tb'} onClick={() => setTab('tb')} />
@@ -73,6 +75,7 @@ export const Accounting = () => {
       </div>
 
       {tab === 'coa'   && <CoaTab />}
+      {tab === 'groups' && <ItemGroupsTab />}
       {tab === 'je'    && <JeTab />}
       {tab === 'gl'    && <GlTab />}
       {tab === 'tb'    && <TrialBalanceTab />}

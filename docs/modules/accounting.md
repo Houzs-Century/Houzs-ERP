@@ -392,6 +392,26 @@ over a tag chosen at the till), so the next statement finds it named. Note the
 phase-2A posting rule is unchanged: `imported` rows still never book — being a
 candidate is about RECONCILING the payout, not re-posting the sale.
 
+**Item groups — the product-group ↔ account registry (GL redesign item 1,
+2026-09-05).** The ledger is moving to the AutoCount periodic shape (owner:
+ledger 只根据 invoice 认,Dr purchase / Cr supplier;月结抓 stock value), and
+the first brick is WHICH purchase/sales account a document line belongs to.
+`scm.acc_item_groups` (migration 20260905T0900) registers every product
+category label — the nine the `mfg_product_category` enums hold are seeded —
+and `scm.acc_item_group_accounts` binds each group, per company, to four
+accounts: Purchase, Sales, Sales Return, Purchase Return. A group with no
+binding row is UNBOUND and the posting rules refuse it by name (owner: 挡下来
+提醒我去绑,不要静默丢进 OTHERS). New groups are born only through
+`scm.acc_register_item_group` (SECURITY DEFINER) which extends BOTH enums and
+registers the row in one call — so the taxonomy and the registry cannot drift
+— and the API forces the four bindings at create (born bound). Discounts stay
+company-level (520-0000 / 610-0001), never per-group. Maintenance UI: the
+**Item Groups** tab on /scm/accounting — unbound groups arrive pre-filled with
+the SUGGESTED defaults marked 建议·unsaved, and nothing writes until the owner
+presses Save (his sign-off, row by row). Routes in
+backend/src/scm/routes/accounting-item-groups.ts (guard: the GL permission),
+pinned by tests/itemGroups.test.ts + ItemGroups.test.tsx.
+
 **A half-failed upload cannot hold its file hostage.** The upload writes the
 batch head first and its lines after; a failure between the two used to leave
 a batch with no lines still owning the file hash, so the SAME file was refused
