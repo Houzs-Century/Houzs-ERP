@@ -2395,7 +2395,7 @@ message, but nothing depends on it.
 | SO header PATCH | `routes/mfg-sales-orders.ts` | 400, and the aggregated 422 report re-states it |
 | SO `/status` → IN_PRODUCTION (proceed writes the date) | `routes/mfg-sales-orders.ts` | 400 |
 | SO amendment SUBMIT | `routes/mfg-sales-orders.ts` | 400 `amendment_dates_xor` |
-| SO amendment APPROVE | `routes/so-amendments.ts` | 409 `amendment_dates_pair_stale` |
+| SO amendment APPROVE | `routes/so-amendments.ts` | 409 `amendment_dates_pair_stale` / `amendment_dates_order_stale` — reads the stored dates through the PG command shim, which returns **Date objects**, so it normalises with `soDateDay` (never `String(v).slice(0, 10)`: that is `'Fri Aug 28'`, docs/bugs/0636) and ships a `message` under 200 chars so the frontend renders it |
 | CO create | `routes/consignment-orders.ts` | 400 |
 | CO header PATCH | `routes/consignment-orders.ts` | 400 |
 | aggregated save report (both directions) | `shared/so-save-problems.ts` | 422 problem |
