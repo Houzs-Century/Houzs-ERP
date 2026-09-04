@@ -350,7 +350,7 @@ Asked whether that case happens here, the owner: 「有的」.
 | status | what writes it today | derived? |
 |---|---|---|
 | `READY_TO_SHIP` | `lib/so-stock-allocation.ts` — advances a CONFIRMED / IN_PRODUCTION order when every main line is ship-ready, and regresses it when one is not | **yes** |
-| `DELIVERED` | `lib/so-delivery-sync.ts` — advances when delivery orders fully cover the lines, releases back to READY_TO_SHIP when they stop covering | **yes** |
+| `DELIVERED` | `lib/so-delivery-sync.ts` — advances when delivery orders fully cover the lines, releases back to READY_TO_SHIP when they stop covering. **Since 2026-09-04 the release needs POSITIVE evidence** (a cancelled DO, a reduced line, a return): a delivery order that counts as delivered yet holds no line rows is broken evidence, not an un-delivery, so the order is HELD at DELIVERED and a `RELEASE_REFUSED` audit row names the document (`emptyLiveDeliveries`; docs/bugs/0637, delivery-order.md "integrity lock") | **yes** |
 | `IN_PRODUCTION` | nothing. A person sets it through `PATCH /:docNo/status` (`routes/mfg-sales-orders.ts`). `lib/so-processing-date.ts` names it only in comments, and the `autoProceed` / `proceeded_at` stamp was removed on 2026-08-18 | **no** |
 | `SHIPPED` | nothing, anywhere. Every occurrence in `backend/src` is a read predicate, a bucket or a rank — `so-delivery-sync.ts` only READS it. Its tab folded into Delivered in #2655, so on a Sales Order it is a dead label | **no** |
 | `INVOICED` | nothing. No path writes a Sales Order to this status | **no** |

@@ -50,6 +50,10 @@
 //
 // Usage: node backend/scripts/do-link-orphan-sentinel.mjs
 import postgres from "postgres";
+// The SAME set the app reads (src/scm/shared/do-shipped-states.ts), through the
+// .mjs mirror — hand-typing it here is how a sentinel and the code it watches
+// come to disagree (check-do-integrity.mjs, 2026-08-20).
+import { DO_NOT_DELIVERED_SQL_IN } from "./lib/do-shipped-states.mjs";
 
 /* BASELINE = the orphans that are known, understood and deliberately left.
    Exactly one on 2026-08-17: 2990-DO-2607-013's NTYR pillow. Its SO line
@@ -185,6 +189,39 @@ try {
        AND i.from_mrp = true
        AND i.so_item_id IS NULL`;
 
+  /* 4. A delivery order that COUNTS as delivered and holds NO line rows. Found
+        2026-09-04: three 2990 documents (2607-016/018/019) carried line_count,
+        money and OUT movements from 2026-07-23 while their 8 rows sat under
+        header ids that no longer existed. syncSoDeliveredFromDo read them as
+        "nothing delivered", released three delivered orders back to
+        READY_TO_SHIP, and MRP planned sofas already in the customers' homes.
+        Mig 20260904T0800 makes this state unreachable through SQL for every
+        writer that respects triggers; this row is what says the lock held.
+        Baseline ZERO, by definition — an empty shipped document is never an
+        answer. */
+  const [{ emptyLive }] = await pg`
+    SELECT COUNT(*)::int AS "emptyLive"
+      FROM scm.delivery_orders d
+     WHERE upper(coalesce(d.status::text, '')) NOT IN ${pg.unsafe(DO_NOT_DELIVERED_SQL_IN)}
+       AND NOT EXISTS (SELECT 1 FROM scm.delivery_order_items i WHERE i.delivery_order_id = d.id)`;
+  const emptyLiveRows = await pg`
+    SELECT d.do_number, d.so_doc_no, d.status::text AS status, d.line_count
+      FROM scm.delivery_orders d
+     WHERE upper(coalesce(d.status::text, '')) NOT IN ${pg.unsafe(DO_NOT_DELIVERED_SQL_IN)}
+       AND NOT EXISTS (SELECT 1 FROM scm.delivery_order_items i WHERE i.delivery_order_id = d.id)
+     ORDER BY d.do_number
+     LIMIT 20`;
+
+  /* 4b. The other half of the same defect: line rows whose delivery_order_id
+         names NO header. The FK is ON DELETE CASCADE and validated, so these can
+         only be written by a path that bypassed it — which is exactly what the
+         2026-07-23 writer did. Eight existed until the 2026-09-04 re-parent. */
+  const [{ headerless }] = await pg`
+    SELECT COUNT(*)::int AS headerless
+      FROM scm.delivery_order_items i
+      LEFT JOIN scm.delivery_orders d ON d.id = i.delivery_order_id
+     WHERE d.id IS NULL`;
+
   const recentDeletes = await pg`
     SELECT to_char(deleted_at, 'YYYY-MM-DD HH24:MI') AS at, doc_no, item_code,
            COALESCE(jwt_claims->>'email', jwt_claims->>'sub', db_user) AS who,
@@ -205,6 +242,11 @@ try {
   console.log(`SO-line deletes in the last 25h: ${recentDeletes.length}`);
   console.log(`goods lines with no warehouse: ${nullWarehouse} [baseline ${BASELINE_NULL_WAREHOUSE}]`);
   console.log(`from_mrp PO lines with no SO link: ${poUnbound} [baseline ${BASELINE_PO_UNBOUND}]`);
+  console.log(`shipped delivery orders with NO line rows: ${emptyLive} [baseline 0]`);
+  for (const r of emptyLiveRows) {
+    console.log(`    ${r.do_number}  from ${r.so_doc_no ?? "-"}  status ${r.status ?? "-"}  line_count ${r.line_count ?? "?"}`);
+  }
+  console.log(`delivery line rows with no header: ${headerless} [baseline 0]`);
   for (const d of recentDeletes) {
     console.log(`  ${d.at}  ${d.doc_no ?? "-"}  ${d.item_code ?? "-"}  by ${d.who ?? "?"}  (${d.application_name ?? "-"})`);
   }
@@ -236,6 +278,20 @@ try {
     alarms.push(
       `${invisible} delivery line(s) carry neither a per-line SO link nor a so_doc_no on the header, ` +
       `and stock moved against them. Neither coverage reading can see these — MRP is wrong about them right now.`,
+    );
+  }
+  if (emptyLive > 0) {
+    alarms.push(
+      `${emptyLive} shipped delivery order(s) hold NO line rows (listed above). Each is broken delivery evidence: ` +
+      `the delivery sync now HOLDS its SO at DELIVERED instead of releasing it, but MRP and every DO reader still ` +
+      `see an empty document. Find the rows (delivery_order_items whose so_item_id belongs to that SO) and ` +
+      `re-parent them, as on 2026-09-04. Mig 20260904T0800 should have refused this — check the trigger is present.`,
+    );
+  }
+  if (headerless > 0) {
+    alarms.push(
+      `${headerless} delivery line row(s) name a delivery_order_id that has no header. The FK is ON DELETE CASCADE, ` +
+      `so a writer bypassed it. Re-parent them to the live document for their SO (2026-09-04 repair) and name the writer.`,
     );
   }
 } finally {
