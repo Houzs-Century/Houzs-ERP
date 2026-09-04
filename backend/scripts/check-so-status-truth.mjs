@@ -107,6 +107,22 @@ try {
   if (!dos.length) note('  none, in any company');
   for (const r of dos) note(`  company ${r.company_id}  ${r.n} DO(s), ${r.linked} carry a sales-order number`);
 
+  /* 4b. WHAT STATE THE DELIVERY ORDERS ARE IN.
+     This is the question that decides everything above it. 2990 hit this exact
+     shape on 2026-07-24: its source system had no "delivered" step on delivery
+     orders, so the importer faithfully carried DISPATCHED, and the sales orders
+     never advanced because the sync only advances off a DELIVERED DO
+     (backfill-2990-delivered-dos.mjs). If Houzs Century's imported DOs sit in
+     the same non-delivered state, the empty DELIVERED tile has the same cause
+     and the same remedy. */
+  const doStates = await pg`
+    SELECT company_id, status, count(*)::int AS n
+      FROM scm.delivery_orders
+     GROUP BY company_id, status
+     ORDER BY company_id, status`;
+  note('DELIVERY ORDER STATES — the question that decides the one above:');
+  for (const r of doStates) note(`  company ${r.company_id}  ${r.status}  ${r.n}`);
+
   /* 5. THE ONE THAT WOULD BE A REAL DEFECT: a sales order that HAS a delivery
      order and is still not marked delivered. */
   const shipped = await pg`
