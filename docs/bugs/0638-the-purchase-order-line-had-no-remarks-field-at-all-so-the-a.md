@@ -2,7 +2,7 @@
 
 **Symptom.** The owner, 2026-09-04: 「那个 description 2 也要记录进我们的 remarks
 里面」, and when asked where: 「SO line 和 PO line 的 remarks」. On the sales side
-that is a data problem (`docs/bugs/0637-*`). On the purchase side the data was
+that is a data problem (`docs/bugs/0639-*`). On the purchase side the data was
 already there and **no screen rendered it** — desktop or phone.
 
 **Measured on production, 2026-09-04** (read-only `claude_ro`), over the 1,117
@@ -61,4 +61,4 @@ parents enumerate the fields they send — an unwired box would accept typing an
 discard it on save, which is worse than no box.
 
 **Ref.** `feat/po-line-remarks`, 2026-09-04. Sales-side twin:
-`docs/bugs/0637-*`.
+`docs/bugs/0639-*`.
