@@ -494,6 +494,12 @@ export const createPaymentVoucherHandler = async (c: any) => {
 
   const built = buildLines(body.lines);
   if ('error' in built) return c.json({ error: built.error }, 400);
+  /* A line debiting the SAME account the voucher pays from would post money
+     into itself — meaningless for an expense and a self-transfer for the
+     internal-transfer shape (GL redesign item 10). Refused at typing time. */
+  if (built.rows.some((r) => r.debit_account_code === creditAccountCode)) {
+    return c.json({ error: 'same_account', message: 'A line cannot debit the Paid From account itself — pick a different destination.' }, 400);
+  }
 
   /* 父户不记账 (owner 2026-09-02) at TYPING time — the GL gate (engine rule 3)
      would refuse the same header at approval, but the operator should hear it
@@ -731,6 +737,14 @@ export const updatePaymentVoucherHandler = async (c: any) => {
   if (body.lines !== undefined) {
     const built = buildLines(body.lines);
     if ('error' in built) return c.json({ error: built.error }, 400);
+    /* Same self-debit door as the create path, against the EFFECTIVE Paid
+       From (the incoming one when this edit changes it, else the stored). */
+    const effectiveCredit = updates.credit_account_code != null
+      ? String(updates.credit_account_code)
+      : String(before.credit_account_code ?? '');
+    if (built.rows.some((r) => r.debit_account_code === effectiveCredit)) {
+      return c.json({ error: 'same_account', message: 'A line cannot debit the Paid From account itself — pick a different destination.' }, 400);
+    }
     /* 父户不记账 — the same typing-time door the create path holds, BEFORE the
        old lines are deleted, so a refused edit changes nothing. */
     for (const dCode of [...new Set(built.rows.map((r) => r.debit_account_code))]) {
