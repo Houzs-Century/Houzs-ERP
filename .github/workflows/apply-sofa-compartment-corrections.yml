@@ -24,6 +24,15 @@ on:
         required: false
         default: "0"
         type: string
+      # Both jobs already pass `DOC: ${{ inputs.doc }}` to the script, and the
+      # script has always read it — but the input was never declared, so the
+      # expression resolved to empty and the whole file ran every time. Declared
+      # here so a single document can be dry-run and applied on its own.
+      doc:
+        description: "one document (e.g. HC-SO-012828), or blank for all of them"
+        required: false
+        default: ""
+        type: string
 
 concurrency:
   group: apply-sofa-compartment-corrections-${{ inputs.target }}
