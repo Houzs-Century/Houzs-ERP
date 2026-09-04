@@ -113,6 +113,23 @@ describe('fold / edit / delete — the owner points 1, 2 and 4', () => {
     expect(screen.getByText(/SCC · control/)).toBeTruthy();
   });
 
+  test('the tree reads as a tree (owner 2026-09-04: 父子account 不清楚) — the NAME column steps with the level and children wear └', () => {
+    draw();
+    /* The child's name cell is indented one step past its header's — the
+       old layout indented only the code column, so every name sat flush
+       and the hierarchy vanished exactly where the eye scans. */
+    /* getAllByText: the parent-codes <datalist> repeats every name as an
+       <option>; the TABLE cell is the one inside a <td>. */
+    const inTd = (name: string) =>
+      screen.getAllByText(name).map((e) => e.closest('td')).find((td) => td != null) as HTMLElement;
+    const headerName = inTd('CASH AT BANK');
+    const childName = inTd('CASH AT BANK - MAYBANK');
+    expect(headerName.style.paddingLeft).toBe('8px');
+    expect(childName.style.paddingLeft).toBe('30px'); // 8 + depth 1 × 22
+    expect(childName.textContent).toContain('└');
+    expect(headerName.textContent).not.toContain('└');
+  });
+
   test('the LIST scrolls inside its card and the header row sticks (owner 2026-09-04: 往下滑时看不到 header / 按 edit 时要跑回上去)', () => {
     const { container } = draw();
     /* The table's scroll container is the card body, not the page — that is
