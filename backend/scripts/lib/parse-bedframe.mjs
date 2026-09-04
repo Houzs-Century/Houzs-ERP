@@ -121,13 +121,13 @@ function parseBedframe(d2) {
      Missing the Color:/bare forms left 1,500+ lines with no colour. */
   if ((m = /(?:COL(?:OUR|OR)?|CLR)(?:\s*CUSHION)?\s*[-:：;]\s*([A-Z0-9][A-Z0-9\- ]*?)(?:\s*[\/,;(]|\s*DIVAN?\b|\s*GAP|\s*M['’.]|$)/i.exec(s))) o.color = m[1].trim();
   else if ((m = /(?:COL(?:OUR|OR)?|CLR)\s+([A-Z]{2,4}\s?-?\s?\d{2,4}[\d-]*)/i.exec(s))) o.color = m[1].trim(); // "colour PC151-01" (no colon)
-  else if ((m = /^\s*([A-Z]{2,4}\s?-?\s?\d{2,4}\s?-\s?\d{1,3})\b/i.exec(s))) o.color = m[1].trim(); // bare code at the start
+  else if ((m = /^\s*([A-Z]{2,4}\s?[-:]?\s?\d{2,4}\s?-\s?\d{1,3})(?![\d-])/i.exec(s))) o.color = m[1].trim(); // bare code at the start, also "PC:151-01" and glued to the next word
   // a colour code anywhere in the text (e.g. "Mgap 14 inch / colour PC151-01 / ...")
   if (!o.color && (m = /\b((?:PC|KS|BF|NB|SF|BO|AM|CH|CX|SC|DC|PU|HR|GD|FG|ZL|NV|RU)\s?-?\s?\d{2,4}\s?-\s?\d{1,3}|SF-AT\s?\d{1,3})\b/i.exec(s))) o.color = m[1].trim();
   /* The same two-group code GLUED to the word before it — staff write
      "DivanabovefullcoverPC151-01" with no space — has no word boundary, so the
      rule above walked straight past a colour that was sitting right there. */
-  if (!o.color && (m = /((?:PC|KS|BF|NB|SF|BO|AM|CH|CX|SC|DC|PU|HR|GD|FG|ZL|NV|RU)\s?-?\s?\d{2,4}\s?-\s?\d{1,3})\b/i.exec(s))) o.color = m[1].trim();
+  if (!o.color && (m = /((?:PC|KS|BF|NB|SF|BO|AM|CH|CX|SC|DC|PU|HR|GD|FG|ZL|NV|RU)\s?[-:]?\s?\d{2,4}\s?-\s?\d{1,3})(?![\d-])/i.exec(s))) o.color = m[1].trim();
   /* SINGLE-group codes — KS-01, NB-04 (owner 2026-08-10: "KS 01 有的啊"). Only at
      the very start or right after a delimiter, so a measurement inside a
      sentence can never be mistaken for a colour. */

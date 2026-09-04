@@ -53,6 +53,34 @@ export const stripColour = (s) => normColour(s).replace(/[^A-Z0-9]/g, "");
 // TBC / KIV anywhere means the colour has not been chosen yet - not a miss.
 export const isPendingColour = (c) => /(TBC|KIV)/i.test(c || "");
 
+/* The same string with the pending marker taken off, so what is left can be
+   asked of the library. "Col:BO315-21Pearl(TBC)" leaves "BO315-21Pearl". */
+export const stripPendingMarker = (c) =>
+  String(c || "").replace(/\(\s*(?:TBC|KIV)\s*\)|\b(?:TBC|KIV)\b/gi, " ").replace(/\s+/g, " ").trim();
+
+/* WHICH of the two things TBC/KIV means, because they are not the same fact and
+   one gate cannot answer both.
+
+     "COL: TBC"                the colour has not been chosen        -> "only"
+     "Col:BO315-21Pearl(TBC)"  a colour IS named, and may still move -> "qualified"
+
+   Measured on company 1, 2026-09-04: 257 migrated sofa/bedframe lines carry a
+   pending marker and 16 of them are "qualified" - the book names a fabric the
+   library holds and the whole string is discarded because TBC appears anywhere
+   in it. Naming the two apart is all this does. It fills nothing and it changes
+   no existing caller: `isPendingColour` is untouched, and whether a qualified
+   line should be bound is the owner's call, not a matcher's.
+
+   `find` is required, never optional: the answer depends entirely on whether
+   the library confirms what is left, so a caller that cannot ask must not get
+   a cheerful "only" by forgetting an argument (BUG CLASS optional-param-noop). */
+export const pendingColourKind = (c, find) => {
+  if (typeof find !== "function") throw new TypeError("pendingColourKind(c, find): find is required");
+  if (!isPendingColour(c)) return "none";
+  const rest = stripPendingMarker(c);
+  return rest && find(rest) ? "qualified" : "only";
+};
+
 // "BOOBOO315-1" = the code typed twice (owner, 2026-08-10).
 const dedupHead = (x) => {
   for (let n = 2; n * 2 <= x.length; n++) if (x.slice(0, n) === x.slice(n, n * 2)) return x.slice(0, n) + x.slice(n * 2);
@@ -73,6 +101,20 @@ const digitsOf = (mark) => (mark.match(/\d+/g) || []).join("-");
 const digitsCompatible = (a, b) => a === b || a.replace(/(.)$/, "0$1") === b || b.replace(/(.)$/, "0$1") === a;
 
 const padTail = (x) => x.replace(/(?<!\d)(\d)$/, "0$1");
+
+/* THE ZERO-PADDING CLASS. On 2026-08-11 the library renumbered every 1-digit
+   tail to two digits - CH141-8 became CH141-08, GARFIELD-1 became GARFIELD-01 -
+   and kept each predecessor as an `active = false` row saying so in its own
+   label. The documents were never rewritten, so the book still says "CH141-8
+   army" while the live row is "CH141-08 ARMY".
+
+   Pad BEFORE the separators are stripped, never after: stripColour("CH141-8")
+   is "CH1418", where the 8 sits next to the 1 of 141 and no rule can tell a
+   1-digit tail from the last digit of a 4-digit series. A lone digit - one with
+   no digit on either side of it - is the only thing padded, so 151 stays 151
+   and STAR-10 can never become STAR-010 nor collide with STAR-01. */
+const padGroups = (s) => String(s).replace(/(?<!\d)(\d)(?!\d)/g, "0$1");
+export const padColour = (x) => stripColour(padGroups(normColour(x)));
 
 /* "PC151-2" / "PC151101" -> the series plus a 2-digit number, both ways round,
    because the owner's data carries a 1-digit tail and an over-long one. */
@@ -119,6 +161,18 @@ export function colourForms(text) {
   if (code) push(code[0]);
   const inProse = /([A-Z]{1,8}\s?\d{3,4})[\s-]+(\d{1,3})(?!\d)/.exec(hashed); // rung 5
   if (inProse) push((inProse[1] + "-" + inProse[2]).replace(/\s+/g, ""));
+  /* rung 8, LAST so every faithful spelling above is tried first: the same
+     spellings with a lone digit padded to two, for the 2026-08-11 renumbering.
+     "HUGYP MADE WOWSON 8877-3" reaches WOWSONS-8877-03 only from here - rung 5
+     gets it to WOWSON8877-3, and the padded form is what the edit-distance pass
+     can then close the missing S on. */
+  out.faithful = out.length; // everything pushed from here on is a PADDED spelling
+  /* The same 3-character floor pass 1 applies, and it is load-bearing here for a
+     reason padding creates: "7#" pads to "07#", which FOLDS to "07" - and the SF
+     series labels its colours "01".."19", so the fold pass (which has no floor
+     of its own) bound "7# CHARCOAL" to SF-AT 07. Padding may not manufacture a
+     two-character key out of a string that never had one. */
+  for (const f of out.slice()) { const p = padGroups(f); if (stripColour(p).length >= 3) push(p); }
   return out;
 }
 
@@ -165,14 +219,57 @@ export const COLOUR_ALIAS = [
   ["PH0ENIX0YSTER1", ["PHOENIX", "PHOENIX-1"], "Phoenix-oyster1 (2)"],
 ];
 
-/* rows: [{ fabric_id, colour_id, label }] straight out of scm.fabric_colours. */
-export function buildFabricColourIndex(rows) {
-  const exact = new Map();
+/* ONE KEY CLAIMED BY TWO DIFFERENT ROWS IS AMBIGUOUS, AND AMBIGUOUS MEANS
+   REFUSE. This is the rule the whole widening rests on: a normalisation that
+   folds two different library rows onto one key may never pick one of them.
+
+   It is not hypothetical. `CREAM` is the label of BOTH CASSNYE-04 and
+   TARONI-01, both active, and the bedframe decoder reads a bare "Cream/Divan10/
+   Gap13" as a colour. The exact index used to be first-wins - `if (!exact.has(
+   k)) exact.set(k, r)` - so findColour("CREAM") answered CASSNYE-04 with a coin
+   toss's confidence and nothing said so. It now answers null, which is the
+   owner's rule: a colour that cannot be CONFIRMED is left empty.
+
+   THE ONE EXCEPTION, and it is a fact the library states about itself rather
+   than a preference we apply. The 2026-08-11 renumbering kept each 1-digit
+   predecessor as `active = false` with "[superseded by CH141-08 on 2026-08-11]"
+   written into its own label. Sixty-six padded keys are claimed by exactly such
+   a pair. That is one identity spelled twice, not two identities competing, so
+   the ACTIVE row takes the key. Two ACTIVE rows on one key stays a refusal.
+
+   `active` is read ONLY where the caller selected it. A row with no `active`
+   property is neither active nor superseded, so a key two such rows claim is
+   dropped exactly as a strict reading requires - a caller that does not supply
+   the fact does not get the exception. */
+function claimIndex(rows, keysOf) {
+  const claims = new Map();
   for (const r of rows) {
-    for (const k of [normColour(r.colour_id), normColour(r.label), stripColour(r.colour_id), stripColour(r.label)]) {
-      if (k && !exact.has(k)) exact.set(k, r);
+    for (const k of keysOf(r)) {
+      if (!k) continue;
+      const set = claims.get(k);
+      if (set) set.add(r); else claims.set(k, new Set([r]));
     }
   }
+  const index = new Map(), refused = new Set();
+  for (const [k, set] of claims) {
+    if (set.size === 1) { index.set(k, [...set][0]); continue; }
+    const live = [...set].filter((r) => r.active === true);
+    const superseded = [...set].filter((r) => r.active === false);
+    if (live.length === 1 && live.length + superseded.length === set.size) index.set(k, live[0]);
+    else refused.add(k);
+  }
+  return { index, refused };
+}
+
+/* rows: [{ fabric_id, colour_id, label, active? }] straight out of
+   scm.fabric_colours. `active` is optional and its absence is STRICTER, never
+   looser - see claimIndex. */
+export function buildFabricColourIndex(rows) {
+  const ex = claimIndex(rows, (r) => [normColour(r.colour_id), normColour(r.label), stripColour(r.colour_id), stripColour(r.label)]);
+  const exact = ex.index, exactRefused = ex.refused;
+  // the same index over the zero-padded key, for the 2026-08-11 renumbering
+  const pd = claimIndex(rows, (r) => [padColour(r.colour_id), padColour(r.label)]);
+  const padded = pd.index, paddedRefused = pd.refused;
   // fold key -> { row, digits } where digits come from the key's OWN mark form
   const folded = new Map(); const ambiguous = new Set(); const markKey = new Map();
   for (const r of rows) {
@@ -192,7 +289,12 @@ export function buildFabricColourIndex(rows) {
   const byPk = new Map(rows.map((r) => [JSON.stringify([r.fabric_id, r.colour_id]), r]));
   const aliasRow = new Map(); const aliasUnresolved = [];
   for (const [key, [fabricId, colourId], why] of COLOUR_ALIAS) {
-    const row = byPk.get(JSON.stringify([fabricId, colourId]));
+    /* The renumbering can move the target out from under an entry: PHOENIX-1
+       became PHOENIX-01 on 2026-08-11 and this alias went inert without a word,
+       which is 2 live lines the table was written to catch. Fall back to the
+       padded key - the SAME identity under its new number, still a whole row
+       read out of the live library, so rules 2 and 3 of the contract hold. */
+    const row = byPk.get(JSON.stringify([fabricId, colourId])) || padded.get(padColour(colourId));
     if (row) aliasRow.set(key, row); else aliasUnresolved.push(`${fabricId} / ${colourId} (${why})`);
   }
 
@@ -225,35 +327,82 @@ export function buildFabricColourIndex(rows) {
     return hit;
   };
 
+  /* A SUPERSEDED ROW RESOLVES TO THE ROW THAT REPLACED IT. The 2026-08-11
+     renumbering left "CH141-8" in the table as `active = false` while the live
+     row is "CH141-08 ARMY", and the book still says "CH141-8 army" - so the
+     exact index answers, faithfully, with a colour the Fabrics picker no longer
+     offers. Follow the supersession through the PADDED key, which is the one
+     thing the two spellings share, and only where that key names exactly one
+     ACTIVE row - a key two live rows claim was already refused above, so this
+     can never choose between them. A row with no `active` property is left
+     alone: nothing was stated, so nothing is followed. */
+  const live = (row) => {
+    if (!row || row.active !== false) return row;
+    const successor = padded.get(padColour(row.colour_id));
+    return successor && successor !== row && successor.active === true ? successor : row;
+  };
+
+  /* WHICH mechanism answered, so a probe can split "this resolves today" from
+     "this resolves only because of the widening" without keeping a second copy
+     of the matcher to compare against. \`via\` names the pass; \`padded\` is true
+     when the spelling that won was one of rung 8's; \`redirected\` when the row
+     the pass returned was superseded and live() followed it to its replacement.
+     Every one of those three is a mechanism this file did not have before, so
+     an answer carrying none of them is an answer the old matcher also gave. */
+  const explainColour = (text) => {
+    const hit = findColourRaw(text);
+    if (!hit) return null;
+    const row = live(hit.row);
+    return { row, via: hit.via, form: hit.form, padded: hit.padded === true, redirected: row !== hit.row };
+  };
+
   const findColour = (text) => {
+    const e = explainColour(text);
+    return e ? e.row : null;
+  };
+
+  const findColourRaw = (text) => {
     if (!text) return null;
     const forms = colourForms(text);
     if (!forms.length) return null;
+    const found = (row, via, form, i) => ({ row, via, form, padded: i >= (forms.faithful ?? forms.length) });
     // pass 1: the exact index, over every spelling. Faithful spellings first.
-    for (const f of forms) {
+    for (let i = 0; i < forms.length; i++) {
+      const f = forms[i];
       for (const cand of [normColour(f), stripColour(f), padTail(stripColour(f)), ...seriesNum(f)]) {
         // under 3 characters is not a code. The SF series labels its colours
         // "01".."19", so a bare "03" would otherwise claim SF-AT 03.
         if (!cand || stripColour(cand).length < 3) continue;
         const h = exact.get(cand);
-        if (h) return h;
+        if (h) return found(h, "exact", f, i);
       }
       if (/^\d/.test(f)) { // a bare number is a PC151 colour in the owner's data
         for (const cand of [stripColour("PC" + f), padTail(stripColour("PC" + f))]) {
           const h = exact.get(cand);
-          if (h) return h;
+          if (h) return found(h, "exact", f, i);
         }
       }
     }
+    /* pass 1b: the ZERO-PADDING index. After every faithful spelling has been
+       tried against the exact index, so a document that writes the library's own
+       spelling always wins, and a padded key two ACTIVE rows claim is already
+       gone from this map rather than picked between. */
+    for (let i = 0; i < forms.length; i++) {
+      const k = padColour(forms[i]);
+      if (k.length < 3) continue; // under 3 characters is not a code (see pass 1)
+      const h = padded.get(k);
+      if (h) return found(h, "padded", forms[i], i);
+    }
     // pass 2: the typo fold, over every spelling. Fold equality means the two
     // strings agree digit for digit already, so no guard is needed here.
-    for (const f of forms) { const h = folded.get(foldColour(f)); if (h) return h.row; }
+    for (let i = 0; i < forms.length; i++) { const h = folded.get(foldColour(forms[i])); if (h) return found(h.row, "fold", forms[i], i); }
     // pass 2b: the NAME lives in the library's colour_id, not in the document -
     // the STAR series is stored as "STAR-10 NAVY", so a document that writes
     // plain STAR-10 has no exact key. Accept the code as a prefix of exactly
     // ONE library key, min 6 chars, and only where the key's own number ends
     // there (so STAR-1 can never claim STAR-10 NAVY).
-    for (const f of forms) {
+    for (let i = 0; i < forms.length; i++) {
+      const f = forms[i];
       const q = foldColour(f);
       if (q.length < 6) continue;
       let hit = null, many = false;
@@ -264,32 +413,34 @@ export function buildFabricColourIndex(rows) {
         if (hit && hit !== h.row) { many = true; break; }
         hit = h.row;
       }
-      if (hit && !many) return hit;
+      if (hit && !many) return found(hit, "name-prefix", f, i);
     }
     // pass 3: free-text rider ("Modenza 01*Bottom wrap ...") - the longest
     // folded PREFIX that indexes uniquely, then one transposition away. Min 6
     // chars so a bare series prefix cannot win alone; the prefix may not stop
     // in the middle of a number (that is what bound B0315-27 to BO315-2).
-    for (const src of forms) {
+    for (let i = 0; i < forms.length; i++) {
+      const src = forms[i];
       const f = foldColour(src), mk = markColour(src);
       for (let len = Math.min(f.length, 14); len >= 6; len--) {
         if (/\d/.test(mk[len] || "")) continue; // cuts a number in half
         const pre = f.slice(0, len), preDigits = digitsOf(mk.slice(0, len));
         const exactPre = folded.get(pre);
         const h = (exactPre && digitsCompatible(exactPre.digits, preDigits) ? exactPre.row : null) || swap1(pre, preDigits);
-        if (h) return h;
+        if (h) return found(h, "prefix", src, i);
       }
     }
-    for (const src of forms) {
+    for (let i = 0; i < forms.length; i++) {
+      const src = forms[i];
       const f = foldColour(src);
       const h = f.length >= 6 ? dist1(f, digitsOf(markColour(src))) : null;
-      if (h) return h;
+      if (h) return found(h, "dist1", src, i);
     }
     // LAST: the alias table. Nothing above resolved, so this cannot displace a
     // lexical answer - see COLOUR_ALIAS. Unknown targets are already dropped.
-    for (const f of forms) { const h = aliasRow.get(foldColour(f)); if (h) return h; }
+    for (let i = 0; i < forms.length; i++) { const h = aliasRow.get(foldColour(forms[i])); if (h) return found(h, "alias", forms[i], i); }
     return null;
   };
 
-  return { findColour, exact, folded, ambiguous, aliasRow, aliasUnresolved };
+  return { findColour, explainColour, exact, exactRefused, padded, paddedRefused, folded, ambiguous, aliasRow, aliasUnresolved };
 }

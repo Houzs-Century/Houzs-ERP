@@ -1,0 +1,47 @@
+name: Fabric colour classes (read-only)
+
+# Why the migrated sofa / bedframe lines that carry no colour carry none, split
+# by CLASS: the book named nothing, the customer has not chosen, the matcher
+# resolves it (and by which mechanism), or the matcher refuses and says why.
+#
+# READ-ONLY: SELECTs only, no DDL, no writes, no transaction. There is no APPLY
+# path anywhere in the script - filling these lines is a separate backfill.
+#
+# RUN ONCE BEFORE MERGE, as CLAUDE.md requires of any workflow_dispatch workflow:
+# run 33850627892 on this branch, conclusion SUCCESS, via a temporary push:
+# trigger that this commit removes.
+on:
+  workflow_dispatch:
+    inputs:
+      company:
+        description: "company_id"
+        required: false
+        default: "1"
+        type: string
+      show:
+        description: "how many examples to name per class"
+        required: false
+        default: "12"
+        type: string
+
+concurrency:
+  group: probe-fabric-colour-classes
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+        working-directory: backend
+      - name: probe (read-only)
+        working-directory: backend
+        env:
+          DATABASE_URL: "${{ secrets.DATABASE_URL }}"
+          COMPANY: "${{ inputs.company || 1 }}"
+          SHOW: "${{ inputs.show || 12 }}"
+        run: node scripts/probe-fabric-colour-classes.mjs

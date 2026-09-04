@@ -86,6 +86,13 @@ async function main() {
 
   const fcRows = await sql`SELECT fabric_id, colour_id, label FROM scm.fabric_colours WHERE company_id = ${CO}`;
   const { findColour } = buildFabricColourIndex(fcRows);
+  /* The unlabelled-colour rule inside parseSofa is gated on this callback and
+     does NOTHING without it - "MODENZA-05 (DARK OLIVE)/35”/1R+1R" writes the
+     colour first with no COL: label, and this script, whose whole job is to
+     stamp colours, was calling parseSofa without it. Same contract as
+     import-ac-outstanding-so.mjs:177. */
+  const knownColour = (c) => { const h = findColour(c); return h ? h.colour_id : null; };
+
   const series = new Set(fcRows.map((r) => r.fabric_id));
   log(`fabric library: ${series.size} series / ${fcRows.length} colours`);
 
@@ -112,7 +119,7 @@ async function main() {
          the re-decode sees the same model they did. */
       let model = String(r.code || "").split("-")[0].toUpperCase();
       model = SOFA_MODEL_ALIAS[model] || model;
-      const ps = r.d2 ? parseSofa(r.d2, model, false) : null;
+      const ps = r.d2 ? parseSofa(r.d2, model, false, { knownColour }) : null;
       const raw = txt(ps?.color) || txt(had.colourLabel);
       if (!raw) {
         // "colour (2S): X" - which compartment gets which colour is a human
