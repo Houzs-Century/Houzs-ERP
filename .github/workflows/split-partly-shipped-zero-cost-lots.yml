@@ -1,0 +1,75 @@
+name: Split partly-shipped zero-cost lots
+
+# Manual. Puts a real cost on the 2,590 units that backfill-zero-cost-lots.yml
+# could not touch: cutover lots that shipped a little and kept the rest, whose
+# single shared unit_cost_sen cannot be written without restating what the
+# shipped units went out at. This SPLITS the row — the shipped part keeps its
+# own lot id and its zero, the part still on hand gets the AutoCount purchase
+# cost and inherits received_at so its FIFO place does not move.
+#
+# PLAN is the default and is strictly read-only: SELECT only, no transaction,
+# no rehearsal write. mode=apply also needs the CONFIRM phrase typed in, and
+# writes each lot in its own transaction, asserting inside it that quantity
+# held, that settled COGS is byte-identical, and that inventory value moved by
+# exactly the planned amount.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      mode:
+        description: "plan (read-only) or apply"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: 'apply only — type: I HAVE REVIEWED THE PLAN'
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: split-partly-shipped-zero-cost-lots-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node --test scripts/lib/split-partly-shipped-lots.test.mjs
+      - run: node scripts/split-partly-shipped-zero-cost-lots.mjs
+        env:
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      # A checker nobody runs is not a checker: the arithmetic that decides how
+      # much money goes on the balance sheet is proved before it is applied to
+      # the book it decides for.
+      - run: node --test scripts/lib/split-partly-shipped-lots.test.mjs
+      - run: node scripts/split-partly-shipped-zero-cost-lots.mjs
+        env:
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
