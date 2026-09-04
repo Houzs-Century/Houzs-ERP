@@ -16,7 +16,7 @@
 
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { BookOpen, Boxes, CalendarClock, FileText, ListTree, Receipt, ShieldCheck, TrendingDown, TrendingUp } from 'lucide-react';
+import { BookOpen, Boxes, CalendarClock, FileText, LineChart, ListTree, Receipt, Scale, ShieldCheck, TrendingDown, TrendingUp } from 'lucide-react';
 import {
   useJournalEntries,
   useJournalEntryDetail,
@@ -42,6 +42,7 @@ import {
 import { DataTable, type Column } from '../../components/DataTable';
 import { ItemGroupsTab } from './ItemGroups';
 import { StockCloseTab } from './StockClose';
+import { PnLTab, BalanceSheetTab } from './Reports';
 import { fmtSen } from '../../vendor/shared/format';
 import { byText } from '../../vendor/scm/lib/sort-options';
 import styles from './Suppliers.module.css';
@@ -55,7 +56,7 @@ const ICON = { size: 16, strokeWidth: 1.75 } as const;
 // amount, never "RM NaN". Kept under the local name so callsites are unchanged.
 const fmt = (sen: number | null | undefined) => fmtSen(sen);
 
-type Tab = 'coa' | 'groups' | 'je' | 'gl' | 'tb' | 'close' | 'ar' | 'ap' | 'check';
+type Tab = 'coa' | 'groups' | 'je' | 'gl' | 'tb' | 'close' | 'pnl' | 'bs' | 'ar' | 'ap' | 'check';
 
 export const Accounting = () => {
   const [tab, setTab] = useState<Tab>('je');
@@ -71,6 +72,8 @@ export const Accounting = () => {
         <TabBtn label="General Ledger"  icon={<FileText {...ICON} />} active={tab === 'gl'}    onClick={() => setTab('gl')} />
         <TabBtn label="Trial Balance"   icon={<Receipt {...ICON} />}  active={tab === 'tb'} onClick={() => setTab('tb')} />
         <TabBtn label="Month-end"       icon={<CalendarClock {...ICON} />} active={tab === 'close'} onClick={() => setTab('close')} />
+        <TabBtn label="P&L"             icon={<LineChart {...ICON} />} active={tab === 'pnl'} onClick={() => setTab('pnl')} />
+        <TabBtn label="Balance Sheet"   icon={<Scale {...ICON} />} active={tab === 'bs'} onClick={() => setTab('bs')} />
         <TabBtn label="AR Aging"        icon={<TrendingUp {...ICON} />} active={tab === 'ar'}  onClick={() => setTab('ar')} />
         <TabBtn label="AP Aging"        icon={<TrendingDown {...ICON} />} active={tab === 'ap'} onClick={() => setTab('ap')} />
         <TabBtn label="Self-check"      icon={<ShieldCheck {...ICON} />} active={tab === 'check'} onClick={() => setTab('check')} />
@@ -82,6 +85,8 @@ export const Accounting = () => {
       {tab === 'gl'    && <GlTab />}
       {tab === 'tb'    && <TrialBalanceTab />}
       {tab === 'close' && <StockCloseTab />}
+      {tab === 'pnl'   && <PnLTab />}
+      {tab === 'bs'    && <BalanceSheetTab />}
       {tab === 'ar'    && <ArAgingTab />}
       {tab === 'ap'    && <ApAgingTab />}
       {tab === 'check' && <SelfCheckTab />}
