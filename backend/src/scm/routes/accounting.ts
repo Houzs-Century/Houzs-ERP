@@ -55,6 +55,7 @@ import { piPeriodicBackfill } from './accounting-pi-backfill';
 import { stockCloseStatus, stockCloseRun } from './accounting-stock-close';
 import { pnlReport, balanceSheetReport } from './accounting-reports';
 import { numberingGet, numberingPut } from './accounting-numbering';
+import { receiptsList, receiptEnsure, receiptFormalise } from './accounting-receipts';
 import { dateOrNull } from '../lib/date-coerce';
 
 /* THE GENERAL LEDGER HAD NO PERMISSION CHECK AT ALL — eleven routes, zero
@@ -142,6 +143,11 @@ accounting.get('/reports/balance-sheet', balanceSheetReport);
    letters + suffix width. Handlers in accounting-numbering.ts. */
 accounting.get('/numbering', numberingGet);
 accounting.put('/numbering', numberingPut);
+/* Official Receipts (GL redesign item 9): list / fetch-or-heal / the manual
+   money-confirmed button. Handlers in accounting-receipts.ts. */
+accounting.get('/receipts', receiptsList);
+accounting.post('/receipts/ensure', receiptEnsure);
+accounting.post('/receipts/:id/formalise', receiptFormalise);
 accounting.post('/item-groups', itemGroupCreate);
 accounting.put('/item-groups/:code/accounts', itemGroupBind);
 accounting.patch('/item-groups/:code', itemGroupPatch);

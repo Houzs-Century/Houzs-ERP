@@ -30,6 +30,8 @@
 
 import { postJournal, reverseJournal } from './engine';
 import { resolveRoles, settlementLines, settlementReceiptLines, statementChargeLines } from './rules';
+import { formaliseReceiptsForSettlement } from './receipts';
+import { companyCodeById } from '../scm/lib/doc-no';
 import type { PaymentCandidate } from './settlement-match';
 
 export type AcquirerRow = {
@@ -499,6 +501,26 @@ export async function confirmSettlementRow(sb: any, input: ConfirmInput): Promis
     /* The ledger is right and the links are right; only the row's stamp failed.
        Say so loudly — a retry is a no-op through the gate's idempotency. */
     return { ok: false, status: 'stamp_failed', reason: `${upErr.message} (the entry ${posted.jeNo ?? '(none — no fee to book)'} DID post — press confirm again to finish stamping the line)` };
+  }
+
+  /* 对账确认 = 钱确定到手:the card payments' Official Receipts turn FORMAL
+     on the acquirer's payout bank (GL redesign item 9 — 卡款 merchant recon
+     确认那笔时自动转正). BEST-EFFORT: the confirm's truth is the fee entry
+     above; a receipt hiccup (or an unconfigured bank letter) leaves the OR
+     in draft for the manual confirm button, never unwinds the settlement. */
+  try {
+    const code = await companyCodeById(sb, companyId);
+    if (code) {
+      await formaliseReceiptsForSettlement(
+        sb, companyId, code,
+        chosen.map((p) => ({ source: p.source, id: p.id })),
+        acq.acquirer.bank_account_code ?? null,
+        input.userName,
+      );
+    }
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error('[receipts] settlement formalise skipped:', e);
   }
   return { ok: true, status: 'confirmed', ...(posted.jeNo ? { jeNo: posted.jeNo } : {}) };
 }
