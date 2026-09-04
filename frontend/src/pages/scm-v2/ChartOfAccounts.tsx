@@ -17,7 +17,7 @@
 // where a person adjusts afterwards. The file itself never enters the repo.
 // ----------------------------------------------------------------------------
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import * as XLSX from 'xlsx';
 import { ChevronDown, ChevronRight, Pencil, Plus, Trash2, Upload } from 'lucide-react';
 import { Button } from '@2990s/design-system';
@@ -198,14 +198,6 @@ export const ChartOfAccounts = () => {
   const [editName, setEditName] = useState('');
   const [editType, setEditType] = useState<ChartRow['type']>('ASSET');
   const [editParent, setEditParent] = useState('');
-  /* With the list scrolling inside its card the panel is normally already on
-     screen; this nudge covers the remainder (a small window, the Add form
-     open too). Optional-called — jsdom has no scrollIntoView. */
-  const editPanelRef = useRef<HTMLElement>(null);
-  useEffect(() => {
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- lib.dom types scrollIntoView as always-present; jsdom (the test runtime) has none
-    if (editing) editPanelRef.current?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
-  }, [editing]);
   const openEdit = (row: ChartRow) => {
     setEditing(row);
     setEditCode(row.code);
@@ -542,8 +534,17 @@ export const ChartOfAccounts = () => {
         </section>
       )}
 
+      {/* Edit is a POP-OUT (owner 2026-09-04, third round on this panel:
+          edit 不能做成一个 pop out 出来 edit? — a dialog appears wherever you
+          are, the list never moves). Backdrop deliberately does NOT close:
+          a stray click must not eat a half-typed rename; Cancel is the way
+          out. Styling mirrors ConfirmDialog's backdrop/card so the two read
+          as one family. */}
       {editing && (
-        <section className={styles.card} ref={editPanelRef}>
+        <div role="presentation"
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.28)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 'var(--space-4)' }}>
+        <section role="dialog" aria-label={`Edit ${editing.code}`} className={styles.card}
+          style={{ width: 'min(560px, 95vw)', boxShadow: 'var(--shadow-3, 0 18px 48px rgba(0,0,0,0.25))' }}>
           <div className={styles.cardHeader}>
             <h2 className={styles.cardTitle}>Edit {editing.code}</h2>
           </div>
@@ -580,6 +581,7 @@ export const ChartOfAccounts = () => {
             </div>
           </div>
         </section>
+        </div>
       )}
 
       <section className={styles.card}>
@@ -597,7 +599,7 @@ export const ChartOfAccounts = () => {
             its OWN is what lets the header row stick: .card carries
             overflow:hidden (its rounded corners), which would swallow a
             page-scroll sticky. */}
-        <div className={styles.cardBody} style={{ overflowX: 'auto', overflowY: 'auto', maxHeight: 'calc(100vh - 260px)' }}>
+        <div className={styles.cardBody} style={{ overflowX: 'auto', overflowY: 'auto', maxHeight: 'calc(100vh - 260px)', padding: 0 }}>
           {unionQ.isLoading && <div style={{ fontSize: 'var(--fs-13)' }}>Loading the chart…</div>}
           {unionQ.error != null && (
             <div className={styles.bannerWarn}>
@@ -610,12 +612,14 @@ export const ChartOfAccounts = () => {
             </div>
           )}
           {accounts.length > 0 && (
-            <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 'var(--fs-13)' }}>
+            <table style={{ borderCollapse: 'separate', borderSpacing: 0, width: '100%', fontSize: 'var(--fs-13)' }}>
               <thead>
                 {/* Sticky INSIDE the card's scroll (see the cardBody note).
                     Solid background + inset shadow instead of the old tr
                     border — a border on the <tr> does not travel with sticky
-                    cells, the shadow does. */}
+                    cells, the shadow does. borderCollapse SEPARATE, not
+                    collapse: Chromium offsets sticky th cells under collapsed
+                    borders, which is the strip the owner called 不好看. */}
                 <tr style={{ textAlign: 'left' }}>
                   {(() => {
                     const stickyTh = {
