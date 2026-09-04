@@ -47,7 +47,6 @@ import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { postUnpostedSiPayments, reverseSiPayment } from '../../acc/payments';
 import { insertSiPaymentRow } from '../lib/si-payment-row';
-import { ensureReceiptForPayment } from '../../acc/receipts';
 import { recomputeSiPaid as recomputePaid, readOrderDepositForInvoice } from '../lib/si-order-deposit';
 import { stampSoDates, stampDoNumber, stampOrderDeposit } from '../lib/si-list-stamps';
 import { postSiRevenue, reverseSiRevenue, resyncSiRevenue } from '../lib/post-si-revenue';
@@ -2070,15 +2069,6 @@ export const postSalesInvoicePaymentHandler = async (c: any) => {
     accountSheet: p.accountSheet, collectedBy: p.collectedBy, note: p.note, createdBy: user.id,
   });
   if (error) return c.json({ error: 'insert_failed', reason: error.message }, 500);
-  /* The Official Receipt is born with the payment (GL redesign item 9);
-     best-effort — ensureReceiptForPayment heals a hiccup at the next print. */
-  try {
-    const paymentId = String((data as { id?: unknown } | null)?.id ?? '');
-    if (paymentId) await ensureReceiptForPayment(sb, 'SIPAY', paymentId);
-  } catch (e) {
-    // eslint-disable-next-line no-console
-    console.error('[receipts] draft OR not created for SI payment:', e);
-  }
   await recomputePaid(sb, id);
   await postUnpostedSiPayments(sb, id); // Accounting hook (需求书 6.3, owner approved 2026-08-16); best-effort
   try { await reconcileSiOverpay(sb, id); }
