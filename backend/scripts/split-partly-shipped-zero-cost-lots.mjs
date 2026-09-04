@@ -395,8 +395,15 @@ async function main() {
       return wrong;
     };
     const wrongShape = await assertShape();
-    if (wrongShape.length) for (const w of wrongShape) bad(`  ${w}`);
-    else note(`  all ${done.length} pair(s) read back correctly: the closed half on hand 0 at cost 0, the open half received = on hand at the planned cost, both at the same received_at`);
+    if (done.length === 0) {
+      /* Zero pairs is not a pass. A check that had nothing to look at reports
+         nothing and reads as green — the shape this repo keeps paying for. */
+      note('  NOTHING WAS APPLIED, so this verification examined nothing. It is not a pass.');
+    } else if (wrongShape.length) {
+      for (const w of wrongShape) bad(`  ${w}`);
+    } else {
+      note(`  all ${done.length} pair(s) read back correctly: the closed half on hand 0 at cost 0, the open half received = on hand at the planned cost, both at the same received_at`);
+    }
 
     const [after] = await check`
       SELECT COALESCE(SUM(qty_remaining::bigint * unit_cost_sen), 0)::bigint AS value_sen,
