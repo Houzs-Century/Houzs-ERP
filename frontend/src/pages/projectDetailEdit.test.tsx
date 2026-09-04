@@ -179,6 +179,35 @@ describe("ProjectDetail — Edit project details", () => {
     expect(screen.getByText("Brand")).toBeTruthy();
   });
 
+  /* Owner 2026-09-03: "frontend only should have start date / end date /
+     rental / size — other details keep hidden behind edit". The resting strip
+     had grown to Start, End, Booth, Venue, State, Organizer and Contractor,
+     which pushed the two NUMBERS the owner reads at a glance off the row. */
+  it("shows only Start, End, Size and Rental until Edit is clicked", async () => {
+    await renderDetail();
+    // Wait for the strip itself, not just the page shell.
+    await screen.findByText("Start");
+
+    for (const shown of ["Start", "End", "Size · sqm", "Rental · RM"]) {
+      expect(screen.getByText(shown), `${shown} must be on the resting strip`).toBeTruthy();
+    }
+    for (const hidden of ["Booth", "Venue *", "State", "Organizer", "Contractor", "Brand"]) {
+      expect(screen.queryByText(hidden), `${hidden} must be behind Edit`).toBeNull();
+    }
+
+    await clickEditOnce();
+
+    // …and Edit still reveals every one of them.
+    await waitFor(() => expect(screen.getByText("Booth")).toBeTruthy());
+    for (const revealed of ["Venue *", "State", "Organizer", "Contractor", "Brand"]) {
+      expect(screen.getByText(revealed), `${revealed} must appear in edit mode`).toBeTruthy();
+    }
+    // The four never leave.
+    for (const kept of ["Start", "End", "Size · sqm", "Rental · RM"]) {
+      expect(screen.getByText(kept), `${kept} must stay in edit mode`).toBeTruthy();
+    }
+  });
+
   it("stays in edit mode when the lookup queries resolve after the click", async () => {
     lookupDelayMs = 150;
     await renderDetail();

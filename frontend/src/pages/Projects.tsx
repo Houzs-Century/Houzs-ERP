@@ -7209,12 +7209,16 @@ function ProjectSpecStrip({
       <div
         className={cn(
           "grid grid-cols-1 divide-x divide-y divide-border-subtle border-y border-border-subtle md:grid-cols-2",
-          // View mode = 5 key fields on one row; Edit mode = 4-col grid for all fields.
-          editing ? "lg:grid-cols-4" : "lg:grid-cols-5",
+          // View mode = the 4 fields the owner reads at a glance, one row.
+          // Edit mode = a 4-col grid for every field.
+          "lg:grid-cols-4",
         )}
       >
-        {/* View mode shows only the key fields (Organizer, Start, End, Booth,
-            Venue). Clicking Edit reveals every field. */}
+        {/* Owner 2026-09-03: the resting strip shows START, END, RENTAL and SIZE
+            and nothing else — "other details keep hidden behind edit". Booth,
+            Venue, State, Organizer and Contractor were on it too, which pushed
+            the two numbers the owner actually checks off the row entirely.
+            Clicking Edit still reveals every field. */}
         {editing && (<>
         <SpecCell label="Brand">
           {editing ? (
@@ -7336,6 +7340,7 @@ function ProjectSpecStrip({
             <SpecValue mono>{p.end_date ?? "—"}</SpecValue>
           )}
         </SpecCell>
+        {editing && (<>
         <SpecCell label="Booth">
           <SpecTextField
             editing={editing}
@@ -7346,49 +7351,37 @@ function ProjectSpecStrip({
         </SpecCell>
 
         <SpecCell label="Venue *">
-          {editing ? (
-            <VenuePicker
-              value={p.venue}
-              onChange={(v) =>
-                patch(v ? { venue: v } : { venue: null, state: null })
-              }
-              onStateHint={(s) => {
-                if (s && s !== p.state) patch({ state: s });
-              }}
-              className={SPEC_INPUT_CLASS}
-            />
-          ) : (
-            <SpecValue>{p.venue ?? "—"}</SpecValue>
-          )}
+          <VenuePicker
+            value={p.venue}
+            onChange={(v) =>
+              patch(v ? { venue: v } : { venue: null, state: null })
+            }
+            onStateHint={(s) => {
+              if (s && s !== p.state) patch({ state: s });
+            }}
+            className={SPEC_INPUT_CLASS}
+          />
         </SpecCell>
-        {editing && (
         <SpecCell label="State">
           <SpecValue muted mono>{p.state ?? "—"}</SpecValue>
         </SpecCell>
-        )}
         <SpecCell label="Organizer">
-          {editing ? (
-            <OrganizerPicker
-              value={p.organizer}
-              onChange={(v) => patch({ organizer: v })}
-              className={SPEC_INPUT_CLASS}
-            />
-          ) : (
-            <SpecValue>{p.organizer ?? "—"}</SpecValue>
-          )}
+          <OrganizerPicker
+            value={p.organizer}
+            onChange={(v) => patch({ organizer: v })}
+            className={SPEC_INPUT_CLASS}
+          />
         </SpecCell>
         <SpecCell label="Contractor">
-          {editing ? (
-            <ContractorPicker
-              value={p.contractor}
-              onChange={(v) => patch({ contractor: v })}
-              className={SPEC_INPUT_CLASS}
-            />
-          ) : (
-            <SpecValue>{p.contractor ?? "—"}</SpecValue>
-          )}
+          <ContractorPicker
+            value={p.contractor}
+            onChange={(v) => patch({ contractor: v })}
+            className={SPEC_INPUT_CLASS}
+          />
         </SpecCell>
-        {editing && (<>
+        </>)}
+        {/* Size and Rental stay on the resting strip — the two numbers the
+            owner checks without opening anything (owner 2026-09-03). */}
         <SpecCell label="Size · sqm">
           <div className="flex items-center gap-1.5">
             <SpecTextField
@@ -7419,6 +7412,7 @@ function ProjectSpecStrip({
           />
         </SpecCell>
 
+        {editing && (<>
         <SpecCell label="Name" span={p.start_date ? 2 : 3}>
           <SpecTextField
             editing={editing}
