@@ -9,6 +9,7 @@ import { authedFetch } from "../vendor/scm/lib/authed-fetch";
 import { usePoSoCoverage, originsByCode, provenanceByCode, storedLinkSkus, deliveredByCode, type OriginAssignment } from "../vendor/scm/lib/flow-queries";
 import { CommittedBatchRowMobile, PairedSoRowsMobile, SourcePosRowMobile } from "./source-chips";
 import { MobileRelationshipMap } from "./MobileRelationshipMap";
+import { MobileLineRemark } from "./MobileLineRemark";
 import { useGrnZeroCostRemedy } from "./MobileGrnZeroCost";
 import { flowAnchorForModule, type FlowNav } from "./relationship-map-model";
 import { idempotentInit, useIdempotencyKey } from "../lib/idempotency";
@@ -186,12 +187,7 @@ function Eyebrow({ children }: { children: string }) {
 
 /** One `.docrow` line item: name + qty on top, unit price + amount below. */
 function LineItem({ name, sub, remark, qty, unitSen, amountSen, assigned, sourceLinked, provenance, allocations, poNumber, sourcePos, sourceAdj, delivered, committedBatch }: {
-  name: string; sub?: string; qty: unknown; unitSen: unknown; amountSen: unknown;
-  // The line's own free text — the PHONE twin of MobileSODetail's remark block
-  // (owner 2026-09-04: 「SO line 和 PO line 的 remarks」). On a PO line this is
-  // purchase_order_items.notes, which is where the AutoCount migration parked
-  // the book's own Description 2. Wraps, never truncates.
-  remark?: string | null;
+  name: string; sub?: string; qty: unknown; unitSen: unknown; amountSen: unknown; remark?: string | null;
   // Present (even if empty) only for purchase docs (PO/GRN/PI): the REAL origin
   // Sales Order(s) this line was raised from + that SO's effective delivery
   // date, matched by SKU. Empty array → dash, mirroring the desktop columns.
@@ -241,11 +237,7 @@ function LineItem({ name, sub, remark, qty, unitSen, amountSen, assigned, source
         {sub ? <span style={{ marginRight: 8 }}>{sub}</span> : null}
         <span>@ {money(unitSen)}</span>
       </div>
-      {(remark ?? "").trim() ? (
-        <div style={{ flexBasis: "100%", fontSize: 11, color: "#767b6e", marginTop: 3, fontStyle: "italic", whiteSpace: "pre-wrap", overflowWrap: "anywhere", lineHeight: 1.35 }}>
-          {String(remark).trim()}
-        </div>
-      ) : null}
+      <MobileLineRemark text={remark} />
       {assigned && (
         /* Purchase docs — the per-SO PAIRED rows (owner 2026-08-02): one row
            per assigned SO = [SO chip | date | that SO's delivered DOs xqty |
@@ -499,18 +491,8 @@ const DOC_MODULES: Record<string, DocMap> = {
          surfaces the sofa/bedframe colour+composition), then item_code +
          cumulative received_qty. buildVariantSummary returns "" when the row
          has no variants, so a bare material line still reads correctly. */
-      sub: join(
-        buildVariantSummary(it.item_group, it.variants) || (it.description2 ?? ""),
-        it.item_code,
-        s(it.received_qty).trim() ? `Received ${s(it.received_qty)}` : "",
-      ),
-      /* The PO line's own remark — purchase_order_items.notes, already in
-         ITEM_COLS and already on this payload. Measured on production
-         2026-09-04: 923 of 1,117 migrated company-1 PO lines carry AutoCount's
-         Description 2 here (891 byte-identical to description2, 32 the same
-         text plus a suffix), and no surface — desktop or phone — rendered it
-         before 2026-09-04. */
-      remark: it.notes ?? null,
+      sub: join(buildVariantSummary(it.item_group, it.variants) || (it.description2 ?? ""), it.item_code, s(it.received_qty).trim() ? `Received ${s(it.received_qty)}` : ""),
+      remark: it.notes ?? null, // MobileLineRemark's header has the why
       qty: it.qty,
       unitSen: it.unit_price_sen,
       amountSen: it.line_total_sen,
