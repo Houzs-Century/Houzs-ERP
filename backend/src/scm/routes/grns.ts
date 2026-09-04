@@ -554,13 +554,10 @@ async function postGrnAndRollup(sb: any, grnId: string, userId: string, companyI
         // are byte-for-byte unchanged.
         unit_cost_sen: allocByItemId.get(it.id)?.landedUnitCostMyr
           ?? toMyrSen(Number(it.unit_price_sen ?? 0), grnRate),
-        /* The BUSINESS date (GL redesign item 4): a GRN keyed late must still
-           count in the month the goods actually arrived — the received date
-           the operator filled in, not the keying moment. */
-        movement_date: (String((grnHeader as { received_at?: string | null } | null)?.received_at ?? '').slice(0, 10)) || undefined,
         source_doc_type: 'GRN' as const,
         source_doc_id: grnId,
-        source_doc_no: grnNo,
+        // movement_date = the RECEIVED date (GL item 4): a late-keyed GRN still counts in its own month.
+        source_doc_no: grnNo, movement_date: String((grnHeader as { received_at?: string | null } | null)?.received_at ?? '').slice(0, 10) || undefined,
         // Production batch = source PO number (migration 0120). NULL for free GRNs.
         batch_no: it.purchase_order_item_id ? (batchByItem.get(it.purchase_order_item_id) ?? null) : null,
         performed_by: userId,

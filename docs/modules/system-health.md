@@ -442,3 +442,15 @@ constant survives every var/secret operation; `resolveBuildSha` still falls back
 to the legacy `c.env.GIT_SHA` and then null, so the watchdog's rogue-deploy
 detection is unchanged (a bare clone carries `"dev"`/an old sha). Pinned by
 `backend/tests/buildInfoSha.test.ts`.
+
+## The cron slots (`backend/src/index.ts` `scheduled()`)
+
+Five wrangler cron expressions fan out inside one `scheduled()` handler; each
+job is `ctx.waitUntil`-guarded so no failure can break its slot-mates:
+
+| cron | what runs |
+|---|---|
+| `*/5` | Hyperdrive keep-warm ping, email-outbox drain, AutoCount SO pull, amendment write-back drain, ERP→AutoCount outbox drain |
+| `*/15`, `*/30` | trip/TMS sweeps; ASSR per-stage alerts + lead-time activations |
+| `0 2` (10:00 MYT) | daily batch: SLA escalation, DO-mirror + PO pulls, ASSR digest, project reminders, client-error digest, idempotency-key TTL sweep, AR-aging MV refresh, Sunday scan-so distill |
+| `5 16` (00:05 MYT) | **month-end stock close sweep** (GL redesign item 4, 2026-09-05): `sweepStockClose` re-checks the two most recent closed months for every company — posting the closing/reversal pair the night a month ends, re-posting when a late-keyed document changed a replayed value. Every outcome lands in `scm.acc_stock_close_runs`; the Month-end tab on /scm/accounting is the visible log. Logic in `backend/src/acc/stock-close.ts`. |
