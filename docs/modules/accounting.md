@@ -655,6 +655,15 @@ The probe needed before flipping it, and the three options, are in
 `backend/tests/accMastersOneHome.test.ts` fails the PR if any `acc/` module
 re-implements the fallback inline.
 
+**Voucher numbering (GL redesign item 8a).** `GET/PUT /accounting/numbering`
+(handlers in accounting-numbering.ts, GL permission) — the owner's own levers:
+one prefix letter per money account (`scm.acc_bank_letters`, UNIQUE per
+company+letter — two banks on one letter would share a number series) and the
+suffix width (`scm.acc_numbering`, 3-5). Maintained on the Voucher numbering
+card of /scm/settlement-setup; full detail in
+docs/modules/payment-voucher.md §12. The OR channels (item 9) and transfers
+(item 10) read the same letter table.
+
 **The five journals (GL redesign item 7).** Every entry is labelled the
 AutoCount way — SALES / PURCHASE / BANK / CASH / GENERAL — derived, never
 stored: `classifyJournal` (acc/journal-class.ts) maps the source type
