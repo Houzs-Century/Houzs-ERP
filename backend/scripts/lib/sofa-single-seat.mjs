@@ -23,6 +23,14 @@
 //
 // The remark is deliberately NOT consulted. It is free text, it is what puts a
 // line in the placeholder branch in the first place, and other work rewrites it.
+//
+// WHAT THIS DEPENDS ON, so the next reader knows what would break it:
+// `description2` is meant to hold the BOOK's wording on a migrated line, and it
+// is currently server-generated on every write — see
+// `docs/bugs/0639-autocount-s-desc2-is-overwritten-by-our-generated-summary-on.md`.
+// If a line's Desc2 is ever replaced by our own computed summary, this asks our
+// text what the book said, and the answer stops meaning anything. Measured loss
+// on 2026-09-04 was zero; this note is here in case that stops being true.
 
 /** The Desc2 writes a one-seater: "1S", "1 S", "1S/…", "1 SEATER". Never "1SEAT2". */
 export const SAYS_ONE_SEATER = /(^|[^0-9A-Za-z])1\s?S(?:EATER)?(?![A-Za-z])/i;
