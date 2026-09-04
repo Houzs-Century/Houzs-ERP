@@ -16,7 +16,9 @@
 // ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
+import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import {
   Search, ArrowUpRight, ArrowDownLeft, Star, X, Plus,
   Warehouse as WarehouseIcon, ChevronRight, ChevronDown,
@@ -428,6 +430,10 @@ const BalancesTab = ({
   warehouseId: string | null;
   onDrilldown: (code: string, name: string) => void;
 }) => {
+  /* 选日期 (GL redesign item 5): a date here swaps the live planning list for
+     the AS-OF photograph — per-product qty and value replayed on the business
+     date, category subtotals included. Clearing the date returns to live. */
+  const [asOf, setAsOf] = useState('');
   const { requestTerm } = useDebouncedSearchTerm(search);
   const { data, isLoading, isFetching, isPlaceholderData, error } = useInventoryProductTotals({
     search: requestTerm.trim() || undefined,
@@ -480,6 +486,19 @@ const BalancesTab = ({
 
   return (
     <>
+      <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', marginBottom: 'var(--space-2)' }}>
+        <label htmlFor="inv-asof" style={{ fontSize: 'var(--fs-13)', color: 'var(--text-soft, #8a8578)' }}>As of date</label>
+        <input id="inv-asof" type="date" value={asOf} onChange={(e) => setAsOf(e.target.value)}
+          style={{ padding: '4px 8px', border: '1px solid var(--c-line, rgba(34,31,32,0.2))', borderRadius: 'var(--radius-sm, 6px)', fontSize: 'var(--fs-13)', background: 'white' }} />
+        {asOf && (
+          <button type="button" className={styles.chip} onClick={() => setAsOf('')}>Back to live</button>
+        )}
+      </div>
+
+      {asOf ? (
+        <AsOfView asOf={asOf} category={category} search={search} />
+      ) : (
+      <>
       <div className={STAT_GRID}>
         <StatCard label="Own Stock Qty" value={fmtQty(stats.ownQty)} pending={statsPending} />
         <StatCard label="Consignment Qty" value={fmtQty(stats.heldQty)} pending={statsPending} />
@@ -548,6 +567,93 @@ const BalancesTab = ({
           rowKey: (r) => r.item_code,
         }}
       />
+      </>
+      )}
+    </>
+  );
+};
+
+/* ── The as-of photograph (GL redesign item 5) ────────────────────────────
+   Replay per product on the BUSINESS date (backend /inventory/valuation —
+   the same engine the month-end close reads), with category subtotals. */
+type AsOfRow = { item_code: string; product_name: string | null; category: string | null; qty: number; value_sen: number };
+
+/** Rows → per-category subtotal lines, largest value first. Exported for its
+    test: the subtotals must always sum back to the grand total. */
+export const categorySubtotals = (rows: AsOfRow[]): Array<{ category: string; qty: number; valueSen: number }> => {
+  const at = new Map<string, { qty: number; valueSen: number }>();
+  for (const r of rows) {
+    const key = r.category ?? '(no category)';
+    const cur = at.get(key) ?? { qty: 0, valueSen: 0 };
+    cur.qty += r.qty;
+    cur.valueSen += r.value_sen;
+    at.set(key, cur);
+  }
+  return [...at.entries()]
+    .map(([category, v]) => ({ category, ...v }))
+    .sort((a, b) => b.valueSen - a.valueSen);
+};
+
+const AsOfView = ({ asOf, category, search }: { asOf: string; category: Category; search: string }) => {
+  const q = useQuery({
+    queryKey: ['inventory-valuation', asOf],
+    queryFn: () => authedFetch<{ asOf: string; totalQty: number; totalValueSen: number; rows: AsOfRow[] }>(
+      `/inventory/valuation?asOf=${encodeURIComponent(asOf)}`,
+    ),
+    staleTime: 60_000,
+  });
+  if (q.isLoading) return <div style={{ fontSize: 'var(--fs-13)', color: 'var(--text-soft, #8a8578)' }}>Replaying {asOf}…</div>;
+  if (q.isError || !q.data) return <div style={{ fontSize: 'var(--fs-13)', color: 'var(--c-danger, #a33)' }}>The {asOf} snapshot did not load. Pick the date again to retry.</div>;
+
+  const needle = search.trim().toLowerCase();
+  const rows = q.data.rows
+    .filter((r) => category === 'all' || r.category === category)
+    .filter((r) => !needle || r.item_code.toLowerCase().includes(needle) || String(r.product_name ?? '').toLowerCase().includes(needle));
+  const subtotals = categorySubtotals(rows);
+  const shownQty = rows.reduce((s, r) => s + r.qty, 0);
+  const shownValue = rows.reduce((s, r) => s + r.value_sen, 0);
+
+  return (
+    <>
+      <div className={STAT_GRID}>
+        <StatCard label={`Qty as of ${asOf}`} value={fmtQty(shownQty)} />
+        <StatCard label={`Value as of ${asOf}`} value={fmtRm(shownValue)} />
+        <StatCard label="Products" value={String(rows.length)} />
+      </div>
+      <div style={{ margin: 'var(--space-2) 0', display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
+        {subtotals.map((s) => (
+          <span key={s.category} className={styles.chip} data-active={category === s.category}>
+            {s.category}: {fmtQty(s.qty)} · {fmtRm(s.valueSen)}
+          </span>
+        ))}
+      </div>
+      <div style={{ overflowX: 'auto', border: '1px solid var(--c-line, rgba(34,31,32,0.12))', borderRadius: 'var(--radius-md)' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
+          <thead>
+            <tr>
+              <th style={{ textAlign: 'left', padding: '8px 10px' }}>Item</th>
+              <th style={{ textAlign: 'left', padding: '8px 10px' }}>Description</th>
+              <th style={{ textAlign: 'left', padding: '8px 10px' }}>Category</th>
+              <th style={{ textAlign: 'right', padding: '8px 10px' }}>Qty</th>
+              <th style={{ textAlign: 'right', padding: '8px 10px' }}>Value</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.item_code} style={{ borderTop: '1px solid var(--border-weak, #e3e1da)' }}>
+                <td style={{ padding: '6px 10px', whiteSpace: 'nowrap' }}>{r.item_code}</td>
+                <td style={{ padding: '6px 10px' }}>{r.product_name ?? '—'}</td>
+                <td style={{ padding: '6px 10px' }}>{r.category ?? '—'}</td>
+                <td style={{ padding: '6px 10px', textAlign: 'right' }}>{fmtQty(r.qty)}</td>
+                <td style={{ padding: '6px 10px', textAlign: 'right' }}>{fmtRm(r.value_sen)}</td>
+              </tr>
+            ))}
+            {rows.length === 0 && (
+              <tr><td colSpan={5} style={{ padding: '10px', color: 'var(--text-soft, #8a8578)' }}>Nothing held on {asOf} under this filter.</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
     </>
   );
 };

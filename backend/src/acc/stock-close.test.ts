@@ -82,6 +82,25 @@ describe('stockValueAsOf — the business-date replay', () => {
   });
 });
 
+describe('stockBreakdownAsOf — the per-item photograph', () => {
+  test('groups by item with the same signs and date rules as the value replay', async () => {
+    const { stockBreakdownAsOf } = await import('./stock-close');
+    const sb = world({
+      inventory_movements: [
+        mv({ item_code: 'SOFA-1' }),
+        mv({ item_code: 'SOFA-1', movement_type: 'OUT', qty: 1, total_cost_sen: 30_000, movement_date: '2026-08-20' }),
+        mv({ item_code: 'MAT-1', total_cost_sen: 20_000, movement_date: '2026-08-30', created_at: '2026-09-02T01:00:00Z' }), // keyed late, Aug business date
+        mv({ item_code: 'MAT-1', movement_date: '2026-09-02', total_cost_sen: 999_999 }), // September — outside
+      ],
+    });
+    const r = await stockBreakdownAsOf(sb, CO, '2026-08-31');
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.items.get('SOFA-1')).toEqual({ qty: 0, valueSen: 70_000 });
+    expect(r.items.get('MAT-1')).toEqual({ qty: 1, valueSen: 20_000 });
+  });
+});
+
 describe('closeStockMonth — the pair, the heal, the log', () => {
   test('first close posts the pair: closing dated the last day, the reversal the 1st of next', async () => {
     const sb = world({ inventory_movements: [mv({})] });
