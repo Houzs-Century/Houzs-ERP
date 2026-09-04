@@ -33,6 +33,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 
+import { selectBuildRows } from "./lib/sofa-desc2-match.mjs";
+
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
 const APPLY = process.env.APPLY === "1";
@@ -52,7 +54,7 @@ async function main() {
   const prods = await sql`SELECT code FROM scm.mfg_products WHERE company_id = ${CO}`;
   const codeSet = new Set(prods.map((p) => K(p.code)));
 
-  let nBuilds = 0, nUpd = 0, nIns = 0, nDel = 0, nRefused = 0, nMissingSku = 0, nPo = 0, nGr = 0, nDo = 0;
+  let nBuilds = 0, nUpd = 0, nIns = 0, nDel = 0, nRefused = 0, nMissingSku = 0, nPo = 0, nGr = 0, nDo = 0, nAmbiguous = 0;
 
   for (const c of DATA.corrections) {
     const docs = ONLY ? c.docs.filter((d) => d === ONLY) : c.docs;
@@ -104,12 +106,29 @@ async function main() {
          correction is about by its AutoCount text, or a second, perfectly good
          build looks like surplus and the script tries to delete it. Caught on
          HC-SO-011957, which holds a 1R+1NA+1R sofa AND a Stool. */
+      /* The narrowing itself lives in scripts/lib/sofa-desc2-match.mjs, with
+         its own test, because a plain `includes` here silently dropped seven
+         owner-approved builds on 2026-09-02 (run 33657082664): the data file
+         writes a line break as the two characters backslash-n and prod holds a
+         real newline, so identical text did not compare equal. Read that
+         module before widening anything further — and note that it REFUSES an
+         ambiguous match rather than picking, which is the only reason a looser
+         needle is safe on a document that holds two builds. */
       if (c.desc2Match) {
-        const keep = rows.filter((r) => String(r.description2 ?? "").includes(c.desc2Match));
-        if (keep.length && keep.length !== rows.length)
-          log(`  ${doc}: ${rows.length} sofa lines on the document, ${keep.length} belong to this build`);
-        if (!keep.length) { log(`  ${doc}: no line matches "${c.desc2Match}" — skipped, the build is not on this document`); continue; }
-        rows.length = 0; rows.push(...keep);
+        const pick = selectBuildRows(rows, c.desc2Match);
+        if (pick.verdict === "ambiguous") {
+          log(`  ${doc}: REFUSED — "${c.desc2Match}" reaches ${pick.texts.length} DIFFERENT builds on this document, and telling them apart is the whole job of desc2Match: ${pick.texts.map((t) => JSON.stringify(t.slice(0, 56))).join("  vs  ")}`);
+          nAmbiguous++; continue;
+        }
+        if (!pick.rows.length) {
+          log(`  ${doc}: no line matches "${c.desc2Match}" (${pick.how}) — skipped, the build is not on this document`);
+          continue;
+        }
+        if (pick.verdict === "normalised")
+          log(`  ${doc}: ${pick.how} — the corrections file writes the line break as \\n, the document holds a real one`);
+        if (pick.rows.length !== rows.length)
+          log(`  ${doc}: ${rows.length} sofa lines on the document, ${pick.rows.length} belong to this build`);
+        rows.length = 0; rows.push(...pick.rows);
       }
       if (!rows.length) {
         /* Say WHY, so a missing build is diagnosable instead of a shrug: does
@@ -276,7 +295,7 @@ async function main() {
   log("");
   log(`builds touched ${nBuilds} · lines updated ${nUpd} · added ${nIns} · removed ${nDel}`);
   log(`downstream carried: PO lines ${nPo} · GRN lines ${nGr} · DO lines ${nDo}`);
-  log(`refused ${nRefused} (downstream reference or the money would move) · piece SKU not minted ${nMissingSku}`);
+  log(`refused ${nRefused} (downstream reference or the money would move) · piece SKU not minted ${nMissingSku} · refused as ambiguous ${nAmbiguous}`);
   for (const h of DATA._held ?? []) log(`HELD ${h.docs.join(" / ")} — ${h.why}`);
   if (!APPLY) log("\nDRY-RUN — set APPLY=1 to write.");
   await sql.end();
