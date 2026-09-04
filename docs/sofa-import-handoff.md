@@ -48,6 +48,20 @@ token 的书写顺序 = 面对沙发时的实际摆位。解析器最后有一�
 | `1EL` / `1ER` / `2EL` / `2ER` | E = 扶手在左/右 → `1A(LHF)` / `1A(RHF)` / `2A(...)` | owner:"EL 或 ER 代表左边或右边";2026-09-04 再确认「ER 就是右边那一端,2ER = 2A(RHF)」 |
 | `L` / `ELT` / `1ELT` | 贵妃(chaise);写在最左 = `L(LHF)`,写在最右 = `L(RHF)` | owner 2026-09-04:「ELT 就是 L」 |
 | `NA`(没有前面的数字) | 就是 `1NA` | owner 2026-09-04 |
+
+> **⚠️ ELT 有两个互相矛盾的判读，等 owner 定（2026-09-04 查证，没有自己选一个）。**
+> 同一串 Desc2 —— `[ (1 ELT / T + NA +2ER) (28") / COL: J9883-1-1 PAMA]` ——
+> 在 `backend/scripts/data/sofa-compartment-corrections-2026-08.json` 里有一条
+> 2026-08-10 批准的 correction，读成 `1ABOX(LHF) + 1NA + 2A(RHF)`；那条的 `why`
+> 写的是「ELT/T 这个写法没有 parser 规则」，**不是看照片得来的**。2026-09-04 owner
+> 亲口说 ELT 就是贵妃 `L`。第一件对不上，上表照 owner 最新的说法写。
+>
+> 落地影响是零，实测过：那条 correction 指的单 `HC-PO-010117` 在生产库里**不存在**
+> （`scm.purchase_orders` 里 0 行，只读连线查的），所以从来没有写到任何一行上。
+> 那个 JSON 本 PR 一个字都没有改。
+>
+> 还有一个 owner 没有解释的字：那串里的 `T`。**不要猜它是什么件**。也因为这个，
+> 这一行至今维持占位，交给 owner 看图定。
 | `C` / `1C` / `CNR` / `CORNER` | 角位 | owner:"1c 是 corner" |
 | `CT` / `C/T` / `CS` / `CONSOLE` / `C TABLE` | Console(中间小几) | owner:"CS 就是 console" |
 | `1B` / `2B` | Bench(**不做扶手**),**分左右** `1B(LHF)/1B(RHF)` | owner:"Bench 就是不做扶手";"1b 要分","2b 也是有的" |
@@ -404,7 +418,15 @@ AutoCount 的 `vItemBalQty` 只有「AMN-SF9028 SOFA 在 KL 有 6 台」,**没�
 
 19 行原文没写件(只写了颜色/工艺,要看图)、6 行没写座深。清单在会话里发过 CSV。
 
-### 8.4 HC-SO-000814 少了整条沙发行(2026-08-10 dry-run 查到,**没人动过**)
+### 8.4 HC-SO-000814 少了整条沙发行(2026-08-10 dry-run 查到)
+
+> **CORRECTED 2026-09-04 —— 这一节的前提已经不成立了。** 生产库里
+> `HC-SO-000814` 现在**有**那条沙发行:`5526-1S`,`description2` 就是
+> `[ (1 ELT / T + NA +2ER) (28") / COL: J9883-1-1 PAMA]`,备注
+> `SOFA UNPARSED — 按图/原文补件`,同一串字的采购单 `HC-PO-000254` 也在。
+> (只读连线查的,company 1。)是谁、什么时候补回去的**没有查**,所以下面那句
+> 「没人动过」不要再当真。金额那一条(比 AutoCount 少 9,300)也要重新核过才算数。
+> 下面原文保留作历史。
 
 `open-5526-model.mjs` 的 prod dry-run 报:`HC-SO-000814 ... 0 sofa line(s) ...
 document lines: accessory:1`。单在 ERP 里,但**只剩一条 accessory 行**(RDS-SQUARE
