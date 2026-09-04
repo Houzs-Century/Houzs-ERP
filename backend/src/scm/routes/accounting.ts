@@ -51,6 +51,7 @@ import {
 } from './accounting-chart';
 import { itemGroupsList, itemGroupCreate, itemGroupBind, itemGroupPatch } from './accounting-item-groups';
 import { piPeriodicBackfill } from './accounting-pi-backfill';
+import { stockCloseStatus, stockCloseRun } from './accounting-stock-close';
 import { dateOrNull } from '../lib/date-coerce';
 
 /* THE GENERAL LEDGER HAD NO PERMISSION CHECK AT ALL — eleven routes, zero
@@ -126,6 +127,10 @@ accounting.get('/item-groups', itemGroupsList);
    periodic shape — missing journals posted, Dr-330 journals reversed and
    re-posted — through the SAME functions live documents use. dryRun first. */
 accounting.post('/backfill/pi-periodic', piPeriodicBackfill);
+/* Month-end stock close (GL redesign item 4): the run log + live value, and
+   the manual run — the nightly close itself fires from the cron. */
+accounting.get('/stock-close', stockCloseStatus);
+accounting.post('/stock-close/run', stockCloseRun);
 accounting.post('/item-groups', itemGroupCreate);
 accounting.put('/item-groups/:code/accounts', itemGroupBind);
 accounting.patch('/item-groups/:code', itemGroupPatch);

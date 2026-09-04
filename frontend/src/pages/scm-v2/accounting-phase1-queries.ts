@@ -186,3 +186,39 @@ export const usePatchItemGroup = () => {
     onError: writeFailedAs('Group not updated'),
   });
 };
+
+/* ── Month-end stock close (GL redesign item 4) — run log + manual run. ──── */
+
+export type StockCloseRun = {
+  month: string;
+  ran_at: string;
+  trigger: string;
+  stock_value_sen: number;
+  action: 'posted' | 'unchanged' | 'reposted' | 'failed';
+  je_no: string | null;
+  rev_je_no: string | null;
+  note: string | null;
+};
+
+export const useStockClose = () => useQuery({
+  queryKey: ['stock-close'],
+  queryFn: () => authedFetch<{ liveValueSen: number; defaultMonth: string; runs: StockCloseRun[] }>(`/accounting/stock-close`),
+  staleTime: 15_000,
+  retry: retryUnlessClientError,
+  retryDelay: 800,
+});
+
+export const useRunStockClose = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { month?: string }) =>
+      authedFetch<{ outcome: { action: string; jeNo?: string; note?: string } }>(`/accounting/stock-close/run`, { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['stock-close'] });
+      void qc.invalidateQueries({ queryKey: ['journal-entries'] });
+      void qc.invalidateQueries({ queryKey: ['gl-entries'] });
+      void qc.invalidateQueries({ queryKey: ['account-balances'] });
+    },
+    onError: writeFailedAs('Month-end run failed'),
+  });
+};

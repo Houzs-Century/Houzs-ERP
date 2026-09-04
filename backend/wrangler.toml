@@ -270,11 +270,14 @@ dataset = "houzs_erp_metrics"
 #   */30   → ASSR per-stage alert scan + scheduled lead-time activations
 #   0 2    → Daily batch: SLA escalation, ASSR daily digest, project
 #            checklist reminders, idempotency-key TTL sweep
+#   5 16   → Month-end stock close sweep (00:05 MYT): posts/heals the
+#            closing-stock pair for the two most recent closed months
 crons = [
   "*/5 * * * *",
   "*/15 * * * *",
   "*/30 * * * *",
-  "0 2 * * *"
+  "0 2 * * *",
+  "5 16 * * *"
 ]
 
 [observability]

@@ -47,6 +47,12 @@ type MovementInput = {
     | 'PC_RECEIVE' | 'PC_RETURN';
   source_doc_id?: string;
   source_doc_no?: string;
+  /** GL redesign item 4 — the BUSINESS date this movement belongs to
+   *  ('YYYY-MM-DD'): a GRN's received date, a DO's dispatch date. Month-end
+   *  stock value replays on THIS, so a document keyed late still counts in
+   *  its own month. Omitted = today (MYT) — right for everything keyed as it
+   *  happens. */
+  movement_date?: string;
   /** Multi-company (migration 0061): inventory_movements.company_id is NOT NULL.
    *  Callers pass the ACTIVE company (or the source doc's company) via the
    *  writeMovements `companyId` arg, which stamps this; the FIFO trigger then
@@ -196,6 +202,13 @@ export async function writeMovements(
   if (companyId != null) {
     rows = rows.map((r) => (r.company_id != null ? r : { ...r, company_id: companyId }));
   }
+  /* EVERY row carries its business date (GL redesign item 4): callers that
+     know one pass it (GRN → received date); everything else is dated today in
+     MYT, the day it was keyed. Always-filled is what lets the month-end
+     replay use a plain `lte` — a NULL here would silently fall out of every
+     as-of filter. */
+  const todayMyt = new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
+  rows = rows.map((r) => (r.movement_date ? r : { ...r, movement_date: todayMyt }));
   try {
     const { error } = await sb.from('inventory_movements').insert(rows);
     if (error) {
@@ -227,6 +240,20 @@ export async function writeMovements(
         if (!retry.error) return { ok: true };
         // eslint-disable-next-line no-console
         console.error('[inventory] movement insert failed (post correction_seq strip):', retry.error.message);
+        return { ok: false, reason: retry.error.message };
+      }
+      /* 20260905T1200 forward-compat, same shape again: a worker that went
+         live moments before the movement_date migration applied must not lose
+         the goods receipt over the new column. The stripped retry behaves
+         exactly like the pre-item-4 world (the migration backfills the date
+         from the source document afterwards). */
+      const dateMissing = msg.includes('movement_date');
+      if (dateMissing && rows.some((r) => 'movement_date' in r)) {
+        const stripped = rows.map(({ movement_date: _d, ...rest }) => rest);
+        const retry = await sb.from('inventory_movements').insert(stripped);
+        if (!retry.error) return { ok: true };
+        // eslint-disable-next-line no-console
+        console.error('[inventory] movement insert failed (post movement_date strip):', retry.error.message);
         return { ok: false, reason: retry.error.message };
       }
       // eslint-disable-next-line no-console

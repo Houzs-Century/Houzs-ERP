@@ -379,7 +379,7 @@ async function checkGrnZeroCost(
    another's GRN. Callers get it from requireActiveCompanyId and refuse first. */
 async function postGrnAndRollup(sb: any, grnId: string, userId: string, companyId: number): Promise<{ ok: true; movementErrors?: string[]; recountError?: string } | { ok: false; reason: string; status?: number; zeroCost?: ZeroCostRefusal }> {
   const { data: grnHeader } = await scopeToCompanyId(sb.from('grns')
-    .select('grn_number, warehouse_id, company_id, exchange_rate, allocation_method')
+    .select('grn_number, warehouse_id, company_id, exchange_rate, allocation_method, received_at')
     .eq('id', grnId), companyId).maybeSingle();
   const { data: items } = await sb.from('grn_items')
     .select('id, purchase_order_item_id, qty_accepted, item_code, material_name, unit_price_sen, line_total_sen, item_group, variants, zero_cost_ack')
@@ -554,6 +554,10 @@ async function postGrnAndRollup(sb: any, grnId: string, userId: string, companyI
         // are byte-for-byte unchanged.
         unit_cost_sen: allocByItemId.get(it.id)?.landedUnitCostMyr
           ?? toMyrSen(Number(it.unit_price_sen ?? 0), grnRate),
+        /* The BUSINESS date (GL redesign item 4): a GRN keyed late must still
+           count in the month the goods actually arrived — the received date
+           the operator filled in, not the keying moment. */
+        movement_date: (String((grnHeader as { received_at?: string | null } | null)?.received_at ?? '').slice(0, 10)) || undefined,
         source_doc_type: 'GRN' as const,
         source_doc_id: grnId,
         source_doc_no: grnNo,

@@ -441,6 +441,27 @@ dying. `?dryRun=1` lists the plan without writing; the write pass batches
 (limit ≤ 25 per call, `remaining` in the response) and re-running is a no-op.
 Handler in accounting-pi-backfill.ts; pinned by tests/piPeriodicBackfill.test.ts.
 
+**Month-end stock close (GL redesign item 4).** Stock value reaches the GL
+once a month, from the live engine (owner: 可以不可以抓实时的): every night at
+00:05 MYT the cron sweeps the two most recent closed months per company —
+on the 1st that POSTS the pair for the month that just ended
+(`STOCKADJ-{co}-{YYYY-MM}` Dr 330-0000 / Cr 620-0000 dated the last day, and
+`STOCKADJ-REV-…` the mirror dated the 1st of the next month, both active, so
+the month-end TB carries the stock and every month's P&L reads purchases +
+opening − closing), and on every other night it is the cheap re-check that
+heals a late-keyed document by REVERSING the old pair and re-posting — never
+an edit. The replay runs on `inventory_movements.movement_date`, the BUSINESS
+date (migration 20260905T1200 backfilled it: GRN rows from grns.received_at,
+DO rows from dispatch, the rest from their keyed time; writeMovements now
+stamps every new row, GRN passing its received date) — so 迟进的 GRN lands in
+its own month, the owner's first question about the design. Every run —
+including the quiet 'unchanged' — writes `scm.acc_stock_close_runs`, shown on
+the **Month-end** tab of /scm/accounting along with the live value and a
+manual Run. acc/stock-close.ts (engine-gated), route
+accounting-stock-close.ts, cron branch `5 16 * * *` in index.ts; pinned by
+acc/stock-close.test.ts. Month-close LOCKING is deliberately later — the
+owner signs that design off separately.
+
 **A half-failed upload cannot hold its file hostage.** The upload writes the
 batch head first and its lines after; a failure between the two used to leave
 a batch with no lines still owning the file hash, so the SAME file was refused

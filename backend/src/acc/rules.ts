@@ -40,7 +40,8 @@ import { accMastersCompanyId } from './masters-company';
 
 export type AccountRole =
   | 'AR' | 'AR_OTHER' | 'SALES' | 'INVENTORY' | 'AP' | 'AP_OTHER'
-  | 'CASH' | 'BANK_DEFAULT' | 'TRANSIT_EDC' | 'TRANSIT_ONLINE' | 'CUSTOMER_DEPOSITS' | 'OVER_SHORT';
+  | 'CASH' | 'BANK_DEFAULT' | 'TRANSIT_EDC' | 'TRANSIT_ONLINE' | 'CUSTOMER_DEPOSITS' | 'OVER_SHORT'
+  | 'CLOSING_STOCK';
 
 /* Fallback = the accountant's own AutoCount codes (migration 0344; owner
    decision 2026-09-02: 迁到 AutoCount 码). Every company carries these codes,
@@ -60,6 +61,7 @@ export const DEFAULT_ROLE_CODES: Record<AccountRole, string> = {
   TRANSIT_ONLINE: '327-0000',    // ONLINE PAYMENT CLEARING (FPX/E-WALLET)
   CUSTOMER_DEPOSITS: '400-0001', // DEPOSIT (under ACCOUNT PAYABLE)
   OVER_SHORT: '946-0000',        // Cash Over/Short (ERP extension)
+  CLOSING_STOCK: '620-0000',     // STOCKS AT THE END OF YEAR (month-close P&L leg)
 };
 
 /* Control accounts (brief §2.4): system-maintained, and a MANUAL journal may

@@ -232,11 +232,15 @@ export function fakeSb(
          date/timestamp strings order, the use these appear in (accounting's
          entry_date and paid_at windows). */
       gte(col: string, val: unknown) {
-        filters.push((r) => (typeof r[col] === 'number' ? Number(r[col]) >= Number(val) : String(r[col] ?? '') >= String(val)));
+        /* NULL matches NO comparison, as in Postgres. The old `?? ''` fold made
+           a null date row pass every `lte(date)` — which double-counted the
+           migration-window rows the stock close deliberately fetches by a
+           SEPARATE is-null query. */
+        filters.push((r) => r[col] != null && (typeof r[col] === 'number' ? Number(r[col]) >= Number(val) : String(r[col]) >= String(val)));
         return builder;
       },
       lte(col: string, val: unknown) {
-        filters.push((r) => (typeof r[col] === 'number' ? Number(r[col]) <= Number(val) : String(r[col] ?? '') <= String(val)));
+        filters.push((r) => r[col] != null && (typeof r[col] === 'number' ? Number(r[col]) <= Number(val) : String(r[col]) <= String(val)));
         return builder;
       },
       /* PostgREST `like` with SQL wildcards. Only `%` is used in this codebase
