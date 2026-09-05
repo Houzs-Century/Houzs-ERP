@@ -456,7 +456,7 @@ There is also no announcements migration in the D1 tree.
 | `0113_announcement_target_company.sql` | `+ target_company_ids text` + one-time backfill from `company_id` |
 | `0140_announcement_media_layout.sql` | `+ media_layout text` (no backfill; NULL = derive default) |
 | `20260904T1700_announcement_body_html.sql` | `+ body_html text` (no backfill; NULL = plain notice, renders exactly as before) |
-| `20260905T1125_announcement_require_ack_scheduled_at.sql` | `+ require_ack integer NOT NULL DEFAULT 0` (backfilled to 1 for human WARNING / SOP rows) and `+ scheduled_at text` (NULL = posted at once) |
+| `backend/src/db/migrations-pg/20260905T1125_announcement_require_ack_scheduled_at.sql` | `+ require_ack integer NOT NULL DEFAULT 0` (backfilled to 1 for human WARNING / SOP rows) and `+ scheduled_at text` (NULL = posted at once) |
 
 Columns that matter:
 
