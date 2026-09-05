@@ -249,11 +249,12 @@
    "model": "8069",
    "pieces": [
     "1A(LHF)",
-    "2A(RHF)"
+    "2A(RHF)",
+    "1NA"
    ],
    "seat": "24",
    "desc2Match": "Col:BO315-7 Peach",
-   "why": "photo: the slip draws [24\"] + [24\"][24\"] with a hatched arm at each outer end - a one plus a two, the same shape as the owner-approved HC-SO-012624. The slip's 'Seater depth +1 inch foam, total seater depth 49\"' is a special order, not a piece"
+   "why": "owner 2026-09-05, reading the slip himself: 1A(LHF)+2A(RHF)+1NA at 24\". My own reading of the same photograph was 1A(LHF)+2A(RHF) - I missed the armless seat, which is the third time today I got the piece COUNT wrong on a drawing that is not a plain row with an arm at each end. The slip's 'Seater depth +1 inch foam, total 49\"' is a special order, not a piece."
   }
  ]
 }
