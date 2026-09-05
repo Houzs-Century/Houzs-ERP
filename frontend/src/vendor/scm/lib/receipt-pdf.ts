@@ -14,6 +14,7 @@ import {
   drawHeader, drawTwoColInfo, drawSignatureBoxes, deliverPdf,
   amountInWordsMyr, fmtRm, fmtDocDate, safeName, type PdfAction,
 } from './pdf-common';
+import { PAYMENT_METHOD_DEFAULT_LABELS } from '@2990s/shared/payment-methods';
 
 export type ReceiptPdfData = {
   or_number: string;
@@ -27,12 +28,12 @@ export type ReceiptPdfData = {
   issued_by: string | null;
 };
 
-const METHOD_LABEL: Record<string, string> = {
-  cash: 'Cash',
-  merchant: 'Card (merchant terminal)',
-  installment: 'Card (installment)',
-  transfer: 'Online transfer',
-};
+/* The SHARED method vocabulary — the same labels the payment rows render, so
+   the receipt cannot call a method something the recording screen does not.
+   The widened value type makes the miss (an unknown method string on an old
+   row) visible to the compiler; noUncheckedIndexedAccess is off here. */
+const labelOf: Record<string, string | undefined> = { ...PAYMENT_METHOD_DEFAULT_LABELS };
+const methodLabel = (m: string | null): string => (m ? labelOf[m] ?? m : '—');
 
 export async function generateReceiptPdf(r: ReceiptPdfData, opts?: { action?: PdfAction }): Promise<void> {
   const { jsPDF } = await import('jspdf');
@@ -52,7 +53,7 @@ export async function generateReceiptPdf(r: ReceiptPdfData, opts?: { action?: Pd
       r.doc_no ? `For: ${r.doc_no}` : null,
     ],
     [
-      `Method: ${METHOD_LABEL[String(r.method ?? '')] ?? (r.method || '—')}`,
+      `Method: ${methodLabel(r.method)}`,
       `Amount: ${fmtRm(r.amount_sen)}`,
       r.status === 'FORMAL' && r.issued_by
         ? `Confirmed by: ${r.issued_by}${r.issued_at ? ` · ${fmtDocDate(r.issued_at)}` : ''}`
