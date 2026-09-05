@@ -1,5 +1,6 @@
-import { useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef, type PointerEvent as ReactPointerEvent } from "react";
 import { Search } from "lucide-react";
+import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { AnnouncementMedia } from "../../components/AnnouncementMedia";
 import { AnnouncementRichBody } from "../../components/AnnouncementRichBody";
 import { cn, relativeTime } from "../../lib/utils";
@@ -22,10 +23,16 @@ import {
 
 // ────────────────────────────────────────────────────────────────────────────
 // InboxView — the reader's default view of /announcements (design handoff
-// 2026-09-04, screen 1): a 396px list on the left — pinned "Needs your
+// 2026-09-04, screen 1): a list on the left — pinned "Needs your
 // confirmation" group, Recent, and the permanent SOP Library grouped by
 // department — and a reading pane on the right with the read-receipts card
 // (writers only) and the sticky acknowledge bar (pending notices only).
+//
+// The list column is 396px by design and RESIZABLE by the reader (owner ask
+// 2026-09-05: "可以自主调整大小"): a drag handle on its right edge, clamped
+// to [LIST_WIDTH_MIN, LIST_WIDTH_MAX], double-click resets, remembered per
+// user in localStorage. Rows never scroll sideways — a title that does not
+// fit wraps onto the next line, whatever the width.
 //
 // Presentational: every fact (what is addressed to me, what I have acked, who
 // may manage) arrives as props so the page owns the fetches and this file can
@@ -65,6 +72,27 @@ export type InboxViewProps = {
   className?: string;
 };
 
+/** The design's list width, and the range a reader may drag it to. */
+export const LIST_WIDTH_DEFAULT = 396;
+export const LIST_WIDTH_MIN = 260;
+export const LIST_WIDTH_MAX = 640;
+
+/** Any stored / dragged value → a width inside the allowed range. */
+export function clampListWidth(v: unknown): number {
+  const n = typeof v === "number" ? v : Number(v);
+  if (!Number.isFinite(n)) return LIST_WIDTH_DEFAULT;
+  return Math.min(LIST_WIDTH_MAX, Math.max(LIST_WIDTH_MIN, Math.round(n)));
+}
+
+export function listWidthStorageKey(userId: number | null): string {
+  return `announcements:inbox-width:u${userId ?? 0}`;
+}
+
+// Every list row: a 3px category rail + content that may SHRINK below its
+// intrinsic width (minmax(0,1fr)), so long titles wrap instead of pushing the
+// column into a horizontal scroll.
+const ROW_GRID = "grid shrink-0 cursor-pointer grid-cols-[3px_minmax(0,1fr)] border-b border-border-subtle";
+
 // Pill geometry shared by the list rows and the reading pane.
 const PILL =
   "inline-flex items-center rounded-full px-[7px] py-[2px] text-[9.5px] font-bold uppercase tracking-[.06em]";
@@ -91,10 +119,65 @@ export function InboxView(p: InboxViewProps) {
     ? p.items.find((a) => a.id === p.selectedId) ?? null
     : null;
 
+  // ── Resizable list column ──────────────────────────────────────────────
+  const [listWidth, setListWidth] = useLocalStorage<number>(
+    listWidthStorageKey(p.currentUserId),
+    LIST_WIDTH_DEFAULT,
+    undefined,
+    clampListWidth,
+  );
+  const drag = useRef<{ startX: number; startW: number } | null>(null);
+  const onDragMove = useCallback(
+    (e: PointerEvent) => {
+      const d = drag.current;
+      if (!d) return;
+      setListWidth(clampListWidth(d.startW + (e.clientX - d.startX)));
+    },
+    [setListWidth],
+  );
+  const endDrag = useCallback(() => {
+    if (!drag.current) return;
+    drag.current = null;
+    document.body.style.cursor = "";
+    document.body.style.userSelect = "";
+    window.removeEventListener("pointermove", onDragMove);
+    window.removeEventListener("pointerup", endDrag);
+  }, [onDragMove]);
+  const startDrag = useCallback(
+    (e: ReactPointerEvent<HTMLDivElement>) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      drag.current = { startX: e.clientX, startW: listWidth };
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+      window.addEventListener("pointermove", onDragMove);
+      window.addEventListener("pointerup", endDrag);
+    },
+    [listWidth, onDragMove, endDrag],
+  );
+  useEffect(() => endDrag, [endDrag]);
+  const nudge = useCallback(
+    (e: React.KeyboardEvent<HTMLDivElement>) => {
+      const step = e.shiftKey ? 40 : 16;
+      if (e.key === "ArrowLeft") setListWidth((w) => clampListWidth(w - step));
+      else if (e.key === "ArrowRight") setListWidth((w) => clampListWidth(w + step));
+      else if (e.key === "Home") setListWidth(LIST_WIDTH_DEFAULT);
+      else return;
+      e.preventDefault();
+    },
+    [setListWidth],
+  );
+
   return (
-    <div className={cn("grid min-h-0 grid-cols-[396px_1fr]", p.className)}>
+    <div
+      className={cn("grid min-h-0", p.className)}
+      style={{ gridTemplateColumns: `${listWidth}px 7px minmax(0,1fr)` }}
+    >
       {/* ── Left list ──────────────────────────────────────────────────── */}
-      <div className="flex min-h-0 flex-col overflow-auto border-r border-border bg-surface">
+      <div
+        className="flex min-h-0 min-w-0 flex-col overflow-y-auto overflow-x-hidden bg-surface"
+        data-testid="inbox-list"
+      >
         <div className="flex shrink-0 flex-col gap-2.5 px-3.5 py-3">
           <label className="flex items-center gap-2 rounded-md border border-border bg-surface-2 px-2.5 py-2">
             <Search size={13} className="shrink-0 text-ink-muted" />
@@ -211,8 +294,29 @@ export function InboxView(p: InboxViewProps) {
         )}
       </div>
 
+      {/* ── Drag handle: the list's right edge ─────────────────────────── */}
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize the notice list"
+        aria-valuemin={LIST_WIDTH_MIN}
+        aria-valuemax={LIST_WIDTH_MAX}
+        aria-valuenow={listWidth}
+        tabIndex={0}
+        title="Drag to resize · double-click to reset"
+        onPointerDown={startDrag}
+        onDoubleClick={() => setListWidth(LIST_WIDTH_DEFAULT)}
+        onKeyDown={nudge}
+        className="group relative z-10 -ml-px flex cursor-col-resize items-center justify-center border-l border-border bg-surface outline-none hover:bg-primary/10 focus-visible:bg-primary/10 active:bg-primary/20"
+      >
+        <span
+          aria-hidden
+          className="h-8 w-[3px] rounded-full bg-border transition-colors group-hover:bg-primary/60 group-focus-visible:bg-primary/60"
+        />
+      </div>
+
       {/* ── Reading pane ───────────────────────────────────────────────── */}
-      <div className="flex min-h-0 flex-col bg-bg">
+      <div className="flex min-h-0 min-w-0 flex-col bg-bg">
         {selected ? (
           <ReadingPane
             a={selected}
@@ -297,10 +401,7 @@ function PinnedRow({
         }
       }}
       aria-pressed={selected}
-      className={cn(
-        "grid shrink-0 cursor-pointer grid-cols-[3px_1fr] border-b border-border-subtle",
-        selected ? "bg-primary-soft" : "bg-surface hover:bg-surface-dim",
-      )}
+      className={cn(ROW_GRID, selected ? "bg-primary-soft" : "bg-surface hover:bg-surface-dim")}
     >
       <div className={meta.railCls} />
       <div className="flex flex-col gap-[5px] px-3.5 py-[11px]">
@@ -310,7 +411,7 @@ function PinnedRow({
             {relativeTime(a.createdAt)}
           </span>
         </div>
-        <span className="text-[13.5px] font-[680] leading-[1.35] text-ink">{a.title}</span>
+        <span className="break-words text-[13.5px] font-[680] leading-[1.35] text-ink">{a.title}</span>
         {a.body && (
           <span className="line-clamp-2 text-[11.5px] leading-[1.45] text-ink-secondary">
             {a.body}
@@ -350,10 +451,7 @@ function RecentRow({
         }
       }}
       aria-pressed={selected}
-      className={cn(
-        "grid shrink-0 cursor-pointer grid-cols-[3px_1fr] border-b border-border-subtle",
-        selected ? "bg-primary-soft" : "bg-surface hover:bg-surface-dim",
-      )}
+      className={cn(ROW_GRID, selected ? "bg-primary-soft" : "bg-surface hover:bg-surface-dim")}
     >
       <div />
       <div className="flex flex-col gap-1 px-3.5 py-2.5">
@@ -375,7 +473,7 @@ function RecentRow({
             {relativeTime(a.createdAt)}
           </span>
         </div>
-        <span className="text-[13px] font-semibold leading-[1.35] text-ink-secondary">
+        <span className="break-words text-[13px] font-semibold leading-[1.35] text-ink-secondary">
           {a.title}
         </span>
         <span className="text-[11px] text-ink-muted">{byLine(a, lookups)}</span>
@@ -405,17 +503,14 @@ function SopRow({
         }
       }}
       aria-pressed={selected}
-      className={cn(
-        "grid shrink-0 cursor-pointer grid-cols-[3px_1fr] border-b border-border-subtle",
-        selected ? "bg-primary-soft" : "bg-surface hover:bg-surface-dim",
-      )}
+      className={cn(ROW_GRID, selected ? "bg-primary-soft" : "bg-surface hover:bg-surface-dim")}
     >
       <div className="bg-accent" />
-      <div className="flex items-center gap-2 px-3.5 py-[9px]">
-        <span className="min-w-0 flex-1 truncate text-[12.5px] font-semibold text-ink-secondary">
+      <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5 px-3.5 py-[9px]">
+        <span className="min-w-0 flex-1 basis-[12ch] break-words text-[12.5px] font-semibold leading-[1.35] text-ink-secondary">
           {a.title}
         </span>
-        <span className="whitespace-nowrap font-mono text-[9.5px] text-ink-muted">{docNo(a)}</span>
+        <span className="ml-auto shrink-0 font-mono text-[9.5px] text-ink-muted">{docNo(a)}</span>
       </div>
     </div>
   );

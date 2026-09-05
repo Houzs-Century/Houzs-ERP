@@ -1,6 +1,14 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { InboxView, type InboxViewProps } from "./InboxView";
+import {
+  InboxView,
+  LIST_WIDTH_DEFAULT,
+  LIST_WIDTH_MAX,
+  LIST_WIDTH_MIN,
+  clampListWidth,
+  listWidthStorageKey,
+  type InboxViewProps,
+} from "./InboxView";
 import type { Announcement } from "./announcementModel";
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -72,6 +80,76 @@ function props(over: Partial<InboxViewProps> = {}): InboxViewProps {
     ...over,
   };
 }
+
+// jsdom's PointerEvent carries no clientX through fireEvent, so the drag is
+// driven with MouseEvents of the pointer type names — React's onPointerDown
+// and the window listeners only key on the event type.
+function pointer(target: EventTarget, type: string, clientX: number) {
+  act(() => {
+    target.dispatchEvent(new MouseEvent(type, { bubbles: true, clientX, button: 0 }));
+  });
+}
+
+describe("InboxView list column width (owner ask 2026-09-05: resizable, rows wrap)", () => {
+  it("clamps any stored value into the allowed range and falls back to the design width", () => {
+    expect(clampListWidth(undefined)).toBe(LIST_WIDTH_DEFAULT);
+    expect(clampListWidth("garbage")).toBe(LIST_WIDTH_DEFAULT);
+    expect(clampListWidth(10)).toBe(LIST_WIDTH_MIN);
+    expect(clampListWidth(5000)).toBe(LIST_WIDTH_MAX);
+    expect(clampListWidth(420.6)).toBe(421);
+  });
+
+  it("drags the handle to change the column and remembers it per user", () => {
+    localStorage.removeItem(listWidthStorageKey(1));
+    const { container } = render(<InboxView {...props()} />);
+    const grid = container.firstElementChild as HTMLElement;
+    expect(grid.style.gridTemplateColumns).toBe(`${LIST_WIDTH_DEFAULT}px 7px minmax(0,1fr)`);
+    const handle = screen.getByRole("separator", { name: "Resize the notice list" });
+    expect(handle.getAttribute("aria-valuenow")).toBe(String(LIST_WIDTH_DEFAULT));
+
+    pointer(handle, "pointerdown", 400);
+    pointer(window, "pointermove", 500);
+    pointer(window, "pointerup", 500);
+    expect(grid.style.gridTemplateColumns).toBe(`${LIST_WIDTH_DEFAULT + 100}px 7px minmax(0,1fr)`);
+    expect(JSON.parse(localStorage.getItem(listWidthStorageKey(1)) ?? "0")).toBe(LIST_WIDTH_DEFAULT + 100);
+
+    // Past the maximum stops at the maximum; a double-click resets.
+    pointer(handle, "pointerdown", 500);
+    pointer(window, "pointermove", 5000);
+    pointer(window, "pointerup", 5000);
+    expect(handle.getAttribute("aria-valuenow")).toBe(String(LIST_WIDTH_MAX));
+    fireEvent.doubleClick(handle);
+    expect(handle.getAttribute("aria-valuenow")).toBe(String(LIST_WIDTH_DEFAULT));
+
+    // Keyboard: arrows nudge, Home resets.
+    fireEvent.keyDown(handle, { key: "ArrowLeft" });
+    expect(handle.getAttribute("aria-valuenow")).toBe(String(LIST_WIDTH_DEFAULT - 16));
+    fireEvent.keyDown(handle, { key: "Home" });
+    expect(handle.getAttribute("aria-valuenow")).toBe(String(LIST_WIDTH_DEFAULT));
+  });
+
+  it("restores a remembered width on mount", () => {
+    localStorage.setItem(listWidthStorageKey(1), "480");
+    const { container } = render(<InboxView {...props()} />);
+    expect((container.firstElementChild as HTMLElement).style.gridTemplateColumns).toBe(
+      "480px 7px minmax(0,1fr)",
+    );
+    localStorage.removeItem(listWidthStorageKey(1));
+  });
+
+  it("rows can shrink below their content width so titles wrap, never scroll sideways", () => {
+    const { container } = render(<InboxView {...props()} />);
+    const list = screen.getByTestId("inbox-list");
+    expect(list.className).toContain("overflow-x-hidden");
+    const rows = container.querySelectorAll("[role='button'][aria-pressed]");
+    expect(rows.length).toBeGreaterThan(0);
+    rows.forEach((r) => expect(r.className).toContain("grid-cols-[3px_minmax(0,1fr)]"));
+    // The SOP row's title wraps (no truncate) and keeps its doc number.
+    const sop = screen.getByText("Bin transfer freeze rules");
+    expect(sop.className).not.toContain("truncate");
+    expect(sop.className).toContain("break-words");
+  });
+});
 
 describe("InboxView", () => {
   it("splits the list into the pinned group, Recent and the SOP Library by department", () => {
