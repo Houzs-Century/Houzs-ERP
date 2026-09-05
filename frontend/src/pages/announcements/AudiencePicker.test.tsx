@@ -1,6 +1,16 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { AudiencePicker, EMPTY_AUDIENCE, audienceSummary, membersOf, type AudienceValue } from "./AudiencePicker";
+import {
+  AudiencePicker,
+  EMPTY_AUDIENCE,
+  activeExclusions,
+  audienceSummary,
+  groupByDivision,
+  membersOf,
+  personMatches,
+  resolveRecipients,
+  type AudienceValue,
+} from "./AudiencePicker";
 import type { Department, TeamMember } from "../../types";
 
 /* The composer's three-column audience (design handoff 2026-09-04). Pins the
@@ -31,10 +41,11 @@ function member(id: number, name: string, dept: number, position: string): TeamM
   } as TeamMember;
 }
 const USERS = [
-  member(11, "Siti Aminah", 2, "Storekeeper"),
-  member(12, "Ravi Kumaran", 2, "Storekeeper"),
+  { ...member(11, "Siti Aminah", 2, "Storekeeper"), division: "Inbound" } as TeamMember,
+  { ...member(12, "Ravi Kumaran", 2, "Storekeeper"), division: "Outbound" } as TeamMember,
   member(13, "Cheah Mei Ling", 1, "Sales Executive"),
   { ...member(14, "Gone", 2, "Storekeeper"), status: "disabled" } as TeamMember,
+  member(15, "Tan Ah Kow", 2, "Forklift Driver"),
 ];
 const COMPANIES = [
   { id: 1, code: "HC", name: "Houzs Century" },
@@ -54,7 +65,7 @@ describe("audienceSummary", () => {
   });
 
   it("membersOf lists active members of the department only", () => {
-    expect(membersOf(USERS, 2).map((u) => u.id)).toEqual([11, 12]);
+    expect(membersOf(USERS, 2).map((u) => u.id)).toEqual([11, 12, 15]);
     expect(membersOf(USERS, null)).toEqual([]);
   });
 });
@@ -103,6 +114,64 @@ describe("AudiencePicker", () => {
     setup({ ...EMPTY_AUDIENCE, allStaff: true });
     expect((screen.getByRole("button", { name: /Warehouse/ }) as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByRole("button", { name: /Cheah Mei Ling/ }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  // ---- owner feedback 2026-09-05: divisions, search, untick under a department
+
+  it("groups the people column by division, unnamed last, with a tick-all per group", () => {
+    const { onChange } = setup(EMPTY_AUDIENCE);
+    // Focus Warehouse (column three follows the focus, not the tick).
+    fireEvent.click(screen.getByRole("button", { name: /Warehouse/ }));
+    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ deptIds: [2] }));
+    const groups = groupByDivision(membersOf(USERS, 2));
+    expect(groups.map((g) => g.division)).toEqual(["Inbound", "Outbound", ""]);
+    expect(groups[2].members.map((m) => m.name)).toEqual(["Tan Ah Kow"]);
+  });
+
+  it("the search box filters people by name / position / division", () => {
+    expect(personMatches(USERS[0], "siti")).toBe(true);
+    expect(personMatches(USERS[0], "INBOUND")).toBe(true);
+    expect(personMatches(USERS[0], "forklift")).toBe(false);
+    expect(personMatches(USERS[4], "forklift")).toBe(true);
+    expect(personMatches(USERS[4], "")).toBe(true);
+  });
+
+  it("under a SELECTED department a person can be unticked, and ticked back", () => {
+    const value: AudienceValue = { ...EMPTY_AUDIENCE, deptIds: [1] };
+    const { onChange } = setup(value);
+    // Sales is both the first (focused) department and selected: Cheah shows ticked.
+    const row = screen.getByRole("button", { name: /Cheah Mei Ling/ }) as HTMLButtonElement;
+    expect(row.disabled).toBe(false);
+    expect(row.getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(row);
+    expect(onChange).toHaveBeenLastCalledWith(
+      expect.objectContaining({ excludedUserIds: [13], userIds: [] }),
+    );
+  });
+
+  it("re-ticking an unticked person clears the exclusion; unticking the department forgets it", () => {
+    const value: AudienceValue = { ...EMPTY_AUDIENCE, deptIds: [1], excludedUserIds: [13] };
+    const { onChange } = setup(value);
+    const row = screen.getByRole("button", { name: /Cheah Mei Ling/ });
+    expect(row.getAttribute("aria-pressed")).toBe("false");
+    fireEvent.click(row);
+    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ excludedUserIds: [] }));
+    fireEvent.click(screen.getByRole("button", { name: /^Sales/ }));
+    expect(onChange).toHaveBeenLastCalledWith(
+      expect.objectContaining({ deptIds: [], excludedUserIds: [] }),
+    );
+  });
+
+  it("resolves recipients client-side only when something was unticked", () => {
+    const plain: AudienceValue = { ...EMPTY_AUDIENCE, deptIds: [2], userIds: [13] };
+    expect(activeExclusions(plain, USERS)).toEqual([]);
+    const withUntick: AudienceValue = { ...plain, excludedUserIds: [12, 13] };
+    // 13 is not a Warehouse member, so that exclusion is inert; 12 counts.
+    expect(activeExclusions(withUntick, USERS)).toEqual([12]);
+    expect(resolveRecipients(withUntick, USERS).sort()).toEqual([11, 15]);
+    expect(audienceSummary(withUntick, COMPANIES, DEPTS, USERS)).toBe(
+      "Warehouse · 1 unticked · All companies",
+    );
   });
 
   it("a Sales-Director-only composer has no company column and no All staff", () => {

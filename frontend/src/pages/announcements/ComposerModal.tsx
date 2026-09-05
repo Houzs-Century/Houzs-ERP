@@ -18,7 +18,9 @@ import { DateTimeField } from "../../vendor/scm/components/DateTimeField";
 import {
   AudiencePicker,
   EMPTY_AUDIENCE,
+  activeExclusions,
   audienceSummary,
+  resolveRecipients,
   type AudienceValue,
 } from "./AudiencePicker";
 import {
@@ -83,7 +85,12 @@ export function readDraft(key: string): ComposerDraft | null {
       attachments: Array.isArray(d.attachments) ? d.attachments : [],
       scheduledAt: typeof d.scheduledAt === "string" ? d.scheduledAt : "",
       expiresAt: typeof d.expiresAt === "string" ? d.expiresAt : "",
-      audience: { ...EMPTY_AUDIENCE, ...(d.audience ?? {}) },
+      audience: {
+        ...EMPTY_AUDIENCE,
+        ...(d.audience ?? {}),
+        // Drafts saved before 2026-09-05 have no exclusion list.
+        excludedUserIds: Array.isArray(d.audience?.excludedUserIds) ? d.audience.excludedUserIds : [],
+      },
       photoLayout: d.photoLayout === "1" || d.photoLayout === "2" || d.photoLayout === "3" || d.photoLayout === "4" ? d.photoLayout : "",
       videoLayout: d.videoLayout === "1x2" ? "1x2" : "1x1",
     };
@@ -92,10 +99,18 @@ export function readDraft(key: string): ComposerDraft | null {
   }
 }
 
-/** The request body for POST /api/announcements, or an error to show. */
+/**
+ * The request body for POST /api/announcements, or an error to show.
+ *
+ * `users` is the roster the picker showed. It is only consulted when someone
+ * was unticked under a selected department: the backend has no exclusion
+ * list, so that department is expanded here into its remaining members and
+ * sent as targetUserIds (owner ask 2026-09-05, "people 那边要可以 untick").
+ */
 export function buildPostBody(
   d: Omit<ComposerDraft, "savedAt">,
   salesDirOnly: boolean,
+  users: TeamMember[] = [],
 ): { ok: true; body: Record<string, unknown> } | { ok: false; error: string } {
   const title = d.title.trim();
   if (!title) return { ok: false, error: "Title is required" };
@@ -117,8 +132,16 @@ export function buildPostBody(
     attachments: d.attachments,
   };
   if (!a.allStaff) {
-    if (a.deptIds.length) body.targetDeptIds = a.deptIds;
-    if (a.userIds.length) body.targetUserIds = a.userIds;
+    if (activeExclusions(a, users).length > 0) {
+      const ids = resolveRecipients(a, users);
+      if (ids.length === 0) {
+        return { ok: false, error: "Everyone in the picked departments is unticked — nobody would receive this." };
+      }
+      body.targetUserIds = ids;
+    } else {
+      if (a.deptIds.length) body.targetDeptIds = a.deptIds;
+      if (a.userIds.length) body.targetUserIds = a.userIds;
+    }
   }
   if (!salesDirOnly && a.companyId != null) body.targetCompanyIds = [a.companyId];
   if (d.scheduledAt) {
@@ -333,7 +356,7 @@ export function ComposerModal(p: ComposerModalProps) {
   );
 
   async function post() {
-    const built = buildPostBody(draft, p.salesDirOnly);
+    const built = buildPostBody(draft, p.salesDirOnly, p.users);
     if (!built.ok) {
       toast.error(built.error);
       return;
@@ -371,7 +394,7 @@ export function ComposerModal(p: ComposerModalProps) {
       onMouseDown={p.onClose}
     >
       <div
-        className="my-2 flex max-h-[calc(100dvh-3rem)] w-full max-w-[1060px] flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-slab"
+        className="my-2 flex max-h-[calc(100dvh-3rem)] w-full max-w-[1280px] flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-slab"
         onMouseDown={(e) => e.stopPropagation()}
       >
         {/* ── Header ───────────────────────────────────────────────────── */}
@@ -392,7 +415,7 @@ export function ComposerModal(p: ComposerModalProps) {
           </button>
         </div>
 
-        <div className="grid min-h-0 flex-1 grid-cols-[1fr_360px]">
+        <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_520px]">
           {/* ── Editor column ─────────────────────────────────────────── */}
           <div className="flex min-h-0 flex-col gap-3.5 overflow-auto border-r border-border px-[18px] py-4">
             <div className="flex flex-wrap items-center gap-2">
@@ -607,7 +630,9 @@ export function ComposerModal(p: ComposerModalProps) {
             </div>
             <div className="flex flex-col gap-[9px] border-t border-border bg-surface-2 px-4 py-[11px]">
               <span className="text-[11px] text-ink-secondary">
-                Recipients resolve at post time. Overdue acknowledgements escalate to each person's supervisor.
+                {activeExclusions(audience, p.users).length > 0
+                  ? "Unticked people are left out by naming the rest of the department individually — someone who joins that department later is not added. Overdue acknowledgements escalate to each person's supervisor."
+                  : "Recipients resolve at post time. Overdue acknowledgements escalate to each person's supervisor."}
               </span>
               <div className="flex gap-2">
                 <button

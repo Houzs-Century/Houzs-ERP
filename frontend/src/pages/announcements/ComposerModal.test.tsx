@@ -67,6 +67,31 @@ describe("buildPostBody", () => {
     expect(r.body.scheduledAt).toBeUndefined();
   });
 
+  it("an unticked person turns the department into an explicit people list (no exclusion list server-side)", () => {
+    const users = [
+      { id: 7, name: "A", email: "a@x", status: "active", department_id: 2 },
+      { id: 8, name: "B", email: "b@x", status: "active", department_id: 2 },
+      { id: 9, name: "C", email: "c@x", status: "active", department_id: 3 },
+    ] as unknown as import("../../types").TeamMember[];
+    const r = buildPostBody(
+      { ...base, audience: { ...EMPTY_AUDIENCE, deptIds: [2], userIds: [9], excludedUserIds: [7] } },
+      false,
+      users,
+    );
+    expect(r.ok && r.body.targetDeptIds).toBeUndefined();
+    expect(r.ok && (r.body.targetUserIds as number[]).sort()).toEqual([8, 9]);
+    // Everyone unticked → refused rather than silently sending to nobody.
+    const none = buildPostBody(
+      { ...base, audience: { ...EMPTY_AUDIENCE, deptIds: [2], userIds: [], excludedUserIds: [7, 8] } },
+      false,
+      users,
+    );
+    expect(none.ok).toBe(false);
+    // Without the roster the exclusion cannot be resolved and the plain mapping stands.
+    const noRoster = buildPostBody({ ...base, audience: { ...base.audience, excludedUserIds: [7] } }, false);
+    expect(noRoster.ok && noRoster.body.targetDeptIds).toEqual([2]);
+  });
+
   it("All staff sends no target; nobody picked is refused; a Sales Director never sends a company", () => {
     const all = buildPostBody({ ...base, audience: { ...EMPTY_AUDIENCE, allStaff: true } }, false);
     expect(all.ok && all.body.targetDeptIds === undefined && all.body.targetUserIds === undefined).toBe(true);
