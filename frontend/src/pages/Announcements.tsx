@@ -38,7 +38,6 @@ import {
   AnnouncementMedia,
   type PhotoLayout,
   type VideoLayout,
-  type AnnMediaLayout,
 } from "../components/AnnouncementMedia";
 import { fmtDateTime } from "../vendor/shared/format";
 import { DateTimeField } from "../vendor/scm/components/DateTimeField";
@@ -49,50 +48,24 @@ import {
   ANNOUNCEMENT_STATUS_LABEL,
   announcementStatus,
 } from "../lib/announcementStatus";
+import { useAnnouncementBanner } from "../components/useAnnouncementBanner";
+import { InboxView } from "./announcements/InboxView";
+import {
+  bucketInbox,
+  companyScopeLabel,
+  type Announcement,
+  type AnnouncementCategory,
+  type Attachment,
+  type Company,
+  type InboxFilter,
+  type NameLookups,
+} from "./announcements/announcementModel";
 
 // ────────────────────────────────────────────────────────────────────────────
-// Domain types — mirrors backend/src/routes/announcements.ts public shape.
+// Domain types — the notice itself lives in announcements/announcementModel.ts
+// (mirrors backend/src/routes/announcements.ts public shape); only the
+// read-receipt payload is local to this file.
 // ────────────────────────────────────────────────────────────────────────────
-type Attachment = {
-  r2Key: string;
-  name: string;
-  mime: string;
-  size?: number;
-};
-
-type TargetType =
-  | "ALL_USERS"
-  | "DEPARTMENT_IDS"
-  | "POSITION_IDS"
-  | "USER_IDS"
-  | "MIXED";
-
-type AnnouncementCategory = "GENERAL" | "WARNING" | "SOP" | "LEARNING";
-
-type Announcement = {
-  id: string;
-  title: string;
-  body: string;
-  /** Canonical rich fragment, or null for a plain notice (see
-   *  lib/announcementRichText.ts). `body` is always its plain-text shadow. */
-  bodyHtml?: string | null;
-  isActive: boolean;
-  expiresAt: string | null;
-  createdAt: string | null;
-  createdBy: number | null;
-  remindedAt: string | null;
-  updatedAt: string | null;
-  attachments?: Attachment[];
-  mediaLayout?: AnnMediaLayout;
-  targetType?: TargetType;
-  targetDeptIds?: number[];
-  targetPositionIds?: number[];
-  targetUserIds?: number[];
-  targetCompanyIds?: number[];
-  category?: AnnouncementCategory;
-};
-
-type Company = { id: number; code: string; name: string };
 type CompaniesResponse = { companies?: Company[] };
 
 type ListResponse = { success?: boolean; data?: Announcement[] };
@@ -115,7 +88,9 @@ type AcksResponse = {
 };
 
 // ────────────────────────────────────────────────────────────────────────────
-// Constants — category metadata mirrors Hookka's ANNOUNCEMENT_CATEGORIES.
+// Constants — category metadata for the LEGACY composer / Manage list below
+// (bordered outline pills). The redesigned surfaces read the shared
+// components/announcementCategory.ts table instead.
 // ────────────────────────────────────────────────────────────────────────────
 const CATEGORY_ORDER: AnnouncementCategory[] = [
   "GENERAL",
@@ -178,22 +153,6 @@ function CategoryBadge({ category }: { category: AnnouncementCategory }) {
   );
 }
 
-// Resolve the company-scope of a notice to a compact chip label. Empty target
-// (or one covering every company) = "Both"/"All"; a subset lists the codes.
-function companyScopeLabel(
-  ids: number[] | undefined,
-  companies: Company[],
-): string {
-  const list = ids ?? [];
-  if (companies.length === 0) return "";
-  if (list.length === 0 || list.length >= companies.length) {
-    return companies.length === 2 ? "Both" : "All companies";
-  }
-  return list
-    .map((id) => companies.find((co) => co.id === id)?.code ?? `#${id}`)
-    .join(" / ");
-}
-
 // A small company-scope chip shown on each row (multi-company only).
 function CompanyBadge({
   ids,
@@ -212,34 +171,39 @@ function CompanyBadge({
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// Page
+// Page — two modes on one route (design handoff 2026-09-04): Reading (the
+// inbox every signed-in user gets) and Manage (ack rates + drill-down, behind
+// announcements.write). The selected notice is shared across both.
 // ────────────────────────────────────────────────────────────────────────────
+type Mode = "read" | "manage";
+
 export function Announcements() {
   const { can, user } = useAuth();
   const toast = useToast();
+  const dialog = useDialog();
   // A Sales Director may compose (owner rule 2026-07-15) even though their
   // POSITION carries no announcements.* permission — code-keyed off the org
   // chart, mirroring the backend requirePermissionOrSalesDirector admittance.
   // `salesDirOnly` = admitted purely as a Sales Director (no full grant): their
-  // composer is constrained to the Sales department / a specific salesperson.
+  // composer is constrained to the Sales department / a specific salesperson,
+  // and they manage only the notices they authored.
   const isSalesDir = isSalesDirectorUser(user);
   const canWrite = can("announcements.write") || isSalesDir;
   const salesDirOnly = isSalesDir && !can("announcements.write");
+  const currentUserId = user?.id ?? null;
 
   // NOTE: this fetch is unbounded (no LIMIT/pagination) — the backend returns
-  // every announcement. Capping it server-side is a separate follow-up; the DOM
-  // list below is windowed so a large payload no longer freezes rendering.
+  // every announcement. Capping it server-side is a separate follow-up.
   const listQ = useQuery<ListResponse>("/api/announcements", () => api.get("/api/announcements"));
-  const items = listQ.data?.data ?? [];
+  const items = useMemo(() => listQ.data?.data ?? [], [listQ.data]);
 
-  // Lookups for the audience pickers + the "To: …" pill resolver. All three sit
+  // Lookups for the audience pickers + the "To: …" resolver. All three sit
   // behind users.read on the backend, which a plain reader does not hold — and
   // since 2026-07-21 this page is open to EVERY authed user, so firing them
-  // unconditionally would mean three guaranteed 403s (times TanStack's retries)
-  // on every ordinary staffer's page load. Off, not hidden: `enabled: canWrite`
-  // means the requests are never made. Nothing is lost — a 403 resolves to the
-  // same empty array these consumers already fall back to, so the "To: …" pill
-  // renders identically either way, and only a writer has a picker to fill.
+  // unconditionally would mean three guaranteed 403s on every ordinary
+  // staffer's page load. Off, not hidden: `enabled: canWrite` means the
+  // requests are never made. A reader's "To:" label falls back to the
+  // server-resolved department names / counts (see audienceLabel).
   const usersQ = useQuery<{ users: TeamMember[] }>("/api/users", () => api.get("/api/users"), [], {
     enabled: canWrite,
   });
@@ -255,8 +219,8 @@ export function Announcements() {
     [],
     { enabled: canWrite },
   );
-  // Multi-company: the company-target selector + row chip only appear when the
-  // companies master returns MORE THAN ONE company (mirrors the top-bar
+  // Multi-company: the company-target selector + scope chip only appear when
+  // the companies master returns MORE THAN ONE company (mirrors the top-bar
   // CompanySwitcher no-op rule). Single-company Houzs shows neither.
   const companiesQ = useQuery<CompaniesResponse>("/api/companies", () =>
     api.get("/api/companies"),
@@ -267,17 +231,136 @@ export function Announcements() {
   const positions = positionsQ.data?.positions ?? [];
   const companies = companiesQ.data?.companies ?? [];
 
-  // Owner rule 2026-07-18: Create is a BUTTON, not an always-open form. The
-  // composer now lives behind a modal opened from the header CTA — the page
-  // opens on the history list, which is the primary surface.
+  const lookups = useMemo<NameLookups>(
+    () => ({
+      departments: new Map(depts.map((d) => [d.id, d.name])),
+      positions: new Map(positions.map((p) => [p.id, p.name])),
+      users: new Map(users.map((u) => [u.id, u.name || u.email])),
+    }),
+    [depts, positions, users],
+  );
+
+  // What is addressed to me / what I have acked — the SAME
+  // answers the mandatory modal at the app root computes, from the same
+  // shared cache entry, so the inbox can never disagree with the modal.
+  const banner = useAnnouncementBanner({ scope: "human" });
+
+  const [mode, setMode] = useState<Mode>("read");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [filter, setFilter] = useState<InboxFilter>("all");
+  const [search, setSearch] = useState("");
+
+  // Default selection once the list lands: the first notice waiting on me,
+  // else the newest one. Never overrides a choice the reader already made.
+  useEffect(() => {
+    if (selectedId && items.some((a) => a.id === selectedId)) return;
+    if (items.length === 0) return;
+    const b = bucketInbox({
+      items,
+      addressedIds: banner.addressedIds,
+      ackedIds: banner.ackedIds,
+      currentUserId,
+      filter: "all",
+      search: "",
+    });
+    const first = b.pending.length > 0 ? b.pending[0] : b.recent.length > 0 ? b.recent[0] : items[0];
+    setSelectedId(first.id);
+  }, [items, selectedId, banner.addressedIds, banner.ackedIds, currentUserId]);
+
+  const selected = selectedId ? items.find((a) => a.id === selectedId) ?? null : null;
+
+  // A Sales Director can manage (hide / delete / remind / view receipts) ONLY
+  // the posts they authored — the backend enforces the same ownership. Full
+  // announcers manage every row.
+  const canManage = useCallback(
+    (a: Announcement) => canWrite && (!salesDirOnly || a.createdBy === currentUserId),
+    [canWrite, salesDirOnly, currentUserId],
+  );
+
+  // Read receipts for the selected notice — writers only (the endpoint is
+  // gated on announcements.write; a reader never fires it).
+  const receiptsEnabled = !!selected && canManage(selected);
+  const receiptsQ = useQuery<AcksResponse>(
+    `/api/announcements/${selected?.id ?? "-"}/acks`,
+    () => api.get(`/api/announcements/${selected?.id}/acks`),
+    [],
+    { enabled: receiptsEnabled },
+  );
+
   const [composerOpen, setComposerOpen] = useState(false);
 
+  async function remindPending(a: Announcement) {
+    const pending = receiptsQ.data?.data?.pending.length ?? 0;
+    const ok = await dialog.confirm({
+      title: "Send reminder",
+      message: `Re-pop the notice for ${pending} un-acknowledged user${
+        pending === 1 ? "" : "s"
+      }? Anyone who already acknowledged is unaffected.`,
+      confirmLabel: "Remind",
+    });
+    if (!ok) return;
+    try {
+      const r = await api.post<{ pendingCount: number }>(
+        `/api/announcements/${a.id}/remind`,
+        { scope: "unacked" },
+      );
+      toast.success(
+        `Reminder set — will re-pop for ${r.pendingCount} user${r.pendingCount === 1 ? "" : "s"}`,
+      );
+      listQ.reload();
+      receiptsQ.reload();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to remind");
+    }
+  }
+
+  async function toggleHidden(a: Announcement) {
+    try {
+      await api.patch(`/api/announcements/${a.id}`, { isActive: !a.isActive });
+      toast.success(a.isActive ? "Announcement hidden" : "Announcement shown");
+      listQ.reload();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Something went wrong. Please try again.");
+    }
+  }
+
+  const modeToggle = canWrite ? (
+    <div
+      role="tablist"
+      aria-label="Announcements mode"
+      className="flex rounded-md border border-border bg-surface-2 p-[2px]"
+    >
+      {(
+        [
+          ["read", "Reading"],
+          ["manage", "Manage"],
+        ] as Array<[Mode, string]>
+      ).map(([m, label]) => (
+        <button
+          key={m}
+          type="button"
+          role="tab"
+          aria-selected={mode === m}
+          onClick={() => setMode(m)}
+          className={cn(
+            "rounded-[5px] px-3.5 py-1.5 text-[12px] font-[650]",
+            mode === m ? "bg-primary text-white" : "text-ink-secondary hover:text-ink",
+          )}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  ) : undefined;
+
   return (
-    <div className="mx-auto flex w-full max-w-4xl flex-col gap-5 px-4 py-5">
+    <div className="flex w-full flex-col">
       <PageHeader
         eyebrow="Workspace · Communications"
         title="Announcements"
-        description="Post office-wide notices and track who has acknowledged them."
+        titleSize="sm"
+        dense
+        actions={modeToggle}
         primaryAction={
           canWrite ? (
             <Button
@@ -308,35 +391,73 @@ export function Announcements() {
         </ComposerModal>
       )}
 
-      <section className="flex flex-col gap-2.5">
-        <h2 className="flex items-center gap-2 px-1 text-[12.5px] font-semibold uppercase tracking-wider text-ink-secondary">
-          <Megaphone size={13} />
-          Posted Announcements
-          <span className="text-ink-muted">({items.length})</span>
-        </h2>
-        {listQ.loading ? (
-          <div className="rounded-lg border border-border bg-surface p-6 text-center text-[12px] text-ink-muted">
-            Loading…
-          </div>
-        ) : items.length === 0 ? (
-          <div className="rounded-lg border border-border bg-surface px-4 py-10 text-center text-[12px] text-ink-muted">
-            Nothing posted yet.
-          </div>
-        ) : (
-          <PostedList
-            items={items}
-            users={users}
-            departments={depts}
-            positions={positions}
-            companies={companies}
-            canWrite={canWrite}
-            salesDirOnly={salesDirOnly}
-            currentUserId={user?.id ?? null}
-            onChanged={() => listQ.reload()}
-            toast={toast}
-          />
-        )}
-      </section>
+      {mode === "read" ? (
+        /* Breaks out of the page gutters (same negative margins as the sticky
+           PageHeader) so the two panes run edge to edge, and fills the viewport
+           below the pinned header — each pane scrolls itself. The bottom
+           margin cancels the layout's own page padding. */
+        <InboxView
+          className="-mx-3 -mb-[calc(10rem+env(safe-area-inset-bottom))] h-[calc(100dvh-var(--page-header-offset,120px)-1.5rem)] min-h-[480px] sm:-mx-4 lg:-mx-4 lg:-mb-10"
+          items={items}
+          loading={listQ.loading}
+          addressedIds={banner.addressedIds}
+          ackedIds={banner.ackedIds}
+          currentUserId={currentUserId}
+          companies={companies}
+          lookups={lookups}
+          selectedId={selectedId}
+          onSelect={setSelectedId}
+          filter={filter}
+          onFilter={setFilter}
+          search={search}
+          onSearch={setSearch}
+          canManage={canManage}
+          canPostpone={banner.canPostpone}
+          onAck={(a) => {
+            // The receipts card is the poster's record; refresh it once the ack
+            // has been posted so a manager acking their own notice sees +1.
+            void banner.ack(a).then(() => {
+              if (receiptsEnabled) receiptsQ.reload();
+            });
+          }}
+          onPostpone={banner.dismissSession}
+          onOpenManage={() => setMode("manage")}
+          onRemindPending={(a) => void remindPending(a)}
+          onHide={(a) => void toggleHidden(a)}
+          receipts={receiptsQ.data?.data ?? null}
+          receiptsLoading={receiptsQ.loading}
+        />
+      ) : (
+        <section className="mx-auto flex w-full max-w-4xl flex-col gap-2.5">
+          <h2 className="flex items-center gap-2 px-1 text-[12.5px] font-semibold uppercase tracking-wider text-ink-secondary">
+            <Megaphone size={13} />
+            Posted Announcements
+            <span className="text-ink-muted">({items.length})</span>
+          </h2>
+          {listQ.loading ? (
+            <div className="rounded-lg border border-border bg-surface p-6 text-center text-[12px] text-ink-muted">
+              Loading…
+            </div>
+          ) : items.length === 0 ? (
+            <div className="rounded-lg border border-border bg-surface px-4 py-10 text-center text-[12px] text-ink-muted">
+              Nothing posted yet.
+            </div>
+          ) : (
+            <PostedList
+              items={items}
+              users={users}
+              departments={depts}
+              positions={positions}
+              companies={companies}
+              canWrite={canWrite}
+              salesDirOnly={salesDirOnly}
+              currentUserId={currentUserId}
+              onChanged={() => listQ.reload()}
+              toast={toast}
+            />
+          )}
+        </section>
+      )}
     </div>
   );
 }

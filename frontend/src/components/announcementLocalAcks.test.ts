@@ -48,11 +48,14 @@ describe("announcement skip counter", () => {
     });
   });
 
-  test("two skips are allowed, the third appearance is acknowledge-only", () => {
+  test("one postponement is allowed, the second appearance is acknowledge-only", () => {
     let skips: AnnouncementSkips = {};
     expect(skipLimitReached(skips, "ann-1")).toBe(false);
     skips = recordAnnouncementSkip(skips, "ann-1", 1_000);
-    expect(skipLimitReached(skips, "ann-1")).toBe(false);
+    expect(skips["ann-1"]).toEqual({ n: 1, at: 1_000 });
+    expect(skipLimitReached(skips, "ann-1")).toBe(true);
+    // A second record (a surface that missed the gate) still counts, and the
+    // limit stays reached — it never re-opens.
     skips = recordAnnouncementSkip(skips, "ann-1", 2_000);
     expect(skips["ann-1"]).toEqual({ n: 2, at: 2_000 });
     expect(skipLimitReached(skips, "ann-1")).toBe(true);
