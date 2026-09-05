@@ -289,6 +289,135 @@ export function bucketInbox(input: InboxInput): InboxBuckets {
   return { pending, recent: filteredRecent, sopGroups, sopCount: sops.length };
 }
 
+// ── Manage mode ────────────────────────────────────────────────────────────
+
+/** GET /api/announcements/:id/acks (extended 2026-09). */
+export type AckPerson = {
+  id: number;
+  name: string;
+  email: string;
+  departmentId?: number | null;
+  departmentName?: string | null;
+  positionName?: string | null;
+  managerId?: number | null;
+};
+export type PendingState = "pending" | "reminded" | "overdue";
+export type AcksData = {
+  total: number;
+  ackedCount: number;
+  acked: Array<AckPerson & { ackedAt: string | null }>;
+  pending: Array<AckPerson & { state?: PendingState }>;
+  byDepartment?: Array<{
+    id: number | null;
+    name: string;
+    total: number;
+    acked: number;
+    pending: number;
+  }>;
+  remindedAt?: string | null;
+  overdueAfterHours?: number;
+};
+
+/** GET /api/announcements/ack-summary — { id → { total, acked } }. */
+export type AckSummary = Record<string, { total: number; acked: number }>;
+
+export const PERSON_STATE_META: Record<
+  PendingState | "confirmed",
+  { label: string; cls: string }
+> = {
+  confirmed: { label: "confirmed", cls: "bg-synced-bg text-synced" },
+  overdue: { label: "overdue", cls: "bg-err-bg text-err" },
+  reminded: { label: "reminded", cls: "bg-warning-bg text-warning-text" },
+  pending: { label: "pending", cls: "bg-surface-dim border border-border text-ink-muted" },
+};
+
+/** Department bucket key — null department is its own bucket. */
+export function deptKey(id: number | null | undefined): string {
+  return id == null ? "none" : String(id);
+}
+
+/** The Manage table's rows: every notice the caller may see (archived
+ *  included — that is the point of Manage), scheduled ones too, through the
+ *  same filter pills as the inbox. "Needs you" = pending for me. */
+export function filterManageRows(input: Omit<InboxInput, "lookups">): Announcement[] {
+  const now = input.now ?? Date.now();
+  const searched = input.items.filter((a) => matchesSearch(a, input.search));
+  const f = input.filter;
+  if (f === "all") return searched;
+  if (f === "pending") {
+    return searched.filter((a) => isPendingForMe(a, input.addressedIds, input.ackedIds, now));
+  }
+  if (f === "mine") {
+    return searched.filter(
+      (a) => input.currentUserId != null && a.createdBy === input.currentUserId,
+    );
+  }
+  return searched.filter((a) => categoryOf(a) === f);
+}
+
+export type ManageStats = {
+  awaitingYou: number;
+  liveNotices: number;
+  /** Mean ack percentage over live notices with a known audience; null = unknown yet. */
+  avgAckRate: number | null;
+  /** Live notices below the 70% threshold. */
+  escalated: number;
+};
+
+export function manageStats(
+  items: Announcement[],
+  summary: AckSummary | null,
+  addressedIds: ReadonlySet<string>,
+  ackedIds: ReadonlySet<string>,
+  now: number = Date.now(),
+): ManageStats {
+  let awaitingYou = 0;
+  let liveNotices = 0;
+  let escalated = 0;
+  let pctSum = 0;
+  let pctCount = 0;
+  for (const a of items) {
+    if (isPendingForMe(a, addressedIds, ackedIds, now)) awaitingYou += 1;
+    if (isArchived(a, now) || isScheduled(a, now)) continue;
+    liveNotices += 1;
+    const s = summary?.[a.id];
+    if (!s || s.total <= 0) continue;
+    const pct = ackPercent(s.acked, s.total);
+    pctSum += pct;
+    pctCount += 1;
+    if (pct < 70) escalated += 1;
+  }
+  return {
+    awaitingYou,
+    liveNotices,
+    avgAckRate: summary && pctCount > 0 ? Math.round(pctSum / pctCount) : null,
+    escalated,
+  };
+}
+
+/** Rows for a CSV export of one notice's read receipts. */
+export function receiptsCsv(a: Announcement, acks: AcksData): string {
+  const esc = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+  const lines = [
+    ["Notice", "Doc no", "Name", "Email", "Department", "Position", "Status", "Acknowledged at"].map(esc).join(","),
+  ];
+  for (const p of acks.acked) {
+    lines.push(
+      [a.title, docNo(a), p.name, p.email, p.departmentName ?? "", p.positionName ?? "", "confirmed", p.ackedAt ?? ""]
+        .map(esc)
+        .join(","),
+    );
+  }
+  for (const p of acks.pending) {
+    lines.push(
+      [a.title, docNo(a), p.name, p.email, p.departmentName ?? "", p.positionName ?? "", p.state ?? "pending", ""]
+        .map(esc)
+        .join(","),
+    );
+  }
+  return lines.join("\r\n");
+}
+
 // ── Labels ─────────────────────────────────────────────────────────────────
 
 /** Doc-number style id for the mono chips. */

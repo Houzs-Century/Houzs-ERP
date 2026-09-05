@@ -41,6 +41,7 @@ import {
   richTextToPlain,
   sanitizeAnnouncementHtml,
 } from "../lib/announcementRichText";
+import { postPersonalNotice } from "../services/personalNotice";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -124,6 +125,15 @@ type AnnouncementRow = {
   // ALWAYS the plain-text shadow of it, so plain-only readers need no branch.
   body_html?: string | null;
   bodyHtml?: string | null;
+  // Per-notice "must acknowledge" flag (mig 20260905T1125), integer 0/1. NULL
+  // only on a pre-migration row / the D1 test mirror — toPublic then emits
+  // null and the client falls back to the category rule (WARNING / SOP).
+  require_ack?: number | boolean | null;
+  requireAck?: number | boolean | null;
+  // Scheduled posting instant (same migration). ISO text; NULL = posted at
+  // once. A row is not delivered (list / banner / ack) before it.
+  scheduled_at?: string | null;
+  scheduledAt?: string | null;
   is_active?: number | boolean | null;
   isActive?: number | boolean | null;
   expires_at?: string | null;
@@ -178,6 +188,39 @@ function notExpired(expiresAt: string | null): boolean {
   const t = Date.parse(expiresAt);
   if (Number.isNaN(t)) return true;
   return t > Date.now();
+}
+
+// Categories that block by default — the value the require_ack flag takes when
+// the composer does not say otherwise, and the rule a pre-migration row falls
+// back to. Mirrors frontend/src/components/announcementCategory.ts.
+function categoryRequiresAck(category: AnnouncementCategory): boolean {
+  return category === "WARNING" || category === "SOP";
+}
+
+// The stored flag, or null when the column is absent / NULL (pre-migration row,
+// D1 test mirror) so the client applies the category rule itself.
+function readRequireAck(v: number | boolean | null | undefined): boolean | null {
+  if (v == null) return null;
+  return v === true || v === 1;
+}
+
+// Not yet reached its scheduled posting instant. NULL / unparseable = live now.
+function scheduledLater(scheduledAt: string | null | undefined, now = Date.now()): boolean {
+  if (!scheduledAt) return false;
+  const t = Date.parse(scheduledAt);
+  return !Number.isNaN(t) && t > now;
+}
+
+// Is this row DELIVERABLE to a reader right now? Active, past its schedule,
+// and not expired — where an SOP never expires (redesign 2026-09-04: the SOP
+// Library is permanent, so a stale expires_at on an SOP is ignored rather than
+// silently pulling a standing procedure off everyone's screen). The list's
+// reader branch, /banner and the ack POST all use this one answer.
+function deliverableNow(r: AnnouncementRow, now = Date.now()): boolean {
+  if (!isActiveFlag(r.isActive ?? r.is_active ?? null)) return false;
+  if (scheduledLater(r.scheduledAt ?? r.scheduled_at ?? null, now)) return false;
+  if (readCategory(r.category) === "SOP") return true;
+  return notExpired(r.expiresAt ?? r.expires_at ?? null);
 }
 
 function isRemindedSince(
@@ -328,10 +371,66 @@ function toPublic(r: AnnouncementRow) {
     targetUserIds: readIntArray(r.targetUserIds ?? r.target_user_ids ?? null),
     targetCompanyIds: readTargetCompanyIds(r),
     category: readCategory(r.category),
+    requireAck: readRequireAck(r.requireAck ?? r.require_ack ?? null),
+    scheduledAt: r.scheduledAt ?? r.scheduled_at ?? null,
     // System-notice tag ('scan' for background slip-scan results). Lets the
     // client suppress the read-receipt roster on private per-user notices.
     source: (r.source ?? null) as string | null,
   };
+}
+
+type PublicAnnouncement = ReturnType<typeof toPublic> & {
+  createdByName?: string | null;
+  targetDeptNames?: string[];
+};
+
+// Author and department NAMES for a batch of rows. Resolved here because a
+// plain reader cannot load /api/users or /api/departments (both sit behind
+// users.read), yet the redesigned inbox shows "Lee Wei · Operation" on every
+// row and groups the SOP Library by department. Two small lookups per request,
+// scoped to the ids actually present; a lookup that fails leaves the names
+// absent rather than failing the list. Ids are validated integers, so the
+// inline IN lists are safe (d1-compat prepared SQL, no `--` comments).
+async function withNames(
+  env: Env,
+  rows: AnnouncementRow[],
+): Promise<PublicAnnouncement[]> {
+  const pub: PublicAnnouncement[] = rows.map(toPublic);
+  const authorIds = new Set<number>();
+  const deptIds = new Set<number>();
+  for (const p of pub) {
+    if (p.createdBy != null && Number.isInteger(p.createdBy)) authorIds.add(p.createdBy);
+    for (const d of p.targetDeptIds) if (Number.isInteger(d)) deptIds.add(d);
+  }
+  const authorName = new Map<number, string>();
+  const deptName = new Map<number, string>();
+  try {
+    if (authorIds.size > 0) {
+      const res = await env.DB.prepare(
+        `SELECT id, name, email FROM users WHERE id IN (${Array.from(authorIds).join(",")})`,
+      ).all<{ id: number; name?: string | null; email?: string | null }>();
+      for (const u of res.results) {
+        authorName.set(u.id, (u.name ?? "").trim() || (u.email ?? "").trim());
+      }
+    }
+    if (deptIds.size > 0) {
+      const res = await env.DB.prepare(
+        `SELECT id, name FROM departments WHERE id IN (${Array.from(deptIds).join(",")})`,
+      ).all<{ id: number; name?: string | null }>();
+      for (const d of res.results) deptName.set(d.id, (d.name ?? "").trim());
+    }
+  } catch (e) {
+    console.error("[announcements] name lookup failed; serving rows unnamed:", (e as Error).message);
+  }
+  for (const p of pub) {
+    if (p.createdBy != null && authorName.has(p.createdBy)) {
+      p.createdByName = authorName.get(p.createdBy) ?? null;
+    }
+    if (p.targetDeptIds.length > 0) {
+      p.targetDeptNames = p.targetDeptIds.map((id) => deptName.get(id) ?? `Dept #${id}`);
+    }
+  }
+  return pub;
 }
 
 function genId(): string {
@@ -592,8 +691,7 @@ app.get("/", async (c) => {
           return true;
         }
         return (
-          isActiveFlag(r.isActive ?? r.is_active ?? null) &&
-          notExpired(r.expiresAt ?? r.expires_at ?? null) &&
+          deliverableNow(r) &&
           userCanSee(
             r,
             user.id,
@@ -602,7 +700,7 @@ app.get("/", async (c) => {
           )
         );
       });
-  return c.json({ success: true, data: rows.map(toPublic) });
+  return c.json({ success: true, data: await withNames(c.env, rows) });
 });
 
 // ============================================================
@@ -705,8 +803,7 @@ app.get("/banner", async (c) => {
   const active = (res.results ?? []).filter(
     (r) =>
       (systemOnly ? !!r.source : !r.source) &&
-      isActiveFlag(r.isActive ?? r.is_active ?? null) &&
-      notExpired(r.expiresAt ?? r.expires_at ?? null) &&
+      deliverableNow(r) &&
       companyCanSee(r, allowed) &&
       userCanSee(
         r,
@@ -732,7 +829,7 @@ app.get("/banner", async (c) => {
 
   const payload = {
     success: true,
-    data: active.map(toPublic),
+    data: await withNames(c.env, active),
     ackedIds,
   };
   if (cacheKey) {
@@ -769,6 +866,160 @@ app.get("/banner", async (c) => {
 // (owner: a normal user must not see the read-receipts). The frontend already
 // only renders this for write-holders; this is the server-side backstop.
 // ============================================================
+// ── Roster + ack helpers shared by the receipts, summary, team and escalation
+// reads below. One SELECT shape, one definition of "in the audience", one
+// definition of a pending person's state, so the drawer, the manage table,
+// the dashboard card and the supervisor notice can never disagree.
+
+type RosterUser = {
+  id: number;
+  email: string;
+  name: string;
+  departmentId: number | null;
+  departmentName: string | null;
+  positionId: number | null;
+  positionName: string | null;
+  managerId: number | null;
+};
+
+// Every ACTIVE user with their org-chart fields. `companyIds` narrows to the
+// notice's targeted companies via the same fail-open grant rule as before
+// (rosterCompaniesSql); [] = the whole roster. Reads dual-keyed because the pg
+// driver folds snake_case → camelCase on read.
+async function loadRoster(env: Env, companyIds: number[]): Promise<RosterUser[]> {
+  const res = await env.DB.prepare(
+    `SELECT u.id, u.email, u.name, u.department_id, u.position_id, u.manager_id,
+            d.name AS department_name, p.name AS position_name
+       FROM users u
+       LEFT JOIN departments d ON d.id = u.department_id
+       LEFT JOIN positions p ON p.id = u.position_id
+      WHERE u.status = 'active'${rosterCompaniesSql(companyIds, "u")}
+      ORDER BY u.name ASC`,
+  ).all<{
+    id: number;
+    email?: string | null;
+    name?: string | null;
+    department_id?: number | null;
+    departmentId?: number | null;
+    position_id?: number | null;
+    positionId?: number | null;
+    manager_id?: number | null;
+    managerId?: number | null;
+    department_name?: string | null;
+    departmentName?: string | null;
+    position_name?: string | null;
+    positionName?: string | null;
+  }>();
+  return (res.results).map((u) => ({
+    id: u.id,
+    email: u.email ?? "",
+    name: u.name ?? "",
+    departmentId: u.departmentId ?? u.department_id ?? null,
+    departmentName: u.departmentName ?? u.department_name ?? null,
+    positionId: u.positionId ?? u.position_id ?? null,
+    positionName: u.positionName ?? u.position_name ?? null,
+    managerId: u.managerId ?? u.manager_id ?? null,
+  }));
+}
+
+function audienceOf(ann: AnnouncementRow, roster: RosterUser[]): RosterUser[] {
+  return roster.filter((u) => userCanSee(ann, u.id, u.departmentId, u.positionId));
+}
+
+// acked_at per user for ONE notice (or, with no id, every notice → keyed by
+// notice id first).
+async function loadAckMap(env: Env, id: string): Promise<Map<number, string | null>> {
+  const res = await env.DB.prepare(
+    "SELECT user_id, acked_at FROM announcement_acks WHERE announcement_id = ?",
+  )
+    .bind(id)
+    .all<{ user_id?: number; userId?: number; acked_at?: string | null; ackedAt?: string | null }>();
+  const out = new Map<number, string | null>();
+  for (const a of res.results) {
+    const uid = a.userId ?? a.user_id;
+    if (uid != null) out.set(uid, a.ackedAt ?? a.acked_at ?? null);
+  }
+  return out;
+}
+
+async function loadAllAcks(env: Env): Promise<Map<string, Set<number>>> {
+  const res = await env.DB.prepare(
+    "SELECT announcement_id, user_id FROM announcement_acks",
+  ).all<{ announcement_id?: string; announcementId?: string; user_id?: number; userId?: number }>();
+  const out = new Map<string, Set<number>>();
+  for (const a of res.results) {
+    const id = a.announcementId ?? a.announcement_id;
+    const uid = a.userId ?? a.user_id;
+    if (!id || uid == null) continue;
+    let set = out.get(id);
+    if (!set) {
+      set = new Set<number>();
+      out.set(id, set);
+    }
+    set.add(uid);
+  }
+  return out;
+}
+
+// The user_companies grants, for narrowing a roster to a notice's targeted
+// companies in JS (the summary walks every notice against one roster, so the
+// per-notice SQL filter does not fit). Same fail-open rule as
+// rosterCompaniesSql: a user with NO grant row belongs to every company. A
+// missing table (D1 test mirror, pre-0085) means no grants → everyone belongs.
+async function loadCompanyGrants(env: Env): Promise<Map<number, Set<number>>> {
+  const out = new Map<number, Set<number>>();
+  try {
+    const res = await env.DB.prepare(
+      "SELECT user_id, company_id FROM user_companies",
+    ).all<{ user_id?: number; userId?: number; company_id?: number; companyId?: number }>();
+    for (const g of res.results) {
+      const uid = g.userId ?? g.user_id;
+      const cid = g.companyId ?? g.company_id;
+      if (uid == null || cid == null) continue;
+      let set = out.get(uid);
+      if (!set) {
+        set = new Set<number>();
+        out.set(uid, set);
+      }
+      set.add(cid);
+    }
+  } catch {
+    /* no grants table → fail-open, everyone belongs to every company */
+  }
+  return out;
+}
+
+function inTargetCompanies(
+  grants: Map<number, Set<number>>,
+  userId: number,
+  targets: number[],
+): boolean {
+  if (targets.length === 0) return true;
+  const mine = grants.get(userId);
+  if (!mine || mine.size === 0) return true;
+  return targets.some((id) => mine.has(id));
+}
+
+// A pending person's state (design handoff 2026-09-04, drawer + dashboard):
+// reminded = the office has reminded since the post; overdue = still unacked
+// past the window; otherwise plainly pending. Confirmed is the acked side.
+const ACK_OVERDUE_HOURS = 48;
+type PendingState = "pending" | "reminded" | "overdue";
+function pendingState(ann: AnnouncementRow, now = Date.now()): PendingState {
+  const remindedAt = ann.remindedAt ?? ann.reminded_at ?? null;
+  if (remindedAt && !Number.isNaN(Date.parse(remindedAt))) return "reminded";
+  const createdAt = ann.createdAt ?? ann.created_at ?? null;
+  const t = createdAt ? Date.parse(createdAt) : NaN;
+  if (!Number.isNaN(t) && now - t > ACK_OVERDUE_HOURS * 3_600_000) return "overdue";
+  return "pending";
+}
+
+// Does the notice demand an acknowledgement? The stored flag, else the
+// category rule — the same fallback the client applies.
+function announcementRequiresAck(r: AnnouncementRow): boolean {
+  return readRequireAck(r.requireAck ?? r.require_ack ?? null) ?? categoryRequiresAck(readCategory(r.category));
+}
+
 app.get("/:id/acks", requirePermissionOrSalesDirector("announcements.write"), async (c) => {
   const id = c.req.param("id");
   const ann = await getScopedAnnouncement(c, id);
@@ -784,56 +1035,56 @@ app.get("/:id/acks", requirePermissionOrSalesDirector("announcements.write"), as
   // ALL_USERS / DEPARTMENT_IDS / POSITION_IDS / USER_IDS / MIXED), narrowed to
   // the notice's TARGETED companies (user_companies grants, fail-open — see
   // helper). A notice targeting all companies counts the whole roster.
-  const rosterRes = await c.env.DB.prepare(
-    `SELECT id, email, name, department_id, position_id FROM users
-      WHERE status = 'active'${rosterCompaniesSql(readTargetCompanyIds(ann))}
-      ORDER BY name ASC`,
-  ).all<{
-    id: number;
-    email?: string | null;
-    name?: string | null;
-    department_id?: number | null;
-    position_id?: number | null;
-  }>();
-  const roster = (rosterRes.results ?? []).filter((u) =>
-    userCanSee(ann, u.id, u.department_id ?? null, u.position_id ?? null),
-  );
+  const roster = audienceOf(ann, await loadRoster(c.env, readTargetCompanyIds(ann)));
+  const ackedAtByUser = await loadAckMap(c.env, id);
+  const state = pendingState(ann);
 
-  const ackRes = await c.env.DB.prepare(
-    "SELECT user_id, acked_at FROM announcement_acks WHERE announcement_id = ?",
-  )
-    .bind(id)
-    .all<{
-      user_id?: number;
-      userId?: number;
-      acked_at?: string | null;
-      ackedAt?: string | null;
-    }>();
-  const ackedAtByUser = new Map<number, string | null>();
-  for (const a of ackRes.results ?? []) {
-    const uid = a.userId ?? a.user_id;
-    if (uid != null) ackedAtByUser.set(uid, a.ackedAt ?? a.acked_at ?? null);
-  }
-
-  const acked: Array<{
+  type Person = {
     id: number;
     name: string;
     email: string;
-    ackedAt: string | null;
-  }> = [];
-  const pending: Array<{ id: number; name: string; email: string }> = [];
+    departmentId: number | null;
+    departmentName: string | null;
+    positionName: string | null;
+    managerId: number | null;
+  };
+  const person = (u: RosterUser): Person => ({
+    id: u.id,
+    name: u.name,
+    email: u.email,
+    departmentId: u.departmentId,
+    departmentName: u.departmentName,
+    positionName: u.positionName,
+    managerId: u.managerId,
+  });
+  const acked: Array<Person & { ackedAt: string | null }> = [];
+  const pending: Array<Person & { state: PendingState }> = [];
+  // Two-level drill-down (notice → department → person): one bucket per
+  // department in the audience, in roster (name) order of first appearance.
+  const byDepartment = new Map<
+    string,
+    { id: number | null; name: string; total: number; acked: number; pending: number }
+  >();
   for (const u of roster) {
-    const name = u.name ?? "";
-    const email = u.email ?? "";
+    const key = u.departmentId == null ? "none" : String(u.departmentId);
+    let d = byDepartment.get(key);
+    if (!d) {
+      d = {
+        id: u.departmentId,
+        name: u.departmentName ?? (u.departmentId == null ? "No department" : `Dept #${u.departmentId}`),
+        total: 0,
+        acked: 0,
+        pending: 0,
+      };
+      byDepartment.set(key, d);
+    }
+    d.total += 1;
     if (ackedAtByUser.has(u.id)) {
-      acked.push({
-        id: u.id,
-        name,
-        email,
-        ackedAt: ackedAtByUser.get(u.id) ?? null,
-      });
+      d.acked += 1;
+      acked.push({ ...person(u), ackedAt: ackedAtByUser.get(u.id) ?? null });
     } else {
-      pending.push({ id: u.id, name, email });
+      d.pending += 1;
+      pending.push({ ...person(u), state });
     }
   }
   acked.sort((x, y) => {
@@ -849,7 +1100,170 @@ app.get("/:id/acks", requirePermissionOrSalesDirector("announcements.write"), as
       ackedCount: acked.length,
       acked,
       pending,
+      byDepartment: Array.from(byDepartment.values()).sort((a, b) => a.name.localeCompare(b.name)),
+      remindedAt: ann.remindedAt ?? ann.reminded_at ?? null,
+      overdueAfterHours: ACK_OVERDUE_HOURS,
     },
+  });
+});
+
+// ============================================================
+// GET /ack-summary — { [id]: { total, acked } } for every human post the
+// caller may manage, in ONE round trip. Feeds the Manage table's ack-rate
+// column and stat strip (design handoff 2026-09-04); walking /:id/acks per row
+// would be N requests. Same gate + Sales-Director ownership rule as the
+// receipts. Company narrowing is done in JS against the grants map because
+// each notice has its own target set.
+// ============================================================
+app.get("/ack-summary", requirePermissionOrSalesDirector("announcements.write"), async (c) => {
+  const user = c.get("user");
+  if (!user) {
+    return c.json({ success: false, error: "Your session has expired. Please sign in again." }, 401);
+  }
+  const sd = salesDirectorScope(c);
+  const allowed = allowedCompanyIds(c);
+  const res = await c.env.DB
+    .prepare(`SELECT * FROM announcements WHERE source IS NULL ORDER BY created_at DESC`)
+    .all<AnnouncementRow>();
+  const rows = (res.results).filter(
+    (r) => companyCanSee(r, allowed) && !sdBlockedFromRow(sd, r, user.id),
+  );
+  const [roster, acks, grants] = await Promise.all([
+    loadRoster(c.env, []),
+    loadAllAcks(c.env),
+    loadCompanyGrants(c.env),
+  ]);
+  const data: Record<string, { total: number; acked: number }> = {};
+  for (const r of rows) {
+    const targets = readTargetCompanyIds(r);
+    const audience = audienceOf(r, roster).filter((u) => inTargetCompanies(grants, u.id, targets));
+    const ackedSet = acks.get(r.id);
+    let acked = 0;
+    for (const u of audience) if (ackedSet?.has(u.id)) acked += 1;
+    data[r.id] = { total: audience.length, acked };
+  }
+  return c.json({ success: true, data });
+});
+
+// ============================================================
+// GET /team-pending — the supervisor's gap (design handoff 2026-09-04, the
+// dashboard "My team's pending" card). Every authed user may call it; the
+// answer is scoped to THEIR direct reports (users.manager_id = caller) and
+// lists each mandatory human notice a report has not acknowledged, with the
+// same pending state the drawer shows. No reports → an empty answer, and the
+// card does not render. Reminders stay manual; the automatic escalation job
+// is a separate follow-up.
+// ============================================================
+app.get("/team-pending", async (c) => {
+  const user = c.get("user");
+  if (!user) {
+    return c.json({ success: false, error: "Your session has expired. Please sign in again." }, 401);
+  }
+  const roster = await loadRoster(c.env, []);
+  const reports = roster.filter((u) => u.managerId === user.id);
+  if (reports.length === 0) {
+    return c.json({ success: true, data: { reports: 0, pending: [] } });
+  }
+  const [res, acks, grants] = await Promise.all([
+    c.env.DB
+      .prepare(`SELECT * FROM announcements WHERE is_active = 1 AND source IS NULL ORDER BY created_at DESC`)
+      .all<AnnouncementRow>(),
+    loadAllAcks(c.env),
+    loadCompanyGrants(c.env),
+  ]);
+  const now = Date.now();
+  const notices = (res.results).filter(
+    (r) => deliverableNow(r, now) && announcementRequiresAck(r),
+  );
+  const pending: Array<{
+    userId: number;
+    name: string;
+    positionName: string | null;
+    announcementId: string;
+    title: string;
+    category: AnnouncementCategory;
+    createdAt: string | null;
+    state: PendingState;
+  }> = [];
+  for (const r of notices) {
+    const targets = readTargetCompanyIds(r);
+    const ackedSet = acks.get(r.id);
+    const state = pendingState(r, now);
+    for (const u of reports) {
+      if (!userCanSee(r, u.id, u.departmentId, u.positionId)) continue;
+      if (!inTargetCompanies(grants, u.id, targets)) continue;
+      if (ackedSet?.has(u.id)) continue;
+      pending.push({
+        userId: u.id,
+        name: u.name || u.email,
+        positionName: u.positionName,
+        announcementId: r.id,
+        title: r.title,
+        category: readCategory(r.category),
+        createdAt: r.createdAt ?? r.created_at ?? null,
+        state,
+      });
+    }
+  }
+  return c.json({
+    success: true,
+    data: { reports: reports.length, pending, overdueAfterHours: ACK_OVERDUE_HOURS },
+  });
+});
+
+// ============================================================
+// POST /:id/escalate — "Notify their supervisors" (design handoff 2026-09-04,
+// the drawer's second action). For every person still pending on the notice
+// (optionally one department: body.departmentId) with a manager on the org
+// chart, the manager gets ONE system notice naming their pending reports. It
+// rides the bell (source NOT NULL never pops a modal), and postPersonalNotice's
+// dedupe swallows a repeat while the first is still unread. Manual, on the
+// poster's click — the automatic overdue job is a separate follow-up.
+// ============================================================
+app.post("/:id/escalate", requirePermissionOrSalesDirector("announcements.write"), async (c) => {
+  const id = c.req.param("id");
+  const ann = await getScopedAnnouncement(c, id);
+  if (!ann) {
+    return c.json({ success: false, error: "Announcement not found" }, 404);
+  }
+  if (sdBlockedFromRow(salesDirectorScope(c), ann, c.get("user").id)) {
+    return c.json({ success: false, error: "Announcement not found" }, 404);
+  }
+  const body = (await c.req.json().catch(() => ({}))) as { departmentId?: unknown };
+  const deptFilter =
+    body.departmentId == null ? null : parseInt(String(body.departmentId), 10);
+
+  const roster = audienceOf(ann, await loadRoster(c.env, readTargetCompanyIds(ann)));
+  const ackedAtByUser = await loadAckMap(c.env, id);
+  const pending = roster.filter(
+    (u) =>
+      !ackedAtByUser.has(u.id) &&
+      (deptFilter == null || !Number.isFinite(deptFilter) || u.departmentId === deptFilter),
+  );
+  const byManager = new Map<number, RosterUser[]>();
+  for (const u of pending) {
+    if (u.managerId == null) continue;
+    const list = byManager.get(u.managerId);
+    if (list) list.push(u);
+    else byManager.set(u.managerId, [u]);
+  }
+  for (const [managerId, people] of byManager) {
+    const names = people.map((p) => p.name || p.email);
+    await postPersonalNotice(c.env, {
+      userIds: [managerId],
+      category: "GENERAL",
+      title: `${names.length} of your team ${names.length === 1 ? "has" : "have"} not acknowledged "${ann.title}"`,
+      body: `Still pending: ${names.join(", ")}. Please follow up — the notice requires acknowledgement.`,
+      source: "ack_escalation",
+    });
+  }
+  // The managers' bell slices just changed.
+  if (byManager.size > 0) await bumpConfigVersion(c.env, "banner");
+  return c.json({
+    success: true,
+    supervisors: byManager.size,
+    people: pending.filter((u) => u.managerId != null).length,
+    unsupervised: pending.filter((u) => u.managerId == null).length,
   });
 });
 
@@ -940,6 +1354,20 @@ app.post("/", requirePermissionOrSalesDirector("announcements.write"), async (c)
 
   const targetType = deriveTargetType(effDeptIds, effPositionIds, effUserIds);
   const category = readCategory(body.category);
+  // "Require acknowledgement" (mig 20260905T1125): an explicit boolean wins;
+  // otherwise the category default — WARNING / SOP on, GENERAL / LEARNING off.
+  const requireAck =
+    typeof body.requireAck === "boolean" ? body.requireAck : categoryRequiresAck(category);
+  // Scheduled posting: a future instant holds the notice back from every
+  // reader until then. A past / absent value posts at once (stored NULL).
+  let scheduledAt: string | null = null;
+  if (body.scheduledAt != null && String(body.scheduledAt).trim() !== "") {
+    const t = Date.parse(String(body.scheduledAt));
+    if (Number.isNaN(t)) {
+      return c.json({ success: false, error: "Invalid schedule date" }, 400);
+    }
+    if (t > Date.now()) scheduledAt = new Date(t).toISOString();
+  }
 
   const id = genId();
   const nowIso = new Date().toISOString();
@@ -962,8 +1390,8 @@ app.post("/", requirePermissionOrSalesDirector("announcements.write"), async (c)
        (id, title, body, body_html, is_active, expires_at, created_by, created_at,
         translations, attachments, media_layout, target_type,
         target_dept_ids, target_position_ids, target_user_ids,
-        target_company_ids, category${stampCo ? ", company_id" : ""})
-     VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?${stampCo ? ", ?" : ""})`,
+        target_company_ids, category, require_ack, scheduled_at${stampCo ? ", company_id" : ""})
+     VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?${stampCo ? ", ?" : ""})`,
   )
     .bind(
       id,
@@ -982,6 +1410,8 @@ app.post("/", requirePermissionOrSalesDirector("announcements.write"), async (c)
       effUserIds.length ? JSON.stringify(effUserIds) : null,
       effCompanyIds.length ? JSON.stringify(effCompanyIds) : null,
       category,
+      requireAck ? 1 : 0,
+      scheduledAt,
       ...(stampCo ? [companyId] : []),
     )
     .run();
@@ -1157,6 +1587,24 @@ app.patch("/:id", requirePermissionOrSalesDirector("announcements.write"), async
     sets.push("category = ?");
     binds.push(readCategory(body.category));
   }
+  if (typeof body.requireAck === "boolean") {
+    sets.push("require_ack = ?");
+    binds.push(body.requireAck ? 1 : 0);
+  }
+  if ("scheduledAt" in body) {
+    const raw = body.scheduledAt;
+    if (raw == null || String(raw).trim() === "") {
+      sets.push("scheduled_at = ?");
+      binds.push(null);
+    } else {
+      const t = Date.parse(String(raw));
+      if (Number.isNaN(t)) {
+        return c.json({ success: false, error: "Invalid schedule date" }, 400);
+      }
+      sets.push("scheduled_at = ?");
+      binds.push(t > Date.now() ? new Date(t).toISOString() : null);
+    }
+  }
   if ("expiresAt" in body) {
     const raw = body.expiresAt;
     if (raw == null || String(raw).trim() === "") {
@@ -1308,11 +1756,7 @@ app.post("/:id/ack", async (c) => {
   }
   const id = c.req.param("id");
   const row = await getScopedAnnouncement(c, id);
-  if (
-    !row ||
-    !isActiveFlag(row.isActive ?? row.is_active ?? null) ||
-    !notExpired(row.expiresAt ?? row.expires_at ?? null)
-  ) {
+  if (!row || !deliverableNow(row)) {
     return c.json({ success: true, acked: false });
   }
   // Stamp the ack with the NOTICE's company (dual-read: the pg driver

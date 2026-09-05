@@ -62,8 +62,11 @@ GET,/api/announcements/:id/acks,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"
 GET,/api/announcements/:id/attachments/:key{.+},AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/announcements.ts
 PUT,/api/announcements/:id/attachments/upload,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermissionOrSalesDirector(""announcements.write"")",,YES,DECLARED_GATE,backend/src/routes/announcements.ts
 PUT,/api/announcements/:id/attachments/upload-thumb,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermissionOrSalesDirector(""announcements.write"")",,YES,DECLARED_GATE,backend/src/routes/announcements.ts
+POST,/api/announcements/:id/escalate,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermissionOrSalesDirector(""announcements.write"")",,YES,DECLARED_GATE,backend/src/routes/announcements.ts
 POST,/api/announcements/:id/remind,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermissionOrSalesDirector(""announcements.write"")",,YES,DECLARED_GATE,backend/src/routes/announcements.ts
+GET,/api/announcements/ack-summary,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermissionOrSalesDirector(""announcements.write"")",,NO,DECLARED_GATE,backend/src/routes/announcements.ts
 GET,/api/announcements/banner,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/announcements.ts
+GET,/api/announcements/team-pending,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/announcements.ts
 POST,/api/assistant/chat,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/assistant.ts
 GET,/api/assistant/conversations,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/assistant.ts
 DELETE,/api/assistant/conversations/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/assistant.ts

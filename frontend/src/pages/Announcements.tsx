@@ -50,9 +50,13 @@ import {
 } from "../lib/announcementStatus";
 import { useAnnouncementBanner } from "../components/useAnnouncementBanner";
 import { InboxView } from "./announcements/InboxView";
+import { ManageView } from "./announcements/ManageView";
 import {
   bucketInbox,
   companyScopeLabel,
+  receiptsCsv,
+  type AckSummary,
+  type AcksData,
   type Announcement,
   type AnnouncementCategory,
   type Attachment,
@@ -70,22 +74,8 @@ type CompaniesResponse = { companies?: Company[] };
 
 type ListResponse = { success?: boolean; data?: Announcement[] };
 
-type AckedUser = {
-  id: number;
-  name: string;
-  email: string;
-  ackedAt: string | null;
-};
-type PendingUser = { id: number; name: string; email: string };
-type AcksResponse = {
-  success?: boolean;
-  data?: {
-    total: number;
-    ackedCount: number;
-    acked: AckedUser[];
-    pending: PendingUser[];
-  };
-};
+type AcksResponse = { success?: boolean; data?: AcksData };
+type SummaryResponse = { success?: boolean; data?: AckSummary };
 
 // ────────────────────────────────────────────────────────────────────────────
 // Constants — category metadata for the LEGACY composer / Manage list below
@@ -287,7 +277,62 @@ export function Announcements() {
     { enabled: receiptsEnabled },
   );
 
+  // Manage mode: one ack-rate map for the whole table, fetched only while the
+  // mode is open and only for a writer (the endpoint is write-gated).
+  const summaryQ = useQuery<SummaryResponse>(
+    "/api/announcements/ack-summary",
+    () => api.get("/api/announcements/ack-summary"),
+    [],
+    { enabled: canWrite && mode === "manage" },
+  );
+  const [drillDept, setDrillDept] = useState<string | null>(null);
+
   const [composerOpen, setComposerOpen] = useState(false);
+
+  // "Notify their supervisors": one system notice per supervisor of the
+  // pending people in the open department (manual escalation; the automatic
+  // overdue job is a separate follow-up).
+  async function escalate(a: Announcement, departmentId: number | null, departmentName: string) {
+    const ok = await dialog.confirm({
+      title: "Notify their supervisors",
+      message: `Send each supervisor of the pending people in ${departmentName} a notice naming who has not acknowledged "${a.title}"?`,
+      confirmLabel: "Notify",
+    });
+    if (!ok) return;
+    try {
+      const r = await api.post<{ supervisors: number; people: number; unsupervised: number }>(
+        `/api/announcements/${a.id}/escalate`,
+        departmentId == null ? {} : { departmentId },
+      );
+      toast.success(
+        r.supervisors === 0
+          ? "Nobody pending here has a supervisor on the org chart."
+          : `Notified ${r.supervisors} supervisor${r.supervisors === 1 ? "" : "s"} about ${r.people} ${r.people === 1 ? "person" : "people"}${r.unsupervised ? ` (${r.unsupervised} without a supervisor)` : ""}`,
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to notify");
+    }
+  }
+
+  // "Export receipts": the selected notice's roster as CSV, built client-side
+  // from the receipts already loaded for the drawer.
+  function exportReceipts() {
+    const a = selected;
+    const acks = receiptsQ.data?.data;
+    if (!a || !acks) {
+      toast.error("Select a notice with loaded read receipts first");
+      return;
+    }
+    const blob = new Blob([receiptsCsv(a, acks)], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `receipts-${a.id}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  }
 
   async function remindPending(a: Announcement) {
     const pending = receiptsQ.data?.data?.pending.length ?? 0;
@@ -309,6 +354,7 @@ export function Announcements() {
       );
       listQ.reload();
       receiptsQ.reload();
+      summaryQ.reload();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to remind");
     }
@@ -360,7 +406,16 @@ export function Announcements() {
         title="Announcements"
         titleSize="sm"
         dense
-        actions={modeToggle}
+        actions={
+          <div className="flex items-center gap-2.5">
+            {modeToggle}
+            {canWrite && mode === "manage" && (
+              <Button variant="secondary" onClick={exportReceipts}>
+                Export receipts
+              </Button>
+            )}
+          </div>
+        }
         primaryAction={
           canWrite ? (
             <Button
@@ -428,35 +483,31 @@ export function Announcements() {
           receiptsLoading={receiptsQ.loading}
         />
       ) : (
-        <section className="mx-auto flex w-full max-w-4xl flex-col gap-2.5">
-          <h2 className="flex items-center gap-2 px-1 text-[12.5px] font-semibold uppercase tracking-wider text-ink-secondary">
-            <Megaphone size={13} />
-            Posted Announcements
-            <span className="text-ink-muted">({items.length})</span>
-          </h2>
-          {listQ.loading ? (
-            <div className="rounded-lg border border-border bg-surface p-6 text-center text-[12px] text-ink-muted">
-              Loading…
-            </div>
-          ) : items.length === 0 ? (
-            <div className="rounded-lg border border-border bg-surface px-4 py-10 text-center text-[12px] text-ink-muted">
-              Nothing posted yet.
-            </div>
-          ) : (
-            <PostedList
-              items={items}
-              users={users}
-              departments={depts}
-              positions={positions}
-              companies={companies}
-              canWrite={canWrite}
-              salesDirOnly={salesDirOnly}
-              currentUserId={currentUserId}
-              onChanged={() => listQ.reload()}
-              toast={toast}
-            />
-          )}
-        </section>
+        <ManageView
+          className="-mx-3 -mb-[calc(10rem+env(safe-area-inset-bottom))] h-[calc(100dvh-var(--page-header-offset,120px)-1.5rem)] min-h-[560px] sm:-mx-4 lg:-mx-4 lg:-mb-10"
+          items={items}
+          loading={listQ.loading}
+          summary={summaryQ.data?.data ?? null}
+          addressedIds={banner.addressedIds}
+          ackedIds={banner.ackedIds}
+          currentUserId={currentUserId}
+          lookups={lookups}
+          selectedId={selectedId}
+          onSelect={(id) => {
+            setSelectedId(id);
+            setDrillDept(null);
+          }}
+          filter={filter}
+          onFilter={setFilter}
+          search={search}
+          onSearch={setSearch}
+          receipts={receiptsQ.data?.data ?? null}
+          receiptsLoading={receiptsQ.loading}
+          drillDept={drillDept}
+          onDrill={setDrillDept}
+          onRemindPending={(a) => void remindPending(a)}
+          onEscalate={(a, deptId, deptName) => void escalate(a, deptId, deptName)}
+        />
       )}
     </div>
   );
