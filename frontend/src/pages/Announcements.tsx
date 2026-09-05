@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Plus } from "lucide-react";
+import { useSearchParams } from "react-router-dom";
 import { PageHeader } from "../components/Layout";
 import { Button } from "../components/Button";
 import { useQuery } from "../hooks/useQuery";
@@ -112,8 +113,11 @@ export function Announcements() {
   // shared cache entry, so the inbox can never disagree with the modal.
   const banner = useAnnouncementBanner({ scope: "human" });
 
+  // ?id=<notice> deep link (the dashboard stack's "View details" / the bell):
+  // read once at mount, then the page owns the selection.
+  const [searchParams] = useSearchParams();
   const [mode, setMode] = useState<Mode>("read");
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(() => searchParams.get("id"));
   const [filter, setFilter] = useState<InboxFilter>("all");
   const [search, setSearch] = useState("");
 

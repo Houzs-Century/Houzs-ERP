@@ -67,6 +67,9 @@ export type BannerAnnouncement = {
   requireAck?: boolean | null;
   /** Author's display name, resolved server-side (mig 2026-09). */
   createdByName?: string | null;
+  /** System-notice tag (scan, service_case, so_amendment, po_amendment,
+   *  ack_escalation); null for a human post. */
+  source?: string | null;
   attachments?: AnnAttachment[];
   mediaLayout?: AnnMediaLayout;
   translations?: BannerTranslations;
@@ -186,6 +189,9 @@ export type UseAnnouncementBanner = {
   /** Whether a given notice may still be postponed (skip not yet spent). Lets
    *  the inbox's bottom bar show / hide its own "Remind later". */
   canPostpone: (a: BannerAnnouncement) => boolean;
+  /** The feed slice itself — every deliverable notice ADDRESSED to this
+   *  reader, newest first (the dashboard stack and the bell render it). */
+  notices: BannerAnnouncement[];
   /** Ids of every notice in the feed slice — i.e. ADDRESSED to this reader.
    *  The Announcements page uses it to tell "pending for me" from "a notice I
    *  can read as a manager but never have to acknowledge". */
@@ -410,6 +416,7 @@ export function useAnnouncementBanner(options?: {
     pendingIndex,
     mustAcknowledge,
     canPostpone,
+    notices: rows,
     addressedIds,
     ackedIds,
     postponedIds: dismissed,

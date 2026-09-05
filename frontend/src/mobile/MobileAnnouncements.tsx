@@ -16,6 +16,7 @@ import {
 } from "./MobileAnnouncementMedia";
 import { MobileVirtualList } from "./MobileVirtualList";
 import { AnnouncementRichBody } from "../components/AnnouncementRichBody";
+import { CATEGORY_META, readCategory, requiresAcknowledgement } from "../components/announcementCategory";
 import { AnnouncementRichEditor } from "../components/AnnouncementRichEditor";
 import { richTextToPlain } from "../lib/announcementRichText";
 import { useAuth } from "../auth/AuthContext";
@@ -74,6 +75,8 @@ type Announcement = {
   createdAt: string | null;
   createdBy: number | null;
   createdByName?: string | null;
+  /** Per-notice "must acknowledge" flag (mig 2026-09); absent = category rule. */
+  requireAck?: boolean | null;
   remindedAt: string | null;
   updatedAt: string | null;
   attachments: Attachment[];
@@ -367,6 +370,11 @@ export function MobileAnnouncements({ onBack }: { onBack?: () => void }) {
   const qc = useQueryClient();
 
   const [view, setView] = useState<"list" | "detail" | "compose" | "notifications">("list");
+  // Design handoff 2026-09-04 (screen 7): Needs you · All · SOP. "Needs you" =
+  // mandatory + addressed to me + unacked, the same rule the desktop inbox and
+  // the pop-up apply (announcementCategory.requiresAcknowledgement).
+  const [filter, setFilter] = useState<"pending" | "all" | "sop">("all");
+  const [ackingId, setAckingId] = useState<string | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
   // Which surface the open notice was tapped from, so Detail's back returns there.
   const [openFrom, setOpenFrom] = useState<"list" | "notifications">("list");
@@ -478,6 +486,31 @@ export function MobileAnnouncements({ onBack }: { onBack?: () => void }) {
   const systemUnread = systemList.reduce((n, a) => (ackedIds.has(a.id) ? n : n + 1), 0);
 
   const open = [...list, ...systemList].find((a) => a.id === openId) ?? null;
+
+  const isPendingForMe = (a: Announcement) =>
+    readerIds.has(a.id) && !ackedIds.has(a.id) && requiresAcknowledgement({ category: readCategory(a.category), requireAck: a.requireAck ?? null });
+  const pendingCount = list.reduce((n, a) => (isPendingForMe(a) ? n + 1 : n), 0);
+  const shownList =
+    filter === "pending"
+      ? list.filter(isPendingForMe)
+      : filter === "sop"
+        ? list.filter((a) => readCategory(a.category) === "SOP")
+        : list;
+
+  // Acknowledge from the card, without opening the notice. Same POST the
+  // detail's bar and the desktop use; same optimistic-with-reconcile trade.
+  const ackInline = async (a: Announcement) => {
+    if (ackingId) return;
+    setAckingId(a.id);
+    try {
+      await api.post(`/api/announcements/${encodeURIComponent(a.id)}/ack`);
+    } catch {
+      /* silent-write-ok: OPTIMISTIC WITH RECONCILE — see Detail.ack above. */
+    }
+    setLocalAcked((prev) => new Set(prev).add(a.id));
+    setAckingId(null);
+    refreshFeeds();
+  };
 
   /* Every write on this screen (publish, hide/show, delete, remind) must bust
      BOTH surfaces: the publisher ledger it renders from, and the reader feed
@@ -626,7 +659,47 @@ export function MobileAnnouncements({ onBack }: { onBack?: () => void }) {
             )}
           </div>
         </div>
-        <div className="scr-title">Announcements</div>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div className="scr-title">Announcements</div>
+          {pendingCount > 0 && (
+            <span aria-label={`${pendingCount} pending`} style={{ borderRadius: 999, background: "var(--red)", color: "#fff", padding: "2px 9px", fontSize: 11, fontWeight: 700 }}>
+              {pendingCount}
+            </span>
+          )}
+        </div>
+        <div style={{ display: "flex", gap: 6, overflowX: "auto", marginTop: 10 }}>
+          {(
+            [
+              ["pending", pendingCount > 0 ? `Needs you ${pendingCount}` : "Needs you"],
+              ["all", "All"],
+              ["sop", "SOP"],
+            ] as Array<["pending" | "all" | "sop", string]>
+          ).map(([id, label]) => {
+            const on = filter === id;
+            return (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setFilter(id)}
+                aria-pressed={on}
+                style={{
+                  borderRadius: 999,
+                  padding: "6px 13px",
+                  fontSize: 12,
+                  fontWeight: on ? 650 : 600,
+                  whiteSpace: "nowrap",
+                  fontFamily: "inherit",
+                  cursor: "pointer",
+                  background: on ? "var(--brand)" : "#fff",
+                  color: on ? "#fff" : "#414539",
+                  border: on ? "1px solid var(--brand)" : "1px solid #d6d9d2",
+                }}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
       </header>
 
       <div className="scroll hz-scroll" style={{ padding: 12, paddingBottom: 120 }}>
@@ -634,9 +707,9 @@ export function MobileAnnouncements({ onBack }: { onBack?: () => void }) {
         {listError && <div style={{ textAlign: "center", color: "var(--red)", fontSize: 12, padding: "26px 0" }}>Couldn't load announcements. Pull to retry.</div>}
         {!listLoading && !listError && (
           <>
-            {list.length > 0 && (
+            {shownList.length > 0 && (
               <MobileVirtualList
-                items={list}
+                items={shownList}
                 getKey={(a) => a.id}
                 estimateHeight={72}
                 gap={9}
@@ -652,14 +725,20 @@ export function MobileAnnouncements({ onBack }: { onBack?: () => void }) {
                       setOpenFrom("list");
                       setView("detail");
                     }}
+                    inlineAck={
+                      isPendingForMe(a)
+                        ? { label: CATEGORY_META[readCategory(a.category)].ctaLabel, acking: ackingId === a.id, onAck: () => void ackInline(a) }
+                        : undefined
+                    }
+                    confirmed={readerIds.has(a.id) && ackedIds.has(a.id)}
                   />
                 )}
               />
             )}
-            {!list.length && (
+            {!shownList.length && (
               <div className="empty">
-                <div className="empty-t">No announcements yet</div>
-                <div className="empty-s">Notices from HQ will appear here.</div>
+                <div className="empty-t">{filter === "pending" ? "Nothing needs you" : filter === "sop" ? "No SOPs yet" : "No announcements yet"}</div>
+                <div className="empty-s">{filter === "pending" ? "Every mandatory notice is acknowledged." : "Notices from HQ will appear here."}</div>
               </div>
             )}
           </>
@@ -680,9 +759,16 @@ function NoticeCard({
   lang,
   companies,
   onOpen,
+  inlineAck,
+  confirmed,
 }: {
   a: Announcement;
   unread: boolean;
+  /** Pending for THIS reader: the category CTA acknowledges in place (44px,
+   *  the hard minimum) beside a "Read full" that opens the notice. */
+  inlineAck?: { label: string; acking: boolean; onAck: () => void };
+  /** Acknowledged by this reader — the card says so instead of offering a CTA. */
+  confirmed?: boolean;
   /** REQUIRED, not optional: the caller has to say whether this row is being
    *  shown to a publisher (ledger — badge Hidden/Expired) or to a reader (feed
    *  — nothing to badge). An optional flag would default the publisher list
@@ -695,9 +781,12 @@ function NoticeCard({
   const na = (a.attachments ?? []).length;
   const col = catColor(a);
   return (
+    <div
+      style={{ display: "flex", flexDirection: "column", gap: 10, background: "#fff", border: `1px solid ${unread ? "#bcdcd7" : "#e3e6e0"}`, borderLeft: inlineAck ? `3px solid ${col}` : undefined, borderRadius: 13, padding: "12px 13px", fontFamily: "inherit" }}
+    >
     <button
       onClick={onOpen}
-      style={{ display: "flex", alignItems: "flex-start", gap: 11, width: "100%", textAlign: "left", background: "#fff", border: `1px solid ${unread ? "#bcdcd7" : "#e3e6e0"}`, borderRadius: 13, padding: "12px 13px", cursor: "pointer", fontFamily: "inherit" }}
+      style={{ display: "flex", alignItems: "flex-start", gap: 11, width: "100%", textAlign: "left", background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: "inherit" }}
     >
       <span style={{ width: 36, height: 36, flex: "none", borderRadius: 10, background: `${col}1f`, display: "flex", alignItems: "center", justifyContent: "center" }}>
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke={col} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 11v2a1 1 0 0 0 1 1h2l5 4V6L6 10H4a1 1 0 0 0-1 1Z" /><path d="M16 8a4 4 0 0 1 0 8" /></svg>
@@ -721,6 +810,32 @@ function NoticeCard({
         )}
       </span>
     </button>
+    {inlineAck && (
+      <div style={{ display: "flex", gap: 8 }}>
+        <button
+          type="button"
+          onClick={inlineAck.onAck}
+          disabled={inlineAck.acking}
+          style={{ flex: 1, height: 44, borderRadius: 10, border: "none", background: col, color: "#fff", fontSize: 13, fontWeight: 700, fontFamily: "inherit", cursor: inlineAck.acking ? "default" : "pointer", opacity: inlineAck.acking ? 0.6 : 1 }}
+        >
+          {inlineAck.acking ? "Marking…" : inlineAck.label}
+        </button>
+        <button
+          type="button"
+          onClick={onOpen}
+          style={{ width: 104, height: 44, borderRadius: 10, border: "1px solid #d6d9d2", background: "#fff", color: "#414539", fontSize: 12.5, fontWeight: 650, fontFamily: "inherit", cursor: "pointer" }}
+        >
+          Read full
+        </button>
+      </div>
+    )}
+    {!inlineAck && confirmed && (
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11.5, fontWeight: 650, color: "var(--green)" }}>
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--green)" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
+        Confirmed
+      </span>
+    )}
+    </div>
   );
 }
 
