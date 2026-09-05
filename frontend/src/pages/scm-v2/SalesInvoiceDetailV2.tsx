@@ -1709,6 +1709,7 @@ export function SalesInvoiceDetailV2() {
                     grandTotalSen={total}
                     currency={salesInvoice.currency}
                     locked={!editingPayments || isCancelled}
+                    receiptFor={{ source: "SIPAY", persistedIds: new Set(persistedDrafts.map((d) => d.uid)) }}
                   />
                 )}
               </Section>

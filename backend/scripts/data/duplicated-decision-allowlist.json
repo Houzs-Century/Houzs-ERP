@@ -1189,6 +1189,11 @@
       "check": "D1",
       "key": "LG,SM,XL|backend/src/lib/announcementRichText.ts frontend/src/lib/announcementRichText.ts",
       "why": "THE ANNOUNCEMENT RICH-BODY GRAMMAR, a deliberate cross-tree TWIN: backend/src/lib/announcementRichText.ts is the original and frontend/src/lib/announcementRichText.ts is its byte-identical copy (the two packages share no build). Both sides run the SAME canonicaliser, the Worker on write and the browser on render, so the sets must be equal; backend/tests/announcementRichText.test.ts and frontend/src/lib/announcementRichText.test.ts pin the same fixtures so a drift is a red test on one side. 2 homes: RAW_DROP, RICH_SIZES."
+    },
+    {
+      "check": "D2",
+      "key": "*,SCM.ACCESS,SCM.PAYMENT_VOUCHER.POST ~ *,SCM.ACCESS,SCM.PAYMENT_VOUCHER.POST,SCM.SALES_ORDER.WRITE",
+      "why": "THE FINANCE NAV GATE against the Official Receipts nav gate, one key apart BY DESIGN. The recon/setup/chart rows show only to GL people (scm.payment_voucher.post); the Official Receipts row adds SCM.SALES_ORDER.WRITE because the OR is sales-side paper — the salesperson who records the payment hands the receipt over — and the sidebar MIRRORS the backend guard (accounting-receipts.ts requirePerm: payment_voucher.post OR sales_order.write). Folding onto the GL-only set would hide the book from the very people who print from it; divergence costs a nav row showing or not, never money."
     }
   ]
 }

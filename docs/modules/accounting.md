@@ -690,7 +690,18 @@ order per channel = the order money was confirmed, and a slow recon never
 scrambles the cash run. No approvals (his call). Born inside the payment
 writers (so-payment-row.ts hook, the SI payment route) with
 `ensureReceiptForPayment` healing history and unhooked paths on demand.
-Surface: `GET /accounting/receipts`, `POST /accounting/receipts/ensure`,
-`POST /accounting/receipts/:id/formalise` (accounting-receipts.ts). Printing
-and the SO/SI screen buttons are item 9b. Pinned by
+Surface: `GET /accounting/receipts`, `POST /accounting/receipts/ensure`
+(returns the WHOLE row — the print button's one round trip),
+`POST /accounting/receipts/:id/formalise` (accounting-receipts.ts). Pinned by
 tests/officialReceipts.test.ts.
+
+**Printing the OR (item 9b).** The pdf (frontend receipt-pdf.ts, A5
+landscape) carries amount-in-words and a diagonal DRAFT watermark until the
+money confirms — the salesperson can hand paper over the moment the payment
+is keyed, and nobody mistakes it for the confirmed copy. Three doors: the
+`/scm/official-receipts` book page (status chips, Print, Confirm money —
+distinct from `/scm/receipts`, the money-in LIST), and a printer button on
+every persisted payment row in the shared PaymentsTable (SO detail SAVED
+mode; SI detail passes `receiptFor.persistedIds` since its rows ride DRAFT
+mode) — ensure-then-print, so payments recorded before the module existed
+heal their OR on first print.
