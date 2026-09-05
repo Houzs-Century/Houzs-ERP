@@ -75,6 +75,8 @@ function props(over: Partial<ManageViewProps> = {}): ManageViewProps {
     onDrill: vi.fn(),
     onRemindPending: vi.fn(),
     onEscalate: vi.fn(),
+    onToggleHidden: vi.fn(),
+    onDelete: vi.fn(),
     ...over,
   };
 }

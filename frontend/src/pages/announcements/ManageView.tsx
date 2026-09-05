@@ -54,6 +54,10 @@ export type ManageViewProps = {
   onDrill: (key: string) => void;
   onRemindPending: (a: Announcement) => void;
   onEscalate: (a: Announcement, departmentId: number | null, departmentName: string) => void;
+  /** Hide / show (PATCH isActive) and permanent delete — the poster's row
+   *  actions from the old list, kept in the drawer header. */
+  onToggleHidden: (a: Announcement) => void;
+  onDelete: (a: Announcement) => void;
   className?: string;
 };
 
@@ -201,6 +205,8 @@ export function ManageView(p: ManageViewProps) {
               onDrill={p.onDrill}
               onRemindPending={() => p.onRemindPending(selected)}
               onEscalate={(deptId, deptName) => p.onEscalate(selected, deptId, deptName)}
+              onToggleHidden={() => p.onToggleHidden(selected)}
+              onDelete={() => p.onDelete(selected)}
             />
           ) : (
             <div className="flex flex-1 items-center justify-center px-6 text-center text-[12px] text-ink-muted">
@@ -306,6 +312,8 @@ function Drawer({
   onDrill,
   onRemindPending,
   onEscalate,
+  onToggleHidden,
+  onDelete,
 }: {
   a: Announcement;
   receipts: AcksData | null;
@@ -314,6 +322,8 @@ function Drawer({
   onDrill: (key: string) => void;
   onRemindPending: () => void;
   onEscalate: (departmentId: number | null, departmentName: string) => void;
+  onToggleHidden: () => void;
+  onDelete: () => void;
 }) {
   const meta = CATEGORY_META[categoryOf(a)];
   const depts = receipts?.byDepartment ?? [];
@@ -352,6 +362,22 @@ function Drawer({
         <span className="font-mono text-[10.5px] text-ink-muted">
           {docNo(a)} · {fmtDateTime(a.createdAt)}
         </span>
+        <div className="mt-1 flex gap-2">
+          <button
+            type="button"
+            onClick={onToggleHidden}
+            className={cn(SECONDARY_BTN, "px-2.5 py-1 text-[11px] font-[650]")}
+          >
+            {a.isActive ? "Hide" : "Show"}
+          </button>
+          <button
+            type="button"
+            onClick={onDelete}
+            className="rounded-md border border-err/40 bg-surface px-2.5 py-1 text-[11px] font-[650] text-err hover:bg-err/5"
+          >
+            Delete
+          </button>
+        </div>
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col gap-3.5 overflow-auto px-4 py-3.5">
