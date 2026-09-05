@@ -46,9 +46,67 @@ test("BOTH real files load, and the 2026-08 round is still there", () => {
   const bySource = new Map();
   for (const b of both.builds) bySource.set(b.source, (bySource.get(b.source) ?? 0) + 1);
   for (const f of CORRECTION_FILES) assert.ok(bySource.get(f) > 0, `${f} contributed no builds`);
-  /* The 2026-09 round is fifteen builds. If that number changes the file
-     changed, and whoever changed it should say so here. */
-  assert.equal(bySource.get("sofa-compartment-corrections-2026-09.json"), 15);
+  /* The 2026-09 round is eighteen builds. If that number changes the file
+     changed, and whoever changed it should say so here.
+     15 -> 18 on 2026-09-05: three builds were added to the file without this
+     number following them, so the assertion had been RED on main and the
+     working-agreement workflow (which runs `node --test scripts/lib/*.test.mjs`
+     and reports rather than blocks) had been carrying the failure. Corrected to
+     what the file actually holds. */
+  assert.equal(bySource.get("sofa-compartment-corrections-2026-09.json"), 18);
+});
+
+/**
+ * THE FILES MAY NOT DISAGREE ABOUT ONE DOCUMENT.
+ *
+ * Every file is loaded on every run and they are applied in order, so a
+ * document named by two builds with DIFFERENT pieces has no answer — it has
+ * whichever answer ran last. Worse, `FILE=2026-08` plans that round alone,
+ * which is how the losing answer gets written on its own.
+ *
+ * WHAT THIS DOES NOT COVER, said plainly because the first draft of this
+ * comment claimed otherwise: it keys on the document NUMBER, so it sees a
+ * document contradicted by another entry — and it does NOT see the two HALVES
+ * of one sofa contradicting each other, because a sales order and the purchase
+ * order raised from it are different numbers in different files. That pair is
+ * only linked by being the same physical sofa, and nothing in the data says so.
+ * The 1ELT test below pins that particular pair by hand for exactly this
+ * reason; a new build corrected on only one of its two documents will still get
+ * past this check.
+ */
+test("no two builds give the same document different pieces", () => {
+  const seen = new Map();
+  for (const b of loadCorrections(DATA).builds) {
+    const pieces = (b.pieces || []).map((p) => String(p).trim().toUpperCase()).join("+");
+    for (const doc of b.docs || []) {
+      /* A document CAN legitimately appear twice — two different builds on one
+         document, told apart by desc2Match. Key on both. */
+      const key = `${doc} :: ${b.desc2Match ?? ""}`;
+      const prev = seen.get(key);
+      if (prev && prev.pieces !== pieces) {
+        assert.fail(
+          `${doc} is given two different builds for the same desc2Match:\n` +
+          `  ${prev.source}: ${prev.pieces}\n  ${b.source}: ${pieces}\n` +
+          `Correct both, or the round that runs last silently wins.`,
+        );
+      }
+      seen.set(key, { pieces, source: b.source });
+    }
+  }
+});
+
+test("the 1ELT build says L(LHF) on BOTH its documents (owner 2026-09-05)", () => {
+  const builds = loadCorrections(DATA).builds
+    .filter((b) => (b.desc2Match || "").includes("1 ELT"));
+  /* The sales order (2026-09) and the purchase order (2026-08) of one sofa. */
+  assert.equal(builds.length, 2, builds.map((b) => `${b.source} ${b.docs.join("/")}`).join(" | "));
+  for (const b of builds) {
+    assert.deepEqual(
+      b.pieces.map((p) => String(p).toUpperCase()),
+      ["L(LHF)", "1NA", "2A(RHF)"],
+      `${b.source} ${b.docs.join("/")} still carries the retired 1ABOX reading`,
+    );
+  }
 });
 
 test("every build in every file names its documents, its pieces and a desc2Match", () => {
