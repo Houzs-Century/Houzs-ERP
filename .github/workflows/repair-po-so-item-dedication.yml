@@ -1,0 +1,94 @@
+name: Repair PO -> SO line dedication
+
+# Manual. `scm.purchase_order_items.so_item_id` is the DEDICATION: this purchase
+# line was raised for THAT sales line. This re-points the dedications of ONE
+# named (sales order, purchase order) pair onto the sales line carrying the same
+# item code AND seat depth - matched by code, never by position - and refuses
+# anything that is not forced.
+#
+# It writes ONE column. No code, no price, no quantity, no row is added or
+# removed; both money columns on both documents are asserted before and after.
+# Removing a placeholder the re-point frees is NOT this job - that stays
+# apply-sofa-compartment-corrections.yml, under its own money and downstream
+# guards.
+#
+# PLAN unless mode=apply, and an apply run also needs the purchase order number
+# typed again in `confirm_po`. An apply run ends by re-reading BOTH documents on
+# a fresh connection and asserting the dedication SHAPE, not a row count.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      company:
+        description: "company_id"
+        required: false
+        default: "1"
+        type: string
+      doc:
+        description: "the sales order (e.g. HC-SO-012929)"
+        required: true
+        type: string
+      po:
+        description: "the purchase order raised from it (e.g. HC-PO-009751)"
+        required: true
+        type: string
+      mode:
+        description: "apply to write, else PLAN"
+        required: false
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm_po:
+        description: "apply only — repeat the purchase order number exactly"
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: repair-po-so-item-dedication-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/repair-po-so-item-dedication.mjs
+        env:
+          MODE: ${{ inputs.mode }}
+          CONFIRM: I HAVE REVIEWED THE DRY-RUN
+          CONFIRM_PO: ${{ inputs.confirm_po }}
+          COMPANY: ${{ inputs.company }}
+          DOC: ${{ inputs.doc }}
+          PO: ${{ inputs.po }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/repair-po-so-item-dedication.mjs
+        env:
+          MODE: ${{ inputs.mode }}
+          CONFIRM: I HAVE REVIEWED THE DRY-RUN
+          CONFIRM_PO: ${{ inputs.confirm_po }}
+          COMPANY: ${{ inputs.company }}
+          DOC: ${{ inputs.doc }}
+          PO: ${{ inputs.po }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
