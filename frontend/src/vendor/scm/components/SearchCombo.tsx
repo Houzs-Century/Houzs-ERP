@@ -41,6 +41,12 @@ export type ComboOption = { value: string; label: string; group?: string };
 const PANEL_MAX = 280;
 const PANEL_MIN = 120;
 const EDGE_GAP = 8;
+/* Round 3 (owner 2026-09-05: 选择时要优化,你看现在挤在一起这样): the panel
+   used to inherit the INPUT's width, so inside a tight table column (~180px)
+   every account label wrapped to three lines. The panel now takes at least
+   PANEL_MIN_W, shifting left when that would run off the viewport's right
+   edge — the input anchors it, it no longer straitjackets it. */
+const PANEL_MIN_W = 320;
 
 type PanelPos = { up: boolean; maxH: number; left: number; width: number; top: number; bottom: number };
 
@@ -49,11 +55,12 @@ function measurePanel(input: HTMLElement): PanelPos {
   const below = window.innerHeight - r.bottom - EDGE_GAP;
   const above = r.top - EDGE_GAP;
   const up = below < PANEL_MAX && above > below;
+  const width = Math.min(Math.max(r.width, PANEL_MIN_W), window.innerWidth - EDGE_GAP * 2);
   return {
     up,
     maxH: Math.max(PANEL_MIN, Math.min(PANEL_MAX, up ? above : below)),
-    left: r.left,
-    width: r.width,
+    left: Math.max(EDGE_GAP, Math.min(r.left, window.innerWidth - width - EDGE_GAP)),
+    width,
     top: r.top,
     bottom: r.bottom,
   };
@@ -204,8 +211,12 @@ export function SearchCombo({
                  closed the list and restored the label. */
               onMouseDown={(e) => { e.preventDefault(); pick(r.o.value); }}
               onMouseEnter={() => setHighlight(r.i)}
+              title={r.o.label}
               style={{
                 padding: '6px 12px', cursor: 'pointer',
+                /* One option, one line — a wrapped label reads as two rows
+                   and the panel is wide enough now (Round 3, see PANEL_MIN_W). */
+                whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
                 background: r.i === highlight ? 'var(--c-cream, #f5f1ea)' : 'transparent',
                 fontWeight: r.o.value === value ? 600 : 400,
               }}

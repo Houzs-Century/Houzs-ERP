@@ -48,11 +48,14 @@ describe('the numbering config', () => {
     const { app } = harness({ acc_bank_letters: [{ company_id: CO, account_code: '310-0010', letter: 'M' }] });
     const res = await app.request('/accounting/numbering');
     expect(res.status).toBe(200);
-    const b = await res.json() as { digits: number; accounts: Array<{ accountCode: string; letter: string | null }> };
+    const b = await res.json() as { digits: number; accounts: Array<{ accountCode: string; letter: string | null; fixedCash?: boolean }> };
     expect(b.digits).toBe(3);
+    /* The drawer (roles.CASH, default 320-0000) reports its FIXED C — the
+       card renders it read-only instead of inviting a letter. */
     expect(b.accounts.map((a) => [a.accountCode, a.letter])).toEqual([
-      ['310-0010', 'M'], ['310-0020', null], ['320-0000', null],
+      ['310-0010', 'M'], ['310-0020', null], ['320-0000', 'C'],
     ]);
+    expect(b.accounts.find((a) => a.accountCode === '320-0000')?.fixedCash).toBe(true);
   });
 
   test('letters save upper-cased; a non-money account and a bad shape are refused by name', async () => {
@@ -69,12 +72,24 @@ describe('the numbering config', () => {
 
   test('one letter, one account — refused in-save and against the stored set', async () => {
     const { app } = harness({ acc_bank_letters: [{ company_id: CO, account_code: '310-0010', letter: 'M' }] });
-    const inSave = await put(app, { letters: [{ accountCode: '310-0020', letter: 'A' }, { accountCode: '320-0000', letter: 'A' }] });
+    const inSave = await put(app, { letters: [{ accountCode: '310-0020', letter: 'A' }, { accountCode: '310-0010', letter: 'A' }] });
     expect(inSave.status).toBe(400);
 
     const stored = await put(app, { letters: [{ accountCode: '310-0020', letter: 'M' }] });
     expect(stored.status).toBe(409);
     expect(((await stored.json()) as { message: string }).message).toContain('M');
+  });
+
+  test('the cash drawer is C on both papers — no letter to save, no bank may take C', async () => {
+    const { app } = harness();
+    /* A letter FOR the drawer: refused — its series is fixed, not config. */
+    const fixed = await put(app, { letters: [{ accountCode: '320-0000', letter: 'K' }] });
+    expect(fixed.status).toBe(400);
+    expect(((await fixed.json()) as { error: string }).error).toBe('letter_fixed');
+    /* C ON a bank: refused — it would collide with the drawer's series. */
+    const clash = await put(app, { letters: [{ accountCode: '310-0020', letter: 'C' }] });
+    expect(clash.status).toBe(400);
+    expect(((await clash.json()) as { message: string }).message).toContain('CPV');
   });
 
   test('digits: 3-5 upserts, anything else is a 400', async () => {

@@ -231,6 +231,7 @@ const NumberingCard = () => {
   const typed = (code: string): string | undefined => draft[code] as string | undefined;
   const letterOf = (code: string, saved: string | null): string => typed(code) ?? saved ?? '';
   const dirtyLetters = rows
+    .filter((a) => a.fixedCash !== true)
     .filter((a) => (typed(a.accountCode) ?? '') !== '' && (typed(a.accountCode) ?? '').toUpperCase() !== (a.letter ?? ''))
     .map((a) => ({ accountCode: a.accountCode, letter: (typed(a.accountCode) ?? '').toUpperCase() }));
   const dirty = dirtyLetters.length > 0 || (digits != null && digits !== (q.data?.digits ?? 3));
@@ -263,14 +264,22 @@ const NumberingCard = () => {
           {rows.map((a) => (
             <label key={a.accountCode} style={{ display: 'inline-flex', gap: 6, alignItems: 'center', fontSize: 'var(--fs-13)' }}>
               <span style={softText}>{a.accountCode} · {a.accountName}</span>
-              <input
-                aria-label={`Letter for ${a.accountCode}`}
-                value={letterOf(a.accountCode, a.letter)}
-                onChange={(e) => { setDraft((d) => ({ ...d, [a.accountCode]: e.target.value })); setNote(null); }}
-                maxLength={3}
-                placeholder="—"
-                style={{ width: 48, padding: '4px 6px', fontSize: 'var(--fs-13)', textTransform: 'uppercase', border: '1px solid var(--c-line, rgba(34,31,32,0.2))', borderRadius: 'var(--radius-sm, 6px)' }}
-              />
+              {a.fixedCash === true ? (
+                /* The drawer: C on both papers (CPV / COR), minted off
+                   roles.CASH — nothing to type, nothing the Save sends. */
+                <span title="现金系列固定 C — 付款 CPV,收据 COR" style={{ padding: '4px 8px', fontWeight: 700 }}>
+                  C <span style={softText}>· CPV/COR 固定</span>
+                </span>
+              ) : (
+                <input
+                  aria-label={`Letter for ${a.accountCode}`}
+                  value={letterOf(a.accountCode, a.letter)}
+                  onChange={(e) => { setDraft((d) => ({ ...d, [a.accountCode]: e.target.value })); setNote(null); }}
+                  maxLength={3}
+                  placeholder="—"
+                  style={{ width: 48, padding: '4px 6px', fontSize: 'var(--fs-13)', textTransform: 'uppercase', border: '1px solid var(--c-line, rgba(34,31,32,0.2))', borderRadius: 'var(--radius-sm, 6px)' }}
+                />
+              )}
             </label>
           ))}
           {rows.length === 0 && <span style={softText}>{q.isLoading ? 'Loading…' : 'No money accounts in this chart yet.'}</span>}

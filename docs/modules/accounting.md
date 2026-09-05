@@ -408,7 +408,11 @@ registers the row in one call — so the taxonomy and the registry cannot drift
 company-level (520-0000 / 610-0001), never per-group. Maintenance UI: the
 **Item Groups** tab on /scm/accounting — unbound groups arrive pre-filled with
 the SUGGESTED defaults marked 建议·unsaved, and nothing writes until the owner
-presses Save (his sign-off, row by row). Routes in
+presses Save (his sign-off, row by row). The account pickers offer only the
+slot's own ledger side (purchase slots EXPENSE, sales slots INCOME) under
+AutoCount-style section headers — Cost of goods sold / Expenses, Sales /
+Sales adjustments / Other incomes, the same 6xx boundary the standard P&L
+reads (owner 2026-09-05: 不能这样做一个header 分类吗). Routes in
 backend/src/scm/routes/accounting-item-groups.ts (guard: the GL permission),
 pinned by tests/itemGroups.test.ts + ItemGroups.test.tsx.
 
@@ -662,7 +666,9 @@ company+letter — two banks on one letter would share a number series) and the
 suffix width (`scm.acc_numbering`, 3-5). Maintained on the Voucher numbering
 card of /scm/settlement-setup; full detail in
 docs/modules/payment-voucher.md §12. The OR channels (item 9) and transfers
-(item 10) read the same letter table.
+(item 10) read the same letter table. The cash drawer (`roles.CASH`) is the
+one FIXED series — C on both papers, CPV / COR — reported `fixedCash` by the
+GET, rendered read-only, refused by the PUT in both directions.
 
 **The five journals (GL redesign item 7).** Every entry is labelled the
 AutoCount way — SALES / PURCHASE / BANK / CASH / GENERAL — derived, never

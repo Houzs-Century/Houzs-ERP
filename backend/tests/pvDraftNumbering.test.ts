@@ -35,6 +35,7 @@ function harness(tables: Record<string, Row[]> = {}, perms: readonly string[] = 
     {
       payment_vouchers: [{ ...PV }],
       acc_bank_letters: [{ company_id: CO, account_code: '310-0010', letter: 'M' }],
+      acc_account_roles: [],
       acc_numbering: [],
       companies: [{ id: CO, code: '2990' }],
       entity_audit_log: [],
@@ -68,6 +69,20 @@ describe('CHECK mints the formal number', () => {
     const body = await res.json() as { pvNumber?: string; checkedBy: string };
     expect(body.pvNumber).toBe(`2990-MPV-${yymm}-001`);
     expect(sb.tables.payment_vouchers[0]).toMatchObject({ pv_number: `2990-MPV-${yymm}-001`, checked_by: 'Checker' });
+  });
+
+  test('paid from the cash drawer mints on the FIXED C — {co}CPV — with no letters row at all', async () => {
+    const { app, sb } = harness({
+      payment_vouchers: [{ ...PV, credit_account_code: '320-0000' }],
+      /* Deliberately EMPTY: the drawer's series is roles.CASH + C, never
+         configuration (owner 2026-09-05: 我payment 出去by cash 时就会是cpv啊). */
+      acc_bank_letters: [],
+    });
+    const res = await check(app);
+    expect(res.status).toBe(200);
+    const body = await res.json() as { pvNumber?: string };
+    expect(body.pvNumber).toBe(`2990-CPV-${yymm}-001`);
+    expect(sb.tables.payment_vouchers[0]).toMatchObject({ pv_number: `2990-CPV-${yymm}-001` });
     const audit = sb.tables.entity_audit_log.find((r) => r.action === 'CHECK');
     expect(JSON.stringify(audit ?? {})).toContain('2990-Draft-');
   });

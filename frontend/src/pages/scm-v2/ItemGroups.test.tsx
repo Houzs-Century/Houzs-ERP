@@ -37,12 +37,15 @@ vi.mock('../../vendor/scm/lib/accounting-queries', () => ({
   useAccounts: () => ({
     data: {
       accounts: [
-        { account_code: '601-0003', account_name: 'PURCHASE OF SOFA', is_active: true },
-        { account_code: '602-0000', account_name: 'PURCHASES OF BEDLINES', is_active: true },
-        { account_code: '501-0000', account_name: 'SALES OF FURNITURE', is_active: true },
-        { account_code: '502-0000', account_name: 'SALES OF BEDLINES', is_active: true },
-        { account_code: '510-0000', account_name: 'RETURN INWARDS', is_active: true },
-        { account_code: '612-0000', account_name: 'PURCHASES RETURN', is_active: true },
+        { account_code: '601-0003', account_name: 'PURCHASE OF SOFA', account_type: 'EXPENSE', is_active: true },
+        { account_code: '602-0000', account_name: 'PURCHASES OF BEDLINES', account_type: 'EXPENSE', is_active: true },
+        { account_code: '501-0000', account_name: 'SALES OF FURNITURE', account_type: 'INCOME', is_active: true },
+        { account_code: '502-0000', account_name: 'SALES OF BEDLINES', account_type: 'INCOME', is_active: true },
+        { account_code: '510-0000', account_name: 'RETURN INWARDS', account_type: 'INCOME', is_active: true },
+        { account_code: '612-0000', account_name: 'PURCHASES RETURN', account_type: 'EXPENSE', is_active: true },
+        /* Noise the picker must HIDE: neither side of trading. */
+        { account_code: '100-0000', account_name: 'CAPITAL', account_type: 'EQUITY', is_active: true },
+        { account_code: '310-0010', account_name: 'CASH AT BANK - MAYBANK', account_type: 'ASSET', is_active: true },
       ],
     },
   }),
@@ -96,6 +99,23 @@ describe('the sign-off flow', () => {
     fireEvent.click(off);
     expect(patchMutate).toHaveBeenCalledWith({ code: 'SOFA', isActive: false });
     expect(bindMutate).not.toHaveBeenCalled();
+  });
+
+  test('the picker offers only its ledger side, under section headers (owner 2026-09-05)', () => {
+    render(<ItemGroupsTab />);
+    const purchase = screen.getByLabelText('BEDLINES Purchase account');
+    fireEvent.focus(purchase);
+    /* EXPENSE list: the cost section heads it; equity/bank/income never show. */
+    expect(screen.getByText('Cost of goods sold')).toBeTruthy();
+    expect(screen.queryByText(/CAPITAL/)).toBeNull();
+    expect(screen.queryByText(/CASH AT BANK/)).toBeNull();
+    expect(screen.queryByText(/SALES OF FURNITURE/)).toBeNull();
+    fireEvent.blur(purchase);
+    const sales = screen.getByLabelText('BEDLINES Sales Return account');
+    fireEvent.focus(sales);
+    /* INCOME list: 510 files under Sales adjustments; expense rows stay out. */
+    expect(screen.getByText('Sales adjustments')).toBeTruthy();
+    expect(screen.queryByText(/PURCHASE OF SOFA/)).toBeNull();
   });
 });
 
