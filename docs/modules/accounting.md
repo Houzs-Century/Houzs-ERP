@@ -444,6 +444,11 @@ idempotency holds, and an unbound group fails THAT invoice by name instead of
 dying. `?dryRun=1` lists the plan without writing; the write pass batches
 (limit ≤ 25 per call, `remaining` in the response) and re-running is a no-op.
 Handler in accounting-pi-backfill.ts; pinned by tests/piPeriodicBackfill.test.ts.
+The owner presses it himself: the **PI backfill card** at the foot of the Item
+Groups tab (PiBackfill.tsx) runs Dry run first — 执行写入 stays disabled until
+a preview exists — then loops the batch until `remaining` is 0, stopping the
+moment a pass completes nothing so unbound-group failures list themselves
+instead of spinning. Per active company: 2990 and HOUZS are two visits.
 
 **Month-end stock close (GL redesign item 4).** Stock value reaches the GL
 once a month, from the live engine (owner: 可以不可以抓实时的): every night at

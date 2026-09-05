@@ -14,6 +14,7 @@
 
 import { useMemo, useState } from 'react';
 import { getActiveCompanyId } from '../../lib/activeCompany';
+import { PiBackfillCard } from './PiBackfill';
 import { SearchCombo, type ComboOption } from '../../vendor/scm/components/SearchCombo';
 import { useAccounts } from '../../vendor/scm/lib/accounting-queries';
 import {
@@ -240,6 +241,10 @@ export const ItemGroupsTab = () => {
           )}
         />
       )}
+
+      {/* Bindings feed the backfill — the historical PIs repost right where
+          the groups were just signed off (item 3's door, owner-pressed). */}
+      <PiBackfillCard />
     </div>
   );
 };
