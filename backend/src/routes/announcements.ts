@@ -778,6 +778,10 @@ app.get("/banner", async (c) => {
   // This user's ack rows (id + when they acked): the popup gate re-pops a
   // notice the user has NOT acked, OR has acked but was reminded AFTER that
   // ack. Read dual-keyed (pg folds snake -> camel on read).
+  // company-scope: the acks read is keyed on the caller's user_id alone (a
+  // user's own receipts, no company dimension), and the notices it is joined
+  // against in JS pass companyCanSee(allowed) at the filter below — a receipt
+  // for a notice the caller's companies cannot see never reaches the payload.
   const [res, ackRes] = await Promise.all([
     c.env.DB
       // WHERE is_active = 1 pushes the active filter to SQL so this uses the
@@ -789,6 +793,7 @@ app.get("/banner", async (c) => {
       .prepare(`SELECT * FROM announcements WHERE is_active = 1 ORDER BY created_at DESC`)
       .all<AnnouncementRow>(),
     c.env.DB
+      // company-scope: keyed on the caller's own user_id; the notice side is gated by companyCanSee below.
       .prepare(
         "SELECT announcement_id, acked_at FROM announcement_acks WHERE user_id = ?",
       )
@@ -929,6 +934,7 @@ function audienceOf(ann: AnnouncementRow, roster: RosterUser[]): RosterUser[] {
 // acked_at per user for ONE notice (or, with no id, every notice → keyed by
 // notice id first).
 async function loadAckMap(env: Env, id: string): Promise<Map<number, string | null>> {
+  // company-scope: receipts for ONE notice the caller already passed getScopedAnnouncement (companyCanSee) for; acks carry no company dimension of their own.
   const res = await env.DB.prepare(
     "SELECT user_id, acked_at FROM announcement_acks WHERE announcement_id = ?",
   )
@@ -943,6 +949,7 @@ async function loadAckMap(env: Env, id: string): Promise<Map<number, string | nu
 }
 
 async function loadAllAcks(env: Env): Promise<Map<string, Set<number>>> {
+  // company-scope: a lookup map consulted only for notices the caller has already filtered through companyCanSee / inTargetCompanies; never returned raw.
   const res = await env.DB.prepare(
     "SELECT announcement_id, user_id FROM announcement_acks",
   ).all<{ announcement_id?: string; announcementId?: string; user_id?: number; userId?: number }>();
@@ -1122,6 +1129,11 @@ app.get("/ack-summary", requirePermissionOrSalesDirector("announcements.write"),
   }
   const sd = salesDirectorScope(c);
   const allowed = allowedCompanyIds(c);
+  // company-scope: announcements carry their audience as target_company_ids
+  // (NULL = every company), not a per-row company predicate — the same
+  // in-JS companyCanSee(allowed) gate GET / applies runs on the very next
+  // line, so a notice targeting only companies the caller lacks is dropped
+  // before its counts are computed.
   const res = await c.env.DB
     .prepare(`SELECT * FROM announcements WHERE source IS NULL ORDER BY created_at DESC`)
     .all<AnnouncementRow>();
@@ -1164,8 +1176,14 @@ app.get("/team-pending", async (c) => {
   if (reports.length === 0) {
     return c.json({ success: true, data: { reports: 0, pending: [] } });
   }
+  // company-scope: the audience is the REPORT's, not the caller's — each
+  // report is matched against a notice's target_company_ids through their own
+  // user_companies grants (inTargetCompanies, fail-open like rosterCompaniesSql)
+  // in the loop below, so a report never appears against a notice their
+  // companies cannot see; the notice rows themselves have no company column.
   const [res, acks, grants] = await Promise.all([
     c.env.DB
+      // company-scope: audience is per REPORT via target_company_ids + inTargetCompanies below; rows carry no company column.
       .prepare(`SELECT * FROM announcements WHERE is_active = 1 AND source IS NULL ORDER BY created_at DESC`)
       .all<AnnouncementRow>(),
     loadAllAcks(c.env),

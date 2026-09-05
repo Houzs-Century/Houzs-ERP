@@ -243,7 +243,7 @@ export function TeamPendingCard() {
       </div>
       <span className="text-[12px] leading-[1.55] text-ink-secondary">
         {people === 0
-          ? "Everyone who reports to you is up to date."
+          ? `No unacknowledged mandatory notice found for your ${data.reports} direct ${data.reports === 1 ? "report" : "reports"} — checked against live notices addressed to them. If you expected one, confirm it is live and targets their department or them.`
           : `${data.reports} ${data.reports === 1 ? "person reports" : "people report"} to you. These have not acknowledged a mandatory notice.`}
       </span>
       {rows.length > 0 && (
