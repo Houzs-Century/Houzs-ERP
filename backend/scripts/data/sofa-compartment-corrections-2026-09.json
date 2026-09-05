@@ -240,6 +240,20 @@
    "seat": "26",
    "desc2Match": "Size:26”/Col:Modenza 02 Barley",
    "why": "owner 2026-09-04 and again 2026-09-05: the 26\" build is 1A(LHF)+2A(RHF). The document ALSO holds a separate 1S at 28\" which is a genuine single seater and is NOT part of this build - the desc2Match selects only the 26\" lines. Measured before writing: the sales order carried a surplus 1S at 26\" and the purchase order carried that same surplus while MISSING its 1A(LHF)"
+  },
+  {
+   "docs": [
+    "HC-SO-013327",
+    "HC-PO-010081"
+   ],
+   "model": "8069",
+   "pieces": [
+    "1A(LHF)",
+    "2A(RHF)"
+   ],
+   "seat": "24",
+   "desc2Match": "Col:BO315-7 Peach",
+   "why": "photo: the slip draws [24\"] + [24\"][24\"] with a hatched arm at each outer end - a one plus a two, the same shape as the owner-approved HC-SO-012624. The slip's 'Seater depth +1 inch foam, total seater depth 49\"' is a special order, not a piece"
   }
  ]
 }
