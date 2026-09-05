@@ -204,13 +204,13 @@
    ],
    "model": "5526",
    "pieces": [
-    "L(LHF)",
+    "1ABOX(LHF)",
     "1NA",
     "2A(RHF)"
    ],
    "seat": "28",
    "desc2Match": "1 ELT",
-   "why": "no photograph exists for this line; decoded from the book text alone with the owner's 2026-09-04 readings ELT=L and 2ER=2A. The stray T is unexplained and no piece was invented for it"
+   "why": "owner 2026-09-05: look at what the purchase order has and put that on the sales order. HC-PO-000254 was decomposed in the 2026-08 round to 1ABOX(LHF)+1NA+2A(RHF), so the sales order copies it and the two sides agree. He read 1ELT as the chaise L, and that stands as a reading - but 5526 has NO chaise piece in the product master, so writing L(LHF) needed a minted SKU and was REFUSED. This line has no photograph at all: 0 rows in both photo manifests and the full-book export reported 0 failed lines, so the book never carried one. The purchase order is the only evidence there is."
   },
   {
    "docs": [
