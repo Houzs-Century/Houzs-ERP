@@ -184,6 +184,20 @@ SKU 名字格式:`SOFA {型号名} {件}`(不带品牌前缀)。
 **教训**:第二批一度给 8030/8060/9058/9028/9050/8069/5535 开了 recliner/power 件,
 owner 指出这些款根本没有 → 已用 `revert-sofa-recliner-skus.mjs` 撤掉 28 个。**开件前先问型号有没有这个机构**。
 
+**教训二(2026-09-05):开错件的另一种走法 —— 先猜出一个件,再为这个猜测铸 SKU。**
+`(1 ELT / T + NA +2ER)` 在 2026-08 被读成 `1ABOX(LHF)+1NA+2A(RHF)`,依据只有字面
+(corrections 档自己写着 "the ELT/T spelling has no parser rule"),
+`fix-modenza-label-and-5526-pieces.mjs` 随即铸了 `5526-1ABOX(LHF)` 好让这个读法写得下去
+—— **SKU 一铸出来,猜测就看起来像定论了**。owner 2026-09-05 定音:
+「1ELT 就是L来的」(1ELT = 陪椅 L)、「1Abox 是1NALT」(1ABOX 的写法是 1NALT),
+两个 token 不是同一个东西。已开 `5526-L(LHF)`(`open-5526-chaise.mjs`),
+SO/PO 两边一起改回 `L(LHF)+1NA+2A(RHF)`,钱一分没动。
+`scripts/lib/parse-sofa.mjs` 其实早就两边都对:`1 ELT` 出 `L(LHF)`、`1NALT` 出
+`1ABOX(LHF)` —— 但**原字串里那个多出来的 `/ T` 会把结构切断**,parser 回 `pieces: []`
+`conf: low`,所以当时没有任何东西去反驳那个猜测。已用
+`scripts/lib/parse-sofa.test.mjs` 钉住。**解不出来的行,答案要么来自图、要么来自 owner;
+字面像什么不是证据。**
+
 ### 3.4 型号本身缺了怎么办 —— 对照表的 `EXISTS(1st-pass)` 会吃掉一个型号
 
 `piece SKU not minted` 有两种成因:件没开(§3.3),或者**整个型号从来没建**。

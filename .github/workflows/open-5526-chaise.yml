@@ -1,0 +1,84 @@
+name: Open the 5526 chaise (5526-L(LHF))
+
+# Manual. Opens ONE compartment on ONE model - the chaise on 5526 - in all three
+# places docs/sofa-import-handoff.md 3.2 requires: the model's allowed_options,
+# the {model}-{piece} SKU in scm.mfg_products, and the master compartment pool.
+#
+# Why: the owner ruled on 2026-09-05 that the slip token `1ELT` IS the chaise
+# `L` (and that `1ABOX` is what a slip spells `1NALT`). HC-SO-000814 and
+# HC-PO-000254 had been decoded the other way in 2026-08, from the spelling
+# alone. Correcting them needs a chaise SKU that 5526 has never had.
+#
+# The SKU is COPIED from the model's closest existing piece (5526-1A(LHF))
+# rather than invented - opening pieces on inference is how 28 wrong recliner
+# SKUs were created and had to be reverted (handoff 3.3).
+#
+# PLAN by default: the transaction is rolled back and nothing is written.
+# mode=apply additionally requires the confirm phrase, and ends by re-reading
+# all three steps on a FRESH connection and asserting their shape.
+#
+# Run this BEFORE "Apply sofa compartment + seat-size corrections", which
+# refuses a build whose piece SKU is not minted.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      company:
+        description: "company_id"
+        required: false
+        default: "1"
+        type: string
+      mode:
+        description: "plan (default) or apply"
+        required: false
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: 'required for mode=apply: 1ELT IS THE CHAISE L'
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: open-5526-chaise-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/open-5526-chaise.mjs
+        env:
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY: ${{ inputs.company }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/open-5526-chaise.mjs
+        env:
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY: ${{ inputs.company }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

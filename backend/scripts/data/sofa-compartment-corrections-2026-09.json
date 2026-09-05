@@ -204,13 +204,13 @@
    ],
    "model": "5526",
    "pieces": [
-    "1ABOX(LHF)",
+    "L(LHF)",
     "1NA",
     "2A(RHF)"
    ],
    "seat": "28",
    "desc2Match": "1 ELT",
-   "why": "owner 2026-09-05: look at what the purchase order has and put that on the sales order. HC-PO-000254 was decomposed in the 2026-08 round to 1ABOX(LHF)+1NA+2A(RHF), so the sales order copies it and the two sides agree. He read 1ELT as the chaise L, and that stands as a reading - but 5526 has NO chaise piece in the product master, so writing L(LHF) needed a minted SKU and was REFUSED. This line has no photograph at all: 0 rows in both photo manifests and the full-book export reported 0 failed lines, so the book never carried one. The purchase order is the only evidence there is."
+   "why": "owner 2026-09-05, in his own words: \"1ELT 就是L来的\" (1ELT IS the chaise, L) and \"1Abox 是1NALT\" (1ABOX is what the slip writes as 1NALT). That RETIRES the earlier reading. This entry used to say 1ABOX(LHF)+1NA+2A(RHF), copied from HC-PO-000254 because the purchase order was the only evidence available - but the purchase order got that from the 2026-08 round, which reached it from the SPELLING alone (its why: \"the ELT/T spelling has no parser rule\"), and fix-modenza-label-and-5526-pieces.mjs minted 5526-1ABOX(LHF) so that guess could be written. A guess copied onto a second document is still one guess. The owner's ruling settles it, and the purchase order is corrected in the same PR so the two sides still agree. scripts/lib/parse-sofa.mjs independently agrees: on \"1 ELT + NA + 2ER\" it emits L(LHF)+1NA+2A(RHF), and 1ABOX(LHF) is what it emits for 1NALT (pinned in scripts/lib/parse-sofa.test.mjs). On the REAL text it emits nothing - the stray \"/ T\" splits the segment, conf=low - which is why this build is corrected from this file rather than by re-running the decoder. This line has no photograph at all: 0 rows in both photo manifests and the full-book export reported 0 failed lines, so the book never carried one. 5526-L(LHF) is opened by scripts/open-5526-chaise.mjs; this correction REFUSES until it exists."
   },
   {
    "docs": [

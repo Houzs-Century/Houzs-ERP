@@ -426,12 +426,12 @@
     "HC-PO-010117"
    ],
    "pieces": [
-    "1ABOX(LHF)",
+    "L(LHF)",
     "1NA",
     "2A(RHF)"
    ],
    "seat": "28",
-   "why": "Desc2 (1 ELT/T + NA + 2ER)(28\") - the ELT/T spelling has no parser rule",
+   "why": "RE-POINTED 2026-09-05. Was 1ABOX(LHF)+1NA+2A(RHF), reached from the spelling alone - the original why read \"Desc2 (1 ELT/T + NA + 2ER)(28\\\") - the ELT/T spelling has no parser rule\", i.e. nobody could decode it and the shape of the letters was the whole argument. The owner then ruled: \"1ELT 就是L来的\" - 1ELT IS the chaise L - and \"1Abox 是1NALT\", so 1ABOX is a DIFFERENT spelling this line does not use. The first piece is L(LHF). Edited in place rather than left standing and overridden by the 2026-09 round: this file is loaded on every run, and two rounds disagreeing about one document would silently revert the owner's ruling whenever FILE=2026-08 was planned alone. Both files now say the same thing, and scripts/lib/sofa-corrections-source.test.mjs asserts they always will. The sales order half of the same build is HC-SO-000814 in sofa-compartment-corrections-2026-09.json. NOTE: HC-PO-010117 no longer exists under that number - the migrated POs were renumbered to follow AutoCount and this build now lives on HC-PO-000254 (linked_ac_docno PO-000254), which the script finds by the desc2Match below.",
    "desc2Match": "[ (1 ELT / T + NA +2ER) (28\") / COL: J98"
   },
   {
