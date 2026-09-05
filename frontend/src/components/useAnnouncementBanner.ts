@@ -15,6 +15,10 @@ import {
   type AnnouncementSkips,
 } from "./announcementLocalAcks";
 import type { AnnAttachment, AnnMediaLayout } from "./AnnouncementMedia";
+import {
+  requiresAcknowledgement,
+  type AnnouncementCategory,
+} from "./announcementCategory";
 
 // ────────────────────────────────────────────────────────────────────────────
 // useAnnouncementBanner — the pop-up notice LOGIC, shared by both shells.
@@ -33,7 +37,7 @@ import type { AnnAttachment, AnnMediaLayout } from "./AnnouncementMedia";
 // permission and must still receive their own notices.
 // ────────────────────────────────────────────────────────────────────────────
 
-export type AnnouncementCategory = "GENERAL" | "WARNING" | "SOP" | "LEARNING";
+export type { AnnouncementCategory };
 
 // Machine translations of the notice, as stored on the row and returned by the
 // banner endpoint. Spelled out here rather than imported from mobile/mobileI18n
@@ -58,6 +62,14 @@ export type BannerAnnouncement = {
   createdAt: string | null;
   remindedAt: string | null;
   category?: AnnouncementCategory;
+  /** Per-notice "must acknowledge" flag (mig 2026-09). Absent = the category
+   *  rule (WARNING / SOP block) — see announcementCategory.ts. */
+  requireAck?: boolean | null;
+  /** Author's display name, resolved server-side (mig 2026-09). */
+  createdByName?: string | null;
+  /** System-notice tag (scan, service_case, so_amendment, po_amendment,
+   *  ack_escalation); null for a human post. */
+  source?: string | null;
   attachments?: AnnAttachment[];
   mediaLayout?: AnnMediaLayout;
   translations?: BannerTranslations;
@@ -120,6 +132,22 @@ const localSkipsStorageKey = () => identityStorageKey(LOCAL_SKIPS_KEY);
 // the desktop banner always has.
 const dismissedThisSession = new Set<string>();
 
+// Every mounted instance of this hook (the root modal, the Announcements
+// page, the phone pop-up) must agree the moment ONE of them acks or postpones.
+// They share localStorage and the dismiss set above, but a same-tab write
+// fires no `storage` event, so the writer pings the others to re-read.
+const instances = new Set<() => void>();
+function notifyInstances(): void {
+  for (const refresh of instances) refresh();
+}
+
+// The local ack stamp for a notice, or undefined when this device never
+// acked it. A helper (not an index read) so the absent case is a real type —
+// AnnouncementAcks is a Record, and a bare index reads as always-present.
+function localAckAt(acks: AnnouncementAcks, id: string): number | undefined {
+  return Object.prototype.hasOwnProperty.call(acks, id) ? acks[id] : undefined;
+}
+
 // True when the office reminded the notice AFTER the local ack — i.e. the
 // banner should re-surface even though we have a local ack stamp.
 function isRemindedSince(
@@ -143,17 +171,40 @@ export function bannerSecondaryKind(
 }
 
 export type UseAnnouncementBanner = {
-  /** The notice to pop right now, or null when there is nothing to show. */
+  /** The notice to pop right now, or null when there is nothing to show. Only
+   *  a notice that REQUIRES acknowledgement ever pops (redesign 2026-09-04:
+   *  WARNING / SOP, or the per-notice flag); GENERAL and LEARNING are read and
+   *  acknowledged inline — in the inbox, the dashboard stack and the bell. */
   current: BannerAnnouncement | null;
-  /** True when `current` has used both skips — the surface must drop every
-   *  dismiss affordance (secondary button, backdrop, close X) and offer only
-   *  `ack`. `dismissSession` refuses anyway, so a missed call site cannot
-   *  grant a third skip. */
+  /** How many mandatory notices are still waiting on this reader (including
+   *  `current` and any postponed this session) — the modal's "n of m pending". */
+  pendingCount: number;
+  /** 1-based position of `current` within that pending set, 0 when none. */
+  pendingIndex: number;
+  /** True when `current` has used its postponement — the surface must drop
+   *  every dismiss affordance (secondary button, backdrop, close X) and offer
+   *  only `ack`. `dismissSession` refuses anyway, so a missed call site cannot
+   *  grant another skip. */
   mustAcknowledge: boolean;
+  /** Whether a given notice may still be postponed (skip not yet spent). Lets
+   *  the inbox's bottom bar show / hide its own "Remind later". */
+  canPostpone: (a: BannerAnnouncement) => boolean;
+  /** The feed slice itself — every deliverable notice ADDRESSED to this
+   *  reader, newest first (the dashboard stack and the bell render it). */
+  notices: BannerAnnouncement[];
+  /** Ids of every notice in the feed slice — i.e. ADDRESSED to this reader.
+   *  The Announcements page uses it to tell "pending for me" from "a notice I
+   *  can read as a manager but never have to acknowledge". */
+  addressedIds: ReadonlySet<string>;
+  /** Ids this reader has acknowledged (local memo ∪ server), minus any the
+   *  office has reminded since — the same answer `current` is computed from. */
+  ackedIds: ReadonlySet<string>;
+  /** Ids postponed this session (no ack recorded; back next visit). */
+  postponedIds: ReadonlySet<string>;
   /** Record the acknowledgement (server + local memo) and hide the notice. */
   ack: (a: BannerAnnouncement) => Promise<void>;
-  /** Skip: hide for THIS session (no ack, re-surfaces next visit) and spend one
-   *  of the two allowed skips. No-op once the limit is reached. */
+  /** Postpone: hide for THIS session (no ack, re-surfaces next visit) and spend
+   *  the single allowed skip. No-op once the limit is reached. */
   dismissSession: (a: BannerAnnouncement) => void;
   /** Hide for this session WITHOUT spending a skip — only for stepping aside
    *  while navigating the reader to the notice itself. */
@@ -240,19 +291,55 @@ export function useAnnouncementBanner(options?: {
     return () => window.removeEventListener("storage", sync);
   }, [user?.id]);
 
-  // The current banner = the newest active notice that this device hasn't
-  // acked (or that the office has reminded since the local ack). Newest first
-  // per the server response.
-  const current = useMemo(() => {
+  // Same-tab sibling instances (see `instances`): re-read what another
+  // instance just wrote. Guarded on the key — with no identity bound there is
+  // nothing persisted to re-read, and reading "" would wipe in-memory state.
+  useEffect(() => {
+    const refresh = () => {
+      const ackKey = localAcksStorageKey();
+      const skipKey = localSkipsStorageKey();
+      if (ackKey) setLocalAcks(readAnnouncementAcks(ackKey));
+      if (skipKey) setSkips(readAnnouncementSkips(skipKey));
+      setDismissed(new Set(dismissedThisSession));
+    };
+    instances.add(refresh);
+    return () => {
+      instances.delete(refresh);
+    };
+  }, []);
+
+  // Everything still waiting on this reader: MANDATORY notices this device
+  // hasn't acked (or that the office has reminded since the local ack). Newest
+  // first per the server response. Postponed ones stay IN this list (they are
+  // still pending — the counter must say so) but are skipped for `current`.
+  const pending = useMemo(
+    () =>
+      rows.filter((a) => {
+        if (!requiresAcknowledgement(a)) return false;
+        const localAt = localAckAt(localAcks, a.id);
+        if (localAt === undefined) return true; // never acked here
+        return isRemindedSince(a.remindedAt, localAt); // re-pop
+      }),
+    [rows, localAcks],
+  );
+  const current = useMemo(
+    () => pending.find((a) => !dismissed.has(a.id)) ?? null,
+    [pending, dismissed],
+  );
+  const pendingIndex = current ? pending.indexOf(current) + 1 : 0;
+
+  // The page-facing sets. `ackedIds` applies the SAME reminded-since rule as
+  // `pending` above, so the inbox never badges Confirmed on a notice the modal
+  // is about to re-pop.
+  const addressedIds = useMemo(() => new Set(rows.map((a) => a.id)), [rows]);
+  const ackedIds = useMemo(() => {
+    const out = new Set<string>();
     for (const a of rows) {
-      if (dismissed.has(a.id)) continue;
-      const localAt = localAcks[a.id];
-      if (localAt == null) return a; // never acked here
-      if (isRemindedSince(a.remindedAt, localAt)) return a; // re-pop
-      // else: already acked — skip
+      const localAt = localAckAt(localAcks, a.id);
+      if (localAt !== undefined && !isRemindedSince(a.remindedAt, localAt)) out.add(a.id);
     }
-    return null;
-  }, [rows, dismissed, localAcks]);
+    return out;
+  }, [rows, localAcks]);
 
   // Hide for this session WITHOUT touching the skip counter — used by ack (the
   // notice is settled, not skipped) and by the mobile "View details" step-aside
@@ -261,6 +348,7 @@ export function useAnnouncementBanner(options?: {
   const hideForNavigation = useCallback((a: BannerAnnouncement) => {
     dismissedThisSession.add(a.id);
     setDismissed(new Set(dismissedThisSession));
+    notifyInstances();
   }, []);
 
   const dismissSession = useCallback(
@@ -274,7 +362,7 @@ export function useAnnouncementBanner(options?: {
           recordAnnouncementSkip(skips, a.id),
         ),
       );
-      hideForNavigation(a);
+      hideForNavigation(a); // also pings sibling instances
     },
     [skips, hideForNavigation],
   );
@@ -282,21 +370,23 @@ export function useAnnouncementBanner(options?: {
   const ack = useCallback(
     async (a: BannerAnnouncement) => {
       const now = Date.now();
-      setLocalAcks((prev) =>
-        mergeAndWriteAnnouncementAcks(localAcksStorageKey(), {
-          ...prev,
-          [a.id]: now,
-        }),
-      );
+      // Written to storage NOW (not inside a lazy state updater) so the
+      // sibling instances pinged by hideForNavigation below re-read the ack
+      // rather than the state before it. The helper merges with what is
+      // already stored; the in-memory map keeps any entry it holds on top.
+      const merged = mergeAndWriteAnnouncementAcks(localAcksStorageKey(), {
+        [a.id]: now,
+      });
+      setLocalAcks((prev) => ({ ...prev, ...merged }));
       // Acknowledging settles the skip debt: a later office Remind re-pops the
       // notice with a fresh allowance instead of an instant hard-lock.
-      setSkips((prev) =>
+      setSkips(
         writeAnnouncementSkips(
           localSkipsStorageKey(),
-          clearAnnouncementSkip(prev, a.id),
+          clearAnnouncementSkip(skips, a.id),
         ),
       );
-      hideForNavigation(a);
+      hideForNavigation(a); // also pings sibling instances
       try {
         await api.post(`/api/announcements/${a.id}/ack`);
       } catch {
@@ -311,10 +401,27 @@ export function useAnnouncementBanner(options?: {
       // leaving a stale count up for a whole poll interval.
       void qc.invalidateQueries({ queryKey: ANNOUNCEMENT_FEED_KEY });
     },
-    [hideForNavigation, qc],
+    [skips, hideForNavigation, qc],
   );
 
   const mustAcknowledge = current != null && skipLimitReached(skips, current.id);
+  const canPostpone = useCallback(
+    (a: BannerAnnouncement) => !skipLimitReached(skips, a.id),
+    [skips],
+  );
 
-  return { current, mustAcknowledge, ack, dismissSession, hideForNavigation };
+  return {
+    current,
+    pendingCount: pending.length,
+    pendingIndex,
+    mustAcknowledge,
+    canPostpone,
+    notices: rows,
+    addressedIds,
+    ackedIds,
+    postponedIds: dismissed,
+    ack,
+    dismissSession,
+    hideForNavigation,
+  };
 }

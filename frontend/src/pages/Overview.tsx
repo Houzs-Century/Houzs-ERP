@@ -6,6 +6,7 @@ import { useQuery } from "../hooks/useQuery";
 import { useAuth } from "../auth/AuthContext";
 import { Button } from "../components/Button";
 import { Badge } from "../components/Badge";
+import { AnnouncementBannerStack, TeamPendingCard } from "../components/AnnouncementDashboard";
 import { cn } from "../lib/utils";
 import { fmtDate } from "../vendor/shared/format";
 
@@ -142,6 +143,13 @@ export function Overview() {
           </div>
         </div>
       </div>
+
+      {/* ── Unacknowledged notices (design handoff 2026-09-04): up to three
+          cards, no modal wall; the supervisor card below it renders only for
+          a user with direct reports. Both read the announcements feed the
+          modal reads, so an acknowledgement here settles everywhere. */}
+      <AnnouncementBannerStack />
+      <TeamPendingCard />
 
       {/* ── KPI ribbon ──────────────────────────────────────────── */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">

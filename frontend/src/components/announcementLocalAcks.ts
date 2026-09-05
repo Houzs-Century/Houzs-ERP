@@ -46,13 +46,20 @@ export function mergeAndWriteAnnouncementAcks(
   return merged;
 }
 
-// ── Skip counter (owner 2026-08-08: two skips, then acknowledgement only) ──
+// ── Skip counter (owner 2026-08-08: skips, then acknowledgement only) ──────
 // Same guarantees as the ack memo above: identity-scoped key, size cap,
 // clock-skew rejection. Local like the acks because the backend records acks,
 // never dismissals — so the allowance is per browser+identity, not per account
 // across devices.
+//
+// ONE postponement (Announcements redesign 2026-09-04, superseding #1728's two):
+// the mandatory modal offers "Remind later" exactly once, with the note "You
+// can postpone once"; on its next appearance only the acknowledge action
+// remains. The modal now pops only for notices that require acknowledgement
+// (WARNING / SOP, or the per-notice flag), so a single postponement is enough
+// slack — the reader is never blocked from opening the page to read it first.
 
-export const MAX_ANNOUNCEMENT_SKIPS = 2;
+export const MAX_ANNOUNCEMENT_SKIPS = 1;
 // Bound against a corrupted blob claiming an absurd count; well above anything
 // a user can reach through the UI (dismiss controls disappear at the limit).
 const MAX_SKIP_COUNT = 99;
