@@ -225,7 +225,9 @@ export const useRunStockClose = () => {
 
 /* ── Voucher numbering (GL redesign item 8a) — per-bank letters + width. ── */
 
-export type NumberingAccount = { accountCode: string; accountName: string; letter: string | null };
+/* fixedCash marks the drawer: its letter is C on both papers (CPV / COR),
+   minted straight off roles.CASH — shown, never editable, never PUT. */
+export type NumberingAccount = { accountCode: string; accountName: string; letter: string | null; fixedCash?: boolean };
 
 export const useVoucherNumbering = () => useQuery({
   queryKey: ['voucher-numbering'],

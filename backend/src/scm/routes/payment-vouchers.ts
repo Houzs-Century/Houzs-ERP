@@ -52,6 +52,7 @@ import { isDocumentHeld } from '../lib/document-hold';
 import { dateOrNull } from '../lib/date-coerce';
 import { postJournal, reverseJournal } from '../../acc/engine';
 import { apControlRole, pvLines, resolveRoles } from '../../acc/rules';
+import { CASH_SERIES_LETTER } from '../../acc/receipts';
 import { uploadPvFileHandler, listPvFilesHandler, streamPvFileHandler, deletePvFileHandler, printPvBundleHandler } from './pv-files';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
@@ -129,8 +130,16 @@ const mintFormalPvNo = async (
   companyId: number,
   creditAccountCode: string,
 ): Promise<{ ok: true; pvNo: string } | { ok: false; status: number; body: Record<string, unknown> }> => {
+  /* The cash drawer is not a configured bank: paying from roles.CASH mints on
+     the FIXED cash letter — {co}CPV — the same CASH_SERIES_LETTER the receipt
+     channel prints as COR (owner 2026-09-05: 我payment 出去by cash 时就会是
+     cpv啊). One letter, both papers; the letters table never holds C. */
+  const roles = await resolveRoles(sb, companyId);
+  const isCash = creditAccountCode === roles.CASH;
   const [letterRes, digitsRes] = await Promise.all([
-    sb.from('acc_bank_letters').select('letter').eq('company_id', companyId).eq('account_code', creditAccountCode).maybeSingle(),
+    isCash
+      ? Promise.resolve({ data: { letter: CASH_SERIES_LETTER }, error: null as { message: string } | null })
+      : sb.from('acc_bank_letters').select('letter').eq('company_id', companyId).eq('account_code', creditAccountCode).maybeSingle(),
     sb.from('acc_numbering').select('doc_digits').eq('company_id', companyId).maybeSingle(),
   ]);
   if (letterRes.error) return { ok: false, status: 500, body: { error: 'load_failed', reason: letterRes.error.message } };

@@ -876,7 +876,13 @@ company width, mints `{co}{letter}PV-YYMM-NNN` (`mintFormalPvNo`,
 collision-retried the way inserts are), records the renumber on the audit
 trail, and answers `pvNumber` so the screen can say so. A bank with no letter
 REFUSES the check (409 `bank_letter_missing`) with the setup card named — a
-voucher must never mint into a series nobody configured. A voucher already
+voucher must never mint into a series nobody configured. **The cash drawer is
+the one fixed series** (owner 2026-09-05: 我payment 出去by cash 时就会是
+cpv啊): paid from `roles.CASH`, the mint takes `CASH_SERIES_LETTER` straight —
+`{co}CPV-YYMM-NNN` — with no letters row involved; the same C prints COR on
+the receipt side. The numbering card shows the drawer read-only (`fixedCash`
+on the GET), the PUT refuses both a letter FOR it (`letter_fixed`) and C on
+any bank (`letter_reserved`). A voucher already
 carrying a formal number (a reject → re-check round) keeps it: a slot is
 never burned twice for the same paper. Journals cannot see draft numbers by
 construction — posting happens at approve, after the mint. Pinned by

@@ -14,19 +14,39 @@
 
 import { useMemo, useState } from 'react';
 import { getActiveCompanyId } from '../../lib/activeCompany';
-import { SearchCombo } from '../../vendor/scm/components/SearchCombo';
+import { SearchCombo, type ComboOption } from '../../vendor/scm/components/SearchCombo';
 import { useAccounts } from '../../vendor/scm/lib/accounting-queries';
 import {
   useItemGroups, useCreateItemGroup, useBindItemGroup, usePatchItemGroup,
   type ItemGroupBinding,
 } from './accounting-phase1-queries';
 
-const SLOTS: Array<{ key: keyof ItemGroupBinding; label: string }> = [
-  { key: 'purchase', label: 'Purchase' },
-  { key: 'sales', label: 'Sales' },
-  { key: 'salesReturn', label: 'Sales Return' },
-  { key: 'purchaseReturn', label: 'Purchase Return' },
+/* Each slot names the side of the ledger it may bind to — the purchase slots
+   take EXPENSE accounts, the sales slots INCOME. The picker filters on this,
+   so CAPITAL and the bank rows never crowd the list (owner 2026-09-05). */
+const SLOTS: Array<{ key: keyof ItemGroupBinding; label: string; wants: 'EXPENSE' | 'INCOME' }> = [
+  { key: 'purchase', label: 'Purchase', wants: 'EXPENSE' },
+  { key: 'sales', label: 'Sales', wants: 'INCOME' },
+  { key: 'salesReturn', label: 'Sales Return', wants: 'INCOME' },
+  { key: 'purchaseReturn', label: 'Purchase Return', wants: 'EXPENSE' },
 ];
+
+/* AutoCount-style section headers inside the picker (owner 2026-09-05: 不能
+   这样做一个header 分类吗?不然有时分不清楚) — the same code boundaries the
+   standard P&L reads (6xx = cost of sales, accounting-reports.ts). Purely how
+   the list is SHOWN; the account rows stay the law. */
+const sectionOf = (code: string, wants: 'EXPENSE' | 'INCOME'): string => {
+  if (wants === 'EXPENSE') return code.startsWith('6') ? 'Cost of goods sold' : 'Expenses';
+  if (code.startsWith('50')) return 'Sales';
+  if (code.startsWith('51') || code.startsWith('52')) return 'Sales adjustments';
+  return 'Other incomes';
+};
+/* Widened value type: noUncheckedIndexedAccess is off, and an unranked
+   section is a real case (it sorts last), not a type impossibility. */
+const SECTION_RANK: Record<string, number | undefined> = {
+  'Sales': 0, 'Sales adjustments': 1, 'Other incomes': 2,
+  'Cost of goods sold': 0, 'Expenses': 1,
+};
 
 /* The defaults the owner approved in outline (2026-09-05): sofa/bedding/dining
    purchases into their 601 children, bedlines into 602; furniture sales into
@@ -87,12 +107,21 @@ export const ItemGroupsTab = () => {
   const activeCo = getActiveCompanyId() ?? companies.at(0)?.id ?? null;
   const coKey = activeCo == null ? '' : String(activeCo);
 
-  /* The pickers offer the company's ACTIVE income/expense accounts — the same
-     population the server will verify against, so the refusal path is for
-     races only, not for normal picking. */
-  const options = useMemo(() => (accountsQ.data?.accounts ?? [])
-    .filter((a) => a.is_active !== false)
-    .map((a) => ({ value: a.account_code, label: `${a.account_code} — ${a.account_name}` })), [accountsQ.data]);
+  /* One option list per ledger side, sectioned the AutoCount way: a purchase
+     slot sees only EXPENSE accounts (Cost of goods sold first, then
+     Expenses), a sales slot only INCOME (Sales / Sales adjustments / Other
+     incomes). 397 accounts collapse to the relevant page. */
+  const optionsByWants = useMemo(() => {
+    const build = (wants: 'EXPENSE' | 'INCOME'): ComboOption[] => (accountsQ.data?.accounts ?? [])
+      .filter((a) => a.is_active !== false && a.account_type === wants)
+      .map((a) => ({
+        value: a.account_code,
+        label: `${a.account_code} — ${a.account_name}`,
+        group: sectionOf(a.account_code, wants),
+      }))
+      .sort((x, y) => ((SECTION_RANK[x.group] ?? 9) - (SECTION_RANK[y.group] ?? 9)) || x.value.localeCompare(y.value));
+    return { EXPENSE: build('EXPENSE'), INCOME: build('INCOME') };
+  }, [accountsQ.data]);
 
   /* Unsaved edits per group. A group with no saved binding starts from the
      SUGGESTED defaults (marked as such) — the sign-off flow. */
@@ -151,7 +180,7 @@ export const ItemGroupsTab = () => {
                   {SLOTS.map((s) => (
                     <td key={s.key} style={{ padding: '6px 10px' }}>
                       <SearchCombo
-                        options={options}
+                        options={optionsByWants[s.wants]}
                         value={draft[s.key]}
                         onChange={(v) => setSlot(g.code, saved, s.key, v)}
                         aria-label={`${g.code} ${s.label} account`}
@@ -202,7 +231,7 @@ export const ItemGroupsTab = () => {
 
       {showNew && (
         <NewGroupDialog
-          options={options}
+          optionsByWants={optionsByWants}
           pending={create.isPending}
           onClose={() => setShowNew(false)}
           onCreate={(body) => create.mutate(
@@ -217,9 +246,9 @@ export const ItemGroupsTab = () => {
 
 /* ── New group — born bound ──────────────────────────────────────────────── */
 const NewGroupDialog = ({
-  options, pending, onClose, onCreate,
+  optionsByWants, pending, onClose, onCreate,
 }: {
-  options: Array<{ value: string; label: string }>;
+  optionsByWants: Record<'EXPENSE' | 'INCOME', ComboOption[]>;
   pending: boolean;
   onClose: () => void;
   onCreate: (body: { code: string; name: string; accounts: ItemGroupBinding }) => void;
@@ -246,7 +275,7 @@ const NewGroupDialog = ({
           {SLOTS.map((s) => (
             <div key={s.key}>
               <div style={softText}>{s.label}</div>
-              <SearchCombo options={options} value={accounts[s.key]}
+              <SearchCombo options={optionsByWants[s.wants]} value={accounts[s.key]}
                 onChange={(v) => setAccounts((a) => ({ ...a, [s.key]: v }))}
                 aria-label={`New group ${s.label} account`} placeholder="— pick account —" />
             </div>
