@@ -25,9 +25,11 @@ import { memo, useEffect, useRef, useState, type CSSProperties, type ReactNode, 
 import { useQuery } from '@tanstack/react-query';
 import {
   DollarSign, Plus, Trash2, Save, FileText, Image as ImageIcon,
-  Calendar as CalIcon, User as UserIcon, Tag, Pencil,
+  Calendar as CalIcon, User as UserIcon, Tag, Pencil, Printer,
 } from 'lucide-react';
 import { sortByText } from '../lib/sort-options';
+import { authedFetch } from '../lib/authed-fetch';
+import { generateReceiptPdf, type ReceiptPdfData } from '../lib/receipt-pdf';
 import { fetchPaymentSlipUrl, scanPaymentReceipt, type SlipUrlResponse } from '../lib/slip';
 import { SlipUploadField } from './SlipUploadField';
 import { MoneyInput } from './MoneyInput';
@@ -357,6 +359,12 @@ type SavedModeProps = {
    *  in-card toggle). The card header lives in here, not in the caller, so a
    *  page that needs a control beside "Payments" has to hand it in. */
   headerAction?: ReactNode;
+  /** Official Receipt print (GL redesign 9b). When present, a PERSISTED row
+   *  grows a printer button: POST /accounting/receipts/ensure fetches (or
+   *  heals) the payment's OR, then the pdf prints — DRAFT watermark until the
+   *  money is confirmed. Deliberately available while `locked`: printing
+   *  changes nothing, and the counter is exactly where it happens. */
+  receiptFor?: ReceiptSource;
 };
 
 type DraftModeProps = {
@@ -382,7 +390,15 @@ type DraftModeProps = {
    *  count is always 0 in DRAFT mode (the whole document is unsaved and the
    *  page's own Save commits it), so this never fires here. */
   onUnsavedChange?: (count: number) => void;
+  /** See SavedModeProps.receiptFor. DRAFT-mode rows are anonymous local state,
+   *  so the caller must also say which uids are persisted payment ids
+   *  (`persistedIds`) — the SI detail seeds its drafts from the API rows and
+   *  keeps `uid = row id`, which is exactly the key the ensure endpoint takes. */
+  receiptFor?: ReceiptSource;
 };
+
+/** Which payment book the rows belong to, in the receipts table's own key. */
+type ReceiptSource = { source: 'SOPAY' | 'SIPAY'; persistedIds?: ReadonlySet<string> };
 
 export type PaymentsTableProps = SavedModeProps | DraftModeProps;
 
@@ -448,6 +464,31 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
   /* Owner 2026-07-13 — DRAFT SO: lift the per-row same-day EDIT lock so every
      persisted payment on an unconfirmed order can still be corrected. */
   const draftUnlocked = props.draftUnlocked ?? false;
+
+  /* ── Official Receipt print (GL redesign 9b) ──────────────────────────
+     ensure-then-print: the endpoint fetches the payment's OR (creating one
+     for a payment recorded before the module existed) and hands the whole
+     row back; the pdf carries a DRAFT watermark until the money confirms. */
+  const receiptFor = props.receiptFor;
+  const [receiptBusy, setReceiptBusy] = useState<string | null>(null);
+  const printReceipt = async (paymentId: string) => {
+    if (!receiptFor) return;
+    setReceiptBusy(paymentId);
+    try {
+      const res = await authedFetch<{ receipt: ReceiptPdfData }>('/accounting/receipts/ensure', {
+        method: 'POST', body: JSON.stringify({ source: receiptFor.source, paymentId }),
+      });
+      await generateReceiptPdf(res.receipt, { action: 'print' });
+    } catch (e) {
+      void notify({
+        title: 'Receipt not printed',
+        body: e instanceof Error ? e.message : 'Something went wrong.',
+        tone: 'error',
+      });
+    } finally {
+      setReceiptBusy(null);
+    }
+  };
 
   const staffQ = useStaff();
   const staff  = staffQ.data ?? [];        // FULL roster — resolves persisted collected_by names
@@ -1212,6 +1253,20 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                   {p.collected_by_name ?? staffNameById(p.collected_by) ?? <span className={detailStyles.muted}>—</span>}
                 </span>
                 <span className={paymentsStyles.cell}>
+                  {receiptFor && (
+                    <button
+                      type="button"
+                      onClick={() => void printReceipt(p.id)}
+                      disabled={receiptBusy === p.id}
+                      title="Print official receipt"
+                      style={{
+                        background: 'transparent', border: 'none', padding: 4,
+                        cursor: 'pointer', color: 'var(--fg-muted)',
+                      }}
+                    >
+                      <Printer size={14} strokeWidth={1.75} />
+                    </button>
+                  )}
                   {!locked && (
                     <div style={{ display: 'flex', gap: 2, justifyContent: 'flex-end', alignItems: 'center' }}>
                       {/* Same-day EDIT (owner 2026-07-13) — only for a payment
@@ -1580,6 +1635,23 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                     >
                       <Trash2 size={14} strokeWidth={1.75} />
                     </button>
+                    {/* DRAFT-mode rows seeded from PERSISTED payments (uid =
+                        API row id — the SI detail) can hand over their OR.
+                        NOT gated by `locked`: printing changes nothing. */}
+                    {receiptFor?.persistedIds?.has(d.uid) === true && (
+                      <button
+                        type="button"
+                        onClick={() => void printReceipt(d.uid)}
+                        disabled={receiptBusy === d.uid}
+                        title="Print official receipt"
+                        style={{
+                          background: 'transparent', border: 'none', padding: 4,
+                          cursor: 'pointer', color: 'var(--fg-muted)',
+                        }}
+                      >
+                        <Printer size={14} strokeWidth={1.75} />
+                      </button>
+                    )}
                   </div>
                 </span>
               </div>
