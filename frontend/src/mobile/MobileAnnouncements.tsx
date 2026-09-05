@@ -1013,7 +1013,7 @@ function Detail({
           </div>
         )}
 
-        <AnnouncementRichBody id="ann-d-body" html={shown.bodyHtml} text={shown.body} style={{ fontSize: 13.5, lineHeight: 1.7, color: "#414539", marginTop: 14 }} />
+        <AnnouncementRichBody id="ann-d-body" html={shown.bodyHtml} text={shown.body} annId={ann.id} style={{ fontSize: 13.5, lineHeight: 1.7, color: "#414539", marginTop: 14 }} />
         <div id="ann-d-atts" style={{ marginTop: 16 }}>
           <Attachments ann={ann} />
         </div>

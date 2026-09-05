@@ -95,7 +95,7 @@ Rules:
   - For the language the notice is ALREADY in, return its original text unchanged.
   - PRESERVE all numbers, dates, times, money amounts, product codes, SKUs, and proper names verbatim.
   - PRESERVE line breaks in the body (keep \\n where the original had them).
-  - The BODY may be a small HTML fragment using only <p> <br> <b> <i> <u> <s> <ol> <ul> <li> and <span data-size="..."> tags. When it is, keep EVERY tag and attribute exactly as given, in the same order and nesting, and translate ONLY the text between the tags. Never add, remove or rename a tag. Never turn HTML into Markdown.
+  - The BODY may be a small HTML fragment using only <p> <br> <b> <i> <u> <s> <ol> <ul> <li> <h1> <h2> <mark> <a href="..." rel="..." target="..."> <table> <tr> <th> <td> <img data-att="..."> and <span data-size="..."> tags. When it is, keep EVERY tag and attribute exactly as given, in the same order and nesting, and translate ONLY the text between the tags. Never translate, alter or drop an href, rel, target, data-att or data-size attribute value. Never add, remove or rename a tag. Never turn HTML into Markdown.
   - If the BODY is empty, return an empty string for body in every language.
   - The very first character of your response must be "{". Anything else corrupts the stored data.`;
 

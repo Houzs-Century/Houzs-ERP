@@ -40,6 +40,7 @@ import {
   hasRichFormatting,
   richTextToPlain,
   sanitizeAnnouncementHtml,
+  stripUnreferencedImages,
 } from "../lib/announcementRichText";
 import { postPersonalNotice } from "../services/personalNotice";
 
@@ -336,16 +337,24 @@ function deriveTargetType(
 // The rich body as the client may send it. Returns the canonical HTML, or null
 // when there is nothing a plain string could not carry (no marks, no lists, no
 // sizes) — that keeps every unformatted notice on the pre-feature plain path.
+// `canonical` is the same fragment even when `html` folded to null — the
+// plain-text shadow is derived from it, never from the client's string.
 // `error` is set only for a fragment past the hard cap; the caller 400s it.
+//
+// Inline images (2026-09-05): an `<img data-att>` may only name one of THIS
+// notice's attachments (`attachmentKeys` = the manifest about to be stored).
+// The serve route refuses any other key anyway, so stripping here only turns
+// a broken image into no image — but it keeps the stored body honest.
 function readBodyHtml(
   v: unknown,
-): { html: string | null; error?: string } {
-  if (typeof v !== "string" || !v.trim()) return { html: null };
+  attachmentKeys: readonly string[],
+): { html: string | null; canonical: string; error?: string } {
+  if (typeof v !== "string" || !v.trim()) return { html: null, canonical: "" };
   if (v.length > RICH_HTML_MAX) {
-    return { html: null, error: `Message too long (${RICH_HTML_MAX} max)` };
+    return { html: null, canonical: "", error: `Message too long (${RICH_HTML_MAX} max)` };
   }
-  const html = sanitizeAnnouncementHtml(v);
-  return { html: hasRichFormatting(html) ? html : null };
+  const canonical = stripUnreferencedImages(sanitizeAnnouncementHtml(v), attachmentKeys);
+  return { html: hasRichFormatting(canonical) ? canonical : null, canonical };
 }
 
 function toPublic(r: AnnouncementRow) {
@@ -1305,15 +1314,16 @@ app.post("/", requirePermissionOrSalesDirector("announcements.write"), async (c)
   // (never trusted from the client) so the two columns can never disagree. A
   // client that sends only `body` — the phone, a script, an old build — takes
   // the plain path exactly as before.
+  const attachments = normalizeAttachments(body.attachments);
   const rawHtml = body.bodyHtml ?? body.body_html;
-  const rich = readBodyHtml(rawHtml);
+  const rich = readBodyHtml(rawHtml, attachments.map((a) => a.r2Key));
   if (rich.error) return c.json({ success: false, error: rich.error }, 400);
   const bodyHtml = rich.html;
   // Any html at all (even one that folded to plain and stores NULL) is the
   // source of truth for the plain text; `body` is read only when no html came.
   const text =
     typeof rawHtml === "string" && rawHtml.trim()
-      ? richTextToPlain(rawHtml)
+      ? richTextToPlain(rich.canonical)
       : String(body.body ?? "").trim();
 
   let expiresAt: string | null = null;
@@ -1325,7 +1335,6 @@ app.post("/", requirePermissionOrSalesDirector("announcements.write"), async (c)
     expiresAt = new Date(t).toISOString();
   }
 
-  const attachments = normalizeAttachments(body.attachments);
   const mediaLayout = readMediaLayout(body.mediaLayout);
   const reqDeptIds = readIntArray(
     body.targetDeptIds as string | number[] | null | undefined,
@@ -1496,13 +1505,18 @@ app.patch("/:id", requirePermissionOrSalesDirector("announcements.write"), async
   // Whoever edits last defines the format: a `bodyHtml` edit rewrites both
   // columns (plain derived from rich); a plain `body` edit clears body_html so
   // a phone editing a formatted notice cannot leave stale formatting behind.
+  const nextAttachments =
+    "attachments" in body
+      ? normalizeAttachments(body.attachments)
+      : normalizeAttachments(existing.attachments ?? null);
+  const nextKeys = nextAttachments.map((a) => a.r2Key);
   if ("bodyHtml" in body || "body_html" in body) {
     const rawHtml = body.bodyHtml ?? body.body_html;
-    const rich = readBodyHtml(rawHtml);
+    const rich = readBodyHtml(rawHtml, nextKeys);
     if (rich.error) return c.json({ success: false, error: rich.error }, 400);
     const text =
       typeof rawHtml === "string" && rawHtml.trim()
-        ? richTextToPlain(rawHtml)
+        ? richTextToPlain(rich.canonical)
         : typeof body.body === "string"
           ? String(body.body).trim()
           : "";
@@ -1520,9 +1534,21 @@ app.patch("/:id", requirePermissionOrSalesDirector("announcements.write"), async
     textChanged = true;
   }
   if ("attachments" in body) {
-    const next = normalizeAttachments(body.attachments);
     sets.push("attachments = ?");
-    binds.push(next.length ? JSON.stringify(next) : null);
+    binds.push(nextAttachments.length ? JSON.stringify(nextAttachments) : null);
+    // An attachment removed while the text still shows it inline: drop the
+    // inline use too, and re-derive the plain shadow, so the stored body never
+    // names a key the serve route would refuse.
+    if (!textChanged && nextHtml) {
+      const stripped = stripUnreferencedImages(nextHtml, nextKeys);
+      if (stripped !== nextHtml) {
+        nextHtml = hasRichFormatting(stripped) ? stripped : null;
+        nextText = richTextToPlain(stripped);
+        sets.push("body_html = ?", "body = ?");
+        binds.push(nextHtml, nextText);
+        textChanged = true;
+      }
+    }
   }
   // Media layout retarget. Present + empty/unrecognised clears to NULL (fall
   // back to count-derived defaults); a valid hint narrows the arrangement.

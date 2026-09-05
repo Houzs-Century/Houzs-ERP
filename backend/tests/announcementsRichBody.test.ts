@@ -104,6 +104,37 @@ describe("announcement rich body", () => {
     expect(row?.body).toBe(r.data?.body);
   });
 
+  test("POST keeps an inline image only when its key is in the attachments manifest", async () => {
+    const mine = "announcements/compose/1725500000000-0badf00d.jpg";
+    const other = "announcements/ann-x/1725500000001-deadbeef.png";
+    const r = await post({
+      title: "Pic",
+      bodyHtml: `<p>see</p><img data-att="${mine}"><img data-att="${other}"><p><b>end</b></p>`,
+      attachments: [{ r2Key: mine, name: "a.jpg", mime: "image/jpeg", size: 10 }],
+    });
+    expect(r.status).toBe(201);
+    expect(r.data?.bodyHtml).toBe(`<p>see</p><img data-att="${mine}"><p><b>end</b></p>`);
+    // The plain shadow is derived from the STRIPPED fragment: one image, not two.
+    expect(r.data?.body).toBe("see\n[image]end");
+    expect((await stored(r.data!.id))?.body_html).toBe(r.data?.bodyHtml);
+  });
+
+  test("PATCH removing an attachment also removes its inline use and re-derives the plain body", async () => {
+    const mine = "announcements/compose/1725500000002-0badf00d.jpg";
+    const created = await post({
+      title: "Pic edit",
+      bodyHtml: `<p><i>before</i></p><img data-att="${mine}">`,
+      attachments: [{ r2Key: mine, name: "a.jpg", mime: "image/jpeg", size: 10 }],
+    });
+    const id = created.data!.id;
+    expect(created.data?.bodyHtml).toContain("<img");
+    const r = await patch(id, { attachments: [] });
+    expect(r.status).toBe(200);
+    expect(r.data?.bodyHtml).toBe("<p><i>before</i></p>");
+    expect(r.data?.body).toBe("before");
+    expect((await stored(id))?.body_html).toBe("<p><i>before</i></p>");
+  });
+
   test("POST with html that carries no formatting stores NULL html — the plain path", async () => {
     const r = await post({ title: "Plain", bodyHtml: "<p>just words</p><p>two lines</p>" });
     expect(r.status).toBe(201);

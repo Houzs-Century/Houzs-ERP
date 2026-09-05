@@ -141,6 +141,7 @@ export function AnnouncementBanner() {
               <AnnouncementRichBody
                 html={current.bodyHtml}
                 text={current.body}
+                annId={current.id}
                 className="mt-2 text-[13px] leading-[1.7] text-ink-secondary"
               />
             </LazySlot>
