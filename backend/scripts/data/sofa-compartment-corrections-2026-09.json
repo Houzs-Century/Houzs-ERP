@@ -211,6 +211,35 @@
    "seat": "28",
    "desc2Match": "1 ELT",
    "why": "no photograph exists for this line; decoded from the book text alone with the owner's 2026-09-04 readings ELT=L and 2ER=2A. The stray T is unexplained and no piece was invented for it"
+  },
+  {
+   "docs": [
+    "HC-SO-013329",
+    "HC-PO-010042"
+   ],
+   "model": "8069",
+   "pieces": [
+    "1B(LHF)",
+    "CNR",
+    "2A(RHF)"
+   ],
+   "seat": "30",
+   "desc2Match": "Col:BO315-4 Sand",
+   "why": "owner read the slip himself 2026-09-05: 1B(LHF) at 26\" + C + 2A(RHF) at 30\". The slip writes 8069 C, draws a box + two 30\" boxes with a separate hatched 26\" marked 1B/S, and the book says Size:30\"/Col:BO315-4 Sand/1B/S seater 26\". All three piece codes exist in the master. The 1B is 26\" while the rest are 30\" - one build, two seat depths"
+  },
+  {
+   "docs": [
+    "HC-SO-012929",
+    "HC-PO-009751"
+   ],
+   "model": "9028",
+   "pieces": [
+    "1A(LHF)",
+    "2A(RHF)"
+   ],
+   "seat": "26",
+   "desc2Match": "Size:26”/Col:Modenza 02 Barley",
+   "why": "owner 2026-09-04 and again 2026-09-05: the 26\" build is 1A(LHF)+2A(RHF). The document ALSO holds a separate 1S at 28\" which is a genuine single seater and is NOT part of this build - the desc2Match selects only the 26\" lines. Measured before writing: the sales order carried a surplus 1S at 26\" and the purchase order carried that same surplus while MISSING its 1A(LHF)"
   }
  ]
 }
