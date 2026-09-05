@@ -28,6 +28,9 @@ vi.mock('../../vendor/scm/lib/accounting-queries', () => ({
     { code: '310-0010', name: 'CASH AT BANK - MAYBANK', type: 'ASSET', parentCode: '310-0000', accMoney: true, special: 'SBK', perCompany: { 1: { active: true } } },
     { code: '400-0000', name: 'ACCOUNT PAYABLE', type: 'LIABILITY', parentCode: null, accMoney: false, special: 'SCC', perCompany: { 1: { active: true } } },
     { code: '900-A002', name: 'ADVERTISEMENT', type: 'EXPENSE', parentCode: null, accMoney: false, special: null, perCompany: { 1: { active: true }, 2: { active: true } } },
+    { code: '500-0000', name: 'SALES', type: 'INCOME', parentCode: null, accMoney: false, special: null, perCompany: { 1: { active: true } } },
+    { code: '700-0000', name: 'Other Income', type: 'INCOME', parentCode: null, accMoney: false, special: null, perCompany: { 1: { active: true } } },
+    { code: '590-0000', name: 'TRANSPORT INCOME', type: 'INCOME', parentCode: '700-0000', accMoney: false, special: null, perCompany: { 1: { active: true } } },
   ] }, isLoading: false, error: null }),
   useChartTick: () => ({ mutateAsync: tickAsync, isPending: false }),
   useChartImport: () => ({ mutateAsync: importAsync, isPending: false }),
@@ -82,7 +85,7 @@ describe('the tick grid', () => {
   test('parents render bold-with-header-tag, children indent, and a tick names company + code', async () => {
     tickAsync.mockClear();
     draw();
-    expect(screen.getByText('header')).toBeTruthy();
+    expect(screen.getAllByText('header').length).toBeGreaterThan(0);
     /* Tick 310-0010 ON for 2990 — the empty cell of the second company. */
     fireEvent.click(screen.getByLabelText('310-0010 for 2990'));
     await waitFor(() => expect(tickAsync).toHaveBeenCalledWith({ companyId: 2, code: '310-0010', active: true }));
@@ -111,6 +114,41 @@ describe('fold / edit / delete — the owner points 1, 2 and 4', () => {
   test('a control account wears its badge', () => {
     draw();
     expect(screen.getByText(/SCC · control/)).toBeTruthy();
+  });
+
+  test('the tree reads as a tree (owner 2026-09-04: 父子account 不清楚) — the NAME column steps with the level and children wear └', () => {
+    draw();
+    /* The child's name cell is indented one step past its header's — the
+       old layout indented only the code column, so every name sat flush
+       and the hierarchy vanished exactly where the eye scans. */
+    /* getAllByText: the parent-codes <datalist> repeats every name as an
+       <option>; the TABLE cell is the one inside a <td>. */
+    const inTd = (name: string) =>
+      screen.getAllByText(name).map((e) => e.closest('td')).find((td) => td != null) as HTMLElement;
+    const headerName = inTd('CASH AT BANK');
+    const childName = inTd('CASH AT BANK - MAYBANK');
+    expect(headerName.style.paddingLeft).toBe('8px');
+    expect(childName.style.paddingLeft).toBe('30px'); // 8 + depth 1 × 22
+    expect(childName.textContent).toContain('└');
+    expect(headerName.textContent).not.toContain('└');
+  });
+
+  test('income splits by the TREE (owner: 就做一个 header 分类) — under 700-0000 wears · Other, trading income stays unlabelled', () => {
+    const { container } = draw();
+    const typeCellOf = (code: string) => {
+      const codeTd = [...container.querySelectorAll('td')].find(
+        (td) => String(td.textContent).replace('└', '').trim() === code,
+      )!;
+      return codeTd.parentElement!.children[2] as HTMLElement;
+    };
+    expect(typeCellOf('590-0000').textContent).toContain('· Other');
+    expect(typeCellOf('700-0000').textContent).toContain('· Other');
+    expect(String(typeCellOf('500-0000').textContent)).not.toContain('Other');
+    /* And the CREATE side says where the choice lives (create 那边同理). */
+    fireEvent.click(screen.getByText('Add account'));
+    const typeSelects = screen.getAllByRole('combobox');
+    fireEvent.change(typeSelects[0]!, { target: { value: 'INCOME' } });
+    expect(screen.getByText(/Set Parent to 700-0000/)).toBeTruthy();
   });
 
   test('the LIST scrolls inside its card and the header row sticks (owner 2026-09-04: 往下滑时看不到 header / 按 edit 时要跑回上去)', () => {

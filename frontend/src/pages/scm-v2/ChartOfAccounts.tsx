@@ -153,6 +153,33 @@ export const ChartOfAccounts = () => {
     for (const a of accounts) m.set(a.code, a.parentCode);
     return m;
   }, [accounts]);
+  /* Depth per code — the indent must STEP with the level (owner 2026-09-04:
+     父子account 不清楚; the old indent was a has-parent boolean, so a
+     grandchild sat as shallow as its parent). Same 6-level cap as isHidden. */
+  const depthOf = useMemo(() => {
+    const m = new Map();
+    for (const a of accounts) {
+      let d = 0;
+      let cursor = a.parentCode ?? null;
+      while (cursor && d < 6) { d += 1; cursor = parentOf.get(cursor) ?? null; }
+      m.set(a.code, d);
+    }
+    return m;
+  }, [accounts, parentOf]);
+  /* Other income = anything hanging under 700-0000 — the owner's one-header
+     split (2026-09-04: other income 我想挂在 700-0000; 就做一个 header 分类).
+     DERIVED from the tree, never a second stored flag, so the badge can't
+     contradict where the account actually hangs. Not under it = 正常生意
+     income, deliberately unlabelled (别乱分类). */
+  const OTHER_INCOME_HEADER = '700-0000';
+  const isOtherIncome = (code: string): boolean => {
+    let cursor: string | null = code;
+    for (let d = 0; cursor && d < 7; d += 1) {
+      if (cursor === OTHER_INCOME_HEADER) return true;
+      cursor = parentOf.get(cursor) ?? null;
+    }
+    return false;
+  };
   const isHidden = (code: string): boolean => {
     let cursor = parentOf.get(code) ?? null;
     for (let depth = 0; cursor && depth < 6; depth += 1) {
@@ -453,6 +480,14 @@ export const ChartOfAccounts = () => {
               <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>Parent (optional)</span>
               <input value={newParent} onChange={(e) => setNewParent(e.target.value)} list="chart-parent-codes" placeholder="305-0000"
                 style={{ fontFamily: 'var(--font-mono)', padding: '6px 8px', border: '1px solid var(--border-weak, #d8d5cd)', borderRadius: 6, width: 150 }} />
+              {/* The owner's income split lives in the TREE (2026-09-04:
+                  create account 那边同理) — creating is where the choice is
+                  made, so say it exactly here. */}
+              {newType === 'INCOME' && (
+                <span style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)', maxWidth: 220 }}>
+                  Other income? Set Parent to 700-0000 — 不挂 = 正常生意收入
+                </span>
+              )}
             </label>
             <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
               <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>Special type</span>
@@ -676,6 +711,7 @@ export const ChartOfAccounts = () => {
                   const isParent = accounts.some((x) => x.parentCode === a.code);
                   if (isHidden(a.code)) return null;
                   const isControl = isControlSpecial(a.special);
+                  const depth = depthOf.get(a.code) ?? 0;
                   return (
                     <tr
                       key={a.code}
@@ -685,7 +721,7 @@ export const ChartOfAccounts = () => {
                       onDrop={(e) => { e.preventDefault(); void onDropInto(a); }}
                       style={{ borderBottom: '1px solid var(--border-weak, #f0eee8)', cursor: canManage ? 'grab' : undefined }}
                     >
-                      <td style={{ padding: '4px 8px', fontFamily: 'var(--font-mono)', paddingLeft: a.parentCode ? 28 : 8, fontWeight: isParent ? 700 : 400, whiteSpace: 'nowrap' }}>
+                      <td style={{ padding: '4px 8px', fontFamily: 'var(--font-mono)', paddingLeft: 8 + depth * 22, fontWeight: isParent ? 700 : 400, whiteSpace: 'nowrap' }}>
                         {isParent ? (
                           <button
                             type="button"
@@ -700,7 +736,12 @@ export const ChartOfAccounts = () => {
                         )}
                         {a.code}
                       </td>
-                      <td style={{ padding: '4px 8px', fontWeight: isParent ? 700 : 400 }}>
+                      {/* The NAME steps with the level too — the eye scans
+                          this column, and an all-flush name column is what
+                          made the tree unreadable. └ marks a child; child
+                          names sit a shade quieter than their header. */}
+                      <td style={{ padding: '4px 8px', paddingLeft: 8 + depth * 22, fontWeight: isParent ? 700 : 400, color: depth > 0 && !isParent ? 'var(--fg-strong, #3a3a3a)' : undefined }}>
+                        {depth > 0 && <span style={{ color: 'var(--fg-muted)', fontFamily: 'var(--font-mono)', marginRight: 6 }}>└</span>}
                         {a.name}
                         {a.accMoney && <span style={{ marginLeft: 6, fontSize: 'var(--fs-11)', color: 'var(--c-secondary-a, #2F5D4F)' }}>money</span>}
                         {isParent && <span style={{ marginLeft: 6, fontSize: 'var(--fs-11)', color: 'var(--fg-muted)' }}>header</span>}
@@ -710,7 +751,12 @@ export const ChartOfAccounts = () => {
                           </span>
                         )}
                       </td>
-                      <td style={{ padding: '4px 8px', fontSize: 'var(--fs-11)', color: TYPE_TONE[a.type] ?? 'inherit' }}>{a.type}</td>
+                      <td style={{ padding: '4px 8px', fontSize: 'var(--fs-11)', color: TYPE_TONE[a.type] ?? 'inherit', whiteSpace: 'nowrap' }}>
+                        {a.type}
+                        {a.type === 'INCOME' && isOtherIncome(a.code) && (
+                          <span style={{ color: 'var(--fg-muted)' }}> · Other</span>
+                        )}
+                      </td>
                       {companies.map((co) => {
                         const active = a.perCompany[co.id]?.active === true;
                         const key = `${co.id}:${a.code}`;

@@ -47,8 +47,13 @@
     },
     {
       "check": "D1",
-      "key": "ACCESSORY,BEDFRAME,BEDLINES,CARPET,DIFFUSER,DINING,MATTRESS,SERVICE,SOFA|backend/src/scm/routes/mfg-products.ts backend/src/scm/shared/so-branding-label.ts frontend/src/pages/scm-v2/ProductModels.tsx frontend/src/vendor/shared/so-branding-label.ts",
-      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 4 homes: MFG_PRODUCT_CATEGORIES, CATEGORIES. Cost of divergence is a blank chip, not a wrong number."
+      "key": "BANK,CASH,GENERAL,PURCHASE,SALES|backend/src/acc/journal-class.ts frontend/src/pages/scm-v2/Accounting.tsx",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — classifyJournal (journal-class.ts) is the rule; JOURNAL_CHIPS is the chip strip's render order over labels the SERVER already stamped on each row (journal_class). The frontend cannot import backend/src/acc (the shared package here is a pair of vendored copies, not a workspace import), and a chip the backend stopped emitting filters to an empty list — a blank chip, not a wrong number."
+    },
+    {
+      "check": "D1",
+      "key": "ACCESSORY,BEDFRAME,BEDLINES,CARPET,DIFFUSER,DINING,MATTRESS,SERVICE,SOFA|backend/src/scm/routes/mfg-products.ts backend/src/scm/shared/so-branding-label.ts frontend/src/pages/scm-v2/ItemGroups.tsx frontend/src/pages/scm-v2/ProductModels.tsx frontend/src/vendor/shared/so-branding-label.ts",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 5 homes: MFG_PRODUCT_CATEGORIES, CATEGORIES, and ItemGroups' SUGGESTED — a per-category map of DEFAULT account bindings (values are accounts, keys just happen to be the vocabulary; the registry itself lives in scm.acc_item_groups seeded from the same enum). Cost of divergence is a blank chip or an unsuggested row, not a wrong number."
     },
     {
       "check": "D1",
@@ -1184,6 +1189,11 @@
       "check": "D1",
       "key": "LG,SM,XL|backend/src/lib/announcementRichText.ts frontend/src/lib/announcementRichText.ts",
       "why": "THE ANNOUNCEMENT RICH-BODY GRAMMAR, a deliberate cross-tree TWIN: backend/src/lib/announcementRichText.ts is the original and frontend/src/lib/announcementRichText.ts is its byte-identical copy (the two packages share no build). Both sides run the SAME canonicaliser, the Worker on write and the browser on render, so the sets must be equal; backend/tests/announcementRichText.test.ts and frontend/src/lib/announcementRichText.test.ts pin the same fixtures so a drift is a red test on one side. 2 homes: RAW_DROP, RICH_SIZES."
+    },
+    {
+      "check": "D2",
+      "key": "*,SCM.ACCESS,SCM.PAYMENT_VOUCHER.POST ~ *,SCM.ACCESS,SCM.PAYMENT_VOUCHER.POST,SCM.SALES_ORDER.WRITE",
+      "why": "THE FINANCE NAV GATE against the Official Receipts nav gate, one key apart BY DESIGN. The recon/setup/chart rows show only to GL people (scm.payment_voucher.post); the Official Receipts row adds SCM.SALES_ORDER.WRITE because the OR is sales-side paper — the salesperson who records the payment hands the receipt over — and the sidebar MIRRORS the backend guard (accounting-receipts.ts requirePerm: payment_voucher.post OR sales_order.write). Folding onto the GL-only set would hide the book from the very people who print from it; divergence costs a nav row showing or not, never money."
     }
   ]
 }

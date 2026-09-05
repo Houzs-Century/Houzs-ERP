@@ -64,7 +64,7 @@ import {
   History,
   Wand2,
   CalendarOff,
-  type LucideIcon, Landmark, CreditCard, Banknote } from "lucide-react";
+  type LucideIcon, Landmark, CreditCard, Banknote, Receipt } from "lucide-react";
 import { cn } from "../lib/utils";
 import { booleanRecordPreference, useIdentityPreference } from "../hooks/useIdentityPreference";
 import { useAuth } from "../auth/AuthContext";
@@ -646,6 +646,10 @@ export const NAV_TABS: NavTab[] = [
       // after. Both gated on the same GL key the backend checks
       // (scm.payment_voucher.post) — front and back both.
       { to: "/scm/merchant-recon", label: "Merchant Recon", icon: CreditCard, anyPerm: ["*", "scm.access", "scm.payment_voucher.post"], anyAccess: ["scm.finance.accounting"] },
+      // Official Receipts (GL redesign item 9): every customer payment's OR
+      // document — drafts waiting for their money, the formal run, print +
+      // manual confirm. NOT the money-in list — that stays at /scm/receipts.
+      { to: "/scm/official-receipts", label: "Official Receipts", icon: Receipt, anyPerm: ["*", "scm.access", "scm.payment_voucher.post", "scm.sales_order.write"], anyAccess: ["scm.finance.accounting"] },
       { to: "/scm/bank-recon", label: "Bank Recon", icon: Banknote, anyPerm: ["*", "scm.access", "scm.payment_voucher.post"], anyAccess: ["scm.finance.accounting"] },
       // Maintained across companies from one screen (owner, 2026-08-18).
       { to: "/scm/settlement-setup", label: "Recon Setup", icon: SettingsIcon, anyPerm: ["*", "scm.access", "scm.payment_voucher.post"], anyAccess: ["scm.finance.accounting"] },

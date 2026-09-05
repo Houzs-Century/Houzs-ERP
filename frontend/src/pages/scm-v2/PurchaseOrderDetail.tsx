@@ -179,6 +179,10 @@ const draftFromItem = (it: PoItemRow): EditLine => ({
   materialKind:   it.material_kind,
   itemCode:   it.item_code,
   materialName:   it.material_name,
+  /* Per-line remarks (scm.purchase_order_items.notes). Seeded so Edit SHOWS
+     what is stored instead of blanking it on save — and this column is where
+     the AutoCount migration parked the book's own Description 2. */
+  notes:          it.notes ?? '',
   supplierSku:    it.supplier_sku ?? undefined,
   qty:            it.qty,
   unitPriceSen: it.unit_price_sen,
@@ -702,6 +706,7 @@ export const PurchaseOrderDetail = () => {
             materialKind:   d.materialKind,
             itemCode:   d.itemCode,
             materialName:   d.materialName || d.itemCode,
+            notes:          d.notes || undefined,
             supplierSku:    d.supplierSku,
             qty:            d.qty,
             unitPriceSen: d.unitPriceSen,
@@ -724,6 +729,7 @@ export const PurchaseOrderDetail = () => {
         const changed =
           d.itemCode !== it.item_code ||
           (d.materialName || d.itemCode) !== it.material_name ||
+          (d.notes ?? '') !== (it.notes ?? '') ||
           (d.supplierSku ?? '') !== (it.supplier_sku ?? '') ||
           (d.category ?? '') !== (it.item_group ?? '') ||
           d.qty !== it.qty ||
@@ -741,6 +747,8 @@ export const PurchaseOrderDetail = () => {
           poId: po.id, itemId: d.itemId,
           itemCode:   d.itemCode,
           materialName:   d.materialName || d.itemCode,
+          /* Always sent, so CLEARING a remark actually reaches the server. */
+          notes:          d.notes ?? '',
           supplierSku:    d.supplierSku,
           qty:            d.qty,
           unitPriceSen: d.unitPriceSen,
@@ -1296,6 +1304,10 @@ export const PurchaseOrderDetail = () => {
                   <PoLineCard
                     index={idx}
                     line={l}
+                    /* Per-line Remarks box — this parent carries `notes` in both
+                       the add-item and the update-item payload below, which is
+                       what the prop's contract requires. */
+                    showRemarks
                     currency={po.currency}
                     supplierId={poSupplierId}
                     bindings={bindings}

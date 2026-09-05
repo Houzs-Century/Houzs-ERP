@@ -40,7 +40,8 @@ import { accMastersCompanyId } from './masters-company';
 
 export type AccountRole =
   | 'AR' | 'AR_OTHER' | 'SALES' | 'INVENTORY' | 'AP' | 'AP_OTHER'
-  | 'CASH' | 'BANK_DEFAULT' | 'TRANSIT_EDC' | 'TRANSIT_ONLINE' | 'CUSTOMER_DEPOSITS' | 'OVER_SHORT';
+  | 'CASH' | 'BANK_DEFAULT' | 'TRANSIT_EDC' | 'TRANSIT_ONLINE' | 'CUSTOMER_DEPOSITS' | 'OVER_SHORT'
+  | 'CLOSING_STOCK';
 
 /* Fallback = the accountant's own AutoCount codes (migration 0344; owner
    decision 2026-09-02: 迁到 AutoCount 码). Every company carries these codes,
@@ -60,6 +61,7 @@ export const DEFAULT_ROLE_CODES: Record<AccountRole, string> = {
   TRANSIT_ONLINE: '327-0000',    // ONLINE PAYMENT CLEARING (FPX/E-WALLET)
   CUSTOMER_DEPOSITS: '400-0001', // DEPOSIT (under ACCOUNT PAYABLE)
   OVER_SHORT: '946-0000',        // Cash Over/Short (ERP extension)
+  CLOSING_STOCK: '620-0000',     // STOCKS AT THE END OF YEAR (month-close P&L leg)
 };
 
 /* Control accounts (brief §2.4): system-maintained, and a MANUAL journal may
@@ -161,25 +163,36 @@ export function siLines(
   ];
 }
 
-/** Purchase invoice posted: Dr INVENTORY / Cr the supplier's AP control for
-    the MYR total — AP for trade creditors, AP_OTHER for 405-x suppliers
-    (apControlRole above). */
+/**
+ * Purchase invoice posted, the AutoCount periodic shape (GL redesign item 2,
+ * owner 2026-09-05: ledger 只根据 invoice 认 — Dr purchase, Cr supplier):
+ * one debit per PRODUCT GROUP on the invoice, each to that group's own
+ * purchase account (scm.acc_item_group_accounts), credited to the supplier's
+ * AP control — AP for trade creditors, AP_OTHER for 405-x (apControlRole).
+ *
+ * Inventory (330-0000) is deliberately NOT here any more: stock value reaches
+ * the GL as the month-end adjustment (item 4), not per document. The debits
+ * arrive already in MYR sen and already summing EXACTLY to the credit — the
+ * caller owns FX and the rounding remainder, because only it knows the
+ * header total the entry must reconcile to.
+ */
 export function piLines(
   roles: RoleCodes,
   pi: { invoice_number: string },
   supplier: { code: string | null; name: string | null },
-  totalSen: number,
+  groupDebits: Array<{ groupCode: string; accountCode: string; myrSen: number }>,
 ): RuleLine[] {
+  const totalSen = groupDebits.reduce((s, g) => s + g.myrSen, 0);
   return [
-    {
-      accountCode: roles.INVENTORY,
-      debitSen: totalSen,
+    ...groupDebits.map((g) => ({
+      accountCode: g.accountCode,
+      debitSen: g.myrSen,
       creditSen: 0,
       partyType: null,
       partyCode: null,
       partyName: null,
-      notes: `Inventory from ${pi.invoice_number}`,
-    },
+      notes: `Purchases — ${g.groupCode} on ${pi.invoice_number}`,
+    })),
     {
       accountCode: roles[apControlRole(supplier.code)],
       debitSen: 0,

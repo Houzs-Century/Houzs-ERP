@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 // @ts-expect-error - plain .mjs, shared by the importers and the refresh scripts
-import { buildFabricColourIndex, colourForms, foldColour } from '../scripts/lib/fabric-colour-match.mjs';
+import { buildFabricColourIndex, colourForms, foldColour, isPendingColour, pendingColourKind } from '../scripts/lib/fabric-colour-match.mjs';
 
 /* Golden test for the ONE fabric-colour matcher. Every string below is a real
    colour written on a real AutoCount document; every library row below is a
@@ -232,5 +232,156 @@ describe('colourForms keeps the untouched original first', () => {
   test('the faithful spelling always leads, so it always wins', () => {
     expect(colourForms('BO315-1 PEARL')[0]).toBe('BO315-1 PEARL');
     expect(hit('BO315-1 PEARL')).toBe('BO315-1-PEARL'); // not the bare BO315-1
+  });
+});
+
+/* ---------------------------------------------------------------------------
+   THE 2026-09-04 CLASSES. The owner's instruction was "同类问题也解决" after
+   seeing four rows where the book and the library plainly name the same fabric.
+   Every library row below is real: SELECT fabric_id, colour_id, label, active
+   FROM scm.fabric_colours WHERE company_id = 1, run on 2026-09-04, returned 949
+   rows - 849 active and 100 superseded by the 2026-08-11 renumbering.
+   --------------------------------------------------------------------------- */
+type ARow = Row & { active: boolean };
+const arow = (fabric_id: string, colour_id: string, label: string, active = true): ARow =>
+  ({ fabric_id, colour_id, label, active });
+
+/* The renumbering pairs, the two labels that genuinely collide, and the series
+   whose numbers must never be confused with each other. */
+const LIVE: ARow[] = [
+  arow('CH141', 'CH141-08', 'CH141-08 ARMY'),
+  arow('CH141', 'CH141-8', 'CH141-8 [superseded by CH141-08 on 2026-08-11]', false),
+  arow('GARFIELD', 'GARFIELD-01', 'GARFIELD-01'),
+  arow('GARFIELD', 'GARFIELD-1-SOFT LINEN', 'LINEN [superseded by GARFIELD-01 on 2026-08-11]', false),
+  arow('NV', 'NV-01', 'NV-01 WP'),
+  arow('NV', 'NV-01 WP', 'WP [superseded by NV-01 on 2026-08-11]', false),
+  arow('BO315', 'BO315-21', 'BO315-21 PEARL'),
+  arow('PC151', 'PC151-01', 'PC151-01'),
+  arow('PC151', 'PC151-13', 'PC151-13'),
+  arow('WOWSONS-8877', 'WOWSONS-8877-03', 'WOWSONS-8877-03'),
+  arow('STAR', 'STAR-01', 'STAR-01'),
+  arow('STAR', 'STAR-10', 'STAR-10 NAVY'),
+  // the REAL collision: two LIVE rows whose whole label is the word CREAM
+  arow('CASSNYE', 'CASSNYE-04', 'CREAM'),
+  arow('TARONI', 'TARONI-01', 'CREAM'),
+];
+const live = buildFabricColourIndex(LIVE);
+const lhit = (s: string): string | null => {
+  const h = live.findColour(s) as ARow | null;
+  return h ? h.colour_id : null;
+};
+
+describe('the four classes the owner named on 2026-09-04', () => {
+  test('a bad extraction is still the same code - "COL: " is not part of it', () => {
+    expect(lhit('COL: PC151-01')).toBe('PC151-01');
+    expect(lhit('Col:PC151-01')).toBe('PC151-01');
+  });
+
+  test('a dash in the wrong place is the same code', () => {
+    /* The book writes "COL:PC-151-01". The DECODER strips the COL: marker
+       (parse-bedframe.mjs) and hands the matcher what is left - so this is the
+       string the matcher is actually asked, and the marker case is asserted
+       one test above where colourForms can lift a code out of prose. */
+    expect(lhit('PC-151-01')).toBe('PC151-01');
+    expect(lhit('PC 151-01')).toBe('PC151-01');
+    expect(lhit('PC151 - 01')).toBe('PC151-01');
+  });
+
+  test('a missing zero is the same code, and it resolves to the LIVE row', () => {
+    // the book says "CH141-8 army"; CH141-8 was superseded by CH141-08 ARMY
+    expect(lhit('CH141-8 army')).toBe('CH141-08');
+    expect(lhit('CH141-8')).toBe('CH141-08');
+    expect(lhit('grafield1-softlinen')).toBe('GARFIELD-01');
+    expect(lhit('NV-1WP')).toBe('NV-01');
+    expect(lhit('HUGYP MADE WOWSON 8877-3')).toBe('WOWSONS-8877-03');
+  });
+
+  test('case alone is not a difference', () => {
+    expect(lhit('BO315-21 pearl')).toBe('BO315-21');
+    expect(lhit('bo315-21 PEARL')).toBe('BO315-21');
+  });
+});
+
+describe('the widening REFUSES a collision - it never picks one of two', () => {
+  /* This is the whole design constraint. CASSNYE-04 and TARONI-01 both carry
+     the label CREAM, both live, and the bedframe decoder reads a bare
+     "Cream/Divan10/Gap13" as a colour. Before 2026-09-04 the exact index was
+     first-wins, so it answered CASSNYE-04 with a coin toss's confidence. */
+  test('two LIVE rows on one key resolve to neither', () => {
+    expect(lhit('CREAM')).toBeNull();
+    expect(lhit('Cream')).toBeNull();
+    expect(live.exactRefused.has('CREAM')).toBe(true);
+    expect(live.paddedRefused.has('CREAM')).toBe(true);
+  });
+
+  test('a superseded predecessor is NOT a second identity - the live row takes the key', () => {
+    // CH141-8 and CH141-08 pad to the same key; one of the two is active = false
+    expect(live.paddedRefused.has('CH14108')).toBe(false);
+    expect(lhit('CH141-08')).toBe('CH141-08');
+  });
+
+  test('without the active fact, a two-row key is refused - absence is STRICTER', () => {
+    const noFlag = buildFabricColourIndex([
+      row('CH141', 'CH141-08', 'CH141-08 ARMY'),
+      row('CH141', 'CH141-8', 'CH141-8 [superseded by CH141-08 on 2026-08-11]'),
+    ]);
+    expect(noFlag.paddedRefused.has('CH14108')).toBe(true);
+    // the faithful spelling still resolves through the exact index
+    expect((noFlag.findColour('CH141-8') as Row).colour_id).toBe('CH141-8');
+  });
+
+  test('padding never moves a number onto its neighbour', () => {
+    expect(lhit('STAR-1')).toBe('STAR-01');
+    expect(lhit('STAR-10')).toBe('STAR-10');
+  });
+
+  test('padding may not manufacture a two-character key', () => {
+    const sf = buildFabricColourIndex([arow('SF', 'SF-AT 07', '07'), arow('SF', 'SF-AT 03', '03')]);
+    expect(sf.findColour('7# CHARCOAL')).toBeNull();
+    expect(sf.findColour('03#Straw')).toBeNull();
+  });
+});
+
+describe('pendingColourKind names the two things TBC means', () => {
+  const find = live.findColour as (s: string) => unknown;
+  test('a bare marker is the colour NOT being chosen', () => {
+    expect(pendingColourKind('COL: TBC', find)).toBe('only');
+    expect(pendingColourKind('KIV', find)).toBe('only');
+    expect(pendingColourKind('PC151- TBC', find)).toBe('only'); // no number written
+  });
+
+  test('a marker BESIDE a library colour is a different fact', () => {
+    expect(pendingColourKind('BO315-21Pearl(TBC)', find)).toBe('qualified');
+    expect(pendingColourKind('PC151-01TBC', find)).toBe('qualified');
+    expect(pendingColourKind('PC151-13 tbc', find)).toBe('qualified');
+  });
+
+  test('no marker at all is neither', () => {
+    expect(pendingColourKind('PC151-01', find)).toBe('none');
+  });
+
+  test('the library lookup is REQUIRED, not optional', () => {
+    // @ts-expect-error - deliberately calling it the way a forgetful caller would
+    expect(() => pendingColourKind('BO315-21 (TBC)')).toThrow(/required/);
+  });
+
+  test('isPendingColour itself is UNCHANGED - no existing caller moves', () => {
+    expect(isPendingColour('BO315-21Pearl(TBC)')).toBe(true);
+    expect(isPendingColour('COL: TBC')).toBe(true);
+    expect(isPendingColour('PC151-01')).toBe(false);
+  });
+});
+
+describe('explainColour says WHICH mechanism answered', () => {
+  test('a faithful spelling reports the exact pass and no widening', () => {
+    const e = live.explainColour('PC151-01') as { via: string; padded: boolean; redirected: boolean };
+    expect(e.via).toBe('exact');
+    expect(e.padded).toBe(false);
+    expect(e.redirected).toBe(false);
+  });
+
+  test('a superseded answer reports the redirect, so a probe can count it', () => {
+    const e = live.explainColour('CH141-8') as { redirected: boolean };
+    expect(e.redirected).toBe(true);
   });
 });

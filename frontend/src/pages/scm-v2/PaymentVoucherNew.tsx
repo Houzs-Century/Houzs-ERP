@@ -129,6 +129,18 @@ export const PaymentVoucherNew = () => {
   const [voucherDate, setVoucherDate]             = useState<string>(() => todayMyt());
   const [notes, setNotes]                         = useState<string>('');
 
+  /* Internal transfer INSIDE the PV (GL redesign item 10, owner: 不能直接在
+     pv 那边开转账就好吗) — same document, same Draft→Checked→Approved chain,
+     same per-bank number series. The "payee" becomes one of our own money
+     accounts and the lines collapse to a single Dr <destination> leg; the
+     server refuses destination === Paid From (same_account). PV mode only —
+     an AP Payment settles suppliers by definition. */
+  const [isTransfer, setIsTransfer]               = useState(false);
+  const [toAccountCode, setToAccountCode]         = useState<string>('');
+  const [transferAmount, setTransferAmount]       = useState<string>('');
+  const transferSen = Math.round((Number(transferAmount) || 0) * 100);
+  const toAccount = moneyAccounts.find((a) => a.account_code === toAccountCode) ?? null;
+
   /* ── Bill OCR (2026-09-02) ──────────────────────────────────────────────
      "Scan bill": pick the bill's page(s) — MULTI-SELECT MEANS ONE BILL — and
      the reader pre-fills payee / date / lines. Everything stays editable;
@@ -391,19 +403,32 @@ export const PaymentVoucherNew = () => {
   const realLines = lines.filter((l) => l.debitAccountCode && l.amountSen > 0);
   const canSave = isAp
     ? !!payeeName.trim() && !!supplierId && !!creditAccountCode && totalSen > 0 && !!apAccountCode
-    : !!payeeName.trim() && !!creditAccountCode && realLines.length > 0;
+    : isTransfer
+      ? !!creditAccountCode && !!toAccountCode && toAccountCode !== creditAccountCode && transferSen > 0
+      : !!payeeName.trim() && !!creditAccountCode && realLines.length > 0;
 
+  const transferMode = !isAp && isTransfer;
+  const transferPayee = toAccount ? `Internal transfer to ${toAccount.account_code} ${toAccount.account_name}` : '';
   const onSave = async () => {
+    if (transferMode) {
+      if (!creditAccountCode) { setDialog({ title: 'Pick a “Paid From” account', body: 'Choose the account the money leaves.' }); return; }
+      if (!toAccountCode) { setDialog({ title: 'Pick the destination', body: 'Choose which of our own accounts the money goes into.' }); return; }
+      if (toAccountCode === creditAccountCode) { setDialog({ title: 'Same account both sides', body: 'A transfer needs two different accounts.' }); return; }
+      if (transferSen <= 0) { setDialog({ title: 'Enter the amount', body: 'How much is moving?' }); return; }
+    } else {
     if (!payeeName.trim()) { setDialog({ title: 'Enter a payee', body: 'Who is this voucher paying?' }); return; }
     if (!creditAccountCode) { setDialog({ title: 'Pick a “Paid From” account', body: 'Choose the bank / cash account the money leaves.' }); return; }
     if (isAp && !supplierId) { setDialog({ title: 'Pick a supplier', body: 'An AP Payment settles a supplier — choose whose invoices this pays.' }); return; }
     if (isAp && totalSen === 0) { setDialog({ title: 'Nothing to pay yet', body: 'Tick an invoice, type a partial amount, or enter a prepay figure.' }); return; }
     if (!isAp && realLines.length === 0) { setDialog({ title: 'Add at least one line', body: 'Each line needs a debit account and an amount > 0.' }); return; }
+    }
 
     /* AP Payment: the ONE GL line is written here — Dr the AP control account
        for exactly what the ticks apply. The operator never touches a debit
        account on this document, so it cannot be mis-booked. */
-    const sendLines = isAp
+    const sendLines = transferMode
+      ? [{ description: 'Internal transfer', debitAccountCode: toAccountCode, amountSen: transferSen }]
+      : isAp
       ? [{
         description: [
           allocations.filter((a) => a.amountSen > 0).length > 0 ? `Settle ${allocations.filter((a) => a.amountSen > 0).length} invoice(s)` : null,
@@ -422,8 +447,8 @@ export const PaymentVoucherNew = () => {
     try {
       const res = await create.mutateAsync({
         idempotencyKey:    idemKey,
-        payeeName:         payeeName.trim(),
-        supplierId:        supplierId || null,
+        payeeName:         transferMode ? transferPayee : payeeName.trim(),
+        supplierId:        transferMode ? null : (supplierId || null),
         purpose,
         creditAccountCode,
         voucherDate,
@@ -490,12 +515,31 @@ export const PaymentVoucherNew = () => {
       <section className={styles.card}>
         <div className={styles.cardHeader}><h2 className={styles.cardTitle}>Header</h2></div>
         <div className={styles.cardBody}>
+          {!isAp && (
+            <div style={{ display: 'flex', gap: 8, marginBottom: 'var(--space-3)' }}>
+              {/* 付给供应商/其他 vs 内部转账 (item 10) — same paper, same chain. */}
+              <Button variant={!isTransfer ? 'primary' : 'secondary'} onClick={() => setIsTransfer(false)}>付款 Payment</Button>
+              <Button variant={isTransfer ? 'primary' : 'secondary'} onClick={() => setIsTransfer(true)}>内部转账 Transfer</Button>
+            </div>
+          )}
           <div className={styles.formGrid2}>
+            {transferMode ? (
+              <label className={styles.field}>
+                <span className={styles.fieldLabel}>Transfer to *</span>
+                <select value={toAccountCode} onChange={(e) => setToAccountCode(e.target.value)} className={styles.fieldInput}>
+                  <option value="">— which of our accounts receives it —</option>
+                  {moneyAccounts.filter((a) => a.account_code !== creditAccountCode).map((a) => (
+                    <option key={a.account_code} value={a.account_code}>{a.account_code} · {a.account_name}</option>
+                  ))}
+                </select>
+              </label>
+            ) : (
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Payee *</span>
               <input type="text" value={payeeName} onChange={(e) => setPayeeName(e.target.value)}
                 placeholder="Who are we paying? (e.g. ABC Freight Forwarding)" className={styles.fieldInput} required />
             </label>
+            )}
             <label className={styles.field}>
               <span className={styles.fieldLabel}>PV #</span>
               <input type="text" readOnly value="(assigned on Save)" className={styles.fieldInput}
@@ -579,7 +623,23 @@ export const PaymentVoucherNew = () => {
       {/* Expense lines — the Payment Voucher's body. An AP Payment has no
           hand-written lines at all: its one GL line (Dr the AP control) is
           composed on save from the ticks below. */}
-      {!isAp && (
+      {transferMode && (
+        <section className={styles.card}>
+          <div className={styles.cardHeader}><h2 className={styles.cardTitle}>Amount</h2></div>
+          <div className={styles.cardBody}>
+            <label className={styles.field} style={{ maxWidth: 260 }}>
+              <span className={styles.fieldLabel}>How much moves (RM) *</span>
+              <input type="number" min="0" step="0.01" value={transferAmount}
+                onChange={(e) => setTransferAmount(e.target.value)} className={styles.fieldInput}
+                placeholder="0.00" aria-label="Transfer amount" />
+            </label>
+            <div style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
+              过账时:Dr {toAccountCode || '收方'} / Cr {creditAccountCode || 'Paid From'} — approve 才进 GL,和付款单同一条审批链。
+            </div>
+          </div>
+        </section>
+      )}
+      {!isAp && !transferMode && (
       <section className={styles.card}>
         <div className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Lines</h2>

@@ -850,3 +850,60 @@ bundle); `frontend/src/pages/scm-v2/PaymentVouchers.test.tsx` pins that
 every row ticks, a POSTED row offers Print and no approval button, and a
 ROW click ticks nothing; `frontend/src/vendor/scm/components/DataGrid.test.tsx`
 pins both sides of `checkboxOnly` (the default row-click tick stays).
+
+## §12 Voucher numbering — the owner's levers (GL redesign item 8a, 2026-09-05)
+
+`scm.acc_bank_letters` (one prefix letter per money account — Maybank M means
+the `{co}-MPV-YYMM-NNN` series; UNIQUE per company+letter, because two banks on
+one letter would share a series) and `scm.acc_numbering` (suffix width 3-5 —
+his 如果到时我要 2990-MPV-2609-0001 呢; width is display-only, the parsers take
+any length, so changing it renumbers nothing). Maintained by the owner on the
+**Voucher numbering** card of /scm/settlement-setup (`GET/PUT
+/accounting/numbering`, handlers in accounting-numbering.ts) — a new bank is a
+letter typed there, never a deploy. `mintMonthlyDocNo` / `nextMonthlyDocNo`
+take the width as a parameter (default 3, callers unchanged). The migration
+also parked the only two existing vouchers (both DRAFT) on the
+`2990-Draft-YYMM-NNN` series — draft 不占正式号; item 8b mints the formal
+per-bank number at CHECKED. The OR channels (item 9) and transfers (item 10)
+read the SAME letter table. Pinned by backend/tests/voucherNumbering.test.ts.
+
+### §12b The Draft → formal flow (item 8b)
+
+A new voucher mints on the Draft series — `{co}Draft-YYMM-NNN`
+(`nextPvDraftNo`) — and earns its formal number at **CHECKED**:
+`checkPaymentVoucherHandler` reads the credit account's letter and the
+company width, mints `{co}{letter}PV-YYMM-NNN` (`mintFormalPvNo`,
+collision-retried the way inserts are), records the renumber on the audit
+trail, and answers `pvNumber` so the screen can say so. A bank with no letter
+REFUSES the check (409 `bank_letter_missing`) with the setup card named — a
+voucher must never mint into a series nobody configured. **The cash drawer is
+the one fixed series** (owner 2026-09-05: 我payment 出去by cash 时就会是
+cpv啊): paid from `roles.CASH`, the mint takes `CASH_SERIES_LETTER` straight —
+`{co}CPV-YYMM-NNN` — with no letters row involved; the same C prints COR on
+the receipt side. The numbering card shows the drawer read-only (`fixedCash`
+on the GET), the PUT refuses both a letter FOR it (`letter_fixed`) and C on
+any bank (`letter_reserved`). A voucher already
+carrying a formal number (a reject → re-check round) keeps it: a slot is
+never burned twice for the same paper. Journals cannot see draft numbers by
+construction — posting happens at approve, after the mint. Pinned by
+backend/tests/pvDraftNumbering.test.ts.
+
+## §13 Internal transfers ride the PV (GL redesign item 10)
+
+The owner's call verbatim: 不能直接在 pv 那边开转账就好吗. A transfer is the
+same paper: the New-PV screen (non-AP mode) carries a 付款/内部转账 toggle —
+transfer mode swaps the payee for a "Transfer to" pick of OUR OWN money
+accounts (Paid From excluded) and the lines for one amount box; the payload
+is a normal voucher whose single line debits the destination
+(payee_name = "Internal transfer to <code> <name>", the marker everything
+else keys on). Same Draft→Checked→Approved chain, same per-bank number
+series, same GL door (approve posts Dr destination / Cr Paid From — a money
+move, not an expense); the PRINT re-titles itself TRANSFER VOUCHER off the
+payee marker, batch printing included. The route refuses a line debiting the
+Paid From account itself (`same_account`, create AND edit, the edit checked
+against the EFFECTIVE Paid From) — a transfer into itself is meaningless and
+an expense line on the paying bank is a typo. Cash bank-ins are the same
+document (drawer → bank). Supplier-payment reports stay clean by
+construction: a transfer's debit leg is a money account, not an expense or
+AP control. Pinned by backend/tests/pvTransfer.test.ts + the same_account
+refusals in the route.

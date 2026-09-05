@@ -2544,6 +2544,7 @@ export const SalesOrderDetail = () => {
         onDraftCommitted={paymentRetryCommitted}
         onUnsavedChange={setUnsavedPayments}
         onRegisterCommitAll={(fn) => { commitPaymentsRef.current = fn; }}
+        receiptFor={{ source: 'SOPAY' }}
         headerAction={canOfferPayEdit ? (
           <Button variant="ghost" onClick={() => { void togglePayEditing(); }}>
             {payEditing ? <span>Done</span> : <><Pencil {...ICON} /><span>Edit payments</span></>}

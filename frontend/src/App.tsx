@@ -99,6 +99,7 @@ const ScmPaymentVoucherScanV2 = lazy(() => import("./pages/scm-v2/PaymentVoucher
 const ScmChartOfAccountsV2 = lazy(() => import("./pages/scm-v2/ChartOfAccounts").then((m) => ({ default: m.ChartOfAccounts })));
 const ScmOtherDebtorsV2 = lazy(() => import("./pages/scm-v2/OtherDebtors").then((m) => ({ default: m.OtherDebtors })));
 const ScmReceiptsV2 = lazy(() => import("./pages/scm-v2/Receipts").then((m) => ({ default: m.Receipts })));
+const ScmOfficialReceiptsV2 = lazy(() => import("./pages/scm-v2/OfficialReceipts").then((m) => ({ default: m.OfficialReceipts })));
 const ScmPaymentVoucherDetailV2 = lazy(() => import("./pages/scm-v2/PaymentVoucherDetail").then((m) => ({ default: m.PaymentVoucherDetail })));
 const ScmStockAdjustmentsV2 = lazy(() => import("./pages/scm-v2/StockAdjustments").then((m) => ({ default: m.StockAdjustments })));
 const ScmStockAdjustmentNewV2 = lazy(() => import("./pages/scm-v2/StockAdjustmentNew").then((m) => ({ default: m.StockAdjustmentNew })));
@@ -682,6 +683,7 @@ export default function App() {
         <Route path="/scm/chart-of-accounts" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmChartOfAccountsV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/other-debtors" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmOtherDebtorsV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/receipts" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmReceiptsV2 /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/official-receipts" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmOfficialReceiptsV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/payment-vouchers/:id" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmPaymentVoucherDetailV2 /></Scm2990Shell></ScmGuard>} />
         {/* TEMP — vendored 2990's stock-movement pages (wave 4: Adjustments /
             Transfers / Takes), parallel to the native /scm/* below. Each wrapped

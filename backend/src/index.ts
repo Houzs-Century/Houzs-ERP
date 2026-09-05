@@ -117,6 +117,7 @@ import { runProjectDueReminders } from "./services/projectReminders";
 import { distillAllSalespersonRules, warmCatalogCacheForCron, processScanQueueMessage } from "./scm/routes/scan-so";
 import { runAgentHeartbeat } from "./services/agent-scheduler";
 import { getSupabaseService } from "./db/supabase";
+import { sweepStockClose } from "./acc/stock-close";
 import { reapOnce } from "./scm/lib/reaper";
 import { getBranding } from "./services/branding";
 // AutoCount inbound SO pull — restored 2026-07-14. Reads SO from the AutoCount
@@ -832,6 +833,28 @@ export default {
           })(),
         );
       }
+    } else if (event.cron === "5 16 * * *") {
+      // 16:05 UTC = 00:05 MYT — the month-end stock close (GL redesign item 4).
+      // On the 1st this POSTS last month's closing-stock pair the night the
+      // month ends (the owner's 抓实时的); every other night it is the cheap
+      // re-check that heals a late-keyed GRN by reversing and re-posting.
+      // Sweeps the two most recent closed months for every company; every
+      // outcome (including the quiet 'unchanged') lands in
+      // scm.acc_stock_close_runs — the visible trail the owner asked for.
+      ctx.waitUntil(
+        (async () => {
+          const sb = getSupabaseService(env);
+          const { data, error } = await sb.schema("public").from("companies").select("id");
+          if (error) throw new Error(`companies: ${error.message}`);
+          const ids = ((data ?? []) as Array<{ id: number }>).map((r) => Number(r.id));
+          const outcomes = await sweepStockClose(sb, ids, "cron");
+          const changed = outcomes.filter((o) => o.action !== "unchanged");
+          console.log(
+            `[cron stock-close] ${outcomes.length} check(s), ${changed.length} change(s)` +
+            (changed.length ? ` — ${changed.map((o) => `${o.companyId}/${o.month}:${o.action}`).join(", ")}` : ""),
+          );
+        })().catch((e) => console.error("[cron stock-close]", e)),
+      );
     }
   },
   // Cloudflare Queue consumer for the background scan-so OCR pipeline (queue

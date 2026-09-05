@@ -325,7 +325,12 @@ Called by the confirm handler (`:1733`), by `POST /` on the non-draft path
    supplier, just description + amount) creates **no** inventory movement; its
    amount is pooled and spread across the goods lines by QTY / VALUE / CBM per the
    header `allocation_method`, persisted as `allocated_charge_sen`.
-6. **The IN movements** (`:412-448`) — see §5.
+6. **The IN movements** (`:412-448`) — see §5. Each IN is stamped with
+   `movement_date` = the GRN's **received date** (GL redesign item 4,
+   2026-09-05): the month-end stock close replays value on the business date,
+   so a GRN keyed on Sep 2 for goods received Aug 30 still counts in August's
+   closing stock. Rows from callers that pass no date get today (MYT) inside
+   `writeMovements`.
 7. **Three post-receipt reconciles**, all best-effort, all after the IN:
    `reconcileDropshipBatches` (`:460`), `reconcileUncostedOuts` (`:492`, the
    oversell retro-cost, scoped to shipments before `receiptCutoffTs`), and for

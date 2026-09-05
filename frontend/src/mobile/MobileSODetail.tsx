@@ -88,6 +88,7 @@ import {
    owns any payment-row markup: that second, read-only copy is exactly what made
    Edit Draft offer LESS than the screen it was opened from. */
 import { AddPaymentSheet, RecordedPaymentsList, type RecordedPayment } from "./RecordedPayments";
+import { MobileLineRemark } from "./MobileLineRemark";
 import "./mobile.css";
 
 /* Shapes are the subset of the /mfg-sales-orders/:docNo + /:docNo/payments
@@ -1074,16 +1075,9 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 13, fontWeight: 700, color: "var(--ink)", overflowWrap: "anywhere" }}>{primary || "—"}</div>
                     {secondary ? <div style={{ fontSize: 11.5, color: "var(--mut)", marginTop: 2, overflowWrap: "anywhere" }}>{secondary}</div> : null}
-                    {/* The line's REMARK — desktop parity (SalesOrderDetailV2's
-                        Item column). Free text that appears nowhere else on the
-                        row: a service line's whole job lives here ("Please take
-                        back Cody Bedframe (King Size) 2 units"). Wraps, never
-                        truncates — half an instruction is worse than none. */}
-                    {(it.remark ?? "").trim() ? (
-                      <div style={{ fontSize: 11, color: "var(--mut)", marginTop: 3, fontStyle: "italic", whiteSpace: "pre-wrap", overflowWrap: "anywhere", lineHeight: 1.35 }}>
-                        {it.remark!.trim()}
-                      </div>
-                    ) : null}
+                    {/* The line's REMARK — one renderer, shared with the phone's
+                        PO surface since 2026-09-04 (see MobileLineRemark). */}
+                    <MobileLineRemark text={it.remark} />
                     {/* UOM only — never the code (see the primary line above). */}
                     {(it.uom ?? "").trim() ? <div className="money" style={{ fontSize: 10, color: "var(--mut2)", marginTop: 3 }}>{it.uom!.trim()}</div> : null}
                     {/* Stock pill + source-PO trace (owner 2026-08-01) — the

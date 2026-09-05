@@ -24,7 +24,7 @@ books which entry":
 | action | entry | source_type | reversal |
 |---|---|---|---|
 | Sales invoice issued | Dr AR / Cr SALES | `SI` | `SI_REVERSAL` |
-| Purchase invoice posted | Dr INVENTORY / Cr AP | `PI` | `PI_REVERSAL` |
+| Purchase invoice posted | Dr each group's purchase account (601-x/602 by scm.acc_item_group_accounts; unbound group REFUSES) / Cr AP | `PI` | `PI_REVERSAL` |
 | Payment voucher posted | Dr expense legs / Cr bank-or-AP header | `PV` | `PV_REVERSAL` |
 | Manual journal (JV) | operator lines, draft first | `MANUAL` | `MANUAL_REVERSAL` |
 | Customer payment collected | Dr CASH/BANK/transit / Cr AR | `SOPAY` / `SIPAY` | `*_REVERSAL` |
@@ -132,7 +132,18 @@ repairs travel as repair workflows beside the seed (plan/apply + CONFIRM):
 .github/workflows/reparent-900-expenses.yml +
 backend/scripts/reparent-900-expenses.mjs hung the flat AutoCount 900-x
 expense roots under 900-0000 (owner 2026-09-04: 批量挂, 全部挂到 900-0000
-下), replicating chartUpdateHandler's reparent guards.
+下), replicating chartUpdateHandler's reparent guards. The income split
+(owner 2026-09-04: 就做一个 header 分类就好, 不要放 code — 4xx reads as
+liability; other income 挂在 700-0000; 530，592都挂other income; 别乱分类)
+is ONE header and zero new codes: .github/workflows/reparent-other-income.yml
++ backend/scripts/reparent-other-income.mjs hang the owner's ENUMERATED
+other-income roots (530/540/550/560/570/580/590/591/592/598/599-series)
+under 700-0000; trading revenue (500/501/502/509/510/520) is deliberately
+untouched — "not under 700-0000" IS the definition of 生意 income. The
+Chart page DERIVES the badge from the tree (INCOME · Other for the 700-0000
+subtree, one source of truth, never a stored flag), and the Add form says
+where the choice lives when Type = INCOME. 700-0000 therefore LEFT the
+deletable-legacy list.
 
 **Chart management arms (2026-09-03, the owner's six-point review)**:
 `accounts.special_type` stores the AutoCount special column verbatim
@@ -244,6 +255,11 @@ in, which is exactly the two-doors drift the owner called out. Its
 read-only tree got legible the same day (the owner, that table in hand:
 父子account不是很明显): headers render BOLD with a `header` tag like the
 union page's, children step in behind a └ glyph, parents column muted.
+The union page itself learned the same lesson on 2026-09-04 (owner, with
+78 accounts now under 900-0000: 父子account 不清楚): the NAME column
+indents per level too (the old indent was code-column-only and a
+has-parent boolean, so grandchildren sat flush), children wear └, and the
+depth walk shares isHidden's 6-level cap.
 Since 2026-09-04 (owner, three rounds: 按 edit 时要跑回上去 / 往下滑时看不
 到 header / 不好看…做成一个 pop out) the union LIST scrolls inside its card
 (`frontend/src/pages/scm-v2/ChartOfAccounts.tsx` cardBody: maxHeight +
@@ -360,6 +376,125 @@ one exact-summing pair — it comes back as `suggested`, pre-ticked on screen wi
 the reason, for a human to confirm. Offered, never taken: two possible answers is
 a question, so nothing is ticked and he chooses;
 `acc/settlement.ts` confirms, which POSTS that moment.
+
+**Which payments are candidates (2026-09-04, the owner's first real uploads
+made the gap loud: four MBB lines all UNMATCHED while their sales sat in the
+ERP).** `couldBeAcquirers` in acc/settlement.ts is the one rule: a card payment
+(merchant / installment) tagged with THIS acquirer, a card payment tagged with
+nothing, or an `imported` payment tagged with nothing — migration-era rows all
+look like that, and the payout still lands in this system's bank, so the
+statement must be able to find them. A payment tagged with a DIFFERENT acquirer
+is never offered (someone else's stream), and cash/transfer never settle
+through one. An untagged candidate reaches the screen marked 未标 merchant — a
+question, not an answer: the matcher still auto-takes only on a unique
+reference. Confirming STAMPS the tag onto the payment row (NULL only, never
+over a tag chosen at the till), so the next statement finds it named. Note the
+phase-2A posting rule is unchanged: `imported` rows still never book — being a
+candidate is about RECONCILING the payout, not re-posting the sale.
+
+**Item groups — the product-group ↔ account registry (GL redesign item 1,
+2026-09-05).** The ledger is moving to the AutoCount periodic shape (owner:
+ledger 只根据 invoice 认,Dr purchase / Cr supplier;月结抓 stock value), and
+the first brick is WHICH purchase/sales account a document line belongs to.
+`scm.acc_item_groups` (migration 20260905T0900) registers every product
+category label — the nine the `mfg_product_category` enums hold are seeded —
+and `scm.acc_item_group_accounts` binds each group, per company, to four
+accounts: Purchase, Sales, Sales Return, Purchase Return. A group with no
+binding row is UNBOUND and the posting rules refuse it by name (owner: 挡下来
+提醒我去绑,不要静默丢进 OTHERS). New groups are born only through
+`scm.acc_register_item_group` (SECURITY DEFINER) which extends BOTH enums and
+registers the row in one call — so the taxonomy and the registry cannot drift
+— and the API forces the four bindings at create (born bound). Discounts stay
+company-level (520-0000 / 610-0001), never per-group. Maintenance UI: the
+**Item Groups** tab on /scm/accounting — unbound groups arrive pre-filled with
+the SUGGESTED defaults marked 建议·unsaved, and nothing writes until the owner
+presses Save (his sign-off, row by row). The account pickers offer only the
+slot's own ledger side (purchase slots EXPENSE, sales slots INCOME) under
+AutoCount-style section headers — Cost of goods sold / Expenses, Sales /
+Sales adjustments / Other incomes, the same 6xx boundary the standard P&L
+reads (owner 2026-09-05: 不能这样做一个header 分类吗). Routes in
+backend/src/scm/routes/accounting-item-groups.ts (guard: the GL permission),
+pinned by tests/itemGroups.test.ts + ItemGroups.test.tsx.
+
+**PI posts the periodic way (GL redesign item 2, 2026-09-05).**
+`postPiAccounting` reads the invoice's LINES, folds each line's `item_group`
+(lower-case from the sales panels) up to the registry's code, sums per group
+in the invoice's own currency, converts per group (the rounding remainder —
+a sen or two, foreign invoices only — lands on the largest group so the
+debits sum EXACTLY to the header's MYR), and debits each group's
+`purchase_account` from `scm.acc_item_group_accounts`; the credit stays on
+the supplier's AP control (400/405 by apControlRole). An invoice with an
+UNBOUND group refuses with the group named (400 at the manual endpoint;
+best-effort at confirm, with the entity-audit note as the trail) — never
+silently into a default account. 330-0000 is no longer touched by documents;
+stock value reaches the GL as the month-end adjustment (item 4). Entries
+posted before this change carry Dr 330-0000 and are re-shaped by the item-3
+backfill (reversal + re-post under the new rule). Pinned by
+tests/piPeriodicPosting.test.ts and the re-shaped apSplit.test.ts.
+
+**The one-shot PI ledger repair (GL redesign item 3).**
+`POST /accounting/backfill/pi-periodic` brings every posted PI of the active
+company into the periodic shape: an invoice with NO journal (the 33 the
+pre-hook era left, docs/bugs/0640) is posted; one with an active Dr-330
+journal is REVERSED (a contra pair, never a delete) and re-posted under the
+item-2 rule; one already periodic is left alone. Nothing is re-implemented —
+each invoice walks through reversePiAccounting + postPiAccounting, so the
+entry is dated by the INVOICE (money lands back in its own month), engine
+idempotency holds, and an unbound group fails THAT invoice by name instead of
+dying. `?dryRun=1` lists the plan without writing; the write pass batches
+(limit ≤ 25 per call, `remaining` in the response) and re-running is a no-op.
+Handler in accounting-pi-backfill.ts; pinned by tests/piPeriodicBackfill.test.ts.
+The owner presses it himself: the **PI backfill card** at the foot of the Item
+Groups tab (PiBackfill.tsx) runs Dry run first — 执行写入 stays disabled until
+a preview exists — then loops the batch until `remaining` is 0, stopping the
+moment a pass completes nothing so unbound-group failures list themselves
+instead of spinning. Per active company: 2990 and HOUZS are two visits.
+
+**Month-end stock close (GL redesign item 4).** Stock value reaches the GL
+once a month, from the live engine (owner: 可以不可以抓实时的): every night at
+00:05 MYT the cron sweeps the two most recent closed months per company —
+on the 1st that POSTS the pair for the month that just ended
+(`STOCKADJ-{co}-{YYYY-MM}` Dr 330-0000 / Cr 620-0000 dated the last day, and
+`STOCKADJ-REV-…` the mirror dated the 1st of the next month, both active, so
+the month-end TB carries the stock and every month's P&L reads purchases +
+opening − closing), and on every other night it is the cheap re-check that
+heals a late-keyed document by REVERSING the old pair and re-posting — never
+an edit. The replay runs on `inventory_movements.movement_date`, the BUSINESS
+date (migration 20260905T1200 backfilled it: GRN rows from grns.received_at,
+DO rows from dispatch, the rest from their keyed time; writeMovements now
+stamps every new row, GRN passing its received date) — so 迟进的 GRN lands in
+its own month, the owner's first question about the design. Every run —
+including the quiet 'unchanged' — writes `scm.acc_stock_close_runs`, shown on
+the **Month-end** tab of /scm/accounting along with the live value and a
+manual Run. acc/stock-close.ts (engine-gated), route
+accounting-stock-close.ts, cron branch `5 16 * * *` in index.ts; pinned by
+acc/stock-close.test.ts. Month-close LOCKING is deliberately later — the
+owner signs that design off separately.
+
+**The standard statements (GL redesign item 6).** P&L and Balance Sheet tabs
+on /scm/accounting, standard layout first (the owner iterates the 样板 later
+— his call; the NUMBERS ship now). One source — `v_gl_entries`, posted and
+not reversed — so they can never argue with the Journal/GL/TB tabs beside
+them. The P&L follows his AutoCount arithmetic under the periodic scheme:
+trading income = INCOME outside the 700-0000 tree (the chart badge's own
+walker), cost of sales = the 6xx EXPENSE codes with the month-close 620 pair
+included (gross profit therefore reads purchases + opening − closing with no
+stock arithmetic in the report itself), other income = the 700 tree, expenses
+= the rest; the balance sheet cuts the same read at a date, shows cumulative
+earnings inside equity, and carries its own self-check line — assets −
+liabilities − equity − earnings prints BALANCED at zero or the difference in
+red, never absorbed. Handlers in accounting-reports.ts
+(`GET /accounting/reports/pnl?from&to`, `/reports/balance-sheet?asOf`), UI in
+Reports.tsx; pinned by tests/accountingReports.test.ts + Reports.test.tsx.
+
+**A half-failed upload cannot hold its file hostage.** The upload writes the
+batch head first and its lines after; a failure between the two used to leave
+a batch with no lines still owning the file hash, so the SAME file was refused
+as "already uploaded" for ever (the owner's PBB statement of 2026-08-01 sat
+exactly like this). Now every failure after the head is written takes the head
+back out, and `clearOrphanBatch` clears any such wreck at the next upload of
+its file — a batch WITH lines keeps the duplicate refusal, because that one
+really was uploaded.
 
 **Two events, two entries** (owner, 2026-08-17: 全部卡机都是隔几天收到的。应该是
 先对卡机报告，然后 match 了就会去 match bank statement). Reconciling the card
@@ -528,3 +663,56 @@ The probe needed before flipping it, and the three options, are in
 `docs/bugs/0615-the-accounting-masters-fell-back-to-company-1-in-silence.md`.
 `backend/tests/accMastersOneHome.test.ts` fails the PR if any `acc/` module
 re-implements the fallback inline.
+
+**Voucher numbering (GL redesign item 8a).** `GET/PUT /accounting/numbering`
+(handlers in accounting-numbering.ts, GL permission) — the owner's own levers:
+one prefix letter per money account (`scm.acc_bank_letters`, UNIQUE per
+company+letter — two banks on one letter would share a number series) and the
+suffix width (`scm.acc_numbering`, 3-5). Maintained on the Voucher numbering
+card of /scm/settlement-setup; full detail in
+docs/modules/payment-voucher.md §12. The OR channels (item 9) and transfers
+(item 10) read the same letter table. The cash drawer (`roles.CASH`) is the
+one FIXED series — C on both papers, CPV / COR — reported `fixedCash` by the
+GET, rendered read-only, refused by the PUT in both directions.
+
+**The five journals (GL redesign item 7).** Every entry is labelled the
+AutoCount way — SALES / PURCHASE / BANK / CASH / GENERAL — derived, never
+stored: `classifyJournal` (acc/journal-class.ts) maps the source type
+(reversals ride their originals), and the money-side documents
+(SOPAY/SIPAY/PV) split CASH vs BANK by which money account their lines
+actually touch, via the company's CASH role. `GET /accounting/journal-entries`
+stamps `journal_class` per row and filters on `?journal=`; the JE tab carries
+the five chips and a Journal column. The manual JV is simply the GENERAL
+journal — the owner's own vocabulary, unchanged. Pinned by
+tests/journalClasses.test.ts.
+
+**Official Receipts (GL redesign item 9).** Every customer payment births a
+receipt (`scm.acc_receipts`, one per payment forever — a reprint reprints,
+never re-issues): DRAFT on the `{co}DraftOR-YYMM` series at recording, FORMAL
+the moment the money is CONFIRMED — cash immediately on `{co}COR-YYMM`
+(钱当场在手), card when merchant reconciliation confirms that payment (the
+settlement hook formalises on the acquirer's payout bank, best-effort so a
+missing letter leaves the OR in draft for the manual button and never unwinds
+a settlement), transfer by the manual confirm — which any human can also use
+after verifying a slip (客户催收据). Channel letters are the PV letter table
+(`scm.acc_bank_letters`; **C reserved for cash**, the numbering PUT refuses
+it for banks) so a bank is one letter on voucher and receipt alike; formal
+order per channel = the order money was confirmed, and a slow recon never
+scrambles the cash run. No approvals (his call). Born inside the payment
+writers (so-payment-row.ts hook, the SI payment route) with
+`ensureReceiptForPayment` healing history and unhooked paths on demand.
+Surface: `GET /accounting/receipts`, `POST /accounting/receipts/ensure`
+(returns the WHOLE row — the print button's one round trip),
+`POST /accounting/receipts/:id/formalise` (accounting-receipts.ts). Pinned by
+tests/officialReceipts.test.ts.
+
+**Printing the OR (item 9b).** The pdf (frontend receipt-pdf.ts, A5
+landscape) carries amount-in-words and a diagonal DRAFT watermark until the
+money confirms — the salesperson can hand paper over the moment the payment
+is keyed, and nobody mistakes it for the confirmed copy. Three doors: the
+`/scm/official-receipts` book page (status chips, Print, Confirm money —
+distinct from `/scm/receipts`, the money-in LIST), and a printer button on
+every persisted payment row in the shared PaymentsTable (SO detail SAVED
+mode; SI detail passes `receiptFor.persistedIds` since its rows ride DRAFT
+mode) — ensure-then-print, so payments recorded before the module existed
+heal their OR on first print.

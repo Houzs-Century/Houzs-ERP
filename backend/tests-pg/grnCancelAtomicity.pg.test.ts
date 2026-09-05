@@ -115,6 +115,7 @@ describePg('a GRN cancel, its stock reversal and its allocation request are one 
         product_name text,
         qty numeric,
         batch_no text,
+        movement_date date,
         source_doc_type text,
         source_doc_id text,
         source_doc_no text,
