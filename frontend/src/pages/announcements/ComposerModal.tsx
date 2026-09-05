@@ -3,8 +3,12 @@ import { createPortal } from "react-dom";
 import { Check, FileText, Film, Plus, X } from "lucide-react";
 import { api } from "../../api/client";
 import { AnnouncementRichBody } from "../../components/AnnouncementRichBody";
-import { AnnouncementRichEditor } from "../../components/AnnouncementRichEditor";
+import {
+  AnnouncementRichEditor,
+  type RichEditorImage,
+} from "../../components/AnnouncementRichEditor";
 import type { PhotoLayout, VideoLayout } from "../../components/AnnouncementMedia";
+import { useDialogOptional } from "../../hooks/useDialog";
 import { useToast } from "../../hooks/useToast";
 import { uploadAnnouncementAttachment } from "../../lib/announcementAttachmentUpload";
 import { richTextToPlain } from "../../lib/announcementRichText";
@@ -159,6 +163,9 @@ function fmtClock(ms: number): string {
 
 export function ComposerModal(p: ComposerModalProps) {
   const toast = useToast();
+  // Optional: the Link button needs the app's prompt dialog; a bare mount
+  // (unit test) has no provider and simply gets no Link button.
+  const dialog = useDialogOptional();
   const storageKey = draftStorageKey(p.currentUserId);
   const restored = useMemo(() => readDraft(storageKey), [storageKey]);
 
@@ -281,6 +288,49 @@ export function ComposerModal(p: ComposerModalProps) {
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
   }, [toast]);
+
+  // An image placed INSIDE the text: uploaded like any attachment (so it is
+  // in the manifest the serve route authorises against), then handed back to
+  // the editor as {key, local preview}. The editor stores only the key.
+  const onInsertImage = useCallback(
+    async (file: File): Promise<RichEditorImage | null> => {
+      if (!file.type.startsWith("image/")) {
+        toast.error("Only an image can be placed in the text");
+        return null;
+      }
+      setUploading(true);
+      try {
+        const res = await uploadAnnouncementAttachment(file);
+        const att: Attachment = { r2Key: res.r2Key, name: res.name, mime: res.mime, size: res.size };
+        setAttachments((prev) => [...prev, att]);
+        const url = URL.createObjectURL(file);
+        setLocalPreviews((prev) => ({ ...prev, [res.r2Key]: url }));
+        return { key: res.r2Key, src: url };
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Upload failed");
+        return null;
+      } finally {
+        setUploading(false);
+      }
+    },
+    [toast],
+  );
+  const imageSrc = useCallback((key: string) => localPreviews[key], [localPreviews]);
+  const onPromptLink = useMemo(
+    () =>
+      dialog
+        ? (current: string) =>
+            dialog.prompt({
+              title: "Link address",
+              message: "A web address (https://…) or an email address.",
+              placeholder: "https://example.com or name@company.com",
+              defaultValue: current,
+              confirmLabel: "Add link",
+              required: true,
+            })
+        : undefined,
+    [dialog],
+  );
 
   async function post() {
     const built = buildPostBody(draft, p.salesDirOnly);
@@ -414,6 +464,7 @@ export function ComposerModal(p: ComposerModalProps) {
                 <AnnouncementRichBody
                   html={html}
                   text={richTextToPlain(html)}
+                  imageSrc={imageSrc}
                   className="text-[14px] leading-[1.75] text-ink-secondary"
                 />
               </div>
@@ -421,9 +472,12 @@ export function ComposerModal(p: ComposerModalProps) {
               <AnnouncementRichEditor
                 value={html}
                 onChange={setHtml}
-                placeholder="Write the notice. Bold, lists and text size are in the toolbar."
+                placeholder="Write the notice. Headings, highlight, links, tables and images are in the toolbar."
                 minHeight={280}
                 disabled={posting}
+                onPromptLink={onPromptLink}
+                onInsertImage={onInsertImage}
+                imageSrc={imageSrc}
               />
             )}
 

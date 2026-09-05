@@ -1192,6 +1192,16 @@
     },
     {
       "check": "D1",
+      "key": "B,I,MARK,S,U|backend/src/lib/announcementRichText.ts frontend/src/lib/announcementRichText.ts",
+      "why": "THE ANNOUNCEMENT RICH-BODY GRAMMAR, a deliberate cross-tree TWIN: backend/src/lib/announcementRichText.ts is the original and frontend/src/lib/announcementRichText.ts is its byte-identical copy (the two packages share no build). Both sides run the SAME canonicaliser, the Worker on write and the browser on render, so the sets must be equal; backend/tests/announcementRichText.test.ts and frontend/src/lib/announcementRichText.test.ts pin the same fixtures so a drift is a red test on one side. Added with the 2026-09-05 toolbar follow-up (h1/h2 headings, mark highlight). 4 homes now: RAW_DROP, RICH_SIZES, PARA_BLOCKS, INLINE_MARKS."
+    },
+    {
+      "check": "D1",
+      "key": "H1,H2,P|backend/src/lib/announcementRichText.ts frontend/src/lib/announcementRichText.ts",
+      "why": "THE ANNOUNCEMENT RICH-BODY GRAMMAR, a deliberate cross-tree TWIN: backend/src/lib/announcementRichText.ts is the original and frontend/src/lib/announcementRichText.ts is its byte-identical copy (the two packages share no build). Both sides run the SAME canonicaliser, the Worker on write and the browser on render, so the sets must be equal; backend/tests/announcementRichText.test.ts and frontend/src/lib/announcementRichText.test.ts pin the same fixtures so a drift is a red test on one side. Added with the 2026-09-05 toolbar follow-up (h1/h2 headings, mark highlight). 4 homes now: RAW_DROP, RICH_SIZES, PARA_BLOCKS, INLINE_MARKS."
+    },
+    {
+      "check": "D1",
       "key": "LG,SM,XL|backend/src/lib/announcementRichText.ts frontend/src/lib/announcementRichText.ts",
       "why": "THE ANNOUNCEMENT RICH-BODY GRAMMAR, a deliberate cross-tree TWIN: backend/src/lib/announcementRichText.ts is the original and frontend/src/lib/announcementRichText.ts is its byte-identical copy (the two packages share no build). Both sides run the SAME canonicaliser, the Worker on write and the browser on render, so the sets must be equal; backend/tests/announcementRichText.test.ts and frontend/src/lib/announcementRichText.test.ts pin the same fixtures so a drift is a red test on one side. 2 homes: RAW_DROP, RICH_SIZES."
     },

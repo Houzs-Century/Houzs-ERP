@@ -117,7 +117,7 @@ export function MobileAnnouncementPopup({ onOpenList }: {
           )}
         </div>
         <div className="sheet-scroll" style={{ gap: 12 }}>
-          <AnnouncementRichBody html={loc.bodyHtml} text={loc.body} style={{ fontSize: 13.5, lineHeight: 1.7, color: "#414539" }} />
+          <AnnouncementRichBody html={loc.bodyHtml} text={loc.body} annId={current.id} style={{ fontSize: 13.5, lineHeight: 1.7, color: "#414539" }} />
           <Attachments ann={current} />
         </div>
         <footer className="sheet-foot">

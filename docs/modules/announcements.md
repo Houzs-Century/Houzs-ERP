@@ -34,6 +34,14 @@ screen down to the database. Same structure as
 > formatted body lives in a new `body_html` column as a strictly
 > canonicalised fragment; `body` is now its plain-text shadow. §1 "Rich
 > body", §3 "Write path" and §4 carry the contract.
+> **2026-09-05 (rich toolbar):** the grammar grew six shapes — `h1` / `h2`,
+> `mark` (highlight), `a[href]` (http(s) / mailto only, always emitted with
+> `rel="noopener noreferrer" target="_blank"`), `table tr th td`, and
+> `img[data-att]` (an inline image names one of the notice's OWN attachment
+> keys, never a URL; the renderer streams it through the manifest-gated
+> attachment route, and the write path strips any key outside the manifest).
+> The editor gained H1 / H2 / Highlight / Link / Table / Image / Clear. No
+> schema change. §3 "Rich body" carries the contract.
 
 > Convention: the row is one table, `public.announcements`. Timestamps are
 > stored as **ISO text**, `is_active` is an **integer 0/1** (not boolean), and
@@ -357,11 +365,20 @@ all filtering happens in JS in the Worker (`:543-547`, `:628-630`).
 - **Rich body (2026-09-04)** — `readBodyHtml()` next to `toPublic()`. A
   `bodyHtml` in the request is run through
   `backend/src/lib/announcementRichText.ts` (allow-list canonicaliser:
-  `p br b i u s ol ul li` + `span[data-size=sm|lg|xl]`, hard cap 20k chars →
-  400). If the result carries no formatting it is stored as **NULL** and the
-  notice stays on the plain path. When it IS stored, `body` is **derived**
-  from it server-side (`richTextToPlain`) — the client's `body` is ignored,
-  so the two columns can never disagree. A request with only `body` is the
+  `p br b i u s ol ul li h1 h2 mark a table tr th td img` +
+  `span[data-size=sm|lg|xl]`, `a[href]` on the http(s) / mailto allow-list
+  (emitted with a constant `rel` / `target`), `img[data-att]` matching the
+  upload route's key shape, hard cap 20k chars → 400). **Inline images are
+  checked against the attachment manifest** (`readBodyHtml(html, keys)`,
+  `stripUnreferencedImages`): POST reads `attachments` first and strips any
+  `<img>` whose key is not in it; PATCH checks against the manifest that
+  will be stored, and a PATCH that removes an attachment without editing the
+  text strips that image's inline use and re-derives `body`. If the result
+  carries no formatting it is stored as **NULL** and the notice stays on the
+  plain path. When it IS stored, `body` is **derived** from it server-side
+  (`richTextToPlain`: headings → lines, table cells → ` | `, a link whose
+  text is not its address → `text (href)`, an image → `[image]`) — the
+  client's `body` is ignored, so the two columns can never disagree. A request with only `body` is the
   pre-feature contract, untouched. On **PATCH**, whichever of `bodyHtml` /
   `body` was sent last defines the format: `bodyHtml` rewrites both columns,
   a plain `body` clears `body_html`. Translation is sent the HTML instead of
@@ -541,8 +558,8 @@ still 403 for that reader (`:146, 157, 164, 171, 180`).
 | Live / Hidden / Expired badge | **`lib/announcementStatus.ts`** — the shared rule; both surfaces import it, neither re-derives it | — |
 | Publisher actions (hide/show, delete, remind, escalate) | `pages/announcements/ManageView.tsx` drawer (+ the inbox's read-receipts card for remind / hide); the "reset all receipts" (`remind { scope: "all" }`) affordance is desktop-retired with the old row — the phone keeps it | `mobile/MobileAnnouncements.tsx` `Detail` + `Receipts` |
 | Media rendering (mig 0140 layout hint) | `components/AnnouncementMedia.tsx` | `mobile/MobileAnnouncementMedia.tsx` |
-| Rich body — editing | **`components/AnnouncementRichEditor.tsx`** — one editor, both composers mount it | (same file) |
-| Rich body — rendering | **`components/AnnouncementRichBody.tsx`** — the only place `body_html` reaches `innerHTML`; list row + `AnnouncementBanner.tsx` use it | `MobileAnnouncements.tsx` `Detail` + `MobileAnnouncementPopup.tsx` use it; `mobileI18n.ts` `localizeAnnouncement()` picks the translated `bodyHtml` |
+| Rich body — editing | **`components/AnnouncementRichEditor.tsx`** — one editor, both composers mount it. Desktop passes `onPromptLink` (the app prompt dialog), `onInsertImage` (uploads through `lib/announcementAttachmentUpload.ts`, adds to the manifest, returns key + local preview) and `imageSrc`; the phone passes none, so it has no Link / Image button | (same file, fewer buttons) |
+| Rich body — rendering | **`components/AnnouncementRichBody.tsx`** — the only place `body_html` reaches `innerHTML`; inbox pane + `AnnouncementBanner.tsx` use it with `annId` so `img[data-att]` streams from `/api/announcements/:id/attachments/:key` (composer preview passes `imageSrc` instead) | `MobileAnnouncements.tsx` `Detail` + `MobileAnnouncementPopup.tsx` use it; `mobileI18n.ts` `localizeAnnouncement()` picks the translated `bodyHtml` |
 | Rich body — grammar | **`lib/announcementRichText.ts`** — byte-identical twin of `backend/src/lib/announcementRichText.ts`; the two test files pin the same fixtures | — |
 | Nav visibility | `components/Sidebar.tsx:666-672` | `mobile/MobileApp.tsx:360` (test-pinned) |
 | Read gate | `frontend/src/App.tsx:481` | — must agree with `backend/src/routes/announcements.ts:530`; the #957 bug was these two disagreeing |

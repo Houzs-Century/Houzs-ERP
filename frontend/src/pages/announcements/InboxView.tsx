@@ -496,6 +496,7 @@ function ReadingPane({
           <AnnouncementRichBody
             html={a.bodyHtml}
             text={a.body}
+            annId={a.id}
             className="text-[14px] leading-[1.75] text-ink-secondary"
           />
 
