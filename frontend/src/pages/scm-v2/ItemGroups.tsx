@@ -41,7 +41,9 @@ const sectionOf = (code: string, wants: 'EXPENSE' | 'INCOME'): string => {
   if (code.startsWith('51') || code.startsWith('52')) return 'Sales adjustments';
   return 'Other incomes';
 };
-const SECTION_RANK: Record<string, number> = {
+/* Widened value type: noUncheckedIndexedAccess is off, and an unranked
+   section is a real case (it sorts last), not a type impossibility. */
+const SECTION_RANK: Record<string, number | undefined> = {
   'Sales': 0, 'Sales adjustments': 1, 'Other incomes': 2,
   'Cost of goods sold': 0, 'Expenses': 1,
 };
@@ -117,7 +119,7 @@ export const ItemGroupsTab = () => {
         label: `${a.account_code} — ${a.account_name}`,
         group: sectionOf(a.account_code, wants),
       }))
-      .sort((x, y) => ((SECTION_RANK[x.group ?? ''] ?? 9) - (SECTION_RANK[y.group ?? ''] ?? 9)) || x.value.localeCompare(y.value));
+      .sort((x, y) => ((SECTION_RANK[x.group] ?? 9) - (SECTION_RANK[y.group] ?? 9)) || x.value.localeCompare(y.value));
     return { EXPENSE: build('EXPENSE'), INCOME: build('INCOME') };
   }, [accountsQ.data]);
 
