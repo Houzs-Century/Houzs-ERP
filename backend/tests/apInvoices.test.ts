@@ -13,6 +13,7 @@
    routes; the PV half copies tests/pvSupplierAdvance.test.ts's harness. */
 
 import { Hono } from 'hono';
+import { SCM_SYSTEM_STAFF_ID } from '../src/scm/middleware/auth';
 import { describe, expect, test } from 'vitest';
 import { fakeSb, type Row } from '../src/scm/lib/fake-postgrest';
 import { computePiSettlement } from '../src/scm/lib/pi-settlement';
@@ -60,7 +61,10 @@ function harness(tables: Record<string, Row[]> = {}, perms: readonly string[] = 
   app.use('*', async (c, next) => {
     c.set('supabase' as never, sb as never);
     c.set('companyId' as never, CO as never);
-    c.set('user' as never, { id: 'u1' } as never);
+    /* The router carries the supabaseAuth bridge (docs/bugs/0648). The pinned
+       system-staff id is the bridge's own "already translated" mark, so it steps
+       aside and the supabase + houzsUser set by hand below stay in force. */
+    c.set('user' as never, { id: SCM_SYSTEM_STAFF_ID } as never);
     c.set('houzsUser' as never, { name: 'Chew', permissions_set: perms } as never);
     c.set('allowedCompanyIds' as never, [CO] as never);
     c.set('companies' as never, [{ id: CO, code: '2990' }] as never);

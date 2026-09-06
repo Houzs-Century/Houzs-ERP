@@ -33,6 +33,7 @@ import { todayMyt } from '../lib/my-time';
 import { postJournal, reverseJournal } from '../../acc/engine';
 import { apInvoiceLines, resolveRoles } from '../../acc/rules';
 import { requireLeafAccount } from './accounting-chart';
+import { supabaseAuth } from '../middleware/auth';
 
 type Row = Record<string, any>;
 
@@ -333,6 +334,10 @@ export const cancelApInvoiceHandler = async (c: any): Promise<Response> => {
 };
 
 export const apInvoices = new Hono();
+/* The SCM bridge is PER ROUTER (scm/index.ts mounts no global one): it stashes
+   the real caller as houzsUser — what hasHouzsPerm reads — and hands out the
+   service client. Without it every read here answered 403 and every write crashed. See docs/bugs/0648; tests/scmRouterBridge.test.ts pins it. */
+apInvoices.use('*', supabaseAuth);
 apInvoices.get('/', listApInvoicesHandler);
 apInvoices.post('/', createApInvoiceHandler);
 apInvoices.get('/:id', apInvoiceDetailHandler);

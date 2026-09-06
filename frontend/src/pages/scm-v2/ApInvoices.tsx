@@ -268,7 +268,12 @@ export const ApInvoices = () => {
         </div>
         <div className={styles.cardBody} style={{ overflowX: 'auto' }}>
           {listQ.isLoading && <div style={{ fontSize: 'var(--fs-13)' }}>Loading…</div>}
-          {!listQ.isLoading && rows.length === 0 && (
+          {/* A refused or failed read says so — an empty sentence over a 403 hid
+             docs/bugs/0648 for an afternoon. */}
+          {listQ.isError && (
+            <div style={{ fontSize: 'var(--fs-13)', color: 'var(--c-red, #b3261e)' }}>The list could not be loaded — {listQ.error instanceof Error ? listQ.error.message : 'something went wrong.'}</div>
+          )}
+          {!listQ.isLoading && !listQ.isError && rows.length === 0 && (
             <div style={{ fontSize: 'var(--fs-13)', color: 'var(--fg-muted)' }}>No supplier invoices here yet — purchase invoices show once posted on the Procurement side; raise an AP invoice for a non-stock bill.</div>
           )}
           {rows.length > 0 && (

@@ -11,6 +11,7 @@
    as tests/pvApControlGuard.test.ts, with update/delete taught to the fake. */
 
 import { Hono } from 'hono';
+import { SCM_SYSTEM_STAFF_ID } from '../src/scm/middleware/auth';
 import { describe, expect, test } from 'vitest';
 import { otherDebtors } from '../src/scm/routes/other-debtors';
 
@@ -87,7 +88,10 @@ function harness(tables: Record<string, Row[]>, perms: string[] = ['*']) {
       },
     } as never);
     c.set('companyId' as never, CO as never);
-    c.set('user' as never, { id: 'u1' } as never);
+    /* The router carries the supabaseAuth bridge (docs/bugs/0648). The pinned
+       system-staff id is the bridge's own "already translated" mark, so it steps
+       aside and the supabase + houzsUser set by hand below stay in force. */
+    c.set('user' as never, { id: SCM_SYSTEM_STAFF_ID } as never);
     c.set('houzsUser' as never, { id: 9, name: 'Tester', permissions_set: new Set(perms) } as never);
     await next();
   });
