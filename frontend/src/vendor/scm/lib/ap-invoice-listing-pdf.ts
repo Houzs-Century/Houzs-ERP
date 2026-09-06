@@ -79,7 +79,8 @@ export async function generateApListingPdf(rows: ApListRow[], filter: ApListingF
     rowPageBreak: 'avoid',
     styles: { ...DOC_TABLE_STYLES, fontSize: 8 },
     headStyles: DOC_TABLE_HEAD_STYLES,
-    footStyles: { fontStyle: 'bold', lineWidth: { top: 0.4 } as never },
+    /* The foot wears the head's dress — bold, ruled above and below. */
+    footStyles: DOC_TABLE_HEAD_STYLES,
     columnStyles: {
       0: { cellWidth: 24 },
       1: { cellWidth: 34 },

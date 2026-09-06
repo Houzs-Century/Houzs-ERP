@@ -55,7 +55,7 @@ vi.mock('../../vendor/scm/lib/payment-voucher-queries', () => ({
   PV_FILE_ACCEPT: 'image/jpeg,image/png,image/webp,application/pdf',
 }));
 vi.mock('../../vendor/scm/lib/ap-invoice-listing-pdf', () => ({
-  generateApListingPdf: (...args: unknown[]) => listingAsync(...args),
+  generateApListingPdf: (rows: unknown, filter: unknown) => listingAsync(rows, filter),
 }));
 vi.mock('../../vendor/scm/lib/accounting-queries', () => ({
   isControlSpecial: (s: string | null | undefined) => s === 'SDC' || s === 'SCC' || s === 'SBS',
