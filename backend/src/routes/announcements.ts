@@ -1141,6 +1141,9 @@ async function findByClientKey(
   userId: number,
   clientKey: string,
 ): Promise<AnnouncementRow | null> {
+  // company-scope: keyed by the AUTHOR, not the tenant — a retry must find
+  // the row the first request made whatever company context it arrives in,
+  // and (created_by, client_key) is unique across the table.
   return env.DB.prepare(
     "SELECT * FROM announcements WHERE created_by = ? AND client_key = ? LIMIT 1",
   )
