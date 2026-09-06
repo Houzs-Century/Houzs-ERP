@@ -197,7 +197,8 @@ card shows `active / target` when a target is set.
 - **A targeting edit busts the member's announcements banner cache.** The banner
   filters by department_id / position_id / company grants, and its per-user KV
   snapshot lives 300s (> the 60s poll), so PATCH `/:id` (when it changes
-  department / position / role / status / department_ids / company_ids), PUT
+  department / position / role / status / department_ids / company_ids, and —
+  since announcements can target a division, mig 20260906T0639 — `division`), PUT
   `/:id/companies`, and DELETE `/:id` all call `bustBannerForUser` (both scopes);
   a department DELETE (`routes/departments.ts`) bumps the banner family version
   because it un-assigns an unknown set of members at once. Session bust alone did
