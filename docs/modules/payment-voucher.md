@@ -182,6 +182,15 @@ can't fit it and above offers more, and caps its height to the side
 actually available. The list itself is NEVER truncated: few visible rows
 must only ever mean few matches.
 
+**Insert and Enter on the line cards (2026-09-06, 刚刚说的功能这普通 payment
+也要有)**: on the plain voucher's lines, **Insert** adds a line and lands on
+its account picker, and **Enter on an amount** hops to the next line's
+account — adding a line when there is none — so a long voucher is typed
+without reaching for the mouse (`PaymentVoucherNew.tsx`, each card carries
+`data-line`; pinned in `PaymentVoucherNew.test.tsx`). The AP invoice's
+round-3 manners carried across, the same day the Other Debtor bill got them
+(accounting.md, "Other Debtors, round 2").
+
 **Paid From offers only money** (owner: paid from 应该只能选cash 和银行): the
 picker lists `acc_money` accounts, pre-filled from the company's
 `BANK_DEFAULT` role, and the server refuses any non-money credit account

@@ -375,6 +375,32 @@ the REAL engine posting into the harness), `OtherDebtors.test.tsx`
 (registry, bill lines, tick-full/type-partial, the four-layer buttons).
 Tables land in migration 0350.
 
+**Other Debtors, round 2 (2026-09-06 — 刚刚说的功能 … other debtor bill 那边
+也要有, the AP invoice's round 3 carried to its sibling).** The bill is a
+pop-out form (`DebtorBillForm.tsx` inside `Modal`, opened from the page
+`frontend/src/pages/scm-v2/OtherDebtors.tsx`): lines in the owner's
+order — account, description, amount — Insert adds a line and lands on its
+account, Enter on an amount moves down (adding a line at the end), amounts
+read 1,800.00 (`MoneyInput`), the date takes bare digits (`DateField`).
+Every bill can be EDITED — every field, `PATCH /other-debtors/bills/:billId`
+(`updateDebtorBillHandler`) — and because a debtor bill is on the books from
+birth, an edit RE-POSTS: the old ODB gets its contra dated as the old bill
+was (`reverseJournal` with `entryDate`, the old date snapshotted before the
+row is touched), then a fresh ODB dated as saved books the bill as it now
+reads, both through the one gate; the reply says `reposted: true` and names
+the new `jeNo`. A second edit contra's the live entry, never the voided one
+(the engine skips `reversed` rows). Guards: `total_below_received` (money
+received caps the total), `cancelled` refuses (raise it again instead), each
+edited line walks `requireLeafAccount` so the control still refuses, and the
+debtor is fixed — a bill belongs to its debtor. COPY starts a NEW bill from
+an old one: lines and description ride over, today's date, a new number on
+post. The detail (`debtorDetailHandler`) hands each bill its `lines` so Edit
+and Copy start from them; the receipt's amounts wear the same money dress.
+Pinned in `otherDebtors.test.ts` (re-post dates, the second edit, refusals
+leaving the books alone) and `OtherDebtors.test.tsx` (dialog, Insert/Enter,
+Edit's cap and payload, Copy). The plain Payment Voucher's line cards got
+the same Insert/Enter manners the same day — payment-voucher.md.
+
 **Receipts (2026-09-03, later the same day: 未来如果我收到其他的钱不是
 under other debtor 的呢? 就我只想开 receipt 罢了)**: /scm/receipts is the
 unified money-in list — one month-windowed table holding GENERAL receipts

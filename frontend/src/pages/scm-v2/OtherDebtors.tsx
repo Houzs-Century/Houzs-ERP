@@ -7,24 +7,33 @@
 // that post directly (明细行自由选户口 — 我开 bill 时决定 account 就行了),
 // and RECEIPTS that walk the PV's four layers and knock bills off like an
 // AP Payment — tick pays in full, type for partial (确定到时也可以 partial).
+//
+// 2026-09-06 (owner: 刚刚说的功能 … other debtor bill 那边也要有): the bill
+// opens in a pop-out form (DebtorBillForm — Insert adds a line, amounts read
+// 1,800.00), every bill can be EDITED (the route re-posts) or COPIED, and the
+// receipt's amounts wear the same money dress.
 // ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
-import { Ban, CheckCircle2, Pencil, Plus, RotateCcw, Send, XCircle } from 'lucide-react';
+import { Ban, CheckCircle2, Copy, Pencil, Plus, RotateCcw, Send, XCircle } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import {
   useAccounts, useOtherDebtors, useDebtorDetail, useCreateDebtor, useUpdateDebtor,
-  useCreateDebtorBill, useCancelDebtorBill, useCreateDebtorReceipt, useDebtorReceiptAction,
+  useCreateDebtorBill, useUpdateDebtorBill, useCancelDebtorBill, useCreateDebtorReceipt, useDebtorReceiptAction,
   type Account, type DebtorBill, type DebtorReceipt,
 } from '../../vendor/scm/lib/accounting-queries';
 import { AccountSelect } from '../../vendor/scm/components/AccountSelect';
+import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
+import { Modal } from '../../vendor/scm/components/Modal';
 import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
+import { DebtorBillForm, emptyBillForm, type BillFormMode, type BillFormSubmit, type BillFormValues } from './DebtorBillForm';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
+const myt = (): string => new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
 
 const fmtRm = (sen: number | null | undefined): string => {
   const v = Number(sen ?? 0);
@@ -41,7 +50,15 @@ const receiptStage = (r: DebtorReceipt): string => {
   return 'Draft';
 };
 
-type BillLine = { rid: number; description: string; creditAccountCode: string; amountSen: number };
+/** The form's values from a bill: an EDIT keeps everything, a COPY keeps the
+    description and lines and starts the paper afresh — today's date, a new
+    number on post. */
+const fromBill = (b: DebtorBill, copy: boolean): BillFormValues => ({
+  billDate: copy ? myt() : b.bill_date,
+  notes: b.notes ?? '',
+  lines: (b.lines ?? []).map((l, i) => ({ rid: i + 1, description: l.description ?? '', creditAccountCode: l.credit_account_code, amountSen: l.amount_sen })),
+});
+type BillFormState = { mode: BillFormMode; initial: BillFormValues; billId?: string; billNumber?: string; receivedSen?: number };
 
 export const OtherDebtors = () => {
   const askConfirm = useConfirm();
@@ -63,6 +80,7 @@ export const OtherDebtors = () => {
   const createDebtor = useCreateDebtor();
   const updateDebtor = useUpdateDebtor();
   const createBill = useCreateDebtorBill();
+  const updateBill = useUpdateDebtorBill();
   const cancelBill = useCancelDebtorBill();
   const createReceipt = useCreateDebtorReceipt();
   const receiptAction = useDebtorReceiptAction();
@@ -86,24 +104,28 @@ export const OtherDebtors = () => {
     }
   };
 
-  /* New-bill card (owner: 开 bill 时决定 account 就行了). */
-  const [billing, setBilling] = useState(false);
-  const [billLines, setBillLines] = useState<BillLine[]>([{ rid: 1, description: '', creditAccountCode: '', amountSen: 0 }]);
-  const billTotal = billLines.reduce((s, l) => s + (l.amountSen > 0 ? l.amountSen : 0), 0);
-  const patchLine = (rid: number, patch: Partial<BillLine>) =>
-    setBillLines((prev) => prev.map((l) => (l.rid === rid ? { ...l, ...patch } : l)));
-  const saveBill = async () => {
-    if (!selectedId) return;
+  /* The bill form — New, Edit, Copy — in its own pop-out (owner: 开 bill 时决定
+     account 就行了; and, 2026-09-06, everything editable, copyable). */
+  const [billForm, setBillForm] = useState<BillFormState | null>(null);
+  const openNewBill = () => setBillForm({ mode: 'new', initial: emptyBillForm() });
+  const openEditBill = (b: DebtorBill) => setBillForm({ mode: 'edit', initial: fromBill(b, false), billId: b.id, billNumber: b.bill_number, receivedSen: Number(b.received_sen) });
+  const openCopyBill = (b: DebtorBill) => setBillForm({ mode: 'copy', initial: fromBill(b, true), billNumber: b.bill_number });
+  const submitBill = async (values: BillFormSubmit) => {
+    if (!selectedId || !billForm) return;
     try {
-      const res = await createBill.mutateAsync({
-        debtorId: selectedId,
-        lines: billLines
-          .filter((l) => l.creditAccountCode && l.amountSen > 0)
-          .map((l) => ({ ...(l.description.trim() ? { description: l.description.trim() } : {}), creditAccountCode: l.creditAccountCode, amountSen: l.amountSen })),
+      if (billForm.mode === 'edit' && billForm.billId) {
+        const res = await updateBill.mutateAsync({ billId: billForm.billId, body: values });
+        setBillForm(null);
+        void notify({ title: `${res.bill.billNumber} saved`, body: `Re-posted — the old journal got its contra and ${res.jeNo ?? 'a fresh entry'} books it as saved; ${fmtRm(res.bill.totalSen)} now on 305-0000.`, tone: 'info' });
+        return;
+      }
+      const res = await createBill.mutateAsync({ debtorId: selectedId, ...values });
+      setBillForm(null);
+      void notify({
+        title: `${res.bill.billNumber} posted`,
+        body: `${fmtRm(res.bill.totalSen)} now owing — the GL carries it on 305-0000.${billForm.mode === 'copy' && billForm.billNumber ? ` Copied from ${billForm.billNumber}.` : ''}`,
+        tone: 'info',
       });
-      setBilling(false);
-      setBillLines([{ rid: 1, description: '', creditAccountCode: '', amountSen: 0 }]);
-      void notify({ title: `${res.bill.billNumber} posted`, body: `${fmtRm(res.bill.totalSen)} now owing — the GL carries it on 305-0000.`, tone: 'info' });
     } catch (e) {
       void notify({ title: 'Bill failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
     }
@@ -158,6 +180,9 @@ export const OtherDebtors = () => {
 
   const debtors = listQ.data?.debtors ?? [];
   const detail = detailQ.data;
+  const billFormTitle = billForm?.mode === 'edit'
+    ? `Edit ${billForm.billNumber ?? 'bill'} — ${detail?.debtor.name ?? ''}`
+    : billForm?.mode === 'copy' ? `New bill — copied from ${billForm.billNumber ?? 'a bill'}` : `New bill — ${detail?.debtor.name ?? ''} · 明细行自由选户口`;
 
   return (
     <div className="space-y-4">
@@ -176,20 +201,17 @@ export const OtherDebtors = () => {
         <section className={styles.card}>
           <div className={styles.cardHeader}><h2 className={styles.cardTitle}>New debtor</h2></div>
           <div className={styles.cardBody} style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-3)', alignItems: 'flex-end', fontSize: 'var(--fs-13)' }}>
-            <label style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: '1 1 220px' }}>
-              <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>Name</span>
-              <input value={newName} onChange={(e) => setNewName(e.target.value)}
-                style={{ padding: '6px 8px', border: '1px solid var(--border-weak, #d8d5cd)', borderRadius: 6 }} />
+            <label className={styles.field} style={{ flex: '1 1 220px' }}>
+              <span className={styles.fieldLabel}>Name</span>
+              <input className={styles.fieldInput} value={newName} onChange={(e) => setNewName(e.target.value)} />
             </label>
-            <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>Phone</span>
-              <input value={newPhone} onChange={(e) => setNewPhone(e.target.value)}
-                style={{ padding: '6px 8px', border: '1px solid var(--border-weak, #d8d5cd)', borderRadius: 6, width: 150 }} />
+            <label className={styles.field} style={{ width: 170 }}>
+              <span className={styles.fieldLabel}>Phone</span>
+              <input className={styles.fieldInput} value={newPhone} onChange={(e) => setNewPhone(e.target.value)} />
             </label>
-            <label style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: '1 1 220px' }}>
-              <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>Notes</span>
-              <input value={newNotes} onChange={(e) => setNewNotes(e.target.value)}
-                style={{ padding: '6px 8px', border: '1px solid var(--border-weak, #d8d5cd)', borderRadius: 6 }} />
+            <label className={styles.field} style={{ flex: '1 1 220px' }}>
+              <span className={styles.fieldLabel}>Notes</span>
+              <input className={styles.fieldInput} value={newNotes} onChange={(e) => setNewNotes(e.target.value)} />
             </label>
             <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
               <Button variant="primary" size="sm" onClick={() => void saveDebtor()} disabled={createDebtor.isPending || !newName.trim()}>
@@ -256,12 +278,12 @@ export const OtherDebtors = () => {
                 </Button>
               )}
               {canCreate && (
-                <Button variant="ghost" size="sm" onClick={() => { setBilling(true); setReceipting(false); }}>
+                <Button variant="ghost" size="sm" onClick={() => { openNewBill(); setReceipting(false); }}>
                   <Plus {...ICON} /> New bill
                 </Button>
               )}
               {canCreate && openBills.length > 0 && (
-                <Button variant="primary" size="sm" onClick={() => { setReceipting(true); setBilling(false); }}>
+                <Button variant="primary" size="sm" onClick={() => { setReceipting(true); setBillForm(null); }}>
                   <Send {...ICON} /> New receipt
                 </Button>
               )}
@@ -269,44 +291,12 @@ export const OtherDebtors = () => {
           </div>
           <div className={styles.cardBody} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
 
-            {billing && (
-              <div style={{ border: '1px solid var(--border-weak, #e3e1da)', borderRadius: 8, padding: 'var(--space-3)', display: 'flex', flexDirection: 'column', gap: 'var(--space-2)', fontSize: 'var(--fs-13)' }}>
-                <b>New bill — 明细行自由选户口</b>
-                {billLines.map((l) => (
-                  <div key={l.rid} style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap', alignItems: 'center' }}>
-                    <input placeholder="Description" value={l.description}
-                      onChange={(e) => patchLine(l.rid, { description: e.target.value })}
-                      style={{ flex: '1 1 200px', padding: '6px 8px', border: '1px solid var(--border-weak, #d8d5cd)', borderRadius: 6 }} />
-                    <div style={{ flex: '1 1 220px' }}>
-                      <AccountSelect accounts={accounts} value={l.creditAccountCode}
-                        onChange={(code) => patchLine(l.rid, { creditAccountCode: code })} />
-                    </div>
-                    <input type="number" min={0} step="0.01" placeholder="Amount (RM)" aria-label={`line ${l.rid} amount`}
-                      value={l.amountSen > 0 ? String(l.amountSen / 100) : ''}
-                      onChange={(e) => patchLine(l.rid, { amountSen: Math.round(Number(e.target.value || 0) * 100) })}
-                      style={{ width: 130, padding: '6px 8px', border: '1px solid var(--border-weak, #d8d5cd)', borderRadius: 6, textAlign: 'right' }} />
-                  </div>
-                ))}
-                <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center' }}>
-                  <Button variant="ghost" size="sm" onClick={() => setBillLines((p) => [...p, { rid: Math.max(...p.map((x) => x.rid)) + 1, description: '', creditAccountCode: '', amountSen: 0 }])}>
-                    <Plus {...ICON} /> Line
-                  </Button>
-                  <span style={{ marginLeft: 'auto', fontFamily: 'var(--font-mono)' }}>Total {fmtRm(billTotal)}</span>
-                  <Button variant="primary" size="sm" onClick={() => void saveBill()}
-                    disabled={createBill.isPending || billTotal <= 0 || billLines.some((l) => l.amountSen > 0 && !l.creditAccountCode)}>
-                    {createBill.isPending ? 'Posting…' : 'Post bill'}
-                  </Button>
-                  <Button variant="ghost" size="sm" onClick={() => setBilling(false)}>Close</Button>
-                </div>
-              </div>
-            )}
-
             {receipting && (
               <div style={{ border: '1px solid var(--border-weak, #e3e1da)', borderRadius: 8, padding: 'var(--space-3)', display: 'flex', flexDirection: 'column', gap: 'var(--space-2)', fontSize: 'var(--fs-13)' }}>
                 <b>New receipt — tick pays in full, type for partial</b>
-                <label style={{ display: 'flex', flexDirection: 'column', gap: 4, maxWidth: 340 }}>
-                  <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>Received into</span>
-                  <AccountSelect accounts={moneyAccounts} value={receiptBank} onChange={setReceiptBank} placeholder="— bank / cash —" />
+                <label className={styles.field} style={{ maxWidth: 340 }}>
+                  <span className={styles.fieldLabel}>Received into</span>
+                  <AccountSelect accounts={moneyAccounts} value={receiptBank} onChange={setReceiptBank} className={styles.fieldInput} placeholder="— bank / cash —" />
                 </label>
                 <table style={{ borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
                   <tbody>
@@ -322,14 +312,10 @@ export const OtherDebtors = () => {
                           </td>
                           <td style={{ padding: '4px 8px', fontFamily: 'var(--font-mono)' }}>{b.bill_number}</td>
                           <td style={{ padding: '4px 8px', textAlign: 'right', color: 'var(--fg-muted)', fontFamily: 'var(--font-mono)' }}>{fmtRm(out)}</td>
-                          <td style={{ padding: '4px 8px' }}>
-                            <input type="number" min={0} step="0.01" aria-label={`amount for ${b.bill_number}`}
-                              value={v > 0 ? String(v / 100) : ''}
-                              onChange={(e) => {
-                                const sen = Math.min(out, Math.max(0, Math.round(Number(e.target.value || 0) * 100)));
-                                setAllocs((prev) => ({ ...prev, [b.id]: sen }));
-                              }}
-                              style={{ width: 120, padding: '4px 8px', border: '1px solid var(--border-weak, #d8d5cd)', borderRadius: 6, textAlign: 'right' }} />
+                          <td style={{ padding: '4px 8px', width: 150 }}>
+                            <MoneyInput bare valueSen={v} inputClassName={styles.fieldInput} selectOnFocus aria-label={`amount for ${b.bill_number}`}
+                              placeholder="0.00" style={{ width: '100%' }}
+                              onCommit={(sen) => setAllocs((prev) => ({ ...prev, [b.id]: Math.min(out, Math.max(0, sen ?? 0)) }))} />
                           </td>
                         </tr>
                       );
@@ -357,15 +343,28 @@ export const OtherDebtors = () => {
                       {detail.bills.map((b) => (
                         <tr key={b.id} style={{ borderBottom: '1px solid var(--border-weak, #f0eee8)', opacity: b.status === 'CANCELLED' ? 0.55 : 1 }}>
                           <td style={{ padding: '4px 8px', fontFamily: 'var(--font-mono)' }}>{b.bill_number}</td>
-                          <td style={{ padding: '4px 8px' }}>{b.bill_date}</td>
+                          <td style={{ padding: '4px 8px', whiteSpace: 'nowrap' }}>{b.bill_date}</td>
+                          <td style={{ padding: '4px 8px', maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={b.notes ?? undefined}>{b.notes ?? '—'}</td>
                           <td style={{ padding: '4px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{fmtRm(b.total_sen)}</td>
                           <td style={{ padding: '4px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)', color: 'var(--fg-muted)' }}>
                             received {fmtRm(b.received_sen)}
                           </td>
                           <td style={{ padding: '4px 8px', fontSize: 'var(--fs-11)' }}>{b.status}</td>
-                          <td style={{ padding: '4px 8px', textAlign: 'right' }}>
+                          <td style={{ padding: '4px 8px', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                            {canCreate && b.status !== 'CANCELLED' && (
+                              <button type="button" aria-label={`Edit ${b.bill_number}`} title="Edit" onClick={() => openEditBill(b)}
+                                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--fg-muted)', padding: 2 }}>
+                                <Pencil size={14} strokeWidth={1.75} />
+                              </button>
+                            )}
+                            {canCreate && (
+                              <button type="button" aria-label={`Copy ${b.bill_number}`} title="Copy as new" onClick={() => openCopyBill(b)}
+                                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--fg-muted)', padding: 2 }}>
+                                <Copy size={14} strokeWidth={1.75} />
+                              </button>
+                            )}
                             {canCancel && b.status !== 'CANCELLED' && b.received_sen === 0 && (
-                              <button type="button" aria-label={`Cancel ${b.bill_number}`} onClick={() => void onCancelBill(b)}
+                              <button type="button" aria-label={`Cancel ${b.bill_number}`} title="Cancel bill" onClick={() => void onCancelBill(b)}
                                 style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--fg-muted)', padding: 2 }}>
                                 <Ban size={14} strokeWidth={1.75} />
                               </button>
@@ -421,6 +420,21 @@ export const OtherDebtors = () => {
             </div>
           </div>
         </section>
+      )}
+
+      {billForm && selectedId && (
+        <Modal title={billFormTitle} onClose={() => setBillForm(null)} ariaLabel={billFormTitle}>
+          <DebtorBillForm
+            key={`${billForm.mode}-${billForm.billId ?? 'new'}`}
+            mode={billForm.mode}
+            initial={billForm.initial}
+            accounts={accounts}
+            receivedSen={billForm.receivedSen}
+            saving={createBill.isPending || updateBill.isPending}
+            onSubmit={submitBill}
+            onCancel={() => setBillForm(null)}
+          />
+        </Modal>
       )}
     </div>
   );

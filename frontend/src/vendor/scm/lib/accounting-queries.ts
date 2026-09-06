@@ -383,9 +383,12 @@ export type OtherDebtor = {
   id: string; name: string; phone: string | null; notes: string | null;
   is_active: boolean; outstanding_sen: number;
 };
+export type DebtorBillLine = { id: string; line_no: number; description: string | null; credit_account_code: string; amount_sen: number };
 export type DebtorBill = {
   id: string; bill_number: string; bill_date: string;
   total_sen: number; received_sen: number; status: string; notes: string | null;
+  /** The bill's lines (2026-09-06) — Edit and Copy start from them. */
+  lines?: DebtorBillLine[];
 };
 export type DebtorReceipt = {
   id: string; receipt_number: string; receipt_date: string;
@@ -434,6 +437,19 @@ export const useCreateDebtorBill = () => {
       lines: Array<{ description?: string; creditAccountCode: string; amountSen: number }>;
     }) => authedFetch<{ ok: boolean; bill: { billNumber: string; totalSen: number } }>(
       `/other-debtors/${debtorId}/bills`, { method: 'POST', body: JSON.stringify(body) },
+    ),
+    onSuccess: () => invalidateDebtors(qc),
+  });
+};
+/** Edit a bill — every field (owner 2026-09-06); the route re-posts and says so with `reposted`. */
+export const useUpdateDebtorBill = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ billId, body }: {
+      billId: string;
+      body: { billDate?: string; notes?: string; lines?: Array<{ description?: string; creditAccountCode: string; amountSen: number }> };
+    }) => authedFetch<{ ok: boolean; bill: { id: string; billNumber: string; totalSen: number }; reposted?: boolean; jeNo?: string }>(
+      `/other-debtors/bills/${billId}`, { method: 'PATCH', body: JSON.stringify(body) },
     ),
     onSuccess: () => invalidateDebtors(qc),
   });
