@@ -69,6 +69,17 @@ export const useCreateApInvoice = () => {
   });
 };
 
+/** Edit — every field (owner 2026-09-06); a posted bill re-posts server-side
+    (contra + fresh entry), which the reply says with `reposted`. */
+export const useUpdateApInvoice = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, body }: { id: string; body: Partial<{ supplierId: string; supplierInvoiceRef: string | null; invoiceDate: string; dueDate: string | null; notes: string | null; lines: ApInvoiceLineInput[] }> }) =>
+      authedFetch<{ ok: boolean; invoice: ApInvoiceHeader; reposted?: boolean; jeNo?: string }>(`/ap-invoices/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+    onSuccess: () => invalidate(qc),
+  });
+};
+
 export const usePostApInvoice = () => {
   const qc = useQueryClient();
   return useMutation({

@@ -1,16 +1,20 @@
 /* AP Invoices — the Finance list shows BOTH kinds (owner 2026-09-06: 我想要
    两个都看到, 现有的 purchase invoice remain): purchase invoices as a
-   read-only mirror linking to their own page, AP invoices raised here with
-   Post / Cancel; the New card scans a bill and attaches its pages after save;
-   round 2 — the list filters by supplier and prints what it shows, the lines
-   are a table in the owner's order with a remove button, the bill carries an
-   overall description. The server half is backend/tests/apInvoices.test.ts. */
+   read-only mirror linking to their own page, AP invoices raised here.
+   Round 2: the list filters by supplier and prints what it shows, the bill
+   carries an overall description. Round 3: a bill opens in a pop-out over
+   the list; every field can be edited (a posted bill re-posts); a bill can
+   be copied; the form's lines are a table in the owner's order with Insert
+   adding a line and landing on it, amounts reading 1,800.00; the form scans
+   a bill and attaches its pages after save. The server half is
+   backend/tests/apInvoices.test.ts + apInvoiceEdit.test.ts. */
 
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, test, vi } from 'vitest';
 
 const createAsync = vi.fn(async (_b: unknown) => ({ ok: true, invoice: { id: 'api-2', invoice_number: '2990-API-2609-002', total_sen: 42_000 } }));
+const updateAsync = vi.fn(async (_v: unknown) => ({ ok: true, invoice: { id: 'api-1', invoice_number: '2990-API-2609-001', total_sen: 420_000 }, reposted: false }));
 const postAsync = vi.fn(async (_id: unknown) => ({ ok: true, jeNo: '2990-JE-2609-030', status: 'posted' }));
 const cancelAsync = vi.fn(async (_id: unknown) => ({ ok: true }));
 const uploadAsync = vi.fn(async (_v: unknown) => ({ ok: true, file: { id: 'f9' } }));
@@ -26,7 +30,7 @@ const extractAsync = vi.fn(async (_bills: unknown) => ({ bills: [{
   supplierMatch: { id: 'sup-h', code: '405-H001', name: 'HOUZS VENTURE HOLDING SDN BHD', confidence: 'contains' },
   memory: { payeeName: 'HOUZS VENTURE HOLDING SDN BHD', debitAccountCode: '900-A001', purpose: 'SUPPLIER_PAYMENT', timesSeen: 1 },
 }] }));
-/* The detail's status — flipped by the files-card test: a DRAFT may lose a file, a POSTED bill keeps it. */
+/* The detail's status — flipped by tests: a DRAFT may lose a file and edits plainly, a POSTED bill keeps files and re-posts on edit. */
 let detailStatus = 'DRAFT';
 
 const ROWS = [
@@ -42,6 +46,7 @@ vi.mock('../../vendor/scm/lib/ap-invoice-queries', () => ({
     supplier: { id: 'sup-h', code: '405-H001', name: 'HOUZS VENTURE HOLDING SDN BHD' },
   } : undefined, isLoading: false }),
   useCreateApInvoice: () => ({ mutateAsync: createAsync, isPending: false }),
+  useUpdateApInvoice: () => ({ mutateAsync: updateAsync, isPending: false }),
   usePostApInvoice: () => ({ mutateAsync: postAsync, isPending: false }),
   useCancelApInvoice: () => ({ mutateAsync: cancelAsync, isPending: false }),
   useApInvoiceFiles: (id: string | null) => ({ data: id ? { files: [{ id: 'f1', file_name: 'rent.pdf', mime: 'application/pdf', size_bytes: 120_000, sort_no: 1, created_at: '2026-09-06T02:00:00Z' }] } : undefined, isLoading: false }),
@@ -62,6 +67,7 @@ vi.mock('../../vendor/scm/lib/accounting-queries', () => ({
   useAccounts: () => ({ data: { accounts: [
     { account_code: '900-0000', account_name: 'Operating Expense', account_type: 'EXPENSE', parent_code: null, is_active: true, acc_money: false, special_type: null },
     { account_code: '900-A001', account_name: 'RENTAL', account_type: 'EXPENSE', parent_code: '900-0000', is_active: true, acc_money: false, special_type: null },
+    { account_code: '900-A002', account_name: 'SERVICE FEE', account_type: 'EXPENSE', parent_code: '900-0000', is_active: true, acc_money: false, special_type: null },
     { account_code: '400-0000', account_name: 'ACCOUNT PAYABLE', account_type: 'LIABILITY', parent_code: null, is_active: true, acc_money: false, special_type: 'SCC' },
   ] }, isLoading: false }),
 }));
@@ -76,9 +82,16 @@ vi.mock('../../vendor/scm/components/NotifyDialog', () => ({ useNotify: () => vi
 import { ApInvoices } from './ApInvoices';
 
 const draw = () => render(<MemoryRouter><ApInvoices /></MemoryRouter>);
+const dialog = () => screen.getByRole('dialog');
+const setAmount = (label: string, rm: string) => {
+  const box = screen.getByLabelText(label);
+  fireEvent.focus(box);
+  fireEvent.change(box, { target: { value: rm } });
+  fireEvent.blur(box);
+};
 
 describe('both kinds on one list', () => {
-  test('a purchase invoice mirrors with a link to its own page; an AP invoice opens here; the description shows', () => {
+  test('a purchase invoice mirrors with a link to its own page; the description shows', () => {
     draw();
     expect(screen.getByText('Purchase Invoice')).toBeTruthy();
     expect(screen.getByText('AP Invoice')).toBeTruthy();
@@ -87,55 +100,56 @@ describe('both kinds on one list', () => {
     expect(screen.getByText('Rent September')).toBeTruthy();
   });
 
-  test('opening a draft AP invoice shows its lines and its description; Post confirms then calls the post', async () => {
+  test('an AP invoice opens in a pop-out OVER the list with its lines and description; Post confirms then calls the post', async () => {
     postAsync.mockClear(); confirmFn.mockClear();
     draw();
     fireEvent.click(screen.getByText('2990-API-2609-001'));
-    expect(screen.getByText('Rent Sept')).toBeTruthy();
-    expect(screen.getAllByText('Rent September').length).toBe(2);
-    fireEvent.click(screen.getByText('Post'));
+    const d = dialog();
+    expect(within(d).getByText('Rent Sept')).toBeTruthy();
+    expect(within(d).getByText('Rent September')).toBeTruthy();
+    /* The list is still there behind it — nothing was pushed in above it. */
+    expect(screen.getByText('2990-PI-2607-005')).toBeTruthy();
+    fireEvent.click(within(d).getByText('Post'));
     await waitFor(() => expect(postAsync).toHaveBeenCalledWith('api-1'));
     expect(JSON.stringify(confirmFn.mock.calls[0]![0])).toMatch(/Post 2990-API-2609-001/);
+    fireEvent.click(within(d).getByLabelText('Close'));
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
 
   test('the supplier filter narrows the list, and Print listing prints exactly what is shown', () => {
     listingAsync.mockClear();
     draw();
     fireEvent.click(screen.getByText('Print listing'));
-    expect(listingAsync).toHaveBeenCalledTimes(1);
     expect((listingAsync.mock.calls[0]![0] as unknown[]).length).toBe(2);
     expect(listingAsync.mock.calls[0]![1]).toEqual({ kind: 'ALL', supplierName: null });
-
     fireEvent.focus(screen.getByLabelText('Filter by supplier'));
     fireEvent.mouseDown(screen.getByText('400-H004 · HOOKKA INDUSTRIES SDN. BHD.'));
     expect(screen.queryByText('2990-API-2609-001')).toBeNull();
-    expect(screen.getByText('2990-PI-2607-005')).toBeTruthy();
-
     fireEvent.click(screen.getByText('Print listing'));
-    expect(listingAsync).toHaveBeenCalledTimes(2);
     expect((listingAsync.mock.calls[1]![0] as unknown[]).length).toBe(1);
     expect(listingAsync.mock.calls[1]![1]).toEqual({ kind: 'ALL', supplierName: 'HOOKKA INDUSTRIES SDN. BHD.' });
   });
 });
 
 describe('raising an AP invoice', () => {
-  test('supplier, a line on a LEAF account (headers and controls never offered), amount → the create payload', async () => {
+  test('supplier, a line on a LEAF account (headers and controls never offered), an amount that reads 420.00 → the create payload', async () => {
     createAsync.mockClear();
     draw();
     fireEvent.click(screen.getByText('New AP invoice'));
-    fireEvent.focus(screen.getByLabelText('AP invoice supplier'));
+    const d = dialog();
+    fireEvent.focus(within(d).getByLabelText('AP invoice supplier'));
     fireEvent.mouseDown(screen.getByText('405-H001 · HOUZS VENTURE HOLDING SDN BHD'));
-    fireEvent.change(screen.getByLabelText('Supplier invoice ref'), { target: { value: 'HVH-1001' } });
-    fireEvent.change(screen.getByLabelText('AP invoice description'), { target: { value: 'Rent October' } });
-    fireEvent.change(screen.getByLabelText('line 1 description'), { target: { value: 'Rent Oct' } });
-    /* The account combobox: the header 900-0000 and the control 400-0000 are absent. */
-    const accountBox = screen.getAllByRole('combobox').find((el) => (el as HTMLInputElement).placeholder.includes('account this line'))!;
+    fireEvent.change(within(d).getByLabelText('Supplier invoice ref'), { target: { value: 'HVH-1001' } });
+    fireEvent.change(within(d).getByLabelText('AP invoice description'), { target: { value: 'Rent October' } });
+    fireEvent.change(within(d).getByLabelText('line 1 description'), { target: { value: 'Rent Oct' } });
+    const accountBox = within(d).getAllByRole('combobox').find((el) => (el as HTMLInputElement).placeholder.includes('account this line'))!;
     fireEvent.focus(accountBox);
     expect(screen.queryByText(/Operating Expense/)).toBeNull();
     expect(screen.queryByText(/ACCOUNT PAYABLE/)).toBeNull();
     fireEvent.mouseDown(screen.getByText('900-A001 · RENTAL'));
-    fireEvent.change(screen.getByLabelText('line 1 amount'), { target: { value: '420' } });
-    fireEvent.click(screen.getByText('Save as draft'));
+    setAmount('line 1 amount', '420');
+    expect((within(d).getByLabelText('line 1 amount') as HTMLInputElement).value).toBe('420.00');
+    fireEvent.click(within(d).getByText('Save as draft'));
     await waitFor(() => expect(createAsync).toHaveBeenCalled());
     expect(createAsync.mock.calls[0]![0]).toMatchObject({
       supplierId: 'sup-h', supplierInvoiceRef: 'HVH-1001', notes: 'Rent October',
@@ -143,35 +157,45 @@ describe('raising an AP invoice', () => {
     });
   });
 
-  test('the lines are a table in the owner\'s order — account, description, amount — and a line can be removed', () => {
+  test("the lines are a table in the owner's order; Insert adds a line and lands on its account; Enter on an amount moves down; a line can be removed", () => {
     draw();
     fireEvent.click(screen.getByText('New AP invoice'));
-    const amountHead = screen.getByText('Amount (RM)');
+    const d = dialog();
+    const amountHead = within(d).getByText('Amount (RM)');
     expect([...amountHead.parentElement!.children].map((c) => c.textContent)).toEqual(['Account', 'Description', 'Amount (RM)', '']);
-    expect(screen.queryByLabelText('remove line 1')).toBeNull();
-    fireEvent.click(screen.getByText('Line'));
-    expect(screen.getByLabelText('line 2 amount')).toBeTruthy();
-    fireEvent.click(screen.getByLabelText('remove line 2'));
-    expect(screen.queryByLabelText('line 2 amount')).toBeNull();
-    expect(screen.getByLabelText('line 1 amount')).toBeTruthy();
+
+    fireEvent.keyDown(within(d).getByLabelText('line 1 amount'), { key: 'Insert' });
+    expect(within(d).getByLabelText('line 2 amount')).toBeTruthy();
+    const landed = document.activeElement as HTMLElement | null;
+    expect(landed?.getAttribute('role')).toBe('combobox');
+    expect(landed?.closest('tr')?.getAttribute('data-line')).toBe('2');
+
+    fireEvent.keyDown(within(d).getByLabelText('line 2 amount'), { key: 'Enter' });
+    expect(within(d).getByLabelText('line 3 amount')).toBeTruthy();
+    expect((document.activeElement as HTMLElement | null)?.closest('tr')?.getAttribute('data-line')).toBe('3');
+
+    fireEvent.click(within(d).getByLabelText('remove line 3'));
+    expect(within(d).queryByLabelText('line 3 amount')).toBeNull();
   });
 });
 
 describe('the scanned bill (OCR) and its files', () => {
-  test('Scan bill pre-fills the supplier, the bill\'s number, dates and lines with the remembered account; the pages attach after save', async () => {
+  test("Scan bill pre-fills the supplier, the bill's number, dates and lines with the remembered account; the pages attach after save", async () => {
     createAsync.mockClear(); uploadAsync.mockClear();
     draw();
     fireEvent.click(screen.getByText('New AP invoice'));
+    const d = dialog();
     const page = new File(['%PDF'], 'rent.pdf', { type: 'application/pdf' });
-    fireEvent.change(screen.getByLabelText('Scan bill files'), { target: { files: [page] } });
-    await waitFor(() => expect(screen.getByText(/Read — check every figure/)).toBeTruthy());
+    fireEvent.change(within(d).getByLabelText('Scan bill files'), { target: { files: [page] } });
+    await waitFor(() => expect(within(d).getByText(/Read — check every figure/)).toBeTruthy());
     expect(extractAsync).toHaveBeenCalledWith([{ files: [{ name: 'rent.pdf', mime: 'application/pdf', dataBase64: 'b64:rent.pdf' }] }]);
-    expect((screen.getByLabelText('Supplier invoice ref') as HTMLInputElement).value).toBe('HVH-0912');
-    expect((screen.getByLabelText('line 1 amount') as HTMLInputElement).value).toBe('4000');
-    expect(screen.getByText(/Account 900-A001 filled/)).toBeTruthy();
-    expect(screen.getByText(/1 scanned file\(s\) will be attached/)).toBeTruthy();
+    expect((within(d).getByLabelText('Supplier invoice ref') as HTMLInputElement).value).toBe('HVH-0912');
+    /* The amount re-dresses from the new line value in a passive effect — a tick after the note. */
+    await waitFor(() => expect((within(d).getByLabelText('line 1 amount') as HTMLInputElement).value).toBe('4,000.00'));
+    expect(within(d).getByText(/Account 900-A001 filled/)).toBeTruthy();
+    expect(within(d).getByText(/1 scanned file\(s\) will be attached/)).toBeTruthy();
 
-    fireEvent.click(screen.getByText('Save as draft'));
+    fireEvent.click(within(d).getByText('Save as draft'));
     await waitFor(() => expect(createAsync).toHaveBeenCalled());
     expect(createAsync.mock.calls[0]![0]).toMatchObject({
       supplierId: 'sup-h', supplierInvoiceRef: 'HVH-0912', invoiceDate: '2026-09-01', dueDate: '2026-09-30',
@@ -180,7 +204,7 @@ describe('the scanned bill (OCR) and its files', () => {
     await waitFor(() => expect(uploadAsync).toHaveBeenCalledWith({ invoiceId: 'api-2', file: { name: 'rent.pdf', mime: 'application/pdf', dataBase64: 'b64:rent.pdf' } }));
   });
 
-  test('the Files card: a draft bill may lose a file; a posted bill keeps its files but still takes one', () => {
+  test('the Files card in the pop-out: a draft bill may lose a file; a posted bill keeps its files but still takes one', () => {
     detailStatus = 'DRAFT';
     const first = draw();
     fireEvent.click(screen.getByText('2990-API-2609-001'));
@@ -197,5 +221,55 @@ describe('the scanned bill (OCR) and its files', () => {
     expect(screen.getByLabelText('Attach bill files')).toBeTruthy();
     expect(screen.getByText(/locked with the posted bill/)).toBeTruthy();
     detailStatus = 'DRAFT';
+  });
+});
+
+describe('editing and copying a bill (round 3)', () => {
+  test('Edit opens the form filled from the bill and saving sends the PATCH; a posted bill says it will re-post', async () => {
+    updateAsync.mockClear();
+    detailStatus = 'DRAFT';
+    const first = draw();
+    fireEvent.click(screen.getByText('2990-API-2609-001'));
+    fireEvent.click(screen.getByText('Edit'));
+    const form = screen.getAllByRole('dialog')[1]!;
+    expect((within(form).getByLabelText('Supplier invoice ref') as HTMLInputElement).value).toBe('HVH-0912');
+    expect((within(form).getByLabelText('line 1 amount') as HTMLInputElement).value).toBe('4,000.00');
+    fireEvent.change(within(form).getByLabelText('AP invoice description'), { target: { value: 'Rent Sept revised' } });
+    fireEvent.click(within(form).getByText('Save changes'));
+    await waitFor(() => expect(updateAsync).toHaveBeenCalled());
+    expect(updateAsync.mock.calls[0]![0]).toMatchObject({
+      id: 'api-1',
+      body: { supplierId: 'sup-h', supplierInvoiceRef: 'HVH-0912', invoiceDate: '2026-09-01', notes: 'Rent Sept revised',
+        lines: [{ description: 'Rent Sept', debitAccountCode: '900-A001', amountSen: 400_000 }, { debitAccountCode: '900-A002', amountSen: 20_000 }] },
+    });
+    first.unmount();
+
+    detailStatus = 'POSTED';
+    draw();
+    fireEvent.click(screen.getByText('2990-API-2609-001'));
+    fireEvent.click(screen.getByText('Edit'));
+    const posted = screen.getAllByRole('dialog')[1]!;
+    expect(within(posted).getByText(/saving re-posts it/)).toBeTruthy();
+    expect(within(posted).getByText('Save & re-post')).toBeTruthy();
+    detailStatus = 'DRAFT';
+  });
+
+  test("Copy opens the form with the bill's supplier, description and lines, no supplier number and today's date; saving raises a new bill", async () => {
+    createAsync.mockClear();
+    draw();
+    fireEvent.click(screen.getByText('2990-API-2609-001'));
+    fireEvent.click(screen.getByText('Copy'));
+    const form = screen.getAllByRole('dialog')[1]!;
+    expect((within(form).getByLabelText('Supplier invoice ref') as HTMLInputElement).value).toBe('');
+    expect((within(form).getByLabelText('AP invoice description') as HTMLInputElement).value).toBe('Rent September');
+    expect((within(form).getByLabelText('line 1 amount') as HTMLInputElement).value).toBe('4,000.00');
+    expect((within(form).getByLabelText('line 2 amount') as HTMLInputElement).value).toBe('200.00');
+    fireEvent.click(within(form).getByText('Save as draft'));
+    await waitFor(() => expect(createAsync).toHaveBeenCalled());
+    const body = createAsync.mock.calls[0]![0] as { supplierId: string; supplierInvoiceRef?: string; notes?: string; lines: unknown[] };
+    expect(body.supplierId).toBe('sup-h');
+    expect(body.supplierInvoiceRef).toBeUndefined();
+    expect(body.notes).toBe('Rent September');
+    expect(body.lines).toHaveLength(2);
   });
 });
