@@ -321,7 +321,7 @@ export type AcksData = {
   total: number;
   ackedCount: number;
   acked: Array<AckPerson & { ackedAt: string | null }>;
-  pending: Array<AckPerson & { state?: PendingState }>;
+  pending: Array<AckPerson & { state?: PendingState; remindedAt?: string | null }>;
   byDepartment?: Array<{
     id: number | null;
     name: string;

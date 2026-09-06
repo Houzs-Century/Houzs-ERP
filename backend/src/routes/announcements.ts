@@ -54,10 +54,14 @@ import {
   divisionEq,
   inTargetCompanies,
   isActiveFlag,
+  laterOf,
   loadAckMap,
   loadAllAcks,
+  loadAllReminders,
   loadCompanyGrants,
+  loadReminderMap,
   loadRoster,
+  loadUserReminders,
   notExpired,
   pendingState,
   readCategory,
@@ -69,6 +73,7 @@ import {
   rosterCompaniesSql,
   rowDivisions,
   rowExcluded,
+  recordReminders,
   scheduledLater,
   userCanSee,
   type AnnouncementAttachment,
@@ -668,7 +673,7 @@ app.get("/banner", async (c) => {
   // user's own receipts, no company dimension), and the notices it is joined
   // against in JS pass companyCanSee(allowed) at the filter below — a receipt
   // for a notice the caller's companies cannot see never reaches the payload.
-  const [res, ackRes] = await Promise.all([
+  const [res, ackRes, myReminders] = await Promise.all([
     c.env.DB
       // WHERE is_active = 1 pushes the active filter to SQL so this uses the
       // (is_active, created_at DESC) index (mig 0058) as a range scan instead of
@@ -690,6 +695,7 @@ app.get("/banner", async (c) => {
         acked_at?: string | null;
         ackedAt?: string | null;
       }>(),
+    loadUserReminders(c.env, user.id),
   ]);
   const division = await callerDivision(c.env, user.id);
   const active = (res.results ?? []).filter(
@@ -715,14 +721,20 @@ app.get("/banner", async (c) => {
   for (const r of active) {
     if (!ackedAtById.has(r.id)) continue;
     const ackedAt = ackedAtById.get(r.id) ?? null;
-    const remindedAt = r.remindedAt ?? r.reminded_at ?? null;
+    // Whole-notice reminder OR this reader's own (per-department) reminder.
+    const remindedAt = laterOf(r.remindedAt ?? r.reminded_at ?? null, myReminders.get(r.id) ?? null);
     if (isRemindedSince(remindedAt, ackedAt)) continue;
     ackedIds.push(r.id);
   }
 
   const payload = {
     success: true,
-    data: await withNames(c.env, active),
+    // The per-notice remindedAt the client compares against its local ack is
+    // the reader's EFFECTIVE one (notice-level or their own row).
+    data: (await withNames(c.env, active)).map((p) => ({
+      ...p,
+      remindedAt: laterOf(p.remindedAt, myReminders.get(p.id) ?? null),
+    })),
     ackedIds,
   };
   if (cacheKey) {
@@ -788,7 +800,8 @@ app.get("/:id/acks", requirePermissionOrSalesDirector("announcements.write"), as
   // helper). A notice targeting all companies counts the whole roster.
   const roster = audienceOf(ann, await loadRoster(c.env, readTargetCompanyIds(ann)));
   const ackedAtByUser = await loadAckMap(c.env, id);
-  const state = pendingState(ann);
+  const reminders = await loadReminderMap(c.env, id);
+  const now = Date.now();
 
   type Person = {
     id: number;
@@ -809,7 +822,7 @@ app.get("/:id/acks", requirePermissionOrSalesDirector("announcements.write"), as
     managerId: u.managerId,
   });
   const acked: Array<Person & { ackedAt: string | null }> = [];
-  const pending: Array<Person & { state: PendingState }> = [];
+  const pending: Array<Person & { state: PendingState; remindedAt: string | null }> = [];
   // Two-level drill-down (notice → department → person): one bucket per
   // department in the audience, in roster (name) order of first appearance.
   const byDepartment = new Map<
@@ -835,7 +848,8 @@ app.get("/:id/acks", requirePermissionOrSalesDirector("announcements.write"), as
       acked.push({ ...person(u), ackedAt: ackedAtByUser.get(u.id) ?? null });
     } else {
       d.pending += 1;
-      pending.push({ ...person(u), state });
+      const remindedAt = reminders.get(u.id) ?? null;
+      pending.push({ ...person(u), state: pendingState(ann, now, remindedAt), remindedAt });
     }
   }
   acked.sort((x, y) => {
@@ -925,13 +939,14 @@ app.get("/team-pending", async (c) => {
   // user_companies grants (inTargetCompanies, fail-open like rosterCompaniesSql)
   // in the loop below, so a report never appears against a notice their
   // companies cannot see; the notice rows themselves have no company column.
-  const [res, acks, grants] = await Promise.all([
+  const [res, acks, grants, reminders] = await Promise.all([
     c.env.DB
       // company-scope: audience is per REPORT via target_company_ids + inTargetCompanies below; rows carry no company column.
       .prepare(`SELECT * FROM announcements WHERE is_active = 1 AND source IS NULL ORDER BY created_at DESC`)
       .all<AnnouncementRow>(),
     loadAllAcks(c.env),
     loadCompanyGrants(c.env),
+    loadAllReminders(c.env),
   ]);
   const now = Date.now();
   const notices = (res.results).filter(
@@ -950,11 +965,11 @@ app.get("/team-pending", async (c) => {
   for (const r of notices) {
     const targets = readTargetCompanyIds(r);
     const ackedSet = acks.get(r.id);
-    const state = pendingState(r, now);
     for (const u of reports) {
       if (!userCanSee(r, u.id, u.departmentId, u.positionId, u.division)) continue;
       if (!inTargetCompanies(grants, u.id, targets)) continue;
       if (ackedSet?.has(u.id)) continue;
+      const state = pendingState(r, now, reminders.get(r.id)?.get(u.id) ?? null);
       pending.push({
         userId: u.id,
         name: u.name || u.email,
@@ -1442,50 +1457,64 @@ app.post("/:id/remind", requirePermissionOrSalesDirector("announcements.write"),
     return c.json({ success: false, error: "Announcement not found" }, 404);
   }
   let scope: "all" | "unacked" = "unacked";
+  let departmentId: number | null = null;
   try {
     const body = (await c.req.json().catch(() => null)) as {
       scope?: unknown;
+      departmentId?: unknown;
     } | null;
     if (body && body.scope === "all") scope = "all";
+    if (body && body.departmentId != null) {
+      const n = parseInt(String(body.departmentId), 10);
+      if (Number.isFinite(n)) departmentId = n;
+    }
   } catch {
     /* default */
   }
 
-  const rosterRes = await c.env.DB.prepare(
-    `SELECT id FROM users WHERE status = 'active'${rosterCompaniesSql(readTargetCompanyIds(ann))}`,
-  ).all<{ id: number }>();
-  const rosterIds = (rosterRes.results ?? []).map((u) => u.id);
-  const ackRes = await c.env.DB.prepare(
-    "SELECT user_id FROM announcement_acks WHERE announcement_id = ?",
-  )
-    .bind(id)
-    .all<{ user_id?: number; userId?: number }>();
-  const ackedSet = new Set<number>();
-  for (const a of ackRes.results ?? []) {
-    const uid = a.userId ?? a.user_id;
-    if (uid != null) ackedSet.add(uid);
-  }
-  const unackedCount = rosterIds.filter((uid) => !ackedSet.has(uid)).length;
+  // The audience (not every active user): the same roster the receipts show.
+  const roster = audienceOf(ann, await loadRoster(c.env, readTargetCompanyIds(ann)));
+  const ackedAtByUser = await loadAckMap(c.env, id);
+  const now = new Date().toISOString();
 
   if (scope === "all") {
+    // "Reset all receipts" (phone only since 2026-09-05): the whole notice
+    // starts over — receipts cleared, notice-level stamp set, no per-person rows.
     await c.env.DB.prepare(
       "DELETE FROM announcement_acks WHERE announcement_id = ?",
     )
       .bind(id)
       .run();
+    // company-scope: ONE notice by primary key, already scoped by getScopedAnnouncement (companyCanSee) above.
+    await c.env.DB.prepare("UPDATE announcements SET reminded_at = ? WHERE id = ?")
+      .bind(now, id)
+      .run();
+    await bumpConfigVersion(c.env, "banner");
+    return c.json({ success: true, pendingCount: roster.length, scope, departmentId: null });
   }
-  await c.env.DB.prepare(
-    "UPDATE announcements SET reminded_at = ? WHERE id = ?",
-  )
-    .bind(new Date().toISOString(), id)
-    .run();
 
-  // The re-pop gate compares reminded_at vs each user's ack — every cached
+  // Un-acked people, optionally only one department's (the drawer's
+  // "Remind <Dept> pending", owner 2026-09-06).
+  const pending = roster.filter(
+    (u) => !ackedAtByUser.has(u.id) && (departmentId == null || u.departmentId === departmentId),
+  );
+  // Per-person rows carry the reminder (mig 20260906T0921): the banner re-pops
+  // for exactly these people and the drawer paints exactly them "reminded".
+  await recordReminders(c.env, id, pending.map((u) => u.id), c.get("user")?.id ?? null, now);
+  if (departmentId == null) {
+    // A whole-notice reminder keeps the notice-level stamp too, so a reader
+    // outside the roster snapshot (joined since) still sees the re-pop.
+    // company-scope: ONE notice by primary key, already scoped by getScopedAnnouncement (companyCanSee) above.
+    await c.env.DB.prepare("UPDATE announcements SET reminded_at = ? WHERE id = ?")
+      .bind(now, id)
+      .run();
+  }
+
+  // The re-pop gate compares the reminder vs each user's ack — every cached
   // banner is now stale, orphan them all.
   await bumpConfigVersion(c.env, "banner");
 
-  const pendingCount = scope === "all" ? rosterIds.length : unackedCount;
-  return c.json({ success: true, pendingCount, scope });
+  return c.json({ success: true, pendingCount: pending.length, scope, departmentId });
 });
 
 // ============================================================

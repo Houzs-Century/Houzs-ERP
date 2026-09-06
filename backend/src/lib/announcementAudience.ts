@@ -196,8 +196,14 @@ export type PendingStateRow = {
   scheduledAt?: string | null;
   scheduled_at?: string | null;
 };
-export function pendingState(ann: PendingStateRow, now = Date.now()): PendingState {
-  const remindedAt = ann.remindedAt ?? ann.reminded_at ?? null;
+export function pendingState(
+  ann: PendingStateRow,
+  now = Date.now(),
+  personRemindedAt: string | null = null,
+): PendingState {
+  // Reminded = the whole notice was reminded (announcements.reminded_at) OR
+  // this person was (announcement_reminders, mig 20260906T0921).
+  const remindedAt = laterOf(ann.remindedAt ?? ann.reminded_at ?? null, personRemindedAt);
   if (remindedAt && !Number.isNaN(Date.parse(remindedAt))) return "reminded";
   const t = liveSinceMs(ann);
   if (!Number.isNaN(t) && now - t > ACK_OVERDUE_HOURS * 3_600_000) return "overdue";
@@ -215,6 +221,114 @@ export function liveSinceMs(ann: PendingStateRow): number {
   if (Number.isNaN(c)) return s;
   if (Number.isNaN(s)) return c;
   return Math.max(c, s);
+}
+
+/** The later of two ISO instants; null when neither parses. */
+export function laterOf(a: string | null | undefined, b: string | null | undefined): string | null {
+  const ta = a ? Date.parse(a) : NaN;
+  const tb = b ? Date.parse(b) : NaN;
+  if (Number.isNaN(ta)) return Number.isNaN(tb) ? null : (b ?? null);
+  if (Number.isNaN(tb)) return a ?? null;
+  return ta >= tb ? (a ?? null) : (b ?? null);
+}
+
+// ── Per-person reminders (mig 20260906T0921). Every reader tolerates the
+// table being absent (pre-migration window, older D1 mirrors): no rows.
+
+/** ONE notice → user id → reminded_at. */
+export async function loadReminderMap(env: Env, id: string): Promise<Map<number, string>> {
+  const out = new Map<number, string>();
+  try {
+    // company-scope: reminders for ONE notice the caller already passed getScopedAnnouncement for; no company dimension of their own.
+    const res = await env.DB.prepare(
+      "SELECT user_id, reminded_at FROM announcement_reminders WHERE announcement_id = ?",
+    )
+      .bind(id)
+      .all<{ user_id?: number; userId?: number; reminded_at?: string | null; remindedAt?: string | null }>();
+    for (const r of res.results) {
+      const uid = r.userId ?? r.user_id;
+      const at = r.remindedAt ?? r.reminded_at ?? null;
+      if (uid != null && at) out.set(uid, at);
+    }
+  } catch {
+    /* no reminders table yet */
+  }
+  return out;
+}
+
+/** ONE reader → notice id → reminded_at (the banner's re-pop input). */
+export async function loadUserReminders(env: Env, userId: number): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  try {
+    // company-scope: keyed on the caller's own user_id; the notice side is gated by companyCanSee / userCanSee where it is read.
+    const res = await env.DB.prepare(
+      "SELECT announcement_id, reminded_at FROM announcement_reminders WHERE user_id = ?",
+    )
+      .bind(userId)
+      .all<{ announcement_id?: string; announcementId?: string; reminded_at?: string | null; remindedAt?: string | null }>();
+    for (const r of res.results) {
+      const id = r.announcementId ?? r.announcement_id;
+      const at = r.remindedAt ?? r.reminded_at ?? null;
+      if (id && at) out.set(id, at);
+    }
+  } catch {
+    /* no reminders table yet */
+  }
+  return out;
+}
+
+/** Every reminder → notice id → (user id → reminded_at), for the team card. */
+export async function loadAllReminders(env: Env): Promise<Map<string, Map<number, string>>> {
+  const out = new Map<string, Map<number, string>>();
+  try {
+    // company-scope: a lookup map consulted only for (notice, report) pairs the caller has already filtered through userCanSee / inTargetCompanies; never returned raw.
+    const res = await env.DB.prepare(
+      "SELECT announcement_id, user_id, reminded_at FROM announcement_reminders",
+    ).all<{ announcement_id?: string; announcementId?: string; user_id?: number; userId?: number; reminded_at?: string | null; remindedAt?: string | null }>();
+    for (const r of res.results) {
+      const id = r.announcementId ?? r.announcement_id;
+      const uid = r.userId ?? r.user_id;
+      const at = r.remindedAt ?? r.reminded_at ?? null;
+      if (!id || uid == null || !at) continue;
+      let m = out.get(id);
+      if (!m) {
+        m = new Map<number, string>();
+        out.set(id, m);
+      }
+      m.set(uid, at);
+    }
+  } catch {
+    /* no reminders table yet */
+  }
+  return out;
+}
+
+/** Upsert one reminder row per person (latest instant wins). Returns how many
+ *  rows were written; 0 with a warning when the table is not there yet. */
+export async function recordReminders(
+  env: Env,
+  announcementId: string,
+  userIds: number[],
+  remindedBy: number | null,
+  at = new Date().toISOString(),
+): Promise<number> {
+  let n = 0;
+  for (const uid of userIds) {
+    try {
+      await env.DB.prepare(
+        `INSERT INTO announcement_reminders (announcement_id, user_id, reminded_at, reminded_by)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT (announcement_id, user_id) DO UPDATE SET reminded_at = excluded.reminded_at, reminded_by = excluded.reminded_by`,
+      )
+        .bind(announcementId, uid, at, remindedBy)
+        .run();
+      n += 1;
+    } catch (e) {
+      console.error("[announcements] reminder row not recorded:", (e as Error).message);
+      break;
+    }
+  }
+  return n;
 }
 
 /** Overdue = live for longer than the window and not yet acknowledged. */
