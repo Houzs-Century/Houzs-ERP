@@ -6,7 +6,7 @@ import { useQuery } from "../hooks/useQuery";
 import { useAuth } from "../auth/AuthContext";
 import { Button } from "../components/Button";
 import { Badge } from "../components/Badge";
-import { AnnouncementBannerStack, TeamPendingCard } from "../components/AnnouncementDashboard";
+import { AckTrendCard, AnnouncementBannerStack, TeamPendingCard } from "../components/AnnouncementDashboard";
 import { cn } from "../lib/utils";
 import { fmtDate } from "../vendor/shared/format";
 
@@ -149,7 +149,12 @@ export function Overview() {
           a user with direct reports. Both read the announcements feed the
           modal reads, so an acknowledgement here settles everywhere. */}
       <AnnouncementBannerStack />
-      <TeamPendingCard />
+      {/* Two-up panel row (handoff screen 5): the supervisor card and the
+          announcer's ack-rate chart; each renders only for its audience. */}
+      <div className="grid gap-3.5 lg:grid-cols-2">
+        <TeamPendingCard />
+        <AckTrendCard />
+      </div>
 
       {/* ── KPI ribbon ──────────────────────────────────────────── */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
