@@ -56,13 +56,19 @@ export function isoToDmy(iso: string | null | undefined): string {
 }
 
 /** "31/05/2026" → "2026-05-31". Returns null if not a real calendar date.
- *  Tolerates 1–2 digit day/month and `-`/`.` separators. */
+ *  Tolerates 1–2 digit day/month and `-`/`.` separators — and the digits
+ *  typed straight through with no separator at all (31052026 / 310526),
+ *  read day-first like the display: the owner types 06092026 and got a
+ *  field that never accepted it (2026-09-06: 日期那边我要输入时会变这样). */
 export function parseDmy(text: string): string | null {
-  const m = /^(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{4})$/.exec(text.trim());
+  const t = text.trim();
+  const compact = /^(\d{2})(\d{2})(\d{4}|\d{2})$/.exec(t);
+  const spaced = compact ? null : /^(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{4})$/.exec(t);
+  const m = compact ?? spaced;
   if (!m) return null;
   const dd = Number(m[1]);
   const mm = Number(m[2]);
-  const yyyy = Number(m[3]);
+  const yyyy = Number(String(m[3]).length === 2 ? `20${m[3]}` : m[3]);
   if (mm < 1 || mm > 12 || dd < 1 || dd > 31) return null;
   // Reject overflow (e.g. 31/02) by round-tripping through a UTC date.
   const dt = new Date(Date.UTC(yyyy, mm - 1, dd));

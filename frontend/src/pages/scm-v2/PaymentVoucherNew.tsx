@@ -742,10 +742,16 @@ export const PaymentVoucherNew = () => {
               </p>
             ) : piListQ.isLoading ? (
               <p style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-13)' }}>Loading outstanding invoices…</p>
-            ) : allocations.length === 0 ? (
-              <p style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-13)' }}>This supplier has no outstanding purchase invoices.</p>
             ) : (
               <>
+                {/* No open invoice is NOT a dead end: the prepay box below
+                    still books the money as this supplier's advance. It used
+                    to hide behind this empty-list sentence — exactly when a
+                    prepay is the whole point (owner 2026-09-06: AP payment 时
+                    如何 advance pay). */}
+                {allocations.length === 0 ? (
+                  <p style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-13)' }}>This supplier has no outstanding purchase invoices — a prepay below still books as their advance.</p>
+                ) : (
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
                   <thead>
                     <tr style={{ textAlign: 'left', color: 'var(--fg-muted)', fontSize: 'var(--fs-11)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
@@ -791,6 +797,7 @@ export const PaymentVoucherNew = () => {
                     ))}
                   </tbody>
                 </table>
+                )}
                 {/* 预付 — money for this supplier AHEAD of any invoice. Rides
                     the same voucher; the server records it as their advance,
                     knocked off later from the voucher that holds it. */}
