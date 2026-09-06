@@ -213,6 +213,30 @@ the receipts and other-debtors lists; the PV keys gate the writes. Pinned by
 ApInvoices.test.tsx (filter + print what is shown, line order + remove, the
 description on list and detail).
 
+**Round 3 (owner, the same night; each ask checked on the live page first).**
+A bill OPENS OVER the list in `frontend/src/vendor/scm/components/Modal.tsx`
+(点开时他是跑上去 — the detail used to be a card pushed in above the list) with
+Edit · Copy · Post · Cancel bill and its Files card; the one form behind New,
+Edit and Copy is `frontend/src/pages/scm-v2/ApInvoiceForm.tsx` (Insert adds
+a line and lands on its account picker, Enter on an amount moves down; the
+amount is the shared `MoneyInput`; the scan sits on New and Copy). **Every
+field can be edited** (edit 这个不能全部都设成可以改吗): `PATCH /:id` takes a
+DRAFT as before and RE-POSTS a posted bill — the old journal gets its contra
+dated as the old bill was, a fresh entry books the bill as saved, one active
+entry stands — with three guards: money already paid caps the new total
+(`total_below_paid`), a bill with money on it keeps its supplier
+(`supplier_locked`), a cancelled bill refuses. **Copy** raises a new bill from
+the old one's supplier, description and lines (no supplier number, today's
+date). Three shared components moved for this round and for every page
+that uses them: `frontend/src/vendor/scm/components/SearchCombo.tsx` scrolls
+the highlighted option into view as ↓ moves and opens ON the first option;
+`frontend/src/vendor/scm/components/DateField.tsx` selects a pre-filled date
+on focus and masks typed digits (31032026 → 31/03/2026, `maskDmy`);
+`frontend/src/vendor/scm/components/MoneyInput.tsx` rests as 1,800.00
+(`fmtMoneyAtRest`) and edits plain. Pinned by `backend/tests/apInvoiceEdit.test.ts`,
+ApInvoices.test.tsx (pop-out, Edit, Copy, Insert / Enter, amounts),
+`SearchCombo.keys.test.tsx`, `DateField.mask.test.tsx`, `MoneyInput.test.tsx`.
+
 **The AutoCount sections (2026-09-06).** Every account carries a `section`
 (`scm.accounts.section`, migration 20260906T0900) — the top node the
 accountant's chart hangs it under: CAPITAL, RETAINED EARNING, FIXED ASSETS,
