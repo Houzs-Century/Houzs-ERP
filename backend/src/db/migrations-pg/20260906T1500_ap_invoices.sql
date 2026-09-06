@@ -1,5 +1,6 @@
 -- 20260906T1500_ap_invoices.sql
 -- REVERSAL: DROP VIEW IF EXISTS scm.v_ap_aging; then recreate the pre-existing view verbatim from 0305_money_centi_to_sen.sql:397 (purchase_invoices only); DROP FUNCTION IF EXISTS scm.settle_api_paid_sen(uuid, bigint); ALTER TABLE scm.pv_allocations DROP CONSTRAINT IF EXISTS pv_allocations_one_target; ALTER TABLE scm.pv_allocations DROP CONSTRAINT IF EXISTS pv_allocations_ap_invoice_id_fk; ALTER TABLE scm.pv_allocations DROP COLUMN IF EXISTS ap_invoice_id; ALTER TABLE scm.pv_allocations ALTER COLUMN pi_id SET NOT NULL; DROP TABLE IF EXISTS scm.ap_invoice_lines; DROP TABLE IF EXISTS scm.ap_invoices;
+--   GRANTS: scm.v_ap_aging carries NO explicit role grants to re-apply — like 0305's eleven recreated views, service_role reads it through the scm schema's default privileges (verified 2026-09-06 on prod AND staging: information_schema.role_table_grants is empty for v_ap_aging, v_ar_aging and v_gl_entries alike). The DROP below therefore discards no ACL, and the reverse re-grants nothing — re-check the same query before running it.
 --
 -- WHAT THIS CHANGES, and why it is safe to run against production:
 --   Two new empty tables, one new function, one nullable column + a CHECK on
