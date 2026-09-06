@@ -50,6 +50,13 @@ screen down to the database. Same structure as
 > a tick-all per group, has a search box, wraps names, and lets a person be
 > **unticked under a selected department** — resolved client-side at post
 > time (see §1 "Desktop composer modal"). No schema change.
+> **2026-09-06 (division targeting, owner: "按 Division 选择为主"):** mig
+> `backend/src/db/migrations-pg/20260906T0639_announcement_target_divisions_excluded_users.sql`
+> adds `target_divisions` ({deptId, division} pairs, matched at read time
+> against the reader's primary department + `users.division`) and
+> `excluded_user_ids` (server-side untick). The Dept column is a tree of
+> departments → divisions; the 2026-09-05 client-side expansion is gone.
+> §1 composer row, §3 "Division targets" and §4 carry the contract.
 
 > Convention: the row is one table, `public.announcements`. Timestamps are
 > stored as **ISO text**, `is_active` is an **integer 0/1** (not boolean), and
@@ -101,7 +108,7 @@ system notices never clutter the office composer list.
 | Desktop page shell (mode toggle, fetches, composer) | `frontend/src/pages/Announcements.tsx` | `Announcements()`; `canWrite` gates the Reading/Manage toggle, the composer CTA, Export receipts and every manage action. Reads the SAME `useAnnouncementBanner` hook the modal reads, so "addressed to me / acked / pending" can never differ between the page and the pop-up |
 | Reading mode (inbox) | `frontend/src/pages/announcements/InboxView.tsx` | List column (396px by design, drag-resizable 260–640px, remembered per user; rows wrap, never scroll sideways — owner 2026-09-05) — pinned *Needs your confirmation*, *Recent* with Confirmed/Unread pills, *SOP Library* grouped by department — beside the reading pane with the writer-only read-receipts card and the sticky acknowledge bar. Presentational; grouping is `bucketInbox()` in `announcementModel.ts` |
 | Manage mode | `frontend/src/pages/announcements/ManageView.tsx` | 4-up stat strip, the ack-rate table (`GET /ack-summary`), the drawer's *By department* buckets and per-person state pills (`GET /:id/acks`), *Remind pending* and *Notify their supervisors* (`POST /:id/escalate`) |
-| Desktop composer modal | `frontend/src/pages/announcements/ComposerModal.tsx` + `AudiencePicker.tsx` | 1280px card (audience panel 520px, owner 2026-09-05): category pills, **Require acknowledgement** (defaults on for WARNING / SOP), title, the shared `AnnouncementRichEditor`, attachment strip, **Schedule** (`scheduledAt`) and Hide after (hidden for SOP — it never expires), Preview, and the three-column audience (Company · Dept / Role · People). Audience maps 1:1 onto the existing targets: departments → `targetDeptIds`, people → `targetUserIds`, company → `targetCompanyIds`, **All staff** → no target (an explicit choice — an empty picker refuses to post, never broadcasts). Position targeting is no longer offered on desktop (owner 2026-09-05; the phone composer still has it). **Unticking (2026-09-05):** the backend has no exclusion list, so a person unticked under a selected department is kept in `audience.excludedUserIds` and `buildPostBody(draft, salesDirOnly, users)` expands that department into its remaining members and sends `targetUserIds` only (the summary says "N unticked" and the footer note states that someone who joins the department later is not added); with nothing unticked the plain department / people mapping is unchanged. The People column groups by `users.division` (`groupByDivision`, unnamed last) with a tick-all row per group and a search box (`personMatches`: name / email / position / division). The draft autosaves per user to `localStorage["announcements:draft:u<id>"]` ("Draft saved HH:mm") and is cleared on post. `buildPostBody()` is the pure request builder, pinned by `ComposerModal.test.tsx` |
+| Desktop composer modal | `frontend/src/pages/announcements/ComposerModal.tsx` + `AudiencePicker.tsx` | 1280px card (audience panel 520px, owner 2026-09-05): category pills, **Require acknowledgement** (defaults on for WARNING / SOP), title, the shared `AnnouncementRichEditor`, attachment strip, **Schedule** (`scheduledAt`) and Hide after (hidden for SOP — it never expires), Preview, and the three-column audience (Company · Dept / Role · People). Audience maps 1:1 onto the existing targets: departments → `targetDeptIds`, people → `targetUserIds`, company → `targetCompanyIds`, **All staff** → no target (an explicit choice — an empty picker refuses to post, never broadcasts). Position targeting is no longer offered on desktop (owner 2026-09-05; the phone composer still has it). **Divisions + unticking (2026-09-06):** the Dept column is a tree — each department row expands to its divisions (`divisionsOf`: the distinct `users.division` values among its members); a division row is a target of its own (`audience.divisions` → `targetDivisions`), ticking the department implies every division (rows shown ticked + disabled, not re-sent). A person reached through a department or division can be unticked (`audience.excludedUserIds` → `excludedUserIds`, pruned to the ids a selected group still reaches); an explicit person outside any group is `targetUserIds`. Nothing is expanded client-side: recipients resolve at read time, so a new member of a targeted department / division is included. `buildPostBody(draft, salesDirOnly, users)` refuses an audience with no department, division or person. The People column groups by `users.division` (`groupByDivision`, unnamed last) with a tick-all row per group and a search box (`personMatches`: name / email / position / division). The draft autosaves per user to `localStorage["announcements:draft:u<id>"]` ("Draft saved HH:mm") and is cleared on post. `buildPostBody()` is the pure request builder, pinned by `ComposerModal.test.tsx` |
 | **Desktop pop-up** | `frontend/src/components/AnnouncementBanner.tsx` | mounted **once**, at the app root: `frontend/src/App.tsx:353` |
 | **Phone pop-up** | `frontend/src/mobile/MobileAnnouncementPopup.tsx` | mounted above the tab shell AND above any overlay: `frontend/src/mobile/MobileApp.tsx:600-604` |
 | Shared pop-up logic | `frontend/src/components/useAnnouncementBanner.ts` | the feed read, the ack, the dismiss rules — **both** shells consume it |
@@ -396,6 +403,21 @@ all filtering happens in JS in the Worker (`:543-547`, `:628-630`).
   degrades to plain rather than to garbage. Pinned by
   `tests/announcementsRichBody.test.ts`, `tests/announcementRichText.test.ts`
   and `tests/translateAnnouncementRich.test.ts`.
+- **Division targets + exclusions (2026-09-06)** — `readDivisionTargets()` /
+  `rowDivisions()` / `rowExcluded()` next to `readIntArray()`. POST and
+  PATCH accept `targetDivisions` (`[{deptId, division}]`, invalid entries
+  dropped, case-insensitive duplicates collapsed) and `excludedUserIds`;
+  PATCH treats either key as a retarget (all six target columns rewritten
+  together, missing buckets keep the row's value). `userCanSee()` gained a
+  fifth argument, the reader's `users.division`: the exclusion list is
+  checked FIRST, then the division bucket matches primary department +
+  division text. The auth user carries no division, so the list / banner /
+  attachment-serve gates call `callerDivision()` (one PK lookup, fail-safe
+  to null = never widens an audience); the roster (`loadRoster`) selects
+  `u.division` so receipts / ack-summary / team-pending count divisions. A
+  Sales Director may only target divisions of their own department. A user
+  PATCH that changes `division` busts that user's banner cache
+  (`bustBannerForUser`). Pinned by `tests/announcementsDivisionTargeting.test.ts`.
 - **Sales Director restriction** — `salesDirectorScope()` `:412-425`,
   `enforceSalesDirectorScope()` `:431-497`. A Sales Director may address only
   their own Sales department as a whole, or named people inside it. Position
@@ -495,6 +517,8 @@ Columns that matter:
 | `target_type` | text | CHECK ∈ `ALL_USERS`/`DEPARTMENT_IDS`/`POSITION_IDS`/`USER_IDS`/`MIXED` |
 | `target_dept_ids`, `target_position_ids`, `target_user_ids` | text | JSON integer arrays |
 | `target_company_ids` | text | JSON integer array; NULL/empty = all companies |
+| `target_divisions` | text | JSON array of `{deptId, division}` (mig `20260906T0639_announcement_target_divisions_excluded_users.sql`); a reader matches when their primary `department_id` = deptId and `users.division` equals the text case-insensitively. Counts as the DEPARTMENT bucket of `target_type` (CHECK untouched). `toPublic` emits `targetDivisions`; `withNames` adds `targetDivisionNames` ("Operation › Driver Team") |
+| `excluded_user_ids` | text | JSON integer array (same migration); an id here never sees the notice, whatever else targets them — checked first in `userCanSee`. `toPublic` emits `excludedUserIds` |
 | `category` | text | CHECK ∈ `GENERAL`/`WARNING`/`SOP`/`LEARNING` — this is the closest thing to a priority; there is **no** `priority` column |
 | `source` | text | NULL = human, `'scan'`/`'service_case'` = system |
 | `company_id` | bigint NOT NULL | **authoring** company; no longer the visibility gate (that is `target_company_ids`) |

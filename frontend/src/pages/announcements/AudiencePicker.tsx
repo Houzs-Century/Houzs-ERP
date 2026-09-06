@@ -1,30 +1,33 @@
-import { useMemo, useState } from "react";
-import { Check, Minus, Search } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Check, ChevronDown, ChevronRight, Minus, Search } from "lucide-react";
 import { cn } from "../../lib/utils";
 import type { Department, TeamMember } from "../../types";
-import type { Company } from "./announcementModel";
+import type { Company, DivisionTarget } from "./announcementModel";
 
 // ────────────────────────────────────────────────────────────────────────────
 // AudiencePicker — the composer's three-column audience (design handoff
-// 2026-09-04, screen 4): Company (single-select) · Dept / Role (checkbox rows
-// that also focus column three) · People · <Dept> (checkbox rows).
+// 2026-09-04, screen 4): Company (single-select) · Dept / Role · People.
 //
-// Owner feedback 2026-09-05 (first day on prod):
-//   · people are grouped by DIVISION (users.division, mig 0021 — the same
-//     free-text sub-grouping the org chart uses), each group with its own
-//     tick-all box;
-//   · a search box filters the people column by name / position / division;
-//   · a person under a SELECTED department can be UNTICKED. The backend has
-//     no exclusion list, so an untick is recorded here (`excludedUserIds`)
-//     and resolved at post time by buildPostBody(): a department with
-//     unticked people is expanded into its remaining members and sent as
-//     targetUserIds. The trade-off — someone who joins that department after
-//     posting is not added automatically — is stated in the summary line.
-//   · names and department names wrap instead of truncating.
+// Owner decisions, 2026-09-05/06:
+//   · DIVISION is the main unit of targeting ("按 Division 选择为主"): a
+//     department such as Operation holds several divisions (users.division,
+//     mig 0021 — the org chart's columns). The Dept column is a tree —
+//     department rows with their divisions underneath — and each division is
+//     a target of its own (`divisions`, stored server-side as
+//     target_divisions, mig 20260906T0639, resolved at read time so someone
+//     who joins the division later is in). Ticking the whole department
+//     implies every division.
+//   · The People column lists the focused department grouped by division;
+//     a group's tick-all IS that division's target; a person reached through
+//     a department / division can be UNTICKED (`excludedUserIds`, stored as
+//     excluded_user_ids — the server leaves them out, whatever else targets
+//     them). A person outside any selected group is an explicit pick.
+//   · A search box filters the people column; names wrap, never truncate.
 //
-// What it produces maps onto the backend's existing targeting exactly:
-// departments → targetDeptIds, people → targetUserIds (MIXED when both),
-// company → targetCompanyIds, and "All staff" → no target at all (ALL_USERS).
+// What it produces maps onto the backend's targeting exactly:
+// departments → targetDeptIds, divisions → targetDivisions, people →
+// targetUserIds, unticked → excludedUserIds, company → targetCompanyIds, and
+// "All staff" → no target at all (ALL_USERS).
 // ────────────────────────────────────────────────────────────────────────────
 
 export type AudienceValue = {
@@ -33,8 +36,10 @@ export type AudienceValue = {
   /** Explicit broadcast. Nothing else is read while it is on. */
   allStaff: boolean;
   deptIds: number[];
+  /** Divisions targeted on their own (a selected department implies its divisions). */
+  divisions: DivisionTarget[];
   userIds: number[];
-  /** People unticked under a selected department (see header). */
+  /** People unticked under a selected department / division (see header). */
   excludedUserIds: number[];
 };
 
@@ -42,6 +47,7 @@ export const EMPTY_AUDIENCE: AudienceValue = {
   companyId: null,
   allStaff: false,
   deptIds: [],
+  divisions: [],
   userIds: [],
   excludedUserIds: [],
 };
@@ -71,28 +77,53 @@ export function membersOf(users: TeamMember[], deptId: number | null): TeamMembe
   );
 }
 
-/** Excluded ids that still matter: members of a selected department. */
-export function activeExclusions(v: AudienceValue, users: TeamMember[]): number[] {
-  if (v.allStaff || v.excludedUserIds.length === 0 || v.deptIds.length === 0) return [];
-  const members = new Set<number>();
-  for (const id of v.deptIds) for (const u of membersOf(users, id)) members.add(u.id);
-  return v.excludedUserIds.filter((id) => members.has(id));
+/** Division label for grouping; "" = the department's own (unnamed) group. */
+function divisionOf(u: TeamMember): string {
+  return (u.division ?? "").trim();
 }
 
-/**
- * The people a selection reaches, resolved on the client. Only used when
- * something was unticked: the backend then receives this list instead of the
- * department ids.
- */
-export function resolveRecipients(v: AudienceValue, users: TeamMember[]): number[] {
+function sameDivision(a: string, b: string): boolean {
+  return a.trim().toLowerCase() === b.trim().toLowerCase();
+}
+
+export function hasDivision(list: DivisionTarget[], deptId: number, division: string): boolean {
+  return list.some((d) => d.deptId === deptId && sameDivision(d.division, division));
+}
+
+/** The distinct division names inside a department, A→Z (from its members). */
+export function divisionsOf(users: TeamMember[], deptId: number): string[] {
+  const seen = new Map<string, string>();
+  for (const u of membersOf(users, deptId)) {
+    const d = divisionOf(u);
+    if (d && !seen.has(d.toLowerCase())) seen.set(d.toLowerCase(), d);
+  }
+  return [...seen.values()].sort((a, b) => a.localeCompare(b));
+}
+
+/** Members of one division of a department (primary department only — that
+ *  is how the server matches a division target). */
+export function membersOfDivision(users: TeamMember[], deptId: number, division: string): TeamMember[] {
+  return users.filter(
+    (u) => u.status === "active" && u.department_id === deptId && sameDivision(divisionOf(u), division),
+  );
+}
+
+/** Everyone a selection reaches through a department or division target. */
+function reachedByGroups(v: AudienceValue, users: TeamMember[]): Set<number> {
   const out = new Set<number>();
   for (const id of v.deptIds) for (const u of membersOf(users, id)) out.add(u.id);
-  for (const id of v.userIds) out.add(id);
-  for (const id of v.excludedUserIds) out.delete(id);
-  return [...out];
+  for (const d of v.divisions) for (const u of membersOfDivision(users, d.deptId, d.division)) out.add(u.id);
+  return out;
 }
 
-/** Live summary line: "Warehouse + Operation · 2 unticked · Houzs Century". */
+/** Excluded ids that still matter: people a selected department / division reaches. */
+export function activeExclusions(v: AudienceValue, users: TeamMember[]): number[] {
+  if (v.allStaff || v.excludedUserIds.length === 0) return [];
+  const reached = reachedByGroups(v, users);
+  return v.excludedUserIds.filter((id) => reached.has(id));
+}
+
+/** Live summary line: "Operation › Driver Team + Sales · 2 unticked · Houzs Century". */
 export function audienceSummary(
   v: AudienceValue,
   companies: Company[],
@@ -105,15 +136,22 @@ export function audienceSummary(
         ? "All companies"
         : ""
       : companies.find((c) => c.id === v.companyId)?.name ?? `Company #${v.companyId}`;
+  const deptName = (id: number) => departments.find((d) => d.id === id)?.name ?? `Dept #${id}`;
   let who: string;
   if (v.allStaff) who = "All staff";
   else {
     const parts: string[] = [];
-    if (v.deptIds.length) {
-      parts.push(
-        v.deptIds.map((id) => departments.find((d) => d.id === id)?.name ?? `Dept #${id}`).join(" + "),
-      );
+    // Divisions of one department read as "Operation › Driver Team + Attendant KL".
+    const byDept = new Map<number, string[]>();
+    for (const d of v.divisions) {
+      if (v.deptIds.includes(d.deptId)) continue;
+      byDept.set(d.deptId, [...(byDept.get(d.deptId) ?? []), d.division]);
     }
+    const groups = [
+      ...v.deptIds.map(deptName),
+      ...[...byDept.entries()].map(([id, divs]) => `${deptName(id)} › ${divs.join(" + ")}`),
+    ];
+    if (groups.length) parts.push(groups.join(" + "));
     const explicit = v.userIds.filter((id) => !v.excludedUserIds.includes(id));
     if (explicit.length) {
       const names = explicit.map((id) => {
@@ -127,11 +165,6 @@ export function audienceSummary(
     who = parts.length ? parts.join(" · ") : "No recipients yet";
   }
   return company ? `${who} · ${company}` : who;
-}
-
-/** Division label for grouping; "" = the department's own (unnamed) group. */
-function divisionOf(u: TeamMember): string {
-  return (u.division ?? "").trim();
 }
 
 export type DivisionGroup = { division: string; members: TeamMember[] };
@@ -189,6 +222,12 @@ export function AudiencePicker(p: AudiencePickerProps) {
       : firstDeptId;
   const focusDept = p.departments.find((d) => d.id === focusId) ?? null;
   const [query, setQuery] = useState("");
+  const [open, setOpen] = useState<Set<number>>(() => new Set(focusId != null ? [focusId] : []));
+  // The focused department's tree is always open.
+  useEffect(() => {
+    if (focusId == null) return;
+    setOpen((prev) => (prev.has(focusId) ? prev : new Set([...prev, focusId])));
+  }, [focusId]);
   const people = useMemo(() => membersOf(p.users, focusId), [p.users, focusId]);
   const groups = useMemo(
     () => groupByDivision(people.filter((u) => personMatches(u, query))),
@@ -198,50 +237,49 @@ export function AudiencePicker(p: AudiencePickerProps) {
   const showCompany = !p.salesDirOnly && p.companies.length > 1;
   const locked = p.disabled === true;
   const deptOff = p.value.allStaff;
-  const focusSelected = focusId != null && p.value.deptIds.includes(focusId);
+  const reached = useMemo(() => reachedByGroups(p.value, p.users), [p.value, p.users]);
 
   const set = (patch: Partial<AudienceValue>) => p.onChange({ ...p.value, ...patch });
+  /** Exclusions that no selected group reaches any more are forgotten. */
+  const pruneExclusions = (next: AudienceValue): AudienceValue => {
+    const r = reachedByGroups(next, p.users);
+    return { ...next, excludedUserIds: next.excludedUserIds.filter((id) => r.has(id)) };
+  };
   const toggleDept = (id: number) => {
     const on = p.value.deptIds.includes(id);
-    if (on) {
-      // Unticking a department forgets the people unticked under it (unless
-      // another selected department still reaches them).
-      const remaining = p.value.deptIds.filter((x) => x !== id);
-      const stillReached = new Set<number>();
-      for (const d of remaining) for (const u of membersOf(p.users, d)) stillReached.add(u.id);
-      set({
-        deptIds: remaining,
-        excludedUserIds: p.value.excludedUserIds.filter((x) => stillReached.has(x)),
-      });
-    } else {
-      set({ deptIds: [...p.value.deptIds, id] });
-    }
+    const next = { ...p.value, deptIds: on ? p.value.deptIds.filter((x) => x !== id) : [...p.value.deptIds, id] };
+    p.onChange(pruneExclusions(next));
     p.onFocusDept(id);
   };
+  const toggleDivision = (deptId: number, division: string) => {
+    const on = hasDivision(p.value.divisions, deptId, division);
+    const next = {
+      ...p.value,
+      divisions: on
+        ? p.value.divisions.filter((d) => !(d.deptId === deptId && sameDivision(d.division, division)))
+        : [...p.value.divisions, { deptId, division }],
+    };
+    p.onChange(pruneExclusions(next));
+    p.onFocusDept(deptId);
+  };
   const isTicked = (id: number) =>
-    p.value.userIds.includes(id) || (focusSelected && !p.value.excludedUserIds.includes(id));
-  /** One click on a person: under a selected department it toggles the
-   *  exclusion; otherwise it toggles the explicit pick. */
+    p.value.userIds.includes(id) || (reached.has(id) && !p.value.excludedUserIds.includes(id));
+  /** One click on a person: reached through a group → toggle the exclusion;
+   *  otherwise → toggle the explicit pick. */
   const setPeople = (ids: number[], on: boolean) => {
-    if (focusSelected) {
-      const excluded = new Set(p.value.excludedUserIds);
-      const explicit = new Set(p.value.userIds);
-      for (const id of ids) {
+    const excluded = new Set(p.value.excludedUserIds);
+    const explicit = new Set(p.value.userIds);
+    for (const id of ids) {
+      if (reached.has(id)) {
         if (on) excluded.delete(id);
         else {
           excluded.add(id);
           explicit.delete(id);
         }
-      }
-      set({ excludedUserIds: [...excluded], userIds: [...explicit] });
-    } else {
-      const explicit = new Set(p.value.userIds);
-      for (const id of ids) {
-        if (on) explicit.add(id);
-        else explicit.delete(id);
-      }
-      set({ userIds: [...explicit] });
+      } else if (on) explicit.add(id);
+      else explicit.delete(id);
     }
+    set({ excludedUserIds: [...excluded], userIds: [...explicit] });
   };
   const togglePerson = (id: number) => setPeople([id], !isTicked(id));
 
@@ -250,8 +288,8 @@ export function AudiencePicker(p: AudiencePickerProps) {
       className={cn(
         "grid min-h-0 flex-1",
         showCompany
-          ? "grid-cols-[136px_176px_minmax(0,1fr)]"
-          : "grid-cols-[176px_minmax(0,1fr)]",
+          ? "grid-cols-[136px_200px_minmax(0,1fr)]"
+          : "grid-cols-[200px_minmax(0,1fr)]",
       )}
     >
       {showCompany && (
@@ -285,7 +323,7 @@ export function AudiencePicker(p: AudiencePickerProps) {
 
       <div className="flex min-h-0 flex-col overflow-auto border-r border-border">
         <div className={SUBHEAD}>
-          <span className={SUBHEAD_TEXT}>Dept / Role</span>
+          <span className={SUBHEAD_TEXT}>Dept / Division</span>
         </div>
         {!p.salesDirOnly && (
           <button
@@ -308,41 +346,97 @@ export function AudiencePicker(p: AudiencePickerProps) {
           p.departments.map((d) => {
             const on = p.value.deptIds.includes(d.id);
             const focused = d.id === focusId;
-            const unticked = on ? membersOf(p.users, d.id).filter((u) => p.value.excludedUserIds.includes(u.id)).length : 0;
+            const divisions = divisionsOf(p.users, d.id);
+            const ownDivisions = p.value.divisions.filter((x) => x.deptId === d.id).length;
+            const unticked = membersOf(p.users, d.id).filter(
+              (u) => reached.has(u.id) && p.value.excludedUserIds.includes(u.id),
+            ).length;
+            const some = !on && ownDivisions > 0;
+            const expanded = open.has(d.id);
             return (
-              <button
-                key={d.id}
-                type="button"
-                disabled={locked || deptOff}
-                onClick={() => toggleDept(d.id)}
-                aria-pressed={on}
-                className={cn(
-                  "flex items-start gap-1.5 border-b border-border-subtle px-[9px] py-2 text-left text-[11.5px] font-semibold leading-[1.3] disabled:opacity-50",
-                  focused && !deptOff
-                    ? "bg-primary-soft text-primary-ink"
-                    : "bg-surface text-ink-secondary hover:bg-surface-dim",
-                )}
-              >
-                <Box on={on && unticked === 0} some={on && unticked > 0} />
-                <span className="min-w-0 flex-1 break-words">
-                  {d.name}
-                  {unticked > 0 && (
-                    <span className="ml-1 font-mono text-[9.5px] font-bold text-warning-text">−{unticked}</span>
+              <div key={d.id} className="border-b border-border-subtle">
+                <div
+                  className={cn(
+                    "flex items-stretch",
+                    focused && !deptOff
+                      ? "bg-primary-soft text-primary-ink"
+                      : "bg-surface text-ink-secondary hover:bg-surface-dim",
                   )}
-                </span>
-                {!deptOff && (
-                  <span
-                    aria-hidden
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      p.onFocusDept(d.id);
-                    }}
-                    className="shrink-0 rounded px-1 text-[9.5px] font-bold uppercase text-ink-muted hover:text-ink"
+                >
+                  <button
+                    type="button"
+                    disabled={locked || deptOff}
+                    onClick={() => toggleDept(d.id)}
+                    aria-pressed={on}
+                    className="flex min-w-0 flex-1 items-start gap-1.5 px-[9px] py-2 text-left text-[11.5px] font-semibold leading-[1.3] disabled:opacity-50"
                   >
-                    people
-                  </span>
-                )}
-              </button>
+                    <Box on={on && unticked === 0} some={(on && unticked > 0) || some} />
+                    <span className="min-w-0 flex-1 break-words">
+                      {d.name}
+                      {unticked > 0 && (
+                        <span className="ml-1 font-mono text-[9.5px] font-bold text-warning-text">−{unticked}</span>
+                      )}
+                    </span>
+                    {!deptOff && (
+                      <span
+                        aria-hidden
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          p.onFocusDept(d.id);
+                        }}
+                        className="shrink-0 rounded px-1 text-[9.5px] font-bold uppercase text-ink-muted hover:text-ink"
+                      >
+                        people
+                      </span>
+                    )}
+                  </button>
+                  {divisions.length > 0 && (
+                    <button
+                      type="button"
+                      aria-label={`${expanded ? "Collapse" : "Expand"} ${d.name} divisions`}
+                      aria-expanded={expanded}
+                      onClick={() =>
+                        setOpen((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(d.id)) next.delete(d.id);
+                          else next.add(d.id);
+                          return next;
+                        })
+                      }
+                      className="shrink-0 px-1.5 text-ink-muted hover:text-ink"
+                    >
+                      {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                    </button>
+                  )}
+                </div>
+                {expanded &&
+                  divisions.map((division) => {
+                    const picked = hasDivision(p.value.divisions, d.id, division);
+                    const members = membersOfDivision(p.users, d.id, division);
+                    const divUnticked = members.filter((u) => p.value.excludedUserIds.includes(u.id)).length;
+                    const implied = on;
+                    const ticked = implied || picked;
+                    return (
+                      <button
+                        key={division}
+                        type="button"
+                        disabled={locked || deptOff || implied}
+                        onClick={() => toggleDivision(d.id, division)}
+                        aria-pressed={ticked}
+                        aria-label={`${d.name} › ${division}`}
+                        title={implied ? "Included — the whole department is selected" : undefined}
+                        className={cn(
+                          "flex w-full items-start gap-1.5 py-[6px] pl-[26px] pr-[9px] text-left text-[11px] font-semibold leading-[1.3] disabled:opacity-60",
+                          ticked ? "bg-primary-soft/60 text-primary-ink" : "bg-surface text-ink-secondary hover:bg-surface-dim",
+                        )}
+                      >
+                        <Box on={ticked && divUnticked === 0} some={ticked && divUnticked > 0} />
+                        <span className="min-w-0 flex-1 break-words">{division}</span>
+                        <span className="shrink-0 font-mono text-[9.5px] text-ink-muted">{members.length}</span>
+                      </button>
+                    );
+                  })}
+              </div>
             );
           })
         )}
@@ -375,19 +469,45 @@ export function AudiencePicker(p: AudiencePickerProps) {
           groups.map((g) => {
             const ids = g.members.map((u) => u.id);
             const tickedCount = ids.filter((id) => isTicked(id)).length;
+            const label = g.division || (hasDivisions ? "No division" : null);
+            const deptOn = focusId != null && p.value.deptIds.includes(focusId);
+            const divisionOn = focusId != null && g.division !== "" && hasDivision(p.value.divisions, focusId, g.division);
+            const groupOn = deptOff || deptOn || divisionOn;
             const allOn = deptOff || tickedCount === ids.length;
             const someOn = !deptOff && tickedCount > 0 && tickedCount < ids.length;
-            const label = g.division || (hasDivisions ? "No division" : null);
+            // A named division's tick-all IS the division target; the unnamed
+            // rest can only be picked person by person (explicit ids).
+            const onGroupClick = () => {
+              if (focusId == null) return;
+              if (g.division !== "") {
+                if (deptOn) return; // implied by the department
+                if (divisionOn && tickedCount < ids.length) {
+                  // Some were unticked: re-tick them all first.
+                  setPeople(ids, true);
+                  return;
+                }
+                toggleDivision(focusId, g.division);
+              } else {
+                setPeople(ids, !allOn);
+              }
+            };
             return (
               <div key={g.division || "__no-division"} className="shrink-0">
                 {label !== null && (
                   <button
                     type="button"
-                    disabled={locked || deptOff}
-                    onClick={() => setPeople(ids, !allOn)}
-                    aria-pressed={allOn}
+                    disabled={locked || deptOff || (g.division !== "" && deptOn)}
+                    onClick={onGroupClick}
+                    aria-pressed={groupOn || allOn}
                     aria-label={`${label} — everyone`}
-                    className="flex w-full items-center gap-1.5 border-b border-border bg-surface-dim px-[9px] py-[5px] text-left disabled:opacity-50"
+                    title={
+                      g.division !== "" && deptOn
+                        ? "Included — the whole department is selected"
+                        : g.division !== ""
+                          ? "Target this division (new members are included automatically)"
+                          : undefined
+                    }
+                    className="flex w-full items-center gap-1.5 border-b border-border bg-surface-dim px-[9px] py-[5px] text-left disabled:opacity-60"
                   >
                     <Box on={allOn} some={someOn} />
                     <span className="min-w-0 flex-1 break-words font-mono text-[9.5px] font-bold uppercase tracking-wider text-ink-secondary">
@@ -400,7 +520,8 @@ export function AudiencePicker(p: AudiencePickerProps) {
                 )}
                 {g.members.map((u) => {
                   const on = deptOff || isTicked(u.id);
-                  const excluded = focusSelected && p.value.excludedUserIds.includes(u.id);
+                  const viaGroup = reached.has(u.id);
+                  const excluded = viaGroup && p.value.excludedUserIds.includes(u.id);
                   return (
                     <button
                       key={u.id}
@@ -411,8 +532,8 @@ export function AudiencePicker(p: AudiencePickerProps) {
                       title={
                         excluded
                           ? "Unticked — will not receive this notice"
-                          : focusSelected
-                            ? "Included through the department · click to untick"
+                          : viaGroup
+                            ? "Included through the department / division · click to untick"
                             : undefined
                       }
                       className={cn(

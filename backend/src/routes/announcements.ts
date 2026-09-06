@@ -168,6 +168,16 @@ type AnnouncementRow = {
   // audience match. See userCompanyCanSee / the unified read paths below.
   target_company_ids?: string | number[] | null;
   targetCompanyIds?: string | number[] | null;
+  // Division targeting (mig 20260906T0639). JSON array of {deptId, division}
+  // — a division is the free-text users.division within ONE department, so
+  // the pair is the key. Counts as the DEPARTMENT bucket of target_type (a
+  // division is a slice of a department; the CHECK constraint is untouched).
+  target_divisions?: string | DivisionTarget[] | null;
+  targetDivisions?: string | DivisionTarget[] | null;
+  // People carved OUT of the audience (mig 20260906T0639). JSON integer array;
+  // an excluded id never sees the notice, whatever else targets them.
+  excluded_user_ids?: string | number[] | null;
+  excludedUserIds?: string | number[] | null;
   category?: string | null;
   source?: string | null;
   company_id?: number | null;
@@ -304,6 +314,50 @@ function normalizeAttachments(raw: unknown): AnnouncementAttachment[] {
   return out;
 }
 
+/** One targeted division: the department it sits in + the division text. */
+export type DivisionTarget = { deptId: number; division: string };
+
+/** Case-insensitive, whitespace-trimmed division equality. */
+function divisionEq(a: string | null | undefined, b: string | null | undefined): boolean {
+  const x = (a ?? "").trim().toLowerCase();
+  const y = (b ?? "").trim().toLowerCase();
+  return x.length > 0 && x === y;
+}
+
+/** Parse a stored / requested division list. Invalid entries are dropped,
+ *  duplicates (same dept, same division ignoring case) collapse to one. */
+export function readDivisionTargets(v: unknown): DivisionTarget[] {
+  let arr: unknown = v;
+  if (typeof v === "string") {
+    if (!v.trim()) return [];
+    try {
+      arr = JSON.parse(v);
+    } catch {
+      return [];
+    }
+  }
+  if (!Array.isArray(arr)) return [];
+  const out: DivisionTarget[] = [];
+  for (const item of arr) {
+    if (!item || typeof item !== "object") continue;
+    const o = item as { deptId?: unknown; dept_id?: unknown; division?: unknown };
+    const deptId = Number(o.deptId ?? o.dept_id);
+    const division = typeof o.division === "string" ? o.division.trim() : "";
+    if (!Number.isInteger(deptId) || deptId <= 0 || !division || division.length > 120) continue;
+    if (out.some((d) => d.deptId === deptId && divisionEq(d.division, division))) continue;
+    out.push({ deptId, division });
+  }
+  return out;
+}
+
+function rowDivisions(r: AnnouncementRow): DivisionTarget[] {
+  return readDivisionTargets(r.targetDivisions ?? r.target_divisions ?? null);
+}
+
+function rowExcluded(r: AnnouncementRow): number[] {
+  return readIntArray(r.excludedUserIds ?? r.excluded_user_ids ?? null);
+}
+
 function readTargetType(r: AnnouncementRow): TargetType {
   const t = String(r.targetType ?? r.target_type ?? "ALL_USERS").toUpperCase();
   if (
@@ -322,14 +376,18 @@ function deriveTargetType(
   deptIds: number[],
   positionIds: number[],
   userIds: number[],
+  divisions: DivisionTarget[] = [],
 ): TargetType {
+  // A division is a slice of a department, so it counts as the DEPARTMENT
+  // bucket — the target_type CHECK constraint keeps its five values.
+  const deptBucket = deptIds.length > 0 || divisions.length > 0;
   const buckets =
-    (deptIds.length > 0 ? 1 : 0) +
+    (deptBucket ? 1 : 0) +
     (positionIds.length > 0 ? 1 : 0) +
     (userIds.length > 0 ? 1 : 0);
   if (buckets === 0) return "ALL_USERS";
   if (buckets > 1) return "MIXED";
-  if (deptIds.length > 0) return "DEPARTMENT_IDS";
+  if (deptBucket) return "DEPARTMENT_IDS";
   if (positionIds.length > 0) return "POSITION_IDS";
   return "USER_IDS";
 }
@@ -378,6 +436,8 @@ function toPublic(r: AnnouncementRow) {
       r.targetPositionIds ?? r.target_position_ids ?? null,
     ),
     targetUserIds: readIntArray(r.targetUserIds ?? r.target_user_ids ?? null),
+    targetDivisions: rowDivisions(r),
+    excludedUserIds: rowExcluded(r),
     targetCompanyIds: readTargetCompanyIds(r),
     category: readCategory(r.category),
     requireAck: readRequireAck(r.requireAck ?? r.require_ack ?? null),
@@ -391,6 +451,8 @@ function toPublic(r: AnnouncementRow) {
 type PublicAnnouncement = ReturnType<typeof toPublic> & {
   createdByName?: string | null;
   targetDeptNames?: string[];
+  /** "Operation › Driver Team" per targetDivisions entry, same order. */
+  targetDivisionNames?: string[];
 };
 
 // Author and department NAMES for a batch of rows. Resolved here because a
@@ -410,6 +472,7 @@ async function withNames(
   for (const p of pub) {
     if (p.createdBy != null && Number.isInteger(p.createdBy)) authorIds.add(p.createdBy);
     for (const d of p.targetDeptIds) if (Number.isInteger(d)) deptIds.add(d);
+    for (const d of p.targetDivisions) deptIds.add(d.deptId);
   }
   const authorName = new Map<number, string>();
   const deptName = new Map<number, string>();
@@ -437,6 +500,11 @@ async function withNames(
     }
     if (p.targetDeptIds.length > 0) {
       p.targetDeptNames = p.targetDeptIds.map((id) => deptName.get(id) ?? `Dept #${id}`);
+    }
+    if (p.targetDivisions.length > 0) {
+      p.targetDivisionNames = p.targetDivisions.map(
+        (d) => `${deptName.get(d.deptId) ?? `Dept #${d.deptId}`} › ${d.division}`,
+      );
     }
   }
   return pub;
@@ -514,11 +582,22 @@ function userCanSee(
   userId: number,
   userDeptId: number | null,
   userPositionId: number | null,
+  userDivision: string | null = null,
 ): boolean {
+  // An unticked person is out, whatever else targets them (mig 20260906T0639).
+  if (rowExcluded(r).includes(userId)) return false;
   const type = readTargetType(r);
   if (type === "ALL_USERS") return true;
   const deptIds = readIntArray(r.targetDeptIds ?? r.target_dept_ids ?? null);
   if (userDeptId != null && deptIds.includes(userDeptId)) return true;
+  // A division target matches the user's PRIMARY department + their division
+  // text (users.division, mig 0021), case-insensitively.
+  if (userDeptId != null && userDivision) {
+    const divisions = rowDivisions(r);
+    if (divisions.some((d) => d.deptId === userDeptId && divisionEq(d.division, userDivision))) {
+      return true;
+    }
+  }
   const positionIds = readIntArray(
     r.targetPositionIds ?? r.target_position_ids ?? null,
   );
@@ -526,6 +605,24 @@ function userCanSee(
   const userIds = readIntArray(r.targetUserIds ?? r.target_user_ids ?? null);
   if (userIds.includes(userId)) return true;
   return false;
+}
+
+// The caller's division for the reader-side audience gates. AuthUser carries
+// department_id / position_id but not users.division (mig 0021), so the
+// list / banner / attachment gates look it up once per request. Missing table
+// or column (older D1 mirrors) = no division, which only ever HIDES a
+// division-targeted notice, never shows one.
+async function callerDivision(env: Env, userId: number): Promise<string | null> {
+  try {
+    // company-scope: the caller's OWN row by primary key; no company dimension.
+    const row = await env.DB.prepare("SELECT division FROM users WHERE id = ?")
+      .bind(userId)
+      .first<{ division?: string | null }>();
+    const v = (row?.division ?? "").trim();
+    return v || null;
+  } catch {
+    return null;
+  }
 }
 
 // ============================================================
@@ -572,6 +669,7 @@ async function enforceSalesDirectorScope(
     positionIds: number[];
     userIds: number[];
     companyIds: number[];
+    divisions?: DivisionTarget[];
   },
 ): Promise<
   | { ok: true; deptIds: number[]; userIds: number[] }
@@ -604,6 +702,12 @@ async function enforceSalesDirectorScope(
       error: "A Sales Director can only post to their own Sales department.",
     };
   }
+  if ((req.divisions ?? []).some((d) => d.deptId !== deptId)) {
+    return {
+      ok: false,
+      error: "A Sales Director can only post to divisions of their own Sales department.",
+    };
+  }
   if (req.userIds.length > 0) {
     const ph = req.userIds.map(() => "?").join(",");
     const rows = await c.env.DB.prepare(
@@ -626,7 +730,7 @@ async function enforceSalesDirectorScope(
     }
   }
   let deptIds = req.deptIds;
-  if (deptIds.length === 0 && req.userIds.length === 0) {
+  if (deptIds.length === 0 && req.userIds.length === 0 && (req.divisions ?? []).length === 0) {
     deptIds = [deptId];
   }
   return { ok: true, deptIds, userIds: req.userIds };
@@ -692,23 +796,27 @@ app.get("/", async (c) => {
   const visible = (res.results ?? []).filter((r) => companyCanSee(r, allowed));
   const rows = isManager
     ? visible
-    : visible.filter((r) => {
-        // A Sales Director sees + manages their OWN posts here regardless of
-        // active/expiry (so the desktop page isn't empty for them), plus their
-        // normal audience feed. Full managers already saw everything above.
-        if (sd.restricted && (r.createdBy ?? r.created_by ?? null) === user.id) {
-          return true;
-        }
-        return (
-          deliverableNow(r) &&
-          userCanSee(
-            r,
-            user.id,
-            user.department_id ?? null,
-            user.position_id ?? null,
-          )
-        );
-      });
+    : await (async () => {
+        const division = await callerDivision(c.env, user.id);
+        return visible.filter((r) => {
+          // A Sales Director sees + manages their OWN posts here regardless of
+          // active/expiry (so the desktop page isn't empty for them), plus their
+          // normal audience feed. Full managers already saw everything above.
+          if (sd.restricted && (r.createdBy ?? r.created_by ?? null) === user.id) {
+            return true;
+          }
+          return (
+            deliverableNow(r) &&
+            userCanSee(
+              r,
+              user.id,
+              user.department_id ?? null,
+              user.position_id ?? null,
+              division,
+            )
+          );
+        });
+      })();
   return c.json({ success: true, data: await withNames(c.env, rows) });
 });
 
@@ -814,6 +922,7 @@ app.get("/banner", async (c) => {
         ackedAt?: string | null;
       }>(),
   ]);
+  const division = await callerDivision(c.env, user.id);
   const active = (res.results ?? []).filter(
     (r) =>
       (systemOnly ? !!r.source : !r.source) &&
@@ -824,6 +933,7 @@ app.get("/banner", async (c) => {
         user.id,
         user.department_id ?? null,
         user.position_id ?? null,
+        division,
       ),
   );
 
@@ -894,6 +1004,7 @@ type RosterUser = {
   positionId: number | null;
   positionName: string | null;
   managerId: number | null;
+  division: string | null;
 };
 
 // Every ACTIVE user with their org-chart fields. `companyIds` narrows to the
@@ -903,7 +1014,7 @@ type RosterUser = {
 async function loadRoster(env: Env, companyIds: number[]): Promise<RosterUser[]> {
   const res = await env.DB.prepare(
     `SELECT u.id, u.email, u.name, u.department_id, u.position_id, u.manager_id,
-            d.name AS department_name, p.name AS position_name
+            u.division, d.name AS department_name, p.name AS position_name
        FROM users u
        LEFT JOIN departments d ON d.id = u.department_id
        LEFT JOIN positions p ON p.id = u.position_id
@@ -919,6 +1030,7 @@ async function loadRoster(env: Env, companyIds: number[]): Promise<RosterUser[]>
     positionId?: number | null;
     manager_id?: number | null;
     managerId?: number | null;
+    division?: string | null;
     department_name?: string | null;
     departmentName?: string | null;
     position_name?: string | null;
@@ -933,11 +1045,12 @@ async function loadRoster(env: Env, companyIds: number[]): Promise<RosterUser[]>
     positionId: u.positionId ?? u.position_id ?? null,
     positionName: u.positionName ?? u.position_name ?? null,
     managerId: u.managerId ?? u.manager_id ?? null,
+    division: (u.division ?? "").trim() || null,
   }));
 }
 
 function audienceOf(ann: AnnouncementRow, roster: RosterUser[]): RosterUser[] {
-  return roster.filter((u) => userCanSee(ann, u.id, u.departmentId, u.positionId));
+  return roster.filter((u) => userCanSee(ann, u.id, u.departmentId, u.positionId, u.division));
 }
 
 // acked_at per user for ONE notice (or, with no id, every notice → keyed by
@@ -1217,7 +1330,7 @@ app.get("/team-pending", async (c) => {
     const ackedSet = acks.get(r.id);
     const state = pendingState(r, now);
     for (const u of reports) {
-      if (!userCanSee(r, u.id, u.departmentId, u.positionId)) continue;
+      if (!userCanSee(r, u.id, u.departmentId, u.positionId, u.division)) continue;
       if (!inTargetCompanies(grants, u.id, targets)) continue;
       if (ackedSet?.has(u.id)) continue;
       pending.push({
@@ -1345,6 +1458,10 @@ app.post("/", requirePermissionOrSalesDirector("announcements.write"), async (c)
   const reqUserIds = readIntArray(
     body.targetUserIds as string | number[] | null | undefined,
   );
+  const reqDivisions = readDivisionTargets(body.targetDivisions ?? body.target_divisions);
+  const reqExcluded = readIntArray(
+    (body.excludedUserIds ?? body.excluded_user_ids) as string | number[] | null | undefined,
+  );
   // Company-target dimension. Empty (author picked "Both"/all, or single-company
   // Houzs) stores NULL = visible to every company.
   const reqCompanyIds = readIntArray(
@@ -1369,6 +1486,7 @@ app.post("/", requirePermissionOrSalesDirector("announcements.write"), async (c)
       positionIds: reqPositionIds,
       userIds: reqUserIds,
       companyIds: reqCompanyIds,
+      divisions: reqDivisions,
     });
     if (!enforced.ok) {
       return c.json({ success: false, error: enforced.error }, 403);
@@ -1379,7 +1497,7 @@ app.post("/", requirePermissionOrSalesDirector("announcements.write"), async (c)
     effCompanyIds = [];
   }
 
-  const targetType = deriveTargetType(effDeptIds, effPositionIds, effUserIds);
+  const targetType = deriveTargetType(effDeptIds, effPositionIds, effUserIds, reqDivisions);
   const category = readCategory(body.category);
   // "Require acknowledgement" (mig 20260905T1125): an explicit boolean wins;
   // otherwise the category default — WARNING / SOP on, GENERAL / LEARNING off.
@@ -1417,8 +1535,9 @@ app.post("/", requirePermissionOrSalesDirector("announcements.write"), async (c)
        (id, title, body, body_html, is_active, expires_at, created_by, created_at,
         translations, attachments, media_layout, target_type,
         target_dept_ids, target_position_ids, target_user_ids,
-        target_company_ids, category, require_ack, scheduled_at${stampCo ? ", company_id" : ""})
-     VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?${stampCo ? ", ?" : ""})`,
+        target_company_ids, category, require_ack, scheduled_at,
+        target_divisions, excluded_user_ids${stampCo ? ", company_id" : ""})
+     VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?${stampCo ? ", ?" : ""})`,
   )
     .bind(
       id,
@@ -1439,6 +1558,8 @@ app.post("/", requirePermissionOrSalesDirector("announcements.write"), async (c)
       category,
       requireAck ? 1 : 0,
       scheduledAt,
+      reqDivisions.length ? JSON.stringify(reqDivisions) : null,
+      reqExcluded.length ? JSON.stringify(reqExcluded) : null,
       ...(stampCo ? [companyId] : []),
     )
     .run();
@@ -1563,8 +1684,18 @@ app.patch("/:id", requirePermissionOrSalesDirector("announcements.write"), async
   if (
     "targetDeptIds" in body ||
     "targetPositionIds" in body ||
-    "targetUserIds" in body
+    "targetUserIds" in body ||
+    "targetDivisions" in body ||
+    "excludedUserIds" in body
   ) {
+    const nextDivisions =
+      "targetDivisions" in body
+        ? readDivisionTargets(body.targetDivisions)
+        : rowDivisions(existing);
+    const nextExcluded =
+      "excludedUserIds" in body
+        ? readIntArray(body.excludedUserIds as string | number[] | null | undefined)
+        : rowExcluded(existing);
     const nextDepts =
       "targetDeptIds" in body
         ? readIntArray(body.targetDeptIds as string | number[] | null | undefined)
@@ -1590,6 +1721,7 @@ app.patch("/:id", requirePermissionOrSalesDirector("announcements.write"), async
         positionIds: nextPositions,
         userIds: nextUsers,
         companyIds: [],
+        divisions: nextDivisions,
       });
       if (!enforced.ok) {
         return c.json({ success: false, error: enforced.error }, 403);
@@ -1599,13 +1731,17 @@ app.patch("/:id", requirePermissionOrSalesDirector("announcements.write"), async
       outUsers = enforced.userIds;
     }
     sets.push("target_type = ?");
-    binds.push(deriveTargetType(outDepts, outPositions, outUsers));
+    binds.push(deriveTargetType(outDepts, outPositions, outUsers, nextDivisions));
     sets.push("target_dept_ids = ?");
     binds.push(outDepts.length ? JSON.stringify(outDepts) : null);
     sets.push("target_position_ids = ?");
     binds.push(outPositions.length ? JSON.stringify(outPositions) : null);
     sets.push("target_user_ids = ?");
     binds.push(outUsers.length ? JSON.stringify(outUsers) : null);
+    sets.push("target_divisions = ?");
+    binds.push(nextDivisions.length ? JSON.stringify(nextDivisions) : null);
+    sets.push("excluded_user_ids = ?");
+    binds.push(nextExcluded.length ? JSON.stringify(nextExcluded) : null);
   }
   // Company retarget. Present + empty array (or null) clears to NULL = all
   // companies; a non-empty array narrows to those companies.
@@ -1928,7 +2064,13 @@ app.get("/:id/attachments/:key{.+}", async (c) => {
     hasPermission(granted, "*") || hasPermission(granted, "announcements.write");
   if (
     !isManager &&
-    !userCanSee(ann, user.id, user.department_id ?? null, user.position_id ?? null)
+    !userCanSee(
+      ann,
+      user.id,
+      user.department_id ?? null,
+      user.position_id ?? null,
+      await callerDivision(c.env, user.id),
+    )
   ) {
     return c.json({ error: "Not found" }, 404);
   }

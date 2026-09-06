@@ -72,7 +72,8 @@ describe("announcements — ack aggregation, team pending, escalation, require_a
          updated_at TEXT, translations TEXT, attachments TEXT, media_layout TEXT,
          target_type TEXT, target_dept_ids TEXT, target_position_ids TEXT,
          target_user_ids TEXT, target_company_ids TEXT, category TEXT,
-         source TEXT, company_id INTEGER, require_ack INTEGER, scheduled_at TEXT)`,
+         source TEXT, company_id INTEGER, require_ack INTEGER, scheduled_at TEXT,
+         target_divisions TEXT, excluded_user_ids TEXT)`,
     ).run();
     await env.DB.prepare(
       `CREATE TABLE IF NOT EXISTS announcement_acks (
@@ -82,8 +83,11 @@ describe("announcements — ack aggregation, team pending, escalation, require_a
     await env.DB.prepare(
       `CREATE TABLE IF NOT EXISTS users (
          id INTEGER PRIMARY KEY, email TEXT, name TEXT, password_hash TEXT, role_id INTEGER, status TEXT,
-         department_id INTEGER, position_id INTEGER, manager_id INTEGER)`,
+         department_id INTEGER, position_id INTEGER, manager_id INTEGER, division TEXT)`,
     ).run();
+    // The D1 test database is built from the D1 mirror migrations, which never
+    // carried users.division (PG-only mig 0021); the roster query selects it.
+    try { await env.DB.prepare("ALTER TABLE users ADD COLUMN division TEXT").run(); } catch { /* already there */ }
     await env.DB.prepare(
       `CREATE TABLE IF NOT EXISTS departments (id INTEGER PRIMARY KEY, name TEXT)`,
     ).run();

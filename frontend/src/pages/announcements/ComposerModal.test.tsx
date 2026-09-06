@@ -67,29 +67,48 @@ describe("buildPostBody", () => {
     expect(r.body.scheduledAt).toBeUndefined();
   });
 
-  it("an unticked person turns the department into an explicit people list (no exclusion list server-side)", () => {
+  it("divisions and unticked people ride as their own server-side targets (mig 20260906T0639)", () => {
     const users = [
-      { id: 7, name: "A", email: "a@x", status: "active", department_id: 2 },
-      { id: 8, name: "B", email: "b@x", status: "active", department_id: 2 },
+      { id: 7, name: "A", email: "a@x", status: "active", department_id: 2, division: "Inbound" },
+      { id: 8, name: "B", email: "b@x", status: "active", department_id: 2, division: "Outbound" },
       { id: 9, name: "C", email: "c@x", status: "active", department_id: 3 },
     ] as unknown as import("../../types").TeamMember[];
+    // Division only + an explicit person + one unticked inside the division.
     const r = buildPostBody(
-      { ...base, audience: { ...EMPTY_AUDIENCE, deptIds: [2], userIds: [9], excludedUserIds: [7] } },
+      {
+        ...base,
+        audience: {
+          ...EMPTY_AUDIENCE,
+          divisions: [{ deptId: 2, division: "Inbound" }],
+          userIds: [9],
+          excludedUserIds: [7, 8], // 8 is Outbound: not reached, so dropped
+        },
+      },
       false,
       users,
     );
     expect(r.ok && r.body.targetDeptIds).toBeUndefined();
-    expect(r.ok && (r.body.targetUserIds as number[]).sort()).toEqual([8, 9]);
-    // Everyone unticked → refused rather than silently sending to nobody.
-    const none = buildPostBody(
-      { ...base, audience: { ...EMPTY_AUDIENCE, deptIds: [2], userIds: [], excludedUserIds: [7, 8] } },
+    expect(r.ok && r.body.targetDivisions).toEqual([{ deptId: 2, division: "Inbound" }]);
+    expect(r.ok && r.body.targetUserIds).toEqual([9]);
+    expect(r.ok && r.body.excludedUserIds).toEqual([7]);
+    // A division the selected department already implies is not repeated.
+    const both = buildPostBody(
+      { ...base, audience: { ...EMPTY_AUDIENCE, deptIds: [2], divisions: [{ deptId: 2, division: "Inbound" }] } },
       false,
       users,
     );
-    expect(none.ok).toBe(false);
-    // Without the roster the exclusion cannot be resolved and the plain mapping stands.
+    expect(both.ok && both.body.targetDeptIds).toEqual([2]);
+    expect(both.ok && both.body.targetDivisions).toBeUndefined();
+    // A division alone is a valid audience.
+    const only = buildPostBody(
+      { ...base, audience: { ...EMPTY_AUDIENCE, divisions: [{ deptId: 2, division: "Inbound" }] } },
+      false,
+    );
+    expect(only.ok).toBe(true);
+    // Without the roster the exclusion list is passed through as given.
     const noRoster = buildPostBody({ ...base, audience: { ...base.audience, excludedUserIds: [7] } }, false);
     expect(noRoster.ok && noRoster.body.targetDeptIds).toEqual([2]);
+    expect(noRoster.ok && noRoster.body.excludedUserIds).toEqual([7]);
   });
 
   it("All staff sends no target; nobody picked is refused; a Sales Director never sends a company", () => {
