@@ -74,6 +74,7 @@ function props(over: Partial<ManageViewProps> = {}): ManageViewProps {
     drillDept: null,
     onDrill: vi.fn(),
     onRemindPending: vi.fn(),
+    onRemindDept: vi.fn(),
     onEscalate: vi.fn(),
     onToggleHidden: vi.fn(),
     onDelete: vi.fn(),
@@ -134,10 +135,12 @@ describe("ManageView", () => {
     expect(screen.getByText("reminded")).toBeTruthy();
     expect(screen.getByText("confirmed")).toBeTruthy();
     expect(screen.queryByText("Cheah Mei Ling")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: /Remind pending/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Remind all pending/ }));
     expect(p.onRemindPending).toHaveBeenCalledWith(expect.objectContaining({ id: "warn" }));
     fireEvent.click(screen.getByRole("button", { name: "Notify their supervisors" }));
     expect(p.onEscalate).toHaveBeenCalledWith(expect.objectContaining({ id: "warn" }), 2, "Warehouse");
+    fireEvent.click(screen.getByRole("button", { name: /Remind Warehouse pending/ }));
+    expect(p.onRemindDept).toHaveBeenCalledWith(expect.objectContaining({ id: "warn" }), 2, "Warehouse");
   });
 
   it("without a summary the rates read as loading and the escalated count as unknown", () => {

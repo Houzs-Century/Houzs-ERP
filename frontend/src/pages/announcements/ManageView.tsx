@@ -53,6 +53,8 @@ export type ManageViewProps = {
   drillDept: string | null;
   onDrill: (key: string) => void;
   onRemindPending: (a: Announcement) => void;
+  /** Remind only the pending people of one department (mig 20260906T0921). */
+  onRemindDept: (a: Announcement, departmentId: number | null, departmentName: string) => void;
   onEscalate: (a: Announcement, departmentId: number | null, departmentName: string) => void;
   /** Hide / show (PATCH isActive) and permanent delete — the poster's row
    *  actions from the old list, kept in the drawer header. */
@@ -204,6 +206,7 @@ export function ManageView(p: ManageViewProps) {
               drillDept={p.drillDept}
               onDrill={p.onDrill}
               onRemindPending={() => p.onRemindPending(selected)}
+              onRemindDept={(deptId, deptName) => p.onRemindDept(selected, deptId, deptName)}
               onEscalate={(deptId, deptName) => p.onEscalate(selected, deptId, deptName)}
               onToggleHidden={() => p.onToggleHidden(selected)}
               onDelete={() => p.onDelete(selected)}
@@ -311,6 +314,7 @@ function Drawer({
   drillDept,
   onDrill,
   onRemindPending,
+  onRemindDept,
   onEscalate,
   onToggleHidden,
   onDelete,
@@ -321,6 +325,7 @@ function Drawer({
   drillDept: string | null;
   onDrill: (key: string) => void;
   onRemindPending: () => void;
+  onRemindDept: (departmentId: number | null, departmentName: string) => void;
   onEscalate: (departmentId: number | null, departmentName: string) => void;
   onToggleHidden: () => void;
   onDelete: () => void;
@@ -468,11 +473,20 @@ function Drawer({
           <div className="flex flex-col gap-[7px] border-t border-border pt-[9px]">
             <button
               type="button"
+              onClick={() => openDept && onRemindDept(openDept.id, openDept.name)}
+              disabled={!openDept || pendingInDept === 0}
+              className={cn(SECONDARY_BTN, "px-2.5 py-[7px] text-[11.5px] font-[650]")}
+            >
+              {openDept ? `Remind ${openDept.name} pending` : "Remind department pending"}
+              {pendingInDept > 0 && ` (${pendingInDept})`}
+            </button>
+            <button
+              type="button"
               onClick={onRemindPending}
               disabled={!receipts || receipts.pending.length === 0}
               className={cn(SECONDARY_BTN, "px-2.5 py-[7px] text-[11.5px] font-[650]")}
             >
-              Remind pending
+              Remind all pending
               {receipts && receipts.pending.length > 0 && ` (${receipts.pending.length})`}
             </button>
             <button

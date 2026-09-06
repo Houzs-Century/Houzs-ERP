@@ -63,6 +63,13 @@ screen down to the database. Same structure as
 > shared with the drawer's manual button); mig
 > `backend/src/db/migrations-pg/20260906T0833_announcement_escalated_at.sql`
 > adds `escalated_at`. §3 "Overdue escalation cron" and §4 carry the contract.
+> **2026-09-06 (per-department Remind, owner: "做抽屉按部门 Remind"):** a
+> reminder is now per person — `announcement_reminders` (mig
+> `backend/src/db/migrations-pg/20260906T0921_announcement_reminders.sql`).
+> The Manage drawer has "Remind <Dept> pending" beside "Remind all pending";
+> `POST /:id/remind` takes `departmentId?`; the banner's re-pop and the
+> drawer's per-person state read the later of the notice-level stamp and the
+> person's own row. §2 remind row and §4 carry the contract.
 > **2026-09-06 (font sizes, owner: "像 Word 那样选字号数字"):** the editor's
 > S / M / L / XL buttons became a **Size dropdown** of point sizes (10–36
 > px, stored as `span[data-size="16"]`); with nothing selected the size
@@ -319,7 +326,7 @@ source line) see
 | POST | `/api/announcements/:id/escalate` | — | `announcements.write` (or Sales Director) — body `{ departmentId? }`; posts ONE system notice (`source 'ack_escalation'`) per supervisor of the pending people, via `postPersonalNotice` (2026-09-05, the drawer's "Notify their supervisors") |
 | POST | `/api/announcements` | `:785` | `announcements.write` (or Sales Director) |
 | PATCH | `/api/announcements/:id` | `:920` | `announcements.write` (or Sales Director) |
-| POST | `/api/announcements/:id/remind` | `:1104` | `announcements.write` (or Sales Director) |
+| POST | `/api/announcements/:id/remind` | `:1104` | `announcements.write` (or Sales Director) — body `{ scope: "unacked" \| "all", departmentId? }`. Since 2026-09-06 a reminder is per PERSON (`announcement_reminders`, one upserted row per pending member of the audience — or of `departmentId` only, the drawer's "Remind <Dept> pending"); a whole-notice reminder also sets `reminded_at`; `scope:"all"` (phone) clears the receipts and sets the notice-level stamp only. `pendingCount` is the audience's pending (not every active user, as before) |
 | DELETE | `/api/announcements/:id` | `:1164` | `announcements.write` (or Sales Director) |
 | PUT | `…/:id/attachments/upload` · `…/upload-thumb` | `:1231`, `:1274` | `announcements.write` (or Sales Director) |
 
@@ -531,6 +538,7 @@ There is also no announcements migration in the D1 tree.
 | Migration | Effect |
 |---|---|
 | `0058_announcements.sql` | creates `announcements` + `announcement_acks` + 2 indexes |
+| `backend/src/db/migrations-pg/20260906T0921_announcement_reminders.sql` | creates `announcement_reminders` (`announcement_id`, `user_id`, `reminded_at`, `reminded_by`; PK on the pair, index on `user_id`) — the per-person reminder behind the drawer's per-department Remind (owner 2026-09-06). Every reader (`loadReminderMap` / `loadUserReminders` / `loadAllReminders` / `recordReminders` in `lib/announcementAudience.ts`) tolerates the table being absent |
 | `0071_announcements_source.sql` | `+ source text` — the human/system split |
 | `0093_native_tables_company_id.sql:76,79` | `+ company_id bigint NOT NULL DEFAULT <HOUZS>` + FK + index on both tables |
 | `0113_announcement_target_company.sql` | `+ target_company_ids text` + one-time backfill from `company_id` |
@@ -545,7 +553,7 @@ Columns that matter:
 | `id` | text PK | `'ann-' + 12 hex` |
 | `is_active` | integer NOT NULL DEFAULT 1 | 0/1, **not** boolean |
 | `expires_at` | text | ISO string, NULL = never |
-| `reminded_at` | text | drives the "re-pop after Remind" rule |
+| `reminded_at` | text | notice-level reminder; the re-pop rule and the drawer's "reminded" state read the LATER of this and the person's own `announcement_reminders` row (`laterOf`) |
 | `created_by` | integer | `users.id`; **NULL** for system notices |
 | `target_type` | text | CHECK ∈ `ALL_USERS`/`DEPARTMENT_IDS`/`POSITION_IDS`/`USER_IDS`/`MIXED` |
 | `target_dept_ids`, `target_position_ids`, `target_user_ids` | text | JSON integer arrays |

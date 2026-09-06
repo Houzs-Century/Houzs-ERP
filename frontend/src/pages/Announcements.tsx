@@ -215,20 +215,25 @@ export function Announcements() {
     URL.revokeObjectURL(url);
   }
 
-  async function remindPending(a: Announcement) {
-    const pending = receiptsQ.data?.data?.pending.length ?? 0;
+  async function remindPending(
+    a: Announcement,
+    dept?: { id: number | null; name: string },
+  ) {
+    const pending = dept
+      ? (receiptsQ.data?.data?.byDepartment?.find((d) => d.id === dept.id)?.pending ?? 0)
+      : (receiptsQ.data?.data?.pending.length ?? 0);
     const ok = await dialog.confirm({
-      title: "Send reminder",
+      title: dept ? `Remind ${dept.name}` : "Send reminder",
       message: `Re-pop the notice for ${pending} un-acknowledged user${
         pending === 1 ? "" : "s"
-      }? Anyone who already acknowledged is unaffected.`,
+      }${dept ? ` in ${dept.name}` : ""}? Anyone who already acknowledged is unaffected.`,
       confirmLabel: "Remind",
     });
     if (!ok) return;
     try {
       const r = await api.post<{ pendingCount: number }>(
         `/api/announcements/${a.id}/remind`,
-        { scope: "unacked" },
+        dept ? { scope: "unacked", departmentId: dept.id } : { scope: "unacked" },
       );
       toast.success(
         `Reminder set — will re-pop for ${r.pendingCount} user${r.pendingCount === 1 ? "" : "s"}`,
@@ -405,6 +410,7 @@ export function Announcements() {
           drillDept={drillDept}
           onDrill={setDrillDept}
           onRemindPending={(a) => void remindPending(a)}
+          onRemindDept={(a, deptId, deptName) => void remindPending(a, { id: deptId, name: deptName })}
           onEscalate={(a, deptId, deptName) => void escalate(a, deptId, deptName)}
           onToggleHidden={(a) => void toggleHidden(a)}
           onDelete={(a) => void deleteNotice(a)}
