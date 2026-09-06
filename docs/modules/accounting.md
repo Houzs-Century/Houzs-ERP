@@ -133,6 +133,14 @@ purchase invoices: `pv_allocations` names a PI **or** an AP invoice
 (lib/ap-invoice-settlement.ts) — and cancel unwinds exactly what was
 applied; `v_ap_aging` is a UNION of both with a trailing `kind`. The five
 journals file it under PURCHASE. Pinned by tests/apInvoices.test.ts.
+Screens: **/scm/ap-invoices** (`frontend/src/pages/scm-v2/ApInvoices.tsx`,
+Finance menu "AP Invoices") — one table with a Kind column, purchase
+invoices linking to their own page, AP invoices opening a detail card with
+Post / Cancel, and a New-AP-invoice card whose lines pick only leaf
+non-control accounts; the **New AP Payment** picker lists a supplier's
+open AP invoices beside its purchase invoices (an `AP` tag on the row) and
+sends `apInvoiceId` for those; the AP Aging tab shows the kind. Pinned by
+ApInvoices.test.tsx + PaymentVoucherNew.test.tsx.
 
 **The AutoCount sections (2026-09-06).** Every account carries a `section`
 (`scm.accounts.section`, migration 20260906T0900) — the top node the

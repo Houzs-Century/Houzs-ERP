@@ -1,0 +1,82 @@
+// ----------------------------------------------------------------------------
+// ap-invoice-queries — the AP Invoice (the non-stock supplier bill) and the
+// Finance list that shows it BESIDE the operational purchase invoices (owner
+// 2026-09-06: 我想要两个都看到, 现有的 purchase invoice remain). Server half:
+// backend/src/scm/routes/ap-invoices.ts.
+// ----------------------------------------------------------------------------
+
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { authedFetch } from './authed-fetch';
+
+export type ApListKind = 'ALL' | 'API' | 'PI';
+
+/** One row of the Finance list — a purchase invoice (read-only mirror) or an
+    AP invoice raised here; `kind` says which. */
+export type ApListRow = {
+  kind: 'API' | 'PI';
+  id: string;
+  invoiceNumber: string;
+  supplierId: string | null;
+  supplierCode: string | null;
+  supplierName: string | null;
+  supplierInvoiceRef: string | null;
+  invoiceDate: string | null;
+  dueDate: string | null;
+  currency: string;
+  totalSen: number;
+  paidSen: number;
+  outstandingSen: number;
+  status: string;
+};
+
+export type ApInvoiceHeader = {
+  id: string; invoice_number: string; supplier_id: string; supplier_invoice_ref: string | null;
+  invoice_date: string; due_date: string | null; currency: string; total_sen: number; paid_sen: number;
+  status: string; notes: string | null; posted_at: string | null; posted_by: string | null;
+};
+export type ApInvoiceLine = { id: string; line_no: number; description: string | null; debit_account_code: string; amount_sen: number };
+
+export const useApInvoices = (kind: ApListKind = 'ALL') => useQuery({
+  queryKey: ['ap-invoices', kind],
+  queryFn: () => authedFetch<{ rows: ApListRow[] }>(`/ap-invoices?kind=${kind}`),
+  staleTime: 15_000,
+});
+
+export const useApInvoiceDetail = (id: string | null) => useQuery({
+  queryKey: ['ap-invoice', id],
+  queryFn: () => authedFetch<{ invoice: ApInvoiceHeader; lines: ApInvoiceLine[]; supplier: { id: string; code: string; name: string } | null }>(`/ap-invoices/${id}`),
+  enabled: !!id,
+});
+
+const invalidate = (qc: ReturnType<typeof useQueryClient>) => {
+  void qc.invalidateQueries({ queryKey: ['ap-invoices'] });
+  void qc.invalidateQueries({ queryKey: ['ap-invoice'] });
+  void qc.invalidateQueries({ queryKey: ['ap-aging'] });
+};
+
+export type ApInvoiceLineInput = { description?: string; debitAccountCode: string; amountSen: number };
+
+export const useCreateApInvoice = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { supplierId: string; supplierInvoiceRef?: string; invoiceDate: string; dueDate?: string | null; notes?: string; lines: ApInvoiceLineInput[] }) =>
+      authedFetch<{ ok: boolean; invoice: ApInvoiceHeader }>(`/ap-invoices`, { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: () => invalidate(qc),
+  });
+};
+
+export const usePostApInvoice = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => authedFetch<{ ok: boolean; jeNo: string; status: string }>(`/ap-invoices/${id}/post`, { method: 'POST', body: '{}' }),
+    onSuccess: () => invalidate(qc),
+  });
+};
+
+export const useCancelApInvoice = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => authedFetch<{ ok: boolean }>(`/ap-invoices/${id}/cancel`, { method: 'POST', body: '{}' }),
+    onSuccess: () => invalidate(qc),
+  });
+};
