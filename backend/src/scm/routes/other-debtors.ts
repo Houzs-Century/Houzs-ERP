@@ -31,6 +31,7 @@ import { supabaseAuth } from '../middleware/auth';
 import { activeCompanyId, companyDocPrefix, requireActiveCompanyId, scopeToCompany } from '../lib/companyScope';
 import { mintMonthlyDocNo } from '../lib/doc-no';
 import { postJournal, reverseJournal } from '../../acc/engine';
+import { dateOrNull } from '../lib/date-coerce';
 import { resolveRoles, type RuleLine } from '../../acc/rules';
 import { requireLeafAccount } from './accounting-chart';
 
@@ -319,7 +320,9 @@ export const updateDebtorBillHandler = async (c: any): Promise<Response> => {
     }
     rebuilt = built;
   }
-  const billDate = body.billDate !== undefined ? (String(body.billDate ?? '').trim() || oldDate) : oldDate;
+  /* A blank or absent date keeps the old one — through the shared coercion, so
+     an unfilled <input type="date"> ("") never reaches the DATE column. */
+  const billDate = dateOrNull(body.billDate) ?? oldDate;
   const notes = body.notes !== undefined ? (body.notes ? String(body.notes).trim() : null) : (bill.notes ?? null);
 
   if (rebuilt) {
