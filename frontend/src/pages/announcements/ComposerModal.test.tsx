@@ -46,6 +46,7 @@ const base: Omit<ComposerDraft, "savedAt"> = {
   audience: { ...EMPTY_AUDIENCE, deptIds: [2], userIds: [7], companyId: 1 },
   photoLayout: "",
   videoLayout: "1x1",
+  clientKey: "draft-key-00000001",
 };
 
 describe("buildPostBody", () => {
@@ -139,6 +140,11 @@ describe("buildPostBody", () => {
     const none = buildPostBody({ ...base, photoLayout: "2" }, false);
     expect(none.ok && none.body.mediaLayout).toBeUndefined();
   });
+
+  it("carries the draft's client key so a repeat of the same draft is one post", () => {
+    const r = buildPostBody(base, false);
+    expect(r.ok && r.body.clientKey).toBe("draft-key-00000001");
+  });
 });
 
 describe("draft round-trip", () => {
@@ -162,6 +168,16 @@ describe("draft round-trip", () => {
     expect(readDraft(key)).toBeNull();
     values.set(key, JSON.stringify({ category: "NOPE" }));
     expect(readDraft(key)).toBeNull();
+  });
+
+  it("keeps the saved client key, and mints one for a draft saved before keys existed", () => {
+    const key = draftStorageKey(5);
+    values.set(key, JSON.stringify({ ...base, savedAt: 1 }));
+    expect(readDraft(key)?.clientKey).toBe("draft-key-00000001");
+    const { clientKey: _dropped, ...legacy } = base;
+    values.set(key, JSON.stringify({ ...legacy, savedAt: 1 }));
+    const minted = readDraft(key)?.clientKey ?? "";
+    expect(minted.length).toBeGreaterThanOrEqual(8);
   });
 });
 
@@ -234,5 +250,35 @@ describe("ComposerModal (rendered)", () => {
     expect(screen.getByText("No recipients yet")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "All staff" }));
     expect(screen.getByText("All staff", { selector: "span.text-ink" })).toBeTruthy();
+  });
+
+  it("a retry after a failed post sends the SAME client key, and a restored draft posts with the key it was saved with", async () => {
+    // The draft the author left behind on 2026-09-06: restored on mount, key
+    // and all, so the post after a reload is the same post.
+    values.set("announcements:draft:u9", JSON.stringify({ ...base, savedAt: 1, clientKey: "saved-key-00000001" }));
+    apiPost.mockRejectedValueOnce(new Error("504: gateway timeout"));
+    apiPost.mockResolvedValue({ success: true });
+    const { onPosted } = mount();
+    fireEvent.click(screen.getByRole("button", { name: "Post announcement" }));
+    await waitFor(() => expect(toastError).toHaveBeenCalledWith("504: gateway timeout"));
+    expect(onPosted).not.toHaveBeenCalled();
+    // The draft (and its key) survive the failure — the next click is a retry.
+    expect(values.has("announcements:draft:u9")).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "Post announcement" }));
+    await waitFor(() => expect(onPosted).toHaveBeenCalled());
+    expect(apiPost).toHaveBeenCalledTimes(2);
+    const keys = apiPost.mock.calls.map((c) => (c[1] as { clientKey: string }).clientKey);
+    expect(keys).toEqual(["saved-key-00000001", "saved-key-00000001"]);
+  });
+
+  it("says so when the server reports the draft was already posted", async () => {
+    apiPost.mockResolvedValue({ success: true, duplicate: true });
+    const { onPosted } = mount();
+    fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Hello" } });
+    fireEvent.click(screen.getByRole("button", { name: /Warehouse/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Post announcement" }));
+    await waitFor(() => expect(onPosted).toHaveBeenCalled());
+    expect(toastSuccess).toHaveBeenCalledWith(expect.stringContaining("already posted"));
   });
 });

@@ -19,6 +19,7 @@ import { AnnouncementRichBody } from "../components/AnnouncementRichBody";
 import { CATEGORY_META, readCategory, requiresAcknowledgement } from "../components/announcementCategory";
 import { AnnouncementRichEditor } from "../components/AnnouncementRichEditor";
 import { richTextToPlain } from "../lib/announcementRichText";
+import { useIdempotencyKey } from "../lib/idempotency";
 import { useAuth } from "../auth/AuthContext";
 import { isSalesDirectorUser } from "../auth/salesAccess";
 import { formatDate } from "../lib/utils";
@@ -1230,6 +1231,11 @@ function Compose({
   const [videoLayout, setVideoLayout] = useState<VideoLayout>("1x1");
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // One key per opened composer (the phone keeps no draft): a retry of this
+  // sheet's post — double tap, "Couldn't save" then Publish again — is
+  // answered by the server with the row the first request made, never a
+  // second one (mig 20260907T0010; the desktop composer keys its draft).
+  const clientKey = useIdempotencyKey();
 
   const hasPhotos = files.some((f) => (f.type || "").startsWith("image/"));
   const hasVideos = files.some((f) => (f.type || "").startsWith("video/"));
@@ -1273,6 +1279,7 @@ function Compose({
   }, [salesDirOnly, bucket, lookups.depts]);
 
   const publish = async () => {
+    if (saving) return;
     const t = title.trim();
     if (!t) {
       setErr("Title is required.");
@@ -1310,6 +1317,7 @@ function Compose({
         body: richTextToPlain(body),
         bodyHtml: body,
         category,
+        clientKey,
       };
       if (bucket === "DEPT") payload.targetDeptIds = Array.from(selDepts);
       if (bucket === "POSITION") payload.targetPositionIds = Array.from(selPositions);
