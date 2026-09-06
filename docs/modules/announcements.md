@@ -73,6 +73,16 @@ screen down to the database. Same structure as
 > `POST /:id/remind` takes `departmentId?`; the banner's re-pop and the
 > drawer's per-person state read the later of the notice-level stamp and the
 > person's own row. §2 remind row and §4 carry the contract.
+> **2026-09-06 (approval workflow, owner: "通告审批流"):** a notice is now
+> Draft → Pending approval → Approved & published / Rejected. Nothing is served
+> until an approver (`announcements.approve`, a role permission) clicks
+> Approve; the reference number `[DEPT]-ANN-[YYMM]-[NNNN]` is minted on
+> approval from the SUBMITTER's department code (see
+> `docs/modules/document-refs.md`); reject needs a reason; every transition
+> audits and rings the right bell. Mig
+> `backend/src/db/migrations-pg/20260906T1509_announcement_approval.sql`;
+> `services/announcementApproval.ts` holds the transitions. §3 "Approval
+> workflow", §2, §4 and §5 carry the contract.
 > **2026-09-06 (font sizes, owner: "像 Word 那样选字号数字"):** the editor's
 > S / M / L / XL buttons became a **Size dropdown** of point sizes (10–36
 > px, stored as `span[data-size="16"]`); with nothing selected the size
@@ -128,7 +138,7 @@ system notices never clutter the office composer list.
 |---|---|---|
 | Desktop page shell (mode toggle, fetches, composer) | `frontend/src/pages/Announcements.tsx` | `Announcements()`; `canWrite` gates the Reading/Manage toggle, the composer CTA, Export receipts and every manage action. Reads the SAME `useAnnouncementBanner` hook the modal reads, so "addressed to me / acked / pending" can never differ between the page and the pop-up |
 | Reading mode (inbox) | `frontend/src/pages/announcements/InboxView.tsx` | List column (396px by design, drag-resizable 260–640px, remembered per user; rows wrap, never scroll sideways — owner 2026-09-05) — pinned *Needs your confirmation*, *Recent* with Confirmed/Unread pills, *SOP Library* grouped by department — beside the reading pane with the writer-only read-receipts card and the sticky acknowledge bar. Presentational; grouping is `bucketInbox()` in `announcementModel.ts` |
-| Manage mode | `frontend/src/pages/announcements/ManageView.tsx` | 4-up stat strip, the ack-rate table (`GET /ack-summary`), the drawer's *By department* buckets and per-person state pills (`GET /:id/acks`), *Remind pending* and *Notify their supervisors* (`POST /:id/escalate`) |
+| Manage mode | `frontend/src/pages/announcements/ManageView.tsx` | 4-up stat strip, the ack-rate table (`GET /ack-summary`), the drawer's *By department* buckets and per-person state pills (`GET /:id/acks`), *Remind pending* and *Notify their supervisors* (`POST /:id/escalate`); since 2026-09-06 also the approval queue — the "Pending approval" filter pill (counted), the state pill per row (Draft / Pending approval / Rejected outrank the ack states), and the drawer's Approve & publish / Reject… (approvers) or Submit for approval (writers, on a draft / rejected notice) with the reject reason shown |
 | Desktop composer modal | `frontend/src/pages/announcements/ComposerModal.tsx` + `AudiencePicker.tsx` | 1280px card (audience panel 520px, owner 2026-09-05): category pills, **Require acknowledgement** (defaults on for WARNING / SOP), title, the shared `AnnouncementRichEditor`, attachment strip, **Schedule** (`scheduledAt`) and Hide after (hidden for SOP — it never expires), Preview, and the three-column audience (Company · Dept / Role · People). Audience maps 1:1 onto the existing targets: departments → `targetDeptIds`, people → `targetUserIds`, company → `targetCompanyIds`, **All staff** → no target (an explicit choice — an empty picker refuses to post, never broadcasts). Position targeting is no longer offered on desktop (owner 2026-09-05; the phone composer still has it). **Divisions + unticking (2026-09-06):** the Dept column is a tree — each department row expands to its divisions (`divisionsOf`: the distinct `users.division` values among its members); a division row is a target of its own (`audience.divisions` → `targetDivisions`), ticking the department implies every division (rows shown ticked + disabled, not re-sent). A person reached through a department or division can be unticked (`audience.excludedUserIds` → `excludedUserIds`, pruned to the ids a selected group still reaches); an explicit person outside any group is `targetUserIds`. Nothing is expanded client-side: recipients resolve at read time, so a new member of a targeted department / division is included. `buildPostBody(draft, salesDirOnly, users)` refuses an audience with no department, division or person. The People column groups by `users.division` (`groupByDivision`, unnamed last) with a tick-all row per group and a search box (`personMatches`: name / email / position / division). The draft autosaves per user to `localStorage["announcements:draft:u<id>"]` ("Draft saved HH:mm") and is cleared on post. `buildPostBody()` is the pure request builder, pinned by `ComposerModal.test.tsx` |
 | **Desktop pop-up** | `frontend/src/components/AnnouncementBanner.tsx` | mounted **once**, at the app root: `frontend/src/App.tsx:353` |
 | **Phone pop-up** | `frontend/src/mobile/MobileAnnouncementPopup.tsx` | mounted above the tab shell AND above any overlay: `frontend/src/mobile/MobileApp.tsx:600-604` |
@@ -174,6 +184,7 @@ so a notice posted from a phone was permanent and un-retractable from a phone.
 |---|---|---|
 | Set an expiry at compose time (`expiresAt`) | composer field "Hide automatically after", shared `DateTimeField` | `Announcements.tsx` composer, same label, same control |
 | Hide / show (`PATCH { isActive }`) | Detail > Publisher | row action |
+| Approve / Reject (`POST /:id/approve`, `/:id/reject` — `announcements.approve`) and Submit for approval (`POST /:id/submit`) — 2026-09-06 | Detail > Approval / the Submit button; the reject reason is asked through the vendored prompt | Manage drawer |
 | Delete (`DELETE /:id`) | Detail > Publisher, behind a confirm | row action, behind a confirm |
 | Remind un-acked (`POST /:id/remind` `{ scope: "unacked" }`) | Receipts panel, behind a confirm, reports the server's `pendingCount` | same |
 | Reset all receipts (`{ scope: "all" }`) | Receipts panel, danger confirm | same |
@@ -327,7 +338,10 @@ source line) see
 | GET | `/api/announcements/ack-summary` | — | `announcements.write` (or Sales Director) — `{ id → { total, acked } }` for every human post the caller may manage, ONE round trip for the Manage table (2026-09-05) |
 | GET | `/api/announcements/team-pending` | — | **none** — explicit 401; scoped to the caller's DIRECT REPORTS (`users.manager_id = caller`): their unacked mandatory notices with the same `state` (2026-09-05, feeds the dashboard "My team's pending" card) |
 | POST | `/api/announcements/:id/escalate` | — | `announcements.write` (or Sales Director) — body `{ departmentId? }`; posts ONE system notice (`source 'ack_escalation'`) per supervisor of the pending people, via `postPersonalNotice` (2026-09-05, the drawer's "Notify their supervisors") |
-| POST | `/api/announcements` | `:785` | `announcements.write` (or Sales Director) |
+| POST | `/api/announcements` | `:785` | `announcements.write` (or Sales Director) — since 2026-09-06 the row is created PENDING_APPROVAL (or DRAFT with body `draft: true`); the answer's `approvalStatus` says which |
+| POST | `/api/announcements/:id/submit` | — | `announcements.write` (or Sales Director on their own post) — DRAFT / REJECTED → PENDING_APPROVAL; rings the approvers' bell (2026-09-06) |
+| POST | `/api/announcements/:id/approve` | — | `announcements.approve` — PENDING_APPROVAL → APPROVED; mints `ref_no` from the submitter's department code (409 with the fix when the department has none); answers the public row incl. `refNo` (2026-09-06) |
+| POST | `/api/announcements/:id/reject` | — | `announcements.approve` — body `{ reason }` (required, 400 when blank); PENDING_APPROVAL → REJECTED; the submitter gets a WARNING bell notice with the reason (2026-09-06) |
 | PATCH | `/api/announcements/:id` | `:920` | `announcements.write` (or Sales Director) |
 | GET | `/api/announcements/ack-trend` | — | `announcements.write` (or Sales Director) — `{ days: 30, buckets[6]: { start, end, label, notices, total, acked, pct\|null }, summary }`: the human notices POSTED in each 5-day bucket of the last 30 days, their summed audience and acknowledgements, from the same `noticeAckTotals()` as `/ack-summary` (2026-09-06, the dashboard chart) |
 | POST | `/api/announcements/:id/remind` | `:1104` | `announcements.write` (or Sales Director) — body `{ scope: "unacked" \| "all", departmentId? }`. Since 2026-09-06 a reminder is per PERSON (`announcement_reminders`, one upserted row per pending member of the audience — or of `departmentId` only, the drawer's "Remind <Dept> pending"); a whole-notice reminder also sets `reminded_at`; `scope:"all"` (phone) clears the receipts and sets the notice-level stamp only. `pendingCount` is the audience's pending (not every active user, as before) |
@@ -398,6 +412,40 @@ all filtering happens in JS in the Worker (`:543-547`, `:628-630`).
 
 - **Create** `:785` — inserts at `:873` with `translations = NULL`, bumps the
   banner cache family version (`:908`), answers, and only THEN translates.
+  Since 2026-09-06 the row is inserted with `approval_status =
+  'PENDING_APPROVAL'` (`submitted_by/at` = the caller, now) — or `'DRAFT'`
+  when the body carries `draft: true` — and, for a submission,
+  `recordSubmission()` writes the `announcement.submit` audit line and rings
+  the approvers' bell.
+- **Approval workflow (2026-09-06, mig `20260906T1509`)** — the transitions
+  live in `backend/src/services/announcementApproval.ts`; the route file only
+  gates them. `submitForApproval` (DRAFT / REJECTED → PENDING_APPROVAL;
+  already pending = no-op so a double click never re-notifies; APPROVED
+  refuses 409), `approveAnnouncement` (PENDING_APPROVAL → APPROVED: resolves
+  the SUBMITTER's department code, `mintDocumentRef(deptCode, "ANN",
+  "announcement", id)`, writes `reviewed_by/at` + `ref_no`, bumps the banner
+  family version, audits `announcement.approve`, tells the submitter; a
+  submitter without a department, or in a department without a code, blocks
+  the approval with a 409 that names what to set — a notice is never published
+  un-numbered), `rejectAnnouncement` (PENDING_APPROVAL → REJECTED; `reason`
+  mandatory, ≤ 1000 chars; audits `announcement.reject`; tells the submitter
+  as a WARNING bell notice). `ApprovalError` carries the HTTP status (400 /
+  409). Who is told: `notifyApprovers()` → `usersHoldingPermission(env,
+  "announcements.approve")` minus the submitter (the wildcard is excluded by
+  that helper's rule — the owner approves from the Manage queue, and is on the
+  bell only if their role lists the verb); the approve / reject notices go to
+  `submitted_by ?? created_by`. All bell notices carry `source =
+  'announcement_approval'`. No e-mail (owner's call, 2026-09-06).
+  **Visibility is enforced in ONE place:** `deliverableNow()`
+  (`lib/announcementAudience.ts`) requires `readApprovalStatus(row) ===
+  "APPROVED"` before the active / schedule / expiry checks, and the reader
+  list, both banner slices, `/pending`, `/team-pending`, `POST /:id/ack`
+  (answers `{ acked: false }`) and the overdue-escalation cron all go through
+  it. A NULL / absent `approval_status` reads as APPROVED — the column's
+  DEFAULT, what every pre-workflow row is, and what a D1 mirror without the
+  column yields. The list endpoint treats an `announcements.approve` holder as
+  a manager (the queue is in the ledger), so the approval desk needs no write
+  verb. Regression suite: `backend/tests/announcementsApproval.test.ts`.
 - **Translation runs after the response (2026-09-06)** — `queueTranslation()`
   next to the create route hands `translateAndStore()`
   (`backend/src/lib/translate-announcement.ts`) to `c.executionCtx.waitUntil`
@@ -560,6 +608,7 @@ There is also no announcements migration in the D1 tree.
 | Migration | Effect |
 |---|---|
 | `0058_announcements.sql` | creates `announcements` + `announcement_acks` + 2 indexes |
+| `backend/src/db/migrations-pg/20260906T1509_announcement_approval.sql` | adds `approval_status` (NOT NULL DEFAULT 'APPROVED' — every existing row stays published), `submitted_by/at`, `reviewed_by/at`, `reject_reason`, `ref_no` (unique partial index) and the open-queue partial index — the approval workflow (owner 2026-09-06) |
 | `backend/src/db/migrations-pg/20260906T0921_announcement_reminders.sql` | creates `announcement_reminders` (`announcement_id`, `user_id`, `reminded_at`, `reminded_by`; PK on the pair, index on `user_id`) — the per-person reminder behind the drawer's per-department Remind (owner 2026-09-06). Every reader (`loadReminderMap` / `loadUserReminders` / `loadAllReminders` / `recordReminders` in `lib/announcementAudience.ts`) tolerates the table being absent |
 | `0071_announcements_source.sql` | `+ source text` — the human/system split |
 | `0093_native_tables_company_id.sql:76,79` | `+ company_id bigint NOT NULL DEFAULT <HOUZS>` + FK + index on both tables |
@@ -590,6 +639,10 @@ Columns that matter:
 | `body_html` | text | canonical rich fragment (`lib/announcementRichText.ts` grammar only) or NULL; `body` is always its plain-text shadow, so plain-only readers (bell excerpt, search, old builds) need no branch |
 | `require_ack` | integer NOT NULL DEFAULT 0 | 0/1; "this notice must be acknowledged". `toPublic` emits `requireAck: null` when the column is absent (D1 test mirror) and the client falls back to the category rule |
 | `scheduled_at` | text | ISO string; NULL = posted at once. Not delivered (list / banner / ack) before it |
+| `approval_status` | text NOT NULL DEFAULT 'APPROVED' | `DRAFT` / `PENDING_APPROVAL` / `APPROVED` / `REJECTED` (mig `20260906T1509_announcement_approval.sql`). Only APPROVED is ever delivered (`deliverableNow`). Partial index `idx_announcements_approval_open` on the non-approved rows. `toPublic` emits `approvalStatus` (absent column → `"APPROVED"`) |
+| `submitted_by`, `submitted_at` | integer, text | who put it in the queue and when (POST without `draft`, or `/submit`) |
+| `reviewed_by`, `reviewed_at`, `reject_reason` | integer, text, text | the approver's decision on the row itself; `reject_reason` is cleared on approve and on re-submit (audit_events keeps the history) |
+| `ref_no` | text, unique where set | `[DEPT]-ANN-[YYMM]-[NNNN]`, minted on approval by `services/documentRefs.ts` (registry `document_refs`, entity_type `announcement`); NULL until approved. `docNo()` on both shells shows it in place of the row id |
 
 `announcement_acks`: `(announcement_id, user_id)` composite **primary key** — the
 idempotency guard for the fire-and-forget ack — plus `acked_at` and
@@ -624,6 +677,7 @@ made the badge count human posts, `2060378b` (#960) opened the sidebar row.
 | Any signed-in user | ack, and stream an attachment of a notice targeted at them | `:1194`; attachment audience `:1325-1333`, key ownership `:1340-1344` |
 | `announcements.write` / `*` | see every notice incl. drafts + expired (still company-gated); create, edit, retarget, remind, delete, read receipts, upload media | `:550-556`; `:698, 785, 920, 1104, 1164, 1231, 1274` |
 | Sales Director (position-derived, holds no flat verb) | the same write doors, but may address only their own Sales dept or named people in it, and may manage only rows they authored | admittance `middleware/auth.ts:202`; scope `:412-425`, `:431-497`; ownership `:502-506` |
+| `announcements.approve` / `*` | the approval desk (2026-09-06): read the ledger incl. the pending queue; Approve (mints the number, publishes) / Reject (reason) on the desktop Manage drawer and the phone Detail; none of the poster's actions unless they also hold write | `requirePermission("announcements.approve")` on `/:id/approve` + `/:id/reject`; the list's `isManager` includes the verb; the desktop page opens Manage for `canWrite \|\| canApprove` and shows Hide / Delete only for `canWrite` |
 | `announcements.read` holder | **nothing extra** | the key is still declared at `backend/src/services/permissions.ts:138` but gates no route, guard or nav row at this commit |
 
 `announcements.read` was the ADMIN list/composer verb. Positions get no
@@ -652,6 +706,7 @@ still 403 for that reader (`:146, 157, 164, 171, 180`).
 | Pop-up markup / CTA wording | `components/AnnouncementBanner.tsx` | `mobile/MobileAnnouncementPopup.tsx` |
 | Composer (audience picker, media layout, company target, **expiry**, **schedule**, **require ack**) | `pages/announcements/ComposerModal.tsx` + `AudiencePicker.tsx` | `mobile/MobileAnnouncements.tsx` `Compose` (still positions + plain expiry; requireAck / scheduledAt default server-side) |
 | Live / Hidden / Expired badge | **`lib/announcementStatus.ts`** — the shared rule; both surfaces import it, neither re-derives it | — |
+| Approval actions (submit / approve / reject, the state pill, the reject reason, the ref no in place of the row id) | `pages/announcements/ManageView.tsx` drawer (`canWrite` / `canApprove` props; the page's `approveNotice` / `rejectNotice` (reason via `useDialog().prompt`) / `submitNotice`); the "Pending approval" filter is `MANAGE_ONLY_FILTERS` in `announcementModel.ts` so the inbox never offers it; the composer's primary is "Submit for approval" + a "Save draft" secondary | `mobile/MobileAnnouncements.tsx` `Detail` (`canApprove` prop, `ApprovalChip`, reason via the vendored `usePrompt`); the ledger is read for `canCreate \|\| canApprove` |
 | Publisher actions (hide/show, delete, remind, escalate) | `pages/announcements/ManageView.tsx` drawer (+ the inbox's read-receipts card for remind / hide); the "reset all receipts" (`remind { scope: "all" }`) affordance is desktop-retired with the old row — the phone keeps it | `mobile/MobileAnnouncements.tsx` `Detail` + `Receipts` |
 | Media rendering (mig 0140 layout hint) | `components/AnnouncementMedia.tsx` | `mobile/MobileAnnouncementMedia.tsx` |
 | Rich body — editing | **`components/AnnouncementRichEditor.tsx`** — one editor, both composers mount it. Desktop passes `onPromptLink` (the app prompt dialog), `onInsertImage` (uploads through `lib/announcementAttachmentUpload.ts`, adds to the manifest, returns key + local preview) and `imageSrc`; the phone passes none, so it has no Link / Image button | (same file, fewer buttons) |

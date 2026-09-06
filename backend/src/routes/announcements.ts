@@ -19,7 +19,7 @@
 // ============================================================
 import { Hono } from "hono";
 import type { Env } from "../types";
-import { requirePermissionOrSalesDirector } from "../middleware/auth";
+import { requirePermission, requirePermissionOrSalesDirector } from "../middleware/auth";
 import { hasPermission } from "../services/permissions";
 import { baseKeyOf, isThumbKey, THUMB_MAX_BYTES, thumbKeyFor } from "../services/photoThumbs";
 import { isSalesDirectorUser } from "../services/pmsAccess";
@@ -48,6 +48,15 @@ import {
 import { postPersonalNotice } from "../services/personalNotice";
 import { escalatePending } from "../services/announcementEscalation";
 import {
+  ApprovalError,
+  APPROVE_PERMISSION,
+  approveAnnouncement,
+  recordSubmission,
+  rejectAnnouncement,
+  submitForApproval,
+  type Actor,
+} from "../services/announcementApproval";
+import {
   ACK_OVERDUE_HOURS,
   announcementRequiresAck,
   audienceOf,
@@ -55,6 +64,7 @@ import {
   categoryRequiresAck,
   deliverableNow,
   divisionEq,
+  readApprovalStatus,
   inTargetCompanies,
   isActiveFlag,
   laterOf,
@@ -292,6 +302,14 @@ function toPublic(r: AnnouncementRow) {
     requireAck: readRequireAck(r.requireAck ?? r.require_ack ?? null),
     scheduledAt: r.scheduledAt ?? r.scheduled_at ?? null,
     escalatedAt: r.escalatedAt ?? r.escalated_at ?? null,
+    // Approval workflow (mig 20260906T1509).
+    approvalStatus: readApprovalStatus(r),
+    submittedBy: r.submittedBy ?? r.submitted_by ?? null,
+    submittedAt: r.submittedAt ?? r.submitted_at ?? null,
+    reviewedBy: r.reviewedBy ?? r.reviewed_by ?? null,
+    reviewedAt: r.reviewedAt ?? r.reviewed_at ?? null,
+    rejectReason: r.rejectReason ?? r.reject_reason ?? null,
+    refNo: r.refNo ?? r.ref_no ?? null,
     // System-notice tag ('scan' for background slip-scan results). Lets the
     // client suppress the read-receipt roster on private per-user notices.
     source: (r.source ?? null) as string | null,
@@ -565,8 +583,12 @@ app.get("/", async (c) => {
     .all<AnnouncementRow>();
   const allowed = allowedCompanyIds(c);
   const granted = user.permissions_set ?? user.permissions ?? [];
+  // The approval desk (announcements.approve) reads the ledger as a manager
+  // does: the queue it acts on is the pending rows, which no reader is served.
   const isManager =
-    hasPermission(granted, "*") || hasPermission(granted, "announcements.write");
+    hasPermission(granted, "*") ||
+    hasPermission(granted, "announcements.write") ||
+    hasPermission(granted, APPROVE_PERMISSION);
   const sd = salesDirectorScope(c);
   // Company gate first (applies to managers AND readers): a notice is listed
   // only for a caller who belongs to a targeted company (or it targets all).
@@ -1232,6 +1254,11 @@ app.post("/", requirePermissionOrSalesDirector("announcements.write"), async (c)
   // the row is written with NULL and the FE shows the original text until the
   // background job lands. The old await here held "Posting…" for 40-100 s on
   // a rich notice and the owner's repeated clicks each inserted a row.
+  // Approval workflow (mig 20260906T1509): a new notice enters the approval
+  // queue — or stays a draft when the composer says so. Nobody is served it
+  // until an approver acts (deliverableNow requires APPROVED).
+  const asDraft = body.draft === true;
+  const initialStatus = asDraft ? "DRAFT" : "PENDING_APPROVAL";
 
   await c.env.DB.prepare(
     `INSERT INTO announcements
@@ -1239,8 +1266,9 @@ app.post("/", requirePermissionOrSalesDirector("announcements.write"), async (c)
         translations, attachments, media_layout, target_type,
         target_dept_ids, target_position_ids, target_user_ids,
         target_company_ids, category, require_ack, scheduled_at,
-        target_divisions, excluded_user_ids${stampCo ? ", company_id" : ""})
-     VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?${stampCo ? ", ?" : ""})`,
+        target_divisions, excluded_user_ids,
+        approval_status, submitted_by, submitted_at${stampCo ? ", company_id" : ""})
+     VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?${stampCo ? ", ?" : ""})`,
   )
     .bind(
       id,
@@ -1263,6 +1291,9 @@ app.post("/", requirePermissionOrSalesDirector("announcements.write"), async (c)
       scheduledAt,
       reqDivisions.length ? JSON.stringify(reqDivisions) : null,
       reqExcluded.length ? JSON.stringify(reqExcluded) : null,
+      initialStatus,
+      asDraft ? null : user?.id ?? null,
+      asDraft ? null : nowIso,
       ...(stampCo ? [companyId] : []),
     )
     .run();
@@ -1279,11 +1310,73 @@ app.post("/", requirePermissionOrSalesDirector("announcements.write"), async (c)
 
   queueTranslation(c, id, { title, body: text, bodyHtml });
 
+  // Into the queue: audit line + the approvers' bell. A draft waits for
+  // /:id/submit.
+  if (row && !asDraft) await recordSubmission(c.env, row, actorOf(user));
+
   // TODO: web push fan-out (no infra in Houzs yet). BrowserPushSink already
   // fires native browser Notifications from the polled activity feed; wiring
   // announcements into a similar polled trigger is the natural next step.
 
   return c.json({ success: true, data: row ? toPublic(row) : null }, 201);
+});
+
+// ============================================================
+// Approval workflow (mig 20260906T1509, owner 2026-09-06) — the transitions
+// live in services/announcementApproval.ts; these are the gates.
+//   POST /:id/submit   — DRAFT / REJECTED → PENDING_APPROVAL (the author's
+//                        managers: announcements.write, or a Sales Director
+//                        on their own post)
+//   POST /:id/approve  — PENDING_APPROVAL → APPROVED, mints the ref no
+//                        (announcements.approve)
+//   POST /:id/reject   — PENDING_APPROVAL → REJECTED, { reason } required
+//                        (announcements.approve)
+// ============================================================
+function actorOf(user: AuthUser | undefined): Actor {
+  return { id: user?.id ?? null, email: user?.email ?? null, name: user?.name ?? null };
+}
+
+async function answerTransition(
+  c: { env: Env; get: (k: string) => unknown; json: (b: unknown, s?: number) => Response },
+  id: string,
+  run: () => Promise<unknown>,
+): Promise<Response> {
+  try {
+    await run();
+  } catch (e) {
+    if (e instanceof ApprovalError) return c.json({ success: false, error: e.message }, e.status);
+    throw e;
+  }
+  const fresh = await getScopedAnnouncement(c, id);
+  return c.json({ success: true, data: fresh ? toPublic(fresh) : null });
+}
+
+app.post("/:id/submit", requirePermissionOrSalesDirector("announcements.write"), async (c) => {
+  const id = c.req.param("id");
+  const existing = await getScopedAnnouncement(c, id);
+  if (!existing) return c.json({ success: false, error: "Announcement not found" }, 404);
+  const user = c.get("user");
+  if (sdBlockedFromRow(salesDirectorScope(c), existing, user.id)) {
+    return c.json({ success: false, error: "Announcement not found" }, 404);
+  }
+  return answerTransition(c, id, () => submitForApproval(c.env, existing, actorOf(user)));
+});
+
+app.post("/:id/approve", requirePermission(APPROVE_PERMISSION), async (c) => {
+  const id = c.req.param("id");
+  const existing = await getScopedAnnouncement(c, id);
+  if (!existing) return c.json({ success: false, error: "Announcement not found" }, 404);
+  return answerTransition(c, id, () => approveAnnouncement(c.env, existing, actorOf(c.get("user"))));
+});
+
+app.post("/:id/reject", requirePermission(APPROVE_PERMISSION), async (c) => {
+  const id = c.req.param("id");
+  const existing = await getScopedAnnouncement(c, id);
+  if (!existing) return c.json({ success: false, error: "Announcement not found" }, 404);
+  const body = (await c.req.json().catch(() => ({}))) as { reason?: unknown };
+  return answerTransition(c, id, () =>
+    rejectAnnouncement(c.env, existing, actorOf(c.get("user")), String(body.reason ?? "")),
+  );
 });
 
 // ============================================================

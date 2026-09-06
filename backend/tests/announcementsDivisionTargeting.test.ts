@@ -50,6 +50,11 @@ const json = (method: string, payload: unknown): RequestInit => ({
 const listIds = async (user: unknown) =>
   ((await call(user, "/api/announcements")).body.data as Array<{ id: string }>).map((a) => a.id);
 
+/** Approve in place (the approval flow has its own suite). */
+async function publish(id: string): Promise<void> {
+  await env.DB.prepare("UPDATE announcements SET approval_status = 'APPROVED' WHERE id = ?").bind(id).run();
+}
+
 describe("announcements — division targets and excluded people", () => {
   beforeAll(async () => {
     await env.DB.prepare(
@@ -60,7 +65,9 @@ describe("announcements — division targets and excluded people", () => {
          target_type TEXT, target_dept_ids TEXT, target_position_ids TEXT,
          target_user_ids TEXT, target_company_ids TEXT, category TEXT,
          source TEXT, company_id INTEGER, require_ack INTEGER, scheduled_at TEXT,
-         target_divisions TEXT, excluded_user_ids TEXT, escalated_at TEXT)`,
+         target_divisions TEXT, excluded_user_ids TEXT, escalated_at TEXT,
+         approval_status TEXT, submitted_by INTEGER, submitted_at TEXT, reviewed_by INTEGER,
+         reviewed_at TEXT, reject_reason TEXT, ref_no TEXT)`,
     ).run();
     await env.DB.prepare(
       `CREATE TABLE IF NOT EXISTS announcement_acks (
@@ -124,6 +131,9 @@ describe("announcements — division targets and excluded people", () => {
     );
     expect(r.status).toBe(201);
     const id = r.body.data.id as string;
+    // A new notice waits for approval (mig 20260906T1509); this suite is about
+    // targeting, so publish it in place before reading the feeds.
+    await publish(id);
     expect(r.body.data.targetType).toBe("DEPARTMENT_IDS");
     expect(r.body.data.targetDeptIds).toEqual([]);
     expect(r.body.data.targetDivisions).toEqual([{ deptId: 30, division: "Driver Team" }]);
@@ -168,6 +178,9 @@ describe("announcements — division targets and excluded people", () => {
     );
     expect(r.status).toBe(201);
     const id = r.body.data.id as string;
+    // A new notice waits for approval (mig 20260906T1509); this suite is about
+    // targeting, so publish it in place before reading the feeds.
+    await publish(id);
     expect(await listIds(reader(701, 30))).toContain(id);
     expect(await listIds(reader(703, 30))).not.toContain(id);
 
@@ -210,6 +223,9 @@ describe("announcements — division targets and excluded people", () => {
     expect(r.status).toBe(201);
     expect(r.body.data.targetType).toBe("MIXED");
     const id = r.body.data.id as string;
+    // A new notice waits for approval (mig 20260906T1509); this suite is about
+    // targeting, so publish it in place before reading the feeds.
+    await publish(id);
     expect(await listIds(reader(705, 31))).toContain(id);
     expect(await listIds(reader(701, 30))).toContain(id);
     expect(await listIds(reader(703, 30))).not.toContain(id);

@@ -17,6 +17,7 @@ import { ManageView } from "./announcements/ManageView";
 import { ComposerModal } from "./announcements/ComposerModal";
 import {
   bucketInbox,
+  isApproved,
   receiptsCsv,
   type AckSummary,
   type AcksData,
@@ -58,12 +59,21 @@ export function Announcements() {
   const isSalesDir = isSalesDirectorUser(user);
   const canWrite = can("announcements.write") || isSalesDir;
   const salesDirOnly = isSalesDir && !can("announcements.write");
+  // The approval desk (mig 20260906T1509): Approve / Reject in Manage. Held by
+  // a role, so the owner re-points it without a code change. An approver
+  // without announcements.write still gets the Manage table (the queue lives
+  // there) but none of the poster's actions.
+  const canApprove = can("announcements.approve");
+  const canOpenManage = canWrite || canApprove;
   const currentUserId = user?.id ?? null;
 
   // NOTE: this fetch is unbounded (no LIMIT/pagination) — the backend returns
   // every announcement. Capping it server-side is a separate follow-up.
   const listQ = useQuery<ListResponse>("/api/announcements", () => api.get("/api/announcements"));
   const items = useMemo(() => listQ.data?.data ?? [], [listQ.data]);
+  // The reading inbox holds only what readers are served: a manager's own
+  // pending / draft / rejected rows belong in Manage, not in their inbox.
+  const inboxItems = useMemo(() => items.filter(isApproved), [items]);
 
   // Lookups for the audience pickers + the "To: …" resolver. All three sit
   // behind users.read on the backend, which a plain reader does not hold — and
@@ -265,6 +275,50 @@ export function Announcements() {
     }
   }
 
+  async function submitNotice(a: Announcement) {
+    try {
+      await api.post(`/api/announcements/${a.id}/submit`, {});
+      toast.success("Submitted for approval");
+      listQ.reload();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Something went wrong. Please try again.");
+    }
+  }
+
+  async function approveNotice(a: Announcement) {
+    try {
+      const r = await api.post<{ data?: { refNo?: string | null } | null }>(
+        `/api/announcements/${a.id}/approve`,
+        {},
+      );
+      const ref = r.data?.refNo;
+      toast.success(ref ? `Approved and published as ${ref}` : "Approved and published");
+      listQ.reload();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Something went wrong. Please try again.");
+    }
+  }
+
+  async function rejectNotice(a: Announcement) {
+    const reason = await dialog.prompt({
+      title: "Reject announcement",
+      message: `"${a.title}" goes back to its author with your reason. They can edit it and submit it again.`,
+      placeholder: "What needs to change",
+      confirmLabel: "Reject",
+      danger: true,
+      required: true,
+      multiline: true,
+    });
+    if (reason == null || !reason.trim()) return;
+    try {
+      await api.post(`/api/announcements/${a.id}/reject`, { reason: reason.trim() });
+      toast.success("Sent back to the author");
+      listQ.reload();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Something went wrong. Please try again.");
+    }
+  }
+
   async function toggleHidden(a: Announcement) {
     try {
       await api.patch(`/api/announcements/${a.id}`, { isActive: !a.isActive });
@@ -275,7 +329,7 @@ export function Announcements() {
     }
   }
 
-  const modeToggle = canWrite ? (
+  const modeToggle = canOpenManage ? (
     <div
       role="tablist"
       aria-label="Announcements mode"
@@ -357,7 +411,7 @@ export function Announcements() {
            margin cancels the layout's own page padding. */
         <InboxView
           className="-mx-3 -mb-[calc(10rem+env(safe-area-inset-bottom))] h-[calc(100dvh-var(--page-header-offset,120px)-1.5rem)] min-h-[480px] sm:-mx-4 lg:-mx-4 lg:-mb-10"
-          items={items}
+          items={inboxItems}
           loading={listQ.loading}
           addressedIds={banner.addressedIds}
           ackedIds={banner.ackedIds}
@@ -414,6 +468,11 @@ export function Announcements() {
           onEscalate={(a, deptId, deptName) => void escalate(a, deptId, deptName)}
           onToggleHidden={(a) => void toggleHidden(a)}
           onDelete={(a) => void deleteNotice(a)}
+          canWrite={canWrite}
+          canApprove={canApprove}
+          onSubmit={(a) => void submitNotice(a)}
+          onApprove={(a) => void approveNotice(a)}
+          onReject={(a) => void rejectNotice(a)}
         />
       )}
     </div>

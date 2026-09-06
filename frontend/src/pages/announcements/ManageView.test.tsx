@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { ManageView, type ManageViewProps } from "./ManageView";
 import type { AcksData, Announcement } from "./announcementModel";
@@ -78,6 +78,11 @@ function props(over: Partial<ManageViewProps> = {}): ManageViewProps {
     onEscalate: vi.fn(),
     onToggleHidden: vi.fn(),
     onDelete: vi.fn(),
+    canWrite: true,
+    canApprove: false,
+    onSubmit: vi.fn(),
+    onApprove: vi.fn(),
+    onReject: vi.fn(),
     ...over,
   };
 }
@@ -147,5 +152,49 @@ describe("ManageView", () => {
     render(<ManageView {...props({ summary: null })} />);
     expect(screen.getAllByText("…").length).toBeGreaterThan(0);
     expect(screen.getByText("Overdue · escalated").parentElement!.textContent).toContain("—");
+  });
+
+  describe("approval workflow (mig 20260906T1509)", () => {
+    const pending = ann({ id: "pend", title: "Forklift rule", category: "WARNING", approvalStatus: "PENDING_APPROVAL" });
+    const rejected = ann({ id: "rej", title: "Canteen hours", approvalStatus: "REJECTED", rejectReason: "Wrong closing time." });
+
+    it("an unapproved row reads its approval state, not an ack state, and the queue pill counts it", () => {
+      render(<ManageView {...props({ items: [...ITEMS, pending, rejected] })} />);
+      expect(screen.getByText("Pending approval", { selector: "td span" })).toBeTruthy();
+      expect(screen.getByText("Rejected", { selector: "td span" })).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Pending approval 1" })).toBeTruthy();
+    });
+
+    it("the queue filter keeps only pending rows", () => {
+      render(<ManageView {...props({ items: [...ITEMS, pending, rejected], filter: "approval", selectedId: null })} />);
+      expect(screen.getByText("Forklift rule")).toBeTruthy();
+      expect(screen.queryByText("Canteen hours")).toBeNull();
+      expect(screen.queryByText("Shipping marks")).toBeNull();
+    });
+
+    it("an approver sees Approve / Reject on a pending notice; a writer only sees that it is waiting", () => {
+      const p = props({ items: [pending], selectedId: "pend", canApprove: true, canWrite: false });
+      render(<ManageView {...p} />);
+      fireEvent.click(screen.getByRole("button", { name: "Approve & publish" }));
+      expect(p.onApprove).toHaveBeenCalledWith(expect.objectContaining({ id: "pend" }));
+      fireEvent.click(screen.getByRole("button", { name: "Reject…" }));
+      expect(p.onReject).toHaveBeenCalledWith(expect.objectContaining({ id: "pend" }));
+      // The approval desk alone gets none of the poster actions.
+      expect(screen.queryByRole("button", { name: "Hide" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
+
+      cleanup();
+      render(<ManageView {...props({ items: [pending], selectedId: "pend" })} />);
+      expect(screen.queryByRole("button", { name: "Approve & publish" })).toBeNull();
+      expect(screen.getByText(/Waiting for an approver/)).toBeTruthy();
+    });
+
+    it("a rejected notice shows the reason and a writer can submit it again", () => {
+      const p = props({ items: [rejected], selectedId: "rej" });
+      render(<ManageView {...p} />);
+      expect(screen.getByTestId("reject-reason").textContent).toContain("Wrong closing time.");
+      fireEvent.click(screen.getByRole("button", { name: "Submit for approval" }));
+      expect(p.onSubmit).toHaveBeenCalledWith(expect.objectContaining({ id: "rej" }));
+    });
   });
 });

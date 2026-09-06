@@ -354,7 +354,10 @@ export function ComposerModal(p: ComposerModalProps) {
     [dialog],
   );
 
-  async function post() {
+  // Approval workflow (mig 20260906T1509): a notice is submitted, not posted —
+  // it goes live when an approver signs it off. `asDraft` parks it in Manage
+  // without ringing the approvers' bell.
+  async function post(opts: { asDraft?: boolean } = {}) {
     const built = buildPostBody(draft, p.salesDirOnly, p.users);
     if (!built.ok) {
       toast.error(built.error);
@@ -362,13 +365,19 @@ export function ComposerModal(p: ComposerModalProps) {
     }
     setPosting(true);
     try {
-      await api.post("/api/announcements", built.body);
+      await api.post("/api/announcements", opts.asDraft ? { ...built.body, draft: true } : built.body);
       try {
         localStorage.removeItem(storageKey);
       } catch {
         /* nothing to clear */
       }
-      toast.success(scheduledAt ? "Announcement scheduled" : "Announcement posted");
+      toast.success(
+        opts.asDraft
+          ? "Draft saved — find it under Manage"
+          : scheduledAt
+            ? "Submitted for approval — it is scheduled once approved"
+            : "Submitted for approval",
+      );
       p.onPosted();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to post");
@@ -630,8 +639,8 @@ export function ComposerModal(p: ComposerModalProps) {
             <div className="flex flex-col gap-[9px] border-t border-border bg-surface-2 px-4 py-[11px]">
               <span className="text-[11px] text-ink-secondary">
                 {activeExclusions(audience, p.users).length > 0
-                  ? "Unticked people are left out. Everyone else resolves at post time — someone who joins a picked department or division later is included. Overdue acknowledgements escalate to each person's supervisor."
-                  : "Recipients resolve at post time — a department or division picks up new members automatically. Overdue acknowledgements escalate to each person's supervisor."}
+                  ? "Unticked people are left out. Everyone else resolves at post time — someone who joins a picked department or division later is included. Overdue acknowledgements escalate to each person's supervisor. Nothing is served until an approver signs it off."
+                  : "Recipients resolve at post time — a department or division picks up new members automatically. Overdue acknowledgements escalate to each person's supervisor. Nothing is served until an approver signs it off."}
               </span>
               <div className="flex gap-2">
                 <button
@@ -644,11 +653,19 @@ export function ComposerModal(p: ComposerModalProps) {
                 </button>
                 <button
                   type="button"
+                  onClick={() => void post({ asDraft: true })}
+                  disabled={!canPost}
+                  className="rounded-md border border-border bg-surface px-3 py-2 text-[12px] font-[650] text-ink-secondary hover:bg-surface-dim disabled:opacity-50"
+                >
+                  Save draft
+                </button>
+                <button
+                  type="button"
                   onClick={() => void post()}
                   disabled={!canPost}
                   className="flex-1 rounded-md bg-primary px-3 py-2 text-[12px] font-bold text-white hover:bg-primary/90 disabled:opacity-50"
                 >
-                  {posting ? "Posting…" : scheduledAt ? "Schedule post" : "Post announcement"}
+                  {posting ? "Submitting…" : scheduledAt ? "Submit scheduled post" : "Submit for approval"}
                 </button>
               </div>
             </div>

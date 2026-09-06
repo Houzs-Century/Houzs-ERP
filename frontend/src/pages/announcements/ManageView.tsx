@@ -9,6 +9,7 @@ import {
   PERSON_STATE_META,
   ackPercent,
   ackRateBarCls,
+  approvalOf,
   audienceLabel,
   categoryOf,
   deptKey,
@@ -60,6 +61,17 @@ export type ManageViewProps = {
    *  actions from the old list, kept in the drawer header. */
   onToggleHidden: (a: Announcement) => void;
   onDelete: (a: Announcement) => void;
+  /** announcements.write (or a Sales Director on their own post): may hide /
+   *  delete / submit. The approval desk alone (announcements.approve) reads
+   *  the table and acts on the queue only. */
+  canWrite: boolean;
+  /** announcements.approve: Approve / Reject on a pending notice. */
+  canApprove: boolean;
+  /** DRAFT / REJECTED → back into the approval queue. */
+  onSubmit: (a: Announcement) => void;
+  onApprove: (a: Announcement) => void;
+  /** The page asks for the reason (a dialog) and posts it. */
+  onReject: (a: Announcement) => void;
   className?: string;
 };
 
@@ -124,7 +136,11 @@ export function ManageView(p: ManageViewProps) {
               {INBOX_FILTERS.map((f) => {
                 const active = p.filter === f.id;
                 const label =
-                  f.id === "pending" && pendingCount > 0 ? `${f.label} ${pendingCount}` : f.label;
+                  f.id === "pending" && pendingCount > 0
+                    ? `${f.label} ${pendingCount}`
+                    : f.id === "approval" && stats.pendingApproval > 0
+                      ? `${f.label} ${stats.pendingApproval}`
+                      : f.label;
                 return (
                   <button
                     key={f.id}
@@ -210,6 +226,11 @@ export function ManageView(p: ManageViewProps) {
               onEscalate={(deptId, deptName) => p.onEscalate(selected, deptId, deptName)}
               onToggleHidden={() => p.onToggleHidden(selected)}
               onDelete={() => p.onDelete(selected)}
+              canWrite={p.canWrite}
+              canApprove={p.canApprove}
+              onSubmit={() => p.onSubmit(selected)}
+              onApprove={() => p.onApprove(selected)}
+              onReject={() => p.onReject(selected)}
             />
           ) : (
             <div className="flex flex-1 items-center justify-center px-6 text-center text-[12px] text-ink-muted">
@@ -318,6 +339,11 @@ function Drawer({
   onEscalate,
   onToggleHidden,
   onDelete,
+  canWrite,
+  canApprove,
+  onSubmit,
+  onApprove,
+  onReject,
 }: {
   a: Announcement;
   receipts: AcksData | null;
@@ -329,8 +355,22 @@ function Drawer({
   onEscalate: (departmentId: number | null, departmentName: string) => void;
   onToggleHidden: () => void;
   onDelete: () => void;
+  canWrite: boolean;
+  canApprove: boolean;
+  onSubmit: () => void;
+  onApprove: () => void;
+  onReject: () => void;
 }) {
   const meta = CATEGORY_META[categoryOf(a)];
+  const approval = approvalOf(a);
+  const approvalMeta =
+    approval === "DRAFT"
+      ? MANAGE_STATUS_META.draft
+      : approval === "PENDING_APPROVAL"
+        ? MANAGE_STATUS_META.pending_approval
+        : approval === "REJECTED"
+          ? MANAGE_STATUS_META.rejected
+          : null;
   const depts = receipts?.byDepartment ?? [];
   const openKey =
     drillDept && depts.some((d) => deptKey(d.id) === drillDept)
@@ -367,21 +407,72 @@ function Drawer({
         <span className="font-mono text-[10.5px] text-ink-muted">
           {docNo(a)} · {fmtDateTime(a.createdAt)}
         </span>
-        <div className="mt-1 flex gap-2">
-          <button
-            type="button"
-            onClick={onToggleHidden}
-            className={cn(SECONDARY_BTN, "px-2.5 py-1 text-[11px] font-[650]")}
+        {approvalMeta && (
+          <span
+            className={cn(
+              "inline-flex self-start rounded-full px-2 py-[2px] text-[10px] font-bold uppercase",
+              approvalMeta.cls,
+            )}
           >
-            {a.isActive ? "Hide" : "Show"}
-          </button>
-          <button
-            type="button"
-            onClick={onDelete}
-            className="rounded-md border border-err/40 bg-surface px-2.5 py-1 text-[11px] font-[650] text-err hover:bg-err/5"
-          >
-            Delete
-          </button>
+            {approvalMeta.label}
+          </span>
+        )}
+        {approval === "REJECTED" && a.rejectReason && (
+          <span className="text-[11.5px] leading-[1.4] text-err" data-testid="reject-reason">
+            Sent back: {a.rejectReason}
+          </span>
+        )}
+        {approval === "PENDING_APPROVAL" && !canApprove && (
+          <span className="text-[11.5px] text-ink-secondary">
+            Waiting for an approver. Nobody is served it until it is approved.
+          </span>
+        )}
+        <div className="mt-1 flex flex-wrap gap-2">
+          {approval === "PENDING_APPROVAL" && canApprove && (
+            <>
+              <button
+                type="button"
+                onClick={onApprove}
+                className="rounded-md bg-primary px-2.5 py-1 text-[11px] font-bold text-white hover:bg-primary/90"
+              >
+                Approve &amp; publish
+              </button>
+              <button
+                type="button"
+                onClick={onReject}
+                className="rounded-md border border-err/40 bg-surface px-2.5 py-1 text-[11px] font-[650] text-err hover:bg-err/5"
+              >
+                Reject…
+              </button>
+            </>
+          )}
+          {(approval === "DRAFT" || approval === "REJECTED") && canWrite && (
+            <button
+              type="button"
+              onClick={onSubmit}
+              className="rounded-md bg-primary px-2.5 py-1 text-[11px] font-bold text-white hover:bg-primary/90"
+            >
+              Submit for approval
+            </button>
+          )}
+          {canWrite && (
+            <>
+              <button
+                type="button"
+                onClick={onToggleHidden}
+                className={cn(SECONDARY_BTN, "px-2.5 py-1 text-[11px] font-[650]")}
+              >
+                {a.isActive ? "Hide" : "Show"}
+              </button>
+              <button
+                type="button"
+                onClick={onDelete}
+                className="rounded-md border border-err/40 bg-surface px-2.5 py-1 text-[11px] font-[650] text-err hover:bg-err/5"
+              >
+                Delete
+              </button>
+            </>
+          )}
         </div>
       </div>
 

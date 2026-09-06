@@ -44,8 +44,16 @@ voided_at / void_reason`; the number keeps its place. `findRef(env, refNo)` and
 `findRefForEntity(env, type, id)` resolve either way round.
 
 Minting is not a route: the module that owns the record mints when the
-record reaches the state that deserves a number (the announcement approval is
-the first consumer).
+record reaches the state that deserves a number. **First consumer (2026-09-06,
+mig `20260906T1509`):** the announcement approval —
+`backend/src/services/announcementApproval.ts` `approveAnnouncement()` mints
+`mintDocumentRef(env, { deptCode: <submitter's department code>, typeCode:
+"ANN", entityType: "announcement", entityId: <announcement id> })` on the
+PENDING_APPROVAL → APPROVED transition and stores the number in
+`announcements.ref_no` as well; a submitter without a department, or in a
+department without a code, blocks the approval (409 naming what to set) rather
+than publishing an un-numbered notice. See `docs/modules/announcements.md`
+§3 "Approval workflow".
 
 ## 3. API — `backend/src/routes/documentRefs.ts` (mounted at `/api`)
 
