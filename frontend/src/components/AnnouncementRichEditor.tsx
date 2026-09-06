@@ -35,7 +35,10 @@ import {
 //
 // Where the browser's command leaves a spelling the grammar does not have,
 // the DOM is rewritten right after the command, and nowhere else:
-//   · fontSize → <font size="7"> becomes <span data-size="…"> (or unwraps)
+//   · fontSize → <font size="7"> becomes <span data-size="…"> (or unwraps).
+//     The Size control is a dropdown of point sizes (owner 2026-09-06, "像
+//     Word 那样选字号数字"); with nothing selected it sizes the whole
+//     paragraph the caret is in, so a click always does something visible.
 //   · hiliteColor → the styled span/font becomes <mark>
 //   · formatBlock h1 / h2 / p is emitted as-is (canonical already)
 //   · createLink is fed a normalised http(s)/mailto URL; anything else is
@@ -83,12 +86,16 @@ type Props = {
   imageSrc?: (key: string) => string | undefined;
 };
 
-const SIZE_OPTIONS: Array<{ key: Size; label: string; title: string }> = [
-  { key: "sm", label: "S", title: "Small text" },
-  { key: "md", label: "M", title: "Normal text" },
-  { key: "lg", label: "L", title: "Large text" },
-  { key: "xl", label: "XL", title: "Extra-large text" },
+/** The dropdown: Default (no span) + the numeric point sizes. The legacy
+ *  sm / lg / xl tokens are read (mapped to their px) but not offered. */
+const SIZE_OPTIONS: Array<{ key: Size; label: string }> = [
+  { key: "md", label: "Default" },
+  // The numeric entries of the grammar, in its order — ONE home (RICH_SIZES).
+  ...RICH_SIZES.filter((n) => /^[0-9]+$/.test(n)).map((n) => ({ key: n as Size, label: n })),
 ];
+const LEGACY_SIZE: Record<string, RichSize> = { sm: "11", lg: "16", xl: "20" };
+/** The block a caret sits in — what a collapsed-selection size applies to. */
+const BLOCK_SELECTOR = "p,h1,h2,li,td,th";
 
 // The sentinel the fontSize command leaves behind. 7 is the largest legacy
 // size, which nothing else in this app produces, so it is safe to key on.
@@ -154,6 +161,13 @@ function foldFontSentinels(root: HTMLElement, size: Size): void {
     span.setAttribute("data-size", size);
     while (font.firstChild) span.appendChild(font.firstChild);
     font.replaceWith(span);
+    // A size span that now wraps nothing but the new one (Enter carried the
+    // previous size into this paragraph) is redundant: unwrap it.
+    let outer = span.parentElement;
+    while (outer && outer.matches("span[data-size]") && outer.childNodes.length === 1) {
+      unwrap(outer);
+      outer = span.parentElement;
+    }
   }
 }
 
@@ -204,8 +218,23 @@ function closestIn(root: HTMLElement, selector: string): Element | null {
 }
 
 function sizeAtSelection(root: HTMLElement): Size {
-  const v = closestIn(root, "span[data-size]")?.getAttribute("data-size") ?? "";
+  const raw = closestIn(root, "span[data-size]")?.getAttribute("data-size") ?? "";
+  const v = LEGACY_SIZE[raw] ?? raw;
   return (RICH_SIZES as readonly string[]).includes(v) ? (v as RichSize) : "md";
+}
+
+/** With nothing selected, select the caret's whole block so the size
+ *  applies to the paragraph; returns true when it did. */
+function selectBlockIfCollapsed(root: HTMLElement): boolean {
+  const sel = window.getSelection();
+  if (!sel) return false;
+  if (sel.rangeCount > 0 && !sel.getRangeAt(0).collapsed) return false;
+  const block = closestIn(root, BLOCK_SELECTOR) ?? root;
+  const range = document.createRange();
+  range.selectNodeContents(block);
+  sel.removeAllRanges();
+  sel.addRange(range);
+  return true;
 }
 
 function blockAtSelection(root: HTMLElement): Block {
@@ -246,6 +275,9 @@ export function AnnouncementRichEditor({
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  // The Size <select> takes focus when opened; the selection it should apply
+  // to is remembered on the way in and put back before the command runs.
+  const savedRange = useRef<Range | null>(null);
   const lastEmitted = useRef<string | null>(null);
   const [empty, setEmpty] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -328,13 +360,30 @@ export function AnnouncementRichEditor({
     [disabled, emit, refreshMarks],
   );
 
+  const rememberSelection = useCallback(() => {
+    const sel = window.getSelection();
+    const el = ref.current;
+    savedRange.current =
+      sel && sel.rangeCount > 0 && el && el.contains(sel.getRangeAt(0).commonAncestorContainer)
+        ? sel.getRangeAt(0).cloneRange()
+        : null;
+  }, []);
+
   const applySize = useCallback(
     (size: Size) => {
       const el = ref.current;
       if (!el || disabled) return;
       el.focus();
+      const sel = window.getSelection();
+      if (sel && savedRange.current) {
+        sel.removeAllRanges();
+        sel.addRange(savedRange.current);
+      }
+      const widened = selectBlockIfCollapsed(el);
       exec("fontSize", FONT_SENTINEL);
       foldFontSentinels(el, size);
+      if (widened && sel && sel.rangeCount > 0) sel.collapseToEnd();
+      savedRange.current = null;
       emit();
       refreshMarks();
     },
@@ -512,24 +561,25 @@ export function AnnouncementRichEditor({
           )}
         {btn("Clear formatting", "Clear formatting", false, clearFormatting, <RemoveFormatting size={13} />)}
         {divider}
-        <span className="mr-0.5 text-[10px] font-semibold uppercase tracking-wider text-ink-muted">
+        <label className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-ink-muted">
           Size
-        </span>
-        {SIZE_OPTIONS.map((o) => (
-          <button
-            key={o.key}
-            type="button"
-            title={o.title}
-            aria-label={o.title}
-            aria-pressed={marks.size === o.key}
+          <select
+            aria-label="Text size"
+            title="Text size — applies to the selection, or to the whole paragraph when nothing is selected"
+            value={marks.size}
             disabled={disabled}
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={() => applySize(o.key)}
-            className={cn(toolBtn, marks.size === o.key && active)}
+            onPointerDown={rememberSelection}
+            onKeyDown={rememberSelection}
+            onChange={(e) => applySize(e.target.value as Size)}
+            className="h-7 rounded border border-border bg-surface px-1 text-[11px] font-semibold normal-case tracking-normal text-ink-secondary outline-none focus:border-primary"
           >
-            {o.label}
-          </button>
-        ))}
+            {SIZE_OPTIONS.map((o) => (
+              <option key={o.key} value={o.key}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </label>
         {onInsertImage && (
           <input
             ref={fileRef}
