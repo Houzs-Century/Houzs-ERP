@@ -8,6 +8,8 @@ import {
   ACK_OVERDUE_HOURS,
   divisionEq,
   inTargetCompanies,
+  isOverdue,
+  liveSinceMs,
   pendingState,
   readDivisionTargets,
   rosterCompaniesSql,
@@ -72,5 +74,17 @@ describe("pendingState", () => {
     expect(pendingState({ reminded_at: "garbage", created_at: new Date(now - (ACK_OVERDUE_HOURS + 1) * h).toISOString() }, now)).toBe("overdue");
     expect(pendingState({ createdAt: new Date(now - 2 * h).toISOString() }, now)).toBe("pending");
     expect(pendingState({}, now)).toBe("pending");
+  });
+
+  test("the overdue clock starts when the notice went live (a scheduled instant after created_at)", () => {
+    const now = Date.parse("2026-09-06T12:00:00Z");
+    const written = new Date(now - 5 * 24 * h).toISOString();
+    const live = new Date(now - 10 * h).toISOString();
+    expect(liveSinceMs({ createdAt: written, scheduledAt: live })).toBe(Date.parse(live));
+    expect(liveSinceMs({ createdAt: written })).toBe(Date.parse(written));
+    expect(Number.isNaN(liveSinceMs({}))).toBe(true);
+    expect(isOverdue({ createdAt: written, scheduledAt: live }, now)).toBe(false);
+    expect(isOverdue({ createdAt: written }, now)).toBe(true);
+    expect(pendingState({ createdAt: written, scheduledAt: live }, now)).toBe("pending");
   });
 });

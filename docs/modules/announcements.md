@@ -57,6 +57,12 @@ screen down to the database. Same structure as
 > `excluded_user_ids` (server-side untick). The Dept column is a tree of
 > departments → divisions; the 2026-09-05 client-side expansion is gone.
 > §1 composer row, §3 "Division targets" and §4 carry the contract.
+> **2026-09-06 (overdue escalation cron, owner: "做逾期自动通知主管的 cron"):**
+> a must-acknowledge notice older than 48h has its supervisors notified once,
+> automatically, by the `*/30` cron (`services/announcementEscalation.ts`,
+> shared with the drawer's manual button); mig
+> `backend/src/db/migrations-pg/20260906T0833_announcement_escalated_at.sql`
+> adds `escalated_at`. §3 "Overdue escalation cron" and §4 carry the contract.
 > **2026-09-06 (font sizes, owner: "像 Word 那样选字号数字"):** the editor's
 > S / M / L / XL buttons became a **Size dropdown** of point sizes (10–36
 > px, stored as `span[data-size="16"]`); with nothing selected the size
@@ -459,9 +465,25 @@ all filtering happens in JS in the Worker (`:543-547`, `:628-630`).
   (`loadRoster`, `audienceOf`, `pendingState`, `announcementRequiresAck`) are
   shared by `/:id/acks`, `/ack-summary`, `/team-pending` and `/:id/escalate`
   so the drawer, the table, the dashboard card and the supervisor notice
-  cannot disagree. Pinned by `tests/announcementsAckSummary.test.ts`. Still
-  manual: reminders and escalation are the poster's click; the automatic
-  overdue-escalation job is a separate follow-up.
+  cannot disagree. Pinned by `tests/announcementsAckSummary.test.ts`.
+  Reminders stay the poster's click.
+- **Overdue escalation cron (2026-09-06)** —
+  `backend/src/services/announcementEscalation.ts`: `escalatePending()` is
+  the ONE implementation behind the drawer's "Notify their supervisors"
+  (`POST /:id/escalate`) and `runOverdueEscalation()`, which the `*/30`
+  cron trigger runs (`src/index.ts`): every active, human,
+  acknowledgement-required, deliverable notice older than
+  `ACK_OVERDUE_HOURS` (48h) with `escalated_at IS NULL` gets one system
+  notice per supervisor of its pending people (`source 'ack_escalation'`),
+  then `escalated_at` is stamped (mig
+  `backend/src/db/migrations-pg/20260906T0833_announcement_escalated_at.sql`)
+  — also when nobody could be notified, so the row is never re-scanned. A
+  manual click stamps it too; `toPublic` emits `escalatedAt` and the Manage
+  drawer shows when it ran. Pinned by `tests/announcementEscalationCron.test.ts`.
+  The gate and the row readers (`userCanSee`, `deliverableNow`,
+  `readIntArray`, `AnnouncementRow`, …) moved into
+  `backend/src/lib/announcementAudience.ts` the same day so the service can
+  share them without importing the route.
 
 ### System notices — the producers
 
@@ -529,6 +551,7 @@ Columns that matter:
 | `target_dept_ids`, `target_position_ids`, `target_user_ids` | text | JSON integer arrays |
 | `target_company_ids` | text | JSON integer array; NULL/empty = all companies |
 | `target_divisions` | text | JSON array of `{deptId, division}` (mig `20260906T0639_announcement_target_divisions_excluded_users.sql`); a reader matches when their primary `department_id` = deptId and `users.division` equals the text case-insensitively. Counts as the DEPARTMENT bucket of `target_type` (CHECK untouched). `toPublic` emits `targetDivisions`; `withNames` adds `targetDivisionNames` ("Operation › Driver Team") |
+| `escalated_at` | text | ISO string; when the overdue escalation ran (cron or manual), NULL = never (mig `20260906T0833_announcement_escalated_at.sql`). `toPublic` emits `escalatedAt` |
 | `excluded_user_ids` | text | JSON integer array (same migration); an id here never sees the notice, whatever else targets them — checked first in `userCanSee`. `toPublic` emits `excludedUserIds` |
 | `category` | text | CHECK ∈ `GENERAL`/`WARNING`/`SOP`/`LEARNING` — this is the closest thing to a priority; there is **no** `priority` column |
 | `source` | text | NULL = human, `'scan'`/`'service_case'` = system |

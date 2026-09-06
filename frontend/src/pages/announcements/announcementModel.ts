@@ -79,6 +79,9 @@ export type Announcement = {
   requireAck?: boolean | null;
   /** Scheduled posting instant (mig 2026-09). Absent/null = posted at once. */
   scheduledAt?: string | null;
+  /** When the overdue escalation ran — the cron or the drawer's click (mig
+   *  20260906T0833). Absent/null = supervisors not notified yet. */
+  escalatedAt?: string | null;
 };
 
 /** One targeted division: the department it sits in + the division text. */
