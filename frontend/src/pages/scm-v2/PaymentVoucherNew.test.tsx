@@ -311,6 +311,20 @@ describe('the plain Payment Voucher (/new)', () => {
     await waitFor(() => expect(screen.getByText(/2 scanned file\(s\) attached/)).toBeTruthy());
   });
 
+  test('Insert adds a line and lands on its account; Enter on an amount moves down, adding a line at the end (owner 2026-09-06)', () => {
+    draw('/scm/payment-vouchers/new');
+    expect(screen.queryByLabelText('line 2 amount')).toBeNull();
+    fireEvent.keyDown(screen.getByLabelText('line 1 amount'), { key: 'Insert' });
+    const second = screen.getByLabelText('line 2 amount');
+    const landed = document.activeElement as HTMLElement | null;
+    expect(landed?.getAttribute('role')).toBe('combobox');
+    expect(landed?.closest('[data-line]')?.contains(second)).toBe(true);
+
+    fireEvent.keyDown(second, { key: 'Enter' });
+    const third = screen.getByLabelText('line 3 amount');
+    expect((document.activeElement as HTMLElement | null)?.closest('[data-line]')?.contains(third)).toBe(true);
+  });
+
   test('the account search actually narrows — 打关键字眼 finds the account', () => {
     draw('/scm/payment-vouchers/new');
     const paidFrom = screen.getByLabelText(/Paid From/) as HTMLInputElement;

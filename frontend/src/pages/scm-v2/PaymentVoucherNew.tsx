@@ -314,6 +314,25 @@ export const PaymentVoucherNew = () => {
     setLines((prev) => prev.map((l) => (l.rid === rid ? { ...l, ...patch } : l)));
   const dropLine = (rid: string) => setLines((prev) => (prev.length <= 1 ? prev : prev.filter((l) => l.rid !== rid)));
   const addLine  = () => setLines((prev) => [...prev, newLine()]);
+  /* Insert adds a line and LANDS on its account (owner 2026-09-06: 按 Ins 直接
+     加然后直接跳到那一行去输入资料 — the AP invoice's manners, here too);
+     Enter on an amount hops to the next line's account, adding one when
+     there is none. The landing happens after React has drawn the card. */
+  const [landOn, setLandOn] = useState<string | null>(null);
+  useEffect(() => {
+    if (landOn == null) return;
+    document.querySelector<HTMLInputElement>(`[data-line="${landOn}"] input[role="combobox"]`)?.focus();
+    setLandOn(null);
+  }, [landOn, lines]);
+  const addLineAndLand = () => {
+    const l = newLine();
+    setLines((prev) => [...prev, l]);
+    setLandOn(l.rid);
+  };
+  const hopFrom = (rid: string) => {
+    const next = lines.at(lines.findIndex((l) => l.rid === rid) + 1);
+    if (next) setLandOn(next.rid); else addLineAndLand();
+  };
 
   const linesTotalSen = useMemo(() => lines.reduce((s, l) => s + l.amountSen, 0), [lines]);
 
@@ -698,11 +717,13 @@ export const PaymentVoucherNew = () => {
             </div>
           )}
           {lines.map((l, idx) => (
-            <div key={l.rid} style={{
-              background: 'var(--c-paper)', border: '1px solid var(--line)',
-              borderRadius: 'var(--radius-lg)', padding: 'var(--space-4)',
-              display: 'flex', flexDirection: 'column', gap: 'var(--space-3)',
-            }}>
+            <div key={l.rid} data-line={l.rid}
+              onKeyDown={(e) => { if (e.key === 'Insert') { e.preventDefault(); addLineAndLand(); } }}
+              style={{
+                background: 'var(--c-paper)', border: '1px solid var(--line)',
+                borderRadius: 'var(--radius-lg)', padding: 'var(--space-4)',
+                display: 'flex', flexDirection: 'column', gap: 'var(--space-3)',
+              }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-3)' }}>
                 <span style={{ fontFamily: 'var(--font-button)', fontSize: 'var(--fs-12)', fontWeight: 700, letterSpacing: '0.10em', color: 'var(--fg-muted)' }}>LINE {idx + 1}</span>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
@@ -737,8 +758,9 @@ export const PaymentVoucherNew = () => {
               <div className={styles.formGrid4} style={{ gridTemplateColumns: 'repeat(2, 1fr)' }}>
                 <label className={styles.field}>
                   <span className={styles.fieldLabel}>Amount (MYR)</span>
-                  <MoneyInput bare valueSen={l.amountSen}
+                  <MoneyInput bare valueSen={l.amountSen} aria-label={`line ${idx + 1} amount`}
                     onCommit={(sen) => setLine(l.rid, { amountSen: sen ?? 0 })}
+                    onKeyDown={(e) => { if (e.key === 'Enter') hopFrom(l.rid); }}
                     inputClassName={styles.fieldInput} selectOnFocus />
                 </label>
               </div>
