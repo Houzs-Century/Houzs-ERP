@@ -233,9 +233,13 @@ of `row-menus-remaining-lists.test.ts`.
 
 The owner's design, in his words: 预付就不能直接挂在supplier 那边吗? An AP
 Payment may pay MORE than the invoices it ticks — type the extra in the
-**Prepay (advance)** field under the PI table. The voucher's one GL line
-debits AP for the WHOLE amount, so the supplier's AP subledger simply runs
-ahead; on post the server records the excess in `scm.acc_supplier_advances`
+**Prepay (advance)** field under the PI table. The field is there whether or
+not the supplier has an open invoice: a supplier with NOTHING outstanding
+still gets the box (the empty-list sentence used to swallow it — owner
+2026-09-06, a new other-creditor he wanted to prepay), and a prepay-only
+voucher composes the same single AP line with no allocation. The voucher's
+one GL line debits AP for the WHOLE amount, so the supplier's AP subledger
+simply runs ahead; on post the server records the excess in `scm.acc_supplier_advances`
 (mig 0340 — one row per voucher, `amount_sen` written once, `applied_sen`
 only grows).
 

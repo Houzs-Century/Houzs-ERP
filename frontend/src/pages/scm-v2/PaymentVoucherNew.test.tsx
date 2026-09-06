@@ -52,6 +52,8 @@ vi.mock('../../vendor/scm/lib/suppliers-queries', () => ({
   useSuppliers: () => ({ data: [
     { id: 'sup-1', code: 'S001', name: 'Foshan Chairs', currency: 'MYR' },
     { id: 'sup-405', code: '405-Z002', name: 'Zhejiang Ju Miao', currency: 'MYR' },
+    /* No invoice anywhere — the prepay-only case. */
+    { id: 'sup-2', code: 'S002', name: 'Empty Hands Sdn Bhd', currency: 'MYR' },
   ], isLoading: false }),
   useSupplierDetail: () => ({ data: { supplier: { id: 'sup-1', currency: 'MYR' } } }),
 }));
@@ -162,6 +164,27 @@ describe('paying ahead (预付) on the AP Payment', () => {
       expect.objectContaining({ debitAccountCode: '400-0000', amountSen: 60000 + 100000 }),
     ]);
     expect(payload.allocations).toEqual([{ piId: 'pi-2', amountSen: 60000 }]);
+  });
+
+  test('a supplier with NO outstanding invoice still gets the prepay box — the advance is the whole voucher (owner 2026-09-06)', async () => {
+    mutateAsync.mockClear();
+    draw('/scm/payment-vouchers/new?type=ap');
+    fireEvent.focus(screen.getByLabelText(/Supplier \*/));
+    fireEvent.mouseDown(screen.getByText('S002 · Empty Hands Sdn Bhd'));
+    /* The empty-list sentence no longer swallows the box. */
+    expect(screen.getByText(/no outstanding purchase invoices — a prepay below/)).toBeTruthy();
+    const prepay = screen.getByLabelText('Prepay amount') as HTMLInputElement;
+    fireEvent.focus(prepay);
+    fireEvent.change(prepay, { target: { value: '500.00' } });
+    fireEvent.blur(prepay);
+    const save = screen.getByText('Create AP Payment').closest('button') as HTMLButtonElement;
+    expect(save.disabled).toBe(false);
+    fireEvent.click(save);
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
+    const payload = mutateAsync.mock.calls[0]![0];
+    expect(payload.lines).toEqual([expect.objectContaining({ debitAccountCode: '400-0000', amountSen: 50000 })]);
+    /* Nothing to knock off — the payload carries no allocation at all. */
+    expect(payload.allocations ?? []).toEqual([]);
   });
 });
 
