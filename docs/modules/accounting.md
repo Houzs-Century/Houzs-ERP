@@ -157,6 +157,44 @@ open AP invoices beside its purchase invoices (an `AP` tag on the row) and
 sends `apInvoiceId` for those; the AP Aging tab shows the kind. Pinned by
 ApInvoices.test.tsx + PaymentVoucherNew.test.tsx.
 
+**The AP invoice's paper — files, OCR, the bundle (2026-09-06; owner, told
+the first cut had neither: 做,附件也一起做,bundle 也带上).** The supplier's bill
+LIVES with the AP invoice as the scanned bill lives with its voucher:
+`scm.acc_ap_invoice_files` (`backend/src/db/migrations-pg/20260906T2100_acc_ap_invoice_files.sql`,
+the shape of `acc_pv_files`, FK `ON DELETE CASCADE`), bytes in the SLIPS R2
+bucket under `ap-invoice-files/<company>/<invoice>/<uuid>.<ext>`, routes
+`/ap-invoices/:id/files` (`backend/src/scm/routes/ap-invoice-files.ts`,
+mounted before `/:id`). The four handlers come from ONE factory,
+`backend/src/scm/lib/doc-files.ts` — the MIME allowlist, the 20 MB cap, the
+key layout and the upload/list/stream/delete bodies — fed two specs: the AP
+invoice's and the PV's (`backend/src/scm/routes/pv-files.ts` keeps only its
+spec and the print bundle). The AP spec's rules: upload takes the create
+keys; a CANCELLED bill takes no more files (409 `invoice_cancelled`); delete
+is refused once POSTED (409 `evidence_locked` — no check layer, so the ledger
+is the lock; a posted bill still takes a late scan). **The bundle**: `POST
+/payment-vouchers/print-bundle` appends, after each voucher's own files, the
+files of every AP invoice that voucher pays (`pv_allocations.ap_invoice_id`,
+allocation order, `loadDocAttachments` labelling each under its invoice
+number so a notice page says whose); purchase-invoice allocations add
+nothing. **OCR**: the New card's **Scan bill** posts to the shared `POST
+/payment-vouchers/extract` (`backend/src/acc/bill-extract.ts`) and pre-fills
+the supplier (the server's match), the supplier's invoice number, both dates
+and the lines — the account from vendor memory only, never a model guess —
+and a create now TEACHES memory (`learnVendorMemory` with source
+`AP_INVOICE`: supplier name → the first line's account, purpose
+SUPPLIER_PAYMENT; the skip that keeps AP *payments* from teaching stays for
+vouchers). The read pages attach after save, scan order. Screens: the New
+card and a Files card on the detail — `frontend/src/vendor/scm/components/DocFilesCard.tsx`,
+the one card the PV detail's `PvFilesCard` and the AP page's
+`ApInvoiceFilesCard` both bind (hooks in
+`frontend/src/vendor/scm/lib/ap-invoice-queries.ts`; the authed byte reader
+`fetchDocFileBlobUrl` in `payment-voucher-queries.ts` takes the path).
+Pinned by `backend/tests/apInvoiceFiles.test.ts` (upload/list/stream/delete
+on the fake R2 binding + the bundle carrying a paid bill's files after the
+voucher page), tests/apInvoices.test.ts (a save teaches memory) and
+ApInvoices.test.tsx (scan pre-fill + attach after save; the Files card's
+draft/posted rules).
+
 **The AutoCount sections (2026-09-06).** Every account carries a `section`
 (`scm.accounts.section`, migration 20260906T0900) — the top node the
 accountant's chart hangs it under: CAPITAL, RETAINED EARNING, FIXED ASSETS,

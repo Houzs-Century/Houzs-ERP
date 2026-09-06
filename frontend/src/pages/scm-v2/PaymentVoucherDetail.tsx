@@ -33,8 +33,9 @@ import {
   useApprovePaymentVoucher,
   useRejectPaymentVoucher,
   useSupplierAdvances, useApplyAdvance,
-  usePvFiles, useUploadPvFile, useDeletePvFile, fetchPvFileBlobUrl, fileToBase64, PV_FILE_ACCEPT,
+  usePvFiles, useUploadPvFile, useDeletePvFile, fetchPvFileBlobUrl,
 } from '../../vendor/scm/lib/payment-voucher-queries';
+import { DocFilesCard } from '../../vendor/scm/components/DocFilesCard';
 import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
 import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
 import { useAccounts, type Account } from '../../vendor/scm/lib/accounting-queries';
@@ -970,110 +971,27 @@ const AdvanceCard = ({ pvId, supplierId }: { pvId: string; supplierId: string })
   );
 };
 
-/* ── Files card — the bill pages behind this voucher (mig 0352). sort_no =
-   attach order = the order printing appends them after the voucher page.
-   View streams the bytes through the Worker (authed) into a blob tab —
-   there is no public URL to leak. Add/delete follow the four-layer rule:
-   a CHECKED voucher's evidence stays (delete hidden, server refuses too),
+/* ── Files card — the bill pages behind this voucher (mig 0352). The card
+   itself is the shared DocFilesCard (since 2026-09-06 the AP invoice shows
+   the same one); this binds the voucher's hooks and its four-layer rule:
+   a CHECKED voucher's evidence stays (remove hidden, server refuses too),
    a CANCELLED one takes no more files. */
-const fmtSize = (bytes: number): string =>
-  bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
-
 const PvFilesCard = ({ pvId, canWrite, locked, cancelled }: { pvId: string; canWrite: boolean; locked: boolean; cancelled: boolean }) => {
-  const notify = useNotify();
-  const askConfirm = useConfirm();
   const filesQ = usePvFiles(pvId);
   const upload = useUploadPvFile();
   const remove = useDeletePvFile();
-  const [viewingId, setViewingId] = useState<string | null>(null);
-
-  const files = filesQ.data?.files ?? [];
-
-  const view = async (fileId: string, fileName: string) => {
-    setViewingId(fileId);
-    try {
-      const { url } = await fetchPvFileBlobUrl(pvId, fileId);
-      window.open(url, '_blank', 'noopener');
-      /* Revoke AFTER the new tab has loaded the blob — immediate revocation
-         races the open and shows a blank tab. */
-      setTimeout(() => { URL.revokeObjectURL(url); }, 60_000);
-    } catch (e) {
-      void notify({ title: `Couldn't open ${fileName}`, body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
-    } finally {
-      setViewingId(null);
-    }
-  };
-
-  const onPick = async (list: FileList | null) => {
-    if (!list || list.length === 0) return;
-    for (const f of [...list]) {
-      try {
-        await upload.mutateAsync({
-          pvId,
-          file: { name: f.name, mime: f.type || 'application/pdf', dataBase64: await fileToBase64(f) },
-        });
-      } catch (e) {
-        void notify({ title: `${f.name} did not attach`, body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
-        break;
-      }
-    }
-  };
-
-  const onDelete = async (fileId: string, fileName: string) => {
-    if (!(await askConfirm({ title: `Remove ${fileName}?`, body: 'The stored file is deleted with its row. A checked voucher refuses this — evidence locks with the document.', confirmLabel: 'Remove file', danger: true }))) return;
-    try {
-      await remove.mutateAsync({ pvId, fileId });
-    } catch (e) {
-      void notify({ title: 'Not removed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
-    }
-  };
-
   return (
-    <section className={styles.card}>
-      <div className={styles.cardHeader}>
-        <h2 className={styles.cardTitle}>Files</h2>
-        {canWrite && !cancelled && (
-          <label style={{ fontSize: 'var(--fs-12)', color: 'var(--c-orange)', cursor: 'pointer', fontWeight: 600 }}>
-            📎 {upload.isPending ? 'Attaching…' : 'Attach file'}
-            <input type="file" multiple accept={PV_FILE_ACCEPT}
-              aria-label="Attach voucher files" style={{ display: 'none' }}
-              disabled={upload.isPending}
-              onChange={(e) => { void onPick(e.target.files); e.target.value = ''; }} />
-          </label>
-        )}
-        <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
-          {files.length} file{files.length === 1 ? '' : 's'}{locked ? ' · locked with the checked voucher' : ''}
-        </span>
-      </div>
-      <div className={styles.cardBody}>
-        {files.length === 0 ? (
-          <p style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-13)', margin: 0 }}>
-            No files yet. A voucher opened from Scan bills attaches its scans here by itself; use Attach file for anything else.
-          </p>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            {files.map((f) => (
-              <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', fontSize: 'var(--fs-13)', padding: '4px 0' }}>
-                <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--fg-muted)', width: 18, textAlign: 'right' }}>{f.sort_no}</span>
-                <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.file_name}</span>
-                <span style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-12)', whiteSpace: 'nowrap' }}>
-                  {f.mime === 'application/pdf' ? 'PDF' : 'image'} · {fmtSize(f.size_bytes)} · {fmtDate(f.created_at)}
-                </span>
-                <Button variant="secondary" size="sm" disabled={viewingId === f.id} onClick={() => void view(f.id, f.file_name)}>
-                  {viewingId === f.id ? 'Opening…' : 'View'}
-                </Button>
-                {canWrite && !locked && !cancelled && (
-                  <button type="button" aria-label={`Remove ${f.file_name}`} disabled={remove.isPending}
-                    onClick={() => void onDelete(f.id, f.file_name)}
-                    style={{ border: 'none', background: 'none', cursor: 'pointer', color: 'var(--fg-muted)', padding: 2 }}>
-                    <Trash2 size={14} strokeWidth={1.75} />
-                  </button>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </section>
+    <DocFilesCard
+      files={filesQ.data?.files ?? []}
+      canWrite={canWrite} locked={locked} closed={cancelled}
+      lockedNote=" · locked with the checked voucher"
+      emptyNote="No files yet. A voucher opened from Scan bills attaches its scans here by itself; use Attach file for anything else."
+      removeBody="The stored file is deleted with its row. A checked voucher refuses this — evidence locks with the document."
+      attachAriaLabel="Attach voucher files"
+      uploading={upload.isPending} removing={remove.isPending}
+      onUpload={(file) => upload.mutateAsync({ pvId, file })}
+      onRemove={(fileId) => remove.mutateAsync({ pvId, fileId })}
+      openUrl={(fileId) => fetchPvFileBlobUrl(pvId, fileId)}
+    />
   );
 };

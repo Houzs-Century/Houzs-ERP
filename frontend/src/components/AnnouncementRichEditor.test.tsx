@@ -69,26 +69,82 @@ describe("AnnouncementRichEditor", () => {
     expect(cmds).toContain("insertUnorderedList");
   });
 
-  test("size buttons fold the fontSize sentinel into data-size spans", () => {
+  test("the Size dropdown folds the fontSize sentinel into a numeric data-size span", () => {
     const onChange = vi.fn();
     render(<AnnouncementRichEditor value="" onChange={onChange} />);
     const el = editor();
+    const select = screen.getByLabelText("Text size") as HTMLSelectElement;
+    expect(Array.from(select.options).map((o) => o.value)).toEqual([
+      "md", "10", "11", "12", "14", "16", "18", "20", "24", "28", "36",
+    ]);
     // Simulate what execCommand('fontSize', '7') leaves behind in a browser.
     execCommand.mockImplementation((cmd) => {
       if (cmd === "fontSize") el.innerHTML = '<p>a<font size="7">big</font></p>';
       return true;
     });
-    fireEvent.click(screen.getByRole("button", { name: "Extra-large text" }));
-    expect(onChange).toHaveBeenLastCalledWith('<p>a<span data-size="xl">big</span></p>');
+    fireEvent.change(select, { target: { value: "20" } });
+    expect(onChange).toHaveBeenLastCalledWith('<p>a<span data-size="20">big</span></p>');
 
-    // "Normal" unwraps instead of wrapping.
+    // "Default" unwraps instead of wrapping, and replaces a nested older size.
     execCommand.mockImplementation((cmd) => {
       if (cmd === "fontSize")
-        el.innerHTML = '<p>a<font size="7"><span data-size="xl">big</span></font></p>';
+        el.innerHTML = '<p>a<font size="7"><span data-size="20">big</span></font></p>';
       return true;
     });
-    fireEvent.click(screen.getByRole("button", { name: "Normal text" }));
+    fireEvent.change(select, { target: { value: "md" } });
     expect(onChange).toHaveBeenLastCalledWith("<p>abig</p>");
+
+    // A size carried into a new paragraph by Enter is replaced, not nested.
+    execCommand.mockImplementation((cmd) => {
+      if (cmd === "fontSize")
+        el.innerHTML = '<p><span data-size="24"><font size="7">next line</font></span></p>';
+      return true;
+    });
+    fireEvent.change(select, { target: { value: "12" } });
+    expect(onChange).toHaveBeenLastCalledWith('<p><span data-size="12">next line</span></p>');
+  });
+
+  test("with nothing selected the size applies to the whole paragraph the caret is in", () => {
+    const onChange = vi.fn();
+    render(<AnnouncementRichEditor value="<p>first</p><p>second</p>" onChange={onChange} />);
+    const el = editor();
+    el.focus();
+    const second = el.querySelectorAll("p")[1];
+    const caret = document.createRange();
+    caret.setStart(second.firstChild!, 2);
+    caret.collapse(true);
+    const sel = window.getSelection()!;
+    sel.removeAllRanges();
+    sel.addRange(caret);
+    let seen: string | null = null;
+    execCommand.mockImplementation((cmd) => {
+      if (cmd === "fontSize") {
+        // What the browser would style: the CURRENT selection's text.
+        seen = window.getSelection()!.toString();
+        const r = window.getSelection()!.getRangeAt(0);
+        const font = document.createElement("font");
+        font.setAttribute("size", "7");
+        font.appendChild(r.extractContents());
+        r.insertNode(font);
+      }
+      return true;
+    });
+    fireEvent.change(screen.getByLabelText("Text size"), { target: { value: "16" } });
+    expect(seen).toBe("second");
+    expect(onChange).toHaveBeenLastCalledWith('<p>first</p><p><span data-size="16">second</span></p>');
+  });
+
+  test("a legacy sm / lg / xl span reads back as its point size in the dropdown", () => {
+    render(<AnnouncementRichEditor value={'<p><span data-size="xl">big</span></p>'} onChange={() => {}} />);
+    const el = editor();
+    el.focus();
+    const range = document.createRange();
+    range.selectNodeContents(el.querySelector("span")!);
+    const sel = window.getSelection()!;
+    sel.removeAllRanges();
+    sel.addRange(range);
+    fireEvent.keyUp(el);
+    expect((screen.getByLabelText("Text size") as HTMLSelectElement).value).toBe("20");
   });
 
   test("paste is forced to plain text", () => {
