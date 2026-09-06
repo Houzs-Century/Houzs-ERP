@@ -22,6 +22,13 @@
 // machinery. Permission keys are the PV family's on purpose: the same people
 // raise, post and cancel money documents.
 // Numbering: {co}API-YYMM-NNN — a NEW series (flagged to the owner; his prefix).
+//
+// Evidence and memory (owner 2026-09-06: 做,附件也一起做,bundle 也带上): the
+// bill's files live beside it (/:id/files — routes/ap-invoice-files.ts, the
+// PV's own factory) and ride the AP Payment's print bundle; a save teaches
+// vendor memory (mig 0341) the supplier → first-line account, so the OCR
+// (POST /payment-vouchers/extract, shared) pre-fills the next same-vendor
+// bill here as it does on a voucher.
 // ----------------------------------------------------------------------------
 
 import { Hono } from 'hono';
@@ -33,6 +40,10 @@ import { todayMyt } from '../lib/my-time';
 import { postJournal, reverseJournal } from '../../acc/engine';
 import { apInvoiceLines, resolveRoles } from '../../acc/rules';
 import { requireLeafAccount } from './accounting-chart';
+import { learnVendorMemory } from './payment-vouchers';
+import {
+  uploadApInvoiceFileHandler, listApInvoiceFilesHandler, streamApInvoiceFileHandler, deleteApInvoiceFileHandler,
+} from './ap-invoice-files';
 
 type Row = Record<string, any>;
 
@@ -216,6 +227,15 @@ export const createApInvoiceHandler = async (c: any): Promise<Response> => {
     await sb.from('ap_invoices').delete().eq('company_id', co.companyId).eq('id', (inv as Row).id);
     return c.json({ error: 'save_failed', reason: lineErr.message }, 500);
   }
+  /* The habit this bill teaches: the supplier's name → the first line's
+     account, so the OCR's next reading of the same vendor's bill pre-fills
+     it. A voucher paying a supplier has nothing to teach (its line is the AP
+     control); the BILL is where the expense account is chosen — hence the
+     source flag, which lifts memory's supplier-payment skip for this call. */
+  await learnVendorMemory(sb, c, {
+    payeeName: sup.supplier.name, purpose: 'SUPPLIER_PAYMENT', source: 'AP_INVOICE',
+    lines: built.lines.map((l, i) => ({ line_no: i + 1, debit_account_code: l.code })),
+  });
   return c.json({ ok: true, invoice: inv }, 201);
 };
 
@@ -335,6 +355,12 @@ export const cancelApInvoiceHandler = async (c: any): Promise<Response> => {
 export const apInvoices = new Hono();
 apInvoices.get('/', listApInvoicesHandler);
 apInvoices.post('/', createApInvoiceHandler);
+/* Files before /:id, as the PV mounts them — the evidence paths never fall
+   into the detail matcher. */
+apInvoices.post('/:id/files', uploadApInvoiceFileHandler);
+apInvoices.get('/:id/files', listApInvoiceFilesHandler);
+apInvoices.get('/:id/files/:fileId', streamApInvoiceFileHandler);
+apInvoices.delete('/:id/files/:fileId', deleteApInvoiceFileHandler);
 apInvoices.get('/:id', apInvoiceDetailHandler);
 apInvoices.patch('/:id', updateApInvoiceHandler);
 apInvoices.post('/:id/post', postApInvoiceHandler);

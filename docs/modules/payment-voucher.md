@@ -738,9 +738,14 @@ under `pv-files/<company>/<pv>/<uuid>.<ext>`; the index is `scm.acc_pv_files`
 (mig `backend/src/db/migrations-pg/0352_acc_pv_files.sql`): one row per file,
 `file_key UNIQUE`, `pv_id` FK `ON DELETE CASCADE`, and `sort_no` = attach order
 = the order printing will append the files after the voucher page. Routes live
-in `backend/src/scm/routes/pv-files.ts` (handlers exported bare for the vitest
-harness) and are mounted in `backend/src/scm/routes/payment-vouchers.ts`
-**before** `GET /:id`, so `/:id/files` never falls into the detail matcher.
+in `backend/src/scm/routes/pv-files.ts` (the PV spec + the print bundle; the
+four handlers come from `backend/src/scm/lib/doc-files.ts`, the factory the
+AP invoice's `routes/ap-invoice-files.ts` has shared since 2026-09-06 —
+docs/modules/accounting.md "The AP invoice's paper") and are mounted in
+`backend/src/scm/routes/payment-vouchers.ts` **before** `GET /:id`, so
+`/:id/files` never falls into the detail matcher. The detail's Files card is
+the shared `frontend/src/vendor/scm/components/DocFilesCard.tsx`, bound to
+the voucher's hooks and rules by `PvFilesCard`.
 
 **The four-layer rule applies to evidence.** Upload/delete take
 `scm.payment_voucher.write`; a **CANCELLED** voucher takes no more files
@@ -827,7 +832,12 @@ copy across; JPEG/PNG sits centred on its own A4 page; a file that cannot
 embed (corrupt, truly locked, webp — Workers have no canvas) becomes a
 **notice page naming it**, and so does an index row whose R2 object is gone —
 visible failure on paper, never a silently missing bill, never a failed
-print. A part whose voucher cannot load fails the WHOLE request by pv. The
+print. A part whose voucher cannot load fails the WHOLE request by pv. Since
+2026-09-06 (owner: bundle 也带上) the bundle also appends, after the
+voucher's own files, the files of every **AP invoice the voucher pays**
+(`pv_allocations.ap_invoice_id`, allocation order; each named under its
+invoice number so a notice page says whose) — purchase-invoice allocations
+add nothing, and a voucher paying no AP invoice prints exactly as before. The
 client half is `fetchPvPrintBundle` + `pdfBytesToBase64`
 (`frontend/src/vendor/scm/lib/payment-voucher-queries.ts` /
 `payment-voucher-pdf.ts`); the returned blob exits through `deliverPdfBlob`

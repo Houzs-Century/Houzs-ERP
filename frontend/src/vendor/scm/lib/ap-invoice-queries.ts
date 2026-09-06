@@ -7,6 +7,8 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
+import { retryUnlessClientError } from '../../../lib/retryPolicy';
+import { fetchDocFileBlobUrl, type PvFile, type PvFilePayload } from './payment-voucher-queries';
 
 export type ApListKind = 'ALL' | 'API' | 'PI';
 
@@ -80,3 +82,43 @@ export const useCancelApInvoice = () => {
     onSuccess: () => invalidate(qc),
   });
 };
+
+/* ── The bill's files (2026-09-06, owner: 附件也一起做) — the supplier's bill
+   LIVES with the AP invoice as the scanned bill lives with its voucher: same
+   row shape (scm.acc_ap_invoice_files), same R2 bucket, same reader; only the
+   path differs. The AP Payment's print bundle appends these after the
+   voucher's own files. Server: backend/src/scm/routes/ap-invoice-files.ts. */
+export const useApInvoiceFiles = (invoiceId: string | null) => useQuery({
+  queryKey: ['ap-invoice-files', invoiceId],
+  queryFn: () => authedFetch<{ files: PvFile[] }>(`/ap-invoices/${invoiceId}/files`),
+  enabled: !!invoiceId,
+  retry: retryUnlessClientError,
+});
+
+export const useUploadApInvoiceFile = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ invoiceId, file }: { invoiceId: string; file: PvFilePayload }) =>
+      authedFetch<{ ok: true; file: PvFile }>(`/ap-invoices/${invoiceId}/files`, {
+        method: 'POST',
+        body: JSON.stringify({ fileName: file.name, mime: file.mime, dataBase64: file.dataBase64 }),
+      }),
+    onSuccess: (_d, vars) => {
+      void qc.invalidateQueries({ queryKey: ['ap-invoice-files', vars.invoiceId] });
+    },
+  });
+};
+
+export const useDeleteApInvoiceFile = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ invoiceId, fileId }: { invoiceId: string; fileId: string }) =>
+      authedFetch<{ ok: true }>(`/ap-invoices/${invoiceId}/files/${fileId}`, { method: 'DELETE' }),
+    onSuccess: (_d, vars) => {
+      void qc.invalidateQueries({ queryKey: ['ap-invoice-files', vars.invoiceId] });
+    },
+  });
+};
+
+export const fetchApInvoiceFileBlobUrl = (invoiceId: string, fileId: string): Promise<{ url: string; contentType: string }> =>
+  fetchDocFileBlobUrl(`/ap-invoices/${invoiceId}/files/${fileId}`);
