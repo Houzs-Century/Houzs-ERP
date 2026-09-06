@@ -484,6 +484,12 @@ PATCH,/api/scm/addons/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requi
 DELETE,/api/scm/admin/categories/:id/hero-image,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.products"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/categories.ts
 GET,/api/scm/admin/categories/:id/hero-image,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.products"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/categories.ts
 POST,/api/scm/admin/categories/:id/hero-image,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.products"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/categories.ts
+GET,/api/scm/ap-invoices,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",,,,NO,DECLARED_GATE,backend/src/scm/routes/ap-invoices.ts
+POST,/api/scm/ap-invoices,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",,,,YES,DECLARED_GATE,backend/src/scm/routes/ap-invoices.ts
+GET,/api/scm/ap-invoices/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",,,,NO,DECLARED_GATE,backend/src/scm/routes/ap-invoices.ts
+PATCH,/api/scm/ap-invoices/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",,,,YES,DECLARED_GATE,backend/src/scm/routes/ap-invoices.ts
+POST,/api/scm/ap-invoices/:id/cancel,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",,,,YES,DECLARED_GATE,backend/src/scm/routes/ap-invoices.ts
+POST,/api/scm/ap-invoices/:id/post,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",,,,YES,DECLARED_GATE,backend/src/scm/routes/ap-invoices.ts
 GET,/api/scm/ar/reconciliation,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.outstanding"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/ar-reconciliation.ts
 GET,/api/scm/autocount-outbox,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/autocount-outbox.ts
 POST,/api/scm/autocount-outbox/:id/requeue,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/autocount-outbox.ts

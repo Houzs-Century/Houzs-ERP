@@ -53,6 +53,7 @@ import { dateOrNull } from '../lib/date-coerce';
 import { postJournal, reverseJournal } from '../../acc/engine';
 import { apControlRole, pvLines, resolveRoles } from '../../acc/rules';
 import { CASH_SERIES_LETTER } from '../../acc/receipts';
+import { settleApInvoicePaidSen } from '../lib/ap-invoice-settlement';
 import { uploadPvFileHandler, listPvFilesHandler, streamPvFileHandler, deletePvFileHandler, printPvBundleHandler } from './pv-files';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
@@ -210,28 +211,37 @@ export function buildLines(
 }
 
 /* ── Normalise + validate the incoming PV→PI allocations (migration 0202) ──── */
+export type AllocationRow = { pi_id: string | null; ap_invoice_id: string | null; amount_sen: number };
 export function buildAllocations(
   raw: unknown,
-): { rows: Array<{ pi_id: string; amount_sen: number }>; total: number } | { error: string } {
+): { rows: AllocationRow[]; total: number } | { error: string } {
   if (raw === undefined || raw === null) return { rows: [], total: 0 };
   if (!Array.isArray(raw)) return { error: 'allocations_invalid' };
-  const rows: Array<{ pi_id: string; amount_sen: number }> = [];
+  const rows: AllocationRow[] = [];
   let total = 0;
   for (const a of raw) {
     const row = a as Record<string, unknown>;
-    const piId = (row.piId as string | undefined)?.trim();
+    /* One target per row: a purchase invoice (stock) OR an AP invoice (the
+       non-stock supplier bill — owner 2026-09-06, both listed side by side on
+       the AP Payment). Naming both, or neither, is refused. */
+    const piId = (row.piId as string | undefined)?.trim() || null;
+    const apInvoiceId = (row.apInvoiceId as string | undefined)?.trim() || null;
     /* Same reason as buildLines: a negative allocation used to clamp to 0 and
        then get skipped by the `<= 0` continue below, so "apply -RM 500 to this
        PI" silently applied nothing while the voucher still posted. */
     const amount = parseAmountSen(row.amountSen);
-    if (!piId) return { error: 'allocation_pi_required' };
+    if (!piId && !apInvoiceId) return { error: 'allocation_pi_required' };
+    if (piId && apInvoiceId) return { error: 'allocation_two_targets' };
     if (amount === null) return { error: 'allocation_amount_invalid' };
     if (amount === 0) continue; // an explicit zero settles nothing — drop the row
-    rows.push({ pi_id: piId, amount_sen: amount });
+    rows.push({ pi_id: piId, ap_invoice_id: apInvoiceId, amount_sen: amount });
     total += amount;
   }
   return { rows, total };
 }
+
+const piIdsOf = (rows: AllocationRow[]): string[] => rows.flatMap((r) => (r.pi_id ? [r.pi_id] : []));
+const apInvoiceIdsOf = (rows: AllocationRow[]): string[] => rows.flatMap((r) => (r.ap_invoice_id ? [r.ap_invoice_id] : []));
 
 /* settlePiPaidSen moved to lib/pi-settlement, where the clamp that stops two
    vouchers over-paying one invoice lives next to the SQL function that enforces
@@ -279,6 +289,26 @@ const ALLOCATION_NOT_THIS_COMPANY = (ids: string[]) => ({
   message: 'One of the invoices this voucher applies to is not available in the company you are working in.',
   purchaseInvoiceIds: ids.slice(0, 20),
 });
+
+/* The AP-invoice twin of the guard above — same reason, same fail-closed
+   shape: an AP invoice id arrives in the body and settles by id alone. It
+   also refuses a bill that is not live (DRAFT / CANCELLED cannot be paid). */
+async function allocationApInvoicesOutsideCompany(
+  sb: any,
+  c: any,
+  ids0: string[],
+): Promise<string[]> {
+  const ids = [...new Set(ids0.filter(Boolean))];
+  if (ids.length === 0) return [];
+  const { data, error } = await scopeToCompany(
+    sb.from('ap_invoices').select('id, status').in('id', ids), c,
+  );
+  if (error) return ids;
+  const live = new Set(((data ?? []) as Array<{ id: string; status: string }>)
+    .filter((r) => r.status !== 'DRAFT' && r.status !== 'CANCELLED')
+    .map((r) => r.id));
+  return ids.filter((id) => !live.has(id));
+}
 
 /* ── A HELD INVOICE IS NOT PAYABLE (owner, 2026-08-21: "PI also hold") ───────
    ON_HOLD arrived on scm.purchase_invoice_status with migration 0320, for the
@@ -364,28 +394,34 @@ paymentVouchers.get('/:id', async (c) => {
     /* PV→PI settlement (0202) — the PIs this PV applies to, joined for the PI
        number + the live total/paid so the detail page can show "Apply to PI". */
     scopeToCompany(sb.from('pv_allocations')
-      .select('id, amount_sen, pi:purchase_invoices(id, invoice_number, supplier_invoice_ref, currency, total_sen, paid_sen, status)')
+      .select('id, amount_sen, pi:purchase_invoices(id, invoice_number, supplier_invoice_ref, currency, total_sen, paid_sen, status), api:ap_invoices(id, invoice_number, supplier_invoice_ref, currency, total_sen, paid_sen, status)')
       .eq('pv_id', id), c),
   ]);
   if (h.error) return c.json({ error: 'load_failed', reason: h.error.message }, 500);
   if (!h.data) return c.json({ error: 'not_found' }, 404);
-  /* Flatten the joined PI (Supabase returns a to-one FK as an array). */
+  /* Flatten the joined invoice (Supabase returns a to-one FK as an array) —
+     a row settles a purchase invoice OR an AP invoice; `kind` says which. */
+  type Inv = { id: string; invoice_number: string; supplier_invoice_ref: string | null; currency: string | null; total_sen: number; paid_sen: number; status: string };
   const allocations = ((a.data ?? []) as Array<{
     id: string; amount_sen: number;
-    pi: { id: string; invoice_number: string; supplier_invoice_ref: string | null; currency: string | null; total_sen: number; paid_sen: number; status: string }
-      | Array<{ id: string; invoice_number: string; supplier_invoice_ref: string | null; currency: string | null; total_sen: number; paid_sen: number; status: string }> | null;
+    pi: Inv | Inv[] | null;
+    api?: Inv | Inv[] | null;
   }>).map((row) => {
     const pi = Array.isArray(row.pi) ? row.pi[0] : row.pi;
+    const api = Array.isArray(row.api) ? row.api[0] : row.api;
+    const inv = pi ?? api ?? null;
     return {
       id: row.id,
       amountSen: Number(row.amount_sen ?? 0),
+      kind: pi ? 'PI' : api ? 'API' : null,
       piId: pi?.id ?? null,
-      invoiceNumber: pi?.invoice_number ?? null,
-      supplierInvoiceRef: pi?.supplier_invoice_ref ?? null,
-      currency: pi?.currency ?? null,
-      totalSen: pi ? Number(pi.total_sen ?? 0) : null,
-      paidSen: pi ? Number(pi.paid_sen ?? 0) : null,
-      status: pi?.status ?? null,
+      apInvoiceId: api?.id ?? null,
+      invoiceNumber: inv?.invoice_number ?? null,
+      supplierInvoiceRef: inv?.supplier_invoice_ref ?? null,
+      currency: inv?.currency ?? null,
+      totalSen: inv ? Number(inv.total_sen ?? 0) : null,
+      paidSen: inv ? Number(inv.paid_sen ?? 0) : null,
+      status: inv?.status ?? null,
     };
   });
   return c.json({ paymentVoucher: h.data, lines: i.data ?? [], allocations });
@@ -563,10 +599,12 @@ export const createPaymentVoucherHandler = async (c: any) => {
 
   // Every applied-to invoice must be THIS company's — see allocationPisOutsideCompany.
   {
-    const outside = await allocationPisOutsideCompany(sb, c, allocBuilt.rows.map((r) => r.pi_id));
+    const outside = await allocationPisOutsideCompany(sb, c, piIdsOf(allocBuilt.rows));
     if (outside.length > 0) return c.json(ALLOCATION_NOT_THIS_COMPANY(outside), 404);
-    const held = await allocationPisOnHold(sb, c, allocBuilt.rows.map((r) => r.pi_id));
+    const held = await allocationPisOnHold(sb, c, piIdsOf(allocBuilt.rows));
     if (held.length > 0) return c.json(ALLOCATION_ON_HOLD(held), 409);
+    const outsideApi = await allocationApInvoicesOutsideCompany(sb, c, apInvoiceIdsOf(allocBuilt.rows));
+    if (outsideApi.length > 0) return c.json(ALLOCATION_NOT_THIS_COMPANY(outsideApi), 404);
   }
   const currency = normalizeCurrency(body.currency);
   /* Migration 0082 — the rate auto-fills from the currency MASTER (rate_to_myr)
@@ -783,10 +821,12 @@ export const updatePaymentVoucherHandler = async (c: any) => {
        the whole allocation set. Refused before the delete, so a rejected edit
        cannot leave the voucher with no allocations at all. */
     {
-      const outside = await allocationPisOutsideCompany(sb, c, allocBuilt.rows.map((r) => r.pi_id));
+      const outside = await allocationPisOutsideCompany(sb, c, piIdsOf(allocBuilt.rows));
       if (outside.length > 0) return c.json(ALLOCATION_NOT_THIS_COMPANY(outside), 404);
-      const held = await allocationPisOnHold(sb, c, allocBuilt.rows.map((r) => r.pi_id));
+      const held = await allocationPisOnHold(sb, c, piIdsOf(allocBuilt.rows));
       if (held.length > 0) return c.json(ALLOCATION_ON_HOLD(held), 409);
+      const outsideApi = await allocationApInvoicesOutsideCompany(sb, c, apInvoiceIdsOf(allocBuilt.rows));
+      if (outsideApi.length > 0) return c.json(ALLOCATION_NOT_THIS_COMPANY(outsideApi), 404);
     }
     await sb.from('pv_allocations').delete().eq('pv_id', id);
     if (allocBuilt.rows.length > 0) {
@@ -992,10 +1032,20 @@ export const postPaymentVoucherHandler = async (c: any) => {
   const rateMismatch: string[] = [];
   if (normalizePurpose(pv.purpose) === 'SUPPLIER_PAYMENT') {
     const { data: allocs } = await sb.from('pv_allocations')
-      .select('id, pi_id, amount_sen').eq('pv_id', id);
-    for (const a of (allocs ?? []) as Array<{ id: string; pi_id: string; amount_sen: number }>) {
+      .select('id, pi_id, ap_invoice_id, amount_sen').eq('pv_id', id);
+    for (const a of (allocs ?? []) as Array<{ id: string; pi_id: string | null; ap_invoice_id: string | null; amount_sen: number }>) {
       const want = Math.max(0, Number(a.amount_sen ?? 0));
       if (want <= 0) continue;
+      /* An AP INVOICE row (the non-stock supplier bill) settles through its
+         own twin of the clamp; nothing below (FX adoption, GRN re-cost) is
+         about it — a bill for rent carries no stock. */
+      if (a.ap_invoice_id) {
+        const settledApi = await settleApInvoicePaidSen(sb, a.ap_invoice_id, want);
+        await sb.from('pv_allocations').update({ applied_sen: settledApi.appliedSen }).eq('id', a.id);
+        if (settledApi.clampedSen > 0) overAllocated.push(`AP invoice ${a.ap_invoice_id}: ${(settledApi.clampedSen / 100).toFixed(2)} refused`);
+        continue;
+      }
+      if (!a.pi_id) continue;
       /* The full allocation goes to settlePiPaidSen and the CAP is applied by
          the database, at write time, against the row as it then stands. This
          used to read the PI here, compute `outstanding = total - paid`, and cap
@@ -1523,10 +1573,16 @@ export const cancelPaymentVoucherHandler = async (c: any) => {
   const fxRateRetained: string[] = [];
   if (normalizePurpose(head.purpose) === 'SUPPLIER_PAYMENT') {
     const { data: allocs } = await sb.from('pv_allocations')
-      .select('id, pi_id, applied_sen').eq('pv_id', id);
-    for (const a of (allocs ?? []) as Array<{ id: string; pi_id: string; applied_sen: number }>) {
+      .select('id, pi_id, ap_invoice_id, applied_sen').eq('pv_id', id);
+    for (const a of (allocs ?? []) as Array<{ id: string; pi_id: string | null; ap_invoice_id: string | null; applied_sen: number }>) {
       const applied = Math.max(0, Number(a.applied_sen ?? 0));
       if (applied <= 0) continue;
+      /* An AP invoice unwinds by exactly what was applied — no FX story. */
+      if (a.ap_invoice_id) {
+        await settleApInvoicePaidSen(sb, a.ap_invoice_id, -applied);
+        continue;
+      }
+      if (!a.pi_id) continue;
 
       /* Read BEFORE the reversal: the settle moves paid_sen and status, never the
          rate, but reading first keeps this notice about the state the operator was

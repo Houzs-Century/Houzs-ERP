@@ -25,6 +25,7 @@ books which entry":
 |---|---|---|---|
 | Sales invoice issued | Dr AR / Cr SALES | `SI` | `SI_REVERSAL` |
 | Purchase invoice posted | Dr each group's purchase account (601-x/602 by scm.acc_item_group_accounts; unbound group REFUSES) / Cr AP | `PI` | `PI_REVERSAL` |
+| AP invoice posted (non-stock supplier bill) | Dr each line's own account / Cr AP control (400 or 405 by the supplier's code) | `API` | `API_REVERSAL` |
 | Payment voucher posted | Dr expense legs / Cr bank-or-AP header | `PV` | `PV_REVERSAL` |
 | Manual journal (JV) | operator lines, draft first | `MANUAL` | `MANUAL_REVERSAL` |
 | Customer payment collected | Dr CASH/BANK/transit / Cr AR | `SOPAY` / `SIPAY` | `*_REVERSAL` |
@@ -106,6 +107,32 @@ own lever (默认银行我可以自己maintenance), surfaced as the Default bank
 on /scm/settlement-setup and pre-filling every voucher's Paid From
 (docs/modules/payment-voucher.md §0c). Contract:
 `backend/src/scm/routes/accountRoles.test.ts`.
+
+**AP Invoices — the non-stock supplier bill (2026-09-06).** AutoCount's A/P
+Invoice, the owner's ask verbatim: 可以不可以像 autocount 这样 purchase invoice
+一边,然后再多一个 AP invoice,这样我就可以把 other creditor 的 invoice 放过去,
+也不会影响 operation 那边的 purchase invoice — and, confirmed: 我想要两个都看到,
+现有的 purchase invoice remain. `scm.ap_invoices` + `scm.ap_invoice_lines`
+(`backend/src/db/migrations-pg/20260906T1500_ap_invoices.sql`), numbered
+`{co}API-YYMM-NNN` (a new series, his prefix), MYR only in this first cut.
+Routes `/scm/ap-invoices` (`backend/src/scm/routes/ap-invoices.ts`, PV key
+family, finance area; settle twin `backend/src/scm/lib/ap-invoice-settlement.ts`):
+`GET /` lists BOTH kinds —
+the operational purchase invoices as a read-only mirror (`kind: 'PI'`,
+POSTED / PARTIALLY_PAID / PAID / ON_HOLD) beside the AP invoices raised here
+(`kind: 'API'`) — `POST /` raises a DRAFT (1–50 lines, each a leaf
+non-control account: 父户不记账 / 由模块过账), `PATCH /:id` edits a draft,
+`POST /:id/post` books through the gate (rule `apInvoiceLines`: Dr each
+line's own account / Cr the supplier's AP control, 400 or 405 by the
+supplier's code, source `API`, dated by the invoice; a second post echoes),
+`POST /:id/cancel` writes the contra (`API_REVERSAL`) and refuses a bill with
+money on it (`has_payments`). It is PAID by the same AP Payment that pays
+purchase invoices: `pv_allocations` names a PI **or** an AP invoice
+(`ap_invoice_id`, CHECK exactly one), the post settles it through
+`scm.settle_api_paid_sen` — the twin of `settle_pi_paid_sen`, same clamp
+(lib/ap-invoice-settlement.ts) — and cancel unwinds exactly what was
+applied; `v_ap_aging` is a UNION of both with a trailing `kind`. The five
+journals file it under PURCHASE. Pinned by tests/apInvoices.test.ts.
 
 **The AutoCount sections (2026-09-06).** Every account carries a `section`
 (`scm.accounts.section`, migration 20260906T0900) — the top node the
