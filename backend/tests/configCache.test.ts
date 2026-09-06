@@ -428,7 +428,7 @@ describe("/api/announcements/banner — per-user cache", () => {
          target_type TEXT, target_dept_ids TEXT, target_position_ids TEXT,
          target_user_ids TEXT, target_company_ids TEXT, category TEXT,
          source TEXT, company_id INTEGER, require_ack INTEGER, scheduled_at TEXT,
-         target_divisions TEXT, excluded_user_ids TEXT)`,
+         target_divisions TEXT, excluded_user_ids TEXT, escalated_at TEXT)`,
     ).run();
     await env.DB.prepare(
       `CREATE TABLE IF NOT EXISTS announcement_acks (

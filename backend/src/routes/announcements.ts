@@ -43,19 +43,44 @@ import {
   stripUnreferencedImages,
 } from "../lib/announcementRichText";
 import { postPersonalNotice } from "../services/personalNotice";
+import { escalatePending } from "../services/announcementEscalation";
 import {
   ACK_OVERDUE_HOURS,
+  announcementRequiresAck,
+  audienceOf,
   callerDivision,
+  categoryRequiresAck,
+  deliverableNow,
   divisionEq,
   inTargetCompanies,
+  isActiveFlag,
+  loadAckMap,
+  loadAllAcks,
   loadCompanyGrants,
   loadRoster,
+  notExpired,
   pendingState,
+  readCategory,
   readDivisionTargets,
+  readIntArray,
+  readRequireAck,
+  readTargetCompanyIds,
+  readTargetType,
   rosterCompaniesSql,
+  rowDivisions,
+  rowExcluded,
+  scheduledLater,
+  userCanSee,
+  type AnnouncementAttachment,
+  type AnnouncementCategory,
+  type AnnouncementRow,
   type DivisionTarget,
+  type MediaLayout,
   type PendingState,
+  type PhotoLayout,
   type RosterUser,
+  type TargetType,
+  type VideoLayout,
 } from "../lib/announcementAudience";
 
 const app = new Hono<{ Bindings: Env }>();
@@ -72,24 +97,11 @@ const app = new Hono<{ Bindings: Env }>();
 // dept/position/user audience match — a notice must pass BOTH.
 
 // The four announcement categories. GENERAL is the back-compat default.
-type AnnouncementCategory = "GENERAL" | "WARNING" | "SOP" | "LEARNING";
 
 // Targeting kinds. ALL_USERS = everyone (the back-compat default).
-type TargetType =
-  | "ALL_USERS"
-  | "DEPARTMENT_IDS"
-  | "POSITION_IDS"
-  | "USER_IDS"
-  | "MIXED";
 
 // One attached media file on an announcement. `r2Key` lives in POD_BUCKET.
 // `name` is the original filename; `mime` drives the renderer (image/video/pdf).
-type AnnouncementAttachment = {
-  r2Key: string;
-  name: string;
-  mime: string;
-  size?: number;
-};
 
 // Rich-media LAYOUT hint (mig 0140). The author picks how the media is laid out;
 // every renderer (desktop pop-up + page, mobile detail) honours the SAME hint so
@@ -99,9 +111,6 @@ type AnnouncementAttachment = {
 //   · photo: how the photo set is arranged — "1" one big, "2" side-by-side,
 //     "3" three across, "4" a 2x2 grid.
 //   · video: the video block's shape — "1x1" square, "1x2" portrait (tall).
-type PhotoLayout = "1" | "2" | "3" | "4";
-type VideoLayout = "1x1" | "1x2";
-type MediaLayout = { photo?: PhotoLayout; video?: VideoLayout };
 
 // Parse the stored media_layout JSON, dropping anything not in the small allowed
 // set. Returns null when empty/unrecognised so toPublic emits `mediaLayout: null`
@@ -129,124 +138,19 @@ function readMediaLayout(raw: unknown): MediaLayout | null {
   return out.photo || out.video ? out : null;
 }
 
-// Raw row shape from the DB (dual-keyed because the pg driver folds
-// snake_case -> camelCase on read — the #1 Hookka read-gotcha).
-type AnnouncementRow = {
-  id: string;
-  title: string;
-  body: string;
-  // Rich body (mig 20260904T1700). Canonical HTML fragment — see
-  // lib/announcementRichText.ts — or NULL for a plain-text notice. `body` is
-  // ALWAYS the plain-text shadow of it, so plain-only readers need no branch.
-  body_html?: string | null;
-  bodyHtml?: string | null;
-  // Per-notice "must acknowledge" flag (mig 20260905T1125), integer 0/1. NULL
-  // only on a pre-migration row / the D1 test mirror — toPublic then emits
-  // null and the client falls back to the category rule (WARNING / SOP).
-  require_ack?: number | boolean | null;
-  requireAck?: number | boolean | null;
-  // Scheduled posting instant (same migration). ISO text; NULL = posted at
-  // once. A row is not delivered (list / banner / ack) before it.
-  scheduled_at?: string | null;
-  scheduledAt?: string | null;
-  is_active?: number | boolean | null;
-  isActive?: number | boolean | null;
-  expires_at?: string | null;
-  expiresAt?: string | null;
-  reminded_at?: string | null;
-  remindedAt?: string | null;
-  created_by?: number | null;
-  createdBy?: number | null;
-  created_at?: string | null;
-  createdAt?: string | null;
-  updated_at?: string | null;
-  updatedAt?: string | null;
-  translations?: AnnouncementTranslations | string | null;
-  attachments?: string | unknown[] | null;
-  // Rich-media layout hint (mig 0140). JSON string, dual-keyed for the pg
-  // snake->camel fold. NULL = derive a default from the attachment count.
-  media_layout?: string | MediaLayout | null;
-  mediaLayout?: string | MediaLayout | null;
-  target_type?: string | null;
-  targetType?: string | null;
-  target_dept_ids?: string | number[] | null;
-  targetDeptIds?: string | number[] | null;
-  target_position_ids?: string | number[] | null;
-  targetPositionIds?: string | number[] | null;
-  target_user_ids?: string | number[] | null;
-  targetUserIds?: string | number[] | null;
-  // Company-targeting dimension (mig 0113). JSON array of company ids, e.g.
-  // '[1]' or '[1,2]'. NULL / empty = ALL companies (visible to everyone). The
-  // existing per-row company_id below is the AUTHORING company; this is the
-  // independent audience filter combined (AND) with the dept/position/user
-  // audience match. See userCompanyCanSee / the unified read paths below.
-  target_company_ids?: string | number[] | null;
-  targetCompanyIds?: string | number[] | null;
-  // Division targeting (mig 20260906T0639). JSON array of {deptId, division}
-  // — a division is the free-text users.division within ONE department, so
-  // the pair is the key. Counts as the DEPARTMENT bucket of target_type (a
-  // division is a slice of a department; the CHECK constraint is untouched).
-  target_divisions?: string | DivisionTarget[] | null;
-  targetDivisions?: string | DivisionTarget[] | null;
-  // People carved OUT of the audience (mig 20260906T0639). JSON integer array;
-  // an excluded id never sees the notice, whatever else targets them.
-  excluded_user_ids?: string | number[] | null;
-  excludedUserIds?: string | number[] | null;
-  category?: string | null;
-  source?: string | null;
-  company_id?: number | null;
-  companyId?: number | null;
-};
 
-function readCategory(v: unknown): AnnouncementCategory {
-  const s = String(v ?? "").trim().toUpperCase();
-  if (s === "WARNING" || s === "SOP" || s === "LEARNING") return s;
-  return "GENERAL";
-}
 
-function isActiveFlag(v: number | boolean | null | undefined): boolean {
-  return v === true || v === 1;
-}
 
-function notExpired(expiresAt: string | null): boolean {
-  if (!expiresAt) return true;
-  const t = Date.parse(expiresAt);
-  if (Number.isNaN(t)) return true;
-  return t > Date.now();
-}
 
 // Categories that block by default — the value the require_ack flag takes when
 // the composer does not say otherwise, and the rule a pre-migration row falls
 // back to. Mirrors frontend/src/components/announcementCategory.ts.
-function categoryRequiresAck(category: AnnouncementCategory): boolean {
-  return category === "WARNING" || category === "SOP";
-}
 
 // The stored flag, or null when the column is absent / NULL (pre-migration row,
 // D1 test mirror) so the client applies the category rule itself.
-function readRequireAck(v: number | boolean | null | undefined): boolean | null {
-  if (v == null) return null;
-  return v === true || v === 1;
-}
 
 // Not yet reached its scheduled posting instant. NULL / unparseable = live now.
-function scheduledLater(scheduledAt: string | null | undefined, now = Date.now()): boolean {
-  if (!scheduledAt) return false;
-  const t = Date.parse(scheduledAt);
-  return !Number.isNaN(t) && t > now;
-}
 
-// Is this row DELIVERABLE to a reader right now? Active, past its schedule,
-// and not expired — where an SOP never expires (redesign 2026-09-04: the SOP
-// Library is permanent, so a stale expires_at on an SOP is ignored rather than
-// silently pulling a standing procedure off everyone's screen). The list's
-// reader branch, /banner and the ack POST all use this one answer.
-function deliverableNow(r: AnnouncementRow, now = Date.now()): boolean {
-  if (!isActiveFlag(r.isActive ?? r.is_active ?? null)) return false;
-  if (scheduledLater(r.scheduledAt ?? r.scheduled_at ?? null, now)) return false;
-  if (readCategory(r.category) === "SOP") return true;
-  return notExpired(r.expiresAt ?? r.expires_at ?? null);
-}
 
 function isRemindedSince(
   remindedAt: string | null,
@@ -273,30 +177,6 @@ function readTranslations(r: AnnouncementRow): AnnouncementTranslations | null {
   return raw;
 }
 
-// Parse a stored JSON array of integers. Tolerates a JSON string OR a parsed
-// array; drops non-numbers; deduplicates.
-function readIntArray(v: string | number[] | null | undefined): number[] {
-  if (v == null) return [];
-  let arr: unknown = v;
-  if (typeof v === "string") {
-    if (!v.trim()) return [];
-    try {
-      arr = JSON.parse(v);
-    } catch {
-      return [];
-    }
-  }
-  if (!Array.isArray(arr)) return [];
-  const seen = new Set<number>();
-  const out: number[] = [];
-  for (const x of arr) {
-    const n = typeof x === "number" ? x : parseInt(String(x), 10);
-    if (!Number.isFinite(n) || seen.has(n)) continue;
-    seen.add(n);
-    out.push(n);
-  }
-  return out;
-}
 
 function normalizeAttachments(raw: unknown): AnnouncementAttachment[] {
   let arr: unknown = raw;
@@ -328,25 +208,8 @@ function normalizeAttachments(raw: unknown): AnnouncementAttachment[] {
   return out;
 }
 
-function rowDivisions(r: AnnouncementRow): DivisionTarget[] {
-  return readDivisionTargets(r.targetDivisions ?? r.target_divisions ?? null);
-}
 
-function rowExcluded(r: AnnouncementRow): number[] {
-  return readIntArray(r.excludedUserIds ?? r.excluded_user_ids ?? null);
-}
 
-function readTargetType(r: AnnouncementRow): TargetType {
-  const t = String(r.targetType ?? r.target_type ?? "ALL_USERS").toUpperCase();
-  if (
-    t === "DEPARTMENT_IDS" ||
-    t === "POSITION_IDS" ||
-    t === "USER_IDS" ||
-    t === "MIXED"
-  )
-    return t;
-  return "ALL_USERS";
-}
 
 // Derive the canonical target_type from which target lists are non-empty.
 // Empty all -> ALL_USERS; one bucket -> that bucket's enum; multiple -> MIXED.
@@ -420,6 +283,7 @@ function toPublic(r: AnnouncementRow) {
     category: readCategory(r.category),
     requireAck: readRequireAck(r.requireAck ?? r.require_ack ?? null),
     scheduledAt: r.scheduledAt ?? r.scheduled_at ?? null,
+    escalatedAt: r.escalatedAt ?? r.escalated_at ?? null,
     // System-notice tag ('scan' for background slip-scan results). Lets the
     // client suppress the read-receipt roster on private per-user notices.
     source: (r.source ?? null) as string | null,
@@ -511,11 +375,6 @@ async function getScopedAnnouncement(
 }
 
 
-// The announcement's targeted company ids (JSON array), dual-keyed for the pg
-// snake->camel fold. Empty = ALL companies.
-function readTargetCompanyIds(r: AnnouncementRow): number[] {
-  return readIntArray(r.targetCompanyIds ?? r.target_company_ids ?? null);
-}
 
 // Company gate: an announcement is visible to a reader whose granted companies
 // are `allowed` IFF its target_company_ids is empty (= all companies) OR
@@ -533,38 +392,6 @@ function companyCanSee(r: AnnouncementRow, allowed: number[] | undefined): boole
   return targets.some((id) => allowed.includes(id));
 }
 
-// True when a user with (id, deptId, positionId) is in the announcement's
-// audience. Used by the banner GET so we never surface a notice the user
-// shouldn't see.
-function userCanSee(
-  r: AnnouncementRow,
-  userId: number,
-  userDeptId: number | null,
-  userPositionId: number | null,
-  userDivision: string | null = null,
-): boolean {
-  // An unticked person is out, whatever else targets them (mig 20260906T0639).
-  if (rowExcluded(r).includes(userId)) return false;
-  const type = readTargetType(r);
-  if (type === "ALL_USERS") return true;
-  const deptIds = readIntArray(r.targetDeptIds ?? r.target_dept_ids ?? null);
-  if (userDeptId != null && deptIds.includes(userDeptId)) return true;
-  // A division target matches the user's PRIMARY department + their division
-  // text (users.division, mig 0021), case-insensitively.
-  if (userDeptId != null && userDivision) {
-    const divisions = rowDivisions(r);
-    if (divisions.some((d) => d.deptId === userDeptId && divisionEq(d.division, userDivision))) {
-      return true;
-    }
-  }
-  const positionIds = readIntArray(
-    r.targetPositionIds ?? r.target_position_ids ?? null,
-  );
-  if (userPositionId != null && positionIds.includes(userPositionId)) return true;
-  const userIds = readIntArray(r.targetUserIds ?? r.target_user_ids ?? null);
-  if (userIds.includes(userId)) return true;
-  return false;
-}
 
 
 // ============================================================
@@ -938,54 +765,11 @@ app.get("/banner", async (c) => {
 // the dashboard card and the supervisor notice can never disagree.
 
 
-function audienceOf(ann: AnnouncementRow, roster: RosterUser[]): RosterUser[] {
-  return roster.filter((u) => userCanSee(ann, u.id, u.departmentId, u.positionId, u.division));
-}
-
-// acked_at per user for ONE notice (or, with no id, every notice → keyed by
-// notice id first).
-async function loadAckMap(env: Env, id: string): Promise<Map<number, string | null>> {
-  // company-scope: receipts for ONE notice the caller already passed getScopedAnnouncement (companyCanSee) for; acks carry no company dimension of their own.
-  const res = await env.DB.prepare(
-    "SELECT user_id, acked_at FROM announcement_acks WHERE announcement_id = ?",
-  )
-    .bind(id)
-    .all<{ user_id?: number; userId?: number; acked_at?: string | null; ackedAt?: string | null }>();
-  const out = new Map<number, string | null>();
-  for (const a of res.results) {
-    const uid = a.userId ?? a.user_id;
-    if (uid != null) out.set(uid, a.ackedAt ?? a.acked_at ?? null);
-  }
-  return out;
-}
-
-async function loadAllAcks(env: Env): Promise<Map<string, Set<number>>> {
-  // company-scope: a lookup map consulted only for notices the caller has already filtered through companyCanSee / inTargetCompanies; never returned raw.
-  const res = await env.DB.prepare(
-    "SELECT announcement_id, user_id FROM announcement_acks",
-  ).all<{ announcement_id?: string; announcementId?: string; user_id?: number; userId?: number }>();
-  const out = new Map<string, Set<number>>();
-  for (const a of res.results) {
-    const id = a.announcementId ?? a.announcement_id;
-    const uid = a.userId ?? a.user_id;
-    if (!id || uid == null) continue;
-    let set = out.get(id);
-    if (!set) {
-      set = new Set<number>();
-      out.set(id, set);
-    }
-    set.add(uid);
-  }
-  return out;
-}
 
 
 
-// Does the notice demand an acknowledgement? The stored flag, else the
-// category rule — the same fallback the client applies.
-function announcementRequiresAck(r: AnnouncementRow): boolean {
-  return readRequireAck(r.requireAck ?? r.require_ack ?? null) ?? categoryRequiresAck(readCategory(r.category));
-}
+
+
 
 app.get("/:id/acks", requirePermissionOrSalesDirector("announcements.write"), async (c) => {
   const id = c.req.param("id");
@@ -1210,39 +994,9 @@ app.post("/:id/escalate", requirePermissionOrSalesDirector("announcements.write"
   const body = (await c.req.json().catch(() => ({}))) as { departmentId?: unknown };
   const deptFilter =
     body.departmentId == null ? null : parseInt(String(body.departmentId), 10);
-
-  const roster = audienceOf(ann, await loadRoster(c.env, readTargetCompanyIds(ann)));
-  const ackedAtByUser = await loadAckMap(c.env, id);
-  const pending = roster.filter(
-    (u) =>
-      !ackedAtByUser.has(u.id) &&
-      (deptFilter == null || !Number.isFinite(deptFilter) || u.departmentId === deptFilter),
-  );
-  const byManager = new Map<number, RosterUser[]>();
-  for (const u of pending) {
-    if (u.managerId == null) continue;
-    const list = byManager.get(u.managerId);
-    if (list) list.push(u);
-    else byManager.set(u.managerId, [u]);
-  }
-  for (const [managerId, people] of byManager) {
-    const names = people.map((p) => p.name || p.email);
-    await postPersonalNotice(c.env, {
-      userIds: [managerId],
-      category: "GENERAL",
-      title: `${names.length} of your team ${names.length === 1 ? "has" : "have"} not acknowledged "${ann.title}"`,
-      body: `Still pending: ${names.join(", ")}. Please follow up — the notice requires acknowledgement.`,
-      source: "ack_escalation",
-    });
-  }
-  // The managers' bell slices just changed.
-  if (byManager.size > 0) await bumpConfigVersion(c.env, "banner");
-  return c.json({
-    success: true,
-    supervisors: byManager.size,
-    people: pending.filter((u) => u.managerId != null).length,
-    unsupervised: pending.filter((u) => u.managerId == null).length,
-  });
+  // The same implementation the overdue cron runs (services/announcementEscalation.ts).
+  const r = await escalatePending(c.env, ann, deptFilter);
+  return c.json({ success: true, ...r });
 });
 
 // ============================================================

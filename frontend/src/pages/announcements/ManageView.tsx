@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { Search } from "lucide-react";
-import { cn } from "../../lib/utils";
+import { cn, relativeTime } from "../../lib/utils";
 import { fmtDateTime } from "../../vendor/shared/format";
 import {
   CATEGORY_META,
@@ -483,6 +483,11 @@ function Drawer({
             >
               Notify their supervisors
             </button>
+            <span className="text-[10.5px] text-ink-muted">
+              {a.escalatedAt
+                ? `Supervisors notified ${relativeTime(a.escalatedAt)} (automatic once a notice is 48h overdue)`
+                : "Supervisors are notified automatically once the notice is 48h overdue."}
+            </span>
           </div>
         </div>
       </div>
