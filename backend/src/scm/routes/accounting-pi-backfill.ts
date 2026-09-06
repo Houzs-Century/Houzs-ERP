@@ -33,13 +33,16 @@ type PiRow = {
   id: string; invoice_number: string; status: string; total_sen: number | null;
   migrated_no_stock: boolean | null;
 };
-type JeRow = { id: string; source_doc_no: string; reversed: boolean | null };
+type JeRow = { id: string; source_doc_no: string; reversed: boolean | null; entry_date: string | null };
 type JeLineRow = { journal_entry_id: string; account_code: string; debit_sen: number | null };
 
 export type BackfillItem = {
   invoiceNumber: string;
   totalSen: number;
   kind: 'missing' | 'reshape' | 'current';
+  /** The ACTIVE journal's own date — a reshape's contra takes it, so the
+      invoice's month cancels within itself (bug 0647). Null when missing. */
+  jeDate: string | null;
 };
 
 /** What each posted, non-migrated PI needs: no JE → 'missing'; an active JE
@@ -59,7 +62,7 @@ export async function classifyPiBackfill(
 
   const { data: jesRaw, error: jeErr } = await sb
     .from('journal_entries')
-    .select('id, source_doc_no, reversed')
+    .select('id, source_doc_no, reversed, entry_date')
     .eq('company_id', companyId)
     .eq('source_type', 'PI');
   if (jeErr) return { ok: false, reason: `JEs: ${jeErr.message}` };
@@ -84,7 +87,7 @@ export async function classifyPiBackfill(
   const items: BackfillItem[] = pis.map((p) => {
     const je = activeJeByDoc.get(p.invoice_number);
     const kind: BackfillItem['kind'] = !je ? 'missing' : dr330.has(je.id) ? 'reshape' : 'current';
-    return { invoiceNumber: p.invoice_number, totalSen: Number(p.total_sen ?? 0), kind };
+    return { invoiceNumber: p.invoice_number, totalSen: Number(p.total_sen ?? 0), kind, jeDate: je?.entry_date ?? null };
   }).sort((a, b) => a.invoiceNumber.localeCompare(b.invoiceNumber));
   return { ok: true, items };
 }
@@ -117,7 +120,9 @@ export const piPeriodicBackfill = async (c: any): Promise<Response> => {
   const results: Array<{ invoiceNumber: string; kind: string; outcome: string; jeNo?: string; reason?: string }> = [];
   for (const item of pending.slice(0, limit)) {
     if (item.kind === 'reshape') {
-      const rev = await reversePiAccounting(sb, item.invoiceNumber);
+      /* The contra carries the ORIGINAL's date, not today's — the month the
+         invoice lives in cancels within itself (bug 0647). */
+      const rev = await reversePiAccounting(sb, item.invoiceNumber, item.jeDate ? { entryDate: item.jeDate } : {});
       if (!rev.ok) {
         results.push({ invoiceNumber: item.invoiceNumber, kind: item.kind, outcome: 'failed', reason: `reverse: ${rev.reason ?? rev.status}` });
         continue;

@@ -740,6 +740,15 @@ accounting.post('/post/pi/:invoiceNumber', async (c) => {
 export async function reversePiAccounting(
   sb: any,
   invoiceNumber: string,
+  opts: {
+    /** The contra's entry_date. A CANCEL leaves it out — a void happens when
+        it happens (today, MYT). A RESHAPE (the periodic backfill re-posting
+        an old-shape entry) passes the original's own date, so the month the
+        invoice lives in cancels within itself: the owner's 照理应该根据 PI 的
+        日期 (2026-09-06, bug 0647 — 19 contras had landed in September and
+        left July/August's stock and AP over-stated until then). */
+    entryDate?: string;
+  } = {},
 ): Promise<{ ok: boolean; status: string; jeNo?: string; jeId?: string; reason?: string }> {
   /* Through the ONE gate (acc/engine): find the ACTIVE PI JE, write a faithful
      contra (same accounts + parties, sides swapped), post it, flag the
@@ -751,7 +760,7 @@ export async function reversePiAccounting(
     sourceType: 'PI',
     sourceDocNo: invoiceNumber,
     narration: (orig) => `Reversal of ${orig.je_no} — Purchase invoice ${invoiceNumber} cancelled`,
-    entryDate: todayMyt(),
+    entryDate: opts.entryDate ?? todayMyt(),
     fallbackLines: (totalSen) => [
       { accountCode: DEFAULT_ROLE_CODES.AP, debitSen: totalSen, creditSen: 0, notes: `Reverse AP ${invoiceNumber}` },
       { accountCode: DEFAULT_ROLE_CODES.INVENTORY, debitSen: 0, creditSen: totalSen, notes: `Reverse inventory ${invoiceNumber}` },
