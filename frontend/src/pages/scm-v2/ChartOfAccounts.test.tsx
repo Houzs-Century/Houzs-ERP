@@ -15,6 +15,17 @@ import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, test, vi } from 'vitest';
 import * as XLSX from 'xlsx';
 
+/* The server's section vocabulary (one home: backend lib/account-sections.ts),
+   as the union hands it down — the page never carries a copy. */
+const SECTIONS = [
+  { section: 'CAPITAL', type: 'EQUITY' },
+  { section: 'CURRENT ASSETS', type: 'ASSET' },
+  { section: 'CURRENT LIABILITIES', type: 'LIABILITY' },
+  { section: 'LONG TERM LIABILITIES', type: 'LIABILITY' },
+  { section: 'SALES', type: 'INCOME' },
+  { section: 'OTHER INCOMES', type: 'INCOME' },
+  { section: 'EXPENSES', type: 'EXPENSE' },
+] as const;
 const tickAsync = vi.fn(async (_b: unknown) => ({}));
 const importAsync = vi.fn(async (_b: unknown) => ({ ok: true, imported: 3, shared: 2, sharedTo: [2] }));
 const renameAsync = vi.fn(async (_b: unknown) => ({ ok: true, moved: { accounts: 2, journal_lines: 3 } }));
@@ -23,14 +34,14 @@ const updateAsync = vi.fn(async (_b: unknown) => ({ ok: true, companies: 2 }));
 const deleteAsync = vi.fn(async (_c: unknown) => ({ ok: true, companies: 2 }));
 vi.mock('../../vendor/scm/lib/accounting-queries', () => ({
   isControlSpecial: (s: string | null | undefined) => s === 'SDC' || s === 'SCC' || s === 'SBS',
-  useChartUnion: () => ({ data: { companies: [{ id: 1, code: 'HOUZS' }, { id: 2, code: '2990' }], accounts: [
-    { code: '310-0000', name: 'CASH AT BANK', type: 'ASSET', parentCode: null, accMoney: false, special: null, perCompany: { 1: { active: true } } },
-    { code: '310-0010', name: 'CASH AT BANK - MAYBANK', type: 'ASSET', parentCode: '310-0000', accMoney: true, special: 'SBK', perCompany: { 1: { active: true } } },
-    { code: '400-0000', name: 'ACCOUNT PAYABLE', type: 'LIABILITY', parentCode: null, accMoney: false, special: 'SCC', perCompany: { 1: { active: true } } },
-    { code: '900-A002', name: 'ADVERTISEMENT', type: 'EXPENSE', parentCode: null, accMoney: false, special: null, perCompany: { 1: { active: true }, 2: { active: true } } },
-    { code: '500-0000', name: 'SALES', type: 'INCOME', parentCode: null, accMoney: false, special: null, perCompany: { 1: { active: true } } },
-    { code: '700-0000', name: 'Other Income', type: 'INCOME', parentCode: null, accMoney: false, special: null, perCompany: { 1: { active: true } } },
-    { code: '590-0000', name: 'TRANSPORT INCOME', type: 'INCOME', parentCode: '700-0000', accMoney: false, special: null, perCompany: { 1: { active: true } } },
+  useChartUnion: () => ({ data: { companies: [{ id: 1, code: 'HOUZS' }, { id: 2, code: '2990' }], sections: SECTIONS, accounts: [
+    { code: '310-0000', name: 'CASH AT BANK', type: 'ASSET', parentCode: null, accMoney: false, special: null, section: 'CURRENT ASSETS', perCompany: { 1: { active: true } } },
+    { code: '310-0010', name: 'CASH AT BANK - MAYBANK', type: 'ASSET', parentCode: '310-0000', accMoney: true, special: 'SBK', section: 'CURRENT ASSETS', perCompany: { 1: { active: true } } },
+    { code: '400-0000', name: 'ACCOUNT PAYABLE', type: 'LIABILITY', parentCode: null, accMoney: false, special: 'SCC', section: 'CURRENT LIABILITIES', perCompany: { 1: { active: true } } },
+    { code: '900-A002', name: 'ADVERTISEMENT', type: 'EXPENSE', parentCode: null, accMoney: false, special: null, section: 'EXPENSES', perCompany: { 1: { active: true }, 2: { active: true } } },
+    { code: '500-0000', name: 'SALES', type: 'INCOME', parentCode: null, accMoney: false, special: null, section: 'SALES', perCompany: { 1: { active: true } } },
+    { code: '700-0000', name: 'Other Income', type: 'INCOME', parentCode: null, accMoney: false, special: null, section: 'OTHER INCOMES', perCompany: { 1: { active: true } } },
+    { code: '590-0000', name: 'TRANSPORT INCOME', type: 'INCOME', parentCode: '700-0000', accMoney: false, special: null, section: 'OTHER INCOMES', perCompany: { 1: { active: true } } },
   ] }, isLoading: false, error: null }),
   useChartTick: () => ({ mutateAsync: tickAsync, isPending: false }),
   useChartImport: () => ({ mutateAsync: importAsync, isPending: false }),
@@ -65,18 +76,20 @@ describe('parseChartXlsx — the AutoCount report shape', () => {
     ];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'Sheet');
-    const p = parseChartXlsx(wb);
+    const p = parseChartXlsx(wb, SECTIONS);
 
     expect(p.rows).toHaveLength(5);
     const mbb = p.rows.find((r) => r.code === '310-0010')!;
-    expect(mbb).toMatchObject({ parentCode: '310-0000', accMoney: true, accountType: 'ASSET', shared: false, specialType: 'SBK' });
+    /* The heading travels with the row now — the server stores it. */
+    expect(mbb).toMatchObject({ parentCode: '310-0000', accMoney: true, accountType: 'ASSET', section: 'CURRENT ASSETS', shared: false, specialType: 'SBK' });
     const parent = p.rows.find((r) => r.code === '310-0000')!;
     expect(parent).toMatchObject({ parentCode: null, accMoney: false, shared: true });
     expect(p.rows.find((r) => r.code === '900-A002')).toMatchObject({ accountType: 'EXPENSE', shared: true });
     /* 460 = borrowings: named counterparties of ONE company. */
     expect(p.rows.find((r) => r.code === '460-0001')).toMatchObject({ accountType: 'LIABILITY', shared: false });
-    /* An unknown section falls back to EXPENSE and is NAMED for the operator. */
-    expect(p.rows.find((r) => r.code === '999-0001')).toMatchObject({ accountType: 'EXPENSE' });
+    /* An unknown section falls back to EXPENSE, carries NO section (the server
+       shelves it by type) and is NAMED for the operator. */
+    expect(p.rows.find((r) => r.code === '999-0001')).toMatchObject({ accountType: 'EXPENSE', section: null });
     expect(p.unknownSections).toEqual(['MYSTERY SECTION']);
   });
 });
@@ -144,11 +157,38 @@ describe('fold / edit / delete — the owner points 1, 2 and 4', () => {
     expect(typeCellOf('590-0000').textContent).toContain('· Other');
     expect(typeCellOf('700-0000').textContent).toContain('· Other');
     expect(String(typeCellOf('500-0000').textContent)).not.toContain('Other');
-    /* And the CREATE side says where the choice lives (create 那边同理). */
-    fireEvent.click(screen.getByText('Add account'));
-    const typeSelects = screen.getAllByRole('combobox');
-    fireEvent.change(typeSelects[0]!, { target: { value: 'INCOME' } });
-    expect(screen.getByText(/Set Parent to 700-0000/)).toBeTruthy();
+  });
+
+  test('the AutoCount sections head the list in the server\'s order, each foldable (owner 2026-09-06: 每个 account type 的 header)', () => {
+    const { container } = draw();
+    const headers = [...container.querySelectorAll('tbody td[data-section]')]
+      .map((td) => td.getAttribute('data-section'));
+    expect(headers).toEqual(['CURRENT ASSETS', 'CURRENT LIABILITIES', 'SALES', 'OTHER INCOMES', 'EXPENSES']);
+    /* Fold a section: its rows vanish, the header stays. */
+    fireEvent.click(screen.getByLabelText('Collapse section CURRENT ASSETS'));
+    expect(screen.queryByText('310-0010')).toBeNull();
+    expect(screen.getByText('CURRENT ASSETS')).toBeTruthy();
+    fireEvent.click(screen.getByLabelText('Expand section CURRENT ASSETS'));
+    expect(screen.getByText('310-0010')).toBeTruthy();
+  });
+
+  test('dragging a header-level account onto a section row re-shelves it (换节); a child is refused, its header named', async () => {
+    updateAsync.mockClear(); confirmFn.mockClear();
+    const { container } = draw();
+    const rowOf = (code: string) => [...container.querySelectorAll('tbody tr')]
+      .find((tr) => String(tr.children[0]?.textContent).replace('└', '').trim() === code) as HTMLElement;
+    const sectionRow = (section: string) => screen.getByLabelText(`Collapse section ${section}`).closest('tr') as HTMLElement;
+    /* 500-0000 SALES → OTHER INCOMES: confirm, then the update names the section. */
+    fireEvent.dragStart(rowOf('500-0000'));
+    fireEvent.drop(sectionRow('OTHER INCOMES'));
+    await waitFor(() => expect(updateAsync).toHaveBeenCalledWith({ code: '500-0000', section: 'OTHER INCOMES' }));
+    expect(JSON.stringify(confirmFn.mock.calls[0]![0])).toMatch(/OTHER INCOMES/);
+    /* A child (310-0010 under 310-0000) does not move on its own. */
+    updateAsync.mockClear();
+    fireEvent.dragStart(rowOf('310-0010'));
+    fireEvent.drop(sectionRow('CURRENT LIABILITIES'));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(updateAsync).not.toHaveBeenCalled();
   });
 
   test('the LIST scrolls inside its card and the header row sticks (owner 2026-09-04: 往下滑时看不到 header / 按 edit 时要跑回上去)', () => {
@@ -241,6 +281,8 @@ describe('fold / edit / delete — the owner points 1, 2 and 4', () => {
     fireEvent.change(screen.getByPlaceholderText('305-0010'), { target: { value: '201-3000' } });
     const name = screen.getAllByDisplayValue('').find((el) => String(el.closest('label')?.textContent).includes('Name'))!;
     fireEvent.change(name, { target: { value: 'F&F (HOSTEL)' } });
+    /* The SECTION is the type now — Create stays disabled until one is picked. */
+    fireEvent.change(screen.getByLabelText('New account section'), { target: { value: 'CURRENT ASSETS' } });
     fireEvent.change(screen.getByLabelText('Special type'), { target: { value: 'SFA' } });
     expect(screen.getByLabelText('Depreciation code')).toHaveProperty('value', '201-3005');
     expect(screen.getByLabelText('Depreciation name')).toHaveProperty('value', 'ACCUM. DEPRN. - F&F (HOSTEL)');
@@ -267,11 +309,13 @@ describe('fold / edit / delete — the owner points 1, 2 and 4', () => {
     fireEvent.change(screen.getByPlaceholderText('305-0010'), { target: { value: '305-0010' } });
     const name = screen.getAllByDisplayValue('').find((el) => String(el.closest('label')?.textContent).includes('Name'))!;
     fireEvent.change(name, { target: { value: 'AHMAD BIN ALI' } });
+    fireEvent.change(screen.getByLabelText('New account section'), { target: { value: 'CURRENT ASSETS' } });
     fireEvent.change(screen.getByPlaceholderText('305-0000'), { target: { value: '305-0000' } });
     fireEvent.click(screen.getByLabelText('new account for 2990')); // untick 2990 → HOUZS only
     fireEvent.click(screen.getByText('Create'));
+    /* The payload names the SECTION; the server derives the type from it. */
     await waitFor(() => expect(createAsync).toHaveBeenCalledWith({
-      code: '305-0010', name: 'AHMAD BIN ALI', accountType: 'ASSET',
+      code: '305-0010', name: 'AHMAD BIN ALI', section: 'CURRENT ASSETS',
       parentCode: '305-0000', accMoney: false, companyIds: [1],
     }));
   });

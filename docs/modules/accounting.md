@@ -107,6 +107,30 @@ on /scm/settlement-setup and pre-filling every voucher's Paid From
 (docs/modules/payment-voucher.md §0c). Contract:
 `backend/src/scm/routes/accountRoles.test.ts`.
 
+**The AutoCount sections (2026-09-06).** Every account carries a `section`
+(`scm.accounts.section`, migration 20260906T0900) — the top node the
+accountant's chart hangs it under: CAPITAL, RETAINED EARNING, FIXED ASSETS,
+OTHER ASSETS, CURRENT ASSETS, CURRENT / LONG TERM / OTHER LIABILITIES,
+SALES, SALES ADJUSTMENTS, COST OF GOODS SOLD, OTHER INCOMES, EXTRA-ORDINARY
+INCOME, EXPENSES, TAXATION, APPROPRIATION A/C. The section DECIDES the
+five-way `account_type` (CAPITAL is EQUITY), never the reverse. One home:
+`backend/src/scm/lib/account-sections.ts` — the ordered vocabulary, the
+seed rule (`defaultSectionFor`, the code ranges the migration ran once over
+his 397 codes) and the section→type map; `GET /accounting/chart` and `GET
+/accounting/accounts` hand the list down, so the chart page's header rows,
+its Section pickers, the xlsx import (the heading now travels with the row)
+and the Item Groups picker all read the server's list and carry no copy.
+The owner's rule (你先帮我分类,然后我自己还能调动 — 用拖拉式): the chart page
+renders one header row per section, foldable, and dropping a header-level
+account on one re-shelves it — `PUT /accounting/chart/update {section}`
+sets the section AND the type it decides on the account and its whole
+subtree, in every company carrying the code; a CHILD refuses with its
+header named (子户跟着 header 走, `section_child`), and a parent in another
+section refuses at create (`section_mismatch`). Statements read the section
+(next PR); the migration's CASE mirrors `defaultSectionFor` — change one,
+change both. Pinned by tests/accountingChart.test.ts §sections +
+ChartOfAccounts.test.tsx.
+
 **The chart maintenance surface (2026-09-03, roadmap A)**: `GET
 /accounting/chart` unions every GRANTED company's accounts into one row per
 code (definition led by the lowest company id, per-company active map;

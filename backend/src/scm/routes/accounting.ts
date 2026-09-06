@@ -56,6 +56,7 @@ import { stockCloseStatus, stockCloseRun } from './accounting-stock-close';
 import { pnlReport, balanceSheetReport } from './accounting-reports';
 import { numberingGet, numberingPut } from './accounting-numbering';
 import { receiptsList, receiptEnsure, receiptFormalise } from './accounting-receipts';
+import { ACCOUNT_SECTIONS, defaultSectionFor } from '../lib/account-sections';
 import { dateOrNull } from '../lib/date-coerce';
 
 /* THE GENERAL LEDGER HAD NO PERMISSION CHECK AT ALL — eleven routes, zero
@@ -198,11 +199,14 @@ accounting.get('/accounts', async (c) => {
        flag rides along so screens don't hardcode code ranges. special_type is
        the AutoCount special column (0347) — pickers hide the SDC/SCC/SBS
        control accounts by it. */
-    .select('account_code, account_name, account_type, parent_code, is_active, acc_money, special_type');
+    .select('account_code, account_name, account_type, parent_code, is_active, acc_money, special_type, section');
   q = scopeToCompany(q, c);
   const { data, error } = await q.order('account_code');
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  return c.json({ accounts: data ?? [] });
+  /* `sections` = the AutoCount section vocabulary in render order, so a
+     picker can group its options under the same headers the chart page
+     shows (lib/account-sections.ts, the one home). */
+  return c.json({ accounts: data ?? [], sections: ACCOUNT_SECTIONS });
 });
 
 /* ── Account roles — which account plays which part ─────────────────────────
@@ -918,7 +922,13 @@ accounting.post('/accounts', async (c) => {
   if (dup) return c.json({ error: 'code_exists' }, 409);
 
   const { data: created, error } = await sb.from('accounts')
-    .insert({ company_id: co.companyId, account_code: code, account_name: name, account_type: type, parent_code: parent, is_active: true })
+    .insert({
+      company_id: co.companyId, account_code: code, account_name: name, account_type: type, parent_code: parent, is_active: true,
+      /* The per-company door names no section: the type's default shelf,
+         the same rule the migration seeded with. The chart page's own door
+         (accounting-chart.ts) takes the section explicitly. */
+      section: defaultSectionFor(type, code),
+    })
     .select('account_code, account_name, account_type, parent_code, is_active')
     .single();
   if (error) return c.json({ error: 'insert_failed', reason: error.message }, 500);

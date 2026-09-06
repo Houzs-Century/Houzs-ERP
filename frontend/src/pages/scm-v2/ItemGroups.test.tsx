@@ -36,16 +36,21 @@ vi.mock('./accounting-phase1-queries', async (importOriginal) => ({
 vi.mock('../../vendor/scm/lib/accounting-queries', () => ({
   useAccounts: () => ({
     data: {
+      sections: [
+        { section: 'CAPITAL', type: 'EQUITY' }, { section: 'CURRENT ASSETS', type: 'ASSET' },
+        { section: 'SALES', type: 'INCOME' }, { section: 'SALES ADJUSTMENTS', type: 'INCOME' },
+        { section: 'COST OF GOODS SOLD', type: 'EXPENSE' }, { section: 'EXPENSES', type: 'EXPENSE' },
+      ],
       accounts: [
-        { account_code: '601-0003', account_name: 'PURCHASE OF SOFA', account_type: 'EXPENSE', is_active: true },
-        { account_code: '602-0000', account_name: 'PURCHASES OF BEDLINES', account_type: 'EXPENSE', is_active: true },
-        { account_code: '501-0000', account_name: 'SALES OF FURNITURE', account_type: 'INCOME', is_active: true },
-        { account_code: '502-0000', account_name: 'SALES OF BEDLINES', account_type: 'INCOME', is_active: true },
-        { account_code: '510-0000', account_name: 'RETURN INWARDS', account_type: 'INCOME', is_active: true },
-        { account_code: '612-0000', account_name: 'PURCHASES RETURN', account_type: 'EXPENSE', is_active: true },
+        { account_code: '601-0003', account_name: 'PURCHASE OF SOFA', account_type: 'EXPENSE', section: 'COST OF GOODS SOLD', is_active: true },
+        { account_code: '602-0000', account_name: 'PURCHASES OF BEDLINES', account_type: 'EXPENSE', section: 'COST OF GOODS SOLD', is_active: true },
+        { account_code: '501-0000', account_name: 'SALES OF FURNITURE', account_type: 'INCOME', section: 'SALES', is_active: true },
+        { account_code: '502-0000', account_name: 'SALES OF BEDLINES', account_type: 'INCOME', section: 'SALES', is_active: true },
+        { account_code: '510-0000', account_name: 'RETURN INWARDS', account_type: 'INCOME', section: 'SALES ADJUSTMENTS', is_active: true },
+        { account_code: '612-0000', account_name: 'PURCHASES RETURN', account_type: 'EXPENSE', section: 'COST OF GOODS SOLD', is_active: true },
         /* Noise the picker must HIDE: neither side of trading. */
-        { account_code: '100-0000', account_name: 'CAPITAL', account_type: 'EQUITY', is_active: true },
-        { account_code: '310-0010', account_name: 'CASH AT BANK - MAYBANK', account_type: 'ASSET', is_active: true },
+        { account_code: '100-0000', account_name: 'CAPITAL', account_type: 'EQUITY', section: 'CAPITAL', is_active: true },
+        { account_code: '310-0010', account_name: 'CASH AT BANK - MAYBANK', account_type: 'ASSET', section: 'CURRENT ASSETS', is_active: true },
       ],
     },
   }),
@@ -105,16 +110,17 @@ describe('the sign-off flow', () => {
     render(<ItemGroupsTab />);
     const purchase = screen.getByLabelText('BEDLINES Purchase account');
     fireEvent.focus(purchase);
-    /* EXPENSE list: the cost section heads it; equity/bank/income never show. */
-    expect(screen.getByText('Cost of goods sold')).toBeTruthy();
-    expect(screen.queryByText(/CAPITAL/)).toBeNull();
+    /* EXPENSE list: the chart's cost section heads it (read off the account
+       rows, never decided here); equity/bank/income never show. */
+    expect(screen.getByText('COST OF GOODS SOLD')).toBeTruthy();
+    expect(screen.queryByText(/^CAPITAL/)).toBeNull();
     expect(screen.queryByText(/CASH AT BANK/)).toBeNull();
     expect(screen.queryByText(/SALES OF FURNITURE/)).toBeNull();
     fireEvent.blur(purchase);
     const sales = screen.getByLabelText('BEDLINES Sales Return account');
     fireEvent.focus(sales);
-    /* INCOME list: 510 files under Sales adjustments; expense rows stay out. */
-    expect(screen.getByText('Sales adjustments')).toBeTruthy();
+    /* INCOME list: 510 files under SALES ADJUSTMENTS; expense rows stay out. */
+    expect(screen.getByText('SALES ADJUSTMENTS')).toBeTruthy();
     expect(screen.queryByText(/PURCHASE OF SOFA/)).toBeNull();
   });
 });
