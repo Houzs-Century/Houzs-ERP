@@ -85,6 +85,21 @@ marker other teams can rely on.
 `scm.payment_voucher.post` (owner decision recorded in-file; dedicated
 `acc.*` keys arrive with the phase-1 UI).
 
+**The bridge is per router (docs/bugs/0648, 2026-09-06).** `scm/index.ts`
+mounts no global `supabaseAuth`; every finance router —
+`backend/src/scm/routes/accounting.ts`, `backend/src/scm/routes/payment-vouchers.ts`,
+`backend/src/scm/routes/receipts.ts`, `backend/src/scm/routes/other-debtors.ts`,
+`backend/src/scm/routes/ap-invoices.ts` — declares `router.use('*', supabaseAuth)`
+itself, because that middleware is what stashes the real caller as
+`houzsUser` (the only source `hasHouzsPerm` reads) and hands out
+`c.get('supabase')`. Three of them shipped without the line and answered
+500 / 403 in production while every test passed (the harnesses set both by
+hand); `backend/tests/scmRouterBridge.test.ts` now parses the mounts in
+`scm/index.ts` and refuses a router without it (a by-design skip must carry
+a reason). A route harness that mounts a router sets `user` to the pinned
+system-staff id (`SCM_SYSTEM_STAFF_ID`), the bridge's own "already
+translated" mark, so it steps aside and the hand-set client stays in force.
+
 Reads: `GET /accounts`, `/journal-entries`, `/journal-entries/:id`, `/gl`
 (v_gl_entries), `/balances` (v_account_balances), `/ar-aging`, `/ap-aging` —
 all company-scoped, all paginated past PostgREST's 1000-row cap.
