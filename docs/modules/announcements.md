@@ -396,9 +396,27 @@ all filtering happens in JS in the Worker (`:543-547`, `:628-630`).
 
 ### Write path
 
-- **Create** `:785` — inserts at `:873`, auto-translates via
-  `backend/src/lib/translate-announcement.ts`, then bumps the banner cache
-  family version (`:908`).
+- **Create** `:785` — inserts at `:873` with `translations = NULL`, bumps the
+  banner cache family version (`:908`), answers, and only THEN translates.
+- **Translation runs after the response (2026-09-06)** — `queueTranslation()`
+  next to the create route hands `translateAndStore()`
+  (`backend/src/lib/translate-announcement.ts`) to `c.executionCtx.waitUntil`
+  (floating-promise fallback in the bare-Hono test harness). The fill is an
+  `UPDATE … WHERE id = ? AND title = ? AND coalesce(body,'') = ? AND
+  coalesce(body_html,'') = ?` — guarded on the TEXT, so a reply that lands
+  after the notice was edited is dropped (`"stale"`) and the edit's own run
+  stores the current text's translation. A PATCH that changes title / body
+  clears `translations` in the same UPDATE as the text and queues a refill;
+  a non-text PATCH (active toggle, retarget, expiry) leaves it alone and
+  calls no model. Each model attempt carries
+  `AbortSignal.timeout(TRANSLATE_ATTEMPT_TIMEOUT_MS)` (30 s). Readers show
+  the original text until the fill lands, then the fill bumps the banner
+  family so the translated copy reaches the next poll. Before this the
+  create route AWAITED the four-language call (40–100 s on a rich notice,
+  three retries, no timeout): the owner saw "Posting…" hang, clicked again,
+  and each click had inserted a row — nine copies of one notice
+  (`docs/bugs/0650`). Pinned by `tests/announcementsTranslateAsync.test.ts`
+  and `tests/translateAnnouncementTimeout.test.ts`.
 - **Rich body (2026-09-04)** — `readBodyHtml()` next to `toPublic()`. A
   `bodyHtml` in the request is run through
   `backend/src/lib/announcementRichText.ts` (allow-list canonicaliser:

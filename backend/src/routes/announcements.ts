@@ -10,8 +10,10 @@
 //   - No web push (Houzs has no push_subscriptions). BrowserPushSink already
 //     fires native Notifications off the polled activity feed; reusing that
 //     here is a future enhancement.
-//   - Translate-announcement.ts is ported and called best-effort. Returns null
-//     when ANTHROPIC_API_KEY is unset → FE falls back to original text.
+//   - Translate-announcement.ts is ported and called best-effort — and, since
+//     2026-09-06, AFTER the response under waitUntil (queueTranslation). The
+//     row is written with translations NULL; the FE shows the original text
+//     until the fill lands, or for good when ANTHROPIC_API_KEY is unset.
 //   - No runtime self-apply DDL block: Houzs migrates-before-deploy
 //     (mig 0058 must be applied before this route's first request).
 // ============================================================
@@ -32,8 +34,9 @@ import {
 } from "../services/configCache";
 import type { BannerScope } from "../services/configCache";
 import {
-  translateAnnouncement,
+  translateAndStore,
   type AnnouncementTranslations,
+  type TranslationSource,
 } from "../lib/translate-announcement";
 import {
   RICH_HTML_MAX,
@@ -1096,6 +1099,24 @@ app.post("/:id/escalate", requirePermissionOrSalesDirector("announcements.write"
 // ============================================================
 // POST / — create. Body validated server-side.
 // ============================================================
+// Run the four-language translation AFTER the response. The row is already
+// written (translations NULL); translateAndStore fills the column when the
+// reply lands and drops it if the text was edited meanwhile. Same
+// waitUntil-with-floating-fallback shape as the banner cache fill above —
+// c.executionCtx throws in the bare-Hono test harness.
+function queueTranslation(
+  c: { env: Env; executionCtx: { waitUntil(p: Promise<unknown>): void } },
+  id: string,
+  src: TranslationSource,
+): void {
+  const run = translateAndStore(c.env, id, src);
+  try {
+    c.executionCtx.waitUntil(run);
+  } catch {
+    void run;
+  }
+}
+
 app.post("/", requirePermissionOrSalesDirector("announcements.write"), async (c) => {
   const user = c.get("user");
   const body = (await c.req
@@ -1207,14 +1228,10 @@ app.post("/", requirePermissionOrSalesDirector("announcements.write"), async (c)
   // window / D1 test mirror inserts unchanged; the PG DEFAULT covers the rest.
   const companyId = activeCompanyId(c);
   const stampCo = companyId != null;
-  // Best-effort translate. apiKey missing -> returns null and we store null;
-  // FE falls back to original text. Awaiting is fine (rare + short).
-  const translations = await translateAnnouncement({
-    title,
-    body: text,
-    bodyHtml,
-    apiKey: c.env.ANTHROPIC_API_KEY,
-  });
+  // Translations are filled in AFTER the response (queueTranslation below):
+  // the row is written with NULL and the FE shows the original text until the
+  // background job lands. The old await here held "Posting…" for 40-100 s on
+  // a rich notice and the owner's repeated clicks each inserted a row.
 
   await c.env.DB.prepare(
     `INSERT INTO announcements
@@ -1233,7 +1250,7 @@ app.post("/", requirePermissionOrSalesDirector("announcements.write"), async (c)
       expiresAt,
       user?.id ?? null,
       nowIso,
-      translations ? JSON.stringify(translations) : null,
+      null,
       attachments.length ? JSON.stringify(attachments) : null,
       mediaLayout ? JSON.stringify(mediaLayout) : null,
       targetType,
@@ -1259,6 +1276,8 @@ app.post("/", requirePermissionOrSalesDirector("announcements.write"), async (c)
   // A new notice changes every targeted reader's banner — orphan ALL cached
   // banner snapshots via the family version.
   await bumpConfigVersion(c.env, "banner");
+
+  queueTranslation(c, id, { title, body: text, bodyHtml });
 
   // TODO: web push fan-out (no infra in Houzs yet). BrowserPushSink already
   // fires native browser Notifications from the polled activity feed; wiring
@@ -1489,14 +1508,11 @@ app.patch("/:id", requirePermissionOrSalesDirector("announcements.write"), async
     return c.json({ success: true, data: toPublic(existing) });
   }
   if (textChanged) {
-    const retranslated = await translateAnnouncement({
-      title: nextTitle,
-      body: nextText,
-      bodyHtml: nextHtml,
-      apiKey: c.env.ANTHROPIC_API_KEY,
-    });
+    // The stored translation describes text that is about to change: clear
+    // it with the edit (readers see the new original, never the old
+    // translation) and refill it after the response — queueTranslation below.
     sets.push("translations = ?");
-    binds.push(retranslated ? JSON.stringify(retranslated) : null);
+    binds.push(null);
   }
   sets.push("updated_at = ?");
   binds.push(new Date().toISOString());
@@ -1511,6 +1527,10 @@ app.patch("/:id", requirePermissionOrSalesDirector("announcements.write"), async
   // Any edit (text, targeting, active toggle, expiry) can change who sees
   // what — orphan all cached banner snapshots.
   await bumpConfigVersion(c.env, "banner");
+
+  if (textChanged) {
+    queueTranslation(c, id, { title: nextTitle, body: nextText, bodyHtml: nextHtml });
+  }
 
   const row = await c.env.DB.prepare(
     "SELECT * FROM announcements WHERE id = ?",
