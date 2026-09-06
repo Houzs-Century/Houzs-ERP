@@ -113,9 +113,11 @@ Invoice, the owner's ask verbatim: 可以不可以像 autocount 这样 purchase 
 一边,然后再多一个 AP invoice,这样我就可以把 other creditor 的 invoice 放过去,
 也不会影响 operation 那边的 purchase invoice — and, confirmed: 我想要两个都看到,
 现有的 purchase invoice remain. `scm.ap_invoices` + `scm.ap_invoice_lines`
-(migration 20260906T1500), numbered `{co}API-YYMM-NNN` (a new series, his
-prefix), MYR only in this first cut. Routes `/scm/ap-invoices`
-(ap-invoices.ts, PV key family, finance area): `GET /` lists BOTH kinds —
+(`backend/src/db/migrations-pg/20260906T1500_ap_invoices.sql`), numbered
+`{co}API-YYMM-NNN` (a new series, his prefix), MYR only in this first cut.
+Routes `/scm/ap-invoices` (`backend/src/scm/routes/ap-invoices.ts`, PV key
+family, finance area; settle twin `backend/src/scm/lib/ap-invoice-settlement.ts`):
+`GET /` lists BOTH kinds —
 the operational purchase invoices as a read-only mirror (`kind: 'PI'`,
 POSTED / PARTIALLY_PAID / PAID / ON_HOLD) beside the AP invoices raised here
 (`kind: 'API'`) — `POST /` raises a DRAFT (1–50 lines, each a leaf
