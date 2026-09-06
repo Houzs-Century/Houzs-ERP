@@ -30,6 +30,7 @@ import roles from "./routes/roles";
 import positions from "./routes/positions";
 import positionCapabilities from "./routes/position-capabilities";
 import departments from "./routes/departments";
+import documentRefs from "./routes/documentRefs";
 import companies from "./routes/companies";
 import tableLayouts from "./routes/tableLayouts";
 import notifications from "./routes/notifications";
@@ -374,6 +375,9 @@ app.route("/api/roles", roles);
 app.route("/api/positions", positions);
 app.route("/api/position-capabilities", positionCapabilities);
 app.route("/api/departments", departments);
+// Document reference numbers + document types (mig 20260906T1417): the
+// router carries its own /document-refs and /document-types prefixes.
+app.route("/api", documentRefs);
 app.route("/api/companies", companies);
 // Column layouts: this user's own (synced across their machines) + each
 // company's admin-set default. Any signed-in user reads and writes their OWN

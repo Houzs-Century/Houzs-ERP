@@ -181,6 +181,10 @@ GET,/api/departments,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePerm
 POST,/api/departments,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""users.manage"")",,YES,DECLARED_GATE,backend/src/routes/departments.ts
 DELETE,/api/departments/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""users.manage"")",,YES,DECLARED_GATE,backend/src/routes/departments.ts
 PATCH,/api/departments/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""users.manage"")",,YES,DECLARED_GATE,backend/src/routes/departments.ts
+GET,/api/document-refs/:refNo,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/documentRefs.ts
+GET,/api/document-types,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/documentRefs.ts
+POST,/api/document-types,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""settings.manage"")",,YES,DECLARED_GATE,backend/src/routes/documentRefs.ts
+PATCH,/api/document-types/:code,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""settings.manage"")",,YES,DECLARED_GATE,backend/src/routes/documentRefs.ts
 GET,/api/finance/pnl,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""projects.read"")",,NO,DECLARED_GATE,backend/src/routes/finance.ts
 GET,/api/finance/pnl/bucket,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""projects.read"")",,NO,DECLARED_GATE,backend/src/routes/finance.ts
 PATCH,/api/fleet-maintenance/breakdowns/:caseId,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,supabaseAuth,"requireHouzsPerm(""fleet.write"")",,YES,DECLARED_GATE,backend/src/scm/routes/fleet-maintenance.ts
