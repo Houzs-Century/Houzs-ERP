@@ -409,8 +409,13 @@ all filtering happens in JS in the Worker (`:543-547`, `:628-630`).
   degrades to plain rather than to garbage. Pinned by
   `tests/announcementsRichBody.test.ts`, `tests/announcementRichText.test.ts`
   and `tests/translateAnnouncementRich.test.ts`.
-- **Division targets + exclusions (2026-09-06)** — `readDivisionTargets()` /
-  `rowDivisions()` / `rowExcluded()` next to `readIntArray()`. POST and
+- **Division targets + exclusions (2026-09-06)** — `rowDivisions()` /
+  `rowExcluded()` next to `readIntArray()`; the parsing (`readDivisionTargets`,
+  `divisionEq`), `callerDivision`, `rosterCompaniesSql`, `loadRoster`,
+  `loadCompanyGrants` / `inTargetCompanies` and `pendingState` live in
+  `backend/src/lib/announcementAudience.ts` (split out of the route the same
+  day when it crossed the 2000-line cap; pinned by
+  `tests/announcementAudience.test.ts`). POST and
   PATCH accept `targetDivisions` (`[{deptId, division}]`, invalid entries
   dropped, case-insensitive duplicates collapsed) and `excludedUserIds`;
   PATCH treats either key as a retarget (all six target columns rewritten
@@ -598,6 +603,7 @@ still 403 for that reader (`:146, 157, 164, 171, 180`).
 | Media rendering (mig 0140 layout hint) | `components/AnnouncementMedia.tsx` | `mobile/MobileAnnouncementMedia.tsx` |
 | Rich body — editing | **`components/AnnouncementRichEditor.tsx`** — one editor, both composers mount it. Desktop passes `onPromptLink` (the app prompt dialog), `onInsertImage` (uploads through `lib/announcementAttachmentUpload.ts`, adds to the manifest, returns key + local preview) and `imageSrc`; the phone passes none, so it has no Link / Image button | (same file, fewer buttons) |
 | Rich body — rendering | **`components/AnnouncementRichBody.tsx`** — the only place `body_html` reaches `innerHTML`; inbox pane + `AnnouncementBanner.tsx` use it with `annId` so `img[data-att]` streams from `/api/announcements/:id/attachments/:key` (composer preview passes `imageSrc` instead) | `MobileAnnouncements.tsx` `Detail` + `MobileAnnouncementPopup.tsx` use it; `mobileI18n.ts` `localizeAnnouncement()` picks the translated `bodyHtml` |
+| Audience ingredients (backend) | — | — (backend: **`backend/src/lib/announcementAudience.ts`** — division-target parsing, the caller's division, the active roster, company-grant narrowing, pending state; the route keeps `userCanSee`) |
 | Rich body — grammar | **`lib/announcementRichText.ts`** — byte-identical twin of `backend/src/lib/announcementRichText.ts`; the two test files pin the same fixtures | — |
 | Nav visibility | `components/Sidebar.tsx:666-672` | `mobile/MobileApp.tsx:360` (test-pinned) |
 | Read gate | `frontend/src/App.tsx:481` | — must agree with `backend/src/routes/announcements.ts:530`; the #957 bug was these two disagreeing |
