@@ -238,7 +238,13 @@ export const createApInvoiceHandler = async (c: any): Promise<Response> => {
   return c.json({ ok: true, invoice: inv }, 201);
 };
 
-/* ── PATCH /:id — a DRAFT may still change; lines replace whole ──────────── */
+/* ── PATCH /:id — every field may change (owner 2026-09-06: edit 这个不能全部
+   都设成可以改吗). A DRAFT simply changes. A POSTED bill RE-POSTS: the
+   engine's contra voids the old entry (dated as the old bill was) and a fresh
+   entry books the edited bill (dated as it now is) — the ledger keeps the
+   trail instead of a silent overwrite, AutoCount's edit-and-repost with the
+   history left in. Three guards: money already paid caps the new total, a
+   bill with money on it keeps its supplier, a cancelled bill is left alone. */
 export const updateApInvoiceHandler = async (c: any): Promise<Response> => {
   if (!hasHouzsPerm(c, 'scm.payment_voucher.create') && !hasHouzsPerm(c, 'scm.payment_voucher.write')) {
     return c.json(NO_PERM('edit an AP invoice'), 403);
@@ -249,38 +255,88 @@ export const updateApInvoiceHandler = async (c: any): Promise<Response> => {
   try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
   const found = await loadInvoice(c, c.req.param('id'));
   if ('resp' in found) return found.resp;
-  if (found.inv.status !== 'DRAFT') {
-    return c.json({ error: 'not_draft', message: `${found.inv.invoice_number} is ${found.inv.status} — a posted bill is corrected by cancelling it and raising it again.` }, 409);
+  const inv = found.inv;
+  if (inv.status === 'CANCELLED') {
+    return c.json({ error: 'cancelled', message: `${inv.invoice_number} is cancelled — raise it again instead.` }, 409);
   }
+  const posted = inv.status !== 'DRAFT';
+  const paid = Number(inv.paid_sen ?? 0);
+  /* Snapshot what the contra needs BEFORE the update: a client that hands out
+     live row references (the test fake does) would otherwise show the edited
+     date here, and the contra must be dated as the OLD bill was. */
+  const oldDate = String(inv.invoice_date);
+  const oldSupplierId = String(inv.supplier_id);
   const sb = c.get('supabase');
   const patch: Row = { updated_at: new Date().toISOString() };
   if (body.supplierId !== undefined) {
     const sup = await loadSupplier(c, String(body.supplierId ?? '').trim());
     if ('resp' in sup) return sup.resp;
+    if (paid > 0 && sup.supplier.id !== oldSupplierId) {
+      return c.json({ error: 'supplier_locked', message: `${inv.invoice_number} has ${(paid / 100).toFixed(2)} paid against it — the money sits on its supplier; cancel the payment before moving the bill.` }, 409);
+    }
     patch.supplier_id = sup.supplier.id;
   }
   if (body.supplierInvoiceRef !== undefined) patch.supplier_invoice_ref = body.supplierInvoiceRef ? String(body.supplierInvoiceRef).trim() : null;
-  if (body.invoiceDate !== undefined) patch.invoice_date = dateOrNull(body.invoiceDate) ?? found.inv.invoice_date;
+  if (body.invoiceDate !== undefined) patch.invoice_date = dateOrNull(body.invoiceDate) ?? inv.invoice_date;
   if (body.dueDate !== undefined) patch.due_date = dateOrNull(body.dueDate);
   if (body.notes !== undefined) patch.notes = body.notes ? String(body.notes).trim() : null;
+  let rebuilt: { lines: CleanLine[]; total: number } | null = null;
   if (body.lines !== undefined) {
     const built = buildLines(body.lines);
     if ('error' in built) return c.json({ error: built.error, message: built.message }, 400);
+    if (built.total < paid) {
+      return c.json({ error: 'total_below_paid', message: `${inv.invoice_number} already has ${(paid / 100).toFixed(2)} paid against it — the total cannot fall below that.` }, 409);
+    }
     for (const code of [...new Set(built.lines.map((l) => l.code))]) {
       const leafErr = await requireLeafAccount(c, co.companyId, code);
       if (leafErr) return leafErr;
     }
-    await sb.from('ap_invoice_lines').delete().eq('company_id', co.companyId).eq('invoice_id', found.inv.id);
+    await sb.from('ap_invoice_lines').delete().eq('company_id', co.companyId).eq('invoice_id', inv.id);
     const { error: lineErr } = await sb.from('ap_invoice_lines').insert(built.lines.map((l, i) => ({
-      company_id: co.companyId, invoice_id: found.inv.id, line_no: i + 1,
+      company_id: co.companyId, invoice_id: inv.id, line_no: i + 1,
       description: l.description, debit_account_code: l.code, amount_sen: l.amountSen,
     })));
     if (lineErr) return c.json({ error: 'save_failed', reason: lineErr.message }, 500);
     patch.total_sen = built.total;
+    rebuilt = built;
   }
-  const { data, error } = await sb.from('ap_invoices').update(patch).eq('company_id', co.companyId).eq('id', found.inv.id).select(HEADER).maybeSingle();
+  if (posted) {
+    const newTotal = rebuilt ? rebuilt.total : Number(inv.total_sen ?? 0);
+    patch.status = newTotal <= paid ? 'PAID' : paid > 0 ? 'PARTIALLY_PAID' : 'POSTED';
+  }
+  const { data, error } = await sb.from('ap_invoices').update(patch).eq('company_id', co.companyId).eq('id', inv.id).select(HEADER).maybeSingle();
   if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);
-  return c.json({ ok: true, invoice: data });
+  if (!posted) return c.json({ ok: true, invoice: data });
+
+  /* The re-post: contra the entry the old bill wrote, then book the bill as
+     it now reads — through the one gate, so numbering and the one-active-
+     entry rule hold exactly as on the first post. */
+  const after = (data ?? inv) as Row;
+  const rev = await reverseJournal(sb, {
+    sourceType: 'API',
+    sourceDocNo: String(inv.invoice_number),
+    companyId: co.companyId,
+    narration: (orig) => `Reversal of ${orig.je_no} — AP invoice ${inv.invoice_number} edited`,
+    entryDate: oldDate,
+  });
+  if (!rev.ok) return c.json({ error: 'reverse_failed', status: rev.status, reason: (rev as { reason?: string }).reason ?? rev.status }, 500);
+  const sup = await loadSupplier(c, String(after.supplier_id));
+  if ('resp' in sup) return sup.resp;
+  const { data: lineRows, error: lErr } = await scopeToCompany(sb.from('ap_invoice_lines').select(LINE).eq('invoice_id', inv.id), c).order('line_no');
+  if (lErr) return c.json({ error: 'load_failed', reason: lErr.message }, 500);
+  const lines = (lineRows ?? []) as Array<{ description: string | null; debit_account_code: string; amount_sen: number }>;
+  const roles = await resolveRoles(sb, co.companyId);
+  const je = await postJournal(sb, {
+    companyId: co.companyId,
+    entryDate: String(after.invoice_date),
+    sourceType: 'API',
+    sourceDocNo: String(inv.invoice_number),
+    narration: `AP invoice ${inv.invoice_number} — ${sup.supplier.name ?? sup.supplier.code ?? 'supplier'}${after.supplier_invoice_ref ? ` (${after.supplier_invoice_ref})` : ''} — edited`,
+    lines: apInvoiceLines(roles, { invoice_number: String(inv.invoice_number) }, sup.supplier,
+      lines.map((l) => ({ accountCode: l.debit_account_code, myrSen: Number(l.amount_sen), description: l.description }))),
+  });
+  if (!je.ok) return c.json({ error: 'post_failed', status: je.status, reason: (je as { reason?: string }).reason ?? je.status }, 500);
+  return c.json({ ok: true, invoice: after, reposted: true, jeNo: je.jeNo });
 };
 
 /* ── POST /:id/post — into the ledger, once ──────────────────────────────── */
