@@ -249,17 +249,25 @@ export function pvLines(
   pv: { pv_number: string; payee_name: string; credit_account_code: string },
   debitLegs: Array<{ description: string | null; debit_account_code: string; myrSen: number }>,
   supplier: { code: string | null; name: string | null },
+  /** The supplier's own AP control (a supplier payment): the Dr leg on it IS
+      the supplier's sub-ledger, so it carries the party the way the invoice
+      side's Cr leg does — owner 2026-09-06, AutoCount in hand: the payment
+      must read Dr 405-H001 / Cr bank. null (an expense voucher) stamps none. */
+  apControlCode: string | null = null,
 ): RuleLine[] {
   const totalSen = debitLegs.reduce((s, l) => s + l.myrSen, 0);
-  const lines: RuleLine[] = debitLegs.map((l) => ({
-    accountCode: l.debit_account_code,
-    debitSen: l.myrSen,
-    creditSen: 0,
-    partyType: null,
-    partyCode: null,
-    partyName: null,
-    notes: `${l.description ?? 'Payment'} — ${pv.pv_number}`,
-  }));
+  const lines: RuleLine[] = debitLegs.map((l) => {
+    const onControl = apControlCode != null && l.debit_account_code === apControlCode && !!supplier.code;
+    return {
+      accountCode: l.debit_account_code,
+      debitSen: l.myrSen,
+      creditSen: 0,
+      partyType: onControl ? 'SUPPLIER' : null,
+      partyCode: onControl ? supplier.code : null,
+      partyName: onControl ? (supplier.name ?? pv.payee_name) : null,
+      notes: `${l.description ?? 'Payment'} — ${pv.pv_number}`,
+    };
+  });
   lines.push({
     accountCode: pv.credit_account_code,
     debitSen: 0,

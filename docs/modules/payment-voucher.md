@@ -262,6 +262,33 @@ simply runs ahead; on post the server records the excess in `scm.acc_supplier_ad
 (mig 0340 — one row per voucher, `amount_sen` written once, `applied_sen`
 only grows).
 
+**The control lock and the AP-control line (docs/bugs/0649, 2026-09-06).**
+The typing-time door that refuses a header or a control account on a
+voucher line (`requireLeafAccount`, since #2913) judged EVERY debit line —
+including the supplier payment's one line, which debits the AP control the
+system itself chose — so from 2026-09-03 every AP Payment, 400 and 405
+suppliers alike, was refused with `control_account_locked`. Now
+`supplierOwnControl` resolves the supplier's OWN control first (400-0000 or
+405-0000 by `apControlRole`), the lock skips exactly that line on create and
+on edit, and the `wrong_ap_control` door still refuses the other control; an
+expense voucher's lines are judged as before. The posted entry also stamps
+the supplier on that Dr leg (`pvLines` takes `apControlCode`): the payment
+reads Dr 405-0000 · 405-H001 / Cr bank, the way the invoice side's Cr leg
+does, so the GL's Party column nets a supplier's invoices and payments.
+Pinned by `backend/tests/pvApControlGuard.test.ts` (the fixtures now carry
+`special_type: 'SCC'`, the production shape that had never been in a test)
+and `backend/tests/pvSupplierAdvance.test.ts`.
+
+**The advance on the list (same day).** `GET /payment-vouchers`
+(`listPaymentVouchersHandler`) stamps `advance_remaining_sen` on every row
+(`acc_supplier_advances` amount − applied, when > 0); the list paints such
+rows blue, the Status cell wears "预付未冲 MYR x", and an **Advance open**
+chip keeps only them — AutoCount's blue row, plus the number colour alone
+cannot say. The knock-off card on the posted voucher lists the supplier's
+open **AP invoices beside its purchase invoices** (an `AP` tag; the apply
+sends `apInvoiceId` for those and the route settles them through the AP
+invoice's own clamp).
+
 **Spending it posts NOTHING.** Both legs already live in AP, so the
 knock-off (POST `/payment-vouchers/:id/apply-advance`, surfaced as the
 "Advance on this voucher" card on the posted voucher's detail page) only

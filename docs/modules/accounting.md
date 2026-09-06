@@ -26,7 +26,7 @@ books which entry":
 | Sales invoice issued | Dr AR / Cr SALES | `SI` | `SI_REVERSAL` |
 | Purchase invoice posted | Dr each group's purchase account (601-x/602 by scm.acc_item_group_accounts; unbound group REFUSES) / Cr AP | `PI` | `PI_REVERSAL` |
 | AP invoice posted (non-stock supplier bill) | Dr each line's own account / Cr AP control (400 or 405 by the supplier's code) | `API` | `API_REVERSAL` |
-| Payment voucher posted | Dr expense legs / Cr bank-or-AP header | `PV` | `PV_REVERSAL` |
+| Payment voucher posted | Dr expense legs / Cr bank-or-AP header; a supplier payment's Dr leg on the AP control carries the supplier as party (since 2026-09-06) | `PV` | `PV_REVERSAL` |
 | Manual journal (JV) | operator lines, draft first | `MANUAL` | `MANUAL_REVERSAL` |
 | Customer payment collected | Dr CASH/BANK/transit / Cr AR | `SOPAY` / `SIPAY` | `*_REVERSAL` |
 | Daily cash close | Dr/Cr OVER_SHORT / Cr/Dr CASH | `CASHUP` | (correct by JV) |
