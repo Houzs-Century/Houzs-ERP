@@ -479,11 +479,15 @@ export async function learnVendorMemory(
     payeeName: string | null | undefined;
     purpose: string | null;
     lines: Array<{ line_no: number; debit_account_code: string }>;
+    /* 'AP_INVOICE' (routes/ap-invoices.ts create): the BILL's lines carry the
+       expense account, so the supplier-payment skip below does not apply —
+       the voucher that later pays it is the one with nothing to teach. */
+    source?: 'PV' | 'AP_INVOICE';
   },
 ): Promise<void> {
   const coId = activeCompanyId(c);
   if (coId == null) return;
-  if (normalizePurpose(input.purpose) === 'SUPPLIER_PAYMENT') return;
+  if (input.source !== 'AP_INVOICE' && normalizePurpose(input.purpose) === 'SUPPLIER_PAYMENT') return;
   const payee = (input.payeeName ?? '').trim();
   if (!payee) return;
   const key = normalizeVendor(payee);

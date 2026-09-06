@@ -57,8 +57,8 @@
     },
     {
       "check": "D1",
-      "key": "APPLICATION/PDF,IMAGE/JPEG,IMAGE/PNG,IMAGE/WEBP|backend/src/scm/routes/lorry-service-records.ts backend/src/scm/routes/pv-files.ts backend/src/scm/routes/slips.ts backend/src/scm/shared/schemas/slip.schema.ts frontend/src/vendor/scm/lib/slip.ts",
-      "why": "AN UPLOAD WHITELIST, per endpoint, and deliberately not one list: each surface decides what IT accepts (portal vs staff vs mail vs OCR vs the PV evidence store). 5 homes: ALLOWED_SLIP_MIMES, PV_FILE_MIMES. Divergence costs a refused upload, never money or stock."
+      "key": "APPLICATION/PDF,IMAGE/JPEG,IMAGE/PNG,IMAGE/WEBP|backend/src/scm/lib/doc-files.ts backend/src/scm/routes/lorry-service-records.ts backend/src/scm/routes/slips.ts backend/src/scm/shared/schemas/slip.schema.ts frontend/src/vendor/scm/lib/slip.ts",
+      "why": "AN UPLOAD WHITELIST, per endpoint, and deliberately not one list: each surface decides what IT accepts (portal vs staff vs mail vs OCR vs the PV evidence store). 5 homes: ALLOWED_SLIP_MIMES, DOC_FILE_MIMES (lib/doc-files.ts — the ONE evidence store the PV and the AP invoice share since 2026-09-06; it replaced pv-files.ts's PV_FILE_MIMES, not a sixth list). Divergence costs a refused upload, never money or stock."
     },
     {
       "check": "D1",

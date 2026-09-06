@@ -107,6 +107,20 @@ describe('raising an AP invoice', () => {
     expect(fx.status).toBe(400);
     expect((await fx.json() as { error: string }).error).toBe('currency_unsupported');
   });
+
+  test('a save teaches vendor memory: the supplier → the first line\'s account, so the next scan of the same vendor pre-fills it', async () => {
+    const { app, sb } = harness({ acc_vendor_memory: [] });
+    expect((await json(app, '/ap-invoices', 'POST', BILL)).status).toBe(201);
+    expect(sb.tables.acc_vendor_memory).toHaveLength(1);
+    expect(sb.tables.acc_vendor_memory[0]).toMatchObject({
+      company_id: CO, payee_name: 'HOUZS VENTURE HOLDING SDN BHD', debit_account_code: '900-A001', purpose: 'SUPPLIER_PAYMENT', times_seen: 1,
+    });
+    expect(String(sb.tables.acc_vendor_memory[0]!.vendor_key)).not.toBe('');
+    /* The habit is last-saved-wins; times_seen only grows. */
+    await json(app, '/ap-invoices', 'POST', { ...BILL, lines: [{ debitAccountCode: '900-A002', amountSen: 5_000 }] });
+    expect(sb.tables.acc_vendor_memory).toHaveLength(1);
+    expect(sb.tables.acc_vendor_memory[0]).toMatchObject({ debit_account_code: '900-A002', times_seen: 2 });
+  });
 });
 
 describe('posting and cancelling', () => {
