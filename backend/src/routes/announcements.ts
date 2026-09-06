@@ -1126,6 +1126,31 @@ app.post("/:id/escalate", requirePermissionOrSalesDirector("announcements.write"
 // reply lands and drops it if the text was edited meanwhile. Same
 // waitUntil-with-floating-fallback shape as the banner cache fill above —
 // c.executionCtx throws in the bare-Hono test harness.
+// The composer's draft key (mig 20260907T0010): opaque, minted client-side,
+// meaningful only to the author who sent it. Shape-checked so the column
+// never holds free text; anything else is treated as "no key".
+const CLIENT_KEY_RE = /^[A-Za-z0-9._-]{8,64}$/;
+function readClientKey(v: unknown): string | null {
+  if (typeof v !== "string") return null;
+  const s = v.trim();
+  return CLIENT_KEY_RE.test(s) ? s : null;
+}
+
+async function findByClientKey(
+  env: Env,
+  userId: number,
+  clientKey: string,
+): Promise<AnnouncementRow | null> {
+  // company-scope: keyed by the AUTHOR, not the tenant — a retry must find
+  // the row the first request made whatever company context it arrives in,
+  // and (created_by, client_key) is unique across the table.
+  return env.DB.prepare(
+    "SELECT * FROM announcements WHERE created_by = ? AND client_key = ? LIMIT 1",
+  )
+    .bind(userId, clientKey)
+    .first<AnnouncementRow>();
+}
+
 function queueTranslation(
   c: { env: Env; executionCtx: { waitUntil(p: Promise<unknown>): void } },
   id: string,
@@ -1151,6 +1176,17 @@ app.post("/", requirePermissionOrSalesDirector("announcements.write"), async (c)
   }
   if (title.length > 200) {
     return c.json({ success: false, error: "Title too long (200 max)" }, 400);
+  }
+  // Idempotent create (mig 20260907T0010): the composer's draft carries a key
+  // minted when the draft is first saved and cleared with it on success. A
+  // repeat of the same draft — after a hang, a reload, a second click — is
+  // answered with the row the first request made, never a second one
+  // (docs/bugs/0651: nine copies of one notice on 2026-09-06).
+  const clientKey = readClientKey(body.clientKey);
+  const keyOwner = clientKey ? user.id : null;
+  if (clientKey && keyOwner != null) {
+    const dup = await findByClientKey(c.env, keyOwner, clientKey);
+    if (dup) return c.json({ success: true, data: toPublic(dup), duplicate: true }, 201);
   }
   // Rich body wins when present: `body` is then DERIVED from it server-side
   // (never trusted from the client) so the two columns can never disagree. A
@@ -1260,15 +1296,19 @@ app.post("/", requirePermissionOrSalesDirector("announcements.write"), async (c)
   const asDraft = body.draft === true;
   const initialStatus = asDraft ? "DRAFT" : "PENDING_APPROVAL";
 
-  await c.env.DB.prepare(
+  // client_key is appended the same way: only when the client sent one, so
+  // the pre-migration window and the D1 test mirrors without the column
+  // insert exactly as before.
+  const stampKey = keyOwner != null;
+  const insert = c.env.DB.prepare(
     `INSERT INTO announcements
        (id, title, body, body_html, is_active, expires_at, created_by, created_at,
         translations, attachments, media_layout, target_type,
         target_dept_ids, target_position_ids, target_user_ids,
         target_company_ids, category, require_ack, scheduled_at,
         target_divisions, excluded_user_ids,
-        approval_status, submitted_by, submitted_at${stampCo ? ", company_id" : ""})
-     VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?${stampCo ? ", ?" : ""})`,
+        approval_status, submitted_by, submitted_at${stampCo ? ", company_id" : ""}${stampKey ? ", client_key" : ""})
+     VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?${stampCo ? ", ?" : ""}${stampKey ? ", ?" : ""})`,
   )
     .bind(
       id,
@@ -1295,8 +1335,20 @@ app.post("/", requirePermissionOrSalesDirector("announcements.write"), async (c)
       asDraft ? null : user?.id ?? null,
       asDraft ? null : nowIso,
       ...(stampCo ? [companyId] : []),
-    )
-    .run();
+      ...(stampKey ? [clientKey] : []),
+    );
+  try {
+    await insert.run();
+  } catch (e) {
+    // Two requests with the same key racing past the lookup above: the
+    // partial unique index (created_by, client_key) refuses the second. Hand
+    // it the winner's row instead of a 500.
+    if (stampKey) {
+      const dup = await findByClientKey(c.env, keyOwner, clientKey as string);
+      if (dup) return c.json({ success: true, data: toPublic(dup), duplicate: true }, 201);
+    }
+    throw e;
+  }
 
   const row = await c.env.DB.prepare(
     "SELECT * FROM announcements WHERE id = ?",

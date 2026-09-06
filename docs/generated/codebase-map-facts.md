@@ -11,7 +11,7 @@ FOR, which trees are dead, what must be changed in pairs — lives in
 
 ## 1. Backend route inventory
 
-169 route modules (45 in `backend/src/routes`, 124 in `backend/src/scm/routes`), 1185 endpoint registrations.
+170 route modules (46 in `backend/src/routes`, 124 in `backend/src/scm/routes`), 1192 endpoint registrations.
 
 An endpoint is a `router.<method>("/…")` registration. For the per-route authorization
 boundary see the sibling artifact `docs/generated/route-capability-matrix.csv`, which
@@ -20,7 +20,7 @@ resolves full mounted paths and their gates.
 | module | endpoints | lines |
 |---|---|---|
 | `backend/src/routes/agent-console.ts` | 33 | 1304 |
-| `backend/src/routes/announcements.ts` | 15 | 1834 |
+| `backend/src/routes/announcements.ts` | 18 | 1976 |
 | `backend/src/routes/assistant.ts` | 4 | 225 |
 | `backend/src/routes/assr.ts` | 62 | 3360 |
 | `backend/src/routes/assrFormIntake.ts` | 6 | 965 |
@@ -31,7 +31,8 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/branding.ts` | 5 | 294 |
 | `backend/src/routes/clientErrors.ts` | 2 | 232 |
 | `backend/src/routes/companies.ts` | 1 | 48 |
-| `backend/src/routes/departments.ts` | 4 | 242 |
+| `backend/src/routes/departments.ts` | 4 | 281 |
+| `backend/src/routes/documentRefs.ts` | 4 | 93 |
 | `backend/src/routes/finance.ts` | 2 | 466 |
 | `backend/src/routes/fleet.ts` | 1 | 37 |
 | `backend/src/routes/inbox.ts` | 1 | 545 |
@@ -198,13 +199,13 @@ scripts, never assumed: each runner declares its own directory, and
 | tree | runner | *.sql | highest | applied to PRODUCTION by deploy.yml | read by backend vitest |
 |---|---|---|---|---|---|
 | `backend/src/db/migrations` | `backend/scripts/migrate.mjs` | 152 | `153_sessions_stay_signed_in.sql` (153) | no | yes |
-| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 365 | `0352_acc_pv_files.sql` (0352) | YES | no |
+| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 368 | `0352_acc_pv_files.sql` (0352) | YES | no |
 
 Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its number): `0136_capture_compat_views_trips_lorries.sql.TEMPLATE`
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1978 files, 697175 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1981 files, 698653 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -413,7 +414,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileAmendments.tsx` | 147 |
 | `frontend/src/mobile/MobileAnnouncementMedia.tsx` | 171 |
 | `frontend/src/mobile/MobileAnnouncementPopup.tsx` | 152 |
-| `frontend/src/mobile/MobileAnnouncements.tsx` | 1482 |
+| `frontend/src/mobile/MobileAnnouncements.tsx` | 1614 |
 | `frontend/src/mobile/MobileApp.tsx` | 1081 |
 | `frontend/src/mobile/MobileAssistant.tsx` | 295 |
 | `frontend/src/mobile/MobileAssrCategoryChips.tsx` | 76 |

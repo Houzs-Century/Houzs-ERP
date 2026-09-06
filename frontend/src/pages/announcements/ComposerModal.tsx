@@ -11,6 +11,7 @@ import type { PhotoLayout, VideoLayout } from "../../components/AnnouncementMedi
 import { useDialogOptional } from "../../hooks/useDialog";
 import { useToast } from "../../hooks/useToast";
 import { uploadAnnouncementAttachment } from "../../lib/announcementAttachmentUpload";
+import { newIdempotencyKey } from "../../lib/idempotency";
 import { richTextToPlain } from "../../lib/announcementRichText";
 import { cn } from "../../lib/utils";
 import type { Department, TeamMember } from "../../types";
@@ -59,6 +60,13 @@ export type ComposerDraft = {
   audience: AudienceValue;
   photoLayout: PhotoLayout | "";
   videoLayout: VideoLayout;
+  /** Minted when the draft is first written, sent with the post, cleared with
+   *  the draft on success. A repeat of the SAME draft — after a hang, a
+   *  reload, a second click — is answered by the server with the row the first
+   *  request made (mig 20260907T0010), never a second one. Stable across
+   *  edits on purpose: the retry that made nine copies on 2026-09-06 was one
+   *  draft re-posted with small changes. */
+  clientKey: string;
 };
 
 export function draftStorageKey(userId: number | null): string {
@@ -93,6 +101,9 @@ export function readDraft(key: string): ComposerDraft | null {
       },
       photoLayout: d.photoLayout === "1" || d.photoLayout === "2" || d.photoLayout === "3" || d.photoLayout === "4" ? d.photoLayout : "",
       videoLayout: d.videoLayout === "1x2" ? "1x2" : "1x1",
+      // A draft saved before 2026-09-07 has no key: mint one now, and the next
+      // autosave makes it stable.
+      clientKey: typeof d.clientKey === "string" && d.clientKey ? d.clientKey : newIdempotencyKey(),
     };
   } catch {
     return null;
@@ -132,6 +143,7 @@ export function buildPostBody(
     category: d.category,
     requireAck: d.requireAck,
     attachments: d.attachments,
+    clientKey: d.clientKey,
   };
   if (!a.allStaff) {
     if (a.deptIds.length) body.targetDeptIds = a.deptIds;
@@ -201,6 +213,9 @@ export function ComposerModal(p: ComposerModalProps) {
   const [audience, setAudience] = useState<AudienceValue>(restored?.audience ?? EMPTY_AUDIENCE);
   const [photoLayout, setPhotoLayout] = useState<PhotoLayout | "">(restored?.photoLayout ?? "");
   const [videoLayout, setVideoLayout] = useState<VideoLayout>(restored?.videoLayout ?? "1x1");
+  // One key per draft (see ComposerDraft.clientKey). A restored draft keeps
+  // the key it was saved with, so the post after a reload is the same post.
+  const [clientKey] = useState(() => restored?.clientKey ?? newIdempotencyKey());
   const [focusDept, setFocusDept] = useState<number | null>(restored?.audience.deptIds[0] ?? null);
   const [savedAt, setSavedAt] = useState<number | null>(restored?.savedAt ?? null);
   const [preview, setPreview] = useState(false);
@@ -242,8 +257,9 @@ export function ComposerModal(p: ComposerModalProps) {
       audience,
       photoLayout,
       videoLayout,
+      clientKey,
     }),
-    [category, requireAck, title, html, attachments, scheduledAt, expiresAt, audience, photoLayout, videoLayout],
+    [category, requireAck, title, html, attachments, scheduledAt, expiresAt, audience, photoLayout, videoLayout, clientKey],
   );
   const firstRender = useRef(true);
   useEffect(() => {
@@ -357,31 +373,49 @@ export function ComposerModal(p: ComposerModalProps) {
   // Approval workflow (mig 20260906T1509): a notice is submitted, not posted —
   // it goes live when an approver signs it off. `asDraft` parks it in Manage
   // without ringing the approvers' bell.
+  //
+  // A ref, not only the `posting` state: two clicks inside one event loop turn
+  // see the same stale state and both get through. The server's client key
+  // would still collapse them into one row; this keeps the second request
+  // from being sent at all.
+  const postingRef = useRef(false);
   async function post(opts: { asDraft?: boolean } = {}) {
+    if (postingRef.current) return;
     const built = buildPostBody(draft, p.salesDirOnly, p.users);
     if (!built.ok) {
       toast.error(built.error);
       return;
     }
+    postingRef.current = true;
     setPosting(true);
     try {
-      await api.post("/api/announcements", opts.asDraft ? { ...built.body, draft: true } : built.body);
+      const res = await api.post<{ duplicate?: boolean }>(
+        "/api/announcements",
+        opts.asDraft ? { ...built.body, draft: true } : built.body,
+      );
       try {
         localStorage.removeItem(storageKey);
       } catch {
         /* nothing to clear */
       }
+      // `duplicate`: this draft had already been submitted (the earlier request
+      // answered after the page gave up on it). The server returned that row
+      // and made no second one — say so, so the author edits it under Manage
+      // rather than submitting again.
       toast.success(
-        opts.asDraft
-          ? "Draft saved — find it under Manage"
-          : scheduledAt
-            ? "Submitted for approval — it is scheduled once approved"
-            : "Submitted for approval",
+        res.duplicate
+          ? "This notice was already submitted — no second copy was made"
+          : opts.asDraft
+            ? "Draft saved — find it under Manage"
+            : scheduledAt
+              ? "Submitted for approval — it is scheduled once approved"
+              : "Submitted for approval",
       );
       p.onPosted();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to post");
     } finally {
+      postingRef.current = false;
       setPosting(false);
     }
   }

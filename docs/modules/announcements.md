@@ -465,6 +465,28 @@ all filtering happens in JS in the Worker (`:543-547`, `:628-630`).
   and each click had inserted a row — nine copies of one notice
   (`docs/bugs/0650`). Pinned by `tests/announcementsTranslateAsync.test.ts`
   and `tests/translateAnnouncementTimeout.test.ts`.
+- **Idempotent create by client key (2026-09-07, mig
+  `backend/src/db/migrations-pg/20260907T0010_announcement_client_key.sql`)** —
+  nullable `announcements.client_key` + partial unique index on
+  `(created_by, client_key)`. `readClientKey()` / `findByClientKey()` sit next
+  to `queueTranslation()`: a request carrying a well-formed `clientKey`
+  (`[A-Za-z0-9._-]{8,64}`) is first looked up by `(created_by, client_key)`
+  and a hit is answered `201 { data: <that row>, duplicate: true }` with no
+  INSERT; otherwise the column is appended to the INSERT the way `company_id`
+  is (only when a key came, so a keyless client and the D1 mirrors without
+  the column insert as before), and two requests racing past the lookup hit
+  the index — the loser is answered with the winner's row. The key is
+  scoped per author; another user's identical key is their own post. The
+  desktop composer keys its DRAFT (`ComposerDraft.clientKey`, minted with
+  `lib/idempotency.ts` `newIdempotencyKey()` when the draft is first written,
+  stable across edits and reloads, cleared with the draft on success, minted
+  on read for a pre-key draft) and shows "This notice was already posted —
+  no second copy was made" on a `duplicate` reply; its `post()` also carries
+  a ref guard. The phone composer keys its MOUNT (`useIdempotencyKey()`) and
+  `publish` returns while `saving`. Why: the retry that made nine copies on
+  2026-09-06 was one draft re-posted after a hang, a reload and a second
+  click (`docs/bugs/0651`). Pinned by `tests/announcementsClientKey.test.ts`
+  and `pages/announcements/ComposerModal.test.tsx`.
 - **Rich body (2026-09-04)** — `readBodyHtml()` next to `toPublic()`. A
   `bodyHtml` in the request is run through
   `backend/src/lib/announcementRichText.ts` (allow-list canonicaliser:
@@ -636,6 +658,7 @@ Columns that matter:
 | `source` | text | NULL = human, `'scan'`/`'service_case'` = system |
 | `company_id` | bigint NOT NULL | **authoring** company; no longer the visibility gate (that is `target_company_ids`) |
 | `translations`, `attachments`, `media_layout` | text | JSON blobs; a translation pair is `{title, body, bodyHtml?}` since 2026-09-04 |
+| `client_key` | text, nullable | the composer's draft key (mig 20260907T0010); partial unique index on `(created_by, client_key)`; NULL on posts from a client that sent none |
 | `body_html` | text | canonical rich fragment (`lib/announcementRichText.ts` grammar only) or NULL; `body` is always its plain-text shadow, so plain-only readers (bell excerpt, search, old builds) need no branch |
 | `require_ack` | integer NOT NULL DEFAULT 0 | 0/1; "this notice must be acknowledged". `toPublic` emits `requireAck: null` when the column is absent (D1 test mirror) and the client falls back to the category rule |
 | `scheduled_at` | text | ISO string; NULL = posted at once. Not delivered (list / banner / ack) before it |
