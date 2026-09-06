@@ -1,13 +1,5 @@
 -- 20260906T1500_ap_invoices.sql
--- REVERSAL, in this order:
---   DROP VIEW IF EXISTS scm.v_ap_aging;  -- then recreate the pre-existing view
---     verbatim from 0305_money_centi_to_sen.sql:397 (purchase_invoices only);
---   DROP FUNCTION IF EXISTS scm.settle_api_paid_sen(uuid, bigint);
---   ALTER TABLE scm.pv_allocations DROP CONSTRAINT IF EXISTS pv_allocations_one_target;
---   ALTER TABLE scm.pv_allocations DROP CONSTRAINT IF EXISTS pv_allocations_ap_invoice_id_fk;
---   ALTER TABLE scm.pv_allocations DROP COLUMN IF EXISTS ap_invoice_id;
---   ALTER TABLE scm.pv_allocations ALTER COLUMN pi_id SET NOT NULL;
---   DROP TABLE IF EXISTS scm.ap_invoice_lines; DROP TABLE IF EXISTS scm.ap_invoices;
+-- REVERSAL: DROP VIEW IF EXISTS scm.v_ap_aging; then recreate the pre-existing view verbatim from 0305_money_centi_to_sen.sql:397 (purchase_invoices only); DROP FUNCTION IF EXISTS scm.settle_api_paid_sen(uuid, bigint); ALTER TABLE scm.pv_allocations DROP CONSTRAINT IF EXISTS pv_allocations_one_target; ALTER TABLE scm.pv_allocations DROP CONSTRAINT IF EXISTS pv_allocations_ap_invoice_id_fk; ALTER TABLE scm.pv_allocations DROP COLUMN IF EXISTS ap_invoice_id; ALTER TABLE scm.pv_allocations ALTER COLUMN pi_id SET NOT NULL; DROP TABLE IF EXISTS scm.ap_invoice_lines; DROP TABLE IF EXISTS scm.ap_invoices;
 --
 -- WHAT THIS CHANGES, and why it is safe to run against production:
 --   Two new empty tables, one new function, one nullable column + a CHECK on
