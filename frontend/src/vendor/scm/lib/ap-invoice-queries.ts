@@ -22,6 +22,8 @@ export type ApListRow = {
   supplierCode: string | null;
   supplierName: string | null;
   supplierInvoiceRef: string | null;
+  /** The overall description (the notes column) — shown on the list and printed on the listing. */
+  description: string | null;
   invoiceDate: string | null;
   dueDate: string | null;
   currency: string;

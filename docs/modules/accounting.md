@@ -180,6 +180,24 @@ voucher page), tests/apInvoices.test.ts (a save teaches memory) and
 ApInvoices.test.tsx (scan pre-fill + attach after save; the Files card's
 draft/posted rules).
 
+**Round 2 (owner, the same evening, screenshots in hand).** The supplier box
+wears the form's `fieldInput` dress (it was a borderless strip he could not
+tell was a field: supplier 筛选无法按下选择), the lines are a table in HIS
+order — account number, description, amount — with a remove button, the
+bill carries an overall **Description** (the `notes` column, returned as
+`description` on the list rows of BOTH kinds and shown on the list, the
+detail and the listing), the list filters by supplier (the suppliers ON the
+list, not the registry, so every choice shows something), and **Print
+listing** (`frontend/src/vendor/scm/lib/ap-invoice-listing-pdf.ts`:
+`apListingTable` pure, `generateApListingPdf` on the shared letterhead,
+landscape A4, the three money columns totalled in the foot) prints exactly
+the rows on screen after the kind and supplier filters — paper and screen
+never disagree. Reads (`GET /`, `GET /:id`) ride the finance area guard like
+the receipts and other-debtors lists; the PV keys gate the writes. Pinned by
+`ap-invoice-listing-pdf.test.ts` (cells, totals, title, preview exit) and
+ApInvoices.test.tsx (filter + print what is shown, line order + remove, the
+description on list and detail).
+
 **The AutoCount sections (2026-09-06).** Every account carries a `section`
 (`scm.accounts.section`, migration 20260906T0900) — the top node the
 accountant's chart hangs it under: CAPITAL, RETAINED EARNING, FIXED ASSETS,

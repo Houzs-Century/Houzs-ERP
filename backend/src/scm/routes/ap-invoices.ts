@@ -47,11 +47,6 @@ import {
 
 type Row = Record<string, any>;
 
-const PV_KEYS = [
-  'scm.payment_voucher.create', 'scm.payment_voucher.write', 'scm.payment_voucher.check',
-  'scm.payment_voucher.approve', 'scm.payment_voucher.post', 'scm.payment_voucher.cancel',
-] as const;
-const canSee = (c: any): boolean => PV_KEYS.some((k) => hasHouzsPerm(c, k));
 const NO_PERM = (what: string) => ({ error: `You don't have permission to ${what}.` });
 
 const yymm = (): string => {
@@ -99,7 +94,8 @@ async function loadSupplier(c: any, supplierId: string): Promise<{ supplier: { i
 
 /* ── GET / — both kinds, one list ─────────────────────────────────────────── */
 export const listApInvoicesHandler = async (c: any): Promise<Response> => {
-  if (!canSee(c)) return c.json(NO_PERM('see supplier invoices'), 403);
+  /* Reads ride the finance area guard (GET → 'view'), as the receipts and
+     other-debtors lists do; the PV key family gates the WRITES below. */
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   const sb = c.get('supabase');
@@ -119,7 +115,7 @@ export const listApInvoicesHandler = async (c: any): Promise<Response> => {
        the Finance side sees a supplier's whole debt. */
     const { data, error } = await scopeToCompany(
       sb.from('purchase_invoices')
-        .select('id, invoice_number, supplier_invoice_ref, supplier_id, invoice_date, due_date, currency, total_sen, paid_sen, status, supplier:suppliers(id, code, name)')
+        .select('id, invoice_number, supplier_invoice_ref, supplier_id, invoice_date, due_date, currency, total_sen, paid_sen, status, notes, supplier:suppliers(id, code, name)')
         .in('status', ['POSTED', 'PARTIALLY_PAID', 'PAID', 'ON_HOLD']), c,
     ).order('invoice_date', { ascending: false }).limit(500);
     if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
@@ -141,6 +137,9 @@ function shape(kind: 'API' | 'PI', r: Row): Row {
     supplierCode: sup?.code ?? null,
     supplierName: sup?.name ?? null,
     supplierInvoiceRef: r.supplier_invoice_ref ?? null,
+    /* The overall description (owner 2026-09-06: 我想要 overall description,
+       到时可以显示在这界面) — the notes column, on both kinds. */
+    description: r.notes ? String(r.notes) : null,
     invoiceDate: r.invoice_date ?? null,
     dueDate: r.due_date ?? null,
     currency: r.currency ?? 'MYR',
@@ -153,7 +152,6 @@ function shape(kind: 'API' | 'PI', r: Row): Row {
 
 /* ── GET /:id — an AP invoice with its lines ─────────────────────────────── */
 export const apInvoiceDetailHandler = async (c: any): Promise<Response> => {
-  if (!canSee(c)) return c.json(NO_PERM('see supplier invoices'), 403);
   const found = await loadInvoice(c, c.req.param('id'));
   if ('resp' in found) return found.resp;
   const sb = c.get('supabase');
