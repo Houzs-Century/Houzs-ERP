@@ -55,7 +55,12 @@ export const PnLTab = () => {
     queryKey: ['report-pnl', from, to],
     queryFn: () => authedFetch<{
       tradingIncome: Line[]; costOfSales: Line[]; otherIncome: Line[]; expenses: Line[];
-      totals: { tradingIncomeSen: number; costOfSalesSen: number; grossProfitSen: number; otherIncomeSen: number; expensesSen: number; netProfitSen: number };
+      /** TAXATION section rows — a profit-before-tax line appears when any posted. */
+      taxation?: Line[];
+      totals: {
+        tradingIncomeSen: number; costOfSalesSen: number; grossProfitSen: number; otherIncomeSen: number; expensesSen: number;
+        profitBeforeTaxSen?: number; taxationSen?: number; netProfitSen: number;
+      };
     }>(`/accounting/reports/pnl?from=${from}&to=${to}`),
     enabled: Boolean(from && to),
     staleTime: 30_000,
@@ -81,6 +86,18 @@ export const PnLTab = () => {
               </tr>
               <Section title="Other income" rows={q.data.otherIncome} totalLabel="Total other income" totalSen={q.data.totals.otherIncomeSen} />
               <Section title="Expenses" rows={q.data.expenses} negate totalLabel="Total expenses" totalSen={q.data.totals.expensesSen} />
+              {/* The TAXATION section (AutoCount's own line) only when
+                  something posted there — the layout stays as the owner
+                  left it otherwise (版式先这样). */}
+              {(q.data.taxation?.length ?? 0) > 0 && (
+                <>
+                  <tr style={{ borderTop: '2px solid var(--c-ink, #221f20)' }}>
+                    <td style={{ padding: '6px 10px', fontWeight: 700 }}>PROFIT BEFORE TAX</td>
+                    <td style={{ padding: '6px 10px', textAlign: 'right', fontWeight: 700 }}>{fmtSen(q.data.totals.profitBeforeTaxSen ?? q.data.totals.netProfitSen)}</td>
+                  </tr>
+                  <Section title="Taxation" rows={q.data.taxation ?? []} negate totalLabel="Total taxation" totalSen={q.data.totals.taxationSen ?? 0} />
+                </>
+              )}
               <tr style={{ borderTop: '2px solid var(--c-ink, #221f20)' }}>
                 <td style={{ padding: '8px 10px', fontWeight: 700 }}>NET PROFIT</td>
                 <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 700 }}>{fmtSen(q.data.totals.netProfitSen)}</td>
