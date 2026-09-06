@@ -1,11 +1,18 @@
 import { describe, expect, test } from "vitest";
 import {
+  INBOX_FILTERS,
+  MANAGE_ONLY_FILTERS,
   ackRateBarCls,
+  approvalOf,
   audienceLabel,
   bucketInbox,
   companyScopeLabel,
+  docNo,
+  filterManageRows,
+  isApproved,
   isArchived,
   isPendingForMe,
+  manageStats,
   manageStatus,
   requiresAck,
   type Announcement,
@@ -175,6 +182,41 @@ describe("bucketInbox", () => {
     expect(b.pending.map((a) => a.id)).toEqual(["t"]);
     expect(b.recent.map((a) => a.id)).toEqual(["b"]);
     expect(b.sopCount).toBe(1);
+  });
+});
+
+describe("approval workflow (mig 20260906T1509)", () => {
+  test("absent = approved; the number is the ref no once minted, the id before", () => {
+    const legacy = ann({ id: "ann-old" });
+    expect(approvalOf(legacy)).toBe("APPROVED");
+    expect(isApproved(legacy)).toBe(true);
+    expect(docNo(legacy)).toBe("ANN-OLD");
+    expect(docNo(ann({ id: "ann-new", refNo: "OPS-ANN-2609-0001" }))).toBe("OPS-ANN-2609-0001");
+    expect(docNo(ann({ id: "ann-new", refNo: "  " }))).toBe("ANN-NEW");
+  });
+
+  test("manage status: the approval state outranks awaiting / the ack rate", () => {
+    const opts = { pendingForMe: true, pct: 10 };
+    expect(manageStatus(ann({ id: "a", approvalStatus: "DRAFT" }), opts, NOW)).toBe("draft");
+    expect(manageStatus(ann({ id: "b", approvalStatus: "PENDING_APPROVAL" }), opts, NOW)).toBe("pending_approval");
+    expect(manageStatus(ann({ id: "c", approvalStatus: "REJECTED" }), opts, NOW)).toBe("rejected");
+    expect(manageStatus(ann({ id: "d", approvalStatus: "APPROVED" }), opts, NOW)).toBe("awaiting");
+  });
+
+  test("the approval filter is the pending queue; stats count it and exclude it from live", () => {
+    const items = [
+      ann({ id: "live", category: "WARNING" }),
+      ann({ id: "q1", approvalStatus: "PENDING_APPROVAL" }),
+      ann({ id: "q2", approvalStatus: "PENDING_APPROVAL" }),
+      ann({ id: "r", approvalStatus: "REJECTED" }),
+    ];
+    const rows = filterManageRows({ items, filter: "approval", search: "", addressedIds: new Set(), ackedIds: new Set(), currentUserId: 1, now: NOW });
+    expect(rows.map((a) => a.id)).toEqual(["q1", "q2"]);
+    const stats = manageStats(items, null, new Set(), new Set(), NOW);
+    expect(stats.pendingApproval).toBe(2);
+    expect(stats.liveNotices).toBe(1);
+    expect(MANAGE_ONLY_FILTERS.has("approval")).toBe(true);
+    expect(INBOX_FILTERS.some((f) => f.id === "approval")).toBe(true);
   });
 });
 

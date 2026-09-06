@@ -431,6 +431,22 @@ export type AnnouncementRow = {
   // click; mig 20260906T0833). NULL = never — the cron's "due" filter.
   escalated_at?: string | null;
   escalatedAt?: string | null;
+  // Approval workflow (mig 20260906T1509). approval_status NULL / absent =
+  // APPROVED (the column's DEFAULT; a D1 mirror without it behaves the same).
+  approval_status?: string | null;
+  approvalStatus?: string | null;
+  submitted_by?: number | null;
+  submittedBy?: number | null;
+  submitted_at?: string | null;
+  submittedAt?: string | null;
+  reviewed_by?: number | null;
+  reviewedBy?: number | null;
+  reviewed_at?: string | null;
+  reviewedAt?: string | null;
+  reject_reason?: string | null;
+  rejectReason?: string | null;
+  ref_no?: string | null;
+  refNo?: string | null;
   category?: string | null;
   source?: string | null;
   company_id?: number | null;
@@ -474,7 +490,22 @@ export function scheduledLater(scheduledAt: string | null | undefined, now = Dat
 // Library is permanent, so a stale expires_at on an SOP is ignored rather than
 // silently pulling a standing procedure off everyone's screen). The list's
 // reader branch, /banner and the ack POST all use this one answer.
+export type ApprovalStatus = "DRAFT" | "PENDING_APPROVAL" | "APPROVED" | "REJECTED";
+const APPROVAL_STATUSES: ReadonlySet<string> = new Set(["DRAFT", "PENDING_APPROVAL", "APPROVED", "REJECTED"]);
+
+/** The approval state of a row. Anything unrecognised (NULL, a row from a
+ *  mirror without the column) reads as APPROVED — the column's DEFAULT, and
+ *  what every pre-workflow notice is. */
+export function readApprovalStatus(r: Pick<AnnouncementRow, "approval_status" | "approvalStatus">): ApprovalStatus {
+  const v = String(r.approvalStatus ?? r.approval_status ?? "").trim().toUpperCase();
+  return APPROVAL_STATUSES.has(v) ? (v as ApprovalStatus) : "APPROVED";
+}
+
 export function deliverableNow(r: AnnouncementRow, now = Date.now()): boolean {
+  // Approval first (mig 20260906T1509): a draft, pending or rejected notice
+  // is nobody's to read — not the feed, not the pop-up, not the bell, not
+  // the ack endpoint, not the escalation cron.
+  if (readApprovalStatus(r) !== "APPROVED") return false;
   if (!isActiveFlag(r.isActive ?? r.is_active ?? null)) return false;
   if (scheduledLater(r.scheduledAt ?? r.scheduled_at ?? null, now)) return false;
   if (readCategory(r.category) === "SOP") return true;

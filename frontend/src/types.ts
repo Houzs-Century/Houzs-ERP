@@ -689,7 +689,7 @@ export interface Role {
 export interface PermissionDef {
   key: string;
   resource: string;
-  verb: "read" | "write" | "manage";
+  verb: "read" | "create" | "write" | "manage" | "approve";
   label: string;
   description: string;
 }

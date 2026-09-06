@@ -59,11 +59,14 @@ DELETE,/api/announcements/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"re
 PATCH,/api/announcements/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermissionOrSalesDirector(""announcements.write"")",,YES,DECLARED_GATE,backend/src/routes/announcements.ts
 POST,/api/announcements/:id/ack,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/announcements.ts
 GET,/api/announcements/:id/acks,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermissionOrSalesDirector(""announcements.write"")",,NO,DECLARED_GATE,backend/src/routes/announcements.ts
+POST,/api/announcements/:id/approve,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,requirePermission(APPROVE_PERMISSION),,YES,DECLARED_GATE,backend/src/routes/announcements.ts
 GET,/api/announcements/:id/attachments/:key{.+},AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/announcements.ts
 PUT,/api/announcements/:id/attachments/upload,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermissionOrSalesDirector(""announcements.write"")",,YES,DECLARED_GATE,backend/src/routes/announcements.ts
 PUT,/api/announcements/:id/attachments/upload-thumb,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermissionOrSalesDirector(""announcements.write"")",,YES,DECLARED_GATE,backend/src/routes/announcements.ts
 POST,/api/announcements/:id/escalate,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermissionOrSalesDirector(""announcements.write"")",,YES,DECLARED_GATE,backend/src/routes/announcements.ts
+POST,/api/announcements/:id/reject,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,requirePermission(APPROVE_PERMISSION),,YES,DECLARED_GATE,backend/src/routes/announcements.ts
 POST,/api/announcements/:id/remind,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermissionOrSalesDirector(""announcements.write"")",,YES,DECLARED_GATE,backend/src/routes/announcements.ts
+POST,/api/announcements/:id/submit,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermissionOrSalesDirector(""announcements.write"")",,YES,DECLARED_GATE,backend/src/routes/announcements.ts
 GET,/api/announcements/ack-summary,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermissionOrSalesDirector(""announcements.write"")",,NO,DECLARED_GATE,backend/src/routes/announcements.ts
 GET,/api/announcements/ack-trend,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermissionOrSalesDirector(""announcements.write"")",,NO,DECLARED_GATE,backend/src/routes/announcements.ts
 GET,/api/announcements/banner,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/announcements.ts

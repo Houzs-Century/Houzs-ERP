@@ -1,4 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { PromptProvider } from "../vendor/scm/components/PromptDialog";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -127,7 +128,9 @@ function mountWith(rows: Row[]) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
-      <MobileAnnouncements />
+      <PromptProvider>
+        <MobileAnnouncements />
+      </PromptProvider>
     </QueryClientProvider>,
   );
 }
@@ -183,7 +186,7 @@ describe("MobileAnnouncements — a phone-posted notice can expire", () => {
     });
 
     await act(async () => {
-      fireEvent.click(screen.getByText(/Publish announcement/));
+      fireEvent.click(screen.getByText(/Submit for approval/));
     });
 
     await waitFor(() => expect(apiPost).toHaveBeenCalled());

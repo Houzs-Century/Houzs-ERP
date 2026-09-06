@@ -8,6 +8,7 @@ import { fmtDateTime } from "../../vendor/shared/format";
 import {
   CATEGORY_META,
   INBOX_FILTERS,
+  MANAGE_ONLY_FILTERS,
   ackPercent,
   audienceLabel,
   bucketInbox,
@@ -191,7 +192,7 @@ export function InboxView(p: InboxViewProps) {
             />
           </label>
           <div className="flex flex-wrap gap-1.5">
-            {INBOX_FILTERS.map((f) => {
+            {INBOX_FILTERS.filter((f) => !MANAGE_ONLY_FILTERS.has(f.id)).map((f) => {
               const active = p.filter === f.id;
               const label =
                 f.id === "pending" && buckets.pending.length > 0

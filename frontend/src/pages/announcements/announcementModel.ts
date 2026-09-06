@@ -82,7 +82,28 @@ export type Announcement = {
   /** When the overdue escalation ran — the cron or the drawer's click (mig
    *  20260906T0833). Absent/null = supervisors not notified yet. */
   escalatedAt?: string | null;
+  /** Approval workflow (mig 20260906T1509). Absent = APPROVED — a notice from
+   *  before the workflow. Nothing but APPROVED is served to readers. */
+  approvalStatus?: ApprovalStatus;
+  submittedBy?: number | null;
+  submittedAt?: string | null;
+  reviewedBy?: number | null;
+  reviewedAt?: string | null;
+  /** Why the approver sent it back; set while REJECTED. */
+  rejectReason?: string | null;
+  /** [DEPT]-ANN-[YYMM]-[NNNN], minted on approval; null until then. */
+  refNo?: string | null;
 };
+
+export type ApprovalStatus = "DRAFT" | "PENDING_APPROVAL" | "APPROVED" | "REJECTED";
+
+/** The approval state; absent reads as APPROVED (the pre-workflow rows). */
+export function approvalOf(a: Pick<Announcement, "approvalStatus">): ApprovalStatus {
+  return a.approvalStatus ?? "APPROVED";
+}
+export function isApproved(a: Pick<Announcement, "approvalStatus">): boolean {
+  return approvalOf(a) === "APPROVED";
+}
 
 /** One targeted division: the department it sits in + the division text. */
 export type DivisionTarget = { deptId: number; division: string };
@@ -135,9 +156,19 @@ export function ackRateBarCls(pct: number): string {
   return "bg-warning-text";
 }
 
-export type ManageStatus = "awaiting" | "escalated" | "complete" | "archived";
+export type ManageStatus =
+  | "draft"
+  | "pending_approval"
+  | "rejected"
+  | "awaiting"
+  | "escalated"
+  | "complete"
+  | "archived";
 
 export const MANAGE_STATUS_META: Record<ManageStatus, { label: string; cls: string }> = {
+  draft: { label: "Draft", cls: "bg-surface-dim border border-border text-ink-muted" },
+  pending_approval: { label: "Pending approval", cls: "bg-warning-bg text-warning-text" },
+  rejected: { label: "Rejected", cls: "bg-err-bg text-err" },
   awaiting: { label: "Awaiting you", cls: "bg-err-bg text-err" },
   escalated: { label: "Escalated", cls: "bg-warning-bg text-warning-text" },
   complete: { label: "Complete", cls: "bg-synced-bg text-synced" },
@@ -153,10 +184,16 @@ export const MANAGE_STATUS_META: Record<ManageStatus, { label: string; cls: stri
  *  Complete only by default, and the caller should render a dash for the rate
  *  itself rather than a number it cannot vouch for. */
 export function manageStatus(
-  a: Pick<Announcement, "isActive" | "expiresAt" | "category">,
+  a: Pick<Announcement, "isActive" | "expiresAt" | "category" | "approvalStatus">,
   opts: { pendingForMe: boolean; pct: number | null },
   now: number = Date.now(),
 ): ManageStatus {
+  // Approval outranks everything: an unapproved notice has no audience yet,
+  // so "awaiting" / the ack rate have nothing to say about it.
+  const approval = approvalOf(a);
+  if (approval === "DRAFT") return "draft";
+  if (approval === "PENDING_APPROVAL") return "pending_approval";
+  if (approval === "REJECTED") return "rejected";
   if (opts.pendingForMe) return "awaiting";
   if (isArchived(a, now)) return "archived";
   if (opts.pct != null && opts.pct < 70) return "escalated";
@@ -172,10 +209,12 @@ export type InboxFilter =
   | "SOP"
   | "LEARNING"
   | "GENERAL"
-  | "mine";
+  | "mine"
+  | "approval";
 
 export const INBOX_FILTERS: Array<{ id: InboxFilter; label: string }> = [
   { id: "pending", label: "Needs you" },
+  { id: "approval", label: "Pending approval" },
   { id: "all", label: "All" },
   { id: "WARNING", label: "Warning" },
   { id: "SOP", label: "SOP" },
@@ -183,6 +222,10 @@ export const INBOX_FILTERS: Array<{ id: InboxFilter; label: string }> = [
   { id: "GENERAL", label: "Notice" },
   { id: "mine", label: "Posted by me" },
 ];
+
+/** Filters that only make sense on the Manage table: the reading inbox never
+ *  holds an unapproved notice, so it does not offer the approval queue. */
+export const MANAGE_ONLY_FILTERS: ReadonlySet<InboxFilter> = new Set<InboxFilter>(["approval"]);
 
 export function matchesSearch(a: Announcement, query: string): boolean {
   const q = query.trim().toLowerCase();
@@ -280,7 +323,7 @@ export function bucketInbox(input: InboxInput): InboxBuckets {
 
   const f = input.filter;
   const filteredRecent =
-    f === "pending"
+    f === "pending" || f === "approval"
       ? []
       : f === "mine"
         ? recent.filter(
@@ -367,6 +410,9 @@ export function filterManageRows(input: Omit<InboxInput, "lookups">): Announceme
       (a) => input.currentUserId != null && a.createdBy === input.currentUserId,
     );
   }
+  if (f === "approval") {
+    return searched.filter((a) => approvalOf(a) === "PENDING_APPROVAL");
+  }
   return searched.filter((a) => categoryOf(a) === f);
 }
 
@@ -377,6 +423,8 @@ export type ManageStats = {
   avgAckRate: number | null;
   /** Live notices below the 70% threshold. */
   escalated: number;
+  /** Notices waiting for an approver (mig 20260906T1509). */
+  pendingApproval: number;
 };
 
 export function manageStats(
@@ -389,11 +437,14 @@ export function manageStats(
   let awaitingYou = 0;
   let liveNotices = 0;
   let escalated = 0;
+  let pendingApproval = 0;
   let pctSum = 0;
   let pctCount = 0;
   for (const a of items) {
     if (isPendingForMe(a, addressedIds, ackedIds, now)) awaitingYou += 1;
-    if (isArchived(a, now) || isScheduled(a, now)) continue;
+    if (approvalOf(a) === "PENDING_APPROVAL") pendingApproval += 1;
+    // An unapproved notice is not live: nobody is served it yet.
+    if (!isApproved(a) || isArchived(a, now) || isScheduled(a, now)) continue;
     liveNotices += 1;
     const s = summary?.[a.id];
     if (!s || s.total <= 0) continue;
@@ -407,6 +458,7 @@ export function manageStats(
     liveNotices,
     avgAckRate: summary && pctCount > 0 ? Math.round(pctSum / pctCount) : null,
     escalated,
+    pendingApproval,
   };
 }
 
@@ -436,8 +488,11 @@ export function receiptsCsv(a: Announcement, acks: AcksData): string {
 // ── Labels ─────────────────────────────────────────────────────────────────
 
 /** Doc-number style id for the mono chips. */
-export function docNo(a: Pick<Announcement, "id">): string {
-  return a.id.toUpperCase();
+/** The number a notice shows: the reference number once approved, else the
+ *  row id (what the pre-workflow notices have always shown). */
+export function docNo(a: Pick<Announcement, "id" | "refNo">): string {
+  const ref = a.refNo?.trim();
+  return ref ? ref : a.id.toUpperCase();
 }
 
 /** Resolve the company-scope of a notice to a compact chip label. Empty target

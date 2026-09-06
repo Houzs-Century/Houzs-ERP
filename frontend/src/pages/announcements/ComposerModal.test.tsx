@@ -213,12 +213,12 @@ describe("ComposerModal (rendered)", () => {
     apiPost.mockResolvedValue({ success: true });
     const { onPosted } = mount();
     fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Hello" } });
-    fireEvent.click(screen.getByRole("button", { name: "Post announcement" }));
+    fireEvent.click(screen.getByRole("button", { name: "Submit for approval" }));
     expect(toastError).toHaveBeenCalledWith(expect.stringContaining("Pick at least one department"));
     expect(apiPost).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole("button", { name: /Warehouse/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Post announcement" }));
+    fireEvent.click(screen.getByRole("button", { name: "Submit for approval" }));
     await waitFor(() => expect(onPosted).toHaveBeenCalled());
     expect(apiPost).toHaveBeenCalledWith(
       "/api/announcements",
@@ -227,10 +227,10 @@ describe("ComposerModal (rendered)", () => {
     expect(values.has("announcements:draft:u9")).toBe(false);
   });
 
-  it("a schedule turns the primary into Schedule post and the audience summary is live", () => {
+  it("a schedule turns the primary into Submit scheduled post and the audience summary is live", () => {
     mount();
     fireEvent.change(screen.getByLabelText("Schedule"), { target: { value: "2026-09-06T08:00" } });
-    expect(screen.getByRole("button", { name: "Schedule post" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Submit scheduled post" })).toBeTruthy();
     expect(screen.getByText("No recipients yet")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "All staff" }));
     expect(screen.getByText("All staff", { selector: "span.text-ink" })).toBeTruthy();
