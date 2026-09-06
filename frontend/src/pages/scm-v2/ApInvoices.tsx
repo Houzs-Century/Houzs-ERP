@@ -16,11 +16,17 @@
 // lines; the account from vendor memory only) and attaches the read pages on
 // save; the detail shows the shared Files card; the AP Payment's print bundle
 // carries these files after the voucher's own.
+//
+// Round 2 (owner, same evening, screenshots in hand): the supplier box wears
+// the form's own input dress (it was a borderless strip he could not tell was
+// a field), the lines are a table in HIS order — account number, description,
+// amount — the bill carries an overall Description that the list shows, the
+// list filters by supplier, and **Print listing** prints what the list shows.
 // ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Plus } from 'lucide-react';
+import { Plus, Printer, X } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { useAccounts, isControlSpecial, type Account } from '../../vendor/scm/lib/accounting-queries';
 import { useSuppliers } from '../../vendor/scm/lib/suppliers-queries';
@@ -32,6 +38,7 @@ import {
 import {
   useExtractBills, fileToBase64, PV_FILE_ACCEPT, type BillExtraction, type VendorMemory, type PvFilePayload,
 } from '../../vendor/scm/lib/payment-voucher-queries';
+import { generateApListingPdf } from '../../vendor/scm/lib/ap-invoice-listing-pdf';
 import { DocFilesCard } from '../../vendor/scm/components/DocFilesCard';
 import { AccountSelect } from '../../vendor/scm/components/AccountSelect';
 import { SearchCombo } from '../../vendor/scm/components/SearchCombo';
@@ -57,7 +64,23 @@ const chip = (on: boolean): React.CSSProperties => ({
   border: '1px solid var(--c-line, rgba(34,31,32,0.2))',
   background: on ? 'var(--c-ink)' : 'transparent', color: on ? 'var(--c-cream)' : 'var(--c-ink)',
 });
-const inputStyle: React.CSSProperties = { padding: '6px 8px', border: '1px solid var(--border-weak, #d8d5cd)', borderRadius: 6 };
+/* One table dress for the lines, the detail and the list. */
+const th: React.CSSProperties = {
+  padding: '6px 8px', textAlign: 'left', fontSize: 'var(--fs-11)', fontWeight: 600, letterSpacing: '0.04em',
+  textTransform: 'uppercase', color: 'var(--fg-muted)', borderBottom: '1px solid var(--border-weak, #e3e1da)', whiteSpace: 'nowrap',
+};
+const td: React.CSSProperties = { padding: '6px 8px', verticalAlign: 'middle' };
+const mono: React.CSSProperties = { fontFamily: 'var(--font-mono)' };
+const right: React.CSSProperties = { textAlign: 'right', ...mono };
+const iconBtn: React.CSSProperties = { border: 'none', background: 'none', cursor: 'pointer', color: 'var(--fg-muted)', padding: 2 };
+const linkBtn: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--c-orange)', fontWeight: 600, cursor: 'pointer', fontSize: 'var(--fs-13)', background: 'none', border: 'none', padding: 0 };
+
+const Meta = ({ label, value }: { label: string; value: React.ReactNode }) => (
+  <div>
+    <div className={styles.fieldLabel}>{label}</div>
+    <div>{value}</div>
+  </div>
+);
 
 export const ApInvoices = () => {
   const askConfirm = useConfirm();
@@ -73,6 +96,18 @@ export const ApInvoices = () => {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const detailQ = useApInvoiceDetail(selectedId);
 
+  /* The supplier filter (owner: supplier 筛选) — the suppliers ON the list,
+     never the whole registry, so every choice shows something. */
+  const [supplierFilter, setSupplierFilter] = useState('');
+  const supplierOptions = useMemo(() => {
+    const seen = new Map<string, string>();
+    for (const r of rows) if (r.supplierId && r.supplierName) seen.set(r.supplierId, `${r.supplierCode ? `${r.supplierCode} · ` : ''}${r.supplierName}`);
+    const named = [...seen].map(([value, label]) => ({ value, label })).sort((a, b) => a.label.localeCompare(b.label));
+    return [{ value: '', label: 'All suppliers' }, ...named];
+  }, [rows]);
+  const visibleRows = useMemo(() => (supplierFilter ? rows.filter((r) => r.supplierId === supplierFilter) : rows), [rows, supplierFilter]);
+  const filteredSupplierName = supplierFilter ? (rows.find((r) => r.supplierId === supplierFilter)?.supplierName ?? null) : null;
+
   const suppliersQ = useSuppliers({ status: 'ACTIVE' });
   const accountsQ = useAccounts();
   /* A line debits an ordinary LEAF: active, not a control (由模块过账) and
@@ -82,6 +117,9 @@ export const ApInvoices = () => {
     const parents = new Set(all.map((a) => a.parent_code).filter((p): p is string => !!p));
     return all.filter((a) => a.is_active && !isControlSpecial(a.special_type) && !parents.has(a.account_code));
   }, [accountsQ.data]);
+  /* The detail names accounts off the UNFILTERED chart — a posted bill on a
+     since-inactive account must still print that account's name. */
+  const accountName = (code: string): string => (accountsQ.data?.accounts ?? []).find((a) => a.account_code === code)?.account_name ?? '';
 
   const create = useCreateApInvoice();
   const post = usePostApInvoice();
@@ -93,12 +131,18 @@ export const ApInvoices = () => {
   const [supplierRef, setSupplierRef] = useState('');
   const [invoiceDate, setInvoiceDate] = useState(myt());
   const [dueDate, setDueDate] = useState('');
-  const [notes, setNotes] = useState('');
+  const [description, setDescription] = useState('');
   const [lines, setLines] = useState<Line[]>([emptyLine(1)]);
   const total = lines.reduce((s, l) => s + (l.amountSen > 0 ? l.amountSen : 0), 0);
   const patchLine = (rid: number, patch: Partial<Line>) =>
     setLines((prev) => prev.map((l) => (l.rid === rid ? { ...l, ...patch } : l)));
+  const addLine = () => setLines((p) => [...p, emptyLine(Math.max(...p.map((x) => x.rid)) + 1)]);
+  const removeLine = (rid: number) => setLines((p) => (p.length > 1 ? p.filter((l) => l.rid !== rid) : p));
   const ready = !!supplierId && !!invoiceDate && total > 0 && lines.filter((l) => l.amountSen > 0).every((l) => !!l.debitAccountCode);
+  const resetCard = () => {
+    setSupplierId(''); setSupplierRef(''); setDueDate(''); setDescription(''); setLines([emptyLine(1)]);
+    setPendingFiles([]); setScanNote(null);
+  };
 
   /* ── Scan bill (OCR) — the voucher's reader (POST /payment-vouchers/extract)
      fills THIS card: the supplier from the server's match, the bill's own
@@ -159,7 +203,7 @@ export const ApInvoices = () => {
         ...(supplierRef.trim() ? { supplierInvoiceRef: supplierRef.trim() } : {}),
         invoiceDate,
         dueDate: dueDate || null,
-        ...(notes.trim() ? { notes: notes.trim() } : {}),
+        ...(description.trim() ? { notes: description.trim() } : {}),
         lines: lines
           .filter((l) => l.debitAccountCode && l.amountSen > 0)
           .map((l) => ({ ...(l.description.trim() ? { description: l.description.trim() } : {}), debitAccountCode: l.debitAccountCode, amountSen: l.amountSen })),
@@ -180,16 +224,16 @@ export const ApInvoices = () => {
           break;
         }
       }
+      const pendingCount = pendingFiles.length;
       setAdding(false);
-      setSupplierId(''); setSupplierRef(''); setDueDate(''); setNotes(''); setLines([emptyLine(1)]);
-      setPendingFiles([]); setScanNote(null);
+      resetCard();
       setSelectedId(res.invoice.id);
       void notify({
         title: `${res.invoice.invoice_number} raised`,
         body: [
           `${fmtSen(res.invoice.total_sen)} as a draft — post it below to put it on the books.`,
           attached > 0 ? `${attached} scanned file(s) attached.` : null,
-          attachErr ? `${pendingFiles.length - attached} file(s) did not attach (${attachErr}) — add them from the bill's Files card.` : null,
+          attachErr ? `${pendingCount - attached} file(s) did not attach (${attachErr}) — add them from the bill's Files card.` : null,
         ].filter(Boolean).join(' '),
         tone: attachErr ? 'error' : 'info',
       });
@@ -225,6 +269,14 @@ export const ApInvoices = () => {
     }
   };
 
+  /* Print listing (owner: print listing 功能我也想要) — exactly the rows on
+     screen, kind and supplier filters applied, totalled. */
+  const printListing = () => {
+    void generateApListingPdf(visibleRows, { kind, supplierName: filteredSupplierName }).catch((e: unknown) => {
+      void notify({ title: 'Listing not printed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
+    });
+  };
+
   const detail = detailQ.data;
 
   return (
@@ -233,8 +285,7 @@ export const ApInvoices = () => {
         eyebrow="Finance"
         title="AP Invoices"
         actions={canCreate ? (
-          <button type="button" onClick={() => setAdding(true)}
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--c-orange)', fontWeight: 600, cursor: 'pointer', fontSize: 'var(--fs-13)', background: 'none', border: 'none', padding: 0 }}>
+          <button type="button" onClick={() => setAdding(true)} style={linkBtn}>
             <Plus {...ICON} /> New AP invoice
           </button>
         ) : undefined}
@@ -242,73 +293,107 @@ export const ApInvoices = () => {
 
       {adding && (
         <section className={styles.card}>
-          <div className={styles.cardHeader}><h2 className={styles.cardTitle}>New AP invoice — 非库存的供应商账单</h2></div>
-          <div className={styles.cardBody} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)', fontSize: 'var(--fs-13)' }}>
-            <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap' }}>
+          <div className={styles.cardHeader}>
+            <h2 className={styles.cardTitle}>New AP invoice — 非库存的供应商账单</h2>
+            <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+              {scanNote && (
+                <span style={{ fontSize: 'var(--fs-12)', color: extract.isPending ? 'var(--fg-muted)' : 'var(--c-orange)' }}>{scanNote}</span>
+              )}
               {/* Scan bill — pick the bill's page(s); MULTI-SELECT = ONE BILL. */}
-              <label style={{ fontSize: 'var(--fs-12)', color: 'var(--c-orange)', cursor: 'pointer', fontWeight: 600 }}>
+              <label style={{ fontSize: 'var(--fs-12)', color: 'var(--c-orange)', cursor: 'pointer', fontWeight: 600, whiteSpace: 'nowrap' }}>
                 📷 {extract.isPending ? 'Reading…' : 'Scan bill (OCR)'}
                 <input type="file" multiple accept={PV_FILE_ACCEPT} aria-label="Scan bill files" style={{ display: 'none' }}
                   disabled={extract.isPending}
                   onChange={(e) => { void onScanFiles(e.target.files); e.target.value = ''; }} />
               </label>
-              {scanNote && (
-                <span style={{ fontSize: 'var(--fs-12)', color: extract.isPending ? 'var(--fg-muted)' : 'var(--c-orange)' }}>{scanNote}</span>
-              )}
             </div>
+          </div>
+          <div className={styles.cardBody} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)', fontSize: 'var(--fs-13)' }}>
             {pendingFiles.length > 0 && (
-              <div style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
+              <div style={soft}>
                 📎 {pendingFiles.length} scanned file(s) will be attached to this bill on save: {pendingFiles.map((f) => f.name).join(', ')}
               </div>
             )}
-            <div style={{ display: 'flex', gap: 'var(--space-3)', flexWrap: 'wrap' }}>
-              <label style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: '1 1 260px' }}>
-                <span style={soft}>Supplier *</span>
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(280px, 2fr) minmax(170px, 1fr) minmax(150px, 1fr) minmax(150px, 1fr)', gap: 'var(--space-3)' }}>
+              <label className={styles.field}>
+                <span className={styles.fieldLabel}>Supplier *</span>
                 <SearchCombo
                   options={sortByText(suppliersQ.data ?? []).map((s) => ({ value: s.id, label: `${s.code} · ${s.name}` }))}
-                  value={supplierId} onChange={setSupplierId} aria-label="AP invoice supplier"
+                  value={supplierId} onChange={setSupplierId} aria-label="AP invoice supplier" className={styles.fieldInput}
                   placeholder={suppliersQ.isLoading ? 'Loading suppliers…' : 'Type to find the supplier'} />
               </label>
-              <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                <span style={soft}>Supplier's invoice no.</span>
-                <input value={supplierRef} onChange={(e) => setSupplierRef(e.target.value)} aria-label="Supplier invoice ref" style={inputStyle} />
+              <label className={styles.field}>
+                <span className={styles.fieldLabel}>Supplier's invoice no.</span>
+                <input className={styles.fieldInput} value={supplierRef} onChange={(e) => setSupplierRef(e.target.value)} aria-label="Supplier invoice ref" placeholder="As printed on the bill" />
               </label>
-              <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                <span style={soft}>Invoice date *</span>
-                <DateField value={invoiceDate} onChange={setInvoiceDate} aria-label="AP invoice date" />
+              <label className={styles.field}>
+                <span className={styles.fieldLabel}>Invoice date *</span>
+                <DateField fullWidth className={styles.fieldInput} value={invoiceDate} onChange={setInvoiceDate} aria-label="AP invoice date" />
               </label>
-              <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                <span style={soft}>Due date</span>
-                <DateField value={dueDate} onChange={setDueDate} aria-label="AP invoice due date" />
+              <label className={styles.field}>
+                <span className={styles.fieldLabel}>Due date</span>
+                <DateField fullWidth className={styles.fieldInput} value={dueDate} onChange={setDueDate} aria-label="AP invoice due date" />
               </label>
             </div>
-            {lines.map((l) => (
-              <div key={l.rid} style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap', alignItems: 'center' }}>
-                <input placeholder="Description" value={l.description} aria-label={`line ${l.rid} description`}
-                  onChange={(e) => patchLine(l.rid, { description: e.target.value })} style={{ ...inputStyle, flex: '1 1 200px' }} />
-                <div style={{ flex: '1 1 240px' }}>
-                  <AccountSelect accounts={lineAccounts} value={l.debitAccountCode}
-                    onChange={(code) => patchLine(l.rid, { debitAccountCode: code })} placeholder="— account this line charges —" />
-                </div>
-                <input type="number" min={0} step="0.01" placeholder="Amount (RM)" aria-label={`line ${l.rid} amount`}
-                  value={l.amountSen > 0 ? String(l.amountSen / 100) : ''}
-                  onChange={(e) => patchLine(l.rid, { amountSen: Math.round(Number(e.target.value || 0) * 100) })}
-                  style={{ ...inputStyle, width: 130, textAlign: 'right' }} />
-              </div>
-            ))}
-            <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              <span style={soft}>Notes</span>
-              <input value={notes} onChange={(e) => setNotes(e.target.value)} aria-label="AP invoice notes" style={inputStyle} />
+            <label className={styles.field}>
+              <span className={styles.fieldLabel}>Description</span>
+              <input className={styles.fieldInput} value={description} onChange={(e) => setDescription(e.target.value)} aria-label="AP invoice description"
+                placeholder="What this bill is for — shows on the list and prints on the listing" />
             </label>
-            <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center' }}>
-              <Button variant="ghost" size="sm" onClick={() => setLines((p) => [...p, emptyLine(Math.max(...p.map((x) => x.rid)) + 1)])}>
-                <Plus {...ICON} /> Line
-              </Button>
-              <span style={{ marginLeft: 'auto', fontFamily: 'var(--font-mono)' }}>Total {fmtSen(total)}</span>
+
+            {/* The lines, in the owner's order: account number, description, amount. */}
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr>
+                  <th style={{ ...th, width: '34%' }}>Account</th>
+                  <th style={th}>Description</th>
+                  <th style={{ ...th, textAlign: 'right', width: 150 }}>Amount (RM)</th>
+                  <th style={{ ...th, width: 36 }} />
+                </tr>
+              </thead>
+              <tbody>
+                {lines.map((l) => (
+                  <tr key={l.rid}>
+                    <td style={td}>
+                      <AccountSelect accounts={lineAccounts} value={l.debitAccountCode} className={styles.fieldInput}
+                        onChange={(code) => patchLine(l.rid, { debitAccountCode: code })} placeholder="— account this line charges —" />
+                    </td>
+                    <td style={td}>
+                      <input className={styles.fieldInput} style={{ width: '100%' }} placeholder="Description" value={l.description} aria-label={`line ${l.rid} description`}
+                        onChange={(e) => patchLine(l.rid, { description: e.target.value })} />
+                    </td>
+                    <td style={td}>
+                      <input className={styles.fieldInput} type="number" min={0} step="0.01" placeholder="0.00" aria-label={`line ${l.rid} amount`}
+                        value={l.amountSen > 0 ? String(l.amountSen / 100) : ''}
+                        onChange={(e) => patchLine(l.rid, { amountSen: Math.round(Number(e.target.value || 0) * 100) })}
+                        style={{ width: '100%', textAlign: 'right' }} />
+                    </td>
+                    <td style={td}>
+                      {lines.length > 1 && (
+                        <button type="button" aria-label={`remove line ${l.rid}`} onClick={() => removeLine(l.rid)} style={iconBtn}>
+                          <X size={14} strokeWidth={1.75} />
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr style={{ borderTop: '1px solid var(--border-weak, #e3e1da)' }}>
+                  <td colSpan={2} style={td}>
+                    <Button variant="ghost" size="sm" onClick={addLine}><Plus {...ICON} /> Line</Button>
+                  </td>
+                  <td style={{ ...td, ...right, fontWeight: 700 }}>Total {fmtSen(total)}</td>
+                  <td />
+                </tr>
+              </tfoot>
+            </table>
+
+            <div style={{ display: 'flex', gap: 'var(--space-2)', justifyContent: 'flex-end' }}>
+              <Button variant="ghost" size="sm" onClick={() => setAdding(false)}>Close</Button>
               <Button variant="primary" size="sm" onClick={() => void save()} disabled={create.isPending || !ready}>
                 {create.isPending ? 'Saving…' : 'Save as draft'}
               </Button>
-              <Button variant="ghost" size="sm" onClick={() => setAdding(false)}>Close</Button>
             </div>
           </div>
         </section>
@@ -319,7 +404,7 @@ export const ApInvoices = () => {
           <div className={styles.cardHeader}>
             <h2 className={styles.cardTitle}>{detail.invoice.invoice_number} · {detail.supplier?.name ?? '—'}</h2>
             <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center' }}>
-              <span style={soft}>{detail.invoice.status}{detail.invoice.supplier_invoice_ref ? ` · ref ${detail.invoice.supplier_invoice_ref}` : ''}</span>
+              <span style={soft}>{detail.invoice.status}</span>
               {canPost && detail.invoice.status === 'DRAFT' && (
                 <Button variant="primary" size="sm" onClick={() => void onPost(detail.invoice.id, detail.invoice.invoice_number)} disabled={post.isPending}>
                   {post.isPending ? 'Posting…' : 'Post'}
@@ -333,28 +418,35 @@ export const ApInvoices = () => {
               <Button variant="ghost" size="sm" onClick={() => setSelectedId(null)}>Close</Button>
             </div>
           </div>
-          <div className={styles.cardBody} style={{ fontSize: 'var(--fs-13)' }}>
+          <div className={styles.cardBody} style={{ fontSize: 'var(--fs-13)', display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 'var(--space-3)' }}>
+              <Meta label="Supplier" value={<span><span style={mono}>{detail.supplier?.code ?? ''}</span> {detail.supplier?.name ?? '—'}</span>} />
+              <Meta label="Supplier's invoice no." value={detail.invoice.supplier_invoice_ref ?? '—'} />
+              <Meta label="Invoice date" value={fmtDateOrDash(detail.invoice.invoice_date)} />
+              <Meta label="Due date" value={fmtDateOrDash(detail.invoice.due_date)} />
+              <Meta label="Description" value={detail.invoice.notes ?? '—'} />
+            </div>
             <table style={{ borderCollapse: 'collapse', width: '100%' }}>
               <thead>
-                <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--border-weak, #e3e1da)' }}>
-                  <th style={{ padding: '6px 8px' }}>#</th>
-                  <th style={{ padding: '6px 8px' }}>Description</th>
-                  <th style={{ padding: '6px 8px' }}>Account</th>
-                  <th style={{ padding: '6px 8px', textAlign: 'right' }}>Amount</th>
+                <tr>
+                  <th style={{ ...th, width: 36 }}>#</th>
+                  <th style={th}>Account</th>
+                  <th style={th}>Description</th>
+                  <th style={{ ...th, textAlign: 'right' }}>Amount</th>
                 </tr>
               </thead>
               <tbody>
                 {detail.lines.map((l) => (
                   <tr key={l.id}>
-                    <td style={{ padding: '4px 8px' }}>{l.line_no}</td>
-                    <td style={{ padding: '4px 8px' }}>{l.description ?? '—'}</td>
-                    <td style={{ padding: '4px 8px', fontFamily: 'var(--font-mono)' }}>{l.debit_account_code}</td>
-                    <td style={{ padding: '4px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{fmtSen(l.amount_sen)}</td>
+                    <td style={{ ...td, ...mono, color: 'var(--fg-muted)' }}>{l.line_no}</td>
+                    <td style={td}><span style={mono}>{l.debit_account_code}</span>{accountName(l.debit_account_code) ? <span style={soft}> · {accountName(l.debit_account_code)}</span> : null}</td>
+                    <td style={td}>{l.description ?? '—'}</td>
+                    <td style={{ ...td, ...right }}>{fmtSen(l.amount_sen)}</td>
                   </tr>
                 ))}
                 <tr style={{ borderTop: '1px solid var(--border-weak, #e3e1da)' }}>
-                  <td colSpan={3} style={{ padding: '4px 8px', fontWeight: 600 }}>Total · paid {fmtSen(detail.invoice.paid_sen)}</td>
-                  <td style={{ padding: '4px 8px', textAlign: 'right', fontWeight: 700, fontFamily: 'var(--font-mono)' }}>{fmtSen(detail.invoice.total_sen)}</td>
+                  <td colSpan={3} style={{ ...td, fontWeight: 600 }}>Total · paid {fmtSen(detail.invoice.paid_sen)}</td>
+                  <td style={{ ...td, ...right, fontWeight: 700 }}>{fmtSen(detail.invoice.total_sen)}</td>
                 </tr>
               </tbody>
             </table>
@@ -371,10 +463,17 @@ export const ApInvoices = () => {
       <section className={styles.card}>
         <div className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Supplier invoices — both kinds</h2>
-          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
             {([['ALL', 'All'], ['API', 'AP invoices'], ['PI', 'Purchase invoices']] as const).map(([v, label]) => (
               <button key={v} type="button" style={chip(kind === v)} onClick={() => setKind(v)}>{label}</button>
             ))}
+            <div style={{ minWidth: 260 }}>
+              <SearchCombo options={supplierOptions} value={supplierFilter} onChange={setSupplierFilter}
+                className={styles.fieldInput} aria-label="Filter by supplier" placeholder="All suppliers" />
+            </div>
+            <Button variant="secondary" size="sm" onClick={printListing} disabled={visibleRows.length === 0}>
+              <Printer {...ICON} /> Print listing
+            </Button>
           </div>
         </div>
         <div className={styles.cardBody} style={{ overflowX: 'auto' }}>
@@ -384,40 +483,46 @@ export const ApInvoices = () => {
           {listQ.isError && (
             <div style={{ fontSize: 'var(--fs-13)', color: 'var(--c-red, #b3261e)' }}>The list could not be loaded — {listQ.error instanceof Error ? listQ.error.message : 'something went wrong.'}</div>
           )}
-          {!listQ.isLoading && !listQ.isError && rows.length === 0 && (
-            <div style={{ fontSize: 'var(--fs-13)', color: 'var(--fg-muted)' }}>No supplier invoices here yet — purchase invoices show once posted on the Procurement side; raise an AP invoice for a non-stock bill.</div>
+          {!listQ.isLoading && !listQ.isError && visibleRows.length === 0 && (
+            <div style={{ fontSize: 'var(--fs-13)', color: 'var(--fg-muted)' }}>
+              {rows.length > 0
+                ? 'No supplier invoices match this filter — pick another supplier or kind.'
+                : 'No supplier invoices here yet — purchase invoices show once posted on the Procurement side; raise an AP invoice for a non-stock bill.'}
+            </div>
           )}
-          {rows.length > 0 && (
+          {visibleRows.length > 0 && (
             <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 'var(--fs-13)' }}>
               <thead>
-                <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--border-weak, #e3e1da)' }}>
-                  <th style={{ padding: '6px 8px' }}>Kind</th>
-                  <th style={{ padding: '6px 8px' }}>No.</th>
-                  <th style={{ padding: '6px 8px' }}>Supplier</th>
-                  <th style={{ padding: '6px 8px' }}>Ref</th>
-                  <th style={{ padding: '6px 8px' }}>Date</th>
-                  <th style={{ padding: '6px 8px' }}>Due</th>
-                  <th style={{ padding: '6px 8px', textAlign: 'right' }}>Total</th>
-                  <th style={{ padding: '6px 8px', textAlign: 'right' }}>Outstanding</th>
-                  <th style={{ padding: '6px 8px' }}>Status</th>
+                <tr>
+                  <th style={th}>Kind</th>
+                  <th style={th}>No.</th>
+                  <th style={th}>Supplier</th>
+                  <th style={th}>Ref</th>
+                  <th style={th}>Description</th>
+                  <th style={th}>Date</th>
+                  <th style={th}>Due</th>
+                  <th style={{ ...th, textAlign: 'right' }}>Total</th>
+                  <th style={{ ...th, textAlign: 'right' }}>Outstanding</th>
+                  <th style={th}>Status</th>
                 </tr>
               </thead>
               <tbody>
-                {rows.map((r) => (
+                {visibleRows.map((r) => (
                   <tr key={`${r.kind}-${r.id}`} style={{ borderBottom: '1px solid var(--border-weak, #f0eee8)', opacity: r.status === 'CANCELLED' ? 0.55 : 1 }}>
-                    <td style={{ padding: '4px 8px', fontSize: 'var(--fs-11)', fontWeight: 600 }}>{KIND_LABEL[r.kind]}</td>
-                    <td style={{ padding: '4px 8px', fontFamily: 'var(--font-mono)' }}>
+                    <td style={{ ...td, fontSize: 'var(--fs-11)', fontWeight: 600, whiteSpace: 'nowrap' }}>{KIND_LABEL[r.kind]}</td>
+                    <td style={{ ...td, ...mono, whiteSpace: 'nowrap' }}>
                       {r.kind === 'PI'
                         ? <Link to={`/scm/purchase-invoices/${r.id}`} style={{ color: 'inherit' }}>{r.invoiceNumber}</Link>
-                        : <button type="button" onClick={() => setSelectedId(r.id)} style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--c-orange)', fontFamily: 'var(--font-mono)' }}>{r.invoiceNumber}</button>}
+                        : <button type="button" onClick={() => setSelectedId(r.id)} style={{ ...linkBtn, ...mono }}>{r.invoiceNumber}</button>}
                     </td>
-                    <td style={{ padding: '4px 8px' }}>{r.supplierName ?? '—'}{r.supplierCode ? <span style={soft}> · {r.supplierCode}</span> : null}</td>
-                    <td style={{ padding: '4px 8px' }}>{r.supplierInvoiceRef ?? '—'}</td>
-                    <td style={{ padding: '4px 8px', whiteSpace: 'nowrap' }}>{fmtDateOrDash(r.invoiceDate)}</td>
-                    <td style={{ padding: '4px 8px', whiteSpace: 'nowrap' }}>{fmtDateOrDash(r.dueDate)}</td>
-                    <td style={{ padding: '4px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{fmtSen(r.totalSen)}</td>
-                    <td style={{ padding: '4px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)', fontWeight: r.outstandingSen > 0 ? 700 : 400 }}>{fmtSen(r.outstandingSen)}</td>
-                    <td style={{ padding: '4px 8px', fontSize: 'var(--fs-11)' }}>{r.status}</td>
+                    <td style={td}>{r.supplierName ?? '—'}{r.supplierCode ? <span style={soft}> · {r.supplierCode}</span> : null}</td>
+                    <td style={td}>{r.supplierInvoiceRef ?? '—'}</td>
+                    <td style={{ ...td, maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.description ?? undefined}>{r.description ?? '—'}</td>
+                    <td style={{ ...td, whiteSpace: 'nowrap' }}>{fmtDateOrDash(r.invoiceDate)}</td>
+                    <td style={{ ...td, whiteSpace: 'nowrap' }}>{fmtDateOrDash(r.dueDate)}</td>
+                    <td style={{ ...td, ...right }}>{fmtSen(r.totalSen)}</td>
+                    <td style={{ ...td, ...right, fontWeight: r.outstandingSen > 0 ? 700 : 400 }}>{fmtSen(r.outstandingSen)}</td>
+                    <td style={{ ...td, fontSize: 'var(--fs-11)' }}>{r.status}</td>
                   </tr>
                 ))}
               </tbody>
