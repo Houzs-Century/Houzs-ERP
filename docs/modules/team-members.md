@@ -167,7 +167,13 @@ was a placeholder). Owner 2026-08-26 made both real:
 `backend/src/db/schema.pg.ts` gains `departments.lead_user_id` (FK `users`,
 `ON DELETE SET NULL`) and `departments.headcount_target`
 (`backend/src/db/migrations-pg/0331_departments_lead_and_headcount.sql`, D1
-mirror `152`). `backend/src/routes/departments.ts` exposes both on GET and
+mirror `152`). **`departments.code` (mig
+`backend/src/db/migrations-pg/20260906T1417_departments_code_document_refs.sql`,
+2026-09-06)**: the 2–4 letter `[DEPT]` segment of a document reference number
+(OPS-ANN-2609-0001, see `docs/modules/document-refs.md`); optional, unique
+case-insensitively, accepted by POST / PATCH `/api/departments` (`code`;
+`""`/`null` clears), edited in `TeamDepartmentsV2.tsx` and shown as a chip
+on the card. `backend/src/routes/departments.ts` exposes both on GET and
 accepts them on PATCH (lead must be a known user or `null`; target a
 non-negative int or `null`).
 
