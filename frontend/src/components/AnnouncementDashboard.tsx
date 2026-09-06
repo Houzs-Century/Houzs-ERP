@@ -13,6 +13,7 @@ import {
   type AnnouncementCategory,
 } from "./announcementCategory";
 import { useAnnouncementBanner, type BannerAnnouncement } from "./useAnnouncementBanner";
+import { ackRateBarCls } from "../pages/announcements/announcementModel";
 
 // ────────────────────────────────────────────────────────────────────────────
 // AnnouncementDashboard — the Overview's two announcement pieces (design
@@ -189,6 +190,80 @@ const STATE_CLS: Record<TeamPendingRow["state"], string> = {
   reminded: "bg-warning-bg text-warning-text",
   pending: "bg-surface-dim border border-border text-ink-muted",
 };
+
+// ── "Ack rate · last 30 days" (design handoff 2026-09-04, screen 5; endpoint
+// 2026-09-06): six 5-day bars from GET /api/announcements/ack-trend — the
+// notices POSTED in each bucket, their summed audience, and how many of it
+// acknowledged. Write-gated like the Manage table it mirrors, so it renders
+// only for an announcer; a bucket with no notice is drawn empty, not as 0%.
+type AckTrendBucket = {
+  start: string;
+  end: string;
+  label: string;
+  notices: number;
+  total: number;
+  acked: number;
+  pct: number | null;
+};
+type AckTrendResponse = {
+  success: boolean;
+  data: {
+    days: number;
+    buckets: AckTrendBucket[];
+    summary: { days: number; notices: number; total: number; acked: number; pct: number | null };
+  };
+};
+
+export function AckTrendCard() {
+  const { can } = useAuth();
+  const enabled = can("announcements.write");
+  const q = useQuery<AckTrendResponse | null>("/api/announcements/ack-trend", () =>
+    enabled ? api.get<AckTrendResponse>("/api/announcements/ack-trend") : Promise.resolve(null),
+  );
+  const data = q.data?.data;
+  if (!enabled || !data) return null;
+  const s = data.summary;
+  return (
+    <div
+      className="flex flex-col gap-3 rounded-lg border border-border bg-surface px-4 py-[15px] shadow-stone"
+      data-testid="ack-trend"
+    >
+      <div className="flex items-baseline justify-between">
+        <span className={cn(EYEBROW, "text-ink-secondary")}>Ack rate · last {data.days} days</span>
+        <span
+          className={cn(
+            "font-money text-[12.5px] font-bold",
+            s.pct == null ? "text-ink-muted" : s.pct >= 95 ? "text-synced" : s.pct >= 70 ? "text-primary" : "text-warning-text",
+          )}
+        >
+          {s.pct == null ? "—" : `${s.pct}%`}
+        </span>
+      </div>
+      <div className="grid h-[120px] grid-cols-6 items-end gap-2" role="img" aria-label="Acknowledgement rate by 5-day period">
+        {data.buckets.map((b) => (
+          <div key={b.start} className="flex h-full flex-col items-center justify-end gap-1">
+            <span className="font-money text-[10.5px] font-bold text-ink-secondary">
+              {b.pct == null ? "—" : `${b.pct}%`}
+            </span>
+            <div className="flex w-full flex-1 items-end rounded-sm bg-surface-dim">
+              <div
+                className={cn("w-full rounded-sm", b.pct == null ? "bg-transparent" : ackRateBarCls(b.pct))}
+                style={{ height: b.pct == null ? 0 : `${Math.max(b.pct, 3)}%` }}
+                title={b.notices === 0 ? "No notice posted in these five days" : `${b.notices} notice${b.notices === 1 ? "" : "s"} · ${b.acked} of ${b.total} acknowledged`}
+              />
+            </div>
+            <span className="font-mono text-[9.5px] text-ink-muted">{b.label}</span>
+          </div>
+        ))}
+      </div>
+      <span className="text-[11.5px] leading-[1.5] text-ink-secondary">
+        {s.notices === 0
+          ? `No notice you can manage was posted in the last ${data.days} days — the bars fill as notices are posted.`
+          : `${s.notices} notice${s.notices === 1 ? "" : "s"} posted · ${s.acked} of ${s.total} acknowledgements received (${s.pct ?? 0}%).`}
+      </span>
+    </div>
+  );
+}
 
 export function TeamPendingCard() {
   const { can } = useAuth();

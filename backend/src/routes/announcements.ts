@@ -898,21 +898,100 @@ app.get("/ack-summary", requirePermissionOrSalesDirector("announcements.write"),
   const rows = (res.results).filter(
     (r) => companyCanSee(r, allowed) && !sdBlockedFromRow(sd, r, user.id),
   );
-  const [roster, acks, grants] = await Promise.all([
-    loadRoster(c.env, []),
-    loadAllAcks(c.env),
-    loadCompanyGrants(c.env),
-  ]);
+  const totals = await noticeAckTotals(c.env, rows);
   const data: Record<string, { total: number; acked: number }> = {};
+  for (const [id, t] of totals) data[id] = t;
+  return c.json({ success: true, data });
+});
+
+// The ONE per-notice arithmetic behind /ack-summary and /ack-trend: the
+// audience (roster through the gate, narrowed by company grants) and how many
+// of it acknowledged. Kept together so the Manage table and the dashboard
+// chart can never disagree on a rate.
+async function noticeAckTotals(
+  env: Env,
+  rows: AnnouncementRow[],
+): Promise<Map<string, { total: number; acked: number }>> {
+  const [roster, acks, grants] = await Promise.all([
+    loadRoster(env, []),
+    loadAllAcks(env),
+    loadCompanyGrants(env),
+  ]);
+  const out = new Map<string, { total: number; acked: number }>();
   for (const r of rows) {
     const targets = readTargetCompanyIds(r);
     const audience = audienceOf(r, roster).filter((u) => inTargetCompanies(grants, u.id, targets));
     const ackedSet = acks.get(r.id);
     let acked = 0;
     for (const u of audience) if (ackedSet?.has(u.id)) acked += 1;
-    data[r.id] = { total: audience.length, acked };
+    out.set(r.id, { total: audience.length, acked });
   }
-  return c.json({ success: true, data });
+  return out;
+}
+
+// ============================================================
+// GET /ack-trend — the dashboard's "Ack rate · last 30 days" (design handoff
+// 2026-09-04, screen 5; endpoint 2026-09-06): six 5-day buckets ending now,
+// each the summed audience and acknowledgements of the human notices POSTED
+// in it, plus the 30-day summary. Same gate, ownership rule and per-notice
+// arithmetic as /ack-summary, so the card and the Manage table agree. A
+// bucket with no notice has pct null (drawn empty, never as 0%).
+// ============================================================
+const ACK_TREND_DAYS = 30;
+const ACK_TREND_BUCKETS = 6;
+app.get("/ack-trend", requirePermissionOrSalesDirector("announcements.write"), async (c) => {
+  const user = c.get("user");
+  if (!user) {
+    return c.json({ success: false, error: "Your session has expired. Please sign in again." }, 401);
+  }
+  const sd = salesDirectorScope(c);
+  const allowed = allowedCompanyIds(c);
+  const now = Date.now();
+  const dayMs = 86_400_000;
+  const bucketMs = (ACK_TREND_DAYS / ACK_TREND_BUCKETS) * dayMs;
+  const windowStart = now - ACK_TREND_DAYS * dayMs;
+  // company-scope: announcements carry their audience as target_company_ids
+  // (NULL = every company), not a per-row company predicate — the same in-JS
+  // companyCanSee(allowed) gate the list applies runs on the very next line.
+  const res = await c.env.DB
+    .prepare(`SELECT * FROM announcements WHERE source IS NULL AND created_at >= ? ORDER BY created_at ASC`)
+    .bind(new Date(windowStart).toISOString())
+    .all<AnnouncementRow>();
+  const rows = (res.results).filter(
+    (r) => companyCanSee(r, allowed) && !sdBlockedFromRow(sd, r, user.id),
+  );
+  const totals = await noticeAckTotals(c.env, rows);
+  const buckets = Array.from({ length: ACK_TREND_BUCKETS }, (_, i) => {
+    const start = new Date(windowStart + i * bucketMs);
+    const end = new Date(windowStart + (i + 1) * bucketMs);
+    return {
+      start: start.toISOString(),
+      end: end.toISOString(),
+      label: start.toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" }),
+      notices: 0,
+      total: 0,
+      acked: 0,
+      pct: null as number | null,
+    };
+  });
+  const summary = { days: ACK_TREND_DAYS, notices: 0, total: 0, acked: 0, pct: null as number | null };
+  for (const r of rows) {
+    const t = Date.parse(r.createdAt ?? r.created_at ?? "");
+    if (Number.isNaN(t) || t < windowStart) continue;
+    const idx = Math.min(ACK_TREND_BUCKETS - 1, Math.floor((t - windowStart) / bucketMs));
+    const tot = totals.get(r.id) ?? { total: 0, acked: 0 };
+    const b = buckets[idx];
+    b.notices += 1;
+    b.total += tot.total;
+    b.acked += tot.acked;
+    summary.notices += 1;
+    summary.total += tot.total;
+    summary.acked += tot.acked;
+  }
+  const pctOf = (acked: number, total: number) => (total > 0 ? Math.round((acked / total) * 100) : null);
+  for (const b of buckets) b.pct = pctOf(b.acked, b.total);
+  summary.pct = pctOf(summary.acked, summary.total);
+  return c.json({ success: true, data: { days: ACK_TREND_DAYS, buckets, summary } });
 });
 
 // ============================================================

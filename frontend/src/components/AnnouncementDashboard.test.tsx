@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { AnnouncementBannerStack, TeamPendingCard } from "./AnnouncementDashboard";
+import { AckTrendCard, AnnouncementBannerStack, TeamPendingCard } from "./AnnouncementDashboard";
 
 /* ────────────────────────────────────────────────────────────────────────────
    Overview pieces (design handoff 2026-09-04, screen 5): the banner stack —
@@ -157,5 +157,51 @@ describe("TeamPendingCard", () => {
     render(<TeamPendingCard />);
     await waitFor(() => expect(screen.getByText("1 of 2")).toBeTruthy());
     expect(screen.queryByRole("button", { name: /Remind all/ })).toBeNull();
+  });
+});
+
+describe("AckTrendCard", () => {
+  const trend = {
+    success: true,
+    data: {
+      days: 30,
+      buckets: [
+        { start: "a", end: "b", label: "7 Aug", notices: 0, total: 0, acked: 0, pct: null },
+        { start: "c", end: "d", label: "12 Aug", notices: 1, total: 10, acked: 10, pct: 100 },
+        { start: "e", end: "f", label: "17 Aug", notices: 2, total: 20, acked: 15, pct: 75 },
+        { start: "g", end: "h", label: "22 Aug", notices: 1, total: 8, acked: 2, pct: 25 },
+        { start: "i", end: "j", label: "27 Aug", notices: 0, total: 0, acked: 0, pct: null },
+        { start: "k", end: "l", label: "1 Sep", notices: 1, total: 12, acked: 6, pct: 50 },
+      ],
+      summary: { days: 30, notices: 5, total: 50, acked: 33, pct: 66 },
+    },
+  };
+  beforeEach(() => {
+    apiGet.mockReset();
+    canWrite.value = true;
+  });
+
+  it("draws six bars with the threshold colours, empty buckets as empty, and the 30-day summary", async () => {
+    apiGet.mockResolvedValue(trend);
+    render(<AckTrendCard />);
+    const card = await screen.findByTestId("ack-trend");
+    expect(card.textContent).toContain("Ack rate · last 30 days");
+    expect(card.textContent).toContain("66%");
+    expect(card.textContent).toContain("5 notices posted · 33 of 50 acknowledgements received (66%)");
+    const bars = card.querySelectorAll("[title]");
+    expect(bars).toHaveLength(6);
+    expect(bars[1].className).toContain("bg-synced");
+    expect(bars[2].className).toContain("bg-primary");
+    expect(bars[3].className).toContain("bg-warning-text");
+    expect((bars[0] as HTMLElement).style.height).toBe("0px");
+    expect(bars[0].getAttribute("title")).toBe("No notice posted in these five days");
+    expect(bars[5].getAttribute("title")).toBe("1 notice · 6 of 12 acknowledged");
+  });
+
+  it("renders nothing for a user without announcements.write, and never calls the endpoint", async () => {
+    canWrite.value = false;
+    const { container } = render(<AckTrendCard />);
+    await waitFor(() => expect(container.firstChild).toBeNull());
+    expect(apiGet).not.toHaveBeenCalled();
   });
 });
