@@ -229,6 +229,19 @@ GRN links, no supplier invoice ref, that paper belongs to the source).
 Contracts: the copy block of `PaymentVoucherNew.test.tsx`, the label pins
 of `row-menus-remaining-lists.test.ts`.
 
+## 0c2. An allocation names a PI or an AP invoice (2026-09-06)
+
+The AP INVOICE (docs/modules/accounting.md, the non-stock supplier bill) is
+paid by THIS document: `buildAllocations` takes `piId` **or** `apInvoiceId`
+per row (both, or neither, refused — `allocation_two_targets` /
+`allocation_pi_required`), the company guard has an AP twin
+(`allocationApInvoicesOutsideCompany`, which also refuses a DRAFT or
+CANCELLED bill), the post settles an AP row through
+`settleApInvoicePaidSen` (the twin clamp) and records `applied_sen` exactly
+as for a PI — the FX-adoption and GRN re-cost branches are PI-only, a rent
+bill carries no stock — cancel unwinds it by what was applied, and the detail
+answers each allocation with `kind` ('PI' | 'API'), `piId` / `apInvoiceId`.
+
 ## 0d. 预付挂在 supplier (2026-09-02)
 
 The owner's design, in his words: 预付就不能直接挂在supplier 那边吗? An AP

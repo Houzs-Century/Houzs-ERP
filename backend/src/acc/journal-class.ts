@@ -26,6 +26,8 @@ export const JOURNAL_CLASSES: readonly JournalClass[] = ['SALES', 'PURCHASE', 'B
 const FIXED: Record<string, JournalClass> = {
   SI: 'SALES',
   PI: 'PURCHASE',
+  API: 'PURCHASE', // the non-stock supplier bill is purchase history too
+
   CASHUP: 'CASH',
   SETTLE: 'BANK',
   SETTLEADJ: 'BANK',
