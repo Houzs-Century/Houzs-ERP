@@ -861,6 +861,9 @@ const ApAgingTab = () => {
         getRowKey={(r) => r.invoice_id}
         columns={[
           { key: 'invoice', label: 'Invoice', width: '140px', getValue: (r) => r.invoice_number, render: (r) => <span className={styles.codeChip}>{r.invoice_number}</span> },
+          /* Both kinds age here since 2026-09-06 — the AP invoice (non-stock
+             bill) beside the purchase invoice; the column says which. */
+          { key: 'kind', label: 'Kind', width: '90px', getValue: (r) => r.kind ?? 'PI', render: (r) => (r.kind === 'API' ? 'AP inv' : 'PI') },
           // Owner 2026-07-24: supplier NAME and CODE are separate columns on
           // every procurement table, not one combined cell.
           { key: 'supplier', label: 'Supplier', getValue: (r) => r.supplier_name ?? '', render: (r) => r.supplier_name ?? '—' },

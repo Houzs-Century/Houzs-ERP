@@ -28,6 +28,7 @@ import { takePvFiles } from '../../vendor/scm/lib/pv-file-handoff';
 import { useIdempotencyKey } from '../../lib/idempotency';
 import { useAccounts, useAccountRoles, type Account } from '../../vendor/scm/lib/accounting-queries';
 import { usePurchaseInvoices } from '../../vendor/scm/lib/purchase-invoice-queries';
+import { useApInvoices } from '../../vendor/scm/lib/ap-invoice-queries';
 import { useSuppliers, useSupplierDetail } from '../../vendor/scm/lib/suppliers-queries';
 import { useActiveCurrencies, rateFor } from '../../vendor/scm/lib/currencies-queries';
 import { CurrencySelect } from '../../vendor/scm/components/CurrencySelect';
@@ -73,7 +74,11 @@ const newLine = (): DraftLine => ({
 /* One outstanding-PI row in the "Apply to PI" picker, with the amount the
    operator chooses to apply (centi, MYR). */
 type PiAlloc = {
+  /** The row's id — a purchase invoice's, or (kind API) an AP invoice's. */
   piId:               string;
+  /** A purchase invoice (stock) or an AP invoice (the non-stock bill, owner
+      2026-09-06) — both settle here, the payload names which. */
+  kind:               'PI' | 'API';
   invoiceNumber:      string;
   supplierInvoiceRef: string | null;
   invoiceDate:        string | null;
@@ -350,13 +355,25 @@ export const PaymentVoucherNew = () => {
   /* AP Payment: every row starts at 0 — TICK pays an invoice in full, typing
      pays part of it, and the voucher total FOLLOWS the ticks (the reverse of
      the old cascade, where lines drove a guessed spread). */
+  /* The supplier's open AP INVOICES (non-stock bills) list beside the PIs —
+     the owner's 我想要两个都看到 — same tick, same partial, same clamp. */
+  const apListQ = useApInvoices('API');
+  const outstandingApiRows = useMemo(() => {
+    if (!applyToPi) return [];
+    return (apListQ.data?.rows ?? []).filter((r) =>
+      String(r.supplierId ?? '') === supplierId
+      && (r.status === 'POSTED' || r.status === 'PARTIALLY_PAID')
+      && r.outstandingSen > 0);
+  }, [applyToPi, apListQ.data, supplierId]);
+
   const allocations: PiAlloc[] = useMemo(() => {
-    return outstandingPiRows.map((r) => {
+    const fromPis: PiAlloc[] = outstandingPiRows.map((r) => {
       const piId = String(r.id ?? '');
       const outstanding = Number(r.total_sen ?? 0) - Number(r.paid_sen ?? 0);
       const amountSen = Math.max(0, Math.min(allocAmounts[piId] ?? 0, outstanding));
       return {
         piId,
+        kind:               'PI' as const,
         invoiceNumber:      String(r.invoice_number ?? piId),
         supplierInvoiceRef: (r.supplier_invoice_ref ?? null) as string | null,
         invoiceDate:        (r.invoice_date ?? null) as string | null,
@@ -364,7 +381,18 @@ export const PaymentVoucherNew = () => {
         amountSen,
       };
     });
-  }, [outstandingPiRows, allocAmounts]);
+    const fromApis: PiAlloc[] = outstandingApiRows.map((r) => ({
+      piId: r.id,
+      kind: 'API' as const,
+      invoiceNumber: r.invoiceNumber,
+      supplierInvoiceRef: r.supplierInvoiceRef,
+      invoiceDate: r.invoiceDate,
+      outstandingSen: r.outstandingSen,
+      amountSen: Math.max(0, Math.min(allocAmounts[r.id] ?? 0, r.outstandingSen)),
+    }));
+    /* Oldest first across both kinds — the order you settle a supplier in. */
+    return [...fromPis, ...fromApis].sort((a, b) => String(a.invoiceDate ?? '').localeCompare(String(b.invoiceDate ?? '')));
+  }, [outstandingPiRows, outstandingApiRows, allocAmounts]);
 
   const allocatedSen = useMemo(() => allocations.reduce((s, a) => s + a.amountSen, 0), [allocations]);
 
@@ -442,7 +470,10 @@ export const PaymentVoucherNew = () => {
         amountSen:      l.amountSen,
       }));
     const sendAllocations = applyToPi
-      ? allocations.filter((a) => a.amountSen > 0).map((a) => ({ piId: a.piId, amountSen: a.amountSen }))
+      ? allocations.filter((a) => a.amountSen > 0).map((a) => (
+        a.kind === 'API'
+          ? { apInvoiceId: a.piId, amountSen: a.amountSen }
+          : { piId: a.piId, amountSen: a.amountSen }))
       : [];
     try {
       const res = await create.mutateAsync({
@@ -750,7 +781,7 @@ export const PaymentVoucherNew = () => {
                     prepay is the whole point (owner 2026-09-06: AP payment 时
                     如何 advance pay). */}
                 {allocations.length === 0 ? (
-                  <p style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-13)' }}>This supplier has no outstanding purchase invoices — a prepay below still books as their advance.</p>
+                  <p style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-13)' }}>This supplier has no outstanding invoices — a prepay below still books as their advance.</p>
                 ) : (
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
                   <thead>
@@ -781,7 +812,12 @@ export const PaymentVoucherNew = () => {
                             style={{ width: 16, height: 16, accentColor: 'var(--c-orange)' }}
                           />
                         </td>
-                        <td style={{ padding: '6px 8px', fontFamily: 'var(--font-mono)' }}>{a.invoiceNumber}</td>
+                        <td style={{ padding: '6px 8px', fontFamily: 'var(--font-mono)' }}>
+                          {a.invoiceNumber}
+                          {a.kind === 'API' && (
+                            <span style={{ marginLeft: 6, fontSize: 'var(--fs-11)', fontFamily: 'inherit', color: 'var(--fg-muted)' }} title="AP invoice — a non-stock supplier bill">AP</span>
+                          )}
+                        </td>
                         <td style={{ padding: '6px 8px', whiteSpace: 'nowrap', color: 'var(--fg-muted)' }}>{fmtDate(a.invoiceDate)}</td>
                         <td style={{ padding: '6px 8px', color: a.supplierInvoiceRef ? 'var(--fg)' : 'var(--fg-muted)' }}>{a.supplierInvoiceRef || '—'}</td>
                         <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)', color: 'var(--fg-muted)' }}>{fmtRm(a.outstandingSen)}</td>

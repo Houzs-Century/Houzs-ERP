@@ -231,6 +231,8 @@ export const useArAging = () => baseQuery<{ arAging: ArAgingRow[] }>(
 
 export type ApAgingRow = {
   invoice_id: string;
+  /** 'PI' (purchase invoice) or 'API' (AP invoice) — v_ap_aging lists both since 2026-09-06. */
+  kind?: 'PI' | 'API';
   invoice_number: string;
   supplier_invoice_ref: string | null;
   supplier_id: string;

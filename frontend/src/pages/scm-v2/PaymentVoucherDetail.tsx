@@ -335,9 +335,19 @@ export const PaymentVoucherDetail = () => {
     // Migration 0202 — settled PIs (SUPPLIER_PAYMENT only). Send the full set of
     // applied rows (amount > 0) so the server replaces the prior allocations.
     const sendAllocations = editApplyToPi
-      ? editAllocRows
+      ? [
+        ...editAllocRows
           .map((r) => ({ piId: r.piId, amountSen: allocAmounts[r.piId] ?? 0 }))
-          .filter((a) => a.amountSen > 0)
+          .filter((a) => a.amountSen > 0),
+        /* An edit REPLACES the allocation set, and this screen's picker lists
+           purchase invoices only — the AP-invoice rows the voucher already
+           settles (raised on the New screen, 2026-09-06) ride through
+           unchanged rather than being silently dropped. */
+        ...allocations
+          .filter((a) => String(a.kind ?? '') === 'API' && a.apInvoiceId)
+          .map((a) => ({ apInvoiceId: String(a.apInvoiceId), amountSen: Number(a.amountSen ?? 0) }))
+          .filter((a) => a.amountSen > 0),
+      ]
       : [];
     try {
       await update.mutateAsync({

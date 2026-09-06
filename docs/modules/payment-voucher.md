@@ -241,6 +241,12 @@ CANCELLED bill), the post settles an AP row through
 as for a PI — the FX-adoption and GRN re-cost branches are PI-only, a rent
 bill carries no stock — cancel unwinds it by what was applied, and the detail
 answers each allocation with `kind` ('PI' | 'API'), `piId` / `apInvoiceId`.
+On the New AP Payment screen the Apply-to-invoice list shows the supplier's
+open AP invoices beside the purchase invoices (an `AP` tag on the row; tick
+= pay in full, type = part) and the payload names `apInvoiceId` for those;
+the detail screen's edit path lists purchase invoices only and passes the
+voucher's existing AP-invoice allocations through unchanged, so an edit
+never silently drops them.
 
 ## 0d. 预付挂在 supplier (2026-09-02)
 
