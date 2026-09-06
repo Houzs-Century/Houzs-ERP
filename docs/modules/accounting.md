@@ -467,7 +467,12 @@ entry is dated by the INVOICE (money lands back in its own month), engine
 idempotency holds, and an unbound group fails THAT invoice by name instead of
 dying. `?dryRun=1` lists the plan without writing; the write pass batches
 (limit ≤ 25 per call, `remaining` in the response) and re-running is a no-op.
-Handler in accounting-pi-backfill.ts; pinned by tests/piPeriodicBackfill.test.ts.
+A reshape's contra carries the ORIGINAL journal's date (not the run day —
+docs/bugs/0647: the first live run dated 19 contras in September and left
+July/August's 330 and AP over-stated), so the invoice's month cancels within
+itself; `reversePiAccounting` takes that date as an option and keeps
+today's for a real cancel. Handler in accounting-pi-backfill.ts; pinned by
+tests/piPeriodicBackfill.test.ts.
 The owner presses it himself: the **PI backfill card** at the foot of the Item
 Groups tab (PiBackfill.tsx) runs Dry run first — 执行写入 stays disabled until
 a preview exists — then loops the batch until `remaining` is 0, stopping the

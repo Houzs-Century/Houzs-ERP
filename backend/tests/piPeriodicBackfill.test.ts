@@ -138,7 +138,12 @@ describe('POST /accounting/backfill/pi-periodic', () => {
     // The old entry survives, reversed, with its contra — never deleted.
     const oldRow = sb.tables.journal_entries.find((j) => j.id === 'je-2990-PI-2607-001')!;
     expect(oldRow.reversed).toBe(true);
-    expect(sb.tables.journal_entries.some((j) => j.source_type === 'PI_REVERSAL' && j.source_doc_no === '2990-PI-2607-001')).toBe(true);
+    const contra = sb.tables.journal_entries.find((j) => j.source_type === 'PI_REVERSAL' && j.source_doc_no === '2990-PI-2607-001')!;
+    expect(contra).toBeTruthy();
+    /* The contra carries the ORIGINAL's date — the invoice's month cancels
+       within itself; a contra dated today left July/August over-stated on
+       the live ledger (bug 0647). */
+    expect(contra.entry_date).toBe('2026-08-01');
 
     // Both repaired invoices now carry an ACTIVE periodic entry (Dr 601-0003).
     for (const doc of ['2990-PI-2607-001', '2990-PI-2608-001']) {
