@@ -21,6 +21,7 @@ import { computePiSettlement } from '../src/scm/lib/pi-settlement';
 import {
   postPaymentVoucherHandler, cancelPaymentVoucherHandler,
   applyAdvanceHandler, supplierAdvancesHandler,
+  updatePaymentVoucherHandler, listPaymentVouchersHandler,
 } from '../src/scm/routes/payment-vouchers';
 
 const CO = 1;
@@ -93,6 +94,23 @@ function harness(tables: Record<string, Row[]>) {
             error: null,
           };
         }
+        /* The AP invoice's twin clamp (settle_api_paid_sen, mig 20260906T1500),
+           answered the way the PI one is so an advance reaches either kind. */
+        if (fn === 'settle_api_paid_sen') {
+          const inv = (tables.ap_invoices ?? []).find((p) => p.id === args.p_id);
+          if (!inv) return { data: [{ applied_sen: 0, reason: 'not_found' }], error: null };
+          const calc = computePiSettlement({
+            paidSen: Number(inv.paid_sen ?? 0),
+            totalSen: Number(inv.total_sen ?? 0),
+            status: inv.status,
+            deltaSen: Number(args.p_delta ?? 0),
+          });
+          if (!calc.skipped) { inv.paid_sen = calc.newPaidSen; inv.status = calc.newStatus; }
+          return {
+            data: [{ applied_sen: calc.skipped ? 0 : calc.appliedSen, new_paid_sen: inv.paid_sen, new_status: inv.status }],
+            error: null,
+          };
+        }
         if (fn === 'next_doc_no_n') {
           const series = String(args.p_series);
           const floor = Math.max(0, Number(args.p_floor ?? 0));
@@ -112,6 +130,8 @@ function harness(tables: Record<string, Row[]>) {
   app.post('/payment-vouchers/:id/cancel', cancelPaymentVoucherHandler as never);
   app.post('/payment-vouchers/:id/apply-advance', applyAdvanceHandler as never);
   app.get('/payment-vouchers/advances/list', supplierAdvancesHandler as never);
+  app.patch('/payment-vouchers/:id', updatePaymentVoucherHandler as never);
+  app.get('/payment-vouchers', listPaymentVouchersHandler as never);
   return app;
 }
 
@@ -127,6 +147,9 @@ const world = (over: { allocSen?: number; totalSen?: number } = {}) => {
       voucher_date: '2026-09-02', payee_name: 'Foshan Chairs', supplier_id: 'sup-1',
       credit_account_code: '1000', currency: 'MYR', exchange_rate: 1,
       purpose: 'SUPPLIER_PAYMENT', total_sen: totalSen,
+      /* The join the list/detail selects carry (supplier:suppliers(...)),
+         handed in flat — the fake reads no joins. */
+      supplier: { id: 'sup-1', code: '400-F001', name: 'Foshan Chairs' },
       submitted_at: '2026-09-02T01:00:00Z', submitted_by: 'Tester',
       approved_at: '2026-09-02T02:00:00Z', approved_by: 'Tester',
     }],
@@ -142,8 +165,21 @@ const world = (over: { allocSen?: number; totalSen?: number } = {}) => {
       { id: 'pi-2', invoice_number: 'HC-PI-2609-002', company_id: CO, status: 'POSTED', currency: 'MYR', exchange_rate: 1, grn_id: null, total_sen: 150_000, paid_sen: 0 },
       { id: 'pi-b', invoice_number: '2990-PI-2609-009', company_id: 2, status: 'POSTED', currency: 'MYR', exchange_rate: 1, grn_id: null, total_sen: 99_000, paid_sen: 0 },
     ],
+    /* The other creditor's kind of bill, since 2026-09-06 a target for the advance too. */
+    ap_invoices: [
+      { id: 'api-1', invoice_number: 'HC-API-2609-001', company_id: CO, supplier_id: 'sup-1', status: 'POSTED', currency: 'MYR', total_sen: 100_000, paid_sen: 0 },
+    ],
     acc_supplier_advances: [],
-    journal_entries: [], journal_entry_lines: [], entity_audit_log: [], suppliers: [],
+    journal_entries: [], journal_entry_lines: [], entity_audit_log: [],
+    suppliers: [{ id: 'sup-1', code: '400-F001', name: 'Foshan Chairs', company_id: CO }],
+    /* The production shape (0649): the AP controls ARE control accounts. */
+    accounts: [
+      { account_code: '1000', account_name: 'Bank', acc_money: true, is_active: true, company_id: CO },
+      { account_code: '400-0000', account_name: 'AP', acc_money: false, is_active: true, company_id: CO, special_type: 'SCC' },
+      { account_code: '405-0000', account_name: 'Other Creditos', acc_money: false, is_active: true, company_id: CO, special_type: 'SCC' },
+      { account_code: '900-A001', account_name: 'RENTAL', acc_money: false, is_active: true, company_id: CO },
+    ],
+    acc_account_roles: [],
   };
   return tables;
 };
@@ -266,5 +302,80 @@ describe('the advances window', () => {
     expect(body.advances).toHaveLength(1);
     expect(body.advances[0]).toMatchObject({ pv_number: 'HC-PV-2609-001', remaining_sen: 300_000 });
     expect(body.totalRemainingSen).toBe(300_000);
+  });
+});
+
+
+const JSON_HEADERS = { 'content-type': 'application/json' };
+
+describe('the advance reaches AP invoices too (2026-09-06)', () => {
+  test('apply names an AP invoice: settled through its own clamp, the allocation carries ap_invoice_id, the advance burns', async () => {
+    const t = world();
+    const app = harness(t);
+    await post(app);
+    const res = await app.request('/payment-vouchers/pv-1/apply-advance', {
+      method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ allocations: [{ apInvoiceId: 'api-1', amountSen: 100_000 }] }),
+    });
+    expect(res.status, await res.clone().text()).toBe(200);
+    expect(await res.json()).toMatchObject({ appliedSen: 100_000, remainingSen: 200_000 });
+    expect(t.ap_invoices[0]).toMatchObject({ paid_sen: 100_000, status: 'PAID' });
+    expect(t.pv_allocations.some((a) => a.ap_invoice_id === 'api-1' && a.pi_id === null && a.from_advance === true && a.amount_sen === 100_000)).toBe(true);
+    expect(t.acc_supplier_advances[0]).toMatchObject({ applied_sen: 100_000 });
+  });
+
+  test('a row naming BOTH kinds is ignored, so nothing is applied', async () => {
+    const t = world();
+    const app = harness(t);
+    await post(app);
+    const res = await app.request('/payment-vouchers/pv-1/apply-advance', {
+      method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ allocations: [{ piId: 'pi-2', apInvoiceId: 'api-1', amountSen: 1 }] }),
+    });
+    expect(res.status).toBe(400);
+    expect((await res.json() as { error: string }).error).toBe('nothing_to_apply');
+  });
+});
+
+describe('the posted entry names the supplier on its AP leg (2026-09-06)', () => {
+  test('Dr 400-0000 carries party 400-F001 — the sub-ledger — and the bank leg keeps "paid to"', async () => {
+    const t = world();
+    await post(harness(t));
+    const je = t.journal_entries[0]!;
+    const lines = t.journal_entry_lines.filter((l) => l.journal_entry_id === je.id);
+    expect(lines.find((l) => l.account_code === '400-0000')).toMatchObject({ party_type: 'SUPPLIER', party_code: '400-F001' });
+    expect(lines.find((l) => l.account_code === '1000')).toMatchObject({ party_type: 'SUPPLIER', party_code: '400-F001' });
+  });
+});
+
+describe('the list says what remains of each advance (2026-09-06)', () => {
+  test('GET / stamps advance_remaining_sen = amount − applied; a voucher with none reads 0', async () => {
+    const t = world();
+    const app = harness(t);
+    await post(app);
+    const res = await app.request('/payment-vouchers');
+    expect(res.status).toBe(200);
+    const b = await res.json() as { paymentVouchers: Row[] };
+    expect(b.paymentVouchers[0]).toMatchObject({ id: 'pv-1', advance_remaining_sen: 300_000 });
+    await apply(app, [{ piId: 'pi-2', amountSen: 150_000 }]);
+    const again = await (await app.request('/payment-vouchers')).json() as { paymentVouchers: Row[] };
+    expect(again.paymentVouchers[0]!.advance_remaining_sen).toBe(150_000);
+  });
+});
+
+describe("editing a supplier payment keeps its control line (docs/bugs/0649)", () => {
+  test('PATCH lines on a draft supplier payment with its own 400-0000 line saves; a control that is not its own refuses', async () => {
+    const t = world();
+    Object.assign(t.payment_vouchers[0]!, { submitted_at: null, submitted_by: null, approved_at: null, approved_by: null });
+    const app = harness(t);
+    const ok = await app.request('/payment-vouchers/pv-1', {
+      method: 'PATCH', headers: JSON_HEADERS,
+      body: JSON.stringify({ lines: [{ description: 'Settle + prepay', debitAccountCode: '400-0000', amountSen: 500_000 }] }),
+    });
+    expect(ok.status, await ok.clone().text()).toBe(200);
+    const bad = await app.request('/payment-vouchers/pv-1', {
+      method: 'PATCH', headers: JSON_HEADERS,
+      body: JSON.stringify({ lines: [{ description: 'typed', debitAccountCode: '405-0000', amountSen: 1 }] }),
+    });
+    expect(bad.status).toBe(400);
+    expect((await bad.json() as { error: string }).error).toBe('control_account_locked');
   });
 });

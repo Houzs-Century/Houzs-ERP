@@ -362,7 +362,11 @@ const ALLOCATION_ON_HOLD = (ids: string[]) => ({
    List / get
    ──────────────────────────────────────────────────────────────────────── */
 
-paymentVouchers.get('/', async (c) => {
+/* GET / — the list. Each row also says what remains of its ADVANCE (owner
+   2026-09-06: 如果这个 prepay 还没有 knock off 单,在 listing 要特别显示):
+   acc_supplier_advances for the page's vouchers, remaining = amount − applied,
+   only when > 0 — the list paints those rows and offers a chip for them. */
+export const listPaymentVouchersHandler = async (c: any): Promise<Response> => {
   const sb = c.get('supabase');
   let q = sb.from('payment_vouchers')
     .select(`${HEADER}, supplier:suppliers(id, code, name)`)
@@ -374,8 +378,21 @@ paymentVouchers.get('/', async (c) => {
   q = scopeToCompany(q, c); // multi-company: isolate to the active company
   const { data, error } = await q;
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  return c.json({ paymentVouchers: data ?? [] });
-});
+  const rows = (data ?? []) as Array<Record<string, unknown> & { id: string }>;
+  const remaining = new Map<string, number>();
+  if (rows.length > 0) {
+    const { data: adv, error: advErr } = await scopeToCompany(
+      sb.from('acc_supplier_advances').select('pv_id, amount_sen, applied_sen').in('pv_id', rows.map((r) => r.id)), c,
+    );
+    if (advErr) return c.json({ error: 'load_failed', reason: advErr.message }, 500);
+    for (const a of (adv ?? []) as Array<{ pv_id: string; amount_sen: number; applied_sen: number }>) {
+      const left = Number(a.amount_sen) - Number(a.applied_sen);
+      if (left > 0) remaining.set(a.pv_id, (remaining.get(a.pv_id) ?? 0) + left);
+    }
+  }
+  return c.json({ paymentVouchers: rows.map((r) => ({ ...r, advance_remaining_sen: remaining.get(r.id) ?? 0 })) });
+};
+paymentVouchers.get('/', listPaymentVouchersHandler);
 
 /* PV attachments (0352) — the bill lives with its voucher. Registered BEFORE
    GET /:id so /:id/files never falls into the detail matcher. */
@@ -522,6 +539,29 @@ export async function learnVendorMemory(
   }
 }
 
+/* A supplier payment's OWN AP control (400-0000 or 405-0000 by the
+   supplier's code) and the other one: what the control lock exempts and
+   what the wrong-control door refuses. Nothing when the voucher is not a
+   supplier payment or names no supplier; a supplier we cannot read fails
+   CLOSED (500), the same way requireLeafAccount does. */
+async function supplierOwnControl(
+  c: any, purposeRaw: unknown, supplierIdRaw: unknown,
+): Promise<{ code: string | null; control: string | null; wrong: string | null } | { resp: Response }> {
+  const none = { code: null, control: null, wrong: null };
+  if (normalizePurpose(purposeRaw) !== 'SUPPLIER_PAYMENT' || !supplierIdRaw) return none;
+  const coId = activeCompanyId(c);
+  if (coId == null) return none;
+  const sb = c.get('supabase');
+  const { data: sup, error: supErr } = await sb.from('suppliers')
+    .select('code').eq('id', String(supplierIdRaw)).maybeSingle();
+  if (supErr) return { resp: c.json({ error: 'load_failed', reason: supErr.message }, 500) };
+  const code = (sup as { code?: string | null } | null)?.code ?? null;
+  if (!code) return none;
+  const roles = await resolveRoles(sb, coId);
+  const role = apControlRole(code);
+  return { code, control: roles[role], wrong: role === 'AP_OTHER' ? roles.AP : roles.AP_OTHER };
+}
+
 export const createPaymentVoucherHandler = async (c: any) => {
   if (!hasHouzsPerm(c, 'scm.payment_voucher.create')) {
     return c.json({ error: "You don't have permission to do that." }, 403);
@@ -550,42 +590,34 @@ export const createPaymentVoucherHandler = async (c: any) => {
     return c.json({ error: 'same_account', message: 'A line cannot debit the Paid From account itself — pick a different destination.' }, 400);
   }
 
+  /* The AP split (owner 2026-09-03): a 405-x supplier's paper belongs to
+     AP_OTHER (405-0000), everyone else's to AP (400-0000) — apControlRole in
+     acc/rules.ts is the ONE home. Resolved FIRST because two doors need it:
+     the control lock below must let the supplier payment's OWN control line
+     through (docs/bugs/0649 — it refused every AP Payment for three days),
+     and the wrong-control door refuses the OTHER control. */
+  const own = await supplierOwnControl(c, body.purpose, body.supplierId);
+  if ('resp' in own) return own.resp;
+
+  if (own.control != null && own.wrong != null && built.rows.some((r) => r.debit_account_code === own.wrong)) {
+    return c.json({
+      error: 'wrong_ap_control',
+      message: `Supplier ${own.code} books to ${own.control} (${apControlRole(own.code) === 'AP_OTHER' ? 'Other Creditors' : 'Account Payable'}) — not ${own.wrong}. Refresh the page and raise the payment again.`,
+    }, 400);
+  }
   /* 父户不记账 (owner 2026-09-02) at TYPING time — the GL gate (engine rule 3)
      would refuse the same header at approval, but the operator should hear it
-     while the form is still open. */
+     while the form is still open. The supplier payment's own AP-control line
+     is the one line this door does not judge: the system wrote it, and the
+     wrong-control door ABOVE is its check — that door runs first, so a line
+     on the OTHER control is refused by name, not as a stray control. */
   {
     const coIdForLeaf = activeCompanyId(c);
     if (coIdForLeaf != null) {
       for (const dCode of [...new Set(built.rows.map((r) => r.debit_account_code))]) {
+        if (own.control != null && dCode === own.control) continue;
         const leafErr = await requireLeafAccount(c, coIdForLeaf, dCode);
         if (leafErr) return leafErr;
-      }
-    }
-  }
-
-  /* The AP split (owner 2026-09-03): a 405-x supplier's paper belongs to
-     AP_OTHER (405-0000), everyone else's to AP (400-0000) — apControlRole in
-     acc/rules.ts is the ONE home. The page picks the right control; this
-     guard refuses the WRONG one, so an out-of-date client cannot book a
-     405 supplier's debt into the trade-creditor control or vice versa. */
-  if (normalizePurpose(body.purpose) === 'SUPPLIER_PAYMENT' && body.supplierId) {
-    const coId = activeCompanyId(c);
-    const sbGuard = c.get('supabase');
-    const { data: sup, error: supErr } = await sbGuard.from('suppliers')
-      .select('code').eq('id', String(body.supplierId)).maybeSingle();
-    /* Fails CLOSED like requireLeafAccount: a supplier we cannot read is a
-       control we cannot verify, and an unverifiable debt does not book. */
-    if (supErr) return c.json({ error: 'load_failed', reason: supErr.message }, 500);
-    const supplierCode = (sup as { code?: string | null } | null)?.code ?? null;
-    if (supplierCode && coId != null) {
-      const roles = await resolveRoles(sbGuard, coId);
-      const right = roles[apControlRole(supplierCode)];
-      const wrong = apControlRole(supplierCode) === 'AP_OTHER' ? roles.AP : roles.AP_OTHER;
-      if (built.rows.some((r) => r.debit_account_code === wrong)) {
-        return c.json({
-          error: 'wrong_ap_control',
-          message: `Supplier ${supplierCode} books to ${right} (${apControlRole(supplierCode) === 'AP_OTHER' ? 'Other Creditors' : 'Account Payable'}) — not ${wrong}. Refresh the page and raise the payment again.`,
-        }, 400);
       }
     }
   }
@@ -797,8 +829,17 @@ export const updatePaymentVoucherHandler = async (c: any) => {
       return c.json({ error: 'same_account', message: 'A line cannot debit the Paid From account itself — pick a different destination.' }, 400);
     }
     /* 父户不记账 — the same typing-time door the create path holds, BEFORE the
-       old lines are deleted, so a refused edit changes nothing. */
+       old lines are deleted, so a refused edit changes nothing — and the same
+       exemption for a supplier payment's own AP-control line (docs/bugs/0649),
+       against the EFFECTIVE purpose and supplier of this edit. */
+    const own = await supplierOwnControl(
+      c,
+      body.purpose !== undefined ? body.purpose : before.purpose,
+      body.supplierId !== undefined ? body.supplierId : before.supplier_id,
+    );
+    if ('resp' in own) return own.resp;
     for (const dCode of [...new Set(built.rows.map((r) => r.debit_account_code))]) {
+      if (own.control != null && dCode === own.control) continue;
       const leafErr = await requireLeafAccount(c, co.companyId, dCode);
       if (leafErr) return leafErr;
     }
@@ -970,6 +1011,12 @@ export const postPaymentVoucherHandler = async (c: any) => {
   const supplier = pv.supplier ?? { code: null, name: null };
   // Multi-company (mig 0061/0081): the JE + its lines belong to the PV's company.
   const companyId = pv.company_id ?? null;
+  /* The supplier's own AP control, for the rule to stamp the supplier on the
+     leg that IS the sub-ledger (owner 2026-09-06: Dr 405-H001 / Cr bank — the
+     invoice side already stamps its Cr leg). Only a supplier payment has one. */
+  const apControlCode = normalizePurpose(pv.purpose) === 'SUPPLIER_PAYMENT' && supplier.code
+    ? (await resolveRoles(sb, companyId))[apControlRole(supplier.code)]
+    : null;
 
   const pf = await assertAuditWritable(sb, { entityType: 'PAYMENT_VOUCHER', entityId: id, action: 'POST', companyId });
   if (!pf.ok) return c.json(auditUnavailableBody(), 409);
@@ -987,7 +1034,7 @@ export const postPaymentVoucherHandler = async (c: any) => {
     sourceType: 'PV',
     sourceDocNo: pv.pv_number,
     narration: `Payment voucher ${pv.pv_number} — ${pv.payee_name}`,
-    lines: pvLines(pv, debitLegs, supplier),
+    lines: pvLines(pv, debitLegs, supplier, apControlCode),
   });
   if (!r.ok) {
     if (r.status === 'je_insert_failed') return c.json({ error: 'je_insert_failed', reason: r.reason }, 500);
@@ -1689,11 +1736,13 @@ export const supplierAdvancesHandler = async (c: any) => {
 };
 paymentVouchers.get('/advances/list', supplierAdvancesHandler);
 
-/* POST /:id/apply-advance { allocations: [{ piId, amountSen }] } — knock the
-   voucher's remaining advance off real invoices. Gated like posting (it
-   settles invoices); refuses another company's or a held invoice by name;
-   Σ may not exceed what remains; each settle is DB-clamped exactly like a
-   payment's, and what is recorded is what was APPLIED, never what was asked. */
+/* POST /:id/apply-advance { allocations: [{ piId | apInvoiceId, amountSen }] }
+   — knock the voucher's remaining advance off real invoices, of EITHER kind
+   (an AP invoice since 2026-09-06: the other creditor's prepay had nothing
+   to land on). Gated like posting (it settles invoices); refuses another
+   company's, a held, a draft or a cancelled invoice by name; Σ may not
+   exceed what remains; each settle is DB-clamped exactly like a payment's,
+   and what is recorded is what was APPLIED, never what was asked. */
 export const applyAdvanceHandler = async (c: any) => {
   if (!hasHouzsPerm(c, 'scm.payment_voucher.post')) {
     return c.json({ error: "You don't have permission to do that." }, 403);
@@ -1704,9 +1753,10 @@ export const applyAdvanceHandler = async (c: any) => {
 
   let body: any;
   try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
-  const wants = (Array.isArray(body.allocations) ? body.allocations : [])
-    .map((a: any) => ({ piId: String(a.piId ?? ''), amountSen: Math.round(Number(a.amountSen ?? 0)) }))
-    .filter((a: { piId: string; amountSen: number }) => a.piId && Number.isFinite(a.amountSen) && a.amountSen > 0);
+  type Want = { piId: string; apInvoiceId: string; amountSen: number };
+  const wants: Want[] = (Array.isArray(body.allocations) ? body.allocations : [])
+    .map((a: any): Want => ({ piId: String(a.piId ?? ''), apInvoiceId: String(a.apInvoiceId ?? ''), amountSen: Math.round(Number(a.amountSen ?? 0)) }))
+    .filter((a: Want) => (a.piId !== '') !== (a.apInvoiceId !== '') && Number.isFinite(a.amountSen) && a.amountSen > 0);
   if (wants.length === 0) return c.json({ error: 'nothing_to_apply', message: 'Name at least one invoice and a positive amount.' }, 400);
 
   const { data: advRaw, error: advErr } = await scopeToCompanyId(
@@ -1724,22 +1774,28 @@ export const applyAdvanceHandler = async (c: any) => {
     }, 409);
   }
 
-  const piIds = wants.map((w: { piId: string }) => w.piId);
-  const outside = await allocationPisOutsideCompany(sb, c, piIds);
+  const piIds = wants.flatMap((w) => (w.piId ? [w.piId] : []));
+  const apIds = wants.flatMap((w) => (w.apInvoiceId ? [w.apInvoiceId] : []));
+  const outside = [
+    ...await allocationPisOutsideCompany(sb, c, piIds),
+    ...await allocationApInvoicesOutsideCompany(sb, c, apIds),
+  ];
   if (outside.length > 0) return c.json(ALLOCATION_NOT_THIS_COMPANY(outside), 404);
   const held = await allocationPisOnHold(sb, c, piIds);
   if (held.length > 0) return c.json(ALLOCATION_ON_HOLD(held), 409);
 
   let appliedSen = 0;
-  const results: Array<{ piId: string; askedSen: number; appliedSen: number }> = [];
-  for (const w of wants as Array<{ piId: string; amountSen: number }>) {
-    const settled = await settlePiPaidSen(sb, w.piId, w.amountSen);
+  const results: Array<{ piId: string | null; apInvoiceId: string | null; askedSen: number; appliedSen: number }> = [];
+  for (const w of wants) {
+    const settled = w.apInvoiceId
+      ? await settleApInvoicePaidSen(sb, w.apInvoiceId, w.amountSen)
+      : await settlePiPaidSen(sb, w.piId, w.amountSen);
     const got = settled.ok ? settled.appliedSen : 0;
     appliedSen += got;
-    results.push({ piId: w.piId, askedSen: w.amountSen, appliedSen: got });
+    results.push({ piId: w.piId || null, apInvoiceId: w.apInvoiceId || null, askedSen: w.amountSen, appliedSen: got });
     if (got > 0) {
       await sb.from('pv_allocations').insert({
-        company_id: co.companyId, pv_id: id, pi_id: w.piId,
+        company_id: co.companyId, pv_id: id, pi_id: w.piId || null, ap_invoice_id: w.apInvoiceId || null,
         amount_sen: got, applied_sen: got, from_advance: true,
       });
     }

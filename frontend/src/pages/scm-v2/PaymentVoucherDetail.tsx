@@ -40,6 +40,7 @@ import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from '
 import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
 import { useAccounts, type Account } from '../../vendor/scm/lib/accounting-queries';
 import { usePurchaseInvoices } from '../../vendor/scm/lib/purchase-invoice-queries';
+import { useApInvoices } from '../../vendor/scm/lib/ap-invoice-queries';
 import { useSuppliers, useSupplierDetail } from '../../vendor/scm/lib/suppliers-queries';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
 import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
@@ -879,13 +880,17 @@ const AdvanceCard = ({ pvId, supplierId }: { pvId: string; supplierId: string })
   const advancesQ = useSupplierAdvances(supplierId);
   const applyM = useApplyAdvance();
   const piListQ = usePurchaseInvoices();
+  /* The other creditor's bills (2026-09-06): an advance to a 405-x supplier
+     lands on its AP INVOICES, which the purchase-invoice list never carries. */
+  const apListQ = useApInvoices('API');
   const [amounts, setAmounts] = useState<Record<string, number>>({});
   const [note, setNote] = useState<string | null>(null);
 
   const mine = (advancesQ.data?.advances ?? []).find((a: { pv_id: string }) => a.pv_id === pvId) ?? null;
 
-  const outstanding = useMemo(() => {
-    return ((piListQ.data?.purchaseInvoices ?? []) as Array<{
+  type Open = { key: string; kind: 'PI' | 'API'; id: string; number: string; date: string | null; outSen: number };
+  const outstanding = useMemo<Open[]>(() => {
+    const pis = ((piListQ.data?.purchaseInvoices ?? []) as Array<{
       id: string; invoice_number?: string | null; supplier_id?: string | null;
       supplier?: { id?: string | null } | null; status?: string | null;
       total_sen?: number | null; paid_sen?: number | null; invoice_date?: string | null;
@@ -896,8 +901,12 @@ const AdvanceCard = ({ pvId, supplierId }: { pvId: string; supplierId: string })
         return sid === supplierId && (st === 'POSTED' || st === 'PARTIALLY_PAID')
           && Number(r.total_sen ?? 0) - Number(r.paid_sen ?? 0) > 0;
       })
-      .sort((a, b) => String(a.invoice_date ?? '').localeCompare(String(b.invoice_date ?? '')));
-  }, [piListQ.data, supplierId]);
+      .map((r): Open => ({ key: `pi:${r.id}`, kind: 'PI', id: String(r.id), number: String(r.invoice_number ?? r.id), date: r.invoice_date ?? null, outSen: Number(r.total_sen ?? 0) - Number(r.paid_sen ?? 0) }));
+    const apis = (apListQ.data?.rows ?? [])
+      .filter((r) => r.supplierId === supplierId && (r.status === 'POSTED' || r.status === 'PARTIALLY_PAID') && r.outstandingSen > 0)
+      .map((r): Open => ({ key: `api:${r.id}`, kind: 'API', id: r.id, number: r.invoiceNumber, date: r.invoiceDate, outSen: r.outstandingSen }));
+    return [...pis, ...apis].sort((a, b) => String(a.date ?? '').localeCompare(String(b.date ?? '')));
+  }, [piListQ.data, apListQ.data, supplierId]);
 
   if (!mine) return null;
   const remaining = mine.remaining_sen;
@@ -915,7 +924,7 @@ const AdvanceCard = ({ pvId, supplierId }: { pvId: string; supplierId: string })
       <div className={styles.cardBody} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
         <p style={{ fontSize: 'var(--fs-13)', color: 'var(--fg-muted)', margin: 0 }}>
           This voucher paid ahead of any invoice. Knock the remainder off the supplier&rsquo;s
-          outstanding invoices below — no money moves; both legs are already in AP.
+          outstanding invoices below — purchase invoices and AP invoices alike; no money moves, both legs are already in AP.
         </p>
         {outstanding.length === 0 ? (
           <p style={{ fontSize: 'var(--fs-13)', color: 'var(--fg-muted)', margin: 0 }}>No outstanding invoice from this supplier yet — the advance waits.</p>
@@ -930,22 +939,21 @@ const AdvanceCard = ({ pvId, supplierId }: { pvId: string; supplierId: string })
               </tr>
             </thead>
             <tbody>
-              {outstanding.map((r) => {
-                const piId = String(r.id);
-                const out = Number(r.total_sen ?? 0) - Number(r.paid_sen ?? 0);
-                return (
-                  <tr key={piId} style={{ borderTop: '1px solid var(--line)' }}>
-                    <td style={{ padding: '6px 8px', fontFamily: 'var(--font-mono)' }}>{String(r.invoice_number ?? piId)}</td>
-                    <td style={{ padding: '6px 8px', whiteSpace: 'nowrap', color: 'var(--fg-muted)' }}>{fmtDate(r.invoice_date as string | null)}</td>
-                    <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)', color: 'var(--fg-muted)' }}>{fmtRm(out)}</td>
-                    <td style={{ padding: '6px 8px', textAlign: 'right' }}>
-                      <MoneyInput bare valueSen={amounts[piId] ?? 0}
-                        onCommit={(sen) => setAmounts((prev) => ({ ...prev, [piId]: Math.max(0, Math.min(out, sen ?? 0)) }))}
-                        inputClassName={styles.fieldInput} selectOnFocus />
-                    </td>
-                  </tr>
-                );
-              })}
+              {outstanding.map((r) => (
+                <tr key={r.key} style={{ borderTop: '1px solid var(--line)' }}>
+                  <td style={{ padding: '6px 8px', fontFamily: 'var(--font-mono)' }}>
+                    {r.number}
+                    {r.kind === 'API' && <span style={{ marginLeft: 6, fontFamily: 'var(--font-sans)', fontSize: 'var(--fs-11)', fontWeight: 600, color: 'var(--c-orange, #b06000)' }}>AP</span>}
+                  </td>
+                  <td style={{ padding: '6px 8px', whiteSpace: 'nowrap', color: 'var(--fg-muted)' }}>{fmtDate(r.date)}</td>
+                  <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)', color: 'var(--fg-muted)' }}>{fmtRm(r.outSen)}</td>
+                  <td style={{ padding: '6px 8px', textAlign: 'right' }}>
+                    <MoneyInput bare valueSen={amounts[r.key] ?? 0}
+                      onCommit={(sen) => setAmounts((prev) => ({ ...prev, [r.key]: Math.max(0, Math.min(r.outSen, sen ?? 0)) }))}
+                      inputClassName={styles.fieldInput} selectOnFocus />
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         )}
@@ -955,9 +963,9 @@ const AdvanceCard = ({ pvId, supplierId }: { pvId: string; supplierId: string })
             disabled={applyM.isPending || asked === 0 || over}
             onClick={() => {
               setNote(null);
-              const allocations = Object.entries(amounts)
-                .filter(([, v]) => v > 0)
-                .map(([piId, amountSen]) => ({ piId, amountSen }));
+              const allocations = outstanding
+                .filter((r) => (amounts[r.key] ?? 0) > 0)
+                .map((r) => (r.kind === 'API' ? { apInvoiceId: r.id, amountSen: amounts[r.key]! } : { piId: r.id, amountSen: amounts[r.key]! }));
               applyM.mutate({ pvId, allocations }, {
                 onSuccess: (d: { appliedSen: number; remainingSen: number }) => { setAmounts({}); setNote(`Knocked off ${fmtRm(d.appliedSen)} — ${fmtRm(d.remainingSen)} of the advance remains.`); },
                 onError: (e) => setNote(e instanceof Error ? e.message : 'Not applied.'),

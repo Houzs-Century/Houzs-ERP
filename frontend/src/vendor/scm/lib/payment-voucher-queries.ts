@@ -51,6 +51,10 @@ export type PaymentVoucherRow = Record<string, unknown> & {
   checked_by?: string | null;
   approved_at?: string | null;
   approved_by?: string | null;
+  /** What remains of this voucher's ADVANCE (paid ahead of any invoice, not
+      yet knocked off) — the list paints such rows and offers a chip. 0 when
+      none. Server: listPaymentVouchersHandler. */
+  advance_remaining_sen?: number | null;
 };
 
 export type PaymentVoucherAllocation = {
@@ -145,7 +149,7 @@ export const useSupplierAdvances = (supplierId: string | null) => useQuery({
 export const useApplyAdvance = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ pvId, allocations }: { pvId: string; allocations: Array<{ piId: string; amountSen: number }> }) =>
+    mutationFn: ({ pvId, allocations }: { pvId: string; allocations: Array<{ piId?: string; apInvoiceId?: string; amountSen: number }> }) =>
       authedFetch<{ ok: true; appliedSen: number; remainingSen: number }>(
         `/payment-vouchers/${pvId}/apply-advance`,
         { method: 'POST', body: JSON.stringify({ allocations }) },
@@ -154,6 +158,9 @@ export const useApplyAdvance = () => {
       void qc.invalidateQueries({ queryKey: ['supplier-advances'] });
       void qc.invalidateQueries({ queryKey: ['payment-voucher-detail', pvId] });
       void qc.invalidateQueries({ queryKey: ['purchase-invoices'] });
+      void qc.invalidateQueries({ queryKey: ['ap-invoices'] });
+      void qc.invalidateQueries({ queryKey: ['ap-invoice'] });
+      void qc.invalidateQueries({ queryKey: ['payment-vouchers'] });
     },
   });
 };
