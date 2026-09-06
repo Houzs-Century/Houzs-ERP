@@ -166,12 +166,12 @@ describe("AckTrendCard", () => {
     data: {
       days: 30,
       buckets: [
-        { start: "a", end: "b", label: "7 Aug", notices: 0, total: 0, acked: 0, pct: null },
-        { start: "c", end: "d", label: "12 Aug", notices: 1, total: 10, acked: 10, pct: 100 },
-        { start: "e", end: "f", label: "17 Aug", notices: 2, total: 20, acked: 15, pct: 75 },
-        { start: "g", end: "h", label: "22 Aug", notices: 1, total: 8, acked: 2, pct: 25 },
-        { start: "i", end: "j", label: "27 Aug", notices: 0, total: 0, acked: 0, pct: null },
-        { start: "k", end: "l", label: "1 Sep", notices: 1, total: 12, acked: 6, pct: 50 },
+        { start: "2026-08-07T00:00:00Z", end: "2026-08-12T00:00:00Z", notices: 0, total: 0, acked: 0, pct: null },
+        { start: "2026-08-12T00:00:00Z", end: "2026-08-17T00:00:00Z", notices: 1, total: 10, acked: 10, pct: 100 },
+        { start: "2026-08-17T00:00:00Z", end: "2026-08-22T00:00:00Z", notices: 2, total: 20, acked: 15, pct: 75 },
+        { start: "2026-08-22T00:00:00Z", end: "2026-08-27T00:00:00Z", notices: 1, total: 8, acked: 2, pct: 25 },
+        { start: "2026-08-27T00:00:00Z", end: "2026-09-01T00:00:00Z", notices: 0, total: 0, acked: 0, pct: null },
+        { start: "2026-09-01T00:00:00Z", end: "2026-09-06T00:00:00Z", notices: 1, total: 12, acked: 6, pct: 50 },
       ],
       summary: { days: 30, notices: 5, total: 50, acked: 33, pct: 66 },
     },
@@ -187,6 +187,7 @@ describe("AckTrendCard", () => {
     const card = await screen.findByTestId("ack-trend");
     expect(card.textContent).toContain("Ack rate · last 30 days");
     expect(card.textContent).toContain("66%");
+    expect(card.textContent).toContain("07/08/2026"); // house DD/MM/YYYY, never a month name
     expect(card.textContent).toContain("5 notices posted · 33 of 50 acknowledgements received (66%)");
     const bars = card.querySelectorAll("[title]");
     expect(bars).toHaveLength(6);

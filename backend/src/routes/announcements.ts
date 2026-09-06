@@ -935,7 +935,8 @@ async function noticeAckTotals(
 // each the summed audience and acknowledgements of the human notices POSTED
 // in it, plus the 30-day summary. Same gate, ownership rule and per-notice
 // arithmetic as /ack-summary, so the card and the Manage table agree. A
-// bucket with no notice has pct null (drawn empty, never as 0%).
+// bucket with no notice has pct null (drawn empty, never as 0%). Buckets
+// carry ISO instants only; the client renders them with the house fmtDate.
 // ============================================================
 const ACK_TREND_DAYS = 30;
 const ACK_TREND_BUCKETS = 6;
@@ -967,7 +968,6 @@ app.get("/ack-trend", requirePermissionOrSalesDirector("announcements.write"), a
     return {
       start: start.toISOString(),
       end: end.toISOString(),
-      label: start.toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" }),
       notices: 0,
       total: 0,
       acked: 0,

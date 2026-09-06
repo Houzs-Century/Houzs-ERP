@@ -14,6 +14,7 @@ import {
 } from "./announcementCategory";
 import { useAnnouncementBanner, type BannerAnnouncement } from "./useAnnouncementBanner";
 import { ackRateBarCls } from "../pages/announcements/announcementModel";
+import { fmtDate } from "../vendor/shared/format";
 
 // ────────────────────────────────────────────────────────────────────────────
 // AnnouncementDashboard — the Overview's two announcement pieces (design
@@ -199,7 +200,6 @@ const STATE_CLS: Record<TeamPendingRow["state"], string> = {
 type AckTrendBucket = {
   start: string;
   end: string;
-  label: string;
   notices: number;
   total: number;
   acked: number;
@@ -252,7 +252,7 @@ export function AckTrendCard() {
                 title={b.notices === 0 ? "No notice posted in these five days" : `${b.notices} notice${b.notices === 1 ? "" : "s"} · ${b.acked} of ${b.total} acknowledged`}
               />
             </div>
-            <span className="font-mono text-[9.5px] text-ink-muted">{b.label}</span>
+            <span className="font-mono text-[9px] text-ink-muted">{fmtDate(b.start)}</span>
           </div>
         ))}
       </div>
