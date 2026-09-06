@@ -184,6 +184,25 @@ describe("announcements — ack aggregation, team pending, escalation, require_a
     expect(denied.status).toBe(403);
   });
 
+  test("GET /ack-trend: six 5-day buckets over 30 days, summed from the same per-notice totals, write-gated", async () => {
+    const r = await call(MANAGER, "/api/announcements/ack-trend");
+    expect(r.status).toBe(200);
+    const d = r.body.data;
+    expect(d.days).toBe(30);
+    expect(d.buckets).toHaveLength(6);
+    // All five human notices were posted within the last 3 days → the LAST
+    // bucket; the earlier five buckets carry no notice and a null pct.
+    for (const b of d.buckets.slice(0, 5)) expect(b).toMatchObject({ notices: 0, total: 0, acked: 0, pct: null });
+    const last = d.buckets[5];
+    // warn 6/1 + sop 2/0 + notice 6/0 + reminded 2/0 + later 6/0 = 22 total, 1 acked.
+    expect(last).toMatchObject({ notices: 5, total: 22, acked: 1, pct: 5 });
+    expect(typeof last.start).toBe("string");
+    expect(d.summary).toEqual({ days: 30, notices: 5, total: 22, acked: 1, pct: 5 });
+    // System notices never count; a reader is refused.
+    const denied = await call(READER, "/api/announcements/ack-trend");
+    expect(denied.status).toBe(403);
+  });
+
   test("GET /:id/acks: department buckets, org fields on each person, and the pending state", async () => {
     const warn = await call(MANAGER, "/api/announcements/ann-warn/acks");
     expect(warn.status).toBe(200);
