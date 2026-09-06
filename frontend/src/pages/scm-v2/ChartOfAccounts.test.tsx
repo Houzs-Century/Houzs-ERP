@@ -176,7 +176,7 @@ describe('fold / edit / delete — the owner points 1, 2 and 4', () => {
     updateAsync.mockClear(); confirmFn.mockClear();
     const { container } = draw();
     const rowOf = (code: string) => [...container.querySelectorAll('tbody tr')]
-      .find((tr) => String(tr.children[0]?.textContent).replace('└', '').trim() === code) as HTMLElement;
+      .find((tr) => String(tr.children[0].textContent).replace('└', '').trim() === code) as HTMLElement;
     const sectionRow = (section: string) => screen.getByLabelText(`Collapse section ${section}`).closest('tr') as HTMLElement;
     /* 500-0000 SALES → OTHER INCOMES: confirm, then the update names the section. */
     fireEvent.dragStart(rowOf('500-0000'));
