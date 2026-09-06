@@ -32,22 +32,11 @@ const SLOTS: Array<{ key: keyof ItemGroupBinding; label: string; wants: 'EXPENSE
   { key: 'purchaseReturn', label: 'Purchase Return', wants: 'EXPENSE' },
 ];
 
-/* AutoCount-style section headers inside the picker (owner 2026-09-05: 不能
-   这样做一个header 分类吗?不然有时分不清楚) — the same code boundaries the
-   standard P&L reads (6xx = cost of sales, accounting-reports.ts). Purely how
-   the list is SHOWN; the account rows stay the law. */
-const sectionOf = (code: string, wants: 'EXPENSE' | 'INCOME'): string => {
-  if (wants === 'EXPENSE') return code.startsWith('6') ? 'Cost of goods sold' : 'Expenses';
-  if (code.startsWith('50')) return 'Sales';
-  if (code.startsWith('51') || code.startsWith('52')) return 'Sales adjustments';
-  return 'Other incomes';
-};
-/* Widened value type: noUncheckedIndexedAccess is off, and an unranked
-   section is a real case (it sorts last), not a type impossibility. */
-const SECTION_RANK: Record<string, number | undefined> = {
-  'Sales': 0, 'Sales adjustments': 1, 'Other incomes': 2,
-  'Cost of goods sold': 0, 'Expenses': 1,
-};
+/* The picker's section headers are the CHART's sections (owner 2026-09-05:
+   不能这样做一个header 分类吗; 2026-09-06: stored on the account, his to move
+   by dragging on the chart page) — read off each account row, ordered by
+   the vocabulary the same API hands down. Nothing here decides a section. */
+const UNSHELVED = 'Unsectioned';
 
 /* The defaults the owner approved in outline (2026-09-05): sofa/bedding/dining
    purchases into their 601 children, bedlines into 602; furniture sales into
@@ -113,14 +102,19 @@ export const ItemGroupsTab = () => {
      Expenses), a sales slot only INCOME (Sales / Sales adjustments / Other
      incomes). 397 accounts collapse to the relevant page. */
   const optionsByWants = useMemo(() => {
+    const order = (accountsQ.data?.sections ?? []).map((s) => s.section);
+    const rank = (section: string): number => {
+      const i = order.indexOf(section);
+      return i < 0 ? order.length : i;
+    };
     const build = (wants: 'EXPENSE' | 'INCOME'): ComboOption[] => (accountsQ.data?.accounts ?? [])
       .filter((a) => a.is_active !== false && a.account_type === wants)
       .map((a) => ({
         value: a.account_code,
         label: `${a.account_code} — ${a.account_name}`,
-        group: sectionOf(a.account_code, wants),
+        group: a.section ?? UNSHELVED,
       }))
-      .sort((x, y) => ((SECTION_RANK[x.group] ?? 9) - (SECTION_RANK[y.group] ?? 9)) || x.value.localeCompare(y.value));
+      .sort((x, y) => (rank(x.group) - rank(y.group)) || x.value.localeCompare(y.value));
     return { EXPENSE: build('EXPENSE'), INCOME: build('INCOME') };
   }, [accountsQ.data]);
 

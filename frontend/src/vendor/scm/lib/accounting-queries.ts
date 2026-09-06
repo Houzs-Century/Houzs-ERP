@@ -25,6 +25,10 @@ export type Account = {
   account_name: string;
   account_type: 'ASSET' | 'LIABILITY' | 'EQUITY' | 'INCOME' | 'EXPENSE';
   parent_code: string | null;
+  /** The AutoCount section (CAPITAL / CURRENT ASSETS / COST OF GOODS SOLD…)
+      the account hangs under — decides the type; the owner moves it on the
+      chart page. NULL only on a row older than the sections migration. */
+  section?: string | null;
   is_active: boolean;
   /** True for the money set (bank / cash / e-wallet — what Daily Bank shows).
       The PV "Paid From" picker offers only these. */
@@ -40,7 +44,10 @@ export type Account = {
    decides what the pickers and the Chart page SHOW. */
 export const isControlSpecial = (special: string | null | undefined): boolean =>
   special === 'SDC' || special === 'SCC' || special === 'SBS';
-export const useAccounts = () => baseQuery<{ accounts: Account[] }>(
+/* The section vocabulary in render order — served by the API (its one home
+   is backend lib/account-sections.ts), never copied here. */
+export type AccountSection = { section: string; type: Account['account_type'] };
+export const useAccounts = () => baseQuery<{ accounts: Account[]; sections?: AccountSection[] }>(
   ['accounts'], `/accounting/accounts`,
 );
 
@@ -253,9 +260,10 @@ export type ChartRow = {
   parentCode: string | null;
   accMoney: boolean;
   special: string | null;
+  section: string | null;
   perCompany: Partial<Record<number, { active: boolean }>>;
 };
-export const useChartUnion = () => baseQuery<{ companies: ChartCompany[]; accounts: ChartRow[] }>(
+export const useChartUnion = () => baseQuery<{ companies: ChartCompany[]; sections: AccountSection[]; accounts: ChartRow[] }>(
   ['chart-union'], `/accounting/chart`,
 );
 
@@ -273,6 +281,9 @@ export const useChartTick = () => {
 
 export type ChartImportRow = {
   code: string; name: string; accountType: string;
+  /** The heading the row sat under in the file when it is a known section; the
+      server derives the type from it and shelves a null by type. */
+  section?: string | null;
   parentCode: string | null; accMoney: boolean; specialType?: string | null; shared: boolean;
 };
 export const useChartImport = () => {
@@ -296,7 +307,9 @@ export const useChartCreate = () => {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: {
-      code: string; name: string; accountType: string;
+      code: string; name: string;
+      /** The section decides the type; accountType alone lands on that type's default shelf. */
+      section?: string; accountType?: string;
       parentCode?: string | null; accMoney?: boolean; specialType?: string | null;
       /** SFA only: the SAD twin created in the same call (固定资产带折旧). */
       depreciation?: { code: string; name: string };
@@ -332,7 +345,7 @@ export const useChartRename = () => {
 export const useChartUpdate = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { code: string; name?: string; accountType?: string; accMoney?: boolean; parentCode?: string | null }) =>
+    mutationFn: (body: { code: string; name?: string; accountType?: string; accMoney?: boolean; parentCode?: string | null; section?: string }) =>
       authedFetch<{ ok: boolean; companies: number }>(
         `/accounting/chart/update`, { method: 'PUT', body: JSON.stringify(body) },
       ),
