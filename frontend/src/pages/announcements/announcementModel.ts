@@ -65,8 +65,14 @@ export type Announcement = {
   targetPositionIds?: number[];
   targetUserIds?: number[];
   targetCompanyIds?: number[];
+  /** Divisions targeted on their own (mig 20260906T0639): {deptId, division}. */
+  targetDivisions?: DivisionTarget[];
+  /** People carved out of the audience (mig 20260906T0639). */
+  excludedUserIds?: number[];
   /** Department names for targetDeptIds (mig 2026-09), same reason as above. */
   targetDeptNames?: string[];
+  /** "Operation › Driver Team" per targetDivisions entry, server-resolved. */
+  targetDivisionNames?: string[];
   category?: AnnouncementCategory;
   /** Per-notice "must acknowledge" flag (mig 2026-09). Absent = derive from
    *  the category, see requiresAck(). */
@@ -74,6 +80,9 @@ export type Announcement = {
   /** Scheduled posting instant (mig 2026-09). Absent/null = posted at once. */
   scheduledAt?: string | null;
 };
+
+/** One targeted division: the department it sits in + the division text. */
+export type DivisionTarget = { deptId: number; division: string };
 
 export type Company = { id: number; code: string; name: string };
 
@@ -230,11 +239,14 @@ export function isPendingForMe(
 export function sopDepartmentLabel(a: Announcement, lookups: NameLookups = {}): string {
   const name = a.targetDeptNames?.[0];
   if (name) return name;
-  const firstId = a.targetDeptIds?.[0];
+  const firstId = a.targetDeptIds?.[0] ?? a.targetDivisions?.[0]?.deptId;
   if (firstId != null) {
     const looked = lookups.departments?.get(firstId);
     if (looked) return looked;
   }
+  // A division-only SOP files under its department (the label's first part).
+  const divisionLabel = a.targetDivisionNames?.[0];
+  if (divisionLabel) return divisionLabel.split(" › ")[0];
   if (a.targetType === "ALL_USERS" || !a.targetType) return "All departments";
   return "General";
 }
@@ -462,6 +474,16 @@ export function audienceLabel(a: Announcement, lookups: NameLookups = {}): strin
         : deptIds.map((id) => lookups.departments?.get(id) ?? `Dept #${id}`);
     parts.push(names.join(" + "));
   }
+  const divisions = a.targetDivisions ?? [];
+  if (divisions.length) {
+    const labels =
+      a.targetDivisionNames && a.targetDivisionNames.length === divisions.length
+        ? a.targetDivisionNames
+        : divisions.map(
+            (d) => `${lookups.departments?.get(d.deptId) ?? `Dept #${d.deptId}`} › ${d.division}`,
+          );
+    parts.push(labels.join(" + "));
+  }
   const posIds = a.targetPositionIds ?? [];
   if (posIds.length) {
     parts.push(
@@ -477,5 +499,7 @@ export function audienceLabel(a: Announcement, lookups: NameLookups = {}): strin
         : `${userIds.length} ${userIds.length === 1 ? "person" : "people"}`,
     );
   }
+  const excluded = a.excludedUserIds ?? [];
+  if (excluded.length) parts.push(`${excluded.length} unticked`);
   return parts.length ? parts.join(" · ") : "—";
 }

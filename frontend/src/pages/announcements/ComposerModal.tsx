@@ -20,7 +20,6 @@ import {
   EMPTY_AUDIENCE,
   activeExclusions,
   audienceSummary,
-  resolveRecipients,
   type AudienceValue,
 } from "./AudiencePicker";
 import {
@@ -88,7 +87,8 @@ export function readDraft(key: string): ComposerDraft | null {
       audience: {
         ...EMPTY_AUDIENCE,
         ...(d.audience ?? {}),
-        // Drafts saved before 2026-09-05 have no exclusion list.
+        // Drafts saved before 2026-09-05/06 have neither list.
+        divisions: Array.isArray(d.audience?.divisions) ? d.audience.divisions : [],
         excludedUserIds: Array.isArray(d.audience?.excludedUserIds) ? d.audience.excludedUserIds : [],
       },
       photoLayout: d.photoLayout === "1" || d.photoLayout === "2" || d.photoLayout === "3" || d.photoLayout === "4" ? d.photoLayout : "",
@@ -102,10 +102,12 @@ export function readDraft(key: string): ComposerDraft | null {
 /**
  * The request body for POST /api/announcements, or an error to show.
  *
- * `users` is the roster the picker showed. It is only consulted when someone
- * was unticked under a selected department: the backend has no exclusion
- * list, so that department is expanded here into its remaining members and
- * sent as targetUserIds (owner ask 2026-09-05, "people 那边要可以 untick").
+ * `users` is the roster the picker showed; it is consulted only to drop an
+ * unticked id that no selected department / division reaches any more (the
+ * server would store it harmlessly, but the receipt is cleaner without it).
+ * Divisions and exclusions are the server's own columns (mig 20260906T0639);
+ * nothing is expanded client-side, so a person who joins a targeted
+ * department or division after posting is included.
  */
 export function buildPostBody(
   d: Omit<ComposerDraft, "savedAt">,
@@ -115,12 +117,12 @@ export function buildPostBody(
   const title = d.title.trim();
   if (!title) return { ok: false, error: "Title is required" };
   const a = d.audience;
-  if (!a.allStaff && a.deptIds.length === 0 && a.userIds.length === 0) {
+  if (!a.allStaff && a.deptIds.length === 0 && a.divisions.length === 0 && a.userIds.length === 0) {
     return {
       ok: false,
       error: salesDirOnly
-        ? "Pick your department or at least one salesperson."
-        : "Pick at least one department or person, or choose All staff.",
+        ? "Pick your department, a division of it, or at least one salesperson."
+        : "Pick at least one department, division or person, or choose All staff.",
     };
   }
   const body: Record<string, unknown> = {
@@ -132,16 +134,13 @@ export function buildPostBody(
     attachments: d.attachments,
   };
   if (!a.allStaff) {
-    if (activeExclusions(a, users).length > 0) {
-      const ids = resolveRecipients(a, users);
-      if (ids.length === 0) {
-        return { ok: false, error: "Everyone in the picked departments is unticked — nobody would receive this." };
-      }
-      body.targetUserIds = ids;
-    } else {
-      if (a.deptIds.length) body.targetDeptIds = a.deptIds;
-      if (a.userIds.length) body.targetUserIds = a.userIds;
-    }
+    if (a.deptIds.length) body.targetDeptIds = a.deptIds;
+    // Divisions the department selection already implies are not repeated.
+    const divisions = a.divisions.filter((x) => !a.deptIds.includes(x.deptId));
+    if (divisions.length) body.targetDivisions = divisions;
+    if (a.userIds.length) body.targetUserIds = a.userIds;
+    const excluded = users.length ? activeExclusions(a, users) : a.excludedUserIds;
+    if (excluded.length) body.excludedUserIds = excluded;
   }
   if (!salesDirOnly && a.companyId != null) body.targetCompanyIds = [a.companyId];
   if (d.scheduledAt) {
@@ -631,8 +630,8 @@ export function ComposerModal(p: ComposerModalProps) {
             <div className="flex flex-col gap-[9px] border-t border-border bg-surface-2 px-4 py-[11px]">
               <span className="text-[11px] text-ink-secondary">
                 {activeExclusions(audience, p.users).length > 0
-                  ? "Unticked people are left out by naming the rest of the department individually — someone who joins that department later is not added. Overdue acknowledgements escalate to each person's supervisor."
-                  : "Recipients resolve at post time. Overdue acknowledgements escalate to each person's supervisor."}
+                  ? "Unticked people are left out. Everyone else resolves at post time — someone who joins a picked department or division later is included. Overdue acknowledgements escalate to each person's supervisor."
+                  : "Recipients resolve at post time — a department or division picks up new members automatically. Overdue acknowledgements escalate to each person's supervisor."}
               </span>
               <div className="flex gap-2">
                 <button
