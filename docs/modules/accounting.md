@@ -499,15 +499,23 @@ owner signs that design off separately.
 on /scm/accounting, standard layout first (the owner iterates the 样板 later
 — his call; the NUMBERS ship now). One source — `v_gl_entries`, posted and
 not reversed — so they can never argue with the Journal/GL/TB tabs beside
-them. The P&L follows his AutoCount arithmetic under the periodic scheme:
-trading income = INCOME outside the 700-0000 tree (the chart badge's own
-walker), cost of sales = the 6xx EXPENSE codes with the month-close 620 pair
-included (gross profit therefore reads purchases + opening − closing with no
-stock arithmetic in the report itself), other income = the 700 tree, expenses
-= the rest; the balance sheet cuts the same read at a date, shows cumulative
-earnings inside equity, and carries its own self-check line — assets −
-liabilities − equity − earnings prints BALANCED at zero or the difference in
-red, never absorbed. Handlers in accounting-reports.ts
+them. Both CLASSIFY BY SECTION (2026-09-06 — the AutoCount tree stored on
+`scm.accounts.section`, so an account the owner drags on the chart page
+moves in the statements too, the way AutoCount's do; one home
+`lib/account-sections.ts`, a row with no section takes its type's default
+shelf by the same rule the migration seeded with). The P&L follows his
+AutoCount arithmetic under the periodic scheme: trading income = SALES +
+SALES ADJUSTMENTS, cost of sales = COST OF GOODS SOLD with the month-close
+620 pair included (gross profit therefore reads purchases + opening −
+closing with no stock arithmetic in the report itself), other income =
+OTHER INCOMES + EXTRA-ORDINARY INCOME, expenses = EXPENSES, then TAXATION
+under a profit-before-tax line (shown only when something posted there —
+the layout otherwise stays as he left it); the balance sheet cuts the same
+read at a date, groups by the section's type with every line naming its
+section in AutoCount order, shows cumulative earnings inside equity, and
+carries its own self-check line — assets − liabilities − equity − earnings
+prints BALANCED at zero or the difference in red, never absorbed. Handlers
+in accounting-reports.ts
 (`GET /accounting/reports/pnl?from&to`, `/reports/balance-sheet?asOf`), UI in
 Reports.tsx; pinned by tests/accountingReports.test.ts + Reports.test.tsx.
 
