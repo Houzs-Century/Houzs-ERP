@@ -10,7 +10,9 @@
 // `announcements.body_html` column holds nothing but the tags listed in
 // CANON below, with exactly three attributes:
 //
-//   · `data-size` on a span — one of sm / lg / xl
+//   · `data-size` on a span — a point size from RICH_SIZES (10 … 36), or
+//     one of the legacy sm / lg / xl tokens that notices written before
+//     2026-09-06 carry (kept readable, no longer offered)
 //   · `href` on an anchor — http(s) or mailto only, entity-escaped, and every
 //     anchor is emitted with the constant `rel="noopener noreferrer"
 //     target="_blank"` so the reader's tab can never be hijacked
@@ -39,8 +41,13 @@
 // pins the same fixtures so a drift shows up as a red test on one side.
 // ---------------------------------------------------------------------------
 
-/** Text sizes an author may pick besides the default. */
-export const RICH_SIZES = ["sm", "lg", "xl"] as const;
+/** Text sizes an author may pick besides the default. The numbers are px
+ *  (owner 2026-09-06: "像 Word 那样选字号数字"); sm / lg / xl are the
+ *  2026-09-04 tokens, still valid so stored notices keep rendering. */
+export const RICH_SIZES = [
+  "10", "11", "12", "14", "16", "18", "20", "24", "28", "36",
+  "sm", "lg", "xl",
+] as const;
 export type RichSize = (typeof RICH_SIZES)[number];
 
 /** Hard cap on the stored HTML. A 20k-char notice is already absurd. */

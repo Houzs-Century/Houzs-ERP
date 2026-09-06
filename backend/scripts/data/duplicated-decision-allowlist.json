@@ -1202,7 +1202,7 @@
     },
     {
       "check": "D1",
-      "key": "LG,SM,XL|backend/src/lib/announcementRichText.ts frontend/src/lib/announcementRichText.ts",
+      "key": "10,11,12,14,16,18,20,24,28,36,LG,SM,XL|backend/src/lib/announcementRichText.ts frontend/src/lib/announcementRichText.ts",
       "why": "THE ANNOUNCEMENT RICH-BODY GRAMMAR, a deliberate cross-tree TWIN: backend/src/lib/announcementRichText.ts is the original and frontend/src/lib/announcementRichText.ts is its byte-identical copy (the two packages share no build). Both sides run the SAME canonicaliser, the Worker on write and the browser on render, so the sets must be equal; backend/tests/announcementRichText.test.ts and frontend/src/lib/announcementRichText.test.ts pin the same fixtures so a drift is a red test on one side. 2 homes: RAW_DROP, RICH_SIZES."
     },
     {

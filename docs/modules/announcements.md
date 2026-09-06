@@ -57,6 +57,11 @@ screen down to the database. Same structure as
 > `excluded_user_ids` (server-side untick). The Dept column is a tree of
 > departments → divisions; the 2026-09-05 client-side expansion is gone.
 > §1 composer row, §3 "Division targets" and §4 carry the contract.
+> **2026-09-06 (font sizes, owner: "像 Word 那样选字号数字"):** the editor's
+> S / M / L / XL buttons became a **Size dropdown** of point sizes (10–36
+> px, stored as `span[data-size="16"]`); with nothing selected the size
+> applies to the whole paragraph the caret is in. The legacy `sm|lg|xl`
+> tokens remain in the grammar so older notices render unchanged.
 
 > Convention: the row is one table, `public.announcements`. Timestamps are
 > stored as **ISO text**, `is_active` is an **integer 0/1** (not boolean), and
@@ -381,7 +386,8 @@ all filtering happens in JS in the Worker (`:543-547`, `:628-630`).
   `bodyHtml` in the request is run through
   `backend/src/lib/announcementRichText.ts` (allow-list canonicaliser:
   `p br b i u s ol ul li h1 h2 mark a table tr th td img` +
-  `span[data-size=sm|lg|xl]`, `a[href]` on the http(s) / mailto allow-list
+  `span[data-size=10|11|12|14|16|18|20|24|28|36]` (px; the 2026-09-04
+  tokens `sm|lg|xl` stay valid for stored notices), `a[href]` on the http(s) / mailto allow-list
   (emitted with a constant `rel` / `target`), `img[data-att]` matching the
   upload route's key shape, hard cap 20k chars → 400). **Inline images are
   checked against the attachment manifest** (`readBodyHtml(html, keys)`,

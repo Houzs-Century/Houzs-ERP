@@ -37,6 +37,14 @@ describe("sanitizeAnnouncementHtml", () => {
     ).toBe("<p>para</p><h2>head</h2><b>b</b><i>i</i><s>s</s>");
   });
 
+  test("numeric point sizes are kept; a number off the list, or padded, is dropped", () => {
+    expect(
+      sanitizeAnnouncementHtml(
+        '<span data-size="16">a</span><span data-size="36">b</span><span data-size="15">c</span><span data-size="16px">d</span><span data-size="999">e</span>',
+      ),
+    ).toBe('<span data-size="16">a</span><span data-size="36">b</span>cde');
+  });
+
   test("drops every attribute except a valid data-size", () => {
     expect(
       sanitizeAnnouncementHtml(
