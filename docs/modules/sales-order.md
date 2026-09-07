@@ -2973,6 +2973,30 @@ Two surfaces render it, and they are the whole point of writing it at all:
 | `scm/shared/variant-summary.ts` (+ the byte-identical frontend copy) | folds the recorded codes into the same `SPECIAL:` segment of Description 2, after the picked ones, skipping any the operator has since picked properly — so it reaches every print, the PO/DO/SI copies and the Detail Listing |
 | `vendor/scm/components/SpecialOrders.tsx` | one ticked, DISABLED row per recorded code, subtitled "from AutoCount — already in this document's price, not charged again", and it counts toward `(N selected)` |
 
+**A THIRD kind of reader was added on 2026-09-07: the REPORTS.** The AutoCount
+reconcile did not know this key existed, so every line closed by this very ruling
+kept reporting as an outstanding `DIFFER` — the owner's applied decision quoted
+back to him as migration backlog on go-live day (`docs/bugs/0668`). The specials
+axis now has a `RECORDED` verdict and its own column in the variant table:
+
+| verdict | means |
+| --- | --- |
+| `AGREE` | the line TICKS what the book asks for |
+| `RECORDED` | the line does not tick it, and `specialsRecorded` carries it — decided, not backlog |
+| `DIFFER` | something the book asks for is neither ticked nor recorded |
+
+`RECORDED` is deliberately not folded into `AGREE` (the line really does not tick
+the option), and a PARTIAL cover stays `DIFFER` — if any requested option is
+neither ticked nor recorded the line is still a gap. `variant-reconcile.mjs`
+also keeps `specialsRecorded` OUT of its `carried` array, so a recorded option is
+never counted as a ticked one and the reported ERP value still says what the line
+actually holds.
+
+Those readers are on the allow-list because they are READ-ONLY: they SELECT and
+print, none writes a line, and none can reach a price. The rule stays "render the
+key, do not price it" — a report is a render — and the test's assertion that the
+four pricing modules never mention the key is untouched.
+
 Only `backend/scripts/record-priced-specials-on-migrated-lines.mjs` writes it, and
 only for codes the line does not already carry. Ticking the same code in the
 picker makes it a normal, charged pick — `addedNow` excludes anything already in

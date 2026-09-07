@@ -59,6 +59,46 @@ itself: `PODTL.TransferedQty` and `SUM(GRDTL.Qty)` are written by different part
 of AutoCount and agree on **9,061 of 9,080 purchase orders**; the 19 that
 disagree are reported UNVERIFIABLE rather than resolved by picking a winner.
 
+**What the check found, run 34136172380, 2026-09-07 23:07 local, against production.**
+Snapshots: live `ac-convert-edges` 2026-09-07 08:39 (primary) and `ac-fidelity-*`
+2026-08-11 (second measure, 27 days older).
+
+| test | result |
+|---|---|
+| goods receipts the ERP INVENTED | **0 of 320** |
+| goods receipts MISSING (AutoCount received, the ERP holds the PO, no GRN) | **89 of 574 purchase orders** |
+| GRN line still mirrors its PO line | **588 of 591 agree**, 3 differ |
+| quantity per purchase order, sofa-free | **227 of 248 agree**, 0 ERP MORE, **21 ERP FEWER** |
+| quantity per purchase order, sofa-bearing | 26 of 72 agree, 45 ERP MORE (the known compartment shape), **1 ERP FEWER** (PO-009715, ERP 3 vs 7) |
+| quantity at (purchase order, item code), sofa excluded | **403 of 408 agree**, **5 differ** |
+| not counted: STALE, NOT INVENTED | 86 — the older cut calls them invented, the live book confirms them |
+
+**The direction is uniform and it is the safe one: the ERP is BEHIND the book,
+never ahead.** Zero findings anywhere say the ERP claims more received than
+AutoCount recorded. Every one of the 5 item-grain differences is ERP < AutoCount:
+
+```
+PO-009304|AK-CS AIRLOFT COMFY PIL  ERP 172  AutoCount 200
+PO-009722|CODY-(Q)                 ERP   1  AutoCount   2
+PO-009790|JAGER-(Q)                ERP   1  AutoCount   2
+PO-009736|AKEMI NOBILITY MATT (K)  ERP   2  AutoCount   3
+PO-009736|AKEMI NOBILITY MATT (SS) ERP   1  AutoCount   2
+```
+
+So on-hand is not overstated by a migrated goods receipt, and no supplier has
+been credited with a delivery that did not happen. What the 89 + 21 + 5 say is
+that AutoCount kept receiving after the ERP's last import and those receipts were
+never carried across — a catching-up job, not a correction. LIKELY cause, not yet
+traced to a line: the same import lane whose freshness `sync-ac-delta` owns.
+
+The 3 broken mirrors point the same way — each GRN line is behind its own PO
+line (`HC-GR-004996-PO-009304` 172 vs 200; `HC-GR-005284-PO-009736` 2 vs 3 and
+1 vs 2), i.e. `received_qty` moved and the goods receipt was not restated.
+
+**The first run of this check, 34134695504, reported "86 invented receipts" and
+was WRONG** — see `docs/bugs/0672-the-goods-receipt-check-called-86-receipts-invented-against.md`.
+That headline is withdrawn.
+
 **The rule to keep.** "NOT APPLICABLE" is not a verdict, and a checker that
 prints it must say what IS applicable or say UNKNOWN. An aggregate that cannot
 reach the line grain still reaches the document grain, and presence-against-

@@ -9,6 +9,7 @@ import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
 import { usePrompt } from "../vendor/scm/components/PromptDialog";
 import { fetchScanSlipImageBlobUrl } from "../vendor/scm/lib/slip";
+import { MobileLinePhotos } from "./MobileLinePhotos";
 import { useStaff, usePickableStaff } from "../vendor/scm/lib/admin-queries";
 import { statusLabel } from "../vendor/scm/lib/status-pill";
 import { useAuth as useHouzsAuth } from "../auth/AuthContext";
@@ -210,6 +211,8 @@ type SoItem = {
      line card's "Type remarks…" box). Served by GET /:docNo all along and
      rendered on neither platform until 2026-08-11 — see the render site. */
   remark?: string | null;
+  photo_urls?: string[] | null;
+  photoUrls?: string[] | null;
 };
 type SoPayment = {
   id: string;
@@ -1078,6 +1081,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
                     {/* The line's REMARK — one renderer, shared with the phone's
                         PO surface since 2026-09-04 (see MobileLineRemark). */}
                     <MobileLineRemark text={it.remark} />
+                    <MobileLinePhotos docNo={docNo} line={it} />
                     {/* UOM only — never the code (see the primary line above). */}
                     {(it.uom ?? "").trim() ? <div className="money" style={{ fontSize: 10, color: "var(--mut2)", marginTop: 3 }}>{it.uom!.trim()}</div> : null}
                     {/* Stock pill + source-PO trace (owner 2026-08-01) — the
