@@ -423,6 +423,32 @@ correction / extract hand-back + company scope),
 
 ## 1. Frontend
 
+### 1a. The Customer Refund screens (2026-09-07, §14)
+
+`PaymentVoucherNew.tsx` opens a third kind on `?type=refund` — **New Customer
+Refund**: no payee typed, no lines, no PI section, no currency; a **Refunds**
+card names the document (Sales Order / Sales Invoice toggle + number, read on
+Enter or blur through `useRefundSource` in `payment-voucher-queries.ts`),
+shows the customer read-only in the header, the payments the document
+collected with an *In the ledger* flag (✓ booked / AutoCount era / not
+booked), the refunds already on it (linked), the three figures (booked here,
+already on refund vouchers, refundable) and a **Refund amount** that opens at
+the headroom; the save sends `refundSourceType`, `refundSourceDocNo`,
+`refundAmountSen` and an empty `lines` — the server composes the Dr AR
+line. An ineligible document prints its reason and shuts the amount. The
+list (`PaymentVouchers.tsx`) grows a **New Customer Refund** button and
+copies a refund as a refund; the Type column reads *Customer Refund*
+(`pv-type-label.ts`, `isRefundPurpose`). The detail
+(`PaymentVoucherDetail.tsx`) labels the payee *Customer*, links **Refunds** to
+the order, hides Supplier and the Type select, and edits the ONE amount
+(`refundAmountSen`) instead of lines. The print (`payment-voucher-pdf.ts`)
+titles the sheet **CUSTOMER REFUND**, REFUND TO the customer, with the
+document. On the order side, `RefundsLine.tsx` under the shared
+`PaymentsTable.tsx` (SAVED mode) lists every refund voucher on the order by
+number with the total refunded — nothing when there is none. Pinned in
+`PaymentVoucherNew.test.tsx`, `PaymentVouchers.test.tsx`, `RefundsLine.test.tsx`,
+`pv-type-label.test.ts`, `payment-voucher-pdf.test.ts`.
+
 | Surface | File |
 |---------|------|
 | Desktop list | `frontend/src/pages/scm-v2/PaymentVouchers.tsx` |
@@ -1005,3 +1031,62 @@ document (drawer → bank). Supplier-payment reports stay clean by
 construction: a transfer's debit leg is a money account, not an expense or
 AP control. Pinned by backend/tests/pvTransfer.test.ts + the same_account
 refusals in the route.
+
+## §14 Customer Refund rides the PV (2026-09-07)
+
+The owner's design check, answered and confirmed (按 1、2、3 的顺序做): a
+refund to a customer is the same paper as a payment voucher — money leaves a
+bank or the drawer through Draft → Prepared → Checked → Approved, with
+attachments, print, batch and audit — with the customer where the supplier
+would be. Purpose `CUSTOMER_REFUND`
+(`20260907T1700_pv_purpose_customer_refund.sql`, an enum value alone in its
+file per 0040's rule); `refund_source_type` (SO / SI), `refund_source_doc_no`,
+`customer_id`, `debtor_code` on the header
+(`20260907T1705_pv_customer_refund_columns.sql`, nullable, with a partial
+index by document). Every rule lives in `lib/pv-refund.ts`; the route file
+holds one-line hooks (it sits at its size ceiling).
+
+- **认单为主.** `GET /payment-vouchers/refund-source?type=SO|SI&docNo=` answers
+  with the document's customer (name, phone, customer_id, debtor code), every
+  payment it collected — marked `booked` when an active SOPAY/SIPAY journal
+  exists — the refunds already on it, and the headroom: `refundableSen` =
+  money THIS ledger booked − every non-cancelled refund voucher (draft or
+  posted, the 0653 reservation shape). `imported` rows and migrated invoices
+  are not booked here and never count. `eligible` + `reason` say why not.
+- **SO any time; SI only when CANCELLED.** A deposit is a Cr AR with no
+  revenue against it, so the refund nets it. A live invoice refunded would
+  leave the customer owing again — the paper for that is the credit note,
+  not built yet — so the route refuses with the reason; a cancelled invoice
+  had its revenue reversed and refunds cleanly.
+- **The one line is the system's.** `POST /payment-vouchers` with purpose
+  `CUSTOMER_REFUND`, `refundSourceType`, `refundSourceDocNo`,
+  `refundAmountSen` (and the money account as Paid From): `refundCreateGuard`
+  loads the source, refuses an ineligible document (409 `refund_not_allowed`)
+  or an amount past the headroom (409 `refund_exceeds_booked`, with the three
+  figures), and composes the single Dr line on `roles.AR` itself — the wire's
+  lines are ignored. The payee is the document's customer name. An edit
+  sends `refundAmountSen` (re-guarded, the line re-composed); `lines` on a
+  refund is refused (`refund_lines_fixed`). The typing-time control lock
+  exempts the refund's own AR line the way it exempts a supplier payment's
+  AP line (`refundOwnControl`).
+- **The GL entry** (`customerRefundLines`, acc/rules.ts): Dr AR (party
+  CUSTOMER — debtor code when the document has one, the name always) / Cr
+  the money account, narration `Customer refund {pv} — {customer} ({doc})`.
+  It offsets the Cr AR the customer's payment booked; 2990's customers have
+  no debtor code, so the two meet by name, which the refund copies from the
+  document.
+- **Numbering: RF.** CHECK mints `{co}{letter}RF-YYMM-NNN` from the money
+  account's letter — cash `{co}CRF` — the voucher date's month; the Draft
+  series is shared with every voucher (`mintFormalPvNo` takes the kind).
+- **Customer credits.** When the document carries a debtor code (HOUZS
+  invoices), POST writes a negative `customer_credits` row
+  (`CUSTOMER_REFUND`, keyed to the voucher) so the credit paid out cannot be
+  spent on the next invoice too; cancel writes it back
+  (`CUSTOMER_REFUND_REVERSAL`). No code, no row (2990).
+- **What else moves: nothing.** The SO/SI keeps its status and paid figures
+  (the money was received); the refund is read off the voucher by the
+  source number. Reports: R&P PAYMENTS under Trade Debtors; Daily Bank a
+  payout; bank rules match it like any PV. Print: the PV layout titled
+  Customer Refund with the document number.
+
+Pinned by `backend/tests/pvCustomerRefund.test.ts`.
