@@ -729,3 +729,47 @@ here should batch the writes rather than issue one statement per value.
   `HC-SO-011850` would deliver 26 units on top of 0 against 25 ordered.
 - 121 delivery orders AutoCount never invoiced. Correctly given no invoice —
   owner: 「发票确定也是 autocount 开了我们才开」.
+
+### 8.6 The verdict — `ac-erp-reconcile`, before and after
+
+Baseline run `34111686290` (current `main`, before any apply). Final run
+`34124410806` (after all ten). Both read-only, both against prod, company 1.
+
+| type | scope | ERP before | ERP after | absent before | **absent after** | price before | price after | money before | money after |
+|---|---|---|---|---|---|---|---|---|---|
+| SO | 2,789 | 2,770 | 2,882 | 112 | **0** | 13 | 13 | 24 | 24 |
+| PO | 484 | 499 | 575 | 77 | **1** | 241 | 241 | 9 | **2** |
+| GR | 214 | 222 | 256 | 34 | **0** | – | – | – | – |
+| DO | 84 | 71 | 171 | 13 | **2** | 52 | **0** | 55 | **2** |
+| IV | 47 | 39 | 42 | 8 | **7** | 0 | 0 | 0 | 0 |
+| PI | 192 | 180 | 202 | 40 | **21** | 0 | 0 | 0 | 0 |
+
+**Disagreements not covered by a declared design difference: 797 -> 470.**
+
+#### FIELD IDENTITY, on the copied fields of PROCEEDED documents
+
+| | before | after | |
+|---|---|---|---|
+| **fields that DIFFER** | **1,262** | **673** | SO 993 -> 652, PO 269 -> 21, DO 0 -> 0 |
+| **blank in the ERP where the book states a value** | **731** | **441** | SO 731 -> 441, PO 0 -> 0, DO 0 -> 0 |
+| values in fields no importer carries at all (SO) | 2,240 | **1** | #3064 gave them columns; the header lane filled them |
+
+The `blank in the ERP` figure is not a straight line between those two readings.
+#3064 landed mid-run and reclassified ~14,130 values from *"no column exists"* to
+*"the column exists and is blank"*, so the intermediate reading (run
+`34120935099`) shows it at **3,025** — higher than the 731 it started at. The
+header lane then took it to 441. Same for SO's "no importer carries it": 2,240
+values had nowhere to go this morning; one does now.
+
+#### The header lane was cancelled mid-write and finished by a re-run
+
+Run `34114714868` wrote for 1h39m and was cancelled at 12:43:51 when a second
+session's `sync-ac-delta` dispatch entered the same concurrency group. Because
+every UPDATE is guarded on the value the plan read, the partial state is not a
+problem: a re-plan measured **1,316 of the 14,916 left**, and run `34123578643`
+wrote `1316 of 1316 intended; 0 skipped`, VERIFY clean.
+
+**Two sessions were dispatching `sync-ac-delta` against prod at the same time.**
+Nothing was corrupted — the lane's design is exactly what absorbed it — but an
+hour and a half of writing was thrown away and had to be re-measured. Serialise
+the go-live dispatches on one operator.
