@@ -419,7 +419,16 @@ on create (his call: 不需要走四层，就录入就好), source RCT
 document leaves the ledger by reversal, never by vanishing. Tables in
 migration 0351. Contracts: `backend/tests/receipts.test.ts` (post shape,
 control/money refusals, void semantics, the three-kind month list),
-`Receipts.test.tsx` (kinds + links + raise payload + void gating).
+`Receipts.test.tsx` (kinds + links + raise payload + void gating). **The
+form carries the receipt's own date and one field dress (2026-09-07,
+owner: 没办法输入日期, 格子等等不整齐, 有些有格子有些没有)**: a Date field
+(DateField, today by default, sent as `receiptDate` — the server already
+took it and dated the number's month by it; the page had simply never
+offered it), and every control — payer, both account pickers, description,
+amount — wears the PV form's `fieldInput` class on a grid (Date | Received
+from | Received into; Description | Account | Amount), the amount a
+MoneyInput that re-dresses to 1,800.00 on blur. Pinned in
+`Receipts.test.tsx`.
 
 **One door to open an account (2026-09-03, the owner: 照理说应该维护
 overall chart of account 罢了)**: `POST /accounting/chart/account` creates
