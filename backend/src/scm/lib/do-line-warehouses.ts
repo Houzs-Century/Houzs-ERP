@@ -46,8 +46,26 @@ export async function resolveDoLineWarehouses(
     .filter((x): x is string => !!x))];
   const soWh = new Map<string, string | null>();
   if (soItemIds.length > 0) {
-    const { data: soRows } = await sb.from('mfg_sales_order_items')
+    const { data: soRows, error } = await sb.from('mfg_sales_order_items')
       .select('id, warehouse_id').in('id', soItemIds);
+    /* The error was UNBOUND until this function moved here, and the ratchet is
+       right that it matters: supabase-js does not throw, so a five-second blip
+       reads as "no SO line has a warehouse" and every line falls through to
+       step 2 - the DO header - which is the single-warehouse default that
+       migration 0118 exists to stop.
+
+       BEHAVIOUR IS UNCHANGED, DELIBERATELY. The fallback still happens; it is
+       now a NAMED decision with a line in the log rather than an accident, and
+       the ten call sites across the ship / resync / restamp / pre-flight paths
+       keep resolving warehouses identically. Resolving a read FAILURE to null
+       instead - callers skip rather than guess - is the stronger fix and it
+       changes what happens to a live shipment during a blip. That belongs in
+       its own PR with its own evidence, not as a rider on a stock guard
+       shipped the night before go-live. */
+    if (error) {
+      // eslint-disable-next-line no-console
+      console.error('[do-warehouse] SO-line warehouse read failed; every line falls back to the DO header:', error.message);
+    }
     for (const r of (soRows ?? []) as Array<{ id: string; warehouse_id: string | null }>) {
       soWh.set(r.id, r.warehouse_id ?? null);
     }
