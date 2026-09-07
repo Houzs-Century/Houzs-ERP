@@ -54,6 +54,7 @@ import { itemGroupsList, itemGroupCreate, itemGroupBind, itemGroupPatch } from '
 import { piPeriodicBackfill } from './accounting-pi-backfill';
 import { stockCloseStatus, stockCloseRun } from './accounting-stock-close';
 import { pnlReport, balanceSheetReport } from './accounting-reports';
+import { receiptsPaymentsReport } from './accounting-rp';
 import { numberingGet, numberingPut } from './accounting-numbering';
 import { receiptsList, receiptEnsure, receiptFormalise } from './accounting-receipts';
 import { ACCOUNT_SECTIONS, defaultSectionFor } from '../lib/account-sections';
@@ -139,6 +140,7 @@ accounting.post('/stock-close/run', stockCloseRun);
 /* The standard statements (GL redesign item 6) — one source (v_gl_entries),
    AutoCount arithmetic; handlers in accounting-reports.ts. */
 accounting.get('/reports/pnl', pnlReport);
+accounting.get('/reports/receipts-payments', receiptsPaymentsReport);
 accounting.get('/reports/balance-sheet', balanceSheetReport);
 /* Voucher numbering — the owner's own levers (GL redesign item 8a): per-bank
    letters + suffix width. Handlers in accounting-numbering.ts. */

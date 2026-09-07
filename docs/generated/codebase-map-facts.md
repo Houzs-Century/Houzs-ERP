@@ -11,7 +11,7 @@ FOR, which trees are dead, what must be changed in pairs — lives in
 
 ## 1. Backend route inventory
 
-170 route modules (46 in `backend/src/routes`, 124 in `backend/src/scm/routes`), 1193 endpoint registrations.
+171 route modules (46 in `backend/src/routes`, 125 in `backend/src/scm/routes`), 1194 endpoint registrations.
 
 An endpoint is a `router.<method>("/…")` registration. For the per-route authorization
 boundary see the sibling artifact `docs/generated/route-capability-matrix.csv`, which
@@ -73,9 +73,10 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/accounting-pi-backfill.ts` | 0 | 149 |
 | `backend/src/scm/routes/accounting-receipts.ts` | 0 | 88 |
 | `backend/src/scm/routes/accounting-reports.ts` | 0 | 186 |
+| `backend/src/scm/routes/accounting-rp.ts` | 0 | 316 |
 | `backend/src/scm/routes/accounting-settlement.ts` | 0 | 1237 |
 | `backend/src/scm/routes/accounting-stock-close.ts` | 0 | 53 |
-| `backend/src/scm/routes/accounting.ts` | 74 | 1449 |
+| `backend/src/scm/routes/accounting.ts` | 75 | 1451 |
 | `backend/src/scm/routes/addons.ts` | 4 | 215 |
 | `backend/src/scm/routes/amendment-mirror.ts` | 1 | 126 |
 | `backend/src/scm/routes/ap-invoice-files.ts` | 0 | 50 |
@@ -205,7 +206,7 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1985 files, 699532 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1993 files, 700295 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -401,7 +402,7 @@ Page files by directory:
 | `frontend/src/pages` | 36 |
 | `frontend/src/pages/MailCenter` | 3 |
 | `frontend/src/pages/announcements` | 4 |
-| `frontend/src/pages/scm-v2` | 145 |
+| `frontend/src/pages/scm-v2` | 146 |
 | `frontend/src/pages/scm-v2/products` | 1 |
 | `frontend/src/pages/team` | 10 |
 
