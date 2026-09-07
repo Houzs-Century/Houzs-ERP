@@ -136,3 +136,29 @@ export function missingGridFacts(rawHeader: string[]): { needsCategory: boolean;
     needsTier: rawHeader.some((h) => gridSizeHeaderToKey(h) !== null) && !mapped.includes('price_tier'),
   };
 }
+
+/** What to tell the operator when a file yielded no importable row.
+ *
+ *  Lives here, beside the rules it is explaining, rather than inline in the
+ *  page: the page is one of the large ones and the size ratchet refuses growth,
+ *  which is the repo asking for the prose to sit next to the rule. It also
+ *  keeps the two in step — a message that drifts from the check it describes is
+ *  how "No rows had a code" came to be printed over 163 rows that all had one.
+ *
+ *  `headersSeen` are the RAW normalised headings, so the missing-facts test can
+ *  see a size column before it is mapped. */
+export function importFailureMessage(headersSeen: string[]): string {
+  const missing = missingGridFacts(headersSeen);
+  const lacks = [
+    missing.needsCategory ? 'a category column' : '',
+    missing.needsTier ? 'the price tier its prices belong to' : '',
+  ].filter(Boolean).join(' and ');
+  if (lacks) {
+    return `This sheet is missing ${lacks}. Older exports left both out — the table`
+      + ' now writes them, so export the page again and edit THAT file. They are not'
+      + ' guessed here: a price filed under the wrong tier is worse than one not filed.';
+  }
+  return `No rows had a code. The columns in this file are: ${headersSeen.join(', ') || '(none)'}.`
+    + ' A row needs a `code`; a code the system does not have yet also needs `name`'
+    + ' and `category`.';
+}
