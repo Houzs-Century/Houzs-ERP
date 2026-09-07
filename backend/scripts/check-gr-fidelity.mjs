@@ -27,12 +27,31 @@
  * ERP invented. That test is presence-versus-absence, it cannot be confounded
  * by sofa compartments or by a code map, and it is the headline of this check.
  *
- * TWO INDEPENDENT AUTOCOUNT MEASURES, cross-checked against each other before
- * either is used as truth: PODTL.TransferedQty (the PO line's own record of how
- * much has been transferred to a receipt) and SUM(GRDTL.Qty) (the receipt
- * documents themselves). They are written by different parts of AutoCount. This
- * check prints how far they agree; where they disagree it says so and treats
- * the PO as UNVERIFIABLE rather than picking a winner.
+ * THE SNAPSHOT MUST BE THE FRESHEST ONE, AND THE FIRST VERSION OF THIS CHECK
+ * GOT THAT WRONG. Run 34134695504 reported "86 of 320 migrated goods receipts
+ * INVENTED — AutoCount never received against this purchase order". It was
+ * measured against `ac-fidelity-*`, cut 2026-08-11. Checked against
+ * `ac-convert-edges.json.gz`, cut from the live book 2026-09-07 08:39, ALL 40
+ * of the 40 named purchase orders had in fact been received — between the two
+ * cuts. 145 purchase orders received more in that window and none received
+ * less. The ERP was right and the check was a month behind, which is precisely
+ * the shape of `docs/bugs/0666`: a comparison that cannot see one of its own
+ * axes reports the axis as a defect.
+ *
+ * So the receipt truth here is `ac-convert-edges.json.gz` — PODTL per line,
+ * with `itemKey` and `transferedQty`, from the live book — and the older
+ * `ac-fidelity-*` pair is kept only as a SECOND measure. Where the two
+ * disagree the answer is the fresh one, and the gap is reported as STALE rather
+ * than as a finding. The check prints both timestamps and refuses to call
+ * anything invented on the strength of the older cut alone.
+ *
+ * THREE INDEPENDENT AUTOCOUNT MEASURES, cross-checked before any is used as
+ * truth: PODTL.TransferedQty from the live export (primary), the same column
+ * from the 2026-08-11 cut, and SUM(GRDTL.Qty) over the receipt documents
+ * themselves. They are written by different parts of AutoCount and cut at
+ * different times. This check prints how far they agree; where the two
+ * SAME-VINTAGE measures disagree it says so and treats the PO as UNVERIFIABLE
+ * rather than picking a winner.
  *
  * SOFA IS A SHAPE DIFFERENCE, NOT A DIVERGENCE. One AutoCount sofa line becomes
  * one ERP line per COMPARTMENT, and the importer writes the SAME received
@@ -88,6 +107,14 @@ async function main() {
   const manifest = JSON.parse(fs.readFileSync(path.join(here, "data", "ac-fidelity-manifest.json"), "utf8"));
   const acPoL = gz("ac-fidelity-po-lines.json.gz");
   const acGr = gz("ac-fidelity-gr-by-po-item.json.gz");
+  /* THE PRIMARY TRUTH. Cut from the live book, so it is the only source allowed
+     to decide that a receipt AutoCount does not know about is a defect. */
+  const edges = gz("ac-convert-edges.json.gz");
+  const EL = edges.line_fields;
+  const eIdx = (n) => { const i = EL.indexOf(n); if (i < 0) throw new Error(`ac-convert-edges has no line field "${n}"`); return i; };
+  const eDoc = eIdx("docNo"), eItem = eIdx("itemKey"), eTrans = eIdx("transferedQty");
+  const edgePoLines = edges.types?.PO?.lines ?? [];
+  if (!edgePoLines.length) throw new Error("ac-convert-edges carries no PO lines; this check cannot answer");
 
   const csv = fs.readFileSync(path.join(here, "data", "autocount-erp-mapping-1561.csv"), "utf8")
     .replace(/^﻿/, "").split(/\r?\n/).filter(Boolean);
@@ -97,13 +124,18 @@ async function main() {
   const erpCodeOf = (acItem) => mapAc.get(norm(acItem)) || null;
   const acIsSofa = (code) => /SOFA/i.test(code || "") || /-1S$/i.test(erpCodeOf(code) || "");
 
+  const ageDays = (a, b) => Math.round((Date.parse(b) - Date.parse(a)) / 86400000);
   log("=".repeat(96));
   log("GOODS RECEIPTS — did the ERP record the receipts AutoCount actually made?");
   log("=".repeat(96));
-  log(`AutoCount snapshot: ${manifest.exported_at}  (${manifest.source})`);
-  log(`  po_lines=${manifest.counts.po_lines}  gr_by_po_item=${manifest.counts.gr_by_po_item}`);
+  log("THE TWO SNAPSHOTS, and which one decides:");
+  log(`  PRIMARY  ac-convert-edges.json.gz   ${edges.exported_at}   ${edgePoLines.length} PO lines`);
+  log(`  second   ac-fidelity-*              ${manifest.exported_at}   ${manifest.counts.po_lines} PO lines, gr_by_po_item ${manifest.counts.gr_by_po_item}`);
+  log(`  the second cut is ${ageDays(manifest.exported_at, edges.exported_at)} day(s) older. NOTHING is called a defect on its strength alone:`);
+  log("  the first version of this check did exactly that and reported 86 invented receipts that the");
+  log("  live book had simply received after the older cut was taken.");
   log(`  GRDTL rows carrying a line-level key back to the PO line: ${manifest.grdtl_rows_with_line_key} of ${manifest.grdtl_rows}`);
-  log("  -> the finest grain the export preserves is (PO document, item code). Everything below is");
+  log("  -> the finest grain either export preserves is (PO document, item code). Everything below is");
   log("     reported at that grain or coarser, and never pretends to a line identity it does not have.");
   log("");
 
@@ -134,19 +166,45 @@ async function main() {
     acGrByPoItem.set(k, (acGrByPoItem.get(k) ?? 0) + n0(r.GrQtySum));
   }
 
-  const allAcPo = new Set([...acTransferByPo.keys(), ...acGrByPo.keys()]);
+  /* THE PRIMARY MEASURE — the live book. */
+  const liveTransferByPo = new Map();
+  const liveByPoItem = new Map();
+  for (const r of edgePoLines) {
+    const po = r[eDoc];
+    liveTransferByPo.set(po, (liveTransferByPo.get(po) ?? 0) + n0(r[eTrans]));
+    const e = erpCodeOf(r[eItem]);
+    const k = `${po}|${norm(e ?? r[eItem])}`;
+    liveByPoItem.set(k, (liveByPoItem.get(k) ?? 0) + n0(r[eTrans]));
+  }
+
+  const allAcPo = new Set([...liveTransferByPo.keys(), ...acTransferByPo.keys(), ...acGrByPo.keys()]);
   let xAgree = 0; const xDiff = [];
   for (const p of allAcPo) {
+    if (!acTransferByPo.has(p) && !acGrByPo.has(p)) continue;   // only in the live cut: nothing to cross-check
     const t = r0(acTransferByPo.get(p)), q = r0(acGrByPo.get(p));
     if (t === q) xAgree += 1; else xDiff.push({ po: p, t, q });
   }
-  log("AUTOCOUNT INTERNAL CROSS-CHECK — two independent measures of the same fact");
+  /* How far the book MOVED between the two cuts. This is the number that turned
+     the first run's headline into a false alarm, so it is printed before any
+     finding rather than discovered afterwards. */
+  let moved = 0, movedUnits = 0, shrank = 0;
+  for (const [p, live] of liveTransferByPo) {
+    if (!acTransferByPo.has(p)) continue;
+    const d = r0(live) - r0(acTransferByPo.get(p));
+    if (d > 0) { moved += 1; movedUnits += d; } else if (d < 0) shrank += 1;
+  }
+  log("AUTOCOUNT AGAINST ITSELF — three measures, two vintages");
   log("-".repeat(96));
-  log("  PODTL.TransferedQty (the purchase order's own record) vs SUM(GRDTL.Qty) (the receipt documents).");
-  log(`  agree ${pad(xAgree, 6)} of ${allAcPo.size} purchase orders`);
-  log(`  differ${pad(xDiff.length, 6)} — these purchase orders are reported UNVERIFIABLE below, never guessed at`);
-  for (const d of xDiff.slice(0, TOP)) log(`     ${d.po}  TransferedQty ${d.t}   GRDTL ${d.q}`);
-  if (xDiff.length > TOP) log(`     ... and ${xDiff.length - TOP} more`);
+  log("  (a) same vintage: PODTL.TransferedQty vs SUM(GRDTL.Qty), both from the 2026-08-11 cut.");
+  log(`      agree ${pad(xAgree, 6)} of ${xAgree + xDiff.length} purchase orders`);
+  log(`      differ${pad(xDiff.length, 6)} — reported UNVERIFIABLE below, never guessed at`);
+  for (const d of xDiff.slice(0, TOP)) log(`         ${d.po}  TransferedQty ${d.t}   GRDTL ${d.q}`);
+  if (xDiff.length > TOP) log(`         ... and ${xDiff.length - TOP} more`);
+  log("");
+  log("  (b) different vintage: how far the book MOVED between the two cuts.");
+  log(`      purchase orders that received MORE  ${pad(moved, 6)}   (+${movedUnits} unit(s))`);
+  log(`      purchase orders that received LESS  ${pad(shrank, 6)}   (AutoCount does not un-receive; a non-zero here means a cut is wrong)`);
+  log("      Every one of these would be a false 'invented receipt' if the older cut were used as truth.");
   const ambiguous = new Set(xDiff.map((d) => d.po));
   log("");
 
@@ -212,14 +270,21 @@ async function main() {
     if (String(gi.item_group ?? "").toLowerCase() === "sofa") erpGrSofaPo.add(gi.ac);
   }
 
-  const acReceived = (po) => Math.max(r0(acTransferByPo.get(po)), r0(acGrByPo.get(po)));
-  const acNeverReceived = (po) => r0(acTransferByPo.get(po)) === 0 && r0(acGrByPo.get(po)) === 0;
+  /* THE LIVE CUT DECIDES. The older pair can only ever RAISE the figure, never
+     lower it: a receipt it knows about is a receipt, and one it has not seen yet
+     is the staleness, not a defect. */
+  const inLive = (po) => liveTransferByPo.has(po);
+  const acReceived = (po) => Math.max(r0(liveTransferByPo.get(po)), r0(acTransferByPo.get(po)), r0(acGrByPo.get(po)));
+  const acNeverReceived = (po) => inLive(po) && acReceived(po) === 0;
 
-  const phantom = [];      // ERP has a receipt, AutoCount recorded none at all
+  const phantom = [];      // ERP has a receipt, the LIVE book recorded none at all
+  const staleOnly = [];    // the older cut says none, the live cut says received — staleness, not a defect
   const notInSnapshot = [];
   for (const [po, g] of erpGrnByAcPo) {
-    if (!allAcPo.has(po) && !acPoLineCount.has(po)) { notInSnapshot.push({ po, grn: g.grn_number }); continue; }
+    if (!inLive(po)) { notInSnapshot.push({ po, grn: g.grn_number }); continue; }
+    const wouldHaveFlagged = r0(acTransferByPo.get(po)) === 0 && r0(acGrByPo.get(po)) === 0 && acPoLineCount.has(po);
     if (acNeverReceived(po)) phantom.push({ po, grn: g.grn_number, units: r0(erpGrUnitsByPo.get(po)), lines: erpGrLinesByPo.get(po) ?? 0, sofa: erpGrSofaPo.has(po) });
+    else if (wouldHaveFlagged) staleOnly.push({ po, grn: g.grn_number, live: r0(liveTransferByPo.get(po)) });
   }
   const missing = [];      // AutoCount received, the ERP holds the PO, but no goods receipt exists
   for (const p of erpPo) {
@@ -243,8 +308,12 @@ async function main() {
   log("     (AutoCount received against this purchase order; the ERP holds the PO but no goods receipt)");
   for (const m of missing.slice(0, TOP)) log(`     ${m.erpPo.padEnd(24)} ${m.po}  AutoCount received ${m.acUnits} unit(s)`);
   if (missing.length > TOP) log(`     ... and ${missing.length - TOP} more`);
+  log(`  STALE, NOT INVENTED      ${pad(staleOnly.length, 6)}  the 2026-08-11 cut shows nothing received and the LIVE book shows a receipt.`);
+  log("     The ERP is right and the older snapshot is behind. These are NOT findings and are not counted.");
+  for (const s of staleOnly.slice(0, Math.min(5, TOP))) log(`     ${s.grn.padEnd(24)} ${s.po}  live book received ${s.live} unit(s)`);
+  if (staleOnly.length > 5) log(`     ... and ${staleOnly.length - 5} more`);
   if (notInSnapshot.length) {
-    log(`  NOT IN THE SNAPSHOT      ${pad(notInSnapshot.length, 6)}  (the purchase order is absent from the AutoCount export — UNVERIFIABLE)`);
+    log(`  NOT IN THE LIVE EXPORT   ${pad(notInSnapshot.length, 6)}  (the purchase order is absent from ac-convert-edges — UNVERIFIABLE)`);
     for (const n of notInSnapshot.slice(0, TOP)) log(`     ${n.grn.padEnd(24)} ${n.po}`);
   }
   log("");
@@ -252,9 +321,9 @@ async function main() {
   // ── TEST 3 — quantity, at the purchase order document grain ──
   const cmp = { agree: [], erpMore: [], erpFewer: [], unverifiable: [] };
   for (const [po] of erpGrnByAcPo) {
-    if (!allAcPo.has(po) && !acPoLineCount.has(po)) continue;
+    if (!inLive(po)) continue;
     const erpU = r0(erpGrUnitsByPo.get(po));
-    if (ambiguous.has(po)) { cmp.unverifiable.push({ po, erpU, reason: "AutoCount's two measures disagree" }); continue; }
+    if (ambiguous.has(po)) { cmp.unverifiable.push({ po, erpU, reason: "AutoCount's two same-vintage measures disagree" }); continue; }
     const acU = acReceived(po);
     const row = { po, erpU, acU, sofa: erpGrSofaPo.has(po) || acPoHasSofa.has(po) };
     if (erpU === acU) cmp.agree.push(row);
@@ -302,15 +371,20 @@ async function main() {
   let itemAgree = 0; const itemDiff = []; let itemNoAc = 0;
   for (const [k, v] of erpByPoItem) {
     const po = k.split("|")[0];
-    if (ambiguous.has(po) || acNeverReceived(po)) continue;   // already reported by Test 2 / Test 3
-    if (!acGrByPoItem.has(k)) { itemNoAc += 1; continue; }
-    if (r0(v) === r0(acGrByPoItem.get(k))) itemAgree += 1;
-    else itemDiff.push({ k, erp: r0(v), ac: r0(acGrByPoItem.get(k)) });
+    if (!inLive(po) || ambiguous.has(po) || acNeverReceived(po)) continue;   // already reported by Test 2 / Test 3
+    /* Both AutoCount measures again, and the LIVE one wins: the older cut can
+       only under-report. */
+    const ac = Math.max(r0(liveByPoItem.get(k)), r0(acGrByPoItem.get(k)));
+    if (!liveByPoItem.has(k) && !acGrByPoItem.has(k)) { itemNoAc += 1; continue; }
+    if (r0(v) === ac) itemAgree += 1;
+    else itemDiff.push({ k, erp: r0(v), ac });
   }
   log("TEST 4 — received quantity at (purchase order, item code) grain, sofa lines excluded");
   log("-".repeat(96));
-  log("  The finest grain the AutoCount export supports. The AutoCount item code is translated to the");
-  log("  ERP code through autocount-erp-mapping-1561.csv, the same map the migration itself used.");
+  log("  The finest grain either AutoCount export supports. The AutoCount item code is translated to");
+  log("  the ERP code through autocount-erp-mapping-1561.csv, the same map the migration itself used.");
+  log("  The live cut's PODTL.TransferedQty per (docNo, itemKey) is the truth; the older GRDTL");
+  log("  aggregate can only raise the figure, never lower it.");
   log(`  agree            ${pad(itemAgree, 6)} of ${itemAgree + itemDiff.length} comparable (purchase order, item) pairs`);
   log(`  differ           ${pad(itemDiff.length, 6)}`);
   log(`  no AutoCount row ${pad(itemNoAc, 6)}  (the code did not translate, or AutoCount received a different code — UNVERIFIABLE)`);
@@ -332,8 +406,10 @@ async function main() {
     log(`  sofa-free quantity ${noSofa(cmp.erpMore).length + noSofa(cmp.erpFewer).length}, sofa short ${sofa(cmp.erpFewer).length}, item-grain ${itemDiff.length}.`);
   }
   log(`UNVERIFIABLE, stated rather than hidden: ${cmp.unverifiable.length} purchase order(s) where AutoCount's own`);
-  log(`two measures disagree, ${itemNoAc} (purchase order, item) pair(s) with no AutoCount counterpart,`);
-  log(`${mirrorNoLink} goods receipt line(s) with no purchase order line, ${notInSnapshot.length} purchase order(s) absent from the snapshot.`);
+  log(`two same-vintage measures disagree, ${itemNoAc} (purchase order, item) pair(s) with no AutoCount counterpart,`);
+  log(`${mirrorNoLink} goods receipt line(s) with no purchase order line, ${notInSnapshot.length} purchase order(s) absent from the live export.`);
+  log(`NOT counted as findings: ${staleOnly.length} goods receipt(s) the 2026-08-11 cut would have called invented and the`);
+  log("live book confirms. That gap is the reason this check reads the live export first.");
   log("Read-only check. Repairing anything found here is a separate, owner-approved change.");
   log(`(${((Date.now() - started) / 1000).toFixed(1)}s)`);
 }

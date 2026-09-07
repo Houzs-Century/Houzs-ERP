@@ -19,6 +19,7 @@ Run workflow。
 | [34132704988](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34132704988) | 第一次跑，用新快照。发现两个报错的地方 |
 | [34133023365](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34133023365) | 修好第一个之后 |
 | [34133528726](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34133528726) | **最终数字，本文全部引用这一次** |
+| [34135024572](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34135024572) | 合并进 main 之后再跑一次，数字**完全一样**，确认不是分支上的特例 |
 
 ---
 
