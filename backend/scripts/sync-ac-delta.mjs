@@ -474,6 +474,10 @@ async function main() {
   const claimed = new Set(poItems.filter((i) => i.so_item_id).map((i) => String(i.so_item_id)));
   const linkPlan = [];
   const linkMissing = [];
+  /* Dedications REFUSED because the ERP's two rows name different products —
+     the guard below. Reported in its own row so it can never be read as
+     "nothing to link". */
+  const linkMismatch = [];
   for (const e of S.edges.PO || []) {
     const key = acFromSoDtlKey(e);
     if (key == null) continue;
@@ -483,6 +487,37 @@ async function main() {
     if (!si) { linkMissing.push({ po: e.DocNo, why: `the SO line ${key} (${e.FromDocNo}) is not in the ERP` }); continue; }
     if (pi.so_item_id) continue;
     if (claimed.has(String(si.id))) { linkMissing.push({ po: e.DocNo, why: `SO line ${key} is already dedicated to another PO line` }); continue; }
+    /* THE TWO ERP ROWS MUST NAME THE SAME PRODUCT, and until 2026-09-07 nothing
+       here checked. The DtlKey pair is AutoCount's link and it is sound — the
+       book's own PODTL.FromSODtlKey resolves to an SO line with an IDENTICAL
+       item code on every one of the pairs below — so a disagreement is between
+       OUR two rows, not between us and the book, and writing the dedication
+       anyway buries it under a link that then reads as evidence.
+
+       It cost 9 wrong dedications in production. Run 34123720786 (2026-09-07
+       12:46Z, mode=apply) wrote 10; the sofa chain audit's SO->PO code mismatch
+       went from 0 (run 34119014176, 11:54Z) to 9 (run 34130736979, 14:02Z), and
+       every one is our sales-order line naming a different bed from the purchase
+       order line now dedicated to it — HC-SO-002558's REGAL (A)-(K) bound to a
+       TRION (A) (HB STR)-(K), HC-SO-011752's CODY-(Q) to a JAGER-(Q),
+       HC-SO-010916's JAGER-(Q) to a JAGER-(SS). In all 9 the mapping sheet and
+       the book agree with the PURCHASE ORDER.
+
+       Why a wrong dedication is not cosmetic: a bedframe or sofa line is
+       hard-bound (`isHardBoundLine`, src/scm/lib/so-stock-allocation.ts) and
+       reads READY only through its OWN dedicated purchase order's received_qty.
+       So the customer's REGAL now lights up when a TRION is received, and the
+       real REGAL line stays dark. UNDER-REPAIR, NEVER WRONG-LINK — the same
+       rule buildMigratedDoPlan states for the delivery matcher. */
+    const nk = (s) => String(s ?? "").trim().toUpperCase().replace(/\s+/g, " ");
+    if (nk(si.item_code) !== nk(pi.item_code)) {
+      linkMismatch.push({
+        po: e.DocNo, poNo: pi.po_number, soNo: e.FromDocNo, soDoc: si.doc_no,
+        poItemId: String(pi.id), soItemId: String(si.id), soDtl: String(key), poDtl: String(e.DtlKey),
+        soCode: si.item_code, poCode: pi.item_code,
+      });
+      continue;
+    }
     claimed.add(String(si.id));
     linkPlan.push({ poItemId: pi.id, soItemId: si.id, poNo: pi.po_number, soNo: e.FromDocNo });
   }
@@ -528,6 +563,11 @@ async function main() {
   log(`  SO->PO dedications this run would write      ${linkPlan.length}`);
   log(`  SO->PO edges that cannot be linked yet       ${linkMissing.length}`);
   for (const m of linkMissing.slice(0, 10)) log(`   ${m.po}: ${m.why}`);
+  log(`  REFUSED, the two ERP rows name DIFFERENT products  ${linkMismatch.length}   <- never written; a wrong dedication makes MRP light the wrong bed`);
+  for (const m of linkMismatch) {
+    log(`   REFUSED ${m.poNo} (${m.po}) line "${m.poCode}"  <-x-  ${m.soDoc} (${m.soNo}) line "${m.soCode}"`);
+    log(`      AutoCount pairs SODtlKey ${m.soDtl} with PODtlKey ${m.poDtl} and the BOOK's two lines carry the same item code, so the disagreement is between OUR two rows. Resolve which of the two is the faithful copy before any dedication is written; so_item_id stays NULL until then.`);
+  }
   log("  conversions on the delta documents (the source is walked back to an SO or a PO):");
   for (const k of ["DO", "IV", "GR", "PI"]) {
     const c = convByType[k];
