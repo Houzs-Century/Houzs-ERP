@@ -624,7 +624,7 @@ named in §3.
 
 ## 7. What is NOT proven here
 
-- **That the applies will succeed.** Every apply in §3 is UNTESTED by this
+- ~~**That the applies will succeed.**~~ CLOSED 2026-09-07 — §8 is the applied log. Originally: every apply in §3 was UNTESTED by this
   report — the brief forbade `apply=1`, correctly. The dry-runs are the
   evidence that the plans are sane; they are not evidence that the writes land.
 - **That §3's order is complete.** It is derived from `docs/ac-resync-runbook.md`
@@ -632,3 +632,144 @@ named in §3.
   A step nobody has needed yet would not appear.
 - **Whether the pre-lock window (§5.5) contains edits.** UNKNOWN.
 - **Whether bedframe needs more than D1** (§5.3). LIKELY a gap; ask the owner.
+
+---
+
+## 8. APPLIED — 2026-09-07, the go-live run
+
+§7 opened by saying every apply above was UNTESTED. This section closes that:
+the runs below were **dispatched against prod** and their output pasted. Every
+row names the run id, so nothing here has to be taken on trust.
+
+### 8.1 What was applied, in dependency order
+
+| # | job | plan (re-measured on the day) | what it wrote | run |
+|---|---|---|---|---|
+| 1 | `import-ac-outstanding-so` `sofa=yes` | 2,789 source orders / 14,041 lines; 112 absent | **112 orders, 558 items, 108 payments**; 2,677 skipped-existing; 108 exceptions | 34112020535 |
+| 2 | `import-ac-outstanding-po` `sofa=no` | 159 POs / 429 lines / RM 582,827.90 | **70 POs, 156 items**; 89 skipped-existing; 1 exception | 34112625997 |
+| 2b | `import-ac-outstanding-po` `sofa=yes` | 190 POs — **all 190 already in the ERP** | nothing to do; the sofa POs came in through steps 2 and 3 | 34119669091 |
+| 3 | `import-ac-so-linked-pos` | 6 POs / 15 lines, 0 unresolved | **6 POs, 15 lines, 15 dedications** | 34112984269 |
+| 4 | `stamp-ac-grn-refs` | 60 to stamp, 0 unimported | **60 POs stamped**; no GRN, no stock | 34113197377 |
+| 5 | `create-migrated-documents kind=both` | GRN 1, DO 11 | **1 GRN + 11 DOs**, no inventory movement | 34113377388 |
+| 6 | `create-migrated-invoices` | PI 4, SI 1 | **5 invoices**, VERIFY OK | 34113583399 |
+| 7 | `sync-ac-delta lanes=recv,do,dedi do_scope=since` | recv 241 / do 89 / dedi 0 | **241 received_qty, 89 delivery documents, 0 inventory movements** | 34113822612 |
+| 8 | `repair-migrated-do-prices mode=apply` | 65 lines / 56 documents | **65 lines, 56 documents** (63 real, 2 zero-qty — see 0665) | 34116824015 |
+| 9 | `create-migrated-invoices` (again, after the 89 new DOs) | SI 2 | **2 invoices**, VERIFY OK | 34118636973 |
+| 10 | `sync-ac-delta lanes=hdr` | 14,916 field values / 3,456 documents | see 8.4 | 34114714868 |
+
+The invoice job was run TWICE on purpose. Step 7 created 89 delivery orders, and
+a delivery order is an invoice SOURCE — `doToIv` could not see them on the first
+pass. Its source count went 82 -> 171 and two more invoices AutoCount had
+actually raised became writable.
+
+### 8.2 The read-back, not the write count
+
+A row count answers "did a row change". These are re-measurements:
+
+| | before | after | run |
+|---|---|---|---|
+| `recv` lines still to raise | 241 on 111 POs | **0 on 0 POs** | 34114554129 |
+| `received_qty` AGREES with AutoCount `TransferedQty` | 869 | **1,281** | ” |
+| ERP received LESS than the book says | 241 lines | **0 lines** | ” |
+| `do` documents still to create | 89 | **0** | ” |
+| ERP mirrors delivery orders | 71 | **171** | ” |
+| ERP mirrors GRNs | 319 | **320** | ” |
+| zero-priced migrated DO lines that are REPAIRABLE | 65 | **0** | 34119785887 |
+
+### 8.3 Two defects the applies exposed, both fixed the same day
+
+- **#3068** — `sync-ac-delta` verified lanes it did not run, so `LANES=recv,do,dedi`
+  exited 1 after writing 241/241 and 89/89 correctly. A red apply against
+  production reads as "back it out", and backing that one out would have
+  discarded correct data. `docs/bugs/0665-sync-ac-delta-verified-lanes-it-did-not-run-so-a-lanes-subse.md`.
+- **#3069** — `repair-migrated-do-prices` selected work on the SALES ORDER's unit
+  price but verified on the DELIVERY line total, so two `qty = 0` lines were
+  written correctly as 0, failed the shape check, and were re-proposed for ever.
+  `docs/bugs/0665-the-do-price-repair-re-proposed-two-zero-quantity-lines-for.md`.
+
+### 8.4 Why the header plan is 14,916 and not 786
+
+The header lane was planned at **786 field values across 382 documents** at
+10:25. Re-planned at 11:00 it read **14,916 across 3,456**. The whole difference
+is #3064, which merged in between and gave seven AutoCount header fields an ERP
+column for the first time — `attention`, `delivery_address1..4`, `display_term`,
+`ac_to_po_no`. Those columns are 100% blank in the ERP by construction, so the
+lane now plans to FILL them:
+
+```
+display_term 3456 + delivery_address1 2878 + delivery_address3 2738
++ delivery_address4 2517 + delivery_address2 1802 + ac_to_po_no 495
++ attention 244                                        = 14,130
+14,130 + the original 786                              = 14,916
+```
+
+Nothing is overwritten: `human` reads 0 on every field, and the new columns had
+no value to lose. The 786 that were always in the plan are unchanged.
+
+**It is slow.** 14,916 guarded single-row UPDATEs over Hyperdrive from a runner
+ran for well over an hour. Measured mid-flight against the reconcile, the SO
+"ERP blank where the book states a value" count fell 3,025 -> 2,554 in 22
+minutes. The lane is convergent and every UPDATE is guarded on the value it
+read, so an interrupted run is finished by re-running it — but a future change
+here should batch the writes rather than issue one statement per value.
+
+### 8.5 Still open after this run
+
+- **270 purchase invoices refused** as `total_disagrees_with_autocount`. 95 are
+  ours at RM 0.00 — a price the cutover dropped, writable once the AutoCount
+  invoice price is stamped on the source lines. **175 have both sides priced and
+  genuinely differ: those need a human.**
+- **648 zero-priced migrated DO lines** whose SALES ORDER line is itself zero.
+  COPY-NEVER-COMPUTE says leave them; they are the same dropped-price family.
+- **PO unit price: 241 lines differ** in the reconcile, unchanged by this run.
+- `HC-PO-009944` — **do not delete**; a dump-then-delete workflow is being written.
+- `PO-009979` — one code-less line held back; it needs an accessory product first
+  (`item_code` is NOT NULL). Owner 2026-09-02: 「要进 accessories」.
+- 5 delivery documents REFUSED by lane `do`'s over-delivery guard, e.g.
+  `HC-SO-011850` would deliver 26 units on top of 0 against 25 ordered.
+- 121 delivery orders AutoCount never invoiced. Correctly given no invoice —
+  owner: 「发票确定也是 autocount 开了我们才开」.
+
+### 8.6 The verdict — `ac-erp-reconcile`, before and after
+
+Baseline run `34111686290` (current `main`, before any apply). Final run
+`34124410806` (after all ten). Both read-only, both against prod, company 1.
+
+| type | scope | ERP before | ERP after | absent before | **absent after** | price before | price after | money before | money after |
+|---|---|---|---|---|---|---|---|---|---|
+| SO | 2,789 | 2,770 | 2,882 | 112 | **0** | 13 | 13 | 24 | 24 |
+| PO | 484 | 499 | 575 | 77 | **1** | 241 | 241 | 9 | **2** |
+| GR | 214 | 222 | 256 | 34 | **0** | – | – | – | – |
+| DO | 84 | 71 | 171 | 13 | **2** | 52 | **0** | 55 | **2** |
+| IV | 47 | 39 | 42 | 8 | **7** | 0 | 0 | 0 | 0 |
+| PI | 192 | 180 | 202 | 40 | **21** | 0 | 0 | 0 | 0 |
+
+**Disagreements not covered by a declared design difference: 797 -> 470.**
+
+#### FIELD IDENTITY, on the copied fields of PROCEEDED documents
+
+| | before | after | |
+|---|---|---|---|
+| **fields that DIFFER** | **1,262** | **673** | SO 993 -> 652, PO 269 -> 21, DO 0 -> 0 |
+| **blank in the ERP where the book states a value** | **731** | **441** | SO 731 -> 441, PO 0 -> 0, DO 0 -> 0 |
+| values in fields no importer carries at all (SO) | 2,240 | **1** | #3064 gave them columns; the header lane filled them |
+
+The `blank in the ERP` figure is not a straight line between those two readings.
+#3064 landed mid-run and reclassified ~14,130 values from *"no column exists"* to
+*"the column exists and is blank"*, so the intermediate reading (run
+`34120935099`) shows it at **3,025** — higher than the 731 it started at. The
+header lane then took it to 441. Same for SO's "no importer carries it": 2,240
+values had nowhere to go this morning; one does now.
+
+#### The header lane was cancelled mid-write and finished by a re-run
+
+Run `34114714868` wrote for 1h39m and was cancelled at 12:43:51 when a second
+session's `sync-ac-delta` dispatch entered the same concurrency group. Because
+every UPDATE is guarded on the value the plan read, the partial state is not a
+problem: a re-plan measured **1,316 of the 14,916 left**, and run `34123578643`
+wrote `1316 of 1316 intended; 0 skipped`, VERIFY clean.
+
+**Two sessions were dispatching `sync-ac-delta` against prod at the same time.**
+Nothing was corrupted — the lane's design is exactly what absorbed it — but an
+hour and a half of writing was thrown away and had to be re-measured. Serialise
+the go-live dispatches on one operator.
