@@ -1938,7 +1938,15 @@ data error.
   order is reading the document.
 - **The column** is added by
   `backend/src/db/migrations-pg/20260907T2340_scm_do_item_ac_substituted.sql` and
-  written only by `backend/scripts/lib/migrated-do-writer.mjs`.
+  written only by `backend/scripts/lib/migrated-do-writer.mjs`. That migration
+  takes the `ACCESS EXCLUSIVE` lock with a **3s `lock_timeout` and up to 20
+  retries**, because its first, bare form timed out waiting for the lock on a
+  live cutover table and blocked every migration behind it (deploy run
+  34141376280; `docs/bugs/0677-*`). The ALTER is metadata-only — a constant
+  default needs no rewrite — so the whole cost is the lock. **Any future
+  `ALTER TABLE` on `scm.delivery_order_items` or `scm.delivery_orders` must bound
+  its lock wait the same way**: these tables take continuous writes and an
+  unbounded wait in front of the deploy pipeline stops everyone.
 - **The importer can no longer lose a note quietly.**
   `create-migrated-documents.mjs` asserts two conservation identities — every
   note in the cut is either created or NAMED, and every book line is either
