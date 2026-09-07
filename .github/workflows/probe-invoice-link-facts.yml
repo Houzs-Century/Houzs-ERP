@@ -1,0 +1,43 @@
+name: Invoice link facts — name the wrong rows (read-only)
+
+# probe-link-identity.mjs (runs 34137796488 and 34139187692, 2026-09-07 23:22
+# and 23:37 local, both success) COUNTED 2 sales-invoice lines and 3
+# purchase-invoice lines whose link points at a line for a DIFFERENT PRODUCT,
+# and 12 rows whose colour disagrees with the line they were copied from. A
+# count cannot be repaired: this probe names the documents and the lines, shows
+# what each side says, and reports whether a correct parent even exists to
+# re-point to.
+#
+# It also settles two things 0672 left open:
+#   * whether the 12 colour disagreements are real, or an artefact of comparing
+#     colourId on one side against colourLabel on the other;
+#   * whether the 296 + 98 shared AutoCount DtlKeys are sofa decomposition (one
+#     model, distinct compartment suffixes) or genuine collisions.
+#
+# READ-ONLY: SELECTs only, no DDL, no writes, no transaction. Manual trigger,
+# own concurrency group, exit 0 for every legitimate answer. Document numbers
+# and item codes are printed because the repair cannot be reviewed without
+# them; no customer or supplier NAME is printed.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: probe-invoice-link-facts
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+        working-directory: backend
+      - name: probe (read-only)
+        working-directory: backend
+        env:
+          DATABASE_URL: "${{ secrets.DATABASE_URL }}"
+        run: node scripts/probe-invoice-link-facts.mjs
