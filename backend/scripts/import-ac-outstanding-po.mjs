@@ -351,7 +351,7 @@ async function main() {
   const dated = built.reduce((a, o) => a + o.items.filter((i) => i.deliv).length, 0);
   log(`POs already in the ERP (dedication left to the repair): ${built.length - fresh.length}`);
   log(`dedicated to an SO line: ${dedicated} of ${fresh.reduce((a, o) => a + o.items.length, 0)} new lines; no SO line found: ${noSoLine}; lines carrying a delivery date: ${dated}`);
-  log(`code-less lines imported as ACCESSORIES (owner 2026-09-02 「要进 accessories」): ${codelessLines}`);
+  log(`code-less lines HELD BACK, listed in the exceptions above (owner 2026-09-02 「要进 accessories」 — they need an accessory product first, item_code is NOT NULL): ${codelessLines}`);
   log(`exceptions: ${exceptions.length}`);
   for (const e of exceptions.slice(0, 15)) log(`   PO ${e.po} ${e.code ? `code="${e.code}" ` : ""}${e.reason}`);
   const s = built.find((o) => o.items.some((i) => i.grp === "bedframe" && i.variants && i.variants.colourId)) || built[0];
