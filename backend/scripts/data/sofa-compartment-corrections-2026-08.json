@@ -411,14 +411,15 @@
   },
   {
    "docs": [
-    "HC-SO-011099"
+    "HC-SO-011099",
+    "HC-PO-009882"
    ],
    "pieces": [
     "1A(LHF)",
     "1A(RHF)"
    ],
    "seat": "30",
-   "why": "photo: two 30\" boxes, a small arm at each end",
+   "why": "photo: two 30\" boxes, a small arm at each end | 2026-09-07: the purchase order was missing from this entry, so the build was written onto the sales order alone and HC-PO left holding the lead piece only (chain audit run 34134017406 reported it as PIECE ABSENT). HC-PO-009882 added so the pair is corrected together, which is what this file's own rule says.",
    "desc2Match": "2S / colour :BO315-4"
   },
   {

@@ -52,6 +52,17 @@
    fix. Sub-line allocations (scm.purchase_order_item_allocations) SUPERSEDE
    the single so_item_id, so a line that has any is refused too.
 
+   ONE PAIR, OR A LIST. DOC/PO name a single pair. PAIRS="<so>=<po>,..." runs
+   the same read, plan, guards, transaction and fresh-connection verification
+   once PER PAIR, in order, each in its own transaction - so a later pair
+   failing never rolls back an earlier one, and the summary names every pair
+   that was already written when one failed. An apply run must repeat EVERY
+   purchase order number in CONFIRM_PO, in order: a batch is not a way to
+   confirm less. Added 2026-09-07 for the 10 UNDER-LINKED sofa builds
+   check-sofa-chain-alignment.mjs separated out - a purchase line that already
+   carries the right piece and simply names no sales line, which is a missing
+   dedication and not a question about the drawing.
+
    MODE=plan (default) prints the whole plan and writes nothing. MODE=apply
    needs CONFIRM="I HAVE REVIEWED THE DRY-RUN" and CONFIRM_PO set to the
    purchase order number, writes every move in ONE transaction guarded on the
@@ -69,26 +80,56 @@ import { K, planDedication, seatKey } from './lib/po-so-dedication-plan.mjs';
 const DSN = process.env.DATABASE_URL;
 if (!DSN) { console.error('need DATABASE_URL'); process.exit(2); }
 const CO = Number(process.env.COMPANY || 1);
-const SO_DOC = (process.env.DOC || '').trim();
-const PO_DOC = (process.env.PO || '').trim();
 const APPLY = (process.env.MODE || 'plan').toLowerCase() === 'apply';
 const CONFIRM_PHRASE = 'I HAVE REVIEWED THE DRY-RUN';
 
 const note = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 const bad = (m) => console.log(process.env.GITHUB_ACTIONS ? `::error::${m}` : `ERROR ${m}`);
 
-if (!SO_DOC || !PO_DOC) {
-  bad('need DOC=<sales order no> and PO=<purchase order no> — this repair works on ONE named pair');
-  process.exit(2);
+/* ONE pair or a LIST of them. The rules, the guards, the transaction and the
+   fresh-connection verification are per pair and unchanged; PAIRS only spares
+   an operator twenty dispatches for one defect class. The 10 under-linked sofa
+   builds of 2026-09-07 are one such class: each is a purchase line that already
+   carries the right piece and simply names no sales line.
+
+   PAIRS="HC-SO-000814=HC-PO-000254,HC-SO-002861=HC-PO-009827"
+   DOC/PO still name a single pair and are the form every existing runbook uses. */
+function parsePairs() {
+  const raw = (process.env.PAIRS || '').trim();
+  if (raw) {
+    const out = [];
+    for (const chunk of raw.split(',')) {
+      const t = chunk.trim();
+      if (!t) continue;
+      const [so, po] = t.split('=').map((x) => (x || '').trim());
+      if (!so || !po) return { pairs: null, why: `PAIRS entry "${t}" is not <sales order>=<purchase order>` };
+      out.push({ soDoc: so, poDoc: po });
+    }
+    if (!out.length) return { pairs: null, why: 'PAIRS is empty' };
+    const dupes = out.map((p) => `${p.soDoc}=${p.poDoc}`).filter((v, i, a) => a.indexOf(v) !== i);
+    if (dupes.length) return { pairs: null, why: `PAIRS names the same pair twice: ${[...new Set(dupes)].join(', ')}` };
+    return { pairs: out, why: null };
+  }
+  const so = (process.env.DOC || '').trim();
+  const po = (process.env.PO || '').trim();
+  if (!so || !po) return { pairs: null, why: 'need DOC=<sales order no> and PO=<purchase order no>, or PAIRS="<so>=<po>,..."' };
+  return { pairs: [{ soDoc: so, poDoc: po }], why: null };
 }
+
+const { pairs: PAIRS, why: PAIRS_WHY } = parsePairs();
+if (!PAIRS) { bad(PAIRS_WHY); process.exit(2); }
+
 if (APPLY && process.env.CONFIRM !== CONFIRM_PHRASE) {
   bad(`MODE=apply requires CONFIRM="${CONFIRM_PHRASE}"`);
   process.exit(2);
 }
 /* A second, stronger confirmation: the purchase order number, typed again.
-   A fixed phrase can be copied out of another script's docs; this one cannot. */
-if (APPLY && (process.env.CONFIRM_PO || '').trim() !== PO_DOC) {
-  bad(`MODE=apply also requires CONFIRM_PO="${PO_DOC}" — the purchase order you mean, typed again`);
+   A fixed phrase can be copied out of another script's docs; this one cannot.
+   For a batch that means EVERY purchase order in it, in order — a batch is not
+   a way to confirm less. */
+const CONFIRM_EXPECT = PAIRS.map((p) => p.poDoc).join(',');
+if (APPLY && (process.env.CONFIRM_PO || '').split(',').map((s) => s.trim()).filter(Boolean).join(',') !== CONFIRM_EXPECT) {
+  bad(`MODE=apply also requires CONFIRM_PO="${CONFIRM_EXPECT}" — the purchase order(s) you mean, typed again in order`);
   process.exit(2);
 }
 
@@ -127,20 +168,20 @@ function dedicationShape(poRows, soRows) {
 /** Resolve the purchase order by its number or by the AutoCount document it
  *  links to — the migrated POs are being renumbered, so the number alone is not
  *  a stable handle (same fallback apply-sofa-compartment-corrections.mjs uses). */
-async function resolvePo(client) {
-  const ac = PO_DOC.replace(/^HC-/, '');
+async function resolvePo(client, poDoc) {
+  const ac = poDoc.replace(/^HC-/, '');
   const rows = await client`SELECT id, po_number, status FROM scm.purchase_orders
-     WHERE company_id = ${CO} AND (po_number = ${PO_DOC} OR linked_ac_docno = ${ac})`;
-  if (rows.length !== 1) return { po: null, why: `${PO_DOC}: ${rows.length} purchase order(s) match on company ${CO}` };
+     WHERE company_id = ${CO} AND (po_number = ${poDoc} OR linked_ac_docno = ${ac})`;
+  if (rows.length !== 1) return { po: null, why: `${poDoc}: ${rows.length} purchase order(s) match on company ${CO}` };
   return { po: rows[0], why: null };
 }
 
-async function readPair(client, poId) {
+async function readPair(client, poId, soDoc) {
   const soRaw = await client`SELECT i.id, i.line_no, i.item_group, i.item_code, i.qty, i.unit_price_sen,
                                     i.total_sen, i.cancelled, i.variants, i.po_qty_picked
                                FROM scm.mfg_sales_order_items i
                                JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
-                              WHERE h.company_id = ${CO} AND i.doc_no = ${SO_DOC}
+                              WHERE h.company_id = ${CO} AND i.doc_no = ${soDoc}
                               ORDER BY i.line_no`;
   const poRaw = await client`SELECT i.id, i.item_group, i.item_code, i.qty, i.unit_price_sen,
                                     i.line_total_sen, i.so_item_id, i.variants, i.received_qty
@@ -153,15 +194,15 @@ async function readPair(client, poId) {
   };
 }
 
-async function main() {
-  note(`mode=${APPLY ? 'APPLY' : 'PLAN'} company=${CO}  ${SO_DOC} <-> ${PO_DOC}`);
+async function runPair(SO_DOC, PO_DOC) {
+  note(`\n===== ${SO_DOC} <-> ${PO_DOC} =====`);
 
-  const { po, why } = await resolvePo(sql);
-  if (!po) { bad(why); await sql.end({ timeout: 5 }); process.exit(1); }
+  const { po, why } = await resolvePo(sql, PO_DOC);
+  if (!po) throw new Error(why);
   if (po.po_number !== PO_DOC) note(`  ${PO_DOC}: found as ${po.po_number} via its AutoCount link`);
 
-  const { soRows, poRows } = await readPair(sql, po.id);
-  if (!soRows.length) { bad(`${SO_DOC}: no lines on company ${CO} — is that the right sales order?`); await sql.end({ timeout: 5 }); process.exit(1); }
+  const { soRows, poRows } = await readPair(sql, po.id, SO_DOC);
+  if (!soRows.length) { throw new Error(`${SO_DOC}: no lines on company ${CO} — is that the right sales order?`); }
 
   const beforeSo = money(soRows, 'total_sen');
   const beforePo = money(poRows, 'line_total_sen');
@@ -186,8 +227,7 @@ async function main() {
                         GROUP BY source_doc_no`;
   if (mv.length) {
     for (const m of mv) bad(`${m.source_doc_no}: ${m.n} inventory movement(s) name it — real stock moved under the present dedication, REFUSED`);
-    await sql.end({ timeout: 5 });
-    process.exit(1);
+    throw new Error(`${SO_DOC} <-> ${po.po_number}: real stock moved under the present dedication`);
   }
   for (const m of plan.moves) {
     const src = poRows.find((p) => p.id === m.poItemId);
@@ -222,14 +262,12 @@ async function main() {
 
   note(`\nplanned moves ${moves.length} · kept ${plan.keeps.length} · refused ${plan.refusals.length}`);
   if (!APPLY) {
-    note('\nPLAN — set MODE=apply (with CONFIRM and CONFIRM_PO) to write.');
-    await sql.end({ timeout: 5 });
-    return;
+    note('PLAN — set MODE=apply (with CONFIRM and CONFIRM_PO) to write.');
+    return { soDoc: SO_DOC, poDoc: po.po_number, planned: moves.length, wrote: 0, refused: plan.refusals.length };
   }
   if (!moves.length) {
-    note('\nnothing to write.');
-    await sql.end({ timeout: 5 });
-    return;
+    note('nothing to write.');
+    return { soDoc: SO_DOC, poDoc: po.po_number, planned: 0, wrote: 0, refused: plan.refusals.length };
   }
 
   let wrote = 0;
@@ -250,9 +288,37 @@ async function main() {
     }
   });
   note(`\nwritten: ${wrote} of ${moves.length}`);
-  await sql.end({ timeout: 5 });
 
-  await verifyOnFreshConnection({ poId: po.id, poNumber: po.po_number, moves, beforeSo, beforePo, pickedBefore });
+  await verifyOnFreshConnection({ soDoc: SO_DOC, poId: po.id, poNumber: po.po_number, moves, beforeSo, beforePo, pickedBefore });
+  return { soDoc: SO_DOC, poDoc: po.po_number, planned: moves.length, wrote, refused: plan.refusals.length };
+}
+
+/* Each pair is its OWN read, plan, guard, transaction and fresh-connection
+   verification, so a later pair failing never rolls back an earlier one. The
+   summary therefore says which pairs were already written when one failed -
+   a batch that hides that is worse than twenty separate dispatches. */
+async function main() {
+  note(`mode=${APPLY ? 'APPLY' : 'PLAN'} company=${CO}  ${PAIRS.length} pair(s)`);
+  const done = [];
+  const failed = [];
+  try {
+    for (const { soDoc, poDoc } of PAIRS) {
+      try {
+        done.push(await runPair(soDoc, poDoc));
+      } catch (e) {
+        bad(`${soDoc} <-> ${poDoc}: ${e.message}`);
+        failed.push({ soDoc, poDoc, why: e.message });
+      }
+    }
+  } finally {
+    await sql.end({ timeout: 5 });
+  }
+
+  note(`\n===== SUMMARY (${APPLY ? 'APPLY' : 'PLAN'}) =====`);
+  for (const d of done) note(`  ${d.soDoc} <-> ${d.poDoc}: planned ${d.planned}, written ${d.wrote}, refused ${d.refused}`);
+  for (const f of failed) bad(`  ${f.soDoc} <-> ${f.poDoc}: FAILED - ${f.why}`);
+  note(`  pairs ${done.length} ok / ${failed.length} failed; dedications written ${done.reduce((a, d) => a + d.wrote, 0)}`);
+  if (failed.length) process.exit(1);
 }
 
 /**
@@ -261,12 +327,12 @@ async function main() {
  * names — plus both money columns on both documents, and the derived
  * po_qty_picked this repair promised not to touch.
  */
-async function verifyOnFreshConnection({ poId, poNumber, moves, beforeSo, beforePo, pickedBefore }) {
+async function verifyOnFreshConnection({ soDoc: SO_DOC, poId, poNumber, moves, beforeSo, beforePo, pickedBefore }) {
   const check = postgres(DSN, { ssl: 'require', prepare: false, max: 1 });
   let failures = 0;
   try {
     note('\n=== VERIFIED ON A FRESH CONNECTION ===');
-    const { soRows, poRows } = await readPair(check, poId);
+    const { soRows, poRows } = await readPair(check, poId, SO_DOC);
     const byId = new Map(soRows.map((r) => [r.id, r]));
 
     for (const line of dedicationShape(poRows, soRows)) note(`  ${line}`);
@@ -306,7 +372,7 @@ async function verifyOnFreshConnection({ poId, poNumber, moves, beforeSo, before
   } finally {
     await check.end({ timeout: 5 });
   }
-  if (failures) { console.error(`VERIFY FAILED — ${failures} assertion(s)`); process.exit(1); }
+  if (failures) { throw new Error(`VERIFY FAILED — ${failures} assertion(s) on ${SO_DOC} <-> ${poNumber}`); }
   note('VERIFY OK — dedication shape, both money columns on both documents, and the derived counter');
 }
 
