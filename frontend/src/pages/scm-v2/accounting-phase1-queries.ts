@@ -263,3 +263,16 @@ export const useSaveVoucherNumbering = () => {
     onError: writeFailedAs('Numbering not saved'),
   });
 };
+
+/** The real backfill behind the Self-check card's "Book now" — the same
+    endpoint without dryRun, one batch of up to 500 (docs/bugs/0655). Each
+    payment posts on its own paid date; the control check re-reads after. */
+export const useBookUnbookedPayments = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => authedFetch<PaymentDryRun>('/accounting/backfill/customer-payments', {
+      method: 'POST', body: JSON.stringify({ limit: 500 }),
+    }),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['control-check'] }); },
+  });
+};
