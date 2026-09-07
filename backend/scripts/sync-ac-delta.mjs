@@ -140,6 +140,11 @@ import { acFromSoDtlKey, normItemCode, planSoPoDedications } from "./lib/ac-po-l
 import {
   buildMigratedDoPlan, insertMigratedDo, loadAcErpItemMap, migratedDoNumber,
 } from "./lib/migrated-do-writer.mjs";
+/* THE SAME RULE THE CUTOVER PATH USES, imported rather than restated. #3121 gave
+   create-migrated-documents.mjs a ship-from branch and left this lane — the
+   writer's OTHER documented caller — passing neither field, so every delivery
+   note created here landed with a NULL branch. */
+import { resolveAcDeliveryLocation } from "./lib/ac-do-location.mjs";
 import {
   PO_HEADER_FIELDS,
   SO_HEADER_FIELDS,
@@ -558,6 +563,12 @@ async function main() {
   const recvPlan = [], recvRefused = [], recvNotes = [];
   const dediPlan = [], dediRefused = [], dediMismatch = [];
   let doPlan = [];
+  /* DocNo -> the distinct Locations its book lines state. Source 2 of
+     lib/ac-do-location.mjs, collected where the rows are read rather than
+     re-derived later. Empty on a snapshot cut before the line projection
+     carried Location, and an empty set resolves to nothing, which the lane
+     PRINTS per document. */
+  const doLineLocs = new Map();
   const doRefused = [], doNotes = [];
   const doDebtor = new Map();
   const TRUTH = "ac-reconcile-truth.json.gz";
@@ -577,6 +588,10 @@ async function main() {
         itemKey: LFD.indexOf("itemKey"), hasCode: LFD.indexOf("hasCode"),
         tq: LFD.indexOf("transferedQty"), fdt: LFD.indexOf("fromDocType"),
         fdn: LFD.indexOf("fromDocNo"), fsk: LFD.indexOf("fromSoDtlKey"),
+        /* -1 on a snapshot cut before the projection carried it: `cell` answers
+           null for a negative index, the location stays unresolved, and the lane
+           SAYS so per document. An absent column must read as "not stated". */
+        loc: LFD.indexOf("location"),
       };
       const HDOC = HFD.indexOf("docNo"), HCAN = HFD.indexOf("cancelled"), HDATE = HFD.indexOf("docDate");
       const D2K = DFD.indexOf("dtlKey"), D2V = DFD.indexOf("desc2");
@@ -775,6 +790,9 @@ async function main() {
             DoNo: kid, DoDate: doDate.get(kid) || null, SoNo: g.acNo,
             ItemCode: cell(r, F.itemKey), LineDesc: null, Qty: num(r[F.qty]),
             DebtorCode: null, DebtorName: null,
+            /* Source 2 of lib/ac-do-location.mjs. Null on a cut taken before the
+               line projection carried Location. */
+            Location: cell(r, F.loc),
           }));
           const { plan, stats } = buildMigratedDoPlan({ rows, itemMap, soItems: mine });
           const dropped = stats.unmapped + stats.noSoLine + stats.exhausted;
@@ -783,6 +801,12 @@ async function main() {
             continue;
           }
           if (stats.collapsed) doNotes.push(`${where}: ${stats.collapsed} duplicate line(s) refused by the shape guard`);
+          for (const r of rows) {
+            const v = String(r.Location ?? "").trim();
+            if (!v) continue;
+            if (!doLineLocs.has(kid)) doLineLocs.set(kid, new Set());
+            doLineLocs.get(kid).add(v);
+          }
           doPlan.push(plan[0]);
         }
       }
@@ -1404,15 +1428,37 @@ async function main() {
      swallowing it. NO INVENTORY MOVEMENT is written and the verification below
      asserts that against scm.inventory_movements, not against intent. */
   if (LANES.has("do")) {
+    /* THE SHIP-FROM BRANCH, by the SAME rule the cutover path uses (#3121,
+       lib/ac-do-location.mjs) — owner 2026-09-07 「记在单头就好」, header not per
+       line. Source 1 is the book's own DO header; a note raised AFTER the
+       fidelity cut has no row there BY CONSTRUCTION, which is exactly the
+       population this lane exists for, so source 2 (its own lines, only when
+       unanimous) is the one that usually answers. Source 3 is nothing: NULL,
+       named, never a company-blind default. */
+    const doHdrLoc = new Map();
+    try {
+      for (const h of gz("ac-fidelity-do-headers.json.gz")) {
+        const v = String(h.SalesLocation ?? "").trim();
+        if (v) doHdrLoc.set(String(h.DocNo ?? "").trim(), v);
+      }
+    } catch {
+      log("   (no ac-fidelity-do-headers.json.gz in this checkout — source 1 unavailable, the lines answer or nothing does)");
+    }
+    const doWarehouses = await sql`SELECT id, code, name FROM scm.warehouses WHERE company_id = ${CO}`;
+    let noWh = 0;
     for (const d of doPlan) {
       try {
-        const made = await insertMigratedDo(sql, d, { companyId: CO, sysUser: SYS_USER, debtorFallback: doDebtor.get(d.so) ?? null });
+        const where = resolveAcDeliveryLocation(d.doNo, doHdrLoc, doLineLocs, doWarehouses);
+        if (!where.warehouseId) { noWh += 1; log(`   ${migratedDoNumber(d.doNo)}: no ship-from branch stamped — ${where.why}`); }
+        const made = await insertMigratedDo(sql, d, { companyId: CO, sysUser: SYS_USER, debtorFallback: doDebtor.get(d.so) ?? null,
+          warehouseId: where.warehouseId, salesLocation: where.salesLocation });
         doMade.push(made); nDo += 1;
       } catch (e) {
         doFailed.push(`${migratedDoNumber(d.doNo)} <- ${d.so}: ${e.message}`);
       }
     }
     log(`delivery documents created: ${nDo} of ${doPlan.length} intended${doFailed.length ? `, ${doFailed.length} FAILED` : ""}`);
+    log(`ship-from branch stamped on ${nDo - noWh} of ${nDo} created document(s); ${noWh} left NULL and named above`);
     for (const f of doFailed) log(`   FAILED ${f}`);
   }
   /* LANE dedi — so_item_id from PODTL.FromSODtlKey, with the same never-steal

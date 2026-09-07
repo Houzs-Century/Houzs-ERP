@@ -683,3 +683,51 @@ describe('GET /settlement/batches', () => {
     expect(body.batches[0]).toMatchObject({ acquirer_code: 'MBB', file_name: 'aug.csv', row_count: 2 });
   });
 });
+
+/* One clearing account per bank (owner 2026-09-07: 我想要拆账户，因为这样我比较然后
+   检查回). The maintenance screen offers each company's 326-/327- accounts and
+   points a merchant at one; the write refuses anything that is not a live
+   clearing account of that company. */
+describe('maintenance — the clearing account per merchant', () => {
+  const CLEARING: Row[] = [
+    { account_code: '326-0000', account_name: 'CARD MACHINE CLEARING (EDC)', account_type: 'ASSET', parent_code: null, is_active: true, acc_money: false, company_id: 2 },
+    { account_code: '326-0010', account_name: 'CARD MACHINE CLEARING — PBB', account_type: 'ASSET', parent_code: null, is_active: true, acc_money: false, company_id: 2 },
+    { account_code: '326-0090', account_name: 'RETIRED', account_type: 'ASSET', parent_code: null, is_active: false, acc_money: false, company_id: 2 },
+    { account_code: '310-0010', account_name: 'Bank — Maybank', account_type: 'ASSET', parent_code: null, is_active: true, acc_money: true, company_id: 2 },
+    { account_code: '900-0000', account_name: 'Rent', account_type: 'EXPENSE', parent_code: null, is_active: true, acc_money: false, company_id: 2 },
+  ];
+  const world = () => harness({
+    accounts: CLEARING,
+    acc_acquirer_config: [{ code: 'PBB', display_name: 'PBB', statement_format: 'CSV', has_unique_ref: true, fee_method: 'stated', date_tolerance_days: 3, column_map: { date: 'D', gross: 'G' }, is_active: true }],
+    acc_company_acquirers: [{ company_id: 2, acquirer_code: 'PBB', transit_account_code: '326-0010', fee_account_code: '930-0000', bank_account_code: '310-0010', is_active: true }],
+  });
+
+  test('the screen reads each company\'s live clearing accounts and where the merchant sits today', async () => {
+    const { app } = world();
+    const body = await (await app.request('/settlement/maintenance')).json() as {
+      merchants: Array<{ code: string; byCompany: Record<string, { transitAccountCode: string | null }> }>;
+      clearings: Record<string, Array<{ account_code: string }>>;
+    };
+    expect(body.merchants.find((m) => m.code === 'PBB')!.byCompany['2']).toMatchObject({ transitAccountCode: '326-0010' });
+    /* Live 326-/327- only — the retired one and the bank and the expense never appear. */
+    expect(body.clearings['2']!.map((a) => a.account_code)).toEqual(['326-0000', '326-0010']);
+    expect(body.clearings['1']).toEqual([]);
+  });
+
+  test('pointing the merchant at a clearing account writes the link; a bank, an expense, a retired or a foreign code is refused', async () => {
+    const { app, sb } = world();
+    const ok = await patch(app, '/settlement/maintenance/merchant', { companyId: 2, code: 'PBB', transitAccountCode: '326-0000' });
+    expect(ok.status, await ok.clone().text()).toBe(200);
+    expect(sb.tables.acc_company_acquirers[0]).toMatchObject({ transit_account_code: '326-0000' });
+    for (const bad of ['310-0010', '900-0000', '326-0090', '326-0777']) {
+      const res = await patch(app, '/settlement/maintenance/merchant', { companyId: 2, code: 'PBB', transitAccountCode: bad });
+      expect(res.status, bad).toBe(400);
+      expect(((await res.json()) as { error: string }).error).toBe('bad_clearing_account');
+    }
+    expect(sb.tables.acc_company_acquirers[0]).toMatchObject({ transit_account_code: '326-0000' });
+    /* Blank = back to the generic account. */
+    const blank = await patch(app, '/settlement/maintenance/merchant', { companyId: 2, code: 'PBB', transitAccountCode: '' });
+    expect(blank.status).toBe(200);
+    expect(sb.tables.acc_company_acquirers[0]).toMatchObject({ transit_account_code: '326-0000' });
+  });
+});

@@ -84,6 +84,7 @@
 import postgres from 'postgres';
 
 import { K, planDedication, seatKey } from './lib/po-so-dedication-plan.mjs';
+import { readPair, resolvePo } from './lib/po-so-dedication-read.mjs';
 
 const DSN = process.env.DATABASE_URL;
 if (!DSN) { console.error('need DATABASE_URL'); process.exit(2); }
@@ -143,27 +144,12 @@ if (APPLY && (process.env.CONFIRM_PO || '').split(',').map((s) => s.trim()).filt
 
 const sql = postgres(DSN, { ssl: 'require', prepare: false, max: 1 });
 
-const seatOf = (v) => {
-  const s = v && typeof v === 'object' ? v.seatHeight : null;
-  return s === null || s === undefined || s === '' ? null : String(s);
-};
-
-/* Everything this run READ about a row except the row's own identity and the
-   pointer being decided. lib/po-so-dedication-plan.mjs uses it for one thing:
-   deciding that a bucket of same-code, same-seat rows holds nothing to choose
-   between - two `1NA` compartments of one sofa, identical down to the money and
-   the Desc2 - so pairing them is a relabelling rather than a guess.
-
-   EVERY column of the SELECT goes in, so widening the SELECT automatically
-   makes the comparison stricter and never looser. `id`, `line_no` and
-   `so_item_id` are the three that must stay OUT: the first two are identity and
-   the last is the thing being written. Keys are sorted so two rows that agree
-   cannot disagree on JSON ordering. */
-const OUT_OF_FINGERPRINT = new Set(['id', 'line_no', 'so_item_id', 'seat', 'fingerprint']);
-const fingerprintOf = (row) => JSON.stringify(
-  Object.keys(row).filter((k) => !OUT_OF_FINGERPRINT.has(k)).sort()
-    .map((k) => [k, row[k] === null || row[k] === undefined ? null : (typeof row[k] === 'object' ? JSON.stringify(row[k]) : String(row[k]))]),
-);
+/* The read, the seat derivation and the fingerprint moved to
+   lib/po-so-dedication-read.mjs on 2026-09-08, unchanged. They are the
+   COMPARISON, not a detail of this script: probe-dedication-bucket-diff.mjs
+   exists to say which column made this planner refuse, and a probe reading its
+   own column list would name a column this script never compared. One file, so
+   the two cannot drift. */
 const money = (rows, totalCol) => rows.reduce(
   (a, r) => ({
     total: a.total + Number(r[totalCol] ?? 0),
@@ -190,43 +176,14 @@ function dedicationShape(poRows, soRows) {
     .sort();
 }
 
-/** Resolve the purchase order by its number or by the AutoCount document it
- *  links to — the migrated POs are being renumbered, so the number alone is not
- *  a stable handle (same fallback apply-sofa-compartment-corrections.mjs uses). */
-async function resolvePo(client, poDoc) {
-  const ac = poDoc.replace(/^HC-/, '');
-  const rows = await client`SELECT id, po_number, status FROM scm.purchase_orders
-     WHERE company_id = ${CO} AND (po_number = ${poDoc} OR linked_ac_docno = ${ac})`;
-  if (rows.length !== 1) return { po: null, why: `${poDoc}: ${rows.length} purchase order(s) match on company ${CO}` };
-  return { po: rows[0], why: null };
-}
-
-async function readPair(client, poId, soDoc) {
-  const soRaw = await client`SELECT i.id, i.line_no, i.item_group, i.item_code, i.qty, i.unit_price_sen,
-                                    i.total_sen, i.cancelled, i.variants, i.po_qty_picked, i.description2
-                               FROM scm.mfg_sales_order_items i
-                               JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
-                              WHERE h.company_id = ${CO} AND i.doc_no = ${soDoc}
-                              ORDER BY i.line_no`;
-  const poRaw = await client`SELECT i.id, i.item_group, i.item_code, i.qty, i.unit_price_sen,
-                                    i.line_total_sen, i.so_item_id, i.variants, i.received_qty, i.description2
-                               FROM scm.purchase_order_items i
-                              WHERE i.purchase_order_id = ${poId} AND i.company_id = ${CO}
-                              ORDER BY i.id`;
-  return {
-    soRows: soRaw.map((r) => ({ ...r, seat: seatOf(r.variants), fingerprint: fingerprintOf(r) })),
-    poRows: poRaw.map((r) => ({ ...r, seat: seatOf(r.variants), fingerprint: fingerprintOf(r) })),
-  };
-}
-
 async function runPair(SO_DOC, PO_DOC) {
   note(`\n===== ${SO_DOC} <-> ${PO_DOC} =====`);
 
-  const { po, why } = await resolvePo(sql, PO_DOC);
+  const { po, why } = await resolvePo(sql, CO, PO_DOC);
   if (!po) throw new Error(why);
   if (po.po_number !== PO_DOC) note(`  ${PO_DOC}: found as ${po.po_number} via its AutoCount link`);
 
-  const { soRows, poRows } = await readPair(sql, po.id, SO_DOC);
+  const { soRows, poRows } = await readPair(sql, CO, po.id, SO_DOC);
   if (!soRows.length) { throw new Error(`${SO_DOC}: no lines on company ${CO} — is that the right sales order?`); }
 
   const beforeSo = money(soRows, 'total_sen');
@@ -357,7 +314,7 @@ async function verifyOnFreshConnection({ soDoc: SO_DOC, poId, poNumber, moves, b
   let failures = 0;
   try {
     note('\n=== VERIFIED ON A FRESH CONNECTION ===');
-    const { soRows, poRows } = await readPair(check, poId, SO_DOC);
+    const { soRows, poRows } = await readPair(check, CO, poId, SO_DOC);
     const byId = new Map(soRows.map((r) => [r.id, r]));
 
     for (const line of dedicationShape(poRows, soRows)) note(`  ${line}`);
