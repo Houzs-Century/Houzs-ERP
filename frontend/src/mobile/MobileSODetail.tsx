@@ -9,6 +9,14 @@ import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
 import { usePrompt } from "../vendor/scm/components/PromptDialog";
 import { fetchScanSlipImageBlobUrl } from "../vendor/scm/lib/slip";
+/* Line photos — the SAME resolver the desktop strip runs (signed URL -> authed
+   proxy -> thumb tier, per-effect-run attempt state). Hand-mirroring it is what
+   made an earlier desktop draft render nothing at all in production; see the
+   header of vendor/scm/lib/so-line-photo.ts. Mobile differs in PRESENTATION
+   only — 64px tap targets instead of the desktop table cell's 32px. */
+import { photoContentType, useScmLinePhoto } from "../vendor/scm/lib/so-line-photo";
+import { MediaLightbox, type MediaItem } from "../components/MediaLightbox";
+import { soLinePhotoLightboxBase } from "../vendor/scm/lib/so-line-photo";
 import { useStaff, usePickableStaff } from "../vendor/scm/lib/admin-queries";
 import { statusLabel } from "../vendor/scm/lib/status-pill";
 import { useAuth as useHouzsAuth } from "../auth/AuthContext";
@@ -210,6 +218,13 @@ type SoItem = {
      line card's "Type remarks…" box). Served by GET /:docNo all along and
      rendered on neither platform until 2026-08-11 — see the render site. */
   remark?: string | null;
+  /* R2 keys for the line's reference photographs — the AutoCount slip the
+     cutover imported, plus anything attached since. In `ITEM` on the backend
+     (mfg-sales-orders.ts) since migration 0076, so this phone screen has been
+     receiving them all along and drew nothing: the same shape as `remark`
+     directly above, and as the desktop V2 detail before 2026-08-10. */
+  photo_urls?: string[] | null;
+  photoUrls?: string[] | null;
 };
 type SoPayment = {
   id: string;
@@ -1078,6 +1093,18 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
                     {/* The line's REMARK — one renderer, shared with the phone's
                         PO surface since 2026-09-04 (see MobileLineRemark). */}
                     <MobileLineRemark text={it.remark} />
+                    {/* The line's reference photographs — the phone twin of the
+                        desktop PHOTOS column. Dual-read camelCase ?? snake_case
+                        like every other field on this row. */}
+                    <MobileLinePhotos
+                      docNo={docNo}
+                      itemId={it.id}
+                      photoKeys={
+                        (Array.isArray(it.photoUrls) ? it.photoUrls
+                          : Array.isArray(it.photo_urls) ? it.photo_urls
+                          : []) as string[]
+                      }
+                    />
                     {/* UOM only — never the code (see the primary line above). */}
                     {(it.uom ?? "").trim() ? <div className="money" style={{ fontSize: 10, color: "var(--mut2)", marginTop: 3 }}>{it.uom!.trim()}</div> : null}
                     {/* Stock pill + source-PO trace (owner 2026-08-01) — the
@@ -1412,6 +1439,90 @@ function ScannedPhotosCard({ slipKey, receiptKey }: { slipKey: string | null; re
           <img src={viewer.src} alt={viewer.label} style={{ maxWidth: "100%", maxHeight: "84vh", borderRadius: 10, objectFit: "contain", background: "#fff" }} />
           <div style={{ marginTop: 12, fontSize: 12, fontWeight: 700, color: "#fff", opacity: 0.85 }}>{viewer.label} · tap anywhere to close</div>
         </div>
+      )}
+    </>
+  );
+}
+
+/* ── LINE PHOTOS on the phone ────────────────────────────────────────────────
+   The mobile twin of desktop's SoLinePhotoStrip. `photo_urls` has been on the
+   wire since migration 0076 and this screen rendered none of it, so the only
+   way to see the imported AutoCount reference shot on a phone was to open the
+   desktop site — which is exactly the desktop/mobile split CLAUDE.md calls a
+   recurring bug class here, and the same shape as `remark` (fixed 2026-08-11)
+   and as the desktop detail itself (fixed 2026-08-10).
+
+   ONE LOGIC LAYER, TWO PRESENTATIONS, which is the owner's standing rule:
+   LOADING is `useScmLinePhoto` — the identical state machine the desktop tile
+   runs — and VIEWING is `MediaLightbox`, already the phone's full-screen
+   previewer on MobilePMS. Only the chrome differs: 64px tiles because a 32px
+   table-cell thumbnail is not a finger target.
+
+   The lightbox re-fetches the FULL object rather than reusing a tile's `src`,
+   for the reason the desktop strip's header records: under the proxy arm that
+   src is a blob: URL holding THUMB bytes and scoped to the tile's current
+   effect run. */
+function MobileLinePhoto({ docNo, itemId, photoKey, onOpen }: {
+  docNo: string; itemId: string; photoKey: string; onOpen: () => void;
+}) {
+  const { src, error, onImgError } = useScmLinePhoto("so", photoKey, docNo, itemId);
+  /* "err" is kept, not softened: when the proxy also fails a missing photo has
+     to read AS missing. The title carries the real reason for a bug report. */
+  if (!src) {
+    return (
+      <span
+        title={error ?? undefined}
+        style={{
+          width: 64, height: 64, borderRadius: 10, display: "inline-flex", alignItems: "center", justifyContent: "center",
+          border: "1px solid var(--line2, #e3e6e0)", background: "#f4f6f3",
+          fontSize: 10, fontWeight: 700, color: error ? "#b4443a" : "var(--mut2, #9aa093)",
+        }}
+      >
+        {error ? "err" : "…"}
+      </span>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      aria-label="View line photo"
+      style={{ width: 64, height: 64, padding: 0, borderRadius: 10, overflow: "hidden", border: "1px solid var(--line2, #e3e6e0)", background: "#f4f6f3", cursor: "pointer" }}
+    >
+      <img src={src} alt="Line photo" onError={onImgError} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+    </button>
+  );
+}
+
+function MobileLinePhotos({ docNo, itemId, photoKeys }: { docNo: string; itemId: string; photoKeys: string[] }) {
+  const [openAt, setOpenAt] = useState<number | null>(null);
+  if (!docNo || !itemId || !photoKeys.length) return null;
+  /* MediaLightbox joins `${baseUrl}/${r2_key}` verbatim, so the key is
+     PRE-ENCODED: its slashes must survive as ONE path segment or Hono's
+     `:photoKey` never matches and the proxy 404s. `caption` carries the bare
+     file name because the Download filename is derived from
+     `caption || r2_key.split("/").pop()`, and the encoded key has no "/" left. */
+  const items = photoKeys.map((k): MediaItem => ({
+    r2_key: encodeURIComponent(k),
+    content_type: photoContentType(k),
+    caption: k.split("/").pop() || k,
+  }));
+  return (
+    <>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
+        {photoKeys.map((k, i) => (
+          <MobileLinePhoto key={k} docNo={docNo} itemId={itemId} photoKey={k} onOpen={() => setOpenAt(i)} />
+        ))}
+      </div>
+      {openAt !== null && (
+        <MediaLightbox
+          items={items}
+          index={openAt}
+          onChange={setOpenAt}
+          onClose={() => setOpenAt(null)}
+          baseUrl={soLinePhotoLightboxBase(docNo, itemId)}
+          badge="Line photo"
+        />
       )}
     </>
   );
