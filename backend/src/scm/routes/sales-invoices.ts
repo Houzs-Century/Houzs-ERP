@@ -59,6 +59,7 @@ import { canViewAllSales, canViewScmFinance } from '../lib/houzs-perms';
 import { SO_ITEM_FINANCE_KEYS } from '../lib/finance-keys';
 import { doLineRemaining, doRemainingByItemId, checkSiOverRemaining, checkSiReopenOverRemaining, findOverInvoicedDoItems, resolveCandidateDoIds, custKeyOf, remainingUnavailableResponse, siTransferRefusal, type DoRemainingLine } from '../lib/do-line-remaining';
 import { siShadowRefusal, unlinkedEditRefusal } from '../lib/unlinked-line-edit-guard';
+import { checkInvoiceSourceItemIdentity } from '../lib/invoice-source-item-identity';
 import { resolveSiHeaderSources, resolveDoLineSources } from '../lib/source-po-trace';
 import { validateItemCodes, unknownItemCodeResponse } from '../lib/validate-item-codes';
 import { applyCustomerCreditToSi, creditFromCancelledSi, reverseCancelledSiCredit, reconcileSiOverpay } from '../lib/customer-credits';
@@ -910,6 +911,22 @@ export const createSalesInvoiceHandler = async (c: Context<{ Bindings: Env; Vari
     if (over) return c.json(over.body, over.status);
   }
 
+  /* IDENTITY, not just the key. Every check above this line asks whether the
+     delivery line may be DRAWN ON — company, status, migrated source, remaining
+     quantity. None asks whether it is the SAME PRODUCT, and a foreign key
+     pointing at a different bed neither dangles nor breaks a constraint. Two
+     production rows were in exactly that state on 2026-09-07 (docs/bugs/0676,
+     probe run 34139187692). The guard takes its own company-scoped read and
+     fails closed. */
+  {
+    const scope = requireActiveCompanyId(c);
+    if (!scope.ok) return c.json(scope.refusal, 409);
+    const identity = await checkInvoiceSourceItemIdentity(sb, 'DO',
+      items.map((it) => ({ sourceItemId: (it.doItemId as string | undefined) ?? null, itemCode: it.itemCode })),
+      scope.companyId);
+    if (identity) return c.json(identity.body, identity.status);
+  }
+
   /* A delivery carried over from AutoCount is invoiced by the migrated-invoice
      converter, never by hand — see lib/migrated-chain.ts. Checked HERE as well
      as on /from-dos because this path reaches the same delivery lines through
@@ -1715,6 +1732,15 @@ export const appendSalesInvoiceItemHandler = async (c: any) => {
     if (over) return c.json(over.body, over.status);
   }
 
+  /* Same rule as POST /, at the door beside it — the failure this bug class
+     keeps producing is a rule applied at N-1 of its N call sites. */
+  {
+    const identity = await checkInvoiceSourceItemIdentity(sb, 'DO',
+      [{ sourceItemId: (it.doItemId as string | undefined) ?? null, itemCode: it.itemCode }],
+      co.companyId);
+    if (identity) return c.json(identity.body, identity.status);
+  }
+
   /* Same refusal as every other path that can attach a delivery line. */
   {
     const mig = await migratedRefusalForDeliveries(sb, { doItemIds: [it.doItemId as string | undefined] });
@@ -1884,6 +1910,24 @@ salesInvoices.patch('/:id/items/:itemId', async (c) => {
       patchCode: it.itemCode,
     });
     if (repoint) return c.json(repoint, 409);
+  }
+
+  /* THE EDIT DOOR ON A LINKED LINE. unlinkedEditRefusal directly above covers
+     the case where the STORED link is null. A line that ALREADY carries a
+     do_item_id had no item check at all: the rename map writes `item_code`
+     unconditionally, so a correct link becomes a wrong one in one PATCH and
+     nothing downstream can tell. docs/bugs/0672 names this shape — every
+     existing unlinked-line guard is scoped to `link IS NULL`.
+
+     It runs on the EFFECTIVE post-patch code (`updates.item_code` when the body
+     sent one, the stored code otherwise), because a patch that omits itemCode
+     still leaves a code sitting next to the link. */
+  {
+    const effectiveCode = updates['item_code'] !== undefined ? updates['item_code'] : prev.item_code;
+    const identity = await checkInvoiceSourceItemIdentity(sb, 'DO',
+      [{ sourceItemId: (prev as { do_item_id?: string | null }).do_item_id ?? null, itemCode: effectiveCode }],
+      co.companyId);
+    if (identity) return c.json(identity.body, identity.status);
   }
 
   const { error } = await scopeToCompanyId(sb.from('sales_invoice_items').update(updates).eq('id', itemId), co.companyId);

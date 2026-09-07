@@ -37,6 +37,7 @@ import { resolvePoSoCoveragePerSkuForPos, resolveDeliveredByCodeForPos, summariz
 import { enqueueConvert, recordParentlessCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
 import { sourceGrnIdsForPi } from '../lib/convert-parent';
 import { refuseMigratedSources } from '../lib/migrated-chain';
+import { checkInvoiceSourceItemIdentity } from '../lib/invoice-source-item-identity';
 import { refuseWithoutWriting } from '../lib/no-write-refusal';
 /* The create's refusal bodies and the two rules its exits follow (2026-08-19). */
 import { insertFailed, loadFailed, rollbackPi, committedAnyway } from '../lib/pi-create-refusals';
@@ -798,6 +799,23 @@ purchaseInvoices.post('/', async (c) => {
         return refuseWithoutWriting(c, { error: 'qty_exceeds_remaining', lines: over }, 409);
       }
     }
+  }
+
+  /* IDENTITY, not just the key. Everything above asks whether the receipt line
+     may be DRAWN ON — company, migrated source, remaining quantity. Nothing
+     asked whether it is the SAME PRODUCT, and the read directly above already
+     had the rows and simply did not look at the column. Three production rows
+     were in that state on 2026-09-07 (docs/bugs/0676, probe run 34139187692).
+     grn_item_id is how a supplier invoice's money reaches the LOT it paid for
+     (lib/recost.ts aggregates PI lines by it), so a wrong one books one
+     receipt's cost onto another receipt's stock. */
+  {
+    const scope = requireActiveCompanyId(c);
+    if (!scope.ok) return refuseWithoutWriting(c, scope.refusal, 409);
+    const identity = await checkInvoiceSourceItemIdentity(sb, 'GR',
+      items.map((it) => ({ sourceItemId: (it.grnItemId as string | undefined) ?? null, itemCode: it.itemCode })),
+      scope.companyId);
+    if (identity) return refuseWithoutWriting(c, identity.body, identity.status);
   }
 
   let subtotal = 0;
@@ -2054,6 +2072,17 @@ purchaseInvoices.post('/:id/items', async (c) => {
     if (capLock) return c.json(capLock, 409);
   }
 
+  /* Same rule as POST /, at the door beside it — the failure this bug class
+     keeps producing is a rule applied at N-1 of its N call sites. */
+  {
+    const scope = requireActiveCompanyId(c);
+    if (!scope.ok) return c.json(scope.refusal, 409);
+    const identity = await checkInvoiceSourceItemIdentity(sb, 'GR',
+      [{ sourceItemId: grnItemId, itemCode: it.itemCode }],
+      scope.companyId);
+    if (identity) return c.json(identity.body, identity.status);
+  }
+
   const row: Record<string, unknown> = {
     purchase_invoice_id: piId,
     grn_item_id: (it.grnItemId as string) ?? null,
@@ -2278,6 +2307,25 @@ purchaseInvoices.patch('/:id/items/:itemId', async (c) => {
       requested: qty, ownPriorDraw: prevQty, what: 'GRN line',
     });
     if (capLock) return c.json(capLock, 409);
+  }
+
+  /* THE FOURTH DOOR. The guard directly above closes the UNLINKED case — a
+     hand-typed line retyped into a material the receipt contains. A line that
+     ALREADY carries a grn_item_id had no item check at all: the rename map
+     writes `item_code` unconditionally, so a correct link becomes a wrong one
+     in one PATCH, the qty cap and recomputeGrnInvoiced keep resolving on the
+     stale link, and recostForPi books this line's money onto that lot.
+     docs/bugs/0672 names the shape — every existing unlinked-line guard is
+     scoped to `link IS NULL`.
+
+     It runs on the EFFECTIVE post-patch code, because a patch that omits
+     itemCode still leaves a code sitting next to the link. */
+  {
+    const effectiveCode = updates['item_code'] !== undefined ? updates['item_code'] : prev.item_code;
+    const identity = await checkInvoiceSourceItemIdentity(sb, 'GR',
+      [{ sourceItemId: grnItemId, itemCode: effectiveCode }],
+      co.companyId);
+    if (identity) return c.json(identity.body, identity.status);
   }
 
   const { error } = await scopeToCompanyId(sb.from('purchase_invoice_items').update(updates).eq('id', itemId), co.companyId);

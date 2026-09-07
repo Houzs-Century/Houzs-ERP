@@ -107,7 +107,28 @@ const NORM = (expr) => `upper(regexp_replace(btrim(coalesce(${expr}, '')), '\\s+
    `colourLabel` (the text) — import-ac-outstanding-so.mjs:302. Both are read,
    id first, so a row carrying either is comparable, and the count of comparable
    pairs is printed so an empty answer can never pass as a clean one again. */
-const COL = (a) => `upper(btrim(coalesce(${a}.variants->>'colourId', ${a}.variants->>'colourLabel', ${a}.variants->>'colourCode', '')))`;
+/* CORRECTED 2026-09-08 — the COALESCE above was itself the same mistake, one
+   layer up. Reading coalesce(colourId, colourLabel, colourCode) on BOTH sides
+   compares across THREE DIFFERENT VOCABULARIES: import-ac-outstanding-so.mjs
+   writes colourId AND colourLabel together at :304 and colourLabel ALONE at
+   :317, so a row from the second path compared against a row from the first
+   disagrees BY CONSTRUCTION. That is what produced the "12 rows across 7
+   documents" this file reported on run 34139187692.
+
+   probe-invoice-link-facts.mjs (run 34143079454, 2026-09-08 00:26 local)
+   printed all three fields on both sides for every one of those rows. NOT ONE
+   was two different fabrics: 8 were a colour id the fabric library SUPERSEDED
+   on 2026-08-11 compared against its own replacement, and 6 were free text on
+   one side against an id on the other. So the comparison below is now made ONLY
+   where both sides carry the SAME field, and the field-mixed pairs are counted
+   and reported separately as what they are — not measurable here. A pair that
+   is genuinely two different fabrics still surfaces, because both such rows
+   carry a colourId. scripts/lib/colour-identity.mjs holds the full rule,
+   including the supersession walk, for a reader who needs a verdict rather than
+   a count; this file stays SQL-only and counts. */
+const COL_ID = (a) => `upper(btrim(coalesce(${a}.variants->>'colourId', '')))`;
+const COL_TEXT = (a) => `upper(btrim(coalesce(${a}.variants->>'colourLabel', ${a}.variants->>'colourCode', '')))`;
+const COL = (a) => `coalesce(nullif(${COL_ID(a)}, ''), ${COL_TEXT(a)})`;
 
 async function columnsOf(tables) {
   const rows = await sql`
@@ -270,13 +291,23 @@ async function main() {
     }
     try {
       const rows = await sql.unsafe(`
-        WITH pairs AS (
+        WITH both AS (
           SELECT c.${e.headFk} AS doc,
-                 ${COL("c")} AS child_col,
-                 ${COL("p")} AS parent_col
+                 ${COL_ID("c")}   AS c_id,   ${COL_ID("p")}   AS p_id,
+                 ${COL_TEXT("c")} AS c_text, ${COL_TEXT("p")} AS p_text,
+                 ${COL("c")}      AS c_any,  ${COL("p")}      AS p_any
             FROM scm.${e.table} c
             JOIN scm.${e.parentTable} p ON p.id = c.${e.column}
-           WHERE ${COL("c")} <> '' AND ${COL("p")} <> ''
+        ),
+        /* COMPARABLE means the two sides carry the SAME FIELD. An id against a
+           free-text label is not a colour measurement, and is counted apart. */
+        pairs AS (
+          SELECT doc,
+                 CASE WHEN c_id <> '' AND p_id <> '' THEN c_id ELSE c_text END AS child_col,
+                 CASE WHEN c_id <> '' AND p_id <> '' THEN p_id ELSE p_text END AS parent_col
+            FROM both
+           WHERE (c_id <> '' AND p_id <> '')
+              OR (c_id = '' AND p_id = '' AND c_text <> '' AND p_text <> '')
         ),
         docs AS (
           SELECT doc,
@@ -289,13 +320,17 @@ async function main() {
         SELECT COALESCE(SUM(pairs), 0)::int                                                AS comparable_pairs,
                COALESCE(SUM(wrong), 0)::int                                                AS wrong_rows,
                COUNT(*) FILTER (WHERE wrong > 0)::int                                      AS docs_with_wrong,
-               COUNT(*) FILTER (WHERE wrong > 0 AND child_multiset = parent_multiset)::int AS docs_perfect_permutation
+               COUNT(*) FILTER (WHERE wrong > 0 AND child_multiset = parent_multiset)::int AS docs_perfect_permutation,
+               (SELECT COUNT(*) FROM both
+                 WHERE c_any <> '' AND p_any <> '' AND ((c_id <> '') <> (p_id <> '')))::int AS field_mixed
           FROM docs`);
       const r = rows[0];
       log(`   ${e.t}->${e.parentType}  ${e.table}.${e.column}`);
-      log(`        ${r.comparable_pairs} pairs where BOTH sides carry a colour code`);
+      log(`        ${r.comparable_pairs} pairs where both sides carry the SAME colour field — the only comparable ones`);
       log(`        ${r.wrong_rows} rows disagree, across ${r.docs_with_wrong} documents`);
       log(`        ${r.docs_perfect_permutation} of those documents are a PERFECT COLOUR PERMUTATION — an exact swap`);
+      log(`        ${r.field_mixed} further pairs carry a colour ID on one side and free TEXT on the other —`);
+      log(`        NOT counted as disagreements, because that comparison has not measured a colour`);
     } catch (err) {
       log(`   ${e.t}->${e.parentType}  ${e.table}.${e.column}  — COLOUR NOT COUNTABLE: ${String(err.message).slice(0, 100)}`);
     }

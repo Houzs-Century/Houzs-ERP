@@ -67,6 +67,7 @@
 // ----------------------------------------------------------------------------
 import postgres from 'postgres';
 import { decomposeGroup } from './lib/sofa-compartment-suffixes.mjs';
+import { compareColour } from './lib/colour-identity.mjs';
 
 const url = process.env.DATABASE_URL;
 if (!url) {
@@ -209,13 +210,26 @@ const EDGES = [
 const COALESCED = (a) => `upper(btrim(coalesce(${a}.variants->>'colourId', ${a}.variants->>'colourLabel', ${a}.variants->>'colourCode', '')))`;
 
 async function colours() {
-  log('=== C. THE 12 COLOUR DISAGREEMENTS — a different COLOUR, or a different FIELD? ===');
+  log('=== C. THE COLOUR DISAGREEMENTS — a different COLOUR, or a different FIELD? ===');
   log('');
   log('   0672 compared coalesce(colourId, colourLabel, colourCode). Those are three');
   log('   different vocabularies. A row carrying only a LABEL compared against a row');
   log('   carrying an ID disagrees by construction, and that is not a wrong colour.');
+  log('   The verdict below has THREE values: a comparison across two vocabularies');
+  log('   has not measured a colour, so it can be resolved UP to `same` and never');
+  log('   down to `different`. scripts/lib/colour-identity.mjs carries the rule.');
   log('');
-  let total = 0; let fieldMix = 0; let artefact = 0; let real = 0;
+  /* The whole fabric library, read once. `active` is deliberately NOT filtered:
+     a superseded row is exactly what has to be visible here — the library
+     renumbered itself on 2026-08-11 and wrote the pointer into the dead row's
+     own label. */
+  const libRows = await sql`SELECT colour_id, label, company_id FROM scm.fabric_colours`;
+  const libByCompany = new Map();
+  for (const r of libRows) {
+    if (!libByCompany.has(r.company_id)) libByCompany.set(r.company_id, new Map());
+    libByCompany.get(r.company_id).set(String(r.colour_id), r.label ?? '');
+  }
+  let total = 0; let same = 0; let unproven = 0; let real = 0;
   for (const [name, child, col, parent, head, fk, pk, docCol] of EDGES) {
     let rows;
     try {
@@ -240,48 +254,27 @@ async function colours() {
       log(`   ${name} — NOT COUNTABLE: ${String(err.message).slice(0, 120)}`);
       continue;
     }
-    if (!rows.length) { log(`   ${name} — no disagreement`); continue; }
-    log(`   ${name}: ${rows.length} row(s)`);
+    if (!rows.length) { log(`   ${name} — no disagreement under the old COALESCE rule`); continue; }
+    log(`   ${name}: ${rows.length} row(s) the old rule called a disagreement`);
     for (const r of rows) {
       total += 1;
-      const cField = r.c_id ? 'colourId' : r.c_label ? 'colourLabel' : 'colourCode';
-      const pField = r.p_id ? 'colourId' : r.p_label ? 'colourLabel' : 'colourCode';
-      if (cField !== pField) fieldMix += 1;
-      const cR = await resolveColour(r.company_id, r.c_id, r.c_label ?? r.c_code);
-      const pR = await resolveColour(r.company_id, r.p_id, r.p_label ?? r.p_code);
-      const same = Boolean(
-        (cR.colourId && pR.colourId && norm(cR.colourId) === norm(pR.colourId))
-        || (cR.label && pR.label && norm(cR.label) === norm(pR.label)),
+      const lib = libByCompany.get(r.company_id) ?? new Map();
+      const v = compareColour(
+        { colourId: r.c_id, colourLabel: r.c_label, colourCode: r.c_code },
+        { colourId: r.p_id, colourLabel: r.p_label, colourCode: r.p_code },
+        lib,
       );
-      if (same) artefact += 1; else real += 1;
+      if (v.verdict === 'same') same += 1; else if (v.verdict === 'unproven') unproven += 1; else real += 1;
       log(`      ${r.doc_no}  ${r.child_code} -> ${r.parent_code}`);
-      log(`         child : id=${r.c_id ?? '-'} label=${r.c_label ?? '-'} code=${r.c_code ?? '-'}  (resolves to ${cR.colourId ?? '?'} / ${cR.label ?? '?'})`);
-      log(`         parent: id=${r.p_id ?? '-'} label=${r.p_label ?? '-'} code=${r.p_code ?? '-'}  (resolves to ${pR.colourId ?? '?'} / ${pR.label ?? '?'})`);
-      log(`         fields compared: ${cField} vs ${pField}${cField !== pField ? '  <-- DIFFERENT FIELDS, the comparison itself is invalid' : ''}`);
-      log(`         VERDICT: ${same ? 'SAME COLOUR — checker artefact' : 'genuinely different colour'}`);
+      log(`         child : id=${r.c_id ?? '-'} label=${r.c_label ?? '-'} code=${r.c_code ?? '-'}`);
+      log(`         parent: id=${r.p_id ?? '-'} label=${r.p_label ?? '-'} code=${r.p_code ?? '-'}`);
+      log(`         VERDICT ${v.verdict.toUpperCase()}: ${v.why}`);
     }
   }
   log('');
-  log(`   TOTAL ${total} disagreeing rows: ${fieldMix} compare two DIFFERENT variant fields;`);
-  log(`   ${artefact} resolve to the SAME colour (artefact); ${real} are a genuinely different colour.`);
-}
-
-/* Resolve either vocabulary to {colourId, label} so a label on one side and an
-   id on the other can still be compared AS COLOURS. `active` is deliberately
-   NOT filtered: a superseded row is exactly the case this has to be able to
-   see (docs/bugs/0669, and the renumbered fabric library of 2026-09-02). */
-async function resolveColour(companyId, id, label) {
-  if (id) {
-    const hit = await sql`SELECT colour_id, label FROM scm.fabric_colours
-                           WHERE colour_id = ${String(id)} AND company_id = ${companyId} LIMIT 1`;
-    return { by: 'id', colourId: String(id), label: hit[0]?.label ?? null };
-  }
-  if (label) {
-    const hit = await sql`SELECT colour_id, label FROM scm.fabric_colours
-                           WHERE upper(btrim(label)) = ${norm(label)} AND company_id = ${companyId} LIMIT 1`;
-    return { by: 'label', colourId: hit[0]?.colour_id ?? null, label: String(label) };
-  }
-  return { by: 'none', colourId: null, label: null };
+  log(`   TOTAL ${total} rows the COALESCE rule called a colour disagreement:`);
+  log(`   ${same} are the SAME colour (checker artefact), ${unproven} cannot be settled by a string rule,`);
+  log(`   and ${real} are two genuinely different live colour ids.`);
 }
 
 /* ------------------------------------------------------------------------ D */
@@ -304,13 +297,14 @@ async function sharedKeys() {
        WHERE c.linked_ac_dtlkey IS NOT NULL
        GROUP BY c.linked_ac_dtlkey
       HAVING count(*) > 1`);
-    let ok = 0; const bad = [];
+    let ok = 0; let repeats = 0; const bad = [];
     for (const g of groups) {
       const v = decomposeGroup(g.codes);
-      if (v.ok) ok += 1; else bad.push({ ...g, why: v.why });
+      if (v.ok) { ok += 1; if (v.repeated.length) repeats += 1; } else bad.push({ ...g, why: v.why });
     }
     log(`   ${line}: ${groups.length} DtlKeys carried by more than one row`);
-    log(`      ${ok} of ${groups.length} are ONE model decomposed into DISTINCT compartments — by design (autocount-sofa-collapse.ts)`);
+    log(`      ${ok} of ${groups.length} are ONE model decomposed into compartments — by design (autocount-sofa-collapse.ts)`);
+    log(`      ${repeats} of those ${ok} carry a compartment TWICE, which is an ordinary build (a four-seater has two 1NA middles) and is reported, not refused`);
     log(`      ${bad.length} of ${groups.length} are NOT, and are candidate collisions:`);
     for (const b of bad.slice(0, 40)) {
       log(`         DtlKey ${b.dtlkey}: ${b.n} rows, ${b.companies} company(ies) — ${b.why}`);

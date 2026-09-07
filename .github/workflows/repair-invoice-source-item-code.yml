@@ -1,0 +1,74 @@
+name: Repair invoice sofa-placeholder item codes (PLAN gated)
+
+# Five invoice lines still name the cutover's un-decoded sofa PLACEHOLDER
+# ({model}-1S) while the delivery / receipt line they were raised from names the
+# real compartment. Probe run 34143079454 (2026-09-08 00:26 local) named them:
+#
+#   HC-I-000745      5526-1S  ->  HC-DO-000542   5526-L(LHF)
+#   HC-I-2412-0065   2379-1S  ->  HC-DO-002158   2379-2S
+#   HC-PI-007551     9058-1S  ->  HC-GR-005068   9058-1A(LHF)
+#   HC-PI-007917     9058-1S  ->  HC-GR-005306   9058-1A(LHF)
+#   HC-PI-007920     8030-1S  ->  HC-GR-005277   8030-1A(LHF)
+#
+# The LINK is correct in every case — right document, and the only line on it.
+# What is wrong is the item code, and only the item code moves: qty, unit price,
+# line total and the link column are re-read on a FRESH connection afterwards
+# and must come back byte identical.
+#
+# The decision is pure and unit-tested (scripts/lib/invoice-sofa-placeholder-repair.mjs)
+# and refuses everything that is not FORCED. The pre-change rows are written to
+# a JSON artifact — on the PLAN run too, so the backup exists before anyone
+# types apply — with the single UPDATE that restores each row.
+#
+# PLAN unless mode=apply, which also needs the confirm phrase.
+# Re-running after a successful apply reports CLEAN.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (default) or apply"
+        required: false
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: 'For apply only — type: I HAVE READ THE PLAN'
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: repair-invoice-source-item-code
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/repair-invoice-source-item-code.mjs
+        env:
+          # The script keys on APPLY === 'true'; anything else is a plan, so the
+          # default cannot write even if the confirm phrase is filled in.
+          APPLY: ${{ inputs.mode == 'apply' }}
+          CONFIRM: ${{ inputs.confirm }}
+          DUMP_PATH: ${{ github.workspace }}/invoice-source-item-code-before.json
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      - name: keep the pre-change rows
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: invoice-source-item-code-before-${{ github.run_id }}
+          path: invoice-source-item-code-before.json
+          if-no-files-found: warn
