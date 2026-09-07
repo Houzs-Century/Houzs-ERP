@@ -133,7 +133,7 @@ import postgres from "postgres";
 import { parsePayment } from "./lib/ac-payment-udf.mjs";
 import { SOFA_MODEL_ALIAS, parseSofa } from "./lib/parse-sofa.mjs";
 import { buildFabricColourIndex } from "./lib/fabric-colour-match.mjs";
-import { acFromSoDtlKey } from "./lib/ac-po-line.mjs";
+import { acFromSoDtlKey, planSoPoDedications } from "./lib/ac-po-line.mjs";
 /* The delivery-document matcher and writer, shared with
    create-migrated-documents.mjs. The rule has ONE home (see that file and
    docs/bugs/0043) and this lane feeds it a different SOURCE, never a copy. */
@@ -472,20 +472,13 @@ async function main() {
   const soItemByDtl = new Map(soItems.filter((i) => i.linked_ac_dtlkey != null).map((i) => [String(i.linked_ac_dtlkey), i]));
   const poItemByDtl = new Map(poItems.filter((i) => i.linked_ac_dtlkey != null).map((i) => [String(i.linked_ac_dtlkey), i]));
   const claimed = new Set(poItems.filter((i) => i.so_item_id).map((i) => String(i.so_item_id)));
-  const linkPlan = [];
-  const linkMissing = [];
-  for (const e of S.edges.PO || []) {
-    const key = acFromSoDtlKey(e);
-    if (key == null) continue;
-    const pi = poItemByDtl.get(String(e.DtlKey));
-    const si = soItemByDtl.get(String(key));
-    if (!pi) { linkMissing.push({ po: e.DocNo, why: "the PO line is not in the ERP yet (import it first)" }); continue; }
-    if (!si) { linkMissing.push({ po: e.DocNo, why: `the SO line ${key} (${e.FromDocNo}) is not in the ERP` }); continue; }
-    if (pi.so_item_id) continue;
-    if (claimed.has(String(si.id))) { linkMissing.push({ po: e.DocNo, why: `SO line ${key} is already dedicated to another PO line` }); continue; }
-    claimed.add(String(si.id));
-    linkPlan.push({ poItemId: pi.id, soItemId: si.id, poNo: pi.po_number, soNo: e.FromDocNo });
-  }
+  /* THE RULE LIVES IN lib/ac-po-line.mjs, with the incident that bought its
+     item-code guard written out there. It is a library and not twenty lines
+     here because it decides what the floor is told is ready to ship, and this
+     repo's most expensive recurring bug is a second copy of an import rule. */
+  const { plan: linkPlan, missing: linkMissing, mismatch: linkMismatch } =
+    planSoPoDedications({ edges: S.edges.PO || [], soItemByDtl, poItemByDtl, alreadyClaimed: claimed });
+
   /* The conversion CHAIN, measured rather than assumed. On the 2026-09-07 cut
      the delta's own edges say: DO comes from SO, IV comes from **DO**, GR comes
      from PO, PI comes from **GR**. So resolving an IV or a PI straight against
@@ -528,6 +521,11 @@ async function main() {
   log(`  SO->PO dedications this run would write      ${linkPlan.length}`);
   log(`  SO->PO edges that cannot be linked yet       ${linkMissing.length}`);
   for (const m of linkMissing.slice(0, 10)) log(`   ${m.po}: ${m.why}`);
+  log(`  REFUSED, the two ERP rows name DIFFERENT products  ${linkMismatch.length}   <- never written; a wrong dedication makes MRP light the wrong bed`);
+  for (const m of linkMismatch) {
+    log(`   REFUSED ${m.poNo} (${m.po}) line "${m.poCode}"  <-x-  ${m.soDoc} (${m.soNo}) line "${m.soCode}"`);
+    log(`      AutoCount pairs SODtlKey ${m.soDtl} with PODtlKey ${m.poDtl} and the BOOK's two lines carry the same item code, so the disagreement is between OUR two rows. Resolve which of the two is the faithful copy before any dedication is written; so_item_id stays NULL until then.`);
+  }
   log("  conversions on the delta documents (the source is walked back to an SO or a PO):");
   for (const k of ["DO", "IV", "GR", "PI"]) {
     const c = convByType[k];
