@@ -83,6 +83,13 @@ screen down to the database. Same structure as
 > `backend/src/db/migrations-pg/20260906T1509_announcement_approval.sql`;
 > `services/announcementApproval.ts` holds the transitions. §3 "Approval
 > workflow", §2, §4 and §5 carry the contract.
+> **2026-09-07 (attachment policy + log, owner: 强制附件 / 操作日志):** the ANN
+> document type's `attachment_required` (Settings → Documents) gates the two
+> doors into the approval queue; `announcement_files` (mig
+> `backend/src/db/migrations-pg/20260907T0715_announcement_files.sql`) logs
+> who attached / removed which file and when; `GET /:id/files` answers it and
+> the Manage drawer shows it. `services/announcementFiles.ts` holds both.
+> §3 "Attachments", §2 and §4 carry the contract.
 > **2026-09-06 (font sizes, owner: "像 Word 那样选字号数字"):** the editor's
 > S / M / L / XL buttons became a **Size dropdown** of point sizes (10–36
 > px, stored as `span[data-size="16"]`); with nothing selected the size
@@ -339,7 +346,8 @@ source line) see
 | GET | `/api/announcements/team-pending` | — | **none** — explicit 401; scoped to the caller's DIRECT REPORTS (`users.manager_id = caller`): their unacked mandatory notices with the same `state` (2026-09-05, feeds the dashboard "My team's pending" card) |
 | POST | `/api/announcements/:id/escalate` | — | `announcements.write` (or Sales Director) — body `{ departmentId? }`; posts ONE system notice (`source 'ack_escalation'`) per supervisor of the pending people, via `postPersonalNotice` (2026-09-05, the drawer's "Notify their supervisors") |
 | POST | `/api/announcements` | `:785` | `announcements.write` (or Sales Director) — since 2026-09-06 the row is created PENDING_APPROVAL (or DRAFT with body `draft: true`); the answer's `approvalStatus` says which |
-| POST | `/api/announcements/:id/submit` | — | `announcements.write` (or Sales Director on their own post) — DRAFT / REJECTED → PENDING_APPROVAL; rings the approvers' bell (2026-09-06) |
+| POST | `/api/announcements/:id/submit` | — | `announcements.write` (or Sales Director on their own post) — DRAFT / REJECTED → PENDING_APPROVAL; rings the approvers' bell (2026-09-06). Since 2026-09-07 refused 400 while the ANN type requires an attachment and the notice has none (same rule as POST without `draft`) |
+| GET | `/api/announcements/:id/files` | — | `announcements.write` / `announcements.approve` / `*` (or a Sales Director on their own post) — the attachment log (mig `20260907T0715`): `[{ id, r2Key, name, mime, size, uploadedBy, uploadedByName, uploadedAt, removedBy, removedByName, removedAt }]`, oldest first, removed lines kept (2026-09-07) |
 | POST | `/api/announcements/:id/approve` | — | `announcements.approve` — PENDING_APPROVAL → APPROVED; mints `ref_no` from the submitter's department code (409 with the fix when the department has none); answers the public row incl. `refNo` (2026-09-06) |
 | POST | `/api/announcements/:id/reject` | — | `announcements.approve` — body `{ reason }` (required, 400 when blank); PENDING_APPROVAL → REJECTED; the submitter gets a WARNING bell notice with the reason (2026-09-06) |
 | PATCH | `/api/announcements/:id` | `:920` | `announcements.write` (or Sales Director) |
@@ -379,7 +387,16 @@ see §6.
 
 ## 3. Backend
 
-`backend/src/routes/announcements.ts` (1,355 lines).
+`backend/src/routes/announcements.ts` (about 1,940 lines — at the repo's file-size
+ceiling, so it may not grow) plus, since 2026-09-07,
+`backend/src/routes/announcementApproval.ts`: the `POST /:id/submit`,
+`/:id/approve`, `/:id/reject` and `GET /:id/files` routes, a second Hono router
+mounted on the SAME `/api/announcements` prefix right after the main one in
+`backend/src/index.ts`. It imports the main router's exported row helpers
+(`getScopedAnnouncement`, `salesDirectorScope`, `sdBlockedFromRow`, `toPublic`,
+`normalizeAttachments`, `actorOf`) so the two files cannot disagree; the D1
+suites (`announcementsApproval.test.ts`, `announcementsAttachmentPolicy.test.ts`)
+mount both routers.
 
 ### Read path — two cohorts, one company gate
 
@@ -446,6 +463,25 @@ all filtering happens in JS in the Worker (`:543-547`, `:628-630`).
   column yields. The list endpoint treats an `announcements.approve` holder as
   a manager (the queue is in the ledger), so the approval desk needs no write
   verb. Regression suite: `backend/tests/announcementsApproval.test.ts`.
+- **Attachments — policy + log (2026-09-07, mig `20260907T0715`)** —
+  `backend/src/services/announcementFiles.ts`. POLICY:
+  `attachmentRequiredForAnnouncements()` reads `document_types.ANN
+  .attachment_required` (Settings → Documents, `pages/settings/
+  DocumentTypesTab.tsx`); when true, POST without `draft` and `POST
+  /:id/submit` answer 400 `ATTACHMENT_REQUIRED_MESSAGE` while the manifest
+  is empty — a draft can always be saved, and the composer holds "Submit for
+  approval" (not "Save draft") with a hint while the file is missing. LOG:
+  `syncAttachmentLog()` runs after the POST insert and after a PATCH that
+  carried `attachments`, bringing `announcement_files` in step with the
+  manifest — a key that appeared becomes a row with the actor as uploader, a
+  key that vanished keeps its row with `removed_by/at`, a key that comes back
+  re-opens its row under the actor; `announcements.attachments` stays the
+  source of WHAT is attached. `listAttachmentLog()` joins the people to names
+  for `GET /:id/files`, which the Manage drawer renders as an "Attachments"
+  block (live count, removed lines struck through). Both readers tolerate the
+  table (or `document_types`) being absent — absent policy = not required,
+  absent log = nothing logged — so the older D1 mirrors need no column.
+  Regression suite: `backend/tests/announcementsAttachmentPolicy.test.ts`.
 - **Translation runs after the response (2026-09-06)** — `queueTranslation()`
   next to the create route hands `translateAndStore()`
   (`backend/src/lib/translate-announcement.ts`) to `c.executionCtx.waitUntil`
@@ -630,6 +666,7 @@ There is also no announcements migration in the D1 tree.
 | Migration | Effect |
 |---|---|
 | `0058_announcements.sql` | creates `announcements` + `announcement_acks` + 2 indexes |
+| `backend/src/db/migrations-pg/20260907T0715_announcement_files.sql` | creates `announcement_files` (`id`, `announcement_id`, `r2_key`, `name`, `mime`, `size`, `uploaded_by/at`, `removed_by/at`; unique on the pair, index on `announcement_id`) — the attachment log (owner 2026-09-06 操作日志). The manifest column stays the source of what is attached; this is who / when |
 | `backend/src/db/migrations-pg/20260906T1509_announcement_approval.sql` | adds `approval_status` (NOT NULL DEFAULT 'APPROVED' — every existing row stays published), `submitted_by/at`, `reviewed_by/at`, `reject_reason`, `ref_no` (unique partial index) and the open-queue partial index — the approval workflow (owner 2026-09-06) |
 | `backend/src/db/migrations-pg/20260906T0921_announcement_reminders.sql` | creates `announcement_reminders` (`announcement_id`, `user_id`, `reminded_at`, `reminded_by`; PK on the pair, index on `user_id`) — the per-person reminder behind the drawer's per-department Remind (owner 2026-09-06). Every reader (`loadReminderMap` / `loadUserReminders` / `loadAllReminders` / `recordReminders` in `lib/announcementAudience.ts`) tolerates the table being absent |
 | `0071_announcements_source.sql` | `+ source text` — the human/system split |
@@ -729,6 +766,7 @@ still 403 for that reader (`:146, 157, 164, 171, 180`).
 | Pop-up markup / CTA wording | `components/AnnouncementBanner.tsx` | `mobile/MobileAnnouncementPopup.tsx` |
 | Composer (audience picker, media layout, company target, **expiry**, **schedule**, **require ack**) | `pages/announcements/ComposerModal.tsx` + `AudiencePicker.tsx` | `mobile/MobileAnnouncements.tsx` `Compose` (still positions + plain expiry; requireAck / scheduledAt default server-side) |
 | Live / Hidden / Expired badge | **`lib/announcementStatus.ts`** — the shared rule; both surfaces import it, neither re-derives it | — |
+| Attachment policy + log (2026-09-07) | `pages/announcements/ComposerModal.tsx` (`attachmentRequired` prop from the page's `/api/document-types` read: hint + Submit held) and the `ManageView.tsx` drawer's "Attachments" block (`files` prop from `GET /:id/files`); the policy itself is edited under Settings → Documents (`pages/settings/DocumentTypesTab.tsx`) | the phone composer relies on the server's 400 (surfaced in its error line); no log view on the phone |
 | Approval actions (submit / approve / reject, the state pill, the reject reason, the ref no in place of the row id) | `pages/announcements/ManageView.tsx` drawer (`canWrite` / `canApprove` props; the page's `approveNotice` / `rejectNotice` (reason via `useDialog().prompt`) / `submitNotice`); the "Pending approval" filter is `MANAGE_ONLY_FILTERS` in `announcementModel.ts` so the inbox never offers it; the composer's primary is "Submit for approval" + a "Save draft" secondary | `mobile/MobileAnnouncements.tsx` `Detail` (`canApprove` prop, `ApprovalChip`, reason via the vendored `usePrompt`); the ledger is read for `canCreate \|\| canApprove` |
 | Publisher actions (hide/show, delete, remind, escalate) | `pages/announcements/ManageView.tsx` drawer (+ the inbox's read-receipts card for remind / hide); the "reset all receipts" (`remind { scope: "all" }`) affordance is desktop-retired with the old row — the phone keeps it | `mobile/MobileAnnouncements.tsx` `Detail` + `Receipts` |
 | Media rendering (mig 0140 layout hint) | `components/AnnouncementMedia.tsx` | `mobile/MobileAnnouncementMedia.tsx` |
