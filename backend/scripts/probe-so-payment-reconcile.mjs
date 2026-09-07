@@ -198,9 +198,20 @@ async function main() {
     if (pays.length === 0) {
       log("      none. The ERP holds no payment record for this order.");
     }
+    let anyImported = false;
     for (const p of pays) {
       log(`      ${p.paid_at}  ${rm(p.amt)}  method=${p.method}  deposit=${p.is_deposit}  acct=${p.account_sheet ?? "-"}  appr=${p.approval_code ?? "-"}`);
       if (p.note) log(`         note: ${p.note}`);
+      if (String(p.note ?? "").startsWith("imported from AutoCount")) anyImported = true;
+    }
+    /* THE DATE ON A MIGRATED PAYMENT IS NOT A PAYMENT DATE, and printing it
+       beside an amount invites it to be read as one. The cutover's own header
+       says "payment date unknown -> CURRENT_DATE (system date)", and
+       import-ac-outstanding-so.mjs:470 writes `h.DocDate ? h.DocDate : CUR` -
+       so paid_at on every migrated row is the ORDER's document date. */
+    if (anyImported) {
+      log("      NOTE: on a MIGRATED row that date is the ORDER date, not a payment date. The book records");
+      log("      no payment date at all, so the cutover used the document's own date (import-ac-outstanding-so.mjs:470).");
     }
     const paySum = pays.reduce((t, p) => t + Number(p.amt), 0);
     const [v] = await sql`

@@ -108,4 +108,77 @@ computes*) says a migration reads AutoCount's own value and never infers one;
 `paid_sen` is where that rule was not followed, and the cost was not a wrong
 number but three hours of reading a corrected total as a payment defect.
 
-**Ref.** fix/money-so-010916-payment-recon, PR pending, 2026-09-07.
+---
+
+### RUN AGAINST PRODUCTION — what was actually observed
+
+All times local (UTC+8). The claims above were `UNTESTED` when PR #3117 merged;
+this is what happened when the two tools were dispatched.
+
+**Read-only probe, run `34141452097`, 2026-09-08 00:04.** `success`. It measured
+the four orders live against the two committed snapshots, and it moved the two
+open questions:
+
+```
+HC-SO-004188
+      order total         RM 7988.00   (header local_total_sen; the 2 line(s) sum to RM 7988.00)
+      paid + balance      RM 7988.00 = the total
+      match   line  1 key=287817 AKEMI ULTIMATE MATT (Q)    ERP 1 x RM 7988.00   book 1 x RM 7988.00
+```
+
+**`docs/bugs/0672`'s "over-collected by RM 4,644.00" is stale, not wrong.** It
+was true for the 32 minutes between run 34134351163 (22:41) and run 34137116270
+(23:13). Production carries the book's figure now. The book says **quantity
+one**.
+
+```
+HC-SO-002309
+      still owed          RM 0.00   (UDF_BALANCE)  last edited in AutoCount 2026-09-04 14:03
+      stored paid         RM 1770.00      stored balance      RM 4579.00
+      the ERP records RM 4279.00 LESS collected than the book
+```
+
+**That is the real finding of this entry and it is not an arithmetic artefact.**
+Every line of `HC-SO-002309` matches the book. The customer settled the order in
+AutoCount on 2026-09-04, after the 2026-08-28 import, and no payment ever flowed
+back. The ERP would chase RM 4,279.00 the book says is already collected. **The
+owner's call; nothing here writes it.**
+
+`HC-SO-013336` is the third shape: the ERP's stored `balance_sen` is RM 1,071.00
+against the book's RM 1,386.00, because the book's own price and balance were
+both corrected after the import and only the price came across. The customer has
+paid nothing on either reading, and the list view's `balance_sen_live`
+(total minus payments) already shows RM 1,386.00 — the staleness is in the stored
+column only.
+
+**The clear, run `34142457842`, 2026-09-08 00:16.** `success`, `APPLY=1`. Plan
+first as run `34141591691` (00:05). All four guards passed; one line written:
+
+```
+APPLIED - 1 line cleared; 1 header re-summed to RM 6088.00 from its lines.
+read-back on a fresh connection: the line is blank, the header equals the sum of
+its lines, and paid/balance are untouched
+HC-SO-010916 after the write:
+   order total   RM 8905.00 -> RM 6088.00   (the book says RM 6088.00 - they now agree)
+   paid RM 1859.00 + balance RM 4229.00 = RM 6088.00 = the total
+```
+
+**Verified twice more.** The probe re-run `34142538437` (00:18) shows all eight
+lines of `HC-SO-010916` matching the book and the order balancing; its census
+now reports **`ONE book line, ONE ERP row - these are the real candidates: 0`**,
+down from 1. A second plan run `34142549401` answered `ALREADY CLEARED. This
+line carries no price. Nothing to do; a re-run is a no-op by design.`
+
+**The census answers the question the ruling raised.** Before the clear it found
+exactly ONE line of that shape in all of company 1, and it was this one. There
+were never others to sweep, and the standing rule was never at risk.
+
+**One thing the probe found that nobody was looking for, and it is NOT money.**
+`HC-SO-004188` carries 2 ERP lines against the book's 4. DtlKeys `925621`
+(`AK-ULTIMATE MATT (Q)`, qty 1) and `925622` (`AK-SK + MICROFIL PIL`, qty 2) are
+in the book and not in the ERP. Both are RM 0.00, so no total moves — but two
+items the customer is owed are missing from the order. Not repaired here and not
+this entry's subject; recorded so the next sweep starts from the fact.
+
+**Ref.** fix/money-so-010916-payment-recon, PR #3117; runs recorded above,
+2026-09-08.
