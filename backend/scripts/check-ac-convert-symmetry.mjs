@@ -1007,6 +1007,22 @@ if (SKIP_ERP) {
           JOIN scm.delivery_order_items d ON d.id = i.do_item_id
           JOIN scm.delivery_orders ph ON ph.id = d.delivery_order_id AND ph.company_id = ${CO}
          WHERE ch.linked_ac_docno IS NOT NULL AND ph.linked_ac_docno IS NOT NULL`,
+      /* THE SIXTH EDGE, and the one a five-edge summary quietly drops. AutoCount
+         raises an invoice STRAIGHT off a sales order on 169 lines, without a
+         delivery order in between, and the book records it as its own edge. The
+         ERP's own invoice flow has no such shape — autocount-convert-lines.ts
+         gives the invoice ONE sourceFk and it is do_item_id — so this is the
+         edge most likely to be silently absent, which is exactly why it must be
+         counted rather than assumed away. sales_invoice_items.so_item_id exists,
+         so the question is answerable; whether it is ever populated is the
+         finding, not the reason to skip it. */
+      "IV <- SO": pg`
+        SELECT DISTINCT ch.linked_ac_docno AS c, ph.linked_ac_docno AS p
+          FROM scm.sales_invoice_items i
+          JOIN scm.sales_invoices ch ON ch.id = i.sales_invoice_id AND ch.company_id = ${CO}
+          JOIN scm.mfg_sales_order_items s ON s.id = i.so_item_id
+          JOIN scm.mfg_sales_orders ph ON ph.doc_no = s.doc_no AND ph.company_id = ${CO}
+         WHERE ch.linked_ac_docno IS NOT NULL AND ph.linked_ac_docno IS NOT NULL`,
     };
     /* The imported-document sets, so FORWARD gets an honest denominator. The
        ERP cannot hold an edge whose documents it never imported, and counting
