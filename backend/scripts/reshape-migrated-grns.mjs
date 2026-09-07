@@ -47,6 +47,31 @@
  * quantity per (purchase order, item) is identical either way, so stock and MRP
  * are unaffected by leaving it unset — which is why the ruling is safe.
  *
+ * ── THE MONEY IS CARRIED, NEVER RECOMPUTED ──────────────────────────────────
+ * `stamp-migrated-source-prices.mjs` owns what a migrated receipt line is worth,
+ * and it applied 32 lines to production on 2026-09-07 at 16:02Z (run
+ * 34141318054). The money it wrote is on the RECEIPT line in AutoCount, not on
+ * the purchase order behind it - on all 180 zero-priced migrated receipt lines
+ * the book's own purchase-order line reads `UnitPrice 0, SubTotal 0`, because
+ * Houzs does not price factory purchase orders (docs/bugs/0674).
+ *
+ * So this writer decides no price. It CARRIES what the line already holds, per
+ * unit: `unit_price_sen` as-is, and `discount_sen` shared out by quantity, so a
+ * line split across two receipts keeps the same money per unit. The lookup is
+ * `(purchase-order line, item code)` first and `(purchase order, item code)`
+ * second - the second is what an unattributed line uses, and it is not an
+ * invention, because every candidate line shares the code and therefore the
+ * price. Where the ERP holds no money at all, an attributed line falls back to
+ * the purchase-order line's price (the old behaviour, usually zero) and an
+ * unattributed line to the book's own receipt line. The run PRINTS the money
+ * before and after so any drift is visible instead of discovered.
+ *
+ * AFTER THIS RUNS, RE-DISPATCH "Stamp migrated source prices". Its selection is
+ * `unit_price_sen = 0`, so it is the authority for everything still unpriced -
+ * and the new grain makes MORE of it stampable, because its partial-mirror
+ * refusal exists precisely for the one-document-per-purchase-order shape this
+ * replaces.
+ *
  * ── NO STOCK, IN EITHER DIRECTION ───────────────────────────────────────────
  * Every document written here keeps `migrated_no_stock` (migration 0276) and no
  * inventory movement is written. On-hand came in once through the AutoCount
@@ -356,6 +381,27 @@ async function main() {
     else existingUnpaired.push(g);
   }
 
+  /* THE MONEY EVERY MIGRATED LINE ALREADY HOLDS, per unit, so a line split
+     across two receipts keeps the same money per unit rather than being
+     re-derived from a purchase order that states none. */
+  const poIdByGrn = new Map(grns.map((g) => [g.id, g.po_id]));
+  const carry = new Map();
+  const carryByPo = new Map();
+  const addCarry = (map, key, l) => {
+    const e = map.get(key) ?? { unit: 0, disc: 0, qty: 0 };
+    e.unit = Math.max(e.unit, n0(l.unit_price_sen));
+    e.disc += n0(l.discount_sen);
+    e.qty += n0(l.qty_accepted);
+    map.set(key, e);
+  };
+  for (const g of grns) {
+    for (const l of linesByGrn.get(g.id) ?? []) {
+      if (l.poi_id) addCarry(carry, `${l.poi_id}|${norm(l.item_code)}`, l);
+      addCarry(carryByPo, `${poIdByGrn.get(g.id)}|${norm(l.item_code)}`, l);
+    }
+  }
+  const moneyBefore = grnLines.reduce((t, l) => t + n0(l.line_total_sen), 0);
+
   const allGrnNumbers = new Set((await sql`SELECT grn_number FROM scm.grns`).map((r) => r.grn_number));
   /* A receipt covering ONE in-scope purchase order keeps the bare AutoCount
      number; one covering several carries the purchase order too, because the
@@ -522,20 +568,6 @@ async function main() {
   for (const g of retire.slice(0, SHOW)) say(`  CANCEL ${pad(g.grn_number, 30)} — superseded by the book's own receipts for ${g._poAc}`);
   if (retire.length > SHOW) say(`  ... ${retire.length - SHOW} more`);
 
-  if (!APPLY) {
-    log(`PLAN ONLY — nothing was written to the database. Re-run with MODE=apply CONFIRM="${CONFIRM_PHRASE}".`);
-    await sql.end();
-    return;
-  }
-
-  /* ── apply ──────────────────────────────────────────────────────────────── */
-  rule("APPLY");
-  const [{ has }] = await sql`SELECT COUNT(*)::int AS has FROM information_schema.columns
-    WHERE table_schema = 'scm' AND table_name = 'grns' AND column_name = 'linked_ac_gr_docno'`;
-  if (!has) {
-    await refuse("scm.grns.linked_ac_gr_docno does not exist. Apply the migration that adds it before running APPLY.");
-  }
-
   /* The billing state a reused document already carries, so an invoice raised
      from it is not forgotten when its lines are rewritten. Keyed on the
      purchase-order line plus the item code, allocated across the new documents
@@ -569,13 +601,30 @@ async function main() {
 
   const lineRows = (d) => d.items.map((i) => {
     const poi = i.poi;
-    const price = poi ? n0(poi.unit_price_sen) : Math.round(n0(priceByKey.get(i.book.dtlKey)));
     const code = poi ? poi.item_code : i.book.itemKey;
     const k = `${poi?.id ?? "-"}|${norm(code)}`;
+    /* Exact line first, then any line of the same purchase order carrying the
+       same code - which is what an unattributed line has, and the price does
+       not depend on WHICH of the identically-coded lines it was. */
+    const held = (poi ? carry.get(k) : null) ?? carryByPo.get(`${d.erpPo.id}|${norm(code)}`) ?? null;
+    let price;
+    let discount = 0;
+    if (held && held.unit > 0) {
+      price = held.unit;
+      discount = held.qty > 0 ? Math.round((held.disc / held.qty) * i.qty) : 0;
+    } else if (poi) {
+      price = n0(poi.unit_price_sen);
+    } else {
+      /* No ERP money anywhere for this code on this purchase order, and no
+         purchase-order line to inherit from. The book's own receipt line is the
+         only statement of what it is worth. */
+      price = Math.round(n0(priceByKey.get(i.book.dtlKey)));
+    }
     const avail = billed.get(k) ?? 0;
     const take = Math.min(avail, i.qty);
     if (take > 0) billed.set(k, avail - take);
     return {
+      discount,
       poi_id: poi?.id ?? null,
       material_kind: poi?.material_kind ?? "mfg_product",
       item_code: code,
@@ -589,18 +638,49 @@ async function main() {
       qty: i.qty,
       price,
       invoiced: take,
+      lineTotal: Math.max(0, Math.round(i.qty * price) - discount),
       notes: i.attributed ? null :
         `PURCHASE-ORDER LINE NOT RECORDED — ${i.why}. The item and the quantity are AutoCount's own; only the link to a purchase-order line is left unset, deliberately (owner 2026-09-07: 跟 autocount 一样).`,
     };
   });
 
+  /* Built ONCE, here, so the PLAN reports the money the APPLY would write. A
+     plan that recomputes its own preview is a second answer, not a preview. */
+  let moneyAfter = 0;
+  for (const d of plan) {
+    d.rows = lineRows(d);
+    d.total = d.rows.reduce((s, r) => s + r.lineTotal, 0);
+    d.warehouse = d.items.find((i) => i.poi?.warehouse_id)?.poi.warehouse_id ?? d.erpPo.purchase_location_id;
+    moneyAfter += d.total;
+  }
+  rule("MONEY — carried, never recomputed");
+  log(`MONEY — the migrated receipts hold RM ${(moneyBefore / 100).toFixed(2)} today; this plan writes RM ${(moneyAfter / 100).toFixed(2)}.`);
+  say("  Nothing here decides a price. `stamp-migrated-source-prices.mjs` owns that — it applied 32 lines to");
+  say("  production on 2026-09-07 16:02Z (run 34141318054) — and this carries what each line already holds,");
+  say("  per unit, so a line split across two receipts keeps the same money per unit. Its selection is");
+  say("  `unit_price_sen = 0`, so RE-DISPATCH IT AFTER THIS RUN to price anything still at zero.");
+
+  if (!APPLY) {
+    log(`PLAN ONLY — nothing was written to the database. Re-run with MODE=apply CONFIRM="${CONFIRM_PHRASE}".`);
+    await sql.end();
+    return;
+  }
+
+  /* ── apply ──────────────────────────────────────────────────────────────── */
+  rule("APPLY");
+  const [{ has }] = await sql`SELECT COUNT(*)::int AS has FROM information_schema.columns
+    WHERE table_schema = 'scm' AND table_name = 'grns' AND column_name = 'linked_ac_gr_docno'`;
+  if (!has) {
+    await refuse("scm.grns.linked_ac_gr_docno does not exist. Apply the migration that adds it before running APPLY.");
+  }
+
   let created = 0;
   let updated = 0;
   let cancelled = 0;
   for (const d of plan) {
-    const rows = lineRows(d);
-    const total = rows.reduce((s, r) => s + Math.round(r.qty * r.price), 0);
-    const warehouse = d.items.find((i) => i.poi?.warehouse_id)?.poi.warehouse_id ?? d.erpPo.purchase_location_id;
+    const rows = d.rows;
+    const total = d.total;
+    const warehouse = d.warehouse;
     await sql.begin(async (tx) => {
       let grnId = d.existing?.id ?? null;
       if (grnId) {
@@ -626,10 +706,10 @@ async function main() {
       for (const r of rows) {
         await tx`INSERT INTO scm.grn_items
             (grn_id, purchase_order_item_id, material_kind, item_code, material_name, item_group,
-             qty_received, qty_accepted, qty_rejected, unit_price_sen, line_total_sen, variants,
+             qty_received, qty_accepted, qty_rejected, unit_price_sen, discount_sen, line_total_sen, variants,
              line_suffix, description2, uom, supplier_sku, invoiced_qty, notes, company_id)
           VALUES (${grnId}::uuid, ${r.poi_id}, ${r.material_kind}::scm.material_kind, ${r.item_code}, ${r.material_name},
-                  ${r.item_group}, ${r.qty}, ${r.qty}, 0, ${r.price}, ${Math.round(r.qty * r.price)},
+                  ${r.item_group}, ${r.qty}, ${r.qty}, 0, ${r.price}, ${r.discount}, ${r.lineTotal},
                   ${r.variants ? sql.json(r.variants) : null}, ${r.line_suffix}, ${r.description2}, ${r.uom ?? "UNIT"},
                   ${r.supplier_sku}, ${r.invoiced}, ${r.notes}, ${CO})`;
       }

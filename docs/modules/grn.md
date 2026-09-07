@@ -560,6 +560,22 @@ number the column holds today, and prints every difference — so an unattribute
 line's effect on a future `recomputePoReceived` is visible now rather than
 discovered later.
 
+**The money is CARRIED, never recomputed — and the price stamp runs AFTER.**
+`stamp-migrated-source-prices.mjs` owns what a migrated receipt line is worth,
+and the money it writes is on the AutoCount RECEIPT line, not on the purchase
+order behind it (`docs/bugs/0674`: on all 180 zero-priced migrated receipt lines
+the book's own purchase-order line reads `UnitPrice 0, SubTotal 0`). The reshape
+decides no price: it carries `unit_price_sen` as-is and shares `discount_sen`
+out by quantity, so a line split across two receipts keeps the same money per
+unit. It looks the price up by `(purchase-order line, item code)` first and
+`(purchase order, item code)` second — the second is what an unattributed line
+uses, and it is not an invention, because every candidate line shares the code
+and therefore the price. **Re-dispatch "Stamp migrated source prices" after the
+reshape**: its selection is `unit_price_sen = 0`, and the new grain makes MORE of
+it stampable, because its partial-mirror refusal exists precisely for the
+one-document-per-purchase-order shape the reshape replaces. The run prints the
+money before and after.
+
 **What it unlocked.** `check-ac-erp-reconcile.mjs` printed *"GR DATA — line and
 money comparison NOT APPLICABLE"* and stopped, because the quantity was derived
 and the grains did not match. Both reasons are gone, so the GR section now
