@@ -62,13 +62,18 @@ const log = (m = "") => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}
    company. Domain knowledge, written out; the LINK COLUMNS below are
    discovered from information_schema so a column added tomorrow cannot be
    silently missed. */
+/* `fk` is the LINE column and `pk` the HEADER column it matches. They are not
+   always id -> id: a sales-order line carries `doc_no` and joins its header BY
+   DOCUMENT NUMBER, which is why the first run of this probe (34137796488)
+   answered `column h.id does not exist` for the one table that matters most and
+   measured nothing for it. Written out per type rather than assumed. */
 const DOC = {
-  SO: { line: "mfg_sales_order_items", head: "mfg_sales_orders", fk: "sales_order_id" },
-  DO: { line: "delivery_order_items", head: "delivery_orders", fk: "delivery_order_id" },
-  GR: { line: "grn_items", head: "grns", fk: "grn_id" },
-  PO: { line: "purchase_order_items", head: "purchase_orders", fk: "purchase_order_id" },
-  SI: { line: "sales_invoice_items", head: "sales_invoices", fk: "sales_invoice_id" },
-  PI: { line: "purchase_invoice_items", head: "purchase_invoices", fk: "purchase_invoice_id" },
+  SO: { line: "mfg_sales_order_items", head: "mfg_sales_orders", fk: "doc_no", pk: "doc_no" },
+  DO: { line: "delivery_order_items", head: "delivery_orders", fk: "delivery_order_id", pk: "id" },
+  GR: { line: "grn_items", head: "grns", fk: "grn_id", pk: "id" },
+  PO: { line: "purchase_order_items", head: "purchase_orders", fk: "purchase_order_id", pk: "id" },
+  SI: { line: "sales_invoice_items", head: "sales_invoices", fk: "sales_invoice_id", pk: "id" },
+  PI: { line: "purchase_invoice_items", head: "purchase_invoices", fk: "purchase_invoice_id", pk: "id" },
 };
 const TYPES = Object.keys(DOC);
 
@@ -94,6 +99,15 @@ const sql = postgres(url, { ssl: "require", prepare: false, max: 1 });
    inner whitespace collapsed. Anything looser would hide a real mismatch;
    anything stricter reports formatting as a wrong product. */
 const NORM = (expr) => `upper(regexp_replace(btrim(coalesce(${expr}, '')), '\\s+', ' ', 'g'))`;
+
+/* THE COLOUR IS NOT `colourCode`. The first run of this probe compared
+   `variants->>'colourCode'` and found 0 comparable pairs on every edge — which
+   is an EMPTY answer, not a clean one, and would have read as "no colour is
+   ever wrong". The importers write `colourId` (the fabric-colour row) and
+   `colourLabel` (the text) — import-ac-outstanding-so.mjs:302. Both are read,
+   id first, so a row carrying either is comparable, and the count of comparable
+   pairs is printed so an empty answer can never pass as a clean one again. */
+const COL = (a) => `upper(btrim(coalesce(${a}.variants->>'colourId', ${a}.variants->>'colourLabel', ${a}.variants->>'colourCode', '')))`;
 
 async function columnsOf(tables) {
   const rows = await sql`
@@ -128,7 +142,7 @@ async function main() {
       const parent = DOC[parentType];
       if (!cols.has(parent.line)) continue;
       const bothHaveItem = have.has("item_code") && cols.get(parent.line).has("item_code");
-      const edge = { t, parentType, table: child.line, column: needle, parentTable: parent.line, headTable: child.head, headFk: child.fk };
+      const edge = { t, parentType, table: child.line, column: needle, parentTable: parent.line, headTable: child.head, headFk: child.fk, headPk: child.pk };
       if (bothHaveItem) edges.push(edge);
       else unusable.push(`${child.line}.${needle} -> ${parent.line} (one side has no item_code)`);
     }
@@ -220,21 +234,23 @@ async function main() {
     try {
       const rows = await sql.unsafe(`
         WITH k AS (
-          SELECT c.linked_ac_dtlkey AS dtlkey${headHasCompany ? `, h.company_id` : ``}
+          SELECT c.linked_ac_dtlkey AS dtlkey, ${NORM("c.item_code")} AS code${headHasCompany ? `, h.company_id` : ``}
             FROM scm.${d.line} c
-            JOIN scm.${d.head} h ON h.id = c.${d.fk}
+            JOIN scm.${d.head} h ON h.${d.pk} = c.${d.fk}
            WHERE c.linked_ac_dtlkey IS NOT NULL
         )
         SELECT (SELECT COUNT(*) FROM scm.${d.line})::int                       AS total,
                (SELECT COUNT(*) FROM k)::int                                   AS keyed,
                (SELECT COUNT(*) FROM (SELECT dtlkey FROM k GROUP BY dtlkey HAVING COUNT(*) > 1) x)::int AS dup_keys,
-               (SELECT COALESCE(SUM(n), 0) FROM (SELECT COUNT(*) AS n FROM k GROUP BY dtlkey HAVING COUNT(*) > 1) y)::int AS dup_rows
+               (SELECT COALESCE(SUM(n), 0) FROM (SELECT COUNT(*) AS n FROM k GROUP BY dtlkey HAVING COUNT(*) > 1) y)::int AS dup_rows,
+               (SELECT COUNT(*) FROM (SELECT dtlkey FROM k GROUP BY dtlkey HAVING COUNT(*) > 1 AND COUNT(DISTINCT code) > 1) w)::int AS dup_keys_diff_code
                ${headHasCompany ? `,
                (SELECT COUNT(*) FROM (SELECT dtlkey FROM k GROUP BY dtlkey HAVING COUNT(DISTINCT company_id) > 1) z)::int AS cross_company_keys` : ``}`);
       const r = rows[0];
       log(`   ${t}  ${d.line}`);
       log(`        ${r.keyed} of ${r.total} rows carry an AutoCount DtlKey`);
       log(`        ${r.dup_keys} DtlKeys are carried by more than one row (${r.dup_rows} rows)`);
+      log(`        ... of those, ${r.dup_keys_diff_code} carry rows naming DIFFERENT products. The rest are ONE book line expanded into several ERP lines (a sofa's compartments), which is expected.`);
       if (headHasCompany) log(`        ${r.cross_company_keys} DtlKeys appear under MORE THAN ONE company — each company has its own book, so any of these is wrong`);
       else log(`        (company not counted: ${d.head} has no company_id)`);
     } catch (err) {
@@ -243,7 +259,7 @@ async function main() {
   }
 
   log("");
-  log("=== 4. THE SOFA COLOUR — the same permutation test on variants->>'colourCode' ===");
+  log("=== 4. THE SOFA COLOUR — the same permutation test on the colour in `variants` ===");
   log("");
   for (const e of edgeResults) {
     const childHasVariants = cols.get(e.table)?.has("variants");
@@ -256,12 +272,11 @@ async function main() {
       const rows = await sql.unsafe(`
         WITH pairs AS (
           SELECT c.${e.headFk} AS doc,
-                 upper(btrim(coalesce(c.variants->>'colourCode', ''))) AS child_col,
-                 upper(btrim(coalesce(p.variants->>'colourCode', ''))) AS parent_col
+                 ${COL("c")} AS child_col,
+                 ${COL("p")} AS parent_col
             FROM scm.${e.table} c
             JOIN scm.${e.parentTable} p ON p.id = c.${e.column}
-           WHERE coalesce(c.variants->>'colourCode', '') <> ''
-             AND coalesce(p.variants->>'colourCode', '') <> ''
+           WHERE ${COL("c")} <> '' AND ${COL("p")} <> ''
         ),
         docs AS (
           SELECT doc,
