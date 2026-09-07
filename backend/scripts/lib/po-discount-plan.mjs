@@ -18,6 +18,8 @@
  * enough (the app's own line editor would undo it).
  */
 
+import { currencyVerdict } from './ac-scope.mjs';
+
 /** Every sen figure is an integer; a float here is a money bug waiting. */
 const sen = (v) => (v == null ? 0 : Math.round(Number(v)));
 
@@ -116,48 +118,12 @@ export function planDocument({ wantByKey, doc, rm }) {
   return { writes, header, refusals, plannedSubtotal };
 }
 
-/** The ERP's local currency. `import-ac-outstanding-po.mjs:401` hard-codes it
- *  into `purchase_orders.currency` for every migrated purchase order. */
-export const LOCAL_CURRENCY = 'MYR';
-
-/**
- * Is this document one whose totals may be compared against the ERP's at all?
- *
- * A DISCOUNT AND AN EXCHANGE RATE ARE NOT DISTINGUISHABLE FROM A TOTAL ALONE,
- * and on 2026-09-07 that cost RM 13,068.55 on a live purchase order: the
- * snapshot carried `LocalNetTotal` (MYR) while the ERP held the document's own
- * CNY figures, so `PO-009335` looked 38.06% "discounted" and the repair booked
- * the difference. 34,334.90 x 0.61938 = 21,266.35 — the discount WAS the rate.
- * Ledger: docs/bugs/0665-*.md.
- *
- * So the rule is refusal, not cleverness. Three verdicts, and only one of them
- * lets money move:
- *
- *   local    the document is in MYR at rate 1 — the two sides mean the same
- *            thing and the comparison is sound.
- *   foreign  the document is in another currency, or at a rate that is not 1.
- *            REFUSED. The gap between the two totals may be a discount, may be
- *            the rate, may be both; nothing here can tell them apart.
- *   unknown  the snapshot predates the currency columns, so the document's
- *            currency was never exported. ALSO REFUSED — an absent column read
- *            as "MYR" is the original defect, restated.
- */
-export function currencyVerdict(header) {
-  if (!header) return { kind: 'unknown', why: 'the book states no header for this document' };
-  const code = (header.currency ?? '').trim().toUpperCase();
-  const rate = header.rate;
-  if (!code || rate == null) {
-    return {
-      kind: 'unknown',
-      why: 'this snapshot carries no currency for the document — re-cut it with a version of ' +
-        'export-ac-reconcile-truth.mjs that exports CurrencyCode and CurrencyRate',
-    };
-  }
-  if (code !== LOCAL_CURRENCY || Math.abs(rate - 1) > 1e-9) {
-    return { kind: 'foreign', why: `the document is in ${code} at rate ${rate}, and the ERP holds ${LOCAL_CURRENCY}` };
-  }
-  return { kind: 'local', why: `${code} at rate ${rate}` };
-}
+/* `currencyVerdict` and `LOCAL_CURRENCY` live in lib/ac-scope.mjs — the
+   snapshot library — because the reconcile CHECKER needs the same verdict this
+   repair does, and two statements of one currency rule is how the first one
+   came to be wrong. Re-exported here so this module still reads as the whole
+   decision. */
+export { currencyVerdict, LOCAL_CURRENCY } from './ac-scope.mjs';
 
 /**
  * The AutoCount side: every PO line whose own amount differs from

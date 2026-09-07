@@ -812,6 +812,20 @@ of an absent column silently reading as "MYR". Population on the 2026-09-07 book
 **22 CNY purchase orders out of 9,412, exactly 1 of them in the migrated scope;
 all 13,366 sales orders are MYR.**
 
+**The read-only reconcile checker makes the OPPOSITE choice, on purpose.**
+`check-ac-erp-reconcile.mjs` compares the book's DOCUMENT total
+(`h.docTotalSen ?? h.totalSen`) against `purchase_orders.total_sen`, which is
+like for like, and reports a non-MYR document in its own `non-MYR` summary column
+rather than as a money difference — a checker that reports every foreign document
+as broken trains people to ignore the money column. It falls back to the local
+total on a snapshot cut before the currency fields existed, and says so as
+`currencyBlind` instead of reporting a clean money column it cannot vouch for.
+What it flags on such a document is the thing that IS wrong: the ERP's own
+`currency` column reads `MYR`. Ledger entry `0666`.
+
+The split is deliberate. A checker that is wrong costs a reader's attention; a
+repair that is wrong costs money, and this one already cost RM 13,068.55.
+
 ### The two AutoCount-mirror header columns (mig `20260907T1026_ac_header_notcarried_columns.sql`)
 
 `scm.purchase_orders.attention` (AutoCount `PO.Attention`, filled on 300 of the

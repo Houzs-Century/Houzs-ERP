@@ -105,7 +105,7 @@ import {
   compareLine, decodeBook, runSelfTest,
 } from "./lib/variant-reconcile.mjs";
 
-import { buildScope, decodeSnapshot, isTestDoc } from "./lib/ac-scope.mjs";
+import { buildScope, currencyVerdict, decodeSnapshot, isTestDoc, LOCAL_CURRENCY } from "./lib/ac-scope.mjs";
 import { FIELD_MAP } from "./lib/ac-field-identity.mjs";
 import {
   compareType, loadAcFieldSide, loadErpFieldSide, measurePoDiscount,
@@ -751,6 +751,12 @@ for (const cfg of TYPES) {
   let sofaDocs = 0;
   const unpairableDocs = [];
   let zeroMoneyDocs = 0;
+  /* Documents whose money is stated in a currency the ERP does not hold, and
+     documents this snapshot could not tell us the currency of. Reported in
+     their own right, NEVER as a money difference — see the money comparison
+     below and docs/bugs/0665-*.md. */
+  const foreignDocs = [];
+  let currencyBlind = 0;
 
   for (const [ac, d] of erpByAc) {
     const h = B.headers.get(ac);
@@ -791,13 +797,40 @@ for (const cfg of TYPES) {
       else F.lineCount.push(msg);
     }
     const erpTotal = d.total_sen == null ? null : Number(d.total_sen);
-    if (h.totalSen !== erpTotal) {
+
+    /* COMPARE LIKE WITH LIKE, since 2026-09-07. `h.totalSen` is
+       `ISNULL(LocalNetTotal, NetTotal)` — the LOCAL (MYR) figure — while the ERP
+       stores the DOCUMENT's own amounts (`import-ac-outstanding-po.mjs:401`
+       hard-codes 'MYR' into `purchase_orders.currency` whatever the book says).
+       On the 9,390 MYR purchase orders those are the same number, which is why
+       nobody could see the bug; on `PO-009335`, CNY at 0.619380, the difference
+       IS the exchange rate, and the PO line-discount repair read it as a 38.06%
+       discount and took RM 13,068.55 off a live document. Ledger 0665.
+
+       So the book side is now the DOCUMENT total, which is what the ERP holds.
+       `docTotalSen` is null on a snapshot cut before the exporter carried it, and
+       the fallback is the old behaviour — no better, no worse, and announced
+       once as `currencyBlind` rather than passed off as a like-for-like read. */
+    const cur = currencyVerdict(h);
+    const bookTotal = h.docTotalSen ?? h.totalSen;
+    if (cur.kind === "unknown") currencyBlind++;
+    if (cur.kind === "foreign") {
+      /* NOT a money difference. The ERP's `currency` column saying MYR on a
+         foreign document is a real defect, but it is a CURRENCY defect, and
+         counting it in the money column is what made an exchange rate look like
+         a discount in the first place. */
+      foreignDocs.push(
+        `${ac}: ${cur.why} — document RM ${rm(h.docTotalSen)}, local RM ${rm(h.totalSen)}, ` +
+          `ERP RM ${rm(erpTotal)} tagged '${LOCAL_CURRENCY}' (ERP ${d.erp_no})`,
+      );
+    }
+    if (bookTotal !== erpTotal) {
       /* An ERP side that is zero while the book is not is a POPULATION
          property, not per-document drift — the migrated delivery orders carry
          no money at all. Counted apart so 55 documents do not read as 55
          separate defects. */
-      if (!erpTotal && h.totalSen) zeroMoneyDocs++;
-      F.money.push(`${ac}: AutoCount RM ${rm(h.totalSen)} vs ERP RM ${rm(erpTotal)} (ERP ${d.erp_no})`);
+      if (!erpTotal && bookTotal) zeroMoneyDocs++;
+      F.money.push(`${ac}: AutoCount RM ${rm(bookTotal)} vs ERP RM ${rm(erpTotal)} (ERP ${d.erp_no})`);
     }
 
     /* When NO ERP line on this document carries a DtlKey and the two sides do
@@ -939,6 +972,23 @@ for (const cfg of TYPES) {
         "while the book carries a value. That is one systematic cause, not that many separate defects.",
     );
   }
+  if (foreignDocs.length) {
+    log(
+      `${t} — ${foreignDocs.length} document(s) are NOT in ${LOCAL_CURRENCY}. Their totals are compared in the ` +
+        "DOCUMENT's own currency, which is what the ERP stores, so they are not money differences. What IS " +
+        `wrong on them is the ERP's own currency column, which reads '${LOCAL_CURRENCY}' regardless ` +
+        "(import-ac-outstanding-po.mjs:401). Listed, never repaired by script — a discount and an exchange rate " +
+        "are not distinguishable from a total alone.",
+    );
+    for (const row of first(foreignDocs)) plain(`      ${row}`);
+  }
+  if (currencyBlind) {
+    log(
+      `${t} — this snapshot carries NO currency for ${currencyBlind} of the ${bothSides} documents on both sides, ` +
+        "so the money comparison above is CURRENCY-BLIND: it cannot tell an exchange rate from a difference. " +
+        "Re-cut it with AC_CRED_FILE=<path> node backend/scripts/export-ac-reconcile-truth.mjs.",
+    );
+  }
   if (unpairableDocs.length) {
     log(
       `${t} — ${unpairableDocs.length} documents could NOT be line-matched (no line key on either side and ` +
@@ -985,6 +1035,7 @@ for (const cfg of TYPES) {
     qty: F.qty.length,
     price: F.price.length,
     money: F.money.length,
+    foreign: foreignDocs.length,
     gaps:
       (cfg.absenceIs === "GAP" ? missingInScope.length : 0) +
       phantom.length + F.lineCount.length + F.item.length + F.qty.length + F.price.length + F.money.length,
@@ -1165,7 +1216,7 @@ plain("═══════════ 5. FIELD IDENTITY — EVERY FIELD THE M
 /* ── one-screen verdict ──────────────────────────────────────────────────── */
 plain("");
 plain("═══════════ SUMMARY ═══════════");
-plain("type  book  scope    erp  absent  phantom   both  lineCnt   item    qty  price  money");
+plain("type  book  scope    erp  absent  phantom   both  lineCnt   item    qty  price  money  non-MYR");
 for (const s of summary) {
   plain(
     [
@@ -1181,10 +1232,16 @@ for (const s of summary) {
       String(s.qty).padStart(6),
       String(s.price).padStart(6),
       String(s.money).padStart(6),
+      /* Its own column, deliberately not folded into `money` and deliberately
+         not counted in `gaps`: a foreign-currency document is compared in its
+         own currency and may be perfectly correct. What it flags is that the
+         ERP tags it MYR. Ledger 0665. */
+      String(s.foreign ?? 0).padStart(7),
     ].join(" "),
   );
 }
 plain("absent = in the expected population but not in the ERP; for DO/IV/PI the population is empty by owner decision.");
+plain("non-MYR = documents compared in their OWN currency. Not a money difference, and never repaired by script.");
 const totalGaps = summary.reduce((a, s) => a + s.gaps, 0);
 log(
   totalGaps === 0
