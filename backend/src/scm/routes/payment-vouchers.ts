@@ -47,7 +47,7 @@
 import { Hono } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
-import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
+import { docMonthTag, mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { isDocumentHeld } from '../lib/document-hold';
 import { dateOrNull } from '../lib/date-coerce';
 import { postJournal, reverseJournal } from '../../acc/engine';
@@ -110,12 +110,11 @@ const normalizePurpose = (raw: unknown): 'SUPPLIER_PAYMENT' | 'FREIGHT' | 'OTHER
    is per BANK, so the sequence = the sequence of real vouchers, with no holes
    from deleted drafts). Mirrors the sibling scm minters — max(suffix)+1 via
    mintMonthlyDocNo (self-healing; never count+1). */
-const pvYymm = (): string => {
-  const d = new Date();
-  return `${String(d.getFullYear()).slice(2)}${String(d.getMonth() + 1).padStart(2, '0')}`;
-};
-const nextPvDraftNo = async (sb: any, c: any): Promise<string> =>
-  mintMonthlyDocNo(sb, 'payment_vouchers', 'pv_number', `${companyDocPrefix(c)}Draft-${pvYymm()}`);
+/* YYMM is the VOUCHER's own date, never the day the row was keyed (owner
+   2026-09-07: 要根据文件日期) — a July voucher typed in September sits in July's
+   series, Draft and formal alike (docMonthTag, doc-no.ts). */
+const nextPvDraftNo = async (sb: any, c: any, voucherDate: string): Promise<string> =>
+  mintMonthlyDocNo(sb, 'payment_vouchers', 'pv_number', `${companyDocPrefix(c)}Draft-${docMonthTag(voucherDate)}`);
 
 const isDraftNumber = (no: string | null | undefined): boolean => /-Draft-/.test(String(no ?? ''));
 
@@ -130,6 +129,7 @@ const mintFormalPvNo = async (
   c: any,
   companyId: number,
   creditAccountCode: string,
+  voucherDate: string,
 ): Promise<{ ok: true; pvNo: string } | { ok: false; status: number; body: Record<string, unknown> }> => {
   /* The cash drawer is not a configured bank: paying from roles.CASH mints on
      the FIXED cash letter — {co}CPV — the same CASH_SERIES_LETTER the receipt
@@ -157,7 +157,7 @@ const mintFormalPvNo = async (
     };
   }
   const digits = Number((digitsRes.data as { doc_digits?: number } | null)?.doc_digits ?? 3);
-  const pvNo = await mintMonthlyDocNo(sb, 'payment_vouchers', 'pv_number', `${companyDocPrefix(c)}${letter}PV-${pvYymm()}`, digits);
+  const pvNo = await mintMonthlyDocNo(sb, 'payment_vouchers', 'pv_number', `${companyDocPrefix(c)}${letter}PV-${docMonthTag(voucherDate)}`, digits);
   return { ok: true, pvNo };
 };
 
@@ -657,12 +657,13 @@ export const createPaymentVoucherHandler = async (c: any) => {
   const pf = await assertAuditWritable(sb, { entityType: 'PAYMENT_VOUCHER', action: 'CREATE', companyId: activeCompanyId(c) });
   if (!pf.ok) return c.json(auditUnavailableBody(), 409);
 
+  const voucherDate = dateOrNull(body.voucherDate) ?? todayMyt();
   const { data: header, error: hErr } = await insertWithDocNoRetry<{ id: string; pv_number: string }>(
-    () => nextPvDraftNo(sb, c),
+    () => nextPvDraftNo(sb, c, voucherDate),
     (pvNumber) => sb.from('payment_vouchers').insert({
       company_id:          activeCompanyId(c), // multi-company: stamp the active company
       pv_number:           pvNumber,
-      voucher_date:        dateOrNull(body.voucherDate) ?? todayMyt(),
+      voucher_date:        voucherDate,
       payee_name:          payeeName,
       supplier_id:         (body.supplierId as string | undefined) ?? null,
       credit_account_code: creditAccountCode,
@@ -1415,7 +1416,7 @@ export const checkPaymentVoucherHandler = async (c: any) => {
   let newPvNo: string | null = null;
   if (isDraftNumber(oldPvNo)) {
     for (let attempt = 0; attempt < 8 && newPvNo == null; attempt += 1) {
-      const minted = await mintFormalPvNo(sb, c, companyId, String(pv.credit_account_code ?? ''));
+      const minted = await mintFormalPvNo(sb, c, companyId, String(pv.credit_account_code ?? ''), String(pv.voucher_date ?? ''));
       if (!minted.ok) return c.json(minted.body, minted.status as 409);
       const { error: numErr } = await scopeToCompanyId(sb.from('payment_vouchers')
         .update({ pv_number: minted.pvNo, updated_at: at }).eq('id', id), companyId);

@@ -879,6 +879,30 @@ the five chips and a Journal column. The manual JV is simply the GENERAL
 journal — the owner's own vocabulary, unchanged. Pinned by
 tests/journalClasses.test.ts.
 
+**Document numbers follow the document date (owner 2026-09-07: 要根据文件日期,
+而不是文件几时 create 的日期).** Six finance series take their YYMM from the
+paper's own date — the AP invoice from `invoice_date`, the payment voucher
+(the Draft number at birth AND the formal `{co}{letter}PV` number at Checked)
+from `voucher_date`, the Official Receipt (draft and formal) from the
+payment's `paid_at`, the general receipt from `receipt_date`, the Other
+Debtor bill and receipt from theirs — through one helper, `docMonthTag` in
+`backend/src/scm/lib/doc-no.ts` (blank or unparseable → today in Malaysia, so
+the before-08:00-on-the-1st UTC slip is gone with it). A March bill keyed in
+September sits in March's series. Editing the date afterwards does NOT
+re-mint (his rule: 单据存了后改日期号码不要重发) — a number is an id, not a
+date. The operational series (SO, PO, PI, SI, DO, GRN, returns, trips…) keep
+the keyed day on purpose (那些别碰先). The one paper issued before this rule,
+`2990-API-2609-001` (dated 31/03/2026), moves to `2990-API-2603-001` through
+`.github/workflows/repair-doc-number.yml` (plan → apply, confirm
+`RENUMBER DOCUMENT`; script `backend/scripts/repair-doc-number.mjs`), which
+also renames the journal's `source_doc_no` (the engine finds a document's
+entry by it) and the number as text in narration, line notes and the audit
+ledger, and drops the emptied 2609 counter so September's next bill is 001
+again. Pinned in `doc-no.test.ts`, `apInvoices.test.ts`,
+`pvDraftNumbering.test.ts`, `officialReceipts.test.ts`, `otherDebtors.test.ts`
+and `receipts.test.ts` — each with a document dated in another month than
+the test runs in.
+
 **Official Receipts (GL redesign item 9).** Every customer payment births a
 receipt (`scm.acc_receipts`, one per payment forever — a reprint reprints,
 never re-issues): DRAFT on the `{co}DraftOR-YYMM` series at recording, FORMAL

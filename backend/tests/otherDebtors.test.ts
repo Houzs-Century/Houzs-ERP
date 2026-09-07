@@ -365,3 +365,29 @@ describe('the Receipt — four layers, partial knock-off, Dr bank / Cr control',
     expect((await res.json() as { error: string }).error).toBe('not_a_money_account');
   });
 });
+
+describe('numbers follow the document date (owner 2026-09-07: 要根据文件日期)', () => {
+  test('a March bill mints ODB-2603 and its March receipt ODR-2603 whatever today is; a later date edit keeps the number', async () => {
+    const tables = baseTables();
+    const app = harness(tables);
+    const made = await post(app, '/d1/bills', { billDate: '2026-03-15', lines: [{ creditAccountCode: '700-0000', amountSen: 50000 }] });
+    expect(made.status, await made.clone().text()).toBe(201);
+    const bill = (await made.json() as { bill: { id: string; billNumber: string } }).bill;
+    expect(bill.billNumber).toMatch(/-ODB-2603-001$/);
+    const billRow = tables.acc_debtor_bills.find((b) => b.bill_number === bill.billNumber)!;
+
+    const rec = await post(app, '/d1/receipts', {
+      receiptDate: '2026-03-20', bankAccountCode: '310-0010', allocations: [{ billId: billRow.id, amountSen: 20000 }],
+    });
+    expect(rec.status, await rec.clone().text()).toBe(201);
+    expect((await rec.json() as { receipt: { receiptNumber: string } }).receipt.receiptNumber).toMatch(/-ODR-2603-001$/);
+
+    /* 单据存了后改日期号码不要重发 — the number is an id, not a date. */
+    const edited = await app.request(`/bills/${billRow.id}`, {
+      method: 'PATCH', body: JSON.stringify({ billDate: '2026-04-02' }), headers: { 'content-type': 'application/json' },
+    });
+    expect(edited.status, await edited.clone().text()).toBe(200);
+    expect(billRow.bill_date).toBe('2026-04-02');
+    expect(billRow.bill_number).toBe(bill.billNumber);
+  });
+});

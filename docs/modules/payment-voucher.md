@@ -938,10 +938,13 @@ read the SAME letter table. Pinned by backend/tests/voucherNumbering.test.ts.
 
 ### §12b The Draft → formal flow (item 8b)
 
-A new voucher mints on the Draft series — `{co}Draft-YYMM-NNN`
-(`nextPvDraftNo`) — and earns its formal number at **CHECKED**:
+A new voucher mints on the Draft series — `{co}Draft-YYMM-NNN`, YYMM being
+the voucher's own `voucher_date` (owner 2026-09-07, 要根据文件日期; the rule
+and the helper live in accounting.md, "Document numbers follow the document
+date") — (`nextPvDraftNo`) — and earns its formal number at **CHECKED**:
 `checkPaymentVoucherHandler` reads the credit account's letter and the
-company width, mints `{co}{letter}PV-YYMM-NNN` (`mintFormalPvNo`,
+company width, mints `{co}{letter}PV-YYMM-NNN` — again the voucher date's
+month, never the check day's — (`mintFormalPvNo`,
 collision-retried the way inserts are), records the renumber on the audit
 trail, and answers `pvNumber` so the screen can say so. A bank with no letter
 REFUSES the check (409 `bank_letter_missing`) with the setup card named — a

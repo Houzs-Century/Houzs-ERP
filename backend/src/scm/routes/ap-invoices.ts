@@ -34,7 +34,7 @@
 import { Hono } from 'hono';
 import { hasHouzsPerm } from '../lib/houzs-perms';
 import { activeCompanyId, companyDocPrefix, requireActiveCompanyId, scopeToCompany } from '../lib/companyScope';
-import { mintMonthlyDocNo } from '../lib/doc-no';
+import { docMonthTag, mintMonthlyDocNo } from '../lib/doc-no';
 import { dateOrNull } from '../lib/date-coerce';
 import { todayMyt } from '../lib/my-time';
 import { postJournal, reverseJournal } from '../../acc/engine';
@@ -49,11 +49,6 @@ import { supabaseAuth } from '../middleware/auth';
 type Row = Record<string, any>;
 
 const NO_PERM = (what: string) => ({ error: `You don't have permission to ${what}.` });
-
-const yymm = (): string => {
-  const d = new Date();
-  return `${String(d.getFullYear()).slice(2)}${String(d.getMonth() + 1).padStart(2, '0')}`;
-};
 
 const HEADER = 'id, company_id, invoice_number, supplier_id, supplier_invoice_ref, invoice_date, due_date, currency, exchange_rate, total_sen, paid_sen, status, notes, created_at, created_by, posted_at, posted_by, cancelled_at, cancelled_by';
 const LINE = 'id, line_no, description, debit_account_code, amount_sen';
@@ -196,7 +191,7 @@ export const createApInvoiceHandler = async (c: any): Promise<Response> => {
   }
 
   const sb = c.get('supabase');
-  const invoiceNumber = await mintMonthlyDocNo(sb, 'ap_invoices', 'invoice_number', `${companyDocPrefix(c)}API-${yymm()}`);
+  const invoiceNumber = await mintMonthlyDocNo(sb, 'ap_invoices', 'invoice_number', `${companyDocPrefix(c)}API-${docMonthTag(invoiceDate)}`);
   const { data: inv, error: insErr } = await sb.from('ap_invoices').insert({
     company_id: co.companyId,
     invoice_number: invoiceNumber,

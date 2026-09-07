@@ -23,10 +23,9 @@ import { buildAllocations, postPaymentVoucherHandler, cancelPaymentVoucherHandle
 const CO = 2;
 const PV_KEYS = ['scm.payment_voucher.create', 'scm.payment_voucher.write', 'scm.payment_voucher.post', 'scm.payment_voucher.cancel'];
 
-const yymm = (() => {
-  const d = new Date();
-  return `${String(d.getFullYear()).slice(2)}${String(d.getMonth() + 1).padStart(2, '0')}`;
-})();
+/* BILL.invoiceDate is 2026-09-01 — a number follows its DOCUMENT date, never
+   the day it was keyed (owner 2026-09-07). */
+const yymm = '2609';
 
 const acct = (code: string, name: string, type: string, over: Row = {}): Row => ({
   company_id: CO, account_code: code, account_name: name, account_type: type, parent_code: null, is_active: true, special_type: null, ...over,
@@ -300,5 +299,14 @@ describe('an AP Payment allocation may name an AP invoice', () => {
     const cancel = await app.request('/payment-vouchers/pv-1/cancel', { method: 'POST' });
     expect(cancel.status).toBe(200);
     expect(tables.ap_invoices[0]).toMatchObject({ paid_sen: 0, status: 'POSTED' });
+  });
+});
+
+describe('the number follows the document date (owner 2026-09-07: 要根据文件日期)', () => {
+  test('a bill dated 31/03/2026 mints into the MARCH series whatever today is', async () => {
+    const { app } = harness();
+    const res = await json(app, '/ap-invoices', 'POST', { ...BILL, invoiceDate: '2026-03-31', dueDate: '2026-04-30' });
+    expect(res.status, await res.clone().text()).toBe(201);
+    expect(((await res.json()) as { invoice: Row }).invoice.invoice_number).toBe('2990-API-2603-001');
   });
 });

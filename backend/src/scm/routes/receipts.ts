@@ -20,17 +20,14 @@ import { Hono } from 'hono';
 import { hasHouzsPerm } from '../lib/houzs-perms';
 import { supabaseAuth } from '../middleware/auth';
 import { companyDocPrefix, requireActiveCompanyId, scopeToCompany } from '../lib/companyScope';
-import { mintMonthlyDocNo } from '../lib/doc-no';
+import { docMonthTag, mintMonthlyDocNo } from '../lib/doc-no';
+import { dateOrNull } from '../lib/date-coerce';
+import { todayMyt } from '../lib/my-time';
 import { postJournal, reverseJournal } from '../../acc/engine';
 import { type RuleLine } from '../../acc/rules';
 import { requireLeafAccount } from './accounting-chart';
 
 type Row = Record<string, any>;
-
-const yymm = () => {
-  const d = new Date();
-  return `${String(d.getFullYear()).slice(2)}${String(d.getMonth() + 1).padStart(2, '0')}`;
-};
 
 /* Month window "YYYY-MM" → [first day, first day of next month). Defaults to
    the current month — the page answers 这个月收了什么钱 without pagination. */
@@ -134,10 +131,10 @@ export const createReceiptHandler = async (c: any): Promise<Response> => {
     const leafErr = await requireLeafAccount(c, coId, code);
     if (leafErr) return leafErr;
   }
-  const receiptDate = String(body.receiptDate ?? '').trim() || new Date().toISOString().slice(0, 10);
+  const receiptDate = dateOrNull(body.receiptDate) ?? todayMyt();
   const totalSen = lines.reduce((s, l) => s + l.amountSen, 0);
 
-  const receiptNumber = await mintMonthlyDocNo(sb, 'acc_receipts', 'receipt_number', `${companyDocPrefix(c)}OR-${yymm()}`);
+  const receiptNumber = await mintMonthlyDocNo(sb, 'acc_receipts', 'receipt_number', `${companyDocPrefix(c)}OR-${docMonthTag(receiptDate)}`);
   const { data: receipt, error: insErr } = await sb.from('acc_receipts').insert({
     company_id: coId,
     receipt_number: receiptNumber,

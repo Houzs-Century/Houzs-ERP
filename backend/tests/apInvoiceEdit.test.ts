@@ -99,7 +99,8 @@ describe('editing a posted bill re-posts', () => {
     });
     expect(res.status, await res.clone().text()).toBe(200);
     expect(await res.json()).toMatchObject({ reposted: true });
-    expect(sb.tables.ap_invoices[0]).toMatchObject({ total_sen: 420_000, status: 'POSTED', invoice_date: '2026-09-15' });
+    /* The date moved; the number did not (单据存了后改日期号码不要重发). */
+    expect(sb.tables.ap_invoices[0]).toMatchObject({ total_sen: 420_000, status: 'POSTED', invoice_date: '2026-09-15', invoice_number: expect.stringMatching(/-API-2609-001$/) });
 
     const bySource = (t: string) => sb.tables.journal_entries.filter((j) => j.source_type === t);
     expect(bySource('API_REVERSAL')).toHaveLength(1);
