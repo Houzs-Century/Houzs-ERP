@@ -932,6 +932,35 @@ again. Pinned in `doc-no.test.ts`, `apInvoices.test.ts`,
 and `receipts.test.ts` — each with a document dated in another month than
 the test runs in.
 
+**Receipts & Payments (2026-09-06/07, owner: 我希望做一个 receipt & Payment
+版式 … 做).** AutoCount's report, in the Accounting page as its own tab:
+a COLUMN per cash/bank account (tick the ones you want) plus Total, RECEIPTS
+above PAYMENTS, opening and closing per column, rows in the owner's own
+accounts — 这个目前我有分 account, 你可以先不要自己分类; the big groups
+(showroom 费用 / operation 费用 …) come later, dragged onto rows on this
+page. `GET /accounting/reports/receipts-payments?from&to&accounts&party`
+(`backend/src/scm/routes/accounting-rp.ts`) reads `v_gl_entries` — posted,
+not reversed, the one source the P&L, balance sheet and trial balance beside
+it read — groups the period by journal, takes each money leg as a receipt
+(debit) or a payment (credit) and books the journal's OTHER lines against it.
+The one rule beyond "the other side's account": a SUPPLIER PAYMENT is read
+through what the voucher settled (his rule A) — a purchase invoice's own
+purchase groups in the proportion of the PI's own debit lines (exact when
+paid in full; a single-group PI is simply its group), an AP invoice's own
+lines, and money paid beyond what was settled as "Supplier advances (预付)".
+A transfer between two money accounts reads as "Transfer to/from <account>",
+never as an unexplained movement; a money account left out of the columns is
+a transfer counterpart the same way. `party=1` is AutoCount's "display trade
+debtor/creditor in details": control-account rows are named by the party and
+the supplier split is not applied. The tab (`ReceiptsPayments.tsx`,
+`rp-report-queries.ts`) opens the entries behind any figure and prints the
+same table landscape (`rp-report-pdf.ts`). Bank clearing accounts (EDC /
+online, 326/327) are not money, so a card sale appears when the settlement
+lands. Pinned in `backend/tests/rpReport.test.ts` (opening / period /
+closing, the rule-A split, the advance remainder, the transfer, party mode,
+the column filter, a reversed journal invisible) and
+`ReceiptsPayments.test.tsx` / `rp-report-pdf.test.ts`.
+
 **Official Receipts (GL redesign item 9).** Every customer payment births a
 receipt (`scm.acc_receipts`, one per payment forever — a reprint reprints,
 never re-issues): DRAFT on the `{co}DraftOR-YYMM` series at recording, FORMAL
