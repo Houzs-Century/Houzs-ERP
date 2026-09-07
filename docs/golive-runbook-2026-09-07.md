@@ -863,8 +863,10 @@ Ten values on two lines, both of them the colour block — not the 1,171 TBC/KIV
 lines that were feared. Against a gain of 51 colours newly resolved and ~31
 blank axes filled on proceeded orders, the sweep was run, and the two losses
 were written to
-`Desktop/Houzs-Project/ac-golive-dumps/refresh-so-variants-2026-09-07-erased.json`
-first so they can be put back by hand. `SO-007693`'s label reads
+`refresh-so-variants-2026-09-07-erased.json`, in the operator's
+`ac-golive-dumps` folder on the Desktop — outside this repo and outside the
+database, which is the point — first, so they can be put back by hand.
+`SO-007693`'s label reads
 `04 [MERGED into SF-AT-04 on 2026-08-13 - superseded, not deleted]` — a pointer
 at a library row that no longer exists.
 
