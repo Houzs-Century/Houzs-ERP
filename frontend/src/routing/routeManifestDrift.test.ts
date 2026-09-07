@@ -55,7 +55,9 @@ describe("executable route contract", () => {
     // (general + other-debtor + customer). (150 that evening: /scm/other-debtors.)
     // 152 since 2026-09-05: /scm/official-receipts — the OR book (GL redesign
     // 9b), NOT the money-in list: drafts under the watermark, Confirm money.
-    expect(STAFF_ROUTE_PATTERNS).toHaveLength(152);
+    // 153 since 2026-09-06: /scm/ap-invoices — the Finance side's supplier
+    // bills, both kinds (AP invoices raised there, purchase invoices mirrored).
+    expect(STAFF_ROUTE_PATTERNS).toHaveLength(153);
     expect(new Set(STAFF_ROUTE_PATTERNS).size).toBe(STAFF_ROUTE_PATTERNS.length);
     expect([...STAFF_ROUTE_PATTERNS].sort()).toEqual([...appPages].sort());
   });
@@ -83,7 +85,8 @@ describe("executable route contract", () => {
     // (152 since 2026-08-21.) (151 since 2026-08-16.) (150 since 2026-08-15.)
     // 160 since 2026-09-03 night — /scm/receipts; see the staff-route count above.
     // 161 since 2026-09-05 — /scm/official-receipts; see the staff-route count above.
-    expect(ROUTE_CONTRACT).toHaveLength(161);
+    // 162 since 2026-09-06 — /scm/ap-invoices; see the staff-route count above.
+    expect(ROUTE_CONTRACT).toHaveLength(162);
   });
 
   it("keeps every desktop nav destination on a live staff route", () => {

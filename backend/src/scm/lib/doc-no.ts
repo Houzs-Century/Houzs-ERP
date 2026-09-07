@@ -1,6 +1,7 @@
 import { paginateAll } from './paginate-all';
 import { BASE_COMPANY_CODE, docPrefixForCode } from './companyScope';
 import { isMissingRpc, isUnsupportedTransactionRpc } from './rpc-missing';
+import { todayMyt } from './my-time';
 
 /* ────────────────────── Monthly doc numbers ──────────────────────
    `<PREFIX>-YYMM-NNN`. The AUTHORITY is scm.doc_number_counters — see
@@ -425,3 +426,19 @@ export const nextJeNo = async (sb: any, date: Date, coPrefix = ''): Promise<stri
   }
   return `${prefix}-${String(n).padStart(4, '0')}`;
 };
+
+/* ─────────────────────────── The month a series takes ───────────────────────
+   A finance document's number carries the month of the DOCUMENT'S OWN DATE —
+   the invoice date, the voucher date, the day the money was paid — never the
+   day the row happened to be keyed (owner 2026-09-07: 要根据文件日期,而不是文件
+   几时 create 的日期; the case in hand was an AP invoice dated 31/03/2026 minted
+   2990-API-2609-001 because it was typed in September). Blank or unparseable
+   falls back to today IN MALAYSIA — the old `new Date()` read the Worker's UTC
+   clock, so a paper keyed before 08:00 on the 1st took the previous month.
+   Editing the date after the save does NOT re-mint: the number is an id, not a
+   date (his rule: 单据存了后改日期号码不要重发). */
+export function docMonthTag(date: string | null | undefined): string {
+  const s = String(date ?? '').trim();
+  const d = /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : todayMyt();
+  return `${d.slice(2, 4)}${d.slice(5, 7)}`;
+}

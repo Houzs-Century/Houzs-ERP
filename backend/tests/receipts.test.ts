@@ -7,6 +7,7 @@
    engine posting into the fake tables. */
 
 import { Hono } from 'hono';
+import { SCM_SYSTEM_STAFF_ID } from '../src/scm/middleware/auth';
 import { describe, expect, test } from 'vitest';
 import { receipts } from '../src/scm/routes/receipts';
 
@@ -80,7 +81,10 @@ function harness(tables: Record<string, Row[]>) {
       },
     } as never);
     c.set('companyId' as never, CO as never);
-    c.set('user' as never, { id: 'u1' } as never);
+    /* The router carries the supabaseAuth bridge (docs/bugs/0648). The pinned
+       system-staff id is the bridge's own "already translated" mark, so it steps
+       aside and the supabase + houzsUser set by hand below stay in force. */
+    c.set('user' as never, { id: SCM_SYSTEM_STAFF_ID } as never);
     c.set('houzsUser' as never, { id: 9, name: 'Tester', permissions_set: new Set(['*']) } as never);
     await next();
   });
@@ -174,5 +178,17 @@ describe('the general receipt — record and post, one motion', () => {
 
     const again = await post(app, `/${row.id}/void`);
     expect(again.status).toBe(409);
+  });
+});
+
+describe('the number follows the receipt date (owner 2026-09-07: 要根据文件日期)', () => {
+  test('a receipt dated in February mints OR-2602 whatever today is', async () => {
+    const app = harness(baseTables());
+    const res = await post(app, '/', {
+      payerName: 'ALLIANZ INSURANCE', receiptDate: '2026-02-10', bankAccountCode: '310-0010',
+      lines: [{ description: '车险赔偿', creditAccountCode: '700-0000', amountSen: 88800 }],
+    });
+    expect(res.status, await res.clone().text()).toBe(201);
+    expect((await res.json() as { receipt: { receiptNumber: string } }).receipt.receiptNumber).toMatch(/-OR-2602-001$/);
   });
 });

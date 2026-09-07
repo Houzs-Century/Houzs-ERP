@@ -1,5 +1,18 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Bold, Italic, List, ListOrdered, Underline } from "lucide-react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  Bold,
+  Heading1,
+  Heading2,
+  Highlighter,
+  Image as ImageIcon,
+  Italic,
+  Link as LinkIcon,
+  List,
+  ListOrdered,
+  RemoveFormatting,
+  Table as TableIcon,
+  Underline,
+} from "lucide-react";
 import { cn } from "../lib/utils";
 import {
   RICH_SIZES,
@@ -11,18 +24,32 @@ import {
 // AnnouncementRichEditor — the announcement composer's message box.
 //
 // Owner ask (2026-09-04): announcements need bold, text size and numbered
-// lists. This is a deliberately SMALL editor: a contenteditable block with a
-// six-button toolbar (bold / italic / underline / numbered / bulleted / size),
-// driven by the browser's own editing commands. No editor library — the
-// grammar it may produce is the ten tags in lib/announcementRichText.ts, and
-// every keystroke's output is pushed through that canonicaliser before it
-// reaches state, so the value this component reports is ALWAYS the stored
-// shape (and never a browser-specific <div>/<font>/style soup).
+// lists. Toolbar follow-up (2026-09-05, Announcements redesign): two heading
+// levels, highlight, link, a small table, an inline image, and Clear. This
+// is still a deliberately SMALL editor: a contenteditable block driven by the
+// browser's own editing commands. No editor library — the grammar it may
+// produce is the allow-list in lib/announcementRichText.ts, and every
+// keystroke's output is pushed through that canonicaliser before it reaches
+// state, so the value this component reports is ALWAYS the stored shape (and
+// never a browser-specific <div>/<font>/style soup).
 //
-// Font size rides on the classic `fontSize` command: the browser wraps the
-// selection in <font size="7">, which we immediately rewrite into
-// <span data-size="…"> (or unwrap for "normal"). That is the only DOM surgery
-// here; everything else is execCommand + re-read innerHTML.
+// Where the browser's command leaves a spelling the grammar does not have,
+// the DOM is rewritten right after the command, and nowhere else:
+//   · fontSize → <font size="7"> becomes <span data-size="…"> (or unwraps).
+//     The Size control is a dropdown of point sizes (owner 2026-09-06, "像
+//     Word 那样选字号数字"); with nothing selected it sizes the whole
+//     paragraph the caret is in, so a click always does something visible.
+//   · hiliteColor → the styled span/font becomes <mark>
+//   · formatBlock h1 / h2 / p is emitted as-is (canonical already)
+//   · createLink is fed a normalised http(s)/mailto URL; anything else is
+//     refused before the command runs (the canonicaliser would drop it anyway)
+//   · a table / image is inserted as canonical HTML through insertHTML
+//
+// Images: the composer owns the upload (`onInsertImage`), and the editor only
+// ever stores the attachment KEY (`<img data-att>`); the `src` you see while
+// editing is a local object URL the composer hands back, re-attached through
+// `imageSrc` whenever the value is written into the DOM. The stored value
+// never carries a URL.
 //
 // Controlled-ish: `value` is written into the DOM only when it differs from
 // what this editor last emitted (initial mount, and the reset-to-"" after a
@@ -31,9 +58,12 @@ import {
 //
 // Paste is forced to plain text. Office staff paste from WhatsApp, Word and
 // email; letting that HTML in would only feed the canonicaliser junk it has
-// to strip anyway, and the user can re-apply the two marks they meant.
+// to strip anyway, and the user can re-apply the marks they meant.
 // ---------------------------------------------------------------------------
 type Size = RichSize | "md";
+type Block = "p" | "h1" | "h2";
+
+export type RichEditorImage = { key: string; src: string };
 
 type Props = {
   value: string;
@@ -44,18 +74,39 @@ type Props = {
   minHeight?: number;
   id?: string;
   disabled?: boolean;
+  /** Ask the user for a link target (the app's prompt dialog). Absent = no
+   *  Link button — the phone composer has no dialog provider. */
+  onPromptLink?: (current: string) => Promise<string | null>;
+  /** Upload a picked image and return its attachment key + a local preview
+   *  URL, or null when the upload failed (the composer has already toasted).
+   *  Absent = no Image button. */
+  onInsertImage?: (file: File) => Promise<RichEditorImage | null>;
+  /** Resolve an attachment key to something an <img src> can show while
+   *  editing (the composer's local previews). Unknown key = no src. */
+  imageSrc?: (key: string) => string | undefined;
 };
 
-const SIZE_OPTIONS: Array<{ key: Size; label: string; title: string }> = [
-  { key: "sm", label: "S", title: "Small text" },
-  { key: "md", label: "M", title: "Normal text" },
-  { key: "lg", label: "L", title: "Large text" },
-  { key: "xl", label: "XL", title: "Extra-large text" },
+/** The dropdown: Default (no span) + the numeric point sizes. The legacy
+ *  sm / lg / xl tokens are read (mapped to their px) but not offered. */
+const SIZE_OPTIONS: Array<{ key: Size; label: string }> = [
+  { key: "md", label: "Default" },
+  // The numeric entries of the grammar, in its order — ONE home (RICH_SIZES).
+  ...RICH_SIZES.filter((n) => /^[0-9]+$/.test(n)).map((n) => ({ key: n as Size, label: n })),
 ];
+const LEGACY_SIZE: Record<string, RichSize> = { sm: "11", lg: "16", xl: "20" };
+/** The block a caret sits in — what a collapsed-selection size applies to. */
+const BLOCK_SELECTOR = "p,h1,h2,li,td,th";
 
 // The sentinel the fontSize command leaves behind. 7 is the largest legacy
 // size, which nothing else in this app produces, so it is safe to key on.
 const FONT_SENTINEL = "7";
+// Any colour works: the styled element is rewritten into <mark> at once and
+// the reader's CSS paints the real highlight. Picked to match .ann-rich mark.
+const HILITE_SENTINEL = "#f3ece0";
+// A 2×2 starter: one header row, one body row. <br> keeps an empty cell
+// clickable in contenteditable (an empty <td> collapses to nothing).
+export const TABLE_TEMPLATE =
+  "<table><tr><th>Column</th><th>Column</th></tr><tr><td><br></td><td><br></td></tr></table><p><br></p>";
 
 function isBlankHtml(html: string): boolean {
   return !html.replace(/<br>|<p>|<\/p>|&nbsp;|\s/g, "");
@@ -77,6 +128,24 @@ function queryState(command: string): boolean {
   }
 }
 
+/**
+ * Turn what a person types into the Link prompt into a target the grammar
+ * accepts, or null. Bare domains get https://, a bare address gets mailto:,
+ * and anything with another scheme (javascript:, data:, ftp:) is refused.
+ */
+export function normalizeLinkHref(input: string): string | null {
+  const v = input.trim();
+  if (!v || /[\s<>"'`\\]/.test(v)) return null;
+  if (/^https?:\/\//i.test(v)) return v;
+  if (/^mailto:/i.test(v)) return /^mailto:[^@]+@[^@]+$/i.test(v) ? v : null;
+  // Some other scheme (javascript:, data:, ftp:) — but "host:8080/x" is a
+  // port, not a scheme, so a digit right after the colon is not one.
+  if (/^[a-z][a-z0-9+.-]*:(?![0-9])/i.test(v)) return null;
+  if (/^[^@]+@[^@]+\.[^@]+$/.test(v)) return `mailto:${v}`;
+  if (/^[a-z0-9-]+(\.[a-z0-9-]+)+(:\d+)?(\/.*)?$/i.test(v)) return `https://${v}`;
+  return null;
+}
+
 /** Rewrite every <font size="7"> the fontSize command produced into the
  *  canonical span (or unwrap it for "normal"), and remove any nested size
  *  spans inside so the newest choice is the only one that applies. */
@@ -92,7 +161,28 @@ function foldFontSentinels(root: HTMLElement, size: Size): void {
     span.setAttribute("data-size", size);
     while (font.firstChild) span.appendChild(font.firstChild);
     font.replaceWith(span);
+    // A size span that now wraps nothing but the new one (Enter carried the
+    // previous size into this paragraph) is redundant: unwrap it.
+    let outer = span.parentElement;
+    while (outer && outer.matches("span[data-size]") && outer.childNodes.length === 1) {
+      unwrap(outer);
+      outer = span.parentElement;
+    }
   }
+}
+
+/** Rewrite whatever the hiliteColor command styled into <mark>, and flatten
+ *  a mark that landed inside another mark. */
+function foldHighlights(root: HTMLElement): void {
+  const styled = Array.from(root.querySelectorAll<HTMLElement>("[style]")).filter(
+    (el) => el.style.backgroundColor !== "",
+  );
+  for (const el of styled) {
+    const mark = document.createElement("mark");
+    while (el.firstChild) mark.appendChild(el.firstChild);
+    el.replaceWith(mark);
+  }
+  root.querySelectorAll("mark mark").forEach((inner) => unwrap(inner));
 }
 
 function unwrap(el: Element): void {
@@ -102,15 +192,73 @@ function unwrap(el: Element): void {
   parent.removeChild(el);
 }
 
-function sizeAtSelection(root: HTMLElement): Size {
+/** Give every stored image its editing-time src (the stored value has none). */
+function hydrateImages(root: HTMLElement, imageSrc?: (key: string) => string | undefined): void {
+  root.querySelectorAll<HTMLImageElement>("img[data-att]").forEach((img) => {
+    const key = img.getAttribute("data-att") ?? "";
+    const src = imageSrc?.(key);
+    if (src) img.setAttribute("src", src);
+    else img.removeAttribute("src");
+    img.setAttribute("alt", "");
+    img.setAttribute("draggable", "false");
+  });
+}
+
+function selectionElement(root: HTMLElement): Element | null {
   const sel = typeof window !== "undefined" ? window.getSelection() : null;
   const node = sel?.anchorNode ?? null;
-  if (!node || !root.contains(node)) return "md";
-  const el = node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement;
-  const sized = el?.closest("span[data-size]");
-  if (!sized || !root.contains(sized)) return "md";
-  const v = sized.getAttribute("data-size") ?? "";
+  if (!node || !root.contains(node)) return null;
+  return node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement;
+}
+
+function closestIn(root: HTMLElement, selector: string): Element | null {
+  const el = selectionElement(root);
+  const hit = el?.closest(selector) ?? null;
+  return hit && root.contains(hit) && hit !== root ? hit : null;
+}
+
+function sizeAtSelection(root: HTMLElement): Size {
+  const raw = closestIn(root, "span[data-size]")?.getAttribute("data-size") ?? "";
+  const v = LEGACY_SIZE[raw] ?? raw;
   return (RICH_SIZES as readonly string[]).includes(v) ? (v as RichSize) : "md";
+}
+
+/** With nothing selected, select the caret's whole block so the size
+ *  applies to the paragraph; returns true when it did. */
+function selectBlockIfCollapsed(root: HTMLElement): boolean {
+  const sel = window.getSelection();
+  if (!sel) return false;
+  if (sel.rangeCount > 0 && !sel.getRangeAt(0).collapsed) return false;
+  const block = closestIn(root, BLOCK_SELECTOR) ?? root;
+  const range = document.createRange();
+  range.selectNodeContents(block);
+  sel.removeAllRanges();
+  sel.addRange(range);
+  return true;
+}
+
+function blockAtSelection(root: HTMLElement): Block {
+  const tag = closestIn(root, "h1,h2")?.tagName.toLowerCase();
+  return tag === "h1" || tag === "h2" ? tag : "p";
+}
+
+/** Unwrap every element matching `selector` that the current selection
+ *  touches. Used by Clear, where removeFormat leaves marks and links alone. */
+function unwrapInSelection(root: HTMLElement, selector: string): void {
+  const sel = typeof window !== "undefined" ? window.getSelection() : null;
+  if (!sel || sel.rangeCount === 0) return;
+  const range = sel.getRangeAt(0);
+  // Boundary comparison rather than Range.intersectsNode: same answer, and
+  // implemented by every DOM the editor runs in (jsdom included).
+  const hits = Array.from(root.querySelectorAll(selector)).filter((el) => {
+    const r = document.createRange();
+    r.selectNode(el);
+    return (
+      range.compareBoundaryPoints(Range.END_TO_START, r) < 0 &&
+      range.compareBoundaryPoints(Range.START_TO_END, r) > 0
+    );
+  });
+  hits.forEach((el) => unwrap(el));
 }
 
 export function AnnouncementRichEditor({
@@ -121,16 +269,27 @@ export function AnnouncementRichEditor({
   minHeight = 132,
   id,
   disabled,
+  onPromptLink,
+  onInsertImage,
+  imageSrc,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  // The Size <select> takes focus when opened; the selection it should apply
+  // to is remembered on the way in and put back before the command runs.
+  const savedRange = useRef<Range | null>(null);
   const lastEmitted = useRef<string | null>(null);
   const [empty, setEmpty] = useState(true);
+  const [busy, setBusy] = useState(false);
   const [marks, setMarks] = useState({
     bold: false,
     italic: false,
     underline: false,
     ol: false,
     ul: false,
+    mark: false,
+    link: false,
+    block: "p" as Block,
     size: "md" as Size,
   });
 
@@ -140,9 +299,10 @@ export function AnnouncementRichEditor({
     if (!el || value === lastEmitted.current) return;
     const safe = value ? sanitizeAnnouncementHtml(value) : "";
     el.innerHTML = safe;
+    hydrateImages(el, imageSrc);
     lastEmitted.current = value;
     setEmpty(isBlankHtml(safe));
-  }, [value]);
+  }, [value, imageSrc]);
 
   // Paragraphs, not <div>s, when Enter is pressed (Chrome's default is div;
   // the canonicaliser folds either, but <p> keeps the DOM and the stored
@@ -161,6 +321,9 @@ export function AnnouncementRichEditor({
       underline: queryState("underline"),
       ol: queryState("insertOrderedList"),
       ul: queryState("insertUnorderedList"),
+      mark: closestIn(el, "mark") !== null,
+      link: closestIn(el, "a") !== null,
+      block: blockAtSelection(el),
       size: sizeAtSelection(el),
     });
   }, []);
@@ -186,33 +349,173 @@ export function AnnouncementRichEditor({
   }, [refreshMarks]);
 
   const run = useCallback(
-    (command: string) => {
+    (command: string, arg?: string) => {
       const el = ref.current;
       if (!el || disabled) return;
       el.focus();
-      exec(command);
+      exec(command, arg);
       emit();
       refreshMarks();
     },
     [disabled, emit, refreshMarks],
   );
+
+  const rememberSelection = useCallback(() => {
+    const sel = window.getSelection();
+    const el = ref.current;
+    savedRange.current =
+      sel && sel.rangeCount > 0 && el && el.contains(sel.getRangeAt(0).commonAncestorContainer)
+        ? sel.getRangeAt(0).cloneRange()
+        : null;
+  }, []);
 
   const applySize = useCallback(
     (size: Size) => {
       const el = ref.current;
       if (!el || disabled) return;
       el.focus();
+      const sel = window.getSelection();
+      if (sel && savedRange.current) {
+        sel.removeAllRanges();
+        sel.addRange(savedRange.current);
+      }
+      const widened = selectBlockIfCollapsed(el);
       exec("fontSize", FONT_SENTINEL);
       foldFontSentinels(el, size);
+      if (widened && sel && sel.rangeCount > 0) sel.collapseToEnd();
+      savedRange.current = null;
       emit();
       refreshMarks();
     },
     [disabled, emit, refreshMarks],
   );
 
+  const applyBlock = useCallback(
+    (block: Block) => {
+      const el = ref.current;
+      if (!el || disabled) return;
+      // Clicking the active heading turns it back into a paragraph.
+      const next = blockAtSelection(el) === block ? "p" : block;
+      run("formatBlock", `<${next}>`);
+    },
+    [disabled, run],
+  );
+
+  const toggleHighlight = useCallback(() => {
+    const el = ref.current;
+    if (!el || disabled) return;
+    el.focus();
+    const current = closestIn(el, "mark");
+    // An emptied highlighted line leaves <mark><br></mark> with the caret
+    // parked beside (not inside) it; the click means "no highlight here".
+    const block = closestIn(el, "p,h1,h2,li,td,th");
+    const emptied = block
+      ? Array.from(block.querySelectorAll("mark")).filter((m) => !m.textContent)
+      : [];
+    if (current) unwrap(current);
+    else if (emptied.length) emptied.forEach((m) => unwrap(m));
+    else {
+      exec("hiliteColor", HILITE_SENTINEL);
+      foldHighlights(el);
+    }
+    emit();
+    refreshMarks();
+  }, [disabled, emit, refreshMarks]);
+
+  const toggleLink = useCallback(async () => {
+    const el = ref.current;
+    if (!el || disabled || !onPromptLink) return;
+    const current = closestIn(el, "a");
+    if (current) {
+      unwrap(current);
+      emit();
+      refreshMarks();
+      return;
+    }
+    // The prompt steals focus; remember the selection and put it back.
+    const sel = window.getSelection();
+    const range = sel && sel.rangeCount > 0 ? sel.getRangeAt(0).cloneRange() : null;
+    const typed = await onPromptLink("");
+    if (typed === null) return;
+    const href = normalizeLinkHref(typed);
+    if (!href) return;
+    el.focus();
+    if (range && sel) {
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
+    if (!range || range.collapsed) {
+      // Nothing selected: the address itself becomes the link text.
+      const text = href.replace(/^mailto:/i, "");
+      exec("insertHTML", `<a href="${href}">${text}</a>&nbsp;`);
+    } else {
+      exec("createLink", href);
+    }
+    emit();
+    refreshMarks();
+  }, [disabled, emit, onPromptLink, refreshMarks]);
+
+  const insertTable = useCallback(() => run("insertHTML", TABLE_TEMPLATE), [run]);
+
+  const onPickImage = useCallback(
+    async (file: File | undefined) => {
+      const el = ref.current;
+      if (fileRef.current) fileRef.current.value = "";
+      if (!el || !file || disabled || !onInsertImage) return;
+      setBusy(true);
+      try {
+        const got = await onInsertImage(file);
+        if (!got) return;
+        el.focus();
+        exec(
+          "insertHTML",
+          `<img data-att="${got.key}" src="${got.src}" alt="" draggable="false"><p><br></p>`,
+        );
+        emit();
+        refreshMarks();
+      } finally {
+        setBusy(false);
+      }
+    },
+    [disabled, emit, onInsertImage, refreshMarks],
+  );
+
+  const clearFormatting = useCallback(() => {
+    const el = ref.current;
+    if (!el || disabled) return;
+    el.focus();
+    exec("removeFormat");
+    unwrapInSelection(el, "mark, a, span[data-size]");
+    if (blockAtSelection(el) !== "p") exec("formatBlock", "<p>");
+    emit();
+    refreshMarks();
+  }, [disabled, emit, refreshMarks]);
+
   const toolBtn =
     "inline-flex h-7 min-w-7 items-center justify-center rounded px-1.5 text-[11px] font-semibold text-ink-secondary transition-colors hover:bg-surface hover:text-ink disabled:opacity-40";
   const active = "bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary";
+  const divider = <span className="mx-1 h-4 w-px bg-border" aria-hidden />;
+  const btn = (
+    label: string,
+    title: string,
+    pressed: boolean,
+    onClick: () => void,
+    icon: ReactNode,
+    extraDisabled = false,
+  ) => (
+    <button
+      type="button"
+      title={title}
+      aria-label={label}
+      aria-pressed={pressed}
+      disabled={disabled || extraDisabled}
+      onMouseDown={(e) => e.preventDefault()}
+      onClick={onClick}
+      className={cn(toolBtn, pressed && active)}
+    >
+      {icon}
+    </button>
+  );
 
   return (
     <div
@@ -227,86 +530,66 @@ export function AnnouncementRichEditor({
         role="toolbar"
         aria-label="Text formatting"
       >
-        <button
-          type="button"
-          title="Bold (Ctrl+B)"
-          aria-label="Bold"
-          aria-pressed={marks.bold}
-          disabled={disabled}
-          onMouseDown={(e) => e.preventDefault()}
-          onClick={() => run("bold")}
-          className={cn(toolBtn, marks.bold && active)}
-        >
-          <Bold size={13} />
-        </button>
-        <button
-          type="button"
-          title="Italic (Ctrl+I)"
-          aria-label="Italic"
-          aria-pressed={marks.italic}
-          disabled={disabled}
-          onMouseDown={(e) => e.preventDefault()}
-          onClick={() => run("italic")}
-          className={cn(toolBtn, marks.italic && active)}
-        >
-          <Italic size={13} />
-        </button>
-        <button
-          type="button"
-          title="Underline (Ctrl+U)"
-          aria-label="Underline"
-          aria-pressed={marks.underline}
-          disabled={disabled}
-          onMouseDown={(e) => e.preventDefault()}
-          onClick={() => run("underline")}
-          className={cn(toolBtn, marks.underline && active)}
-        >
-          <Underline size={13} />
-        </button>
-        <span className="mx-1 h-4 w-px bg-border" aria-hidden />
-        <button
-          type="button"
-          title="Numbered list"
-          aria-label="Numbered list"
-          aria-pressed={marks.ol}
-          disabled={disabled}
-          onMouseDown={(e) => e.preventDefault()}
-          onClick={() => run("insertOrderedList")}
-          className={cn(toolBtn, marks.ol && active)}
-        >
-          <ListOrdered size={13} />
-        </button>
-        <button
-          type="button"
-          title="Bulleted list"
-          aria-label="Bulleted list"
-          aria-pressed={marks.ul}
-          disabled={disabled}
-          onMouseDown={(e) => e.preventDefault()}
-          onClick={() => run("insertUnorderedList")}
-          className={cn(toolBtn, marks.ul && active)}
-        >
-          <List size={13} />
-        </button>
-        <span className="mx-1 h-4 w-px bg-border" aria-hidden />
-        <span className="mr-0.5 text-[10px] font-semibold uppercase tracking-wider text-ink-muted">
+        {btn("Heading 1", "Heading 1", marks.block === "h1", () => applyBlock("h1"), <Heading1 size={14} />)}
+        {btn("Heading 2", "Heading 2", marks.block === "h2", () => applyBlock("h2"), <Heading2 size={14} />)}
+        {divider}
+        {btn("Bold", "Bold (Ctrl+B)", marks.bold, () => run("bold"), <Bold size={13} />)}
+        {btn("Italic", "Italic (Ctrl+I)", marks.italic, () => run("italic"), <Italic size={13} />)}
+        {btn("Underline", "Underline (Ctrl+U)", marks.underline, () => run("underline"), <Underline size={13} />)}
+        {btn("Highlight", "Highlight", marks.mark, toggleHighlight, <Highlighter size={13} />)}
+        {divider}
+        {btn("Numbered list", "Numbered list", marks.ol, () => run("insertOrderedList"), <ListOrdered size={13} />)}
+        {btn("Bulleted list", "Bulleted list", marks.ul, () => run("insertUnorderedList"), <List size={13} />)}
+        {divider}
+        {onPromptLink &&
+          btn(
+            marks.link ? "Remove link" : "Link",
+            marks.link ? "Remove link" : "Link (Ctrl+K)",
+            marks.link,
+            () => void toggleLink(),
+            <LinkIcon size={13} />,
+          )}
+        {btn("Insert table", "Insert table", false, insertTable, <TableIcon size={13} />)}
+        {onInsertImage &&
+          btn(
+            "Insert image",
+            busy ? "Uploading…" : "Insert image",
+            false,
+            () => fileRef.current?.click(),
+            <ImageIcon size={13} />,
+            busy,
+          )}
+        {btn("Clear formatting", "Clear formatting", false, clearFormatting, <RemoveFormatting size={13} />)}
+        {divider}
+        <label className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-ink-muted">
           Size
-        </span>
-        {SIZE_OPTIONS.map((o) => (
-          <button
-            key={o.key}
-            type="button"
-            title={o.title}
-            aria-label={o.title}
-            aria-pressed={marks.size === o.key}
+          <select
+            aria-label="Text size"
+            title="Text size — applies to the selection, or to the whole paragraph when nothing is selected"
+            value={marks.size}
             disabled={disabled}
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={() => applySize(o.key)}
-            className={cn(toolBtn, marks.size === o.key && active)}
+            onPointerDown={rememberSelection}
+            onKeyDown={rememberSelection}
+            onChange={(e) => applySize(e.target.value as Size)}
+            className="h-7 rounded border border-border bg-surface px-1 text-[11px] font-semibold normal-case tracking-normal text-ink-secondary outline-none focus:border-primary"
           >
-            {o.label}
-          </button>
-        ))}
+            {SIZE_OPTIONS.map((o) => (
+              <option key={o.key} value={o.key}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        {onInsertImage && (
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            aria-label="Image file"
+            onChange={(e) => void onPickImage(e.target.files?.[0])}
+          />
+        )}
       </div>
       <div
         ref={ref}
@@ -325,6 +608,12 @@ export function AnnouncementRichEditor({
         onFocus={refreshMarks}
         onKeyUp={refreshMarks}
         onMouseUp={refreshMarks}
+        onKeyDown={(e) => {
+          if (onPromptLink && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+            e.preventDefault();
+            void toggleLink();
+          }
+        }}
         onPaste={(e) => {
           e.preventDefault();
           const text = e.clipboardData.getData("text/plain");

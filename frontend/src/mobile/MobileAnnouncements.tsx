@@ -16,13 +16,16 @@ import {
 } from "./MobileAnnouncementMedia";
 import { MobileVirtualList } from "./MobileVirtualList";
 import { AnnouncementRichBody } from "../components/AnnouncementRichBody";
+import { CATEGORY_META, readCategory, requiresAcknowledgement } from "../components/announcementCategory";
 import { AnnouncementRichEditor } from "../components/AnnouncementRichEditor";
 import { richTextToPlain } from "../lib/announcementRichText";
+import { useIdempotencyKey } from "../lib/idempotency";
 import { useAuth } from "../auth/AuthContext";
 import { isSalesDirectorUser } from "../auth/salesAccess";
 import { formatDate } from "../lib/utils";
 import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
+import { usePrompt } from "../vendor/scm/components/PromptDialog";
 import { DateTimeField } from "../vendor/scm/components/DateTimeField";
 import {
   ANNOUNCEMENT_STATUS_LABEL,
@@ -74,6 +77,8 @@ type Announcement = {
   createdAt: string | null;
   createdBy: number | null;
   createdByName?: string | null;
+  /** Per-notice "must acknowledge" flag (mig 2026-09); absent = category rule. */
+  requireAck?: boolean | null;
   remindedAt: string | null;
   updatedAt: string | null;
   attachments: Attachment[];
@@ -93,7 +98,26 @@ type Announcement = {
   // go through localizeAnnouncement(), which falls back to the ORIGINAL posted
   // text in all of those cases.
   translations?: AnnouncementTranslations;
+  /** Approval workflow (mig 20260906T1509); absent = APPROVED. */
+  approvalStatus?: "DRAFT" | "PENDING_APPROVAL" | "APPROVED" | "REJECTED";
+  rejectReason?: string | null;
+  /** [DEPT]-ANN-[YYMM]-[NNNN], minted on approval. */
+  refNo?: string | null;
 };
+
+const APPROVAL_CHIP: Record<"DRAFT" | "PENDING_APPROVAL" | "REJECTED", { label: string; bg: string; fg: string }> = {
+  DRAFT: { label: "Draft", bg: "#eceee9", fg: "#767b6e" },
+  PENDING_APPROVAL: { label: "Pending approval", bg: "#fff1d6", fg: "#8a5a00" },
+  REJECTED: { label: "Rejected", bg: "#fbe4e1", fg: "#a3271b" },
+};
+/** The approval state before anything else: an unapproved notice has no
+ *  audience yet, so Live / Hidden / Expired would be a claim about nothing. */
+function ApprovalChip({ ann }: { ann: Announcement }) {
+  const s = ann.approvalStatus ?? "APPROVED";
+  if (s === "APPROVED") return null;
+  const c = APPROVAL_CHIP[s];
+  return <span className="spill" style={{ background: c.bg, color: c.fg }}>{c.label}</span>;
+}
 
 // Multi-company: the company-target selector + row chip only appear when
 // /api/companies returns MORE THAN ONE company (mirrors the desktop rule).
@@ -364,9 +388,18 @@ export function MobileAnnouncements({ onBack }: { onBack?: () => void }) {
   const isSalesDir = isSalesDirectorUser(user);
   const canCreate = can("announcements.write") || isSalesDir;
   const salesDirOnly = isSalesDir && !can("announcements.write");
+  // The approval desk (mig 20260906T1509): Approve / Reject on the phone too.
+  // An approver without write reads the ledger (the queue is in it).
+  const canApprove = can("announcements.approve");
+  const seesLedger = canCreate || canApprove;
   const qc = useQueryClient();
 
   const [view, setView] = useState<"list" | "detail" | "compose" | "notifications">("list");
+  // Design handoff 2026-09-04 (screen 7): Needs you · All · SOP. "Needs you" =
+  // mandatory + addressed to me + unacked, the same rule the desktop inbox and
+  // the pop-up apply (announcementCategory.requiresAcknowledgement).
+  const [filter, setFilter] = useState<"pending" | "all" | "sop">("all");
+  const [ackingId, setAckingId] = useState<string | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
   // Which surface the open notice was tapped from, so Detail's back returns there.
   const [openFrom, setOpenFrom] = useState<"list" | "notifications">("list");
@@ -398,7 +431,7 @@ export function MobileAnnouncements({ onBack }: { onBack?: () => void }) {
   const ledgerQ = useQuery({
     queryKey: ["mobile-ann-ledger"],
     queryFn: () => api.get<BannerResponse>("/api/announcements"),
-    enabled: canCreate,
+    enabled: seesLedger,
     staleTime: 30_000,
   });
   // System notices (scan / service-case) — the ACTIONABLE per-user notices the
@@ -454,9 +487,9 @@ export function MobileAnnouncements({ onBack }: { onBack?: () => void }) {
   const readerList = data?.data ?? [];
   // Publishers read the ledger (everything, incl. hidden + expired); everyone
   // else reads their own feed. One expression so the two cannot diverge.
-  const list = canCreate ? (ledgerQ.data?.data ?? []) : readerList;
-  const listLoading = canCreate ? ledgerQ.isLoading : isLoading;
-  const listError = canCreate ? ledgerQ.error : error;
+  const list = seesLedger ? (ledgerQ.data?.data ?? []) : readerList;
+  const listLoading = seesLedger ? ledgerQ.isLoading : isLoading;
+  const listError = seesLedger ? ledgerQ.error : error;
   const systemList = systemQ.data?.data ?? [];
   /* Which ids are in the READER feed. An unread dot is a statement about the
      signed-in person's own inbox, so it may only be drawn for a notice that is
@@ -478,6 +511,31 @@ export function MobileAnnouncements({ onBack }: { onBack?: () => void }) {
   const systemUnread = systemList.reduce((n, a) => (ackedIds.has(a.id) ? n : n + 1), 0);
 
   const open = [...list, ...systemList].find((a) => a.id === openId) ?? null;
+
+  const isPendingForMe = (a: Announcement) =>
+    readerIds.has(a.id) && !ackedIds.has(a.id) && requiresAcknowledgement({ category: readCategory(a.category), requireAck: a.requireAck ?? null });
+  const pendingCount = list.reduce((n, a) => (isPendingForMe(a) ? n + 1 : n), 0);
+  const shownList =
+    filter === "pending"
+      ? list.filter(isPendingForMe)
+      : filter === "sop"
+        ? list.filter((a) => readCategory(a.category) === "SOP")
+        : list;
+
+  // Acknowledge from the card, without opening the notice. Same POST the
+  // detail's bar and the desktop use; same optimistic-with-reconcile trade.
+  const ackInline = async (a: Announcement) => {
+    if (ackingId) return;
+    setAckingId(a.id);
+    try {
+      await api.post(`/api/announcements/${encodeURIComponent(a.id)}/ack`);
+    } catch {
+      /* silent-write-ok: OPTIMISTIC WITH RECONCILE — see Detail.ack above. */
+    }
+    setLocalAcked((prev) => new Set(prev).add(a.id));
+    setAckingId(null);
+    refreshFeeds();
+  };
 
   /* Every write on this screen (publish, hide/show, delete, remind) must bust
      BOTH surfaces: the publisher ledger it renders from, and the reader feed
@@ -524,6 +582,7 @@ export function MobileAnnouncements({ onBack }: { onBack?: () => void }) {
            sdBlockedFromRow enforces on PATCH / DELETE / remind. A system
            (scan / service-case) notice is nobody's to retract. */
         canManage={canCreate && !open.source && (!salesDirOnly || open.createdBy === (user?.id ?? null))}
+        canApprove={canApprove && !open.source}
         acked={ackedIds.has(open.id)}
         onAcked={() => markAcked(open.id)}
         onChanged={refreshFeeds}
@@ -626,7 +685,47 @@ export function MobileAnnouncements({ onBack }: { onBack?: () => void }) {
             )}
           </div>
         </div>
-        <div className="scr-title">Announcements</div>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div className="scr-title">Announcements</div>
+          {pendingCount > 0 && (
+            <span aria-label={`${pendingCount} pending`} style={{ borderRadius: 999, background: "var(--red)", color: "#fff", padding: "2px 9px", fontSize: 11, fontWeight: 700 }}>
+              {pendingCount}
+            </span>
+          )}
+        </div>
+        <div style={{ display: "flex", gap: 6, overflowX: "auto", marginTop: 10 }}>
+          {(
+            [
+              ["pending", pendingCount > 0 ? `Needs you ${pendingCount}` : "Needs you"],
+              ["all", "All"],
+              ["sop", "SOP"],
+            ] as Array<["pending" | "all" | "sop", string]>
+          ).map(([id, label]) => {
+            const on = filter === id;
+            return (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setFilter(id)}
+                aria-pressed={on}
+                style={{
+                  borderRadius: 999,
+                  padding: "6px 13px",
+                  fontSize: 12,
+                  fontWeight: on ? 650 : 600,
+                  whiteSpace: "nowrap",
+                  fontFamily: "inherit",
+                  cursor: "pointer",
+                  background: on ? "var(--brand)" : "#fff",
+                  color: on ? "#fff" : "#414539",
+                  border: on ? "1px solid var(--brand)" : "1px solid #d6d9d2",
+                }}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
       </header>
 
       <div className="scroll hz-scroll" style={{ padding: 12, paddingBottom: 120 }}>
@@ -634,9 +733,9 @@ export function MobileAnnouncements({ onBack }: { onBack?: () => void }) {
         {listError && <div style={{ textAlign: "center", color: "var(--red)", fontSize: 12, padding: "26px 0" }}>Couldn't load announcements. Pull to retry.</div>}
         {!listLoading && !listError && (
           <>
-            {list.length > 0 && (
+            {shownList.length > 0 && (
               <MobileVirtualList
-                items={list}
+                items={shownList}
                 getKey={(a) => a.id}
                 estimateHeight={72}
                 gap={9}
@@ -644,7 +743,7 @@ export function MobileAnnouncements({ onBack }: { onBack?: () => void }) {
                   <NoticeCard
                     a={a}
                     unread={readerIds.has(a.id) && !ackedIds.has(a.id)}
-                    showStatus={canCreate}
+                    showStatus={seesLedger}
                     lang={lang}
                     companies={companies}
                     onOpen={() => {
@@ -652,14 +751,20 @@ export function MobileAnnouncements({ onBack }: { onBack?: () => void }) {
                       setOpenFrom("list");
                       setView("detail");
                     }}
+                    inlineAck={
+                      isPendingForMe(a)
+                        ? { label: CATEGORY_META[readCategory(a.category)].ctaLabel, acking: ackingId === a.id, onAck: () => void ackInline(a) }
+                        : undefined
+                    }
+                    confirmed={readerIds.has(a.id) && ackedIds.has(a.id)}
                   />
                 )}
               />
             )}
-            {!list.length && (
+            {!shownList.length && (
               <div className="empty">
-                <div className="empty-t">No announcements yet</div>
-                <div className="empty-s">Notices from HQ will appear here.</div>
+                <div className="empty-t">{filter === "pending" ? "Nothing needs you" : filter === "sop" ? "No SOPs yet" : "No announcements yet"}</div>
+                <div className="empty-s">{filter === "pending" ? "Every mandatory notice is acknowledged." : "Notices from HQ will appear here."}</div>
               </div>
             )}
           </>
@@ -680,9 +785,16 @@ function NoticeCard({
   lang,
   companies,
   onOpen,
+  inlineAck,
+  confirmed,
 }: {
   a: Announcement;
   unread: boolean;
+  /** Pending for THIS reader: the category CTA acknowledges in place (44px,
+   *  the hard minimum) beside a "Read full" that opens the notice. */
+  inlineAck?: { label: string; acking: boolean; onAck: () => void };
+  /** Acknowledged by this reader — the card says so instead of offering a CTA. */
+  confirmed?: boolean;
   /** REQUIRED, not optional: the caller has to say whether this row is being
    *  shown to a publisher (ledger — badge Hidden/Expired) or to a reader (feed
    *  — nothing to badge). An optional flag would default the publisher list
@@ -695,9 +807,12 @@ function NoticeCard({
   const na = (a.attachments ?? []).length;
   const col = catColor(a);
   return (
+    <div
+      style={{ display: "flex", flexDirection: "column", gap: 10, background: "#fff", border: `1px solid ${unread ? "#bcdcd7" : "#e3e6e0"}`, borderLeft: inlineAck ? `3px solid ${col}` : undefined, borderRadius: 13, padding: "12px 13px", fontFamily: "inherit" }}
+    >
     <button
       onClick={onOpen}
-      style={{ display: "flex", alignItems: "flex-start", gap: 11, width: "100%", textAlign: "left", background: "#fff", border: `1px solid ${unread ? "#bcdcd7" : "#e3e6e0"}`, borderRadius: 13, padding: "12px 13px", cursor: "pointer", fontFamily: "inherit" }}
+      style={{ display: "flex", alignItems: "flex-start", gap: 11, width: "100%", textAlign: "left", background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: "inherit" }}
     >
       <span style={{ width: 36, height: 36, flex: "none", borderRadius: 10, background: `${col}1f`, display: "flex", alignItems: "center", justifyContent: "center" }}>
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke={col} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 11v2a1 1 0 0 0 1 1h2l5 4V6L6 10H4a1 1 0 0 0-1 1Z" /><path d="M16 8a4 4 0 0 1 0 8" /></svg>
@@ -709,6 +824,7 @@ function NoticeCard({
         </span>
         <span style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 5, flexWrap: "wrap" }}>
           <CatChip ann={a} />
+          {showStatus && <ApprovalChip ann={a} />}
           {showStatus && <StatusChip ann={a} />}
           <CompanyChip ann={a} companies={companies} />
           <span style={{ fontSize: 11, color: "#767b6e" }}>{byLine(a)} · {dm(a.createdAt)}</span>
@@ -721,6 +837,32 @@ function NoticeCard({
         )}
       </span>
     </button>
+    {inlineAck && (
+      <div style={{ display: "flex", gap: 8 }}>
+        <button
+          type="button"
+          onClick={inlineAck.onAck}
+          disabled={inlineAck.acking}
+          style={{ flex: 1, height: 44, borderRadius: 10, border: "none", background: col, color: "#fff", fontSize: 13, fontWeight: 700, fontFamily: "inherit", cursor: inlineAck.acking ? "default" : "pointer", opacity: inlineAck.acking ? 0.6 : 1 }}
+        >
+          {inlineAck.acking ? "Marking…" : inlineAck.label}
+        </button>
+        <button
+          type="button"
+          onClick={onOpen}
+          style={{ width: 104, height: 44, borderRadius: 10, border: "1px solid #d6d9d2", background: "#fff", color: "#414539", fontSize: 12.5, fontWeight: 650, fontFamily: "inherit", cursor: "pointer" }}
+        >
+          Read full
+        </button>
+      </div>
+    )}
+    {!inlineAck && confirmed && (
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11.5, fontWeight: 650, color: "var(--green)" }}>
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--green)" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
+        Confirmed
+      </span>
+    )}
+    </div>
   );
 }
 
@@ -729,6 +871,7 @@ function Detail({
   companies,
   canReceipts,
   canManage,
+  canApprove,
   acked,
   onAcked,
   onChanged,
@@ -741,6 +884,8 @@ function Detail({
   /** May this caller hide / show / delete THIS notice. REQUIRED — a default
    *  would decide a permission by omission. */
   canManage: boolean;
+  /** announcements.approve: Approve / Reject while the notice is pending. */
+  canApprove: boolean;
   acked: boolean;
   onAcked: () => void;
   /** A write landed and the row changed: bust both feeds. */
@@ -754,8 +899,57 @@ function Detail({
   const [managing, setManaging] = useState(false);
   const confirm = useConfirm();
   const notify = useNotify();
+  const promptFor = usePrompt();
   const isAcked = acked || localAck;
   const status = announcementStatus(ann);
+  const approval = ann.approvalStatus ?? "APPROVED";
+
+  /* APPROVAL (mig 20260906T1509) — the same three transitions the desktop
+     drawer has. Each reports the server's answer; the approve toast carries
+     the reference number the server minted. */
+  const transition = async (
+    action: "submit" | "approve" | "reject",
+    body: Record<string, unknown>,
+    done: (data: { refNo?: string | null } | null) => { title: string; body: string },
+  ) => {
+    if (managing) return;
+    setManaging(true);
+    try {
+      const r = await api.post<{ data?: { refNo?: string | null } | null }>(
+        `/api/announcements/${encodeURIComponent(ann.id)}/${action}`,
+        body,
+      );
+      onChanged();
+      await notify(done(r.data ?? null));
+    } catch (e) {
+      await notify({
+        title: action === "approve" ? "Could not approve it" : action === "reject" ? "Could not reject it" : "Could not submit it",
+        body: e instanceof Error ? e.message.replace(/^\d+:\s*/, "") : "Please try again.",
+        tone: "error",
+      });
+    }
+    setManaging(false);
+  };
+  const submit = () =>
+    transition("submit", {}, () => ({ title: "Submitted for approval", body: "It goes live once an approver signs it off." }));
+  const approve = () =>
+    transition("approve", {}, (d) => ({
+      title: "Approved and published",
+      body: d?.refNo ? `Reference ${d.refNo}. It is live for its audience now.` : "It is live for its audience now.",
+    }));
+  const reject = async () => {
+    if (managing) return;
+    const reason = await promptFor({
+      title: "Reject announcement",
+      body: "It goes back to its author with your reason. They can edit it and submit it again.",
+      placeholder: "What needs to change",
+      confirmLabel: "Reject",
+      multiline: true,
+      validate: (v) => (v.trim() ? null : "A reason is required."),
+    });
+    if (reason == null || !reason.trim()) return;
+    await transition("reject", { reason: reason.trim() }, () => ({ title: "Sent back to the author", body: "They have been told why." }));
+  };
 
   /* RETRACTION — hide/show + delete, the two publisher actions the phone did
      not have at all. Both report the server's refusal: this file's Remind
@@ -852,12 +1046,18 @@ function Detail({
       <div className="scroll hz-scroll" style={{ padding: 14, paddingBottom: 40 }}>
         <div id="ann-d-meta" style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10, alignItems: "center" }}>
           <CatChip ann={ann} />
-          {canManage && <StatusChip ann={ann} />}
+          {(canManage || canApprove) && <ApprovalChip ann={ann} />}
+          {canManage && approval === "APPROVED" && <StatusChip ann={ann} />}
           <CompanyChip ann={ann} companies={companies} />
           <span style={{ fontSize: 11, color: "#9aa093", alignSelf: "center" }}>{dm(ann.createdAt)}</span>
         </div>
         <div id="ann-d-title" style={{ fontSize: 21, fontWeight: 800, color: "#11140f", lineHeight: 1.25 }}>{shown.title}</div>
-        <div id="ann-d-by" style={{ fontSize: 11.5, color: "#767b6e", marginTop: 6 }}>Posted by {byLine(ann)}</div>
+        <div id="ann-d-by" style={{ fontSize: 11.5, color: "#767b6e", marginTop: 6 }}>
+          {ann.refNo ? `${ann.refNo} · ` : ""}Posted by {byLine(ann)}
+        </div>
+        {approval === "REJECTED" && ann.rejectReason && (canManage || canApprove) && (
+          <div style={{ fontSize: 12, color: "#a3271b", marginTop: 6 }}>Sent back: {ann.rejectReason}</div>
+        )}
         {/* When it stops showing — stated on the phone as well as the desktop,
             because "why is this still up" is a question the publisher asks from
             wherever they happen to be. */}
@@ -898,10 +1098,50 @@ function Detail({
           </div>
         )}
 
-        <AnnouncementRichBody id="ann-d-body" html={shown.bodyHtml} text={shown.body} style={{ fontSize: 13.5, lineHeight: 1.7, color: "#414539", marginTop: 14 }} />
+        <AnnouncementRichBody id="ann-d-body" html={shown.bodyHtml} text={shown.body} annId={ann.id} style={{ fontSize: 13.5, lineHeight: 1.7, color: "#414539", marginTop: 14 }} />
         <div id="ann-d-atts" style={{ marginTop: 16 }}>
           <Attachments ann={ann} />
         </div>
+        {approval === "PENDING_APPROVAL" && canApprove && (
+          <div id="ann-d-approval" style={{ marginTop: 18 }}>
+            <div className="ey" style={{ color: "#767b6e", margin: "0 2px 8px" }}>Approval</div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button
+                onClick={() => void approve()}
+                disabled={managing}
+                className="btn"
+                style={{ flex: 1, padding: 9, opacity: managing ? 0.6 : 1, cursor: managing ? "default" : "pointer" }}
+              >
+                Approve &amp; publish
+              </button>
+              <button
+                onClick={() => void reject()}
+                disabled={managing}
+                className="tinybtn"
+                style={{ flex: 1, padding: 9, color: "var(--red)", opacity: managing ? 0.6 : 1, cursor: managing ? "default" : "pointer" }}
+              >
+                Reject…
+              </button>
+            </div>
+          </div>
+        )}
+        {approval === "PENDING_APPROVAL" && !canApprove && canManage && (
+          <div style={{ fontSize: 12, color: "#767b6e", marginTop: 18 }}>
+            Waiting for an approver. Nobody is served it until it is approved.
+          </div>
+        )}
+        {(approval === "DRAFT" || approval === "REJECTED") && canManage && (
+          <div id="ann-d-submit" style={{ marginTop: 18 }}>
+            <button
+              onClick={() => void submit()}
+              disabled={managing}
+              className="btn"
+              style={{ width: "100%", padding: 9, opacity: managing ? 0.6 : 1, cursor: managing ? "default" : "pointer" }}
+            >
+              Submit for approval
+            </button>
+          </div>
+        )}
         {canManage && (
           <div id="ann-d-manage" style={{ marginTop: 18 }}>
             <div className="ey" style={{ color: "#767b6e", margin: "0 2px 8px" }}>Publisher</div>
@@ -991,6 +1231,11 @@ function Compose({
   const [videoLayout, setVideoLayout] = useState<VideoLayout>("1x1");
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // One key per opened composer (the phone keeps no draft): a retry of this
+  // sheet's post — double tap, "Couldn't save" then Publish again — is
+  // answered by the server with the row the first request made, never a
+  // second one (mig 20260907T0010; the desktop composer keys its draft).
+  const clientKey = useIdempotencyKey();
 
   const hasPhotos = files.some((f) => (f.type || "").startsWith("image/"));
   const hasVideos = files.some((f) => (f.type || "").startsWith("video/"));
@@ -1034,6 +1279,7 @@ function Compose({
   }, [salesDirOnly, bucket, lookups.depts]);
 
   const publish = async () => {
+    if (saving) return;
     const t = title.trim();
     if (!t) {
       setErr("Title is required.");
@@ -1071,6 +1317,7 @@ function Compose({
         body: richTextToPlain(body),
         bodyHtml: body,
         category,
+        clientKey,
       };
       if (bucket === "DEPT") payload.targetDeptIds = Array.from(selDepts);
       if (bucket === "POSITION") payload.targetPositionIds = Array.from(selPositions);
@@ -1136,7 +1383,7 @@ function Compose({
         <div style={{ display: "flex", alignItems: "flex-start", gap: 9, background: "#f3ece0", border: "1px solid #e8dcc5", borderRadius: 11, padding: "10px 11px", marginBottom: 14 }}>
           <svg width="15" height="15" style={{ flex: "none", marginTop: 1 }} viewBox="0 0 24 24" fill="none" stroke="#a16a2e" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6Z" /></svg>
           <div style={{ fontSize: 11, color: "#5a3a14", lineHeight: 1.5 }}>
-            <b>Publishing rights:</b> Management, HR &amp; department leads. You're posting as <b>{poster}</b>.
+            <b>Publishing rights:</b> Management, HR &amp; department leads. You're posting as <b>{poster}</b>. Every notice goes live only once an approver signs it off.
           </div>
         </div>
 
@@ -1334,7 +1581,7 @@ function Compose({
 
       <footer className="actbar">
         <button onClick={publish} disabled={saving} className="btn" style={{ cursor: saving ? "default" : "pointer", opacity: saving ? 0.6 : 1 }}>
-          {saving ? "Saving…" : "Publish announcement"}
+          {saving ? "Saving…" : "Submit for approval"}
         </button>
       </footer>
     </div>

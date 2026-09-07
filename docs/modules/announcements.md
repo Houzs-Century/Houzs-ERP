@@ -34,6 +34,60 @@ screen down to the database. Same structure as
 > formatted body lives in a new `body_html` column as a strictly
 > canonicalised fragment; `body` is now its plain-text shadow. §1 "Rich
 > body", §3 "Write path" and §4 carry the contract.
+> **2026-09-05 (rich toolbar):** the grammar grew six shapes — `h1` / `h2`,
+> `mark` (highlight), `a[href]` (http(s) / mailto only, always emitted with
+> `rel="noopener noreferrer" target="_blank"`), `table tr th td`, and
+> `img[data-att]` (an inline image names one of the notice's OWN attachment
+> keys, never a URL; the renderer streams it through the manifest-gated
+> attachment route, and the write path strips any key outside the manifest).
+> The editor gained H1 / H2 / Highlight / Link / Table / Image / Clear. No
+> schema change. §3 "Rich body" carries the contract.
+> **2026-09-05 (owner's first-day feedback on prod):** the inbox list column
+> is resizable (drag handle, 260–640px, double-click resets, remembered per
+> user as `announcements:inbox-width:u<id>`) and its rows wrap instead of
+> scrolling sideways; the composer grew to 1280px with a 520px audience
+> panel; the People column groups by **division** (`users.division`) with
+> a tick-all per group, has a search box, wraps names, and lets a person be
+> **unticked under a selected department** — resolved client-side at post
+> time (see §1 "Desktop composer modal"). No schema change.
+> **2026-09-06 (division targeting, owner: "按 Division 选择为主"):** mig
+> `backend/src/db/migrations-pg/20260906T0639_announcement_target_divisions_excluded_users.sql`
+> adds `target_divisions` ({deptId, division} pairs, matched at read time
+> against the reader's primary department + `users.division`) and
+> `excluded_user_ids` (server-side untick). The Dept column is a tree of
+> departments → divisions; the 2026-09-05 client-side expansion is gone.
+> §1 composer row, §3 "Division targets" and §4 carry the contract.
+> **2026-09-06 (overdue escalation cron, owner: "做逾期自动通知主管的 cron"):**
+> a must-acknowledge notice older than 48h has its supervisors notified once,
+> automatically, by the `*/30` cron (`services/announcementEscalation.ts`,
+> shared with the drawer's manual button); mig
+> `backend/src/db/migrations-pg/20260906T0833_announcement_escalated_at.sql`
+> adds `escalated_at`. §3 "Overdue escalation cron" and §4 carry the contract.
+> **2026-09-06 (ack-rate chart, owner: "做 30 天 ack-rate 端点"):** `GET
+> /ack-trend` and the dashboard's `AckTrendCard` — the last piece of the
+> 2026-09-04 handoff. No schema change. §1 dashboard row and §2 carry it.
+> **2026-09-06 (per-department Remind, owner: "做抽屉按部门 Remind"):** a
+> reminder is now per person — `announcement_reminders` (mig
+> `backend/src/db/migrations-pg/20260906T0921_announcement_reminders.sql`).
+> The Manage drawer has "Remind <Dept> pending" beside "Remind all pending";
+> `POST /:id/remind` takes `departmentId?`; the banner's re-pop and the
+> drawer's per-person state read the later of the notice-level stamp and the
+> person's own row. §2 remind row and §4 carry the contract.
+> **2026-09-06 (approval workflow, owner: "通告审批流"):** a notice is now
+> Draft → Pending approval → Approved & published / Rejected. Nothing is served
+> until an approver (`announcements.approve`, a role permission) clicks
+> Approve; the reference number `[DEPT]-ANN-[YYMM]-[NNNN]` is minted on
+> approval from the SUBMITTER's department code (see
+> `docs/modules/document-refs.md`); reject needs a reason; every transition
+> audits and rings the right bell. Mig
+> `backend/src/db/migrations-pg/20260906T1509_announcement_approval.sql`;
+> `services/announcementApproval.ts` holds the transitions. §3 "Approval
+> workflow", §2, §4 and §5 carry the contract.
+> **2026-09-06 (font sizes, owner: "像 Word 那样选字号数字"):** the editor's
+> S / M / L / XL buttons became a **Size dropdown** of point sizes (10–36
+> px, stored as `span[data-size="16"]`); with nothing selected the size
+> applies to the whole paragraph the caret is in. The legacy `sm|lg|xl`
+> tokens remain in the grammar so older notices render unchanged.
 
 > Convention: the row is one table, `public.announcements`. Timestamps are
 > stored as **ISO text**, `is_active` is an **integer 0/1** (not boolean), and
@@ -69,16 +123,30 @@ system notices never clutter the office composer list.
 
 ### Screens
 
+> **2026-09-05 — Announcements redesign (design handoff 2026-09-04).** The
+> desktop page is now TWO MODES on one route — *Reading* (a two-pane inbox
+> every signed-in user gets) and *Manage* (ack rates + a notice → department →
+> person drill-down, behind `announcements.write`) — and the desktop pop-up is a
+> **mandatory-acknowledgement modal** that pops only for a notice that requires
+> acknowledgement. The rules that moved are listed in each section below; the
+> shared rule files are `frontend/src/components/announcementCategory.ts` (one
+> table of category colours / CTA wording / which categories block) and
+> `frontend/src/pages/announcements/announcementModel.ts` (inbox grouping,
+> archiving, ack-rate thresholds, manage status).
+
 | Surface | File | Notes |
 |---|---|---|
-| Desktop page (list + composer) | `frontend/src/pages/Announcements.tsx` (1,468 lines) | `Announcements()` at `:210`; `canWrite` at `:219` gates the composer CTA, the modal and every row action |
-| Desktop composer modal | same file — `Composer` `:459`, `ComposerModal` `:1073`, rendered `:287-300` | |
+| Desktop page shell (mode toggle, fetches, composer) | `frontend/src/pages/Announcements.tsx` | `Announcements()`; `canWrite` gates the Reading/Manage toggle, the composer CTA, Export receipts and every manage action. Reads the SAME `useAnnouncementBanner` hook the modal reads, so "addressed to me / acked / pending" can never differ between the page and the pop-up |
+| Reading mode (inbox) | `frontend/src/pages/announcements/InboxView.tsx` | List column (396px by design, drag-resizable 260–640px, remembered per user; rows wrap, never scroll sideways — owner 2026-09-05) — pinned *Needs your confirmation*, *Recent* with Confirmed/Unread pills, *SOP Library* grouped by department — beside the reading pane with the writer-only read-receipts card and the sticky acknowledge bar. Presentational; grouping is `bucketInbox()` in `announcementModel.ts` |
+| Manage mode | `frontend/src/pages/announcements/ManageView.tsx` | 4-up stat strip, the ack-rate table (`GET /ack-summary`), the drawer's *By department* buckets and per-person state pills (`GET /:id/acks`), *Remind pending* and *Notify their supervisors* (`POST /:id/escalate`); since 2026-09-06 also the approval queue — the "Pending approval" filter pill (counted), the state pill per row (Draft / Pending approval / Rejected outrank the ack states), and the drawer's Approve & publish / Reject… (approvers) or Submit for approval (writers, on a draft / rejected notice) with the reject reason shown |
+| Desktop composer modal | `frontend/src/pages/announcements/ComposerModal.tsx` + `AudiencePicker.tsx` | 1280px card (audience panel 520px, owner 2026-09-05): category pills, **Require acknowledgement** (defaults on for WARNING / SOP), title, the shared `AnnouncementRichEditor`, attachment strip, **Schedule** (`scheduledAt`) and Hide after (hidden for SOP — it never expires), Preview, and the three-column audience (Company · Dept / Role · People). Audience maps 1:1 onto the existing targets: departments → `targetDeptIds`, people → `targetUserIds`, company → `targetCompanyIds`, **All staff** → no target (an explicit choice — an empty picker refuses to post, never broadcasts). Position targeting is no longer offered on desktop (owner 2026-09-05; the phone composer still has it). **Divisions + unticking (2026-09-06):** the Dept column is a tree — each department row expands to its divisions (`divisionsOf`: the distinct `users.division` values among its members); a division row is a target of its own (`audience.divisions` → `targetDivisions`), ticking the department implies every division (rows shown ticked + disabled, not re-sent). A person reached through a department or division can be unticked (`audience.excludedUserIds` → `excludedUserIds`, pruned to the ids a selected group still reaches); an explicit person outside any group is `targetUserIds`. Nothing is expanded client-side: recipients resolve at read time, so a new member of a targeted department / division is included. `buildPostBody(draft, salesDirOnly, users)` refuses an audience with no department, division or person. The People column groups by `users.division` (`groupByDivision`, unnamed last) with a tick-all row per group and a search box (`personMatches`: name / email / position / division). The draft autosaves per user to `localStorage["announcements:draft:u<id>"]` ("Draft saved HH:mm") and is cleared on post. `buildPostBody()` is the pure request builder, pinned by `ComposerModal.test.tsx` |
 | **Desktop pop-up** | `frontend/src/components/AnnouncementBanner.tsx` | mounted **once**, at the app root: `frontend/src/App.tsx:353` |
 | **Phone pop-up** | `frontend/src/mobile/MobileAnnouncementPopup.tsx` | mounted above the tab shell AND above any overlay: `frontend/src/mobile/MobileApp.tsx:600-604` |
 | Shared pop-up logic | `frontend/src/components/useAnnouncementBanner.ts` | the feed read, the ack, the dismiss rules — **both** shells consume it |
-| Mobile list + system bell | `frontend/src/mobile/MobileAnnouncements.tsx` | READER feed + system bell. **Publishers read the LEDGER instead** — see *The mobile list has two sources* below |
+| Mobile list + system bell | `frontend/src/mobile/MobileAnnouncements.tsx` | READER feed + system bell. **Publishers read the LEDGER instead** — see *The mobile list has two sources* below. **2026-09-05 (screen 7):** header pending pill, a **Needs you · All · SOP** filter row, and **inline acknowledgement** on a reader's pending card (44px category CTA + "Read full"); an acknowledged card reads "Confirmed". "Needs you" = mandatory + addressed to me + unacked — the same `requiresAcknowledgement()` rule the desktop inbox and both pop-ups apply |
 | Shared status rule (Live / Hidden / Expired) | `frontend/src/lib/announcementStatus.ts` | imported by BOTH the desktop row and the phone card; neither re-derives it |
-| **Desktop system bell** | `frontend/src/components/NotificationBell.tsx` | System-notices section reading `?scope=system` (2026-08-08); mounted in `TopNavbar.tsx` + the sidebar's mobile drawer. Unread renders as a red COUNT (system notices + the per-project aggregate, capped `99+`) at every mount — the navbar's quiet-dot variant was removed 2026-09-02 when amendment approvals started arriving here |
+| **Desktop bell — one unread entry point** | `frontend/src/components/NotificationBell.tsx` | 404px popover with tabs **All · Announcements · System** (2026-09-05). Announcements = the human feed through the shared `useAnnouncementBanner` hook (unread = unacked; a mandatory row carries an inline **Acknowledge**, the others **Mark read**, both `POST /:id/ack`); System = `?scope=system` machine notices (tag from `source`: Scan / Service case / Amendment / Team) + the per-project activity feed. **Mark all read** sweeps unread system notices, non-mandatory announcements and the project feed — never a mandatory notice. Mounted in `TopNavbar.tsx` + the sidebar's mobile drawer; the badge is every unread across the three sources, capped `99+` |
+| **Dashboard banner stack + supervisor card** | `frontend/src/components/AnnouncementDashboard.tsx` (mounted on `pages/Overview.tsx`) | `AnnouncementBannerStack`: up to three unacknowledged notices under the greeting — first expanded (category CTA + View details / Read SOP → `/announcements?id=…`), the rest collapsed, overflow behind "n more notices collapsed · Expand"; same hook as the modal, so an ack here settles everywhere. `TeamPendingCard`: `GET /team-pending` — renders only for a user with direct reports; lists each report's unacked mandatory notice with its state; **Remind all** (one `remind {scope:"unacked"}` per distinct notice) only for `announcements.write` holders, since the remind route is write-gated. `AckTrendCard` (2026-09-06): the handoff's "Ack rate · last 30 days" — six 5-day bars from `GET /ack-trend` (write-gated, so it renders only for an announcer), threshold colours from `ackRateBarCls`, an empty bucket drawn empty, a summary line; sits beside the supervisor card in a two-up row |
 | Media renderers | `frontend/src/components/AnnouncementMedia.tsx` (lazy) / `frontend/src/mobile/MobileAnnouncementMedia.tsx` | |
 | Unread badge hook | `frontend/src/mobile/useAnnouncementUnread.ts` | |
 
@@ -116,6 +184,7 @@ so a notice posted from a phone was permanent and un-retractable from a phone.
 |---|---|---|
 | Set an expiry at compose time (`expiresAt`) | composer field "Hide automatically after", shared `DateTimeField` | `Announcements.tsx` composer, same label, same control |
 | Hide / show (`PATCH { isActive }`) | Detail > Publisher | row action |
+| Approve / Reject (`POST /:id/approve`, `/:id/reject` — `announcements.approve`) and Submit for approval (`POST /:id/submit`) — 2026-09-06 | Detail > Approval / the Submit button; the reject reason is asked through the vendored prompt | Manage drawer |
 | Delete (`DELETE /:id`) | Detail > Publisher, behind a confirm | row action, behind a confirm |
 | Remind un-acked (`POST /:id/remind` `{ scope: "unacked" }`) | Receipts panel, behind a confirm, reports the server's `pendingCount` | same |
 | Reset all receipts (`{ scope: "all" }`) | Receipts panel, danger confirm | same |
@@ -152,10 +221,23 @@ target, since the desktop Announcements page lists human posts only).
 
 ### Pop-up trigger logic (all in `useAnnouncementBanner.ts`)
 
-- **Current notice** = the first feed row that is neither session-dismissed nor
-  locally acked — or that *is* locally acked but whose `remindedAt` is newer
-  than the local ack stamp, i.e. the office pressed **Remind** since you
-  acknowledged (`:203-212`, `isRemindedSince` `:107-115`).
+- **Only a notice that REQUIRES acknowledgement pops (2026-09-05).**
+  `requiresAcknowledgement()` in `components/announcementCategory.ts`: the
+  per-notice `requireAck` flag when the payload carries it, else the category
+  rule — `WARNING` / `SOP` block, `GENERAL` / `LEARNING` never do (they are
+  read and acknowledged inline: the inbox's Recent group, the dashboard stack,
+  the bell). Both shells share this through the hook. The hook also returns
+  `pendingCount` / `pendingIndex` (the modal's "n of m pending"),
+  `canPostpone(a)`, and the page-facing sets `addressedIds` / `ackedIds`.
+- **Current notice** = the first MANDATORY feed row that is neither
+  session-dismissed nor locally acked — or that *is* locally acked but whose
+  `remindedAt` is newer than the local ack stamp, i.e. the office pressed
+  **Remind** since you acknowledged (`isRemindedSince`).
+- **Sibling instances stay in step.** The root modal and the Announcements
+  page each mount the hook; a same-tab write fires no `storage` event, so the
+  writer pings a module-level listener set and every instance re-reads the ack
+  memo, the skip counter and the dismiss set. The ack is written to storage
+  synchronously (not inside a lazy state updater) for the same reason.
 - **Local ack memo**: `localStorage["announcements:localAcks"]`, a
   `{ id: ackedAtMs }` map (`:76-96`). The server's `ackedIds` are merged into it
   additively (`:183-198`) so the pop-up stays down across a reload before the
@@ -164,30 +246,29 @@ target, since the desktop Announcements page lists human posts only).
   not persisted — the phone unmounts the pop-up on every shell navigation, and a
   just-waved-away notice must not spring back on the next mount. It re-surfaces
   on the next visit.
-- **Skip limit (owner 2026-08-08): two skips, then acknowledge-only.** Each
-  session-dismiss of a notice (secondary "Remind later"/"Later", backdrop
-  tap, mobile sheet-x) also counts one skip in
+- **Postponement (2026-09-05, superseding #1728's two skips): ONE, then
+  acknowledge-only.** Each session-dismiss of a notice ("Remind later",
+  backdrop tap, mobile sheet-x) counts one skip in
   `localStorage["announcements:localSkips"]` — identity-scoped and sanitised by
   the same `announcementLocalAcks.ts` module as the ack memo, stored as
   `{ id: { n, at } }`. When a notice's count reaches
-  `MAX_ANNOUNCEMENT_SKIPS` (2), the hook returns `mustAcknowledge: true` and
-  both shells drop every dismiss affordance, showing "This notice requires
-  acknowledgement" in the secondary slot — only the ack button remains
-  (`dismissSession` also refuses at the limit, so a missed call site cannot
-  grant a third skip). Applies to every banner notice — there is no
-  ack-required flag; all notices carry a tracked ack. The mobile "View
-  details"/"Read SOP" step-aside does **not** count (it navigates the reader TO
-  the notice via the non-counting `hideForNavigation`; the desktop twin counts
-  nothing either). Acking clears the notice's count, so an office Remind
+  `MAX_ANNOUNCEMENT_SKIPS` (**1**), the hook returns `mustAcknowledge: true` and
+  both shells drop every dismiss affordance; the note under the desktop modal
+  goes from "You can postpone once" to "This notice requires acknowledgement"
+  and only the ack button remains (`dismissSession` also refuses at the limit,
+  so a missed call site cannot grant another skip). A postponed notice STAYS in
+  the inbox's pinned group — postponing only stops the modal for the session.
+  The mobile "View details"/"Read SOP" step-aside does **not** count (it
+  navigates the reader TO the notice via the non-counting
+  `hideForNavigation`). Acking clears the notice's count, so an office Remind
   re-pops with a fresh allowance. The count is local like the acks — the
   backend records acks, never dismissals — so the allowance is per
   browser+identity, not per account across devices.
-- **Secondary button semantics by category** (`:121-125`): `WARNING`/`SOP` →
-  navigate to `/announcements`; `GENERAL`/`LEARNING` → session-dismiss (no ack).
-  The desktop navigates with `window.location.assign` rather than `useNavigate`
-  on purpose — `.design-sync/previews/AnnouncementBanner.tsx` mounts the
-  component without a `<Router>`, and `useNavigate()` throws outside one
-  (`AnnouncementBanner.tsx:139-146`).
+- **Secondary button**: the desktop modal's secondary is always "Remind later"
+  (postpone) — the reader is never navigated away, because the page behind the
+  modal is where the notice is read anyway. `bannerSecondaryKind()` (`WARNING`/
+  `SOP` → navigate, `GENERAL`/`LEARNING` → dismiss) is now consumed by the
+  PHONE pop-up only.
 - Backdrop tap **never** acks.
 
 ### The unread badge is computed client-side
@@ -253,10 +334,17 @@ source line) see
 | GET | `/api/announcements/banner` | `:584` | **none** — explicit 401 (`:585-588`) |
 | POST | `/api/announcements/:id/ack` | `:1194` | **none** — explicit 401 (`:1195-1198`) |
 | GET | `/api/announcements/:id/attachments/:key{.+}` | `:1308` | none as middleware; audience checked in-handler (`:1325-1333`) |
-| GET | `/api/announcements/:id/acks` | `:698` | `announcements.write` (or Sales Director) |
-| POST | `/api/announcements` | `:785` | `announcements.write` (or Sales Director) |
+| GET | `/api/announcements/:id/acks` | `:698` | `announcements.write` (or Sales Director) — since 2026-09-05 also `byDepartment[]`, each person's `departmentId/Name`, `positionName`, `managerId`, and each pending person's `state` (`pending` / `reminded` / `overdue`, window `overdueAfterHours` = 48) |
+| GET | `/api/announcements/ack-summary` | — | `announcements.write` (or Sales Director) — `{ id → { total, acked } }` for every human post the caller may manage, ONE round trip for the Manage table (2026-09-05) |
+| GET | `/api/announcements/team-pending` | — | **none** — explicit 401; scoped to the caller's DIRECT REPORTS (`users.manager_id = caller`): their unacked mandatory notices with the same `state` (2026-09-05, feeds the dashboard "My team's pending" card) |
+| POST | `/api/announcements/:id/escalate` | — | `announcements.write` (or Sales Director) — body `{ departmentId? }`; posts ONE system notice (`source 'ack_escalation'`) per supervisor of the pending people, via `postPersonalNotice` (2026-09-05, the drawer's "Notify their supervisors") |
+| POST | `/api/announcements` | `:785` | `announcements.write` (or Sales Director) — since 2026-09-06 the row is created PENDING_APPROVAL (or DRAFT with body `draft: true`); the answer's `approvalStatus` says which |
+| POST | `/api/announcements/:id/submit` | — | `announcements.write` (or Sales Director on their own post) — DRAFT / REJECTED → PENDING_APPROVAL; rings the approvers' bell (2026-09-06) |
+| POST | `/api/announcements/:id/approve` | — | `announcements.approve` — PENDING_APPROVAL → APPROVED; mints `ref_no` from the submitter's department code (409 with the fix when the department has none); answers the public row incl. `refNo` (2026-09-06) |
+| POST | `/api/announcements/:id/reject` | — | `announcements.approve` — body `{ reason }` (required, 400 when blank); PENDING_APPROVAL → REJECTED; the submitter gets a WARNING bell notice with the reason (2026-09-06) |
 | PATCH | `/api/announcements/:id` | `:920` | `announcements.write` (or Sales Director) |
-| POST | `/api/announcements/:id/remind` | `:1104` | `announcements.write` (or Sales Director) |
+| GET | `/api/announcements/ack-trend` | — | `announcements.write` (or Sales Director) — `{ days: 30, buckets[6]: { start, end, label, notices, total, acked, pct\|null }, summary }`: the human notices POSTED in each 5-day bucket of the last 30 days, their summed audience and acknowledgements, from the same `noticeAckTotals()` as `/ack-summary` (2026-09-06, the dashboard chart) |
+| POST | `/api/announcements/:id/remind` | `:1104` | `announcements.write` (or Sales Director) — body `{ scope: "unacked" \| "all", departmentId? }`. Since 2026-09-06 a reminder is per PERSON (`announcement_reminders`, one upserted row per pending member of the audience — or of `departmentId` only, the drawer's "Remind <Dept> pending"); a whole-notice reminder also sets `reminded_at`; `scope:"all"` (phone) clears the receipts and sets the notice-level stamp only. `pendingCount` is the audience's pending (not every active user, as before) |
 | DELETE | `/api/announcements/:id` | `:1164` | `announcements.write` (or Sales Director) |
 | PUT | `…/:id/attachments/upload` · `…/upload-thumb` | `:1231`, `:1274` | `announcements.write` (or Sales Director) |
 
@@ -322,17 +410,101 @@ all filtering happens in JS in the Worker (`:543-547`, `:628-630`).
 
 ### Write path
 
-- **Create** `:785` — inserts at `:873`, auto-translates via
-  `backend/src/lib/translate-announcement.ts`, then bumps the banner cache
-  family version (`:908`).
+- **Create** `:785` — inserts at `:873` with `translations = NULL`, bumps the
+  banner cache family version (`:908`), answers, and only THEN translates.
+  Since 2026-09-06 the row is inserted with `approval_status =
+  'PENDING_APPROVAL'` (`submitted_by/at` = the caller, now) — or `'DRAFT'`
+  when the body carries `draft: true` — and, for a submission,
+  `recordSubmission()` writes the `announcement.submit` audit line and rings
+  the approvers' bell.
+- **Approval workflow (2026-09-06, mig `20260906T1509`)** — the transitions
+  live in `backend/src/services/announcementApproval.ts`; the route file only
+  gates them. `submitForApproval` (DRAFT / REJECTED → PENDING_APPROVAL;
+  already pending = no-op so a double click never re-notifies; APPROVED
+  refuses 409), `approveAnnouncement` (PENDING_APPROVAL → APPROVED: resolves
+  the SUBMITTER's department code, `mintDocumentRef(deptCode, "ANN",
+  "announcement", id)`, writes `reviewed_by/at` + `ref_no`, bumps the banner
+  family version, audits `announcement.approve`, tells the submitter; a
+  submitter without a department, or in a department without a code, blocks
+  the approval with a 409 that names what to set — a notice is never published
+  un-numbered), `rejectAnnouncement` (PENDING_APPROVAL → REJECTED; `reason`
+  mandatory, ≤ 1000 chars; audits `announcement.reject`; tells the submitter
+  as a WARNING bell notice). `ApprovalError` carries the HTTP status (400 /
+  409). Who is told: `notifyApprovers()` → `usersHoldingPermission(env,
+  "announcements.approve")` minus the submitter (the wildcard is excluded by
+  that helper's rule — the owner approves from the Manage queue, and is on the
+  bell only if their role lists the verb); the approve / reject notices go to
+  `submitted_by ?? created_by`. All bell notices carry `source =
+  'announcement_approval'`. No e-mail (owner's call, 2026-09-06).
+  **Visibility is enforced in ONE place:** `deliverableNow()`
+  (`lib/announcementAudience.ts`) requires `readApprovalStatus(row) ===
+  "APPROVED"` before the active / schedule / expiry checks, and the reader
+  list, both banner slices, `/pending`, `/team-pending`, `POST /:id/ack`
+  (answers `{ acked: false }`) and the overdue-escalation cron all go through
+  it. A NULL / absent `approval_status` reads as APPROVED — the column's
+  DEFAULT, what every pre-workflow row is, and what a D1 mirror without the
+  column yields. The list endpoint treats an `announcements.approve` holder as
+  a manager (the queue is in the ledger), so the approval desk needs no write
+  verb. Regression suite: `backend/tests/announcementsApproval.test.ts`.
+- **Translation runs after the response (2026-09-06)** — `queueTranslation()`
+  next to the create route hands `translateAndStore()`
+  (`backend/src/lib/translate-announcement.ts`) to `c.executionCtx.waitUntil`
+  (floating-promise fallback in the bare-Hono test harness). The fill is an
+  `UPDATE … WHERE id = ? AND title = ? AND coalesce(body,'') = ? AND
+  coalesce(body_html,'') = ?` — guarded on the TEXT, so a reply that lands
+  after the notice was edited is dropped (`"stale"`) and the edit's own run
+  stores the current text's translation. A PATCH that changes title / body
+  clears `translations` in the same UPDATE as the text and queues a refill;
+  a non-text PATCH (active toggle, retarget, expiry) leaves it alone and
+  calls no model. Each model attempt carries
+  `AbortSignal.timeout(TRANSLATE_ATTEMPT_TIMEOUT_MS)` (30 s). Readers show
+  the original text until the fill lands, then the fill bumps the banner
+  family so the translated copy reaches the next poll. Before this the
+  create route AWAITED the four-language call (40–100 s on a rich notice,
+  three retries, no timeout): the owner saw "Posting…" hang, clicked again,
+  and each click had inserted a row — nine copies of one notice
+  (`docs/bugs/0650`). Pinned by `tests/announcementsTranslateAsync.test.ts`
+  and `tests/translateAnnouncementTimeout.test.ts`.
+- **Idempotent create by client key (2026-09-07, mig
+  `backend/src/db/migrations-pg/20260907T0010_announcement_client_key.sql`)** —
+  nullable `announcements.client_key` + partial unique index on
+  `(created_by, client_key)`. `readClientKey()` / `findByClientKey()` sit next
+  to `queueTranslation()`: a request carrying a well-formed `clientKey`
+  (`[A-Za-z0-9._-]{8,64}`) is first looked up by `(created_by, client_key)`
+  and a hit is answered `201 { data: <that row>, duplicate: true }` with no
+  INSERT; otherwise the column is appended to the INSERT the way `company_id`
+  is (only when a key came, so a keyless client and the D1 mirrors without
+  the column insert as before), and two requests racing past the lookup hit
+  the index — the loser is answered with the winner's row. The key is
+  scoped per author; another user's identical key is their own post. The
+  desktop composer keys its DRAFT (`ComposerDraft.clientKey`, minted with
+  `lib/idempotency.ts` `newIdempotencyKey()` when the draft is first written,
+  stable across edits and reloads, cleared with the draft on success, minted
+  on read for a pre-key draft) and shows "This notice was already posted —
+  no second copy was made" on a `duplicate` reply; its `post()` also carries
+  a ref guard. The phone composer keys its MOUNT (`useIdempotencyKey()`) and
+  `publish` returns while `saving`. Why: the retry that made nine copies on
+  2026-09-06 was one draft re-posted after a hang, a reload and a second
+  click (`docs/bugs/0651`). Pinned by `tests/announcementsClientKey.test.ts`
+  and `pages/announcements/ComposerModal.test.tsx`.
 - **Rich body (2026-09-04)** — `readBodyHtml()` next to `toPublic()`. A
   `bodyHtml` in the request is run through
   `backend/src/lib/announcementRichText.ts` (allow-list canonicaliser:
-  `p br b i u s ol ul li` + `span[data-size=sm|lg|xl]`, hard cap 20k chars →
-  400). If the result carries no formatting it is stored as **NULL** and the
-  notice stays on the plain path. When it IS stored, `body` is **derived**
-  from it server-side (`richTextToPlain`) — the client's `body` is ignored,
-  so the two columns can never disagree. A request with only `body` is the
+  `p br b i u s ol ul li h1 h2 mark a table tr th td img` +
+  `span[data-size=10|11|12|14|16|18|20|24|28|36]` (px; the 2026-09-04
+  tokens `sm|lg|xl` stay valid for stored notices), `a[href]` on the http(s) / mailto allow-list
+  (emitted with a constant `rel` / `target`), `img[data-att]` matching the
+  upload route's key shape, hard cap 20k chars → 400). **Inline images are
+  checked against the attachment manifest** (`readBodyHtml(html, keys)`,
+  `stripUnreferencedImages`): POST reads `attachments` first and strips any
+  `<img>` whose key is not in it; PATCH checks against the manifest that
+  will be stored, and a PATCH that removes an attachment without editing the
+  text strips that image's inline use and re-derives `body`. If the result
+  carries no formatting it is stored as **NULL** and the notice stays on the
+  plain path. When it IS stored, `body` is **derived** from it server-side
+  (`richTextToPlain`: headings → lines, table cells → ` | `, a link whose
+  text is not its address → `text (href)`, an image → `[image]`) — the
+  client's `body` is ignored, so the two columns can never disagree. A request with only `body` is the
   pre-feature contract, untouched. On **PATCH**, whichever of `bodyHtml` /
   `body` was sent last defines the format: `bodyHtml` rewrites both columns,
   a plain `body` clears `body_html`. Translation is sent the HTML instead of
@@ -342,6 +514,26 @@ all filtering happens in JS in the Worker (`:543-547`, `:628-630`).
   degrades to plain rather than to garbage. Pinned by
   `tests/announcementsRichBody.test.ts`, `tests/announcementRichText.test.ts`
   and `tests/translateAnnouncementRich.test.ts`.
+- **Division targets + exclusions (2026-09-06)** — `rowDivisions()` /
+  `rowExcluded()` next to `readIntArray()`; the parsing (`readDivisionTargets`,
+  `divisionEq`), `callerDivision`, `rosterCompaniesSql`, `loadRoster`,
+  `loadCompanyGrants` / `inTargetCompanies` and `pendingState` live in
+  `backend/src/lib/announcementAudience.ts` (split out of the route the same
+  day when it crossed the 2000-line cap; pinned by
+  `tests/announcementAudience.test.ts`). POST and
+  PATCH accept `targetDivisions` (`[{deptId, division}]`, invalid entries
+  dropped, case-insensitive duplicates collapsed) and `excludedUserIds`;
+  PATCH treats either key as a retarget (all six target columns rewritten
+  together, missing buckets keep the row's value). `userCanSee()` gained a
+  fifth argument, the reader's `users.division`: the exclusion list is
+  checked FIRST, then the division bucket matches primary department +
+  division text. The auth user carries no division, so the list / banner /
+  attachment-serve gates call `callerDivision()` (one PK lookup, fail-safe
+  to null = never widens an audience); the roster (`loadRoster`) selects
+  `u.division` so receipts / ack-summary / team-pending count divisions. A
+  Sales Director may only target divisions of their own department. A user
+  PATCH that changes `division` busts that user's banner cache
+  (`bustBannerForUser`). Pinned by `tests/announcementsDivisionTargeting.test.ts`.
 - **Sales Director restriction** — `salesDirectorScope()` `:412-425`,
   `enforceSalesDirectorScope()` `:431-497`. A Sales Director may address only
   their own Sales department as a whole, or named people inside it. Position
@@ -358,6 +550,39 @@ all filtering happens in JS in the Worker (`:543-547`, `:628-630`).
 - **Read receipts** `GET /:id/acks` `:698` — builds the roster from active users
   filtered through `userCanSee` (`:713-726`), so the denominator is the notice's
   real audience, not the whole company.
+- **Redesign backend (2026-09-05)** — `mig 20260905T1125` adds `require_ack`
+  and `scheduled_at`. On POST, `requireAck` is an explicit boolean or the
+  category default (`categoryRequiresAck`: WARNING / SOP); `scheduledAt` in
+  the future is stored and holds the notice back, a past instant stores NULL
+  (posted at once). `deliverableNow()` is the ONE "may a reader have this now"
+  answer used by the list's reader branch, `/banner` and the ack POST: active,
+  past its schedule, and not expired — **except an SOP, which never expires**
+  (the SOP Library is permanent; a stale `expires_at` on an SOP is ignored).
+  Managers still list scheduled rows. `withNames()` resolves `createdByName`
+  and `targetDeptNames` on the list and banner payloads because a plain reader
+  cannot load `/api/users` or `/api/departments`. The roster helpers
+  (`loadRoster`, `audienceOf`, `pendingState`, `announcementRequiresAck`) are
+  shared by `/:id/acks`, `/ack-summary`, `/team-pending` and `/:id/escalate`
+  so the drawer, the table, the dashboard card and the supervisor notice
+  cannot disagree. Pinned by `tests/announcementsAckSummary.test.ts`.
+  Reminders stay the poster's click.
+- **Overdue escalation cron (2026-09-06)** —
+  `backend/src/services/announcementEscalation.ts`: `escalatePending()` is
+  the ONE implementation behind the drawer's "Notify their supervisors"
+  (`POST /:id/escalate`) and `runOverdueEscalation()`, which the `*/30`
+  cron trigger runs (`src/index.ts`): every active, human,
+  acknowledgement-required, deliverable notice older than
+  `ACK_OVERDUE_HOURS` (48h) with `escalated_at IS NULL` gets one system
+  notice per supervisor of its pending people (`source 'ack_escalation'`),
+  then `escalated_at` is stamped (mig
+  `backend/src/db/migrations-pg/20260906T0833_announcement_escalated_at.sql`)
+  — also when nobody could be notified, so the row is never re-scanned. A
+  manual click stamps it too; `toPublic` emits `escalatedAt` and the Manage
+  drawer shows when it ran. Pinned by `tests/announcementEscalationCron.test.ts`.
+  The gate and the row readers (`userCanSee`, `deliverableNow`,
+  `readIntArray`, `AnnouncementRow`, …) moved into
+  `backend/src/lib/announcementAudience.ts` the same day so the service can
+  share them without importing the route.
 
 ### System notices — the producers
 
@@ -405,11 +630,14 @@ There is also no announcements migration in the D1 tree.
 | Migration | Effect |
 |---|---|
 | `0058_announcements.sql` | creates `announcements` + `announcement_acks` + 2 indexes |
+| `backend/src/db/migrations-pg/20260906T1509_announcement_approval.sql` | adds `approval_status` (NOT NULL DEFAULT 'APPROVED' — every existing row stays published), `submitted_by/at`, `reviewed_by/at`, `reject_reason`, `ref_no` (unique partial index) and the open-queue partial index — the approval workflow (owner 2026-09-06) |
+| `backend/src/db/migrations-pg/20260906T0921_announcement_reminders.sql` | creates `announcement_reminders` (`announcement_id`, `user_id`, `reminded_at`, `reminded_by`; PK on the pair, index on `user_id`) — the per-person reminder behind the drawer's per-department Remind (owner 2026-09-06). Every reader (`loadReminderMap` / `loadUserReminders` / `loadAllReminders` / `recordReminders` in `lib/announcementAudience.ts`) tolerates the table being absent |
 | `0071_announcements_source.sql` | `+ source text` — the human/system split |
 | `0093_native_tables_company_id.sql:76,79` | `+ company_id bigint NOT NULL DEFAULT <HOUZS>` + FK + index on both tables |
 | `0113_announcement_target_company.sql` | `+ target_company_ids text` + one-time backfill from `company_id` |
 | `0140_announcement_media_layout.sql` | `+ media_layout text` (no backfill; NULL = derive default) |
 | `20260904T1700_announcement_body_html.sql` | `+ body_html text` (no backfill; NULL = plain notice, renders exactly as before) |
+| `backend/src/db/migrations-pg/20260905T1125_announcement_require_ack_scheduled_at.sql` | `+ require_ack integer NOT NULL DEFAULT 0` (backfilled to 1 for human WARNING / SOP rows) and `+ scheduled_at text` (NULL = posted at once) |
 
 Columns that matter:
 
@@ -418,16 +646,26 @@ Columns that matter:
 | `id` | text PK | `'ann-' + 12 hex` |
 | `is_active` | integer NOT NULL DEFAULT 1 | 0/1, **not** boolean |
 | `expires_at` | text | ISO string, NULL = never |
-| `reminded_at` | text | drives the "re-pop after Remind" rule |
+| `reminded_at` | text | notice-level reminder; the re-pop rule and the drawer's "reminded" state read the LATER of this and the person's own `announcement_reminders` row (`laterOf`) |
 | `created_by` | integer | `users.id`; **NULL** for system notices |
 | `target_type` | text | CHECK ∈ `ALL_USERS`/`DEPARTMENT_IDS`/`POSITION_IDS`/`USER_IDS`/`MIXED` |
 | `target_dept_ids`, `target_position_ids`, `target_user_ids` | text | JSON integer arrays |
 | `target_company_ids` | text | JSON integer array; NULL/empty = all companies |
+| `target_divisions` | text | JSON array of `{deptId, division}` (mig `20260906T0639_announcement_target_divisions_excluded_users.sql`); a reader matches when their primary `department_id` = deptId and `users.division` equals the text case-insensitively. Counts as the DEPARTMENT bucket of `target_type` (CHECK untouched). `toPublic` emits `targetDivisions`; `withNames` adds `targetDivisionNames` ("Operation › Driver Team") |
+| `escalated_at` | text | ISO string; when the overdue escalation ran (cron or manual), NULL = never (mig `20260906T0833_announcement_escalated_at.sql`). `toPublic` emits `escalatedAt` |
+| `excluded_user_ids` | text | JSON integer array (same migration); an id here never sees the notice, whatever else targets them — checked first in `userCanSee`. `toPublic` emits `excludedUserIds` |
 | `category` | text | CHECK ∈ `GENERAL`/`WARNING`/`SOP`/`LEARNING` — this is the closest thing to a priority; there is **no** `priority` column |
 | `source` | text | NULL = human, `'scan'`/`'service_case'` = system |
 | `company_id` | bigint NOT NULL | **authoring** company; no longer the visibility gate (that is `target_company_ids`) |
 | `translations`, `attachments`, `media_layout` | text | JSON blobs; a translation pair is `{title, body, bodyHtml?}` since 2026-09-04 |
+| `client_key` | text, nullable | the composer's draft key (mig 20260907T0010); partial unique index on `(created_by, client_key)`; NULL on posts from a client that sent none |
 | `body_html` | text | canonical rich fragment (`lib/announcementRichText.ts` grammar only) or NULL; `body` is always its plain-text shadow, so plain-only readers (bell excerpt, search, old builds) need no branch |
+| `require_ack` | integer NOT NULL DEFAULT 0 | 0/1; "this notice must be acknowledged". `toPublic` emits `requireAck: null` when the column is absent (D1 test mirror) and the client falls back to the category rule |
+| `scheduled_at` | text | ISO string; NULL = posted at once. Not delivered (list / banner / ack) before it |
+| `approval_status` | text NOT NULL DEFAULT 'APPROVED' | `DRAFT` / `PENDING_APPROVAL` / `APPROVED` / `REJECTED` (mig `20260906T1509_announcement_approval.sql`). Only APPROVED is ever delivered (`deliverableNow`). Partial index `idx_announcements_approval_open` on the non-approved rows. `toPublic` emits `approvalStatus` (absent column → `"APPROVED"`) |
+| `submitted_by`, `submitted_at` | integer, text | who put it in the queue and when (POST without `draft`, or `/submit`) |
+| `reviewed_by`, `reviewed_at`, `reject_reason` | integer, text, text | the approver's decision on the row itself; `reject_reason` is cleared on approve and on re-submit (audit_events keeps the history) |
+| `ref_no` | text, unique where set | `[DEPT]-ANN-[YYMM]-[NNNN]`, minted on approval by `services/documentRefs.ts` (registry `document_refs`, entity_type `announcement`); NULL until approved. `docNo()` on both shells shows it in place of the row id |
 
 `announcement_acks`: `(announcement_id, user_id)` composite **primary key** — the
 idempotency guard for the fire-and-forget ack — plus `acked_at` and
@@ -462,6 +700,7 @@ made the badge count human posts, `2060378b` (#960) opened the sidebar row.
 | Any signed-in user | ack, and stream an attachment of a notice targeted at them | `:1194`; attachment audience `:1325-1333`, key ownership `:1340-1344` |
 | `announcements.write` / `*` | see every notice incl. drafts + expired (still company-gated); create, edit, retarget, remind, delete, read receipts, upload media | `:550-556`; `:698, 785, 920, 1104, 1164, 1231, 1274` |
 | Sales Director (position-derived, holds no flat verb) | the same write doors, but may address only their own Sales dept or named people in it, and may manage only rows they authored | admittance `middleware/auth.ts:202`; scope `:412-425`, `:431-497`; ownership `:502-506` |
+| `announcements.approve` / `*` | the approval desk (2026-09-06): read the ledger incl. the pending queue; Approve (mints the number, publishes) / Reject (reason) on the desktop Manage drawer and the phone Detail; none of the poster's actions unless they also hold write | `requirePermission("announcements.approve")` on `/:id/approve` + `/:id/reject`; the list's `isManager` includes the verb; the desktop page opens Manage for `canWrite \|\| canApprove` and shows Hide / Delete only for `canWrite` |
 | `announcements.read` holder | **nothing extra** | the key is still declared at `backend/src/services/permissions.ts:138` but gates no route, guard or nav row at this commit |
 
 `announcements.read` was the ADMIN list/composer verb. Positions get no
@@ -485,14 +724,17 @@ still 403 for that reader (`:146, 157, 164, 171, 180`).
 
 | Change | Desktop | Mobile |
 |---|---|---|
-| Pop-up behaviour (feed, ack, dismiss, remind rule) | **`components/useAnnouncementBanner.ts`** — the shared file; editing it hits both shells and the badge hook | — |
+| Pop-up behaviour (feed, ack, dismiss, remind rule) | **`components/useAnnouncementBanner.ts`** — the shared file; editing it hits both shells, the badge hook AND the desktop Announcements page (it reads `addressedIds` / `ackedIds` from the same hook) | — |
+| Category colours / CTA wording / which categories block | **`components/announcementCategory.ts`** — the one table; the modal, the inbox, Manage, the bell and the dashboard read it. The backend twin of the blocking rule is `categoryRequiresAck` in `routes/announcements.ts` | `MobileAnnouncements.tsx` / `MobileAnnouncementPopup.tsx` still carry their own `CAT_COLOR` hex map (phone shell CSS, not Tailwind) — keep the four labels in step |
 | Pop-up markup / CTA wording | `components/AnnouncementBanner.tsx` | `mobile/MobileAnnouncementPopup.tsx` |
-| Composer (audience picker, media layout, company target, **expiry**) | `pages/Announcements.tsx:459` | `mobile/MobileAnnouncements.tsx` `Compose` |
+| Composer (audience picker, media layout, company target, **expiry**, **schedule**, **require ack**) | `pages/announcements/ComposerModal.tsx` + `AudiencePicker.tsx` | `mobile/MobileAnnouncements.tsx` `Compose` (still positions + plain expiry; requireAck / scheduledAt default server-side) |
 | Live / Hidden / Expired badge | **`lib/announcementStatus.ts`** — the shared rule; both surfaces import it, neither re-derives it | — |
-| Publisher row actions (hide/show, delete, remind, reset) | `pages/Announcements.tsx` row | `mobile/MobileAnnouncements.tsx` `Detail` + `Receipts` |
+| Approval actions (submit / approve / reject, the state pill, the reject reason, the ref no in place of the row id) | `pages/announcements/ManageView.tsx` drawer (`canWrite` / `canApprove` props; the page's `approveNotice` / `rejectNotice` (reason via `useDialog().prompt`) / `submitNotice`); the "Pending approval" filter is `MANAGE_ONLY_FILTERS` in `announcementModel.ts` so the inbox never offers it; the composer's primary is "Submit for approval" + a "Save draft" secondary | `mobile/MobileAnnouncements.tsx` `Detail` (`canApprove` prop, `ApprovalChip`, reason via the vendored `usePrompt`); the ledger is read for `canCreate \|\| canApprove` |
+| Publisher actions (hide/show, delete, remind, escalate) | `pages/announcements/ManageView.tsx` drawer (+ the inbox's read-receipts card for remind / hide); the "reset all receipts" (`remind { scope: "all" }`) affordance is desktop-retired with the old row — the phone keeps it | `mobile/MobileAnnouncements.tsx` `Detail` + `Receipts` |
 | Media rendering (mig 0140 layout hint) | `components/AnnouncementMedia.tsx` | `mobile/MobileAnnouncementMedia.tsx` |
-| Rich body — editing | **`components/AnnouncementRichEditor.tsx`** — one editor, both composers mount it | (same file) |
-| Rich body — rendering | **`components/AnnouncementRichBody.tsx`** — the only place `body_html` reaches `innerHTML`; list row + `AnnouncementBanner.tsx` use it | `MobileAnnouncements.tsx` `Detail` + `MobileAnnouncementPopup.tsx` use it; `mobileI18n.ts` `localizeAnnouncement()` picks the translated `bodyHtml` |
+| Rich body — editing | **`components/AnnouncementRichEditor.tsx`** — one editor, both composers mount it. Desktop passes `onPromptLink` (the app prompt dialog), `onInsertImage` (uploads through `lib/announcementAttachmentUpload.ts`, adds to the manifest, returns key + local preview) and `imageSrc`; the phone passes none, so it has no Link / Image button | (same file, fewer buttons) |
+| Rich body — rendering | **`components/AnnouncementRichBody.tsx`** — the only place `body_html` reaches `innerHTML`; inbox pane + `AnnouncementBanner.tsx` use it with `annId` so `img[data-att]` streams from `/api/announcements/:id/attachments/:key` (composer preview passes `imageSrc` instead) | `MobileAnnouncements.tsx` `Detail` + `MobileAnnouncementPopup.tsx` use it; `mobileI18n.ts` `localizeAnnouncement()` picks the translated `bodyHtml` |
+| Audience ingredients (backend) | — | — (backend: **`backend/src/lib/announcementAudience.ts`** — division-target parsing, the caller's division, the active roster, company-grant narrowing, pending state; the route keeps `userCanSee`) |
 | Rich body — grammar | **`lib/announcementRichText.ts`** — byte-identical twin of `backend/src/lib/announcementRichText.ts`; the two test files pin the same fixtures | — |
 | Nav visibility | `components/Sidebar.tsx:666-672` | `mobile/MobileApp.tsx:360` (test-pinned) |
 | Read gate | `frontend/src/App.tsx:481` | — must agree with `backend/src/routes/announcements.ts:530`; the #957 bug was these two disagreeing |

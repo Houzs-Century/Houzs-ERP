@@ -126,6 +126,18 @@ export function SearchCombo({
   /* Reset the highlight whenever the list changes shape. */
   useEffect(() => { setHighlight(0); }, [query, open]);
 
+  /* Round 4 (owner 2026-09-06: SUPPLIER 选的时候我希望可以按往下选): ↓ moved
+     the highlight fine, but the panel never scrolled with it — past the
+     seventh row the highlighted option was below the fold, so to the eye the
+     key did nothing. The highlighted row now follows the key into view. */
+  const listRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const el = listRef.current?.querySelector<HTMLElement>(`[data-hit="${highlight}"]`);
+    /* jsdom has no scrollIntoView; the typing says every element does. */
+    if (el && typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'nearest' });
+  }, [highlight, open]);
+
   const close = (restore: boolean) => {
     setOpen(false);
     if (restore) setQuery(null);
@@ -171,7 +183,12 @@ export function SearchCombo({
         onFocus={(e) => { setOpen(true); e.target.select(); }}
         onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
         onKeyDown={(e) => {
-          if (e.key === 'ArrowDown') { e.preventDefault(); setOpen(true); setHighlight((h) => Math.min(h + 1, hits.length - 1)); }
+          if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            /* A closed panel opens ON the first option; an open one steps down. */
+            if (!open) { setOpen(true); setHighlight(0); }
+            else setHighlight((h) => Math.min(h + 1, hits.length - 1));
+          }
           else if (e.key === 'ArrowUp') { e.preventDefault(); setHighlight((h) => Math.max(h - 1, 0)); }
           else if (e.key === 'Enter') { if (open && hits[highlight]) { e.preventDefault(); pick(hits[highlight].value); } }
           else if (e.key === 'Escape') { close(true); }
@@ -179,6 +196,7 @@ export function SearchCombo({
       />
       {open && !disabled && pos && createPortal(
         <div
+          ref={listRef}
           role="listbox"
           /* preventDefault on the CONTAINER too: grabbing the panel's own
              scrollbar must not steal focus from the input — a blur here
@@ -206,6 +224,7 @@ export function SearchCombo({
             <div
               key={r.o.value}
               role="option"
+              data-hit={r.i}
               aria-selected={r.o.value === value}
               /* mousedown, not click: click fires after blur has already
                  closed the list and restored the label. */

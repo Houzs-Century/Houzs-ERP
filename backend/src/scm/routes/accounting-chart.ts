@@ -25,6 +25,7 @@
 // ----------------------------------------------------------------------------
 
 import { hasHouzsPerm } from '../lib/houzs-perms';
+import { ACCOUNT_SECTIONS, defaultSectionFor, isAccountSection, sectionType } from '../lib/account-sections';
 
 const requireChartPerm = (c: any): boolean => hasHouzsPerm(c, 'scm.payment_voucher.post');
 
@@ -48,7 +49,15 @@ type AccountRow = {
   is_active: boolean;
   acc_money: boolean | null;
   special_type: string | null;
+  /** The AutoCount top node the account hangs under — decides account_type
+      (lib/account-sections.ts). NULL only on a row older than the migration. */
+  section: string | null;
 };
+
+/* Every field a definition COPY carries (tick-ON, create chains, re-parent
+   instantiation) — one list, so a new column cannot be copied in one walk and
+   forgotten in another. */
+const DEFINITION_FIELDS = 'account_code, account_name, account_type, parent_code, acc_money, special_type, section';
 
 /** The caller's company allow-list, fail-CLOSED like every scoping helper:
     no resolved list means no cross-company picture. */
@@ -69,14 +78,14 @@ export const chartUnionHandler = async (c: any): Promise<Response> => {
   const sb = c.get('supabase');
   const { data, error } = await sb
     .from('accounts')
-    .select('company_id, account_code, account_name, account_type, parent_code, is_active, acc_money, special_type')
+    .select(`company_id, is_active, ${DEFINITION_FIELDS}`)
     .in('company_id', ids);
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
 
   /* One row per code. Definition fields prefer the LOWEST company id that
      carries the code (company 1 = the master book where the accountant's
      import lands), so a rename there leads the union. */
-  const byCode = new Map<string, { code: string; name: string; type: string; parentCode: string | null; accMoney: boolean; special: string | null; definedBy: number; perCompany: Record<number, { active: boolean }> }>();
+  const byCode = new Map<string, { code: string; name: string; type: string; parentCode: string | null; accMoney: boolean; special: string | null; section: string | null; definedBy: number; perCompany: Record<number, { active: boolean }> }>();
   for (const raw of (data ?? []) as AccountRow[]) {
     const cur = byCode.get(raw.account_code);
     if (!cur || raw.company_id < cur.definedBy) {
@@ -87,6 +96,7 @@ export const chartUnionHandler = async (c: any): Promise<Response> => {
         parentCode: raw.parent_code,
         accMoney: raw.acc_money === true,
         special: raw.special_type ?? null,
+        section: raw.section ?? null,
         definedBy: raw.company_id,
         perCompany: { ...(cur?.perCompany ?? {}), [raw.company_id]: { active: raw.is_active } },
       });
@@ -99,6 +109,10 @@ export const chartUnionHandler = async (c: any): Promise<Response> => {
     .map((co) => ({ id: co.id, code: co.code }));
   return c.json({
     companies,
+    /* The section vocabulary rides along, in render order — the page's
+       headers, its Section pickers and the import's heading check all read
+       THIS list, never a copy of their own. */
+    sections: ACCOUNT_SECTIONS,
     accounts: [...byCode.values()].map(({ definedBy: _d, ...row }) => row),
   });
 };
@@ -130,7 +144,7 @@ export const chartTickHandler = async (c: any): Promise<Response> => {
       chain.unshift(cursor);
       const lookRes: { data: unknown; error: { message: string } | null } = await sb
         .from('accounts')
-        .select('company_id, account_code, account_name, account_type, parent_code, acc_money, special_type')
+        .select(`company_id, ${DEFINITION_FIELDS}`)
         .eq('account_code', cursor)
         .order('company_id')
         .limit(1)
@@ -142,7 +156,7 @@ export const chartTickHandler = async (c: any): Promise<Response> => {
     for (const step of chain) {
       const defRes = await sb
         .from('accounts')
-        .select('account_code, account_name, account_type, parent_code, acc_money, special_type')
+        .select(DEFINITION_FIELDS)
         .eq('account_code', step)
         .order('company_id')
         .limit(1)
@@ -157,6 +171,7 @@ export const chartTickHandler = async (c: any): Promise<Response> => {
         parent_code: d.parent_code,
         acc_money: d.acc_money === true,
         special_type: d.special_type ?? null,
+        section: d.section ?? defaultSectionFor(d.account_type, d.account_code),
         is_active: true,
       }, { onConflict: 'company_id,account_code' });
       if (upErr) return c.json({ error: 'save_failed', reason: upErr.message }, 500);
@@ -206,12 +221,18 @@ export const chartImportHandler = async (c: any): Promise<Response> => {
   if (rows.length === 0) return c.json({ error: 'no_rows' }, 400);
   if (rows.length > 1000) return c.json({ error: 'too_many_rows', message: 'At most 1000 accounts per import.' }, 400);
 
-  const clean: Array<{ code: string; name: string; type: string; parent: string | null; money: boolean; special: string | null; shared: boolean }> = [];
+  const clean: Array<{ code: string; name: string; type: string; parent: string | null; money: boolean; special: string | null; section: string; shared: boolean }> = [];
   const seen = new Set<string>();
   for (const [i, r] of rows.entries()) {
     const code = String(r?.code ?? '').trim();
     const name = String(r?.name ?? '').trim();
-    const type = String(r?.accountType ?? '').trim().toUpperCase();
+    /* The section HEADING the file put the row under, when it is one of the
+       vocabulary; it decides the type. A row without one (an unknown heading
+       — the screen names those) keeps the type it was sent with and takes the
+       default shelf for it. */
+    const sectionRaw = r?.section != null ? String(r.section).trim().toUpperCase() : '';
+    const section = isAccountSection(sectionRaw) ? sectionRaw : null;
+    const type = section ? String(sectionType(section)) : String(r?.accountType ?? '').trim().toUpperCase();
     if (!code || !name) return c.json({ error: 'bad_row', message: `Row ${i + 1} is missing code or name.` }, 400);
     if (!ACCOUNT_TYPES.has(type)) return c.json({ error: 'bad_row', message: `Row ${i + 1} (${code}): accountType must be ASSET / LIABILITY / EQUITY / INCOME / EXPENSE.` }, 400);
     if (seen.has(code)) return c.json({ error: 'bad_row', message: `Row ${i + 1}: ${code} appears twice in the file.` }, 400);
@@ -225,6 +246,7 @@ export const chartImportHandler = async (c: any): Promise<Response> => {
       parent: r?.parentCode ? String(r.parentCode).trim() : null,
       money: r?.accMoney === true,
       special,
+      section: section ?? defaultSectionFor(type, code),
       shared: r?.shared === true,
     });
   }
@@ -245,6 +267,7 @@ export const chartImportHandler = async (c: any): Promise<Response> => {
     parent_code: r.parent,
     acc_money: r.money,
     special_type: r.special,
+    section: r.section,
     is_active: true,
   }));
 
@@ -343,7 +366,15 @@ export const chartCreateHandler = async (c: any): Promise<Response> => {
   if (ids.length === 0) return c.json({ error: 'no_companies', message: 'No company grants resolve for this session.' }, 409);
   const code = String(body.code ?? '').trim();
   const name = String(body.name ?? '').trim();
-  const type = String(body.accountType ?? '').trim().toUpperCase();
+  /* The SECTION decides the type (CAPITAL is EQUITY, COST OF GOODS SOLD is
+     EXPENSE — lib/account-sections.ts); a caller naming only a type lands on
+     that type's default shelf, the way the migration seeded the old rows. */
+  const sectionRaw = body.section != null ? String(body.section).trim().toUpperCase() : '';
+  const sectionShown = sectionRaw;
+  if (sectionRaw && !isAccountSection(sectionRaw)) {
+    return c.json({ error: 'bad_section', message: `${sectionShown} is not a section of the chart — pick one of ${ACCOUNT_SECTIONS.map((s) => s.section).join(' / ')}.` }, 400);
+  }
+  const type = sectionRaw ? String(sectionType(sectionRaw)) : String(body.accountType ?? '').trim().toUpperCase();
   const parent = body.parentCode ? String(body.parentCode).trim() : null;
   const special = body.specialType ? String(body.specialType).trim().toUpperCase() : null;
   const targets: number[] = Array.isArray(body.companyIds) && body.companyIds.length > 0
@@ -355,6 +386,7 @@ export const chartCreateHandler = async (c: any): Promise<Response> => {
   if (!ACCOUNT_TYPES.has(type)) {
     return c.json({ error: 'bad_type', message: 'accountType must be ASSET / LIABILITY / EQUITY / INCOME / EXPENSE.' }, 400);
   }
+  const section = sectionRaw || defaultSectionFor(type, code);
   if (special && !SPECIAL_RE.test(special)) {
     return c.json({ error: 'bad_special', message: `${special} is not a 2-4 letter AutoCount special code.` }, 400);
   }
@@ -406,7 +438,7 @@ export const chartCreateHandler = async (c: any): Promise<Response> => {
   for (let depth = 0; cursor && depth < 4; depth += 1) {
     const lookRes: { data: unknown; error: { message: string } | null } = await sb
       .from('accounts')
-      .select('account_code, account_name, account_type, parent_code, acc_money, special_type')
+      .select(DEFINITION_FIELDS)
       .eq('account_code', cursor)
       .order('company_id')
       .limit(1)
@@ -415,6 +447,12 @@ export const chartCreateHandler = async (c: any): Promise<Response> => {
     if (!lookRes.data) return c.json({ error: 'parent_unknown', message: `Parent ${cursor} exists in no company's chart.` }, 400);
     chain.unshift(lookRes.data as AccountRow);
     cursor = (lookRes.data as AccountRow).parent_code;
+  }
+  /* A child sits where its header sits — a parent in another section would
+     split the tree across two headers on the page. */
+  const header = chain.length > 0 ? chain[chain.length - 1] : undefined;
+  if (header?.section && header.section !== section) {
+    return c.json({ error: 'section_mismatch', message: `${parent} sits under ${header.section} — a child takes its header's section (子户跟着 header 走).` }, 400);
   }
 
   /* SBK/SCH ARE money — the import applies the same equivalence; a manual
@@ -431,6 +469,7 @@ export const chartCreateHandler = async (c: any): Promise<Response> => {
         parent_code: d.parent_code,
         acc_money: d.acc_money === true,
         special_type: d.special_type ?? null,
+        section: d.section ?? defaultSectionFor(d.account_type, d.account_code),
         is_active: true,
       }, { onConflict: 'company_id,account_code' });
       if (upErr) return c.json({ error: 'save_failed', reason: upErr.message }, 500);
@@ -443,6 +482,7 @@ export const chartCreateHandler = async (c: any): Promise<Response> => {
       parent_code: parent,
       acc_money: money,
       special_type: special,
+      section,
       is_active: true,
     }, { onConflict: 'company_id,account_code' });
     if (insErr) return c.json({ error: 'save_failed', reason: insErr.message }, 500);
@@ -456,6 +496,7 @@ export const chartCreateHandler = async (c: any): Promise<Response> => {
         parent_code: parent,
         acc_money: false,
         special_type: 'SAD',
+        section,
         is_active: true,
       }, { onConflict: 'company_id,account_code' });
       if (depErr) return c.json({ error: 'save_failed', reason: depErr.message }, 500);
@@ -521,6 +562,45 @@ export const chartUpdateHandler = async (c: any): Promise<Response> => {
   if (body.accMoney !== undefined) patch.acc_money = body.accMoney === true;
 
   const sb = c.get('supabase');
+
+  /* ── 换节 (the owner, 2026-09-06: 你先帮我分类,然后我自己还能调动 — 用拖拉式).
+     Dropping an account on a section header moves it there, its TYPE follows
+     the section (CAPITAL is EQUITY — the section decides), and its whole
+     subtree rides along so a header and its children never straddle two
+     sections. A CHILD does not move on its own: drag its header instead —
+     the tree, not the row, is the unit (子户跟着 header 走). Every company
+     carrying the code moves at once: the section is part of the definition. */
+  let sectionCodes: string[] | null = null;
+  if (body.section !== undefined) {
+    const section = String(body.section ?? '').trim().toUpperCase();
+    const shown = section || '(empty)';
+    if (!isAccountSection(section)) {
+      return c.json({ error: 'bad_section', message: `${shown} is not a section of the chart — pick one of ${ACCOUNT_SECTIONS.map((s) => s.section).join(' / ')}.` }, 400);
+    }
+    const { data: allRows, error: allErr } = await sb.from('accounts').select('account_code, parent_code, section');
+    if (allErr) return c.json({ error: 'load_failed', reason: allErr.message }, 500);
+    const rows = (allRows ?? []) as Array<{ account_code: string; parent_code: string | null; section: string | null }>;
+    const self = rows.find((r) => r.account_code === code);
+    if (!self) return c.json({ error: 'code_unknown', message: `${code} exists in no company's chart.` }, 404);
+    if (self.parent_code && (body.parentCode === undefined || body.parentCode)) {
+      return c.json({ error: 'section_child', message: `${code} sits under ${self.parent_code} — drag its header instead (子户跟着 header 走), or move it to the root first.` }, 400);
+    }
+    /* The subtree: every code whose parent chain reaches this one. */
+    const kidsOf = new Map<string, string[]>();
+    for (const r of rows) {
+      if (!r.parent_code) continue;
+      const list = kidsOf.get(r.parent_code) ?? [];
+      if (!list.includes(r.account_code)) list.push(r.account_code);
+      kidsOf.set(r.parent_code, list);
+    }
+    const subtree = [code];
+    for (let i = 0; i < subtree.length && i < 5000; i += 1) {
+      for (const k of kidsOf.get(subtree[i]!) ?? []) if (!subtree.includes(k)) subtree.push(k);
+    }
+    sectionCodes = subtree;
+    patch.section = section;
+    patch.account_type = sectionType(section);
+  }
 
   /* ── 改父户 (the owner, 2026-09-03: 我希望可以拖动式 put account under 别的
      account 前提是那个 account 没有 transaction). The moved account keeps its
@@ -595,6 +675,16 @@ export const chartUpdateHandler = async (c: any): Promise<Response> => {
 
   if (Object.keys(patch).length === 0) return c.json({ error: 'nothing_to_change' }, 400);
 
+  /* A section move carries the subtree: the children take ONLY the section
+     and the type it decides — their names, parents and flags are their own. */
+  if (sectionCodes && sectionCodes.length > 1) {
+    const { error: subErr } = await sb
+      .from('accounts')
+      .update({ section: patch.section, account_type: patch.account_type })
+      .in('account_code', sectionCodes.slice(1));
+    if (subErr) return c.json({ error: 'save_failed', reason: subErr.message }, 500);
+  }
+
   const { data, error } = await sb
     .from('accounts')
     .update(patch)
@@ -620,7 +710,7 @@ export const chartUpdateHandler = async (c: any): Promise<Response> => {
       }
       for (const step of chain) {
         const { data: def, error: dErr } = await sb.from('accounts')
-          .select('account_code, account_name, account_type, parent_code, acc_money, special_type')
+          .select(DEFINITION_FIELDS)
           .eq('account_code', step).order('company_id').limit(1).maybeSingle();
         if (dErr) return c.json({ error: 'load_failed', reason: dErr.message }, 500);
         if (!def) continue;
@@ -633,6 +723,7 @@ export const chartUpdateHandler = async (c: any): Promise<Response> => {
           parent_code: d.parent_code,
           acc_money: d.acc_money === true,
           special_type: d.special_type ?? null,
+          section: d.section ?? defaultSectionFor(d.account_type, d.account_code),
           is_active: true,
         }, { onConflict: 'company_id,account_code' });
         if (upErr) return c.json({ error: 'save_failed', reason: upErr.message }, 500);

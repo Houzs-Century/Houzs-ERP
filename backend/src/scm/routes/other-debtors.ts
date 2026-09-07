@@ -27,20 +27,18 @@
 
 import { Hono } from 'hono';
 import { hasHouzsPerm } from '../lib/houzs-perms';
+import { supabaseAuth } from '../middleware/auth';
 import { activeCompanyId, companyDocPrefix, requireActiveCompanyId, scopeToCompany } from '../lib/companyScope';
-import { mintMonthlyDocNo } from '../lib/doc-no';
+import { docMonthTag, mintMonthlyDocNo } from '../lib/doc-no';
+import { todayMyt } from '../lib/my-time';
 import { postJournal, reverseJournal } from '../../acc/engine';
+import { dateOrNull } from '../lib/date-coerce';
 import { resolveRoles, type RuleLine } from '../../acc/rules';
 import { requireLeafAccount } from './accounting-chart';
 
 type Row = Record<string, any>;
 
 const now = () => new Date().toISOString();
-
-const yymm = () => {
-  const d = new Date();
-  return `${String(d.getFullYear()).slice(2)}${String(d.getMonth() + 1).padStart(2, '0')}`;
-};
 
 /* Same door as the PV's Paid From: the receiving account must BE money. */
 const requireMoneyIn = async (c: any, code: string): Promise<Response | null> => {
@@ -147,10 +145,62 @@ export const debtorDetailHandler = async (c: any): Promise<Response> => {
   ]);
   if (bills.error) return c.json({ error: 'load_failed', reason: bills.error.message }, 500);
   if (receipts.error) return c.json({ error: 'load_failed', reason: receipts.error.message }, 500);
-  return c.json({ debtor: found.debtor, bills: bills.data ?? [], receipts: receipts.data ?? [] });
+  /* Each bill's lines ride along (2026-09-06): Edit and Copy start from them. */
+  const billRows = (bills.data ?? []) as Row[];
+  const byBill = new Map<string, Row[]>();
+  if (billRows.length > 0) {
+    const { data: lineRows, error: lErr } = await scopeToCompany(
+      sb.from('acc_debtor_bill_lines').select('id, bill_id, line_no, description, credit_account_code, amount_sen').in('bill_id', billRows.map((b) => b.id)), c,
+    ).order('line_no');
+    if (lErr) return c.json({ error: 'load_failed', reason: lErr.message }, 500);
+    for (const l of (lineRows ?? []) as Row[]) {
+      const k = String(l.bill_id);
+      byBill.set(k, [...(byBill.get(k) ?? []), l]);
+    }
+  }
+  return c.json({ debtor: found.debtor, bills: billRows.map((b) => ({ ...b, lines: byBill.get(String(b.id)) ?? [] })), receipts: receipts.data ?? [] });
 };
 
 /* ── Debtor Bill — posts directly (the owner: bill 直接过账) ───────────────── */
+
+type BillLine = { description: string | null; code: string; amountSen: number };
+
+/** 1–50 lines, each a credit account and a positive integer sen — the one
+    parser behind raising a bill and editing one. */
+function buildBillLines(raw: unknown): { lines: BillLine[]; total: number } | { error: string; message: string } {
+  const rawLines = Array.isArray(raw) ? raw : [];
+  if (rawLines.length === 0 || rawLines.length > 50) {
+    return { error: 'lines_required', message: 'A bill takes 1 to 50 lines.' };
+  }
+  const lines: BillLine[] = [];
+  for (const [i, l] of rawLines.entries()) {
+    const code = String(l?.creditAccountCode ?? '').trim();
+    const amount = Number(l?.amountSen);
+    if (!code) return { error: 'bad_line', message: `Line ${i + 1} has no account.` };
+    if (!Number.isInteger(amount) || amount <= 0) {
+      return { error: 'bad_line', message: `Line ${i + 1}: amountSen must be a positive integer (got ${String(l?.amountSen)}).` };
+    }
+    lines.push({ description: l?.description ? String(l.description).trim() : null, code, amountSen: amount });
+  }
+  return { lines, total: lines.reduce((s, l) => s + l.amountSen, 0) };
+}
+
+/** The ODB entry for a bill: Dr the other-debtor control for the total, Cr
+    each line its own account — the same shape on first post and on re-post. */
+function debtorBillRuleLines(roles: { AR_OTHER: string }, debtorName: string, billNumber: string, lines: BillLine[], totalSen: number): RuleLine[] {
+  return [
+    {
+      accountCode: roles.AR_OTHER, debitSen: totalSen, creditSen: 0,
+      partyType: 'ODEBTOR', partyCode: null, partyName: debtorName,
+      notes: `Other debtor ${debtorName} — ${billNumber}`,
+    },
+    ...lines.map((l) => ({
+      accountCode: l.code, debitSen: 0, creditSen: l.amountSen,
+      partyType: null, partyCode: null, partyName: null,
+      notes: l.description ?? billNumber,
+    })),
+  ];
+}
 
 export const createDebtorBillHandler = async (c: any): Promise<Response> => {
   if (!hasHouzsPerm(c, 'scm.payment_voucher.create')) {
@@ -162,20 +212,9 @@ export const createDebtorBillHandler = async (c: any): Promise<Response> => {
   if ('resp' in found) return found.resp;
   if (found.debtor.is_active !== true) return c.json({ error: 'debtor_inactive', message: `${found.debtor.name} is deactivated.` }, 400);
 
-  const rawLines = Array.isArray(body.lines) ? body.lines : [];
-  if (rawLines.length === 0 || rawLines.length > 50) {
-    return c.json({ error: 'lines_required', message: 'A bill takes 1 to 50 lines.' }, 400);
-  }
-  const lines: Array<{ description: string | null; code: string; amountSen: number }> = [];
-  for (const [i, l] of rawLines.entries()) {
-    const code = String(l?.creditAccountCode ?? '').trim();
-    const amount = Number(l?.amountSen);
-    if (!code) return c.json({ error: 'bad_line', message: `Line ${i + 1} has no account.` }, 400);
-    if (!Number.isInteger(amount) || amount <= 0) {
-      return c.json({ error: 'bad_line', message: `Line ${i + 1}: amountSen must be a positive integer (got ${String(l?.amountSen)}).` }, 400);
-    }
-    lines.push({ description: l?.description ? String(l.description).trim() : null, code, amountSen: amount });
-  }
+  const built = buildBillLines(body.lines);
+  if ('error' in built) return c.json({ error: built.error, message: built.message }, 400);
+  const lines = built.lines;
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json({ error: 'no_company', message: 'No active company resolves for this session.' }, 409);
   const coId = co.companyId;
@@ -185,11 +224,11 @@ export const createDebtorBillHandler = async (c: any): Promise<Response> => {
     const leafErr = await requireLeafAccount(c, coId, code);
     if (leafErr) return leafErr;
   }
-  const billDate = String(body.billDate ?? '').trim() || new Date().toISOString().slice(0, 10);
+  const billDate = dateOrNull(body.billDate) ?? todayMyt();
   const totalSen = lines.reduce((s, l) => s + l.amountSen, 0);
 
   const sb = c.get('supabase');
-  const billNumber = await mintMonthlyDocNo(sb, 'acc_debtor_bills', 'bill_number', `${companyDocPrefix(c)}ODB-${yymm()}`);
+  const billNumber = await mintMonthlyDocNo(sb, 'acc_debtor_bills', 'bill_number', `${companyDocPrefix(c)}ODB-${docMonthTag(billDate)}`);
   const { data: bill, error: insErr } = await sb.from('acc_debtor_bills').insert({
     company_id: coId,
     bill_number: billNumber,
@@ -217,18 +256,7 @@ export const createDebtorBillHandler = async (c: any): Promise<Response> => {
   }
 
   const roles = await resolveRoles(sb, coId);
-  const ruleLines: RuleLine[] = [
-    {
-      accountCode: roles.AR_OTHER, debitSen: totalSen, creditSen: 0,
-      partyType: 'ODEBTOR', partyCode: null, partyName: found.debtor.name,
-      notes: `Other debtor ${found.debtor.name} — ${bill.bill_number}`,
-    },
-    ...lines.map((l) => ({
-      accountCode: l.code, debitSen: 0, creditSen: l.amountSen,
-      partyType: null, partyCode: null, partyName: null,
-      notes: l.description ?? bill.bill_number,
-    })),
-  ];
+  const ruleLines = debtorBillRuleLines(roles, String(found.debtor.name), String(bill.bill_number), lines, totalSen);
   const r = await postJournal(sb, {
     companyId: coId,
     entryDate: billDate,
@@ -244,6 +272,100 @@ export const createDebtorBillHandler = async (c: any): Promise<Response> => {
     return c.json({ error: 'post_failed', reason: (r as { reason?: string }).reason ?? r.status }, 500);
   }
   return c.json({ ok: true, bill: { id: bill.id, billNumber: bill.bill_number, totalSen } }, 201);
+};
+
+/* ── PATCH /bills/:billId — every field may change (owner 2026-09-06: edit
+   这个不能全部都设成可以改吗 — the same rule the AP invoice got). A debtor bill
+   is on the books the moment it exists, so an edit RE-POSTS: the old ODB
+   entry gets its contra dated as the old bill was, a fresh entry books the
+   bill as saved. Money already received caps the new total; a cancelled bill
+   is left alone; the debtor stays — a bill belongs to its debtor. */
+export const updateDebtorBillHandler = async (c: any): Promise<Response> => {
+  if (!hasHouzsPerm(c, 'scm.payment_voucher.write') && !hasHouzsPerm(c, 'scm.payment_voucher.create')) {
+    return c.json({ error: "You don't have permission to do that." }, 403);
+  }
+  let body: any;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
+  const sb = c.get('supabase');
+  const { data: billRaw, error } = await scopeToCompany(
+    sb.from('acc_debtor_bills').select('id, bill_number, debtor_id, bill_date, total_sen, received_sen, status, notes, company_id').eq('id', c.req.param('billId')), c,
+  ).maybeSingle();
+  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  if (!billRaw) return c.json({ error: 'not_found' }, 404);
+  const bill = billRaw as Row;
+  if (bill.status === 'CANCELLED') return c.json({ error: 'cancelled', message: `${bill.bill_number} is cancelled — raise it again instead.` }, 409);
+  /* Snapshot before the update — a client handing out live row references
+     (the test fake does) would otherwise show the edited date to the contra. */
+  const oldDate = String(bill.bill_date);
+  const billNumber = String(bill.bill_number);
+  const coId = Number(bill.company_id);
+  const received = Number(bill.received_sen ?? 0);
+  const found = await loadDebtor(c, String(bill.debtor_id));
+  if ('resp' in found) return found.resp;
+
+  let rebuilt: { lines: BillLine[]; total: number } | null = null;
+  if (body.lines !== undefined) {
+    const built = buildBillLines(body.lines);
+    if ('error' in built) return c.json({ error: built.error, message: built.message }, 400);
+    if (built.total < received) {
+      return c.json({ error: 'total_below_received', message: `${billNumber} already has ${(received / 100).toFixed(2)} received against it — the total cannot fall below that.` }, 409);
+    }
+    for (const code of [...new Set(built.lines.map((l) => l.code))]) {
+      const leafErr = await requireLeafAccount(c, coId, code);
+      if (leafErr) return leafErr;
+    }
+    rebuilt = built;
+  }
+  /* A blank or absent date keeps the old one — through the shared coercion, so
+     an unfilled <input type="date"> ("") never reaches the DATE column. */
+  const billDate = dateOrNull(body.billDate) ?? oldDate;
+  const notes = body.notes !== undefined ? (body.notes ? String(body.notes).trim() : null) : (bill.notes ?? null);
+
+  if (rebuilt) {
+    const { error: delErr } = await sb.from('acc_debtor_bill_lines').delete().eq('company_id', coId).eq('bill_id', bill.id);
+    if (delErr) return c.json({ error: 'save_failed', reason: delErr.message }, 500);
+    const { error: lineErr } = await sb.from('acc_debtor_bill_lines').insert(rebuilt.lines.map((l, i) => ({
+      company_id: coId, bill_id: bill.id, line_no: i + 1,
+      description: l.description, credit_account_code: l.code, amount_sen: l.amountSen,
+    })));
+    if (lineErr) return c.json({ error: 'save_failed', reason: lineErr.message }, 500);
+  }
+  const totalSen = rebuilt ? rebuilt.total : Number(bill.total_sen ?? 0);
+  const { error: upErr } = await sb.from('acc_debtor_bills')
+    .update({ bill_date: billDate, notes, total_sen: totalSen })
+    .eq('company_id', coId).eq('id', bill.id);
+  if (upErr) return c.json({ error: 'save_failed', reason: upErr.message }, 500);
+
+  /* The re-post: contra the entry the old bill wrote, then book the bill as
+     it now reads — through the one gate. */
+  const rev = await reverseJournal(sb, {
+    companyId: coId,
+    sourceType: 'ODB',
+    sourceDocNo: billNumber,
+    narration: (orig) => `Edit debtor bill ${billNumber} — voids ${orig.je_no}`,
+    entryDate: oldDate,
+  });
+  if (!rev.ok) return c.json({ error: 'reverse_failed', reason: (rev as { reason?: string }).reason ?? rev.status }, 500);
+  let lines: BillLine[];
+  if (rebuilt) lines = rebuilt.lines;
+  else {
+    const { data: rows, error: lErr } = await scopeToCompany(
+      sb.from('acc_debtor_bill_lines').select('line_no, description, credit_account_code, amount_sen').eq('bill_id', bill.id), c,
+    ).order('line_no');
+    if (lErr) return c.json({ error: 'load_failed', reason: lErr.message }, 500);
+    lines = ((rows ?? []) as Row[]).map((l) => ({ description: l.description ?? null, code: String(l.credit_account_code), amountSen: Number(l.amount_sen) }));
+  }
+  const roles = await resolveRoles(sb, coId);
+  const r = await postJournal(sb, {
+    companyId: coId,
+    entryDate: billDate,
+    sourceType: 'ODB',
+    sourceDocNo: billNumber,
+    narration: `Debtor bill ${billNumber} — ${found.debtor.name} — edited`,
+    lines: debtorBillRuleLines(roles, String(found.debtor.name), billNumber, lines, totalSen),
+  });
+  if (!r.ok) return c.json({ error: 'post_failed', reason: (r as { reason?: string }).reason ?? r.status }, 500);
+  return c.json({ ok: true, bill: { id: bill.id, billNumber, totalSen }, reposted: true, jeNo: r.jeNo });
 };
 
 export const cancelDebtorBillHandler = async (c: any): Promise<Response> => {
@@ -318,9 +440,9 @@ export const createDebtorReceiptHandler = async (c: any): Promise<Response> => {
     }
   }
   const totalSen = allocs.reduce((s, a) => s + a.amountSen, 0);
-  const receiptDate = String(body.receiptDate ?? '').trim() || new Date().toISOString().slice(0, 10);
+  const receiptDate = dateOrNull(body.receiptDate) ?? todayMyt();
 
-  const receiptNumber = await mintMonthlyDocNo(sb, 'acc_debtor_receipts', 'receipt_number', `${companyDocPrefix(c)}ODR-${yymm()}`);
+  const receiptNumber = await mintMonthlyDocNo(sb, 'acc_debtor_receipts', 'receipt_number', `${companyDocPrefix(c)}ODR-${docMonthTag(receiptDate)}`);
   const { data: receipt, error: insErr } = await sb.from('acc_debtor_receipts').insert({
     company_id: coId,
     receipt_number: receiptNumber,
@@ -506,12 +628,17 @@ export const approveDebtorReceiptHandler = async (c: any): Promise<Response> => 
 /* ── Router ───────────────────────────────────────────────────────────────── */
 
 export const otherDebtors = new Hono();
+/* The SCM bridge is PER ROUTER (scm/index.ts mounts no global one): it stashes
+   the real caller as houzsUser — what hasHouzsPerm reads — and hands out the
+   service client. This router shipped without it: the list answered 500 and every write 403. See docs/bugs/0648; tests/scmRouterBridge.test.ts pins it. */
+otherDebtors.use('*', supabaseAuth);
 otherDebtors.get('/', listDebtorsHandler);
 otherDebtors.post('/', createDebtorHandler);
 otherDebtors.get('/:id', debtorDetailHandler);
 otherDebtors.patch('/:id', updateDebtorHandler);
 otherDebtors.post('/:id/bills', createDebtorBillHandler);
 otherDebtors.post('/bills/:billId/cancel', cancelDebtorBillHandler);
+otherDebtors.patch('/bills/:billId', updateDebtorBillHandler);
 otherDebtors.post('/:id/receipts', createDebtorReceiptHandler);
 otherDebtors.post('/receipts/:receiptId/submit', submitDebtorReceiptHandler);
 otherDebtors.post('/receipts/:receiptId/withdraw', withdrawDebtorReceiptHandler);

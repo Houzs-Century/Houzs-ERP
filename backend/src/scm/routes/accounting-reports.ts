@@ -4,38 +4,44 @@
 // iterated with him later, the NUMBERS ship now).
 //
 // Both read ONE source — v_gl_entries (posted, not reversed) — so they can
-// never disagree with the Journal/GL/TB tabs beside them. The P&L follows the
-// owner's AutoCount arithmetic under the periodic scheme:
+// never disagree with the Journal/GL/TB tabs beside them, and both CLASSIFY
+// BY SECTION (owner 2026-09-06, the AutoCount tree stored on scm.accounts —
+// 你先帮我分类,然后我自己还能调动: drag an account on the chart page and the
+// statements follow it, the way AutoCount's do). The vocabulary's one home is
+// lib/account-sections.ts; a row the chart has not sectioned (older than the
+// migration, or a code the chart no longer carries) takes the default shelf
+// for its type — the same rule the migration seeded with.
 //
-//   Trading income   INCOME accounts OUTSIDE the 700-0000 tree (his rule:
-//                    other income 挂 700 下 — the same walker the chart badge
-//                    uses, one source of truth)
-//   Cost of sales    EXPENSE accounts coded 6xx — purchases by group (601/602),
-//                    returns (612), carriage (615) AND the month-close pair
-//                    (620 closing / its reversal), so gross profit already
-//                    reads purchases + opening − closing without this file
-//                    doing any stock arithmetic of its own.
+//   Trading income   SALES + SALES ADJUSTMENTS
+//   Cost of sales    COST OF GOODS SOLD — purchases by group, returns,
+//                    carriage AND the month-close pair (620 closing / its
+//                    reversal), so gross profit already reads purchases +
+//                    opening − closing without this file doing any stock
+//                    arithmetic of its own.
 //   Gross profit     the difference
-//   Other income     the 700 tree
-//   Expenses         every other EXPENSE (the 900 tree and friends)
-//   Net profit       gross + other − expenses
+//   Other income     OTHER INCOMES + EXTRA-ORDINARY INCOME
+//   Expenses         EXPENSES
+//   Profit before tax
+//   Taxation         TAXATION (shown only when something posted there)
+//   Net profit
 //
-// The balance sheet is the same read cut at a date, grouped by type, with the
-// cumulative P&L to that date shown inside equity as current earnings — and
-// its own self-check line: assets − liabilities − equity − earnings must be
-// exactly zero or the report says so in red rather than pretending.
+// The balance sheet is the same read cut at a date, grouped by the section's
+// type (assets / liabilities / equity — every line still names its section,
+// in AutoCount order, for the layout round to come), with the cumulative P&L
+// to that date shown inside equity as current earnings — and its own
+// self-check line: assets − liabilities − equity − earnings must be exactly
+// zero or the report says so in red rather than pretending.
 // ----------------------------------------------------------------------------
 
 import { hasHouzsPerm } from '../lib/houzs-perms';
 import { requireActiveCompanyId } from '../lib/companyScope';
 import { paginateAll } from '../lib/paginate-all';
+import { ACCOUNT_SECTIONS, defaultSectionFor } from '../lib/account-sections';
 
 const requirePerm = (c: any): boolean => hasHouzsPerm(c, 'scm.payment_voucher.post');
 const NO_PERM = { error: "You don't have permission to read the financial statements." };
 
-const OTHER_INCOME_ROOT = '700-0000';
-
-type AccountRow = { account_code: string; account_name: string; account_type: string; parent_code: string | null };
+type AccountRow = { account_code: string; account_type: string; section: string | null };
 type SumRow = { code: string; name: string; type: string; drSen: number; crSen: number };
 
 /** Sum posted, non-reversed GL lines per account inside [from, to]. */
@@ -66,25 +72,36 @@ async function loadSums(
   return { ok: true, sums: [...at.values()].sort((a, b) => a.code.localeCompare(b.code)) };
 }
 
-/** parent walk → is this INCOME account under 700-0000? Same rule as the
-    chart's derived badge — one vocabulary. */
-function otherIncomeWalker(accounts: AccountRow[]): (code: string) => boolean {
-  const parentOf = new Map(accounts.map((a) => [a.account_code, a.parent_code]));
-  return (code: string): boolean => {
-    let cur: string | null | undefined = code;
-    for (let depth = 0; cur && depth < 6; depth += 1) {
-      if (cur === OTHER_INCOME_ROOT) return true;
-      cur = parentOf.get(cur);
-    }
-    return false;
-  };
+/** The chart of the active company, read once per report. */
+async function loadAccounts(sb: any, companyId: number): Promise<{ ok: true; accounts: AccountRow[] } | { ok: false; reason: string }> {
+  const { data, error } = await sb.from('accounts').select('account_code, account_type, section').eq('company_id', companyId);
+  if (error) return { ok: false, reason: String((error as { message?: string }).message ?? error) };
+  return { ok: true, accounts: (data ?? []) as AccountRow[] };
 }
 
-type ReportLine = { code: string; name: string; amountSen: number };
-const lines = (rows: SumRow[], amount: (r: SumRow) => number): ReportLine[] =>
-  rows.map((r) => ({ code: r.code, name: r.name, amountSen: amount(r) }))
-    .filter((l) => l.amountSen !== 0);
+/** Where each summed account sits: its stored section, else the default
+    shelf for its type (a row older than the migration, or a code the chart
+    no longer carries). */
+function sectionResolver(accounts: AccountRow[]): (r: SumRow) => string {
+  const stored = new Map(accounts.map((a) => [a.account_code, a.section]));
+  return (r) => stored.get(r.code) ?? defaultSectionFor(r.type, r.code);
+}
+
+const SECTION_ORDER = new Map(ACCOUNT_SECTIONS.map((s, i) => [s.section, i]));
+const sectionsOfType = (type: string): string[] => ACCOUNT_SECTIONS.filter((s) => s.type === type).map((s) => s.section);
+
+type Sectioned = { r: SumRow; section: string };
+type ReportLine = { code: string; name: string; section: string; amountSen: number };
+
+const lines = (rows: Sectioned[], amount: (r: SumRow) => number): ReportLine[] =>
+  rows.map((x) => ({ code: x.r.code, name: x.r.name, section: x.section, amountSen: amount(x.r) }))
+    .filter((l) => l.amountSen !== 0)
+    .sort((a, b) => ((SECTION_ORDER.get(a.section) ?? 99) - (SECTION_ORDER.get(b.section) ?? 99)) || a.code.localeCompare(b.code));
 const total = (ls: ReportLine[]): number => ls.reduce((s, l) => s + l.amountSen, 0);
+const inSections = (rows: Sectioned[], sections: string[]): Sectioned[] => rows.filter((x) => sections.includes(x.section));
+
+const credit = (r: SumRow): number => r.crSen - r.drSen;
+const debit = (r: SumRow): number => r.drSen - r.crSen;
 
 /* ── GET /accounting/reports/pnl?from=YYYY-MM-DD&to=YYYY-MM-DD ────────────── */
 export const pnlReport = async (c: any): Promise<Response> => {
@@ -97,34 +114,33 @@ export const pnlReport = async (c: any): Promise<Response> => {
     return c.json({ error: 'bad_range', message: 'from and to must be YYYY-MM-DD.' }, 400);
   }
   const sb = c.get('supabase');
-  const [sums, accs] = await Promise.all([
-    loadSums(sb, co.companyId, from, to),
-    sb.from('accounts').select('account_code, account_name, account_type, parent_code').eq('company_id', co.companyId),
-  ]);
+  const [sums, accs] = await Promise.all([loadSums(sb, co.companyId, from, to), loadAccounts(sb, co.companyId)]);
   if (!sums.ok) return c.json({ error: 'load_failed', reason: sums.reason }, 500);
-  if (accs.error) return c.json({ error: 'load_failed', reason: accs.error.message }, 500);
-  const isOther = otherIncomeWalker((accs.data ?? []) as AccountRow[]);
+  if (!accs.ok) return c.json({ error: 'load_failed', reason: accs.reason }, 500);
+  const secOf = sectionResolver(accs.accounts);
+  const rows: Sectioned[] = sums.sums.map((r) => ({ r, section: secOf(r) }));
 
-  const income = sums.sums.filter((r) => r.type === 'INCOME');
-  const expense = sums.sums.filter((r) => r.type === 'EXPENSE');
-
-  const tradingIncome = lines(income.filter((r) => !isOther(r.code)), (r) => r.crSen - r.drSen);
-  const otherIncome = lines(income.filter((r) => isOther(r.code)), (r) => r.crSen - r.drSen);
-  const costOfSales = lines(expense.filter((r) => r.code.startsWith('6')), (r) => r.drSen - r.crSen);
-  const expenses = lines(expense.filter((r) => !r.code.startsWith('6')), (r) => r.drSen - r.crSen);
+  const tradingIncome = lines(inSections(rows, ['SALES', 'SALES ADJUSTMENTS']), credit);
+  const costOfSales = lines(inSections(rows, ['COST OF GOODS SOLD']), debit);
+  const otherIncome = lines(inSections(rows, ['OTHER INCOMES', 'EXTRA-ORDINARY INCOME']), credit);
+  const expenses = lines(inSections(rows, ['EXPENSES']), debit);
+  const taxation = lines(inSections(rows, ['TAXATION']), debit);
 
   const grossProfitSen = total(tradingIncome) - total(costOfSales);
-  const netProfitSen = grossProfitSen + total(otherIncome) - total(expenses);
+  const profitBeforeTaxSen = grossProfitSen + total(otherIncome) - total(expenses);
+  const netProfitSen = profitBeforeTaxSen - total(taxation);
 
   return c.json({
     from, to,
-    tradingIncome, costOfSales, otherIncome, expenses,
+    tradingIncome, costOfSales, otherIncome, expenses, taxation,
     totals: {
       tradingIncomeSen: total(tradingIncome),
       costOfSalesSen: total(costOfSales),
       grossProfitSen,
       otherIncomeSen: total(otherIncome),
       expensesSen: total(expenses),
+      profitBeforeTaxSen,
+      taxationSen: total(taxation),
       netProfitSen,
     },
   });
@@ -140,17 +156,20 @@ export const balanceSheetReport = async (c: any): Promise<Response> => {
     return c.json({ error: 'bad_date', message: 'asOf must be YYYY-MM-DD.' }, 400);
   }
   const sb = c.get('supabase');
-  const sums = await loadSums(sb, co.companyId, null, asOf);
+  const [sums, accs] = await Promise.all([loadSums(sb, co.companyId, null, asOf), loadAccounts(sb, co.companyId)]);
   if (!sums.ok) return c.json({ error: 'load_failed', reason: sums.reason }, 500);
+  if (!accs.ok) return c.json({ error: 'load_failed', reason: accs.reason }, 500);
+  const secOf = sectionResolver(accs.accounts);
+  const rows: Sectioned[] = sums.sums.map((r) => ({ r, section: secOf(r) }));
 
-  const assets = lines(sums.sums.filter((r) => r.type === 'ASSET'), (r) => r.drSen - r.crSen);
-  const liabilities = lines(sums.sums.filter((r) => r.type === 'LIABILITY'), (r) => r.crSen - r.drSen);
-  const equity = lines(sums.sums.filter((r) => r.type === 'EQUITY'), (r) => r.crSen - r.drSen);
+  const assets = lines(inSections(rows, sectionsOfType('ASSET')), debit);
+  const liabilities = lines(inSections(rows, sectionsOfType('LIABILITY')), credit);
+  const equity = lines(inSections(rows, sectionsOfType('EQUITY')), credit);
   /* Every ringgit the P&L has recognised to this date lives in equity as the
      period's earnings — that is what makes the sheet balance under double
      entry, and splitting it out is how the standard statement reads. */
-  const earningsSen = sums.sums.filter((r) => r.type === 'INCOME').reduce((s, r) => s + (r.crSen - r.drSen), 0)
-    - sums.sums.filter((r) => r.type === 'EXPENSE').reduce((s, r) => s + (r.drSen - r.crSen), 0);
+  const earningsSen = inSections(rows, sectionsOfType('INCOME')).reduce((s, x) => s + credit(x.r), 0)
+    - inSections(rows, sectionsOfType('EXPENSE')).reduce((s, x) => s + debit(x.r), 0);
 
   const assetsSen = total(assets);
   const liabilitiesSen = total(liabilities);

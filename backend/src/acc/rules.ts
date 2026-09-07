@@ -83,6 +83,7 @@ export const apControlRole = (supplierCode: string | null | undefined): 'AP' | '
 export const REVERSAL_SOURCE: Record<string, string> = {
   SI: 'SI_REVERSAL',
   PI: 'PI_REVERSAL',
+  API: 'API_REVERSAL',
   PV: 'PV_REVERSAL',
   MANUAL: 'MANUAL_REVERSAL',
   SOPAY: 'SOPAY_REVERSAL',
@@ -176,6 +177,40 @@ export function siLines(
  * caller owns FX and the rounding remainder, because only it knows the
  * header total the entry must reconcile to.
  */
+/** AP invoice posted (the non-stock supplier bill — AutoCount's A/P Invoice;
+    owner 2026-09-06: other creditor 的 invoice 放过去,不影响 operation 那边的
+    purchase invoice): Dr each line's OWN account (rent, service, whatever the
+    line says) / Cr the supplier's AP control — 400 or 405 by the supplier's
+    code, the same split the PI and the PV use. Amounts arrive in MYR sen. */
+export function apInvoiceLines(
+  roles: RoleCodes,
+  inv: { invoice_number: string },
+  supplier: { code: string | null; name: string | null },
+  debits: Array<{ accountCode: string; myrSen: number; description: string | null }>,
+): RuleLine[] {
+  const totalSen = debits.reduce((s, d) => s + d.myrSen, 0);
+  return [
+    ...debits.map((d) => ({
+      accountCode: d.accountCode,
+      debitSen: d.myrSen,
+      creditSen: 0,
+      partyType: null,
+      partyCode: null,
+      partyName: null,
+      notes: d.description ?? `AP invoice ${inv.invoice_number}`,
+    })),
+    {
+      accountCode: roles[apControlRole(supplier.code)],
+      debitSen: 0,
+      creditSen: totalSen,
+      partyType: 'SUPPLIER',
+      partyCode: supplier.code,
+      partyName: supplier.name,
+      notes: `AP invoice ${inv.invoice_number}`,
+    },
+  ];
+}
+
 export function piLines(
   roles: RoleCodes,
   pi: { invoice_number: string },
@@ -214,17 +249,25 @@ export function pvLines(
   pv: { pv_number: string; payee_name: string; credit_account_code: string },
   debitLegs: Array<{ description: string | null; debit_account_code: string; myrSen: number }>,
   supplier: { code: string | null; name: string | null },
+  /** The supplier's own AP control (a supplier payment): the Dr leg on it IS
+      the supplier's sub-ledger, so it carries the party the way the invoice
+      side's Cr leg does — owner 2026-09-06, AutoCount in hand: the payment
+      must read Dr 405-H001 / Cr bank. null (an expense voucher) stamps none. */
+  apControlCode: string | null = null,
 ): RuleLine[] {
   const totalSen = debitLegs.reduce((s, l) => s + l.myrSen, 0);
-  const lines: RuleLine[] = debitLegs.map((l) => ({
-    accountCode: l.debit_account_code,
-    debitSen: l.myrSen,
-    creditSen: 0,
-    partyType: null,
-    partyCode: null,
-    partyName: null,
-    notes: `${l.description ?? 'Payment'} — ${pv.pv_number}`,
-  }));
+  const lines: RuleLine[] = debitLegs.map((l) => {
+    const onControl = apControlCode != null && l.debit_account_code === apControlCode && !!supplier.code;
+    return {
+      accountCode: l.debit_account_code,
+      debitSen: l.myrSen,
+      creditSen: 0,
+      partyType: onControl ? 'SUPPLIER' : null,
+      partyCode: onControl ? supplier.code : null,
+      partyName: onControl ? (supplier.name ?? pv.payee_name) : null,
+      notes: `${l.description ?? 'Payment'} — ${pv.pv_number}`,
+    };
+  });
   lines.push({
     accountCode: pv.credit_account_code,
     debitSen: 0,

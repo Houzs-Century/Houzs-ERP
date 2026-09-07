@@ -33,12 +33,14 @@ import {
   useApprovePaymentVoucher,
   useRejectPaymentVoucher,
   useSupplierAdvances, useApplyAdvance,
-  usePvFiles, useUploadPvFile, useDeletePvFile, fetchPvFileBlobUrl, fileToBase64, PV_FILE_ACCEPT,
+  usePvFiles, useUploadPvFile, useDeletePvFile, fetchPvFileBlobUrl,
 } from '../../vendor/scm/lib/payment-voucher-queries';
+import { DocFilesCard } from '../../vendor/scm/components/DocFilesCard';
 import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
 import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
 import { useAccounts, type Account } from '../../vendor/scm/lib/accounting-queries';
 import { usePurchaseInvoices } from '../../vendor/scm/lib/purchase-invoice-queries';
+import { useApInvoices } from '../../vendor/scm/lib/ap-invoice-queries';
 import { useSuppliers, useSupplierDetail } from '../../vendor/scm/lib/suppliers-queries';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
 import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
@@ -335,9 +337,19 @@ export const PaymentVoucherDetail = () => {
     // Migration 0202 — settled PIs (SUPPLIER_PAYMENT only). Send the full set of
     // applied rows (amount > 0) so the server replaces the prior allocations.
     const sendAllocations = editApplyToPi
-      ? editAllocRows
+      ? [
+        ...editAllocRows
           .map((r) => ({ piId: r.piId, amountSen: allocAmounts[r.piId] ?? 0 }))
-          .filter((a) => a.amountSen > 0)
+          .filter((a) => a.amountSen > 0),
+        /* An edit REPLACES the allocation set, and this screen's picker lists
+           purchase invoices only — the AP-invoice rows the voucher already
+           settles (raised on the New screen, 2026-09-06) ride through
+           unchanged rather than being silently dropped. */
+        ...allocations
+          .filter((a) => String(a.kind ?? '') === 'API' && a.apInvoiceId)
+          .map((a) => ({ apInvoiceId: String(a.apInvoiceId), amountSen: Number(a.amountSen ?? 0) }))
+          .filter((a) => a.amountSen > 0),
+      ]
       : [];
     try {
       await update.mutateAsync({
@@ -868,13 +880,17 @@ const AdvanceCard = ({ pvId, supplierId }: { pvId: string; supplierId: string })
   const advancesQ = useSupplierAdvances(supplierId);
   const applyM = useApplyAdvance();
   const piListQ = usePurchaseInvoices();
+  /* The other creditor's bills (2026-09-06): an advance to a 405-x supplier
+     lands on its AP INVOICES, which the purchase-invoice list never carries. */
+  const apListQ = useApInvoices('API');
   const [amounts, setAmounts] = useState<Record<string, number>>({});
   const [note, setNote] = useState<string | null>(null);
 
   const mine = (advancesQ.data?.advances ?? []).find((a: { pv_id: string }) => a.pv_id === pvId) ?? null;
 
-  const outstanding = useMemo(() => {
-    return ((piListQ.data?.purchaseInvoices ?? []) as Array<{
+  type Open = { key: string; kind: 'PI' | 'API'; id: string; number: string; date: string | null; outSen: number };
+  const outstanding = useMemo<Open[]>(() => {
+    const pis = ((piListQ.data?.purchaseInvoices ?? []) as Array<{
       id: string; invoice_number?: string | null; supplier_id?: string | null;
       supplier?: { id?: string | null } | null; status?: string | null;
       total_sen?: number | null; paid_sen?: number | null; invoice_date?: string | null;
@@ -885,8 +901,12 @@ const AdvanceCard = ({ pvId, supplierId }: { pvId: string; supplierId: string })
         return sid === supplierId && (st === 'POSTED' || st === 'PARTIALLY_PAID')
           && Number(r.total_sen ?? 0) - Number(r.paid_sen ?? 0) > 0;
       })
-      .sort((a, b) => String(a.invoice_date ?? '').localeCompare(String(b.invoice_date ?? '')));
-  }, [piListQ.data, supplierId]);
+      .map((r): Open => ({ key: `pi:${r.id}`, kind: 'PI', id: String(r.id), number: String(r.invoice_number ?? r.id), date: r.invoice_date ?? null, outSen: Number(r.total_sen ?? 0) - Number(r.paid_sen ?? 0) }));
+    const apis = (apListQ.data?.rows ?? [])
+      .filter((r) => r.supplierId === supplierId && (r.status === 'POSTED' || r.status === 'PARTIALLY_PAID') && r.outstandingSen > 0)
+      .map((r): Open => ({ key: `api:${r.id}`, kind: 'API', id: r.id, number: r.invoiceNumber, date: r.invoiceDate, outSen: r.outstandingSen }));
+    return [...pis, ...apis].sort((a, b) => String(a.date ?? '').localeCompare(String(b.date ?? '')));
+  }, [piListQ.data, apListQ.data, supplierId]);
 
   if (!mine) return null;
   const remaining = mine.remaining_sen;
@@ -904,7 +924,7 @@ const AdvanceCard = ({ pvId, supplierId }: { pvId: string; supplierId: string })
       <div className={styles.cardBody} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
         <p style={{ fontSize: 'var(--fs-13)', color: 'var(--fg-muted)', margin: 0 }}>
           This voucher paid ahead of any invoice. Knock the remainder off the supplier&rsquo;s
-          outstanding invoices below — no money moves; both legs are already in AP.
+          outstanding invoices below — purchase invoices and AP invoices alike; no money moves, both legs are already in AP.
         </p>
         {outstanding.length === 0 ? (
           <p style={{ fontSize: 'var(--fs-13)', color: 'var(--fg-muted)', margin: 0 }}>No outstanding invoice from this supplier yet — the advance waits.</p>
@@ -919,22 +939,21 @@ const AdvanceCard = ({ pvId, supplierId }: { pvId: string; supplierId: string })
               </tr>
             </thead>
             <tbody>
-              {outstanding.map((r) => {
-                const piId = String(r.id);
-                const out = Number(r.total_sen ?? 0) - Number(r.paid_sen ?? 0);
-                return (
-                  <tr key={piId} style={{ borderTop: '1px solid var(--line)' }}>
-                    <td style={{ padding: '6px 8px', fontFamily: 'var(--font-mono)' }}>{String(r.invoice_number ?? piId)}</td>
-                    <td style={{ padding: '6px 8px', whiteSpace: 'nowrap', color: 'var(--fg-muted)' }}>{fmtDate(r.invoice_date as string | null)}</td>
-                    <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)', color: 'var(--fg-muted)' }}>{fmtRm(out)}</td>
-                    <td style={{ padding: '6px 8px', textAlign: 'right' }}>
-                      <MoneyInput bare valueSen={amounts[piId] ?? 0}
-                        onCommit={(sen) => setAmounts((prev) => ({ ...prev, [piId]: Math.max(0, Math.min(out, sen ?? 0)) }))}
-                        inputClassName={styles.fieldInput} selectOnFocus />
-                    </td>
-                  </tr>
-                );
-              })}
+              {outstanding.map((r) => (
+                <tr key={r.key} style={{ borderTop: '1px solid var(--line)' }}>
+                  <td style={{ padding: '6px 8px', fontFamily: 'var(--font-mono)' }}>
+                    {r.number}
+                    {r.kind === 'API' && <span style={{ marginLeft: 6, fontFamily: 'var(--font-sans)', fontSize: 'var(--fs-11)', fontWeight: 600, color: 'var(--c-orange, #b06000)' }}>AP</span>}
+                  </td>
+                  <td style={{ padding: '6px 8px', whiteSpace: 'nowrap', color: 'var(--fg-muted)' }}>{fmtDate(r.date)}</td>
+                  <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)', color: 'var(--fg-muted)' }}>{fmtRm(r.outSen)}</td>
+                  <td style={{ padding: '6px 8px', textAlign: 'right' }}>
+                    <MoneyInput bare valueSen={amounts[r.key] ?? 0}
+                      onCommit={(sen) => setAmounts((prev) => ({ ...prev, [r.key]: Math.max(0, Math.min(r.outSen, sen ?? 0)) }))}
+                      inputClassName={styles.fieldInput} selectOnFocus />
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         )}
@@ -944,9 +963,9 @@ const AdvanceCard = ({ pvId, supplierId }: { pvId: string; supplierId: string })
             disabled={applyM.isPending || asked === 0 || over}
             onClick={() => {
               setNote(null);
-              const allocations = Object.entries(amounts)
-                .filter(([, v]) => v > 0)
-                .map(([piId, amountSen]) => ({ piId, amountSen }));
+              const allocations = outstanding
+                .filter((r) => (amounts[r.key] ?? 0) > 0)
+                .map((r) => (r.kind === 'API' ? { apInvoiceId: r.id, amountSen: amounts[r.key]! } : { piId: r.id, amountSen: amounts[r.key]! }));
               applyM.mutate({ pvId, allocations }, {
                 onSuccess: (d: { appliedSen: number; remainingSen: number }) => { setAmounts({}); setNote(`Knocked off ${fmtRm(d.appliedSen)} — ${fmtRm(d.remainingSen)} of the advance remains.`); },
                 onError: (e) => setNote(e instanceof Error ? e.message : 'Not applied.'),
@@ -960,110 +979,27 @@ const AdvanceCard = ({ pvId, supplierId }: { pvId: string; supplierId: string })
   );
 };
 
-/* ── Files card — the bill pages behind this voucher (mig 0352). sort_no =
-   attach order = the order printing appends them after the voucher page.
-   View streams the bytes through the Worker (authed) into a blob tab —
-   there is no public URL to leak. Add/delete follow the four-layer rule:
-   a CHECKED voucher's evidence stays (delete hidden, server refuses too),
+/* ── Files card — the bill pages behind this voucher (mig 0352). The card
+   itself is the shared DocFilesCard (since 2026-09-06 the AP invoice shows
+   the same one); this binds the voucher's hooks and its four-layer rule:
+   a CHECKED voucher's evidence stays (remove hidden, server refuses too),
    a CANCELLED one takes no more files. */
-const fmtSize = (bytes: number): string =>
-  bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
-
 const PvFilesCard = ({ pvId, canWrite, locked, cancelled }: { pvId: string; canWrite: boolean; locked: boolean; cancelled: boolean }) => {
-  const notify = useNotify();
-  const askConfirm = useConfirm();
   const filesQ = usePvFiles(pvId);
   const upload = useUploadPvFile();
   const remove = useDeletePvFile();
-  const [viewingId, setViewingId] = useState<string | null>(null);
-
-  const files = filesQ.data?.files ?? [];
-
-  const view = async (fileId: string, fileName: string) => {
-    setViewingId(fileId);
-    try {
-      const { url } = await fetchPvFileBlobUrl(pvId, fileId);
-      window.open(url, '_blank', 'noopener');
-      /* Revoke AFTER the new tab has loaded the blob — immediate revocation
-         races the open and shows a blank tab. */
-      setTimeout(() => { URL.revokeObjectURL(url); }, 60_000);
-    } catch (e) {
-      void notify({ title: `Couldn't open ${fileName}`, body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
-    } finally {
-      setViewingId(null);
-    }
-  };
-
-  const onPick = async (list: FileList | null) => {
-    if (!list || list.length === 0) return;
-    for (const f of [...list]) {
-      try {
-        await upload.mutateAsync({
-          pvId,
-          file: { name: f.name, mime: f.type || 'application/pdf', dataBase64: await fileToBase64(f) },
-        });
-      } catch (e) {
-        void notify({ title: `${f.name} did not attach`, body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
-        break;
-      }
-    }
-  };
-
-  const onDelete = async (fileId: string, fileName: string) => {
-    if (!(await askConfirm({ title: `Remove ${fileName}?`, body: 'The stored file is deleted with its row. A checked voucher refuses this — evidence locks with the document.', confirmLabel: 'Remove file', danger: true }))) return;
-    try {
-      await remove.mutateAsync({ pvId, fileId });
-    } catch (e) {
-      void notify({ title: 'Not removed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
-    }
-  };
-
   return (
-    <section className={styles.card}>
-      <div className={styles.cardHeader}>
-        <h2 className={styles.cardTitle}>Files</h2>
-        {canWrite && !cancelled && (
-          <label style={{ fontSize: 'var(--fs-12)', color: 'var(--c-orange)', cursor: 'pointer', fontWeight: 600 }}>
-            📎 {upload.isPending ? 'Attaching…' : 'Attach file'}
-            <input type="file" multiple accept={PV_FILE_ACCEPT}
-              aria-label="Attach voucher files" style={{ display: 'none' }}
-              disabled={upload.isPending}
-              onChange={(e) => { void onPick(e.target.files); e.target.value = ''; }} />
-          </label>
-        )}
-        <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
-          {files.length} file{files.length === 1 ? '' : 's'}{locked ? ' · locked with the checked voucher' : ''}
-        </span>
-      </div>
-      <div className={styles.cardBody}>
-        {files.length === 0 ? (
-          <p style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-13)', margin: 0 }}>
-            No files yet. A voucher opened from Scan bills attaches its scans here by itself; use Attach file for anything else.
-          </p>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            {files.map((f) => (
-              <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', fontSize: 'var(--fs-13)', padding: '4px 0' }}>
-                <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--fg-muted)', width: 18, textAlign: 'right' }}>{f.sort_no}</span>
-                <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.file_name}</span>
-                <span style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-12)', whiteSpace: 'nowrap' }}>
-                  {f.mime === 'application/pdf' ? 'PDF' : 'image'} · {fmtSize(f.size_bytes)} · {fmtDate(f.created_at)}
-                </span>
-                <Button variant="secondary" size="sm" disabled={viewingId === f.id} onClick={() => void view(f.id, f.file_name)}>
-                  {viewingId === f.id ? 'Opening…' : 'View'}
-                </Button>
-                {canWrite && !locked && !cancelled && (
-                  <button type="button" aria-label={`Remove ${f.file_name}`} disabled={remove.isPending}
-                    onClick={() => void onDelete(f.id, f.file_name)}
-                    style={{ border: 'none', background: 'none', cursor: 'pointer', color: 'var(--fg-muted)', padding: 2 }}>
-                    <Trash2 size={14} strokeWidth={1.75} />
-                  </button>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </section>
+    <DocFilesCard
+      files={filesQ.data?.files ?? []}
+      canWrite={canWrite} locked={locked} closed={cancelled}
+      lockedNote=" · locked with the checked voucher"
+      emptyNote="No files yet. A voucher opened from Scan bills attaches its scans here by itself; use Attach file for anything else."
+      removeBody="The stored file is deleted with its row. A checked voucher refuses this — evidence locks with the document."
+      attachAriaLabel="Attach voucher files"
+      uploading={upload.isPending} removing={remove.isPending}
+      onUpload={(file) => upload.mutateAsync({ pvId, file })}
+      onRemove={(fileId) => remove.mutateAsync({ pvId, fileId })}
+      openUrl={(fileId) => fetchPvFileBlobUrl(pvId, fileId)}
+    />
   );
 };

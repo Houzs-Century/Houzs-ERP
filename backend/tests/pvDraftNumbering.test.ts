@@ -15,13 +15,12 @@ import { checkPaymentVoucherHandler } from '../src/scm/routes/payment-vouchers';
 
 const CO = 2;
 
-const yymm = (() => {
-  const d = new Date();
-  return `${String(d.getFullYear()).slice(2)}${String(d.getMonth() + 1).padStart(2, '0')}`;
-})();
+/* The voucher is dated 2026-07-05: its series follows the VOUCHER date, not
+   the day it is checked (owner 2026-09-07). Draft and formal alike. */
+const yymm = '2607';
 
 const PV: Row = {
-  id: 'pv1', pv_number: `2990-Draft-${yymm}-001`, voucher_date: '2026-09-05',
+  id: 'pv1', pv_number: `2990-Draft-${yymm}-001`, voucher_date: '2026-07-05',
   payee_name: 'HOOKKA', supplier_id: 's1', credit_account_code: '310-0010',
   currency: 'MYR', exchange_rate: 1, purpose: 'x', notes: null, total_sen: 100000,
   status: 'DRAFT', posted_at: null, created_at: '2026-09-05', created_by: 'u',

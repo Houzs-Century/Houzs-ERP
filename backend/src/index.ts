@@ -30,6 +30,7 @@ import roles from "./routes/roles";
 import positions from "./routes/positions";
 import positionCapabilities from "./routes/position-capabilities";
 import departments from "./routes/departments";
+import documentRefs from "./routes/documentRefs";
 import companies from "./routes/companies";
 import tableLayouts from "./routes/tableLayouts";
 import notifications from "./routes/notifications";
@@ -109,6 +110,7 @@ import { drainEmailOutbox } from "./services/email";
 import { runClientErrorDigest } from "./services/clientErrors";
 import { runSlaEscalation } from "./services/assrEscalation";
 import { runAssrAlerts, runAssrDailyDigest } from "./services/assrAlerts";
+import { runOverdueEscalation } from "./services/announcementEscalation";
 import { runScheduledLeadTimeActivations } from "./services/assrLeadTime";
 import { runProjectDueReminders } from "./services/projectReminders";
 // Weekly OCR rule-distill (scan-so self-evolution). Run via the daily 02:00
@@ -373,6 +375,9 @@ app.route("/api/roles", roles);
 app.route("/api/positions", positions);
 app.route("/api/position-capabilities", positionCapabilities);
 app.route("/api/departments", departments);
+// Document reference numbers + document types (mig 20260906T1417): the
+// router carries its own /document-refs and /document-types prefixes.
+app.route("/api", documentRefs);
 app.route("/api/companies", companies);
 // Column layouts: this user's own (synced across their machines) + each
 // company's admin-set default. Any signed-in user reads and writes their OWN
@@ -625,6 +630,17 @@ export default {
       );
       // Lead-time scheduled activations (mig 080). Cheap: one indexed SELECT
       // for pending rows whose scheduled_for is past.
+      // Announcements: a notice that requires acknowledgement and is past the
+      // 48h overdue window gets its supervisors notified once (owner
+      // 2026-09-06). Cheap: one indexed-ish SELECT, work only for due rows.
+      ctx.waitUntil(
+        runOverdueEscalation(env)
+          .then((r) => {
+            if (r.escalated > 0 || r.scanned > 0)
+              console.log(`[cron ann-escalation] ${JSON.stringify(r)}`);
+          })
+          .catch((e) => console.error("[cron ann-escalation]", e))
+      );
       ctx.waitUntil(
         runScheduledLeadTimeActivations(env)
           .then((r) => {

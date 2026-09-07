@@ -70,6 +70,17 @@ GL in the same request, so this key also opens the standalone post door
 (docs/modules/payment-voucher.md §0b). Declared like every key, deliberately granted to **no** seed role: only
 `*` (Owner / IT Admin) can approve until the owner assigns it to a position.
 
+**`announcements.approve`** (approval workflow, owner 2026-09-06, mig
+`20260906T1509`) is the announcements approval desk: every notice — the MD's
+own included — is published by this holder's Approve click (`POST
+/api/announcements/:id/approve` / `:id/reject`), which also mints the
+`[DEPT]-ANN-[YYMM]-[NNNN]` reference number. The verb value is `approve` (the
+catalogue's `verb` union gained it). Conferred by `*` like any other key, but
+the approval-needed bell notice goes only to roles that LIST the key
+(`usersHoldingPermission` excludes the wildcard) — so give it to the MD's role
+rather than relying on Owner. Granted to **no** seed role. Contract:
+docs/modules/announcements.md §3 "Approval workflow".
+
 `EXPLICIT_APPROVAL_KEYS` is a separate rule on top: the four checklist-approval
 keys are NOT conferred by `*`. `holdsChecklistApproval()` is the reader; the
 Owner role carries them explicitly instead.

@@ -25,7 +25,8 @@ books which entry":
 |---|---|---|---|
 | Sales invoice issued | Dr AR / Cr SALES | `SI` | `SI_REVERSAL` |
 | Purchase invoice posted | Dr each group's purchase account (601-x/602 by scm.acc_item_group_accounts; unbound group REFUSES) / Cr AP | `PI` | `PI_REVERSAL` |
-| Payment voucher posted | Dr expense legs / Cr bank-or-AP header | `PV` | `PV_REVERSAL` |
+| AP invoice posted (non-stock supplier bill) | Dr each line's own account / Cr AP control (400 or 405 by the supplier's code) | `API` | `API_REVERSAL` |
+| Payment voucher posted | Dr expense legs / Cr bank-or-AP header; a supplier payment's Dr leg on the AP control carries the supplier as party (since 2026-09-06) | `PV` | `PV_REVERSAL` |
 | Manual journal (JV) | operator lines, draft first | `MANUAL` | `MANUAL_REVERSAL` |
 | Customer payment collected | Dr CASH/BANK/transit / Cr AR | `SOPAY` / `SIPAY` | `*_REVERSAL` |
 | Daily cash close | Dr/Cr OVER_SHORT / Cr/Dr CASH | `CASHUP` | (correct by JV) |
@@ -84,6 +85,21 @@ marker other teams can rely on.
 `scm.payment_voucher.post` (owner decision recorded in-file; dedicated
 `acc.*` keys arrive with the phase-1 UI).
 
+**The bridge is per router (docs/bugs/0648, 2026-09-06).** `scm/index.ts`
+mounts no global `supabaseAuth`; every finance router —
+`backend/src/scm/routes/accounting.ts`, `backend/src/scm/routes/payment-vouchers.ts`,
+`backend/src/scm/routes/receipts.ts`, `backend/src/scm/routes/other-debtors.ts`,
+`backend/src/scm/routes/ap-invoices.ts` — declares `router.use('*', supabaseAuth)`
+itself, because that middleware is what stashes the real caller as
+`houzsUser` (the only source `hasHouzsPerm` reads) and hands out
+`c.get('supabase')`. Three of them shipped without the line and answered
+500 / 403 in production while every test passed (the harnesses set both by
+hand); `backend/tests/scmRouterBridge.test.ts` now parses the mounts in
+`scm/index.ts` and refuses a router without it (a by-design skip must carry
+a reason). A route harness that mounts a router sets `user` to the pinned
+system-staff id (`SCM_SYSTEM_STAFF_ID`), the bridge's own "already
+translated" mark, so it steps aside and the hand-set client stays in force.
+
 Reads: `GET /accounts`, `/journal-entries`, `/journal-entries/:id`, `/gl`
 (v_gl_entries), `/balances` (v_account_balances), `/ar-aging`, `/ap-aging` —
 all company-scoped, all paginated past PostgREST's 1000-row cap.
@@ -106,6 +122,144 @@ own lever (默认银行我可以自己maintenance), surfaced as the Default bank
 on /scm/settlement-setup and pre-filling every voucher's Paid From
 (docs/modules/payment-voucher.md §0c). Contract:
 `backend/src/scm/routes/accountRoles.test.ts`.
+
+**AP Invoices — the non-stock supplier bill (2026-09-06).** AutoCount's A/P
+Invoice, the owner's ask verbatim: 可以不可以像 autocount 这样 purchase invoice
+一边,然后再多一个 AP invoice,这样我就可以把 other creditor 的 invoice 放过去,
+也不会影响 operation 那边的 purchase invoice — and, confirmed: 我想要两个都看到,
+现有的 purchase invoice remain. `scm.ap_invoices` + `scm.ap_invoice_lines`
+(`backend/src/db/migrations-pg/20260906T1500_ap_invoices.sql`), numbered
+`{co}API-YYMM-NNN` (a new series, his prefix), MYR only in this first cut.
+Routes `/scm/ap-invoices` (`backend/src/scm/routes/ap-invoices.ts`, PV key
+family, finance area; settle twin `backend/src/scm/lib/ap-invoice-settlement.ts`):
+`GET /` lists BOTH kinds —
+the operational purchase invoices as a read-only mirror (`kind: 'PI'`,
+POSTED / PARTIALLY_PAID / PAID / ON_HOLD) beside the AP invoices raised here
+(`kind: 'API'`) — `POST /` raises a DRAFT (1–50 lines, each a leaf
+non-control account: 父户不记账 / 由模块过账), `PATCH /:id` edits a draft,
+`POST /:id/post` books through the gate (rule `apInvoiceLines`: Dr each
+line's own account / Cr the supplier's AP control, 400 or 405 by the
+supplier's code, source `API`, dated by the invoice; a second post echoes),
+`POST /:id/cancel` writes the contra (`API_REVERSAL`) and refuses a bill with
+money on it (`has_payments`). It is PAID by the same AP Payment that pays
+purchase invoices: `pv_allocations` names a PI **or** an AP invoice
+(`ap_invoice_id`, CHECK exactly one), the post settles it through
+`scm.settle_api_paid_sen` — the twin of `settle_pi_paid_sen`, same clamp
+(lib/ap-invoice-settlement.ts) — and cancel unwinds exactly what was
+applied; `v_ap_aging` is a UNION of both with a trailing `kind`. The five
+journals file it under PURCHASE. Pinned by tests/apInvoices.test.ts.
+Screens: **/scm/ap-invoices** (`frontend/src/pages/scm-v2/ApInvoices.tsx`,
+Finance menu "AP Invoices") — one table with a Kind column, purchase
+invoices linking to their own page, AP invoices opening a detail card with
+Post / Cancel, and a New-AP-invoice card whose lines pick only leaf
+non-control accounts; the **New AP Payment** picker lists a supplier's
+open AP invoices beside its purchase invoices (an `AP` tag on the row) and
+sends `apInvoiceId` for those; the AP Aging tab shows the kind. Pinned by
+ApInvoices.test.tsx + PaymentVoucherNew.test.tsx.
+
+**The AP invoice's paper — files, OCR, the bundle (2026-09-06; owner, told
+the first cut had neither: 做,附件也一起做,bundle 也带上).** The supplier's bill
+LIVES with the AP invoice as the scanned bill lives with its voucher:
+`scm.acc_ap_invoice_files` (`backend/src/db/migrations-pg/20260906T2100_acc_ap_invoice_files.sql`,
+the shape of `acc_pv_files`, FK `ON DELETE CASCADE`), bytes in the SLIPS R2
+bucket under `ap-invoice-files/<company>/<invoice>/<uuid>.<ext>`, routes
+`/ap-invoices/:id/files` (`backend/src/scm/routes/ap-invoice-files.ts`,
+mounted before `/:id`). The four handlers come from ONE factory,
+`backend/src/scm/lib/doc-files.ts` — the MIME allowlist, the 20 MB cap, the
+key layout and the upload/list/stream/delete bodies — fed two specs: the AP
+invoice's and the PV's (`backend/src/scm/routes/pv-files.ts` keeps only its
+spec and the print bundle). The AP spec's rules: upload takes the create
+keys; a CANCELLED bill takes no more files (409 `invoice_cancelled`); delete
+is refused once POSTED (409 `evidence_locked` — no check layer, so the ledger
+is the lock; a posted bill still takes a late scan). **The bundle**: `POST
+/payment-vouchers/print-bundle` appends, after each voucher's own files, the
+files of every AP invoice that voucher pays (`pv_allocations.ap_invoice_id`,
+allocation order, `loadDocAttachments` labelling each under its invoice
+number so a notice page says whose); purchase-invoice allocations add
+nothing. **OCR**: the New card's **Scan bill** posts to the shared `POST
+/payment-vouchers/extract` (`backend/src/acc/bill-extract.ts`) and pre-fills
+the supplier (the server's match), the supplier's invoice number, both dates
+and the lines — the account from vendor memory only, never a model guess —
+and a create now TEACHES memory (`learnVendorMemory` with source
+`AP_INVOICE`: supplier name → the first line's account, purpose
+SUPPLIER_PAYMENT; the skip that keeps AP *payments* from teaching stays for
+vouchers). The read pages attach after save, scan order. Screens: the New
+card and a Files card on the detail — `frontend/src/vendor/scm/components/DocFilesCard.tsx`,
+the one card the PV detail's `PvFilesCard` and the AP page's
+`ApInvoiceFilesCard` both bind (hooks in
+`frontend/src/vendor/scm/lib/ap-invoice-queries.ts`; the authed byte reader
+`fetchDocFileBlobUrl` in `payment-voucher-queries.ts` takes the path).
+Pinned by `backend/tests/apInvoiceFiles.test.ts` (upload/list/stream/delete
+on the fake R2 binding + the bundle carrying a paid bill's files after the
+voucher page), tests/apInvoices.test.ts (a save teaches memory) and
+ApInvoices.test.tsx (scan pre-fill + attach after save; the Files card's
+draft/posted rules).
+
+**Round 2 (owner, the same evening, screenshots in hand).** The supplier box
+wears the form's `fieldInput` dress (it was a borderless strip he could not
+tell was a field: supplier 筛选无法按下选择), the lines are a table in HIS
+order — account number, description, amount — with a remove button, the
+bill carries an overall **Description** (the `notes` column, returned as
+`description` on the list rows of BOTH kinds and shown on the list, the
+detail and the listing), the list filters by supplier (the suppliers ON the
+list, not the registry, so every choice shows something), and **Print
+listing** (`frontend/src/vendor/scm/lib/ap-invoice-listing-pdf.ts`:
+`apListingTable` pure, `generateApListingPdf` on the shared letterhead,
+landscape A4, the three money columns totalled in the foot) prints exactly
+the rows on screen after the kind and supplier filters — paper and screen
+never disagree. Reads (`GET /`, `GET /:id`) ride the finance area guard like
+the receipts and other-debtors lists; the PV keys gate the writes. Pinned by
+`ap-invoice-listing-pdf.test.ts` (cells, totals, title, preview exit) and
+ApInvoices.test.tsx (filter + print what is shown, line order + remove, the
+description on list and detail).
+
+**Round 3 (owner, the same night; each ask checked on the live page first).**
+A bill OPENS OVER the list in `frontend/src/vendor/scm/components/Modal.tsx`
+(点开时他是跑上去 — the detail used to be a card pushed in above the list) with
+Edit · Copy · Post · Cancel bill and its Files card; the one form behind New,
+Edit and Copy is `frontend/src/pages/scm-v2/ApInvoiceForm.tsx` (Insert adds
+a line and lands on its account picker, Enter on an amount moves down; the
+amount is the shared `MoneyInput`; the scan sits on New and Copy). **Every
+field can be edited** (edit 这个不能全部都设成可以改吗): `PATCH /:id` takes a
+DRAFT as before and RE-POSTS a posted bill — the old journal gets its contra
+dated as the old bill was, a fresh entry books the bill as saved, one active
+entry stands — with three guards: money already paid caps the new total
+(`total_below_paid`), a bill with money on it keeps its supplier
+(`supplier_locked`), a cancelled bill refuses. **Copy** raises a new bill from
+the old one's supplier, description and lines (no supplier number, today's
+date). Three shared components moved for this round and for every page
+that uses them: `frontend/src/vendor/scm/components/SearchCombo.tsx` scrolls
+the highlighted option into view as ↓ moves and opens ON the first option;
+`frontend/src/vendor/scm/components/DateField.tsx` selects a pre-filled date
+on focus and masks typed digits (31032026 → 31/03/2026, `maskDmy`);
+`frontend/src/vendor/scm/components/MoneyInput.tsx` rests as 1,800.00
+(`fmtMoneyAtRest`) and edits plain. Pinned by `backend/tests/apInvoiceEdit.test.ts`,
+ApInvoices.test.tsx (pop-out, Edit, Copy, Insert / Enter, amounts),
+`SearchCombo.keys.test.tsx`, `DateField.mask.test.tsx`, `MoneyInput.test.tsx`.
+
+**The AutoCount sections (2026-09-06).** Every account carries a `section`
+(`scm.accounts.section`, migration 20260906T0900) — the top node the
+accountant's chart hangs it under: CAPITAL, RETAINED EARNING, FIXED ASSETS,
+OTHER ASSETS, CURRENT ASSETS, CURRENT / LONG TERM / OTHER LIABILITIES,
+SALES, SALES ADJUSTMENTS, COST OF GOODS SOLD, OTHER INCOMES, EXTRA-ORDINARY
+INCOME, EXPENSES, TAXATION, APPROPRIATION A/C. The section DECIDES the
+five-way `account_type` (CAPITAL is EQUITY), never the reverse. One home:
+`backend/src/scm/lib/account-sections.ts` — the ordered vocabulary, the
+seed rule (`defaultSectionFor`, the code ranges the migration ran once over
+his 397 codes) and the section→type map; `GET /accounting/chart` and `GET
+/accounting/accounts` hand the list down, so the chart page's header rows,
+its Section pickers, the xlsx import (the heading now travels with the row)
+and the Item Groups picker all read the server's list and carry no copy.
+The owner's rule (你先帮我分类,然后我自己还能调动 — 用拖拉式): the chart page
+renders one header row per section, foldable, and dropping a header-level
+account on one re-shelves it — `PUT /accounting/chart/update {section}`
+sets the section AND the type it decides on the account and its whole
+subtree, in every company carrying the code; a CHILD refuses with its
+header named (子户跟着 header 走, `section_child`), and a parent in another
+section refuses at create (`section_mismatch`). Statements read the section
+(next PR); the migration's CASE mirrors `defaultSectionFor` — change one,
+change both. Pinned by tests/accountingChart.test.ts §sections +
+ChartOfAccounts.test.tsx.
 
 **The chart maintenance surface (2026-09-03, roadmap A)**: `GET
 /accounting/chart` unions every GRANTED company's accounts into one row per
@@ -220,6 +374,32 @@ Contracts: `backend/tests/otherDebtors.test.ts` (the route contract with
 the REAL engine posting into the harness), `OtherDebtors.test.tsx`
 (registry, bill lines, tick-full/type-partial, the four-layer buttons).
 Tables land in migration 0350.
+
+**Other Debtors, round 2 (2026-09-06 — 刚刚说的功能 … other debtor bill 那边
+也要有, the AP invoice's round 3 carried to its sibling).** The bill is a
+pop-out form (`DebtorBillForm.tsx` inside `Modal`, opened from the page
+`frontend/src/pages/scm-v2/OtherDebtors.tsx`): lines in the owner's
+order — account, description, amount — Insert adds a line and lands on its
+account, Enter on an amount moves down (adding a line at the end), amounts
+read 1,800.00 (`MoneyInput`), the date takes bare digits (`DateField`).
+Every bill can be EDITED — every field, `PATCH /other-debtors/bills/:billId`
+(`updateDebtorBillHandler`) — and because a debtor bill is on the books from
+birth, an edit RE-POSTS: the old ODB gets its contra dated as the old bill
+was (`reverseJournal` with `entryDate`, the old date snapshotted before the
+row is touched), then a fresh ODB dated as saved books the bill as it now
+reads, both through the one gate; the reply says `reposted: true` and names
+the new `jeNo`. A second edit contra's the live entry, never the voided one
+(the engine skips `reversed` rows). Guards: `total_below_received` (money
+received caps the total), `cancelled` refuses (raise it again instead), each
+edited line walks `requireLeafAccount` so the control still refuses, and the
+debtor is fixed — a bill belongs to its debtor. COPY starts a NEW bill from
+an old one: lines and description ride over, today's date, a new number on
+post. The detail (`debtorDetailHandler`) hands each bill its `lines` so Edit
+and Copy start from them; the receipt's amounts wear the same money dress.
+Pinned in `otherDebtors.test.ts` (re-post dates, the second edit, refusals
+leaving the books alone) and `OtherDebtors.test.tsx` (dialog, Insert/Enter,
+Edit's cap and payload, Copy). The plain Payment Voucher's line cards got
+the same Insert/Enter manners the same day — payment-voucher.md.
 
 **Receipts (2026-09-03, later the same day: 未来如果我收到其他的钱不是
 under other debtor 的呢? 就我只想开 receipt 罢了)**: /scm/receipts is the
@@ -443,7 +623,12 @@ entry is dated by the INVOICE (money lands back in its own month), engine
 idempotency holds, and an unbound group fails THAT invoice by name instead of
 dying. `?dryRun=1` lists the plan without writing; the write pass batches
 (limit ≤ 25 per call, `remaining` in the response) and re-running is a no-op.
-Handler in accounting-pi-backfill.ts; pinned by tests/piPeriodicBackfill.test.ts.
+A reshape's contra carries the ORIGINAL journal's date (not the run day —
+docs/bugs/0647: the first live run dated 19 contras in September and left
+July/August's 330 and AP over-stated), so the invoice's month cancels within
+itself; `reversePiAccounting` takes that date as an option and keeps
+today's for a real cancel. Handler in accounting-pi-backfill.ts; pinned by
+tests/piPeriodicBackfill.test.ts.
 The owner presses it himself: the **PI backfill card** at the foot of the Item
 Groups tab (PiBackfill.tsx) runs Dry run first — 执行写入 stays disabled until
 a preview exists — then loops the batch until `remaining` is 0, stopping the
@@ -475,15 +660,23 @@ owner signs that design off separately.
 on /scm/accounting, standard layout first (the owner iterates the 样板 later
 — his call; the NUMBERS ship now). One source — `v_gl_entries`, posted and
 not reversed — so they can never argue with the Journal/GL/TB tabs beside
-them. The P&L follows his AutoCount arithmetic under the periodic scheme:
-trading income = INCOME outside the 700-0000 tree (the chart badge's own
-walker), cost of sales = the 6xx EXPENSE codes with the month-close 620 pair
-included (gross profit therefore reads purchases + opening − closing with no
-stock arithmetic in the report itself), other income = the 700 tree, expenses
-= the rest; the balance sheet cuts the same read at a date, shows cumulative
-earnings inside equity, and carries its own self-check line — assets −
-liabilities − equity − earnings prints BALANCED at zero or the difference in
-red, never absorbed. Handlers in accounting-reports.ts
+them. Both CLASSIFY BY SECTION (2026-09-06 — the AutoCount tree stored on
+`scm.accounts.section`, so an account the owner drags on the chart page
+moves in the statements too, the way AutoCount's do; one home
+`lib/account-sections.ts`, a row with no section takes its type's default
+shelf by the same rule the migration seeded with). The P&L follows his
+AutoCount arithmetic under the periodic scheme: trading income = SALES +
+SALES ADJUSTMENTS, cost of sales = COST OF GOODS SOLD with the month-close
+620 pair included (gross profit therefore reads purchases + opening −
+closing with no stock arithmetic in the report itself), other income =
+OTHER INCOMES + EXTRA-ORDINARY INCOME, expenses = EXPENSES, then TAXATION
+under a profit-before-tax line (shown only when something posted there —
+the layout otherwise stays as he left it); the balance sheet cuts the same
+read at a date, groups by the section's type with every line naming its
+section in AutoCount order, shows cumulative earnings inside equity, and
+carries its own self-check line — assets − liabilities − equity − earnings
+prints BALANCED at zero or the difference in red, never absorbed. Handlers
+in accounting-reports.ts
 (`GET /accounting/reports/pnl?from&to`, `/reports/balance-sheet?asOf`), UI in
 Reports.tsx; pinned by tests/accountingReports.test.ts + Reports.test.tsx.
 
@@ -685,6 +878,30 @@ stamps `journal_class` per row and filters on `?journal=`; the JE tab carries
 the five chips and a Journal column. The manual JV is simply the GENERAL
 journal — the owner's own vocabulary, unchanged. Pinned by
 tests/journalClasses.test.ts.
+
+**Document numbers follow the document date (owner 2026-09-07: 要根据文件日期,
+而不是文件几时 create 的日期).** Six finance series take their YYMM from the
+paper's own date — the AP invoice from `invoice_date`, the payment voucher
+(the Draft number at birth AND the formal `{co}{letter}PV` number at Checked)
+from `voucher_date`, the Official Receipt (draft and formal) from the
+payment's `paid_at`, the general receipt from `receipt_date`, the Other
+Debtor bill and receipt from theirs — through one helper, `docMonthTag` in
+`backend/src/scm/lib/doc-no.ts` (blank or unparseable → today in Malaysia, so
+the before-08:00-on-the-1st UTC slip is gone with it). A March bill keyed in
+September sits in March's series. Editing the date afterwards does NOT
+re-mint (his rule: 单据存了后改日期号码不要重发) — a number is an id, not a
+date. The operational series (SO, PO, PI, SI, DO, GRN, returns, trips…) keep
+the keyed day on purpose (那些别碰先). The one paper issued before this rule,
+`2990-API-2609-001` (dated 31/03/2026), moves to `2990-API-2603-001` through
+`.github/workflows/repair-doc-number.yml` (plan → apply, confirm
+`RENUMBER DOCUMENT`; script `backend/scripts/repair-doc-number.mjs`), which
+also renames the journal's `source_doc_no` (the engine finds a document's
+entry by it) and the number as text in narration, line notes and the audit
+ledger, and drops the emptied 2609 counter so September's next bill is 001
+again. Pinned in `doc-no.test.ts`, `apInvoices.test.ts`,
+`pvDraftNumbering.test.ts`, `officialReceipts.test.ts`, `otherDebtors.test.ts`
+and `receipts.test.ts` — each with a document dated in another month than
+the test runs in.
 
 **Official Receipts (GL redesign item 9).** Every customer payment births a
 receipt (`scm.acc_receipts`, one per payment forever — a reprint reprints,

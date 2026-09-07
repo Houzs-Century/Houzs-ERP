@@ -28,6 +28,7 @@ import { takePvFiles } from '../../vendor/scm/lib/pv-file-handoff';
 import { useIdempotencyKey } from '../../lib/idempotency';
 import { useAccounts, useAccountRoles, type Account } from '../../vendor/scm/lib/accounting-queries';
 import { usePurchaseInvoices } from '../../vendor/scm/lib/purchase-invoice-queries';
+import { useApInvoices } from '../../vendor/scm/lib/ap-invoice-queries';
 import { useSuppliers, useSupplierDetail } from '../../vendor/scm/lib/suppliers-queries';
 import { useActiveCurrencies, rateFor } from '../../vendor/scm/lib/currencies-queries';
 import { CurrencySelect } from '../../vendor/scm/components/CurrencySelect';
@@ -73,7 +74,11 @@ const newLine = (): DraftLine => ({
 /* One outstanding-PI row in the "Apply to PI" picker, with the amount the
    operator chooses to apply (centi, MYR). */
 type PiAlloc = {
+  /** The row's id — a purchase invoice's, or (kind API) an AP invoice's. */
   piId:               string;
+  /** A purchase invoice (stock) or an AP invoice (the non-stock bill, owner
+      2026-09-06) — both settle here, the payload names which. */
+  kind:               'PI' | 'API';
   invoiceNumber:      string;
   supplierInvoiceRef: string | null;
   invoiceDate:        string | null;
@@ -309,6 +314,25 @@ export const PaymentVoucherNew = () => {
     setLines((prev) => prev.map((l) => (l.rid === rid ? { ...l, ...patch } : l)));
   const dropLine = (rid: string) => setLines((prev) => (prev.length <= 1 ? prev : prev.filter((l) => l.rid !== rid)));
   const addLine  = () => setLines((prev) => [...prev, newLine()]);
+  /* Insert adds a line and LANDS on its account (owner 2026-09-06: 按 Ins 直接
+     加然后直接跳到那一行去输入资料 — the AP invoice's manners, here too);
+     Enter on an amount hops to the next line's account, adding one when
+     there is none. The landing happens after React has drawn the card. */
+  const [landOn, setLandOn] = useState<string | null>(null);
+  useEffect(() => {
+    if (landOn == null) return;
+    document.querySelector<HTMLInputElement>(`[data-line="${landOn}"] input[role="combobox"]`)?.focus();
+    setLandOn(null);
+  }, [landOn, lines]);
+  const addLineAndLand = () => {
+    const l = newLine();
+    setLines((prev) => [...prev, l]);
+    setLandOn(l.rid);
+  };
+  const hopFrom = (rid: string) => {
+    const next = lines.at(lines.findIndex((l) => l.rid === rid) + 1);
+    if (next) setLandOn(next.rid); else addLineAndLand();
+  };
 
   const linesTotalSen = useMemo(() => lines.reduce((s, l) => s + l.amountSen, 0), [lines]);
 
@@ -350,13 +374,25 @@ export const PaymentVoucherNew = () => {
   /* AP Payment: every row starts at 0 — TICK pays an invoice in full, typing
      pays part of it, and the voucher total FOLLOWS the ticks (the reverse of
      the old cascade, where lines drove a guessed spread). */
+  /* The supplier's open AP INVOICES (non-stock bills) list beside the PIs —
+     the owner's 我想要两个都看到 — same tick, same partial, same clamp. */
+  const apListQ = useApInvoices('API');
+  const outstandingApiRows = useMemo(() => {
+    if (!applyToPi) return [];
+    return (apListQ.data?.rows ?? []).filter((r) =>
+      String(r.supplierId ?? '') === supplierId
+      && (r.status === 'POSTED' || r.status === 'PARTIALLY_PAID')
+      && r.outstandingSen > 0);
+  }, [applyToPi, apListQ.data, supplierId]);
+
   const allocations: PiAlloc[] = useMemo(() => {
-    return outstandingPiRows.map((r) => {
+    const fromPis: PiAlloc[] = outstandingPiRows.map((r) => {
       const piId = String(r.id ?? '');
       const outstanding = Number(r.total_sen ?? 0) - Number(r.paid_sen ?? 0);
       const amountSen = Math.max(0, Math.min(allocAmounts[piId] ?? 0, outstanding));
       return {
         piId,
+        kind:               'PI' as const,
         invoiceNumber:      String(r.invoice_number ?? piId),
         supplierInvoiceRef: (r.supplier_invoice_ref ?? null) as string | null,
         invoiceDate:        (r.invoice_date ?? null) as string | null,
@@ -364,7 +400,18 @@ export const PaymentVoucherNew = () => {
         amountSen,
       };
     });
-  }, [outstandingPiRows, allocAmounts]);
+    const fromApis: PiAlloc[] = outstandingApiRows.map((r) => ({
+      piId: r.id,
+      kind: 'API' as const,
+      invoiceNumber: r.invoiceNumber,
+      supplierInvoiceRef: r.supplierInvoiceRef,
+      invoiceDate: r.invoiceDate,
+      outstandingSen: r.outstandingSen,
+      amountSen: Math.max(0, Math.min(allocAmounts[r.id] ?? 0, r.outstandingSen)),
+    }));
+    /* Oldest first across both kinds — the order you settle a supplier in. */
+    return [...fromPis, ...fromApis].sort((a, b) => String(a.invoiceDate ?? '').localeCompare(String(b.invoiceDate ?? '')));
+  }, [outstandingPiRows, outstandingApiRows, allocAmounts]);
 
   const allocatedSen = useMemo(() => allocations.reduce((s, a) => s + a.amountSen, 0), [allocations]);
 
@@ -442,7 +489,10 @@ export const PaymentVoucherNew = () => {
         amountSen:      l.amountSen,
       }));
     const sendAllocations = applyToPi
-      ? allocations.filter((a) => a.amountSen > 0).map((a) => ({ piId: a.piId, amountSen: a.amountSen }))
+      ? allocations.filter((a) => a.amountSen > 0).map((a) => (
+        a.kind === 'API'
+          ? { apInvoiceId: a.piId, amountSen: a.amountSen }
+          : { piId: a.piId, amountSen: a.amountSen }))
       : [];
     try {
       const res = await create.mutateAsync({
@@ -667,11 +717,13 @@ export const PaymentVoucherNew = () => {
             </div>
           )}
           {lines.map((l, idx) => (
-            <div key={l.rid} style={{
-              background: 'var(--c-paper)', border: '1px solid var(--line)',
-              borderRadius: 'var(--radius-lg)', padding: 'var(--space-4)',
-              display: 'flex', flexDirection: 'column', gap: 'var(--space-3)',
-            }}>
+            <div key={l.rid} data-line={l.rid}
+              onKeyDown={(e) => { if (e.key === 'Insert') { e.preventDefault(); addLineAndLand(); } }}
+              style={{
+                background: 'var(--c-paper)', border: '1px solid var(--line)',
+                borderRadius: 'var(--radius-lg)', padding: 'var(--space-4)',
+                display: 'flex', flexDirection: 'column', gap: 'var(--space-3)',
+              }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-3)' }}>
                 <span style={{ fontFamily: 'var(--font-button)', fontSize: 'var(--fs-12)', fontWeight: 700, letterSpacing: '0.10em', color: 'var(--fg-muted)' }}>LINE {idx + 1}</span>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
@@ -706,8 +758,9 @@ export const PaymentVoucherNew = () => {
               <div className={styles.formGrid4} style={{ gridTemplateColumns: 'repeat(2, 1fr)' }}>
                 <label className={styles.field}>
                   <span className={styles.fieldLabel}>Amount (MYR)</span>
-                  <MoneyInput bare valueSen={l.amountSen}
+                  <MoneyInput bare valueSen={l.amountSen} aria-label={`line ${idx + 1} amount`}
                     onCommit={(sen) => setLine(l.rid, { amountSen: sen ?? 0 })}
+                    onKeyDown={(e) => { if (e.key === 'Enter') hopFrom(l.rid); }}
                     inputClassName={styles.fieldInput} selectOnFocus />
                 </label>
               </div>
@@ -742,10 +795,16 @@ export const PaymentVoucherNew = () => {
               </p>
             ) : piListQ.isLoading ? (
               <p style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-13)' }}>Loading outstanding invoices…</p>
-            ) : allocations.length === 0 ? (
-              <p style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-13)' }}>This supplier has no outstanding purchase invoices.</p>
             ) : (
               <>
+                {/* No open invoice is NOT a dead end: the prepay box below
+                    still books the money as this supplier's advance. It used
+                    to hide behind this empty-list sentence — exactly when a
+                    prepay is the whole point (owner 2026-09-06: AP payment 时
+                    如何 advance pay). */}
+                {allocations.length === 0 ? (
+                  <p style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-13)' }}>This supplier has no outstanding invoices — a prepay below still books as their advance.</p>
+                ) : (
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
                   <thead>
                     <tr style={{ textAlign: 'left', color: 'var(--fg-muted)', fontSize: 'var(--fs-11)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
@@ -775,7 +834,12 @@ export const PaymentVoucherNew = () => {
                             style={{ width: 16, height: 16, accentColor: 'var(--c-orange)' }}
                           />
                         </td>
-                        <td style={{ padding: '6px 8px', fontFamily: 'var(--font-mono)' }}>{a.invoiceNumber}</td>
+                        <td style={{ padding: '6px 8px', fontFamily: 'var(--font-mono)' }}>
+                          {a.invoiceNumber}
+                          {a.kind === 'API' && (
+                            <span style={{ marginLeft: 6, fontSize: 'var(--fs-11)', fontFamily: 'inherit', color: 'var(--fg-muted)' }} title="AP invoice — a non-stock supplier bill">AP</span>
+                          )}
+                        </td>
                         <td style={{ padding: '6px 8px', whiteSpace: 'nowrap', color: 'var(--fg-muted)' }}>{fmtDate(a.invoiceDate)}</td>
                         <td style={{ padding: '6px 8px', color: a.supplierInvoiceRef ? 'var(--fg)' : 'var(--fg-muted)' }}>{a.supplierInvoiceRef || '—'}</td>
                         <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)', color: 'var(--fg-muted)' }}>{fmtRm(a.outstandingSen)}</td>
@@ -791,6 +855,7 @@ export const PaymentVoucherNew = () => {
                     ))}
                   </tbody>
                 </table>
+                )}
                 {/* 预付 — money for this supplier AHEAD of any invoice. Rides
                     the same voucher; the server records it as their advance,
                     knocked off later from the voucher that holds it. */}

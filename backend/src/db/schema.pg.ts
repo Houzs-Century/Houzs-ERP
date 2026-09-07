@@ -128,6 +128,10 @@ export const departments = pgTable("departments", {
   description: text("description"),
   color: text("color").notNull().default("64748b"),
   sort_order: integer("sort_order").notNull().default(0),
+  // The department's 2–4 letter code (mig 20260906T1417) — the [DEPT] segment
+  // of a document reference number (OPS-ANN-2609-0001). NULL = not assigned
+  // yet; unique case-insensitively (idx_departments_code_upper).
+  code: text("code"),
   // The department's LEAD, an explicit choice (mig-pg 0331) rather than the
   // derived one the Team screens inferred from manager_id. NULL = no lead yet
   // (the red "No lead" state), which is the default. ON DELETE SET NULL so

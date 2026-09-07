@@ -182,6 +182,15 @@ can't fit it and above offers more, and caps its height to the side
 actually available. The list itself is NEVER truncated: few visible rows
 must only ever mean few matches.
 
+**Insert and Enter on the line cards (2026-09-06, 刚刚说的功能这普通 payment
+也要有)**: on the plain voucher's lines, **Insert** adds a line and lands on
+its account picker, and **Enter on an amount** hops to the next line's
+account — adding a line when there is none — so a long voucher is typed
+without reaching for the mouse (`PaymentVoucherNew.tsx`, each card carries
+`data-line`; pinned in `PaymentVoucherNew.test.tsx`). The AP invoice's
+round-3 manners carried across, the same day the Other Debtor bill got them
+(accounting.md, "Other Debtors, round 2").
+
 **Paid From offers only money** (owner: paid from 应该只能选cash 和银行): the
 picker lists `acc_money` accounts, pre-filled from the company's
 `BANK_DEFAULT` role, and the server refuses any non-money credit account
@@ -229,15 +238,65 @@ GRN links, no supplier invoice ref, that paper belongs to the source).
 Contracts: the copy block of `PaymentVoucherNew.test.tsx`, the label pins
 of `row-menus-remaining-lists.test.ts`.
 
+## 0c2. An allocation names a PI or an AP invoice (2026-09-06)
+
+The AP INVOICE (docs/modules/accounting.md, the non-stock supplier bill) is
+paid by THIS document: `buildAllocations` takes `piId` **or** `apInvoiceId`
+per row (both, or neither, refused — `allocation_two_targets` /
+`allocation_pi_required`), the company guard has an AP twin
+(`allocationApInvoicesOutsideCompany`, which also refuses a DRAFT or
+CANCELLED bill), the post settles an AP row through
+`settleApInvoicePaidSen` (the twin clamp) and records `applied_sen` exactly
+as for a PI — the FX-adoption and GRN re-cost branches are PI-only, a rent
+bill carries no stock — cancel unwinds it by what was applied, and the detail
+answers each allocation with `kind` ('PI' | 'API'), `piId` / `apInvoiceId`.
+On the New AP Payment screen the Apply-to-invoice list shows the supplier's
+open AP invoices beside the purchase invoices (an `AP` tag on the row; tick
+= pay in full, type = part) and the payload names `apInvoiceId` for those;
+the detail screen's edit path lists purchase invoices only and passes the
+voucher's existing AP-invoice allocations through unchanged, so an edit
+never silently drops them.
+
 ## 0d. 预付挂在 supplier (2026-09-02)
 
 The owner's design, in his words: 预付就不能直接挂在supplier 那边吗? An AP
 Payment may pay MORE than the invoices it ticks — type the extra in the
-**Prepay (advance)** field under the PI table. The voucher's one GL line
-debits AP for the WHOLE amount, so the supplier's AP subledger simply runs
-ahead; on post the server records the excess in `scm.acc_supplier_advances`
+**Prepay (advance)** field under the PI table. The field is there whether or
+not the supplier has an open invoice: a supplier with NOTHING outstanding
+still gets the box (the empty-list sentence used to swallow it — owner
+2026-09-06, a new other-creditor he wanted to prepay), and a prepay-only
+voucher composes the same single AP line with no allocation. The voucher's
+one GL line debits AP for the WHOLE amount, so the supplier's AP subledger
+simply runs ahead; on post the server records the excess in `scm.acc_supplier_advances`
 (mig 0340 — one row per voucher, `amount_sen` written once, `applied_sen`
 only grows).
+
+**The control lock and the AP-control line (docs/bugs/0649, 2026-09-06).**
+The typing-time door that refuses a header or a control account on a
+voucher line (`requireLeafAccount`, since #2913) judged EVERY debit line —
+including the supplier payment's one line, which debits the AP control the
+system itself chose — so from 2026-09-03 every AP Payment, 400 and 405
+suppliers alike, was refused with `control_account_locked`. Now
+`supplierOwnControl` resolves the supplier's OWN control first (400-0000 or
+405-0000 by `apControlRole`), the lock skips exactly that line on create and
+on edit, and the `wrong_ap_control` door still refuses the other control; an
+expense voucher's lines are judged as before. The posted entry also stamps
+the supplier on that Dr leg (`pvLines` takes `apControlCode`): the payment
+reads Dr 405-0000 · 405-H001 / Cr bank, the way the invoice side's Cr leg
+does, so the GL's Party column nets a supplier's invoices and payments.
+Pinned by `backend/tests/pvApControlGuard.test.ts` (the fixtures now carry
+`special_type: 'SCC'`, the production shape that had never been in a test)
+and `backend/tests/pvSupplierAdvance.test.ts`.
+
+**The advance on the list (same day).** `GET /payment-vouchers`
+(`listPaymentVouchersHandler`) stamps `advance_remaining_sen` on every row
+(`acc_supplier_advances` amount − applied, when > 0); the list paints such
+rows blue, the Status cell wears "预付未冲 MYR x", and an **Advance open**
+chip keeps only them — AutoCount's blue row, plus the number colour alone
+cannot say. The knock-off card on the posted voucher lists the supplier's
+open **AP invoices beside its purchase invoices** (an `AP` tag; the apply
+sends `apInvoiceId` for those and the route settles them through the AP
+invoice's own clamp).
 
 **Spending it posts NOTHING.** Both legs already live in AP, so the
 knock-off (POST `/payment-vouchers/:id/apply-advance`, surfaced as the
@@ -715,9 +774,14 @@ under `pv-files/<company>/<pv>/<uuid>.<ext>`; the index is `scm.acc_pv_files`
 (mig `backend/src/db/migrations-pg/0352_acc_pv_files.sql`): one row per file,
 `file_key UNIQUE`, `pv_id` FK `ON DELETE CASCADE`, and `sort_no` = attach order
 = the order printing will append the files after the voucher page. Routes live
-in `backend/src/scm/routes/pv-files.ts` (handlers exported bare for the vitest
-harness) and are mounted in `backend/src/scm/routes/payment-vouchers.ts`
-**before** `GET /:id`, so `/:id/files` never falls into the detail matcher.
+in `backend/src/scm/routes/pv-files.ts` (the PV spec + the print bundle; the
+four handlers come from `backend/src/scm/lib/doc-files.ts`, the factory the
+AP invoice's `routes/ap-invoice-files.ts` has shared since 2026-09-06 —
+docs/modules/accounting.md "The AP invoice's paper") and are mounted in
+`backend/src/scm/routes/payment-vouchers.ts` **before** `GET /:id`, so
+`/:id/files` never falls into the detail matcher. The detail's Files card is
+the shared `frontend/src/vendor/scm/components/DocFilesCard.tsx`, bound to
+the voucher's hooks and rules by `PvFilesCard`.
 
 **The four-layer rule applies to evidence.** Upload/delete take
 `scm.payment_voucher.write`; a **CANCELLED** voucher takes no more files
@@ -804,7 +868,12 @@ copy across; JPEG/PNG sits centred on its own A4 page; a file that cannot
 embed (corrupt, truly locked, webp — Workers have no canvas) becomes a
 **notice page naming it**, and so does an index row whose R2 object is gone —
 visible failure on paper, never a silently missing bill, never a failed
-print. A part whose voucher cannot load fails the WHOLE request by pv. The
+print. A part whose voucher cannot load fails the WHOLE request by pv. Since
+2026-09-06 (owner: bundle 也带上) the bundle also appends, after the
+voucher's own files, the files of every **AP invoice the voucher pays**
+(`pv_allocations.ap_invoice_id`, allocation order; each named under its
+invoice number so a notice page says whose) — purchase-invoice allocations
+add nothing, and a voucher paying no AP invoice prints exactly as before. The
 client half is `fetchPvPrintBundle` + `pdfBytesToBase64`
 (`frontend/src/vendor/scm/lib/payment-voucher-queries.ts` /
 `payment-voucher-pdf.ts`); the returned blob exits through `deliverPdfBlob`
@@ -869,10 +938,13 @@ read the SAME letter table. Pinned by backend/tests/voucherNumbering.test.ts.
 
 ### §12b The Draft → formal flow (item 8b)
 
-A new voucher mints on the Draft series — `{co}Draft-YYMM-NNN`
-(`nextPvDraftNo`) — and earns its formal number at **CHECKED**:
+A new voucher mints on the Draft series — `{co}Draft-YYMM-NNN`, YYMM being
+the voucher's own `voucher_date` (owner 2026-09-07, 要根据文件日期; the rule
+and the helper live in accounting.md, "Document numbers follow the document
+date") — (`nextPvDraftNo`) — and earns its formal number at **CHECKED**:
 `checkPaymentVoucherHandler` reads the credit account's letter and the
-company width, mints `{co}{letter}PV-YYMM-NNN` (`mintFormalPvNo`,
+company width, mints `{co}{letter}PV-YYMM-NNN` — again the voucher date's
+month, never the check day's — (`mintFormalPvNo`,
 collision-retried the way inserts are), records the renumber on the audit
 trail, and answers `pvNumber` so the screen can say so. A bank with no letter
 REFUSES the check (409 `bank_letter_missing`) with the setup card named — a

@@ -20,7 +20,7 @@
 export interface PermissionDef {
   key: string;
   resource: string;
-  verb: "read" | "create" | "write" | "manage";
+  verb: "read" | "create" | "write" | "manage" | "approve";
   label: string;
   description: string;
 }
@@ -230,6 +230,10 @@ export const PERMISSIONS: PermissionDef[] = [
   // authed user can see + ack their own banner). Owner + IT Admin bypass via "*".
   { key: "announcements.read",  resource: "Announcements", verb: "read",  label: "View announcements",  description: "Open the Announcements list page and see read-receipts" },
   { key: "announcements.write", resource: "Announcements", verb: "write", label: "Manage announcements", description: "Post, edit, hide, remind, and delete announcements" },
+  // The approval desk (mig 20260906T1509): every notice — the MD's own
+  // included — is published by an approve click. Give this to the role that
+  // signs off; re-point it whenever the approver changes.
+  { key: "announcements.approve", resource: "Announcements", verb: "approve", label: "Approve announcements", description: "Approve or reject submitted announcements before they go live; receives the approval-needed notice" },
 
   // System
   { key: "udf.manage", resource: "Custom Fields", verb: "manage", label: "Manage custom fields", description: "Add or remove user-defined fields on tables" },

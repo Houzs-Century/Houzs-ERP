@@ -1816,7 +1816,7 @@ app.patch("/:id", requirePermissionOrSalesDirector("users.manage"), async (c) =>
   // edit changes targeting without touching the session. Covers every such
   // field in ONE place. Best-effort (bustBannerForUser swallows KV trouble).
   const bannerTargetingChanged =
-    "department_id" in set ||
+    "department_id" in set || "division" in set ||
     "position_id" in set ||
     "role_id" in set ||
     "status" in set ||

@@ -13,7 +13,8 @@ const pnlData = {
   ],
   otherIncome: [{ code: '590-0000', name: 'RENT RECEIVED', amountSen: 5_000 }],
   expenses: [{ code: '900-A001', name: 'ADVERT', amountSen: 12_000 }],
-  totals: { tradingIncomeSen: 100_000, costOfSalesSen: 50_000, grossProfitSen: 50_000, otherIncomeSen: 5_000, expensesSen: 12_000, netProfitSen: 43_000 },
+  taxation: [{ code: '950-0000', name: 'TAXATION', amountSen: 3_000 }],
+  totals: { tradingIncomeSen: 100_000, costOfSalesSen: 50_000, grossProfitSen: 50_000, otherIncomeSen: 5_000, expensesSen: 12_000, profitBeforeTaxSen: 43_000, taxationSen: 3_000, netProfitSen: 40_000 },
 };
 const bsData = {
   assets: [{ code: '310-0010', name: 'BANK', amountSen: 93_000 }, { code: '330-0000', name: 'STOCK', amountSen: 10_000 }],
@@ -39,8 +40,11 @@ describe('the standard statements', () => {
     expect(screen.getByText(/Cost of sales/)).toBeTruthy();
     const gross = screen.getByText('GROSS PROFIT').closest('tr')!;
     expect(gross.textContent).toContain('RM 500.00');
+    /* Tax posted → profit before tax, the Taxation section, then net AFTER tax. */
+    expect(screen.getByText('PROFIT BEFORE TAX').closest('tr')!.textContent).toContain('RM 430.00');
+    expect(screen.getByText('Taxation')).toBeTruthy();
     const net = screen.getByText('NET PROFIT').closest('tr')!;
-    expect(net.textContent).toContain('RM 430.00');
+    expect(net.textContent).toContain('RM 400.00');
     // The closing-stock credit shows as a deduction inside cost of sales.
     expect(screen.getByText(/620-0000/)).toBeTruthy();
   });
