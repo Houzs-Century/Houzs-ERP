@@ -4,7 +4,8 @@
    deposit taken at order creation ever reached the books — 64 of the 78 rows
    2990 recorded after the hook landed. This pins the SHAPE of the source: each
    `.from('mfg_sales_order_payments').insert(` in the writers below is followed,
-   within reach, by `postSoPayment(`. RED on the unfixed tree (two inserts, no
+   within reach, by the booking hook — `postSoPayment(` itself or the shared
+   `bookSoPaymentBestEffort(` wrapper. RED on the unfixed tree (two inserts, no
    hook), green after. */
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -24,7 +25,8 @@ describe('every customer payment row insert is followed by the booking hook', ()
       while ((m = re.exec(src)) !== null) {
         count += 1;
         const window = src.slice(m.index, m.index + 12_000);
-        expect(window.indexOf('postSoPayment('), `${file}: the payment insert at offset ${m.index} is not followed by postSoPayment(`).toBeGreaterThan(-1);
+        const hooked = window.includes('postSoPayment(') || window.includes('bookSoPaymentBestEffort(');
+        expect(hooked, `${file}: the payment insert at offset ${m.index} is not followed by the booking hook`).toBe(true);
       }
       expect(count, `${file}: expected at least one payment insert`).toBeGreaterThan(0);
     });

@@ -29,12 +29,12 @@ Self-check card said "Payments that reached the ledger — all of them".
    deliberately left unbooked, wrong for one whose hook had failed on every row:
    the card read green.
 
-**Fix.** Both SO-create inserts now `.select(…).single()` the row and call
-`postSoPayment` best-effort, exactly like the panel path (a refusal still never
-blocks the order). `tests/soCreateDepositBooks.test.ts` pins the shape — every
-`mfg_sales_order_payments` insert in the writers is followed by
-`postSoPayment(` — and was RED on the unfixed tree (two inserts, no hook),
-green after. The engine's read-only half is now `validateJournal` (steps 1–3b,
+**Fix.** Both SO-create inserts now `.select(…).single()` the row and book it
+through `bookSoPaymentBestEffort` (`lib/so-payment-row.ts` — the one hook, now
+shared with the panel path; a refusal still never blocks the order).
+`tests/soCreateDepositBooks.test.ts` pins the shape — every
+`mfg_sales_order_payments` insert in the writers is followed by the booking
+hook — and was RED on the unfixed tree (two inserts, no hook), green after. The engine's read-only half is now `validateJournal` (steps 1–3b,
 shared with `postJournal`); `postSoPayment(…, { dryRun })` and
 `backfillSoPayments(…, { dryRun })` answer would_post / the refusal with its
 reason and write nothing; `POST /accounting/backfill/customer-payments

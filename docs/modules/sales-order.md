@@ -4186,6 +4186,7 @@ after the hook landed on 2026-08-16. Both inserts now `.select(…).single()` th
 row and book it best-effort, exactly like the panel path: a ledger refusal is
 logged and never blocks the order, and the Accounting Self-check card's
 **Why? (dry run)** shows the gate's own reason for any row that did not book.
-`backend/tests/soCreateDepositBooks.test.ts` pins the shape — every payment
-insert in the writers is followed by `postSoPayment(` — and was RED on the
-unfixed tree.
+Both go through `bookSoPaymentBestEffort` in `lib/so-payment-row.ts`, the same
+hook the panel path uses. `backend/tests/soCreateDepositBooks.test.ts` pins the
+shape — every payment insert in the writers is followed by the booking hook —
+and was RED on the unfixed tree.

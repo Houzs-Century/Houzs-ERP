@@ -48,8 +48,7 @@ import { signalNullWarehouseRows } from '../lib/null-warehouse-signal';
    moved to scm/lib so scan-so.ts's background writer reaches the same rules
    without importing a 12,000-line router. Re-exported below for the callers
    that still name this module. */
-import { deriveAccountSheet, PAYMENT_COLS, recordSoPaymentRow, afterSoPaymentRemoved, type SoPaymentRowInput } from '../lib/so-payment-row';
-import { postSoPayment } from '../../acc/payments';
+import { deriveAccountSheet, PAYMENT_COLS, recordSoPaymentRow, afterSoPaymentRemoved, bookSoPaymentBestEffort, type SoPaymentRowInput } from '../lib/so-payment-row';
 import { recomputeSiPaidForOrder } from '../lib/si-order-deposit';
 export { recordSoPaymentRow };
 export type { SoPaymentRowInput };
@@ -5223,9 +5222,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
      POST /:docNo/payments route. Best-effort: a ledger failure must never
      block the order (the header column still carries the deposit). */
   if (posPayments) {
-    /* Split payment — book EVERY validated row. Best-effort like the single
-       path (the header already carries the Σ, so a ledger hiccup never blocks
-       the order); rows are schema-validated so nothing is silently dropped. */
+    /* Split payment — every validated row, best-effort (the header carries Σ; a ledger hiccup never blocks the order). */
     const paidAt = dateOrNull(body.paymentDate) ?? todayMyt(); // header coerces the same key; uncoerced here the swallowed insert lost the deposit row
     for (let i = 0; i < posPayments.length; i++) {
       const p = posPayments[i]!;
@@ -5267,16 +5264,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
         console.error('[so-create] split-payment ledger insert failed:', depErr.message);
         continue;
       }
-      /* Book it through the one posting gate — best-effort, exactly like the
-         panel's own path (lib/so-payment-row). This row used to be inserted
-         WITHOUT the hook, so the money on it never reached the books
-         (docs/bugs/0652). A refusal never blocks the order; the Self-check
-         card's dry run and the backfill are the self-heal. */
-      const bookedSplit = await postSoPayment(sb, depRow as never);
-      if (!bookedSplit.ok) {
-        // eslint-disable-next-line no-console
-        console.error('[so-create] split payment not booked:', (depRow as { id?: string } | null)?.id, bookedSplit.status, bookedSplit.reason);
-      }
+      await bookSoPaymentBestEffort(sb, depRow, 'split payment at SO create'); // docs/bugs/0652: this row used to skip the gate
       /* Promote — 'promoted' rows are excluded from the slip reaper (same dance
          as the SO-create order slip). The UPDATE runs under the caller's RLS
          (pending_slip_uploads allows the UPLOADER to promote); in this flow the
@@ -5362,14 +5350,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
         // eslint-disable-next-line no-console
         console.error('[so-create] deposit ledger insert failed:', depErr.message);
       } else {
-        /* Book it through the one posting gate — best-effort (docs/bugs/0652:
-           this deposit used to be inserted WITHOUT the hook, so no deposit taken
-           at SO create ever reached the books). A refusal never blocks the order. */
-        const bookedDeposit = await postSoPayment(sb, depRow as never);
-        if (!bookedDeposit.ok) {
-          // eslint-disable-next-line no-console
-          console.error('[so-create] deposit not booked:', (depRow as { id?: string } | null)?.id, bookedDeposit.status, bookedDeposit.reason);
-        }
+        await bookSoPaymentBestEffort(sb, depRow, 'deposit at SO create'); // docs/bugs/0652: this row used to skip the gate
         await recordSoAudit(sb, {
           docNo,
           action: 'ADD_PAYMENT',

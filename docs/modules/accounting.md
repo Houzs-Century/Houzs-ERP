@@ -514,9 +514,9 @@ the POS split payments and the SO-create deposit straight into
 the hook landed — and the 15 panel-path rows that DID reach `postSoPayment`
 were refused with the reason going to the console and nowhere else, while the
 Self-check card read "all of them" because its boundary is the first booked
-payment and there was none. Now: both inserts call `postSoPayment` (best-effort,
-never blocking the order — `tests/soCreateDepositBooks.test.ts` pins the shape,
-RED on the unfixed tree); the engine's read-only half is `validateJournal`
+payment and there was none. Now: both inserts book through the shared `bookSoPaymentBestEffort` hook in
+`lib/so-payment-row.ts` (best-effort, never blocking the order —
+`tests/soCreateDepositBooks.test.ts` pins the shape, RED on the unfixed tree); the engine's read-only half is `validateJournal`
 (steps 1–3b, shared with `postJournal`), `postSoPayment(…, { dryRun })` and
 `backfillSoPayments(…, { dryRun })` answer "would this post, and if not why?"
 without writing, `POST /backfill/customer-payments { dryRun: true }` exposes
