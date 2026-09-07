@@ -18,7 +18,13 @@ import type { OriginAssignment } from './flow-queries';
 import type { OutstandingScope } from '../../../lib/outstandingEmptyReason';
 
 export type SupplierStatus = 'ACTIVE' | 'INACTIVE' | 'BLOCKED';
-export type Currency = 'MYR' | 'RMB' | 'USD' | 'SGD';
+/* CNY joined on 2026-09-07 (mig 20260907T2330). It is the ISO code for the same
+   currency as the older RMB, and both are carried because the AutoCount book
+   states CNY and the migration copies the book's value rather than translating
+   it. This union, the supplier route's CURRENCIES set and the backend's
+   VALID_CURRENCIES are ONE decision — the duplicated-decision gate
+   (backend/scripts/check-duplicated-decisions.mjs) fails when they drift. */
+export type Currency = 'MYR' | 'RMB' | 'CNY' | 'USD' | 'SGD';
 export type MaterialKind = 'mfg_product' | 'fabric' | 'raw';
 // Draft/Confirmed two-state model re-adds DRAFT to po_status (migration 0042
 // re-adds the enum value 0078 removed). A PO can be saved as DRAFT (no SO-quota

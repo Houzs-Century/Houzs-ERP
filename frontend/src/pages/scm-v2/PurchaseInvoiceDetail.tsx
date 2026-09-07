@@ -838,6 +838,9 @@ const SupplierCard = ({
                 onChange={(e) => onField('currency', e.target.value)}>
                 <option value="MYR">MYR</option>
                 <option value="RMB">RMB</option>
+                {/* CNY — same currency as RMB under its ISO code; a purchase
+                    invoice raised against a CNY purchase order carries it. */}
+                <option value="CNY">CNY</option>
                 <option value="USD">USD</option>
                 <option value="SGD">SGD</option>
               </select>

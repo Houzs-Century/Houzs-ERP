@@ -45,7 +45,12 @@ export const suppliers = new Hono<{ Bindings: Env; Variables: Variables }>();
 suppliers.use('*', supabaseAuth);
 
 const SUPPLIER_STATUSES = new Set(['ACTIVE', 'INACTIVE', 'BLOCKED']);
-const CURRENCIES = new Set(['MYR', 'RMB', 'USD', 'SGD']);
+/* CNY added 2026-09-07 (mig 20260907T2330) — the same set as
+   lib/purchase-doc-vocab.ts VALID_CURRENCIES and the frontend's `Currency`
+   union. Kept local rather than imported because a supplier is not a purchase
+   DOCUMENT, but the three are one decision and check-duplicated-decisions.mjs
+   fails when they drift apart. */
+const CURRENCIES = new Set(['MYR', 'RMB', 'CNY', 'USD', 'SGD']);
 const MATERIAL_KINDS = new Set(['mfg_product', 'fabric', 'raw']);
 
 /* PR #40 — full master record (Commander 2026-05-26 AutoCount parity) */
