@@ -748,6 +748,20 @@ matches: `0082_scm_fx_landed_cost.sql`, `0143_scm_do_ship_cost_snapshot.sql`,
 `0154_scm_oversell_retrocost.sql`. Do not trust a bare "migration NNNN" in a
 comment without checking the filename.
 
+### The two AutoCount-mirror header columns (mig `20260907T1026_ac_header_notcarried_columns.sql`)
+
+`scm.purchase_orders.attention` (AutoCount `PO.Attention`, filled on 300 of the
+9,408 book purchase orders) and `scm.purchase_orders.display_term` (`PO.DisplayTerm`,
+filled on all 9,408 and holding one distinct value, `C.O.D.`). Both nullable
+`text`; both are absent from `HEADER_COLS`, so **no route selects them and no
+screen shows them today.** The only writer is `backend/scripts/sync-ac-delta.mjs`
+with `LANES=hdr`, driven by `backend/scripts/lib/ac-header-fields.mjs`.
+
+AutoCount's `PO.DeliverAddr1..4` deliberately got **no** column: on a purchase
+order that is our own receiving address, identical on all 9,408 book documents.
+The delivery-address ruling was about the SALES order, where the address is the
+customer's (`docs/modules/sales-order.md`, same migration).
+
 ### Line photos (mig 0274)
 
 Owner 2026-08-10: an SO line can hold photos, a PO line must too, and converting

@@ -3607,6 +3607,37 @@ Schema: `scm` (vendored 2990 clone, 108 tables). Key tables:
 | `scm.mfg_sales_order_payments` | payments ledger (so_doc_no FK, method, online_type). Also READ by `scm/lib/si-order-deposit.ts` — the deposit here settles the Sales Invoices raised off the order |
 | VIEW `scm.mfg_sales_orders_with_payment_totals` | header + `paid_total_sen` + `balance_sen_live` (Σ over payments) — the list reads this |
 
+### The seven AutoCount-mirror header columns (mig `20260907T1026_ac_header_notcarried_columns.sql`)
+
+Added on go-live day so the AutoCount fields with no ERP home stop being
+uncopyable. **Nothing in the app reads or writes them yet** — no screen, no
+endpoint, no PDF. The one writer is
+`backend/scripts/sync-ac-delta.mjs` with `LANES=hdr`, driven by
+`backend/scripts/lib/ac-header-fields.mjs`. All seven are nullable `text`.
+
+| Column | AutoCount field | What it is |
+|---|---|---|
+| `attention` | `SO.Attention` | the contact person the document is addressed to |
+| `delivery_address1..4` | `SO.DeliverAddr1..4` | **where the goods go.** Not always the invoice address (`address1..4`) |
+| `display_term` | `SO.DisplayTerm` | the credit term AutoCount PRINTS. The ERP's own terms live on the CUSTOMER, so this is the only order-level record of one |
+| `ac_to_po_no` | `SO.UDF_ToPONo` | the purchase order(s) AutoCount raised FROM this order, comma-joined. **NOT a customer PO number** |
+
+Two things worth knowing before using them:
+
+- **The delivery address is the operational one, and the population is small.**
+  Measured on the 2026-09-07 book cut (13,365 orders): delivery and invoice
+  address are IDENTICAL on 12,667, genuinely DIFFERENT on 112, and 12 more carry
+  a delivery address with no invoice address. So 124 orders would send a driver
+  to the wrong place — that is the number, not the 12,791 that merely have the
+  field filled.
+- **`ac_to_po_no` is the outgoing direction.** 7,068 of the 7,071 filled values
+  in the book begin `PO-`. Reading it as a customer's own PO reference is the
+  mistake the name is built to prevent.
+
+`display_term` holds exactly one distinct value across the whole book today
+(`C.O.D.`), which is why it earns a column rather than a rule: a document whose
+printed term ever stops being C.O.D. is invisible to us without it.
+
 Indexes that matter here:
 - `idx_msop_doc` on `mfg_sales_order_payments(so_doc_no)` — the payment-totals view's
   aggregation (already present; not the bottleneck).

@@ -171,7 +171,7 @@ const SO_HEADER = [
   { key: "debtorName", label: "debtor name", kind: "text", ac: (h) => h.DebtorName, erp: "debtor_name", status: CARRIED, writer: "HCOLS debtor_name (falls back to 'CUSTOMER' when the book is blank)" },
   { key: "salesAgent", label: "sales agent", kind: "text", ac: (h) => h.SalesAgent, erp: "agent", status: CARRIED, writer: "HCOLS agent" },
   { key: "salespersonId", label: "salesperson bound", kind: "text", ac: (h) => (h.SalesAgent ? "(an agent is named)" : null), erp: "salesperson_bound", status: DERIVED, writer: "HCOLS salesperson_id, resolved through data/agent-staff-binding.csv", note: "reports whether the named agent reached a staff row at all, not a spelling" },
-  { key: "attention", label: "attention", kind: "text", ac: (h) => h.Attention, erp: "attention", status: NOT_CARRIED, writer: "exported by export-ac-reimport.py:159, named by NO importer column" },
+  { key: "attention", label: "attention", kind: "text", ac: (h) => h.Attention, erp: "attention", status: CARRIED, writer: "lib/ac-header-fields.mjs SO_HEADER_FIELDS `attention` -> sync-ac-delta.mjs LANES=hdr (column added by mig 20260907T1026)" },
   { key: "phone", label: "phone", kind: "text", ac: (h) => h.Phone1, erp: "phone", status: CARRIED, writer: "HCOLS phone" },
   { key: "ref", label: "ref", kind: "text", ac: (h) => h.Ref, erp: "ref", status: CARRIED, writer: "HCOLS ref" },
   { key: "customerSoNo", label: "customer SO no", kind: "text", ac: (h) => h.Ref, erp: "customer_so_no", status: CARRIED, writer: "HCOLS customer_so_no (the same Ref, written twice)" },
@@ -179,11 +179,19 @@ const SO_HEADER = [
   { key: "invAddr2", label: "invoice addr 2", kind: "text", ac: (h) => h.InvAddr2, erp: "address2", status: CARRIED, writer: "HCOLS address2" },
   { key: "invAddr3", label: "invoice addr 3", kind: "text", ac: (h) => h.InvAddr3, erp: "address3", status: CARRIED, writer: "HCOLS address3" },
   { key: "invAddr4", label: "invoice addr 4", kind: "text", ac: (h) => h.InvAddr4, erp: "address4", status: CARRIED, writer: "HCOLS address4" },
-  { key: "delivAddr1", label: "delivery addr 1", kind: "text", ac: (h) => h.DeliverAddr1, erp: null, status: NOT_CARRIED, writer: "exported (export-ac-reimport.py:162), named by NO importer column" },
-  { key: "delivAddr2", label: "delivery addr 2", kind: "text", ac: (h) => h.DeliverAddr2, erp: null, status: NOT_CARRIED, writer: "exported, not carried" },
-  { key: "delivAddr3", label: "delivery addr 3", kind: "text", ac: (h) => h.DeliverAddr3, erp: null, status: NOT_CARRIED, writer: "exported, not carried" },
-  { key: "delivAddr4", label: "delivery addr 4", kind: "text", ac: (h) => h.DeliverAddr4, erp: null, status: NOT_CARRIED, writer: "exported, not carried" },
-  { key: "delivContact", label: "delivery contact", kind: "text", ac: (h) => h.DeliverContact, erp: null, status: NOT_CARRIED, writer: "exported, not carried" },
+  /* THE DELIVERY ADDRESS IS THE OPERATIONAL ONE. A driver needs the address the
+     goods go to, and it is not always the invoice address: measured on the
+     2026-09-07 header cut, the two agree on 12,667 of 13,365 book orders and
+     genuinely DIFFER on 112, with 12 more carrying a delivery address and no
+     invoice address. 124 documents is the whole prize, and it is worth having —
+     but quoting 12,791 (the fill count) as the size of the problem would be the
+     denominator error CLAUDE.md warns about. */
+  { key: "delivAddr1", label: "delivery addr 1", kind: "text", ac: (h) => h.DeliverAddr1, erp: "delivery_address1", status: CARRIED, writer: "lib/ac-header-fields.mjs SO_HEADER_FIELDS `delivery_address1` -> sync-ac-delta.mjs LANES=hdr (mig 20260907T1026)" },
+  { key: "delivAddr2", label: "delivery addr 2", kind: "text", ac: (h) => h.DeliverAddr2, erp: "delivery_address2", status: CARRIED, writer: "SO_HEADER_FIELDS `delivery_address2` -> LANES=hdr (mig 20260907T1026)" },
+  { key: "delivAddr3", label: "delivery addr 3", kind: "text", ac: (h) => h.DeliverAddr3, erp: "delivery_address3", status: CARRIED, writer: "SO_HEADER_FIELDS `delivery_address3` -> LANES=hdr (mig 20260907T1026)" },
+  { key: "delivAddr4", label: "delivery addr 4", kind: "text", ac: (h) => h.DeliverAddr4, erp: "delivery_address4", status: CARRIED, writer: "SO_HEADER_FIELDS `delivery_address4` -> LANES=hdr (mig 20260907T1026)" },
+  { key: "delivContact", label: "delivery contact", kind: "text", ac: (h) => h.DeliverContact, erp: null, status: NOT_CARRIED, writer: "exported, not carried — 25 of 13,365 book orders carry one, and it was NOT among the four the owner ruled in on 2026-09-07" },
+  { key: "displayTerm", label: "display term", kind: "text", ac: (h) => h.DisplayTerm, erp: "display_term", status: CARRIED, writer: "SO_HEADER_FIELDS `display_term` -> LANES=hdr (mig 20260907T1026)", note: "the migration cut does not carry DisplayTerm; the AutoCount side is filled from ac-doc-headers.json.gz, fill-only" },
   { key: "emergency", label: "emergency phone", kind: "text", ac: (h) => h.DeliverPhone1, erp: "emergency_contact_phone", status: DERIVED, writer: "HCOLS emergency_contact_phone — DeliverPhone1 only when it differs from Phone1, else the 2nd part of Phone1" },
   { key: "salesLocation", label: "warehouse / location", kind: "text", ac: (h) => h.SalesLocation, erp: "sales_location", status: DERIVED, writer: "HCOLS sales_location via the SALESLOC map (PG -> 'PG WAREHOUSE')" },
   { key: "venue", label: "venue (UDF)", kind: "text", ac: (h) => h.UDF_VENUE, erp: "venue", status: CARRIED, writer: "HCOLS venue", note: "scm.mfg_sales_orders.venue is canonicalised by a DB trigger, so a difference here can be the trigger rewriting the write" },
@@ -191,7 +199,15 @@ const SO_HEADER = [
   { key: "procDate", label: "processing date (PDate)", kind: "date", ac: (h) => h.UDF_PDate, erp: "processing_date", status: CARRIED, writer: "HCOLS processing_date" },
   { key: "balance", label: "balance (UDF)", kind: "money", ac: (h) => h.UDF_BALANCE, erp: "balance_sen", status: CARRIED, writer: "HCOLS balance_sen" },
   { key: "payment", label: "payment (UDF)", kind: "text", ac: (h) => (h.UDF_PAYEMENT ? "(a payment is stated)" : null), erp: "payment_udf_present", status: DERIVED, writer: "HCOLS approval_code + account_sheet, split by lib/ac-payment-udf.mjs", note: "reports whether a stated UDF_PAYEMENT reached the ERP at all, not its spelling" },
-  { key: "toPoNo", label: "ToPONo (UDF)", kind: "text", ac: (h) => h.ToPONo, erp: null, status: NOT_CARRIED, writer: "read only by check-autocount-parity.mjs; no importer writes it" },
+  /* THE WRITER'S OWN SOURCE COMES FIRST. `UDF_ToPONo` is the key
+     lib/ac-header-fields.mjs reads out of the header cut, so comparing against
+     it is comparing against what the lane will actually write; `ToPONo` is the
+     same UDF under the name ac-so-status.json.gz gives it, kept as the fallback
+     for a checkout with no header cut. Measured 2026-09-07 on the committed
+     snapshots: 176 orders carry both, they DISAGREE on 0, and no order carries
+     only the status-file spelling — so the order of the two is a statement
+     about coupling, not a tie-break anyone is relying on today. */
+  { key: "toPoNo", label: "ToPONo (UDF)", kind: "text", ac: (h) => h.UDF_ToPONo ?? h.ToPONo, erp: "ac_to_po_no", status: CARRIED, writer: "SO_HEADER_FIELDS `ac_to_po_no` -> LANES=hdr (mig 20260907T1026)", note: "NOT a customer PO: 7,068 of the 7,071 filled values in the book begin 'PO-' — they are the purchase orders AutoCount raised FROM the order" },
   { key: "delivDate", label: "delivery date (header)", kind: "date", ac: (h) => h.__earliestDeliveryDate, erp: "customer_delivery_date", status: DERIVED, writer: "HCOLS customer_delivery_date = earliest line DeliveryDate" },
   { key: "remark2", label: "remark2", kind: "text", ac: (h) => h.Remark2, erp: "remark2", status: CARRIED, writer: "HCOLS remark2, from ac-so-remarks.json.gz" },
   { key: "remark3", label: "remark3", kind: "text", ac: (h) => h.Remark3, erp: "remark3", status: CARRIED, writer: "HCOLS remark3" },
@@ -220,6 +236,8 @@ const PO_HEADER = [
   { key: "creditorCode", label: "creditor code", kind: "text", ac: (h) => h.CreditorCode, erp: "supplier_code", status: CARRIED, writer: ":379 supplier_id, resolved from CreditorCode" },
   { key: "creditorName", label: "creditor name", kind: "text", ac: (h) => h.CreditorName, erp: "supplier_name", status: DERIVED, writer: "the supplier row's own name, reached through CreditorCode" },
   { key: "ref", label: "ref", kind: "text", ac: (h) => h.Ref, erp: null, status: NOT_CARRIED, writer: "exported (export-ac-reimport.py PO select), named by NO importer column" },
+  { key: "attention", label: "attention", kind: "text", ac: (h) => h.Attention, erp: "attention", status: CARRIED, writer: "lib/ac-header-fields.mjs PO_HEADER_FIELDS `attention` -> sync-ac-delta.mjs LANES=hdr (mig 20260907T1026)", note: "the PO migration cut carries no Attention; the AutoCount side is filled from ac-doc-headers.json.gz, fill-only" },
+  { key: "displayTerm", label: "display term", kind: "text", ac: (h) => h.DisplayTerm, erp: "display_term", status: CARRIED, writer: "PO_HEADER_FIELDS `display_term` -> LANES=hdr (mig 20260907T1026)", note: "same source as attention above" },
   { key: "location", label: "warehouse / location", kind: "text", ac: (h) => h.Location, erp: "purchase_location", status: DERIVED, writer: ":379 purchase_location_id = whId(Location)" },
   { key: "delivDate", label: "expected delivery", kind: "date", ac: (h) => h.__earliestDeliveryDate, erp: "expected_at", status: DERIVED, writer: ":374 expected_at = earliest line DeliveryDate" },
   { key: "currency", label: "currency", kind: "text", ac: (h) => h.CurrencyCode, erp: "currency", status: CARRIED, notExported: "PO.CurrencyCode", writer: ":379 currency — the importer writes the CONSTANT 'MYR'" },
@@ -330,6 +348,73 @@ export const SELF_TEST = [
       Object.values(FIELD_MAP).every((t) =>
         [...t.header, ...t.line].every((f) => (f.status === CARRIED ? !!f.erp : true)),
       ),
+  },
+  {
+    /* 2026-09-07,「四个都加」. These four were the whole NOT_CARRIED finding on
+       the sales order: the book held them and the ERP had nowhere to put them.
+       Migration 20260907T1026 gave each a column and lib/ac-header-fields.mjs
+       named the writer, so the checker must now COMPARE them instead of
+       reporting them as missing. If a column is dropped or a map row reverted,
+       this fails rather than the section quietly going back to NOT_CARRIED. */
+    name: "the four fields the owner ruled in are CARRIED, not NOT_CARRIED",
+    run: () => {
+      const want = {
+        attention: "attention",
+        delivAddr1: "delivery_address1",
+        delivAddr2: "delivery_address2",
+        delivAddr3: "delivery_address3",
+        delivAddr4: "delivery_address4",
+        displayTerm: "display_term",
+        toPoNo: "ac_to_po_no",
+      };
+      const so = new Map(FIELD_MAP.SO.header.map((f) => [f.key, f]));
+      for (const [key, col] of Object.entries(want)) {
+        const f = so.get(key);
+        if (!f || f.status !== CARRIED || f.erp !== col || f.notExported) return false;
+      }
+      const po = new Map(FIELD_MAP.PO.header.map((f) => [f.key, f]));
+      for (const key of ["attention", "displayTerm"]) {
+        const f = po.get(key);
+        if (!f || f.status !== CARRIED || !f.erp) return false;
+      }
+      return true;
+    },
+  },
+  {
+    /* The delivery address is read off the book, never derived from the invoice
+       address, and the two are genuinely different documents' worth of data.
+       This pins the ACCESSOR, because the cheap wrong implementation — falling
+       back to InvAddr when DeliverAddr is blank — would report 100% agreement
+       and hide every one of the 124 orders the column exists for. */
+    name: "delivery address reads DeliverAddr and never falls back to InvAddr — all FOUR lines",
+    run: () => {
+      /* All four, not just line 1. A first cut of this case checked delivAddr1
+         alone and stayed green while delivAddr2 was deliberately given an
+         InvAddr2 fallback — the exact defect it was written to catch, on three
+         of the four fields it was written to cover. */
+      for (const n of [1, 2, 3, 4]) {
+        const f = FIELD_MAP.SO.header.find((x) => x.key === `delivAddr${n}`);
+        const withBoth = { [`DeliverAddr${n}`]: "NO 8 JALAN GUDANG", [`InvAddr${n}`]: "NO 1 JALAN OFFICE" };
+        const deliveryBlank = { [`DeliverAddr${n}`]: null, [`InvAddr${n}`]: "NO 1 JALAN OFFICE" };
+        if (f.ac(withBoth) !== "NO 8 JALAN GUDANG") return false;
+        if (f.ac(deliveryBlank) != null) return false;
+      }
+      return true;
+    },
+  },
+  {
+    /* Two files spell the same AutoCount UDF differently — ac-so-status.json.gz
+       says `ToPONo`, the header cut says `UDF_ToPONo` — and reading only one of
+       them would report the field as blank on whichever half is loaded. */
+    name: "ToPONo is read under BOTH spellings the exports use",
+    run: () => {
+      const f = FIELD_MAP.SO.header.find((x) => x.key === "toPoNo");
+      return f.ac({ ToPONo: "PO-000972" }) === "PO-000972"
+        && f.ac({ UDF_ToPONo: "PO-010170" }) === "PO-010170"
+        && f.ac({ ToPONo: null, UDF_ToPONo: "PO-010170" }) === "PO-010170"
+        // the writer's own source wins when both are present
+        && f.ac({ ToPONo: "PO-000001", UDF_ToPONo: "PO-000002" }) === "PO-000002";
+    },
   },
 ];
 

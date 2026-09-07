@@ -128,6 +128,60 @@ test("the headline case is in the map: SalesAgent reaches BOTH ERP homes", () =>
   assert.deepEqual(keys.sort(), ["agent", "salesperson_id"]);
 });
 
+test("the four fields the owner ruled in each name a real ERP column AND its migration", () => {
+  /* 2026-09-07,「四个都加」. These were NOT_CARRIED — the book held the column and
+     no importer named an ERP one — so 2,912 measured book values had nowhere to
+     land. If somebody sets one of them back to `erp: null`, or adds the column
+     to the map without shipping the migration that creates it, this fails. */
+  const MIG = "20260907T1026";
+  const want = {
+    attention: "Attention",
+    delivery_address1: "DeliverAddr1",
+    delivery_address2: "DeliverAddr2",
+    delivery_address3: "DeliverAddr3",
+    delivery_address4: "DeliverAddr4",
+    display_term: "DisplayTerm",
+    ac_to_po_no: "UDF_ToPONo",
+  };
+  for (const [key, book] of Object.entries(want)) {
+    const f = SO_HEADER_FIELDS.find((x) => x.key === key);
+    assert.ok(f, `SO_HEADER_FIELDS lost ${key}`);
+    assert.equal(f.erp, key, `${key} must name its own ERP column`);
+    assert.equal(f.book, book);
+    assert.equal(f.kind, "copy", `${key} is a straight copy of the book's own text`);
+    assert.ok(f.why.includes(MIG), `${key} must cite the migration that created its column`);
+  }
+  for (const key of ["attention", "display_term"]) {
+    const f = PO_HEADER_FIELDS.find((x) => x.key === key);
+    assert.ok(f && f.erp === key && f.kind === "copy", `PO ${key} must be a copy into its own column`);
+    assert.ok(f.why.includes(MIG));
+  }
+});
+
+test("ac_to_po_no is NOT named after a customer PO", () => {
+  /* Measured on ac-doc-headers.json.gz (2026-09-07): 7,068 of the 7,071 filled
+     UDF_ToPONo values begin "PO-" — they are the purchase orders AutoCount
+     raised FROM the order, going OUT to a supplier. The repo has already dropped
+     four dead `customer_po*` columns once (0312); a column named for the wrong
+     direction is how that happens again. */
+  const f = SO_HEADER_FIELDS.find((x) => x.book === "UDF_ToPONo");
+  assert.equal(f.erp, "ac_to_po_no");
+  assert.ok(!/customer/i.test(f.erp), "ToPONo is not the customer's PO number");
+  assert.match(f.why, /NOT a customer PO number/);
+});
+
+test("a blank in the book never overwrites a value in the ERP, on the new fields too", () => {
+  /* The owner's rule of the same day, 2026-09-07:「保留 ERP 的价钱 — 空白不覆盖」.
+     It is the mirror of copy-never-compute and it binds every field, not only
+     the money ones the ruling was made about. */
+  for (const key of ["delivery_address1", "display_term", "attention", "ac_to_po_no"]) {
+    const f = SO_HEADER_FIELDS.find((x) => x.key === key);
+    assert.equal(compareField(f, null, "what the ERP already holds").verdict, "bookBlank");
+    assert.equal(compareField(f, "   ", "what the ERP already holds").verdict, "bookBlank");
+    assert.equal(compareField(f, "BOOK VALUE", null).verdict, "erpBlank");
+  }
+});
+
 test("a resolve field is never compared as text", () => {
   /* salesperson_id holds a uuid whose source is a NAME. Comparing the two would
      report every order as differing; the lane counts presence instead. */
