@@ -57,6 +57,8 @@ function monthGrid(year: number, month: number): Date[] {
 }
 
 type EventRange = { e: ShareEvent; start: number; end: number };
+/** One event's bar within a single week row (its label shown once, spanning its days). */
+type Seg = { e: ShareEvent; startCol: number; span: number; lane: number; roundL: boolean; roundR: boolean };
 
 export function ContractorCalendar() {
   // Read from the location — this surface is chosen before any <Routes> exists.
@@ -132,9 +134,49 @@ export function ContractorCalendar() {
     setCursor({ y: today.getFullYear(), m: today.getMonth() });
   }
 
-  function eventsOn(cell: Date): ShareEvent[] {
-    const k = dayNum(cell);
-    return ranges.filter((r) => r.start <= k && k <= r.end).map((r) => r.e);
+  const weeks = useMemo<Date[][]>(() => {
+    const out: Date[][] = [];
+    for (let w = 0; w < 6; w++) out.push(cells.slice(w * 7, w * 7 + 7));
+    return out;
+  }, [cells]);
+
+  // Lay a week's events out as SPANNING bars — one bar per event across the days
+  // it covers, its details shown ONCE — packed into lanes so overlapping events
+  // stack instead of repeating on every day.
+  function layoutWeek(week: Date[]): { segs: Seg[]; laneCount: number } {
+    const DAY = 86400000;
+    const weekStart = dayNum(week[0]);
+    const weekEnd = dayNum(week[6]);
+    const hits = ranges
+      .filter((r) => r.end >= weekStart && r.start <= weekEnd)
+      .sort((a, b) => b.end - b.start - (a.end - a.start) || a.start - b.start);
+    const tracks: boolean[][] = [];
+    const segs: Seg[] = [];
+    for (const r of hits) {
+      const startCol = Math.round((Math.max(r.start, weekStart) - weekStart) / DAY);
+      const endCol = Math.round((Math.min(r.end, weekEnd) - weekStart) / DAY);
+      let lane = 0;
+      for (; lane <= hits.length; lane++) {
+        if (!tracks[lane]) tracks[lane] = [false, false, false, false, false, false, false];
+        let free = true;
+        for (let col = startCol; col <= endCol; col++) {
+          if (tracks[lane][col]) { free = false; break; }
+        }
+        if (free) {
+          for (let col = startCol; col <= endCol; col++) tracks[lane][col] = true;
+          break;
+        }
+      }
+      segs.push({
+        e: r.e,
+        startCol,
+        span: endCol - startCol + 1,
+        lane,
+        roundL: r.start >= weekStart,
+        roundR: r.end <= weekEnd,
+      });
+    }
+    return { segs, laneCount: tracks.length };
   }
 
   function label(e: ShareEvent): string {
@@ -164,7 +206,7 @@ export function ContractorCalendar() {
   const eventCount = data ? data.events.length : 0;
 
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-900">
+    <div className="min-h-screen bg-[#0F766E]/5 text-gray-900">
       <div className="mx-auto max-w-5xl px-3 py-4 sm:px-5 sm:py-6">
         {/* Header */}
         <div className="mb-4">
@@ -208,52 +250,69 @@ export function ContractorCalendar() {
         </div>
 
         {/* Calendar grid */}
-        <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
-          <div className="grid grid-cols-7 border-b border-gray-200 bg-gray-50">
+        <div className="overflow-hidden rounded-xl border-2 border-[#0F766E]/40 bg-white shadow-md ring-1 ring-[#0F766E]/5">
+          <div className="grid grid-cols-7 border-b-2 border-[#0F766E] bg-[#0F766E]">
             {weekdayNames.map((w) => (
-              <div key={w} className="px-2 py-1.5 text-center text-[10px] font-semibold uppercase text-gray-400">
+              <div key={w} className="px-2 py-2 text-center text-[10px] font-semibold uppercase tracking-wide text-white">
                 {w}
               </div>
             ))}
           </div>
-          <div className="grid grid-cols-7">
-            {cells.map((cell, i) => {
-              const inMonth = cell.getMonth() === cursor.m;
-              const isToday = dayNum(cell) === todayKey;
-              const dayEvents = eventsOn(cell);
+          <div>
+            {weeks.map((week, wi) => {
+              const { segs, laneCount } = layoutWeek(week);
+              const minH = Math.max(76, 24 + laneCount * 20 + 4);
               return (
-                <div
-                  key={i}
-                  className={`min-h-[74px] border-b border-r border-gray-100 p-1 sm:min-h-[92px] ${
-                    inMonth ? "bg-white" : "bg-gray-50/60"
-                  }`}
-                >
-                  <div
-                    className={`mb-0.5 text-right text-[11px] ${
-                      isToday
-                        ? "font-bold text-[#0F766E]"
-                        : inMonth
-                          ? "text-gray-500"
-                          : "text-gray-300"
-                    }`}
-                  >
-                    {cell.getDate()}
-                  </div>
-                  <div className="space-y-0.5">
-                    {dayEvents.map((e, j) => {
-                      const booth = (e.boothNo ?? "").trim();
-                      return (
+                <div key={wi} className="relative grid grid-cols-7" style={{ minHeight: minH }}>
+                  {week.map((cell, ci) => {
+                    const inMonth = cell.getMonth() === cursor.m;
+                    const isToday = dayNum(cell) === todayKey;
+                    return (
+                      <div
+                        key={ci}
+                        className={`border-b border-r border-[#0F766E]/15 p-1 ${
+                          inMonth ? "bg-white" : "bg-[#0F766E]/[0.04]"
+                        }`}
+                      >
                         <div
-                          key={j}
-                          className="rounded bg-[#0F766E] px-1 py-[2px] text-[9.5px] font-semibold leading-tight text-white"
-                          title={`${label(e)}${booth ? " — Booth " + booth : ""}`}
+                          className={`text-right text-[11px] ${
+                            isToday
+                              ? "font-bold text-[#0F766E]"
+                              : inMonth
+                                ? "text-gray-500"
+                                : "text-gray-300"
+                          }`}
                         >
-                          <div className="truncate">{label(e)}</div>
-                          {booth ? <div className="truncate opacity-90">Booth {booth}</div> : null}
+                          {cell.getDate()}
                         </div>
-                      );
-                    })}
-                  </div>
+                      </div>
+                    );
+                  })}
+                  {/* One spanning bar per event — its details shown ONCE across its days. */}
+                  {segs.map((seg, si) => {
+                    const booth = (seg.e.boothNo ?? "").trim();
+                    return (
+                      <div
+                        key={si}
+                        className="absolute px-[3px]"
+                        style={{
+                          left: `${(seg.startCol / 7) * 100}%`,
+                          width: `${(seg.span / 7) * 100}%`,
+                          top: 24 + seg.lane * 20,
+                        }}
+                      >
+                        <div
+                          className={`truncate bg-[#0F766E] px-1.5 py-[3px] text-[9.5px] font-semibold leading-tight text-white ${
+                            seg.roundL ? "rounded-l-md" : ""
+                          } ${seg.roundR ? "rounded-r-md" : ""}`}
+                          title={`${label(seg.e)}${booth ? " — Booth " + booth : ""}`}
+                        >
+                          {label(seg.e)}
+                          {booth ? ` · Booth ${booth}` : ""}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               );
             })}
