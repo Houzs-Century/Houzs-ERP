@@ -152,6 +152,24 @@ export function colourForms(text) {
   push(hashed); push(tidy);
   const named = dropTrailingName(tidy); // rung 3
   push(named);
+  /* Rung 3b. A digit running straight into a NAME, with no space: the slip
+     writes "KS-08sea pink".  Every OTHER spelling of that colour already
+     resolves - "KS-08 sea pink", "KS-08", even the un-hyphenated "KS08sea pink"
+     - because the hyphen is what stops the bare-code rung below (its
+     `[A-Z]{1,4}\s?\d{2,4}` cannot cross a "-"), and rung 3 cannot peel "SEA"
+     off "KS-08SEA" because the character before it is a digit, not a separator.
+     So the ONE combination hyphen + missing space fell through every rung.
+
+     Measured on the pair that found it: HC-SO-008447 FENRIR-(Q) reported its
+     colour ERP-blank, and the PO arm of the SAME colour, PO-009922 FENRIR-(Q),
+     was the ONE line in 538 that refresh-po-variants would have ERASED - the
+     ERP held "KS-08 SEA PINK" and the re-parse could not resolve the book's
+     spelling, so the null patch would have deleted the whole colour block.
+
+     This only ADDS a candidate spelling.  It cannot make an ambiguous key
+     resolve: two active rows claiming one key is still refused by claimIndex. */
+  const spaced = tidy.replace(/(\d)(?=[A-Z])/g, "$1 ").replace(/\s+/g, " ").trim();
+  if (spaced !== tidy) { push(spaced); push(dropTrailingName(spaced)); }
   push(named.replace(/\s+/g, "")); // rung 4
   push(tidy.replace(/\s+/g, ""));
   push(padWrittenTail(named)); // rung 6

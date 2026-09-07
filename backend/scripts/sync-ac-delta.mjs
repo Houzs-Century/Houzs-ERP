@@ -133,7 +133,7 @@ import postgres from "postgres";
 import { parsePayment } from "./lib/ac-payment-udf.mjs";
 import { SOFA_MODEL_ALIAS, parseSofa } from "./lib/parse-sofa.mjs";
 import { buildFabricColourIndex } from "./lib/fabric-colour-match.mjs";
-import { acFromSoDtlKey, planSoPoDedications } from "./lib/ac-po-line.mjs";
+import { acFromSoDtlKey, normItemCode, planSoPoDedications } from "./lib/ac-po-line.mjs";
 /* The delivery-document matcher and writer, shared with
    create-migrated-documents.mjs. The rule has ONE home (see that file and
    docs/bugs/0043) and this lane feeds it a different SOURCE, never a copy. */
@@ -556,7 +556,7 @@ async function main() {
      snapshot is missing or stale they stay empty and their lanes write
      nothing, which is the same refusal the report makes. */
   const recvPlan = [], recvRefused = [], recvNotes = [];
-  const dediPlan = [], dediRefused = [];
+  const dediPlan = [], dediRefused = [], dediMismatch = [];
   let doPlan = [];
   const doRefused = [], doNotes = [];
   const doDebtor = new Map();
@@ -950,6 +950,18 @@ async function main() {
         if (dediPoItems.has(String(pi.id))) continue;                    // the section-4 lane already claims this PO line
         if (poTouched.has(pi.po_number)) { dediRefused.push(`${dediWhere}: REFUSED, a person edited this purchase order's dedication in the ERP`); continue; }
         if (dediClaimed.has(String(si.id))) { dediRefused.push(`${dediWhere}: REFUSED, that sales-order line is already dedicated to another purchase-order line`); continue; }
+        /* THE IDENTITY, not just the key. Lane `links` above got this guard on
+           2026-09-07 after the DtlKey pair alone put nine sales-order lines on
+           a purchase-order line for a different bed (docs/bugs/0671). This lane
+           writes the SAME column from the SAME pair and built its plan inline,
+           so it kept the defect — and it is in the workflow's DEFAULT lanes, so
+           an apply dispatch with untouched inputs runs it. The rule is imported
+           from lib/ac-po-line.mjs rather than restated: a second copy of an
+           import rule is this repo's most expensive recurring bug. */
+        if (normItemCode(si.item_code) !== normItemCode(pi.item_code)) {
+          dediMismatch.push(`${dediWhere}: REFUSED, our two rows name DIFFERENT products - sales order says ${si.item_code}, purchase order says ${pi.item_code}. AutoCount's own pair agrees; the disagreement is inside the ERP and a person has to settle it.`);
+          continue;
+        }
         dediClaimed.add(String(si.id));
         dediPoItems.add(String(pi.id));
         dediPlan.push({ poItemId: pi.id, soItemId: si.id, poNo: pi.po_number, acPo: poNo, soDoc: si.doc_no, acSo: soNo, itemCode: si.item_code, soDtl: String(key) });
@@ -973,9 +985,14 @@ async function main() {
       log("LANE dedi - THE SO->PO DEDICATIONS THIS RUN WOULD WRITE");
       log(`  purchase-order lines that would gain their so_item_id     ${dediPlan.length} across ${new Set(dediPlan.map((u) => u.poNo)).size} purchase order(s)`);
       log(`  REFUSED                                                   ${dediRefused.length}`);
+      log(`  REFUSED, the two ERP rows name a DIFFERENT product        ${dediMismatch.length}`);
       log(`  already owned by the section-4 stamps lane this run       ${linkPlan.length}`);
       if (dediPlan.length) enumerate("LANE dedi, dedications to write", dediPlan.map((u) => `${u.poNo} (${u.acPo}) -> ${u.soDoc} (${u.acSo}) line ${u.itemCode} soDtl=${u.soDtl}`));
       if (dediRefused.length) enumerate("LANE dedi, REFUSED", dediRefused);
+      /* Kept apart from `dediRefused` on purpose: a claim conflict is this
+         script deciding who gets a line, an item mismatch is a disagreement
+         inside the ERP that no script may resolve. */
+      if (dediMismatch.length) enumerate("LANE dedi, REFUSED - DIFFERENT PRODUCT ON THE TWO SIDES", dediMismatch);
 
       // ══ CASE 4 — PROCEEDED LINES WHOSE BUILD TEXT MOVED SINCE WE COPIED IT ══
       /* check-ac-erp-reconcile.mjs already answers WHICH AXIS disagrees. The

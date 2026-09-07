@@ -185,12 +185,12 @@ async function main() {
   note(`book snapshot: ${book.po.size} PO Desc2 values, exportedAt ${book.exportedAt} (${book.source})`);
 
   const rows = await sql`
-    SELECT i.id, h.doc_no, i.item_group, i.item_code,
+    SELECT i.id, h.po_number AS doc_no, i.item_group, i.item_code,
            i.description2, i.notes, i.variants, i.linked_ac_dtlkey
       FROM scm.purchase_order_items i
       JOIN scm.purchase_orders h ON h.id = i.purchase_order_id
      WHERE h.company_id = ${CO} AND h.linked_ac_docno IS NOT NULL
-     ORDER BY h.doc_no, i.id`;
+     ORDER BY h.po_number, i.id`;
 
   const before = {
     lines: rows.length,

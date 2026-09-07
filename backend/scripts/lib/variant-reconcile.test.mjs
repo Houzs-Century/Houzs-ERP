@@ -36,7 +36,7 @@ import { parseBedframe } from "./parse-bedframe.mjs";
 import { SOFA_MODEL_ALIAS, parseSofa } from "./parse-sofa.mjs";
 import { isPendingColour } from "./fabric-colour-match.mjs";
 import {
-  AGREE, BOOK_BLANK, DIFFER, ERP_BLANK, PENDING, UNREADABLE,
+  AGREE, BOOK_BLANK, DIFFER, ERP_BLANK, PENDING, RECORDED, UNREADABLE,
   compareLine, decodeBook, inches, multisetDiff, runSelfTest,
 } from "./variant-reconcile.mjs";
 
@@ -164,6 +164,37 @@ test("specials are read from variants.specials, the field the picker actually bi
   assert.match(derivedOnly.specials.detail, /custom_specials/);
   const absent = compare(d2, [line({ variants: {} })]);
   assert.equal(absent.specials.verdict, ERP_BLANK);
+});
+
+test("a PRICED special already in variants.specialsRecorded is RECORDED, not DIFFER", () => {
+  /* The owner's ruling 甲 of 2026-09-03 — 「记下来给工厂看，但单据的钱不可以动」. The
+     recording script writes `specialsRecorded` precisely BECAUSE writing
+     `specials` would reprice a historical document, so a checker that reads only
+     `specials` reports the owner's own applied decision as outstanding work. */
+  const d2 = "PC151-01/Divan:8\"/Front Drawer";
+  const recorded = compare(d2, [line({ variants: { specialsRecorded: ["Front Drawer"] } })]);
+  assert.equal(recorded.specials.verdict, RECORDED);
+  assert.match(recorded.specials.detail, /specialsRecorded/);
+});
+
+test("RECORDED never swallows a real gap: a PARTIAL cover stays DIFFER", () => {
+  /* The failure mode of the fix, pinned. If ANY option the book asks for is
+     neither ticked nor recorded, the line is still a gap — rounding a partial
+     cover up to "decided" is how work disappears from a backlog. */
+  const d2 = "PC151-01/Divan:8\"/Front Drawer/Left Drawer";
+  const axes = compare(d2, [line({ variants: { specialsRecorded: ["Front Drawer"] } })]);
+  assert.equal(axes.specials.verdict, DIFFER);
+  assert.match(axes.specials.detail, /Left Drawer/);
+  assert.match(axes.specials.detail, /IS recorded money-neutrally/);
+});
+
+test("a recorded option is NOT counted as carried — the line still does not tick it", () => {
+  /* `specialsRecorded` must never be merged into the carried list: the ERP
+     column the reader reports has to keep saying what the line actually holds,
+     or the next reader cannot tell a ticked option from a recorded one. */
+  const d2 = "PC151-01/Divan:8\"/Front Drawer";
+  const axes = compare(d2, [line({ variants: { specialsRecorded: ["Front Drawer"] } })]);
+  assert.equal(axes.specials.erp, "");
 });
 
 test("a double-encoded jsonb specials payload is MEASURED, not read as empty", () => {

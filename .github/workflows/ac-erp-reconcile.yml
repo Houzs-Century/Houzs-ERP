@@ -20,6 +20,11 @@ name: AutoCount vs ERP reconcile (read-only)
 on:
   workflow_dispatch:
     inputs:
+      show:
+        description: "Offenders to print per axis (20 is the status default; raise it to adjudicate compartments)"
+        required: false
+        default: "20"
+        type: string
       max_snapshot_age_days:
         description: "Refuse if the AutoCount snapshot is older than this many days"
         required: false
@@ -54,6 +59,7 @@ jobs:
       - run: node scripts/check-ac-erp-reconcile.mjs
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SHOW: ${{ inputs.show }}
           MAX_SNAPSHOT_AGE_DAYS: ${{ inputs.max_snapshot_age_days }}
           COMPANY_ID: ${{ inputs.company_id }}
           # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml

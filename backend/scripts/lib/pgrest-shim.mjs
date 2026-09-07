@@ -47,9 +47,37 @@
 //                               PostgREST-specific semantics; covered by
 //                               tests/pgrestShim.node.mjs
 //
-// NOT a general client. No embedded selects (`a, rel(b)`), no `.rpc()`, no
-// deletes — the day a canonical function needs one, the gap list names it and
-// the shim grows a tested method.
+// 2026-09-07 growth (docs/bugs/0670 — the dispatchable recompute has been
+// unable to run since 2026-08-16):
+//   select('id, so:t!inner(c), kids:t2!inner(c1, c2)')  — ONE level of `!inner`
+//                               embed, plus dotted filter columns on an embed
+//                               (.not('so.status','in','(...)'),
+//                               .gt('po_items.received_qty', 0)).
+// This is the shape `recomputeSoStockAllocation` has used since 24b379034
+// (#2298) inverted its two hot reads. Before this, `q()` threw
+// `unsafe identifier "so.status"` and the whole recompute refused — for three
+// weeks, under a run that exited 0.
+//
+// HOW IT IS TRANSLATED, and why that is faithful rather than a guess:
+//   * The RELATIONSHIP IS READ FROM pg_constraint at run time, exactly once per
+//     (parent, embed) pair, the same way PostgREST resolves an embed. Not one
+//     FK between the two tables, or more than one? That is a GAP with the count
+//     printed — never a guessed join column. `mfg_sales_order_items` joins its
+//     header on `doc_no`, NOT on an id, so an assumed `parent_id` convention
+//     would have silently joined nothing here.
+//   * A to-ONE embed (the parent holds the FK) becomes an INNER JOIN and its
+//     filters go in the main WHERE — equivalent under an inner join.
+//   * A to-MANY embed (the child holds the FK) becomes a correlated
+//     `json_agg` subquery for the data plus an `EXISTS` for `!inner`, so the
+//     PARENT row set is never multiplied. That matters: `.range()` pages over
+//     parents, and a join that fanned out would page over joined rows and both
+//     repeat and skip parents.
+//   * `!inner` is required. A plain `rel(...)` embed is a GAP, because a LEFT
+//     embed changes which parents come back and no caller here wants one.
+//
+// NOT a general client. One level of embedding only, no `.rpc()`, no deletes —
+// the day a canonical function needs one, the gap list names it and the shim
+// grows a tested method.
 const IDENT = /^[a-z_][a-z0-9_]*$/;
 /* PostgREST's EMBEDDED-FILTER spelling — `.not('so.status', 'in', ...)`,
    `.gt('po_items.received_qty', 0)`. It filters the parent by a column of an
@@ -68,6 +96,21 @@ const IDENT = /^[a-z_][a-z0-9_]*$/;
    (2026-09-07). Same composition as docs/bugs/0599, one layer lower. */
 const EMBEDDED_FILTER = /^[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*$/;
 
+/* Split on commas at parenthesis depth 0, so an embed's own column list stays
+   in one piece: "id, so:t!inner(a, b), c" -> ["id", "so:t!inner(a, b)", "c"]. */
+export function splitTopLevel(s) {
+  const out = [];
+  let depth = 0, cur = "";
+  for (const ch of String(s ?? "")) {
+    if (ch === "(") depth++;
+    else if (ch === ")") depth--;
+    if (ch === "," && depth === 0) { out.push(cur); cur = ""; continue; }
+    cur += ch;
+  }
+  if (cur.trim() !== "" || out.length === 0) out.push(cur);
+  return out.map((x) => x.trim()).filter((x) => x !== "");
+}
+
 export function pgrestShim(sql, schema = "scm") {
   const gaps = [];
   const q = (id) => {
@@ -78,6 +121,30 @@ export function pgrestShim(sql, schema = "scm") {
     }
     if (!IDENT.test(String(id))) throw new Error(`pgrest-shim: unsafe identifier "${id}"`);
     return `"${id}"`;
+  };
+
+  /* One catalog probe per (parent, embed) pair per shim instance. PostgREST
+     resolves an embed from the FOREIGN KEY; so does this. */
+  const relCache = new Map();
+  const resolveRelation = async (parent, child) => {
+    const key = `${parent}|${child}`;
+    if (relCache.has(key)) return relCache.get(key);
+    const rows = await sql.unsafe(
+      `SELECT src.relname AS src_table, tgt.relname AS tgt_table,
+              (SELECT a.attname FROM pg_attribute a WHERE a.attrelid = c.conrelid  AND a.attnum = c.conkey[1])  AS src_col,
+              (SELECT a.attname FROM pg_attribute a WHERE a.attrelid = c.confrelid AND a.attnum = c.confkey[1]) AS tgt_col
+         FROM pg_constraint c
+         JOIN pg_class src ON src.oid = c.conrelid
+         JOIN pg_namespace sn ON sn.oid = src.relnamespace
+         JOIN pg_class tgt ON tgt.oid = c.confrelid
+         JOIN pg_namespace tn ON tn.oid = tgt.relnamespace
+        WHERE c.contype = 'f' AND array_length(c.conkey, 1) = 1
+          AND sn.nspname = $1 AND tn.nspname = $1
+          AND ((src.relname = $2 AND tgt.relname = $3) OR (src.relname = $3 AND tgt.relname = $2))`,
+      [schema, parent, child]);
+    const rel = { rows: [...rows] };
+    relCache.set(key, rel);
+    return rel;
   };
 
   const from = (table) => {
@@ -102,29 +169,33 @@ export function pgrestShim(sql, schema = "scm") {
         };
         // Placeholders are minted in emission order, so WHERE is built where it
         // is emitted: after SET for updates, first for selects.
+        /* `ref` turns a filter's column into a SQL reference. The default is
+           the bare quoted column, byte-identical to what this shim emitted
+           before embeds existed; the embed path passes a qualifier. */
+        const clausesFor = (list, ref = (c) => q(c)) => list.map((f) => {
+          if (f.op === "eq") return `${ref(f.col)} = ${p(f.v)}`;
+          if (f.op === "in") {
+            const arr = Array.isArray(f.v) ? f.v : [];
+            if (arr.length === 0) return "FALSE"; // PostgREST in.() empty -> no rows
+            return `${ref(f.col)} IN (${arr.map((x) => p(x)).join(", ")})`;
+          }
+          if (f.op === "not-in") {
+            const arr = Array.isArray(f.v) ? f.v : [];
+            if (arr.length === 0) return "TRUE"; // excluding nothing keeps every row
+            return `${ref(f.col)} NOT IN (${arr.map((x) => p(x)).join(", ")})`;
+          }
+          if (f.op === "not-is-null") return `${ref(f.col)} IS NOT NULL`;
+          if (f.op === "is-null") return `${ref(f.col)} IS NULL`;
+          if (f.op === "cmp") return `${ref(f.col)} ${f.cmp} ${p(f.v)}`;
+          if (f.op === "or") {
+            // f.v: [{ col, op: 'is-null' | 'lt', v? }] — parsed in .or().
+            const parts = f.v.map((d) => (d.op === "is-null" ? `${ref(d.col)} IS NULL` : `${ref(d.col)} < ${p(d.v)}`));
+            return `(${parts.join(" OR ")})`;
+          }
+          throw new Error(`pgrest-shim: unknown filter op ${f.op}`);
+        });
         const buildWhere = () => {
-          const wheres = state.filters.map((f) => {
-            if (f.op === "eq") return `${q(f.col)} = ${p(f.v)}`;
-            if (f.op === "in") {
-              const arr = Array.isArray(f.v) ? f.v : [];
-              if (arr.length === 0) return "FALSE"; // PostgREST in.() empty -> no rows
-              return `${q(f.col)} IN (${arr.map((x) => p(x)).join(", ")})`;
-            }
-            if (f.op === "not-in") {
-              const arr = Array.isArray(f.v) ? f.v : [];
-              if (arr.length === 0) return "TRUE"; // excluding nothing keeps every row
-              return `${q(f.col)} NOT IN (${arr.map((x) => p(x)).join(", ")})`;
-            }
-            if (f.op === "not-is-null") return `${q(f.col)} IS NOT NULL`;
-            if (f.op === "is-null") return `${q(f.col)} IS NULL`;
-            if (f.op === "cmp") return `${q(f.col)} ${f.cmp} ${p(f.v)}`;
-            if (f.op === "or") {
-              // f.v: [{ col, op: 'is-null' | 'lt', v? }] — parsed in .or().
-              const parts = f.v.map((d) => (d.op === "is-null" ? `${q(d.col)} IS NULL` : `${q(d.col)} < ${p(d.v)}`));
-              return `(${parts.join(" OR ")})`;
-            }
-            throw new Error(`pgrest-shim: unknown filter op ${f.op}`);
-          });
+          const wheres = clausesFor(state.filters);
           return wheres.length ? ` WHERE ${wheres.join(" AND ")}` : "";
         };
         const target = `"${schema}".${q(state.table)}`;
@@ -183,15 +254,124 @@ export function pgrestShim(sql, schema = "scm") {
           await sql.unsafe(`UPDATE ${target} SET ${sets}${where}`, params);
           return { data: null, error: null };
         }
+        /* ── the embedded-select path ──────────────────────────────────────
+           Entered only when select() actually names an embed, so every
+           non-embedded read below emits exactly the SQL it always did. */
+        const parts = state.cols === "*" ? ["*"] : splitTopLevel(state.cols);
+        const embedSpecs = parts.filter((t) => t.includes("("));
+        if (embedSpecs.length > 0) {
+          const embeds = [];
+          for (const t of embedSpecs) {
+            const m = /^(?:([A-Za-z_][A-Za-z0-9_]*)\s*:\s*)?([A-Za-z_][A-Za-z0-9_]*)(!inner)?\s*\((.*)\)$/.exec(t);
+            if (!m) return gap(`embedded select ${JSON.stringify(t)} — unparseable`);
+            if (!m[3]) return gap(`embedded select ${JSON.stringify(t)} without !inner — a LEFT embed changes which parent rows come back`);
+            const embedCols = splitTopLevel(m[4]);
+            if (embedCols.some((c) => c.includes("(") || c.includes(":"))) {
+              return gap(`embedded select ${JSON.stringify(t)} — only ONE level of embedding is implemented`);
+            }
+            const alias = m[1] || m[2];
+            /* "p" is this translation's own name for the parent table. */
+            if (alias === "p") return gap(`embed aliased "p" — that name is taken by the parent row`);
+            if (embedCols.length === 0) return gap(`embedded select ${JSON.stringify(t)} names no columns`);
+            embeds.push({ alias, table: m[2], cols: embedCols });
+          }
+          const byAlias = new Map(embeds.map((e) => [e.alias, e]));
+          const baseCols = parts.filter((t) => !t.includes("("));
+          if (baseCols.includes("*")) return gap(`select("*") alongside an embed`);
+
+          /* Route every filter to the parent or to the embed it names. An
+             alias nobody declared is a gap, never silently a parent column. */
+          const parentFilters = [];
+          for (const f of state.filters) {
+            const cols = f.op === "or" ? f.v.map((d) => d.col) : [f.col];
+            const aliases = [...new Set(cols.map((c) => (String(c).includes(".") ? String(c).split(".")[0] : null)))];
+            if (aliases.length !== 1) return gap(`a filter spanning ${JSON.stringify(aliases)} — one target per filter`);
+            const alias = aliases[0];
+            if (alias === null) { parentFilters.push(f); continue; }
+            const e = byAlias.get(alias);
+            if (!e) return gap(`filter on "${alias}.*" but select() declares no embed called "${alias}"`);
+            const strip = (c) => String(c).slice(alias.length + 1);
+            e.filters = e.filters ?? [];
+            e.filters.push(f.op === "or"
+              ? { ...f, v: f.v.map((d) => ({ ...d, col: strip(d.col) })) }
+              : { ...f, col: strip(f.col) });
+          }
+
+          /* The relationship, from the catalog. */
+          for (const e of embeds) {
+            const rel = await resolveRelation(state.table, e.table);
+            if (rel.rows.length !== 1) {
+              return gap(`embed "${e.alias}": ${rel.rows.length} single-column foreign key(s) between ${schema}.${state.table} and ${schema}.${e.table} — PostgREST resolves an embed through exactly one`);
+            }
+            const r = rel.rows[0];
+            e.toOne = r.src_table === state.table;
+            e.parentCol = e.toOne ? r.src_col : r.tgt_col;
+            e.childCol = e.toOne ? r.tgt_col : r.src_col;
+          }
+
+          /* Emission order is TEXT order, deliberately: placeholders are minted
+             as clauses are built, so building in the order the statement reads
+             keeps $1, $2, ... ascending across it. They would bind correctly
+             either way — each clause carries its own index — but a statement
+             whose numbers jump is a statement nobody can check by eye in a log. */
+          const P = `"p"`;
+          const A = (e) => q(e.alias);
+          const C = (e) => `"c_${e.alias}"`;
+          const childFrom = (e, extra) => `FROM "${schema}".${q(e.table)} ${C(e)} WHERE ${C(e)}.${q(e.childCol)} = ${P}.${q(e.parentCol)}${extra}`;
+          const embedWhere = (e) => {
+            const f = clausesFor(e.filters ?? [], (c) => `${C(e)}.${q(c)}`);
+            return f.length ? ` AND ${f.join(" AND ")}` : "";
+          };
+          const selectList = [...baseCols.map((c) => `${P}.${q(c)}`)];
+          for (const e of embeds) {
+            if (e.toOne) {
+              selectList.push(`json_build_object(${e.cols.map((c) => `'${c}', ${A(e)}.${q(c)}`).join(", ")}) AS ${A(e)}`);
+            } else {
+              /* to-MANY: aggregate in a correlated subquery so the parent row
+                 set is never multiplied. */
+              const obj = `json_build_object(${e.cols.map((c) => `'${c}', ${C(e)}.${q(c)}`).join(", ")})`;
+              selectList.push(`(SELECT COALESCE(json_agg(${obj}), '[]'::json) ${childFrom(e, embedWhere(e))}) AS ${A(e)}`);
+            }
+          }
+          const joins = embeds.filter((e) => e.toOne)
+            .map((e) => `JOIN "${schema}".${q(e.table)} ${A(e)} ON ${A(e)}.${q(e.childCol)} = ${P}.${q(e.parentCol)}`);
+          const allWhere = [
+            ...clausesFor(parentFilters, (c) => `${P}.${q(c)}`),
+            ...embeds.filter((e) => e.toOne).flatMap((e) => clausesFor(e.filters ?? [], (c) => `${A(e)}.${q(c)}`)),
+            /* `!inner` on a to-many: at least one child must survive the same
+               narrowing the aggregate applied. */
+            ...embeds.filter((e) => !e.toOne).map((e) => `EXISTS (SELECT 1 ${childFrom(e, embedWhere(e))})`),
+          ];
+          const eOrder = state.order.length
+            ? ` ORDER BY ${state.order.map((o) => `${P}.${q(o.col)} ${o.asc ? "ASC" : "DESC"}`).join(", ")}`
+            : "";
+          const eLimit = state.limit != null ? ` LIMIT ${Number(state.limit)}` : "";
+          const eOffset = state.offset != null ? ` OFFSET ${Number(state.offset)}` : "";
+          const text = `SELECT ${selectList.join(", ")} FROM "${schema}".${q(state.table)} ${P}`
+            + (joins.length ? ` ${joins.join(" ")}` : "")
+            + (allWhere.length ? ` WHERE ${allWhere.join(" AND ")}` : "")
+            + eOrder + eLimit + eOffset;
+          const rows = await sql.unsafe(text, params);
+          if (state.single === "maybe") {
+            if (rows.length > 1) return { data: null, error: { message: `maybeSingle: ${rows.length} rows` } };
+            return { data: rows[0] ?? null, error: null };
+          }
+          if (state.single === "single") {
+            if (rows.length !== 1) return { data: null, error: { message: `single: ${rows.length} rows` } };
+            return { data: rows[0], error: null };
+          }
+          return { data: [...rows], error: null };
+        }
+
         const where = buildWhere();
 
         let cols = "*";
         if (state.cols !== "*") {
-          cols = String(state.cols).split(",").map((c) => {
+          cols = parts.map((c) => {
             const t = c.trim();
             if (!t) throw new Error("pgrest-shim: empty column in select()");
-            if (t.includes("(") || t.includes(":")) {
-              const msg = `pgrest-shim GAP: embedded/aliased select "${t}" is not implemented`;
+            if (t.includes(":")) {
+              const msg = `pgrest-shim GAP: aliased select "${t}" is not implemented`;
               gaps.push(msg);
               throw new Error(msg);
             }
