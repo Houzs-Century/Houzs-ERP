@@ -23,7 +23,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { Save, Trash2, X } from 'lucide-react';
 import { Button } from '@2990s/design-system';
-import { useCreatePaymentVoucher, usePaymentVoucherDetail, useSupplierAdvances, usePvReservations, NO_RESERVATIONS, useExtractBills, useUploadPvFile, fileToBase64, type BillExtraction, type VendorMemory, type PvFilePayload } from '../../vendor/scm/lib/payment-voucher-queries';
+import { useCreatePaymentVoucher, usePaymentVoucherDetail, useSupplierAdvances, usePvReservations, NO_RESERVATIONS, useExtractBills, useUploadPvFile, useRefundSource, fileToBase64, type BillExtraction, type VendorMemory, type PvFilePayload } from '../../vendor/scm/lib/payment-voucher-queries';
 import { takePvFiles } from '../../vendor/scm/lib/pv-file-handoff';
 import { useIdempotencyKey } from '../../lib/idempotency';
 import { useAccounts, useAccountRoles, type Account } from '../../vendor/scm/lib/accounting-queries';
@@ -55,7 +55,7 @@ const fmtRm = (centi: number | null | undefined, currency = 'MYR'): string => {
 /* Migration 0202 — what this voucher is FOR. SUPPLIER_PAYMENT settles a
    supplier's outstanding PIs at face value (the "Apply to PI" section);
    FREIGHT / OTHER are plain cash-out vouchers (lines only, no settlement). */
-type PvPurpose = 'SUPPLIER_PAYMENT' | 'FREIGHT' | 'OTHER';
+type PvPurpose = 'SUPPLIER_PAYMENT' | 'FREIGHT' | 'OTHER' | 'CUSTOMER_REFUND';
 
 type DraftLine = {
   rid:              string;
@@ -99,6 +99,10 @@ export const PaymentVoucherNew = () => {
      Payment Voucher: expense lines only, no supplier, no PI section. */
   const [searchParams] = useSearchParams();
   const isAp = searchParams.get('type') === 'ap';
+  /* ?type=refund — the Customer Refund (§14): the operator names the document
+     (SO any time, SI when cancelled), the server says who and how much, and
+     the one Dr AR line is the system's. No payee typed, no lines, no PIs. */
+  const isRefund = searchParams.get('type') === 'refund';
   const create   = useCreatePaymentVoucher();
   /* One key for the one voucher this page is open to raise (lib/idempotency.ts).
      Minted once by useState's lazy init: stable across re-renders and across a
@@ -124,7 +128,7 @@ export const PaymentVoucherNew = () => {
   const [supplierId, setSupplierId]               = useState<string>('');
   /* Fixed by the document type — AP Payment settles PIs, Payment Voucher is
      plain cash-out. The old three-way dropdown is gone with the split. */
-  const purpose: PvPurpose = isAp ? 'SUPPLIER_PAYMENT' : 'OTHER';
+  const purpose: PvPurpose = isRefund ? 'CUSTOMER_REFUND' : isAp ? 'SUPPLIER_PAYMENT' : 'OTHER';
   const [creditAccountCode, setCreditAccountCode] = useState<string>('');
   /* Pre-fill Paid From with the company's own default bank (BANK_DEFAULT —
      the role the owner maintains in Recon Setup). Only while untouched. */
@@ -251,6 +255,21 @@ export const PaymentVoucherNew = () => {
   const [currencyOverride, setCurrencyOverride]   = useState<string | null>(null);
   const [lines, setLines]                         = useState<DraftLine[]>([newLine()]);
   const [dialog, setDialog] = useState<{ title: string; body: string; goTo?: string } | null>(null);
+  /* ── Customer Refund state (§14). refundDocNo is the COMMITTED number (blur /
+     Enter on the input); the source is read from the server by that number. */
+  const [refundType, setRefundType]         = useState<'SO' | 'SI'>('SO');
+  const [refundDocInput, setRefundDocInput] = useState<string>('');
+  const [refundDocNo, setRefundDocNo]       = useState<string>('');
+  const [refundAmountSen, setRefundAmountSen] = useState<number | null>(null);
+  const refundQ = useRefundSource(refundType, isRefund ? refundDocNo : '');
+  const refundSrc = isRefund && refundQ.data ? refundQ.data.source : null;
+  /* The amount opens at the headroom (a full refund is the common case) and
+     follows a re-load; a typed figure stays until the document changes. */
+  useEffect(() => {
+    if (!refundSrc) { setRefundAmountSen(null); return; }
+    setRefundAmountSen((prev) => (prev == null || prev > refundSrc.refundableSen ? refundSrc.refundableSen : prev));
+  }, [refundSrc]);
+  const refundError = refundQ.isError ? (refundQ.error instanceof Error ? refundQ.error.message : 'The document could not be read.') : null;
 
   /* ── Copy as new (the owner, 2026-09-03, AutoCount in hand) ─────────────
      ?copyFrom=<pvId> pre-fills CONTENT from an existing voucher — payee,
@@ -270,6 +289,13 @@ export const PaymentVoucherNew = () => {
     if (v.supplier_id) setSupplierId(String(v.supplier_id));
     if (v.credit_account_code) setCreditAccountCode(String(v.credit_account_code));
     if (v.notes) setNotes(String(v.notes));
+    /* A copied refund carries its document, never its amount — the headroom
+       is re-read live. */
+    if (v.purpose === 'CUSTOMER_REFUND' && v.refund_source_doc_no) {
+      setRefundType(v.refund_source_type === 'SI' ? 'SI' : 'SO');
+      setRefundDocInput(String(v.refund_source_doc_no));
+      setRefundDocNo(String(v.refund_source_doc_no));
+    }
     const cur = typeof v.currency === 'string' ? v.currency : null;
     if (cur && cur !== 'MYR') {
       setCurrencyOverride(cur);
@@ -440,7 +466,7 @@ export const PaymentVoucherNew = () => {
 
   /* The voucher total: an AP Payment IS its ticks plus any prepay; a Payment
      Voucher is its lines. Nothing to over-allocate in either shape. */
-  const totalSen = isAp ? allocatedSen + advanceSen : linesTotalSen;
+  const totalSen = isRefund ? (refundAmountSen ?? 0) : isAp ? allocatedSen + advanceSen : linesTotalSen;
 
   /* RINGGIT IN, RATE OUT — re-derived when either side moves (see the header
      comment on the MYR-paid field). */
@@ -461,7 +487,9 @@ export const PaymentVoucherNew = () => {
     ? rolesQ.data?.roles.AP_OTHER
     : rolesQ.data?.roles.AP) ?? '';
   const realLines = lines.filter((l) => l.debitAccountCode && l.amountSen > 0);
-  const canSave = isAp
+  const canSave = isRefund
+    ? !!refundSrc && refundSrc.eligible && !!creditAccountCode && (refundAmountSen ?? 0) > 0 && (refundAmountSen ?? 0) <= refundSrc.refundableSen
+    : isAp
     ? !!payeeName.trim() && !!supplierId && !!creditAccountCode && totalSen > 0 && !!apAccountCode
     : isTransfer
       ? !!creditAccountCode && !!toAccountCode && toAccountCode !== creditAccountCode && transferSen > 0
@@ -470,7 +498,13 @@ export const PaymentVoucherNew = () => {
   const transferMode = !isAp && isTransfer;
   const transferPayee = toAccount ? `Internal transfer to ${toAccount.account_code} ${toAccount.account_name}` : '';
   const onSave = async () => {
-    if (transferMode) {
+    if (isRefund) {
+      if (!refundSrc) { setDialog({ title: 'Name the document', body: 'Type the Sales Order or Sales Invoice number this refunds, then press Enter.' }); return; }
+      if (!refundSrc.eligible) { setDialog({ title: 'This document cannot be refunded', body: refundSrc.reason ?? 'Nothing to refund.' }); return; }
+      if (!creditAccountCode) { setDialog({ title: 'Pick a “Paid From” account', body: 'Choose the bank / cash account the refund leaves.' }); return; }
+      if ((refundAmountSen ?? 0) <= 0) { setDialog({ title: 'Enter the refund amount', body: 'How much goes back to the customer?' }); return; }
+      if ((refundAmountSen ?? 0) > refundSrc.refundableSen) { setDialog({ title: 'More than was collected', body: `${refundSrc.docNo} has ${fmtRm(refundSrc.refundableSen)} left to refund.` }); return; }
+    } else if (transferMode) {
       if (!creditAccountCode) { setDialog({ title: 'Pick a “Paid From” account', body: 'Choose the account the money leaves.' }); return; }
       if (!toAccountCode) { setDialog({ title: 'Pick the destination', body: 'Choose which of our own accounts the money goes into.' }); return; }
       if (toAccountCode === creditAccountCode) { setDialog({ title: 'Same account both sides', body: 'A transfer needs two different accounts.' }); return; }
@@ -486,7 +520,9 @@ export const PaymentVoucherNew = () => {
     /* AP Payment: the ONE GL line is written here — Dr the AP control account
        for exactly what the ticks apply. The operator never touches a debit
        account on this document, so it cannot be mis-booked. */
-    const sendLines = transferMode
+    const sendLines = isRefund
+      ? [] /* the server composes the one Dr AR line (§14) */
+      : transferMode
       ? [{ description: 'Internal transfer', debitAccountCode: toAccountCode, amountSen: transferSen }]
       : isAp
       ? [{
@@ -510,9 +546,10 @@ export const PaymentVoucherNew = () => {
     try {
       const res = await create.mutateAsync({
         idempotencyKey:    idemKey,
-        payeeName:         transferMode ? transferPayee : payeeName.trim(),
-        supplierId:        transferMode ? null : (supplierId || null),
+        payeeName:         isRefund ? (refundSrc?.customer.name ?? refundSrc?.docNo ?? '') : transferMode ? transferPayee : payeeName.trim(),
+        supplierId:        transferMode || isRefund ? null : (supplierId || null),
         purpose,
+        ...(isRefund ? { refundSourceType: refundType, refundSourceDocNo: refundSrc?.docNo, refundAmountSen: refundAmountSen ?? 0 } : {}),
         creditAccountCode,
         voucherDate,
         notes:             notes || undefined,
@@ -561,7 +598,7 @@ export const PaymentVoucherNew = () => {
     <div className="space-y-4">
       <PageHeader back
         eyebrow="Finance"
-        title={isAp ? 'New AP Payment' : 'New Payment Voucher'}
+        title={isRefund ? 'New Customer Refund' : isAp ? 'New AP Payment' : 'New Payment Voucher'}
         actions={
           <div className={styles.actions}>
             <Button variant="ghost" size="md" onClick={() => navigate('/scm/payment-vouchers')}>
@@ -569,7 +606,7 @@ export const PaymentVoucherNew = () => {
             </Button>
             <Button variant="primary" size="md" onClick={onSave} disabled={saving || !canSave}>
               <Save {...ICON} />
-              {saving ? 'Saving…' : isAp ? 'Create AP Payment' : 'Create Voucher'}
+              {saving ? 'Saving…' : isRefund ? 'Create Refund' : isAp ? 'Create AP Payment' : 'Create Voucher'}
             </Button>
           </div>
         }
@@ -578,7 +615,7 @@ export const PaymentVoucherNew = () => {
       <section className={styles.card}>
         <div className={styles.cardHeader}><h2 className={styles.cardTitle}>Header</h2></div>
         <div className={styles.cardBody}>
-          {!isAp && (
+          {!isAp && !isRefund && (
             <div style={{ display: 'flex', gap: 8, marginBottom: 'var(--space-3)' }}>
               {/* 付给供应商/其他 vs 内部转账 (item 10) — same paper, same chain. */}
               <Button variant={!isTransfer ? 'primary' : 'secondary'} onClick={() => setIsTransfer(false)}>付款 Payment</Button>
@@ -596,6 +633,13 @@ export const PaymentVoucherNew = () => {
                   ))}
                 </select>
               </label>
+            ) : isRefund ? (
+            <label className={styles.field}>
+              <span className={styles.fieldLabel}>Customer</span>
+              {/* From the document, never retyped — the payee IS the customer. */}
+              <input type="text" readOnly aria-label="Customer" value={refundSrc ? `${refundSrc.customer.name ?? '—'}${refundSrc.customer.phone ? ` · ${refundSrc.customer.phone}` : ''}` : ''}
+                placeholder="— from the document below —" className={styles.fieldInput} style={{ background: 'var(--c-cream)' }} />
+            </label>
             ) : (
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Payee *</span>
@@ -647,14 +691,14 @@ export const PaymentVoucherNew = () => {
             {/* Multi-currency (Phase 1-A). Currency defaults to the linked
                 supplier's currency (MYR = strict no-op, rate field hidden); a
                 foreign currency reveals the auto-filled, editable exchange rate. */}
-            <CurrencySelect
+            {!isRefund && <CurrencySelect
               currency={currency}
               onCurrencyChange={setCurrencyOverride}
               exchangeRate={exchangeRate}
               onRateChange={(v) => { setRateSource('rate'); setMyrPaidSen(null); setExchangeRate(v); }}
               rateHint={<>≈ {fmtRm(Math.round(totalSen * resolveFxRate(exchangeRate)), 'MYR')} posted to GL</>}
               styles={styles}
-            />
+            />}
 
             {/* ── Ringgit in, rate out ─────────────────────────────────────────
                 The owner knows what left the bank, not what the rate was. Enter the
@@ -702,7 +746,88 @@ export const PaymentVoucherNew = () => {
           </div>
         </section>
       )}
-      {!isAp && !transferMode && (
+      {/* ── Refunds — the Customer Refund's body (§14): name the document,
+          read what it collected, decide how much goes back. ── */}
+      {isRefund && (
+        <section className={styles.card}>
+          <div className={styles.cardHeader}>
+            <h2 className={styles.cardTitle}>Refunds</h2>
+            <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
+              {refundSrc ? `${fmtRm(refundSrc.refundableSen)} refundable` : '认单为主 — name the order or the cancelled invoice'}
+            </span>
+          </div>
+          <div className={styles.cardBody} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+            <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <Button variant={refundType === 'SO' ? 'primary' : 'secondary'} onClick={() => { setRefundType('SO'); setRefundDocNo(''); }}>Sales Order</Button>
+                <Button variant={refundType === 'SI' ? 'primary' : 'secondary'} onClick={() => { setRefundType('SI'); setRefundDocNo(''); }}>Sales Invoice</Button>
+              </div>
+              <label className={styles.field} style={{ flex: '1 1 260px' }}>
+                <span className={styles.fieldLabel}>{refundType === 'SO' ? 'Sales Order no. *' : 'Sales Invoice no. *'}</span>
+                <input type="text" value={refundDocInput} aria-label="Refunded document"
+                  onChange={(e) => setRefundDocInput(e.target.value)}
+                  onBlur={() => setRefundDocNo(refundDocInput.trim())}
+                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); setRefundDocNo(refundDocInput.trim()); } }}
+                  placeholder={refundType === 'SO' ? 'e.g. 2990-SO-2607-001' : 'e.g. HC-SI-2607-001'} className={styles.fieldInput} />
+              </label>
+            </div>
+            {refundQ.isLoading && refundDocNo && <p style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-13)' }}>Reading {refundDocNo}…</p>}
+            {refundError && <p style={{ color: 'var(--c-festive-b, #B8331F)', fontSize: 'var(--fs-13)' }}>{refundError}</p>}
+            {refundSrc && (
+              <>
+                {!refundSrc.eligible && (
+                  <p style={{ color: 'var(--c-festive-b, #B8331F)', fontSize: 'var(--fs-13)', fontWeight: 600 }}>{refundSrc.reason}</p>
+                )}
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
+                  <thead>
+                    <tr style={{ textAlign: 'left', color: 'var(--fg-muted)', fontSize: 'var(--fs-11)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                      <th style={{ padding: '6px 8px' }}>Paid on</th>
+                      <th style={{ padding: '6px 8px' }}>Method</th>
+                      <th style={{ padding: '6px 8px' }}>Bank</th>
+                      <th style={{ padding: '6px 8px', textAlign: 'right' }}>Amount</th>
+                      <th style={{ padding: '6px 8px' }}>In the ledger</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {refundSrc.payments.length === 0 && (
+                      <tr><td colSpan={5} style={{ padding: '6px 8px', color: 'var(--fg-muted)' }}>No payment recorded on {refundSrc.docNo}.</td></tr>
+                    )}
+                    {refundSrc.payments.map((p) => (
+                      <tr key={p.id} style={{ borderTop: '1px solid var(--line)', color: p.booked ? 'inherit' : 'var(--fg-muted)' }}>
+                        <td style={{ padding: '6px 8px', whiteSpace: 'nowrap' }}>{fmtDate(p.paidOn)}</td>
+                        <td style={{ padding: '6px 8px' }}>{p.method}</td>
+                        <td style={{ padding: '6px 8px' }}>{p.provider ?? '—'}</td>
+                        <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{fmtRm(p.amountSen)}</td>
+                        <td style={{ padding: '6px 8px' }}>{p.booked ? '✓ booked' : p.method === 'imported' ? 'AutoCount era' : 'not booked'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <div style={{ display: 'flex', gap: 'var(--space-4)', flexWrap: 'wrap', fontSize: 'var(--fs-13)', borderTop: '1px solid var(--line)', paddingTop: 'var(--space-3)' }}>
+                  <span>Booked here <b style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(refundSrc.bookedSen)}</b></span>
+                  <span>Already on refund vouchers <b style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(refundSrc.refundedSen)}</b>
+                    {refundSrc.refunds.map((r) => <span key={r.id}> · <a href={`/scm/payment-vouchers/${r.id}`} style={{ color: 'var(--c-orange)' }}>{r.pvNumber}</a></span>)}
+                  </span>
+                  <span>Refundable <b style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(refundSrc.refundableSen)}</b></span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', flexWrap: 'wrap' }}>
+                  <b style={{ fontSize: 'var(--fs-13)' }}>Refund amount (MYR)</b>
+                  <label style={{ width: 180 }}>
+                    <span style={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden', clip: 'rect(0 0 0 0)' }}>Refund amount</span>
+                    <MoneyInput bare valueSen={refundAmountSen ?? 0} aria-label="Refund amount"
+                      onCommit={(sen) => setRefundAmountSen(Math.max(0, sen ?? 0))}
+                      inputClassName={styles.fieldInput} selectOnFocus disabled={!refundSrc.eligible} />
+                  </label>
+                  <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
+                    Books: Dr {rolesQ.data?.roles.AR ?? '300-0000'} Trade Debtors ({refundSrc.customer.name ?? refundSrc.docNo}) {fmtRm(refundAmountSen ?? 0)} · Cr {creditAccountCode || 'Paid From'} {fmtRm(refundAmountSen ?? 0)}
+                  </span>
+                </div>
+              </>
+            )}
+          </div>
+        </section>
+      )}
+      {!isAp && !transferMode && !isRefund && (
       <section className={styles.card}>
         <div className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Lines</h2>

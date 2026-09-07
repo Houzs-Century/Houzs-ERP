@@ -13,7 +13,8 @@ const CHART: Row[] = ['300-0000', '500-0000', '320-0000', '310-0010', '326-0000'
   account_code: code, account_name: code, account_type: 'ASSET', parent_code: null, is_active: true, company_id: 1,
 }));
 
-const SO: Row = { doc_no: 'SO-2608-001', company_id: 1, customer_name: 'Ah Meng', customer_phone: '0123' };
+/* The order table's real columns (docs/bugs/0655): debtor_name and phone. */
+const SO: Row = { doc_no: 'SO-2608-001', company_id: 1, debtor_name: 'Ah Meng', phone: '0123' };
 
 const PAY = (over: Partial<Row> = {}): Row => ({
   id: 'pay-1',

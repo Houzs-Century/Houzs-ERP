@@ -51,7 +51,8 @@ import { docMonthTag, mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-
 import { isDocumentHeld } from '../lib/document-hold';
 import { dateOrNull } from '../lib/date-coerce';
 import { postJournal, reverseJournal } from '../../acc/engine';
-import { apControlRole, pvLines, resolveRoles } from '../../acc/rules';
+import { apControlRole, pvLines, customerRefundLines, resolveRoles } from '../../acc/rules';
+import { refundSourceHandler, refundCreateGuard, refundOwnControl, bookRefundCredit } from '../lib/pv-refund';
 import { CASH_SERIES_LETTER } from '../../acc/receipts';
 import { settleApInvoicePaidSen } from '../lib/ap-invoice-settlement';
 import { allocationHeadroomBreach, pendingReservationsHandler } from '../lib/pv-reservations';
@@ -87,17 +88,19 @@ const PV_AUDIT_FIELDS: Array<[string, string]> = [
 ];
 
 const HEADER =
-  'id, pv_number, voucher_date, payee_name, supplier_id, credit_account_code, currency, exchange_rate, purpose, notes, total_sen, status, posted_at, created_at, created_by, updated_at, company_id, submitted_at, submitted_by, checked_at, checked_by, approved_at, approved_by';
+  'id, pv_number, voucher_date, payee_name, supplier_id, credit_account_code, currency, exchange_rate, purpose, notes, total_sen, status, posted_at, created_at, created_by, updated_at, company_id, submitted_at, submitted_by, checked_at, checked_by, approved_at, approved_by, refund_source_type, refund_source_doc_no, customer_id, debtor_code';
 
 const LINE = 'id, pv_id, line_no, description, debit_account_code, amount_sen, created_at';
 
 /* Migration 0202 — the PV purpose. Only SUPPLIER_PAYMENT settles AP (its
    allocations decrement the linked PIs' paid_sen); FREIGHT / OTHER post the GL
    but touch no PI. Default SUPPLIER_PAYMENT. */
-const normalizePurpose = (raw: unknown): 'SUPPLIER_PAYMENT' | 'FREIGHT' | 'OTHER' => {
+/* CUSTOMER_REFUND (mig 20260907T1700) is the third document on the same paper — lib/pv-refund.ts. */
+const normalizePurpose = (raw: unknown): 'SUPPLIER_PAYMENT' | 'FREIGHT' | 'OTHER' | 'CUSTOMER_REFUND' => {
   const v = String(raw ?? '').trim().toUpperCase();
-  return v === 'FREIGHT' || v === 'OTHER' ? v : 'SUPPLIER_PAYMENT';
+  return v === 'FREIGHT' || v === 'OTHER' || v === 'CUSTOMER_REFUND' ? v : 'SUPPLIER_PAYMENT';
 };
+const isRefund = (purpose: unknown): boolean => normalizePurpose(purpose) === 'CUSTOMER_REFUND';
 
 /* FX (migration 0082) — exchange_rate = MYR per 1 unit of the PV currency, and
    the currency auto-fills its rate from the currency MASTER. normalizeCurrency /
@@ -131,6 +134,7 @@ const mintFormalPvNo = async (
   companyId: number,
   creditAccountCode: string,
   voucherDate: string,
+  kind: 'PV' | 'RF' = 'PV', // a Customer Refund mints {letter}RF (owner 2026-09-07: 用 rf)
 ): Promise<{ ok: true; pvNo: string } | { ok: false; status: number; body: Record<string, unknown> }> => {
   /* The cash drawer is not a configured bank: paying from roles.CASH mints on
      the FIXED cash letter — {co}CPV — the same CASH_SERIES_LETTER the receipt
@@ -158,7 +162,7 @@ const mintFormalPvNo = async (
     };
   }
   const digits = Number((digitsRes.data as { doc_digits?: number } | null)?.doc_digits ?? 3);
-  const pvNo = await mintMonthlyDocNo(sb, 'payment_vouchers', 'pv_number', `${companyDocPrefix(c)}${letter}PV-${docMonthTag(voucherDate)}`, digits);
+  const pvNo = await mintMonthlyDocNo(sb, 'payment_vouchers', 'pv_number', `${companyDocPrefix(c)}${letter}${kind}-${docMonthTag(voucherDate)}`, digits);
   return { ok: true, pvNo };
 };
 
@@ -399,6 +403,7 @@ paymentVouchers.get('/', listPaymentVouchersHandler);
    GET /:id so /:id/files never falls into the detail matcher. */
 /* print-bundle sits with the other literal paths, BEFORE '/:id'. */
 paymentVouchers.post('/print-bundle', printPvBundleHandler);
+paymentVouchers.get('/refund-source', refundSourceHandler); // the document a Customer Refund refunds (lib/pv-refund.ts)
 paymentVouchers.post('/:id/files', uploadPvFileHandler);
 paymentVouchers.get('/:id/files', listPvFilesHandler);
 paymentVouchers.get('/:id/files/:fileId', streamPvFileHandler);
@@ -549,6 +554,7 @@ async function supplierOwnControl(
   c: any, purposeRaw: unknown, supplierIdRaw: unknown,
 ): Promise<{ code: string | null; control: string | null; wrong: string | null } | { resp: Response }> {
   const none = { code: null, control: null, wrong: null };
+  if (isRefund(purposeRaw)) return { ...none, control: await refundOwnControl(c.get('supabase'), activeCompanyId(c)) };
   if (normalizePurpose(purposeRaw) !== 'SUPPLIER_PAYMENT' || !supplierIdRaw) return none;
   const coId = activeCompanyId(c);
   if (coId == null) return none;
@@ -582,7 +588,10 @@ export const createPaymentVoucherHandler = async (c: any) => {
     if (moneyErr) return moneyErr;
   }
 
-  const built = buildLines(body.lines);
+  /* A Customer Refund's one line is composed by the guard (Dr AR for the amount), never taken from the wire. */
+  const refund = isRefund(body.purpose) ? await refundCreateGuard(c, body) : null;
+  if (refund && !refund.ok) return refund.resp;
+  const built = refund && refund.ok ? { rows: refund.rows, total: refund.total } : buildLines(body.lines);
   if ('error' in built) return c.json({ error: built.error }, 400);
   /* A line debiting the SAME account the voucher pays from would post money
      into itself — meaningless for an expense and a self-transfer for the
@@ -679,6 +688,7 @@ export const createPaymentVoucherHandler = async (c: any) => {
       total_sen:         built.total,
       status:              'DRAFT',
       created_by:          user.id,
+      ...(refund && refund.ok ? refund.fields : {}),
     }).select(HEADER).single(),
   );
   if (hErr) return c.json({ error: 'insert_failed', reason: hErr.message }, 500);
@@ -724,6 +734,7 @@ export const createPaymentVoucherHandler = async (c: any) => {
       fieldChange('totalSen', null, built.total),
       fieldChange('lineCount', null, built.rows.length),
       fieldChange('allocatedSen', null, allocBuilt.total),
+      ...(refund && refund.ok ? [fieldChange('refundSourceDocNo', null, String(refund.fields.refund_source_doc_no))] : []),
     ]),
   });
 
@@ -823,6 +834,13 @@ export const updatePaymentVoucherHandler = async (c: any) => {
   // Lines (optional) — full replace + recompute total when supplied.
   let newTotal: number | undefined;
   let newLines: Array<{ line_no: number; debit_account_code: string }> | undefined;
+  if (isRefund(before.purpose) && body.refundAmountSen !== undefined) {
+    const re = await refundCreateGuard(c, { refundSourceType: before.refund_source_type, refundSourceDocNo: before.refund_source_doc_no, refundAmountSen: body.refundAmountSen }, id);
+    if (!re.ok) return re.resp;
+    body.lines = re.rows.map((r) => ({ description: r.description, debitAccountCode: r.debit_account_code, amountSen: r.amount_sen }));
+  } else if (isRefund(before.purpose) && body.lines !== undefined) {
+    return c.json({ error: 'refund_lines_fixed', message: 'A refund has one line the system writes — change the refund amount instead.' }, 400);
+  }
   if (body.lines !== undefined) {
     const built = buildLines(body.lines);
     if ('error' in built) return c.json({ error: built.error }, 400);
@@ -1038,13 +1056,16 @@ export const postPaymentVoucherHandler = async (c: any) => {
      handler's own guard (it also heals the PV status flag); the engine's
      internal guard is the second net, and the acc_je_one_active_source index
      is the third. */
+  const refundPv = pvRaw as { refund_source_doc_no?: string | null; debtor_code?: string | null };
   const r = await postJournal(sb, {
     companyId,
     entryDate: pv.voucher_date,
     sourceType: 'PV',
     sourceDocNo: pv.pv_number,
-    narration: `Payment voucher ${pv.pv_number} — ${pv.payee_name}`,
-    lines: pvLines(pv, debitLegs, supplier, apControlCode),
+    narration: isRefund(pv.purpose) ? `Customer refund ${pv.pv_number} — ${pv.payee_name} (${refundPv.refund_source_doc_no ?? '?'})` : `Payment voucher ${pv.pv_number} — ${pv.payee_name}`,
+    lines: isRefund(pv.purpose)
+      ? customerRefundLines({ ...pv, refund_source_doc_no: refundPv.refund_source_doc_no ?? null }, (await resolveRoles(sb, companyId)).AR, { code: refundPv.debtor_code ?? null, name: pv.payee_name }, totalSen)
+      : pvLines(pv, debitLegs, supplier, apControlCode),
   });
   if (!r.ok) {
     if (r.status === 'je_insert_failed') return c.json({ error: 'je_insert_failed', reason: r.reason }, 500);
@@ -1056,6 +1077,7 @@ export const postPaymentVoucherHandler = async (c: any) => {
   await sb.from('payment_vouchers').update({
     status: 'POSTED', posted_at: new Date().toISOString(), updated_at: new Date().toISOString(),
   }).eq('id', id);
+  if (isRefund(pv.purpose)) await bookRefundCredit(sb, { ...pv, debtor_code: refundPv.debtor_code ?? null }, 'refund');
 
   /* The money-out event. Recorded here rather than after the PI settlement loop
      below so a settlement hiccup cannot cost us the record that the GL was
@@ -1425,7 +1447,7 @@ export const checkPaymentVoucherHandler = async (c: any) => {
   let newPvNo: string | null = null;
   if (isDraftNumber(oldPvNo)) {
     for (let attempt = 0; attempt < 8 && newPvNo == null; attempt += 1) {
-      const minted = await mintFormalPvNo(sb, c, companyId, String(pv.credit_account_code ?? ''), String(pv.voucher_date ?? ''));
+      const minted = await mintFormalPvNo(sb, c, companyId, String(pv.credit_account_code ?? ''), String(pv.voucher_date ?? ''), isRefund(pv.purpose) ? 'RF' : 'PV');
       if (!minted.ok) return c.json(minted.body, minted.status as 409);
       const { error: numErr } = await scopeToCompanyId(sb.from('payment_vouchers')
         .update({ pv_number: minted.pvNo, updated_at: at }).eq('id', id), companyId);
@@ -1531,12 +1553,13 @@ export const cancelPaymentVoucherHandler = async (c: any) => {
     /* currency + exchange_rate join the select for the FX-rate retention notice at
        the end of this handler — the voucher's own rate is what identifies the
        invoices whose rate it established. */
-    sb.from('payment_vouchers').select('id, status, pv_number, purpose, currency, exchange_rate, company_id').eq('id', id), co.companyId,
+    sb.from('payment_vouchers').select('id, status, pv_number, purpose, currency, exchange_rate, company_id, total_sen, payee_name, debtor_code').eq('id', id), co.companyId,
   ).maybeSingle();
   if (!cur) return c.json(NOT_THIS_COMPANY, 404);
   const head = cur as {
     id: string; status: string; pv_number: string; purpose: string | null;
     currency: string | null; exchange_rate: string | number | null; company_id: number | null;
+    total_sen: number; payee_name: string; debtor_code?: string | null;
   };
   // Idempotent — already cancelled, echo back.
   if (head.status === 'CANCELLED') return c.json({ paymentVoucher: { id, status: 'CANCELLED' } });
@@ -1600,6 +1623,7 @@ export const cancelPaymentVoucherHandler = async (c: any) => {
   // Reverse the GL post if one exists. Best-effort (audit-DLQ): a reversal
   // failure never un-cancels the voucher; the contra is idempotent.
   const rev = await reversePvAccounting(sb, cancelled.pv_number);
+  if (rev.ok && isRefund(head.purpose)) await bookRefundCredit(sb, head, 'reversal');
   if (!rev.ok) {
     // eslint-disable-next-line no-console
     console.error(`[pv-accounting] reversal failed for ${cancelled.pv_number}:`, rev.status, rev.reason);

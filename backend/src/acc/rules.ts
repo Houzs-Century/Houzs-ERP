@@ -281,6 +281,27 @@ export function pvLines(
 }
 
 /**
+ * Customer refund posted (a CUSTOMER_REFUND payment voucher, owner 2026-09-07):
+ * the mirror of customerPaymentLines — Dr AR for that customer (undoing the
+ * Cr AR their payment booked), Cr the money account the refund leaves from.
+ * The party rides BOTH legs the way a supplier payment's does: the AR leg is
+ * the sub-ledger, the money leg names who was paid.
+ */
+export function customerRefundLines(
+  pv: { pv_number: string; payee_name: string; credit_account_code: string; refund_source_doc_no: string | null },
+  arControlCode: string,
+  customer: { code: string | null; name: string | null },
+  amountSen: number,
+): RuleLine[] {
+  const party = { partyType: 'CUSTOMER', partyCode: customer.code ?? null, partyName: customer.name ?? pv.payee_name };
+  const doc = pv.refund_source_doc_no ?? 'the customer';
+  return [
+    { accountCode: arControlCode, debitSen: amountSen, creditSen: 0, ...party, notes: `Refund on ${doc} — ${pv.pv_number}` },
+    { accountCode: pv.credit_account_code, debitSen: 0, creditSen: amountSen, ...party, notes: `Refund to ${pv.payee_name} — ${pv.pv_number}` },
+  ];
+}
+
+/**
  * Customer payment collected (SO or SI panel): Dr the account the money landed
  * in, Cr AR. The debit account follows the sales panel's own 3-method model —
  * see the rules table above.

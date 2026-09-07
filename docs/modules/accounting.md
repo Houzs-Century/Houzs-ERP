@@ -419,7 +419,16 @@ on create (his call: 不需要走四层，就录入就好), source RCT
 document leaves the ledger by reversal, never by vanishing. Tables in
 migration 0351. Contracts: `backend/tests/receipts.test.ts` (post shape,
 control/money refusals, void semantics, the three-kind month list),
-`Receipts.test.tsx` (kinds + links + raise payload + void gating).
+`Receipts.test.tsx` (kinds + links + raise payload + void gating). **The
+form carries the receipt's own date and one field dress (2026-09-07,
+owner: 没办法输入日期, 格子等等不整齐, 有些有格子有些没有)**: a Date field
+(DateField, today by default, sent as `receiptDate` — the server already
+took it and dated the number's month by it; the page had simply never
+offered it), and every control — payer, both account pickers, description,
+amount — wears the PV form's `fieldInput` class on a grid (Date | Received
+from | Received into; Description | Account | Amount), the amount a
+MoneyInput that re-dresses to 1,800.00 on blur. Pinned in
+`Receipts.test.tsx`.
 
 **One door to open an account (2026-09-03, the owner: 照理说应该维护
 overall chart of account 罢了)**: `POST /accounting/chart/account` creates
@@ -533,6 +542,18 @@ on 400/405 was reported as a foreign source (21 findings on 2990's 405-0000).
 The AP arm now walks `ap_invoices` for drift the way it walks PIs, and both
 source types are family on the creditor controls
 (`tests/controlCheckPayments.test.ts`, `apControlCheckUnpostedPi.test.ts`).
+The dry run then named the reason the hook had been failing since it landed
+(docs/bugs/0655): `postSoPayment` read `customer_name, customer_phone` off
+`mfg_sales_orders`, columns the order table never had — it names its customer
+`debtor_name` and the phone `phone` — so PostgREST refused the read and every
+customer payment died at `so_read_failed`, 171 of them in 2990. The two reads
+(`acc/payments.ts`, `acc/settlement.ts`) now use the real columns;
+`tests/soPaymentOrderColumns.test.ts` pins the accounting module's
+`mfg_sales_orders` SELECTs against the table's real column list (the fake
+client cannot catch a wrong column — it hands back whatever the fixture row
+has, which is exactly how this shipped). The card's **Book N payments now**
+button, offered only after a dry run the gate refused nothing on and behind a
+confirm, is the same endpoint without dryRun — the owner presses it.
 
 **Phase 2B part 1 (2026-08-16): Daily Bank.** GET /accounting/daily-bank?date= answers the owner one question - today, where is the money and how much can actually move - live from the ledger (2.3: no caches): opening/in/out/closing per money account (scm.accounts.acc_money flag, migration 0299), settlement-in-transit balances per acquirer (visible, never counted movable), and — since phase 3 (2026-08-28, mig 0339) — pendingApprovalSen: every DRAFT payment voucher sitting in the approval queue, converted to MYR the way posting will, subtracted from available. Page /scm/daily-bank (Finance menu): date navigation + Get Image (canvas-drawn PNG to clipboard for WhatsApp, download fallback). Board arithmetic pinned in acc/daily-bank.test.ts. 946-0000 Cash Over/Short + OVER_SHORT role seeded for the coming daily cashup.
 
@@ -962,8 +983,8 @@ the column filter, a reversed journal invisible) and
 `ReceiptsPayments.test.tsx` / `rp-report-pdf.test.ts`.
 
 **Official Receipts (GL redesign item 9).** Every customer payment births a
-receipt (`scm.acc_receipts`, one per payment forever — a reprint reprints,
-never re-issues): DRAFT on the `{co}DraftOR-YYMM` series at recording, FORMAL
+receipt (`scm.acc_official_receipts`, one per payment forever — a reprint
+reprints, never re-issues): DRAFT on the `{co}DraftOR-YYMM` series at recording, FORMAL
 the moment the money is CONFIRMED — cash immediately on `{co}COR-YYMM`
 (钱当场在手), card when merchant reconciliation confirms that payment (the
 settlement hook formalises on the acquirer's payout bank, best-effort so a
@@ -979,7 +1000,17 @@ writers (so-payment-row.ts hook, the SI payment route) with
 Surface: `GET /accounting/receipts`, `POST /accounting/receipts/ensure`
 (returns the WHOLE row — the print button's one round trip),
 `POST /accounting/receipts/:id/formalise` (accounting-receipts.ts). Pinned by
-tests/officialReceipts.test.ts.
+tests/officialReceipts.test.ts. **The table is its own since docs/bugs/0658
+(2026-09-07):** the module's first migration (20260905T1800) said
+`CREATE TABLE IF NOT EXISTS scm.acc_receipts` — the name 0351 had already
+given the general money-in receipt — so on every database the statement was
+a silent no-op, the tracker called it applied, and or_number / payment_source
+never existed: every birth failed best-effort, the book page could not load,
+the settlement hook formalised nothing. Migration 20260907T1600 creates
+`scm.acc_official_receipts` (same columns), the module reads it, and
+`tests/officialReceiptsTable.test.ts` pins that no two migrations ever
+CREATE one scm table name again. Receipts for payments recorded while the
+table was missing heal on first print (`ensure`), as before.
 
 **Printing the OR (item 9b).** The pdf (frontend receipt-pdf.ts, A5
 landscape) carries amount-in-words and a diagonal DRAFT watermark until the
@@ -991,3 +1022,15 @@ every persisted payment row in the shared PaymentsTable (SO detail SAVED
 mode; SI detail passes `receiptFor.persistedIds` since its rows ride DRAFT
 mode) — ensure-then-print, so payments recorded before the module existed
 heal their OR on first print.
+
+**Customer Refund (2026-09-07).** The refund to a customer is a payment
+voucher of purpose `CUSTOMER_REFUND` — payment-voucher.md §14 is the guide.
+Its entry is `customerRefundLines` in `backend/src/acc/rules.ts`, the mirror
+of `customerPaymentLines`: Dr AR (role `AR`, party CUSTOMER — the debtor
+code when the document carries one, the name always) / Cr the money account
+the refund leaves from, both legs stamped with the customer. It offsets the
+Cr AR the customer's own payment booked; 2990's customers carry no debtor
+code, so the two meet by name, which the voucher copies from the document.
+Migrations `20260907T1700_pv_purpose_customer_refund.sql` (the enum value)
+and `20260907T1705_pv_customer_refund_columns.sql` (source and customer on
+the header). Pinned by `backend/tests/pvCustomerRefund.test.ts`.

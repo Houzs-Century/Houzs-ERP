@@ -221,11 +221,34 @@ Head "5  the five conversions, and whether the Transfer link is really there"
 <# The evidence is FromDocType / FromDocNo on the TARGET's lines. That is what
    AutoCount's own convert-from / convert-to reads. A target that exists with
    those columns empty is a standalone document that merely looks right. #>
-function CheckLink($name, $docType, $docNo, $expectType, $expectNo) {
+<# SO -> PO IS NOT RECORDED LIKE THE OTHER FOUR, and asserting FromDocType on it
+   is a FALSE failure. AutoCount stores that one edge as PODTL.FromSODtlKey plus
+   FromDocNo and leaves FromDocType NULL - measured 2026-09-07 on the live book:
+   0 of 10,792 real SO->PO lines carry a FromDocType, including a document the
+   SDK had created minutes earlier. Every other edge (DO<-SO, IV<-DO, IV<-SO,
+   GR<-PO, PI<-GR) stamps it on 100% of its lines. This row read FAIL for that
+   reason alone and nothing was ever wrong with the link.
+   Pass -LineKeyed for the SO->PO edge: the evidence there is FromDocNo plus a
+   resolvable FromSODtlKey. check-ac-convert-symmetry.mjs proves the same split
+   from a snapshot of the whole book every time it runs. #>
+function CheckLink($name, $docType, $docNo, $expectType, $expectNo, [switch]$LineKeyed) {
   $d = ReadDoc $docType $docNo
   if ($d.status -ne 200 -or -not $d.json.ok) { Record $name "FAIL" ("doc-read " + $d.status + " " + $d.raw); return }
   $ls = @($d.json.lines)
   if (-not $ls.Count) { Record $name "FAIL" "target has no lines"; return }
+  if ($LineKeyed) {
+    $linked = @($ls | Where-Object { "$($_.FromDocNo)" -eq $expectNo -and "$($_.FromSODtlKey)" -and [double]"$($_.FromSODtlKey)" -gt 0 })
+    if ($linked.Count -eq $ls.Count) {
+      Record $name "PASS" ("all " + $ls.Count + " line(s) carry FromDocNo=" + $expectNo +
+                           " and a FromSODtlKey (this edge carries no FromDocType by design)")
+    } elseif ($linked.Count) {
+      Record $name "FAIL" ($linked.Count.ToString() + " of " + $ls.Count + " lines carry FromDocNo + FromSODtlKey")
+    } else {
+      Record $name "FAIL" ("NO line carries the SO link - FromDocNo='" + $ls[0].FromDocNo +
+                           "' FromSODtlKey='" + $ls[0].FromSODtlKey + "'")
+    }
+    return
+  }
   $linked = @($ls | Where-Object { "$($_.FromDocNo)" -eq $expectNo -and "$($_.FromDocType)" -eq $expectType })
   if ($linked.Count -eq $ls.Count) {
     Record $name "PASS" ("all " + $ls.Count + " line(s) carry FromDocType=" + $expectType + " FromDocNo=" + $expectNo)
@@ -246,7 +269,7 @@ $r = Call '/so-to-po' @{ FromDocNo = $SO; DocNo = $PO; DtlKeys = @($soKeys[0]); 
 if ($r.status -ne 200 -or -not $r.json.ok) { Record "5a so-to-po" "FAIL" ("status=" + $r.status + " " + $r.raw); $poNo = $null }
 else {
   $poNo = $r.json.docNo; Record "5a so-to-po" "PASS" ("PO=" + $poNo)
-  CheckLink "5a link PO<-SO" 'PO' $poNo 'SO' $SO
+  CheckLink "5a link PO<-SO" 'PO' $poNo 'SO' $SO -LineKeyed
   <# READ IT NOW, not in teardown. /po-to-gr refuses this PO with "no
      transferable lines", and AutoCount's outstanding predicate is
      Qty - ISNULL(TransferedQty,0) > 0 - so these four columns say whether the
