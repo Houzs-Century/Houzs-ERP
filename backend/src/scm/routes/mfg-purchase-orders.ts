@@ -1143,13 +1143,48 @@ export const createMfgPurchaseOrderHandler = async (c: any) => {
       .filter((x): x is string => !!x);
     if (lineSoItemIds.length > 0) {
       // Company scope (2026-08-19) — service-role bypasses RLS: scope the SO-item read and refuse a foreign soItemId BEFORE it is linked / photo-copied / po_qty_picked-rolled (mirrors soLinkTargetRefusal).
-      const { data: lineSoRows } = await scopeToCompany(supabase.from('mfg_sales_order_items').select('id, doc_no, qty, po_qty_picked'), c).in('id', lineSoItemIds);
+      const { data: lineSoRows } = await scopeToCompany(supabase.from('mfg_sales_order_items').select('id, doc_no, item_code, qty, po_qty_picked'), c).in('id', lineSoItemIds);
       const soRows = (lineSoRows ?? []) as Array<{
-        id: string; doc_no: string | null; qty: number; po_qty_picked: number;
+        id: string; doc_no: string | null; item_code: string | null; qty: number; po_qty_picked: number;
       }>;
       const foreignSoItemId = lineSoItemIds.find((id) => !new Set(soRows.map((r) => r.id)).has(id));
       if (foreignSoItemId) {
         return c.json({ error: 'so_line_not_found', reason: 'That Sales Order line does not exist on this company.', soItemId: foreignSoItemId }, 404);
+      }
+
+      /* THE IDENTITY, not just the key. The four other places in this file that
+         bind so_item_id — the add-line, the patch-line and both allocation
+         paths — all go through soLinkTargetRefusal, whose
+         `so_link_material_mismatch` refuses a link whose two lines name
+         different products. This path read the SO lines for company scope and
+         the qty cap and stopped: the comment above says it "mirrors
+         soLinkTargetRefusal", and it mirrored only the company half. So a
+         New-PO form line for product B could be linked to an SO line for
+         product A, which is what makes the floor read READY on the wrong bed
+         (isHardBoundLine, lib/so-stock-allocation.ts) — the same damage the
+         importer did on 2026-09-07 (docs/bugs/0671), entered through the front
+         door. Bug class: docs/bugs/0672-bug-class-key-without-identity.
+         Compared in memory off the batch read already taken, so the check costs
+         no extra round trip; the refusal shape is soLinkTargetRefusal's. */
+      {
+        const normCode = (v: unknown) => String(v ?? '').trim().toUpperCase().replace(/\s+/g, ' ');
+        const soRowById = new Map(soRows.map((r) => [r.id, r]));
+        for (const it of items) {
+          const sid = it.soItemId as string | undefined;
+          if (!sid) continue;
+          const soRow = soRowById.get(sid);
+          const soCode = normCode(soRow?.item_code);
+          const poCode = normCode(it.itemCode);
+          if (!soCode || soCode !== poCode) {
+            return c.json({
+              error: 'so_link_material_mismatch',
+              reason: `This line orders ${String(it.itemCode ?? '')}, but the picked Sales Order line is for ${soRow?.item_code ?? '(no item)'}. Pick the matching line, or leave the source blank.`,
+              soItemCode: soRow?.item_code ?? null,
+              itemCode: it.itemCode ?? null,
+              soItemId: sid,
+            }, 409);
+          }
+        }
       }
       const offender = await firstUnorderableSo(
         supabase,
