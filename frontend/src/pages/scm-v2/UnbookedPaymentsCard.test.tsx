@@ -9,6 +9,8 @@ import { describe, expect, test, vi } from 'vitest';
 
 vi.mock('../../vendor/scm/lib/authed-fetch', () => ({ authedFetch: vi.fn() }));
 vi.mock('../../vendor/scm/lib/mutation-error', () => ({ writeFailedAs: () => () => {} }));
+const confirmFn = vi.fn(async (_a: unknown) => true);
+vi.mock('../../vendor/scm/components/ConfirmDialog', () => ({ useConfirm: () => confirmFn }));
 
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import { UnbookedPaymentsCard } from './Accounting';
@@ -58,5 +60,44 @@ describe('the never-booked state', () => {
     ] });
     expect(screen.getByText('1 did not')).toBeTruthy();
     expect(screen.getByText('Why? (dry run)')).toBeTruthy();
+  });
+});
+
+describe('Book now (docs/bugs/0655)', () => {
+  test('appears only after a dry run the gate refused nothing on, confirms, then runs the real backfill', async () => {
+    mockedFetch.mockReset(); confirmFn.mockClear();
+    const clean = {
+      ok: true, dryRun: true, scanned: 2, posted: 0, wouldPost: 2, skipped: 0, remaining: 0, failed: [],
+      rows: [
+        { id: 'p1', docNo: '2990-SO-2606-001', paidOn: '2026-06-11', method: 'transfer', amountSen: 12500, status: 'would_post' },
+        { id: 'p2', docNo: '2990-SO-2606-002', paidOn: '2026-06-12', method: 'merchant', amountSen: 193300, status: 'would_post' },
+      ],
+    };
+    mockedFetch.mockResolvedValueOnce(clean);
+    mockedFetch.mockResolvedValueOnce({ ...clean, dryRun: false, posted: 2, wouldPost: 0 });
+    draw({ since: null, rows: [], totalSen: 0, ok: false, neverBooked: { count: 2, totalSen: 205800, firstPaidOn: '2026-06-11', lastPaidOn: '2026-06-12' } });
+    expect(screen.queryByText(/Book 2 payments now/)).toBeNull();
+    fireEvent.click(screen.getByText('Why? (dry run)'));
+    await waitFor(() => expect(screen.getByText('Book 2 payments now')).toBeTruthy());
+    fireEvent.click(screen.getByText('Book 2 payments now'));
+    await waitFor(() => expect(mockedFetch).toHaveBeenCalledWith('/accounting/backfill/customer-payments', {
+      method: 'POST', body: JSON.stringify({ limit: 500 }),
+    }));
+    expect(JSON.stringify(confirmFn.mock.calls[0]![0])).toMatch(/Book 2 payments into the ledger\?/);
+    expect(JSON.stringify(confirmFn.mock.calls[0]![0])).toMatch(/RM 2,058\.00/);
+    await waitFor(() => expect(screen.getByText(/Booked 2, skipped 0, refused 0/)).toBeTruthy());
+  });
+
+  test('a dry run with a refusal offers no Book button', async () => {
+    mockedFetch.mockReset();
+    mockedFetch.mockResolvedValueOnce({
+      ok: true, dryRun: true, scanned: 1, posted: 0, wouldPost: 0, skipped: 0, remaining: 1,
+      failed: [{ id: 'p1', status: 'so_read_failed', reason: 'column mfg_sales_orders.customer_name does not exist' }],
+      rows: [{ id: 'p1', docNo: '2990-SO-2606-001', paidOn: '2026-06-11', method: 'transfer', amountSen: 12500, status: 'so_read_failed', reason: 'column mfg_sales_orders.customer_name does not exist' }],
+    });
+    draw({ since: null, rows: [], totalSen: 0, ok: false, neverBooked: { count: 1, totalSen: 12500, firstPaidOn: '2026-06-11', lastPaidOn: '2026-06-11' } });
+    fireEvent.click(screen.getByText('Why? (dry run)'));
+    await waitFor(() => expect(screen.getByText('so_read_failed')).toBeTruthy());
+    expect(screen.queryByText(/payments? now/)).toBeNull();
   });
 });
