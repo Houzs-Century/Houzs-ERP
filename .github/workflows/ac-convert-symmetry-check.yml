@@ -1,0 +1,73 @@
+name: Convert symmetry check (read-only)
+
+# "记得检查我们的 convert（也就是 transfer from 和 transfer to）的功能对称。
+#  你相互检查看一下，transfer to 和 transfer from 的功能全部都是准确的吗？
+#  数据是准确的吗？"  (owner, 2026-09-07 — go-live day)
+#
+# Two directions, and whether they agree:
+#   transfer FROM — a child names a source; does that source exist?
+#   transfer TO   — a parent counts what it transferred away; do the children
+#                   account for it?  A parent that says 5 while its children
+#                   total 2 is the bug this repo already paid for once.
+#
+# The ERP side lives only in production, so before this existed the question
+# cost an owner interruption AND put the production DSN in front of a human for
+# a SELECT. Actions already holds secrets.DATABASE_URL for the deploy.
+#
+# The AutoCount side does NOT come from here: the book is reachable only over
+# ZeroTier from the office network, which a GitHub-hosted runner has no route
+# to. It comes from the committed snapshot
+# backend/scripts/data/ac-convert-edges.json.gz, refreshed by running
+#   AC_CRED_FILE=<path> node backend/scripts/export-ac-convert-edges.mjs
+# on a machine on that network. The checker REFUSES when that snapshot is older
+# than max_snapshot_age_days rather than answering against a stale book.
+#
+# Manual trigger only — it is a question, not a gate, and a production DB read
+# on a schedule becomes CI noise nobody reads.
+on:
+  workflow_dispatch:
+    inputs:
+      max_snapshot_age_days:
+        description: "Refuse if the AutoCount snapshot is older than this many days"
+        required: false
+        default: "2"
+      company_id:
+        description: "ERP company to check (AED_HOUZS is company 1)"
+        required: false
+        default: "1"
+      skip_erp:
+        description: "Set to 1 to answer the AutoCount half alone (no DB read)"
+        required: false
+        default: "0"
+
+# Deliberately NOT in the deploy concurrency group: this touches nothing and
+# must never queue behind — or displace — a release.
+concurrency:
+  group: ac-convert-symmetry
+  cancel-in-progress: true
+
+jobs:
+  symmetry:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-ac-convert-symmetry.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MAX_SNAPSHOT_AGE_DAYS: ${{ inputs.max_snapshot_age_days }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          SKIP_ERP: ${{ inputs.skip_erp }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first
