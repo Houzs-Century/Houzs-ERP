@@ -1,0 +1,260 @@
+{
+ "_note": "Owner-approved compartment answers for the sofa lines still on a bare -1S placeholder on PROCEEDED company-1 orders, 2026-09-04. Same shape as sofa-compartment-corrections-2026-08.json. Every entry names the documents it applies to, the model, the target piece list, the seat where the book or the slip states one, the desc2Match that tells one build on a document from another, and a why recording how the answer was reached. Four entries are the owner's own reading, given in chat; the rest are read off the photograph and confirmed by him.",
+ "_rules": "Money never moves: the price rides the FIRST piece and every other piece is 0. Lines are matched to target pieces and UPDATED in place so a row id - and any purchase allocation hanging off it - survives. A document can hold MORE THAN ONE sofa build, so desc2Match is required; where a document holds TWO lines with the SAME text those are two identical sofas and both take the build.",
+ "entries": [
+  {
+   "docs": [
+    "HC-PO-009582"
+   ],
+   "model": "8030",
+   "pieces": [
+    "1A(LHF)",
+    "1NA",
+    "1A(RHF)"
+   ],
+   "seat": "24",
+   "desc2Match": "modenza 04: mustard",
+   "why": "photo: three 24\" boxes, a hatched arm at each outer end - the same shape and seat as the owner-approved HC-SO-012636"
+  },
+  {
+   "docs": [
+    "HC-PO-009751"
+   ],
+   "model": "9028",
+   "pieces": [
+    "1A(LHF)",
+    "2A(RHF)"
+   ],
+   "seat": "26",
+   "desc2Match": "Size:26”/Col:Modenza 02 Barley",
+   "why": "photo: the slip writes 3S:26\" and 1S:28\" and draws [26]+[26][26] plus a separate [28]. ONLY the 26\" build changes - the 28\" line is a genuine single seater and is left alone. Matches the owner-approved HC-SO-012929"
+  },
+  {
+   "docs": [
+    "HC-SO-013389"
+   ],
+   "model": "8030",
+   "pieces": [
+    "1A(LHF)",
+    "1A(RHF)"
+   ],
+   "seat": "35",
+   "desc2Match": "35 inch per seat",
+   "why": "photo: two 35\" boxes, arm hatched on the outer edge of each - same as the owner-approved HC-SO-012113"
+  },
+  {
+   "docs": [
+    "HC-SO-013320"
+   ],
+   "model": "8069",
+   "pieces": [
+    "1A(LHF)",
+    "1A(RHF)"
+   ],
+   "seat": "32",
+   "desc2Match": "col: HR805-20",
+   "why": "photo: two 32\" boxes, an arm at each outer edge; slip notes storage on the left arm and a 5\" arm rest"
+  },
+  {
+   "docs": [
+    "HC-SO-013328"
+   ],
+   "model": "9028",
+   "pieces": [
+    "2A(LHF)",
+    "1A(RHF)"
+   ],
+   "seat": "26",
+   "desc2Match": "Col:ZL-12 TAN",
+   "why": "photo: [26\"|26\"] + [26\"], arms only at the two outer ends - the mirror of the owner-approved HC-SO-012624"
+  },
+  {
+   "docs": [
+    "HC-SO-013385"
+   ],
+   "model": "9028",
+   "pieces": [
+    "L(LHF)",
+    "1NA",
+    "1A(RHF)"
+   ],
+   "seat": "30",
+   "desc2Match": "fully cover with one laye",
+   "why": "photo: the chaise drawn as the deeper box on the left, a 30\" seat, then the arm at the right end; a second photo shows the finished L"
+  },
+  {
+   "docs": [
+    "HC-SO-013000"
+   ],
+   "model": "9058",
+   "pieces": [
+    "1A(LHF)",
+    "CNR",
+    "1NA",
+    "1A(RHF)"
+   ],
+   "seat": null,
+   "desc2Match": "Col : CH141-12",
+   "why": "owner read the slip himself 2026-09-04: 1AL + c + 1NA + 1AR"
+  },
+  {
+   "docs": [
+    "HC-PO-009260"
+   ],
+   "model": "9058",
+   "pieces": [
+    "1A(LHF)",
+    "1NA",
+    "CNR",
+    "1A(RHF)"
+   ],
+   "seat": "30",
+   "desc2Match": "MODENZA 05- DARK OLIVE",
+   "why": "owner 2026-09-04: 1AL+1NA+C+1AR, seat 30"
+  },
+  {
+   "docs": [
+    "HC-SO-012277"
+   ],
+   "model": "8051",
+   "pieces": [
+    "1A(LHF)",
+    "1NA",
+    "1A(RHF)"
+   ],
+   "seat": null,
+   "desc2Match": "no hole on sitting area",
+   "why": "photo: three boxes, a hatched arm at each outer end; no seat size written anywhere, so seat is left empty"
+  },
+  {
+   "docs": [
+    "HC-SO-013384"
+   ],
+   "model": "8030",
+   "pieces": [
+    "1A(LHF)",
+    "1NA",
+    "1A(RHF)"
+   ],
+   "seat": "28",
+   "desc2Match": "ZL -15 MISTY",
+   "why": "photo: three 28\" boxes, hatched arm at each outer end. TWO lines on this document carry the identical text - two identical sofas - and both take this build"
+  },
+  {
+   "docs": [
+    "HC-SO-013312"
+   ],
+   "model": "9058",
+   "pieces": [
+    "L(RHF)",
+    "1NA",
+    "1A(RHF)"
+   ],
+   "seat": "32",
+   "desc2Match": "back rest  (5540)",
+   "why": "owner read the slip himself 2026-09-04: the taller box is the chaise. Both 9058-L(RHF) and 9058-1A(RHF) exist in the product master"
+  },
+  {
+   "docs": [
+    "HC-SO-011008"
+   ],
+   "model": "9058",
+   "pieces": [
+    "1A(LHF)",
+    "1NA",
+    "CNR",
+    "1NA",
+    "1A(RHF)"
+   ],
+   "seat": "32",
+   "desc2Match": "MODENZA 01- Houston Cream",
+   "why": "owner read the slip himself 2026-09-04: 1A+1NA+C+1NA+1A"
+  },
+  {
+   "docs": [
+    "HC-SO-012025",
+    "HC-PO-009024"
+   ],
+   "model": "9050",
+   "pieces": [
+    "1A(LHF)",
+    "1NA",
+    "CNR",
+    "1A(RHF)"
+   ],
+   "seat": "30",
+   "desc2Match": "all adjustable arm rest",
+   "why": "photo: the same four-piece L the owner confirmed on HC-PO-009260, read with his correction that the vertical strokes in the long leg are seams, not extra pieces. TWO lines on each document carry the identical text - two identical sofas - and both take this build"
+  },
+  {
+   "docs": [
+    "HC-SO-003295"
+   ],
+   "model": "2379",
+   "pieces": [
+    "2S"
+   ],
+   "seat": "60cm",
+   "desc2Match": "2R(60cm)",
+   "why": "photo: the slip titles it 2S (60cm) and draws two R boxes of 60 with an arm at each outer end - the line carries 2379-1S, the wrong piece"
+  },
+  {
+   "docs": [
+    "HC-SO-000814"
+   ],
+   "model": "5526",
+   "pieces": [
+    "L(LHF)",
+    "1NA",
+    "2A(RHF)"
+   ],
+   "seat": "28",
+   "desc2Match": "1 ELT",
+   "why": "owner 2026-09-05, in his own words: \"1ELT 就是L来的\" (1ELT IS the chaise, L) and \"1Abox 是1NALT\" (1ABOX is what the slip writes as 1NALT). That RETIRES the earlier reading. This entry used to say 1ABOX(LHF)+1NA+2A(RHF), copied from HC-PO-000254 because the purchase order was the only evidence available - but the purchase order got that from the 2026-08 round, which reached it from the SPELLING alone (its why: \"the ELT/T spelling has no parser rule\"), and fix-modenza-label-and-5526-pieces.mjs minted 5526-1ABOX(LHF) so that guess could be written. A guess copied onto a second document is still one guess. The owner's ruling settles it, and the purchase order is corrected in the same PR so the two sides still agree. scripts/lib/parse-sofa.mjs independently agrees: on \"1 ELT + NA + 2ER\" it emits L(LHF)+1NA+2A(RHF), and 1ABOX(LHF) is what it emits for 1NALT (pinned in scripts/lib/parse-sofa.test.mjs). On the REAL text it emits nothing - the stray \"/ T\" splits the segment, conf=low - which is why this build is corrected from this file rather than by re-running the decoder. This line has no photograph at all: 0 rows in both photo manifests and the full-book export reported 0 failed lines, so the book never carried one. 5526-L(LHF) is opened by scripts/open-5526-chaise.mjs; this correction REFUSES until it exists."
+  },
+  {
+   "docs": [
+    "HC-SO-013329",
+    "HC-PO-010042"
+   ],
+   "model": "8069",
+   "pieces": [
+    "1B(LHF)",
+    "CNR",
+    "2A(RHF)"
+   ],
+   "seat": "30",
+   "desc2Match": "Col:BO315-4 Sand",
+   "why": "owner read the slip himself 2026-09-05: 1B(LHF) at 26\" + C + 2A(RHF) at 30\". The slip writes 8069 C, draws a box + two 30\" boxes with a separate hatched 26\" marked 1B/S, and the book says Size:30\"/Col:BO315-4 Sand/1B/S seater 26\". All three piece codes exist in the master. The 1B is 26\" while the rest are 30\" - one build, two seat depths"
+  },
+  {
+   "docs": [
+    "HC-SO-012929",
+    "HC-PO-009751"
+   ],
+   "model": "9028",
+   "pieces": [
+    "1A(LHF)",
+    "2A(RHF)"
+   ],
+   "seat": "26",
+   "desc2Match": "Size:26”/Col:Modenza 02 Barley",
+   "why": "owner 2026-09-04 and again 2026-09-05: the 26\" build is 1A(LHF)+2A(RHF). The document ALSO holds a separate 1S at 28\" which is a genuine single seater and is NOT part of this build - the desc2Match selects only the 26\" lines. Measured before writing: the sales order carried a surplus 1S at 26\" and the purchase order carried that same surplus while MISSING its 1A(LHF)"
+  },
+  {
+   "docs": [
+    "HC-SO-013327",
+    "HC-PO-010081"
+   ],
+   "model": "8069",
+   "pieces": [
+    "1A(LHF)",
+    "2A(RHF)",
+    "1NA"
+   ],
+   "seat": "24",
+   "desc2Match": "Col:BO315-7 Peach",
+   "why": "owner 2026-09-05, reading the slip himself: 1A(LHF)+2A(RHF)+1NA at 24\". My own reading of the same photograph was 1A(LHF)+2A(RHF) - I missed the armless seat, which is the third time today I got the piece COUNT wrong on a drawing that is not a plain row with an arm at each end. The slip's 'Seater depth +1 inch foam, total 49\"' is a special order, not a piece."
+  }
+ ]
+}

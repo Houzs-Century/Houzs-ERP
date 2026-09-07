@@ -36,20 +36,28 @@ const ICON = { size: 16, strokeWidth: 1.75 } as const;
 /* The owner's four layers as chips (2026-09-02). The enum underneath stays
    DRAFT/POSTED/CANCELLED — Prepared and Checked are DRAFTs wearing marks, so
    the chip filter reads the marks, not just the status. */
-const STATUS_CHIPS = ['all', 'DRAFT', 'PREPARED', 'CHECKED', 'POSTED', 'CANCELLED'] as const;
+const STATUS_CHIPS = ['all', 'DRAFT', 'PREPARED', 'CHECKED', 'POSTED', 'ADVANCE', 'CANCELLED'] as const;
+
+/* An advance not yet knocked off (owner 2026-09-06: 如果这个 prepay 还没有
+   knock off 单,在 listing 要特别显示 — AutoCount paints such rows blue). The
+   row goes blue AND wears a pill with the open amount: colour alone says
+   neither how much nor, to a colour-blind clerk, anything at all. */
+const advanceOpenSen = (r: PaymentVoucherRow): number => Number(r.advance_remaining_sen ?? 0);
+const ADVANCE_BLUE = 'var(--c-blue, #1d4ed8)';
 
 const chipMatches = (chip: string, r: PaymentVoucherRow): boolean => {
   switch (chip) {
     case 'DRAFT':    return r.status === 'DRAFT' && r.submitted_at == null;
     case 'PREPARED': return r.status === 'DRAFT' && r.submitted_at != null && r.checked_at == null;
     case 'CHECKED':  return r.status === 'DRAFT' && r.checked_at != null;
+    case 'ADVANCE':  return advanceOpenSen(r) > 0;
     default:         return r.status === chip;
   }
 };
 
 const CHIP_LABELS: Record<string, string> = {
   all: 'All', DRAFT: 'Draft', PREPARED: 'Prepared', CHECKED: 'Checked',
-  POSTED: 'Approved', CANCELLED: 'Cancelled',
+  POSTED: 'Approved', ADVANCE: 'Advance open', CANCELLED: 'Cancelled',
 };
 
 const fmtMoney = (centi: number, currency = 'MYR'): string => fmtMoneySen(centi, currency);
@@ -109,6 +117,11 @@ const buildPvColumns = (): DataGridColumn<PaymentVoucherRow>[] => [
         )}
         {r.status === 'DRAFT' && r.submitted_at != null && r.checked_at == null && (
           <span style={{ fontSize: 'var(--fs-12, 12px)', color: 'var(--c-orange, #b06000)' }}>prepared — awaiting check</span>
+        )}
+        {advanceOpenSen(r) > 0 && (
+          <span style={{ fontSize: 'var(--fs-12, 12px)', color: ADVANCE_BLUE, fontWeight: 600, whiteSpace: 'nowrap' }}>
+            预付未冲 {fmtMoney(advanceOpenSen(r), r.currency)}
+          </span>
         )}
       </span>
     ),
@@ -433,7 +446,7 @@ export const PaymentVouchers = () => {
         onRowDoubleClick={(r) => navigate(`/scm/payment-vouchers/${r.id}`)}
         rowStyle={(r) => r.status === 'CANCELLED'
           ? { opacity: 0.6, filter: 'grayscale(0.4)' }
-          : undefined}
+          : advanceOpenSen(r) > 0 ? { color: ADVANCE_BLUE } : undefined}
         contextMenu={(r) => {
           // DRAFT is editable; a POSTED / CANCELLED voucher is read-only. Cancel
           // is hidden once cancelled. View always available.

@@ -11,7 +11,23 @@
 // short-circuits to null and the FE simply renders the original title/body.
 // The route never blocks on the translate call — a Claude outage or missing
 // key MUST NEVER prevent posting an announcement.
+//
+// 2026-09-06: the translation no longer sits on the request path at all. The
+// routes write the row with `translations = NULL`, answer, and run
+// `translateAndStore()` under waitUntil; it fills the column when the reply
+// lands (guarded so it never overwrites a newer edit). Before this, a rich
+// notice took 40-100 s to post (four languages of HTML, up to 4096 tokens,
+// three retries, no timeout): the owner saw "Posting…" hang, clicked again,
+// and every click had in fact inserted a row — nine copies of one notice.
 // ---------------------------------------------------------------------------
+
+import {
+  hasRichFormatting,
+  richTextToPlain,
+  sanitizeAnnouncementHtml,
+} from "./announcementRichText";
+import { bumpConfigVersion } from "../services/configCache";
+import type { ConfigCacheEnv } from "../services/configCache";
 
 const CLAUDE_MODEL = "claude-sonnet-4-6";
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
@@ -23,13 +39,23 @@ const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 // the final attempt fall through to the caller's existing !resp.ok handling.
 const RETRYABLE_ANTHROPIC_STATUS = new Set([429, 500, 502, 503, 529]);
 
+// Per-attempt ceiling. Four languages of a long rich body is the slowest
+// generation this app makes; a healthy reply lands well inside this, and a
+// stuck socket must not pin the background job for as long as the platform
+// allows. An aborted attempt rejects and falls to translateAnnouncement's
+// catch → null, the same outcome as a network failure.
+export const TRANSLATE_ATTEMPT_TIMEOUT_MS = 30_000;
+
 async function anthropicFetchWithRetry(
   init: RequestInit,
   tries = 3,
 ): Promise<Response> {
   let resp: Response | null = null;
   for (let attempt = 0; attempt < tries; attempt += 1) {
-    resp = await fetch(ANTHROPIC_URL, init);
+    resp = await fetch(ANTHROPIC_URL, {
+      ...init,
+      signal: AbortSignal.timeout(TRANSLATE_ATTEMPT_TIMEOUT_MS),
+    });
     if (resp.ok) return resp;
     let overloaded = false;
     try {
@@ -59,8 +85,11 @@ async function anthropicFetchWithRetry(
 export const ANNOUNCEMENT_LANGS = ["en", "ms", "zh", "bn"] as const;
 export type AnnouncementLang = (typeof ANNOUNCEMENT_LANGS)[number];
 
-// One translated pair.
-export type TranslationPair = { title: string; body: string };
+// One translated pair. `bodyHtml` is present only when the SOURCE notice was
+// composed with formatting (announcements.body_html): it is the translated
+// body re-canonicalised through announcementRichText.ts, and `body` is then
+// the plain-text shadow of it — the same body/body_html contract as the row.
+export type TranslationPair = { title: string; body: string; bodyHtml?: string };
 
 // The full stored shape — title+body for every supported language.
 export type AnnouncementTranslations = Record<AnnouncementLang, TranslationPair>;
@@ -86,6 +115,7 @@ Rules:
   - For the language the notice is ALREADY in, return its original text unchanged.
   - PRESERVE all numbers, dates, times, money amounts, product codes, SKUs, and proper names verbatim.
   - PRESERVE line breaks in the body (keep \\n where the original had them).
+  - The BODY may be a small HTML fragment using only <p> <br> <b> <i> <u> <s> <ol> <ul> <li> <h1> <h2> <mark> <a href="..." rel="..." target="..."> <table> <tr> <th> <td> <img data-att="..."> and <span data-size="..."> tags. When it is, keep EVERY tag and attribute exactly as given, in the same order and nesting, and translate ONLY the text between the tags. Never translate, alter or drop an href, rel, target, data-att or data-size attribute value. Never add, remove or rename a tag. Never turn HTML into Markdown.
   - If the BODY is empty, return an empty string for body in every language.
   - The very first character of your response must be "{". Anything else corrupts the stored data.`;
 
@@ -130,6 +160,27 @@ export function parseTranslationsText(
 }
 
 /**
+ * When the source body was rich HTML, the model was asked to return HTML back
+ * in `body`. Re-canonicalise it (the model's output is untrusted input like any
+ * other) and split it into the row's body / body_html pair. A language whose
+ * translation came back with the tags stripped simply has no `bodyHtml` and
+ * renders as plain text — honest, and never unsafe.
+ */
+export function splitRichTranslations(
+  t: AnnouncementTranslations,
+): AnnouncementTranslations {
+  const out = {} as AnnouncementTranslations;
+  for (const lang of ANNOUNCEMENT_LANGS) {
+    const pair = t[lang];
+    const html = sanitizeAnnouncementHtml(pair.body);
+    out[lang] = hasRichFormatting(html)
+      ? { title: pair.title, body: richTextToPlain(html), bodyHtml: html }
+      : { title: pair.title, body: richTextToPlain(html) || pair.body };
+  }
+  return out;
+}
+
+/**
  * Translate a posted announcement's title + body into all four supported
  * languages with ONE Claude call.
  *
@@ -141,13 +192,18 @@ export function parseTranslationsText(
 export async function translateAnnouncement(args: {
   title: string;
   body: string;
+  /** The canonicalised rich body, when the notice has one. Sent INSTEAD of
+   *  `body` so the translation keeps the author's formatting; the returned
+   *  HTML is re-canonicalised and split back into body / bodyHtml per language. */
+  bodyHtml?: string | null;
   apiKey: string | undefined;
 }): Promise<AnnouncementTranslations | null> {
   const { title, body, apiKey } = args;
+  const bodyHtml = args.bodyHtml ? sanitizeAnnouncementHtml(args.bodyHtml) : "";
   if (!apiKey) return null;
-  if (!title.trim() && !body.trim()) return null;
+  if (!title.trim() && !body.trim() && !bodyHtml) return null;
 
-  const userPayload = JSON.stringify({ title, body });
+  const userPayload = JSON.stringify({ title, body: bodyHtml || body });
 
   try {
     const resp = await anthropicFetchWithRetry({
@@ -187,8 +243,62 @@ export async function translateAnnouncement(args: {
     if (parsedResp.error) return null;
     const firstText =
       parsedResp.content?.find((b) => b.type === "text")?.text ?? "";
-    return parseTranslationsText(firstText);
+    const parsed = parseTranslationsText(firstText);
+    return parsed && bodyHtml ? splitRichTranslations(parsed) : parsed;
   } catch {
     return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Off-request translation (2026-09-06).
+// ---------------------------------------------------------------------------
+
+/** The text a translation describes — exactly what the row stores. */
+export type TranslationSource = {
+  title: string;
+  body: string;
+  bodyHtml: string | null;
+};
+
+export type TranslateAndStoreResult = "stored" | "stale" | "none";
+
+/**
+ * Translate an announcement AFTER its row is written and fill
+ * `announcements.translations`. Meant for `waitUntil`; never throws.
+ *
+ * The UPDATE is guarded on the text itself (title, body, body_html), not on
+ * the id alone: a reply that lands after the notice was edited describes text
+ * that no longer exists and is dropped ("stale"). The edit's own run stores
+ * the current text's translation. A null translation (no key, model down,
+ * timeout, unparseable) leaves the column NULL and the FE shows the original.
+ */
+export async function translateAndStore(
+  env: ConfigCacheEnv & { DB: D1Database; ANTHROPIC_API_KEY?: string },
+  id: string,
+  src: TranslationSource,
+): Promise<TranslateAndStoreResult> {
+  try {
+    const translations = await translateAnnouncement({
+      title: src.title,
+      body: src.body,
+      bodyHtml: src.bodyHtml,
+      apiKey: env.ANTHROPIC_API_KEY,
+    });
+    if (!translations) return "none";
+    const r = await env.DB.prepare(
+      `UPDATE announcements SET translations = ?
+        WHERE id = ? AND title = ? AND coalesce(body, '') = ? AND coalesce(body_html, '') = ?`,
+    )
+      .bind(JSON.stringify(translations), id, src.title, src.body, src.bodyHtml ?? "")
+      .run();
+    if (r.meta.changes === 0) return "stale";
+    // Readers cache the banner snapshot with the translations inside it —
+    // orphan those so the translated copy reaches phones on the next poll.
+    await bumpConfigVersion(env, "banner");
+    return "stored";
+  } catch (e) {
+    console.warn("[announcements] background translation failed", id, e);
+    return "none";
   }
 }

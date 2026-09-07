@@ -35,6 +35,12 @@ export type PaymentCandidate = {
       whoever created the row. A uuid here; the name is resolved once, in bulk,
       by whichever screen shows it. */
   recordedById?: string | null;
+  /** Which acquirer the payment was RECORDED as, null when it never was —
+      migration-era rows all are. Carried for the screen (the operator should
+      see he is claiming untagged money) and stamped on by the confirm; the
+      matching itself never reads it, because the loader already refused
+      payments tagged with a different acquirer. */
+  merchantProvider?: string | null;
 };
 
 export type MatchBucket = 'MATCHED' | 'NEEDS_CONFIRM' | 'UNMATCHED' | 'IGNORED';

@@ -48,6 +48,10 @@ export type SettlementCandidate = {
   /** Who paid — on the batch-detail candidates (the matcher carries it); the
       watchlist's do not, so a reader has to ask. */
   customerName?: string | null;
+  /** Which acquirer the payment was recorded as. Null on migration-era rows —
+      shown as 未标 merchant so the operator knows he is claiming untagged
+      money; confirming stamps the tag on. */
+  merchantProvider?: string | null;
 };
 
 export type SettlementLink = {

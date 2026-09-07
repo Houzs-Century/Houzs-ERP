@@ -27,6 +27,34 @@ vi.mock("../auth/AuthContext", () => ({
   useAuth: () => ({ user: { id: 505 } }),
 }));
 
+// The human slice rides the shared banner hook, which keeps its ack memo in
+// localStorage under an identity-scoped key; no identity here keeps it inert
+// so only the SYSTEM half is under test.
+vi.mock("../lib/storageIdentity", () => ({ identityStorageKey: () => null }));
+
+const SYSTEM_PAYLOAD = {
+  success: true,
+  data: [
+    {
+      id: "ann-case",
+      title: "New service case ASSR/HC/2608/001",
+      body: "A new service case has been created and assigned to your team.",
+      createdAt: new Date().toISOString(),
+      remindedAt: null,
+      source: "service_case",
+    },
+    {
+      id: "ann-acked",
+      title: "Sales order saved",
+      body: "Already read on the phone.",
+      createdAt: new Date().toISOString(),
+      remindedAt: null,
+      source: "scan",
+    },
+  ],
+  ackedIds: ["ann-acked"],
+};
+
 // Project-activity half of the bell — pinned to a known unread count so the
 // combined badge is deterministic. The system half is what's under test.
 vi.mock("../hooks/useNotifications", () => ({
@@ -36,6 +64,7 @@ vi.mock("../hooks/useNotifications", () => ({
     totalUnread: 3,
     loadFailed: false,
     reload: vi.fn(),
+    markAllRead: vi.fn(async () => ({ ok: 0, failed: 0 })),
     pointsBalance: 0,
     giftingBalance: 0,
     currentStreak: 0,
@@ -65,26 +94,13 @@ describe("NotificationBell — system notices section", () => {
   beforeEach(() => {
     apiGet.mockReset();
     apiPost.mockReset();
-    apiGet.mockResolvedValue({
-      success: true,
-      data: [
-        {
-          id: "ann-case",
-          title: "New service case ASSR/HC/2608/001",
-          body: "A new service case has been created and assigned to your team.",
-          createdAt: new Date().toISOString(),
-          remindedAt: null,
-        },
-        {
-          id: "ann-acked",
-          title: "Sales order saved",
-          body: "Already read on the phone.",
-          createdAt: new Date().toISOString(),
-          remindedAt: null,
-        },
-      ],
-      ackedIds: ["ann-acked"],
-    });
+    // Route by slice: the SYSTEM slice carries the two notices; the HUMAN
+    // slice (the Announcements tab, read through the shared hook) is empty.
+    apiGet.mockImplementation((url: string) =>
+      url.includes("scope=system")
+        ? Promise.resolve(SYSTEM_PAYLOAD)
+        : Promise.resolve({ success: true, data: [], ackedIds: [] }),
+    );
     apiPost.mockResolvedValue({ success: true });
   });
 
@@ -104,7 +120,10 @@ describe("NotificationBell — system notices section", () => {
     expect(apiGet).toHaveBeenCalledWith("/api/announcements/banner?scope=system");
 
     fireEvent.click(screen.getByRole("button", { name: /Notifications/ }));
-    expect(screen.getByText("System notices")).toBeTruthy();
+    // One unread entry point: tabs split announcements from system notices,
+    // and a system row wears its source as the tag.
+    expect(screen.getByRole("tab", { name: /System/ })).toBeTruthy();
+    expect(screen.getByText("Service case")).toBeTruthy();
     expect(screen.getByText("New service case ASSR/HC/2608/001")).toBeTruthy();
     // The acked notice is settled — it must not resurface in the bell.
     expect(screen.queryByText("Sales order saved")).toBeNull();

@@ -33,6 +33,7 @@ import {
 import { ICON, btn, softText, danger, refusalText } from './settlement-ui';
 import { useAccounts, useAccountRoles, useSaveBankDefault } from '../../vendor/scm/lib/accounting-queries';
 import { useBankRules, useSaveBankRule, useCreateBankRule, type BankRule } from './bank-queries';
+import { useVoucherNumbering, useSaveVoucherNumbering } from './accounting-phase1-queries';
 import css from './SettlementSetup.module.css';
 import { PageHeader } from '../../components/Layout';
 
@@ -72,6 +73,7 @@ export const SettlementSetup = () => {
       )}
 
       <DefaultBankCard />
+      <NumberingCard />
       <BankRulesCard />
     </div>
   );
@@ -211,6 +213,83 @@ const BankRulesCard = () => {
    transfer payment lands, and what the PV / AP Payment "Paid From" pre-fills.
    Per company — switch companies in the top bar to set the other one's. Only
    money accounts are offered, and the server refuses anything else anyway. */
+/* ── Voucher numbering (GL redesign item 8a) — the owner's own levers ──────
+   One letter per bank (Maybank M → the 2990-MPV-YYMM series; a new bank is a
+   letter typed HERE, never a deploy) and the suffix width (3 → -001, up to
+   5). The PV series (8b), the OR channels (9) and transfers (10) all read
+   the same letters, so Maybank is M everywhere or nowhere. */
+const NumberingCard = () => {
+  const q = useVoucherNumbering();
+  const save = useSaveVoucherNumbering();
+  const [draft, setDraft] = useState<Record<string, string>>({});
+  const [digits, setDigits] = useState<number | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+
+  const rows = q.data?.accounts ?? [];
+  const shownDigits = digits ?? q.data?.digits ?? 3;
+  // Index reads widened by hand — noUncheckedIndexedAccess is off project-wide.
+  const typed = (code: string): string | undefined => draft[code] as string | undefined;
+  const letterOf = (code: string, saved: string | null): string => typed(code) ?? saved ?? '';
+  const dirtyLetters = rows
+    .filter((a) => a.fixedCash !== true)
+    .filter((a) => (typed(a.accountCode) ?? '') !== '' && (typed(a.accountCode) ?? '').toUpperCase() !== (a.letter ?? ''))
+    .map((a) => ({ accountCode: a.accountCode, letter: (typed(a.accountCode) ?? '').toUpperCase() }));
+  const dirty = dirtyLetters.length > 0 || (digits != null && digits !== (q.data?.digits ?? 3));
+
+  return (
+    <section className={css.card}>
+      <div style={{ padding: 'var(--space-3)' }} className="space-y-2">
+        <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap' }}>
+          <b style={{ fontSize: 'var(--fs-14)' }}>Voucher numbering (this company)</b>
+          <span style={softText}>每家银行一个字母 (Maybank M → 2990-MPV-2609-001);位数你自己定</span>
+          <span style={{ flex: 1 }} />
+          <span style={softText}>Digits</span>
+          <select aria-label="Voucher number digits" value={shownDigits}
+            onChange={(e) => { setDigits(Number(e.target.value)); setNote(null); }}
+            style={{ padding: '6px 10px', fontSize: 'var(--fs-13)' }}>
+            {[3, 4, 5].map((d) => <option key={d} value={d}>{d} — {'0'.repeat(d - 1)}1</option>)}
+          </select>
+          <button type="button" style={btn(dirty, save.isPending)} disabled={!dirty || save.isPending}
+            onClick={() => save.mutate(
+              { ...(digits != null ? { digits } : {}), ...(dirtyLetters.length ? { letters: dirtyLetters } : {}) },
+              {
+                onSuccess: () => { setNote('Saved — new vouchers use these series.'); setDraft({}); setDigits(null); },
+                onError: (e) => setNote(e instanceof Error ? e.message : 'Not saved.'),
+              },
+            )}>
+            {save.isPending ? 'Saving…' : 'Save'}
+          </button>
+        </div>
+        <div style={{ display: 'flex', gap: 'var(--space-3)', flexWrap: 'wrap' }}>
+          {rows.map((a) => (
+            <label key={a.accountCode} style={{ display: 'inline-flex', gap: 6, alignItems: 'center', fontSize: 'var(--fs-13)' }}>
+              <span style={softText}>{a.accountCode} · {a.accountName}</span>
+              {a.fixedCash === true ? (
+                /* The drawer: C on both papers (CPV / COR), minted off
+                   roles.CASH — nothing to type, nothing the Save sends. */
+                <span title="现金系列固定 C — 付款 CPV,收据 COR" style={{ padding: '4px 8px', fontWeight: 700 }}>
+                  C <span style={softText}>· CPV/COR 固定</span>
+                </span>
+              ) : (
+                <input
+                  aria-label={`Letter for ${a.accountCode}`}
+                  value={letterOf(a.accountCode, a.letter)}
+                  onChange={(e) => { setDraft((d) => ({ ...d, [a.accountCode]: e.target.value })); setNote(null); }}
+                  maxLength={3}
+                  placeholder="—"
+                  style={{ width: 48, padding: '4px 6px', fontSize: 'var(--fs-13)', textTransform: 'uppercase', border: '1px solid var(--c-line, rgba(34,31,32,0.2))', borderRadius: 'var(--radius-sm, 6px)' }}
+                />
+              )}
+            </label>
+          ))}
+          {rows.length === 0 && <span style={softText}>{q.isLoading ? 'Loading…' : 'No money accounts in this chart yet.'}</span>}
+        </div>
+        {note && <div style={softText}>{note}</div>}
+      </div>
+    </section>
+  );
+};
+
 const DefaultBankCard = () => {
   const rolesQ = useAccountRoles();
   const accountsQ = useAccounts();

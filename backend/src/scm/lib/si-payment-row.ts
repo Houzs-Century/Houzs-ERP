@@ -10,6 +10,9 @@
 // derives nothing.
 // ----------------------------------------------------------------------------
 
+import { createReceiptForPayment } from '../../acc/receipts';
+import { companyCodeById } from './doc-no';
+
 export const SI_PAYMENT_COLS =
   'id, sales_invoice_id, paid_at, method, merchant_provider, installment_months, ' +
   'online_type, approval_code, amount_sen, account_sheet, collected_by, note, ' +
@@ -42,7 +45,7 @@ export async function insertSiPaymentRow(sb: any, p: SiPaymentRowInput) {
     : null;
   const onlineType        = p.method === 'transfer' ? (p.onlineType ?? null) : null;
 
-  return sb.from('sales_invoice_payments').insert({
+  const res = await sb.from('sales_invoice_payments').insert({
     // The ACTIVE company, proven to be the invoice's by the caller's scoped read.
     company_id:         p.companyId,
     sales_invoice_id:   p.salesInvoiceId,
@@ -58,4 +61,26 @@ export async function insertSiPaymentRow(sb: any, p: SiPaymentRowInput) {
     note:               p.note ?? null,
     created_by:         p.createdBy,
   }).select(SI_PAYMENT_COLS).single();
+
+  /* The Official Receipt is born with the payment (GL redesign item 9) —
+     DRAFT for card/transfer, formal at once for cash. BEST-EFFORT: the money
+     is recorded; a receipt hiccup must never un-record it, and
+     ensureReceiptForPayment heals the gap at the next print. */
+  if (!res.error) {
+    try {
+      const paymentId = String((res.data as { id?: unknown } | null)?.id ?? '');
+      const code = p.companyId != null ? await companyCodeById(sb, p.companyId) : null;
+      if (paymentId && p.companyId != null && code) {
+        await createReceiptForPayment(sb, {
+          source: 'SIPAY', paymentId, companyId: p.companyId, companyCode: code,
+          docNo: p.salesInvoiceId, method: p.method, amountSen: p.amountSen,
+          paidAt: String(p.paidAt ?? '').slice(0, 10) || null, createdBy: p.createdBy ?? null,
+        });
+      }
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error('[receipts] draft OR not created for SI payment:', e);
+    }
+  }
+  return res;
 }

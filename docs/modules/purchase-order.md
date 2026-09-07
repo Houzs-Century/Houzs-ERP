@@ -1119,7 +1119,37 @@ A rule change to the PO touches both surfaces. The pairs:
 | SO→PO conversion | `pages/scm-v2/PurchaseOrderFromSo.tsx` | `mobile/MobileConvertWizard.tsx` (`target: "po"`) |
 | Line allocations (mig 0235) | `PurchaseOrderDetailV2.tsx` Allocations column + `components/scm-v2/PoLineAllocationsModal.tsx` (editor) | `mobile/MobileModuleDetail.tsx` `LineItem` chips — DISPLAY-ONLY (the phone PO surface has no per-line editor, same precedent as the SO-link picker) |
 | Cache invalidation after a write | the mutation hooks in `vendor/scm/lib/suppliers-queries.ts` | `mobile/sharedInvalidate.ts:71` |
+| **Line remarks (`notes`)** | text under the item on `PurchaseOrderDetailV2.tsx` + a `defaultHidden` **Remark** column (search / filter / export); an editable **Remarks** box on `PurchaseOrderDetail.tsx` (Edit, via `PoLineCard`'s `showRemarks`) and on `PurchaseOrderNew.tsx` (Create) | text under the item on `mobile/MobileModuleDetail.tsx` — rendered through the shared `mobile/MobileLineRemark.tsx`, DISPLAY-ONLY (the phone PO surface still has no per-line editor) |
 | Line photos (mig 0274) | Photos column on `PurchaseOrderDetailV2.tsx` (read-only strip, since 2026-08-28) | NOT BUILT — the mobile PO detail surface DOES exist (`MobileModuleDetail` config, Submit/Cancel/Reopen actions, a line list already rendering the mig-0235 allocation chips); it renders no photos, and there is no per-line editor to hang an uploader on |
+
+### Line remarks — `purchase_order_items.notes`, surfaced 2026-09-04
+
+Owner, 2026-09-04: 「那个 description 2 也要记录进我们的 remarks 里面」,
+「SO line 和 PO line 的 remarks」. The PO line's free text is `notes` — the twin
+of the SO line's `remark`. It has always been selected by `ITEM_COLS`, persisted
+by the item POST, and patchable through the item PATCH's `['notes','notes']`
+field map; **no screen rendered it until 2026-09-04**, and `PoLineCard` had no
+`notes` or `remark` field of any kind.
+
+That mattered because it is where the AutoCount migration parked the book's own
+`Desc2`. Measured on production 2026-09-04 over the 1,117 migrated company-1 PO
+lines: **923 carry the book's wording in `notes`** (891 byte-identical to
+`description2`, 32 the same text plus a suffix), e.g.
+`col:PC-151-03/m.gap:12inch/divan:8inch+2inchleg`.
+
+**Why `notes` and not `description2`.** `description2` is server-owned on a PO
+line — the item PATCH recomputes it from `buildVariantSummary` on every write —
+and it IS on the AutoCount write-back path. `notes` is neither: `PO_ITEM_COLS`
+(`backend/src/scm/lib/autocount-outbox.ts`) does not select it, and the only
+`notes` the write-back sends is the HEADER's (`purchase_orders.notes` →
+`Description`). So a line remark survives every save and never reaches the book.
+
+**`PoLineCard`'s box is OPT-IN** (`showRemarks`, default off). The same card is
+reused by `PurchaseInvoiceDetail`, `PurchaseInvoiceDetailV2` and
+`PurchaseConsignmentOrderDetail`, and each of those parents enumerates the fields
+it sends on add/update — a box they do not send would accept typing and discard
+it on save. Turn it on in a parent only when that parent also carries `notes` in
+BOTH payloads. Ledger: `docs/bugs/0640-*`; sales-side twin `docs/bugs/0639-*`.
 
 **Line photos render on the desktop V2 detail since 2026-08-28** — a read-only
 Photos column between Supplier SKU and Ordered, tiles opening the shared

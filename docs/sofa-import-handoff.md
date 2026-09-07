@@ -45,8 +45,23 @@ token 的书写顺序 = 面对沙发时的实际摆位。解析器最后有一�
 | `1S` / `2S` / `3S` | 整张 1/2/3 座(两端都有扶手) | — |
 | `1A` / `2A` | 一个位 / 两个位,**带一个扶手** | owner:"我们沙发有分一个位一个扶手和两个位一个扶手" |
 | `1NA` / `2NA` | 无扶手 | — |
-| `1EL` / `1ER` / `2EL` / `2ER` | E = 扶手在左/右 → `1A(LHF)` / `1A(RHF)` / `2A(...)` | owner:"EL 或 ER 代表左边或右边" |
-| `L` | 贵妃(chaise) | — |
+| `1EL` / `1ER` / `2EL` / `2ER` | E = 扶手在左/右 → `1A(LHF)` / `1A(RHF)` / `2A(...)` | owner:"EL 或 ER 代表左边或右边";2026-09-04 再确认「ER 就是右边那一端,2ER = 2A(RHF)」 |
+| `L` / `ELT` / `1ELT` | 贵妃(chaise);写在最左 = `L(LHF)`,写在最右 = `L(RHF)` | owner 2026-09-04:「ELT 就是 L」 |
+| `NA`(没有前面的数字) | 就是 `1NA` | owner 2026-09-04 |
+
+> **⚠️ ELT 有两个互相矛盾的判读，等 owner 定（2026-09-04 查证，没有自己选一个）。**
+> 同一串 Desc2 —— `[ (1 ELT / T + NA +2ER) (28") / COL: J9883-1-1 PAMA]` ——
+> 在 `backend/scripts/data/sofa-compartment-corrections-2026-08.json` 里有一条
+> 2026-08-10 批准的 correction，读成 `1ABOX(LHF) + 1NA + 2A(RHF)`；那条的 `why`
+> 写的是「ELT/T 这个写法没有 parser 规则」，**不是看照片得来的**。2026-09-04 owner
+> 亲口说 ELT 就是贵妃 `L`。第一件对不上，上表照 owner 最新的说法写。
+>
+> 落地影响是零，实测过：那条 correction 指的单 `HC-PO-010117` 在生产库里**不存在**
+> （`scm.purchase_orders` 里 0 行，只读连线查的），所以从来没有写到任何一行上。
+> 那个 JSON 本 PR 一个字都没有改。
+>
+> 还有一个 owner 没有解释的字：那串里的 `T`。**不要猜它是什么件**。也因为这个，
+> 这一行至今维持占位，交给 owner 看图定。
 | `C` / `1C` / `CNR` / `CORNER` | 角位 | owner:"1c 是 corner" |
 | `CT` / `C/T` / `CS` / `CONSOLE` / `C TABLE` | Console(中间小几) | owner:"CS 就是 console" |
 | `1B` / `2B` | Bench(**不做扶手**),**分左右** `1B(LHF)/1B(RHF)` | owner:"Bench 就是不做扶手";"1b 要分","2b 也是有的" |
@@ -169,6 +184,20 @@ SKU 名字格式:`SOFA {型号名} {件}`(不带品牌前缀)。
 **教训**:第二批一度给 8030/8060/9058/9028/9050/8069/5535 开了 recliner/power 件,
 owner 指出这些款根本没有 → 已用 `revert-sofa-recliner-skus.mjs` 撤掉 28 个。**开件前先问型号有没有这个机构**。
 
+**教训二(2026-09-05):开错件的另一种走法 —— 先猜出一个件,再为这个猜测铸 SKU。**
+`(1 ELT / T + NA +2ER)` 在 2026-08 被读成 `1ABOX(LHF)+1NA+2A(RHF)`,依据只有字面
+(corrections 档自己写着 "the ELT/T spelling has no parser rule"),
+`fix-modenza-label-and-5526-pieces.mjs` 随即铸了 `5526-1ABOX(LHF)` 好让这个读法写得下去
+—— **SKU 一铸出来,猜测就看起来像定论了**。owner 2026-09-05 定音:
+「1ELT 就是L来的」(1ELT = 陪椅 L)、「1Abox 是1NALT」(1ABOX 的写法是 1NALT),
+两个 token 不是同一个东西。已开 `5526-L(LHF)`(`open-5526-chaise.mjs`),
+SO/PO 两边一起改回 `L(LHF)+1NA+2A(RHF)`,钱一分没动。
+`scripts/lib/parse-sofa.mjs` 其实早就两边都对:`1 ELT` 出 `L(LHF)`、`1NALT` 出
+`1ABOX(LHF)` —— 但**原字串里那个多出来的 `/ T` 会把结构切断**,parser 回 `pieces: []`
+`conf: low`,所以当时没有任何东西去反驳那个猜测。已用
+`scripts/lib/parse-sofa.test.mjs` 钉住。**解不出来的行,答案要么来自图、要么来自 owner;
+字面像什么不是证据。**
+
 ### 3.4 型号本身缺了怎么办 —— 对照表的 `EXISTS(1st-pass)` 会吃掉一个型号
 
 `piece SKU not minted` 有两种成因:件没开(§3.3),或者**整个型号从来没建**。
@@ -263,6 +292,8 @@ HR805-31/-40、NX007/010/011、ZL-6/-20、Garfield、Wowsons、Chantic、J9883-2
 | **补 SO 行的 warehouse** | `backfill-so-line-warehouse.mjs` | 同名 yml |
 | **special order 落到 SO/PO 行** | `backfill-sofa-special-orders.mjs` | 同名 yml |
 | **补脚高 = Default(见 2.5)** | `backfill-sofa-leg-default.mjs` | 同名 yml |
+| **占位行为什么解不出(只读)** | `probe-sofa-placeholder-desc2.mjs` | 同名 yml |
+| **完整度体检(只读)** | `check-sofa-bedframe-completeness.mjs` | 同名 yml |
 
 ### 体检脚本的 7 项
 
@@ -275,6 +306,37 @@ HR805-31/-40、NX007/010/011、ZL-6/-20、Garfield、Wowsons、Chantic、J9883-2
 7. **真漏拆 vs 正常占位**(靠备注签名区分)
 
 改动之后一定重跑这个脚本;`gh run view <id> --log` 里 `##[notice]` 就是报告。
+
+### `-1S` 的两种意思,体检报告分开数(owner 2026-09-04)
+
+单据行的码结尾是 `-1S`,有两个完全不同的情况:
+
+- **书上就写一个位,ERP 也是一个位** —— 对的,不是缺口
+- **解不出这套沙发的组合,importer 退回一个位的占位** —— 这才是要人补的
+
+两个数加在一起,老板看到的待办就被撑大了。`check-sofa-bedframe-completeness.mjs`
+现在把 `-1S` 的行做一次普查,总数照印,再拆开:
+
+```
+of which — bare "1S" lines, all told: 26
+of which — bare "1S" — WE COULD NOT READ THE BUILD (the real backlog): 20
+of which — bare "1S" — the book says a single seater and we agree: 5
+of which — bare "1S" — carries a different compartment finding: 1
+```
+
+(prod、company 1、已 proceed 的销售单,2026-09-04 实测。)
+
+**判断标准是两半,缺一不可**,理由都写在
+`backend/scripts/lib/sofa-single-seat.mjs` 里,两条都是 prod 的真实行:
+
+1. **Desc2 自己要写出一个位**。只问解析器不行 —— HC-SO-013327 的
+   `Seater depth +1”` 是座深指示,那个 `+1` 会被语法读成一个裸件,于是一条完全
+   没有组合的文字被读成「一个位」。
+2. **解析器要把整套读成刚好那一件**。只看字串不行 —— HC-SO-001472 的
+   `3S+2S+1S` 是三张沙发成套,它的 `1S` 行是对的,但对的理由不一样。
+
+备注(`remark`)**不参与判断**:它是自由文字,本来就是它把行归到占位那一支的,
+而且别的工作正在改写它。
 
 ### 改解析器的规矩
 
@@ -370,7 +432,15 @@ AutoCount 的 `vItemBalQty` 只有「AMN-SF9028 SOFA 在 KL 有 6 台」,**没�
 
 19 行原文没写件(只写了颜色/工艺,要看图)、6 行没写座深。清单在会话里发过 CSV。
 
-### 8.4 HC-SO-000814 少了整条沙发行(2026-08-10 dry-run 查到,**没人动过**)
+### 8.4 HC-SO-000814 少了整条沙发行(2026-08-10 dry-run 查到)
+
+> **CORRECTED 2026-09-04 —— 这一节的前提已经不成立了。** 生产库里
+> `HC-SO-000814` 现在**有**那条沙发行:`5526-1S`,`description2` 就是
+> `[ (1 ELT / T + NA +2ER) (28") / COL: J9883-1-1 PAMA]`,备注
+> `SOFA UNPARSED — 按图/原文补件`,同一串字的采购单 `HC-PO-000254` 也在。
+> (只读连线查的,company 1。)是谁、什么时候补回去的**没有查**,所以下面那句
+> 「没人动过」不要再当真。金额那一条(比 AutoCount 少 9,300)也要重新核过才算数。
+> 下面原文保留作历史。
 
 `open-5526-model.mjs` 的 prod dry-run 报:`HC-SO-000814 ... 0 sofa line(s) ...
 document lines: accessory:1`。单在 ERP 里,但**只剩一条 accessory 行**(RDS-SQUARE

@@ -111,6 +111,13 @@ async function main() {
   log("=== C. THE DECISIVE READ ===");
   const fcRows = await sql`SELECT fabric_id, colour_id, label FROM scm.fabric_colours WHERE company_id = ${CO}`;
   const { findColour } = buildFabricColourIndex(fcRows);
+  /* The unlabelled-colour rule inside parseSofa is gated on this callback and
+     does NOTHING without it - "MODENZA-05 (DARK OLIVE)/35”/1R+1R" writes the
+     colour first with no COL: label, and this script, whose whole job is to
+     stamp colours, was calling parseSofa without it. Same contract as
+     import-ac-outstanding-so.mjs:177. */
+  const knownColour = (c) => { const h = findColour(c); return h ? h.colour_id : null; };
+
   log(`fabric library: ${new Set(fcRows.map((r) => r.fabric_id)).size} series / ${fcRows.length} colours`);
 
   const soLines = await sql`SELECT i.id, i.item_code AS code, i.description2 AS d2, i.variants
@@ -129,7 +136,7 @@ async function main() {
       if (isBound(had)) { tally.bound++; continue; }
       let model = String(r.code || "").split("-")[0].toUpperCase();
       model = SOFA_MODEL_ALIAS[model] || model;
-      const ps = r.d2 ? parseSofa(r.d2, model, false) : null;
+      const ps = r.d2 ? parseSofa(r.d2, model, false, { knownColour }) : null;
       const raw = txt(ps?.color) || txt(had.colourLabel);
       if (!raw) { tally.none++; continue; }
       if (isPendingColour(raw)) { tally.pending++; continue; }

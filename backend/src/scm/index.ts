@@ -36,6 +36,7 @@ import { purchaseInvoices } from "./routes/purchase-invoices";
 import { purchaseInvoicesListEnrichment } from "./routes/purchase-invoices-list-enrichment";
 import { paymentVouchers } from "./routes/payment-vouchers";
 import { otherDebtors } from "./routes/other-debtors";
+import { apInvoices } from "./routes/ap-invoices";
 import { receipts } from "./routes/receipts";
 import { entityAuditLog } from "./routes/entity-audit-log";
 import { autocountOutbox } from "./routes/autocount-outbox";
@@ -458,6 +459,10 @@ scm.route("/other-debtors", otherDebtors);
 // plus general receipts that post directly; same area, same key family.
 scm.use("/receipts/*", scmAreaGuard("scm.finance.accounting"));
 scm.route("/receipts", receipts);
+// AP Invoices (owner 2026-09-06) — the non-stock supplier bill beside the
+// purchase invoices it is paid alongside; same area, same PV key family.
+scm.use("/ap-invoices/*", scmAreaGuard("scm.finance.accounting"));
+scm.route("/ap-invoices", apInvoices);
 // Payment Audit Log — Finance's payment TRAIL (port of 2990's /admin/audit-log):
 // one row per mfg_sales_order_payments entry + its SO header context. Read-only.
 // Same L2 area as Accounting: it is the money ledger's read side, not a new

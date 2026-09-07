@@ -128,3 +128,121 @@ export const useConfirmDailyClose = () => {
     onError: writeFailedAs('Daily close not confirmed'),
   });
 };
+
+/* ── Item groups — the product-group ↔ ledger-account registry (GL redesign
+   item 1). The binding decides which purchase/sales account a document line
+   posts to; an unbound group refuses to post, so this screen is where the
+   owner keeps the map. ─────────────────────────────────────────────────── */
+
+export type ItemGroupBinding = {
+  purchase: string;
+  sales: string;
+  salesReturn: string;
+  purchaseReturn: string;
+};
+
+export type ItemGroup = {
+  code: string;
+  name: string;
+  isActive: boolean;
+  /** companyId → the four accounts; a missing key means UNBOUND there. */
+  bindings: Record<string, ItemGroupBinding>;
+};
+
+export const useItemGroups = () => useQuery({
+  queryKey: ['item-groups'],
+  queryFn: () => authedFetch<{ companies: Array<{ id: number; code: string }>; groups: ItemGroup[] }>(`/accounting/item-groups`),
+  staleTime: 15_000,
+  retry: retryUnlessClientError,
+  retryDelay: 800,
+});
+
+export const useCreateItemGroup = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { code: string; name: string; companyId: number; accounts: ItemGroupBinding }) =>
+      authedFetch<{ ok: boolean; code: string }>(`/accounting/item-groups`, { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['item-groups'] }); },
+    onError: writeFailedAs('Group not created'),
+  });
+};
+
+export const useBindItemGroup = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ code, ...body }: { code: string; companyId: number; accounts: ItemGroupBinding }) =>
+      authedFetch<{ ok: boolean }>(`/accounting/item-groups/${encodeURIComponent(code)}/accounts`, { method: 'PUT', body: JSON.stringify(body) }),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['item-groups'] }); },
+    onError: writeFailedAs('Binding not saved'),
+  });
+};
+
+export const usePatchItemGroup = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ code, ...body }: { code: string; name?: string; isActive?: boolean }) =>
+      authedFetch<{ ok: boolean }>(`/accounting/item-groups/${encodeURIComponent(code)}`, { method: 'PATCH', body: JSON.stringify(body) }),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['item-groups'] }); },
+    onError: writeFailedAs('Group not updated'),
+  });
+};
+
+/* ── Month-end stock close (GL redesign item 4) — run log + manual run. ──── */
+
+export type StockCloseRun = {
+  month: string;
+  ran_at: string;
+  trigger: string;
+  stock_value_sen: number;
+  action: 'posted' | 'unchanged' | 'reposted' | 'failed';
+  je_no: string | null;
+  rev_je_no: string | null;
+  note: string | null;
+};
+
+export const useStockClose = () => useQuery({
+  queryKey: ['stock-close'],
+  queryFn: () => authedFetch<{ liveValueSen: number; defaultMonth: string; runs: StockCloseRun[] }>(`/accounting/stock-close`),
+  staleTime: 15_000,
+  retry: retryUnlessClientError,
+  retryDelay: 800,
+});
+
+export const useRunStockClose = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { month?: string }) =>
+      authedFetch<{ outcome: { action: string; jeNo?: string; note?: string } }>(`/accounting/stock-close/run`, { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['stock-close'] });
+      void qc.invalidateQueries({ queryKey: ['journal-entries'] });
+      void qc.invalidateQueries({ queryKey: ['gl-entries'] });
+      void qc.invalidateQueries({ queryKey: ['account-balances'] });
+    },
+    onError: writeFailedAs('Month-end run failed'),
+  });
+};
+
+/* ── Voucher numbering (GL redesign item 8a) — per-bank letters + width. ── */
+
+/* fixedCash marks the drawer: its letter is C on both papers (CPV / COR),
+   minted straight off roles.CASH — shown, never editable, never PUT. */
+export type NumberingAccount = { accountCode: string; accountName: string; letter: string | null; fixedCash?: boolean };
+
+export const useVoucherNumbering = () => useQuery({
+  queryKey: ['voucher-numbering'],
+  queryFn: () => authedFetch<{ digits: number; accounts: NumberingAccount[] }>(`/accounting/numbering`),
+  staleTime: 30_000,
+  retry: retryUnlessClientError,
+  retryDelay: 800,
+});
+
+export const useSaveVoucherNumbering = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { digits?: number; letters?: Array<{ accountCode: string; letter: string }> }) =>
+      authedFetch<{ ok: boolean }>(`/accounting/numbering`, { method: 'PUT', body: JSON.stringify(body) }),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['voucher-numbering'] }); },
+    onError: writeFailedAs('Numbering not saved'),
+  });
+};

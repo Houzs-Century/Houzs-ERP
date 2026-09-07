@@ -51,6 +51,10 @@ export type PaymentVoucherRow = Record<string, unknown> & {
   checked_by?: string | null;
   approved_at?: string | null;
   approved_by?: string | null;
+  /** What remains of this voucher's ADVANCE (paid ahead of any invoice, not
+      yet knocked off) — the list paints such rows and offers a chip. 0 when
+      none. Server: listPaymentVouchersHandler. */
+  advance_remaining_sen?: number | null;
 };
 
 export type PaymentVoucherAllocation = {
@@ -145,7 +149,7 @@ export const useSupplierAdvances = (supplierId: string | null) => useQuery({
 export const useApplyAdvance = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ pvId, allocations }: { pvId: string; allocations: Array<{ piId: string; amountSen: number }> }) =>
+    mutationFn: ({ pvId, allocations }: { pvId: string; allocations: Array<{ piId?: string; apInvoiceId?: string; amountSen: number }> }) =>
       authedFetch<{ ok: true; appliedSen: number; remainingSen: number }>(
         `/payment-vouchers/${pvId}/apply-advance`,
         { method: 'POST', body: JSON.stringify({ allocations }) },
@@ -154,6 +158,9 @@ export const useApplyAdvance = () => {
       void qc.invalidateQueries({ queryKey: ['supplier-advances'] });
       void qc.invalidateQueries({ queryKey: ['payment-voucher-detail', pvId] });
       void qc.invalidateQueries({ queryKey: ['purchase-invoices'] });
+      void qc.invalidateQueries({ queryKey: ['ap-invoices'] });
+      void qc.invalidateQueries({ queryKey: ['ap-invoice'] });
+      void qc.invalidateQueries({ queryKey: ['payment-vouchers'] });
     },
   });
 };
@@ -287,16 +294,17 @@ export const useDeletePvFile = () => {
   });
 };
 
-/* The authed byte fetch behind both attachment readers (authedFetch
-   JSON-parses, so it can't carry these). Same Worker-proxy pattern as
-   slip.ts's fetchSlipAsObjectUrl, reusing the exported API_URL instead of
-   declaring another copy. */
-async function fetchPvFileResponse(pvId: string, fileId: string): Promise<Response> {
+/* The authed byte fetch behind every attachment reader (authedFetch
+   JSON-parses, so it can't carry these) — the voucher's files and, since
+   2026-09-06, the AP invoice's (ap-invoice-queries.ts hands its own path
+   in). Same Worker-proxy pattern as slip.ts's fetchSlipAsObjectUrl, reusing
+   the exported API_URL instead of declaring another copy. */
+async function fetchDocFileResponse(path: string): Promise<Response> {
   const token = readAuthToken();
   if (!token) throw new Error('Your session has expired — please sign in again.');
   let signal: AbortSignal | undefined;
   try { signal = AbortSignal.timeout(60_000); } catch { signal = undefined; } // pre-2022 browsers
-  const res = await correlatedFetch(`${API_URL}/payment-vouchers/${pvId}/files/${fileId}`, {
+  const res = await correlatedFetch(`${API_URL}${path}`, {
     headers: { authorization: `Bearer ${token}`, ...companyHeader() },
     signal,
   });
@@ -308,14 +316,16 @@ async function fetchPvFileResponse(pvId: string, fileId: string): Promise<Respon
 }
 
 /* View one attachment as a blob object URL. The caller revokes it. */
-export async function fetchPvFileBlobUrl(pvId: string, fileId: string): Promise<{ url: string; contentType: string }> {
-  const res = await fetchPvFileResponse(pvId, fileId);
+export async function fetchDocFileBlobUrl(path: string): Promise<{ url: string; contentType: string }> {
+  const res = await fetchDocFileResponse(path);
   const contentType = res.headers.get('content-type') ?? 'application/octet-stream';
   return consumeCorrelated(res, async () => ({
     url: URL.createObjectURL(await res.blob()),
     contentType,
   }));
 }
+export const fetchPvFileBlobUrl = (pvId: string, fileId: string): Promise<{ url: string; contentType: string }> =>
+  fetchDocFileBlobUrl(`/payment-vouchers/${pvId}/files/${fileId}`);
 
 /* The print's merge lives ON THE WORKER (backend pv-files.ts print-bundle +
    lib/pdf-attach.ts): the stored bills are in R2 next door, and pdf-lib in

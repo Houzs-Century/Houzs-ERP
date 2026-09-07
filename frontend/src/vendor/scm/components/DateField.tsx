@@ -49,6 +49,15 @@ export type DateFieldProps = {
   required?: boolean;
 };
 
+/** Digits → the DD/MM/YYYY mask as far as they reach: "3" → "3", "3103" →
+ *  "31/03", "310320" → "31/03/20", "31032026" → "31/03/2026". */
+export function maskDmy(digits: string): string {
+  const d = digits.slice(0, 8);
+  if (d.length <= 2) return d;
+  if (d.length <= 4) return `${d.slice(0, 2)}/${d.slice(2)}`;
+  return `${d.slice(0, 2)}/${d.slice(2, 4)}/${d.slice(4)}`;
+}
+
 /** "2026-05-31" → "31/05/2026". Returns '' for empty/malformed. */
 export function isoToDmy(iso: string | null | undefined): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso ?? ''));
@@ -56,13 +65,22 @@ export function isoToDmy(iso: string | null | undefined): string {
 }
 
 /** "31/05/2026" → "2026-05-31". Returns null if not a real calendar date.
- *  Tolerates 1–2 digit day/month and `-`/`.` separators. */
+ *  Tolerates 1–2 digit day/month and `-`/`.` separators — and the digits
+ *  typed straight through with no separator at all (31052026 / 310526),
+ *  read day-first like the display: the owner types 06092026 and got a
+ *  field that never accepted it (2026-09-06: 日期那边我要输入时会变这样). */
 export function parseDmy(text: string): string | null {
-  const m = /^(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{4})$/.exec(text.trim());
+  const t = text.trim();
+  const compact = /^(\d{2})(\d{2})(\d{4}|\d{2})$/.exec(t);
+  /* A two-digit year after separators too (31/03/26): the mask below writes
+     the separators for the operator, so the six-digit shortcut must still
+     read the same way it does typed straight through. */
+  const spaced = compact ? null : /^(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{4}|\d{2})$/.exec(t);
+  const m = compact ?? spaced;
   if (!m) return null;
   const dd = Number(m[1]);
   const mm = Number(m[2]);
-  const yyyy = Number(m[3]);
+  const yyyy = Number(String(m[3]).length === 2 ? `20${m[3]}` : m[3]);
   if (mm < 1 || mm > 12 || dd < 1 || dd > 31) return null;
   // Reject overflow (e.g. 31/02) by round-tripping through a UTC date.
   const dt = new Date(Date.UTC(yyyy, mm - 1, dd));
@@ -139,9 +157,18 @@ export function DateField({
         disabled={disabled}
         required={required}
         value={display}
-        onFocus={() => setEditing(isoToDmy(value))}
+        /* Select-all on focus (owner 2026-09-06: 日期我输入时希望不用自己打 "/"):
+           the field often arrives pre-filled — today's date on a new bill —
+           and typing into it APPENDED, so 31032026 became 06/09/202631032026,
+           parsed as nothing, and snapped back on blur. Typing now replaces. */
+        onFocus={(e) => { setEditing(isoToDmy(value)); e.currentTarget.select(); }}
         onChange={(e) => {
-          const t = e.target.value;
+          const raw = e.target.value;
+          /* Digits typed straight through wear the mask as they land:
+             3103 → 31/03, 31032026 → 31/03/2026. Anything else (a pasted
+             31-03-2026, a stray letter) is left as typed for the parser. */
+          const digits = raw.replace(/\D/g, '');
+          const t = /^[\d/]*$/.test(raw) && digits.length <= 8 ? maskDmy(digits) : raw;
           setEditing(t);
           const trimmed = t.trim();
           if (trimmed === '') { onChange(''); return; }

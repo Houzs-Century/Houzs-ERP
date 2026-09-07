@@ -202,7 +202,12 @@ const CEILINGS = {
   // (the same build, measured honestly for the first time; the true figure on
   // the old commit was ~269 KB and removing jspdf's tree from the eager path
   // cut it to ~155). Keep tight: a real regression here is a first-paint cost.
-  INITIAL_JS_GZIP: 165 * KB,
+  // 165 -> 166 on 2026-09-05: the notification bell (top chrome, always
+  // loaded) became the one unread entry point — tabs, announcement rows with
+  // inline Acknowledge / Mark read, source tags — for the Announcements
+  // redesign (PR #2994), +1.0 KB gzip. Deliberate; the popover body is the
+  // next candidate to lazy-load if this ceiling is reached again.
+  INITIAL_JS_GZIP: 166 * KB,
   // Everything the app can lazy-load (users only fetch the routes they visit).
   // A soft guard against unbounded total growth, not a first-paint cost. Left
   // at 1800 deliberately — main is at ~99% of it and RAISING IT AGAIN IS NOT

@@ -167,7 +167,13 @@ was a placeholder). Owner 2026-08-26 made both real:
 `backend/src/db/schema.pg.ts` gains `departments.lead_user_id` (FK `users`,
 `ON DELETE SET NULL`) and `departments.headcount_target`
 (`backend/src/db/migrations-pg/0331_departments_lead_and_headcount.sql`, D1
-mirror `152`). `backend/src/routes/departments.ts` exposes both on GET and
+mirror `152`). **`departments.code` (mig
+`backend/src/db/migrations-pg/20260906T1417_departments_code_document_refs.sql`,
+2026-09-06)**: the 2–4 letter `[DEPT]` segment of a document reference number
+(OPS-ANN-2609-0001, see `docs/modules/document-refs.md`); optional, unique
+case-insensitively, accepted by POST / PATCH `/api/departments` (`code`;
+`""`/`null` clears), edited in `TeamDepartmentsV2.tsx` and shown as a chip
+on the card. `backend/src/routes/departments.ts` exposes both on GET and
 accepts them on PATCH (lead must be a known user or `null`; target a
 non-negative int or `null`).
 
@@ -197,7 +203,8 @@ card shows `active / target` when a target is set.
 - **A targeting edit busts the member's announcements banner cache.** The banner
   filters by department_id / position_id / company grants, and its per-user KV
   snapshot lives 300s (> the 60s poll), so PATCH `/:id` (when it changes
-  department / position / role / status / department_ids / company_ids), PUT
+  department / position / role / status / department_ids / company_ids, and —
+  since announcements can target a division, mig 20260906T0639 — `division`), PUT
   `/:id/companies`, and DELETE `/:id` all call `bustBannerForUser` (both scopes);
   a department DELETE (`routes/departments.ts`) bumps the banner family version
   because it un-assigns an unknown set of members at once. Session bust alone did

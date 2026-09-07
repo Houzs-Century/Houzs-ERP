@@ -379,7 +379,7 @@ async function checkGrnZeroCost(
    another's GRN. Callers get it from requireActiveCompanyId and refuse first. */
 async function postGrnAndRollup(sb: any, grnId: string, userId: string, companyId: number): Promise<{ ok: true; movementErrors?: string[]; recountError?: string } | { ok: false; reason: string; status?: number; zeroCost?: ZeroCostRefusal }> {
   const { data: grnHeader } = await scopeToCompanyId(sb.from('grns')
-    .select('grn_number, warehouse_id, company_id, exchange_rate, allocation_method')
+    .select('grn_number, warehouse_id, company_id, exchange_rate, allocation_method, received_at')
     .eq('id', grnId), companyId).maybeSingle();
   const { data: items } = await sb.from('grn_items')
     .select('id, purchase_order_item_id, qty_accepted, item_code, material_name, unit_price_sen, line_total_sen, item_group, variants, zero_cost_ack')
@@ -544,8 +544,7 @@ async function postGrnAndRollup(sb: any, grnId: string, userId: string, companyI
       .filter((it) => it.qty_accepted > 0)
       .map((it) => ({
         movement_type: 'IN' as const,
-        warehouse_id: warehouseId,
-        item_code: it.item_code,
+        warehouse_id: warehouseId, item_code: it.item_code,
         variant_key: keyedVariantWithWarning(grnNo, it, computeVariantKey), // mig 0095; warns when the group ignores them
         product_name: it.material_name,
         qty: it.qty_accepted,
@@ -556,7 +555,8 @@ async function postGrnAndRollup(sb: any, grnId: string, userId: string, companyI
           ?? toMyrSen(Number(it.unit_price_sen ?? 0), grnRate),
         source_doc_type: 'GRN' as const,
         source_doc_id: grnId,
-        source_doc_no: grnNo,
+        // movement_date = the RECEIVED date (GL item 4): a late-keyed GRN counts in its own month.
+        source_doc_no: grnNo, movement_date: String((grnHeader as { received_at?: string | null } | null)?.received_at ?? '').slice(0, 10) || undefined,
         // Production batch = source PO number (migration 0120). NULL for free GRNs.
         batch_no: it.purchase_order_item_id ? (batchByItem.get(it.purchase_order_item_id) ?? null) : null,
         performed_by: userId,
