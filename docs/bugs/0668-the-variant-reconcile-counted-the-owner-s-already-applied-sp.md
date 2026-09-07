@@ -48,4 +48,18 @@ Three tests in `scripts/lib/variant-reconcile.test.mjs`, proved RED first: with
 the `RECORDED` export present and the old verdict block restored, 2 of 18 failed;
 with the fix, 18 of 18 pass.
 
+**The guard that caught this fix, and was right to.**
+`backend/tests/specialsRecordedNeverPriced.test.ts` keeps `specialsRecorded` out
+of every file that is not a display surface, because the whole reason the key
+exists is that nothing which computes money may read it. It failed this change
+on its first CI run, exactly as designed.
+
+The four readers added to its allow-list are READ-ONLY reports — they open a
+connection, SELECT, and print; none writes a line and none can reach a price.
+The rule the list encodes is "render the key, do not price it", and a report is
+a render. Nothing was loosened: the test's third case still asserts the four
+pricing modules never mention the key, and `variant-reconcile.mjs` deliberately
+keeps `specialsRecorded` OUT of `carried`, so a recorded option is never counted
+as a ticked one.
+
 **Ref.** fix/variants-specials-close, 2026-09-07.
