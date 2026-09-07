@@ -1,0 +1,83 @@
+{
+  "kind": "prune-dead-line-photo-keys",
+  "generatedAt": "2026-09-07T14:51:53.128Z",
+  "account": "816e457307d7fa0491c2a08a72ad5dcd",
+  "bucket": "houzs-erp",
+  "company": 1,
+  "count": 9,
+  "ops": [
+    {
+      "arm": "SALES ORDER",
+      "id": "336d7acc-d407-4aa5-90a0-27577dd03b4f",
+      "doc": "HC-SO-013497",
+      "dtl": "926847",
+      "drop": "so-items/HC-SO-013497/336d7acc-d407-4aa5-90a0-27577dd03b4f/ac-926847-1.jpg",
+      "keeps": []
+    },
+    {
+      "arm": "SALES ORDER",
+      "id": "995ada8d-7996-47b1-80ab-d66e32fbb80b",
+      "doc": "HC-SO-013501",
+      "dtl": "926859",
+      "drop": "so-items/HC-SO-013501/995ada8d-7996-47b1-80ab-d66e32fbb80b/ac-926859-1.jpg",
+      "keeps": []
+    },
+    {
+      "arm": "SALES ORDER",
+      "id": "46670193-fea0-42b8-b6c1-31525a53448e",
+      "doc": "HC-SO-013502",
+      "dtl": "926865",
+      "drop": "so-items/HC-SO-013502/46670193-fea0-42b8-b6c1-31525a53448e/ac-926865-1.jpg",
+      "keeps": []
+    },
+    {
+      "arm": "SALES ORDER",
+      "id": "0b85253f-2d47-49f3-afa5-d12c99af3e37",
+      "doc": "HC-SO-013503",
+      "dtl": "926872",
+      "drop": "so-items/HC-SO-013503/0b85253f-2d47-49f3-afa5-d12c99af3e37/ac-926872-1.jpg",
+      "keeps": []
+    },
+    {
+      "arm": "SALES ORDER",
+      "id": "096d31e2-8003-454d-81af-3ed91363f52a",
+      "doc": "HC-SO-013506",
+      "dtl": "927031",
+      "drop": "so-items/HC-SO-013506/096d31e2-8003-454d-81af-3ed91363f52a/ac-927031-1.jpg",
+      "keeps": []
+    },
+    {
+      "arm": "SALES ORDER",
+      "id": "94d986c4-09a4-43e8-bab6-05e5543c94b5",
+      "doc": "HC-SO-013507",
+      "dtl": "927060",
+      "drop": "so-items/HC-SO-013507/94d986c4-09a4-43e8-bab6-05e5543c94b5/ac-927060-1.jpg",
+      "keeps": []
+    },
+    {
+      "arm": "SALES ORDER",
+      "id": "9a126cdc-7d70-4fa5-afd7-537f38e51f87",
+      "doc": "HC-SO-013508",
+      "dtl": "927063",
+      "drop": "so-items/HC-SO-013508/9a126cdc-7d70-4fa5-afd7-537f38e51f87/ac-927063-1.jpg",
+      "keeps": []
+    },
+    {
+      "arm": "SALES ORDER",
+      "id": "29f5d77f-1809-4e83-bd77-8a6a01189c67",
+      "doc": "HC-SO-013499",
+      "dtl": "926852",
+      "drop": "so-items/HC-SO-013499/29f5d77f-1809-4e83-bd77-8a6a01189c67/ac-926852-1.jpg",
+      "keeps": []
+    },
+    {
+      "arm": "SALES ORDER",
+      "id": "26cd8cb5-8188-4137-bec6-96016395a447",
+      "doc": "HC-SO-013499",
+      "dtl": "926851",
+      "drop": "so-items/HC-SO-013499/26cd8cb5-8188-4137-bec6-96016395a447/ac-926851-1.jpg",
+      "keeps": []
+    }
+  ],
+  "digest": "sha256:40e9298618dc5bbdbaf16b310931b0c8a8fb02b704e9697f88616a47f7e680bb"
+}
