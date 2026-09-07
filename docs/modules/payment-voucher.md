@@ -153,7 +153,7 @@ Payment. So the New page is TWO documents on one route:
 - **Payment Voucher** (`/scm/payment-vouchers/new`) — pays expenses. Free-text
   payee, hand-written lines, **no supplier and no Apply-to-PI section**.
   Purpose stored as `OTHER` (the old three-way purpose dropdown is gone; the
-  document type IS the purpose now).
+  document type IS the purpose now). The detail shows it as **Type: AP Payment / Payment Voucher** (owner 2026-09-07: 为什么我一直看到 purpose - other? → the word Purpose and the old Freight choice are gone; `vendor/scm/lib/pv-type-label.ts`).
 - **AP Payment** (`/scm/payment-vouchers/new?type=ap`) — settles a supplier.
   Supplier required; **no hand-written lines at all**: tick an invoice to pay
   it in full, type a figure for a partial, and the voucher total follows the

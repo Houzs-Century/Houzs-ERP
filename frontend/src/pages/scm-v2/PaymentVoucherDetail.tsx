@@ -36,6 +36,7 @@ import {
   usePvFiles, useUploadPvFile, useDeletePvFile, fetchPvFileBlobUrl,
   usePvReservations, NO_RESERVATIONS,
 } from '../../vendor/scm/lib/payment-voucher-queries';
+import { pvTypeLabel, pvTypeOf } from '../../vendor/scm/lib/pv-type-label';
 import { DocFilesCard } from '../../vendor/scm/components/DocFilesCard';
 import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
 import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
@@ -66,11 +67,9 @@ const fmtRm = (centi: number | null | undefined, currency = 'MYR'): string => {
   return `${currency} ${(v / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
 
-/* Migration 0202 — human label for the PV purpose. */
-const purposeLabel = (p: string | null | undefined): string =>
-  p === 'FREIGHT' ? 'Freight'
-  : p === 'OTHER' ? 'Other'
-  : 'Supplier payment (settle PI)';
+/* The stored `purpose` is the document kind — shown as "Type: AP Payment /
+   Payment Voucher" (owner 2026-09-07: 为什么我一直看到 purpose - others?); the
+   labels live in vendor/scm/lib/pv-type-label.ts. */
 
 type EditLine = {
   rid:              string;
@@ -215,7 +214,7 @@ export const PaymentVoucherDetail = () => {
     if (!isEditing || !pv) return;
     setPayeeName(pv.payee_name ?? '');
     setSupplierId(pv.supplier_id ?? '');
-    setPurpose((pv.purpose ?? 'SUPPLIER_PAYMENT') as 'SUPPLIER_PAYMENT' | 'FREIGHT' | 'OTHER');
+    setPurpose(pvTypeOf(pv.purpose));
     setCreditAccountCode(pv.credit_account_code ?? '');
     setVoucherDate(pv.voucher_date ?? '');
     setNotes(pv.notes ?? '');
@@ -547,7 +546,7 @@ export const PaymentVoucherDetail = () => {
             <div className={styles.formGrid2}>
               <InfoCell label="Payee" value={pv.payee_name} />
               <InfoCell label="Supplier" value={pv.supplier?.name ?? null} />
-              <InfoCell label="Purpose" value={purposeLabel(pv.purpose)} />
+              <InfoCell label="Type" value={pvTypeLabel(pv.purpose)} />
               <InfoCell label="Paid From" value={accountLabel(pv.credit_account_code)} />
               <InfoCell label="Voucher Date" value={pv.voucher_date ? fmtDateOrDash(pv.voucher_date) : null} />
               <InfoCell label="Currency" value={viewCurrency} />
@@ -570,12 +569,11 @@ export const PaymentVoucherDetail = () => {
                 </select>
               </label>
               <label className={styles.field}>
-                <span className={styles.fieldLabel}>Purpose</span>
+                <span className={styles.fieldLabel}>Type</span>
                 <span className={styles.selectWrap}>
-                  <select className={styles.fieldSelect} value={purpose} onChange={(e) => setPurpose(e.target.value as 'SUPPLIER_PAYMENT' | 'FREIGHT' | 'OTHER')}>
-                    <option value="SUPPLIER_PAYMENT">Supplier payment (settle PI)</option>
-                    <option value="FREIGHT">Freight</option>
-                    <option value="OTHER">Other</option>
+                  <select className={styles.fieldSelect} value={purpose} onChange={(e) => setPurpose(pvTypeOf(e.target.value))}>
+                    <option value="SUPPLIER_PAYMENT">AP Payment</option>
+                    <option value="OTHER">Payment Voucher</option>
                   </select>
                   <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
                 </span>
