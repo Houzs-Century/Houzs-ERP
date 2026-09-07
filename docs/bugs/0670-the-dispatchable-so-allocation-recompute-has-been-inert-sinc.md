@@ -46,7 +46,7 @@ read as during the go-live tally.
 
 This is a STOPGAP and is labelled one. The root fix is either (a) grow the shim
 to translate one-level `!inner` embeds and dotted filter columns into SQL joins,
-with tests in `backend/tests/pgrestShim.node.mjs`, or (b) drive the recompute
+with tests in `backend/tests/pgrestShim.test.mjs`, or (b) drive the recompute
 through the Worker, which holds real PostgREST credentials, instead of through
 Actions. (a) keeps the workflow; (b) deletes it. Neither is done here.
 
