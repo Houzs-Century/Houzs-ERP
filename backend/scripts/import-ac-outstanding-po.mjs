@@ -220,8 +220,24 @@ async function main() {
           exceptions.push({ po: acPo, code: null, reason: "no item code AND no description — nothing to carry" });
           continue;
         }
+        /* The owner's 2026-09-02 ruling is that a code-less line becomes an
+           ACCESSORY, and the item push below duly wrote item_code NULL for it.
+           That was marked UNVERIFIED against the live column. It is now VERIFIED
+           and it does not hold: scm.purchase_order_items.item_code is NOT NULL —
+           created as material_code by mig 0090, renamed by mig 0307, never
+           relaxed by any migration in the tree. The row cannot be inserted.
+
+           So the line is reported and the run continues. It used to reach the
+           catalog guard with a blank code, which REFUSED THE WHOLE RUN: on
+           2026-09-07 one line (PO-009979 "ERGOTEX PILLOW CASE - FAIR") blocked
+           all 165 purchase orders on go-live day. One unmintable accessory must
+           not cost the other 164 documents. Mint the product, or point the code
+           at a real one in the mapping CSV, and re-run — the import is
+           idempotent, so the rest will simply be skipped. */
         codelessLines++;
-        log(`  code-less line imported as accessory: ${acPo} "${desc.slice(0, 40)}" x${Math.round(num(l.Qty)) || 1}`);
+        exceptions.push({ po: acPo, code: null,
+          reason: `code-less line "${desc.slice(0, 40)}" x${Math.round(num(l.Qty)) || 1} — needs an accessory product before it can be imported (item_code is NOT NULL)` });
+        continue;
       }
       const grp = codeless ? "accessories" : (CATG[cat] || "others");
       const qty = Math.round(num(l.Qty)) || 1;
@@ -295,12 +311,14 @@ async function main() {
         }
         continue;
       }
-      /* `erp` is NULL on a code-less line by construction (:199 sets it null when
-         the binding misses, and the branch at :217 deliberately ACCEPTS that line
-         when the book carries a description). Looking the product up unguarded
-         threw `Cannot read properties of null (reading 'toUpperCase')` and killed
-         the whole run on the first such line - PO-009979 "ERGOTEX PILLOW CASE -
-         FAIR", in the 2026-09-07 cut. A code-less line has no product to find. */
+      /* Guarded because `erp` is set to null a few lines up whenever the binding
+         misses, and reading it unguarded threw
+         `Cannot read properties of null (reading 'toUpperCase')` here, killing
+         the whole run on the first code-less line — PO-009979 "ERGOTEX PILLOW
+         CASE - FAIR", in the 2026-09-07 cut. The code-less branch above now
+         returns before reaching this line, so nothing should arrive null today;
+         the guard stays because a future accepted-null case must degrade to "no
+         product found", never to a crash. */
       const prod = erp ? prodByCode.get(erp.toUpperCase()) : null;
       const soItemId = dedicate(l, erp);
       if (!soItemId && !skipDedication) noSoLine++;

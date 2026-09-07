@@ -31,9 +31,30 @@ It had never fired because no accepted code-less line existed in an earlier
 export cut. `PO-009979` arrived in the 2026-09-07 re-cut, and one row turned an
 accepted case into a total failure.
 
-**Fix.** `const prod = erp ? prodByCode.get(erp.toUpperCase()) : null;` with a
-comment naming why `erp` is legitimately null there. Proved by re-dispatching
-the same workflow from the fix branch against production in DRY-RUN and reading
-the run to completion — the run output is quoted in the PR.
+**Fix, in two parts, because the crash was hiding a second defect.**
+
+1. `const prod = erp ? prodByCode.get(erp.toUpperCase()) : null;` — the crash.
+   Re-dispatching the same workflow from the fix branch against production in
+   DRY-RUN then ran to completion (`POs to import: 165; lines: 439; value RM
+   580,277.9`) and exited **2**, refused by the catalog guard.
+
+2. That refusal was the second defect. `nonCatalogRefs` counts a blank code as
+   an orphan — correct for every other caller — so the one accepted code-less
+   line refused **all 165 purchase orders**, on cutover day. And the acceptance
+   itself was unsound: the item push wrote `item_code: null`, marked *UNVERIFIED
+   against the live column*, and the column is **NOT NULL** (`material_code text
+   NOT NULL`, mig `0090_scm_purchase_consignment_tables.sql:70`, renamed by mig
+   `0307_item_code_unify.sql:34`, never relaxed anywhere in the tree). The row
+   could never have been inserted.
+
+   So a code-less line is now recorded as an EXCEPTION naming what it needs — an
+   accessory product minted, or the code pointed at a real one in
+   `data/autocount-erp-mapping-1561.csv` — and the other 164 documents import.
+   The shared guard is untouched: weakening it would have removed a real
+   protection from every other caller to serve one owner-sanctioned case.
+
+**Lesson.** An UNVERIFIED note in a comment is a live bug with a date on it. This
+one sat until the run that would have exercised it, and it arrived attached to a
+crash, so it cost two rounds to find instead of one.
 
 **Ref.** fix/po-import-codeless-crash, 2026-09-07.
