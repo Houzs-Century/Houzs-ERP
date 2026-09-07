@@ -170,6 +170,28 @@ async function main() {
   }
   if (list.length > SHOW) plain(`... and ${list.length - SHOW} more documents`);
 
+  /* A "total after" is only meaningful when the "total now" is. On the first
+     production run (34138211541) EVERY one of the 70 purchase orders read
+     RM 0.00 while all 157 sales orders carried a real figure — a whole class
+     behaving unlike the rest, which is the finding, not the noise.
+     `scm.purchase_orders.total_sen` is `integer DEFAULT 0 NOT NULL`, so the
+     column is the right one and the zeros are real values rather than a bad
+     read. What is NOT yet explained is that the reconcile compares 574 PO
+     document totals and finds only 2 differing, which it could not if the ERP
+     side were uniformly zero. Until that is resolved the after-total on a
+     zero-before document must not be read as a document total, so the report
+     says so itself instead of printing a figure that looks authoritative. */
+  const zeroBefore = list.filter((d) => !d.before);
+  if (zeroBefore.length) {
+    plain("");
+    log(`READ THE "would add" COLUMN, NOT "total after", ON ${zeroBefore.length} OF THESE ${list.length} DOCUMENTS.`);
+    plain(`   They carry a stored total of RM 0.00 today (SO ${zeroBefore.filter((d) => d.side === "SO").length}, ` +
+      `PO ${zeroBefore.filter((d) => d.side === "PO").length}), so "total after" is just the surcharge and NOT`);
+    plain("   the document's value. The surcharge itself is still correct. This is flagged rather than");
+    plain("   hidden because a zero on one whole document type is a finding in its own right, and it is");
+    plain("   NOT yet reconciled with the document-level check, which compares 574 PO totals and finds 2 differing.");
+  }
+
   plain("");
   log(`per option, across every held-back line:`);
   for (const [c, e] of [...perCode.entries()].sort((a, b) => b[1].sell - a[1].sell)) {
