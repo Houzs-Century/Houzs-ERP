@@ -23,18 +23,63 @@ in scope   89 lines 10 POs RM 42662.80
 PO-009335 PO-009887 PO-009948 PO-009982 PO-010019 PO-010021 PO-010069 PO-010072 PO-010104 PO-010165
 ```
 
-Every one of the 89 discounted lines is the same 25%, and on all ten orders the
-book's own header `NetTotal` equals the sum of its discounted line amounts
-exactly — so there is no tax component to reconcile. All 21 item codes involved
-are mattresses; none decomposes into compartments the way a sofa line does.
-**25 of the 89 lines already carry `TransferedQty > 0` in AutoCount**, i.e. the
-goods have been received against them.
+> **CORRECTED 2026-09-07, same day, by the production run that shipped with it.**
+> This paragraph said *"Every one of the 89 discounted lines is the same 25%"*.
+> **That is false.** The reconcile run 34114514690 printed
+> `PO-009335 JM-CL JAC WP MP (K) qty 240 @ RM 68.54 -> book RM 10188.55, ERP RM 16449.60 (38.1% off)`
+> on the very first example line. Measured properly: **84 lines are 25.00% off
+> and 5 are 38.06% off, all five on PO-009335.**
+>
+> How the wrong sentence got written, because that is the reusable part: the
+> per-document totals were printed and nine of the ten came out at exactly 75%
+> of the undiscounted figure. One rate was inferred from nine documents and the
+> tenth was never looked at — the `claim-before-check` failure this repo already
+> has a memory for. The cheap check (`[...new Set(lines.map(rate))]`) took
+> seconds once it was actually run.
+>
+> **The repair is unaffected, and that is worth stating rather than assuming.**
+> `planDocument` computes `discountSen = qty * unit_price_sen - <the book's own
+> line amount>` in whole sen. It never derives, applies or validates a
+> PERCENTAGE, so a line at 38.06% is copied exactly as faithfully as one at 25%.
+> Had the script keyed on a rate, this wrong belief would have cost money.
+
+On all ten orders the book's own header `NetTotal` equals the sum of its
+discounted line amounts exactly — so there is no tax component to reconcile. All
+21 item codes involved are mattresses; none decomposes into compartments the way
+a sofa line does. **25 of the 89 lines already carry `TransferedQty > 0` in
+AutoCount**, i.e. the goods have been received against them.
 
 **Fix — the repair is BUILT and PLANNED, and deliberately NOT APPLIED.**
 `backend/scripts/repair-po-line-discount.mjs` plus
 `.github/workflows/repair-po-line-discount.yml` (plan by default; apply needs
 `apply=yes` and the confirm phrase typed in full). Money on ten live documents is
 the owner's call, not a script's.
+
+**Dispatched against PRODUCTION in PLAN mode**, run
+[34115066315](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34115066315),
+2026-09-07T11:08Z — `89 lines to correct, 10 headers to recompute, 0 REFUSED, 0
+in scope but absent from the ERP`, ending `PLAN ONLY — nothing written`. The
+per-document table it printed, which is the thing to read before deciding:
+
+| PO (ERP) | AutoCount | lines | disc | recv | ERP total now | AutoCount total | difference |
+|---|---|---|---|---|---|---|---|
+| HC-PO-009335 | PO-009335 | 5 | 5 | 0 | RM 34,334.90 | RM 21,266.35 | RM 13,068.55 |
+| HC-PO-010069 | PO-010069 | 19 | 19 | 0 | RM 26,146.00 | RM 19,609.50 | RM 6,536.50 |
+| HC-PO-010165 | PO-010165 | 13 | 13 | 0 | RM 20,110.00 | RM 15,082.50 | RM 5,027.50 |
+| HC-PO-010104 | PO-010104 | 13 | 13 | 0 | RM 19,318.00 | RM 14,488.50 | RM 4,829.50 |
+| HC-PO-009887 | PO-009887 | 14 | 14 | 13 | RM 17,335.00 | RM 13,001.25 | RM 4,333.75 |
+| HC-PO-009982 | PO-009982 | 5 | 5 | 4 | RM 9,180.00 | RM 6,885.00 | RM 2,295.00 |
+| HC-PO-010019 | PO-010019 | 8 | 8 | 4 | RM 9,008.00 | RM 6,756.00 | RM 2,252.00 |
+| HC-PO-010072 | PO-010072 | 6 | 6 | 0 | RM 8,520.00 | RM 6,390.00 | RM 2,130.00 |
+| HC-PO-009948 | PO-009948 | 5 | 5 | 4 | RM 7,680.00 | RM 5,760.00 | RM 1,920.00 |
+| HC-PO-010021 | PO-010021 | 1 | 1 | 0 | RM 1,080.00 | RM 810.00 | RM 270.00 |
+| **TOTAL** | 10 docs | 89 | 89 | 25 | **RM 152,711.90** | **RM 110,049.10** | **RM 42,662.80** |
+
+Every AutoCount total in that table equals the book's own header `NetTotal`, and
+the ERP figure equals the sum of `qty x unit_price_sen` over the same lines — the
+two differ by exactly the discount and by nothing else. **Four of the ten orders
+already have received lines** (13, 4, 4 and 4 of them); those receipts keep their
+own totals and their stock cost does not move.
 
 **Which of the two possible repairs, and why.** The narrow option — correct
 `line_total_sen` and leave `discount_sen` at 0 — is **self-erasing**, read off
