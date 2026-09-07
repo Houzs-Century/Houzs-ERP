@@ -23,6 +23,10 @@ import postgres from "postgres";
    check-golive-parity.mjs — a second copy of a location map is how stock
    silently moves between branches in one script and not the other. */
 import { SALESLOC, SERVICE_GROUPS, loadAcBinding, serviceErpCodes } from "./lib/ac-stock-compare.mjs";
+/* The sofa fold - owner ruling 2026-09-07: the ERP pieces are folded up into
+   whole sofas FOR THE COMPARISON ONLY. Nothing here changes how sofa stock is
+   stored; the sofa MRP stays hard-bound at piece level. */
+import { sofaModelOf, makeModelMatcher, foldSofaPieces } from "./lib/sofa-piece-fold.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -441,6 +445,146 @@ async function main() {
   for (const r of valued.slice(0, TOP)) {
     log(`  RM ${r.rm.toFixed(2).padStart(10)}  ${r.code} @ ${r.wh}: AutoCount ${r.ac ?? "-"} vs ERP ${r.erp ?? "-"} (${r.d > 0 ? "+" : ""}${r.d}) :: ${causeOf(r).split(" — ")[0]}`);
   }
+
+  // ================= PART A2 — SOFA, FOLDED INTO WHOLE SOFAS =================
+  /* Sofa has been excluded from the balance axis since this reconcile was
+     written, on BOTH sides, because AutoCount counts one whole sofa where the
+     ERP counts its compartments and the two are not commensurable. The owner
+     lifted that on 2026-09-07 with a specific instruction: 「把我们的件数折回成整
+     张沙发再比」 — fold OUR pieces up, do not decompose THEIRS.
+
+     That direction is the whole point. Decomposing an AutoCount balance row into
+     compartments is impossible without inventing which build it is: a balance
+     row carries a quantity and nothing else, and 0 of 1,337 sofa GRDTL lines in
+     AED_HOUZS carry a serial or a batch. Folding needs no invention, because
+     import-ac-sofa-stock.mjs stamped every compartment lot of one build with the
+     same batch_no = its source PO number (grns.ts resolvePoBatchByItem, mig
+     0120; sofa-set-coverage.ts calls it the batch identity). batch = build.
+
+     THE ERP SIDE CANNOT USE scm.inventory_balances HERE. That view groups by
+     (warehouse, item_code, variant_key, company) and drops batch_no entirely, so
+     it cannot tell one build from another. The query below reproduces the view's
+     OWN sign arithmetic (mig 0307) one grain finer, with batch_no kept —
+     deliberately not a naive SUM(qty), which gets OUT backwards.
+
+     THIS SECTION IS READ-ONLY AND CHANGES NO STORED STOCK. */
+  log("");
+  log("=== PART A2 — SOFA, the ERP's pieces folded back into whole sofas ===");
+
+  const sofaModels = new Map();     // ERP model -> [AutoCount item codes]
+  const sofaNoModel = [];
+  for (const ac of sofaFurniture) {
+    const erp = byAc.get(ac);
+    const model = erp ? sofaModelOf(erp) : null;
+    if (!model) { sofaNoModel.push(`${ac} -> ${erp ?? "(unmapped)"}`); continue; }
+    if (!sofaModels.has(model)) sofaModels.set(model, []);
+    sofaModels.get(model).push(ac);
+  }
+  const acModelOf = new Map();
+  for (const [model, acs] of sofaModels) for (const ac of acs) acModelOf.set(ac, model);
+  log(`sofa models resolved from the binding: ${sofaModels.size} models over ${acModelOf.size} AutoCount item codes`);
+  if (sofaNoModel.length) {
+    log(`  ${sofaNoModel.length} sofa binding row(s) do NOT end in the -1S model target and are REPORTED, never guessed into a model:`);
+    for (const x of sofaNoModel.slice(0, 15)) log(`     NO MODEL ${x}`);
+  }
+
+  /* AutoCount's side: whole sofas per model + warehouse. Several AutoCount codes
+     can share one ERP model, so they sum into the model's cell. */
+  const acSofa = new Map();
+  const sofaUnmappedWh = new Map();
+  for (const r of bal) {
+    if (!r.BalQty) continue;
+    if (!sofaFurniture.has(norm(r.ItemCode))) continue;
+    const model = acModelOf.get(norm(r.ItemCode));
+    if (!model) continue;
+    const wh = resolveWh(r.Location);
+    if (!wh) { sofaUnmappedWh.set(norm(r.Location), (sofaUnmappedWh.get(norm(r.Location)) ?? 0) + Number(r.BalQty)); continue; }
+    const k = `${model}|${wh.id}`;
+    acSofa.set(k, (acSofa.get(k) ?? 0) + Number(r.BalQty));
+  }
+  for (const [l, q] of sofaUnmappedWh) log(`  UNMAPPED LOCATION ${l}: ${q} whole sofas have no ERP warehouse`);
+
+  const sofaMv = await sql`SELECT m.item_code, m.warehouse_id, COALESCE(m.batch_no,'') AS batch_no,
+      SUM(CASE
+            WHEN m.movement_type::text = 'IN'         THEN m.qty
+            WHEN m.movement_type::text = 'OUT'        THEN -m.qty
+            WHEN m.movement_type::text = 'ADJUSTMENT' THEN m.qty
+            WHEN m.movement_type::text = 'TRANSFER'   THEN m.qty
+            ELSE 0 END)::int AS qty
+    FROM scm.inventory_movements m
+    JOIN scm.mfg_products p ON p.code = m.item_code AND p.company_id = ${CO}
+   WHERE m.company_id = ${CO} AND UPPER(COALESCE(p.category::text,'')) = 'SOFA'
+   GROUP BY m.item_code, m.warehouse_id, COALESCE(m.batch_no,'')`;
+  const matchModel = makeModelMatcher(sofaModels.keys());
+  const unmatchedSofa = new Map();
+  const pieceRows = [];
+  for (const r of sofaMv) {
+    const model = matchModel(r.item_code);
+    if (!model) { unmatchedSofa.set(norm(r.item_code), (unmatchedSofa.get(norm(r.item_code)) ?? 0) + Number(r.qty)); continue; }
+    pieceRows.push({ model, warehouseId: String(r.warehouse_id), batchNo: r.batch_no, itemCode: r.item_code, qty: Number(r.qty) });
+  }
+  log(`ERP sofa piece rows (item x warehouse x batch): ${sofaMv.length}; folded: ${pieceRows.length}`);
+  if (unmatchedSofa.size) {
+    log(`  ${unmatchedSofa.size} ERP sofa product code(s) match NO model in the binding — dropped from the fold and listed, because a piece bucketed under the wrong model is worse than a piece nobody counted:`);
+    for (const [c, q] of [...unmatchedSofa.entries()].sort((a, b) => Math.abs(b[1]) - Math.abs(a[1])).slice(0, 20)) log(`     NO MODEL MATCH ${c}: ${q} pieces`);
+  }
+  const folded = foldSofaPieces(pieceRows);
+  const foldTotals = [...folded.values()].reduce((a, c) => ({
+    builds: a.builds + c.builds, incomplete: a.incomplete + c.incomplete,
+    noBatch: a.noBatch + c.noBatch, negative: a.negative + c.negative,
+  }), { builds: 0, incomplete: 0, noBatch: 0, negative: 0 });
+  log(`builds (batches) folded: ${foldTotals.builds}; of those, ${foldTotals.incomplete} have pieces standing at different counts (min < max, so the build is NOT a whole sofa), ${foldTotals.noBatch} carry no batch_no at all, ${foldTotals.negative} fold to a negative piece count`);
+
+  const sofaKeys = new Set([...acSofa.keys(), ...folded.keys()]);
+  const sofaAgree = [], sofaDiffer = [];
+  for (const k of sofaKeys) {
+    const a = Math.round(acSofa.get(k) ?? 0);
+    const f = folded.get(k);
+    const e = f ? f.whole : 0;
+    const [model, whId] = k.split("|");
+    const row = { model, whId, wh: whName.get(whId) ?? whId, ac: a, erp: e,
+      ceiling: f ? f.ceiling : 0, builds: f ? f.builds : 0, d: e - a };
+    (a === e ? sofaAgree : sofaDiffer).push(row);
+  }
+  const acSofaUnits = [...acSofa.values()].reduce((s, x) => s + x, 0);
+  const erpSofaWhole = [...folded.values()].reduce((s, c) => s + c.whole, 0);
+  const erpSofaCeiling = [...folded.values()].reduce((s, c) => s + c.ceiling, 0);
+  log("");
+  log(`SOFA cells compared: ${sofaKeys.size} | AGREE: ${sofaAgree.length} | DISAGREE: ${sofaDiffer.length}`);
+  log(`whole sofas — AutoCount ${Math.round(acSofaUnits)} vs ERP ${erpSofaWhole} (net ${erpSofaWhole - Math.round(acSofaUnits) >= 0 ? "+" : ""}${erpSofaWhole - Math.round(acSofaUnits)})`);
+  log(`  the ERP number is COMPLETE sofas — every piece of the build still on the shelf. Counting each build by its BIGGEST surviving piece instead would give ${erpSofaCeiling}; the difference, ${erpSofaCeiling - erpSofaWhole}, is sofas missing at least one piece.`);
+  log("");
+  log(`sofa disagreements (max ${TOP}):`);
+  for (const r of [...sofaDiffer].sort((a, b) => Math.abs(b.d) - Math.abs(a.d)).slice(0, TOP)) {
+    log(`  ${r.model} @ ${r.wh}: AutoCount ${r.ac} vs ERP ${r.erp} (${r.d > 0 ? "+" : ""}${r.d}) — ${r.builds} build(s) in the ERP, ceiling ${r.ceiling}`);
+  }
+  const sofaPerWh = new Map();
+  for (const r of [...sofaAgree, ...sofaDiffer]) {
+    const c = sofaPerWh.get(r.whId) ?? { wh: r.wh, cells: 0, agree: 0, ac: 0, erp: 0 };
+    c.cells += 1; c.ac += r.ac; c.erp += r.erp; if (r.ac === r.erp) c.agree += 1;
+    sofaPerWh.set(r.whId, c);
+  }
+  log("");
+  log("sofa per-warehouse rollup:");
+  log(`  ${"warehouse".padEnd(20)} ${"cells".padStart(6)} ${"agree".padStart(6)} ${"AutoCount".padStart(10)} ${"ERP".padStart(8)} ${"delta".padStart(8)}`);
+  for (const c of [...sofaPerWh.values()].sort((a, b) => Math.abs(b.erp - b.ac) - Math.abs(a.erp - a.ac))) {
+    log(`  ${String(c.wh).padEnd(20)} ${String(c.cells).padStart(6)} ${String(c.agree).padStart(6)} ${String(c.ac).padStart(10)} ${String(c.erp).padStart(8)} ${String(c.erp - c.ac).padStart(8)}`);
+  }
+  /* Sofa value, on the same cost source PART A uses, so the two money numbers
+     are the same kind of number. Reported separately rather than merged: sofa
+     was never in the RM figure before tonight, and quietly folding it in would
+     make the total look like it had moved when only its definition had. */
+  const sofaCostRm = (model) => {
+    for (const ac of sofaModels.get(model) ?? []) {
+      const erp = byAc.get(ac);
+      const rm = erp ? costByErp.get(norm(erp)) : 0;
+      if (rm > 0) return rm;
+    }
+    return 0;
+  };
+  const sofaValued = sofaDiffer.map((r) => ({ ...r, rm: Math.abs(r.d) * sofaCostRm(r.model) })).filter((r) => r.rm > 0);
+  log("");
+  log(`sofa value at risk across the disagreeing cells: RM ${sofaValued.reduce((s, r) => s + r.rm, 0).toFixed(2)} (costed cells: ${sofaValued.length}/${sofaDiffer.length})`);
 
   // ================= PART B — STATUS / REMARK 2 =================
   log("");
