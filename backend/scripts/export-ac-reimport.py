@@ -522,9 +522,16 @@ if want("stamps"):
     # no reload branch — so recording here would DELETE two other sections'
     # entries every time the stamps are re-cut alone. sync-ac-delta.mjs reads
     # the age off the payload and refuses a stale one.
+    # TIMEZONE-AWARE, unlike the manifest's NOW. This stamp is COMPARED — the
+    # planner refuses a stale snapshot — and it is written on a UTC+8 desktop
+    # and read on a UTC runner. `datetime.now()` is naive, so the first prod
+    # dispatch computed the snapshot's age as MINUS 0.32 days and refused a
+    # snapshot cut 20 minutes earlier. A timestamp that is only ever printed can
+    # be naive; one that is subtracted cannot.
+    exported_at = datetime.datetime.now().astimezone().isoformat()
     write_gz(
         "ac-doc-stamps.json.gz",
-        {"rows": {"exportedAt": NOW, "since": SINCE, "source": DB,
+        {"rows": {"exportedAt": exported_at, "since": SINCE, "source": DB,
                   "stamps": stamps, "edges": edges, "closure": closure}},
     )
 
