@@ -1315,6 +1315,13 @@ accounting.get('/daily-bank', async (c) => {
     const existing = transitByAccount.get(a.transit_account_code);
     transitByAccount.set(a.transit_account_code, existing ? `${existing}/${a.code}` : a.code);
   }
+  /* The GENERIC clearing account (role TRANSIT_EDC, 326-0000) stays on the
+     board once the acquirers have their own accounts (owner 2026-09-07: 我想要
+     拆账户): a card payment recorded without a bank still lands there, and
+     money the board cannot see is money nobody chases. Named 未标银行 so the
+     line reads as what it is, not as a machine. */
+  const genericTransit = (await resolveRoles(sb, co.companyId)).TRANSIT_EDC;
+  if (!transitByAccount.has(genericTransit)) transitByAccount.set(genericTransit, '未标银行');
   const transitCodes = [...transitByAccount.keys()];
   const { data: transitNamesRaw, error: tErr } = await sb.from('accounts')
     .select('account_code, account_name')

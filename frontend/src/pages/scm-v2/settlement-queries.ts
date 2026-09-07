@@ -196,7 +196,7 @@ export type MaintenanceMerchant = {
   autoMatchable: boolean;
   /* Keyed by company id, and only for the companies the server answered for —
      so a lookup can miss, and every reader has to say what it does then. */
-  byCompany: Record<string, { enabled: boolean; linked: boolean; bankAccountCode: string | null } | undefined>;
+  byCompany: Record<string, { enabled: boolean; linked: boolean; bankAccountCode: string | null; transitAccountCode?: string | null } | undefined>;
 };
 
 /** One account CODE across every company — the rows of the bank matrix. */
@@ -210,6 +210,10 @@ export type MaintenanceData = {
   companies: MaintenanceCompany[];
   merchants: MaintenanceMerchant[];
   banks: MaintenanceBank[];
+  /** Each company's clearing accounts (326-/327-, not money) — where a
+      machine's card money sits before the payout (owner 2026-09-07: one per
+      bank). Keyed by company id; absent on an older server. */
+  clearings?: Record<string, Array<{ account_code: string; account_name: string }> | undefined>;
 };
 
 export const useSettlementMaintenance = () => useQuery({

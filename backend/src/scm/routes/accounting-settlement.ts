@@ -196,6 +196,10 @@ function maintenanceCompany(c: Ctx, asked: unknown): { ok: true; companyId: numb
    companies the caller may maintain, every merchant with whether THIS company
    uses it and where its money lands, and this company's money accounts with
    whether it banks with them. */
+/** A clearing account: the 326- (card machine) and 327- (online) codes — where
+    money sits between the swipe and the payout. */
+const isClearingCode = (code: string): boolean => /^32[67]-/.test(code);
+
 export const settlementMaintenance = guard(async (c) => {
   const sb = c.get('supabase');
 
@@ -238,8 +242,23 @@ export const settlementMaintenance = guard(async (c) => {
   if (bErr) return c.json({ error: 'load_failed', reason: bErr.message }, 500);
   const bankRows = (bankRaw ?? []) as Array<Record<string, any>>;
 
+  /* Every company's CLEARING accounts — where a machine's card money sits
+     before the payout (owner 2026-09-07: 我想要拆账户 — one per bank, so the
+     screen must offer them). The 326-/327- codes: card and online clearing;
+     not money, so the payout picker above never shows them. */
+  const { data: clearRaw, error: clErr } = await sb.from('accounts')
+    .select('company_id, account_code, account_name')
+    .in('company_id', ids).eq('acc_money', false).eq('is_active', true).order('account_code');
+  if (clErr) return c.json({ error: 'load_failed', reason: clErr.message }, 500);
+  const clearings: Record<string, Array<{ account_code: string; account_name: string }>> = {};
+  for (const id of ids) clearings[String(id)] = [];
+  for (const r of (clearRaw ?? []) as Array<Record<string, any>>) {
+    if (!isClearingCode(String(r.account_code))) continue;
+    clearings[String(Number(r.company_id))]?.push({ account_code: String(r.account_code), account_name: String(r.account_name ?? r.account_code) });
+  }
+
   const merchants = ((cfgRaw ?? []) as Array<Record<string, any>>).map((g) => {
-    const byCompany: Record<string, { enabled: boolean; linked: boolean; bankAccountCode: string | null }> = {};
+    const byCompany: Record<string, { enabled: boolean; linked: boolean; bankAccountCode: string | null; transitAccountCode: string | null }> = {};
     for (const id of ids) {
       const link = linkOf.get(`${id}:${String(g.code)}`);
       byCompany[String(id)] = {
@@ -248,6 +267,7 @@ export const settlementMaintenance = guard(async (c) => {
         enabled: link ? link.is_active !== false : false,
         linked: Boolean(link),
         bankAccountCode: link?.bank_account_code ?? null,
+        transitAccountCode: link?.transit_account_code ?? null,
       };
     }
     return {
@@ -288,7 +308,7 @@ export const settlementMaintenance = guard(async (c) => {
     };
   });
 
-  return c.json({ companies, merchants, banks });
+  return c.json({ companies, merchants, banks, clearings });
 });
 
 
@@ -312,12 +332,28 @@ export const settlementMaintenanceMerchant = guard(async (c) => {
   const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
   if (body.enabled !== undefined) patch.is_active = Boolean(body.enabled);
   if (body.bankAccountCode !== undefined) patch.bank_account_code = body.bankAccountCode || null;
+  /* The clearing account (owner 2026-09-07: one per bank). Must be one of THIS
+     company's live 326-/327- accounts — the posting rules read it blind, so a
+     typo here would book card money onto an address that is not a clearing
+     account at all. Blank = back to the generic 326-0000. */
+  if (body.transitAccountCode !== undefined) {
+    const code = String(body.transitAccountCode ?? '').trim() || '326-0000';
+    if (!isClearingCode(code)) return c.json({ error: 'bad_clearing_account', message: `${code} is not a clearing account (326-/327-).` }, 400);
+    const { data: acct, error: aErr } = await sb.from('accounts')
+      .select('account_code, is_active, acc_money').eq('company_id', companyId).eq('account_code', code).maybeSingle();
+    if (aErr) return c.json({ error: 'load_failed', reason: aErr.message }, 500);
+    const a = acct as { is_active?: boolean; acc_money?: boolean } | null;
+    if (!a || a.is_active === false || a.acc_money === true) {
+      return c.json({ error: 'bad_clearing_account', message: `${code} is not a live clearing account in this company's chart.` }, 400);
+    }
+    patch.transit_account_code = code;
+  }
 
   if (!existing) {
     const { error } = await sb.from('acc_company_acquirers').insert({
       company_id: companyId,
       acquirer_code: code,
-      transit_account_code: '326-0000',
+      transit_account_code: (patch.transit_account_code as string | undefined) ?? '326-0000',
       fee_account_code: '930-0000',
       bank_account_code: body.bankAccountCode || null,
       is_active: body.enabled === undefined ? true : Boolean(body.enabled),

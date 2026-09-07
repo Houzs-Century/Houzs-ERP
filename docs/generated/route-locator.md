@@ -182,9 +182,9 @@ Total: 1182 route registrations across 152 files.
 - L1260  GET    /acquirers
 - L1276  POST   /backfill/customer-payments
 - L1293  GET    /daily-bank
-- L1370  GET    /daily-close
-- L1405  PUT    /daily-close
-- L1453  POST   /daily-close/confirm
+- L1377  GET    /daily-close
+- L1412  PUT    /daily-close
+- L1460  POST   /daily-close/confirm
 
 ## backend/src/routes/assr.ts  (61)
 - L333  GET    /settings
@@ -329,12 +329,12 @@ Total: 1182 route registrations across 152 files.
 - L1225  GET    /${base}/brief
 
 ## backend/src/scm/routes/mfg-purchase-orders.ts  (24)
-- L391  GET    /
-- L579  GET    /outstanding-so-items
-- L709  GET    /so-line-candidates
-- L856  GET    /:id
-- L1029  GET    /:id/linked
-- L1074  GET    /:id/revisions
+- L392  GET    /
+- L580  GET    /outstanding-so-items
+- L710  GET    /so-line-candidates
+- L857  GET    /:id
+- L1030  GET    /:id/linked
+- L1075  GET    /:id/revisions
 - L1401  POST   /
 - L2467  POST   /from-sos
 - L2547  PATCH  /:id
@@ -1129,11 +1129,11 @@ Total: 1182 route registrations across 152 files.
 - L442  GET    /:code
 
 ## backend/src/scm/routes/receipts.ts  (5)
-- L361  GET    /
-- L362  POST   /
-- L363  POST   /:id/void
-- L364  GET    /:id
-- L365  PATCH  /:id
+- L363  GET    /
+- L364  POST   /
+- L365  POST   /:id/void
+- L366  GET    /:id
+- L367  PATCH  /:id
 
 ## backend/src/scm/routes/staff.ts  (5)
 - L144  GET    /

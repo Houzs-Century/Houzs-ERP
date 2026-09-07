@@ -67,7 +67,7 @@ export const SettlementSetup = () => {
 
       {companies.length > 0 && (
         <>
-          <MerchantMatrix companies={companies} merchants={merchants} banks={banks} onEdit={setEditing} />
+          <MerchantMatrix companies={companies} merchants={merchants} banks={banks} clearings={data?.clearings ?? {}} onEdit={setEditing} />
           <BankMatrix companies={companies} banks={banks} />
         </>
       )}
@@ -341,8 +341,10 @@ const DefaultBankCard = () => {
 
 /* ── Merchants down the side, companies across the top ────────────────────── */
 
-const MerchantMatrix = ({ companies, merchants, banks, onEdit }: {
+const MerchantMatrix = ({ companies, merchants, banks, clearings, onEdit }: {
   companies: MaintenanceCompany[]; merchants: MaintenanceMerchant[]; banks: MaintenanceBank[];
+  /** Each company's clearing accounts (326-/327-) — the picker under the payout bank. */
+  clearings: NonNullable<MaintenanceData['clearings']>;
   onEdit: (code: string) => void;
 }) => {
   const save = useSaveMaintenanceMerchant();
@@ -412,6 +414,19 @@ const MerchantMatrix = ({ companies, merchants, banks, onEdit }: {
                               ))}
                             </select>
                             {!at.bankAccountCode && <div className={css.warn}>company default</div>}
+                            {/* The clearing account — where this machine's card money
+                                sits until the payout (owner 2026-09-07: one per bank,
+                                so the board says what each still owes). Offered only
+                                when the server lists the company's clearing codes. */}
+                            {(clearings[String(co.id)]?.length ?? 0) > 0 && (
+                              <select className={css.bankPick}
+                                aria-label={`${m.code} clearing for ${co.name}`} value={at.transitAccountCode ?? '326-0000'}
+                                onChange={(e) => save.mutate({ companyId: co.id, code: m.code, transitAccountCode: e.target.value })}>
+                                {(clearings[String(co.id)] ?? []).map((a) => (
+                                  <option key={a.account_code} value={a.account_code}>clearing · {a.account_code} {a.account_name}</option>
+                                ))}
+                              </select>
+                            )}
                           </>
                         )}
                       </div>
