@@ -1,0 +1,53 @@
+name: MRP allocation rules - do bedframe/sofa/mattress obey them (read-only)
+
+# The owner, 2026-09-07: 「1. 我的 BedFrame 跟 Sofa 是不是根据 PO Hard Binding
+# 显示东西 Ready  2. 我的 Mattress 是不是跟着 Delivered 来分配 MRP」
+#
+# This does not describe the rules, it hunts their REFUTATION on the migrated
+# book: a hard-bound line reading Ready with no received purchase order of its
+# own, and a mattress line reading Ready with nothing in its warehouse bucket.
+# Every predicate is IMPORTED from the modules the ERP itself runs (hence tsx),
+# so the probe cannot drift into measuring its own copy of the rule.
+#
+# READ-ONLY: SELECTs only, no DDL, no writes, no transaction. Manual trigger,
+# own concurrency group, exit 0 for every legitimate answer.
+on:
+  workflow_dispatch:
+    inputs:
+      company:
+        description: "company id (1 = the hard-bound company)"
+        required: false
+        default: "1"
+        type: string
+      show:
+        description: "how many document numbers to name per class"
+        required: false
+        default: "12"
+        type: string
+
+concurrency:
+  group: probe-mrp-allocation-rules
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - name: probe (read-only)
+        run: npx tsx scripts/probe-mrp-allocation-rules.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          COMPANY: ${{ inputs.company }}
+          SHOW: ${{ inputs.show }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
+          NODE_OPTIONS: --dns-result-order=ipv4first

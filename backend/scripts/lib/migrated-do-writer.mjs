@@ -94,12 +94,35 @@ export function indexSoLines(soItems) {
 export function buildMigratedDoPlan({ rows, itemMap, soItems, done = new Set() }) {
   const { soByKey, soByModel } = indexSoLines(soItems);
   const byDo = new Map();
-  const stats = { noSoLine: 0, unmapped: 0, exhausted: 0, collapsed: 0, missExamples: [], missCodes: new Map() };
+  /* `byDoc` is the SAME drops, attributed to the delivery note they came off.
+     The four counters below say HOW MANY book lines this run could not place;
+     they cannot say WHICH DOCUMENT is now short, and that is the difference
+     between "13 lines missed" and "DO-001800 has no lines at all, so it does
+     not exist in the ERP, and DO-001953 exists with two of its four".
+     create-migrated-documents.mjs reported only the counters, so both shapes
+     were invisible: 2 documents vanished from the corpus and the run printed
+     "DO documents: 82" — the count AFTER the loss — with nothing subtracted
+     from anything. The reconcile then printed those 2 as "(owner-declined)".
+     Attribution is what turns a total into a finding. */
+  const stats = { noSoLine: 0, unmapped: 0, exhausted: 0, collapsed: 0, missExamples: [], missCodes: new Map(), byDoc: new Map() };
+  const noteDoc = (doNo, field, entry) => {
+    let d = stats.byDoc.get(doNo);
+    if (!d) { d = { bookLines: 0, kept: 0, dropped: [] }; stats.byDoc.set(doNo, d); }
+    if (field === "book") d.bookLines += 1;
+    else if (field === "kept") d.kept += 1;
+    else d.dropped.push(entry);
+    return d;
+  };
   const taken = new Map();      // `DoNo|SoNo|code`  -> candidate SO lines already claimed
   const modelDone = new Set();  // `DoNo|SoNo|model` -> the whole build is already on this DO
   for (const r of rows) {
+    noteDoc(r.DoNo, "book");
     const erp = itemMap.get(norm(r.ItemCode));
-    if (!erp) { stats.unmapped++; continue; }
+    if (!erp) {
+      stats.unmapped++;
+      noteDoc(r.DoNo, "dropped", { so: r.SoNo, code: r.ItemCode, desc: r.LineDesc ?? null, qty: r.Qty ?? null, why: "the mapping sheet has no ERP code for it" });
+      continue;
+    }
     /* Exact code first, then the build's compartment lines. A sofa AutoCount
        shipped as one whole unit corresponds to EVERY compartment of that build
        here, so all of them are marked delivered - otherwise the pieces stay
@@ -113,12 +136,20 @@ export function buildMigratedDoPlan({ rows, itemMap, soItems, done = new Set() }
          the duplicates, so the row is skipped and counted LOUDLY instead - the
          same choice backfill-ac-line-keys.mjs makes when a group's counts
          disagree, and for the same reason: a wrong link is worse than none. */
-      if (used >= cands.length) { stats.exhausted++; continue; }
+      if (used >= cands.length) {
+        stats.exhausted++;
+        noteDoc(r.DoNo, "dropped", { so: r.SoNo, code: norm(erp), desc: r.LineDesc ?? null, qty: r.Qty ?? null, why: `all ${cands.length} matching sales-order line(s) are already claimed by an earlier line of this same delivery` });
+        continue;
+      }
       taken.set(ck, used + 1);
       targets = [cands[used]];
     } else {
       const mk = `${r.DoNo}|${r.SoNo}|${sofaModelOf(erp)}`;
-      if (modelDone.has(mk)) { stats.collapsed++; continue; }
+      if (modelDone.has(mk)) {
+        stats.collapsed++;
+        noteDoc(r.DoNo, "dropped", { so: r.SoNo, code: norm(erp), desc: r.LineDesc ?? null, qty: r.Qty ?? null, why: `every compartment of sofa ${sofaModelOf(erp)} is already on this delivery` });
+        continue;
+      }
       const pieces = soByModel.get(`${r.SoNo}|${sofaModelOf(erp)}`);
       if (pieces && pieces.length) { modelDone.add(mk); targets = pieces; }
     }
@@ -126,8 +157,10 @@ export function buildMigratedDoPlan({ rows, itemMap, soItems, done = new Set() }
       stats.noSoLine++;
       stats.missCodes.set(erp, (stats.missCodes.get(erp) ?? 0) + 1);
       if (stats.missExamples.length < 5) stats.missExamples.push({ so: r.SoNo, erp: norm(erp) });
+      noteDoc(r.DoNo, "dropped", { so: r.SoNo, code: norm(erp), desc: r.LineDesc ?? null, qty: r.Qty ?? null, why: "that sales order carries no line with this item code" });
       continue;
     }
+    noteDoc(r.DoNo, "kept");
     if (!byDo.has(r.DoNo)) byDo.set(r.DoNo, { doNo: r.DoNo, date: r.DoDate, so: targets[0].doc_no, acSo: r.SoNo,
       debtorCode: r.DebtorCode || null, debtorName: (r.DebtorName || "").trim() || null, items: [] });
     for (const t of targets) {
@@ -147,7 +180,11 @@ export function buildMigratedDoPlan({ rows, itemMap, soItems, done = new Set() }
     const seen = new Set(); const keep = [];
     for (const it of d.items) {
       const k = `${it.soItemId}|${norm(it.code)}|${it.qty}`;
-      if (seen.has(k)) { stats.collapsed++; continue; }
+      if (seen.has(k)) {
+        stats.collapsed++;
+        noteDoc(d.doNo, "dropped", { so: d.acSo, code: norm(it.code), desc: it.name ?? null, qty: it.qty, why: "an identical line (same order line, same quantity) is already on this delivery" });
+        continue;
+      }
       seen.add(k); keep.push(it);
     }
     d.items = keep;
