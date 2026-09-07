@@ -174,7 +174,12 @@ async function main() {
     const erp = erpByAcDoc.get(acDoc);
     if (!erp) { docsNotInErp++; continue; }
     if ((nullKeyByDoc.get(erp.doc_no) ?? 0) > 0) {
-      unjudgeable.push({ doc: erp.doc_no, acDoc, keyless: nullKeyByDoc.get(erp.doc_no), lines: ls.length });
+      unjudgeable.push({
+        doc: erp.doc_no, acDoc, keyless: nullKeyByDoc.get(erp.doc_no),
+        bookLines: ls.length,
+        erpLines: (keysByDoc.get(erp.doc_no)?.size ?? 0) + (nullKeyByDoc.get(erp.doc_no) ?? 0),
+        bookFree: ls.filter((l) => centi(l.UnitPrice) === 0).length,
+      });
       continue;
     }
     docsCompared++;
@@ -199,8 +204,20 @@ async function main() {
 
   log("");
   log(`documents compared line by line: ${docsCompared}; in the book but not in the ERP (a different lane — import-ac-outstanding-so.mjs owns it): ${docsNotInErp}; UNJUDGEABLE because an ERP line carries no linked_ac_dtlkey: ${unjudgeable.length}`);
-  for (const u of unjudgeable.slice(0, 15)) log(`   UNJUDGEABLE ${u.doc} (AC ${u.acDoc}) — ${u.keyless} ERP line(s) with no AutoCount key; run backfill-ac-line-keys.mjs first`);
-  if (unjudgeable.length > 15) log(`   ... and ${unjudgeable.length - 15} more`);
+  /* LISTED IN FULL, up to TOP — not a hard 15. A census that hides 70 of its 85
+     findings behind "... and 70 more" cannot answer "is document X in here?",
+     and that is the only question anyone brings to it. HC-SO-012128 — the
+     order carrying the four compensation pillows — was in the hidden 70 on the
+     first prod run (34160962831), so the run could neither confirm nor deny the
+     line it was dispatched to find. The counts per document are printed for the
+     same reason: a document whose book side is LONGER than its ERP side is a
+     candidate miss, and the reader can see which ones those are. */
+  const shortSide = unjudgeable.filter((u) => u.bookLines > u.erpLines);
+  log(`   of those, ${shortSide.length} hold FEWER ERP lines than the book does — those are the candidate misses hiding behind the missing keys`);
+  for (const u of unjudgeable.slice(0, TOP)) {
+    log(`   UNJUDGEABLE ${u.doc} (AC ${u.acDoc}) — book ${u.bookLines} line(s) (${u.bookFree} at RM 0.00) vs ERP ${u.erpLines}, ${u.keyless} of them with no AutoCount key${u.bookLines > u.erpLines ? " <- SHORT" : ""}`);
+  }
+  if (unjudgeable.length > TOP) log(`   ... and ${unjudgeable.length - TOP} more — raise TOP to see them`);
 
   /* ── The census. This is the answer to "is it a PATTERN". ───────────────── */
   const free = missing.filter((m) => m.upSen === 0);
