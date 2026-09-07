@@ -123,7 +123,14 @@ async function main() {
   const ageDays = (Date.now() - Date.parse(String(S.exportedAt).replace(" ", "T"))) / 86400000;
   log(`stamps snapshot: since=${S.since} exported=${S.exportedAt} (${ageDays.toFixed(2)} days old)`);
   const MAX_AGE = Number(process.env.MAX_SNAPSHOT_AGE_DAYS || 2);
-  if (!(ageDays >= 0) || ageDays > MAX_AGE) {
+  /* A slightly NEGATIVE age is clock skew between the exporting desktop and
+     this runner, not a forged snapshot; an hour of it is tolerated. Anything
+     further into the future is refused, because the age is the only thing
+     standing between a delta apply and a stale picture of the book. The export
+     writes a timezone-aware stamp now — a naive local one read as +8h here and
+     refused a snapshot cut twenty minutes earlier. */
+  const SKEW = 1 / 24;
+  if (!(ageDays >= -SKEW) || ageDays > MAX_AGE) {
     console.error(`REFUSED: the AutoCount stamps snapshot is ${ageDays.toFixed(2)} days old (limit ${MAX_AGE}). Re-cut it before syncing a delta.`);
     process.exit(2);
   }
