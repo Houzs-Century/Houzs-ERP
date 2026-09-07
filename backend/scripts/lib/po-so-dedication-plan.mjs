@@ -25,6 +25,12 @@
 // cancelled target, a quantity that would over-convert — is returned as a
 // refusal and left for a person. A plausible guess about which sofa a purchase
 // was for is worse than a visible gap.
+//
+// THE ONE THING THAT IS NOT A GUESS is a bucket where every candidate on both
+// sides is INDISTINGUISHABLE from its siblings - two identical `1NA`
+// compartments of one sofa. Any bijection there produces the same state, so it
+// is a relabelling and not a choice. It fires only when the caller supplies a
+// `fingerprint` and every fingerprint in the bucket matches.
 // ---------------------------------------------------------------------------
 
 /** Codes are compared the way the app compares them: trimmed, upper-cased. */
@@ -36,16 +42,52 @@ export const seatKey = (s) => (s === null || s === undefined || s === '' ? '' : 
 /** The bucket a line belongs to: same code AND same seat, or it is not the same piece. */
 const bucketOf = (row) => JSON.stringify([K(row.item_code), seatKey(row.seat)]);
 
+/**
+ * Are these rows INDISTINGUISHABLE - not merely the same piece, but carrying
+ * no observable difference at all?
+ *
+ * `fingerprint` is the CALLER's, and it must be built from every column the
+ * caller read except the row's own identity (`id`, `line_no`) and the pointer
+ * being decided (`so_item_id`). A caller that supplies none gets `false`, which
+ * keeps the old refusal - this widening can never fire by omission.
+ *
+ * WHY IT MATTERS. A sofa build carries two `1NA` compartments because the sofa
+ * physically has two, and the importer wrote them as two rows with the same
+ * code, the same seat, the same quantity, the same money, the same variants and
+ * the same Desc2. Pairing purchase line A with sales line B or with sales line
+ * C is then a RELABELLING: no downstream reader can tell the two apart, so
+ * neither answer is more right than the other and there is nothing to guess
+ * about. Refusing costs something real - a hard-bound sales line with no
+ * dedication can never reach READY, because readiness is read through its OWN
+ * dedicated purchase line's received quantity.
+ *
+ * The moment ANY column differs - a price, a colour, a seat, a special, a
+ * received quantity - the fingerprints differ and the bucket is refused exactly
+ * as before. That is the whole guard: this does not compare less, it compares
+ * MORE, and only acts when the comparison finds nothing to choose between.
+ */
+const allIdentical = (rows) => {
+  if (rows.length < 2) return false;
+  const first = rows[0]?.fingerprint;
+  if (first === undefined || first === null || first === '') return false;
+  return rows.every((r) => r.fingerprint === first);
+};
+
 const label = (row) => `${K(row.item_code)}${seatKey(row.seat) ? ` @${seatKey(row.seat)}"` : ''}`;
 
 /**
  * Plan the dedications for ONE (sales order, purchase order) pair.
  *
  * @param {object} args
- * @param {Array<{id: string, item_code: string, qty: number, seat: string|null, so_item_id: string|null}>} args.poRows
+ * @param {Array<{id: string, item_code: string, qty: number, seat: string|null, so_item_id: string|null, fingerprint?: string}>} args.poRows
  *        every sofa line of the purchase order
- * @param {Array<{id: string, item_code: string, qty: number, seat: string|null, cancelled: boolean}>} args.soRows
+ * @param {Array<{id: string, item_code: string, qty: number, seat: string|null, cancelled: boolean, fingerprint?: string}>} args.soRows
  *        every sofa line of the sales order
+ *
+ * `fingerprint` is OPTIONAL and, when given, must be built from every column
+ * the caller read except `id`, `line_no` and `so_item_id`. It is used only to
+ * settle a bucket of INDISTINGUISHABLE rows - see allIdentical above. Omit it
+ * and the planner behaves exactly as it did before.
  * @returns {{
  *   moves: Array<{poItemId: string, poCode: string, seat: string, from: string|null, to: string, why: 'mismatch'|'unbound'}>,
  *   keeps: Array<{poItemId: string, poCode: string, to: string}>,
@@ -119,6 +161,27 @@ export function planDedication({ poRows = [], soRows = [] } = {}) {
   }
   for (const [b, group] of byBucket) {
     const cands = free.get(b) ?? [];
+    /* N purchase lines against N sales lines is forced WHEN THERE IS NOTHING TO
+       CHOOSE: every purchase line in the bucket identical to the others, every
+       sales line identical to the others. Any bijection then produces the same
+       state, so pairing them in order is not a guess. */
+    if (group.length > 1 && group.length === cands.length
+        && allIdentical(group.map((n) => n.po)) && allIdentical(cands)) {
+      for (let i = 0; i < group.length; i++) {
+        const n = group[i];
+        const target = cands[i];
+        const poQty = Number(n.po.qty ?? 0);
+        const soQty = Number(target.qty ?? 0);
+        if (poQty > soQty) {
+          refusals.push(
+            `${label(n.po)}: the purchase line orders ${poQty} against a sales line of ${soQty} - ${poQty} > ${soQty} would exceed the demand, REFUSED`,
+          );
+          continue;
+        }
+        moves.push({ poItemId: n.po.id, poCode: K(n.po.item_code), seat: seatKey(n.po.seat), from: n.from, to: target.id, why: n.why });
+      }
+      continue;
+    }
     if (group.length !== 1 || cands.length !== 1) {
       const who = group.map((n) => label(n.po)).join(', ');
       refusals.push(

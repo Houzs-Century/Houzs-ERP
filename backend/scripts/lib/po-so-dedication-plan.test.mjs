@@ -202,3 +202,48 @@ test("a qty that would exceed the sales line is refused, not truncated", () => {
   assert.equal(moveTo(plan, PO_2A_26), null);
   assert.ok(plan.refusals.some((r) => /3 > 1|exceed/i.test(r)), plan.refusals.join(" | "));
 });
+
+/* ── 4. two INDISTINGUISHABLE compartments ─────────────────────────────────── */
+
+/* Read off production 2026-09-07 (probe run 34138285314): HC-SO-011008's build
+   is 1A(LHF)+1NA+CNR+1NA+1A(RHF) and HC-PO-009881 carries two `9058-1NA` lines
+   that are identical on every column the runner reads - code, seat 32, qty 1,
+   both money columns, variants and Desc2 - against two sales lines that are
+   identical to each other in the same way. The bucket was refused as "2
+   purchase line(s) and 2 sales line(s)", which left two hard-bound sales lines
+   with no dedication at all, and a hard-bound line reads READY only through its
+   OWN dedicated purchase line's received quantity. */
+const twinSo = (fp) => [
+  { id: "so-1na-a", item_code: "9058-1NA", qty: 1, seat: "32", cancelled: false, fingerprint: fp },
+  { id: "so-1na-b", item_code: "9058-1NA", qty: 1, seat: "32", cancelled: false, fingerprint: fp },
+  { id: "so-anchor", item_code: "9058-1A(LHF)", qty: 1, seat: "32", cancelled: false, fingerprint: "anchor" },
+];
+const twinPo = (fp) => [
+  { id: "po-anchor", item_code: "9058-1A(LHF)", qty: 1, seat: "32", so_item_id: "so-anchor", fingerprint: "anchor" },
+  { id: "po-1na-a", item_code: "9058-1NA", qty: 1, seat: "32", so_item_id: null, fingerprint: fp },
+  { id: "po-1na-b", item_code: "9058-1NA", qty: 1, seat: "32", so_item_id: null, fingerprint: fp },
+];
+
+test("two IDENTICAL compartments are paired - any bijection is the same state", () => {
+  const plan = planDedication({ poRows: twinPo("1na|32|1|0|0"), soRows: twinSo("1na|32|1|0|0") });
+  assert.deepEqual(plan.refusals, []);
+  const bound = plan.moves.filter((m) => m.poCode === "9058-1NA");
+  assert.equal(bound.length, 2, "both purchase lines are dedicated");
+  assert.equal(new Set(bound.map((m) => m.to)).size, 2, "to two DIFFERENT sales lines, never both to one");
+  assert.ok(bound.every((m) => m.why === "unbound"));
+});
+
+test("one differing column and the bucket is refused again", () => {
+  const so = twinSo("1na|32|1|0|0");
+  so[1] = { ...so[1], fingerprint: "1na|32|1|0|668000" }; // this one carries the build's price
+  const plan = planDedication({ poRows: twinPo("1na|32|1|0|0"), soRows: so });
+  assert.deepEqual(plan.moves.filter((m) => m.poCode === "9058-1NA"), []);
+  assert.ok(plan.refusals.some((r) => /2 purchase line\(s\) and 2 sales line\(s\)/.test(r)), plan.refusals.join(" | "));
+});
+
+test("no fingerprint means the OLD refusal - the widening cannot fire by omission", () => {
+  const strip = (r) => { const { fingerprint, ...rest } = r; return rest; };
+  const plan = planDedication({ poRows: twinPo("x").map(strip), soRows: twinSo("x").map(strip) });
+  assert.deepEqual(plan.moves.filter((m) => m.poCode === "9058-1NA"), []);
+  assert.ok(plan.refusals.some((r) => /no pairing is forced/.test(r)), plan.refusals.join(" | "));
+});
