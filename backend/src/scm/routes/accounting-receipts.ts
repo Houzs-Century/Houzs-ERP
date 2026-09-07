@@ -27,7 +27,7 @@ export const receiptsList = async (c: any): Promise<Response> => {
   const status = String(c.req.query('status') ?? '').trim().toUpperCase();
   const limit = Math.min(200, Math.max(1, Number(c.req.query('limit') ?? 100) || 100));
 
-  let q = sb.from('acc_receipts')
+  let q = sb.from('acc_official_receipts')
     .select('id, or_number, status, payment_source, payment_id, doc_no, customer_name, method, amount_sen, paid_at, channel_account_code, issued_at, issued_by, created_at')
     .eq('company_id', co.companyId)
     .order('created_at', { ascending: false })
@@ -55,7 +55,7 @@ export const receiptEnsure = async (c: any): Promise<Response> => {
   if (!r.ok) return c.json({ error: 'ensure_failed', reason: r.reason }, 500);
   /* The caller is about to PRINT: hand back the whole row (customer, method,
      amounts, issued-by), not just the number — one round trip, server truth. */
-  const { data: row, error: rowErr } = await sb.from('acc_receipts').select('*').eq('id', r.id).maybeSingle();
+  const { data: row, error: rowErr } = await sb.from('acc_official_receipts').select('*').eq('id', r.id).maybeSingle();
   if (rowErr || !row) return c.json({ error: 'ensure_failed', reason: rowErr?.message ?? 'receipt vanished after ensure' }, 500);
   return c.json({ receipt: row });
 };
