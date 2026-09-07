@@ -8,6 +8,7 @@
 // HEADER, never on a per-line column. What these tests pin is the part of that
 // ruling that can go silently wrong — the ORDER of the sources, and the refusal
 // to guess when the book cannot answer with one location.
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import { mixedLocationDocs, resolveAcDeliveryLocation } from '../scripts/lib/ac-do-location.mjs';
@@ -102,5 +103,43 @@ describe('mixedLocationDocs', () => {
 
   it('returns an empty list rather than null when every document is unanimous', () => {
     expect(mixedLocationDocs(lines({ 'DO-A': ['KL'] }))).toEqual([]);
+  });
+});
+
+/* ── BOTH CALLERS OF THE WRITER, not just the one that was fixed ────────────
+ * #3121 gave `create-migrated-documents.mjs` a ship-from branch. The writer's
+ * own header names TWO callers, and the other one — `sync-ac-delta.mjs`, which
+ * creates every delivery note raised AFTER the cutover cut — went on passing
+ * neither field, so those documents landed with a NULL branch. That is this
+ * repo's most expensive recurring shape: one rule, two callers, one of them
+ * updated.
+ *
+ * Source-level, because the lane's I/O is a production database and the RULE it
+ * must reach is already covered by the tests above; what was missing was the
+ * WIRING, and the wiring is exactly what a source assertion can hold. */
+describe('the delta lane resolves the ship-from branch through the same rule', () => {
+  const delta = readFileSync(new URL('../scripts/sync-ac-delta.mjs', import.meta.url), 'utf8');
+  const writer = readFileSync(new URL('../scripts/lib/migrated-do-writer.mjs', import.meta.url), 'utf8');
+
+  it('imports the shared resolver rather than restating the order', () => {
+    expect(delta).toContain("from \"./lib/ac-do-location.mjs\"");
+    expect(delta).toContain('resolveAcDeliveryLocation(');
+  });
+
+  it('passes BOTH location fields into insertMigratedDo', () => {
+    const call = delta.slice(delta.indexOf('insertMigratedDo(sql, d,'));
+    expect(call.slice(0, 400)).toContain('warehouseId:');
+    expect(call.slice(0, 400)).toContain('salesLocation:');
+  });
+
+  /* The writer accepts them; a caller that stopped passing them would default to
+     NULL with no error, which is how this gap opened in the first place. */
+  it('the writer still accepts the two fields it is being handed', () => {
+    expect(writer).toMatch(/insertMigratedDo\([^)]*warehouseId/s);
+    expect(writer).toMatch(/insertMigratedDo\([^)]*salesLocation/s);
+  });
+
+  it('reads the line Location by NAME, so an older snapshot resolves to nothing', () => {
+    expect(delta).toContain('LFD.indexOf("location")');
   });
 });

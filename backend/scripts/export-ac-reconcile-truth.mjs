@@ -247,7 +247,8 @@ SELECT LTRIM(RTRIM(ISNULL(h.DocNo,''))) + CHAR(31) +
        ${fromType} + CHAR(31) +
        ${fromNo} + CHAR(31) +
        ${fromSoDtl} + CHAR(31) +
-       CONVERT(varchar(32), CAST(ISNULL(d.SubTotal,0) AS decimal(19,2)))
+       CONVERT(varchar(32), CAST(ISNULL(d.SubTotal,0) AS decimal(19,2))) + CHAR(31) +
+       LTRIM(RTRIM(ISNULL(d.Location,'')))
   FROM ${d} d JOIN ${h} h ON h.DocKey = d.DocKey
  ORDER BY h.DocNo, d.Seq, d.DtlKey`;
 }
@@ -369,6 +370,15 @@ const snapshot = {
     "qty", "unitPrice", "subTotal", "transferedQty",
     "fromDocType", "fromDocNo", "fromSoDtlKey",
     "docSubTotal",
+    /* APPENDED 2026-09-08 so `sync-ac-delta`'s DO lane can reach source 2 of
+       lib/ac-do-location.mjs — "the document's own line Locations, and ONLY when
+       they are unanimous". A delivery note raised AFTER the fidelity cut has no
+       row in ac-fidelity-do-headers.json.gz by construction, so source 1 cannot
+       answer for it and this projection is the only place its location can come
+       from. Appended, never reordered: decodeSnapshot indexes by NAME, so an
+       older cut reads this as null and the lane says it cannot resolve rather
+       than defaulting. */
+    "location",
   ],
   /* Present ONLY on a snapshot cut by this version or later.  The variant
      reconcile keys off its absence to refuse rather than report a clean run
