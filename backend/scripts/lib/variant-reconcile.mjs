@@ -35,7 +35,7 @@
  *    on its own line because the owner asked to see it ("AutoCount blank but
  *    ERP has one"), not because it is work.
  *
- * ── THE FOUR VERDICTS, AND THE TWO NON-VERDICTS ────────────────────────────
+ * ── THE VERDICTS ─────────────────────────────────────────────────────────
  *   AGREE        both sides say the same thing, or both say nothing.
  *   ERP_BLANK    the book states the axis and the ERP carries nothing.
  *                THE ONLY ONE THAT IS A GAP — and only on a proceeded order.
@@ -48,6 +48,27 @@
  *   UNREADABLE   the decoder cannot read this Desc2 (parse-sofa returns
  *                conf "low", or the guard that keeps "(1 ELT / T + NA +2ER)" a
  *                placeholder fires).  A photograph job, never a data defect.
+ *   RECORDED     specials only.  The book asks for a PRICED option, the line
+ *                does not tick it, and `variants.specialsRecorded` carries it.
+ *                That is the owner's ruling 甲 of 2026-09-03 already applied —
+ *                「记下来给工厂看，但单据的钱不可以动」 — not an open gap.
+ *
+ * ── WHY RECORDED HAD TO BECOME ITS OWN VERDICT ─────────────────────────────
+ * `record-priced-specials-on-migrated-lines.mjs` deliberately writes
+ * `variants.specialsRecorded` and never `variants.specials`, because ten call
+ * sites across nine files fold `variants.specials` into a price or a cost and
+ * stamping it there would reprice a historical document.  `variant-summary.ts`
+ * surfaces the recorded key, so the factory does see the option.
+ *
+ * This reader knew nothing about that column.  It read only `variants.specials`,
+ * `variants.special` and `custom_specials`, so every line closed by the owner's
+ * own money-neutral decision kept reporting as DIFFER — work already done,
+ * counted as outstanding, on the eve of go-live.
+ *
+ * It is NOT folded into AGREE: the line genuinely does not carry the tick, and
+ * pretending otherwise would be the same dishonesty pointing the other way.  It
+ * gets its own column, so the open backlog and the decided-and-recorded set can
+ * never be added up into one number again.
  *
  * ── COMPARTMENTS ARE A MULTISET ─────────────────────────────────────────────
  * "Piece ORDER does not matter: the apply script compares the compartment
@@ -169,7 +190,8 @@ export const BOOK_BLANK = "BOOK_BLANK";
 export const DIFFER = "DIFFER";
 export const PENDING = "PENDING";
 export const UNREADABLE = "UNREADABLE";
-export const VERDICTS = [AGREE, ERP_BLANK, BOOK_BLANK, DIFFER, PENDING, UNREADABLE];
+export const RECORDED = "RECORDED";
+export const VERDICTS = [AGREE, ERP_BLANK, BOOK_BLANK, DIFFER, PENDING, UNREADABLE, RECORDED];
 
 /** The generic two-value comparison every scalar axis uses. */
 export function verdictOf(bookVal, erpVal, same) {
@@ -388,20 +410,42 @@ export function compareLine(deps, { book, erpLines, proceeded }) {
     const vs1 = asList((lead.variants || {}).special);
     const cs = asList(lead.custom_specials);
     const carried = [...vs.list, ...vs1.list, ...cs.list].map(elText).filter(Boolean);
+    /* The owner's ruling 甲 lives in its OWN key, on purpose: stamping a priced
+       code into `variants.specials` would reprice a historical document, so
+       record-priced-specials-on-migrated-lines.mjs writes `specialsRecorded`
+       instead and variant-summary.ts shows it to the factory.  Read separately
+       and NEVER merged into `carried`: a recorded option is not a ticked one. */
+    const recorded = asList((lead.variants || {}).specialsRecorded).list.map(elText).filter(Boolean);
     const wanted = deps.mapSpecials(book.specials, group);
     cell.book = book.specials.join(" | ");
     cell.erp = carried.join(" | ");
     cell.detail = vs.list.length || vs1.list.length ? "" : cs.list.length ? "carried ONLY in the derived custom_specials" : "";
     if (!book.specials.length) {
       cell.verdict = carried.length ? BOOK_BLANK : AGREE;
-    } else if (!carried.length) {
+    } else if (!carried.length && !recorded.length) {
       cell.verdict = ERP_BLANK;
     } else {
       const missing = wanted.filter((w) => !deps.specialCarried(w, carried));
       if (!missing.length) cell.verdict = AGREE;
       else {
-        cell.verdict = DIFFER;
-        cell.detail = `${cell.detail ? `${cell.detail}; ` : ""}the book asks for ${missing.join(", ")} and the line does not carry it`;
+        /* Every still-missing option is already recorded money-neutrally =>
+           RECORDED, the decision applied.  A PARTIAL cover stays DIFFER: some
+           of what the book asks for is neither ticked nor recorded, and
+           rounding that up to "decided" is how a real gap disappears. */
+        const unrecorded = missing.filter((w) => !deps.specialCarried(w, recorded));
+        if (!unrecorded.length) {
+          cell.verdict = RECORDED;
+          cell.detail =
+            `${cell.detail ? `${cell.detail}; ` : ""}the book asks for ${missing.join(", ")}; the line does not tick it and ` +
+            "variants.specialsRecorded carries it — owner ruling 甲 2026-09-03, recorded for the factory with the document's money untouched";
+        } else {
+          cell.verdict = DIFFER;
+          cell.detail =
+            `${cell.detail ? `${cell.detail}; ` : ""}the book asks for ${unrecorded.join(", ")} and the line does not carry it` +
+            (missing.length > unrecorded.length
+              ? ` (${missing.length - unrecorded.length} more of what it asks for IS recorded money-neutrally)`
+              : "");
+        }
       }
     }
   }
