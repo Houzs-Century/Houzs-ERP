@@ -53,6 +53,7 @@ run-prod`)。少数 workflow 不收 target(如 `refresh-so-tail-from-book.yml`�
 | 4 | `topup-ac-po-lines.yml` | apply 要 `confirm="I HAVE REVIEWED THE DRY-RUN"` |
 | 5 | `stamp-ac-grn-refs.yml` | 盖收货/采购发票号 |
 | 6 | `create-migrated-documents.yml` | `kind=both`;GRN+DO 镜像,**不动库存** |
+| 6b | `repair-migrated-do-prices.yml` | 先 `mode=plan`,再 `mode=apply` + `confirm="THE PRICE COMES FROM THE SALES ORDER"`。**第 6 步在 2026-09-02 之前建的交货单一分钱都没写**(0617):金额栏和上面的营业额都是 RM 0.00,而且这个 0 会带进新开的销售发票。价钱从它自己那张销售单的行上抄,销售单本来就是 0 的行不动 |
 | 7 | `create-migrated-invoices.yml` | `mode=apply` + 同上确认句;金额一分不差才开,DIFFERS 名单呈 owner |
 
 ⚠️ **两路 PO 导入现在会「拒绝写不存在的件号」**(2026-08-31,
@@ -66,6 +67,21 @@ run-prod`)。少数 workflow 不收 target(如 `refresh-so-tail-from-book.yml`�
 存在**的 ERP 件号(或先把产品开出来),再重跑。旧单据的修补是另一支:
 `repair-orphan-sofa-codes.yml`,先 `mode=plan` 看清单。
 
+
+⚠️ **重新切过快照(`data/*.gz`)之后,阶段 1 要整段重跑一次。** 数据档进了 main
+不等于写进了 ERP——写进去的是上面这几个 workflow,它们只有人 dispatch 才会动。
+2026-09-07 上线当天就是这样:早上 PR #3029 重切了 `ac-gr-refs.json.gz` 和
+`ac-partial-dos.json.gz`,两支写入器上一次跑还是 8-29,对帐于是报出 32 张收货单
+和 12 张交货单「缺」——44 张全部就躺在已经进了库的档案里。
+
+**看到「缺」先跑这一支,它不用连数据库、几秒就有答案:**
+
+```bash
+node backend/scripts/check-ac-gap-attribution.mjs
+```
+
+它对每一类说:在册几张、其中几张**已经在**已提交的来源档里、几张真的哪里都没有。
+已经在来源档里的,要的是 dispatch,不是写新的导入器。
 ## 阶段 2 — 库存(双向对平)
 
 | # | workflow | 备注 |
