@@ -456,11 +456,21 @@ if ($dbline -notmatch 'DBSetting') { Die "the connection line does not look like
 $acUser = $null; $acPass = $null; $acOrigin = $null
 $csEsc = { param($s) $s.Replace('\', '\\').Replace('"', '\"') }
 if (Test-Path $AcLoginFile) {
-  $acLines = @(Get-Content $AcLoginFile | ForEach-Object { $_.Trim() } | Where-Object { $_ })
-  if ($acLines.Count -lt 2) {
-    Die "$AcLoginFile must hold two non-empty lines - the AutoCount user id on the first, its password on the second."
+  # Read the lines WITHOUT dropping empty ones. The first draft filtered blanks
+  # and then demanded two survivors, which made the one state the live book
+  # actually holds impossible to express: AOTG's `Users.Passwd` is an empty
+  # string (measured 2026-09-07 - every other user's is 112 characters), so the
+  # account genuinely has NO password and the file's second line has to be
+  # allowed to be empty. A validator that refuses the real world is a validator
+  # that gets worked around, and the work-around would have been to put some
+  # made-up password in the file and wonder why the login failed.
+  $acRaw = @(Get-Content $AcLoginFile)
+  if ($acRaw.Count -lt 1 -or -not "$($acRaw[0])".Trim()) {
+    Die "$AcLoginFile is empty - line 1 must be the AutoCount user id (line 2 is its password, and MAY be blank)."
   }
-  $acUser = $acLines[0]; $acPass = $acLines[1]; $acOrigin = $AcLoginFile
+  $acUser = "$($acRaw[0])".Trim()
+  $acPass = if ($acRaw.Count -ge 2) { "$($acRaw[1])".Trim() } else { '' }
+  $acOrigin = $AcLoginFile
 } elseif ($pick) {
   # setup.json's own `user` / `password` - NOT dbUsername / dbPassword. This is
   # the pre-2026-09-07 pair, so a host with no login file deploys exactly what
@@ -469,12 +479,21 @@ if (Test-Path $AcLoginFile) {
   $acPass = & $pick @('password','Password')
   $acOrigin = "setup.json at $SetupJson (the pre-2026-09-07 fallback)"
 }
-if (-not $acUser -or -not $acPass) {
+if (-not $acUser) {
   Die ("no AutoCount application login could be resolved. Write $AcLoginFile with the user id on line 1 " +
-       "and its password on line 2, or use a setup.json that carries `user` and `password`.")
+       "and its password on line 2, or use a setup.json that carries ``user`` and ``password``.")
 }
 $script:AcPassword = $acPass
 Step "AutoCount login '$acUser' from $acOrigin; password NOT shown"
+# A blank password is ALLOWED because it is the truth about this book today, and
+# refusing it would only push someone into inventing one. It is not silent: the
+# whole reason to give the write-back its own login is so the staff's login can
+# be locked down, and a service account with no password makes that lock
+# worthless - anyone can simply log in as it. Say so on every deploy until it
+# stops being true.
+if (-not $acPass) {
+  Step "WARNING: '$acUser' has NO PASSWORD. The service will work, but locking any other AutoCount user is pointless while this account can be logged into by name alone. Set one in User Maintenance, then put it on line 2 of $AcLoginFile and redeploy."
+}
 if ($prePass) { $script:DbPassword = $prePass }
 
 # ---------------------------------------------------------- 3 SQL PRE-FLIGHT
