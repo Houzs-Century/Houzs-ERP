@@ -25,12 +25,16 @@
    WHERE THE LOCATION COMES FROM, in order, never guessed:
      1. data/ac-fidelity-do-headers.json.gz — the book's own header field.
         Covers 11,134 documents.
-     2. data/ac-partial-dos.json.gz line Locations, and ONLY when every line of
-        that document agrees. The header snapshot runs ~307 documents behind the
-        book, so 19 of the cutover cut's 84 have no header row; all 19 are
-        unanimous on their lines, and where BOTH sources exist they agree on
-        65 of 65.
-     3. nothing — the document is REPORTED and left alone.
+     2. line Locations, and ONLY when every line of that document agrees — from
+        data/ac-fidelity-do-lines.json.gz (the whole book, 11,134 documents)
+        and data/ac-partial-dos.json.gz (the cutover cut, 84). The header
+        snapshot runs behind the book, so 19 of the cut's 84 have no header row;
+        all 19 are unanimous on their lines, and where BOTH sources exist they
+        agree on 65 of 65.
+     3. nothing — the document is REPORTED and left alone. Measured 2026-09-08:
+        89 of 171 migrated documents land here, every one a DO-0114xx/DO-0115xx
+        raised AFTER both snapshots were taken. They are named, not defaulted;
+        a snapshot refresh is what fills them.
 
    ONE RULE, NOT A SECOND COPY. The order above, the map and the resolution all
    live in lib/ac-do-location.mjs, shared with create-migrated-documents.mjs so
@@ -84,15 +88,23 @@ async function main() {
     const v = (h.SalesLocation || '').trim();
     if (v) hdrLoc.set(h.DocNo, v);
   }
-  /* Source 2 — the document's own lines, ONLY when unanimous. Also the census
-     that decided the ruling: which documents span two locations. */
+  /* Source 2 — the document's own lines, ONLY when unanimous.
+     BOTH line snapshots, and that is the point: `ac-partial-dos` holds the
+     cutover cut (84 documents) while `ac-fidelity-do-lines` holds the whole
+     book (11,134). Reading only the cut made the mixed-location census below
+     report ZERO — a census over 84 documents answering a question asked about
+     11,134 — and the owner's ruling explicitly asks for the mixed ones to be
+     NAMED. A count computed over the wrong corpus reads exactly like a clean
+     result, which is the failure this repo keeps paying for. */
   const lineLocs = new Map();
-  for (const r of gz('ac-partial-dos.json.gz')) {
-    const v = (r.Location || '').trim();
-    if (!v) continue;
-    if (!lineLocs.has(r.DoNo)) lineLocs.set(r.DoNo, new Set());
-    lineLocs.get(r.DoNo).add(v);
-  }
+  const addLineLoc = (doc, raw) => {
+    const v = (raw || '').trim();
+    if (!v) return;
+    if (!lineLocs.has(doc)) lineLocs.set(doc, new Set());
+    lineLocs.get(doc).add(v);
+  };
+  for (const l of gz('ac-fidelity-do-lines.json.gz')) addLineLoc(l.DocNo, l.Location);
+  for (const r of gz('ac-partial-dos.json.gz')) addLineLoc(r.DoNo, r.Location);
   note(`book: ${hdrLoc.size} document header(s), ${lineLocs.size} document(s) with line locations`);
 
   /* The documents the book itself cannot answer with ONE location. Named rather
