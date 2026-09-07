@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'vitest';
 import poSource from '../src/scm/routes/mfg-purchase-orders.ts?raw';
 import pcoSource from '../src/scm/routes/purchase-consignment-orders.ts?raw';
+import { readFileSync, readdirSync } from 'node:fs';
+
 import { VALID_CURRENCIES, VALID_KINDS } from '../src/scm/lib/purchase-doc-vocab';
 
 /* Both purchase routers declared three same-named constants. Two were copies;
@@ -54,9 +56,31 @@ describe('the two purchase documents share what is genuinely shared', () => {
     }
   });
 
-  test('the shared sets hold what they held before the move', () => {
-    expect([...VALID_CURRENCIES].sort()).toEqual(['MYR', 'RMB', 'SGD', 'USD']);
+  /* CNY joined on 2026-09-07 (mig 20260907T2330) so the migrated CNY purchase
+     order HC-PO-009335 can carry the code the AutoCount book states. RMB stays:
+     they are one currency under two names and this ERP was seeded with RMB, so
+     removing it would invalidate an existing vocabulary rather than extend it. */
+  test('the shared sets hold what they held before the move, plus CNY', () => {
+    expect([...VALID_CURRENCIES].sort()).toEqual(['CNY', 'MYR', 'RMB', 'SGD', 'USD']);
     expect([...VALID_KINDS].sort()).toEqual(['fabric', 'mfg_product', 'raw']);
+  });
+
+  /* The DB enum is the harder gate: a code the API accepts but scm.currency_code
+     has no label for fails at the INSERT with `invalid_input_value`, which reads
+     as a 500 rather than a validation error. Every member here must exist as a
+     label — mig 20260907T2330 added CNY, and the other four came with the type. */
+  test('every accepted currency is a scm.currency_code label in a migration', () => {
+    const dir = new URL('../src/db/migrations-pg/', import.meta.url);
+    const sql = readdirSync(dir)
+      .filter((f) => f.endsWith('.sql'))
+      .map((f) => readFileSync(new URL(f, dir), 'utf8'))
+      .join('\n');
+    for (const code of VALID_CURRENCIES) {
+      expect(
+        sql.includes(`'${code}'`),
+        `${code} is accepted by the API but no migration ever names it`,
+      ).toBe(true);
+    }
   });
 });
 

@@ -27,6 +27,7 @@ import { parsePayment } from "./lib/ac-payment-udf.mjs";
 import zlib from "node:zlib";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { bookCurrency } from "./lib/ac-currency.mjs";
 import postgres from "postgres";
 import { parseBedframe } from "./lib/parse-bedframe.mjs";
 import { SOFA_MODEL_ALIAS, parseSofa } from "./lib/parse-sofa.mjs";
@@ -446,7 +447,11 @@ async function main() {
         V(salesLoc(h.SalesLocation)), V(h.Ref || null), V(h.Ref || null), V(h.UDF_VENUE || null), V(o.venue ? o.venue.id : null), V(h.UDF_BRANDING || null),
         V(h.InvAddr1 || null), V(h.InvAddr2 || null), V(h.InvAddr3 || null), V(h.InvAddr4 || null), V(o.postcode || null), V(o.city || null), V(o.cState || null),
         V(h.Phone1 || null), V(o.emergency || null),
-        V("CONFIRMED"), "1", V("MYR"), V(o.total), V(o.bal), V(o.paid), V(o.paid), V(o.items.length),
+        /* THE BOOK'S OWN CURRENCY (lib/ac-currency.mjs), not the constant this
+           slot used to hold. All 13,365 book sales orders are MYR on the
+           2026-09-07 cut, so today this writes the same value — but it writes it
+           because the book says so, not because the script does. */
+        V("CONFIRMED"), "1", V(bookCurrency(h)), V(o.total), V(o.bal), V(o.paid), V(o.paid), V(o.items.length),
         V(o.bucket.mattress + (o.bucket.sofa || 0)), V(o.bucket.bedframe), V(o.bucket.accessory), V(o.bucket.service), V(o.bucket.others),
         V(o.paid > 0 ? "imported" : null), V(o.pay.appr || null), o.paid > 0 ? (h.DocDate ? V(h.DocDate) : V(CUR)) : "NULL",
         o.procDate ? V(o.procDate) : "NULL",

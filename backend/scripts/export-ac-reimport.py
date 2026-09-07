@@ -187,13 +187,20 @@ SO_OUT_INNER = (
 )
 
 # ── 1. sales orders, whole documents ─────────────────────────────────────────
+# `h.CurrencyCode` joined the SO and both PO lanes on 2026-09-07. Every migration
+# writer used to put the CONSTANT 'MYR' into the ERP's currency column because
+# these cuts carried no currency at all — and the book holds 22 CNY purchase
+# orders out of 9,408, one of them inside the migrated scope. THESE THREE
+# SECTIONS ONLY TAKE EFFECT ON A RE-CUT; the committed .json.gz files predate the
+# column, and lib/ac-currency.mjs says so out loud rather than defaulting in
+# silence.
 if want("so"):
     so = rows_of(f"""
         SELECT h.DocKey, LTRIM(RTRIM(h.DocNo)) AS DocNo, h.DocDate, h.DebtorCode, h.DebtorName,
                h.Attention, h.Ref, h.SalesAgent, h.SalesLocation, h.Phone1,
                h.InvAddr1, h.InvAddr2, h.InvAddr3, h.InvAddr4,
                h.DeliverAddr1, h.DeliverAddr2, h.DeliverAddr3, h.DeliverAddr4,
-               h.DeliverContact, h.DeliverPhone1,
+               h.DeliverContact, h.DeliverPhone1, h.CurrencyCode,
                d.DtlKey, d.ItemCode, d.Description, d.Desc2, d.Qty, d.UnitPrice,
                d.Location, d.DeliveryDate, d.TransferedQty, d.TransferedPOQty,
                h.UDF_BALANCE, h.UDF_BRANDING, d.UDF_BatchNo, h.UDF_PAYEMENT,
@@ -231,7 +238,7 @@ else:
 if want("po1"):
     po1 = rows_of(f"""
         SELECT h.DocKey, LTRIM(RTRIM(h.DocNo)) AS DocNo, h.DocDate, h.CreditorCode,
-               cr.CompanyName AS CreditorName, h.Ref,
+               cr.CompanyName AS CreditorName, h.Ref, h.CurrencyCode,
                d.DtlKey, d.ItemCode, d.Description, d.Desc2, d.Qty, d.TransferedQty,
                d.UnitPrice, d.Location, d.DeliveryDate, d.FromSODocList, d.FromSODtlKey
           FROM PO h JOIN PODTL d ON d.DocKey = h.DocKey
@@ -249,7 +256,7 @@ else:
 if want("po2"):
     po2 = rows_of(f"""
         SELECT LTRIM(RTRIM(h.DocNo)) AS DocNo, h.DocDate, h.CreditorCode,
-               cr.CompanyName AS CreditorName, h.Ref, h.Cancelled,
+               cr.CompanyName AS CreditorName, h.Ref, h.Cancelled, h.CurrencyCode,
                d.DtlKey, d.ItemCode, d.Description, d.Desc2, d.Qty, d.TransferedQty,
                d.UnitPrice, d.Location, d.DeliveryDate, d.FromSODocList, d.FromSODtlKey
           FROM PO h JOIN PODTL d ON d.DocKey = h.DocKey

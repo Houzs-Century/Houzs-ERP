@@ -1610,6 +1610,14 @@ const SupplierCard = ({
                 options={[
                   { value: 'MYR', label: 'MYR' },
                   { value: 'RMB', label: 'RMB' },
+                  /* CNY is the ISO code for the same currency as RMB. Both are
+                     listed because the AutoCount book states CNY and the
+                     migration copies the book's value rather than translating
+                     it (mig 20260907T2330). A stored value missing from this
+                     list renders the select BLANK and the next save silently
+                     rewrites it — which is why the code has to be here, not
+                     only in the DB enum. */
+                  { value: 'CNY', label: 'CNY' },
                   { value: 'USD', label: 'USD' },
                   { value: 'SGD', label: 'SGD' },
                 ]}

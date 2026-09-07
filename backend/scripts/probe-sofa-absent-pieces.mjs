@@ -143,11 +143,11 @@ async function main() {
     log("");
     log(`################ ${doc}`);
     const hdr = await sql`SELECT doc_no, UPPER(COALESCE(status::text,'')) AS status, linked_ac_docno AS ac,
-                                 proceeded_at, customer_name
+                                 proceeded_at, debtor_name
                             FROM scm.mfg_sales_orders WHERE company_id = ${CO} AND doc_no = ${doc}`;
     if (!hdr.length) { log(`  no such sales order on company ${CO}`); summary.push({ doc, verdict: "NO SUCH DOCUMENT" }); continue; }
     const h = hdr[0];
-    log(`  status ${h.status} · AutoCount ${h.ac ?? "(none)"} · proceeded ${h.proceeded_at ?? "(not proceeded)"} · ${h.customer_name ?? ""}`);
+    log(`  status ${h.status} · AutoCount ${h.ac ?? "(none)"} · proceeded ${h.proceeded_at ?? "(not proceeded)"} · ${h.debtor_name ?? ""}`);
 
     const soRows = await sql`
       SELECT i.id::text AS id, i.line_no, i.item_code AS code, i.item_group AS grp, i.qty, i.cancelled,
