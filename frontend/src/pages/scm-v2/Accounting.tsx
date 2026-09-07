@@ -16,7 +16,7 @@
 
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { BookOpen, Boxes, CalendarClock, FileText, LineChart, ListTree, Receipt, Scale, ShieldCheck, TrendingDown, TrendingUp } from 'lucide-react';
+import { ArrowLeftRight, BookOpen, Boxes, CalendarClock, FileText, LineChart, ListTree, Receipt, Scale, ShieldCheck, TrendingDown, TrendingUp } from 'lucide-react';
 import {
   useJournalEntries,
   useJournalEntryDetail,
@@ -37,6 +37,7 @@ import {
   useReverseJournalEntry,
   useControlCheck,
   usePaymentBookingDryRun,
+  useBookUnbookedPayments,
   type ControlCheckRow,
   type UnbookedPayments,
   type PaymentDryRun,
@@ -45,6 +46,8 @@ import { DataTable, type Column } from '../../components/DataTable';
 import { ItemGroupsTab } from './ItemGroups';
 import { StockCloseTab } from './StockClose';
 import { PnLTab, BalanceSheetTab } from './Reports';
+import { ReceiptsPaymentsTab } from './ReceiptsPayments';
+import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { fmtSen } from '../../vendor/shared/format';
 import { byText } from '../../vendor/scm/lib/sort-options';
 import styles from './Suppliers.module.css';
@@ -58,7 +61,7 @@ const ICON = { size: 16, strokeWidth: 1.75 } as const;
 // amount, never "RM NaN". Kept under the local name so callsites are unchanged.
 const fmt = (sen: number | null | undefined) => fmtSen(sen);
 
-type Tab = 'coa' | 'groups' | 'je' | 'gl' | 'tb' | 'close' | 'pnl' | 'bs' | 'ar' | 'ap' | 'check';
+type Tab = 'coa' | 'groups' | 'je' | 'gl' | 'tb' | 'close' | 'pnl' | 'bs' | 'rp' | 'ar' | 'ap' | 'check';
 
 export const Accounting = () => {
   const [tab, setTab] = useState<Tab>('je');
@@ -76,6 +79,7 @@ export const Accounting = () => {
         <TabBtn label="Month-end"       icon={<CalendarClock {...ICON} />} active={tab === 'close'} onClick={() => setTab('close')} />
         <TabBtn label="P&L"             icon={<LineChart {...ICON} />} active={tab === 'pnl'} onClick={() => setTab('pnl')} />
         <TabBtn label="Balance Sheet"   icon={<Scale {...ICON} />} active={tab === 'bs'} onClick={() => setTab('bs')} />
+        <TabBtn label="Receipts & Payments" icon={<ArrowLeftRight {...ICON} />} active={tab === 'rp'} onClick={() => setTab('rp')} />
         <TabBtn label="AR Aging"        icon={<TrendingUp {...ICON} />} active={tab === 'ar'}  onClick={() => setTab('ar')} />
         <TabBtn label="AP Aging"        icon={<TrendingDown {...ICON} />} active={tab === 'ap'} onClick={() => setTab('ap')} />
         <TabBtn label="Self-check"      icon={<ShieldCheck {...ICON} />} active={tab === 'check'} onClick={() => setTab('check')} />
@@ -89,6 +93,7 @@ export const Accounting = () => {
       {tab === 'close' && <StockCloseTab />}
       {tab === 'pnl'   && <PnLTab />}
       {tab === 'bs'    && <BalanceSheetTab />}
+      {tab === 'rp'    && <ReceiptsPaymentsTab />}
       {tab === 'ar'    && <ArAgingTab />}
       {tab === 'ap'    && <ApAgingTab />}
       {tab === 'check' && <SelfCheckTab />}
@@ -704,6 +709,12 @@ export const UnbookedPaymentsCard = ({ p }: { p: UnbookedPayments }) => {
   const never = p.since == null && (p.neverBooked?.count ?? 0) > 0;
   const clean = p.ok && p.rows.length === 0 && !never;
   const dry = usePaymentBookingDryRun();
+  const book = useBookUnbookedPayments();
+  const askConfirm = useConfirm();
+  /* The real run is offered only after a dry run the gate refused nothing on
+     (docs/bugs/0655) — the owner presses it himself; the write is his. */
+  const bookable = dry.data && dry.data.scanned > 0 && dry.data.failed.length === 0 ? dry.data : null;
+  const bookableSen = bookable ? bookable.rows.reduce((s, r) => s + r.amountSen, 0) : 0;
   const unbookedCount = never ? (p.neverBooked?.count ?? 0) : p.rows.length;
   const unbookedSen = never ? (p.neverBooked?.totalSen ?? 0) : p.totalSen;
 
@@ -742,6 +753,29 @@ export const UnbookedPaymentsCard = ({ p }: { p: UnbookedPayments }) => {
 
       {dry.isError && <div style={{ fontSize: 'var(--fs-13)', color: bad }}>The dry run could not run: {dry.error instanceof Error ? dry.error.message : String(dry.error)}</div>}
       {dry.data && <DryRunResult r={dry.data} />}
+      {bookable && !book.data && (
+        <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center' }}>
+          <button type="button" disabled={book.isPending}
+            onClick={() => {
+              void askConfirm({
+                title: `Book ${bookable.scanned} payment${bookable.scanned === 1 ? '' : 's'} into the ledger?`,
+                body: `The gate refused none of them. Each posts on its own paid date — ${fmt(bookableSen)} in total, Dr bank / cash / clearing, Cr Trade Debtors.`,
+                confirmLabel: 'Book them',
+              }).then((ok) => { if (ok) book.mutate(); });
+            }}
+            style={{ border: `1px solid ${good}`, color: good, background: 'none', borderRadius: 6, padding: '4px 12px', cursor: 'pointer', fontSize: 'var(--fs-12)', fontWeight: 700 }}>
+            {book.isPending ? 'Booking…' : `Book ${bookable.scanned} payment${bookable.scanned === 1 ? '' : 's'} now`}
+          </button>
+          <span style={{ fontSize: 'var(--fs-12)', color: 'var(--c-ink-soft, #777)' }}>Nothing is written until you confirm.</span>
+        </div>
+      )}
+      {book.isError && <div style={{ fontSize: 'var(--fs-13)', color: bad }}>The booking could not run: {book.error instanceof Error ? book.error.message : String(book.error)}</div>}
+      {book.data && (
+        <div style={{ fontSize: 'var(--fs-13)', color: book.data.failed.length > 0 ? bad : good, fontWeight: 600 }}>
+          Booked {book.data.posted}, skipped {book.data.skipped}, refused {book.data.failed.length}
+          {book.data.remaining > 0 ? ` — ${book.data.remaining} still waiting, press Why? and book again` : ' — the card re-reads now'}.
+        </div>
+      )}
 
       {p.rows.length > 0 && (
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>

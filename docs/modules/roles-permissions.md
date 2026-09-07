@@ -44,7 +44,12 @@ PERMISSIONS[]  ->  PERMISSION_KEYS (a Set)  ->  isValidPermission(key)
 ```
 
 `isValidPermission` returns true for `"*"` (the Owner wildcard) or a member of
-that Set. **Three separate things depend on it, and all three fail silently for
+that Set. `"*"` is also conferred by POSITION: `positionGrantsWildcard()` in
+`backend/src/services/positionPolicy.ts` (`GOD_POSITIONS` = Super Admin, Owner,
+and — owner 2026-09-07, "和 super admin 同等级，通权限" — Managing Director; exact
+normalised name, never substring), read by `hydrateAuthUser` which adds `*` to the
+session. The Team matrix mirrors the list by slug (`GOD_SLUGS` in
+`pages/team/TeamRolesV2.tsx`) to show those positions locked-on. **Three separate things depend on it, and all three fail silently for
 a key that is not declared:**
 
 | where | what it does with an undeclared key |

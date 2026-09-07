@@ -533,6 +533,18 @@ on 400/405 was reported as a foreign source (21 findings on 2990's 405-0000).
 The AP arm now walks `ap_invoices` for drift the way it walks PIs, and both
 source types are family on the creditor controls
 (`tests/controlCheckPayments.test.ts`, `apControlCheckUnpostedPi.test.ts`).
+The dry run then named the reason the hook had been failing since it landed
+(docs/bugs/0655): `postSoPayment` read `customer_name, customer_phone` off
+`mfg_sales_orders`, columns the order table never had — it names its customer
+`debtor_name` and the phone `phone` — so PostgREST refused the read and every
+customer payment died at `so_read_failed`, 171 of them in 2990. The two reads
+(`acc/payments.ts`, `acc/settlement.ts`) now use the real columns;
+`tests/soPaymentOrderColumns.test.ts` pins the accounting module's
+`mfg_sales_orders` SELECTs against the table's real column list (the fake
+client cannot catch a wrong column — it hands back whatever the fixture row
+has, which is exactly how this shipped). The card's **Book N payments now**
+button, offered only after a dry run the gate refused nothing on and behind a
+confirm, is the same endpoint without dryRun — the owner presses it.
 
 **Phase 2B part 1 (2026-08-16): Daily Bank.** GET /accounting/daily-bank?date= answers the owner one question - today, where is the money and how much can actually move - live from the ledger (2.3: no caches): opening/in/out/closing per money account (scm.accounts.acc_money flag, migration 0299), settlement-in-transit balances per acquirer (visible, never counted movable), and — since phase 3 (2026-08-28, mig 0339) — pendingApprovalSen: every DRAFT payment voucher sitting in the approval queue, converted to MYR the way posting will, subtracted from available. Page /scm/daily-bank (Finance menu): date navigation + Get Image (canvas-drawn PNG to clipboard for WhatsApp, download fallback). Board arithmetic pinned in acc/daily-bank.test.ts. 946-0000 Cash Over/Short + OVER_SHORT role seeded for the coming daily cashup.
 
@@ -931,6 +943,35 @@ again. Pinned in `doc-no.test.ts`, `apInvoices.test.ts`,
 `pvDraftNumbering.test.ts`, `officialReceipts.test.ts`, `otherDebtors.test.ts`
 and `receipts.test.ts` — each with a document dated in another month than
 the test runs in.
+
+**Receipts & Payments (2026-09-06/07, owner: 我希望做一个 receipt & Payment
+版式 … 做).** AutoCount's report, in the Accounting page as its own tab:
+a COLUMN per cash/bank account (tick the ones you want) plus Total, RECEIPTS
+above PAYMENTS, opening and closing per column, rows in the owner's own
+accounts — 这个目前我有分 account, 你可以先不要自己分类; the big groups
+(showroom 费用 / operation 费用 …) come later, dragged onto rows on this
+page. `GET /accounting/reports/receipts-payments?from&to&accounts&party`
+(`backend/src/scm/routes/accounting-rp.ts`) reads `v_gl_entries` — posted,
+not reversed, the one source the P&L, balance sheet and trial balance beside
+it read — groups the period by journal, takes each money leg as a receipt
+(debit) or a payment (credit) and books the journal's OTHER lines against it.
+The one rule beyond "the other side's account": a SUPPLIER PAYMENT is read
+through what the voucher settled (his rule A) — a purchase invoice's own
+purchase groups in the proportion of the PI's own debit lines (exact when
+paid in full; a single-group PI is simply its group), an AP invoice's own
+lines, and money paid beyond what was settled as "Supplier advances (预付)".
+A transfer between two money accounts reads as "Transfer to/from <account>",
+never as an unexplained movement; a money account left out of the columns is
+a transfer counterpart the same way. `party=1` is AutoCount's "display trade
+debtor/creditor in details": control-account rows are named by the party and
+the supplier split is not applied. The tab (`ReceiptsPayments.tsx`,
+`rp-report-queries.ts`) opens the entries behind any figure and prints the
+same table landscape (`rp-report-pdf.ts`). Bank clearing accounts (EDC /
+online, 326/327) are not money, so a card sale appears when the settlement
+lands. Pinned in `backend/tests/rpReport.test.ts` (opening / period /
+closing, the rule-A split, the advance remainder, the transfer, party mode,
+the column filter, a reversed journal invisible) and
+`ReceiptsPayments.test.tsx` / `rp-report-pdf.test.ts`.
 
 **Official Receipts (GL redesign item 9).** Every customer payment births a
 receipt (`scm.acc_receipts`, one per payment forever — a reprint reprints,
