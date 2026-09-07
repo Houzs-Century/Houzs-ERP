@@ -157,6 +157,38 @@ try {
     plain(`  lines carrying an AutoCount DtlKey: ${keyed[0].with_key} of ${li.length}`);
   }
 
+  /* THE DELETION FINGERPRINT, generalised.  AutoCount hard-deletes a document:
+     the header and its DtlKeys vanish together, leaving a hole in the key
+     sequence.  An ERP row whose linked_ac_docno is absent from the book AND
+     whose line keys are absent too is a faithful import of a DELETED document,
+     not a row somebody invented.  The two are opposite findings and must not be
+     reported as one. */
+  const bookPo = new Set(snap.types.PO.headers.map((r) => r[hIdx.docNo]));
+  const bookKeys = new Set();
+  for (const t of Object.keys(snap.types)) {
+    for (const r of snap.types[t].lines) bookKeys.add(String(r[lIdx.dtlKey]));
+  }
+  const orphanPos = await sql`SELECT h.po_number, h.linked_ac_docno, h.created_at, h.created_by,
+      h.status, h.total_sen,
+      COUNT(i.id)::int AS lines,
+      COUNT(i.linked_ac_dtlkey)::int AS keyed,
+      COALESCE(ARRAY_AGG(DISTINCT i.linked_ac_dtlkey) FILTER (WHERE i.linked_ac_dtlkey IS NOT NULL), '{}') AS keys
+    FROM scm.purchase_orders h
+    LEFT JOIN scm.purchase_order_items i ON i.purchase_order_id = h.id
+    WHERE h.company_id = ${CO} AND h.linked_ac_docno IS NOT NULL
+    GROUP BY h.id, h.po_number, h.linked_ac_docno, h.created_at, h.created_by, h.status, h.total_sen`;
+  const absent = orphanPos.filter((r) => !bookPo.has(r.linked_ac_docno));
+  const deleted = absent.filter((r) => r.keyed > 0 && r.keys.every((k) => !bookKeys.has(String(k))));
+  const invented = absent.filter((r) => !(r.keyed > 0 && r.keys.every((k) => !bookKeys.has(String(k)))));
+  plain(`
+  ERP purchase orders claiming an AutoCount number the book does not have: ${absent.length}`);
+  plain(`    of those, EVERY line key is also absent from the book (the deletion fingerprint): ${deleted.length}`);
+  plain(`    of those, some line key still exists in the book, or no key at all: ${invented.length}`);
+  fence("ERP POs whose AutoCount document is absent from the book",
+    absent.map((r) => `${r.po_number} -> ${r.linked_ac_docno} created ${r.created_at.toISOString?.() ?? r.created_at} ` +
+      `status=${r.status} lines=${r.lines} keyed=${r.keyed} keys=[${r.keys.join(",")}] ` +
+      `${r.keyed > 0 && r.keys.every((k) => !bookKeys.has(String(k))) ? "DELETED-IN-BOOK" : "UNEXPLAINED"}`));
+
   /* neighbours, to place it in the numbering */
   const nb = await sql`SELECT to_jsonb(p) AS j FROM scm.purchase_orders p
     WHERE p.company_id = ${CO} AND p.po_number BETWEEN 'HC-PO-009940' AND 'HC-PO-009950'
@@ -188,16 +220,29 @@ try {
     WHERE table_schema = 'scm' AND table_name = 'purchase_order_items' AND column_name = 'item_code'`;
   plain(`scm.purchase_order_items.item_code is_nullable = ${nn.length ? nn[0].is_nullable : "(column not found)"}`);
   plain(`scm.products columns: ${[...(colsOf.get("products") || [])].join(", ")}`);
-  const erg = hasCol("products", "name")
-    ? await sql`SELECT to_jsonb(p) AS j FROM scm.products p
-        WHERE p.company_id = ${CO} AND (p.item_code ILIKE '%ERGOTEX%' OR p.item_code ILIKE '%PILLOW%'
-           OR p.name ILIKE '%ERGOTEX%' OR p.name ILIKE '%PILLOW%')
-        ORDER BY p.item_code LIMIT 40`
-    : await sql`SELECT to_jsonb(p) AS j FROM scm.products p
-        WHERE p.company_id = ${CO} AND (p.item_code ILIKE '%ERGOTEX%' OR p.item_code ILIKE '%PILLOW%')
-        ORDER BY p.item_code LIMIT 40`;
-  plain(`existing products matching ERGOTEX / PILLOW CASE: ${erg.length}`);
-  for (const r of erg) plain(`  ${JSON.stringify(r.j)}`);
+  /* scm.products keys on sku + model_code + name; there is no item_code column
+     here - the NOT NULL item_code lives on purchase_order_items and is a free
+     text code, not a foreign key into this table. */
+  const erg = await sql`SELECT p.id, p.sku, p.model_code, p.name, p.category_id, p.supplier_id
+    FROM scm.products p
+    WHERE p.company_id = ${CO} AND (p.sku ILIKE '%ERGOTEX%' OR p.name ILIKE '%ERGOTEX%'
+       OR p.model_code ILIKE '%ERGOTEX%' OR p.sku ILIKE '%PILLOW%' OR p.name ILIKE '%PILLOW%')
+    ORDER BY p.sku LIMIT 40`;
+  plain(`existing products matching ERGOTEX / PILLOW: ${erg.length}`);
+  for (const r of erg) plain(`  ${JSON.stringify(r)}`);
+  /* what the PO importer actually validates against: the item codes already in
+     use on purchase order lines, which is where the accessory has to land */
+  const accLines = await sql`SELECT DISTINCT i.item_code, i.material_name
+    FROM scm.purchase_order_items i
+    JOIN scm.purchase_orders h ON h.id = i.purchase_order_id
+    WHERE h.company_id = ${CO} AND i.item_group = 'accessory'
+      AND (i.item_code ILIKE '%PILLOW%' OR i.material_name ILIKE '%PILLOW%')
+    ORDER BY i.item_code LIMIT 25`;
+  plain(`accessory item codes already used on PO lines (pillow family): ${accLines.length}`);
+  for (const r of accLines) plain(`  ${r.item_code}  |  ${r.material_name}`);
+  const ergMap = [...codeMap.entries()].filter(([k]) => k.includes("ERGOTEX") || k.includes("PILLOW CASE"));
+  plain(`mapping CSV rows mentioning ERGOTEX / PILLOW CASE: ${ergMap.length}`);
+  for (const [k, v] of ergMap.slice(0, 20)) plain(`  "${k}" -> "${v}"`);
   const po79 = await sql`SELECT po_number, linked_ac_docno, status FROM scm.purchase_orders
     WHERE company_id = ${CO} AND linked_ac_docno = 'PO-009979'`;
   plain(`is PO-009979 already in the ERP? ${po79.length ? JSON.stringify(po79) : "no"}`);
