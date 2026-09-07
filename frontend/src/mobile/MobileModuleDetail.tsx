@@ -186,7 +186,7 @@ function Eyebrow({ children }: { children: string }) {
 }
 
 /** One `.docrow` line item: name + qty on top, unit price + amount below. */
-function LineItem({ name, sub, remark, qty, unitSen, amountSen, assigned, sourceLinked, provenance, allocations, poNumber, sourcePos, sourceAdj, delivered, committedBatch }: {
+function LineItem({ name, sub, remark, qty, unitSen, amountSen, assigned, sourceLinked, provenance, allocations, poNumber, sourcePos, sourceAdj, delivered, committedBatch, substituted }: {
   name: string; sub?: string; qty: unknown; unitSen: unknown; amountSen: unknown; remark?: string | null;
   // Present (even if empty) only for purchase docs (PO/GRN/PI): the REAL origin
   // Sales Order(s) this line was raised from + that SO's effective delivery
@@ -208,6 +208,11 @@ function LineItem({ name, sub, remark, qty, unitSen, amountSen, assigned, source
   // DO creation — the hard-from-DO anchor. Rendered as an anchored solid chip
   // (CommittedBatchRowMobile); absent → nothing. Display-only.
   committedBatch?: string | null;
+  // DO lines only (mig 20260907T2340): AutoCount shipped an item code the named
+  // sales order does not carry. The desktop detail shows the same flag on the
+  // same field (one-product rule) — a substitution the system hid is exactly
+  // what the owner's 2026-09-07 ruling was about.
+  substituted?: boolean;
   // Purchase docs (PO / GRN / PI): the DO(s) that shipped this line's goods,
   // with per-DO qty + the DO's own SO (soDocNo) so each chip pairs with its
   // Assigned-SO row — the mobile twin of the desktop per-SO sub-table.
@@ -237,6 +242,17 @@ function LineItem({ name, sub, remark, qty, unitSen, amountSen, assigned, source
         {sub ? <span style={{ marginRight: 8 }}>{sub}</span> : null}
         <span>@ {money(unitSen)}</span>
       </div>
+      {substituted ? (
+        /* Substituted at dispatch. Amber, and it says WHY rather than just
+           flagging: the line carries no so_item_id, so the order's outstanding
+           quantity has deliberately not moved. */
+        <div style={{ flexBasis: "100%", marginTop: 4 }}>
+          <span style={{ display: "inline-block", fontSize: 10, fontWeight: 700, color: "#8a5a00",
+            background: "#fff4d6", border: "1px solid #f0d79a", borderRadius: 6, padding: "2px 6px" }}>
+            Substituted at dispatch — not on the SO
+          </span>
+        </div>
+      ) : null}
       <MobileLineRemark text={remark} />
       {assigned && (
         /* Purchase docs — the per-SO PAIRED rows (owner 2026-08-02): one row
@@ -1631,9 +1647,15 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD, flowNav }:
                 const committedBatch = moduleKey === "delivery-orders-mfg"
                   ? ((it?.committed_po_batch_no as string | null | undefined) ?? null)
                   : null;
+                /* DO lines only (mig 20260907T2340): the delivered code is not
+                   on the named sales order. Same field the desktop detail's
+                   badge reads. */
+                const substituted = moduleKey === "delivery-orders-mfg"
+                  ? Boolean(it?.ac_substituted)
+                  : false;
                 const delivered = coverageType ? (deliveredMap.get(code) ?? []) : undefined;
                 const provenance = coverageType ? (provByCode.get(code) ?? []) : undefined;
-                return <LineItem key={s(it?.id) || i} name={l.name} sub={l.sub} remark={l.remark} qty={l.qty} unitSen={l.unitSen} amountSen={l.amountSen} assigned={assigned} sourceLinked={coverageType ? linkedSkus.has(code) : undefined} provenance={provenance} allocations={allocations} poNumber={s(header?.po_number)} sourcePos={sourcePos} sourceAdj={sourceAdj} delivered={delivered} committedBatch={committedBatch} />;
+                return <LineItem key={s(it?.id) || i} name={l.name} sub={l.sub} remark={l.remark} qty={l.qty} unitSen={l.unitSen} amountSen={l.amountSen} assigned={assigned} sourceLinked={coverageType ? linkedSkus.has(code) : undefined} provenance={provenance} allocations={allocations} poNumber={s(header?.po_number)} sourcePos={sourcePos} sourceAdj={sourceAdj} delivered={delivered} committedBatch={committedBatch} substituted={substituted} />;
               }) : <div style={{ fontSize: 11.5, color: "#9aa093", padding: "9px 0" }}>No line items.</div>)}
             </div>
           </div>
