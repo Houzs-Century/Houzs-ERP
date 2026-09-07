@@ -109,6 +109,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { parseMoneyToSen } from '../../lib/money';
 import styles from './Products.module.css';
 import { DateField } from "../../vendor/scm/components/DateField";
+import { normalizeImportHeader, looksLikeGridExport } from './products-import-headers';
 
 const ICON_PROPS = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -5027,40 +5028,6 @@ function parseSkuCsv(text: string): Array<Record<string, string>> {
   }
   if (cellStr !== '' || row.length > 0) { row.push(cellStr); grid.push(row); }
   return gridToSkuRecords(grid);
-}
-
-/* Header matching is tolerant of case AND of space-vs-underscore, so a
-   hand-made sheet with "Base Price" maps to the same column as the round-trip
-   export's `base_price`. This is the rule the FABRIC import already runs
-   (`vendor/scm/lib/fabric-csv.ts`, docs/bugs/0605, 2026-09-02) — it was written
-   for one of the two importers and never reached this one, which is the
-   fixed-on-one-surface-only class CLAUDE.md names. Runs of whitespace and
-   underscore collapse to a single underscore; the export's own headers are
-   already lower snake_case, so this is identity on an exported file and only
-   ever LOOSENS matching. */
-export function normalizeImportHeader(h: string): string {
-  return h.trim().toLowerCase().replace(/[\s_]+/g, '_');
-}
-
-/* THE OTHER FILE ON THIS PAGE, and why it can never be imported.
- *
- * The SKU page offers TWO exports and the Import dialog says only "exported
- * from this page", which is true of both. The grid's own export writes what is
- * ON SCREEN — "Product Code", "Description", one column per sofa SIZE — and the
- * owner reasonably fed it back in (2026-09-07) and got "No rows had a code",
- * which names the symptom and not the file.
- *
- * It is not enough to alias those headers, and aliasing them would be the
- * dangerous fix: the grid writes the price for the CURRENTLY SELECTED tier and
- * carries NO tier column, so re-importing it would offer prices with no tier.
- * The importer refuses a priced row whose tier it cannot read, deliberately,
- * because a price filed under the wrong tier is worse than one not filed. So
- * the honest behaviour is to RECOGNISE the file and say which button to use.
- *
- * Detected on `product_code`, which the round-trip export never writes (its
- * column is `code`). */
-export function looksLikeGridExport(header: string[]): boolean {
-  return header.includes('product_code');
 }
 
 /** Header-key a parsed grid (CSV or Excel) into one object per data row, keyed

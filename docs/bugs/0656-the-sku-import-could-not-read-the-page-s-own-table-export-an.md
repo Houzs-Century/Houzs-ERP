@@ -61,6 +61,14 @@ The owner states the contract in one sentence (2026-09-07):
   reuses it — no second query.
 * **Frontend** — `normalizeImportHeader` gives this importer the tolerance the
   fabric one has had since 0605 (case, and space vs underscore).
+* **Frontend** — the two helpers live in `products-import-headers.ts`, not in
+  `Products.tsx`. The file-size ratchet refused the growth, which is the repo
+  asking for a module rather than a bigger number, and it was right to.
+* **Frontend** — the table export is detected on SHAPE, not on one label: no
+  `code` column, and at least one header that is a bare number. The obvious test
+  — keying on the grid's own code-column heading — was also the worse one: that
+  spelling is retired vocabulary (`audit:vocabulary` refused it, correctly), and
+  a detector pinned to one label breaks the day somebody renames a column.
 * **Frontend** — the table export is RECOGNISED, not aliased. **Aliasing it would
   have been the dangerous fix**: the grid writes the price for whichever tier is
   on screen and carries NO tier column, so an imported price would have no tier,
@@ -72,7 +80,7 @@ The owner states the contract in one sentence (2026-09-07):
 
 **Verified.**
 
-* `frontend/src/pages/scm-v2/Products.import.test.ts` — 6 tests, including the
+* `frontend/src/pages/scm-v2/Products.import.test.ts` — 7 tests, including the
   owner's real header row verbatim and an assertion that the normaliser is
   IDENTITY on every header the round-trip export writes (loosening a match must
   not break the file that already worked). Proved red the only way it can be:

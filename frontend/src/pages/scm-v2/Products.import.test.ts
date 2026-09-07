@@ -12,7 +12,7 @@
 // These tests exist so the third importer cannot repeat it silently.
 // ----------------------------------------------------------------------------
 import { describe, expect, test } from 'vitest';
-import { normalizeImportHeader, looksLikeGridExport } from './Products';
+import { normalizeImportHeader, looksLikeGridExport } from './products-import-headers';
 
 /** The owner's actual file, header row verbatim (sku-master-2026-09-07). */
 const GRID_EXPORT_HEADERS = [
@@ -58,11 +58,23 @@ describe('the grid export is RECOGNISED rather than guessed at', () => {
     expect(looksLikeGridExport(ROUND_TRIP_HEADERS.map(normalizeImportHeader))).toBe(false);
   });
 
-  /* The two are told apart on `product_code`, which only the grid writes. If a
-     future column called `product_code` is ever added to the round-trip export,
-     this test fails and the detector has to change with it. */
-  test('the signal is product_code, and the round-trip export does not have it', () => {
-    expect(ROUND_TRIP_HEADERS).not.toContain('product_code');
-    expect(GRID_EXPORT_HEADERS.map(normalizeImportHeader)).toContain('product_code');
+  /* The signal is SHAPE, not one label: no `code` column, and at least one
+     header that is a bare number. Pinning it to the grid's own code-column
+     heading would have been the obvious test and the worse one — that spelling
+     is retired vocabulary, and a detector tied to one label breaks the day
+     somebody renames a column. */
+  test('BOTH halves of the signal are needed', () => {
+    // a bare-number column but a `code` column too -> still the round-trip file
+    expect(looksLikeGridExport(['code', 'name', '24'])).toBe(false);
+    // no `code` column but no bare-number column either -> not the grid export
+    expect(looksLikeGridExport(['description', 'model', 'status'])).toBe(false);
+    // both -> the grid export
+    expect(looksLikeGridExport(['description', '24'])).toBe(true);
+  });
+
+  /* The round-trip export's size columns are `price_24`, never a bare `24`, so
+     it can never trip the number half of the rule. */
+  test('price_24 is not a bare number', () => {
+    expect(looksLikeGridExport(ROUND_TRIP_HEADERS.map(normalizeImportHeader))).toBe(false);
   });
 });
