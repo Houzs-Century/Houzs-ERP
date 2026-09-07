@@ -350,7 +350,7 @@ const ITEM =
   /* Mig 0230 — the incoming PO batch this line shipped against before its goods
      arrived. Surfaced so the DO detail can say which PO a short line is bound to
      instead of leaving the operator to infer it from the header badge. */
-  'committed_po_batch_no';
+  'committed_po_batch_no, ac_substituted';
 
 const PAYMENT_COLS =
   'id, delivery_order_id, paid_at, method, merchant_provider, installment_months, ' +

@@ -66,6 +66,8 @@ import {
   useUpdateMfgDeliveryOrderItem,
 } from "../../vendor/scm/lib/delivery-order-queries";
 import { useRacks } from "../../vendor/scm/lib/warehouse-queries";
+import { useWarehouses } from "../../vendor/scm/lib/inventory-queries";
+import { warehouseLabel } from "../../vendor/scm/lib/warehouse-label";
 import { useSetBreadcrumbs } from "../../hooks/useBreadcrumbs";
 import { useStaffLookup } from "../../hooks/useStaffLookup";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
@@ -115,6 +117,9 @@ type DoHeader = HoldFields & {
   customer_so_no: string | null;
   po_doc_no: string | null;
   sales_location: string | null;
+  /* The branch that shipped it — the canonical binding beside the free-text
+     `sales_location` snapshot. Owner ruling 2026-09-07: header, not per line. */
+  warehouse_id: string | null;
   address1: string | null;
   address2: string | null;
   city: string | null;
@@ -192,6 +197,11 @@ type DoItem = {
      convert (owner 2026-08-10: 送货时照片要跟着 line). Returned by the detail
      GET's ITEM columns; rendered read-only via DoLinePhotoStrip. */
   photo_urls?: string[];
+  /* Mig 20260907T2340 — AutoCount shipped an item code the named sales order
+     does not carry (the warehouse substituted the product at dispatch). The row
+     deliberately carries NO so_item_id, so this flag is the only thing that
+     tells it apart from an ordinary ad-hoc line. Owner ruling 2026-09-07. */
+  ac_substituted?: boolean;
 };
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -724,6 +734,13 @@ export function DeliveryOrderDetailV2() {
   // ONE gate, shared with the lists, the SO drawer and mobile — this was a
   // hand-copied `["edit","full"].includes(...)`, and the copies disagreed.
   const canWriteDo = canOperateDeliveryOrders(user, can, pageAccess);
+  /* Ship-from branch. The header's own warehouse_id is the canonical binding
+     (it is also step 2 of resolveDoLineWarehouses, the answer for any line with
+     no SO line behind it); `sales_location` is the free-text snapshot kept
+     beside it. Labelled through the SHARED warehouseLabel rule — code first,
+     then name — so this reads byte-identical to the SO header and the PDF.
+     Owner ruling 2026-09-07: the delivery location lives on the header. */
+  const warehousesQ = useWarehouses();
 
   const deliveryOrder =
     (detail.data as { deliveryOrder?: DoHeader } | undefined)?.deliveryOrder ??
@@ -943,6 +960,20 @@ export function DeliveryOrderDetailV2() {
                 <span className="truncate text-ink-secondary">
                   {secondary}
                 </span>
+              </div>
+            )}
+            {/* SUBSTITUTED AT DISPATCH (mig 20260907T2340). The delivered code
+                is not on this document's sales order — the warehouse shipped a
+                different product. Shown because the alternative is the system
+                presenting a code that silently does not match the order, which
+                is exactly what the owner's ruling was about. The line carries no
+                so_item_id, so the order's outstanding quantity is unchanged
+                until a person decides which line this replaces. */}
+            {l.ac_substituted && (
+              <div className="mt-1">
+                <Badge tone="warning" size="xs">
+                  Substituted at dispatch — not on the SO
+                </Badge>
               </div>
             )}
             {/* Committed batch (mig 0230) — the hard-from-DO anchor. Renders
@@ -1425,6 +1456,24 @@ export function DeliveryOrderDetailV2() {
                       : "Not scheduled"
                   }
                   muted={!deliveryOrder.customer_delivery_date}
+                />
+                {/* Which branch shipped it. Resolved id first, then the stored
+                    text snapshot; a document whose location the book could not
+                    answer says so rather than borrowing a default. */}
+                <Field
+                  label="Ship-from warehouse"
+                  value={
+                    warehouseLabel(
+                      (warehousesQ.data ?? []).find(
+                        (w) => w.id === deliveryOrder.warehouse_id
+                      ) ?? null
+                    ) ||
+                    deliveryOrder.sales_location ||
+                    "Not recorded"
+                  }
+                  muted={
+                    !deliveryOrder.warehouse_id && !deliveryOrder.sales_location
+                  }
                 />
               </div>
 

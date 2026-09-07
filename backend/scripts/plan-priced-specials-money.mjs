@@ -42,7 +42,7 @@
 // different questions and the owner is entitled to answer them separately.
 import postgres from "postgres";
 import {
-  K, buildLiveIndex, classifyLine, loadPhraseMap,
+  buildLiveIndex, classifyLine, loadPhraseMap,
 } from "./lib/special-order-phrase-mapper.mjs";
 /* The processing-date column is named in ONE place and read through it, exactly
    as check-ac-erp-reconcile.mjs does — which is why the two cannot disagree
@@ -66,15 +66,16 @@ async function main() {
 
   const addons = await sql`SELECT code, label, categories, active, selling_price_sen, cost_price_sen
     FROM scm.special_addons WHERE company_id = ${CO} ORDER BY code`;
-  const liveByCat = buildLiveIndex(addons);
-  const priceOf = new Map();
-  for (const r of addons) {
-    priceOf.set(K(r.code), { sell: Number(r.selling_price_sen || 0), cost: Number(r.cost_price_sen || 0) });
-  }
-  const isPriced = (c) => {
-    const p = priceOf.get(K(c));
-    return !!p && (p.sell !== 0 || p.cost !== 0);
-  };
+  /* buildLiveIndex returns { liveByCat, priceOf, isPriced } — take all three
+     rather than re-deriving the price rules here. `isPriced` in particular is
+     the SAME predicate the backfill uses to decide what to hold back, so this
+     report cannot disagree with it about which lines are in the money bucket.
+     The first draft assigned the whole object to `liveByCat` and hand-rolled a
+     second `isPriced`; the object mistake failed loudly on the first prod
+     dispatch (run 34138053374, `liveByCat.get is not a function`), and the
+     hand-rolled predicate would not have failed at all — it would just have been
+     a second opinion nobody compared. */
+  const { liveByCat, priceOf, isPriced } = buildLiveIndex(addons);
   const priced = addons.filter((r) => isPriced(r.code));
   log(`scm.special_addons: ${addons.length} rows, ${priced.length} PRICED (read live, never hard-coded)`);
   for (const r of priced.sort((a, b) => Number(b.selling_price_sen) - Number(a.selling_price_sen))) {
@@ -126,7 +127,7 @@ async function main() {
       const qty = Math.max(1, Number(r.qty || 1));
       let sell = 0, cost = 0;
       for (const c of pricedNow) {
-        const p = priceOf.get(K(c));
+        const p = priceOf.get(c) || { sell: 0, cost: 0 };   // keyed by the exact code
         sell += p.sell * qty;
         cost += p.cost * qty;
         const e = perCode.get(c) || { n: 0, sell: 0, unit: p.sell };
@@ -168,6 +169,42 @@ async function main() {
     }
   }
   if (list.length > SHOW) plain(`... and ${list.length - SHOW} more documents`);
+
+  /* A "total after" is only meaningful when the "total now" is. On the first
+     production run (34138211541) EVERY one of the 70 purchase orders read
+     RM 0.00 while all 157 sales orders carried a real figure — a whole class
+     behaving unlike the rest, which is the finding, not the noise.
+
+     WHY, traced 2026-09-07 and no longer an open question. Both PO importers
+     write `total_sen = SUM(qty x priceSen)` where `priceSen` is copied straight
+     from AutoCount's PODTL.UnitPrice (import-ac-outstanding-po.mjs,
+     import-ac-so-linked-pos.mjs:235). That price is 0 on a large part of the
+     migrated set — the reconcile counts 241 PO lines where the book says
+     RM 0.00 and the ERP line holds a real figure — so the header copied a zero
+     while the LINE prices were set later by something that never rolled the
+     total back up.
+
+     That also explains the apparent contradiction this comment used to record
+     as unresolved: the reconcile compares 574 PO document totals and finds
+     almost none differing, which looked impossible against a uniformly zero ERP
+     side. It is not. The BOOK's total is zero too, so 0 == 0 agrees, correctly.
+
+     So the surcharge below is right, the after-total is not a document value on
+     these rows, and the underlying defect — a header total that does not equal
+     the sum of its own lines on 70 migrated purchase orders — is real, separate
+     from this report, and recorded in docs/bugs/0675. */
+  const zeroBefore = list.filter((d) => !d.before);
+  if (zeroBefore.length) {
+    plain("");
+    log(`READ THE "would add" COLUMN, NOT "total after", ON ${zeroBefore.length} OF THESE ${list.length} DOCUMENTS.`);
+    plain(`   They carry a stored total of RM 0.00 today (SO ${zeroBefore.filter((d) => d.side === "SO").length}, ` +
+      `PO ${zeroBefore.filter((d) => d.side === "PO").length}), so "total after" is just the surcharge and NOT`);
+    plain("   the document's value. The surcharge itself is still correct. This is flagged rather than");
+    plain("   hidden because a zero on one whole document type is a finding in its own right, and it is");
+    plain("   The cause is known (docs/bugs/0675): the header copied AutoCount's own unit price, which is RM 0.00");
+    plain("   on much of the migrated set, while the LINE prices were set later and never rolled back up. The");
+    plain("   document-level check agrees on these totals because the BOOK's total is zero as well.");
+  }
 
   plain("");
   log(`per option, across every held-back line:`);

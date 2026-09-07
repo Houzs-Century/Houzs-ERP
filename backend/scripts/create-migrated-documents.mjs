@@ -36,6 +36,11 @@ import postgres from "postgres";
 import {
   buildMigratedDoPlan, indexSoLines, insertMigratedDo, loadAcErpItemMap,
 } from "./lib/migrated-do-writer.mjs";
+/* The delivery location goes on the HEADER (owner 2026-09-07, "记在单头就好").
+   The map is the SHARED one the PO importer's whId() uses — a second copy of a
+   location map is how stock silently moves between branches — and the resolution
+   onto a warehouse row is the tested spec of migration 0309's backfill. */
+import { mixedLocationDocs, resolveAcDeliveryLocation } from "./lib/ac-do-location.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -201,7 +206,15 @@ async function doDos() {
 
   /* The matcher and the writer are lib/migrated-do-writer.mjs, shared with
      sync-ac-delta.mjs. Everything below is reporting. */
-  const { plan, byDo, stats } = buildMigratedDoPlan({ rows, itemMap, soItems, done });
+  /* allowSubstitution: the owner's 2026-09-07 ruling. A book line naming a code
+     the sales order does not carry is CARRIED (marked, unlinked) instead of
+     dropped - see lib/migrated-do-writer.mjs. This is the cutover cut, the set
+     the ruling was made about. sync-ac-delta.mjs deliberately does NOT enable
+     it: that lane is ALL-OR-NOTHING with an over-delivery assertion keyed on
+     quantity, so it already REFUSES loudly rather than vanishing a document,
+     and turning substitution on there changes what that assertion measures.
+     Enabling it there is a separate, reviewed change. */
+  const { plan, byDo, stats } = buildMigratedDoPlan({ rows, itemMap, soItems, done, allowSubstitution: true });
   const { soByKey } = indexSoLines(soItems);
 
   log(`AutoCount delivery lines against open orders: ${rows.length}; unmapped code ${stats.unmapped}; no ERP SO line ${stats.noSoLine}`);
@@ -214,6 +227,17 @@ async function doDos() {
     const onOrder = soItems.filter((it) => it.ac === ex.so).map((it) => it.item_code);
     log(`   MISS ${ex.so} wanted "${ex.erp}" (exact hits ${have}); that order's ERP lines: ${onOrder.length ? onOrder.join(" | ") : "(no lines found for this linked_ac_docno)"}`);
   }
+  /* ── SUBSTITUTED CODES, NAMED ────────────────────────────────────────────
+     Every one of these is a delivery the warehouse made with a different
+     product than the order asked for. They are carried, not dropped, and the
+     row says so — but a count alone would hide WHICH order now holds a line
+     nobody has reconciled, so each is printed with its order and quantity. */
+  log("");
+  log(`── substituted at dispatch (code not on the order; carried, marked, NOT linked to an order line): ${stats.substituted} line(s) on ${new Set(stats.subLines.map((x) => x.doNo)).size} note(s)`);
+  for (const x of stats.subLines) {
+    log(`      ${x.doNo} <- ${x.erpSo} (${x.so}): ${x.code}${x.desc ? ` "${x.desc}"` : ""} qty ${x.qty} — AutoCount code ${x.acCode}; that order carries no such line`);
+  }
+  log("");
   log(`DO documents: ${byDo.size}; already mirrored: ${byDo.size - plan.length}; to create: ${plan.length} (${plan.reduce((s, d) => s + d.items.length, 0)} lines, ${plan.reduce((s, d) => s + d.items.reduce((t, i) => t + i.qty, 0), 0)} units)`);
   for (const d of plan.slice(0, 8)) log(`   ${d.doNo} <- ${d.so}: ${d.items.length} line(s)`);
 
@@ -260,15 +284,72 @@ async function doDos() {
     log(`      ${s.doNo}: ${s.kept} of ${s.bookLines} line(s) written, ${s.dropped.length} dropped`);
     for (const x of s.dropped) log(`         ${x.code}${x.desc ? ` "${x.desc}"` : ""} qty ${x.qty ?? "-"} <- ${x.so}: ${x.why}`);
   }
+
+  /* ── CONSERVATION, ASSERTED ──────────────────────────────────────────────
+     The defect this whole section exists for was not a wrong number, it was a
+     MISSING one: `byDo.size` counted the documents that survived, so the two
+     that did not were absent from every total and nothing went down. A count
+     nothing is subtracted from cannot be checked. So the run now closes the
+     books out loud: every delivery note in the cut is either a document the ERP
+     will hold, or it is NAMED above with the reason. If those two do not add
+     up, the arithmetic says so here rather than a reconcile saying it in three
+     weeks' time. */
+  const bookDocs = stats.byDoc.size;
+  const reachEbook = byDo.size + vanished.length;
+  log("");
+  log(`── conservation: ${bookDocs} delivery note(s) in the cut = ${byDo.size} reaching the ERP + ${vanished.length} named as NOT created`);
+  if (reachEbook !== bookDocs) {
+    log(`::error::CONSERVATION FAILED — ${bookDocs} note(s) in, ${reachEbook} accounted for. ${bookDocs - reachEbook} delivery note(s) are unaccounted for. Do NOT apply this run; a document is disappearing without being named.`);
+    process.exitCode = 1;
+    return;
+  }
+  const bookLines = [...stats.byDoc.values()].reduce((t, d) => t + d.bookLines, 0);
+  const keptLines = [...stats.byDoc.values()].reduce((t, d) => t + d.kept, 0);
+  const dropLines = [...stats.byDoc.values()].reduce((t, d) => t + d.dropped.length, 0);
+  log(`── conservation: ${bookLines} book line(s) = ${keptLines} carried (${stats.substituted} of them substituted) + ${dropLines} named as dropped`);
+  if (keptLines + dropLines !== bookLines) {
+    log(`::error::CONSERVATION FAILED — ${bookLines} book line(s) in, ${keptLines + dropLines} accounted for. Do NOT apply this run.`);
+    process.exitCode = 1;
+    return;
+  }
   log("");
   if (!APPLY) { log("DRY-RUN — set APPLY=1 to create. No inventory movement is written in either mode."); return; }
 
+  /* ── THE DELIVERY LOCATION, ONTO THE HEADER ──────────────────────────────
+     The book's own header field first; where the header snapshot runs behind
+     the book, the document's own lines and ONLY when they agree unanimously.
+     Anything else stays NULL and is NAMED — an unresolved location must be
+     visibly absent, never a company-blind default, because a wrong warehouse
+     reads as another branch's stock. backfill-migrated-do-warehouse.mjs applies
+     the same rule to the documents already written. */
+  const hdrLoc = new Map();
+  for (const h of gz("ac-fidelity-do-headers.json.gz")) {
+    const v = (h.SalesLocation || "").trim();
+    if (v) hdrLoc.set(h.DocNo, v);
+  }
+  const lineLocs = new Map();
+  for (const r of rows) {
+    const v = (r.Location || "").trim();
+    if (!v) continue;
+    if (!lineLocs.has(r.DoNo)) lineLocs.set(r.DoNo, new Set());
+    lineLocs.get(r.DoNo).add(v);
+  }
+  const warehouses = await sql`SELECT id, code, name FROM scm.warehouses WHERE company_id = ${CO}`;
+  const mixedDocs = mixedLocationDocs(lineLocs);
+  log(`── delivery location: documents in this cut whose lines span TWO locations: ${mixedDocs.length}`);
+  for (const m of mixedDocs) log(`      MIXED ${m.doc}: lines say ${m.locations.join(" + ")}; header says ${hdrLoc.get(m.doc) ?? "(no header row)"} — the header wins, recorded as not unanimous`);
+
   // one AutoCount delivery note = one ERP DO, so the number carries over intact
   let made = 0;
+  let noWh = 0;
   for (const d of plan) {
-    await insertMigratedDo(sql, d, { companyId: CO, sysUser: SYS_USER, debtorFallback: soDebtor.get(d.so) ?? null });
+    const where = resolveAcDeliveryLocation(d.doNo, hdrLoc, lineLocs, warehouses);
+    if (!where.warehouseId) { noWh += 1; log(`   ${d.doNo}: no delivery warehouse stamped — ${where.why}`); }
+    await insertMigratedDo(sql, d, { companyId: CO, sysUser: SYS_USER, debtorFallback: soDebtor.get(d.so) ?? null,
+      warehouseId: where.warehouseId, salesLocation: where.salesLocation });
     made += 1;
   }
+  log(`delivery warehouse stamped on ${made - noWh} of ${made} new document(s); ${noWh} left NULL and named above`);
   log(`DONE. DOs created: ${made}. No inventory movement written — by design.`);
 }
 
