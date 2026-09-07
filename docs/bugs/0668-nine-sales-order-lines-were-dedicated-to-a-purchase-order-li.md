@@ -54,9 +54,14 @@ the import mis-mapped the code — is the owner's decision, so the plan prints t
 comparison per pair (our two codes, the book's two, and which of ours disagrees)
 and stops there.
 
-**Follow-up.** The normalisation is restated in this script because
-`normItemCode` lands in `backend/scripts/lib/ac-po-line.mjs` with PR #3076,
-which was green but not on `main` when this repair had to be runnable. Fold the
-two into that one export once #3076 merges.
+**One rule, one place.** The repair imports `normItemCode` from
+`backend/scripts/lib/ac-po-line.mjs` — the same export `planSoPoDedications`
+uses to REFUSE a mismatched dedication (PR #3076, merged 2026-09-07). The guard
+that will not write one and the repair that removes one must never disagree
+about what "the same item" means, or the repair would delete links the guard
+would have allowed.
+
+**Companion entry.** `0671-the-delta-sync-dedicated-9-sales-order-lines-to-purchase-ord.md`
+covers the WRITE-side guard. This one covers the rows it cannot reach.
 
 **Ref.** fix/so-po-dedication-revert, 2026-09-07.

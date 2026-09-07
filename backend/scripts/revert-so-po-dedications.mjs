@@ -51,16 +51,13 @@ import zlib from "node:zlib";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 
-/* THE SAME NORMALISATION THE GUARD USES, and deliberately a copy for now.
-   The guard that stops NEW bad dedications is in flight as `normItemCode` in
-   scripts/lib/ac-po-line.mjs (PR #3076, green but not yet on main). Importing
-   an export that does not exist on `main` would make this repair unrunnable
-   tonight, and the nine wrong rows are live tonight — so the rule is restated
-   here, once, and this PR's ledger entry records that folding the two into one
-   lib export is the follow-up the moment #3076 lands. The SQL re-assertion in
-   the UPDATE below mirrors this exactly: BTRIM, collapse internal whitespace,
-   upper-case. If you change one, change all three. */
-const normItemCode = (s) => String(s ?? "").trim().toUpperCase().replace(/\s+/g, " ");
+/* THE SAME normItemCode THE GUARD USES — imported, not restated. The guard
+   that refuses to WRITE a mismatched dedication (`planSoPoDedications`) and
+   this repair that REMOVES one must never disagree about what "the same item"
+   means, or the repair would delete links the guard would have allowed. The
+   SQL re-assertion inside the UPDATE below mirrors it: BTRIM, collapse internal
+   whitespace, upper-case. Change one, change both. */
+import { normItemCode } from "./lib/ac-po-line.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DATA = path.join(HERE, "data");
