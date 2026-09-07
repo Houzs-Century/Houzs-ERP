@@ -630,6 +630,11 @@ between READY and PENDING.
 The OUT counterpart for goods sent back to the supplier is the **Purchase
 Return** (`/purchase-returns`), a separate module.
 
+**Every one of those four OUT paths is LINE-derived, and that is the trap.** They
+read `grn_items` and write the opposite of what the lines say. That is correct
+for a receipt whose post wrote the matching IN, and wrong for one whose post
+wrote nothing — see 5b.
+
 ---
 
 ## 5a. `ON_HOLD` — a paperwork pause, never a stock event (mig 0319)
@@ -661,6 +666,48 @@ the warehouse either way — what stops is the paperwork.
 `GoodsReceivedDetailV2`'s `effectiveOf` names it explicitly. Its fall-through is
 `draft`, so a held receipt would otherwise have read as an un-posted DRAFT — the
 opposite of the truth, since a held GRN has already posted and its stock is in.
+
+---
+
+## 5b. `migrated_no_stock` — a POSTED receipt that posted no stock (mig 0276)
+
+The 320 goods receipts carried over from AutoCount at the cutover are **POSTED
+with no inventory movement behind them, deliberately**: on-hand entered the ERP
+once through the AutoCount balance snapshot, which already counts every past
+receipt as IN. Measured on production 2026-09-07 (Actions -> *GR shape check*):
+**0 movement rows, 0 units** behind all 320.
+
+So this module carries a second document class that commits no stock, alongside
+DRAFT — and unlike DRAFT it is POSTED, so every status gate lets it through.
+`migrated_no_stock` is now read at **five** sites in `grns.ts` and the stock
+effect is skipped exactly as it is for a draft:
+
+| Site | What is skipped |
+|---|---|
+| `PATCH /:id/cancel` | the reversing OUT per line, and the rack reversal |
+| `PATCH /:id` | the warehouse-relocate OUT + IN |
+| `POST /:id/items` | the IN for the added line |
+| `PATCH /:id/items/:itemId` | the delta IN / OUT (`inventoryChange` stays false) |
+| `DELETE /:id/items/:itemId` | the reversing OUT for the removed line |
+
+**Paperwork is NOT skipped** — the PO `received_qty` recount, the audit row, the
+AutoCount outbox enqueue and the header money recompute all still run. Only the
+stock moves are suppressed, and the cancel audit note says so instead of claiming
+a reversal that did not happen (`qtyReversed` is stamped 0, not the line total).
+
+**`grnReverseWouldGoNegative` is NOT a second line of defence here, and reading
+it as one is what let this ship.** It asks whether the units are on hand; for a
+migrated receipt they are, having arrived by the snapshot rather than by this
+document. It PASSES, so the phantom OUT is written and every guard in §6 reads as
+satisfied. It is now skipped for these documents for the same reason it already
+skips service lines: with no IN to reverse, *"the goods were already consumed
+downstream"* names a cause that does not exist.
+
+Was it ever hit in production? `backend/scripts/check-migrated-cancel-exposure.mjs`
++ Actions -> *Migrated cancel exposure (read-only)* answer it. Ledger:
+`docs/bugs/0675-a-migrated-goods-receipt-cancelled-reversing-879-units-it-ne.md`.
+
+---
 
 ## 6. What locks and when
 

@@ -1815,6 +1815,36 @@ which is per-line by nature. `seedFollowerVariants` strips both.
 The rule itself, and which pages are on it, are documented in
 `docs/modules/sales-order.md`.
 
+## `migrated_no_stock` — a DELIVERED order with no OUT behind it (mig 0276)
+
+The delivery orders carried over from AutoCount are created **DELIVERED with no
+inventory movement**, deliberately: the balance snapshot already counts their
+units as gone, so an OUT here would deduct the same units twice.
+
+**The DO CANCEL path needed no change, and knowing WHY is the point.** It is
+MOVEMENT-derived: `fn_reverse_do_out` loops over
+`inventory_movements WHERE source_doc_type='DO' AND source_doc_id = …`, and
+`buildDoReversalRows` is handed the same rows. Zero movements, zero buckets,
+zero writes — safe by construction, not by a guard. The GRN cancel path is
+LINE-derived and was not (`docs/modules/grn.md` §5b).
+
+**Two DO paths were NOT movement-derived and are now guarded:**
+
+| Function | What it did to a migrated DO |
+|---|---|
+| `resyncInventoryForDo` | `delta = target_qty − current_net_out`, and `current_net_out` is 0 for every bucket — so ONE line edit wrote a full OUT for EVERY line. Reached from `POST /:id/items`, `PATCH /:id/items/:itemId`, `DELETE /:id/items/:itemId`. It returns before computing a delta now. |
+| `deductInventoryForDo` | Its idempotency guard asks *"did this DO already write an OUT?"*, and for migrated paperwork the answer is legitimately no and always will be — so the guard against double-deducting was the guard that let it in. Reachable by reverting a migrated DO to DRAFT (which reverses nothing, correctly) and re-shipping. It returns `[]` now. |
+
+`resyncInventoryForDo` is exported for this reason and pinned by
+`backend/tests/migratedNoStockDoResync.test.ts`, proved RED with the guard
+disabled: two OUT rows, the whole delivery, from one line edit. Both header
+reads carry a forward-compat retry for a database without mig 0276, the same
+shape `is_dropship` already had.
+
+Ledger:
+`docs/bugs/0675-a-migrated-goods-receipt-cancelled-reversing-879-units-it-ne.md`.
+Was it ever hit in production: Actions -> *Migrated cancel exposure (read-only)*.
+
 ## A migrated DO line's snapshot columns (2026-08-11)
 
 `scm.delivery_order_items` carries `item_group`, `variants` and `description2`
