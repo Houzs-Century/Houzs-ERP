@@ -57,6 +57,12 @@ import {
 } from '../../vendor/scm/lib/suppliers-queries';
 import { useMfgProducts, useMaintenanceConfig, type MfgCategory, type MfgProductRow } from '../../vendor/scm/lib/mfg-products-queries';
 import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
+/* A refused write must SAY so. The five grid cells below fire-and-forget, and
+   useUpdateBinding carries no onError (unlike useDeleteBinding and
+   useSetCostAnchor beside it), so a 503 from the go-live write freeze - or a
+   403, or a 504 - changed nothing and reported nothing. That is the owner's
+   exact report on 2026-09-07: "我点了main 为什么没反应". */
+import { writeFailed } from '../../vendor/scm/lib/mutation-error';
 import { useProductModels, type ProductModelRow } from '../../vendor/scm/lib/product-models-queries';
 import {
   useLocalities,
@@ -1396,11 +1402,10 @@ const MainStarCell = ({
       title={binding.is_main_supplier ? 'Main supplier' : 'Set as main'}
       onClick={(e) => {
         e.stopPropagation();
-        update.mutate({
-          supplierId,
-          bindingId: binding.id,
-          isMainSupplier: !binding.is_main_supplier,
-        });
+        update.mutate(
+          { supplierId, bindingId: binding.id, isMainSupplier: !binding.is_main_supplier },
+          { onError: writeFailed },
+        );
       }}
     >
       <Star
@@ -1570,7 +1575,7 @@ const InlineSupplierSku = ({
     const next = draft.trim();
     if (next === binding.supplier_sku) return;
     if (!next) { setDraft(binding.supplier_sku); return; }
-    update.mutate({ supplierId, bindingId: binding.id, supplierSku: next });
+    update.mutate({ supplierId, bindingId: binding.id, supplierSku: next }, { onError: writeFailed });
   };
   return (
     <input
@@ -1603,7 +1608,7 @@ const InlineUnitPrice = ({
       onCommit={(sen) => {
         const next = sen ?? 0;
         if (next === binding.unit_price_sen) return;
-        update.mutate({ supplierId, bindingId: binding.id, unitPriceSen: next });
+        update.mutate({ supplierId, bindingId: binding.id, unitPriceSen: next }, { onError: writeFailed });
       }}
     />
   );
@@ -1729,7 +1734,7 @@ const InlineSofaMatrixCell = ({
       currency={binding.currency}
       onCommit={(v) => {
         const next = setSofaCell(binding.price_matrix, height, tier, v);
-        update.mutate({ supplierId, bindingId: binding.id, priceMatrix: next });
+        update.mutate({ supplierId, bindingId: binding.id, priceMatrix: next }, { onError: writeFailed });
       }}
     />
   );
@@ -1753,7 +1758,7 @@ const InlineBedframeMatrixCell = ({
       currency={binding.currency}
       onCommit={(v) => {
         const next = setBedframeCell(binding.price_matrix, tier, v);
-        update.mutate({ supplierId, bindingId: binding.id, priceMatrix: next });
+        update.mutate({ supplierId, bindingId: binding.id, priceMatrix: next }, { onError: writeFailed });
       }}
     />
   );
