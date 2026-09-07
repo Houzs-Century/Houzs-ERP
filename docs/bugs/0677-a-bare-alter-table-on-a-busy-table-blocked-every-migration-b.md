@@ -1,6 +1,6 @@
 ## A bare ALTER TABLE on a busy table blocked every migration behind it [high]
 
-<!-- area: Migrations + deploy -->
+<!-- area: Deploy, CI, migrations -->
 
 **Symptom.** Production deploy run **34141376280** (2026-09-07 ~16:14Z /
 2026-09-08 00:14 MYT) failed:
