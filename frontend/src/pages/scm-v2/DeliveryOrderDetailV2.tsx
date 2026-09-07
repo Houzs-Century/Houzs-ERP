@@ -198,6 +198,11 @@ type DoItem = {
      convert (owner 2026-08-10: 送货时照片要跟着 line). Returned by the detail
      GET's ITEM columns; rendered read-only via DoLinePhotoStrip. */
   photo_urls?: string[];
+  /* Mig 20260907T2340 — AutoCount shipped an item code the named sales order
+     does not carry (the warehouse substituted the product at dispatch). The row
+     deliberately carries NO so_item_id, so this flag is the only thing that
+     tells it apart from an ordinary ad-hoc line. Owner ruling 2026-09-07. */
+  ac_substituted?: boolean;
 };
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -962,6 +967,20 @@ export function DeliveryOrderDetailV2() {
                     {l.warehouse_code}
                   </span>
                 )}
+              </div>
+            )}
+            {/* SUBSTITUTED AT DISPATCH (mig 20260907T2340). The delivered code
+                is not on this document's sales order — the warehouse shipped a
+                different product. Shown because the alternative is the system
+                presenting a code that silently does not match the order, which
+                is exactly what the owner's ruling was about. The line carries no
+                so_item_id, so the order's outstanding quantity is unchanged
+                until a person decides which line this replaces. */}
+            {l.ac_substituted && (
+              <div className="mt-1">
+                <Badge tone="warning" size="xs">
+                  Substituted at dispatch — not on the SO
+                </Badge>
               </div>
             )}
             {/* Committed batch (mig 0230) — the hard-from-DO anchor. Renders

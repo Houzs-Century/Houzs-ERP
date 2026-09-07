@@ -14,7 +14,7 @@
 //                    qty) twice, whatever the mapping above it decided.
 import { describe, expect, it } from 'vitest';
 
-import { buildMigratedDoPlan } from '../scripts/lib/migrated-do-writer.mjs';
+import { buildMigratedDoPlan, doNote } from '../scripts/lib/migrated-do-writer.mjs';
 
 const itemMap = new Map([
   ['AC-CHAIR', 'CHAIR-01'],
@@ -156,5 +156,151 @@ describe('the migrated delivery-order matcher', () => {
     expect(d.kept).toBe(0);
     expect(d.bookLines).toBe(1);
     expect(d.dropped[0].why).toMatch(/no line with this item code/);
+  });
+});
+
+/* Owner ruling 2026-09-07, "改我们的程式，允许换型号". The warehouse substitutes a
+   product at dispatch, so the delivery names a code the order does not carry.
+   The document must come in; the pairing must NOT be invented. These pin both
+   halves, because getting only the first is how RM-priced goods end up credited
+   against the wrong sales-order line. */
+describe('a substituted item code (allowSubstitution)', () => {
+  const orderedElse = [soLine('so-1', 'SOMETHING-ELSE')];
+
+  it('OFF by default — the behaviour of every existing caller is unchanged', () => {
+    const { plan, stats } = buildMigratedDoPlan({
+      rows: [acRow()], itemMap, soItems: orderedElse,
+    });
+    expect(plan).toHaveLength(0);
+    expect(stats.noSoLine).toBe(1);
+    expect(stats.substituted).toBe(0);
+  });
+
+  it('ON — the document exists instead of silently vanishing', () => {
+    const { plan, stats } = buildMigratedDoPlan({
+      rows: [acRow()], itemMap, soItems: orderedElse, allowSubstitution: true,
+    });
+    expect(plan).toHaveLength(1);
+    expect(plan[0].doNo).toBe('DO-000001');
+    expect(plan[0].so).toBe('HC-SO-000001');
+    expect(stats.substituted).toBe(1);
+    expect(stats.noSoLine).toBe(0);
+    expect(stats.byDoc.get('DO-000001').kept).toBe(1);
+    expect(stats.byDoc.get('DO-000001').dropped).toHaveLength(0);
+  });
+
+  it('carries the BOOK code and description, never the ordered product', () => {
+    const { plan } = buildMigratedDoPlan({
+      rows: [acRow()], itemMap, soItems: orderedElse, allowSubstitution: true,
+    });
+    const [line] = plan[0].items;
+    expect(line.code).toBe('CHAIR-01');        // the book's code, through the mapping sheet
+    expect(line.name).toBe('A CHAIR');         // the book's description
+    expect(line.code).not.toBe('SOMETHING-ELSE');
+  });
+
+  it('does NOT invent a link to a sales-order line, and says it is a substitution', () => {
+    const { plan } = buildMigratedDoPlan({
+      rows: [acRow()], itemMap, soItems: orderedElse, allowSubstitution: true,
+    });
+    const [line] = plan[0].items;
+    expect(line.soItemId).toBeNull();
+    expect(line.substituted).toBe(true);
+  });
+
+  it('prices the line from the BOOK, not from a line it is not paired to', () => {
+    const { plan } = buildMigratedDoPlan({
+      rows: [acRow({ UnitPrice: 189.9 })],
+      itemMap,
+      soItems: [soLine('so-1', 'SOMETHING-ELSE', { unit_price_sen: 999999 })],
+      allowSubstitution: true,
+    });
+    const [line] = plan[0].items;
+    expect(line.unitPriceSen).toBe(18990);
+    expect(line.unitCostSen).toBe(0);          // unknown -> zero, never borrowed
+  });
+
+  it('leaves classification blank rather than borrowing from another line', () => {
+    const { plan } = buildMigratedDoPlan({
+      rows: [acRow()],
+      itemMap,
+      soItems: [soLine('so-1', 'SOMETHING-ELSE', { item_group: 'sofa', variants: { a: 1 }, description2: 'NOT MINE' })],
+      allowSubstitution: true,
+    });
+    const [line] = plan[0].items;
+    expect(line.group).toBeNull();
+    expect(line.variants).toBeNull();
+    expect(line.desc2).toBeNull();
+  });
+
+  it('a matched line on the SAME note is untouched and stays linked', () => {
+    const { plan, stats } = buildMigratedDoPlan({
+      rows: [acRow(), acRow({ ItemCode: 'AC-SOFA' })],
+      itemMap,
+      soItems: [soLine('so-1', 'CHAIR-01')],
+      allowSubstitution: true,
+    });
+    const [matched, substituted] = plan[0].items;
+    expect(matched.soItemId).toBe('so-1');
+    expect(matched.substituted).toBeUndefined();
+    expect(substituted.soItemId).toBeNull();
+    expect(substituted.substituted).toBe(true);
+    expect(stats.byDoc.get('DO-000001').substituted).toBe(1);
+  });
+
+  it('two identical BOOK rows are two deliveries, not one duplicate collapsed away', () => {
+    /* The shape guard keys on (so_item_id, code, qty) and every substituted row
+       carries so_item_id NULL, so without the exemption the second real book
+       row would be deleted as a duplicate. */
+    const { plan, stats } = buildMigratedDoPlan({
+      rows: [acRow(), acRow()], itemMap, soItems: orderedElse, allowSubstitution: true,
+    });
+    expect(plan[0].items).toHaveLength(2);
+    expect(stats.collapsed).toBe(0);
+    expect(stats.substituted).toBe(2);
+  });
+
+  it('still refuses when the sales order itself never reached the ERP', () => {
+    // No line anywhere carries ac 'SO-000001', so there is no ERP order to hang
+    // the delivery on. That is a genuine gap and must stay a NAMED drop.
+    const { plan, stats } = buildMigratedDoPlan({
+      rows: [acRow()],
+      itemMap,
+      soItems: [soLine('so-1', 'CHAIR-01', { ac: 'SO-999999', doc_no: 'HC-SO-999999' })],
+      allowSubstitution: true,
+    });
+    expect(plan).toHaveLength(0);
+    expect(stats.substituted).toBe(0);
+    expect(stats.noSoLine).toBe(1);
+    expect(stats.byDoc.get('DO-000001').dropped[0].why).toMatch(/no imported ERP sales order/);
+  });
+
+  it('an unmapped code is still NOT substituted — the book code is unknown', () => {
+    const { plan, stats } = buildMigratedDoPlan({
+      rows: [acRow({ ItemCode: 'AC-UNKNOWN' })], itemMap, soItems: orderedElse, allowSubstitution: true,
+    });
+    expect(plan).toHaveLength(0);
+    expect(stats.unmapped).toBe(1);
+    expect(stats.substituted).toBe(0);
+  });
+});
+
+describe('the header note', () => {
+  it('names the substituted lines in words on the document itself', () => {
+    const { plan } = buildMigratedDoPlan({
+      rows: [acRow()], itemMap, soItems: [soLine('so-1', 'SOMETHING-ELSE')], allowSubstitution: true,
+    });
+    const note = doNote(plan[0]);
+    expect(note).toMatch(/mirrors AutoCount delivery DO-000001/);
+    expect(note).toMatch(/SUBSTITUTED AT DISPATCH: 1 line\(s\)/);
+    expect(note).toMatch(/CHAIR-01 x1/);
+    expect(note).toMatch(/outstanding quantity is unchanged/);
+  });
+
+  it('says nothing extra on an ordinary document', () => {
+    const { plan } = buildMigratedDoPlan({
+      rows: [acRow()], itemMap, soItems: [soLine('so-1', 'CHAIR-01')],
+    });
+    expect(doNote(plan[0])).not.toMatch(/SUBSTITUTED/);
   });
 });

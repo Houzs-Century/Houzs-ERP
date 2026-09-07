@@ -50,4 +50,20 @@ production: the pairing happens and lands on two DIFFERENT sales lines; one
 differing column restores the refusal; no fingerprint restores the refusal.
 Proved RED on the unfixed planner - 16 pass, 1 fail - and 17 pass after.
 
+**APPLIED.** Plan run 34139629930 over the seven remaining builds (2026-09-07
+23:47 local): five now plan where all seven were refused before. Apply run
+34139727635: **12 dedications written, 5 pairs ok, 0 failed**, each verified on a
+fresh connection.
+
+The guard held on the other two. HC-SO-012025 was still refused as
+`2 purchase line(s) and 2 sales line(s)`, which means the candidate rows differ on
+a column the fingerprint compares - so the widening did exactly what it is
+supposed to do and stopped. HC-SO-012277 was refused for a different reason
+entirely: its purchase lines carry no seat at all, so they are not even in the
+same bucket. Both are recorded in
+`docs/bugs/0673-ten-sofa-builds-bought-every-piece-but-dedicated-only-the-fi.md`.
+
+The audit after all of tonight's work (run 34140007029, CAP=200):
+`piece multiset MISMATCH` **3**, down from 29.
+
 **Ref.** fix/sofa-dedication-identical-rows, 2026-09-07.
