@@ -66,6 +66,35 @@ history differs:
   full, in the plan run, with an instruction to switch to `shape=append` if any
   looks like a person's typing rather than an importer's.
 
+**RUN, and what it found (2026-09-07, all times MYT).** The tool's first plan
+died on a copied column name — `docs/bugs/0673-*`, fixed the same hour, nothing
+written. It then ran for real:
+
+| run | mode | time | result |
+|---|---|---|---|
+| [`34137460950`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34137460950) | plan | 23:19 | 47 to write, **0 to discard**; rollback HELD |
+| [`34137603133`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34137603133) | **apply** | 23:24 | **52 written**; 52/52 re-read on a fresh connection carrying the book text byte-for-byte; `description2 moved: 0` |
+
+The apply wrote 5 more than the plan because the corpus grew from 1,328 to
+1,333 migrated lines in the five minutes between them — the tool reads live and
+re-decides, which is the behaviour wanted, and it is why a plan count is a
+forecast rather than a contract.
+
+**The measured shape of the purchase side**, from the apply's BEFORE block:
+
+| | lines |
+|---|---|
+| migrated company-1 PO lines | 1,333 |
+| carry a `description2` (the book's wording) | 1,094 |
+| `notes` already CONTAINED that wording — skipped, not relabelled | 1,042 |
+| `notes` empty and the book had text — **filled by this run** | **52** |
+| the book holds no Desc2 at all — blank stays blank | 239 |
+
+**Zero rows were discarded**, on the plan and the apply alike, so the header's
+"read the discard list before applying" caution turned out to be moot on this
+table: every occupied note already held the book's words. The caution stays,
+because that is a fact about today's data and not a property of the script.
+
 **Not fixed here, and named so it is not mistaken for done:** the root overwrite
 itself. `description2` is still regenerated on every save on both tables. These
 scripts preserve the text; they do not stop the overwrite. Same open item as
