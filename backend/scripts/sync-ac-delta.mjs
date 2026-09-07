@@ -61,6 +61,12 @@ import { parsePayment } from "./lib/ac-payment-udf.mjs";
 import { SOFA_MODEL_ALIAS, parseSofa } from "./lib/parse-sofa.mjs";
 import { buildFabricColourIndex } from "./lib/fabric-colour-match.mjs";
 import { acFromSoDtlKey } from "./lib/ac-po-line.mjs";
+import {
+  SO_HEADER_LEGACY_PAYLOAD_KEYS,
+  SO_PROCESSING_DATE_COLUMN,
+  SO_PROCESSING_DATE_LEGACY_COLUMNS,
+  SO_PROCESSING_DATE_PAYLOAD_KEY,
+} from "./lib/so-processing-date.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -87,7 +93,10 @@ const rpad = (s, n) => String(s).padStart(n);
    script writes. One list, because a field this script may write is a field a
    human touching it must veto. */
 const TOUCHED_NEEDLES = [
-  "proceeded_at", "proceededAt", "processing_date", "processingDate", "internal_expected_dd",
+  "proceeded_at", "proceededAt",
+  SO_PROCESSING_DATE_COLUMN, SO_PROCESSING_DATE_PAYLOAD_KEY,
+  ...SO_PROCESSING_DATE_LEGACY_COLUMNS,
+  ...Object.keys(SO_HEADER_LEGACY_PAYLOAD_KEYS),
   "Processing Date", "customer_delivery_date", "customerDeliveryDate",
   "remark2", "remark3", "remark4", "Remark 2", "Remark 3", "Remark 4",
   "sales_exemption_expiry", "salesExemptionExpiry", '"note"', "'note'",
