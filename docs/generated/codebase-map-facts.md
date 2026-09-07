@@ -11,7 +11,7 @@ FOR, which trees are dead, what must be changed in pairs — lives in
 
 ## 1. Backend route inventory
 
-171 route modules (46 in `backend/src/routes`, 125 in `backend/src/scm/routes`), 1195 endpoint registrations.
+172 route modules (47 in `backend/src/routes`, 125 in `backend/src/scm/routes`), 1199 endpoint registrations.
 
 An endpoint is a `router.<method>("/…")` registration. For the per-route authorization
 boundary see the sibling artifact `docs/generated/route-capability-matrix.csv`, which
@@ -20,7 +20,8 @@ resolves full mounted paths and their gates.
 | module | endpoints | lines |
 |---|---|---|
 | `backend/src/routes/agent-console.ts` | 33 | 1304 |
-| `backend/src/routes/announcements.ts` | 18 | 1979 |
+| `backend/src/routes/announcementApproval.ts` | 5 | 133 |
+| `backend/src/routes/announcements.ts` | 15 | 1958 |
 | `backend/src/routes/assistant.ts` | 4 | 225 |
 | `backend/src/routes/assr.ts` | 62 | 3360 |
 | `backend/src/routes/assrFormIntake.ts` | 6 | 965 |
@@ -159,7 +160,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/pwp-codes.ts` | 5 | 500 |
 | `backend/src/scm/routes/pwp-rules.ts` | 4 | 233 |
 | `backend/src/scm/routes/quotes.ts` | 4 | 321 |
-| `backend/src/scm/routes/receipts.ts` | 3 | 228 |
+| `backend/src/scm/routes/receipts.ts` | 5 | 365 |
 | `backend/src/scm/routes/reports.ts` | 6 | 1308 |
 | `backend/src/scm/routes/sales-analysis.ts` | 2 | 551 |
 | `backend/src/scm/routes/sales-invoices.ts` | 15 | 2559 |
@@ -200,13 +201,13 @@ scripts, never assumed: each runner declares its own directory, and
 | tree | runner | *.sql | highest | applied to PRODUCTION by deploy.yml | read by backend vitest |
 |---|---|---|---|---|---|
 | `backend/src/db/migrations` | `backend/scripts/migrate.mjs` | 152 | `153_sessions_stay_signed_in.sql` (153) | no | yes |
-| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 371 | `0352_acc_pv_files.sql` (0352) | YES | no |
+| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 373 | `0352_acc_pv_files.sql` (0352) | YES | no |
 
 Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its number): `0136_capture_compat_views_trips_lorries.sql.TEMPLATE`
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1996 files, 701126 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (2002 files, 702930 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -214,10 +215,10 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `frontend/src/pages/Projects.tsx` | 15144 |
 | `backend/src/scm/routes/mfg-sales-orders.ts` | 11951 |
 | `frontend/src/pages/ServiceCases.tsx` | 8817 |
-| `backend/src/services/autocount-sofa-corpus.ts` | 8509 |
+| `backend/src/services/autocount-sofa-corpus.ts` | 8581 |
 | `frontend/src/pages/Team.tsx` | 5686 |
 | `backend/src/scm/routes/delivery-orders-mfg.ts` | 5601 |
-| `frontend/src/pages/scm-v2/Products.tsx` | 5440 |
+| `frontend/src/pages/scm-v2/Products.tsx` | 5449 |
 | `backend/src/routes/projects.ts` | 5140 |
 | `backend/src/scm/routes/scan-so.ts` | 4865 |
 | `backend/src/scm/routes/mfg-purchase-orders.ts` | 4538 |
@@ -404,6 +405,7 @@ Page files by directory:
 | `frontend/src/pages/announcements` | 4 |
 | `frontend/src/pages/scm-v2` | 146 |
 | `frontend/src/pages/scm-v2/products` | 1 |
+| `frontend/src/pages/settings` | 1 |
 | `frontend/src/pages/team` | 10 |
 
 ## 5. Mobile screen inventory
@@ -415,7 +417,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileAmendments.tsx` | 147 |
 | `frontend/src/mobile/MobileAnnouncementMedia.tsx` | 171 |
 | `frontend/src/mobile/MobileAnnouncementPopup.tsx` | 152 |
-| `frontend/src/mobile/MobileAnnouncements.tsx` | 1614 |
+| `frontend/src/mobile/MobileAnnouncements.tsx` | 1644 |
 | `frontend/src/mobile/MobileApp.tsx` | 1081 |
 | `frontend/src/mobile/MobileAssistant.tsx` | 295 |
 | `frontend/src/mobile/MobileAssrCategoryChips.tsx` | 76 |

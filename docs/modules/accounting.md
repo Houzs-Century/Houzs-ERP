@@ -428,7 +428,22 @@ offered it), and every control — payer, both account pickers, description,
 amount — wears the PV form's `fieldInput` class on a grid (Date | Received
 from | Received into; Description | Account | Amount), the amount a
 MoneyInput that re-dresses to 1,800.00 on blur. Pinned in
-`Receipts.test.tsx`.
+`Receipts.test.tsx`. **Edit and re-post (later the same day — four receipts
+keyed on the wrong day: 这四张我开的还可以 edit 吗? → 做 b)**: a POSTED general
+receipt takes a pencil on its row (`frontend/src/pages/scm-v2/Receipts.tsx`,
+shown to the PV write or create key); the same form opens seeded from
+`GET /receipts/:id` (`getReceiptHandler`, header + lines) and **Save &
+re-post** sends `PATCH /receipts/:id` (`updateReceiptHandler`, the same
+keys): date, payer, landing account and lines may all change, with the
+same doors as create (money account, leaf and non-control lines); the server
+reverses the old RCT entry dated as the receipt WAS and books a fresh RCT on
+the new date — the AP invoice's edit-and-repost, the trail kept. **The number
+stays** (改日期号码不重发): a receipt dated back into August keeps its
+September series number; entry_date is what the reports and the
+reconciliation read. A void receipt is left alone (409 `receipt_cancelled`).
+Contracts: `backend/tests/receipts.test.ts` (re-post on a new date, the
+doors, the void refusal) and `Receipts.test.tsx` (the pencil, the seeded
+form, the PATCH payload).
 
 **One door to open an account (2026-09-03, the owner: 照理说应该维护
 overall chart of account 罢了)**: `POST /accounting/chart/account` creates

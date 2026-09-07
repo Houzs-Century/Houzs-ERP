@@ -8,12 +8,12 @@
 // of the sales payments — 顾客的钱 keeps its own flow).
 // ----------------------------------------------------------------------------
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Ban, Plus } from 'lucide-react';
+import { Ban, Pencil, Plus } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import {
-  useAccounts, useReceipts, useCreateReceipt, useVoidReceipt,
+  useAccounts, useReceipts, useCreateReceipt, useVoidReceipt, useReceiptDetail, useUpdateReceipt,
   type Account, type ReceiptRow,
 } from '../../vendor/scm/lib/accounting-queries';
 import { AccountSelect } from '../../vendor/scm/components/AccountSelect';
@@ -45,6 +45,7 @@ export const Receipts = () => {
   const { can } = useHouzsAuth();
   const canCreate = can('scm.payment_voucher.create');
   const canCancel = can('scm.payment_voucher.cancel');
+  const canEdit = can('scm.payment_voucher.write') || canCreate;
 
   const [month, setMonth] = useState<string>(() => new Date().toISOString().slice(0, 7));
   const listQ = useReceipts(month);
@@ -54,6 +55,7 @@ export const Receipts = () => {
 
   const createReceipt = useCreateReceipt();
   const voidReceipt = useVoidReceipt();
+  const updateReceipt = useUpdateReceipt();
 
   const [adding, setAdding] = useState(false);
   const [payer, setPayer] = useState('');
@@ -65,25 +67,56 @@ export const Receipts = () => {
   const [receiptDate, setReceiptDate] = useState<string>(() => todayMyt());
   const [lines, setLines] = useState<Line[]>([{ rid: 1, description: '', creditAccountCode: '', amountSen: 0 }]);
   const total = lines.reduce((s, l) => s + (l.amountSen > 0 ? l.amountSen : 0), 0);
+  /* Editing a POSTED general receipt (owner 2026-09-07: 收钱的日期错了 → 做 b):
+     the same form, seeded from the receipt, saved through PATCH — the server
+     reverses the old RCT entry as it was dated and books a fresh one on the
+     new date; the number stays. */
+  const [editing, setEditing] = useState<ReceiptRow | null>(null);
+  const detailQ = useReceiptDetail(editing?.id ?? null);
+  /* Seed ONCE per receipt opened — the operator's edits must not be overwritten
+     by a refetch, and a hook that hands back a fresh object must not loop. */
+  const seededFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!editing || !detailQ.data || seededFor.current === editing.id) return;
+    seededFor.current = editing.id;
+    const { receipt, lines: rows } = detailQ.data;
+    setPayer(receipt.payer_name);
+    setBank(receipt.bank_account_code);
+    setReceiptDate(String(receipt.receipt_date).slice(0, 10));
+    setLines(rows.length > 0
+      ? rows.map((l, i) => ({ rid: i + 1, description: l.description ?? '', creditAccountCode: l.credit_account_code, amountSen: Number(l.amount_sen) }))
+      : [{ rid: 1, description: '', creditAccountCode: '', amountSen: 0 }]);
+    setAdding(true);
+  }, [editing, detailQ.data]);
+  const closeForm = () => {
+    setAdding(false); setEditing(null); seededFor.current = null;
+    setPayer(''); setBank(''); setReceiptDate(todayMyt());
+    setLines([{ rid: 1, description: '', creditAccountCode: '', amountSen: 0 }]);
+  };
   const patchLine = (rid: number, patch: Partial<Line>) =>
     setLines((prev) => prev.map((l) => (l.rid === rid ? { ...l, ...patch } : l)));
 
   const save = async () => {
+    const sendLines = lines
+      .filter((l) => l.creditAccountCode && l.amountSen > 0)
+      .map((l) => ({ ...(l.description.trim() ? { description: l.description.trim() } : {}), creditAccountCode: l.creditAccountCode, amountSen: l.amountSen }));
     try {
+      if (editing) {
+        const res = await updateReceipt.mutateAsync({ id: editing.id, payerName: payer.trim(), receiptDate, bankAccountCode: bank, lines: sendLines });
+        closeForm();
+        void notify({ title: `${res.receipt.receiptNumber} re-posted`, body: `${fmtRm(res.receipt.totalSen)} now booked on ${res.receipt.receiptDate} — the old entry is reversed, the number stays.`, tone: 'info' });
+        return;
+      }
       const res = await createReceipt.mutateAsync({
         payerName: payer.trim(),
         receiptDate,
         bankAccountCode: bank,
-        lines: lines
-          .filter((l) => l.creditAccountCode && l.amountSen > 0)
-          .map((l) => ({ ...(l.description.trim() ? { description: l.description.trim() } : {}), creditAccountCode: l.creditAccountCode, amountSen: l.amountSen })),
+        lines: sendLines,
       });
-      setAdding(false);
-      setPayer(''); setBank(''); setReceiptDate(todayMyt());
-      setLines([{ rid: 1, description: '', creditAccountCode: '', amountSen: 0 }]);
+      closeForm();
       void notify({ title: `${res.receipt.receiptNumber} posted`, body: `${fmtRm(res.receipt.totalSen)} booked into the ledger.`, tone: 'info' });
     } catch (e) {
-      void notify({ title: 'Receipt failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
+      void notify({ title: editing ? 'Re-post failed' : 'Receipt failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
     }
   };
 
@@ -110,7 +143,7 @@ export const Receipts = () => {
         eyebrow="Finance"
         title="Receipts"
         actions={canCreate ? (
-          <button type="button" onClick={() => setAdding(true)}
+          <button type="button" onClick={() => { closeForm(); setAdding(true); }}
             style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--c-orange)', fontWeight: 600, cursor: 'pointer', fontSize: 'var(--fs-13)', background: 'none', border: 'none', padding: 0 }}>
             <Plus {...ICON} /> New receipt
           </button>
@@ -119,7 +152,7 @@ export const Receipts = () => {
 
       {adding && (
         <section className={styles.card}>
-          <div className={styles.cardHeader}><h2 className={styles.cardTitle}>New receipt — 录入即过账</h2></div>
+          <div className={styles.cardHeader}><h2 className={styles.cardTitle}>{editing ? `Edit ${editing.number} — 改了会重新过账` : 'New receipt — 录入即过账'}</h2></div>
           {/* Every control wears the same field dress (styles.fieldInput — the
               PV form's), on a grid: Date | Received from | Received into, then
               Description | Account | Amount per line. Owner 2026-09-07: 没办法
@@ -156,10 +189,10 @@ export const Receipts = () => {
               </Button>
               <span style={{ marginLeft: 'auto', fontFamily: 'var(--font-mono)' }}>Total {fmtRm(total)}</span>
               <Button variant="primary" size="sm" onClick={() => void save()}
-                disabled={createReceipt.isPending || total <= 0 || !payer.trim() || !bank || !receiptDate || lines.some((l) => l.amountSen > 0 && !l.creditAccountCode)}>
-                {createReceipt.isPending ? 'Posting…' : 'Post receipt'}
+                disabled={createReceipt.isPending || updateReceipt.isPending || total <= 0 || !payer.trim() || !bank || !receiptDate || lines.some((l) => l.amountSen > 0 && !l.creditAccountCode)}>
+                {editing ? (updateReceipt.isPending ? 'Re-posting…' : 'Save & re-post') : createReceipt.isPending ? 'Posting…' : 'Post receipt'}
               </Button>
-              <Button variant="ghost" size="sm" onClick={() => setAdding(false)}>Close</Button>
+              <Button variant="ghost" size="sm" onClick={closeForm}>Close</Button>
             </div>
           </div>
         </section>
@@ -209,7 +242,13 @@ export const Receipts = () => {
                     <td style={{ padding: '4px 8px', fontFamily: 'var(--font-mono)' }}>{r.moneyAccount}</td>
                     <td style={{ padding: '4px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{fmtRm(r.totalSen)}</td>
                     <td style={{ padding: '4px 8px', fontSize: 'var(--fs-11)' }}>{r.status}</td>
-                    <td style={{ padding: '4px 8px', textAlign: 'right' }}>
+                    <td style={{ padding: '4px 8px', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                      {r.kind === 'GENERAL' && r.status === 'POSTED' && canEdit && (
+                        <button type="button" aria-label={`Edit ${r.number}`} onClick={() => setEditing(r)}
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--fg-muted)', padding: 2, marginRight: 4 }}>
+                          <Pencil size={14} strokeWidth={1.75} />
+                        </button>
+                      )}
                       {r.kind === 'GENERAL' && r.status === 'POSTED' && canCancel && (
                         <button type="button" aria-label={`Void ${r.number}`} onClick={() => void onVoid(r)}
                           style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--fg-muted)', padding: 2 }}>

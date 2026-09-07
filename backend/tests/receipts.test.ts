@@ -192,3 +192,81 @@ describe('the number follows the receipt date (owner 2026-09-07: 要根据文件
     expect((await res.json() as { receipt: { receiptNumber: string } }).receipt.receiptNumber).toMatch(/-OR-2602-001$/);
   });
 });
+
+describe('edit and re-post (owner 2026-09-07: 收钱的日期错了 → 做 b)', () => {
+  const patch = (app: Hono, path: string, body: Row) => app.request(path, {
+    method: 'PATCH', body: JSON.stringify(body), headers: { 'content-type': 'application/json' },
+  });
+
+  test('changing the date re-posts — the old RCT is reversed as it was dated, a fresh RCT lands on the new date, the number stays', async () => {
+    const tables = baseTables();
+    const app = harness(tables);
+    const res = await post(app, '/', {
+      payerName: 'HOUZS VENTURE HOLDING SDN BHD', receiptDate: `${thisMonth}-07`, bankAccountCode: '310-0010',
+      lines: [{ description: 'capital', creditAccountCode: '700-0000', amountSen: 10000000 }],
+    });
+    expect(res.status, await res.clone().text()).toBe(201);
+    const made = (await res.json() as { receipt: { receiptNumber: string } }).receipt;
+    const row = tables.acc_receipts[0]!;
+
+    const edited = await patch(app, `/${row.id}`, { receiptDate: '2026-08-28' });
+    expect(edited.status, await edited.clone().text()).toBe(200);
+    const body = await edited.json() as { reposted: boolean; jeNo: string; receipt: { receiptNumber: string; receiptDate: string; totalSen: number } };
+    expect(body.reposted).toBe(true);
+    expect(body.receipt).toMatchObject({ receiptNumber: made.receiptNumber, receiptDate: '2026-08-28', totalSen: 10000000 });
+    expect(row).toMatchObject({ receipt_number: made.receiptNumber, receipt_date: '2026-08-28', status: 'POSTED' });
+
+    const rct = tables.journal_entries.filter((j) => j.source_type === 'RCT' && j.source_doc_no === made.receiptNumber);
+    expect(rct).toHaveLength(2);
+    expect(rct[0]).toMatchObject({ entry_date: `${thisMonth}-07`, reversed: true });
+    expect(rct[1]).toMatchObject({ entry_date: '2026-08-28' });
+    expect(rct[1]!.reversed).toBeFalsy();
+    const contra = tables.journal_entries.find((j) => j.source_type === 'RCT_REVERSAL')!;
+    expect(contra).toBeTruthy();
+    expect(String(contra.entry_date)).toBe(`${thisMonth}-07`);
+    /* The lines were kept as they were (none sent) and the new entry books them. */
+    const jl = tables.journal_entry_lines.filter((l) => l.journal_entry_id === rct[1]!.id);
+    expect(jl.find((l) => l.account_code === '310-0010')).toMatchObject({ debit_sen: 10000000, party_name: 'HOUZS VENTURE HOLDING SDN BHD' });
+    expect(jl.find((l) => l.account_code === '700-0000')).toMatchObject({ credit_sen: 10000000 });
+
+    const detail = await app.request(`/${row.id}`);
+    expect(detail.status).toBe(200);
+    const d = await detail.json() as { receipt: Row; lines: Row[] };
+    expect(d.receipt).toMatchObject({ receipt_number: made.receiptNumber, receipt_date: '2026-08-28' });
+    expect(d.lines).toHaveLength(1);
+  });
+
+  test('payer, bank and lines change too, with the same doors as create; a cancelled receipt is left alone', async () => {
+    const tables = baseTables();
+    tables.accounts.push({ company_id: CO, account_code: '320-0000', account_name: 'CASH', acc_money: true, is_active: true });
+    const app = harness(tables);
+    const res = await post(app, '/', {
+      payerName: 'ALLIANZ', bankAccountCode: '310-0010',
+      lines: [{ creditAccountCode: '700-0000', amountSen: 500 }],
+    });
+    expect(res.status).toBe(201);
+    const row = tables.acc_receipts[0]!;
+
+    const notMoney = await patch(app, `/${row.id}`, { bankAccountCode: '700-0000' });
+    expect(notMoney.status).toBe(400);
+    const control = await patch(app, `/${row.id}`, { lines: [{ creditAccountCode: '400-0000', amountSen: 100 }] });
+    expect(control.status).toBe(400);
+
+    const ok = await patch(app, `/${row.id}`, {
+      payerName: 'ALLIANZ INSURANCE', bankAccountCode: '320-0000',
+      lines: [{ description: 'claim', creditAccountCode: '700-0000', amountSen: 700 }, { creditAccountCode: '700-0000', amountSen: 300 }],
+    });
+    expect(ok.status, await ok.clone().text()).toBe(200);
+    expect(row).toMatchObject({ payer_name: 'ALLIANZ INSURANCE', bank_account_code: '320-0000', total_sen: 1000 });
+    expect(tables.acc_receipt_lines.filter((l) => l.receipt_id === row.id)).toHaveLength(2);
+    const active = tables.journal_entries.filter((j) => j.source_type === 'RCT' && !j.reversed);
+    expect(active).toHaveLength(1);
+    expect(tables.journal_entry_lines.filter((l) => l.journal_entry_id === active[0]!.id).find((l) => l.account_code === '320-0000')).toMatchObject({ debit_sen: 1000 });
+
+    const voided = await post(app, `/${row.id}/void`);
+    expect(voided.status).toBe(200);
+    const afterVoid = await patch(app, `/${row.id}`, { receiptDate: '2026-08-01' });
+    expect(afterVoid.status).toBe(409);
+    expect((await afterVoid.json() as { error: string }).error).toBe('receipt_cancelled');
+  });
+});
