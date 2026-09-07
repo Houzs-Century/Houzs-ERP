@@ -206,6 +206,51 @@ async function doDos() {
   }
   log(`DO documents: ${byDo.size}; already mirrored: ${byDo.size - plan.length}; to create: ${plan.length} (${plan.reduce((s, d) => s + d.items.length, 0)} lines, ${plan.reduce((s, d) => s + d.items.reduce((t, i) => t + i.qty, 0), 0)} units)`);
   for (const d of plan.slice(0, 8)) log(`   ${d.doNo} <- ${d.so}: ${d.items.length} line(s)`);
+
+  /* ── WHAT THE COUNTS ABOVE CANNOT SAY ────────────────────────────────────
+     `byDo.size` is the number of documents that produced AT LEAST ONE line, so
+     a delivery note whose every line failed to match simply is not in it — it
+     is not created, not refused, not counted. There is no number anywhere in
+     this run that goes down when that happens.
+
+     Measured on production 2026-09-07 (run 34129497431): the cut holds 84
+     delivery notes, this line printed "DO documents: 82", and DO-001800 and
+     DO-005583 had silently ceased to exist. The AutoCount vs ERP reconcile
+     then reported them as "(owner-declined)" — a gap printed as a decision,
+     which is the failure mode this whole family of scripts exists to prevent.
+     Both are un-cancelled, both deliver against orders with lines still
+     outstanding, and both name an item code their sales order does not carry.
+
+     The second shape is worse because it is silent on BOTH sides: a note whose
+     OTHER lines matched IS created, short of the lines that did not. DO-001953
+     is the live one — 4 lines in the book, 2 written — and the two it lost were
+     its only lines with a quantity, so create-migrated-invoices refused its
+     sales invoice as `nothing_to_invoice` and I-2411-0323 never came in either.
+
+     Neither shape is fixed here, deliberately: matching a delivery line to a
+     sales-order line it does not name is a JUDGEMENT about a substitution, and
+     inventing that link is computing, not copying. What is fixed is that the
+     run now SAYS so, per document, so the number is a finding and not a
+     silence. */
+  const short = [];
+  const vanished = [];
+  for (const [doNo, d] of stats.byDoc) {
+    if (!d.dropped.length) continue;
+    (d.kept === 0 ? vanished : short).push({ doNo, ...d });
+  }
+  log("");
+  log(`── delivery notes this run could not carry WHOLE: ${vanished.length + short.length} of ${stats.byDoc.size} in the cut`);
+  log(`   NOT CREATED AT ALL (every book line unmatched, so the document does not reach the ERP): ${vanished.length}`);
+  for (const v of vanished) {
+    log(`      ${v.doNo}: 0 of ${v.bookLines} line(s) matched — the ERP will have NO delivery for this AutoCount note`);
+    for (const x of v.dropped) log(`         ${x.code}${x.desc ? ` "${x.desc}"` : ""} qty ${x.qty ?? "-"} <- ${x.so}: ${x.why}`);
+  }
+  log(`   CREATED SHORT (some lines written, some dropped — the document exists but is incomplete): ${short.length}`);
+  for (const s of short) {
+    log(`      ${s.doNo}: ${s.kept} of ${s.bookLines} line(s) written, ${s.dropped.length} dropped`);
+    for (const x of s.dropped) log(`         ${x.code}${x.desc ? ` "${x.desc}"` : ""} qty ${x.qty ?? "-"} <- ${x.so}: ${x.why}`);
+  }
+  log("");
   if (!APPLY) { log("DRY-RUN — set APPLY=1 to create. No inventory movement is written in either mode."); return; }
 
   // one AutoCount delivery note = one ERP DO, so the number carries over intact

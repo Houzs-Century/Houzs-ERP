@@ -208,6 +208,19 @@ async function main() {
     for (const g of sb.__gaps) console.error(`  ${g}`);
     process.exit(1);
   }
+  /* A REFUSAL IS NOT AN ANSWER, AND IT MUST NOT EXIT 0. The __gaps guard above
+     only catches the shim's OWN `gap()` path; a throw from anywhere else inside
+     the canonical function — `pgrest-shim: unsafe identifier "so.status"` is the
+     live one — leaves the gap list empty, so the run printed "(no line changed
+     — the projection already matches the allocator's own answer)" over a
+     function that never executed, and exited green. Run 34127825188 read exactly
+     that way on 2026-09-07 while ok=false. The two lines below are the whole
+     difference between "nothing to do" and "we did not look". */
+  if (result?.ok === false) {
+    console.error(`RECOMPUTE REFUSED: ${result?.reason ?? "no reason given"}`);
+    console.error("Nothing above describes what a recompute would change — the canonical function did not run. Do NOT read the per-line section as evidence.");
+    process.exit(1);
+  }
   notice(APPLY
     ? (result?.ok === false ? "NOT COMMITTED — the canonical function refused; see its reason above." : "APPLIED — committed. Re-run in DRY-RUN (expect zero flips) and re-run the SO source-trace check: ready-no-open-lots must shrink to zero.")
     : "DRY-RUN — the canonical function ran and every write above was rolled back. Review, then APPLY=1.");
