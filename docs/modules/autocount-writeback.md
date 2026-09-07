@@ -408,6 +408,14 @@ Invoices for carried-over documents are written by
 construction. They carry `migrated_no_stock = true` (migration 0294), the same
 predicate 0276 gave `scm.grns` and `scm.delivery_orders`.
 
+What that script reads on the receipt side — which migrated GRNs exist, which
+AutoCount receipt each mirrors, and what each line is still billable for — lives
+in `backend/scripts/lib/migrated-grn-source.mjs`, not inline. It is shared with
+`backend/scripts/diag-migrated-purchase-invoices.mjs`, the read-only check that
+gives every purchase-invoice gap a name. A diagnostic that computed "what we
+would bill" its own way would explain its own copy rather than the converter, so
+there is one statement of it and two callers.
+
 Note the asymmetry worth remembering: `scm.grns.linked_ac_docno` holds the
 **PO's** AutoCount number, not the receipt's, despite migration 0276's own
 comment. A convert transfer pushed from a migrated GRN would therefore also name
