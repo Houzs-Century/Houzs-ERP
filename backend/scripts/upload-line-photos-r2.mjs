@@ -120,7 +120,28 @@ function wrangler(args) {
     shell: process.platform === 'win32',
     windowsHide: true,
   });
-  return { ok: r.status === 0, out: redact(r.stdout || ''), err: redact(r.stderr || ''), code: r.status };
+  /* `r.error` and `r.signal` are CARRIED, not dropped. spawnSync reports a
+     process that never STARTED (ENOENT, EAGAIN) or one KILLED by a signal with
+     `status === null` and BOTH streams empty — so a caller reading only
+     stdout/stderr prints a failure with no reason at all.
+
+     Measured 2026-09-07 during the line-photo upload: sixteen keys failed and
+     every one logged `!! <key>: ` with nothing after the colon. Sixteen
+     failures that could not be told apart from each other, or from a failure
+     we already understand. Same shape as the connector's old "AutoCount login
+     failed" with no user id (fixed the same day): a message that cannot
+     distinguish its causes is not a message. */
+  const why = r.error ? `spawn failed: ${r.error.message}`
+            : r.signal ? `killed by ${r.signal}`
+            : r.status === null ? 'exited with no status and no output'
+            : '';
+  return {
+    ok: r.status === 0,
+    out: redact(r.stdout || ''),
+    err: redact(r.stderr || '') || why,
+    code: r.status,
+    signal: r.signal ?? null,
+  };
 }
 
 function objectPut(key, file) {
@@ -259,7 +280,12 @@ function main() {
       fs.writeSync(doneFh, r.key + '\n');   // flushed per key: a kill loses nothing
     } else {
       failed++;
-      failures.push({ key: r.key, err: (res.err || res.out).trim().split('\n').slice(-3).join(' | ') });
+      /* Never RECORD an empty reason either. `wrangler()` now supplies one for
+         the no-output cases; this is the belt to that brace, so whatever
+         happens the row says something a reader can act on. */
+      const reason = (res.err || res.out).trim().split('\n').slice(-3).join(' | ')
+        || `no output; exit code ${res.code}${res.signal ? `, signal ${res.signal}` : ''}`;
+      failures.push({ key: r.key, err: reason });
       log(`  !! ${r.key}: ${failures.at(-1).err}`);
       if (failed >= 5 && uploaded === 0) {
         fs.closeSync(doneFh);
