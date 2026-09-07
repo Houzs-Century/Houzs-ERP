@@ -105,6 +105,8 @@ import {
   compareLine, decodeBook, runSelfTest,
 } from "./lib/variant-reconcile.mjs";
 
+import { buildScope, decodeSnapshot, isTestDoc } from "./lib/ac-scope.mjs";
+
 const here = path.dirname(fileURLToPath(import.meta.url));
 const DATA = path.join(here, "data");
 const SNAP = path.join(DATA, "ac-reconcile-truth.json.gz");
@@ -154,13 +156,8 @@ const codeMap = new Map();
 }
 
 /* ── snapshot -> typed rows ──────────────────────────────────────────────── */
-const hIdx = Object.fromEntries(snap.header_fields.map((n, i) => [n, i]));
-const lIdx = Object.fromEntries(snap.line_fields.map((n, i) => [n, i]));
-const num = (v) => (v === "" || v == null ? null : Number(v));
-const sen = (v) => (v == null || v === "" ? null : Math.round(Number(v) * 100));
 const norm = (s) => String(s ?? "").trim().toUpperCase().replace(/\s+/g, " ");
 const mapped = (s) => codeMap.get(norm(s)) ?? norm(s);
-const isTestDoc = (d) => d.startsWith("HC-") || d.startsWith("ZZ");
 /* Trap 3.  An AutoCount sofa line is one ERP line PER COMPARTMENT, so the
    codes are "DSL-8051 SOFA" against "8051-1A(LHF)" and only the MODEL is
    commensurable — which is exactly what check-migration-fidelity.mjs declares
@@ -185,92 +182,29 @@ if (!HAS_DESC2) {
   process.exit(2);
 }
 
-const book = {};
-for (const [t, payload] of Object.entries(snap.types)) {
-  const headers = new Map();
-  for (const r of payload.headers) {
-    headers.set(r[hIdx.docNo], {
-      docNo: r[hIdx.docNo],
-      docDate: r[hIdx.docDate],
-      cancelled: r[hIdx.cancelled] === "T",
-      totalSen: sen(r[hIdx.netTotal]),
-      lineCount: Number(r[hIdx.lineCount]),
-    });
-  }
-  const lines = new Map();
-  const byDtlKey = new Map();
-  for (const r of payload.lines) {
-    const l = {
-      docNo: r[lIdx.docNo],
-      dtlKey: r[lIdx.dtlKey],
-      seq: Number(r[lIdx.seq]),
-      itemKey: r[lIdx.itemKey],
-      hasCode: r[lIdx.hasCode] === "1",
-      qty: num(r[lIdx.qty]),
-      unitPriceSen: sen(r[lIdx.unitPrice]),
-      subTotalSen: sen(r[lIdx.subTotal]),
-      transferedQty: num(r[lIdx.transferedQty]),
-      fromDocType: r[lIdx.fromDocType],
-      fromDocNo: r[lIdx.fromDocNo],
-      fromSoDtlKey: r[lIdx.fromSoDtlKey],
-    };
-    if (!lines.has(l.docNo)) lines.set(l.docNo, []);
-    lines.get(l.docNo).push(l);
-    byDtlKey.set(l.dtlKey, l);
-  }
-  /* Desc2 is exported only for lines that HAVE one, so an absent key means the
-     book said nothing about the build — which is BOOK-BLANK, never unknown. */
-  const desc2 = new Map();
-  for (const [key, text] of payload.desc2 || []) desc2.set(key, text);
-  book[t] = { headers, lines, byDtlKey, desc2 };
-}
+const book = decodeSnapshot(snap);
 
 /* ── scope: the population the migration was defined to carry ────────────── */
+/* The definition itself lives in scripts/lib/ac-scope.mjs and is stated ONCE.
+   It used to be restated here, over the snapshot columns, while
+   export-ac-reimport.py stated it as SQL against the book — and two statements
+   of one rule is how a checker comes to measure a population no importer ever
+   carried.  check-ac-gap-attribution.mjs reads the same module, so the check
+   and the attribution can never disagree about who is in scope. */
+const SCOPE = buildScope(book);
+const soScope = SCOPE.SO;
+/* Diagnostic only, NOT part of the definition: the orders the DO rule keeps
+   out, reported at the end so the exclusion stays visible. */
+const soFullyDelivered = new Set();
 const soInvoicedDirect = new Set();
 for (const ls of book.IV.lines.values()) {
   for (const l of ls) if (l.fromDocType === "SO" && l.fromDocNo) soInvoicedDirect.add(l.fromDocNo);
 }
-const soScope = new Set();
-const soFullyDelivered = new Set();
 for (const [docNo, h] of book.SO.headers) {
   if (!docNo || h.cancelled || isTestDoc(docNo)) continue;
   const ls = book.SO.lines.get(docNo) || [];
   if (ls.length && ls.every((l) => (l.qty ?? 0) <= (l.transferedQty ?? 0))) soFullyDelivered.add(docNo);
-  if (!ls.some((l) => (l.qty ?? 0) > (l.transferedQty ?? 0))) continue;
-  if (soInvoicedDirect.has(docNo)) continue;
-  soScope.add(docNo);
 }
-const soDtlKeysInScope = new Set();
-for (const d of soScope) for (const l of book.SO.lines.get(d) || []) soDtlKeysInScope.add(l.dtlKey);
-
-const poScope = new Set();
-for (const [docNo, h] of book.PO.headers) {
-  if (!docNo || h.cancelled || isTestDoc(docNo)) continue;
-  const ls = book.PO.lines.get(docNo) || [];
-  const lane1 = ls.some((l) => (l.qty ?? 0) > (l.transferedQty ?? 0));
-  const lane2 = ls.some(
-    (l) =>
-      (l.fromSoDtlKey && soDtlKeysInScope.has(l.fromSoDtlKey)) ||
-      (l.fromDocNo && l.fromDocNo.split(/[,;\s]+/).some((n) => soScope.has(n))),
-  );
-  if (lane1 || lane2) poScope.add(docNo);
-}
-const grScope = new Set();
-for (const [docNo, h] of book.GR.headers) {
-  if (!docNo || h.cancelled || isTestDoc(docNo)) continue;
-  const ls = book.GR.lines.get(docNo) || [];
-  if (ls.some((l) => l.fromDocType === "PO" && poScope.has(l.fromDocNo))) grScope.add(docNo);
-}
-const doScope = new Set();
-for (const [docNo, h] of book.DO.headers) {
-  if (!docNo || h.cancelled) continue;
-  const ls = book.DO.lines.get(docNo) || [];
-  if (ls.some((l) => l.fromDocType === "SO" && soScope.has(l.fromDocNo))) doScope.add(docNo);
-}
-/* IV and PI have NO expected population — the owner declined the historical
-   import. An empty scope makes every absence land in the "decision" column,
-   which is the honest place for it. */
-const SCOPE = { SO: soScope, PO: poScope, GR: grScope, DO: doScope, IV: new Set(), PI: new Set() };
 
 /* ── ERP side ────────────────────────────────────────────────────────────── */
 const sql = postgres(url, { ssl: "require", prepare: false, max: 1, connect_timeout: 30 });
