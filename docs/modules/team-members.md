@@ -23,7 +23,12 @@
 >   outsourced teams are excluded by owner ruling (`isOutsourced`).
 > * `departments2` → `TeamDepartmentsV2.tsx`, `mail2` → `TeamMailboxesV2.tsx`
 >   (Mail Center reskin with derived personal/department/orphaned types).
-> * `permissions` → `TeamRolesV2.tsx` — the EDITABLE position-capability
+> * `permissions` → `TeamRolesV2.tsx` — since 2026-09-07 the first section
+>   ("Roles") embeds the ROLE editor from `pages/Roles.tsx` (role list, the
+>   permission checkboxes grouped by module, New Role — owner: "Roles &
+>   Permissions 里加个 Roles 分区", because the strip's Roles tab was removed
+>   and the editor was reachable only by URL `?tab=roles`, which still
+>   works); the remaining sections are the EDITABLE position-capability
 >   matrix (owner 2026-08-22: "要界面可编辑"). Grants are rows in
 >   `position_capabilities` (PG mig 0322, D1 mirror 150); the catalogue + the
 >   fail-closed gate live in `backend/src/services/positionCapabilities.ts`;
