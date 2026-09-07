@@ -60,7 +60,7 @@ furniture (AutoCount counts one whole sofa where the ERP counts its
 compartments — not commensurable), and the service pseudo-items AutoCount
 models as stock (`DISPOSE`, `TRANSPORTATION CHARGES`, `STORAGE`). The second
 of those was one-sided until this change; see
-`docs/bugs/0655-the-stock-reconciler-dropped-autocount-s-service-pseudo-item.md`.
+`docs/bugs/0656-the-stock-reconciler-dropped-autocount-s-service-pseudo-item.md`.
 
 The largest differences are accessory lines at BALAKONG (`AK-CS AIRLOFT COMFY
 PIL` ERP 93 / AutoCount 222, `AK- ESSENTIAL BOLSTER` ERP 25 / AutoCount 144).
