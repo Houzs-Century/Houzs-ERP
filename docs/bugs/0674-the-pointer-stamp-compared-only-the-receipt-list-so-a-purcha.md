@@ -46,4 +46,23 @@ the check that can see it: it names, per absent invoice, whether the purchase
 order's stored receipt list already equalled the snapshot's, which is the
 fingerprint of this skip firing.
 
-**Ref.** fix/ac-purchase-invoices, 2026-09-07.
+**Observed, against production.** Four runs, in order:
+
+| run | time (+08) | output |
+| --- | --- | --- |
+| 34139368829 | 23:38 | diagnostic: `ABSENT: 21`; `stamp_skipped_the_po_its_receipts_were_unchanged: 16` |
+| 34139512152 | 23:40 | stamp DRY-RUN: `to stamp: 73 (73 of them ONLY because the purchase-invoice list moved…)` |
+| 34140454809 | 23:51 | stamp APPLY: `DONE. POs stamped: 73. No GRN was created and no stock moved` |
+| 34140590449 | 23:53 | diagnostic: `ABSENT: 5` |
+| 34140676108 | 23:54 | reconcile: `PI DOCUMENTS — in-scope AutoCount documents absent from the ERP: 5 (GAP)` |
+
+Under the old test all 73 would have been skipped: every one of them had a
+receipt list already equal to the snapshot's.
+
+**What the fix does NOT do.** It writes the pointer, not the invoice. Those 16
+AutoCount invoices are now named on their purchase order; they are still not
+`scm.purchase_invoices` documents, and cannot be until the goods-receipt line
+prices are carried — see `docs/migrated-invoices-2026-09-07.md` §3.
+
+**Ref.** fix/ac-purchase-invoices, 2026-09-07. Code fix in PR #3105; the run
+evidence above landed with the follow-up.
