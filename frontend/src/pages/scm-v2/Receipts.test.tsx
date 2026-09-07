@@ -9,8 +9,17 @@ import { describe, expect, test, vi } from 'vitest';
 
 const createAsync = vi.fn(async (_b: unknown) => ({ ok: true, receipt: { receiptNumber: 'HC-OR-2609-001', totalSen: 88800 } }));
 const voidAsync = vi.fn(async (_id: unknown) => ({ ok: true }));
+const updateAsync = vi.fn(async (_b: unknown) => ({ ok: true, reposted: true, jeNo: 'JE-2608-009', receipt: { receiptNumber: 'HC-OR-2609-001', totalSen: 88800, receiptDate: '2026-08-28' } }));
 
+/* ONE stable object, as react-query would hand back — a fresh literal per
+   render would re-fire the seeding effect forever. */
+const DETAIL_G1 = {
+  receipt: { id: 'g1', receipt_number: 'HC-OR-2609-001', payer_name: 'ALLIANZ INSURANCE', receipt_date: '2026-09-03', bank_account_code: '310-0010', total_sen: 88800, status: 'POSTED', notes: null },
+  lines: [{ id: 'l1', line_no: 1, description: '车险赔偿', credit_account_code: '700-0000', amount_sen: 88800 }],
+};
 vi.mock('../../vendor/scm/lib/accounting-queries', () => ({
+  useReceiptDetail: (id: string | null) => ({ data: id === 'g1' ? DETAIL_G1 : undefined, isLoading: false }),
+  useUpdateReceipt: () => ({ mutateAsync: updateAsync, isPending: false }),
   isControlSpecial: (s: string | null | undefined) => s === 'SDC' || s === 'SCC' || s === 'SBS',
   useAccounts: () => ({ data: { accounts: [
     { account_code: '310-0010', account_name: 'MAYBANK', account_type: 'ASSET', parent_code: null, is_active: true, acc_money: true },
@@ -104,5 +113,32 @@ describe('the unified money-in list', () => {
     fireEvent.click(screen.getByLabelText('Void HC-OR-2609-001'));
     await waitFor(() => expect(voidAsync).toHaveBeenCalledWith('g1'));
     expect(JSON.stringify(confirmFn.mock.calls[0]![0])).toMatch(/reversed/);
+  });
+});
+
+describe('edit a posted receipt and re-post (owner 2026-09-07: 收钱的日期错了 → 做 b)', () => {
+  test('the pencil sits on GENERAL POSTED rows only, seeds the form from the receipt, and Save & re-post PATCHes the whole receipt', async () => {
+    updateAsync.mockClear();
+    draw();
+    expect(screen.getAllByLabelText(/^Edit /)).toHaveLength(1);
+    fireEvent.click(screen.getByLabelText('Edit HC-OR-2609-001'));
+    await waitFor(() => expect(screen.getByText('Edit HC-OR-2609-001 — 改了会重新过账')).toBeTruthy());
+    expect((screen.getByLabelText(/Received from/) as HTMLInputElement).value).toBe('ALLIANZ INSURANCE');
+    const date = screen.getByLabelText('Receipt date') as HTMLInputElement;
+    expect(date.value).toBe('03/09/2026');
+    expect((screen.getByLabelText('line 1 amount') as HTMLInputElement).value).toBe('888.00');
+    fireEvent.focus(date);
+    fireEvent.change(date, { target: { value: '28082026' } });
+    fireEvent.blur(date);
+    fireEvent.click(screen.getByText('Save & re-post'));
+    await waitFor(() => expect(updateAsync).toHaveBeenCalledWith({
+      id: 'g1',
+      payerName: 'ALLIANZ INSURANCE',
+      receiptDate: '2026-08-28',
+      bankAccountCode: '310-0010',
+      lines: [{ description: '车险赔偿', creditAccountCode: '700-0000', amountSen: 88800 }],
+    }));
+    /* The form closes and the next New starts clean. */
+    await waitFor(() => expect(screen.queryByText(/改了会重新过账/)).toBeNull());
   });
 });

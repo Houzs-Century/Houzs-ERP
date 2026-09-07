@@ -518,3 +518,30 @@ export const useVoidReceipt = () => {
     onSuccess: () => { void qc.invalidateQueries({ queryKey: ['receipts'] }); },
   });
 };
+/* Edit and re-post (owner 2026-09-07: 收钱的日期错了 → 做 b). The detail seeds
+   the form; the PATCH re-posts through the server (old RCT reversed as dated,
+   a fresh one on the new date, the number kept). */
+export type ReceiptDetail = {
+  receipt: { id: string; receipt_number: string; payer_name: string; receipt_date: string; bank_account_code: string; total_sen: number; status: string; notes: string | null };
+  lines: Array<{ id: string; line_no: number; description: string | null; credit_account_code: string; amount_sen: number }>;
+};
+export const useReceiptDetail = (id: string | null) => useQuery({
+  queryKey: ['receipt-detail', id],
+  enabled: !!id,
+  queryFn: () => authedFetch<ReceiptDetail>(`/receipts/${id}`),
+});
+export const useUpdateReceipt = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...body }: {
+      id: string; payerName?: string; receiptDate?: string; bankAccountCode?: string; notes?: string | null;
+      lines?: Array<{ description?: string; creditAccountCode: string; amountSen: number }>;
+    }) => authedFetch<{ ok: boolean; reposted: boolean; jeNo: string; receipt: { receiptNumber: string; totalSen: number; receiptDate: string } }>(
+      `/receipts/${id}`, { method: 'PATCH', body: JSON.stringify(body) },
+    ),
+    onSuccess: (_d, vars) => {
+      void qc.invalidateQueries({ queryKey: ['receipts'] });
+      void qc.invalidateQueries({ queryKey: ['receipt-detail', vars.id] });
+    },
+  });
+};
