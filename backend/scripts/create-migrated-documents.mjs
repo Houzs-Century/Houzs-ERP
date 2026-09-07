@@ -31,6 +31,11 @@ import zlib from "node:zlib";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
+/* The DO matcher and writer live in lib/ so sync-ac-delta.mjs can reuse the
+   rule instead of copying it. Moved 2026-09-07; the logic is unchanged. */
+import {
+  buildMigratedDoPlan, indexSoLines, insertMigratedDo, loadAcErpItemMap,
+} from "./lib/migrated-do-writer.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -41,16 +46,7 @@ const log = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m
 const sql = postgres(DST, { ssl: "require", prepare: false, max: 1 });
 const CO = 1;
 const SYS_USER = "00000000-0000-4000-8000-000000000001";
-const norm = (s) => (s || "").trim().toUpperCase().replace(/\s+/g, " ");
 const gz = (f) => JSON.parse(zlib.gunzipSync(fs.readFileSync(path.join(here, "data", f))).toString("utf8").replace(/^﻿/, ""));
-
-function parseCsvLine(line) {
-  const out = []; let cur = ""; let q = false;
-  for (let i = 0; i < line.length; i++) { const c = line[i];
-    if (q) { if (c === '"') { if (line[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += c; }
-    else { if (c === '"') q = true; else if (c === ",") { out.push(cur); cur = ""; } else cur += c; } }
-  out.push(cur); return out;
-}
 
 async function nextSeq(table, col, prefix) {
   const [{ maxno }] = await sql.unsafe(
@@ -168,10 +164,7 @@ async function doDos() {
   log("");
   log("═══ DO — deliveries AutoCount already made against still-open orders ═══");
   const rows = gz("ac-partial-dos.json.gz");
-  const csv = fs.readFileSync(path.join(here, "data", "autocount-erp-mapping-1561.csv"), "utf8").replace(/^﻿/, "").split(/\r?\n/).filter(Boolean);
-  csv.shift();
-  const byAc = new Map();
-  for (const ln of csv) { const f = parseCsvLine(ln); if (f[0]) byAc.set(norm(f[0]), (f[1] || "").trim()); }
+  const itemMap = loadAcErpItemMap(path.join(here, "data"));
 
   const done = new Set((await sql`SELECT linked_ac_docno FROM scm.delivery_orders
       WHERE company_id = ${CO} AND migrated_no_stock = true AND linked_ac_docno IS NOT NULL`)
@@ -188,119 +181,25 @@ async function doDos() {
      silence: `WHERE item_group IN ('sofa','bedframe')` then matched ZERO
      delivery-order lines corpus-wide, so the whole SO -> DO leg of
      check-sofa-chain-alignment.mjs reported "aligned" while measuring an empty
-     set. The GRN writer above (:145) always copied them, which is exactly why
-     nobody noticed. Do not drop them again. */
+     set. The GRN writer above always copied them, which is exactly why nobody
+     noticed. Do not drop them again. */
   const soItems = await sql`SELECT i.id, i.item_code, i.line_no, i.qty, i.item_group, i.variants,
       i.description2, i.unit_price_sen, i.discount_sen, i.unit_cost_sen,
       h.doc_no, h.linked_ac_docno ac
     FROM scm.mfg_sales_order_items i JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
     WHERE h.company_id = ${CO} AND h.linked_ac_docno IS NOT NULL ORDER BY i.line_no`;
-  const soByKey = new Map();
-  const soByModel = new Map();
-  for (const it of soItems) {
-    const code = norm(it.item_code);
-    const k = `${it.ac}|${code}`;
-    if (!soByKey.has(k)) soByKey.set(k, []);
-    soByKey.get(k).push(it);
-    /* A sofa arrives in the ERP as one line per COMPARTMENT, so an AutoCount
-       delivery line naming the whole model can never match a code. Index the
-       build by its model prefix as well, exactly as the photo importer does. */
-    const dash = code.indexOf("-");
-    if (dash < 0) continue;
-    const mk = `${it.ac}|${code.slice(0, dash)}`;
-    if (!soByModel.has(mk)) soByModel.set(mk, []);
-    soByModel.get(mk).push(it);
-  }
-  const sofaModelOf = (erp) => {
-    const ALIAS = { "5530": "9028", "5536": "9058", "5537": "8030", "5540": "8030" };
-    const m = (erp || "").replace(/-1S$/i, "").toUpperCase();
-    return ALIAS[m] || m;
-  };
 
-  const byDo = new Map();
-  let noSoLine = 0, unmapped = 0, exhausted = 0, collapsed = 0;
-  const missExamples = [];
-  const missCodes = new Map(); // a silent miss count hid this same class of bug twice already
-  /* TWO WAYS THIS WRITER INSERTED THE SAME DELIVERY LINE TWICE, both fixed here.
-     Measured on production 2026-08-11: 8 migrated documents, 18 surplus lines,
-     every one an EXACT duplicate of its twin - same item, same qty, same
-     so_item_id - so they are a double INSERT, not two real AutoCount lines.
+  /* The matcher and the writer are lib/migrated-do-writer.mjs, shared with
+     sync-ac-delta.mjs. Everything below is reporting. */
+  const { plan, byDo, stats } = buildMigratedDoPlan({ rows, itemMap, soItems, done });
+  const { soByKey } = indexSoLines(soItems);
 
-       1. `targets` took cands[0] unconditionally, so a SECOND AutoCount row of
-          the same item code on the same order produced a second delivery line
-          pointing at the FIRST sales-order line. Consuming the candidates in
-          order fixes the duplicate AND the mis-link underneath it: two rows of
-          one code are two deliveries against two different lines.
-       2. the sofa branch re-pushed EVERY compartment of a build each time
-          another AutoCount row named the same model, multiplying a 3-piece
-          sofa by however many rows AutoCount wrote.
-
-     HC-SO-001920 is the visible one: 1 unit ordered, 4 delivery lines. */
-  const taken = new Map();      // `DoNo|SoNo|code`  -> candidate SO lines already claimed
-  const modelDone = new Set();  // `DoNo|SoNo|model` -> the whole build is already on this DO
-  for (const r of rows) {
-    const erp = byAc.get(norm(r.ItemCode));
-    if (!erp) { unmapped++; continue; }
-    /* Exact code first, then the build's compartment lines. A sofa AutoCount
-       shipped as one whole unit corresponds to EVERY compartment of that build
-       here, so all of them are marked delivered - otherwise the pieces stay
-       outstanding and the set can be shipped a second time. */
-    const cands = soByKey.get(`${r.SoNo}|${norm(erp)}`) ?? [];
-    let targets = null;
-    if (cands.length) {
-      const ck = `${r.DoNo}|${r.SoNo}|${norm(erp)}`;
-      const used = taken.get(ck) ?? 0;
-      /* Out of distinct sales-order lines to claim. Reusing one is what created
-         the duplicates, so the row is skipped and counted LOUDLY instead - the
-         same choice backfill-ac-line-keys.mjs makes when a group's counts
-         disagree, and for the same reason: a wrong link is worse than none. */
-      if (used >= cands.length) { exhausted++; continue; }
-      taken.set(ck, used + 1);
-      targets = [cands[used]];
-    } else {
-      const mk = `${r.DoNo}|${r.SoNo}|${sofaModelOf(erp)}`;
-      if (modelDone.has(mk)) { collapsed++; continue; }
-      const pieces = soByModel.get(`${r.SoNo}|${sofaModelOf(erp)}`);
-      if (pieces && pieces.length) { modelDone.add(mk); targets = pieces; }
-    }
-    if (!targets || !targets.length) {
-      noSoLine++;
-      missCodes.set(erp, (missCodes.get(erp) ?? 0) + 1);
-      if (missExamples.length < 5) missExamples.push({ so: r.SoNo, erp: norm(erp) });
-      continue;
-    }
-    if (!byDo.has(r.DoNo)) byDo.set(r.DoNo, { doNo: r.DoNo, date: r.DoDate, so: targets[0].doc_no,
-      debtorCode: r.DebtorCode || null, debtorName: (r.DebtorName || "").trim() || null, items: [] });
-    for (const t of targets) {
-      byDo.get(r.DoNo).items.push({ code: t.item_code, name: r.LineDesc, qty: Math.round(Number(r.Qty || 0)),
-        soItemId: t.id, group: t.item_group ?? null, variants: t.variants ?? null, desc2: t.description2 ?? null,
-        /* The MONEY, from the same row the normal create path reads it from.
-           Omitted until docs/bugs/0617-the-migrated-delivery-orders-carried-no-money-at-all.md
-           while the GRN writer above always carried it. */
-        unitPriceSen: t.unit_price_sen ?? 0, discountSen: t.discount_sen ?? 0, unitCostSen: t.unit_cost_sen ?? 0 });
-    }
-  }
-  /* The invariant, asserted rather than inferred. Whatever the mapping above
-     decides, one document may not carry the same sales-order line at the same
-     quantity twice. The two fixes above remove the known causes; this refuses
-     the SHAPE, so a future mapping path cannot reintroduce it silently. */
-  for (const d of byDo.values()) {
-    const seen = new Set(); const keep = [];
-    for (const it of d.items) {
-      const k = `${it.soItemId}|${norm(it.code)}|${it.qty}`;
-      if (seen.has(k)) { collapsed++; continue; }
-      seen.add(k); keep.push(it);
-    }
-    d.items = keep;
-  }
-
-  const plan = [...byDo.values()].filter((d) => !done.has(d.doNo));
-  log(`AutoCount delivery lines against open orders: ${rows.length}; unmapped code ${unmapped}; no ERP SO line ${noSoLine}`);
-  log(`duplicate-guard: ${exhausted} row(s) skipped for having no unclaimed SO line left; ${collapsed} duplicate line(s) refused`);
-  for (const [code, n] of [...missCodes.entries()].sort((a, b) => b[1] - a[1]).slice(0, 15)) log(`   no ERP line for ${code} x${n}`);
+  log(`AutoCount delivery lines against open orders: ${rows.length}; unmapped code ${stats.unmapped}; no ERP SO line ${stats.noSoLine}`);
+  log(`duplicate-guard: ${stats.exhausted} row(s) skipped for having no unclaimed SO line left; ${stats.collapsed} duplicate line(s) refused`);
+  for (const [code, n] of [...stats.missCodes.entries()].sort((a, b) => b[1] - a[1]).slice(0, 15)) log(`   no ERP line for ${code} x${n}`);
   /* A count of misses is not a diagnosis. For the first few, print what the ERP
      order ACTUALLY has on it, so the mismatch is visible instead of inferred. */
-  for (const ex of missExamples.slice(0, 5)) {
+  for (const ex of stats.missExamples.slice(0, 5)) {
     const have = (soByKey.get(`${ex.so}|${ex.erp}`) ?? []).length;
     const onOrder = soItems.filter((it) => it.ac === ex.so).map((it) => it.item_code);
     log(`   MISS ${ex.so} wanted "${ex.erp}" (exact hits ${have}); that order's ERP lines: ${onOrder.length ? onOrder.join(" | ") : "(no lines found for this linked_ac_docno)"}`);
@@ -312,68 +211,7 @@ async function doDos() {
   // one AutoCount delivery note = one ERP DO, so the number carries over intact
   let made = 0;
   for (const d of plan) {
-    const doNo = "HC-" + d.doNo;
-    await sql.begin(async (tx) => {
-      const [hdr] = await tx`INSERT INTO scm.delivery_orders
-          (do_number, so_doc_no, debtor_code, debtor_name, status, do_date, currency,
-           company_id, created_by, notes, migrated_no_stock, linked_ac_docno)
-        VALUES (${doNo}, ${d.so}, ${d.debtorCode},
-                ${d.debtorName ?? soDebtor.get(d.so) ?? "(unnamed)"},
-                'DELIVERED', ${(d.date || "").slice(0, 10) || null}, 'MYR',
-                ${CO}, ${SYS_USER},
-                ${`mirrors AutoCount delivery ${d.doNo}. No stock movement: the balance snapshot already counts these units as delivered.`},
-                true, ${d.doNo})
-        RETURNING id`;
-      /* THE PRICE COLUMNS ARE NOT OPTIONAL. They were omitted here while the GRN
-         half of this same script (doGrns, above) wrote unit_price_sen and
-         line_total_sen — one file, two answers. They default to 0 NOT NULL, so
-         the omission is silent, and it is NOT cosmetic: the DO line's price
-         prefills a new Sales Invoice (do-line-remaining.ts:326 ->
-         SalesInvoiceFromDo.tsx:321), the SI price-drift guard skips a zero by
-         design ("no ratio to drift from"), and migrated_no_stock gates the SI
-         and the PI but NOT the DO->SI path. An operator invoicing one of these
-         would have been prefilled RM 0.00 with nothing said. See
-         docs/bugs/0617-the-migrated-delivery-orders-carried-no-money-at-all.md.
-         The source is the SO line, which is exactly where the normal create path
-         takes it from (delivery-orders-mfg.ts:4058, fed by
-         soDeliverableRemaining). */
-      let hdrTotal = 0;
-      for (const it of d.items) {
-        const unit = Math.round(Number(it.unitPriceSen ?? 0));
-        const cost = Math.round(Number(it.unitCostSen ?? 0));
-        /* THE DISCOUNT IS DELIBERATELY NOT CARRIED, and this is the one place
-           this writer departs from the interactive create path
-           (delivery-orders-mfg.ts:4048 does `(qty * unit) - discount`).
-           `mfg_sales_order_items.discount_sen` is a LINE-level amount, not a
-           per-unit one, and one migrated SO line is routinely split across
-           several AutoCount delivery notes (that is what `taken`/`used` above
-           is counting). Copying the whole discount onto each split would deduct
-           it once per delivery. Dividing it needs a rule nobody has written.
-           A per-UNIT price is well defined and is what the invoice prefill
-           needs; the discount stays 0 and the operator sees the undiscounted
-           figure rather than an invented one. Say it out loud rather than
-           quietly picking a split. */
-        const disc = 0;
-        const lineTotal = Math.max(0, Math.round(Number(it.qty) * unit));
-        hdrTotal += lineTotal;
-        await tx`INSERT INTO scm.delivery_order_items
-            (delivery_order_id, so_item_id, item_code, description, uom, qty, company_id,
-             item_group, variants, description2,
-             unit_price_sen, discount_sen, line_total_sen, unit_cost_sen, line_cost_sen)
-          VALUES (${hdr.id}, ${it.soItemId}, ${it.code}, ${it.name || null}, 'UNIT', ${it.qty}, ${CO},
-                  ${it.group}, ${it.variants ? sql.json(it.variants) : null}, ${it.desc2},
-                  ${unit}, ${disc}, ${lineTotal}, ${cost}, ${Math.round(Number(it.qty) * cost)})`;
-      }
-      /* The header total is Sigma line_total_sen everywhere else
-         (delivery-orders-mfg.ts:461). Written here so the list's Amount column
-         and its Revenue tile do not read RM 0.00 over priced lines. The category
-         buckets and margin are deliberately left to the app's own recompute —
-         restating that split here would be a second copy of a rule that already
-         has one home. */
-      await tx`UPDATE scm.delivery_orders
-                  SET local_total_sen = ${hdrTotal}, line_count = ${d.items.length}
-                WHERE id = ${hdr.id}`;
-    });
+    await insertMigratedDo(sql, d, { companyId: CO, sysUser: SYS_USER, debtorFallback: soDebtor.get(d.so) ?? null });
     made += 1;
   }
   log(`DONE. DOs created: ${made}. No inventory movement written — by design.`);
