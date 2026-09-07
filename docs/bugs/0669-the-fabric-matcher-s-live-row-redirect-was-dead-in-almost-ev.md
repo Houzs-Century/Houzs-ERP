@@ -1,6 +1,6 @@
 ## The fabric matcher's live-row redirect was dead in almost every caller [high]
 
-<!-- area: Sofa / fabric library -->
+<!-- area: Sofa, fabric, variants -->
 
 **Symptom.** The recorded trap from the 2026-09-02 cutover clean-up: *the fabric
 library renumbered itself on 2026-08-11 and a matcher answered the DEAD row.*
