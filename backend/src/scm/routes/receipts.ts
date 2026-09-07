@@ -312,7 +312,9 @@ export const updateReceiptHandler = async (c: any): Promise<Response> => {
   const totalSen = lines.reduce((s, l) => s + l.amountSen, 0);
 
   const { error: upErr } = await sb.from('acc_receipts').update({
-    payer_name: payer, receipt_date: receiptDate, bank_account_code: bank, total_sen: totalSen, notes,
+    /* The coercion sits at the write (tests/dateWriteCoercion.test.ts): a
+       missing or unreadable date keeps the receipt's own. */
+    payer_name: payer, receipt_date: dateOrNull(body.receiptDate) ?? oldDate, bank_account_code: bank, total_sen: totalSen, notes,
   }).eq('company_id', coId).eq('id', receipt.id);
   if (upErr) return c.json({ error: 'save_failed', reason: upErr.message }, 500);
   if (body.lines !== undefined) {
