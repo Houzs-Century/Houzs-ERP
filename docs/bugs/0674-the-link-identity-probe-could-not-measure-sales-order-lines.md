@@ -50,4 +50,20 @@ split by whether the sharing rows name the same product, because the first run
 could not tell one book line legitimately expanded into several sofa-compartment
 lines (benign) from a genuine key collision (not benign).
 
-**Ref.** fix/link-identity-probe-corrections, 2026-09-07.
+**Verified.** Re-run 34139187692, 2026-09-07 23:37 local, `success`. The
+sales-order lines are now measured (14,764 of 15,613 carry a DtlKey) and the
+colour section compares 295 / 252 / 976 / 38 / 94 real pairs on its five live
+edges instead of zero.
+
+**A THIRD one, found by the fix.** The duplicate-DtlKey split added here — "of
+those, how many carry rows naming DIFFERENT products" — was supposed to separate
+a sofa's compartments from a real key collision. It answered 295 of 296 and 98 of
+98, and it is worthless: **a sofa's compartments have different item codes by
+construction** (`MODEL-1S`, `MODEL-2S`, `MODEL-CNR`). It is the same defect as the
+`colourCode` one, one layer up, and it is recorded rather than quietly replaced
+because the pattern is the point: three checks in one file, each written
+carefully, each answering a question next to the one asked. The discriminator
+that WOULD work is the model prefix — the code before the first dash — and it is
+not written yet. Do not quote 295 or 98 as collisions.
+
+**Ref.** fix/link-identity-probe-corrections + docs/link-identity-run2, 2026-09-07.
