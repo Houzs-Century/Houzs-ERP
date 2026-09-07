@@ -53,6 +53,7 @@ run-prod`)。少数 workflow 不收 target(如 `refresh-so-tail-from-book.yml`�
 | 4 | `topup-ac-po-lines.yml` | apply 要 `confirm="I HAVE REVIEWED THE DRY-RUN"` |
 | 5 | `stamp-ac-grn-refs.yml` | 盖收货/采购发票号 |
 | 6 | `create-migrated-documents.yml` | `kind=both`;GRN+DO 镜像,**不动库存** |
+| 6b | `repair-migrated-do-prices.yml` | 先 `mode=plan`,再 `mode=apply` + `confirm="THE PRICE COMES FROM THE SALES ORDER"`。**第 6 步在 2026-09-02 之前建的交货单一分钱都没写**(0617):金额栏和上面的营业额都是 RM 0.00,而且这个 0 会带进新开的销售发票。价钱从它自己那张销售单的行上抄,销售单本来就是 0 的行不动 |
 | 7 | `create-migrated-invoices.yml` | `mode=apply` + 同上确认句;金额一分不差才开,DIFFERS 名单呈 owner |
 
 ⚠️ **两路 PO 导入现在会「拒绝写不存在的件号」**(2026-08-31,
@@ -66,6 +67,21 @@ run-prod`)。少数 workflow 不收 target(如 `refresh-so-tail-from-book.yml`�
 存在**的 ERP 件号(或先把产品开出来),再重跑。旧单据的修补是另一支:
 `repair-orphan-sofa-codes.yml`,先 `mode=plan` 看清单。
 
+
+⚠️ **重新切过快照(`data/*.gz`)之后,阶段 1 要整段重跑一次。** 数据档进了 main
+不等于写进了 ERP——写进去的是上面这几个 workflow,它们只有人 dispatch 才会动。
+2026-09-07 上线当天就是这样:早上 PR #3029 重切了 `ac-gr-refs.json.gz` 和
+`ac-partial-dos.json.gz`,两支写入器上一次跑还是 8-29,对帐于是报出 32 张收货单
+和 12 张交货单「缺」——44 张全部就躺在已经进了库的档案里。
+
+**看到「缺」先跑这一支,它不用连数据库、几秒就有答案:**
+
+```bash
+node backend/scripts/check-ac-gap-attribution.mjs
+```
+
+它对每一类说:在册几张、其中几张**已经在**已提交的来源档里、几张真的哪里都没有。
+已经在来源档里的,要的是 dispatch,不是写新的导入器。
 ## 阶段 2 — 库存(双向对平)
 
 | # | workflow | 备注 |
@@ -255,6 +271,45 @@ resolve 再跑一趟,`already attached` 应该等于上一趟的 `photo keys pla
 > 是整个 `FurtherDescription` 字段覆盖式重写,所以在回写这类行之前必须先读回账本
 > 现有的值,否则第二张会被**抹掉**。详见
 > `docs/autocount-further-description-photos.md` §7 问题 8。
+
+#### 完成实录 — 2026-09-07 上线日,照片这一段收尾
+
+这一段是**做完了**的记录,数字全部是当天从 R2 和 prod 读回来的,不是打算做的事。
+
+| 关卡 | 结果 |
+|---|---|
+| 上传 R2 | **850 / 850**,失败 0 |
+| `MODE=verify` **整批**(不是抽样) | **850 / 850** 位元组和 manifest 完全一致;缺 0、错 0、无法核对 0 |
+| 挂回 ERP | SO **610 / 610** key、PO **240 / 240** key;再跑一趟 `apply=1` 印 `already attached: 610 / 240`、`keys attached: 0`(幂等确认) |
+| 账本有照片、ERP 也有这一行 | SO **517 / 517 到位**、PO **222 / 222 到位**,两边 **missing 都是 0** |
+
+上线前那次是 SO 到位 510(缺 7)、PO 到位 221(缺 1);现在两边都归零。
+
+**整批核对怎么跑得完**:`MODE=verify` 一次只抽 `SAMPLE` 把 key,而且每读一个 key
+就要开一个 wrangler 行程,850 个串著跑要一个多钟头。做法是把 resolve 的计划档
+**切成几段**,每段当一个独立的 `PLAN` 喂给 `MODE=verify`,`SAMPLE` 设得比那段大,
+几段同时跑——各段的联集就是整批,脚本一个字都不用改。当天切成 SO 5 段 + PO 2 段,
+七个行程并行,**12 分钟**跑完 850 个 key。
+
+**挂不上的那些,原因说清楚**(`probe-line-photo-gap.yml` 印的就是这张表):
+
+| | SO | PO |
+|---|---|---|
+| 账本拍了照的行 | 2,761 | 2,409 |
+| ERP 根本没有这一行 | 2,244 | 2,187 |
+| ├ 整张单当初就没迁进来(cutover 只搬未结清的单) | 2,151 | 2,185 |
+| └ 单在、行对不上 | 93 | 2 |
+| ERP 有这一行 | 517 | 222 |
+| └ **照片已到位** | **517** | **222** |
+
+所以剩下的缺口**不是照片没搬**,是那些单据本来就不在 ERP 里。要它们的照片,得先把
+那些单迁进来,不是再跑一次照片。
+
+> 另外记一笔:`probe-line-photo-coverage.yml` 数的是**行(row)**,
+> `probe-line-photo-gap.yml` 数的是**账本的那一行(line)**。一张沙发是账本一行、
+> ERP 好几行,照片按规矩只挂第一行,所以 coverage 那张表会看到 SO 322 / PO 134 个
+> row「没照片」——那是**设计如此**,不是缺口。看缺口请看 gap 那张。
+> 还有 SO 有 **124 行带著照片但没有 AutoCount 行号**,上面这个漏斗看不到它们。
 
 ## 阶段 4 — 重算与终验(全绿才算完)
 
