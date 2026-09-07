@@ -13,6 +13,7 @@ import { env } from "cloudflare:test";
 import { Hono } from "hono";
 import { beforeAll, describe, expect, test } from "vitest";
 import announcementRoutes from "../src/routes/announcements";
+import announcementApprovalRoutes from "../src/routes/announcementApproval";
 
 type User = {
   id: number;
@@ -48,6 +49,7 @@ app.use("*", async (c: never, next: never) => {
   await (next as unknown as () => Promise<void>)();
 });
 app.route("/api/announcements", announcementRoutes);
+app.route("/api/announcements", announcementApprovalRoutes);
 
 type Reply = { status: number; success?: boolean; error?: string; data?: any };
 async function call(as: User, method: string, path: string, body?: unknown): Promise<Reply> {

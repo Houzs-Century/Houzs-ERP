@@ -387,7 +387,16 @@ see §6.
 
 ## 3. Backend
 
-`backend/src/routes/announcements.ts` (1,355 lines).
+`backend/src/routes/announcements.ts` (about 1,940 lines — at the repo's file-size
+ceiling, so it may not grow) plus, since 2026-09-07,
+`backend/src/routes/announcementApproval.ts`: the `POST /:id/submit`,
+`/:id/approve`, `/:id/reject` and `GET /:id/files` routes, a second Hono router
+mounted on the SAME `/api/announcements` prefix right after the main one in
+`backend/src/index.ts`. It imports the main router's exported row helpers
+(`getScopedAnnouncement`, `salesDirectorScope`, `sdBlockedFromRow`, `toPublic`,
+`normalizeAttachments`, `actorOf`) so the two files cannot disagree; the D1
+suites (`announcementsApproval.test.ts`, `announcementsAttachmentPolicy.test.ts`)
+mount both routers.
 
 ### Read path — two cohorts, one company gate
 

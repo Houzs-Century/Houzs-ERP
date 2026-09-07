@@ -443,6 +443,14 @@ to the legacy `c.env.GIT_SHA` and then null, so the watchdog's rogue-deploy
 detection is unchanged (a bare clone carries `"dev"`/an old sha). Pinned by
 `backend/tests/buildInfoSha.test.ts`.
 
+## Route mounts worth knowing (`backend/src/index.ts`)
+
+`/api/announcements` is served by TWO routers mounted on the same prefix, in
+order: `routes/announcements.ts` (the module, at its file-size ceiling) and
+`routes/announcementApproval.ts` (2026-09-07: submit / approve / reject /
+files). Hono tries them in mount order, so a path both could match belongs to
+the first; today none overlaps. See `docs/modules/announcements.md` §3.
+
 ## The cron slots (`backend/src/index.ts` `scheduled()`)
 
 Five wrangler cron expressions fan out inside one `scheduled()` handler; each

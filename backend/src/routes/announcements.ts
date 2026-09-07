@@ -19,7 +19,7 @@
 // ============================================================
 import { Hono } from "hono";
 import type { Env } from "../types";
-import { requirePermission, requirePermissionOrSalesDirector } from "../middleware/auth";
+import { requirePermissionOrSalesDirector } from "../middleware/auth";
 import { hasPermission } from "../services/permissions";
 import { baseKeyOf, isThumbKey, THUMB_MAX_BYTES, thumbKeyFor } from "../services/photoThumbs";
 import { isSalesDirectorUser } from "../services/pmsAccess";
@@ -47,19 +47,10 @@ import {
 } from "../lib/announcementRichText";
 import { postPersonalNotice } from "../services/personalNotice";
 import { escalatePending } from "../services/announcementEscalation";
-import {
-  ApprovalError,
-  APPROVE_PERMISSION,
-  approveAnnouncement,
-  recordSubmission,
-  rejectAnnouncement,
-  submitForApproval,
-  type Actor,
-} from "../services/announcementApproval";
+import { APPROVE_PERMISSION, recordSubmission, type Actor } from "../services/announcementApproval";
 import {
   ATTACHMENT_REQUIRED_MESSAGE,
   attachmentRequiredForAnnouncements,
-  listAttachmentLog,
   syncAttachmentLog,
 } from "../services/announcementFiles";
 import {
@@ -202,7 +193,7 @@ function readTranslations(r: AnnouncementRow): AnnouncementTranslations | null {
 }
 
 
-function normalizeAttachments(raw: unknown): AnnouncementAttachment[] {
+export function normalizeAttachments(raw: unknown): AnnouncementAttachment[] {
   let arr: unknown = raw;
   if (typeof arr === "string") {
     const s = arr.trim();
@@ -280,7 +271,7 @@ function readBodyHtml(
   return { html: hasRichFormatting(canonical) ? canonical : null, canonical };
 }
 
-function toPublic(r: AnnouncementRow) {
+export function toPublic(r: AnnouncementRow) {
   return {
     id: r.id,
     title: r.title,
@@ -392,7 +383,7 @@ function genId(): string {
 // A notice targeting only companies the caller does NOT belong to resolves to
 // null (callers answer 404, indistinguishable from a nonexistent id). The gate
 // is skipped (fail-open) when the caller's allow-list is unresolved.
-async function getScopedAnnouncement(
+export async function getScopedAnnouncement(
   c: { env: Env; get: (k: string) => unknown },
   id: string,
 ): Promise<AnnouncementRow | null> {
@@ -443,7 +434,7 @@ function companyCanSee(r: AnnouncementRow, allowed: number[] | undefined): boole
 // Director; a `*`/announcements.write holder is never restricted.
 type SdScope = { restricted: boolean; deptId: number | null };
 
-function salesDirectorScope(c: { get: (k: string) => unknown }): SdScope {
+export function salesDirectorScope(c: { get: (k: string) => unknown }): SdScope {
   const user = c.get("user") as AuthUser | undefined;
   const granted = user?.permissions_set ?? user?.permissions ?? [];
   if (
@@ -540,7 +531,7 @@ async function enforceSalesDirectorScope(
 // True when a restricted Sales Director is acting on a notice they did NOT
 // author. Ownership-gates edit / delete / remind / receipts so a Sales Director
 // can only manage their OWN posts (a full announcer is never restricted).
-function sdBlockedFromRow(scope: SdScope, row: AnnouncementRow, userId: number | null): boolean {
+export function sdBlockedFromRow(scope: SdScope, row: AnnouncementRow, userId: number | null): boolean {
   if (!scope.restricted) return false;
   const author = row.createdBy ?? row.created_by ?? null;
   return author == null || author !== userId;
@@ -1389,90 +1380,11 @@ app.post("/", requirePermissionOrSalesDirector("announcements.write"), async (c)
   return c.json({ success: true, data: row ? toPublic(row) : null }, 201);
 });
 
-// ============================================================
-// Approval workflow (mig 20260906T1509, owner 2026-09-06) — the transitions
-// live in services/announcementApproval.ts; these are the gates.
-//   POST /:id/submit   — DRAFT / REJECTED → PENDING_APPROVAL (the author's
-//                        managers: announcements.write, or a Sales Director
-//                        on their own post)
-//   POST /:id/approve  — PENDING_APPROVAL → APPROVED, mints the ref no
-//                        (announcements.approve)
-//   POST /:id/reject   — PENDING_APPROVAL → REJECTED, { reason } required
-//                        (announcements.approve)
-// ============================================================
-function actorOf(user: AuthUser | undefined): Actor {
+/** The audit / notice actor for the signed-in user (POST, PATCH and the
+ *  approval router share it). */
+export function actorOf(user: AuthUser | undefined): Actor {
   return { id: user?.id ?? null, email: user?.email ?? null, name: user?.name ?? null };
 }
-
-async function answerTransition(
-  c: { env: Env; get: (k: string) => unknown; json: (b: unknown, s?: number) => Response },
-  id: string,
-  run: () => Promise<unknown>,
-): Promise<Response> {
-  try {
-    await run();
-  } catch (e) {
-    if (e instanceof ApprovalError) return c.json({ success: false, error: e.message }, e.status);
-    throw e;
-  }
-  const fresh = await getScopedAnnouncement(c, id);
-  return c.json({ success: true, data: fresh ? toPublic(fresh) : null });
-}
-
-// GET /:id/files — the attachment log (mig 20260907T0715): who attached /
-// removed which file and when. For the people who manage or approve the
-// notice (a Sales Director on their own post); readers get the manifest only.
-app.get("/:id/files", async (c) => {
-  const user = c.get("user");
-  const granted = user.permissions_set;
-  const sd = salesDirectorScope(c);
-  const allowed =
-    hasPermission(granted, "*") ||
-    hasPermission(granted, "announcements.write") ||
-    hasPermission(granted, APPROVE_PERMISSION) ||
-    sd.restricted;
-  if (!allowed) return c.json({ success: false, error: "You don't have permission to do that." }, 403);
-  const id = c.req.param("id");
-  const existing = await getScopedAnnouncement(c, id);
-  if (!existing || sdBlockedFromRow(sd, existing, user.id)) {
-    return c.json({ success: false, error: "Announcement not found" }, 404);
-  }
-  return c.json({ success: true, data: await listAttachmentLog(c.env, id) });
-});
-
-app.post("/:id/submit", requirePermissionOrSalesDirector("announcements.write"), async (c) => {
-  const id = c.req.param("id");
-  const existing = await getScopedAnnouncement(c, id);
-  if (!existing) return c.json({ success: false, error: "Announcement not found" }, 404);
-  const user = c.get("user");
-  if (sdBlockedFromRow(salesDirectorScope(c), existing, user.id)) {
-    return c.json({ success: false, error: "Announcement not found" }, 404);
-  }
-  if (
-    normalizeAttachments(existing.attachments ?? null).length === 0 &&
-    (await attachmentRequiredForAnnouncements(c.env))
-  ) {
-    return c.json({ success: false, error: ATTACHMENT_REQUIRED_MESSAGE }, 400);
-  }
-  return answerTransition(c, id, () => submitForApproval(c.env, existing, actorOf(user)));
-});
-
-app.post("/:id/approve", requirePermission(APPROVE_PERMISSION), async (c) => {
-  const id = c.req.param("id");
-  const existing = await getScopedAnnouncement(c, id);
-  if (!existing) return c.json({ success: false, error: "Announcement not found" }, 404);
-  return answerTransition(c, id, () => approveAnnouncement(c.env, existing, actorOf(c.get("user"))));
-});
-
-app.post("/:id/reject", requirePermission(APPROVE_PERMISSION), async (c) => {
-  const id = c.req.param("id");
-  const existing = await getScopedAnnouncement(c, id);
-  if (!existing) return c.json({ success: false, error: "Announcement not found" }, 404);
-  const body = (await c.req.json().catch(() => ({}))) as { reason?: unknown };
-  return answerTransition(c, id, () =>
-    rejectAnnouncement(c.env, existing, actorOf(c.get("user")), String(body.reason ?? "")),
-  );
-});
 
 // ============================================================
 // PATCH /:id — edit fields, toggle isActive, retarget, re-translate.
