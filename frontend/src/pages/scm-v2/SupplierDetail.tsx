@@ -4311,10 +4311,8 @@ const PaymentTermsSelect = ({ value, onChange }: { value: string; onChange: (v: 
 
 /* Supplier currency picker (edit mode). Fixed MYR/RMB/CNY/USD/SGD enum — order
    is canonical, NOT alphabetically sorted. Once saved, supplier.currency flows to
-   PurchaseOrderNew + the PI pages. CNY was added 2026-09-07 alongside the DB
-   enum: a supplier the book bills in yuan must be settable to the code the book
-   uses, and a set that disagreed with VALID_CURRENCIES is what the
-   duplicated-decision gate refuses. */
+   PurchaseOrderNew + the PI pages. CNY joined 2026-09-07 with the DB enum; a set
+   disagreeing with VALID_CURRENCIES is what the duplicated-decision gate refuses. */
 const CURRENCY_OPTIONS: readonly Currency[] = ['MYR', 'RMB', 'CNY', 'USD', 'SGD'];
 
 const CurrencyEditSelect = ({ value, onChange }: { value: Currency; onChange: (v: Currency) => void }) => (

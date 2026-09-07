@@ -1,0 +1,86 @@
+name: Backfill delivery-line warehouse from AutoCount (plan by default)
+
+# AutoCount records a Location on every delivery LINE (HQ / PG / KL / SRW / SBH)
+# and the ERP had no column for it, so the reconcile reported it as
+# `line location [NOT-C]`. Owner ruling 2026-09-07: those codes ARE our stock
+# warehouses, so this MAPS them onto the warehouses the ERP already has — the
+# shared SALESLOC table in backend/scripts/lib/ac-stock-compare.mjs, reached
+# through the same `resolveWarehouse` the document writer uses.
+#
+# PRECONDITION: migration 20260907T2345 must have been applied — it adds
+# `warehouse_id` + `location` to scm.delivery_order_items.
+#
+# SAFETY: fills a NULL only, and only on documents carrying
+# `migrated_no_stock = true` (migration 0276), which by construction have written
+# no inventory movement. It cannot move goods between warehouses. A document the
+# book gives two different locations for is REFUSED and listed, never split by
+# guesswork. A location that maps to no ERP warehouse stores the raw code and
+# leaves warehouse_id NULL.
+#
+# PLAN BY DEFAULT. `apply=1` also requires the CONFIRM phrase, which this
+# workflow supplies only on the apply path.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      apply:
+        description: "1 to write, else PLAN only"
+        required: false
+        default: "0"
+        type: string
+      company_id:
+        description: "Company (1 = Houzs Century)"
+        required: false
+        default: "1"
+      top:
+        description: "How many plan rows to list"
+        required: false
+        default: "40"
+
+concurrency:
+  group: backfill-do-line-warehouse-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/backfill-do-line-warehouse.mjs
+        env:
+          MODE: ${{ inputs.apply == '1' && 'apply' || 'plan' }}
+          CONFIRM: ${{ inputs.apply == '1' && 'I HAVE REVIEWED THE WAREHOUSE PLAN' || '' }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          TOP: ${{ inputs.top }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/backfill-do-line-warehouse.mjs
+        env:
+          MODE: ${{ inputs.apply == '1' && 'apply' || 'plan' }}
+          CONFIRM: ${{ inputs.apply == '1' && 'I HAVE REVIEWED THE WAREHOUSE PLAN' || '' }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          TOP: ${{ inputs.top }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

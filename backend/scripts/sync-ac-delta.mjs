@@ -577,6 +577,11 @@ async function main() {
         itemKey: LFD.indexOf("itemKey"), hasCode: LFD.indexOf("hasCode"),
         tq: LFD.indexOf("transferedQty"), fdt: LFD.indexOf("fromDocType"),
         fdn: LFD.indexOf("fromDocNo"), fsk: LFD.indexOf("fromSoDtlKey"),
+        /* -1 on a snapshot cut before 2026-09-07: `cell` returns null for a
+           negative index, the writer stores no location, and every reader stays
+           on resolveDoLineWarehouses exactly as it does today. An absent column
+           must read as "not stated", never as a value. */
+        loc: LFD.indexOf("location"),
       };
       const HDOC = HFD.indexOf("docNo"), HCAN = HFD.indexOf("cancelled"), HDATE = HFD.indexOf("docDate");
       const D2K = DFD.indexOf("dtlKey"), D2V = DFD.indexOf("desc2");
@@ -775,6 +780,10 @@ async function main() {
             DoNo: kid, DoDate: doDate.get(kid) || null, SoNo: g.acNo,
             ItemCode: cell(r, F.itemKey), LineDesc: null, Qty: num(r[F.qty]),
             DebtorCode: null, DebtorName: null,
+            /* The book's own per-line location -> delivery_order_items.location
+               + warehouse_id, through the SHARED SALESLOC map inside
+               lib/migrated-do-writer.mjs. Null on a pre-2026-09-07 cut. */
+            Location: cell(r, F.loc),
           }));
           const { plan, stats } = buildMigratedDoPlan({ rows, itemMap, soItems: mine });
           const dropped = stats.unmapped + stats.noSoLine + stats.exhausted;
@@ -1404,9 +1413,20 @@ async function main() {
      swallowing it. NO INVENTORY MOVEMENT is written and the verification below
      asserts that against scm.inventory_movements, not against intent. */
   if (LANES.has("do")) {
+  /* The warehouse master, keyed by CODE — the same key
+     backfill-so-line-warehouse.mjs resolves against and the key the live master
+     actually holds (`KL WAREHOUSE`, `PG WAREHOUSE`, `HQ`, ...). Loaded ONCE and
+     handed to the writer, so the AutoCount location -> warehouse mapping has
+     exactly one home (lib/migrated-do-writer.mjs `resolveWarehouse` over the
+     SHARED SALESLOC table). */
+  const warehouseByCode = new Map(
+    (await sql`SELECT id, code FROM scm.warehouses WHERE company_id = ${CO}`)
+      .map((w) => [String(w.code ?? "").trim().toUpperCase(), w.id]),
+  );
+
     for (const d of doPlan) {
       try {
-        const made = await insertMigratedDo(sql, d, { companyId: CO, sysUser: SYS_USER, debtorFallback: doDebtor.get(d.so) ?? null });
+        const made = await insertMigratedDo(sql, d, { companyId: CO, sysUser: SYS_USER, debtorFallback: doDebtor.get(d.so) ?? null, warehouseByCode });
         doMade.push(made); nDo += 1;
       } catch (e) {
         doFailed.push(`${migratedDoNumber(d.doNo)} <- ${d.so}: ${e.message}`);

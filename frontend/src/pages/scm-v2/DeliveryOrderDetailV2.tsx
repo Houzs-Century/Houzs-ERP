@@ -183,6 +183,12 @@ type DoItem = {
   rack_id?: string | null;
   racks?: string[];
   warehouse_id?: string | null;
+  /* The ship-from warehouse's CODE, stamped by the detail GET beside
+     warehouse_id. It was served and rendered nowhere on this page: the mobile
+     DO detail has shown it on every line since it existed
+     (mobile/MobileModuleDetail.tsx), and so do the Goods Received and Delivery
+     Return details. Desktop and mobile are one product. */
+  warehouse_code?: string | null;
   /* Mig 0230 — the incoming PO batch this line committed to at DO creation
      (ship-before-arrival). The hard-from-DO anchor (Decision, docs/modules/
      purchase-order.md 2026-08-06); returned by the detail GET's ITEM columns.
@@ -938,11 +944,24 @@ export function DeliveryOrderDetailV2() {
             <div className="text-[13px] font-semibold text-ink">
               {primary}
             </div>
-            {secondary && (
+            {(secondary || l.warehouse_code) && (
               <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[11px] text-ink-muted">
-                <span className="truncate text-ink-secondary">
-                  {secondary}
-                </span>
+                {secondary && (
+                  <span className="truncate text-ink-secondary">
+                    {secondary}
+                  </span>
+                )}
+                {/* THE WAREHOUSE THIS LINE'S GOODS LEAVE FROM. A merged delivery
+                    can span several warehouses, so it is a per-LINE fact and the
+                    header's single "Warehouse" figure cannot express it. Same
+                    chip as GoodsReceivedDetailV2 and DeliveryReturnDetailV2 —
+                    absent renders nothing, never a dash. */}
+                {l.warehouse_code && (
+                  <span className="inline-flex items-center gap-0.5 rounded bg-primary-soft px-1.5 py-0 text-[10px] font-semibold text-primary-ink">
+                    <Warehouse size={9} />
+                    {l.warehouse_code}
+                  </span>
+                )}
               </div>
             )}
             {/* Committed batch (mig 0230) — the hard-from-DO anchor. Renders

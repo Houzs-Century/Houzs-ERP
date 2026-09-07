@@ -291,7 +291,14 @@ const DO_LINE = [
   { key: "qty", label: "quantity", kind: "num", ac: (l) => Math.round(numOf(l.Qty) ?? 0), erp: "qty", status: CARRIED, writer: ":359 qty" },
   { key: "description", label: "description", kind: "text", ac: (l) => l.LineDesc, erp: "description", status: CARRIED, writer: ":359 description = the AutoCount delivery line's own text, verbatim" },
   { key: "unitPrice", label: "unit price", kind: "money", ac: (l) => l.UnitPrice, erp: "unit_price_sen", status: DERIVED, writer: ":359 unit_price_sen comes from the SALES ORDER line (bugs/0617), not from DODTL.UnitPrice" },
-  { key: "location", label: "line location", kind: "text", ac: (l) => l.Location, erp: null, status: NOT_CARRIED, writer: "exported; NO importer names a delivery_order_items column for it" },
+  /* CARRIED SINCE 2026-09-07. The owner ruled that AutoCount's HQ / PG / KL /
+     SRW / SBH ARE the ERP's own stock warehouses, so the delivery line now has
+     the same raw-code + resolved-uuid pair the sales-order line has always had
+     (mig 20260907T2345). The book side is compared as TEXT against `location`;
+     `warehouse_id` is the derived half and is reported on its own row below,
+     the same split the SO line uses. */
+  { key: "location", label: "line location", kind: "text", ac: (l) => l.Location, erp: "location", status: CARRIED, writer: "lib/migrated-do-writer.mjs `location`, verbatim from DODTL.Location" },
+  { key: "warehouse", label: "warehouse resolved", kind: "text", ac: (l) => (l.Location ? "(a location is named)" : null), erp: "warehouse_bound", status: DERIVED, writer: "lib/migrated-do-writer.mjs `warehouse_id = resolveWarehouse(Location)` through the SHARED SALESLOC map in lib/ac-stock-compare.mjs", note: "reports whether the book's stated location reached an ERP warehouse at all, not which one; an unmapped code deliberately stays NULL" },
 ];
 
 export const FIELD_MAP = {

@@ -258,6 +258,12 @@ export async function loadErpFieldSide(sql, CO) {
     "h.linked_ac_docno AS ac_no", "COALESCE(i.line_no, 0) AS line_no",
     pickI(cols.doi, "item_code"), "i.qty::float8 AS qty", pickI(cols.doi, "unit_price_sen"),
     pickI(cols.doi, "description"),
+    /* The delivery line's own warehouse, since mig 20260907T2345. `pickI` /
+       the column guard keep this readable on a database where the migration has
+       not run yet — the field then reports blank, which is the honest answer,
+       rather than making the whole section refuse. */
+    pickI(cols.doi, "location"),
+    cols.doi.has("warehouse_id") ? "CASE WHEN i.warehouse_id IS NOT NULL THEN '(a location is named)' END AS warehouse_bound" : "NULL AS warehouse_bound",
   ].join(", ");
 
   /* No LIMIT anywhere, deliberately. A LIMIT 500 on a sibling check reported a

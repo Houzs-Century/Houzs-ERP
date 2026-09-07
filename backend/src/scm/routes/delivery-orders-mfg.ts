@@ -344,7 +344,8 @@ const ITEM =
   /* Mig 20260828T0746 — SO-carried photo keys; read path: routes/delivery-order-item-photos.ts, carry contract: lib/do-item-row.ts. */
   'photo_urls, ' +
   'unit_cost_sen, line_cost_sen, line_margin_sen, variants, notes, ' +
-  'line_delivery_date, line_delivery_date_overridden, rack_id, created_at, ' +
+  // warehouse_id + location: mig 20260907T2345, where the goods LEFT from.
+  'line_delivery_date, line_delivery_date_overridden, rack_id, created_at, warehouse_id, location, ' +
   /* Mig 0230 — the incoming PO batch this line shipped against before its goods
      arrived. Surfaced so the DO detail can say which PO a short line is bound to
      instead of leaving the operator to infer it from the header badge. */
@@ -872,12 +873,11 @@ export async function restampDoActualCost(sb: any, deliveryOrderId: string) {
     const isDropship = (doHeader as { is_dropship?: boolean }).is_dropship === true;
 
     const { data: items } = await sb.from('delivery_order_items')
-      .select('id, so_item_id, item_code, qty, item_group, variants, line_total_sen, ship_cost_sen, committed_po_batch_no')
+      .select('id, so_item_id, warehouse_id, item_code, qty, item_group, variants, line_total_sen, ship_cost_sen, committed_po_batch_no')
       .eq('delivery_order_id', deliveryOrderId);
     if (!items || items.length === 0) return;
 
-    const lineWh = await resolveDoLineWarehouses(
-      sb, items as Array<{ id: string; so_item_id?: string | null }>, headerWarehouseId,
+    const lineWh = await resolveDoLineWarehouses(sb, items as DoLineWhRow[], headerWarehouseId,
       (doHeader as { company_id?: number | null }).company_id ?? undefined);
 
     /* Sofa batch per so_item — same shared resolution the ship used
@@ -988,6 +988,9 @@ export async function restampDoActualCost(sb: any, deliveryOrderId: string) {
    PG; stock never crosses warehouses (CLAUDE.md locked rule).
 
    Resolution order per DO line:
+     0. the LINE'S OWN warehouse_id — 1-3 INFER it, AutoCount STATES it per line
+        (agree 363/366, differ 3). NULL changes nothing. Mig 20260907T2345,
+        traced in docs/modules/delivery-order.md.
      1. the linked SO line's warehouse_id (so_item_id → mfg_sales_order_items)
      2. the DO header's warehouse_id (ad-hoc lines with no so_item_id)
      3. the DO's OWN company's default warehouse (last-resort fallback)
@@ -999,9 +1002,10 @@ export async function restampDoActualCost(sb: any, deliveryOrderId: string) {
    The `id` field is only a correlation key, so this also serves lines that do
    not exist yet: the pre-flight stock check passes synthetic ids and the request
    body's soItemId, and gets back exactly the warehouses the OUT will use. */
+type DoLineWhRow = { id: string; so_item_id?: string | null; warehouse_id?: string | null };
 async function resolveDoLineWarehouses(
   sb: any,
-  items: Array<{ id: string; so_item_id?: string | null }>,
+  items: DoLineWhRow[],
   headerWarehouseId: string | null,
   /* The DO's company (2026-08-03) — step 3 is per company. It used to be a
      company-blind draw across every company's is_default warehouses, decided by
@@ -1023,7 +1027,7 @@ async function resolveDoLineWarehouses(
   const fallback = headerWarehouseId ?? (await defaultWarehouseId(sb, companyId));
   for (const it of items) {
     const fromSo = it.so_item_id ? (soWh.get(it.so_item_id) ?? null) : null;
-    out.set(it.id, fromSo ?? fallback);
+    out.set(it.id, it.warehouse_id ?? fromSo ?? fallback);
   }
   return out;
 }
@@ -1261,17 +1265,15 @@ async function deductInventoryForDo(sb: any, deliveryOrderId: string, performedB
   }
   const doHeader = doHeaderRes.data;
   const { data: items } = await sb.from('delivery_order_items')
-    .select('id, so_item_id, item_code, description, qty, item_group, variants, rack_id, committed_po_batch_no')
+    .select('id, so_item_id, warehouse_id, item_code, description, qty, item_group, variants, rack_id, committed_po_batch_no')
     .eq('delivery_order_id', deliveryOrderId);
   const headerWarehouseId = (doHeader as { warehouse_id: string | null } | null)?.warehouse_id ?? null;
   const doNo = (doHeader as { do_number: string } | null)?.do_number ?? deliveryOrderId;
   const isDropship = (doHeader as { is_dropship?: boolean } | null)?.is_dropship === true;
   if (!items) return [];
 
-  // Per-line warehouse — each line ships from its SO line's warehouse (0118),
-  // not a single DO-header default. Stock never crosses warehouses.
-  const lineWh = await resolveDoLineWarehouses(
-    sb, items as Array<{ id: string; so_item_id?: string | null }>, headerWarehouseId,
+  // Per-line warehouse (the line's own, else its SO line's, else the header).
+  const lineWh = await resolveDoLineWarehouses(sb, items as DoLineWhRow[], headerWarehouseId,
     (doHeader as { company_id?: number | null } | null)?.company_id ?? undefined);
 
   /* Stage 3 (Commander 2026-05-31) — SOFA ships as a whole colour-matched set
@@ -1609,13 +1611,11 @@ async function resyncInventoryForDo(sb: any, deliveryOrderId: string, performedB
 
   // 1. Target qty per (warehouse_id, item_code, variant_key) bucket — sum of
   //    current active DO lines (mirror of deductInventoryForDo's collapsing).
-  //    Each line's warehouse comes from its SO line (0118), not a header default,
-  //    so a resync delta lands in the SAME warehouse the first ship debited.
+  //    Same per-line resolution as the first ship, so the delta lands in the same warehouse.
   const { data: items } = await sb.from('delivery_order_items')
-    .select('id, so_item_id, item_code, description, qty, item_group, variants, committed_po_batch_no')
+    .select('id, so_item_id, warehouse_id, item_code, description, qty, item_group, variants, committed_po_batch_no')
     .eq('delivery_order_id', deliveryOrderId);
-  const lineWh = await resolveDoLineWarehouses(
-    sb, (items ?? []) as Array<{ id: string; so_item_id?: string | null }>, headerWarehouseId,
+  const lineWh = await resolveDoLineWarehouses(sb, (items ?? []) as DoLineWhRow[], headerWarehouseId,
     (doHeader as { company_id?: number | null }).company_id ?? undefined);
 
   /* Sofa batch per so_item — same SHARED resolution the first ship used

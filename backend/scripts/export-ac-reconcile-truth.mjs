@@ -247,7 +247,8 @@ SELECT LTRIM(RTRIM(ISNULL(h.DocNo,''))) + CHAR(31) +
        ${fromType} + CHAR(31) +
        ${fromNo} + CHAR(31) +
        ${fromSoDtl} + CHAR(31) +
-       CONVERT(varchar(32), CAST(ISNULL(d.SubTotal,0) AS decimal(19,2)))
+       CONVERT(varchar(32), CAST(ISNULL(d.SubTotal,0) AS decimal(19,2))) + CHAR(31) +
+       LTRIM(RTRIM(ISNULL(d.Location,'')))
   FROM ${d} d JOIN ${h} h ON h.DocKey = d.DocKey
  ORDER BY h.DocNo, d.Seq, d.DtlKey`;
 }
@@ -369,6 +370,13 @@ const snapshot = {
     "qty", "unitPrice", "subTotal", "transferedQty",
     "fromDocType", "fromDocNo", "fromSoDtlKey",
     "docSubTotal",
+    /* APPENDED 2026-09-07 for the delivery line's WAREHOUSE. AutoCount records
+       a Location on every detail row and the ERP had nowhere to put it, so the
+       reconcile reported it as `line location [NOT-C]`. The owner ruled that
+       those codes ARE our stock warehouses, so the value now has a column
+       (mig 20260907T2345) and this is the field that feeds it. Appended, never
+       reordered, for the same reason as the currency fields above. */
+    "location",
   ],
   /* Present ONLY on a snapshot cut by this version or later.  The variant
      reconcile keys off its absence to refuse rather than report a clean run

@@ -3658,6 +3658,16 @@ endpoint, no PDF. The one writer is
 | `display_term` | `SO.DisplayTerm` | the credit term AutoCount PRINTS. The ERP's own terms live on the CUSTOMER, so this is the only order-level record of one |
 | `ac_to_po_no` | `SO.UDF_ToPONo` | the purchase order(s) AutoCount raised FROM this order, comma-joined. **NOT a customer PO number** |
 
+**A neighbouring lane, so a reader of this section is not surprised by it:**
+`sync-ac-delta.mjs`'s `LANES=do` lane also carries AutoCount's per-DELIVERY-LINE
+`Location` since 2026-09-07, into
+`scm.delivery_order_items.location` + `warehouse_id` (mig
+`20260907T2345_scm_do_item_warehouse.sql`). That is a DELIVERY-order fact and it
+is documented in full in `docs/modules/delivery-order.md`, under *Which
+warehouse* — named here only because this is where the script's lanes are
+described. It reads the location out of the truth snapshot's line projection, so
+it is inert until that snapshot is re-cut.
+
 Two things worth knowing before using them:
 
 - **The delivery address is the operational one, and the population is small.**

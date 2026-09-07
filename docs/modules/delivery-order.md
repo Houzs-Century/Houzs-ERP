@@ -532,7 +532,7 @@ column lists are `HEADER` (`delivery-orders-mfg.ts:292-310`), `ITEM` (`:333-337`
 | Table | Role |
 |-------|------|
 | `scm.delivery_orders` | DO header. `do_number`, `so_doc_no`, `debtor_code/name`, `do_date`, `expected_delivery_at`, `customer_delivery_date`, `dispatched_at` / `signed_at` / `delivered_at`, `driver_id/name`, `vehicle`, `m3_total_milli`, address block, `salesperson_id`, `branding`, `venue_id`, per-category revenue + cost subtotals, `local_total_sen`, `total_cost_sen`, `total_margin_sen`, `line_count`, `warehouse_id`, `is_dropship`, `arrives_em_warehouse_date`, `pod_r2_key`, `signature_data`, `status`, `company_id`. |
-| `scm.delivery_order_items` | DO lines. `so_item_id` (the SO link that drives warehouse resolution + remaining-qty caps), `item_code`, `item_group`, `qty`, `m3_milli`, `unit_price_sen`, `discount_sen`, `line_total_sen`, `unit_cost_sen`, `line_cost_sen`, `line_margin_sen`, **`ship_cost_sen`**, `variants`, `line_delivery_date`, `line_delivery_date_overridden`, `rack_id`, **`committed_po_batch_no`** (mig 0230 — the incoming PO this line shipped against before its goods arrived; the per-line claim signal the receipt reconcile reads), **`photo_urls`** (mig `20260828T0746_do_item_photo_urls.sql` — `text[] NOT NULL DEFAULT '{}'`, the source SO line's R2 photo keys carried on convert/add; SHARED keys not copies, per line never deduplicated, `[]` never null; every insert path derives it server-side via `loadCarriedSoLinePhotos` + `carriedPhotoUrls` in `backend/src/scm/lib/do-item-row.ts`, ad-hoc lines get `[]`). |
+| `scm.delivery_order_items` | DO lines. **`warehouse_id`** + **`location`** (mig `20260907T2345_scm_do_item_warehouse.sql` — the warehouse this line's goods actually LEFT from, and AutoCount's raw `DODTL.Location` beside it; NULL means "not stated" and the reader falls back to `resolveDoLineWarehouses`), `so_item_id` (the SO link that drives warehouse resolution + remaining-qty caps), `item_code`, `item_group`, `qty`, `m3_milli`, `unit_price_sen`, `discount_sen`, `line_total_sen`, `unit_cost_sen`, `line_cost_sen`, `line_margin_sen`, **`ship_cost_sen`**, `variants`, `line_delivery_date`, `line_delivery_date_overridden`, `rack_id`, **`committed_po_batch_no`** (mig 0230 — the incoming PO this line shipped against before its goods arrived; the per-line claim signal the receipt reconcile reads), **`photo_urls`** (mig `20260828T0746_do_item_photo_urls.sql` — `text[] NOT NULL DEFAULT '{}'`, the source SO line's R2 photo keys carried on convert/add; SHARED keys not copies, per line never deduplicated, `[]` never null; every insert path derives it server-side via `loadCarriedSoLinePhotos` + `carriedPhotoUrls` in `backend/src/scm/lib/do-item-row.ts`, ad-hoc lines get `[]`). |
 | `scm.delivery_order_payments` | Payments taken at delivery. `method`, `merchant_provider`, `installment_months`, `online_type`, `approval_code`, `amount_sen`, `account_sheet`, `collected_by`. |
 | `scm.delivery_order_crew` | One row per DO (UNIQUE `do_id`): driver/helper/lorry FKs plus the assign-time name/IC/contact/plate snapshot. |
 | `scm.inventory_movements` | Where the OUT lands. Keyed `(source_doc_type='DO', source_doc_id, item_code, variant_key, COALESCE(correction_seq,0))` by `uq_inv_mov_do_source_v2` (migration 0279; before that, `uq_inv_mov_do_source` without the correction slot), the partial unique index the reversal has to route around (`:4322-4328`). Full definition in §on idempotency below. |
@@ -1504,10 +1504,55 @@ divergence produced an OUT that consumed no lot
 (`docs/inventory-ledger-divergence-coe.md`) — a different bug in a different
 place, untouched by 0279.
 
-**Which warehouse:** `resolveDoLineWarehouses` (`:645`), in order —
+**Which warehouse:** `resolveDoLineWarehouses`, in order —
+**(0) the LINE'S OWN `warehouse_id`** (mig
+`backend/src/db/migrations-pg/20260907T2345_scm_do_item_warehouse.sql`),
 (1) the linked SO line's `warehouse_id`, (2) the DO header's `warehouse_id`,
 (3) the global default. A line that resolves to none is **skipped**, never
 guessed. Stock never crosses warehouses.
+
+**Step 0 exists because steps 1-3 are an INFERENCE.** AutoCount records a
+Location on every delivery LINE — `HQ`, `PG`, `KL`, `SRW`, `SBH` — and the ERP
+had no column for it, so the reconcile reported it as `line location [NOT-C]`:
+a value the book states that nothing carried. Owner ruling 2026-09-07:
+「HQ PGG 就是我们的 stock warehouse location」— these ARE our warehouses, so the
+book's code maps onto the ERP's own `scm.warehouses` through the SHARED
+`SALESLOC` table in `backend/scripts/lib/ac-stock-compare.mjs`. Nothing here is a
+second location concept.
+
+Measured on the committed book cut (`backend/scripts/data/ac-partial-dos.json.gz`):
+the inference agrees with the book on **363 of the 366** migrated delivery lines
+that carry a location and **DIFFERS on 3** — `DO-000097` shipped from `HQ`
+against a `PG` sales-order line. A derived answer that is right 99.2% of the time
+is exactly what is worth replacing with the stated one, because nothing about the
+answer says which 0.8% is wrong.
+
+- `scm.delivery_order_items.warehouse_id` (uuid, FK, `ON DELETE SET NULL`) and
+  `.location` (the book's raw code) are the SAME pair
+  `mfg_sales_order_items` has always carried. NULL means "not stated" and every
+  reader falls back to steps 1-3 exactly as before, so the column is a **no-op
+  on every line this app creates**.
+- Written by `backend/scripts/lib/migrated-do-writer.mjs` (`resolveWarehouse`),
+  the one home both `create-migrated-documents.mjs` and `sync-ac-delta.mjs` call.
+  An unmapped code stores the raw text, leaves `warehouse_id` NULL and is
+  COUNTED — never guessed.
+- Backfilled by `backend/scripts/backfill-do-line-warehouse.mjs` +
+  `.github/workflows/backfill-do-line-warehouse.yml`, plan by default. The match
+  is per DOCUMENT (the cut carries no `SoDtlKey`), and that is exact rather than
+  convenient: all 84 delivery documents in the cut state exactly ONE location
+  across their lines, and a document that ever states two is REFUSED and listed.
+- **It is on the screen.** The detail GET already stamped `warehouse_code` on
+  every item and the mobile DO detail has rendered it since it existed
+  (`frontend/src/mobile/MobileModuleDetail.tsx`); the DESKTOP detail did not, so
+  `DeliveryOrderDetailV2.tsx` now shows the same per-line chip
+  `GoodsReceivedDetailV2` and `DeliveryReturnDetailV2` use. The header's single
+  "Warehouse" figure cannot express a merged delivery that spans two.
+- Exported for the reconcile: `d.Location` was appended to
+  `backend/scripts/export-ac-reconcile-truth.mjs`'s line projection, and
+  `ac-field-identity.mjs` now compares the DO line's location as **copy** rather
+  than reporting it `NOT-C`. **That export needs a RE-CUT to take effect** — the
+  committed snapshot predates the column, and an absent field reads as null, not
+  as a value.
 
 **Reversal:** cancelling a DO restores its ORIGINAL lots at their ORIGINAL
 per-lot cost and DELETES the DO's `inventory_lot_consumptions` rows —

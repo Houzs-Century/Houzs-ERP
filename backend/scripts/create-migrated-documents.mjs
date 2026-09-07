@@ -263,10 +263,24 @@ async function doDos() {
   log("");
   if (!APPLY) { log("DRY-RUN — set APPLY=1 to create. No inventory movement is written in either mode."); return; }
 
+  /* The warehouse master, keyed by CODE — the same key
+     backfill-so-line-warehouse.mjs resolves against and the key the live master
+     actually holds (`KL WAREHOUSE`, `PG WAREHOUSE`, `HQ`, ...). Loaded ONCE and
+     handed to the writer, so the AutoCount location -> warehouse mapping has
+     exactly one home (lib/migrated-do-writer.mjs `resolveWarehouse` over the
+     SHARED SALESLOC table). */
+  const warehouseByCode = new Map(
+    (await sql`SELECT id, code FROM scm.warehouses WHERE company_id = ${CO}`)
+      .map((w) => [String(w.code ?? "").trim().toUpperCase(), w.id]),
+  );
+  if (stats.unmappedLocations?.size) {
+    log(`AutoCount locations with NO ERP warehouse (left NULL, never guessed): ${[...stats.unmappedLocations].map(([k, v]) => `${k} x${v}`).join(", ")}`);
+  }
+
   // one AutoCount delivery note = one ERP DO, so the number carries over intact
   let made = 0;
   for (const d of plan) {
-    await insertMigratedDo(sql, d, { companyId: CO, sysUser: SYS_USER, debtorFallback: soDebtor.get(d.so) ?? null });
+    await insertMigratedDo(sql, d, { companyId: CO, sysUser: SYS_USER, debtorFallback: soDebtor.get(d.so) ?? null, warehouseByCode });
     made += 1;
   }
   log(`DONE. DOs created: ${made}. No inventory movement written — by design.`);
