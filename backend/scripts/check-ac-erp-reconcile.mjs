@@ -112,6 +112,7 @@ import {
 } from "./lib/variant-reconcile.mjs";
 
 import { buildScope, currencyVerdict, decodeSnapshot, isTestDoc, LOCAL_CURRENCY } from "./lib/ac-scope.mjs";
+import { grPairGrain } from "./lib/ac-gr-pair-grain.mjs";
 import { FIELD_MAP } from "./lib/ac-field-identity.mjs";
 import {
   compareType, loadAcFieldSide, loadErpFieldSide, measurePoDiscount,
@@ -240,45 +241,17 @@ const SCOPE = buildScope(book);
    So the BOOK is restated at the grain the ERP can hold, rather than the ERP
    being compared against a document it is structurally unable to mirror.
 
-   The population is derived from `SCOPE.GR` and `SCOPE.PO` — both from
-   `lib/ac-scope.mjs`, so the pair scope cannot drift away from the document
-   scope the rest of this file uses. A pair "document" carries the receipt's own
-   date and currency, and a total that is the sum of ITS OWN lines, which is the
-   only total the ERP document can be expected to equal. */
-function grPairGrain() {
-  const headers = new Map();
-  const lines = new Map();
-  const byDtlKey = new Map();
-  const scope = new Set();
-  for (const gr of SCOPE.GR) {
-    const h = book.GR.headers.get(gr);
-    if (!h) continue;
-    for (const l of book.GR.lines.get(gr) || []) {
-      if (l.fromDocType !== "PO" || !l.fromDocNo || !SCOPE.PO.has(l.fromDocNo)) continue;
-      const key = `${gr}|${l.fromDocNo}`;
-      if (!lines.has(key)) lines.set(key, []);
-      lines.get(key).push(l);
-      byDtlKey.set(l.dtlKey, l);
-      scope.add(key);
-    }
-  }
-  for (const [key, ls] of lines) {
-    const h = book.GR.headers.get(key.split("|")[0]);
-    const sum = (f) => (ls.every((l) => l[f] == null) ? null : ls.reduce((s, l) => s + (l[f] ?? 0), 0));
-    headers.set(key, {
-      docNo: key,
-      docDate: h.docDate,
-      cancelled: h.cancelled,
-      totalSen: sum("subTotalSen"),
-      docTotalSen: sum("docSubTotalSen"),
-      lineCount: ls.length,
-      currency: h.currency,
-      rate: h.rate,
-    });
-  }
-  return { view: { headers, lines, byDtlKey, desc2: book.GR.desc2 }, scope };
-}
-const GR_PAIR = grPairGrain();
+   The rule itself is `lib/ac-gr-pair-grain.mjs`; READ ITS HEADER before
+   changing what the book side means. It returns the two halves SEPARATELY and
+   they must stay that way: `view` is the whole book at pair grain (11,623
+   pairs), `scope` is the expected population (400), derived from `SCOPE.GR` and
+   `SCOPE.PO` so it cannot drift from the document scope the rest of this file
+   uses. Building both from ONE filtered loop — which is what this file used to
+   do inline — made the book side and the population the same set, so every
+   legitimate out-of-scope pair the ERP holds fell through to `phantom` and was
+   printed as a document the book does not have. There were 97, and the book
+   states every one of them. */
+const GR_PAIR = grPairGrain(book, SCOPE);
 const soScope = SCOPE.SO;
 /* Diagnostic only, NOT part of the definition: the orders the DO rule keeps
    out, reported at the end so the exclusion stays visible. */
@@ -813,8 +786,10 @@ for (const cfg of TYPES) {
     plain(
       "GRAIN: one \"document\" below is a (AutoCount receipt x purchase order) PAIR, written `GR-nnn|PO-nnn`, " +
         "because an ERP goods receipt belongs to ONE purchase order while an AutoCount receipt can span several. " +
-        `The book holds ${book[t].headers.size} ${t} documents in total and ${SCOPE[t].size} in scope; ` +
-        `they resolve to ${B.headers.size} pairs.`,
+        `The book holds ${book[t].headers.size} ${t} documents in total, which resolve to ${B.headers.size} ` +
+        `pairs; ${SCOPE[t].size} receipts are in scope and they resolve to the ${scope.size} pairs the ERP ` +
+        "is expected to hold. A pair the book states but the population excludes is reported as PRESENT " +
+        "THOUGH OUT OF SCOPE, never as a phantom.",
     );
   }
   plain(
