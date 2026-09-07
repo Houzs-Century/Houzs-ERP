@@ -1,6 +1,6 @@
 ## Cancelling a migrated goods receipt writes a phantom stock OUT [high]
 
-<!-- area: Goods receipts + inventory -->
+<!-- area: Purchase orders + GRN + PI -->
 
 **Status: FOUND, NOT YET FIXED.** Recorded here because it is a go-live hazard
 that a staff click reaches today, and because it is the reason the GR reshape
