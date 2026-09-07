@@ -25,6 +25,15 @@
 // written). A child document here is a SNAPSHOT of its parent — copy the
 // classification with the quantity, always.
 //
+// SUPERSEDED FOR GOODS RECEIPTS, 2026-09-07. `reshape-migrated-grns.mjs` now owns
+// the shape of a migrated goods receipt: one document per (AutoCount receipt x
+// purchase order), carrying the book's own receipt date and quantity, because the
+// owner ruled the ERP must show the receipts the account book actually made
+// (「是 A 的，不过只是把那些需要的搬进来，不需要的不需要搬」). The GRN arm below still
+// works and is still idempotent — it skips any purchase order that already has a
+// migrated receipt — but what it WRITES is the old one-per-purchase-order shape
+// with `received_at = CURRENT_DATE`. Use the reshape writer for goods receipts.
+//
 // KIND=grn | do | both (default both). DRY-RUN by default; APPLY=1 writes.
 import fs from "node:fs";
 import zlib from "node:zlib";
@@ -40,7 +49,12 @@ import {
    asked, not derived from the purchase order. lib/ac-gr-location.mjs owns that
    read and the SHARED location map; see the header there for why a surviving
    stock LAYER is not a receipt location. */
-import { bookLocationForPair, grLocationWarehouseCode, loadBookGrLocations } from "./lib/ac-gr-location.mjs";
+import { loadBookGrLocations, resolveAcReceiptLocation } from "./lib/ac-gr-location.mjs";
+/* The delivery location goes on the HEADER (owner 2026-09-07, "记在单头就好").
+   The map is the SHARED one the PO importer's whId() uses — a second copy of a
+   location map is how stock silently moves between branches — and the resolution
+   onto a warehouse row is the tested spec of migration 0309's backfill. */
+import { mixedLocationDocs, resolveAcDeliveryLocation } from "./lib/ac-do-location.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -146,24 +160,13 @@ async function doGrns() {
      "the book agrees". Same reason the ambiguous case (one receipt, two
      locations, one header column) falls back rather than picking the first. */
   const book = loadBookGrLocations(path.join(here, "data"));
-  const whRows = await sql`SELECT id, code FROM scm.warehouses WHERE company_id = ${CO}`;
-  const whByCode = new Map(whRows.map((w) => [String(w.code).toUpperCase(), w.id]));
-  const whStat = { copied: 0, noBookLocation: 0, ambiguous: 0, unresolvedCode: 0 };
+  const warehouses = await sql`SELECT id::text AS id, code, name FROM scm.warehouses WHERE company_id = ${CO}`;
+  const whStat = { copied: 0, derived: 0 };
   const bookWarehouseFor = (g) => {
-    const codes = g.items.map((i) => i.item_code);
-    let found = null;
-    for (const acGr of (g.po.linked_ac_grn_docnos ?? [])) {
-      const r = bookLocationForPair(book, acGr, codes);
-      if (r.ambiguous) { whStat.ambiguous += 1; return null; }
-      if (!r.loc) continue;
-      if (found && found !== r.loc) { whStat.ambiguous += 1; return null; }
-      found = r.loc;
-    }
-    if (!found) { whStat.noBookLocation += 1; return null; }
-    const id = whByCode.get(String(grLocationWarehouseCode(found)).toUpperCase()) ?? whByCode.get(found);
-    if (!id) { whStat.unresolvedCode += 1; log(`   WARN ${g.po.linked_ac_docno}: book location ${found} has no ERP warehouse — falling back`); return null; }
+    const r = resolveAcReceiptLocation(g.po.linked_ac_grn_docnos ?? [], g.items.map((i) => i.item_code), book, warehouses);
+    if (!r.warehouseId) { whStat.derived += 1; return null; }
     whStat.copied += 1;
-    return id;
+    return r.warehouseId;
   };
   log(`book receipt-location sources: ${book.sources.join("; ") || "none on this cut"}`);
 
@@ -208,11 +211,9 @@ async function doGrns() {
     if (made % 50 === 0) log(`  ..${made}/${plan.length}`);
   }
   log(`DONE. GRNs created: ${made}. No inventory movement written — by design.`);
-  log(`receiving warehouse: ${whStat.copied} COPIED from the book; ` +
-      `${whStat.noBookLocation} derived from the purchase order because this cut carries no receipt location; ` +
-      `${whStat.ambiguous} derived because the book used more than one location for the receipt ` +
-      `(scm.grn_items has no warehouse column, so a header cannot hold two); ` +
-      `${whStat.unresolvedCode} derived because the book's location has no ERP warehouse.`);
+  log(`receiving warehouse: ${whStat.copied} COPIED from AutoCount's own receipt; ` +
+      `${whStat.derived} fell back to the purchase order. A fallback means the book was NEVER ASKED ` +
+      `(or answered with two locations for one header), not that it agrees — re-cut ac-gr-refs and re-run to raise the copied count.`);
 }
 
 // ── delivery orders for the part AutoCount already delivered ─────────────────
@@ -356,12 +357,41 @@ async function doDos() {
   log("");
   if (!APPLY) { log("DRY-RUN — set APPLY=1 to create. No inventory movement is written in either mode."); return; }
 
+  /* ── THE DELIVERY LOCATION, ONTO THE HEADER ──────────────────────────────
+     The book's own header field first; where the header snapshot runs behind
+     the book, the document's own lines and ONLY when they agree unanimously.
+     Anything else stays NULL and is NAMED — an unresolved location must be
+     visibly absent, never a company-blind default, because a wrong warehouse
+     reads as another branch's stock. backfill-migrated-do-warehouse.mjs applies
+     the same rule to the documents already written. */
+  const hdrLoc = new Map();
+  for (const h of gz("ac-fidelity-do-headers.json.gz")) {
+    const v = (h.SalesLocation || "").trim();
+    if (v) hdrLoc.set(h.DocNo, v);
+  }
+  const lineLocs = new Map();
+  for (const r of rows) {
+    const v = (r.Location || "").trim();
+    if (!v) continue;
+    if (!lineLocs.has(r.DoNo)) lineLocs.set(r.DoNo, new Set());
+    lineLocs.get(r.DoNo).add(v);
+  }
+  const warehouses = await sql`SELECT id, code, name FROM scm.warehouses WHERE company_id = ${CO}`;
+  const mixedDocs = mixedLocationDocs(lineLocs);
+  log(`── delivery location: documents in this cut whose lines span TWO locations: ${mixedDocs.length}`);
+  for (const m of mixedDocs) log(`      MIXED ${m.doc}: lines say ${m.locations.join(" + ")}; header says ${hdrLoc.get(m.doc) ?? "(no header row)"} — the header wins, recorded as not unanimous`);
+
   // one AutoCount delivery note = one ERP DO, so the number carries over intact
   let made = 0;
+  let noWh = 0;
   for (const d of plan) {
-    await insertMigratedDo(sql, d, { companyId: CO, sysUser: SYS_USER, debtorFallback: soDebtor.get(d.so) ?? null });
+    const where = resolveAcDeliveryLocation(d.doNo, hdrLoc, lineLocs, warehouses);
+    if (!where.warehouseId) { noWh += 1; log(`   ${d.doNo}: no delivery warehouse stamped — ${where.why}`); }
+    await insertMigratedDo(sql, d, { companyId: CO, sysUser: SYS_USER, debtorFallback: soDebtor.get(d.so) ?? null,
+      warehouseId: where.warehouseId, salesLocation: where.salesLocation });
     made += 1;
   }
+  log(`delivery warehouse stamped on ${made - noWh} of ${made} new document(s); ${noWh} left NULL and named above`);
   log(`DONE. DOs created: ${made}. No inventory movement written — by design.`);
 }
 

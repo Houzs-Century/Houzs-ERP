@@ -41,7 +41,7 @@ import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 
 import { SALESLOC } from "./lib/ac-stock-compare.mjs";
-import { bookLocationForPair, grLocationWarehouseCode, loadBookGrLocations } from "./lib/ac-gr-location.mjs";
+import { loadBookGrLocations, resolveAcReceiptLocation } from "./lib/ac-gr-location.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const DATA = path.join(here, "data");
@@ -131,6 +131,7 @@ async function main() {
   const rows = await pg`
     SELECT g.id, g.grn_number, g.warehouse_id::text AS stored, w.code AS stored_code,
            g.linked_ac_docno AS ac_po, p.po_number,
+           to_jsonb(g) ->> 'linked_ac_gr_docno' AS ac_gr_docno,
            p.purchase_location_id::text AS po_location, p.linked_ac_grn_docnos AS ac_grs,
            (SELECT i.warehouse_id::text FROM scm.purchase_order_items i
              WHERE i.purchase_order_id = p.id AND COALESCE(i.received_qty, 0) > 0
@@ -161,37 +162,33 @@ async function main() {
   line("4. Stored warehouse vs AutoCount's OWN receipt location (GRDTL), where the committed cuts carry it");
   const book = loadBookGrLocations(DATA);
   line(`   book sources on this cut: ${book.sources.join("; ") || "NONE — the GR export did not select Location before 2026-09-08"}`);
-  const whRows = await pg`SELECT id::text AS id, code FROM scm.warehouses WHERE company_id = ${CO}`;
-  const whByCode = new Map(whRows.map((w) => [U(w.code), w.id]));
-  let known = 0, agree = 0, unknown = 0, ambiguous = 0, unresolved = 0;
+  const warehouses = await pg`SELECT id::text AS id, code, name FROM scm.warehouses WHERE company_id = ${CO}`;
+  const whByCode = new Map(warehouses.map((w) => [U(w.code), w.id]));
+  let known = 0, agree = 0;
+  const unanswered = new Map();
   const disagree = [];
   for (const r of rows) {
-    const codes = r.item_codes ?? [];
-    let loc = null;
-    let amb = false;
-    for (const acGr of (r.ac_grs ?? [])) {
-      const res = bookLocationForPair(book, acGr, codes);
-      if (res.ambiguous) { amb = true; break; }
-      if (!res.loc) continue;
-      if (loc && loc !== res.loc) { amb = true; break; }
-      loc = res.loc;
+    /* Ask by the RECEIPT number the row carries. `linked_ac_gr_docno` exists
+       since the pair-grain reshape (mig 20260907T2345) and names ONE receipt;
+       before it the only handle was the purchase order's receipt list, which is
+       why both are read. */
+    const acGrs = r.ac_gr_docno ? [r.ac_gr_docno] : (r.ac_grs ?? []);
+    const res = resolveAcReceiptLocation(acGrs, r.item_codes ?? [], book, warehouses);
+    if (!res.warehouseId) {
+      unanswered.set(res.why, (unanswered.get(res.why) ?? 0) + 1);
+      continue;
     }
-    if (amb) { ambiguous += 1; continue; }
-    if (!loc) { unknown += 1; continue; }
     known += 1;
-    const want = whByCode.get(U(grLocationWarehouseCode(loc))) ?? whByCode.get(U(loc));
-    if (!want) { unresolved += 1; line(`     UNRESOLVED ${r.grn_number}: book location ${loc} has no ERP warehouse`); continue; }
-    if (want === r.stored) agree += 1;
-    else disagree.push(`${r.grn_number} (AutoCount ${(r.ac_grs ?? []).join(",")} / ${r.ac_po}): book=${loc} ERP=${r.stored_code ?? r.stored}`);
+    if (res.warehouseId === r.stored) agree += 1;
+    else disagree.push(`${r.grn_number} (AutoCount ${acGrs.join(",")} / ${r.ac_po}): book=${res.bookLocation} -> ${res.warehouseCode}, ERP=${r.stored_code ?? r.stored}`);
   }
   line(`   receipts the book can answer for: ${known} of ${rows.length}`);
-  line(`   the book was never asked (no GRDTL location on this cut): ${unknown}`);
-  line(`   the book used MORE THAN ONE location for the receipt: ${ambiguous}`);
-  line(`   book location with no ERP warehouse: ${unresolved}`);
+  line(`   the book could NOT answer for ${rows.length - known}:`);
+  for (const [why, n] of unanswered) line(`     ${n}x ${why}`);
   line(`   AGREE: ${agree}   DISAGREE: ${disagree.length}`);
   for (const m of disagree) line(`     DIFF ${m}`);
   line(disagree.length === 0
-    ? `   VERDICT: on the ${known} receipts the book can answer for, the ERP already shows AutoCount's own location. The other ${unknown + ambiguous} are UNKNOWN, not agreed.`
+    ? `   VERDICT: on the ${known} receipts the book can answer for, the ERP already shows AutoCount's own location. The other ${rows.length - known} are UNKNOWN, not agreed.`
     : `   VERDICT: ${disagree.length} migrated receipt(s) show a location AutoCount did not record. Those are the backfill set.`);
   line("");
 

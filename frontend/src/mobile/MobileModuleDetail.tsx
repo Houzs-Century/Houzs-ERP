@@ -364,7 +364,7 @@ const DOC_MODULES: Record<string, DocMap> = {
       ["DO Date", dmy(h.do_date)],
       ["Delivery", dmy(h.customer_delivery_date ?? h.expected_delivery_at)],
       ["Phone", formatPhone(firstOf(h.phone))],
-      ["Location", firstOf(h.sales_location, h.customer_state, h.state)],
+      ["Ship-from", firstOf(h.sales_location)], // the BRANCH (owner 2026-09-07, header-level); the customer_state fallback was a different concept under one label
       ["Reference", firstOf(h.ref, h.po_doc_no)],
       ["Salesperson", firstOf(h.agent)],
     ],

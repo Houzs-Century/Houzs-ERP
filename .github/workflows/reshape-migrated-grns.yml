@@ -1,0 +1,106 @@
+name: Reshape migrated goods receipts (plan by default)
+
+# Makes the ERP's carried-over goods receipts the shape the ACCOUNT BOOK has:
+# one document per (AutoCount receipt x purchase order), carrying the book's own
+# receipt date and the book's own quantity.
+#
+# Owner 2026-09-07: 「是 A 的，不过只是把那些需要的搬进来，不需要的不需要搬」.
+#
+# Today the ERP holds one goods receipt per PURCHASE ORDER, all 320 of them
+# stamped with the day the migration ran. The book received 318 in-scope purchase
+# orders in 400 (receipt x purchase order) pairs across 214 receipts, 70 of those
+# purchase orders in more than one go.
+#
+# NO STOCK MOVES. Every document keeps `migrated_no_stock` and the script REFUSES
+# to run if any inventory movement is found behind the migrated receipts. The
+# retirement of a superseded document is a DIRECT status flip, deliberately not
+# `PATCH /grns/:id/cancel` — that route never reads `migrated_no_stock` and would
+# write a reversing inventory OUT for every line.
+#
+# PRECONDITION: the migration adding `scm.grns.linked_ac_gr_docno` must have been
+# applied. The apply path re-reads information_schema and refuses by name rather
+# than discovering a failed INSERT halfway through.
+#
+# PLAN BY DEFAULT. `apply=1` also requires the CONFIRM phrase, which this
+# workflow supplies only on the apply path. The plan and the apply both write a
+# restorable JSON dump of every migrated goods receipt AS IT STANDS, before
+# anything moves, and upload it as an artifact.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      apply:
+        description: "1 to write, else PLAN only"
+        required: false
+        default: "0"
+        type: string
+      company_id:
+        description: "Company (1 = Houzs Century)"
+        required: false
+        default: "1"
+      show:
+        description: "Rows to print per list"
+        required: false
+        default: "20"
+
+concurrency:
+  group: reshape-migrated-grns-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/reshape-migrated-grns.mjs
+        env:
+          MODE: ${{ inputs.apply == '1' && 'apply' || 'plan' }}
+          CONFIRM: ${{ inputs.apply == '1' && 'I HAVE REVIEWED THE GR RESHAPE PLAN' || '' }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          SHOW: ${{ inputs.show }}
+          DUMP_DIR: ${{ github.workspace }}/grn-dump
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: migrated-grns-before-staging
+          path: grn-dump/
+          if-no-files-found: warn
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/reshape-migrated-grns.mjs
+        env:
+          MODE: ${{ inputs.apply == '1' && 'apply' || 'plan' }}
+          CONFIRM: ${{ inputs.apply == '1' && 'I HAVE REVIEWED THE GR RESHAPE PLAN' || '' }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          SHOW: ${{ inputs.show }}
+          DUMP_DIR: ${{ github.workspace }}/grn-dump
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: migrated-grns-before-prod
+          path: grn-dump/
+          if-no-files-found: warn

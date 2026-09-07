@@ -35,13 +35,26 @@ is a showroom transfer after the receipt, not a receipt. Read as receipt
 locations, the layers "find" a difference on `GR-002798` that the book's own
 `GRDTL` rows for that same receipt (all `PG`) contradict.
 
-**Exposure, measured on the committed cuts (book side, 2026-09-08).** Using
-direct `GRDTL` evidence only: of 1,019 in-scope receipt-to-order reference rows,
-**245 have a book location — and all 245 equal the derived value. 0 differ.**
-That covers 85 of the 214 in-scope receipts and 100 of the 400 receipt x order
-pairs. Also 0 of the 318 in-scope purchase orders have lines in more than one
-location, so the single header column is not lossy for any of them. The
-remaining 300 pairs are **UNKNOWN, not agreed** — the book was never asked.
+**Exposure, measured 2026-09-08 by the shipped resolver itself**
+(`resolveAcReceiptLocation` over the committed cuts, not an ad-hoc script):
+
+| grain | answered by the book | agree with the derived value | DIFFER |
+|---|---|---|---|
+| receipt-to-order reference rows | 238 of 1,019 | 238 | **0** |
+| receipt x order pairs | 97 of 400 | 97 | **0** |
+| AutoCount receipts | 82 of 214 | 82 | **0** |
+
+Why the book cannot answer for the rest, at receipt grain: **129 of 214** have no
+GRDTL location on this cut (the export never selected it), and **3 of 214** used
+more than one location for one receipt — `GR-003512` (KL + SRW), `GR-004812`
+(KL + PG), `GR-005062` (KL + PG + SRW). Those three are a real structural limit,
+not a gap: `scm.grn_items` has no warehouse column, so an ERP receipt header
+holds ONE location and cannot represent them. The resolver refuses them by name
+rather than taking the first.
+
+Also **0 of 318** in-scope purchase orders have received lines in more than one
+location, so the single header column is not lossy on the order side. The 129
+unanswered receipts are **UNKNOWN, not agreed** — the book was never asked.
 
 **Fix.**
 
@@ -63,9 +76,19 @@ remaining 300 pairs are **UNKNOWN, not agreed** — the book was never asked.
    receipts, stored-vs-derived, stored-vs-book, multi-location orders, and
    whether the shared map lands on real warehouses.
 
-**No backfill was written.** Nothing measurable disagrees, and
-`reshape-migrated-grns.mjs` is rebuilding these documents at the (receipt x
-order) grain, so a competing UPDATE would be overwritten. The reshape carries the
-same derivation and should adopt `lib/ac-gr-location.mjs`.
+5. `reshape-migrated-grns.mjs` — the writer that will actually run — adopts the
+   same resolver. Its PLAN now prints how many documents take the warehouse from
+   the book and how many fall back, and names the first few that could not be
+   answered.
+6. `backend/tests/acGrLocation.test.mjs` pins the rule: the refusal on a
+   two-location receipt, the refusal when the book was never asked, and the
+   shared-map resolution (10 tests).
+
+**No backfill was written, deliberately.** Nothing measurable disagrees, and the
+receipts are about to be rebuilt by `reshape-migrated-grns.mjs` (PR #3123,
+merged; its workflow had never been dispatched when this was written, verified
+against the Actions API) — so a competing UPDATE would simply be overwritten.
+Fixing the writer before it runs is the durable fix; a backfill would have been
+the patch.
 
 **Ref.** fix/gr-receipt-location, 2026-09-08.

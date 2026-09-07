@@ -532,7 +532,7 @@ column lists are `HEADER` (`delivery-orders-mfg.ts:292-310`), `ITEM` (`:333-337`
 | Table | Role |
 |-------|------|
 | `scm.delivery_order_items` | DO line. `ac_substituted` (mig `20260907T2340`) — AutoCount shipped a code the named SO does not carry; `so_item_id` is NULL on those by design. |
-| `scm.delivery_orders` | DO header. `do_number`, `so_doc_no`, `debtor_code/name`, `do_date`, `expected_delivery_at`, `customer_delivery_date`, `dispatched_at` / `signed_at` / `delivered_at`, `driver_id/name`, `vehicle`, `m3_total_milli`, address block, `salesperson_id`, `branding`, `venue_id`, per-category revenue + cost subtotals, `local_total_sen`, `total_cost_sen`, `total_margin_sen`, `line_count`, `warehouse_id`, `is_dropship`, `arrives_em_warehouse_date`, `pod_r2_key`, `signature_data`, `status`, `company_id`. |
+| `scm.delivery_orders` | DO header. `warehouse_id` + `sales_location` are the SHIP-FROM BRANCH (owner 2026-09-07: header-level, never per line) — see the section below. Also: `do_number`, `so_doc_no`, `debtor_code/name`, `do_date`, `expected_delivery_at`, `customer_delivery_date`, `dispatched_at` / `signed_at` / `delivered_at`, `driver_id/name`, `vehicle`, `m3_total_milli`, address block, `salesperson_id`, `branding`, `venue_id`, per-category revenue + cost subtotals, `local_total_sen`, `total_cost_sen`, `total_margin_sen`, `line_count`, `warehouse_id`, `is_dropship`, `arrives_em_warehouse_date`, `pod_r2_key`, `signature_data`, `status`, `company_id`. |
 | `scm.delivery_order_items` | DO lines. `so_item_id` (the SO link that drives warehouse resolution + remaining-qty caps), `item_code`, `item_group`, `qty`, `m3_milli`, `unit_price_sen`, `discount_sen`, `line_total_sen`, `unit_cost_sen`, `line_cost_sen`, `line_margin_sen`, **`ship_cost_sen`**, `variants`, `line_delivery_date`, `line_delivery_date_overridden`, `rack_id`, **`committed_po_batch_no`** (mig 0230 — the incoming PO this line shipped against before its goods arrived; the per-line claim signal the receipt reconcile reads), **`photo_urls`** (mig `20260828T0746_do_item_photo_urls.sql` — `text[] NOT NULL DEFAULT '{}'`, the source SO line's R2 photo keys carried on convert/add; SHARED keys not copies, per line never deduplicated, `[]` never null; every insert path derives it server-side via `loadCarriedSoLinePhotos` + `carriedPhotoUrls` in `backend/src/scm/lib/do-item-row.ts`, ad-hoc lines get `[]`). |
 | `scm.delivery_order_payments` | Payments taken at delivery. `method`, `merchant_provider`, `installment_months`, `online_type`, `approval_code`, `amount_sen`, `account_sheet`, `collected_by`. |
 | `scm.delivery_order_crew` | One row per DO (UNIQUE `do_id`): driver/helper/lorry FKs plus the assign-time name/IC/contact/plate snapshot. |
@@ -1938,7 +1938,15 @@ data error.
   order is reading the document.
 - **The column** is added by
   `backend/src/db/migrations-pg/20260907T2340_scm_do_item_ac_substituted.sql` and
-  written only by `backend/scripts/lib/migrated-do-writer.mjs`.
+  written only by `backend/scripts/lib/migrated-do-writer.mjs`. That migration
+  takes the `ACCESS EXCLUSIVE` lock with a **3s `lock_timeout` and up to 20
+  retries**, because its first, bare form timed out waiting for the lock on a
+  live cutover table and blocked every migration behind it (deploy run
+  34141376280; `docs/bugs/0677-*`). The ALTER is metadata-only — a constant
+  default needs no rewrite — so the whole cost is the lock. **Any future
+  `ALTER TABLE` on `scm.delivery_order_items` or `scm.delivery_orders` must bound
+  its lock wait the same way**: these tables take continuous writes and an
+  unbounded wait in front of the deploy pipeline stops everyone.
 - **The importer can no longer lose a note quietly.**
   `create-migrated-documents.mjs` asserts two conservation identities — every
   note in the cut is either created or NAMED, and every book line is either
@@ -1947,6 +1955,64 @@ data error.
   ALL-OR-NOTHING with an explicit refusal list, so it never vanished a document;
   and its over-delivery assertion is keyed on quantity, which a substituted line
   changes the meaning of. Enabling it there is a separate, reviewed change.
+
+## The delivery warehouse lives on the DO HEADER (2026-09-07)
+
+Owner ruling, *"记在单头就好"*. Measured before asking, on
+`backend/scripts/data/ac-fidelity-do-*.json.gz`: a book line's `Location` equals
+its header's `SalesLocation` on **46,182 of 46,194** non-blank lines, and only
+**2 of 11,134** documents span two locations — `DO-000140` (PG + HQ) and
+`DO-000153` (KL + SUNWAY). So the branch is a HEADER fact. There is no per-line
+location column and one must not be added.
+
+The columns are the two `scm.delivery_orders` already had: `warehouse_id` (the
+canonical binding) and `sales_location` (the free-text snapshot beside it). They
+are written from ONE answer, so they can never disagree.
+
+**The rule is `backend/scripts/lib/ac-do-location.mjs`** — shared by
+`create-migrated-documents.mjs` (stamps a document as it is written),
+`backfill-migrated-do-warehouse.mjs` (stamps the ones already written) and
+`sync-ac-delta.mjs`'s `LANES=do` (stamps the notes raised AFTER the cutover cut),
+so the same document cannot land on different branches depending on which ran.
+Sources, in order, never guessed:
+
+1. the book's own DO header (`SalesLocation`) — 11,134 documents;
+2. the document's own line `Location`s, and ONLY when unanimous — the header
+   snapshot runs ~307 documents behind the book, so 19 of the cutover cut's 84
+   have no header row; where both sources exist they agree on 65 of 65;
+3. nothing — NULL, REPORTED, left alone. Never a company-blind default, because
+   a wrong warehouse reads as another branch's stock.
+
+**Why it matters beyond display.** `resolveDoLineWarehouses` (`:645`) resolves a
+line's ship-from warehouse as (1) the linked SO line's, (2) **the DO header's**,
+(3) the company default. A migrated line with no `so_item_id` — the substituted
+shape above — skips (1), so (2) is the step that has to answer. Migrated
+documents write no movements at all, so nothing moves stock either way; what was
+wrong was the warehouse a person READS.
+
+**THE DELTA LANE IS THE THIRD CALLER, and it was the one left out.**
+`sync-ac-delta.mjs` creates every delivery note raised after the cutover cut, and
+until 2026-09-08 it called `insertMigratedDo` with neither location field — so
+those documents landed with a NULL branch while the cutover corpus had one. It
+now resolves through the same module. Two things about that lane are specific to
+it and worth knowing:
+
+- **Source 1 cannot answer for it, by construction.** A note raised after the
+  fidelity cut has no row in `ac-fidelity-do-headers.json.gz` — which is the
+  exact population this lane exists for — so source 2, the document's own lines
+  when unanimous, is what usually answers.
+- **Source 2 needed a column the snapshot did not carry.** The lane reads
+  `data/ac-reconcile-truth.json.gz`, whose LINE projection had no `Location`;
+  `export-ac-reconcile-truth.mjs` now emits it, APPENDED. Until that file is
+  re-cut the index is `-1`, the location resolves to nothing, and the lane
+  PRINTS `no ship-from branch stamped` per document rather than defaulting.
+
+**Both surfaces.** Desktop shows *Ship-from warehouse* in the DO detail's
+Delivery info card (`frontend/src/pages/scm-v2/DeliveryOrderDetailV2.tsx`),
+labelled through the shared `warehouseLabel` rule so it reads byte-identical to
+the SO header and the PDF. Mobile shows *Ship-from* in the DO detail's meta grid
+(`frontend/src/mobile/MobileModuleDetail.tsx`) — that row previously fell back to
+`customer_state`, a different concept under the same label, and no longer does.
 
 ## Coverage note (2026-08-12 verification sweep)
 

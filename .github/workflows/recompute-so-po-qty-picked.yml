@@ -1,0 +1,66 @@
+name: Recompute SO po_qty_picked (PLAN-gated)
+
+# repair-migrated-po-lines.mjs:369-383 named this gap itself: it stamps the
+# purchase-order dedication and does NOT move po_qty_picked, "a duplicate-PO
+# risk until something recomputes it". Nothing ever did. Measured 2026-09-08
+# (convert-symmetry run 34142505986): 962 of 15050 live company-1 sales-order
+# lines disagree with their own purchase-order children, all 962 reading LOW —
+# the SO->PO ceiling is qty - po_qty_picked, so a counter stuck at 0 lets a
+# second purchase order be raised for goods already bought.
+#
+# Invents nothing: every value is a sum over purchase_order_items rows that
+# ALREADY carry so_item_id. No link is created, moved or inferred, and the
+# account book is not consulted.
+#
+# Applies the app's own rule, not a plausible one — recomputeSoPicked drops
+# from_mrp lines, excludes DRAFT purchase orders alongside CANCELLED, and does
+# not clamp. This is the value the app would write itself the next time anyone
+# edited one of those purchase orders.
+#
+# PLAN by default. apply needs the CONFIRM phrase. po_qty_picked feeds MRP and
+# the From-SO picker, so do NOT apply while a stock re-seed or an MRP recompute
+# is in flight.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (default, read-only) or apply"
+        required: false
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: 'On apply, type exactly: recompute-po-qty-picked'
+        required: false
+        default: ""
+      company_id:
+        description: "ERP company (AED_HOUZS is company 1)"
+        required: false
+        default: "1"
+
+concurrency:
+  group: recompute-so-po-qty-picked
+  cancel-in-progress: false
+
+jobs:
+  recompute:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/recompute-so-po-qty-picked.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

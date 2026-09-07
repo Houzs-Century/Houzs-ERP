@@ -10,6 +10,13 @@
  * differently from the converter does not explain the converter — it invents a
  * second answer and calls it evidence.
  *
+ * A CANCELLED receipt is excluded, added 2026-09-07 with the goods-receipt
+ * reshape. `reshape-migrated-grns.mjs` retires a superseded migrated receipt by
+ * flipping its status rather than deleting it (the owner's standing rule), so
+ * from that day a `migrated_no_stock` receipt can be a retired one — and a
+ * retired receipt must not offer its lines up to be invoiced a second time
+ * beside the live document that replaced it.
+ *
  * READ-ONLY. SELECT only, no writes, no decisions: the decisions live in
  * src/scm/lib/migrated-chain.ts and both callers pass this straight into it.
  */
@@ -34,6 +41,7 @@ export async function loadMigratedGrnSources(sql, { companyId, grToPi, isCancell
            g.purchase_order_id, p.linked_ac_grn_docnos AS ac_grs
     FROM scm.grns g JOIN scm.purchase_orders p ON p.id = g.purchase_order_id
     WHERE g.company_id = ${companyId} AND g.migrated_no_stock = true
+      AND g.status <> 'CANCELLED'
     ORDER BY g.grn_number`;
   const items = await sql`
     SELECT i.id, i.grn_id, i.material_kind, i.item_code, i.material_name, i.item_group,
@@ -43,7 +51,8 @@ export async function loadMigratedGrnSources(sql, { companyId, grToPi, isCancell
            i.leg_height_inches, i.leg_price_sen, i.custom_specials, i.line_suffix,
            i.special_order_price_sen
     FROM scm.grn_items i JOIN scm.grns g ON g.id = i.grn_id
-    WHERE g.company_id = ${companyId} AND g.migrated_no_stock = true`;
+    WHERE g.company_id = ${companyId} AND g.migrated_no_stock = true
+      AND g.status <> 'CANCELLED'`;
   const byDoc = new Map();
   for (const it of items) {
     if (!byDoc.has(it.grn_id)) byDoc.set(it.grn_id, []);

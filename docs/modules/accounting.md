@@ -1049,3 +1049,30 @@ code, so the two meet by name, which the voucher copies from the document.
 Migrations `20260907T1700_pv_purpose_customer_refund.sql` (the enum value)
 and `20260907T1705_pv_customer_refund_columns.sql` (source and customer on
 the header). Pinned by `backend/tests/pvCustomerRefund.test.ts`.
+
+**One clearing account per card machine (2026-09-07, owner: 我想要拆账户，因为这样
+我比较然后检查回).** Until now every acquirer's card money sat in ONE account,
+326-0000 CARD MACHINE CLEARING (EDC), so Daily Bank could only say what "the
+machines" owed as a lump. `20260907T2200_acc_per_bank_clearing_2990.sql` gives
+2990 a clearing account per bank — 326-0010 PBB, 326-0020 MBB, 326-0030 GHL,
+326-0040 HLB, siblings of 326-0000 (父户不记账: the generic account keeps its
+job for a card payment recorded without a bank — 2990's 43 untagged
+installment rows, and the 4 the owner chose to leave tagged CIMB) — and points
+each acquirer link (`scm.acc_company_acquirers.transit_account_code`) at its
+own; CIMB and AEON (switched off) stay on the generic account, HOUZS is not
+touched. The posting rules already read the acquirer's account
+(`transitFor`, acc/payments.ts) and the settlement layer posts fees and
+payouts against it, so the split needs no rule change. The Recon Setup
+maintenance matrix (`frontend/src/pages/scm-v2/SettlementSetup.tsx`) grows a
+**clearing** picker under each merchant's payout bank, fed by the new
+`clearings` block of `GET /accounting/settlement/maintenance` (each company's
+live 326-/327- accounts) and written through `PATCH
+/accounting/settlement/maintenance/merchant` `transitAccountCode`, which
+refuses anything that is not a live clearing account of that company
+(`backend/src/scm/routes/accounting-settlement.ts`). Daily Bank
+(`backend/src/scm/routes/accounting.ts`) keeps the generic account on the
+board as 未标银行 once no active acquirer points at it, so untagged card money
+stays visible. Contracts: `backend/tests/settlementRoutes.test.ts` (the
+clearing list, the write and its refusals), `SettlementSetup.test.tsx` (the
+picker). Merchant reconciliation moving a matched untagged payment from the
+generic account to its bank's is the follow-up.

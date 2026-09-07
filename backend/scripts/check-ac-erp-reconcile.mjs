@@ -56,14 +56,20 @@
  *       DECISION, and is counted apart from the gaps.
  *
  * ── THE THREE TRAPS THIS CHECK IS BUILT AROUND ──────────────────────────────
- * 1. scm.grns.linked_ac_docno holds the PO's AutoCount number, NOT the GR's —
- *    by design (check-migration-fidelity.mjs: "one ERP GRN per PURCHASE ORDER;
- *    an AutoCount receipt can span several").  The AutoCount GR numbers live
- *    in purchase_orders.linked_ac_grn_docnos.  Matching GR the obvious way
- *    reported all 216 as missing once already (check-ac-erp-doc-links.mjs:104).
- *    GR LINE data is not compared at all: grn_items.qty_received is DERIVED
- *    from the PO line, so a comparison against GRDTL would measure the
- *    derivation, not the book.
+ * 1. scm.grns.linked_ac_docno holds the PO's AutoCount number, NOT the GR's.
+ *    The RECEIPT number is a separate column, scm.grns.linked_ac_gr_docno,
+ *    added 2026-09-07 with the reshape; the older array
+ *    purchase_orders.linked_ac_grn_docnos is still the presence pointer for a
+ *    receipt no document stands for.  Matching GR the obvious way reported all
+ *    216 as missing once already (check-ac-erp-doc-links.mjs:104).
+ *
+ *    GR LINE data IS compared now, at (receipt x purchase order) PAIR grain.
+ *    It used to be skipped, correctly, because grn_items.qty_received was
+ *    DERIVED from the PO line and one ERP GRN covered a whole PO.
+ *    reshape-migrated-grns.mjs removed both reasons: the quantity is now the
+ *    BOOK's own and the document is one receipt's worth of one purchase order.
+ *    The unit PRICE is still taken from the purchase-order line, so it stays
+ *    DECLARED rather than counted as a gap.
  * 2. Item codes are TRANSLATED through data/autocount-erp-mapping-1561.csv.
  *    An untranslated comparison reports the whole catalogue as wrong.
  * 3. SOFA lines decompose: one AutoCount line becomes one ERP line per
@@ -227,6 +233,52 @@ const book = decodeSnapshot(snap);
    carried.  check-ac-gap-attribution.mjs reads the same module, so the check
    and the attribution can never disagree about who is in scope. */
 const SCOPE = buildScope(book);
+
+/* ── goods receipts, restated at (receipt × purchase order) grain ───────── */
+/* The book states a receipt once, with lines raised from several purchase
+   orders. The ERP cannot: `scm.grns.purchase_order_id` is one purchase order.
+   So the BOOK is restated at the grain the ERP can hold, rather than the ERP
+   being compared against a document it is structurally unable to mirror.
+
+   The population is derived from `SCOPE.GR` and `SCOPE.PO` — both from
+   `lib/ac-scope.mjs`, so the pair scope cannot drift away from the document
+   scope the rest of this file uses. A pair "document" carries the receipt's own
+   date and currency, and a total that is the sum of ITS OWN lines, which is the
+   only total the ERP document can be expected to equal. */
+function grPairGrain() {
+  const headers = new Map();
+  const lines = new Map();
+  const byDtlKey = new Map();
+  const scope = new Set();
+  for (const gr of SCOPE.GR) {
+    const h = book.GR.headers.get(gr);
+    if (!h) continue;
+    for (const l of book.GR.lines.get(gr) || []) {
+      if (l.fromDocType !== "PO" || !l.fromDocNo || !SCOPE.PO.has(l.fromDocNo)) continue;
+      const key = `${gr}|${l.fromDocNo}`;
+      if (!lines.has(key)) lines.set(key, []);
+      lines.get(key).push(l);
+      byDtlKey.set(l.dtlKey, l);
+      scope.add(key);
+    }
+  }
+  for (const [key, ls] of lines) {
+    const h = book.GR.headers.get(key.split("|")[0]);
+    const sum = (f) => (ls.every((l) => l[f] == null) ? null : ls.reduce((s, l) => s + (l[f] ?? 0), 0));
+    headers.set(key, {
+      docNo: key,
+      docDate: h.docDate,
+      cancelled: h.cancelled,
+      totalSen: sum("subTotalSen"),
+      docTotalSen: sum("docSubTotalSen"),
+      lineCount: ls.length,
+      currency: h.currency,
+      rate: h.rate,
+    });
+  }
+  return { view: { headers, lines, byDtlKey, desc2: book.GR.desc2 }, scope };
+}
+const GR_PAIR = grPairGrain();
 const soScope = SCOPE.SO;
 /* Diagnostic only, NOT part of the definition: the orders the DO rule keeps
    out, reported at the end so the exclusion stays visible. */
@@ -302,15 +354,57 @@ const TYPES = [
     t: "GR",
     label: "Goods Received",
     absenceIs: "GAP",
-    /* The GR numbers live on the PO row, not on scm.grns — trap 1. Presence
-       only: there is no ERP GR document to compare lines or money against. */
-    pointers: () => sql`SELECT DISTINCT g AS ac_no, p.po_number AS erp_no
+    /* GOODS RECEIPTS ARE COMPARED AT PAIR GRAIN, and that is a decision worth
+       reading before changing.
+
+       This section used to print "line and money comparison NOT APPLICABLE" and
+       stop, for two reasons that were both true: `grn_items.qty_received` was
+       DERIVED from the purchase-order line rather than copied from the book, and
+       ONE ERP goods receipt covered a whole purchase order while an AutoCount
+       receipt can span several. Comparing those would have measured our own
+       derivation. But "not applicable" then read as "checked", and the contents
+       of the migrated receipts went unexamined right up to go-live.
+
+       Both reasons were removed by `reshape-migrated-grns.mjs` (owner 2026-09-07:
+       「是 A 的，不过只是把那些需要的搬进来，不需要的不需要搬」): the ERP now holds one document per
+       (AutoCount receipt × purchase order), carrying the book's own receipt date
+       and the book's own received quantity, and each one names its receipt in
+       `scm.grns.linked_ac_gr_docno`.
+
+       PAIR, not receipt, because `scm.grns.purchase_order_id` is a SINGLE
+       purchase order and 51 of the 214 in-scope receipts cover more than one.
+       Comparing at RECEIPT grain would report every one of those 51 as short by
+       the part of it raised against another purchase order — a shortfall the ERP
+       is structurally incapable of not having. The pair is the finest grain both
+       sides can state, and at that grain the comparison is like-for-like. */
+    pairGrain: true,
+    sofaAware: true,
+    priceDeclared:
+      "grn_items.unit_price_sen is taken from the PURCHASE ORDER line by design, not from GRDTL.UnitPrice — " +
+      "reshape-migrated-grns.mjs copies the book's item, quantity and date, and leaves price to the order",
+    docs: () => sql`SELECT g.grn_number AS erp_no,
+        g.linked_ac_gr_docno || '|' || p.linked_ac_docno AS ac_no,
+        COALESCE(g.total_sen, 0) AS total_sen
+      FROM scm.grns g JOIN scm.purchase_orders p ON p.id = g.purchase_order_id
+      WHERE g.company_id = ${CO} AND g.status <> 'CANCELLED'
+        AND g.linked_ac_gr_docno IS NOT NULL AND p.linked_ac_docno IS NOT NULL`,
+    lines: () => sql`SELECT g.linked_ac_gr_docno || '|' || p.linked_ac_docno AS ac_no,
+        i.item_code, i.qty_accepted::float8 AS qty, i.unit_price_sen,
+        NULL::bigint AS ac_dtlkey, i.line_suffix,
+        0 AS line_no, i.created_at, i.id::text AS id,
+        i.item_group, i.variants, i.custom_specials, i.description2,
+        TRUE AS proceeded
+      FROM scm.grn_items i
+      JOIN scm.grns g ON g.id = i.grn_id
+      JOIN scm.purchase_orders p ON p.id = g.purchase_order_id
+      WHERE g.company_id = ${CO} AND g.status <> 'CANCELLED'
+        AND g.linked_ac_gr_docno IS NOT NULL AND p.linked_ac_docno IS NOT NULL`,
+    /* The other half of the presence axis: receipt numbers stamped on the
+       purchase order by stamp-ac-grn-refs.mjs, which carry no ERP document.
+       Restated at pair grain so it is commensurable with the documents. */
+    pointers: () => sql`SELECT DISTINCT g || '|' || p.linked_ac_docno AS ac_no, p.po_number AS erp_no
       FROM scm.purchase_orders p, unnest(p.linked_ac_grn_docnos) g
-      WHERE p.company_id = ${CO}`,
-    linesNotComparable:
-      "grn_items.qty_received/unit_price are DERIVED from the PO line (check-migration-fidelity.mjs), " +
-      "and one ERP GRN covers a whole PO while an AutoCount receipt can span several — comparing them " +
-      "would measure the derivation, not the book.",
+      WHERE p.company_id = ${CO} AND p.linked_ac_docno IS NOT NULL`,
   },
   {
     t: "DO",
@@ -410,22 +504,27 @@ try {
   if (codeMap.size < 100) {
     problems.push(`the item-code map loaded only ${codeMap.size} rows from ${MAP_CSV}`);
   }
-  for (const { t } of TYPES) {
+  for (const cfg of TYPES) {
+    const t = cfg.t;
+    /* The GR side claims a PAIR key, so it must be proved against the PAIR
+       view. Proving it against the receipt-grain headers would resolve nothing
+       and refuse the whole run. */
+    const bk = cfg.pairGrain ? GR_PAIR.view : book[t];
     const claims = [
       ...erp[t].docs.filter((d) => d.ac_no).map((d) => String(d.ac_no).trim()),
       ...erp[t].pointers.map((d) => String(d.ac_no).trim()),
     ];
     if (claims.length === 0) continue;
-    const hit = claims.filter((a) => book[t].headers.has(a)).length;
+    const hit = claims.filter((a) => bk.headers.has(a)).length;
     if (hit === 0) {
       problems.push(
         `${t}: ${claims.length} ERP rows claim an AutoCount number and NOT ONE resolves against ` +
-          `${book[t].headers.size} ${t} headers in the snapshot — the doc-number matcher is broken, not the data.`,
+          `${bk.headers.size} ${t} headers in the snapshot — the doc-number matcher is broken, not the data.`,
       );
     }
     const keyed = erp[t].lines.filter((l) => l.ac_dtlkey != null);
     if (keyed.length) {
-      const kHit = keyed.filter((l) => book[t].byDtlKey.has(String(l.ac_dtlkey).trim())).length;
+      const kHit = keyed.filter((l) => bk.byDtlKey.has(String(l.ac_dtlkey).trim())).length;
       if (kHit === 0) {
         problems.push(
           `${t}: ${keyed.length} ERP lines carry linked_ac_dtlkey and NOT ONE resolves against the ` +
@@ -702,13 +801,24 @@ function reportVariants(t, label, rows, desc2) {
 
 for (const cfg of TYPES) {
   const t = cfg.t;
-  const B = book[t];
-  const scope = SCOPE[t];
+  /* GR compares at (receipt × purchase order) grain — see the cfg block. Both
+     the book side and the population come from GR_PAIR so the two halves of the
+     comparison cannot be at different grains. */
+  const B = cfg.pairGrain ? GR_PAIR.view : book[t];
+  const scope = cfg.pairGrain ? GR_PAIR.scope : SCOPE[t];
 
   plain("");
   plain(`═══════════ ${t} — ${cfg.label} ═══════════`);
+  if (cfg.pairGrain) {
+    plain(
+      "GRAIN: one \"document\" below is a (AutoCount receipt x purchase order) PAIR, written `GR-nnn|PO-nnn`, " +
+        "because an ERP goods receipt belongs to ONE purchase order while an AutoCount receipt can span several. " +
+        `The book holds ${book[t].headers.size} ${t} documents in total and ${SCOPE[t].size} in scope; ` +
+        `they resolve to ${B.headers.size} pairs.`,
+    );
+  }
   plain(
-    `AutoCount: ${B.headers.size} documents in the book; ${scope.size} in the expected ERP population` +
+    `AutoCount: ${B.headers.size} ${cfg.pairGrain ? "pairs" : "documents"} in the book; ${scope.size} in the expected ERP population` +
       (scope.size === 0 ? " (none expected — the owner declined the historical import)" : ""),
   );
 
@@ -1017,7 +1127,7 @@ for (const cfg of TYPES) {
       const ep = el.unit_price_sen == null ? 0 : Number(el.unit_price_sen);
       if (ap !== ep) {
         const msg = `${ac} DtlKey ${al.dtlKey}: AutoCount unit price RM ${rm(ap)} vs ERP RM ${rm(ep)}`;
-        if (split || sofa) D.price++;
+        if (split || sofa || cfg.priceDeclared) D.price++;
         else {
           F.price.push(msg);
           /* WHICH KIND of price difference this is, because "241 lines differ"
@@ -1087,6 +1197,9 @@ for (const cfg of TYPES) {
       `(line count ${D.lineCount}, unit price ${D.price}); item code by design ${D.item}` +
       (cfg.itemCodeDeclared ? ` — ${cfg.itemCodeDeclared}` : ""),
   );
+  if (cfg.priceDeclared) {
+    plain(`   unit price is DECLARED for this type — ${cfg.priceDeclared}. The QUANTITY is not: it is copied from the book and is compared above.`);
+  }
   if (F.price.length) {
     log(
       `${t} UNIT PRICE — the ${F.price.length} difference(s), split by what each one IS:` +

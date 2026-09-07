@@ -66,6 +66,8 @@ import {
   useUpdateMfgDeliveryOrderItem,
 } from "../../vendor/scm/lib/delivery-order-queries";
 import { useRacks } from "../../vendor/scm/lib/warehouse-queries";
+import { useWarehouses } from "../../vendor/scm/lib/inventory-queries";
+import { warehouseLabel } from "../../vendor/scm/lib/warehouse-label";
 import { useSetBreadcrumbs } from "../../hooks/useBreadcrumbs";
 import { useStaffLookup } from "../../hooks/useStaffLookup";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
@@ -115,6 +117,9 @@ type DoHeader = HoldFields & {
   customer_so_no: string | null;
   po_doc_no: string | null;
   sales_location: string | null;
+  /* The branch that shipped it — the canonical binding beside the free-text
+     `sales_location` snapshot. Owner ruling 2026-09-07: header, not per line. */
+  warehouse_id: string | null;
   address1: string | null;
   address2: string | null;
   city: string | null;
@@ -729,6 +734,13 @@ export function DeliveryOrderDetailV2() {
   // ONE gate, shared with the lists, the SO drawer and mobile — this was a
   // hand-copied `["edit","full"].includes(...)`, and the copies disagreed.
   const canWriteDo = canOperateDeliveryOrders(user, can, pageAccess);
+  /* Ship-from branch. The header's own warehouse_id is the canonical binding
+     (it is also step 2 of resolveDoLineWarehouses, the answer for any line with
+     no SO line behind it); `sales_location` is the free-text snapshot kept
+     beside it. Labelled through the SHARED warehouseLabel rule — code first,
+     then name — so this reads byte-identical to the SO header and the PDF.
+     Owner ruling 2026-09-07: the delivery location lives on the header. */
+  const warehousesQ = useWarehouses();
 
   const deliveryOrder =
     (detail.data as { deliveryOrder?: DoHeader } | undefined)?.deliveryOrder ??
@@ -1444,6 +1456,24 @@ export function DeliveryOrderDetailV2() {
                       : "Not scheduled"
                   }
                   muted={!deliveryOrder.customer_delivery_date}
+                />
+                {/* Which branch shipped it. Resolved id first, then the stored
+                    text snapshot; a document whose location the book could not
+                    answer says so rather than borrowing a default. */}
+                <Field
+                  label="Ship-from warehouse"
+                  value={
+                    warehouseLabel(
+                      (warehousesQ.data ?? []).find(
+                        (w) => w.id === deliveryOrder.warehouse_id
+                      ) ?? null
+                    ) ||
+                    deliveryOrder.sales_location ||
+                    "Not recorded"
+                  }
+                  muted={
+                    !deliveryOrder.warehouse_id && !deliveryOrder.sales_location
+                  }
                 />
               </div>
 
