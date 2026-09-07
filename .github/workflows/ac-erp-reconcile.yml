@@ -1,0 +1,61 @@
+name: AutoCount vs ERP reconcile (read-only)
+
+# "确保全部 SO PO GR DO SI PI 都是对的,并且里面的数据都是对的" (owner, 2026-09-07).
+#
+# Answers it without anyone opening a SQL console. The ERP side lives only in
+# production, so before this existed the question cost an owner interruption
+# AND put the production DSN in front of a human for a SELECT. Actions already
+# holds secrets.DATABASE_URL for the deploy, so the check runs here.
+#
+# The AutoCount side does NOT come from here: the book is reachable only over
+# ZeroTier from the office network, which a GitHub-hosted runner has no route
+# to. It comes from the committed snapshot
+# backend/scripts/data/ac-reconcile-truth.json.gz, refreshed by running
+#   AC_CRED_FILE=<path> node backend/scripts/export-ac-reconcile-truth.mjs
+# on a machine on that network. The checker REFUSES when that snapshot is more
+# than two days old rather than answering against a stale book.
+#
+# Manual trigger only - it is a question, not a gate, and a production DB read
+# on a schedule becomes CI noise nobody reads.
+on:
+  workflow_dispatch:
+    inputs:
+      max_snapshot_age_days:
+        description: "Refuse if the AutoCount snapshot is older than this many days"
+        required: false
+        default: "2"
+      company_id:
+        description: "ERP company to reconcile (AED_HOUZS is company 1)"
+        required: false
+        default: "1"
+
+# Deliberately NOT in the deploy concurrency group: this touches nothing and
+# must never queue behind - or displace - a release.
+concurrency:
+  group: ac-erp-reconcile
+  cancel-in-progress: true
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-ac-erp-reconcile.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MAX_SNAPSHOT_AGE_DAYS: ${{ inputs.max_snapshot_age_days }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first
