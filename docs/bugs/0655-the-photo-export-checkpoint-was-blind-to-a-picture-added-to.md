@@ -1,6 +1,6 @@
 ## The photo export checkpoint was blind to a picture added to an older line [high]
 
-<!-- area: AutoCount migration -->
+<!-- area: AutoCount sync + write-back -->
 
 **Symptom.** On go-live day the AutoCount line-photo export was re-run to top up
 the 2026-08-31 snapshot. It reported new images only from the tail of the book.
