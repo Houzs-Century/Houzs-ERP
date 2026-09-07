@@ -233,7 +233,7 @@ const invalidateMaintenance = (qc: ReturnType<typeof useQueryClient>) => {
 export const useSaveMaintenanceMerchant = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { companyId: number; code: string; enabled?: boolean; bankAccountCode?: string | null }) =>
+    mutationFn: (body: { companyId: number; code: string; enabled?: boolean; bankAccountCode?: string | null; transitAccountCode?: string }) =>
       authedFetch<{ ok: boolean; created: boolean }>('/accounting/settlement/maintenance/merchant', {
         method: 'PATCH', body: JSON.stringify(body),
       }),

@@ -28,8 +28,7 @@ import { AlertTriangle, ArrowLeft } from 'lucide-react';
 import {
   useSettlementMaintenance, useSaveMaintenanceMerchant, useSaveMaintenanceBank,
   useSaveAcquirerSetup,
-  type MaintenanceMerchant, type MaintenanceBank, type MaintenanceCompany,
-} from './settlement-queries';
+  type MaintenanceMerchant, type MaintenanceBank, type MaintenanceCompany, type MaintenanceData } from './settlement-queries';
 import { ICON, btn, softText, danger, refusalText } from './settlement-ui';
 import { useAccounts, useAccountRoles, useSaveBankDefault } from '../../vendor/scm/lib/accounting-queries';
 import { useBankRules, useSaveBankRule, useCreateBankRule, type BankRule } from './bank-queries';
