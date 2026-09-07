@@ -1445,3 +1445,48 @@ at both supplier scopes, so adding one of those codes to a migrated PO line's
 That is why the migrated-line backfill writes `variants.specialsRecorded`
 instead — a key no pricing path reads. Full rule and the surfaces that render it:
 `docs/modules/sales-order.md` §`variants.specialsRecorded`.
+
+## The delta sync writes `so_item_id` too — and until 2026-09-07 it was the one writer that did not check the product
+
+The section above (**"the dedication never crosses products"**) states the rule
+for `repair-migrated-po-lines.mjs`, which takes its candidates through
+`scripts/lib/so-line-dedication.mjs`. There is a SECOND writer of the same
+column: `scripts/sync-ac-delta.mjs` lane `links`, which resolves both ends of
+AutoCount's own `PODTL.FromSODtlKey` pair by `linked_ac_dtlkey` and stamps the
+link. A key pair on both sides is the strongest evidence there is, so it wrote on
+that alone and never compared the two rows' `item_code`.
+
+**It cost nine wrong dedications in production.** Run 34123720786 (2026-09-07
+12:46Z, `mode=apply`) reported `SO->PO dedications written: 10 of 10 intended`;
+the sofa document-chain audit's SO -> PO code mismatch went from 0 (run
+34119014176, 11:54Z) to 9 (run 34130736979, 14:02Z). Each of the nine binds a
+sales-order line to a purchase-order line for a different bed — REGAL (A)-(K) to
+a TRION (A) (HB STR)-(K), CODY-(Q) to a JAGER-(Q), JAGER-(Q) to a JAGER-(SS),
+BEDFRAME KIV to a CELENE (A)-(K).
+
+**AutoCount is not the wrong side.** Decoding the 2026-09-07T09:35Z truth
+snapshot, each of those PO lines resolves through its own `FromSODtlKey` to a
+sales-order line with a byte-identical AutoCount item code, and
+`autocount-erp-mapping-1561.csv` maps that code to what our PURCHASE ORDER says.
+The disagreement is between OUR two rows: the sales-order line is the one that
+does not match its own AutoCount source.
+
+**Why a wrong dedication is not bookkeeping.** A bedframe or sofa line is
+hard-bound (`isHardBoundLine`, `backend/src/scm/lib/so-stock-allocation.ts`) and
+reads READY only through its OWN dedicated purchase order's `received_qty`, never
+through the pooled balance. So the customer's REGAL now goes READY when a TRION
+is received, and the real REGAL line can never light.
+
+The rule now lives in `scripts/lib/ac-po-line.mjs` as `planSoPoDedications()`,
+which returns `{ plan, missing, mismatch }` — a `missing` is an import that has
+not happened yet, a `mismatch` is a disagreement inside the ERP that a person has
+to settle, and only `plan` is written. `backend/tests/soPoDedication.test.mjs`
+drives it over the nine real pairs and over the two properties that matter beside
+the refusal: a refused pair must NOT consume the sales-order line, so the PO line
+that DOES match it can still be dedicated; and case and inner whitespace are
+normalised before two codes are called different.
+
+**The nine already in production are NOT reverted by this rule.** The guard stops
+the tenth; deciding which of the two rows is the faithful copy — did the customer
+change the bed, or did the sales-order import mis-map it? — is the owner's.
+Ledger: `docs/bugs/0671-the-delta-sync-dedicated-9-sales-order-lines-to-purchase-ord.md`.
