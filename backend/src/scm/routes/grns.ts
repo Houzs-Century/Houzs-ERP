@@ -2401,7 +2401,16 @@ mountHoldRoute(grns, 'grn'); // the mig-0324 MARKER, never `status` — routes/d
    c.get('supabase'). The body stays INSIDE the route on purpose: several checks
    scan grns.ts by route block, and hoisting it to a named handler moved it out
    of their sight. docs/modules/grn.md 7c. */
-grns.patch('/:id/cancel', async (c) => runScmPgCommand(c, async (
+/* EXPORTED so the command can be driven directly against a fake PostgREST.
+   runScmPgCommand needs a real PostgreSQL transaction, so while this body was
+   inline the only reachable test was a source-shape one — and the defect this
+   export exists for (a migrated receipt reversing stock it never posted) is
+   invisible to source shape: the code compiles and reads correctly either way.
+   Extraction only; the body below is unchanged apart from the guard it now
+   carries. Same pattern as postGrnHandler / createGrnFromPosHandler above. */
+export const cancelGrnCommand = async (
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Hono's context, as everywhere else in this file.
+  c: any,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the pg command client is a PostgREST-shaped shim, not a SupabaseClient; typing it honestly needs schema.pg.ts to cover the SCM tables (drizzle-kit pull), the upstream fix ci.yml's lint job names. Same shape as the line DELETE below.
   sb: any,
 ) => {
@@ -2593,7 +2602,9 @@ grns.patch('/:id/cancel', async (c) => runScmPgCommand(c, async (
   });
 
   return c.json({ grn: data ?? { id, status: 'CANCELLED' }, ...(cancelErrors.length ? { cancelErrors } : {}) });
-}));
+};
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- see cancelGrnCommand.
+grns.patch('/:id/cancel', async (c) => runScmPgCommand(c, async (sb: any) => cancelGrnCommand(c, sb)));
 
 /* ════════════════════════════════════════════════════════════════════════
    GRN PO-clone CRUD (PATCH header + line add / edit / delete) — mirrors the
