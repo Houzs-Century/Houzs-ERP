@@ -779,6 +779,9 @@ describe("positionGrantsWildcard — position ⇒ '*'", () => {
   test("god positions grant the wildcard (exact name, case/space tolerant)", () => {
     expect(positionGrantsWildcard("Super Admin")).toBe(true);
     expect(positionGrantsWildcard("Owner")).toBe(true);
+    // Owner 2026-09-07: the Managing Director position is Super Admin's peer.
+    expect(positionGrantsWildcard("Managing Director")).toBe(true);
+    expect(positionGrantsWildcard("  managing   DIRECTOR ")).toBe(true);
     expect(positionGrantsWildcard("  super   admin ")).toBe(true);
     expect(positionGrantsWildcard("OWNER")).toBe(true);
   });
@@ -790,6 +793,8 @@ describe("positionGrantsWildcard — position ⇒ '*'", () => {
     expect(positionGrantsWildcard("Assistant Super Admin")).toBe(false);
     expect(positionGrantsWildcard("Sales Director")).toBe(false);
     expect(positionGrantsWildcard("Owners")).toBe(false);
+    expect(positionGrantsWildcard("Assistant to Managing Director")).toBe(false);
+    expect(positionGrantsWildcard("Managing Directors")).toBe(false);
   });
 
   test("empty / null → false (fail closed)", () => {
