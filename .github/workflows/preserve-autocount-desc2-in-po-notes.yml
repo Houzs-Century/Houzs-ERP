@@ -1,0 +1,89 @@
+name: Preserve AutoCount Desc2 in the PO line note (PLAN by default)
+
+# The PURCHASE-SIDE twin of preserve-autocount-desc2-in-remark.yml. The owner,
+# asked WHERE his 2026-09-02 request applied, answered 「SO line 和 PO line 的
+# remarks」 — both sides. The sales side got its tool that day; the purchase
+# side got only the render seams (docs/bugs/0640-*), because the migration had
+# already filled `notes` on 923 of the 1,117 migrated company-1 PO lines. That
+# left no tool to park the book's wording on a line the NEXT re-import brings
+# in — which is exactly how the sales side went 4,139 -> +200 rows in three
+# days (run 34132958644, 2026-09-07).
+#
+# A PO line has no `remark` column; its free-text field is
+# scm.purchase_order_items.notes. `notes` is NOT on the AutoCount write-back
+# path — PO_ITEM_COLS (autocount-outbox.ts:396-397) does not select it, and the
+# only `notes` the write-back sends is the HEADER's — so a copy parked there
+# survives every save and never reaches the account book. `description2` is on
+# that path AND is recomputed by the item PATCH on every write, which is why
+# this script never touches it.
+#
+# PLAN (default): every UPDATE runs inside ONE transaction and is ROLLED BACK.
+# The output prints the before/after count per column, the per-source split,
+# five worked samples, and a fresh-connection re-read asserting the rollback
+# held and description2 did not move. Nothing persists.
+# mode=apply commits the same transaction and additionally requires the CONFIRM
+# phrase, which is not defaulted here — it has to be typed into the dispatch.
+#
+# READ THE DISCARD LIST BEFORE APPLYING. Unlike the sales table — whose 663
+# occupied remarks were grouped and shown to the owner, who then ruled
+# 「如果是我们导入的就不需要」 — the occupied notes on THIS table have never
+# been enumerated for him. Lines whose note already carries the book's words
+# (the 923) are skipped rather than relabelled, so the discard list is short;
+# read it, and if anything in it looks like a person's typing rather than an
+# importer's, run shape=append instead.
+#
+# Manual trigger only, own concurrency group — a diagnostic must never queue
+# behind or displace a release. Never scheduled.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (rolls back) or apply (commits)"
+        required: false
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      shape:
+        description: "overwrite = book text replaces an importer note; append = keep the note and add the book text below it; fill-only = write only empty notes"
+        required: false
+        default: "overwrite"
+        type: choice
+        options: [overwrite, append, fill-only]
+      company:
+        description: "company id (1 = Houzs Century)"
+        required: false
+        default: "1"
+        type: string
+      confirm:
+        description: 'apply ONLY: type I HAVE REVIEWED THE DRY-RUN'
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: preserve-autocount-desc2-in-po-notes
+  cancel-in-progress: false
+
+jobs:
+  preserve:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: npx tsx scripts/preserve-autocount-desc2-in-po-notes.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          SHAPE: ${{ inputs.shape }}
+          COMPANY: ${{ inputs.company }}
+          CONFIRM: ${{ inputs.confirm }}
