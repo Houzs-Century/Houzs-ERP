@@ -1,0 +1,52 @@
+name: GR shape check (read-only)
+
+# The owner ruled option A for migrated goods receipts on 2026-09-07:
+#   「不是说过了吗？是 A 的，不过只是把那些需要的搬进来，不需要的不需要搬」
+# — one ERP goods receipt per AutoCount receipt, the book's date and the book's
+# quantity, in-scope only.
+#
+# This is the PRECONDITION for that reshape, not the reshape. It measures how
+# split the book actually is, whether the migrated receipts really carry no
+# inventory movement (the migrated_no_stock claim, migration 0276), and what
+# cancelling them through the route would cost. The ERP side of all three lives
+# only in production, so before this existed the question cost an owner
+# interruption and put the production DSN in front of a human for a SELECT.
+#
+# Manual trigger only — it is a question, not a gate.
+on:
+  workflow_dispatch:
+    inputs:
+      company_id:
+        description: "ERP company to measure (AED_HOUZS is company 1)"
+        required: false
+        default: "1"
+
+# Deliberately NOT in the deploy concurrency group: this writes nothing and must
+# never queue behind — or displace — a release.
+concurrency:
+  group: gr-shape-check
+  cancel-in-progress: true
+
+jobs:
+  shape:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-gr-shape.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first
