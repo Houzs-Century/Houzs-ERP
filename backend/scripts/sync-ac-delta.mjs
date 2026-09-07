@@ -1468,20 +1468,26 @@ async function main() {
      I meant". Every sample is re-read on a connection this run has not used. */
   const v = postgres(DST, { ssl: "require", prepare: false, max: 1 });
   let bad = 0;
-  for (const u of descUpdates.slice(0, 5)) {
+  /* Each sample loop is guarded by its own lane. A plan is computed for every
+     lane on every run, but only the lanes named in LANES are written, so an
+     unguarded loop re-reads rows this run deliberately left alone and reports
+     the untouched value as a MISMATCH. LANES=recv,do,dedi did exactly that on
+     2026-09-07: 241/241, 89/89 and the movement assertion all passed, and the
+     job still exited 1 on 15 "failures" from desc, pay and links. */
+  if (LANES.has("desc")) for (const u of descUpdates.slice(0, 5)) {
     const [row] = await v`SELECT description2, linked_ac_dtlkey, jsonb_typeof(COALESCE(variants,'{}'::jsonb)) AS vt FROM scm.mfg_sales_order_items WHERE id = ${u.id}`;
     if (!row || txt(row.description2) !== u.to || String(row.linked_ac_dtlkey) !== String(u.dtl) || row.vt !== "object") { bad++; log(`   VERIFY MISMATCH line ${u.id}`); }
   }
-  for (const u of payUpdates.slice(0, 5)) {
+  if (LANES.has("pay")) for (const u of payUpdates.slice(0, 5)) {
     const [row] = await v`SELECT local_total_sen t, balance_sen b, paid_sen p FROM scm.mfg_sales_orders WHERE doc_no = ${u.doc} AND company_id = 1`;
     if (!row || Number(row.t) !== u.total || Number(row.b) !== u.bal || Number(row.p) !== u.paid || Number(row.t) - Number(row.b) !== Number(row.p)) { bad++; log(`   VERIFY MISMATCH ${u.doc}`); }
   }
-  for (const u of linkPlan.slice(0, 5)) {
+  if (LANES.has("links")) for (const u of linkPlan.slice(0, 5)) {
     const [row] = await v`SELECT i.so_item_id, s.doc_no, s.item_code FROM scm.purchase_order_items i
         LEFT JOIN scm.mfg_sales_order_items s ON s.id = i.so_item_id WHERE i.id = ${u.poItemId}`;
     if (!row || String(row.so_item_id) !== String(u.soItemId) || !row.doc_no || !row.item_code) { bad++; log(`   VERIFY MISMATCH po line ${u.poItemId}`); }
   }
-  for (const u of recvPlan.slice(0, 5)) {
+  if (LANES.has("recv")) for (const u of recvPlan.slice(0, 5)) {
     const [row] = await v`SELECT received_qty::float8 AS rq, qty::float8 AS q, linked_ac_dtlkey FROM scm.purchase_order_items WHERE id = ${u.poItemId}`;
     if (!row || Number(row.rq) !== u.to || Number(row.q) < Number(row.rq) || String(row.linked_ac_dtlkey) !== String(u.dtl)) { bad++; log(`   VERIFY MISMATCH po line ${u.poItemId}`); }
   }
@@ -1507,7 +1513,7 @@ async function main() {
     if (Number(n) !== 0) { bad++; log(`   VERIFY FAILED: ${n} inventory movement(s) exist for the ${doMade.length} migrated delivery document(s) this run created — they must have NONE`); }
     else log(`VERIFY: 0 inventory movements against the ${doMade.length} delivery document(s) created, as designed.`);
   }
-  for (const u of dediPlan.slice(0, 5)) {
+  if (LANES.has("dedi")) for (const u of dediPlan.slice(0, 5)) {
     const [row] = await v`SELECT i.so_item_id, s.doc_no, s.item_code FROM scm.purchase_order_items i
         LEFT JOIN scm.mfg_sales_order_items s ON s.id = i.so_item_id WHERE i.id = ${u.poItemId}`;
     if (!row || String(row.so_item_id) !== String(u.soItemId) || row.doc_no !== u.soDoc || !row.item_code) { bad++; log(`   VERIFY MISMATCH dedication on po line ${u.poItemId}`); }
@@ -1543,7 +1549,8 @@ async function main() {
   }
   if (doFailed.length) { bad++; log(`VERIFY FAILED: ${doFailed.length} delivery document(s) could not be written`); }
   if (bad) { log(`VERIFY FAILED on ${bad} sample(s)`); await v.end(); await sql.end(); process.exit(1); }
-  log(`VERIFY (fresh connection): ${Math.min(5, descUpdates.length)} desc2 line(s), ${Math.min(5, payUpdates.length)} order(s), ${Math.min(5, linkPlan.length)} link(s), ${Math.min(5, recvPlan.length)} received line(s), ${Math.min(5, doMade.length)} delivery document(s), ${Math.min(5, dediPlan.length)} dedication(s) and ${LANES.has("hdr") ? Math.min(8, hdrWrites.length) : 0} header field(s) re-read with the shape intended.`);
+  const nSample = (lane, n) => (LANES.has(lane) ? Math.min(5, n) : 0);
+  log(`VERIFY (fresh connection): ${nSample("desc", descUpdates.length)} desc2 line(s), ${nSample("pay", payUpdates.length)} order(s), ${nSample("links", linkPlan.length)} link(s), ${nSample("recv", recvPlan.length)} received line(s), ${Math.min(5, doMade.length)} delivery document(s), ${nSample("dedi", dediPlan.length)} dedication(s) and ${LANES.has("hdr") ? Math.min(8, hdrWrites.length) : 0} header field(s) re-read with the shape intended.`);
   await v.end();
   await sql.end();
 }
