@@ -171,12 +171,39 @@ async function main() {
 
   // ── THE GAP ────────────────────────────────────────────────────────────────
   rule("THE GAP — what option A would change");
+  /* THE SNAPSHOT'S SCOPE IS NARROWER THAN THE ERP'S, and comparing the two sets
+     without saying so manufactures a gap. ac-gr-refs is exported
+     `WHERE po.DocNo IN (outstanding POs + SO-linked POs)`, and that set is
+     RECOMPUTED at export time — a purchase order that has since been closed
+     drops out of it. The ERP's migrated set was frozen at import. So an ERP
+     receipt whose purchase order is outside the export scope is a document the
+     snapshot has NO ROWS ABOUT; it is not evidence the book lacks a receipt.
+     The two are separated below rather than summed. */
+  const scopeRows = [...gz("ac-outstanding-po.json.gz"), ...gz("ac-so-linked-pos.json.gz")];
+  const exportScope = new Set(scopeRows.map((r) => n(r.DocNo)));
   const erpPoAc = new Set(grns.map((g) => n(g.po_ac_docno)).filter(Boolean));
   const bookPoInErp = [...poGr.keys()].filter((po) => erpPoAc.has(po));
-  const wantPairs = [...pairs].filter((p) => erpPoAc.has(p.split("|")[0]));
-  notice(`SHAPE A — ${wantPairs.length} documents where the ERP holds ${grns.length} today (+${wantPairs.length - grns.length}), over the ${bookPoInErp.length} purchase orders both sides agree on`);
-  say(`  book purchase orders with a receipt that the ERP does NOT hold a GRN for: ${poGr.size - bookPoInErp.length}`);
-  say(`  ERP migrated GRNs whose purchase order the book shows NO receipt for:     ${grns.length - new Set(grns.filter((g) => poGr.has(n(g.po_ac_docno))).map((g) => g.id)).size}`);
+  const shared = new Set(bookPoInErp);
+  const wantPairs = [...pairs].filter((p) => shared.has(p.split("|")[0]));
+  const erpOnShared = grns.filter((g) => shared.has(n(g.po_ac_docno))).length;
+  say(`snapshot export scope (outstanding + SO-linked purchase orders): ${exportScope.size} purchase orders`);
+  say(`ERP migrated goods receipts sit on ${erpPoAc.size} purchase orders; ${bookPoInErp.length} of those are in that scope AND have a receipt in it`);
+  notice(`SHAPE A — over the ${bookPoInErp.length} purchase orders both sides can speak about, the ERP holds ${erpOnShared} documents and the book has ${wantPairs.length} (+${wantPairs.length - erpOnShared})`);
+
+  const erpUnspeakable = grns.filter((g) => !poGr.has(n(g.po_ac_docno)));
+  const outOfScope = erpUnspeakable.filter((g) => !exportScope.has(n(g.po_ac_docno)));
+  const inScopeNoReceipt = erpUnspeakable.filter((g) => exportScope.has(n(g.po_ac_docno)));
+  say(`  ERP migrated GRNs the snapshot cannot speak about: ${erpUnspeakable.length} of ${grns.length}`);
+  say(`     ...because their purchase order is OUTSIDE the export scope:   ${outOfScope.length}  ← scope artefact, not a gap`);
+  say(`     ...purchase order IS in scope but the book shows NO receipt:   ${inScopeNoReceipt.length}  ← a real disagreement if non-zero`);
+  if (inScopeNoReceipt.length) {
+    say("     first 10:");
+    for (const g of inScopeNoReceipt.slice(0, 10)) say(`       ${g.grn_number}  (PO ${g.po_number} = AutoCount ${g.po_ac_docno})`);
+  }
+  const bookPoNotInErp = [...poGr.keys()].filter((po) => !erpPoAc.has(po));
+  say(`  book purchase orders with a receipt but NO ERP migrated GRN: ${bookPoNotInErp.length} of ${poGr.size}`);
+  say("     Expected where the purchase order was never imported, or was imported with");
+  say("     received_qty 0 — create-migrated-documents.mjs builds only from received_qty > 0.");
 
   // ── STOCK SAFETY ───────────────────────────────────────────────────────────
   rule("STOCK — would reshaping these documents move inventory?");
