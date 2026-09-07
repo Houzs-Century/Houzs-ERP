@@ -1,0 +1,53 @@
+name: Migrated cancel exposure (read-only)
+
+# Has a document that never posted stock already had its stock un-posted?
+#
+# The 320 migrated goods receipts and the migrated delivery orders carry NO
+# inventory movement on purpose (migration 0276): on-hand entered the ERP once
+# through the AutoCount balance snapshot. Until the guard shipped, cancelling a
+# migrated receipt wrote a reversing OUT per line, and editing a line on a
+# migrated delivery order wrote a full OUT for every line. Both are blocked now.
+#
+# This measures the OTHER half — whether either already happened before the
+# guard existed. The answer lives only in production, and the owner is not a
+# database console.
+#
+# Manual trigger only: it is a question, not a gate. Never put a production read
+# on a schedule.
+on:
+  workflow_dispatch:
+    inputs:
+      company_id:
+        description: "ERP company to measure (AED_HOUZS is company 1)"
+        required: false
+        default: "1"
+
+# Its OWN group, never the deploy's: a diagnostic must not queue behind — or
+# displace — a release.
+concurrency:
+  group: migrated-cancel-exposure
+  cancel-in-progress: true
+
+jobs:
+  exposure:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-migrated-cancel-exposure.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first
