@@ -173,10 +173,11 @@ const isTestDoc = (d) => d.startsWith("HC-") || d.startsWith("ZZ");
 
    (a) THE MODEL MUST BE FOLDED THROUGH SOFA_MODEL_ALIAS.  The floor writes the
        same sofa under an internal number and a catalogue number — 5530/9028,
-       5536/9058, 5537/8030, 5540/8030 — and TEN other scripts in this
-       directory fold it before comparing.  This checker was the only one that
-       did not, so "HOK-5536 SOFA" against "9058-2A(LHF)" read as a defect
-       while every other tool called them the same sofa.  12 lines.
+       5536/9058, 5537/8030, 5540/8030 — and the other scripts in this
+       directory fold it before comparing (`git grep -l "SOFA_MODEL_ALIAS\["
+       -- backend/scripts` is the live list; do not trust a count typed here).
+       This checker did not, so "HOK-5536 SOFA" against "9058-2A(LHF)" read as
+       a defect while the importers called them the same sofa.  12 lines.
 
    (b) A NO-MODEL PAIR IS NOT AUTOMATICALLY A DEFECT.  isSofaCode is a /SOFA/
        substring test, so "AMN-SOFA PILLOW" — an accessory whose NAME contains

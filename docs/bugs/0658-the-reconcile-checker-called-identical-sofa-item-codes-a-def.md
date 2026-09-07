@@ -21,8 +21,9 @@ checker against production (runs 34099375384 and 34099753029), not by reading it
    the two strings were identical. **94 lines over 94 sales orders.**
 2. The model was not folded through `SOFA_MODEL_ALIAS`. The floor writes the
    same sofa under an internal number and a catalogue number (5530/9028,
-   5536/9058, 5537/8030, 5540/8030); ten other scripts in `backend/scripts` fold
-   it before comparing and this checker was the only one that did not, so
+   5536/9058, 5537/8030, 5540/8030); the other scripts in `backend/scripts` fold
+   it before comparing (`git grep -l "SOFA_MODEL_ALIAS\[" -- backend/scripts`)
+   and this checker did not, so
    `HOK-5536 SOFA` vs `9058-2A(LHF)` read as a defect. **12 lines over 7 sales
    orders.**
 
