@@ -2429,11 +2429,31 @@ export const cancelGrnCommand = async (
 
   // Read → guard → update → reverse (mirrors PO cancel's split-to-avoid-PGRST116).
   const { data: cur, error: readErr } = await scopeToCompanyId(sb.from('grns')
-    .select('id, status, grn_number, warehouse_id')
+    .select('id, status, grn_number, warehouse_id, migrated_no_stock')
     .eq('id', id), co.companyId).maybeSingle();
   if (readErr) return refuseWithoutWriting(c, { error: 'load_failed', reason: readErr.message }, 500);
   if (!cur) return refuseWithoutWriting(c, NOT_THIS_COMPANY, 404);
-  const head = cur as { id: string; status: string; grn_number: string; warehouse_id: string | null };
+  const head = cur as {
+    id: string; status: string; grn_number: string; warehouse_id: string | null;
+    migrated_no_stock?: boolean | null;
+  };
+  /* SECOND LEAK GUARD, the twin of the DRAFT one below (migration 0276). A
+     migrated receipt is AutoCount paperwork carried over at the cutover: it was
+     created POSTED with the book's quantities and NO inventory movement behind
+     it, because on-hand entered the ERP once through the AutoCount balance
+     snapshot, which already counts every past receipt as IN. Un-posting a
+     posting that never happened takes real units off the shelf.
+
+     Measured on production 2026-09-07 (Actions "GR shape check"): the 320
+     migrated receipts of company 1 carry 0 movement rows and 0 units, and
+     cancelling them through this route would have written reversing OUTs for
+     879 units.
+
+     grnReverseWouldGoNegative CANNOT catch this and is not a second line of
+     defence: it asks whether the units are on hand, and they are — they just
+     did not come from this document. It passes, which is exactly why this path
+     read as safe for a month. */
+  const migratedNoStock = head.migrated_no_stock === true;
   // Idempotent — already cancelled, echo back without re-reversing.
   if (head.status === 'CANCELLED') {
     const { data } = await scopeToCompanyId(sb.from('grns').select(HEADER).eq('id', id), co.companyId).maybeSingle();
@@ -2489,8 +2509,15 @@ export const cancelGrnCommand = async (
 
   // Bug #2 — block the cancel if the received stock was already consumed
   // downstream (reversing it out would drive on-hand negative + corrupt COGS).
-  const consumedLock = await grnReverseWouldGoNegative(sb, head.warehouse_id, lineList);
-  if (consumedLock) return refuseWithoutWriting(c, consumedLock, 409);
+  /* Skipped for a migrated receipt for the same reason service lines are
+     skipped inside the guard itself: there is no IN to reverse, so "the goods
+     were already consumed" is a refusal naming a cause that does not exist —
+     and it would make a migrated document permanently un-cancellable once its
+     snapshot units happened to ship. */
+  if (!migratedNoStock) {
+    const consumedLock = await grnReverseWouldGoNegative(sb, head.warehouse_id, lineList);
+    if (consumedLock) return refuseWithoutWriting(c, consumedLock, 409);
+  }
 
   /* Bug #3/#11 — ATOMIC single ACTIVE→CANCELLED transition. The conditional
      UPDATE excludes CANCELLED so two concurrent cancels race on the row and
@@ -2519,11 +2546,18 @@ export const cancelGrnCommand = async (
     actor: c.get('houzsUser'),
     companyId: activeCompanyId(c),
     statusSnapshot: 'CANCELLED',
-    note: `Reversing receipt of ${lineList.length} line(s)`,
+    note: migratedNoStock
+      ? `Migrated AutoCount paperwork (${lineList.length} line(s)) — no stock was posted by this receipt, so none was reversed`
+      : `Reversing receipt of ${lineList.length} line(s)`,
     fieldChanges: compactChanges([
       ...statusChange(head.status, 'CANCELLED'),
       fieldChange('warehouseId', null, head.warehouse_id),
-      fieldChange('qtyReversed', null, lineList.reduce((s, l) => s + Number(l.qty_accepted ?? 0), 0)),
+      /* 0, not the line total, when nothing was reversed: this field is read as
+         "how many units left the shelf", and a number here that no movement
+         backs is the same lie the reversal itself was. */
+      fieldChange('qtyReversed', null, migratedNoStock
+        ? 0
+        : lineList.reduce((s, l) => s + Number(l.qty_accepted ?? 0), 0)),
     ]),
   });
 
@@ -2533,7 +2567,11 @@ export const cancelGrnCommand = async (
      condition the old inline recompute did. */
   let stockReversed = false;
   try {
-    const warehouseId = head.warehouse_id ?? (await defaultWarehouseId(sb, activeCompanyId(c)));
+    // MIGRATED SHORT-CIRCUIT: nothing was posted, so nothing un-posts. See the
+    // migratedNoStock guard above for the measurement behind this line.
+    const warehouseId = migratedNoStock
+      ? null
+      : head.warehouse_id ?? (await defaultWarehouseId(sb, activeCompanyId(c)));
     if (warehouseId) {
       const batchByItem = await resolvePoBatchByItem(sb, lineList.map((it) => it.purchase_order_item_id));
       const movements = buildGrnCancelReversals(lineList, batchByItem, {
@@ -2564,10 +2602,17 @@ export const cancelGrnCommand = async (
 
   // (a2) Physical rack reversal — pull every rack item this GRN placed +
   //      log a STOCK_OUT, mirroring the inventory OUT above. Best-effort.
-  try {
-    const { reverseGrnRacks } = await import('../lib/grn-rack-sync');
-    await reverseGrnRacks(sb, id, head.grn_number, user.id);
-  } catch (e) { /* eslint-disable-next-line no-console */ console.error('[grn-rack] reverse failed:', e); }
+  /* Gated with the inventory OUT it mirrors. A migrated receipt placed nothing
+     on a rack, so today this is a no-op either way (reverseGrnRacks returns
+     early on zero rack items) — it is gated because the pairing is the rule:
+     the day something back-fills racks for these documents, the un-gated half
+     would start pulling placements this receipt never made. */
+  if (!migratedNoStock) {
+    try {
+      const { reverseGrnRacks } = await import('../lib/grn-rack-sync');
+      await reverseGrnRacks(sb, id, head.grn_number, user.id);
+    } catch (e) { /* eslint-disable-next-line no-console */ console.error('[grn-rack] reverse failed:', e); }
+  }
 
   // (b) Recount received_qty on each linked PO item from live GRN lines — this
   //     cancelled GRN's lines now drop out, auto-releasing the PO + re-evaluating
@@ -2641,8 +2686,11 @@ grns.patch('/:id', async (c) => {
   /* GRN_AUDIT_SELECT (not just the relocation's columns): this row is also the
      BEFORE half of every audit from->to pair, and the relocation reads its
      warehouse / status / rate out of the same row. One read serves all three. */
+  /* `migrated_no_stock` rides this one read rather than joining
+     GRN_AUDIT_SELECT: it is not an auditable field (nothing can edit it), it is
+     a decision input for the relocation block below. */
   const { data: beforeRow } = await scopeToCompanyId(sb.from('grns')
-    .select(GRN_AUDIT_SELECT).eq('id', id), co.companyId).maybeSingle();
+    .select(`${GRN_AUDIT_SELECT}, migrated_no_stock`).eq('id', id), co.companyId).maybeSingle();
   if (!beforeRow) return refuseWithoutWriting(c, NOT_THIS_COMPANY, 404);
   const before = (beforeRow ?? {}) as unknown as Record<string, unknown>;
 
@@ -2668,7 +2716,15 @@ grns.patch('/:id', async (c) => {
      new, same cost + source-PO batch. Same downstream-consumption guard as cancel
      (block if the old-warehouse stock was already shipped); best-effort alloc
      re-walk after. */
-  if (body.warehouseId !== undefined) {
+  /* …unless the GRN is migrated AutoCount paperwork (migration 0276), which
+     pushed NO stock into the old warehouse: the units are there because the
+     balance snapshot put them there. Relocating the DOCUMENT must then move the
+     document only. Writing the OUT/IN pair anyway would drain the old warehouse
+     of units this receipt never delivered into it and mint them in the new one
+     — company-wide on-hand nets to zero, which is exactly why it would go
+     unnoticed. Read from the row, not from `body`: the flag is not editable. */
+  const migratedNoStock = (before.migrated_no_stock as boolean | null | undefined) === true;
+  if (body.warehouseId !== undefined && !migratedNoStock) {
     const c0 = (beforeRow ?? null) as unknown as { grn_number: string; status: string | null; warehouse_id: string | null; exchange_rate?: string | number | null } | null;
     const oldWh = c0?.warehouse_id ?? null;
     const newWh = (body.warehouseId as string | null) ?? null;
@@ -2876,8 +2932,12 @@ grns.post('/:id/items', async (c) => {
   if (childLock) return refuseWithoutWriting(c, childLock, 409);
   /* Audit 2026-06-10 #10 — line CRUD on a CANCELLED/CLOSED GRN was a silent
      stock door (an added line's IN never reverses again). Mirror prLineLock. */
-  const { data: grnGate } = await sb.from('grns').select('status').eq('id', grnId).maybeSingle();
+  const { data: grnGate } = await sb.from('grns').select('status, migrated_no_stock').eq('id', grnId).maybeSingle();
   const grnGateStatus = ((grnGate as { status?: string } | null)?.status ?? '').toUpperCase();
+  /* Migrated AutoCount paperwork (migration 0276) posts NO inventory, exactly
+     like a DRAFT — see the cancel route's migratedNoStock note. A line added to
+     one must not write an IN for units the balance snapshot already counted. */
+  const migratedNoStock = (grnGate as { migrated_no_stock?: boolean | null } | null)?.migrated_no_stock === true;
   if (grnGateStatus === 'CANCELLED' || grnGateStatus === 'CLOSED') {
     return refuseWithoutWriting(c, { error: 'grn_locked',
       message: `This GRN is ${grnGateStatus} — its lines can no longer be changed.` }, 409);
@@ -3046,7 +3106,11 @@ grns.post('/:id/items', async (c) => {
   // OUT to reverse it, driving inventory negative. Mirror postGrnAndRollup for
   // this one line so add/edit/delete all converge. Best-effort throughout.
   try { await recomputePoReceived(sb, [addedPoiId]); } catch { /* best-effort */ }
-  if (qtyReceived > 0) {
+  /* The PO rollup above still runs for a migrated receipt — received_qty is
+     paperwork and the book's own number — but the IN below does not: these
+     units are already on the shelf via the balance snapshot, so posting one
+     would count them twice. */
+  if (qtyReceived > 0 && !migratedNoStock) {
     try {
       const { data: grnHeader } = await sb.from('grns')
         .select('grn_number, warehouse_id, exchange_rate').eq('id', grnId).maybeSingle();
@@ -3126,9 +3190,13 @@ grns.patch('/:id/items/:itemId', async (c) => {
   if (childLock) return refuseWithoutWriting(c, childLock, 409);
   /* Audit 2026-06-10 #10 — line CRUD on a CANCELLED/CLOSED GRN was a silent
      stock door (an added line's IN never reverses again). Mirror prLineLock. */
-  const { data: grnGate } = await scopeToCompanyId(sb.from('grns').select('status, purchase_order_id').eq('id', grnId), co.companyId).maybeSingle();
+  const { data: grnGate } = await scopeToCompanyId(sb.from('grns').select('status, purchase_order_id, migrated_no_stock').eq('id', grnId), co.companyId).maybeSingle();
   if (!grnGate) return refuseWithoutWriting(c, NOT_THIS_COMPANY, 404);
   const grnGateStatus = ((grnGate as { status?: string } | null)?.status ?? '').toUpperCase();
+  /* Migrated AutoCount paperwork (migration 0276) — same standing as DRAFT for
+     stock, see the cancel route. A qty REDUCTION here writes a delta OUT, which
+     on one of these documents takes units off the shelf that it never put on. */
+  const migratedNoStock = (grnGate as { migrated_no_stock?: boolean | null } | null)?.migrated_no_stock === true;
   if (grnGateStatus === 'CANCELLED' || grnGateStatus === 'CLOSED') {
     return refuseWithoutWriting(c, { error: 'grn_locked',
       message: `This GRN is ${grnGateStatus} — its lines can no longer be changed.` }, 409);
@@ -3259,7 +3327,11 @@ grns.patch('/:id/items/:itemId', async (c) => {
      and the full IN is written once at confirm. inventoryChange stays false for
      a draft so the movement block + grnReverseWouldGoNegative guard are skipped. */
   const isDraftGrn = grnGateStatus === 'DRAFT';
-  const inventoryChange = !isDraftGrn && (qtyChanged || bucketChanged) && (prevAccepted > 0 || newAccepted > 0);
+  /* migratedNoStock joins isDraftGrn here for the same reason and with the same
+     effect: no committed stock behind this document, so no delta to write and
+     no on-hand guard to run. */
+  const inventoryChange = !isDraftGrn && !migratedNoStock
+    && (qtyChanged || bucketChanged) && (prevAccepted > 0 || newAccepted > 0);
 
   // Resolve warehouse once (needed by both the guard and the movement write).
   let editWarehouseId: string | null = null;
@@ -3430,9 +3502,14 @@ grns.delete('/:id/items/:itemId', async (c) => runScmPgCommand(c, async (
   if (childLock) return refuseWithoutWriting(c, childLock, 409);
   /* Audit 2026-06-10 #10 — line CRUD on a CANCELLED/CLOSED GRN was a silent
      stock door (an added line's IN never reverses again). Mirror prLineLock. */
-  const { data: grnGate } = await scopeToCompanyId(sb.from('grns').select('status').eq('id', grnId), co.companyId).maybeSingle();
+  const { data: grnGate } = await scopeToCompanyId(sb.from('grns').select('status, migrated_no_stock').eq('id', grnId), co.companyId).maybeSingle();
   if (!grnGate) return refuseWithoutWriting(c, NOT_THIS_COMPANY, 404);
   const grnGateStatus = ((grnGate as { status?: string } | null)?.status ?? '').toUpperCase();
+  /* Migrated AutoCount paperwork (migration 0276) — the per-line twin of the
+     whole-document defect fixed in PATCH /:id/cancel: this route reverses the
+     "inventory IN the GRN post wrote for THIS line", and for a migrated receipt
+     the post wrote none. */
+  const migratedNoStock = (grnGate as { migrated_no_stock?: boolean | null } | null)?.migrated_no_stock === true;
   if (grnGateStatus === 'CANCELLED' || grnGateStatus === 'CLOSED') {
     return refuseWithoutWriting(c, { error: 'grn_locked',
       message: `This GRN is ${grnGateStatus} — its lines can no longer be changed.` }, 409);
@@ -3455,11 +3532,15 @@ grns.delete('/:id/items/:itemId', async (c) => runScmPgCommand(c, async (
      stock to over-reverse). The post-delete OUT + PO recount below are likewise
      gated on !isDraftGrn. */
   const isDraftGrn = grnGateStatus === 'DRAFT';
+  /* One flag for "this document has no committed stock behind it", so the three
+     stock steps below cannot drift apart. DRAFT and MIGRATED reach it by
+     different routes and mean the same thing here. */
+  const noCommittedStock = isDraftGrn || migratedNoStock;
   // Bug #2 — deleting a posted GRN line writes an OUT to reverse its receipt.
   // If that line's received stock was already consumed downstream the OUT would
   // drive on-hand negative + corrupt COGS, so block it. Resolve the GRN's
   // warehouse the same way the reversal below does.
-  if (line && !isDraftGrn) {
+  if (line && !noCommittedStock) {
     const lg = line as {
       qty_accepted: number; item_code: string;
       item_group?: string | null; variants?: VariantAttrs | null;
@@ -3525,7 +3606,10 @@ grns.delete('/:id/items/:itemId', async (c) => runScmPgCommand(c, async (
     //     per-line OUT is precise). GRN is NOT under a same-key UNIQUE index, so
     //     this lands; the FIFO trigger consumes the line's lot + computes COGS.
     //     Best-effort — a movement failure never blocks the delete.
-    if ((l.qty_accepted ?? 0) > 0) {
+    /* …and for a MIGRATED receipt the post wrote no IN for this line, so there
+       is nothing to reverse. `noCommittedStock` rather than `!migratedNoStock`
+       so this reads as the same condition the guard above used. */
+    if ((l.qty_accepted ?? 0) > 0 && !noCommittedStock) {
       /* Same reason as the cancel route's flag: the enqueue below must not sit
          inside this best-effort catch. It did until 2026-08-20, and the comment
          beside it claimed the opposite. BUG-HISTORY 2026-08-20. */
