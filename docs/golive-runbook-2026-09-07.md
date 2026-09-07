@@ -104,7 +104,24 @@ stamp-po-line-costs            input autocount-erp-mapping-1561.csv @ 2026-08-29
 ```
 
 Only one of these is on tonight's critical path: **`check-po-arm-own-text`**,
-whose input was re-cut this morning. The other six read snapshots that are
+whose input was re-cut this morning.
+
+**It has now been run, for the first time in its life** (run `34102814435`,
+read-only, dispatched for this report), and it found something:
+
+```
+distinct (DocNo|erp_code) keys in the PO export:  447
+keys carrying more than one export row:            48
+export rows whose parse the survivor overwrote:    15   <- the CEILING on PO-arm damage
+  of those, the parse DIFFERS from the survivor:   12   <- the only keys that can have done damage
+  of those, every row parses IDENTICALLY:          36   <- harmless
+```
+
+So the ceiling on PO-arm damage is **15 rows, of which 12 can actually have done
+harm** (e.g. `PO-009776|8050-1S`). That is a small number and it is not zero —
+and it sat unmeasured because nobody had ever pressed Run. **This is the whole
+report in miniature:** a check that has never run is not evidence of health, it
+is an absence of evidence, and the two look identical on a dashboard. The other six read snapshots that are
 themselves weeks old (the `ac-fidelity-*` set has not moved since 2026-08-11),
 so running them tonight would measure a stale world. They are listed for
 completeness, not scheduled.
