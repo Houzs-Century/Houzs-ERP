@@ -109,7 +109,9 @@ import { useQueryClient } from '@tanstack/react-query';
 import { parseMoneyToSen } from '../../lib/money';
 import styles from './Products.module.css';
 import { DateField } from "../../vendor/scm/components/DateField";
-import { normalizeImportHeader, looksLikeGridExport } from './products-import-headers';
+import {
+  normalizeImportHeader, looksLikeGridExport, mapGridHeaders, isGridNoPrice, missingGridFacts,
+} from './products-import-headers';
 
 const ICON_PROPS = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -671,6 +673,30 @@ const SkuMasterTab = () => {
         width: '120px',
         getValue: (r) => r.base_model ?? '',
         render: (r) => r.base_model ?? '—',
+      });
+      /* THE SHEET HAS TO SAY WHICH TIER ITS PRICES ARE, and which category the
+         rows are, because the owner uses the export AS HIS TEMPLATE —
+         「正常我都是 export 了 edit 那个 sheet 的…因为要有 template」 (2026-09-07).
+         Without these two the exported file is not a template, it is a picture:
+         the size columns below hold the prices of whichever tier the toggle is
+         on and said so nowhere, and the category was obvious on screen and
+         absent in the file. Both are one column each and they make the file
+         describe itself, so nothing has to be asked or guessed on the way back
+         in. `price_tier` and `category` are the importer's own keys, so the
+         round trip needs no alias for either. */
+      cols.push({
+        key: 'category',
+        label: 'category',
+        width: '110px',
+        getValue: (r) => r.category ?? '',
+        render: (r) => r.category ?? '—',
+      });
+      cols.push({
+        key: 'price_tier',
+        label: 'price_tier',
+        width: '110px',
+        getValue: () => tier,
+        render: () => <span>{tier}</span>,
       });
       for (const s of sofaSizes) {
         cols.push({
@@ -5030,11 +5056,18 @@ function parseSkuCsv(text: string): Array<Record<string, string>> {
   return gridToSkuRecords(grid);
 }
 
-/** Header-key a parsed grid (CSV or Excel) into one object per data row, keyed
- *  by lower-cased trimmed header text. */
+/** Header-key a parsed grid (CSV or Excel) into one object per data row.
+ *
+ *  READS BOTH FILES THIS PAGE WRITES. The round-trip export's headers are
+ *  already the importer's keys; the TABLE export's are what a person reads, so
+ *  they are mapped (`mapGridHeaders`). The owner's own file was the second kind
+ *  and could not be read at all — 「为什么我的文件不能用呢？」 — which is the page
+ *  failing to read what it had just written. */
 function gridToSkuRecords(grid: string[][]): Array<Record<string, string>> {
   if (grid.length < 1) return [];
-  const header = (grid[0] ?? []).map(normalizeImportHeader);
+  const raw = (grid[0] ?? []).map(normalizeImportHeader);
+  const fromGrid = looksLikeGridExport(raw);
+  const header = fromGrid ? mapGridHeaders(raw) : raw;
   const out: Array<Record<string, string>> = [];
   for (let r = 1; r < grid.length; r++) {
     const cells = grid[r];
@@ -5043,7 +5076,12 @@ function gridToSkuRecords(grid: string[][]): Array<Record<string, string>> {
     for (let c = 0; c < header.length; c++) {
       const key = header[c];
       if (!key) continue;
-      obj[key] = (cells[c] ?? '').trim();
+      const cell = (cells[c] ?? '').trim();
+      /* -1 IS THE GRID'S "no price", NOT A PRICE. Its sort accessor returns -1
+         when a seat height has none, so the export writes it literally. Read as
+         a number it would create a SKU priced at minus one sen. */
+      if (fromGrid && isGridNoPrice(cell)) continue;
+      obj[key] = cell;
     }
     out.push(obj);
   }
@@ -5190,12 +5228,16 @@ const ImportSkusDialog = ({ sofaSizes, onClose }: { sofaSizes: string[]; onClose
         if (tierErrors.length > 0) {
           setResult({ upserted: 0, failed: tierErrors.length, failures: tierErrors });
         } else {
+          const missing = missingGridFacts(headersSeen);
           setErrorMsg(
-            looksLikeGridExport(headersSeen)
-              ? 'That is the TABLE export (it starts with "Product Code"). It cannot be'
-                + ' imported — it carries one column per sofa size but not the price tier,'
-                + ' so a price in it has nowhere safe to go. Use the "Export SKUs" button'
-                + ' at the top right, edit that file, and import it back.'
+            (missing.needsCategory || missing.needsTier)
+              ? `This sheet is missing ${[
+                  missing.needsCategory ? 'a category column' : '',
+                  missing.needsTier ? 'the price tier its prices belong to' : '',
+                ].filter(Boolean).join(' and ')}. Older exports left both out — the`
+                + ' table now writes them, so export the page again and edit THAT file.'
+                + ' They are not guessed here: a price filed under the wrong tier is'
+                + ' worse than one not filed.'
               : `No rows had a code. The columns in this file are: ${headersSeen.join(', ') || '(none)'}.`
                 + ' A row needs a `code`; a code the system does not have yet also needs'
                 + ' `name` and `category`.',
