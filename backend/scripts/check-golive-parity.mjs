@@ -95,6 +95,14 @@ import { missingVariantAxes } from "./lib/variant-axes.mjs";
 import { buildFabricColourIndex, isPendingColour } from "./lib/fabric-colour-match.mjs";
 import { SOFA_MODEL_ALIAS, parseSofa } from "./lib/parse-sofa.mjs";
 import { isSingleSeatBuild } from "./lib/sofa-single-seat.mjs";
+/* The staleness bracket, SHARED with probe-so-stock-status-stale.mjs. Section 1B
+   calls 220 orders "AutoCount behind"; on some of them the ERP's own stored
+   stock_status is the stale side, and saying so needs the same arithmetic that
+   probe already owns — not a second copy of it. */
+import { computeVariantKey } from "../src/scm/shared/variant-key.ts";
+import { isServiceLine } from "../src/scm/shared/service-sku.ts";
+import { SO_TERMINAL_STATES } from "../src/scm/shared/so-terminal-states.ts";
+import { onHandByBucket, classifyStockLines, stalenessBracket } from "./lib/so-stock-staleness.mjs";
 
 const DSN = process.env.DATABASE_URL;
 if (!DSN) { console.error("DATABASE_URL not set. Aborting."); process.exit(1); }
@@ -487,6 +495,66 @@ async function main() {
     log(`    ${m.acDoc.padEnd(14)} (${String(m.doc).padEnd(16)} ${String(m.status).padEnd(14)})  AutoCount "${m.ac || "(blank)"}"  vs  ERP "${m.erp || "(blank)"}"`);
   if (!gated.length) log("    none");
 
+  /* ── IS THE ERP'S OWN SIDE FRESH? A CONTRADICTION, NOT A FOOTNOTE ────────
+     The sentence above — "AutoCount is behind on 220 orders" — rests on the
+     ERP's stored `stock_status`, and that value is written ONLY by
+     recomputeSoStockAllocation, ~34 of whose ~38 triggers are best-effort. It
+     goes stale (docs/modules/sales-order.md 0.3). So on an order where the ERP
+     reads PENDING while the goods stand in that line's own warehouse bucket,
+     AutoCount's READY may be the RIGHT answer and ours the stale one.
+
+     That contradicts the owner's ruling in his own favour, which is exactly the
+     kind of thing a gate must surface rather than bridge. It is measured with
+     the SAME bracket probe-so-stock-status-stale.mjs reports, imported. */
+  const balRows = await sql`
+    SELECT warehouse_id, item_code, COALESCE(variant_key, '') AS variant_key, SUM(qty)::numeric AS qty
+      FROM scm.inventory_balances
+     WHERE company_id = ${CO}
+     GROUP BY warehouse_id, item_code, COALESCE(variant_key, '')`;
+  const statusByDoc = new Map(orders.map((o) => [o.doc_no, norm(o.status)]));
+  const processedDocs = new Set(orders.filter((o) => o.processing_date != null).map((o) => o.doc_no));
+  const TERMINAL = new Set([...SO_TERMINAL_STATES].map((x) => norm(x)));
+  const { candidates } = classifyStockLines(items.filter((i) => !i.cancelled), {
+    isServiceLine,
+    isTerminalStatus: (l) => TERMINAL.has(statusByDoc.get(l.doc_no) ?? ""),
+    variantKeyOf: (l) => computeVariantKey(l.item_group, l.variants),
+    processedOf: (l) => processedDocs.has(l.doc_no),
+  });
+  const { upper: staleUpper, lower: staleLower } = stalenessBracket(candidates, onHandByBucket(balRows));
+  const staleFloorDocs = new Set(staleLower.map((c) => c.doc_no));
+  const contested = acBehindOrders.filter((m) => staleFloorDocs.has(m.doc));
+
+  head("--- IS OUR OWN SIDE FRESH? (the same bracket probe-so-stock-status-stale.mjs reports) ---");
+  log(`  live SO lines whose bucket holds ANY on-hand while the line reads non-READY : ${pad(staleUpper.length)}  (ceiling)`);
+  log(`  ... and enough on-hand for ALL demand on that bucket, so FIFO cannot explain it: ${pad(staleLower.length)}  (floor)`);
+  log(`  orders carrying at least one FLOOR line                                     : ${pad(staleFloorDocs.size)}`);
+  log("");
+  log(`  OF THE ${acBehindOrders.length} ORDERS CALLED "AUTOCOUNT BEHIND", ${contested.length} ALSO CARRY A FLOOR LINE.`);
+  log("  On those the ERP's stored status is the stale side, so AutoCount's READY may be");
+  log("  correct and ours out of date. They are NOT safely 'AutoCount behind' — they are");
+  log("  CONTESTED, and they are the first place to look, not the last.");
+  log(`  ${acBehindOrders.length - contested.length} of the ${acBehindOrders.length} are unaffected and stand as AutoCount behind.`);
+  verdict.staleFloorLines = staleLower.length;
+  verdict.staleFloorOrders = staleFloorDocs.size;
+  verdict.contested = contested.length;
+  head(`  first ${TOP} CONTESTED orders (we say AutoCount is behind, but our own line is stale):`);
+  for (const m of contested.slice(0, TOP))
+    log(`    ${m.acDoc.padEnd(14)} (${String(m.doc).padEnd(16)} ${String(m.status).padEnd(14)})  AutoCount "${m.ac || "(blank)"}"  vs  ERP "${m.erp || "(blank)"}"`);
+  if (!contested.length) log("    none — every AutoCount-behind order's own lines are fresh");
+
+  /* The repair machinery's own state. A DEAD queue row means allocation has
+     STOPPED system-wide and stays stopped until a human clears it — which would
+     invalidate the freshness reading above rather than qualify it. */
+  const q = await sql`SELECT job_key, state, attempts, last_error FROM scm.stock_allocation_recompute_queue`;
+  const lk = await sql`SELECT lock_key, locked_by, locked_until FROM scm.stock_allocation_recompute_lock`;
+  log("");
+  log(`  the recompute queue: ${q.length === 0 ? "EMPTY — nothing queued to refresh these" : q.map((r) => `${r.job_key}=${r.state ?? "PENDING"}(attempts ${r.attempts})`).join(", ")}`);
+  for (const r of q) if (String(r.state ?? "") === "DEAD") log(`    DEAD LETTER on ${r.job_key}: allocation has stopped system-wide and needs a human. ${String(r.last_error ?? "").slice(0, 200)}`);
+  for (const r of lk) {
+    const held = r.locked_by && r.locked_until && new Date(r.locked_until) > new Date();
+    log(`  the recompute lock ${r.lock_key}: ${held ? `HELD until ${r.locked_until?.toISOString?.() ?? r.locked_until}` : "free"}`);
+  }
+
   // ---- 1C. per SO LINE ---------------------------------------------------
   head("--- 1C. per SO LINE (exact key: mfg_sales_order_items.linked_ac_dtlkey = SODTL.DtlKey) ---");
   /* AutoCount has NO per-line readiness field. Established read-only against the
@@ -846,14 +914,17 @@ async function main() {
   log(`        ... excluding blank-on-both       : ${verdict.orderSpokenAgree} of ${verdict.orderSpoken} AGREE  <- the un-flattered figure`);
   log(`        ... of the disagreements       : ${verdict.orderNotProceeded} are the ERP's own no-processing-date gate (not drift)`);
   log(`        ... genuinely AutoCount behind : ${verdict.orderAcBehind}`);
+  log(`        ... of THOSE, CONTESTED        : ${verdict.contested} also carry a line our own allocator has left stale, so AutoCount may be right on them`);
   log(`  1C  per LINE (exact DtlKey)          : ${verdict.lineQtyAgree} of ${verdict.lineComparable} 1:1 lines agree on quantity; ${verdict.lineQtyDiff} differ; ${verdict.lineExploded} sofa lines exploded (not comparable); ${verdict.lineAcMissingInErp} AutoCount lines genuinely absent`);
   log(`  2   processing date                  : ${verdict.pdHave} have one · ${verdict.pdLegitNone} legitimately have none · ${verdict.pdMissing} MISSING one they should have · ${verdict.pdDiffer} differ`);
   log(`  3   payment                          : ${verdict.payAgree} of ${verdict.payCompared} orders agree to the sen; ${verdict.payDiffer} differ; net ${verdict.payDeltaSen >= 0 ? "+" : ""}${rm(verdict.payDeltaSen)} (ERP − AutoCount)`);
   log(`  4   variants on the PROCEEDED set    : colour ${verdict.varColour} · seat size ${verdict.varSeat} · compartments ${verdict.varCompartment}  (over ${verdict.varPopulation} proceeded sofa/bedframe lines)`);
   log("");
-  log("  Reading it: the owner's ruling is that the ERP is the standard. Every 'differ' above");
-  log("  is AutoCount behind the ERP unless the line says otherwise. The two numbers that are");
-  log("  WORK, not drift, are section 2's MISSING count and section 4's proceeded backlog.");
+  log("  Reading it: the owner's ruling is that the ERP is the standard, so a 'differ' is");
+  log("  AutoCount behind the ERP unless the line says otherwise — with ONE honest exception,");
+  log(`  the ${verdict.contested} CONTESTED orders, where our own stored status is itself stale and`);
+  log("  AutoCount's may be the right answer. The numbers that are WORK, not drift, are");
+  log("  section 2's MISSING count, section 4's proceeded backlog, and those contested orders.");
   log("");
   log(`  AutoCount snapshot: ${manifest.exported_at}${ageH > STALE_HOURS ? "  *** STALE ***" : ""}`);
   log("  Read-only run. No row was written.");
