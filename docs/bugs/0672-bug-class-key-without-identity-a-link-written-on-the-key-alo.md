@@ -221,11 +221,18 @@ several sales orders is now refused instead of `[0]` being taken. And the two
 sides, derived through the CSV from DIFFERENT AutoCount codes, are compared.
 
 **Why the tests read source instead of calling the code.** The property being
-pinned is not "the rule is right" — `normItemCode` and `soLinkTargetRefusal`
-already have behavioural tests. It is "the rule is APPLIED AT THIS CALL SITE",
-and a call-site population is precisely what a unit test cannot see; that is
-0099's lesson and the instrument `scripts/check-optional-decision-params.mjs`
-already uses here.
+pinned is not "the rule is right" — the rule for site 2 now lives in
+`backend/src/scm/lib/so-link-item-identity.ts` and has its own behavioural test
+(`backend/tests/soLinkItemIdentity.test.ts`, 11 assertions including five of the
+real wrong pairs from 0671), and site 1's rule is `normItemCode`, already covered
+by `soPoDedication.test.mjs`. What the structural test pins is that the rule is
+APPLIED AT THIS CALL SITE, and a call-site population is precisely what a unit
+test cannot see; that is 0099's lesson and the instrument
+`scripts/check-optional-decision-params.mjs` already uses here.
+
+Site 2's guard was moved into its own module rather than inlined, because the
+file-size ratchet charges GROWTH: `mfg-purchase-orders.ts` is 4,538 lines at the
+merge base and 4,538 after this change.
 
 ---
 

@@ -78,7 +78,11 @@ describe('POST /purchase-orders — the client-supplied so_item_id on the CREATE
     expect(block).toMatch(/select\(\s*'id,\s*doc_no,\s*item_code/);
   });
 
+  /* The rule itself lives in lib/so-link-item-identity.ts and is covered
+     behaviourally by soLinkItemIdentity.test.ts. What this pins is that the
+     create path CALLS it — the property a unit test cannot see. */
   it('refuses a bind whose two lines name a different product', () => {
-    expect(block).toMatch(/so_link_material_mismatch/);
+    expect(block).toMatch(/soLinkItemMismatch\(\s*items\s*,\s*soRows\s*\)/);
+    expect(src).toMatch(/import\s*\{[^}]*soLinkItemMismatch[^}]*\}\s*from\s*'\.\.\/lib\/so-link-item-identity'/);
   });
 });
