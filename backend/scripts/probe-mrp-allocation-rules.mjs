@@ -45,10 +45,11 @@
 // ----------------------------------------------------------------------------
 import { readFileSync } from 'node:fs';
 import postgres from 'postgres';
-import { isHardBoundLine, HARD_BOUND_COMPANY_ID } from '../src/scm/lib/so-stock-allocation';
-import { normCategory } from '../src/scm/lib/so-readiness';
-import { computeVariantKey, isServiceLine } from '../src/scm/shared';
-import { doCountsAsDelivered } from '../src/scm/shared/do-shipped-states';
+import { isHardBoundLine, HARD_BOUND_COMPANY_ID } from '../src/scm/lib/so-stock-allocation.ts';
+import { normCategory } from '../src/scm/lib/so-readiness.ts';
+import { computeVariantKey } from '../src/scm/shared/variant-key.ts';
+import { isServiceLine } from '../src/scm/shared/service-sku.ts';
+import { doCountsAsDelivered } from '../src/scm/shared/do-shipped-states.ts';
 import { SO_TERMINAL_STATES } from './lib/so-terminal-states.mjs';
 
 const log = (m = '') => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
