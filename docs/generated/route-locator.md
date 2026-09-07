@@ -807,14 +807,14 @@ Total: 1178 route registrations across 151 files.
 - L224  GET    /
 - L235  POST   /
 - L299  POST   /batch-import
-- L498  DELETE /:id
-- L501  GET    /:id
-- L921  PATCH  /:id
-- L928  POST   /:id/activate-one-shot
-- L971  GET    /:id/price-history
-- L1006  GET    /:id/suppliers
-- L1179  POST   /:id/price-changes
-- L1226  GET    /:id/price-changes
+- L528  DELETE /:id
+- L531  GET    /:id
+- L951  PATCH  /:id
+- L958  POST   /:id/activate-one-shot
+- L1001  GET    /:id/price-history
+- L1036  GET    /:id/suppliers
+- L1209  POST   /:id/price-changes
+- L1256  GET    /:id/price-changes
 
 ## backend/src/scm/routes/scan-so.ts  (11)
 - L2273  GET    /salespeople

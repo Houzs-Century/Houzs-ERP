@@ -17,6 +17,9 @@ import {
   type Account, type ReceiptRow,
 } from '../../vendor/scm/lib/accounting-queries';
 import { AccountSelect } from '../../vendor/scm/components/AccountSelect';
+import { DateField } from '../../vendor/scm/components/DateField';
+import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
+import { todayMyt } from '../../vendor/scm/lib/dates';
 import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
@@ -55,6 +58,11 @@ export const Receipts = () => {
   const [adding, setAdding] = useState(false);
   const [payer, setPayer] = useState('');
   const [bank, setBank] = useState('');
+  /* The receipt's own date — the number's month follows it (docMonthTag on
+     the server), so a receipt keyed today for last week's money lands in
+     last week's series. Blank is refused by the button, never defaulted here
+     and sent as nothing. */
+  const [receiptDate, setReceiptDate] = useState<string>(() => todayMyt());
   const [lines, setLines] = useState<Line[]>([{ rid: 1, description: '', creditAccountCode: '', amountSen: 0 }]);
   const total = lines.reduce((s, l) => s + (l.amountSen > 0 ? l.amountSen : 0), 0);
   const patchLine = (rid: number, patch: Partial<Line>) =>
@@ -64,13 +72,14 @@ export const Receipts = () => {
     try {
       const res = await createReceipt.mutateAsync({
         payerName: payer.trim(),
+        receiptDate,
         bankAccountCode: bank,
         lines: lines
           .filter((l) => l.creditAccountCode && l.amountSen > 0)
           .map((l) => ({ ...(l.description.trim() ? { description: l.description.trim() } : {}), creditAccountCode: l.creditAccountCode, amountSen: l.amountSen })),
       });
       setAdding(false);
-      setPayer(''); setBank('');
+      setPayer(''); setBank(''); setReceiptDate(todayMyt());
       setLines([{ rid: 1, description: '', creditAccountCode: '', amountSen: 0 }]);
       void notify({ title: `${res.receipt.receiptNumber} posted`, body: `${fmtRm(res.receipt.totalSen)} booked into the ledger.`, tone: 'info' });
     } catch (e) {
@@ -111,31 +120,34 @@ export const Receipts = () => {
       {adding && (
         <section className={styles.card}>
           <div className={styles.cardHeader}><h2 className={styles.cardTitle}>New receipt — 录入即过账</h2></div>
+          {/* Every control wears the same field dress (styles.fieldInput — the
+              PV form's), on a grid: Date | Received from | Received into, then
+              Description | Account | Amount per line. Owner 2026-09-07: 没办法
+              输入日期, 格子等等不整齐, 有些有格子有些没有. */}
           <div className={styles.cardBody} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)', fontSize: 'var(--fs-13)' }}>
-            <div style={{ display: 'flex', gap: 'var(--space-3)', flexWrap: 'wrap' }}>
-              <label style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: '1 1 220px' }}>
-                <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>Received from (打字就行)</span>
-                <input value={payer} onChange={(e) => setPayer(e.target.value)}
-                  style={{ padding: '6px 8px', border: '1px solid var(--border-weak, #d8d5cd)', borderRadius: 6 }} />
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(150px, 180px) minmax(220px, 1fr) minmax(240px, 1fr)', gap: 'var(--space-3)', alignItems: 'end' }}>
+              <label className={styles.field}>
+                <span className={styles.fieldLabel}>Date</span>
+                <DateField fullWidth value={receiptDate} onChange={(iso) => setReceiptDate(iso)} className={styles.fieldInput} aria-label="Receipt date" />
               </label>
-              <label style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 280 }}>
-                <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>Received into</span>
-                <AccountSelect accounts={moneyAccounts} value={bank} onChange={setBank} placeholder="— bank / cash —" />
+              <label className={styles.field}>
+                <span className={styles.fieldLabel}>Received from (打字就行)</span>
+                <input value={payer} onChange={(e) => setPayer(e.target.value)} className={styles.fieldInput} />
+              </label>
+              <label className={styles.field}>
+                <span className={styles.fieldLabel}>Received into</span>
+                <AccountSelect accounts={moneyAccounts} value={bank} onChange={setBank} placeholder="— bank / cash —" className={styles.fieldInput} />
               </label>
             </div>
             {lines.map((l) => (
-              <div key={l.rid} style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap', alignItems: 'center' }}>
-                <input placeholder="Description" value={l.description}
-                  onChange={(e) => patchLine(l.rid, { description: e.target.value })}
-                  style={{ flex: '1 1 200px', padding: '6px 8px', border: '1px solid var(--border-weak, #d8d5cd)', borderRadius: 6 }} />
-                <div style={{ flex: '1 1 220px' }}>
-                  <AccountSelect accounts={accounts} value={l.creditAccountCode}
-                    onChange={(code) => patchLine(l.rid, { creditAccountCode: code })} />
-                </div>
-                <input type="number" min={0} step="0.01" placeholder="Amount (RM)" aria-label={`line ${l.rid} amount`}
-                  value={l.amountSen > 0 ? String(l.amountSen / 100) : ''}
-                  onChange={(e) => patchLine(l.rid, { amountSen: Math.round(Number(e.target.value || 0) * 100) })}
-                  style={{ width: 130, padding: '6px 8px', border: '1px solid var(--border-weak, #d8d5cd)', borderRadius: 6, textAlign: 'right' }} />
+              <div key={l.rid} style={{ display: 'grid', gridTemplateColumns: 'minmax(200px, 1fr) minmax(240px, 1fr) 160px', gap: 'var(--space-2)', alignItems: 'center' }}>
+                <input placeholder="Description" value={l.description} className={styles.fieldInput}
+                  onChange={(e) => patchLine(l.rid, { description: e.target.value })} />
+                <AccountSelect accounts={accounts} value={l.creditAccountCode} className={styles.fieldInput}
+                  onChange={(code) => patchLine(l.rid, { creditAccountCode: code })} />
+                <MoneyInput bare valueSen={l.amountSen > 0 ? l.amountSen : null} allowBlank placeholder="Amount (RM)"
+                  aria-label={`line ${l.rid} amount`} inputClassName={styles.fieldInput}
+                  onCommit={(sen) => patchLine(l.rid, { amountSen: sen ?? 0 })} />
               </div>
             ))}
             <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center' }}>
@@ -144,7 +156,7 @@ export const Receipts = () => {
               </Button>
               <span style={{ marginLeft: 'auto', fontFamily: 'var(--font-mono)' }}>Total {fmtRm(total)}</span>
               <Button variant="primary" size="sm" onClick={() => void save()}
-                disabled={createReceipt.isPending || total <= 0 || !payer.trim() || !bank || lines.some((l) => l.amountSen > 0 && !l.creditAccountCode)}>
+                disabled={createReceipt.isPending || total <= 0 || !payer.trim() || !bank || !receiptDate || lines.some((l) => l.amountSen > 0 && !l.creditAccountCode)}>
                 {createReceipt.isPending ? 'Posting…' : 'Post receipt'}
               </Button>
               <Button variant="ghost" size="sm" onClick={() => setAdding(false)}>Close</Button>

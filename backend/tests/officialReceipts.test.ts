@@ -23,7 +23,7 @@ const yymm = '2607';
 
 const world = (over: Record<string, Row[]> = {}) => fakeSb(
   {
-    acc_receipts: [],
+    acc_official_receipts: [],
     acc_bank_letters: [{ company_id: CO, account_code: '310-0010', letter: 'M' }],
     acc_numbering: [],
     acc_account_roles: [],
@@ -35,10 +35,10 @@ const world = (over: Record<string, Row[]> = {}) => fakeSb(
   },
   {},
   [
-    { table: 'acc_receipts', column: 'or_number', name: 'acc_receipts_or_number_key' },
-    { table: 'acc_receipts', column: 'payment_id', name: 'acc_receipts_payment_once' },
+    { table: 'acc_official_receipts', column: 'or_number', name: 'acc_official_receipts_or_number_key' },
+    { table: 'acc_official_receipts', column: 'payment_id', name: 'acc_official_receipts_payment_once' },
   ],
-  ['acc_receipts'],
+  ['acc_official_receipts'],
 );
 
 const CARD = {
@@ -53,14 +53,14 @@ describe('birth', () => {
     expect(r1).toMatchObject({ ok: true, status: 'DRAFT', orNumber: `2990-DraftOR-${yymm}-001` });
     const r2 = await createReceiptForPayment(sb, CARD);
     expect(r2.ok && r2.id).toBe(r1.ok && r1.id);
-    expect(sb.tables.acc_receipts).toHaveLength(1);
+    expect(sb.tables.acc_official_receipts).toHaveLength(1);
   });
 
   test('a CASH payment is FORMAL in the same breath, on the COR series', async () => {
     const sb = world();
     const r = await createReceiptForPayment(sb, { ...CARD, paymentId: 'p2', method: 'cash' });
     expect(r).toMatchObject({ ok: true, status: 'FORMAL', orNumber: `2990-COR-${yymm}-001` });
-    expect(sb.tables.acc_receipts[0]).toMatchObject({ status: 'FORMAL', channel_account_code: '320-0000' });
+    expect(sb.tables.acc_official_receipts[0]).toMatchObject({ status: 'FORMAL', channel_account_code: '320-0000' });
   });
 });
 
@@ -81,30 +81,30 @@ describe('the manual confirm', () => {
 
   test('defaults to the company bank, mints {letter}OR, stamps who confirmed', async () => {
     const { app, sb } = harness({
-      acc_receipts: [{ id: 7, company_id: CO, or_number: `2990-DraftOR-${yymm}-004`, status: 'DRAFT', payment_source: 'SOPAY', payment_id: 'p9', amount_sen: 5000, paid_at: '2026-07-05' }],
+      acc_official_receipts: [{ id: 7, company_id: CO, or_number: `2990-DraftOR-${yymm}-004`, status: 'DRAFT', payment_source: 'SOPAY', payment_id: 'p9', amount_sen: 5000, paid_at: '2026-07-05' }],
     });
     const res = await app.request('/accounting/receipts/7/formalise', { method: 'POST' });
     expect(res.status).toBe(200);
     expect((await res.json() as { orNumber: string }).orNumber).toBe(`2990-MOR-${yymm}-001`);
-    expect(sb.tables.acc_receipts[0]).toMatchObject({ status: 'FORMAL', issued_by: 'Chew', channel_account_code: '310-0010' });
+    expect(sb.tables.acc_official_receipts[0]).toMatchObject({ status: 'FORMAL', issued_by: 'Chew', channel_account_code: '310-0010' });
   });
 
   test('a bank with no letter refuses with the setup card named', async () => {
     const { app, sb } = harness({
-      acc_receipts: [{ id: 7, company_id: CO, or_number: `2990-DraftOR-${yymm}-004`, status: 'DRAFT', payment_source: 'SOPAY', payment_id: 'p9', amount_sen: 5000, paid_at: '2026-07-05' }],
+      acc_official_receipts: [{ id: 7, company_id: CO, or_number: `2990-DraftOR-${yymm}-004`, status: 'DRAFT', payment_source: 'SOPAY', payment_id: 'p9', amount_sen: 5000, paid_at: '2026-07-05' }],
       acc_bank_letters: [],
     });
     const res = await app.request('/accounting/receipts/7/formalise', { method: 'POST' });
     expect(res.status).toBe(409);
     expect(((await res.json()) as { message: string }).message).toContain('Voucher numbering');
-    expect(sb.tables.acc_receipts[0]).toMatchObject({ status: 'DRAFT' });
+    expect(sb.tables.acc_official_receipts[0]).toMatchObject({ status: 'DRAFT' });
   });
 });
 
 describe('settlement confirm turns card receipts formal', () => {
   test('formalises on the payout bank; missing receipts and letters are reported, never thrown', async () => {
     const sb = world({
-      acc_receipts: [
+      acc_official_receipts: [
         { id: 1, company_id: CO, or_number: `2990-DraftOR-${yymm}-001`, status: 'DRAFT', payment_source: 'SOPAY', payment_id: 'p1', amount_sen: 1, paid_at: '2026-07-05' },
         { id: 2, company_id: CO, or_number: `2990-MOR-${yymm}-009`, status: 'FORMAL', payment_source: 'SOPAY', payment_id: 'p2', amount_sen: 1, paid_at: '2026-07-05' },
       ],
@@ -118,7 +118,7 @@ describe('settlement confirm turns card receipts formal', () => {
       { paymentId: 'p3', outcome: 'no_receipt' },
     ]);
     // -010: the series already held -009, and max+1 never re-issues.
-    expect(sb.tables.acc_receipts[0]).toMatchObject({ status: 'FORMAL', or_number: `2990-MOR-${yymm}-010` });
+    expect(sb.tables.acc_official_receipts[0]).toMatchObject({ status: 'FORMAL', or_number: `2990-MOR-${yymm}-010` });
   });
 });
 
@@ -129,6 +129,6 @@ describe('ensure heals history', () => {
     });
     const r = await ensureReceiptForPayment(sb, 'SOPAY', 'old1');
     expect(r).toMatchObject({ ok: true, status: 'DRAFT' });
-    expect(sb.tables.acc_receipts[0]).toMatchObject({ doc_no: '2990-SO-2607-009', amount_sen: 25000 });
+    expect(sb.tables.acc_official_receipts[0]).toMatchObject({ doc_no: '2990-SO-2607-009', amount_sen: 25000 });
   });
 });

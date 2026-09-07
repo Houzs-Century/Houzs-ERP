@@ -1,7 +1,10 @@
 // ----------------------------------------------------------------------------
 // acc/receipts — Official Receipts (GL redesign item 9, owner 2026-09-05).
 //
-// One receipt per customer payment, born the moment the payment is recorded:
+// One receipt per customer payment, born the moment the payment is recorded
+// — rows of scm.acc_official_receipts (its OWN table since docs/bugs/0658:
+// the first migration named it acc_receipts, the general money-in receipt's
+// table, and so built nothing):
 //   DRAFT   printable with a DRAFT stamp, numbered on the draft series
 //           ({co}DraftOR-YYMM-NNN) — the salesperson can hand something over;
 //   FORMAL  the moment the money is CONFIRMED — which mints the channel
@@ -77,7 +80,7 @@ export async function createReceiptForPayment(
   sb: any,
   p: ReceiptPaymentInput,
 ): Promise<{ ok: true; id: number; orNumber: string; status: string } | { ok: false; reason: string }> {
-  const { data: existing, error: exErr } = await sb.from('acc_receipts')
+  const { data: existing, error: exErr } = await sb.from('acc_official_receipts')
     .select('id, or_number, status')
     .eq('payment_source', p.source).eq('payment_id', p.paymentId).maybeSingle();
   if (exErr) return { ok: false, reason: exErr.message };
@@ -88,8 +91,8 @@ export async function createReceiptForPayment(
 
   const prefix = docPrefixForCode(p.companyCode);
   for (let attempt = 0; attempt < 8; attempt += 1) {
-    const draftNo = await mintMonthlyDocNo(sb, 'acc_receipts', 'or_number', `${prefix}DraftOR-${docMonthTag(p.paidAt)}`);
-    const { data, error } = await sb.from('acc_receipts').insert({
+    const draftNo = await mintMonthlyDocNo(sb, 'acc_official_receipts', 'or_number', `${prefix}DraftOR-${docMonthTag(p.paidAt)}`);
+    const { data, error } = await sb.from('acc_official_receipts').insert({
       company_id: p.companyId,
       or_number: draftNo,
       status: 'DRAFT',
@@ -119,7 +122,7 @@ export async function createReceiptForPayment(
     }
     const dupPayment = /payment_source|payment_id/.test(String(error.message ?? '')) && /duplicate key/i.test(String(error.message ?? ''));
     if (dupPayment) {
-      const { data: again, error: againErr } = await sb.from('acc_receipts')
+      const { data: again, error: againErr } = await sb.from('acc_official_receipts')
         .select('id, or_number, status').eq('payment_source', p.source).eq('payment_id', p.paymentId).maybeSingle();
       if (againErr) return { ok: false, reason: `receipt exists but could not be read back: ${againErr.message}` };
       if (again) {
@@ -142,7 +145,7 @@ export async function formaliseReceipt(
   sb: any,
   input: { companyId: number; companyCode: string; receiptId: number; accountCode: string; actor: string | null },
 ): Promise<{ ok: true; orNumber: string; already?: boolean } | { ok: false; status: string; reason: string }> {
-  const { data: rRaw, error: rErr } = await sb.from('acc_receipts')
+  const { data: rRaw, error: rErr } = await sb.from('acc_official_receipts')
     .select('id, or_number, status, company_id, paid_at')
     .eq('id', input.receiptId).eq('company_id', input.companyId).maybeSingle();
   if (rErr) return { ok: false, status: 'load_failed', reason: rErr.message };
@@ -164,8 +167,8 @@ export async function formaliseReceipt(
   const prefix = docPrefixForCode(input.companyCode);
   const at = new Date().toISOString();
   for (let attempt = 0; attempt < 8; attempt += 1) {
-    const formalNo = await mintMonthlyDocNo(sb, 'acc_receipts', 'or_number', `${prefix}${ch.letter}OR-${docMonthTag(r.paid_at)}`, digits);
-    const { error } = await sb.from('acc_receipts').update({
+    const formalNo = await mintMonthlyDocNo(sb, 'acc_official_receipts', 'or_number', `${prefix}${ch.letter}OR-${docMonthTag(r.paid_at)}`, digits);
+    const { error } = await sb.from('acc_official_receipts').update({
       or_number: formalNo,
       status: 'FORMAL',
       channel_account_code: input.accountCode,
@@ -190,7 +193,7 @@ export async function ensureReceiptForPayment(
   source: 'SOPAY' | 'SIPAY',
   paymentId: string,
 ): Promise<{ ok: true; id: number; orNumber: string; status: string } | { ok: false; reason: string }> {
-  const { data: existing, error: exErr } = await sb.from('acc_receipts')
+  const { data: existing, error: exErr } = await sb.from('acc_official_receipts')
     .select('id, or_number, status')
     .eq('payment_source', source).eq('payment_id', paymentId).maybeSingle();
   if (exErr) return { ok: false, reason: exErr.message };
@@ -246,7 +249,7 @@ export async function formaliseReceiptsForSettlement(
   const out: Array<{ paymentId: string; outcome: string }> = [];
   if (!bankAccountCode) return payments.map((p) => ({ paymentId: p.id, outcome: 'no_bank_configured' }));
   for (const p of payments) {
-    const { data, error } = await sb.from('acc_receipts')
+    const { data, error } = await sb.from('acc_official_receipts')
       .select('id, status')
       .eq('payment_source', p.source).eq('payment_id', p.id).maybeSingle();
     /* A blip is NOT "no receipt" — reported as its own outcome so the sweep's
