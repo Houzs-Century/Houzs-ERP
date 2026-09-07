@@ -34,6 +34,10 @@ export type PvPdfHeader = {
   currency?: string | null; exchange_rate?: string | number | null;
   credit_account_code: string; total_sen?: number | null;
   supplier?: { code: string; name: string } | null;
+  /* A Customer Refund (§14) prints its kind and the document it refunds. */
+  purpose?: string | null;
+  refund_source_type?: string | null;
+  refund_source_doc_no?: string | null;
   /* The four layers — names as recorded by the approval routes. */
   submitted_at?: string | null; submitted_by?: string | null;
   checked_at?: string | null;   checked_by?: string | null;
@@ -111,7 +115,8 @@ export async function renderPaymentVoucherInto(
      and says so: the payee the transfer form derives is the marker, so the
      batch printer re-titles without any new parameter. */
   let y = drawHeader(doc, {
-    docTitle: String(header.payee_name).startsWith('Internal transfer to ') ? 'TRANSFER VOUCHER' : 'PAYMENT VOUCHER',
+    docTitle: header.purpose === 'CUSTOMER_REFUND' ? 'CUSTOMER REFUND'
+      : String(header.payee_name).startsWith('Internal transfer to ') ? 'TRANSFER VOUCHER' : 'PAYMENT VOUCHER',
     rightMeta: [
       { label: 'PV No', value: header.pv_number },
       { label: 'Date',  value: fmtDocDate(header.voucher_date) },
@@ -120,12 +125,18 @@ export async function renderPaymentVoucherInto(
 
   y = drawInfoColumns(doc, y,
     {
-      title: 'PAY TO',
-      rows: [
-        ['Payee', header.payee_name],
-        ['Supplier', header.supplier ? `${header.supplier.code} · ${header.supplier.name}` : null],
-        ['Note', header.notes ?? null],
-      ],
+      title: header.purpose === 'CUSTOMER_REFUND' ? 'REFUND TO' : 'PAY TO',
+      rows: header.purpose === 'CUSTOMER_REFUND'
+        ? [
+          ['Customer', header.payee_name],
+          ['Refunds', header.refund_source_doc_no ? `${header.refund_source_type ?? ''} ${header.refund_source_doc_no}`.trim() : null],
+          ['Note', header.notes ?? null],
+        ]
+        : [
+          ['Payee', header.payee_name],
+          ['Supplier', header.supplier ? `${header.supplier.code} · ${header.supplier.name}` : null],
+          ['Note', header.notes ?? null],
+        ],
     },
     {
       title: 'VOUCHER DETAILS',
