@@ -219,16 +219,22 @@ async function main() {
       FROM scm.purchase_order_items i
       JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
      WHERE p.company_id = ${CO} AND p.linked_ac_docno IS NOT NULL`;
+  /* CANCELLED IS EXCLUDED, added 2026-09-07 with the goods-receipt reshape.
+     `reshape-migrated-grns.mjs` retires a superseded migrated receipt by
+     flipping its status rather than deleting it (the owner's standing rule), so
+     from that day a `migrated_no_stock` receipt can be a RETIRED one. Counting
+     it would add its units to the live documents that replaced it and report
+     the purchase order as over-received. */
   const erpGrn = await sql`
     SELECT g.id, g.grn_number, g.purchase_order_id, g.linked_ac_docno, g.migrated_no_stock
       FROM scm.grns g
-     WHERE g.company_id = ${CO} AND g.migrated_no_stock = true`;
+     WHERE g.company_id = ${CO} AND g.migrated_no_stock = true AND g.status <> 'CANCELLED'`;
   const erpGrnItems = await sql`
     SELECT gi.id, gi.grn_id, gi.purchase_order_item_id, gi.item_code, gi.item_group,
            gi.qty_received, gi.qty_accepted, g.linked_ac_docno AS ac, g.grn_number
       FROM scm.grns g
       JOIN scm.grn_items gi ON gi.grn_id = g.id
-     WHERE g.company_id = ${CO} AND g.migrated_no_stock = true`;
+     WHERE g.company_id = ${CO} AND g.migrated_no_stock = true AND g.status <> 'CANCELLED'`;
 
   log("SCOPE — the ERP rows this check walks");
   log("-".repeat(96));
@@ -237,23 +243,45 @@ async function main() {
   log("");
 
   // ── TEST 1 — is the ERP's goods receipt a faithful mirror of its PO line? ──
+  /* PER PURCHASE-ORDER LINE, SUMMED OVER ITS RECEIPTS — not per goods-receipt
+     line. This compared one line against `received_qty` directly, which was
+     right while `create-migrated-documents.mjs` wrote exactly ONE receipt per
+     purchase order carrying that column verbatim. Since
+     `reshape-migrated-grns.mjs` (owner 2026-09-07: the ERP shows the receipts
+     the book actually made), a purchase order received twice has TWO documents
+     and neither line equals the column on its own — 70 of 318 purchase orders
+     are in that shape, so the old comparison would have reported the split
+     itself as a defect on every one of them. The SUM is the statement that
+     survived the reshape and it is the one that matters. */
   const poItemById = new Map(erpPoItems.map((r) => [String(r.id), r]));
-  let mirrorOk = 0; const mirrorBad = []; let mirrorNoLink = 0;
+  const receivedByPoi = new Map();
+  const grnsByPoi = new Map();
+  let mirrorNoLink = 0;
   for (const gi of erpGrnItems) {
-    const pi = gi.purchase_order_item_id ? poItemById.get(String(gi.purchase_order_item_id)) : null;
-    if (!pi) { mirrorNoLink += 1; continue; }
-    if (r0(gi.qty_received) === r0(pi.received_qty)) mirrorOk += 1;
-    else mirrorBad.push({ grn: gi.grn_number, code: gi.item_code, grnQty: r0(gi.qty_received), poQty: r0(pi.received_qty) });
+    const key = gi.purchase_order_item_id ? String(gi.purchase_order_item_id) : null;
+    if (!key || !poItemById.has(key)) { mirrorNoLink += 1; continue; }
+    receivedByPoi.set(key, (receivedByPoi.get(key) ?? 0) + r0(gi.qty_received));
+    if (!grnsByPoi.has(key)) grnsByPoi.set(key, []);
+    grnsByPoi.get(key).push(gi.grn_number);
   }
-  log("TEST 1 — is each goods receipt line a faithful mirror of its purchase order line?");
+  let mirrorOk = 0; const mirrorBad = [];
+  for (const [key, qty] of receivedByPoi) {
+    const pi = poItemById.get(key);
+    if (qty === r0(pi.received_qty)) mirrorOk += 1;
+    else mirrorBad.push({ grn: (grnsByPoi.get(key) ?? []).join(" + "), code: pi.item_code, grnQty: qty, poQty: r0(pi.received_qty) });
+  }
+  log("TEST 1 — do a purchase order line's receipts add up to what the line says it received?");
   log("-".repeat(96));
-  log("  create-migrated-documents.mjs doGrns() writes `qty_received = it.received_qty`. If that mirror");
-  log("  is intact, every statement below about the goods receipt is equally a statement about");
-  log("  purchase_order_items.received_qty — the column the outstanding-PO list and supplier chasing read.");
-  log(`  agree      ${pad(mirrorOk, 6)} of ${erpGrnItems.length} goods receipt lines`);
+  log("  A purchase order AutoCount received in more than one go now has one ERP goods receipt per");
+  log("  receipt, so no single line equals purchase_order_items.received_qty. What must still hold is");
+  log("  the SUM across that line's receipts — the column the outstanding-PO list and supplier chasing read.");
+  log(`  agree      ${pad(mirrorOk, 6)} of ${receivedByPoi.size} purchase order lines carrying receipts`);
   log(`  differ     ${pad(mirrorBad.length, 6)}`);
-  log(`  no PO line ${pad(mirrorNoLink, 6)}  (purchase_order_item_id null or dangling — not comparable)`);
-  for (const b of mirrorBad.slice(0, TOP)) log(`     ${b.grn} ${b.code}: GRN says ${b.grnQty}, PO line says ${b.poQty}`);
+  log(`  no PO line ${pad(mirrorNoLink, 6)}  of ${erpGrnItems.length} goods receipt lines (purchase_order_item_id null or dangling — not comparable)`);
+  log("             AutoCount does not record WHICH purchase-order line a receipt line received");
+  log("             (GRDTL.FromDocDtlKey is 0 of 21,746 rows), so a line whose item code appears twice");
+  log("             on its purchase order is deliberately left unlinked. Owner: 跟 autocount 一样.");
+  for (const b of mirrorBad.slice(0, TOP)) log(`     ${b.grn} ${b.code}: receipts add to ${b.grnQty}, PO line says ${b.poQty}`);
   if (mirrorBad.length > TOP) log(`     ... and ${mirrorBad.length - TOP} more`);
   log("");
 

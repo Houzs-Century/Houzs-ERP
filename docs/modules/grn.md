@@ -498,6 +498,93 @@ with its own AutoCount text. Everything else is listed, never guessed at.
 
 ---
 
+## 4d. Migrated goods receipts carry the ACCOUNT BOOK's shape (2026-09-07)
+
+Owner, on being offered three shapes: 「不是说过了吗？是 A 的，不过只是把那些需要的搬
+进来，不需要的不需要搬」 — if AutoCount received a purchase order in three
+deliveries, the ERP shows three receipts, with the book's own dates and
+quantities, for the in-scope set only.
+
+**What it replaced.** `create-migrated-documents.mjs` wrote ONE goods receipt per
+PURCHASE ORDER, built from `purchase_order_items.received_qty`, stamped
+`received_at = CURRENT_DATE`. Measured on production 2026-09-07 (`check-gr-shape`,
+run 34135520445): 320 documents, every one dated the day the migration ran,
+against a book that received 318 in-scope purchase orders in **400 (receipt x
+purchase order) pairs across 214 receipts** — 70 of those purchase orders in more
+than one go, 61 of them on genuinely different dates.
+
+**The grain is the PAIR, not the receipt, and that is structural.**
+`scm.grns.purchase_order_id` is a SINGLE purchase order, and 51 of the 214
+receipts cover more than one in-scope purchase order (`GR-000201` covers 17). One
+ERP document per AutoCount receipt is therefore impossible without a schema
+change. The pair delivers what was asked for WITHIN each purchase order: the
+book's split, the book's dates, the book's quantities.
+
+**Two columns, and they are not the same thing.**
+
+| column | holds |
+|---|---|
+| `scm.grns.linked_ac_docno` | the **purchase order's** AutoCount number. Named as if it were the receipt's by mig `0276`; it never was, and ten scripts read it the true way. |
+| `scm.grns.linked_ac_gr_docno` | the **receipt's** AutoCount number. Added by mig `20260907T2345_grn_linked_ac_gr_docno.sql`. Several rows may share a value — the pair `(linked_ac_gr_docno, purchase order)` is what identifies a document. |
+
+**The writer is `backend/scripts/reshape-migrated-grns.mjs`** + Actions ->
+**Reshape migrated goods receipts (plan by default)**. Plan by default, `CONFIRM`
+phrase on apply, a restorable JSON dump of every migrated receipt written BEFORE
+anything moves in both modes, and a fresh-connection verify that asserts each
+document's date, line count and units rather than a row count.
+
+**Never delete, only retire.** A receipt whose pair is in the plan is UPDATED IN
+PLACE — same id, same number, same place in every relationship map. One whose
+pair is not is CANCELLED by a **direct status flip**, not by
+`PATCH /:id/cancel`: that route has zero occurrences of `migrated_no_stock` and
+would write a reversing inventory OUT for every line (879 units across the 320).
+Its guard `grnReverseWouldGoNegative` PASSES here, because the units really are
+on the shelf — they came from the AutoCount balance snapshot, not from this
+document, and the guard cannot see the difference. The route is the unsafe path,
+not the outcome.
+
+**The purchase-order LINE is left UNSET on the lines the book cannot decide.**
+AutoCount records the receipt, the item and the quantity; it does not record
+which purchase-order line was received (`GRDTL.FromDocDtlKey` is 0 of 21,746
+rows, agreed by two independently-cut extracts). Where a purchase order carries
+an item code ONCE the receipt line resolves exactly. Where it carries the same
+code twice, `purchase_order_item_id` stays NULL and the line says so in its own
+`grn_items.notes`, with the document's `notes` naming every such line. Owner
+ruling on those lines: 「跟 autocount 一样」. Filling the first matching line
+would be inventing an attribution, and the total quantity per (purchase order,
+item) is identical either way, so stock and MRP are unaffected.
+
+**`purchase_order_items.received_qty` is NOT written by the reshape.** The plan
+compares what the book's receipts add up to per purchase-order line against the
+number the column holds today, and prints every difference — so an unattributed
+line's effect on a future `recomputePoReceived` is visible now rather than
+discovered later.
+
+**The money is CARRIED, never recomputed — and the price stamp runs AFTER.**
+`stamp-migrated-source-prices.mjs` owns what a migrated receipt line is worth,
+and the money it writes is on the AutoCount RECEIPT line, not on the purchase
+order behind it (`docs/bugs/0674`: on all 180 zero-priced migrated receipt lines
+the book's own purchase-order line reads `UnitPrice 0, SubTotal 0`). The reshape
+decides no price: it carries `unit_price_sen` as-is and shares `discount_sen`
+out by quantity, so a line split across two receipts keeps the same money per
+unit. It looks the price up by `(purchase-order line, item code)` first and
+`(purchase order, item code)` second — the second is what an unattributed line
+uses, and it is not an invention, because every candidate line shares the code
+and therefore the price. **Re-dispatch "Stamp migrated source prices" after the
+reshape**: its selection is `unit_price_sen = 0`, and the new grain makes MORE of
+it stampable, because its partial-mirror refusal exists precisely for the
+one-document-per-purchase-order shape the reshape replaces. The run prints the
+money before and after.
+
+**What it unlocked.** `check-ac-erp-reconcile.mjs` printed *"GR DATA — line and
+money comparison NOT APPLICABLE"* and stopped, because the quantity was derived
+and the grains did not match. Both reasons are gone, so the GR section now
+compares line count, item code and QUANTITY at pair grain. The unit PRICE is
+still taken from the purchase-order line and is reported as DECLARED, not as a
+gap.
+
+---
+
 ## 5. Stock direction
 
 **A Goods Received Note moves inventory IN.**
