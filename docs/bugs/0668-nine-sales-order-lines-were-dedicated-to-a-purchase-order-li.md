@@ -48,6 +48,14 @@ a phrase copied from an earlier run cannot fire. The mismatch is re-asserted
 inside the UPDATE, and a fresh connection re-reads the SHAPE afterwards
 (`so_item_id` now NULL, `item_code` unmoved) rather than a row count.
 
+**The tenth dedication is MEASURED, not assumed.** That run wrote ten; nine name
+different items in the ERP. The shape an item_code comparison cannot see is a
+pair where our two rows agree with each other and BOTH disagree with AutoCount,
+so the plan checks every dedication in the company against the book and prints
+that count either way — the tenth is answered as a member of the population
+rather than as a special case. Rows in that class are NOT reverted here: they are
+a different question and none of the evidence for the nine applies to them.
+
 **What it deliberately does NOT do.** It writes no correction. Which side is
 right — the customer changed the bed in AutoCount after we copied the order, or
 the import mis-mapped the code — is the owner's decision, so the plan prints the

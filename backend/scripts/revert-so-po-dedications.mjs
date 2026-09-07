@@ -148,6 +148,41 @@ async function main() {
   /* ── the owner's table: which SIDE disagrees with the book ─────────────── */
   const book = readBook();
   log(`book snapshot ${book.exportedAt}; PODTL SO-edge export ${book.edgesExportedAt}`);
+
+  /* THE QUIETER CLASS, measured rather than assumed. Run 34123720786 wrote TEN
+     dedications and only nine name different items in the ERP; the tenth was
+     flagged as "looks like the same shape" and never measured. The shape that
+     the item_code comparison CANNOT see is a pair where our two rows agree with
+     each other and both disagree with AutoCount — so every dedication in the
+     company is checked against the book here, not just the tenth, and the
+     answer is a count either way. */
+  const agreeing = rows.filter((r) => !bad.includes(r));
+  const offBook = [];
+  let notInBook = 0;
+  for (const r of agreeing) {
+    const bSo = book.soByDtl.get(String(r.so_dtlkey ?? ""))?.itemKey ?? null;
+    const bPo = book.poByDtl.get(String(r.po_dtlkey ?? ""))?.itemKey ?? null;
+    if (bSo === null || bPo === null) { notInBook++; continue; }
+    const eSo = book.toErp(bSo);
+    const ePo = book.toErp(bPo);
+    /* An UNMAPPED code is a fact about the 1,561-row mapping sheet, not a
+       disagreement — saying otherwise would invent a finding. */
+    if (eSo === null && ePo === null) { notInBook++; continue; }
+    const soOk = eSo === null || normItemCode(eSo) === normItemCode(r.so_item_code);
+    const poOk = ePo === null || normItemCode(ePo) === normItemCode(r.po_item_code);
+    if (soOk && poOk) continue;
+    offBook.push({ soDoc: r.so_doc_no, poNo: r.po_number, ours: r.so_item_code,
+      bookSoErp: eSo, bookPoErp: ePo, soDtl: String(r.so_dtlkey ?? ""), poDtl: String(r.po_dtlkey ?? "") });
+  }
+  log(`  of the ${agreeing.length} that agree with each other:`);
+  log(`    both ends also match the book                    ${agreeing.length - offBook.length - notInBook}`);
+  log(`    our two rows agree but DISAGREE with the book    ${offBook.length}   <- NOT reverted here; a different question`);
+  log(`    one end is not in this book snapshot / unmapped  ${notInBook}   (says nothing either way)`);
+  for (const o of offBook.slice(0, 20)) {
+    log(`     ${o.soDoc} / ${o.poNo}: ours "${o.ours}"; the book says SO "${o.bookSoErp ?? "(unmapped)"}" PO "${o.bookPoErp ?? "(unmapped)"}" (SODtlKey ${o.soDtl} -> PODtlKey ${o.poDtl})`);
+  }
+  if (offBook.length > 20) log(`     ... and ${offBook.length - 20} more`);
+
   const verdicts = [];
   for (const r of bad) {
     const bSo = book.soByDtl.get(String(r.so_dtlkey ?? ""))?.itemKey ?? null;
@@ -197,6 +232,7 @@ async function main() {
     incident: "sync-ac-delta run 34123720786 wrote dedications without comparing item_code (guard: PR #3076)",
     rows: bad.map((r) => ({ ...r })),
     verdicts,
+    agreeWithEachOtherButNotWithTheBook: offBook,
     restore: bad.map((r) =>
       `UPDATE scm.purchase_order_items SET so_item_id = '${String(r.so_item_id).replace(/'/g, "''")}' WHERE id = '${String(r.po_item_id).replace(/'/g, "''")}';`),
   };
