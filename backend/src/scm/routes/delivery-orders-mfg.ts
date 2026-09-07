@@ -106,6 +106,8 @@ import {
 } from '../lib/ship-commitment';
 import { loadSofaBatchStock, sofaStockKey } from '../lib/sofa-set-coverage';
 import { buildDoReversalRows } from '../lib/do-reversal';
+import { resolveDoLineWarehouses } from '../lib/do-line-warehouses';
+import { isMigratedNoStock } from '../lib/migrated-no-stock';
 import { currentDocNoByKey, type CurrentEvent } from '../lib/current-doc';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { recordSoAudit, type FieldChange } from '../lib/so-audit';
@@ -980,53 +982,8 @@ export async function restampDoActualCost(sb: any, deliveryOrderId: string) {
    One (DO, item_code, variant_key) bucket may hold exactly ONE movement row
    of any kind, ever. That is what makes this deduction safe, and it is also
    what resyncInventoryForDo collides with — see the note there. */
-/* ── resolveDoLineWarehouses (Agent D 2026-05-31, TASK #32) ───────────────────
-   PER-WAREHOUSE CORRECTNESS for the OUTBOUND side. A DO line MUST deduct from
-   the warehouse of the Sales Order LINE it delivers (mfg_sales_order_items.
-   warehouse_id, migration 0118) — never a single DO-header default. A KL SO
-   line must ship from KL stock even if the DO header (or the default) points at
-   PG; stock never crosses warehouses (CLAUDE.md locked rule).
-
-   Resolution order per DO line:
-     1. the linked SO line's warehouse_id (so_item_id → mfg_sales_order_items)
-     2. the DO header's warehouse_id (ad-hoc lines with no so_item_id)
-     3. the DO's OWN company's default warehouse (last-resort fallback)
-
-   Returns a map of delivery_order_items.id → warehouse_id (or null when even
-   the fallbacks are absent — the caller skips those lines so a wrong warehouse
-   is never guessed).
-
-   The `id` field is only a correlation key, so this also serves lines that do
-   not exist yet: the pre-flight stock check passes synthetic ids and the request
-   body's soItemId, and gets back exactly the warehouses the OUT will use. */
-async function resolveDoLineWarehouses(
-  sb: any,
-  items: Array<{ id: string; so_item_id?: string | null }>,
-  headerWarehouseId: string | null,
-  /* The DO's company (2026-08-03) — step 3 is per company. It used to be a
-     company-blind draw across every company's is_default warehouses, decided by
-     alphabetical `code` order. */
-  companyId: number | undefined,
-): Promise<Map<string, string | null>> {
-  const out = new Map<string, string | null>();
-  const soItemIds = [...new Set(items
-    .map((it) => it.so_item_id ?? null)
-    .filter((x): x is string => !!x))];
-  const soWh = new Map<string, string | null>();
-  if (soItemIds.length > 0) {
-    const { data: soRows } = await sb.from('mfg_sales_order_items')
-      .select('id, warehouse_id').in('id', soItemIds);
-    for (const r of (soRows ?? []) as Array<{ id: string; warehouse_id: string | null }>) {
-      soWh.set(r.id, r.warehouse_id ?? null);
-    }
-  }
-  const fallback = headerWarehouseId ?? (await defaultWarehouseId(sb, companyId));
-  for (const it of items) {
-    const fromSo = it.so_item_id ? (soWh.get(it.so_item_id) ?? null) : null;
-    out.set(it.id, fromSo ?? fallback);
-  }
-  return out;
-}
+/* resolveDoLineWarehouses moved to scm/lib/do-line-warehouses.ts 2026-09-07,
+   a MOVE not a rewrite. All ten call sites in this file still go through it. */
 
 /* ── checkDoStockAvailability (2026-08-03) ────────────────────────────────────
    THE PRE-FLIGHT CHECK MUST ASK ABOUT THE WAREHOUSE THE GOODS ACTUALLY LEAVE.
@@ -1259,22 +1216,19 @@ async function deductInventoryForDo(sb: any, deliveryOrderId: string, performedB
       .select('do_number, warehouse_id, company_id, migrated_no_stock')
       .eq('id', deliveryOrderId).maybeSingle();
   }
-  // Same forward-compat for migration 0276's column (see resyncInventoryForDo).
+  // Same forward-compat for mig 0276's column (see resyncInventoryForDo).
   if (doHeaderRes.error && (doHeaderRes.error.message ?? '').includes('migrated_no_stock')) {
     doHeaderRes = await sb.from('delivery_orders')
       .select('do_number, warehouse_id, company_id')
       .eq('id', deliveryOrderId).maybeSingle();
   }
   const doHeader = doHeaderRes.data;
-  /* IDEMPOTENCY GUARD #2, and the reason guard #1 is not enough. Guard #1 asks
-     "did this DO already write an OUT?" — for migrated AutoCount paperwork
-     (migration 0276) the answer is legitimately NO and always will be, because
-     its units left the shelf inside the balance snapshot instead. So the guard
-     that exists to stop a double deduction is the guard that lets this one
-     through. Reached by reverting a migrated DO to DRAFT (which reverses
-     nothing, correctly — reverseInventoryForDo is movement-derived) and
-     shipping it again. */
-  if ((doHeader as { migrated_no_stock?: boolean | null } | null)?.migrated_no_stock === true) return [];
+  /* IDEMPOTENCY GUARD #2, and why #1 is not enough: #1 asks "did this DO write
+     an OUT?", and for migrated paperwork the answer is legitimately no, forever
+     — so the guard against double-deducting is the one that lets it in. Reached
+     by reverting a migrated DO to DRAFT (which reverses nothing, correctly) and
+     shipping it again. lib/migrated-no-stock.ts. */
+  if (isMigratedNoStock(doHeader as { migrated_no_stock?: boolean | null } | null)) return [];
   const { data: items } = await sb.from('delivery_order_items')
     .select('id, so_item_id, item_code, description, qty, item_group, variants, rack_id, committed_po_batch_no')
     .eq('delivery_order_id', deliveryOrderId);
@@ -1603,9 +1557,9 @@ export async function returnDoRacksOnCancel(sb: any, deliveryOrderId: string, do
    IDEMPOTENT: re-running with no line changes yields delta 0 everywhere — no
    writes. Cancel-reversal still works via reverseMovements (it nets per
    bucket). Non-shipped DOs skip — deductInventoryForDo handles the first ship. */
-/* EXPORTED for the same reason reverseInventoryForDo and restampDoActualCost
-   are: it is the DO's stock-correction chokepoint and its behaviour has to be
-   pinnable without standing up the three route handlers that call it. */
+/* EXPORTED like reverseInventoryForDo and restampDoActualCost: it is the DO's
+   stock-correction chokepoint and has to be pinnable without standing up the
+   three route handlers that call it. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- unchanged from before the export; the PostgREST shim has no honest type until schema.pg.ts covers the SCM tables.
 export async function resyncInventoryForDo(sb: any, deliveryOrderId: string, performedBy: string) {
   // Header — need warehouse_id, do_number, status, is_dropship (audit C1).
@@ -1618,9 +1572,8 @@ export async function resyncInventoryForDo(sb: any, deliveryOrderId: string, per
       .select('do_number, status, warehouse_id, company_id, migrated_no_stock')
       .eq('id', deliveryOrderId).maybeSingle();
   }
-  /* Forward-compat, same shape as is_dropship above: a database without
-     migration 0276 has no such column, and a resync must not stop dead on a
-     schema that predates the cutover. */
+  // Forward-compat, same shape as is_dropship: a database without mig 0276 has
+  // no such column, and a resync must not stop dead on a pre-cutover schema.
   if (hdrRes.error && (hdrRes.error.message ?? '').includes('migrated_no_stock')) {
     hdrRes = await sb.from('delivery_orders')
       .select('do_number, status, warehouse_id, company_id')
@@ -1630,17 +1583,14 @@ export async function resyncInventoryForDo(sb: any, deliveryOrderId: string, per
   if (!doHeader) return;
   const status = ((doHeader as { status: string | null }).status ?? '').toUpperCase();
   if (!SHIPPED_STATES.includes(status)) return; // not yet shipped → no OUT yet → nothing to sync
-  /* MIGRATED PAPERWORK (migration 0276) — the DO twin of the GRN cancel defect,
-     and worse, because it fires on an ordinary line edit rather than a cancel.
-     These documents were created DELIVERED with NO movement behind them: the
-     AutoCount balance snapshot already counted their units as gone. The delta
-     below is `target_qty − current_net_out`, and current_net_out is 0 for every
-     bucket, so a single line edit would write a full OUT for EVERY line of the
-     document — deducting the whole delivery a second time.
-     Returns before computing a delta rather than gating each write: there is
-     nothing to sync a migrated DO's ledger TO, and a partial correction on a
-     document with no primary posting is not a safer half-measure. */
-  if ((doHeader as { migrated_no_stock?: boolean | null }).migrated_no_stock === true) return;
+  /* MIGRATED PAPERWORK — the DO twin of the GRN cancel defect, and worse: it
+     fires on an ordinary line edit, not a cancel. The delta below is
+     `target_qty − current_net_out`, and current_net_out is 0 for every bucket of
+     a migrated DO, so ONE line edit writes a full OUT for EVERY line. Returns
+     before computing a delta: there is nothing to sync its ledger TO, and a
+     partial correction on a document with no primary posting is not a safer
+     half-measure. lib/migrated-no-stock.ts. */
+  if (isMigratedNoStock(doHeader as { migrated_no_stock?: boolean | null })) return;
   const headerWarehouseId = (doHeader as { warehouse_id: string | null }).warehouse_id ?? null;
   const doNo = (doHeader as { do_number: string }).do_number;
   const isDropship = (doHeader as { is_dropship?: boolean }).is_dropship === true;
