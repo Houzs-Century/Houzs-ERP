@@ -430,10 +430,11 @@ from | Received into; Description | Account | Amount), the amount a
 MoneyInput that re-dresses to 1,800.00 on blur. Pinned in
 `Receipts.test.tsx`. **Edit and re-post (later the same day — four receipts
 keyed on the wrong day: 这四张我开的还可以 edit 吗? → 做 b)**: a POSTED general
-receipt takes a pencil on its row; the same form opens seeded from
+receipt takes a pencil on its row (`frontend/src/pages/scm-v2/Receipts.tsx`,
+shown to the PV write or create key); the same form opens seeded from
 `GET /receipts/:id` (`getReceiptHandler`, header + lines) and **Save &
-re-post** sends `PATCH /receipts/:id` (`updateReceiptHandler`, PV write or
-create key): date, payer, landing account and lines may all change, with the
+re-post** sends `PATCH /receipts/:id` (`updateReceiptHandler`, the same
+keys): date, payer, landing account and lines may all change, with the
 same doors as create (money account, leaf and non-control lines); the server
 reverses the old RCT entry dated as the receipt WAS and books a fresh RCT on
 the new date — the AP invoice's edit-and-repost, the trail kept. **The number
