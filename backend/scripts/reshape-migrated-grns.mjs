@@ -400,7 +400,17 @@ async function main() {
       addCarry(carryByPo, `${poIdByGrn.get(g.id)}|${norm(l.item_code)}`, l);
     }
   }
-  const moneyBefore = grnLines.reduce((t, l) => t + n0(l.line_total_sen), 0);
+  /* THREE FIGURES, NOT ONE, because the first two are not the same number and
+     comparing the plan against the wrong one manufactures a scare. A migrated
+     line's `line_total_sen` was written once at import and several repairs have
+     touched `unit_price_sen` since without re-summing it, so the stored total
+     and `qty x unit - discount` can disagree. The plan writes the SECOND shape,
+     so the second is what it must be compared against — and the per-unit
+     figures are what settle whether money was carried or created. */
+  const moneyBeforeStored = grnLines.reduce((t, l) => t + n0(l.line_total_sen), 0);
+  const moneyBeforeComputed = grnLines.reduce(
+    (t, l) => t + Math.max(0, Math.round(n0(l.qty_accepted) * n0(l.unit_price_sen)) - n0(l.discount_sen)), 0);
+  const unitsBefore = grnLines.reduce((t, l) => t + n0(l.qty_accepted), 0);
 
   const allGrnNumbers = new Set((await sql`SELECT grn_number FROM scm.grns`).map((r) => r.grn_number));
   /* A receipt covering ONE in-scope purchase order keeps the bare AutoCount
@@ -606,10 +616,18 @@ async function main() {
     /* Exact line first, then any line of the same purchase order carrying the
        same code - which is what an unattributed line has, and the price does
        not depend on WHICH of the identically-coded lines it was. */
-    const held = (poi ? carry.get(k) : null) ?? carryByPo.get(`${d.erpPo.id}|${norm(code)}`) ?? null;
+    const exact = poi ? carry.get(k) : null;
+    const held = exact ?? carryByPo.get(`${d.erpPo.id}|${norm(code)}`) ?? null;
     let price;
     let discount = 0;
-    if (held && held.unit > 0) {
+    /* 空白不覆盖. A line that EXISTS today keeps its own money — including a
+       zero, which is a statement about that line and not an absence. Falling
+       through to the purchase order there would WRITE money onto a line that
+       holds none, which is the opposite of carrying. */
+    if (exact) {
+      price = exact.unit;
+      discount = exact.qty > 0 ? Math.round((exact.disc / exact.qty) * i.qty) : 0;
+    } else if (held && held.unit > 0) {
       price = held.unit;
       discount = held.qty > 0 ? Math.round((held.disc / held.qty) * i.qty) : 0;
     } else if (poi) {
@@ -653,12 +671,30 @@ async function main() {
     d.warehouse = d.items.find((i) => i.poi?.warehouse_id)?.poi.warehouse_id ?? d.erpPo.purchase_location_id;
     moneyAfter += d.total;
   }
+  const unitsAfter = plan.reduce((t, d) => t + d.items.reduce((u, i) => u + i.qty, 0), 0);
+  const per = (money, units) => (units > 0 ? (money / units / 100).toFixed(2) : "n/a");
   rule("MONEY — carried, never recomputed");
-  log(`MONEY — the migrated receipts hold RM ${(moneyBefore / 100).toFixed(2)} today; this plan writes RM ${(moneyAfter / 100).toFixed(2)}.`);
+  log(`MONEY — today the migrated receipts STORE RM ${(moneyBeforeStored / 100).toFixed(2)} in line_total_sen, ` +
+    `and their own qty x unit - discount COMPUTES RM ${(moneyBeforeComputed / 100).toFixed(2)}. This plan writes RM ${(moneyAfter / 100).toFixed(2)}.`);
+  say(`  per unit: stored RM ${per(moneyBeforeStored, unitsBefore)}   computed RM ${per(moneyBeforeComputed, unitsBefore)}   planned RM ${per(moneyAfter, unitsAfter)}   (${unitsBefore} units today, ${unitsAfter} planned)`);
+  say("  THE PLAN WRITES qty x unit - discount, so `computed` is the like-for-like figure and `stored` is not:");
+  say("  a repair that moved unit_price_sen without re-summing the line leaves the two disagreeing, and reading");
+  say("  the plan against the stored column would report that old gap as money this run invented.");
   say("  Nothing here decides a price. `stamp-migrated-source-prices.mjs` owns that — it applied 32 lines to");
   say("  production on 2026-09-07 16:02Z (run 34141318054) — and this carries what each line already holds,");
   say("  per unit, so a line split across two receipts keeps the same money per unit. Its selection is");
   say("  `unit_price_sen = 0`, so RE-DISPATCH IT AFTER THIS RUN to price anything still at zero.");
+  /* The per-unit figures are the invariant. Units change (a sofa is one book
+     line and one ERP row per compartment); money per unit must not. */
+  const drift = unitsBefore > 0 && unitsAfter > 0
+    ? Math.abs(moneyAfter / unitsAfter - moneyBeforeComputed / unitsBefore) / (moneyBeforeComputed / unitsBefore) : 0;
+  if (drift > 0.02) {
+    log(`MONEY — the money PER UNIT moves by ${(drift * 100).toFixed(1)}%. Carrying should not move it. ` +
+      "Read the per-line detail before applying; something is being priced rather than copied.");
+  } else {
+    log(`MONEY — the money per unit moves by ${(drift * 100).toFixed(2)}%, so the difference in the totals is the ` +
+      "unit count, not a price this run invented.");
+  }
 
   if (!APPLY) {
     log(`PLAN ONLY — nothing was written to the database. Re-run with MODE=apply CONFIRM="${CONFIRM_PHRASE}".`);
