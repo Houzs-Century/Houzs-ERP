@@ -138,7 +138,19 @@ async function main() {
      and a branch AutoCount does not model must not be touched at all. */
   const governedWh = new Set();
   for (const k of Object.keys(SALESLOC)) { const w = resolveWh(k); if (w) governedWh.add(String(w.id)); }
-  log(`governed warehouses (SALESLOC targets present in the ERP): ${[...governedWh].map((id) => whName.get(id)).join(", ")}`);
+  /* Plus any warehouse an AutoCount location in tonight's file actually resolves
+     to. resolveWh falls back to a bare warehouse-code match, so a location can be
+     mapped without appearing in SALESLOC — and if AutoCount states a balance for
+     a branch, it states ALL of that branch, including the cells it says are
+     empty. Leaving those out would seed the branch's additions while refusing its
+     subtractions, which is not "用今晚的结存为准" but a top-up wearing its name. */
+  for (const r of gz("ac-live-stock-balance.json.gz")) {
+    const w = resolveWh(r.Location);
+    if (w) governedWh.add(String(w.id));
+  }
+  log(`governed warehouses: ${[...governedWh].map((id) => whName.get(id)).join(", ")}`);
+  const ungoverned = whs.filter((w) => !governedWh.has(String(w.id)));
+  log(`warehouses AutoCount does not speak about, left entirely alone: ${ungoverned.length ? ungoverned.map((w) => w.name).join(", ") : "(none)"}`);
 
   // ================= AutoCount side — the authority =========================
   const bal = gz("ac-live-stock-balance.json.gz");
