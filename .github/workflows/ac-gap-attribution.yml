@@ -1,0 +1,31 @@
+name: AutoCount gap attribution (offline)
+
+# Manual. Answers the question the reconcile raises but cannot settle: is an
+# in-scope AutoCount document MISSING from the ERP, or is it already sitting in
+# a committed migration source that nobody has dispatched since it was re-cut?
+#
+# No secrets and NO DATABASE. It reads only the committed snapshot and the
+# committed migration sources, so it can run on any ref, costs nothing, and
+# cannot touch production. Run it BEFORE writing an importer: on 2026-09-07 it
+# would have shown that all 32 "missing" goods receipts and all 12 "missing"
+# delivery orders were already in the tree.
+on:
+  workflow_dispatch:
+
+# Its own group. A diagnostic must never queue behind - or displace - a release.
+concurrency:
+  group: ac-gap-attribution
+  cancel-in-progress: true
+
+jobs:
+  attribute:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      # No npm ci: the script has zero dependencies on purpose.
+      - run: node backend/scripts/check-ac-gap-attribution.mjs

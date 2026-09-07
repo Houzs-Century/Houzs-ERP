@@ -319,11 +319,42 @@ mfgProducts.post('/batch-import', async (c) => {
     const code = String(r.code ?? '').trim();
     const name = String(r.name ?? '').trim();
     const category = String(r.category ?? '').trim();
-    if (!code || !name || !VALID_CATEGORIES.has(category)) {
-      failures.push({ code, reason: 'missing code/name or invalid category' });
+    if (!code) {
+      failures.push({ code, reason: 'missing code' });
       continue;
     }
-    const row: Record<string, unknown> = { code, name, category };
+    /* NAME AND CATEGORY ARE REQUIRED TO CREATE, NOT TO UPDATE.
+     *
+     * The owner states the contract in one sentence (2026-09-07):
+     * 「如果没有 Code 在系统里面的 import,就是等于开 Code。然后如果我有 Code 在
+     *   系统里面,它 match 得到,就是代表我要更改东西」— a code the system does not
+     * hold is a NEW SKU, a code it holds is an EDIT.
+     *
+     * Demanding both on every row contradicted the data-loss-safe rule written
+     * twenty lines above: every OTHER column is written only when the cell is
+     * filled, precisely so an edited export cannot wipe what it does not carry.
+     * Name and category were the two exceptions, which made the commonest real
+     * file — a price-only edit — impossible to import at all. It failed as
+     * `missing code/name or invalid category`, reading like a broken file
+     * rather than a rule.
+     *
+     * The existence read moved UP for this; the write branch below reuses it. */
+    const { data: existing } = await supabase.from('mfg_products')
+      .select('id, seat_height_prices').eq('code', code).eq('company_id', activeCompanyId(c)).maybeSingle();
+
+    if (!existing && (!name || !VALID_CATEGORIES.has(category))) {
+      failures.push({
+        code,
+        reason: `${code} is not in the system, so this row would CREATE it — a new SKU needs a name and a valid category (${[...VALID_CATEGORIES].join(', ')}).`,
+      });
+      continue;
+    }
+
+    const row: Record<string, unknown> = { code };
+    /* Present-and-non-empty only, exactly like every other column. On a create
+       the guard above has already proved both are there. */
+    if (name) row.name = name;
+    if (VALID_CATEGORIES.has(category)) row.category = category;
 
     // String fields — include only when the cell actually has a value.
     if (hasVal(r.status))      row.status = String(r.status);
@@ -361,8 +392,7 @@ mfgProducts.post('/batch-import', async (c) => {
 
     // Never rewrite the PK id on re-import: UPDATE an existing SKU by code (id +
     // any omitted column left untouched), INSERT a brand-new SKU with a fresh id.
-    const { data: existing } = await supabase.from('mfg_products')
-      .select('id, seat_height_prices').eq('code', code).eq('company_id', activeCompanyId(c)).maybeSingle();
+    // `existing` was read above, where it also decides create-vs-edit.
     let error;
     if (existing) {
       // Merge sofa prices BY TIER: the export ships one tier at a time, so an
