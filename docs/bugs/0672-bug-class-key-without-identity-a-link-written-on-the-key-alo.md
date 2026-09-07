@@ -237,9 +237,75 @@ and both were in MY instrument, so they are recorded rather than quietly fixed:
   EMPTY answer that prints identically to a clean one. The importers write
   `colourId` and `colourLabel` (`import-ac-outstanding-so.mjs:302`).
 
-Both fixed, and the comparable-pair count is now printed beside every colour
-answer so an empty result can never read as a clean one again. Re-run recorded
-below.
+Both fixed (`docs/bugs/0674`), and the comparable-pair count is now printed
+beside every colour answer so an empty result can never read as a clean one
+again.
+
+### The corrected re-run — 34139187692, 2026-09-07 23:37 local
+
+Fifteen minutes after the first. Conclusion `success`.
+
+**PO -> SO went from 10 wrong to 0, and it was not us.** Linked rows moved
+1,122 -> 1,124 and NULLs 410 -> 408, so the ten were REPOINTED, not blanked.
+Another agent owns those rows and was working on them tonight; this file records
+the measurement, not the authorship. **PROVEN: `purchase_order_items.so_item_id`
+carries no item-code disagreement as of 23:37 local.**
+
+**Still open, and still nobody else's finding:**
+
+| link | comparable | **wrong product** | perfect permutation |
+|---|---|---|---|
+| `sales_invoice_items.do_item_id` | 182 of 182 | **2**, on 2 documents | 0 |
+| `purchase_invoice_items.grn_item_id` | 198 of 198 | **3**, on 3 documents | 0 |
+
+DO -> SO, GR -> PO and PO -> SO are all **clean** on item code.
+
+**The colour, now that it is actually being compared** (section 4 measured
+nothing at all on the first run):
+
+| link | pairs where both sides carry a colour | rows disagreeing | documents | exact swaps |
+|---|---|---|---|---|
+| DO -> SO | 295 | 1 | 1 | 0 |
+| GR -> PO | 252 | 3 | 1 | 0 |
+| PO -> SO | 976 | 5 | 2 | 0 |
+| SI -> DO | 38 | 1 | 1 | 0 |
+| PI -> GR | 94 | 2 | 2 | 0 |
+| SI -> SO | 0 | — | — | — |
+
+**12 rows across 7 documents carry a colour that disagrees with the line they
+were copied from, and NOT ONE document is a perfect permutation.** So the
+exact-swap shape does not exist between two ERP rows. That does not clear
+instance 2: `DO-011505` and `DO-011478` swap between the BOOK and the ERP, and
+both ERP rows there are internally consistent with their own parents, so an
+ERP-only test cannot see them by construction. Saying "0 swaps" without that
+sentence would be the same false negative this class specialises in.
+
+### The duplicate line key: measured, and STILL UNKNOWN — my discriminator was wrong
+
+The sales-order lines, invisible on the first run, are the bigger half:
+
+| table | rows carrying a DtlKey | keys on more than one row | rows involved |
+|---|---|---|---|
+| `mfg_sales_order_items` | 14,764 of 15,613 | **296** | 728 |
+| `purchase_order_items` | 1,281 of 1,532 | **98** | 250 |
+
+The other four line tables carry no AutoCount key at all. No key is shared across
+companies, on any table.
+
+I added a split — "of those, how many carry rows naming DIFFERENT products" — to
+separate a sofa's compartments (benign) from a real collision. It answered
+**295 of 296** and **98 of 98**, and that answer is worthless, because **a sofa's
+compartments DO have different item codes** (`MODEL-1S`, `MODEL-2S`, `MODEL-CNR`).
+The discriminator cannot tell the two cases apart. It is the same mistake as the
+`colourCode` one, one layer up: a check that answers a different question.
+
+**UNKNOWN, and here is what would settle it:** whether the rows sharing one
+DtlKey are compartments of ONE model (the code before the first dash agrees) or
+unrelated products. If they are compartments, this is by design and
+`src/services/autocount-sofa-collapse.ts` is the module that expects it. If any
+group is not, that group is a genuine collision and every `Map` keyed by DtlKey —
+including the write-back's `doc.EditDetail(dtlKey)` — is a coin flip on it. Do
+not quote 295/98 as collisions; they have not been shown to be.
 
 ---
 

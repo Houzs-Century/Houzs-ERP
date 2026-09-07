@@ -3002,6 +3002,18 @@ only for codes the line does not already carry. Ticking the same code in the
 picker makes it a normal, charged pick — `addedNow` excludes anything already in
 `variants.specials`, so a human's choice is never quietly made free.
 
+**Its line count is a DENOMINATOR, not a remaining balance.** The selection reads
+`variants.specials`, which that script never writes, so a PLAN re-run after a
+successful apply reports the same total as before it. Read as backlog it says the
+owner's ruling never landed — which is exactly how 139 already-decided lines were
+quoted back as go-live work
+(`docs/bugs/0668-the-variant-reconcile-counted-the-owner-s-already-applied-sp.md`).
+Since 2026-09-07 the report splits that total into lines the run ADDS a code to
+versus lines an earlier apply already covers, so the number that moves is visible
+beside the one that does not. Read the split, never the total, when deciding
+whether there is anything left to do
+(`docs/bugs/0674-the-specials-recording-plan-reported-its-stable-denominator.md`).
+
 Drafts stay freely saveable — the scan pipeline still lands imperfect drafts;
 what changed is that they can no longer BECOME orders until resolved.
 ON_HOLD-resume and reopen re-enter CONFIRMED without re-gating (legacy orders
