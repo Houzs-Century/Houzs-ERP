@@ -189,7 +189,41 @@ async function main() {
      customer leg is still open. The SO side's DO rule governs the CUSTOMER
      delivery only and deliberately does not mirror onto purchasing. */
   const doneDocs = new Set();
-  for (const r of rows) { if (doneDocs.has(r.DocNo)) continue; if (!SOFA && isSofa(r.ItemCode)) continue; if (!groups.has(r.DocNo)) groups.set(r.DocNo, []); groups.get(r.DocNo).push(r); }
+  /* SOFA=0 DROPS A LINE, NOT A DOCUMENT, AND IT USED TO DO IT IN SILENCE.
+     `continue` here removes one sofa line and lets the rest of its purchase
+     order through, so the document is CREATED SHORT. The insert below is then
+     idempotent on po_number, so a later SOFA=1 run skips the document whole and
+     the line can never arrive: silent drop plus document-level idempotency is a
+     permanently incomplete document that no count reported.
+
+     Measured on prod 2026-09-08: 7 purchase orders (PO-010085, PO-010086,
+     PO-010146, PO-010150, PO-010151, PO-010160, PO-010161) sat SUBMITTED
+     holding only their pillow lines while the book held the sofa line on every
+     one of them. Nothing in any log had ever named them.
+
+     So the drop is COUNTED and NAMED. It is still a drop - flipping the default
+     is a scope decision, and the repair for the documents already written is
+     topup-ac-po-lines.mjs, not a re-run - but a line that vanishes silently is
+     the most repeated defect on this cutover and this was one of its homes. */
+  const sofaDropped = [];
+  for (const r of rows) {
+    if (doneDocs.has(r.DocNo)) continue;
+    if (!SOFA && isSofa(r.ItemCode)) { sofaDropped.push(r); continue; }
+    if (!groups.has(r.DocNo)) groups.set(r.DocNo, []);
+    groups.get(r.DocNo).push(r);
+  }
+  if (sofaDropped.length) {
+    const docs = new Set(sofaDropped.map((r) => r.DocNo));
+    const short = [...docs].filter((d) => groups.has(d));
+    log(`SOFA=0: ${sofaDropped.length} sofa line(s) on ${docs.size} document(s) NOT carried.`);
+    log(`   ${short.length} of those document(s) still import, and they import SHORT — every other line lands and`);
+    log("   the sofa line does not. The insert is idempotent on po_number, so re-running with SOFA=1 will NOT");
+    log("   add it: the repair for a document already written is topup-ac-po-lines.mjs.");
+    for (const r of sofaDropped.slice(0, 40)) {
+      log(`   DROPPED ${r.DocNo} DtlKey=${r.DtlKey ?? "?"} "${r.ItemCode}" x${r.Qty}${groups.has(r.DocNo) ? "  <- document imports SHORT" : "  (whole document has no other line)"}`);
+    }
+    if (sofaDropped.length > 40) log(`   ... and ${sofaDropped.length - 40} more`);
+  }
   let pos = [...groups.entries()];
   if (LIMIT) pos = pos.slice(0, LIMIT);
 

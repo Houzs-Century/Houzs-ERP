@@ -46,7 +46,17 @@ function parseCsvLine(line) {
 
 async function main() {
   log(`mode=${APPLY ? "APPLY" : "RESOLVE"}`);
-  const manifest = JSON.parse(zlib.gunzipSync(fs.readFileSync(path.join(here, "data", "ac-photo-manifest.json.gz"))).toString("utf8"));
+  /* MANIFEST names the decode manifest to attach FROM, and defaults to the
+     committed whole-corpus one. A TARGETED export (export-ac-line-photos.py with
+     DTLKEY_FILE) writes its own, much shorter manifest beside the JPEGs, and the
+     attach has to be able to read THAT one: planning from the 2,762-row file to
+     land nine photographs would re-plan the entire corpus, and the plan is what
+     the uploader uploads. Absolute path, or a name resolved under data/. */
+  const manifestPath = process.env.MANIFEST
+    ? (path.isAbsolute(process.env.MANIFEST) ? process.env.MANIFEST : path.join(here, "data", process.env.MANIFEST))
+    : path.join(here, "data", "ac-photo-manifest.json.gz");
+  log(`manifest: ${manifestPath}`);
+  const manifest = JSON.parse(zlib.gunzipSync(fs.readFileSync(manifestPath)).toString("utf8"));
   const csv = fs.readFileSync(path.join(here, "data", "autocount-erp-mapping-1561.csv"), "utf8").replace(/^﻿/, "").split(/\r?\n/).filter(Boolean);
   csv.shift();
   const byAc = new Map();

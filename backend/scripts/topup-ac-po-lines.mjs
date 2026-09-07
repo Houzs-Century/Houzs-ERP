@@ -85,6 +85,7 @@ import postgres from "postgres";
 import { buildFabricColourIndex, isPendingColour } from "./lib/fabric-colour-match.mjs";
 import { parseBedframe } from "./lib/parse-bedframe.mjs";
 import { SOFA_MODEL_ALIAS, parseSofa } from "./lib/parse-sofa.mjs";
+import { aliasFoldsForCatalog, catalogPredicate } from "./lib/catalog-code-guard.mjs";
 import {
   RECEIVED_INDETERMINATE,
   buildFamilies, claimErpRows, diffExpectedRows, groupByDoc, mergeAcPoLines, planFamilyInserts,
@@ -151,6 +152,29 @@ async function main() {
   const prodByCode = new Map(products.map((p) => [p.code.toUpperCase(), p]));
   const codeSet = new Set(products.map((p) => p.code.toUpperCase()));
   const prodCat = new Map(products.map((p) => [norm(p.code), PCATG[String(p.category ?? "").toUpperCase()] ?? null]));
+  /* ALIAS FOLD, the same one import-ac-so-linked-pos.mjs:108 applies (docs/bugs
+     /0577). The mapping CSV names the sofa model the BOOK uses - `HOK-5536 SOFA`
+     -> `5536-1S` - and the ERP catalogue spells the four folded models by their
+     alias (5530/5536/5537/5540 -> 9028/9058/8030/8030). Measured on prod
+     2026-09-08: scm.mfg_products carries 5535-1S, 8030-1S, 9028-1S and 9058-1S
+     and carries NO 5530-1S, 5536-1S, 5537-1S or 5540-1S.
+
+     Without the fold `prodCat.get("5536-1S")` is undefined, so the catalogue
+     rule below answered "others" while the CSV answered "sofa" - a SOFA SPLIT,
+     which this script refuses. That refusal WITHHELD the missing sofa line on
+     PO-010085, PO-010086, PO-010160 and PO-010161 and disagreed on 51 lines in
+     all, none of which was a real disagreement: it was one side reading a code
+     the catalogue does not spell. Only a code the catalogue does NOT have is
+     folded, and only onto one it does, so this can never move a code that
+     already resolves. */
+  {
+    const moves = aliasFoldsForCatalog([...byAc.values()].map((v) => v.erp), catalogPredicate(codeSet), SOFA_MODEL_ALIAS);
+    if (moves.size) {
+      log(`alias fold: ${moves.size} mapped code(s) the catalogue does not carry resolve through SOFA_MODEL_ALIAS`);
+      for (const [from, to] of moves) log(`   ${from} -> ${to}`);
+      for (const [ac, v] of byAc) if (moves.has(v.erp)) byAc.set(ac, { ...v, erp: moves.get(v.erp) });
+    }
+  }
   const whs = await sql`SELECT id, code FROM scm.warehouses WHERE company_id = ${CO}`;
   const whByCode = new Map(whs.map((w) => [norm(w.code), w.id]));
   const whId = (loc) => { const k = norm(loc); return whByCode.get(norm(SALESLOC[k] || k)) ?? whByCode.get(k) ?? null; };
