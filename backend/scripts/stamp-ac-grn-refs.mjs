@@ -46,21 +46,36 @@ async function main() {
   }
   log(`AutoCount receipts in the snapshot: ${refs.length} rows / ${byPo.size} POs / ${new Set(refs.map((r) => r.GrNo)).size} GR docs / ${new Set(refs.filter((r) => r.PiNo).map((r) => r.PiNo)).size} PI docs`);
 
-  const pos = await sql`SELECT id, po_number, linked_ac_docno, linked_ac_grn_docnos
+  const pos = await sql`SELECT id, po_number, linked_ac_docno, linked_ac_grn_docnos, linked_ac_pinv_docnos
     FROM scm.purchase_orders WHERE company_id = 1 AND linked_ac_docno IS NOT NULL`;
   const plan = [];
   let notImported = 0;
+  let piOnly = 0;
   const seen = new Set(pos.map((p) => p.linked_ac_docno));
   for (const [acPo] of byPo) if (!seen.has(acPo)) notImported++;
+  const same = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
   for (const p of pos) {
     const e = byPo.get(p.linked_ac_docno);
     if (!e || !e.gr.size) continue;
     const gr = [...e.gr].sort();
-    const already = (p.linked_ac_grn_docnos ?? []).slice().sort();
-    if (already.length === gr.length && already.every((v, i) => v === gr[i])) continue;
-    plan.push({ id: p.id, po: p.po_number, ac: p.linked_ac_docno, gr, pi: [...e.pi].sort() });
+    const pi = [...e.pi].sort();
+    /* BOTH lists, not just the receipts. The UPDATE below writes
+       linked_ac_pinv_docnos too, so a skip that consults only the GR list
+       silently declines to write the invoice list. That is not hypothetical:
+       AutoCount keeps raising purchase invoices against receipts it has already
+       delivered, so a purchase order whose receipts stopped changing months ago
+       goes on collecting invoice numbers this job then refuses to carry. On
+       2026-09-07 that left 15 in-scope purchase invoices with no pointer, and
+       the reconcile — which counts the pointer as presence — reported them as
+       missing documents. Ledger: docs/bugs/0674-*. */
+    const grEqual = same((p.linked_ac_grn_docnos ?? []).slice().sort(), gr);
+    const piEqual = same((p.linked_ac_pinv_docnos ?? []).slice().sort(), pi);
+    if (grEqual && piEqual) continue;
+    if (grEqual) piOnly++;
+    plan.push({ id: p.id, po: p.po_number, ac: p.linked_ac_docno, gr, pi });
   }
-  log(`imported POs: ${pos.length}; to stamp: ${plan.length}; AutoCount POs with a receipt that are NOT imported: ${notImported}`);
+  log(`imported POs: ${pos.length}; to stamp: ${plan.length} (${piOnly} of them ONLY because the purchase-invoice list moved`
+    + `, which the receipts-only skip used to miss); AutoCount POs with a receipt that are NOT imported: ${notImported}`);
   for (const p of plan.slice(0, 12)) log(`   ${p.po} <- ${p.ac}: GR ${p.gr.join(", ")}${p.pi.length ? "; PI " + p.pi.join(", ") : ""}`);
   if (plan.length > 12) log(`   ... and ${plan.length - 12} more`);
 
