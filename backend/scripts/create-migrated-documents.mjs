@@ -25,6 +25,15 @@
 // written). A child document here is a SNAPSHOT of its parent — copy the
 // classification with the quantity, always.
 //
+// SUPERSEDED FOR GOODS RECEIPTS, 2026-09-07. `reshape-migrated-grns.mjs` now owns
+// the shape of a migrated goods receipt: one document per (AutoCount receipt x
+// purchase order), carrying the book's own receipt date and quantity, because the
+// owner ruled the ERP must show the receipts the account book actually made
+// (「是 A 的，不过只是把那些需要的搬进来，不需要的不需要搬」). The GRN arm below still
+// works and is still idempotent — it skips any purchase order that already has a
+// migrated receipt — but what it WRITES is the old one-per-purchase-order shape
+// with `received_at = CURRENT_DATE`. Use the reshape writer for goods receipts.
+//
 // KIND=grn | do | both (default both). DRY-RUN by default; APPLY=1 writes.
 import fs from "node:fs";
 import zlib from "node:zlib";
