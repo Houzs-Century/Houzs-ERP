@@ -5029,11 +5029,45 @@ function parseSkuCsv(text: string): Array<Record<string, string>> {
   return gridToSkuRecords(grid);
 }
 
+/* Header matching is tolerant of case AND of space-vs-underscore, so a
+   hand-made sheet with "Base Price" maps to the same column as the round-trip
+   export's `base_price`. This is the rule the FABRIC import already runs
+   (`vendor/scm/lib/fabric-csv.ts`, docs/bugs/0605, 2026-09-02) — it was written
+   for one of the two importers and never reached this one, which is the
+   fixed-on-one-surface-only class CLAUDE.md names. Runs of whitespace and
+   underscore collapse to a single underscore; the export's own headers are
+   already lower snake_case, so this is identity on an exported file and only
+   ever LOOSENS matching. */
+export function normalizeImportHeader(h: string): string {
+  return h.trim().toLowerCase().replace(/[\s_]+/g, '_');
+}
+
+/* THE OTHER FILE ON THIS PAGE, and why it can never be imported.
+ *
+ * The SKU page offers TWO exports and the Import dialog says only "exported
+ * from this page", which is true of both. The grid's own export writes what is
+ * ON SCREEN — "Product Code", "Description", one column per sofa SIZE — and the
+ * owner reasonably fed it back in (2026-09-07) and got "No rows had a code",
+ * which names the symptom and not the file.
+ *
+ * It is not enough to alias those headers, and aliasing them would be the
+ * dangerous fix: the grid writes the price for the CURRENTLY SELECTED tier and
+ * carries NO tier column, so re-importing it would offer prices with no tier.
+ * The importer refuses a priced row whose tier it cannot read, deliberately,
+ * because a price filed under the wrong tier is worse than one not filed. So
+ * the honest behaviour is to RECOGNISE the file and say which button to use.
+ *
+ * Detected on `product_code`, which the round-trip export never writes (its
+ * column is `code`). */
+export function looksLikeGridExport(header: string[]): boolean {
+  return header.includes('product_code');
+}
+
 /** Header-key a parsed grid (CSV or Excel) into one object per data row, keyed
  *  by lower-cased trimmed header text. */
 function gridToSkuRecords(grid: string[][]): Array<Record<string, string>> {
   if (grid.length < 1) return [];
-  const header = (grid[0] ?? []).map((h) => h.trim().toLowerCase());
+  const header = (grid[0] ?? []).map(normalizeImportHeader);
   const out: Array<Record<string, string>> = [];
   for (let r = 1; r < grid.length; r++) {
     const cells = grid[r];
@@ -5072,6 +5106,11 @@ const ImportSkusDialog = ({ sofaSizes, onClose }: { sofaSizes: string[]; onClose
         setBusy(false);
         return;
       }
+      /* The columns as the parser SAW them, already normalised. A row object is
+         keyed by header, so this needs no extra plumbing — and printing them is
+         what turns "no rows had a code" from a verdict into something a person
+         can act on (the fabric import learned the same lesson, docs/bugs/0605). */
+      const headersSeen = Object.keys(parsed[0] ?? {});
 
       // Group rows by code — a sofa with PRICE_1 / PRICE_2 / PRICE_3 rows
       // becomes ONE product carrying all its size × tier prices.
@@ -5184,7 +5223,16 @@ const ImportSkusDialog = ({ sofaSizes, onClose }: { sofaSizes: string[]; onClose
         if (tierErrors.length > 0) {
           setResult({ upserted: 0, failed: tierErrors.length, failures: tierErrors });
         } else {
-          setErrorMsg('No rows had a code. Every row needs a code, name, and category.');
+          setErrorMsg(
+            looksLikeGridExport(headersSeen)
+              ? 'That is the TABLE export (it starts with "Product Code"). It cannot be'
+                + ' imported — it carries one column per sofa size but not the price tier,'
+                + ' so a price in it has nowhere safe to go. Use the "Export SKUs" button'
+                + ' at the top right, edit that file, and import it back.'
+              : `No rows had a code. The columns in this file are: ${headersSeen.join(', ') || '(none)'}.`
+                + ' A row needs a `code`; a code the system does not have yet also needs'
+                + ' `name` and `category`.',
+          );
         }
         setBusy(false);
         return;
