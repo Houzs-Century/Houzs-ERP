@@ -1,6 +1,6 @@
 ## The SKU import could not read the page's own table export, and refused a price-only edit [high]
 
-<!-- area: Products + SKU catalogue -->
+<!-- area: Sales orders + pricing -->
 
 **Symptom.** The owner exported the SKU page, edited prices, imported the file
 back, and got:
