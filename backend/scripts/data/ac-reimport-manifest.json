@@ -1,5 +1,5 @@
 {
-  "exported_at": "2026-09-08 05:58:15.052966",
+  "exported_at": "2026-09-08 05:58:52.734988",
   "source": "AED_HOUZS live (read-only)",
   "round": "reimport-v3 2026-08-28",
   "files": {
@@ -18,9 +18,9 @@
     "ac-so-remarks.json.gz": 2789
   },
   "last_run": {
-    "at": "2026-09-08 05:58:15.052966",
+    "at": "2026-09-08 05:58:52.734988",
     "sections": [
-      "po1"
+      "po2"
     ]
   }
 }
