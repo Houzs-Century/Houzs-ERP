@@ -748,6 +748,33 @@ matches: `0082_scm_fx_landed_cost.sql`, `0143_scm_do_ship_cost_snapshot.sql`,
 `0154_scm_oversell_retrocost.sql`. Do not trust a bare "migration NNNN" in a
 comment without checking the filename.
 
+### The AutoCount line discount, and the invariant a repair must not break
+
+AutoCount stores `PODTL.UnitPrice` and `PODTL.SubTotal` as separate columns and
+the line discount lives in the gap: `SubTotal` is the discounted amount. Every
+purchase-order importer here computes the line amount from the undiscounted half
+(`import-ac-outstanding-po.mjs:230` / `:379`, `import-ac-so-linked-pos.mjs:403`),
+so a migrated purchase order OVERSTATES what we owe. Measured 2026-09-07: 2,976
+lines across 533 book purchase orders, RM 1,760,189.99; **10 orders / 89 lines /
+RM 42,662.80 inside the migrated scope.** Ledger entries `0662` and `0664`.
+
+**The invariant, and why a line-total-only repair does not hold.** This module
+maintains `line_total_sen = max(0, qty * unit_price_sen - discount_sen)` in three
+places — `POST /:id/items` (`:3042`), `PATCH /:id/items` (`:3169`) and
+`recomputePoTotals`, which writes `subtotal_sen = total_sen = SUM(line_total_sen)`
+(`:2798`). Anything that writes a line total without the matching
+`discount_sen` violates it, and the **next line edit through the UI recomputes
+the total from a discount of zero**, silently restoring the overstated figure.
+Any repair here writes the discount, the line total and the header together.
+
+`backend/scripts/repair-po-line-discount.mjs` +
+`.github/workflows/repair-po-line-discount.yml` do exactly that, plan by default.
+Two things it deliberately leaves alone: `unit_price_sen` (AutoCount's own
+`UnitPrice` is the undiscounted figure and copying it is correct) and stock cost
+(`grns.ts:555` costs a receipt at the UNDISCOUNTED unit price, so inventory
+valuation does not move). A GRN raised AFTER a repair inherits the corrected
+`discount_sen` through `grns.ts:1872`; one raised before keeps its own total.
+
 ### The two AutoCount-mirror header columns (mig `20260907T1026_ac_header_notcarried_columns.sql`)
 
 `scm.purchase_orders.attention` (AutoCount `PO.Attention`, filled on 300 of the
