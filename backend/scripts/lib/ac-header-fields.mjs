@@ -123,17 +123,32 @@ export const SO_HEADER_FIELDS = [
   { key: "approval_code", book: "UDF_PAYEMENT", erp: "approval_code", kind: "money",
     why: "parsed by lib/ac-payment-udf.mjs; the pay lane writes it" },
 
-  { key: "(Attention)", book: "Attention", erp: null, kind: "copy",
-    why: "AutoCount's contact-person line. scm.mfg_sales_orders has no column for it" },
-  { key: "(DeliverAddr1)", book: "DeliverAddr1", erp: null, kind: "copy", why: "delivery address line 1 — no ERP column" },
-  { key: "(DeliverAddr2)", book: "DeliverAddr2", erp: null, kind: "copy", why: "delivery address line 2 — no ERP column" },
-  { key: "(DeliverAddr3)", book: "DeliverAddr3", erp: null, kind: "copy", why: "delivery address line 3 — no ERP column" },
-  { key: "(DeliverAddr4)", book: "DeliverAddr4", erp: null, kind: "copy", why: "delivery address line 4 — no ERP column" },
-  { key: "(DeliverContact)", book: "DeliverContact", erp: null, kind: "copy", why: "delivery contact name — no ERP column" },
-  { key: "(DisplayTerm)", book: "DisplayTerm", erp: null, kind: "copy",
-    why: "the credit term AutoCount prints. The ERP keeps terms on the CUSTOMER, not the order" },
-  { key: "(UDF_ToPONo)", book: "UDF_ToPONo", erp: null, kind: "copy",
-    why: "the PO(s) AutoCount raised from this order, comma-joined. The ERP expresses that as a real SO->PO line link, which sync-ac-delta CASE 3 already reports" },
+  /* THE FOUR THE OWNER RULED IN, 2026-09-07 —「四个都加」. Each was NOT_CARRIED:
+     the book held the column and no importer named an ERP one, so the value had
+     nowhere to land. Migration 20260907T1026 gives them a home.
+
+     NOTE THE WRITER CITATION, because it is not the usual one. The SO importer's
+     HCOLS does not carry these — it is INSERT-ONLY and was deliberately left
+     alone mid-cutover — so the ONE writer is the update lane below, which runs
+     over every row with a linked_ac_docno and therefore covers a document
+     imported five minutes ago as readily as one imported in August. */
+  { key: "attention", book: "Attention", erp: "attention", kind: "copy",
+    why: "AutoCount's contact-person line; column added by 20260907T1026, written ONLY by sync-ac-delta LANES=hdr (import-ac-outstanding-so.mjs HCOLS does not carry it)" },
+  { key: "delivery_address1", book: "DeliverAddr1", erp: "delivery_address1", kind: "copy",
+    why: "the address the GOODS go to. Different from InvAddr on 112 of 13,365 book orders (+12 delivery-only) — small, and exactly the set a driver would otherwise be sent to the wrong place for. 20260907T1026; written by LANES=hdr" },
+  { key: "delivery_address2", book: "DeliverAddr2", erp: "delivery_address2", kind: "copy",
+    why: "20260907T1026; written by LANES=hdr" },
+  { key: "delivery_address3", book: "DeliverAddr3", erp: "delivery_address3", kind: "copy",
+    why: "20260907T1026; written by LANES=hdr" },
+  { key: "delivery_address4", book: "DeliverAddr4", erp: "delivery_address4", kind: "copy",
+    why: "20260907T1026; written by LANES=hdr" },
+  { key: "display_term", book: "DisplayTerm", erp: "display_term", kind: "copy",
+    why: "the credit term AutoCount PRINTS. The ERP keeps terms on the CUSTOMER, so this is the only place an order-level term is visible; one distinct value book-wide today ('C.O.D.'). 20260907T1026; written by LANES=hdr" },
+  { key: "ac_to_po_no", book: "UDF_ToPONo", erp: "ac_to_po_no", kind: "copy",
+    why: "the PURCHASE ORDER(S) AUTOCOUNT RAISED FROM THIS ORDER, comma-joined — NOT a customer PO number (7,068 of 7,071 filled values begin 'PO-'). The ERP expresses the relationship as a real SO->PO line link, which sync-ac-delta CASE 3 reports; this keeps the book's own text so the two can be compared. 20260907T1026; written by LANES=hdr" },
+
+  { key: "(DeliverContact)", book: "DeliverContact", erp: null, kind: "copy",
+    why: "delivery contact name — no ERP column. Filled on 25 of 13,365 book orders and NOT among the four the owner ruled in; listed so it stays visible" },
 ];
 
 export const PO_HEADER_FIELDS = [
@@ -150,9 +165,12 @@ export const PO_HEADER_FIELDS = [
     why: "earliest LINE delivery date, the derivation the app's own SO->PO convert uses" },
   { key: "currency", book: "CurrencyCode", erp: "currency", kind: "const",
     why: "the importer hard-codes 'MYR'" },
-  { key: "(Attention)", book: "Attention", erp: null, kind: "copy", why: "no ERP column" },
-  { key: "(DeliverAddr1)", book: "DeliverAddr1", erp: null, kind: "copy", why: "no ERP column" },
-  { key: "(DisplayTerm)", book: "DisplayTerm", erp: null, kind: "copy", why: "no ERP column" },
+  { key: "attention", book: "Attention", erp: "attention", kind: "copy",
+    why: "20260907T1026; written ONLY by sync-ac-delta LANES=hdr — neither PO importer carries it" },
+  { key: "display_term", book: "DisplayTerm", erp: "display_term", kind: "copy",
+    why: "20260907T1026; written ONLY by sync-ac-delta LANES=hdr" },
+  { key: "(DeliverAddr1)", book: "DeliverAddr1", erp: null, kind: "copy",
+    why: "no ERP column, and deliberately so: a PURCHASE order's delivery address is OUR OWN receiving address and is identical on all 9,408 book purchase orders. The owner's delivery-address ruling was about the SALES order" },
 ];
 
 /* THE HUMAN VETO, DERIVED FROM THE MAP ABOVE — never typed separately, so a

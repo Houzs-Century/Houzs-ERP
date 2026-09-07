@@ -77,6 +77,54 @@ export function loadAcFieldSide(dataDir, book) {
     return { headers, lines };
   };
 
+  /* THE HEADER-MASTER CUT, merged in as a FILL-ONLY enrichment.
+   *
+   * WHY. The migration exports are the right source for anything an importer
+   * read, which is why this file takes them and not a convenience snapshot. But
+   * three fields the owner ruled in on 2026-09-07 are not in them at all:
+   * SO.DisplayTerm, PO.Attention and PO.DisplayTerm. `export-ac-reimport.py`'s
+   * `hdr` section already exports every one of them into ac-doc-headers.json.gz
+   * — it exists precisely because the migration cut is filtered to the
+   * OUTSTANDING population and carries none of the fields no importer read. So
+   * the value is in the tree; without this merge the checker would report
+   * "AutoCount blank" on a field the book fills on all 13,365 orders.
+   *
+   * FILL-ONLY, and that is the owner's own rule, not a convenience: 「保留 ERP
+   * 的价钱 — 空白不覆盖」. A key the migration cut already carries is NEVER
+   * overwritten from here, so the comparison keeps reading the file the writers
+   * read and this cut can only ADD a field, never move one. A blank in this cut
+   * cannot erase a value in that one either.
+   *
+   * ABSENT IS FINE. The file is optional: on a checkout without it, the three
+   * fields simply stay unfilled and land in the `notExported` block, which is
+   * the honest answer rather than a fabricated blank. It is deliberately NOT in
+   * `need()` — a missing header cut must not make the whole section refuse. */
+  const hdrCut = gz(dataDir, "ac-doc-headers.json.gz");
+  const hdrBy = { SO: new Map(), PO: new Map() };
+  if (hdrCut?.rows) {
+    for (const [kind, fieldsKey, rowsKey] of [["SO", "so_fields", "so"], ["PO", "po_fields", "po"]]) {
+      const fields = hdrCut.rows[fieldsKey] || [];
+      const iDoc = fields.indexOf("DocNo");
+      if (iDoc < 0) continue;
+      for (const r of hdrCut.rows[rowsKey] || []) {
+        const o = {};
+        for (let i = 0; i < fields.length; i++) o[fields[i]] = r[i];
+        hdrBy[kind].set(String(r[iDoc]).trim(), o);
+      }
+    }
+  }
+  const enrich = (kind, headers) => {
+    const by = hdrBy[kind];
+    if (!by.size) return;
+    for (const [docNo, h] of headers) {
+      const extra = by.get(docNo);
+      if (!extra) continue;
+      for (const [k, v] of Object.entries(extra)) {
+        if (h[k] === undefined) h[k] = v; // FILL ONLY — never overwrite the migration cut
+      }
+    }
+  };
+
   const SO = group(soRows, "DocNo", "DtlKey", "SO");
   for (const [d, h] of SO.headers) {
     const rem = remByDoc.get(d);
@@ -84,10 +132,12 @@ export function loadAcFieldSide(dataDir, book) {
     const st = statusByDoc.get(d);
     if (st) h.ToPONo = st.ToPONo;
   }
+  enrich("SO", SO.headers);
 
   /* Both PO exports feed one population: the outstanding lane and the
      SO-dedicated lane. ac-scope.mjs states them as PO lane 1 and lane 2. */
   const PO = group([...poRows, ...linkedPo], "DocNo", "DtlKey", "PO");
+  enrich("PO", PO.headers);
   const DO = group(doRows, "DoNo", "DoDtlKey", "DO");
 
   /* The owner's blank rule needs to know which orders were PROCEEDED. The book
@@ -148,6 +198,12 @@ export async function loadErpFieldSide(sql, CO) {
     pick(cols.so, "agent"), pick(cols.so, "attention"), pick(cols.so, "phone"), pick(cols.so, "ref"),
     pick(cols.so, "customer_so_no"), pick(cols.so, "address1"), pick(cols.so, "address2"),
     pick(cols.so, "address3"), pick(cols.so, "address4"),
+    /* mig 20260907T1026. `pick` degrades to `NULL AS <name>` when the column is
+       absent, so a checkout whose database predates the migration reports these
+       as "the ERP has nowhere to put it" rather than killing the statement. */
+    pick(cols.so, "delivery_address1"), pick(cols.so, "delivery_address2"),
+    pick(cols.so, "delivery_address3"), pick(cols.so, "delivery_address4"),
+    pick(cols.so, "display_term"), pick(cols.so, "ac_to_po_no"),
     pick(cols.so, "emergency_contact_phone"), pick(cols.so, "sales_location"),
     pick(cols.so, "venue"), pick(cols.so, "branding"), pick(cols.so, "processing_date"),
     pick(cols.so, "balance_sen"), pick(cols.so, "customer_delivery_date"),
@@ -171,6 +227,7 @@ export async function loadErpFieldSide(sql, CO) {
     "h.linked_ac_docno AS ac_no", "h.po_number AS erp_no",
     pick(cols.po, "po_date"), pick(cols.po, "expected_at"), pick(cols.po, "currency"),
     pick(cols.po, "total_sen"),
+    pick(cols.po, "attention"), pick(cols.po, "display_term"), // mig 20260907T1026
     "s.code AS supplier_code", "s.name AS supplier_name",
     "w.code AS purchase_location",
   ].join(", ");
