@@ -197,4 +197,23 @@ describe("ManageView", () => {
       expect(p.onSubmit).toHaveBeenCalledWith(expect.objectContaining({ id: "rej" }));
     });
   });
+
+  describe("attachment log (mig 20260907T0715)", () => {
+    it("lists who attached what, strikes removed files, and stays hidden when there are none", () => {
+      const files = [
+        { id: 1, r2Key: "k1", name: "Rules.pdf", mime: "application/pdf", size: 10, uploadedBy: 6, uploadedByName: "Wong Kah Seng", uploadedAt: "2026-09-07T01:00:00Z", removedBy: null, removedByName: null, removedAt: null },
+        { id: 2, r2Key: "k2", name: "Photo.jpg", mime: "image/jpeg", size: 10, uploadedBy: 6, uploadedByName: "Wong Kah Seng", uploadedAt: "2026-09-07T01:00:00Z", removedBy: 7, removedByName: "Farah Nadia", removedAt: "2026-09-07T02:00:00Z" },
+      ];
+      render(<ManageView {...props({ files })} />);
+      const log = screen.getByTestId("attachment-log");
+      expect(log.textContent).toContain("1 attached");
+      expect(log.textContent).toContain("Rules.pdf");
+      expect(log.textContent).toContain("Wong Kah Seng");
+      expect(log.textContent).toContain("removed by Farah Nadia");
+
+      cleanup();
+      render(<ManageView {...props({ files: [] })} />);
+      expect(screen.queryByTestId("attachment-log")).toBeNull();
+    });
+  });
 });

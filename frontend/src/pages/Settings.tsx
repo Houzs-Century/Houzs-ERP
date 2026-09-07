@@ -27,8 +27,9 @@ import {
 } from "../lib/branding";
 import type { SyncStatusResponse, Paginated, ExecutionLog } from "../types";
 import { correlatedFetch } from "../lib/requestCorrelation";
+import { DocumentTypesTab } from "./settings/DocumentTypesTab";
 
-type SettingsTab = "connection" | "sync" | "email" | "branding" | "logs";
+type SettingsTab = "connection" | "sync" | "email" | "branding" | "documents" | "logs";
 
 const SETTINGS_KEYS = ["tab"] as const;
 
@@ -43,7 +44,7 @@ export function Settings() {
 
   const raw = params.get("tab") as SettingsTab | null;
   const active: SettingsTab =
-    raw && ["connection", "sync", "email", "branding", "logs"].includes(raw)
+    raw && ["connection", "sync", "email", "branding", "documents", "logs"].includes(raw)
       ? raw
       : "connection";
 
@@ -60,6 +61,7 @@ export function Settings() {
     { value: "sync", label: "Sync" },
     { value: "email", label: "Email" },
     { value: "branding", label: "Branding" },
+    { value: "documents", label: "Documents" },
     { value: "logs", label: "Activity Log" },
   ];
 
@@ -83,6 +85,11 @@ export function Settings() {
       title: "Company Branding",
       description:
         "The company identity printed on documents (PDF letterheads), the app chrome, and the login screen.",
+    },
+    documents: {
+      title: "Document Types",
+      description:
+        "The document-type registry behind reference numbers ([DEPT]-[TYPE]-[YYMM]-[NNNN]) and the attachment-required-before-submit policy per type.",
     },
     logs: {
       title: "Activity Log",
@@ -110,6 +117,7 @@ export function Settings() {
       )}
       {active === "email" && <EmailTab />}
       {active === "branding" && <BrandingTab />}
+      {active === "documents" && <DocumentTypesTab />}
       {active === "logs" && <ActivityLog />}
 
       {/* Third-party asset attribution (owner 2026-07-24: keep the Icons8

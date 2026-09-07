@@ -57,6 +57,12 @@ import {
   type Actor,
 } from "../services/announcementApproval";
 import {
+  ATTACHMENT_REQUIRED_MESSAGE,
+  attachmentRequiredForAnnouncements,
+  listAttachmentLog,
+  syncAttachmentLog,
+} from "../services/announcementFiles";
+import {
   ACK_OVERDUE_HOURS,
   announcementRequiresAck,
   audienceOf,
@@ -1295,6 +1301,12 @@ app.post("/", requirePermissionOrSalesDirector("announcements.write"), async (c)
   // until an approver acts (deliverableNow requires APPROVED).
   const asDraft = body.draft === true;
   const initialStatus = asDraft ? "DRAFT" : "PENDING_APPROVAL";
+  // Attachment policy (mig 20260907T0715, Settings → Documents): a notice
+  // may not enter the queue without a file when the ANN type demands one.
+  // A draft is always allowed — the gate is on submission.
+  if (!asDraft && attachments.length === 0 && (await attachmentRequiredForAnnouncements(c.env))) {
+    return c.json({ success: false, error: ATTACHMENT_REQUIRED_MESSAGE }, 400);
+  }
 
   // client_key is appended the same way: only when the client sent one, so
   // the pre-migration window and the D1 test mirrors without the column
@@ -1362,6 +1374,10 @@ app.post("/", requirePermissionOrSalesDirector("announcements.write"), async (c)
 
   queueTranslation(c, id, { title, body: text, bodyHtml });
 
+  // The attachment log (mig 20260907T0715): who attached what, from the
+  // manifest just saved.
+  if (row && attachments.length > 0) await syncAttachmentLog(c.env, id, attachments, actorOf(user));
+
   // Into the queue: audit line + the approvers' bell. A draft waits for
   // /:id/submit.
   if (row && !asDraft) await recordSubmission(c.env, row, actorOf(user));
@@ -1403,6 +1419,27 @@ async function answerTransition(
   return c.json({ success: true, data: fresh ? toPublic(fresh) : null });
 }
 
+// GET /:id/files — the attachment log (mig 20260907T0715): who attached /
+// removed which file and when. For the people who manage or approve the
+// notice (a Sales Director on their own post); readers get the manifest only.
+app.get("/:id/files", async (c) => {
+  const user = c.get("user");
+  const granted = user.permissions_set;
+  const sd = salesDirectorScope(c);
+  const allowed =
+    hasPermission(granted, "*") ||
+    hasPermission(granted, "announcements.write") ||
+    hasPermission(granted, APPROVE_PERMISSION) ||
+    sd.restricted;
+  if (!allowed) return c.json({ success: false, error: "You don't have permission to do that." }, 403);
+  const id = c.req.param("id");
+  const existing = await getScopedAnnouncement(c, id);
+  if (!existing || sdBlockedFromRow(sd, existing, user.id)) {
+    return c.json({ success: false, error: "Announcement not found" }, 404);
+  }
+  return c.json({ success: true, data: await listAttachmentLog(c.env, id) });
+});
+
 app.post("/:id/submit", requirePermissionOrSalesDirector("announcements.write"), async (c) => {
   const id = c.req.param("id");
   const existing = await getScopedAnnouncement(c, id);
@@ -1410,6 +1447,12 @@ app.post("/:id/submit", requirePermissionOrSalesDirector("announcements.write"),
   const user = c.get("user");
   if (sdBlockedFromRow(salesDirectorScope(c), existing, user.id)) {
     return c.json({ success: false, error: "Announcement not found" }, 404);
+  }
+  if (
+    normalizeAttachments(existing.attachments ?? null).length === 0 &&
+    (await attachmentRequiredForAnnouncements(c.env))
+  ) {
+    return c.json({ success: false, error: ATTACHMENT_REQUIRED_MESSAGE }, 400);
   }
   return answerTransition(c, id, () => submitForApproval(c.env, existing, actorOf(user)));
 });
@@ -1672,6 +1715,10 @@ app.patch("/:id", requirePermissionOrSalesDirector("announcements.write"), async
   // Any edit (text, targeting, active toggle, expiry) can change who sees
   // what — orphan all cached banner snapshots.
   await bumpConfigVersion(c.env, "banner");
+
+  // The attachment log follows the manifest (mig 20260907T0715): a key that
+  // appeared is logged under this editor, one that vanished is marked removed.
+  if ("attachments" in body) await syncAttachmentLog(c.env, id, nextAttachments, actorOf(c.get("user")));
 
   if (textChanged) {
     queueTranslation(c, id, { title: nextTitle, body: nextText, bodyHtml: nextHtml });

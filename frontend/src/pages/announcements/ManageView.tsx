@@ -21,6 +21,7 @@ import {
   type AckSummary,
   type AcksData,
   type Announcement,
+  type AnnouncementFile,
   type InboxFilter,
   type NameLookups,
 } from "./announcementModel";
@@ -50,6 +51,9 @@ export type ManageViewProps = {
   /** Receipts for the SELECTED notice. */
   receipts: AcksData | null;
   receiptsLoading: boolean;
+  /** The attachment log for the SELECTED notice (GET /:id/files); null while
+   *  loading / not fetched. Rendered only when it has lines. */
+  files?: AnnouncementFile[] | null;
   /** The department bucket open in the drill-down (deptKey), null = first. */
   drillDept: string | null;
   onDrill: (key: string) => void;
@@ -219,6 +223,7 @@ export function ManageView(p: ManageViewProps) {
               a={selected}
               receipts={p.receipts}
               receiptsLoading={p.receiptsLoading}
+              files={p.files ?? null}
               drillDept={p.drillDept}
               onDrill={p.onDrill}
               onRemindPending={() => p.onRemindPending(selected)}
@@ -332,6 +337,7 @@ function Drawer({
   a,
   receipts,
   receiptsLoading,
+  files,
   drillDept,
   onDrill,
   onRemindPending,
@@ -348,6 +354,7 @@ function Drawer({
   a: Announcement;
   receipts: AcksData | null;
   receiptsLoading: boolean;
+  files: AnnouncementFile[] | null;
   drillDept: string | null;
   onDrill: (key: string) => void;
   onRemindPending: () => void;
@@ -477,6 +484,31 @@ function Drawer({
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col gap-3.5 overflow-auto px-4 py-3.5">
+        {files && files.length > 0 && (
+          <div className="flex flex-col gap-[7px] rounded-md border border-border bg-surface-2 p-3" data-testid="attachment-log">
+            <div className="flex items-baseline justify-between">
+              <span className={cn(EYEBROW, "text-ink-secondary")}>Attachments</span>
+              <span className="font-money text-[12.5px] font-[650] text-ink">
+                {files.filter((f) => !f.removedAt).length} attached
+              </span>
+            </div>
+            <ul className="flex flex-col gap-1">
+              {files.map((f) => (
+                <li
+                  key={f.id}
+                  className={cn("flex items-baseline justify-between gap-2 text-[11.5px]", f.removedAt && "text-ink-muted line-through")}
+                >
+                  <span className="min-w-0 truncate text-ink">{f.name ?? f.r2Key}</span>
+                  <span className="shrink-0 text-[10.5px] text-ink-muted">
+                    {f.removedAt
+                      ? `removed by ${f.removedByName ?? "?"} · ${fmtDateTime(f.removedAt)}`
+                      : `${f.uploadedByName ?? "?"} · ${fmtDateTime(f.uploadedAt)}`}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
         <div className="flex flex-col gap-[9px] rounded-md border border-border bg-surface-2 p-3">
           <div className="flex items-baseline justify-between">
             <span className={cn(EYEBROW, "text-ink-secondary")}>By department</span>

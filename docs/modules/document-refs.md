@@ -65,8 +65,12 @@ than publishing an un-numbered notice. See `docs/modules/announcements.md`
 | PATCH | `/api/document-types/:code` | `settings.manage` | `{ label?, attachmentRequired?, isActive? }` |
 
 `attachment_required` is the per-type policy the "attachment required before
-submit" rule reads (follow-up PR); the flag exists now so the policy has one
-home.
+submit" rule reads. Since 2026-09-07 it is EDITED under Settings → Documents
+(`frontend/src/pages/settings/DocumentTypesTab.tsx`: the registry table, the
+Required / Optional switch, Active, New type) and ENFORCED for the ANN type by
+`backend/src/services/announcementFiles.ts` on the two doors into the
+announcement approval queue (docs/modules/announcements.md §3 "Attachments").
+Other families pick it up as they join the scheme.
 
 ## 4. Database — mig `backend/src/db/migrations-pg/20260906T1417_departments_code_document_refs.sql`
 
