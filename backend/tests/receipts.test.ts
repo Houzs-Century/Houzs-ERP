@@ -180,3 +180,15 @@ describe('the general receipt — record and post, one motion', () => {
     expect(again.status).toBe(409);
   });
 });
+
+describe('the number follows the receipt date (owner 2026-09-07: 要根据文件日期)', () => {
+  test('a receipt dated in February mints OR-2602 whatever today is', async () => {
+    const app = harness(baseTables());
+    const res = await post(app, '/', {
+      payerName: 'ALLIANZ INSURANCE', receiptDate: '2026-02-10', bankAccountCode: '310-0010',
+      lines: [{ description: '车险赔偿', creditAccountCode: '700-0000', amountSen: 88800 }],
+    });
+    expect(res.status, await res.clone().text()).toBe(201);
+    expect((await res.json() as { receipt: { receiptNumber: string } }).receipt.receiptNumber).toMatch(/-OR-2602-001$/);
+  });
+});

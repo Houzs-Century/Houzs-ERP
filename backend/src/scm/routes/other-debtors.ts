@@ -29,7 +29,8 @@ import { Hono } from 'hono';
 import { hasHouzsPerm } from '../lib/houzs-perms';
 import { supabaseAuth } from '../middleware/auth';
 import { activeCompanyId, companyDocPrefix, requireActiveCompanyId, scopeToCompany } from '../lib/companyScope';
-import { mintMonthlyDocNo } from '../lib/doc-no';
+import { docMonthTag, mintMonthlyDocNo } from '../lib/doc-no';
+import { todayMyt } from '../lib/my-time';
 import { postJournal, reverseJournal } from '../../acc/engine';
 import { dateOrNull } from '../lib/date-coerce';
 import { resolveRoles, type RuleLine } from '../../acc/rules';
@@ -38,11 +39,6 @@ import { requireLeafAccount } from './accounting-chart';
 type Row = Record<string, any>;
 
 const now = () => new Date().toISOString();
-
-const yymm = () => {
-  const d = new Date();
-  return `${String(d.getFullYear()).slice(2)}${String(d.getMonth() + 1).padStart(2, '0')}`;
-};
 
 /* Same door as the PV's Paid From: the receiving account must BE money. */
 const requireMoneyIn = async (c: any, code: string): Promise<Response | null> => {
@@ -228,11 +224,11 @@ export const createDebtorBillHandler = async (c: any): Promise<Response> => {
     const leafErr = await requireLeafAccount(c, coId, code);
     if (leafErr) return leafErr;
   }
-  const billDate = String(body.billDate ?? '').trim() || new Date().toISOString().slice(0, 10);
+  const billDate = dateOrNull(body.billDate) ?? todayMyt();
   const totalSen = lines.reduce((s, l) => s + l.amountSen, 0);
 
   const sb = c.get('supabase');
-  const billNumber = await mintMonthlyDocNo(sb, 'acc_debtor_bills', 'bill_number', `${companyDocPrefix(c)}ODB-${yymm()}`);
+  const billNumber = await mintMonthlyDocNo(sb, 'acc_debtor_bills', 'bill_number', `${companyDocPrefix(c)}ODB-${docMonthTag(billDate)}`);
   const { data: bill, error: insErr } = await sb.from('acc_debtor_bills').insert({
     company_id: coId,
     bill_number: billNumber,
@@ -444,9 +440,9 @@ export const createDebtorReceiptHandler = async (c: any): Promise<Response> => {
     }
   }
   const totalSen = allocs.reduce((s, a) => s + a.amountSen, 0);
-  const receiptDate = String(body.receiptDate ?? '').trim() || new Date().toISOString().slice(0, 10);
+  const receiptDate = dateOrNull(body.receiptDate) ?? todayMyt();
 
-  const receiptNumber = await mintMonthlyDocNo(sb, 'acc_debtor_receipts', 'receipt_number', `${companyDocPrefix(c)}ODR-${yymm()}`);
+  const receiptNumber = await mintMonthlyDocNo(sb, 'acc_debtor_receipts', 'receipt_number', `${companyDocPrefix(c)}ODR-${docMonthTag(receiptDate)}`);
   const { data: receipt, error: insErr } = await sb.from('acc_debtor_receipts').insert({
     company_id: coId,
     receipt_number: receiptNumber,

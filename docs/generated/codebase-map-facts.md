@@ -79,7 +79,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/addons.ts` | 4 | 215 |
 | `backend/src/scm/routes/amendment-mirror.ts` | 1 | 126 |
 | `backend/src/scm/routes/ap-invoice-files.ts` | 0 | 50 |
-| `backend/src/scm/routes/ap-invoices.ts` | 10 | 430 |
+| `backend/src/scm/routes/ap-invoices.ts` | 10 | 425 |
 | `backend/src/scm/routes/ar-reconciliation.ts` | 1 | 163 |
 | `backend/src/scm/routes/autocount-line-sweep.ts` | 0 | 202 |
 | `backend/src/scm/routes/autocount-outbox.ts` | 8 | 984 |
@@ -135,9 +135,9 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/model-free-gifts.ts` | 3 | 147 |
 | `backend/src/scm/routes/mrp-lead-times.ts` | 2 | 95 |
 | `backend/src/scm/routes/mrp.ts` | 2 | 1763 |
-| `backend/src/scm/routes/other-debtors.ts` | 13 | 651 |
+| `backend/src/scm/routes/other-debtors.ts` | 13 | 647 |
 | `backend/src/scm/routes/outstanding.ts` | 2 | 321 |
-| `backend/src/scm/routes/payment-vouchers.ts` | 19 | 1951 |
+| `backend/src/scm/routes/payment-vouchers.ts` | 19 | 1952 |
 | `backend/src/scm/routes/personal-quick-picks.ts` | 3 | 212 |
 | `backend/src/scm/routes/po-amendments.ts` | 6 | 726 |
 | `backend/src/scm/routes/po-gates.ts` | 0 | 90 |
@@ -158,7 +158,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/pwp-codes.ts` | 5 | 500 |
 | `backend/src/scm/routes/pwp-rules.ts` | 4 | 233 |
 | `backend/src/scm/routes/quotes.ts` | 4 | 321 |
-| `backend/src/scm/routes/receipts.ts` | 3 | 231 |
+| `backend/src/scm/routes/receipts.ts` | 3 | 228 |
 | `backend/src/scm/routes/reports.ts` | 6 | 1308 |
 | `backend/src/scm/routes/sales-analysis.ts` | 2 | 551 |
 | `backend/src/scm/routes/sales-invoices.ts` | 15 | 2559 |
@@ -205,7 +205,7 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1981 files, 698715 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1981 files, 698733 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |

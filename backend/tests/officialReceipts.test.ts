@@ -17,10 +17,9 @@ import { createReceiptForPayment, ensureReceiptForPayment, formaliseReceiptsForS
 import { receiptFormalise } from '../src/scm/routes/accounting-receipts';
 
 const CO = 2;
-const yymm = (() => {
-  const d = new Date();
-  return `${String(d.getFullYear()).slice(2)}${String(d.getMonth() + 1).padStart(2, '0')}`;
-})();
+/* Every payment here was paid on 2026-07-05: the receipt's series follows the
+   PAYMENT date, draft and formal alike (owner 2026-09-07). */
+const yymm = '2607';
 
 const world = (over: Record<string, Row[]> = {}) => fakeSb(
   {
@@ -44,7 +43,7 @@ const world = (over: Record<string, Row[]> = {}) => fakeSb(
 
 const CARD = {
   source: 'SOPAY' as const, paymentId: 'p1', companyId: CO, companyCode: '2990',
-  docNo: '2990-SO-2609-001', method: 'merchant', amountSen: 100000, paidAt: '2026-09-05', createdBy: 'Sales',
+  docNo: '2990-SO-2609-001', method: 'merchant', amountSen: 100000, paidAt: '2026-07-05', createdBy: 'Sales',
 };
 
 describe('birth', () => {
@@ -82,7 +81,7 @@ describe('the manual confirm', () => {
 
   test('defaults to the company bank, mints {letter}OR, stamps who confirmed', async () => {
     const { app, sb } = harness({
-      acc_receipts: [{ id: 7, company_id: CO, or_number: `2990-DraftOR-${yymm}-004`, status: 'DRAFT', payment_source: 'SOPAY', payment_id: 'p9', amount_sen: 5000 }],
+      acc_receipts: [{ id: 7, company_id: CO, or_number: `2990-DraftOR-${yymm}-004`, status: 'DRAFT', payment_source: 'SOPAY', payment_id: 'p9', amount_sen: 5000, paid_at: '2026-07-05' }],
     });
     const res = await app.request('/accounting/receipts/7/formalise', { method: 'POST' });
     expect(res.status).toBe(200);
@@ -92,7 +91,7 @@ describe('the manual confirm', () => {
 
   test('a bank with no letter refuses with the setup card named', async () => {
     const { app, sb } = harness({
-      acc_receipts: [{ id: 7, company_id: CO, or_number: `2990-DraftOR-${yymm}-004`, status: 'DRAFT', payment_source: 'SOPAY', payment_id: 'p9', amount_sen: 5000 }],
+      acc_receipts: [{ id: 7, company_id: CO, or_number: `2990-DraftOR-${yymm}-004`, status: 'DRAFT', payment_source: 'SOPAY', payment_id: 'p9', amount_sen: 5000, paid_at: '2026-07-05' }],
       acc_bank_letters: [],
     });
     const res = await app.request('/accounting/receipts/7/formalise', { method: 'POST' });
@@ -106,8 +105,8 @@ describe('settlement confirm turns card receipts formal', () => {
   test('formalises on the payout bank; missing receipts and letters are reported, never thrown', async () => {
     const sb = world({
       acc_receipts: [
-        { id: 1, company_id: CO, or_number: `2990-DraftOR-${yymm}-001`, status: 'DRAFT', payment_source: 'SOPAY', payment_id: 'p1', amount_sen: 1 },
-        { id: 2, company_id: CO, or_number: `2990-MOR-${yymm}-009`, status: 'FORMAL', payment_source: 'SOPAY', payment_id: 'p2', amount_sen: 1 },
+        { id: 1, company_id: CO, or_number: `2990-DraftOR-${yymm}-001`, status: 'DRAFT', payment_source: 'SOPAY', payment_id: 'p1', amount_sen: 1, paid_at: '2026-07-05' },
+        { id: 2, company_id: CO, or_number: `2990-MOR-${yymm}-009`, status: 'FORMAL', payment_source: 'SOPAY', payment_id: 'p2', amount_sen: 1, paid_at: '2026-07-05' },
       ],
     });
     const out = await formaliseReceiptsForSettlement(sb, CO, '2990',

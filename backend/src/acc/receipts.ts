@@ -22,14 +22,9 @@
 // any gap the next time the receipt is needed.
 // ----------------------------------------------------------------------------
 
-import { mintMonthlyDocNo } from '../scm/lib/doc-no';
+import { docMonthTag, mintMonthlyDocNo } from '../scm/lib/doc-no';
 import { docPrefixForCode } from '../scm/lib/companyScope';
 import { resolveRoles } from './rules';
-
-const yymm = (): string => {
-  const d = new Date();
-  return `${String(d.getFullYear()).slice(2)}${String(d.getMonth() + 1).padStart(2, '0')}`;
-};
 
 export const CASH_SERIES_LETTER = 'C';
 
@@ -93,7 +88,7 @@ export async function createReceiptForPayment(
 
   const prefix = docPrefixForCode(p.companyCode);
   for (let attempt = 0; attempt < 8; attempt += 1) {
-    const draftNo = await mintMonthlyDocNo(sb, 'acc_receipts', 'or_number', `${prefix}DraftOR-${yymm()}`);
+    const draftNo = await mintMonthlyDocNo(sb, 'acc_receipts', 'or_number', `${prefix}DraftOR-${docMonthTag(p.paidAt)}`);
     const { data, error } = await sb.from('acc_receipts').insert({
       company_id: p.companyId,
       or_number: draftNo,
@@ -148,11 +143,11 @@ export async function formaliseReceipt(
   input: { companyId: number; companyCode: string; receiptId: number; accountCode: string; actor: string | null },
 ): Promise<{ ok: true; orNumber: string; already?: boolean } | { ok: false; status: string; reason: string }> {
   const { data: rRaw, error: rErr } = await sb.from('acc_receipts')
-    .select('id, or_number, status, company_id')
+    .select('id, or_number, status, company_id, paid_at')
     .eq('id', input.receiptId).eq('company_id', input.companyId).maybeSingle();
   if (rErr) return { ok: false, status: 'load_failed', reason: rErr.message };
   if (!rRaw) return { ok: false, status: 'not_found', reason: `receipt ${input.receiptId} not found` };
-  const r = rRaw as { id: number; or_number: string; status: string };
+  const r = rRaw as { id: number; or_number: string; status: string; paid_at: string | null };
   if (r.status === 'FORMAL') return { ok: true, orNumber: r.or_number, already: true };
 
   const ch = await channelLetterFor(sb, input.companyId, input.accountCode);
@@ -169,7 +164,7 @@ export async function formaliseReceipt(
   const prefix = docPrefixForCode(input.companyCode);
   const at = new Date().toISOString();
   for (let attempt = 0; attempt < 8; attempt += 1) {
-    const formalNo = await mintMonthlyDocNo(sb, 'acc_receipts', 'or_number', `${prefix}${ch.letter}OR-${yymm()}`, digits);
+    const formalNo = await mintMonthlyDocNo(sb, 'acc_receipts', 'or_number', `${prefix}${ch.letter}OR-${docMonthTag(r.paid_at)}`, digits);
     const { error } = await sb.from('acc_receipts').update({
       or_number: formalNo,
       status: 'FORMAL',
