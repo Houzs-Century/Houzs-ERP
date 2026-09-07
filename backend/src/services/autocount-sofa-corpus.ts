@@ -32,7 +32,7 @@ export interface AcSofaCorpusRow {
   desc2: string;
 }
 
-export const AC_SOFA_CORPUS_ROWS = 706;
+export const AC_SOFA_CORPUS_ROWS = 712;
 export const AC_SOFA_CORPUS: readonly AcSofaCorpusRow[] = [
   {
     "side": "PO",
@@ -1808,6 +1808,30 @@ export const AC_SOFA_CORPUS: readonly AcSofaCorpusRow[] = [
     "qty": 1,
     "creditorCode": "400-O002",
     "desc2": "replace the leg by fully cover \nNilon bottom \nCol : Nicca 01 - Moon Cream",
+    "recl": true
+  },
+  {
+    "side": "PO",
+    "docNo": "PO-010169",
+    "dtlKey": 927193,
+    "acItemCode": "AMN-SF9058 SOFA",
+    "erpCode": "9058-1S",
+    "model": "9058",
+    "qty": 1,
+    "creditorCode": "400-A004",
+    "desc2": "2L(28”) / Col:CH141-9 Sky",
+    "recl": true
+  },
+  {
+    "side": "PO",
+    "docNo": "PO-010170",
+    "dtlKey": 927196,
+    "acItemCode": "HOK-5535 SOFA",
+    "erpCode": "5535-1S",
+    "model": "5535",
+    "qty": 1,
+    "creditorCode": "400-O002",
+    "desc2": "(2+L)28inch/Col:HR805-30",
     "recl": true
   },
   {
@@ -8504,6 +8528,54 @@ export const AC_SOFA_CORPUS: readonly AcSofaCorpusRow[] = [
     "qty": 1,
     "creditorCode": null,
     "desc2": "fully cover replace the leg \nNilon bottom \nCol :COVE 16 \nafter push back fully cover ",
+    "recl": true
+  },
+  {
+    "side": "SO",
+    "docNo": "SO-013506",
+    "dtlKey": 927031,
+    "acItemCode": "DSL-8030 SOFA",
+    "erpCode": "8030-1S",
+    "model": "8030",
+    "qty": 1,
+    "creditorCode": null,
+    "desc2": "(1EL+1ER)30inch/Col:Bo315-21\n*Leg change 6’’wooden leg",
+    "recl": true
+  },
+  {
+    "side": "SO",
+    "docNo": "SO-013507",
+    "dtlKey": 927060,
+    "acItemCode": "HOK-5535 SOFA",
+    "erpCode": "5535-1S",
+    "model": "5535",
+    "qty": 1,
+    "creditorCode": null,
+    "desc2": "(2+L)28inch/Col:HR805-30",
+    "recl": true
+  },
+  {
+    "side": "SO",
+    "docNo": "SO-013508",
+    "dtlKey": 927063,
+    "acItemCode": "DSL-8030 SOFA",
+    "erpCode": "8030-1S",
+    "model": "8030",
+    "qty": 1,
+    "creditorCode": null,
+    "desc2": "(1EL+1Console+1ER)Col:\nBottom wrap by nylon",
+    "recl": true
+  },
+  {
+    "side": "SO",
+    "docNo": "SO-013509",
+    "dtlKey": 927065,
+    "acItemCode": "DSL-8069 SOFA",
+    "erpCode": "8069-1S",
+    "model": "8069",
+    "qty": 1,
+    "creditorCode": null,
+    "desc2": "(1B/S+2ER)28inch/Col:TBC\n*Wrap by nylon",
     "recl": true
   }
 ];
