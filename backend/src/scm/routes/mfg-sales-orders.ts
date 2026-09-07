@@ -48,7 +48,7 @@ import { signalNullWarehouseRows } from '../lib/null-warehouse-signal';
    moved to scm/lib so scan-so.ts's background writer reaches the same rules
    without importing a 12,000-line router. Re-exported below for the callers
    that still name this module. */
-import { deriveAccountSheet, PAYMENT_COLS, recordSoPaymentRow, afterSoPaymentRemoved, type SoPaymentRowInput } from '../lib/so-payment-row';
+import { deriveAccountSheet, PAYMENT_COLS, recordSoPaymentRow, afterSoPaymentRemoved, bookSoPaymentBestEffort, type SoPaymentRowInput } from '../lib/so-payment-row';
 import { recomputeSiPaidForOrder } from '../lib/si-order-deposit';
 export { recordSoPaymentRow };
 export type { SoPaymentRowInput };
@@ -5222,9 +5222,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
      POST /:docNo/payments route. Best-effort: a ledger failure must never
      block the order (the header column still carries the deposit). */
   if (posPayments) {
-    /* Split payment — book EVERY validated row. Best-effort like the single
-       path (the header already carries the Σ, so a ledger hiccup never blocks
-       the order); rows are schema-validated so nothing is silently dropped. */
+    /* Split payment — every validated row, best-effort (the header carries Σ; a ledger hiccup never blocks the order). */
     const paidAt = dateOrNull(body.paymentDate) ?? todayMyt(); // header coerces the same key; uncoerced here the swallowed insert lost the deposit row
     for (let i = 0; i < posPayments.length; i++) {
       const p = posPayments[i]!;
@@ -5233,7 +5231,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
       const installmentMonths = merchantLike
         && typeof p.installmentMonths === 'number' && p.installmentMonths > 0
         ? p.installmentMonths : null;
-      const { error: depErr } = await sb.from('mfg_sales_order_payments').insert({
+      const { data: depRow, error: depErr } = await sb.from('mfg_sales_order_payments').insert({
         company_id:         companyId, // multi-company: match the SO's company
         so_doc_no:          docNo,
         paid_at:            paidAt,
@@ -5260,12 +5258,13 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
         created_by:         user.id,
         is_deposit:         true,
         note:               'POS split payment (auto-recorded at SO create)',
-      });
+      }).select('id, so_doc_no, paid_at, method, merchant_provider, amount_sen, company_id').single();
       if (depErr) {
         // eslint-disable-next-line no-console
         console.error('[so-create] split-payment ledger insert failed:', depErr.message);
         continue;
       }
+      await bookSoPaymentBestEffort(sb, depRow, 'split payment at SO create'); // docs/bugs/0652: this row used to skip the gate
       /* Promote — 'promoted' rows are excluded from the slip reaper (same dance
          as the SO-create order slip). The UPDATE runs under the caller's RLS
          (pending_slip_uploads allows the UPLOADER to promote); in this flow the
@@ -5329,7 +5328,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
         && typeof body.installmentMonths === 'number' && body.installmentMonths > 0
         ? body.installmentMonths : null;
       const paidAt = dateOrNull(body.paymentDate) ?? todayMyt(); // same as the split-payment row above
-      const { error: depErr } = await sb.from('mfg_sales_order_payments').insert({
+      const { data: depRow, error: depErr } = await sb.from('mfg_sales_order_payments').insert({
         company_id:         companyId, // multi-company: match the SO's company
         so_doc_no:          docNo,
         paid_at:            paidAt,
@@ -5346,11 +5345,12 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
         created_by:         user.id,
         is_deposit:         true,
         note:               'POS deposit (auto-recorded at SO create)',
-      });
+      }).select('id, so_doc_no, paid_at, method, merchant_provider, amount_sen, company_id').single();
       if (depErr) {
         // eslint-disable-next-line no-console
         console.error('[so-create] deposit ledger insert failed:', depErr.message);
       } else {
+        await bookSoPaymentBestEffort(sb, depRow, 'deposit at SO create'); // docs/bugs/0652: this row used to skip the gate
         await recordSoAudit(sb, {
           docNo,
           action: 'ADD_PAYMENT',

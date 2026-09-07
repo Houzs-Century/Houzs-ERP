@@ -61,7 +61,24 @@ export type UnbookedPayments = {
   ok: boolean;
   /** Only when the check itself could not run. */
   error?: string;
+  /** When NOTHING has ever booked (since = null): what the payment tables hold
+      anyway — the money the hook should have moved (docs/bugs/0652). */
+  neverBooked?: { count: number; totalSen: number; firstPaidOn: string | null; lastPaidOn: string | null };
 };
+
+/** The Self-check card's "Why?" — the backfill endpoint in dry-run mode: each
+    unbooked payment through the gate's own checks, verdict and reason back,
+    nothing written (docs/bugs/0652). */
+export type PaymentDryRunRow = { id: string; docNo: string; paidOn: string; method: string; amountSen: number; status: string; reason?: string };
+export type PaymentDryRun = {
+  ok: boolean; dryRun: boolean; scanned: number; posted: number; wouldPost: number; skipped: number;
+  failed: Array<{ id: string; status: string; reason?: string }>; rows: PaymentDryRunRow[]; remaining: number;
+};
+export const usePaymentBookingDryRun = () => useMutation({
+  mutationFn: () => authedFetch<PaymentDryRun>('/accounting/backfill/customer-payments', {
+    method: 'POST', body: JSON.stringify({ dryRun: true, limit: 500 }),
+  }),
+});
 
 export const useControlCheck = () => useQuery({
   queryKey: ['control-check'],

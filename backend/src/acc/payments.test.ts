@@ -200,6 +200,9 @@ describe('payments that never reached the ledger', () => {
     if (!r.ok) return;
     expect(r.since).toBeNull();
     expect(r.rows).toHaveLength(0);
+    /* …but it SAYS how much is sitting there (docs/bugs/0652): the card used to
+       read "all of them" for a company whose hook had refused every payment. */
+    expect(r.neverBooked).toEqual({ count: 1, totalSen: 50000, firstPaidOn: '2026-01-05', lastPaidOn: '2026-01-05' });
   });
 
   it('ignores everything dated before the first booked payment', async () => {
@@ -266,5 +269,45 @@ describe('payments that never reached the ledger', () => {
     expect(r.rows.map((x) => x.id)).toEqual(['q1', 'late']);
     expect(r.rows.map((x) => x.source)).toEqual(['SIPAY', 'SOPAY']);
     expect(r.totalSen).toBe(40000);
+  });
+});
+
+/* ── The dry run (docs/bugs/0652) ──────────────────────────────────────────────
+   The hook only ever logged its refusals to the console; 2990's 15 panel-path
+   payments and 64 SO-create deposits never reached the books and nothing on a
+   screen said why. The dry run answers with the gate's own checks, writing
+   nothing. */
+describe('dry run — would this post, and if not, why?', () => {
+  it("answers would_post with the gate's own lines and writes nothing", async () => {
+    const sb = world();
+    const out = await postSoPayment(sb, PAY() as never, { dryRun: true });
+    expect(out).toMatchObject({ ok: true, status: 'would_post', entryDate: '2026-08-10' });
+    if (!out.ok || out.status !== 'would_post') return;
+    expect(out.lines.map((l) => [l.accountCode, l.debitSen, l.creditSen])).toEqual([
+      ['888-0000', 50000, 0],
+      [DEFAULT_ROLE_CODES.AR, 0, 50000],
+    ]);
+    expect(sb.tables.journal_entries).toHaveLength(0);
+    expect(sb.tables.journal_entry_lines).toHaveLength(0);
+  });
+
+  it('names the account the chart refuses — the reason the silent hook never surfaced', async () => {
+    const sb = world({ acquirers: [{ company_id: 1, code: 'MBB', display_name: 'MBB', transit_account_code: '999-0000', is_active: true }] });
+    const out = await postSoPayment(sb, PAY() as never, { dryRun: true });
+    expect(out).toMatchObject({ ok: false, status: 'account_invalid' });
+    expect(String((out as { reason?: string }).reason)).toContain('999-0000');
+    expect(sb.tables.journal_entries).toHaveLength(0);
+  });
+
+  it('the backfill dry run reports every candidate with its verdict and posts none', async () => {
+    const sb = world({ pays: [PAY(), PAY({ id: 'pay-2', method: 'cash' }), PAY({ id: 'pay-3', method: 'imported' })] });
+    const out = await backfillSoPayments(sb, 100, { dryRun: true });
+    expect(out).toMatchObject({ ok: true, dryRun: true, scanned: 2, posted: 0, wouldPost: 2, skipped: 0 });
+    expect(out.rows.map((r) => [r.id, r.status, r.amountSen])).toEqual([['pay-1', 'would_post', 50000], ['pay-2', 'would_post', 50000]]);
+    expect(sb.tables.journal_entries).toHaveLength(0);
+    /* The real run afterwards posts exactly those two. */
+    const real = await backfillSoPayments(sb, 100);
+    expect(real).toMatchObject({ ok: true, dryRun: false, posted: 2, wouldPost: 0 });
+    expect(sb.tables.journal_entries.filter((j) => j.source_type === 'SOPAY')).toHaveLength(2);
   });
 });

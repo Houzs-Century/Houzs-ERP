@@ -36,8 +36,10 @@ import {
 import {
   useReverseJournalEntry,
   useControlCheck,
+  usePaymentBookingDryRun,
   type ControlCheckRow,
   type UnbookedPayments,
+  type PaymentDryRun,
 } from './accounting-phase1-queries';
 import { DataTable, type Column } from '../../components/DataTable';
 import { ItemGroupsTab } from './ItemGroups';
@@ -691,10 +693,19 @@ const SelfCheckTab = () => {
    ever booked one; a card that silently spoke about a period nobody could see
    would be its own kind of lie. */
 
-const UnbookedPaymentsCard = ({ p }: { p: UnbookedPayments }) => {
+/* docs/bugs/0652: a company whose hook had refused EVERY payment read "all of
+   them" here — nothing had ever booked, so there was "no period to check". The
+   card now says so in red, with the money, and the Why? button puts each
+   unbooked payment through the gate's own checks (dry run, nothing written) and
+   prints the verdict and reason the console-only hook never showed anyone. */
+export const UnbookedPaymentsCard = ({ p }: { p: UnbookedPayments }) => {
   const good = 'var(--c-secondary-a, #2F5D4F)';
   const bad = 'var(--c-festive-b, #B8331F)';
-  const clean = p.ok && p.rows.length === 0;
+  const never = p.since == null && (p.neverBooked?.count ?? 0) > 0;
+  const clean = p.ok && p.rows.length === 0 && !never;
+  const dry = usePaymentBookingDryRun();
+  const unbookedCount = never ? (p.neverBooked?.count ?? 0) : p.rows.length;
+  const unbookedSen = never ? (p.neverBooked?.totalSen ?? 0) : p.totalSen;
 
   return (
     <div style={{ ...cardStyle, borderColor: clean ? good : bad }} className="space-y-2">
@@ -705,9 +716,15 @@ const UnbookedPaymentsCard = ({ p }: { p: UnbookedPayments }) => {
           background: clean ? 'rgba(47, 93, 79, 0.12)' : 'rgba(184, 51, 31, 0.12)',
           color: clean ? good : bad,
         }}>
-          {clean ? 'all of them' : `${p.rows.length} did not`}
+          {clean ? 'all of them' : never ? 'none, ever' : `${p.rows.length} did not`}
         </span>
-        {!clean && <span>{fmt(p.totalSen)} on documents and not in the books</span>}
+        {!clean && <span>{fmt(unbookedSen)} on {unbookedCount} payment{unbookedCount === 1 ? '' : 's'} and not in the books</span>}
+        {!clean && (
+          <button type="button" onClick={() => dry.mutate()} disabled={dry.isPending}
+            style={{ marginLeft: 'auto', border: `1px solid ${bad}`, color: bad, background: 'none', borderRadius: 6, padding: '2px 10px', cursor: 'pointer', fontSize: 'var(--fs-12)', fontWeight: 600 }}>
+            {dry.isPending ? 'Asking the gate…' : 'Why? (dry run)'}
+          </button>
+        )}
       </div>
 
       {p.error && <div style={{ fontSize: 'var(--fs-13)', color: bad }}>The check could not run: {p.error}</div>}
@@ -716,11 +733,15 @@ const UnbookedPaymentsCard = ({ p }: { p: UnbookedPayments }) => {
           speaking about nothing. */}
       <div style={{ fontSize: 'var(--fs-12)', color: 'var(--c-ink-soft, #777)' }}>
         {p.since == null
-          ? 'No payment has been booked in this company yet, so there is no period to check. '
-            + 'Payments recorded before the accounting module starts here are expected to be unbooked.'
+          ? (never
+            ? `No payment has ever been booked in this company, yet ${p.neverBooked?.count ?? 0} were recorded between ${p.neverBooked?.firstPaidOn ?? '?'} and ${p.neverBooked?.lastPaidOn ?? '?'} (imported and zero rows not counted). The booking hook is not reaching the books — press Why? for the gate's own reason on each.`
+            : 'No payment has been booked in this company yet, and its SO/SI payment tables hold no bookable row (imported and zero rows are skipped by design).')
           : `Counting payments from ${p.since}, the first day this company booked one. `
             + 'Anything earlier is history that was deliberately left unbooked.'}
       </div>
+
+      {dry.isError && <div style={{ fontSize: 'var(--fs-13)', color: bad }}>The dry run could not run: {dry.error instanceof Error ? dry.error.message : String(dry.error)}</div>}
+      {dry.data && <DryRunResult r={dry.data} />}
 
       {p.rows.length > 0 && (
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
@@ -736,6 +757,46 @@ const UnbookedPaymentsCard = ({ p }: { p: UnbookedPayments }) => {
                 <td>{r.paidOn}</td>
                 <td>{r.method}</td>
                 <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmt(r.amountSen)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+};
+
+/* The dry run's answer, row by row — the verdict column is the gate's own
+   status word (would_post, account_invalid, …) and the reason is its sentence. */
+const DryRunResult = ({ r }: { r: PaymentDryRun }) => {
+  const good = 'var(--c-secondary-a, #2F5D4F)';
+  const bad = 'var(--c-festive-b, #B8331F)';
+  const byStatus = new Map<string, number>();
+  for (const row of r.rows) byStatus.set(row.status, (byStatus.get(row.status) ?? 0) + 1);
+  const summary = [...byStatus].map(([s, n]) => `${n} ${s === 'would_post' ? 'would post' : s}`).join(', ');
+  return (
+    <div className="space-y-1" style={{ fontSize: 'var(--fs-13)' }}>
+      <div>
+        <b>Dry run</b> — {r.scanned} unbooked payment{r.scanned === 1 ? '' : 's'} put through the gate, nothing written
+        {r.rows.length > 0 ? `: ${summary}.` : '.'}
+        {r.remaining > r.rows.length ? ` Showing the first ${r.rows.length}.` : ''}
+      </div>
+      {r.rows.length > 0 && (
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
+          <thead>
+            <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--c-line, rgba(34,31,32,0.18))' }}>
+              <th>Document</th><th>Paid on</th><th>How</th><th style={{ textAlign: 'right' }}>Amount</th><th>Verdict</th><th>Reason</th>
+            </tr>
+          </thead>
+          <tbody>
+            {r.rows.map((row) => (
+              <tr key={row.id} style={{ borderBottom: '1px solid var(--c-line, rgba(34,31,32,0.10))' }}>
+                <td>{row.docNo}</td>
+                <td>{row.paidOn}</td>
+                <td>{row.method}</td>
+                <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmt(row.amountSen)}</td>
+                <td style={{ fontWeight: 600, color: row.status === 'would_post' ? good : bad }}>{row.status === 'would_post' ? 'would post' : row.status}</td>
+                <td>{row.reason ?? '—'}</td>
               </tr>
             ))}
           </tbody>

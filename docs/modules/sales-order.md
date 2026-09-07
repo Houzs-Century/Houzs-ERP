@@ -4176,3 +4176,17 @@ Separately, the live stock verdict the coverage endpoint returns is now actually
 read by the pill — it was being written to a field the renderer does not consult
 and silently discarded
 (`docs/bugs/0614-the-healed-stock-verdict-reached-the-browser-and-was-thrown.md`).
+
+**SO-create payments book through the gate (2026-09-07, docs/bugs/0652).**
+`createSalesOrderCore` writes the POS split payments and the SO-create deposit
+into `mfg_sales_order_payments` itself, not through `lib/so-payment-row`; until
+this day those two inserts never called `postSoPayment`, so no deposit taken at
+order creation reached the general ledger — 64 of the 78 payments 2990 recorded
+after the hook landed on 2026-08-16. Both inserts now `.select(…).single()` the
+row and book it best-effort, exactly like the panel path: a ledger refusal is
+logged and never blocks the order, and the Accounting Self-check card's
+**Why? (dry run)** shows the gate's own reason for any row that did not book.
+Both go through `bookSoPaymentBestEffort` in `lib/so-payment-row.ts`, the same
+hook the panel path uses. `backend/tests/soCreateDepositBooks.test.ts` pins the
+shape — every payment insert in the writers is followed by the booking hook —
+and was RED on the unfixed tree.

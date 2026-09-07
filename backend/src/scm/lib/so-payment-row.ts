@@ -82,6 +82,20 @@ export type SoPaymentRowInput = {
   auditNote?: string;
 };
 
+/** Book an SO payment row through the one posting gate, best-effort — the
+    hook the panel path always had, shared with the SO-create inserts since
+    docs/bugs/0652 (they used to write the row and stop). A refusal is logged
+    and never blocks the caller; the Self-check card's dry run and the backfill
+    are the self-heal. */
+export async function bookSoPaymentBestEffort(sb: any, row: Record<string, unknown> | null | undefined, where: string): Promise<void> {
+  if (!row) return;
+  const booked = await postSoPayment(sb, row as never);
+  if (!booked.ok) {
+    /* eslint-disable-next-line no-console */
+    console.error(`[acc] SO ${where} not booked:`, (row as { id?: string }).id, booked.status, booked.reason);
+  }
+}
+
 export async function recordSoPaymentRow(
   sb: any,
   p: SoPaymentRowInput,
@@ -208,11 +222,7 @@ export async function recordSoPaymentRow(
      payment through the one posting gate. Best-effort like the enqueue above —
      a booking failure never fails the operator's save; the accounting
      backfill endpoint is the self-heal. */
-  const booked = await postSoPayment(sb, data as never);
-  if (!booked.ok) {
-    /* eslint-disable-next-line no-console */
-    console.error('[acc] SO payment not booked:', (data as { id?: string }).id, booked.status, booked.reason);
-  }
+  await bookSoPaymentBestEffort(sb, data as Record<string, unknown>, 'payment');
 
   /* The invoices raised off this order settle partly out of THIS money
      (lib/si-order-deposit), so their status has to be re-rolled here. Without
