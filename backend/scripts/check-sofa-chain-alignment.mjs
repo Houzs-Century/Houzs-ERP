@@ -277,6 +277,25 @@ async function main() {
   const legStats = () => ({ child: 0, childSofa: 0, childBed: 0, nullFk: 0, dangling: 0, pairs: 0, aligned: 0, code: 0, varDiff: 0, varAbsent: 0, builds: 0, buildsSofa: 0, buildsBed: 0, buildsAligned: 0, buildsMismatch: 0 });
 
   const s1 = legStats(); const m1 = []; const b1 = [];
+  /* THE PIECES A BUILD "LACKS" ARE NOT NECESSARILY ABSENT FROM THE PURCHASE
+     ORDER — they may be sitting on it with no `so_item_id`, which is a missing
+     LINK, not a missing piece, and the two need completely different answers.
+     A missing piece is a build disagreement and belongs in front of the owner
+     with the drawing. A missing link is `sync-ac-delta.mjs`'s `dedi` lane, and
+     it is also what makes MRP blind: a bedframe or sofa line lights only
+     through its OWN dedicated purchase order (`so-stock-allocation.ts`,
+     `isHardBoundLine`), so an undedicated compartment can never read READY no
+     matter how much stock arrives against it.
+     Every one of the 20 mismatches measured on 2026-09-07 (run 34119014176)
+     printed "PO has that the SO never had: (none)" — the PO is a SUBSET of the
+     SO every time — which is the signature of under-linkage, not of a wrong
+     build. This section tests that reading instead of asserting it. */
+  const unlinkedPoByDoc = new Map();
+  for (const p of poRows) {
+    if (p.so_item_id) continue;
+    if (!unlinkedPoByDoc.has(p.doc)) unlinkedPoByDoc.set(p.doc, []);
+    unlinkedPoByDoc.get(p.doc).push(p);
+  }
   for (const p of poRows) {
     s1.child++; (p.grp === "sofa" ? s1.childSofa++ : s1.childBed++);
     if (!p.so_item_id) { s1.nullFk++; continue; }
@@ -296,12 +315,43 @@ async function main() {
     const d = multisetDiff(b.so.map((r) => pieceOf(b.grp, r.code)), b.po.map((r) => pieceOf(b.grp, r.code)));
     if (!d) { s1.buildsAligned++; continue; }
     s1.buildsMismatch++;
-    b1.push(`      ${b.doc} -> ${[...new Set(b.po.map((r) => r.doc))].join(",")}  ${b.grp} ${b.model}${spanTag(b.po)}\n` +
+    /* Which of the lacked pieces are ON the same purchase order already, just
+       not dedicated to this sales order? Matched as a MULTISET on the piece
+       label and consumed once each, so two identical unlinked lines cover two
+       identical lacked pieces and no more. This does not decide anything and
+       writes nothing — it separates "the link is missing" from "the piece is
+       missing" so the two are not handed to the owner as one number. */
+    const poDocs = [...new Set(b.po.map((r) => r.doc))];
+    const pool = poDocs.flatMap((docNo) => (unlinkedPoByDoc.get(docNo) ?? []).map((r) => pieceOf(b.grp, r.code)));
+    const coveredByUnlinked = [];
+    const genuinelyAbsent = [];
+    for (const want of d.childLacks) {
+      const at = pool.indexOf(want);
+      if (at >= 0) { pool.splice(at, 1); coveredByUnlinked.push(want); } else genuinelyAbsent.push(want);
+    }
+    if (coveredByUnlinked.length && !genuinelyAbsent.length) s1.buildsUnderlinked = (s1.buildsUnderlinked ?? 0) + 1;
+    else if (genuinelyAbsent.length && !coveredByUnlinked.length) s1.buildsPieceAbsent = (s1.buildsPieceAbsent ?? 0) + 1;
+    else s1.buildsMixed = (s1.buildsMixed ?? 0) + 1;
+    const verdict = !genuinelyAbsent.length
+      ? "UNDER-LINKED, not a build disagreement: every lacked piece is on that purchase order already with so_item_id NULL. Fix = the dedication (sync-ac-delta LANES=dedi), not the drawing."
+      : !coveredByUnlinked.length
+        ? "PIECE ABSENT from the purchase order entirely — this one needs the owner and the drawing."
+        : `MIXED: ${coveredByUnlinked.length} lacked piece(s) are unlinked lines on that PO, ${genuinelyAbsent.length} are not on it at all.`;
+    b1.push(`      ${b.doc} -> ${poDocs.join(",")}  ${b.grp} ${b.model}${spanTag(b.po)}\n` +
             `         SO  ${b.so.map((r) => pieceOf(b.grp, r.code)).join("+")}\n` +
             `         PO  ${b.po.map((r) => pieceOf(b.grp, r.code)).join("+")}\n` +
-            `         PO lacks: ${d.childLacks.join(", ") || "(none)"}   PO has that the SO never had: ${d.childExtra.join(", ") || "(none)"}`);
+            `         PO lacks: ${d.childLacks.join(", ") || "(none)"}   PO has that the SO never had: ${d.childExtra.join(", ") || "(none)"}\n` +
+            `         on that PO but undedicated: ${coveredByUnlinked.join(", ") || "(none)"}   not on that PO at all: ${genuinelyAbsent.join(", ") || "(none)"}\n` +
+            `         VERDICT: ${verdict}`);
   }
   printLeg("LEG 1  SO -> PO", "purchase_order_items.so_item_id", s1, m1, b1);
+  log("");
+  log("    --- LEG 1 piece mismatches, split by WHAT IS ACTUALLY WRONG ---");
+  log(`      under-linked (every lacked piece is an undedicated line on the same PO)  ${s1.buildsUnderlinked ?? 0}`);
+  log(`      piece genuinely absent from the purchase order                          ${s1.buildsPieceAbsent ?? 0}`);
+  log(`      mixed (some of each)                                                     ${s1.buildsMixed ?? 0}`);
+  log("      Only the second and third rows are questions for the owner. The first is a");
+  log("      dedication the delta sync already knows how to write.");
 
   // ── LEG 2: PO -> GRN ───────────────────────────────────────────────────────
   const s2 = legStats(); const m2 = []; const b2 = [];

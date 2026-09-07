@@ -124,4 +124,37 @@ describe('the migrated delivery-order matcher', () => {
     expect(plan[0].items[0].name).toBeNull();
     expect(plan[0].debtorName).toBeNull();
   });
+  /* The two shapes create-migrated-documents.mjs could not report before
+     2026-09-07: a note that loses SOME of its lines, and a note that loses ALL
+     of them and therefore never becomes a document at all. The aggregate
+     counters cannot tell them apart — `byDo.size` simply does not include the
+     second — so DO-001800 and DO-005583 left production with no delivery and no
+     number anywhere went down. See docs/bugs. */
+  it('attributes every dropped line to the delivery note it came off', () => {
+    const { stats } = buildMigratedDoPlan({
+      rows: [acRow(), acRow({ ItemCode: 'AC-UNKNOWN' })],
+      itemMap,
+      soItems: [soLine('so-1', 'CHAIR-01')],
+    });
+    const d = stats.byDoc.get('DO-000001');
+    expect(d.bookLines).toBe(2);
+    expect(d.kept).toBe(1);
+    expect(d.dropped).toHaveLength(1);
+    expect(d.dropped[0].why).toMatch(/mapping sheet has no ERP code/);
+  });
+
+  it('a note whose every line fails is visible as kept=0, not merely absent', () => {
+    const { plan, stats } = buildMigratedDoPlan({
+      rows: [acRow({ ItemCode: 'AC-CHAIR' })],
+      itemMap,
+      // the order carries a DIFFERENT code — the live shape: AutoCount
+      // delivered a substituted item the sales order never named.
+      soItems: [soLine('so-1', 'SOMETHING-ELSE')],
+    });
+    expect(plan).toHaveLength(0);
+    const d = stats.byDoc.get('DO-000001');
+    expect(d.kept).toBe(0);
+    expect(d.bookLines).toBe(1);
+    expect(d.dropped[0].why).toMatch(/no line with this item code/);
+  });
 });
