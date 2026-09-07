@@ -132,6 +132,19 @@ try {
   const S = gz("ac-doc-stamps.json.gz").rows;
   log(`C. REBUILDING THE CONFLICT SET from the same snapshot (since=${S.since} exported=${S.exportedAt})`);
 
+  // The book's own lines, needed HERE and not only in section K: sync-ac-delta
+  // drops an order for "no book lines in the outstanding snapshot" BEFORE it
+  // ever reaches the conflict test (sync-ac-delta.mjs:236-238). Omitting that
+  // filter rebuilds a LARGER set than the run refused, and the difference would
+  // read as a discrepancy in the report rather than as a bug in the report.
+  const soRows = gz("ac-outstanding-so.json.gz");
+  const acLineByDtl = new Map();
+  for (const r of soRows) acLineByDtl.set(String(r.DtlKey), r);
+  const acSoHeader = new Map();
+  for (const r of soRows) if (!acSoHeader.has(r.DocNo)) acSoHeader.set(r.DocNo, r);
+  const acSoLines = new Map();
+  for (const r of soRows) { if (!acSoLines.has(r.DocNo)) acSoLines.set(r.DocNo, []); acSoLines.get(r.DocNo).push(r); }
+
   const soHeaders = await sql`
     SELECT doc_no, linked_ac_docno, version, status, created_at, updated_at
       FROM scm.mfg_sales_orders
@@ -156,10 +169,13 @@ try {
 
   const editedSo = (S.stamps.SO || []).filter((r) => !(r.Created && String(r.Created) >= S.since) && erpSoByAc.has(r.DocNo));
   const conflicts = [];
+  let noBookLines = 0;
   for (const st of editedSo) {
     const h = erpSoByAc.get(st.DocNo);
+    if (!acSoLines.get(st.DocNo)) { noBookLines++; continue; }   // same order as sync-ac-delta.mjs:236
     if (touched.has(h.doc_no)) conflicts.push({ acDoc: st.DocNo, doc: h.doc_no, acModified: st.Modified, h });
   }
+  log(`   candidates ${editedSo.length}; no book lines in the outstanding snapshot ${noBookLines} (run reported 422 / 86)`);
   conflicts.sort((a, b) => a.doc.localeCompare(b.doc));
   log(`   CONFLICTS rebuilt: ${conflicts.length} (run 34097966565 reported 81)`);
 
@@ -352,14 +368,6 @@ try {
   const txt = (v) => { const s = (v == null ? "" : String(v)).trim(); return s === "" ? null : s; };
   const num = (v) => { const n = parseFloat(String(v ?? "").replace(/[^0-9.\-]/g, "")); return isFinite(n) ? n : 0; };
   const centi = (v) => Math.round(num(v) * 100);
-
-  const soRows = gz("ac-outstanding-so.json.gz");
-  const acLineByDtl = new Map();
-  for (const r of soRows) acLineByDtl.set(String(r.DtlKey), r);
-  const acSoHeader = new Map();
-  for (const r of soRows) if (!acSoHeader.has(r.DocNo)) acSoHeader.set(r.DocNo, r);
-  const acSoLines = new Map();
-  for (const r of soRows) { if (!acSoLines.has(r.DocNo)) acSoLines.set(r.DocNo, []); acSoLines.get(r.DocNo).push(r); }
 
   const items = await sql`
     SELECT i.id, i.doc_no, i.linked_ac_dtlkey, i.description2
