@@ -210,9 +210,14 @@ async function main() {
   /* Did the cutover import actually run? The repo contains a script that
       printed a DONE line while writing nothing, so the movements are counted
       here rather than trusted from a log. */
-  const [cut] = await sql`SELECT COUNT(*)::int n, COALESCE(SUM(qty),0)::int units
+  /* The seeding WINDOW, not just the count. "CUTOVER ADJUSTMENT ONLY" is the
+     largest cause bucket, and it means "the delta was already there when the
+     ERP was seeded" — a claim nobody can weigh without knowing WHEN that was.
+     Read from the rows rather than from a runbook date. */
+  const [cut] = await sql`SELECT COUNT(*)::int n, COALESCE(SUM(qty),0)::int units,
+      MIN(created_at)::text first_at, MAX(created_at)::text last_at
     FROM scm.inventory_movements WHERE source_doc_type = 'AC_CUTOVER'`;
-  log(`cutover adjustment movements present in ERP: ${cut.n} (${cut.units} units)`);
+  log(`cutover adjustment movements present in ERP: ${cut.n} (${cut.units} units), seeded ${cut.first_at ?? "-"} .. ${cut.last_at ?? "-"} UTC`);
 
   /* scm.inventory_balances (migration 0084) sums TRANSFER as +qty with no
      compensating branch, and the FIFO trigger has no TRANSFER case at all. If
@@ -252,6 +257,11 @@ async function main() {
       if (erp && wh) movedSinceSnapshot.add(`${norm(erp)}|${wh.id}`);
     }
   }
+  /* Printed, because a cause bucket that reports zero is indistinguishable from
+     a cause bucket that never fires unless the input to it is shown. This is
+     the owner's "movement after the snapshot cut" bucket: how far the LIVE book
+     has walked away from the baseline the ERP was seeded from. */
+  log(`AutoCount cells that moved since the seeding baseline (ac-stock-balance.json.gz): ${movedSinceSnapshot.size}`);
 
   const keys = new Set([...acCell.keys(), ...erpCell.keys()]);
   const agree = [], differ = [], acOnly = [], erpOnly = [];
@@ -315,9 +325,20 @@ async function main() {
     WHERE company_id = ${CO} AND source_doc_no IN ('DO-2607-005','DO-2607-017')`;
   const knownCells = new Set(knownDo.map((r) => `${norm(r.item_code)}|${r.warehouse_id}`));
   log(`cells touched by the known double-ship pair (DO-2607-005 / DO-2607-017): ${knownCells.size}`);
+  /* The model-name widening is ONLY admissible while the traced documents are
+     still in the movement ledger. On 2026-09-07 they were not — the re-import
+     re-seeded the ledger and the pair matched zero rows — so the prefix test
+     was labelling 14 cells / 139 units "traced, owner decision pending" on the
+     strength of a product name alone, and pre-empting their real cause: every
+     one of them carries AC_CUTOVER movements and nothing else, which is a
+     seeding delta, not a double-ship. A double-ship IS a DO posting twice; a
+     cell with no DO movement cannot have one. Gate the widening on the
+     evidence so the label comes back by itself if the documents do. */
+  const doubleShipEvidence = knownCells.size > 0;
+  if (!doubleShipEvidence) log("   -> the traced pair matches NO movement rows, so the KETTA/NTYR/TRION/XAMMAR model widening is withheld: those cells are reported under whatever their movements actually show");
 
   const causeOf = (r) => {
-    if (knownCells.has(`${r.code}|${r.whId}`) || isKnownDoubleShip(r.code)) return "KNOWN DOUBLE-SHIP (SO-2606-019, DO-2607-005 + DO-2607-017) — traced, owner decision pending";
+    if (knownCells.has(`${r.code}|${r.whId}`) || (doubleShipEvidence && isKnownDoubleShip(r.code))) return "KNOWN DOUBLE-SHIP (SO-2606-019, DO-2607-005 + DO-2607-017) — traced, owner decision pending";
     if (dupCell.has(`${r.code}|${r.whId}`)) return "DOUBLE-POSTED DOCUMENT — a single-post document type posted this cell more than once";
     if (movedSinceSnapshot.has(`${r.code}|${r.whId}`)) return "MIGRATION CUT-OFF — AutoCount moved after the cutover snapshot the ERP was seeded from";
     const m = mvBy.get(`${r.code}|${r.whId}`);
