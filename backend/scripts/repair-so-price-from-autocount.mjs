@@ -17,7 +17,7 @@
  * RM 3,344.00, so copying the quantity alone left 1 x RM 3,344.00 - further
  * from the book (RM 7,988.00) than the RM 6,688.00 it started at. Quantity and
  * price are one fact about a line and repairing half of it is not half a
- * repair. Ledger: docs/bugs/0670.
+ * repair. Ledger: docs/bugs/0672.
  *
  * NEVER COMPUTED. The price written is the book's `UnitPrice` for that DtlKey,
  * read from the reconcile snapshot. Nothing here derives a price from a total,
@@ -89,12 +89,39 @@ async function main() {
       JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
      WHERE h.company_id = 1 AND i.linked_ac_dtlkey IS NOT NULL`;
 
-  const write = [], held = [], skippedForeign = [];
+  /* ONE AutoCount DtlKey CAN BE MANY ERP LINES, and that is the whole reason
+     this guard exists rather than a comment.
+
+     A sofa is a single SODTL row in the book and one ERP row PER COMPARTMENT -
+     CNR, 2A(RHF), 1NA and so on. `import-ac-outstanding-so.mjs` puts the
+     document's price on the FIRST piece and 0.00 on every sibling
+     (`up: first ? up : 0`), so the group's total is the book's line total and
+     the zeros are CORRECT, not missing data.
+
+     Without this guard the first dry-run of this script proposed writing the
+     whole sofa price onto every compartment: 441 lines across 302 orders,
+     +RM 2,216,501.00 of invented revenue, with DtlKey 901904 alone claimed by
+     five ERP rows. The reconcile checker never reports those because it
+     declares the sofa split (`if (split || sofa) D.price++`) - which is why the
+     honest count is 13 and not 441.
+
+     A group is therefore SKIPPED wholesale and named. Re-pricing a decomposed
+     sofa is the sofa tooling's job, not this script's: it would have to decide
+     which piece carries the money, and that is a decision, not a copy. */
+  const erpLinesPerKey = new Map();
+  for (const r of rows) erpLinesPerKey.set(String(r.k), (erpLinesPerKey.get(String(r.k)) ?? 0) + 1);
+
+  const write = [], held = [], skippedForeign = [], skippedSplit = new Map();
   for (const r of rows) {
     const b = book.get(String(r.k));
     if (!b) continue;
     const cur = Number(r.up);
     if (b.priceSen === cur) continue;
+    if (erpLinesPerKey.get(String(r.k)) > 1) {
+      const g = skippedSplit.get(String(r.k)) ?? { k: r.k, doc: r.doc_no, n: erpLinesPerKey.get(String(r.k)), codes: [] };
+      g.codes.push(r.item_code); skippedSplit.set(String(r.k), g);
+      continue;
+    }
     if (foreign.has(b.docNo)) { skippedForeign.push({ ...r, cur, book: b.priceSen, ac: b.docNo }); continue; }
     /* 空白不覆盖. The book holding 0.00 is the book holding no price. */
     if (b.priceSen === 0) { held.push({ ...r, cur, book: 0 }); continue; }
@@ -120,6 +147,16 @@ async function main() {
     log("");
     log(`SKIPPED, not in MYR - amounts are not comparable: ${skippedForeign.length}`);
     for (const f of skippedForeign) log(`   ${f.doc_no} key=${f.k} (AutoCount ${f.ac})`);
+  }
+  if (skippedSplit.size) {
+    const nRows = [...skippedSplit.values()].reduce((t, g) => t + g.codes.length, 0);
+    log("");
+    log(`SKIPPED, one book line decomposed into several ERP lines: ${skippedSplit.size} AutoCount line(s) / ${nRows} ERP row(s)`);
+    log("   The book's price sits on the FIRST piece and its siblings are 0.00 BY DESIGN, so the group already sums to the book's line. Re-pricing a decomposed sofa is a decision about which piece carries the money, not a copy.");
+    for (const g of [...skippedSplit.values()].slice(0, 15)) {
+      log(`   ${g.doc} key=${g.k} -> ${g.n} ERP lines: ${g.codes.slice(0, 5).join(", ")}`);
+    }
+    if (skippedSplit.size > 15) log(`   ... and ${skippedSplit.size - 15} more`);
   }
 
   const byDoc = new Map();
