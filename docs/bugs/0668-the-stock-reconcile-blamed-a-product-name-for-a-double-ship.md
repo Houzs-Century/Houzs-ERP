@@ -34,9 +34,12 @@ have one.
 so the label returns by itself if the documents return. When the widening is
 withheld the run says so on its own line rather than going quiet. Proved RED on
 the unfixed tree by run 34132704988 (14 cells / 139 units under the label, with
-`knownCells` printed as 0) and GREEN by run 34133261172 on the same production
-database and the same AutoCount snapshot: the label disappears and those 14
-cells / 139 units move to `CUTOVER ADJUSTMENT ONLY`, which is what their
-movements say. No other bucket moved.
+`knownCells` printed as 0) and GREEN by run 34133023365 on the same production
+database and the same AutoCount snapshot. The label disappears and the 14 cells
+land where their movements say they belong — 13 of them under `CUTOVER
+ADJUSTMENT ONLY` (162 cells / 1086 units -> 175 / 1211) and one, `NTYR-CS LTX
+PIL @ SARAWAK WAREHOUSE` (AutoCount 14, ERP absent), under `NO ERP MOVEMENT`
+(26 cells / 38 units -> 27 / 52). Cell totals are unchanged either side of the
+fix: 146 disagree + 27 AutoCount-only + 29 ERP-only = 202.
 
 **Ref.** chore/ac-stock-recut-0907, 2026-09-07.
