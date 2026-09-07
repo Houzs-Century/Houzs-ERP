@@ -483,6 +483,39 @@ if want("stamps"):
         linked = sum(1 for r in rows if (r["FromDocNo"] or "").strip())
         print("   %-3s edges=%-6d (%d carry a source document)" % (kind, len(rows), linked), flush=True)
 
+    # CHAIN CLOSURE. An IV is raised from a DO and a PI from a GR (measured on
+    # this cut: IV.FromDocType is DO on all 63 sources, PI.FromDocType is GR on
+    # all 60) — so "which sales order is this invoice for?" needs one more hop,
+    # and the parent DO/GR is usually OLDER than SINCE and therefore absent from
+    # the stamps above. Without this step 58 of 63 IV sources and 39 of 60 PI
+    # sources report as untraceable. One bounded lookup per 400 parents, header
+    # columns only, same pause.
+    parents = {"DO": set(), "GR": set()}
+    have = {k: {r["DocNo"] for r in stamps.get(k, [])} for k in ("DO", "GR")}
+    for child, parent_type in (("IV", "DO"), ("PI", "GR")):
+        for r in edges.get(child, []):
+            f = (r.get("FromDocNo") or "").strip()
+            if r.get("FromDocType") == parent_type and f and f not in have[parent_type]:
+                parents[parent_type].add(f)
+    closure = {}
+    for kind, dtl in (("DO", "DODTL"), ("GR", "GRDTL")):
+        want_docs = sorted(parents[kind])
+        rows = []
+        for i in range(0, len(want_docs), 400):
+            lit = "','".join(d.replace("'", "''") for d in want_docs[i:i + 400])
+            if not lit:
+                continue
+            rows.extend(rows_of(
+                "SELECT LTRIM(RTRIM(h.DocNo)) AS DocNo, MIN(d.FromDocType) AS FromDocType, "
+                "MIN(LTRIM(RTRIM(d.FromDocNo))) AS FromDocNo "
+                "FROM %s d JOIN %s h ON h.DocKey = d.DocKey "
+                "WHERE LTRIM(RTRIM(h.DocNo)) IN ('%s') AND d.FromDocNo IS NOT NULL "
+                "GROUP BY LTRIM(RTRIM(h.DocNo))" % (dtl, kind, lit)))
+            time.sleep(PAUSE)
+        closure[kind] = rows
+        print("   %-3s chain closure: %d of %d parent(s) resolved one hop further"
+              % (kind, len(rows), len(want_docs)), flush=True)
+
     # The receipt lives INSIDE the payload (exportedAt / since / source), not in
     # ac-reimport-manifest.json. ONLY=<section> rewrites that manifest from
     # whatever this invocation touched, and the ruler and remarks sections have
@@ -492,7 +525,7 @@ if want("stamps"):
     write_gz(
         "ac-doc-stamps.json.gz",
         {"rows": {"exportedAt": NOW, "since": SINCE, "source": DB,
-                  "stamps": stamps, "edges": edges}},
+                  "stamps": stamps, "edges": edges, "closure": closure}},
     )
 
 with open(os.path.join(OUT, "ac-reimport-manifest.json"), "w", encoding="utf-8") as f:

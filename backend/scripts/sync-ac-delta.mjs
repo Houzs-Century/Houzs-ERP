@@ -340,19 +340,41 @@ async function main() {
     claimed.add(String(si.id));
     linkPlan.push({ poItemId: pi.id, soItemId: si.id, poNo: pi.po_number, soNo: e.FromDocNo });
   }
+  /* The conversion CHAIN, measured rather than assumed. On the 2026-09-07 cut
+     the delta's own edges say: DO comes from SO, IV comes from **DO**, GR comes
+     from PO, PI comes from **GR**. So resolving an IV or a PI straight against
+     the sales/purchase order tables answers a question nobody asked — the
+     source has to be walked back one hop first, through the DO/GR edges in this
+     same snapshot. A hop this snapshot cannot make (the parent predates SINCE)
+     is reported as UNTRACEABLE, never as absent. */
+  const parentOf = {};
+  for (const kind of ["DO", "GR"]) {
+    const m = new Map();
+    for (const e of S.edges[kind] || []) { const f = txt(e.FromDocNo); if (f && !m.has(e.DocNo)) m.set(e.DocNo, { type: e.FromDocType, doc: f }); }
+    // the export's chain-closure rows: parents older than SINCE, so absent above
+    for (const e of (S.closure && S.closure[kind]) || []) { const f = txt(e.FromDocNo); if (f && !m.has(e.DocNo)) m.set(e.DocNo, { type: e.FromDocType, doc: f }); }
+    parentOf[kind] = m;
+  }
+  const inErp = (type, docNo) => (type === "PO" ? erpPoByAc.has(docNo) : type === "SO" ? erpSoByAc.has(docNo) : null);
   const convByType = {};
   for (const kind of ["DO", "IV", "GR", "PI"]) {
     const edges = (S.edges[kind] || []).filter((e) => txt(e.FromDocNo));
     const bySrc = new Map();
     for (const e of edges) { const k = `${e.FromDocType}|${e.FromDocNo}`; if (!bySrc.has(k)) bySrc.set(k, new Set()); bySrc.get(k).add(e.DocNo); }
-    let known = 0, unknown = 0;
+    let known = 0, unknown = 0, untraceable = 0;
     const unknownList = [];
     for (const [k] of bySrc) {
-      const [t, n] = k.split("|");
-      const hit = t === "PO" ? erpPoByAc.has(n) : erpSoByAc.has(n);
-      if (hit) known++; else { unknown++; unknownList.push(n); }
+      let [t, n] = k.split("|");
+      let hops = 0;
+      while (inErp(t, n) === null && hops < 3) {                 // walk DO -> SO, GR -> PO
+        const p = (parentOf[t] || new Map()).get(n);
+        if (!p) { t = null; break; }
+        t = p.type; n = p.doc; hops++;
+      }
+      if (t === null || inErp(t, n) === null) { untraceable++; continue; }
+      if (inErp(t, n)) known++; else { unknown++; unknownList.push(`${t} ${n}`); }
     }
-    convByType[kind] = { docs: new Set(edges.map((e) => e.DocNo)).size, sources: bySrc.size, known, unknown, unknownList };
+    convByType[kind] = { docs: new Set(edges.map((e) => e.DocNo)).size, sources: bySrc.size, from: [...new Set(edges.map((e) => e.FromDocType))].join("/"), known, unknown, untraceable, unknownList };
   }
   log("");
   log("TRANSACTION LINKS");
@@ -360,10 +382,11 @@ async function main() {
   log(`  SO->PO dedications this run would write      ${linkPlan.length}`);
   log(`  SO->PO edges that cannot be linked yet       ${linkMissing.length}`);
   for (const m of linkMissing.slice(0, 10)) log(`   ${m.po}: ${m.why}`);
-  log("  conversions on the delta documents:");
+  log("  conversions on the delta documents (the source is walked back to an SO or a PO):");
   for (const k of ["DO", "IV", "GR", "PI"]) {
     const c = convByType[k];
-    log(`   ${pad(k, 3)} ${rpad(c.docs, 4)} document(s) from ${rpad(c.sources, 4)} source(s) — ${c.known} source(s) the ERP has, ${c.unknown} it does not`);
+    log(`   ${pad(k, 3)} ${rpad(c.docs, 4)} doc(s) raised from ${rpad(c.sources, 4)} ${pad(c.from, 3)} source(s) — ${c.known} resolve to a document the ERP has, ${c.unknown} to one it does not, ${c.untraceable} untraceable from this snapshot`);
+    if (c.unknownList.length) log(`       not in the ERP: ${c.unknownList.slice(0, 8).join(", ")}${c.unknownList.length > 8 ? ` ... (+${c.unknownList.length - 8})` : ""}`);
   }
 
   if (!APPLY) {
