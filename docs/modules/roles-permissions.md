@@ -28,7 +28,7 @@ not this one.
 | declared in | `backend/src/services/permissions.ts` `PERMISSIONS[]` | `backend/src/services/pageAccess.ts` `PAGES[]` |
 | granted per | **ROLE** (`roles.permissions`, a JSON array) | **POSITION** (`position_page_access`) |
 | gates | API capability — `requirePermission("x")` | which MENUS and pages exist |
-| admin UI | Team > **Roles** (`frontend/src/pages/Roles.tsx`) | Team > **Positions** |
+| admin UI | Team > **Roles & Permissions** > **Roles** section (`frontend/src/pages/Roles.tsx` embedded by `pages/team/TeamRolesV2.tsx` since 2026-09-07; `/team?tab=roles` still opens it alone) | Team > **Positions** |
 | spec doc | this file | `docs/PERMISSION-MATRIX.md` |
 
 Positions gate menus, roles gate permissions. A position grant is **not**
