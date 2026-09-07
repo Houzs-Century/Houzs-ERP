@@ -862,3 +862,17 @@ and **NOT LOADED** if it fails — never `STOCK` or a bare dash, which are
 answers. `coverage` is a required prop on the shared drill-down; the rule, the
 five surfaces that fetch separately, and how to add a sixth are in
 `docs/modules/coverage-state.md` (trace: `docs/bugs/0603-a-drill-down-printed-stock-while-the-answer-was-still-loadin.md`).
+
+## Customer credits and the Customer Refund voucher (2026-09-07)
+
+`backend/src/scm/lib/customer-credits.ts` gains two source types for the
+refund voucher (payment-voucher.md §14): `CUSTOMER_REFUND` — a negative row
+written when a `CUSTOMER_REFUND` payment voucher POSTS against a document
+whose customer carries a debtor code, so the credit paid out in cash cannot
+be spent on the next invoice as well — and `CUSTOMER_REFUND_REVERSAL`, the
+positive row a cancel writes back. Both key `source_doc_no` to the voucher
+number. A document with no debtor code (2990's orders) writes no row: its
+credit never lived in this ledger. The invoice side is unchanged: a refund
+is allowed only on a CANCELLED invoice (its revenue already reversed by
+`reverseSiRevenue`); a live invoice is refused with the reason, because the
+paper for that is the credit note.

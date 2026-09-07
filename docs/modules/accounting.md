@@ -1003,3 +1003,15 @@ every persisted payment row in the shared PaymentsTable (SO detail SAVED
 mode; SI detail passes `receiptFor.persistedIds` since its rows ride DRAFT
 mode) — ensure-then-print, so payments recorded before the module existed
 heal their OR on first print.
+
+**Customer Refund (2026-09-07).** The refund to a customer is a payment
+voucher of purpose `CUSTOMER_REFUND` — payment-voucher.md §14 is the guide.
+Its entry is `customerRefundLines` in `backend/src/acc/rules.ts`, the mirror
+of `customerPaymentLines`: Dr AR (role `AR`, party CUSTOMER — the debtor
+code when the document carries one, the name always) / Cr the money account
+the refund leaves from, both legs stamped with the customer. It offsets the
+Cr AR the customer's own payment booked; 2990's customers carry no debtor
+code, so the two meet by name, which the voucher copies from the document.
+Migrations `20260907T1700_pv_purpose_customer_refund.sql` (the enum value)
+and `20260907T1705_pv_customer_refund_columns.sql` (source and customer on
+the header). Pinned by `backend/tests/pvCustomerRefund.test.ts`.
