@@ -12,7 +12,17 @@
 // rows, and its row count reported 7 of 7.
 import { describe, expect, it } from "vitest";
 
-import { planDocument, readBookDiscounts } from "../scripts/lib/po-discount-plan.mjs";
+import { currencyVerdict, planDocument, readBookDiscounts } from "../scripts/lib/po-discount-plan.mjs";
+
+/** Every document is MYR at rate 1 unless a case says otherwise — the shape the
+ *  book has on 9,390 of its 9,412 purchase orders. */
+const hdrs = (over = {}) => {
+  const m = new Map();
+  for (const [d, h] of Object.entries({ "PO-1": {}, "PO-IN": {}, "PO-OUT": {}, ...over })) {
+    m.set(d, { docNo: d, currency: "MYR", rate: 1, ...h });
+  }
+  return m;
+};
 
 /** PO-009948's real line, from the book: 1 x RM 1,880.00 totalled at RM 1,410.00. */
 const want = (over = {}) => new Map([
@@ -131,7 +141,7 @@ describe("the owner's blank rule: 空白不覆盖", () => {
       { dtlKey: 2, itemKey: "Y", qty: 1, unitPriceSen: null, subTotalSen: 75000 },
       { dtlKey: 3, itemKey: "Z", qty: null, unitPriceSen: 100000, subTotalSen: 75000 },
     ]]]);
-    const r = readBookDiscounts(lines, new Set(["PO-1"]));
+    const r = readBookDiscounts(lines, new Set(["PO-1"]), hdrs());
     expect(r.byDoc.size).toBe(0);
     expect(r.skipped).toHaveLength(3);
     expect(r.whole.lines).toBe(0);
@@ -142,7 +152,7 @@ describe("the owner's blank rule: 空白不覆盖", () => {
       { dtlKey: 1, itemKey: "X", qty: 1, unitPriceSen: 188000, subTotalSen: 141000 },
       { dtlKey: 2, itemKey: "Y", qty: 2, unitPriceSen: 50000, subTotalSen: 100000 },
     ]]]);
-    const r = readBookDiscounts(lines, new Set(["PO-1"]));
+    const r = readBookDiscounts(lines, new Set(["PO-1"]), hdrs());
     expect(r.whole).toMatchObject({ lines: 1, sen: 47000 });
     expect(r.inScope).toMatchObject({ docs: 1, lines: 1, sen: 47000 });
     expect([...r.byDoc.get("PO-1").keys()]).toEqual(["1"]);
@@ -153,9 +163,96 @@ describe("the owner's blank rule: 空白不覆盖", () => {
       ["PO-IN", [{ dtlKey: 1, itemKey: "X", qty: 1, unitPriceSen: 188000, subTotalSen: 141000 }]],
       ["PO-OUT", [{ dtlKey: 2, itemKey: "Y", qty: 1, unitPriceSen: 100000, subTotalSen: 75000 }]],
     ]);
-    const r = readBookDiscounts(lines, new Set(["PO-IN"]));
+    const r = readBookDiscounts(lines, new Set(["PO-IN"]), hdrs());
     expect(r.whole).toMatchObject({ lines: 2, sen: 47000 + 25000 });
     expect(r.inScope).toMatchObject({ docs: 1, lines: 1, sen: 47000 });
     expect(r.skipped).toEqual([]);
+  });
+});
+
+// ── the currency gate ────────────────────────────────────────────────────────
+// Added 2026-09-07, after this repair took RM 13,068.55 off HC-PO-009335 on a
+// false premise. That document is denominated in CHINESE YUAN at 0.619380; the
+// snapshot carried the MYR figures and the ERP holds the CNY ones, so the gap
+// between them looked like a 38.06% line discount and was written as one. The
+// book states DiscountAmt = 0.00 on every line of it.
+// 34,334.90 x 0.61938 = 21,266.35 — the discount WAS the rate.
+// Ledger: docs/bugs/0665-*.md.
+describe("currency: a rate is not a discount, and the difference is unknowable from a total", () => {
+  const cnyLine = [{ dtlKey: 851335, itemKey: "JM-CL JAC WP MP (K)", qty: 240, unitPriceSen: 6854, subTotalSen: 1018855 }];
+
+  it("REFUSES an in-scope document that is not the local currency, and plans nothing for it", () => {
+    const r = readBookDiscounts(
+      new Map([["PO-009335", cnyLine]]),
+      new Set(["PO-009335"]),
+      hdrs({ "PO-009335": { currency: "CNY", rate: 0.61938 } }),
+    );
+    expect(r.byDoc.size).toBe(0);
+    expect(r.inScope).toMatchObject({ docs: 0, lines: 0, sen: 0 });
+    expect(r.currencyRefused).toHaveLength(1);
+    expect(r.currencyRefused[0]).toMatchObject({ docNo: "PO-009335", kind: "foreign" });
+    expect(r.currencyRefused[0].why).toContain("CNY");
+    // The whole-book description still counts it. Hiding a refused document
+    // from the totals would make the refusal invisible in the very number a
+    // reader uses to sanity-check the run.
+    expect(r.whole).toMatchObject({ lines: 1 });
+  });
+
+  it("REFUSES the local currency at a rate that is not 1", () => {
+    const r = readBookDiscounts(
+      new Map([["PO-009335", cnyLine]]),
+      new Set(["PO-009335"]),
+      hdrs({ "PO-009335": { currency: "MYR", rate: 0.61938 } }),
+    );
+    expect(r.byDoc.size).toBe(0);
+    expect(r.currencyRefused[0]).toMatchObject({ kind: "foreign" });
+  });
+
+  it("REFUSES a snapshot that carries no currency — an absent column is not 'MYR'", () => {
+    // A cut made before the exporter carried CurrencyCode decodes these as null.
+    // Reading that as the local currency is the original defect, restated.
+    const r = readBookDiscounts(
+      new Map([["PO-009335", cnyLine]]),
+      new Set(["PO-009335"]),
+      new Map([["PO-009335", { docNo: "PO-009335", currency: null, rate: null }]]),
+    );
+    expect(r.byDoc.size).toBe(0);
+    expect(r.currencyRefused[0]).toMatchObject({ kind: "unknown" });
+  });
+
+  it("lets an MYR document at rate 1 through untouched", () => {
+    const r = readBookDiscounts(
+      new Map([["PO-1", [{ dtlKey: 1, itemKey: "X", qty: 1, unitPriceSen: 188000, subTotalSen: 141000 }]]]),
+      new Set(["PO-1"]),
+      hdrs(),
+    );
+    expect(r.currencyRefused).toEqual([]);
+    expect(r.inScope).toMatchObject({ docs: 1, lines: 1, sen: 47000 });
+  });
+
+  it("does not gate a document the migration never carried", () => {
+    // Out of scope is out of scope: a foreign PO nobody imported is not a
+    // refusal to report, it is simply not this script's business.
+    const r = readBookDiscounts(
+      new Map([["PO-OUT", cnyLine]]),
+      new Set(["PO-IN"]),
+      hdrs({ "PO-OUT": { currency: "CNY", rate: 0.61938 } }),
+    );
+    expect(r.currencyRefused).toEqual([]);
+    expect(r.byDoc.size).toBe(0);
+  });
+
+  it("REFUSES to run at all when the headers are not passed", () => {
+    // Required, not optional: a caller must not be able to reach the discount
+    // rule without the currency beside it.
+    expect(() => readBookDiscounts(new Map(), new Set(), undefined)).toThrow(/currency/i);
+  });
+
+  it("currencyVerdict names the three answers", () => {
+    expect(currencyVerdict({ currency: "MYR", rate: 1 }).kind).toBe("local");
+    expect(currencyVerdict({ currency: "myr", rate: 1.0000000001 }).kind).toBe("local");
+    expect(currencyVerdict({ currency: "CNY", rate: 0.61938 }).kind).toBe("foreign");
+    expect(currencyVerdict({ currency: "", rate: null }).kind).toBe("unknown");
+    expect(currencyVerdict(undefined).kind).toBe("unknown");
   });
 });

@@ -87,6 +87,14 @@ export function decodeSnapshot(snap) {
   const num = (v) => (v === "" || v == null ? null : Number(v));
   const sen = (v) => (v == null || v === "" ? null : Math.round(Number(v) * 100));
 
+  /* Present ONLY on a snapshot cut 2026-09-07 or later.  `currency` / `rate` /
+     `docTotal` / `docSubTotal` came in after a currency-blind checker read an
+     exchange rate as a line discount and took RM 13,068.55 off a live CNY
+     purchase order (docs/bugs/0665-*.md).  An older cut decodes them as NULL,
+     which is the point: a consumer that needs the currency can then REFUSE,
+     instead of reading an absent column as "MYR" — the mistake in miniature. */
+  const hasCurrency = Object.hasOwn(hIdx, "currency") && Object.hasOwn(hIdx, "rate");
+
   const book = {};
   for (const [t, payload] of Object.entries(snap.types)) {
     const headers = new Map();
@@ -95,8 +103,14 @@ export function decodeSnapshot(snap) {
         docNo: r[hIdx.docNo],
         docDate: r[hIdx.docDate],
         cancelled: r[hIdx.cancelled] === "T",
+        /* LOCAL currency (MYR) — the books' own figure, unchanged. */
         totalSen: sen(r[hIdx.netTotal]),
         lineCount: Number(r[hIdx.lineCount]),
+        /* DOCUMENT currency. On a MYR document these equal the two above; on a
+           foreign one they are what the document itself says. */
+        currency: hasCurrency ? (r[hIdx.currency] || null) : null,
+        rate: hasCurrency ? num(r[hIdx.rate]) : null,
+        docTotalSen: Object.hasOwn(hIdx, "docTotal") ? sen(r[hIdx.docTotal]) : null,
       });
     }
     const lines = new Map();
@@ -110,7 +124,10 @@ export function decodeSnapshot(snap) {
         hasCode: r[lIdx.hasCode] === "1",
         qty: num(r[lIdx.qty]),
         unitPriceSen: sen(r[lIdx.unitPrice]),
+        /* LOCAL currency (MYR). `docSubTotalSen` is the same line stated in the
+           DOCUMENT's currency, and is null on a snapshot cut before 2026-09-07. */
         subTotalSen: sen(r[lIdx.subTotal]),
+        docSubTotalSen: Object.hasOwn(lIdx, "docSubTotal") ? sen(r[lIdx.docSubTotal]) : null,
         transferedQty: num(r[lIdx.transferedQty]),
         fromDocType: r[lIdx.fromDocType],
         fromDocNo: r[lIdx.fromDocNo],

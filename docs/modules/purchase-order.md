@@ -775,6 +775,43 @@ Two things it deliberately leaves alone: `unit_price_sen` (AutoCount's own
 valuation does not move). A GRN raised AFTER a repair inherits the corrected
 `discount_sen` through `grns.ts:1872`; one raised before keeps its own total.
 
+**⚠ CURRENCY IS A REFUSAL, NOT A CONVERSION — and this cost RM 13,068.55 on a
+live document before it was one.** The repair ran against production on
+2026-09-07 (run 34116301278) and got nine of its ten orders right. The tenth,
+`HC-PO-009335`, is denominated in **CHINESE YUAN** at 0.619380:
+
+| side | what it held |
+|---|---|
+| the snapshot | `ISNULL(h.LocalNetTotal, h.NetTotal)` / `ISNULL(d.LocalSubTotal, d.SubTotal)` — the **MYR** figures, RM 21,266.35 |
+| the ERP | the **document-currency** figures, 34,334.90 CNY, with `import-ac-outstanding-po.mjs:401` hard-coding `'MYR'` into `purchase_orders.currency` regardless |
+
+`34,334.90 x 0.61938 = 21,266.35`, so the gap between the two sides was read as a
+"38.06% line discount" and written as one. The book's five lines all carry
+`DiscountAmt = 0.00`. Reverted by
+`backend/scripts/revert-po-cny-false-discount.mjs` +
+`.github/workflows/revert-po-cny-false-discount.yml`. Ledger entry `0665`.
+
+**A discount and an exchange rate are not distinguishable from a total alone**, so
+the repair no longer tries. `scripts/lib/po-discount-plan.mjs` exports
+`currencyVerdict`, and `readBookDiscounts` takes the book's PO headers as a
+REQUIRED argument so no caller can reach the discount rule without the currency
+beside it. Three verdicts, and only `local` lets money move:
+
+| verdict | condition | what happens |
+|---|---|---|
+| `local` | `MYR` at rate 1 | the two sides mean the same thing; the discount rule applies |
+| `foreign` | any other currency, or a rate that is not 1 | the document is REFUSED and listed. Repair it by hand or not at all |
+| `unknown` | the snapshot predates the currency columns | the WHOLE RUN is refused — a script that cannot see the currency cannot claim a document does not have one |
+
+The snapshot carries `currency`, `rate` and `docTotal` per header and
+`docSubTotal` per line since 2026-09-07, APPENDED beside the local-currency
+`netTotal` / `subTotal` rather than replacing them, so a consumer states which of
+the two it means. `decodeSnapshot` indexes by NAME, so an older cut decodes the
+new fields as null — which is what makes the `unknown` refusal possible instead
+of an absent column silently reading as "MYR". Population on the 2026-09-07 book:
+**22 CNY purchase orders out of 9,412, exactly 1 of them in the migrated scope;
+all 13,366 sales orders are MYR.**
+
 ### The two AutoCount-mirror header columns (mig `20260907T1026_ac_header_notcarried_columns.sql`)
 
 `scm.purchase_orders.attention` (AutoCount `PO.Attention`, filled on 300 of the

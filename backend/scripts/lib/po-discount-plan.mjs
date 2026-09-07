@@ -116,19 +116,82 @@ export function planDocument({ wantByKey, doc, rm }) {
   return { writes, header, refusals, plannedSubtotal };
 }
 
+/** The ERP's local currency. `import-ac-outstanding-po.mjs:401` hard-codes it
+ *  into `purchase_orders.currency` for every migrated purchase order. */
+export const LOCAL_CURRENCY = 'MYR';
+
+/**
+ * Is this document one whose totals may be compared against the ERP's at all?
+ *
+ * A DISCOUNT AND AN EXCHANGE RATE ARE NOT DISTINGUISHABLE FROM A TOTAL ALONE,
+ * and on 2026-09-07 that cost RM 13,068.55 on a live purchase order: the
+ * snapshot carried `LocalNetTotal` (MYR) while the ERP held the document's own
+ * CNY figures, so `PO-009335` looked 38.06% "discounted" and the repair booked
+ * the difference. 34,334.90 x 0.61938 = 21,266.35 — the discount WAS the rate.
+ * Ledger: docs/bugs/0665-*.md.
+ *
+ * So the rule is refusal, not cleverness. Three verdicts, and only one of them
+ * lets money move:
+ *
+ *   local    the document is in MYR at rate 1 — the two sides mean the same
+ *            thing and the comparison is sound.
+ *   foreign  the document is in another currency, or at a rate that is not 1.
+ *            REFUSED. The gap between the two totals may be a discount, may be
+ *            the rate, may be both; nothing here can tell them apart.
+ *   unknown  the snapshot predates the currency columns, so the document's
+ *            currency was never exported. ALSO REFUSED — an absent column read
+ *            as "MYR" is the original defect, restated.
+ */
+export function currencyVerdict(header) {
+  if (!header) return { kind: 'unknown', why: 'the book states no header for this document' };
+  const code = (header.currency ?? '').trim().toUpperCase();
+  const rate = header.rate;
+  if (!code || rate == null) {
+    return {
+      kind: 'unknown',
+      why: 'this snapshot carries no currency for the document — re-cut it with a version of ' +
+        'export-ac-reconcile-truth.mjs that exports CurrencyCode and CurrencyRate',
+    };
+  }
+  if (code !== LOCAL_CURRENCY || Math.abs(rate - 1) > 1e-9) {
+    return { kind: 'foreign', why: `the document is in ${code} at rate ${rate}, and the ERP holds ${LOCAL_CURRENCY}` };
+  }
+  return { kind: 'local', why: `${code} at rate ${rate}` };
+}
+
 /**
  * The AutoCount side: every PO line whose own amount differs from
  * qty x unit price. THE OWNER'S BLANK RULE, 2026-09-07 —
  * 「保留 ERP 的价钱 — 空白不覆盖」 — a book line missing its qty, unit price or
  * amount is SKIPPED and reported, never read as zero. Treating a missing export
  * column as RM 0.00 would manufacture a 100% discount out of an absent field.
+ *
+ * `bookPoHeaders` IS REQUIRED, and it is required rather than optional so that
+ * no caller can reach the discount rule without the currency beside it. A
+ * document that is not MYR at rate 1 — or whose currency this snapshot never
+ * carried — never reaches `byDoc` at all; it comes back in `currencyRefused`,
+ * to be printed. See `currencyVerdict` for why this is a refusal and not a
+ * conversion.
  */
-export function readBookDiscounts(bookPoLines, scopePo) {
+export function readBookDiscounts(bookPoLines, scopePo, bookPoHeaders) {
+  if (!(bookPoHeaders instanceof Map)) {
+    throw new Error('readBookDiscounts needs the PO headers to read each document\'s currency — see docs/bugs/0665-*.md');
+  }
   const byDoc = new Map();
   const skipped = [];
+  const currencyRefused = [];
   const whole = { lines: 0, docs: new Set(), sen: 0 };
 
   for (const [docNo, lines] of bookPoLines) {
+    /* The currency gate comes FIRST, before a single line of this document is
+       read as a discount. `whole` deliberately still counts it: the whole-book
+       figure is a description of the book, not a plan, and hiding a foreign
+       document from it would make the refusal invisible in the totals. */
+    const verdict = scopePo.has(docNo) ? currencyVerdict(bookPoHeaders.get(docNo)) : null;
+    const blocked = verdict != null && verdict.kind !== 'local';
+    if (blocked) {
+      currencyRefused.push({ docNo, kind: verdict.kind, why: verdict.why });
+    }
     for (const l of lines) {
       if (l.qty == null || l.unitPriceSen == null || l.subTotalSen == null) {
         if (scopePo.has(docNo)) {
@@ -142,6 +205,7 @@ export function readBookDiscounts(bookPoLines, scopePo) {
       whole.docs.add(docNo);
       whole.sen += undiscSen - l.subTotalSen;
       if (!scopePo.has(docNo)) continue;
+      if (blocked) continue;
       if (!byDoc.has(docNo)) byDoc.set(docNo, new Map());
       byDoc.get(docNo).set(String(l.dtlKey), {
         dtlKey: String(l.dtlKey), item: l.itemKey, qty: l.qty,
@@ -155,5 +219,5 @@ export function readBookDiscounts(bookPoLines, scopePo) {
     lines: [...byDoc.values()].reduce((s, m) => s + m.size, 0),
     sen: [...byDoc.values()].reduce((s, m) => s + [...m.values()].reduce((t, x) => t + (x.undiscSen - x.bookSen), 0), 0),
   };
-  return { byDoc, skipped, whole, inScope };
+  return { byDoc, skipped, currencyRefused, whole, inScope };
 }
