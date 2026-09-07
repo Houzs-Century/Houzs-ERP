@@ -41,7 +41,12 @@ export async function grnReverseWouldGoNegative(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- unchanged from grns.ts: the PostgREST-shaped client has no honest type until schema.pg.ts covers the SCM tables.
   sb: any,
   warehouseId: string | null,
-  lines: Array<{ qty_accepted: number; item_code: string; item_group?: string | null; variants?: VariantAttrs | null }>,
+  /* qty_accepted NULLABLE, and qty below likewise: both are read straight off a
+     PostgREST `any` client whose columns accept NULL, and the `?? 0` guards are
+     the only thing standing between a null and a wrong verdict. Typing them
+     `number` because a caller's hand-written cast says so is what makes the
+     linter call those guards redundant. Same reasoning as GrnCancelLine. */
+  lines: Array<{ qty_accepted: number | null; item_code: string; item_group?: string | null; variants?: VariantAttrs | null }>,
 ): Promise<{ error: string; message: string } | null> {
   if (!warehouseId) return null;
   // Sum the qty we'd reverse OUT per (item_code, variant_key) bucket.
@@ -73,7 +78,7 @@ export async function grnReverseWouldGoNegative(
     .in('item_code', itemCodes);
   if (error) return null; // best-effort: don't block on a balance read failure
   const onHand = new Map<string, number>();
-  for (const r of (balRows ?? []) as Array<{ item_code: string; variant_key: string | null; qty: number }>) {
+  for (const r of (balRows ?? []) as Array<{ item_code: string; variant_key: string | null; qty: number | null }>) {
     onHand.set(`${r.item_code}::${r.variant_key ?? ''}`, Number(r.qty ?? 0));
   }
   for (const [k, b] of needByBucket) {
