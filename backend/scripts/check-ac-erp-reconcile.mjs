@@ -101,7 +101,7 @@ import { mapSpecial as mapBedframeSpecial } from "./lib/bedframe-special-map.mjs
 import { K as SK, mapPhrase as mapSofaPhrase, skey } from "./lib/sofa-special-map.mjs";
 import { soProcessingDateFragment } from "./lib/so-processing-date.mjs";
 import {
-  AGREE, AXES, BOOK_BLANK, DIFFER, ERP_BLANK, PENDING, UNREADABLE, VARIANT_GROUPS, VERDICTS,
+  AGREE, AXES, BOOK_BLANK, DIFFER, ERP_BLANK, PENDING, RECORDED, UNREADABLE, VARIANT_GROUPS, VERDICTS,
   compareLine, decodeBook, runSelfTest,
 } from "./lib/variant-reconcile.mjs";
 
@@ -119,7 +119,13 @@ const SNAP = path.join(DATA, "ac-reconcile-truth.json.gz");
 const MAP_CSV = path.join(DATA, "autocount-erp-mapping-1561.csv");
 const CO = Number(process.env.COMPANY_ID || 1); // AED_HOUZS is company 1
 const MAX_AGE_DAYS = Number(process.env.MAX_SNAPSHOT_AGE_DAYS || 2);
-const SHOW = 20; // the owner asked for the first 20 offenders each way
+/* The owner asked for the first 20 offenders each way, and 20 is the right
+   default for a status read. It is overridable because ONE axis needs the whole
+   list rather than a sample: a sofa compartment disagreement is adjudicated by a
+   person reading both builds piece by piece against the slip
+   (sofa-slip-notation — the photo and the Desc2 are read TOGETHER), and
+   "... 12 more" is exactly the 12 he cannot adjudicate. */
+const SHOW = Math.max(1, Number(process.env.SHOW || 20));
 
 const log = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 const plain = (m) => console.log(m);
@@ -610,6 +616,7 @@ function reportVariants(t, label, rows, desc2) {
       if (cell.verdict === DIFFER || (cell.verdict === ERP_BLANK && proceeded)) {
         offenders[key].push({
           differ: cell.verdict === DIFFER,
+          proceeded,
           line: `${where}: ${both}${proceeded ? "" : "  [NOT PROCEEDED]"}`,
         });
       } else if (cell.verdict === BOOK_BLANK) {
@@ -634,20 +641,25 @@ function reportVariants(t, label, rows, desc2) {
     return { t, pop, tally, comparable: false };
   }
 
-  plain("axis                 |            PROCEEDED (the backlog)             |          not proceeded (blank is OK)");
-  plain("                     |  agree  ERPblank  bookblank  differ  pend  unread |  agree  ERPblank  bookblank  differ  pend  unread");
+  plain("axis                 |                 PROCEEDED (the backlog)                  |             not proceeded (blank is OK)");
+  plain("                     |  agree  ERPblank  bookblank  differ  pend  unread  recorded |  agree  ERPblank  bookblank  differ  pend  unread  recorded");
   for (const a of AXES) {
     const y = tally[a.key].yes;
     const n = tally[a.key].no;
     const seen = VERDICTS.reduce((s2, v) => s2 + y[v] + n[v], 0);
     if (!seen) continue;
-    const cells = (h) => [h[AGREE], h[ERP_BLANK], h[BOOK_BLANK], h[DIFFER], h[PENDING], h[UNREADABLE]]
-      .map((x, i) => String(x).padStart([6, 9, 10, 7, 5, 7][i]));
+    const cells = (h) => [h[AGREE], h[ERP_BLANK], h[BOOK_BLANK], h[DIFFER], h[PENDING], h[UNREADABLE], h[RECORDED]]
+      .map((x, i) => String(x).padStart([6, 9, 10, 7, 5, 7, 10][i]));
     plain(`${a.label.padEnd(20)} | ${cells(y).join(" ")} | ${cells(n).join(" ")}`);
   }
   plain(
     "ERPblank on a PROCEEDED order is the only column that is WORK. bookblank is the ERP holding a value the " +
       "book never stated — an operator filled it in, which is allowed. pend = the book says TBC/KIV.",
+  );
+  plain(
+    "recorded = the book asks for a PRICED special the line does not tick, and variants.specialsRecorded already " +
+      "carries it: the owner's 2026-09-03 ruling 甲 applied — the factory sees the option and the document's money " +
+      "did not move. DECIDED work, not backlog, and it is broken out so it can never be summed into the DIFFER column again.",
   );
   if (unkeyedSofa) {
     plain(
@@ -663,9 +675,19 @@ function reportVariants(t, label, rows, desc2) {
     /* Differences first: both sides state something and they disagree, which is
        the only shape that needs a human to adjudicate rather than a fill. */
     list.sort((x, y) => Number(y.differ) - Number(x.differ));
+    /* SPLIT THE DIFFER COUNT BY PROCEEDED, in the ANNOTATION and not only in the
+       table above. This headline is the line that gets quoted into briefs and
+       status notes, and it was summing the two halves the table had just been at
+       pains to separate: sofa compartments read "32 DIFFER" on 2026-09-07 when
+       ONE of the 32 sat on a proceeded order and 31 did not. The owner's rule
+       「还没proceed还没确认的就可以直接放空的」 has already been broken twice by a
+       lumped number, and both times the lump came from a line like this one. */
+    const dif = list.filter((x) => x.differ);
+    const difYes = dif.filter((x) => x.proceeded).length;
     log(
-      `${t} VARIANT ${a.label} — ${list.filter((x) => x.differ).length} DIFFER, ` +
-        `${list.filter((x) => !x.differ).length} ERP blank on a proceeded order`,
+      `${t} VARIANT ${a.label} — ${difYes} DIFFER on a PROCEEDED order` +
+        (dif.length - difYes ? ` (+${dif.length - difYes} on orders not yet proceeded)` : "") +
+        `, ${list.filter((x) => !x.differ).length} ERP blank on a proceeded order`,
     );
     for (const row of list.slice(0, SHOW)) plain(`      ${row.line}`);
     if (list.length > SHOW) plain(`      ... ${list.length - SHOW} more`);
