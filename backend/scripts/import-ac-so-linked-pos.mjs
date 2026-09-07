@@ -28,6 +28,7 @@ import fs from "node:fs";
 import zlib from "node:zlib";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { bookCurrency } from "./lib/ac-currency.mjs";
 import postgres from "postgres";
 import { buildFabricColourIndex, isPendingColour } from "./lib/fabric-colour-match.mjs";
 import { SOFA_MODEL_ALIAS, parseSofa } from "./lib/parse-sofa.mjs";
@@ -331,6 +332,9 @@ async function main() {
     plan.push({
       acDoc: doc, supId, docDate: (first.DocDate || "").slice(0, 10) || null,
       ref: first.Ref || null, items,
+      /* THE BOOK'S OWN CURRENCY, not the constant 'MYR' the INSERT below used to
+         carry. One rule, one home: lib/ac-currency.mjs. */
+      currency: bookCurrency(first),
       status: allRecv ? "RECEIVED" : anyRecv ? "PARTIALLY_RECEIVED" : "SUBMITTED",
     });
   }
@@ -387,7 +391,7 @@ async function main() {
           (po_number, linked_ac_docno, supplier_id, status, po_date, expected_at, purchase_location_id, currency,
            subtotal_sen, tax_sen, total_sen, revision, company_id, created_by, notes)
         VALUES (${poNo}, ${p.acDoc}, ${p.supId}, ${p.status}, ${p.docDate ?? sql`CURRENT_DATE`}, ${headerEta},
-                ${p.items[0]?.wh ?? null}, 'MYR', ${subtotal}, 0, ${subtotal}, 1, 1, ${SYS_USER},
+                ${p.items[0]?.wh ?? null}, ${p.currency}, ${subtotal}, 0, ${subtotal}, 1, 1, ${SYS_USER},
                 ${"imported from AutoCount " + p.acDoc + " (already received; stock came in with the balance snapshot)"})
         RETURNING id`;
       for (const it of p.items) {

@@ -1,0 +1,80 @@
+name: Repair migrated document currency (plan by default)
+
+# Puts the AutoCount book's own CurrencyCode onto the migrated documents whose
+# ERP row says 'MYR' because a script hard-coded it.
+#
+# Measured on the committed header cut (data/ac-doc-headers.json.gz, 2026-09-07
+# 17:36+08): the book holds 22 CNY purchase orders out of 9,408 and 0 non-MYR
+# sales orders out of 13,365. ONE of the 22 is inside the migrated scope —
+# HC-PO-009335 — and it reads 'MYR'. Owner ruling, 2026-09-07: 改成 CNY.
+#
+# ONE COLUMN, `currency`. No amount, no rate, no line, no downstream document.
+# scm.purchase_orders has no exchange_rate column at all; conversion happens on
+# the GRN / PI / PV, each carrying its own currency and rate (src/scm/lib/fx.ts),
+# so nothing already stored is re-interpreted by this.
+#
+# PRECONDITION: migration 20260907T2330 must have been applied — it adds 'CNY' to
+# scm.currency_code. The script re-reads pg_enum and REFUSES by name rather than
+# discovering a failed UPDATE halfway through.
+#
+# PLAN BY DEFAULT. `apply=1` also requires the CONFIRM phrase, which this
+# workflow supplies only on the apply path.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      apply:
+        description: "1 to write, else PLAN only"
+        required: false
+        default: "0"
+        type: string
+      company_id:
+        description: "Company (1 = Houzs Century)"
+        required: false
+        default: "1"
+
+concurrency:
+  group: repair-migrated-currency-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/repair-migrated-currency.mjs
+        env:
+          MODE: ${{ inputs.apply == '1' && 'apply' || 'plan' }}
+          CONFIRM: ${{ inputs.apply == '1' && 'I HAVE REVIEWED THE CURRENCY PLAN' || '' }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/repair-migrated-currency.mjs
+        env:
+          MODE: ${{ inputs.apply == '1' && 'apply' || 'plan' }}
+          CONFIRM: ${{ inputs.apply == '1' && 'I HAVE REVIEWED THE CURRENCY PLAN' || '' }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

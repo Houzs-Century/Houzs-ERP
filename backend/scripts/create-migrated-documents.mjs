@@ -59,7 +59,8 @@ async function doGrns() {
   log("═══ GRN — receipts AutoCount already made ═══");
   const lines = await sql`SELECT i.id, i.purchase_order_id, i.item_code, i.material_name,
       i.received_qty, i.unit_price_sen, i.item_group, i.variants, i.warehouse_id,
-      p.po_number, p.linked_ac_docno, p.supplier_id, p.purchase_location_id, p.linked_ac_grn_docnos
+      p.po_number, p.linked_ac_docno, p.supplier_id, p.purchase_location_id, p.linked_ac_grn_docnos,
+      p.currency
     FROM scm.purchase_order_items i JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
     WHERE p.company_id = ${CO} AND p.linked_ac_docno IS NOT NULL AND COALESCE(i.received_qty,0) > 0
     ORDER BY p.po_number, i.id`;
@@ -138,7 +139,16 @@ async function doGrns() {
           (grn_number, purchase_order_id, supplier_id, warehouse_id, status, posted_at, received_at,
            currency, company_id, created_by, notes, migrated_no_stock, linked_ac_docno)
         VALUES (${grnNo}, ${g.po.purchase_order_id}, ${g.po.supplier_id},
-                ${g.items[0].warehouse_id ?? g.po.purchase_location_id}, 'POSTED', NOW(), CURRENT_DATE, 'MYR',
+                /* THE RECEIPT IS IN THE ORDER'S CURRENCY, not a constant. This
+                   is the same rule routes/grns.ts already applies to a GRN raised
+                   in the app (resolveGrnFx: "the GRN inherits its currency from
+                   the source PO"); the migration writer used to hard-code 'MYR'
+                   and so disagreed with the live path on a foreign order.
+                   exchange_rate is deliberately NOT set here — the column
+                   defaults to 1 and a rate this script invented would be a
+                   fabricated one; a real receipt is gated by
+                   assertForeignRatePostable instead. */
+                ${g.items[0].warehouse_id ?? g.po.purchase_location_id}, 'POSTED', NOW(), CURRENT_DATE, ${g.po.currency ?? "MYR"},
                 ${CO}, ${SYS_USER},
                 ${grnNote(g)},
                 true, ${g.po.linked_ac_docno})

@@ -823,6 +823,40 @@ of an absent column silently reading as "MYR". Population on the 2026-09-07 book
 **22 CNY purchase orders out of 9,412, exactly 1 of them in the migrated scope;
 all 13,366 sales orders are MYR.**
 
+**THE LABEL ITSELF WAS REPAIRED ON 2026-09-07 — owner ruling 改成 CNY.** Everything
+above stays true of the money; what changed is that `purchase_orders.currency`
+now says what the book says.
+
+- `scm.currency_code` gained the label `CNY`
+  (`backend/src/db/migrations-pg/20260907T2330_currency_code_cny.sql`). `CNY`
+  and the older `RMB` are one currency under two names, and BOTH are valid: the
+  migration copies the book's code and never translates it. `VALID_CURRENCIES`
+  (`src/scm/lib/purchase-doc-vocab.ts`) and the PO / GRN / PI currency dropdowns
+  carry CNY for the same reason — a stored code the API rejects makes the
+  document uneditable, and one the dropdown omits renders BLANK and is silently
+  rewritten by the next save.
+- The four writers that hard-coded `'MYR'` now import
+  `scripts/lib/ac-currency.mjs`. `export-ac-reimport.py` carries `h.CurrencyCode`
+  on the SO lane and both PO lanes — **which only takes effect on a re-cut**; an
+  older cut has no column and every import defaults to MYR *and says so in its
+  own log*, rather than defaulting in silence.
+- **NO `scm.currencies` ROW WAS SEEDED FOR CNY, deliberately.** `rate_to_myr` is
+  `NOT NULL DEFAULT 1` and `isPositiveFiniteRate(1)` is true, so a seeded row
+  would let `assertForeignRatePostable` pass a yuan receipt costed as ringgit —
+  the exact R2 mis-cost the guard exists to refuse. With no master row the guard
+  reads a null rate and BLOCKS until a real one is entered. (The pre-existing
+  **RMB row carries rate_to_myr = 1.000000** for that same seed reason, which is
+  a latent hazard; nothing in production holds RMB today.)
+- **What the label change reaches.** `scm.purchase_orders` has NO
+  `exchange_rate` column, so nothing already stored is re-interpreted. The FUTURE
+  is what changes: `resolveGrnFx` copies the PO's currency onto a new GRN and the
+  R2 guard then refuses that receipt until a CNY rate exists. Measured before
+  applying: 0 GRNs and 0 purchase invoices exist against `HC-PO-009335`.
+
+Repair: `scripts/repair-migrated-currency.mjs` +
+`.github/workflows/repair-migrated-currency.yml` (plan by default, CONFIRM-gated,
+`RE-RUN: inert`). Ledger entry `0674`.
+
 **The read-only reconcile checker makes the OPPOSITE choice, on purpose.**
 `check-ac-erp-reconcile.mjs` compares the book's DOCUMENT total
 (`h.docTotalSen ?? h.totalSen`) against `purchase_orders.total_sen`, which is
