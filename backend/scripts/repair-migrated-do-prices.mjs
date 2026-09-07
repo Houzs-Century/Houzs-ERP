@@ -101,13 +101,23 @@ try {
 
   const noLink = rows.filter((r) => !r.so_item_id);
   const zeroSource = rows.filter((r) => r.so_item_id && !(Number(r.so_unit_price_sen) > 0));
-  const fixable = rows.filter((r) => r.so_item_id && Number(r.so_unit_price_sen) > 0);
+  /* A line that delivers NOTHING has a correct line total of zero, whatever the
+     sales order charges per unit. The repair writes qty x unit_price, so on
+     qty = 0 it writes 0, the row still matches this query's `line_total_sen = 0`
+     and the shape check below reads it back as "STILL zero" — a red apply and a
+     plan that re-proposes the same rows for ever. Measured 2026-09-07: of 65
+     lines planned, 2 (HC-DO-001953, HC-DO-002817) printed `-> local_total_sen 0`
+     in the plan and were the exact 2 the verification then failed on. */
+  const zeroQty = rows.filter((r) => r.so_item_id && Number(r.so_unit_price_sen) > 0 && !(Number(r.qty) > 0));
+  const fixable = rows.filter((r) => r.so_item_id && Number(r.so_unit_price_sen) > 0 && Number(r.qty) > 0);
 
   log(`  no so_item_id — REPORTED, never guessed : ${noLink.length}`);
   log(`  sales-order line is itself 0 — left alone: ${zeroSource.length}`);
+  log(`  delivers 0 unit(s) — zero IS the total  : ${zeroQty.length}`);
   log(`  repairable from the sales order          : ${fixable.length}`);
   for (const r of noLink.slice(0, 15)) log(`    UNLINKED  ${r.do_number}  line ${r.id}`);
   for (const r of zeroSource.slice(0, 15)) log(`    SO-IS-ZERO ${r.do_number}  line ${r.id}`);
+  for (const r of zeroQty.slice(0, 15)) log(`    ZERO-QTY  ${r.do_number}  line ${r.id}  qty=${r.qty}`);
 
   const byDo = new Map();
   for (const r of fixable) {
