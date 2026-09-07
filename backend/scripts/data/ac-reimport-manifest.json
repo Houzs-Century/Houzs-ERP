@@ -16,5 +16,11 @@
     "ac-po-fromsodtlkey.json.gz": 697,
     "ac-outstanding-now.json.gz": 4,
     "ac-so-remarks.json.gz": 2786
+  },
+  "last_run": {
+    "at": "2026-09-07 17:36:02.097289",
+    "sections": [
+      "hdr"
+    ]
   }
 }

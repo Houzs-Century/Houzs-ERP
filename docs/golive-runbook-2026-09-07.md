@@ -365,7 +365,7 @@ criterion; the readiness doc explains how to read each section.
 | 核对哪些数据没有 / 是否本来就该没有 | Phase G + readiness doc | yes |
 | tally stock balance + amount | E1-E3, then G | yes |
 | MRP / COGS 自动跟着 tally | F2-F5 | partly, §5.1 |
-| sales agent 跟着我们的逻辑 | — | **no tool, §5.4** |
+| sales agent 跟着我们的逻辑 | `sync-ac-delta` LANES=hdr / hdrstaff | yes, §5.4 |
 | SKU 跟着我们的逻辑 | `align-open-skus`, `align-seed-skus`, `reconcile-sku` | yes, but all stale |
 
 ---
@@ -460,17 +460,56 @@ Labelled LIKELY, not PROVEN: D1 may already cover the requirement via the shared
 parser. **Confirm with the owner what bedframe decomposition should produce
 beyond what D1 does** before treating this as a gap to build.
 
-### 5.4 Sales agent has no cutover tool (PROVEN, by absence)
+### 5.4 Sales agent has no cutover tool — CLOSED 2026-09-07 (header master lane)
 
 The owner's last line asks whether incoming orders can follow our own logic for
 sales agents and SKUs. For SKU there are tools (`align-open-skus`,
 `align-seed-skus`, `reconcile-sku`) — all stale, all in the 65.
 
-For sales agent there is only `salesperson-picker-roster-check`, which has
-**never been run** (0 runs, entire history). There is no backfill or alignment
-workflow that assigns sales agents on imported orders. If the 98 incoming SOs
-need an agent attached by our rules rather than AutoCount's text, **that work
-has no tool and cannot be done tonight by dispatch.**
+For sales agent there was only `salesperson-picker-roster-check`, which has
+**never been run** (0 runs, entire history). There was no backfill or alignment
+workflow that assigns sales agents on imported orders.
+
+**What closed it.** `sync-ac-delta.mjs` gained a HEADER MASTER lane, and the gap
+turned out to be wider than the agent: the importer maps AutoCount's whole
+header at INSERT and nothing had looked at it since, so the customer name, the
+invoice address, the phone, Ref, venue, branding, the processing date and the
+remarks were all frozen on the day each document was copied. The lane reports,
+per FIELD, how many migrated documents AGREE with AutoCount, how many DIFFER,
+and how many the ERP holds blank while AutoCount has a value — and it does the
+same for purchase-order headers.
+
+- **Plan is the default and writes nothing.** Actions -> *Sync AutoCount delta
+  (go-live)* -> target `prod`, apply `no`.
+- **The field map is shared with the importer**
+  (`backend/scripts/lib/ac-header-fields.mjs`), so the insert and the update
+  cannot drift. `SALESLOC` was moved there out of
+  `import-ac-outstanding-so.mjs`, and a test fails if a local copy comes back.
+- **`LANES=hdr`** writes the straight copies only. A field the importer DERIVED
+  (postcode, city, state, emergency phone, the header delivery date) is counted
+  and never written — re-deriving it is the inference
+  `migration-copy-never-compute` forbids. A field AutoCount left blank stays
+  blank.
+- **`LANES=hdrstaff`** creates the missing inactive salesperson rows. That is a
+  WRITE TO MASTER DATA, so it is off unless named, every row carries an
+  `ACIMP-` staff code (the reversal is one `DELETE ... WHERE staff_code LIKE
+  'ACIMP-%'`), and it can never activate a person who was deactivated on
+  purpose.
+- **Refusals are per (document, FIELD)** and keyed on
+  `mfg_so_audit_log.actor_id` being a real person, not on `version > 1` — PR
+  #3042 measured 80 of 81 of those "conflicts" as the automated stock-allocation
+  sweep. The plan prints what a version test WOULD have refused, so the
+  difference is a number rather than an argument.
+- **Fields AutoCount carries that the ERP has nowhere to put** — `Attention`,
+  the four delivery-address lines, `DeliverContact`, `DisplayTerm` (the credit
+  term) and `UDF_ToPONo` — are counted and labelled `NO COL`, not silently
+  dropped. Giving any of them a home is an owner decision, not a sync.
+
+The header snapshot is `backend/scripts/data/ac-doc-headers.json.gz`, cut by the
+one exporter with `ONLY=hdr AC_CRED_FILE=<path> python
+backend/scripts/export-ac-reimport.py`. Unlike the outstanding cut it is NOT
+filtered to the outstanding population: a document that has since been fully
+delivered still needs its header kept current.
 
 ### 5.5 The snapshots were cut before the lock — BEING FIXED
 
