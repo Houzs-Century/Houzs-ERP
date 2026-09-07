@@ -505,6 +505,27 @@ zero-difference self-check tile), AR/AP Aging, and Self-check (layer 1).
 
 **Phase 2A (2026-08-16).** Customer payments reach the ledger: acc/payments.ts posts each sales-panel payment row through the gate (Dr CASH / BANK_DEFAULT / acquirer transit by the panel 3-method model, Cr AR; source SOPAY/SIPAY keyed on the payment row uuid). scm.acc_acquirers is the 2.13 master (display_name = the exact merchant_provider strings; CIMB/GHL/HLB/MBB/PBB seeded; 决定4 config columns NULL until the owner fills them). imported-method rows and payments on migrated invoices never book - AutoCount carries that money. GET /acquirers lists the master; POST /backfill/customer-payments walks unposted rows batched + idempotent. The sales-side insert/delete HOOKS are NOT yet wired - listed for owner approval per brief 6.3/6.4.
 
+**Customer payments that never reached the books (2026-09-07, docs/bugs/0652).**
+Checking the Receipt & Payment report's data found 2990 with ZERO `SOPAY`
+journals against 171 non-imported SO payments since June (RM 403,593.50).
+Two causes, both in code: `createSalesOrderCore` (mfg-sales-orders.ts) wrote
+the POS split payments and the SO-create deposit straight into
+`mfg_sales_order_payments` without the booking hook — 64 of the 78 rows since
+the hook landed — and the 15 panel-path rows that DID reach `postSoPayment`
+were refused with the reason going to the console and nowhere else, while the
+Self-check card read "all of them" because its boundary is the first booked
+payment and there was none. Now: both inserts call `postSoPayment` (best-effort,
+never blocking the order — `tests/soCreateDepositBooks.test.ts` pins the shape,
+RED on the unfixed tree); the engine's read-only half is `validateJournal`
+(steps 1–3b, shared with `postJournal`), `postSoPayment(…, { dryRun })` and
+`backfillSoPayments(…, { dryRun })` answer "would this post, and if not why?"
+without writing, `POST /backfill/customer-payments { dryRun: true }` exposes
+it, and the card has a never-booked state (red, with the money and the dates)
+plus a **Why? (dry run)** button that prints each payment's verdict and the
+gate's reason (`UnbookedPaymentsCard.test.tsx`, `acc/payments.test.ts`). The
+backfill itself — the same endpoint without dryRun, batched, idempotent — is
+the self-heal, run on the owner's word once the dry run has spoken.
+
 **Phase 2B part 1 (2026-08-16): Daily Bank.** GET /accounting/daily-bank?date= answers the owner one question - today, where is the money and how much can actually move - live from the ledger (2.3: no caches): opening/in/out/closing per money account (scm.accounts.acc_money flag, migration 0299), settlement-in-transit balances per acquirer (visible, never counted movable), and — since phase 3 (2026-08-28, mig 0339) — pendingApprovalSen: every DRAFT payment voucher sitting in the approval queue, converted to MYR the way posting will, subtracted from available. Page /scm/daily-bank (Finance menu): date navigation + Get Image (canvas-drawn PNG to clipboard for WhatsApp, download fallback). Board arithmetic pinned in acc/daily-bank.test.ts. 946-0000 Cash Over/Short + OVER_SHORT role seeded for the coming daily cashup.
 
 **Phase 3 (2026-08-28): PV approval — money leaves only after a yes.** The full write-up lives in docs/modules/payment-voucher.md §0b (marker columns per the 0324 lesson, the pure rule table in scm/lib/pv-approval.ts, the post gate, the scm.payment_voucher.approve key, the audit verbs). What belongs to THIS module: the Daily Bank board's available figure now answers "closing minus what is already asked for", which is the question the owner's phase-3 placeholder was holding a seat for.

@@ -75,7 +75,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/accounting-reports.ts` | 0 | 186 |
 | `backend/src/scm/routes/accounting-settlement.ts` | 0 | 1237 |
 | `backend/src/scm/routes/accounting-stock-close.ts` | 0 | 53 |
-| `backend/src/scm/routes/accounting.ts` | 74 | 1446 |
+| `backend/src/scm/routes/accounting.ts` | 74 | 1449 |
 | `backend/src/scm/routes/addons.ts` | 4 | 215 |
 | `backend/src/scm/routes/amendment-mirror.ts` | 1 | 126 |
 | `backend/src/scm/routes/ap-invoice-files.ts` | 0 | 50 |
@@ -131,7 +131,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/mfg-purchase-orders-list-enrichment.ts` | 1 | 82 |
 | `backend/src/scm/routes/mfg-purchase-orders.ts` | 24 | 4538 |
 | `backend/src/scm/routes/mfg-sales-orders-list-enrichment.ts` | 2 | 298 |
-| `backend/src/scm/routes/mfg-sales-orders.ts` | 42 | 11951 |
+| `backend/src/scm/routes/mfg-sales-orders.ts` | 42 | 11970 |
 | `backend/src/scm/routes/model-free-gifts.ts` | 3 | 147 |
 | `backend/src/scm/routes/mrp-lead-times.ts` | 2 | 95 |
 | `backend/src/scm/routes/mrp.ts` | 2 | 1763 |
@@ -205,13 +205,13 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1981 files, 698733 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1983 files, 699160 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
 |---|---|
 | `frontend/src/pages/Projects.tsx` | 15144 |
-| `backend/src/scm/routes/mfg-sales-orders.ts` | 11951 |
+| `backend/src/scm/routes/mfg-sales-orders.ts` | 11970 |
 | `frontend/src/pages/ServiceCases.tsx` | 8817 |
 | `backend/src/services/autocount-sofa-corpus.ts` | 8401 |
 | `frontend/src/pages/Team.tsx` | 5686 |

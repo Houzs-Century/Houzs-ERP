@@ -49,6 +49,7 @@ import { signalNullWarehouseRows } from '../lib/null-warehouse-signal';
    without importing a 12,000-line router. Re-exported below for the callers
    that still name this module. */
 import { deriveAccountSheet, PAYMENT_COLS, recordSoPaymentRow, afterSoPaymentRemoved, type SoPaymentRowInput } from '../lib/so-payment-row';
+import { postSoPayment } from '../../acc/payments';
 import { recomputeSiPaidForOrder } from '../lib/si-order-deposit';
 export { recordSoPaymentRow };
 export type { SoPaymentRowInput };
@@ -5233,7 +5234,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
       const installmentMonths = merchantLike
         && typeof p.installmentMonths === 'number' && p.installmentMonths > 0
         ? p.installmentMonths : null;
-      const { error: depErr } = await sb.from('mfg_sales_order_payments').insert({
+      const { data: depRow, error: depErr } = await sb.from('mfg_sales_order_payments').insert({
         company_id:         companyId, // multi-company: match the SO's company
         so_doc_no:          docNo,
         paid_at:            paidAt,
@@ -5260,11 +5261,21 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
         created_by:         user.id,
         is_deposit:         true,
         note:               'POS split payment (auto-recorded at SO create)',
-      });
+      }).select('id, so_doc_no, paid_at, method, merchant_provider, amount_sen, company_id').single();
       if (depErr) {
         // eslint-disable-next-line no-console
         console.error('[so-create] split-payment ledger insert failed:', depErr.message);
         continue;
+      }
+      /* Book it through the one posting gate — best-effort, exactly like the
+         panel's own path (lib/so-payment-row). This row used to be inserted
+         WITHOUT the hook, so the money on it never reached the books
+         (docs/bugs/0652). A refusal never blocks the order; the Self-check
+         card's dry run and the backfill are the self-heal. */
+      const bookedSplit = await postSoPayment(sb, depRow as never);
+      if (!bookedSplit.ok) {
+        // eslint-disable-next-line no-console
+        console.error('[so-create] split payment not booked:', (depRow as { id?: string } | null)?.id, bookedSplit.status, bookedSplit.reason);
       }
       /* Promote — 'promoted' rows are excluded from the slip reaper (same dance
          as the SO-create order slip). The UPDATE runs under the caller's RLS
@@ -5329,7 +5340,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
         && typeof body.installmentMonths === 'number' && body.installmentMonths > 0
         ? body.installmentMonths : null;
       const paidAt = dateOrNull(body.paymentDate) ?? todayMyt(); // same as the split-payment row above
-      const { error: depErr } = await sb.from('mfg_sales_order_payments').insert({
+      const { data: depRow, error: depErr } = await sb.from('mfg_sales_order_payments').insert({
         company_id:         companyId, // multi-company: match the SO's company
         so_doc_no:          docNo,
         paid_at:            paidAt,
@@ -5346,11 +5357,19 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
         created_by:         user.id,
         is_deposit:         true,
         note:               'POS deposit (auto-recorded at SO create)',
-      });
+      }).select('id, so_doc_no, paid_at, method, merchant_provider, amount_sen, company_id').single();
       if (depErr) {
         // eslint-disable-next-line no-console
         console.error('[so-create] deposit ledger insert failed:', depErr.message);
       } else {
+        /* Book it through the one posting gate — best-effort (docs/bugs/0652:
+           this deposit used to be inserted WITHOUT the hook, so no deposit taken
+           at SO create ever reached the books). A refusal never blocks the order. */
+        const bookedDeposit = await postSoPayment(sb, depRow as never);
+        if (!bookedDeposit.ok) {
+          // eslint-disable-next-line no-console
+          console.error('[so-create] deposit not booked:', (depRow as { id?: string } | null)?.id, bookedDeposit.status, bookedDeposit.reason);
+        }
         await recordSoAudit(sb, {
           docNo,
           action: 'ADD_PAYMENT',

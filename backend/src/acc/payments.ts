@@ -18,8 +18,8 @@
 //     negative receipt.
 // ----------------------------------------------------------------------------
 
-import { postJournal, reverseJournal } from './engine';
-import { resolveRoles, customerPaymentLines } from './rules';
+import { postJournal, reverseJournal, validateJournal } from './engine';
+import { resolveRoles, customerPaymentLines, type RuleLine } from './rules';
 import { accMastersCompanyId } from './masters-company';
 
 export type SoPaymentRow = {
@@ -35,6 +35,8 @@ export type SoPaymentRow = {
 export type PostPaymentResult =
   | { ok: true; status: 'posted' | 'already_posted'; jeNo: string; jeId: string }
   | { ok: true; status: 'skipped_imported' | 'skipped_zero' }
+  /** The dry run's answer: the gate would take it, with these lines (docs/bugs/0652). */
+  | { ok: true; status: 'would_post'; entryDate: string; lines: RuleLine[] }
   | { ok: false; status: string; reason?: string };
 
 /** Resolve the acquirer's transit account by the DISPLAY name the sales panel
@@ -72,7 +74,7 @@ const paymentDate = (paidAt: string | null): string | null => {
   return /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : null;
 };
 
-export async function postSoPayment(sb: any, p: SoPaymentRow): Promise<PostPaymentResult> {
+export async function postSoPayment(sb: any, p: SoPaymentRow, opts: { dryRun?: boolean } = {}): Promise<PostPaymentResult> {
   if (p.method === 'imported') return { ok: true, status: 'skipped_imported' };
   const amountSen = Number(p.amount_sen);
   if (!Number.isInteger(amountSen) || amountSen <= 0) return { ok: true, status: 'skipped_zero' };
@@ -94,7 +96,7 @@ export async function postSoPayment(sb: any, p: SoPaymentRow): Promise<PostPayme
     ? await transitFor(sb, companyId, p.merchant_provider)
     : null;
 
-  const r = await postJournal(sb, {
+  const input = {
     companyId,
     entryDate,
     sourceType: 'SOPAY',
@@ -107,7 +109,16 @@ export async function postSoPayment(sb: any, p: SoPaymentRow): Promise<PostPayme
       customerCode: null,
       customerName,
     }, amountSen),
-  });
+  };
+  /* DRY RUN (docs/bugs/0652): "would this post, and if not, why?" — answered
+     by the gate's own checks with nothing written. The hook itself only ever
+     logged its refusals to the console, so this is the diagnosis it never had. */
+  if (opts.dryRun) {
+    const v = await validateJournal(sb, input);
+    if (!v.ok) return { ok: false, status: v.status, reason: v.reason };
+    return { ok: true, status: 'would_post', entryDate, lines: input.lines };
+  }
+  const r = await postJournal(sb, input);
   if (r.ok) {
     if (r.status === 'already_posted') return { ok: true, status: 'already_posted', jeNo: r.jeNo, jeId: r.jeId };
     return { ok: true, status: 'posted', jeNo: r.jeNo, jeId: r.jeId };
@@ -189,10 +200,18 @@ export async function postSiPayment(sb: any, p: SiPaymentRow): Promise<PostPayme
    post it. Batched and idempotent: safe to call repeatedly until `remaining`
    is zero; a row that fails is reported, not retried in-loop, and does not
    stop the batch (§2.14: the failure list IS the output). */
+/** One candidate's verdict in a backfill run — real or dry (docs/bugs/0652). */
+export type BackfillRow = { id: string; docNo: string; paidOn: string; method: string; amountSen: number; status: string; reason?: string };
+
 export async function backfillSoPayments(
   sb: any,
   batchLimit = 200,
-): Promise<{ ok: boolean; scanned: number; posted: number; skipped: number; failed: Array<{ id: string; status: string; reason?: string }>; remaining: number; reason?: string }> {
+  /** dryRun: put each candidate through the gate's checks and report; write nothing. */
+  opts: { dryRun?: boolean } = {},
+): Promise<{
+  ok: boolean; dryRun: boolean; scanned: number; posted: number; wouldPost: number; skipped: number;
+  failed: Array<{ id: string; status: string; reason?: string }>; rows: BackfillRow[]; remaining: number; reason?: string;
+}> {
   // Every payment id that already carries an ACTIVE entry.
   const postedIds = new Set<string>();
   {
@@ -205,7 +224,7 @@ export async function backfillSoPayments(
         .eq('source_type', 'SOPAY')
         .order('id')
         .range(from, from + page - 1);
-      if (error) return { ok: false, scanned: 0, posted: 0, skipped: 0, failed: [], remaining: -1, reason: `journal scan: ${error.message}` };
+      if (error) return { ok: false, dryRun: opts.dryRun === true, scanned: 0, posted: 0, wouldPost: 0, skipped: 0, failed: [], rows: [], remaining: -1, reason: `journal scan: ${error.message}` };
       const rows = (data ?? []) as Array<{ source_doc_no: string | null; reversed: boolean | null }>;
       for (const r of rows) if (r.source_doc_no && !r.reversed) postedIds.add(r.source_doc_no);
       if (rows.length < page) break;
@@ -226,7 +245,7 @@ export async function backfillSoPayments(
         .order('paid_at')
         .order('id')
         .range(from, from + page - 1);
-      if (error) return { ok: false, scanned: 0, posted: 0, skipped: 0, failed: [], remaining: -1, reason: `payments scan: ${error.message}` };
+      if (error) return { ok: false, dryRun: opts.dryRun === true, scanned: 0, posted: 0, wouldPost: 0, skipped: 0, failed: [], rows: [], remaining: -1, reason: `payments scan: ${error.message}` };
       const rows = (data ?? []) as SoPaymentRow[];
       for (const r of rows) if (!postedIds.has(r.id)) candidates.push(r);
       if (rows.length < page) break;
@@ -237,20 +256,30 @@ export async function backfillSoPayments(
   const batch = candidates.slice(0, batchLimit);
   let posted = 0;
   let skipped = 0;
+  let wouldPost = 0;
   const failed: Array<{ id: string; status: string; reason?: string }> = [];
+  const rows: BackfillRow[] = [];
   for (const p of batch) {
-    const r = await postSoPayment(sb, p);
+    const r = await postSoPayment(sb, p, opts);
     if (r.ok && (r.status === 'posted' || r.status === 'already_posted')) posted += 1;
+    else if (r.ok && r.status === 'would_post') wouldPost += 1;
     else if (r.ok) skipped += 1;
     else failed.push({ id: p.id, status: r.status, reason: r.reason });
+    rows.push({
+      id: p.id, docNo: p.so_doc_no, paidOn: String(p.paid_at ?? '').slice(0, 10), method: p.method,
+      amountSen: Number(p.amount_sen), status: r.status, ...(r.ok ? {} : { reason: r.reason }),
+    });
   }
 
   return {
     ok: true,
+    dryRun: opts.dryRun === true,
     scanned: candidates.length,
     posted,
+    wouldPost,
     skipped,
     failed,
+    rows,
     remaining: Math.max(0, candidates.length - batch.length) + failed.length,
   };
 }
@@ -326,11 +355,51 @@ export type UnbookedPayment = {
   method: string;
 };
 
+/** What the payment tables hold when NOTHING has ever booked — the same
+    three skips as the poster (imported, zero, undated), so the figure is the
+    money the hook should have moved and did not. */
+export type NeverBooked = { count: number; totalSen: number; firstPaidOn: string | null; lastPaidOn: string | null };
+
+async function neverBookedSummary(sb: any, companyId: number): Promise<{ ok: true; summary: NeverBooked } | { ok: false; reason: string }> {
+  const summary: NeverBooked = { count: 0, totalSen: 0, firstPaidOn: null, lastPaidOn: null };
+  const fold = (raw: Array<Record<string, any>>) => {
+    for (const r of raw) {
+      if (String(r.method ?? '') === 'imported') continue;
+      const amountSen = Number(r.amount_sen ?? 0);
+      if (!Number.isInteger(amountSen) || amountSen <= 0) continue;
+      const paidOn = String(r.paid_at ?? '').slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(paidOn)) continue;
+      summary.count += 1;
+      summary.totalSen += amountSen;
+      if (summary.firstPaidOn == null || paidOn < summary.firstPaidOn) summary.firstPaidOn = paidOn;
+      if (summary.lastPaidOn == null || paidOn > summary.lastPaidOn) summary.lastPaidOn = paidOn;
+    }
+  };
+  for (const table of ['mfg_sales_order_payments', 'sales_invoice_payments'] as const) {
+    let from = 0;
+    const page = 1000;
+    for (;;) {
+      const { data, error } = await sb.from(table)
+        .select('id, paid_at, amount_sen, method')
+        .eq('company_id', companyId)
+        .neq('method', 'imported')
+        .order('id')
+        .range(from, from + page - 1);
+      if (error) return { ok: false, reason: `${table}: ${error.message}` };
+      const rows = (data ?? []) as Array<Record<string, any>>;
+      fold(rows);
+      if (rows.length < page) break;
+      from += page;
+    }
+  }
+  return { ok: true, summary };
+}
+
 export async function unbookedPayments(
   sb: any,
   companyId: number,
 ): Promise<
-  | { ok: true; since: string | null; rows: UnbookedPayment[]; totalSen: number }
+  | { ok: true; since: string | null; rows: UnbookedPayment[]; totalSen: number; neverBooked?: NeverBooked }
   | { ok: false; reason: string }
 > {
   /* Every payment id that already carries an ACTIVE entry, and the earliest
@@ -360,8 +429,15 @@ export async function unbookedPayments(
   }
 
   /* No payment has EVER been booked here, so there is no boundary to draw and
-     every payment would be listed. Report the state instead of the list. */
-  if (since == null) return { ok: true, since: null, rows: [], totalSen: 0 };
+     every payment would be listed. Report the STATE instead of the list — with
+     how much money that state is holding (docs/bugs/0652: a company whose hook
+     had refused every payment read as "all of them" on the card, because
+     nothing had ever booked and so there was "no period to check"). */
+  if (since == null) {
+    const nb = await neverBookedSummary(sb, companyId);
+    if (!nb.ok) return { ok: false, reason: nb.reason };
+    return { ok: true, since: null, rows: [], totalSen: 0, neverBooked: nb.summary };
+  }
 
   const rows: UnbookedPayment[] = [];
   const take = (

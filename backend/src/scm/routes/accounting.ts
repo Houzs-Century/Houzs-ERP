@@ -1228,8 +1228,11 @@ accounting.post('/backfill/customer-payments', async (c) => {
   let body: any = {};
   try { body = await c.req.json(); } catch { body = {}; }
   const limit = Math.max(1, Math.min(500, Number(body.limit ?? 200) || 200));
+  /* dryRun (docs/bugs/0652): every candidate through the gate's checks, each
+     verdict and reason reported, nothing written — the Self-check card's Why?. */
+  const dryRun = body.dryRun === true;
   const sb = c.get('supabase');
-  const r = await backfillSoPayments(sb, limit);
+  const r = await backfillSoPayments(sb, limit, { dryRun });
   if (!r.ok) return c.json({ error: 'backfill_failed', reason: r.reason }, 500);
   return c.json(r);
 });
