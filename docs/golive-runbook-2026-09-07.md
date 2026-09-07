@@ -181,6 +181,10 @@ blocked tool — see §5.2.
 
 ## 3. The ordered runbook
 
+**Step zero, before anything below: merge PR #3044** (the post-lock snapshot
+re-cut) and, if the SI/PI lane matters tonight, land the invoice re-export from
+§5.2 in the same window. Everything in Phase A reads those snapshots.
+
 **Ordering rationale, which is the part that matters.** Each step's input is the
 previous step's output:
 
@@ -418,6 +422,13 @@ be **8.9 days** and refuse again.
 `ac-invoice-refs.json.gz` and `ac-invoice-prices.json.gz` are still at
 2026-08-29T19:01:04Z. This is what leaves **169 PIs** missing.
 
+**Confirmed twice.** PR #3044 — *"the FINAL AutoCount cut, taken one minute after
+the book was locked"*, open and queued as this was written — re-cuts 15 snapshot
+files and **also skips the invoice pair**. So two consecutive re-cuts, including
+the one explicitly framed as final, have left the invoice map untouched. This is
+not an oversight to hope somebody notices tonight: **the exporters below are a
+separate pair of scripts and somebody has to run them.**
+
 **The fix, and it must happen on this machine before A9 can run:**
 
 ```bash
@@ -461,15 +472,17 @@ workflow that assigns sales agents on imported orders. If the 98 incoming SOs
 need an agent attached by our rules rather than AutoCount's text, **that work
 has no tool and cannot be done tonight by dispatch.**
 
-### 5.5 The snapshots were cut before the lock (LIKELY)
+### 5.5 The snapshots were cut before the lock — BEING FIXED
 
-AutoCount went view-only at 16:20 local. The freshest committed snapshot is
-`ac-reconcile-truth.json.gz` at 08:03 UTC (16:03 local); the main set is 06:35
-UTC (14:35 local), and the book export inside it is stamped 13:03 local. So
-there is a **1-3 hour window before the lock** whose edits are not in any
-snapshot. Whether anyone edited the book in that window is UNKNOWN. If exactness
-matters, re-export after the lock — the book is frozen now, so a re-export is
-final and cheap.
+AutoCount went view-only at 16:20 local. The snapshot set this report measured
+against is 06:35 UTC (14:35 local) with its book export stamped 13:03 local, so
+there is a **1-3 hour window before the lock** whose edits it cannot contain.
+
+**PR #3044 closes this** — it is the post-lock re-cut, and it was queued while
+this was written. **Merge #3044 before running any of Phase A**, and re-run the
+Phase G checks afterwards: every count in §2 was measured against the PRE-lock
+snapshot and will move. The backlog shape will not change much, but the exact
+numbers will, and the runbook's proof steps compare against them.
 
 ---
 
