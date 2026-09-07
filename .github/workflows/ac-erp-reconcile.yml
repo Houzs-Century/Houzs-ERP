@@ -60,11 +60,8 @@ jobs:
           # for the full Happy-Eyeballs reasoning.
           NODE_OPTIONS: --dns-result-order=ipv4first
       # TEMPORARY probe step - removed before this branch is proposed for merge.
-      # Exists only to dispatch the new diagnostic, whose own workflow file
-      # cannot be dispatched until it is on the default branch (HTTP 404).
-      - run: node scripts/diag-ac-four-exceptions.mjs
+      - run: node scripts/open-ac-supplier-400-z003.mjs
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          COMPANY_ID: "1"
-          SHOW: "40"
+          MODE: plan
           NODE_OPTIONS: --dns-result-order=ipv4first
