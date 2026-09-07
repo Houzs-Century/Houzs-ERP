@@ -9,7 +9,7 @@ resolves the supplier by `CreditorCode` against `scm.suppliers.code` and, when
 it misses, records an exception and `continue`s past the WHOLE document. That
 skip is correct behaviour (#2757 made it a skip rather than a run-killer); what
 was wrong was the data behind it. `400-Z003` was not in `scm.suppliers` at all —
-measured against production 2026-09-07, `suppliers matching code 400-Z003 or
+measured against production 2026-09-07: `suppliers matching code 400-Z003 or
 name ~ ZOE: 0` of 44.
 
 The supplier is not new. The committed 2026-08-11 fidelity export carries 22
@@ -23,9 +23,9 @@ the book's own creditor row — one single-row indexed lookup,
 `SELECT ... FROM Creditor WHERE AccNo='400-Z003'`. Every value is copied; a
 column AutoCount holds as NULL stays blank. The one value that is not a copy,
 `country`, is named in an `ASSUMED` constant and printed on every run. Plan by
-default, `CONFIRM_SUPPLIER` phrase on the apply path, and a verification that
-re-reads on a FRESH connection and asserts the row's SHAPE against the book,
-not its row count.
+default, a `CONFIRM_SUPPLIER` phrase on the apply path, and a verification that
+re-reads on a FRESH connection and asserts the row's SHAPE against the book
+rather than its row count.
 
 Applied to production 2026-09-07 (run 34100311954): `APPLIED — rows inserted: 1`,
 `VERIFY shape matches the AutoCount row verbatim: YES`. The PO importer dry run
