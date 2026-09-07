@@ -741,6 +741,9 @@ for (const cfg of TYPES) {
     keyOrphan: [], unmatchedErp: [], unmatchedAc: [],
   };
   const D = { lineCount: 0, item: 0, price: 0 }; // declared, not gaps
+  /* The unit-price differences, split by WHAT KIND they are. See the comment at
+     the classification below; only `bothPriced` and `erpDropped` are copy jobs. */
+  const P = { bookDropped: [], bookUnpriced: [], erpDropped: [], bothPriced: [] };
   /* One entry per AUTOCOUNT line that became at least one ERP line, carrying
      the ERP lines it became. A sofa line becomes one ERP row per compartment,
      so the compartment axis is only answerable over the whole group. */
@@ -951,7 +954,26 @@ for (const cfg of TYPES) {
       if (ap !== ep) {
         const msg = `${ac} DtlKey ${al.dtlKey}: AutoCount unit price RM ${rm(ap)} vs ERP RM ${rm(ep)}`;
         if (split || sofa) D.price++;
-        else F.price.push(msg);
+        else {
+          F.price.push(msg);
+          /* WHICH KIND of price difference this is, because "241 lines differ"
+             hides three unrelated facts and the owner's 空白不覆盖 rule applies
+             to only one of them.
+
+             `bookDropped` is the EXPORT-FAILURE test and it is self-checking:
+             the book states a SubTotal for the line while its UnitPrice is
+             zero. A transport that lost the price would leave the subtotal
+             behind, so a non-zero count here means the export is lying and the
+             other buckets cannot be trusted. Measured over the whole book on
+             2026-09-07 (18,890 PODTL rows read directly over sqlcmd): 10,810
+             rows have UnitPrice 0 and the SAME 10,810 have SubTotal 0, so this
+             count is expected to stay at zero. */
+          const aSub = al.subTotalSen ?? 0;
+          if (ap === 0 && aSub !== 0) P.bookDropped.push(msg);
+          else if (ap === 0 && ep > 0) P.bookUnpriced.push(msg);
+          else if (ap > 0 && ep === 0) P.erpDropped.push(msg);
+          else P.bothPriced.push(msg);
+        }
       }
     }
   }
@@ -1001,6 +1023,33 @@ for (const cfg of TYPES) {
       `(line count ${D.lineCount}, unit price ${D.price}); item code by design ${D.item}` +
       (cfg.itemCodeDeclared ? ` — ${cfg.itemCodeDeclared}` : ""),
   );
+  if (F.price.length) {
+    log(
+      `${t} UNIT PRICE — the ${F.price.length} difference(s), split by what each one IS:` +
+        `  book holds NO price, ERP does: ${P.bookUnpriced.length}` +
+        `; both sides priced and they differ: ${P.bothPriced.length}` +
+        `; ERP dropped a price the book states: ${P.erpDropped.length}` +
+        `; export lost a price the book has: ${P.bookDropped.length}`,
+    );
+    plain(
+      "      Only the last three are copy jobs. `book holds NO price` is the owner's 空白不覆盖 case — the book " +
+        "states 0.00 AND a 0.00 line subtotal, so it holds no price to copy and the ERP's value must stand.",
+    );
+    plain(
+      "      `export lost a price` is the SELF-CHECK: the book states a line SubTotal while its UnitPrice is zero, " +
+        "which is what a lost price looks like. A non-zero count there means this whole split is untrustworthy.",
+    );
+    for (const [pname, parr] of [
+      ["book holds NO price, ERP does", P.bookUnpriced],
+      ["both sides priced and they DIFFER", P.bothPriced],
+      ["ERP dropped a price the book states", P.erpDropped],
+      ["EXPORT LOST a price the book has", P.bookDropped],
+    ]) {
+      if (!parr.length) continue;
+      plain(`   ${pname} (first ${Math.min(SHOW, parr.length)} of ${parr.length}):`);
+      for (const row of first(parr)) plain(`      ${row}`);
+    }
+  }
   for (const [name, arr] of [
     ["line count", F.lineCount],
     ["item code", F.item],
