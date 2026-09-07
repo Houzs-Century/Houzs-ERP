@@ -74,7 +74,7 @@ export function looksLikeGridExport(header: string[]): boolean {
  *
  *  Grounded in `gridColumns` in Products.tsx, where each column's `getValue`
  *  names the field it renders — "Description" really is the product NAME. */
-const GRID_LABEL_TO_KEY: Record<string, string> = {
+const GRID_LABEL_TO_KEY: Record<string, string | undefined> = {
   'product code': 'code',
   description: 'name',
   model: 'base_model',

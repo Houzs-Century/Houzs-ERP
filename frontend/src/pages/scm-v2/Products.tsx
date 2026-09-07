@@ -674,22 +674,16 @@ const SkuMasterTab = () => {
         getValue: (r) => r.base_model ?? '',
         render: (r) => r.base_model ?? '—',
       });
-      /* THE SHEET HAS TO SAY WHICH TIER ITS PRICES ARE, and which category the
-         rows are, because the owner uses the export AS HIS TEMPLATE —
-         「正常我都是 export 了 edit 那个 sheet 的…因为要有 template」 (2026-09-07).
-         Without these two the exported file is not a template, it is a picture:
-         the size columns below hold the prices of whichever tier the toggle is
-         on and said so nowhere, and the category was obvious on screen and
-         absent in the file. Both are one column each and they make the file
-         describe itself, so nothing has to be asked or guessed on the way back
-         in. `price_tier` and `category` are the importer's own keys, so the
-         round trip needs no alias for either. */
+      /* The two columns that make the exported sheet a TEMPLATE rather than a
+         picture of the screen — see products-import-headers.ts for why, and
+         docs/bugs/0662 for what it cost. Labelled with the importer's own key
+         names so the round trip needs no alias for either. */
       cols.push({
         key: 'category',
         label: 'category',
         width: '110px',
-        getValue: (r) => r.category ?? '',
-        render: (r) => r.category ?? '—',
+        getValue: (r) => r.category,
+        render: (r) => r.category,
       });
       cols.push({
         key: 'price_tier',
