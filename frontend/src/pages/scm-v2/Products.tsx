@@ -109,7 +109,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { parseMoneyToSen } from '../../lib/money';
 import styles from './Products.module.css';
 import { DateField } from "../../vendor/scm/components/DateField";
-import { normalizeImportHeader, looksLikeGridExport } from './products-import-headers';
+import { normalizeImportHeader, looksLikeGridExport, mapGridHeaders, isGridNoPrice, importFailureMessage } from './products-import-headers';
 
 const ICON_PROPS = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -671,6 +671,23 @@ const SkuMasterTab = () => {
         width: '120px',
         getValue: (r) => r.base_model ?? '',
         render: (r) => r.base_model ?? '—',
+      });
+      /* The two columns that make the exported sheet a TEMPLATE and not a
+         picture of the screen — docs/bugs/0662. Labelled with the importer's
+         own key names, so the round trip needs no alias for either. */
+      cols.push({
+        key: 'category',
+        label: 'category',
+        width: '110px',
+        getValue: (r) => r.category,
+        render: (r) => r.category,
+      });
+      cols.push({
+        key: 'price_tier',
+        label: 'price_tier',
+        width: '110px',
+        getValue: () => tier,
+        render: () => <span>{tier}</span>,
       });
       for (const s of sofaSizes) {
         cols.push({
@@ -5030,11 +5047,12 @@ function parseSkuCsv(text: string): Array<Record<string, string>> {
   return gridToSkuRecords(grid);
 }
 
-/** Header-key a parsed grid (CSV or Excel) into one object per data row, keyed
- *  by lower-cased trimmed header text. */
+/** Header-key a parsed grid, reading BOTH files this page writes (bugs/0662). */
 function gridToSkuRecords(grid: string[][]): Array<Record<string, string>> {
   if (grid.length < 1) return [];
-  const header = (grid[0] ?? []).map(normalizeImportHeader);
+  const raw = (grid[0] ?? []).map(normalizeImportHeader);
+  const fromGrid = looksLikeGridExport(raw);
+  const header = fromGrid ? mapGridHeaders(raw) : raw;
   const out: Array<Record<string, string>> = [];
   for (let r = 1; r < grid.length; r++) {
     const cells = grid[r];
@@ -5043,7 +5061,10 @@ function gridToSkuRecords(grid: string[][]): Array<Record<string, string>> {
     for (let c = 0; c < header.length; c++) {
       const key = header[c];
       if (!key) continue;
-      obj[key] = (cells[c] ?? '').trim();
+      const cell = (cells[c] ?? '').trim();
+      /* -1 is the grid's "no price", never a price — see isGridNoPrice. */
+      if (fromGrid && isGridNoPrice(cell)) continue;
+      obj[key] = cell;
     }
     out.push(obj);
   }
@@ -5073,10 +5094,7 @@ const ImportSkusDialog = ({ sofaSizes, onClose }: { sofaSizes: string[]; onClose
         setBusy(false);
         return;
       }
-      /* The columns as the parser SAW them, already normalised. A row object is
-         keyed by header, so this needs no extra plumbing — and printing them is
-         what turns "no rows had a code" from a verdict into something a person
-         can act on (the fabric import learned the same lesson, docs/bugs/0605). */
+      /* The columns as the parser saw them — a row is keyed by header. */
       const headersSeen = Object.keys(parsed[0] ?? {});
 
       // Group rows by code — a sofa with PRICE_1 / PRICE_2 / PRICE_3 rows
@@ -5190,16 +5208,7 @@ const ImportSkusDialog = ({ sofaSizes, onClose }: { sofaSizes: string[]; onClose
         if (tierErrors.length > 0) {
           setResult({ upserted: 0, failed: tierErrors.length, failures: tierErrors });
         } else {
-          setErrorMsg(
-            looksLikeGridExport(headersSeen)
-              ? 'That is the TABLE export (it starts with "Product Code"). It cannot be'
-                + ' imported — it carries one column per sofa size but not the price tier,'
-                + ' so a price in it has nowhere safe to go. Use the "Export SKUs" button'
-                + ' at the top right, edit that file, and import it back.'
-              : `No rows had a code. The columns in this file are: ${headersSeen.join(', ') || '(none)'}.`
-                + ' A row needs a `code`; a code the system does not have yet also needs'
-                + ' `name` and `category`.',
-          );
+          setErrorMsg(importFailureMessage(headersSeen));
         }
         setBusy(false);
         return;

@@ -12,7 +12,9 @@
 // These tests exist so the third importer cannot repeat it silently.
 // ----------------------------------------------------------------------------
 import { describe, expect, test } from 'vitest';
-import { normalizeImportHeader, looksLikeGridExport } from './products-import-headers';
+import {
+  normalizeImportHeader, looksLikeGridExport, mapGridHeaders, isGridNoPrice, missingGridFacts,
+} from './products-import-headers';
 
 /** The owner's actual file, header row verbatim (sku-master-2026-09-07). */
 const GRID_EXPORT_HEADERS = [
@@ -76,5 +78,63 @@ describe('the grid export is RECOGNISED rather than guessed at', () => {
      it can never trip the number half of the rule. */
   test('price_24 is not a bare number', () => {
     expect(looksLikeGridExport(ROUND_TRIP_HEADERS.map(normalizeImportHeader))).toBe(false);
+  });
+});
+
+describe("the owner's own file is READ, not refused", () => {
+  const mapped = mapGridHeaders(GRID_EXPORT_HEADERS.map(normalizeImportHeader));
+
+  test('the code and the name arrive under the keys the importer reads', () => {
+    expect(mapped[0]).toBe('code');   // "Product Code"
+    expect(mapped[1]).toBe('name');   // "Description" IS the name on this grid
+    expect(mapped[2]).toBe('base_model');
+  });
+
+  /* The grid's numbers are already SEN (47250 = RM 472.50), so they map to the
+     `_sen` column and no conversion runs — a rounding step that never happens
+     cannot lose half a ringgit. */
+  test('a bare seat height becomes the SEN price column for that size', () => {
+    expect(mapped[3]).toBe('price_24_sen');
+    expect(mapped[9]).toBe('price_37_sen');
+  });
+
+  /* A heading with no meaning to the importer passes through untouched — it is
+     never bent onto a key it does not mean. The row builder reads the keys it
+     knows and ignores the rest, so passing through costs nothing and blanking
+     would have destroyed `category` and `price_tier`, which the export now
+     writes under the importer's own names. */
+  test('a column the importer has no use for is left alone, not misfiled', () => {
+    expect(mapped[11]).toBe('barcode');
+    expect(mapped[12]).not.toMatch(/^(code|name|category|price_)/);
+  });
+
+  /* -1 is the grid's "this size has no price for the shown tier". Read as a
+     number it would create a SKU priced at minus one sen. */
+  test('-1 is absence, and only -1', () => {
+    expect(isGridNoPrice('-1')).toBe(true);
+    expect(isGridNoPrice(' -1 ')).toBe(true);
+    expect(isGridNoPrice('0')).toBe(false);
+    expect(isGridNoPrice('47250')).toBe(false);
+  });
+});
+
+describe('what the file cannot say, the export now says', () => {
+  test("the owner's old file is missing both facts", () => {
+    const m = missingGridFacts(GRID_EXPORT_HEADERS.map(normalizeImportHeader));
+    expect(m.needsCategory).toBe(true);
+    expect(m.needsTier).toBe(true);
+  });
+
+  /* The sofa grid now carries `category` and `price_tier`, so a file exported
+     from today on answers both by itself and nothing is asked. */
+  test('a sheet exported after this change asks for nothing', () => {
+    const today = ['product_code', 'description', 'model', 'category', 'price_tier', '24', '26'];
+    const m = missingGridFacts(today);
+    expect(m.needsCategory).toBe(false);
+    expect(m.needsTier).toBe(false);
+  });
+
+  test('a sheet with no size columns needs no tier at all', () => {
+    expect(missingGridFacts(['product_code', 'description', 'category']).needsTier).toBe(false);
   });
 });
