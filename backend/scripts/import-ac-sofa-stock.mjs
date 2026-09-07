@@ -62,6 +62,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 import { variantKeyMirror } from "./lib/ledger-repair-core.mjs";
+import { enqueueStockAllocationRecompute, stockAllocationEnqueueNote } from "./lib/stock-allocation-enqueue.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -412,6 +413,14 @@ async function main() {
   }
   log(`DONE. sofa opening lots written: ${done} / ${units} units.`);
   log("Run the allocation recompute afterwards — the lines flip on the next allocation pass, not here.");
+  /* The stock this script moved is invisible to the readiness projection until
+     something recomputes it, and NOTHING here goes through the Worker, so no
+     trigger fires and the five-minute cron has no row to drain. Register the
+     invalidation so it does. See lib/stock-allocation-enqueue.mjs. */
+  if (APPLY) {
+    const requeue = await enqueueStockAllocationRecompute(sql, "import-ac-sofa-stock");
+    log(stockAllocationEnqueueNote(requeue));
+  }
   await sql.end();
 }
 main().catch((e) => { console.error(e); process.exit(1); });

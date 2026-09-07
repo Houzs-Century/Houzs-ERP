@@ -1,0 +1,62 @@
+name: Three regressed orders — the detail (read-only)
+
+# READ-ONLY. Why HC-SO-007676, HC-SO-011731 and HC-SO-013348 went BACKWARDS in
+# the 2026-09-08 allocation recompute (apply run 34141612663, 00:06-00:15 +08)
+# when the dry run had said zero orders would regress. The AutoCount inventory
+# re-seed (run 34140557010, 23:53 +08) landed between the two and changed the
+# answer; this prints what changed under each line and whether another order
+# out-competed it on the allocator's own priority order.
+#
+# Counts, doc numbers, item codes, warehouses and dates. Customer ACCOUNT CODES
+# are printed; customer NAMES are masked — this repository and these logs are
+# public. Same rule as probe-effective-delivery-drift.yml.
+#
+# Every statement is a SELECT: no DDL, no writes, no transaction.
+# See backend/scripts/probe-three-regressed-lines.mjs.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Database to read"
+        required: true
+        default: "prod"
+        type: choice
+        options: [prod, staging]
+      docs:
+        description: "Comma-separated SO doc numbers"
+        required: false
+        default: "HC-SO-007676,HC-SO-011731,HC-SO-013348"
+      since:
+        description: "Window start (UTC ISO) — default is an hour before the re-seed"
+        required: false
+        default: "2026-09-07T15:00:00Z"
+
+# Its own group — a diagnostic must never queue behind, or displace, a release.
+concurrency:
+  group: probe-three-regressed-lines
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 24 }
+      - run: npm ci
+      - name: Trace the three regressions
+        env:
+          DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
+          DOCS: ${{ inputs.docs }}
+          SINCE: ${{ inputs.since }}
+        # pipefail, or `tee` swallows a crash and a truncated answer reads as success
+        run: |
+          set -o pipefail
+          node scripts/probe-three-regressed-lines.mjs | tee three-regressed-lines.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: probe-three-regressed-lines
+          path: backend/three-regressed-lines.txt
+          retention-days: 14

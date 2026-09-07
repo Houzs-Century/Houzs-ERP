@@ -85,6 +85,7 @@ import postgres from "postgres";
 import { buildFabricColourIndex, isPendingColour } from "./lib/fabric-colour-match.mjs";
 import { parseBedframe } from "./lib/parse-bedframe.mjs";
 import { SOFA_MODEL_ALIAS, parseSofa } from "./lib/parse-sofa.mjs";
+import { enqueueStockAllocationRecompute, stockAllocationEnqueueNote } from "./lib/stock-allocation-enqueue.mjs";
 import {
   RECEIVED_INDETERMINATE,
   buildFamilies, claimErpRows, diffExpectedRows, groupByDoc, mergeAcPoLines, planFamilyInserts,
@@ -570,6 +571,22 @@ async function main() {
     }
     log("VERIFY OK - every inserted row reads back with the expected shape.");
   } finally {
+    /* The stock this script moved is invisible to the readiness projection until
+       something recomputes it, and NOTHING here goes through the Worker, so no
+       trigger fires and the five-minute cron has no row to drain. Register the
+       invalidation so it does. See lib/stock-allocation-enqueue.mjs. */
+    if (APPLY) {
+      /* Inside a `finally`: a throw here would REPLACE whatever error brought us
+         in, so the failure is shouted rather than raised. The stock write has
+         already landed, so losing the enqueue leaves the projection stale until
+         somebody runs the recompute — which is exactly what this line has to say. */
+      try {
+        const requeue = await enqueueStockAllocationRecompute(check, "topup-ac-po-lines");
+        log(stockAllocationEnqueueNote(requeue));
+      } catch (enqueueError) {
+        console.error(`STOCK-ALLOCATION ENQUEUE FAILED (${enqueueError?.message ?? enqueueError}) - stock moved and the readiness projection was NOT invalidated. Dispatch "recompute-so-allocation" by hand.`);
+      }
+    }
     await check.end();
   }
 }

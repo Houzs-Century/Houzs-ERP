@@ -47,6 +47,7 @@
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
 import { DO_STOCK_OUT_STATES } from "./lib/do-shipped-states.mjs";
+import { enqueueStockAllocationRecompute, stockAllocationEnqueueNote } from "./lib/stock-allocation-enqueue.mjs";
 
 function resolveUrl() {
   if (process.env.DATABASE_URL) return process.env.DATABASE_URL;
@@ -207,5 +208,21 @@ try {
   if (!APPLY) console.log(`\nNothing was written. Re-run with APPLY=true CONFIRM="${CONFIRM_PHRASE}" to commit.`);
   else console.log(`\nNow dispatch "Restamp DO actual cost", then re-run the integrity check.`);
 } finally {
+  /* The stock this script moved is invisible to the readiness projection until
+     something recomputes it, and NOTHING here goes through the Worker, so no
+     trigger fires and the five-minute cron has no row to drain. Register the
+     invalidation so it does. See lib/stock-allocation-enqueue.mjs. */
+  if (APPLY) {
+    /* Inside a `finally`: a throw here would REPLACE whatever error brought us
+       in, so the failure is shouted rather than raised. The stock write has
+       already landed, so losing the enqueue leaves the projection stale until
+       somebody runs the recompute — which is exactly what this line has to say. */
+    try {
+      const requeue = await enqueueStockAllocationRecompute(pg, "repair-orphan-do-movements");
+      console.log(stockAllocationEnqueueNote(requeue));
+    } catch (enqueueError) {
+      console.error(`STOCK-ALLOCATION ENQUEUE FAILED (${enqueueError?.message ?? enqueueError}) - stock moved and the readiness projection was NOT invalidated. Dispatch "recompute-so-allocation" by hand.`);
+    }
+  }
   await pg.end({ timeout: 5 });
 }

@@ -90,6 +90,7 @@ import { fileURLToPath } from 'node:url';
 import postgres from 'postgres';
 
 import { conservation, normCode, planSplits } from './lib/split-partly-shipped-lots.mjs';
+import { enqueueStockAllocationRecompute, stockAllocationEnqueueNote } from './lib/stock-allocation-enqueue.mjs';
 
 const DSN = process.env.DATABASE_URL;
 if (!DSN) { console.error('need DATABASE_URL'); process.exit(2); }
@@ -422,6 +423,22 @@ async function main() {
        WHERE company_id = ${CO} AND COALESCE(unit_cost_sen, 0) = 0 AND qty_remaining > 0`;
     note(`  still open at zero cost: ${stillZero[0].lots} lot(s) / ${stillZero[0].units} unit(s) — these are the gift / demo / display pieces, whose cost IS zero`);
   } finally {
+    /* The stock this script moved is invisible to the readiness projection until
+       something recomputes it, and NOTHING here goes through the Worker, so no
+       trigger fires and the five-minute cron has no row to drain. Register the
+       invalidation so it does. See lib/stock-allocation-enqueue.mjs. */
+    if (APPLY) {
+      /* Inside a `finally`: a throw here would REPLACE whatever error brought us
+         in, so the failure is shouted rather than raised. The stock write has
+         already landed, so losing the enqueue leaves the projection stale until
+         somebody runs the recompute — which is exactly what this line has to say. */
+      try {
+        const requeue = await enqueueStockAllocationRecompute(check, 'split-partly-shipped-zero-cost-lots');
+        console.log(stockAllocationEnqueueNote(requeue));
+      } catch (enqueueError) {
+        console.error(`STOCK-ALLOCATION ENQUEUE FAILED (${enqueueError?.message ?? enqueueError}) - stock moved and the readiness projection was NOT invalidated. Dispatch "recompute-so-allocation" by hand.`);
+      }
+    }
     await check.end({ timeout: 5 });
   }
   if (failed.length) process.exit(1);

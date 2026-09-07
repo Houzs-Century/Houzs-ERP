@@ -451,6 +451,44 @@ the third-and-a-half of them — read which.**
    and sets `queuedForRetry: true`, so "nobody will retry" is no longer one of
    the things `ok: true` can mean.
 
+4. **A SCRIPT that writes stock entered NEITHER path.** All three mechanisms
+   above are about the Worker. `backend/scripts/*` open
+   `postgres(DATABASE_URL)` and write straight to the database, so no trigger
+   fires, no retry row is written, and the cron can never repair what it cannot
+   see. Measured 2026-09-08: **16 scripts write a relation the allocator reads
+   as supply and ZERO of them queued a recompute** — the intersection was empty.
+   The go-live inventory re-seed was exactly this shape, and the projection was
+   only corrected because a human remembered to dispatch the recompute by hand.
+   **FIXED 2026-09-08** —
+   `docs/bugs/0677-a-script-that-writes-stock-leaves-the-readiness-projection-s.md`.
+
+   **If you write a script that touches stock, call
+   `enqueueStockAllocationRecompute` from
+   `backend/scripts/lib/stock-allocation-enqueue.mjs` on the apply path.** It
+   writes the same singleton row `stock-allocation-queue.ts` writes, so the
+   five-minute cron picks it up. The watched relations are the allocator's own
+   supply reads: `inventory_movements` (the base table under the
+   `inventory_balances` VIEW), `inventory_lots` (under `v_inventory_lots_open`),
+   `purchase_order_items.received_qty` (bound mode) and
+   `grn_items.received_qty`. **You cannot forget** — the `stock-recompute` rule
+   in `backend/scripts/lib/release-discipline.mjs` fails the required
+   `backend-typecheck` check if you do.
+
+   *Not a durability guarantee.* The script has already committed by the time it
+   calls this, so the row cannot join that transaction — it is a REPAIR REQUEST,
+   the same standing the other ~32 triggers have.
+
+   **Why there is no database trigger, which would be stronger.** A trigger on
+   the tables themselves would cover every writer including psql-by-hand. It was
+   weighed on 2026-09-08 and rejected for now: the queue is a SINGLETON row, so
+   an upsert inside every stock-writing transaction takes a row lock that every
+   concurrent GRN / DO post would then serialise behind — a worse production
+   hazard than a stale projection, and not something to introduce on go-live
+   night. The precondition for doing it properly is a LOCK-FREE dirty marker: an
+   insert-only table the trigger appends to (no shared row, no contention) which
+   the cron folds into the queue before draining. That is the follow-up, and it
+   is a real one, not a note to make this paragraph feel finished.
+
 **What is NOT fixed, and needs the same work it always did:** a Worker that dies
 BEFORE reaching the recompute still leaves no row and no retry. Only a queue
 write inside the source write's own transaction covers that, which means moving

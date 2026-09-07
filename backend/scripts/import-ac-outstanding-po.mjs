@@ -45,6 +45,7 @@ import { SOFA_MODEL_ALIAS, parseSofa } from "./lib/parse-sofa.mjs";
 import { acDeliveryDate, acDtlKey, acFromSoDtlKey } from "./lib/ac-po-line.mjs";
 import { makeSoLineTaker } from "./lib/so-line-dedication.mjs";
 import { aliasFoldsForCatalog, catalogPredicate, nonCatalogRefs, formatNonCatalogRefusal } from "./lib/catalog-code-guard.mjs";
+import { enqueueStockAllocationRecompute, stockAllocationEnqueueNote } from "./lib/stock-allocation-enqueue.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -447,6 +448,14 @@ async function main() {
     });
   }
   log(`DONE. inserted POs=${nPo} items=${nItems}; skipped-existing=${existing.size}; exceptions=${exceptions.length}`);
+  /* The stock this script moved is invisible to the readiness projection until
+     something recomputes it, and NOTHING here goes through the Worker, so no
+     trigger fires and the five-minute cron has no row to drain. Register the
+     invalidation so it does. See lib/stock-allocation-enqueue.mjs. */
+  if (APPLY) {
+    const requeue = await enqueueStockAllocationRecompute(sql, "import-ac-outstanding-po");
+    log(stockAllocationEnqueueNote(requeue));
+  }
   await sql.end();
 }
 main().catch((e) => { console.error(e); process.exit(1); });

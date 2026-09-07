@@ -25,6 +25,7 @@
 // RE-RUN: inert. A row already parked at PJ is either out of scope or matched by an IS DISTINCT FROM guard.
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
+import { enqueueStockAllocationRecompute, stockAllocationEnqueueNote } from "./lib/stock-allocation-enqueue.mjs";
 
 const APPLY = process.env.APPLY === "1";
 const notice = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
@@ -136,6 +137,15 @@ async function main() {
        AND warehouse_id IS DISTINCT FROM ${pj.id} AND qty_remaining > 0`;
   notice(`On-hand consignment lots STILL not at PJ after apply: ${left} (expect 0).`);
   if (left > 0) warn(`${left} still off PJ — investigate.`);
+  /* This script relocates lots AND movements between warehouses, and the
+     allocator buckets stock per warehouse — so every line drawing on the old
+     warehouse just lost its supply and every line on PJ just gained some.
+     Nothing here goes through the Worker, so no trigger fires and the
+     five-minute cron has no row to drain until this call writes one. */
+  if (APPLY) {
+    const requeue = await enqueueStockAllocationRecompute(sql, "repair-consignment-to-pj");
+    notice(stockAllocationEnqueueNote(requeue));
+  }
 }
 
 main().then(() => sql.end()).catch(async (e) => {

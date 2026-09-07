@@ -20,6 +20,7 @@ import zlib from "node:zlib";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
+import { enqueueStockAllocationRecompute, stockAllocationEnqueueNote } from "./lib/stock-allocation-enqueue.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -128,6 +129,14 @@ async function main() {
     if (done % 100 === 0) log(`  ..${done}/${todo.length}`);
   }
   log(`DONE. cells relayered: ${done}`);
+  /* The stock this script moved is invisible to the readiness projection until
+     something recomputes it, and NOTHING here goes through the Worker, so no
+     trigger fires and the five-minute cron has no row to drain. Register the
+     invalidation so it does. See lib/stock-allocation-enqueue.mjs. */
+  if (APPLY) {
+    const requeue = await enqueueStockAllocationRecompute(sql, "import-ac-stock-layers");
+    log(stockAllocationEnqueueNote(requeue));
+  }
   await sql.end();
 }
 main().catch((e) => { console.error(e); process.exit(1); });

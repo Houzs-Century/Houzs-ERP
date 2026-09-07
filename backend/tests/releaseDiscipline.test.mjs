@@ -247,6 +247,102 @@ test('a RE-RUN note in the BODY does not count — it has to be in the header', 
   assert.ok(scan(body).failed.includes('rerun-note'));
 });
 
+// -- rule: stock-recompute ------------------------------------------------
+//
+// The narrow question: does this script move SUPPLY the SO allocator reads? A
+// script that does and never queues a recompute leaves stock_status answering
+// for stock that is gone, and nothing anywhere reports it.
+//
+// The negative cases matter as much as the positives. A rule that fired on a
+// SELECT, on a repricing UPDATE, or on a table whose name merely STARTS the
+// same way would be worked around within a week.
+
+const ENQUEUE_IMPORT = "import { enqueueStockAllocationRecompute } from './lib/stock-allocation-enqueue.mjs';";
+const withEnqueue = (src) => src.replace(
+  "import postgres from 'postgres';",
+  ["import postgres from 'postgres';", ENQUEUE_IMPORT].join('\n'),
+);
+
+const MOVEMENTS = COMPLIANT.replace(
+  'UPDATE scm.mfg_sales_order_items SET variants = variants -> 0 WHERE id = ANY(',
+  'INSERT INTO scm.inventory_movements (qty) SELECT 1 WHERE false AND id = ANY(',
+);
+
+test('RED: a script that writes inventory_movements and never queues a recompute', () => {
+  const r = scan(MOVEMENTS);
+  assert.ok(r.failed.includes('stock-recompute'));
+  assert.match(r.detail['stock-recompute'], /inventory_movements/);
+  assert.match(r.detail['stock-recompute'], /Worker request path/);
+});
+
+test('GREEN: the same script importing the enqueue passes', () => {
+  const r = scan(withEnqueue(MOVEMENTS));
+  assert.ok(!r.failed.includes('stock-recompute'));
+});
+
+test('RED: inventory_lots too - sofa set coverage reads it through v_inventory_lots_open', () => {
+  const r = scan(COMPLIANT.replace('UPDATE scm.mfg_sales_order_items SET variants', 'UPDATE scm.inventory_lots SET variants'));
+  assert.ok(r.failed.includes('stock-recompute'));
+  assert.match(r.detail['stock-recompute'], /inventory_lots/);
+});
+
+test('RED: purchase_order_items.received_qty is BOUND-mode supply', () => {
+  const r = scan(COMPLIANT.replace(
+    'UPDATE scm.mfg_sales_order_items SET variants = variants -> 0',
+    'UPDATE scm.purchase_order_items SET received_qty = 2',
+  ));
+  assert.ok(r.failed.includes('stock-recompute'));
+  assert.match(r.detail['stock-recompute'], /purchase_order_items\.received_qty/);
+});
+
+test('GREEN: repricing a PO line is not a stock write', () => {
+  const r = scan(COMPLIANT.replace(
+    'UPDATE scm.mfg_sales_order_items SET variants = variants -> 0',
+    'UPDATE scm.purchase_order_items SET unit_price_sen = 100',
+  ));
+  assert.ok(!r.failed.includes('stock-recompute'));
+});
+
+test('GREEN: reading inventory_movements is not writing it', () => {
+  const r = scan(COMPLIANT.replace(
+    'SELECT id, variants FROM scm.mfg_sales_order_items',
+    'SELECT id, variants FROM scm.inventory_movements',
+  ));
+  assert.ok(!r.failed.includes('stock-recompute'));
+});
+
+test('GREEN: a table whose name merely BEGINS with a watched one is not watched', () => {
+  const r = scan(MOVEMENTS.replace('scm.inventory_movements', 'scm.inventory_movements_archive'));
+  assert.ok(!r.failed.includes('stock-recompute'));
+});
+
+test('RED: the enqueue named only in a log line does not count', () => {
+  const r = scan(MOVEMENTS.replace(
+    'const sql = postgres(DSN, { max: 1 });',
+    ['const sql = postgres(DSN, { max: 1 });', "console.log('remember enqueueStockAllocationRecompute');"].join('\n'),
+  ));
+  assert.ok(r.failed.includes('stock-recompute'));
+});
+
+test('RED: a stock write reached only through a lib helper still needs the enqueue', () => {
+  const libExports = indexLibExports([['stock-write.mjs', [
+    'export async function writeMovement(db, qty) {',
+    '  return db`INSERT INTO scm.inventory_movements (qty) VALUES (${qty})`;',
+    '}',
+  ].join('\n')]]);
+  const r = scanScript({
+    name: 'x.mjs',
+    source: [
+      "import postgres from 'postgres';",
+      "import { writeMovement } from './lib/stock-write.mjs';",
+      'const pg = postgres(process.env.DATABASE_URL);',
+    ].join('\n'),
+    libExports,
+  });
+  assert.ok(r.failed.includes('stock-recompute'));
+  assert.match(r.detail['stock-recompute'], /inventory_movements/);
+});
+
 // ── migrations ─────────────────────────────────────────────────────────────
 
 test('RED: a migration with no reversal note', () => {

@@ -141,6 +141,96 @@ function writeEvidence(code) {
   return found;
 }
 
+// ── Does this script write STOCK? ──────────────────────────────────────────
+// A NARROWER question than "does it write", and it has its own answer because
+// the consequence is different. Writing stock does not just change a row: it
+// changes the answer to "can this sales order ship", and that answer is a
+// PROJECTION (mfg_sales_order_items.stock_status) recomputed only by
+// src/scm/lib/so-stock-allocation.ts.
+//
+// Every trigger for that recompute hangs off the Worker request path, and the
+// five-minute cron only ever finds work that a Worker queued. A script writes
+// straight to Postgres, so it enters neither. The projection then keeps
+// answering for stock that is no longer there, indefinitely, with nothing
+// reporting it — which is what happened on the 2026-09-07 inventory re-seed
+// and is why the recompute had to be dispatched by hand afterwards.
+//
+// THE RELATIONS ARE THE ALLOCATOR'S OWN SUPPLY READS, not a guess:
+//   inventory_movements    — scm.inventory_balances is a VIEW over it (mig 0084
+//                            line 180), and the allocator reads that view. The
+//                            base table is the thing that can be written.
+//   inventory_lots         — v_inventory_lots_open, which sofa-set-coverage.ts
+//                            reads to decide whether a batch covers a set.
+//   purchase_order_items   — .received_qty, the BOUND-mode supply (a line whose
+//                            own PO has been received is READY whatever the
+//                            pooled bucket says).
+//   grn_items              — .received_qty, which rolls up into the column above.
+//   inventory_balances     — listed even though it is a view today: if it is
+//                            ever materialised, a write to it must not slip
+//                            through because this list said only "movements".
+//
+// LIMITATION, STATED RATHER THAN DISCOVERED LATER. A write whose table name is
+// fully interpolated (`UPDATE scm.${t} SET`) is invisible here — the name is not
+// in the text. The general write rules above already force such a script through
+// mode-gate / confirm-phrase / fresh-verify, so it is not unguarded; it is just
+// not guarded BY THIS RULE. Do not read a green run as "no script can leave the
+// projection stale".
+const STOCK_RELATIONS = [
+  { table: 'inventory_movements', column: null },
+  { table: 'inventory_lots', column: null },
+  { table: 'inventory_balances', column: null },
+  { table: 'purchase_order_items', column: 'received_qty' },
+  { table: 'grn_items', column: 'received_qty' },
+];
+
+/* A SQL write aimed at one named relation. The optional schema qualifier and
+   optional double quotes are both live in this tree (`scm.inventory_movements`,
+   `"grn_items"`), and an UPDATE may carry a table alias before SET. */
+const stockSqlWrite = (table) => new RegExp(
+  String.raw`(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM|TRUNCATE(?:\s+TABLE)?)\s+(?:scm\.)?"?` + table + String.raw`"?\b`,
+  'i',
+);
+
+/* The PostgREST shape, for scripts that hold a shim client rather than raw SQL. */
+const stockPgrestWrite = (table) => new RegExp(
+  String.raw`\.from\s*\(\s*['"\`](?:scm\.)?` + table + String.raw`['"\`]\s*\)[\s\S]{0,300}?\.(?:insert|update|upsert|delete)\s*\(`,
+  'i',
+);
+
+/* For the two column-gated relations: the column has to appear in the statement,
+   not merely somewhere in the file. `received_qty` is what moves supply;
+   repricing a PO line or fixing its currency does not, and failing those scripts
+   would teach people that this rule cries wolf. The window is generous because
+   an UPDATE ... SET ... FROM ... WHERE across several lines is normal here. */
+const COLUMN_WINDOW = 800;
+
+/** @returns {string[]} one entry per stock relation this script writes. */
+export function stockWriteEvidence(code) {
+  const found = [];
+  for (const { table, column } of STOCK_RELATIONS) {
+    for (const re of [stockSqlWrite(table), stockPgrestWrite(table)]) {
+      const m = re.exec(code);
+      if (!m) continue;
+      if (column && !new RegExp(String.raw`\b` + column + String.raw`\b`).test(code.slice(m.index, m.index + COLUMN_WINDOW))) continue;
+      found.push(column ? `${table}.${column}` : table);
+      break;
+    }
+  }
+  return found;
+}
+
+/* The call that closes the hole: scripts/lib/stock-allocation-enqueue.mjs.
+   Matched by IMPORT rather than by call text so a mention in a log string cannot
+   pass the rule, and so the enqueue module itself is not judged to be missing
+   its own import. */
+const STOCK_ENQUEUE_IMPORT =
+  /import\s*\{[^}]*\benqueueStockAllocationRecompute\b[^}]*\}\s*from\s*['"][^'"]*stock-allocation-enqueue\.mjs['"]/;
+
+/** Does this script register the invalidation the cron needs to find? */
+export function hasStockAllocationEnqueue(code) {
+  return STOCK_ENQUEUE_IMPORT.test(code);
+}
+
 /** Offset of the first write indicator, or -1. Used to place the verification. */
 function firstWriteOffset(code) {
   let best = -1;
@@ -348,6 +438,11 @@ export const SCRIPT_RULES = [
     what: 'a stated re-run behaviour in the header',
     fix: 'add a header line `RE-RUN: <what a second run does>`',
   },
+  {
+    id: 'stock-recompute',
+    what: 'a queued SO stock-allocation recompute, for a script that writes STOCK',
+    fix: "import { enqueueStockAllocationRecompute } from './lib/stock-allocation-enqueue.mjs' and call it after the write — otherwise mfg_sales_order_items.stock_status keeps answering for stock that moved, and nothing reports it",
+  },
 ];
 
 /**
@@ -431,6 +526,18 @@ export function scanScript({ name, source, libExports = new Map() }) {
       failed.push('fresh-verify');
       detail['fresh-verify'] = 'the fresh-connection re-read asks only for a COUNT and nothing about the value — the double-encoding repair counted 7 of 7 while re-corrupting all 7';
     }
+  }
+
+  /* 5. A script that writes STOCK has to register the invalidation.
+        Placed BEFORE the re-run note only because it is the newest rule; order
+        in the output is by rule id, not by position here. */
+  const stockWrites = stockWriteEvidence(code);
+  for (const [, body] of imported) {
+    for (const rel of stockWriteEvidence(body)) if (!stockWrites.includes(rel)) stockWrites.push(rel);
+  }
+  if (stockWrites.length > 0 && !hasStockAllocationEnqueue(code)) {
+    failed.push('stock-recompute');
+    detail['stock-recompute'] = `writes ${stockWrites.join(', ')} and never queues a recompute — the ~38 allocation triggers all hang off the Worker request path, and the five-minute cron only drains rows a Worker queued, so this write leaves mfg_sales_order_items.stock_status stale with nothing to repair it`;
   }
 
   // 4. Re-run behaviour, in the header.

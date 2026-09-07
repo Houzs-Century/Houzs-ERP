@@ -77,6 +77,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 import { SALESLOC, SERVICE_GROUPS, loadAcBinding, serviceErpCodes } from "./lib/ac-stock-compare.mjs";
+import { enqueueStockAllocationRecompute, stockAllocationEnqueueNote } from "./lib/stock-allocation-enqueue.mjs";
 
 const DSN = process.env.DATABASE_URL;
 const APPLY = (process.env.MODE || "plan").toLowerCase() === "apply";
@@ -503,6 +504,22 @@ async function main() {
     if (collateral.length) bad("VERIFY FAILED: stock changed outside the governed universe.");
     log("verify OK — every governed cell equals AutoCount, and nothing outside it moved.");
   } finally {
+    /* The stock this script moved is invisible to the readiness projection until
+       something recomputes it, and NOTHING here goes through the Worker, so no
+       trigger fires and the five-minute cron has no row to drain. Register the
+       invalidation so it does. See lib/stock-allocation-enqueue.mjs. */
+    if (APPLY) {
+      /* Inside a `finally`: a throw here would REPLACE whatever error brought us
+         in, so the failure is shouted rather than raised. The stock write has
+         already landed, so losing the enqueue leaves the projection stale until
+         somebody runs the recompute — which is exactly what this line has to say. */
+      try {
+        const requeue = await enqueueStockAllocationRecompute(check, "reseed-stock-from-ac-snapshot");
+        log(stockAllocationEnqueueNote(requeue));
+      } catch (enqueueError) {
+        console.error(`STOCK-ALLOCATION ENQUEUE FAILED (${enqueueError?.message ?? enqueueError}) - stock moved and the readiness projection was NOT invalidated. Dispatch "recompute-so-allocation" by hand.`);
+      }
+    }
     await check.end({ timeout: 5 });
   }
 }

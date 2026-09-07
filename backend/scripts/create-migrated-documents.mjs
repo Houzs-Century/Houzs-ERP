@@ -41,6 +41,7 @@ import {
    location map is how stock silently moves between branches — and the resolution
    onto a warehouse row is the tested spec of migration 0309's backfill. */
 import { mixedLocationDocs, resolveAcDeliveryLocation } from "./lib/ac-do-location.mjs";
+import { enqueueStockAllocationRecompute, stockAllocationEnqueueNote } from "./lib/stock-allocation-enqueue.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -357,6 +358,14 @@ async function main() {
   log(`mode=${APPLY ? "APPLY" : "DRY-RUN"} kind=${KIND}`);
   if (KIND === "grn" || KIND === "both") await doGrns();
   if (KIND === "do" || KIND === "both") await doDos();
+  /* The stock this script moved is invisible to the readiness projection until
+     something recomputes it, and NOTHING here goes through the Worker, so no
+     trigger fires and the five-minute cron has no row to drain. Register the
+     invalidation so it does. See lib/stock-allocation-enqueue.mjs. */
+  if (APPLY) {
+    const requeue = await enqueueStockAllocationRecompute(sql, "create-migrated-documents");
+    log(stockAllocationEnqueueNote(requeue));
+  }
   await sql.end();
 }
 main().catch((e) => { console.error(e); process.exit(1); });
