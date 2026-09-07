@@ -42,7 +42,7 @@
 // different questions and the owner is entitled to answer them separately.
 import postgres from "postgres";
 import {
-  K, buildLiveIndex, classifyLine, loadPhraseMap,
+  buildLiveIndex, classifyLine, loadPhraseMap,
 } from "./lib/special-order-phrase-mapper.mjs";
 /* The processing-date column is named in ONE place and read through it, exactly
    as check-ac-erp-reconcile.mjs does — which is why the two cannot disagree
@@ -66,15 +66,16 @@ async function main() {
 
   const addons = await sql`SELECT code, label, categories, active, selling_price_sen, cost_price_sen
     FROM scm.special_addons WHERE company_id = ${CO} ORDER BY code`;
-  const liveByCat = buildLiveIndex(addons);
-  const priceOf = new Map();
-  for (const r of addons) {
-    priceOf.set(K(r.code), { sell: Number(r.selling_price_sen || 0), cost: Number(r.cost_price_sen || 0) });
-  }
-  const isPriced = (c) => {
-    const p = priceOf.get(K(c));
-    return !!p && (p.sell !== 0 || p.cost !== 0);
-  };
+  /* buildLiveIndex returns { liveByCat, priceOf, isPriced } — take all three
+     rather than re-deriving the price rules here. `isPriced` in particular is
+     the SAME predicate the backfill uses to decide what to hold back, so this
+     report cannot disagree with it about which lines are in the money bucket.
+     The first draft assigned the whole object to `liveByCat` and hand-rolled a
+     second `isPriced`; the object mistake failed loudly on the first prod
+     dispatch (run 34138053374, `liveByCat.get is not a function`), and the
+     hand-rolled predicate would not have failed at all — it would just have been
+     a second opinion nobody compared. */
+  const { liveByCat, priceOf, isPriced } = buildLiveIndex(addons);
   const priced = addons.filter((r) => isPriced(r.code));
   log(`scm.special_addons: ${addons.length} rows, ${priced.length} PRICED (read live, never hard-coded)`);
   for (const r of priced.sort((a, b) => Number(b.selling_price_sen) - Number(a.selling_price_sen))) {
@@ -126,7 +127,7 @@ async function main() {
       const qty = Math.max(1, Number(r.qty || 1));
       let sell = 0, cost = 0;
       for (const c of pricedNow) {
-        const p = priceOf.get(K(c));
+        const p = priceOf.get(c) || { sell: 0, cost: 0 };   // keyed by the exact code
         sell += p.sell * qty;
         cost += p.cost * qty;
         const e = perCode.get(c) || { n: 0, sell: 0, unit: p.sell };
