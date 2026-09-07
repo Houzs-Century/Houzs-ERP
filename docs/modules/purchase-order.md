@@ -467,6 +467,17 @@ it, but a hand-typed line never could.
   `po_qty_picked` forward. Previously the read carried no company predicate (the
   service-role client bypasses RLS), so a foreign `soItemId` re-parented another
   company's SO line onto this company's PO. `BUG-HISTORY.md` 2026-08-19.
+- **`POST /` also refuses a bind to a DIFFERENT product (2026-09-07).** The
+  company predicate above was only half of what `soLinkTargetRefusal` does, and
+  the comment in the code said it "mirrors" that function — so a New-PO line for
+  product B could be linked to an SO line for product A on the create path while
+  the add-line, patch-line and both allocation paths refused it. The create now
+  reads `item_code` in the same batch SO read and returns the same
+  `409 so_link_material_mismatch` (with `soItemId` alongside `soItemCode` /
+  `itemCode`). It does NOT apply the SPEC gate — that stays where it is, on the
+  allocation paths. Why it matters: `so_item_id` is what makes a hard-bound line
+  read READY (`isHardBoundLine`), so a wrong bind lights the wrong bed. Bug
+  class `docs/bugs/0672-bug-class-key-without-identity-*.md`.
 - **And through `soLineOverConvertRefusal` (2026-08-11)** — `soLinkTargetRefusal`
   proves a bind POINTS somewhere legitimate; it says nothing about HOW MUCH. Both
   line paths take an operator-supplied qty, and until this landed neither capped

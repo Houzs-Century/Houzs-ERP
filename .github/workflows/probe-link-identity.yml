@@ -1,0 +1,39 @@
+name: Link identity — do both sides name the same thing? (read-only)
+
+# The bug class "key without identity": a link written on the strength of a KEY
+# (a DtlKey, a doc number, a row position) without asserting that the two rows
+# are the same product. On 2026-09-07 that put nine sales-order lines on a
+# purchase-order line for a different bed. docs/bugs/0671-*.md.
+#
+# The existing document-link matrix counts each link FILLED and DANGLING, and
+# all nine were filled and none dangled — a valid foreign key pointing at the
+# wrong product. This probe asks the question that one cannot: do the two rows
+# agree on item_code, is a document's wrong pairing a PERFECT PERMUTATION (the
+# fingerprint of positional pairing), is the AutoCount DtlKey actually unique,
+# and does the sofa colour swap between two lines of one document.
+#
+# READ-ONLY: SELECTs only, no DDL, no writes, no transaction. Manual trigger,
+# own concurrency group, exit 0 for every legitimate answer. Counts only — this
+# repository and its Actions logs are PUBLIC.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: probe-link-identity
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+        working-directory: backend
+      - name: probe (read-only)
+        working-directory: backend
+        env:
+          DATABASE_URL: "${{ secrets.DATABASE_URL }}"
+        run: node scripts/probe-link-identity.mjs

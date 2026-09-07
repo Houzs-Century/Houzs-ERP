@@ -3015,6 +3015,34 @@ purchase order is a second rollout that needs its own.
 > what put those 64 dead addresses there in the first place. Every refusal is
 > printed and counted and the run exits 1. Trace:
 > `docs/bugs/0638-two-photo-repairs-could-be-planned-but-never-applied-anywher.md`.
+>
+> **`INCLUDE_BLANKS=1` — when dropping the row's LAST address is a repair.**
+> *Added 2026-09-07.* The prune refuses by default to remove a dead address
+> that would leave the row with no picture at all: it prints it under
+> `WOULD GO BLANK` and stops, because turning a broken tile into no tile is a
+> decision about what the owner wants to see. That is right for a photograph
+> that was LOST. It is wrong for one that was NEVER THERE — an address minted
+> by an attach run whose object was never uploaded, where the row showed
+> nothing before the address arrived and removing it only restores that. The
+> attach step cannot tell the difference on its own: it plans from the DECODE
+> manifest and has no way to ask R2 whether the object exists, which is how
+> nine such addresses were written on 2026-09-07
+> (`docs/bugs/0668-the-photo-attach-run-wrote-30-keys-when-only-21-objects-had.md`).
+>
+> The flag is **PLAN-ONLY** and enforced as such: it refuses `MODE=apply`, and
+> it refuses to run without `PLAN_OUT`. So a blank-leaving drop can only reach
+> the database through the handoff above — digest-checked, freshness-checked
+> and re-checked row by row at apply time — never through a local apply nobody
+> reviewed. The ops it writes carry `keeps: []`, the honest record that nothing
+> licensed the drop; the precondition then expects only the dead address
+> itself, so the row is still verified against the live column before anything
+> is written. Default off, so `planDeadKeyPrune`'s "never the last copy"
+> promise and its pinned test are untouched.
+>
+> **The picture itself is still missing after this runs.** Removing the address
+> is not recovery — it takes the broken tile off the line. Recovery is a
+> targeted re-export of those DtlKeys with
+> `export-ac-line-photos.py`'s `DTLKEY_FILE` mode, then upload, then attach.
 
 ## 8. Configuration
 
