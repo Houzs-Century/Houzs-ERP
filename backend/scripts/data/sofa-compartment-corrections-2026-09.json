@@ -44,7 +44,8 @@
   },
   {
    "docs": [
-    "HC-SO-013320"
+    "HC-SO-013320",
+    "HC-PO-010008"
    ],
    "model": "8069",
    "pieces": [
@@ -53,11 +54,12 @@
    ],
    "seat": "32",
    "desc2Match": "col: HR805-20",
-   "why": "photo: two 32\" boxes, an arm at each outer edge; slip notes storage on the left arm and a 5\" arm rest"
+   "why": "photo: two 32\" boxes, an arm at each outer edge; slip notes storage on the left arm and a 5\" arm rest | 2026-09-07: the purchase order was missing from this entry, so the build was written onto the sales order alone and HC-PO left holding the lead piece only (chain audit run 34134017406 reported it as PIECE ABSENT). HC-PO-010008 added so the pair is corrected together, which is what this file's own rule says."
   },
   {
    "docs": [
-    "HC-SO-013328"
+    "HC-SO-013328",
+    "HC-PO-010082"
    ],
    "model": "9028",
    "pieces": [
@@ -66,11 +68,12 @@
    ],
    "seat": "26",
    "desc2Match": "Col:ZL-12 TAN",
-   "why": "photo: [26\"|26\"] + [26\"], arms only at the two outer ends - the mirror of the owner-approved HC-SO-012624"
+   "why": "photo: [26\"|26\"] + [26\"], arms only at the two outer ends - the mirror of the owner-approved HC-SO-012624 | 2026-09-07: the purchase order was missing from this entry, so the build was written onto the sales order alone and HC-PO left holding the lead piece only (chain audit run 34134017406 reported it as PIECE ABSENT). HC-PO-010082 added so the pair is corrected together, which is what this file's own rule says."
   },
   {
    "docs": [
-    "HC-SO-013385"
+    "HC-SO-013385",
+    "HC-PO-010084"
    ],
    "model": "9028",
    "pieces": [
@@ -80,11 +83,12 @@
    ],
    "seat": "30",
    "desc2Match": "fully cover with one laye",
-   "why": "photo: the chaise drawn as the deeper box on the left, a 30\" seat, then the arm at the right end; a second photo shows the finished L"
+   "why": "photo: the chaise drawn as the deeper box on the left, a 30\" seat, then the arm at the right end; a second photo shows the finished L | 2026-09-07: the purchase order was missing from this entry, so the build was written onto the sales order alone and HC-PO left holding the lead piece only (chain audit run 34134017406 reported it as PIECE ABSENT). HC-PO-010084 added so the pair is corrected together, which is what this file's own rule says."
   },
   {
    "docs": [
-    "HC-SO-013000"
+    "HC-SO-013000",
+    "HC-PO-009980"
    ],
    "model": "9058",
    "pieces": [
@@ -95,7 +99,7 @@
    ],
    "seat": null,
    "desc2Match": "Col : CH141-12",
-   "why": "owner read the slip himself 2026-09-04: 1AL + c + 1NA + 1AR"
+   "why": "owner read the slip himself 2026-09-04: 1AL + c + 1NA + 1AR | 2026-09-07: the purchase order was missing from this entry, so the build was written onto the sales order alone and HC-PO left holding the lead piece only (chain audit run 34134017406 reported it as PIECE ABSENT). HC-PO-009980 added so the pair is corrected together, which is what this file's own rule says."
   },
   {
    "docs": [
@@ -114,7 +118,8 @@
   },
   {
    "docs": [
-    "HC-SO-012277"
+    "HC-SO-012277",
+    "HC-PO-010040"
    ],
    "model": "8051",
    "pieces": [
@@ -124,11 +129,12 @@
    ],
    "seat": null,
    "desc2Match": "no hole on sitting area",
-   "why": "photo: three boxes, a hatched arm at each outer end; no seat size written anywhere, so seat is left empty"
+   "why": "photo: three boxes, a hatched arm at each outer end; no seat size written anywhere, so seat is left empty | 2026-09-07: the purchase order was missing from this entry, so the build was written onto the sales order alone and HC-PO left holding the lead piece only (chain audit run 34134017406 reported it as PIECE ABSENT). HC-PO-010040 added so the pair is corrected together, which is what this file's own rule says."
   },
   {
    "docs": [
-    "HC-SO-013384"
+    "HC-SO-013384",
+    "HC-PO-010083"
    ],
    "model": "8030",
    "pieces": [
@@ -138,11 +144,12 @@
    ],
    "seat": "28",
    "desc2Match": "ZL -15 MISTY",
-   "why": "photo: three 28\" boxes, hatched arm at each outer end. TWO lines on this document carry the identical text - two identical sofas - and both take this build"
+   "why": "photo: three 28\" boxes, hatched arm at each outer end. TWO lines on this document carry the identical text - two identical sofas - and both take this build | 2026-09-07: the purchase order was missing from this entry, so the build was written onto the sales order alone and HC-PO left holding the lead piece only (chain audit run 34134017406 reported it as PIECE ABSENT). HC-PO-010083 added so the pair is corrected together, which is what this file's own rule says."
   },
   {
    "docs": [
-    "HC-SO-013312"
+    "HC-SO-013312",
+    "HC-PO-010041"
    ],
    "model": "9058",
    "pieces": [
@@ -152,11 +159,12 @@
    ],
    "seat": "32",
    "desc2Match": "back rest  (5540)",
-   "why": "owner read the slip himself 2026-09-04: the taller box is the chaise. Both 9058-L(RHF) and 9058-1A(RHF) exist in the product master"
+   "why": "owner read the slip himself 2026-09-04: the taller box is the chaise. Both 9058-L(RHF) and 9058-1A(RHF) exist in the product master | 2026-09-07: the purchase order was missing from this entry, so the build was written onto the sales order alone and HC-PO left holding the lead piece only (chain audit run 34134017406 reported it as PIECE ABSENT). HC-PO-010041 added so the pair is corrected together, which is what this file's own rule says."
   },
   {
    "docs": [
-    "HC-SO-011008"
+    "HC-SO-011008",
+    "HC-PO-009881"
    ],
    "model": "9058",
    "pieces": [
@@ -168,7 +176,7 @@
    ],
    "seat": "32",
    "desc2Match": "MODENZA 01- Houston Cream",
-   "why": "owner read the slip himself 2026-09-04: 1A+1NA+C+1NA+1A"
+   "why": "owner read the slip himself 2026-09-04: 1A+1NA+C+1NA+1A | 2026-09-07: the purchase order was missing from this entry, so the build was written onto the sales order alone and HC-PO left holding the lead piece only (chain audit run 34134017406 reported it as PIECE ABSENT). HC-PO-009881 added so the pair is corrected together, which is what this file's own rule says."
   },
   {
    "docs": [
