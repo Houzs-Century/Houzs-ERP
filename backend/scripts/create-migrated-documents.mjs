@@ -54,7 +54,7 @@ import { loadBookGrLocations, resolveAcReceiptLocation } from "./lib/ac-gr-locat
    The map is the SHARED one the PO importer's whId() uses — a second copy of a
    location map is how stock silently moves between branches — and the resolution
    onto a warehouse row is the tested spec of migration 0309's backfill. */
-import { mixedLocationDocs, resolveAcDeliveryLocation } from "./lib/ac-do-location.mjs";
+import { loadDoLocationSources, mixedLocationDocs, resolveAcDeliveryLocation } from "./lib/ac-do-location.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -364,17 +364,22 @@ async function doDos() {
      visibly absent, never a company-blind default, because a wrong warehouse
      reads as another branch's stock. backfill-migrated-do-warehouse.mjs applies
      the same rule to the documents already written. */
-  const hdrLoc = new Map();
-  for (const h of gz("ac-fidelity-do-headers.json.gz")) {
-    const v = (h.SalesLocation || "").trim();
-    if (v) hdrLoc.set(h.DocNo, v);
-  }
-  const lineLocs = new Map();
+  /* The two maps come from lib/ac-do-location.mjs, beside the rule that reads
+     them, so this writer and the backfill cannot end up reading different
+     files. THIS CUT's own lines are added on top: `rows` is the population
+     being written right now, which is narrower than any snapshot but never
+     staler than one. */
+  const { hdrLoc, lineLocs, sources } = loadDoLocationSources(path.join(here, "data"), {
+    readFileSync: fs.readFileSync, gunzipSync: zlib.gunzipSync, existsSync: fs.existsSync, join: path.join,
+  });
+  for (const s of sources) log(`      source ${s}`);
   for (const r of rows) {
     const v = (r.Location || "").trim();
     if (!v) continue;
-    if (!lineLocs.has(r.DoNo)) lineLocs.set(r.DoNo, new Set());
-    lineLocs.get(r.DoNo).add(v);
+    const d = String(r.DoNo || "").trim();
+    if (!d) continue;
+    if (!lineLocs.has(d)) lineLocs.set(d, new Set());
+    lineLocs.get(d).add(v);
   }
   const warehouses = await sql`SELECT id, code, name FROM scm.warehouses WHERE company_id = ${CO}`;
   const mixedDocs = mixedLocationDocs(lineLocs);

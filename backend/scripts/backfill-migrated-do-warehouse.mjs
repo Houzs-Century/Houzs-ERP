@@ -58,7 +58,7 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import postgres from 'postgres';
-import { mixedLocationDocs, resolveAcDeliveryLocation } from './lib/ac-do-location.mjs';
+import { loadDoLocationSources, mixedLocationDocs, resolveAcDeliveryLocation } from './lib/ac-do-location.mjs';
 
 const DSN = process.env.DATABASE_URL;
 const APPLY = (process.env.MODE || 'plan').toLowerCase() === 'apply';
@@ -73,26 +73,20 @@ if (APPLY && process.env.CONFIRM !== CONFIRM_PHRASE) {
   bad(`MODE=apply requires CONFIRM="${CONFIRM_PHRASE}" — run MODE=plan first and read it.`);
 }
 const sql = postgres(DSN, { ssl: 'require', prepare: false, max: 1 });
-const gz = (f) => JSON.parse(zlib.gunzipSync(fs.readFileSync(path.join(here, 'data', f))).toString('utf8').replace(/^﻿/, ''));
 
 async function main() {
   note(`mode=${APPLY ? 'APPLY' : 'PLAN (writes nothing)'} company=${CO}`);
 
-  /* Source 1 — the book's own header field. */
-  const hdrLoc = new Map();
-  for (const h of gz('ac-fidelity-do-headers.json.gz')) {
-    const v = (h.SalesLocation || '').trim();
-    if (v) hdrLoc.set(h.DocNo, v);
-  }
-  /* Source 2 — the document's own lines, ONLY when unanimous. Also the census
-     that decided the ruling: which documents span two locations. */
-  const lineLocs = new Map();
-  for (const r of gz('ac-partial-dos.json.gz')) {
-    const v = (r.Location || '').trim();
-    if (!v) continue;
-    if (!lineLocs.has(r.DoNo)) lineLocs.set(r.DoNo, new Set());
-    lineLocs.get(r.DoNo).add(v);
-  }
+  /* THE SOURCES, loaded by lib/ac-do-location.mjs — the same module that holds
+     the rule, so this script and create-migrated-documents.mjs cannot read a
+     different set of files and then disagree about a branch. Every source it
+     found (or did not) is printed, because on 2026-09-08 the 89 unstamped
+     documents were not a rule failure: both files this script used to read
+     carried no row for any of them. */
+  const { hdrLoc, lineLocs, sources } = loadDoLocationSources(path.join(here, 'data'), {
+    readFileSync: fs.readFileSync, gunzipSync: zlib.gunzipSync, existsSync: fs.existsSync, join: path.join,
+  });
+  for (const s of sources) note(`   source ${s}`);
   note(`book: ${hdrLoc.size} document header(s), ${lineLocs.size} document(s) with line locations`);
 
   /* The documents the book itself cannot answer with ONE location. Named rather

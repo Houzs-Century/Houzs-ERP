@@ -77,3 +77,78 @@ export function resolveAcDeliveryLocation(acDoNo, hdrLoc, lineLocs, warehouses) 
 export function mixedLocationDocs(lineLocs) {
   return [...lineLocs].filter(([, s]) => s.size > 1).map(([doc, s]) => ({ doc, locations: [...s] }));
 }
+
+/* ── WHERE THE TWO MAPS COME FROM ────────────────────────────────────────────
+   The rule above takes `hdrLoc` and `lineLocs` as arguments and does not care
+   which files they were read from. Both callers built them by hand, from the
+   same two snapshots, in two places — the second copy the header of this file
+   warns about, one layer down. It cost the exact thing it predicted: on
+   2026-09-08, 89 of 173 migrated delivery orders had no ship-from branch, and
+   the reason was not the rule but the SOURCES. `ac-fidelity-do-headers.json.gz`
+   holds 11,134 documents and none of the 89; `ac-partial-dos.json.gz` is a
+   369-line projection of the imported orders' deliveries and holds none of them
+   either. The book has known all along.
+
+   So the loader lives here, with the rule, and it reads THREE sources:
+
+     1. ac-fidelity-do-headers.json.gz   the book's own DO header field.
+     2. ac-partial-dos.json.gz           line Locations of the imported orders'
+                                         deliveries.
+     3. ac-reconcile-truth.json.gz       line Locations of EVERY delivery note in
+                                         the book. `location` is the fourteenth
+                                         line field, appended 2026-09-07 and
+                                         first actually cut 2026-09-08; a cut
+                                         older than that has 13 fields and this
+                                         source contributes nothing rather than
+                                         reading some other column by position.
+
+   Sources 2 and 3 are UNIONED into the same per-document set, deliberately.
+   They are two views of one fact, so agreement is invisible and disagreement
+   turns the document mixed — which the rule then refuses instead of picking a
+   side. Flattening it would be the guess this whole module exists to avoid. */
+export function loadDoLocationSources(dataDir, { readFileSync, gunzipSync, existsSync, join }) {
+  const gz = (f) => JSON.parse(gunzipSync(readFileSync(join(dataDir, f))).toString('utf8').replace(/^\uFEFF/, ''));
+  const sources = [];
+
+  const hdrLoc = new Map();
+  if (existsSync(join(dataDir, 'ac-fidelity-do-headers.json.gz'))) {
+    for (const h of gz('ac-fidelity-do-headers.json.gz')) {
+      const v = (h.SalesLocation || '').trim();
+      if (v) hdrLoc.set(String(h.DocNo).trim(), v);
+    }
+    sources.push(`ac-fidelity-do-headers.json.gz: ${hdrLoc.size} header location(s)`);
+  } else sources.push('ac-fidelity-do-headers.json.gz: ABSENT');
+
+  const lineLocs = new Map();
+  const add = (doc, loc) => {
+    const d = String(doc || '').trim();
+    const v = String(loc || '').trim();
+    if (!d || !v) return;
+    if (!lineLocs.has(d)) lineLocs.set(d, new Set());
+    lineLocs.get(d).add(v);
+  };
+
+  if (existsSync(join(dataDir, 'ac-partial-dos.json.gz'))) {
+    let n = 0;
+    for (const r of gz('ac-partial-dos.json.gz')) { add(r.DoNo, r.Location); n++; }
+    sources.push(`ac-partial-dos.json.gz: ${n} line(s)`);
+  } else sources.push('ac-partial-dos.json.gz: ABSENT');
+
+  if (existsSync(join(dataDir, 'ac-reconcile-truth.json.gz'))) {
+    const t = gz('ac-reconcile-truth.json.gz');
+    const fields = t.line_fields || [];
+    const di = fields.indexOf('docNo');
+    const li = fields.indexOf('location');
+    const lines = (t.types && t.types.DO && t.types.DO.lines) || [];
+    if (li < 0 || di < 0) {
+      /* A cut taken before the column was cut. Saying so is the point: reading
+         field 13 of a 13-field row would silently hand back docSubTotal. */
+      sources.push(`ac-reconcile-truth.json.gz: cut ${t.exported_at || '(undated)'} carries NO line location — contributes nothing`);
+    } else {
+      for (const l of lines) add(l[di], l[li]);
+      sources.push(`ac-reconcile-truth.json.gz: ${lines.length} DO line(s), cut ${t.exported_at || '(undated)'}`);
+    }
+  } else sources.push('ac-reconcile-truth.json.gz: ABSENT');
+
+  return { hdrLoc, lineLocs, sources };
+}
