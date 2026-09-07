@@ -295,7 +295,13 @@ async function main() {
         }
         continue;
       }
-      const prod = prodByCode.get(erp.toUpperCase());
+      /* `erp` is NULL on a code-less line by construction (:199 sets it null when
+         the binding misses, and the branch at :217 deliberately ACCEPTS that line
+         when the book carries a description). Looking the product up unguarded
+         threw `Cannot read properties of null (reading 'toUpperCase')` and killed
+         the whole run on the first such line - PO-009979 "ERGOTEX PILLOW CASE -
+         FAIR", in the 2026-09-07 cut. A code-less line has no product to find. */
+      const prod = erp ? prodByCode.get(erp.toUpperCase()) : null;
       const soItemId = dedicate(l, erp);
       if (!soItemId && !skipDedication) noSoLine++;
       /* A code-less line carries item_code NULL — the book HAS no code for it and
