@@ -22,6 +22,10 @@ on:
         description: "1 to WRITE. Anything else is a dry-run."
         required: false
         default: ""
+      confirm:
+        description: 'To WRITE, type exactly: I HAVE REVIEWED THE DRY-RUN'
+        required: false
+        default: ""
 
 concurrency:
   group: repair-so-qty-autocount-${{ inputs.target }}
@@ -42,6 +46,7 @@ jobs:
         env:
           DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
           APPLY: ${{ inputs.apply }}
+          CONFIRM: ${{ inputs.confirm }}
           NODE_OPTIONS: --dns-result-order=ipv4first
 
   run-prod:
@@ -57,4 +62,5 @@ jobs:
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           APPLY: ${{ inputs.apply }}
+          CONFIRM: ${{ inputs.confirm }}
           NODE_OPTIONS: --dns-result-order=ipv4first

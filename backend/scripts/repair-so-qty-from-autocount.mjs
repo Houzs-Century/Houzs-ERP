@@ -38,9 +38,10 @@
  *
  *   DATABASE_URL   required
  *   APPLY=1        write. Dry-run otherwise.
+ *   CONFIRM        must equal "I HAVE REVIEWED THE DRY-RUN" to write.
  *
  * RE-RUN: convergent. The book's DtlKey is the source and the truth does not
- * move, so a second run finds nothing to do.
+ * move, so a second run finds nothing to write and says so.
  */
 import fs from "node:fs";
 import zlib from "node:zlib";
@@ -51,6 +52,11 @@ import postgres from "postgres";
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
 const APPLY = process.env.APPLY === "1";
+const CONFIRM_PHRASE = "I HAVE REVIEWED THE DRY-RUN";
+if (APPLY && process.env.CONFIRM !== CONFIRM_PHRASE) {
+  console.error(`APPLY=1 needs CONFIRM="${CONFIRM_PHRASE}". Read the dry-run first: it names every line whose quantity moves, the money each one moves, and the conflicts it refuses to write.`);
+  process.exit(2);
+}
 const here = path.dirname(fileURLToPath(import.meta.url));
 const sql = postgres(DST, { ssl: "require", prepare: false, max: 1 });
 const log = (m = "") => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
@@ -173,13 +179,27 @@ async function main() {
   log("");
   log(`APPLIED - ${nLines} line(s) now carry the book's quantity; ${nHeads} order total(s) re-summed.`);
 
-  /* Read back. A RETURNING count says what the statement claimed, not what the
-     table holds. */
-  const back = await sql`
-    SELECT i.linked_ac_dtlkey k, i.qty::numeric q FROM scm.mfg_sales_order_items i
-     WHERE i.id = ANY(${write.map((w) => w.id)})`;
-  const still = back.filter((r) => Math.round(Number(r.q)) !== bookQty.get(String(r.k)) ? true : false);
-  log(`read-back: ${back.length - still.length}/${write.length} line(s) now equal the book${still.length ? `; STILL DIFFER: ${still.map((s) => s.k).join(", ")}` : ""}`);
+  /* Read back on a SECOND connection. The session that wrote is the worst
+     witness that the write landed, and a row count is not a shape: this asserts
+     what each value now IS - qty is a finite number equal to the book's, and
+     the line money is still qty * unit_price. */
+  const fresh = postgres(DST, { ssl: "require", prepare: false, max: 1 });
+  const back = await fresh`
+    SELECT i.linked_ac_dtlkey k, i.qty AS q, i.unit_price_sen AS up, i.total_sen AS total
+      FROM scm.mfg_sales_order_items i WHERE i.id = ANY(${write.map((w) => w.id)})`;
+  const bad = [];
+  for (const r of back) {
+    const q = Number(r.q), up = Number(r.up), total = Number(r.total);
+    const want = bookQty.get(String(r.k));
+    if (typeof q !== "number" || !Number.isFinite(q) || Math.round(q) !== Math.round(want)) {
+      bad.push(`${r.k}: qty is ${JSON.stringify(r.q)}, book says ${want}`); continue;
+    }
+    if (total !== Math.round(up * q)) bad.push(`${r.k}: total_sen ${total} is not ${up} x ${q}`);
+  }
+  log(`read-back on a fresh connection: ${back.length}/${write.length} row(s) returned; ${back.length - bad.length} carry the book's quantity AND a line total that is qty x unit price`);
+  for (const b of bad) log(`   WRONG SHAPE ${b}`);
+  if (bad.length) { log(`${bad.length} row(s) did NOT land as intended - do not report this run as clean.`); }
+  await fresh.end();
 
   log("");
   log("order totals, and whether paid + balance still add up (the owner's call where they do not):");
