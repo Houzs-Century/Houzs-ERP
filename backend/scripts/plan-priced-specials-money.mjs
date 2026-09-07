@@ -44,6 +44,10 @@ import postgres from "postgres";
 import {
   K, buildLiveIndex, classifyLine, loadPhraseMap,
 } from "./lib/special-order-phrase-mapper.mjs";
+/* The processing-date column is named in ONE place and read through it, exactly
+   as check-ac-erp-reconcile.mjs does — which is why the two cannot disagree
+   about what "proceeded" means. */
+import { soProcessingDateFragment } from "./lib/so-processing-date.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -53,6 +57,7 @@ const log = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m
 const plain = (m) => console.log(m);
 const rm = (sen) => `RM ${(Number(sen || 0) / 100).toFixed(2)}`;
 const sql = postgres(DST, { ssl: "require", prepare: false, max: 1 });
+const PDATE = soProcessingDateFragment(sql);
 
 const MAP = loadPhraseMap();
 
@@ -79,23 +84,32 @@ async function main() {
   /* THE SAME QUERY AND THE SAME CLASSIFIER the backfill uses, so this cannot
      describe a different population from the one that was actually held back. */
   const soLines = await sql`SELECT i.id, i.doc_no AS doc, i.item_code AS code, i.item_group AS grp,
-      i.description2 AS d2, i.variants, i.qty, i.line_total_sen
+      i.description2 AS d2, i.variants, i.qty
     FROM scm.mfg_sales_order_items i JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
     WHERE h.company_id = ${CO} AND i.item_group IN ('sofa','bedframe') AND h.linked_ac_docno IS NOT NULL`;
   const poLines = await sql`SELECT i.id, h.po_number AS doc, i.item_code AS code, i.item_group AS grp,
-      i.description2 AS d2, i.variants, i.qty, i.line_total_sen
+      i.description2 AS d2, i.variants, i.qty
     FROM scm.purchase_order_items i JOIN scm.purchase_orders h ON h.id = i.purchase_order_id
     WHERE h.company_id = ${CO} AND i.item_group IN ('sofa','bedframe') AND h.linked_ac_docno IS NOT NULL`;
 
+  /* THE COLUMN NAMES ARE COPIED FROM check-ac-erp-reconcile.mjs, not guessed.
+     The SO header total is COALESCE(local_total_sen, subtotal_sen) — that table
+     has no `total_sen` at all — and "proceeded" is the shared processing-date
+     fragment. The obvious `total_sen` / `proceeded_at` spelling was written here
+     first and would have failed on first dispatch: the exact shape CLAUDE.md
+     records for #2120, a workflow copied by name-similarity onto columns nobody
+     checked. */
   const soTotals = new Map();
-  for (const r of await sql`SELECT doc_no, COALESCE(total_sen,0) AS t, proceeded_at
+  for (const r of await sql`SELECT doc_no,
+        COALESCE(local_total_sen, subtotal_sen, 0) AS t,
+        (${PDATE} IS NOT NULL) AS proceeded
       FROM scm.mfg_sales_orders WHERE company_id = ${CO} AND linked_ac_docno IS NOT NULL`) {
-    soTotals.set(r.doc_no, { total: Number(r.t), proceeded: r.proceeded_at != null });
+    soTotals.set(r.doc_no, { total: Number(r.t || 0), proceeded: r.proceeded === true });
   }
   const poTotals = new Map();
-  for (const r of await sql`SELECT po_number, COALESCE(total_sen,0) AS t
+  for (const r of await sql`SELECT po_number, COALESCE(total_sen, 0) AS t
       FROM scm.purchase_orders WHERE company_id = ${CO} AND linked_ac_docno IS NOT NULL`) {
-    poTotals.set(r.po_number, { total: Number(r.t), proceeded: true });
+    poTotals.set(r.po_number, { total: Number(r.t || 0), proceeded: true });
   }
 
   const docs = new Map();     // "SO HC-SO-0001" -> { side, doc, lines[], addSell, addCost }
