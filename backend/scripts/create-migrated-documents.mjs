@@ -36,6 +36,11 @@ import postgres from "postgres";
 import {
   buildMigratedDoPlan, indexSoLines, insertMigratedDo, loadAcErpItemMap,
 } from "./lib/migrated-do-writer.mjs";
+/* The receiving warehouse is COPIED from the book where the book has been
+   asked, not derived from the purchase order. lib/ac-gr-location.mjs owns that
+   read and the SHARED location map; see the header there for why a surviving
+   stock LAYER is not a receipt location. */
+import { bookLocationForPair, grLocationWarehouseCode, loadBookGrLocations } from "./lib/ac-gr-location.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -126,6 +131,42 @@ async function doGrns() {
 
   const grUse = new Map();
   for (const g of plan) for (const gr of (g.po.linked_ac_grn_docnos ?? [])) grUse.set(gr, (grUse.get(gr) ?? 0) + 1);
+
+  /* THE RECEIVING WAREHOUSE IS THE BOOK'S, NOT THE PURCHASE ORDER'S.
+     This line used to read `g.items[0].warehouse_id ?? g.po.purchase_location_id`
+     — the FIRST line's warehouse, else the ORDER's location — which is a
+     derivation, and a migration copies rather than computes. A warehouse can
+     receive into a location the order did not name, and when it does the derived
+     answer is wrong with nothing to say so; that is exactly how the delivery-order
+     line warehouse went wrong (3 of 366 lines).
+     Where the committed cuts carry the book's own GRDTL location we copy it.
+     Where they do not — the GR export only started selecting the column on
+     2026-09-08, so older cuts are partial — we fall back to the old derivation
+     and SAY SO in the log, because a miss means "the book was never asked", not
+     "the book agrees". Same reason the ambiguous case (one receipt, two
+     locations, one header column) falls back rather than picking the first. */
+  const book = loadBookGrLocations(path.join(here, "data"));
+  const whRows = await sql`SELECT id, code FROM scm.warehouses WHERE company_id = ${CO}`;
+  const whByCode = new Map(whRows.map((w) => [String(w.code).toUpperCase(), w.id]));
+  const whStat = { copied: 0, noBookLocation: 0, ambiguous: 0, unresolvedCode: 0 };
+  const bookWarehouseFor = (g) => {
+    const codes = g.items.map((i) => i.item_code);
+    let found = null;
+    for (const acGr of (g.po.linked_ac_grn_docnos ?? [])) {
+      const r = bookLocationForPair(book, acGr, codes);
+      if (r.ambiguous) { whStat.ambiguous += 1; return null; }
+      if (!r.loc) continue;
+      if (found && found !== r.loc) { whStat.ambiguous += 1; return null; }
+      found = r.loc;
+    }
+    if (!found) { whStat.noBookLocation += 1; return null; }
+    const id = whByCode.get(String(grLocationWarehouseCode(found)).toUpperCase()) ?? whByCode.get(found);
+    if (!id) { whStat.unresolvedCode += 1; log(`   WARN ${g.po.linked_ac_docno}: book location ${found} has no ERP warehouse — falling back`); return null; }
+    whStat.copied += 1;
+    return id;
+  };
+  log(`book receipt-location sources: ${book.sources.join("; ") || "none on this cut"}`);
+
   let seq = await nextSeq("grns", "grn_number", "HC-GRN-");
   let made = 0;
   for (const g of plan) {
@@ -148,7 +189,7 @@ async function doGrns() {
                    defaults to 1 and a rate this script invented would be a
                    fabricated one; a real receipt is gated by
                    assertForeignRatePostable instead. */
-                ${g.items[0].warehouse_id ?? g.po.purchase_location_id}, 'POSTED', NOW(), CURRENT_DATE, ${g.po.currency ?? "MYR"},
+                ${bookWarehouseFor(g) ?? g.items[0].warehouse_id ?? g.po.purchase_location_id}, 'POSTED', NOW(), CURRENT_DATE, ${g.po.currency ?? "MYR"},
                 ${CO}, ${SYS_USER},
                 ${grnNote(g)},
                 true, ${g.po.linked_ac_docno})
@@ -167,6 +208,11 @@ async function doGrns() {
     if (made % 50 === 0) log(`  ..${made}/${plan.length}`);
   }
   log(`DONE. GRNs created: ${made}. No inventory movement written — by design.`);
+  log(`receiving warehouse: ${whStat.copied} COPIED from the book; ` +
+      `${whStat.noBookLocation} derived from the purchase order because this cut carries no receipt location; ` +
+      `${whStat.ambiguous} derived because the book used more than one location for the receipt ` +
+      `(scm.grn_items has no warehouse column, so a header cannot hold two); ` +
+      `${whStat.unresolvedCode} derived because the book's location has no ERP warehouse.`);
 }
 
 // ── delivery orders for the part AutoCount already delivered ─────────────────

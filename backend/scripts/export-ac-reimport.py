@@ -333,6 +333,12 @@ if want("grrefs"):
     grrefs = rows_of(f"""
         SELECT LTRIM(RTRIM(po.DocNo)) AS PoNo, pd.DtlKey AS PoDtlKey, g.ItemCode,
                LTRIM(RTRIM(gr.DocNo)) AS GrNo, gr.DocDate AS GrDate, g.Qty AS GrQty,
+               -- THE RECEIPT'S OWN LOCATION. Added 2026-09-08: both migrated-receipt
+               -- writers were DERIVING the receiving warehouse from the purchase
+               -- order because this column was read here and never selected, so the
+               -- book's answer existed and simply never left the server. A migration
+               -- copies; it does not compute.
+               ISNULL(LTRIM(RTRIM(g.Location)),'') AS Location,
                LTRIM(RTRIM(pi.DocNo)) AS PiNo, pi.DocDate AS PiDate
           FROM GRDTL g
           JOIN GR gr ON gr.DocKey = g.DocKey AND gr.Cancelled='F'
