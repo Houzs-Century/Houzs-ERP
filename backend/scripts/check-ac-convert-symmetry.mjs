@@ -625,13 +625,22 @@ if (SKIP_ERP) {
        WHERE table_schema='scm' AND (table_name, column_name) IN (
          ('purchase_order_items','so_item_id'), ('delivery_order_items','so_item_id'),
          ('sales_invoice_items','so_item_id'), ('grn_items','purchase_order_item_id'),
-         ('purchase_invoice_items','grn_item_id'),
-         ('mfg_sales_order_items','po_qty_picked'), ('purchase_order_items','received_qty'))`;
+         ('purchase_invoice_items','grn_item_id'), ('sales_invoice_items','do_item_id'),
+         ('mfg_sales_order_items','po_qty_picked'), ('purchase_order_items','received_qty'),
+         ('purchase_order_items','from_mrp'), ('grn_items','returned_qty'),
+         ('grn_items','invoiced_qty'), ('grn_items','qty_accepted'))`;
     const have = new Set(cols.map((r) => `${r.table_name}.${r.column_name}`));
+    /* Every column any measurement below DEPENDS ON, including the three the
+       write-path corrections added. from_mrp and returned_qty are not decorative:
+       drop either from the query and the counter silently reverts to the naive
+       rule that reported 962 and 241 false drifts. A renamed column must REFUSE,
+       never quietly answer a different question. */
     const need = ["purchase_order_items.so_item_id", "delivery_order_items.so_item_id",
-      "sales_invoice_items.so_item_id", "grn_items.purchase_order_item_id",
+      "sales_invoice_items.so_item_id", "sales_invoice_items.do_item_id",
+      "grn_items.purchase_order_item_id",
       "purchase_invoice_items.grn_item_id", "mfg_sales_order_items.po_qty_picked",
-      "purchase_order_items.received_qty"];
+      "purchase_order_items.received_qty", "purchase_order_items.from_mrp",
+      "grn_items.returned_qty", "grn_items.invoiced_qty", "grn_items.qty_accepted"];
     const missing = need.filter((n) => !have.has(n));
     if (missing.length) {
       console.error(`REFUSED: the ERP no longer carries ${missing.join(", ")}. The edges this check is `
@@ -699,22 +708,59 @@ if (SKIP_ERP) {
        counted in JS reports the LIMIT as the answer the moment the real number
        exceeds it — this said exactly "500 of 14492" on its first run against
        production, which is the limit, not a measurement. */
+    /* MEASURE THE RULE THE WRITE PATH ACTUALLY APPLIES, not a plausible one.
+       This block compared po_qty_picked against a plain sum of non-cancelled PO
+       lines and reported 962 of 15050 SO lines drifting, every one of them
+       "reading LOW - an over-convert could get through". recomputeSoPicked
+       (routes/mfg-purchase-orders.ts:2843-2887) does NOT count that population:
+
+         - it DROPS lines with from_mrp = true. An MRP-origin PO line is
+           reference-only by the 2026-05-31 decision and deliberately does not
+           lock its source SO line; coverage is handled by the pooled-supply
+           model instead.
+         - it excludes DRAFT purchase orders as well as CANCELLED ones, because
+           a draft PO must not drop the SO off the From-SO picker before it
+           commits.
+
+       Counting either population inflates `took`, which produces a difference
+       in exactly the LOW direction — which is what the old query reported, on
+       every one of the 962. A counter measured against a rule the system does
+       not use is the trap this repo names "the check that answers a different
+       question", and here it would have told the owner his convert ceiling was
+       open on 962 sales-order lines the night of go-live.
+
+       BOTH numbers are printed. The write-path figure is the answer; the naive
+       one is kept beside it so the size of the artefact is visible and this
+       cannot quietly regress into the old reading. */
     const pickedAgg = await pg`
-      WITH j AS (
-        SELECT s.id, o.doc_no, s.po_qty_picked AS claimed, COALESCE(k.took,0) AS took
+      WITH child AS (
+        SELECT i.so_item_id, sum(i.qty) AS took
+          FROM scm.purchase_order_items i
+          JOIN scm.purchase_orders h ON h.id = i.purchase_order_id
+         WHERE i.so_item_id IS NOT NULL
+           AND i.from_mrp IS NOT TRUE
+           AND h.status NOT IN ('CANCELLED','DRAFT')
+         GROUP BY i.so_item_id),
+      naive AS (
+        SELECT i.so_item_id, sum(i.qty) AS took
+          FROM scm.purchase_order_items i
+          JOIN scm.purchase_orders h ON h.id = i.purchase_order_id
+         WHERE i.so_item_id IS NOT NULL AND h.status <> 'CANCELLED'
+         GROUP BY i.so_item_id),
+      j AS (
+        SELECT s.id, o.doc_no, s.po_qty_picked AS claimed,
+               COALESCE(k.took,0) AS took, COALESCE(n.took,0) AS naive_took
           FROM scm.mfg_sales_order_items s
           JOIN scm.mfg_sales_orders o ON o.doc_no = s.doc_no AND o.company_id = ${CO}
-          LEFT JOIN (SELECT i.so_item_id, sum(i.qty) AS took
-                       FROM scm.purchase_order_items i
-                       JOIN scm.purchase_orders h ON h.id = i.purchase_order_id
-                      WHERE i.so_item_id IS NOT NULL AND h.status <> 'CANCELLED'
-                      GROUP BY i.so_item_id) k ON k.so_item_id = s.id
+          LEFT JOIN child k ON k.so_item_id = s.id
+          LEFT JOIN naive n ON n.so_item_id = s.id
          WHERE o.status <> 'CANCELLED')
       SELECT count(*)::int AS lines,
              count(*) FILTER (WHERE claimed <> took)::int AS differ,
              count(*) FILTER (WHERE claimed < took)::int  AS reads_low,
              count(*) FILTER (WHERE claimed > took)::int  AS reads_high,
-             count(*) FILTER (WHERE claimed <> took AND doc_no LIKE 'HC-%')::int AS migrated
+             count(*) FILTER (WHERE claimed <> took AND doc_no LIKE 'HC-%')::int AS migrated,
+             count(*) FILTER (WHERE claimed <> naive_took)::int AS naive_differ
         FROM j`;
     const pa = pickedAgg[0];
     const picked = await pg`
@@ -724,11 +770,14 @@ if (SKIP_ERP) {
         LEFT JOIN (SELECT i.so_item_id, sum(i.qty) AS took
                      FROM scm.purchase_order_items i
                      JOIN scm.purchase_orders h ON h.id = i.purchase_order_id
-                    WHERE i.so_item_id IS NOT NULL AND h.status <> 'CANCELLED'
+                    WHERE i.so_item_id IS NOT NULL AND i.from_mrp IS NOT TRUE
+                      AND h.status NOT IN ('CANCELLED','DRAFT')
                     GROUP BY i.so_item_id) k ON k.so_item_id = s.id
        WHERE o.status <> 'CANCELLED' AND s.po_qty_picked <> COALESCE(k.took,0)
        ORDER BY o.doc_no LIMIT ${SHOW}`;
     out(`    SO line po_qty_picked vs its PO children : ${pa.differ} of ${pa.lines} live SO lines DISAGREE`);
+    out(`      (measured the way recomputeSoPicked writes it: from_mrp lines dropped, DRAFT and CANCELLED POs excluded.`);
+    out(`       A plain non-cancelled sum - the rule the system does NOT use - would have reported ${pa.naive_differ}.)`);
     /* DIRECTION decides the risk, and it is the opposite of the intuition.
        The SO->PO ceiling is qty - po_qty_picked, so a counter that reads LOW
        makes the ceiling too GENEROUS: the guard would let someone raise a
@@ -744,33 +793,53 @@ if (SKIP_ERP) {
       out(`      ${r.doc_no} ${r.item_code}: ERP says picked ${r.claimed}, PO lines total ${r.took}`);
     }
 
-    /* qty_received or qty_accepted? Measure BOTH and let the book say which
-       convention received_qty actually follows, rather than guessing. */
+    /* The same correction, on the other stored counter. This block used to guess
+       the convention — "qty_received or qty_accepted? Measure BOTH and take the
+       smaller difference" — and reported 241 of 1333 either way. It is not a
+       guess and it is neither column on its own. recomputePoReceived
+       (routes/grns.ts:840-891) writes
+
+           received_qty = SUM over live GRN lines of max(0, qty_accepted - returned_qty)
+
+       excluding DRAFT GRNs as well as CANCELLED ones, because a draft GRN has
+       committed no receipt. Picking whichever raw column happened to disagree
+       less is not the same question, and a checker that resolves a tie by taking
+       the smaller number is choosing the flattering answer rather than the true
+       one. All three are printed so the correction stays visible. */
     const recv = await pg`
+      WITH live AS (
+        SELECT i.purchase_order_item_id AS k,
+               sum(greatest(0, coalesce(i.qty_accepted,0) - coalesce(i.returned_qty,0))) AS net,
+               sum(i.qty_received) AS recv, sum(i.qty_accepted) AS acc
+          FROM scm.grn_items i JOIN scm.grns gh ON gh.id = i.grn_id
+         WHERE i.purchase_order_item_id IS NOT NULL AND gh.status NOT IN ('CANCELLED','DRAFT')
+         GROUP BY i.purchase_order_item_id)
       SELECT count(*)::int AS lines,
+             count(*) FILTER (WHERE p.received_qty <> COALESCE(g.net,0))::int  AS differs_net,
              count(*) FILTER (WHERE p.received_qty <> COALESCE(g.recv,0))::int AS differs_received,
-             count(*) FILTER (WHERE p.received_qty <> COALESCE(g.acc,0))::int  AS differs_accepted
+             count(*) FILTER (WHERE p.received_qty <> COALESCE(g.acc,0))::int  AS differs_accepted,
+             count(*) FILTER (WHERE p.received_qty < COALESCE(g.net,0))::int   AS reads_low,
+             count(*) FILTER (WHERE p.received_qty > COALESCE(g.net,0))::int   AS reads_high
         FROM scm.purchase_order_items p
         JOIN scm.purchase_orders h ON h.id = p.purchase_order_id AND h.company_id = ${CO}
-        LEFT JOIN (SELECT i.purchase_order_item_id AS k, sum(i.qty_received) AS recv, sum(i.qty_accepted) AS acc
-                     FROM scm.grn_items i JOIN scm.grns gh ON gh.id = i.grn_id
-                    WHERE i.purchase_order_item_id IS NOT NULL AND gh.status <> 'CANCELLED'
-                    GROUP BY i.purchase_order_item_id) g ON g.k = p.id
+        LEFT JOIN live g ON g.k = p.id
        WHERE h.status <> 'CANCELLED'`;
     const rv = recv[0];
-    const conv = rv.differs_received <= rv.differs_accepted ? "qty_received" : "qty_accepted";
-    const differs = Math.min(rv.differs_received, rv.differs_accepted);
-    out(`    PO line received_qty vs its GRN children: ${differs} of ${rv.lines} live PO lines DISAGREE ` +
-      `(measured against ${conv}; the other convention differs on ${Math.max(rv.differs_received, rv.differs_accepted)})`);
+    out(`    PO line received_qty vs its GRN children: ${rv.differs_net} of ${rv.lines} live PO lines DISAGREE`);
+    out("      (measured the way recomputePoReceived writes it: max(0, qty_accepted - returned_qty), DRAFT and CANCELLED GRNs excluded.");
+    out(`       Raw qty_received alone would report ${rv.differs_received}; raw qty_accepted alone ${rv.differs_accepted}.)`);
+    out(`      ${rv.reads_low} read LOW (a PO line still reads outstanding after the goods arrived)`);
+    out(`      ${rv.reads_high} read HIGH (the PO reads received for goods that did not arrive)`);
     const recvEx = await pg`
-      SELECT h.po_number, p.item_code, p.received_qty AS claimed, COALESCE(g.recv,0) AS took
+      SELECT h.po_number, p.item_code, p.received_qty AS claimed, COALESCE(g.net,0) AS took
         FROM scm.purchase_order_items p
         JOIN scm.purchase_orders h ON h.id = p.purchase_order_id AND h.company_id = ${CO}
-        LEFT JOIN (SELECT i.purchase_order_item_id AS k, sum(i.qty_received) AS recv
+        LEFT JOIN (SELECT i.purchase_order_item_id AS k,
+                          sum(greatest(0, coalesce(i.qty_accepted,0) - coalesce(i.returned_qty,0))) AS net
                      FROM scm.grn_items i JOIN scm.grns gh ON gh.id = i.grn_id
-                    WHERE i.purchase_order_item_id IS NOT NULL AND gh.status <> 'CANCELLED'
+                    WHERE i.purchase_order_item_id IS NOT NULL AND gh.status NOT IN ('CANCELLED','DRAFT')
                     GROUP BY i.purchase_order_item_id) g ON g.k = p.id
-       WHERE h.status <> 'CANCELLED' AND p.received_qty <> COALESCE(g.recv,0)
+       WHERE h.status <> 'CANCELLED' AND p.received_qty <> COALESCE(g.net,0)
        ORDER BY h.po_number LIMIT ${SHOW}`;
     for (const r of recvEx) out(`      ${r.po_number} ${r.item_code}: ERP says received ${r.claimed}, GRN lines total ${r.took}`);
 
