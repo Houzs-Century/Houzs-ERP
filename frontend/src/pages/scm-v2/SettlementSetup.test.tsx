@@ -25,7 +25,7 @@ const DATA: MaintenanceData = {
       /* His own case: the same merchant, two companies, two banks. */
       byCompany: {
         '1': { enabled: true, linked: true, bankAccountCode: '310-0020' },
-        '2': { enabled: true, linked: true, bankAccountCode: '310-0010' },
+        '2': { enabled: true, linked: true, bankAccountCode: '310-0010', transitAccountCode: '326-0010' },
       },
     },
     {
@@ -55,6 +55,15 @@ const DATA: MaintenanceData = {
       },
     },
   ],
+  /* One clearing account per bank (owner 2026-09-07): 2990 has them, HOUZS
+     has only the generic one. */
+  clearings: {
+    '1': [{ account_code: '326-0000', account_name: 'CARD MACHINE CLEARING (EDC)' }],
+    '2': [
+      { account_code: '326-0000', account_name: 'CARD MACHINE CLEARING (EDC)' },
+      { account_code: '326-0010', account_name: 'CARD MACHINE CLEARING — PBB' },
+    ],
+  },
 };
 
 const merchantMutate = vi.fn();
@@ -222,5 +231,23 @@ describe('the bank recognition rules card', () => {
       { acquirerCode: 'PBB', pattern: 'IBG CREDIT' },
       expect.anything(),
     );
+  });
+});
+
+/* One clearing account per bank (owner 2026-09-07: 我想要拆账户). The picker
+   sits under the payout bank, shows where the merchant's card money sits
+   today, and a change writes transitAccountCode for THAT company. */
+describe('the clearing account per merchant', () => {
+  test("2990 sees PBB on its own clearing account and can move it; a change names the company", () => {
+    merchantMutate.mockClear();
+    draw();
+    const pick = screen.getByLabelText("PBB clearing for 2990's Home") as HTMLSelectElement;
+    expect(pick.value).toBe('326-0010');
+    expect([...pick.options].map((o) => o.value)).toEqual(['326-0000', '326-0010']);
+    fireEvent.change(pick, { target: { value: '326-0000' } });
+    expect(merchantMutate).toHaveBeenCalledWith({ companyId: 2, code: 'PBB', transitAccountCode: '326-0000' });
+    /* HOUZS has only the generic account listed — the picker still shows it,
+       reading the generic default. */
+    expect((screen.getByLabelText('PBB clearing for Houzs Century') as HTMLSelectElement).value).toBe('326-0000');
   });
 });
