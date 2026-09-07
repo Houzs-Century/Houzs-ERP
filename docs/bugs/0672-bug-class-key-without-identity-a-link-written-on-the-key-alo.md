@@ -173,7 +173,73 @@ other question, in four parts:
    a `Map` keyed by DtlKey silently keeps one row per key;
 4. the same permutation test on `variants->>'colourCode'`.
 
-**Production numbers: see the run recorded at the bottom of this entry.**
+### What production actually says — run 34137796488, 2026-09-07 23:22 local
+
+`probe-link-identity.mjs` against `secrets.DATABASE_URL`, read-only, conclusion
+`success`. Counts only, per the privacy rule.
+
+**1. Rows whose link points at a DIFFERENT product**
+
+| link | linked / total rows | carry no link | dangling | **wrong product** |
+|---|---|---|---|---|
+| `delivery_order_items.so_item_id` (DO -> SO) | 1000 / 1007 | 7 | 0 | **0** |
+| `grn_items.purchase_order_item_id` (GR -> PO) | 715 / 715 | 0 | 0 | **0** |
+| `purchase_order_items.so_item_id` (PO -> SO) | 1122 / 1532 | 410 | 0 | **10** |
+| `sales_invoice_items.do_item_id` (SI -> DO) | 182 / 182 | 0 | 0 | **2** |
+| `sales_invoice_items.so_item_id` (SI -> SO) | 0 / 182 | 182 | 0 | 0 (nothing to compare) |
+| `purchase_invoice_items.grn_item_id` (PI -> GR) | 198 / 198 | 0 | 0 | **3** |
+
+**15 wrong links in production, on three chains.** Every one is FILLED and NONE
+dangles, which is exactly why the existing matrix reported them clean.
+
+**The PO -> SO number is 10, and the sofa audit's was 9.** The audit counts sofa
+and bedframe; this counts every purchase-order line. So one wrong dedication was
+outside the audit's population and has never been reported — LIKELY the
+`AMN-SOFA PILLOW` accessory line that run 34123720786 wrote alongside the nine
+(0671 names it), but that is an inference from the run's own enumeration, not a
+row-level match. UNKNOWN until someone lists the ten.
+
+**SI -> DO 2 and PI -> GR 3 are NEW.** Nobody has reported these. They are on the
+two chains site 15 flags: an invoice line that names a delivery line for a
+different product, and a purchase-invoice line that names a goods-receipt line
+for a different product. Both routes take the link from the client and check
+company, parent status and quantity — never the item.
+
+**2. None of the fifteen is a permutation.** 8 purchase orders, 2 sales invoices
+and 3 purchase invoices carry a wrong pairing, and **0 of the 13 documents is a
+perfect permutation of its own codes**. So these are not positional swaps: the
+parent is a product the document does not even order. That REFUTES the tidy
+theory that one mechanism produced everything, and it is consistent with the DO
+colour swap being a separate shape — there the codes MATCH and only the colour
+moves, so an item-code test cannot see it by construction.
+
+**3. The AutoCount line key is duplicated on the purchase-order lines.** 1,281 of
+1,532 PO lines carry a `linked_ac_dtlkey`; **98 keys are carried by more than one
+row, 250 rows in total.** The other five line tables carry none at all. The
+LIKELY explanation is benign — one book line for a sofa becomes several ERP
+compartment lines, and they share the book's key — but the consequence does not
+care: `composeEdit` addresses a book row by `doc.EditDetail(dtlKey)`, and any
+lane that builds a `Map` keyed by DtlKey keeps ONE row per key. The first run
+could not tell benign from collision; the probe now splits the count by whether
+the sharing rows name the same product. **UNKNOWN until that re-run.**
+
+### The probe's own two blind spots, found by running it
+
+Both are the trap CLAUDE.md names — the check that answers a different question —
+and both were in MY instrument, so they are recorded rather than quietly fixed:
+
+- **The sales-order lines were not measured at all.** Section 3 answered
+  `NOT COUNTABLE: column h.id does not exist` for `mfg_sales_order_items`,
+  because a sales-order LINE joins its header by `doc_no`, not by an id foreign
+  key. The one table the whole incident is about produced no number.
+- **The colour test compared a key nothing writes.** It read
+  `variants->>'colourCode'` and found **0 comparable pairs on every edge** — an
+  EMPTY answer that prints identically to a clean one. The importers write
+  `colourId` and `colourLabel` (`import-ac-outstanding-so.mjs:302`).
+
+Both fixed, and the comparable-pair count is now printed beside every colour
+answer so an empty result can never read as a clean one again. Re-run recorded
+below.
 
 ---
 
