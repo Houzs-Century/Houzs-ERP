@@ -82,14 +82,17 @@ export async function postSoPayment(sb: any, p: SoPaymentRow, opts: { dryRun?: b
   if (!entryDate) return { ok: false, status: 'bad_paid_at', reason: `payment ${p.id} has no usable paid_at` };
 
   // The SO carries the company and the customer identity for the AR leg.
+  // The order table names its customer debtor_name (and the phone, phone) —
+  // docs/bugs/0655: this read asked for customer_name, a column it never had,
+  // and every customer payment since the hook landed died here.
   const { data: so, error: soErr } = await sb
     .from('mfg_sales_orders')
-    .select('company_id, customer_name, customer_phone')
+    .select('company_id, debtor_name, phone')
     .eq('doc_no', p.so_doc_no)
     .maybeSingle();
   if (soErr) return { ok: false, status: 'so_read_failed', reason: soErr.message };
   const companyId = (so as { company_id?: number | null } | null)?.company_id ?? p.company_id ?? null;
-  const customerName = (so as { customer_name?: string | null } | null)?.customer_name ?? null;
+  const customerName = (so as { debtor_name?: string | null } | null)?.debtor_name ?? null;
 
   const roles = await resolveRoles(sb, companyId);
   const transit = p.method === 'merchant' || p.method === 'installment'
