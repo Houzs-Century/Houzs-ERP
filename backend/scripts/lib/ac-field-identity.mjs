@@ -214,7 +214,17 @@ const SO_HEADER = [
   { key: "remark4", label: "remark4", kind: "text", ac: (h) => h.Remark4, erp: "remark4", status: CARRIED, writer: "HCOLS remark4" },
   { key: "note", label: "note (UDF_Note)", kind: "text", ac: (h) => h.UDF_Note, erp: "note", status: CARRIED, writer: "HCOLS note" },
   { key: "exemption", label: "sales exemption expiry", kind: "date", ac: (h) => h.SalesExemptionExpiryDate, erp: "sales_exemption_expiry", status: CARRIED, writer: "HCOLS sales_exemption_expiry" },
-  { key: "currency", label: "currency", kind: "text", ac: (h) => h.CurrencyCode, erp: "currency", status: CARRIED, notExported: "SO.CurrencyCode", writer: "HCOLS currency — the importer writes the CONSTANT 'MYR'" },
+  /* MEASURABLE SINCE 2026-09-07, and it was already measurable before anyone
+     noticed: `notExported: "SO.CurrencyCode"` sat here while
+     export-ac-reimport.py's `hdr` section had been exporting SO.CurrencyCode
+     into ac-doc-headers.json.gz all along, and ac-field-identity-run.mjs's
+     `enrich()` merges every field of that cut onto the header. The marker means
+     "there is no book value to compare", and that was false — so a field the
+     book fills on all 13,365 orders was being excluded from the comparison by a
+     stale annotation rather than by a missing column. Measured on the 2026-09-07
+     17:36+08 cut: 13,365 of 13,365 sales orders are MYR, so this row is expected
+     to agree everywhere; the PO row below is the one that finds the defect. */
+  { key: "currency", label: "currency", kind: "text", ac: (h) => h.CurrencyCode, erp: "currency", status: CARRIED, writer: "HCOLS currency — the importer writes the CONSTANT 'MYR'", note: "the book side comes from ac-doc-headers.json.gz through enrich(), not from the migration cut" },
   { key: "creditTerm", label: "credit term", kind: "text", ac: (h) => h.CreditTerm, erp: null, status: NOT_CARRIED, notExported: "SO.CreditTerm", writer: "NO importer names an ERP column for it" },
   { key: "docTotal", label: "document total", kind: "sen", ac: (h) => h.__bookTotalSen, erp: "local_total_sen", status: DERIVED, writer: "HCOLS local_total_sen = SUM(qty x unit price) over the IMPORTED lines", note: "the book's NetTotal is over ALL lines of the document; the ERP sums the lines the migration carried" },
 ];
@@ -240,7 +250,12 @@ const PO_HEADER = [
   { key: "displayTerm", label: "display term", kind: "text", ac: (h) => h.DisplayTerm, erp: "display_term", status: CARRIED, writer: "PO_HEADER_FIELDS `display_term` -> LANES=hdr (mig 20260907T1026)", note: "same source as attention above" },
   { key: "location", label: "warehouse / location", kind: "text", ac: (h) => h.Location, erp: "purchase_location", status: DERIVED, writer: ":379 purchase_location_id = whId(Location)" },
   { key: "delivDate", label: "expected delivery", kind: "date", ac: (h) => h.__earliestDeliveryDate, erp: "expected_at", status: DERIVED, writer: ":374 expected_at = earliest line DeliveryDate" },
-  { key: "currency", label: "currency", kind: "text", ac: (h) => h.CurrencyCode, erp: "currency", status: CARRIED, notExported: "PO.CurrencyCode", writer: ":379 currency — the importer writes the CONSTANT 'MYR'" },
+  /* THE ROW THE OWNER RULED ON. The importer writes the CONSTANT 'MYR'; the book
+     holds 22 CNY purchase orders out of 9,408 on the 2026-09-07 17:36+08 header
+     cut. It was marked notExported until 2026-09-07 — see the SO row above for
+     why that marker was wrong: ac-doc-headers.json.gz has carried
+     PO.CurrencyCode since the `hdr` section was written, and enrich() merges it. */
+  { key: "currency", label: "currency", kind: "text", ac: (h) => h.CurrencyCode, erp: "currency", status: CARRIED, writer: ":379 currency — the importer writes the CONSTANT 'MYR'", note: "the book side comes from ac-doc-headers.json.gz through enrich(), not from the migration cut" },
   { key: "creditTerm", label: "credit term", kind: "text", ac: (h) => h.CreditTerm, erp: null, status: NOT_CARRIED, notExported: "PO.CreditTerm", writer: "NO importer names an ERP column for it" },
   { key: "docTotal", label: "document total", kind: "sen", ac: (h) => h.__bookTotalSen, erp: "total_sen", status: DERIVED, writer: ":379 total_sen = SUM(qty x unit price), UNDISCOUNTED — see the discount row" },
 ];
@@ -262,7 +277,12 @@ const DO_HEADER = [
   { key: "debtorCode", label: "debtor code", kind: "text", ac: (h) => h.DebtorCode, erp: "debtor_code", status: CARRIED, writer: ":317 debtor_code" },
   { key: "debtorName", label: "debtor name", kind: "text", ac: (h) => h.DebtorName, erp: "debtor_name", status: CARRIED, writer: ":317 debtor_name (falls back to the sales order's name when the note is blank)" },
   { key: "soNo", label: "source sales order", kind: "text", ac: (h) => h.SoNo, erp: "so_ac_docno", status: CARRIED, writer: ":317 so_doc_no, the ERP order carrying that AutoCount number" },
-  { key: "currency", label: "currency", kind: "text", ac: (h) => h.CurrencyCode, erp: "currency", status: CARRIED, notExported: "DO.CurrencyCode", writer: ":317 currency — the CONSTANT 'MYR'" },
+  /* STILL NOT MEASURABLE, and for a real reason rather than a stale one: the DO
+     side is built from ac-partial-dos.json.gz, which has no header projection at
+     all, and ac-doc-headers.json.gz carries only `so` and `po`. The `hdr` section
+     of export-ac-reimport.py now has a DO lane, so this becomes measurable on the
+     NEXT cut of that file — not on the committed one. */
+  { key: "currency", label: "currency", kind: "text", ac: (h) => h.CurrencyCode, erp: "currency", status: CARRIED, notExported: "DO.CurrencyCode (the `hdr` DO lane, added 2026-09-07 — needs a re-cut)", writer: ":317 currency — the CONSTANT 'MYR'" },
   { key: "docTotal", label: "document total", kind: "sen", ac: (h) => h.__bookTotalSen, erp: "local_total_sen", status: DERIVED, writer: ":373 local_total_sen = SUM(line totals), and the LINE PRICE COMES FROM THE SALES ORDER, not from DODTL" },
 ];
 
