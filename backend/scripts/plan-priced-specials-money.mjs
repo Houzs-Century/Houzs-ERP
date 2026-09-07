@@ -174,13 +174,25 @@ async function main() {
      production run (34138211541) EVERY one of the 70 purchase orders read
      RM 0.00 while all 157 sales orders carried a real figure — a whole class
      behaving unlike the rest, which is the finding, not the noise.
-     `scm.purchase_orders.total_sen` is `integer DEFAULT 0 NOT NULL`, so the
-     column is the right one and the zeros are real values rather than a bad
-     read. What is NOT yet explained is that the reconcile compares 574 PO
-     document totals and finds only 2 differing, which it could not if the ERP
-     side were uniformly zero. Until that is resolved the after-total on a
-     zero-before document must not be read as a document total, so the report
-     says so itself instead of printing a figure that looks authoritative. */
+
+     WHY, traced 2026-09-07 and no longer an open question. Both PO importers
+     write `total_sen = SUM(qty x priceSen)` where `priceSen` is copied straight
+     from AutoCount's PODTL.UnitPrice (import-ac-outstanding-po.mjs,
+     import-ac-so-linked-pos.mjs:235). That price is 0 on a large part of the
+     migrated set — the reconcile counts 241 PO lines where the book says
+     RM 0.00 and the ERP line holds a real figure — so the header copied a zero
+     while the LINE prices were set later by something that never rolled the
+     total back up.
+
+     That also explains the apparent contradiction this comment used to record
+     as unresolved: the reconcile compares 574 PO document totals and finds
+     almost none differing, which looked impossible against a uniformly zero ERP
+     side. It is not. The BOOK's total is zero too, so 0 == 0 agrees, correctly.
+
+     So the surcharge below is right, the after-total is not a document value on
+     these rows, and the underlying defect — a header total that does not equal
+     the sum of its own lines on 70 migrated purchase orders — is real, separate
+     from this report, and recorded in docs/bugs/0675. */
   const zeroBefore = list.filter((d) => !d.before);
   if (zeroBefore.length) {
     plain("");
@@ -189,7 +201,9 @@ async function main() {
       `PO ${zeroBefore.filter((d) => d.side === "PO").length}), so "total after" is just the surcharge and NOT`);
     plain("   the document's value. The surcharge itself is still correct. This is flagged rather than");
     plain("   hidden because a zero on one whole document type is a finding in its own right, and it is");
-    plain("   NOT yet reconciled with the document-level check, which compares 574 PO totals and finds 2 differing.");
+    plain("   The cause is known (docs/bugs/0675): the header copied AutoCount's own unit price, which is RM 0.00");
+    plain("   on much of the migrated set, while the LINE prices were set later and never rolled back up. The");
+    plain("   document-level check agrees on these totals because the BOOK's total is zero as well.");
   }
 
   plain("");
