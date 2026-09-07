@@ -1,0 +1,55 @@
+name: Priced specials — the money the owner has to rule on (read-only)
+
+# The 358 special orders the backfill held back because charging them would move
+# a historical document's total. Prints WHICH document, WHICH line, WHICH option,
+# what it adds in ringgit, and the document total before and after.
+#
+# READ-ONLY. This script has no apply path — it runs SELECTs and prints.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      show:
+        description: "How many documents to print in full"
+        required: false
+        default: "400"
+        type: string
+
+concurrency:
+  group: priced-specials-money-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/plan-priced-specials-money.mjs
+        env:
+          SHOW: ${{ inputs.show }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/plan-priced-specials-money.mjs
+        env:
+          SHOW: ${{ inputs.show }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

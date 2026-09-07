@@ -119,7 +119,13 @@ const SNAP = path.join(DATA, "ac-reconcile-truth.json.gz");
 const MAP_CSV = path.join(DATA, "autocount-erp-mapping-1561.csv");
 const CO = Number(process.env.COMPANY_ID || 1); // AED_HOUZS is company 1
 const MAX_AGE_DAYS = Number(process.env.MAX_SNAPSHOT_AGE_DAYS || 2);
-const SHOW = 20; // the owner asked for the first 20 offenders each way
+/* The owner asked for the first 20 offenders each way, and 20 is the right
+   default for a status read. It is overridable because ONE axis needs the whole
+   list rather than a sample: a sofa compartment disagreement is adjudicated by a
+   person reading both builds piece by piece against the slip
+   (sofa-slip-notation — the photo and the Desc2 are read TOGETHER), and
+   "... 12 more" is exactly the 12 he cannot adjudicate. */
+const SHOW = Math.max(1, Number(process.env.SHOW || 20));
 
 const log = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 const plain = (m) => console.log(m);
