@@ -45,10 +45,17 @@ describe('the unified money-in list', () => {
     expect(screen.getByText('HC-ODR-2609-001').closest('a')!.getAttribute('href')).toBe('/scm/other-debtors');
   });
 
-  test('a general receipt raises with typed payer, picked bank and free-pick lines', async () => {
+  test('a general receipt raises with its own date, typed payer, picked bank and free-pick lines', async () => {
     createAsync.mockClear();
     draw();
     fireEvent.click(screen.getByText('New receipt'));
+    /* The date is the receipt's own (owner 2026-09-07: 没办法输入日期) —
+       typed day-first, sent ISO; the number's month follows it server-side. */
+    const date = screen.getByLabelText('Receipt date') as HTMLInputElement;
+    fireEvent.focus(date);
+    fireEvent.change(date, { target: { value: '02092026' } });
+    fireEvent.blur(date);
+    expect(date.value).toBe('02/09/2026');
     fireEvent.change(screen.getByLabelText(/Received from/), { target: { value: 'ALLIANZ INSURANCE' } });
     const combos = screen.getAllByRole('combobox');
     fireEvent.focus(combos[0]!); // Received into — money only
@@ -56,13 +63,38 @@ describe('the unified money-in list', () => {
     fireEvent.change(screen.getByPlaceholderText('Description'), { target: { value: '车险赔偿' } });
     fireEvent.focus(screen.getAllByRole('combobox')[1]!);
     fireEvent.mouseDown(screen.getByText('700-0000 · Other Income'));
-    fireEvent.change(screen.getByLabelText('line 1 amount'), { target: { value: '888' } });
+    /* MoneyInput commits on blur and re-dresses at rest (1,800.00 style). */
+    const amount = screen.getByLabelText('line 1 amount') as HTMLInputElement;
+    fireEvent.focus(amount);
+    fireEvent.change(amount, { target: { value: '888' } });
+    fireEvent.blur(amount);
+    expect(amount.value).toBe('888.00');
     fireEvent.click(screen.getByText('Post receipt'));
     await waitFor(() => expect(createAsync).toHaveBeenCalledWith({
       payerName: 'ALLIANZ INSURANCE',
+      receiptDate: '2026-09-02',
       bankAccountCode: '310-0010',
       lines: [{ description: '车险赔偿', creditAccountCode: '700-0000', amountSen: 88800 }],
     }));
+  });
+
+  test('the form opens on today and every control wears the one field dress (格子整齐)', () => {
+    draw();
+    fireEvent.click(screen.getByText('New receipt'));
+    const date = screen.getByLabelText('Receipt date') as HTMLInputElement;
+    expect(date.value).toMatch(/^\d{2}\/\d{2}\/\d{4}$/);
+    /* Payer, both account pickers, the description and the amount all carry
+       the PV form's fieldInput class — no more bordered boxes beside bare
+       selects (owner 2026-09-07: 有些有格子有些没有). */
+    const dressed = [
+      screen.getByLabelText(/Received from/),
+      ...screen.getAllByRole('combobox'),
+      screen.getByPlaceholderText('Description'),
+      screen.getByLabelText('line 1 amount'),
+    ];
+    expect(dressed).toHaveLength(5);
+    for (const el of dressed) expect(el.className, el.outerHTML.slice(0, 80)).toMatch(/fieldInput/);
+    expect(date.closest('span')!.className).toMatch(/fieldInput/);
   });
 
   test('void confirms with the reversal sentence, then sends the id — offered on GENERAL rows only', async () => {
