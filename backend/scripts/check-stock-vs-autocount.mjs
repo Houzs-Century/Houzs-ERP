@@ -210,9 +210,14 @@ async function main() {
   /* Did the cutover import actually run? The repo contains a script that
       printed a DONE line while writing nothing, so the movements are counted
       here rather than trusted from a log. */
-  const [cut] = await sql`SELECT COUNT(*)::int n, COALESCE(SUM(qty),0)::int units
+  /* The seeding WINDOW, not just the count. "CUTOVER ADJUSTMENT ONLY" is the
+     largest cause bucket, and it means "the delta was already there when the
+     ERP was seeded" — a claim nobody can weigh without knowing WHEN that was.
+     Read from the rows rather than from a runbook date. */
+  const [cut] = await sql`SELECT COUNT(*)::int n, COALESCE(SUM(qty),0)::int units,
+      MIN(created_at)::text first_at, MAX(created_at)::text last_at
     FROM scm.inventory_movements WHERE source_doc_type = 'AC_CUTOVER'`;
-  log(`cutover adjustment movements present in ERP: ${cut.n} (${cut.units} units)`);
+  log(`cutover adjustment movements present in ERP: ${cut.n} (${cut.units} units), seeded ${cut.first_at ?? "-"} .. ${cut.last_at ?? "-"} UTC`);
 
   /* scm.inventory_balances (migration 0084) sums TRANSFER as +qty with no
      compensating branch, and the FIFO trigger has no TRANSFER case at all. If
@@ -237,21 +242,47 @@ async function main() {
     log(`scm.${t}: ${m.n} rows, ${m.migrated} migrated_no_stock (no movement by design)`);
   }
 
-  // snapshot drift = AutoCount activity AFTER the cutover snapshot
+  /* Drift = AutoCount activity AFTER the ERP's stock was seeded.
+     The baseline MUST be frozen at the seeding moment. It used to be
+     ac-stock-balance.json.gz, which is a working export that
+     export-ac-reimport.py re-cuts every round; it was re-cut on 2026-09-07,
+     after seeding, so it equalled the live book, the drift set collapsed to
+     zero cells, and 175 cells / 1211 units of "AutoCount has moved on since"
+     were reported as "the seeding was wrong". Two causes needing opposite
+     remedies, silently merged by a routine re-export.
+     data/ac-seed-baseline-balance.README.md carries the provenance and the
+     ~22h bias against the ERP's own AC_CUTOVER max(created_at). */
   const snap = new Map();
-  for (const r of gz("ac-stock-balance.json.gz")) {
+  for (const r of gz("ac-seed-baseline-balance.json.gz")) {
     const k = `${norm(r.ItemCode)}|${norm(r.Location)}`;
     snap.set(k, (snap.get(k) ?? 0) + Number(r.BalQty || 0));
   }
+  /* Carried through the SAME binding and warehouse mapping as acCell, so a
+     seeded quantity is comparable to an ERP quantity cell for cell. Mapping the
+     AutoCount side one way and the baseline another is how a filter invents a
+     gap — the lesson D7 in docs/stock-reconciliation.md was bought with. */
+  const seedCell = new Map();
+  for (const r of snap.keys()) {
+    const [ac, loc] = r.split("|");
+    const erp = byAc.get(ac); const wh = resolveWh(loc);
+    if (!erp || !wh) continue;
+    const k = `${norm(erp)}|${wh.id}`;
+    seedCell.set(k, (seedCell.get(k) ?? 0) + snap.get(r));
+  }
   const movedSinceSnapshot = new Set();
+  let driftUnits = 0;
   for (const r of bal) {
     const k = `${norm(r.ItemCode)}|${norm(r.Location)}`;
-    if (Math.abs(Number(r.BalQty || 0) - (snap.get(k) ?? 0)) > 1e-9) {
+    const d = Number(r.BalQty || 0) - (snap.get(k) ?? 0);
+    if (Math.abs(d) > 1e-9) {
       const erp = byAc.get(norm(r.ItemCode));
       const wh = resolveWh(r.Location);
-      if (erp && wh) movedSinceSnapshot.add(`${norm(erp)}|${wh.id}`);
+      if (erp && wh) { movedSinceSnapshot.add(`${norm(erp)}|${wh.id}`); driftUnits += Math.abs(d); }
     }
   }
+  /* Printed, because a cause bucket that reports zero is indistinguishable from
+     a cause bucket that never fires unless the input to it is shown. */
+  log(`AutoCount cells that moved since the seeding baseline: ${movedSinceSnapshot.size} (${Math.round(driftUnits)} units absolute) — the book kept trading after the ERP was seeded`);
 
   const keys = new Set([...acCell.keys(), ...erpCell.keys()]);
   const agree = [], differ = [], acOnly = [], erpOnly = [];
@@ -315,11 +346,34 @@ async function main() {
     WHERE company_id = ${CO} AND source_doc_no IN ('DO-2607-005','DO-2607-017')`;
   const knownCells = new Set(knownDo.map((r) => `${norm(r.item_code)}|${r.warehouse_id}`));
   log(`cells touched by the known double-ship pair (DO-2607-005 / DO-2607-017): ${knownCells.size}`);
+  /* The model-name widening is ONLY admissible while the traced documents are
+     still in the movement ledger. On 2026-09-07 they were not — the re-import
+     re-seeded the ledger and the pair matched zero rows — so the prefix test
+     was labelling 14 cells / 139 units "traced, owner decision pending" on the
+     strength of a product name alone, and pre-empting their real cause: every
+     one of them carries AC_CUTOVER movements and nothing else, which is a
+     seeding delta, not a double-ship. A double-ship IS a DO posting twice; a
+     cell with no DO movement cannot have one. Gate the widening on the
+     evidence so the label comes back by itself if the documents do. */
+  const doubleShipEvidence = knownCells.size > 0;
+  if (!doubleShipEvidence) log("   -> the traced pair matches NO movement rows, so the KETTA/NTYR/TRION/XAMMAR model widening is withheld: those cells are reported under whatever their movements actually show");
 
   const causeOf = (r) => {
-    if (knownCells.has(`${r.code}|${r.whId}`) || isKnownDoubleShip(r.code)) return "KNOWN DOUBLE-SHIP (SO-2606-019, DO-2607-005 + DO-2607-017) — traced, owner decision pending";
+    if (knownCells.has(`${r.code}|${r.whId}`) || (doubleShipEvidence && isKnownDoubleShip(r.code))) return "KNOWN DOUBLE-SHIP (SO-2606-019, DO-2607-005 + DO-2607-017) — traced, owner decision pending";
     if (dupCell.has(`${r.code}|${r.whId}`)) return "DOUBLE-POSTED DOCUMENT — a single-post document type posted this cell more than once";
-    if (movedSinceSnapshot.has(`${r.code}|${r.whId}`)) return "MIGRATION CUT-OFF — AutoCount moved after the cutover snapshot the ERP was seeded from";
+    /* Split the old single MIGRATION CUT-OFF bucket, because the two halves
+       need opposite remedies and only the seed baseline can tell them apart.
+       If the ERP still holds exactly what it was seeded with, the ERP did not
+       go wrong at all — it simply never received what AutoCount posted after
+       seeding, and the remedy is a catch-up sync. If BOTH sides have moved off
+       the baseline, the two systems have been traded independently and the
+       remedy is a count. */
+    if (movedSinceSnapshot.has(`${r.code}|${r.whId}`)) {
+      const seeded = seedCell.get(`${r.code}|${r.whId}`);
+      if (seeded !== undefined && Math.abs((r.erp ?? 0) - seeded) < 1e-9)
+        return "ERP IS BEHIND THE BOOK — the ERP still holds exactly the seeded quantity; AutoCount has traded this cell since seeding and those movements never reached the ERP";
+      return "BOTH MOVED SINCE SEEDING — AutoCount traded this cell after seeding AND the ERP no longer holds the seeded quantity either";
+    }
     const m = mvBy.get(`${r.code}|${r.whId}`);
     if (!m) return "NO ERP MOVEMENT — the cutover adjustment never reached this cell";
     const types = new Set(m.keys());
