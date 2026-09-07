@@ -47,7 +47,16 @@ const isKnownDoubleShip = (code) => KNOWN_DOUBLE_SHIP_MODELS.some((m) => code.st
 
 /* Faithful reimplementation of backend/src/scm/lib/so-readiness.ts. Kept in
    step with it deliberately: this script must derive the SAME string the UI
-   shows, or the status comparison measures the script instead of the ERP. */
+   shows, or the status comparison measures the script instead of the ERP.
+
+   IT HAD DRIFTED, and the drift is the thing this comment is for. Between
+   2026-08-16 and 2026-09-07 the ERP counted SERVICE lines into its liveCount so
+   a service-only order reads READY; this copy dropped them, so the same order
+   read "" here. Found by looking for it (docs/bugs/0673) rather than by a
+   failure, which is why a hand-kept copy is a liability: the two files agree
+   only while somebody re-reads both. If this diverges again, the honest fix is
+   to run this script under tsx and IMPORT summariseReadiness, the way
+   scripts/probe-mrp-allocation-rules.mjs imports isHardBoundLine. */
 const MAIN_CATEGORIES = new Set(["SOFA", "BEDFRAME", "MATTRESS"]);
 function normCategory(raw) {
   const g = (raw ?? "").trim().toUpperCase();
@@ -67,10 +76,19 @@ const isServiceLine = (l) =>
   (N(l.item_code).length > 4 && N(l.item_code).startsWith("SVC-"));
 function summariseReadiness(lines) {
   const live = lines.filter((l) => !l.cancelled);
-  let mainCount = 0, mainReady = 0, accCount = 0, accReady = 0;
+  let mainCount = 0, mainReady = 0, accCount = 0, accReady = 0, svcCount = 0;
   const mainByCat = new Map();
   for (const l of live) {
-    if (isServiceLine(l)) continue;
+    /* SERVICE lines are COUNTED, not dropped — this copy dropped them and so
+       could never reproduce the owner's 2026-08-16 ruling that a service-only
+       order is ready on sight (「如果它是 service 的单，也应该直接 ready」).
+       so-readiness.ts counts svcCount into its liveCount for exactly that
+       reason; without it, an order whose every line is a delivery fee scored
+       byte-identically to an order with NO lines, so this checker read "" where
+       the ERP shows READY and reported its own omission as a disagreement with
+       AutoCount. Services carry no inventory, so they still take no part in any
+       ready/short tally. */
+    if (isServiceLine(l)) { svcCount += 1; continue; }
     const cat = normCategory(l.item_group);
     const isReady = l.stock_status === "READY";
     if (MAIN_CATEGORIES.has(cat)) {
@@ -82,8 +100,12 @@ function summariseReadiness(lines) {
     } else { accCount += 1; if (isReady) accReady += 1; }
   }
   const isMainReady = mainCount > 0 ? mainReady === mainCount : true;
-  const isFullyReady = (mainCount + accCount) > 0 && mainReady === mainCount && accReady === accCount;
-  if (mainCount + accCount === 0) return "";
+  /* liveCount, not mainCount + accCount — the ONLY thing that separates "this
+     order has nothing left to wait for" from "this order has nothing on it".
+     Both gates read it, exactly as so-readiness.ts does. */
+  const liveCount = mainCount + accCount + svcCount;
+  const isFullyReady = liveCount > 0 && mainReady === mainCount && accReady === accCount;
+  if (liveCount === 0) return "";
   if (isFullyReady) return "READY";
   /* `mainCount > 0 &&` is load-bearing, and this copy was missing it until
      2026-08-16: isMainReady is VACUOUSLY true when the SO has no main line, so
@@ -449,11 +471,19 @@ async function main() {
   const acRem = new Map();
   for (const r of gz("ac-live-so-remark2.json.gz")) acRem.set(r.DocNo.trim().toUpperCase(), { remark: (r.Remark2 || "").trim().toUpperCase(), outstanding: r.Outstanding });
 
-  /* proceeded_at matters: recomputeSoStockAllocation gates on it. An SO with a
-     NULL processing date has every line FORCED to PENDING and consumes no
-     stock, so the ERP emits "" no matter how much stock is physically there.
-     Without this column a whole class of disagreement looks inexplicable. */
-  const lines = await sql`SELECT h.linked_ac_docno, h.doc_no, h.status, h.proceeded_at,
+  /* The processing date matters: recomputeSoStockAllocation gates on it. An SO
+     with a NULL processing date has every line FORCED to PENDING and consumes
+     no stock, so the ERP emits "" no matter how much stock is physically there.
+     Without this column a whole class of disagreement looks inexplicable.
+
+     THE COLUMN IS `processing_date`, and this read asked for `proceeded_at`.
+     The allocator's gate moved on 2026-08-18 (SO_PROCESSING_DATE_COLUMN in
+     shared/so-processing-date.ts, which is that column's stop-reading step):
+     `proceeded_at` is the same fact in the wrong shape and no shipped client
+     writes it when an operator sets a Processing Date. Reading it here meant
+     the checker's own explanation for a disagreement was derived from a column
+     the engine it is explaining no longer consults. */
+  const lines = await sql`SELECT h.linked_ac_docno, h.doc_no, h.status, h.processing_date,
       i.item_group, i.item_code, i.stock_status, COALESCE(i.cancelled,false) cancelled
     FROM scm.mfg_sales_orders h
     JOIN scm.mfg_sales_order_items i ON i.doc_no = h.doc_no
@@ -461,7 +491,7 @@ async function main() {
   const byOrder = new Map();
   for (const l of lines) {
     const k = String(l.linked_ac_docno).trim().toUpperCase();
-    if (!byOrder.has(k)) byOrder.set(k, { doc_no: l.doc_no, status: l.status, proceeded_at: l.proceeded_at, lines: [] });
+    if (!byOrder.has(k)) byOrder.set(k, { doc_no: l.doc_no, status: l.status, processing_date: l.processing_date, lines: [] });
     byOrder.get(k).lines.push(l);
   }
   log(`ERP orders linked to an AutoCount DocNo: ${byOrder.size}`);
@@ -495,11 +525,11 @@ async function main() {
     matrix.set(key, (matrix.get(key) ?? 0) + 1);
     const sameCanon = canon(ac.remark) === canon(erpRemark);
     if (sameCanon && (ac.remark || "") !== (erpRemark || "")) orderOnly += 1;
-    if (!sameCanon) mismatches.push({ doc, erpDoc: o.doc_no, ac: ac.remark, erp: erpRemark, status: o.status, outstanding: ac.outstanding, proceeded: o.proceeded_at != null });
+    if (!sameCanon) mismatches.push({ doc, erpDoc: o.doc_no, ac: ac.remark, erp: erpRemark, status: o.status, outstanding: ac.outstanding, proceeded: o.processing_date != null });
   }
 
   const statusCause = (m) => {
-    if (!m.proceeded) return "NOT PROCESSED IN ERP — proceeded_at is NULL, so the allocator forces every line PENDING and the ERP cannot report readiness regardless of stock";
+    if (!m.proceeded) return "NOT PROCESSED IN ERP — processing_date is NULL, so the allocator forces every line PENDING and the ERP cannot report readiness regardless of stock";
     if (m.ac && !m.erp) return "AUTOCOUNT AHEAD — staff marked it ready in AutoCount but the ERP allocator found no stock to allocate";
     if (!m.ac && m.erp) return "ERP AHEAD — the ERP allocated stock but nobody typed it back into AutoCount's Remark2";
     return "BOTH SET, DIFFERENT — the two systems disagree on WHICH categories are ready";
