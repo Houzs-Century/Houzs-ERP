@@ -348,12 +348,7 @@ const ITEM =
   /* Mig 0230 — the incoming PO batch this line shipped against before its goods
      arrived. Surfaced so the DO detail can say which PO a short line is bound to
      instead of leaving the operator to infer it from the header badge. */
-  'committed_po_batch_no, ' +
-  /* Mig 20260907T2340 — the warehouse shipped a different product than the order
-     names. so_item_id is NULL on these BY DESIGN (which ordered line it replaces
-     is a human decision), so without this flag the row is indistinguishable from
-     an ordinary ad-hoc line. docs/modules/delivery-order.md. */
-  'ac_substituted';
+  'committed_po_batch_no, ac_substituted';
 
 const PAYMENT_COLS =
   'id, delivery_order_id, paid_at, method, merchant_provider, installment_months, ' +

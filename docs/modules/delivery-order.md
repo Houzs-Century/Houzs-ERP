@@ -1929,10 +1929,16 @@ data error.
   `resolveDoLineWarehouses` — the DO **header's** `warehouse_id` — precisely
   because step (1) needs an SO line. Moot for stock on migrated documents
   (`migrated_no_stock`, no movements), but it is why the header binding matters.
-- **Both surfaces show it.** Desktop `DeliveryOrderDetailV2.tsx` renders an amber
-  Badge on the Item cell; mobile `MobileModuleDetail.tsx` renders the same words
-  on the same line. The header `notes` names the codes in prose as well, because
-  the person reconciling the note against the order is reading the document.
+- **Both surfaces show it.** Desktop
+  `frontend/src/pages/scm-v2/DeliveryOrderDetailV2.tsx` renders an amber Badge on
+  the Item cell; mobile renders the same words on the same line via
+  `SubstitutedRowMobile` in `frontend/src/mobile/source-chips.tsx`, wired from
+  `frontend/src/mobile/MobileModuleDetail.tsx`. The header `notes` names the
+  codes in prose as well, because the person reconciling the note against the
+  order is reading the document.
+- **The column** is added by
+  `backend/src/db/migrations-pg/20260907T2340_scm_do_item_ac_substituted.sql` and
+  written only by `backend/scripts/lib/migrated-do-writer.mjs`.
 - **The importer can no longer lose a note quietly.**
   `create-migrated-documents.mjs` asserts two conservation identities — every
   note in the cut is either created or NAMED, and every book line is either
