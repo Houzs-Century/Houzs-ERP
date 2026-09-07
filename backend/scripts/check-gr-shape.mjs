@@ -326,8 +326,41 @@ async function main() {
   say("    A receipt line names its purchase order and its ItemCode, and nothing finer, so");
   say("    the ERP line must be resolved by ItemCode. That is exact where a purchase order");
   say("    carries each code once, and NOT RECOVERABLE where it carries one twice — the");
-  say("    PO-009633 trap recorded in export-ac-fidelity-truth.py. A writer must MEASURE");
-  say("    that set and report it, never silently pick the first matching line.");
+  say("    PO-009633 trap recorded in export-ac-fidelity-truth.py.");
+  say("");
+  /* HOW BIG IS THAT SET? Printed rather than described, because "some purchase
+     orders are ambiguous" is not something a decision can be made on. Measured
+     off the same fresh extract, so it moves with the book. */
+  const poLinesByDoc = new Map();
+  for (const r of ce.types.PO.lines) {
+    const d = n(r[cD]);
+    if (!poGr.has(d)) continue;
+    if (!poLinesByDoc.has(d)) poLinesByDoc.set(d, []);
+    poLinesByDoc.get(d).push(r);
+  }
+  const ambiguousPos = new Set();
+  let ambiguousPoLines = 0;
+  for (const [po, ls] of poLinesByDoc) {
+    const seen = new Map();
+    for (const l of ls) { const k = n(l[cIT]); seen.set(k, (seen.get(k) ?? 0) + 1); }
+    const dup = [...seen.values()].filter((v) => v > 1);
+    if (dup.length) { ambiguousPos.add(po); ambiguousPoLines += dup.reduce((a, b) => a + b, 0); }
+  }
+  let ambLines = 0, ambUnits = 0;
+  for (const r of ce.types.GR.lines) {
+    if (n(r[cFT]) !== "PO") continue;
+    const po = n(r[cFN]);
+    if (!ambiguousPos.has(po)) continue;
+    const h = grHead.get(n(r[cD]));
+    if (!h || h.cancelled !== "F") continue;
+    ambLines += 1; ambUnits += Number(r[cQ] || 0);
+  }
+  say(`  in-scope purchase orders present in this extract: ${poLinesByDoc.size} of ${poGr.size}`);
+  say(`    every line a UNIQUE item code — receipt line resolves exactly: ${poLinesByDoc.size - ambiguousPos.size}`);
+  say(`    same item code on 2+ lines — NOT decidable from the book:      ${ambiguousPos.size}  (${ambiguousPoLines} purchase-order lines)`);
+  notice(`SHAPE A LINE RESOLUTION — ${ceLines - ambLines} of ${ceLines} receipt lines (${ceUnits - ambUnits} of ${ceUnits} units) resolve to exactly one purchase-order line; ${ambLines} lines / ${ambUnits} units sit on a purchase order with a duplicate item code and need a STATED rule`);
+  say("  A writer must name that rule and report the set it applied to. Silently taking");
+  say("  the first matching line is the PO-009633 defect being re-created deliberately.");
 
   await sql.end();
   say("");
