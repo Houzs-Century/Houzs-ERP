@@ -90,6 +90,12 @@ screen down to the database. Same structure as
 > who attached / removed which file and when; `GET /:id/files` answers it and
 > the Manage drawer shows it. `services/announcementFiles.ts` holds both.
 > §3 "Attachments", §2 and §4 carry the contract.
+> **2026-09-07 (void, not delete, owner: 不可以删只可以 cancel):** a submitted
+> notice is never deleted — `POST /:id/void { reason }` keeps the row, the
+> receipts and the reference number (registry VOID) and stops serving it;
+> `DELETE /:id` discards a DRAFT only, and the database trigger in mig
+> `backend/src/db/migrations-pg/20260907T1030_announcement_void_no_hard_delete.sql`
+> refuses any other delete underneath the app. §3 "Void", §2, §4 and §5.
 > **2026-09-06 (font sizes, owner: "像 Word 那样选字号数字"):** the editor's
 > S / M / L / XL buttons became a **Size dropdown** of point sizes (10–36
 > px, stored as `span[data-size="16"]`); with nothing selected the size
@@ -347,13 +353,14 @@ source line) see
 | POST | `/api/announcements/:id/escalate` | — | `announcements.write` (or Sales Director) — body `{ departmentId? }`; posts ONE system notice (`source 'ack_escalation'`) per supervisor of the pending people, via `postPersonalNotice` (2026-09-05, the drawer's "Notify their supervisors") |
 | POST | `/api/announcements` | `:785` | `announcements.write` (or Sales Director) — since 2026-09-06 the row is created PENDING_APPROVAL (or DRAFT with body `draft: true`); the answer's `approvalStatus` says which |
 | POST | `/api/announcements/:id/submit` | — | `announcements.write` (or Sales Director on their own post) — DRAFT / REJECTED → PENDING_APPROVAL; rings the approvers' bell (2026-09-06). Since 2026-09-07 refused 400 while the ANN type requires an attachment and the notice has none (same rule as POST without `draft`) |
+| POST | `/api/announcements/:id/void` | — | `announcements.write` (or Sales Director on their own post) — body `{ reason }` (required); any SUBMITTED notice (pending / approved / rejected) → voided: `voided_by/at`, `void_reason`, the registry number marked VOID, banner cache bumped, `announcement.void` audited, the submitter told (WARNING bell). A draft answers 409 (discard it). Idempotent (2026-09-07) |
 | GET | `/api/announcements/:id/files` | — | `announcements.write` / `announcements.approve` / `*` (or a Sales Director on their own post) — the attachment log (mig `20260907T0715`): `[{ id, r2Key, name, mime, size, uploadedBy, uploadedByName, uploadedAt, removedBy, removedByName, removedAt }]`, oldest first, removed lines kept (2026-09-07) |
 | POST | `/api/announcements/:id/approve` | — | `announcements.approve` — PENDING_APPROVAL → APPROVED; mints `ref_no` from the submitter's department code (409 with the fix when the department has none); answers the public row incl. `refNo` (2026-09-06) |
 | POST | `/api/announcements/:id/reject` | — | `announcements.approve` — body `{ reason }` (required, 400 when blank); PENDING_APPROVAL → REJECTED; the submitter gets a WARNING bell notice with the reason (2026-09-06) |
 | PATCH | `/api/announcements/:id` | `:920` | `announcements.write` (or Sales Director) |
 | GET | `/api/announcements/ack-trend` | — | `announcements.write` (or Sales Director) — `{ days: 30, buckets[6]: { start, end, label, notices, total, acked, pct\|null }, summary }`: the human notices POSTED in each 5-day bucket of the last 30 days, their summed audience and acknowledgements, from the same `noticeAckTotals()` as `/ack-summary` (2026-09-06, the dashboard chart) |
 | POST | `/api/announcements/:id/remind` | `:1104` | `announcements.write` (or Sales Director) — body `{ scope: "unacked" \| "all", departmentId? }`. Since 2026-09-06 a reminder is per PERSON (`announcement_reminders`, one upserted row per pending member of the audience — or of `departmentId` only, the drawer's "Remind <Dept> pending"); a whole-notice reminder also sets `reminded_at`; `scope:"all"` (phone) clears the receipts and sets the notice-level stamp only. `pendingCount` is the audience's pending (not every active user, as before) |
-| DELETE | `/api/announcements/:id` | `:1164` | `announcements.write` (or Sales Director) |
+| DELETE | `/api/announcements/:id` | `:1164` | `announcements.write` (or Sales Director) — since 2026-09-07 DRAFTS ONLY: a submitted notice answers 409 "voided, not deleted"; the trigger `trg_announcements_no_hard_delete` refuses the same at the database |
 | PUT | `…/:id/attachments/upload` · `…/upload-thumb` | `:1231`, `:1274` | `announcements.write` (or Sales Director) |
 
 `requirePermissionOrSalesDirector` is `backend/src/middleware/auth.ts:195-208`:
@@ -482,6 +489,21 @@ all filtering happens in JS in the Worker (`:543-547`, `:628-630`).
   table (or `document_types`) being absent — absent policy = not required,
   absent log = nothing logged — so the older D1 mirrors need no column.
   Regression suite: `backend/tests/announcementsAttachmentPolicy.test.ts`.
+- **Void, not delete (2026-09-07, mig `20260907T1030`)** — the owner's
+  document rule (`docs/hard-delete-inventory.md`: 不可以删只可以 cancel) reaches
+  the announcements. `voidAnnouncement()` in `services/announcementApproval.ts`:
+  reason mandatory (≤ 1000), a DRAFT refuses (it is discarded instead), a
+  voided notice answers the same row again (idempotent); it marks the
+  reference number VOID through `voidDocumentRef` (never re-issued — the
+  next mint in the series moves on), writes `voided_by/at` + `void_reason`,
+  bumps the banner family, audits `announcement.void`, tells the submitter.
+  `deliverableNow()` checks `isVoided()` FIRST, so a voided notice leaves the
+  feed, both banners, the ack route and the cron whatever its approval state;
+  the ledger (managers / approvers) keeps showing it, struck through, with the
+  reason. `DELETE /:id` now refuses anything but a DRAFT (409), and the
+  BEFORE DELETE trigger `trg_announcements_no_hard_delete` refuses the same
+  underneath — by the app, a script or a hand-typed statement. Regression
+  suite: `backend/tests/announcementsVoid.test.ts`.
 - **Translation runs after the response (2026-09-06)** — `queueTranslation()`
   next to the create route hands `translateAndStore()`
   (`backend/src/lib/translate-announcement.ts`) to `c.executionCtx.waitUntil`
@@ -666,6 +688,7 @@ There is also no announcements migration in the D1 tree.
 | Migration | Effect |
 |---|---|
 | `0058_announcements.sql` | creates `announcements` + `announcement_acks` + 2 indexes |
+| `backend/src/db/migrations-pg/20260907T1030_announcement_void_no_hard_delete.sql` | adds `voided_by/at`, `void_reason` and the BEFORE DELETE trigger `trg_announcements_no_hard_delete` (`announcements_no_hard_delete()`: refuses unless `approval_status = 'DRAFT'`) — void, not delete (owner 2026-09-06) |
 | `backend/src/db/migrations-pg/20260907T0715_announcement_files.sql` | creates `announcement_files` (`id`, `announcement_id`, `r2_key`, `name`, `mime`, `size`, `uploaded_by/at`, `removed_by/at`; unique on the pair, index on `announcement_id`) — the attachment log (owner 2026-09-06 操作日志). The manifest column stays the source of what is attached; this is who / when |
 | `backend/src/db/migrations-pg/20260906T1509_announcement_approval.sql` | adds `approval_status` (NOT NULL DEFAULT 'APPROVED' — every existing row stays published), `submitted_by/at`, `reviewed_by/at`, `reject_reason`, `ref_no` (unique partial index) and the open-queue partial index — the approval workflow (owner 2026-09-06) |
 | `backend/src/db/migrations-pg/20260906T0921_announcement_reminders.sql` | creates `announcement_reminders` (`announcement_id`, `user_id`, `reminded_at`, `reminded_by`; PK on the pair, index on `user_id`) — the per-person reminder behind the drawer's per-department Remind (owner 2026-09-06). Every reader (`loadReminderMap` / `loadUserReminders` / `loadAllReminders` / `recordReminders` in `lib/announcementAudience.ts`) tolerates the table being absent |
@@ -737,6 +760,7 @@ made the badge count human posts, `2060378b` (#960) opened the sidebar row.
 | Any signed-in user | ack, and stream an attachment of a notice targeted at them | `:1194`; attachment audience `:1325-1333`, key ownership `:1340-1344` |
 | `announcements.write` / `*` | see every notice incl. drafts + expired (still company-gated); create, edit, retarget, remind, delete, read receipts, upload media | `:550-556`; `:698, 785, 920, 1104, 1164, 1231, 1274` |
 | Sales Director (position-derived, holds no flat verb) | the same write doors, but may address only their own Sales dept or named people in it, and may manage only rows they authored | admittance `middleware/auth.ts:202`; scope `:412-425`, `:431-497`; ownership `:502-506` |
+| `announcements.write` / `*` (or a Sales Director on their own post) | void a submitted notice with a reason (2026-09-07) — the Manage drawer's Void… / the phone Detail's Void…; discard a DRAFT (Discard draft) | `POST /:id/void` + `DELETE /:id` (drafts only) in `routes/announcementApproval.ts` / `routes/announcements.ts`; the database trigger underneath |
 | `announcements.approve` / `*` | the approval desk (2026-09-06): read the ledger incl. the pending queue; Approve (mints the number, publishes) / Reject (reason) on the desktop Manage drawer and the phone Detail; none of the poster's actions unless they also hold write | `requirePermission("announcements.approve")` on `/:id/approve` + `/:id/reject`; the list's `isManager` includes the verb; the desktop page opens Manage for `canWrite \|\| canApprove` and shows Hide / Delete only for `canWrite` |
 | `announcements.read` holder | **nothing extra** | the key is still declared at `backend/src/services/permissions.ts:138` but gates no route, guard or nav row at this commit |
 
@@ -766,6 +790,7 @@ still 403 for that reader (`:146, 157, 164, 171, 180`).
 | Pop-up markup / CTA wording | `components/AnnouncementBanner.tsx` | `mobile/MobileAnnouncementPopup.tsx` |
 | Composer (audience picker, media layout, company target, **expiry**, **schedule**, **require ack**) | `pages/announcements/ComposerModal.tsx` + `AudiencePicker.tsx` | `mobile/MobileAnnouncements.tsx` `Compose` (still positions + plain expiry; requireAck / scheduledAt default server-side) |
 | Live / Hidden / Expired badge | **`lib/announcementStatus.ts`** — the shared rule; both surfaces import it, neither re-derives it | — |
+| Void, not delete (2026-09-07) | `ManageView.tsx` drawer: Void… (submitted) / Discard draft (draft), the Voided pill + reason, no actions once voided; the page's `voidNotice` asks the reason via `useDialog().prompt`; `announcementModel.ts` `isVoided` / `manageStatus` "voided" / `isArchived` | `mobile/MobileAnnouncements.tsx` `Detail`: the same button voids (vendored `usePrompt`) or discards a draft; `ApprovalChip` shows Voided |
 | Attachment policy + log (2026-09-07) | `pages/announcements/ComposerModal.tsx` (`attachmentRequired` prop from the page's `/api/document-types` read: hint + Submit held) and the `ManageView.tsx` drawer's "Attachments" block (`files` prop from `GET /:id/files`); the policy itself is edited under Settings → Documents (`pages/settings/DocumentTypesTab.tsx`) | the phone composer relies on the server's 400 (surfaced in its error line); no log view on the phone |
 | Approval actions (submit / approve / reject, the state pill, the reject reason, the ref no in place of the row id) | `pages/announcements/ManageView.tsx` drawer (`canWrite` / `canApprove` props; the page's `approveNotice` / `rejectNotice` (reason via `useDialog().prompt`) / `submitNotice`); the "Pending approval" filter is `MANAGE_ONLY_FILTERS` in `announcementModel.ts` so the inbox never offers it; the composer's primary is "Submit for approval" + a "Save draft" secondary | `mobile/MobileAnnouncements.tsx` `Detail` (`canApprove` prop, `ApprovalChip`, reason via the vendored `usePrompt`); the ledger is read for `canCreate \|\| canApprove` |
 | Publisher actions (hide/show, delete, remind, escalate) | `pages/announcements/ManageView.tsx` drawer (+ the inbox's read-receipts card for remind / hide); the "reset all receipts" (`remind { scope: "all" }`) affordance is desktop-retired with the old row — the phone keeps it | `mobile/MobileAnnouncements.tsx` `Detail` + `Receipts` |

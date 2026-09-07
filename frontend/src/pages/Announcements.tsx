@@ -18,6 +18,7 @@ import { ComposerModal } from "./announcements/ComposerModal";
 import {
   bucketInbox,
   isApproved,
+  isVoided,
   receiptsCsv,
   type AnnouncementFile,
   type AckSummary,
@@ -74,7 +75,7 @@ export function Announcements() {
   const items = useMemo(() => listQ.data?.data ?? [], [listQ.data]);
   // The reading inbox holds only what readers are served: a manager's own
   // pending / draft / rejected rows belong in Manage, not in their inbox.
-  const inboxItems = useMemo(() => items.filter(isApproved), [items]);
+  const inboxItems = useMemo(() => items.filter((a) => isApproved(a) && !isVoided(a)), [items]);
 
   // Lookups for the audience pickers + the "To: …" resolver. All three sit
   // behind users.read on the backend, which a plain reader does not hold — and
@@ -276,17 +277,41 @@ export function Announcements() {
     }
   }
 
+  // Void (mig 20260907T1030): a submitted notice keeps its row, receipts
+  // and number; it just stops being served. The reason is mandatory.
+  async function voidNotice(a: Announcement) {
+    const reason = await dialog.prompt({
+      title: "Void announcement",
+      message: `"${a.title}" stops being shown to anyone and keeps its number${a.refNo ? ` (${a.refNo})` : ""}. This cannot be undone.`,
+      placeholder: "Why it is being voided",
+      confirmLabel: "Void",
+      danger: true,
+      required: true,
+      multiline: true,
+    });
+    if (reason == null || !reason.trim()) return;
+    try {
+      await api.post(`/api/announcements/${a.id}/void`, { reason: reason.trim() });
+      toast.success("Announcement voided");
+      listQ.reload();
+      summaryQ.reload();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Something went wrong. Please try again.");
+    }
+  }
+
+  // Drafts only — a submitted notice is voided (the server refuses the rest).
   async function deleteNotice(a: Announcement) {
     const ok = await dialog.confirm({
-      title: "Delete announcement",
-      message: `Permanently delete "${a.title}"? Read-receipts will also be removed. This can't be undone.`,
-      confirmLabel: "Delete",
+      title: "Discard draft",
+      message: `Discard the draft "${a.title}"? It was never submitted, so nothing else is affected.`,
+      confirmLabel: "Discard",
       danger: true,
     });
     if (!ok) return;
     try {
       await api.del(`/api/announcements/${a.id}`);
-      toast.success("Announcement deleted");
+      toast.success("Draft discarded");
       setSelectedId(null);
       listQ.reload();
       summaryQ.reload();
@@ -495,6 +520,7 @@ export function Announcements() {
           onSubmit={(a) => void submitNotice(a)}
           onApprove={(a) => void approveNotice(a)}
           onReject={(a) => void rejectNotice(a)}
+          onVoid={(a) => void voidNotice(a)}
         />
       )}
     </div>
