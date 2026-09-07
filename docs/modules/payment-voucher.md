@@ -1012,11 +1012,13 @@ The owner's design check, answered and confirmed (按 1、2、3 的顺序做): a
 refund to a customer is the same paper as a payment voucher — money leaves a
 bank or the drawer through Draft → Prepared → Checked → Approved, with
 attachments, print, batch and audit — with the customer where the supplier
-would be. Purpose `CUSTOMER_REFUND` (mig 20260907T1700, an enum value alone
-in its file per 0040's rule); `refund_source_type` (SO / SI),
-`refund_source_doc_no`, `customer_id`, `debtor_code` on the header (mig
-20260907T1705). Every rule lives in `lib/pv-refund.ts`; the route file holds
-one-line hooks (it sits at its size ceiling).
+would be. Purpose `CUSTOMER_REFUND`
+(`20260907T1700_pv_purpose_customer_refund.sql`, an enum value alone in its
+file per 0040's rule); `refund_source_type` (SO / SI), `refund_source_doc_no`,
+`customer_id`, `debtor_code` on the header
+(`20260907T1705_pv_customer_refund_columns.sql`, nullable, with a partial
+index by document). Every rule lives in `lib/pv-refund.ts`; the route file
+holds one-line hooks (it sits at its size ceiling).
 
 - **认单为主.** `GET /payment-vouchers/refund-source?type=SO|SI&docNo=` answers
   with the document's customer (name, phone, customer_id, debtor code), every
