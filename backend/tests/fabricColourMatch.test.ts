@@ -48,6 +48,7 @@ const LIBRARY: Row[] = [
   row('PHOENIX', 'PHOENIX-1', 'PHOENIX-1 OYSTER'),
   row('NINJA 02', 'NINJA 02'), row('NINJA 03', 'NINJA 03'),
   row('ORION', 'ORION-01'), row('ORION', 'ORION-1'), row('ORION', 'ORION-5'),
+  row('KS', 'KS-08', 'SEA PINK'), row('KS', 'KS-01', 'BABY WHITE'),
 ];
 
 const { findColour } = buildFabricColourIndex(LIBRARY);
@@ -87,6 +88,26 @@ describe('the ladder: every rung on a string a document really carries', () => {
     expect(hit('J9047-1-Brunette')).toBe('GIRONA J9047-01 BEUNETTE');
     expect(hit('J9047-2 Amber')).toBe('GIRONA J9047-02 AMBER');
     expect(hit('151-03')).toBe('PC151-03');
+  });
+});
+
+describe('rung 3b: a digit running straight into the colour NAME', () => {
+  /* Found on 2026-09-07 by the one line in 538 that refresh-po-variants would
+     have ERASED. Every other spelling of this colour already resolved; the ONE
+     combination that fell through was hyphen PLUS missing space, because the
+     bare-code rung cannot cross a "-" and rung 3 cannot peel a name whose
+     preceding character is a digit. HC-SO-008447 read colour-blank and
+     PO-009922 - the same FENRIR-(Q) colour - was the erase candidate. */
+  test('"KS-08sea pink" resolves, as its three other spellings already did', () => {
+    expect(hit('KS-08sea pink')).toBe('KS-08');
+    expect(hit('KS-08 sea pink')).toBe('KS-08');
+    expect(hit('KS08sea pink')).toBe('KS-08');
+    expect(hit('KS-08')).toBe('KS-08');
+  });
+
+  test('it only ADDS a spelling - a trailing NAME is still peeled, not glued on', () => {
+    expect(hit('GD2502-04-OAK')).toBe('GD2502-04');
+    expect(hit('CH141-13 deep grey')).toBe('CH141-13');
   });
 });
 
