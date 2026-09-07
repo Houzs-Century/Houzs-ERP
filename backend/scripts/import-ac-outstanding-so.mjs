@@ -31,6 +31,7 @@ import postgres from "postgres";
 import { parseBedframe } from "./lib/parse-bedframe.mjs";
 import { SOFA_MODEL_ALIAS, parseSofa } from "./lib/parse-sofa.mjs";
 import { buildFabricColourIndex, isPendingColour } from "./lib/fabric-colour-match.mjs";
+import { SALESLOC, salesLoc } from "./lib/ac-header-fields.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -68,8 +69,10 @@ const CATG = { MATTRESS: "mattress", BEDFRAME: "bedframe", ACC: "accessory", ACC
 // but company 1's own pick list names delivery "TRANSPORTATION CHARGES".
 const C1_ALIAS = { "SVC-DELIVERY": "TRANSPORTATION CHARGES", "SVC-DELIVERY-ADD": "TRANSPORTATION CHARGES", "SVC-DELIVERY-CROSS": "TRANSPORTATION CHARGES" };
 // AutoCount SalesLocation short code -> ERP full warehouse name (what the picker stores)
-const SALESLOC = { KL: "KL WAREHOUSE", PG: "PG WAREHOUSE", SRW: "SRW WAREHOUSE", SBH: "SBH WAREHOUSE", HQ: "HQ", JB: "KL WAREHOUSE", KUANTAN: "KL WAREHOUSE" };
-const salesLoc = (c) => c ? (SALESLOC[c.trim().toUpperCase()] || c.trim()) : null;
+/* SALESLOC / salesLoc moved to lib/ac-header-fields.mjs (pure move, identical
+   entries). sync-ac-delta.mjs's header lane keeps `sales_location` up to date
+   and has to resolve it the way THIS insert did; a second copy of the map is
+   how the insert and the update stop agreeing. */
 const isSofa = (c) => /SOFA/i.test(c || "");
 const uomOf = (g) => (g === "bedframe" ? "SET" : "UNIT");
 const strip = (s) => norm(s).replace(/[^A-Z0-9]/g, "");

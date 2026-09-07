@@ -11,15 +11,27 @@ name: Sync AutoCount delta (go-live)
 # REFUSES because a person edited them in the ERP, the sofa compartment sets that
 # now disagree, and the SO->PO dedications it would write.
 #
-# apply=yes needs the confirm phrase typed in full, and writes only the lanes no
-# other tool owns:
-#   desc   line description2
-#   pay    the migrated payment/balance row
-#   links  the SO->PO line dedication the header-stamp delta can see
-#   recv   received_qty, copied from AutoCount's per-line PODTL.TransferedQty
-#   do     the delivery documents for orders AutoCount has delivered and the ERP
-#          does not reflect - migrated_no_stock = true, NO inventory movement
-#   dedi   the SO->PO dedications only the truth snapshot can see
+# It also reports the HEADER MASTER census: for every field the importer reads
+# at insert - sales agent, debtor code and name, the invoice address, phone,
+# Ref, venue, branding, processing date, remarks - how many migrated documents
+# AGREE with AutoCount, how many DIFFER, and how many the ERP holds blank while
+# AutoCount has a value.
+#
+# apply=yes needs the confirm phrase typed in full, and writes only the lanes
+# named in `lanes`:
+#   desc      line description2
+#   pay       the migrated payment / balance row
+#   links     the SO->PO line dedication the header-stamp delta can see
+#   recv      received_qty, copied from AutoCount's per-line PODTL.TransferedQty
+#   do        the delivery documents for orders AutoCount has delivered and the
+#             ERP does not reflect - migrated_no_stock = true, NO inventory movement
+#   dedi      the SO->PO dedications only the truth snapshot can see
+#   hdr       header master fields - OFF by default. Every UPDATE is guarded on
+#             the value the plan read, and a field a PERSON edited is refused.
+#   hdrstaff  CREATES an inactive salesperson row per unbound AutoCount agent -
+#             OFF by default, because it is a WRITE TO MASTER DATA. Every row
+#             carries an ACIMP- staff_code so the whole set is reversible, and
+#             it never activates anybody.
 # The INSERT lane belongs to the importers the plan names
 # (import-ac-outstanding-so.mjs, import-ac-outstanding-po.mjs,
 # import-ac-so-linked-pos.mjs) and is NOT run from here.
@@ -30,9 +42,11 @@ name: Sync AutoCount delta (go-live)
 #   AC_CRED_FILE=... node backend/scripts/export-ac-reconcile-truth.mjs
 # and is subject to the same MAX_SNAPSHOT_AGE_DAYS refusal as the stamps cut.
 #
-# The AutoCount stamps snapshot is committed (backend/scripts/data/ac-doc-stamps.json.gz)
-# and re-cut from a desktop on the ZeroTier link with
+# Two AutoCount snapshots are committed and re-cut from a desktop on the
+# ZeroTier link, both through the ONE exporter:
 #   ONLY=stamps AC_CRED_FILE=... python backend/scripts/export-ac-reimport.py
+#   ONLY=hdr    AC_CRED_FILE=... python backend/scripts/export-ac-reimport.py
+# (ac-doc-stamps.json.gz and ac-doc-headers.json.gz respectively)
 # The script REFUSES to run against a snapshot older than MAX_SNAPSHOT_AGE_DAYS.
 on:
   workflow_dispatch:
@@ -44,7 +58,7 @@ on:
         type: choice
         options: [staging, prod]
       apply:
-        description: "yes = write the desc2 / payment / link lanes. Anything else = PLAN only."
+        description: "yes = write the lanes named in `lanes`. Anything else = PLAN only."
         required: false
         default: "no"
         type: choice
@@ -55,7 +69,7 @@ on:
         default: ""
         type: string
       lanes:
-        description: "Which apply lanes to run (comma separated): desc,pay,links,recv,do,dedi"
+        description: "Apply lanes (comma separated): desc,pay,links,recv,do,dedi,hdr,hdrstaff. hdr/hdrstaff are OFF by default."
         required: false
         default: "desc,pay,links,recv,do,dedi"
         type: string
