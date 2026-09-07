@@ -52,4 +52,20 @@ than lines is the multi-picture case working). The PO manifest afterwards is
 2,587 images over 2,409 lines with 152 multi-picture lines and a maximum of 5 —
 which is the census's own count of the live book exactly.
 
+**Closed out, read back from R2 and from prod.** The 60 recovered images went
+through the same pipeline as the rest and the whole population was re-checked,
+not sampled: 850 of 850 keys uploaded with 0 failures; `MODE=verify` re-read all
+850 on fresh wrangler processes and found 850 byte-identical to the manifest, 0
+missing, 0 wrong, 0 unverifiable (7 chunked plans run in parallel, run
+`ALL VERIFY CHUNKS EXITED rc=0` at 2026-09-07T16:20:57+08:00). The attach
+workflows then wrote SO 610 of 610 and PO 240 of 240 keys, and an immediate
+second `apply=1` printed `already attached: 610` / `240` with
+`keys attached: 0`, which is the idempotence claim executed rather than
+asserted. `probe-line-photo-gap.yml` afterwards (runs 34100281206): of the book
+lines that exist in the ERP, SO 517 of 517 and PO 222 of 222 carry their
+picture — MISSING 0 on both sides, down from 7 and 1 before this branch. The
+remaining 2,244 SO and 2,187 PO photographed lines have no ERP row at all, 2,151
+and 2,185 of them because the whole document was never migrated; that is a
+document-migration gap, not a photo gap.
+
 **Ref.** feat/ac-photos-finish-2026-09-07, 2026-09-07.
