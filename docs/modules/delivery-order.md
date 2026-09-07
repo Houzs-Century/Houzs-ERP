@@ -1968,15 +1968,20 @@ data error.
   order is reading the document.
 - **The column** is added by
   `backend/src/db/migrations-pg/20260907T2340_scm_do_item_ac_substituted.sql` and
-  written only by `backend/scripts/lib/migrated-do-writer.mjs`. That migration
-  takes the `ACCESS EXCLUSIVE` lock with a **3s `lock_timeout` and up to 20
-  retries**, because its first, bare form timed out waiting for the lock on a
-  live cutover table and blocked every migration behind it (deploy run
-  34141376280; `docs/bugs/0677-*`). The ALTER is metadata-only — a constant
-  default needs no rewrite — so the whole cost is the lock. **Any future
-  `ALTER TABLE` on `scm.delivery_order_items` or `scm.delivery_orders` must bound
-  its lock wait the same way**: these tables take continuous writes and an
-  unbounded wait in front of the deploy pipeline stops everyone.
+  written only by `backend/scripts/lib/migrated-do-writer.mjs`. That migration is a bare
+  `ALTER TABLE` and it **timed out on its first attempt** against the live
+  cutover table — `canceling statement due to statement timeout`, deploy run
+  34141376280 — blocking every migration behind it until a later deploy retried
+  and got the lock (`docs/bugs/0677-*`). The ALTER is metadata-only, since a
+  constant default needs no rewrite, so the whole cost was the `ACCESS EXCLUSIVE`
+  LOCK.
+
+  **Any future `ALTER TABLE` on `scm.delivery_order_items` or
+  `scm.delivery_orders` must bound its lock wait** — a short `lock_timeout` with
+  retries — because these tables take continuous writes and an unbounded wait
+  sitting in front of the deploy pipeline stops everyone. `backend-postgres` CI
+  cannot warn you: it applies migrations to a container with no concurrent
+  writers, so this class is invisible to every gate the repo has.
 - **The importer can no longer lose a note quietly.**
   `create-migrated-documents.mjs` asserts two conservation identities — every
   note in the cut is either created or NAMED, and every book line is either

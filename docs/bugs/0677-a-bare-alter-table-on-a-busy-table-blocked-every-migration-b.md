@@ -2,7 +2,7 @@
 
 <!-- area: Deploy, CI, migrations -->
 
-**Symptom.** Production deploy run **34141376280** (2026-09-07 ~16:14Z /
+**Symptom.** Production deploy run **34141376280** (2026-09-07 16:14Z /
 2026-09-08 00:14 MYT) failed:
 
 ```
@@ -29,40 +29,27 @@ So the failure was not the change being expensive. It was **asking for an
 exclusive lock on a hot table with no bound on the wait, during the busiest hour
 this database has ever had.**
 
-**Why it looked safe.** `backend-postgres` CI applies every migration to a real
-Postgres container and passed — because that container has no concurrent
-writers. A lock-contention failure is invisible to any gate that runs against an
-idle database, which is every gate we have.
+> **An `ALTER TABLE` is not "cheap" or "expensive". It is a LOCK REQUEST, and its
+> cost is set by whatever else is touching the table.**
 
-**Fix.** The ALTER now asks with a short `lock_timeout` and retries, inside a
-`DO` block:
+**Why every gate missed it.** `backend-postgres` CI applies every migration to a
+real Postgres container and passed — because that container has no concurrent
+writers. Lock contention is invisible to any check that runs against an idle
+database, which is every check this repo has.
 
-- `SET LOCAL lock_timeout = '3s'` per attempt, so one live writer costs three
-  seconds instead of the whole deploy;
-- up to 20 attempts with `pg_sleep(2)` between — about 100s, under the file's
-  `SET LOCAL statement_timeout = '180s'`;
-- then it **gives up loudly** with a message saying the table is under
-  continuous write load and the deploy should be re-run in a quieter window. A
-  migration that hangs indefinitely on a lock is not better than one that fails.
-- `COMMENT ON COLUMN` moved INSIDE the successful attempt, where the lock is
-  already held, so it cannot become a second thing to queue for.
-- The stray `BEGIN;` / `COMMIT;` are gone. `pg-migrate` already wraps each file
-  in one transaction (`pg.begin()` in `backend/scripts/pg-migrate.mjs:304`), and
-  a `COMMIT;` inside that would end the runner's own transaction early. Every
-  recent migration in this tree omits them; this file had copied the older 0309
-  style.
+**Resolution.** It resolved itself: a later deploy retried, the lock had freed,
+and the migration applied normally. The column exists in production with the
+original body and nothing about the schema is in doubt.
 
-**Editing the file rather than superseding it is correct here, and only here.**
-`pg-migrate` runs each file inside one transaction and rolls back on error, so
-**no `_pg_migrations` row was ever written** and there is no checksum to drift
-against — verified in the run log, which reports the file as `pending` on the
-following attempt. Editing an **applied** file's body remains forbidden.
+**What was NOT done, and why.** The body was not rewritten with a retry loop.
+That was attempted (PR #3124) and it blocked the pipeline a second time, because
+by then the file had applied and an applied migration's body is immutable — see
+`docs/bugs/0678-*`, which is the more valuable half of this night.
 
-**Lesson.** *An `ALTER TABLE` is not "cheap" or "expensive" — it is a LOCK
-REQUEST, and its cost is set by whatever else is touching the table.* The gates
-in this repo all measure migrations against an idle database, so none of them
-can see this class. On a table that takes live writes, bound the wait and retry;
-never let an unbounded lock wait sit in front of the deploy pipeline.
+**The durable fix is guidance for the NEXT one**, recorded in
+`docs/modules/delivery-order.md`: any future `ALTER TABLE` on
+`scm.delivery_order_items` or `scm.delivery_orders` must bound its lock wait — a
+short `lock_timeout` with retries — because these tables take continuous writes
+and an unbounded wait in front of the deploy pipeline stops everyone.
 
-**Ref.** PR (2026-09-08), fixing the migration added by #3113. Deploy run
-34141376280 is the failure; the recovery run is recorded on the PR.
+**Ref.** Deploy run 34141376280. Migration added by PR #3113 (2026-09-07).
