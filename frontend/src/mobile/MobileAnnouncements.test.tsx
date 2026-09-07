@@ -221,21 +221,37 @@ describe("MobileAnnouncements — a publisher can retract from the phone", () =>
     await waitFor(() => expect(apiPatch).toHaveBeenCalledWith("/api/announcements/a1", { isActive: false }));
   });
 
-  it("deletes only after a confirm, and reports a refusal", async () => {
+  it("discards a DRAFT only after a confirm, and reports a refusal (a submitted notice is voided, not deleted)", async () => {
     confirmAnswer.current = false;
-    await openDetail([notice()]);
+    await openDetail([notice({ approvalStatus: "DRAFT" })]);
     await act(async () => {
-      fireEvent.click(screen.getByText("Delete"));
+      fireEvent.click(screen.getByText("Discard draft"));
     });
     expect(apiDel).not.toHaveBeenCalled();
 
     confirmAnswer.current = true;
     apiDel.mockRejectedValueOnce(new Error("403: Announcement not found"));
     await act(async () => {
-      fireEvent.click(screen.getByText("Delete"));
+      fireEvent.click(screen.getByText("Discard draft"));
     });
     await waitFor(() => expect(apiDel).toHaveBeenCalledWith("/api/announcements/a1"));
     await waitFor(() => expect(notified.some((n) => /403|not found/i.test(String(n.body)))).toBe(true));
+  });
+
+  it("a submitted notice offers Void…, which asks a reason and POSTs /void (mig 20260907T1030)", async () => {
+    apiPost.mockResolvedValue({ success: true, data: { id: "a1", voidedAt: "2026-09-07T00:00:00Z" } });
+    await openDetail([notice()]);
+    expect(screen.queryByText("Delete")).toBeNull();
+    await act(async () => {
+      fireEvent.click(screen.getByText("Void…"));
+    });
+    const box = await screen.findByRole("textbox", { name: /reason|void/i }).catch(() => null);
+    const input = box ?? (await screen.findAllByRole("textbox")).at(-1)!;
+    fireEvent.change(input, { target: { value: "Superseded." } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Void" }));
+    });
+    await waitFor(() => expect(apiPost).toHaveBeenCalledWith("/api/announcements/a1/void", { reason: "Superseded." }));
   });
 });
 

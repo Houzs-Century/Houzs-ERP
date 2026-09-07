@@ -103,6 +103,9 @@ type Announcement = {
   rejectReason?: string | null;
   /** [DEPT]-ANN-[YYMM]-[NNNN], minted on approval. */
   refNo?: string | null;
+  /** Void (mig 20260907T1030). */
+  voidedAt?: string | null;
+  voidReason?: string | null;
 };
 
 const APPROVAL_CHIP: Record<"DRAFT" | "PENDING_APPROVAL" | "REJECTED", { label: string; bg: string; fg: string }> = {
@@ -113,6 +116,7 @@ const APPROVAL_CHIP: Record<"DRAFT" | "PENDING_APPROVAL" | "REJECTED", { label: 
 /** The approval state before anything else: an unapproved notice has no
  *  audience yet, so Live / Hidden / Expired would be a claim about nothing. */
 function ApprovalChip({ ann }: { ann: Announcement }) {
+  if (ann.voidedAt) return <span className="spill" style={{ background: "#eceee9", color: "#767b6e", textDecoration: "line-through" }}>Voided</span>;
   const s = ann.approvalStatus ?? "APPROVED";
   if (s === "APPROVED") return null;
   const c = APPROVAL_CHIP[s];
@@ -908,7 +912,7 @@ function Detail({
      drawer has. Each reports the server's answer; the approve toast carries
      the reference number the server minted. */
   const transition = async (
-    action: "submit" | "approve" | "reject",
+    action: "submit" | "approve" | "reject" | "void",
     body: Record<string, unknown>,
     done: (data: { refNo?: string | null } | null) => { title: string; body: string },
   ) => {
@@ -923,7 +927,14 @@ function Detail({
       await notify(done(r.data ?? null));
     } catch (e) {
       await notify({
-        title: action === "approve" ? "Could not approve it" : action === "reject" ? "Could not reject it" : "Could not submit it",
+        title:
+          action === "approve"
+            ? "Could not approve it"
+            : action === "reject"
+              ? "Could not reject it"
+              : action === "void"
+                ? "Could not void it"
+                : "Could not submit it",
         body: e instanceof Error ? e.message.replace(/^\d+:\s*/, "") : "Please try again.",
         tone: "error",
       });
@@ -977,12 +988,28 @@ function Detail({
     setManaging(false);
   };
 
+  /* A draft is discarded; a submitted notice is VOIDED with a reason (mig
+     20260907T1030 — the server refuses to delete anything else). */
+  const isDraft = (ann.approvalStatus ?? "APPROVED") === "DRAFT";
   const remove = async () => {
     if (managing) return;
+    if (!isDraft) {
+      const reason = await promptFor({
+        title: "Void announcement",
+        body: `"${ann.title}" stops being shown to anyone and keeps its number. This cannot be undone.`,
+        placeholder: "Why it is being voided",
+        confirmLabel: "Void",
+        multiline: true,
+        validate: (v) => (v.trim() ? null : "A reason is required."),
+      });
+      if (reason == null || !reason.trim()) return;
+      await transition("void", { reason: reason.trim() }, () => ({ title: "Announcement voided", body: "It is no longer shown to anyone." }));
+      return;
+    }
     const ok = await confirm({
-      title: "Delete announcement",
-      body: `Permanently delete "${ann.title}"? Read-receipts go with it. This cannot be undone.`,
-      confirmLabel: "Delete",
+      title: "Discard draft",
+      body: `Discard the draft "${ann.title}"? It was never submitted.`,
+      confirmLabel: "Discard",
       danger: true,
     });
     if (!ok) return;
@@ -990,10 +1017,10 @@ function Detail({
     try {
       await api.del(`/api/announcements/${encodeURIComponent(ann.id)}`);
       onRemoved();
-      await notify({ title: "Announcement deleted", body: `"${ann.title}" is gone.` });
+      await notify({ title: "Draft discarded", body: `"${ann.title}" is gone.` });
     } catch (e) {
       await notify({
-        title: "Could not delete it",
+        title: "Could not discard it",
         body: e instanceof Error ? e.message.replace(/^\d+:\s*/, "") : "Please try again.",
         tone: "error",
       });
@@ -1057,6 +1084,9 @@ function Detail({
         </div>
         {approval === "REJECTED" && ann.rejectReason && (canManage || canApprove) && (
           <div style={{ fontSize: 12, color: "#a3271b", marginTop: 6 }}>Sent back: {ann.rejectReason}</div>
+        )}
+        {ann.voidedAt && (canManage || canApprove) && (
+          <div style={{ fontSize: 12, color: "#767b6e", marginTop: 6 }}>Voided: {ann.voidReason ?? "no reason recorded"}</div>
         )}
         {/* When it stops showing — stated on the phone as well as the desktop,
             because "why is this still up" is a question the publisher asks from
@@ -1156,11 +1186,11 @@ function Detail({
               </button>
               <button
                 onClick={() => void remove()}
-                disabled={managing}
+                disabled={managing || !!ann.voidedAt}
                 className="tinybtn"
-                style={{ flex: 1, padding: 9, color: "var(--red)", opacity: managing ? 0.6 : 1, cursor: managing ? "default" : "pointer" }}
+                style={{ flex: 1, padding: 9, color: "var(--red)", opacity: managing || ann.voidedAt ? 0.6 : 1, cursor: managing ? "default" : "pointer" }}
               >
-                Delete
+                {ann.voidedAt ? "Voided" : isDraft ? "Discard draft" : "Void…"}
               </button>
             </div>
           </div>

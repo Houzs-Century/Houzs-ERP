@@ -8,6 +8,8 @@
 //   POST /api/announcements/:id/submit   — DRAFT / REJECTED → PENDING_APPROVAL
 //   POST /api/announcements/:id/approve  — PENDING_APPROVAL → APPROVED (+ ref no)
 //   POST /api/announcements/:id/reject   — PENDING_APPROVAL → REJECTED, { reason }
+//   POST /api/announcements/:id/void     — any submitted notice → voided, { reason }
+//                                          (mig 20260907T1030; DELETE is drafts only)
 //
 // The transitions live in services/announcementApproval.ts; the policy and
 // the log in services/announcementFiles.ts; the row helpers (scoped lookup,
@@ -24,6 +26,7 @@ import {
   approveAnnouncement,
   rejectAnnouncement,
   submitForApproval,
+  voidAnnouncement,
 } from "../services/announcementApproval";
 import {
   ATTACHMENT_REQUIRED_MESSAGE,
@@ -99,6 +102,22 @@ app.post("/:id/approve", requirePermission(APPROVE_PERMISSION), async (c) => {
   const existing = await getScopedAnnouncement(c, id);
   if (!existing) return c.json({ success: false, error: "Announcement not found" }, 404);
   return answerTransition(c, id, () => approveAnnouncement(c.env, existing, actorOf(c.get("user"))));
+});
+
+// Void — the poster's door (write, or a Sales Director on their own post),
+// the same people who could delete before mig 20260907T1030 took that away.
+app.post("/:id/void", requirePermissionOrSalesDirector("announcements.write"), async (c) => {
+  const id = c.req.param("id");
+  const existing = await getScopedAnnouncement(c, id);
+  if (!existing) return c.json({ success: false, error: "Announcement not found" }, 404);
+  const user = c.get("user");
+  if (sdBlockedFromRow(salesDirectorScope(c), existing, user.id)) {
+    return c.json({ success: false, error: "Announcement not found" }, 404);
+  }
+  const body = (await c.req.json().catch(() => ({}))) as { reason?: unknown };
+  return answerTransition(c, id, () =>
+    voidAnnouncement(c.env, existing, actorOf(user), String(body.reason ?? "")),
+  );
 });
 
 app.post("/:id/reject", requirePermission(APPROVE_PERMISSION), async (c) => {

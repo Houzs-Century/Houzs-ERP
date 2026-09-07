@@ -29,13 +29,14 @@
 // ---------------------------------------------------------------------------
 import type { Env } from "../types";
 import {
+  isVoided,
   readApprovalStatus,
   type AnnouncementRow,
   type ApprovalStatus,
 } from "../lib/announcementAudience";
 import { writeAudit } from "./audit";
 import { bumpConfigVersion } from "./configCache";
-import { mintDocumentRef } from "./documentRefs";
+import { mintDocumentRef, voidDocumentRef } from "./documentRefs";
 import { usersHoldingPermission } from "./permissionHolders";
 import { postPersonalNotice } from "./personalNotice";
 
@@ -253,6 +254,63 @@ export async function approveAnnouncement(
     });
   }
   return { refNo: ref.refNo };
+}
+
+/**
+ * Void (mig 20260907T1030, owner: 不可以删只可以 cancel): any submitted notice
+ * — pending, approved, rejected — leaves every reader surface for good and
+ * keeps its row, its receipts and its reference number (the registry marks
+ * the number VOID; it is never re-issued). The reason is mandatory. A draft
+ * is not voided but discarded (DELETE, drafts only). Idempotent: voiding a
+ * voided notice changes nothing and answers the same row.
+ */
+export async function voidAnnouncement(
+  env: Env,
+  row: AnnouncementRow,
+  actor: Actor,
+  reason: string,
+  now = Date.now(),
+): Promise<{ reason: string; already: boolean }> {
+  const text = String(reason).trim();
+  if (!text) throw new ApprovalError("A reason is required to void an announcement.", 400);
+  if (text.length > 1000) throw new ApprovalError("Reason too long (1000 max).", 400);
+  if (isVoided(row)) return { reason: String(row.voidReason ?? row.void_reason ?? text), already: true };
+  if (readApprovalStatus(row) === "DRAFT") {
+    throw new ApprovalError("A draft is discarded, not voided — delete it instead.", 409);
+  }
+  const nowIso = new Date(now).toISOString();
+  const refNo = row.refNo ?? row.ref_no ?? null;
+  if (refNo) await voidDocumentRef(env, refNo, actor.id, text, now);
+  // company-scope: keyed by the announcement's primary key; the caller already resolved the row within its company scope.
+  await env.DB.prepare(
+    "UPDATE announcements SET voided_by = ?, voided_at = ?, void_reason = ?, updated_at = ? WHERE id = ?",
+  )
+    .bind(actor.id, nowIso, text, nowIso, String(row.id))
+    .run();
+  // It leaves every reader's banner — orphan the cached snapshots.
+  await bumpConfigVersion(env, "banner");
+  const title = titleOf(row);
+  await writeAudit(env, {
+    action: "announcement.void",
+    entityType: ANNOUNCEMENT_ENTITY,
+    entityId: String(row.id),
+    summary: `Voided "${title}"${refNo ? ` (${refNo})` : ""}: ${text}`,
+    meta: { reason: text, refNo, approvalStatus: readApprovalStatus(row) },
+    actorId: actor.id,
+    actorEmail: actor.email ?? null,
+  });
+  const submitter = submitterOf(row);
+  if (submitter != null && submitter !== actor.id) {
+    await postPersonalNotice(env, {
+      userIds: [submitter],
+      category: "WARNING",
+      title: `Voided: ${title}`,
+      body: `${actorLabel(actor)} voided "${title}"${refNo ? ` (${refNo})` : ""}: ${text}`,
+      source: APPROVAL_NOTICE_SOURCE,
+      expiresDays: 14,
+    });
+  }
+  return { reason: text, already: false };
 }
 
 /**
