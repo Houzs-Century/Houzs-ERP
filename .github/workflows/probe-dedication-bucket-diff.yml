@@ -1,0 +1,84 @@
+name: Dedication bucket diff (read-only)
+
+# Manual, read-only. WHICH COLUMN made the dedication planner refuse a bucket?
+#
+# lib/po-so-dedication-plan.mjs pairs a bucket of same-code, same-seat rows only
+# when every candidate on both sides is INDISTINGUISHABLE. When it refuses it
+# says "N purchase line(s) and M sales line(s) could pair here" - correct, and
+# useless, because it never says WHY the rows are distinguishable. This prints
+# the two sides column by column and marks the columns that differ.
+#
+# It reads through lib/po-so-dedication-read.mjs, the same module the repair
+# imports, so a column named here is a column the planner actually compared.
+#
+# No writes, no DDL, no transaction. Exits 0 for every legitimate answer.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      company:
+        description: "company_id"
+        required: false
+        default: "1"
+        type: string
+      pairs:
+        description: '"<so>=<po>,<so>=<po>"; blank = the two builds the 2026-09-07 widening left refused'
+        required: false
+        default: ""
+        type: string
+      doc:
+        description: "a single sales order (used with po)"
+        required: false
+        default: ""
+        type: string
+      po:
+        description: "the purchase order raised from it (used with doc)"
+        required: false
+        default: ""
+        type: string
+
+# Its own group: a diagnostic must never queue behind or displace a release.
+concurrency:
+  group: probe-dedication-bucket-diff-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/probe-dedication-bucket-diff.mjs
+        env:
+          COMPANY: ${{ inputs.company }}
+          PAIRS: ${{ inputs.pairs }}
+          DOC: ${{ inputs.doc }}
+          PO: ${{ inputs.po }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/probe-dedication-bucket-diff.mjs
+        env:
+          COMPANY: ${{ inputs.company }}
+          PAIRS: ${{ inputs.pairs }}
+          DOC: ${{ inputs.doc }}
+          PO: ${{ inputs.po }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

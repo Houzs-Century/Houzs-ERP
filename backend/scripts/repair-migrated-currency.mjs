@@ -53,6 +53,7 @@ import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 
 import { bookCurrency } from "./lib/ac-currency.mjs";
+import { CURRENCY_ARMS, missingColumns, splitTable } from "./lib/migrated-currency-arms.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const DSN = process.env.DATABASE_URL;
@@ -94,10 +95,7 @@ function bookByDoc() {
   return out;
 }
 
-const ARMS = [
-  { kind: "PO", table: "scm.purchase_orders", label: "purchase orders", docCol: "po_number" },
-  { kind: "SO", table: "scm.mfg_sales_orders", label: "sales orders", docCol: "doc_no" },
-];
+const ARMS = CURRENCY_ARMS;
 
 async function main() {
   log(`mode=${APPLY ? "APPLY" : "PLAN"} company_id=${CO}`);
@@ -123,11 +121,36 @@ async function main() {
   );
   log(`scm.currency_code labels: ${[...labels].join(", ") || "(the type is not an enum here)"}`);
 
+  /* EVERY COLUMN THIS RUN WILL NAME, CHECKED FIRST. The first production run
+     printed a correct purchase-order plan and then died on the sales orders with
+     `column "id" does not exist`: scm.mfg_sales_orders has no `id`, it is keyed
+     by `doc_no`. A wrong belief about a column must refuse by NAME before any
+     statement is built, not surface as a Postgres error halfway through. */
+  for (const arm of ARMS) {
+    const { schema, table } = splitTable(arm.table);
+    const cols = new Set(
+      (await sql`SELECT column_name FROM information_schema.columns
+                  WHERE table_schema = ${schema} AND table_name = ${table}`).map((r) => r.column_name),
+    );
+    if (!cols.size) {
+      log(`REFUSING: ${arm.table} does not exist. This is a missing-table condition, not a data answer.`);
+      await sql.end();
+      process.exit(1);
+    }
+    const gone = missingColumns(arm, cols);
+    if (gone.length) {
+      log(`REFUSING: ${arm.table} has no column(s) ${gone.join(", ")} — this script would have named them. Fix lib/migrated-currency-arms.mjs rather than the statement.`);
+      await sql.end();
+      process.exit(1);
+    }
+    line(`  ${arm.table}: keyed by ${arm.pk}, document number in ${arm.docCol} — both present`);
+  }
+
   const plan = [];
   const refused = [];
   for (const arm of ARMS) {
     const rows = await sql.unsafe(
-      `SELECT id::text AS id, ${arm.docCol} AS doc, linked_ac_docno AS ac, currency::text AS currency, status
+      `SELECT ${arm.pk}::text AS pk, ${arm.docCol} AS doc, linked_ac_docno AS ac, currency::text AS currency, status
          FROM ${arm.table}
         WHERE company_id = ${CO} AND linked_ac_docno IS NOT NULL
         ORDER BY linked_ac_docno`,
@@ -143,7 +166,7 @@ async function main() {
         refused.push(`${arm.label}: ${r.doc} wants '${want}', which scm.currency_code has NO LABEL for — apply migration 20260907T2330 first`);
         continue;
       }
-      plan.push({ arm, id: r.id, doc: r.doc, ac: r.ac, from: have || "(blank)", to: want, status: r.status });
+      plan.push({ arm, pk: r.pk, doc: r.doc, ac: r.ac, from: have || "(blank)", to: want, status: r.status });
     }
     log(`${arm.label}: ${rows.length} migrated; ${agree} already agree with the book; ${unknown} have no row in the header cut; ${plan.filter((p) => p.arm === arm).length} to change`);
   }
@@ -173,8 +196,8 @@ async function main() {
        than overwritten. */
     const res = await sql.unsafe(
       `UPDATE ${p.arm.table} SET currency = $1::scm.currency_code
-        WHERE id = $2::uuid AND company_id = ${CO} AND currency::text <> $1`,
-      [p.to, p.id],
+        WHERE ${p.arm.pk}::text = $2 AND company_id = ${CO} AND currency::text <> $1`,
+      [p.to, p.pk],
     );
     changed += res.count ?? 0;
   }
@@ -187,16 +210,16 @@ async function main() {
   const verify = postgres(DSN, { ssl: "require", prepare: false, max: 1 });
   let bad = 0;
   for (const arm of ARMS) {
-    const ids = plan.filter((p) => p.arm === arm).map((p) => p.id);
+    const ids = plan.filter((p) => p.arm === arm).map((p) => p.pk);
     if (!ids.length) continue;
     const rows = await verify.unsafe(
-      `SELECT id::text AS id, ${arm.docCol} AS doc, currency::text AS currency, pg_typeof(currency)::text AS coltype
-         FROM ${arm.table} WHERE id = ANY($1::uuid[])`,
+      `SELECT ${arm.pk}::text AS pk, ${arm.docCol} AS doc, currency::text AS currency, pg_typeof(currency)::text AS coltype
+         FROM ${arm.table} WHERE ${arm.pk}::text = ANY($1::text[])`,
       [ids],
     );
-    const want = new Map(plan.filter((p) => p.arm === arm).map((p) => [p.id, p.to]));
+    const want = new Map(plan.filter((p) => p.arm === arm).map((p) => [p.pk, p.to]));
     for (const r of rows) {
-      const expect = want.get(r.id);
+      const expect = want.get(r.pk);
       const got = String(r.currency ?? "");
       if (got !== expect) { bad += 1; line(`  VERIFY FAILED — ${r.doc}: expected '${expect}', reads '${got}' (${r.coltype})`); }
       else line(`  verified ${pad(r.doc, 18)} currency = '${got}' (${r.coltype})`);

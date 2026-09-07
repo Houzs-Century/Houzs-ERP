@@ -3658,6 +3658,16 @@ endpoint, no PDF. The one writer is
 | `display_term` | `SO.DisplayTerm` | the credit term AutoCount PRINTS. The ERP's own terms live on the CUSTOMER, so this is the only order-level record of one |
 | `ac_to_po_no` | `SO.UDF_ToPONo` | the purchase order(s) AutoCount raised FROM this order, comma-joined. **NOT a customer PO number** |
 
+**A neighbouring lane, named here because this is where this script's lanes are
+described:** `sync-ac-delta.mjs`'s `LANES=do` now stamps the SHIP-FROM BRANCH on
+every delivery note it creates, through the shared
+`backend/scripts/lib/ac-do-location.mjs` — the same rule the cutover path uses.
+That is a delivery-order fact and it is documented in full in
+`docs/modules/delivery-order.md`; until then those documents landed with a NULL
+branch while the cutover corpus had one. It reads the location out of the truth
+snapshot's line projection, so it is inert until that snapshot is re-cut, and it
+PRINTS every document it cannot resolve rather than defaulting.
+
 Two things worth knowing before using them:
 
 - **The delivery address is the operational one, and the population is small.**

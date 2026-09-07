@@ -127,9 +127,9 @@
     "1NA",
     "1A(RHF)"
    ],
-   "seat": null,
+   "seat": "28",
    "desc2Match": "no hole on sitting area",
-   "why": "photo: three boxes, a hatched arm at each outer end; no seat size written anywhere, so seat is left empty | 2026-09-07: the purchase order was missing from this entry, so the build was written onto the sales order alone and HC-PO left holding the lead piece only (chain audit run 34134017406 reported it as PIECE ABSENT). HC-PO-010040 added so the pair is corrected together, which is what this file's own rule says."
+   "why": "photo: three boxes, a hatched arm at each outer end | 2026-09-07: the purchase order was missing from this entry, so the build was written onto the sales order alone and HC-PO left holding the lead piece only (chain audit run 34134017406 reported it as PIECE ABSENT). HC-PO-010040 added so the pair is corrected together, which is what this file's own rule says. | 2026-09-08 OWNER: 就是 28 寸. That RETIRES this entry's earlier reading, which said \"no seat size written anywhere, so seat is left empty\" and left both documents with no seatHeight at all. The empty seat was not neutral: lib/po-so-dedication-plan.mjs buckets a line by (item_code, seat), so the purchase lines and the sales lines were not even in the same bucket and no pairing could ever be forced - repair-po-so-item-dedication.mjs refused the pair for exactly that reason in run 34139629930. The document's own Desc2 reads \"28 inch per seat\" and the sales order's lead line already carried seatHeight=28, so the seat was written on ONE side of three lines and absent from the rest; the owner's ruling settles which value is right and this entry now writes it on BOTH documents so the two sides agree and the existing planner can pair them."
   },
   {
    "docs": [
