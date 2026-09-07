@@ -329,12 +329,12 @@ Total: 1182 route registrations across 152 files.
 - L1225  GET    /${base}/brief
 
 ## backend/src/scm/routes/mfg-purchase-orders.ts  (24)
-- L391  GET    /
-- L579  GET    /outstanding-so-items
-- L709  GET    /so-line-candidates
-- L856  GET    /:id
-- L1029  GET    /:id/linked
-- L1074  GET    /:id/revisions
+- L392  GET    /
+- L580  GET    /outstanding-so-items
+- L710  GET    /so-line-candidates
+- L857  GET    /:id
+- L1030  GET    /:id/linked
+- L1075  GET    /:id/revisions
 - L1401  POST   /
 - L2467  POST   /from-sos
 - L2547  PATCH  /:id
@@ -510,22 +510,22 @@ Total: 1182 route registrations across 152 files.
 - L1444  GET    /reservations
 
 ## backend/src/scm/routes/delivery-orders-mfg.ts  (16)
-- L2682  GET    /
-- L2916  GET    /deliverable-so-lines
-- L3005  GET    /so-source/:docNo
-- L3031  GET    /:id
-- L3221  POST   /
-- L4177  POST   /from-sos
-- L4188  PUT    /:id/crew
-- L4333  PATCH  /:id
-- L4765  POST   /:id/items
-- L4767  PATCH  /:id/items/:itemId
-- L5085  DELETE /:id/items/:itemId
-- L5175  GET    /:id/payments
-- L5231  POST   /:id/payments
-- L5273  DELETE /:id/payments/:paymentId
-- L5597  PATCH  /:id/status
-- L5598  POST   /:id/revert
+- L2670  GET    /
+- L2904  GET    /deliverable-so-lines
+- L2993  GET    /so-source/:docNo
+- L3019  GET    /:id
+- L3209  POST   /
+- L4165  POST   /from-sos
+- L4176  PUT    /:id/crew
+- L4321  PATCH  /:id
+- L4753  POST   /:id/items
+- L4755  PATCH  /:id/items/:itemId
+- L5073  DELETE /:id/items/:itemId
+- L5163  GET    /:id/payments
+- L5219  POST   /:id/payments
+- L5261  DELETE /:id/payments/:paymentId
+- L5585  PATCH  /:id/status
+- L5586  POST   /:id/revert
 
 ## backend/src/scm/routes/product-models.ts  (16)
 - L93  GET    /:id/photo/:key
@@ -689,19 +689,19 @@ Total: 1182 route registrations across 152 files.
 - L1263  POST   /entries/:id/push
 
 ## backend/src/scm/routes/grns.ts  (13)
-- L1026  GET    /
-- L1212  GET    /outstanding-po-items
-- L1316  GET    /:id
-- L1386  GET    /:id/linked
-- L1455  POST   /
-- L1969  POST   /from-pos
-- L2069  PATCH  /:id/post
-- L2381  POST   /from-po-items
-- L2404  PATCH  /:id/cancel
-- L2607  PATCH  /:id
-- L2837  POST   /:id/items
-- L3090  PATCH  /:id/items/:itemId
-- L3398  DELETE /:id/items/:itemId
+- L965  GET    /
+- L1151  GET    /outstanding-po-items
+- L1255  GET    /:id
+- L1325  GET    /:id/linked
+- L1394  POST   /
+- L1908  POST   /from-pos
+- L2008  PATCH  /:id/post
+- L2320  POST   /from-po-items
+- L2571  PATCH  /:id/cancel
+- L2582  PATCH  /:id
+- L2819  POST   /:id/items
+- L3076  PATCH  /:id/items/:itemId
+- L3390  DELETE /:id/items/:itemId
 
 ## backend/src/scm/routes/other-debtors.ts  (13)
 - L635  GET    /
@@ -748,18 +748,18 @@ Total: 1182 route registrations across 152 files.
 - L1262  PATCH  /:id/status
 
 ## backend/src/scm/routes/suppliers.ts  (12)
-- L259  GET    /
-- L354  GET    /:id
-- L385  POST   /
-- L527  PATCH  /:id
-- L530  GET    /:id/bindings
-- L626  POST   /:id/bindings
-- L719  POST   /:id/bindings/batch
-- L721  PATCH  /:id/bindings/:bindingId
-- L815  PATCH  /:id/bindings/:bindingId/cost-anchor
-- L873  DELETE /:id/bindings/:bindingId
-- L896  GET    /:id/scorecard
-- L1026  GET    /material/:kind/:code
+- L264  GET    /
+- L359  GET    /:id
+- L390  POST   /
+- L532  PATCH  /:id
+- L535  GET    /:id/bindings
+- L631  POST   /:id/bindings
+- L724  POST   /:id/bindings/batch
+- L726  PATCH  /:id/bindings/:bindingId
+- L820  PATCH  /:id/bindings/:bindingId/cost-anchor
+- L878  DELETE /:id/bindings/:bindingId
+- L901  GET    /:id/scorecard
+- L1031  GET    /material/:kind/:code
 
 ## backend/src/routes/tableLayouts.ts  (11)
 - L191  GET    /
@@ -1129,11 +1129,11 @@ Total: 1182 route registrations across 152 files.
 - L442  GET    /:code
 
 ## backend/src/scm/routes/receipts.ts  (5)
-- L361  GET    /
-- L362  POST   /
-- L363  POST   /:id/void
-- L364  GET    /:id
-- L365  PATCH  /:id
+- L363  GET    /
+- L364  POST   /
+- L365  POST   /:id/void
+- L366  GET    /:id
+- L367  PATCH  /:id
 
 ## backend/src/scm/routes/staff.ts  (5)
 - L144  GET    /
