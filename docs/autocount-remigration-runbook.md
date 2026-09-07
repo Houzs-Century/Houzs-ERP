@@ -139,6 +139,7 @@ dependency argument, not as a substitute for it:
 | 1.4 | `topup-ac-po-lines.yml` | fills received quantities the two lanes could not resolve. Needs both lanes present |
 | 1.5 | `stamp-ac-grn-refs.yml` | stamps the book's GRN and PI document numbers onto the POs. Reference numbers only — no receipt, no stock |
 | 1.6 | `create-migrated-documents.yml` (`kind=both`) | GRN and DO mirrors. Must follow the POs and SOs they hang off, and writes NO movements: the balance snapshot already counts every past receipt and delivery |
+| 1.6b | `repair-migrated-do-prices.yml` (`mode=plan`, then `mode=apply` + the confirm phrase) | a delivery order created by 1.6 before 2026-09-02 carries NO money at all (`docs/bugs/0617-the-migrated-delivery-orders-carried-no-money-at-all.md`): the writer named ten columns and none of the price ones, and both are `DEFAULT 0 NOT NULL`. The zero reaches the Amount column, the Revenue tile and every Sales Invoice prefilled from that line. The price is COPIED from the delivery order line's own sales-order line; a sales-order line that is itself 0 is left alone |
 | 1.7 | `create-migrated-invoices.yml` | invoices mirror GRNs and DOs, so they follow 1.6. Opens one only where the amount matches the book to the cent |
 | 2.1 | `import-ac-stock-balance.yml` with `neg=1` | on-hand is reconciled against the book AFTER the paperwork, so the mirrors have something to hang on and the delta is computed once |
 | 2.2 | `import-ac-sofa-stock.yml` | sofa lots are driven off the already-imported SO-linked POs |
@@ -152,6 +153,7 @@ dependency argument, not as a substitute for it:
 | 4.4 | `check-ac-vs-erp-reconcile.yml` | "fully received must be lit" equals 0 |
 | 4.5 | `check-remark2-vs-status.yml` | ALGO-SUSPECT must be 0; the other buckets are explained differences |
 | 4.6 | `check-ac-erp-doc-links.yml` | the two document-relationship graphs, both directions. `backlog = 0` |
+| 4.7 | `ac-erp-reconcile.yml`, then `node backend/scripts/check-ac-gap-attribution.mjs` | the six types, both directions, document + line + money. Read them IN THAT ORDER: the reconcile says how many in-scope documents the ERP does not hold, and the attribution says how many of those are already sitting in a committed migration source and therefore need a DISPATCH rather than an importer. On 2026-09-07 that distinction was worth 32 GR and 12 DO. The attribution needs no database |
 | 5 | Go-live seal: lock the book, re-run 0 to 4, turn on write-back, smoke-test | only after 4 is green |
 
 **Two workflows sit in the 2026-08-28 order but NOT in the resync order, and

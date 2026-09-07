@@ -974,8 +974,8 @@ the column filter, a reversed journal invisible) and
 `ReceiptsPayments.test.tsx` / `rp-report-pdf.test.ts`.
 
 **Official Receipts (GL redesign item 9).** Every customer payment births a
-receipt (`scm.acc_receipts`, one per payment forever — a reprint reprints,
-never re-issues): DRAFT on the `{co}DraftOR-YYMM` series at recording, FORMAL
+receipt (`scm.acc_official_receipts`, one per payment forever — a reprint
+reprints, never re-issues): DRAFT on the `{co}DraftOR-YYMM` series at recording, FORMAL
 the moment the money is CONFIRMED — cash immediately on `{co}COR-YYMM`
 (钱当场在手), card when merchant reconciliation confirms that payment (the
 settlement hook formalises on the acquirer's payout bank, best-effort so a
@@ -991,7 +991,17 @@ writers (so-payment-row.ts hook, the SI payment route) with
 Surface: `GET /accounting/receipts`, `POST /accounting/receipts/ensure`
 (returns the WHOLE row — the print button's one round trip),
 `POST /accounting/receipts/:id/formalise` (accounting-receipts.ts). Pinned by
-tests/officialReceipts.test.ts.
+tests/officialReceipts.test.ts. **The table is its own since docs/bugs/0658
+(2026-09-07):** the module's first migration (20260905T1800) said
+`CREATE TABLE IF NOT EXISTS scm.acc_receipts` — the name 0351 had already
+given the general money-in receipt — so on every database the statement was
+a silent no-op, the tracker called it applied, and or_number / payment_source
+never existed: every birth failed best-effort, the book page could not load,
+the settlement hook formalised nothing. Migration 20260907T1600 creates
+`scm.acc_official_receipts` (same columns), the module reads it, and
+`tests/officialReceiptsTable.test.ts` pins that no two migrations ever
+CREATE one scm table name again. Receipts for payments recorded while the
+table was missing heal on first print (`ensure`), as before.
 
 **Printing the OR (item 9b).** The pdf (frontend receipt-pdf.ts, A5
 landscape) carries amount-in-words and a diagonal DRAFT watermark until the
