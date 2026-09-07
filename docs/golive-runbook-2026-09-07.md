@@ -1,0 +1,595 @@
+# Go-live runbook — 2026-09-07
+
+One ordered list of what to dispatch tonight, and in what order, to satisfy the
+owner's acceptance spec. Every number here was **measured**, not read off a
+source file. The method and the raw evidence are in §6.
+
+Companion docs, neither of which this one replaces:
+
+- `docs/ac-resync-runbook.md` — the generic METHOD (phases 0-5) and its traps.
+  This file is tonight's ordered INSTANCE of it, with the census attached.
+- `docs/golive-readiness-2026-09-07.md` — what is currently WRONG (the parity
+  gate's verdict). This file is what to RUN about it.
+
+---
+
+## 0. The finding, in one line
+
+**The cutover jobs are not un-dispatched. They are dispatched in DRY-RUN and
+never flipped to apply.**
+
+The morning's reconciliation reported 32 Goods Received and 12 Delivery Orders
+absent from the ERP, and concluded no importer was missing. Both halves are
+right, and the conclusion drawn from them was wrong. `create-migrated-documents`
+exists, and it ran **today at 08:25 UTC** — in `DRY-RUN`. Its own log says so.
+So the documents really are absent, the tool really does exist, and the missing
+step is the one nobody took.
+
+Re-measured at 08:43 UTC today with a run dispatched for this report
+(`34102058139`), against the snapshot re-cut this morning:
+
+```
+GR: book 212, in ERP 180, MISSING 32
+DO: book  83, in ERP  71, MISSING 12
+```
+
+Exactly the morning's two numbers. They were never imported.
+
+**This generalises.** Of the eight cutover lanes dispatched this morning, six
+ran read-only and two wrote:
+
+| dispatched today | mode | wrote anything? |
+|---|---|---|
+| `import-ac-outstanding-so` | `DRY-RUN` | no |
+| `import-ac-outstanding-po` | `DRY-RUN` | no |
+| `import-ac-so-linked-pos` | `DRY-RUN` | no |
+| `stamp-ac-grn-refs` | `DRY-RUN` | no |
+| `create-migrated-documents` | `DRY-RUN kind=both` | no |
+| `repair-migrated-do-prices` | `mode=plan` | no |
+| `sync-ac-delta` | `mode=plan lanes=desc,pay,links` | no |
+| `recompute-so-allocation` | `DRY-RUN` + **refused** | no (see §5.1) |
+| `import-so-line-photos` | **`mode=APPLY`** | yes |
+| `import-po-line-photos` | **`mode=APPLY`** | yes |
+
+PROVEN, from each run's own annotations. Photos are in. Nothing else is.
+
+### The second-order trap: a stale check reports "all clear"
+
+`check-cutover-completeness` ran at 03:20 UTC, **before** the snapshots were
+re-cut at 06:35, and reported:
+
+> SO: AutoCount outstanding 2750; in ERP 2750; **MISSING 0** · PO MISSING 1
+
+The same check, re-dispatched at 08:43 against the fresh snapshot
+(run `34102060759`), reports:
+
+> SO: AutoCount outstanding 2777; in ERP 2679; **MISSING 98** · PO MISSING 75
+
+Nothing changed in the ERP between those two runs. Only the input did. **A job
+whose input is newer than its last run does not merely owe a run — its previous
+verdict is actively misleading.** That is the rule the census below applies.
+
+---
+
+## 1. Headline census
+
+Measured across every workflow the Actions API knows about, cross-referenced
+against `git log -1 --format=%cI` on each file in `backend/scripts/data/`.
+
+`origin/main` carries **446** workflow files; the API knows **447**. The extra
+is `tmp-audit-all-so.yml` [gone] — deleted from the tree, still remembered
+because it has run history. It is in none of the lists below.
+
+| | count |
+|---|---|
+| workflow files on `origin/main` | 446 |
+| **owe a run** (input snapshot newer than their most recent run of any kind) | **65** |
+| ...of those, **never run at all** | **7** |
+| workflows with zero runs in their entire history | 37 |
+| snapshot entries under `backend/scripts/data/` | 82 |
+| ...re-cut today by PR #3029 | 14 |
+
+PROVEN. Full derivation in §6; the complete 65-row list is in §6.5.
+
+### The 7 that owe a run and have NEVER been dispatched
+
+```enumeration
+align-rebind-unlinked          input autocount-sku-rebind-pairs.tsv @ 2026-08-07
+bedframe-sofa-status-truth     input ac-bedframe-sofa-readiness.json.gz @ 2026-08-11
+cancel-parity-check            input ac-cancel-parity.json.gz @ 2026-08-11
+check-po-arm-own-text          input ac-outstanding-so.json.gz @ 2026-09-07
+delivered-but-open             input ac-fidelity-so-lines.json.gz @ 2026-08-11
+mrp-unreleased-demand          input ac-fidelity-so-lines.json.gz @ 2026-08-11
+stamp-po-line-costs            input autocount-erp-mapping-1561.csv @ 2026-08-29
+```
+
+Only one of these is on tonight's critical path: **`check-po-arm-own-text`**,
+whose input was re-cut this morning.
+
+**It has now been run, for the first time in its life** (run `34102814435`,
+read-only, dispatched for this report), and it found something:
+
+```
+distinct (DocNo|erp_code) keys in the PO export:  447
+keys carrying more than one export row:            48
+export rows whose parse the survivor overwrote:    15   <- the CEILING on PO-arm damage
+  of those, the parse DIFFERS from the survivor:   12   <- the only keys that can have done damage
+  of those, every row parses IDENTICALLY:          36   <- harmless
+```
+
+So the ceiling on PO-arm damage is **15 rows, of which 12 can actually have done
+harm** (e.g. `PO-009776|8050-1S`). That is a small number and it is not zero —
+and it sat unmeasured because nobody had ever pressed Run. **This is the whole
+report in miniature:** a check that has never run is not evidence of health, it
+is an absence of evidence, and the two look identical on a dashboard. The other six read snapshots that are
+themselves weeks old (the `ac-fidelity-*` set has not moved since 2026-08-11),
+so running them tonight would measure a stale world. They are listed for
+completeness, not scheduled.
+
+### The full never-run set (37, for the record)
+
+These have zero runs in their entire history. Most are probes written and never
+fired; none except `check-po-arm-own-text` and `resync-so-delivered-status` sit
+on tonight's path.
+
+```enumeration
+align-rebind-unlinked            mrp-snapshot-check
+backfill-zero-line-costs         mrp-unreleased-demand
+bedframe-sofa-status-truth       park-2990-staff-showroom
+branding-vocabulary-check        probe-amendment-price-discarded
+cancel-parity-check              probe-effective-delivery-drift
+check-po-arm-own-text            probe-mrp-roundtrip-cost
+delivered-but-open               probe-po-so-link-provenance
+driver-scope-link-check          probe-pos-flags-govern-erp
+dump-compat-views                probe-remark-staleness
+dump-views                       probe-so-delivered-not-advanced
+duplicate-ic-check               probe-transfer-census
+ios-release                      probe-venue-write-divergence
+ledger-divergence-check          relabel-provenance-notes
+migrate-2990-staff               resync-so-delivered-status
+retire-non-fabric-rows           salesperson-picker-roster-check
+sequence-drift-check             sequence-drift-repair
+seed-fleet-data                  stamp-po-line-costs
+truth-scope-check                variant-key-drift-check
+which-so-is-so-to-po-retrying
+```
+
+---
+
+## 2. The measured backlog to clear tonight
+
+From run `34102058139` (read-only, dispatched 08:43 UTC today, fresh snapshot):
+
+```
+book graph: SO 2777 | PO 484 | DO 83 | GR 212 | PI 186 | SO->PO line edges 699
+erp graph:  SO 2770 | PO 499 | DO 71 | GR 222 | PI  28 | SI 39
+
+SO   book 2777, in ERP 2679, MISSING  98
+PO   book  484, in ERP  409, MISSING  75
+DO   book   83, in ERP   71, MISSING  12
+GR   book  212, in ERP  180, MISSING  32
+PI   book  186, in ERP   17, MISSING 169
+SO->PO line edges  book 699, linked 542, LINE-MISSING 78, EDGE-MISSING 2
+DO parent check: WRONG-PARENT 0
+VERDICT: total backlog items 466
+```
+
+PROVEN. The **169 missing PIs** are the largest single item and the one with a
+blocked tool — see §5.2.
+
+---
+
+## 3. The ordered runbook
+
+**Step zero, before anything below: merge PR #3044** (the post-lock snapshot
+re-cut) and, if the SI/PI lane matters tonight, land the invoice re-export from
+§5.2 in the same window. Everything in Phase A reads those snapshots.
+
+**Ordering rationale, which is the part that matters.** Each step's input is the
+previous step's output:
+
+1. Documents must EXIST before anything can reference them.
+2. Line-level keys and links must exist before dedication/variant work can join on them.
+3. A variant refresh parses a description, so the description must be current first.
+4. Sofa compartment decomposition needs the lines to exist and their Desc2 to be current.
+5. Stock movement is a consequence of documents, so stock imports come after documents.
+6. MRP and COGS READ stock, so they come last.
+
+**Two standing rules for every dispatch below:**
+
+- **Always pass `-f target=prod`.** Most of these default to `staging`. On
+  2026-08-30 a whole SO apply landed in staging because it was omitted. Verify
+  by reading the run's first log line: `Complete job name: run-prod`.
+- **Dispatch dry first, read the plan, then re-dispatch with apply.** Never
+  chain them. The dry-run output is the evidence that the apply is safe.
+
+### Phase A — documents (must be first)
+
+| # | workflow | DRY RUN | APPLY | changes | proof it worked |
+|---|---|---|---|---|---|
+| A1 | `import-ac-outstanding-so` | `-f target=prod` | `-f target=prod -f apply=1` | inserts the 98 missing SOs | re-run A0 check: SO MISSING -> 0 |
+| A2 | `import-ac-outstanding-so` (sofa pass) | `-f target=prod -f sofa=yes` | `-f target=prod -f sofa=yes -f apply=1` | the held sofa orders, per-compartment | sofa lines appear with compartments |
+| A3 | `import-ac-outstanding-po` | `-f target=prod` | `-f target=prod -f apply=1` | inserts missing standalone POs | PO MISSING drops |
+| A3b | `import-ac-outstanding-po` (sofa pass) | `-f target=prod -f sofa=yes` | `-f target=prod -f sofa=yes -f apply=1` | the held sofa POs, per-compartment | sofa PO lines appear |
+| A4 | `import-ac-so-linked-pos` | `-f target=prod` | `-f target=prod -f apply=1` | POs raised against an in-book SO, line-bound | PO MISSING -> 0; LINE-MISSING drops |
+| A5 | `topup-ac-po-lines` | `-f target=prod` | `-f target=prod -f apply=1 -f confirm="I HAVE REVIEWED THE DRY-RUN"` | adds PO lines missed by earlier rounds | LINE-MISSING 78 -> 0 |
+| A6 | `stamp-ac-grn-refs` | `-f target=prod` | `-f target=prod -f apply=1` | stamps GR/PI refs onto imported POs | GR refs present on PO rows |
+| A7 | `create-migrated-documents` | `-f target=prod -f kind=both` | `-f target=prod -f kind=both -f apply=1` | creates the 32 GR + 12 DO mirrors, **no stock movement** | GR MISSING 32->0, DO MISSING 12->0 |
+| A8 | `repair-migrated-do-prices` | `-f mode=plan -f company=all` | `-f mode=apply -f company=all -f confirm="THE PRICE COMES FROM THE SALES ORDER"` | prices the zero-value migrated DO lines | see §3.1 |
+| A9 | `create-migrated-invoices` | `-f target=prod -f mode=dry-run -f kind=both` | `-f target=prod -f mode=apply -f kind=both -f confirm="I HAVE REVIEWED THE DRY-RUN"` | the 169 missing PIs + SIs | **BLOCKED — see §5.2** |
+
+Both importers carry a `sofa` input (`default: "no"`, choice `no|yes`), verified
+against the YAML on `origin/main`. The sofa orders are **held out of the default
+pass by design** — `import-ac-outstanding-so.mjs:6` skips any order with a sofa
+line whole — so the sofa pass is a second dispatch, not an option on the first.
+Run the plain pass to completion before the sofa pass on each side.
+
+#### 3.1 What A8 will actually do
+
+PROVEN, from run `34100490708`'s own plan output today:
+
+```
+zero-priced lines on migrated delivery orders : 320
+  repairable from the sales order             :  65
+  sales-order line is itself 0 - left alone   : 255
+  no so_item_id - REPORTED, never guessed     :   0
+documents affected                            :  56
+```
+
+So the population is **56 documents / 65 lines**, not the 71 quoted this
+morning. The other 255 are legitimately zero because their sales-order line is
+zero, and the tool leaves them alone by design.
+
+### Phase B — line keys, links, dedication
+
+| # | workflow | DRY RUN | APPLY | changes |
+|---|---|---|---|---|
+| B1 | `backfill-ac-line-keys` | `-f target=prod` | `-f target=prod -f apply=1` | stamps `linked_ac_dtlkey` on SO lines |
+| B2 | `backfill-ac-sofa-line-keys` | `-f target=prod` | `-f target=prod -f apply=1` | same, sofa lines |
+| B3 | `backfill-po-ac-dtlkey` | `-f target=prod` | `-f target=prod -f apply=1` | PO line -> SO line key |
+| B4 | `repair-dedication-from-autocount` | `-f target=prod` | `-f target=prod -f apply=1` | which PO line serves which SO line |
+| B5 | `repair-migrated-po-lines` | `-f target=prod` | `-f target=prod -f apply=1 -f confirm="I HAVE REVIEWED THE DRY-RUN"` | repairs PO lines against the book |
+| B6 | `repair-so-delivered-from-imported-dos` | `-f company=1` | `-f company=1 -f apply=1 -f confirm_company=1` | advances SO delivered state from the DOs A7 created |
+
+**B6 must come after A7.** It reads the delivery orders A7 creates; run before,
+it sees nothing and reports a clean no-op — the exact false negative that
+started this report. Its confirm value is the company id repeated, not a phrase.
+
+Proof for Phase B: re-run `check-ac-erp-doc-links` — `LINE-MISSING` and
+`EDGE-MISSING` should both reach 0.
+
+### Phase C — the "latest data" refresh (remark 2, dates, payments)
+
+The owner's spec: *remark 2、照片、variant 等等也是根据最新的数据 update 进来*.
+
+| # | workflow | DRY RUN | APPLY | changes |
+|---|---|---|---|---|
+| C1 | `refresh-so-tail-from-book` | (no inputs) | `-f apply=1 -f confirm="REFRESH SO TAIL"` | header fields + line delivery dates, from the book |
+| C2 | `backfill-so-remarks` | (no inputs) | `-f apply=1 -f confirm="BACKFILL SO REMARKS"` | Remark2-4 |
+| C3 | `backfill-so-dates` | `-f target=prod` | `-f target=prod -f apply=1` | SO dates |
+| C4 | `unify-processing-date` | `-f target=prod -f mode=dry-run -f company=1` | `-f target=prod -f mode=apply -f company=1 -f confirm="I HAVE REVIEWED THE DRY-RUN"` | the **62 missing Processing Dates** |
+| C5 | `sync-ac-delta` | `-f target=prod -f apply=no` | `-f target=prod -f apply=yes -f confirm="SYNC AC DELTA" -f lanes=desc,pay,links` | desc2 + the **47 payment differences (RM 155,521)** + links |
+
+C1/C2 take **no `target` input** — they are prod by design. A 422 means drop
+the parameter.
+
+C4 and C5 together close items 2 and 3 of the readiness doc's three blockers.
+
+Photos are already applied (`import-so-line-photos` / `import-po-line-photos`,
+`mode=APPLY`, 08:21 UTC today) — **do not re-run them** unless
+`probe-line-photo-coverage` shows a gap.
+
+### Phase D — variants, sofa compartments, bedframe
+
+**Must come after Phase C**: these parse the description, so the description has
+to be current first. This is the ordering the owner's spec implies and the one
+most likely to be got wrong.
+
+| # | workflow | DRY RUN | APPLY | changes |
+|---|---|---|---|---|
+| D1 | `refresh-so-variants` | `-f target=prod` | `-f target=prod -f apply=1` | re-parses SO line variants |
+| D2 | `refresh-po-variants` | `-f target=prod` | `-f target=prod -f apply=1` | same, PO side |
+| D3 | `redecode-collapsed-sofa-lines` | `-f target=prod -f mode=plan -f company=1` | `-f target=prod -f mode=apply -f company=1 -f confirm="I HAVE REVIEWED THE DRY-RUN"` | **sofa -> compartments** (the owner's item 1) |
+| D4 | `refresh-sofa-colours` | `-f target=prod -f company=1` | `-f target=prod -f company=1 -f apply=1` | fabric colour per compartment |
+| D5 | `apply-sofa-compartment-corrections` | `-f target=prod -f company=1` | `-f target=prod -f company=1 -f apply=1` | the owner's hand corrections |
+
+**Bedframe (the owner's item 2) has no dedicated apply workflow.** See §5.3.
+
+Proof for Phase D: `check-sofa-bedframe-completeness -f target=prod -f
+company=1` — the PROCEEDED backlog (colour 47 / seat size 21 / compartments 0)
+should shrink. Per the owner's 2026-09-04 rule, only the **proceeded**
+population counts; the all-orders figure is context and must not be quoted as
+the work.
+
+### Phase E — stock
+
+**After documents, because documents move stock.**
+
+| # | workflow | DRY RUN | APPLY | changes |
+|---|---|---|---|---|
+| E1 | `import-ac-stock-balance` | `-f target=prod -f neg=1` | `-f target=prod -f neg=1 -f apply=1` | balances both directions |
+| E2 | `import-ac-sofa-stock` | `-f target=prod` | `-f target=prod -f apply=1` | sofa batches |
+| E3 | `import-ac-stock-layers` | `-f target=prod` | `-f target=prod -f apply=1` | FIFO cost layers |
+
+`neg=1` on E1 is deliberate: negatives are period issues, deducted by FIFO.
+Read both columns in the dry-run.
+
+Proof: `check-stock-vs-autocount` and `stock-truth-check`. The 1A figure to beat
+is **798 of 936 cells agreeing (85.3%)**.
+
+### Phase F — allocation, MRP, COGS (last, because they read stock)
+
+| # | workflow | notes |
+|---|---|---|
+| F1 | `recompute-so-allocation` | **BROKEN — see §5.1.** Use `enqueue-so-allocation-recompute` instead. |
+| F2 | `enqueue-so-allocation-recompute` | queues the in-app allocator, which is not affected by the §5.1 defect |
+| F3 | `mrp-pairing-audit` | read-only |
+| F4 | `uncosted-cogs-check` | read-only; last succeeded 2026-08-05, owes a run |
+| F5 | `costless-stock-check` | read-only; last succeeded 2026-08-11, owes a run |
+
+F2 is what clears the **43 CONTESTED orders** the parity gate flagged — the ones
+where our own stored status is stale and AutoCount may be right.
+
+### Phase G — final verification (all read-only, dispatch freely)
+
+Run these in order and read every one:
+
+```
+check-cutover-completeness   -f target=prod
+check-ac-erp-doc-links       -f target=prod
+golive-parity-check          -f target=prod -f company=1
+check-sofa-bedframe-completeness -f target=prod -f company=1
+check-stock-vs-autocount     -f target=prod
+stock-truth-check
+ac-erp-reconcile
+```
+
+The gate is `golive-parity-check`. Its verdict block is the acceptance
+criterion; the readiness doc explains how to read each section.
+
+---
+
+## 4. Mapping the owner's spec to the steps
+
+| the owner asked for | steps | tool exists? |
+|---|---|---|
+| SO DO PO GR 全部搬进来 | A1-A7 | yes |
+| SI PI 搬进来 | A9 | **blocked, §5.2** |
+| remark 2 update | C2, C5 | yes |
+| 照片 import | already applied today | yes, done |
+| variant update | D1, D2 | yes |
+| 哪些 SO 转成 DO / PO 转成 GR / SO 转成 PO | B4, B6 + `check-ac-erp-doc-links` | yes |
+| 对标 transaction workflow, 确认哪些 valid | Phase G | yes |
+| 沙发 -> compartment | D3, D4, D5 | yes |
+| Bed frame -> variants | D1 partly | **no dedicated tool, §5.3** |
+| 核对哪些数据没有 / 是否本来就该没有 | Phase G + readiness doc | yes |
+| tally stock balance + amount | E1-E3, then G | yes |
+| MRP / COGS 自动跟着 tally | F2-F5 | partly, §5.1 |
+| sales agent 跟着我们的逻辑 | — | **no tool, §5.4** |
+| SKU 跟着我们的逻辑 | `align-open-skus`, `align-seed-skus`, `reconcile-sku` | yes, but all stale |
+
+---
+
+## 5. Gaps — things the spec needs that have no working tool
+
+### 5.1 `recompute-so-allocation` cannot run the canonical allocator (PROVEN)
+
+Run `34099835565` today reported job status **success** while the operation
+**refused**:
+
+```
+[so-allocation] recompute failed: Error: allocation DO-line load failed:
+  pgrest-shim: unsafe identifier "so.status"
+canonical result: ok=false linesFlipped=0 ordersAdvanced=0 ordersRegressed=0
+```
+
+Root cause, traced: `backend/src/scm/lib/so-stock-allocation.ts:447` uses an
+embedded PostgREST select with a dotted filter —
+
+```js
+.select('id, so:mfg_sales_orders!inner(status), do_items:delivery_order_items!inner(...)')
+.not('so.status', 'in', SO_TERMINAL_STATES_PGREST)
+```
+
+Real PostgREST supports that. The **script wrapper does not**:
+`backend/scripts/lib/pgrest-shim.mjs:53` guards identifiers with
+`/^[a-z_][a-z0-9_]*$/`, which rejects the dot. The shim's own header says it is
+"NOT a general client. No embedded selects". So the workflow is structurally
+incapable of running the current allocator.
+
+**Impact is limited**: the in-app allocator (every GRN/DO/return trigger) uses
+real PostgREST and is unaffected. Use `enqueue-so-allocation-recompute` (F2)
+tonight. The shim fix is a follow-up, not a tonight job.
+
+**Note the reporting hazard**: the job exits 0 by the repo's own read-only
+convention, so this refusal is invisible unless you read the log. Anyone
+scanning for red runs would have called this green.
+
+### 5.2 The SI/PI lane is blocked on a stale snapshot (PROVEN)
+
+`create-migrated-invoices` last ran 2026-09-05 and **failed**:
+
+```
+REFUSED: ac-invoice-refs.json.gz was exported 2026-08-30T02:38:32 (6.1 days ago).
+Invoices raised since are invisible to it and its totals are superseded.
+Re-export the map first (export-ac-reimport.py ONLY=ivrefs).
+```
+
+The guard is `ageDays <= 2` (`create-migrated-invoices.mjs:88`). Today it would
+be **8.9 days** and refuse again.
+
+**Why**: PR #3029 re-cut 14 snapshots this morning but **not** the invoice pair.
+`ac-invoice-refs.json.gz` and `ac-invoice-prices.json.gz` are still at
+2026-08-29T19:01:04Z. This is what leaves **169 PIs** missing.
+
+**Confirmed twice.** PR #3044 — *"the FINAL AutoCount cut, taken one minute after
+the book was locked"*, open and queued as this was written — re-cuts 15 snapshot
+files and **also skips the invoice pair**. So two consecutive re-cuts, including
+the one explicitly framed as final, have left the invoice map untouched. This is
+not an oversight to hope somebody notices tonight: **the exporters below are a
+separate pair of scripts and somebody has to run them.**
+
+**The fix, and it must happen on this machine before A9 can run:**
+
+```bash
+AC_CRED_FILE=<scratchpad>/.ac-cred python backend/scripts/export-ac-invoice-refs.py
+AC_CRED_FILE=<scratchpad>/.ac-cred python backend/scripts/export-ac-invoice-prices.py
+```
+
+then commit both `.gz` files in a PR and merge before dispatching A9. The export
+is read-only, so the AutoCount view-only lock does not block it — but it does
+need the ZeroTier link to `DESKTOP-TDH50IT\A2006`.
+
+**UNTESTED** — I did not run either exporter; they need the credential file and
+the ZeroTier link, neither of which is available from this session.
+
+### 5.3 Bedframe decomposition has no apply workflow (LIKELY)
+
+The owner asked for bedframe descriptions to be parsed into variants, the same
+way sofas become compartments. The parser exists
+(`backend/scripts/lib/parse-bedframe.mjs`, used by `check-golive-parity` and
+others), and `refresh-so-variants` (D1) will apply whatever that parser yields.
+But there is **no bedframe equivalent of `redecode-collapsed-sofa-lines`** — no
+dedicated decomposition-and-apply lane.
+
+`bedframe-sofa-status-truth` exists and would measure this, but it has **never
+been run** and its snapshot (`ac-bedframe-sofa-readiness.json.gz`) is from
+2026-08-11, so it would measure a stale world.
+
+Labelled LIKELY, not PROVEN: D1 may already cover the requirement via the shared
+parser. **Confirm with the owner what bedframe decomposition should produce
+beyond what D1 does** before treating this as a gap to build.
+
+### 5.4 Sales agent has no cutover tool (PROVEN, by absence)
+
+The owner's last line asks whether incoming orders can follow our own logic for
+sales agents and SKUs. For SKU there are tools (`align-open-skus`,
+`align-seed-skus`, `reconcile-sku`) — all stale, all in the 65.
+
+For sales agent there is only `salesperson-picker-roster-check`, which has
+**never been run** (0 runs, entire history). There is no backfill or alignment
+workflow that assigns sales agents on imported orders. If the 98 incoming SOs
+need an agent attached by our rules rather than AutoCount's text, **that work
+has no tool and cannot be done tonight by dispatch.**
+
+### 5.5 The snapshots were cut before the lock — BEING FIXED
+
+AutoCount went view-only at 16:20 local. The snapshot set this report measured
+against is 06:35 UTC (14:35 local) with its book export stamped 13:03 local, so
+there is a **1-3 hour window before the lock** whose edits it cannot contain.
+
+**PR #3044 closes this** — it is the post-lock re-cut, and it was queued while
+this was written. **Merge #3044 before running any of Phase A**, and re-run the
+Phase G checks afterwards: every count in §2 was measured against the PRE-lock
+snapshot and will move. The backlog shape will not change much, but the exact
+numbers will, and the runbook's proof steps compare against them.
+
+---
+
+## 6. Method, and how to reproduce it
+
+### 6.1 The run census
+
+```bash
+gh api 'repos/Houzs-Century/Houzs-ERP/actions/workflows' --paginate \
+  -q '.workflows[] | [(.id|tostring), .state, .path, .name] | @tsv'
+# then per workflow:
+gh api "repos/.../actions/workflows/$id/runs?per_page=1" \
+  -q '.workflow_runs[0] | [(.id|tostring), .status, .conclusion, .created_at, .event, .head_branch] | @tsv'
+gh api "repos/.../actions/workflows/$id/runs?per_page=1" -q '.total_count'
+```
+
+**Trap, recorded so nobody repeats it:** the `?status=success` filter is
+unreliable — it returned zero rows for `mrp-pairing-audit`, which has six
+successful runs. Never-run claims in this document rest on `total_count == 0`,
+which is sound; recency claims use the **unfiltered** latest run.
+
+### 6.2 The input-freshness test
+
+```bash
+for f in backend/scripts/data/*; do git log -1 --format=%cI -- "$f"; done
+```
+
+Then map workflow -> script (`grep` the YAML) -> snapshot (`grep` the script for
+the basename), and flag any workflow whose most recent run predates the snapshot
+it reads. Reverse-mapping (snapshot -> readers) catches the scripts that build
+their paths dynamically; the forward map alone found only 39 of them.
+
+### 6.3 The plan-vs-apply test
+
+The cheap way — no log download:
+
+```bash
+jid=$(gh api "repos/.../actions/runs/$RUN/jobs" -q '.jobs[0].id')
+gh api "repos/.../check-runs/$jid/annotations" -q '.[].message'
+```
+
+`##[notice]` lines surface as annotations, and every one of these scripts prints
+its mode there (`mode=DRY-RUN`, `mode=plan`, `mode=APPLY`, `PLAN ONLY. Nothing
+was written.`).
+
+### 6.4 Evidence dispatched for this report
+
+Both read-only, both `success`:
+
+| run | workflow | why |
+|---|---|---|
+| `34102058139` | `check-ac-erp-doc-links` | was failing on a stale snapshot since 2026-09-01; the re-cut unblocked it, PROVEN by this run |
+| `34102060759` | `check-cutover-completeness` | re-measured against the fresh snapshot; MISSING 0 -> 98 |
+
+No workflow was dispatched with `apply=1` in the course of writing this
+document.
+
+### 6.5 The 65 that owe a run
+
+Never-run (7) are listed in §1. The remaining 58, oldest run first:
+
+```enumeration
+align-open-skus                  2026-08-05    repair-pure-losses               2026-08-28
+align-link-models                2026-08-05    backfill-so-remarks              2026-08-28
+align-safe-cleanup               2026-08-06    repair-migrated-po-lines         2026-08-28
+load-supplier-price-list         2026-08-09    topup-ac-po-lines                2026-08-29
+check-cutover-metrics            2026-08-09    import-ac-stock-balance          2026-08-29
+repair-leaked-sofa-lines         2026-08-10    import-ac-sofa-stock             2026-08-29
+remove-delivered-imported-so     2026-08-10    refresh-so-tail-from-book        2026-08-29
+probe-sofa-import-duplicates     2026-08-10    backfill-ac-sofa-line-keys       2026-08-29
+rollback-so-linked-po-import     2026-08-10    repair-dedication-from-autocount 2026-08-30
+import-po-so-links               2026-08-10    backfill-photo-urls-from-keys    2026-08-31
+open-5526-model                  2026-08-10    refresh-po-variants              2026-08-31
+refresh-so-variants              2026-08-10    probe-sofa-colour-misses         2026-09-01
+probe-write-persistence          2026-08-10    check-stock-vs-autocount         2026-09-02
+backfill-so-line-warehouse       2026-08-10    check-autocount-parity           2026-09-02
+check-stock-criterion            2026-08-10    check-migration-fidelity         2026-09-02
+check-sofa-chain-alignment       2026-08-10    backfill-ac-line-keys            2026-09-02
+diag-sofa-cutover-residue        2026-08-10    seed-chart-of-accounts           2026-09-03
+repair-collided-so-variants      2026-08-10    redecode-collapsed-sofa-lines    2026-09-04
+repair-grn-variant-snapshot      2026-08-11    probe-sofa-placeholder-desc2     2026-09-04
+seed-hydraulic-special-addon     2026-08-11    stock-truth-check                2026-09-04
+diag-so-po-variant-divergence    2026-08-11    refresh-sofa-colours             2026-09-04
+backfill-po-ac-dtlkey            2026-08-11    check-so-dates-truth             2026-09-04
+repair-desc2-from-own-line       2026-08-11    check-ac-vs-erp-reconcile        2026-09-05
+check-status-disagreement-why    2026-08-11    check-remark2-vs-status          2026-09-05
+unify-processing-date            2026-08-13    check-sofa-bedframe-completeness 2026-09-05
+autocount-field-alignment        2026-08-14    check-ac-erp-doc-links           2026-09-05
+census-autocount-party-codes     2026-08-18    check-cutover-completeness       2026-09-07
+probe-undated-demand             2026-08-18    import-ac-stock-layers           2026-08-28
+delete-ac-iv-orders              2026-08-28    backfill-so-dates                2026-08-28
+```
+
+Not all 65 should be run. `rollback-so-linked-po-import` is a rollback tool.
+The `align-*` and `open-5526-model` group are one-shot August alignments whose
+input files have not changed since. The ones on tonight's path are the ones
+named in §3.
+
+---
+
+## 7. What is NOT proven here
+
+- **That the applies will succeed.** Every apply in §3 is UNTESTED by this
+  report — the brief forbade `apply=1`, correctly. The dry-runs are the
+  evidence that the plans are sane; they are not evidence that the writes land.
+- **That §3's order is complete.** It is derived from `docs/ac-resync-runbook.md`
+  plus the dependency reasoning in §3, and cross-checked against what ran today.
+  A step nobody has needed yet would not appear.
+- **Whether the pre-lock window (§5.5) contains edits.** UNKNOWN.
+- **Whether bedframe needs more than D1** (§5.3). LIKELY a gap; ask the owner.

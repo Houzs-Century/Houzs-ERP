@@ -1,0 +1,57 @@
+name: AutoCount four exceptions (read-only)
+
+# The four data exceptions blocking a clean AutoCount-vs-ERP tally on go-live
+# day (owner, 2026-09-07). The ERP side of each lives only in production, so
+# before this workflow the question cost an owner interruption AND put the
+# production DSN in front of a human for a SELECT. Actions already holds
+# secrets.DATABASE_URL for the deploy, so the read happens here.
+#
+# The AutoCount side does NOT come from here: the book is reachable only over
+# ZeroTier from the office network, which a GitHub-hosted runner has no route
+# to. It comes from the committed snapshot
+# backend/scripts/data/ac-reconcile-truth.json.gz.
+#
+# READ-ONLY. SELECTs only, no DDL, no writes, no transaction. Manual trigger
+# only - it is a question, not a gate.
+on:
+  workflow_dispatch:
+    inputs:
+      company_id:
+        description: "ERP company to inspect (AED_HOUZS is company 1)"
+        required: false
+        default: "1"
+      show:
+        description: "How many offending lines to list per classification"
+        required: false
+        default: "25"
+
+# Deliberately NOT in the deploy concurrency group: this touches nothing and
+# must never queue behind - or displace - a release.
+concurrency:
+  group: diag-ac-four-exceptions
+  cancel-in-progress: true
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/diag-ac-four-exceptions.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          SHOW: ${{ inputs.show }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first

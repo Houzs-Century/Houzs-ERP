@@ -378,3 +378,33 @@ export const usePvReservations = (supplierId: string | null, excludePvId: string
   staleTime: 10_000,
   retry: retryUnlessClientError,
 });
+
+/* ── Customer Refund (payment-voucher.md §14) ─────────────────────────────
+   The document a refund refunds — 认单为主: the operator names the Sales
+   Order (any status) or the Sales Invoice (CANCELLED only), and the server
+   answers with the customer, every payment it collected (booked = reached
+   this ledger), the refunds already on it and the headroom. */
+export type RefundPayment = { id: string; paidOn: string; method: string; provider: string | null; amountSen: number; booked: boolean };
+export type RefundVoucherRow = { id: string; pvNumber: string; status: string; voucherDate: string; totalSen: number };
+export type RefundSource = {
+  type: 'SO' | 'SI';
+  docNo: string;
+  status: string | null;
+  customer: { name: string | null; phone: string | null; customerId: string | null; debtorCode: string | null };
+  payments: RefundPayment[];
+  bookedSen: number;
+  refunds: RefundVoucherRow[];
+  refundedSen: number;
+  refundableSen: number;
+  eligible: boolean;
+  reason: string | null;
+};
+
+export const useRefundSource = (type: 'SO' | 'SI', docNo: string, excludePvId: string | null = null) => useQuery({
+  queryKey: ['pv-refund-source', type, docNo.trim(), excludePvId],
+  enabled: docNo.trim().length > 0,
+  retry: false,
+  queryFn: () => authedFetch<{ source: RefundSource }>(
+    `/payment-vouchers/refund-source?type=${type}&docNo=${encodeURIComponent(docNo.trim())}${excludePvId ? `&excludePvId=${encodeURIComponent(excludePvId)}` : ''}`,
+  ),
+});

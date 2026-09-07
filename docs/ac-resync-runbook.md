@@ -53,6 +53,7 @@ run-prod`)。少数 workflow 不收 target(如 `refresh-so-tail-from-book.yml`�
 | 4 | `topup-ac-po-lines.yml` | apply 要 `confirm="I HAVE REVIEWED THE DRY-RUN"` |
 | 5 | `stamp-ac-grn-refs.yml` | 盖收货/采购发票号 |
 | 6 | `create-migrated-documents.yml` | `kind=both`;GRN+DO 镜像,**不动库存** |
+| 6b | `repair-migrated-do-prices.yml` | 先 `mode=plan`,再 `mode=apply` + `confirm="THE PRICE COMES FROM THE SALES ORDER"`。**第 6 步在 2026-09-02 之前建的交货单一分钱都没写**(0617):金额栏和上面的营业额都是 RM 0.00,而且这个 0 会带进新开的销售发票。价钱从它自己那张销售单的行上抄,销售单本来就是 0 的行不动 |
 | 7 | `create-migrated-invoices.yml` | `mode=apply` + 同上确认句;金额一分不差才开,DIFFERS 名单呈 owner |
 
 ⚠️ **两路 PO 导入现在会「拒绝写不存在的件号」**(2026-08-31,
@@ -66,6 +67,21 @@ run-prod`)。少数 workflow 不收 target(如 `refresh-so-tail-from-book.yml`�
 存在**的 ERP 件号(或先把产品开出来),再重跑。旧单据的修补是另一支:
 `repair-orphan-sofa-codes.yml`,先 `mode=plan` 看清单。
 
+
+⚠️ **重新切过快照(`data/*.gz`)之后,阶段 1 要整段重跑一次。** 数据档进了 main
+不等于写进了 ERP——写进去的是上面这几个 workflow,它们只有人 dispatch 才会动。
+2026-09-07 上线当天就是这样:早上 PR #3029 重切了 `ac-gr-refs.json.gz` 和
+`ac-partial-dos.json.gz`,两支写入器上一次跑还是 8-29,对帐于是报出 32 张收货单
+和 12 张交货单「缺」——44 张全部就躺在已经进了库的档案里。
+
+**看到「缺」先跑这一支,它不用连数据库、几秒就有答案:**
+
+```bash
+node backend/scripts/check-ac-gap-attribution.mjs
+```
+
+它对每一类说:在册几张、其中几张**已经在**已提交的来源档里、几张真的哪里都没有。
+已经在来源档里的,要的是 dispatch,不是写新的导入器。
 ## 阶段 2 — 库存(双向对平)
 
 | # | workflow | 备注 |
@@ -125,6 +141,48 @@ EXPORT DONE. SO: 2723 new image(s), 2723 in manifest, 0 failed line(s)
 就要警觉——那几张是我们自己画出来的像素、不是账本存的,先看图再决定上不上传;
 第一行的 `self-test` 没出现就说明解析器根本没跑起来,**别把 0 张当成"账本没照片"**。
 
+#### ⚠️ 断点看不到「旧行后来才加的照片」——补跑必须先做一次普查(bug 0655)
+
+断点是 `DtlKey > last`,而 DtlKey 是**行**的身份、不是**照片**的身份。同事在一张
+早就存在的单上补一张照片,那一行的 DtlKey 还是旧的小号码,**断点永远走不到它**,
+补跑会印 `new: 0` 而你会信。2026-09-07 实测:账本比 2026-08-31 的 manifest 多出
+**SO 38 行、PO 17 行**带照片,其中四行(DtlKey 802568 / 824817 / 858533 /
+873097)远在断点 917,140 **之下**。
+
+`FORCE=1` 能找到,但**上线当天不许用**:它会把整本的 `FurtherDescription` LOB
+重新拉一遍,而那条 SQL 实例正是 ERP 写回 AutoCount 用的同一台。当天早上就是因为
+有人对这个栏位跑了不设边界的扫描,写回直接
+`SalesOrder.InternalSave()` → `The wait operation timed out`;把扫描停掉之后同一个
+写入测试 40/43 通过。
+
+所以补跑的正确顺序是**先只读普查、再定点提取**:
+
+1. **普查**(只读,不取照片位元组)。每批都带明确范围
+   `WHERE DtlKey > @last AND DtlKey <= @last + @w`,只选 DocNo、DtlKey 和
+   `{\pict` 的**出现次数**,逐批写到本机档案;每批 15 秒超时,超时就把批调小,
+   不要干等。每十批查一次
+   `sys.dm_exec_requests`(`blocking_session_id <> 0`)确认自己没挡住写回。
+2. 把普查结果和 manifest 对一下,列出**缺的 DtlKey**。
+3. **定点提取**——比平常那条查询**更窄**,所以上线当天跑是安全的:
+
+```bash
+AC_CRED_FILE=<path> DTLKEY_FILE=<缺的key清单> BATCH=10 \
+  python backend/scripts/export-ac-line-photos.py
+```
+
+清单一行一个 key,`so 802568` / `po 914481` 这种写法可以一个档同时喂两边。这个模式
+**不会动 `.state.json`**(它是故意去读断点以下的 key 的),而且某一边一个 key 都
+没有时会明讲,不会印 `new: 0` 装作账本很干净。
+
+2026-09-07 实跑:SO 读 38 行、PO 读 20 行,写出 **38 + 22 张、0 失败**(PO 张数比
+行数多,就是一行多张的情形)。
+
+#### 一行不只一张照片——PO 侧尤其明显
+
+**别写「一行一张」的逻辑**。2026-09-07 普查账本:PO **2,409 行里有 152 行不只一张**
+,最多一行 **5 张**;SO 只有 1 行 2 张。导出器用 `__<DtlKey>_<n>.jpg` 编号,挂回
+脚本用 `ac-<DtlKey>-<n>.jpg` 编号,两边都已经支援;当成一行一张会**静静漏掉 152 行**。
+
 ### 2. 上传 R2(本机;需要 owner 放好的 token 档)
 
 Token 由 owner 在 Cloudflare 后台开(R2 → API → Create API token,对 `houzs-erp`
@@ -151,6 +209,17 @@ key **不是这个脚本算的**——它只认第 3 步那两个脚本印出来
 (`<so|po>-items/<单号>/<行 id>/ac-<DtlKey>-<n>.jpg`),**对不上就整个拒绝**,
 绝不猜一个前缀传上去。传成功的 key 逐条写进 `<PHOTO_DIR>/.uploaded.txt`,
 中途杀掉再跑会跳过它们(PO 侧同理,`PHOTO_DIR=<OUT_DIR>/po`)。
+
+> **`.uploaded.txt` 只是「快」,不是「对」——重抽过的照片一定要清掉它再传。**
+> 脚本自己的注释就写着这一条,2026-09-07 它真的咬人了:`MODE=verify` 抽 30 张,
+> 抓到 `so-items/HC-SO-011633/…/ac-802567-1.jpg` 的 **R2 位元组和 manifest 对不上**
+> (`f5adb903…` vs `2e0eb8fb…`)。原因不是传错档,是这个 key 在名单里 → 被跳过 →
+> R2 留着**上一次提取**的那份位元组,而本机档案后来变了。
+>
+> 所以**重新提取过之后**,别只补差额:把 `.uploaded.txt` 移开,照整份计划全传一次。
+> 同 key 同档覆盖是幂等的,代价只是时间(实测约 1.7 秒一张)。
+> `MODE=verify` 是唯一会**真的把位元组抓回来比对 sha256** 的一步 —— 挂回之前一定要跑,
+> 它 `VERDICT: FAILED` 就不要挂。
 
 > **更正 2026-09-02。** 这一段原本写着「到 2026-08-31 为止**一次 R2 上传都没做过**
 > (token 档还没建)」,并把下面那个方块标成「示意的形状,不是跑过的纪录」。
@@ -202,6 +271,45 @@ resolve 再跑一趟,`already attached` 应该等于上一趟的 `photo keys pla
 > 是整个 `FurtherDescription` 字段覆盖式重写,所以在回写这类行之前必须先读回账本
 > 现有的值,否则第二张会被**抹掉**。详见
 > `docs/autocount-further-description-photos.md` §7 问题 8。
+
+#### 完成实录 — 2026-09-07 上线日,照片这一段收尾
+
+这一段是**做完了**的记录,数字全部是当天从 R2 和 prod 读回来的,不是打算做的事。
+
+| 关卡 | 结果 |
+|---|---|
+| 上传 R2 | **850 / 850**,失败 0 |
+| `MODE=verify` **整批**(不是抽样) | **850 / 850** 位元组和 manifest 完全一致;缺 0、错 0、无法核对 0 |
+| 挂回 ERP | SO **610 / 610** key、PO **240 / 240** key;再跑一趟 `apply=1` 印 `already attached: 610 / 240`、`keys attached: 0`(幂等确认) |
+| 账本有照片、ERP 也有这一行 | SO **517 / 517 到位**、PO **222 / 222 到位**,两边 **missing 都是 0** |
+
+上线前那次是 SO 到位 510(缺 7)、PO 到位 221(缺 1);现在两边都归零。
+
+**整批核对怎么跑得完**:`MODE=verify` 一次只抽 `SAMPLE` 把 key,而且每读一个 key
+就要开一个 wrangler 行程,850 个串著跑要一个多钟头。做法是把 resolve 的计划档
+**切成几段**,每段当一个独立的 `PLAN` 喂给 `MODE=verify`,`SAMPLE` 设得比那段大,
+几段同时跑——各段的联集就是整批,脚本一个字都不用改。当天切成 SO 5 段 + PO 2 段,
+七个行程并行,**12 分钟**跑完 850 个 key。
+
+**挂不上的那些,原因说清楚**(`probe-line-photo-gap.yml` 印的就是这张表):
+
+| | SO | PO |
+|---|---|---|
+| 账本拍了照的行 | 2,761 | 2,409 |
+| ERP 根本没有这一行 | 2,244 | 2,187 |
+| ├ 整张单当初就没迁进来(cutover 只搬未结清的单) | 2,151 | 2,185 |
+| └ 单在、行对不上 | 93 | 2 |
+| ERP 有这一行 | 517 | 222 |
+| └ **照片已到位** | **517** | **222** |
+
+所以剩下的缺口**不是照片没搬**,是那些单据本来就不在 ERP 里。要它们的照片,得先把
+那些单迁进来,不是再跑一次照片。
+
+> 另外记一笔:`probe-line-photo-coverage.yml` 数的是**行(row)**,
+> `probe-line-photo-gap.yml` 数的是**账本的那一行(line)**。一张沙发是账本一行、
+> ERP 好几行,照片按规矩只挂第一行,所以 coverage 那张表会看到 SO 322 / PO 134 个
+> row「没照片」——那是**设计如此**,不是缺口。看缺口请看 gap 那张。
+> 还有 SO 有 **124 行带著照片但没有 AutoCount 行号**,上面这个漏斗看不到它们。
 
 ## 阶段 4 — 重算与终验(全绿才算完)
 

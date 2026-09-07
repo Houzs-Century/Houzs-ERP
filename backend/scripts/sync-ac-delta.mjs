@@ -66,6 +66,7 @@ import {
   SO_PROCESSING_DATE_COLUMN,
   SO_PROCESSING_DATE_LEGACY_COLUMNS,
   SO_PROCESSING_DATE_PAYLOAD_KEY,
+  soProcessingDateFragment,
 } from "./lib/so-processing-date.mjs";
 
 const DST = process.env.DATABASE_URL;
@@ -106,6 +107,7 @@ const TOUCHED_NEEDLES = [
 ].map((n) => `%${n}%`);
 
 const sql = postgres(DST, { ssl: "require", prepare: false, max: 1 });
+const PDATE = soProcessingDateFragment(sql);
 
 async function main() {
   log(`mode=${MODE} lanes=${[...LANES].join(",") || "(none)"}`);
@@ -147,7 +149,8 @@ async function main() {
 
   // ─────────── production ───────────
   const soHeaders = await sql`
-    SELECT doc_no, linked_ac_docno, version, status, local_total_sen, balance_sen, paid_sen
+    SELECT doc_no, linked_ac_docno, version, status, local_total_sen, balance_sen, paid_sen,
+           created_at, (${PDATE} IS NOT NULL) AS proceeded
       FROM scm.mfg_sales_orders
      WHERE company_id = 1 AND linked_ac_docno IS NOT NULL`;
   const erpSoByAc = new Map(soHeaders.map((h) => [h.linked_ac_docno, h]));
@@ -159,11 +162,12 @@ async function main() {
      WHERE h.company_id = 1 AND h.linked_ac_docno IS NOT NULL
        AND COALESCE(i.cancelled, false) = false`;
   const poHeaders = await sql`
-    SELECT po_number, linked_ac_docno FROM scm.purchase_orders
+    SELECT po_number, linked_ac_docno, created_at FROM scm.purchase_orders
      WHERE company_id = 1 AND linked_ac_docno IS NOT NULL`;
   const erpPoByAc = new Map(poHeaders.map((h) => [h.linked_ac_docno, h]));
   const poItems = await sql`
     SELECT i.id, i.linked_ac_dtlkey, i.item_code, i.description, i.description2, i.so_item_id,
+           i.qty::float8 AS qty, COALESCE(i.received_qty, 0)::float8 AS received_qty,
            p.po_number, p.linked_ac_docno
       FROM scm.purchase_order_items i
       JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
@@ -405,10 +409,299 @@ async function main() {
     if (c.unknownList.length) log(`       not in the ERP: ${c.unknownList.slice(0, 8).join(", ")}${c.unknownList.length > 8 ? ` ... (+${c.unknownList.length - 8})` : ""}`);
   }
 
+  // ─────────── 5. CONVERSIONS ON THE ALREADY-MIGRATED POPULATION ───────────
+  /* WHY THIS SECTION EXISTS, AND WHY SECTIONS 2-3 CANNOT ANSWER IT.
+     A conversion creates a CHILD document. The PARENT header's stamp need not
+     move at all — what moves is the parent LINE's TransferedQty. Measured on
+     the 2026-09-07 stamps cut (since=2026-08-29): of the 115 purchase orders a
+     goods receipt was raised from, 110 do NOT appear in stamps.PO; of the 166
+     sales orders a delivery was raised from, 60 do NOT appear in stamps.SO. So
+     every lane above that iterates `editedSo` — description2, sofa
+     compartments, payment/balance — is blind to them by construction, and the
+     conversion census in section 4 only asks whether the SOURCE is in the ERP,
+     never whether the ERP reflects the CHILD.
+
+     The parent-side signal is TransferedQty, and it lives in the committed
+     ac-reconcile-truth.json.gz (every header and every line of all six types,
+     no filtering). This section reads that, joins it to the ERP, and reports
+     four cases. It WRITES NOTHING: a delivery, a receipt or a changed variant
+     is repaired by the tool that owns that lane, and a second copy of an import
+     rule is this repo's most expensive recurring bug. */
+  const TRUTH = "ac-reconcile-truth.json.gz";
+  log("");
+  if (!has(TRUTH)) {
+    log(`CONVERSIONS: data/${TRUTH} is missing — run scripts/export-ac-reconcile-truth.mjs. Section skipped.`);
+  } else {
+    const T = gz(TRUTH);
+    const tAge = (Date.now() - Date.parse(T.exported_at)) / 86400000;
+    log(`CONVERSIONS ON THE ALREADY-MIGRATED POPULATION  (truth snapshot ${T.exported_at}, ${tAge.toFixed(2)} days old)`);
+    if (!(tAge >= -SKEW) || tAge > MAX_AGE) {
+      log(`  REFUSED: that snapshot is ${tAge.toFixed(2)} days old (limit ${MAX_AGE}). Re-cut it with scripts/export-ac-reconcile-truth.mjs before believing a number here.`);
+    } else {
+      const LFD = T.line_fields, HFD = T.header_fields, DFD = T.desc2_fields;
+      const F = {
+        doc: LFD.indexOf("docNo"), dtl: LFD.indexOf("dtlKey"), qty: LFD.indexOf("qty"),
+        tq: LFD.indexOf("transferedQty"), fdt: LFD.indexOf("fromDocType"),
+        fdn: LFD.indexOf("fromDocNo"), fsk: LFD.indexOf("fromSoDtlKey"),
+      };
+      const HDOC = HFD.indexOf("docNo"), HCAN = HFD.indexOf("cancelled"), HDATE = HFD.indexOf("docDate");
+      const D2K = DFD.indexOf("dtlKey"), D2V = DFD.indexOf("desc2");
+      const cell = (r, i) => (i < 0 ? null : txt(r[i]));
+      /* A child document dated on or after the day we took our copy of the
+         parent is a conversion that happened SINCE the migration — the owner's
+         actual question. One dated before it is history the owner already
+         decided not to import (check-ac-erp-reconcile.mjs calls that absence a
+         DECISION, not a gap), so the two must never be added together. */
+      const docDateOf = (kind) => {
+        const m = new Map();
+        for (const h of T.types[kind].headers || []) { const d = cell(h, HDOC); if (d) m.set(d, cell(h, HDATE)); }
+        return m;
+      };
+      const day = (v) => (v == null ? null : String(v instanceof Date ? v.toISOString() : v).slice(0, 10));
+      const raisedSince = (childDates, kids, erpCreatedAt) => {
+        const cut = day(erpCreatedAt);
+        if (!cut) return null;
+        return kids.some((k) => { const d = day(childDates.get(k)); return d != null && d >= cut; });
+      };
+      /* Desc2 travels through an export, a gzip and an import. A difference that
+         survives whitespace and quote normalisation is a REAL build change; one
+         that does not is the round trip, and reporting the two as one number
+         would hand the owner 202 "changed variants" when most are a curly quote. */
+      const flatten = (v) => (v == null ? null : String(v)
+        .replace(/[\u2018\u2019\u02BC\u2032\u00B4`]/g, "'")
+        .replace(/[\u201C\u201D\u2033]/g, '"')
+        .replace(/\s+/g, " ").trim());
+      const cancelledSet = (kind) =>
+        new Set((T.types[kind].headers || []).filter((h) => cell(h, HCAN) === "T").map((h) => cell(h, HDOC)));
+      const soCancelled = cancelledSet("SO"), poCancelled = cancelledSet("PO");
+
+      const enumerate = (title, arr) => {
+        log(`  ${title} — first ${Math.min(20, arr.length)} of ${arr.length}:`);
+        log("  ```enumeration");
+        for (const x of arr.slice(0, 20)) log(`  ${x}`);
+        if (arr.length > 20) log(`  ... and ${arr.length - 20} more`);
+        log("  ```");
+      };
+
+      // ── the ERP's downstream documents, read once ──
+      const erpDo = await sql`SELECT do_number, linked_ac_docno, so_doc_no, status, migrated_no_stock
+                                FROM scm.delivery_orders WHERE company_id = 1`;
+      const erpGrn = await sql`SELECT grn_number, linked_ac_docno, migrated_no_stock
+                                 FROM scm.grns WHERE company_id = 1`;
+      const erpDoByAc = new Set(erpDo.filter((d) => d.linked_ac_docno).map((d) => String(d.linked_ac_docno).trim()));
+      const erpDoBySo = new Map();
+      for (const d of erpDo) {
+        if (!d.so_doc_no || String(d.status || "").toUpperCase() === "CANCELLED") continue;
+        if (!erpDoBySo.has(d.so_doc_no)) erpDoBySo.set(d.so_doc_no, []);
+        erpDoBySo.get(d.so_doc_no).push(d.do_number);
+      }
+      const erpGrnByAc = new Set(erpGrn.filter((g) => g.linked_ac_docno).map((g) => String(g.linked_ac_docno).trim()));
+      log(`  ERP mirrors: ${erpDo.length} delivery order(s), ${erpDoByAc.size} of them carrying an AutoCount DO number; ${erpGrn.length} GRN(s), ${erpGrnByAc.size} carrying an AutoCount GR number`);
+
+      // ══ CASE 1 — SO -> DO ══
+      const doChildrenOfSo = new Map();
+      for (const r of T.types.DO.lines) {
+        if (cell(r, F.fdt) !== "SO") continue;
+        const parent = cell(r, F.fdn); if (!parent) continue;
+        if (!doChildrenOfSo.has(parent)) doChildrenOfSo.set(parent, new Set());
+        doChildrenOfSo.get(parent).add(cell(r, F.doc));
+      }
+      const soAgg = new Map();
+      for (const r of T.types.SO.lines) {
+        const d = cell(r, F.doc); if (!d) continue;
+        let e = soAgg.get(d); if (!e) { e = { qty: 0, tq: 0 }; soAgg.set(d, e); }
+        e.qty += num(r[F.qty]); e.tq += num(r[F.tq]);
+      }
+      const doDate = docDateOf("DO");
+      const c1 = { full: [], part: [], mirrored: 0, nativeOnly: [], gapFull: [], gapPart: [], gapDocs: [],
+                   sinceFull: [], sincePart: [], beforeMigration: [], undated: [] };
+      for (const [acNo, h] of erpSoByAc) {
+        if (soCancelled.has(acNo)) continue;
+        const a = soAgg.get(acNo);
+        if (!a || a.tq <= 0) continue;
+        const whole = a.tq >= a.qty;
+        (whole ? c1.full : c1.part).push(acNo);
+        const kids = [...(doChildrenOfSo.get(acNo) || [])];
+        if (kids.some((k) => erpDoByAc.has(k))) { c1.mirrored++; continue; }
+        if (erpDoBySo.has(h.doc_no)) {
+          c1.nativeOnly.push(`${h.doc_no} (${acNo}) — ERP delivery ${erpDoBySo.get(h.doc_no).join("/")} carries no AutoCount DO number`);
+          continue;
+        }
+        c1.gapDocs.push(acNo);
+        const since = raisedSince(doDate, kids, h.created_at);
+        const row = `${h.doc_no} (${acNo}) ${a.tq}/${a.qty} unit(s) delivered in the book${kids.length ? `, AutoCount ${kids.slice(0, 3).join("/")} dated ${kids.map((k) => day(doDate.get(k))).filter(Boolean).slice(0, 3).join("/") || "?"}` : ", no DO line names it"}, ERP copy taken ${day(h.created_at) || "?"}`;
+        (whole ? c1.gapFull : c1.gapPart).push(row);
+        if (since === null) c1.undated.push(row);
+        else if (since) (whole ? c1.sinceFull : c1.sincePart).push(row);
+        else c1.beforeMigration.push(row);
+      }
+      log("");
+      log("CASE 1 — SALES ORDERS THE BOOK HAS DELIVERED (SO -> DO)");
+      log(`  migrated sales orders in the ERP                          ${erpSoByAc.size}`);
+      log(`  ... AutoCount now shows FULLY delivered                   ${c1.full.length}`);
+      log(`  ... AutoCount now shows PARTLY delivered                  ${c1.part.length}`);
+      log(`  the ERP mirrors an AutoCount delivery for it              ${c1.mirrored}`);
+      log(`  the ERP has a delivery of its own, unlinked to the book   ${c1.nativeOnly.length}`);
+      log(`  the ERP DOES NOT REFLECT it — fully delivered in the book ${c1.gapFull.length}`);
+      log(`  the ERP DOES NOT REFLECT it — partly delivered            ${c1.gapPart.length}`);
+  log("  ── of those gaps, split by WHEN the delivery was raised ──");
+      log(`  delivered SINCE we took our copy, fully  -> ACT ON THESE          ${c1.sinceFull.length}`);
+      log(`  delivered SINCE we took our copy, partly -> ACT ON THESE          ${c1.sincePart.length}`);
+      log(`  already delivered BEFORE we copied it (the owner's DECISION)      ${c1.beforeMigration.length}`);
+      log(`  cannot be dated from this snapshot                                ${c1.undated.length}`);
+      if (c1.sinceFull.length) enumerate("CASE 1, delivered SINCE the migration, FULLY", c1.sinceFull);
+      if (c1.sincePart.length) enumerate("CASE 1, delivered SINCE the migration, PARTLY", c1.sincePart);
+      if (c1.beforeMigration.length) enumerate("CASE 1, delivered BEFORE the migration (not a gap)", c1.beforeMigration);
+      if (c1.nativeOnly.length) enumerate("CASE 1, ERP-native delivery with no AutoCount number", c1.nativeOnly);
+
+      // ══ CASE 2 — PO -> GR ══
+      const acPoLineByDtl = new Map();
+      for (const r of T.types.PO.lines) { const k = cell(r, F.dtl); if (k) acPoLineByDtl.set(k, r); }
+      const grChildrenOfPo = new Map();
+      for (const r of T.types.GR.lines) {
+        if (cell(r, F.fdt) !== "PO") continue;
+        const parent = cell(r, F.fdn); if (!parent) continue;
+        if (!grChildrenOfPo.has(parent)) grChildrenOfPo.set(parent, new Set());
+        grChildrenOfPo.get(parent).add(cell(r, F.doc));
+      }
+      const grDate = docDateOf("GR");
+      const poCreatedByAc = new Map(poHeaders.map((h) => [h.linked_ac_docno, h.created_at]));
+      const c2 = { keyed: 0, agree: 0, short: [], over: [], noBookLine: 0, shortDocs: new Set(),
+                   grAbsent: new Set(), since: [], before: [], undated: [], sinceDocs: new Set() };
+      for (const l of poItems) {
+        if (l.linked_ac_dtlkey == null) continue;
+        if (poCancelled.has(String(l.linked_ac_docno))) continue;
+        c2.keyed++;
+        const bl = acPoLineByDtl.get(String(l.linked_ac_dtlkey));
+        if (!bl) { c2.noBookLine++; continue; }
+        const bookTq = num(bl[F.tq]), erpRecv = num(l.received_qty);
+        if (Math.abs(bookTq - erpRecv) < 1e-6) { c2.agree++; continue; }
+        const kids = [...(grChildrenOfPo.get(String(l.linked_ac_docno)) || [])];
+        for (const k of kids) if (!erpGrnByAc.has(k)) c2.grAbsent.add(k);
+        const row = `${l.po_number} (${l.linked_ac_docno}) dtl=${l.linked_ac_dtlkey} ${l.item_code}: book received ${bookTq}, ERP received_qty ${erpRecv}, ordered ${num(l.qty)}; AutoCount GR ${kids.length ? kids.slice(0, 3).join("/") : "none"}`;
+        if (erpRecv < bookTq) {
+          c2.short.push(row); c2.shortDocs.add(l.po_number);
+          const since = raisedSince(grDate, kids, poCreatedByAc.get(l.linked_ac_docno));
+          if (since === null) c2.undated.push(row);
+          else if (since) { c2.since.push(row); c2.sinceDocs.add(l.po_number); }
+          else c2.before.push(row);
+        } else c2.over.push(row);
+      }
+      log("");
+      log("CASE 2 — PURCHASE ORDERS THE BOOK HAS RECEIVED (PO -> GR)");
+      log(`  migrated PO lines carrying an AutoCount DtlKey            ${c2.keyed}`);
+      log(`  received_qty AGREES with AutoCount TransferedQty          ${c2.agree}`);
+      log(`  the line is not in the truth snapshot at all              ${c2.noBookLine}`);
+      log(`  ERP received LESS than the book says                      ${c2.short.length} line(s) on ${c2.shortDocs.size} purchase order(s)`);
+      log(`  ERP received MORE than the book says                      ${c2.over.length} line(s)`);
+      log(`  AutoCount goods receipts behind them the ERP has no mirror for  ${c2.grAbsent.size}`);
+      log("  ── of the short lines, split by WHEN the receipt was raised ──");
+      log(`  received SINCE we took our copy -> ACT ON THESE            ${c2.since.length} line(s) on ${c2.sinceDocs.size} purchase order(s)`);
+      log(`  already received BEFORE we copied it                       ${c2.before.length}`);
+      log(`  cannot be dated from this snapshot                         ${c2.undated.length}`);
+      if (c2.since.length) enumerate("CASE 2, received SINCE the migration", c2.since);
+      if (c2.before.length) enumerate("CASE 2, received BEFORE the migration", c2.before);
+      if (c2.over.length) enumerate("CASE 2, ERP ahead of the book", c2.over);
+
+      // ══ CASE 3 — SO -> PO ══
+      /* FromDocType is NULL on PODTL even on real production rows (verified on
+         PO-010163 <- SO-013423 and on a fresh test document), so the edge is
+         FromSODtlKey + FromDocNo and FromDocType is never read here. */
+      const c3 = { edges: 0, poDocs: new Set(), inErp: new Set(), absent: new Set(),
+                   alreadyLinked: 0, missing: [], soLineAbsent: [] };
+      for (const r of T.types.PO.lines) {
+        const key = cell(r, F.fsk), soNo = cell(r, F.fdn), poNo = cell(r, F.doc);
+        if (!key || !soNo || !poNo) continue;
+        if (!erpSoByAc.has(soNo)) continue;                 // parent SO never migrated: out of population
+        if (poCancelled.has(poNo)) continue;
+        c3.edges++; c3.poDocs.add(poNo);
+        const poInErp = erpPoByAc.has(poNo);
+        (poInErp ? c3.inErp : c3.absent).add(poNo);
+        const si = soItemByDtl.get(String(key));
+        if (!si) { c3.soLineAbsent.push(`${poNo} <- ${soNo} soDtl=${key}: the sales-order LINE is not in the ERP`); continue; }
+        if (!poInErp) { c3.missing.push(`${si.doc_no} (${soNo}) line ${si.item_code} <- ${poNo}: the purchase order is not in the ERP at all`); continue; }
+        const pi = poItemByDtl.get(String(cell(r, F.dtl)));
+        if (!pi) { c3.missing.push(`${si.doc_no} (${soNo}) line ${si.item_code} <- ${poNo} dtl=${cell(r, F.dtl)}: the PO LINE is not in the ERP`); continue; }
+        if (pi.so_item_id) { c3.alreadyLinked++; continue; }
+        c3.missing.push(`${si.doc_no} (${soNo}) line ${si.item_code} <- ${pi.po_number} (${poNo}): so_item_id is NULL`);
+      }
+      log("");
+      log("CASE 3 — PURCHASE ORDERS RAISED FROM A MIGRATED SALES ORDER (SO -> PO)");
+      log(`  book PO lines naming a MIGRATED sales-order line          ${c3.edges}`);
+      log(`  distinct purchase orders behind them                      ${c3.poDocs.size}`);
+      log(`  ... already in the ERP                                    ${c3.inErp.size}`);
+      log(`  ... ABSENT from the ERP (import-ac-so-linked-pos.mjs)     ${c3.absent.size}`);
+      log(`  the ERP line already carries its dedication               ${c3.alreadyLinked}`);
+      log(`  ERP sales-order lines MISSING their PO dedication         ${c3.missing.length}`);
+      log(`  the sales-order line itself is not in the ERP             ${c3.soLineAbsent.length}`);
+      if (c3.absent.size) enumerate("CASE 3, purchase orders absent from the ERP", [...c3.absent]);
+      if (c3.missing.length) enumerate("CASE 3, missing SO->PO dedication", c3.missing);
+      if (c3.soLineAbsent.length) enumerate("CASE 3, sales-order line absent", c3.soLineAbsent);
+
+      // ══ CASE 4 — PROCEEDED LINES WHOSE BUILD TEXT MOVED SINCE WE COPIED IT ══
+      /* check-ac-erp-reconcile.mjs already answers WHICH AXIS disagrees. The
+         question it does not answer is WHEN. A variant the ERP holds was copied
+         verbatim from Desc2 at import, so a line whose Desc2 differs TODAY is a
+         line the book changed after we took our copy. blank-ok-until-proceeded
+         is the owner's rule: on an order that is not proceeded a blank is
+         legitimate and is NOT a gap. */
+      const bookDesc2 = new Map();
+      for (const r of T.types.SO.desc2) bookDesc2.set(String(r[D2K]), txt(r[D2V]));
+      const proceededByAc = new Map(soHeaders.map((h) => [h.linked_ac_docno, h.proceeded === true]));
+      const c4 = { keyed: 0, same: 0, filled: [], changed: [], cosmetic: [], cleared: [], notProceeded: 0, humanEdited: 0 };
+      for (const l of soItems) {
+        if (l.linked_ac_dtlkey == null) continue;
+        if (soCancelled.has(String(l.linked_ac_docno))) continue;
+        c4.keyed++;
+        const book = bookDesc2.get(String(l.linked_ac_dtlkey)) || null;
+        const erp = txt(l.description2);
+        if (book === erp) { c4.same++; continue; }
+        const h = erpSoByAc.get(l.linked_ac_docno);
+        const where = `${h ? h.doc_no : "?"} (${l.linked_ac_docno}) dtl=${l.linked_ac_dtlkey} ${l.item_code}`;
+        // COPY, NEVER COMPUTE: a book value that went blank never erases ours.
+        if (book === null) { c4.cleared.push(where); continue; }
+        if (proceededByAc.get(l.linked_ac_docno) !== true) { c4.notProceeded++; continue; }
+        if (h && touched.has(h.doc_no)) { c4.humanEdited++; continue; }
+        const row = `${where}: ERP ${JSON.stringify(erp)} -> BOOK ${JSON.stringify(book)}`;
+        if (erp === null) { c4.filled.push(row); continue; }
+        (flatten(erp) === flatten(book) ? c4.cosmetic : c4.changed).push(row);
+      }
+      log("");
+      log("CASE 4 — PROCEEDED LINES WHOSE BUILD TEXT CHANGED IN THE BOOK SINCE WE COPIED IT");
+      log(`  migrated SO lines carrying an AutoCount DtlKey            ${c4.keyed}`);
+      log(`  the book's Desc2 still matches the ERP's copy             ${c4.same}`);
+      log(`  PROCEEDED, ERP blank, the book has since FILLED it in     ${c4.filled.length}`);
+      log(`  PROCEEDED, both filled, the book has since CHANGED it     ${c4.changed.length}   <- the real backlog`);
+      log(`  PROCEEDED, differs only by quote style / line breaks       ${c4.cosmetic.length}   (export round trip, not a build change)`);
+      log(`  NOT proceeded — blank is OK, not a gap (owner's rule)     ${c4.notProceeded}`);
+      log(`  a person edited the ERP order; never overwritten here     ${c4.humanEdited}`);
+      log(`  the book CLEARED a text the ERP still holds               ${c4.cleared.length}`);
+      if (c4.filled.length) enumerate("CASE 4, filled in since we copied", c4.filled);
+      if (c4.changed.length) enumerate("CASE 4, changed since we copied", c4.changed);
+      if (c4.cosmetic.length) enumerate("CASE 4, cosmetic only (NOT a build change)", c4.cosmetic);
+
+      // ══ how much of the above the HEADER-STAMP delta could see ══
+      const stampSo = new Set((S.stamps.SO || []).map((r) => r.DocNo));
+      const stampPo = new Set((S.stamps.PO || []).map((r) => r.DocNo));
+      const blindSo = c1.gapDocs.filter((d) => !stampSo.has(d));
+      const c2Ac = new Set(poItems.filter((l) => c2.shortDocs.has(l.po_number)).map((l) => String(l.linked_ac_docno)));
+      const blindPo = [...c2Ac].filter((d) => !stampPo.has(d));
+      log("");
+      log("WHAT A HEADER-STAMP DELTA CAN AND CANNOT SEE");
+      log("  A conversion moves the CHILD's stamp and the PARENT's LINE. The parent");
+      log("  HEADER need not move at all, so a plan keyed on stamps misses it.");
+      log(`  CASE 1: ${blindSo.length} of the ${c1.gapDocs.length} unreflected sales order(s) are absent from stamps.SO.`);
+      log(`  CASE 2: ${blindPo.length} of the ${c2Ac.size} short purchase order(s) are absent from stamps.PO.`);
+      log("  TransferedQty, not the header stamp, is the parent-side signal — which is");
+      log("  why this section reads ac-reconcile-truth.json.gz and not ac-doc-stamps.json.gz.");
+    }
+  }
+
   if (!APPLY) {
     log("");
     log('PLAN ONLY — no writes. MODE=apply CONFIRM="SYNC AC DELTA" writes the desc2, payment and link lanes.');
     log("The INSERT lane is NOT this script's: run the importers named above.");
+    log("Section 5 (conversions) is REPORT-ONLY in both modes — it never writes.");
     await sql.end();
     return;
   }
