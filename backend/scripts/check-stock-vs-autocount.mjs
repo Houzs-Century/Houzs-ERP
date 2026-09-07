@@ -246,6 +246,26 @@ async function main() {
     log(`scm.${t}: ${m.n} rows, ${m.migrated} migrated_no_stock (no movement by design)`);
   }
 
+  /* THE TRAP THE RE-SEED CREATES, ASSERTED RATHER THAN ASSUMED.
+     Once the balance is re-seeded from a snapshot, a migrated document that
+     WRITES an inventory movement double-counts: the snapshot already contains
+     that receipt or that delivery. `migrated_no_stock` is the flag that is
+     supposed to prevent it, and mig 0276 is where the contract is written down —
+     but a flag is a claim about intent and this is the measurement of it. Any
+     reshaping of the migrated goods receipts or delivery notes must keep this
+     line at zero. */
+  const [leak] = await sql`SELECT
+      COUNT(*) FILTER (WHERE mv.source_doc_type::text = 'GRN')::int grn_rows,
+      COUNT(*) FILTER (WHERE mv.source_doc_type::text = 'DO')::int  do_rows,
+      COALESCE(SUM(ABS(mv.qty)),0)::int units
+    FROM scm.inventory_movements mv
+    LEFT JOIN scm.grns g            ON g.id = mv.source_doc_id AND mv.source_doc_type::text = 'GRN'
+    LEFT JOIN scm.delivery_orders d ON d.id = mv.source_doc_id AND mv.source_doc_type::text = 'DO'
+   WHERE mv.company_id = ${CO}
+     AND (g.migrated_no_stock IS TRUE OR d.migrated_no_stock IS TRUE)`;
+  log(`migrated documents that DID write an inventory movement (must be 0 — each one double-counts against the seeded balance): ${leak.grn_rows} goods-receipt rows, ${leak.do_rows} delivery rows, ${leak.units} units absolute`);
+  if (leak.grn_rows || leak.do_rows) log("   -> DOUBLE-COUNT. A migrated document is posting stock the balance snapshot already contains. Find what stopped setting migrated_no_stock, or what started posting despite it, before trusting any number below.");
+
   /* Drift = AutoCount activity AFTER the ERP's stock was seeded.
      The baseline MUST be frozen at the seeding moment. It used to be
      ac-stock-balance.json.gz, which is a working export that
