@@ -162,7 +162,7 @@ async function main() {
      WHERE h.company_id = 1 AND h.linked_ac_docno IS NOT NULL
        AND COALESCE(i.cancelled, false) = false`;
   const poHeaders = await sql`
-    SELECT po_number, linked_ac_docno FROM scm.purchase_orders
+    SELECT po_number, linked_ac_docno, created_at FROM scm.purchase_orders
      WHERE company_id = 1 AND linked_ac_docno IS NOT NULL`;
   const erpPoByAc = new Map(poHeaders.map((h) => [h.linked_ac_docno, h]));
   const poItems = await sql`
@@ -444,9 +444,33 @@ async function main() {
         tq: LFD.indexOf("transferedQty"), fdt: LFD.indexOf("fromDocType"),
         fdn: LFD.indexOf("fromDocNo"), fsk: LFD.indexOf("fromSoDtlKey"),
       };
-      const HDOC = HFD.indexOf("docNo"), HCAN = HFD.indexOf("cancelled");
+      const HDOC = HFD.indexOf("docNo"), HCAN = HFD.indexOf("cancelled"), HDATE = HFD.indexOf("docDate");
       const D2K = DFD.indexOf("dtlKey"), D2V = DFD.indexOf("desc2");
       const cell = (r, i) => (i < 0 ? null : txt(r[i]));
+      /* A child document dated on or after the day we took our copy of the
+         parent is a conversion that happened SINCE the migration — the owner's
+         actual question. One dated before it is history the owner already
+         decided not to import (check-ac-erp-reconcile.mjs calls that absence a
+         DECISION, not a gap), so the two must never be added together. */
+      const docDateOf = (kind) => {
+        const m = new Map();
+        for (const h of T.types[kind].headers || []) { const d = cell(h, HDOC); if (d) m.set(d, cell(h, HDATE)); }
+        return m;
+      };
+      const day = (v) => (v == null ? null : String(v instanceof Date ? v.toISOString() : v).slice(0, 10));
+      const raisedSince = (childDates, kids, erpCreatedAt) => {
+        const cut = day(erpCreatedAt);
+        if (!cut) return null;
+        return kids.some((k) => { const d = day(childDates.get(k)); return d != null && d >= cut; });
+      };
+      /* Desc2 travels through an export, a gzip and an import. A difference that
+         survives whitespace and quote normalisation is a REAL build change; one
+         that does not is the round trip, and reporting the two as one number
+         would hand the owner 202 "changed variants" when most are a curly quote. */
+      const flatten = (v) => (v == null ? null : String(v)
+        .replace(/[\u2018\u2019\u02BC\u2032\u00B4`]/g, "'")
+        .replace(/[\u201C\u201D\u2033]/g, '"')
+        .replace(/\s+/g, " ").trim());
       const cancelledSet = (kind) =>
         new Set((T.types[kind].headers || []).filter((h) => cell(h, HCAN) === "T").map((h) => cell(h, HDOC)));
       const soCancelled = cancelledSet("SO"), poCancelled = cancelledSet("PO");
@@ -488,7 +512,9 @@ async function main() {
         let e = soAgg.get(d); if (!e) { e = { qty: 0, tq: 0 }; soAgg.set(d, e); }
         e.qty += num(r[F.qty]); e.tq += num(r[F.tq]);
       }
-      const c1 = { full: [], part: [], mirrored: 0, nativeOnly: [], gapFull: [], gapPart: [], gapDocs: [] };
+      const doDate = docDateOf("DO");
+      const c1 = { full: [], part: [], mirrored: 0, nativeOnly: [], gapFull: [], gapPart: [], gapDocs: [],
+                   sinceFull: [], sincePart: [], beforeMigration: [], undated: [] };
       for (const [acNo, h] of erpSoByAc) {
         if (soCancelled.has(acNo)) continue;
         const a = soAgg.get(acNo);
@@ -502,8 +528,12 @@ async function main() {
           continue;
         }
         c1.gapDocs.push(acNo);
-        const row = `${h.doc_no} (${acNo}) ${a.tq}/${a.qty} unit(s) delivered in the book${kids.length ? `, AutoCount ${kids.slice(0, 3).join("/")}` : ", no DO line names it"}`;
+        const since = raisedSince(doDate, kids, h.created_at);
+        const row = `${h.doc_no} (${acNo}) ${a.tq}/${a.qty} unit(s) delivered in the book${kids.length ? `, AutoCount ${kids.slice(0, 3).join("/")} dated ${kids.map((k) => day(doDate.get(k))).filter(Boolean).slice(0, 3).join("/") || "?"}` : ", no DO line names it"}, ERP copy taken ${day(h.created_at) || "?"}`;
         (whole ? c1.gapFull : c1.gapPart).push(row);
+        if (since === null) c1.undated.push(row);
+        else if (since) (whole ? c1.sinceFull : c1.sincePart).push(row);
+        else c1.beforeMigration.push(row);
       }
       log("");
       log("CASE 1 — SALES ORDERS THE BOOK HAS DELIVERED (SO -> DO)");
@@ -514,8 +544,14 @@ async function main() {
       log(`  the ERP has a delivery of its own, unlinked to the book   ${c1.nativeOnly.length}`);
       log(`  the ERP DOES NOT REFLECT it — fully delivered in the book ${c1.gapFull.length}`);
       log(`  the ERP DOES NOT REFLECT it — partly delivered            ${c1.gapPart.length}`);
-      if (c1.gapPart.length) enumerate("CASE 1 gap, PARTLY delivered", c1.gapPart);
-      if (c1.gapFull.length) enumerate("CASE 1 gap, FULLY delivered", c1.gapFull);
+  log("  ── of those gaps, split by WHEN the delivery was raised ──");
+      log(`  delivered SINCE we took our copy, fully  -> ACT ON THESE          ${c1.sinceFull.length}`);
+      log(`  delivered SINCE we took our copy, partly -> ACT ON THESE          ${c1.sincePart.length}`);
+      log(`  already delivered BEFORE we copied it (the owner's DECISION)      ${c1.beforeMigration.length}`);
+      log(`  cannot be dated from this snapshot                                ${c1.undated.length}`);
+      if (c1.sinceFull.length) enumerate("CASE 1, delivered SINCE the migration, FULLY", c1.sinceFull);
+      if (c1.sincePart.length) enumerate("CASE 1, delivered SINCE the migration, PARTLY", c1.sincePart);
+      if (c1.beforeMigration.length) enumerate("CASE 1, delivered BEFORE the migration (not a gap)", c1.beforeMigration);
       if (c1.nativeOnly.length) enumerate("CASE 1, ERP-native delivery with no AutoCount number", c1.nativeOnly);
 
       // ══ CASE 2 — PO -> GR ══
@@ -528,7 +564,10 @@ async function main() {
         if (!grChildrenOfPo.has(parent)) grChildrenOfPo.set(parent, new Set());
         grChildrenOfPo.get(parent).add(cell(r, F.doc));
       }
-      const c2 = { keyed: 0, agree: 0, short: [], over: [], noBookLine: 0, shortDocs: new Set(), grAbsent: new Set() };
+      const grDate = docDateOf("GR");
+      const poCreatedByAc = new Map(poHeaders.map((h) => [h.linked_ac_docno, h.created_at]));
+      const c2 = { keyed: 0, agree: 0, short: [], over: [], noBookLine: 0, shortDocs: new Set(),
+                   grAbsent: new Set(), since: [], before: [], undated: [], sinceDocs: new Set() };
       for (const l of poItems) {
         if (l.linked_ac_dtlkey == null) continue;
         if (poCancelled.has(String(l.linked_ac_docno))) continue;
@@ -540,7 +579,13 @@ async function main() {
         const kids = [...(grChildrenOfPo.get(String(l.linked_ac_docno)) || [])];
         for (const k of kids) if (!erpGrnByAc.has(k)) c2.grAbsent.add(k);
         const row = `${l.po_number} (${l.linked_ac_docno}) dtl=${l.linked_ac_dtlkey} ${l.item_code}: book received ${bookTq}, ERP received_qty ${erpRecv}, ordered ${num(l.qty)}; AutoCount GR ${kids.length ? kids.slice(0, 3).join("/") : "none"}`;
-        if (erpRecv < bookTq) { c2.short.push(row); c2.shortDocs.add(l.po_number); } else c2.over.push(row);
+        if (erpRecv < bookTq) {
+          c2.short.push(row); c2.shortDocs.add(l.po_number);
+          const since = raisedSince(grDate, kids, poCreatedByAc.get(l.linked_ac_docno));
+          if (since === null) c2.undated.push(row);
+          else if (since) { c2.since.push(row); c2.sinceDocs.add(l.po_number); }
+          else c2.before.push(row);
+        } else c2.over.push(row);
       }
       log("");
       log("CASE 2 — PURCHASE ORDERS THE BOOK HAS RECEIVED (PO -> GR)");
@@ -550,7 +595,12 @@ async function main() {
       log(`  ERP received LESS than the book says                      ${c2.short.length} line(s) on ${c2.shortDocs.size} purchase order(s)`);
       log(`  ERP received MORE than the book says                      ${c2.over.length} line(s)`);
       log(`  AutoCount goods receipts behind them the ERP has no mirror for  ${c2.grAbsent.size}`);
-      if (c2.short.length) enumerate("CASE 2, ERP short of the book", c2.short);
+      log("  ── of the short lines, split by WHEN the receipt was raised ──");
+      log(`  received SINCE we took our copy -> ACT ON THESE            ${c2.since.length} line(s) on ${c2.sinceDocs.size} purchase order(s)`);
+      log(`  already received BEFORE we copied it                       ${c2.before.length}`);
+      log(`  cannot be dated from this snapshot                         ${c2.undated.length}`);
+      if (c2.since.length) enumerate("CASE 2, received SINCE the migration", c2.since);
+      if (c2.before.length) enumerate("CASE 2, received BEFORE the migration", c2.before);
       if (c2.over.length) enumerate("CASE 2, ERP ahead of the book", c2.over);
 
       // ══ CASE 3 — SO -> PO ══
@@ -598,7 +648,7 @@ async function main() {
       const bookDesc2 = new Map();
       for (const r of T.types.SO.desc2) bookDesc2.set(String(r[D2K]), txt(r[D2V]));
       const proceededByAc = new Map(soHeaders.map((h) => [h.linked_ac_docno, h.proceeded === true]));
-      const c4 = { keyed: 0, same: 0, filled: [], changed: [], cleared: [], notProceeded: 0, humanEdited: 0 };
+      const c4 = { keyed: 0, same: 0, filled: [], changed: [], cosmetic: [], cleared: [], notProceeded: 0, humanEdited: 0 };
       for (const l of soItems) {
         if (l.linked_ac_dtlkey == null) continue;
         if (soCancelled.has(String(l.linked_ac_docno))) continue;
@@ -613,19 +663,22 @@ async function main() {
         if (proceededByAc.get(l.linked_ac_docno) !== true) { c4.notProceeded++; continue; }
         if (h && touched.has(h.doc_no)) { c4.humanEdited++; continue; }
         const row = `${where}: ERP ${JSON.stringify(erp)} -> BOOK ${JSON.stringify(book)}`;
-        (erp === null ? c4.filled : c4.changed).push(row);
+        if (erp === null) { c4.filled.push(row); continue; }
+        (flatten(erp) === flatten(book) ? c4.cosmetic : c4.changed).push(row);
       }
       log("");
       log("CASE 4 — PROCEEDED LINES WHOSE BUILD TEXT CHANGED IN THE BOOK SINCE WE COPIED IT");
       log(`  migrated SO lines carrying an AutoCount DtlKey            ${c4.keyed}`);
       log(`  the book's Desc2 still matches the ERP's copy             ${c4.same}`);
       log(`  PROCEEDED, ERP blank, the book has since FILLED it in     ${c4.filled.length}`);
-      log(`  PROCEEDED, both filled, the book has since CHANGED it     ${c4.changed.length}`);
+      log(`  PROCEEDED, both filled, the book has since CHANGED it     ${c4.changed.length}   <- the real backlog`);
+      log(`  PROCEEDED, differs only by quote style / line breaks       ${c4.cosmetic.length}   (export round trip, not a build change)`);
       log(`  NOT proceeded — blank is OK, not a gap (owner's rule)     ${c4.notProceeded}`);
       log(`  a person edited the ERP order; never overwritten here     ${c4.humanEdited}`);
       log(`  the book CLEARED a text the ERP still holds               ${c4.cleared.length}`);
       if (c4.filled.length) enumerate("CASE 4, filled in since we copied", c4.filled);
       if (c4.changed.length) enumerate("CASE 4, changed since we copied", c4.changed);
+      if (c4.cosmetic.length) enumerate("CASE 4, cosmetic only (NOT a build change)", c4.cosmetic);
 
       // ══ how much of the above the HEADER-STAMP delta could see ══
       const stampSo = new Set((S.stamps.SO || []).map((r) => r.DocNo));
