@@ -36,7 +36,7 @@ import {
   usePvFiles, useUploadPvFile, useDeletePvFile, fetchPvFileBlobUrl,
   usePvReservations, NO_RESERVATIONS,
 } from '../../vendor/scm/lib/payment-voucher-queries';
-import { pvTypeLabel, pvTypeOf } from '../../vendor/scm/lib/pv-type-label';
+import { isRefundPurpose, pvTypeLabel, pvTypeOf } from '../../vendor/scm/lib/pv-type-label';
 import { DocFilesCard } from '../../vendor/scm/components/DocFilesCard';
 import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
 import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
@@ -203,6 +203,10 @@ export const PaymentVoucherDetail = () => {
      editable as the fallback. Mirrors PaymentVoucherNew. */
   const [myrPaidSen, setMyrPaidSen]               = useState<number | null>(null);
   const [editLines, setEditLines]                 = useState<EditLine[]>([]);
+  /* A Customer Refund (§14) has ONE line the system writes; an edit moves the
+     amount and the server re-composes it (refundAmountSen), never the lines. */
+  const isRefundPv = isRefundPurpose(pv?.purpose);
+  const [editRefundAmountSen, setEditRefundAmountSen] = useState<number>(0);
   // Migration 0202 — edit allocations: applied amount per PI id (centi).
   const [allocAmounts, setAllocAmounts]           = useState<Record<string, number>>({});
 
@@ -223,6 +227,7 @@ export const PaymentVoucherDetail = () => {
        field means "this is what I actually paid", and inventing it from a rate would
        put a figure nobody typed in front of the operator as if it were evidence. */
     setMyrPaidSen(null);
+    setEditRefundAmountSen(Number(pv.total_sen ?? 0));
     // Seed the applied-amount map from the loaded allocations (keyed by PI id).
     setAllocAmounts(Object.fromEntries(
       allocations.map((a) => [String(a.piId ?? a.pi_id ?? ''), Number(a.amountSen ?? a.amount_sen ?? 0)]),
@@ -247,7 +252,7 @@ export const PaymentVoucherDetail = () => {
 
   const editTotalSen = useMemo(() => editLines.reduce((s, l) => s + l.amountSen, 0), [editLines]);
   const viewTotalSen = Number(pv?.total_sen ?? 0);
-  const totalSen = isEditing ? editTotalSen : viewTotalSen;
+  const totalSen = isEditing ? (isRefundPv ? editRefundAmountSen : editTotalSen) : viewTotalSen;
 
   /* Multi-currency (Phase 1-A) — the PV keeps its own currency; the exchange
      rate converts the GL posting to MYR. In VIEW we show the stored currency; in
@@ -335,7 +340,8 @@ export const PaymentVoucherDetail = () => {
     const realLines = editLines.filter((l) => l.debitAccountCode && l.amountSen > 0);
     if (!payeeName.trim()) { notify({ title: 'Enter a payee', body: 'Who is this voucher paying?', tone: 'error' }); return; }
     if (!creditAccountCode) { notify({ title: 'Pick a “Paid From” account', body: 'Choose the bank / cash / payables account.', tone: 'error' }); return; }
-    if (realLines.length === 0) { notify({ title: 'Add at least one line', body: 'Each line needs a debit account and an amount > 0.', tone: 'error' }); return; }
+    if (isRefundPv && editRefundAmountSen <= 0) { void notify({ title: 'Enter the refund amount', body: 'How much goes back to the customer?', tone: 'error' }); return; }
+    if (!isRefundPv && realLines.length === 0) { notify({ title: 'Add at least one line', body: 'Each line needs a debit account and an amount > 0.', tone: 'error' }); return; }
     if (editOverAllocated) {
       notify({ title: 'Applied more than the voucher total', body: `You've applied ${fmtRm(editAllocatedSen)} to PIs but the voucher total is only ${fmtRm(editTotalSen)}.`, tone: 'error' });
       return;
@@ -361,8 +367,9 @@ export const PaymentVoucherDetail = () => {
       await update.mutateAsync({
         id,
         payeeName:         payeeName.trim(),
-        supplierId:        supplierId || null,
-        purpose,
+        supplierId:        isRefundPv ? null : (supplierId || null),
+        /* A refund's kind is fixed at birth — the edit never re-types it. */
+        purpose:           isRefundPv ? 'CUSTOMER_REFUND' : purpose,
         creditAccountCode,
         voucherDate,
         notes:             notes || null,
@@ -372,11 +379,13 @@ export const PaymentVoucherDetail = () => {
         exchangeRate:      isForeign
           ? resolveFxRate(exchangeRate)
           : 1,
-        lines: realLines.map((l) => ({
-          description:      l.description || undefined,
-          debitAccountCode: l.debitAccountCode,
-          amountSen:      l.amountSen,
-        })),
+        ...(isRefundPv
+          ? { refundAmountSen: editRefundAmountSen }
+          : { lines: realLines.map((l) => ({
+            description:      l.description || undefined,
+            debitAccountCode: l.debitAccountCode,
+            amountSen:      l.amountSen,
+          })) }),
         // Always send allocations for a SUPPLIER_PAYMENT edit (empty clears
         // them); FREIGHT/OTHER omit the key so the server leaves them untouched.
         ...(editApplyToPi ? { allocations: sendAllocations } : {}),
@@ -544,9 +553,17 @@ export const PaymentVoucherDetail = () => {
         <div className={styles.cardBody}>
           {!isEditing ? (
             <div className={styles.formGrid2}>
-              <InfoCell label="Payee" value={pv.payee_name} />
-              <InfoCell label="Supplier" value={pv.supplier?.name ?? null} />
+              <InfoCell label={isRefundPv ? 'Customer' : 'Payee'} value={pv.payee_name} />
+              {!isRefundPv && <InfoCell label="Supplier" value={pv.supplier?.name ?? null} />}
               <InfoCell label="Type" value={pvTypeLabel(pv.purpose)} />
+              {isRefundPv && (
+                <div className={styles.field}>
+                  <span className={styles.fieldLabel}>Refunds</span>
+                  {pv.refund_source_type === 'SO' && pv.refund_source_doc_no
+                    ? <Link to={`/scm/sales-orders/${String(pv.refund_source_doc_no)}`} style={{ color: 'var(--c-orange)', fontFamily: 'var(--font-mono)' }}>{String(pv.refund_source_doc_no)}</Link>
+                    : <span style={{ fontFamily: 'var(--font-mono)' }}>{pv.refund_source_type ?? ''} {pv.refund_source_doc_no ?? '—'}</span>}
+                </div>
+              )}
               <InfoCell label="Paid From" value={accountLabel(pv.credit_account_code)} />
               <InfoCell label="Voucher Date" value={pv.voucher_date ? fmtDateOrDash(pv.voucher_date) : null} />
               <InfoCell label="Currency" value={viewCurrency} />
@@ -556,9 +573,18 @@ export const PaymentVoucherDetail = () => {
           ) : (
             <div className={styles.formGrid2}>
               <label className={styles.field}>
-                <span className={styles.fieldLabel}>Payee *</span>
-                <input type="text" value={payeeName} onChange={(e) => setPayeeName(e.target.value)} className={styles.fieldInput} />
+                <span className={styles.fieldLabel}>{isRefundPv ? 'Customer' : 'Payee *'}</span>
+                <input type="text" value={payeeName} onChange={(e) => setPayeeName(e.target.value)} className={styles.fieldInput} readOnly={isRefundPv} />
               </label>
+              {isRefundPv && (
+                <label className={styles.field}>
+                  <span className={styles.fieldLabel}>Refund amount (MYR) *</span>
+                  <MoneyInput bare valueSen={editRefundAmountSen} aria-label="Refund amount"
+                    onCommit={(sen) => setEditRefundAmountSen(Math.max(0, sen ?? 0))}
+                    inputClassName={styles.fieldInput} selectOnFocus />
+                </label>
+              )}
+              {!isRefundPv && (<>
               <label className={styles.field}>
                 <span className={styles.fieldLabel}>Supplier {purpose === 'SUPPLIER_PAYMENT' ? '*' : '(optional)'}</span>
                 <select value={supplierId} onChange={(e) => setSupplierId(e.target.value)} className={styles.fieldInput} disabled={suppliersQ.isLoading}>
@@ -578,6 +604,7 @@ export const PaymentVoucherDetail = () => {
                   <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
                 </span>
               </label>
+              </>)}
               <label className={styles.field}>
                 <span className={styles.fieldLabel}>Paid From (Credit) *</span>
                 <AccountSelect accounts={accounts} value={creditAccountCode} onChange={setCreditAccountCode} className={styles.fieldInput} />
@@ -629,7 +656,7 @@ export const PaymentVoucherDetail = () => {
           <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>total {fmtRm(totalSen, currency)}</span>
         </div>
         <div className={styles.cardBody} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-          {!isEditing ? (
+          {!isEditing || isRefundPv ? (
             lines.length === 0 ? (
               <p style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-13)' }}>No lines.</p>
             ) : (

@@ -21,11 +21,14 @@ let copySourceDetail: { paymentVoucher: Record<string, unknown>; lines: Array<Re
 /* What other unposted vouchers already applied (docs/bugs/0653) — empty
    everywhere but the reservations test, which sets and restores it. */
 let reservations: { byPi: Record<string, number>; byApInvoice: Record<string, number>; holders: Record<string, string[]> } = { byPi: {}, byApInvoice: {}, holders: {} };
+/* The document a Customer Refund names (§14) — set by the refund test. */
+let refundSource: Record<string, unknown> | undefined;
 vi.mock('../../vendor/scm/lib/payment-voucher-queries', () => ({
   useCreatePaymentVoucher: () => ({ mutateAsync, isPending: false }),
   usePvReservations: () => ({ data: reservations, isLoading: false }),
   NO_RESERVATIONS: { byPi: {}, byApInvoice: {}, holders: {} },
   usePaymentVoucherDetail: (id: string | null) => ({ data: id ? copySourceDetail : undefined, isLoading: false }),
+  useRefundSource: (_type: string, docNo: string) => ({ data: docNo && refundSource ? { source: refundSource } : undefined, isLoading: false, isError: false, error: null }),
   useExtractBills: () => ({ mutateAsync: extractAsync, isPending: false }),
   useUploadPvFile: () => ({ mutateAsync: uploadPvAsync, isPending: false }),
   fileToBase64: async (f: File) => `b64:${f.name}`,
@@ -49,7 +52,7 @@ vi.mock('../../vendor/scm/lib/accounting-queries', () => ({
     { account_code: '400-0000', account_name: 'Account Payable', account_type: 'LIABILITY', is_active: true, acc_money: false },
     { account_code: '405-0000', account_name: 'Other Creditos', account_type: 'LIABILITY', is_active: true, acc_money: false },
   ] }, isLoading: false }),
-  useAccountRoles: () => ({ data: { roles: { BANK_DEFAULT: '310-0010', AP: '400-0000', AP_OTHER: '405-0000' }, overridden: {} }, isLoading: false }),
+  useAccountRoles: () => ({ data: { roles: { BANK_DEFAULT: '310-0010', AP: '400-0000', AP_OTHER: '405-0000', AR: '300-0000' }, overridden: {} }, isLoading: false }),
   useSaveBankDefault: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 vi.mock('../../vendor/scm/lib/purchase-invoice-queries', () => ({
@@ -364,5 +367,70 @@ describe('invoices another unapproved voucher already applies stay off the picke
     } finally {
       reservations = { byPi: {}, byApInvoice: {}, holders: {} };
     }
+  });
+});
+
+describe('the Customer Refund (?type=refund, §14)', () => {
+  test('names the document, reads its customer and payments, and the save carries the source and the amount — no lines, no payee typed', async () => {
+    mutateAsync.mockClear();
+    refundSource = {
+      type: 'SO', docNo: '2990-SO-2607-001', status: 'CANCELLED',
+      customer: { name: 'Ah Meng', phone: '0123', customerId: 'cust-1', debtorCode: null },
+      payments: [
+        { id: 'p1', paidOn: '2026-07-01', method: 'transfer', provider: null, amountSen: 50000, booked: true },
+        { id: 'p2', paidOn: '2026-07-02', method: 'imported', provider: null, amountSen: 30000, booked: false },
+      ],
+      bookedSen: 50000, refunds: [{ id: 'pv-old', pvNumber: '2990-MRF-2607-001', status: 'POSTED', voucherDate: '2026-07-20', totalSen: 20000 }],
+      refundedSen: 20000, refundableSen: 30000, eligible: true, reason: null,
+    };
+    draw('/scm/payment-vouchers/new?type=refund');
+    expect(screen.getByText('New Customer Refund')).toBeTruthy();
+    /* No lines card, no payee box, no transfer toggle — the body is the document. */
+    expect(screen.queryByText('Lines')).toBeNull();
+    expect(screen.queryByText('内部转账 Transfer')).toBeNull();
+    const doc = screen.getByLabelText('Refunded document') as HTMLInputElement;
+    fireEvent.change(doc, { target: { value: ' 2990-SO-2607-001 ' } });
+    fireEvent.keyDown(doc, { key: 'Enter' });
+    await waitFor(() => expect((screen.getByLabelText('Customer') as HTMLInputElement).value).toBe('Ah Meng · 0123'));
+    /* Payments with their ledger flag; the AutoCount-era row says so. */
+    expect(screen.getByText('✓ booked')).toBeTruthy();
+    expect(screen.getByText('AutoCount era')).toBeTruthy();
+    expect(screen.getByText('MYR 300.00 refundable')).toBeTruthy();
+    expect(screen.getByText('2990-MRF-2607-001').closest('a')!.getAttribute('href')).toBe('/scm/payment-vouchers/pv-old');
+    /* The amount opened at the headroom; type a partial. */
+    const amount = screen.getByLabelText('Refund amount') as HTMLInputElement;
+    expect(amount.value).toBe('300.00');
+    fireEvent.focus(amount);
+    fireEvent.change(amount, { target: { value: '120' } });
+    fireEvent.blur(amount);
+    expect(screen.getByText(/Books: Dr 300-0000 Trade Debtors \(Ah Meng\) MYR 120\.00 · Cr 310-0010 MYR 120\.00/)).toBeTruthy();
+    fireEvent.click(screen.getByText('Create Refund'));
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
+    const payload = mutateAsync.mock.calls[0]![0];
+    expect(payload).toMatchObject({
+      purpose: 'CUSTOMER_REFUND', payeeName: 'Ah Meng', supplierId: null, creditAccountCode: '310-0010',
+      refundSourceType: 'SO', refundSourceDocNo: '2990-SO-2607-001', refundAmountSen: 12000, lines: [],
+    });
+    refundSource = undefined;
+  });
+
+  test('an ineligible document says why and the amount stays shut', async () => {
+    mutateAsync.mockClear();
+    refundSource = {
+      type: 'SI', docNo: 'HC-SI-2607-001', status: 'SENT',
+      customer: { name: 'Ali', phone: null, customerId: null, debtorCode: 'D001' },
+      payments: [{ id: 'sp1', paidOn: '2026-07-01', method: 'transfer', provider: null, amountSen: 80000, booked: true }],
+      bookedSen: 80000, refunds: [], refundedSen: 0, refundableSen: 80000, eligible: false,
+      reason: 'HC-SI-2607-001 still stands (SENT) — a refund would leave the customer owing it again.',
+    };
+    draw('/scm/payment-vouchers/new?type=refund');
+    fireEvent.click(screen.getByText('Sales Invoice'));
+    const doc = screen.getByLabelText('Refunded document') as HTMLInputElement;
+    fireEvent.change(doc, { target: { value: 'HC-SI-2607-001' } });
+    fireEvent.blur(doc);
+    await waitFor(() => expect(screen.getByText(/still stands/)).toBeTruthy());
+    expect((screen.getByLabelText('Refund amount') as HTMLInputElement).disabled).toBe(true);
+    expect((screen.getByText('Create Refund').closest('button') as HTMLButtonElement).disabled).toBe(true);
+    refundSource = undefined;
   });
 });
