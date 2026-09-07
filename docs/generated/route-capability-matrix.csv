@@ -882,6 +882,7 @@ POST,/api/scm/payment-vouchers/:id/withdraw,AUTHENTICATED_MIDDLEWARE,COMPANY_CON
 GET,/api/scm/payment-vouchers/advances/list,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/payment-vouchers.ts
 POST,/api/scm/payment-vouchers/extract,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/payment-vouchers.ts
 POST,/api/scm/payment-vouchers/print-bundle,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/payment-vouchers.ts
+GET,/api/scm/payment-vouchers/reservations/list,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/payment-vouchers.ts
 GET,/api/scm/personal-quick-picks,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/personal-quick-picks.ts
 POST,/api/scm/personal-quick-picks,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/personal-quick-picks.ts
 DELETE,/api/scm/personal-quick-picks/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/personal-quick-picks.ts

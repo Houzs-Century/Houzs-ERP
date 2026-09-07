@@ -34,6 +34,7 @@ import {
   useRejectPaymentVoucher,
   useSupplierAdvances, useApplyAdvance,
   usePvFiles, useUploadPvFile, useDeletePvFile, fetchPvFileBlobUrl,
+  usePvReservations, NO_RESERVATIONS,
 } from '../../vendor/scm/lib/payment-voucher-queries';
 import { DocFilesCard } from '../../vendor/scm/components/DocFilesCard';
 import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
@@ -280,12 +281,16 @@ export const PaymentVoucherDetail = () => {
      excludes what this PV applies, so add it back). */
   const editApplyToPi = isEditing && purpose === 'SUPPLIER_PAYMENT' && !!supplierId;
   const piListQ = usePurchaseInvoices();
+  /* Other UNPOSTED vouchers' reservations (docs/bugs/0653) — this voucher's own
+     rows are excluded by id, so what it already applies stays visible. */
+  const reservationsQ = usePvReservations(editApplyToPi ? supplierId : null, id || null);
+  const reservedByOthers = reservationsQ.data ?? NO_RESERVATIONS;
   const editAllocRows = useMemo(() => {
-    if (!editApplyToPi) return [] as Array<{ piId: string; invoiceNumber: string; supplierInvoiceRef: string | null; outstandingSen: number }>;
+    if (!editApplyToPi) return [] as Array<{ piId: string; invoiceNumber: string; supplierInvoiceRef: string | null; totalSen: number; outstandingSen: number }>;
     const appliedByThisPv = new Map<string, number>(
       allocations.map((a) => [String(a.piId ?? a.pi_id ?? ''), Number(a.amountSen ?? a.amount_sen ?? 0)]),
     );
-    const byId = new Map<string, { piId: string; invoiceNumber: string; supplierInvoiceRef: string | null; outstandingSen: number }>();
+    const byId = new Map<string, { piId: string; invoiceNumber: string; supplierInvoiceRef: string | null; totalSen: number; outstandingSen: number }>();
     for (const r of ((piListQ.data?.purchaseInvoices ?? []) as Array<Record<string, any>>)) {
       const sid = String(r.supplier_id ?? r.supplier?.id ?? '');
       if (sid !== supplierId) continue;
@@ -293,13 +298,14 @@ export const PaymentVoucherDetail = () => {
       if (st !== 'POSTED' && st !== 'PARTIALLY_PAID') continue;
       const piId = String(r.id ?? '');
       if (!piId) continue;
-      const baseOutstanding = Number(r.total_sen ?? 0) - Number(r.paid_sen ?? 0);
+      const baseOutstanding = Number(r.total_sen ?? 0) - Number(r.paid_sen ?? 0) - (reservedByOthers.byPi[piId] ?? 0);
       const outstanding = baseOutstanding + (appliedByThisPv.get(piId) ?? 0);
       if (outstanding <= 0) continue;
       byId.set(piId, {
         piId,
         invoiceNumber:      String(r.invoice_number ?? piId),
         supplierInvoiceRef: (r.supplier_invoice_ref ?? null) as string | null,
+        totalSen:           Number(r.total_sen ?? 0),
         outstandingSen:   outstanding,
       });
     }
@@ -311,11 +317,12 @@ export const PaymentVoucherDetail = () => {
         piId,
         invoiceNumber:      String(a.invoiceNumber ?? a.invoice_number ?? piId),
         supplierInvoiceRef: (a.supplierInvoiceRef ?? a.supplier_invoice_ref ?? null) as string | null,
+        totalSen:           Number(a.totalSen ?? a.total_sen ?? a.amountSen ?? a.amount_sen ?? 0),
         outstandingSen:   Number(a.amountSen ?? a.amount_sen ?? 0),
       });
     }
     return [...byId.values()];
-  }, [editApplyToPi, piListQ.data, allocations, supplierId]);
+  }, [editApplyToPi, piListQ.data, allocations, supplierId, reservedByOthers]);
 
   const editAllocatedSen = useMemo(
     () => editAllocRows.reduce((s, r) => s + (allocAmounts[r.piId] ?? 0), 0),
@@ -733,6 +740,7 @@ export const PaymentVoucherDetail = () => {
                       <tr style={{ textAlign: 'left', color: 'var(--fg-muted)', fontSize: 'var(--fs-11)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
                         <th style={{ padding: '6px 8px' }}>Invoice</th>
                         <th style={{ padding: '6px 8px' }}>Supplier Ref</th>
+                        <th style={{ padding: '6px 8px', textAlign: 'right' }}>Amount</th>
                         <th style={{ padding: '6px 8px', textAlign: 'right' }}>Outstanding</th>
                         <th style={{ padding: '6px 8px', textAlign: 'right' }}>Apply</th>
                       </tr>
@@ -742,6 +750,7 @@ export const PaymentVoucherDetail = () => {
                         <tr key={r.piId} style={{ borderTop: '1px solid var(--line)' }}>
                           <td style={{ padding: '6px 8px', fontFamily: 'var(--font-mono)' }}>{r.invoiceNumber}</td>
                           <td style={{ padding: '6px 8px', color: r.supplierInvoiceRef ? 'var(--fg)' : 'var(--fg-muted)' }}>{r.supplierInvoiceRef || '—'}</td>
+                          <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{fmtRm(r.totalSen)}</td>
                           <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)', color: 'var(--fg-muted)' }}>{fmtRm(r.outstandingSen)}</td>
                           <td style={{ padding: '6px 8px', textAlign: 'right' }}>
                             <MoneyInput bare valueSen={allocAmounts[r.piId] ?? 0}

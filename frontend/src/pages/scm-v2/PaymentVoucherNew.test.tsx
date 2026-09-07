@@ -18,8 +18,13 @@ const uploadPvAsync = vi.fn(async (_v: { pvId: string; file: { name: string } })
 /* Set by the copy-as-new test; undefined everywhere else (no ?copyFrom → the
    detail hook is disabled and the page never sees it). */
 let copySourceDetail: { paymentVoucher: Record<string, unknown>; lines: Array<Record<string, unknown>>; allocations: unknown[] } | undefined;
+/* What other unposted vouchers already applied (docs/bugs/0653) — empty
+   everywhere but the reservations test, which sets and restores it. */
+let reservations: { byPi: Record<string, number>; byApInvoice: Record<string, number>; holders: Record<string, string[]> } = { byPi: {}, byApInvoice: {}, holders: {} };
 vi.mock('../../vendor/scm/lib/payment-voucher-queries', () => ({
   useCreatePaymentVoucher: () => ({ mutateAsync, isPending: false }),
+  usePvReservations: () => ({ data: reservations, isLoading: false }),
+  NO_RESERVATIONS: { byPi: {}, byApInvoice: {}, holders: {} },
   usePaymentVoucherDetail: (id: string | null) => ({ data: id ? copySourceDetail : undefined, isLoading: false }),
   useExtractBills: () => ({ mutateAsync: extractAsync, isPending: false }),
   useUploadPvFile: () => ({ mutateAsync: uploadPvAsync, isPending: false }),
@@ -335,5 +340,29 @@ describe('the plain Payment Voucher (/new)', () => {
     /* Picking writes the VALUE and restores the full label. */
     fireEvent.mouseDown(screen.getByText('320-1000 · Cash in hand'));
     expect(paidFrom.value).toBe('320-1000 · Cash in hand');
+  });
+});
+
+describe('invoices another unapproved voucher already applies stay off the picker (owner 2026-09-07: payment 已经分配了就不要显示)', () => {
+  test('a fully reserved invoice is not offered; a partly reserved one offers only what is left', () => {
+    reservations = {
+      byPi: { 'pi-2': 60000, 'pi-1': 55000 },
+      byApInvoice: { 'api-1': 42000 },
+      holders: { 'pi-2': ['2990-HPV-2609-003'], 'pi-1': ['2990-HPV-2609-004'], 'api-1': ['2990-HPV-2604-006'] },
+    };
+    try {
+      draw('/scm/payment-vouchers/new?type=ap');
+      fireEvent.focus(screen.getByLabelText(/Supplier \*/));
+      fireEvent.mouseDown(screen.getByText('S001 · Foshan Chairs'));
+      /* pi-2: 600.00 outstanding, 600.00 reserved → gone. api-1: 420.00 reserved in full → gone. */
+      expect(screen.queryByText('2990-PI-2609-002')).toBeNull();
+      expect(screen.queryByText('2990-API-2609-001')).toBeNull();
+      /* pi-1: 2,550.00 − 550.00 reserved → 2,000.00 is all that can be applied. */
+      expect(screen.getByText('2990-PI-2609-001')).toBeTruthy();
+      fireEvent.click(screen.getByLabelText('Pay 2990-PI-2609-001 in full'));
+      expect(screen.getByText(/Applying MYR 2,000\.00/)).toBeTruthy();
+    } finally {
+      reservations = { byPi: {}, byApInvoice: {}, holders: {} };
+    }
   });
 });
