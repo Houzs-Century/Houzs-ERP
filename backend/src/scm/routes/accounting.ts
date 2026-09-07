@@ -1152,6 +1152,45 @@ export const controlCheckHandler = async (c: any) => {
       drift.push({ docNo, docTotalSen: 0, jeTotalSen: je.jeTotal, diffSen: je.jeTotal, note: 'journal active but document not found' });
     }
 
+    /* AP INVOICES (the non-stock supplier bills, 2026-09-06) — source API, on
+       either creditor control by the supplier's code. The AP arm walks them
+       once, the same shape as the PIs above (docs/bugs/0654: they were not
+       walked at all, and their journals read as foreign lines below). */
+    if (role === 'AP') {
+      const { data: apiJes, error: apiJesErr } = await sb.from('journal_entries')
+        .select('id, je_no, source_doc_no, total_debit_sen')
+        .eq('company_id', companyId).eq('source_type', 'API')
+        .eq('posted', true).eq('reversed', false);
+      if (apiJesErr) return { role, accountCode, error: apiJesErr.message };
+      const apiByDoc = new Map<string, number>();
+      for (const j of (apiJes ?? []) as Array<{ source_doc_no: string | null; total_debit_sen: number }>) {
+        if (j.source_doc_no) apiByDoc.set(j.source_doc_no, Number(j.total_debit_sen ?? 0));
+      }
+      const { data: bills, error: billsErr } = await sb.from('ap_invoices')
+        .select('invoice_number, total_sen, status')
+        .eq('company_id', companyId);
+      if (billsErr) return { role, accountCode, error: billsErr.message };
+      for (const b of (bills ?? []) as Array<{ invoice_number: string; total_sen: number; status: string | null }>) {
+        const s = (b.status ?? '').toUpperCase();
+        const jeTotal = apiByDoc.get(b.invoice_number);
+        if (s === 'DRAFT' || s === 'CANCELLED') {
+          if (jeTotal != null) drift.push({ docNo: b.invoice_number, docTotalSen: 0, jeTotalSen: jeTotal, diffSen: jeTotal, note: `journal active but document is ${s}` });
+          apiByDoc.delete(b.invoice_number);
+          continue;
+        }
+        const docTotal = Number(b.total_sen ?? 0);
+        if (jeTotal == null) {
+          if (docTotal > 0) drift.push({ docNo: b.invoice_number, docTotalSen: docTotal, jeTotalSen: 0, diffSen: -docTotal, note: 'document has no active journal' });
+          continue;
+        }
+        if (jeTotal !== docTotal) drift.push({ docNo: b.invoice_number, docTotalSen: docTotal, jeTotalSen: jeTotal, diffSen: jeTotal - docTotal, note: 'journal total differs from document total' });
+        apiByDoc.delete(b.invoice_number);
+      }
+      for (const [docNo, jeTotal] of apiByDoc) {
+        drift.push({ docNo, docTotalSen: 0, jeTotalSen: jeTotal, diffSen: jeTotal, note: 'journal active but document not found' });
+      }
+    }
+
     const { data: lines, error: linesErr } = await paginateAll<Record<string, unknown>>((from, to) =>
       sb.from('v_gl_entries').select('*').eq('company_id', companyId).eq('account_code', accountCode).order('line_id').range(from, to));
     if (linesErr) return { role, accountCode, error: linesErr.message };
@@ -1166,7 +1205,10 @@ export const controlCheckHandler = async (c: any) => {
       ? new Set(['SI', 'SI_REVERSAL', 'SOPAY', 'SOPAY_REVERSAL', 'SIPAY', 'SIPAY_REVERSAL'])
       : role === 'AR_OTHER'
         ? new Set(['ODB', 'ODB_REVERSAL', 'ODR', 'ODR_REVERSAL'])
-        : new Set(['PI', 'PI_REVERSAL', 'PV', 'PV_REVERSAL']);
+        /* API = the AP invoice (docs/bugs/0654): it credits 400 or 405 by the
+           supplier's code, exactly as a PI does, and its edit re-post writes
+           the reversal. Both were read as foreign until this line. */
+        : new Set(['PI', 'PI_REVERSAL', 'PV', 'PV_REVERSAL', 'API', 'API_REVERSAL']);
     for (const l of (lines ?? []) as Array<{ je_no: string; source_type: string; debit_sen: number; credit_sen: number }>) {
       bal += Number(l.debit_sen ?? 0) - Number(l.credit_sen ?? 0);
       if (!family.has(l.source_type)) {
@@ -1194,8 +1236,14 @@ export const controlCheckHandler = async (c: any) => {
 
   return c.json({
     checks,
+    /* neverBooked rides along (docs/bugs/0654: it was computed and then
+       dropped here, so the card said "all of them" over 171 unbooked rows). */
     payments: unbooked.ok
-      ? { since: unbooked.since, rows: unbooked.rows, totalSen: unbooked.totalSen, ok: unbooked.rows.length === 0 }
+      ? {
+          since: unbooked.since, rows: unbooked.rows, totalSen: unbooked.totalSen,
+          ok: unbooked.rows.length === 0 && (unbooked.neverBooked?.count ?? 0) === 0,
+          ...(unbooked.neverBooked ? { neverBooked: unbooked.neverBooked } : {}),
+        }
       : { since: null, rows: [], totalSen: 0, ok: false, error: unbooked.reason },
   });
 };

@@ -32,10 +32,24 @@ const PI = (invoice_number: string, total_sen: number, status: string, extra = {
   exchange_rate: 1, migrated_no_stock: false, ...extra,
 });
 
+/* AP invoices (docs/bugs/0654): the AP arm walks them like PIs, and their
+   journals — source API on 400 or 405 — are family on both creditor controls. */
 const sb = fakeSb({
   acc_account_roles: [],
-  journal_entries: [],
-  v_gl_entries: [],
+  journal_entries: [
+    { id: 'je-api-1', je_no: 'JE-API-1', company_id: 1, source_type: 'API', source_doc_no: '2990-API-2603-001', posted: true, reversed: false, total_debit_sen: 214_374, total_credit_sen: 214_374 },
+  ],
+  v_gl_entries: [
+    { line_id: 1, company_id: 1, account_code: '405-0000', je_no: 'JE-API-1', source_type: 'API', debit_sen: 0, credit_sen: 214_374, posted: true, reversed: false },
+    { line_id: 2, company_id: 1, account_code: '405-0000', je_no: 'JE-API-2', source_type: 'API_REVERSAL', debit_sen: 100, credit_sen: 0, posted: true, reversed: false },
+    /* A debtor-bill line parked on the creditor control IS foreign. */
+    { line_id: 3, company_id: 1, account_code: '405-0000', je_no: 'JE-ODB-9', source_type: 'ODB', debit_sen: 50, credit_sen: 0, posted: true, reversed: false },
+  ],
+  ap_invoices: [
+    { id: 'api-1', invoice_number: '2990-API-2603-001', total_sen: 214_374, status: 'POSTED', company_id: 1 }, // journal present
+    { id: 'api-2', invoice_number: '2990-API-2604-009', total_sen: 5_000, status: 'POSTED', company_id: 1 },   // NO journal — drift
+    { id: 'api-3', invoice_number: '2990-API-2604-010', total_sen: 5_000, status: 'DRAFT', company_id: 1 },    // no journal is correct
+  ],
   sales_invoices: [],
   purchase_invoices: [
     PI('HC-PI-2608-003', 140_000, 'POSTED'),        // the live case
@@ -107,7 +121,19 @@ describe('the third arm — AP_OTHER (the 2026-09-03 split)', () => {
     expect(other.accountCode).toBe('405-0000'); // DEFAULT_ROLE_CODES — no roles rows seeded here
     /* HC-PI-2608-003's missing journal is the AP arm's finding, once. */
     expect(other.driftDocs).toEqual([]);
-    expect(other.foreignLines).toEqual([]);
-    expect(other.ok).toBe(true);
+    /* The AP-invoice journal and its reversal are family; only the debtor-bill
+       line is foreign (docs/bugs/0654 — before, all three were reported). */
+    expect(other.foreignLines.map((f: any) => f.jeNo)).toEqual(['JE-ODB-9']);
+    expect(other.ok).toBe(false);
+  });
+});
+
+describe('AP invoices on the AP arm (docs/bugs/0654)', () => {
+  it('a posted AP invoice with no journal is drift; one with its journal, and a draft, are not', async () => {
+    const ap = await controlCheck();
+    const byDoc = new Map((ap.driftDocs ?? []).map((d: any) => [d.docNo, d]));
+    expect(byDoc.get('2990-API-2604-009')).toMatchObject({ note: 'document has no active journal', diffSen: -5_000 });
+    expect(byDoc.has('2990-API-2603-001')).toBe(false);
+    expect(byDoc.has('2990-API-2604-010')).toBe(false);
   });
 });

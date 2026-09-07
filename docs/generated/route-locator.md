@@ -178,13 +178,13 @@ Total: 1177 route registrations across 151 files.
 - L905  POST   /accounts
 - L952  PATCH  /accounts/:code
 - L1016  POST   /journal-entries/:id/reverse
-- L1203  GET    /control-check
-- L1212  GET    /acquirers
-- L1228  POST   /backfill/customer-payments
-- L1245  GET    /daily-bank
-- L1322  GET    /daily-close
-- L1357  PUT    /daily-close
-- L1405  POST   /daily-close/confirm
+- L1251  GET    /control-check
+- L1260  GET    /acquirers
+- L1276  POST   /backfill/customer-payments
+- L1293  GET    /daily-bank
+- L1370  GET    /daily-close
+- L1405  PUT    /daily-close
+- L1453  POST   /daily-close/confirm
 
 ## backend/src/routes/assr.ts  (61)
 - L333  GET    /settings
