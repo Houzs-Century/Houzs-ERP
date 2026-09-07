@@ -271,6 +271,9 @@ try {
     erpByDoc.get(l.ac_no).push(l);
   }
 
+  /* Reproduce check-ac-erp-reconcile.mjs's sofa branch EXACTLY as it stood
+     before today's fix, then say why each finding fired. */
+  const rawModelOf = (x) => (String(x ?? "").match(/\d{3,}/) || [null])[0];
   const mism = [];
   for (const [ac, erpLines] of erpByDoc) {
     const acLines = acLinesByDoc.get(ac);
@@ -282,60 +285,61 @@ try {
       const al = acByKey.get(k);
       if (!al) continue;
       if (!isSofaCode(al.itemKey)) continue;
-      const am = modelOf(al.itemKey);
-      const em = modelOf(el.item_code);
-      if (am && em && am !== em) {
-        /* the extra test the reconcile checker does not make */
-        const alsoInDoc = acLines.some((x) => isSofaCode(x.itemKey) && modelOf(x.itemKey) === em);
-        const foldsEqual = foldedModel(al.itemKey) === foldedModel(el.item_code);
-        const mappedModel = modelOf(mapped(al.itemKey));
-        mism.push({
-          ac, dtlKey: k, book: al.itemKey, erp: el.item_code, am, em,
-          alsoInDoc, foldsEqual, mappedAgrees: mappedModel === em,
-        });
-      }
+      const am = rawModelOf(al.itemKey);
+      const em = rawModelOf(el.item_code);
+      const oldSaysOk = Boolean(am && em && am === em);
+      if (oldSaysOk) continue; // the old checker was happy; not a finding
+      const fam = foldedModel(al.itemKey);
+      const fem = foldedModel(el.item_code);
+      let why;
+      if (!am && !em) {
+        why = mapped(al.itemKey) === norm(el.item_code)
+          ? "identical-codes"           // byte-identical, reported anyway
+          : "no-model-codes-differ";
+      } else if (am && em && fam === fem) why = "alias";
+      else why = "genuine";
+      mism.push({ ac, dtlKey: k, book: al.itemKey, erp: el.item_code, am, em, why });
     }
   }
-  plain(`sofa lines whose model disagrees, reproduced exactly as check-ac-erp-reconcile.mjs counts them: ${mism.length}`);
+  plain(`sofa-branch findings the OLD checker would raise, over DtlKey-paired lines: ${mism.length}`);
   plain(`distinct sales orders involved: ${new Set(mism.map((m) => m.ac)).size}`);
 
-  const byCause = {
-    permutation: mism.filter((m) => m.alsoInDoc),
-    alias: mism.filter((m) => !m.alsoInDoc && m.foldsEqual),
-    mapping: mism.filter((m) => !m.alsoInDoc && !m.foldsEqual && m.mappedAgrees),
-    genuine: mism.filter((m) => !m.alsoInDoc && !m.foldsEqual && !m.mappedAgrees),
+  const buckets = {
+    "identical-codes": [], alias: [], "no-model-codes-differ": [], genuine: [],
   };
-  plain(`\nCLASSIFICATION (each line counted once, in this order):`);
-  plain(`  (c) checker mis-pairing  — the SAME document has another AutoCount line`);
-  plain(`      carrying the ERP's model, so the two sides hold the same multiset`);
-  plain(`      and only the DtlKey pairing is crossed:            ${byCause.permutation.length}`);
-  plain(`  (a) alias family         — SOFA_MODEL_ALIAS folds them equal, and the`);
-  plain(`      reconcile checker is the one script that does not fold:  ${byCause.alias.length}`);
-  plain(`  (a) mapping translation  — autocount-erp-mapping-1561.csv already`);
-  plain(`      translates the book code to the ERP's model, but the sofa branch`);
-  plain(`      compares the RAW itemKey instead of mapped():        ${byCause.mapping.length}`);
-  plain(`  (b) genuine disagreement — none of the above explains it: ${byCause.genuine.length}`);
+  for (const m of mism) buckets[m.why].push(m);
+  plain(`
+WHY EACH ONE FIRED:`);
+  plain(`  (c) identical-codes      the two codes are BYTE IDENTICAL and neither`);
+  plain(`      yields a model - an accessory whose NAME contains "SOFA".`);
+  plain(`      A pure false positive:                              ${buckets["identical-codes"].length}`);
+  plain(`  (a) alias                SOFA_MODEL_ALIAS folds them equal; this`);
+  plain(`      checker is the only one that did not fold:          ${buckets.alias.length}`);
+  plain(`  (b) no-model-codes-differ neither yields a model AND the codes differ`);
+  plain(`      - a real finding:                                   ${buckets["no-model-codes-differ"].length}`);
+  plain(`  (b) genuine              the folded models genuinely disagree:  ${buckets.genuine.length}`);
 
-  for (const [name, rows] of Object.entries(byCause)) {
+  for (const [name, rows] of Object.entries(buckets)) {
     if (!rows.length) continue;
     const pairs = new Map();
     for (const m of rows) {
-      const k = `${m.am} -> ${m.em}`;
-      pairs.set(k, (pairs.get(k) || 0) + 1);
+      const kk = `${m.am ?? "?"} -> ${m.em ?? "?"}`;
+      pairs.set(kk, (pairs.get(kk) || 0) + 1);
     }
-    fence(`${name}: ${rows.length} line(s), by model pair`,
-      [...pairs.entries()].sort((a, b) => b[1] - a[1])
-        .map(([k, n]) => `${String(n).padStart(5)}  book ${k}`));
+    fence(`${name}: ${rows.length} line(s) over ${new Set(rows.map((r) => r.ac)).size} sales order(s), by model pair`,
+      [...pairs.entries()].sort((a, b) => b[1] - a[1]).map(([kk, n]) => `${String(n).padStart(5)}  ${kk}`));
     fence(`${name}: first ${Math.min(SHOW, rows.length)} line(s)`,
       rows.slice(0, SHOW).map((m) =>
-        `${m.ac} DtlKey ${m.dtlKey}: book "${m.book}" (model ${m.am}) vs ERP "${m.erp}" (model ${m.em})`));
+        `${m.ac} DtlKey ${m.dtlKey}: book "${m.book}" vs ERP "${m.erp}"`));
   }
+  const byCause = buckets;
 
   head("VERDICT");
   plain(`1. HC-PO-009944 present in ERP: ${po44.length ? "YES" : "NO"}`);
   plain(`2. supplier 400-Z003 present: ${z.some((r) => r.code === "400-Z003") ? "YES" : "NO"}; ZOE-named rows: ${z.length}`);
   plain(`3. an ERGOTEX/PILLOW product exists: ${erg.length ? "YES" : "NO"}`);
-  plain(`4. sofa model disagreements ${mism.length}: mis-pairing ${byCause.permutation.length}, alias ${byCause.alias.length}, mapping ${byCause.mapping.length}, genuine ${byCause.genuine.length}`);
+  plain(`4. sofa-branch findings ${mism.length}: identical-codes ${byCause["identical-codes"].length}, ` +
+    `alias ${byCause.alias.length}, no-model-codes-differ ${byCause["no-model-codes-differ"].length}, genuine ${byCause.genuine.length}`);
 } catch (e) {
   console.error(`REFUSED: ${e.message}`);
   process.exitCode = 2;

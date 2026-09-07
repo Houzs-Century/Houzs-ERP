@@ -75,6 +75,7 @@ import path from "node:path";
 import zlib from "node:zlib";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
+import { SOFA_MODEL_ALIAS } from "./lib/parse-sofa.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const DATA = path.join(here, "data");
@@ -138,9 +139,31 @@ const isTestDoc = (d) => d.startsWith("HC-") || d.startsWith("ZZ");
    ("item_code beyond the model prefix" is not compared).  The model is the
    first run of 3+ digits on each side; "AMN-SF9028 SOFA" and "9028-1A(LHF)"
    both yield 9028, and "DSL-8030 SOFA" against "9058-1A(LHF)" does NOT — that
-   one is a real finding and stays one. */
+   one is a real finding and stays one.
+
+   TWO CORRECTIONS, 2026-09-07 (go-live), both measured against production:
+
+   (a) THE MODEL MUST BE FOLDED THROUGH SOFA_MODEL_ALIAS.  The floor writes the
+       same sofa under an internal number and a catalogue number — 5530/9028,
+       5536/9058, 5537/8030, 5540/8030 — and TEN other scripts in this
+       directory fold it before comparing.  This checker was the only one that
+       did not, so "HOK-5536 SOFA" against "9058-2A(LHF)" read as a defect
+       while every other tool called them the same sofa.  12 lines.
+
+   (b) A NO-MODEL PAIR IS NOT AUTOMATICALLY A DEFECT.  isSofaCode is a /SOFA/
+       substring test, so "AMN-SOFA PILLOW" — an accessory whose NAME contains
+       the word — takes the sofa branch, yields NO model on either side, and
+       fell through to the finding list even when the two codes were BYTE
+       IDENTICAL ("AMN-SOFA PILLOW" vs "AMN-SOFA PILLOW").  When neither side
+       yields a model the codes themselves are perfectly comparable, so they
+       are compared, exactly as the non-sofa branch does.  A pair where only
+       ONE side has a model is still a real finding and stays one. */
 const isSofaCode = (s) => /SOFA/i.test(String(s ?? ""));
-const modelOf = (s) => (String(s ?? "").match(/\d{3,}/) || [null])[0];
+const rawModelOf = (s) => (String(s ?? "").match(/\d{3,}/) || [null])[0];
+const modelOf = (s) => {
+  const m = rawModelOf(s);
+  return m == null ? null : SOFA_MODEL_ALIAS[m] || m;
+};
 
 const book = {};
 for (const [t, payload] of Object.entries(snap.types)) {
@@ -609,7 +632,10 @@ for (const cfg of TYPES) {
         /* compartment codes: only the model is comparable */
         const am = modelOf(al.itemKey);
         const em = modelOf(el.item_code);
-        if (am && em && am === em) D.item++;
+        /* neither side carries a model: not a decomposed sofa at all, but an
+           accessory whose NAME contains "SOFA".  Compare the codes. */
+        const agrees = am && em ? am === em : !am && !em && mapped(al.itemKey) === norm(el.item_code);
+        if (agrees) D.item++;
         else if (cfg.itemCodeDeclared) D.item++;
         else {
           F.item.push(
