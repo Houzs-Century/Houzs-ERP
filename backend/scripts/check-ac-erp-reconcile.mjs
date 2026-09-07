@@ -19,6 +19,18 @@
  *                       the AutoCount line key (DtlKey) where the ERP carries
  *                       one and on document order where it does not.
  *   3. MONEY            document total on each side.
+ *   4. VARIANTS         "还有里面的variant 啊 col divan gap 等等 / 所以你要拿目前的
+ *                       orders 去对比autocount的数据什么不一样" (owner, 2026-09-07).
+ *                       For every paired line, AutoCount's own Desc2 is decoded
+ *                       with the WRITERS' decoders and compared against the ERP
+ *                       line's `variants` jsonb, axis by axis: colour/fabric,
+ *                       divan, gap, leg, T.Heights, seat size, sofa
+ *                       compartments (as a MULTISET) and specials.  Counts and
+ *                       the first 20 examples per axis with both values side by
+ *                       side, and every count split PROCEEDED / not proceeded —
+ *                       an unconfirmed order is allowed to be blank.
+ *                       The comparison itself is lib/variant-reconcile.mjs;
+ *                       read its header before changing what "different" means.
  *
  * ── THE DO RULE (the owner's; NOT a bug to fix) ─────────────────────────────
  * Outstanding = NOT yet transferred to a DO.  The migration carried the
@@ -67,6 +79,13 @@
  * DtlKey matcher actually hit the snapshot, and that the item-code map loaded;
  * a type whose ERP rows carry links of which NONE resolve exits 2.
  *
+ * The variant half has its own three refusals, for the same reason: a snapshot
+ * with no Desc2 at all, a fabric library that loaded almost nothing, and a
+ * decoder that no longer decodes the five measured Desc2 shapes in
+ * lib/variant-reconcile.mjs's SELF_TEST.  A document type that produced no
+ * comparable bedframe or sofa line SAYS SO in its own section rather than
+ * printing an empty table that reads as agreement.
+ *
  * RE-RUN: read-only, so a second run answers again from current state — which
  * is the point: it runs again after the delta migration.
  */
@@ -75,6 +94,16 @@ import path from "node:path";
 import zlib from "node:zlib";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
+import { parseBedframe } from "./lib/parse-bedframe.mjs";
+import { SOFA_MODEL_ALIAS, parseSofa } from "./lib/parse-sofa.mjs";
+import { buildFabricColourIndex, isPendingColour } from "./lib/fabric-colour-match.mjs";
+import { mapSpecial as mapBedframeSpecial } from "./lib/bedframe-special-map.mjs";
+import { K as SK, mapPhrase as mapSofaPhrase, skey } from "./lib/sofa-special-map.mjs";
+import { soProcessingDateFragment } from "./lib/so-processing-date.mjs";
+import {
+  AGREE, AXES, BOOK_BLANK, DIFFER, ERP_BLANK, PENDING, UNREADABLE, VARIANT_GROUPS, VERDICTS,
+  compareLine, decodeBook, runSelfTest,
+} from "./lib/variant-reconcile.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const DATA = path.join(here, "data");
@@ -142,6 +171,20 @@ const isTestDoc = (d) => d.startsWith("HC-") || d.startsWith("ZZ");
 const isSofaCode = (s) => /SOFA/i.test(String(s ?? ""));
 const modelOf = (s) => (String(s ?? "").match(/\d{3,}/) || [null])[0];
 
+/* ── the book's own build text (the VARIANT half) ─────────────────────────── */
+/* A snapshot cut before 2026-09-07 carries no Desc2 at all, and a variant
+   verdict computed over nothing would read as "the variants agree".  Refuse. */
+const HAS_DESC2 = Array.isArray(snap.desc2_fields) && snap.desc2_fields.length === 2;
+if (!HAS_DESC2) {
+  console.error(
+    "REFUSED: this AutoCount snapshot carries no Desc2 (no `desc2_fields`), so the variants inside " +
+      "each line cannot be compared. Re-run export-ac-reconcile-truth.mjs — the version that pulls " +
+      "Desc2 in bounded key windows. Reporting a clean variant run against a snapshot that never read " +
+      "the build text would be a verdict computed over nothing.",
+  );
+  process.exit(2);
+}
+
 const book = {};
 for (const [t, payload] of Object.entries(snap.types)) {
   const headers = new Map();
@@ -175,7 +218,11 @@ for (const [t, payload] of Object.entries(snap.types)) {
     lines.get(l.docNo).push(l);
     byDtlKey.set(l.dtlKey, l);
   }
-  book[t] = { headers, lines, byDtlKey };
+  /* Desc2 is exported only for lines that HAVE one, so an absent key means the
+     book said nothing about the build — which is BOOK-BLANK, never unknown. */
+  const desc2 = new Map();
+  for (const [key, text] of payload.desc2 || []) desc2.set(key, text);
+  book[t] = { headers, lines, byDtlKey, desc2 };
 }
 
 /* ── scope: the population the migration was defined to carry ────────────── */
@@ -227,6 +274,11 @@ const SCOPE = { SO: soScope, PO: poScope, GR: grScope, DO: doScope, IV: new Set(
 
 /* ── ERP side ────────────────────────────────────────────────────────────── */
 const sql = postgres(url, { ssl: "require", prepare: false, max: 1, connect_timeout: 30 });
+/* The ONE name of the Processing Date column, spliced as SQL TEXT rather than
+   bound as a parameter — postgres.js would send `h.$1 IS NOT NULL` otherwise.
+   See lib/so-processing-date.mjs; migration 0286 renamed the column and eleven
+   scripts went on naming the old one, which fails the WHOLE statement. */
+const PDATE = soProcessingDateFragment(sql);
 const refuse = async (msg) => {
   console.error(`REFUSED: ${msg}`);
   await sql.end({ timeout: 5 }).catch(() => {});
@@ -247,7 +299,9 @@ const TYPES = [
       FROM scm.mfg_sales_orders WHERE company_id = ${CO}`,
     lines: () => sql`SELECT h.linked_ac_docno AS ac_no, i.item_code, i.qty::float8 AS qty,
         i.unit_price_sen, i.linked_ac_dtlkey AS ac_dtlkey, i.line_suffix,
-        COALESCE(i.line_no, 0) AS line_no, i.created_at, i.id::text AS id
+        COALESCE(i.line_no, 0) AS line_no, i.created_at, i.id::text AS id,
+        i.item_group, i.variants, i.custom_specials, i.description2,
+        (h.${PDATE} IS NOT NULL) AS proceeded
       FROM scm.mfg_sales_order_items i
       JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
       WHERE h.company_id = ${CO} AND h.linked_ac_docno IS NOT NULL`,
@@ -260,9 +314,19 @@ const TYPES = [
       FROM scm.purchase_orders WHERE company_id = ${CO}`,
     lines: () => sql`SELECT h.linked_ac_docno AS ac_no, i.item_code, i.qty::float8 AS qty,
         i.unit_price_sen, i.linked_ac_dtlkey AS ac_dtlkey, i.line_suffix,
-        0 AS line_no, i.created_at, i.id::text AS id
+        0 AS line_no, i.created_at, i.id::text AS id,
+        i.item_group, i.variants, i.custom_specials, i.description2,
+        /* A PO line dedicated to an SO line inherits that order's state, because
+           the customer's "not chosen yet" is what makes a blank legitimate. A
+           PO line with no dedication is PROCEEDED: every purchase order in this
+           ERP is at least SUBMITTED (measured 2026-09-07: 296 RECEIVED, 180
+           SUBMITTED, 23 PARTIALLY_RECEIVED, nothing in a draft state), so the
+           supplier is already being asked to build it. */
+        (si.id IS NULL OR sh.${PDATE} IS NOT NULL) AS proceeded
       FROM scm.purchase_order_items i
       JOIN scm.purchase_orders h ON h.id = i.purchase_order_id
+      LEFT JOIN scm.mfg_sales_order_items si ON si.id = i.so_item_id
+      LEFT JOIN scm.mfg_sales_orders sh ON sh.doc_no = si.doc_no
       WHERE h.company_id = ${CO} AND h.linked_ac_docno IS NOT NULL`,
   },
   {
@@ -291,7 +355,9 @@ const TYPES = [
       FROM scm.delivery_orders WHERE company_id = ${CO}`,
     lines: () => sql`SELECT h.linked_ac_docno AS ac_no, i.item_code, i.qty::float8 AS qty,
         i.unit_price_sen, i.linked_ac_dtlkey AS ac_dtlkey, i.line_suffix,
-        COALESCE(i.line_no, 0) AS line_no, i.created_at, i.id::text AS id
+        COALESCE(i.line_no, 0) AS line_no, i.created_at, i.id::text AS id,
+        i.item_group, i.variants, i.custom_specials, i.description2,
+        TRUE AS proceeded
       FROM scm.delivery_order_items i
       JOIN scm.delivery_orders h ON h.id = i.delivery_order_id
       WHERE h.company_id = ${CO} AND h.linked_ac_docno IS NOT NULL`,
@@ -306,7 +372,9 @@ const TYPES = [
       FROM scm.sales_invoices WHERE company_id = ${CO}`,
     lines: () => sql`SELECT h.linked_ac_docno AS ac_no, i.item_code, i.qty::float8 AS qty,
         i.unit_price_sen, i.linked_ac_dtlkey AS ac_dtlkey, i.line_suffix,
-        COALESCE(i.line_no, 0) AS line_no, i.created_at, i.id::text AS id
+        COALESCE(i.line_no, 0) AS line_no, i.created_at, i.id::text AS id,
+        i.item_group, i.variants, i.custom_specials, i.description2,
+        TRUE AS proceeded
       FROM scm.sales_invoice_items i
       JOIN scm.sales_invoices h ON h.id = i.sales_invoice_id
       WHERE h.company_id = ${CO} AND h.linked_ac_docno IS NOT NULL`,
@@ -319,7 +387,9 @@ const TYPES = [
       FROM scm.purchase_invoices WHERE company_id = ${CO}`,
     lines: () => sql`SELECT h.linked_ac_docno AS ac_no, i.item_code, i.qty::float8 AS qty,
         i.unit_price_sen, i.linked_ac_dtlkey AS ac_dtlkey, i.line_suffix,
-        0 AS line_no, i.created_at, i.id::text AS id
+        0 AS line_no, i.created_at, i.id::text AS id,
+        i.item_group, i.variants, i.custom_specials, i.description2,
+        TRUE AS proceeded
       FROM scm.purchase_invoice_items i
       JOIN scm.purchase_invoices h ON h.id = i.purchase_invoice_id
       WHERE h.company_id = ${CO} AND h.linked_ac_docno IS NOT NULL`,
@@ -384,10 +454,239 @@ try {
   );
 }
 
+/* ── the variant side: masters, decoders, and their own self-test ─────────── */
+/* Every decoder is the writers' own. Nothing here re-implements a Desc2 rule —
+   see the header of lib/variant-reconcile.mjs for why that matters. */
+let V = null;
+try {
+  /* `active` is read on purpose. The fabric library renumbered itself on
+     2026-08-11 (one-digit tails became two, predecessors kept as active=false),
+     the account book was never rewritten, and a matcher without `active`
+     answers with the DEAD row — which is how 166 sofa lines lost their colour.
+     buildFabricColourIndex follows the supersession only when it is told. */
+  const fcRows = await sql`SELECT fabric_id, colour_id, label, active
+    FROM scm.fabric_colours WHERE company_id = ${CO}`;
+  const { findColour } = buildFabricColourIndex(fcRows);
+  const prodCodes = new Set(
+    (await sql`SELECT code FROM scm.mfg_products WHERE company_id = ${CO}`).map((p) =>
+      String(p.code ?? "").trim().toUpperCase(),
+    ),
+  );
+  const addons = await sql`SELECT code, label, categories FROM scm.special_addons WHERE company_id = ${CO}`;
+  const sofaLive = new Map();
+  for (const r of addons.filter((x) => (x.categories || []).some((c) => /sofa/i.test(String(c))))) {
+    sofaLive.set(SK(r.code), r.code);
+    if (r.label) sofaLive.set(SK(r.label), r.code);
+  }
+  const bedLive = new Set(addons.filter((x) => (x.categories || []).includes("BEDFRAME")).map((r) => r.code));
+
+  const RECL = ["-1S(R)", "-1A(R)(LHF)", "-1A(P)(LHF)", "-1S(P)"];
+  const knownColour = (c) => {
+    const h = findColour(c);
+    return h ? h.colour_id : null;
+  };
+  V = {
+    parseBedframe,
+    parseSofa,
+    isPendingColour,
+    modelAlias: SOFA_MODEL_ALIAS,
+    knownColour,
+    reclOf: (m) => RECL.some((s) => prodCodes.has(`${m}${s}`.toUpperCase())),
+    /* A colour is compared as the library row it names, never as a spelling. */
+    colourIdentity: (text) => {
+      const h = findColour(text);
+      return h ? `${h.fabric_id}|${h.colour_id}` : null;
+    },
+    /* The picker codes a Desc2 phrase asks for. Where no code exists the phrase
+       itself is what the owner asked to be carried ("没有的才用 customs others
+       那边写进去"), so it is returned as the wanted item. */
+    mapSpecials: (phrases, group) => {
+      const want = [];
+      for (const p of phrases) {
+        if (group === "sofa") {
+          const codes = sofaLive.has(SK(p)) ? [sofaLive.get(SK(p))] : mapSofaPhrase(p, sofaLive);
+          want.push(...(codes.length ? codes : [p]));
+        } else {
+          const codes = bedLive.has(p) ? [p] : mapBedframeSpecial(p).filter((x) => bedLive.has(x));
+          want.push(...(codes.length ? codes : [p]));
+        }
+      }
+      return [...new Set(want)];
+    },
+    /* Free text and a picker code are the same request written two ways, so a
+       carried value counts when either spelling contains the other. */
+    specialCarried: (wanted, carried) => {
+      const w = skey(wanted);
+      if (!w) return true;
+      return carried.some((c) => {
+        const k = skey(c);
+        return !!k && (k.includes(w) || w.includes(k));
+      });
+    },
+    masters: { fabricColours: fcRows.length, products: prodCodes.size, sofaAddons: sofaLive.size, bedAddons: bedLive.size },
+  };
+} catch (e) {
+  await refuse(`the variant masters could not be read: ${e.message}`);
+}
+{
+  const problems = runSelfTest(V);
+  if (V.masters.fabricColours < 50) {
+    problems.push(`only ${V.masters.fabricColours} fabric colours loaded for company ${CO} — the colour matcher would answer null for everything`);
+  }
+  if (problems.length) {
+    for (const p of problems) console.error(`VARIANT SELF-TEST FAILED — ${p}`);
+    await refuse(
+      "the Desc2 decoders do not decode; refusing to report that the variants agree. " +
+        "A verdict computed over nothing must never read as a pass.",
+    );
+  }
+  plain(
+    `variant self-test: ${V.masters.fabricColours} fabric colours, ${V.masters.products} product codes, ` +
+      `${V.masters.sofaAddons} sofa + ${V.masters.bedAddons} bedframe add-on keys; ` +
+      "every decoder case decoded as measured. Proceeding.",
+  );
+}
+
 /* ── compare ─────────────────────────────────────────────────────────────── */
 const rm = (s) => (s == null ? "null" : (Number(s) / 100).toFixed(2));
 const first = (a) => a.slice(0, SHOW);
 const summary = [];
+const variantTotals = [];
+const SHOW_BOOK_BLANK = 5; // the direction that is NOT work; enough to see it exists
+
+/**
+ * The variant reconcile for one document type.
+ *
+ * `rows` is one entry per AutoCount line that reached the ERP, carrying the ERP
+ * lines it became — the sofa split means that is often more than one.  `desc2`
+ * is the book's own build text by DtlKey; a line absent from it is a line the
+ * book said nothing about, which is BOOK-BLANK on every axis and NOT unknown.
+ *
+ * Every count is split PROCEEDED / not proceeded, because the owner's rule is
+ * that an unconfirmed order may legitimately be blank and quoting the combined
+ * figure as the backlog has already cost him time twice.
+ */
+function reportVariants(t, label, rows, desc2) {
+  const tally = {};
+  for (const a of AXES) tally[a.key] = { yes: {}, no: {} };
+  for (const a of AXES) for (const half of ["yes", "no"]) for (const v of VERDICTS) tally[a.key][half][v] = 0;
+  const offenders = {};
+  const bookBlanks = {};
+  for (const a of AXES) {
+    offenders[a.key] = [];
+    bookBlanks[a.key] = [];
+  }
+  const pop = { total: rows.length, modelled: 0, bedframe: 0, sofa: 0, other: 0, withDesc2: 0, proceeded: 0 };
+  let unkeyedSofa = 0;
+
+  for (const r of rows) {
+    const lead = r.erpLines[0] || {};
+    const group = String(lead.item_group ?? "").toLowerCase();
+    if (!VARIANT_GROUPS.has(group)) {
+      pop.other++;
+      continue;
+    }
+    pop.modelled++;
+    pop[group]++;
+    const text = desc2.get(r.acLine.dtlKey) || "";
+    if (text) pop.withDesc2++;
+    /* `proceeded` is a per-line fact carried from the ERP query, not inferred
+       here: an order with a Processing Date is what the factory is building. */
+    const proceeded = lead.proceeded === true;
+    if (proceeded) pop.proceeded++;
+    const book = decodeBook(V, { desc2: text, itemGroup: group, itemCode: lead.item_code });
+    const { axes } = compareLine(V, { book, erpLines: r.erpLines, proceeded });
+    /* THE COMPARTMENT AXIS NEEDS THE WHOLE BUILD, AND ONLY THE LINE KEY CAN
+       REGROUP IT. One AutoCount sofa line becomes one ERP line per piece; the
+       pieces are recognisable as one build because they share
+       linked_ac_dtlkey. Where the ERP lines carry no key the pairing above
+       falls back to value and then to document order, which returns ONE ERP
+       line per AutoCount line — so a five-piece build would be compared against
+       one piece and reported as four missing compartments that are not missing
+       at all. Say the axis is unanswerable instead of answering it wrongly. */
+    if (axes.compartments && !r.erpLines.every((l) => l.ac_dtlkey != null)) {
+      axes.compartments.verdict = UNREADABLE;
+      axes.compartments.book = axes.compartments.book || "(not regroupable)";
+      axes.compartments.detail =
+        "the ERP lines of this document carry no AutoCount line key, so the pieces of one build cannot be regrouped";
+      unkeyedSofa++;
+    }
+    const half = proceeded ? "yes" : "no";
+    for (const [key, cell] of Object.entries(axes)) {
+      tally[key][half][cell.verdict]++;
+      const where = `${r.ac} DtlKey ${r.acLine.dtlKey} (ERP ${r.erpNo} ${lead.item_code ?? "?"})`;
+      const both = `AutoCount "${cell.book || "(blank)"}" vs ERP "${cell.erp || "(blank)"}"` +
+        (cell.detail ? ` — ${cell.detail}` : "");
+      if (cell.verdict === DIFFER || (cell.verdict === ERP_BLANK && proceeded)) {
+        offenders[key].push({
+          differ: cell.verdict === DIFFER,
+          line: `${where}: ${both}${proceeded ? "" : "  [NOT PROCEEDED]"}`,
+        });
+      } else if (cell.verdict === BOOK_BLANK) {
+        bookBlanks[key].push(`${where}: ${both}`);
+      }
+    }
+  }
+
+  plain("");
+  plain(`─────────── ${t} — ${label}: THE VARIANTS INSIDE THE LINE ───────────`);
+  if (!pop.total) {
+    log(`${t} VARIANTS — no AutoCount line of this type paired to an ERP line, so nothing was compared. NOT a clean run.`);
+    return { t, pop, tally, comparable: false };
+  }
+  plain(
+    `${pop.total} AutoCount lines paired to an ERP line; ${pop.modelled} carry a variant-bearing item group ` +
+      `(${pop.bedframe} bedframe, ${pop.sofa} sofa) and ${pop.other} do not (accessory, mattress, service — no axes to compare). ` +
+      `${pop.withDesc2} of the ${pop.modelled} have a build text in the book; ${pop.proceeded} are on a PROCEEDED order.`,
+  );
+  if (!pop.modelled) {
+    log(`${t} VARIANTS — no bedframe or sofa line on this document type. Nothing to compare; NOT a clean run.`);
+    return { t, pop, tally, comparable: false };
+  }
+
+  plain("axis                 |            PROCEEDED (the backlog)             |          not proceeded (blank is OK)");
+  plain("                     |  agree  ERPblank  bookblank  differ  pend  unread |  agree  ERPblank  bookblank  differ  pend  unread");
+  for (const a of AXES) {
+    const y = tally[a.key].yes;
+    const n = tally[a.key].no;
+    const seen = VERDICTS.reduce((s2, v) => s2 + y[v] + n[v], 0);
+    if (!seen) continue;
+    const cells = (h) => [h[AGREE], h[ERP_BLANK], h[BOOK_BLANK], h[DIFFER], h[PENDING], h[UNREADABLE]]
+      .map((x, i) => String(x).padStart([6, 9, 10, 7, 5, 7][i]));
+    plain(`${a.label.padEnd(20)} | ${cells(y).join(" ")} | ${cells(n).join(" ")}`);
+  }
+  plain(
+    "ERPblank on a PROCEEDED order is the only column that is WORK. bookblank is the ERP holding a value the " +
+      "book never stated — an operator filled it in, which is allowed. pend = the book says TBC/KIV.",
+  );
+  if (unkeyedSofa) {
+    plain(
+      `   of the ${pop.sofa} sofa lines, ${unkeyedSofa} sit on a document whose ERP lines carry no AutoCount ` +
+        "line key, so their COMPARTMENTS are unanswerable rather than agreeing. Their colour, seat size and " +
+        "specials are still compared - those are per-line values and do not need the build regrouped.",
+    );
+  }
+
+  for (const a of AXES) {
+    const list = offenders[a.key];
+    if (!list.length) continue;
+    /* Differences first: both sides state something and they disagree, which is
+       the only shape that needs a human to adjudicate rather than a fill. */
+    list.sort((x, y) => Number(y.differ) - Number(x.differ));
+    log(
+      `${t} VARIANT ${a.label} — ${list.filter((x) => x.differ).length} DIFFER, ` +
+        `${list.filter((x) => !x.differ).length} ERP blank on a proceeded order`,
+    );
+    for (const row of list.slice(0, SHOW)) plain(`      ${row.line}`);
+    if (list.length > SHOW) plain(`      ... ${list.length - SHOW} more`);
+    const bb = bookBlanks[a.key];
+    if (bb.length) {
+      plain(`   ${a.label} — AutoCount blank, ERP carries one: ${bb.length} (first ${Math.min(SHOW_BOOK_BLANK, bb.length)}, NOT work)`);
+      for (const row of bb.slice(0, SHOW_BOOK_BLANK)) plain(`      ${row}`);
+    }
+  }
+  return { t, pop, tally, comparable: true };
+}
 
 for (const cfg of TYPES) {
   const t = cfg.t;
@@ -473,6 +772,10 @@ for (const cfg of TYPES) {
     keyOrphan: [], unmatchedErp: [], unmatchedAc: [],
   };
   const D = { lineCount: 0, item: 0, price: 0 }; // declared, not gaps
+  /* One entry per AUTOCOUNT line that became at least one ERP line, carrying
+     the ERP lines it became. A sofa line becomes one ERP row per compartment,
+     so the compartment axis is only answerable over the whole group. */
+  const variantRows = [];
   let descOnly = 0;
   let bothSides = 0;
   let comparedLines = 0;
@@ -602,6 +905,19 @@ for (const cfg of TYPES) {
       else F.unmatchedErp.push(`${ac}: ERP line ${freeErp[i].id} has no AutoCount line`);
     }
 
+    /* The VARIANT side rides the pairing the document reconcile already did —
+       DtlKey where the ERP carries one, then value, then document order. A
+       second, private matcher here would disagree with the one whose verdict is
+       printed above it. */
+    {
+      const byAc = new Map();
+      for (const [al, el] of pairs) {
+        if (!byAc.has(al.dtlKey)) byAc.set(al.dtlKey, { acLine: al, erpLines: [] });
+        byAc.get(al.dtlKey).erpLines.push(el);
+      }
+      for (const [, g] of byAc) variantRows.push({ ac, erpNo: d.erp_no, ...g });
+    }
+
     for (const [al, el, split] of pairs) {
       comparedLines++;
       if (!al.hasCode) descOnly++;
@@ -678,6 +994,10 @@ for (const cfg of TYPES) {
     for (const row of first(arr)) plain(`      ${row}`);
   }
 
+  /* ── 4. THE VARIANTS INSIDE THE LINE ──────────────────────────────────── */
+  const vt = reportVariants(t, cfg.label, variantRows, B.desc2);
+  variantTotals.push(vt);
+
   summary.push({
     t,
     acDocs: B.headers.size,
@@ -711,6 +1031,73 @@ plain(
     `fully delivered: ${soFullyDelivered.size}; invoiced direct with no DO (owner-excluded 2026-08-10): ` +
     `${[...soInvoicedDirect].filter((d) => book.SO.headers.has(d)).length}`,
 );
+
+/* ── the variant verdict, one line per axis, every type added together ───── */
+plain("");
+plain("═══════════ VARIANTS INSIDE THE LINE — ALL TYPES ═══════════");
+{
+  const comparable = variantTotals.filter((v) => v.comparable);
+  if (!comparable.length) {
+    log(
+      "VARIANTS — not one document type produced a comparable bedframe or sofa line. The variant reconcile " +
+        "answered NOTHING; do not read the absence of findings as agreement.",
+    );
+  } else {
+    /* The owner asked about the ORDERS - "拿目前的orders 去对比autocount的数据".
+       A sales order and the purchase order raised from it are what the factory
+       builds from, so they are where a blank axis is work. A delivery order, a
+       sales invoice and a purchase invoice are downstream MIRRORS of a build
+       that was already decided; their `variants` are not what anyone reads to
+       make the furniture, and on this book most of them carry none at all.
+       Both totals are printed, because folding the mirrors into the headline
+       would inflate the backlog with rows nobody is meant to fill. */
+    const BUILD_TYPES = new Set(["SO", "PO"]);
+    const blank = () => {
+      const o = {};
+      for (const a of AXES) o[a.key] = { yes: {}, no: {} };
+      for (const a of AXES) for (const half of ["yes", "no"]) for (const v of VERDICTS) o[a.key][half][v] = 0;
+      return o;
+    };
+    const add = blank();
+    const build = blank();
+    for (const vt of comparable) {
+      for (const a of AXES) for (const half of ["yes", "no"]) for (const v of VERDICTS) {
+        add[a.key][half][v] += vt.tally[a.key][half][v];
+        if (BUILD_TYPES.has(vt.t)) build[a.key][half][v] += vt.tally[a.key][half][v];
+      }
+    }
+    plain(`types compared: ${comparable.map((v) => v.t).join(", ")} (GR carries no comparable ERP line — see the GR section)`);
+    plain("axis                 |  ORDERS (SO+PO), PROCEEDED  |  every type, PROCEEDED  |  not proceeded");
+    plain("                     |   ERPblank        differ    |  ERPblank      differ   |  ERPblank   differ");
+    let work = 0;
+    let differ = 0;
+    let orderWork = 0;
+    let orderDiffer = 0;
+    for (const a of AXES) {
+      const y = add[a.key];
+      const b = build[a.key];
+      const seen = VERDICTS.reduce((s2, v) => s2 + y.yes[v] + y.no[v], 0);
+      if (!seen) continue;
+      work += y.yes[ERP_BLANK];
+      differ += y.yes[DIFFER] + y.no[DIFFER];
+      orderWork += b.yes[ERP_BLANK];
+      orderDiffer += b.yes[DIFFER] + b.no[DIFFER];
+      plain(
+        `${a.label.padEnd(20)} | ${String(b.yes[ERP_BLANK]).padStart(10)} ${String(b.yes[DIFFER]).padStart(13)}` +
+          `    | ${String(y.yes[ERP_BLANK]).padStart(9)} ${String(y.yes[DIFFER]).padStart(11)}   ` +
+          `| ${String(y.no[ERP_BLANK]).padStart(9)} ${String(y.no[DIFFER]).padStart(8)}`,
+      );
+    }
+    log(
+      `VARIANTS — on the ORDERS the factory builds from (SO + PO): ${orderWork} axis values the book states and ` +
+        `a PROCEEDED order does not carry, and ${orderDiffer} where both sides state something DIFFERENT. ` +
+        `Across all five types the same figures are ${work} and ${differ}; the difference is delivery orders and ` +
+        "invoices, which mirror a build rather than decide one and mostly carry no variants at all — filling those " +
+        "is not work anyone asked for. An unconfirmed order's blank is not counted either: " +
+        "还没proceed还没确认的就可以直接放空的.",
+    );
+  }
+}
 
 /* ── one-screen verdict ──────────────────────────────────────────────────── */
 plain("");
