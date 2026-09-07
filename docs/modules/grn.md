@@ -473,6 +473,45 @@ matches in this module's chain: `0082_scm_fx_landed_cost.sql`,
 `0154_scm_oversell_retrocost.sql`, `0057_scm_dropship_do.sql`. Do not trust a bare
 "migration NNNN" in a comment without checking the filename.
 
+### The migrated receipt's WAREHOUSE is copied from the book, not derived (2026-09-08)
+
+The owner reads the receiving location on every goods receipt. Until 2026-09-08
+the migrated ones did not carry AutoCount's: both writers COMPUTED it from the
+purchase order — `create-migrated-documents.mjs:151`
+(`g.items[0].warehouse_id ?? g.po.purchase_location_id`) and
+`reshape-migrated-grns.mjs:653` (the same rule in the pair-grain shape). A
+migration copies; it does not compute.
+
+`backend/scripts/lib/ac-gr-location.mjs` is now the one place that answers "where
+did AutoCount put these goods". Three rules live there and all three are load-bearing:
+
+1. **Only real `GRDTL` rows count.** `data/ac-stock-layers.json.gz` carries
+   `{ItemCode, Location, SrcDoc, Src:'GR'}` and looks like a receipt location; it
+   is where the units are NOW. Of 274 cells carried by both it and a real `GRDTL`
+   row, 16 disagree and **every one of the 16 moves KL/PG to a DISPLAY or SERVICE
+   location** — a showroom transfer after the receipt. The layers are excluded.
+2. **The location map is IMPORTED**, never re-typed — `SALESLOC` from
+   `lib/ac-stock-compare.mjs`. The book writes `PG`; the ERP calls it
+   `PG WAREHOUSE`. A second copy of a location map is how stock silently moves
+   between branches.
+3. **A miss is UNKNOWN, not agreement.** The GR export only started selecting
+   `GRDTL.Location` on 2026-09-08 (`export-ac-reimport.py`, `grrefs`), so older
+   cuts answer for part of the corpus. The writer falls back to the derivation
+   and says so in its log; it never reports a fallback as a copy. An ambiguous
+   receipt — two locations, and `scm.grn_items` has no warehouse column — falls
+   back rather than taking the first.
+
+Measured 2026-09-08 by the resolver itself: of 214 in-scope AutoCount receipts the
+book can answer for **82**, and **all 82 equal the derived value — 0 differ**
+(238 of 1,019 reference rows, 97 of 400 receipt x order pairs, same result). Of
+the rest, 129 have no GRDTL location on this cut and **3 used more than one
+location for one receipt** — `GR-003512` (KL + SRW), `GR-004812` (KL + PG),
+`GR-005062` (KL + PG + SRW) — which the header cannot represent and the resolver
+refuses by name. 0 of 318 in-scope purchase orders have received lines in more
+than one location. Read-only probe: `check-gr-receipt-location.mjs` + Actions ->
+**GR receiving location check (read-only)**. Rule pinned by
+`backend/tests/acGrLocation.test.mjs`. Ledger `0677`.
+
 ### `grn_items.variants` is a SNAPSHOT, and nothing sweeps it (2026-08-11)
 
 `grn_items.variants` is copied from the parent PO line at receipt

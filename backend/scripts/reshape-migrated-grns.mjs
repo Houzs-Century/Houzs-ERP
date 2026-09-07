@@ -138,6 +138,9 @@ import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 
 import { buildScope, decodeSnapshot } from "./lib/ac-scope.mjs";
+/* The receiving warehouse is the BOOK'S, not the purchase order's. One rule,
+   one location map — see the header of lib/ac-gr-location.mjs. */
+import { loadBookGrLocations, resolveAcReceiptLocation } from "./lib/ac-gr-location.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const DATA = path.join(here, "data");
@@ -292,6 +295,11 @@ async function main() {
   say(`  pair documents by receipt year: ${Object.entries(years).sort().map(([y, c]) => `${y} ${c}`).join("   ")}   (${edges.pairs.size} documents)`);
 
   /* ── the ERP side ───────────────────────────────────────────────────────── */
+  /* The receiving warehouse is COPIED from the book where the book can answer.
+   lib/ac-gr-location.mjs owns that read and the SHARED location map; its header
+   says why a surviving stock LAYER is not a receipt location. */
+  const warehouses = await sql`SELECT id::text AS id, code, name FROM scm.warehouses WHERE company_id = ${CO}`;
+  const bookLoc = loadBookGrLocations(path.join(here, "data"));
   const pos = await sql`SELECT id::text AS id, po_number, linked_ac_docno AS ac, supplier_id::text AS supplier_id,
       purchase_location_id::text AS purchase_location_id, currency::text AS currency
     FROM scm.purchase_orders WHERE company_id = ${CO} AND linked_ac_docno IS NOT NULL`;
@@ -650,9 +658,29 @@ async function main() {
   for (const d of plan) {
     d.rows = lineRows(d);
     d.total = d.rows.reduce((s, r) => s + r.lineTotal, 0);
-    d.warehouse = d.items.find((i) => i.poi?.warehouse_id)?.poi.warehouse_id ?? d.erpPo.purchase_location_id;
+    /* THE BOOK'S LOCATION FIRST. The old rule — the first purchase-order line's
+       warehouse, else the ORDER's location — is a DERIVATION, and a migration
+       copies rather than computes; a warehouse can receive into a location the
+       order did not name. Where the committed cuts carry AutoCount's own GRDTL
+       location we copy it; where they do not (the GR export only started
+       selecting the column on 2026-09-08) we fall back and COUNT it, because a
+       miss means the book was never asked, not that it agrees. */
+    const bl = resolveAcReceiptLocation([d.gr], d.items.map((i) => (i.poi ? i.poi.item_code : i.book.itemKey)), bookLoc, warehouses);
+    d.warehouseFrom = bl.warehouseId ? "book" : "purchase order";
+    d.warehouseWhy = bl.why;
+    d.bookLocation = bl.bookLocation;
+    d.warehouse = bl.warehouseId ?? d.items.find((i) => i.poi?.warehouse_id)?.poi.warehouse_id ?? d.erpPo.purchase_location_id;
     moneyAfter += d.total;
   }
+  rule("RECEIVING LOCATION — copied where the book can answer");
+  const locCopied = plan.filter((d) => d.warehouseFrom === "book").length;
+  log(`LOCATION — ${locCopied} of ${plan.length} documents take the warehouse from AutoCount's own receipt; ${plan.length - locCopied} fall back to the purchase order.`);
+  say(`  Book sources on this cut: ${bookLoc.sources.join("; ") || "NONE"}.`);
+  say("  A fallback means the book was NEVER ASKED, not that it agrees — export-ac-reimport.py's");
+  say("  grrefs section only started selecting GRDTL.Location on 2026-09-08, so an older cut answers");
+  say("  for part of the corpus. Re-cut it and re-run this to raise the copied count.");
+  for (const d of plan.filter((x) => x.warehouseFrom !== "book").slice(0, 5)) say(`    ${d.gr} / ${d.po}: ${d.warehouseWhy}`);
+
   rule("MONEY — carried, never recomputed");
   log(`MONEY — the migrated receipts hold RM ${(moneyBefore / 100).toFixed(2)} today; this plan writes RM ${(moneyAfter / 100).toFixed(2)}.`);
   say("  Nothing here decides a price. `stamp-migrated-source-prices.mjs` owns that — it applied 32 lines to");
