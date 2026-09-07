@@ -416,10 +416,21 @@ gives every purchase-invoice gap a name. A diagnostic that computed "what we
 would bill" its own way would explain its own copy rather than the converter, so
 there is one statement of it and two callers.
 
+**A CANCELLED migrated receipt is excluded from that loader, since 2026-09-07.**
+`backend/scripts/reshape-migrated-grns.mjs` retires a superseded migrated receipt
+by flipping its status rather than deleting it, because the owner's standing rule
+is never delete, only cancel. From that day a `migrated_no_stock` receipt can be
+a retired one, and a retired receipt must not offer its lines up to be invoiced a
+second time beside the live document that replaced it.
+
 Note the asymmetry worth remembering: `scm.grns.linked_ac_docno` holds the
 **PO's** AutoCount number, not the receipt's, despite migration 0276's own
 comment. A convert transfer pushed from a migrated GRN would therefore also name
-the wrong source document.
+the wrong source document. The RECEIPT's number now has its own column,
+`scm.grns.linked_ac_gr_docno` (migration
+`20260907T2345_grn_linked_ac_gr_docno.sql`) — a new column rather than a
+re-pointing, because six scripts read the old one as the purchase order's
+number. `docs/modules/grn.md` section 4d has the full shape.
 
 ### What each side is composed FROM
 
