@@ -1,0 +1,43 @@
+name: SO version provenance (read-only)
+
+# Answers "what did the ERP-side edits on the 81 conflicted sales orders
+# actually change?" without anyone opening a SQL console.
+#
+# sync-ac-delta.mjs refuses to write an AutoCount change into an ERP order when
+# `version > 1`, calling that "a person edited this order". The owner disputes
+# that reading. The evidence lives only in production, so the check runs here
+# and nobody handles the credential.
+#
+# Manual trigger only — it is a question, not a gate, and a production DB read
+# must never become routine CI noise.
+on:
+  workflow_dispatch:
+
+# Deliberately NOT in the deploy concurrency group: this writes nothing and must
+# never queue behind — or displace — a release.
+concurrency:
+  group: so-version-provenance
+  cancel-in-progress: true
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-so-version-provenance.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first
