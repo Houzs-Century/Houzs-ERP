@@ -31,30 +31,38 @@
  *      route for these documents, and the size of the exposure is measured
  *      here rather than asserted.
  *
- * ── WHAT THIS DELIBERATELY REFUSES TO DO ────────────────────────────────────
- * It does NOT report a per-receipt QUANTITY, and the reason is the finding:
+ * ── WHICH SNAPSHOT ANSWERS WHICH QUESTION ───────────────────────────────────
+ * Four committed extracts touch goods receipts and they are not interchangeable.
+ * Reading the wrong one produces a confident wrong answer, which this check has
+ * already done once (docs/bugs/0673, docs/bugs/0674).
  *
- *   - `ac-gr-refs.json.gz` is the only snapshot carrying a GR number, a GR date
- *     and a quantity together, and its query LEFT JOINs PODTL on
+ *   - `ac-convert-edges.json.gz` is the ONE that carries per-receipt line truth,
+ *     and it is what makes option A buildable with no fresh AutoCount pull. Its
+ *     own `grain` field states it: "one row per AutoCount DocNo (headers) and
+ *     per DtlKey (lines); NO filtering". GR headers give the receipt DATE and
+ *     the cancelled flag; GR lines give the item code, the quantity and the
+ *     purchase order the line was raised from. No join to fan it out, no
+ *     aggregate to flatten it. Rows are ARRAYS, positional per `line_fields` /
+ *     `header_fields` — take the index from those arrays, never hard-code one.
+ *   - `ac-gr-refs.json.gz` is used here for the (PO, receipt) PAIR SET and the
+ *     receipt date, and for nothing else. Its query LEFT JOINs PODTL on
  *     (DocKey, ItemCode) and PIDTL on (FromDocNo, ItemCode)
- *     (export-ac-reimport.py). Both fan out. Measured on the committed file:
- *     1,019 rows but only 597 distinct, 422 byte-identical duplicates, and 54
- *     groups where ONE receipt line maps to more than one purchase-order line.
- *     GRDTL carries no detail key in the SELECT, so a genuine duplicate receipt
- *     line and a join artefact are indistinguishable. Summing GrQty overstates.
+ *     (export-ac-reimport.py), and both fan out: 1,019 rows but only 597
+ *     distinct, 422 byte-identical duplicates, 54 groups where one receipt line
+ *     maps to more than one purchase-order line. It carries no GRDTL detail key,
+ *     so a genuine duplicate receipt line and a join artefact cannot be told
+ *     apart and summing `GrQty` overstates. The PAIR SET survives that intact —
+ *     a LEFT JOIN duplicates rows, it cannot invent a PoNo or a GrNo, and those
+ *     two come from the INNER joins. It is cross-checked against
+ *     ac-convert-edges below rather than trusted.
  *   - `ac-fidelity-gr-by-po-item.json.gz` is honest but AGGREGATED over every
  *     receipt of a (PO, ItemCode) cell — it carries no GR number at all, so it
- *     cannot split one PO's receipts into the documents that made them.
- *   - The book itself cannot supply the PO LINE: `export-ac-fidelity-truth.py`
- *     measures `SUM(CASE WHEN ISNULL(FromDocDtlKey,0) <> 0 ...)` over GRDTL and
- *     `ac-fidelity-manifest.json` records the answer — 0 of 21,001 rows. A
- *     receipt line names its purchase order (FromDocNo) and its ItemCode, and
- *     nothing finer.
- *
- * The (PO, GR) PAIR SET is used, and only that, because it survives the fan-out
- * intact: both LEFT JOINs duplicate rows, neither can invent a PoNo or a GrNo —
- * those come from the two INNER joins. The pair count is cross-checked against
- * the reconcile's independently-computed in-scope population below.
+ *     cannot split one purchase order's receipts into the documents that made
+ *     them. `check-gr-fidelity.mjs` uses it for the contents comparison at that
+ *     grain; this check does not use it.
+ *   - `ac-fidelity-manifest.json` records the one thing the BOOK genuinely does
+ *     not hold: `grdtl_rows_with_line_key` is 0 of 21,001. A receipt line names
+ *     its purchase order and its ItemCode, and nothing finer.
  *
  * READ-ONLY. SELECT only — no DDL, no writes, no transaction. Exit 0 for every
  * legitimate answer; non-zero only when the database is unreachable or the
@@ -171,12 +179,39 @@ async function main() {
 
   // ── THE GAP ────────────────────────────────────────────────────────────────
   rule("THE GAP — what option A would change");
+  /* THE SNAPSHOT'S SCOPE IS NARROWER THAN THE ERP'S, and comparing the two sets
+     without saying so manufactures a gap. ac-gr-refs is exported
+     `WHERE po.DocNo IN (outstanding POs + SO-linked POs)`, and that set is
+     RECOMPUTED at export time — a purchase order that has since been closed
+     drops out of it. The ERP's migrated set was frozen at import. So an ERP
+     receipt whose purchase order is outside the export scope is a document the
+     snapshot has NO ROWS ABOUT; it is not evidence the book lacks a receipt.
+     The two are separated below rather than summed. */
+  const scopeRows = [...gz("ac-outstanding-po.json.gz"), ...gz("ac-so-linked-pos.json.gz")];
+  const exportScope = new Set(scopeRows.map((r) => n(r.DocNo)));
   const erpPoAc = new Set(grns.map((g) => n(g.po_ac_docno)).filter(Boolean));
   const bookPoInErp = [...poGr.keys()].filter((po) => erpPoAc.has(po));
-  const wantPairs = [...pairs].filter((p) => erpPoAc.has(p.split("|")[0]));
-  notice(`SHAPE A — ${wantPairs.length} documents where the ERP holds ${grns.length} today (+${wantPairs.length - grns.length}), over the ${bookPoInErp.length} purchase orders both sides agree on`);
-  say(`  book purchase orders with a receipt that the ERP does NOT hold a GRN for: ${poGr.size - bookPoInErp.length}`);
-  say(`  ERP migrated GRNs whose purchase order the book shows NO receipt for:     ${grns.length - new Set(grns.filter((g) => poGr.has(n(g.po_ac_docno))).map((g) => g.id)).size}`);
+  const shared = new Set(bookPoInErp);
+  const wantPairs = [...pairs].filter((p) => shared.has(p.split("|")[0]));
+  const erpOnShared = grns.filter((g) => shared.has(n(g.po_ac_docno))).length;
+  say(`snapshot export scope (outstanding + SO-linked purchase orders): ${exportScope.size} purchase orders`);
+  say(`ERP migrated goods receipts sit on ${erpPoAc.size} purchase orders; ${bookPoInErp.length} of those are in that scope AND have a receipt in it`);
+  notice(`SHAPE A — over the ${bookPoInErp.length} purchase orders both sides can speak about, the ERP holds ${erpOnShared} documents and the book has ${wantPairs.length} (+${wantPairs.length - erpOnShared})`);
+
+  const erpUnspeakable = grns.filter((g) => !poGr.has(n(g.po_ac_docno)));
+  const outOfScope = erpUnspeakable.filter((g) => !exportScope.has(n(g.po_ac_docno)));
+  const inScopeNoReceipt = erpUnspeakable.filter((g) => exportScope.has(n(g.po_ac_docno)));
+  say(`  ERP migrated GRNs the snapshot cannot speak about: ${erpUnspeakable.length} of ${grns.length}`);
+  say(`     ...because their purchase order is OUTSIDE the export scope:   ${outOfScope.length}  ← scope artefact, not a gap`);
+  say(`     ...purchase order IS in scope but the book shows NO receipt:   ${inScopeNoReceipt.length}  ← a real disagreement if non-zero`);
+  if (inScopeNoReceipt.length) {
+    say("     first 10:");
+    for (const g of inScopeNoReceipt.slice(0, 10)) say(`       ${g.grn_number}  (PO ${g.po_number} = AutoCount ${g.po_ac_docno})`);
+  }
+  const bookPoNotInErp = [...poGr.keys()].filter((po) => !erpPoAc.has(po));
+  say(`  book purchase orders with a receipt but NO ERP migrated GRN: ${bookPoNotInErp.length} of ${poGr.size}`);
+  say("     Expected where the purchase order was never imported, or was imported with");
+  say("     received_qty 0 — create-migrated-documents.mjs builds only from received_qty > 0.");
 
   // ── STOCK SAFETY ───────────────────────────────────────────────────────────
   rule("STOCK — would reshaping these documents move inventory?");
@@ -227,30 +262,105 @@ async function main() {
   say("  → A direct SQL status flip cancels these documents WITHOUT that reversal.");
   say("    The route is the unsafe path, not the outcome.");
 
+  // ── THE BOOK, AT LINE GRAIN ────────────────────────────────────────────────
+  /* ac-convert-edges.json.gz is the extract that makes shape A buildable, and
+     the first version of this check MISSED it and said the data did not exist.
+     Its grain is stated in the file: "one row per AutoCount DocNo (headers) and
+     per DtlKey (lines); NO filtering". So it holds every GRDTL row with its GR
+     document, that document's date and cancelled flag, the item code, the
+     quantity, and the purchase order the line was raised from — with no join to
+     fan it out and no aggregate to flatten it.
+
+     Rows are ARRAYS, positional per line_fields / header_fields. Read the index
+     out of those arrays; never hard-code a position. */
+  rule("THE BOOK AT LINE GRAIN — ac-convert-edges, and whether the two extracts agree");
+  const ce = gz("ac-convert-edges.json.gz");
+  const LF = ce.line_fields, HF = ce.header_fields;
+  const cD = LF.indexOf("docNo"), cQ = LF.indexOf("qty"), cIT = LF.indexOf("itemKey");
+  const cFT = LF.indexOf("fromDocType"), cFN = LF.indexOf("fromDocNo"), cFDK = LF.indexOf("fromDocDtlKey");
+  const hD = HF.indexOf("docNo"), hDate = HF.indexOf("docDate"), hC = HF.indexOf("cancelled");
+  const grHead = new Map(ce.types.GR.headers.map((h) => [n(h[hD]), { date: n(h[hDate]), cancelled: n(h[hC]) }]));
+  say(`snapshot ac-convert-edges.json.gz — exported ${ce.exported_at}, ${ce.counts.GR.headers} GR headers / ${ce.counts.GR.lines} GR lines, unfiltered`);
+
+  const cePairs = new Set();
+  let ceLines = 0, ceUnits = 0, ceCancelledSkipped = 0;
+  const cePoGr = new Map();
+  for (const r of ce.types.GR.lines) {
+    if (n(r[cFT]) !== "PO") continue;
+    const po = n(r[cFN]);
+    if (!poGr.has(po)) continue;              // in-scope purchase orders only
+    const grNo = n(r[cD]);
+    const h = grHead.get(grNo);
+    if (!h || h.cancelled !== "F") { ceCancelledSkipped += 1; continue; }
+    cePairs.add(`${po}|${grNo}`);
+    if (!cePoGr.has(po)) cePoGr.set(po, new Set());
+    cePoGr.get(po).add(grNo);
+    ceLines += 1;
+    ceUnits += Number(r[cQ] || 0);
+  }
+  const bothPairs = [...pairs].filter((p) => cePairs.has(p)).length;
+  notice(`BOOK AT LINE GRAIN — ${ceLines} receipt lines, ${ceUnits} units, over the same ${cePoGr.size} in-scope purchase orders`);
+  say(`  (PO, receipt) pairs: ac-gr-refs ${pairs.size}, ac-convert-edges ${cePairs.size}, in BOTH ${bothPairs}`);
+  say(`  → two independently-cut extracts, ${bothPairs === pairs.size && bothPairs === cePairs.size ? "IDENTICAL" : "DISAGREEING — resolve before building on either"} on the pair set.`);
+  say(`  cancelled receipt lines skipped: ${ceCancelledSkipped}`);
+  const ceHist = {};
+  for (const [, s] of cePoGr) ceHist[s.size] = (ceHist[s.size] ?? 0) + 1;
+  say(`  purchase orders by receipts, from this extract: ${histogram(ceHist)}`);
+  say(`  ERP holds ${lineCount} migrated GRN lines carrying ${units} units against the book's ${ceLines} / ${ceUnits}`);
+  say("  Those totals are NOT expected to match line-for-line: the ERP line count follows");
+  say("  the PURCHASE ORDER's lines (one GRN line per received PO line) while the book's");
+  say("  follows the RECEIPT's lines. The UNIT totals are the comparable pair.");
+
   // ── FEASIBILITY ────────────────────────────────────────────────────────────
-  rule("FEASIBILITY — what a shape-A writer still needs and does not have");
+  rule("FEASIBILITY — what a shape-A writer has, and the one thing it does not");
   const fid = JSON.parse(fs.readFileSync(path.join(here, "data", "ac-fidelity-manifest.json"), "utf8"));
-  say(`  GRDTL rows in the book:                       ${fid.grdtl_rows}`);
-  say(`  ...of which carry a FromDocDtlKey (PO line):  ${fid.grdtl_rows_with_line_key}`);
-  say("  → The book cannot say WHICH purchase-order line a receipt line received.");
-  say("    It gives FromDocNo (the purchase order) and ItemCode, and nothing finer.");
-  say("    Where a purchase order carries the same ItemCode on two lines, the split is");
-  say("    not recoverable from AutoCount at all — the PO-009633 trap already recorded");
-  say("    in export-ac-fidelity-truth.py.");
+  const ceKeyed = ce.types.GR.lines.filter((r) => Number(r[cFDK] || 0) !== 0).length;
+  say("  HAS, from ac-convert-edges, with no fresh AutoCount pull:");
+  say("    the receipt number, its DATE and its cancelled flag (headers)");
+  say("    one row per GRDTL detail key, with item code, quantity and source purchase order");
   say("");
-  say("  Per-receipt QUANTITY is not in any committed snapshot:");
-  say("    ac-gr-refs.json.gz         has GrNo + GrDate + GrQty, but its PODTL/PIDTL LEFT");
-  say("                               JOINs fan out and it carries no GRDTL detail key,");
-  say("                               so its quantities cannot be de-duplicated honestly.");
-  say("    ac-fidelity-gr-by-po-item  is aggregated over every receipt of a (PO, item)");
-  say(`                               cell (${fid.exported_at}) and holds no GR number.`);
+  say("  DOES NOT HAVE — the purchase-order LINE a receipt line received:");
+  say(`    GRDTL rows carrying a FromDocDtlKey — ac-fidelity-manifest: ${fid.grdtl_rows_with_line_key} of ${fid.grdtl_rows}`);
+  say(`                                        — ac-convert-edges:     ${ceKeyed} of ${ce.counts.GR.lines}`);
+  say("    Two extracts of different vintages agree that the column is empty book-wide.");
+  say("    A receipt line names its purchase order and its ItemCode, and nothing finer, so");
+  say("    the ERP line must be resolved by ItemCode. That is exact where a purchase order");
+  say("    carries each code once, and NOT RECOVERABLE where it carries one twice — the");
+  say("    PO-009633 trap recorded in export-ac-fidelity-truth.py.");
   say("");
-  say("  A shape-A writer needs ONE clean export, one row per GRDTL detail key:");
-  say("    SELECT gr.DocNo, gr.DocDate, g.DtlKey, g.FromDocNo, g.ItemCode,");
-  say("           g.Qty, g.UnitPrice, g.Description, g.Location");
-  say("      FROM GRDTL g JOIN GR gr ON gr.DocKey = g.DocKey");
-  say("     WHERE gr.Cancelled = 'F' AND g.FromDocType = 'PO'");
-  say("    — no LEFT JOIN, no GROUP BY, no correlated subquery.");
+  /* HOW BIG IS THAT SET? Printed rather than described, because "some purchase
+     orders are ambiguous" is not something a decision can be made on. Measured
+     off the same fresh extract, so it moves with the book. */
+  const poLinesByDoc = new Map();
+  for (const r of ce.types.PO.lines) {
+    const d = n(r[cD]);
+    if (!poGr.has(d)) continue;
+    if (!poLinesByDoc.has(d)) poLinesByDoc.set(d, []);
+    poLinesByDoc.get(d).push(r);
+  }
+  const ambiguousPos = new Set();
+  let ambiguousPoLines = 0;
+  for (const [po, ls] of poLinesByDoc) {
+    const seen = new Map();
+    for (const l of ls) { const k = n(l[cIT]); seen.set(k, (seen.get(k) ?? 0) + 1); }
+    const dup = [...seen.values()].filter((v) => v > 1);
+    if (dup.length) { ambiguousPos.add(po); ambiguousPoLines += dup.reduce((a, b) => a + b, 0); }
+  }
+  let ambLines = 0, ambUnits = 0;
+  for (const r of ce.types.GR.lines) {
+    if (n(r[cFT]) !== "PO") continue;
+    const po = n(r[cFN]);
+    if (!ambiguousPos.has(po)) continue;
+    const h = grHead.get(n(r[cD]));
+    if (!h || h.cancelled !== "F") continue;
+    ambLines += 1; ambUnits += Number(r[cQ] || 0);
+  }
+  say(`  in-scope purchase orders present in this extract: ${poLinesByDoc.size} of ${poGr.size}`);
+  say(`    every line a UNIQUE item code — receipt line resolves exactly: ${poLinesByDoc.size - ambiguousPos.size}`);
+  say(`    same item code on 2+ lines — NOT decidable from the book:      ${ambiguousPos.size}  (${ambiguousPoLines} purchase-order lines)`);
+  notice(`SHAPE A LINE RESOLUTION — ${ceLines - ambLines} of ${ceLines} receipt lines (${ceUnits - ambUnits} of ${ceUnits} units) resolve to exactly one purchase-order line; ${ambLines} lines / ${ambUnits} units sit on a purchase order with a duplicate item code and need a STATED rule`);
+  say("  A writer must name that rule and report the set it applied to. Silently taking");
+  say("  the first matching line is the PO-009633 defect being re-created deliberately.");
 
   await sql.end();
   say("");
