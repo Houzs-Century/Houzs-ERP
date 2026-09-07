@@ -416,6 +416,22 @@ gives every purchase-invoice gap a name. A diagnostic that computed "what we
 would bill" its own way would explain its own copy rather than the converter, so
 there is one statement of it and two callers.
 
+That diagnostic answers in TWO lanes, because "the ERP holds this invoice" means
+two different things with different remedies. The POINTER lane is
+`scm.purchase_orders.linked_ac_pinv_docnos` — a cross-reference written by
+`stamp-ac-grn-refs.mjs`, carrying no money and creating no document, and it is
+what `check-ac-erp-reconcile.mjs` counts as presence. The DOCUMENT lane is a real
+`scm.purchase_invoices` row, gated on our total equalling AutoCount's to the sen.
+Reading a closed pointer gap as a mirrored invoice is the mistake the two lanes
+exist to prevent: on 2026-09-07 sixteen of twenty-one reported gaps were pointers
+the stamp had declined to write (`docs/bugs/0674-*`), and closing them did not
+create a single invoice document.
+
+Neither the currency nor the exchange rate is read from
+`scm.purchase_orders` — it has no `exchange_rate` column, and a document's own
+currency lives on the AutoCount header, which `ac-scope.mjs`'s `currencyVerdict`
+is the one reader of (`docs/bugs/0676-*`).
+
 **A CANCELLED migrated receipt is excluded from that loader, since 2026-09-07.**
 `backend/scripts/reshape-migrated-grns.mjs` retires a superseded migrated receipt
 by flipping its status rather than deleting it, because the owner's standing rule

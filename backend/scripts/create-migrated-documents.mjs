@@ -45,6 +45,11 @@ import postgres from "postgres";
 import {
   buildMigratedDoPlan, indexSoLines, insertMigratedDo, loadAcErpItemMap,
 } from "./lib/migrated-do-writer.mjs";
+/* The delivery location goes on the HEADER (owner 2026-09-07, "记在单头就好").
+   The map is the SHARED one the PO importer's whId() uses — a second copy of a
+   location map is how stock silently moves between branches — and the resolution
+   onto a warehouse row is the tested spec of migration 0309's backfill. */
+import { mixedLocationDocs, resolveAcDeliveryLocation } from "./lib/ac-do-location.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -319,12 +324,41 @@ async function doDos() {
   log("");
   if (!APPLY) { log("DRY-RUN — set APPLY=1 to create. No inventory movement is written in either mode."); return; }
 
+  /* ── THE DELIVERY LOCATION, ONTO THE HEADER ──────────────────────────────
+     The book's own header field first; where the header snapshot runs behind
+     the book, the document's own lines and ONLY when they agree unanimously.
+     Anything else stays NULL and is NAMED — an unresolved location must be
+     visibly absent, never a company-blind default, because a wrong warehouse
+     reads as another branch's stock. backfill-migrated-do-warehouse.mjs applies
+     the same rule to the documents already written. */
+  const hdrLoc = new Map();
+  for (const h of gz("ac-fidelity-do-headers.json.gz")) {
+    const v = (h.SalesLocation || "").trim();
+    if (v) hdrLoc.set(h.DocNo, v);
+  }
+  const lineLocs = new Map();
+  for (const r of rows) {
+    const v = (r.Location || "").trim();
+    if (!v) continue;
+    if (!lineLocs.has(r.DoNo)) lineLocs.set(r.DoNo, new Set());
+    lineLocs.get(r.DoNo).add(v);
+  }
+  const warehouses = await sql`SELECT id, code, name FROM scm.warehouses WHERE company_id = ${CO}`;
+  const mixedDocs = mixedLocationDocs(lineLocs);
+  log(`── delivery location: documents in this cut whose lines span TWO locations: ${mixedDocs.length}`);
+  for (const m of mixedDocs) log(`      MIXED ${m.doc}: lines say ${m.locations.join(" + ")}; header says ${hdrLoc.get(m.doc) ?? "(no header row)"} — the header wins, recorded as not unanimous`);
+
   // one AutoCount delivery note = one ERP DO, so the number carries over intact
   let made = 0;
+  let noWh = 0;
   for (const d of plan) {
-    await insertMigratedDo(sql, d, { companyId: CO, sysUser: SYS_USER, debtorFallback: soDebtor.get(d.so) ?? null });
+    const where = resolveAcDeliveryLocation(d.doNo, hdrLoc, lineLocs, warehouses);
+    if (!where.warehouseId) { noWh += 1; log(`   ${d.doNo}: no delivery warehouse stamped — ${where.why}`); }
+    await insertMigratedDo(sql, d, { companyId: CO, sysUser: SYS_USER, debtorFallback: soDebtor.get(d.so) ?? null,
+      warehouseId: where.warehouseId, salesLocation: where.salesLocation });
     made += 1;
   }
+  log(`delivery warehouse stamped on ${made - noWh} of ${made} new document(s); ${noWh} left NULL and named above`);
   log(`DONE. DOs created: ${made}. No inventory movement written — by design.`);
 }
 

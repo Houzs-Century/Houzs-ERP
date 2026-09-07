@@ -92,7 +92,7 @@ const mirrors = await sql`
 const mirroredBy = new Map(mirrors.map((r) => [String(r.linked_ac_docno).trim(), r]));
 
 const pos = await sql`
-  SELECT po_number, linked_ac_docno, currency, exchange_rate,
+  SELECT po_number, linked_ac_docno,
          COALESCE(linked_ac_grn_docnos, '{}') AS ac_grs,
          COALESCE(linked_ac_pinv_docnos, '{}') AS ac_pis
   FROM scm.purchase_orders WHERE company_id = ${CO} AND linked_ac_docno IS NOT NULL`;

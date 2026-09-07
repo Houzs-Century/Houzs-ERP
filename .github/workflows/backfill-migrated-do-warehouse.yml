@@ -1,0 +1,69 @@
+name: Stamp the delivery warehouse on migrated DO headers (PLAN gated)
+
+# Every migrated delivery order was written by lib/migrated-do-writer.mjs, which
+# names eleven header columns and none of the location ones — so warehouse_id
+# and sales_location are NULL across the whole migrated corpus. The ERP holds
+# the delivery but cannot say which branch shipped it, while AutoCount has known
+# all along.
+#
+# Owner ruling 2026-09-07, "记在单头就好" — the location goes on the HEADER, not
+# on every line. Measured before asking: the line's Location equals its header's
+# SalesLocation on 46,182 of 46,194 non-blank book lines, and only 2 of 11,134
+# documents span two locations (DO-000140, DO-000153 — both NAMED in the run
+# output, neither in the migrated corpus).
+#
+# Location comes from the book's own header snapshot; where that snapshot runs
+# behind (19 of the cutover cut's 84), from the document's own lines and ONLY
+# when they are unanimous. Anything else is REPORTED and left alone. The map is
+# the SHARED SALESLOC from lib/ac-stock-compare.mjs — the one the PO importer
+# already uses — resolved by the tested lib/resolve-warehouse-location.mjs.
+#
+# Writes two columns, only where warehouse_id IS NULL. No line, quantity, money,
+# status or inventory movement is touched; the read-back asserts that these
+# documents still carry ZERO movements. PLAN unless mode=apply, which also needs
+# the confirm phrase. Re-running is inert.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (default) or apply"
+        required: false
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: 'For apply only — type: I HAVE REVIEWED THE DRY-RUN'
+        required: false
+        default: ""
+        type: string
+      company:
+        description: "company_id (default 1 — Houzs Century)"
+        required: false
+        default: "1"
+        type: string
+
+concurrency:
+  group: backfill-migrated-do-warehouse
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/backfill-migrated-do-warehouse.mjs
+        env:
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY_ID: ${{ inputs.company }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

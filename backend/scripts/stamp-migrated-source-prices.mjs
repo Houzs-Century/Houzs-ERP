@@ -542,9 +542,31 @@ async function main() {
     for (const a of accepted) {
       const gr = a.docs.filter((n) => byId.get(n).kind === 'GR').map((n) => byId.get(n).id);
       const dd = a.docs.filter((n) => byId.get(n).kind === 'DO').map((n) => byId.get(n).id);
+      /* SUMMED THE WAY THE INVOICE GATE SUMS IT, not off `line_total_sen`.
+         The first version of this check read SUM(line_total_sen) and cried
+         failure on 5 of 24 invoices that were in fact correct: those groups
+         contain lines the cutover left with a unit price and a line_total_sen
+         of 0, and `planMigratedInvoices` never reads line_total_sen — its rule
+         is `max(0, round(qty x unit) - discount)` over the lines with qty > 0
+         (migrated-chain.ts `lineValueSen`). A verify that computes a different
+         number from the thing it is verifying reports defects that are its own
+         (docs/bugs/0594). Proven by the converter's own dry-run immediately
+         afterwards: all five appear in WOULD CREATE at AutoCount's total. */
       const sums = [
-        ...(gr.length ? await check`SELECT COALESCE(SUM(line_total_sen), 0)::bigint AS t FROM scm.grn_items WHERE grn_id = ANY(${gr}::uuid[])` : []),
-        ...(dd.length ? await check`SELECT COALESCE(SUM(line_total_sen), 0)::bigint AS t FROM scm.delivery_order_items WHERE delivery_order_id = ANY(${dd}::uuid[])` : []),
+        ...(gr.length ? await check`
+          SELECT COALESCE(SUM(GREATEST(0,
+                   ROUND((i.qty_accepted - COALESCE(i.invoiced_qty, 0) - COALESCE(i.returned_qty, 0)) * i.unit_price_sen)
+                   - COALESCE(i.discount_sen, 0))), 0)::bigint AS t
+            FROM scm.grn_items i
+           WHERE i.grn_id = ANY(${gr}::uuid[])
+             AND (i.qty_accepted - COALESCE(i.invoiced_qty, 0) - COALESCE(i.returned_qty, 0)) > 0` : []),
+        ...(dd.length ? await check`
+          SELECT COALESCE(SUM(GREATEST(0,
+                   ROUND(i.qty * COALESCE(NULLIF(i.unit_price_sen, 0), s.unit_price_sen, 0))
+                   - COALESCE(i.discount_sen, 0))), 0)::bigint AS t
+            FROM scm.delivery_order_items i
+            LEFT JOIN scm.mfg_sales_order_items s ON s.id = i.so_item_id
+           WHERE i.delivery_order_id = ANY(${dd}::uuid[]) AND i.qty > 0` : []),
       ];
       const total = sums.reduce((t, r) => t + Number(r.t), 0);
       const ok = total === a.acTotal;

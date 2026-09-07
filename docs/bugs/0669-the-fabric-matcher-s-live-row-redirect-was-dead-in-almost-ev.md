@@ -66,4 +66,41 @@ column, and changing fourteen scripts' behaviour at once in the middle of a
 go-live is not a safe trade for a defect whose write path is FUZZY-gated
 anyway. Decision owner: the owner, after the pairings above are confirmed.
 
-**Ref.** fix/ac-lines-match-2026-09-07, 2026-09-07.
+**APPLIED 2026-09-08, and the trap was real on the way through.** The 19 colour
+pairings were written to prod with `backfill-sofa-variants` `fuzzy=1 apply=1`
+(run [34140545099](https://github.com/hello-houzs/Houzs-ERP/actions/runs/34140545099),
+00:53 local): `company 1`, `fabric library: 951 colour rows`, `TO FILL 82`,
+`APPLIED — 82 line(s) merged`. Four of those texts would have bound to a RETIRED
+row without the `active` column, and `propose-sofa-colour-matches` says so per
+proposal:
+
+```
+"CH141-8 ARMY"  -> CH141-08   *** without `active`, the matcher would have answered CH141-8 ***
+"CH141-9 sky"   -> CH141-09   *** ... would have answered CH141-9 ***
+"BO315-4 Sand"  -> BO315-04   *** ... would have answered BO315-4-SAND ***
+"BO315-7 Peach" -> BO315-07   *** ... would have answered BO315-7 ***
+```
+
+Those four cover **18 of the 82 lines**. Independent read-back of what the run
+actually wrote: all 20 distinct colour codes in the plan are LIVE rows, and the
+plan contains **zero** retired codes.
+
+**THE DAMAGE FROM THE OTHER CALLERS IS NOW A NUMBER, NOT AN ARGUMENT.**
+`repair-superseded-colour-refs` plan against prod, same sitting:
+
+```
+fabric_colours: 951  (active 851, retired 100)
+  repairable: 16   refused: 1
+  total live lines stranded on a retired colour: 255
+       75 "CH141-1" -> "CH141-01"      50 "BO315-3" -> "BO315-03"
+       36 "BO315-1-PEARL" -> "BO315-01"  18 "M2402-4-SAND" -> "M2402-04"
+       ... 12 more mappings
+  REFUSED 1 line "AVANI 02" — "AVANI-02" is in series "AVANI", not "AVANI 02"
+```
+
+255 live lines, written by the thirteen callers that still omit the column.
+Not repaired here: it is a 255-row write in the middle of a go-live, the repair
+script and its workflow already exist, and the decision is the owner's.
+
+**Ref.** fix/ac-lines-match-2026-09-07, 2026-09-07; applied and measured
+docs/cutover-keys-and-ledger, 2026-09-08.
