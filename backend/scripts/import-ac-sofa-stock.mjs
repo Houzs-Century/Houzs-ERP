@@ -50,8 +50,42 @@
 //     physical 2-seater is a wrong stock number, and a wrong number is worse
 //     than a missing one. Pass PLACEHOLDER=1 to include them once a human has
 //     decided. They are counted and listed either way.
-//   - never creates the showroom display sofas (no PO, no configuration,
-//     AutoCount Desc2 literally "DISPLAY REF: ADJ0052/00148"). Reported only.
+//   - never creates the showroom display sofas — LIFTED 2026-09-08, see below.
+//
+// THE DISPLAY-ROOM REFUSAL, AND WHY IT IS GONE (owner ruling 2026-09-07 evening).
+// The refusal above cost 26 whole sofas: measured on the 2026-09-07 22:21 live
+// export, 17 AutoCount balance cells at a DISP location hold 26 units — 24 at
+// KL DISP, 2 at PG DISP — and the ERP held none of them. The owner's rule is
+// 「我们要的是完整的数据 加我们的规则」: the book comes across COMPLETE, and our
+// rules live in the rule layer, never as an edit to a migrated row. He
+// explicitly refused a "display, excluded from MRP" flag — 「你换不一样就代表
+// 我们的数据从 autocount 搬过来的就不一样了啊」 — a flag on the row IS a change
+// to the data.
+//
+// So section 6b opens them the way the ORDINARY balance import already opens
+// every other AutoCount balance row (import-ac-stock-balance.mjs:166-171): a
+// plain ADJUSTMENT at (binding target code, mapped warehouse, quantity), NO
+// batch, NO variant, NO marking of any kind. Nothing about the row says
+// "display" — only the warehouse does, which is what AutoCount itself says.
+//
+// This does NOT contradict the "never decompose a balance row" rule above: it
+// does not decompose anything. It writes ONE row for the book's ONE row, on the
+// ERP code the binding CSV already maps that AutoCount item to ({model}-1S) —
+// the same code import-ac-stock-balance.mjs would have used had the sofa filter
+// not held it out. No compartment is invented, because none is claimed.
+//
+// WHAT IT MEANS FOR READINESS, AND IT IS THE HONEST ANSWER. A sofa line goes
+// READY only through sofa-set-coverage.findCoveringBatch, and loadSofaBatchStock
+// reads `.not('batch_no','is',null)` — a lot with no batch is INVISIBLE to sofa
+// allocation. A display unit has no purchase order, therefore no batch, so
+// opening it can flip nothing to READY. That is correct: a showroom piece with
+// no recorded configuration is not a build anybody can ship.
+//
+// COST IS THE BOOK'S OWN ZERO, NOT A GUESS. All 17 display cells carry UTDQty 0
+// and UTDCost 0 in ac-utd-stock-cost.json.gz and appear in neither
+// ac-item-costs nor the checker's cost map (measured 2026-09-08). Migration
+// copies, never computes: they come in at cost 0 because AutoCount holds no
+// cost for them. backfill-zero-cost-lots.mjs owns that fallback lane.
 //
 // Idempotent: a (product, warehouse, batch, variant) that already carries an
 // AC_CUTOVER sofa lot is skipped, so re-running tops up rather than doubles.
@@ -62,6 +96,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 import { variantKeyMirror } from "./lib/ledger-repair-core.mjs";
+/* SHARED with check-stock-vs-autocount.mjs and check-golive-parity.mjs. The
+   location map and the binding reader must be the SAME objects the checker
+   uses, or this import writes into one warehouse and the reconcile looks for it
+   in another — the exact failure docs/stock-reconciliation.md D7 records. */
+import { SALESLOC, loadAcBinding } from "./lib/ac-stock-compare.mjs";
+import { makeModelMatcher, foldSofaPieces } from "./lib/sofa-piece-fold.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -289,6 +329,164 @@ async function main() {
   for (const p of todo.slice(0, 30)) log(`   +${p.qty} ${p.code} [${p.variantKey || "no-variant"}] batch ${p.batch} (AC ${p.acPo}) cost ${p.costSen / 100} RM`);
   if (todo.length > 30) log(`   ... and ${todo.length - 30} more`);
 
+  /* ── 6b. THE SHOWROOM DISPLAY UNITS — the book's own rows, copied ─────────
+     Owner 2026-09-07: bring them in exactly as AutoCount holds them, with no
+     marking. See the block at the top of this file for the ruling and for why
+     writing them cannot flip a single line READY.
+
+     THE CELL IS THE UNIT OF WORK, and it is compared the way the RECONCILE
+     compares it — AutoCount's whole sofas per (ERP model, warehouse) against
+     the ERP's compartment rows folded back up by lib/sofa-piece-fold.mjs. Any
+     other arithmetic here would make this import and check-stock-vs-autocount
+     disagree by construction, which is how a "fixed" cell stays red forever.
+
+     Idempotent WITHOUT a marker: the second run folds the lot the first run
+     wrote, sees the cell already at the book's number, and opens nothing. */
+  const whRows = await sql`SELECT id, code, name FROM scm.warehouses WHERE company_id = 1`;
+  const whByCode = new Map(whRows.map((w) => [norm(w.code), w]));
+  const resolveWh = (loc) => {
+    const k = norm(loc);
+    return whByCode.get(norm(SALESLOC[k] ?? k)) ?? whByCode.get(k) ?? null;
+  };
+  /* DISPLAY is not pattern-matched on the ERP warehouse NAME — the KL showroom
+     is called BALAKONG DISPLAY, so a /DISPLAY/ test on the name is luck. It is
+     read off the SHARED location map: an AutoCount location whose code ends in
+     " DISP" is a showroom, and its ERP warehouse is whatever SALESLOC says. */
+  const displayWhIds = new Set();
+  for (const [acLoc, erpCode] of Object.entries(SALESLOC)) {
+    if (!/\sDISP$/.test(norm(acLoc))) continue;
+    const w = whByCode.get(norm(erpCode));
+    if (w) displayWhIds.add(String(w.id));
+  }
+  const { byAc, sofaFurniture } = loadAcBinding(
+    fs.readFileSync(path.join(here, "data", "autocount-erp-mapping-1561.csv"), "utf8"));
+  /* The model behind an ERP piece code, and the ERP codes that actually exist.
+     A binding target the product master does not carry is REPORTED, never
+     invented — an inventory movement on a code with no product is a row no
+     screen can render and no reconcile can fold. */
+  const sofaProds = await sql`SELECT code, name FROM scm.mfg_products
+     WHERE company_id = 1 AND UPPER(COALESCE(category::text,'')) = 'SOFA'`;
+  const prodByCode = new Map(sofaProds.map((p) => [norm(p.code), p]));
+  const modelsFromBinding = new Set();
+  for (const ac of sofaFurniture) {
+    const e = norm(byAc.get(ac) ?? "");
+    if (e.endsWith("-1S")) modelsFromBinding.add(e.slice(0, -3));
+  }
+  const matchModel = makeModelMatcher(modelsFromBinding);
+
+  /* The ERP side, folded — the SAME sign arithmetic and the SAME grain as
+     check-stock-vs-autocount.mjs PART A2 (mig 0307), one row per
+     (item, warehouse, batch). scm.inventory_balances cannot be used: it drops
+     batch_no, so it cannot tell one build from another. */
+  const sofaMv = await sql`SELECT m.item_code, m.warehouse_id, COALESCE(m.batch_no,'') AS batch_no,
+      SUM(CASE
+            WHEN m.movement_type::text = 'IN'         THEN m.qty
+            WHEN m.movement_type::text = 'OUT'        THEN -m.qty
+            WHEN m.movement_type::text = 'ADJUSTMENT' THEN m.qty
+            WHEN m.movement_type::text = 'TRANSFER'   THEN m.qty
+            ELSE 0 END)::int AS qty
+    FROM scm.inventory_movements m
+    JOIN scm.mfg_products p ON p.code = m.item_code AND p.company_id = 1
+   WHERE m.company_id = 1 AND UPPER(COALESCE(p.category::text,'')) = 'SOFA'
+   GROUP BY m.item_code, m.warehouse_id, COALESCE(m.batch_no,'')`;
+  const pieceRows = [];
+  for (const r of sofaMv) {
+    const model = matchModel(r.item_code);
+    if (!model) continue;
+    pieceRows.push({ model, warehouseId: String(r.warehouse_id), batchNo: r.batch_no, itemCode: r.item_code, qty: Number(r.qty) });
+  }
+  /* The lots THIS run is about to write count too — a display cell that also
+     receives a PO-driven build above must not be opened twice. */
+  for (const p of todo) {
+    const model = matchModel(p.code);
+    if (model) pieceRows.push({ model, warehouseId: String(p.whId), batchNo: p.batch, itemCode: p.code, qty: p.qty });
+  }
+  const foldedNow = foldSofaPieces(pieceRows);
+
+  /* AutoCount's display cells, from the same balance snapshot section 1 read. */
+  const displayCells = [];
+  for (const r of gz("ac-stock-balance.json.gz")) {
+    if (!r.BalQty || !isSofaSet(r.ItemCode)) continue;
+    const wh = resolveWh(r.Location);
+    if (!wh || !displayWhIds.has(String(wh.id))) continue;
+    const erpCode = norm(byAc.get(norm(r.ItemCode)) ?? "");
+    const model = erpCode.endsWith("-1S") ? erpCode.slice(0, -3) : null;
+    displayCells.push({ ac: norm(r.ItemCode), loc: norm(r.Location), erpCode, model, wh, need: Math.round(Number(r.BalQty)) });
+  }
+  const acDisplayUnits = displayCells.reduce((s, c) => s + c.need, 0);
+  log("");
+  log(`AutoCount SHOWROOM DISPLAY sofa: ${displayCells.length} cells / ${acDisplayUnits} whole sofas across ${new Set(displayCells.map((c) => String(c.wh.id))).size} display warehouse(s)`);
+
+  /* Cost is the book's own. UTD first (it is per item x location x batch, the
+     closest thing AutoCount has to "what this shelf cost"), then the item cost
+     master. NEVER the ERP product master's catalogue price: that is our number,
+     not the book's, and this import copies. */
+  const utdRm = new Map();
+  for (const r of gz("ac-utd-stock-cost.json.gz")) {
+    if (!(Number(r.UTDQty) > 0)) continue;
+    const rm = Number(r.AverageCost ?? (Number(r.UTDCost) / Number(r.UTDQty)));
+    if (rm > 0 && !utdRm.has(norm(r.ItemCode))) utdRm.set(norm(r.ItemCode), rm);
+  }
+  for (const r of gz("ac-item-costs.json.gz")) {
+    const rm = Number(r.RealCost || r.Cost || r.RecentCost || 0);
+    if (rm > 0 && !utdRm.has(norm(r.ItemCode))) utdRm.set(norm(r.ItemCode), rm);
+  }
+
+  const displayTodo = [];
+  const displaySkipped = [];
+  for (const c of displayCells) {
+    if (!c.model) { displaySkipped.push({ ...c, why: `binding target "${c.erpCode || "(none)"}" is not a {model}-1S code` }); continue; }
+    if (!prodByCode.has(c.erpCode)) { displaySkipped.push({ ...c, why: `ERP product ${c.erpCode} does not exist in mfg_products` }); continue; }
+    const f = foldedNow.get(`${c.model}|${String(c.wh.id)}`);
+    const have = f ? f.whole : 0;
+    if (f && (f.incomplete || f.negative)) {
+      displaySkipped.push({ ...c, why: `ERP already holds ${f.builds} build(s) here, ${f.incomplete} of them with pieces at different counts and ${f.negative} negative — the fold cannot say how many whole sofas stand there, so this cell is REPORTED, never topped up on a number nobody can stand behind` });
+      continue;
+    }
+    const open = c.need - Math.max(0, have);
+    if (open <= 0) { displaySkipped.push({ ...c, why: `already at the book's number (AutoCount ${c.need}, ERP ${have})`, satisfied: true }); continue; }
+    const costRm = utdRm.get(c.ac) ?? 0;
+    displayTodo.push({
+      code: prodByCode.get(c.erpCode).code,
+      name: prodByCode.get(c.erpCode).name ?? c.erpCode,
+      whId: c.wh.id, whName: c.wh.name ?? c.wh.code,
+      batch: null, variantKey: "", qty: open, costSen: Math.round(costRm * 100),
+      ac: c.ac, loc: c.loc, acQty: c.need, cur: have,
+    });
+  }
+  const displayUnits = displayTodo.reduce((s, p) => s + p.qty, 0);
+  log(`DISPLAY LOTS TO CREATE: ${displayTodo.length} cells / ${displayUnits} units (already at the book's number: ${displaySkipped.filter((s) => s.satisfied).length}; cannot be written: ${displaySkipped.filter((s) => !s.satisfied).length})`);
+  for (const p of displayTodo) log(`   +${p.qty} ${p.code} @ ${p.whName} (AutoCount ${p.ac} @ ${p.loc}: ${p.acQty} vs ERP ${p.cur}) cost ${p.costSen / 100} RM, no batch, no variant`);
+  for (const s of displaySkipped.filter((x) => !x.satisfied)) log(`   NOT WRITTEN ${s.ac} @ ${s.loc} (${s.need}) — ${s.why}`);
+  const displayZeroCost = displayTodo.filter((p) => p.costSen === 0).length;
+  if (displayZeroCost) log(`   ${displayZeroCost} of ${displayTodo.length} display cells carry cost 0 because AutoCount itself holds no cost for them (UTDQty 0 and no item-cost row). Copied, not invented; backfill-zero-cost-lots.mjs owns the fallback.`);
+  log("   a display unit has no purchase order, so it gets NO batch_no — and loadSofaBatchStock reads `.not('batch_no','is',null)`, so these units are invisible to sofa allocation and can flip nothing to READY. That is the correct reading of a showroom piece with no recorded configuration.");
+
+  /* ── 6c. The sofa the book holds that neither lane accounts for ───────────
+     Reported per CELL, not per item code, because a cell is what the reconcile
+     compares. These are ORDINARY warehouses — a different question from the
+     showroom, and deliberately NOT written here: a no-batch lot at a selling
+     warehouse would show as on-hand stock on the MRP page while remaining
+     un-allocatable, which reads as a bug to whoever looks at it. */
+  const ordinaryShort = [];
+  for (const r of gz("ac-stock-balance.json.gz")) {
+    if (!r.BalQty || !isSofaSet(r.ItemCode)) continue;
+    const wh = resolveWh(r.Location);
+    if (!wh || displayWhIds.has(String(wh.id))) continue;
+    const erpCode = norm(byAc.get(norm(r.ItemCode)) ?? "");
+    const model = erpCode.endsWith("-1S") ? erpCode.slice(0, -3) : null;
+    if (!model) continue;
+    const f = foldedNow.get(`${model}|${String(wh.id)}`);
+    const have = f ? f.whole : 0;
+    const need = Math.round(Number(r.BalQty));
+    if (have >= need) continue;
+    ordinaryShort.push({ ac: norm(r.ItemCode), model, wh: wh.name ?? wh.code, need, have, short: need - have, builds: f ? f.builds : 0, ceiling: f ? f.ceiling : 0 });
+  }
+  log("");
+  log(`SOFA STILL SHORT AT ORDINARY (non-showroom) WAREHOUSES after this run: ${ordinaryShort.length} cells / ${ordinaryShort.reduce((s, x) => s + x.short, 0)} whole sofas — REPORTED, not written`);
+  for (const x of ordinaryShort.sort((a, b) => b.short - a.short)) log(`   short ${x.short}: ${x.model} @ ${x.wh} — AutoCount ${x.need} vs ERP ${x.have} (${x.builds} build(s), ceiling ${x.ceiling}) [AC ${x.ac}]`);
+  log("   these are SELLING warehouses. Their cause is a missing/dropped PURCHASE DOCUMENT (see the drop list above), and the remedy is to recover the document, not to open a configuration-less lot beside real demand.");
+
   /* ── 7. Projection: how many sofa SO lines this would make allocatable ────
      Run TWICE. As-is, and again with every sofa SO line's warehouse resolved
      from the `location` text it already carries, because the second blocker is
@@ -296,10 +494,11 @@ async function main() {
      backfill script beside this one), and findCoveringBatch returns null for a
      null warehouse whatever the stock says. Reporting only the first number
      would hide the reason this import alone changes nothing. */
-  const whRows = await sql`SELECT id, code FROM scm.warehouses WHERE company_id = 1`;
-  const whByCode = new Map(whRows.map((w) => [norm(w.code), w.id]));
-  const LOC = { KL: "KL WAREHOUSE", PG: "PG WAREHOUSE", SRW: "SRW WAREHOUSE", SBH: "SBH WAREHOUSE" };
-  const whFromLoc = (loc) => whByCode.get(norm(LOC[norm(loc)] ?? loc)) ?? whByCode.get(norm(loc)) ?? null;
+  /* The warehouse masters and the location map are section 6b's — one copy, so
+     this projection and the display lane can never resolve a location
+     differently. The private LOC table that stood here held only the four
+     selling branches and would have answered null for a showroom. */
+  const whFromLoc = (loc) => resolveWh(loc)?.id ?? null;
 
   const soLines = await sql`
     SELECT i.id, i.doc_no, i.item_code, i.item_group, i.variants, i.qty, i.warehouse_id, i.location, i.stock_status
@@ -411,7 +610,28 @@ async function main() {
     if (done % 25 === 0) log(`  ..${done}/${todo.length}`);
   }
   log(`DONE. sofa opening lots written: ${done} / ${units} units.`);
+
+  /* The showroom units. Byte-identical in shape to import-ac-stock-balance.mjs's
+     own INSERT — ADJUSTMENT, empty variant_key, no batch_no column at all — so
+     a display sofa is stored exactly the way every other AutoCount balance row
+     was stored. No created_at is written: a display unit has no receipt to date
+     it by, and inventing one would be the "plausible number" this file refuses
+     everywhere else. */
+  let displayDone = 0;
+  for (const p of displayTodo) {
+    const cols = ["movement_type", "warehouse_id", "item_code", "product_name", "variant_key",
+      "qty", "unit_cost_sen", "source_doc_type", "source_doc_no", "notes"];
+    const args = ["ADJUSTMENT", p.whId, p.code, p.name, p.variantKey, p.qty, p.costSen,
+      "AC_CUTOVER", SRC_DOC, `AutoCount ${p.ac} @ ${p.loc}: AC ${p.acQty} vs ERP ${p.cur}`];
+    if (hasCo) { cols.push("company_id"); args.push(1); }
+    await sql.unsafe(
+      `INSERT INTO scm.inventory_movements (${cols.join(",")}) VALUES (${cols.map((_, i) => `$${i + 1}`).join(",")})`,
+      args);
+    displayDone++;
+  }
+  log(`DONE. showroom display lots written: ${displayDone} / ${displayUnits} units.`);
   log("Run the allocation recompute afterwards — the lines flip on the next allocation pass, not here.");
+  log("Then re-run check-stock-vs-autocount: a direct SQL stock write does NOT trigger a projection recompute (docs/bugs/0675 — the triggers are all on the Worker request path).");
   await sql.end();
 }
 main().catch((e) => { console.error(e); process.exit(1); });
