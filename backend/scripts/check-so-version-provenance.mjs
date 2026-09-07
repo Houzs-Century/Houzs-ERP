@@ -338,6 +338,84 @@ try {
      GROUP BY 1,2,3 ORDER BY n DESC LIMIT 40`;
   for (const n of anotes) log(`   audit ${String(n.n).padStart(5)}x / ${String(n.docs).padStart(3)} order(s)  action=${n.action} actor="${n.actor}"  "${cut(n.note, 140)}"`);
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // K.  IS ANYTHING ACTUALLY CONTESTED?
+  //
+  // sync-ac-delta.mjs `continue`s on a conflict BEFORE it computes the desc2
+  // diff (sync-ac-delta.mjs:238) and skips the order in the payment lane too
+  // (`if (touched.has(h.doc_no)) continue;`, :309). So its own headline numbers
+  // — "75 desc2 line(s)", "REFUSED, a person owns the payment rows 0" — are
+  // measured over the NON-conflicted orders only. Nobody has ever asked what
+  // the 81 actually disagree about. Ask now, with the same comparison.
+  // ══════════════════════════════════════════════════════════════════════════
+  log("K. WHAT IS ACTUALLY CONTESTED ON THE 81 — the per-field tests that never ran");
+  const txt = (v) => { const s = (v == null ? "" : String(v)).trim(); return s === "" ? null : s; };
+  const num = (v) => { const n = parseFloat(String(v ?? "").replace(/[^0-9.\-]/g, "")); return isFinite(n) ? n : 0; };
+  const centi = (v) => Math.round(num(v) * 100);
+
+  const soRows = gz("ac-outstanding-so.json.gz");
+  const acLineByDtl = new Map();
+  for (const r of soRows) acLineByDtl.set(String(r.DtlKey), r);
+  const acSoHeader = new Map();
+  for (const r of soRows) if (!acSoHeader.has(r.DocNo)) acSoHeader.set(r.DocNo, r);
+  const acSoLines = new Map();
+  for (const r of soRows) { if (!acSoLines.has(r.DocNo)) acSoLines.set(r.DocNo, []); acSoLines.get(r.DocNo).push(r); }
+
+  const items = await sql`
+    SELECT i.id, i.doc_no, i.linked_ac_dtlkey, i.description2
+      FROM scm.mfg_sales_order_items i
+     WHERE i.doc_no = ANY(${conflictDocs}) AND COALESCE(i.cancelled, false) = false`;
+  const itemsByDoc = new Map();
+  for (const i of items) { if (!itemsByDoc.has(i.doc_no)) itemsByDoc.set(i.doc_no, []); itemsByDoc.get(i.doc_no).push(i); }
+
+  const money = await sql`
+    SELECT doc_no, local_total_sen, balance_sen, paid_sen FROM scm.mfg_sales_orders
+     WHERE doc_no = ANY(${conflictDocs})`;
+  const moneyByDoc = new Map(money.map((m) => [m.doc_no, m]));
+
+  const pays = await sql`
+    SELECT so_doc_no, method, note FROM scm.mfg_sales_order_payments
+     WHERE so_doc_no = ANY(${conflictDocs}) AND company_id = 1`;
+  const paysByDoc = new Map();
+  for (const p of pays) { if (!paysByDoc.has(p.so_doc_no)) paysByDoc.set(p.so_doc_no, []); paysByDoc.get(p.so_doc_no).push(p); }
+
+  let nDesc = 0, nMoney = 0, nNothing = 0, nNoBook = 0, nPersonOwnsMoney = 0;
+  const descDetail = [];
+  for (const c of conflicts) {
+    const bookLines = acSoLines.get(c.acDoc);
+    if (!bookLines) { nNoBook++; continue; }
+    let d2 = 0;
+    for (const l of (itemsByDoc.get(c.doc) || [])) {
+      if (l.linked_ac_dtlkey == null) continue;
+      const bl = acLineByDtl.get(String(l.linked_ac_dtlkey));
+      if (!bl) continue;
+      const want = txt(bl.Desc2), cur = txt(l.description2);
+      if (want !== null && want !== cur) { d2++; descDetail.push({ doc: c.doc, dtl: l.linked_ac_dtlkey, from: cur, to: want }); }
+    }
+    const bh = acSoHeader.get(c.acDoc);
+    const total = bookLines.reduce((a, l) => a + centi(l.UnitPrice) * (Math.round(num(l.Qty)) || 1), 0);
+    const bal = centi(bh.UDF_BALANCE);
+    const paid = Math.max(0, total - bal);
+    const m = moneyByDoc.get(c.doc);
+    const moneyMoved = m && !(Number(m.local_total_sen) === total && Number(m.balance_sen) === bal && Number(m.paid_sen) === paid);
+    const rows = paysByDoc.get(c.doc) || [];
+    const migrated = rows.filter((p) => p.method === "imported" && /^imported from AutoCount/.test(p.note || ""));
+    const personOwnsMoney = rows.length !== migrated.length || migrated.length > 1;
+    if (d2) nDesc++;
+    if (moneyMoved) nMoney++;
+    if (moneyMoved && personOwnsMoney) nPersonOwnsMoney++;
+    if (!d2 && !moneyMoved) nNothing++;
+  }
+  log(`   of the ${conflicts.length} refused orders:`);
+  log(`     ${String(nDesc).padStart(3)} have a description2 difference the sync WOULD have written`);
+  log(`     ${String(nMoney).padStart(3)} have money that moved in the book`);
+  log(`     ${String(nPersonOwnsMoney).padStart(3)} of those money movers ALSO have a payment row a person owns (a REAL conflict)`);
+  log(`     ${String(nNothing).padStart(3)} have NEITHER — refused over nothing at all`);
+  log(`     ${String(nNoBook).padStart(3)} have no book lines in the outstanding snapshot (out of this lane's scope)`);
+  raw("=== ENUMERATION: the description2 differences suppressed by the refusal ===");
+  for (const d of descDetail) raw(`${d.doc} dtl=${d.dtl}: ${j(d.from)} -> ${j(d.to)}`);
+  raw("=== END ENUMERATION ===");
+
   log("REPORT COMPLETE — nothing was written.");
 } catch (err) {
   console.error(`check-so-version-provenance FAILED: ${err?.message ?? err}`);
