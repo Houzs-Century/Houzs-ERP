@@ -1,0 +1,93 @@
+name: Sync AutoCount delta (go-live)
+
+# Manual. The documents that MOVED in AutoCount since the last import cut.
+#
+# Every AutoCount importer in backend/scripts is INSERT-ONLY, so a re-run brings
+# in NEW documents and silently ignores every already-migrated document that
+# CHANGED in the book. This is the tool that sees the changed ones.
+#
+# PLAN is the default and it writes nothing: it prints the per-type census
+# (moved / created / edited / in the ERP / absent / importable), the documents it
+# REFUSES because a person edited them in the ERP, the sofa compartment sets that
+# now disagree, and the SO->PO dedications it would write.
+#
+# apply=yes needs the confirm phrase typed in full, and writes only the three
+# lanes no other tool owns: line description2, the migrated payment/balance row,
+# and the SO->PO line dedication. The INSERT lane belongs to the importers the
+# plan names (import-ac-outstanding-so.mjs, import-ac-outstanding-po.mjs,
+# import-ac-so-linked-pos.mjs) and is NOT run from here.
+#
+# The AutoCount stamps snapshot is committed (backend/scripts/data/ac-doc-stamps.json.gz)
+# and re-cut from a desktop on the ZeroTier link with
+#   ONLY=stamps AC_CRED_FILE=... python backend/scripts/export-ac-reimport.py
+# The script REFUSES to run against a snapshot older than MAX_SNAPSHOT_AGE_DAYS.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "staging"
+        type: choice
+        options: [staging, prod]
+      apply:
+        description: "yes = write the desc2 / payment / link lanes. Anything else = PLAN only."
+        required: false
+        default: "no"
+        type: choice
+        options: ["no", "yes"]
+      confirm:
+        description: 'Type SYNC AC DELTA to arm apply. Ignored when apply=no.'
+        required: false
+        default: ""
+        type: string
+      lanes:
+        description: "Which apply lanes to run (comma separated): desc,pay,links"
+        required: false
+        default: "desc,pay,links"
+        type: string
+      max_snapshot_age_days:
+        description: "Refuse a stamps snapshot older than this many days."
+        required: false
+        default: "2"
+        type: string
+
+concurrency:
+  group: sync-ac-delta-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/sync-ac-delta.mjs
+        env:
+          MODE: ${{ inputs.apply == 'yes' && 'apply' || 'plan' }}
+          CONFIRM: ${{ inputs.confirm }}
+          LANES: ${{ inputs.lanes }}
+          MAX_SNAPSHOT_AGE_DAYS: ${{ inputs.max_snapshot_age_days }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/sync-ac-delta.mjs
+        env:
+          MODE: ${{ inputs.apply == 'yes' && 'apply' || 'plan' }}
+          CONFIRM: ${{ inputs.confirm }}
+          LANES: ${{ inputs.lanes }}
+          MAX_SNAPSHOT_AGE_DAYS: ${{ inputs.max_snapshot_age_days }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
