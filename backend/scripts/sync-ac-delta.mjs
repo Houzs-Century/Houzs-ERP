@@ -27,6 +27,34 @@
 //                                           apply-sofa-compartment-corrections.mjs
 //
 // It WRITES only the lanes nothing else owns — line `description2`, the
+// migrated payment/balance row, and the three CONVERSION lanes below.
+//
+// THE THREE CONVERSION LANES (added 2026-09-07, #3047 measured them and wrote
+// nothing). A conversion creates a CHILD document; the parent HEADER's stamp
+// need not move at all, so the stamps delta above is blind to them by
+// construction and the parent-side signal is the LINE's TransferedQty, which
+// lives in ac-reconcile-truth.json.gz. Section 5 reads it and now also plans:
+//
+//   recv  copy PODTL.TransferedQty onto the matching ERP purchase-order line's
+//         received_qty. Matched on linked_ac_dtlkey ONLY, and refused where
+//         there is none. NEVER writes a value LOWER than the ERP already holds
+//         (0 lines are over-received corpus-wide, so a decrease would mean the
+//         MATCH is wrong, not the book), and NEVER above the ordered quantity.
+//         GrQty is not read anywhere: it is AGGREGATED on (DocNo + ItemCode)
+//         and reading it per line is what once put 65 migrated lines into
+//         production with received_qty > qty.
+//   do    create the delivery documents for the orders AutoCount has delivered
+//         and the ERP does not reflect. The matcher and the writer are
+//         lib/migrated-do-writer.mjs, SHARED with create-migrated-documents.mjs
+//         — only the SOURCE differs (the truth snapshot instead of the cutover
+//         cut, because the cutover cut cannot see a delivery raised after it).
+//         Every document carries migrated_no_stock = true and posts NO
+//         inventory movement: the units already came out through the AutoCount
+//         balance snapshot, so a second deduction double-counts them. The
+//         verification asserts that against scm.inventory_movements.
+//   dedi  write so_item_id on the ERP purchase-order line from
+//         PODTL.FromSODtlKey. FromDocType is NULL on all 10,792 SO->PO lines in
+//         the live book, so it is never read — measured, not assumed.
 // migrated payment/balance row, the document HEADER MASTER fields, and the
 // conversion links it rebuilds.
 //
@@ -51,6 +79,13 @@
 // documents disagree and I did not touch them" is the intended outcome; a
 // silent overwrite of the owner's own data is not.
 //
+// THE THREE CONVERSION LANES USE THE AUDIT TRAIL ALONE for that test, and
+// deliberately NOT `version > 1`: version is an optimistic-locking token bumped
+// by seven automated paths, and the probe in #3042 found 80 of 81 such
+// "conflicts" were the automated stock-allocation sweep and exactly ONE was a
+// person. On the purchase-order side the trail is scm.entity_audit_log
+// (entity_type = 'PURCHASE_ORDER', migration 0139), matched on the fields these
+// lanes would write and nothing else.
 // The HEADER lane's veto is narrower and better: per (document, FIELD), and
 // keyed on mfg_so_audit_log.actor_id being a real person rather than the
 // migration's own system user. It does NOT use `version > 1` —
@@ -66,11 +101,22 @@
 //
 // MODE=plan (default) | MODE=apply, and apply also needs
 //   CONFIRM="SYNC AC DELTA"
-// LANES=desc,pay,links,hdr,hdrstaff — the last two are OFF by default. `hdr`
+// LANES=desc,pay,links,recv,do,dedi,hdr,hdrstaff — the last two are OFF by
+// default. `hdr`
 // writes header master fields; `hdrstaff` CREATES master data (an inactive
 // salesperson row per unbound AutoCount agent) and must be asked for by name.
 // RE-RUN: convergent. A second run against the same snapshot re-reads the live
 // rows, finds every difference already applied and writes nothing; the refusal
+// list is recomputed from scratch each run and is never persisted. The three
+// conversion lanes converge the same way and for the same reason: `recv` plans
+// only lines where the ERP is BELOW the book, so a written line no longer
+// qualifies; `dedi` plans only lines whose so_item_id is NULL; `do` skips every
+// AutoCount delivery the ERP already mirrors (linked_ac_docno), so a second run
+// creates nothing and cannot duplicate a delivery note.
+//
+// LANES=desc,pay,links,recv,do,dedi (all of them by default).
+// DO_SCOPE=since (default) | all — which unreflected deliveries lane `do`
+// writes; the plan prints both counts either way.
 // list is recomputed from scratch each run and is never persisted. The header
 // lane is convergent for a second reason as well — every UPDATE is guarded on
 // the value this run read, so a row somebody edited in between is skipped and
@@ -88,6 +134,12 @@ import { parsePayment } from "./lib/ac-payment-udf.mjs";
 import { SOFA_MODEL_ALIAS, parseSofa } from "./lib/parse-sofa.mjs";
 import { buildFabricColourIndex } from "./lib/fabric-colour-match.mjs";
 import { acFromSoDtlKey } from "./lib/ac-po-line.mjs";
+/* The delivery-document matcher and writer, shared with
+   create-migrated-documents.mjs. The rule has ONE home (see that file and
+   docs/bugs/0043) and this lane feeds it a different SOURCE, never a copy. */
+import {
+  buildMigratedDoPlan, insertMigratedDo, loadAcErpItemMap, migratedDoNumber,
+} from "./lib/migrated-do-writer.mjs";
 import {
   PO_HEADER_FIELDS,
   SO_HEADER_FIELDS,
@@ -113,7 +165,20 @@ if (APPLY && process.env.CONFIRM !== "SYNC AC DELTA") {
   console.error('MODE=apply needs CONFIRM="SYNC AC DELTA" — refusing.');
   process.exit(2);
 }
-const LANES = new Set((process.env.LANES || "desc,pay,links").split(",").map((s) => s.trim()).filter(Boolean));
+const LANES = new Set((process.env.LANES || "desc,pay,links,recv,do,dedi").split(",").map((s) => s.trim()).filter(Boolean));
+/* DO_SCOPE picks WHICH unreflected deliveries lane `do` writes.
+   since (default) = only the ones AutoCount raised on or after the day we
+     took our copy of the order. Those are the conversions the ERP has not
+     caught up with, and they are the owner's actual question.
+   all             = those PLUS the ones already delivered BEFORE we copied
+     the order. That absence is a DECISION, not a gap
+     (check-ac-erp-reconcile.mjs says so), so writing it needs someone to
+     ask for it by name. The plan prints both counts either way. */
+const DO_SCOPE = (process.env.DO_SCOPE || "since").toLowerCase();
+if (!["since", "all"].includes(DO_SCOPE)) { console.error(`DO_SCOPE must be since or all, got ${DO_SCOPE}`); process.exit(2); }
+/* The migration's own actor, same value create-migrated-documents.mjs uses. */
+const SYS_USER = "00000000-0000-4000-8000-000000000001";
+const CO = 1;
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const log = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
@@ -219,8 +284,33 @@ async function main() {
     for (const r of rows) touched.add(r.so_doc_no);
   }
   const byAudit = touched.size;
+  /* THE THREE CONVERSION LANES TEST AUTHORSHIP ON THE AUDIT TRAIL ALONE.
+     `touched` below also folds in `version > 1`, and that is NOT an
+     authorship signal: version is an optimistic-locking token bumped by
+     seven automated paths, and the probe in #3042 found 80 of 81 such
+     "conflicts" were the automated stock-allocation sweep and exactly ONE
+     was a person. Folding it in here would refuse ~79 orders in the name of
+     a human who never touched them, and hide the one who did. */
+  const touchedByAudit = new Set(touched);
   for (const h of soHeaders) if (Number(h.version) > 1) touched.add(h.doc_no);
   log(`ERP sales orders a person has edited: ${touched.size} (${byAudit} by audit trail, the rest by version > 1)`);
+
+  /* The PURCHASE-ORDER side of the same question. Sales orders have their own
+     table (scm.mfg_so_audit_log); every other SCM document records into
+     scm.entity_audit_log keyed (entity_type, entity_id) with the human
+     document number alongside (migration 0139). The needles are the fields
+     THIS script would write on a purchase-order line, and nothing else - a
+     person who renamed the supplier has not vetoed a received quantity. */
+  const PO_TOUCHED_NEEDLES = ["received_qty", "receivedQty", "so_item_id", "soItemId"].map((n) => `%${n}%`);
+  const allPoDocs = poHeaders.map((h) => h.po_number);
+  const poTouched = new Set();
+  for (let i = 0; i < allPoDocs.length; i += 2000) {
+    const rows = await sql`SELECT DISTINCT entity_doc_no FROM scm.entity_audit_log
+       WHERE entity_type = 'PURCHASE_ORDER' AND entity_doc_no = ANY(${allPoDocs.slice(i, i + 2000)})
+         AND field_changes::text ILIKE ANY(${PO_TOUCHED_NEEDLES})`;
+    for (const r of rows) poTouched.add(r.entity_doc_no);
+  }
+  log(`ERP purchase orders a person has edited in the fields this script writes: ${poTouched.size} (audit trail only)`);
 
   const fcRows = await sql`SELECT fabric_id, colour_id, label FROM scm.fabric_colours WHERE company_id = 1`;
   const { findColour } = buildFabricColourIndex(fcRows);
@@ -463,6 +553,15 @@ async function main() {
      four cases. It WRITES NOTHING: a delivery, a receipt or a changed variant
      is repaired by the tool that owns that lane, and a second copy of an import
      rule is this repo's most expensive recurring bug. */
+  /* The three conversion WRITE PLANS. Declared out here because section 5
+     computes them and the apply block below consumes them; when the truth
+     snapshot is missing or stale they stay empty and their lanes write
+     nothing, which is the same refusal the report makes. */
+  const recvPlan = [], recvRefused = [], recvNotes = [];
+  const dediPlan = [], dediRefused = [];
+  let doPlan = [];
+  const doRefused = [], doNotes = [];
+  const doDebtor = new Map();
   const TRUTH = "ac-reconcile-truth.json.gz";
   log("");
   if (!has(TRUTH)) {
@@ -477,6 +576,7 @@ async function main() {
       const LFD = T.line_fields, HFD = T.header_fields, DFD = T.desc2_fields;
       const F = {
         doc: LFD.indexOf("docNo"), dtl: LFD.indexOf("dtlKey"), qty: LFD.indexOf("qty"),
+        itemKey: LFD.indexOf("itemKey"), hasCode: LFD.indexOf("hasCode"),
         tq: LFD.indexOf("transferedQty"), fdt: LFD.indexOf("fromDocType"),
         fdn: LFD.indexOf("fromDocNo"), fsk: LFD.indexOf("fromSoDtlKey"),
       };
@@ -549,7 +649,7 @@ async function main() {
         e.qty += num(r[F.qty]); e.tq += num(r[F.tq]);
       }
       const doDate = docDateOf("DO");
-      const c1 = { full: [], part: [], mirrored: 0, nativeOnly: [], gapFull: [], gapPart: [], gapDocs: [],
+      const c1 = { full: [], part: [], mirrored: 0, nativeOnly: [], gapFull: [], gapPart: [], gapDocs: [], gaps: [],
                    sinceFull: [], sincePart: [], beforeMigration: [], undated: [] };
       for (const [acNo, h] of erpSoByAc) {
         if (soCancelled.has(acNo)) continue;
@@ -565,6 +665,7 @@ async function main() {
         }
         c1.gapDocs.push(acNo);
         const since = raisedSince(doDate, kids, h.created_at);
+        c1.gaps.push({ acNo, doc: h.doc_no, whole, kids, since, tq: a.tq, qty: a.qty });
         const row = `${h.doc_no} (${acNo}) ${a.tq}/${a.qty} unit(s) delivered in the book${kids.length ? `, AutoCount ${kids.slice(0, 3).join("/")} dated ${kids.map((k) => day(doDate.get(k))).filter(Boolean).slice(0, 3).join("/") || "?"}` : ", no DO line names it"}, ERP copy taken ${day(h.created_at) || "?"}`;
         (whole ? c1.gapFull : c1.gapPart).push(row);
         if (since === null) c1.undated.push(row);
@@ -589,6 +690,139 @@ async function main() {
       if (c1.sincePart.length) enumerate("CASE 1, delivered SINCE the migration, PARTLY", c1.sincePart);
       if (c1.beforeMigration.length) enumerate("CASE 1, delivered BEFORE the migration (not a gap)", c1.beforeMigration);
       if (c1.nativeOnly.length) enumerate("CASE 1, ERP-native delivery with no AutoCount number", c1.nativeOnly);
+
+      // == LANE do - THE DELIVERIES THE ERP DOES NOT REFLECT ==
+      /* THE SOURCE IS THE TRUTH SNAPSHOT, NOT THE CUTOVER CUT. The DO writer
+         create-migrated-documents.mjs owns reads data/ac-partial-dos.json.gz -
+         the partial deliveries against orders that were still open when the
+         migration was taken. It cannot see a delivery raised afterwards, which
+         is the whole population here: measured 2026-09-07, the committed
+         fidelity DO snapshot is 307 documents behind the live book while the
+         truth snapshot this section already reads is current. So the SOURCE
+         differs and the RULE does not - the matcher and the writer are
+         lib/migrated-do-writer.mjs, shared with that script.
+
+         WHAT THE TRUTH PROJECTION CANNOT GIVE, and what happens instead:
+         DODTL carries FromDocType + FromDocNo but NO FromDtlKey (see
+         export-ac-reconcile-truth.mjs: only PODTL is exported with
+         fromSoDtlKey), so a delivery line names its parent DOCUMENT and never
+         its parent LINE. The matcher's item-code + sofa-model walk is therefore
+         the only way across, exactly as it is for the cutover cut. The
+         projection also has no line Description and no debtor: those stay blank
+         and the debtor falls back to the sales order's own.
+
+         ALL OR NOTHING, PER DOCUMENT. One book line that does not resolve
+         refuses the WHOLE delivery note. A half-written delivery is
+         indistinguishable from a real partial one and would let the rest ship
+         twice; under-repair, never duplicate. */
+      const doCancelled = cancelledSet("DO");
+      const erpDoNumbers = new Set(erpDo.map((d) => d.do_number));
+      const doLinesByDoc = new Map();
+      for (const r of T.types.DO.lines) {
+        const d = cell(r, F.doc); if (!d) continue;
+        if (!doLinesByDoc.has(d)) doLinesByDoc.set(d, []);
+        doLinesByDoc.get(d).push(r);
+      }
+      const doGapScope = c1.gaps.filter((g) => (DO_SCOPE === "all" ? true : g.since === true));
+      const gapAcNos = [...new Set(doGapScope.map((g) => g.acNo))];
+      const gapDocNos = [...new Set(doGapScope.map((g) => g.doc))];
+      /* item_group / variants / description2 / the money are pulled because a
+         DELIVERY ORDER IS A SNAPSHOT OF THE SALES ORDER AT DISPATCH - the same
+         column list create-migrated-documents.mjs reads, and for the reasons
+         written there (docs/bugs/0030 and 0617). */
+      const doSoItems = gapAcNos.length ? await sql`
+        SELECT i.id, i.item_code, i.line_no, i.qty::float8 AS qty, i.item_group, i.variants,
+               i.description2, i.unit_price_sen, i.discount_sen, i.unit_cost_sen,
+               h.doc_no, h.linked_ac_docno AS ac
+          FROM scm.mfg_sales_order_items i JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
+         WHERE h.company_id = ${CO} AND h.linked_ac_docno = ANY(${gapAcNos})
+           AND COALESCE(i.cancelled, false) = false
+         ORDER BY i.line_no` : [];
+      for (const r of gapDocNos.length
+        ? await sql`SELECT doc_no, debtor_name FROM scm.mfg_sales_orders WHERE company_id = ${CO} AND doc_no = ANY(${gapDocNos})`
+        : []) doDebtor.set(r.doc_no, r.debtor_name);
+      /* What the ERP already counts as delivered on these orders, from its own
+         rows. Used ONLY as the over-delivery assertion below - never to derive
+         a quantity to write. */
+      const deliveredBySo = new Map((gapDocNos.length
+        ? await sql`SELECT d.so_doc_no, COALESCE(SUM(i.qty), 0)::float8 AS q
+                      FROM scm.delivery_orders d JOIN scm.delivery_order_items i ON i.delivery_order_id = d.id
+                     WHERE d.company_id = ${CO} AND d.so_doc_no = ANY(${gapDocNos})
+                       AND upper(COALESCE(d.status::text, '')) <> 'CANCELLED'
+                     GROUP BY d.so_doc_no`
+        : []).map((r) => [r.so_doc_no, Number(r.q)]));
+      const soItemsByAc = new Map();
+      const soOrderedQty = new Map();
+      for (const it of doSoItems) {
+        if (!soItemsByAc.has(it.ac)) soItemsByAc.set(it.ac, []);
+        soItemsByAc.get(it.ac).push(it);
+        soOrderedQty.set(it.doc_no, (soOrderedQty.get(it.doc_no) || 0) + Number(it.qty || 0));
+      }
+      const itemMap = loadAcErpItemMap(path.join(here, "data"));
+      for (const g of doGapScope) {
+        if (touchedByAudit.has(g.doc)) { doRefused.push(`${g.doc} (${g.acNo}): a person edited this sales order in the ERP (audit trail)`); continue; }
+        const mine = soItemsByAc.get(g.acNo) || [];
+        if (!mine.length) { doRefused.push(`${g.doc} (${g.acNo}): the ERP order has no live line to deliver`); continue; }
+        if (!g.kids.length) { doRefused.push(`${g.doc} (${g.acNo}): the book shows ${g.tq}/${g.qty} unit(s) delivered but NO delivery line names this order - there is no document to mirror`); continue; }
+        for (const kid of g.kids) {
+          const where = `${g.doc} (${g.acNo}) <- ${kid}`;
+          if (erpDoByAc.has(kid)) continue;                                  // already mirrored
+          if (doCancelled.has(kid)) { doRefused.push(`${where}: cancelled in AutoCount`); continue; }
+          if (erpDoNumbers.has(migratedDoNumber(kid))) { doRefused.push(`${where}: the ERP already holds a delivery numbered ${migratedDoNumber(kid)}`); continue; }
+          const bookRows = (doLinesByDoc.get(kid) || []).filter((r) => cell(r, F.fdt) === "SO" && cell(r, F.fdn) === g.acNo);
+          if (!bookRows.length) { doRefused.push(`${where}: no line of that delivery names this sales order`); continue; }
+          const codeless = bookRows.filter((r) => cell(r, F.hasCode) !== "1");
+          if (codeless.length) { doRefused.push(`${where}: ${codeless.length} of its ${bookRows.length} line(s) carry no ItemCode, so nothing can be matched`); continue; }
+          const rows = bookRows.map((r) => ({
+            DoNo: kid, DoDate: doDate.get(kid) || null, SoNo: g.acNo,
+            ItemCode: cell(r, F.itemKey), LineDesc: null, Qty: num(r[F.qty]),
+            DebtorCode: null, DebtorName: null,
+          }));
+          const { plan, stats } = buildMigratedDoPlan({ rows, itemMap, soItems: mine });
+          const dropped = stats.unmapped + stats.noSoLine + stats.exhausted;
+          if (dropped > 0 || plan.length !== 1) {
+            doRefused.push(`${where}: ALL-OR-NOTHING - ${dropped} of ${rows.length} book line(s) did not resolve to a sales-order line (unmapped ${stats.unmapped}, no ERP line ${stats.noSoLine}, no unclaimed line left ${stats.exhausted})`);
+            continue;
+          }
+          if (stats.collapsed) doNotes.push(`${where}: ${stats.collapsed} duplicate line(s) refused by the shape guard`);
+          doPlan.push(plan[0]);
+        }
+      }
+      /* THE OVER-DELIVERY ASSERTION. `taken` inside the matcher is keyed per
+         DELIVERY NOTE, so two notes against one order can each claim the same
+         sales-order line - correct when the order really was shipped twice,
+         wrong when the match went astray. Nothing downstream would catch it, so
+         it is asserted here against the order's own ordered quantity plus what
+         the ERP already delivered. An order that fails REFUSES ALL of its
+         planned notes: a partial write of a set that does not add up is the
+         worst of the three outcomes. */
+      {
+        const plannedBySo = new Map();
+        for (const d of doPlan) plannedBySo.set(d.so, (plannedBySo.get(d.so) || 0) + d.items.reduce((t, i) => t + Number(i.qty || 0), 0));
+        const overSo = new Set();
+        for (const [doc, planned] of plannedBySo) {
+          const ordered = soOrderedQty.get(doc) || 0;
+          const already = deliveredBySo.get(doc) || 0;
+          if (planned + already > ordered + 1e-6) {
+            overSo.add(doc);
+            doRefused.push(`${doc}: REFUSED, the plan would deliver ${planned} unit(s) on top of ${already} already delivered against ${ordered} ordered`);
+          }
+        }
+        if (overSo.size) doPlan = doPlan.filter((d) => !overSo.has(d.so));
+      }
+      log("");
+      log("LANE do - THE DELIVERY DOCUMENTS THIS RUN WOULD CREATE");
+      log(`  DO_SCOPE=${DO_SCOPE}  (since = raised on or after the day we copied the order; all = plus the pre-migration history)`);
+      log(`  unreflected sales orders, delivered SINCE we copied them   ${c1.gaps.filter((g) => g.since === true).length}`);
+      log(`  unreflected sales orders, delivered BEFORE that            ${c1.gaps.filter((g) => g.since === false).length}   (the owner's DECISION; DO_SCOPE=all includes them)`);
+      log(`  unreflected sales orders that cannot be dated              ${c1.gaps.filter((g) => g.since === null).length}   (never written by either scope)`);
+      log(`  sales orders in scope for this run                         ${doGapScope.length}`);
+      log(`  delivery documents this run would CREATE                   ${doPlan.length} (${doPlan.reduce((t, d) => t + d.items.length, 0)} line(s), ${doPlan.reduce((t, d) => t + d.items.reduce((a, i) => a + Number(i.qty || 0), 0), 0)} unit(s)) across ${new Set(doPlan.map((d) => d.so)).size} sales order(s)`);
+      log(`  REFUSED                                                    ${doRefused.length}`);
+      log("  every document carries migrated_no_stock = true and posts NO inventory movement (migration 0276)");
+      if (doPlan.length) enumerate("LANE do, documents to create", doPlan.map((d) => `${migratedDoNumber(d.doNo)} <- ${d.so} (${d.acSo}) dated ${(d.date || "?").slice(0, 10)}: ${d.items.length} line(s), ${d.items.reduce((a, i) => a + Number(i.qty || 0), 0)} unit(s)`));
+      if (doRefused.length) enumerate("LANE do, REFUSED", doRefused);
+      if (doNotes.length) enumerate("LANE do, notes", doNotes);
 
       // ══ CASE 2 — PO -> GR ══
       const acPoLineByDtl = new Map();
@@ -621,6 +855,24 @@ async function main() {
           if (since === null) c2.undated.push(row);
           else if (since) { c2.since.push(row); c2.sinceDocs.add(l.po_number); }
           else c2.before.push(row);
+          /* LANE `recv` - the write plan, with the three guards that decide it.
+             1. THE KEY. The loop above has already skipped every line without
+                a linked_ac_dtlkey, so the match is AutoCount's own line key
+                and never a guess. There is no fallback on purpose.
+             2. NEVER BELOW WHAT THE ERP HOLDS. This branch is the shortfall
+                branch, so `to` is always above `from`; the whole corpus has 0
+                over-received lines, which means a DECREASE would say the
+                match is wrong, not that a receipt was undone.
+             3. NEVER ABOVE THE ORDERED QUANTITY. received_qty > qty is the
+                exact state that reading the AGGREGATED GrQty as a per-line
+                figure once put into production on 65 migrated lines
+                (topup-ac-po-lines.mjs header). TransferedQty is per LINE and
+                must not produce it - so a line that would is REFUSED and
+                listed, never clamped to something nobody can stand behind. */
+          if (poTouched.has(l.po_number)) recvRefused.push(`${row}  REFUSED: a person edited this purchase order's received quantity or dedication in the ERP`);
+          else if (bookTq > num(l.qty) + 1e-6) recvRefused.push(`${row}  REFUSED: the book's received figure is ABOVE the ordered quantity - writing it would recreate the received_qty > qty defect`);
+          else recvPlan.push({ poItemId: l.id, poNo: l.po_number, acDoc: String(l.linked_ac_docno), dtl: String(l.linked_ac_dtlkey),
+                               itemCode: l.item_code, from: erpRecv, to: bookTq, ordered: num(l.qty), since });
         } else c2.over.push(row);
       }
       log("");
@@ -639,12 +891,44 @@ async function main() {
       if (c2.before.length) enumerate("CASE 2, received BEFORE the migration", c2.before);
       if (c2.over.length) enumerate("CASE 2, ERP ahead of the book", c2.over);
 
+      /* The stated consequence of lane `recv`, not a refusal. A purchase order
+         whose migrated GRN was already written mirrors the received_qty of the
+         moment it was written; raising the line leaves that document behind,
+         and create-migrated-documents.mjs will not top it up (it skips a PO it
+         has already mirrored). Naming the count here is what turns a
+         discrepancy someone will find later into a stated scope. */
+      const migratedGrnPo = new Set(erpGrn.filter((g) => g.migrated_no_stock && g.linked_ac_docno).map((g) => String(g.linked_ac_docno).trim()));
+      const recvWithGrn = recvPlan.filter((u) => migratedGrnPo.has(u.acDoc));
+      log("");
+      log("LANE recv - THE WRITE PLAN FOR received_qty");
+      log(`  lines this run would raise                                ${recvPlan.length} on ${new Set(recvPlan.map((u) => u.poNo)).size} purchase order(s)`);
+      log(`  ... received SINCE we took our copy                       ${recvPlan.filter((u) => u.since === true).length}`);
+      log(`  ... received BEFORE it (our copy was short at import)     ${recvPlan.filter((u) => u.since === false).length}`);
+      log(`  ... cannot be dated from this snapshot                    ${recvPlan.filter((u) => u.since === null).length}`);
+      log(`  REFUSED                                                   ${recvRefused.length}`);
+      log(`  units this run would add                                  ${recvPlan.reduce((t, u) => t + (u.to - u.from), 0)}`);
+      log(`  of the planned lines, on a PO whose migrated GRN is already written  ${recvWithGrn.length} (that GRN keeps its own quantity; not a refusal)`);
+      if (recvPlan.length) enumerate("LANE recv, lines to raise", recvPlan.map((u) => `${u.poNo} (${u.acDoc}) dtl=${u.dtl} ${u.itemCode}: received_qty ${u.from} -> ${u.to} of ${u.ordered} ordered`));
+      if (recvRefused.length) enumerate("LANE recv, REFUSED", recvRefused);
+
       // ══ CASE 3 — SO -> PO ══
       /* FromDocType is NULL on PODTL even on real production rows (verified on
          PO-010163 <- SO-013423 and on a fresh test document), so the edge is
          FromSODtlKey + FromDocNo and FromDocType is never read here. */
+      /* `missing` is THREE different findings and only the last is writable.
+         Reporting the bucket as one number reads as "47 dedications to write"
+         when the answer is "31 purchase orders to IMPORT first, and N to
+         write" — so the three are counted apart as well as listed together. */
       const c3 = { edges: 0, poDocs: new Set(), inErp: new Set(), absent: new Set(),
-                   alreadyLinked: 0, missing: [], soLineAbsent: [] };
+                   alreadyLinked: 0, missing: [], soLineAbsent: [],
+                   poAbsent: 0, poLineAbsent: 0, nullLink: 0 };
+      /* LANE `dedi` shares its NEVER-STEAL bookkeeping with the section-4 link
+         lane above: `claimed` already holds every sales-order line the ERP
+         dedicates today plus every line that lane intends to claim, and
+         `linkPlan` already owns its PO lines. Seeding from both is what stops
+         the two lanes fighting over one line inside a single run. */
+      const dediClaimed = new Set(claimed);
+      const dediPoItems = new Set(linkPlan.map((u) => String(u.poItemId)));
       for (const r of T.types.PO.lines) {
         const key = cell(r, F.fsk), soNo = cell(r, F.fdn), poNo = cell(r, F.doc);
         if (!key || !soNo || !poNo) continue;
@@ -655,11 +939,22 @@ async function main() {
         (poInErp ? c3.inErp : c3.absent).add(poNo);
         const si = soItemByDtl.get(String(key));
         if (!si) { c3.soLineAbsent.push(`${poNo} <- ${soNo} soDtl=${key}: the sales-order LINE is not in the ERP`); continue; }
-        if (!poInErp) { c3.missing.push(`${si.doc_no} (${soNo}) line ${si.item_code} <- ${poNo}: the purchase order is not in the ERP at all`); continue; }
+        if (!poInErp) { c3.poAbsent++; c3.missing.push(`${si.doc_no} (${soNo}) line ${si.item_code} <- ${poNo}: the purchase order is not in the ERP at all`); continue; }
         const pi = poItemByDtl.get(String(cell(r, F.dtl)));
-        if (!pi) { c3.missing.push(`${si.doc_no} (${soNo}) line ${si.item_code} <- ${poNo} dtl=${cell(r, F.dtl)}: the PO LINE is not in the ERP`); continue; }
+        if (!pi) { c3.poLineAbsent++; c3.missing.push(`${si.doc_no} (${soNo}) line ${si.item_code} <- ${poNo} dtl=${cell(r, F.dtl)}: the PO LINE is not in the ERP`); continue; }
         if (pi.so_item_id) { c3.alreadyLinked++; continue; }
+        c3.nullLink++;
         c3.missing.push(`${si.doc_no} (${soNo}) line ${si.item_code} <- ${pi.po_number} (${poNo}): so_item_id is NULL`);
+        /* THE WRITE PLAN. The edge is FromSODtlKey + FromDocNo; FromDocType is
+           NULL on all 10,792 SO->PO lines in the live book, so it is never read
+           (measured, not assumed - see the comment above this loop). */
+        const dediWhere = `${si.doc_no} (${soNo}) line ${si.item_code} <- ${pi.po_number} (${poNo}) dtl=${cell(r, F.dtl)}`;
+        if (dediPoItems.has(String(pi.id))) continue;                    // the section-4 lane already claims this PO line
+        if (poTouched.has(pi.po_number)) { dediRefused.push(`${dediWhere}: REFUSED, a person edited this purchase order's dedication in the ERP`); continue; }
+        if (dediClaimed.has(String(si.id))) { dediRefused.push(`${dediWhere}: REFUSED, that sales-order line is already dedicated to another purchase-order line`); continue; }
+        dediClaimed.add(String(si.id));
+        dediPoItems.add(String(pi.id));
+        dediPlan.push({ poItemId: pi.id, soItemId: si.id, poNo: pi.po_number, acPo: poNo, soDoc: si.doc_no, acSo: soNo, itemCode: si.item_code, soDtl: String(key) });
       }
       log("");
       log("CASE 3 — PURCHASE ORDERS RAISED FROM A MIGRATED SALES ORDER (SO -> PO)");
@@ -669,10 +964,20 @@ async function main() {
       log(`  ... ABSENT from the ERP (import-ac-so-linked-pos.mjs)     ${c3.absent.size}`);
       log(`  the ERP line already carries its dedication               ${c3.alreadyLinked}`);
       log(`  ERP sales-order lines MISSING their PO dedication         ${c3.missing.length}`);
+      log(`  ... because the PURCHASE ORDER is not in the ERP yet      ${c3.poAbsent}   (import-ac-so-linked-pos.mjs owns these, not this script)`);
+      log(`  ... because the PO LINE is not in the ERP yet             ${c3.poLineAbsent}   (topup-ac-po-lines.mjs owns these)`);
+      log(`  ... because so_item_id is NULL on a line that IS here     ${c3.nullLink}   <- the only writable one, and lane dedi's population`);
       log(`  the sales-order line itself is not in the ERP             ${c3.soLineAbsent.length}`);
       if (c3.absent.size) enumerate("CASE 3, purchase orders absent from the ERP", [...c3.absent]);
       if (c3.missing.length) enumerate("CASE 3, missing SO->PO dedication", c3.missing);
       if (c3.soLineAbsent.length) enumerate("CASE 3, sales-order line absent", c3.soLineAbsent);
+      log("");
+      log("LANE dedi - THE SO->PO DEDICATIONS THIS RUN WOULD WRITE");
+      log(`  purchase-order lines that would gain their so_item_id     ${dediPlan.length} across ${new Set(dediPlan.map((u) => u.poNo)).size} purchase order(s)`);
+      log(`  REFUSED                                                   ${dediRefused.length}`);
+      log(`  already owned by the section-4 stamps lane this run       ${linkPlan.length}`);
+      if (dediPlan.length) enumerate("LANE dedi, dedications to write", dediPlan.map((u) => `${u.poNo} (${u.acPo}) -> ${u.soDoc} (${u.acSo}) line ${u.itemCode} soDtl=${u.soDtl}`));
+      if (dediRefused.length) enumerate("LANE dedi, REFUSED", dediRefused);
 
       // ══ CASE 4 — PROCEEDED LINES WHOSE BUILD TEXT MOVED SINCE WE COPIED IT ══
       /* check-ac-erp-reconcile.mjs already answers WHICH AXIS disagrees. The
@@ -992,10 +1297,12 @@ async function main() {
 
   if (!APPLY) {
     log("");
-    log('PLAN ONLY — no writes. MODE=apply CONFIRM="SYNC AC DELTA" writes the desc2, payment and link lanes.');
+    log('PLAN ONLY — no writes. MODE=apply CONFIRM="SYNC AC DELTA" writes the lanes named in LANES.');
+    log(`   desc  ${descUpdates.length} line(s)      pay   ${payUpdates.length} order(s)     links ${linkPlan.length} dedication(s)`);
+    log(`   recv  ${recvPlan.length} line(s)      do    ${doPlan.length} document(s)  dedi  ${dediPlan.length} dedication(s)`);
     log(`LANES=hdr would write ${hdrWrites.length} header field value(s); LANES=hdrstaff would create ${staffCreate.length} inactive staff row(s).`);
     log("The INSERT lane is NOT this script's: run the importers named above.");
-    log("Section 5 (conversions) is REPORT-ONLY in both modes — it never writes.");
+    log("Section 5's CASE 4 (build text) stays REPORT-ONLY — a changed Desc2 can change the NUMBER of ERP lines.");
     await sql.end();
     return;
   }
@@ -1049,6 +1356,67 @@ async function main() {
     log(`SO->PO dedications written: ${nLink} of ${linkPlan.length} intended`);
   }
 
+  /* LANE recv — copy AutoCount's per-line PODTL.TransferedQty onto the matching
+     ERP line. Matched on linked_ac_dtlkey and nothing else. The two guards that
+     decided the plan are RE-ASSERTED inside the statement, because a goods
+     receipt posted in the ERP between the plan and this write would move the
+     live value: `received_qty <= to` refuses a DECREASE (which would lose a
+     real receipt), `qty >= to` refuses the received_qty > qty state that
+     reading the aggregated GrQty per line once created on 65 lines. A row that
+     fails either is simply not updated and shows up in the count. */
+  let nRecv = 0, nDo = 0, nDedi = 0;
+  const doMade = [];
+  const doFailed = [];
+  if (LANES.has("recv")) {
+    for (let i = 0; i < recvPlan.length; i += 300) {
+      const b = recvPlan.slice(i, i + 300);
+      await sql.begin(async (tx) => {
+        for (const u of b) {
+          const r = await tx`UPDATE scm.purchase_order_items SET received_qty = ${u.to}
+                              WHERE id = ${u.poItemId} AND company_id = ${CO}
+                                AND COALESCE(received_qty, 0) <= ${u.to}
+                                AND qty >= ${u.to}
+                              RETURNING id`;
+          nRecv += r.length;
+        }
+      });
+    }
+    log(`received_qty written: ${nRecv} of ${recvPlan.length} intended`);
+  }
+  /* LANE do — the delivery documents. One transaction per document (the writer
+     opens it), so one collision cannot take the other hundred down with it; a
+     failure is recorded and the run exits non-zero at the end rather than
+     swallowing it. NO INVENTORY MOVEMENT is written and the verification below
+     asserts that against scm.inventory_movements, not against intent. */
+  if (LANES.has("do")) {
+    for (const d of doPlan) {
+      try {
+        const made = await insertMigratedDo(sql, d, { companyId: CO, sysUser: SYS_USER, debtorFallback: doDebtor.get(d.so) ?? null });
+        doMade.push(made); nDo += 1;
+      } catch (e) {
+        doFailed.push(`${migratedDoNumber(d.doNo)} <- ${d.so}: ${e.message}`);
+      }
+    }
+    log(`delivery documents created: ${nDo} of ${doPlan.length} intended${doFailed.length ? `, ${doFailed.length} FAILED` : ""}`);
+    for (const f of doFailed) log(`   FAILED ${f}`);
+  }
+  /* LANE dedi — so_item_id from PODTL.FromSODtlKey, with the same never-steal
+     re-check the section-4 link lane makes inside its own transaction. */
+  if (LANES.has("dedi")) {
+    for (let i = 0; i < dediPlan.length; i += 300) {
+      const b = dediPlan.slice(i, i + 300);
+      await sql.begin(async (tx) => {
+        for (const u of b) {
+          const r = await tx`UPDATE scm.purchase_order_items SET so_item_id = ${u.soItemId}
+                              WHERE id = ${u.poItemId} AND so_item_id IS NULL
+                                AND NOT EXISTS (SELECT 1 FROM scm.purchase_order_items x WHERE x.so_item_id = ${u.soItemId})
+                              RETURNING id`;
+          nDedi += r.length;
+        }
+      });
+    }
+    log(`SO->PO dedications written (lane dedi): ${nDedi} of ${dediPlan.length} intended`);
+  }
   /* ── the header master lane ──
      One UPDATE per (document, field), each guarded by the value this run READ.
      `col = ${from}` (or `IS NULL`) is the whole safety property: between the
@@ -1113,6 +1481,37 @@ async function main() {
         LEFT JOIN scm.mfg_sales_order_items s ON s.id = i.so_item_id WHERE i.id = ${u.poItemId}`;
     if (!row || String(row.so_item_id) !== String(u.soItemId) || !row.doc_no || !row.item_code) { bad++; log(`   VERIFY MISMATCH po line ${u.poItemId}`); }
   }
+  for (const u of recvPlan.slice(0, 5)) {
+    const [row] = await v`SELECT received_qty::float8 AS rq, qty::float8 AS q, linked_ac_dtlkey FROM scm.purchase_order_items WHERE id = ${u.poItemId}`;
+    if (!row || Number(row.rq) !== u.to || Number(row.q) < Number(row.rq) || String(row.linked_ac_dtlkey) !== String(u.dtl)) { bad++; log(`   VERIFY MISMATCH po line ${u.poItemId}`); }
+  }
+  for (const m of doMade.slice(0, 5)) {
+    const [row] = await v`SELECT d.do_number, d.so_doc_no, d.status::text AS status, d.migrated_no_stock, d.line_count,
+                                 d.linked_ac_docno,
+                                 (SELECT count(*) FROM scm.delivery_order_items i WHERE i.delivery_order_id = d.id) AS lines,
+                                 (SELECT count(*) FROM scm.delivery_order_items i WHERE i.delivery_order_id = d.id AND i.so_item_id IS NULL) AS unlinked
+                            FROM scm.delivery_orders d WHERE d.id = ${m.id}`;
+    if (!row || row.migrated_no_stock !== true || String(row.status).toUpperCase() !== "DELIVERED"
+        || Number(row.lines) !== m.lines || Number(row.line_count) !== m.lines
+        || Number(row.unlinked) !== 0 || !row.so_doc_no || !row.linked_ac_docno) { bad++; log(`   VERIFY MISMATCH delivery ${m.doNo}`); }
+  }
+  /* THE MOVEMENT ASSERTION, over EVERY document this run created and not a
+     sample: migrated paperwork that moved stock would deduct units the AutoCount
+     balance snapshot already counted as gone, and nothing downstream would ever
+     say so. Read on the fresh connection, by the same two keys check-do-integrity
+     reads (source_doc_no and source_doc_id). */
+  if (doMade.length) {
+    const [{ n }] = await v`SELECT count(*)::int AS n FROM scm.inventory_movements m
+       WHERE m.source_doc_type::text = 'DO'
+         AND (m.source_doc_no = ANY(${doMade.map((d) => d.doNo)}) OR m.source_doc_id::text = ANY(${doMade.map((d) => String(d.id))}))`;
+    if (Number(n) !== 0) { bad++; log(`   VERIFY FAILED: ${n} inventory movement(s) exist for the ${doMade.length} migrated delivery document(s) this run created — they must have NONE`); }
+    else log(`VERIFY: 0 inventory movements against the ${doMade.length} delivery document(s) created, as designed.`);
+  }
+  for (const u of dediPlan.slice(0, 5)) {
+    const [row] = await v`SELECT i.so_item_id, s.doc_no, s.item_code FROM scm.purchase_order_items i
+        LEFT JOIN scm.mfg_sales_order_items s ON s.id = i.so_item_id WHERE i.id = ${u.poItemId}`;
+    if (!row || String(row.so_item_id) !== String(u.soItemId) || row.doc_no !== u.soDoc || !row.item_code) { bad++; log(`   VERIFY MISMATCH dedication on po line ${u.poItemId}`); }
+  }
   /* The header lane's shape assertion. A row count would answer "a row
      changed"; this asserts the COLUMN now reads what the plan meant, that the
      row is still the one we aimed at (its AutoCount number is unchanged), and
@@ -1142,8 +1541,9 @@ async function main() {
     if (activated.length) { bad++; log(`   VERIFY MISMATCH: ${activated.length} ACIMP-* staff row(s) are ACTIVE — this lane must never activate anybody`); }
     else log(`   VERIFY: all ${rows.length} ACIMP-* staff row(s) are inactive, as intended.`);
   }
+  if (doFailed.length) { bad++; log(`VERIFY FAILED: ${doFailed.length} delivery document(s) could not be written`); }
   if (bad) { log(`VERIFY FAILED on ${bad} sample(s)`); await v.end(); await sql.end(); process.exit(1); }
-  log(`VERIFY (fresh connection): ${Math.min(5, descUpdates.length)} line(s), ${Math.min(5, payUpdates.length)} order(s), ${Math.min(5, linkPlan.length)} dedication(s) and ${LANES.has("hdr") ? Math.min(8, hdrWrites.length) : 0} header field(s) re-read with the shape intended.`);
+  log(`VERIFY (fresh connection): ${Math.min(5, descUpdates.length)} desc2 line(s), ${Math.min(5, payUpdates.length)} order(s), ${Math.min(5, linkPlan.length)} link(s), ${Math.min(5, recvPlan.length)} received line(s), ${Math.min(5, doMade.length)} delivery document(s), ${Math.min(5, dediPlan.length)} dedication(s) and ${LANES.has("hdr") ? Math.min(8, hdrWrites.length) : 0} header field(s) re-read with the shape intended.`);
   await v.end();
   await sql.end();
 }
