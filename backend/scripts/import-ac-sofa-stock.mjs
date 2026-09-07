@@ -4,10 +4,12 @@
 //
 // WHY THIS EXISTS. import-ac-stock-balance.mjs filters `!isSofa(ItemCode)`
 // (:54) and import-ac-stock-layers.mjs does the same (:50), so not a single
-// sofa unit came in with the 2026-08-09 opening. AutoCount holds 76 whole sofas
-// (ac-stock-balance.json.gz, SOFA PILLOW excluded — that is a plain accessory,
-// see the report at the end); the ERP holds a handful of legacy ones, and every
-// sofa sales-order line reads PENDING because there is nothing to allocate.
+// sofa unit came in with the 2026-08-09 opening. As of the 2026-09-07 export
+// AutoCount holds 107 whole sofas over 40 balance cells (this file used to say
+// 76, measured before the sofa predicate was corrected below — the script now
+// PRINTS the number on every run rather than asking you to trust this line);
+// the ERP holds a handful of legacy ones, and every sofa sales-order line reads
+// PENDING because there is nothing to allocate.
 //
 // WHY IT CANNOT JUST RUN THE BALANCE IMPORT WITH THE FILTER REMOVED.
 // AutoCount tracks a sofa as ONE unit of one model ("AMN-SF9028 SOFA" x 6); the
@@ -55,7 +57,8 @@
 // THE DISPLAY-ROOM REFUSAL, AND WHY IT IS GONE (owner ruling 2026-09-07 evening).
 // The refusal above cost 26 whole sofas: measured on the 2026-09-07 22:21 live
 // export, 17 AutoCount balance cells at a DISP location hold 26 units — 24 at
-// KL DISP, 2 at PG DISP — and the ERP held none of them. The owner's rule is
+// KL DISP, 2 at PG DISP — and the ERP held none of them. (9 of those 17 cells
+// were invisible to this script for a SECOND reason as well; see makeIsSofaSet.) The owner's rule is
 // 「我们要的是完整的数据 加我们的规则」: the book comes across COMPLETE, and our
 // rules live in the rule layer, never as an edit to a migrated row. He
 // explicitly refused a "display, excluded from MRP" flag — 「你换不一样就代表
@@ -127,11 +130,30 @@ const isoDay = (v) => {
 };
 const gz = (f) => JSON.parse(zlib.gunzipSync(fs.readFileSync(path.join(here, "data", f))).toString("utf8").replace(/^﻿/, ""));
 
-/* A sofa SET, not a sofa-shaped accessory. `AMN-SOFA PILLOW` matches /SOFA/ and
-   is a plain ACCESSORY in the mapping table — it has no compartments and does
-   not belong to this import (it is missing from the ERP for the same reason and
-   is reported at the end so it is not lost). */
-const isSofaSet = (c) => /SOFA/i.test(c || "") && !/PILLOW/i.test(c || "");
+/* A sofa SET, not a sofa-shaped accessory — DECIDED BY THE BINDING CSV'S
+   CATEGORY COLUMN, not by the item code's spelling.
+   
+   It used to be `/SOFA/i.test(c) && !/PILLOW/i.test(c)`, and that name test is
+   why this script could not see a fifth of the book's sofa. Measured on the
+   2026-09-07 export: the binding calls 40 balance cells / 107 whole sofas SOFA;
+   the name test found 29 / 87. The 11 missing cells are all `THL-*` codes —
+   `THL-2379`, `THL-7226`, `THL-5142` and so on — which do not spell the word.
+   Nine of them stand in the showrooms. They were invisible to BOTH importers at
+   once: import-ac-stock-balance.mjs excludes them because the binding says SOFA,
+   and this script excluded them because the code does not say SOFA, so no path
+   could ever open them.
+   
+   That is docs/stock-reconciliation.md D7 one layer up, and the fix is its
+   lesson applied: never categorise stock by a field that is not the one the
+   RECONCILE uses. check-stock-vs-autocount.mjs and check-golive-parity.mjs both
+   read this same column through loadAcBinding, so the three now agree by
+   construction rather than by coincidence.
+   
+   The pillow hazard the name test existed for does not return: measured on the
+   same export, ZERO codes in the binding's SOFA category spell PILLOW, so the
+   category test admits none. Section 8 still asserts that and warns if a future
+   CSV edit mis-categorises one. */
+const makeIsSofaSet = (sofaFurniture) => (c) => sofaFurniture.has(norm(c));
 
 /* MIRROR of sofa-set-coverage.ts findCoveringBatch, for the READ-ONLY "how many
    sets would become allocatable" projection at the end. Report path only — the
@@ -155,7 +177,17 @@ function coveringBatch(lines, remaining, batches) {
 async function main() {
   log(`mode=${APPLY ? "APPLY" : "DRY-RUN"}${PLACEHOLDER ? " (+placeholder builds)" : ""}; source_doc_no=${SRC_DOC}`);
 
-  /* ── 1. AutoCount's authority on HOW MANY sofas exist ───────────────────── */
+  /* ── 1. AutoCount's authority on HOW MANY sofas exist ─────────────────────
+     The binding CSV is loaded FIRST because it decides what a sofa is (see
+     makeIsSofaSet above); every later section asks it the same question. */
+  const { byAc, sofaFurniture } = loadAcBinding(
+    fs.readFileSync(path.join(here, "data", "autocount-erp-mapping-1561.csv"), "utf8"));
+  const isSofaSet = makeIsSofaSet(sofaFurniture);
+  const nameTestOnly = gz("ac-stock-balance.json.gz")
+    .filter((r) => r.BalQty !== 0 && isSofaSet(r.ItemCode) && !/SOFA/i.test(r.ItemCode || ""));
+  if (nameTestOnly.length) {
+    log(`sofa cells the OLD /SOFA/ name test could not see (item codes that do not spell "sofa", e.g. THL-2379): ${nameTestOnly.length} cells / ${nameTestOnly.reduce((s, r) => s + Math.round(Number(r.BalQty)), 0)} whole sofas — now included, because the binding CSV's category is what the reconcile uses`);
+  }
   const bal = gz("ac-stock-balance.json.gz").filter((r) => r.BalQty !== 0 && isSofaSet(r.ItemCode));
   const balByItem = new Map();
   const balByCell = new Map();
@@ -358,8 +390,6 @@ async function main() {
     const w = whByCode.get(norm(erpCode));
     if (w) displayWhIds.add(String(w.id));
   }
-  const { byAc, sofaFurniture } = loadAcBinding(
-    fs.readFileSync(path.join(here, "data", "autocount-erp-mapping-1561.csv"), "utf8"));
   /* The model behind an ERP piece code, and the ERP codes that actually exist.
      A binding target the product master does not carry is REPORTED, never
      invented — an inventory movement on a code with no product is a row no
