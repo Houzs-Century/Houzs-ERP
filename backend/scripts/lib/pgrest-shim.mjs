@@ -79,6 +79,22 @@
 // the day a canonical function needs one, the gap list names it and the shim
 // grows a tested method.
 const IDENT = /^[a-z_][a-z0-9_]*$/;
+/* PostgREST's EMBEDDED-FILTER spelling — `.not('so.status', 'in', ...)`,
+   `.gt('po_items.received_qty', 0)`. It filters the parent by a column of an
+   embedded relation, so it belongs to the same unimplemented feature as
+   `select('a, rel(b)')` below and must be reported the same way.
+
+   IT WAS NOT. A dotted name fell through to the plain "unsafe identifier"
+   throw, which records NO gap — so the shim's whole safety net (every caller
+   aborts non-zero on a non-empty `__gaps`) never fired for the one shape the
+   allocator actually uses. `so-stock-allocation.ts` acquired two of these on
+   2026-08-16 with its inverted DO-line and PO-link reads, and from that day
+   `recompute-so-allocation` returned `ok=false … unsafe identifier "so.status"`
+   while its report printed "(no line changed — the projection already matches
+   the allocator's own answer)". PROVEN on three separate production
+   dispatches, all of them green: runs 34099835565, 34127825188, 34132871751
+   (2026-09-07). Same composition as docs/bugs/0599, one layer lower. */
+const EMBEDDED_FILTER = /^[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*$/;
 
 /* Split on commas at parenthesis depth 0, so an embed's own column list stays
    in one piece: "id, so:t!inner(a, b), c" -> ["id", "so:t!inner(a, b)", "c"]. */
@@ -98,6 +114,11 @@ export function splitTopLevel(s) {
 export function pgrestShim(sql, schema = "scm") {
   const gaps = [];
   const q = (id) => {
+    if (EMBEDDED_FILTER.test(String(id))) {
+      const msg = `pgrest-shim GAP: embedded filter "${id}" is not implemented — the shim has no embedded relations to filter on, so this read cannot be executed`;
+      gaps.push(msg);
+      throw new Error(msg);
+    }
     if (!IDENT.test(String(id))) throw new Error(`pgrest-shim: unsafe identifier "${id}"`);
     return `"${id}"`;
   };
