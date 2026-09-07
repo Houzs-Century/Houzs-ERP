@@ -33,7 +33,7 @@ import path from "node:path";
 import zlib from "node:zlib";
 import { fileURLToPath } from "node:url";
 
-import { MIGRATION_SOURCE, buildScope, decodeBook } from "./lib/ac-scope.mjs";
+import { MIGRATION_SOURCE, buildScope, decodeSnapshot } from "./lib/ac-scope.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const DATA = path.join(here, "data");
@@ -50,7 +50,7 @@ if (!fs.existsSync(SNAP)) {
 const gz = (f) => JSON.parse(zlib.gunzipSync(fs.readFileSync(path.join(DATA, f))).toString("utf8").replace(/^﻿/, ""));
 
 const snap = gz("ac-reconcile-truth.json.gz");
-const book = decodeBook(snap);
+const book = decodeSnapshot(snap);
 const scope = buildScope(book);
 
 console.log(`AutoCount snapshot exported_at=${snap.exported_at}`);

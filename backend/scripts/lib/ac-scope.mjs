@@ -65,8 +65,10 @@
 
 export const isTestDoc = (docNo) => String(docNo ?? "").startsWith("HC-") || String(docNo ?? "").startsWith("ZZ");
 
-/** Decode `data/ac-reconcile-truth.json.gz` (already parsed) into typed maps. */
-export function decodeBook(snap) {
+/** Decode `data/ac-reconcile-truth.json.gz` (already parsed) into typed maps.
+ *  Named for the SNAPSHOT deliberately: variant-reconcile.mjs exports its own
+ *  `decodeBook`, which decodes one line's BUILD TEXT and is a different thing. */
+export function decodeSnapshot(snap) {
   const hIdx = Object.fromEntries(snap.header_fields.map((n, i) => [n, i]));
   const lIdx = Object.fromEntries(snap.line_fields.map((n, i) => [n, i]));
   const num = (v) => (v === "" || v == null ? null : Number(v));
@@ -105,7 +107,14 @@ export function decodeBook(snap) {
       lines.get(l.docNo).push(l);
       byDtlKey.set(l.dtlKey, l);
     }
-    book[t] = { headers, lines, byDtlKey };
+    /* Desc2 is exported only for lines that HAVE one, so an absent key means the
+       book said nothing about the build — which is BOOK-BLANK, never unknown.
+       A snapshot cut before 2026-09-07 carries none at all; refusing on that is
+       the CALLER's job, because only the caller knows whether it is about to
+       compare variants. */
+    const desc2 = new Map();
+    for (const [key, text] of payload.desc2 || []) desc2.set(key, text);
+    book[t] = { headers, lines, byDtlKey, desc2 };
   }
   return book;
 }
