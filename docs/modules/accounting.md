@@ -533,6 +533,18 @@ on 400/405 was reported as a foreign source (21 findings on 2990's 405-0000).
 The AP arm now walks `ap_invoices` for drift the way it walks PIs, and both
 source types are family on the creditor controls
 (`tests/controlCheckPayments.test.ts`, `apControlCheckUnpostedPi.test.ts`).
+The dry run then named the reason the hook had been failing since it landed
+(docs/bugs/0655): `postSoPayment` read `customer_name, customer_phone` off
+`mfg_sales_orders`, columns the order table never had — it names its customer
+`debtor_name` and the phone `phone` — so PostgREST refused the read and every
+customer payment died at `so_read_failed`, 171 of them in 2990. The two reads
+(`acc/payments.ts`, `acc/settlement.ts`) now use the real columns;
+`tests/soPaymentOrderColumns.test.ts` pins the accounting module's
+`mfg_sales_orders` SELECTs against the table's real column list (the fake
+client cannot catch a wrong column — it hands back whatever the fixture row
+has, which is exactly how this shipped). The card's **Book N payments now**
+button, offered only after a dry run the gate refused nothing on and behind a
+confirm, is the same endpoint without dryRun — the owner presses it.
 
 **Phase 2B part 1 (2026-08-16): Daily Bank.** GET /accounting/daily-bank?date= answers the owner one question - today, where is the money and how much can actually move - live from the ledger (2.3: no caches): opening/in/out/closing per money account (scm.accounts.acc_money flag, migration 0299), settlement-in-transit balances per acquirer (visible, never counted movable), and — since phase 3 (2026-08-28, mig 0339) — pendingApprovalSen: every DRAFT payment voucher sitting in the approval queue, converted to MYR the way posting will, subtracted from available. Page /scm/daily-bank (Finance menu): date navigation + Get Image (canvas-drawn PNG to clipboard for WhatsApp, download fallback). Board arithmetic pinned in acc/daily-bank.test.ts. 946-0000 Cash Over/Short + OVER_SHORT role seeded for the coming daily cashup.
 

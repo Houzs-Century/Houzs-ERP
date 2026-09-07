@@ -154,12 +154,12 @@ export async function loadPaymentCandidates(
   const customerOf = new Map<string, string>();
   if (soDocs.length > 0) {
     const { data, error } = await sb.from('mfg_sales_orders')
-      .select('doc_no, customer_name').eq('company_id', companyId).in('doc_no', soDocs);
+      .select('doc_no, debtor_name').eq('company_id', companyId).in('doc_no', soDocs); // debtor_name — docs/bugs/0655
     /* Failed is not "nameless": a blank customer column across the whole
        screen reads as data, so the read fails like its siblings above. */
     if (error) return { ok: false, reason: `SO customers: ${error.message}` };
-    for (const r of (data ?? []) as Array<{ doc_no: string; customer_name: string | null }>) {
-      if (r.customer_name) customerOf.set(`SO:${r.doc_no}`, r.customer_name);
+    for (const r of (data ?? []) as Array<{ doc_no: string; debtor_name: string | null }>) {
+      if (r.debtor_name) customerOf.set(`SO:${r.doc_no}`, r.debtor_name);
     }
   }
   if (siIds.length > 0) {
