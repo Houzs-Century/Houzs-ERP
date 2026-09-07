@@ -50,7 +50,12 @@ $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("AcSyncService.compilecheck.
 $exe = [System.IO.Path]::ChangeExtension($tmp, '.exe')
 try {
   $src = Get-Content $Source -Raw
-  [System.IO.File]::WriteAllText($tmp, $src.Replace('__DBLINE__', $dummy).Replace('__BOOK__', 'AED_HOUZS'))
+  # The AutoCount login placeholders take DUMMY values here for the same reason
+  # the connection line does: this script answers "does the source compile",
+  # and it must never need a credential to answer it. deploy-on-host.ps1 is
+  # where the real pair is substituted.
+  [System.IO.File]::WriteAllText($tmp, $src.Replace('__DBLINE__', $dummy).Replace('__BOOK__', 'AED_HOUZS').
+                                            Replace('__ACUSER__', 'DUMMYUSER').Replace('__ACPASS__', 'DUMMYPASS'))
 
   # Stock / ARAP / GeneralMaint / StockMaint carry the MASTER-DATA classes that
   # /ensure-masters drives - ItemDataAccess, DebtorDataAccess, CreditorDataAccess,

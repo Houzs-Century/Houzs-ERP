@@ -155,7 +155,34 @@ class AcSyncService {
   static string Url =
     "http://localhost:" + (File.Exists(@"C:\Temp\ac-svc-port.txt")
       ? File.ReadAllText(@"C:\Temp\ac-svc-port.txt").Trim() : "8900") + "/";
-  const string USER = "ADMIN";
+  /* The AutoCount APPLICATION login the write-back authenticates as, and the
+     name stamped as the ACTOR on everything it writes — CancelDocument,
+     SaveData, SaveDebtor and SaveCreditor all take it.
+
+     It was the literal "ADMIN" until 2026-09-07, and Session() called
+     Login(USER, USER) — the user id sent as its own password — so the account
+     book's ADMIN password was, and had to stay, the string "ADMIN".
+
+     Measured on the live book that day, because the question "is ADMIN a
+     service identity or a person's account?" had never been asked: ADMIN
+     created or last-modified 110,184 documents; MASTER 25; MALL 3; AOTG and
+     LOGISTIC none at all. ADMIN is what the staff work in. Two things followed
+     from that and neither was survivable:
+
+       - AutoCount cannot be made read-only for the staff without locking the
+         write-back out alongside them, because it is the same login.
+       - Nothing in the account book can tell an ERP write from a person's.
+
+     Both are now substituted at deploy time. `C:\Temp\ac-svc-login.txt` (line 1
+     user, line 2 password) is the source; with no such file the deploy falls
+     back to setup.json's own `user` / `password`, which reproduces the previous
+     behaviour exactly — a deploy that is asked for nothing new changes nothing.
+
+     PASS is deliberately its own constant rather than a second read of USER: a
+     login whose password is derivable from its user id cannot be strengthened
+     later without another code change, and that is the trap being removed. */
+  const string USER = "__ACUSER__";
+  const string PASS = "__ACPASS__";
 
   static string ApiKey =
     File.Exists(@"C:\Temp\ac-svc-key.txt") ? File.ReadAllText(@"C:\Temp\ac-svc-key.txt").Trim() : null;
@@ -973,7 +1000,13 @@ class AcSyncService {
   static AutoCount.Authentication.UserSession Session() {
     __DBLINE__
     var s = new AutoCount.Authentication.UserSession(db);
-    if (!s.Login(USER, USER)) throw new Exception("AutoCount login failed");
+    /* Name the user in the failure. The old message was "AutoCount login
+       failed" with nothing else, which is the same sentence for a wrong
+       password, a disabled account and a user id that does not exist — and
+       after 2026-09-07 the user id is a deploy-time value, so "which login did
+       this build actually get?" became a question the error has to answer. The
+       password is never in the message. */
+    if (!s.Login(USER, PASS)) throw new Exception("AutoCount login failed for user '" + USER + "'");
     return s;
   }
 

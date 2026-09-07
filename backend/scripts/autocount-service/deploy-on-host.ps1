@@ -66,7 +66,14 @@ param(
   [string] $Book         = "AED_HOUZS",
   [int]    $ExpectPort   = 8900,
   [string] $PortFile     = "C:\Temp\ac-svc-port.txt",
-  [string] $KeyFile      = "C:\Temp\ac-svc-key.txt"
+  [string] $KeyFile      = "C:\Temp\ac-svc-key.txt",
+  # The AutoCount APPLICATION login the service authenticates as (line 1 the
+  # user id, line 2 the password). A FILE and not a parameter, for the reason
+  # this script already gives for the DB password: argv is world-readable in a
+  # process list. Absent, the login falls back to setup.json's own user /
+  # password, which is what the service used before 2026-09-07 - so a deploy
+  # that is asked for nothing new changes nothing. See AcSyncService.cs's USER.
+  [string] $AcLoginFile  = "C:\Temp\ac-svc-login.txt"
 )
 
 $ErrorActionPreference = 'Stop'
@@ -97,6 +104,10 @@ $script:ServiceStopped = $false
 $script:ExitCode = $null
 # The DB password, once known, so it can be scrubbed out of anything printed.
 $script:DbPassword = ''
+# The AutoCount APPLICATION password, same rule. It is a SECOND secret since
+# 2026-09-07 - before that the login sent the user id as its own password, so
+# there was nothing here to leak that DbPassword did not already cover.
+$script:AcPassword = ''
 
 # ------------------------------------------------------------------ helpers
 
@@ -108,7 +119,8 @@ function Protect-Secret([string] $Text, [int] $SqlNumber) {
     return "login failed - the SQL server rejected the credentials from setup.json (SQL error 18456). Credentials not shown."
   }
   if (-not $Text) { return $Text }
-  if ($script:DbPassword) { return $Text.Replace($script:DbPassword, '<password>') }
+  if ($script:DbPassword) { $Text = $Text.Replace($script:DbPassword, '<password>') }
+  if ($script:AcPassword) { $Text = $Text.Replace($script:AcPassword, '<ac-password>') }
   return $Text
 }
 
@@ -428,6 +440,41 @@ if ($DbLineFile) {
   Step "connection line assembled from setup.json - server '$srv', book '$Book', credentials NOT shown"
 }
 if ($dbline -notmatch 'DBSetting') { Die "the connection line does not look like a DBSetting - refusing to compile it" }
+
+# ------------------------------------- 2b the AutoCount APPLICATION login
+# A DIFFERENT credential from the SQL one above, and the distinction is the
+# whole point of this section: the SQL login opens the database, this one is
+# what the service presents to AutoCount, and it is the name AutoCount stamps
+# as the ACTOR on every document the write-back creates, edits or cancels.
+#
+# Until 2026-09-07 the service was hardcoded to ADMIN and sent the user id as
+# its own password. Measured that day on the live book: ADMIN had created or
+# last-modified 110,184 documents against 28 for every other user combined -
+# ADMIN is the account the staff work in. So the write-back could not be given
+# its own identity, AutoCount could not be locked for the staff without locking
+# the ERP out with them, and the book could not tell the two apart.
+$acUser = $null; $acPass = $null; $acOrigin = $null
+$csEsc = { param($s) $s.Replace('\', '\\').Replace('"', '\"') }
+if (Test-Path $AcLoginFile) {
+  $acLines = @(Get-Content $AcLoginFile | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+  if ($acLines.Count -lt 2) {
+    Die "$AcLoginFile must hold two non-empty lines - the AutoCount user id on the first, its password on the second."
+  }
+  $acUser = $acLines[0]; $acPass = $acLines[1]; $acOrigin = $AcLoginFile
+} elseif ($pick) {
+  # setup.json's own `user` / `password` - NOT dbUsername / dbPassword. This is
+  # the pre-2026-09-07 pair, so a host with no login file deploys exactly what
+  # it deployed before and this change is invisible to it.
+  $acUser = & $pick @('user','User')
+  $acPass = & $pick @('password','Password')
+  $acOrigin = "setup.json at $SetupJson (the pre-2026-09-07 fallback)"
+}
+if (-not $acUser -or -not $acPass) {
+  Die ("no AutoCount application login could be resolved. Write $AcLoginFile with the user id on line 1 " +
+       "and its password on line 2, or use a setup.json that carries `user` and `password`.")
+}
+$script:AcPassword = $acPass
+Step "AutoCount login '$acUser' from $acOrigin; password NOT shown"
 if ($prePass) { $script:DbPassword = $prePass }
 
 # ---------------------------------------------------------- 3 SQL PRE-FLIGHT
@@ -506,12 +553,13 @@ try {
   }
   # String.Replace, never -replace: the connection line contains backslashes and
   # a regex replacement would eat them.
-  $text = $text.Replace('__DBLINE__', $dbline).Replace('__BOOK__', $Book)
+  $text = $text.Replace('__DBLINE__', $dbline).Replace('__BOOK__', $Book).
+                Replace('__ACUSER__', (& $csEsc $acUser)).Replace('__ACPASS__', (& $csEsc $acPass))
   Set-Content -Path $buildCs -Value $text -Encoding UTF8
 
-  $left = (Select-String -Path $buildCs -Pattern '__DBLINE__|__BOOK__' -AllMatches | Measure-Object).Count
+  $left = (Select-String -Path $buildCs -Pattern '__DBLINE__|__BOOK__|__ACUSER__|__ACPASS__' -AllMatches | Measure-Object).Count
   if ($left -ne 0) { Die "placeholders still present after substitution ($left). A partial replace will not compile." }
-  Ok "substituted $before x __DBLINE__ and __BOOK__ = '$Book'; 0 placeholders left"
+  Ok "substituted $before x __DBLINE__, __BOOK__ = '$Book', __ACUSER__ = '$acUser' (password substituted, not shown); 0 placeholders left"
 
   # -------------------------------------------------------------- 4b compile
   $refs = @('AutoCount.dll','AutoCount.Invoicing.dll','AutoCount.Sales.dll','AutoCount.Purchase.dll',
