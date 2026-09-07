@@ -177,6 +177,31 @@ export function CommittedBatchRowMobile({ poNo }: { poNo?: string | null }) {
   );
 }
 
+/* DO lines only (mig 20260907T2340): AutoCount shipped an item code the named
+   sales order does not carry — the warehouse substituted the product at
+   dispatch. Amber, and it says WHY rather than only flagging: the row carries no
+   so_item_id on purpose (which ordered line it replaces is a human decision), so
+   the order's outstanding quantity has deliberately NOT moved. Desktop twin: the
+   Badge on DeliveryOrderDetailV2's Item cell — one rule, two surfaces.
+   docs/modules/delivery-order.md, docs/bugs/0674-*. */
+const substitutedChip: CSSProperties = {
+  fontSize: 10, fontWeight: 700, color: "#8a5a00",
+  background: "#fff4d6", border: "1px solid #f0d79a", borderRadius: 5, padding: "1px 6px",
+};
+export function SubstitutedRowMobile({ on }: { on?: boolean }) {
+  if (!on) return null;
+  return (
+    <div style={rowStyle}>
+      <span
+        style={substitutedChip}
+        title="Substituted at dispatch — AutoCount delivered an item code this delivery's sales order does not carry. The code and description are copied from AutoCount verbatim. The line is deliberately not linked to a sales-order line, so the order's outstanding quantity is unchanged until someone decides which ordered item this replaces."
+      >
+        Substituted at dispatch — not on the SO
+      </span>
+    </div>
+  );
+}
+
 /* Purchase docs (PO / GRN / PI): the DO(s) that shipped this line's goods.
    Multi-DO lines ALWAYS show each qty — a 1+1 batch split must not read as one
    unit shipped twice (owner 2026-08-01); a single chip shows qty only past 1. */

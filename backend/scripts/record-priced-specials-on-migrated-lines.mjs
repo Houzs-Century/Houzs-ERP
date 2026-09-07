@@ -227,6 +227,13 @@ async function main() {
   const oddVariants = [];
   const alreadyArmed = { so: 0, po: 0, codes: new Map() }; // lines that ALREADY carry a priced code
   let safeSetSize = 0;               // what the earlier SKIP_PRICED pass would stamp today
+  /* Of the selected lines, how many ALREADY carry the whole record from an
+     earlier apply. The selection cannot shrink after a successful run — it is
+     driven by `variants.specials`, which this script never writes — so without
+     this split a re-run's line count reads as untouched backlog. That exact
+     mis-read is what quoted 139 already-decided lines back as outstanding
+     (docs/bugs/0668-*). */
+  const cover = { so: { fresh: 0, already: 0 }, po: { fresh: 0, already: 0 } };
 
   for (const [which, rows] of TABLES.map(([w]) => [w, w === "so" ? soLines : poLines])) {
     for (const r of rows) {
@@ -272,9 +279,17 @@ async function main() {
       const declared = asArray(v0.specialsRecorded).map((x) => String(x).trim()).filter(Boolean);
       const recordedOnly = [...new Set([...declared, ...cls.addedNow])];
 
+      /* A line is FRESH when this run puts a code on it that is not recorded
+         yet. `recordedOnly` is the union, so equal length means `declared`
+         already covered every code the slip asks for and the write is a
+         no-change rewrite. */
+      const gains = cls.addedNow.filter((c) => !declared.includes(c));
+      if (gains.length) cover[which].fresh++; else cover[which].already++;
+
       updates[which].push({
         id: r.id, doc: r.doc, code: r.code, qty: Number(r.qty ?? 0),
         had: cls.had, next: cls.next, addedNow: cls.addedNow, pricedNow, recordedOnly,
+        gains,
       });
       if (samples.length < SHOW)
         samples.push(`   ${which.toUpperCase()} ${String(r.doc ?? "").padEnd(14)} ${String(r.code ?? "").padEnd(20)} ` +
@@ -289,6 +304,18 @@ async function main() {
   log("");
   log(`lines this run would RECORD: SO ${updates.so.length}, PO ${updates.po.length} ` +
       `(total ${updates.so.length + updates.po.length})`);
+  /* The denominator above NEVER shrinks after a successful apply — the selection
+     reads variants.specials, which this script does not write. The split below
+     is the part that moves, and it is the honest answer to "how much is left". */
+  const freshTotal = cover.so.fresh + cover.po.fresh;
+  const alreadyTotal = cover.so.already + cover.po.already;
+  log(`   of those, NOT yet recorded (this run adds a code): SO ${cover.so.fresh}, PO ${cover.po.fresh} ` +
+      `(total ${freshTotal})`);
+  log(`   of those, ALREADY recorded by an earlier apply (rewrite is a no-change): ` +
+      `SO ${cover.so.already}, PO ${cover.po.already} (total ${alreadyTotal})`);
+  if (freshTotal === 0)
+    log(`   -> nothing left to record. A re-run reporting ${updates.so.length + updates.po.length} ` +
+        `lines is the stable denominator, not backlog.`);
   log(`lines the earlier 0/0 pass still owns and this run leaves alone: ${safeSetSize}`);
   log("");
   log(`per PRICED code (lines that would record it):`);

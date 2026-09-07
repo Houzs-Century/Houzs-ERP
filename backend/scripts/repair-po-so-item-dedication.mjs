@@ -31,6 +31,14 @@
    seater ends up dedicated to a 26" build - and on this very document there IS
    a 28" single seater, a genuine second sofa that must not be touched.
 
+   THE ONE BUCKET IT DOES SETTLE is same-code, same-seat rows that are
+   INDISTINGUISHABLE on every other column this run read - the two `1NA`
+   compartments of one sofa, identical in quantity, both money columns, variants
+   and Desc2 on both sides. Any pairing there produces the same state, so it is
+   a relabelling, not a choice; and refusing costs something real, because a
+   hard-bound sales line with no dedication can never reach READY. One differing
+   column and the bucket is refused exactly as before.
+
    IT REFUSES RATHER THAN PICKS. Two candidate sales lines, none, a pointer
    that leaves the document pair, a cancelled target, a quantity that would
    exceed the demand, a purchase order with no dedication to this sales order
@@ -139,6 +147,23 @@ const seatOf = (v) => {
   const s = v && typeof v === 'object' ? v.seatHeight : null;
   return s === null || s === undefined || s === '' ? null : String(s);
 };
+
+/* Everything this run READ about a row except the row's own identity and the
+   pointer being decided. lib/po-so-dedication-plan.mjs uses it for one thing:
+   deciding that a bucket of same-code, same-seat rows holds nothing to choose
+   between - two `1NA` compartments of one sofa, identical down to the money and
+   the Desc2 - so pairing them is a relabelling rather than a guess.
+
+   EVERY column of the SELECT goes in, so widening the SELECT automatically
+   makes the comparison stricter and never looser. `id`, `line_no` and
+   `so_item_id` are the three that must stay OUT: the first two are identity and
+   the last is the thing being written. Keys are sorted so two rows that agree
+   cannot disagree on JSON ordering. */
+const OUT_OF_FINGERPRINT = new Set(['id', 'line_no', 'so_item_id', 'seat', 'fingerprint']);
+const fingerprintOf = (row) => JSON.stringify(
+  Object.keys(row).filter((k) => !OUT_OF_FINGERPRINT.has(k)).sort()
+    .map((k) => [k, row[k] === null || row[k] === undefined ? null : (typeof row[k] === 'object' ? JSON.stringify(row[k]) : String(row[k]))]),
+);
 const money = (rows, totalCol) => rows.reduce(
   (a, r) => ({
     total: a.total + Number(r[totalCol] ?? 0),
@@ -178,19 +203,19 @@ async function resolvePo(client, poDoc) {
 
 async function readPair(client, poId, soDoc) {
   const soRaw = await client`SELECT i.id, i.line_no, i.item_group, i.item_code, i.qty, i.unit_price_sen,
-                                    i.total_sen, i.cancelled, i.variants, i.po_qty_picked
+                                    i.total_sen, i.cancelled, i.variants, i.po_qty_picked, i.description2
                                FROM scm.mfg_sales_order_items i
                                JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
                               WHERE h.company_id = ${CO} AND i.doc_no = ${soDoc}
                               ORDER BY i.line_no`;
   const poRaw = await client`SELECT i.id, i.item_group, i.item_code, i.qty, i.unit_price_sen,
-                                    i.line_total_sen, i.so_item_id, i.variants, i.received_qty
+                                    i.line_total_sen, i.so_item_id, i.variants, i.received_qty, i.description2
                                FROM scm.purchase_order_items i
                               WHERE i.purchase_order_id = ${poId} AND i.company_id = ${CO}
                               ORDER BY i.id`;
   return {
-    soRows: soRaw.map((r) => ({ ...r, seat: seatOf(r.variants) })),
-    poRows: poRaw.map((r) => ({ ...r, seat: seatOf(r.variants) })),
+    soRows: soRaw.map((r) => ({ ...r, seat: seatOf(r.variants), fingerprint: fingerprintOf(r) })),
+    poRows: poRaw.map((r) => ({ ...r, seat: seatOf(r.variants), fingerprint: fingerprintOf(r) })),
   };
 }
 
