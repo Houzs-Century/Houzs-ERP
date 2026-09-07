@@ -22,7 +22,9 @@ export type CreditSourceType =
   | 'SO_CANCEL_REFUND'   // SO was cancelled with paid deposit > 0 → credit equal to paid deposit
   | 'OVERPAY'            // payment recorded > remaining due → excess turned into credit
   | 'APPLIED_TO_SI'      // negative entry — credit applied to a new invoice
-  | 'MANUAL_ADJUST';     // operator-entered adjustment
+  | 'MANUAL_ADJUST'      // operator-entered adjustment
+  | 'CUSTOMER_REFUND'    // negative entry — a Customer Refund voucher paid the credit out in cash (lib/pv-refund.ts)
+  | 'CUSTOMER_REFUND_REVERSAL'; // that voucher was cancelled — the credit comes back
 
 export type AddCreditInput = {
   debtorCode: string;

@@ -347,6 +347,12 @@ export const PaymentVouchers = () => {
                   <Plus {...ICON} />
                   <span>New Payment Voucher</span>
                 </Button>
+                {/* The third kind (§14): money back to a customer, named by
+                    the order or the cancelled invoice it refunds. */}
+                <Button variant="secondary" size="sm" onClick={() => navigate('/scm/payment-vouchers/new?type=refund')}>
+                  <Plus {...ICON} />
+                  <span>New Customer Refund</span>
+                </Button>
                 {/* The bill pile: drop many bills, they come back read and
                     grouped by supplier (owner's three cases, 2026-09-02). */}
                 <Button variant="ghost" size="sm" onClick={() => navigate('/scm/payment-vouchers/scan')}>
@@ -466,7 +472,7 @@ export const PaymentVouchers = () => {
              identity is fresh. An AP Payment copies to an AP Payment. */
           menu.push({
             label: 'Copy as new',
-            onClick: () => navigate(`/scm/payment-vouchers/new?copyFrom=${r.id}${(r as Record<string, unknown>).purpose === 'SUPPLIER_PAYMENT' ? '&type=ap' : ''}`),
+            onClick: () => navigate(`/scm/payment-vouchers/new?copyFrom=${r.id}${(r as Record<string, unknown>).purpose === 'SUPPLIER_PAYMENT' ? '&type=ap' : (r as Record<string, unknown>).purpose === 'CUSTOMER_REFUND' ? '&type=refund' : ''}`),
           });
           /* Print (owner 2026-09-03: print pv include ocr 的文件一起) — the
              established list→print route: land on the detail with ?print=1

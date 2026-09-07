@@ -148,3 +148,12 @@ describe('the batch runs in voucher-date order (docs/bugs/0653)', () => {
     expect(checkAsync.mock.calls.map((c) => c[0])).toEqual(['prep-early', 'prep']);
   });
 });
+
+describe('the third New (§14)', () => {
+  test('New Customer Refund stands beside the other two', () => {
+    draw();
+    expect(screen.getByText('New Customer Refund')).toBeTruthy();
+    expect(screen.getByText('New AP Payment')).toBeTruthy();
+    expect(screen.getByText('New Payment Voucher')).toBeTruthy();
+  });
+});
