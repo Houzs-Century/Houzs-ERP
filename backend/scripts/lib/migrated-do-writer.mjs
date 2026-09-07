@@ -280,19 +280,27 @@ export function doNote(d) {
   return parts.join(" ");
 }
 
-/** One migrated delivery order, header + lines, inside ONE transaction. */
-export async function insertMigratedDo(sql, d, { companyId, sysUser, debtorFallback = null }) {
+/** One migrated delivery order, header + lines, inside ONE transaction.
+    `warehouseId` / `salesLocation` are the branch that shipped it, from the
+    book — owner ruling 2026-09-07 ("记在单头就好"): the delivery location lives
+    on the HEADER, never on a per-line column. Both are optional and default to
+    NULL, because an unresolved location must stay visibly absent rather than
+    fall back to a company-blind default; backfill-migrated-do-warehouse.mjs
+    reports every document it cannot resolve instead of guessing one. */
+export async function insertMigratedDo(sql, d, { companyId, sysUser, debtorFallback = null, warehouseId = null, salesLocation = null }) {
   const doNo = migratedDoNumber(d.doNo);
   return sql.begin(async (tx) => {
     const [hdr] = await tx`INSERT INTO scm.delivery_orders
         (do_number, so_doc_no, debtor_code, debtor_name, status, do_date, currency,
-         company_id, created_by, notes, migrated_no_stock, linked_ac_docno)
+         company_id, created_by, notes, migrated_no_stock, linked_ac_docno,
+         warehouse_id, sales_location)
       VALUES (${doNo}, ${d.so}, ${d.debtorCode},
               ${d.debtorName ?? debtorFallback ?? "(unnamed)"},
               'DELIVERED', ${(d.date || "").slice(0, 10) || null}, 'MYR',
               ${companyId}, ${sysUser},
               ${doNote(d)},
-              true, ${d.doNo})
+              true, ${d.doNo},
+              ${warehouseId}, ${salesLocation})
       RETURNING id`;
     /* THE PRICE COLUMNS ARE NOT OPTIONAL. They were omitted here while the GRN
        half of create-migrated-documents.mjs wrote unit_price_sen and
