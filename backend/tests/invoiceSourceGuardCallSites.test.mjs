@@ -18,8 +18,8 @@
 // docs/bugs/0099's lesson, and the instrument
 // scripts/check-optional-decision-params.mjs already uses this shape here.
 //
-// EVERY assertion in this file FAILED before the guard was wired (6 failed of
-// 6, on the tree carrying only the module and its behavioural test); the red
+// EVERY assertion in this file FAILED before the guard was wired (8 failed of
+// 8, on the tree carrying only the module and its behavioural test); the red
 // run is quoted in docs/bugs/0677. If a refactor moves the code, do NOT delete
 // an assertion — re-anchor it, or replace it with a behavioural test that
 // proves the same refusal.
@@ -54,13 +54,13 @@ describe('sales-invoices.ts — every path that writes do_item_id from a client 
      already checks company, migrated-source, the shadow rule and the invoiced
      ceiling. It never compared the item. */
   it('POST / asserts identity before it inserts the lines', () => {
-    const site = between(src, 'const over = await checkSiOverRemaining(sb, items);', 'const rows = items.map((it, lineNo) => buildItemRow(h.id, it, lineNo));', 'SI POST /');
+    const site = between(src, 'const over = await checkSiOverRemaining(sb, items)', 'const rows = items.map((it, lineNo) => buildItemRow(h.id, it, lineNo));', 'SI POST /');
     expect(site).toMatch(GUARD);
   });
 
   /* POST /:id/items — the add-line. Same client-supplied doItemId, same gap. */
   it('POST /:id/items asserts identity before it inserts the line', () => {
-    const site = between(src, 'const over = await checkSiOverRemaining(sb, [it]);', 'const row = buildItemRow(id, it, nextLineNo);', 'SI add-line');
+    const site = between(src, 'const over = await checkSiOverRemaining(sb, [it])', 'const row = buildItemRow(id, it, nextLineNo);', 'SI add-line');
     expect(site).toMatch(GUARD);
   });
 
@@ -92,7 +92,7 @@ describe('purchase-invoices.ts — every path that writes grn_item_id from a cli
 
   /* POST /:id/items — the add-line. */
   it('POST /:id/items asserts identity before it inserts the line', () => {
-    const site = between(src, "capColumn: 'qty_accepted', drawnColumns: ['invoiced_qty', 'returned_qty'],", 'const row: Record<string, unknown> = {', 'PI add-line');
+    const site = between(src, "requested: qty, what: 'GRN line' });", 'const row: Record<string, unknown> = {', 'PI add-line');
     expect(site).toMatch(GUARD);
   });
 

@@ -907,24 +907,8 @@ export const createSalesInvoiceHandler = async (c: Context<{ Bindings: Env; Vari
   }
 
   {
-    const over = await checkSiOverRemaining(sb, items);
+    const over = await checkSiOverRemaining(sb, items) ?? await checkInvoiceSourceItemIdentity(sb, 'DO', items.map((it) => ({ sourceItemId: (it.doItemId as string | undefined) ?? null, itemCode: it.itemCode })), activeCompanyId(c) ?? null);
     if (over) return c.json(over.body, over.status);
-  }
-
-  /* IDENTITY, not just the key. Every check above this line asks whether the
-     delivery line may be DRAWN ON — company, status, migrated source, remaining
-     quantity. None asks whether it is the SAME PRODUCT, and a foreign key
-     pointing at a different bed neither dangles nor breaks a constraint. Two
-     production rows were in exactly that state on 2026-09-07 (docs/bugs/0676,
-     probe run 34139187692). The guard takes its own company-scoped read and
-     fails closed. */
-  {
-    const scope = requireActiveCompanyId(c);
-    if (!scope.ok) return c.json(scope.refusal, 409);
-    const identity = await checkInvoiceSourceItemIdentity(sb, 'DO',
-      items.map((it) => ({ sourceItemId: (it.doItemId as string | undefined) ?? null, itemCode: it.itemCode })),
-      scope.companyId);
-    if (identity) return c.json(identity.body, identity.status);
   }
 
   /* A delivery carried over from AutoCount is invoiced by the migrated-invoice
@@ -1728,17 +1712,8 @@ export const appendSalesInvoiceItemHandler = async (c: any) => {
   }
 
   {
-    const over = await checkSiOverRemaining(sb, [it]);
+    const over = await checkSiOverRemaining(sb, [it]) ?? await checkInvoiceSourceItemIdentity(sb, 'DO', [{ sourceItemId: (it.doItemId as string | undefined) ?? null, itemCode: it.itemCode }], co.companyId);
     if (over) return c.json(over.body, over.status);
-  }
-
-  /* Same rule as POST /, at the door beside it — the failure this bug class
-     keeps producing is a rule applied at N-1 of its N call sites. */
-  {
-    const identity = await checkInvoiceSourceItemIdentity(sb, 'DO',
-      [{ sourceItemId: (it.doItemId as string | undefined) ?? null, itemCode: it.itemCode }],
-      co.companyId);
-    if (identity) return c.json(identity.body, identity.status);
   }
 
   /* Same refusal as every other path that can attach a delivery line. */
@@ -1903,31 +1878,12 @@ salesInvoices.patch('/:id/items/:itemId', async (c) => {
   /* The EDIT half of FIX 3 — see unlinked-line-edit-guard for why (the cap above
      is gated on prev.do_item_id, so a re-typed unlinked code double-bills). */
   {
-    const repoint = await unlinkedEditRefusal(sb, 'sales-invoice', {
-      parentId: siFromDoId,
-      storedLink: (prev as { do_item_id?: string | null }).do_item_id ?? null,
-      storedCode: (prev as { item_code?: string | null }).item_code ?? null,
-      patchCode: it.itemCode,
-    });
+    const storedLink = (prev as { do_item_id?: string | null }).do_item_id ?? null;
+    const repoint = await unlinkedEditRefusal(sb, 'sales-invoice', { parentId: siFromDoId, storedLink, storedCode: (prev as { item_code?: string | null }).item_code ?? null, patchCode: it.itemCode });
     if (repoint) return c.json(repoint, 409);
-  }
-
-  /* THE EDIT DOOR ON A LINKED LINE. unlinkedEditRefusal directly above covers
-     the case where the STORED link is null. A line that ALREADY carries a
-     do_item_id had no item check at all: the rename map writes `item_code`
-     unconditionally, so a correct link becomes a wrong one in one PATCH and
-     nothing downstream can tell. docs/bugs/0672 names this shape — every
-     existing unlinked-line guard is scoped to `link IS NULL`.
-
-     It runs on the EFFECTIVE post-patch code (`updates.item_code` when the body
-     sent one, the stored code otherwise), because a patch that omits itemCode
-     still leaves a code sitting next to the link. */
-  {
-    const effectiveCode = updates['item_code'] !== undefined ? updates['item_code'] : prev.item_code;
-    const identity = await checkInvoiceSourceItemIdentity(sb, 'DO',
-      [{ sourceItemId: (prev as { do_item_id?: string | null }).do_item_id ?? null, itemCode: effectiveCode }],
-      co.companyId);
-    if (identity) return c.json(identity.body, identity.status);
+    /* THE EDIT DOOR ON A LINKED LINE: unlinkedEditRefusal above is scoped to a STORED link of null. Checked on the EFFECTIVE post-patch code. */
+    const drift = await checkInvoiceSourceItemIdentity(sb, 'DO', [{ sourceItemId: storedLink, itemCode: updates['item_code'] !== undefined ? updates['item_code'] : prev.item_code }], co.companyId);
+    if (drift) return c.json(drift.body, drift.status);
   }
 
   const { error } = await scopeToCompanyId(sb.from('sales_invoice_items').update(updates).eq('id', itemId), co.companyId);

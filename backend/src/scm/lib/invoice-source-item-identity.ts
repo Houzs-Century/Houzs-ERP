@@ -118,6 +118,7 @@ export function invoiceSourceItemMismatch(
 
 export type InvoiceSourceRefusal =
   | { status: 409; body: InvoiceSourceMismatch }
+  | { status: 409; body: { error: 'company_unresolved'; reason: string; message: string } }
   | { status: 503; body: { error: 'source_identity_unavailable'; reason: string; message: string } };
 
 /**
@@ -127,8 +128,9 @@ export type InvoiceSourceRefusal =
  * `companyId` is REQUIRED and not optional. It decides which rows this guard is
  * allowed to compare against, and an optional scope is the shape CLAUDE.md
  * names: every caller that says nothing keeps the unscoped behaviour with no
- * compile error. Every call site already holds it (`activeCompanyId(c)` /
- * `co.companyId`).
+ * compile error. It is `number | null` rather than `number` so an UNRESOLVED
+ * company is a value a caller must pass deliberately — and null REFUSES, which
+ * is the stricter direction, never a silently unscoped read.
  *
  * FAILS CLOSED. A read that errors is a 503, never a pass: this guard exists
  * because a silent success is exactly what the defect looks like.
@@ -138,10 +140,15 @@ export async function checkInvoiceSourceItemIdentity(
   sb: any,
   chain: InvoiceSourceChain,
   lines: InvoiceSourceLine[],
-  companyId: number,
+  companyId: number | null,
 ): Promise<InvoiceSourceRefusal | null> {
   const ids = [...new Set(lines.map((l) => l.sourceItemId).filter((x): x is string => !!x))];
   if (ids.length === 0) return null;
+  /* An unresolved company cannot be compared against anything. Refuse rather
+     than read every company's rows — the same answer scopeToCompany gives. */
+  if (companyId == null) {
+    return { status: 409, body: { error: 'company_unresolved', reason: 'no active company', message: 'No active company is selected, so this invoice line cannot be checked against the document it comes from.' } };
+  }
   const { data, error } = await sb.from(CHAIN[chain].table)
     .select('id, item_code')
     .in('id', ids)

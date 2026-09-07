@@ -25,6 +25,7 @@ import {
   coveredGrnIds, findUnlinkedPiLines, unlinkedInvoiceResponse, unlinkedCheckFailedResponse,
 } from '../lib/return-unlinked-lines';
 import { assertSourceLinesInCompany } from '../lib/ref-in-company';
+import { checkInvoiceSourceItemIdentity } from '../lib/invoice-source-item-identity';
 import { readStatusCounts } from '../lib/status-counts';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY,
@@ -37,7 +38,6 @@ import { resolvePoSoCoveragePerSkuForPos, resolveDeliveredByCodeForPos, summariz
 import { enqueueConvert, recordParentlessCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
 import { sourceGrnIdsForPi } from '../lib/convert-parent';
 import { refuseMigratedSources } from '../lib/migrated-chain';
-import { checkInvoiceSourceItemIdentity } from '../lib/invoice-source-item-identity';
 import { refuseWithoutWriting } from '../lib/no-write-refusal';
 /* The create's refusal bodies and the two rules its exits follow (2026-08-19). */
 import { insertFailed, loadFailed, rollbackPi, committedAnyway } from '../lib/pi-create-refusals';
@@ -798,24 +798,10 @@ purchaseInvoices.post('/', async (c) => {
       if (over.length > 0) {
         return refuseWithoutWriting(c, { error: 'qty_exceeds_remaining', lines: over }, 409);
       }
+      /* IDENTITY, not just the key — invoice-source-item-identity.ts has the why. */
+      const identity = await checkInvoiceSourceItemIdentity(sb, 'GR', items.map((it) => ({ sourceItemId: (it.grnItemId as string | undefined) ?? null, itemCode: it.itemCode })), activeCompanyId(c) ?? null);
+      if (identity) return refuseWithoutWriting(c, identity.body, identity.status);
     }
-  }
-
-  /* IDENTITY, not just the key. Everything above asks whether the receipt line
-     may be DRAWN ON — company, migrated source, remaining quantity. Nothing
-     asked whether it is the SAME PRODUCT, and the read directly above already
-     had the rows and simply did not look at the column. Three production rows
-     were in that state on 2026-09-07 (docs/bugs/0676, probe run 34139187692).
-     grn_item_id is how a supplier invoice's money reaches the LOT it paid for
-     (lib/recost.ts aggregates PI lines by it), so a wrong one books one
-     receipt's cost onto another receipt's stock. */
-  {
-    const scope = requireActiveCompanyId(c);
-    if (!scope.ok) return refuseWithoutWriting(c, scope.refusal, 409);
-    const identity = await checkInvoiceSourceItemIdentity(sb, 'GR',
-      items.map((it) => ({ sourceItemId: (it.grnItemId as string | undefined) ?? null, itemCode: it.itemCode })),
-      scope.companyId);
-    if (identity) return refuseWithoutWriting(c, identity.body, identity.status);
   }
 
   let subtotal = 0;
@@ -2037,12 +2023,7 @@ purchaseInvoices.post('/:id/items', async (c) => {
       grnItemIds: [(it.grnItemId as string | undefined) ?? null],
     });
     if (covered.error) return c.json(unlinkedCheckFailedResponse(covered.error), 500);
-    const unlinked = await findUnlinkedPiLines(sb, covered.ids, [{
-      lineRef: String(it.lineNumber ?? '0'),
-      itemCode: String(it.itemCode ?? ''),
-      qty: Number(it.qty ?? 1),
-      soItemId: (it.grnItemId as string | undefined) ?? null,
-    }]);
+    const unlinked = await findUnlinkedPiLines(sb, covered.ids, [{ lineRef: String(it.lineNumber ?? '0'), itemCode: String(it.itemCode ?? ''), qty: Number(it.qty ?? 1), soItemId: (it.grnItemId as string | undefined) ?? null }]);
     if (!unlinked.ok) return c.json(unlinkedCheckFailedResponse(unlinked.reason), 500);
     if (unlinked.offenders.length > 0) return c.json(unlinkedInvoiceResponse(unlinked.offenders), 409);
   }
@@ -2064,22 +2045,10 @@ purchaseInvoices.post('/:id/items', async (c) => {
     const mig = await migratedRefusalForGrnItems(sb, [grnItemId]);
     if (!mig.ok) return c.json({ error: 'load_failed', reason: mig.reason }, 500);
     if (mig.refusal) return c.json(mig.refusal, 409);
-    const capLock = await qtyCapRefusal(sb, {
-      table: 'grn_items', id: grnItemId,
-      capColumn: 'qty_accepted', drawnColumns: ['invoiced_qty', 'returned_qty'],
-      requested: qty, what: 'GRN line',
-    });
+    const capLock = await qtyCapRefusal(sb, { table: 'grn_items', id: grnItemId, capColumn: 'qty_accepted', drawnColumns: ['invoiced_qty', 'returned_qty'], requested: qty, what: 'GRN line' });
     if (capLock) return c.json(capLock, 409);
-  }
-
-  /* Same rule as POST /, at the door beside it — the failure this bug class
-     keeps producing is a rule applied at N-1 of its N call sites. */
-  {
-    const scope = requireActiveCompanyId(c);
-    if (!scope.ok) return c.json(scope.refusal, 409);
-    const identity = await checkInvoiceSourceItemIdentity(sb, 'GR',
-      [{ sourceItemId: grnItemId, itemCode: it.itemCode }],
-      scope.companyId);
+    /* Same rule as POST / — this class is a rule applied at N-1 of its N sites. */
+    const identity = await checkInvoiceSourceItemIdentity(sb, 'GR', [{ sourceItemId: grnItemId, itemCode: it.itemCode }], activeCompanyId(c) ?? null);
     if (identity) return c.json(identity.body, identity.status);
   }
 
@@ -2285,12 +2254,7 @@ purchaseInvoices.patch('/:id/items/:itemId', async (c) => {
   if (!grnItemId && it.itemCode !== undefined) {
     const covered = await coveredGrnIds(sb, { headerGrnId: parentGrnId, piId });
     if (covered.error) return c.json(unlinkedCheckFailedResponse(covered.error), 500);
-    const unlinked = await findUnlinkedPiLines(sb, covered.ids, [{
-      lineRef: itemId,
-      itemCode: String(it.itemCode ?? prev.item_code ?? ''),
-      qty,
-      soItemId: null,
-    }]);
+    const unlinked = await findUnlinkedPiLines(sb, covered.ids, [{ lineRef: itemId, itemCode: String(it.itemCode ?? prev.item_code ?? ''), qty, soItemId: null }]);
     if (!unlinked.ok) return c.json(unlinkedCheckFailedResponse(unlinked.reason), 500);
     if (unlinked.offenders.length > 0) return c.json(unlinkedInvoiceResponse(unlinked.offenders), 409);
   }
@@ -2301,31 +2265,17 @@ purchaseInvoices.patch('/:id/items/:itemId', async (c) => {
   const delta = qty - prevQty;
   if (grnItemId && delta !== 0) {
     // remaining headroom for THIS line = accepted - returned - (invoiced - prevQty).
-    const capLock = await qtyCapRefusal(sb, {
-      table: 'grn_items', id: grnItemId,
-      capColumn: 'qty_accepted', drawnColumns: ['invoiced_qty', 'returned_qty'],
-      requested: qty, ownPriorDraw: prevQty, what: 'GRN line',
-    });
+    const capLock = await qtyCapRefusal(sb, { table: 'grn_items', id: grnItemId, capColumn: 'qty_accepted', drawnColumns: ['invoiced_qty', 'returned_qty'], requested: qty, ownPriorDraw: prevQty, what: 'GRN line' });
     if (capLock) return c.json(capLock, 409);
   }
 
-  /* THE FOURTH DOOR. The guard directly above closes the UNLINKED case — a
-     hand-typed line retyped into a material the receipt contains. A line that
-     ALREADY carries a grn_item_id had no item check at all: the rename map
-     writes `item_code` unconditionally, so a correct link becomes a wrong one
-     in one PATCH, the qty cap and recomputeGrnInvoiced keep resolving on the
-     stale link, and recostForPi books this line's money onto that lot.
-     docs/bugs/0672 names the shape — every existing unlinked-line guard is
-     scoped to `link IS NULL`.
-
-     It runs on the EFFECTIVE post-patch code, because a patch that omits
-     itemCode still leaves a code sitting next to the link. */
+  /* THE FOURTH DOOR: the unlinked guard above is scoped to a STORED link of
+     null, so a line that ALREADY carries a grn_item_id could have its product
+     rewritten under a live link — and recostForPi books this line's money onto
+     that lot. Checked on the EFFECTIVE post-patch code. */
   {
-    const effectiveCode = updates['item_code'] !== undefined ? updates['item_code'] : prev.item_code;
-    const identity = await checkInvoiceSourceItemIdentity(sb, 'GR',
-      [{ sourceItemId: grnItemId, itemCode: effectiveCode }],
-      co.companyId);
-    if (identity) return c.json(identity.body, identity.status);
+    const drift = await checkInvoiceSourceItemIdentity(sb, 'GR', [{ sourceItemId: grnItemId, itemCode: updates['item_code'] !== undefined ? updates['item_code'] : prev.item_code }], co.companyId);
+    if (drift) return c.json(drift.body, drift.status);
   }
 
   const { error } = await scopeToCompanyId(sb.from('purchase_invoice_items').update(updates).eq('id', itemId), co.companyId);
