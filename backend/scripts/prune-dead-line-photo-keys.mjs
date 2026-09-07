@@ -89,6 +89,21 @@ const APPLY = (process.env.MODE || 'plan').toLowerCase() === 'apply';
 const PLAN_OUT = process.env.PLAN_OUT || '';
 const PLAN_IN = process.env.PLAN_IN || '';
 const CONFIRM_PHRASE = 'PRUNE DEAD PHOTO KEYS';
+/* INCLUDE_BLANKS — the ONE case where dropping the row's only address is a
+   repair and not a decision: the address was attached by an attach run whose
+   OBJECT was never uploaded, so the row never showed a picture at any point.
+   Nothing is lost by removing it and something is actively broken by keeping
+   it — the write-back materialiser throws on the first key the bucket cannot
+   answer and the line then sends NO photographs to AutoCount at all
+   (docs/bugs/0625-a-backfill-replayed-the-round-1-photo-key-log-without-asking.md).
+
+   It is PLAN-ONLY on purpose. A blank-leaving drop can only ever reach the
+   database through the plan file — written where R2 can be asked, committed,
+   digest-checked, freshness-checked and re-checked row by row at apply time —
+   never through a local MODE=apply that nobody reviewed. The default is off,
+   so `planDeadKeyPrune`'s promise ("never the last copy") and the owner's
+   standing call on a genuinely-lost picture are both untouched. */
+const INCLUDE_BLANKS = process.env.INCLUDE_BLANKS === '1';
 
 const note = (m = '') => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 const bad = (m) => console.log(process.env.GITHUB_ACTIONS ? `::error::${m}` : `ERROR ${m}`);
@@ -99,6 +114,14 @@ if (PLAN_OUT && APPLY) { console.error('PLAN_OUT is a PLAN output. A plan is wri
 if (!TOKEN && !PLAN_IN) { console.error('need R2_API_TOKEN — deadness is a fact about the bucket, not a list in this repo. (Or apply a fresh plan file with PLAN_IN.)'); process.exit(2); }
 if (APPLY && process.env.CONFIRM !== CONFIRM_PHRASE) {
   console.error(`MODE=apply needs CONFIRM="${CONFIRM_PHRASE}" — refusing.`);
+  process.exit(2);
+}
+if (INCLUDE_BLANKS && APPLY) {
+  console.error('INCLUDE_BLANKS=1 is a PLAN-mode input. A blank-leaving drop reaches the database only through a reviewed plan file — refusing.');
+  process.exit(2);
+}
+if (INCLUDE_BLANKS && !PLAN_OUT) {
+  console.error('INCLUDE_BLANKS=1 needs PLAN_OUT — its whole point is that the drop is written down and reviewed before it runs.');
   process.exit(2);
 }
 const MAX_AGE = resolveMaxAgeMinutes(process.env.PLAN_MAX_AGE_MINUTES);
@@ -302,9 +325,15 @@ async function main() {
     note(`${arm.name}: ${rows.length} row(s) carry a photo`);
     note(`  dead addresses that are a STALE DUPLICATE — the row still shows that picture: ${prune.length}`);
     for (const p of prune) note(`     ${p.doc}  AC line ${p.dtl}  drop ${p.drop}`);
-    note(`  dead addresses that are the row's ONLY one — LEFT ALONE, owner decides: ${wouldBlank.length}`);
-    for (const w of wouldBlank) note(`     WOULD GO BLANK  ${w.doc}  AC line ${w.dtl}  ${w.dead}`);
-    work.push({ arm, prune, byRow });
+    note(`  dead addresses that are the row's ONLY one — ${INCLUDE_BLANKS ? 'INCLUDED, see INCLUDE_BLANKS' : 'LEFT ALONE, owner decides'}: ${wouldBlank.length}`);
+    for (const w of wouldBlank) note(`     ${INCLUDE_BLANKS ? 'WILL GO BLANK  ' : 'WOULD GO BLANK '} ${w.doc}  AC line ${w.dtl}  ${w.dead}`);
+    /* keeps: [] is the honest record that nothing licensed this drop. The
+       precondition then expects only the dead address itself, so the row is
+       still checked against the live column before anything is written. */
+    const blanks = INCLUDE_BLANKS
+      ? wouldBlank.map((w) => ({ id: w.id, doc: w.doc, dtl: w.dtl, drop: w.dead, keeps: [] }))
+      : [];
+    work.push({ arm, prune: [...prune, ...blanks], byRow });
   }
 
   if (!APPLY) {
@@ -323,7 +352,9 @@ async function main() {
       note(`PLAN WRITTEN — ${PLAN_OUT}`);
       note(`  generatedAt ${plan.generatedAt}, ${plan.count} operation(s), digest ${plan.digest}`);
       note(`  Apply it within ${MAX_AGE.minutes} minute(s): MODE=apply CONFIRM="${CONFIRM_PHRASE}" PLAN_IN=${PLAN_OUT} (DATABASE_URL only — no R2 token).`);
-      note('  The WOULD GO BLANK addresses are deliberately NOT in the file: they are the owner\'s decision, not an operation.');
+      note(INCLUDE_BLANKS
+        ? '  INCLUDE_BLANKS=1 — this file DOES carry the blank-leaving drops (keeps: []). Read them before applying.'
+        : '  The WOULD GO BLANK addresses are deliberately NOT in the file: they are the owner\'s decision, not an operation.');
     } else {
       note(`Set MODE=apply CONFIRM="${CONFIRM_PHRASE}" to write, or PLAN_OUT=<path> to hand the plan to the apply workflow.`);
     }
