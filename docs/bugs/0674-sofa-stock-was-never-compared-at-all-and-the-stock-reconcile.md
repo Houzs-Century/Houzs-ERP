@@ -58,3 +58,30 @@ in the middle of it and a headline number that read as 202 defects.
   owner ruling, same night.
 
 **Ref.** fix/stock-reseed-golive, 2026-09-07.
+
+**Measured after the fix, on production (2026-09-07 evening, +08).** Re-seed
+PLAN run 34140365685, APPLY run 34140557010, reconcile run 34140765109:
+
+| | before (run 34135024572) | after |
+|---|---|---|
+| non-sofa cells compared | 996 | 996 |
+| non-sofa cells disagreeing | 202 | **3** |
+| units over comparable cells | AutoCount 9,916 vs ERP 9,606 | AutoCount 9,916 vs ERP **9,916** |
+| value at risk, non-sofa | RM 19,666.98 (177 cells uncosted) | **RM 0.00** (0 of 3 costed) |
+| sofa cells compared | 0 | **41** (3 agree, 38 disagree) |
+| migrated documents that wrote stock | not measured | **0** |
+
+The 3 that remain are ERP display products no AutoCount item maps to, so
+AutoCount states no opinion on them and the re-seed left them alone by design.
+
+The safety check ran before the overwrite and found **0** stock movements that
+exist only in the ERP since seeding, on both readings (after the seeding's own
+last movement, and since 2026-08-29 00:00 (+08)). The ~22h baseline bias the
+README recorded as unquantified measured **47 cells / 128 units**.
+
+Sofa's first-ever number: AutoCount 107 whole sofas vs the ERP's 49, over 48
+builds. 24 of the 58 missing sit at BALAKONG DISPLAY, where the ERP holds no
+sofa at all — those are the showroom display units `import-ac-sofa-stock.mjs`
+deliberately refuses to create ("no PO, no configuration"), now counted rather
+than assumed. Sofa value at risk RM 50,147.23, still a LOWER BOUND at 9 of 38
+cells costed.
