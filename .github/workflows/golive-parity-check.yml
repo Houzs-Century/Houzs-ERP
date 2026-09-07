@@ -1,0 +1,110 @@
+name: Go-live parity gate (read-only)
+
+# THE gate the owner unlocks Houzs ERP on (2026-09-07):
+#   「确保数据都没问题后，我们要对标看 Stock Status 是不是一致的。如果一致，我们
+#     就可以解锁 Houzs ERP。」
+#
+# Four answers in one run — stock status (ERP vs AutoCount, per product+warehouse
+# and per order/line), processing-date completeness, payment completeness, and
+# the colour / Seat Size / sofa-compartment backlog on the PROCEEDED population.
+# The verdict block at the end is the whole point; it lands as run annotations so
+# it is readable without opening the log.
+#
+# It exists so nobody has to paste a production DSN into a SQL console to answer
+# "can we unlock yet?" — the same reason check-soak-gate.mjs exists, and this
+# workflow is modelled on soak-gate-check.yml.
+#
+# READ-ONLY: SELECTs only, no DDL, no writes, no transaction, and it never takes
+# the stock-allocation lock, so it cannot block a production recompute. It exits
+# 0 for every legitimate answer INCLUDING a failing gate — the answer is the
+# output, and a red job would read as "the check broke". Non-zero means the
+# database was unreachable, or one of the script's own startup self-tests failed,
+# in which case it prints REFUSED and gives no verdict at all.
+#
+# Runs under `npx tsx` so the script imports the REAL summariseReadiness out of
+# src/scm/lib/so-readiness.ts instead of re-implementing it — same reuse-not-
+# replication rule probe-so-stock-status-stale.yml follows. That matters more
+# here than anywhere: docs/stock-reconciliation.md's correction #2 records that
+# the older checker carries a hand-copied port of that function whose agreement
+# with its source was never tested.
+#
+# THE AUTOCOUNT SIDE IS A COMMITTED SNAPSHOT, not a live read. The book sits
+# behind ZeroTier on the office network and a GitHub runner cannot reach it.
+# Refresh it from a machine on that network before quoting a run as the go-live
+# verdict:
+#     python backend/scripts/export-ac-reimport.py
+# then commit backend/scripts/data/ac-*. The script prints the snapshot's own
+# timestamp and marks it STALE past `stale_hours`, so an old export is reported
+# rather than silently compared.
+#
+# Manual trigger only. A production DB read on a schedule turns a real question
+# into CI noise nobody reads.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which database"
+        required: true
+        default: "prod"
+        type: choice
+        options: [prod, staging]
+      company:
+        description: "company_id (1 = HOUZS)"
+        required: false
+        default: "1"
+        type: string
+      top:
+        description: "How many examples to list per finding"
+        required: false
+        default: "20"
+        type: string
+      stale_hours:
+        description: "Report the AutoCount snapshot as STALE past this many hours"
+        required: false
+        default: "48"
+        type: string
+
+# Deliberately NOT the deploy's group: a diagnostic must never queue behind — or
+# displace — a release.
+concurrency:
+  group: golive-parity-check-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    # It is the ONLY database credential this repo holds; SUPABASE_SERVICE_ROLE_KEY
+    # must never become an Actions secret (this repository is public).
+    environment: ${{ inputs.target == 'prod' && 'Production' || 'Staging' }}
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - name: Measure the gate
+        env:
+          DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
+          COMPANY: ${{ inputs.company }}
+          TOP: ${{ inputs.top }}
+          STALE_HOURS: ${{ inputs.stale_hours }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml for
+          # the full Happy-Eyeballs reasoning. Harmless on an IPv4-only host.
+          NODE_OPTIONS: --dns-result-order=ipv4first
+        # pipefail, or `tee` swallows a crash and a truncated verdict reads as a
+        # complete one — which is the exact failure this script refuses to make.
+        run: |
+          set -o pipefail
+          npx tsx scripts/check-golive-parity.mjs | tee golive-parity.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: golive-parity-${{ inputs.target }}
+          path: backend/golive-parity.txt
+          retention-days: 30

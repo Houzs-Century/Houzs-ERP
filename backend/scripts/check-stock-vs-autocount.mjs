@@ -19,6 +19,10 @@ import zlib from "node:zlib";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
+/* SALESLOC / SERVICE_GROUPS / the binding-CSV reader are SHARED with
+   check-golive-parity.mjs — a second copy of a location map is how stock
+   silently moves between branches in one script and not the other. */
+import { SALESLOC, SERVICE_GROUPS, loadAcBinding, serviceErpCodes } from "./lib/ac-stock-compare.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -30,25 +34,7 @@ const sql = postgres(DST, { ssl: "require", prepare: false, max: 1 });
 const norm = (s) => (s || "").trim().toUpperCase().replace(/\s+/g, " ");
 const gz = (f) => JSON.parse(zlib.gunzipSync(fs.readFileSync(path.join(here, "data", f))).toString("utf8").replace(/^﻿/, ""));
 
-/* AutoCount location -> ERP warehouse CODE. Taken verbatim from the PO import
-   (import-ac-outstanding-po.mjs SALESLOC), which resolved 100% there, extended
-   with the stock-only locations that appear in vItemBalQty. A location with no
-   confident ERP home stays UNMAPPED and is REPORTED — never guessed, because a
-   wrong guess silently moves stock between branches. */
-const SALESLOC = {
-  KL: "KL WAREHOUSE", PG: "PG WAREHOUSE", SRW: "SRW WAREHOUSE", SBH: "SBH WAREHOUSE",
-  HQ: "HQ", "KL DISP": "KL DISPLAY", "PG DISP": "PG DISPLAY", "SBH DISP": "SBH DISPLAY",
-  "EM DISP": "EM DISPLAY", "C&C DISP": "C&C DISPLAY",
-  "SERV KL": "KL SERVICE", "SERV PG": "PG SERVICE",
-  SUNWAY: "SUNWAY SHOWROOM", "KELANA.J": "KELANA.J SHOWROOM",
-};
 
-/* AutoCount ItemGroups that are NOT physical stock. AutoCount models delivery
-   fees, disposal and storage as stock-controlled items, so they accumulate a
-   large negative balance that no warehouse ever holds. The ERP models the same
-   lines as SERVICE, which carry no inventory at all. Comparing them is a
-   category error, not a discrepancy. */
-const SERVICE_GROUPS = new Set(["OTHER", "TRANS"]);
 
 /* Known-unfixed defect, already traced and pending an owner decision. Labelled
    so it reads as the known case instead of a new finding.
@@ -58,13 +44,6 @@ const SERVICE_GROUPS = new Set(["OTHER", "TRANS"]);
 const KNOWN_DOUBLE_SHIP_MODELS = ["KETTA", "NTYR", "TRION", "XAMMAR"];
 const isKnownDoubleShip = (code) => KNOWN_DOUBLE_SHIP_MODELS.some((m) => code.startsWith(m));
 
-function parseCsvLine(line) {
-  const out = []; let cur = ""; let q = false;
-  for (let i = 0; i < line.length; i++) { const c = line[i];
-    if (q) { if (c === '"') { if (line[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += c; }
-    else { if (c === '"') q = true; else if (c === ",") { out.push(cur); cur = ""; } else cur += c; } }
-  out.push(cur); return out;
-}
 
 /* Faithful reimplementation of backend/src/scm/lib/so-readiness.ts. Kept in
    step with it deliberately: this script must derive the SAME string the UI
@@ -130,28 +109,24 @@ async function main() {
   log(`AutoCount export taken ${manifest.exported_at} from ${manifest.source}`);
 
   // ---- binding: AutoCount ItemCode -> ERP product code, plus AC category ----
-  const csv = fs.readFileSync(path.join(here, "data", "autocount-erp-mapping-1561.csv"), "utf8").replace(/^﻿/, "").split(/\r?\n/).filter(Boolean);
-  csv.shift();
-  const byAc = new Map();
-  for (const ln of csv) { const f = parseCsvLine(ln); if (f[0]) byAc.set(norm(f[0]), (f[1] || "").trim()); }
-  /* Sofa FURNITURE, by the binding CSV's category column — byte-identical to
-     import-ac-stock-balance.mjs:64, and that identity is the point. The
-     exclusion here must be the SAME predicate as the importer's, because the
-     question this check asks is "did the ERP receive what AutoCount holds": an
-     item the importer brought in MUST be compared, or its ERP stock shows up as
-     a hole that AutoCount supposedly does not have.
-     Excluding on the AutoCount ItemGroup instead — which is what this script
-     did until 2026-08-11 — swept out 19 codes / 85 units of pillows, bolsters
-     and stools that AutoCount happens to file under ItemGroup SOFA but the
-     binding CSV correctly calls ACCESSORY. The importer imported them, so the
-     ERP holds them, so they were reported as 85 units of phantom ERP-only
-     stock across 12 cells. 77 of those units were real and present on both
-     sides; only +8 was a genuine delta. Same failure as D7 in
-     docs/stock-reconciliation.md, one layer up: never categorise stock by a
-     field that is not the one the importer used. */
-  const sofaFurniture = new Set(
-    csv.map(parseCsvLine).filter((f) => (f[3] || "").trim().toUpperCase() === "SOFA").map((f) => norm(f[0])),
-  );
+  /* Sofa FURNITURE is decided by the binding CSV's category column — byte-identical
+     to import-ac-stock-balance.mjs:64, and that identity is the point. The exclusion
+     here must be the SAME predicate as the importer's, because the question this check
+     asks is "did the ERP receive what AutoCount holds": an item the importer brought in
+     MUST be compared, or its ERP stock shows up as a hole that AutoCount supposedly does
+     not have.
+     Excluding on the AutoCount ItemGroup instead — which is what this script did until
+     2026-08-11 — swept out 19 codes / 85 units of pillows, bolsters and stools that
+     AutoCount happens to file under ItemGroup SOFA but the binding CSV correctly calls
+     ACCESSORY. The importer imported them, so the ERP holds them, so they were reported
+     as 85 units of phantom ERP-only stock across 12 cells. 77 of those units were real
+     and present on both sides; only +8 was a genuine delta. Same failure as D7 in
+     docs/stock-reconciliation.md, one layer up: never categorise stock by a field that
+     is not the one the importer used.
+     The reader lives in lib/ac-stock-compare.mjs so check-golive-parity.mjs applies
+     the identical predicate. */
+  const { byAc, sofaFurniture } = loadAcBinding(
+    fs.readFileSync(path.join(here, "data", "autocount-erp-mapping-1561.csv"), "utf8"));
   const item = new Map(gz("ac-live-item-master.json.gz").map((r) => [norm(r.ItemCode), r]));
   const groupOf = (ac) => (item.get(norm(ac))?.ItemGroup ?? "").toUpperCase();
 
@@ -218,7 +193,18 @@ async function main() {
   const erpSofa = erpBal.filter((r) => r.is_sofa);
   const erpSofaUnits = erpSofa.reduce((s, r) => s + Number(r.qty), 0);
   log(`  ERP side, same exclusion: ${erpSofa.length} sofa-compartment cells / ${erpSofaUnits} units held out (AutoCount counts one whole sofa where the ERP counts its compartments — the two are not commensurable, so the balance axis excludes sofa on BOTH sides)`);
-  const erpCell = new Map(erpBal.filter((r) => !r.is_sofa).map((r) => [`${norm(r.item_code)}|${r.warehouse_id}`, Number(r.qty)]));
+  /* The SERVICE exclusion has to be symmetric for exactly the reason the sofa one
+     does, and it was not until 2026-09-07: AutoCount's OTHER / TRANS pseudo-items
+     were dropped above while the ERP's own DISPOSE / TRANSPORTATION CHARGES /
+     STORAGE cells stayed in, so 16 cells and -4,149 units reported as ERP-only
+     stock AutoCount does not have. A hole invented by the filter, not found by
+     it. The ERP codes come from the binding via serviceErpCodes(), never typed. */
+  const svcErp = serviceErpCodes(byAc, (code) => groupOf(code));
+  const erpService = erpBal.filter((r) => !r.is_sofa && svcErp.has(norm(r.item_code)));
+  log(`  ERP side, same exclusion: ${erpService.length} service pseudo-item cells / ${erpService.reduce((s, r) => s + Number(r.qty), 0)} units held out (AutoCount models delivery / disposal / storage as stock-controlled items; the ERP models them as SERVICE, which carries no inventory)`);
+  const erpCell = new Map(erpBal
+    .filter((r) => !r.is_sofa && !svcErp.has(norm(r.item_code)))
+    .map((r) => [`${norm(r.item_code)}|${r.warehouse_id}`, Number(r.qty)]));
   const whName = new Map(whs.map((w) => [String(w.id), w.name]));
 
   /* Did the cutover import actually run? The repo contains a script that
