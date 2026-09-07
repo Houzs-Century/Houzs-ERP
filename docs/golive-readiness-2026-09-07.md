@@ -20,10 +20,11 @@ Actions → **Go-live parity gate (read-only)** → Run workflow.
 
 **还不能，差三件事，都不大。**
 
-1. **库存状态（Stock Status）对不上的，有 220 张单。** 这 220 张不是我们错 ——
-   我们的数比较新，是 AutoCount 那边没跟上。要么是同事在 AutoCount 打了 READY
-   但货其实还没到，要么是货到了没人回去打。**这不挡解锁**，但要让仓库知道以后
-   只看 ERP。
+1. **库存状态（Stock Status）对不上的，有 220 张单。** 其中 **177 张是 AutoCount
+   落后**，不是我们错 —— 我们的数比较新。**但有 43 张是我们自己的问题**：货其实
+   已经在仓库里了，我们系统还写着「没货」，所以那 43 张上面 AutoCount 打的 READY
+   有可能才是对的。**这 43 张要先看。** 另外 177 张不挡解锁，只要让仓库知道以后
+   只看 ERP 就好。
 2. **有 62 张单，AutoCount 有 Processing Date，我们这边是空的。** 这 62 张全部
    是 8 月 30 日之后新填的，也就是上次导入之后才动的。**这个要补**，补完这一项
    就干净了。
@@ -33,8 +34,8 @@ Actions → **Go-live parity gate (read-only)** → Run workflow.
 另外，还没 proceed 的单可以空着，这是老板自己的规矩，所以下面「要做的工」只算
 已经有 Processing Date 的单：**颜色 47 条、Seat Size 21 条、沙发件数 0 条。**
 
-**一句话：把「新的那批改动」再导一次，上面三件事会一起好。** 剩下 220 张 Stock
-Status 的差异不是我们的问题，是 AutoCount 落后。
+**一句话：把「新的那批改动」再导一次，第 2、3 件事会一起好；第 1 件里的 43 张要
+我们自己重算一次库存。**
 
 ---
 
@@ -93,9 +94,32 @@ Attributed:
 | NOT PROCEEDED — no Processing Date, the allocator forces PENDING by design | 39 |
 | AUTOCOUNT BEHIND — the ERP allocated, nobody typed it back | 8 |
 
-So **220 orders are AutoCount genuinely behind the ERP**, and 39 are the ERP's
-own processing-date gate — a rule, not drift, and the one class scored neither
-way because the ERP cannot answer yet.
+So 220 orders read as AutoCount behind the ERP, and 39 are the ERP's own
+processing-date gate — a rule, not drift, and the one class scored neither way
+because the ERP cannot answer yet.
+
+### The contradiction inside that 220, and it is not a footnote
+
+"AutoCount is behind" rests on the ERP's stored `stock_status`, and that value is
+written only by `recomputeSoStockAllocation`, ~34 of whose ~38 triggers are
+best-effort. It goes stale. Measured with the same bracket
+`probe-so-stock-status-stale.mjs` reports (now a shared module, so the two cannot
+disagree):
+
+| | count |
+|---|---|
+| live lines whose bucket holds ANY on-hand while the line reads non-READY | 684 (ceiling) |
+| ... and enough on-hand for ALL demand on that bucket, so FIFO cannot explain it | 126 (floor) |
+| orders carrying at least one floor line | 89 |
+| **of the 220 "AutoCount behind" orders, also carrying a floor line — CONTESTED** | **43** |
+
+On those 43 the ERP's own answer is the stale one, so AutoCount's READY may be
+correct. They are the first place to look, not the last. The remaining **177
+stand as AutoCount behind**. The recompute queue is EMPTY and the lock is free,
+so nothing is currently queued to refresh them.
+
+Examples: `SO-000517` (AutoCount READY, ERP BEDFRAME), `SO-000951` (AutoCount
+READY, ERP blank), `SO-005786` (AutoCount READY, ERP PARTIAL, at READY_TO_SHIP).
 
 ### 1C. Per SO line
 
@@ -236,7 +260,11 @@ timestamp and marks it STALE past `stale_hours`.
 1. Land the delta import. **LIKELY** it closes the 62 missing Processing Dates
    and most of the 46 payment gaps — both populations are dated after the last
    import. Re-run this check; that is what it is built for.
-2. Decide the 220 Stock Status disagreements. They are AutoCount behind the ERP
-   under the owner's own ruling, so the decision is whether the warehouse stops
-   reading Remark2, not whether the ERP changes.
-3. Fill the 47 colour and 21 Seat Size gaps on proceeded orders, or accept them.
+2. Refresh the 43 CONTESTED orders. Their lines read PENDING while the goods sit
+   in their own bucket, so our own answer is the stale one there. The repair is
+   `recompute-so-allocation` — **UNTESTED here; it has not been dispatched as
+   part of this work.**
+3. Decide the remaining 177 Stock Status disagreements. Those are AutoCount
+   behind the ERP under the owner's own ruling, so the decision is whether the
+   warehouse stops reading Remark2, not whether the ERP changes.
+4. Fill the 47 colour and 21 Seat Size gaps on proceeded orders, or accept them.
