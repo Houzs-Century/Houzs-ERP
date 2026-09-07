@@ -109,7 +109,16 @@ export type Announcement = {
   rejectReason?: string | null;
   /** [DEPT]-ANN-[YYMM]-[NNNN], minted on approval; null until then. */
   refNo?: string | null;
+  /** Void (mig 20260907T1030): a submitted notice is never deleted, only
+   *  voided with a reason. voidedAt set = out of every reader surface. */
+  voidedBy?: number | null;
+  voidedAt?: string | null;
+  voidReason?: string | null;
 };
+
+export function isVoided(a: Pick<Announcement, "voidedAt">): boolean {
+  return a.voidedAt != null;
+}
 
 export type ApprovalStatus = "DRAFT" | "PENDING_APPROVAL" | "APPROVED" | "REJECTED";
 
@@ -139,9 +148,10 @@ export function requiresAck(
 /** SOP never expires (permanent SOP Library); every other category is archived
  *  once hidden or past expiry and drops out of the default list. */
 export function isArchived(
-  a: Pick<Announcement, "isActive" | "expiresAt" | "category">,
+  a: Pick<Announcement, "isActive" | "expiresAt" | "category" | "voidedAt">,
   now: number = Date.now(),
 ): boolean {
+  if (isVoided(a)) return true;
   if (!a.isActive) return true;
   if (categoryOf(a) === "SOP") return false;
   return announcementStatus(a, now) === "expired";
@@ -173,6 +183,7 @@ export function ackRateBarCls(pct: number): string {
 }
 
 export type ManageStatus =
+  | "voided"
   | "draft"
   | "pending_approval"
   | "rejected"
@@ -182,6 +193,7 @@ export type ManageStatus =
   | "archived";
 
 export const MANAGE_STATUS_META: Record<ManageStatus, { label: string; cls: string }> = {
+  voided: { label: "Voided", cls: "bg-surface-dim border border-border text-ink-muted line-through" },
   draft: { label: "Draft", cls: "bg-surface-dim border border-border text-ink-muted" },
   pending_approval: { label: "Pending approval", cls: "bg-warning-bg text-warning-text" },
   rejected: { label: "Rejected", cls: "bg-err-bg text-err" },
@@ -200,12 +212,14 @@ export const MANAGE_STATUS_META: Record<ManageStatus, { label: string; cls: stri
  *  Complete only by default, and the caller should render a dash for the rate
  *  itself rather than a number it cannot vouch for. */
 export function manageStatus(
-  a: Pick<Announcement, "isActive" | "expiresAt" | "category" | "approvalStatus">,
+  a: Pick<Announcement, "isActive" | "expiresAt" | "category" | "approvalStatus" | "voidedAt">,
   opts: { pendingForMe: boolean; pct: number | null },
   now: number = Date.now(),
 ): ManageStatus {
-  // Approval outranks everything: an unapproved notice has no audience yet,
-  // so "awaiting" / the ack rate have nothing to say about it.
+  // A void is final and outranks everything (mig 20260907T1030); then the
+  // approval state: an unapproved notice has no audience yet, so "awaiting" /
+  // the ack rate have nothing to say about it.
+  if (isVoided(a)) return "voided";
   const approval = approvalOf(a);
   if (approval === "DRAFT") return "draft";
   if (approval === "PENDING_APPROVAL") return "pending_approval";

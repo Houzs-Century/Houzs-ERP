@@ -20,6 +20,19 @@ that systematic look, so there is no fourth.
 **Read this before adding any `DELETE` handler**, and add a row to it in the
 same PR if you do.
 
+> **2026-09-07 — the rule reaches the non-SCM document families.** The
+> announcements (`docs/modules/announcements.md` §3 "Void, not delete"):
+> `DELETE /api/announcements/:id` is now DRAFT-only (the draft-discard
+> shape, like `DELETE /mfg-sales-orders/:docNo`), a submitted notice is voided
+> with a reason (`POST /:id/void`), and — first in the repo — a BEFORE DELETE
+> trigger (`trg_announcements_no_hard_delete`, mig `20260907T1030`) refuses
+> the purge at the database, so the rule holds against a script or a hand-typed
+> statement, not only against the app. The other 40 `app.delete` handlers
+> under `backend/src/routes/` are master data, child rows, assets and
+> config (users / roles / positions / departments / labels / layouts / logos /
+> checklist items / venues / …) — none is a business document — and are left
+> alone on the §1 reading.
+
 There is already a mechanism that will make you notice: `npm --prefix backend
 run audit:routes` fails on route drift, so a new `DELETE` route cannot merge
 without someone regenerating `docs/generated/route-capability-matrix.csv` — the

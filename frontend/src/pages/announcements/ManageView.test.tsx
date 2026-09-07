@@ -83,6 +83,7 @@ function props(over: Partial<ManageViewProps> = {}): ManageViewProps {
     onSubmit: vi.fn(),
     onApprove: vi.fn(),
     onReject: vi.fn(),
+    onVoid: vi.fn(),
     ...over,
   };
 }
@@ -195,6 +196,31 @@ describe("ManageView", () => {
       expect(screen.getByTestId("reject-reason").textContent).toContain("Wrong closing time.");
       fireEvent.click(screen.getByRole("button", { name: "Submit for approval" }));
       expect(p.onSubmit).toHaveBeenCalledWith(expect.objectContaining({ id: "rej" }));
+    });
+  });
+
+  describe("void, not delete (mig 20260907T1030)", () => {
+    it("a submitted notice offers Void…, a draft offers Discard draft, a voided one shows its reason and no actions", () => {
+      const p = props({ items: [ITEMS[0]], selectedId: ITEMS[0].id });
+      render(<ManageView {...p} />);
+      expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "Void…" }));
+      expect(p.onVoid).toHaveBeenCalledWith(expect.objectContaining({ id: ITEMS[0].id }));
+
+      cleanup();
+      const draft = ann({ id: "d", title: "A draft", approvalStatus: "DRAFT" });
+      const p2 = props({ items: [draft], selectedId: "d" });
+      render(<ManageView {...p2} />);
+      fireEvent.click(screen.getByRole("button", { name: "Discard draft" }));
+      expect(p2.onDelete).toHaveBeenCalledWith(expect.objectContaining({ id: "d" }));
+
+      cleanup();
+      const voided = ann({ id: "v", title: "Old rule", voidedAt: "2026-09-07T03:00:00Z", voidReason: "Superseded." });
+      render(<ManageView {...props({ items: [voided], selectedId: "v" })} />);
+      expect(screen.getByText("Voided", { selector: "td span" })).toBeTruthy();
+      expect(screen.getByTestId("void-reason").textContent).toContain("Superseded.");
+      expect(screen.queryByRole("button", { name: "Void…" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Hide" })).toBeNull();
     });
   });
 

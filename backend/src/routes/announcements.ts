@@ -61,6 +61,7 @@ import {
   categoryRequiresAck,
   deliverableNow,
   divisionEq,
+  isVoided,
   readApprovalStatus,
   inTargetCompanies,
   isActiveFlag,
@@ -307,6 +308,10 @@ export function toPublic(r: AnnouncementRow) {
     reviewedAt: r.reviewedAt ?? r.reviewed_at ?? null,
     rejectReason: r.rejectReason ?? r.reject_reason ?? null,
     refNo: r.refNo ?? r.ref_no ?? null,
+    // Void (mig 20260907T1030).
+    voidedBy: r.voidedBy ?? r.voided_by ?? null,
+    voidedAt: r.voidedAt ?? r.voided_at ?? null,
+    voidReason: r.voidReason ?? r.void_reason ?? null,
     // System-notice tag ('scan' for background slip-scan results). Lets the
     // client suppress the read-receipt roster on private per-user notices.
     source: (r.source ?? null) as string | null,
@@ -1107,6 +1112,9 @@ app.post("/:id/escalate", requirePermissionOrSalesDirector("announcements.write"
   if (sdBlockedFromRow(salesDirectorScope(c), ann, c.get("user").id)) {
     return c.json({ success: false, error: "Announcement not found" }, 404);
   }
+  if (isVoided(ann)) {
+    return c.json({ success: false, error: "A voided announcement cannot be escalated." }, 409);
+  }
   const body = (await c.req.json().catch(() => ({}))) as { departmentId?: unknown };
   const deptFilter =
     body.departmentId == null ? null : parseInt(String(body.departmentId), 10);
@@ -1659,6 +1667,9 @@ app.post("/:id/remind", requirePermissionOrSalesDirector("announcements.write"),
   if (sdBlockedFromRow(salesDirectorScope(c), ann, c.get("user")?.id ?? null)) {
     return c.json({ success: false, error: "Announcement not found" }, 404);
   }
+  if (isVoided(ann)) {
+    return c.json({ success: false, error: "A voided announcement cannot be reminded." }, 409);
+  }
   let scope: "all" | "unacked" = "unacked";
   let departmentId: number | null = null;
   try {
@@ -1734,6 +1745,15 @@ app.delete("/:id", requirePermissionOrSalesDirector("announcements.write"), asyn
   // A Sales Director may only delete notices they authored.
   if (sdBlockedFromRow(salesDirectorScope(c), existing, c.get("user")?.id ?? null)) {
     return c.json({ success: false, error: "Announcement not found" }, 404);
+  }
+  // Drafts only (mig 20260907T1030, owner: 不可以删只可以 cancel): a submitted
+  // notice is voided (POST /:id/void) and keeps its row, receipts and number.
+  // The database trigger refuses the same thing underneath.
+  if (readApprovalStatus(existing) !== "DRAFT") {
+    return c.json(
+      { success: false, error: "A submitted announcement is voided, not deleted — use Void and give a reason." },
+      409,
+    );
   }
   await c.env.DB.prepare("DELETE FROM announcements WHERE id = ?")
     .bind(id)

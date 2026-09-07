@@ -11,6 +11,7 @@ import {
   ackRateBarCls,
   approvalOf,
   audienceLabel,
+  isVoided,
   categoryOf,
   deptKey,
   docNo,
@@ -76,6 +77,9 @@ export type ManageViewProps = {
   onApprove: (a: Announcement) => void;
   /** The page asks for the reason (a dialog) and posts it. */
   onReject: (a: Announcement) => void;
+  /** Void a SUBMITTED notice with a reason (mig 20260907T1030) — the page
+   *  asks for the reason. Delete stays for drafts only. */
+  onVoid: (a: Announcement) => void;
   className?: string;
 };
 
@@ -236,6 +240,7 @@ export function ManageView(p: ManageViewProps) {
               onSubmit={() => p.onSubmit(selected)}
               onApprove={() => p.onApprove(selected)}
               onReject={() => p.onReject(selected)}
+              onVoid={() => p.onVoid(selected)}
             />
           ) : (
             <div className="flex flex-1 items-center justify-center px-6 text-center text-[12px] text-ink-muted">
@@ -350,6 +355,7 @@ function Drawer({
   onSubmit,
   onApprove,
   onReject,
+  onVoid,
 }: {
   a: Announcement;
   receipts: AcksData | null;
@@ -367,9 +373,11 @@ function Drawer({
   onSubmit: () => void;
   onApprove: () => void;
   onReject: () => void;
+  onVoid: () => void;
 }) {
   const meta = CATEGORY_META[categoryOf(a)];
   const approval = approvalOf(a);
+  const voided = isVoided(a);
   const approvalMeta =
     approval === "DRAFT"
       ? MANAGE_STATUS_META.draft
@@ -414,7 +422,16 @@ function Drawer({
         <span className="font-mono text-[10.5px] text-ink-muted">
           {docNo(a)} · {fmtDateTime(a.createdAt)}
         </span>
-        {approvalMeta && (
+        {voided ? (
+          <span
+            className={cn(
+              "inline-flex self-start rounded-full px-2 py-[2px] text-[10px] font-bold uppercase",
+              MANAGE_STATUS_META.voided.cls,
+            )}
+          >
+            {MANAGE_STATUS_META.voided.label}
+          </span>
+        ) : approvalMeta ? (
           <span
             className={cn(
               "inline-flex self-start rounded-full px-2 py-[2px] text-[10px] font-bold uppercase",
@@ -422,6 +439,11 @@ function Drawer({
             )}
           >
             {approvalMeta.label}
+          </span>
+        ) : null}
+        {voided && (
+          <span className="text-[11.5px] leading-[1.4] text-ink-muted" data-testid="void-reason">
+            Voided{a.voidedAt ? ` ${fmtDateTime(a.voidedAt)}` : ""}: {a.voidReason ?? "no reason recorded"}
           </span>
         )}
         {approval === "REJECTED" && a.rejectReason && (
@@ -435,7 +457,7 @@ function Drawer({
           </span>
         )}
         <div className="mt-1 flex flex-wrap gap-2">
-          {approval === "PENDING_APPROVAL" && canApprove && (
+          {!voided && approval === "PENDING_APPROVAL" && canApprove && (
             <>
               <button
                 type="button"
@@ -453,7 +475,7 @@ function Drawer({
               </button>
             </>
           )}
-          {(approval === "DRAFT" || approval === "REJECTED") && canWrite && (
+          {!voided && (approval === "DRAFT" || approval === "REJECTED") && canWrite && (
             <button
               type="button"
               onClick={onSubmit}
@@ -462,7 +484,7 @@ function Drawer({
               Submit for approval
             </button>
           )}
-          {canWrite && (
+          {canWrite && !voided && (
             <>
               <button
                 type="button"
@@ -471,13 +493,23 @@ function Drawer({
               >
                 {a.isActive ? "Hide" : "Show"}
               </button>
-              <button
-                type="button"
-                onClick={onDelete}
-                className="rounded-md border border-err/40 bg-surface px-2.5 py-1 text-[11px] font-[650] text-err hover:bg-err/5"
-              >
-                Delete
-              </button>
+              {approval === "DRAFT" ? (
+                <button
+                  type="button"
+                  onClick={onDelete}
+                  className="rounded-md border border-err/40 bg-surface px-2.5 py-1 text-[11px] font-[650] text-err hover:bg-err/5"
+                >
+                  Discard draft
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={onVoid}
+                  className="rounded-md border border-err/40 bg-surface px-2.5 py-1 text-[11px] font-[650] text-err hover:bg-err/5"
+                >
+                  Void…
+                </button>
+              )}
             </>
           )}
         </div>
@@ -597,7 +629,7 @@ function Drawer({
             <button
               type="button"
               onClick={() => openDept && onRemindDept(openDept.id, openDept.name)}
-              disabled={!openDept || pendingInDept === 0}
+              disabled={voided || !openDept || pendingInDept === 0}
               className={cn(SECONDARY_BTN, "px-2.5 py-[7px] text-[11.5px] font-[650]")}
             >
               {openDept ? `Remind ${openDept.name} pending` : "Remind department pending"}
@@ -606,7 +638,7 @@ function Drawer({
             <button
               type="button"
               onClick={onRemindPending}
-              disabled={!receipts || receipts.pending.length === 0}
+              disabled={voided || !receipts || receipts.pending.length === 0}
               className={cn(SECONDARY_BTN, "px-2.5 py-[7px] text-[11.5px] font-[650]")}
             >
               Remind all pending
@@ -615,7 +647,7 @@ function Drawer({
             <button
               type="button"
               onClick={() => openDept && onEscalate(openDept.id, openDept.name)}
-              disabled={!openDept || pendingInDept === 0}
+              disabled={voided || !openDept || pendingInDept === 0}
               className={cn(SECONDARY_BTN, "px-2.5 py-[7px] text-[11.5px] font-[650]")}
             >
               Notify their supervisors
