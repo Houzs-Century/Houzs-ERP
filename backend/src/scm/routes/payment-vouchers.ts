@@ -54,6 +54,7 @@ import { postJournal, reverseJournal } from '../../acc/engine';
 import { apControlRole, pvLines, resolveRoles } from '../../acc/rules';
 import { CASH_SERIES_LETTER } from '../../acc/receipts';
 import { settleApInvoicePaidSen } from '../lib/ap-invoice-settlement';
+import { allocationHeadroomBreach, pendingReservationsHandler } from '../lib/pv-reservations';
 import { uploadPvFileHandler, listPvFilesHandler, streamPvFileHandler, deletePvFileHandler, printPvBundleHandler } from './pv-files';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
@@ -641,6 +642,10 @@ export const createPaymentVoucherHandler = async (c: any) => {
     if (held.length > 0) return c.json(ALLOCATION_ON_HOLD(held), 409);
     const outsideApi = await allocationApInvoicesOutsideCompany(sb, c, apInvoiceIdsOf(allocBuilt.rows));
     if (outsideApi.length > 0) return c.json(ALLOCATION_NOT_THIS_COMPANY(outsideApi), 404);
+    /* Headroom (docs/bugs/0653): what other unposted vouchers already applied
+       to these invoices is spoken for. */
+    const breach = await allocationHeadroomBreach(sb, c, allocBuilt.rows, null);
+    if (breach) return c.json(breach, breach.error === 'load_failed' ? 500 : 409);
   }
   const currency = normalizeCurrency(body.currency);
   /* Migration 0082 — the rate auto-fills from the currency MASTER (rate_to_myr)
@@ -873,6 +878,10 @@ export const updatePaymentVoucherHandler = async (c: any) => {
       if (held.length > 0) return c.json(ALLOCATION_ON_HOLD(held), 409);
       const outsideApi = await allocationApInvoicesOutsideCompany(sb, c, apInvoiceIdsOf(allocBuilt.rows));
       if (outsideApi.length > 0) return c.json(ALLOCATION_NOT_THIS_COMPANY(outsideApi), 404);
+      /* Headroom (docs/bugs/0653) — this voucher's own rows are excluded by id,
+         so re-saving what it already applies is never a breach. */
+      const breach = await allocationHeadroomBreach(sb, c, allocBuilt.rows, id);
+      if (breach) return c.json(breach, breach.error === 'load_failed' ? 500 : 409);
     }
     await sb.from('pv_allocations').delete().eq('pv_id', id);
     if (allocBuilt.rows.length > 0) {
@@ -1736,6 +1745,7 @@ export const supplierAdvancesHandler = async (c: any) => {
   });
 };
 paymentVouchers.get('/advances/list', supplierAdvancesHandler);
+paymentVouchers.get('/reservations/list', pendingReservationsHandler);
 
 /* POST /:id/apply-advance { allocations: [{ piId | apInvoiceId, amountSen }] }
    — knock the voucher's remaining advance off real invoices, of EITHER kind

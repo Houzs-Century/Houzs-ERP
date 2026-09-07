@@ -208,7 +208,12 @@ export const PaymentVouchers = () => {
   const approveTargets = canApprove ? tickedRows.filter(isApprovable) : [];
 
   const runBatch = async (kind: 'prepare' | 'check' | 'approve') => {
-    const targets = kind === 'prepare' ? prepareTargets : kind === 'check' ? checkTargets : approveTargets;
+    /* Voucher-date order, then the Draft/creation order (docs/bugs/0653): the
+       formal number is minted the moment a voucher is checked, so a batch that
+       ran in TICK order once gave the 28/04 vouchers 001/002 and the 21/04 ones
+       003–006. Tick order is the operator's mouse; the date is the paper's. */
+    const targets = [...(kind === 'prepare' ? prepareTargets : kind === 'check' ? checkTargets : approveTargets)]
+      .sort((a, b) => String(a.voucher_date ?? '').localeCompare(String(b.voucher_date ?? '')) || String(a.pv_number).localeCompare(String(b.pv_number)));
     if (targets.length === 0) return;
     /* Prepare is freely reversible (withdraw, and the voucher stays editable)
        so it runs without a dialog — same as the detail page's button. The two

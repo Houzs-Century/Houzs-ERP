@@ -191,6 +191,32 @@ without reaching for the mouse (`PaymentVoucherNew.tsx`, each card carries
 round-3 manners carried across, the same day the Other Debtor bill got them
 (accounting.md, "Other Debtors, round 2").
 
+**The batch runs in voucher-date order (2026-09-07, docs/bugs/0653).** Prepare,
+Check and Approve & post stamp the ticked vouchers oldest voucher date first
+(same date: Draft order), never in tick order — the formal number is minted
+the moment a voucher is checked, so a batch that ran in list order once gave
+the 28/04 vouchers `2990-HPV-2604-001/002` ahead of the 21/04 ones. Across
+separate check sessions the number still follows the moment of checking; the
+one-off `.github/workflows/repair-renumber-pv-series.yml`
+(`backend/scripts/repair-renumber-pv-series.mjs`, plan → apply, confirm
+`RENUMBER PV SERIES`) re-orders a month already stamped out of order —
+unposted vouchers only, text mirrors (audit ledger, supplier advances)
+renamed with them. Pinned in `PaymentVouchers.test.tsx`.
+
+**An invoice a saved voucher already applies to leaves the picker (same day:
+payment 已经分配了就不要显示).** An allocation reserves its invoice the moment the
+voucher is saved, but `paid_sen` moves only at Approve — so the AP Payment
+picker subtracts what other UNPOSTED vouchers (Draft, Prepared, Checked) have
+applied: an invoice with nothing left is not listed, a partly reserved one
+offers only the remainder, and a voucher being edited never counts its own
+rows. `GET /payment-vouchers/reservations/list?supplierId=&excludePvId=`
+(`pendingReservations`) is the source, `usePvReservations` the hook; the
+create and edit doors refuse `over_allocation` (409) naming the voucher that
+holds the amount (`allocationHeadroomBreach`). Advance applications settled
+`paid_sen` when they were applied and are not pending. Pinned in
+`tests/pvReservations.test.ts` (RED on the unfixed tree: a second voucher
+could apply the same invoice in full) and `PaymentVoucherNew.test.tsx`.
+
 **Paid From offers only money** (owner: paid from 应该只能选cash 和银行): the
 picker lists `acc_money` accounts, pre-filled from the company's
 `BANK_DEFAULT` role, and the server refuses any non-money credit account

@@ -23,7 +23,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { Save, Trash2, X } from 'lucide-react';
 import { Button } from '@2990s/design-system';
-import { useCreatePaymentVoucher, usePaymentVoucherDetail, useSupplierAdvances, useExtractBills, useUploadPvFile, fileToBase64, type BillExtraction, type VendorMemory, type PvFilePayload } from '../../vendor/scm/lib/payment-voucher-queries';
+import { useCreatePaymentVoucher, usePaymentVoucherDetail, useSupplierAdvances, usePvReservations, NO_RESERVATIONS, useExtractBills, useUploadPvFile, fileToBase64, type BillExtraction, type VendorMemory, type PvFilePayload } from '../../vendor/scm/lib/payment-voucher-queries';
 import { takePvFiles } from '../../vendor/scm/lib/pv-file-handoff';
 import { useIdempotencyKey } from '../../lib/idempotency';
 import { useAccounts, useAccountRoles, type Account } from '../../vendor/scm/lib/accounting-queries';
@@ -82,6 +82,9 @@ type PiAlloc = {
   invoiceNumber:      string;
   supplierInvoiceRef: string | null;
   invoiceDate:        string | null;
+  /** The invoice's own total — shown beside what is left (owner 2026-09-07:
+      我要显示 invoice 的原本 amount). */
+  totalSen:           number;
   outstandingSen:   number;
   amountSen:        number;
 };
@@ -352,6 +355,11 @@ export const PaymentVoucherNew = () => {
      per PI. The allocations settle AP at face value (MYR). */
   const applyToPi = isAp && !!supplierId;
   const piListQ = usePurchaseInvoices();
+  /* What other UNPOSTED vouchers already applied (docs/bugs/0653): an invoice
+     with nothing left is not offered; a partly reserved one offers only what
+     remains. paid_sen alone moves at Approve and would offer the same bill twice. */
+  const reservationsQ = usePvReservations(applyToPi ? supplierId : null);
+  const reserved = reservationsQ.data ?? NO_RESERVATIONS;
   const outstandingPiRows = useMemo(() => {
     if (!applyToPi) return [] as Array<Record<string, any>>;
     return ((piListQ.data?.purchaseInvoices ?? []) as Array<Record<string, any>>).filter((r) => {
@@ -359,12 +367,12 @@ export const PaymentVoucherNew = () => {
       if (sid !== supplierId) return false;
       const st = String(r.status ?? '').toUpperCase();
       if (st !== 'POSTED' && st !== 'PARTIALLY_PAID') return false;
-      const outstanding = Number(r.total_sen ?? 0) - Number(r.paid_sen ?? 0);
+      const outstanding = Number(r.total_sen ?? 0) - Number(r.paid_sen ?? 0) - (reserved.byPi[String(r.id ?? '')] ?? 0);
       return outstanding > 0;
     /* Oldest first — the order you settle a supplier in (the owner asked to
        SEE the dates; the list endpoint sends newest-first for browsing). */
     }).sort((a, b) => String(a.invoice_date ?? '').localeCompare(String(b.invoice_date ?? '')));
-  }, [applyToPi, piListQ.data, supplierId]);
+  }, [applyToPi, piListQ.data, supplierId, reserved]);
 
   // The per-PI amounts the operator has entered, keyed by PI id.
   const [allocAmounts, setAllocAmounts] = useState<Record<string, number>>({});
@@ -382,13 +390,13 @@ export const PaymentVoucherNew = () => {
     return (apListQ.data?.rows ?? []).filter((r) =>
       String(r.supplierId ?? '') === supplierId
       && (r.status === 'POSTED' || r.status === 'PARTIALLY_PAID')
-      && r.outstandingSen > 0);
-  }, [applyToPi, apListQ.data, supplierId]);
+      && r.outstandingSen - (reserved.byApInvoice[r.id] ?? 0) > 0);
+  }, [applyToPi, apListQ.data, supplierId, reserved]);
 
   const allocations: PiAlloc[] = useMemo(() => {
     const fromPis: PiAlloc[] = outstandingPiRows.map((r) => {
       const piId = String(r.id ?? '');
-      const outstanding = Number(r.total_sen ?? 0) - Number(r.paid_sen ?? 0);
+      const outstanding = Number(r.total_sen ?? 0) - Number(r.paid_sen ?? 0) - (reserved.byPi[piId] ?? 0);
       const amountSen = Math.max(0, Math.min(allocAmounts[piId] ?? 0, outstanding));
       return {
         piId,
@@ -396,22 +404,27 @@ export const PaymentVoucherNew = () => {
         invoiceNumber:      String(r.invoice_number ?? piId),
         supplierInvoiceRef: (r.supplier_invoice_ref ?? null) as string | null,
         invoiceDate:        (r.invoice_date ?? null) as string | null,
+        totalSen:           Number(r.total_sen ?? 0),
         outstandingSen:   outstanding,
         amountSen,
       };
     });
-    const fromApis: PiAlloc[] = outstandingApiRows.map((r) => ({
-      piId: r.id,
-      kind: 'API' as const,
-      invoiceNumber: r.invoiceNumber,
-      supplierInvoiceRef: r.supplierInvoiceRef,
-      invoiceDate: r.invoiceDate,
-      outstandingSen: r.outstandingSen,
-      amountSen: Math.max(0, Math.min(allocAmounts[r.id] ?? 0, r.outstandingSen)),
-    }));
+    const fromApis: PiAlloc[] = outstandingApiRows.map((r) => {
+      const left = r.outstandingSen - (reserved.byApInvoice[r.id] ?? 0);
+      return {
+        piId: r.id,
+        kind: 'API' as const,
+        invoiceNumber: r.invoiceNumber,
+        supplierInvoiceRef: r.supplierInvoiceRef,
+        invoiceDate: r.invoiceDate,
+        totalSen: r.totalSen,
+        outstandingSen: left,
+        amountSen: Math.max(0, Math.min(allocAmounts[r.id] ?? 0, left)),
+      };
+    });
     /* Oldest first across both kinds — the order you settle a supplier in. */
     return [...fromPis, ...fromApis].sort((a, b) => String(a.invoiceDate ?? '').localeCompare(String(b.invoiceDate ?? '')));
-  }, [outstandingPiRows, outstandingApiRows, allocAmounts]);
+  }, [outstandingPiRows, outstandingApiRows, allocAmounts, reserved]);
 
   const allocatedSen = useMemo(() => allocations.reduce((s, a) => s + a.amountSen, 0), [allocations]);
 
@@ -812,6 +825,7 @@ export const PaymentVoucherNew = () => {
                       <th style={{ padding: '6px 8px' }}>Invoice</th>
                       <th style={{ padding: '6px 8px' }}>Date</th>
                       <th style={{ padding: '6px 8px' }}>Supplier Ref</th>
+                      <th style={{ padding: '6px 8px', textAlign: 'right' }}>Amount</th>
                       <th style={{ padding: '6px 8px', textAlign: 'right' }}>Outstanding</th>
                       <th style={{ padding: '6px 8px', textAlign: 'right' }}>Apply</th>
                     </tr>
@@ -842,6 +856,7 @@ export const PaymentVoucherNew = () => {
                         </td>
                         <td style={{ padding: '6px 8px', whiteSpace: 'nowrap', color: 'var(--fg-muted)' }}>{fmtDate(a.invoiceDate)}</td>
                         <td style={{ padding: '6px 8px', color: a.supplierInvoiceRef ? 'var(--fg)' : 'var(--fg-muted)' }}>{a.supplierInvoiceRef || '—'}</td>
+                        <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{fmtRm(a.totalSen)}</td>
                         <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)', color: 'var(--fg-muted)' }}>{fmtRm(a.outstandingSen)}</td>
                         <td style={{ padding: '6px 8px', textAlign: 'right' }}>
                           <MoneyInput bare valueSen={a.amountSen}

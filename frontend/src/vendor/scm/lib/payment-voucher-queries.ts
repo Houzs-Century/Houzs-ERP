@@ -362,3 +362,19 @@ export async function fetchPvPrintDetail(pvId: string): Promise<{
 }> {
   return authedFetch(`/payment-vouchers/${pvId}`);
 }
+
+/** What UNPOSTED vouchers have already applied to each of a supplier's
+    invoices (docs/bugs/0653) — the picker subtracts it, so an invoice a saved
+    voucher already covers leaves the list (owner 2026-09-07: payment 已经分配了
+    就不要显示). excludePvId keeps the voucher being edited out of its own way. */
+export type PvReservations = { byPi: Record<string, number>; byApInvoice: Record<string, number>; holders: Record<string, string[]> };
+export const NO_RESERVATIONS: PvReservations = { byPi: {}, byApInvoice: {}, holders: {} };
+export const usePvReservations = (supplierId: string | null, excludePvId: string | null = null) => useQuery({
+  queryKey: ['pv-reservations', supplierId ?? 'none', excludePvId ?? ''],
+  queryFn: () => authedFetch<PvReservations>(
+    `/payment-vouchers/reservations/list?supplierId=${encodeURIComponent(supplierId ?? '')}${excludePvId ? `&excludePvId=${encodeURIComponent(excludePvId)}` : ''}`,
+  ),
+  enabled: Boolean(supplierId),
+  staleTime: 10_000,
+  retry: retryUnlessClientError,
+});
