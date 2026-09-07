@@ -304,6 +304,38 @@ truth for one document, and a UI that must explain which one wins.
 - Delivery order **presence**: 171 of 173 in scope are in the ERP, 0 phantom.
 - Delivery order **copied fields**: 82 of 82 headers, 353 of 353 lines.
 - The four sofa **colours** flagged as swapped are correct in the ERP (§5).
-- Goods receipts: the numbers land in `docs/bugs/0668` from the corrected run of
-  `check-gr-fidelity.yml`. **The 86-invented headline of run 34134695504 is
-  withdrawn** (§0).
+- Goods receipts, corrected run **34136172380** (2026-09-07 23:07 local):
+  **0 of 320 invented**, and **0 findings anywhere say the ERP claims MORE
+  received than AutoCount recorded.** On-hand is not overstated by a migrated
+  goods receipt and no supplier has been credited with a delivery that did not
+  happen. The 86-invented headline of run 34134695504 is **withdrawn** (§0).
+
+## 10. Goods receipts — the one direction that IS out
+
+Every goods-receipt finding points the same way: **the ERP is BEHIND the book,
+never ahead.**
+
+| finding | number |
+|---|---|
+| AutoCount received, the ERP holds the purchase order, **no goods receipt exists** | **89 of 574 purchase orders** |
+| sofa-free purchase orders where the ERP received LESS | **21 of 248** |
+| `(purchase order, item code)` pairs that differ — all of them ERP < AutoCount | **5 of 408** |
+| goods receipt lines that no longer mirror their own purchase order line | **3 of 591** |
+
+```
+PO-009304|AK-CS AIRLOFT COMFY PIL  ERP 172  AutoCount 200
+PO-009722|CODY-(Q)                 ERP   1  AutoCount   2
+PO-009790|JAGER-(Q)                ERP   1  AutoCount   2
+PO-009736|AKEMI NOBILITY MATT (K)  ERP   2  AutoCount   3
+PO-009736|AKEMI NOBILITY MATT (SS) ERP   1  AutoCount   2
+```
+
+This is a **catching-up job, not a correction**: AutoCount kept receiving after
+the ERP's last import and those receipts were never carried across. The book
+moved by **+1,276 units over 145 purchase orders** between 2026-08-11 and
+2026-09-07 (printed by the check itself). The business effect is that the ERP
+under-states what has arrived, so someone may chase a supplier for goods already
+delivered. It does NOT overstate stock.
+
+Cause **LIKELY** the import lane whose freshness `sync-ac-delta` owns; **not yet
+traced to a line**, and that is the next thing to do on the goods-receipt side.

@@ -10,6 +10,11 @@ const CURRENCY_SYMBOL: Record<string, string> = {
   SGD: "S$",
   USD: "US$",
   RMB: "¥",
+  // CNY is the ISO code for the same currency as RMB, and both are stored
+  // (mig 20260907T2330: the AutoCount book states CNY on 22 purchase orders and
+  // the migration copies rather than translates). Same symbol, because it is the
+  // same money — a missing entry here renders the bare code with no symbol.
+  CNY: "¥",
 };
 
 /** Integer *_sen → a BARE 2dp amount, e.g. 123456 → "1,234.56" — no currency.

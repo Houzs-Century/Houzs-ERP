@@ -37,6 +37,7 @@ import fs from "node:fs";
 import zlib from "node:zlib";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { bookCurrency, currencyTally, sawCurrencyColumn } from "./lib/ac-currency.mjs";
 import postgres from "postgres";
 import { buildFabricColourIndex, isPendingColour } from "./lib/fabric-colour-match.mjs";
 import { parseBedframe } from "./lib/parse-bedframe.mjs";
@@ -86,6 +87,11 @@ function parsePayment(p) {
 async function main() {
   log(`mode=${APPLY ? "APPLY" : "DRY-RUN"}${LIMIT ? ` LIMIT=${LIMIT}` : ""}`);
   const rows = JSON.parse(zlib.gunzipSync(fs.readFileSync(path.join(here, "data", "ac-outstanding-po.json.gz"))).toString("utf8").replace(/^﻿/, ""));
+  /* Whether THIS cut can answer the currency question at all. The column was
+     added to export-ac-reimport.py's PO lanes on 2026-09-07; a cut taken before
+     that has no CurrencyCode and every document then defaults to MYR. Saying so
+     once is the difference between a copy and an assumption. */
+  const cutCarriesCurrency = rows.some((r) => sawCurrencyColumn(r));
   log(`AutoCount outstanding PO lines: ${rows.length}`);
 
   const csv = fs.readFileSync(path.join(here, "data", "autocount-erp-mapping-1561.csv"), "utf8").replace(/^﻿/, "").split(/\r?\n/).filter(Boolean);
@@ -336,7 +342,11 @@ async function main() {
         up, lt, w, deliv: acDeliveryDate(l), bf, variants });
     }
     if (!items.length) continue;
-    built.push({ poNo: "HC-" + acPo, acPo, supId, poDate: h.DocDate, locWh: whId(h.Location), subtotal, status: anyReceived ? "PARTIALLY_RECEIVED" : "SUBMITTED", items });
+    /* THE BOOK'S OWN CURRENCY, not the constant 'MYR' this line used to imply.
+       A migration copies and never computes (lib/ac-currency.mjs). Falls back to
+       MYR only when the cut carries no CurrencyCode column at all, which
+       reproduces today's behaviour exactly rather than inventing a new one. */
+    built.push({ poNo: "HC-" + acPo, acPo, supId, poDate: h.DocDate, locWh: whId(h.Location), currency: bookCurrency(h), subtotal, status: anyReceived ? "PARTIALLY_RECEIVED" : "SUBMITTED", items });
   }
 
   log("");
@@ -388,6 +398,17 @@ async function main() {
   for (let i = 0; i < nums.length; i += 500) { const r = await sql`SELECT po_number FROM scm.purchase_orders WHERE company_id = 1 AND po_number = ANY(${nums.slice(i, i + 500)})`; for (const x of r) existing.add(x.po_number); }
   const todo = built.filter((o) => !existing.has(o.poNo));
   log(`already imported: ${existing.size}; to insert: ${todo.length}`);
+  /* SAY WHICH CURRENCY EACH DOCUMENT IS GOING IN AS, and say whether the cut
+     could answer at all. A writer that silently defaults 22 CNY documents to
+     ringgit is exactly what happened here before; a count that distinguishes
+     "the book said MYR" from "the cut had no column" is the difference between
+     a copy and an assumption. */
+  {
+    const t = currencyTally(todo.map((o) => ({ CurrencyCode: o.currency })));
+    log(`currency: ${[...t.tally].map(([k, v]) => `${k}=${v}`).join(", ") || "(none)"}`);
+    if (!todo.length) log("   (nothing to insert)");
+    else if (!cutCarriesCurrency) log("   NOTE: this cut carries no CurrencyCode column, so every document defaults to MYR — the pre-2026-09-07 behaviour, not a reading of the book. Re-cut ac-outstanding-po.json.gz to fix that.");
+  }
 
   let nPo = 0, nItems = 0;
   for (const o of todo) {
@@ -400,7 +421,7 @@ async function main() {
       const ins = await tx`INSERT INTO scm.purchase_orders
         (po_number, linked_ac_docno, supplier_id, status, po_date, expected_at, purchase_location_id, currency,
          subtotal_sen, tax_sen, total_sen, revision, company_id, created_by, notes)
-        VALUES (${o.poNo}, ${o.acPo}, ${o.supId}, ${o.status}, ${o.poDate || sql`CURRENT_DATE`}, ${headerEta}, ${o.locWh}, 'MYR',
+        VALUES (${o.poNo}, ${o.acPo}, ${o.supId}, ${o.status}, ${o.poDate || sql`CURRENT_DATE`}, ${headerEta}, ${o.locWh}, ${o.currency},
          ${o.subtotal}, 0, ${o.subtotal}, 1, 1, ${SYS_USER}, ${"imported from AutoCount " + o.acPo})
         ON CONFLICT (po_number) DO NOTHING RETURNING id`;
       if (!ins.length) return;

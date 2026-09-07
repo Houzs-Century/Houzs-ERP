@@ -75,6 +75,15 @@ async function main() {
   }
 
   let planned = 0, already = 0, noSoLine = 0, noPoLine = 0, noOrigin = 0;
+  /* THE THREE REFUSALS BELOW ARE THE BUG CLASS "key without identity"
+     (docs/bugs/0672). This script wrote so_item_id on a KEY — a doc number, a
+     row position — without ever asserting that the two rows name the same
+     product. On 2026-09-07 the same omission in sync-ac-delta's `links` lane
+     put nine sales-order lines on a purchase-order line for a different bed
+     (docs/bugs/0671), and so_item_id is what makes a hard-bound line read READY
+     (isHardBoundLine, src/scm/lib/so-stock-allocation.ts). A wrong link is
+     worse than none, because it then reads as evidence. */
+  let mismatch = 0, ambiguous = 0, multiOrigin = 0;
   const plan = [];
   for (const [k, acLines] of acGrp) {
     const poLines = poGrp.get(k);
@@ -85,12 +94,35 @@ async function main() {
       let soDoc = null, soCode = null;
       const viaDtl = ac.FromSODtlKey != null ? soByDtl.get(String(ac.FromSODtlKey)) : null;
       if (viaDtl) { soDoc = viaDtl.doc; soCode = viaDtl.code; }
-      else if (ac.FromSODocList) { soDoc = String(ac.FromSODocList).split(",")[0].trim(); soCode = ac.ItemCode; }
+      else if (ac.FromSODocList) {
+        /* A CONSOLIDATED purchase order names SEVERAL sales orders. Taking the
+           first one was a guess dressed as a lookup: nothing here can say which
+           of them this line came off. */
+        const docs = String(ac.FromSODocList).split(",").map((x) => x.trim()).filter(Boolean);
+        if (docs.length > 1) { multiOrigin++; log(`  REFUSED ${k}: the AutoCount line names ${docs.length} sales orders (${docs.join(", ")}) and nothing here says which one this line came off`); continue; }
+        soDoc = docs[0]; soCode = ac.ItemCode;
+      }
       if (!soDoc) { noOrigin++; continue; }
       const erpSoCode = byAc.get(norm(soCode)) ?? "";
       const soCands = soGrp.get(`${soDoc}|${norm(erpSoCode)}`);
       if (!soCands || !soCands.length) { noSoLine++; log(`  no SO line for ${k} <- ${soDoc} ${soCode}`); continue; }
-      const soLine = soCands.length === 1 ? soCands[0] : soCands[i % soCands.length];
+      /* `soCands[i % soCands.length]` used to stand here. `i` is the counter of
+         the OUTER zip over a different array, so when one sales order carried
+         two lines of the same code — two of the same sofa in different colours,
+         the normal case — which one got the link was decided by an unrelated
+         loop index. That is a coin flip, and it produces the exact-swap
+         signature seen on the migrated delivery orders. */
+      if (soCands.length > 1) { ambiguous++; log(`  REFUSED ${k} <- ${soDoc}: ${soCands.length} sales-order lines carry this code and the book does not say which`); continue; }
+      const soLine = soCands[0];
+      /* THE IDENTITY. Both sides were resolved through the CSV from DIFFERENT
+         AutoCount codes — the PO line from its own, the SO line from the SO's —
+         and 117 ERP codes are claimed by more than one AutoCount code, so the
+         two derivations can disagree. */
+      if (norm(po.item_code) !== norm(soLine.item_code)) {
+        mismatch++;
+        log(`  REFUSED ${k} <- ${soDoc}: the purchase-order line is ${po.item_code} and the sales-order line is ${soLine.item_code} — DIFFERENT products`);
+        continue;
+      }
       if (po.so_item_id) { already++; continue; }
       plan.push({ poItemId: po.id, soItemId: soLine.id, k, soDoc });
       planned++;
@@ -98,6 +130,7 @@ async function main() {
   }
   log(`AC PO lines with origin: ${[...acGrp.values()].flat().length}; links planned: ${planned}; already linked: ${already}`);
   log(`unresolved -> PO line missing: ${noPoLine}; SO line missing: ${noSoLine}; no origin recorded: ${noOrigin}`);
+  log(`REFUSED -> different product on the two sides: ${mismatch}; several SO lines share the code: ${ambiguous}; the AutoCount line names several sales orders: ${multiOrigin}`);
   for (const p of plan.slice(0, 15)) log(`   ${p.k} -> SO ${p.soDoc}`);
 
   if (!APPLY) { log("DRY-RUN — set APPLY=1 to write."); await sql.end(); return; }

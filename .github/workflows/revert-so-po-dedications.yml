@@ -1,0 +1,110 @@
+name: SO->PO dedications — revert the wrong ones (PLAN by default)
+
+# Manual. Undoes the SO->PO dedications that bind a sales-order line to a
+# purchase-order line for a DIFFERENT product (docs/bugs/0671): sync-ac-delta's
+# `links` lane matched on AutoCount's DtlKey pair alone and never compared the
+# two ERP rows' item_code, so run 34123720786 (2026-09-07 20:46 MYT) wrote nine
+# dedications naming a different bed on each end.
+#
+# WHY THIS UNDOES RATHER THAN WAITS FOR A DECISION. A bedframe line is
+# HARD-BOUND: it reads READY only through its OWN dedicated purchase order's
+# received_qty. A wrong dedication therefore lights a customer's REGAL when a
+# TRION arrives — strictly worse than no dedication at all, which simply leaves
+# the line waiting on the pool. Removing it restores the state that held before
+# that run.
+#
+# THE DUMP IS THE PRECONDITION. plan writes nothing to the database: it writes
+# a restorable JSON file (one UPDATE per row that puts the exact so_item_id
+# back), uploads it as an artifact AND prints it in full to the log, because an
+# artifact expires and a log line does not. apply re-runs that dump, re-reads it
+# off disk, and refuses to write if it did not parse.
+#
+# WHICH SIDE IS RIGHT IS NOT DECIDED HERE. The plan prints, per pair, our two
+# item codes and the book's two — read from the snapshots committed in this
+# repo, never from a live AutoCount SQL connection — and says which of ours
+# disagrees with the book. Re-dedicating to the right line is a separate,
+# deliberate act once the owner has ruled.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan writes only the JSON + the table; apply also nulls so_item_id"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: 'For mode=apply, type: REVERT <n> DEDICATIONS (n = the count the plan printed)'
+        required: false
+        default: ""
+        type: string
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      company_id:
+        description: "ERP company (Houzs Century is 1)"
+        required: false
+        default: "1"
+        type: string
+
+# Its own group: a one-defect repair must never queue behind, or displace, a
+# release.
+concurrency:
+  group: revert-so-po-dedications-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/revert-so-po-dedications.mjs
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          OUT: ${{ github.workspace }}/dedication-dump/so-po-dedications.json
+          NODE_OPTIONS: --dns-result-order=ipv4first
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: so-po-dedication-dump-${{ inputs.mode }}
+          path: dedication-dump/
+          if-no-files-found: warn
+          retention-days: 90
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/revert-so-po-dedications.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          OUT: ${{ github.workspace }}/dedication-dump/so-po-dedications.json
+          # GitHub-hosted runners have no IPv6 egress.
+          NODE_OPTIONS: --dns-result-order=ipv4first
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: so-po-dedication-dump-${{ inputs.mode }}
+          path: dedication-dump/
+          if-no-files-found: warn
+          retention-days: 90

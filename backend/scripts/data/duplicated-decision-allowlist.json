@@ -42,7 +42,7 @@
     },
     {
       "check": "D1",
-      "key": "MYR,RMB,SGD,USD|backend/src/scm/lib/purchase-doc-vocab.ts backend/src/scm/routes/suppliers.ts frontend/src/lib/scm.ts frontend/src/pages/scm-v2/SupplierDetail.tsx frontend/src/pages/scm-v2/Suppliers.tsx",
+      "key": "CNY,MYR,RMB,SGD,USD|backend/src/scm/lib/purchase-doc-vocab.ts backend/src/scm/routes/suppliers.ts frontend/src/lib/scm.ts frontend/src/pages/scm-v2/SupplierDetail.tsx frontend/src/pages/scm-v2/Suppliers.tsx",
       "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 5 homes: VALID_CURRENCIES, CURRENCIES, CURRENCY_SYMBOL, CURRENCY_OPTIONS. Cost of divergence is a blank chip, not a wrong number."
     },
     {
