@@ -773,3 +773,130 @@ wrote `1316 of 1316 intended; 0 skipped`, VERIFY clean.
 Nothing was corrupted — the lane's design is exactly what absorbed it — but an
 hour and a half of writing was thrown away and had to be re-measured. Serialise
 the go-live dispatches on one operator.
+
+---
+
+## 9. APPLIED — the second half, 12:44 to 13:30
+
+§8 ends with the header lane finished. This section is everything after it, run
+by a second session. Same rule: every row names its run.
+
+### 9.0 A correction to §8's account of the cancel
+
+§8 says run `34114714868` "was cancelled at 12:43:51 when a second session's
+`sync-ac-delta` dispatch entered the same concurrency group". That is not what
+happened, and the difference matters because the lesson is a different one.
+
+It was cancelled by an explicit `gh run cancel` from that second session, which
+had **read the wrong evidence**. A normal `sync-ac-delta` run finishes in 35-40
+seconds; this one had been running 96 minutes; GitHub serves no log for an
+in-progress job, so there was nothing to read; and the session's own arithmetic
+— 786 writes at the ~0.4s round trip it had measured off a verify sample — said
+six minutes, not ninety-six. So it called the run hung and cleared it to unblock
+the concurrency group.
+
+Every input to that conclusion was true. The conclusion was false, because the
+run's `LANES` were not 786 writes but **14,916**, and 14,916 x 0.4s is 99
+minutes. The one fact that settles it — what the run was actually dispatched
+with — is not on the run object the API returns, but the identical 14,916 plan
+had been printed by a sibling run an hour earlier and was one `gh run view` away.
+
+**The rule this buys: before cancelling a long-running job, find out what it was
+asked to do.** A duration is only anomalous relative to a workload.
+
+Nothing was lost but time: every UPDATE is guarded on the value the plan read,
+so the re-plan simply measured the 1,316 that remained.
+
+### 9.1 What was applied
+
+| # | job | plan | what it wrote | run |
+|---|---|---|---|---|
+| 11 | `sync-ac-delta lanes=desc,pay,links,recv,do,dedi,hdr` | desc 75 / pay 40 / links 10 / hdr 0 | **75 description2 lines, 40 payment rows, 10 dedications**; VERIFY 5/5/5 | 34123720786 |
+| 12 | `backfill-sofa-variants`, `fuzzy` OFF | 16 to fill, 58 held on a fuzzy colour | **16 lines merged**, 0 skipped | 34124801377 |
+| 13 | `dump-and-delete-po HC-PO-009944` | dump first, delete second | **dump 16,491 bytes, re-read OK; 3 lines + 1 header deleted**; VERIFY 0 remaining | 34124910249 / 34125030805 |
+| 14 | `backfill-specials-into-variants skip_priced=1` | SO 89 / PO 38 | **127 lines**; read-back 127 carry every code, 0 do not; 358 held as priced | 34125641978 |
+| 15 | `backfill-so-dates` | 62 headers | **62 headers + 306 item lines**; 2 headers and 17 lines REFUSED on the audit trail | 34125933888 |
+| 16 | `refresh-so-variants` | 2,565 lines, erases 10 | see 9.3 | 34126455704 |
+
+### 9.2 The invoices did not become writable, and not for the reason assumed
+
+The go-live brief said the 7 sales and 21 purchase invoices were absent only
+because their source DOs and GRs had not been imported, and would now be
+creatable. They are not. Dry-run `34124085262`, after every import:
+
+```
+PURCHASE INVOICES   source documents: 320   WOULD CREATE: 0   refused: 320
+   total_disagrees_with_autocount 270 | nothing_to_invoice 34
+   no_autocount_invoice 10 | ambiguous_autocount_invoices 6
+SALES INVOICES      source documents: 171   WOULD CREATE: 0
+   already mirrored 42 | refused 126 (no_autocount_invoice 121,
+   total_disagrees 4, nothing_to_invoice 1)
+```
+
+The sources ARE all there now — 320 and 171, against 82 this morning, so the
+import half of the theory was right. The gate that refuses them is
+`acValueSen === valueSen` in `src/scm/lib/migrated-chain.ts`, and of the 270,
+**175 have both sides priced and genuinely differ**. Those need a human, not a
+re-run. `allowTotalMismatch` exists in that module and is deliberately not
+exposed on the workflow; forcing it would write invoices whose money is not the
+book's money.
+
+### 9.3 The bedframe sweep was measured before it was run
+
+`refresh-so-variants.mjs` re-derives the owned variant axes from AutoCount's
+Desc2 and writes `null` for every axis the parse does not yield;
+`variants || patch` stores those nulls, so a value the ERP holds and the book
+does not state is DELETED. Its last apply was 2026-08-10 — four weeks of staff
+edits stood behind it — and its dry-run reported only what it would ADD.
+
+PR #3074 made it report what it would take away. Measured against production
+(run `34126290530`) before any write:
+
+```
+WOULD ERASE: 10 value(s) the ERP holds and the AutoCount Desc2 does not state
+   fabricId 2 | colourId 2 | fabricCode 2 | colourLabel 2 | fabricLabel 2
+      SO-007693 VALKYRIE (A)-(Q)   colourId "SF-AT 04"
+      SO-008447 FENRIR-(Q)         colourId "KS-08"
+```
+
+Ten values on two lines, both of them the colour block — not the 1,171 TBC/KIV
+lines that were feared. Against a gain of 51 colours newly resolved and ~31
+blank axes filled on proceeded orders, the sweep was run, and the two losses
+were written to
+`refresh-so-variants-2026-09-07-erased.json`, in the operator's
+`ac-golive-dumps` folder on the Desktop — outside this repo and outside the
+database, which is the point — first, so they can be put back by hand.
+`SO-007693`'s label reads
+`04 [MERGED into SF-AT-04 on 2026-08-13 - superseded, not deleted]` — a pointer
+at a library row that no longer exists.
+
+`refresh-po-variants.mjs` imports the same `buildBedframeVariantPatch` and has
+the same behaviour. It was NOT instrumented and NOT run.
+
+### 9.4 Still open
+
+- **175 purchase invoices** where our total and AutoCount's are both priced and
+  differ. A human decision, per document.
+- **PO unit price: 241 lines** — **53% of the whole remaining 456** — and it is
+  AutoCount holding **RM 0.00** where the ERP holds the real price. Copying the
+  book here would zero 241 real prices. This is the mirror of COPY-NEVER-COMPUTE
+  and it must not be "closed".
+- **`HC-SO-010886`** — AutoCount qty 5 against ERP qty 2, RM 4,250.00 against
+  RM 3,800.00: a LINE QUANTITY change made after the copy. No lane writes qty;
+  it is one of 22 such lines.
+- **58 sofa colours** that resolve only through the fuzzy matcher, and **2 codes
+  absent from the fabric library** (`nicca - 02 Oat glow`, `CHINO-01`). Owner
+  decision, by the tool's own rule that a match is not a copy.
+- **358 lines** the specials backfill held back because they would gain a PRICED
+  add-on. Owner decision — stamping one reprices a historical document.
+- **`PO-009979`**, and the 2 owner-declined delivery orders: unchanged from §8.5.
+
+### 9.5 `backfill-so-dates` reports its header plan and hides its line plan
+
+The dry-run prints `headers to update: 62` and stops. The per-line section that
+went on to write **306** `line_delivery_date` values sits inside the `if (APPLY)`
+block, so no dry-run can show it. The write itself is safe — `IS NULL` is
+repeated inside the SQL and a human-touched document is refused — but "the
+dry-run prints EXACTLY the list apply consumes" is the standard
+`backfill-sofa-variants-from-desc2.mjs` sets in its own header, and this script
+does not meet it. Not fixed tonight.
