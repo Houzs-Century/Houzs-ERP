@@ -45,7 +45,9 @@ type MatrixPayload = {
   baselines: Partial<Record<string, Partial<Record<string, string>>>>;
 };
 
-const GOD_SLUGS = new Set(["super_admin", "owner"]);
+// Mirrors GOD_POSITIONS in backend/src/services/positionPolicy.ts (by slug):
+// these positions hold '*' by position, so the matrix shows them locked-on.
+const GOD_SLUGS = new Set(["super_admin", "owner", "managing_director"]);
 
 const LEVEL_CYCLE = ["none", "view", "edit", "full"] as const;
 const LEVEL_CODE: Record<string, string> = {
