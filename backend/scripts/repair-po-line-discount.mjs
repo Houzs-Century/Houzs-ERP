@@ -58,6 +58,24 @@
  * codes on the ten in-scope orders are mattresses, so no group is expected to
  * decompose — the refusal is there for the day that stops being true.)
  *
+ * ⚠ CURRENCY IS A REFUSAL, NOT A CONVERSION — added 2026-09-07 after this
+ * script moved money it should not have. `PO-009335` is denominated in CHINESE
+ * YUAN at 0.619380. The snapshot carried `LocalNetTotal` / `LocalSubTotal`, the
+ * MYR figures; the ERP holds the document's own CNY figures and
+ * `import-ac-outstanding-po.mjs:401` hard-codes 'MYR' into the currency column
+ * regardless. So this script compared MYR against CNY, saw the ERP as 38.06%
+ * "higher", and wrote RM 13,068.55 of discount AutoCount does not state — the
+ * book's five lines all read `DiscountAmt = 0.00`. 34,334.90 x 0.61938 =
+ * 21,266.35: the discount WAS the exchange rate.
+ * Reverted by `revert-po-cny-false-discount.mjs`. Ledger: docs/bugs/0665-*.md.
+ *
+ * A discount and an exchange rate are not distinguishable from a total alone.
+ * So a document that is not MYR at rate 1 is REFUSED and listed, never
+ * repaired, and a snapshot that carries no currency at all REFUSES THE WHOLE
+ * RUN — a script that cannot see the currency cannot claim a document does not
+ * have one. On the 2026-09-07 book that is 22 CNY purchase orders out of 9,412,
+ * of which exactly 1 is in the migrated scope.
+ *
  * MODE=plan (default) prints, per document, the ERP total NOW, the AutoCount
  * total and the difference, and writes nothing.
  * MODE=apply needs CONFIRM="I HAVE REVIEWED THE PO DISCOUNT PLAN".
@@ -141,11 +159,36 @@ async function main() {
   /* The AutoCount side: every PO line whose own amount differs from
      qty x unit price. That difference IS the discount — the book states no
      other place for it. */
-  const { byDoc: bookDiscount, skipped: bookSkipped, whole, inScope } = readBookDiscounts(book.PO.lines, scope.PO);
+  const {
+    byDoc: bookDiscount, skipped: bookSkipped, currencyRefused, whole, inScope,
+  } = readBookDiscounts(book.PO.lines, scope.PO, book.PO.headers);
 
   note('');
   note(`WHOLE BOOK: ${whole.lines} discounted line(s) across ${whole.docs.size} purchase order(s), ${rm(whole.sen)}.`);
   note(`IN THE MIGRATED SCOPE: ${inScope.lines} line(s) across ${inScope.docs} purchase order(s), ${rm(inScope.sen)}.`);
+
+  /* THE CURRENCY GATE, printed before anything else it might affect. A document
+     that is not MYR at rate 1 never reached the discount rule at all — see
+     lib/po-discount-plan.mjs `currencyVerdict`, and docs/bugs/0665-*.md for the
+     RM 13,068.55 this exists to have prevented. */
+  if (currencyRefused.length) {
+    const unknown = currencyRefused.filter((r) => r.kind === 'unknown');
+    plain('');
+    bad(`CURRENCY: ${currencyRefused.length} in-scope purchase order(s) REFUSED — a discount and an exchange rate are not`);
+    bad('  distinguishable from a total alone, so this script does not try. Repair them by hand or not at all.');
+    for (const r of currencyRefused) bad(`     ${r.docNo}: ${r.why}`);
+    if (unknown.length) {
+      plain('');
+      bad(
+        `REFUSING THE WHOLE RUN: ${unknown.length} in-scope document(s) have no currency in this snapshot. ` +
+        'A script that cannot see the currency cannot claim a document does not have one. Re-cut the snapshot with ' +
+        'AC_CRED_FILE=<path> node backend/scripts/export-ac-reconcile-truth.mjs and run this again.',
+      );
+      await sql.end({ timeout: 5 });
+      process.exit(2);
+    }
+  }
+
   if (bookSkipped.length) {
     plain(`  ${bookSkipped.length} in-scope book line(s) SKIPPED because the book states no amount (blank never overwrites):`);
     for (const s of bookSkipped.slice(0, 10)) plain(`     ${s}`);

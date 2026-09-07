@@ -188,13 +188,34 @@ function rows(sql, expectFields, timeoutSec = BULK_TIMEOUT_S) {
   throw last;
 }
 
-/* Header projection, identical for all six types. */
+/* Header projection, identical for all six types.
+ *
+ * CURRENCY TRAVELS WITH THE MONEY, since 2026-09-07, and `netTotal` is no longer
+ * the only amount.  It used to be `ISNULL(h.LocalNetTotal, h.NetTotal)` alone —
+ * the LOCAL-currency (MYR) figure — while the ERP holds the DOCUMENT-currency
+ * one (`import-ac-outstanding-po.mjs:401` hard-codes 'MYR' into
+ * `purchase_orders.currency` whatever the book says).  On a MYR document the two
+ * are the same number and nothing showed; on `PO-009335`, which is in CNY at
+ * 0.619380, the difference IS the exchange rate, and the PO line-discount repair
+ * read it as a 38.06% discount and took RM 13,068.55 off a live purchase order.
+ * Ledger: docs/bugs/0665-*.md.
+ *
+ * So both amounts now travel, beside the currency and the rate that relate them,
+ * and a consumer states which one it means.  Neither is "the" total: `netTotal`
+ * is the MYR figure the books are kept in, `docTotal` is what the document
+ * itself says, and comparing an ERP figure against the wrong one is the defect
+ * this fixes.  The book holds 22 CNY purchase orders out of 9,412 and all 13,366
+ * sales orders in MYR, so on today's data every other document has
+ * netTotal === docTotal — which is exactly why nobody could see the bug. */
 const headerSql = (h, d) => `
 SELECT LTRIM(RTRIM(ISNULL(h.DocNo,''))) + CHAR(31) +
        ISNULL(CONVERT(varchar(10), h.DocDate, 23),'') + CHAR(31) +
        ISNULL(h.Cancelled,'F') + CHAR(31) +
        CONVERT(varchar(32), CAST(ISNULL(ISNULL(h.LocalNetTotal, h.NetTotal),0) AS decimal(19,2))) + CHAR(31) +
-       CAST((SELECT COUNT(*) FROM ${d} q WHERE q.DocKey = h.DocKey) AS varchar(12))
+       CAST((SELECT COUNT(*) FROM ${d} q WHERE q.DocKey = h.DocKey) AS varchar(12)) + CHAR(31) +
+       LTRIM(RTRIM(ISNULL(h.CurrencyCode,''))) + CHAR(31) +
+       CONVERT(varchar(32), CAST(ISNULL(h.CurrencyRate,0) AS decimal(19,6))) + CHAR(31) +
+       CONVERT(varchar(32), CAST(ISNULL(h.NetTotal,0) AS decimal(19,2)))
   FROM ${h} h
  ORDER BY h.DocNo`;
 
@@ -225,7 +246,8 @@ SELECT LTRIM(RTRIM(ISNULL(h.DocNo,''))) + CHAR(31) +
        ISNULL(CONVERT(varchar(32), CAST(${transfered} AS decimal(19,4))),'') + CHAR(31) +
        ${fromType} + CHAR(31) +
        ${fromNo} + CHAR(31) +
-       ${fromSoDtl}
+       ${fromSoDtl} + CHAR(31) +
+       CONVERT(varchar(32), CAST(ISNULL(d.SubTotal,0) AS decimal(19,2)))
   FROM ${d} d JOIN ${h} h ON h.DocKey = d.DocKey
  ORDER BY h.DocNo, d.Seq, d.DtlKey`;
 }
@@ -334,11 +356,19 @@ const snapshot = {
   exported_at: new Date().toISOString(),
   source: `${DB} live (read-only)`,
   grain: "one row per AutoCount DocNo (headers) and per DtlKey (lines); NO filtering",
-  header_fields: ["docNo", "docDate", "cancelled", "netTotal", "lineCount"],
+  /* `netTotal` / `subTotal` are the LOCAL-currency (MYR) amounts and always
+     were; `currency`, `rate`, `docTotal` and `docSubTotal` were APPENDED
+     2026-09-07 so a consumer can say which of the two it means instead of being
+     handed one and left to assume.  Appended, never reordered: `decodeSnapshot`
+     indexes these by NAME, so an older snapshot decodes with the new fields
+     null — which is what lets a consumer refuse a currency-blind cut rather than
+     read a missing column as "MYR".  Ledger: docs/bugs/0665-*.md. */
+  header_fields: ["docNo", "docDate", "cancelled", "netTotal", "lineCount", "currency", "rate", "docTotal"],
   line_fields: [
     "docNo", "dtlKey", "seq", "itemKey", "hasCode",
     "qty", "unitPrice", "subTotal", "transferedQty",
     "fromDocType", "fromDocNo", "fromSoDtlKey",
+    "docSubTotal",
   ],
   /* Present ONLY on a snapshot cut by this version or later.  The variant
      reconcile keys off its absence to refuse rather than report a clean run
@@ -351,8 +381,8 @@ const snapshot = {
 
 for (const { t, h, d, opts } of TYPES) {
   const t0 = Date.now();
-  const hdr = rows(headerSql(h, d), 5);
-  const lns = rows(lineSql(h, d, opts), 12);
+  const hdr = rows(headerSql(h, d), snapshot.header_fields.length);
+  const lns = rows(lineSql(h, d, opts), snapshot.line_fields.length);
   const d2 = desc2Rows(d, t);
   snapshot.types[t] = { headers: hdr, lines: lns, desc2: d2.rows };
   snapshot.counts[t] = { headers: hdr.length, lines: lns.length, desc2: d2.rows.length };
