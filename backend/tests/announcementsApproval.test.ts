@@ -18,6 +18,7 @@ import { env } from "cloudflare:test";
 import { Hono } from "hono";
 import { beforeAll, describe, expect, test } from "vitest";
 import announcementRoutes from "../src/routes/announcements";
+import announcementApprovalRoutes from "../src/routes/announcementApproval";
 import { deliverableNow } from "../src/lib/announcementAudience";
 
 type User = {
@@ -56,6 +57,7 @@ app.use("*", async (c: never, next: never) => {
   await (next as unknown as () => Promise<void>)();
 });
 app.route("/api/announcements", announcementRoutes);
+app.route("/api/announcements", announcementApprovalRoutes);
 
 type Pub = {
   id: string;

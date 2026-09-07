@@ -182,6 +182,10 @@ export type ComposerModalProps = {
   companies: Company[];
   salesDirOnly: boolean;
   currentUserId: number | null;
+  /** Settings → Documents says the ANN type needs a file before submit
+   *  (mig 20260907T0715). Submit is held until one is attached; Save draft is
+   *  not. The server enforces the same rule. */
+  attachmentRequired?: boolean;
   onClose: () => void;
   onPosted: () => void;
 };
@@ -424,6 +428,8 @@ export function ComposerModal(p: ComposerModalProps) {
   const hasPhotos = attachments.some((a) => a.mime.startsWith("image/"));
   const hasVideos = attachments.some((a) => a.mime.startsWith("video/"));
   const canPost = !posting && !uploading && title.trim().length > 0;
+  const missingAttachment = p.attachmentRequired === true && attachments.length === 0;
+  const canSubmit = canPost && !missingAttachment;
   const meta = CATEGORY_META[category];
 
   if (typeof document === "undefined") return null;
@@ -574,6 +580,11 @@ export function ComposerModal(p: ComposerModalProps) {
                   </div>
                 );
               })}
+              {missingAttachment && (
+                <span className="self-center text-[11px] font-[650] text-warning-text" data-testid="attachment-required-hint">
+                  An attachment is required before submit
+                </span>
+              )}
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
@@ -696,7 +707,8 @@ export function ComposerModal(p: ComposerModalProps) {
                 <button
                   type="button"
                   onClick={() => void post()}
-                  disabled={!canPost}
+                  disabled={!canSubmit}
+                  title={missingAttachment ? "Attach a file first — this notice type requires one" : undefined}
                   className="flex-1 rounded-md bg-primary px-3 py-2 text-[12px] font-bold text-white hover:bg-primary/90 disabled:opacity-50"
                 >
                   {posting ? "Submitting…" : scheduledAt ? "Submit scheduled post" : "Submit for approval"}

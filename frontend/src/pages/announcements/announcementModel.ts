@@ -33,6 +33,22 @@ export type Attachment = {
   size?: number;
 };
 
+/** One line of the attachment log (GET /:id/files, mig 20260907T0715): who
+ *  attached / removed which file and when. A removed file keeps its line. */
+export type AnnouncementFile = {
+  id: number;
+  r2Key: string;
+  name: string | null;
+  mime: string | null;
+  size: number | null;
+  uploadedBy: number | null;
+  uploadedByName: string | null;
+  uploadedAt: string;
+  removedBy: number | null;
+  removedByName: string | null;
+  removedAt: string | null;
+};
+
 export type TargetType =
   | "ALL_USERS"
   | "DEPARTMENT_IDS"

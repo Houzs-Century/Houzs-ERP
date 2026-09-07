@@ -19,6 +19,7 @@ import {
   bucketInbox,
   isApproved,
   receiptsCsv,
+  type AnnouncementFile,
   type AckSummary,
   type AcksData,
   type Announcement,
@@ -167,6 +168,25 @@ export function Announcements() {
     [],
     { enabled: receiptsEnabled },
   );
+
+  // The attachment log for the selected notice (mig 20260907T0715) — Manage
+  // only; the endpoint answers writers / approvers.
+  const filesQ = useQuery<{ data: AnnouncementFile[] }>(
+    `/api/announcements/${selected?.id ?? "-"}/files`,
+    () => api.get(`/api/announcements/${selected?.id}/files`),
+    [],
+    { enabled: !!selected && mode === "manage" && canOpenManage },
+  );
+  // The attachment policy for the ANN type (Settings → Documents): the
+  // composer disables Submit while a required file is missing. The server
+  // enforces it regardless.
+  const docTypesQ = useQuery<{ data: Array<{ code: string; attachmentRequired: boolean }> }>(
+    "/api/document-types",
+    () => api.get("/api/document-types"),
+    [],
+    { enabled: canWrite },
+  );
+  const attachmentRequired = (docTypesQ.data?.data ?? []).some((t) => t.code === "ANN" && t.attachmentRequired);
 
   // Manage mode: one ack-rate map for the whole table, fetched only while the
   // mode is open and only for a writer (the endpoint is write-gated).
@@ -395,6 +415,7 @@ export function Announcements() {
           companies={companies}
           salesDirOnly={salesDirOnly}
           currentUserId={currentUserId}
+          attachmentRequired={attachmentRequired}
           onClose={() => setComposerOpen(false)}
           onPosted={() => {
             listQ.reload();
@@ -461,6 +482,7 @@ export function Announcements() {
           onSearch={setSearch}
           receipts={receiptsQ.data?.data ?? null}
           receiptsLoading={receiptsQ.loading}
+          files={filesQ.data?.data ?? null}
           drillDept={drillDept}
           onDrill={setDrillDept}
           onRemindPending={(a) => void remindPending(a)}
