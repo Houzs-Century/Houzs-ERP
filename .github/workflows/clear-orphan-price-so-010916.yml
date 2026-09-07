@@ -1,0 +1,71 @@
+name: Clear the orphan price on HC-SO-010916 line 2
+
+# ONE LINE, ONE ORDER, ONE OWNER RULING (2026-09-07): 「跟账本，清成空白」.
+#
+# HC-SO-010916 line 2 (AutoCount SO-010916, DtlKey 758652) holds RM 2,817.00
+# where the book states nothing. Clearing it takes the order from RM 8,905.00
+# to the book's RM 6,088.00.
+#
+# THIS IS AN EXCEPTION FOR ONE LINE, NOT A REPEAL of the owner's standing rule
+# that a blank never overwrites a value. The script's scope is three constants
+# in its own source - document, DtlKey, amount - and this workflow exposes no
+# input that widens it. Others of the same shape are LISTED by
+# "SO payment reconcile (read-only)", never cleared.
+#
+# PLAN unless apply=1. paid_sen and the header's balance_sen are never touched.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      apply:
+        description: "1 to WRITE. Anything else is a plan."
+        required: false
+        default: ""
+      confirm:
+        description: 'To WRITE, type exactly: I HAVE REVIEWED THE PLAN'
+        required: false
+        default: ""
+
+concurrency:
+  group: clear-orphan-price-so-010916-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/clear-orphan-price-so-010916.mjs
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          APPLY: ${{ inputs.apply }}
+          CONFIRM: ${{ inputs.confirm }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/clear-orphan-price-so-010916.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          APPLY: ${{ inputs.apply }}
+          CONFIRM: ${{ inputs.confirm }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

@@ -531,7 +531,8 @@ column lists are `HEADER` (`delivery-orders-mfg.ts:292-310`), `ITEM` (`:333-337`
 
 | Table | Role |
 |-------|------|
-| `scm.delivery_orders` | DO header. `do_number`, `so_doc_no`, `debtor_code/name`, `do_date`, `expected_delivery_at`, `customer_delivery_date`, `dispatched_at` / `signed_at` / `delivered_at`, `driver_id/name`, `vehicle`, `m3_total_milli`, address block, `salesperson_id`, `branding`, `venue_id`, per-category revenue + cost subtotals, `local_total_sen`, `total_cost_sen`, `total_margin_sen`, `line_count`, `warehouse_id`, `is_dropship`, `arrives_em_warehouse_date`, `pod_r2_key`, `signature_data`, `status`, `company_id`. |
+| `scm.delivery_order_items` | DO line. `ac_substituted` (mig `20260907T2340`) — AutoCount shipped a code the named SO does not carry; `so_item_id` is NULL on those by design. |
+| `scm.delivery_orders` | DO header. `warehouse_id` + `sales_location` are the SHIP-FROM BRANCH (owner 2026-09-07: header-level, never per line) — see the section below. Also: `do_number`, `so_doc_no`, `debtor_code/name`, `do_date`, `expected_delivery_at`, `customer_delivery_date`, `dispatched_at` / `signed_at` / `delivered_at`, `driver_id/name`, `vehicle`, `m3_total_milli`, address block, `salesperson_id`, `branding`, `venue_id`, per-category revenue + cost subtotals, `local_total_sen`, `total_cost_sen`, `total_margin_sen`, `line_count`, `warehouse_id`, `is_dropship`, `arrives_em_warehouse_date`, `pod_r2_key`, `signature_data`, `status`, `company_id`. |
 | `scm.delivery_order_items` | DO lines. `so_item_id` (the SO link that drives warehouse resolution + remaining-qty caps), `item_code`, `item_group`, `qty`, `m3_milli`, `unit_price_sen`, `discount_sen`, `line_total_sen`, `unit_cost_sen`, `line_cost_sen`, `line_margin_sen`, **`ship_cost_sen`**, `variants`, `line_delivery_date`, `line_delivery_date_overridden`, `rack_id`, **`committed_po_batch_no`** (mig 0230 — the incoming PO this line shipped against before its goods arrived; the per-line claim signal the receipt reconcile reads), **`photo_urls`** (mig `20260828T0746_do_item_photo_urls.sql` — `text[] NOT NULL DEFAULT '{}'`, the source SO line's R2 photo keys carried on convert/add; SHARED keys not copies, per line never deduplicated, `[]` never null; every insert path derives it server-side via `loadCarriedSoLinePhotos` + `carriedPhotoUrls` in `backend/src/scm/lib/do-item-row.ts`, ad-hoc lines get `[]`). |
 | `scm.delivery_order_payments` | Payments taken at delivery. `method`, `merchant_provider`, `installment_months`, `online_type`, `approval_code`, `amount_sen`, `account_sheet`, `collected_by`. |
 | `scm.delivery_order_crew` | One row per DO (UNIQUE `do_id`): driver/helper/lorry FKs plus the assign-time name/IC/contact/plate snapshot. |
@@ -1893,6 +1894,99 @@ What that means for anyone reading or writing this module:
 - When the line-retirement work lands for real, these rows are still present
   and can be flipped to `cancelled = true` in one statement.
 
+
+## A delivery line can carry a SUBSTITUTED item code (2026-09-07)
+
+The warehouse substitutes a product at dispatch, so an AutoCount delivery note
+routinely ships an item code the sales order it names does not carry. AutoCount
+holds **no DO -> SO line key in this book** (`fromSoDtlKey`: 10,792 of 18,890 PO
+lines, **0 of 48,772 DO lines**), so the item code is the only bridge — and until
+2026-09-07 a row whose code did not reach was dropped. When it was a note's only
+row the whole DOCUMENT disappeared, uncounted: `DO-001800` and `DO-005583` were
+never created. See `docs/bugs/0674-*`.
+
+Owner ruling 2026-09-07 (*"改我们的程式，允许换型号"*): the document comes in, the
+pairing is still not invented.
+
+| | |
+|---|---|
+| `item_code` / `description` | the **book's**, through the usual mapping sheet. Never rewritten into the order's product. |
+| `so_item_id` | **NULL, on purpose.** Which ordered line a substitution replaces is a human judgement. |
+| `ac_substituted` | `true` (migration `20260907T2340`). The only thing separating this row from an ordinary ad-hoc line. |
+| `unit_price_sen` | the **book's** `UnitPrice`. Never borrowed from a line this row is not paired to. `unit_cost_sen` = 0 — unknown stays unknown. |
+| `item_group` / `variants` / `description2` | blank. There is no parent line to snapshot a classification from. |
+
+**What this means when you read the module.** A `scm.delivery_order_items` row
+with `so_item_id IS NULL` and `ac_substituted = true` is a real, expected shape
+on migrated documents — like the `qty = 0` retired duplicates above, it is not a
+data error.
+
+- **The order's outstanding quantity does NOT move for these lines.**
+  `soDeliverableRemaining` resolves on `so_item_id` and skips a null. That is
+  correct here and is the accepted cost of not guessing: crediting the wrong
+  ordered line is worse than leaving the decision visible.
+- **Which warehouse a substituted line ships from** falls to step (2) of
+  `resolveDoLineWarehouses` — the DO **header's** `warehouse_id` — precisely
+  because step (1) needs an SO line. Moot for stock on migrated documents
+  (`migrated_no_stock`, no movements), but it is why the header binding matters.
+- **Both surfaces show it.** Desktop
+  `frontend/src/pages/scm-v2/DeliveryOrderDetailV2.tsx` renders an amber Badge on
+  the Item cell; mobile renders the same words on the same line via
+  `SubstitutedRowMobile` in `frontend/src/mobile/source-chips.tsx`, wired from
+  `frontend/src/mobile/MobileModuleDetail.tsx`. The header `notes` names the
+  codes in prose as well, because the person reconciling the note against the
+  order is reading the document.
+- **The column** is added by
+  `backend/src/db/migrations-pg/20260907T2340_scm_do_item_ac_substituted.sql` and
+  written only by `backend/scripts/lib/migrated-do-writer.mjs`.
+- **The importer can no longer lose a note quietly.**
+  `create-migrated-documents.mjs` asserts two conservation identities — every
+  note in the cut is either created or NAMED, and every book line is either
+  carried or NAMED — and refuses to apply when they do not add up.
+- **`sync-ac-delta.mjs` deliberately does NOT enable substitution.** That lane is
+  ALL-OR-NOTHING with an explicit refusal list, so it never vanished a document;
+  and its over-delivery assertion is keyed on quantity, which a substituted line
+  changes the meaning of. Enabling it there is a separate, reviewed change.
+
+## The delivery warehouse lives on the DO HEADER (2026-09-07)
+
+Owner ruling, *"记在单头就好"*. Measured before asking, on
+`backend/scripts/data/ac-fidelity-do-*.json.gz`: a book line's `Location` equals
+its header's `SalesLocation` on **46,182 of 46,194** non-blank lines, and only
+**2 of 11,134** documents span two locations — `DO-000140` (PG + HQ) and
+`DO-000153` (KL + SUNWAY). So the branch is a HEADER fact. There is no per-line
+location column and one must not be added.
+
+The columns are the two `scm.delivery_orders` already had: `warehouse_id` (the
+canonical binding) and `sales_location` (the free-text snapshot beside it). They
+are written from ONE answer, so they can never disagree.
+
+**The rule is `backend/scripts/lib/ac-do-location.mjs`** — shared by
+`create-migrated-documents.mjs` (stamps a document as it is written) and
+`backfill-migrated-do-warehouse.mjs` (stamps the ones already written), so the
+same document cannot land on different branches depending on which ran. Sources,
+in order, never guessed:
+
+1. the book's own DO header (`SalesLocation`) — 11,134 documents;
+2. the document's own line `Location`s, and ONLY when unanimous — the header
+   snapshot runs ~307 documents behind the book, so 19 of the cutover cut's 84
+   have no header row; where both sources exist they agree on 65 of 65;
+3. nothing — NULL, REPORTED, left alone. Never a company-blind default, because
+   a wrong warehouse reads as another branch's stock.
+
+**Why it matters beyond display.** `resolveDoLineWarehouses` (`:645`) resolves a
+line's ship-from warehouse as (1) the linked SO line's, (2) **the DO header's**,
+(3) the company default. A migrated line with no `so_item_id` — the substituted
+shape above — skips (1), so (2) is the step that has to answer. Migrated
+documents write no movements at all, so nothing moves stock either way; what was
+wrong was the warehouse a person READS.
+
+**Both surfaces.** Desktop shows *Ship-from warehouse* in the DO detail's
+Delivery info card (`frontend/src/pages/scm-v2/DeliveryOrderDetailV2.tsx`),
+labelled through the shared `warehouseLabel` rule so it reads byte-identical to
+the SO header and the PDF. Mobile shows *Ship-from* in the DO detail's meta grid
+(`frontend/src/mobile/MobileModuleDetail.tsx`) — that row previously fell back to
+`customer_state`, a different concept under the same label, and no longer does.
 
 ## Coverage note (2026-08-12 verification sweep)
 
