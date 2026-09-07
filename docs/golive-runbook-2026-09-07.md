@@ -681,11 +681,11 @@ A row count answers "did a row change". These are re-measurements:
 - **#3068** — `sync-ac-delta` verified lanes it did not run, so `LANES=recv,do,dedi`
   exited 1 after writing 241/241 and 89/89 correctly. A red apply against
   production reads as "back it out", and backing that one out would have
-  discarded correct data. `docs/bugs/0665-sync-ac-delta-verified-lanes-...md`.
+  discarded correct data. `docs/bugs/0665-sync-ac-delta-verified-lanes-it-did-not-run-so-a-lanes-subse.md`.
 - **#3069** — `repair-migrated-do-prices` selected work on the SALES ORDER's unit
   price but verified on the DELIVERY line total, so two `qty = 0` lines were
   written correctly as 0, failed the shape check, and were re-proposed for ever.
-  `docs/bugs/0665-the-do-price-repair-re-proposed-two-zero-quantity-lines-...md`.
+  `docs/bugs/0665-the-do-price-repair-re-proposed-two-zero-quantity-lines-for.md`.
 
 ### 8.4 Why the header plan is 14,916 and not 786
 
