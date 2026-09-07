@@ -34,6 +34,7 @@ import { fetchPaymentSlipUrl, scanPaymentReceipt, type SlipUrlResponse } from '.
 import { SlipUploadField } from './SlipUploadField';
 import { MoneyInput } from './MoneyInput';
 import { DateField } from './DateField';
+import { RefundsLine } from './RefundsLine';
 import { useNotify } from './NotifyDialog';
 import { useConfirm } from './ConfirmDialog';
 import { todayMyt, mytDayOf } from '../lib/dates';
@@ -1690,6 +1691,9 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
               )}
             </span>
           </div>
+          {/* Money that went BACK (§14) — every refund voucher on a saved
+              order, linked by number; nothing when there is none. */}
+          {isSaved && <RefundsLine docNo={(props as SavedModeProps).docNo} />}
         </div>
       </div>
     </section>

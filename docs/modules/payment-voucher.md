@@ -423,6 +423,32 @@ correction / extract hand-back + company scope),
 
 ## 1. Frontend
 
+### 1a. The Customer Refund screens (2026-09-07, §14)
+
+`PaymentVoucherNew.tsx` opens a third kind on `?type=refund` — **New Customer
+Refund**: no payee typed, no lines, no PI section, no currency; a **Refunds**
+card names the document (Sales Order / Sales Invoice toggle + number, read on
+Enter or blur through `useRefundSource` in `payment-voucher-queries.ts`),
+shows the customer read-only in the header, the payments the document
+collected with an *In the ledger* flag (✓ booked / AutoCount era / not
+booked), the refunds already on it (linked), the three figures (booked here,
+already on refund vouchers, refundable) and a **Refund amount** that opens at
+the headroom; the save sends `refundSourceType`, `refundSourceDocNo`,
+`refundAmountSen` and an empty `lines` — the server composes the Dr AR
+line. An ineligible document prints its reason and shuts the amount. The
+list (`PaymentVouchers.tsx`) grows a **New Customer Refund** button and
+copies a refund as a refund; the Type column reads *Customer Refund*
+(`pv-type-label.ts`, `isRefundPurpose`). The detail
+(`PaymentVoucherDetail.tsx`) labels the payee *Customer*, links **Refunds** to
+the order, hides Supplier and the Type select, and edits the ONE amount
+(`refundAmountSen`) instead of lines. The print (`payment-voucher-pdf.ts`)
+titles the sheet **CUSTOMER REFUND**, REFUND TO the customer, with the
+document. On the order side, `RefundsLine.tsx` under the shared
+`PaymentsTable.tsx` (SAVED mode) lists every refund voucher on the order by
+number with the total refunded — nothing when there is none. Pinned in
+`PaymentVoucherNew.test.tsx`, `PaymentVouchers.test.tsx`, `RefundsLine.test.tsx`,
+`pv-type-label.test.ts`, `payment-voucher-pdf.test.ts`.
+
 | Surface | File |
 |---------|------|
 | Desktop list | `frontend/src/pages/scm-v2/PaymentVouchers.tsx` |
