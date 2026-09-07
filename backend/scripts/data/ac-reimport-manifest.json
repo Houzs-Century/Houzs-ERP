@@ -1,5 +1,5 @@
 {
-  "exported_at": "2026-09-07 17:37:33.087443",
+  "exported_at": "2026-09-08 03:52:25.719566",
   "source": "AED_HOUZS live (read-only)",
   "round": "reimport-v3 2026-08-28",
   "files": {
@@ -16,5 +16,11 @@
     "ac-po-fromsodtlkey.json.gz": 697,
     "ac-outstanding-now.json.gz": 4,
     "ac-so-remarks.json.gz": 2789
+  },
+  "last_run": {
+    "at": "2026-09-08 03:52:25.719566",
+    "sections": [
+      "po2"
+    ]
   }
 }
