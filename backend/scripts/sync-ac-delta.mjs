@@ -877,8 +877,13 @@ async function main() {
       /* FromDocType is NULL on PODTL even on real production rows (verified on
          PO-010163 <- SO-013423 and on a fresh test document), so the edge is
          FromSODtlKey + FromDocNo and FromDocType is never read here. */
+      /* `missing` is THREE different findings and only the last is writable.
+         Reporting the bucket as one number reads as "47 dedications to write"
+         when the answer is "31 purchase orders to IMPORT first, and N to
+         write" — so the three are counted apart as well as listed together. */
       const c3 = { edges: 0, poDocs: new Set(), inErp: new Set(), absent: new Set(),
-                   alreadyLinked: 0, missing: [], soLineAbsent: [] };
+                   alreadyLinked: 0, missing: [], soLineAbsent: [],
+                   poAbsent: 0, poLineAbsent: 0, nullLink: 0 };
       /* LANE `dedi` shares its NEVER-STEAL bookkeeping with the section-4 link
          lane above: `claimed` already holds every sales-order line the ERP
          dedicates today plus every line that lane intends to claim, and
@@ -896,10 +901,11 @@ async function main() {
         (poInErp ? c3.inErp : c3.absent).add(poNo);
         const si = soItemByDtl.get(String(key));
         if (!si) { c3.soLineAbsent.push(`${poNo} <- ${soNo} soDtl=${key}: the sales-order LINE is not in the ERP`); continue; }
-        if (!poInErp) { c3.missing.push(`${si.doc_no} (${soNo}) line ${si.item_code} <- ${poNo}: the purchase order is not in the ERP at all`); continue; }
+        if (!poInErp) { c3.poAbsent++; c3.missing.push(`${si.doc_no} (${soNo}) line ${si.item_code} <- ${poNo}: the purchase order is not in the ERP at all`); continue; }
         const pi = poItemByDtl.get(String(cell(r, F.dtl)));
-        if (!pi) { c3.missing.push(`${si.doc_no} (${soNo}) line ${si.item_code} <- ${poNo} dtl=${cell(r, F.dtl)}: the PO LINE is not in the ERP`); continue; }
+        if (!pi) { c3.poLineAbsent++; c3.missing.push(`${si.doc_no} (${soNo}) line ${si.item_code} <- ${poNo} dtl=${cell(r, F.dtl)}: the PO LINE is not in the ERP`); continue; }
         if (pi.so_item_id) { c3.alreadyLinked++; continue; }
+        c3.nullLink++;
         c3.missing.push(`${si.doc_no} (${soNo}) line ${si.item_code} <- ${pi.po_number} (${poNo}): so_item_id is NULL`);
         /* THE WRITE PLAN. The edge is FromSODtlKey + FromDocNo; FromDocType is
            NULL on all 10,792 SO->PO lines in the live book, so it is never read
@@ -920,6 +926,9 @@ async function main() {
       log(`  ... ABSENT from the ERP (import-ac-so-linked-pos.mjs)     ${c3.absent.size}`);
       log(`  the ERP line already carries its dedication               ${c3.alreadyLinked}`);
       log(`  ERP sales-order lines MISSING their PO dedication         ${c3.missing.length}`);
+      log(`  ... because the PURCHASE ORDER is not in the ERP yet      ${c3.poAbsent}   (import-ac-so-linked-pos.mjs owns these, not this script)`);
+      log(`  ... because the PO LINE is not in the ERP yet             ${c3.poLineAbsent}   (topup-ac-po-lines.mjs owns these)`);
+      log(`  ... because so_item_id is NULL on a line that IS here     ${c3.nullLink}   <- the only writable one, and lane dedi's population`);
       log(`  the sales-order line itself is not in the ERP             ${c3.soLineAbsent.length}`);
       if (c3.absent.size) enumerate("CASE 3, purchase orders absent from the ERP", [...c3.absent]);
       if (c3.missing.length) enumerate("CASE 3, missing SO->PO dedication", c3.missing);
