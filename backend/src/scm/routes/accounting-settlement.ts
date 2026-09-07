@@ -34,7 +34,7 @@ import { parseStatement, type StatementColumnMap } from '../../acc/settlement-pa
 import { matchStatement, recordedNotArrived, type MatchBucket, type PaymentCandidate } from '../../acc/settlement-match';
 import {
   loadAcquirer, loadPaymentCandidates, loadSettledKeys, confirmSettlementRow, postStatementCharge,
-  postBatchReceipt, loadBatchReceipts, undoBatchReceipt, unconfirmSettlementRow,
+  postBatchReceipt, loadBatchReceipts, undoBatchReceipt, unconfirmSettlementRow, clearOrphanBatch,
 } from '../../acc/settlement';
 import { resolveRoles } from '../../acc/rules';
 
@@ -409,6 +409,14 @@ export const settlementUpload = guard(async (c) => {
   if (!parsed.ok) return c.json({ error: 'unreadable_statement', message: parsed.reason }, 400);
 
   const fileHash = await sha256Hex(content);
+  /* A batch left WITHOUT lines by a half-failed upload holds this hash hostage
+     — clear it so the same file can come in again; a batch WITH lines keeps
+     its refusal below. */
+  const gate = await clearOrphanBatch(sb, co.companyId, fileHash);
+  if (!gate.ok) return c.json({ error: 'load_failed', reason: gate.reason }, 500);
+  if (gate.state === 'duplicate') {
+    return c.json({ error: 'already_uploaded', message: 'This exact file has already been uploaded. Open the existing batch instead of loading it twice.' }, 409);
+  }
   const { data: batchRow, error: batchErr } = await sb.from('acc_settlement_batches').insert({
     company_id: co.companyId,
     acquirer_code: acquirerCode,
@@ -432,13 +440,20 @@ export const settlementUpload = guard(async (c) => {
     }, twice ? 409 : 500);
   }
   const batchId = (batchRow as { id: number }).id;
+  /* From here to the lines being written, every failure must take the batch
+     head back out — leaving it is what created the hash-hostage orphan the
+     gate above cleans up after. Best effort: if even the delete fails, the
+     next upload's gate clears it. */
+  const abandonBatch = async () => {
+    await sb.from('acc_settlement_batches').delete().eq('id', batchId).eq('company_id', co.companyId);
+  };
 
   const [candidates, settled] = await Promise.all([
     loadPaymentCandidates(sb, co.companyId, acq.acquirer, parsed.periodFrom, parsed.periodTo),
     loadSettledKeys(sb, co.companyId),
   ]);
-  if (!candidates.ok) return c.json({ error: 'load_failed', reason: candidates.reason }, 500);
-  if (!settled.ok) return c.json({ error: 'load_failed', reason: settled.reason }, 500);
+  if (!candidates.ok) { await abandonBatch(); return c.json({ error: 'load_failed', reason: candidates.reason }, 500); }
+  if (!settled.ok) { await abandonBatch(); return c.json({ error: 'load_failed', reason: settled.reason }, 500); }
 
   const decisions = matchStatement(
     { code: acq.acquirer.code, has_unique_ref: acq.acquirer.has_unique_ref, date_tolerance_days: acq.acquirer.date_tolerance_days },
@@ -461,7 +476,7 @@ export const settlementUpload = guard(async (c) => {
       notes: d.clue,
     })),
   ).select('id, line_no');
-  if (rowsErr) return c.json({ error: 'save_failed', reason: rowsErr.message }, 500);
+  if (rowsErr) { await abandonBatch(); return c.json({ error: 'save_failed', reason: rowsErr.message }, 500); }
 
   /* Link the reference-matched payments to their line. A link that loses the
      acc_settlement_payment_once race (another statement claimed that payment

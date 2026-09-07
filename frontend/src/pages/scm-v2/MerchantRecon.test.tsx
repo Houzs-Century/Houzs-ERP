@@ -27,8 +27,9 @@ const ROW: SettlementRow = {
   bucket: 'NEEDS_CONFIRM', match_reason: 'amount+date', confirmed_at: null,
   posted_je_no: null, notes: null, linked: [],
   candidates: [
-    { source: 'SOPAY', id: 'p1', docNo: 'SO-2608-001', paidOn: '2026-08-01', amountSen: 60000, approvalCode: 'A1' },
-    { source: 'SOPAY', id: 'p2', docNo: 'SO-2608-002', paidOn: '2026-08-02', amountSen: 40000, approvalCode: null },
+    /* p1 is a migration-era payment: no merchant tag. p2 was tagged at the till. */
+    { source: 'SOPAY', id: 'p1', docNo: 'SO-2608-001', paidOn: '2026-08-01', amountSen: 60000, approvalCode: 'A1', merchantProvider: null },
+    { source: 'SOPAY', id: 'p2', docNo: 'SO-2608-002', paidOn: '2026-08-02', amountSen: 40000, approvalCode: null, merchantProvider: 'MBB' },
   ],
   comboHints: [['p1', 'p2']],
   clue: 'No single payment matches; 1 pair(s) of payments add up to this amount',
@@ -279,6 +280,20 @@ describe('the reconcile tab', () => {
        the server's own refusals (money already received) come back verbatim. */
     fireEvent.click(screen.getByTitle(/Take this line back out of the ledger/));
     expect(unconfirmMutate).toHaveBeenCalledWith(8, expect.anything());
+  });
+
+  /* A migration-era payment carries no merchant tag; the operator claiming it
+     should see that where he ticks it. Strictly null-only: SUGGESTED_ROW's
+     candidate omits the field entirely (an older response shape) and must NOT
+     be called untagged. */
+  test('an untagged payment says so where it is claimed', () => {
+    draw();
+    fireEvent.click(screen.getByText('Reconcile'));
+    expect(screen.getAllByText('未标 merchant')).toHaveLength(1);
+    const cell = screen.getByText(/SO-2608-001/).closest('td') as HTMLElement;
+    expect(cell.textContent).toContain('未标 merchant');
+    const tagged = screen.getByText(/SO-2608-002/).closest('td') as HTMLElement;
+    expect(tagged.textContent).not.toContain('未标 merchant');
   });
 
   /* The approval code may be mistyped, so the system falls back to amount+date

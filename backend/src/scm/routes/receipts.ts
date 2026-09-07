@@ -18,6 +18,7 @@
 
 import { Hono } from 'hono';
 import { hasHouzsPerm } from '../lib/houzs-perms';
+import { supabaseAuth } from '../middleware/auth';
 import { companyDocPrefix, requireActiveCompanyId, scopeToCompany } from '../lib/companyScope';
 import { mintMonthlyDocNo } from '../lib/doc-no';
 import { postJournal, reverseJournal } from '../../acc/engine';
@@ -221,6 +222,10 @@ export const voidReceiptHandler = async (c: any): Promise<Response> => {
 /* ── Router ───────────────────────────────────────────────────────────────── */
 
 export const receipts = new Hono();
+/* The SCM bridge is PER ROUTER (scm/index.ts mounts no global one): it stashes
+   the real caller as houzsUser — what hasHouzsPerm reads — and hands out the
+   service client. This router shipped without it and GET /receipts answered 500 to everyone. See docs/bugs/0648; tests/scmRouterBridge.test.ts pins it. */
+receipts.use('*', supabaseAuth);
 receipts.get('/', listReceiptsHandler);
 receipts.post('/', createReceiptHandler);
 receipts.post('/:id/void', voidReceiptHandler);

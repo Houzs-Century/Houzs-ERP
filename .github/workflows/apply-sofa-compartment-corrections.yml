@@ -1,10 +1,17 @@
 name: Apply sofa compartment + seat-size corrections
 
-# Manual. Creates the sofa special-order codes the AutoCount slips use but the
-# Specials master does not have yet. Counted from the 1,456 sofa Desc2 strings
-# in the cutover exports; prices are left at 0 for the owner to set.
-# Writes scm.special_addons directly - NOT the snapshot route, which deactivates
-# every code missing from the payload. DRY-RUN unless apply=1.
+# Manual. Writes the owner-approved sofa compartment + seat answers onto the
+# live documents: a build that reached the ERP as a bare -1S placeholder becomes
+# its real pieces, matched and UPDATED in place so the row id - and the purchase
+# dedication hanging off it - survives. Reads EVERY corrections file under
+# backend/scripts/data (2026-08 and 2026-09 today); `file` narrows it to one
+# round. DRY-RUN unless apply=1, and an APPLY run ends by re-reading every
+# document on a fresh connection and asserting the piece multiset.
+#
+# The header this file used to carry described creating special-order codes in
+# scm.special_addons. That was a copy-paste from add-missing-sofa-fabrics.yml
+# and had nothing to do with the job below - it is the kind of thing an operator
+# reads instead of the script.
 on:
   workflow_dispatch:
     inputs:
@@ -33,6 +40,11 @@ on:
         required: false
         default: ""
         type: string
+      file:
+        description: "one corrections round (e.g. 2026-09), or blank for every file"
+        required: false
+        default: ""
+        type: string
 
 concurrency:
   group: apply-sofa-compartment-corrections-${{ inputs.target }}
@@ -54,6 +66,7 @@ jobs:
           APPLY: ${{ inputs.apply }}
           COMPANY: ${{ inputs.company }}
           DOC: ${{ inputs.doc }}
+          FILE: ${{ inputs.file }}
           DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
 
   run-prod:
@@ -70,4 +83,5 @@ jobs:
           APPLY: ${{ inputs.apply }}
           COMPANY: ${{ inputs.company }}
           DOC: ${{ inputs.doc }}
+          FILE: ${{ inputs.file }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}

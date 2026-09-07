@@ -16,7 +16,7 @@
 
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { BookOpen, FileText, ListTree, Receipt, ShieldCheck, TrendingDown, TrendingUp } from 'lucide-react';
+import { BookOpen, Boxes, CalendarClock, FileText, LineChart, ListTree, Receipt, Scale, ShieldCheck, TrendingDown, TrendingUp } from 'lucide-react';
 import {
   useJournalEntries,
   useJournalEntryDetail,
@@ -40,6 +40,9 @@ import {
   type UnbookedPayments,
 } from './accounting-phase1-queries';
 import { DataTable, type Column } from '../../components/DataTable';
+import { ItemGroupsTab } from './ItemGroups';
+import { StockCloseTab } from './StockClose';
+import { PnLTab, BalanceSheetTab } from './Reports';
 import { fmtSen } from '../../vendor/shared/format';
 import { byText } from '../../vendor/scm/lib/sort-options';
 import styles from './Suppliers.module.css';
@@ -53,7 +56,7 @@ const ICON = { size: 16, strokeWidth: 1.75 } as const;
 // amount, never "RM NaN". Kept under the local name so callsites are unchanged.
 const fmt = (sen: number | null | undefined) => fmtSen(sen);
 
-type Tab = 'coa' | 'je' | 'gl' | 'tb' | 'ar' | 'ap' | 'check';
+type Tab = 'coa' | 'groups' | 'je' | 'gl' | 'tb' | 'close' | 'pnl' | 'bs' | 'ar' | 'ap' | 'check';
 
 export const Accounting = () => {
   const [tab, setTab] = useState<Tab>('je');
@@ -64,18 +67,26 @@ export const Accounting = () => {
 
       <div className={styles.statusChips} style={{ gap: 'var(--space-2)' }}>
         <TabBtn label="Chart of Accounts" icon={<ListTree {...ICON} />} active={tab === 'coa'} onClick={() => setTab('coa')} />
+        <TabBtn label="Item Groups"     icon={<Boxes {...ICON} />}    active={tab === 'groups'} onClick={() => setTab('groups')} />
         <TabBtn label="Journal Entries" icon={<BookOpen {...ICON} />} active={tab === 'je'}    onClick={() => setTab('je')} />
         <TabBtn label="General Ledger"  icon={<FileText {...ICON} />} active={tab === 'gl'}    onClick={() => setTab('gl')} />
         <TabBtn label="Trial Balance"   icon={<Receipt {...ICON} />}  active={tab === 'tb'} onClick={() => setTab('tb')} />
+        <TabBtn label="Month-end"       icon={<CalendarClock {...ICON} />} active={tab === 'close'} onClick={() => setTab('close')} />
+        <TabBtn label="P&L"             icon={<LineChart {...ICON} />} active={tab === 'pnl'} onClick={() => setTab('pnl')} />
+        <TabBtn label="Balance Sheet"   icon={<Scale {...ICON} />} active={tab === 'bs'} onClick={() => setTab('bs')} />
         <TabBtn label="AR Aging"        icon={<TrendingUp {...ICON} />} active={tab === 'ar'}  onClick={() => setTab('ar')} />
         <TabBtn label="AP Aging"        icon={<TrendingDown {...ICON} />} active={tab === 'ap'} onClick={() => setTab('ap')} />
         <TabBtn label="Self-check"      icon={<ShieldCheck {...ICON} />} active={tab === 'check'} onClick={() => setTab('check')} />
       </div>
 
       {tab === 'coa'   && <CoaTab />}
+      {tab === 'groups' && <ItemGroupsTab />}
       {tab === 'je'    && <JeTab />}
       {tab === 'gl'    && <GlTab />}
       {tab === 'tb'    && <TrialBalanceTab />}
+      {tab === 'close' && <StockCloseTab />}
+      {tab === 'pnl'   && <PnLTab />}
+      {tab === 'bs'    && <BalanceSheetTab />}
       {tab === 'ar'    && <ArAgingTab />}
       {tab === 'ap'    && <ApAgingTab />}
       {tab === 'check' && <SelfCheckTab />}
@@ -241,8 +252,17 @@ const CoaTab = () => {
 const jeStatus = (r: JournalEntry): string =>
   r.reversed ? 'REVERSED' : r.posted ? 'POSTED' : 'DRAFT';
 
+/* The five journals (GL redesign item 7) — the AutoCount way the owner reads
+   his books. The class arrives on each row from the server (derived from the
+   source type and, for money documents, from which money account the lines
+   touch); the chips are a client filter over the loaded page. */
+const JOURNAL_CHIPS = ['SALES', 'PURCHASE', 'BANK', 'CASH', 'GENERAL'] as const;
+const journalClassOf = (r: JournalEntry): string =>
+  String((r as { journal_class?: string }).journal_class ?? 'GENERAL');
+
 const JeTab = () => {
   const [sourceType, setSourceType] = useState<string>('');
+  const [journal, setJournal] = useState<string>('');
   const q = useJournalEntries(sourceType ? { sourceType } : undefined);
   const rows = useMemo(() => q.data?.journalEntries ?? [], [q.data]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -250,14 +270,15 @@ const JeTab = () => {
 
   const [search, setSearch] = useState('');
   const visible = useMemo(() => {
+    const inJournal = journal ? rows.filter((r) => journalClassOf(r) === journal) : rows;
     const term = search.trim().toLowerCase();
-    if (!term) return rows;
-    return rows.filter((r) =>
-      `${r.je_no} ${r.entry_date} ${r.source_type} ${r.source_doc_no ?? ''} ${jeStatus(r)}`
+    if (!term) return inJournal;
+    return inJournal.filter((r) =>
+      `${r.je_no} ${r.entry_date} ${r.source_type} ${r.source_doc_no ?? ''} ${journalClassOf(r)} ${jeStatus(r)}`
         .toLowerCase()
         .includes(term),
     );
-  }, [rows, search]);
+  }, [rows, search, journal]);
 
   return (
     <div className="space-y-3">
@@ -280,6 +301,13 @@ const JeTab = () => {
           <option value="MANUAL">Manual</option>
           <option value="MANUAL_REVERSAL">Manual Reversal</option>
         </select>
+        {/* The five journals, AutoCount's own vocabulary. */}
+        <button type="button" style={btnStyle(journal === '')} onClick={() => setJournal('')}>All journals</button>
+        {JOURNAL_CHIPS.map((jc) => (
+          <button key={jc} type="button" style={btnStyle(journal === jc)} onClick={() => setJournal(journal === jc ? '' : jc)}>
+            {jc}
+          </button>
+        ))}
       </div>
 
       {creating && <NewJournalForm onDone={() => setCreating(false)} />}
@@ -306,6 +334,7 @@ const JeTab = () => {
         columns={[
           { key: 'je_no', label: 'JE No', width: '140px', getValue: (r) => r.je_no, render: (r) => <span className={styles.codeChip}>{r.je_no}</span> },
           { key: 'entry_date', label: 'Date', width: '110px', getValue: (r) => r.entry_date, render: (r) => fmtDateOrDash(r.entry_date) },
+          { key: 'journal', label: 'Journal', width: '100px', getValue: (r) => journalClassOf(r), render: (r) => journalClassOf(r) },
           { key: 'source', label: 'Source', width: '110px', getValue: (r) => r.source_type, render: (r) => r.source_type },
           { key: 'doc', label: 'Doc', width: '140px', getValue: (r) => r.source_doc_no ?? '', render: (r) => r.source_doc_no ?? '—' },
           { key: 'debit', label: 'Debit', align: 'right', width: '130px', getValue: (r) => r.total_debit_sen / 100, render: (r) => fmt(r.total_debit_sen) },
@@ -832,6 +861,9 @@ const ApAgingTab = () => {
         getRowKey={(r) => r.invoice_id}
         columns={[
           { key: 'invoice', label: 'Invoice', width: '140px', getValue: (r) => r.invoice_number, render: (r) => <span className={styles.codeChip}>{r.invoice_number}</span> },
+          /* Both kinds age here since 2026-09-06 — the AP invoice (non-stock
+             bill) beside the purchase invoice; the column says which. */
+          { key: 'kind', label: 'Kind', width: '90px', getValue: (r) => r.kind ?? 'PI', render: (r) => (r.kind === 'API' ? 'AP inv' : 'PI') },
           // Owner 2026-07-24: supplier NAME and CODE are separate columns on
           // every procurement table, not one combined cell.
           { key: 'supplier', label: 'Supplier', getValue: (r) => r.supplier_name ?? '', render: (r) => r.supplier_name ?? '—' },

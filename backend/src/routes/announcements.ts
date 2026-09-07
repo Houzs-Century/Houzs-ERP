@@ -10,14 +10,16 @@
 //   - No web push (Houzs has no push_subscriptions). BrowserPushSink already
 //     fires native Notifications off the polled activity feed; reusing that
 //     here is a future enhancement.
-//   - Translate-announcement.ts is ported and called best-effort. Returns null
-//     when ANTHROPIC_API_KEY is unset → FE falls back to original text.
+//   - Translate-announcement.ts is ported and called best-effort — and, since
+//     2026-09-06, AFTER the response under waitUntil (queueTranslation). The
+//     row is written with translations NULL; the FE shows the original text
+//     until the fill lands, or for good when ANTHROPIC_API_KEY is unset.
 //   - No runtime self-apply DDL block: Houzs migrates-before-deploy
 //     (mig 0058 must be applied before this route's first request).
 // ============================================================
 import { Hono } from "hono";
 import type { Env } from "../types";
-import { requirePermissionOrSalesDirector } from "../middleware/auth";
+import { requirePermission, requirePermissionOrSalesDirector } from "../middleware/auth";
 import { hasPermission } from "../services/permissions";
 import { baseKeyOf, isThumbKey, THUMB_MAX_BYTES, thumbKeyFor } from "../services/photoThumbs";
 import { isSalesDirectorUser } from "../services/pmsAccess";
@@ -32,9 +34,72 @@ import {
 } from "../services/configCache";
 import type { BannerScope } from "../services/configCache";
 import {
-  translateAnnouncement,
+  translateAndStore,
   type AnnouncementTranslations,
+  type TranslationSource,
 } from "../lib/translate-announcement";
+import {
+  RICH_HTML_MAX,
+  hasRichFormatting,
+  richTextToPlain,
+  sanitizeAnnouncementHtml,
+  stripUnreferencedImages,
+} from "../lib/announcementRichText";
+import { postPersonalNotice } from "../services/personalNotice";
+import { escalatePending } from "../services/announcementEscalation";
+import {
+  ApprovalError,
+  APPROVE_PERMISSION,
+  approveAnnouncement,
+  recordSubmission,
+  rejectAnnouncement,
+  submitForApproval,
+  type Actor,
+} from "../services/announcementApproval";
+import {
+  ACK_OVERDUE_HOURS,
+  announcementRequiresAck,
+  audienceOf,
+  callerDivision,
+  categoryRequiresAck,
+  deliverableNow,
+  divisionEq,
+  readApprovalStatus,
+  inTargetCompanies,
+  isActiveFlag,
+  laterOf,
+  loadAckMap,
+  loadAllAcks,
+  loadAllReminders,
+  loadCompanyGrants,
+  loadReminderMap,
+  loadRoster,
+  loadUserReminders,
+  notExpired,
+  pendingState,
+  readCategory,
+  readDivisionTargets,
+  readIntArray,
+  readRequireAck,
+  readTargetCompanyIds,
+  readTargetType,
+  rosterCompaniesSql,
+  rowDivisions,
+  rowExcluded,
+  recordReminders,
+  scheduledLater,
+  userCanSee,
+  type AnnouncementAttachment,
+  type AnnouncementCategory,
+  type AnnouncementRow,
+  type DivisionTarget,
+  type MediaLayout,
+  type PendingState,
+  type PhotoLayout,
+  type RosterUser,
+  type TargetType,
+  type VideoLayout,
+} from "../lib/announcementAudience";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -50,24 +115,11 @@ const app = new Hono<{ Bindings: Env }>();
 // dept/position/user audience match — a notice must pass BOTH.
 
 // The four announcement categories. GENERAL is the back-compat default.
-type AnnouncementCategory = "GENERAL" | "WARNING" | "SOP" | "LEARNING";
 
 // Targeting kinds. ALL_USERS = everyone (the back-compat default).
-type TargetType =
-  | "ALL_USERS"
-  | "DEPARTMENT_IDS"
-  | "POSITION_IDS"
-  | "USER_IDS"
-  | "MIXED";
 
 // One attached media file on an announcement. `r2Key` lives in POD_BUCKET.
 // `name` is the original filename; `mime` drives the renderer (image/video/pdf).
-type AnnouncementAttachment = {
-  r2Key: string;
-  name: string;
-  mime: string;
-  size?: number;
-};
 
 // Rich-media LAYOUT hint (mig 0140). The author picks how the media is laid out;
 // every renderer (desktop pop-up + page, mobile detail) honours the SAME hint so
@@ -77,9 +129,6 @@ type AnnouncementAttachment = {
 //   · photo: how the photo set is arranged — "1" one big, "2" side-by-side,
 //     "3" three across, "4" a 2x2 grid.
 //   · video: the video block's shape — "1x1" square, "1x2" portrait (tall).
-type PhotoLayout = "1" | "2" | "3" | "4";
-type VideoLayout = "1x1" | "1x2";
-type MediaLayout = { photo?: PhotoLayout; video?: VideoLayout };
 
 // Parse the stored media_layout JSON, dropping anything not in the small allowed
 // set. Returns null when empty/unrecognised so toPublic emits `mediaLayout: null`
@@ -107,67 +156,19 @@ function readMediaLayout(raw: unknown): MediaLayout | null {
   return out.photo || out.video ? out : null;
 }
 
-// Raw row shape from the DB (dual-keyed because the pg driver folds
-// snake_case -> camelCase on read — the #1 Hookka read-gotcha).
-type AnnouncementRow = {
-  id: string;
-  title: string;
-  body: string;
-  is_active?: number | boolean | null;
-  isActive?: number | boolean | null;
-  expires_at?: string | null;
-  expiresAt?: string | null;
-  reminded_at?: string | null;
-  remindedAt?: string | null;
-  created_by?: number | null;
-  createdBy?: number | null;
-  created_at?: string | null;
-  createdAt?: string | null;
-  updated_at?: string | null;
-  updatedAt?: string | null;
-  translations?: AnnouncementTranslations | string | null;
-  attachments?: string | unknown[] | null;
-  // Rich-media layout hint (mig 0140). JSON string, dual-keyed for the pg
-  // snake->camel fold. NULL = derive a default from the attachment count.
-  media_layout?: string | MediaLayout | null;
-  mediaLayout?: string | MediaLayout | null;
-  target_type?: string | null;
-  targetType?: string | null;
-  target_dept_ids?: string | number[] | null;
-  targetDeptIds?: string | number[] | null;
-  target_position_ids?: string | number[] | null;
-  targetPositionIds?: string | number[] | null;
-  target_user_ids?: string | number[] | null;
-  targetUserIds?: string | number[] | null;
-  // Company-targeting dimension (mig 0113). JSON array of company ids, e.g.
-  // '[1]' or '[1,2]'. NULL / empty = ALL companies (visible to everyone). The
-  // existing per-row company_id below is the AUTHORING company; this is the
-  // independent audience filter combined (AND) with the dept/position/user
-  // audience match. See userCompanyCanSee / the unified read paths below.
-  target_company_ids?: string | number[] | null;
-  targetCompanyIds?: string | number[] | null;
-  category?: string | null;
-  source?: string | null;
-  company_id?: number | null;
-  companyId?: number | null;
-};
 
-function readCategory(v: unknown): AnnouncementCategory {
-  const s = String(v ?? "").trim().toUpperCase();
-  if (s === "WARNING" || s === "SOP" || s === "LEARNING") return s;
-  return "GENERAL";
-}
 
-function isActiveFlag(v: number | boolean | null | undefined): boolean {
-  return v === true || v === 1;
-}
 
-function notExpired(expiresAt: string | null): boolean {
-  if (!expiresAt) return true;
-  const t = Date.parse(expiresAt);
-  if (Number.isNaN(t)) return true;
-  return t > Date.now();
-}
+
+// Categories that block by default — the value the require_ack flag takes when
+// the composer does not say otherwise, and the rule a pre-migration row falls
+// back to. Mirrors frontend/src/components/announcementCategory.ts.
+
+// The stored flag, or null when the column is absent / NULL (pre-migration row,
+// D1 test mirror) so the client applies the category rule itself.
+
+// Not yet reached its scheduled posting instant. NULL / unparseable = live now.
+
 
 function isRemindedSince(
   remindedAt: string | null,
@@ -194,30 +195,6 @@ function readTranslations(r: AnnouncementRow): AnnouncementTranslations | null {
   return raw;
 }
 
-// Parse a stored JSON array of integers. Tolerates a JSON string OR a parsed
-// array; drops non-numbers; deduplicates.
-function readIntArray(v: string | number[] | null | undefined): number[] {
-  if (v == null) return [];
-  let arr: unknown = v;
-  if (typeof v === "string") {
-    if (!v.trim()) return [];
-    try {
-      arr = JSON.parse(v);
-    } catch {
-      return [];
-    }
-  }
-  if (!Array.isArray(arr)) return [];
-  const seen = new Set<number>();
-  const out: number[] = [];
-  for (const x of arr) {
-    const n = typeof x === "number" ? x : parseInt(String(x), 10);
-    if (!Number.isFinite(n) || seen.has(n)) continue;
-    seen.add(n);
-    out.push(n);
-  }
-  return out;
-}
 
 function normalizeAttachments(raw: unknown): AnnouncementAttachment[] {
   let arr: unknown = raw;
@@ -249,17 +226,8 @@ function normalizeAttachments(raw: unknown): AnnouncementAttachment[] {
   return out;
 }
 
-function readTargetType(r: AnnouncementRow): TargetType {
-  const t = String(r.targetType ?? r.target_type ?? "ALL_USERS").toUpperCase();
-  if (
-    t === "DEPARTMENT_IDS" ||
-    t === "POSITION_IDS" ||
-    t === "USER_IDS" ||
-    t === "MIXED"
-  )
-    return t;
-  return "ALL_USERS";
-}
+
+
 
 // Derive the canonical target_type from which target lists are non-empty.
 // Empty all -> ALL_USERS; one bucket -> that bucket's enum; multiple -> MIXED.
@@ -267,16 +235,43 @@ function deriveTargetType(
   deptIds: number[],
   positionIds: number[],
   userIds: number[],
+  divisions: DivisionTarget[] = [],
 ): TargetType {
+  // A division is a slice of a department, so it counts as the DEPARTMENT
+  // bucket — the target_type CHECK constraint keeps its five values.
+  const deptBucket = deptIds.length > 0 || divisions.length > 0;
   const buckets =
-    (deptIds.length > 0 ? 1 : 0) +
+    (deptBucket ? 1 : 0) +
     (positionIds.length > 0 ? 1 : 0) +
     (userIds.length > 0 ? 1 : 0);
   if (buckets === 0) return "ALL_USERS";
   if (buckets > 1) return "MIXED";
-  if (deptIds.length > 0) return "DEPARTMENT_IDS";
+  if (deptBucket) return "DEPARTMENT_IDS";
   if (positionIds.length > 0) return "POSITION_IDS";
   return "USER_IDS";
+}
+
+// The rich body as the client may send it. Returns the canonical HTML, or null
+// when there is nothing a plain string could not carry (no marks, no lists, no
+// sizes) — that keeps every unformatted notice on the pre-feature plain path.
+// `canonical` is the same fragment even when `html` folded to null — the
+// plain-text shadow is derived from it, never from the client's string.
+// `error` is set only for a fragment past the hard cap; the caller 400s it.
+//
+// Inline images (2026-09-05): an `<img data-att>` may only name one of THIS
+// notice's attachments (`attachmentKeys` = the manifest about to be stored).
+// The serve route refuses any other key anyway, so stripping here only turns
+// a broken image into no image — but it keeps the stored body honest.
+function readBodyHtml(
+  v: unknown,
+  attachmentKeys: readonly string[],
+): { html: string | null; canonical: string; error?: string } {
+  if (typeof v !== "string" || !v.trim()) return { html: null, canonical: "" };
+  if (v.length > RICH_HTML_MAX) {
+    return { html: null, canonical: "", error: `Message too long (${RICH_HTML_MAX} max)` };
+  }
+  const canonical = stripUnreferencedImages(sanitizeAnnouncementHtml(v), attachmentKeys);
+  return { html: hasRichFormatting(canonical) ? canonical : null, canonical };
 }
 
 function toPublic(r: AnnouncementRow) {
@@ -284,6 +279,7 @@ function toPublic(r: AnnouncementRow) {
     id: r.id,
     title: r.title,
     body: r.body ?? "",
+    bodyHtml: r.bodyHtml ?? r.body_html ?? null,
     isActive: isActiveFlag(r.isActive ?? r.is_active ?? null),
     expiresAt: r.expiresAt ?? r.expires_at ?? null,
     createdAt: r.createdAt ?? r.created_at ?? null,
@@ -299,12 +295,87 @@ function toPublic(r: AnnouncementRow) {
       r.targetPositionIds ?? r.target_position_ids ?? null,
     ),
     targetUserIds: readIntArray(r.targetUserIds ?? r.target_user_ids ?? null),
+    targetDivisions: rowDivisions(r),
+    excludedUserIds: rowExcluded(r),
     targetCompanyIds: readTargetCompanyIds(r),
     category: readCategory(r.category),
+    requireAck: readRequireAck(r.requireAck ?? r.require_ack ?? null),
+    scheduledAt: r.scheduledAt ?? r.scheduled_at ?? null,
+    escalatedAt: r.escalatedAt ?? r.escalated_at ?? null,
+    // Approval workflow (mig 20260906T1509).
+    approvalStatus: readApprovalStatus(r),
+    submittedBy: r.submittedBy ?? r.submitted_by ?? null,
+    submittedAt: r.submittedAt ?? r.submitted_at ?? null,
+    reviewedBy: r.reviewedBy ?? r.reviewed_by ?? null,
+    reviewedAt: r.reviewedAt ?? r.reviewed_at ?? null,
+    rejectReason: r.rejectReason ?? r.reject_reason ?? null,
+    refNo: r.refNo ?? r.ref_no ?? null,
     // System-notice tag ('scan' for background slip-scan results). Lets the
     // client suppress the read-receipt roster on private per-user notices.
     source: (r.source ?? null) as string | null,
   };
+}
+
+type PublicAnnouncement = ReturnType<typeof toPublic> & {
+  createdByName?: string | null;
+  targetDeptNames?: string[];
+  /** "Operation › Driver Team" per targetDivisions entry, same order. */
+  targetDivisionNames?: string[];
+};
+
+// Author and department NAMES for a batch of rows. Resolved here because a
+// plain reader cannot load /api/users or /api/departments (both sit behind
+// users.read), yet the redesigned inbox shows "Lee Wei · Operation" on every
+// row and groups the SOP Library by department. Two small lookups per request,
+// scoped to the ids actually present; a lookup that fails leaves the names
+// absent rather than failing the list. Ids are validated integers, so the
+// inline IN lists are safe (d1-compat prepared SQL, no `--` comments).
+async function withNames(
+  env: Env,
+  rows: AnnouncementRow[],
+): Promise<PublicAnnouncement[]> {
+  const pub: PublicAnnouncement[] = rows.map(toPublic);
+  const authorIds = new Set<number>();
+  const deptIds = new Set<number>();
+  for (const p of pub) {
+    if (p.createdBy != null && Number.isInteger(p.createdBy)) authorIds.add(p.createdBy);
+    for (const d of p.targetDeptIds) if (Number.isInteger(d)) deptIds.add(d);
+    for (const d of p.targetDivisions) deptIds.add(d.deptId);
+  }
+  const authorName = new Map<number, string>();
+  const deptName = new Map<number, string>();
+  try {
+    if (authorIds.size > 0) {
+      const res = await env.DB.prepare(
+        `SELECT id, name, email FROM users WHERE id IN (${Array.from(authorIds).join(",")})`,
+      ).all<{ id: number; name?: string | null; email?: string | null }>();
+      for (const u of res.results) {
+        authorName.set(u.id, (u.name ?? "").trim() || (u.email ?? "").trim());
+      }
+    }
+    if (deptIds.size > 0) {
+      const res = await env.DB.prepare(
+        `SELECT id, name FROM departments WHERE id IN (${Array.from(deptIds).join(",")})`,
+      ).all<{ id: number; name?: string | null }>();
+      for (const d of res.results) deptName.set(d.id, (d.name ?? "").trim());
+    }
+  } catch (e) {
+    console.error("[announcements] name lookup failed; serving rows unnamed:", (e as Error).message);
+  }
+  for (const p of pub) {
+    if (p.createdBy != null && authorName.has(p.createdBy)) {
+      p.createdByName = authorName.get(p.createdBy) ?? null;
+    }
+    if (p.targetDeptIds.length > 0) {
+      p.targetDeptNames = p.targetDeptIds.map((id) => deptName.get(id) ?? `Dept #${id}`);
+    }
+    if (p.targetDivisions.length > 0) {
+      p.targetDivisionNames = p.targetDivisions.map(
+        (d) => `${deptName.get(d.deptId) ?? `Dept #${d.deptId}`} › ${d.division}`,
+      );
+    }
+  }
+  return pub;
 }
 
 function genId(): string {
@@ -329,31 +400,7 @@ async function getScopedAnnouncement(
   return companyCanSee(row, allowed) ? row : null;
 }
 
-/**
- * Company filter for a notice's read-receipt / reminder roster. A notice's
- * audience spans the companies it TARGETS (target_company_ids); a user belongs
- * to that audience when they have a `user_companies` (mig 0085) grant for any
- * targeted company — with the same FAIL-OPEN rule as companyContext: a user
- * with NO grant rows belongs to every company. When the notice targets ALL
- * companies (empty list) OR no valid ids are given, returns "" (no filter) so
- * the whole active roster counts. Ids come from OUR companies master and are
- * re-validated as positive integers, so inlining them (no binds) is safe.
- */
-function rosterCompaniesSql(companyIds: number[], alias = "users"): string {
-  const ids = (companyIds ?? [])
-    .map(Number)
-    .filter((n) => Number.isInteger(n) && n > 0);
-  if (ids.length === 0) return "";
-  const inList = ids.join(",");
-  return ` AND (NOT EXISTS (SELECT 1 FROM user_companies uc WHERE uc.user_id = ${alias}.id)
-             OR EXISTS (SELECT 1 FROM user_companies uc WHERE uc.user_id = ${alias}.id AND uc.company_id IN (${inList})))`;
-}
 
-// The announcement's targeted company ids (JSON array), dual-keyed for the pg
-// snake->camel fold. Empty = ALL companies.
-function readTargetCompanyIds(r: AnnouncementRow): number[] {
-  return readIntArray(r.targetCompanyIds ?? r.target_company_ids ?? null);
-}
 
 // Company gate: an announcement is visible to a reader whose granted companies
 // are `allowed` IFF its target_company_ids is empty (= all companies) OR
@@ -371,27 +418,7 @@ function companyCanSee(r: AnnouncementRow, allowed: number[] | undefined): boole
   return targets.some((id) => allowed.includes(id));
 }
 
-// True when a user with (id, deptId, positionId) is in the announcement's
-// audience. Used by the banner GET so we never surface a notice the user
-// shouldn't see.
-function userCanSee(
-  r: AnnouncementRow,
-  userId: number,
-  userDeptId: number | null,
-  userPositionId: number | null,
-): boolean {
-  const type = readTargetType(r);
-  if (type === "ALL_USERS") return true;
-  const deptIds = readIntArray(r.targetDeptIds ?? r.target_dept_ids ?? null);
-  if (userDeptId != null && deptIds.includes(userDeptId)) return true;
-  const positionIds = readIntArray(
-    r.targetPositionIds ?? r.target_position_ids ?? null,
-  );
-  if (userPositionId != null && positionIds.includes(userPositionId)) return true;
-  const userIds = readIntArray(r.targetUserIds ?? r.target_user_ids ?? null);
-  if (userIds.includes(userId)) return true;
-  return false;
-}
+
 
 // ============================================================
 // Sales-Director post scope (owner 2026-07-15). A Sales Director is admitted to
@@ -437,6 +464,7 @@ async function enforceSalesDirectorScope(
     positionIds: number[];
     userIds: number[];
     companyIds: number[];
+    divisions?: DivisionTarget[];
   },
 ): Promise<
   | { ok: true; deptIds: number[]; userIds: number[] }
@@ -469,6 +497,12 @@ async function enforceSalesDirectorScope(
       error: "A Sales Director can only post to their own Sales department.",
     };
   }
+  if ((req.divisions ?? []).some((d) => d.deptId !== deptId)) {
+    return {
+      ok: false,
+      error: "A Sales Director can only post to divisions of their own Sales department.",
+    };
+  }
   if (req.userIds.length > 0) {
     const ph = req.userIds.map(() => "?").join(",");
     const rows = await c.env.DB.prepare(
@@ -491,7 +525,7 @@ async function enforceSalesDirectorScope(
     }
   }
   let deptIds = req.deptIds;
-  if (deptIds.length === 0 && req.userIds.length === 0) {
+  if (deptIds.length === 0 && req.userIds.length === 0 && (req.divisions ?? []).length === 0) {
     deptIds = [deptId];
   }
   return { ok: true, deptIds, userIds: req.userIds };
@@ -549,33 +583,40 @@ app.get("/", async (c) => {
     .all<AnnouncementRow>();
   const allowed = allowedCompanyIds(c);
   const granted = user.permissions_set ?? user.permissions ?? [];
+  // The approval desk (announcements.approve) reads the ledger as a manager
+  // does: the queue it acts on is the pending rows, which no reader is served.
   const isManager =
-    hasPermission(granted, "*") || hasPermission(granted, "announcements.write");
+    hasPermission(granted, "*") ||
+    hasPermission(granted, "announcements.write") ||
+    hasPermission(granted, APPROVE_PERMISSION);
   const sd = salesDirectorScope(c);
   // Company gate first (applies to managers AND readers): a notice is listed
   // only for a caller who belongs to a targeted company (or it targets all).
   const visible = (res.results ?? []).filter((r) => companyCanSee(r, allowed));
   const rows = isManager
     ? visible
-    : visible.filter((r) => {
-        // A Sales Director sees + manages their OWN posts here regardless of
-        // active/expiry (so the desktop page isn't empty for them), plus their
-        // normal audience feed. Full managers already saw everything above.
-        if (sd.restricted && (r.createdBy ?? r.created_by ?? null) === user.id) {
-          return true;
-        }
-        return (
-          isActiveFlag(r.isActive ?? r.is_active ?? null) &&
-          notExpired(r.expiresAt ?? r.expires_at ?? null) &&
-          userCanSee(
-            r,
-            user.id,
-            user.department_id ?? null,
-            user.position_id ?? null,
-          )
-        );
-      });
-  return c.json({ success: true, data: rows.map(toPublic) });
+    : await (async () => {
+        const division = await callerDivision(c.env, user.id);
+        return visible.filter((r) => {
+          // A Sales Director sees + manages their OWN posts here regardless of
+          // active/expiry (so the desktop page isn't empty for them), plus their
+          // normal audience feed. Full managers already saw everything above.
+          if (sd.restricted && (r.createdBy ?? r.created_by ?? null) === user.id) {
+            return true;
+          }
+          return (
+            deliverableNow(r) &&
+            userCanSee(
+              r,
+              user.id,
+              user.department_id ?? null,
+              user.position_id ?? null,
+              division,
+            )
+          );
+        });
+      })();
+  return c.json({ success: true, data: await withNames(c.env, rows) });
 });
 
 // ============================================================
@@ -653,7 +694,11 @@ app.get("/banner", async (c) => {
   // This user's ack rows (id + when they acked): the popup gate re-pops a
   // notice the user has NOT acked, OR has acked but was reminded AFTER that
   // ack. Read dual-keyed (pg folds snake -> camel on read).
-  const [res, ackRes] = await Promise.all([
+  // company-scope: the acks read is keyed on the caller's user_id alone (a
+  // user's own receipts, no company dimension), and the notices it is joined
+  // against in JS pass companyCanSee(allowed) at the filter below — a receipt
+  // for a notice the caller's companies cannot see never reaches the payload.
+  const [res, ackRes, myReminders] = await Promise.all([
     c.env.DB
       // WHERE is_active = 1 pushes the active filter to SQL so this uses the
       // (is_active, created_at DESC) index (mig 0058) as a range scan instead of
@@ -664,6 +709,7 @@ app.get("/banner", async (c) => {
       .prepare(`SELECT * FROM announcements WHERE is_active = 1 ORDER BY created_at DESC`)
       .all<AnnouncementRow>(),
     c.env.DB
+      // company-scope: keyed on the caller's own user_id; the notice side is gated by companyCanSee below.
       .prepare(
         "SELECT announcement_id, acked_at FROM announcement_acks WHERE user_id = ?",
       )
@@ -674,18 +720,20 @@ app.get("/banner", async (c) => {
         acked_at?: string | null;
         ackedAt?: string | null;
       }>(),
+    loadUserReminders(c.env, user.id),
   ]);
+  const division = await callerDivision(c.env, user.id);
   const active = (res.results ?? []).filter(
     (r) =>
       (systemOnly ? !!r.source : !r.source) &&
-      isActiveFlag(r.isActive ?? r.is_active ?? null) &&
-      notExpired(r.expiresAt ?? r.expires_at ?? null) &&
+      deliverableNow(r) &&
       companyCanSee(r, allowed) &&
       userCanSee(
         r,
         user.id,
         user.department_id ?? null,
         user.position_id ?? null,
+        division,
       ),
   );
 
@@ -698,14 +746,20 @@ app.get("/banner", async (c) => {
   for (const r of active) {
     if (!ackedAtById.has(r.id)) continue;
     const ackedAt = ackedAtById.get(r.id) ?? null;
-    const remindedAt = r.remindedAt ?? r.reminded_at ?? null;
+    // Whole-notice reminder OR this reader's own (per-department) reminder.
+    const remindedAt = laterOf(r.remindedAt ?? r.reminded_at ?? null, myReminders.get(r.id) ?? null);
     if (isRemindedSince(remindedAt, ackedAt)) continue;
     ackedIds.push(r.id);
   }
 
   const payload = {
     success: true,
-    data: active.map(toPublic),
+    // The per-notice remindedAt the client compares against its local ack is
+    // the reader's EFFECTIVE one (notice-level or their own row).
+    data: (await withNames(c.env, active)).map((p) => ({
+      ...p,
+      remindedAt: laterOf(p.remindedAt, myReminders.get(p.id) ?? null),
+    })),
     ackedIds,
   };
   if (cacheKey) {
@@ -742,6 +796,18 @@ app.get("/banner", async (c) => {
 // (owner: a normal user must not see the read-receipts). The frontend already
 // only renders this for write-holders; this is the server-side backstop.
 // ============================================================
+// ── Roster + ack helpers shared by the receipts, summary, team and escalation
+// reads below. One SELECT shape, one definition of "in the audience", one
+// definition of a pending person's state, so the drawer, the manage table,
+// the dashboard card and the supervisor notice can never disagree.
+
+
+
+
+
+
+
+
 app.get("/:id/acks", requirePermissionOrSalesDirector("announcements.write"), async (c) => {
   const id = c.req.param("id");
   const ann = await getScopedAnnouncement(c, id);
@@ -757,56 +823,58 @@ app.get("/:id/acks", requirePermissionOrSalesDirector("announcements.write"), as
   // ALL_USERS / DEPARTMENT_IDS / POSITION_IDS / USER_IDS / MIXED), narrowed to
   // the notice's TARGETED companies (user_companies grants, fail-open — see
   // helper). A notice targeting all companies counts the whole roster.
-  const rosterRes = await c.env.DB.prepare(
-    `SELECT id, email, name, department_id, position_id FROM users
-      WHERE status = 'active'${rosterCompaniesSql(readTargetCompanyIds(ann))}
-      ORDER BY name ASC`,
-  ).all<{
-    id: number;
-    email?: string | null;
-    name?: string | null;
-    department_id?: number | null;
-    position_id?: number | null;
-  }>();
-  const roster = (rosterRes.results ?? []).filter((u) =>
-    userCanSee(ann, u.id, u.department_id ?? null, u.position_id ?? null),
-  );
+  const roster = audienceOf(ann, await loadRoster(c.env, readTargetCompanyIds(ann)));
+  const ackedAtByUser = await loadAckMap(c.env, id);
+  const reminders = await loadReminderMap(c.env, id);
+  const now = Date.now();
 
-  const ackRes = await c.env.DB.prepare(
-    "SELECT user_id, acked_at FROM announcement_acks WHERE announcement_id = ?",
-  )
-    .bind(id)
-    .all<{
-      user_id?: number;
-      userId?: number;
-      acked_at?: string | null;
-      ackedAt?: string | null;
-    }>();
-  const ackedAtByUser = new Map<number, string | null>();
-  for (const a of ackRes.results ?? []) {
-    const uid = a.userId ?? a.user_id;
-    if (uid != null) ackedAtByUser.set(uid, a.ackedAt ?? a.acked_at ?? null);
-  }
-
-  const acked: Array<{
+  type Person = {
     id: number;
     name: string;
     email: string;
-    ackedAt: string | null;
-  }> = [];
-  const pending: Array<{ id: number; name: string; email: string }> = [];
+    departmentId: number | null;
+    departmentName: string | null;
+    positionName: string | null;
+    managerId: number | null;
+  };
+  const person = (u: RosterUser): Person => ({
+    id: u.id,
+    name: u.name,
+    email: u.email,
+    departmentId: u.departmentId,
+    departmentName: u.departmentName,
+    positionName: u.positionName,
+    managerId: u.managerId,
+  });
+  const acked: Array<Person & { ackedAt: string | null }> = [];
+  const pending: Array<Person & { state: PendingState; remindedAt: string | null }> = [];
+  // Two-level drill-down (notice → department → person): one bucket per
+  // department in the audience, in roster (name) order of first appearance.
+  const byDepartment = new Map<
+    string,
+    { id: number | null; name: string; total: number; acked: number; pending: number }
+  >();
   for (const u of roster) {
-    const name = u.name ?? "";
-    const email = u.email ?? "";
+    const key = u.departmentId == null ? "none" : String(u.departmentId);
+    let d = byDepartment.get(key);
+    if (!d) {
+      d = {
+        id: u.departmentId,
+        name: u.departmentName ?? (u.departmentId == null ? "No department" : `Dept #${u.departmentId}`),
+        total: 0,
+        acked: 0,
+        pending: 0,
+      };
+      byDepartment.set(key, d);
+    }
+    d.total += 1;
     if (ackedAtByUser.has(u.id)) {
-      acked.push({
-        id: u.id,
-        name,
-        email,
-        ackedAt: ackedAtByUser.get(u.id) ?? null,
-      });
+      d.acked += 1;
+      acked.push({ ...person(u), ackedAt: ackedAtByUser.get(u.id) ?? null });
     } else {
-      pending.push({ id: u.id, name, email });
+      d.pending += 1;
+      const remindedAt = reminders.get(u.id) ?? null;
+      pending.push({ ...person(u), state: pendingState(ann, now, remindedAt), remindedAt });
     }
   }
   acked.sort((x, y) => {
@@ -822,13 +890,280 @@ app.get("/:id/acks", requirePermissionOrSalesDirector("announcements.write"), as
       ackedCount: acked.length,
       acked,
       pending,
+      byDepartment: Array.from(byDepartment.values()).sort((a, b) => a.name.localeCompare(b.name)),
+      remindedAt: ann.remindedAt ?? ann.reminded_at ?? null,
+      overdueAfterHours: ACK_OVERDUE_HOURS,
     },
   });
 });
 
 // ============================================================
+// GET /ack-summary — { [id]: { total, acked } } for every human post the
+// caller may manage, in ONE round trip. Feeds the Manage table's ack-rate
+// column and stat strip (design handoff 2026-09-04); walking /:id/acks per row
+// would be N requests. Same gate + Sales-Director ownership rule as the
+// receipts. Company narrowing is done in JS against the grants map because
+// each notice has its own target set.
+// ============================================================
+app.get("/ack-summary", requirePermissionOrSalesDirector("announcements.write"), async (c) => {
+  const user = c.get("user");
+  if (!user) {
+    return c.json({ success: false, error: "Your session has expired. Please sign in again." }, 401);
+  }
+  const sd = salesDirectorScope(c);
+  const allowed = allowedCompanyIds(c);
+  // company-scope: announcements carry their audience as target_company_ids
+  // (NULL = every company), not a per-row company predicate — the same
+  // in-JS companyCanSee(allowed) gate GET / applies runs on the very next
+  // line, so a notice targeting only companies the caller lacks is dropped
+  // before its counts are computed.
+  const res = await c.env.DB
+    .prepare(`SELECT * FROM announcements WHERE source IS NULL ORDER BY created_at DESC`)
+    .all<AnnouncementRow>();
+  const rows = (res.results).filter(
+    (r) => companyCanSee(r, allowed) && !sdBlockedFromRow(sd, r, user.id),
+  );
+  const totals = await noticeAckTotals(c.env, rows);
+  const data: Record<string, { total: number; acked: number }> = {};
+  for (const [id, t] of totals) data[id] = t;
+  return c.json({ success: true, data });
+});
+
+// The ONE per-notice arithmetic behind /ack-summary and /ack-trend: the
+// audience (roster through the gate, narrowed by company grants) and how many
+// of it acknowledged. Kept together so the Manage table and the dashboard
+// chart can never disagree on a rate.
+async function noticeAckTotals(
+  env: Env,
+  rows: AnnouncementRow[],
+): Promise<Map<string, { total: number; acked: number }>> {
+  const [roster, acks, grants] = await Promise.all([
+    loadRoster(env, []),
+    loadAllAcks(env),
+    loadCompanyGrants(env),
+  ]);
+  const out = new Map<string, { total: number; acked: number }>();
+  for (const r of rows) {
+    const targets = readTargetCompanyIds(r);
+    const audience = audienceOf(r, roster).filter((u) => inTargetCompanies(grants, u.id, targets));
+    const ackedSet = acks.get(r.id);
+    let acked = 0;
+    for (const u of audience) if (ackedSet?.has(u.id)) acked += 1;
+    out.set(r.id, { total: audience.length, acked });
+  }
+  return out;
+}
+
+// ============================================================
+// GET /ack-trend — the dashboard's "Ack rate · last 30 days" (design handoff
+// 2026-09-04, screen 5; endpoint 2026-09-06): six 5-day buckets ending now,
+// each the summed audience and acknowledgements of the human notices POSTED
+// in it, plus the 30-day summary. Same gate, ownership rule and per-notice
+// arithmetic as /ack-summary, so the card and the Manage table agree. A
+// bucket with no notice has pct null (drawn empty, never as 0%). Buckets
+// carry ISO instants only; the client renders them with the house fmtDate.
+// ============================================================
+const ACK_TREND_DAYS = 30;
+const ACK_TREND_BUCKETS = 6;
+app.get("/ack-trend", requirePermissionOrSalesDirector("announcements.write"), async (c) => {
+  const user = c.get("user");
+  if (!user) {
+    return c.json({ success: false, error: "Your session has expired. Please sign in again." }, 401);
+  }
+  const sd = salesDirectorScope(c);
+  const allowed = allowedCompanyIds(c);
+  const now = Date.now();
+  const dayMs = 86_400_000;
+  const bucketMs = (ACK_TREND_DAYS / ACK_TREND_BUCKETS) * dayMs;
+  const windowStart = now - ACK_TREND_DAYS * dayMs;
+  // company-scope: announcements carry their audience as target_company_ids
+  // (NULL = every company), not a per-row company predicate — the same in-JS
+  // companyCanSee(allowed) gate the list applies runs on the very next line.
+  const res = await c.env.DB
+    .prepare(`SELECT * FROM announcements WHERE source IS NULL AND created_at >= ? ORDER BY created_at ASC`)
+    .bind(new Date(windowStart).toISOString())
+    .all<AnnouncementRow>();
+  const rows = (res.results).filter(
+    (r) => companyCanSee(r, allowed) && !sdBlockedFromRow(sd, r, user.id),
+  );
+  const totals = await noticeAckTotals(c.env, rows);
+  const buckets = Array.from({ length: ACK_TREND_BUCKETS }, (_, i) => {
+    const start = new Date(windowStart + i * bucketMs);
+    const end = new Date(windowStart + (i + 1) * bucketMs);
+    return {
+      start: start.toISOString(),
+      end: end.toISOString(),
+      notices: 0,
+      total: 0,
+      acked: 0,
+      pct: null as number | null,
+    };
+  });
+  const summary = { days: ACK_TREND_DAYS, notices: 0, total: 0, acked: 0, pct: null as number | null };
+  for (const r of rows) {
+    const t = Date.parse(r.createdAt ?? r.created_at ?? "");
+    if (Number.isNaN(t) || t < windowStart) continue;
+    const idx = Math.min(ACK_TREND_BUCKETS - 1, Math.floor((t - windowStart) / bucketMs));
+    const tot = totals.get(r.id) ?? { total: 0, acked: 0 };
+    const b = buckets[idx];
+    b.notices += 1;
+    b.total += tot.total;
+    b.acked += tot.acked;
+    summary.notices += 1;
+    summary.total += tot.total;
+    summary.acked += tot.acked;
+  }
+  const pctOf = (acked: number, total: number) => (total > 0 ? Math.round((acked / total) * 100) : null);
+  for (const b of buckets) b.pct = pctOf(b.acked, b.total);
+  summary.pct = pctOf(summary.acked, summary.total);
+  return c.json({ success: true, data: { days: ACK_TREND_DAYS, buckets, summary } });
+});
+
+// ============================================================
+// GET /team-pending — the supervisor's gap (design handoff 2026-09-04, the
+// dashboard "My team's pending" card). Every authed user may call it; the
+// answer is scoped to THEIR direct reports (users.manager_id = caller) and
+// lists each mandatory human notice a report has not acknowledged, with the
+// same pending state the drawer shows. No reports → an empty answer, and the
+// card does not render. Reminders stay manual; the automatic escalation job
+// is a separate follow-up.
+// ============================================================
+app.get("/team-pending", async (c) => {
+  const user = c.get("user");
+  if (!user) {
+    return c.json({ success: false, error: "Your session has expired. Please sign in again." }, 401);
+  }
+  const roster = await loadRoster(c.env, []);
+  const reports = roster.filter((u) => u.managerId === user.id);
+  if (reports.length === 0) {
+    return c.json({ success: true, data: { reports: 0, pending: [] } });
+  }
+  // company-scope: the audience is the REPORT's, not the caller's — each
+  // report is matched against a notice's target_company_ids through their own
+  // user_companies grants (inTargetCompanies, fail-open like rosterCompaniesSql)
+  // in the loop below, so a report never appears against a notice their
+  // companies cannot see; the notice rows themselves have no company column.
+  const [res, acks, grants, reminders] = await Promise.all([
+    c.env.DB
+      // company-scope: audience is per REPORT via target_company_ids + inTargetCompanies below; rows carry no company column.
+      .prepare(`SELECT * FROM announcements WHERE is_active = 1 AND source IS NULL ORDER BY created_at DESC`)
+      .all<AnnouncementRow>(),
+    loadAllAcks(c.env),
+    loadCompanyGrants(c.env),
+    loadAllReminders(c.env),
+  ]);
+  const now = Date.now();
+  const notices = (res.results).filter(
+    (r) => deliverableNow(r, now) && announcementRequiresAck(r),
+  );
+  const pending: Array<{
+    userId: number;
+    name: string;
+    positionName: string | null;
+    announcementId: string;
+    title: string;
+    category: AnnouncementCategory;
+    createdAt: string | null;
+    state: PendingState;
+  }> = [];
+  for (const r of notices) {
+    const targets = readTargetCompanyIds(r);
+    const ackedSet = acks.get(r.id);
+    for (const u of reports) {
+      if (!userCanSee(r, u.id, u.departmentId, u.positionId, u.division)) continue;
+      if (!inTargetCompanies(grants, u.id, targets)) continue;
+      if (ackedSet?.has(u.id)) continue;
+      const state = pendingState(r, now, reminders.get(r.id)?.get(u.id) ?? null);
+      pending.push({
+        userId: u.id,
+        name: u.name || u.email,
+        positionName: u.positionName,
+        announcementId: r.id,
+        title: r.title,
+        category: readCategory(r.category),
+        createdAt: r.createdAt ?? r.created_at ?? null,
+        state,
+      });
+    }
+  }
+  return c.json({
+    success: true,
+    data: { reports: reports.length, pending, overdueAfterHours: ACK_OVERDUE_HOURS },
+  });
+});
+
+// ============================================================
+// POST /:id/escalate — "Notify their supervisors" (design handoff 2026-09-04,
+// the drawer's second action). For every person still pending on the notice
+// (optionally one department: body.departmentId) with a manager on the org
+// chart, the manager gets ONE system notice naming their pending reports. It
+// rides the bell (source NOT NULL never pops a modal), and postPersonalNotice's
+// dedupe swallows a repeat while the first is still unread. Manual, on the
+// poster's click — the automatic overdue job is a separate follow-up.
+// ============================================================
+app.post("/:id/escalate", requirePermissionOrSalesDirector("announcements.write"), async (c) => {
+  const id = c.req.param("id");
+  const ann = await getScopedAnnouncement(c, id);
+  if (!ann) {
+    return c.json({ success: false, error: "Announcement not found" }, 404);
+  }
+  if (sdBlockedFromRow(salesDirectorScope(c), ann, c.get("user").id)) {
+    return c.json({ success: false, error: "Announcement not found" }, 404);
+  }
+  const body = (await c.req.json().catch(() => ({}))) as { departmentId?: unknown };
+  const deptFilter =
+    body.departmentId == null ? null : parseInt(String(body.departmentId), 10);
+  // The same implementation the overdue cron runs (services/announcementEscalation.ts).
+  const r = await escalatePending(c.env, ann, deptFilter);
+  return c.json({ success: true, ...r });
+});
+
+// ============================================================
 // POST / — create. Body validated server-side.
 // ============================================================
+// Run the four-language translation AFTER the response. The row is already
+// written (translations NULL); translateAndStore fills the column when the
+// reply lands and drops it if the text was edited meanwhile. Same
+// waitUntil-with-floating-fallback shape as the banner cache fill above —
+// c.executionCtx throws in the bare-Hono test harness.
+// The composer's draft key (mig 20260907T0010): opaque, minted client-side,
+// meaningful only to the author who sent it. Shape-checked so the column
+// never holds free text; anything else is treated as "no key".
+const CLIENT_KEY_RE = /^[A-Za-z0-9._-]{8,64}$/;
+function readClientKey(v: unknown): string | null {
+  if (typeof v !== "string") return null;
+  const s = v.trim();
+  return CLIENT_KEY_RE.test(s) ? s : null;
+}
+
+async function findByClientKey(
+  env: Env,
+  userId: number,
+  clientKey: string,
+): Promise<AnnouncementRow | null> {
+  // company-scope: keyed by the AUTHOR, not the tenant — a retry must find
+  // the row the first request made whatever company context it arrives in,
+  // and (created_by, client_key) is unique across the table.
+  return env.DB.prepare(
+    "SELECT * FROM announcements WHERE created_by = ? AND client_key = ? LIMIT 1",
+  )
+    .bind(userId, clientKey)
+    .first<AnnouncementRow>();
+}
+
+function queueTranslation(
+  c: { env: Env; executionCtx: { waitUntil(p: Promise<unknown>): void } },
+  id: string,
+  src: TranslationSource,
+): void {
+  const run = translateAndStore(c.env, id, src);
+  try {
+    c.executionCtx.waitUntil(run);
+  } catch {
+    void run;
+  }
+}
+
 app.post("/", requirePermissionOrSalesDirector("announcements.write"), async (c) => {
   const user = c.get("user");
   const body = (await c.req
@@ -836,13 +1171,38 @@ app.post("/", requirePermissionOrSalesDirector("announcements.write"), async (c)
     .catch(() => ({}))) as Record<string, unknown>;
 
   const title = String(body.title ?? "").trim();
-  const text = String(body.body ?? "").trim();
   if (!title) {
     return c.json({ success: false, error: "Title is required" }, 400);
   }
   if (title.length > 200) {
     return c.json({ success: false, error: "Title too long (200 max)" }, 400);
   }
+  // Idempotent create (mig 20260907T0010): the composer's draft carries a key
+  // minted when the draft is first saved and cleared with it on success. A
+  // repeat of the same draft — after a hang, a reload, a second click — is
+  // answered with the row the first request made, never a second one
+  // (docs/bugs/0651: nine copies of one notice on 2026-09-06).
+  const clientKey = readClientKey(body.clientKey);
+  const keyOwner = clientKey ? user.id : null;
+  if (clientKey && keyOwner != null) {
+    const dup = await findByClientKey(c.env, keyOwner, clientKey);
+    if (dup) return c.json({ success: true, data: toPublic(dup), duplicate: true }, 201);
+  }
+  // Rich body wins when present: `body` is then DERIVED from it server-side
+  // (never trusted from the client) so the two columns can never disagree. A
+  // client that sends only `body` — the phone, a script, an old build — takes
+  // the plain path exactly as before.
+  const attachments = normalizeAttachments(body.attachments);
+  const rawHtml = body.bodyHtml ?? body.body_html;
+  const rich = readBodyHtml(rawHtml, attachments.map((a) => a.r2Key));
+  if (rich.error) return c.json({ success: false, error: rich.error }, 400);
+  const bodyHtml = rich.html;
+  // Any html at all (even one that folded to plain and stores NULL) is the
+  // source of truth for the plain text; `body` is read only when no html came.
+  const text =
+    typeof rawHtml === "string" && rawHtml.trim()
+      ? richTextToPlain(rich.canonical)
+      : String(body.body ?? "").trim();
 
   let expiresAt: string | null = null;
   if (body.expiresAt != null && String(body.expiresAt).trim() !== "") {
@@ -853,7 +1213,6 @@ app.post("/", requirePermissionOrSalesDirector("announcements.write"), async (c)
     expiresAt = new Date(t).toISOString();
   }
 
-  const attachments = normalizeAttachments(body.attachments);
   const mediaLayout = readMediaLayout(body.mediaLayout);
   const reqDeptIds = readIntArray(
     body.targetDeptIds as string | number[] | null | undefined,
@@ -863,6 +1222,10 @@ app.post("/", requirePermissionOrSalesDirector("announcements.write"), async (c)
   );
   const reqUserIds = readIntArray(
     body.targetUserIds as string | number[] | null | undefined,
+  );
+  const reqDivisions = readDivisionTargets(body.targetDivisions ?? body.target_divisions);
+  const reqExcluded = readIntArray(
+    (body.excludedUserIds ?? body.excluded_user_ids) as string | number[] | null | undefined,
   );
   // Company-target dimension. Empty (author picked "Both"/all, or single-company
   // Houzs) stores NULL = visible to every company.
@@ -888,6 +1251,7 @@ app.post("/", requirePermissionOrSalesDirector("announcements.write"), async (c)
       positionIds: reqPositionIds,
       userIds: reqUserIds,
       companyIds: reqCompanyIds,
+      divisions: reqDivisions,
     });
     if (!enforced.ok) {
       return c.json({ success: false, error: enforced.error }, 403);
@@ -898,8 +1262,22 @@ app.post("/", requirePermissionOrSalesDirector("announcements.write"), async (c)
     effCompanyIds = [];
   }
 
-  const targetType = deriveTargetType(effDeptIds, effPositionIds, effUserIds);
+  const targetType = deriveTargetType(effDeptIds, effPositionIds, effUserIds, reqDivisions);
   const category = readCategory(body.category);
+  // "Require acknowledgement" (mig 20260905T1125): an explicit boolean wins;
+  // otherwise the category default — WARNING / SOP on, GENERAL / LEARNING off.
+  const requireAck =
+    typeof body.requireAck === "boolean" ? body.requireAck : categoryRequiresAck(category);
+  // Scheduled posting: a future instant holds the notice back from every
+  // reader until then. A past / absent value posts at once (stored NULL).
+  let scheduledAt: string | null = null;
+  if (body.scheduledAt != null && String(body.scheduledAt).trim() !== "") {
+    const t = Date.parse(String(body.scheduledAt));
+    if (Number.isNaN(t)) {
+      return c.json({ success: false, error: "Invalid schedule date" }, 400);
+    }
+    if (t > Date.now()) scheduledAt = new Date(t).toISOString();
+  }
 
   const id = genId();
   const nowIso = new Date().toISOString();
@@ -908,30 +1286,39 @@ app.post("/", requirePermissionOrSalesDirector("announcements.write"), async (c)
   // window / D1 test mirror inserts unchanged; the PG DEFAULT covers the rest.
   const companyId = activeCompanyId(c);
   const stampCo = companyId != null;
-  // Best-effort translate. apiKey missing -> returns null and we store null;
-  // FE falls back to original text. Awaiting is fine (rare + short).
-  const translations = await translateAnnouncement({
-    title,
-    body: text,
-    apiKey: c.env.ANTHROPIC_API_KEY,
-  });
+  // Translations are filled in AFTER the response (queueTranslation below):
+  // the row is written with NULL and the FE shows the original text until the
+  // background job lands. The old await here held "Posting…" for 40-100 s on
+  // a rich notice and the owner's repeated clicks each inserted a row.
+  // Approval workflow (mig 20260906T1509): a new notice enters the approval
+  // queue — or stays a draft when the composer says so. Nobody is served it
+  // until an approver acts (deliverableNow requires APPROVED).
+  const asDraft = body.draft === true;
+  const initialStatus = asDraft ? "DRAFT" : "PENDING_APPROVAL";
 
-  await c.env.DB.prepare(
+  // client_key is appended the same way: only when the client sent one, so
+  // the pre-migration window and the D1 test mirrors without the column
+  // insert exactly as before.
+  const stampKey = keyOwner != null;
+  const insert = c.env.DB.prepare(
     `INSERT INTO announcements
-       (id, title, body, is_active, expires_at, created_by, created_at,
+       (id, title, body, body_html, is_active, expires_at, created_by, created_at,
         translations, attachments, media_layout, target_type,
         target_dept_ids, target_position_ids, target_user_ids,
-        target_company_ids, category${stampCo ? ", company_id" : ""})
-     VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?${stampCo ? ", ?" : ""})`,
+        target_company_ids, category, require_ack, scheduled_at,
+        target_divisions, excluded_user_ids,
+        approval_status, submitted_by, submitted_at${stampCo ? ", company_id" : ""}${stampKey ? ", client_key" : ""})
+     VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?${stampCo ? ", ?" : ""}${stampKey ? ", ?" : ""})`,
   )
     .bind(
       id,
       title,
       text,
+      bodyHtml,
       expiresAt,
       user?.id ?? null,
       nowIso,
-      translations ? JSON.stringify(translations) : null,
+      null,
       attachments.length ? JSON.stringify(attachments) : null,
       mediaLayout ? JSON.stringify(mediaLayout) : null,
       targetType,
@@ -940,9 +1327,28 @@ app.post("/", requirePermissionOrSalesDirector("announcements.write"), async (c)
       effUserIds.length ? JSON.stringify(effUserIds) : null,
       effCompanyIds.length ? JSON.stringify(effCompanyIds) : null,
       category,
+      requireAck ? 1 : 0,
+      scheduledAt,
+      reqDivisions.length ? JSON.stringify(reqDivisions) : null,
+      reqExcluded.length ? JSON.stringify(reqExcluded) : null,
+      initialStatus,
+      asDraft ? null : user?.id ?? null,
+      asDraft ? null : nowIso,
       ...(stampCo ? [companyId] : []),
-    )
-    .run();
+      ...(stampKey ? [clientKey] : []),
+    );
+  try {
+    await insert.run();
+  } catch (e) {
+    // Two requests with the same key racing past the lookup above: the
+    // partial unique index (created_by, client_key) refuses the second. Hand
+    // it the winner's row instead of a 500.
+    if (stampKey) {
+      const dup = await findByClientKey(c.env, keyOwner, clientKey as string);
+      if (dup) return c.json({ success: true, data: toPublic(dup), duplicate: true }, 201);
+    }
+    throw e;
+  }
 
   const row = await c.env.DB.prepare(
     "SELECT * FROM announcements WHERE id = ?",
@@ -954,11 +1360,75 @@ app.post("/", requirePermissionOrSalesDirector("announcements.write"), async (c)
   // banner snapshots via the family version.
   await bumpConfigVersion(c.env, "banner");
 
+  queueTranslation(c, id, { title, body: text, bodyHtml });
+
+  // Into the queue: audit line + the approvers' bell. A draft waits for
+  // /:id/submit.
+  if (row && !asDraft) await recordSubmission(c.env, row, actorOf(user));
+
   // TODO: web push fan-out (no infra in Houzs yet). BrowserPushSink already
   // fires native browser Notifications from the polled activity feed; wiring
   // announcements into a similar polled trigger is the natural next step.
 
   return c.json({ success: true, data: row ? toPublic(row) : null }, 201);
+});
+
+// ============================================================
+// Approval workflow (mig 20260906T1509, owner 2026-09-06) — the transitions
+// live in services/announcementApproval.ts; these are the gates.
+//   POST /:id/submit   — DRAFT / REJECTED → PENDING_APPROVAL (the author's
+//                        managers: announcements.write, or a Sales Director
+//                        on their own post)
+//   POST /:id/approve  — PENDING_APPROVAL → APPROVED, mints the ref no
+//                        (announcements.approve)
+//   POST /:id/reject   — PENDING_APPROVAL → REJECTED, { reason } required
+//                        (announcements.approve)
+// ============================================================
+function actorOf(user: AuthUser | undefined): Actor {
+  return { id: user?.id ?? null, email: user?.email ?? null, name: user?.name ?? null };
+}
+
+async function answerTransition(
+  c: { env: Env; get: (k: string) => unknown; json: (b: unknown, s?: number) => Response },
+  id: string,
+  run: () => Promise<unknown>,
+): Promise<Response> {
+  try {
+    await run();
+  } catch (e) {
+    if (e instanceof ApprovalError) return c.json({ success: false, error: e.message }, e.status);
+    throw e;
+  }
+  const fresh = await getScopedAnnouncement(c, id);
+  return c.json({ success: true, data: fresh ? toPublic(fresh) : null });
+}
+
+app.post("/:id/submit", requirePermissionOrSalesDirector("announcements.write"), async (c) => {
+  const id = c.req.param("id");
+  const existing = await getScopedAnnouncement(c, id);
+  if (!existing) return c.json({ success: false, error: "Announcement not found" }, 404);
+  const user = c.get("user");
+  if (sdBlockedFromRow(salesDirectorScope(c), existing, user.id)) {
+    return c.json({ success: false, error: "Announcement not found" }, 404);
+  }
+  return answerTransition(c, id, () => submitForApproval(c.env, existing, actorOf(user)));
+});
+
+app.post("/:id/approve", requirePermission(APPROVE_PERMISSION), async (c) => {
+  const id = c.req.param("id");
+  const existing = await getScopedAnnouncement(c, id);
+  if (!existing) return c.json({ success: false, error: "Announcement not found" }, 404);
+  return answerTransition(c, id, () => approveAnnouncement(c.env, existing, actorOf(c.get("user"))));
+});
+
+app.post("/:id/reject", requirePermission(APPROVE_PERMISSION), async (c) => {
+  const id = c.req.param("id");
+  const existing = await getScopedAnnouncement(c, id);
+  if (!existing) return c.json({ success: false, error: "Announcement not found" }, 404);
+  const body = (await c.req.json().catch(() => ({}))) as { reason?: unknown };
+  return answerTransition(c, id, () =>
+    rejectAnnouncement(c.env, existing, actorOf(c.get("user")), String(body.reason ?? "")),
+  );
 });
 
 // ============================================================
@@ -984,6 +1454,7 @@ app.patch("/:id", requirePermissionOrSalesDirector("announcements.write"), async
   let textChanged = false;
   let nextTitle = existing.title;
   let nextText = existing.body ?? "";
+  let nextHtml: string | null = existing.bodyHtml ?? existing.body_html ?? null;
 
   if ("isActive" in body) {
     sets.push("is_active = ?");
@@ -1002,17 +1473,53 @@ app.patch("/:id", requirePermissionOrSalesDirector("announcements.write"), async
     nextTitle = title;
     textChanged = true;
   }
-  if (typeof body.body === "string") {
+  // Whoever edits last defines the format: a `bodyHtml` edit rewrites both
+  // columns (plain derived from rich); a plain `body` edit clears body_html so
+  // a phone editing a formatted notice cannot leave stale formatting behind.
+  const nextAttachments =
+    "attachments" in body
+      ? normalizeAttachments(body.attachments)
+      : normalizeAttachments(existing.attachments ?? null);
+  const nextKeys = nextAttachments.map((a) => a.r2Key);
+  if ("bodyHtml" in body || "body_html" in body) {
+    const rawHtml = body.bodyHtml ?? body.body_html;
+    const rich = readBodyHtml(rawHtml, nextKeys);
+    if (rich.error) return c.json({ success: false, error: rich.error }, 400);
+    const text =
+      typeof rawHtml === "string" && rawHtml.trim()
+        ? richTextToPlain(rich.canonical)
+        : typeof body.body === "string"
+          ? String(body.body).trim()
+          : "";
+    sets.push("body_html = ?", "body = ?");
+    binds.push(rich.html, text);
+    nextHtml = rich.html;
+    nextText = text;
+    textChanged = true;
+  } else if (typeof body.body === "string") {
     const text = String(body.body).trim();
-    sets.push("body = ?");
-    binds.push(text);
+    sets.push("body = ?", "body_html = ?");
+    binds.push(text, null);
+    nextHtml = null;
     nextText = text;
     textChanged = true;
   }
   if ("attachments" in body) {
-    const next = normalizeAttachments(body.attachments);
     sets.push("attachments = ?");
-    binds.push(next.length ? JSON.stringify(next) : null);
+    binds.push(nextAttachments.length ? JSON.stringify(nextAttachments) : null);
+    // An attachment removed while the text still shows it inline: drop the
+    // inline use too, and re-derive the plain shadow, so the stored body never
+    // names a key the serve route would refuse.
+    if (!textChanged && nextHtml) {
+      const stripped = stripUnreferencedImages(nextHtml, nextKeys);
+      if (stripped !== nextHtml) {
+        nextHtml = hasRichFormatting(stripped) ? stripped : null;
+        nextText = richTextToPlain(stripped);
+        sets.push("body_html = ?", "body = ?");
+        binds.push(nextHtml, nextText);
+        textChanged = true;
+      }
+    }
   }
   // Media layout retarget. Present + empty/unrecognised clears to NULL (fall
   // back to count-derived defaults); a valid hint narrows the arrangement.
@@ -1027,8 +1534,18 @@ app.patch("/:id", requirePermissionOrSalesDirector("announcements.write"), async
   if (
     "targetDeptIds" in body ||
     "targetPositionIds" in body ||
-    "targetUserIds" in body
+    "targetUserIds" in body ||
+    "targetDivisions" in body ||
+    "excludedUserIds" in body
   ) {
+    const nextDivisions =
+      "targetDivisions" in body
+        ? readDivisionTargets(body.targetDivisions)
+        : rowDivisions(existing);
+    const nextExcluded =
+      "excludedUserIds" in body
+        ? readIntArray(body.excludedUserIds as string | number[] | null | undefined)
+        : rowExcluded(existing);
     const nextDepts =
       "targetDeptIds" in body
         ? readIntArray(body.targetDeptIds as string | number[] | null | undefined)
@@ -1054,6 +1571,7 @@ app.patch("/:id", requirePermissionOrSalesDirector("announcements.write"), async
         positionIds: nextPositions,
         userIds: nextUsers,
         companyIds: [],
+        divisions: nextDivisions,
       });
       if (!enforced.ok) {
         return c.json({ success: false, error: enforced.error }, 403);
@@ -1063,13 +1581,17 @@ app.patch("/:id", requirePermissionOrSalesDirector("announcements.write"), async
       outUsers = enforced.userIds;
     }
     sets.push("target_type = ?");
-    binds.push(deriveTargetType(outDepts, outPositions, outUsers));
+    binds.push(deriveTargetType(outDepts, outPositions, outUsers, nextDivisions));
     sets.push("target_dept_ids = ?");
     binds.push(outDepts.length ? JSON.stringify(outDepts) : null);
     sets.push("target_position_ids = ?");
     binds.push(outPositions.length ? JSON.stringify(outPositions) : null);
     sets.push("target_user_ids = ?");
     binds.push(outUsers.length ? JSON.stringify(outUsers) : null);
+    sets.push("target_divisions = ?");
+    binds.push(nextDivisions.length ? JSON.stringify(nextDivisions) : null);
+    sets.push("excluded_user_ids = ?");
+    binds.push(nextExcluded.length ? JSON.stringify(nextExcluded) : null);
   }
   // Company retarget. Present + empty array (or null) clears to NULL = all
   // companies; a non-empty array narrows to those companies.
@@ -1095,6 +1617,24 @@ app.patch("/:id", requirePermissionOrSalesDirector("announcements.write"), async
     sets.push("category = ?");
     binds.push(readCategory(body.category));
   }
+  if (typeof body.requireAck === "boolean") {
+    sets.push("require_ack = ?");
+    binds.push(body.requireAck ? 1 : 0);
+  }
+  if ("scheduledAt" in body) {
+    const raw = body.scheduledAt;
+    if (raw == null || String(raw).trim() === "") {
+      sets.push("scheduled_at = ?");
+      binds.push(null);
+    } else {
+      const t = Date.parse(String(raw));
+      if (Number.isNaN(t)) {
+        return c.json({ success: false, error: "Invalid schedule date" }, 400);
+      }
+      sets.push("scheduled_at = ?");
+      binds.push(t > Date.now() ? new Date(t).toISOString() : null);
+    }
+  }
   if ("expiresAt" in body) {
     const raw = body.expiresAt;
     if (raw == null || String(raw).trim() === "") {
@@ -1113,13 +1653,11 @@ app.patch("/:id", requirePermissionOrSalesDirector("announcements.write"), async
     return c.json({ success: true, data: toPublic(existing) });
   }
   if (textChanged) {
-    const retranslated = await translateAnnouncement({
-      title: nextTitle,
-      body: nextText,
-      apiKey: c.env.ANTHROPIC_API_KEY,
-    });
+    // The stored translation describes text that is about to change: clear
+    // it with the edit (readers see the new original, never the old
+    // translation) and refill it after the response — queueTranslation below.
     sets.push("translations = ?");
-    binds.push(retranslated ? JSON.stringify(retranslated) : null);
+    binds.push(null);
   }
   sets.push("updated_at = ?");
   binds.push(new Date().toISOString());
@@ -1134,6 +1672,10 @@ app.patch("/:id", requirePermissionOrSalesDirector("announcements.write"), async
   // Any edit (text, targeting, active toggle, expiry) can change who sees
   // what — orphan all cached banner snapshots.
   await bumpConfigVersion(c.env, "banner");
+
+  if (textChanged) {
+    queueTranslation(c, id, { title: nextTitle, body: nextText, bodyHtml: nextHtml });
+  }
 
   const row = await c.env.DB.prepare(
     "SELECT * FROM announcements WHERE id = ?",
@@ -1159,50 +1701,64 @@ app.post("/:id/remind", requirePermissionOrSalesDirector("announcements.write"),
     return c.json({ success: false, error: "Announcement not found" }, 404);
   }
   let scope: "all" | "unacked" = "unacked";
+  let departmentId: number | null = null;
   try {
     const body = (await c.req.json().catch(() => null)) as {
       scope?: unknown;
+      departmentId?: unknown;
     } | null;
     if (body && body.scope === "all") scope = "all";
+    if (body && body.departmentId != null) {
+      const n = parseInt(String(body.departmentId), 10);
+      if (Number.isFinite(n)) departmentId = n;
+    }
   } catch {
     /* default */
   }
 
-  const rosterRes = await c.env.DB.prepare(
-    `SELECT id FROM users WHERE status = 'active'${rosterCompaniesSql(readTargetCompanyIds(ann))}`,
-  ).all<{ id: number }>();
-  const rosterIds = (rosterRes.results ?? []).map((u) => u.id);
-  const ackRes = await c.env.DB.prepare(
-    "SELECT user_id FROM announcement_acks WHERE announcement_id = ?",
-  )
-    .bind(id)
-    .all<{ user_id?: number; userId?: number }>();
-  const ackedSet = new Set<number>();
-  for (const a of ackRes.results ?? []) {
-    const uid = a.userId ?? a.user_id;
-    if (uid != null) ackedSet.add(uid);
-  }
-  const unackedCount = rosterIds.filter((uid) => !ackedSet.has(uid)).length;
+  // The audience (not every active user): the same roster the receipts show.
+  const roster = audienceOf(ann, await loadRoster(c.env, readTargetCompanyIds(ann)));
+  const ackedAtByUser = await loadAckMap(c.env, id);
+  const now = new Date().toISOString();
 
   if (scope === "all") {
+    // "Reset all receipts" (phone only since 2026-09-05): the whole notice
+    // starts over — receipts cleared, notice-level stamp set, no per-person rows.
     await c.env.DB.prepare(
       "DELETE FROM announcement_acks WHERE announcement_id = ?",
     )
       .bind(id)
       .run();
+    // company-scope: ONE notice by primary key, already scoped by getScopedAnnouncement (companyCanSee) above.
+    await c.env.DB.prepare("UPDATE announcements SET reminded_at = ? WHERE id = ?")
+      .bind(now, id)
+      .run();
+    await bumpConfigVersion(c.env, "banner");
+    return c.json({ success: true, pendingCount: roster.length, scope, departmentId: null });
   }
-  await c.env.DB.prepare(
-    "UPDATE announcements SET reminded_at = ? WHERE id = ?",
-  )
-    .bind(new Date().toISOString(), id)
-    .run();
 
-  // The re-pop gate compares reminded_at vs each user's ack — every cached
+  // Un-acked people, optionally only one department's (the drawer's
+  // "Remind <Dept> pending", owner 2026-09-06).
+  const pending = roster.filter(
+    (u) => !ackedAtByUser.has(u.id) && (departmentId == null || u.departmentId === departmentId),
+  );
+  // Per-person rows carry the reminder (mig 20260906T0921): the banner re-pops
+  // for exactly these people and the drawer paints exactly them "reminded".
+  await recordReminders(c.env, id, pending.map((u) => u.id), c.get("user")?.id ?? null, now);
+  if (departmentId == null) {
+    // A whole-notice reminder keeps the notice-level stamp too, so a reader
+    // outside the roster snapshot (joined since) still sees the re-pop.
+    // company-scope: ONE notice by primary key, already scoped by getScopedAnnouncement (companyCanSee) above.
+    await c.env.DB.prepare("UPDATE announcements SET reminded_at = ? WHERE id = ?")
+      .bind(now, id)
+      .run();
+  }
+
+  // The re-pop gate compares the reminder vs each user's ack — every cached
   // banner is now stale, orphan them all.
   await bumpConfigVersion(c.env, "banner");
 
-  const pendingCount = scope === "all" ? rosterIds.length : unackedCount;
-  return c.json({ success: true, pendingCount, scope });
+  return c.json({ success: true, pendingCount: pending.length, scope, departmentId });
 });
 
 // ============================================================
@@ -1245,11 +1801,7 @@ app.post("/:id/ack", async (c) => {
   }
   const id = c.req.param("id");
   const row = await getScopedAnnouncement(c, id);
-  if (
-    !row ||
-    !isActiveFlag(row.isActive ?? row.is_active ?? null) ||
-    !notExpired(row.expiresAt ?? row.expires_at ?? null)
-  ) {
+  if (!row || !deliverableNow(row)) {
     return c.json({ success: true, acked: false });
   }
   // Stamp the ack with the NOTICE's company (dual-read: the pg driver
@@ -1377,7 +1929,13 @@ app.get("/:id/attachments/:key{.+}", async (c) => {
     hasPermission(granted, "*") || hasPermission(granted, "announcements.write");
   if (
     !isManager &&
-    !userCanSee(ann, user.id, user.department_id ?? null, user.position_id ?? null)
+    !userCanSee(
+      ann,
+      user.id,
+      user.department_id ?? null,
+      user.position_id ?? null,
+      await callerDivision(c.env, user.id),
+    )
   ) {
     return c.json({ error: "Not found" }, 404);
   }

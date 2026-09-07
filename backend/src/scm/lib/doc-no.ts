@@ -41,8 +41,12 @@ export function maxMonthlySuffix(monthPrefix: string, existing: string[]): numbe
   return max;
 }
 
-export function nextMonthlyDocNo(monthPrefix: string, existing: string[]): string {
-  return `${monthPrefix}-${String(maxMonthlySuffix(monthPrefix, existing) + 1).padStart(3, '0')}`;
+export function nextMonthlyDocNo(monthPrefix: string, existing: string[], digits = 3): string {
+  /* `digits` is the SUFFIX WIDTH the owner can set per company (GL redesign
+     item 8: 如果到时我要 2990-MPV-2609-0001 呢). Width is display only —
+     maxMonthlySuffix parses any length, so widening later renumbers nothing
+     and collides with nothing. */
+  return `${monthPrefix}-${String(maxMonthlySuffix(monthPrefix, existing) + 1).padStart(digits, '0')}`;
 }
 
 /* ────────────────── Reading the month (max+1's only input) ──────────────────
@@ -217,6 +221,7 @@ export async function mintMonthlyDocNo(
   table: string,
   col: string,
   monthPrefix: string,
+  digits = 3,
 ): Promise<string> {
   const floor = maxMonthlySuffix(monthPrefix, await fetchMonthlyDocNos(sb, table, col, monthPrefix));
   const n = await claimDocNoSuffix(sb, monthPrefix, floor);
@@ -225,9 +230,9 @@ export async function mintMonthlyDocNo(
     // behaviour, stated out loud rather than reached by accident.
     // eslint-disable-next-line no-console
     console.warn(`[doc-no] ${DOC_NO_COUNTER_RPC} unavailable for ${monthPrefix}; minting from the live max (pre-counter behaviour, re-issue exposure is back until the migration applies)`);
-    return `${monthPrefix}-${String(floor + 1).padStart(3, '0')}`;
+    return `${monthPrefix}-${String(floor + 1).padStart(digits, '0')}`;
   }
-  return `${monthPrefix}-${String(n).padStart(3, '0')}`;
+  return `${monthPrefix}-${String(n).padStart(digits, '0')}`;
 }
 
 /* ─────────────────────── Mint + insert with collision retry ─────────────────

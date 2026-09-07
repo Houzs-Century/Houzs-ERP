@@ -1048,7 +1048,16 @@ const SettlementLine = ({ row }: { row: SettlementRow }) => {
                     <input type="checkbox" checked={picked.has(key(p))} onChange={() => toggle(p)}
                       aria-label={`Select ${p.docNo}`} />
                   </td>
-                  <td style={cell}>{p.docNo}</td>
+                  <td style={cell}>
+                    {p.docNo}
+                    {/* A migration-era payment carries no merchant tag; say so
+                        where it is being claimed. Confirming writes the tag.
+                        Strictly null: a candidate WITHOUT the field (an older
+                        cached response) is unknown, not untagged. */}
+                    {p.merchantProvider === null && (
+                      <span style={{ marginLeft: 6, fontSize: 'var(--fs-12)', color: 'var(--text-soft, #8a8578)' }}>未标 merchant</span>
+                    )}
+                  </td>
                   <td style={cell}>{p.paidOn}</td>
                   <td style={cell}>{p.approvalCode ?? '—'}</td>
                   <td style={num}>{fmt(p.amountSen)}</td>

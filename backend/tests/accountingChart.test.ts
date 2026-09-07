@@ -535,3 +535,111 @@ describe('requireLeafAccount — 父户不记账 at typing time', () => {
     expect(await requireLeafAccount(ctx(tables), 1, '310-0010')).toBeNull();
   });
 });
+
+/* The AutoCount sections (owner 2026-09-06: 你先帮我分类,然后我自己还能调动 —
+   用拖拉式). The section is part of the DEFINITION: it decides the type, it
+   rides every copy, and a move carries the subtree in every company. */
+describe('sections — the AutoCount account-type tree', () => {
+  test('the union carries the vocabulary in render order and each row its section', async () => {
+    const tables = { accounts: [
+      acct(1, '310-0000', { section: 'CURRENT ASSETS' }),
+      acct(1, '601-0001', { account_type: 'EXPENSE', section: 'COST OF GOODS SOLD' }),
+    ] };
+    const res = await harness(tables).request('/chart');
+    const body = await res.json() as { sections: Array<{ section: string; type: string }>; accounts: Array<Row> };
+    expect(body.sections[0]).toEqual({ section: 'CAPITAL', type: 'EQUITY' });
+    expect(body.sections.map((s) => s.section)).toContain('COST OF GOODS SOLD');
+    expect(body.accounts.find((a) => a.code === '601-0001')!.section).toBe('COST OF GOODS SOLD');
+  });
+
+  test('a section move re-types the account and carries its subtree in EVERY company', async () => {
+    const tables = { accounts: [
+      acct(1, '590-0000', { account_type: 'INCOME', section: 'SALES' }),
+      acct(1, '590-0001', { account_type: 'INCOME', section: 'SALES', parent_code: '590-0000' }),
+      acct(2, '590-0000', { account_type: 'INCOME', section: 'SALES' }),
+      acct(1, '500-0000', { account_type: 'INCOME', section: 'SALES' }),
+    ] };
+    const app = harness(tables);
+    const res = await app.request('/chart/update', {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ code: '590-0000', section: 'other incomes' }),
+    });
+    expect(res.status).toBe(200);
+    for (const r of tables.accounts.filter((a) => a.account_code.startsWith('590'))) {
+      expect(r.section, `${r.company_id}:${r.account_code}`).toBe('OTHER INCOMES');
+    }
+    /* Across a type boundary the type follows the section — CAPITAL is EQUITY. */
+    const cap = await app.request('/chart/update', {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ code: '500-0000', section: 'CAPITAL' }),
+    });
+    expect(cap.status).toBe(200);
+    expect(tables.accounts.find((a) => a.account_code === '500-0000')).toMatchObject({ section: 'CAPITAL', account_type: 'EQUITY' });
+  });
+
+  test('a CHILD does not change section on its own (子户跟着 header 走); an unknown section is named', async () => {
+    const tables = { accounts: [
+      acct(1, '310-0000', { section: 'CURRENT ASSETS' }),
+      acct(1, '310-0010', { section: 'CURRENT ASSETS', parent_code: '310-0000' }),
+    ] };
+    const app = harness(tables);
+    const child = await app.request('/chart/update', {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ code: '310-0010', section: 'FIXED ASSETS' }),
+    });
+    expect(child.status).toBe(400);
+    expect((await child.json() as { error: string }).error).toBe('section_child');
+    const bad = await app.request('/chart/update', {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ code: '310-0000', section: 'MYSTERY' }),
+    });
+    expect(bad.status).toBe(400);
+    expect((await bad.json() as { message: string }).message).toContain('CURRENT ASSETS');
+  });
+
+  test('create takes the section and derives the type; no section = the default shelf; a child under another section refuses', async () => {
+    const tables = { accounts: [
+      acct(1, '460-0000', { account_type: 'LIABILITY', section: 'LONG TERM LIABILITIES' }),
+    ] };
+    const app = harness(tables);
+    const bySection = await app.request('/chart/account', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ code: '950-0001', name: 'TAX', section: 'TAXATION', companyIds: [1] }),
+    });
+    expect(bySection.status).toBe(200);
+    expect(tables.accounts.find((a) => a.account_code === '950-0001')).toMatchObject({ section: 'TAXATION', account_type: 'EXPENSE' });
+    const byType = await app.request('/chart/account', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ code: '601-0009', name: 'PURCHASE X', accountType: 'EXPENSE', companyIds: [1] }),
+    });
+    expect(byType.status).toBe(200);
+    expect(tables.accounts.find((a) => a.account_code === '601-0009')!.section).toBe('COST OF GOODS SOLD');
+    const split = await app.request('/chart/account', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ code: '460-0009', name: 'LOAN', section: 'CURRENT LIABILITIES', parentCode: '460-0000', companyIds: [1] }),
+    });
+    expect(split.status).toBe(400);
+    expect((await split.json() as { error: string }).error).toBe('section_mismatch');
+  });
+
+  test('import stores the heading it was given and shelves an unknown one by type; tick-ON copies the section', async () => {
+    const tables = { accounts: [] as Row[] };
+    const app = harness(tables);
+    const imp = await app.request('/chart/import', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ companyId: 1, rows: [
+        { code: '201-0000', name: 'FURNITURE', accountType: 'ASSET', section: 'FIXED ASSETS', parentCode: null, accMoney: false, shared: false },
+        { code: '999-0001', name: 'ODD', accountType: 'EXPENSE', section: null, parentCode: null, accMoney: false, shared: false },
+      ] }),
+    });
+    expect(imp.status).toBe(200);
+    expect(tables.accounts.find((a) => a.account_code === '201-0000')!.section).toBe('FIXED ASSETS');
+    expect(tables.accounts.find((a) => a.account_code === '999-0001')!.section).toBe('EXPENSES');
+    const tick = await app.request('/chart/tick', {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ companyId: 2, code: '201-0000', active: true }),
+    });
+    expect(tick.status).toBe(200);
+    expect(tables.accounts.find((a) => a.company_id === 2 && a.account_code === '201-0000')!.section).toBe('FIXED ASSETS');
+  });
+});

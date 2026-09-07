@@ -30,6 +30,7 @@ import roles from "./routes/roles";
 import positions from "./routes/positions";
 import positionCapabilities from "./routes/position-capabilities";
 import departments from "./routes/departments";
+import documentRefs from "./routes/documentRefs";
 import companies from "./routes/companies";
 import tableLayouts from "./routes/tableLayouts";
 import notifications from "./routes/notifications";
@@ -109,6 +110,7 @@ import { drainEmailOutbox } from "./services/email";
 import { runClientErrorDigest } from "./services/clientErrors";
 import { runSlaEscalation } from "./services/assrEscalation";
 import { runAssrAlerts, runAssrDailyDigest } from "./services/assrAlerts";
+import { runOverdueEscalation } from "./services/announcementEscalation";
 import { runScheduledLeadTimeActivations } from "./services/assrLeadTime";
 import { runProjectDueReminders } from "./services/projectReminders";
 // Weekly OCR rule-distill (scan-so self-evolution). Run via the daily 02:00
@@ -117,6 +119,7 @@ import { runProjectDueReminders } from "./services/projectReminders";
 import { distillAllSalespersonRules, warmCatalogCacheForCron, processScanQueueMessage } from "./scm/routes/scan-so";
 import { runAgentHeartbeat } from "./services/agent-scheduler";
 import { getSupabaseService } from "./db/supabase";
+import { sweepStockClose } from "./acc/stock-close";
 import { reapOnce } from "./scm/lib/reaper";
 import { getBranding } from "./services/branding";
 // AutoCount inbound SO pull — restored 2026-07-14. Reads SO from the AutoCount
@@ -372,6 +375,9 @@ app.route("/api/roles", roles);
 app.route("/api/positions", positions);
 app.route("/api/position-capabilities", positionCapabilities);
 app.route("/api/departments", departments);
+// Document reference numbers + document types (mig 20260906T1417): the
+// router carries its own /document-refs and /document-types prefixes.
+app.route("/api", documentRefs);
 app.route("/api/companies", companies);
 // Column layouts: this user's own (synced across their machines) + each
 // company's admin-set default. Any signed-in user reads and writes their OWN
@@ -624,6 +630,17 @@ export default {
       );
       // Lead-time scheduled activations (mig 080). Cheap: one indexed SELECT
       // for pending rows whose scheduled_for is past.
+      // Announcements: a notice that requires acknowledgement and is past the
+      // 48h overdue window gets its supervisors notified once (owner
+      // 2026-09-06). Cheap: one indexed-ish SELECT, work only for due rows.
+      ctx.waitUntil(
+        runOverdueEscalation(env)
+          .then((r) => {
+            if (r.escalated > 0 || r.scanned > 0)
+              console.log(`[cron ann-escalation] ${JSON.stringify(r)}`);
+          })
+          .catch((e) => console.error("[cron ann-escalation]", e))
+      );
       ctx.waitUntil(
         runScheduledLeadTimeActivations(env)
           .then((r) => {
@@ -832,6 +849,28 @@ export default {
           })(),
         );
       }
+    } else if (event.cron === "5 16 * * *") {
+      // 16:05 UTC = 00:05 MYT — the month-end stock close (GL redesign item 4).
+      // On the 1st this POSTS last month's closing-stock pair the night the
+      // month ends (the owner's 抓实时的); every other night it is the cheap
+      // re-check that heals a late-keyed GRN by reversing and re-posting.
+      // Sweeps the two most recent closed months for every company; every
+      // outcome (including the quiet 'unchanged') lands in
+      // scm.acc_stock_close_runs — the visible trail the owner asked for.
+      ctx.waitUntil(
+        (async () => {
+          const sb = getSupabaseService(env);
+          const { data, error } = await sb.schema("public").from("companies").select("id");
+          if (error) throw new Error(`companies: ${error.message}`);
+          const ids = ((data ?? []) as Array<{ id: number }>).map((r) => Number(r.id));
+          const outcomes = await sweepStockClose(sb, ids, "cron");
+          const changed = outcomes.filter((o) => o.action !== "unchanged");
+          console.log(
+            `[cron stock-close] ${outcomes.length} check(s), ${changed.length} change(s)` +
+            (changed.length ? ` — ${changed.map((o) => `${o.companyId}/${o.month}:${o.action}`).join(", ")}` : ""),
+          );
+        })().catch((e) => console.error("[cron stock-close]", e)),
+      );
     }
   },
   // Cloudflare Queue consumer for the background scan-so OCR pipeline (queue

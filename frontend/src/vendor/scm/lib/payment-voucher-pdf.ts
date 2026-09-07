@@ -106,9 +106,12 @@ export async function renderPaymentVoucherInto(
   const totalSen = Number(header.total_sen ?? 0) || lines.reduce((s, l) => s + Number(l.amount_sen), 0);
 
   /* An AP Payment IS a payment voucher wearing its settlement — the owner's
-     AutoCount vocabulary keeps both under one printed title. */
+     AutoCount vocabulary keeps both under one printed title. An INTERNAL
+     TRANSFER (GL redesign item 10) is the same paper moving our own money,
+     and says so: the payee the transfer form derives is the marker, so the
+     batch printer re-titles without any new parameter. */
   let y = drawHeader(doc, {
-    docTitle: 'PAYMENT VOUCHER',
+    docTitle: String(header.payee_name).startsWith('Internal transfer to ') ? 'TRANSFER VOUCHER' : 'PAYMENT VOUCHER',
     rightMeta: [
       { label: 'PV No', value: header.pv_number },
       { label: 'Date',  value: fmtDocDate(header.voucher_date) },

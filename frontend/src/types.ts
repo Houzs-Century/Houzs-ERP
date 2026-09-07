@@ -625,6 +625,9 @@ export interface Department {
   color: string;
   sort_order: number;
   member_count: number;
+  /** 2–4 letter reference-number segment (mig 20260906T1417), e.g. "OPS".
+   *  null = not assigned yet; a department without one cannot mint numbers. */
+  code?: string | null;
   /** The department's chosen lead (mig-pg 0331). null = no lead set — the real
    *  lead takes precedence over the derived one; see teamShared.buildDeptNodes. */
   lead_user_id?: number | null;
@@ -686,7 +689,7 @@ export interface Role {
 export interface PermissionDef {
   key: string;
   resource: string;
-  verb: "read" | "write" | "manage";
+  verb: "read" | "create" | "write" | "manage" | "approve";
   label: string;
   description: string;
 }

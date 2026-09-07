@@ -29,6 +29,12 @@ vi.mock('../../vendor/scm/lib/payment-voucher-queries', () => ({
   ], totalRemainingSen: 50000 }, isLoading: false }),
 }));
 vi.mock('../../lib/idempotency', () => ({ useIdempotencyKey: () => 'idem-1' }));
+/* The AP invoices (non-stock bills) the picker lists BESIDE the PIs. */
+vi.mock('../../vendor/scm/lib/ap-invoice-queries', () => ({
+  useApInvoices: () => ({ data: { rows: [
+    { kind: 'API', id: 'api-1', invoiceNumber: '2990-API-2609-001', supplierId: 'sup-1', supplierCode: 'S001', supplierName: 'Foshan Chairs', supplierInvoiceRef: 'RENT-9', invoiceDate: '2026-09-03', dueDate: null, currency: 'MYR', totalSen: 42000, paidSen: 0, outstandingSen: 42000, status: 'POSTED' },
+  ] }, isLoading: false }),
+}));
 vi.mock('../../vendor/scm/lib/accounting-queries', () => ({
   isControlSpecial: (s: string | null | undefined) => s === 'SDC' || s === 'SCC' || s === 'SBS',
   useAccounts: () => ({ data: { accounts: [
@@ -52,6 +58,8 @@ vi.mock('../../vendor/scm/lib/suppliers-queries', () => ({
   useSuppliers: () => ({ data: [
     { id: 'sup-1', code: 'S001', name: 'Foshan Chairs', currency: 'MYR' },
     { id: 'sup-405', code: '405-Z002', name: 'Zhejiang Ju Miao', currency: 'MYR' },
+    /* No invoice anywhere — the prepay-only case. */
+    { id: 'sup-2', code: 'S002', name: 'Empty Hands Sdn Bhd', currency: 'MYR' },
   ], isLoading: false }),
   useSupplierDetail: () => ({ data: { supplier: { id: 'sup-1', currency: 'MYR' } } }),
 }));
@@ -136,6 +144,23 @@ describe('the AP Payment (?type=ap)', () => {
   });
 });
 
+describe('an AP invoice beside the purchase invoices (owner 2026-09-06)', () => {
+  test('the supplier\'s open AP invoice lists with an AP tag, ticks like a PI, and the payload names apInvoiceId', async () => {
+    mutateAsync.mockClear();
+    draw('/scm/payment-vouchers/new?type=ap');
+    fireEvent.focus(screen.getByLabelText(/Supplier \*/));
+    fireEvent.mouseDown(screen.getByText('S001 · Foshan Chairs'));
+    expect(screen.getByText('2990-API-2609-001')).toBeTruthy();
+    fireEvent.click(screen.getByLabelText('Pay 2990-API-2609-001 in full'));
+    expect(screen.getByText(/Applying MYR 420\.00/)).toBeTruthy();
+    fireEvent.click(screen.getByText('Create AP Payment'));
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
+    const payload = mutateAsync.mock.calls[0]![0];
+    expect(payload.allocations).toEqual([{ apInvoiceId: 'api-1', amountSen: 42000 }]);
+    expect(payload.lines).toEqual([expect.objectContaining({ debitAccountCode: '400-0000', amountSen: 42000 })]);
+  });
+});
+
 describe('paying ahead (预付) on the AP Payment', () => {
   test('a prepay figure joins the total, the payload, and the Books line; the old advance is pointed at', async () => {
     mutateAsync.mockClear();
@@ -162,6 +187,27 @@ describe('paying ahead (预付) on the AP Payment', () => {
       expect.objectContaining({ debitAccountCode: '400-0000', amountSen: 60000 + 100000 }),
     ]);
     expect(payload.allocations).toEqual([{ piId: 'pi-2', amountSen: 60000 }]);
+  });
+
+  test('a supplier with NO outstanding invoice still gets the prepay box — the advance is the whole voucher (owner 2026-09-06)', async () => {
+    mutateAsync.mockClear();
+    draw('/scm/payment-vouchers/new?type=ap');
+    fireEvent.focus(screen.getByLabelText(/Supplier \*/));
+    fireEvent.mouseDown(screen.getByText('S002 · Empty Hands Sdn Bhd'));
+    /* The empty-list sentence no longer swallows the box. */
+    expect(screen.getByText(/no outstanding invoices — a prepay below/)).toBeTruthy();
+    const prepay = screen.getByLabelText('Prepay amount') as HTMLInputElement;
+    fireEvent.focus(prepay);
+    fireEvent.change(prepay, { target: { value: '500.00' } });
+    fireEvent.blur(prepay);
+    const save = screen.getByText('Create AP Payment').closest('button') as HTMLButtonElement;
+    expect(save.disabled).toBe(false);
+    fireEvent.click(save);
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
+    const payload = mutateAsync.mock.calls[0]![0];
+    expect(payload.lines).toEqual([expect.objectContaining({ debitAccountCode: '400-0000', amountSen: 50000 })]);
+    /* Nothing to knock off — the payload carries no allocation at all. */
+    expect(payload.allocations ?? []).toEqual([]);
   });
 });
 
@@ -263,6 +309,20 @@ describe('the plain Payment Voucher (/new)', () => {
       ['pv-1', 'tnb-page-2.jpg'],
     ]);
     await waitFor(() => expect(screen.getByText(/2 scanned file\(s\) attached/)).toBeTruthy());
+  });
+
+  test('Insert adds a line and lands on its account; Enter on an amount moves down, adding a line at the end (owner 2026-09-06)', () => {
+    draw('/scm/payment-vouchers/new');
+    expect(screen.queryByLabelText('line 2 amount')).toBeNull();
+    fireEvent.keyDown(screen.getByLabelText('line 1 amount'), { key: 'Insert' });
+    const second = screen.getByLabelText('line 2 amount');
+    const landed = document.activeElement as HTMLElement | null;
+    expect(landed?.getAttribute('role')).toBe('combobox');
+    expect(landed?.closest('[data-line]')?.contains(second)).toBe(true);
+
+    fireEvent.keyDown(second, { key: 'Enter' });
+    const third = screen.getByLabelText('line 3 amount');
+    expect((document.activeElement as HTMLElement | null)?.closest('[data-line]')?.contains(third)).toBe(true);
   });
 
   test('the account search actually narrows — 打关键字眼 finds the account', () => {

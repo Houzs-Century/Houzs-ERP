@@ -9,6 +9,7 @@ import { authedFetch } from "../vendor/scm/lib/authed-fetch";
 import { usePoSoCoverage, originsByCode, provenanceByCode, storedLinkSkus, deliveredByCode, type OriginAssignment } from "../vendor/scm/lib/flow-queries";
 import { CommittedBatchRowMobile, PairedSoRowsMobile, SourcePosRowMobile } from "./source-chips";
 import { MobileRelationshipMap } from "./MobileRelationshipMap";
+import { MobileLineRemark } from "./MobileLineRemark";
 import { useGrnZeroCostRemedy } from "./MobileGrnZeroCost";
 import { flowAnchorForModule, type FlowNav } from "./relationship-map-model";
 import { idempotentInit, useIdempotencyKey } from "../lib/idempotency";
@@ -185,8 +186,8 @@ function Eyebrow({ children }: { children: string }) {
 }
 
 /** One `.docrow` line item: name + qty on top, unit price + amount below. */
-function LineItem({ name, sub, qty, unitSen, amountSen, assigned, sourceLinked, provenance, allocations, poNumber, sourcePos, sourceAdj, delivered, committedBatch }: {
-  name: string; sub?: string; qty: unknown; unitSen: unknown; amountSen: unknown;
+function LineItem({ name, sub, remark, qty, unitSen, amountSen, assigned, sourceLinked, provenance, allocations, poNumber, sourcePos, sourceAdj, delivered, committedBatch }: {
+  name: string; sub?: string; qty: unknown; unitSen: unknown; amountSen: unknown; remark?: string | null;
   // Present (even if empty) only for purchase docs (PO/GRN/PI): the REAL origin
   // Sales Order(s) this line was raised from + that SO's effective delivery
   // date, matched by SKU. Empty array → dash, mirroring the desktop columns.
@@ -236,6 +237,7 @@ function LineItem({ name, sub, qty, unitSen, amountSen, assigned, sourceLinked, 
         {sub ? <span style={{ marginRight: 8 }}>{sub}</span> : null}
         <span>@ {money(unitSen)}</span>
       </div>
+      <MobileLineRemark text={remark} />
       {assigned && (
         /* Purchase docs — the per-SO PAIRED rows (owner 2026-08-02): one row
            per assigned SO = [SO chip | date | that SO's delivered DOs xqty |
@@ -340,7 +342,7 @@ type DocMap = {
   meta: (h: any) => Array<[string, string]>;
   /** [Total, Secondary, Tertiary] stats — each [label, value, color] or null. */
   stats: (h: any) => Array<[string, string, string] | null>;
-  line: (it: any) => { name: string; sub?: string; qty: unknown; unitSen: unknown; amountSen: unknown };
+  line: (it: any) => { name: string; sub?: string; remark?: string | null; qty: unknown; unitSen: unknown; amountSen: unknown };
   /** Optional amber warning bar between the stats and the line items —
    *  computed from the SAME detail payload (header + items), so no extra
    *  fetch. Return null for "nothing to warn about". */
@@ -489,11 +491,8 @@ const DOC_MODULES: Record<string, DocMap> = {
          surfaces the sofa/bedframe colour+composition), then item_code +
          cumulative received_qty. buildVariantSummary returns "" when the row
          has no variants, so a bare material line still reads correctly. */
-      sub: join(
-        buildVariantSummary(it.item_group, it.variants) || (it.description2 ?? ""),
-        it.item_code,
-        s(it.received_qty).trim() ? `Received ${s(it.received_qty)}` : "",
-      ),
+      sub: join(buildVariantSummary(it.item_group, it.variants) || (it.description2 ?? ""), it.item_code, s(it.received_qty).trim() ? `Received ${s(it.received_qty)}` : ""),
+      remark: it.notes ?? null, // MobileLineRemark's header has the why
       qty: it.qty,
       unitSen: it.unit_price_sen,
       amountSen: it.line_total_sen,
@@ -1634,7 +1633,7 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD, flowNav }:
                   : null;
                 const delivered = coverageType ? (deliveredMap.get(code) ?? []) : undefined;
                 const provenance = coverageType ? (provByCode.get(code) ?? []) : undefined;
-                return <LineItem key={s(it?.id) || i} name={l.name} sub={l.sub} qty={l.qty} unitSen={l.unitSen} amountSen={l.amountSen} assigned={assigned} sourceLinked={coverageType ? linkedSkus.has(code) : undefined} provenance={provenance} allocations={allocations} poNumber={s(header?.po_number)} sourcePos={sourcePos} sourceAdj={sourceAdj} delivered={delivered} committedBatch={committedBatch} />;
+                return <LineItem key={s(it?.id) || i} name={l.name} sub={l.sub} remark={l.remark} qty={l.qty} unitSen={l.unitSen} amountSen={l.amountSen} assigned={assigned} sourceLinked={coverageType ? linkedSkus.has(code) : undefined} provenance={provenance} allocations={allocations} poNumber={s(header?.po_number)} sourcePos={sourcePos} sourceAdj={sourceAdj} delivered={delivered} committedBatch={committedBatch} />;
               }) : <div style={{ fontSize: 11.5, color: "#9aa093", padding: "9px 0" }}>No line items.</div>)}
             </div>
           </div>

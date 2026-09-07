@@ -47,13 +47,18 @@
     },
     {
       "check": "D1",
-      "key": "ACCESSORY,BEDFRAME,BEDLINES,CARPET,DIFFUSER,DINING,MATTRESS,SERVICE,SOFA|backend/src/scm/routes/mfg-products.ts backend/src/scm/shared/so-branding-label.ts frontend/src/pages/scm-v2/ProductModels.tsx frontend/src/vendor/shared/so-branding-label.ts",
-      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 4 homes: MFG_PRODUCT_CATEGORIES, CATEGORIES. Cost of divergence is a blank chip, not a wrong number."
+      "key": "BANK,CASH,GENERAL,PURCHASE,SALES|backend/src/acc/journal-class.ts frontend/src/pages/scm-v2/Accounting.tsx",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — classifyJournal (journal-class.ts) is the rule; JOURNAL_CHIPS is the chip strip's render order over labels the SERVER already stamped on each row (journal_class). The frontend cannot import backend/src/acc (the shared package here is a pair of vendored copies, not a workspace import), and a chip the backend stopped emitting filters to an empty list — a blank chip, not a wrong number."
     },
     {
       "check": "D1",
-      "key": "APPLICATION/PDF,IMAGE/JPEG,IMAGE/PNG,IMAGE/WEBP|backend/src/scm/routes/lorry-service-records.ts backend/src/scm/routes/pv-files.ts backend/src/scm/routes/slips.ts backend/src/scm/shared/schemas/slip.schema.ts frontend/src/vendor/scm/lib/slip.ts",
-      "why": "AN UPLOAD WHITELIST, per endpoint, and deliberately not one list: each surface decides what IT accepts (portal vs staff vs mail vs OCR vs the PV evidence store). 5 homes: ALLOWED_SLIP_MIMES, PV_FILE_MIMES. Divergence costs a refused upload, never money or stock."
+      "key": "ACCESSORY,BEDFRAME,BEDLINES,CARPET,DIFFUSER,DINING,MATTRESS,SERVICE,SOFA|backend/src/scm/routes/mfg-products.ts backend/src/scm/shared/so-branding-label.ts frontend/src/pages/scm-v2/ItemGroups.tsx frontend/src/pages/scm-v2/ProductModels.tsx frontend/src/vendor/shared/so-branding-label.ts",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 5 homes: MFG_PRODUCT_CATEGORIES, CATEGORIES, and ItemGroups' SUGGESTED — a per-category map of DEFAULT account bindings (values are accounts, keys just happen to be the vocabulary; the registry itself lives in scm.acc_item_groups seeded from the same enum). Cost of divergence is a blank chip or an unsuggested row, not a wrong number."
+    },
+    {
+      "check": "D1",
+      "key": "APPLICATION/PDF,IMAGE/JPEG,IMAGE/PNG,IMAGE/WEBP|backend/src/scm/lib/doc-files.ts backend/src/scm/routes/lorry-service-records.ts backend/src/scm/routes/slips.ts backend/src/scm/shared/schemas/slip.schema.ts frontend/src/vendor/scm/lib/slip.ts",
+      "why": "AN UPLOAD WHITELIST, per endpoint, and deliberately not one list: each surface decides what IT accepts (portal vs staff vs mail vs OCR vs the PV evidence store). 5 homes: ALLOWED_SLIP_MIMES, DOC_FILE_MIMES (lib/doc-files.ts — the ONE evidence store the PV and the AP invoice share since 2026-09-06; it replaced pv-files.ts's PV_FILE_MIMES, not a sixth list). Divergence costs a refused upload, never money or stock."
     },
     {
       "check": "D1",
@@ -87,8 +92,13 @@
     },
     {
       "check": "D1",
-      "key": "GENERAL,LEARNING,SOP,WARNING|frontend/src/components/AnnouncementBanner.tsx frontend/src/mobile/MobileAnnouncementPopup.tsx frontend/src/mobile/MobileAnnouncements.tsx frontend/src/pages/Announcements.tsx",
-      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 4 homes: CATEGORY_LABEL, CAT_LABEL, CAT_COLOR, CATEGORY_ORDER. Cost of divergence is a blank chip, not a wrong number."
+      "key": "GENERAL,LEARNING,SOP,WARNING|frontend/src/components/announcementCategory.ts frontend/src/mobile/MobileAnnouncementPopup.tsx frontend/src/mobile/MobileAnnouncements.tsx",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a category is rendered, not a second answer to what the categories are. Since the 2026-09-05 redesign the DESKTOP has exactly one home, components/announcementCategory.ts (CATEGORY_META + CATEGORY_ORDER; the banner, inbox, manage, composer, bell and dashboard all import it — AnnouncementBanner.tsx and pages/Announcements.tsx no longer carry their own maps). The two phone files keep CAT_LABEL / CAT_COLOR because the phone shell paints with hex in inline styles, not Tailwind tokens; the four enum values themselves are validated in ONE place, readCategory() in backend/src/routes/announcements.ts. Cost of divergence is a blank chip, not a wrong number."
+    },
+    {
+      "check": "D1",
+      "key": ",1,2,3,4|frontend/src/mobile/MobileAnnouncements.tsx frontend/src/pages/announcements/ComposerModal.tsx",
+      "why": "The photo-layout picker's option list (\"\" = auto, then 1 / 2 / 3 / 4 columns) on each shell's composer. It is a PRESENTATION of the backend's PhotoLayout enum, whose single home is readMediaLayout() in backend/src/routes/announcements.ts — a value outside it is dropped server-side, so a divergent picker can only offer a choice that is silently ignored, never store a wrong layout. The desktop entry MOVED from pages/Announcements.tsx into pages/announcements/ComposerModal.tsx with the 2026-09-05 redesign; the phone composer is unchanged."
     },
     {
       "check": "D1",
@@ -1174,6 +1184,31 @@
       "check": "D1",
       "key": "-,--,KIV,N.A.,N/A,NA,NIL,NONE,TBC,—|backend/src/scm/shared/so-branding-label.ts frontend/src/vendor/shared/so-branding-label.ts",
       "why": "THE MIRROR ITSELF, not a second decision. PLACEHOLDER_BRAND_TEXTS is declared ONCE in scm/shared/ and frontend/src/vendor/shared/ is its byte-identical copy, which check-shared-mirrors.mjs --strict fails the build over if the two ever differ - the opposite of the drift this check exists to catch."
+    },
+    {
+      "check": "D1",
+      "key": "EMBED,HEAD,IFRAME,MATH,NOSCRIPT,OBJECT,SCRIPT,STYLE,SVG,TEMPLATE,TEXTAREA,TITLE|backend/src/lib/announcementRichText.ts frontend/src/lib/announcementRichText.ts",
+      "why": "THE ANNOUNCEMENT RICH-BODY GRAMMAR, a deliberate cross-tree TWIN: backend/src/lib/announcementRichText.ts is the original and frontend/src/lib/announcementRichText.ts is its byte-identical copy (the two packages share no build). Both sides run the SAME canonicaliser, the Worker on write and the browser on render, so the sets must be equal; backend/tests/announcementRichText.test.ts and frontend/src/lib/announcementRichText.test.ts pin the same fixtures so a drift is a red test on one side. 2 homes: RAW_DROP, RICH_SIZES."
+    },
+    {
+      "check": "D1",
+      "key": "B,I,MARK,S,U|backend/src/lib/announcementRichText.ts frontend/src/lib/announcementRichText.ts",
+      "why": "THE ANNOUNCEMENT RICH-BODY GRAMMAR, a deliberate cross-tree TWIN: backend/src/lib/announcementRichText.ts is the original and frontend/src/lib/announcementRichText.ts is its byte-identical copy (the two packages share no build). Both sides run the SAME canonicaliser, the Worker on write and the browser on render, so the sets must be equal; backend/tests/announcementRichText.test.ts and frontend/src/lib/announcementRichText.test.ts pin the same fixtures so a drift is a red test on one side. Added with the 2026-09-05 toolbar follow-up (h1/h2 headings, mark highlight). 4 homes now: RAW_DROP, RICH_SIZES, PARA_BLOCKS, INLINE_MARKS."
+    },
+    {
+      "check": "D1",
+      "key": "H1,H2,P|backend/src/lib/announcementRichText.ts frontend/src/lib/announcementRichText.ts",
+      "why": "THE ANNOUNCEMENT RICH-BODY GRAMMAR, a deliberate cross-tree TWIN: backend/src/lib/announcementRichText.ts is the original and frontend/src/lib/announcementRichText.ts is its byte-identical copy (the two packages share no build). Both sides run the SAME canonicaliser, the Worker on write and the browser on render, so the sets must be equal; backend/tests/announcementRichText.test.ts and frontend/src/lib/announcementRichText.test.ts pin the same fixtures so a drift is a red test on one side. Added with the 2026-09-05 toolbar follow-up (h1/h2 headings, mark highlight). 4 homes now: RAW_DROP, RICH_SIZES, PARA_BLOCKS, INLINE_MARKS."
+    },
+    {
+      "check": "D1",
+      "key": "10,11,12,14,16,18,20,24,28,36,LG,SM,XL|backend/src/lib/announcementRichText.ts frontend/src/lib/announcementRichText.ts",
+      "why": "THE ANNOUNCEMENT RICH-BODY GRAMMAR, a deliberate cross-tree TWIN: backend/src/lib/announcementRichText.ts is the original and frontend/src/lib/announcementRichText.ts is its byte-identical copy (the two packages share no build). Both sides run the SAME canonicaliser, the Worker on write and the browser on render, so the sets must be equal; backend/tests/announcementRichText.test.ts and frontend/src/lib/announcementRichText.test.ts pin the same fixtures so a drift is a red test on one side. 2 homes: RAW_DROP, RICH_SIZES."
+    },
+    {
+      "check": "D2",
+      "key": "*,SCM.ACCESS,SCM.PAYMENT_VOUCHER.POST ~ *,SCM.ACCESS,SCM.PAYMENT_VOUCHER.POST,SCM.SALES_ORDER.WRITE",
+      "why": "THE FINANCE NAV GATE against the Official Receipts nav gate, one key apart BY DESIGN. The recon/setup/chart rows show only to GL people (scm.payment_voucher.post); the Official Receipts row adds SCM.SALES_ORDER.WRITE because the OR is sales-side paper — the salesperson who records the payment hands the receipt over — and the sidebar MIRRORS the backend guard (accounting-receipts.ts requirePerm: payment_voucher.post OR sales_order.write). Folding onto the GL-only set would hide the book from the very people who print from it; divergence costs a nav row showing or not, never money."
     }
   ]
 }

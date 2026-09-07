@@ -57,9 +57,17 @@ refutation is the strongest argument for building the check rather than
 reasoning.
 
 **The lesson, and it is not "be careful".** A diagnostic is code, and code that
-has never executed is not shipped. The cheapest guard is to dispatch it BEFORE
-merging — a `workflow_dispatch` can be run from a branch — which costs one click
-and would have turned this into an edit rather than a second PR.
+has never executed is not shipped.
+
+**CORRECTED 2026-09-04, hours later, by trying it.** This entry first said the
+guard is to dispatch it from the branch before merging. That works only for a
+workflow whose FILE IS ALREADY ON THE DEFAULT BRANCH — GitHub answers
+`HTTP 404: workflow <name>.yml not found on the default branch` for a brand-new
+one, whatever `--ref` says. So a NEW workflow cannot be proven before its first
+merge, by anyone, and the honest procedure is: merge it, dispatch it immediately,
+and treat the first run as part of shipping rather than as a later step. Editing
+an EXISTING workflow's script is the case the branch dispatch does cover, and
+that is what it should be used for.
 
 **Ref.** fix/status-truth-enum-cast, 2026-09-04. Follows #2947, which added the
 check.

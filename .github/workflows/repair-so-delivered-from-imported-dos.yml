@@ -1,0 +1,58 @@
+name: Sales orders — reconcile against IMPORTED delivery orders
+
+# The owner, 2026-09-04: 「送货了的应该已经是去 delivered 了」.
+#
+# Measured first (check-so-status-truth, run 33852430695): company 1 has 71
+# delivery orders, ALL 71 already DELIVERED, and NOT ONE of its 2,770 sales
+# orders is DELIVERED. The reconciliation that advances a sales order is only
+# ever called from an ERP delivery-order ROUTE, and an imported delivery order
+# never travelled one.
+#
+# This runs the REAL syncSoDeliveredFromDo — no coverage logic of its own, so a
+# partially delivered order correctly stays where it is.
+#
+# PLAN by default. APPLY=1 needs CONFIRM_COMPANY to equal the company id, so a
+# pasted command cannot land on the other company's books.
+
+on:
+  workflow_dispatch:
+    inputs:
+      company:
+        description: "Company id (1 = Houzs Century)"
+        required: false
+        default: "1"
+        type: string
+      apply:
+        description: "1 to write, anything else PLAN (runs and rolls back)"
+        required: false
+        default: "0"
+        type: string
+      confirm_company:
+        description: "Repeat the company id here to APPLY. Ignored on a plan"
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: repair-so-delivered-from-imported-dos
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: npx tsx scripts/repair-so-delivered-from-imported-dos.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          COMPANY: ${{ inputs.company }}
+          APPLY: ${{ inputs.apply }}
+          CONFIRM_COMPANY: ${{ inputs.confirm_company }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first
