@@ -375,6 +375,17 @@ construction, and are listed as such rather than counted as ERP defects.
 
 ## 5. Drift since the cutover snapshot
 
+> **Superseded on 2026-09-07 as to the FILE, not the method.** The drift baseline
+> is now `data/ac-seed-baseline-balance.json.gz`, which is frozen.
+> `ac-stock-balance.json.gz` is a *working* export that `export-ac-reimport.py`
+> re-cuts every round; it was re-cut after the ERP was seeded, at which point it
+> equalled the live book (measured: 0 cells differ), the drift set collapsed to
+> empty, and 175 cells / 1,211 units of "AutoCount has moved on" were reported as
+> "the seeding was wrong" — the opposite remedy. See `docs/bugs/0669` and
+> `docs/stock-vs-autocount-2026-09-07.md`. The numbers in the table below are the
+> 2026-08-11 reading and are kept as the historical record; for the current
+> reading, run the workflow.
+
 The ERP was seeded from an AutoCount balance snapshot taken **2026-08-09**
 (`data/ac-stock-balance.json.gz`). Staff have kept working in AutoCount since.
 Comparing that snapshot against the live book isolates exactly how much of any
@@ -1100,4 +1111,8 @@ not narrow the comparison — it fabricates a difference.
 - `backend/src/scm/lib/so-readiness.ts` — the Remark 2 convention in code
 - `backend/src/db/migrations-pg/0276_scm_migrated_documents.sql` — why migrated
   paperwork has no movements
-- `BUG-HISTORY.md` — the per-bug ledger
+- `docs/stock-vs-autocount-2026-09-07.md` — the owner-facing answer to "what is
+  different", measured against the 2026-09-07 22:21 (+08) live cut
+- `backend/scripts/data/ac-seed-baseline-balance.README.md` — why the drift
+  baseline is a separate frozen file, and what re-cutting it breaks
+- `BUG-HISTORY.md` — the signpost; the per-bug ledger is `docs/bugs/`

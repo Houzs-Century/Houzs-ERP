@@ -246,7 +246,14 @@ async function main() {
       }
       const grp = CATG[cat] || "others";
       if (!codeSet.has(erp.toUpperCase())) notInPickList.add(erp);
-      const qty = Math.round(num(l.Qty)) || 1;
+      /* NO `|| 1` FALLBACK. `0 || 1` is 1 in JavaScript, so a line the book
+         records at Qty 0 used to be imported as ONE unit of goods. Seven
+         migrated lines carried that invented unit on 2026-09-07 - all of them
+         zero-priced annotations (DISPOSE REQUEST, TRANSPORTATION CHARGES, a
+         bare "LEG: FOLLOW DISPLAY" note). `num()` already returns 0 rather than
+         NaN for anything unparseable, so nothing needs a fallback.
+         Ledger: BUG-HISTORY.md, repair-so-qty-from-autocount.mjs. */
+      const qty = Math.round(num(l.Qty));
       const up = centi(l.UnitPrice); const lineTotal = up * qty; total += lineTotal; if (bucket[grp] !== undefined) bucket[grp] += lineTotal;
       let bf = null, variants = null;
       if (grp === "bedframe") {

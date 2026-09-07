@@ -1,0 +1,54 @@
+name: Sofa colour pairings for the owner to confirm (read-only)
+
+# The owner asked for the candidate pairings rather than a refusal:
+# 你确定你辨认不出吗？你 AI 辨认不出我们的 fabric 有哪一些是跟它一样接近的吗？
+#
+# Prints, for every colour the sofa backfill holds behind FUZZY: the customer's
+# own text, the library row it would resolve to, WHICH pass resolved it, the
+# sibling colours in the same series, and a confidence. It WRITES NOTHING.
+#
+# Once he confirms, backfill-sofa-variants-from-desc2 with FUZZY=1 applies them.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+
+concurrency:
+  group: propose-sofa-colour-matches-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/propose-sofa-colour-matches.mjs
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/propose-sofa-colour-matches.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
