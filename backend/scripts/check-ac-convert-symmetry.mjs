@@ -626,8 +626,30 @@ if (SKIP_ERP) {
     out("4b. TRANSFER TO inside the ERP - the two denormalised counters that gate the convert");
     out("    (SO->PO ceiling is qty - po_qty_picked; PO->GRN ceiling is qty - received_qty.");
     out("     Drift in either weakens the guard that stops an over-convert.)");
+    /* COUNT and EXAMPLES are two queries on purpose. A single LIMITed SELECT
+       counted in JS reports the LIMIT as the answer the moment the real number
+       exceeds it — this said exactly "500 of 14492" on its first run against
+       production, which is the limit, not a measurement. */
+    const pickedAgg = await pg`
+      WITH j AS (
+        SELECT s.id, o.doc_no, s.po_qty_picked AS claimed, COALESCE(k.took,0) AS took
+          FROM scm.mfg_sales_order_items s
+          JOIN scm.mfg_sales_orders o ON o.doc_no = s.doc_no AND o.company_id = ${CO}
+          LEFT JOIN (SELECT i.so_item_id, sum(i.qty) AS took
+                       FROM scm.purchase_order_items i
+                       JOIN scm.purchase_orders h ON h.id = i.purchase_order_id
+                      WHERE i.so_item_id IS NOT NULL AND h.status <> 'CANCELLED'
+                      GROUP BY i.so_item_id) k ON k.so_item_id = s.id
+         WHERE o.status <> 'CANCELLED')
+      SELECT count(*)::int AS lines,
+             count(*) FILTER (WHERE claimed <> took)::int AS differ,
+             count(*) FILTER (WHERE claimed < took)::int  AS reads_low,
+             count(*) FILTER (WHERE claimed > took)::int  AS reads_high,
+             count(*) FILTER (WHERE claimed <> took AND doc_no LIKE 'HC-%')::int AS migrated
+        FROM j`;
+    const pa = pickedAgg[0];
     const picked = await pg`
-      SELECT s.id, o.doc_no, s.item_code, s.po_qty_picked AS claimed, COALESCE(k.took,0) AS took
+      SELECT o.doc_no, s.item_code, s.po_qty_picked AS claimed, COALESCE(k.took,0) AS took
         FROM scm.mfg_sales_order_items s
         JOIN scm.mfg_sales_orders o ON o.doc_no = s.doc_no AND o.company_id = ${CO}
         LEFT JOIN (SELECT i.so_item_id, sum(i.qty) AS took
@@ -636,13 +658,20 @@ if (SKIP_ERP) {
                     WHERE i.so_item_id IS NOT NULL AND h.status <> 'CANCELLED'
                     GROUP BY i.so_item_id) k ON k.so_item_id = s.id
        WHERE o.status <> 'CANCELLED' AND s.po_qty_picked <> COALESCE(k.took,0)
-       ORDER BY o.doc_no LIMIT 500`;
-    const pickedTotal = await pg`
-      SELECT count(*)::int AS n FROM scm.mfg_sales_order_items s
-        JOIN scm.mfg_sales_orders o ON o.doc_no = s.doc_no AND o.company_id = ${CO}
-       WHERE o.status <> 'CANCELLED'`;
-    out(`    SO line po_qty_picked vs its PO children : ${picked.length} of ${pickedTotal[0].n} live SO lines DISAGREE`);
-    for (const r of picked.slice(0, SHOW)) {
+       ORDER BY o.doc_no LIMIT ${SHOW}`;
+    out(`    SO line po_qty_picked vs its PO children : ${pa.differ} of ${pa.lines} live SO lines DISAGREE`);
+    /* DIRECTION decides the risk, and it is the opposite of the intuition.
+       The SO->PO ceiling is qty - po_qty_picked, so a counter that reads LOW
+       makes the ceiling too GENEROUS: the guard would let someone raise a
+       second purchase order for goods already bought. A counter that reads
+       HIGH only blocks a legitimate purchase, which staff notice immediately.
+       Migrated orders are split out because the importer writing PO lines
+       without bumping the counter is a different defect from the live write
+       path drifting. */
+    out(`      ${pa.reads_low} read LOW (ceiling too generous - an over-convert could get through)`);
+    out(`      ${pa.reads_high} read HIGH (ceiling too tight - blocks a legitimate purchase)`);
+    out(`      ${pa.migrated} of the ${pa.differ} sit on a MIGRATED order (HC-*); ${pa.differ - pa.migrated} on an ERP-native one`);
+    for (const r of picked) {
       out(`      ${r.doc_no} ${r.item_code}: ERP says picked ${r.claimed}, PO lines total ${r.took}`);
     }
 

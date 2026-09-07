@@ -419,7 +419,16 @@ on create (his call: 不需要走四层，就录入就好), source RCT
 document leaves the ledger by reversal, never by vanishing. Tables in
 migration 0351. Contracts: `backend/tests/receipts.test.ts` (post shape,
 control/money refusals, void semantics, the three-kind month list),
-`Receipts.test.tsx` (kinds + links + raise payload + void gating).
+`Receipts.test.tsx` (kinds + links + raise payload + void gating). **The
+form carries the receipt's own date and one field dress (2026-09-07,
+owner: 没办法输入日期, 格子等等不整齐, 有些有格子有些没有)**: a Date field
+(DateField, today by default, sent as `receiptDate` — the server already
+took it and dated the number's month by it; the page had simply never
+offered it), and every control — payer, both account pickers, description,
+amount — wears the PV form's `fieldInput` class on a grid (Date | Received
+from | Received into; Description | Account | Amount), the amount a
+MoneyInput that re-dresses to 1,800.00 on blur. Pinned in
+`Receipts.test.tsx`.
 
 **One door to open an account (2026-09-03, the owner: 照理说应该维护
 overall chart of account 罢了)**: `POST /accounting/chart/account` creates
@@ -1013,3 +1022,15 @@ every persisted payment row in the shared PaymentsTable (SO detail SAVED
 mode; SI detail passes `receiptFor.persistedIds` since its rows ride DRAFT
 mode) — ensure-then-print, so payments recorded before the module existed
 heal their OR on first print.
+
+**Customer Refund (2026-09-07).** The refund to a customer is a payment
+voucher of purpose `CUSTOMER_REFUND` — payment-voucher.md §14 is the guide.
+Its entry is `customerRefundLines` in `backend/src/acc/rules.ts`, the mirror
+of `customerPaymentLines`: Dr AR (role `AR`, party CUSTOMER — the debtor
+code when the document carries one, the name always) / Cr the money account
+the refund leaves from, both legs stamped with the customer. It offsets the
+Cr AR the customer's own payment booked; 2990's customers carry no debtor
+code, so the two meet by name, which the voucher copies from the document.
+Migrations `20260907T1700_pv_purpose_customer_refund.sql` (the enum value)
+and `20260907T1705_pv_customer_refund_columns.sql` (source and customer on
+the header). Pinned by `backend/tests/pvCustomerRefund.test.ts`.

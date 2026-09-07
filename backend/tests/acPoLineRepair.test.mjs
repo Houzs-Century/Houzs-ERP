@@ -108,13 +108,15 @@ test("FromSODtlKey reads as absent when AutoCount stores 0 or nothing", () => {
   assert.equal(acFromSoDtlKey({}), null);
   // The real export: a PO raised from nothing is normal, an unreadable one is not.
   // Pinned to the COMMITTED snapshots, so these move when the snapshots are
-  // re-cut. 2026-09-07 go-live delta cut: 958 merged lines carrying 699 with an
-  // SO origin (941/696 on the 08-29 quiet-book cut; 938/685 on 08-28;
-  // 738/595 on 08-10). The book grew by 17 outstanding PO lines in nine days.
+  // re-cut. 2026-09-07 FINAL cut, taken 16:21:42, one minute after AutoCount was
+  // locked view-only: 956 merged lines carrying 697 with an SO origin. Earlier
+  // that day the 13:03 cut read 958/699 - it FELL because two more POs were
+  // fully received between 13:03 and the lock and left the outstanding set.
+  // (941/696 on the 08-29 quiet-book cut; 938/685 on 08-28; 738/595 on 08-10.)
   const merged = [...mergeAcPoLines(SO_LINKED, OUTSTANDING).values()];
   const withOrigin = merged.filter((l) => acFromSoDtlKey(l));
-  assert.equal(merged.length, 958);
-  assert.equal(withOrigin.length, 699);
+  assert.equal(merged.length, 956);
+  assert.equal(withOrigin.length, 697);
 });
 
 // ── the dedication rule ─────────────────────────────────────────────────────
@@ -316,7 +318,7 @@ test("NO indistinguishable bucket in the committed exports supports a zip", () =
     buckets.get(k).push(l);
   }
   const ambiguous = [...buckets.values()].filter((v) => v.length > 1);
-  assert.equal(ambiguous.length, 8, "8 buckets survive the (qty, Desc2) split on the 2026-09-07 go-live delta cut (9 on 08-29, 7 on 08-28). The bucket that went is PO-009893's two keyless EG-FLEXICARE-S MATT (Q) lines: measured in the live book on 2026-09-07, every line of that PO now has TransferedQty = Qty, so the whole document left the outstanding set");
+  assert.equal(ambiguous.length, 8, "8 buckets survive the (qty, Desc2) split on the 2026-09-07 FINAL cut, taken one minute after the book was locked (9 on 08-29, 7 on 08-28). The bucket that went is PO-009893's two keyless EG-FLEXICARE-S MATT (Q) lines: measured in the live book that day, every line of that PO now has TransferedQty = Qty, so the whole document left the outstanding set");
   assert.equal(ambiguous.reduce((n, v) => n + v.length, 0), 16);
   const keyed = ambiguous.filter((acs) => acs.some((a) => acFromSoDtlKey(a)));
   assert.equal(keyed.length, 7, "7 buckets carry at least one origin key (5 on the 08-28 cut)");
