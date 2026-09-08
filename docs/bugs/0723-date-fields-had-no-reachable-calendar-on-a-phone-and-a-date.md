@@ -54,6 +54,15 @@ text box.
   ~30px to ~52px and re-flow every form row on every phone. The icon keeps its
   20px appearance.
 
+**One fault the tests could not have found.** The error message shipped first as
+plain red text on a transparent ground, floated below the field so it would not
+re-flow the row. Loaded in Chromium it rendered directly ON TOP of the next
+line's own text and neither was readable — the message that exists to stop a
+silent failure was itself silent. It is now an opaque chip (paper background,
+red border, small shadow) in the same position, still at zero layout cost. Found
+by loading the component in a browser, which is the only thing that could have
+found it.
+
 **Proved RED on the unfixed tree.** The five per-keystroke cases in
 `DateField.mask.test.tsx` were run against `HEAD`'s `DateField.tsx` and failed
 with the reported string: `AssertionError: expected '79/20/26' to be '7/9/2026'`,
