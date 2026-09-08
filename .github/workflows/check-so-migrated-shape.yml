@@ -50,7 +50,10 @@ jobs:
       - uses: actions/setup-node@v6
         with: { node-version: 22 }
       - run: npm ci
-      - run: node scripts/check-so-migrated-shape.mjs
+      # npx tsx, not node: this script imports the REAL rule out of
+      # src/scm/lib/so-is-migrated.ts rather than expressing the shape a second
+      # time in SQL. Same runner check-so-open-for-new.yml uses, same reason.
+      - run: npx tsx scripts/check-so-migrated-shape.mjs
         env:
           DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
           COMPANY_ID: ${{ inputs.company_id }}
@@ -65,7 +68,10 @@ jobs:
       - uses: actions/setup-node@v6
         with: { node-version: 22 }
       - run: npm ci
-      - run: node scripts/check-so-migrated-shape.mjs
+      # npx tsx, not node: this script imports the REAL rule out of
+      # src/scm/lib/so-is-migrated.ts rather than expressing the shape a second
+      # time in SQL. Same runner check-so-open-for-new.yml uses, same reason.
+      - run: npx tsx scripts/check-so-migrated-shape.mjs
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           COMPANY_ID: ${{ inputs.company_id }}

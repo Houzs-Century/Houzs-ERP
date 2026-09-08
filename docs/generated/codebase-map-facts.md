@@ -105,7 +105,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/delivery-residence-rules.ts` | 4 | 227 |
 | `backend/src/scm/routes/delivery-returns.ts` | 11 | 1879 |
 | `backend/src/scm/routes/delivery-zones.ts` | 9 | 789 |
-| `backend/src/scm/routes/document-cancel-routes.ts` | 11 | 487 |
+| `backend/src/scm/routes/document-cancel-routes.ts` | 11 | 525 |
 | `backend/src/scm/routes/document-flow.ts` | 2 | 1065 |
 | `backend/src/scm/routes/document-hold-routes.ts` | 0 | 96 |
 | `backend/src/scm/routes/dp-orders.ts` | 5 | 653 |
@@ -209,7 +209,7 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (2048 files, 713885 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (2048 files, 713907 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
