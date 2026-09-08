@@ -377,3 +377,36 @@ export function recordedNotArrived(
     .map((p) => ({ ...p, ageDays: Math.round(dayGap(p.paidOn, asOf)) }))
     .sort((a, b) => b.ageDays - a.ageDays);
 }
+
+/** The list key for card money recorded without a bank — the word the batch
+    detail already puts beside such a candidate (未标 merchant). */
+export const UNTAGGED_LIST = '未标';
+
+/**
+ * Put an UNTAGGED payment on a watch list ONCE. loadPaymentCandidates hands a
+ * payment tagged with nothing to EVERY acquirer's pool — right for matching
+ * (couldBeAcquirers: it could be any of theirs, and each statement must be
+ * able to find it), wrong for a count: the watchlist and the in-transit list
+ * both walked the pools acquirer by acquirer and listed the same RM 3,365 once
+ * per active merchant, so 2990's 43 untagged instalments read as 172 rows and
+ * four times the money (docs/bugs/0688). A tagged payment is in one pool only
+ * and keeps its acquirer; an untagged one is listed under NO acquirer the
+ * first time it is met and skipped after that — the confirm that stamps its
+ * bank is what moves it onto that merchant's list. `listed` is the memory
+ * across the acquirers of one request; the caller owns it.
+ */
+export function listOnce<T extends { source: string; id: string; merchantProvider?: string | null }>(
+  pool: T[],
+  acquirerCode: string,
+  listed: Set<string>,
+): Array<T & { acquirerCode: string | null }> {
+  const out: Array<T & { acquirerCode: string | null }> = [];
+  for (const p of pool) {
+    if (p.merchantProvider != null) { out.push({ ...p, acquirerCode }); continue; }
+    const key = `${p.source}:${p.id}`;
+    if (listed.has(key)) continue;
+    listed.add(key);
+    out.push({ ...p, acquirerCode: null });
+  }
+  return out;
+}

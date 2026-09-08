@@ -29,7 +29,7 @@
 // ----------------------------------------------------------------------------
 
 import { postJournal, reverseJournal } from './engine';
-import { resolveRoles, settlementLines, settlementReceiptLines, statementChargeLines } from './rules';
+import { resolveRoles, settlementLines, settlementReceiptLines, statementChargeLines, clearingMoveLines } from './rules';
 import { formaliseReceiptsForSettlement } from './receipts';
 import { companyCodeById } from '../scm/lib/doc-no';
 import type { PaymentCandidate } from './settlement-match';
@@ -337,8 +337,77 @@ export type ConfirmInput = {
 };
 
 export type ConfirmResult =
-  | { ok: true; status: 'confirmed' | 'already_confirmed'; jeNo?: string }
+  | {
+    ok: true; status: 'confirmed' | 'already_confirmed'; jeNo?: string;
+    /** The entry that moved money keyed in without a bank onto this merchant's
+        own clearing account, and how much (做 2) — absent when nothing moved. */
+    moveJeNo?: string; movedSen?: number;
+  }
   | { ok: false; status: string; reason: string };
+
+/**
+ * 做 2 (owner 2026-09-08: match 了就不见). Money keyed in WITHOUT a bank was
+ * booked to the GENERIC clearing account (role TRANSIT_EDC — 326-0000, 未标银行
+ * on Daily Bank) because nobody could say whose it was; this merchant's
+ * statement has just named it. Move what those payments booked there onto the
+ * merchant's own clearing account, dated by the transaction like the fee, so
+ * the payout clears it from the same account the fee left — and the generic
+ * account reads zero once every untagged payment has been matched.
+ *
+ * Nothing to do when the merchant sits on the generic account itself (CIMB,
+ * AEON, HOUZS), when a payment was booked on the merchant's account already
+ * (tagged at the till), or when it never reached the ledger. Keyed
+ * SETTLEMOVE-<row id>, so a second press books once and the undo can find it.
+ */
+async function moveUntaggedBooking(
+  sb: any,
+  companyId: number,
+  acquirer: { transit_account_code: string },
+  row: { id: number; acquirer_code: string; txn_date: string; ref: string | null },
+  chosen: Array<{ source: 'SOPAY' | 'SIPAY'; id: string; docNo: string | null }>,
+): Promise<{ ok: true; movedSen: number; jeNo: string | null } | { ok: false; status: string; reason: string }> {
+  const nothing = { ok: true as const, movedSen: 0, jeNo: null };
+  const generic = (await resolveRoles(sb, companyId)).TRANSIT_EDC;
+  const own = acquirer.transit_account_code;
+  if (!own || own === generic || chosen.length === 0) return nothing;
+
+  const { data: jeRaw, error: jeErr } = await sb
+    .from('journal_entries')
+    .select('id, source_type, source_doc_no, reversed')
+    .eq('company_id', companyId)
+    .in('source_type', ['SOPAY', 'SIPAY'])
+    .in('source_doc_no', chosen.map((p) => p.id))
+    .eq('posted', true);
+  if (jeErr) return { ok: false, status: 'booking_read_failed', reason: `Could not read the payments' own entries: ${jeErr.message}` };
+  const live = ((jeRaw ?? []) as Array<{ id: string; source_type: string; source_doc_no: string; reversed: boolean | null }>)
+    .filter((e) => e.reversed !== true && chosen.some((p) => p.id === e.source_doc_no && p.source === e.source_type));
+  if (live.length === 0) return nothing;
+
+  const { data: lineRaw, error: lineErr } = await sb
+    .from('journal_entry_lines')
+    .select('journal_entry_id, account_code, debit_sen')
+    .in('journal_entry_id', live.map((e) => e.id))
+    .eq('account_code', generic);
+  if (lineErr) return { ok: false, status: 'booking_read_failed', reason: `Could not read the payments' own entries: ${lineErr.message}` };
+  const movedSen = ((lineRaw ?? []) as Array<{ debit_sen: number | null }>).reduce((s, l) => s + Number(l.debit_sen ?? 0), 0);
+  if (movedSen <= 0) return nothing;
+
+  const txnDate = isoDay(row.txn_date);
+  const docs = chosen.map((p) => p.docNo).filter(Boolean).join(', ') || 'card payments';
+  const posted = await postJournal(sb, {
+    companyId,
+    entryDate: txnDate,
+    sourceType: 'SETTLEMOVE',
+    sourceDocNo: `SETTLEMOVE-${row.id}`,
+    narration: `${row.acquirer_code} settlement ${txnDate}${row.ref ? ` ref ${row.ref}` : ''} — ${docs} keyed in without a bank: moved from ${generic} to ${own}`,
+    lines: clearingMoveLines(
+      { fromCode: generic, toCode: own },
+      { acquirerCode: row.acquirer_code, txnDate, ref: row.ref, amountSen: movedSen },
+    ),
+  });
+  if (!posted.ok) return { ok: false, status: posted.status, reason: posted.reason ?? 'the posting gate refused the move' };
+  return { ok: true, movedSen, jeNo: posted.jeNo };
+}
 
 /**
  * Confirm ONE settlement line: link the payments it covers, post the entry,
@@ -485,6 +554,15 @@ export async function confirmSettlementRow(sb: any, input: ConfirmInput): Promis
     return { ok: false, status: posted.status, reason: posted.reason ?? 'the entry was refused by the posting gate' };
   }
 
+  /* 做 2: the money this statement has just named leaves the generic clearing
+     account for the merchant's own. After the fee, which is the confirm's
+     truth; a move that fails leaves the fee standing and asks for a second
+     press, which resumes through the gate's idempotency like the stamp below. */
+  const moved = await moveUntaggedBooking(sb, companyId, acq.acquirer, row, chosen);
+  if (!moved.ok) {
+    return { ok: false, status: moved.status, reason: `${moved.reason} (the fee entry ${posted.jeNo ?? '(none — no fee to book)'} DID post — press confirm again to finish)` };
+  }
+
   const { error: upErr } = await sb
     .from('acc_settlement_rows')
     .update({
@@ -522,7 +600,12 @@ export async function confirmSettlementRow(sb: any, input: ConfirmInput): Promis
     // eslint-disable-next-line no-console
     console.error('[receipts] settlement formalise skipped:', e);
   }
-  return { ok: true, status: 'confirmed', ...(posted.jeNo ? { jeNo: posted.jeNo } : {}) };
+  return {
+    ok: true,
+    status: 'confirmed',
+    ...(posted.jeNo ? { jeNo: posted.jeNo } : {}),
+    ...(moved.jeNo ? { moveJeNo: moved.jeNo, movedSen: moved.movedSen } : {}),
+  };
 }
 
 /**
@@ -626,6 +709,17 @@ export async function unconfirmSettlementRow(
     });
     if (!reversed.ok) return { ok: false, status: reversed.status, reason: reversed.reason ?? 'the reversal was refused' };
   }
+
+  /* The move that put untagged money onto this merchant's own clearing account
+     (做 2) goes back the same way; a line that moved nothing reverses nothing. */
+  const movedBack = await reverseJournal(sb, {
+    sourceType: 'SETTLEMOVE',
+    sourceDocNo: `SETTLEMOVE-${row.id}`,
+    companyId,
+    entryDate: isoDay(row.txn_date),
+    narration: (orig: { je_no: string }) => `Reversal of ${orig.je_no} — the confirmation was taken back`,
+  });
+  if (!movedBack.ok) return { ok: false, status: movedBack.status, reason: movedBack.reason ?? 'the move reversal was refused' };
 
   /* Links go AFTER the reversal held: releasing the payments while the fee
      entry still stands would let the same money confirm twice against one

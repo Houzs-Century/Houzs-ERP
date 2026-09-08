@@ -496,8 +496,10 @@ export type ReceiptRow = {
   moneyAccount: string; totalSen: number; status: string;
   debtorId?: string; notes?: string | null;
 };
-export const useReceipts = (month?: string) => baseQuery<{ month: string; receipts: ReceiptRow[] }>(
-  ['receipts', month ?? 'current'], `/receipts${month ? `?month=${month}` : ''}`,
+/** No month = every month (owner 2026-09-08: 月份只是筛选); `month` echoes the
+    filter, null when none. */
+export const useReceipts = (month?: string) => baseQuery<{ month: string | null; receipts: ReceiptRow[] }>(
+  ['receipts', month ?? 'all'], `/receipts${month ? `?month=${month}` : ''}`,
 );
 export const useCreateReceipt = () => {
   const qc = useQueryClient();

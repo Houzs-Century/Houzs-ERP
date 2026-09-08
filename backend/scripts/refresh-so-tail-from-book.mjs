@@ -10,6 +10,20 @@
 //   sales_exemption_expiry, remark2, remark3, remark4, note   (headers)
 //   line_delivery_date                                        (lines)
 //
+// 2026-09-08 — TWO defects found by the reconcile and fixed here, after ten
+// days without a run left 614 line dates and 132 header dates holding the
+// 2026-08-29 book:
+//   1. the DATE source was `ac-so-dates.json.gz`, an OLDER cut than the
+//      `ac-outstanding-so.json.gz` the reconcile grades against (75 lines
+//      already disagreed). Refreshing from it wrote yesterday's answer.
+//   2. line dates were keyed on DocNo + ERP item code. A sofa's compartment
+//      rows carry codes no mapping row produces, so they matched nothing and
+//      stayed BLANK for good; two lines of one product with different dates
+//      collapsed to one. Keyed on AutoCount's own DtlKey now, which is unique
+//      across all 14,041 book lines.
+// This tool is the ONLY writer of these fields, so a gap here is invisible
+// everywhere else until the reconcile counts it.
+//
 // SAFETY: every doc whose audit trail shows a person touched any of these
 // fields is REFUSED (same needle lists as the backfills) — HC is frozen, so
 // in practice nothing refuses, but the guard is the rule, not the situation.
@@ -66,7 +80,15 @@ function parseCsvLine(line) {
 
 async function main() {
   log(`mode=${APPLY ? "APPLY" : "PLAN"}`);
-  const dates = gz("ac-so-dates.json.gz");
+  /* THE DATE SOURCE IS `ac-outstanding-so.json.gz`, NOT `ac-so-dates.json.gz`.
+     Both are cuts of the same 14,041 book lines and `PDate` equals `UDF_PDate`
+     on every one of them, but they are cut at DIFFERENT times: measured
+     2026-09-08, 75 lines already disagree on the delivery date, and
+     `ac-outstanding-so` is the fresher of the two AND the one the reconcile
+     grades us against. Refreshing from the older cut writes yesterday's answer
+     and reports success. It also carries `DtlKey`, which `ac-so-dates` does
+     not — see the line-date map below. */
+  const dates = gz("ac-outstanding-so.json.gz");
   const remarks = gz("ac-so-remarks.json.gz");
   const csv = fs.readFileSync(path.join(here, "data", "autocount-erp-mapping-1561.csv"), "utf8").replace(/^﻿/, "").split(/\r?\n/).filter(Boolean);
   csv.shift();
@@ -75,14 +97,24 @@ async function main() {
   const C1_ALIAS = { "SVC-DELIVERY": "TRANSPORTATION CHARGES", "SVC-DELIVERY-ADD": "TRANSPORTATION CHARGES", "SVC-DELIVERY-CROSS": "TRANSPORTATION CHARGES" };
   const erpOf = (ac) => { let e = byAc.get(norm(ac)); if (e && C1_ALIAS[e.toUpperCase()]) e = C1_ALIAS[e.toUpperCase()]; return e || null; };
 
-  const proc = new Map(), earliest = new Map(), lineDates = new Map();
+  /* TWO line-date maps, and the KEY is the point.
+     `byKey` is AutoCount's own DtlKey — unique across all 14,041 book lines
+     (measured), so it pairs exactly and it reaches the rows an item-code key
+     never could: a sofa's compartment rows carry codes like `8030-1A(LHF)`
+     that no mapping row produces, so they matched nothing and stayed blank.
+     `byItem` is the old DocNo+item-code key, kept ONLY for ERP rows that carry
+     no `linked_ac_dtlkey`. It is lossy by construction — two lines of the same
+     product with different dates collapse to one (2 such lines today) — which
+     is why it is the fallback and not the rule. */
+  const proc = new Map(), earliest = new Map(), byKey = new Map(), byItem = new Map();
   for (const r of dates) {
-    if (r.PDate && String(r.PDate).trim() && !proc.has(r.DocNo)) proc.set(r.DocNo, day(r.PDate));
-    const d = day(r.DelivDate);
+    if (r.UDF_PDate && String(r.UDF_PDate).trim() && !proc.has(r.DocNo)) proc.set(r.DocNo, day(r.UDF_PDate));
+    const d = day(r.DeliveryDate);
     if (d) {
       if (!earliest.has(r.DocNo) || d < earliest.get(r.DocNo)) earliest.set(r.DocNo, d);
+      if (r.DtlKey != null && String(r.DtlKey).trim() !== "") byKey.set(String(r.DtlKey).trim(), d);
       const erp = erpOf(r.ItemCode);
-      if (erp) lineDates.set(`${r.DocNo}|${erp.toUpperCase()}`, d);
+      if (erp) byItem.set(`${r.DocNo}|${erp.toUpperCase()}`, d);
     }
   }
   const rem = new Map();
@@ -90,7 +122,17 @@ async function main() {
     remark2: txt(r.Remark2), remark3: txt(r.Remark3), remark4: txt(r.Remark4),
     note: txt(r.UDF_Note), seed: day(r.SalesExemptionExpiryDate),
   });
-  log(`snapshot: dates docs ${new Set(dates.map((r) => r.DocNo)).size}, remark docs ${rem.size}`);
+  /* WHICH DOCUMENTS THIS CUT SPEAKS ABOUT. The snapshots carry the IN-SCOPE
+     population (2,789 orders); the ERP also holds 93 company-1 orders that
+     mirror an AutoCount document the scope rule excludes. For those the
+     snapshot has no row, and `rem.get(...) || {}` used to turn that silence
+     into `null` for every field — a PLAN that proposed erasing the processing
+     date, delivery date, exemption date and remarks of 93 real documents, and
+     it read like ordinary work because a missing row and a cleared value look
+     identical once both are `null`. A document this cut does not carry is a
+     document the book said nothing about here; it is SKIPPED. */
+  const docsInCut = new Set(dates.map((r) => r.DocNo));
+  log(`snapshot: dates docs ${docsInCut.size}, remark docs ${rem.size}`);
 
   const orders = await sql`SELECT doc_no, linked_ac_docno,
       to_char(processing_date, 'YYYY-MM-DD') AS p,
@@ -107,9 +149,12 @@ async function main() {
 
   const per = { processing_date: 0, customer_delivery_date: 0, sales_exemption_expiry: 0, remark2: 0, remark3: 0, remark4: 0, note: 0 };
   let refused = 0;
+  let outOfCut = 0;
+  let heldBlank = 0;
   const ups = [];
   for (const o of orders) {
     if (touched.has(o.doc_no)) { refused++; continue; }
+    if (!docsInCut.has(o.linked_ac_docno)) { outOfCut++; continue; }
     const R = rem.get(o.linked_ac_docno) || {};
     const want = {
       processing_date: proc.get(o.linked_ac_docno) ?? null,
@@ -118,25 +163,45 @@ async function main() {
       remark2: R.remark2 ?? null, remark3: R.remark3 ?? null, remark4: R.remark4 ?? null, note: R.note ?? null,
     };
     const cur = { processing_date: o.p, customer_delivery_date: o.d, sales_exemption_expiry: o.seed, remark2: txt(o.remark2), remark3: txt(o.remark3), remark4: txt(o.remark4), note: txt(o.note) };
+    /* 空白不覆盖 — the owner's standing rule. Where the book states nothing and
+       the ERP holds a value, the ERP's value stands; an operator filling a
+       field in is allowed and is not drift to undo. So a difference is work
+       only when the book actually STATES the new value. */
+    for (const k of Object.keys(want)) {
+      if ((want[k] ?? null) === null && (cur[k] ?? null) !== null) { want[k] = cur[k]; heldBlank++; }
+    }
     const changed = Object.keys(want).filter((k) => (want[k] ?? null) !== (cur[k] ?? null));
     if (!changed.length) continue;
     for (const k of changed) per[k]++;
     ups.push({ doc: o.doc_no, want, changed });
   }
-  log(`headers REFUSED (a person touched a synced field): ${refused}`);
+  log(`headers REFUSED (a person touched a synced field): ${refused}; SKIPPED (the AutoCount document is not in this cut): ${outOfCut}; ` +
+      `field values the ERP keeps because the book states none (空白不覆盖): ${heldBlank}`);
   log(`headers with differences: ${ups.length} — ${Object.entries(per).map(([k, n]) => `${k} ${n}`).join(", ")}`);
   for (const u of ups.slice(0, 10)) log(`   ${u.doc}: ${u.changed.map((k) => `${k} -> ${JSON.stringify(u.want[k])}`).join(" | ")}`);
 
-  const items = await sql`SELECT i.id, i.item_code, to_char(i.line_delivery_date, 'YYYY-MM-DD') AS d, i.doc_no, h.linked_ac_docno
+  const items = await sql`SELECT i.id, i.item_code, i.linked_ac_dtlkey,
+      to_char(i.line_delivery_date, 'YYYY-MM-DD') AS d, i.doc_no, h.linked_ac_docno
     FROM scm.mfg_sales_order_items i JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
     WHERE h.company_id = 1 AND h.linked_ac_docno IS NOT NULL`;
   const lus = [];
+  const lineWhy = { byKey: 0, byItem: 0, erpBlank: 0, erpDiffers: 0, noBookDate: 0, refused: 0 };
   for (const it of items) {
-    if (touched.has(it.doc_no)) continue;
-    const want = lineDates.get(`${it.linked_ac_docno}|${(it.item_code || "").toUpperCase()}`) ?? null;
-    if (want !== null && want !== it.d) lus.push({ id: it.id, d: want });
+    if (touched.has(it.doc_no)) { lineWhy.refused++; continue; }
+    const k = it.linked_ac_dtlkey == null ? null : String(it.linked_ac_dtlkey).trim();
+    const viaKey = k ? byKey.get(k) ?? null : null;
+    const want = viaKey ?? byItem.get(`${it.linked_ac_docno}|${(it.item_code || "").toUpperCase()}`) ?? null;
+    if (want === null) { lineWhy.noBookDate++; continue; }
+    if (want === it.d) continue;
+    if (viaKey !== null) lineWhy.byKey++; else lineWhy.byItem++;
+    if (it.d == null) lineWhy.erpBlank++; else lineWhy.erpDiffers++;
+    lus.push({ id: it.id, d: want });
   }
-  log(`line delivery dates with differences: ${lus.length}`);
+  /* The split is the report. "614 differ" and "142 blank" are two different
+     defects with two different stories, and a single total hides which one a
+     re-run actually closes. */
+  log(`line delivery dates with differences: ${lus.length} — ERP blank ${lineWhy.erpBlank}, ERP holds another date ${lineWhy.erpDiffers}; ` +
+      `matched on DtlKey ${lineWhy.byKey}, on item code ${lineWhy.byItem}; lines the book states no date for ${lineWhy.noBookDate}`);
 
   if (!APPLY) { log('PLAN ONLY — APPLY=1 CONFIRM="REFRESH SO TAIL" writes.'); await sql.end(); return; }
 
@@ -157,17 +222,53 @@ async function main() {
     });
   }
   log(`headers refreshed: ${hw} of ${ups.length} intended`);
+  /* LOCK ORDER, then a retry. `scm.mfg_sales_order_items` is written by the
+     Worker's allocation recompute as well as by this tool, and 300 unordered
+     `WHERE id =` updates in one transaction take row locks in whatever order
+     the array happened to be in. Run 34179743773 deadlocked there after
+     writing all 132 headers — `40P01 ... while updating tuple (488,13) in
+     relation "mfg_sales_order_items"`. Sorting by id gives every writer of this
+     script the same order, and smaller batches hold fewer locks at once; the
+     retry covers the writer that does not share our order. The tool is
+     convergent, so a batch that fails all three times is picked up by the next
+     run rather than silently skipped — but it must still be REPORTED. */
   let lw = 0;
-  for (let i = 0; i < lus.length; i += 300) {
-    const b = lus.slice(i, i + 300);
-    await sql.begin(async (tx) => {
-      for (const u of b) {
-        const r = await tx`UPDATE scm.mfg_sales_order_items SET line_delivery_date = ${u.d}::date WHERE id = ${u.id} RETURNING id`;
-        lw += r.length;
+  let retried = 0;
+  const failedBatches = [];
+  lus.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  for (let i = 0; i < lus.length; i += 100) {
+    const b = lus.slice(i, i + 100);
+    for (let attempt = 1; ; attempt++) {
+      try {
+        /* Count AFTER the transaction commits, never inside it. Run
+           34179984666 said "766 of 807" when 707 had landed: `lw` was
+           incremented row by row inside a transaction that then rolled back,
+           so the failure report over-counted the work it had just lost. */
+        let inBatch = 0;
+        await sql.begin(async (tx) => {
+          inBatch = 0;
+          for (const u of b) {
+            const r = await tx`UPDATE scm.mfg_sales_order_items SET line_delivery_date = ${u.d}::date WHERE id = ${u.id} RETURNING id`;
+            inBatch += r.length;
+          }
+        });
+        lw += inBatch;
+        break;
+      } catch (e) {
+        /* 40P01 deadlock and 57014 query-cancelled (the statement/lock timeout
+           a busy table produces) are both "someone else had it, come back" —
+           run 34179984666 hit 57014 on the batch at offset 300 and gave up on
+           41 lines because only the deadlock was retried. */
+        if ((e?.code !== "40P01" && e?.code !== "57014") || attempt >= 4) { failedBatches.push({ at: i, why: e?.code ?? String(e) }); break; }
+        retried++;
+        await new Promise((r) => setTimeout(r, 500 * attempt));
       }
-    });
+    }
   }
-  log(`line dates refreshed: ${lw} of ${lus.length} intended`);
+  log(`line dates refreshed: ${lw} of ${lus.length} intended` +
+      (retried ? `; ${retried} batch retry(ies) after a deadlock` : "") +
+      (failedBatches.length ? `; ${failedBatches.length} BATCH(ES) STILL FAILED — re-run: ${failedBatches.map((f) => `${f.at}:${f.why}`).join(", ")}` : ""));
+  if (failedBatches.length) { await sql.end(); process.exit(1); }
 
   /* fresh-connection SHAPE verify */
   const vsql = postgres(DST, { ssl: "require", prepare: false, max: 1 });

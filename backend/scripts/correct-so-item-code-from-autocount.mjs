@@ -61,6 +61,7 @@ import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 
 import { normItemCode } from "./lib/ac-po-line.mjs";
+import { readMappingCsv } from "./lib/ac-mapping-csv.mjs";
 import { planSoItemCodeCorrections } from "./lib/so-item-code-correction.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -71,10 +72,26 @@ const MODE = (process.env.MODE || "plan").toLowerCase();
 const APPLY = MODE === "apply";
 const CONFIRM = process.env.CONFIRM ?? "";
 const CO = Number(process.env.COMPANY_ID || 1);
+/* WHICH SALES-ORDER LINES ARE ASKED THE QUESTION.
+ *
+ *   edges  (default, the 2026-09-08 morning run) only the lines AutoCount's own
+ *          PODTL FromSODtlKey edge names. That population found the ten
+ *          bedframes because each had a purchase order to disagree with.
+ *   all    every migrated line that carries a `linked_ac_dtlkey`. A line with no
+ *          purchase order behind it is invisible to `edges` and is exactly where
+ *          the rest of the reconcile's item-code column lives: on 2026-09-08 the
+ *          checker's 101 sales-order differences held 52 genuinely different
+ *          products and only a handful of them had an edge (docs/bugs/0689).
+ *
+ * The RULES do not change with the population - lib/so-item-code-correction.mjs
+ * states them once, and a decomposed sofa or a code our own pick list does not
+ * carry is REFUSED either way. */
+const POPULATION = (process.env.POPULATION || "edges").toLowerCase();
 const OUT = process.env.OUT || path.join(process.cwd(), "so-item-code-dump.json");
 
 if (!DST) { console.error("REFUSED: DATABASE_URL not set."); process.exit(2); }
 if (!["plan", "apply"].includes(MODE)) { console.error(`MODE must be plan or apply, got ${MODE}`); process.exit(2); }
+if (!["edges", "all"].includes(POPULATION)) { console.error(`POPULATION must be edges or all, got ${POPULATION}`); process.exit(2); }
 
 const log = (m = "") => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 const plain = (m = "") => console.log(m);
@@ -97,29 +114,11 @@ function readBook() {
   const poByDtl = new Map(T.types.PO.lines.map((r) => { const o = obj(r); return [String(o.dtlKey), o]; }));
   const desc2 = new Map((T.types.SO.desc2 ?? []).map((r) => [String(r[0]), r[1]]));
 
-  /* The mapping sheet, both columns this correction needs: the ERP code AND the
-     category, because item_group is derived from the category and reading only
-     the code would leave the group behind. */
-  const csv = fs.readFileSync(path.join(DATA, "autocount-erp-mapping-1561.csv"), "utf8")
-    .replace(/^﻿/, "").trim().split(/\r?\n/);
-  const acMapByCode = new Map();
-  for (const line of csv.slice(1)) {
-    const f = [];
-    let cur = "", q = false;
-    for (let i = 0; i < line.length; i++) {
-      const ch = line[i];
-      if (q) {
-        if (ch === '"' && line[i + 1] === '"') { cur += '"'; i++; }
-        else if (ch === '"') q = false;
-        else cur += ch;
-      } else if (ch === '"') q = true;
-      else if (ch === ",") { f.push(cur); cur = ""; }
-      else cur += ch;
-    }
-    f.push(cur);
-    if (!f[0]) continue;
-    acMapByCode.set(normItemCode(f[0]), { erp: (f[1] || "").trim(), cat: (f[3] || "").trim().toUpperCase() });
-  }
+  /* The mapping sheet, read by lib/ac-mapping-csv.mjs - the ONE reader, since
+     2026-09-08. This script always parsed it properly; check-ac-erp-reconcile.mjs
+     did not, and two parsers for one file is how the two disagreed about 40
+     sales-order lines (docs/bugs/0689). */
+  const acMapByCode = readMappingCsv(fs.readFileSync(path.join(DATA, "autocount-erp-mapping-1561.csv"), "utf8"));
 
   const edgeFile = gz("ac-po-fromsodtlkey.json.gz");
   return { exportedAt: T.exported_at, edgesExportedAt: edgeFile.exportedAt, edges: edgeFile.rows, soByDtl, poByDtl, desc2, acMapByCode };
@@ -128,7 +127,7 @@ function readBook() {
 const sql = postgres(DST, { ssl: "require", prepare: false, max: 1 });
 
 async function main() {
-  log(`mode=${MODE} company=${CO} out=${OUT}`);
+  log(`mode=${MODE} population=${POPULATION} company=${CO} out=${OUT}`);
 
   const book = readBook();
   log("SNAPSHOT VINTAGES - read these before any finding below.");
@@ -137,40 +136,60 @@ async function main() {
   log(`   ${book.edges.length} PODTL SO-edge(s); production is read live, now.`);
   log("");
 
-  /* Only the keys the edges name are read back out of production - the whole
-     migrated line table is not this question. */
-  const keys = [...new Set(book.edges.map((e) => (e.FromSODtlKey == null ? null : String(e.FromSODtlKey)))
-    .filter((k) => k && k !== "0"))];
-  const erpRows = await sql`
-    SELECT s.id, s.doc_no, s.line_no, s.item_code, s.item_group, s.description, s.description2,
+  /* WHAT IS READ BACK OUT OF PRODUCTION. On `edges`, only the keys the book's
+     own PODTL edges name - the whole migrated line table is not that question.
+     On `all`, every migrated line that carries a key, because a line with no
+     purchase order behind it can be just as wrong and no edge will ever name it. */
+  const COLS = sql`s.id, s.doc_no, s.line_no, s.item_code, s.item_group, s.description, s.description2,
            s.qty::int AS qty, s.unit_price_sen::int AS unit_price_sen, s.total_sen::int AS total_sen,
            s.unit_cost_sen::int AS unit_cost_sen, s.stock_status, s.variants, s.custom_specials,
-           s.linked_ac_dtlkey, s.cancelled, h.debtor_name, h.linked_ac_docno AS so_ac_docno
-      FROM scm.mfg_sales_order_items s
-      JOIN scm.mfg_sales_orders h ON h.doc_no = s.doc_no
-     WHERE s.company_id = ${CO}
-       AND s.linked_ac_dtlkey IS NOT NULL
-       AND s.linked_ac_dtlkey::text = ANY(${keys})
-     ORDER BY s.doc_no, s.line_no`;
+           s.linked_ac_dtlkey, s.cancelled, h.debtor_name, h.linked_ac_docno AS so_ac_docno`;
+  let erpRows;
+  if (POPULATION === "all") {
+    erpRows = await sql`
+      SELECT ${COLS}
+        FROM scm.mfg_sales_order_items s
+        JOIN scm.mfg_sales_orders h ON h.doc_no = s.doc_no
+       WHERE s.company_id = ${CO}
+         AND s.linked_ac_dtlkey IS NOT NULL
+       ORDER BY s.doc_no, s.line_no`;
+  } else {
+    const keys = [...new Set(book.edges.map((e) => (e.FromSODtlKey == null ? null : String(e.FromSODtlKey)))
+      .filter((k) => k && k !== "0"))];
+    erpRows = await sql`
+      SELECT ${COLS}
+        FROM scm.mfg_sales_order_items s
+        JOIN scm.mfg_sales_orders h ON h.doc_no = s.doc_no
+       WHERE s.company_id = ${CO}
+         AND s.linked_ac_dtlkey IS NOT NULL
+         AND s.linked_ac_dtlkey::text = ANY(${keys})
+       ORDER BY s.doc_no, s.line_no`;
+  }
   const erpRowsByDtl = new Map();
   for (const r of erpRows) {
     const k = String(r.linked_ac_dtlkey);
     if (!erpRowsByDtl.has(k)) erpRowsByDtl.set(k, []);
     erpRowsByDtl.get(k).push(r);
   }
+  /* On `all` the population IS the keys our own lines carry; the planner takes
+     the same shape either way so its rules cannot fork with the population. */
+  const population = POPULATION === "all"
+    ? [...erpRowsByDtl.keys()].map((k) => ({ FromSODtlKey: k }))
+    : book.edges;
 
   const products = await sql`SELECT code, name FROM scm.mfg_products WHERE company_id = ${CO}`;
   const productByCode = new Map(products.map((p) => [normItemCode(p.code), p]));
   log(`company ${CO}: ${erpRows.length} sales-order line(s) carry one of those keys; pick list holds ${products.length} product(s)`);
 
   const { plan, refused, counts } = planSoItemCodeCorrections({
-    edges: book.edges, bookSoByDtl: book.soByDtl, acMapByCode: book.acMapByCode, erpRowsByDtl, productByCode,
+    edges: population, bookSoByDtl: book.soByDtl, acMapByCode: book.acMapByCode, erpRowsByDtl, productByCode,
   });
 
   log("");
   log("THE POPULATION, measured");
-  log(`  distinct sales-order lines the book's edges name   ${counts.edges}`);
+  log(`  distinct AutoCount line keys examined               ${counts.edges}   (population=${POPULATION})`);
   log(`  our line already names the book's product          ${counts.agree}`);
+  log(`  our line names the SAME product, written another way ${counts.translation}   (the book's own code, or a compartment of it - NOT a defect, lib/item-code-class.mjs)`);
   log(`  our line names a DIFFERENT product  <- correct     ${plan.length}`);
   log(`  REFUSED, the key is claimed by >1 ERP row          ${counts.decomposed}   (decomposed sofa; linked_ac_dtlkey is not unique)`);
   log(`  REFUSED, our pick list has no such product         ${counts.noProduct}`);

@@ -55,6 +55,7 @@
 // "the book's product" for a compartment row is not the book line's own code.
 
 import { normItemCode, acFromSoDtlKey } from "./ac-po-line.mjs";
+import { classifyItemCode } from "./item-code-class.mjs";
 
 /** AutoCount mapping-sheet category -> `mfg_sales_order_items.item_group`.
  *  The SAME table import-ac-outstanding-so.mjs:68 uses. One rule, one place. */
@@ -79,7 +80,7 @@ export const itemGroupForCategory = (cat) =>
 export function planSoItemCodeCorrections({ edges, bookSoByDtl, acMapByCode, erpRowsByDtl, productByCode }) {
   const plan = [];
   const refused = [];
-  const counts = { edges: 0, notInBook: 0, unmapped: 0, notInErp: 0, decomposed: 0, agree: 0, noProduct: 0 };
+  const counts = { edges: 0, notInBook: 0, unmapped: 0, notInErp: 0, decomposed: 0, agree: 0, noProduct: 0, translation: 0 };
   const seen = new Set();
 
   for (const e of edges ?? []) {
@@ -113,6 +114,18 @@ export function planSoItemCodeCorrections({ edges, bookSoByDtl, acMapByCode, erp
 
     const row = rows[0];
     if (normItemCode(row.item_code) === normItemCode(m.erp)) { counts.agree++; continue; }
+
+    /* OUR CODE IS NOT THE SHEET'S, AND THAT IS NOT AUTOMATICALLY A DEFECT.
+       A migrated line very often carries the BOOK'S OWN code rather than the
+       sheet's longer catalogue name - "DL-CS2 NN-WINTER SLEEP MATT (K" against
+       the sheet's "DUNLOPILLO COOLSILK 2.0 NANO-G WINTER SLEEP MATT (K)". The
+       two name the same product; only the string differs. Correcting those
+       would be a mass rename of lines nothing is wrong with, and on the `all`
+       population it is the difference between a handful of corrections and
+       hundreds. lib/item-code-class.mjs decides, and only `different` is a
+       defect this planner may write. */
+    const k = classifyItemCode({ acCode, erpCode: row.item_code, mapping: acMapByCode, groupSize: rows.length });
+    if (k.cls !== "different") { counts.translation++; continue; }
 
     /* Resolve through OUR OWN pick list so the stored string is byte-identical
        to a picker-chosen one. `m.erp` is what the CSV says; `product.code` is

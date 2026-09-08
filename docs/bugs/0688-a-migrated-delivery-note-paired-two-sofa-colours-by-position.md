@@ -1,14 +1,49 @@
-## A migrated delivery note paired two sofa colours by position, because the book carries no line key there [high]
+## A migrated delivery note paired two lines of one code by position, with colour in neither the bucket nor the tie-break [high]
 
-**Symptom.** `DO-011505` and `DO-011478` each carry two lines of one sofa model
-in two fabrics, and on both notes the two colours are EXACT SWAPS of what the
-account book says — `DO-011505` DtlKey 920097 book `PC151-01` / ERP `PC151-17`
-and 920099 book `PC151-17` / ERP `PC151-01` (reconcile run 34130727594). A
-perfect swap on two separate documents is not two colour errors; it is
-positional pairing. `docs/bugs/0672` records it as instance 2 and names the
-writer as site 6, unfixed, because *"fixing it means deciding what to do when
-the book carries no line-level key to settle it, which is a design call, not a
-guard."* This entry is that decision, implemented.
+> **CORRECTED the same day, before this entry was a day old.** The first version
+> of this heading said "two sofa colours" and opened by naming `DO-011505` and
+> `DO-011478` as the production instance. **The book refutes that attribution**
+> and the correction is kept in place rather than quietly rewritten, because the
+> wrong half is the more useful half to record. See the box below.
+
+**Symptom.** `buildMigratedDoPlan` pairs an AutoCount delivery line to one of the
+order's lines on `(AutoCount SO number, ERP item code)` and then takes the
+candidates BY POSITION. Where one order carries two lines of one code in
+different colours, the choice is a coin flip, and the writer copies `variants`
+off whichever line it picked -- so the delivery note states the other line's
+colour. **MEASURED on production, probe run 34180583537 (2026-09-08 10:35
+local): 26 book delivery lines across 17 delivery notes are in that position
+today, out of the 810 that pair at all** (784 paired + 26 ambiguous; the other
+47,867 of 48,677 do not reach the ERP at all -- 46,609 have no ERP line because
+the ERP holds only company 1's outstanding orders, and 1,255 are unmapped).
+
+### What the book REFUTED, and it was my own opening sentence
+
+`docs/bugs/0672` records `DO-011505` and `DO-011478` as instance 2 of the
+key-without-identity class and names **site 6, this writer**, as "the writer that
+produces that shape". This entry repeated it. Checked against the re-cut
+(`ac-reconcile-truth.json.gz`, `exported_at 2026-09-08T00:03:44Z`), it is wrong
+on both documents:
+
+```
+DO-011505  DtlKey 920097  HOK-1003 (A) (K)  Desc2 PC151-01   -> ERP HILTON (A)-(K)
+           DtlKey 920099  HOK-1007 (Q)      Desc2 PC151-17   -> ERP CODY-(Q)
+DO-011478  DtlKey 917532  HOK-1007 (Q)      Desc2 PC151-13   -> ERP CODY-(Q)
+           DtlKey 917534  HOK-1005 (Q)      Desc2 PC151-06   -> ERP FENRIR-(Q)
+```
+
+The two swapped lines on each note carry **different AutoCount item codes that
+map to different ERP codes** (`autocount-erp-mapping-1561.csv`). They therefore
+never land in one `soByKey` bucket, no positional choice is ever made between
+them, and **this guard cannot fire on either document.** They are also
+bedframes, not sofas, which is why the heading changed too.
+
+**So their colour came from somewhere else and is still unattributed.** The book
+carries it plainly in the line's own `Desc2` on all four rows, so it was
+available and was not used. That is `docs/bugs/0689`, open, and it is NOT closed
+by this entry. Two documents that look like one mechanism are two findings until
+someone shows they are one -- and the tidy story is what made this the wrong
+answer the first time.
 
 **Root cause, traced.** `backend/scripts/lib/migrated-do-writer.mjs`
 `buildMigratedDoPlan` buckets candidate sales-order lines on `(AutoCount SO
@@ -55,7 +90,10 @@ existing `duplicate-guard:` one.
 
 **A missing link is visible and recoverable. A wrong one is neither** — it puts
 the wrong colour in front of a customer and reads as correct to every check we
-have.
+have. The 26 it now lists are pillows, storage, bedframes and DISPOSE lines, not
+sofas; the sofa build takes the `soByModel` branch, which consumes every
+compartment at once and makes no positional choice, so it is untouched by this
+rule and untested by it.
 
 **The false negative this nearly produced, recorded because it is the point.**
 `tests/migratedDoWriter.test.mjs` builds every fixture line with `variants:
