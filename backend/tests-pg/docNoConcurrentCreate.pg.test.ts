@@ -312,9 +312,18 @@ describePg('thirty concurrent Sales Order creates (real postgres)', () => {
 
   test('past the 1,000th document of one month: the paged floor is right, and a truncated one is harmless', async () => {
     const series = 'HC-SO-2703';
+    /* `lpad(i::text, 3, '0')` alone is WRONG past 999 and fails silently in the
+       most confusing possible way: Postgres TRUNCATES when the value is longer
+       than the target width, so 1000 comes back as '100' and collides with the
+       real 100. JavaScript's padStart — which is what the minter uses — widens
+       instead. This CASE is padStart's semantics, and it is the boundary the
+       whole test is about, so getting it wrong here would have measured the
+       fixture rather than the code. */
     await admin.unsafe(
       `INSERT INTO scm.mfg_sales_orders (doc_no, company_id)
-         SELECT format('${series}-%s', lpad(i::text, 3, '0')), 1 FROM generate_series(1, 1200) i`,
+         SELECT format('${series}-%s',
+                       CASE WHEN i < 1000 THEN lpad(i::text, 3, '0') ELSE i::text END), 1
+           FROM generate_series(1, 1200) i`,
     );
     const sb = postgrestOver(admin);
 
