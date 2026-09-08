@@ -1006,7 +1006,7 @@ export function AutoCountSync() {
                     answer "am I looking at all of it". This can. */}
                 <div className="flex items-center justify-between gap-3 border-t border-border bg-surface-2 px-2.5 py-1.5 text-[12px] text-ink-muted">
                   <span className="tabular-nums">
-                    {acShowingLine(live.length, d.counts.total)}
+                    {acShowingLine(live.length, acListTotal(d, state))}
                   </span>
                   <span>{AC_SORTED_BY_LINE[sort]}</span>
                 </div>
