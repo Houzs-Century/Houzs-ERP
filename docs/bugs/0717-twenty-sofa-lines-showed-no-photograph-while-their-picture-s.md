@@ -72,7 +72,7 @@ computes exactly this repair and `docs/bugs/0638-…` already built the plan-fil
 handoff to apply it; what was missing was the run. Plan generated on the
 operator machine (the only place holding both the R2 token and a DSN), applied
 through *Apply line photo repair (from a plan file)* against prod, **run
-`RUN_ID_PENDING`**: 20 lines gained 20 addresses.
+`34222921431`**: 20 lines gained 20 addresses.
 
 Why it cannot put a picture on the wrong line: the match is on the AutoCount
 line key `(doc_no, linked_ac_dtlkey)` — never position, never item code — the
@@ -100,7 +100,55 @@ book holds a DIFFERENT image for the PO line, and a photograph on the wrong line
 is worse than none.
 
 **What did NOT move, asserted rather than assumed.** The write appends one text
-array element. Before and after the apply, on prod: `MOVED_CONTROL_PENDING`
+array element. The write appends one text
+array element to 20 sales-order rows. Measured on prod immediately before
+(11:50Z) and after (11:54Z) the apply, company 1:
+
+```
+SO headers 2883  sub=0 rev=3122700 paid=1038468600 bal=945253100 dep=1021583400  UNCHANGED
+SO lines   15072 qty=25416 unit=1845445200 total=1981629100 disc=97600 cost=145608  UNCHANGED
+SO status  CONFIRMED:2352 IN_PRODUCTION:222 READY_TO_SHIP:208 DELIVERED:101  UNCHANGED
+inventory_movements 3505 qty=6069                       UNCHANGED
+movements behind a MIGRATED sales order  0  ->  0        UNCHANGED
+inventory_lots 2517 remaining=10331                      UNCHANGED
+SO photos  rows 687 -> 707,  addresses 1176 -> 1196      +20 / +20, exactly the repair
+```
+
+**One thing DID move that this repair did not touch, and it is named rather
+than absorbed.** The purchase-order line count went 1,344 -> 1,345 and PO
+photos 245 -> 246 across the same window. That is a CONCURRENT LANE, not this
+one: the plan carried 20 operations, all on the `SALES ORDER` arm, and the run
+log reads `PURCHASE ORDER: no operation in this plan`. The six newest PO lines
+were created 11:53:13Z-11:53:34Z — 45 seconds AFTER this run finished at
+11:52:28Z — and every one carries `unit_price_sen = 0` and
+`line_total_sen = 0`, the signature of a sofa compartment insert
+(`fix/unlock-146-sofas`, which was flagged as touching the same lines). No
+sales-order line was updated by anything else in the window: 0 rows.
+
+Because the PO side moved under it, the row-level PO figure of 184 is a reading
+of a moving population and is quoted as such; the PO LINE figure of 7 is the
+stable one.
+
+**Verified — the owner's number, before and after, on production.**
+`probe-line-photo-gap.mjs` run `34223033961` (after) against `34221745956`
+(before):
+
+| sales order, per AutoCount LINE | before | after |
+|---|---|---|
+| in the ERP | 637 | 637 |
+| **ARRIVED — the line shows its picture** | 617 | **637** |
+| **MISSING — no row of the line shows one** | 20 | **0** |
+
+**Every sales-order line the ERP holds a book photograph for now carries it.**
+The row-level instrument agrees and closes without remainder
+(`probe-line-photo-coverage.mjs` run `34223037788`): 672 -> 692 rows carrying a
+photo, 450 -> 430 without, and the gap probe accounts for all 430 as siblings
+carrying none by design. **That number will never reach zero and should not**;
+430 sibling compartments is what the owner's one-picture-per-build rule looks
+like counted by row.
+
+The purchase-order side is deliberately unchanged: 233 of 240 lines arrived,
+7 still missing.
 
 **Ref.** `fix/line-photos-missing`, 2026-09-08. Probe runs `34220784734`
 (row-level, before), `34221745956` (line-level split), and the after-run quoted
