@@ -332,8 +332,29 @@ are supposed to produce:
 
 - **NEW orders saved in the window.** Zero after a lift means staff still cannot
   save and the lift did not work.
-- **Staff actions recorded against MIGRATED orders in the window.** Non-zero is
-  the alarm — read WHO first, because an `*` account bypasses the lock by design.
+- **Migrated orders touched by a PERSON in the window.** Non-zero is the alarm —
+  read WHO first, because an `*` account bypasses the lock by design. Rows the
+  SYSTEM wrote are counted separately and are not an alarm: the stock-allocation
+  recompute writes `UPDATE_LINE` / `UPDATE_STATUS` audit rows constantly.
+
+**The pre-lift baseline, so the "after" reading means something.** Measured
+2026-09-08 at 11:29 MYT (run `34183368917`):
+
+| | |
+|---|---|
+| `scm.migrated_so_lock` | `"1"`, written 09:42:14 MYT — the lock IS in place |
+| `scm.write_freeze` | `"1 - scm.procurement.products"`, written 2026-09-02 11:52 MYT |
+| NEW orders saved by company 1, last 24h | **0** — and **0 ERP-created orders in all** |
+| Migrated orders touched by a person, last 24h | **0** (50 rows, all `system (auto-allocate)`) |
+
+That third row is the useful one: **company 1 has never created a sales order in
+this ERP.** Every one of its orders came across from AutoCount. So after the
+lift, the count going 0 -> 1 is unambiguous — there is no background traffic to
+mistake it for.
+
+The fourth row is the closest thing there is to proof that the migrated lock is
+holding in production without borrowing somebody's login: nobody has touched a
+migrated order in 24 hours, and the only writer that has is the cron.
 
 It cannot save an order for you, and does not pretend to. The step it does not
 replace is the runbook's own: **one ordinary member of staff — not an
