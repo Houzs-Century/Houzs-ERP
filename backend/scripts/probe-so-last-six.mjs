@@ -72,14 +72,24 @@ async function main() {
   const sofaAddons = addons.filter((a) => (a.categories || []).some((c) => /sofa/i.test(String(c))));
   p(`${addons.length} addon row(s) for company ${CO}; ${sofaAddons.length} carry a SOFA category`);
   p(`columns: ${[...addonCols].sort().join(", ")}`);
-  const priceCol = ["price_sen", "unit_price_sen", "amount_sen"].find((c) => addonCols.has(c)) || null;
+  /* The PRICE decides which route HC-SO-013496's specials repair may take. A
+     FREE option can be ticked in variants.specials; a PRICED one cannot be
+     stamped there without repricing the document, which is why the owner's
+     ruling 甲 put priced options in variants.specialsRecorded instead. So the
+     price is printed for every sofa option, not guessed at. */
+  const priceCols = ["selling_price_sen", "cost_price_sen", "price_sen", "unit_price_sen", "amount_sen"]
+    .filter((c) => addonCols.has(c));
   p("");
   p("  every SOFA addon whose code or label mentions a backrest, a back cushion or 8030:");
   for (const a of sofaAddons) {
     const t = `${a.code} ${a.label ?? ""}`.toLowerCase();
-    if (!/back|8030|cushion/.test(t)) continue;
-    p(`    code=${j(a.code)}  label=${j(a.label ?? null)}${priceCol ? `  ${priceCol}=${a[priceCol]}` : ""}  categories=${j(a.categories)}`);
+    if (!/back|8030|cushion|nylon|nilon/.test(t)) continue;
+    p(`    code=${j(a.code)}  label=${j(a.label ?? null)}  ${priceCols.map((c) => `${c}=${a[c]}`).join(" ")}  active=${j(a.active ?? null)}  categories=${j(a.categories)}`);
   }
+  p("");
+  p("  is CHANGE8030BACKREST a live option code at all, in ANY category?");
+  const spelt = addons.filter((a) => /change\s*8030|8030\s*back/i.test(`${a.code} ${a.label ?? ""}`));
+  p(`    ${spelt.length} row(s): ${spelt.map((a) => j(a.code)).join(", ") || "(none)"}`);
 
   /* ── the sales orders ───────────────────────────────────────────────────── */
   const soiCols = await cols("scm.mfg_sales_order_items");
@@ -205,10 +215,16 @@ async function main() {
   }
   /* HC-SO-012128's missing book line names a pillow; a line cannot be created
      for a product the catalogue does not hold. */
-  const pillows = await sql`SELECT code, name, item_group FROM scm.mfg_products
+  /* scm.mfg_products has no item_group column — measured, run 34243496074,
+     which died here on `column "item_group" does not exist` AFTER printing
+     everything above it. Read what the table has instead of what a sibling
+     table has. */
+  const prodCols = await cols("scm.mfg_products");
+  p(`  scm.mfg_products columns: ${[...prodCols].sort().join(", ")}`);
+  const pillows = await sql`SELECT code, name FROM scm.mfg_products
                              WHERE company_id = ${CO} AND upper(code) LIKE '%PILLOW%' ORDER BY code`;
   p(`  pillow products in the catalogue: ${pillows.length}`);
-  for (const x of pillows.slice(0, 30)) p(`    ${j(x.code)} ${j(x.name)} group=${j(x.item_group ?? null)}`);
+  for (const x of pillows.slice(0, 30)) p(`    ${j(x.code)} ${j(x.name)}`);
 
   await sql.end();
   p("");
