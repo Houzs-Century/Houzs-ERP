@@ -1606,7 +1606,7 @@ twenty minutes on 2026-09-08 and gave opposite answers on production about
 `redecode-collapsed-sofa-lines.mjs` requires BOTH (`isPlaceholderLine`). A
 purchase row that decoded to a single `1S` from a text today's parser reads as
 `2A(LHF)+1A(RHF)` carries no marker, so it is invisible to that tool — the class
-`docs/bugs/0713` was written about. Widening the predicate would rewrite live
+`docs/bugs/0715` was written about. Widening the predicate would rewrite live
 one-seaters; the narrow answer is to require the sales side to state the same
 multiset independently.
 
