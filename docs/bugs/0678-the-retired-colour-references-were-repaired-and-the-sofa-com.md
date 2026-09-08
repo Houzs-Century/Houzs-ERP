@@ -4,7 +4,7 @@
 
 All times LOCAL (Malaysia, UTC+8). Company 1 (Houzs Century), prod.
 
-## PART 1 — 280 live lines were bound to a colour the factory cannot buy
+### PART 1 — 280 live lines were bound to a colour the factory cannot buy
 
 **Symptom.** `docs/bugs/0669` measured it and left it: live document lines
 naming a `scm.fabric_colours` row that is `active = false`. A retired colour is
@@ -153,7 +153,7 @@ quantity, and a line key is an identity, not a quantity. (The sofa keying writes
 only `linked_ac_dtlkey` on `scm.mfg_sales_order_items` and
 `scm.purchase_order_items` — neither is a stock table.)
 
-## PART 2 — the reconcile was pairing a book line against a different line's sofa compartment
+### PART 2 — the reconcile was pairing a book line against a different line's sofa compartment
 
 **Symptom.** `check-ac-erp-reconcile` reported quantity differences on
 `SO-000814` DtlKey 58981 and `SO-012128` DtlKey 924549 that were not quantity
