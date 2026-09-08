@@ -1323,6 +1323,49 @@ query over the survivors. That is the fix for the 2026-08-20 re-issue, not a
 regression — see `docs/doc-number-reissue-coe.md` and the 2026-06-12 note in
 `scm/lib/doc-no.ts`.
 
+#### Thirty people pressing Save at the same second (owner, 2026-09-08)
+
+His question before the module opened to the whole sales floor: 「确保检查看
+document number 怎么跑 以免 30 个人同时开单的话号码大家撞」. **No two of them can
+get the same number, and none of them sees an error.** Three independent layers,
+in the order they act:
+
+1. **The claim is atomic.** `scm.next_doc_no_n` (migration 0316) is one
+   `INSERT … ON CONFLICT … DO UPDATE … RETURNING` statement, so the second
+   caller waits on the first's row lock and reads the incremented counter. Two
+   creates cannot read the same value, however close together they arrive.
+2. **The floor cannot make it wrong.** `mintMonthlyDocNo` reads the month's live
+   max first and passes it as `p_floor`; the RPC answers
+   `GREATEST(counter, floor + 1)`. A stale, truncated or empty floor can only be
+   IGNORED, so the read that precedes the claim is not a race window.
+3. **The unique index is the backstop, and `insertWithDocNoRetry` is what turns
+   it into a retry instead of a 500.** `scm.mfg_sales_orders.doc_no` is the
+   primary key. The create path mints at `mfg-sales-orders.ts:3365` — early,
+   because a PWP voucher claim is reserved against the number before the header
+   exists — and there is exactly ONE header insert, at `:5006`, wrapped in
+   `insertWithDocNoRetry`. Its first attempt reuses the already-minted number
+   and a re-mint only happens on a `23505`. **`tries` is 8 normally and 1 when a
+   PWP code was claimed**, deliberately: a re-mint would orphan
+   `pwp_codes.redeemed_doc_no`, so a promo order fails clean and rolls the claim
+   back rather than retrying.
+
+Proved end to end, not by reading: `backend/tests-pg/docNoConcurrentCreate.pg.test.ts`
+fires 30 concurrent creates on 30 real connections through the real
+`mintMonthlyDocNo` + `insertWithDocNoRetry`, and asserts 30 documents, 30
+distinct numbers, zero errors. It also holds all thirty at a barrier so they
+share an IDENTICAL floor, and shows every one of them still minted exactly once
+— the counter, not the retry, is what makes it safe. The RED is in the same
+file: with the counter switched off at the transport (`counter: false`, which is
+the real pre-0316 / pre-migration state) the same thirty-way race hands ONE
+number to all thirty and refuses twenty-nine with `23505`.
+
+**Past 1,000 documents in one month** the numbering does not break. The floor
+read pages (`fetchMonthlyDocNos` → `paginateAll`), the suffix widens to four
+digits, `maxMonthlySuffix` parses any width, and a truncated floor is harmless
+under the counter. What is left is cost: one extra PostgREST round trip per
+create per 1,000 rows in that month. `.github/workflows/doc-no-headroom.yml`
+reports how far the busiest month has ever got.
+
 ### Caching / loading behaviour (why the list opens instantly)
 Three layers, tuned so the list never shows a full-load spinner on a revisit:
 1. **react-query in-memory** (`lib/queryClient.ts`) — `staleTime 30s`, `gcTime 30min`.
@@ -1949,6 +1992,58 @@ item translation, `no-price`, book-blank variants, an unproceeded order's blank,
 `backend/scripts/lib/so-verdict-derive.mjs`. Full runbook including the order of
 operations: `docs/migrated-so-lock.md` §10.
 
+### 「所以SO 都tally了吗?」 — the ONE artifact, and why the lock's number is not it
+
+Actions -> **Are all the sales orders tallied? (read-only)**
+(`.github/workflows/so-tally-verdict.yml`). Read-only, manual, own concurrency
+group, **writes nothing to production** — there is no publish step, deliberately;
+the sibling *AutoCount vs ERP reconcile* workflow is where the verdict can be
+PUBLISHED to `scm.so_reconcile_verdict`.
+
+**The lock's `differ` count is not an answer to the owner's question, and must
+not be quoted as one.** It is a SAFETY verdict: everything that is not proven
+identical LOCKS, including every document the reconcile could not compare at
+all. That is right for a lock and wrong for a status report — on 2026-09-08 it
+read `149 still differ` while **110 of the 149 had never been compared**, because
+the account book's own Desc2 does not decode into pieces. The full trace is
+`docs/bugs/0715-cannot-be-compared-was-counted-as-differ-so-the-sales-order.md`.
+
+The report splits that into four, and a document lands in exactly one:
+
+| bucket | meaning | blocks TALLIED? |
+| --- | --- | --- |
+| `identical` | compared on every axis and every axis agreed | — |
+| `work` | a real difference, or the document is absent, or the ERP claims one the book does not have | **YES** |
+| `unanswerable` | the ONLY findings are axes the checker REFUSED to answer (`UNANSWERABLE_AXES`) | no — the owner's drawing decides these |
+| `book-gap` | nothing differs; the ERP carries a value the BOOK never stated | no — already accepted as 一模一样 |
+
+Precedence is `work > unanswerable > book-gap > identical`, so a class listed in
+the report's *what this verdict excluded* section can hold more documents than
+the bucket it feeds. The word **TALLIED** is decided in exactly one place —
+`isTallied` in `backend/scripts/lib/so-tally-verdict.mjs`, zero `work` — so no
+summary can soften it.
+
+**It measures nothing.** `check-so-tally.mjs` runs
+`check-ac-erp-reconcile.mjs`, reads the verdict file that run writes, and
+classifies its rows; then it parses the reconcile's own printed `SO VERDICT` and
+`SUMMARY SO` lines and REFUSES to print anything if they disagree with the file.
+Parsing checks; it never decides. A second implementation of "different" is what
+`docs/bugs/0708-two-tools-answered-the-same-pairing-question-differently-twe.md`
+cost.
+
+**MEASURED**, `node backend/scripts/check-so-tally.mjs` against PRODUCTION over
+the read-only DSN, 2026-09-08 11:52 UTC, company 1, exit 0 — **re-run before
+quoting it**, the sofa lanes move these numbers daily:
+
+> 2,882 documents. **2,711 identical · 37 differ and are work · 109 cannot be
+> compared · 25 the book itself is the gap.** NOT TALLIED. The 37 are 35 sofa
+> compartments, 1 specials and 1 `a book line we do not have`; **5 of the 35 sit
+> on a PROCEEDED order** and the rest do not. All 109 unanswerable ones have the
+> same cause — keyed, but the book's build text does not decode into pieces, so
+> only the owner's drawing settles them, and **none** can be closed by stamping a
+> line key. The document, SKU, quantity, unit price, document total,
+> colour/fabric, seat size and bedframe-build axes are all at **zero**.
+
 
 ### Deleting an SO — DRAFT only, and the test-order escape hatch
 
@@ -2026,6 +2121,38 @@ Tooling: `backend/scripts/repair-so-book-parity-owner-ruling.mjs` +
 Neither lane touches `paid_sen` or the header `balance_sen`, and neither reaches
 AutoCount — 「写回autocount的你不需要理了」, same day.
 
+#### The SECOND override, same day: a whole document
+
+Later on 2026-09-08, again knowing the rule:
+
+> 「把SO2609-001 删掉 这是测试单来的」
+>
+> "Delete SO2609-001. It is a test order."
+
+`HC-SO-2609-001` was removed with **Actions -> "Delete test SO"**, below. It is
+the same shape of override as the row above and it is **just as narrow**: a
+document the owner names, not a class. Two overrides in one day is not the rule
+softening — the rule is still *cancel, never delete*, and the only thing that
+moves it is him, per document.
+
+Three things worth carrying forward from it:
+
+- **The document it removed is written down.** Every column of the header and of
+  its one line is in the ledger entry, so it can be re-keyed by hand if the
+  ruling is ever reversed. That is the price of an irreversible act, and it is
+  the same price `repair-so-book-parity-owner-ruling.mjs` pays above.
+- **It was the ERP's own first native sales order** — the only document in
+  production whose `linked_ac_docno` equalled its `doc_no` (1 of 2,883, run
+  `34220096163`). Several checks and docs pointed at it by name; they are
+  corrected in the same PR, and the pure-function test keeps the strings as
+  FIXTURES because the shape rule still has to answer for that shape.
+- **AutoCount keeps its copy.** The write-back had already succeeded, and the
+  live book still holds `HC-SO-2609-001` uncancelled at RM 100.00. Deleting
+  here does not reach the book and nothing was enqueued to. Somebody has to
+  cancel it in AutoCount by hand.
+
+Ledger: `docs/bugs/0715-deleting-a-sales-order-trusted-a-hand-written-child-list-nob.md`.
+
 ## The save lock — one minute, and it knows whose it is
 
 **It covers ONE SAVE, not an editing session.** Opening an order takes no lock at
@@ -2093,6 +2220,43 @@ default; `apply=1` also requires `confirm_doc` to repeat the doc_no. It REFUSES 
 any downstream DO/SI (both FKs are `ON DELETE SET NULL`, so a delete would
 silently orphan a real document), on a status past CONFIRMED, on more than one
 payment, and on vouchers already in circulation.
+
+**Since 2026-09-08 it also sweeps the live schema, and that is now the guard that
+decides whether a delete is safe.** The refusals above are a hand-written list of
+two tables, and what it removes is a hand-written list of four; neither had ever
+been checked against the database. The script now asks
+`information_schema` for every text column in `scm`/`public` whose name could
+hold a document number — 107 of them on production — counts each against the
+target, and CLASSIFIES what comes back:
+
+| bucket | what happens |
+|---|---|
+| CHILD (`CHILD_TABLES`) | deleted with the order |
+| AUDIT (`scm.autocount_outbox`, `scm.mfg_so_audit_log`, `scm.entity_audit_log`) | **kept on purpose.** Who created the order, and whether it reached the account book, outlive the order |
+| DOWNSTREAM (delivery orders, invoices, PO allocations, consignment notes …) | REFUSES |
+| anything else | REFUSES, and names the table. `ALLOW_ORPHAN_REFS=yes` proceeds and leaves them, as a deliberate act |
+
+A refusal exits 0 — it is a verdict, not a malfunction. The first production run
+of the sweep refused: `scm.mfg_so_audit_log` was on no list at all
+(run `34220446297`).
+
+Three more properties it did not have before:
+
+- **`MODE=plan` is the default** (`APPLY=1` still means `MODE=apply`), and plan
+  prints the FULL document — header, every line with its sofa `variants` build,
+  every payment, every column — as JSON before anything is written. There is no
+  undo; that output is the recovery path.
+- **The verification re-reads on a FRESH connection and asserts the SHAPE**, not
+  a row count: the document and every child gone, the audit rows still there,
+  and a CONTROL — row counts plus an md5 fingerprint of every OTHER order's
+  `doc_no|status`, plus their line count, payment count and money total —
+  identical before and after. A mismatch throws.
+- **Its SQL is executed against a real Postgres in CI** before production sees it
+  (`backend/tests-pg/deleteTestSoRefs.pg.test.ts`, the `backend-postgres` job),
+  because `node --check` used to be the whole of the evidence a production
+  DELETE had.
+
+Ledger: `docs/bugs/0715-deleting-a-sales-order-trusted-a-hand-written-child-list-nob.md`.
 
 Vouchers are the part that does not cascade: `pwp_codes.source_doc_no` /
 `.redeemed_doc_no` carry **no FK** to the SO, so nothing the database does will

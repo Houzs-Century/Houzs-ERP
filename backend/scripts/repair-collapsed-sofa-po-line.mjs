@@ -435,7 +435,7 @@ async function main() {
        delivery counts, and the log says which kind it was. */
     const grs = await sql`
       SELECT g.grn_number AS doc, g.migrated_no_stock AS migrated,
-             gi.item_code AS code, gi.qty
+             gi.item_code AS code, gi.qty_accepted AS qty
         FROM scm.grn_items gi JOIN scm.grns g ON g.id = gi.grn_id
        WHERE gi.purchase_order_item_id = ${po.id}`;
     const dos = await sql`

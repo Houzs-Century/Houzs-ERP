@@ -7,6 +7,19 @@
    Both were measured on production before the fix shipped — Actions -> *SO
    migrated shape (read-only)*, run 34214516108, 2026-09-08:
 
+   HC-SO-2609-001 IS NO LONGER A LIVE DOCUMENT. It was DELETED from the ERP on 2026-09-08 at the owner's instruction — it was a
+   test order. IT STAYS HERE, deliberately: soIsMigratedShape is a PURE FUNCTION
+   over two strings, so every assertion below is a FIXTURE and none of them needs
+   the row to exist. What the pair records — an ERP number the account book
+   echoed back unchanged — is the shape the rule must answer FALSE for, and it is
+   the only worked example of it this repo has now that the live 'equal' bucket
+   is empty. Deleting these cases to "tidy up" would delete the regression test
+   for docs/bugs/0703 and leave the write-back arm of the rule unasserted.
+
+   The LIVE probe is the half that had to change: check-so-migrated-shape.mjs
+   pins HC-SO-013361 only, because a pin that reads a deleted row prints
+   NOT FOUND forever. Ledger: docs/bugs/0715-deleting-a-sales-order-trusted-a-hand-written-child-list-nob.md
+
      HC-SO-2609-001   linked_ac_docno "HC-SO-2609-001"   created by a person at
                       14:06:50 MYT, written back at 14:11, and classed as
                       MIGRATED by 14:12. It must answer FALSE.

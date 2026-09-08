@@ -463,6 +463,25 @@ PILLOW),AutoCount 那条 `RDS-5526 SOFA`(DtlKey 58980,**UnitPrice 9,300**)不在
 
 ---
 
+### 8.6 别名型号的沙发 PO 行被记成 `others`（2026-09-08 发现）
+
+- **现象**：SO-012565 (Lisa) 单里沙发两件 Remaining 都是 1，但开 DO 卡在「Stock not
+  enough」，Ship anyway 之后又被沙发 batch 规则挡死：没批次、没挂 PO。
+- **根因**：lane 2 (`import-ac-so-linked-pos.mjs`) 在 2026-08-28 那一轮，用**没折别名的**
+  `5540-1S` 去问 catalogue，问不到 → `others` → 不拆件，写成一条 `8030-1S`，**没有**
+  `SOFA UNPARSED` 标记。SO 那边同一段 Desc2 拆成了 `8030-2A(LHF)+8030-1A(RHF)`。
+  `import-ac-sofa-stock.mjs` 只看 `item_group='sofa'`，所以这台沙发从来没开过库存。
+- **范围**（2026-09-08 prod 只读实测）：14 行 / 14 张 PO，全是 HOK-5530/5536/5537/5540
+  这四个别名型号，全部 RECEIVED、各带一条 migrated 收货行、0 movements。9 张 SO 还开着
+  且备注 READY，5 张已交货。
+- **修**：`repair-mislabelled-sofa-po-lines.mjs` + 同名 workflow，默认 plan。按账本自己的
+  `FromSODtlKey` 从 PO 行走到 SO 的件，PO 原文用同一个 decoder 解出来必须跟 SO 的件一模
+  一样（或原文相同），才把 PO 行（连同 migrated 收货行）改成 SO 的件、挂 `so_item_id`。
+  已交货的 5 张**拒绝**（沙发已经出门，开库存就是把送出去的沙发放回架上）。
+- **修完还要跑两个现成的 workflow**：`import-ac-sofa-stock.yml`（开 lot）→ allocation
+  recompute（绑批次 → READY）。写这段的时候**三个都还没在 prod 上跑过**。
+- 账本条目：`docs/bugs/0714-the-sofa-purchase-line-was-filed-as-others-so-the-sales-orde.md`。
+
 ## 9. 一句话铁律
 
 1. **不确定就不猜**——宁可占位 + 标记,也不要写一个看起来对的件

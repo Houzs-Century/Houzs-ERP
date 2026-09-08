@@ -261,8 +261,17 @@ per-document verdict went **2731 -> 2733 would OPEN, 151 -> 149 LOCKED**.
 runs: PO `0 / 0 / 0 / 0 / 0` with decided 1, no-price 241, non-MYR 1; GR money 9
 with 100 ERP-RM0 and 2 same-goods; DO phantom 2; IV 4 absent, 4 same-goods, 9
 same-money, 1 no-key-open; PI 1 line-count, 11 same-money, 6 no-key-open. SO's
-own `phantom 1` is also identical — it is `HC-SO-2609-001`, a document the ERP
-claims and the book does not have, and it is **not** this lane's.
+own `phantom 1` is also identical — it is `HC-SO-2609-001`, and it is **not**
+this lane's.
+
+> **CORRECTED 2026-09-08.** This said the book "does not have" it. The book DOES
+> have it: the AutoCount side here is the snapshot exported
+> `2026-09-08T00:03:44.762Z`, about six hours before the write-back, so the
+> phantom was a snapshot artefact. The live book was read directly and holds
+> `HC-SO-2609-001` uncancelled at RM 100.00. The ERP row has since been
+> DELETED from the ERP on 2026-09-08 at the owner's instruction. Nothing in THIS lane's control changes — the cell was identical
+> across both of its runs either way. Ledger:
+> `docs/bugs/0715-deleting-a-sales-order-trusted-a-hand-written-child-list-nob.md`.
 
 **Stock did not move at all.**
 

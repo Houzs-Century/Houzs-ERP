@@ -49,10 +49,29 @@ if (!Number.isInteger(COMPANY_ID) || COMPANY_ID <= 0) {
   console.error(`COMPANY_ID must be a positive integer; got ${JSON.stringify(process.env.COMPANY_ID)}`);
   process.exit(1);
 }
-/* The two documents docs/bugs/0703 names, pinned here so the run that decides
-   the fix prints them by name instead of leaving the reader to trust a count.
-   Overridable, because the second one is only an EXAMPLE of a cutover order. */
-const PIN = (process.env.PINNED || "HC-SO-2609-001,HC-SO-013361")
+/* The documents docs/bugs/0703 names, pinned here so the run that decides the
+   fix prints them by name instead of leaving the reader to trust a count.
+
+   IT USED TO PIN HC-SO-2609-001 TOO, and that document no longer exists: it was
+   DELETED from the ERP on 2026-09-08 at the owner's instruction — a test order,
+   《把SO2609-001 删掉 这是测试单来的》. Leaving it pinned would print
+   "NOT FOUND" as a ::warning:: on every future run, which reads as an anomaly
+   rather than as a document somebody removed on purpose.
+
+   It is NOT replaced by another live write-back example, because on the day it
+   was deleted there was no second one: the 'equal' bucket held exactly 1 of
+   2,883 (run 34214516108, measured again by 34220096163). That bucket is
+   printed above and is the honest, self-updating answer — when the ERP next
+   creates and sends an order, 'equal' becomes 1 again on its own and this pin
+   does not have to be edited for the probe to tell the truth.
+
+   The SHAPE rule is still pinned by name on BOTH documents, in
+   backend/tests/soIsMigratedShape.test.ts — a pure function needs no live row.
+
+   Ledger: docs/bugs/0715-deleting-a-sales-order-trusted-a-hand-written-child-list-nob.md
+
+   Overridable: the remaining one is only an EXAMPLE of a cutover order. */
+const PIN = (process.env.PINNED || "HC-SO-013361")
   .split(",").map((s) => s.trim()).filter(Boolean);
 
 function resolveUrl() {
