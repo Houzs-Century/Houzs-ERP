@@ -2302,6 +2302,7 @@ export const SalesOrderDetail = () => {
                        marker + red ring stay off on a no-date draft (owner
                        2026-07-14). */
                     variantsRequired={requireVariants}
+                    seedSofaLegDefault={true}
                   />
                 </div>
               );
@@ -2327,6 +2328,7 @@ export const SalesOrderDetail = () => {
                     onRemove={cb?.onRemove ?? (() => cancelAddLine(staged.key))}
                     canRemove={true}
                     variantsRequired={requireVariants}
+                    seedSofaLegDefault={true}
                   />
                 </div>
               );
