@@ -1,6 +1,6 @@
 ## A sofa whose text is a suffix of its neighbour's had no address at all [high]
 
-<!-- area: AutoCount cutover — sofa compartments -->
+<!-- area: Sofa, fabric, variants -->
 
 **Symptom.** The owner ruled on 2026-09-08 that `HC-SO-012025` holds TWO
 DIFFERENT sofas: the first `1A(LHF)+1NA+CNR+1A(RHF)`, and the second — the slip
