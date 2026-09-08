@@ -31,7 +31,7 @@ import {
   type MaintenanceMerchant, type MaintenanceBank, type MaintenanceCompany, type MaintenanceData } from './settlement-queries';
 import { ICON, btn, softText, danger, refusalText } from './settlement-ui';
 import { useAccounts, useAccountRoles, useSaveBankDefault } from '../../vendor/scm/lib/accounting-queries';
-import { useBankRules, useSaveBankRule, useCreateBankRule, type BankRule } from './bank-queries';
+import { useBankRules, useSaveBankRule, useCreateBankRule, useBankConfigs, useSaveBankConfig, type BankRule, type BankConfig } from './bank-queries';
 import { useVoucherNumbering, useSaveVoucherNumbering } from './accounting-phase1-queries';
 import css from './SettlementSetup.module.css';
 import { PageHeader } from '../../components/Layout';
@@ -73,8 +73,152 @@ export const SettlementSetup = () => {
 
       <DefaultBankCard />
       <NumberingCard />
+      <BankStatementsCard />
       <BankRulesCard />
     </div>
+  );
+};
+
+/* ── Bank statements — which accounts take one, and how each file reads
+   (owner 2026-09-08: Bank Recon said no account was set up and nothing on
+   any screen could set one up; and 别卡死读 column, 我怕未来 bank 可能换 format).
+   Per company — the company this session works in — because the same bank
+   pays different companies into different accounts. Every heading role takes
+   SEVERAL names, comma-separated; a blank role falls back to the reader's
+   built-in names, shown beside it. */
+const HEADING_ROLES = [
+  { key: 'date', label: 'Date headings' },
+  { key: 'description', label: 'Description headings' },
+  { key: 'reference', label: 'Reference headings (joined)' },
+  { key: 'credit', label: 'Money-in headings' },
+  { key: 'debit', label: 'Money-out headings' },
+  { key: 'amount', label: 'Single amount heading' },
+  { key: 'indicator', label: 'CR/DR heading' },
+  { key: 'balance', label: 'Balance headings' },
+] as const;
+type HeadingKey = typeof HEADING_ROLES[number]['key'];
+type ConfigForm = { accountCode: string; bankCode: string; accountNo: string; statementFormat: string; delimiter: string; amountFormat: string; creditIndicator: string } & Record<HeadingKey, string>;
+const EMPTY_CONFIG: ConfigForm = {
+  accountCode: '', bankCode: '', accountNo: '', statementFormat: 'CSV', delimiter: '', amountFormat: 'decimal', creditIndicator: 'CR',
+  date: '', description: '', reference: '', credit: '', debit: '', amount: '', indicator: '', balance: '',
+};
+const joinHeadings = (h: string | string[] | undefined): string => (h == null ? '' : Array.isArray(h) ? h.join(', ') : h);
+const splitHeadings = (s: string): string[] => s.split(',').map((x) => x.trim()).filter(Boolean);
+
+const BankStatementsCard = () => {
+  const cfgQ = useBankConfigs();
+  const save = useSaveBankConfig();
+  const accountsQ = useAccounts();
+  const money = (accountsQ.data?.accounts ?? []).filter((a) => a.acc_money === true && a.is_active);
+  const [form, setForm] = useState<ConfigForm | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const configs = cfgQ.data?.configs ?? [];
+  const defaults = cfgQ.data?.defaultHeadings ?? {};
+  const set = (patch: Partial<ConfigForm>) => setForm((f) => ({ ...(f ?? EMPTY_CONFIG), ...patch }));
+
+  const edit = (c: BankConfig) => setForm({
+    accountCode: c.account_code, bankCode: c.bank_code, accountNo: c.account_no ?? '', statementFormat: c.statement_format,
+    delimiter: c.delimiter === '\t' ? 'tab' : (c.delimiter ?? ''), amountFormat: c.amount_format, creditIndicator: c.credit_indicator,
+    date: joinHeadings(c.column_map.date), description: joinHeadings(c.column_map.description), reference: joinHeadings(c.column_map.reference),
+    credit: joinHeadings(c.column_map.credit), debit: joinHeadings(c.column_map.debit), amount: joinHeadings(c.column_map.amount),
+    indicator: joinHeadings(c.column_map.indicator), balance: joinHeadings(c.column_map.balance),
+  });
+
+  const submit = () => {
+    if (!form) return;
+    const columnMap: Record<string, string[]> = {};
+    for (const r of HEADING_ROLES) { const list = splitHeadings(form[r.key]); if (list.length > 0) columnMap[r.key] = list; }
+    save.mutate({
+      accountCode: form.accountCode, bankCode: form.bankCode, accountNo: form.accountNo, statementFormat: form.statementFormat,
+      delimiter: form.delimiter, amountFormat: form.amountFormat, creditIndicator: form.creditIndicator, isActive: true, columnMap,
+    }, {
+      onSuccess: () => { setNote(`${form.accountCode} saved — upload its statements on Bank Recon.`); setForm(null); },
+      onError: (e) => setNote(refusalText(e, 'That account was not saved.')),
+    });
+  };
+
+  return (
+    <section className={css.card}>
+      <div className={css.cardHead}>
+        <span className={css.cardTitle}>Bank statements</span>
+        <span className={css.hint}>Which of this company's accounts take a statement file, and how each file reads. Headings, never positions — name every caption the bank has used, comma-separated.</span>
+      </div>
+      {configs.length === 0 && !cfgQ.isLoading && (
+        <div style={softText}>No account takes a statement yet — Bank Recon cannot read a file until one does.</div>
+      )}
+      {configs.length > 0 && (
+        <div className={css.scroll}>
+          <table className={css.grid}>
+            <thead>
+              <tr>
+                <th className={css.head}>Account</th><th className={css.head}>Bank</th><th className={css.head}>Account no.</th>
+                <th className={css.head}>File</th><th className={css.head}>Headings</th><th className={css.head} aria-label="edit" />
+              </tr>
+            </thead>
+            <tbody>
+              {configs.map((c) => (
+                <tr key={c.id} className={css.row}>
+                  <td className={css.label}><div className={css.name}>{c.account_code}</div></td>
+                  <td>{c.bank_code}{c.is_active ? '' : ' (off)'}</td>
+                  <td>{c.account_no ?? '—'}</td>
+                  <td>{c.statement_format}{c.delimiter ? ` · ${c.delimiter === '\t' ? 'tab' : c.delimiter}` : ''} · {c.amount_format}</td>
+                  <td style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
+                    {HEADING_ROLES.filter((r) => joinHeadings(c.column_map[r.key])).map((r) => `${r.label.replace(/ headings?.*$/i, '')}: ${joinHeadings(c.column_map[r.key])}`).join(' · ') || 'built-in names'}
+                  </td>
+                  <td><button type="button" style={btn()} onClick={() => edit(c)}>Edit</button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
+        <button type="button" style={btn()} onClick={() => setForm(EMPTY_CONFIG)}>+ Add account</button>
+        {note && <span style={{ ...softText, color: note.includes('saved') ? undefined : danger }}>{note}</span>}
+      </div>
+      {form && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 'var(--space-2)', fontSize: 'var(--fs-13)' }}>
+          <label>Account<br />
+            <select aria-label="Statement account" value={form.accountCode} onChange={(e) => set({ accountCode: e.target.value })} disabled={configs.some((c) => c.account_code === form.accountCode)} style={{ width: '100%' }}>
+              <option value="">— pick the bank account —</option>
+              {money.map((a) => <option key={a.account_code} value={a.account_code}>{a.account_code} · {a.account_name}</option>)}
+            </select>
+          </label>
+          <label>Bank<br /><input aria-label="Bank" value={form.bankCode} onChange={(e) => set({ bankCode: e.target.value })} placeholder="HLB / MBB / PBB…" style={{ width: '100%' }} /></label>
+          <label>Account number (the file must mention it)<br /><input aria-label="Account number" value={form.accountNo} onChange={(e) => set({ accountNo: e.target.value })} style={{ width: '100%' }} /></label>
+          <label>File format<br />
+            <select aria-label="File format" value={form.statementFormat} onChange={(e) => set({ statementFormat: e.target.value })} style={{ width: '100%' }}>
+              <option value="CSV">CSV</option><option value="TXT">TXT</option>
+            </select>
+          </label>
+          <label>Delimiter<br />
+            <select aria-label="Delimiter" value={form.delimiter} onChange={(e) => set({ delimiter: e.target.value })} style={{ width: '100%' }}>
+              <option value="">comma</option><option value="|">pipe |</option><option value="tab">tab</option><option value=";">semicolon ;</option>
+            </select>
+          </label>
+          <label>Amounts<br />
+            <select aria-label="Amount format" value={form.amountFormat} onChange={(e) => set({ amountFormat: e.target.value })} style={{ width: '100%' }}>
+              <option value="decimal">decimal (1,710.00)</option><option value="integer-sen">integer sen (000000000171000)</option>
+            </select>
+          </label>
+          <label>Credit indicator<br /><input aria-label="Credit indicator" value={form.creditIndicator} onChange={(e) => set({ creditIndicator: e.target.value })} style={{ width: '100%' }} /></label>
+          {HEADING_ROLES.map((r) => (
+            <label key={r.key}>{r.label}<br />
+              <input aria-label={r.label} value={form[r.key]} onChange={(e) => set({ [r.key]: e.target.value } as Partial<ConfigForm>)}
+                placeholder={(defaults[r.key] ?? []).slice(0, 3).join(', ') || '—'} style={{ width: '100%' }} />
+            </label>
+          ))}
+          <div style={{ gridColumn: '1 / -1', display: 'flex', gap: 'var(--space-2)', alignItems: 'center' }}>
+            <span style={softText}>A blank heading uses the reader's built-in names (shown greyed). Save, then upload on Bank Recon.</span>
+            <span style={{ flex: 1 }} />
+            <button type="button" style={btn(true, save.isPending || !form.accountCode || !form.bankCode)} disabled={save.isPending || !form.accountCode || !form.bankCode} onClick={submit}>
+              {save.isPending ? 'Saving…' : 'Save statement setup'}
+            </button>
+            <button type="button" style={btn()} onClick={() => setForm(null)}>Cancel</button>
+          </div>
+        </div>
+      )}
+    </section>
   );
 };
 

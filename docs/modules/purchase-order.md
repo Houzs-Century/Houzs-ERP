@@ -1594,6 +1594,7 @@ Three tools own this edge and they do not overlap:
 | ONE purchase row, ONE sales row | `repair-po-so-link-from-book.mjs` | a Map keyed by DtlKey would keep one row of a multi-row side |
 | SEVERAL on both sides, same products | `repair-po-so-link-sofa-compartments.mjs` | the pairing is a copy plus an identity match, not a choice |
 | ONE collapsed purchase row (`{model}-1S`), SEVERAL sales rows | `repair-collapsed-sofa-po-line.mjs` | the other two cannot invent a compartment; this one takes it from the BOOK's own Desc2 and only when the sales side already holds that exact multiset |
+| the same, but the purchase row is filed `others` AND carries a migrated, movement-free goods-receipt line | `repair-mislabelled-sofa-po-lines.mjs` | the row above refuses any build with a receipt line (its gate 6) and leaves the category alone; this one splits the receipt WITH the line (owner 2026-08-11) and writes `item_group = 'sofa'`, because the sofa stock import and `computeVariantKey` both key on it. Measured 2026-09-08: all 14 rows of this shape carry a receipt, so the row above reaches none of them (run 34220188752). `docs/bugs/0714-the-sofa-purchase-line-was-filed-as-others-so-the-sales-orde.md` |
 
 All three share ONE pairing vocabulary — `scripts/lib/sofa-po-so-pair.mjs` and
 `scripts/lib/redecode-sofa-plan.mjs`. Two copies of the pairing rule existed for
