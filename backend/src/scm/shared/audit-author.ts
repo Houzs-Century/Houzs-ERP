@@ -8,13 +8,16 @@
 //
 //   · the go-live change log the owner reads (routes/change-log.ts)
 //   · the migrated-order lock check (scripts/check-so-open-for-new.mjs)
-//   · the AutoCount delta sync's refusal to overwrite a person
-//     (scripts/sync-ac-delta.mjs)
+//   · the AutoCount delta sync's refusal to overwrite a person, through
+//     scripts/lib/ac-human-edit.mjs, which INDEXES person edits per
+//     (document, field) and delegates the AUTHORSHIP question here
 //
-// Those three used to hold three different answers. The rule lives here, and
-// they import it — check-duplicated-decisions.mjs exists because a business
-// rule with two homes drifts, and this one had already drifted in the most
-// expensive direction possible (see THE DEFECT, below).
+// It lives in `src/scm/shared/` and not in `scripts/lib/` for one mechanical
+// reason: the change-log route runs in the Worker, and a Worker bundle cannot
+// import out of `backend/scripts`. The scripts CAN import a `.ts` (they run
+// under `npx tsx`), so this is the only direction that gives all three callers
+// one answer. ac-human-edit.mjs keeps the indexing, the aliasing and the
+// refusal wording — those are not decisions and are better where they are.
 //
 // ── THE RULE ──
 // A row is MACHINE-written when `actor_name_snapshot` starts with "system"
@@ -32,17 +35,29 @@
 // personalised (auth.ts carries the real caller's name into
 // user_metadata.name, which was itself a later fix for exactly this reason).
 //
-// ── THE DEFECT THIS FIXES [critical] ──
-// sync-ac-delta.mjs's header lane classified authorship as
+// PROVEN BY RUNNING IT, not by reading it. audit-author.test.ts executes the
+// REAL supabaseAuth middleware over a caller whose Houzs id is 4242 and asserts
+// that `c.get('user').id` comes back as the pinned uuid. That assertion is the
+// evidence for every sentence above, and it fails the moment the pinning
+// changes — at which point this rule can be revisited rather than quietly
+// becoming wrong.
 //
-//     if (!r.actor_id || String(r.actor_id) === SYS_ACTOR) { sysAuthored++; continue; }
+// ── THE TWO DEFECTS THIS CLOSES [critical] ──
+// 1. sync-ac-delta.mjs's header lane read `!r.actor_id` as "the system wrote
+//    it". A null actor is a normal shape for a PERSON here (so-amendments.ts
+//    writes actorId: null on purpose; so-handover.ts and entity-audit.ts leave
+//    it null whenever the caller has no staff row), so a person's edit was
+//    handed to the next sync to overwrite. Fixed by #3205. docs/bugs/0700.
+// 2. The rule #3205 landed kept a second arm — `actor_id === MIGRATION_ACTOR_ID
+//    => system`. That arm is the one measured above: it matches EVERY human
+//    sales-order edit, so the guard still refused nothing on the lane that
+//    matters most. It matches ZERO migration rows, because NO script writes
+//    actor_id into either audit table at all — the only two that insert
+//    (backfill-2990-delivered-dos.mjs:124 and repair-so-fee-line-integrity.mjs:317)
+//    both omit the column. Removed here. docs/bugs/0703.
 //
-// with SYS_ACTOR = SCM_SYSTEM_STAFF_ID. Since that uuid is what EVERY human
-// edit carries, the "never overwrite a human" veto matched every human edit as
-// a system row and skipped it: the veto refused NOTHING, and the account book's
-// older value would have been written over a salesperson's change with no
-// signal at all. Proven by reading the two files, and asserted red-first in
-// audit-author.test.ts. See docs/bugs/0702.
+// Both are asserted red-first in audit-author.test.ts, which runs each old
+// predicate against a salesperson's own audit row.
 //
 // ── WHY A NAME PREFIX IS A SOUND SIGNAL ──
 // It is the writer's own self-declaration, and every machine writer in the tree
@@ -139,67 +154,4 @@ export function auditMachineSql(column: string): string {
 /** TRUE for a PERSON row. The readers want this one more often than its twin. */
 export function auditPersonSql(column: string): string {
   return `NOT ${auditMachineSql(column)}`;
-}
-
-/* ──────────────────────────────────────────────────────────────────────
-   THE VETO — "a row a person has edited is theirs".
-   ────────────────────────────────────────────────────────────────────── */
-
-/** One audit row, reduced to what the veto reads. */
-export type VetoAuditRow = AuditAuthorRow & {
-  /** The document the row belongs to (so_doc_no, or entity_doc_no). */
-  doc: string;
-  /** `field_changes` rendered as text. The match is a substring test over the
-   *  whole blob — the same test sync-ac-delta has always used; only the
-   *  AUTHORSHIP arm changed, and changing two things at once is how a fix
-   *  becomes unattributable. */
-  fieldChangesText: string;
-};
-
-/** A field the sync knows how to write: its own key, and the ERP column. */
-export type VetoField = { key: string; erp: string | null | undefined };
-
-export type PersonEditVeto = {
-  /** `${doc}|${fieldKey}` for every field a PERSON changed. */
-  fields: Set<string>;
-  /** The documents at least one of those fields belongs to. */
-  docs: Set<string>;
-  /** Denominators, for the run to print. */
-  rowsRead: number;
-  machineRows: number;
-  personRows: number;
-};
-
-const camelise = (s: string) => s.replace(/_([a-z0-9])/g, (_m, c: string) => c.toUpperCase());
-
-/**
- * Which (document, field) pairs a PERSON has edited, and must therefore never
- * be overwritten from the account book.
- *
- * Both parameters are REQUIRED. `fields` in particular decides the whole
- * outcome: defaulting it to an empty list would make the veto vacuously empty
- * and every overwrite would proceed, which is the exact failure this function
- * exists to prevent.
- */
-export function planPersonEditVeto(rows: VetoAuditRow[], fields: VetoField[]): PersonEditVeto {
-  const out: PersonEditVeto = {
-    fields: new Set(),
-    docs: new Set(),
-    rowsRead: rows.length,
-    machineRows: 0,
-    personRows: 0,
-  };
-  const inScope = fields.filter((f): f is { key: string; erp: string } => !!f.erp);
-  for (const r of rows) {
-    if (classifyAuditAuthor(r) === 'machine') { out.machineRows++; continue; }
-    out.personRows++;
-    const fc = (r.fieldChangesText || '').toLowerCase();
-    for (const f of inScope) {
-      if (fc.includes(f.erp.toLowerCase()) || fc.includes(camelise(f.erp).toLowerCase())) {
-        out.fields.add(`${r.doc}|${f.key}`);
-        out.docs.add(r.doc);
-      }
-    }
-  }
-  return out;
 }

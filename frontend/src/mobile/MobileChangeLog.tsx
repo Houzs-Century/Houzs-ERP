@@ -20,7 +20,7 @@ import {
   CL_WINDOWS,
   clActionLabel,
   clFieldLabel,
-  clMyt,
+  clWhen,
   clTruncationNote,
   clValueLabel,
   clVerdict,
@@ -62,7 +62,7 @@ function DocumentCard({ doc }: { doc: ChangeLogDocument }) {
           {doc.people.length > 0 ? doc.people.join(", ") : "The system only"}
         </div>
         <div style={{ marginTop: 2, fontSize: 11, color: "var(--mut)" }}>
-          {doc.changeCount} change{doc.changeCount === 1 ? "" : "s"} · last {clMyt(doc.lastChangeAt)}
+          {doc.changeCount} change{doc.changeCount === 1 ? "" : "s"} · last {clWhen(doc.lastChangeAt)}
         </div>
       </button>
 
@@ -75,7 +75,7 @@ function DocumentCard({ doc }: { doc: ChangeLogDocument }) {
                 {ch.author === "machine" ? " (automatic)" : ""}
               </div>
               <div style={{ color: "var(--mut)", fontSize: 11 }}>
-                {clMyt(ch.at)}
+                {clWhen(ch.at)}
                 {ch.source ? ` · via ${ch.source}` : ""}
               </div>
               {ch.fields.length === 0 ? (

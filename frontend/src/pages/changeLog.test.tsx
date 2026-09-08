@@ -168,7 +168,7 @@ describe("the desktop page", () => {
 
   it("prints Malaysia local time, not UTC", async () => {
     await mountDesktop(payload());
-    expect(await screen.findByText(/14:00 MYT/)).toBeTruthy();
+    expect(await screen.findByText(/08\/09\/2026 14:00/)).toBeTruthy();
   });
 
   it("says a load failure out loud rather than rendering an empty table", async () => {

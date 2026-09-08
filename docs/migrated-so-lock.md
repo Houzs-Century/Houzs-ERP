@@ -72,6 +72,64 @@ the statement at the top of this file.
 
 ---
 
+## 2a. Risk 1 is CLOSED — the sync can no longer overwrite a person quietly
+
+*Added 2026-09-08, `fix/sync-human-edit-guard`.* Risk 1 above ("`sync-ac-delta`
+will run again, and it can overwrite a staff edit with no signal at all") was
+the reason it was unsafe to let anyone edit a migrated order. It is now
+addressed at the sync, which is where it belonged:
+
+* **The authorship question has ONE home**,
+  `backend/scripts/lib/ac-human-edit.mjs`. The sync used to answer it three
+  different ways in three lanes, and the header lane's answer was wrong in the
+  direction that loses the edit: it read a NULL `actor_id` as "the SYSTEM wrote
+  this", when a null actor is a normal shape for a PERSON's row here. The rule
+  now used everywhere is the one `check-so-open-for-new.mjs` proved against
+  production: SYSTEM is the migration's pinned actor, or a null actor named
+  `system%`; everything else — an unattributed row included — is a person.
+* **The purchase-order header lane had no veto at all.** Its lookup set was
+  keyed by sales-order document number. That half now reads
+  `scm.entity_audit_log`.
+* **A refusal is NAMED, never counted.** The document, the line, both values and
+  who edited it, on every lane.
+
+Traces: `docs/bugs/0700-*`, `docs/bugs/0701-*`.
+
+**What this does NOT do.** It does not make the sync's ~40 remaining
+differences go away, and it does not decide anything about a document nobody
+has edited — an untouched migrated order is still written from the book, as
+intended. What it guarantees is that a person's edit is refused and reported
+instead of silently replaced.
+
+---
+
+## 2b. ⚠️ A NEW ORDER JOINS THE LOCKED POPULATION MINUTES AFTER IT IS SAVED
+
+*Found 2026-09-08. NOT fixed. Read `docs/bugs/0703-*` before lifting anything.*
+
+The sentence above — "`linked_ac_docno` … NULL for every order the ERP created
+itself" — **is false today.** On a successful AutoCount write-back the outbox
+stamps that same column on the ERP's own document
+(`backend/src/scm/lib/autocount-outbox.ts:1902`). So a brand-new sales order
+becomes "migrated" to this lock a few minutes after a salesperson saves it, and
+goes view-only — the exact opposite of 「只开新单」.
+
+Not a theory — it happened today. Run `34193634352` (2026-09-08, 14:12 MYT)
+shows `HC-SO-2609-001` — the ERP's own numbering — CREATEd by a person at
+14:06:51 MYT and sitting in the `linked_ac_docno IS NOT NULL` population, while
+the count of `linked_ac_docno IS NULL` is 0. Run `34194179668` (14:20 MYT) shows
+why: `scm.autocount_writeback = "1"`, ON for company 1, and `create_so SENT 1
+(of 1) last 2026-09-08T06:11` — 14:11 MYT, between the two.
+
+It also blinds the verification: §4's "have staff create a new order" check
+counts `linked_ac_docno IS NULL`, so a successful write-back erases the proof
+that the lift worked.
+
+**Options and a recommendation are in `docs/bugs/0703-*`. This is the owner's
+call, and it has to be made BEFORE the freeze is lifted, not after.**
+
+---
+
 ## 3. The grammar
 
 ```
@@ -165,7 +223,48 @@ renders a curated sentence — never the generic "refresh and check", which on a
 migrated order is advice that loops.
 
 **On a new order** — nothing changes at all. No banner, no greying, every button
-where it was.
+where it was. (Until the write-back stamps it — see §2b.)
+
+---
+
+## 5a. What the lock does and does NOT cover — ENUMERATED, not reasoned
+
+*Added 2026-09-08.* Lifting `scm.sales.orders` opens **43 write endpoints**, not
+one screen. Counted from the committed route inventory
+`docs/generated/route-capability-matrix.csv` (gated in CI by
+`npm --prefix backend run audit:routes`), mapped through `SCM_AREA_MOUNTS`:
+
+| Prefix | write endpoints | covered by this lock? |
+|---|---|---|
+| `/mfg-sales-orders` | 21 | **yes** — `scm.use("/mfg-sales-orders/*", migratedSoReadonly())` |
+| `/so-amendments` | 6 | **yes** — `migratedSoAmendmentReadonly()` |
+| `/so-handover` | 1 | **yes, since 2026-09-08** — see below |
+| `/scan-so` | 6 | no, and it does not need to be |
+| `/quotes` | 3 | no — a quote is not a sales order |
+| `/slips` | 3 | no, and it does not need to be |
+| `/pwp-codes` | 2 | no — reservation codes, not orders |
+| `/scan-payment` | 1 | no, and it does not need to be |
+
+**`/so-handover/apply` was the third door and it was open.** It runs
+`mfg_sales_orders.update({ salesperson_id, agent })` and carried only the area
+guard. A third mount of the router factory would NOT have closed it —
+`soDocNoFromPath` reads the document number from the PATH and this route carries
+a LIST of them in the BODY, so the factory would have found nothing, answered
+"not migrated" and waved every write through. The decision is now asked per
+order inside the handler, through the same `migratedSoReadonlyState` the guard
+and the detail screen use, and a refused order lands in the existing per-order
+`skipped` report with the lock's own sentence. `docs/bugs/0702-*`.
+
+**The four marked "does not need to be" were CHECKED, not assumed.**
+`backend/src/scm/routes/scan-so.ts` names `mfg_sales_orders` /
+`mfg_sales_order_payments` four times and every one is a SELECT (duplicate
+detection and payment de-duplication); `slips.ts` writes only
+`pending_slip_uploads` and R2; `scan-payment.ts` and `pwp-codes` never name a
+sales-order table at all. None of them can edit an existing document.
+
+```
+grep -nE "\.from\('(mfg_sales_orders|mfg_sales_order_items|mfg_sales_order_payments)'\)"   backend/src/scm/routes/{scan-so,slips,scan-payment,so-handover}.ts
+```
 
 **An operator sentence must stay under 200 characters.** Both clients discard a
 longer one and fall back to their generic line. The cap is enforced in
@@ -227,6 +326,11 @@ this row says, and is the bigger hammer if the floor has to stop.
   > amendments in all, across **2,882** migrated orders of **3,047**. The door
   > was open and nobody was standing in it. That is the count on the day, not a
   > property of the system — re-run the check before quoting it.
+- **`linked_ac_docno` does not mean "came from AutoCount". It means "is in
+  AutoCount".** The write-back stamps it on our own documents
+  (`autocount-outbox.ts:1902`), so a new order joins the locked population
+  shortly after it is saved. This is §2b and it is the biggest trap on this
+  page.
 - **Reads were never affected** and never will be by this switch.
 
 ---

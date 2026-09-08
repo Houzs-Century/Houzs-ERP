@@ -3,7 +3,7 @@ import {
   buildChangeLogQs,
   clActionLabel,
   clFieldLabel,
-  clMyt,
+  clWhen,
   clTruncationNote,
   clValueLabel,
   clVerdict,
@@ -115,18 +115,20 @@ describe("labels", () => {
   });
 });
 
-describe("times are Malaysia local, always", () => {
-  it("renders 06:00 UTC as 14:00 MYT", () => {
-    const s = clMyt("2026-09-08T06:00:00.000Z");
-    expect(s).toContain("14:00");
-    expect(s).toContain("MYT");
-    /* The month name spelling ("Sep" / "Sept") moves with the runtime's ICU
-       data, so the assertion is on the parts that carry meaning. */
-    expect(s).toMatch(/08 Sept? 2026/);
+describe("times are Malaysia local, in the repo's ONE date format", () => {
+  /* The page must never make the owner do timezone arithmetic, and it must
+     never introduce a second date format to avoid it — fmtDateTime already
+     converts to MYT (vendor/shared/format.ts, mytParts). */
+  it("renders 06:00 UTC as 14:00 on the same day, dd/mm/yyyy", () => {
+    expect(clWhen("2026-09-08T06:00:00.000Z")).toBe("08/09/2026 14:00");
   });
 
-  it("hands back an unparseable stamp unchanged rather than printing Invalid Date", () => {
-    expect(clMyt("not-a-date")).toBe("not-a-date");
+  it("crosses the day boundary the way MYT does, not the way UTC does", () => {
+    expect(clWhen("2026-09-07T17:00:00.000Z")).toBe("08/09/2026 01:00");
+  });
+
+  it("does not print Invalid Date for an unparseable stamp", () => {
+    expect(clWhen("not-a-date")).not.toContain("Invalid");
   });
 });
 

@@ -32,7 +32,7 @@ import {
   CL_WINDOWS,
   clActionLabel,
   clFieldLabel,
-  clMyt,
+  clWhen,
   clTruncationNote,
   clValueLabel,
   clVerdict,
@@ -74,7 +74,7 @@ function DocumentRow({ doc }: { doc: ChangeLogDocument }) {
         <span className="w-[80px] shrink-0 text-right text-ink-muted">
           {doc.changeCount} change{doc.changeCount === 1 ? "" : "s"}
         </span>
-        <span className="w-[190px] shrink-0 text-right text-ink-muted">{clMyt(doc.lastChangeAt)}</span>
+        <span className="w-[190px] shrink-0 text-right text-ink-muted">{clWhen(doc.lastChangeAt)}</span>
       </button>
 
       {open && (
@@ -84,7 +84,7 @@ function DocumentRow({ doc }: { doc: ChangeLogDocument }) {
               <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
                 <span className="font-semibold text-ink">{clActionLabel(ch.action)}</span>
                 <span className="text-ink">by {clWhoLabel(ch)}</span>
-                <span className="text-ink-muted">{clMyt(ch.at)}</span>
+                <span className="text-ink-muted">{clWhen(ch.at)}</span>
                 {ch.source && <span className="text-ink-muted">via {ch.source}</span>}
                 {ch.author === "machine" && (
                   <span className="rounded bg-canvas px-1.5 py-0.5 text-[11px] text-ink-muted">
@@ -236,7 +236,7 @@ export function ChangeLog() {
                   <span className="w-[170px] shrink-0">Document</span>
                   <span className="flex-1">Changed by</span>
                   <span className="w-[80px] shrink-0 text-right">Changes</span>
-                  <span className="w-[190px] shrink-0 text-right">Last change</span>
+                  <span className="w-[190px] shrink-0 text-right">Last change (MYT)</span>
                 </div>
                 {d.documents.map((doc) => (
                   <DocumentRow key={`${doc.docType}|${doc.docNo}`} doc={doc} />

@@ -1388,8 +1388,8 @@ Total: 1183 route registrations across 153 files.
 - L502  PUT    /targets
 
 ## backend/src/scm/routes/so-handover.ts  (2)
-- L97  GET    /preview
-- L132  POST   /apply
+- L106  GET    /preview
+- L141  POST   /apply
 
 ## backend/src/scm/routes/so-settings.ts  (2)
 - L24  GET    /

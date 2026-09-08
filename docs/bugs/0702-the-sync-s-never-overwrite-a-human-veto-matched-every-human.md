@@ -47,17 +47,26 @@ person**. So that arm refused ~79 orders on a robot's behalf and buried the one
 real person inside the same set. It is removed from the veto and kept as a
 printed comparison.
 
-**And the rule had three homes.** `check-so-open-for-new.mjs` held the only
-CORRECT one — `actor_id IS NULL AND actor_name_snapshot ILIKE 'system%'`, written
+**And the rule had three homes.** `check-so-open-for-new.mjs` held the closest
+to correct — `actor_id IS NULL AND actor_name_snapshot ILIKE 'system%'`, written
 after run 34183368917 reported "50 staff actions" that were 50 of 50 the
 allocation cron (#3177) — while this script held the broken one and nothing else
 had an opinion at all.
 
-**Fix.** One home: `backend/src/scm/shared/audit-author.ts`. A row is
-MACHINE-written when `actor_name_snapshot` starts with "system"; everything else
-is a PERSON, including an unattributed row (the direction that SURFACES it).
-`actor_id` is not consulted at all, because it is a constant. Imported by
-`sync-ac-delta.mjs`, `check-so-open-for-new.mjs` and the new
+**Fix.** Landed in two PRs that crossed in the air, which is worth recording
+because the second was needed only because the first stopped one step short.
+`#3205` created `backend/scripts/lib/ac-human-edit.mjs` and fixed the NULL-actor
+arm. This branch found that the rule it settled on still classified every human
+sales-order edit as the system through a SECOND arm, and closed that — the trace
+is `docs/bugs/0704`, and it is where the measurement lives.
+
+The rule now has ONE home for the whole repo:
+`backend/src/scm/shared/audit-author.ts`. A row is MACHINE-written when
+`actor_name_snapshot` starts with "system"; everything else is a PERSON,
+including an unattributed row (the direction that SURFACES it). `actor_id` is
+not consulted at all, because it is a constant. Read by `ac-human-edit.mjs`
+(which keeps the indexing and the refusal wording),
+`check-so-open-for-new.mjs` and the new
 `backend/src/scm/routes/change-log.ts`; both scripts now run under `npx tsx`
 so they can import it (the runner `golive-parity-check.yml` already uses).
 

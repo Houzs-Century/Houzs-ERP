@@ -21,6 +21,7 @@
 
 import { api } from "../api/client";
 import { useQuery } from "../hooks/useQuery";
+import { fmtDateTime } from "../vendor/shared/format";
 
 export type ChangeLogDocType = "SO" | "PO" | "DO" | "GRN";
 export type ChangeLogAuthor = "person" | "machine";
@@ -196,19 +197,19 @@ export function clFieldLabel(field: string): string {
 }
 
 /**
- * Local Malaysia time (UTC+8), always. The owner reads times in MYT; a UTC
- * stamp on this page would have him doing arithmetic to decide whether a change
- * happened during working hours.
+ * When a change happened, in THE repo's one date format — `fmtDateTime`,
+ * "08/09/2026 14:00".
+ *
+ * IT IS ALREADY MALAYSIA LOCAL. `dateParts` in vendor/shared/format.ts converts
+ * a zoned instant through `mytParts`, which is the whole reason that module
+ * exists. A second formatter here would be a second date format, and this repo
+ * gates against exactly that (`check-date-formatting.mjs`) after paying for it
+ * more than once — the first draft of this file hand-rolled an
+ * `Intl.DateTimeFormat` and the gate caught it. The surfaces say MYT once, in
+ * the column heading, rather than on every row.
  */
-export function clMyt(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  const p = new Intl.DateTimeFormat("en-GB", {
-    timeZone: "Asia/Kuala_Lumpur",
-    year: "numeric", month: "short", day: "2-digit",
-    hour: "2-digit", minute: "2-digit", hour12: false,
-  }).format(d);
-  return `${p} MYT`;
+export function clWhen(iso: string): string {
+  return fmtDateTime(iso);
 }
 
 /** One line saying what is on screen and what is NOT, in the owner's terms.

@@ -54,13 +54,20 @@ backend/src/scm/shared/audit-author.ts
 no name at all, deliberately, because that is the direction that SURFACES a
 change rather than hiding it.
 
-**`actor_id` is not consulted, and cannot be.** `scm/middleware/auth.ts:112`
-pins `SCM_SYSTEM_STAFF_ID` (`00000000-0000-4000-8000-000000000001`) onto
+**`actor_id` is not consulted, and cannot be.** `scm/middleware/auth.ts` pins
+`SCM_SYSTEM_STAFF_ID` (`00000000-0000-4000-8000-000000000001`) onto
 `c.get('user').id` for every authenticated SCM caller, and all 21
 `recordSoAudit` call sites in `routes/mfg-sales-orders.ts` pass
-`actorId: user.id`. The column is a constant. Reading it as authorship is what
-made `sync-ac-delta.mjs`'s never-overwrite-a-human veto refuse nothing at all —
-`docs/bugs/0702`.
+`actorId: user.id`. The column is a constant.
+
+**That is MEASURED, not read.** `backend/src/scm/shared/audit-author.test.ts`
+runs the real `supabaseAuth` middleware over a caller whose Houzs id is 4242 and
+asserts what comes back. It is an executed assertion because the claim has been
+wrong twice, in opposite directions, and both times it was settled by reading a
+file: reading `actor_id` as authorship is what made the delta sync's
+never-overwrite-a-human veto refuse nothing at all — first through
+`!actor_id` (`docs/bugs/0700`, `docs/bugs/0702`), then through
+`actor_id === MIGRATION_ACTOR_ID` (`docs/bugs/0704`).
 
 **`version` is not consulted either, anywhere.** It is an optimistic-locking
 token bumped by seven automated paths; `check-so-version-provenance.mjs` (#3042)
@@ -71,9 +78,17 @@ person.
 live spellings, several of which are not audit sources at all. Making it a second
 arm of the rule would be a second rule wearing the first one's name.
 
-The three readers of the rule: this route, `scripts/check-so-open-for-new.mjs`
-and `scripts/sync-ac-delta.mjs`. The two scripts import the `.ts` module and are
-therefore run with `npx tsx`, not `node`.
+The three readers of the rule: this route,
+`scripts/check-so-open-for-new.mjs`, and `scripts/sync-ac-delta.mjs` through
+`scripts/lib/ac-human-edit.mjs` — which keeps the field aliasing, the
+per-(document, field) index and the refusal wording (none of them decisions) and
+delegates only the authorship question. The two scripts import the `.ts` module
+and are therefore run with `npx tsx`, not `node`.
+
+The module sits in `src/scm/shared/` rather than `scripts/lib/` for one
+mechanical reason: this route runs in the WORKER and a Worker bundle cannot
+import out of `backend/scripts`, while a script CAN import a `.ts`. That is the
+only direction in which all three callers get one answer.
 
 ---
 
@@ -105,6 +120,19 @@ via `*`.
 
 There is **no `scmAreaGuard`** on the route, for `/autocount-outbox`'s reason:
 an L2 area key is a PAGE key, and this page belongs to no single SCM area.
+
+### Where it appears
+
+| surface | file | how it is gated |
+| --- | --- | --- |
+| desktop nav row, `system` section, beside AutoCount Sync | `frontend/src/components/Sidebar.tsx` | `anyPerm: ["*", "scm.changelog.read", "settings.manage"]` |
+| desktop route `/change-log` | `frontend/src/App.tsx` | the same three, on a `<Guard>` |
+| phone menu row, `System` group | `frontend/src/mobile/MobileApp.tsx` | the live `NAV_TABS` entry for `/change-log` |
+| phone screen | `frontend/src/mobile/MobileApp.tsx` | the SCREEN is guarded too, not only the row — a `/change-log` URL must not mount the page or fire its query for someone the endpoint would 403. `TabLocked`, not hidden. |
+
+All four mirror the two keys the endpoint accepts. **None of them is the
+boundary** — the server checks the same keys against the REAL caller and returns
+403 — so a divergence costs a visible-but-empty page, never access.
 
 ---
 
@@ -148,7 +176,8 @@ service-role, so RLS is bypassed and that predicate is the entire boundary.
 ## The two surfaces
 
 One shared layer, `frontend/src/lib/changeLog.ts`: the hook, the window options,
-the verb labels, the field labels, the MYT formatter and the verdict sentence.
+the document-type vocabulary, the verb labels, the field labels, `clWhen` and the
+verdict sentence.
 The pages hold presentation only — a table on the desktop, cards on a phone,
 because a table does not fit 375 px.
 
@@ -156,9 +185,13 @@ Filters live in the URL on the desktop (URL is state) and in component state on
 the phone (the mobile shell has no router), with the DEFAULTS coming from the
 shared layer so both open on the same view.
 
-**Times are Malaysia local, always** — `clMyt`, `Asia/Kuala_Lumpur`. A UTC stamp
-here would have the owner doing arithmetic to decide whether a change happened
-during working hours.
+**Times are Malaysia local, always, in THE repo's one date format** — `clWhen`
+is `fmtDateTime` from `frontend/src/vendor/shared/format.ts`, which converts
+through `mytParts`. A UTC stamp here would have the owner doing arithmetic to
+decide whether a change happened during working hours; a second formatter here
+would be a second date format, which `backend/scripts/check-date-formatting.mjs`
+gates against — and did, on the first draft of this file. The surfaces say MYT
+once, in the column heading, rather than on every row.
 
 **An unknown verb or field renders as ITSELF.** A renderer that silently swallows
 a verb it has not met makes a new kind of change invisible on the one page that

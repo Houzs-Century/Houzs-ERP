@@ -15,14 +15,15 @@
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect } from 'vitest';
+import { Hono } from 'hono';
 import {
   classifyAuditAuthor,
   isPersonAuthored,
   auditMachineSql,
   auditPersonSql,
-  planPersonEditVeto,
-  type VetoAuditRow,
 } from './audit-author';
+import { supabaseAuth, SCM_SYSTEM_STAFF_ID } from '../middleware/auth';
+import type { Variables } from '../env';
 
 /* middleware/auth.ts:47 — the uuid pinned onto c.get('user').id for EVERY
    authenticated SCM caller, and therefore onto every `actorId: user.id` the 21
@@ -113,93 +114,57 @@ describe('auditMachineSql / auditPersonSql — the same rule in SQL', () => {
 });
 
 /* ─────────────────────────────────────────────────────────────────────────
-   THE OVERWRITE, PROVED RED THEN GREEN.
+   THE MEASUREMENT THE WHOLE RULE RESTS ON, RUN RATHER THAN READ.
 
-   The scenario is the owner's, in one row: he opens the sales orders to his
-   staff, a salesperson corrects the delivery address on a migrated order, and
-   the next AutoCount delta sync reads the account book's older address and
-   plans to write it back over her.
+   Everything above depends on one claim: `actor_id` cannot distinguish a
+   person from the system, because the auth middleware pins ONE uuid onto every
+   authenticated SCM caller. That claim has now been wrong twice in this
+   repository's history, in both directions, and each time it was settled by
+   reading a file:
 
-   `OLD_VETO_RULE` is sync-ac-delta.mjs:1175 as it stood, copied verbatim:
+     · sync-ac-delta.mjs read `!actor_id` as "the system did it" and overwrote
+       people's edits (docs/bugs/0700).
+     · the fix for that kept `actor_id === <pinned uuid> => system`, which is
+       the same mistake wearing the opposite sign (docs/bugs/0703).
 
-       if (!r.actor_id || String(r.actor_id) === SYS_ACTOR) { sysAuthored++; continue; }
-
-   The first assertion runs that rule against her audit row and shows it lets
-   the overwrite through. The second runs planPersonEditVeto against the same
-   row and shows it refused. Neither needs a database: the defect is in the
-   predicate, and a predicate is testable.
+   So this suite EXECUTES the real middleware instead of quoting it. A caller
+   whose Houzs user id is 4242 goes in; what comes back out on `c.get('user')`
+   is the assertion. If the pinning ever changes, this fails, and the rule is
+   revisited on purpose rather than becoming quietly wrong a third time.
    ───────────────────────────────────────────────────────────────────────── */
-describe('the account book must not overwrite a salesperson — red, then green', () => {
-  const PINNED = '00000000-0000-4000-8000-000000000001';
+describe('the pinned actor — measured, not quoted', () => {
+  it('supabaseAuth replaces the caller id with ONE uuid, so actor_id carries no authorship', async () => {
+    /* Typed as the SCM app's own Variables so `houzsUser` resolves — the bare
+       Hono generic knows only the global ContextVariableMap. */
+    const app = new Hono<{ Variables: Variables }>();
+    let seenUserId: unknown = 'the handler never ran';
+    let seenHouzsId: unknown = null;
 
-  /** Her edit, in the shape scm.mfg_so_audit_log actually stores it. */
-  const HER_EDIT: VetoAuditRow = {
-    doc: 'HC-SO-013361',
-    actor_id: PINNED,                       // auth.ts pins this for every caller
-    actor_name_snapshot: 'Wei Siang',       // ...and personalises only the name
-    fieldChangesText: JSON.stringify([
-      { field: 'deliveryAddress', from: '12 Jalan Lama', to: '88 Jalan Baru, Klang' },
-    ]),
-  };
+    app.use('*', async (c, next) => {
+      /* What the global /api/* auth leaves behind: the REAL Houzs user. */
+      c.set('user', { id: 4242, email: 'ws@example.com', name: 'Wei Siang', permissions: ['*'] } as never);
+      await next();
+    });
+    app.use('*', supabaseAuth);
+    app.get('/probe', (c) => {
+      seenUserId = (c.get('user') as { id?: unknown }).id;
+      seenHouzsId = (c.get('houzsUser') as { id?: unknown } | undefined)?.id ?? null;
+      return c.text('ok');
+    });
 
-  /** The allocation cron, on the same order, in the same window. */
-  const THE_CRON: VetoAuditRow = {
-    doc: 'HC-SO-013361',
-    actor_id: null,
-    actor_name_snapshot: 'system (auto-allocate)',
-    fieldChangesText: JSON.stringify([{ field: 'stockStatus', from: 'auto', to: '2 line(s) -> READY' }]),
-  };
+    /* getSupabaseService reads these off the env; the client is never called. */
+    const res = await app.request('/probe', {}, {
+      SUPABASE_URL: 'https://example.supabase.co',
+      SUPABASE_SERVICE_ROLE_KEY: 'x'.repeat(40),
+    } as never);
 
-  /* The header fields the sync would write, in lib/ac-header-fields.mjs's shape. */
-  const FIELDS = [
-    { key: 'deliveryAddress', erp: 'delivery_address' },
-    { key: 'salesAgent', erp: 'salesperson_id' },
-  ];
-
-  /* sync-ac-delta.mjs:1175, verbatim, as a predicate. */
-  const OLD_VETO_RULE = (r: VetoAuditRow) => !(!r.actor_id || String(r.actor_id) === PINNED);
-
-  it('RED: the rule that shipped classified her edit as the system and would have overwritten it', () => {
-    expect(OLD_VETO_RULE(HER_EDIT)).toBe(false);
-    /* And it was right about the cron — which is why nobody noticed: the rule
-       looked like it was working every time it ran. */
-    expect(OLD_VETO_RULE(THE_CRON)).toBe(false);
-  });
-
-  it('GREEN: the shared rule refuses her field, counts the cron, and leaves the rest of the document alone', () => {
-    const veto = planPersonEditVeto([HER_EDIT, THE_CRON], FIELDS);
-
-    expect(veto.fields.has('HC-SO-013361|deliveryAddress')).toBe(true);
-    expect(veto.docs.has('HC-SO-013361')).toBe(true);
-
-    /* The veto is per FIELD, not per document: the book may still correct the
-       sales agent on this same order, because nobody touched it. */
-    expect(veto.fields.has('HC-SO-013361|salesAgent')).toBe(false);
-
-    expect(veto.rowsRead).toBe(2);
-    expect(veto.personRows).toBe(1);
-    expect(veto.machineRows).toBe(1);
-  });
-
-  it('a document only the cron touched is not vetoed at all', () => {
-    const veto = planPersonEditVeto([THE_CRON], FIELDS);
-    expect(veto.docs.size).toBe(0);
-    expect(veto.fields.size).toBe(0);
-    expect(veto.machineRows).toBe(1);
-    expect(veto.personRows).toBe(0);
-  });
-
-  it('an empty field list vetoes nothing — so the caller must pass one, and it is required', () => {
-    expect(planPersonEditVeto([HER_EDIT], []).fields.size).toBe(0);
-  });
-
-  it('matches a camelCase field_changes key against the snake_case ERP column', () => {
-    const veto = planPersonEditVeto([HER_EDIT], [{ key: 'deliveryAddress', erp: 'delivery_address' }]);
-    expect(veto.fields.has('HC-SO-013361|deliveryAddress')).toBe(true);
-  });
-
-  it('a field with no ERP column is skipped rather than matching everything', () => {
-    const veto = planPersonEditVeto([HER_EDIT], [{ key: 'ghost', erp: null }]);
-    expect(veto.fields.size).toBe(0);
+    expect(res.status).toBe(200);
+    /* THE FINDING: her id went in, the pinned uuid came out. This is the value
+       all 21 `actorId: user.id` call sites in routes/mfg-sales-orders.ts write
+       onto her audit row. */
+    expect(seenUserId).toBe(SCM_SYSTEM_STAFF_ID);
+    /* Her real identity survives only on houzsUser (an integer) and, for the
+       audit trail, in the NAME snapshot — which is why the name is the signal. */
+    expect(seenHouzsId).toBe(4242);
   });
 });
