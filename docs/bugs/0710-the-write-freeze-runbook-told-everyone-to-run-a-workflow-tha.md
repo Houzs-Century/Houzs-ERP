@@ -72,35 +72,6 @@ value was changed by shipping it. `MODE` defaults to `plan`.
 
 **Ref.** PR pending, 2026-09-08. Runbook: `docs/write-freeze-staged-lift.md` §6.
 
----
-
-## The first dispatch FAILED, and that is the rule working
-
-**Run `34209796675`, 2026-09-08, `mode=plan` against production:**
-
-```
-set-write-freeze — MODE=plan
-BEFORE  scm.write_freeze = "1 - scm.procurement.products"
-TypeError: areaKeys.has is not a function
-    at validateFreezeValue (backend/scripts/lib/scm-area-keys.mjs:80:18)
-```
-
-`readScmAreaKeys()` returns a **Set**, and `validateFreezeValue` calls `.has()`
-on whatever it is handed. This script normalised it to a sorted ARRAY for its own
-filtering and printing — and then passed that array into the library. Every local
-check passed: `node --check`, both refusal guards, the release-discipline gate.
-None of them reaches that line, because none of them has a database to get past.
-
-**Nothing was written.** It is the plan path, and it died before the write.
-
-Fixed by keeping BOTH shapes and never deriving one at a call site: `AREA_SET`
-is what the library gets, `areaKeys` is the sorted array this file filters and
-prints with. A startup assertion now refuses to run at all if
-`readScmAreaKeys()` ever stops returning something with `.has`, so the next
-person gets a sentence instead of a `TypeError` inside somebody else's module.
-
-**This is the repo's own rule earning its keep, not an accident:** *a
-`workflow_dispatch` workflow is not shipped until it has been dispatched once
-and reported success.* The PR body said UNTESTED in exactly those words. The
-first dispatch is what found it — and the same rule was written after #2120
-failed on its first dispatch for a different reason.
+**Its first dispatch failed** — a defect of its own, not of this one:
+`docs/bugs/0711-the-freeze-setter-handed-an-array-to-a-library-that-calls-h.md`.
+Nothing was written; it was the plan path.
