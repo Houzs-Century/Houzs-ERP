@@ -1,6 +1,6 @@
 {
- "_note": "Owner-approved compartment answers for the sofa lines still on a bare -1S placeholder on PROCEEDED company-1 orders, 2026-09-04. Same shape as sofa-compartment-corrections-2026-08.json. Every entry names the documents it applies to, the model, the target piece list, the seat where the book or the slip states one, the desc2Match that tells one build on a document from another, and a why recording how the answer was reached. Four entries are the owner's own reading, given in chat; the rest are read off the photograph and confirmed by him. 2026-09-08: HC-SO-013475 was added to this same file rather than a new one - a fourth file whose name also contains \"2026-09\" would make the FILE= substring filter select two rounds at once (scripts/lib/sofa-corrections-source.test.mjs pins that), and this build carries its own why, which is where the evidence has to live. It is NOT a placeholder build: it is the shop floor reporting that the drawing and our decode disagree.",
- "_rules": "Money never moves: the price rides the FIRST piece and every other piece is 0. Lines are matched to target pieces and UPDATED in place so a row id - and any purchase allocation hanging off it - survives. A document can hold MORE THAN ONE sofa build, so desc2Match is required; where a document holds TWO lines with the SAME text those are two identical sofas and both take the build.",
+ "_note": "Owner-approved compartment answers for the sofa lines still on a bare -1S placeholder on PROCEEDED company-1 orders, 2026-09-04. Same shape as sofa-compartment-corrections-2026-08.json. Every entry names the documents it applies to, the model, the target piece list, the seat where the book or the slip states one, the desc2Match that tells one build on a document from another, and a why recording how the answer was reached. Four entries are the owner's own reading, given in chat; the rest are read off the photograph and confirmed by him. 2026-09-08: HC-SO-013475 was added to this same file rather than a new one - a fourth file whose name also contains \"2026-09\" would make the FILE= substring filter select two rounds at once (scripts/lib/sofa-corrections-source.test.mjs pins that), and this build carries its own why, which is where the evidence has to live. It is NOT a placeholder build: it is the shop floor reporting that the drawing and our decode disagree. 2026-09-08 (second round, same day): the owner re-read the enlarged slips of HC-SO-011733, HC-SO-012025 and HC-SO-013384 and gave six answers. TWO of them - HC-SO-012025's first sofa and HC-SO-013384's first sofa - CONFIRM entries already in this file, and that confirmation is recorded in their own `why` rather than duplicated as new entries. HC-SO-011733 and HC-SO-012025's second sofa are written as entries below. HC-SO-013384's second and third sofas are in `_held`, each carrying the measured reason the document cannot hold them yet. Still no fourth file: a name also containing \"2026-09\" would make the FILE= substring filter select two rounds at once, which scripts/lib/sofa-corrections-source.test.mjs pins.",
+ "_rules": "Money never moves: the price rides the FIRST piece and every other piece is 0. Lines are matched to target pieces and UPDATED in place so a row id - and any purchase allocation hanging off it - survives. A document can hold MORE THAN ONE sofa build, so desc2Match is required; where a document holds TWO lines with the SAME text those are two identical sofas and both take the build. Where a document holds two sofas that NO needle can tell apart - because one build's text is a strict SUFFIX of the other's - the second build carries a `desc2Exclude` as well: the rows carrying that text, byte-exactly, are not this build. An exclusion that matches no row on the document is a REFUSAL, never a quiet widening back onto both sofas.",
  "entries": [
   {
    "docs": [
@@ -144,7 +144,7 @@
    ],
    "seat": "28",
    "desc2Match": "ZL -15 MISTY",
-   "why": "photo: three 28\" boxes, hatched arm at each outer end. TWO lines on this document carry the identical text - two identical sofas - and both take this build | 2026-09-07: the purchase order was missing from this entry, so the build was written onto the sales order alone and HC-PO left holding the lead piece only (chain audit run 34134017406 reported it as PIECE ABSENT). HC-PO-010083 added so the pair is corrected together, which is what this file's own rule says."
+   "why": "photo: three 28\" boxes, hatched arm at each outer end. TWO lines on this document carry the identical text - two identical sofas - and both take this build | 2026-09-07: the purchase order was missing from this entry, so the build was written onto the sales order alone and HC-PO left holding the lead piece only (chain audit run 34134017406 reported it as PIECE ABSENT). HC-PO-010083 added so the pair is corrected together, which is what this file's own rule says. | 2026-09-08 the owner RE-READ this slip from the enlarged photograph and gave the same answer, so this entry is CONFIRMED by him a second time and nothing about it changes. Recorded because a re-reading that agrees is evidence too: it is the reason this build is not in the held list below beside the ones his re-reading did move. He read it 1AL+1NA+1AR at 28\"."
   },
   {
    "docs": [
@@ -191,8 +191,8 @@
     "1A(RHF)"
    ],
    "seat": "30",
-   "desc2Match": "all adjustable arm rest",
-   "why": "photo: the same four-piece L the owner confirmed on HC-PO-009260, read with his correction that the vertical strokes in the long leg are seams, not extra pieces. TWO lines on each document carry the identical text - two identical sofas - and both take this build"
+   "desc2Match": " bottom to Nilon",
+   "why": "photo: the same four-piece L the owner confirmed on HC-PO-009260, read with his correction that the vertical strokes in the long leg are seams, not extra pieces. TWO lines on each document carry the identical text - two identical sofas - and both take this build | 2026-09-08 the owner RE-READ this slip from the enlarged photograph and gave the same answer, so this entry is CONFIRMED by him a second time and nothing about it changes. Recorded because a re-reading that agrees is evidence too: it is the reason this build is not in the held list below beside the ones his re-reading did move. He read it 1AL+1NA+C+1AR. | 2026-09-08 THE NEEDLE CHANGED, THE BUILD DID NOT. It said \"all adjustable arm rest\", which every one of this document's EIGHT sofa rows carries, so this correction was written onto BOTH sofas - correct while they were believed identical, wrong the moment he ruled the second one a plain 1S. The needle is now the LEADING SPACE the account book left on DtlKey 829179's text and not on 829180's (\" bottom to Nilon\"), which is the only thing on this document that tells the first sofa from the second. Measured on prod, probe run 34242061732: rows 1/6/7/8 carry the leading space and rows 2/9/10/11 do not."
   },
   {
    "docs": [
@@ -277,6 +277,65 @@
    "seat": "28",
    "desc2Match": "3S(28\")",
    "why": "Staff report relayed by the owner, 2026-09-08: \"So013475 item 2 matching incorrect. Autocount drawing is 1+1+1. ERP 2+1. please check & correct it, this urgent bill.\" The book text for DtlKey 924983 is 3S(28\"), and parse-sofa.mjs turns a 3S at any seat depth other than 24\" into 2A(LHF)+1A(RHF) by the owner standing rule - which is WHY the ERP holds 2+1, so this is a per-document override of that rule and not a change to it. The DRAWING on the same line (photo so-items/HC-SO-013475/4b274c15-0260-4861-a47b-9748ab8cd792/ac-924983-1.jpg, AutoCount DtlKey 924983) shows three separate seats and the owner ruled the drawing wins. Line 1 of the same order is a DIFFERENT build (2S(35\")) and is not touched - hence the desc2Match."
+  },
+  {
+   "docs": [
+    "HC-SO-011733",
+    "HC-PO-008783"
+   ],
+   "model": "9058",
+   "pieces": [
+    "2A(LHF)",
+    "CNR",
+    "1NA",
+    "1NA",
+    "1A(RHF)"
+   ],
+   "seat": "30",
+   "desc2Match": "SEAT HEIGHT: +1",
+   "why": "owner 2026-09-08, reading the enlarged slip: 2A(LHF)+CNR+1NA+1NA+1A(RHF) at 30\". He corrected the reading of the left-hand shape himself and stated the rule with it: TWO BOXES SHARING ONE OUTER FRAME ARE ONE MULTI-SEAT PIECE - the two 30\" boxes sit inside a single outline with the arm hatched on its left, so that is 2A(LHF) and not 1A(LHF)+1NA. Outlines count pieces; inner divisions count seats. | WHY THIS DOCUMENT CAME BACK TO HIM AT ALL, AND IT IS NOT THE BUILD: he ruled it in the 2026-08 round and the ERP was moved to that answer, but that ruling's needle is \"{COL:CH141-8 ARMY}/{SEAT HEIGHT: +1\\\"INCH\" and the fabric library RENUMBERED CH141-8 to CH141-08 on 2026-08-11, so prod now holds \"{COL:CH141-08 ARMY}\" and the needle has matched nothing since. A ruling nothing can find is a ruling the reconcile does not have, which is why a build he had already answered kept reporting as CANNOT BE COMPARED - the same class as docs/bugs/0718, a correction gone inert when the fabric library renumbered itself. This entry's needle is \"SEAT HEIGHT: +1\", which the book and the ERP both carry and no colour renumbering can move. | ONE PIECE IS OPEN AND IT IS HIS WORD TO GIVE, NOT OURS TO ASSUME. Prod holds SIX compartments - 2A(LHF)+CNR+1NA+1NA+CONSOLE+1A(RHF) - and HC-PO-008783 carries the matching six, dedicated line by line (probe run 34242061732). His own 2026-08 ruling on this document listed the Console; his 2026-09-08 list does not mention it. A console is not a seat and may simply not have been read out with the seat run. The build is written HERE EXACTLY AS HE GAVE IT and nothing is deleted on an assumption: the applier refuses to cut the surplus 9058-CONSOLE row because a purchase-order line is dedicated to it, so the refusal is reported every run and the question stays visible until he answers it in one word."
+  },
+  {
+   "docs": [
+    "HC-SO-012025",
+    "HC-PO-009024"
+   ],
+   "model": "9050",
+   "pieces": [
+    "1S"
+   ],
+   "seat": null,
+   "desc2Match": "all adjustable arm rest",
+   "desc2Exclude": " bottom to Nilon",
+   "why": "owner 2026-09-08, reading the enlarged slips of this document one by one: the SECOND sofa - the slip marked \"9050 G\" - is a plain single seater. He stated the rule with it: A SINGLE BOX HATCHED ON BOTH SIDES IS 1S at the stated seat, and that shape is never to be returned as unreadable. NO SEAT is written: he did not state one for this sofa, and this file copies his answer rather than borrowing its neighbour's 30 inches. | HOW IT IS ADDRESSED, and it is the whole difficulty of this document. The account book states the same build text TWICE on SO-012025, once with a LEADING SPACE (DtlKey 829179) and once without (829180), and the ERP explodes each into four compartment rows that inherit their lead's text verbatim. The second sofa's text is therefore a strict SUFFIX of the first's, so every substring that finds the second also finds the first - proved exhaustively in scripts/lib/sofa-desc2-match.test.mjs, not assumed. So this build is addressed by what it is NOT: desc2Exclude takes out the rows carrying the leading space, byte-exactly, leaving DtlKey 829180's four rows. An exclusion that matches nothing REFUSES rather than widening back onto both sofas. | THE MONEY DOES NOT MOVE. Prod, probe run 34242061732: the whole sofa price rides DtlKey 829179's row and every row of the second sofa is 0, so collapsing four zero rows into one leaves the document's total exactly where it was. The three surplus rows are the ones nothing points at - HC-PO-009024's 1NA, CNR and 1A(RHF) lines are all undedicated and unreceived - and the applier refuses the build outright if that stops being true. | HC-PO-009024 is named with the sales order so the pair is corrected together and the factory document does not keep building a four-piece sofa the customer document no longer says (docs/bugs/0719)."
+  }
+ ],
+ "_held": [
+  {
+   "docs": [
+    "HC-SO-013384"
+   ],
+   "model": "8030",
+   "pieces": [
+    "1S"
+   ],
+   "seat": "35",
+   "desc2Match": "fully cover replace the leg",
+   "why": "owner 2026-09-08, reading the enlarged slips of this document one by one: the SECOND sofa is a single seater at 35\". He stated the rule with it: A SINGLE BOX HATCHED ON BOTH SIDES IS 1S at the stated seat, and that shape is never to be returned as unreadable.",
+   "heldWhy": "NOT WRITTEN 2026-09-08, and his answer is NOT in doubt - this document cannot yet be addressed at the grain his answer needs. Measured on prod, probe run 34242061732: HC-SO-013384 holds TWO sofa builds whose Desc2 are BYTE-IDENTICAL (\"Col : ZL -15 MISTY  fully cover replace the leg  Nilon bottom\", AutoCount DtlKey 914561 and 914562), so no needle can reach one without the other. Its sibling HC-SO-012025 could be split only because the book happened to leave a LEADING SPACE on one of its two texts; this document has no such difference. The line key cannot address it either: of the six ERP sofa rows only the two leads carry linked_ac_dtlkey and the four compartments the correction added carry NULL, and backfill-ac-sofa-line-keys.mjs refuses to stamp them precisely because two identical builds of one model do not force which is which. Writing the 1S under any needle that exists today would collapse BOTH sofas, including the one he confirmed as 1A(LHF)+1NA+1A(RHF). What this needs first is a line key on every compartment row of this document; that is a change to shared pairing machinery and is deliberately not stacked onto this data fix."
+  },
+  {
+   "docs": [
+    "HC-SO-013384"
+   ],
+   "model": "8030",
+   "pieces": [
+    "2A",
+    "1A"
+   ],
+   "seat": null,
+   "why": "owner 2026-09-08, the THIRD drawing on this document's slips: 2A + 1A.",
+   "heldWhy": "NOT WRITTEN 2026-09-08, and it needs HIS WORD before anything is written, on two counts. FIRST, THE DOCUMENT HOLDS TWO SOFA LINES AND HE READ THREE DRAWINGS. The committed book snapshot data/ac-reconcile-truth.json.gz (cut 2026-09-08) states exactly two sofa lines on SO-013384, DtlKey 914561 and 914562, and the ERP holds two builds - but the line photographs are THREE distinct slips: ac-914561-1.jpg on the first line, and ac-914562-1.jpg AND ac-914562-2.jpg both hanging off the second (probe run 34242061732). A third sofa cannot be written onto a document the account book gives two lines: the line count is the book's under his standing rule, and creating a sales-order line the book does not state is a different lane with its own allow-list. Which drawing is the second sofa and which is the third is his to say. SECOND, THE HANDING IS NOT STATED: he gave \"2A + 1A\" with no L or R, and every piece SKU in the catalogue is handed (8030-2A(LHF) / 8030-2A(RHF)), so a bare 8030-2A is not a product and the applier would refuse it. Choosing a hand for him would be inventing the half of the answer he did not give."
   }
  ]
 }

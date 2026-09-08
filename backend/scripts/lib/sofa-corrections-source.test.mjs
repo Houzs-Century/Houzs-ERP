@@ -56,8 +56,18 @@ test("BOTH real files load, and the 2026-08 round is still there", () => {
      18 -> 19 on 2026-09-08: HC-SO-013475, the sofa the shop floor reported as
      "Autocount drawing is 1+1+1, ERP 2+1". It went into THIS file rather than a
      2026-09-08 one because the FILE= substring filter would then select two
-     rounds at once - the test below pins that. */
-  assert.equal(bySource.get("sofa-compartment-corrections-2026-09.json"), 19);
+     rounds at once - the test below pins that.
+     19 -> 21 on 2026-09-08 (second round, same day): the owner re-read the
+     enlarged slips of HC-SO-011733, HC-SO-012025 and HC-SO-013384 and gave six
+     answers. TWO of them confirm entries this file already held and add no
+     build; TWO are new entries (HC-SO-011733, and HC-SO-012025's second sofa);
+     and TWO are HELD, which is why the held count is asserted beside the build
+     count - a held build that quietly became a written one would otherwise move
+     neither number. */
+  assert.equal(bySource.get("sofa-compartment-corrections-2026-09.json"), 21);
+  const heldBySource = new Map();
+  for (const h of both.held) heldBySource.set(h.source, (heldBySource.get(h.source) ?? 0) + 1);
+  assert.equal(heldBySource.get("sofa-compartment-corrections-2026-09.json"), 2);
 });
 
 /* ── THE TWO SOURCES MAY NOT BE CONFUSED FOR EACH OTHER ─────────────────────

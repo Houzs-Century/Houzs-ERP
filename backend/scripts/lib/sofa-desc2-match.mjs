@@ -34,6 +34,30 @@
  * 2026-09-04: all 16 documents that match exactly today match exactly ONE
  * distinct Desc2, so the guard cannot regress a build that already applies.
  *
+
+ * ── WHEN NO NEEDLE CAN REACH THE BUILD: `desc2Exclude` ─────────────────────
+ * A needle can only say what a build IS. On HC-SO-012025 the account book
+ * states the same text twice, once with a LEADING SPACE (DtlKey 829179) and
+ * once without (829180), and the ERP explodes each into four compartment rows
+ * that inherit their lead's text verbatim. The second sofa's text is therefore
+ * a strict SUFFIX of the first's, so EVERY substring that finds the second also
+ * finds the first — proved exhaustively in the test, not assumed. While the two
+ * were believed to be identical sofas that did not matter: one correction was
+ * written onto both, which is this file's stated rule. On 2026-09-08 the owner
+ * read the enlarged slips and ruled that they are NOT the same sofa, and from
+ * that moment the second one has no address at all.
+ *
+ * `desc2Exclude` is the other half of the address: the rows that carry it are
+ * NOT this build. It is deliberately BYTE-EXACT and never normalised, because
+ * the discriminator here IS a leading space and `normaliseDesc2` erases exactly
+ * that.
+ *
+ * AND IT CARRIES ITS OWN BRAKE. If the exclusion matches NO row on the
+ * document, the discriminator is gone — a re-import trimmed the space, say —
+ * and the correction would silently widen back onto both sofas. That is the
+ * failure this whole module exists to prevent, so an exclusion that removes
+ * nothing is a REFUSAL (`exclusion-missing`), never a quiet no-op.
+ *
  * Zero dependencies — `node --test scripts/lib/sofa-desc2-match.test.mjs` runs
  * it on a bare checkout, and the working-agreement workflow does exactly that.
  */
@@ -94,6 +118,9 @@ export function desc2Contains(haystack, needle) {
  *   `normalised` — found only after normalising; say so in the operator's log.
  *   `none` — no row carries the text. The build is not on this document.
  *   `ambiguous` — the needle spans more than one build. REFUSE; never pick.
+ *   `exclusion-missing` — a `desc2Exclude` was given and no row on the document
+ *     carries it, so the discriminator that tells this build from its neighbour
+ *     is gone. REFUSE; the alternative is writing this build onto both.
  * @property {any[]} rows the rows of the build; empty unless the verdict allows
  * @property {string} how one line, for the operator's log
  * @property {string[]} texts the distinct normalised Desc2 the needle reached
@@ -105,10 +132,24 @@ export function desc2Contains(haystack, needle) {
  * @param {any[]} rows every sofa row on the document, in document order
  * @param {string|null|undefined} needle the correction's `desc2Match`
  * @param {(row:any)=>unknown} [readDesc2] how to read a row's Desc2
+ * @param {string|null|undefined} [exclude] the correction's `desc2Exclude`: rows
+ *   carrying this text, BYTE-EXACTLY, are not this build
  * @returns {BuildSelection}
  */
-export function selectBuildRows(rows, needle, readDesc2 = (r) => r.description2) {
-  const all = Array.isArray(rows) ? rows : [];
+export function selectBuildRows(rows, needle, readDesc2 = (r) => r.description2, exclude = null) {
+  const every = Array.isArray(rows) ? rows : [];
+  /* The exclusion narrows the CANDIDATE POOL before anything else looks at it,
+     so a row it names can never be reached, be counted towards ambiguity, or be
+     treated as surplus by the caller. */
+  const ex = String(exclude ?? "");
+  const all = ex === "" ? every : every.filter((r) => !String(readDesc2(r) ?? "").includes(ex));
+  if (ex !== "" && all.length === every.length)
+    return {
+      verdict: "exclusion-missing",
+      rows: [],
+      how: `no line on this document carries the desc2Exclude ${JSON.stringify(ex)}, so the text that tells this build from its neighbour is gone`,
+      texts: [],
+    };
   if (!needle) return { verdict: "all", rows: all.slice(), how: "no desc2Match on this correction", texts: [] };
 
   /* One build is one Desc2. Two distinct texts under one needle means the

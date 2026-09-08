@@ -245,14 +245,24 @@ async function main() {
          module before widening anything further — and note that it REFUSES an
          ambiguous match rather than picking, which is the only reason a looser
          needle is safe on a document that holds two builds. */
-      if (c.desc2Match) {
-        const pick = selectBuildRows(rows, c.desc2Match);
+      if (c.desc2Match || c.desc2Exclude) {
+        /* `desc2Exclude` is the second half of the address, for a document
+           whose second sofa has NO address of its own: on HC-SO-012025 the
+           book states the same text twice, once with a leading space and once
+           without, so the second build's text is a strict SUFFIX of the first's
+           and every needle that finds one finds the other. Rows carrying the
+           exclusion are not this build. See lib/sofa-desc2-match.mjs. */
+        const pick = selectBuildRows(rows, c.desc2Match, undefined, c.desc2Exclude);
+        if (pick.verdict === "exclusion-missing") {
+          log(`  ${doc}: REFUSED — ${pick.how}. Writing this build without it would put it on BOTH sofas.`);
+          nAmbiguous++; continue;
+        }
         if (pick.verdict === "ambiguous") {
           log(`  ${doc}: REFUSED — "${c.desc2Match}" reaches ${pick.texts.length} DIFFERENT builds on this document, and telling them apart is the whole job of desc2Match: ${pick.texts.map((t) => JSON.stringify(t.slice(0, 56))).join("  vs  ")}`);
           nAmbiguous++; continue;
         }
         if (!pick.rows.length) {
-          log(`  ${doc}: no line matches "${c.desc2Match}" (${pick.how}) — skipped, the build is not on this document`);
+          log(`  ${doc}: no line matches "${c.desc2Match}"${c.desc2Exclude ? ` once ${JSON.stringify(c.desc2Exclude)} is excluded` : ""} (${pick.how}) — skipped, the build is not on this document`);
           continue;
         }
         if (pick.verdict === "normalised")

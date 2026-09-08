@@ -80,9 +80,18 @@ export function makeSofaRulingLookup(dataDir, onError = () => {}) {
        these" on every single run. 「这个很多我刚刚都给过你答案了啊」.
        Measured on the 2026-09-08 data: exactly ONE document is ruled in more
        than one file, so this changes that document and nothing else. */
-    const hit = findLast(cands, (c) => c.desc2Match && desc2Contains(text, c.desc2Match));
+    /* `desc2Exclude` is the other half of an address, for a build whose text is
+       a strict SUFFIX of its neighbour's and therefore has no needle of its own
+       (HC-SO-012025: the same text twice, once with a leading space). It is
+       BYTE-EXACT and never normalised, because the discriminator IS that space
+       and normaliseDesc2 removes it. Applied HERE as well as in the writer so
+       the reporter and the writer cannot disagree about whose build a line is:
+       without it the newest ruling wins for BOTH sofas and the four-piece one
+       would be reported as the single seater the owner ruled its neighbour. */
+    const excluded = (c) => c.desc2Exclude && String(text ?? "").includes(c.desc2Exclude);
+    const hit = findLast(cands, (c) => c.desc2Match && !excluded(c) && desc2Contains(text, c.desc2Match));
     /* A single ruling with no needle can only be this document's one build. */
-    const only = cands.length === 1 && !cands[0].desc2Match ? cands[0] : null;
+    const only = cands.length === 1 && !cands[0].desc2Match && !excluded(cands[0]) ? cands[0] : null;
     const pick = hit || only;
     return pick ? { pieces: pick.pieces, source: pick.source } : null;
   };
