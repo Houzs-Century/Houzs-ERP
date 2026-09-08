@@ -1,5 +1,17 @@
 ## The cost-stamping script priced a queen bed from a king's purchase line [high, money]
 
+<!-- area: Purchase orders + GRN + PI -->
+<!-- status: open -->
+
+> **STILL OPEN, verified 2026-09-08.** The code defect is fixed, but this
+> entry's own binding sequence - merge, dispatch apply=0, read the planned
+> writes, then apply=1 - was never carried out. `.github/workflows/stamp-po-line-costs.yml`
+> exists and has **zero runs in its entire history**:
+> `gh api repos/Houzs-Century/Houzs-ERP/actions/workflows/stamp-po-line-costs.yml/runs --jq .total_count`
+> returns `0`. So the purchase-order line costs this tool targeted have never
+> been stamped by it. Whether they were stamped by something else is UNKNOWN -
+> a PLAN run answers it in about a minute and writes nothing.
+
 **Symptom** — `stamp-po-line-costs.mjs` planned to write RM470.00 onto
 `DIVAN ONLY-(Q)` x3 and RM641.50 onto `ELEGANT (A)-(Q)` x1. The queen's own
 purchase history is RM325 median over 152 lines (+44.6%) and RM585 over 52

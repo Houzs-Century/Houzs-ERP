@@ -71,5 +71,25 @@ precondition for the paperwork-moved-stock-did-not case, and it is 0 of 473 and
 writes a movement without a cancel; that is exactly what Q2 measures, and Q2 is
 what crashed.
 
-**Ref.** `fix/cutover-ledger-backlog`, 2026-09-08. Unblocks
-`docs/bugs/0675-a-migrated-goods-receipt-cancelled-reversing-879-units-it-ne.md`.
+**VERIFIED by re-running it, before merge.** Dispatched from the branch carrying
+the fix — run
+[34189651181](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34189651181),
+2026-09-08 13:11 local, conclusion `success`. All six sections printed, and the
+question the [critical] entry had been waiting on is now answered:
+
+```
+movements behind the 473 migrated goods receipts:   0 row(s), 0 units
+movements behind the 173 migrated delivery orders:  0 row(s), 0 units
+STOCK — CLEAN. 0 movement rows behind 646 migrated documents.
+CANCEL audit rows on migrated documents: 0
+EXPOSURE PREVENTED — cancelling every live migrated goods receipt would have
+  written reversing OUTs for 1334 units; editing one line on every live migrated
+  delivery order would have written OUTs for 1245 units.
+```
+
+**Nothing was written** — the run's own closing line is
+`check-migrated-cancel-exposure: read-only, nothing was written.`
+
+**Ref.** `fix/cutover-ledger-backlog`, 2026-09-08. CLOSES
+`docs/bugs/0675-a-migrated-goods-receipt-cancelled-reversing-879-units-it-ne.md`,
+which is `[critical]` and had been UNKNOWN since 2026-09-07.
