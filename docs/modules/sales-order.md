@@ -3209,6 +3209,17 @@ also keeps `specialsRecorded` OUT of its `carried` array, so a recorded option i
 never counted as a ticked one and the reported ERP value still says what the line
 actually holds.
 
+**The table that prints that column moved on 2026-09-08.** `reportVariants` —
+the whole 226-line render — is now `backend/scripts/lib/variant-report.mjs`,
+because `check-ac-erp-reconcile.mjs` reached its 2,000-line ceiling and the
+repo's rule is that an over-cap file may not grow. Nothing about the behaviour
+moved with it, and the allow-list in
+`backend/tests/specialsRecordedNeverPriced.test.ts` gained the new path for the
+same reason the checker was on it: the same render, in a new file, computing no
+price and reading no money. (The move also brought a `no-key` column beside
+`differ` on the SCALAR axes — `docs/bugs/0712`, and
+`docs/modules/delivery-order.md` for what it means.)
+
 Those readers are on the allow-list because they are READ-ONLY: they SELECT and
 print, none writes a line, and none can reach a price. The rule stays "render the
 key, do not price it" — a report is a render — and the test's assertion that the

@@ -136,8 +136,8 @@ import { mapSpecial as mapBedframeSpecial } from "./lib/bedframe-special-map.mjs
 import { K as SK, mapPhrase as mapSofaPhrase, skey } from "./lib/sofa-special-map.mjs";
 import { soProcessingDateFragment } from "./lib/so-processing-date.mjs";
 import {
-  AGREE, AXES, BOOK_BLANK, DIFFER, ERP_BLANK, PENDING, RECORDED, UNREADABLE, VARIANT_GROUPS, VERDICTS,
-  compareLine, decodeBook, runSelfTest,
+  AGREE, AXES, BOOK_BLANK, DIFFER, ERP_BLANK, NO_LINE_KEY, PENDING, RECORDED, UNREADABLE, VARIANT_GROUPS,
+  VERDICTS, compareLine, decodeBook, foldGuessedPairing, runSelfTest,
 } from "./lib/variant-reconcile.mjs";
 
 import { buildScope, currencyVerdict, decodeSnapshot, isTestDoc, LOCAL_CURRENCY } from "./lib/ac-scope.mjs";
@@ -149,6 +149,7 @@ import { blankRowArm, isBlankBookRow, splitBlankBookRows } from "./lib/ac-blank-
 import { grPairGrain } from "./lib/ac-gr-pair-grain.mjs";
 import { erpReconcileTypes } from "./lib/ac-reconcile-erp-sql.mjs";
 import { bagOf, compareBags } from "./lib/keyless-multiset.mjs";
+import { reportVariants } from "./lib/variant-report.mjs";
 import { FIELD_MAP } from "./lib/ac-field-identity.mjs";
 import {
   compareType, loadAcFieldSide, loadErpFieldSide, measurePoDiscount,
@@ -156,7 +157,6 @@ import {
 } from "./lib/ac-field-identity-run.mjs";
 import { printFieldTable, printPoDiscount } from "./lib/ac-field-identity-report.mjs";
 import { buildVerdictRows, makeVerdictRecorder, summariseVerdict } from "./lib/so-verdict-derive.mjs";
-import { classifyUnread, makeUnreadTally } from "./lib/sofa-unread-split.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const DATA = path.join(here, "data");
@@ -576,198 +576,6 @@ const rm = (s) => (s == null ? "null" : (Number(s) / 100).toFixed(2));
 const first = (a) => a.slice(0, SHOW);
 const summary = [];
 const variantTotals = [];
-const SHOW_BOOK_BLANK = 5; // the direction that is NOT work; enough to see it exists
-
-/* axis key -> the label the table prints, so the sentence a salesperson reads
-   and the column the owner reads are the SAME WORD. Built from AXES rather than
-   typed, so a new axis cannot arrive with no name here. */
-const AXIS_LABEL = Object.fromEntries(AXES.map((a) => [a.key, a.label]));
-
-/**
- * The variant reconcile for one document type.
- *
- * `rows` is one entry per AutoCount line that reached the ERP, carrying the ERP
- * lines it became — the sofa split means that is often more than one.  `desc2`
- * is the book's own build text by DtlKey; a line absent from it is a line the
- * book said nothing about, which is BOOK-BLANK on every axis and NOT unknown.
- *
- * Every count is split PROCEEDED / not proceeded, because the owner's rule is
- * that an unconfirmed order may legitimately be blank and quoting the combined
- * figure as the backlog has already cost him time twice.
- */
-function reportVariants(t, label, rows, desc2) {
-  const tally = {};
-  for (const a of AXES) tally[a.key] = { yes: {}, no: {} };
-  for (const a of AXES) for (const half of ["yes", "no"]) for (const v of VERDICTS) tally[a.key][half][v] = 0;
-  const offenders = {};
-  const bookBlanks = {};
-  for (const a of AXES) {
-    offenders[a.key] = [];
-    bookBlanks[a.key] = [];
-  }
-  const pop = { total: rows.length, modelled: 0, bedframe: 0, sofa: 0, other: 0, withDesc2: 0, proceeded: 0 };
-  let unkeyedSofa = 0;
-  /* The `unread` column, by CAUSE. lib/sofa-unread-split.mjs holds the argument
-     for why one number there was two populations needing different people. */
-  const unread = makeUnreadTally();
-
-  for (const r of rows) {
-    const lead = r.erpLines[0] || {};
-    const group = String(lead.item_group ?? "").toLowerCase();
-    if (!VARIANT_GROUPS.has(group)) {
-      pop.other++;
-      continue;
-    }
-    pop.modelled++;
-    pop[group]++;
-    const text = desc2.get(r.acLine.dtlKey) || "";
-    if (text) pop.withDesc2++;
-    /* `proceeded` is a per-line fact carried from the ERP query, not inferred
-       here: an order with a Processing Date is what the factory is building. */
-    const proceeded = lead.proceeded === true;
-    if (proceeded) pop.proceeded++;
-    const book = decodeBook(V, { desc2: text, itemGroup: group, itemCode: lead.item_code });
-    const { axes } = compareLine(V, { book, erpLines: r.erpLines, proceeded });
-    /* THE COMPARTMENT AXIS NEEDS THE WHOLE BUILD, AND ONLY THE LINE KEY CAN
-       REGROUP IT. One AutoCount sofa line becomes one ERP line per piece; the
-       pieces are recognisable as one build because they share
-       linked_ac_dtlkey. Where the ERP lines carry no key the pairing above
-       falls back to value and then to document order, which returns ONE ERP
-       line per AutoCount line — so a five-piece build would be compared against
-       one piece and reported as four missing compartments that are not missing
-       at all. Say the axis is unanswerable instead of answering it wrongly. */
-    /* Measured BEFORE the override below, because the override replaces the
-       cell's verdict and would erase the evidence that the book text was the
-       other, independent reason this line cannot be answered. */
-    const bookUnreadable = book.compartments === null;
-    const keyless = !r.erpLines.every((l) => l.ac_dtlkey != null);
-    if (axes.compartments && keyless) {
-      axes.compartments.verdict = UNREADABLE;
-      axes.compartments.book = axes.compartments.book || "(not regroupable)";
-      axes.compartments.detail =
-        "the ERP lines of this document carry no AutoCount line key, so the pieces of one build cannot be regrouped";
-      unkeyedSofa++;
-    }
-    if (axes.compartments && axes.compartments.verdict === UNREADABLE) {
-      unread.record(
-        classifyUnread({ keyless, bookUnreadable }),
-        proceeded,
-        `${r.ac} DtlKey ${r.acLine.dtlKey} (ERP ${r.erpNo} ${lead.item_code ?? "?"})` +
-          (proceeded ? "" : "  [NOT PROCEEDED]"),
-      );
-    }
-    const half = proceeded ? "yes" : "no";
-    for (const [key, cell] of Object.entries(axes)) {
-      tally[key][half][cell.verdict]++;
-      const where = `${r.ac} DtlKey ${r.acLine.dtlKey} (ERP ${r.erpNo} ${lead.item_code ?? "?"})`;
-      const both = `AutoCount "${cell.book || "(blank)"}" vs ERP "${cell.erp || "(blank)"}"` +
-        (cell.detail ? ` — ${cell.detail}` : "");
-      if (cell.verdict === DIFFER || (cell.verdict === ERP_BLANK && proceeded)) {
-        offenders[key].push({
-          differ: cell.verdict === DIFFER,
-          proceeded,
-          line: `${where}: ${both}${proceeded ? "" : "  [NOT PROCEEDED]"}`,
-        });
-        /* THE VERDICT LOCKS ON BOTH ARMS, and on an order that is not yet
-           proceeded too. DIFFER is two sides stating different things, which
-           the owner's 「还没proceed还没确认的就可以直接放空的」 does NOT excuse —
-           that ruling is about a BLANK. ERP_BLANK is only counted when the
-           order IS proceeded, which is the same line the table calls "the only
-           column that is WORK". BOOK_BLANK, PENDING and RECORDED fall to the
-           branches below and never lock. */
-        VERDICT.record(t, r.ac, r.erpNo, AXIS_LABEL[key] ?? key, `${where}: ${both}`);
-      } else if (cell.verdict === UNREADABLE) {
-        /* WE COULD NOT ANSWER THIS AXIS. A sofa whose ERP lines carry no
-           AutoCount line key cannot have its compartments regrouped, so the
-           reconcile says so rather than agreeing — and "could not tell" is not
-           "it matches". It locks on its own named axis so the person reading
-           the refusal is not sent looking for a difference that was never
-           measured. */
-        VERDICT.record(t, r.ac, r.erpNo, "sofa build not verifiable", `${where}: ${cell.detail || "not comparable"}`);
-      } else if (cell.verdict === BOOK_BLANK) {
-        bookBlanks[key].push(`${where}: ${both}`);
-      }
-    }
-  }
-
-  plain("");
-  plain(`─────────── ${t} — ${label}: THE VARIANTS INSIDE THE LINE ───────────`);
-  if (!pop.total) {
-    log(`${t} VARIANTS — no AutoCount line of this type paired to an ERP line, so nothing was compared. NOT a clean run.`);
-    return { t, pop, tally, comparable: false };
-  }
-  plain(
-    `${pop.total} AutoCount lines paired to an ERP line; ${pop.modelled} carry a variant-bearing item group ` +
-      `(${pop.bedframe} bedframe, ${pop.sofa} sofa) and ${pop.other} do not (accessory, mattress, service — no axes to compare). ` +
-      `${pop.withDesc2} of the ${pop.modelled} have a build text in the book; ${pop.proceeded} are on a PROCEEDED order.`,
-  );
-  if (!pop.modelled) {
-    log(`${t} VARIANTS — no bedframe or sofa line on this document type. Nothing to compare; NOT a clean run.`);
-    return { t, pop, tally, comparable: false };
-  }
-
-  plain("axis                 |                 PROCEEDED (the backlog)                  |             not proceeded (blank is OK)");
-  plain("                     |  agree  ERPblank  bookblank  differ  pend  unread  recorded |  agree  ERPblank  bookblank  differ  pend  unread  recorded");
-  for (const a of AXES) {
-    const y = tally[a.key].yes;
-    const n = tally[a.key].no;
-    const seen = VERDICTS.reduce((s2, v) => s2 + y[v] + n[v], 0);
-    if (!seen) continue;
-    const cells = (h) => [h[AGREE], h[ERP_BLANK], h[BOOK_BLANK], h[DIFFER], h[PENDING], h[UNREADABLE], h[RECORDED]]
-      .map((x, i) => String(x).padStart([6, 9, 10, 7, 5, 7, 10][i]));
-    plain(`${a.label.padEnd(20)} | ${cells(y).join(" ")} | ${cells(n).join(" ")}`);
-  }
-  plain(
-    "ERPblank on a PROCEEDED order is the only column that is WORK. bookblank is the ERP holding a value the " +
-      "book never stated — an operator filled it in, which is allowed. pend = the book says TBC/KIV.",
-  );
-  plain(
-    "recorded = the book asks for a PRICED special the line does not tick, and variants.specialsRecorded already " +
-      "carries it: the owner's 2026-09-03 ruling 甲 applied — the factory sees the option and the document's money " +
-      "did not move. DECIDED work, not backlog, and it is broken out so it can never be summed into the DIFFER column again.",
-  );
-  if (unkeyedSofa) {
-    plain(
-      `   of the ${pop.sofa} sofa lines, ${unkeyedSofa} sit on a document whose ERP lines carry no AutoCount ` +
-        "line key, so their COMPARTMENTS are unanswerable rather than agreeing. Their colour, seat size and " +
-        "specials are still compared - those are per-line values and do not need the build regrouped.",
-    );
-  }
-
-  /* Printed whenever anything is unanswerable, because a single number there
-     has twice been read as one backlog. */
-  for (const line of unread.lines(SHOW)) plain(line);
-
-  for (const a of AXES) {
-    const list = offenders[a.key];
-    if (!list.length) continue;
-    /* Differences first: both sides state something and they disagree, which is
-       the only shape that needs a human to adjudicate rather than a fill. */
-    list.sort((x, y) => Number(y.differ) - Number(x.differ));
-    /* SPLIT THE DIFFER COUNT BY PROCEEDED, in the ANNOTATION and not only in the
-       table above. This headline is the line that gets quoted into briefs and
-       status notes, and it was summing the two halves the table had just been at
-       pains to separate: sofa compartments read "32 DIFFER" on 2026-09-07 when
-       ONE of the 32 sat on a proceeded order and 31 did not. The owner's rule
-       「还没proceed还没确认的就可以直接放空的」 has already been broken twice by a
-       lumped number, and both times the lump came from a line like this one. */
-    const dif = list.filter((x) => x.differ);
-    const difYes = dif.filter((x) => x.proceeded).length;
-    log(
-      `${t} VARIANT ${a.label} — ${difYes} DIFFER on a PROCEEDED order` +
-        (dif.length - difYes ? ` (+${dif.length - difYes} on orders not yet proceeded)` : "") +
-        `, ${list.filter((x) => !x.differ).length} ERP blank on a proceeded order`,
-    );
-    for (const row of list.slice(0, SHOW)) plain(`      ${row.line}`);
-    if (list.length > SHOW) plain(`      ... ${list.length - SHOW} more`);
-    const bb = bookBlanks[a.key];
-    if (bb.length) {
-      plain(`   ${a.label} — AutoCount blank, ERP carries one: ${bb.length} (first ${Math.min(SHOW_BOOK_BLANK, bb.length)}, NOT work)`);
-      for (const row of bb.slice(0, SHOW_BOOK_BLANK)) plain(`      ${row}`);
-    }
-  }
-  return { t, pop, tally, comparable: true };
-}
 
 for (const cfg of TYPES) {
   const t = cfg.t;
@@ -1617,7 +1425,7 @@ for (const cfg of TYPES) {
   }
 
   /* ── 4. THE VARIANTS INSIDE THE LINE ──────────────────────────────────── */
-  const vt = reportVariants(t, cfg.label, variantRows, B.desc2);
+  const vt = reportVariants({ t, label: cfg.label, rows: variantRows, desc2: B.desc2, deps: V, VERDICT, SHOW, log, plain });
   variantTotals.push(vt);
 
   summary.push({
@@ -1706,6 +1514,7 @@ plain("═══════════ VARIANTS INSIDE THE LINE — ALL TYPES 
     let differ = 0;
     let orderWork = 0;
     let orderDiffer = 0;
+    let noKey = 0;
     for (const a of AXES) {
       const y = add[a.key];
       const b = build[a.key];
@@ -1713,6 +1522,7 @@ plain("═══════════ VARIANTS INSIDE THE LINE — ALL TYPES 
       if (!seen) continue;
       work += y.yes[ERP_BLANK];
       differ += y.yes[DIFFER] + y.no[DIFFER];
+      noKey += y.yes[NO_LINE_KEY] + y.no[NO_LINE_KEY];
       orderWork += b.yes[ERP_BLANK];
       orderDiffer += b.yes[DIFFER] + b.no[DIFFER];
       plain(
@@ -1729,6 +1539,14 @@ plain("═══════════ VARIANTS INSIDE THE LINE — ALL TYPES 
         "is not work anyone asked for. An unconfirmed order's blank is not counted either: " +
         "还没proceed还没确认的就可以直接放空的.",
     );
+    if (noKey) {
+      log(
+        `VARIANTS — a further ${noKey} axis value(s) are NOT counted above and are NOT work: two or more of our rows ` +
+          "of one item at one quantity on one document carry no AutoCount line number, so which of ours answers which " +
+          "of the book's was the checker's own guess, and both sides state the SAME set of values. Listed by name in " +
+          "each type's section as `no-key`; docs/bugs/0709 and 0712 have the trace.",
+      );
+    }
   }
 }
 
