@@ -30,6 +30,7 @@ import { suppliers } from "./routes/suppliers";
 import { mfgPurchaseOrders } from "./routes/mfg-purchase-orders";
 import { mfgPurchaseOrdersListEnrichment } from "./routes/mfg-purchase-orders-list-enrichment";
 import { purchaseOrderItemPhotos } from "./routes/purchase-order-item-photos";
+import { cancelApprovalGuard, cancelRequestsInbox, poCancelRequests, soCancelRequests } from "./routes/document-cancel-routes";
 import { grns } from "./routes/grns";
 import { grnsListEnrichment } from "./routes/grns-list-enrichment";
 import { purchaseInvoices } from "./routes/purchase-invoices";
@@ -287,6 +288,12 @@ scm.use("/mfg-purchase-orders/*", scmAreaGuard("scm.procurement.po"));
 // the main router so its static `/list-mrp-enrichment` path resolves ahead of
 // `/:id`. Shares the guard above via the path prefix.
 scm.route("/mfg-purchase-orders", mfgPurchaseOrdersListEnrichment);
+// Cancellation needs a reason + TWO approvals (owner 2026-09-08). The request
+// routes ride this prefix's area guard; the guard in front of PATCH /:id/cancel
+// refuses until the PO carries an APPROVED request, then stamps it EXECUTED.
+// routes/document-cancel-routes.ts — the PO router itself is not edited.
+scm.use("/mfg-purchase-orders/:id/cancel", cancelApprovalGuard("PO"));
+scm.route("/mfg-purchase-orders", poCancelRequests);
 scm.route("/mfg-purchase-orders", mfgPurchaseOrders);
 // Per-line photo WRITES (upload / delete PO-owned keys) — separate file because
 // the main router is at its size ceiling; same prefix, same area guard.
@@ -331,6 +338,12 @@ scm.use("/mfg-sales-orders/*", migratedSoReadonly());
 // verdicts). Mounted BEFORE the main router so its static `/list-mrp-enrichment`
 // path resolves ahead of `/:docNo`. Shares the guard above via the path prefix.
 scm.route("/mfg-sales-orders", mfgSalesOrdersListEnrichment);
+// Cancellation needs a reason + TWO approvals (owner 2026-09-08). Same shape as
+// the PO above: request routes on this prefix (behind the area guard AND the
+// migrated-SO lock), and a guard on the status route that only wakes when the
+// body says CANCELLED. routes/document-cancel-routes.ts.
+scm.use("/mfg-sales-orders/:docNo/status", cancelApprovalGuard("SO"));
+scm.route("/mfg-sales-orders", soCancelRequests);
 scm.route("/mfg-sales-orders", mfgSalesOrders);
 // SO amendment / revision workflow — SO-centric, so it rides the same L2 area
 // guard as Sales Orders (GET=view, PATCH=edit); the finer scm.amendment.* gates
@@ -351,6 +364,10 @@ scm.route("/so-amendments", soAmendments);
 // both handlers.
 scm.use("/so-handover/*", scmAreaGuard("scm.sales.orders"));
 scm.route("/so-handover", soHandover);
+// The cancellation-request inbox — both documents, this company. Coarse
+// scm.access only: an inbox spanning the sales and procurement areas cannot
+// pick one of them; each row's actions still hit the per-document routes above.
+scm.route("/cancel-requests", cancelRequestsInbox);
 // state-warehouse-mappings: cross-area lookup (SO/DO warehouse routing) — left
 // on the coarse gate, see SHARED READ HELPERS note above.
 scm.route("/state-warehouse-mappings", stateWarehouseMappings);

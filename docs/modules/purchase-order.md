@@ -268,7 +268,7 @@ with no per-area level consulted.
 | PATCH | `/:id/submit` | `:2904` | Legacy no-op/echo — returns 409 unless already SUBMITTED. Also 409 `purchase_location_id_required` if the PO has no ship-to warehouse (2026-08-02). |
 | PATCH | `/:id/confirm` | `:2998` | **The commit**: DRAFT → SUBMITTED. Blocked 409 `purchase_location_id_required` (via `poWarehouseGap`) if the header `purchase_location_id` is blank AND any line has no `warehouse_id` — a warehouse-less PO can't go live because its GR would receive into the wrong warehouse (owner 2026-08-02). |
 | POST | `/:id/send-to-supplier` | `:3019` | Email the PO PDF. Fail-closed on the `purchase_order` email channel (`:3032`). |
-| PATCH | `/:id/cancel` | `:3182` | → CANCELLED; releases SO quota AND clears the line's mig-0235 allocation sub-lines (a cancelled PO attributes nothing — 2026-08-02). |
+| PATCH | `/:id/cancel` | `:3182` | → CANCELLED; releases SO quota AND clears the line's mig-0235 allocation sub-lines (a cancelled PO attributes nothing — 2026-08-02). **Since 2026-09-08 a non-DRAFT PO reaches this only after a cancellation request with a reason has been approved twice** — `cancelApprovalGuard('PO')` at the mount refuses 403 `cancel_approval_required` otherwise (`docs/modules/document-cancel-approval.md`). A DRAFT still cancels directly. |
 | PATCH | `/:id/reopen` | `:3276` | CANCELLED → SUBMITTED; re-claims SO quota. Allocation sub-lines are NOT restored (they were cleared on cancel); the coarse `so_item_id` link remains, re-split via the allocation editor if needed. **Since 2026-08-13 it also runs `poWarehouseGap` and stamps `submitted_at`** — reopen was the third door to SUBMITTED and the only one with no warehouse gate, so cancel-then-reopen turned a warehouse-less DRAFT into a live, GR-receivable PO. |
 | POST | `/bulk-supplier-date` | — | **Was missing from this table until 2026-08-13.** Sets ONE supplier-REVISED delivery-date slot (`slot` 2/3/4 → `supplier_delivery_date_2..4`) across up to 100 POs. It never touches `supplier_id` and never touches `expected_at`. `applyToLines` **defaults to TRUE**, so unless the caller opts out it cascades onto every line's date as well. A downstream-locked or foreign-company PO is reported in `skipped`, never written; each updated PO still gets its own audit row. |
 
@@ -405,7 +405,8 @@ works and is multi-select at line level — but only for a line that is
   stamps `submitted_at`, writes a `POST` audit row, then runs `recomputeSoPicked`
   best-effort (`:2983-2989`). Idempotent on SUBMITTED / PARTIALLY_RECEIVED
   (`:2943`); rejects anything else with 409.
-- **Cancel** (`:3182`). Refuses RECEIVED (`:3200`); idempotent on CANCELLED;
+- **Cancel** (`:3182`). Behind the two-approval request for any non-DRAFT PO
+  (`document-cancel-approval.md`). Refuses RECEIVED (`:3200`); idempotent on CANCELLED;
   then two locks — `poHasDownstream` (`:3208`) and `poHasOutstandingDropshipOut`
   (`:3214`). Releases every converted SO line's quota via `recomputeSoPicked`
   (`:3251-3259`).
