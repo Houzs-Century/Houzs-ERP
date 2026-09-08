@@ -67,6 +67,14 @@
 // also safe to run beside the other cutover lanes — it takes no lock beyond its
 // own rows and touches no column any of them writes.
 //
+// ONE THING THE VERIFICATION WILL FLAG AND IT IS NOT A BUG: if somebody fills one
+// of these fields by hand in the seconds between the plan and the apply, the
+// per-column guard KEEPS their value and the re-read then disagrees with what
+// this run planned. That is reported as a wrong value on purpose - a
+// disagreement between what a write intended and what the row now holds is
+// always worth a person looking, and quietly excusing the one benign shape would
+// excuse the malignant ones with it.
+//
 //   MODE=plan (default)  read, classify, print every count, write NOTHING.
 //   MODE=apply           needs CONFIRM="CARRY THE CUSTOMER BLOCK". Writes in ONE
 //                        transaction, then re-reads on a FRESH connection and
@@ -354,7 +362,14 @@ async function main() {
         const width = cols.length + 1;
         const vals = batch.map((_, k) => `($${k * width + 1}::uuid, ${cols.map((__, j) => `$${k * width + 2 + j}::text`).join(",")})`).join(",");
         const r = await tx.unsafe(
-          `UPDATE scm.delivery_orders SET ${cols.map((c) => `${c} = v.${c}`).join(", ")}
+          /* PER-COLUMN guard, not one guard for the statement. A row is grouped
+             by the SET of columns it needs, so an OR-joined WHERE would let a
+             row through on ONE still-empty column and then assign ALL of them -
+             overwriting a value somebody filled between the plan and the apply.
+             That is the one promise this script makes, so the guard is repeated
+             inside every assignment and the WHERE only decides which rows to
+             visit. */
+          `UPDATE scm.delivery_orders SET ${cols.map((c) => `${c} = CASE WHEN ${EMPTY("scm.delivery_orders", c)} THEN v.${c} ELSE scm.delivery_orders.${c} END`).join(", ")}
              FROM (VALUES ${vals}) AS v(id, ${cols.join(",")})
             WHERE scm.delivery_orders.id = v.id
               AND (${cols.map((c) => EMPTY("scm.delivery_orders", c)).join(" OR ")})`,
