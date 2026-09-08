@@ -1806,6 +1806,64 @@ UPDATE scm.app_config SET value = 'off', updated_at = now()
 
 Full runbook, including what a malformed value does: `docs/migrated-so-lock.md`.
 
+#### CORRECTNESS MODE — `verdict:1` opens the migrated orders that MATCH the book
+
+Owner, 2026-09-08, after the ruling above: **「他们是要开 SO 和 edit SO 来 proceed
+单;purchasing 要开 PO;logistic 要 convert SO to DO」**. All three happen ON the
+migrated orders, so an ORIGIN-grained lock blocks the work the cutover exists to
+enable — 2,882 documents shut to protect the handful that are wrong.
+
+A new switch value re-grains it onto CORRECTNESS. Everything above still
+describes value `1`; this describes `verdict:1`.
+
+| | |
+|---|---|
+| Switch | the SAME row, `scm.app_config['scm.migrated_so_lock']`, value **`verdict:1`** / `verdict:1,2` / `verdict:all`. Every pre-existing value means exactly what it meant, and a malformed `verdict:` spelling falls back to locking ALL by origin — the harder answer, because per-document IS an opening. |
+| The fact it reads | `scm.so_reconcile_verdict`, one row per migrated sales order, keyed on the ERP `doc_no`. Written ONLY by `backend/scripts/publish-so-reconcile-verdict.mjs` from a `check-ac-erp-reconcile.mjs` run. **Nothing is stamped on `mfg_sales_orders`** — the owner's rule (「你换不一样就代表我们的数据从 autocount 搬过来的就不一样了啊」) is why the verdict lives in its own table. |
+| Decision | `migratedSoIsLocked(value, companyId, isMigrated, verdict)`. The fourth parameter is **REQUIRED and `SoReconcileVerdict \| null`**, so the compiler enumerated the call sites — `null` LOCKS, exactly as `isMigrated: null` does. |
+| Only `clean` opens | Five states, one of which opens: clean-and-fresh. **No verdict published**, **verdict older than 48h**, **the read errored or threw**, and **it differs** all LOCK. 48h is the AutoCount snapshot's own limit — a verdict cannot be fresher than the book it was measured against. |
+| Refusal | still `409 so_migrated_readonly`, but the sentence now names the DOCUMENT and the AXIS: *"HC-SO-010789 still differs from the AutoCount book on: document total. It opens by itself once that is corrected."* Under the 200-char cap both clients enforce — `migratedSoVerdictMessage` drops axis NAMES until it fits rather than truncating one. |
+| Operator `description` | **not consulted in this mode.** A per-document sentence has to name the document; an override would erase the part that makes it actionable. |
+| The LIST | `migratedSoListGate` reads the page's verdicts in ONE batched statement (`.in('doc_no', …)`), then answers per row. A row whose verdict did not come back is absent, and absent locks — so the list can only ever show MORE locked than the API refuses, never fewer. |
+| Cost while OFF | zero. `migratedSoReadonlyState` short-circuits on `!value.byVerdict` before any verdict read, and `migratedSoVerdictMode.test.ts` proves it by giving the guard a fake client that THROWS on the verdict table. |
+
+**What the two front ends needed: nothing new.** They already consume
+`migrated_readonly` + `migrated_readonly_reason` as decided facts, so the five
+surfaces in the table above are unchanged. ONE frontend defect had to be fixed:
+`humanApiError`'s curated `ERROR_CODE_MESSAGES` entry won over the server's
+`reason`, which would have thrown the per-document sentence away and shown the
+old class sentence about payments —
+`docs/bugs/0700-a-per-document-refusal-reason-was-overwritten-by-the-curated.md`.
+
+**MEASURED against production**, Actions -> *AutoCount vs ERP reconcile
+(read-only)*, run `34194151677`, 2026-09-08 14:19 MYT:
+
+> 2,882 migrated sales orders compared. **2,653 (92.1%) match the book exactly**
+> and would open on `verdict:1`. **229 (7.9%) stay locked** — and only **55** of
+> those carry a real difference; the other **174** are locked because the
+> reconcile could not ANSWER for them, which is not the same thing and is
+> deliberately not treated as one.
+
+Documents per locking axis in that run (documents, not findings): sofa build not
+verifiable 162, sofa compartments 29, lines could not be matched 23, line count
+11, a book line we do not have 10, specials 7, seat size 5, document total 5,
+colour / fabric 2, item code 1, quantity 1, a line key on the wrong document 1.
+
+**`sofa build not verifiable` is the big one and it is not a wrong sofa.** Where
+a document's ERP lines carry no AutoCount line key, one book line's compartments
+cannot be regrouped, so `variant-reconcile` answers UNREADABLE rather than
+agreeing. "Could not tell" is not "it matches", so it locks — on its own named
+axis, so nobody is sent hunting for a difference that was never measured. Those
+162 open by themselves the moment the line keys are backfilled; nothing about
+them has to be repaired by hand.
+
+Which axes lock, and why the reconcile's DECLARED classes (sofa decomposition,
+item translation, `no-price`, book-blank variants, an unproceeded order's blank,
+`pend`, `recorded`) do not, is stated once in
+`backend/scripts/lib/so-verdict-derive.mjs`. Full runbook including the order of
+operations: `docs/migrated-so-lock.md` §10.
+
+
 ### Deleting an SO — DRAFT only, and the test-order escape hatch
 
 `DELETE /:docNo` hard-deletes a **DRAFT and nothing else** — `409 so_not_draft`

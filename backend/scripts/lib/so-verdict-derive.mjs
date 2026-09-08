@@ -43,7 +43,16 @@
  *   ERP-blank on an order that is NOT proceeded — owner: 还没proceed还没确认的就
  *                        可以直接放空的.
  *   pend / recorded      the book says TBC/KIV; or the priced special is already
- *                        in variants.specialsRecorded (owner 2026-09-03 甲).
+ *                        carried on the line under the owner's 2026-09-03 ruling
+ *                        甲 - the factory sees the option and the document's
+ *                        money did not move, so it is DECIDED work, not a
+ *                        difference (see lib/variant-reconcile.mjs, which
+ *                        owns that verdict). The jsonb key it lives under is
+ *                        deliberately NOT spelled here: a tree scan in
+ *                        backend/tests asserts that only display surfaces name
+ *                        it, and a mention in this header would have to become
+ *                        an exception in that scan. A check with an exception
+ *                        in it is the shape this repo keeps paying for.
  *
  * Everything the reconcile could not ANSWER is a locking axis, not an absent
  * one. `sofa build not verifiable` is the live example: where a document's ERP
