@@ -2220,6 +2220,44 @@ read-only **What the ERP holds for a sales order** workflow runs
 `backend/scripts/diag-so-erp-build.mjs` (`DOCS=` takes ERP or AutoCount
 numbers). See `docs/bugs/0728-the-cannot-be-compared-list-printed-the-refusal-and-never-th.md`.
 
+**And the cause table must explain THAT column, not a wider set — 2026-09-09.**
+The block headed *"WHAT 'CANNOT BE COMPARED' MEANS, BY CAUSE"* was counting a
+different population from the column it names. Run 34257873206: GR printed 6
+against a column of 3, DO 7 against 5, PI 5 against 2, and PO printed 13 against
+13 with the MEMBERSHIP still wrong — `HC-PO-000254` in the table and not in the
+column (it differs on `transfer to`, so precedence makes it `work`), and
+`HC-PO-009828` in the column and in no cause row at all.
+
+Two defects, both in `tallyVerdict`:
+
+1. the cross-tab was fed by the `unanswerable-cause` note of EVERY row, with no
+   reference to the bucket `bucketOf` had put it in. It is now fed by the
+   `unanswerable` bucket only, and the excluded documents are counted on their
+   own line (`unreadOnWorkDocs`) rather than merged away;
+2. `sofa build not verifiable` was the only unanswerable axis emitting a cause.
+   `transfer chain not verifiable` is the other, and it is itself TWO
+   populations owed opposite things — `line_not_stamped` is MECHANICAL (a
+   backfill), `erp_parent_unstamped` is an ABSENT SOURCE nobody can answer. The
+   causes are emitted in `lib/ac-transfer-chain-run.mjs` beside the refusal from
+   the verdict it already holds, so a cause and its refusal cannot disagree.
+
+`backend/scripts/lib/unanswerable-causes.mjs` is the registry — every cause, its
+sentence, and WHOSE it is (**MECHANICAL** / **ABSENT SOURCE** / **YOURS**). It
+IMPORTS `UNREAD_LABEL` from `lib/sofa-unread-split.mjs` rather than restating it,
+and refuses to load if a cause has a label with no owner or an owner with no
+label. The report prints `documents in the column carrying NO named cause: N`
+whether N is zero or not — "every one is named" is a claim, and the number that
+would be non-zero if it were false is what makes it evidence. See
+`docs/bugs/0729-the-cannot-be-compared-cause-table-described-a-different-pop.md`.
+
+**MECHANICAL means no ruling is needed, NOT that the key is derivable.** Measured
+on the same day: the delivery orders' MECHANICAL arm is real — the book's build
+text decodes and only the line key is missing — and
+`backfill-ac-downstream-line-keys.mjs` still stamps **0** of them, refusing each
+by name (`our sofa compartments are uneven … so the fold cannot state how many
+sofas this is`, prod dry-run 34261120780). Reading MECHANICAL as "already
+actionable" is the same over-read one level down.
+
 **It measures nothing.** `check-so-tally.mjs` runs
 `check-ac-erp-reconcile.mjs`, reads the verdict file that run writes, and
 classifies its rows; then it parses the reconcile's own printed `SO VERDICT` and
