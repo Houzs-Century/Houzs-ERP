@@ -453,6 +453,15 @@ export function parseSaveProblems(body: string | undefined | null): SaveProblem[
 /** Build an operator-friendly message from an API failure. Surfaces the
  *  server's own reason ONLY when it's already a plain sentence; otherwise maps
  *  the HTTP status to plain words. Never leaks JSON / SQL / status codes. */
+/* Codes whose refusal names ONE DOCUMENT, so the server's sentence beats
+   anything that can be written here. Keep this list tiny: a curated sentence is
+   the better default precisely because it is written for the operator, and this
+   is the exception for refusals the server can say more about than we can.
+   `so_migrated_readonly` earns it because since 2026-09-08 the answer differs
+   per order — one still differs from the account book on `document total`, its
+   neighbour matches and is open — and a class-level sentence cannot say which. */
+const SERVER_SENTENCE_WINS: ReadonlySet<string> = new Set(['so_migrated_readonly']);
+
 const ERROR_CODE_MESSAGES: Record<string, string> = {
   // Aggregated save gate (backend so-save-problems.ts). A surface that renders
   // the `problems` list itself never reaches this; it's the single-line fallback
@@ -622,10 +631,61 @@ export function humanApiError(status: number, body: string): string {
         : problems.map((p) => `• ${p.message}`).join('\n');
     }
     const j = JSON.parse(body) as { error?: unknown; reason?: unknown; message?: unknown };
+    /* HOISTED — these three used to sit just above `const said` below. They
+       moved because step 1 now has to be able to ASK whether the server's own
+       sentence is renderable before it decides to overwrite it with a curated
+       one. Nothing about what they do changed. */
+    const isPlain = (r: string) =>
+      !!r && r.length < 200 && !r.trim().startsWith('{') && !isErrorCode(r) &&
+      !/violates|constraint|null value|column|relation|syntax|PGRST|error_code|\b\d{5}\b/i.test(r);
+
+    /* THE DIAGNOSTIC TAIL, DROPPED INSTEAD OF THE WHOLE SENTENCE.
+       Sixteen fail-closed refusals in this tree write the operator's sentence
+       and then staple the driver's own words onto the end of it in brackets —
+       `…so this invoice was NOT saved … Please try again (column grn_items.foo
+       does not exist).` (backend return-unlinked-lines.ts:294, and the same
+       shape in allowed-options-check, do-line-remaining, downstream-lock,
+       qty-cap, service-line-guard, sku-usage, so-confirm-gate, the two unlinked
+       edit guards, derive-do-so-item-id and three route-level lock checks).
+       The filter above is right about the bracket and was wrong about the
+       sentence: it judged the pair as one string and threw away BOTH, so a
+       refusal that had explained itself in full rendered as "The system hit a
+       problem." Fixing it here rather than in sixteen strings is deliberate —
+       the next one written will be the same shape, and this is the only place
+       that sees the string at the moment it is judged.
+       Only a TRAILING bracket is removed, only when the whole string failed and
+       the remainder passes, and only ever by DELETION — a mid-sentence aside
+       ("Goods Receipt -> Transfer to Purchase Invoice") is untouched, and a
+       remainder that is still internals is still dropped. Nothing that renders
+       today stops rendering. */
+    const withoutTail = (r: string) => r.replace(/\s*\([^()]*\)\s*(\.?)\s*$/, '$1').trim();
+    const sayable = (raw: unknown): string | null => {
+      if (typeof raw !== 'string') return null;
+      if (isPlain(raw)) return raw;
+      const trimmed = withoutTail(raw);
+      return trimmed !== raw && isPlain(trimmed) ? trimmed : null;
+    };
     // 1. Known error code → curated plain message.
     if (typeof j.error === 'string') {
       const mapped = ERROR_CODE_MESSAGES[j.error];
-      if (mapped) return mapped;
+      /* ...UNLESS the server's sentence is about THIS DOCUMENT. A curated
+         sentence is written once for a whole class of refusal, which is exactly
+         what makes it better than a raw 409 — and exactly what makes it WORSE
+         than a per-document one. Since the migrated-order lock was re-grained
+         onto correctness (backend/src/scm/lib/so-reconcile-verdict.ts) the
+         server answers "HC-SO-010789 still differs from the AutoCount book on:
+         document total", and the curated line here would have thrown that away
+         and said "view-only until its payments are reconciled" — a sentence
+         that is no longer even the reason. The salesperson would be told the
+         order is shut and given nothing to act on, which is the "the button
+         does nothing" failure with extra steps.
+         The curated line stays as the FALLBACK for a server that sends nothing
+         sayable, so a code in this set can never render worse than before. */
+      if (mapped && !SERVER_SENTENCE_WINS.has(j.error)) return mapped;
+      if (mapped) {
+        const perDocument = sayable(j.reason) ?? sayable(j.message);
+        return perDocument ?? mapped;
+      }
     }
     // 1b. STRUCTURED REFUSAL — the server named the input, the value AND the
     //     legal set, and we used to throw all three away. `variant_not_allowed`
@@ -669,36 +729,6 @@ export function humanApiError(status: number, body: string): string {
     //    reach an operator. The `{`-prefix + `error_code` guards catch them;
     //    401s then fall through to the friendly "session has expired" status
     //    message below.
-    const isPlain = (r: string) =>
-      !!r && r.length < 200 && !r.trim().startsWith('{') && !isErrorCode(r) &&
-      !/violates|constraint|null value|column|relation|syntax|PGRST|error_code|\b\d{5}\b/i.test(r);
-
-    /* THE DIAGNOSTIC TAIL, DROPPED INSTEAD OF THE WHOLE SENTENCE.
-       Sixteen fail-closed refusals in this tree write the operator's sentence
-       and then staple the driver's own words onto the end of it in brackets —
-       `…so this invoice was NOT saved … Please try again (column grn_items.foo
-       does not exist).` (backend return-unlinked-lines.ts:294, and the same
-       shape in allowed-options-check, do-line-remaining, downstream-lock,
-       qty-cap, service-line-guard, sku-usage, so-confirm-gate, the two unlinked
-       edit guards, derive-do-so-item-id and three route-level lock checks).
-       The filter above is right about the bracket and was wrong about the
-       sentence: it judged the pair as one string and threw away BOTH, so a
-       refusal that had explained itself in full rendered as "The system hit a
-       problem." Fixing it here rather than in sixteen strings is deliberate —
-       the next one written will be the same shape, and this is the only place
-       that sees the string at the moment it is judged.
-       Only a TRAILING bracket is removed, only when the whole string failed and
-       the remainder passes, and only ever by DELETION — a mid-sentence aside
-       ("Goods Receipt -> Transfer to Purchase Invoice") is untouched, and a
-       remainder that is still internals is still dropped. Nothing that renders
-       today stops rendering. */
-    const withoutTail = (r: string) => r.replace(/\s*\([^()]*\)\s*(\.?)\s*$/, '$1').trim();
-    const sayable = (raw: unknown): string | null => {
-      if (typeof raw !== 'string') return null;
-      if (isPlain(raw)) return raw;
-      const trimmed = withoutTail(raw);
-      return trimmed !== raw && isPlain(trimmed) ? trimmed : null;
-    };
     const said = sayable(j.message) ?? sayable(j.reason);
     if (said) return said;
   } catch { /* body wasn't JSON — fall through to the status map */ }

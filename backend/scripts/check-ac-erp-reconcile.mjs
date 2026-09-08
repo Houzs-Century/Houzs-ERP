@@ -154,6 +154,7 @@ import {
   runSelfTest as runFieldSelfTest,
 } from "./lib/ac-field-identity-run.mjs";
 import { printFieldTable, printPoDiscount } from "./lib/ac-field-identity-report.mjs";
+import { buildVerdictRows, makeVerdictRecorder, summariseVerdict } from "./lib/so-verdict-derive.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const DATA = path.join(here, "data");
@@ -168,6 +169,15 @@ const MAX_AGE_DAYS = Number(process.env.MAX_SNAPSHOT_AGE_DAYS || 2);
    (sofa-slip-notation — the photo and the Desc2 are read TOGETHER), and
    "... 12 more" is exactly the 12 he cannot adjudicate. */
 const SHOW = Math.max(1, Number(process.env.SHOW || 20));
+/* THE PER-DOCUMENT VERDICT, recorded as this run finds things.
+   It is written out (VERDICT_OUT) and published by
+   publish-so-reconcile-verdict.mjs so the migrated-sales-order lock can shut
+   the documents that still differ and open the ones that do not, instead of
+   shutting all 2,882 because of where they came from. It only TALLIES what the
+   comparisons below decide - see lib/so-verdict-derive.mjs for why there must
+   never be a second opinion about "different". */
+const VERDICT = makeVerdictRecorder();
+const VERDICT_OUT = String(process.env.VERDICT_OUT || "").trim();
 
 const log = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 const plain = (m) => console.log(m);
@@ -555,6 +565,11 @@ const summary = [];
 const variantTotals = [];
 const SHOW_BOOK_BLANK = 5; // the direction that is NOT work; enough to see it exists
 
+/* axis key -> the label the table prints, so the sentence a salesperson reads
+   and the column the owner reads are the SAME WORD. Built from AXES rather than
+   typed, so a new axis cannot arrive with no name here. */
+const AXIS_LABEL = Object.fromEntries(AXES.map((a) => [a.key, a.label]));
+
 /**
  * The variant reconcile for one document type.
  *
@@ -624,6 +639,22 @@ function reportVariants(t, label, rows, desc2) {
           proceeded,
           line: `${where}: ${both}${proceeded ? "" : "  [NOT PROCEEDED]"}`,
         });
+        /* THE VERDICT LOCKS ON BOTH ARMS, and on an order that is not yet
+           proceeded too. DIFFER is two sides stating different things, which
+           the owner's 「还没proceed还没确认的就可以直接放空的」 does NOT excuse —
+           that ruling is about a BLANK. ERP_BLANK is only counted when the
+           order IS proceeded, which is the same line the table calls "the only
+           column that is WORK". BOOK_BLANK, PENDING and RECORDED fall to the
+           branches below and never lock. */
+        VERDICT.record(t, r.ac, r.erpNo, AXIS_LABEL[key] ?? key, `${where}: ${both}`);
+      } else if (cell.verdict === UNREADABLE) {
+        /* WE COULD NOT ANSWER THIS AXIS. A sofa whose ERP lines carry no
+           AutoCount line key cannot have its compartments regrouped, so the
+           reconcile says so rather than agreeing — and "could not tell" is not
+           "it matches". It locks on its own named axis so the person reading
+           the refusal is not sent looking for a difference that was never
+           measured. */
+        VERDICT.record(t, r.ac, r.erpNo, "sofa build not verifiable", `${where}: ${cell.detail || "not comparable"}`);
       } else if (cell.verdict === BOOK_BLANK) {
         bookBlanks[key].push(`${where}: ${both}`);
       }
@@ -905,6 +936,11 @@ for (const cfg of TYPES) {
     const h = B.headers.get(ac);
     if (!h) continue;
     bothSides++;
+    /* COMPARED. Only a document that reaches this line can ever be published
+       `clean`; one the run never got to has no row at all, and the guard reads
+       an absent row as LOCKED. "We checked it and it matches" and "we never
+       looked" must not be the same answer — see lib/so-verdict-derive.mjs. */
+    VERDICT.seen(t, ac, d.erp_no);
 
     /* AutoCount's own EMPTY ROWS are declared, not compared — a row with no
        ItemCode, no quantity and no money is not a line the ERP can hold, and
@@ -959,7 +995,10 @@ for (const cfg of TYPES) {
     if (acLines.length !== erpLines.length) {
       const msg = `${ac}: AutoCount ${acLines.length} vs ERP ${erpLines.length} (ERP ${d.erp_no})`;
       if (sofa) D.lineCount++;
-      else { F.lineCount.push(msg); lineCountRows.push({ key: ac, erpNo: d.erp_no, line: msg }); }
+      else {
+        F.lineCount.push(msg); lineCountRows.push({ key: ac, erpNo: d.erp_no, line: msg });
+        VERDICT.record(t, ac, d.erp_no, "line count", msg);
+      }
     }
 
     /* ── the two PAIRING-INDEPENDENT measurements ────────────────────────────
@@ -1042,7 +1081,13 @@ for (const cfg of TYPES) {
        once as `currencyBlind` rather than passed off as a like-for-like read. */
     const cur = currencyVerdict(h);
     const bookTotal = h.docTotalSen ?? h.totalSen;
-    if (cur.kind === "unknown") currencyBlind++;
+    if (cur.kind === "unknown") {
+      currencyBlind++;
+      /* This snapshot could not tell us the document's currency, so the money
+         comparison below is currency-blind for it. An unanswerable comparison
+         is not an agreement. */
+      VERDICT.record(t, ac, d.erp_no, "currency", "this snapshot does not state the document's currency");
+    }
     if (cur.kind === "foreign") {
       /* NOT a money difference. The ERP's `currency` column saying MYR on a
          foreign document is a real defect, but it is a CURRENCY defect, and
@@ -1052,6 +1097,11 @@ for (const cfg of TYPES) {
         `${ac}: ${cur.why} — document RM ${rm(h.docTotalSen)}, local RM ${rm(h.totalSen)}, ` +
           `ERP RM ${rm(erpTotal)} tagged '${LOCAL_CURRENCY}' (ERP ${d.erp_no})`,
       );
+      /* NOT a money difference — and still a difference. The reconcile's own
+         words: "a real defect, but a CURRENCY defect". An order whose currency
+         we hold wrongly is not one to proceed, so it locks on its own axis
+         rather than being counted as money it is not. */
+      VERDICT.record(t, ac, d.erp_no, "currency", cur.why);
     }
     if (bookTotal !== erpTotal) {
       /* An ERP side that is zero while the book is not is a POPULATION
@@ -1064,6 +1114,8 @@ for (const cfg of TYPES) {
       /* The same difference in a shape a classifier can read. The string above
          is what a human sees; this is what decides which column it lands in. */
       moneyRows.push({ key: ac, erpNo: d.erp_no, bookSen: bookTotal, erpSen: erpTotal, line });
+      VERDICT.record(t, ac, d.erp_no, "document total",
+        `AutoCount RM ${rm(bookTotal)} vs ERP RM ${rm(erpTotal)}`);
     }
 
     /* Recorded HERE and not where `shapePerCode` was computed, because the
@@ -1082,6 +1134,8 @@ for (const cfg of TYPES) {
        report. */
     if (!erpLines.some((l) => l.ac_dtlkey != null) && acLines.length !== erpLines.length) {
       unpairableDocs.push(`${ac}: no line key on either side and the counts differ (ERP ${d.erp_no})`);
+      VERDICT.record(t, ac, d.erp_no, "lines could not be matched",
+        `no line key on either side and the counts differ (AutoCount ${acLines.length} vs ERP ${erpLines.length})`);
       continue;
     }
 
@@ -1102,6 +1156,8 @@ for (const cfg of TYPES) {
         }
         if (!al) {
           F.keyOrphan.push(`${ac}: ERP line ${el.id} claims DtlKey ${k}, not a line of this document`);
+          VERDICT.record(t, ac, d.erp_no, "a line key on the wrong document",
+            `ERP line ${el.id} claims DtlKey ${k}, not a line of this document`);
           continue;
         }
         /* a second ERP line on the same AutoCount line = the sofa split */
@@ -1145,8 +1201,23 @@ for (const cfg of TYPES) {
     }
     for (let i = 0; i < Math.max(freeAc.length, freeErp.length); i++) {
       if (i < freeAc.length && i < freeErp.length) pairs.push([freeAc[i], freeErp[i], false]);
-      else if (i < freeAc.length) F.unmatchedAc.push(`${ac}: AutoCount DtlKey ${freeAc[i].dtlKey} has no ERP line`);
-      else F.unmatchedErp.push(`${ac}: ERP line ${freeErp[i].id} has no AutoCount line`);
+      else if (i < freeAc.length) {
+        F.unmatchedAc.push(`${ac}: AutoCount DtlKey ${freeAc[i].dtlKey} has no ERP line`);
+        VERDICT.record(t, ac, d.erp_no, "a book line we do not have",
+          `AutoCount DtlKey ${freeAc[i].dtlKey} has no ERP line`);
+      } else {
+        F.unmatchedErp.push(`${ac}: ERP line ${freeErp[i].id} has no AutoCount line`);
+        /* A SOFA-DECOMPOSED document is EXPECTED to hold more ERP lines than
+           the book: one book line is one ERP line per compartment. That is the
+           same declared class the line-count column already applies, applied
+           here for the same reason and from the same `sofa` measurement, so
+           the two cannot disagree about one document. On any other document a
+           line the book does not have is a real finding and locks. */
+        if (!sofa) {
+          VERDICT.record(t, ac, d.erp_no, "line count",
+            `ERP line ${freeErp[i].id} has no AutoCount line`);
+        }
+      }
     }
 
     /* The VARIANT side rides the pairing the document reconcile already did —
@@ -1193,11 +1264,16 @@ for (const cfg of TYPES) {
             ` (ERP ${d.erp_no}; ${k.why})`;
           F.item.push(line);
           itemRows.push({ key: ac, erpNo: d.erp_no, line });
+          VERDICT.record(t, ac, d.erp_no, "item code", line);
         }
       }
       const aq = al.qty ?? 0;
       const eq = el.qty == null ? 0 : Number(el.qty);
-      if (Math.abs(aq - eq) > 1e-4) F.qty.push(`${ac} DtlKey ${al.dtlKey}: AutoCount qty ${aq} vs ERP qty ${eq}`);
+      if (Math.abs(aq - eq) > 1e-4) {
+        F.qty.push(`${ac} DtlKey ${al.dtlKey}: AutoCount qty ${aq} vs ERP qty ${eq}`);
+        VERDICT.record(t, ac, d.erp_no, "quantity",
+          `DtlKey ${al.dtlKey}: AutoCount qty ${aq} vs ERP qty ${eq}`);
+      }
       const ap = al.unitPriceSen ?? 0;
       const ep = el.unit_price_sen == null ? 0 : Number(el.unit_price_sen);
       if (ap !== ep) {
@@ -1222,6 +1298,16 @@ for (const cfg of TYPES) {
           else if (ap === 0 && ep > 0) P.bookUnpriced.push(msg);
           else if (ap > 0 && ep === 0) P.erpDropped.push(msg);
           else P.bothPriced.push(msg);
+          /* `bookUnpriced` is the ONLY bucket that is not a difference: the
+             book states no price at all and copying it would ERASE ours
+             (owner's 空白不覆盖 rule), which is exactly what splitBookUnpriced
+             takes out of the summary. The other three lock — including
+             `bookDropped`, because a book SubTotal with no UnitPrice means the
+             EXPORT is lying and nothing about that document is evidence. */
+          if (!(ap === 0 && aSub === 0 && ep > 0)) {
+            VERDICT.record(t, ac, d.erp_no, "unit price",
+              `DtlKey ${al.dtlKey}: AutoCount RM ${rm(ap)} vs ERP RM ${rm(ep)}`);
+          }
         }
       }
     }
@@ -1744,6 +1830,50 @@ if (notWork) {
         .join("; ") +
       ". Each is explained under the table.",
   );
+}
+
+/* ── THE PER-DOCUMENT SALES-ORDER VERDICT ──────────────────────────────────
+   Written out ONLY when asked for (VERDICT_OUT), so the read-only check the
+   owner dispatches stays exactly what it was. publish-so-reconcile-verdict.mjs
+   is what puts these rows in the database; this file never writes one, which
+   keeps the CLAUDE.md rule that a read-only check is read-only.
+
+   The verdict is keyed on the ERP document number and covers SALES ORDERS only:
+   it feeds the migrated-sales-order lock, and no other document type has one. */
+if (VERDICT_OUT) {
+  const measuredAt = new Date().toISOString();
+  const runId = crypto.randomUUID();
+  const rows = buildVerdictRows({ recorder: VERDICT, type: "SO", companyId: CO, measuredAt, runId });
+  const sum = summariseVerdict(rows);
+  plain("");
+  plain("═══════════ PER-DOCUMENT VERDICT — SALES ORDERS ═══════════");
+  log(
+    `SO VERDICT — ${sum.docCount} migrated sales orders compared against the book: ` +
+      `${sum.cleanCount} match it exactly and would OPEN; ${sum.differCount} still differ and stay LOCKED.`,
+  );
+  for (const [axis, docs] of sum.perAxis) plain(`   ${axis}: ${docs} document(s)`);
+  for (const r of rows.filter((x) => !x.clean).slice(0, SHOW)) {
+    plain(`   LOCKED ${r.doc_no} (${r.ac_doc_no}) — ${r.axes.join(", ")}`);
+  }
+  const differ = sum.differCount;
+  if (differ > SHOW) plain(`   ... and ${differ - SHOW} more`);
+  fs.writeFileSync(
+    VERDICT_OUT,
+    JSON.stringify({
+      version: 1,
+      type: "SO",
+      company_id: CO,
+      measured_at: measuredAt,
+      run_id: runId,
+      snapshot_exported_at: snap.exported_at ?? null,
+      source: process.env.GITHUB_SERVER_URL && process.env.GITHUB_RUN_ID
+        ? `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`
+        : "local",
+      summary: sum,
+      rows,
+    }, null, 0),
+  );
+  plain(`   verdict written to ${VERDICT_OUT} (${rows.length} rows)`);
 }
 
 await sql.end({ timeout: 5 });
