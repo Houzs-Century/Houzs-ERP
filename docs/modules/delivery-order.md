@@ -887,6 +887,40 @@ so the book's `UDF_PAYEMENT` / `UDF_BALANCE` never learn about a payment recorde
 against the delivery. That is the payment half of the owner's sentence, it is a
 different lane's subject, and it is named here so it is not lost between the two.
 
+### A migrated delivery order carries the customer block from its sales order (2026-09-08)
+
+`scm.delivery_orders` holds the whole customer block — `phone`, `email`,
+`customer_type`, `building_type`, `address1`, `address2`, `city`, `state`,
+`customer_state`, `postcode`, `customer_country` and the three emergency-contact
+columns — and the interactive create path fills every one of them from the source
+order (`delivery-orders-mfg.ts:3459`). `backend/src/scm/lib/so-to-do-fields.ts`
+owns WHICH fields carry across, for both live converters.
+
+**`lib/migrated-do-writer.mjs` did not carry any of it until 2026-09-08.** Its
+header INSERT named fourteen columns and none of them was in that list, so every
+document either of its callers produced — `create-migrated-documents.mjs` and
+`sync-ac-delta.mjs` — rendered `-` for phone, email and address. The owner
+reported it the day delivery orders opened to staff (`HC-DO-011556`), and the
+point is that it is not a figures problem: **a delivery note with no phone and no
+address is unusable as paperwork even on a fully delivered order whose data he
+has ruled does not matter** (「已经出货了的就随便把 ... 数据对不对不重要了」).
+
+It now copies the block from the parent sales order inside the same transaction,
+one `UPDATE ... FROM scm.mfg_sales_orders`, folding the order's four address
+lines into the delivery order's two the same way `so-to-do-fields.ts` does.
+**Nothing is defaulted** — a field the order does not carry stays NULL, which is
+what the Create-DO banner is built to report honestly. Pinned by
+`backend/tests/migratedDoWriter.test.mjs`.
+
+Rows written before that: `backend/scripts/repair-customer-block.mjs` +
+`.github/workflows/repair-customer-block.yml` (plan by default, apply gated on
+`CONFIRM="CARRY THE CUSTOMER BLOCK"`); the size of the class is measured by
+`backend/scripts/check-customer-block-gap.mjs` +
+`.github/workflows/check-customer-block-gap.yml`, read-only. Neither touches a
+line, a quantity, a price, a payment column or a status, and neither enqueues an
+AutoCount outbox row. Ledger:
+`docs/bugs/0714-the-migrated-delivery-order-never-carried-a-customer-block-s.md`.
+
 ### Who moves the DO status, and what each value blocks (2026-08-16)
 
 DB type is the `scm.do_status` ENUM (base body in

@@ -45,6 +45,7 @@ import {
   bankRulesList, bankRuleCreate, bankRuleUpdate,
   bankLineReceipt, bankLineMatch, bankLineIgnore, bankLineUndo,
 } from './accounting-bank';
+import { bankConfigList, bankConfigSave } from './accounting-bank-config';
 import { payoutUpload, payoutList } from './accounting-payouts';
 import {
   chartUnionHandler, chartTickHandler, chartImportHandler,
@@ -161,6 +162,8 @@ accounting.put('/chart/rename', chartRenameHandler);
 accounting.put('/chart/update', chartUpdateHandler);
 accounting.post('/chart/account', chartCreateHandler);
 accounting.delete('/chart/account', chartDeleteHandler);
+accounting.get('/bank/config', bankConfigList);
+accounting.post('/bank/config', bankConfigSave);
 accounting.get('/bank/rules', bankRulesList);
 accounting.post('/bank/rules', bankRuleCreate);
 accounting.patch('/bank/rules/:id', bankRuleUpdate);

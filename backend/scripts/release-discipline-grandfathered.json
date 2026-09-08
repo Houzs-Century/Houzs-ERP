@@ -240,9 +240,6 @@
       "confirm-phrase",
       "fresh-verify"
     ],
-    "delete-test-so.mjs": [
-      "fresh-verify"
-    ],
     "diag-pwp-price-gap.mjs": [
       "confirm-phrase",
       "fresh-verify",

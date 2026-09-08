@@ -84,7 +84,14 @@ vi.mock('./bank-queries', () => ({
   ] }, isLoading: false }),
   useSaveBankRule: () => ({ mutate: saveRule, isPending: false }),
   useCreateBankRule: () => ({ mutate: createRule, isPending: false }),
+  /* The bank-statements card (2026-09-08): one account set up, the reader's
+     built-in headings for the placeholders. */
+  useBankConfigs: () => ({ data: { configs: [
+    { id: 7, account_code: '310-0010', bank_code: 'MBB', account_no: '0000564418610346', statement_format: 'CSV', delimiter: '|', amount_format: 'integer-sen', credit_indicator: 'CR', column_map: { date: ['EFFECT DATE'], description: ['TRX DESCRIPTION'], amount: ['AMOUNT'], indicator: ['AMOUNT IND'] }, is_active: true },
+  ], defaultHeadings: { date: ['Date', 'Transaction Date'], description: ['Transaction Description', 'Remarks'], reference: ['Ref. No.'], credit: ['Deposit', 'Credit Amount'], debit: ['Withdrawal', 'Payment Amount'], amount: ['Amount'], indicator: ['Amount Ind'], balance: ['Balance'] } }, isLoading: false }),
+  useSaveBankConfig: () => ({ mutate: saveConfig, isPending: false }),
 }));
+const saveConfig = vi.fn();
 
 const saveBankDefault = vi.fn();
 vi.mock('./accounting-phase1-queries', () => ({
@@ -249,5 +256,29 @@ describe('the clearing account per merchant', () => {
     /* HOUZS has only the generic account listed — the picker still shows it,
        reading the generic default. */
     expect((screen.getByLabelText('PBB clearing for Houzs Century') as HTMLSelectElement).value).toBe('326-0000');
+  });
+});
+
+/* ── The bank-statements card (2026-09-08: 别卡死读 column) ──────────────────── */
+describe('the bank statements card', () => {
+  test('lists the account already set up, and saves a new one with several headings per role as lists', () => {
+    saveConfig.mockClear();
+    draw();
+    expect(screen.getByText('Bank statements')).toBeTruthy();
+    expect(screen.getByText('0000564418610346')).toBeTruthy();
+    fireEvent.click(screen.getByText('+ Add account'));
+    fireEvent.change(screen.getByLabelText('Statement account'), { target: { value: '310-0010' } });
+    fireEvent.change(screen.getByLabelText('Bank'), { target: { value: 'HLB' } });
+    fireEvent.change(screen.getByLabelText('Account number'), { target: { value: '23600602788' } });
+    fireEvent.change(screen.getByLabelText('Date headings'), { target: { value: 'Date, Transaction Date' } });
+    fireEvent.change(screen.getByLabelText('Reference headings (joined)'), { target: { value: 'Ref. No., Sender / Receiver Name' } });
+    fireEvent.click(screen.getByText('Save statement setup'));
+    expect(saveConfig).toHaveBeenCalledTimes(1);
+    expect(saveConfig.mock.calls[0]![0]).toMatchObject({
+      accountCode: '310-0010', bankCode: 'HLB', accountNo: '23600602788', statementFormat: 'CSV', amountFormat: 'decimal',
+      columnMap: { date: ['Date', 'Transaction Date'], reference: ['Ref. No.', 'Sender / Receiver Name'] },
+    });
+    /* Roles left blank are not sent — the reader's built-in names apply. */
+    expect((saveConfig.mock.calls[0]![0] as { columnMap: Record<string, unknown> }).columnMap.description).toBeUndefined();
   });
 });

@@ -1,0 +1,63 @@
+name: Check customer-block gap (read-only)
+
+# How many delivery orders a driver cannot use because the document carries no
+# phone and no address, and how many sales orders are missing only a DERIVED
+# field. Two different causes, counted separately and never added together.
+#
+# READ-ONLY. The script takes no APPLY flag and every statement in it is a
+# SELECT. The AutoCount side is the committed snapshot
+# backend/scripts/data/ac-doc-headers.json.gz — the book itself is only
+# reachable over ZeroTier from the office and a hosted runner has no route to it.
+on:
+  workflow_dispatch:
+    inputs:
+      company_id:
+        description: "ERP company (AED_HOUZS is company 1)"
+        required: false
+        default: "1"
+        type: string
+      top:
+        description: "Document numbers to list per unanswerable class"
+        required: false
+        default: "30"
+        type: string
+      named_do:
+        description: "Delivery orders to inspect one by one (comma separated)"
+        required: false
+        default: "HC-DO-011556"
+        type: string
+      named_so:
+        description: "Sales orders to inspect one by one (comma separated)"
+        required: false
+        default: "HC-SO-013124,HC-SO-012565"
+        type: string
+
+# Deliberately NOT in the deploy concurrency group: it touches nothing and must
+# never queue behind - or displace - a release.
+concurrency:
+  group: check-customer-block-gap
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-customer-block-gap.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          TOP: ${{ inputs.top }}
+          NAMED_DO: ${{ inputs.named_do }}
+          NAMED_SO: ${{ inputs.named_so }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

@@ -97,6 +97,11 @@ export function reportVariants({ t, label, rows, desc2, deps: V, VERDICT, SHOW, 
        other, independent reason this line cannot be answered. */
     const bookUnreadable = book.compartments === null;
     const keyless = !r.erpLines.every((l) => l.ac_dtlkey != null);
+    /* Carried onto the row rather than recomputed in pass 3, so the CAUSE the
+       per-document verdict records and the cause the cross-tab prints are the
+       SAME measurement. Two statements of one classification is the failure
+       this file's own header names. */
+    const unreadCause = classifyUnread({ keyless, bookUnreadable });
     if (axes.compartments && keyless) {
       axes.compartments.verdict = UNREADABLE;
       axes.compartments.book = axes.compartments.book || "(not regroupable)";
@@ -106,7 +111,7 @@ export function reportVariants({ t, label, rows, desc2, deps: V, VERDICT, SHOW, 
     }
     if (axes.compartments && axes.compartments.verdict === UNREADABLE) {
       unread.record(
-        classifyUnread({ keyless, bookUnreadable }),
+        unreadCause,
         proceeded,
         `${r.ac} DtlKey ${r.acLine.dtlKey} (ERP ${r.erpNo} ${lead.item_code ?? "?"})` +
           (proceeded ? "" : "  [NOT PROCEEDED]"),
@@ -120,7 +125,7 @@ export function reportVariants({ t, label, rows, desc2, deps: V, VERDICT, SHOW, 
        line key could be stamped at all, so the two cannot disagree about which
        rows are candidates for each other. */
     computed.push({
-      r, lead, proceeded, axes,
+      r, lead, proceeded, axes, unreadCause,
       bucket: `${r.ac}|${comparisonKey({ code: lead.item_code, side: "erp", suffixed: Boolean(lead.line_suffix) }).key}|${Number(Number(lead.qty ?? 0).toFixed(4))}`,
       keyed: !keyless,
     });
@@ -130,7 +135,7 @@ export function reportVariants({ t, label, rows, desc2, deps: V, VERDICT, SHOW, 
      clauses that keep it from swallowing a real difference. */
   const guessFold = foldGuessedPairing(computed);
 
-  for (const { r, lead, proceeded, axes } of computed) {
+  for (const { r, lead, proceeded, axes, unreadCause } of computed) {
     const half = proceeded ? "yes" : "no";
     for (const [key, cell] of Object.entries(axes)) {
       tally[key][half][cell.verdict]++;
@@ -150,7 +155,7 @@ export function reportVariants({ t, label, rows, desc2, deps: V, VERDICT, SHOW, 
            order IS proceeded, which is the same line the table calls "the only
            column that is WORK". BOOK_BLANK, PENDING and RECORDED fall to the
            branches below and never lock. */
-        VERDICT.record(t, r.ac, r.erpNo, AXIS_LABEL[key] ?? key, `${where}: ${both}`);
+        VERDICT.record(t, r.ac, r.erpNo, AXIS_LABEL[key] ?? key, `${where}: ${both}`, proceeded);
       } else if (cell.verdict === UNREADABLE) {
         /* WE COULD NOT ANSWER THIS AXIS. A sofa whose ERP lines carry no
            AutoCount line key cannot have its compartments regrouped, so the
@@ -158,14 +163,29 @@ export function reportVariants({ t, label, rows, desc2, deps: V, VERDICT, SHOW, 
            "it matches". It locks on its own named axis so the person reading
            the refusal is not sent looking for a difference that was never
            measured. */
-        VERDICT.record(t, r.ac, r.erpNo, "sofa build not verifiable", `${where}: ${cell.detail || "not comparable"}`);
+        VERDICT.record(t, r.ac, r.erpNo, "sofa build not verifiable", `${where}: ${cell.detail || "not comparable"}`, proceeded);
+        /* WHOSE it is, recorded next to the refusal. A key that is merely
+           unstamped is OURS to stamp; a build text that does not decode is the
+           owner's drawing and nothing else. One number covering both has been
+           quoted as one backlog once already (lib/sofa-unread-split.mjs). */
+        VERDICT.note(t, r.ac, r.erpNo, "unanswerable-cause", unreadCause, where, proceeded);
       } else if (cell.verdict === BOOK_BLANK) {
         bookBlanks[key].push(`${where}: ${both}`);
+        VERDICT.note(t, r.ac, r.erpNo, "book-blank", AXIS_LABEL[key] ?? key, `${where}: ${both}`, proceeded);
+      } else if (cell.verdict === PENDING) {
+        VERDICT.note(t, r.ac, r.erpNo, "pending", AXIS_LABEL[key] ?? key, `${where}: ${both}`, proceeded);
+      } else if (cell.verdict === RECORDED) {
+        VERDICT.note(t, r.ac, r.erpNo, "recorded", AXIS_LABEL[key] ?? key, `${where}: ${both}`, proceeded);
+      } else if (cell.verdict === ERP_BLANK) {
+        /* Reached only when the order is NOT proceeded — the branch above took
+           the proceeded arm. 还没proceed还没确认的就可以直接放空的. */
+        VERDICT.note(t, r.ac, r.erpNo, "erp-blank-not-proceeded", AXIS_LABEL[key] ?? key, `${where}: ${both}`, false);
       } else if (cell.verdict === NO_LINE_KEY) {
         /* NAMED, never a count on its own. A class the reader cannot enumerate
            is a suppression, not a declaration — the rule docs/bugs/0668 was
            written for, applied to the column that was added to answer it. */
         noKeyRows[key].push(`${where}: ${both}`);
+        VERDICT.note(t, r.ac, r.erpNo, "no-line-key", AXIS_LABEL[key] ?? key, `${where}: ${both}`, proceeded);
       }
     }
   }

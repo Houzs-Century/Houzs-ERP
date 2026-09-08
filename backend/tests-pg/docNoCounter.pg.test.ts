@@ -1,17 +1,15 @@
-import { readFile, readdir } from 'node:fs/promises';
-import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import postgres, { type Sql } from 'postgres';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
-// @ts-expect-error — plain .mjs helper, no types; this is the SAME splitter
-// pg-migrate.mjs uses, so the replay below is the real one and not a lookalike.
-import { splitSqlStatements } from '../scripts/lib/split-sql.mjs';
 import {
   mintMonthlyDocNo,
   nextJeNo,
   nextMonthlyDocNo,
   claimDocNoSuffix,
 } from '../src/scm/lib/doc-no';
+// The PostgREST-shaped facade over a real connection. SHARED with
+// docNoConcurrentCreate.pg.test.ts so the two suites cannot drift into
+// describing different code paths — see the note in that file.
+import { applyDocNoCounterMigration, postgrestOver } from './lib/doc-no-fixture';
 
 /* scm.doc_number_counters — the document counter, against a real server.
  *
@@ -37,91 +35,6 @@ import {
 
 const url = process.env.TEST_DATABASE_URL ?? '';
 const describePg = url ? describe : describe.skip;
-
-const migrationsDir = fileURLToPath(new URL('../src/db/migrations-pg/', import.meta.url));
-
-// By SUFFIX, never by number — parallel PRs renumber migrations routinely, and a
-// number-pinned read would silently resolve to nothing and pass vacuously.
-async function migrationSql(): Promise<string> {
-  const files = (await readdir(migrationsDir)).filter((f) => f.endsWith('_scm_doc_number_counters.sql'));
-  if (files.length !== 1) {
-    throw new Error(
-      `expected exactly one *_scm_doc_number_counters.sql migration, found ${files.length}: ${files.join(', ')}`,
-    );
-  }
-  return readFile(join(migrationsDir, files[0]!), 'utf8');
-}
-
-/** Replay exactly as pg-migrate.mjs does: split, then one transaction. */
-async function applyMigration(sql: Sql): Promise<number> {
-  const stmts = splitSqlStatements(await migrationSql()) as string[];
-  await sql.begin(async (tx) => {
-    for (const s of stmts) await tx.unsafe(s);
-  });
-  return stmts.length;
-}
-
-/* A PostgREST-SHAPED FACADE over a real connection — not a mock of the database.
- *
- * The production client is @supabase/supabase-js talking HTTP to PostgREST;
- * there is no way to run that here. What this replaces is the TRANSPORT, and
- * only the four calls doc-no.ts makes: `.from().select().like().order().range()`
- * and `.rpc()`. Every row, every lock and every counter increment below is real
- * PostgreSQL. The repo's own pgTransactionSupabase would have been preferable
- * and cannot be used: it has no `.like()`, which is the whole floor read.
- */
-function postgrestOver(sql: Sql) {
-  return {
-    from(table: string) {
-      const q = {
-        _cols: '*',
-        _like: null as null | [string, string],
-        _order: null as null | [string, boolean],
-        _from: 0,
-        _to: 999,
-        _limit: null as null | number,
-        select(cols: string) { q._cols = cols; return q; },
-        like(col: string, pattern: string) { q._like = [col, pattern]; return q; },
-        order(col: string, opts?: { ascending?: boolean }) { q._order = [col, opts?.ascending !== false]; return q; },
-        limit(n: number) { q._limit = n; return q; },
-        range(from: number, to: number) { q._from = from; q._to = to; return q; },
-        async then(
-          resolve: (v: { data: unknown[] | null; error: unknown }) => void,
-          _reject?: (e: unknown) => void,
-        ) {
-          const [likeCol, likePattern] = q._like ?? ['', '%'];
-          const take = q._limit ?? (q._to - q._from + 1);
-          try {
-            const rows = await sql.unsafe(
-              `SELECT ${q._cols} FROM scm.${table}`
-              + (q._like ? ` WHERE ${likeCol} LIKE $1` : '')
-              + (q._order ? ` ORDER BY ${q._order[0]}${q._order[1] ? '' : ' DESC'}` : '')
-              + ` LIMIT ${take} OFFSET ${q._limit ? 0 : q._from}`,
-              (q._like ? [likePattern] : []) as never[],
-            );
-            // PostgREST's shape: a read error is DATA, never a throw.
-            resolve({ data: [...(rows as unknown[])], error: null });
-          } catch (e) {
-            resolve({ data: null, error: { message: e instanceof Error ? e.message : String(e) } });
-          }
-        },
-      };
-      return q;
-    },
-    async rpc(name: string, args: Record<string, unknown>) {
-      if (name !== 'next_doc_no_n') return { data: null, error: { code: 'PGRST202', message: `Could not find the function ${name}` } };
-      try {
-        const rows = await sql.unsafe<Array<{ n: number }>>(
-          'SELECT scm.next_doc_no_n($1::text, $2::int) AS n',
-          [args.p_series, args.p_floor] as never[],
-        );
-        return { data: rows[0]?.n ?? null, error: null };
-      } catch (e) {
-        return { data: null, error: { code: '', message: e instanceof Error ? e.message : String(e) } };
-      }
-    },
-  };
-}
 
 const counters = async (sql: Sql) =>
   new Map(
@@ -192,7 +105,7 @@ describePg('scm.doc_number_counters — the document counter (real postgres)', (
         VALUES ('TRIP-2608-001', 1), ('TRIP-2608-002', 2), ('TRIP-2608-003', 1);
     `);
 
-    const applied = await applyMigration(admin);
+    const applied = await applyDocNoCounterMigration(admin);
     expect(applied).toBeGreaterThan(5);
   });
 
@@ -415,7 +328,7 @@ describePg('scm.doc_number_counters — the document counter (real postgres)', (
 
   test('re-applying the migration moves no counter', async () => {
     const before = await counters(admin);
-    await applyMigration(admin);
+    await applyDocNoCounterMigration(admin);
     const after = await counters(admin);
     expect([...after.entries()].sort()).toEqual([...before.entries()].sort());
   });
