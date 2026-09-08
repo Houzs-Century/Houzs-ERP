@@ -96,16 +96,31 @@ describe("a pairing the document FORCES", () => {
     expect(new Set(r.stamps.map((s) => s.dtlKey))).toEqual(new Set([10, 11]));
   });
 
-  it("derives the SAME assignment on a re-run", () => {
-    const args = {
-      bookLines: [book({ dtlKey: 11 }), book({ dtlKey: 10 })],
-      erpRows: [erp({ id: "b" }), erp({ id: "a" })],
-      docNo: "D",
-    };
-    const a = pairDocument(args).stamps.map((s) => `${s.id}=${s.dtlKey}`).sort();
-    const b = pairDocument(args).stamps.map((s) => `${s.id}=${s.dtlKey}`).sort();
-    expect(a).toEqual(b);
-    expect(a).toEqual(["a=10", "b=11"]);
+  it("derives the SAME assignment however the database ordered the rows", () => {
+    // A plan that depends on an unordered SELECT is not reproducible — the flaw
+    // the retired purchase-order half of backfill-ac-line-keys.mjs had.
+    const bookLines = [book({ dtlKey: 11 }), book({ dtlKey: 10 })];
+    const forward = [erp({ id: "a" }), erp({ id: "b" })];
+    const reversed = [erp({ id: "b" }), erp({ id: "a" })];
+    const run = (erpRows) =>
+      pairDocument({ bookLines, erpRows, docNo: "D" }).stamps.map((s) => `${s.id}=${s.dtlKey}`).sort();
+    expect(run(forward)).toEqual(["a=10", "b=11"]);
+    expect(run(reversed)).toEqual(["a=10", "b=11"]);
+  });
+
+  it("keys a sofa build the same way however its compartments came back", () => {
+    const bookLines = [
+      book({ dtlKey: 10, code: "8030-1S", rawCode: "DSL-8030 SOFA" }),
+      book({ dtlKey: 11, code: "8030-1S", rawCode: "DSL-8030 SOFA" }),
+    ];
+    const pieces = (ids) => ids.map((id, n) => erp({ id, code: n % 2 ? "8030-CNR" : "8030-1A(LHF)" }));
+    const run = (ids) =>
+      pairDocument({ bookLines, erpRows: pieces(ids), docNo: "D" }).stamps
+        .map((s) => `${s.id}=${s.dtlKey}`).sort().join(",");
+    // Two builds of one model on one document is ONE unit here, so this pairs
+    // 2 book lines against 1 unit and must refuse — the point being that it
+    // refuses IDENTICALLY whatever order the rows arrived in.
+    expect(run(["a", "b"])).toBe(run(["b", "a"]));
   });
 });
 

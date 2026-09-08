@@ -26,6 +26,11 @@ on:
         required: false
         default: "0"
         type: string
+      confirm:
+        description: 'For apply ONLY, type exactly: STAMP DOWNSTREAM LINE KEYS'
+        required: false
+        default: ""
+        type: string
 
 # Its OWN group, never the deploy's: a cutover write must not queue behind — or
 # displace — a release.
@@ -47,6 +52,7 @@ jobs:
       - run: node scripts/backfill-ac-downstream-line-keys.mjs
         env:
           APPLY: ${{ inputs.apply }}
+          CONFIRM: ${{ inputs.confirm }}
           DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
 
   run-prod:
@@ -61,4 +67,5 @@ jobs:
       - run: node scripts/backfill-ac-downstream-line-keys.mjs
         env:
           APPLY: ${{ inputs.apply }}
+          CONFIRM: ${{ inputs.confirm }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
