@@ -2251,6 +2251,41 @@ not one of §6's enqueue anchors, so the balance in AutoCount is the one the
 document last carried when something else was edited. Sending it is strictly
 better than never sending it; keeping it live needs a payment-side hook.
 
+### Which PAYMENTS the book can learn about — one table, and it is not the only one that takes money
+
+Both fields above are computed from **`scm.mfg_sales_order_payments` and nothing
+else**:
+
+| reader | field it builds | table |
+|---|---|---|
+| `readSoOutstandingSen` (`scm/lib/autocount-read.ts:65`) | `UDF_BALANCE` | `scm.mfg_sales_order_payments` |
+| `readSoPaymentRefs` (`scm/lib/autocount-read.ts:187`) | `UDF_PAYEMENT` | `scm.mfg_sales_order_payments` |
+
+`composePaymentUdf` has exactly two feeders — `scm/lib/so-edit-header.ts:187` and
+`services/autocount-writeback.ts:1284` — and both are fed from those two reads.
+
+**`scm.delivery_order_payments` is a SECOND money table, and no AutoCount path
+reads it.** It is written by `POST /delivery-orders-mfg/:id/payments`
+(`scm/routes/delivery-orders-mfg.ts:5243`) and rendered by the DO Create and
+Detail screens through the same `PaymentsTable` the sales order uses
+(`frontend/src/vendor/scm/lib/delivery-order-queries.ts:417-470`). So a payment
+a driver takes at the door is recorded in our database and the account book is
+never told — the book goes on showing that customer as owing.
+
+That is not a branch that forgot to enqueue: there is no code path of any kind
+from that table to the write-back, which is why it is a section here and not a
+line in §6's table. **Do not "fix" it by pointing `readSoPaymentRefs` at both
+tables** — the two ledgers can legitimately hold the SAME payment (a door
+collection also keyed on the order), and summing them would tell AutoCount the
+customer paid twice.
+
+The exposure is measured, never assumed, by
+`backend/scripts/check-do-payment-book-gap.mjs` (workflow: **DO payment book gap
+(read-only)**), which separates door money the sales order ALSO records from
+door money that exists nowhere else. Ledger entry:
+`docs/bugs/0704-money-collected-at-the-door-never-reaches-the-account-book.md`,
+where the ruling and the chosen repair will be recorded.
+
 ### DeliverPhone1 — two contacts, two columns
 
 Owner 2026-08-15: *"我们的电话号码 … 应该是有一个 Delivery Contact，一个是
