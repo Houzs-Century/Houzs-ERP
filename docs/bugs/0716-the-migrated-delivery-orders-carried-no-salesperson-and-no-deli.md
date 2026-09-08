@@ -70,6 +70,19 @@ the residual rather than carrying a second copy of the customer-block rule —
 a second copy of an import rule is this repo's most expensive recurring bug
 class (`lib/migrated-do-writer.mjs` header).
 
+**Applied to production, 2026-09-08.** Merged as #3285 (`fdc19134`), backend
+deploy `34231623531` success. Plan run
+[`34231665739`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34231665739):
+**173 of 173** migrated company-1 delivery orders had all six NULL, every one
+linked to a live sales order, 0 orphans. Apply run
+[`34232388710`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34232388710)
+wrote 173 headers in one transaction; fresh-connection verify: values not as
+planned 0, still NULL 0, inventory movements 0. Read-back NULL counts:
+`salesperson_id` 173 -> 0, `agent` 173 -> 0, `ref` 173 -> 0,
+`expected_delivery_at` 173 -> 0, `branding` 173 -> 2, `customer_delivery_date`
+173 -> 23 — the last two are blank on the sales order itself (an SO-side gap,
+named in the plan, not invented).
+
 **Ref.** `fix/migrated-do-header-snapshot-0908`, 2026-09-08. Related:
 docs/bugs/0714 (customer block, same writer, same day), docs/bugs/0043 (line
 snapshot, same writer), #3121 (ship-from branch, the columns this must not

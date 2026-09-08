@@ -64,6 +64,52 @@ test("BOTH real files load, and the 2026-08 round is still there", () => {
   assert.equal(bySource.get("sofa-compartment-corrections-2026-09.json"), 35);
 });
 
+/* ── THE TWO SOURCES MAY NOT BE CONFUSED FOR EACH OTHER ─────────────────────
+ * A build read off the owner's DRAWING may legitimately contradict the account
+ * book — that is the whole of 「一律跟账本。除了sofa compartment而已啊」. A build
+ * copied FROM the book may not: its target IS the book. Both kinds are loaded
+ * through this one loader and handed to the reconcile as `deps.sofaRuling`, so
+ * the only thing keeping them apart is which file they live in, and the only
+ * thing telling a later reader which is which is the `why`. Neither survives an
+ * unlabelled entry, which is what this pins. */
+test("every build says which SOURCE it came from — the book's words or a drawing", () => {
+  const { builds } = loadCorrections(DATA);
+  for (const b of builds) {
+    const where = `${b.source} ${(b.docs || []).join("/")}`;
+    const why = String(b.why ?? "");
+    /* `Desc2` IS a way of naming the book, and the terse 2026-08 entries use it
+       — HC-SO-010955's whole why is "Desc2 2ER+C+1ER", which names its source
+       exactly and would have failed a pattern that only looked for the words
+       "account book". Recognising it is not loosening the guard: the guard asks
+       that a source be NAMED, and that one is. */
+    const saysBook = /ACCOUNT BOOK|account book's own words|一律跟账本|Desc2/.test(why);
+    const saysDrawing = /photo|drawing|slip|OWNER|OCR/i.test(why);
+    assert.ok(
+      saysBook || saysDrawing,
+      `${where}: the why names neither the book nor a drawing, so nobody can tell whether this build ` +
+        "is allowed to disagree with AutoCount",
+    );
+  }
+});
+
+test("a BOOK-ALIGNED build never claims to be the owner's reading", () => {
+  const { builds } = loadCorrections(DATA, "book-aligned");
+  assert.ok(builds.length > 0, "the book-aligned round loaded nothing");
+  for (const b of builds) {
+    assert.match(String(b.why), /ACCOUNT BOOK/, `${(b.docs || []).join("/")}: no book provenance`);
+    /* "photo:" is how every owner-read build in the other files opens. A
+       book-aligned entry that opened that way would be indistinguishable from
+       one, and the owner's drawing is the ONE authority allowed to overrule
+       AutoCount. */
+    assert.doesNotMatch(
+      String(b.why),
+      /^photo:/,
+      `${(b.docs || []).join("/")}: a book-aligned build must not present itself as a drawing reading`,
+    );
+    assert.equal(b.seat, undefined, `${(b.docs || []).join("/")}: book-aligned builds write no seat`);
+  }
+});
+
 /**
  * THE FILES MAY NOT DISAGREE ABOUT ONE DOCUMENT.
  *
