@@ -94,4 +94,58 @@ book's receipt rather than one raised in the ERP while the shop traded through
 cutover. The fixed section 3 settles that per document before anything is
 written.
 
-**Ref.** fix/pi-grn-links, 2026-09-09.
+## MEASURED OUTCOME
+
+Applied to production. `MODE=plan` [34274440126](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34274440126),
+`MODE=apply` [34275605452](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34275605452),
+one link taken back in [34277058873](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34277058873)
+(see `docs/bugs/0733-*`), verified by
+[34277483785](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34277483785).
+
+**The headline, from the same report the defect was raised against**
+(`po-gr-tally-verdict.yml`, before = run 34268495385):
+
+| document type | before | after |
+| --- | --- | --- |
+| Sales orders | 16 differ · 30 cannot compare | 16 · 30 |
+| Purchase orders | 13 · 13 | 13 · 13 |
+| Goods receipts | 11 · 6 | 11 · 6 |
+| Delivery orders | 13 · 5 | 13 · 5 |
+| Sales invoices | 16 · 2 | 16 · 2 |
+| **Purchase invoices** | **53** · 1 | **48** · 1 |
+
+**Five purchase invoices fully tallied. Every other type is unchanged to the
+document** — the control this repair was required to hold.
+
+**On the axis itself** (`ac-erp-reconcile.yml` run 34277179894, the PI arm of
+单据转换链):
+
+| verdict | before | after |
+| --- | --- | --- |
+| `agree_doc_line_unstated` | 0 | **25** |
+| `erp_link_missing` | 58 | **33** |
+| `doc_differs` | 59 | 59 |
+| differing lines | 117 | **92** |
+| differing invoices | 47 | **32** |
+
+**Why the axis moved 15 invoices and the headline only 5.** The tally counts a
+document as differing if it differs on ANY axis. Fifteen invoices stopped
+differing on the transfer chain; ten of them still differ on something else, so
+five is what reached the headline. Both numbers are true and they are not the
+same number.
+
+**The prediction, and how close it came.** Recorded on the pull request before
+the apply: 117 -> 91 lines and 47 -> 31 invoices. Measured: 92 and 32. The
+difference is exactly the one link that was written and then taken back — the
+prediction assumed all 26 would stand, and 25 did. An earlier prediction on the
+same work, made from the matcher's yield alone, said the axis would fall to 59
+lines; that was wrong by a wide margin because it ignored the ERP's sofa
+decomposition, and the plan run refuted it within minutes.
+
+**What is left on this axis, and it is not this defect.** 33 lines still carry
+no link — every one of them a book receipt line the ERP splits into several
+compartment rows, where which compartment an invoice billed cannot be read from
+either document. 59 lines are the other cause entirely
+(`scm.grns.linked_ac_gr_docno` IS NULL), untouched here by design.
+
+**Ref.** fix/pi-grn-links, 2026-09-09; outcome measured 2026-09-09.
