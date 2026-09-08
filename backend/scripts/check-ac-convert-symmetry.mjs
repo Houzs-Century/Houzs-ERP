@@ -1081,7 +1081,138 @@ if (SKIP_ERP) {
       presenceRows.push({ edgeId, inScope, held, missing, erp: erpPairs.size, recorded, invented: inventedTotal });
     }
 
-    /* GR <- PO, asked the only way the ERP's own stamps allow. The GRN header
+    /* ── GR <- PO, AT DOCUMENT GRAIN AGAINST THE BOOK ──────────────────────
+     *
+     * This checker used to print "no document-grain book comparison possible"
+     * for this edge and stop, on the reasoning that scm.grns.linked_ac_docno
+     * holds the PURCHASE ORDER's number rather than the receipt's. That
+     * reasoning is sound and the conclusion drawn from it was still wrong: the
+     * cutover DOES record which AutoCount receipts brought a purchase order in,
+     * on `purchase_orders.linked_ac_grn_docnos` (mig 0275, whose header calls it
+     * "naming the source documents instead of fabricating an ERP one"). A PO row
+     * carrying linked_ac_docno = P and linked_ac_grn_docnos = {G1,G2} is the ERP
+     * asserting the edges G1<-P and G2<-P in AutoCount's own numbering, which is
+     * exactly the pair bookDocEdges() produces. So the edge is answerable, and
+     * the owner asked for it three times while this block said it could not be
+     * asked. It is asked here.
+     *
+     * The FORWARD denominator scopes on the PARENT only. An ERP goods receipt
+     * has no AutoCount receipt number of its own, so "did the ERP import this
+     * GR" is not a question that can be put; requiring it would silently drop
+     * the whole edge. Scoping on the purchase order is the honest denominator:
+     * of the book's receipt edges whose PURCHASE ORDER the ERP holds, how many
+     * does the ERP name the receipt for. */
+    out("");
+    out("    --- GR <- PO  (document grain, through purchase_orders.linked_ac_grn_docnos)");
+    {
+      const grStampRows = await pg`
+        SELECT linked_ac_docno AS p, linked_ac_grn_docnos AS gs
+          FROM scm.purchase_orders
+         WHERE company_id = ${CO} AND linked_ac_docno IS NOT NULL
+           AND coalesce(array_length(linked_ac_grn_docnos, 1), 0) > 0`;
+      const erpPairs = new Set();
+      for (const r of grStampRows) {
+        for (const g of r.gs ?? []) erpPairs.add(`${String(g).trim()}|${String(r.p).trim()}`);
+      }
+      const bookPairs = bookDocEdges(book, EDGES.find((e) => e.id === "GR <- PO"));
+      let inScope = 0; let held = 0; let missing = 0; let outOfScope = 0; let cancelledSkipped = 0;
+      const missingEx = [];
+      for (const [k, v] of bookPairs) {
+        if (v.cancelled) { cancelledSkipped++; continue; }
+        if (!imported.PO.has(v.parent)) { outOfScope++; continue; }
+        inScope++;
+        if (erpPairs.has(k)) held++;
+        else { missing++; if (missingEx.length < SHOW) missingEx.push(k); }
+      }
+      let recorded = 0; const invented = [];
+      for (const k of erpPairs) {
+        if (bookPairs.has(k)) recorded++;
+        else if (invented.length < SHOW) invented.push(k);
+      }
+      out(`        book records ${bookPairs.size} document edge(s); ${cancelledSkipped} sit on a cancelled document, `
+        + `${outOfScope} name a purchase order the ERP did not import (out of cutover scope)`);
+      out(`        FORWARD  book -> ERP : ${held} of ${inScope} held by the ERP | ${missing} MISSING`);
+      out(`        BACKWARD ERP -> book : ${recorded} of ${erpPairs.size} recorded in the book | ${erpPairs.size - recorded} NOT IN THE BOOK`);
+      for (const m of missingEx) out(`          missing: ${m.replace("|", " <- ")}`);
+      for (const m of invented) out(`          not in the book: ${m.replace("|", " <- ")}`);
+      presenceRows.push({ edgeId: "GR <- PO", inScope, held, missing, erp: erpPairs.size, recorded, invented: erpPairs.size - recorded });
+    }
+
+    /* ── PI <- GR, COMPOSED THROUGH THE PURCHASE ORDER ─────────────────────
+     *
+     * The direct edge cannot be compared and that part of the old note stands:
+     * the book names a GOODS RECEIPT as the invoice's parent, and no ERP row
+     * carries an AutoCount receipt number it could be matched against. What CAN
+     * be compared is the same relationship one hop wider. Compose the book's
+     * PI<-GR with its GR<-PO to get (purchase invoice, purchase order), and read
+     * the ERP's own assertion of the same pair off linked_ac_pinv_docnos.
+     *
+     * A COMPOSED edge is a WEAKER question and is labelled as one everywhere it
+     * is printed. It cannot tell two receipts of one purchase order apart, so it
+     * proves the invoice hangs off the right ORDER, never off the right RECEIPT.
+     * That is less than the owner asked for and it is more than "unknown"; both
+     * halves are said out loud rather than one of them quietly standing in for
+     * the other. */
+    out("");
+    out("    --- PI <- GR  (COMPOSED to PI <- PO - see the limit stated below)");
+    {
+      const piStampRows = await pg`
+        SELECT linked_ac_docno AS p, linked_ac_pinv_docnos AS ps
+          FROM scm.purchase_orders
+         WHERE company_id = ${CO} AND linked_ac_docno IS NOT NULL
+           AND coalesce(array_length(linked_ac_pinv_docnos, 1), 0) > 0`;
+      const erpPairs = new Set();
+      for (const r of piStampRows) {
+        for (const p of r.ps ?? []) erpPairs.add(`${String(p).trim()}|${String(r.p).trim()}`);
+      }
+      /* The book's composition. A receipt drawing on more than one purchase
+         order yields one pair per order — 1,291 of 5,353 receipts do, so
+         collapsing them to a single parent would silently drop real edges. */
+      const grParents = new Map();
+      for (const l of allLines(book, "GR")) {
+        if (l.fromDocType !== "PO" || !l.fromDocNo) continue;
+        if (!grParents.has(l.docNo)) grParents.set(l.docNo, new Set());
+        grParents.get(l.docNo).add(l.fromDocNo);
+      }
+      const bookPairs = new Map();
+      let piLinesNoPo = 0;
+      for (const l of allLines(book, "PI")) {
+        if (l.fromDocType !== "GR" || !l.fromDocNo) continue;
+        const pos = grParents.get(l.fromDocNo);
+        if (!pos) { piLinesNoPo++; continue; }
+        for (const p of pos) {
+          bookPairs.set(`${l.docNo}|${p}`, {
+            child: l.docNo, parent: p,
+            cancelled: !!book.PI.headers.get(l.docNo)?.cancelled || !!book.PO.headers.get(p)?.cancelled,
+          });
+        }
+      }
+      let inScope = 0; let held = 0; let missing = 0; let outOfScope = 0; let cancelledSkipped = 0;
+      const missingEx = [];
+      for (const [k, v] of bookPairs) {
+        if (v.cancelled) { cancelledSkipped++; continue; }
+        if (!imported.PO.has(v.parent)) { outOfScope++; continue; }
+        inScope++;
+        if (erpPairs.has(k)) held++;
+        else { missing++; if (missingEx.length < SHOW) missingEx.push(k); }
+      }
+      let recorded = 0; const invented = [];
+      for (const k of erpPairs) {
+        if (bookPairs.has(k)) recorded++;
+        else if (invented.length < SHOW) invented.push(k);
+      }
+      out(`        LIMIT: this proves the invoice hangs off the right ORDER, never off the right RECEIPT.`);
+      out(`        book composes ${bookPairs.size} (invoice, order) edge(s) from ${piLinesNoPo === 0 ? "every" : "most"} PI line naming a receipt;`);
+      out(`        ${piLinesNoPo} PI line(s) name a receipt that names no purchase order, so they compose to nothing`);
+      out(`        ${cancelledSkipped} sit on a cancelled document, ${outOfScope} name a purchase order the ERP did not import`);
+      out(`        FORWARD  book -> ERP : ${held} of ${inScope} held by the ERP | ${missing} MISSING`);
+      out(`        BACKWARD ERP -> book : ${recorded} of ${erpPairs.size} recorded in the book | ${erpPairs.size - recorded} NOT IN THE BOOK`);
+      for (const m of missingEx) out(`          missing: ${m.replace("|", " <- ")}`);
+      for (const m of invented) out(`          not in the book: ${m.replace("|", " <- ")}`);
+      presenceRows.push({ edgeId: "PI <- GR (composed)", inScope, held, missing, erp: erpPairs.size, recorded, invented: erpPairs.size - recorded });
+    }
+
+    /* The two-routes cross-check kept from the previous version: the GRN header
        carries its PURCHASE ORDER's AutoCount number, and the GRN's LINES each
        resolve to a purchase-order line whose header carries one too. Those two
        are the same fact by two routes, so a disagreement is a genuine one-sided
@@ -1089,7 +1220,7 @@ if (SKIP_ERP) {
        another. This is not a substitute for the book comparison above and is
        not counted as one. */
     out("");
-    out("    --- GR <- PO  (no document-grain book comparison possible - see above)");
+    out("    --- GR <- PO  ERP-internal cross-check: header vs lines");
     const grAgree = await pg`
       WITH j AS (
         SELECT g.id, g.linked_ac_docno AS header_says,
@@ -1110,16 +1241,129 @@ if (SKIP_ERP) {
     out(`        ${ga.total} live GRNs have at least one line resolving to a purchase order`);
     out(`        header's AutoCount PO number vs the PO its LINES resolve to: ${ga.disagree} DISAGREE`);
     out(`        ${ga.header_unstamped} carry no AutoCount number on the header; ${ga.multi_parent} draw on more than one purchase order`);
-    presenceRows.push({ edgeId: "GR <- PO", headerVsLines: ga.disagree, total: ga.total });
-    out("");
-    out("    --- PI <- GR  (no document-grain book comparison possible - see above)");
-    out("        UNKNOWN by construction: the book names a GOODS RECEIPT number as the parent, and");
-    out("        the ERP stores no AutoCount receipt number it could be matched against. The");
-    out("        ERP-internal answer for this edge is in 4a (orphans) and 4b (invoiced_qty).");
+    presenceRows.push({ edgeId: "GR <- PO header/lines", headerVsLines: ga.disagree, total: ga.total });
 
     log(`PRESENCE: ${presenceRows.filter((r) => r.missing != null).reduce((a, r) => a + r.missing, 0)} book edges the ERP does not hold; `
       + `${presenceRows.filter((r) => r.invented != null).reduce((a, r) => a + r.invented, 0)} ERP edges the book does not record; `
       + `${ga.disagree} GRNs whose header and lines name different purchase orders.`);
+
+    /* ══ 6. IDENTITY ══════════════════════════════════════════════════════════
+     *
+     * The third question, and the one presence and symmetry between them cannot
+     * reach. A link can be PRESENT on both sides and SYMMETRIC and still name
+     * the wrong thing: docs/bugs/0672 is that class, and it produced fifteen
+     * real wrong links in production including ten bedframes, where a hard-bound
+     * line reads READY off its own dedicated purchase order and a customer's
+     * REGAL therefore lights up when a TRION arrives.
+     *
+     * Counted here so the matrix is complete in ONE run. probe-link-identity.mjs
+     * asks the same question in more shapes (the swap signature, the colour) and
+     * remains the deeper tool; this is the row of the matrix, not a replacement
+     * for it. */
+    head("6.  IDENTITY - THE LINK IS PRESENT AND SYMMETRIC. DO THE TWO ENDS NAME THE SAME ITEM?");
+    const NORMC = (e) => `upper(regexp_replace(btrim(coalesce(${e}, '')), '\\s+', ' ', 'g'))`;
+    const idEdges = [
+      { id: "PO <- SO", table: "purchase_order_items", col: "so_item_id", parent: "mfg_sales_order_items" },
+      { id: "DO <- SO", table: "delivery_order_items", col: "so_item_id", parent: "mfg_sales_order_items" },
+      { id: "IV <- SO", table: "sales_invoice_items", col: "so_item_id", parent: "mfg_sales_order_items" },
+      { id: "IV <- DO", table: "sales_invoice_items", col: "do_item_id", parent: "delivery_order_items" },
+      { id: "GR <- PO", table: "grn_items", col: "purchase_order_item_id", parent: "purchase_order_items" },
+      { id: "PI <- GR", table: "purchase_invoice_items", col: "grn_item_id", parent: "grn_items" },
+    ];
+    const idRows = [];
+    for (const e of idEdges) {
+      const r = (await pg.unsafe(`
+        SELECT count(*)::int AS rows,
+               count(c.${e.col})::int AS linked,
+               count(*) FILTER (WHERE c.${e.col} IS NULL)::int AS unlinked,
+               count(*) FILTER (WHERE c.${e.col} IS NOT NULL AND p.id IS NULL)::int AS dangling,
+               count(*) FILTER (WHERE p.id IS NOT NULL
+                 AND ${NORMC("c.item_code")} <> ${NORMC("p.item_code")})::int AS wrong_item
+          FROM scm.${e.table} c
+          LEFT JOIN scm.${e.parent} p ON p.id = c.${e.col}`))[0];
+      idRows.push({ id: e.id, ...r });
+      out(`    ${e.id.padEnd(10)} ${String(r.linked).padStart(6)} linked of ${String(r.rows).padStart(6)} rows `
+        + `(${r.unlinked} carry no link) | ${r.dangling} dangling | ${r.wrong_item} name a DIFFERENT product`);
+    }
+    /* A count taken only over rows that ALREADY carry a link cannot see a link
+       that was never written, so the unlinked column above is printed next to
+       the answer rather than filtered away. Which of those NULLs SHOULD have
+       been a link is section 5's question, not this one's. */
+    log(`IDENTITY: ${idRows.reduce((a, r) => a + r.wrong_item, 0)} link(s) whose two ends name a different product; `
+      + `${idRows.reduce((a, r) => a + r.dangling, 0)} dangling.`);
+
+    /* ── the shared AutoCount line key, SETTLED rather than assumed ─────────
+     *
+     * 296 sales-order and 98 purchase-order DtlKeys are carried by more than one
+     * ERP row, and the standing reading is "LIKELY all sofa decomposition,
+     * UNPROVEN". probe-link-identity.mjs cannot settle it: it counts how many of
+     * those keys carry rows naming DIFFERENT products, and a sofa decomposed
+     * into compartments produces exactly that — each compartment is its own
+     * piece code — so a high count is equally consistent with both readings.
+     *
+     * What DOES settle it is the BOOK line the key belongs to. This checker
+     * holds the snapshot, so the key can be resolved to its AutoCount ItemCode
+     * and tested with the repo's own sofa predicate (the /\bSOFA\b/i used by
+     * check-ac-erp-doc-links.mjs on this same question). A shared key whose book
+     * line is not a sofa is the finding; a shared key whose book line IS one is
+     * the expected decomposition. */
+    out("");
+    out("    --- shared AutoCount line keys: sofa decomposition, or something else?");
+    const SOFA_RE = /\bSOFA\b/i;
+    for (const [t, spec] of Object.entries({
+      SO: { line: "mfg_sales_order_items", head: "mfg_sales_orders", fk: "doc_no", pk: "doc_no" },
+      PO: { line: "purchase_order_items", head: "purchase_orders", fk: "purchase_order_id", pk: "id" },
+    })) {
+      const dups = await pg.unsafe(`
+        SELECT c.linked_ac_dtlkey::text AS k, count(*)::int AS n
+          FROM scm.${spec.line} c
+          JOIN scm.${spec.head} h ON h.${spec.pk} = c.${spec.fk} AND h.company_id = ${CO}
+         WHERE c.linked_ac_dtlkey IS NOT NULL
+         GROUP BY 1 HAVING count(*) > 1`);
+      let sofa = 0; const notSofa = []; let unresolved = 0;
+      for (const d of dups) {
+        const bookLine = book[t].byKey.get(d.k);
+        if (!bookLine) { unresolved++; continue; }
+        if (SOFA_RE.test(bookLine.itemKey || "")) sofa++;
+        else if (notSofa.length < SHOW) notSofa.push(`${bookLine.docNo} key ${d.k} ${bookLine.itemKey} (${d.n} ERP rows)`);
+        else notSofa.push("");
+      }
+      out(`        ${t}: ${dups.length} DtlKey(s) carried by more than one ERP row`);
+      out(`           ${sofa} resolve to a book line whose item code is a SOFA - the expected decomposition`);
+      out(`           ${notSofa.length} are NOT a sofa line; ${unresolved} do not resolve to any book line in this snapshot`);
+      for (const n of notSofa.slice(0, SHOW)) if (n) out(`             ${n}`);
+      if (dups.length > 0 && notSofa.length === 0 && unresolved === 0) {
+        log(`SETTLED: every one of the ${dups.length} shared ${t} DtlKeys is a sofa line decomposed into compartments.`);
+      } else if (notSofa.length > 0) {
+        log(`NOT ALL SOFA: ${notSofa.length} shared ${t} DtlKey(s) resolve to a book line that is not a sofa - each is a key claimed by rows the book never split.`);
+      }
+    }
+
+    /* ══ 7. THE MATRIX ═══════════════════════════════════════════════════════
+     *
+     * One row per edge, both directions, each count with its denominator. The
+     * owner asked for the transfer-from / transfer-to half of this three times;
+     * scattering it across six sections is how it kept not arriving. Every
+     * number here is printed above with its working - this is the reading, not
+     * a second measurement. */
+    head("7.  THE MATRIX - every edge, both directions, each count with its denominator");
+    const pRow = (id) => presenceRows.find((r) => r.edgeId === id);
+    const iRow = (id) => idRows.find((r) => r.id === id);
+    out("");
+    out("    edge        | FORWARD book->ERP | BACKWARD ERP->book | wrong item | not linked");
+    out("    " + "-".repeat(88));
+    for (const id of ["PO <- SO", "DO <- SO", "IV <- SO", "IV <- DO", "GR <- PO", "PI <- GR (composed)"]) {
+      const p = pRow(id);
+      const i = iRow(id === "PI <- GR (composed)" ? "PI <- GR" : id);
+      const fwd = p ? `${p.held} / ${p.inScope}` : "not comparable";
+      const bwd = p ? `${p.recorded} / ${p.erp}` : "not comparable";
+      out(`    ${id.padEnd(11)} | ${fwd.padStart(17)} | ${bwd.padStart(18)} | ${String(i?.wrong_item ?? "-").padStart(10)} | ${String(i?.unlinked ?? "-").padStart(10)}`);
+    }
+    out("");
+    out("    FORWARD  denominator = book document edges BOTH of whose documents the ERP imported,");
+    out("             neither cancelled. BACKWARD denominator = every edge the ERP asserts.");
+    out("    'wrong item' and 'not linked' are LINE counts inside the ERP (section 6), not document counts.");
+    out("    PI <- GR is COMPOSED to PI <- PO: it proves the right ORDER, never the right RECEIPT.");
   } finally {
     await pg.end({ timeout: 5 });
   }
