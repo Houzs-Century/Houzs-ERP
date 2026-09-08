@@ -156,6 +156,7 @@ import {
 } from "./lib/ac-field-identity-run.mjs";
 import { printFieldTable, printPoDiscount } from "./lib/ac-field-identity-report.mjs";
 import { buildVerdictRows, makeVerdictRecorder, summariseVerdict } from "./lib/so-verdict-derive.mjs";
+import { classifyUnread, makeUnreadTally } from "./lib/sofa-unread-split.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const DATA = path.join(here, "data");
@@ -595,38 +596,9 @@ function reportVariants(t, label, rows, desc2) {
   }
   const pop = { total: rows.length, modelled: 0, bedframe: 0, sofa: 0, other: 0, withDesc2: 0, proceeded: 0 };
   let unkeyedSofa = 0;
-  /* ── WHY THE `unread` COLUMN IS SPLIT ────────────────────────────────────
-     It is ONE column carrying at least two populations that need different
-     people. A sofa whose ERP rows carry no AutoCount line key is a MECHANICAL
-     gap — nothing about the build is in doubt, we simply have not recorded
-     which book line the rows belong to, and stamping the key is a recording
-     job that needs no ruling. A sofa whose Desc2 the decoder cannot turn into
-     pieces is the OWNER's: the text does not say what the build is, so only
-     his drawing can answer it, and no amount of keying will change that.
-     Summing them produced "195 unanswerable" and left every reader to assume
-     the whole number was somebody's backlog.
-
-     The two questions are INDEPENDENT, so the split is a cross-tab and not a
-     list: a line can be missing its key AND undecodable, and folding that case
-     into either arm alone would overstate what stamping keys can buy. `other`
-     exists so a third cause cannot arrive silently — it is named and listed,
-     never absorbed. */
-  const unread = {
-    keylessBookReadable: { yes: 0, no: 0 },
-    keylessBookUnreadable: { yes: 0, no: 0 },
-    keyedBookUnreadable: { yes: 0, no: 0 },
-    other: { yes: 0, no: 0 },
-  };
-  const UNREAD_LABEL = {
-    keylessBookReadable:
-      "no AutoCount line key, and the book's build text DOES decode — MECHANICAL, a key is all that is missing",
-    keylessBookUnreadable:
-      "no AutoCount line key AND the book's build text does not decode — needs the key first, then the owner's drawing",
-    keyedBookUnreadable:
-      "keyed, but the book's build text cannot be decoded into pieces — the OWNER's drawing is the only source",
-    other: "UNREADABLE for some other reason — named below, never folded into either arm",
-  };
-  const unreadDocs = { keylessBookReadable: [], keylessBookUnreadable: [], keyedBookUnreadable: [], other: [] };
+  /* The `unread` column, by CAUSE. lib/sofa-unread-split.mjs holds the argument
+     for why one number there was two populations needing different people. */
+  const unread = makeUnreadTally();
 
   for (const r of rows) {
     const lead = r.erpLines[0] || {};
@@ -666,11 +638,9 @@ function reportVariants(t, label, rows, desc2) {
       unkeyedSofa++;
     }
     if (axes.compartments && axes.compartments.verdict === UNREADABLE) {
-      const bucket = keyless
-        ? bookUnreadable ? "keylessBookUnreadable" : "keylessBookReadable"
-        : bookUnreadable ? "keyedBookUnreadable" : "other";
-      unread[bucket][proceeded ? "yes" : "no"] += 1;
-      unreadDocs[bucket].push(
+      unread.record(
+        classifyUnread({ keyless, bookUnreadable }),
+        proceeded,
         `${r.ac} DtlKey ${r.acLine.dtlKey} (ERP ${r.erpNo} ${lead.item_code ?? "?"})` +
           (proceeded ? "" : "  [NOT PROCEEDED]"),
       );
@@ -753,35 +723,9 @@ function reportVariants(t, label, rows, desc2) {
     );
   }
 
-  /* The `unread` column, split by CAUSE. Printed whenever anything is in it,
-     because a single number there has twice been read as one backlog. */
-  const unreadTotal = Object.values(unread).reduce((s2, h) => s2 + h.yes + h.no, 0);
-  if (unreadTotal) {
-    plain(
-      `   the ${unreadTotal} UNREAD compartment answer(s) on this document type, BY CAUSE ` +
-        "(the two causes are independent, so this is a cross-tab, not a list):",
-    );
-    for (const [k, h] of Object.entries(unread)) {
-      if (!h.yes && !h.no) continue;
-      plain(`      ${String(h.yes + h.no).padStart(4)}  (${h.yes} proceeded, ${h.no} not)  ${UNREAD_LABEL[k]}`);
-    }
-    const fixable = unread.keylessBookReadable.yes + unread.keylessBookReadable.no;
-    const ownerOnly = unread.keyedBookUnreadable.yes + unread.keyedBookUnreadable.no
-      + unread.keylessBookUnreadable.yes + unread.keylessBookUnreadable.no;
-    plain(
-      `      => ${fixable} can be made comparable WITHOUT the owner (stamp the key); ` +
-        `${ownerOnly} cannot — the book's own text does not say what the build is.`,
-    );
-    for (const [k, list] of Object.entries(unreadDocs)) {
-      if (!list.length) continue;
-      /* `other` is listed WHOLE. It is the bucket that exists to make a third
-         cause visible, and a sampled unknown is not a visible one. */
-      const cap = k === "other" ? list.length : SHOW;
-      plain(`      -- ${UNREAD_LABEL[k]}`);
-      for (const line of list.slice(0, cap)) plain(`         ${line}`);
-      if (list.length > cap) plain(`         ... ${list.length - cap} more`);
-    }
-  }
+  /* Printed whenever anything is unanswerable, because a single number there
+     has twice been read as one backlog. */
+  for (const line of unread.lines(SHOW)) plain(line);
 
   for (const a of AXES) {
     const list = offenders[a.key];
