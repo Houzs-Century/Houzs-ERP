@@ -1,0 +1,66 @@
+name: Repair a line's colour or seat size from the account book
+
+# Manual. The owner's rule of 2026-09-08: 「一律跟账本。除了sofa compartment而已啊」 —
+# follow the account book for everything; only sofa compartments need his
+# judgement. So where the book states a colour or a seat size and the ERP line
+# holds a DIFFERENT one, the book wins.
+#
+# It writes ONLY the hand-reviewed entries in
+# backend/scripts/data/variant-book-corrections.json, never a sweep over every
+# reported difference — docs/bugs/0705 found two DECODER artifacts on these same
+# two axes on the same day, and one of them would have written a stool's width
+# into a build instruction. It also refuses any entry whose row no longer holds
+# the value the list was written against, so a later human edit is never
+# overwritten.
+#
+# It touches `variants` only: no quantity, no price, no item code, no status, so
+# stock, readiness and money cannot move. Specials are REPORTED and never
+# written — variants.specials folds into the authoritative unit price and has
+# two writers that know it (docs/bugs/0013).
+#
+# PLAN is the default and is read-only. Apply needs BOTH mode=apply and the
+# exact confirm phrase — the workflow passes CONFIRM through, which is the whole
+# point of docs/bugs/0700: a sibling shipped an apply path its own script could
+# never satisfy because the env block did not carry the phrase.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (read-only, default) or apply"
+        required: false
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: 'For apply ONLY, type exactly: FOLLOW THE BOOK ON COLOUR AND SEAT'
+        required: false
+        default: ""
+        type: string
+      company_id:
+        description: "Company id (default 1)"
+        required: false
+        default: "1"
+        type: string
+
+# Its own group: a repair must not queue behind - or displace - a release.
+concurrency:
+  group: repair-so-variant-from-book
+  cancel-in-progress: false
+
+jobs:
+  run-prod:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/repair-so-variant-from-book.mjs
+        env:
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
+          NODE_OPTIONS: --dns-result-order=ipv4first

@@ -92,7 +92,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 import { buildFabricColourIndex, isPendingColour } from "./lib/fabric-colour-match.mjs";
-import { parseBedframe } from "./lib/parse-bedframe.mjs";
+import { bedframeVariants, parseBedframe } from "./lib/parse-bedframe.mjs";
 import { SOFA_MODEL_ALIAS, parseSofa } from "./lib/parse-sofa.mjs";
 import { aliasFoldsForCatalog, catalogPredicate, nonCatalogRefs, formatNonCatalogRefusal } from "./lib/catalog-code-guard.mjs";
 import {
@@ -356,13 +356,10 @@ async function main() {
     let bf = null, variants = null;
     if (r.grp === "bedframe") {
       bf = parseBedframe(l.desc2);
-      const pending = isPendingColour(bf.color);
-      const fc = pending ? null : findColour(bf.color);
-      const tot = (Number(bf.gap) || 0) + (Number(bf.divan) || 0) + (Number(bf.leg) || 0);
-      variants = { fabricId: fc ? fc.fabric_id : null, colourId: fc ? fc.colour_id : null, fabricCode: fc ? fc.colour_id : null,
-        colourLabel: fc ? fc.label : null, fabricLabel: fc ? fc.fabric_id : null,
-        gap: bf.gap != null ? bf.gap + '"' : null, divanHeight: bf.divan != null ? bf.divan + '"' : null,
-        legHeight: bf.leg != null ? bf.leg + '"' : null, totalHeight: tot ? tot + '"' : null, specials: bf.specials || [] };
+      /* One statement of the block, in lib/parse-bedframe.mjs beside the parser
+         that feeds it — it decides the PENDING-colour rule too, so this caller
+         no longer restates it. */
+      variants = bedframeVariants(bf, findColour);
     }
     const prod = prodByCode.get(r.erp.toUpperCase());
     return [{ ...base, itemCode: r.erp, materialName: (prod && prod.name) || l.description || r.erp,

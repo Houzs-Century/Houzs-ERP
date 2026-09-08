@@ -3175,6 +3175,34 @@ beside the one that does not. Read the split, never the total, when deciding
 whether there is anything left to do
 (`docs/bugs/0674-the-specials-recording-plan-reported-its-stable-denominator.md`).
 
+#### The specials axis counts what the DECODER said the book asks for
+
+Every verdict above is computed against `parseSofa(...).specials`, so a phrase
+the decoder invents is indistinguishable, in the report, from an option the shop
+actually wrote down. That is not hypothetical: until 2026-09-08 a fabric's shade
+name — `BO315-26 (YELLOW)`, `NX011 (BEIGE)`, `M2402-19(DARK GREY)` — was read as
+a special order, because `unlabelledColour` strips the bracket to confirm the
+code against the fabric library and then LEFT it in the text, where the
+structure pass freed it into a token and the rider catch-all turned it into a
+request. Seven such lines reached the owner's go-live tally as
+`ERP blank on a proceeded order`, the one column the report calls WORK, and none
+of them was work
+(`docs/bugs/0705-a-fabric-shade-name-in-brackets-was-read-as-a-special-order.md`).
+
+`isTradeName()` in `backend/scripts/lib/parse-sofa.mjs` now takes the bracket
+out, and only ever on a code the LIVE library confirms. It is deliberately
+narrow — at most two plain alphabetic words, no digits, and neither
+`SPECIAL_WORD` nor `INSTRUCTION_TOKEN` — because the two errors do not cost the
+same: dropping `(No armrest)` builds a sofa wrong, keeping `(PEARL)` only makes
+a report noisy. Anything unrecognised stays a special.
+
+**The rule this leaves behind, for any axis, not just specials:** before quoting
+a variant difference as migration backlog, read the book's own Desc2 for one of
+the offenders. `node --test scripts/lib/parse-sofa.test.mjs` pins both
+directions, and the seat-size axis carries the same shape — `STOOL(25 X 40INCH)`
+is a stool's length by its width, and reading `40"` off it put a phantom on the
+same tally.
+
 Drafts stay freely saveable — the scan pipeline still lands imperfect drafts;
 what changed is that they can no longer BECOME orders until resolved.
 ON_HOLD-resume and reopen re-enter CONFIRMED without re-gating (legacy orders
@@ -4262,6 +4290,34 @@ direct SO write path already passes `trustOperatorSelling = !(isPosTabletCaller)
   whose own qty x unit price is not the book's, a surcharge, and a line whose
   goods have already left. The purchase-order twin is `repair-po-line-discount`.
   Ledger: `docs/bugs/0696-autocount-s-sales-order-line-discount-is-dropped-the-same-wa.md`.
+- **A MIGRATED order can be missing a LINE the book has, and the outstanding cut
+  cannot see it** — found 2026-09-08. `import-ac-outstanding-so.mjs` is
+  idempotent at DOCUMENT level, so a line the shop added to the book after the
+  import can never arrive later; `topup-ac-so-lines.mjs` exists for exactly that
+  and reads `data/ac-outstanding-so.json.gz`, which carries **zero** lines for a
+  document that has since been delivered — so on those documents it cannot see a
+  missing line at all. Six sales orders sat in that blind spot
+  (`docs/bugs/0694`, and section A of
+  `docs/cutover-so-do-remainder-2026-09-08.md`).
+  `backend/scripts/topup-ac-lines-from-truth.mjs` +
+  `.github/workflows/topup-ac-lines-from-truth.yml` close it: the same DtlKey
+  comparison run against `data/ac-reconcile-truth.json.gz` (the whole book), over
+  the population the ERP **holds** rather than the outstanding scope. Plan by
+  default. It writes a PRICED line, which `topup-ac-so-lines.mjs` refuses by
+  design, because it re-sums `local_total_sen`, `line_count` and the five
+  category buckets from the lines — the same write `repair-so-line-discount.mjs`
+  performs, and the invariant `mfg-sales-orders.ts:4321` maintains. It REFUSES: a
+  document holding any line with a NULL `linked_ac_dtlkey` (UNJUDGEABLE, whole);
+  a book line with no ItemCode (the book names no product); a SOFA line
+  (compartments are a decision); a code not in `scm.mfg_products`; quantity 0;
+  a non-MYR document; and a line whose own `SubTotal` is not qty x UnitPrice,
+  because that gap is a line discount and the script above owns it. A bedframe
+  line is decoded by IMPORTING `lib/parse-bedframe.mjs` — `parseBedframe` plus
+  `bedframeVariants`, the block the two importers and `topup-ac-po-lines.mjs`
+  used to spell out and now share. An ERP row the book does NOT have is
+  REPORTED, never deleted. `paid_sen` and the header `balance_sen` are never
+  touched; a document a corrected total leaves inconsistent is NAMED.
+  Ledger: `docs/bugs/0704-a-top-up-that-reads-the-outstanding-cut-is-blind-to-a-delive.md`.
 
 **A MIGRATED order is exempt.** When the SO header carries `linked_ac_docno`
 (migration 0271 — the marker that actually exists; `migrated_no_stock` lives only
