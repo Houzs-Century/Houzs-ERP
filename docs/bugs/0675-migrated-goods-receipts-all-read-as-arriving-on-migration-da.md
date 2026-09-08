@@ -65,4 +65,30 @@ measurement (3 distinct dates over 320 documents against 214 dated receipts), an
 `check-ac-erp-reconcile.mjs`'s GR section printing NOT APPLICABLE is the red state
 of the checker. Both are re-run after the apply.
 
-**Ref.** `feat/gr-reshape-pair-grain`, 2026-09-07.
+**APPLIED 2026-09-08 09:00 local (run 34175100153)** — created 153, updated 247,
+cancelled 0, after the money question that had held it since 2026-09-07 was
+settled against the book (`docs/bugs/0682`). Both promised re-runs came back
+green, and both are quoted with their denominators because a count is not a
+shape:
+
+- **Shape, on a fresh connection inside the apply run.** 473 live migrated
+  receipts; `received_at` now takes **110 distinct values** where it took 3;
+  87 lines read back carrying no purchase-order line, exactly the 87 the plan
+  flagged; 0 inventory movements.
+- **Stock, re-measured by the independent detector** (run 34175761482, *Stock vs
+  AutoCount reconcile*): `scm.grns` **473 rows, 473 `migrated_no_stock`**, and
+  *migrated documents that DID write an inventory movement: **0** goods-receipt
+  rows, **0** delivery rows, **0** units*. `AutoCount cells that moved since the
+  seeding baseline: 0`, so the 23:53 balance re-seed was not disturbed.
+- **The reconcile's GR section** (run 34175952533) went from
+  `GR DATA (0 documents on both sides, 0 lines paired)` to
+  **`GR DATA (400 documents on both sides, 506 lines paired)`**: absent **0**,
+  phantom **0**, line-count differs **0 of 400**, quantity differs **0 of 400**,
+  unit price differs **0 of 400**. What remains is item code **103 of 400** and
+  document total **109 of 400** — and the run names the systematic cause itself:
+  100 of those 400 carry zero money in the ERP while the book carries a value,
+  which is `stamp-migrated-source-prices.mjs`'s to close, not the reshape's. A
+  further **44 of 400** could not be line-matched and are **UNVERIFIED, not
+  verified-clean**.
+
+**Ref.** `feat/gr-reshape-pair-grain`, 2026-09-07; applied `chore/gr-reshape-applied-evidence`, 2026-09-08.
