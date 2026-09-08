@@ -2121,6 +2121,38 @@ Tooling: `backend/scripts/repair-so-book-parity-owner-ruling.mjs` +
 Neither lane touches `paid_sen` or the header `balance_sen`, and neither reaches
 AutoCount — 「写回autocount的你不需要理了」, same day.
 
+#### The SECOND override, same day: a whole document
+
+Later on 2026-09-08, again knowing the rule:
+
+> 「把SO2609-001 删掉 这是测试单来的」
+>
+> "Delete SO2609-001. It is a test order."
+
+`HC-SO-2609-001` was removed with **Actions -> "Delete test SO"**, below. It is
+the same shape of override as the row above and it is **just as narrow**: a
+document the owner names, not a class. Two overrides in one day is not the rule
+softening — the rule is still *cancel, never delete*, and the only thing that
+moves it is him, per document.
+
+Three things worth carrying forward from it:
+
+- **The document it removed is written down.** Every column of the header and of
+  its one line is in the ledger entry, so it can be re-keyed by hand if the
+  ruling is ever reversed. That is the price of an irreversible act, and it is
+  the same price `repair-so-book-parity-owner-ruling.mjs` pays above.
+- **It was the ERP's own first native sales order** — the only document in
+  production whose `linked_ac_docno` equalled its `doc_no` (1 of 2,883, run
+  `34220096163`). Several checks and docs pointed at it by name; they are
+  corrected in the same PR, and the pure-function test keeps the strings as
+  FIXTURES because the shape rule still has to answer for that shape.
+- **AutoCount keeps its copy.** The write-back had already succeeded, and the
+  live book still holds `HC-SO-2609-001` uncancelled at RM 100.00. Deleting
+  here does not reach the book and nothing was enqueued to. Somebody has to
+  cancel it in AutoCount by hand.
+
+Ledger: `docs/bugs/0715-deleting-a-sales-order-trusted-a-hand-written-child-list-nob.md`.
+
 ## The save lock — one minute, and it knows whose it is
 
 **It covers ONE SAVE, not an editing session.** Opening an order takes no lock at
@@ -2188,6 +2220,43 @@ default; `apply=1` also requires `confirm_doc` to repeat the doc_no. It REFUSES 
 any downstream DO/SI (both FKs are `ON DELETE SET NULL`, so a delete would
 silently orphan a real document), on a status past CONFIRMED, on more than one
 payment, and on vouchers already in circulation.
+
+**Since 2026-09-08 it also sweeps the live schema, and that is now the guard that
+decides whether a delete is safe.** The refusals above are a hand-written list of
+two tables, and what it removes is a hand-written list of four; neither had ever
+been checked against the database. The script now asks
+`information_schema` for every text column in `scm`/`public` whose name could
+hold a document number — 107 of them on production — counts each against the
+target, and CLASSIFIES what comes back:
+
+| bucket | what happens |
+|---|---|
+| CHILD (`CHILD_TABLES`) | deleted with the order |
+| AUDIT (`scm.autocount_outbox`, `scm.mfg_so_audit_log`, `scm.entity_audit_log`) | **kept on purpose.** Who created the order, and whether it reached the account book, outlive the order |
+| DOWNSTREAM (delivery orders, invoices, PO allocations, consignment notes …) | REFUSES |
+| anything else | REFUSES, and names the table. `ALLOW_ORPHAN_REFS=yes` proceeds and leaves them, as a deliberate act |
+
+A refusal exits 0 — it is a verdict, not a malfunction. The first production run
+of the sweep refused: `scm.mfg_so_audit_log` was on no list at all
+(run `34220446297`).
+
+Three more properties it did not have before:
+
+- **`MODE=plan` is the default** (`APPLY=1` still means `MODE=apply`), and plan
+  prints the FULL document — header, every line with its sofa `variants` build,
+  every payment, every column — as JSON before anything is written. There is no
+  undo; that output is the recovery path.
+- **The verification re-reads on a FRESH connection and asserts the SHAPE**, not
+  a row count: the document and every child gone, the audit rows still there,
+  and a CONTROL — row counts plus an md5 fingerprint of every OTHER order's
+  `doc_no|status`, plus their line count, payment count and money total —
+  identical before and after. A mismatch throws.
+- **Its SQL is executed against a real Postgres in CI** before production sees it
+  (`backend/tests-pg/deleteTestSoRefs.pg.test.ts`, the `backend-postgres` job),
+  because `node --check` used to be the whole of the evidence a production
+  DELETE had.
+
+Ledger: `docs/bugs/0715-deleting-a-sales-order-trusted-a-hand-written-child-list-nob.md`.
 
 Vouchers are the part that does not cascade: `pwp_codes.source_doc_no` /
 `.redeemed_doc_no` carry **no FK** to the SO, so nothing the database does will
