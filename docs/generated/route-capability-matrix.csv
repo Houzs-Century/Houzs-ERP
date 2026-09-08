@@ -522,6 +522,7 @@ GET,/api/scm/categories/:id/hero-blob,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,a
 GET,/api/scm/categories/:id/hero-blob,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,,,,NO,DECLARED_GATE,backend/src/scm/routes/public-images.ts
 GET,/api/scm/categories/:id/hero-meta,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/categories.ts
 PATCH,/api/scm/categories/:id/hero-meta,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/categories.ts
+GET,/api/scm/change-log,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/change-log.ts
 GET,/api/scm/consignment-notes,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.consignment.notes"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/consignment-notes.ts
 POST,/api/scm/consignment-notes,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.consignment.notes"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/consignment-notes.ts
 GET,/api/scm/consignment-notes/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.consignment.notes"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/consignment-notes.ts

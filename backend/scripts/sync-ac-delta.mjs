@@ -73,27 +73,45 @@
 // money lane re-reads Sum(qty*unitprice) and UDF_BALANCE exactly as
 // import-ac-outstanding-so.mjs read them at insert time.
 //
-// NEVER OVERWRITE A HUMAN. A document is REFUSED and listed, not written, when
-// scm.mfg_so_audit_log shows a person changed a field in scope, or the header
-// `version` has moved off 1, or a person owns its payment rows. "These N
-// documents disagree and I did not touch them" is the intended outcome; a
-// silent overwrite of the owner's own data is not.
+// NEVER OVERWRITE A PERSON — AND THE DIRECTION REVERSED WHEN THE SYSTEM OPENED.
+// A document is REFUSED and listed, not written, when scm.mfg_so_audit_log
+// shows a PERSON changed a field in scope. "These N documents disagree and I
+// did not touch them" is the intended outcome; a silent overwrite of a
+// salesperson's own data is not.
 //
-// THE THREE CONVERSION LANES USE THE AUDIT TRAIL ALONE for that test, and
-// deliberately NOT `version > 1`: version is an optimistic-locking token bumped
-// by seven automated paths, and the probe in #3042 found 80 of 81 such
-// "conflicts" were the automated stock-allocation sweep and exactly ONE was a
-// person. On the purchase-order side the trail is scm.entity_audit_log
-// (entity_type = 'PURCHASE_ORDER', migration 0139), matched on the fields these
-// lanes would write and nothing else.
-// The HEADER lane's veto is narrower and better: per (document, FIELD), and
-// keyed on mfg_so_audit_log.actor_id being a real person rather than the
-// migration's own system user. It does NOT use `version > 1` —
-// check-so-version-provenance.mjs (PR #3042) measured 80 of 81 "conflicts" as
-// the automated stock-allocation sweep and exactly 1 as a person, so that arm
-// refuses the owner's data on a robot's behalf. The desc2/pay lanes keep the
-// old two-armed test for now; the header section prints what the version arm
-// WOULD have refused, so the cost is a number and not an argument.
+// Since the owner opened sales, delivery and purchase documents to staff, the
+// ERP is MASTER on any row a person edited: the account book follows it, not
+// the other way round. That rule still holds the OLD way for the migration
+// backlog — a document nobody has touched is still arbitrated by the book —
+// and it must not hold for anything a person edits after opening.
+// So the refusal is now only half the answer. LANES=push carries the ERP's own
+// value OUT to the book through the existing write-back (`enqueueEdit`, the
+// same function the routes call), instead of leaving the two sides silently
+// disagreeing. The refusals are printed on the PLAN path whether or not push is
+// armed.
+//
+// WHO IS A PERSON is decided by src/scm/shared/audit-author.ts, imported here
+// and by check-so-open-for-new.mjs and routes/change-log.ts, so the rule has
+// ONE home. `version` is NOT an authorship signal anywhere in this script any
+// more: it is an optimistic-locking token bumped by seven automated paths, and
+// #3042 measured 80 of 81 "conflicts" as the allocation sweep. It is still
+// COUNTED and printed beside the real number.
+//
+// EVERY LANE NOW USES THE AUDIT TRAIL ALONE for that test. On the
+// purchase-order side the trail is scm.entity_audit_log (entity_type =
+// 'PURCHASE_ORDER', migration 0139), matched on the fields those lanes would
+// write and nothing else — a person who renamed the supplier has not vetoed a
+// received quantity. The HEADER lane's veto is narrower again: per (document,
+// FIELD), so the book may still correct a field on the same order that nobody
+// touched.
+//
+// THE DEFECT THAT MADE THIS URGENT [critical, 2026-09-08, docs/bugs/0702]. The
+// header lane classified authorship as `actor_id === SYS_ACTOR ? system :
+// person`. scm/middleware/auth.ts PINS that very uuid onto every authenticated
+// SCM caller, and all 21 recordSoAudit call sites pass it — so every human
+// edit read as a system row and the veto refused NOTHING. It is fixed by the
+// shared rule, which reads the writer's own self-declaration in
+// actor_name_snapshot instead.
 //
 // SOFA is decomposed only by the shared decoder lib/parse-sofa.mjs — never
 // hand-parsed here — and compartment CHANGES are reported, never applied,
@@ -101,10 +119,11 @@
 //
 // MODE=plan (default) | MODE=apply, and apply also needs
 //   CONFIRM="SYNC AC DELTA"
-// LANES=desc,pay,links,recv,do,dedi,hdr,hdrstaff — the last two are OFF by
-// default. `hdr`
-// writes header master fields; `hdrstaff` CREATES master data (an inactive
-// salesperson row per unbound AutoCount agent) and must be asked for by name.
+// LANES=desc,pay,links,recv,do,dedi,hdr,hdrstaff,push — the last three are OFF
+// by default. `hdr` writes header master fields; `hdrstaff` CREATES master data
+// (an inactive salesperson row per unbound AutoCount agent); `push` enqueues an
+// AutoCount edit carrying a PERSON's value out to the account book. All three
+// must be asked for by name.
 // RE-RUN: convergent. A second run against the same snapshot re-reads the live
 // rows, finds every difference already applied and writes nothing; the refusal
 // list is recomputed from scratch each run and is never persisted. The three
@@ -121,6 +140,13 @@
 // lane is convergent for a second reason as well — every UPDATE is guarded on
 // the value this run read, so a row somebody edited in between is skipped and
 // counted, never overwritten on a retry.
+//
+// `push` is the one lane whose second run is NOT a no-op, and it is safe for a
+// different reason: it enqueues an EDIT, never a create, so re-running sends
+// the account book the same current state a second time and the book ends
+// holding exactly what the ERP holds either way. It cannot make a second
+// document. Once the book agrees, the field stops differing and the lane plans
+// nothing.
 //
 //   node scripts/sync-ac-delta.mjs
 //   MODE=apply CONFIRM="SYNC AC DELTA" node scripts/sync-ac-delta.mjs
@@ -160,6 +186,19 @@ import {
   SO_PROCESSING_DATE_PAYLOAD_KEY,
   soProcessingDateFragment,
 } from "./lib/so-processing-date.mjs";
+/* WHO WROTE AN AUDIT ROW is decided in ONE place for the whole repo. Imported,
+   never restated: the three callers of this rule used to hold three different
+   answers, and this script's was the dangerous one — see the file's header. */
+import {
+  auditPersonSql,
+  classifyAuditAuthor,
+  planPersonEditVeto,
+} from "../src/scm/shared/audit-author.ts";
+/* The write-back's OWN composer, not a second one. Same function the SO routes
+   call; pgrest-shim is the documented way a script reaches it with only
+   DATABASE_URL (precedent: rebuild-ac-document.mjs). */
+import { enqueueEdit } from "../src/scm/lib/autocount-outbox.ts";
+import { pgrestShim } from "./lib/pgrest-shim.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -280,42 +319,72 @@ async function main() {
      WHERE p.company_id = 1 AND p.linked_ac_docno IS NOT NULL`;
   log(`ERP: SO ${soHeaders.length} headers / ${soItems.length} lines; PO ${poHeaders.length} headers / ${poItems.length} lines`);
 
-  // who did a human touch?
+  /* ── WHO TOUCHED WHAT, AND IS "WHO" A PERSON? ──────────────────────────
+     THE OWNER'S RULE SINCE THE SYSTEM WAS OPENED TO STAFF: a row a person has
+     edited is THEIRS. The account book arbitrates the migration backlog; it
+     does NOT arbitrate a change somebody made after opening. So this set is
+     the veto, and getting it wrong in the permissive direction destroys a
+     salesperson's work with no signal.
+
+     TWO CORRECTIONS LANDED HERE 2026-09-08, both of them in that direction:
+
+     1. The rows are now CLASSIFIED. This query used to count any audit row
+        naming a field in scope, whoever wrote it — so the stock-allocation
+        cron, which writes UPDATE_LINE and UPDATE_STATUS rows all day
+        (so-stock-allocation.ts:998 and :1082), inflated the refusal list. The
+        `NOT (... ILIKE 'system%')` predicate is auditPersonSql, the shared
+        rule.
+     2. `version > 1` is GONE from the veto. It is an optimistic-locking token
+        bumped by seven automated paths; check-so-version-provenance.mjs
+        (#3042) measured 80 of 81 "conflicts" as the allocation sweep and
+        exactly ONE as a person. It refused ~79 orders in the name of a human
+        who never touched them, and — because it was folded into the SAME set —
+        it hid which one was real. It is still COUNTED and printed, so the
+        difference stays a number rather than an argument. */
   const allSoDocs = soHeaders.map((h) => h.doc_no);
   const touched = new Set();
+  let soAuditRowsRead = 0, soAuditMachineRows = 0;
   for (let i = 0; i < allSoDocs.length; i += 2000) {
-    const rows = await sql`SELECT DISTINCT so_doc_no FROM scm.mfg_so_audit_log
+    const rows = await sql`SELECT so_doc_no, actor_id, actor_name_snapshot FROM scm.mfg_so_audit_log
        WHERE so_doc_no = ANY(${allSoDocs.slice(i, i + 2000)}) AND field_changes::text ILIKE ANY(${TOUCHED_NEEDLES})`;
-    for (const r of rows) touched.add(r.so_doc_no);
+    for (const r of rows) {
+      soAuditRowsRead++;
+      if (classifyAuditAuthor(r) === "machine") { soAuditMachineRows++; continue; }
+      touched.add(r.so_doc_no);
+    }
   }
-  const byAudit = touched.size;
-  /* THE THREE CONVERSION LANES TEST AUTHORSHIP ON THE AUDIT TRAIL ALONE.
-     `touched` below also folds in `version > 1`, and that is NOT an
-     authorship signal: version is an optimistic-locking token bumped by
-     seven automated paths, and the probe in #3042 found 80 of 81 such
-     "conflicts" were the automated stock-allocation sweep and exactly ONE
-     was a person. Folding it in here would refuse ~79 orders in the name of
-     a human who never touched them, and hide the one who did. */
-  const touchedByAudit = new Set(touched);
-  for (const h of soHeaders) if (Number(h.version) > 1) touched.add(h.doc_no);
-  log(`ERP sales orders a person has edited: ${touched.size} (${byAudit} by audit trail, the rest by version > 1)`);
+  /* Kept as its own name because the three conversion lanes reference it, and
+     because the two used to differ (this one excluded the version arm). They
+     are now the SAME set — the version arm is not a veto anywhere — and the
+     alias stays only so those call sites keep reading as what they mean. */
+  const touchedByAudit = touched;
+  const versionWouldHaveRefused = soHeaders.filter((h) => Number(h.version) > 1).length;
+  log(`ERP sales orders a PERSON has edited: ${touched.size}`
+    + ` (${soAuditRowsRead} audit row(s) named a field in scope, ${soAuditMachineRows} of them written by the system)`);
+  log(`  for comparison, a version > 1 test would refuse ${versionWouldHaveRefused} order(s). NOT used: #3042 measured 80 of 81 as the allocation sweep.`);
 
   /* The PURCHASE-ORDER side of the same question. Sales orders have their own
      table (scm.mfg_so_audit_log); every other SCM document records into
      scm.entity_audit_log keyed (entity_type, entity_id) with the human
      document number alongside (migration 0139). The needles are the fields
      THIS script would write on a purchase-order line, and nothing else - a
-     person who renamed the supplier has not vetoed a received quantity. */
+     person who renamed the supplier has not vetoed a received quantity.
+     Same authorship rule, same reason. */
   const PO_TOUCHED_NEEDLES = ["received_qty", "receivedQty", "so_item_id", "soItemId"].map((n) => `%${n}%`);
+  const PERSON_SQL = auditPersonSql("actor_name_snapshot");
   const allPoDocs = poHeaders.map((h) => h.po_number);
   const poTouched = new Set();
   for (let i = 0; i < allPoDocs.length; i += 2000) {
-    const rows = await sql`SELECT DISTINCT entity_doc_no FROM scm.entity_audit_log
-       WHERE entity_type = 'PURCHASE_ORDER' AND entity_doc_no = ANY(${allPoDocs.slice(i, i + 2000)})
-         AND field_changes::text ILIKE ANY(${PO_TOUCHED_NEEDLES})`;
+    const rows = await sql.unsafe(
+      `SELECT DISTINCT entity_doc_no FROM scm.entity_audit_log
+        WHERE entity_type = 'PURCHASE_ORDER' AND entity_doc_no = ANY($1)
+          AND field_changes::text ILIKE ANY($2)
+          AND ${PERSON_SQL}`,
+      [allPoDocs.slice(i, i + 2000), PO_TOUCHED_NEEDLES],
+    );
     for (const r of rows) poTouched.add(r.entity_doc_no);
   }
-  log(`ERP purchase orders a person has edited in the fields this script writes: ${poTouched.size} (audit trail only)`);
+  log(`ERP purchase orders a PERSON has edited in the fields this script writes: ${poTouched.size} (audit trail only)`);
 
   const fcRows = await sql`SELECT fabric_id, colour_id, label FROM scm.fabric_colours WHERE company_id = 1`;
   const { findColour } = buildFabricColourIndex(fcRows);
@@ -370,7 +439,7 @@ async function main() {
     const h = erpSoByAc.get(st.DocNo);
     const bookLines = acSoLines.get(st.DocNo);
     if (!bookLines) { noBookLines++; continue; }
-    if (touched.has(h.doc_no)) { conflicts.push({ acDoc: st.DocNo, doc: h.doc_no, why: `a person edited this order in the ERP (audit trail, or version ${h.version})` }); continue; }
+    if (touched.has(h.doc_no)) { conflicts.push({ acDoc: st.DocNo, doc: h.doc_no, why: "a person edited this order in the ERP (audit trail)" }); continue; }
     const erpLines = soLinesByDoc.get(st.DocNo) || [];
     const keyed = erpLines.filter((l) => l.linked_ac_dtlkey != null);
     if (keyed.length !== erpLines.length) unkeyed.push({ acDoc: st.DocNo, doc: h.doc_no, n: erpLines.length - keyed.length });
@@ -1106,6 +1175,9 @@ async function main() {
      so the difference is a number rather than an argument. */
   const HDRFILE = "ac-doc-headers.json.gz";
   const hdrWrites = [];          // { table, pk, pkVal, doc, field, col, from, to }
+  /* Fields a PERSON owns where the book still disagrees. Never written INTO the
+     ERP; carried OUT to the account book by LANES=push. */
+  const pushToBook = [];         // { doc, acNo, field, col, erp, book }
   const staffCreate = [];        // agent display names with no ERP staff row
   const staffRebind = [];        // ACIMP-* placeholder that a real staff row now shadows
   log("");
@@ -1157,13 +1229,25 @@ async function main() {
       const erpPoRows = await readErp("purchase_orders", "po_number", poFieldsLive.map((f) => f.erp));
       log(`  ERP migrated headers: ${erpSoRows.length} sales order(s), ${erpPoRows.length} purchase order(s)`);
 
-      /* ── the human veto, per (document, field) ── */
-      const SYS_ACTOR = "00000000-0000-4000-8000-000000000001";
+      /* ── the human veto, per (document, field) ──
+         CORRECTED 2026-09-08 [critical]. This block asked
+
+             if (!r.actor_id || String(r.actor_id) === SYS_ACTOR) { skip }
+
+         with SYS_ACTOR = 00000000-0000-4000-8000-000000000001. That uuid is
+         what scm/middleware/auth.ts:112 PINS onto c.get('user').id for every
+         authenticated SCM caller, and all 21 recordSoAudit call sites in
+         routes/mfg-sales-orders.ts pass `actorId: user.id` — so it is what
+         EVERY human sales-order edit carries. The test therefore matched every
+         person, skipped them as "system-authored", and this veto refused
+         NOTHING: the account book's older value would have been written over a
+         salesperson's change with no signal at all. docs/bugs/0702.
+
+         The rule now lives in src/scm/shared/audit-author.ts, is keyed on the
+         writer's own self-declaration in actor_name_snapshot, and is asserted
+         red-then-green in audit-author.test.ts. */
       const HDR_NEEDLES = headerAuditNeedles(SO_HEADER_FIELDS);
-      const camel = (s) => s.replace(/_([a-z0-9])/g, (_m, c) => c.toUpperCase());
-      const humanField = new Set();   // `${doc}|${fieldKey}`
-      const humanDocs = new Set();
-      let auditRows = 0, sysAuthored = 0;
+      const hdrAuditRows = [];
       const soDocNos = erpSoRows.map((r) => r.doc_no);
       for (let i = 0; i < soDocNos.length; i += 1000) {
         const rows = await sql`SELECT so_doc_no, actor_id, actor_name_snapshot, field_changes::text AS fc
@@ -1171,21 +1255,21 @@ async function main() {
                                 WHERE so_doc_no = ANY(${soDocNos.slice(i, i + 1000)})
                                   AND field_changes::text ILIKE ANY(${HDR_NEEDLES})`;
         for (const r of rows) {
-          auditRows++;
-          if (!r.actor_id || String(r.actor_id) === SYS_ACTOR) { sysAuthored++; continue; }
-          const fc = (r.fc || "").toLowerCase();
-          for (const f of SO_HEADER_FIELDS) {
-            if (!f.erp) continue;
-            if (fc.includes(f.erp.toLowerCase()) || fc.includes(camel(f.erp).toLowerCase())) {
-              humanField.add(`${r.so_doc_no}|${f.key}`);
-              humanDocs.add(r.so_doc_no);
-            }
-          }
+          hdrAuditRows.push({
+            doc: r.so_doc_no,
+            actor_id: r.actor_id,
+            actor_name_snapshot: r.actor_name_snapshot,
+            fieldChangesText: r.fc || "",
+          });
         }
       }
+      const veto = planPersonEditVeto(hdrAuditRows, SO_HEADER_FIELDS);
+      const humanField = veto.fields;  // `${doc}|${fieldKey}`
+      const humanDocs = veto.docs;
       const versionWouldRefuse = soHeaders.filter((h) => Number(h.version) > 1).length;
-      log(`  audit rows naming a header field in scope           ${auditRows}  (${sysAuthored} written by the migration's own system actor, never a veto)`);
+      log(`  audit rows naming a header field in scope           ${veto.rowsRead}  (${veto.machineRows} written by the system — the allocation cron and friends, never a veto)`);
       log(`  sales orders where a PERSON changed a header field  ${humanDocs.size}  — those fields are refused, the rest of the document is not`);
+      log(`  fields refused across those orders                  ${humanField.size}`);
       log(`  for comparison, a version > 1 test would refuse     ${versionWouldRefuse} whole document(s). NOT used: PR #3042 measured 80 of 81 as the automated allocation sweep.`);
 
       /* ── the per-field census ── */
@@ -1218,7 +1302,22 @@ async function main() {
                   return { verdict: "agree", book: b, erp: e };
                 })()
               : compareField(f, bookRaw, row[f.erp]);
-            if ((c.verdict === "differ" || c.verdict === "erpBlank") && humanField.has(`${row[pk]}|${f.key}`)) { st.human++; continue; }
+            if ((c.verdict === "differ" || c.verdict === "erpBlank") && humanField.has(`${row[pk]}|${f.key}`)) {
+              st.human++;
+              /* THE OTHER HALF OF THE RULE, AND THE ONE THAT WAS MISSING.
+                 Refusing to overwrite her leaves the two systems disagreeing
+                 and nobody told. Since opening, the ERP is master on a row a
+                 person edited — so this disagreement is a job for the
+                 write-back, pointing the other way: the BOOK is brought to the
+                 ERP. Collected here, printed always, and enqueued only under
+                 LANES=push. Sales orders only: SO is the type the write-back
+                 composes a keyed edit for from a document NUMBER, and it is
+                 the type the owner opened first. */
+              if (table === "mfg_sales_orders" && f.erp) {
+                pushToBook.push({ doc: row[pk], acNo, field: f.key, col: f.erp, erp: c.erp, book: c.book });
+              }
+              continue;
+            }
             st[c.verdict]++;
             if ((c.verdict === "differ" || c.verdict === "erpBlank") && st.sample.length < 3) {
               st.sample.push(`${row[pk]} (${acNo}): ERP ${JSON.stringify(c.erp)} -> BOOK ${JSON.stringify(c.book)}`);
@@ -1334,12 +1433,33 @@ async function main() {
     }
   }
 
+  /* ── THE REFUSALS, PRINTED WHETHER OR NOT ANYBODY ASKED ──
+     A refusal that reaches nobody is the failure this repo has already paid
+     for: 35 write paths refused correctly and told no one, and the owner
+     reported it as "the button does nothing". These lines run on the PLAN path
+     too, so the count is visible without arming anything. */
+  log("");
+  if (pushToBook.length === 0) {
+    log("PERSON-OWNED FIELDS THE BOOK DISAGREES WITH: 0 — nothing was refused, and nothing needs pushing.");
+  } else {
+    const pushDocs = [...new Set(pushToBook.map((p) => p.doc))];
+    log(`PERSON-OWNED FIELDS THE BOOK DISAGREES WITH: ${pushToBook.length} field(s) on ${pushDocs.length} sales order(s).`);
+    log("  NOT written into the ERP — a person owns them. The ERP is master here,");
+    log("  so the account book is the side that has to move. LANES=push enqueues one");
+    log("  keyed AutoCount edit per order, carrying the ERP's own value out.");
+    for (const p of pushToBook.slice(0, 20)) {
+      log(`   ${p.doc} (${p.acNo})  ${p.field}: ERP ${JSON.stringify(p.erp)}  <-  book still says ${JSON.stringify(p.book)}`);
+    }
+    if (pushToBook.length > 20) log(`   ... and ${pushToBook.length - 20} more`);
+  }
+
   if (!APPLY) {
     log("");
     log('PLAN ONLY — no writes. MODE=apply CONFIRM="SYNC AC DELTA" writes the lanes named in LANES.');
     log(`   desc  ${descUpdates.length} line(s)      pay   ${payUpdates.length} order(s)     links ${linkPlan.length} dedication(s)`);
     log(`   recv  ${recvPlan.length} line(s)      do    ${doPlan.length} document(s)  dedi  ${dediPlan.length} dedication(s)`);
     log(`LANES=hdr would write ${hdrWrites.length} header field value(s); LANES=hdrstaff would create ${staffCreate.length} inactive staff row(s).`);
+    log(`LANES=push would enqueue ${new Set(pushToBook.map((p) => p.doc)).size} AutoCount edit(s) carrying the ERP's value OUT to the book.`);
     log("The INSERT lane is NOT this script's: run the importers named above.");
     log("Section 5's CASE 4 (build text) stays REPORT-ONLY — a changed Desc2 can change the NUMBER of ERP lines.");
     await sql.end();
@@ -1502,6 +1622,48 @@ async function main() {
       });
     }
     log(`header master written: ${nHdr} of ${hdrWrites.length} intended; ${hdrMiss} skipped because the ERP value moved after the plan was read`);
+  }
+
+  /* ── the push lane: carry the PERSON's value OUT to the account book ──
+     The direction the owner reversed when he opened the system. Where a person
+     owns a field and the book still holds the old value, the book is what is
+     wrong, and the existing write-back is how it gets corrected.
+
+     IT IS NOT A SECOND COMPOSER. `enqueueEdit` is the same function the SO
+     routes call, driven over the pg connection by pgrest-shim (the precedent is
+     rebuild-ac-document.mjs, which does exactly this). Every refusal the
+     composer already knows still applies and is reported verbatim — a keyless
+     line, a converted document, an unresolvable item — because composing a
+     payload here by hand is how two homes for one rule start.
+
+     ONE EDIT PER DOCUMENT, not per field: a keyed edit carries the document's
+     whole current state, so a second enqueue for the same order would send the
+     same thing twice. `touchedFields` names the columns a person set, which is
+     what tells the composer a cleared field is a deliberate clear and not a
+     blank it should skip.
+
+     OFF BY DEFAULT. It writes into the outbox that feeds a LICENSED account
+     book, which is the same bar `hdr` and `hdrstaff` are held to. */
+  let nPush = 0, pushRefused = 0;
+  if (LANES.has("push")) {
+    const colsByDoc = new Map();
+    for (const p of pushToBook) {
+      if (!colsByDoc.has(p.doc)) colsByDoc.set(p.doc, new Set());
+      colsByDoc.get(p.doc).add(p.col);
+    }
+    const sb = pgrestShim(sql, "scm");
+    for (const [docNo, cols] of colsByDoc) {
+      const queued = await enqueueEdit(sb, {
+        companyId: 1,
+        docType: "SO",
+        docNo,
+        touchedFields: [...cols],
+      });
+      if (queued) { nPush++; log(`   queued AutoCount edit for ${docNo} (${[...cols].join(", ")})`); }
+      else { pushRefused++; log(`   REFUSED by the write-back composer: ${docNo} — see the AutoCount Sync page for the reason on the row`); }
+    }
+    log(`AutoCount edits enqueued from person-owned fields: ${nPush} of ${colsByDoc.size} order(s); ${pushRefused} refused by the composer.`);
+    if (sb.__gaps?.length) log(`   pgrest-shim gaps hit: ${sb.__gaps.join(", ")} — the enqueue above may be incomplete.`);
   }
 
   /* ── the staff lane: auto-creating a salesperson is a WRITE TO MASTER DATA ──
