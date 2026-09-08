@@ -468,14 +468,18 @@ export const useIgnoreSettlementRow = () => {
 
 export type Watchlist = {
   from: string; to: string; clean: boolean;
-  recordedNotArrived: Array<SettlementCandidate & { ageDays: number; acquirerCode: string }>;
+  /** acquirerCode null = keyed in without a bank; the server lists such a
+      payment ONCE (docs/bugs/0688) and the screen shows it as 未标. */
+  recordedNotArrived: Array<SettlementCandidate & { ageDays: number; acquirerCode: string | null }>;
   arrivedNotRecorded: Array<{ id: number; acquirer_code: string; txn_date: string; ref: string | null; gross_sen: number; notes: string | null }>;
 };
 
 export type AgeBucket = '0-7' | '8-14' | '15-30' | 'over-30';
 
 export type InTransitLine = {
-  acquirerCode: string;
+  /** null = keyed in without a bank, listed once (docs/bugs/0688); the
+      ageing table keys such money 未标. */
+  acquirerCode: string | null;
   source: 'SOPAY' | 'SIPAY';
   paymentId: string;
   docNo: string;

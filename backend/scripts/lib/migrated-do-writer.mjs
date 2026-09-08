@@ -184,8 +184,15 @@ export function buildMigratedDoPlan({ rows, itemMap, soItems, done = new Set(), 
          48,772 DO lines in the 2026-09-08 re-cut — so when the two orders
          disagree the result is an exact swap, and `variants` is copied from
          whichever line was picked, which puts the other customer's colour on
-         the note. DO-011505 and DO-011478 are that shape in production
-         (docs/bugs/0672, instance 2).
+         the note.
+
+         NOT the mechanism behind DO-011505 / DO-011478, and saying so is the
+         point. docs/bugs/0672 attributed those two to this site; the book
+         refutes it. Their swapped DtlKeys carry DIFFERENT AutoCount codes that
+         map to DIFFERENT ERP codes -- 920097 HOK-1003 (A) (K) -> HILTON (A)-(K)
+         against 920099 HOK-1007 (Q) -> CODY-(Q) -- so they never share a bucket
+         here and this guard cannot fire on them. Their colour came from
+         somewhere else and is still unattributed (docs/bugs/0689).
 
          So: pair on model + colour, and where colour does not resolve it, write
          NO link. A missing link is visible and recoverable; a wrong one is
