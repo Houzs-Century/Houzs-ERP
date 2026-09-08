@@ -238,3 +238,42 @@ test("LINE KEY: several keys select several lines — two identical sofas, one b
   assert.equal(got.verdict, "linekey");
   assert.equal(got.rows.length, 2);
 });
+
+/* ── ONE BOOK LINE, SEVERAL ERP ROWS ─────────────────────────────────────────
+ * A sofa is ONE line in the account book and one ERP row per COMPARTMENT, and
+ * every one of those rows carries that single line's DtlKey — the invariant
+ * src/scm/lib/autocount-line-keys.ts:155 states and the guide repeats. So a
+ * correction naming ONE key legitimately selects SEVERAL rows.
+ *
+ * Measured on prod, dry-run 34243523350: HC-SO-011221 holds `9028-2S` and
+ * `9028-1S`, BOTH carrying DtlKey 775621, and the selector answered
+ *
+ *   no line matches line key(s) 775621 — the document does not carry these
+ *   line key(s) ... the build is not on this document
+ *
+ * which is false and skipped a correct build. The cause was counting ROWS
+ * against KEYS. What must be checked is that every key NAMED is PRESENT; how
+ * many rows carry it is the build's shape, not an error.
+ */
+test("LINE KEY: one key selects EVERY row that carries it — a sofa is one book line", () => {
+  const rows = [
+    { item_code: "9028-2S", linked_ac_dtlkey: "775621" },
+    { item_code: "9028-1S", linked_ac_dtlkey: "775621" },
+  ];
+  const got = selectBuildRows(rows, null, undefined, { lineKeys: ["775621"] });
+  assert.equal(got.verdict, "linekey");
+  assert.equal(got.rows.length, 2);
+});
+
+test("LINE KEY: a key the document does not carry is still a refusal", () => {
+  const rows = [
+    { item_code: "9028-2S", linked_ac_dtlkey: "775621" },
+    { item_code: "9028-1S", linked_ac_dtlkey: "775621" },
+  ];
+  /* Two keys named, only one present: the build is not wholly on this
+     document, and matching by text instead is the transposition class. */
+  const got = selectBuildRows(rows, null, undefined, { lineKeys: ["775621", "999999"] });
+  assert.equal(got.verdict, "none");
+  assert.equal(got.rows.length, 0);
+  assert.match(got.how, /999999/);
+});

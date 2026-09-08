@@ -718,8 +718,14 @@ export async function readConvertSourceKeys(
     const covered = new Set<string>();
     const sibIds = [...new Set(shared.flatMap((key) => siblings.get(key)?.ids ?? []))];
     if (sibIds.length) {
-      const { data: cov, error: covErr } = await sb.from(spec.itemTable)
-        .select(`id, ${spec.sourceFk}`).in(spec.sourceFk, sibIds);
+      /* THROUGH inAcLineOrder, and this read does not need the order — it
+         becomes a Set. `acLineOrderWiring` cannot tell a coverage read from a
+         payload read and should not have to: the rule is that EVERY selecting
+         read of a line table goes through the one helper, and an exception list
+         is how that rule stops being checkable. Ordering a read whose result is
+         unordered costs nothing and keeps the guard whole. */
+      const { data: cov, error: covErr } = await inAcLineOrder(sb.from(spec.itemTable)
+        .select(`id, ${spec.sourceFk}`).in(spec.sourceFk, sibIds));
       for (const r of (covErr ? [] : (cov ?? []) as unknown as Array<Record<string, unknown>>)) {
         const src = r[spec.sourceFk];
         if (typeof src === 'string' && src) covered.add(src);
