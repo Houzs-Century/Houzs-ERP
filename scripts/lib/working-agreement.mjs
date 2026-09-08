@@ -458,7 +458,21 @@ const VERIFIED_RX =
 const PLACEHOLDER_RX = /^\s*(?:<[^>]*>|tbd|todo|n\/?a|none|-{1,3}|\.{3})?\s*$/i;
 
 const findStatement = (body, rx) => {
-  for (const line of String(body || "").split("\n")) {
+  /* SPLIT ON EITHER LINE ENDING. GitHub returns a PR body with CRLF, and every
+     matcher above ends `(.*)$` — in JavaScript `.` does not match \r, so with a
+     bare split("\n") the trailing \r sits past the end of the capture and `$`
+     cannot match. Rule 3 then reported "Missing: a line reading Reversal:"
+     against a body that stated it in full, on every CRLF PR body — which is
+     this repo's "a checker that cannot match" trap with the sign flipped. It
+     does not report a false clean; it reports a false VIOLATION, and a gate
+     that fails compliant PRs is a gate somebody deletes.
+
+     Measured 2026-09-08 on PR #3207, run 34197700964: the body carried both
+     `Reversal:` and `Verified against:` as their own lines and the rule
+     reported both missing. `/^\s*(?:...)(reversal)...:(.*)$/.test("Reversal: x")`
+     is true and `.test("Reversal: x\r")` is false — that pair is the whole bug
+     and it is pinned in workingAgreement.test.mjs. */
+  for (const line of String(body || "").split(/\r?\n/)) {
     const m = rx.exec(line);
     if (!m) continue;
     const value = m[2].trim();
