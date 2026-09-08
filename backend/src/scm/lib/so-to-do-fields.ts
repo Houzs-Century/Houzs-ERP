@@ -142,6 +142,9 @@ const REPORTED_FIELDS: ReadonlyArray<readonly [keyof SoConversionSource, string]
   ['city', 'City'],
   ['postcode', 'Postcode'],
   ['salesLocation', 'Sales Location'],
+  /* Seeded into the form since 2026-09-08 (docs/bugs/0723); before that a DO
+     raised from the form carried no customer date unless the operator retyped it. */
+  ['customerDeliveryDate', 'Delivery Date'],
 ];
 
 /**
