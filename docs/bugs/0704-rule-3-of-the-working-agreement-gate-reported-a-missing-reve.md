@@ -1,6 +1,11 @@
-<!-- area: Repo tooling: tests, ratchets, generators -->
-
 ## Rule 3 of the working-agreement gate reported a missing Reversal line against a body that stated it [low]
+
+<!-- area: Repo tooling: tests, ratchets, generators -->
+<!-- ^ TAGGED because the keyword table cannot place this one. It is about
+     the WORKING-AGREEMENT GATE, and its title has to say "Reversal" to be
+     readable at all - which is an Accounting + GL word (journal, ledger,
+     debit, credit, payment voucher, reversal). Untagged it filed itself
+     under Accounting, and tests/bugIndexAreas caught it. -->
 
 **Symptom.** PR #3207 carried a migration and a PR body with both required
 lines, each on a line of its own:
