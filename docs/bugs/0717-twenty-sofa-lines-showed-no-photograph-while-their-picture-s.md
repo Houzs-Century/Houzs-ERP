@@ -62,8 +62,9 @@ upload has no recorded run" — the shape of `docs/bugs/0625-…`, where 64
 addresses named an object that was never uploaded. Asked of the bucket rather
 than of the log, on the operator machine, 2026-09-08:
 `prune-dead-line-photo-keys.mjs` MODE=plan listed **2,271 objects** under
-`so-items/` + `po-items/` and checked every address on all 687 SO and 245 PO
-rows that carry one — **0 dead addresses, 0 that would go blank, on both arms.**
+`so-items/` + `po-items/` and checked every importer-minted address on the 687
+sales-order rows and 245 purchase-order rows that carry one: **0 dead
+addresses, and 0 that would be left blank.**
 Every importer-minted address on a live company-1 line resolves to a real
 object. The upload did happen; the warning is stale and no prune is needed.
 
@@ -79,9 +80,9 @@ line key `(doc_no, linked_ac_dtlkey)` — never position, never item code — th
 candidate object must already be in `photo_urls` somewhere on THE SAME document
 and must resolve in R2, the group must be ONE model (`isOneModel`, the guard
 from `docs/bugs/0684-…`), and the target is `firstRow(group)`, which
-`docs/bugs/0690-…` measured on 2026-09-08 and deliberately kept: of 419
-multi-row groups on both arms, **419 are one model decomposed into compartments
-and 0 book keys appear on two documents**. The apply then re-checked every row's
+`docs/bugs/0690-…` measured on 2026-09-08 and deliberately kept: of its 419 multi-row groups (310 sales-order +
+109 purchase-order), **419 are one model decomposed into compartments and 0 book
+keys appear on two documents**. The apply then re-checked every row's
 `photo_urls` against the plan and verified on a FRESH connection.
 
 **This was the first real APPLY of the plan-file handoff.** `docs/bugs/0638-…`
