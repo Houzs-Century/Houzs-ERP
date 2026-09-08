@@ -301,9 +301,12 @@ async function main() {
       /* IS NULL is re-asserted in the UPDATE, not only in the SELECT that built
          the plan: between plan and apply a person may have linked the line by
          hand, and their answer wins over this one. */
+      /* Both ids are read back as ::text so the plan file is plain JSON; the
+         casts put them back to uuid rather than letting the driver bind a text
+         parameter against a uuid column, which errors. */
       const res = await sql`
-        UPDATE scm.grn_items SET purchase_order_item_id = ${w.poItemId}
-         WHERE id = ${w.grnItemId} AND purchase_order_item_id IS NULL`;
+        UPDATE scm.grn_items SET purchase_order_item_id = ${w.poItemId}::uuid
+         WHERE id = ${w.grnItemId}::uuid AND purchase_order_item_id IS NULL`;
       written += res.count;
     }
     note(`wrote ${written} link(s) of ${plan.writes.length} planned`);

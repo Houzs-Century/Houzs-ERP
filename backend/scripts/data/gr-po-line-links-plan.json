@@ -1,0 +1,273 @@
+{
+  "built_at": "2026-09-08T19:19:15.138Z",
+  "company_id": 1,
+  "digest": "5ec80e7f7009f59067e896c0a478cb99be23c401e42823e99251f97e68d2d0f2",
+  "writes": [
+    {
+      "grnItemId": "af6abe89-13c7-4c7d-af74-a1039c40b6e3",
+      "poItemId": "fc7c4d67-5afc-4291-895a-6e93db3b21af",
+      "grnNumber": "HC-GR-004939-PO-009081",
+      "itemCode": "TIFANNY 2.0 (F)-(Q)",
+      "grDocNo": "GR-004939",
+      "grDtlKey": "853738",
+      "poDocNo": "PO-009081",
+      "poDtlKey": "833540",
+      "how": "the one line of 2 on PO-009081 whose build text is the same"
+    },
+    {
+      "grnItemId": "703b7c5b-8064-4fae-92f9-fa6571b96ffd",
+      "poItemId": "7c8d12dc-6721-4036-9a4d-247cebade375",
+      "grnNumber": "HC-GR-004989",
+      "itemCode": "TIFANNY 2.0 (F)-(Q)",
+      "grDocNo": "GR-004989",
+      "grDtlKey": "860498",
+      "poDocNo": "PO-009081",
+      "poDtlKey": "833538",
+      "how": "the one line of 2 on PO-009081 whose build text is the same"
+    },
+    {
+      "grnItemId": "5e351c19-06da-4bbc-a2c2-24f0d725fb63",
+      "poItemId": "31f6d5b6-f878-47b0-b289-67c70c0db360",
+      "grnNumber": "HC-GR-005195-PO-009706",
+      "itemCode": "CASUAL-(Q)",
+      "grDocNo": "GR-005195",
+      "grDtlKey": "890089",
+      "poDocNo": "PO-009706",
+      "poDtlKey": "881727",
+      "how": "the one line of 2 on PO-009706 whose build text is the same"
+    },
+    {
+      "grnItemId": "8bd56d26-054c-4ad8-815d-c3a30e5a8827",
+      "poItemId": "30e85a4f-61ae-4e2b-8434-48fc72ada77c",
+      "grnNumber": "HC-GR-005195-PO-009706",
+      "itemCode": "CASUAL-(Q)",
+      "grDocNo": "GR-005195",
+      "grDtlKey": "890091",
+      "poDocNo": "PO-009706",
+      "poDtlKey": "881729",
+      "how": "the one line of 2 on PO-009706 whose build text is the same"
+    },
+    {
+      "grnItemId": "4b5257fc-abd9-4c33-8740-6fb9bbb8e4b8",
+      "poItemId": "4c44abdd-2e1b-4729-bdac-a30d7cf0e7e0",
+      "grnNumber": "HC-GR-005220-PO-009790",
+      "itemCode": "JAGER-(Q)",
+      "grDocNo": "GR-005220",
+      "grDtlKey": "895150",
+      "poDocNo": "PO-009790",
+      "poDtlKey": "889846",
+      "how": "the one line of 2 on PO-009790 whose build text is the same"
+    },
+    {
+      "grnItemId": "7f7d6667-912c-4598-bfc4-8c243286e4f5",
+      "poItemId": "42b39d33-d87e-4a7e-ac3d-6e1010401964",
+      "grnNumber": "HC-GR-005271-PO-009722",
+      "itemCode": "CODY-(Q)",
+      "grDocNo": "GR-005271",
+      "grDtlKey": "909306",
+      "poDocNo": "PO-009722",
+      "poDtlKey": "884637",
+      "how": "the one line of 2 on PO-009722 whose build text is the same"
+    },
+    {
+      "grnItemId": "0151612d-0407-4c8d-a0c9-5438d3587550",
+      "poItemId": "f2a90172-451c-4648-b742-f17b1df74d38",
+      "grnNumber": "HC-GR-005279-PO-009924",
+      "itemCode": "DIVAN ONLY-(Q)",
+      "grDocNo": "GR-005279",
+      "grDtlKey": "911037",
+      "poDocNo": "PO-009924",
+      "poDtlKey": "905063",
+      "how": "the one line of 2 on PO-009924 whose build text is the same"
+    },
+    {
+      "grnItemId": "6bf948ce-a0ea-48a7-8244-31b8e880b30b",
+      "poItemId": "75e66006-df3a-40e1-b7ea-cd55bce7db4c",
+      "grnNumber": "HC-GR-005282-PO-009866",
+      "itemCode": "CODY-(Q)",
+      "grDocNo": "GR-005282",
+      "grDtlKey": "911311",
+      "poDocNo": "PO-009866",
+      "poDtlKey": "896169",
+      "how": "the one line of 2 on PO-009866 whose build text is the same"
+    },
+    {
+      "grnItemId": "a41d8f16-21e0-45bc-96e9-b6cac320e744",
+      "poItemId": "f4d39b53-62b0-444b-8ed7-3cbf01f0a425",
+      "grnNumber": "HC-GR-005292",
+      "itemCode": "CODY-(Q)",
+      "grDocNo": "GR-005292",
+      "grDtlKey": "912725",
+      "poDocNo": "PO-009866",
+      "poDtlKey": "896171",
+      "how": "the one line of 2 on PO-009866 whose build text is the same"
+    },
+    {
+      "grnItemId": "6ec73820-e7b7-4165-a3b6-2e451fabba3e",
+      "poItemId": "f25a72f7-5415-4d7e-b250-84e84aa9b470",
+      "grnNumber": "HC-GR-005327-PO-009722",
+      "itemCode": "CODY-(Q)",
+      "grDocNo": "GR-005327",
+      "grDtlKey": "916141",
+      "poDocNo": "PO-009722",
+      "poDtlKey": "884635",
+      "how": "the one line of 2 on PO-009722 whose build text is the same"
+    },
+    {
+      "grnItemId": "ddf8c448-afd1-49cb-8af6-e06a7fbdd0d3",
+      "poItemId": "e0d55009-f31e-417c-ab3f-75a8c7fe9447",
+      "grnNumber": "HC-GR-005329-PO-009790",
+      "itemCode": "JAGER-(Q)",
+      "grDocNo": "GR-005329",
+      "grDtlKey": "916323",
+      "poDocNo": "PO-009790",
+      "poDtlKey": "889848",
+      "how": "the one line of 2 on PO-009790 whose build text is the same"
+    },
+    {
+      "grnItemId": "e2d2a541-631c-407b-bc19-e5edb87af8b3",
+      "poItemId": "2cc8a165-f1ec-45fc-82a9-c00496621ace",
+      "grnNumber": "HC-GR-005329-PO-010013",
+      "itemCode": "CODY-(Q)",
+      "grDocNo": "GR-005329",
+      "grDtlKey": "916335",
+      "poDocNo": "PO-010013",
+      "poDtlKey": "910932",
+      "how": "the one line of 2 on PO-010013 whose build text is the same"
+    },
+    {
+      "grnItemId": "9dd5c909-b2a6-46f5-a5de-f75e71f441c4",
+      "poItemId": "02a3f078-1868-4453-b89b-693d211aa607",
+      "grnNumber": "HC-GR-005334",
+      "itemCode": "AKEMI ARMOUR MATT (K)",
+      "grDocNo": "GR-005334",
+      "grDtlKey": "917584",
+      "poDocNo": "PO-009887",
+      "poDtlKey": "897418",
+      "how": "the one line of 2 on PO-009887 whose build text is the same"
+    },
+    {
+      "grnItemId": "6699232e-217e-4e76-800f-2f605d8cd868",
+      "poItemId": "0fd595b5-8f11-42de-b6aa-9cfe49fd5526",
+      "grnNumber": "HC-GR-005346-PO-010025",
+      "itemCode": "JAGER-(Q)",
+      "grDocNo": "GR-005346",
+      "grDtlKey": "917848",
+      "poDocNo": "PO-010025",
+      "poDtlKey": "912750",
+      "how": "the one line of 2 on PO-010025 whose build text is the same"
+    },
+    {
+      "grnItemId": "6da0b415-0f4f-495a-91e6-373cbd2b3634",
+      "poItemId": "3322a9a4-2210-4a0a-be73-54a81bdb40a7",
+      "grnNumber": "HC-GR-005346-PO-010029",
+      "itemCode": "TRION (A) (HB STR)-(K)",
+      "grDocNo": "GR-005346",
+      "grDtlKey": "917854",
+      "poDocNo": "PO-010029",
+      "poDtlKey": "912766",
+      "how": "the one line of 2 on PO-010029 whose build text is the same"
+    },
+    {
+      "grnItemId": "b7235b36-4cf2-40a5-b4e8-c2b52c92888f",
+      "poItemId": "ca8af0c0-8963-42f8-8234-420da754b4b0",
+      "grnNumber": "HC-GR-005350-PO-010013",
+      "itemCode": "CODY-(Q)",
+      "grDocNo": "GR-005350",
+      "grDtlKey": "919662",
+      "poDocNo": "PO-010013",
+      "poDtlKey": "910930",
+      "how": "the one line of 2 on PO-010013 whose build text is the same"
+    },
+    {
+      "grnItemId": "a994e4f4-e5fe-47d4-b7d7-6c92ce6b1cf0",
+      "poItemId": "b31fecf1-4593-4681-becd-b9c4f5afb2e5",
+      "grnNumber": "HC-GR-005382-PO-009933",
+      "itemCode": "CODY-(SP)",
+      "grDocNo": "GR-005382",
+      "grDtlKey": "927124",
+      "poDocNo": "PO-009933",
+      "poDtlKey": "905098",
+      "how": "the one line of 2 on PO-009933 whose build text is the same"
+    }
+  ],
+  "refusals": [
+    {
+      "grDtlKey": "79819",
+      "erp": "HC-GR-000232",
+      "grDocNo": "GR-000232",
+      "poDocNo": "PO-000290",
+      "why": "2 order lines carry this item code on PO-000290 and 2 of them carry the same build text, so it singles out no one line"
+    },
+    {
+      "grDtlKey": "79821",
+      "erp": "HC-GR-000232",
+      "grDocNo": "GR-000232",
+      "poDocNo": "PO-000290",
+      "why": "2 order lines carry this item code on PO-000290 and 2 of them carry the same build text, so it singles out no one line"
+    },
+    {
+      "grDtlKey": "802465",
+      "erp": "HC-GR-004478",
+      "grDocNo": "GR-004478",
+      "poDocNo": "PO-008506",
+      "why": "2 order lines carry this item code on PO-008506 and 2 of them carry the same build text, so it singles out no one line"
+    },
+    {
+      "grDtlKey": "802467",
+      "erp": "HC-GR-004478",
+      "grDocNo": "GR-004478",
+      "poDocNo": "PO-008506",
+      "why": "2 order lines carry this item code on PO-008506 and 2 of them carry the same build text, so it singles out no one line"
+    },
+    {
+      "grDtlKey": "853759",
+      "erp": "HC-GR-004940-PO-009024",
+      "grDocNo": "GR-004940",
+      "poDocNo": "PO-009024",
+      "why": "2 order lines carry this item code on PO-009024 and the receipt line's build text matches none of them"
+    },
+    {
+      "grDtlKey": "859119",
+      "erp": "HC-GR-004982",
+      "grDocNo": "GR-004982",
+      "poDocNo": "PO-009024",
+      "why": "2 order lines carry this item code on PO-009024 and 2 of them carry the same build text, so it singles out no one line"
+    },
+    {
+      "grDtlKey": "910810",
+      "erp": "HC-GR-005278-PO-009920",
+      "grDocNo": "GR-005278",
+      "poDocNo": "PO-009920",
+      "why": "2 order lines carry this item code on PO-009920 and 2 of them carry the same build text, so it singles out no one line"
+    },
+    {
+      "grDtlKey": "910812",
+      "erp": "HC-GR-005278-PO-009920",
+      "grDocNo": "GR-005278",
+      "poDocNo": "PO-009920",
+      "why": "2 order lines carry this item code on PO-009920 and 2 of them carry the same build text, so it singles out no one line"
+    },
+    {
+      "grDtlKey": "917586",
+      "erp": "HC-GR-005334",
+      "grDocNo": "GR-005334",
+      "poDocNo": "PO-009887",
+      "why": "2 order lines carry this item code on PO-009887 and 2 of them carry the same build text, so it singles out no one line"
+    },
+    {
+      "grDtlKey": "917588",
+      "erp": "HC-GR-005334",
+      "grDocNo": "GR-005334",
+      "poDocNo": "PO-009887",
+      "why": "2 order lines carry this item code on PO-009887 and 2 of them carry the same build text, so it singles out no one line"
+    },
+    {
+      "grDtlKey": "925712",
+      "erp": "HC-GR-005360-PO-010024",
+      "grDocNo": "GR-005360",
+      "poDocNo": "PO-010024",
+      "why": "2 order lines carry this item code on PO-010024 and 2 of them carry the same build text, so it singles out no one line"
+    }
+  ]
+}
