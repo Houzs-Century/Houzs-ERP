@@ -426,6 +426,7 @@ export function planLineKeys({ bookByDoc, erpByDoc }) {
     refusedRows: 0,
     forcedUnique: 0,
     forcedInterchangeable: 0,
+    forcedBuildText: 0,
     disagreements: 0,
     blankBookRows: 0,
     documentsFullyStamped: 0,
@@ -454,6 +455,7 @@ export function planLineKeys({ bookByDoc, erpByDoc }) {
     totals.stampedRows += r.stamps.length;
     totals.forcedUnique += r.stamps.filter((s) => s.forced === "unique").length;
     totals.forcedInterchangeable += r.stamps.filter((s) => s.forced === "interchangeable").length;
+    totals.forcedBuildText += r.stamps.filter((s) => s.forced === "build text").length;
     totals.disagreements += r.audits.length;
     totals.blankBookRows += r.blankBookRows;
     /* EVERY row is exactly one of three things: already keyed, stamped now, or

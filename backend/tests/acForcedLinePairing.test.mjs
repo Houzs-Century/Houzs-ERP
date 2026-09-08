@@ -378,3 +378,30 @@ describe("two sofas of ONE model on one document — the build text decides", ()
     expect(u[0]).toMatchObject({ key: "SOFA 8030", qty: 1, uneven: false, desc2: null });
   });
 });
+
+describe("the roll-up counts every FORCED kind", () => {
+  it("counts build-text stamps in their own total, so the three sum to stampedRows", () => {
+    // It printed `undefined` in plan run 34210216732 because the field was
+    // never initialised — a report that cannot count its own work.
+    const out = planLineKeys({
+      bookByDoc: new Map([[
+        "D1",
+        [
+          book({ dtlKey: 900, code: "8030-1S", rawCode: "DSL-8030 SOFA", desc2: "1S (28INCH)", unitPriceSen: 100 }),
+          book({ dtlKey: 901, code: "8030-1S", rawCode: "DSL-8030 SOFA", desc2: "2L+C (30INCH)", unitPriceSen: 200 }),
+        ],
+      ]]),
+      erpByDoc: new Map([[
+        "D1",
+        [
+          erp({ id: "a", code: "8030-1A(LHF)", desc2: "2L+C (30inch)" }),
+          erp({ id: "b", code: "8030-L(RHF)", desc2: "2L+C (30inch)" }),
+          erp({ id: "c", code: "8030-1S", desc2: "1S (28inch)" }),
+        ],
+      ]]),
+    });
+    const { stampedRows, forcedUnique, forcedInterchangeable, forcedBuildText } = out.totals;
+    expect(forcedBuildText).toBe(3);
+    expect(forcedUnique + forcedInterchangeable + forcedBuildText).toBe(stampedRows);
+  });
+});
