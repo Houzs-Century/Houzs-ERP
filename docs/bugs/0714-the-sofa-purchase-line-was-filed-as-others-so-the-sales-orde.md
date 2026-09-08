@@ -51,6 +51,20 @@ movements. Every one's sales side is already decoded into compartments. 9 of the
 010886, 010956, 012060, 012173, 012526, 012565, 012986, 013013. The other 5 are
 DELIVERED with a delivery-order line already on the compartments.
 
+**The sibling tool, and why it reaches none of these.** PR #3261 shipped
+`backend/scripts/repair-collapsed-sofa-po-line.mjs` for the same order
+(`docs/bugs/0715-a-sofa-the-warehouse-already-holds-cannot-be-delivered-becau.md`,
+`docs/bugs/0716-a-sofa-purchase-line-lost-its-category-on-the-so-to-po-hop-a.md`).
+Its gate 6 refuses any build with a goods-receipt line, and every one of the 14
+carries exactly one. Run 34220188752 (plan, `DOC=HC-PO-009435`, on main at
+`db9b124`, 2026-09-08 11:21Z) says so verbatim: *"downstream has moved - 1
+goods-receipt line(s) (HC-GR-005256-PO-009435)"*, PROVABLE 0. It also leaves
+`item_group` as it found it, on purpose, deferring the category to the 0514 lane.
+So on this population the two tools do not overlap: that one owns the shape with
+no receipt; this one owns the shape with a migrated, movement-free receipt, and
+writes the category because the sofa stock import and `computeVariantKey` both
+key on it and neither can be made to ship the sofa without it.
+
 **Fix.** `backend/scripts/repair-mislabelled-sofa-po-lines.mjs` +
 `.github/workflows/repair-mislabelled-sofa-po-lines.yml` (plan by default,
 CONFIRM phrase on apply, one transaction per build, fresh-connection SHAPE

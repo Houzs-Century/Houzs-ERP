@@ -98,7 +98,8 @@ describe('the refusals — every one a stop, never a fallback', () => {
   });
   test('a compartment appears twice on the sales side', () => {
     const s = so(); s.lines[1].code = '8030-2A(LHF)';
-    expect(why({ so: s, decoded: decoded(['2A(LHF)', '2A(LHF)']) })).toMatch(/twice/);
+    // the wording is the shared judge's (lib/sofa-po-so-pair.mjs), not this planner's
+    expect(why({ so: s, decoded: decoded(['2A(LHF)', '2A(LHF)']) })).toMatch(/more than once on one side/);
   });
   test('a piece SKU is not minted', () => expect(why({ codeSet: new Set(['8030-2A(LHF)']) })).toMatch(/not minted: 8030-1A\(RHF\)/));
   test('the purchase line orders more than one build', () => expect(why({ po: po({ qty: 2 }) })).toMatch(/orders 2/));

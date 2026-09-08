@@ -30,6 +30,7 @@
 // ---------------------------------------------------------------------------
 
 import { compartmentOf, isPlaceholderLine, pieceCodes, sameBuild } from './redecode-sofa-plan.mjs';
+import { judgeCompartmentPair } from './sofa-po-so-pair.mjs';
 
 const K = (s) => String(s ?? '').trim().toUpperCase();
 const norm = (s) => K(s).replace(/\s+/g, ' ');
@@ -110,7 +111,6 @@ export function planMislabelledBuild({ po, so, grns, doLines, decoded, codeSet, 
     return refuse(`the sales side on ${so.doc} is itself a placeholder — redecode-collapsed-sofa-lines.mjs owns that shape`);
   }
   const soCodes = live.map((l) => String(l.code).trim());
-  if (new Set(soCodes.map(K)).size !== soCodes.length) return refuse(`a compartment appears twice on ${so.doc} (${soCodes.join(', ')}) — which purchase piece is which is a human's call`);
   const unminted = soCodes.filter((c) => !codeSet.has(K(c)));
   if (unminted.length) return refuse(`a piece SKU is not minted: ${unminted.join(', ')}`);
   if (Number(po.qty) !== 1) return refuse(`the purchase line orders ${po.qty}, not one build`);
@@ -120,17 +120,30 @@ export function planMislabelledBuild({ po, so, grns, doLines, decoded, codeSet, 
   if (real.length) return refuse(`goods-receipt line(s) really moved stock (${real.map((g) => g.doc).join(', ')}) — splitting those needs a compensating movement, not a re-code`);
 
   const readable = decoded && Array.isArray(decoded.pieces) && decoded.pieces.length > 0 && decoded.conf !== 'low';
+  let poCodes;
   if (readable) {
-    const poCodes = pieceCodes(po.model, decoded.pieces).map((c) => (canonical ? canonical(c) : c));
+    poCodes = pieceCodes(po.model, decoded.pieces).map((c) => (canonical ? canonical(c) : c));
+    /* ORDER MATTERS here, on top of the multiset the shared judge compares: the
+       piece list is the sofa read left to right, so the mirrored build is a
+       different sofa and needs the drawing (redecode-sofa-plan's sameBuild). */
     if (!sameBuild(poCodes, soCodes)) {
       return refuse(`the purchase text decodes to ${poCodes.join('+')} where ${so.doc} holds ${soCodes.join('+')}`);
     }
-  } else if (!sameText(po.d2, live[0].d2)) {
+  } else if (sameText(po.d2, live[0].d2)) {
+    poCodes = soCodes;
+  } else {
     return refuse(`the purchase text does not decode and is not the same text as ${so.doc}'s — nothing says they are one build`);
   }
 
+  /* The dedication is the ONE pairing vocabulary every tool on this edge shares
+     (docs/modules/purchase-order.md: "do not write a fourth"). The pieces this
+     plan will write stand in for the purchase rows; a compartment that repeats
+     on either side is the coin flip that judge refuses. */
+  const verdict = judgeCompartmentPair(poCodes.map((c) => ({ item_code: c })), live, (r) => r.item_code ?? r.code);
+  if (verdict.verdict !== 'provable') return refuse(`${so.doc}: ${verdict.why}`);
+
   return {
     kind: 'expand',
-    target: live.map((l) => ({ code: String(l.code).trim(), soItemId: l.id, variants: l.variants ?? null })),
+    target: verdict.pairs.map(({ po: p, so: s }) => ({ code: String(p.item_code).trim(), soItemId: s.id, variants: s.variants ?? null })),
   };
 }
