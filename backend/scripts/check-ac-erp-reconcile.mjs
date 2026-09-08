@@ -182,6 +182,22 @@ const SHOW = Math.max(1, Number(process.env.SHOW || 20));
    never be a second opinion about "different". */
 const VERDICT = makeVerdictRecorder();
 const VERDICT_OUT = String(process.env.VERDICT_OUT || "").trim();
+/* THE SAME VERDICT, FOR THE OTHER DOCUMENT TYPES. 2026-09-08, the owner:
+   「然后把PO GR也tally掉」.
+
+   A DIRECTORY and not a second path, because the recorder above has ALWAYS been
+   keyed by document type — every `VERDICT.record(t, ...)` call site below passes
+   the type it is looping over — so purchase-order and goods-receipt findings
+   were already being collected and simply never written out. This emits what is
+   already there; it adds no comparison, and it must never be allowed to. The
+   file `VERDICT_OUT` still receives SALES ORDERS and nothing else, so
+   publish-so-reconcile-verdict.mjs and the migrated-sales-order lock see a byte
+   for byte unchanged payload. */
+const VERDICT_DIR = String(process.env.VERDICT_DIR || "").trim();
+const VERDICT_TYPES = String(process.env.VERDICT_TYPES || "SO,PO,GR")
+  .split(",")
+  .map((s) => s.trim().toUpperCase())
+  .filter(Boolean);
 
 const log = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 const plain = (m) => console.log(m);
@@ -1921,28 +1937,18 @@ if (notWork) {
 
    The verdict is keyed on the ERP document number and covers SALES ORDERS only:
    it feeds the migrated-sales-order lock, and no other document type has one. */
-if (VERDICT_OUT) {
-  const measuredAt = new Date().toISOString();
-  const runId = crypto.randomUUID();
-  const rows = buildVerdictRows({ recorder: VERDICT, type: "SO", companyId: CO, measuredAt, runId });
+/* ONE construction of the payload, used by both writers below. Two copies of
+   this object is how the SO file and a PO file would come to describe the same
+   run differently — the failure this whole lane is built against. */
+const verdictPayloadFor = (type, measuredAt, runId) => {
+  const rows = buildVerdictRows({ recorder: VERDICT, type, companyId: CO, measuredAt, runId });
   const sum = summariseVerdict(rows);
-  plain("");
-  plain("═══════════ PER-DOCUMENT VERDICT — SALES ORDERS ═══════════");
-  log(
-    `SO VERDICT — ${sum.docCount} migrated sales orders compared against the book: ` +
-      `${sum.cleanCount} match it exactly and would OPEN; ${sum.differCount} still differ and stay LOCKED.`,
-  );
-  for (const [axis, docs] of sum.perAxis) plain(`   ${axis}: ${docs} document(s)`);
-  for (const r of rows.filter((x) => !x.clean).slice(0, SHOW)) {
-    plain(`   LOCKED ${r.doc_no} (${r.ac_doc_no}) — ${r.axes.join(", ")}`);
-  }
-  const differ = sum.differCount;
-  if (differ > SHOW) plain(`   ... and ${differ - SHOW} more`);
-  fs.writeFileSync(
-    VERDICT_OUT,
-    JSON.stringify({
+  return {
+    rows,
+    sum,
+    payload: {
       version: 1,
-      type: "SO",
+      type,
       company_id: CO,
       measured_at: measuredAt,
       run_id: runId,
@@ -1956,12 +1962,67 @@ if (VERDICT_OUT) {
          quantity / price / money axes without measuring anything itself.
          publish-so-reconcile-verdict.mjs names the fields it inserts, so extra
          keys here reach no database column. */
-      population: summaryByType.get("SO") ?? null,
-      presence: VERDICT.presenceFor("SO"),
+      population: summaryByType.get(type) ?? null,
+      presence: VERDICT.presenceFor(type),
       rows,
-    }, null, 0),
+    },
+  };
+};
+
+if (VERDICT_OUT) {
+  const measuredAt = new Date().toISOString();
+  const runId = crypto.randomUUID();
+  const { rows, sum, payload } = verdictPayloadFor("SO", measuredAt, runId);
+  plain("");
+  plain("═══════════ PER-DOCUMENT VERDICT — SALES ORDERS ═══════════");
+  log(
+    `SO VERDICT — ${sum.docCount} migrated sales orders compared against the book: ` +
+      `${sum.cleanCount} match it exactly and would OPEN; ${sum.differCount} still differ and stay LOCKED.`,
   );
+  for (const [axis, docs] of sum.perAxis) plain(`   ${axis}: ${docs} document(s)`);
+  for (const r of rows.filter((x) => !x.clean).slice(0, SHOW)) {
+    plain(`   LOCKED ${r.doc_no} (${r.ac_doc_no}) — ${r.axes.join(", ")}`);
+  }
+  const differ = sum.differCount;
+  if (differ > SHOW) plain(`   ... and ${differ - SHOW} more`);
+  fs.writeFileSync(VERDICT_OUT, JSON.stringify(payload, null, 0));
   plain(`   verdict written to ${VERDICT_OUT} (${rows.length} rows)`);
+}
+
+/* ── THE PER-DOCUMENT VERDICT FOR EVERY REQUESTED TYPE ──────────────────────
+   Written to a directory as `<TYPE>-verdict.json`, one file per type, all from
+   the SAME run — so a report that puts purchase orders and goods receipts side
+   by side is quoting one comparison, not two that may have seen different data.
+
+   Each type also gets ONE machine-readable line in a uniform shape. That line
+   is what check-po-gr-tally.mjs parses back out to prove its own counts against
+   this run's, and a uniform shape means the cross-check is one expression
+   rather than one per type. The SO-specific line above is left exactly as it
+   was: the sales-order lane parses it, and this lane must not move it. */
+if (VERDICT_DIR) {
+  fs.mkdirSync(VERDICT_DIR, { recursive: true });
+  const measuredAt = new Date().toISOString();
+  const runId = crypto.randomUUID();
+  plain("");
+  plain("═══════════ PER-DOCUMENT VERDICT — BY DOCUMENT TYPE ═══════════");
+  for (const type of VERDICT_TYPES) {
+    const { rows, sum, payload } = verdictPayloadFor(type, measuredAt, runId);
+    /* A type with no rows is NOT written as an empty answer. An absent file is
+       read by the checker as "this run never compared that type", which is the
+       truth; a zero-row file would read as "compared, and all clean". */
+    if (!rows.length) {
+      plain(`   ${type}: no compared documents in this run — no verdict file written.`);
+      continue;
+    }
+    const file = path.join(VERDICT_DIR, `${type}-verdict.json`);
+    fs.writeFileSync(file, JSON.stringify(payload, null, 0));
+    log(
+      `${type} TALLY VERDICT — ${sum.docCount} documents compared against the book: ` +
+        `${sum.cleanCount} match it exactly; ${sum.differCount} still differ.`,
+    );
+    for (const [axis, docs] of sum.perAxis) plain(`   ${type} ${axis}: ${docs} document(s)`);
+    plain(`   ${type} verdict written to ${file} (${rows.length} rows)`);
+  }
 }
 
 await sql.end({ timeout: 5 });

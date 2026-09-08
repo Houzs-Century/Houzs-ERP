@@ -151,6 +151,66 @@ reconstructing a per-line figure from GR details is not an option;
 | PO linkage | ERP PO `linked_ac_docno` == AutoCount PO DocNo; `so_item` link kept where present. |
 | Exceptions | SO colour/free-text exception list (~37, all AutoCount source-data truncation) consciously reviewed; nothing silently dropped. |
 
+## C2. THE ONE-LINE ANSWER, per document type (added 2026-09-08)
+
+Section C ties out COUNTS and VALUE. It does not answer 「都tally了吗」 for a
+document type, because a summary row can be right about its own column and still
+leave a document differing — see `docs/bugs/0715` (a comparison that never ran,
+counted as `differ`) and `docs/bugs/0720` (a purchase order that differed on
+CURRENCY while the gap total read `PO 0`).
+
+Two read-only workflows print that answer, one document at a time, and neither
+writes anything:
+
+| question | Actions -> workflow | script |
+|---|---|---|
+| 「SO 都tally了吗」 | **Are all the sales orders tallied? (read-only)** | `backend/scripts/check-so-tally.mjs` |
+| 「PO GR 也tally了吗」 | **Are the purchase orders and goods receipts tallied? (read-only)** | `backend/scripts/check-po-gr-tally.mjs` |
+
+Both classify the SAME comparison — `check-ac-erp-reconcile.mjs` — into four
+buckets, and **neither measures anything itself**. The second runs the reconcile
+ONCE for every requested type (`TYPES`, default `PO,GR,SO`) so purchase orders,
+goods receipts and the sales-order CONTROL all quote one run.
+
+**The four buckets, and why the third one has to exist.** A document whose sofa
+build the book's own text does not state is NEITHER agreeing NOR differing.
+Folding it into DIFFER invents a backlog nobody owes; folding it into IDENTICAL
+calls it checked when nothing checked it. It gets its own column, always.
+
+- `identical` — compared on every axis, and every axis agreed.
+- `work` — at least one axis where both sides state something different, or the
+  document is absent, or the ERP claims one the book does not have.
+- `unanswerable` — the only findings are axes the checker refused to answer.
+- `book-gap` — the ERP carries a value the BOOK never stated. Already accepted.
+
+**TALLIED means zero `work`**, and it is decided in exactly one place —
+`isTallied` in `backend/scripts/lib/so-tally-verdict.mjs`. Not "few", not "only
+the declared ones are left". No summary writer gets a vote.
+
+**Two things that are NOT differences, per type, and are printed with the ruling
+that made them so** — do not "repair" either into a difference:
+
+- PO: **241 lines where the BOOK states no price.** Houzs prices a purchase when
+  the goods arrive; copying the book's blank would ERASE a real price.
+- GR: **100 receipts carrying RM 0.00.** The owner, 2026-09-08: 「GR 0 没关系」.
+  Proved per document (`migrated_no_stock`, zero inventory movements), never
+  assumed.
+
+**Grain, for goods receipts.** One "document" is a
+(AutoCount receipt x purchase order) PAIR, written `GR-nnn|PO-nnn`. An ERP goods
+receipt belongs to ONE purchase order while an AutoCount receipt can span
+several, and 51 of the 214 in-scope receipts do. Counting receipts instead
+reports every one of those as short by the part raised against another order.
+
+**Currency is its own axis and it LOCKS.** A foreign purchase order's total is
+compared in the document's own currency, so the money can be right to the sen
+while the ERP's `currency` column reads MYR — which is wrong. It is deliberately
+NOT in the SUMMARY's gap total (comparing a local-currency total against a
+document-currency one is what wrote RM 13,068.55 of imaginary discount onto a
+CNY order, `docs/bugs/0665`), so the per-document verdict is the only place it
+shows. Never repair a foreign document's TOTAL by script: a discount and an
+exchange rate are not distinguishable from a total alone.
+
 ## D. The mapping/rules the tally depends on (so a re-run reproduces the same numbers)
 
 - SKU: `backend/scripts/data/autocount-erp-mapping-1561.csv` (ac_code -> erp_code); 0 non-sofa codes off the pick list after the `SVC-DELIVERY -> TRANSPORTATION CHARGES` company-1 alias.

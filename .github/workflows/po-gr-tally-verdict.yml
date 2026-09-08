@@ -1,0 +1,93 @@
+name: Are the purchase orders and goods receipts tallied? (read-only)
+
+# 「然后把PO GR也tally掉」 — the owner, 2026-09-08, immediately after the sales
+# orders were answered.
+#
+# The sibling workflow `so-tally-verdict.yml` answers the same question for
+# sales orders and is NOT touched by this lane. This one runs the same
+# comparison ONCE and prints one verdict per document type, so a reader putting
+# purchase orders beside goods receipts is quoting a single run rather than two
+# that may have read the ERP a minute apart.
+#
+# WHY SALES ORDERS ARE IN THE DEFAULT LIST. As a CONTROL. This lane extends the
+# shared verdict module and the reconcile's emission block, so the way to show
+# it moved no sales-order figure is to print the sales-order figures from the
+# same run and set them beside the sales-order lane's own. If SO moves, this
+# lane broke something.
+#
+# READ-ONLY, AND THIS LANE WRITES NOTHING TO PRODUCTION. It runs
+# check-ac-erp-reconcile.mjs — SELECTs only, one connection, no DDL, no
+# transaction — and reads the machine-readable verdicts that run writes to a
+# temp directory. There is no MODE=apply and no publish step.
+#
+# The AutoCount side is the committed snapshot
+# backend/scripts/data/ac-reconcile-truth.json.gz — the book is reachable only
+# over ZeroTier from the office network, which a GitHub-hosted runner has no
+# route to. The checker REFUSES when that snapshot is stale rather than
+# answering against an old book.
+#
+# Manual trigger only: it is a question, not a gate, and a production DB read on
+# a schedule becomes CI noise nobody reads.
+on:
+  workflow_dispatch:
+    inputs:
+      types:
+        description: "Document types to answer for, comma separated (SO is the control)"
+        required: false
+        default: "PO,GR,SO"
+        type: string
+      show:
+        description: "Offenders to list per section (raise it to see every one)"
+        required: false
+        default: "20"
+        type: string
+      company_id:
+        description: "ERP company (AED_HOUZS is company 1)"
+        required: false
+        default: "1"
+      max_snapshot_age_days:
+        description: "Refuse if the AutoCount snapshot is older than this many days"
+        required: false
+        default: "2"
+      reconcile_log:
+        description: "Also print the full reconcile log underneath the verdicts (long)"
+        required: false
+        default: false
+        type: boolean
+
+# Its OWN group. Not the deploy's — a diagnostic must not queue behind or
+# displace a release. Not the reconcile's and not the sales-order tally's
+# either: several lanes are working this book at once, and asking this question
+# must not cancel somebody else's run mid-flight.
+concurrency:
+  group: po-gr-tally-verdict
+  cancel-in-progress: true
+
+jobs:
+  verdict:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - name: The verdicts
+        run: node scripts/check-po-gr-tally.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          TYPES: ${{ inputs.types }}
+          SHOW: ${{ inputs.show }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          MAX_SNAPSHOT_AGE_DAYS: ${{ inputs.max_snapshot_age_days }}
+          RECONCILE_LOG: ${{ inputs.reconcile_log }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first
