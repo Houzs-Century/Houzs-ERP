@@ -142,9 +142,20 @@ export function erpReconcileTypes({ sql, CO, PDATE }) {
       FROM scm.grns g JOIN scm.purchase_orders p ON p.id = g.purchase_order_id
       WHERE g.company_id = ${CO} AND g.status <> 'CANCELLED'
         AND g.linked_ac_gr_docno IS NOT NULL AND p.linked_ac_docno IS NOT NULL`,
+    /* READ THE KEY, do not hard-code its absence. This selected `NULL::bigint`
+       because migration 0280 added `grn_items.linked_ac_dtlkey` and nothing ever
+       filled it — 0 of 636 rows, so the constant and the column agreed and the
+       difference was invisible. It stopped being invisible the moment the owner
+       asked 「为什么会这样行号不一样呢？」: with the column hard-coded to NULL both
+       callers were FORCED to pair a goods receipt by quantity and position for
+       ever, even after the keys arrived. That guess is what produced the 34
+       item-code "differences" this type reports as the checker's own, and it is
+       the same shape that put a REGAL in front of a customer whose book line
+       says TRION. backfill-ac-downstream-line-keys.mjs fills the column; this
+       reads it. Every other type here already did. */
     lines: () => sql`SELECT g.linked_ac_gr_docno || '|' || p.linked_ac_docno AS ac_no,
         i.item_code, i.qty_accepted::float8 AS qty, i.unit_price_sen,
-        NULL::bigint AS ac_dtlkey, i.line_suffix,
+        i.linked_ac_dtlkey AS ac_dtlkey, i.line_suffix,
         0 AS line_no, i.created_at, i.id::text AS id,
         i.item_group, i.variants, i.custom_specials, i.description2,
         TRUE AS proceeded

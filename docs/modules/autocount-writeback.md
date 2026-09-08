@@ -607,6 +607,31 @@ with `doc.EditDetail(dtlKey)`. The ERP stores it in
 `scm.mfg_sales_order_items.linked_ac_dtlkey` and
 `scm.purchase_order_items.linked_ac_dtlkey` (migration 0273) — and, since migration **0280**, on all four downstream line tables too (`delivery_order_items`, `grn_items`, `sales_invoice_items`, `purchase_invoice_items`). All six carry it; 0280 is what made a DO / GRN / SI / PI edit expressible at all.
 
+### The MIGRATED documents had to be backfilled — the column alone was not enough
+
+0280's header says *"nothing backfills it: the keys are stamped forward"*, and
+that was the whole state of the downstream tables until 2026-09-08: **0 of 636
+`grn_items` rows carried a key**. A document created by the cutover therefore had
+no line identity at all, so its first edit was refused — the refusal working as
+designed, over a population nobody had a route to.
+
+`backend/scripts/backfill-ac-downstream-line-keys.mjs` closes that for goods
+receipts and delivery orders (workflow **Backfill AutoCount line keys (goods
+receipts + delivery orders)**; `APPLY=1` needs `CONFIRM="STAMP DOWNSTREAM LINE
+KEYS"`). It stamps ONLY where the document forces the pairing —
+`backend/scripts/lib/ac-forced-line-pairing.mjs` holds the rule and its header
+argues each clause — and leaves everything else NULL and named, because a WRONG
+DtlKey makes `AcSyncService` append to the live book while a NULL one is refused
+loudly. Sales invoices and purchase invoices are NOT covered: their lines come
+from OUR delivery order and OUR goods receipt rather than from AutoCount's own
+`IVDTL` / `PIDTL`, so the book states no counterpart to pair against.
+
+The same absence had a second victim outside this module.
+`check-ac-erp-reconcile.mjs` selected `NULL::bigint AS ac_dtlkey` for goods
+receipts — a constant, not the column — so it was structurally forced to pair by
+quantity and position for ever. It reads the column now
+(`docs/bugs/0697-the-migrated-goods-receipts-and-delivery-orders-carry-no-aut.md`).
+
 ### The defect this section exists for
 
 `/edit` used to fall through to `doc.AddDetail()` for a line with no key —
