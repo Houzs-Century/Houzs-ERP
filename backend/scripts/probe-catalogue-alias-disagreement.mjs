@@ -158,7 +158,7 @@ async function main() {
            count(i.id)::int AS lines,
            count(*) FILTER (WHERE i.item_group = 'sofa')::int AS sofa_lines
       FROM scm.purchase_orders h
-      LEFT JOIN scm.purchase_order_items i ON i.po_id = h.id
+      LEFT JOIN scm.purchase_order_items i ON i.purchase_order_id = h.id
      WHERE h.company_id = ${CO} AND h.linked_ac_docno = ANY(${docs})
      GROUP BY h.po_number, h.linked_ac_docno, h.status, h.total_sen
      ORDER BY h.linked_ac_docno`;
