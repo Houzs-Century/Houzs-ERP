@@ -704,19 +704,19 @@ Total: 1198 route registrations across 154 files.
 - L3390  DELETE /:id/items/:itemId
 
 ## backend/src/scm/routes/other-debtors.ts  (13)
-- L635  GET    /
-- L636  POST   /
-- L637  GET    /:id
-- L638  PATCH  /:id
-- L639  POST   /:id/bills
-- L640  POST   /bills/:billId/cancel
-- L641  PATCH  /bills/:billId
-- L642  POST   /:id/receipts
-- L643  POST   /receipts/:receiptId/submit
-- L644  POST   /receipts/:receiptId/withdraw
-- L645  POST   /receipts/:receiptId/check
-- L646  POST   /receipts/:receiptId/reject
-- L647  POST   /receipts/:receiptId/approve
+- L664  GET    /
+- L665  POST   /
+- L666  GET    /:id
+- L667  PATCH  /:id
+- L668  POST   /:id/bills
+- L669  POST   /bills/:billId/cancel
+- L670  PATCH  /bills/:billId
+- L671  POST   /:id/receipts
+- L672  POST   /receipts/:receiptId/submit
+- L673  POST   /receipts/:receiptId/withdraw
+- L674  POST   /receipts/:receiptId/check
+- L675  POST   /receipts/:receiptId/reject
+- L676  POST   /receipts/:receiptId/approve
 
 ## backend/src/scm/routes/purchase-consignment-receives.ts  (13)
 - L513  GET    /
