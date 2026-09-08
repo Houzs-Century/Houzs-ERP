@@ -2301,7 +2301,7 @@ export const SalesOrderDetail = () => {
                        (matches this page's Save gate + the backend), so the ` *`
                        marker + red ring stay off on a no-date draft (owner
                        2026-07-14). */
-                    variantsRequired={requireVariants}
+                    variantsRequired={requireVariants} seedSofaLegDefault={true}
                   />
                 </div>
               );
@@ -2326,7 +2326,7 @@ export const SalesOrderDetail = () => {
                     onChange={cb?.onChange ?? ((patch) => patchAddingDraft(staged.key, patch))}
                     onRemove={cb?.onRemove ?? (() => cancelAddLine(staged.key))}
                     canRemove={true}
-                    variantsRequired={requireVariants}
+                    variantsRequired={requireVariants} seedSofaLegDefault={true}
                   />
                 </div>
               );

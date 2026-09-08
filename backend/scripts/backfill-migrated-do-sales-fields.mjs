@@ -197,16 +197,24 @@ async function main() {
         if (String(now) !== String(v)) { disagree++; note(`   DISAGREES ${p.r.do_number}.${c}: planned ${short(v)}, read back ${short(now)}`); }
       }
     }
+    /* The no-movement invariant belongs to MIGRATED documents only: the balance
+       snapshot already counted their units. A document a person raised in the
+       ERP ships stock and HAS movements, and SCOPE=all reaches those. The first
+       scope=all apply (runs 34237593431 / 34237682845, 2026-09-08) wrote every
+       value correctly and then failed its own verify on 49 and 73 legitimate
+       movements — docs/bugs/0724. Counted on the migrated subset now. */
     const [mv] = ids.length
       ? await check.unsafe(
         `SELECT COUNT(*)::int AS movements FROM scm.inventory_movements m
-          WHERE m.source_doc_type = 'DO' AND m.source_doc_id = ANY($1::uuid[])`, [ids])
+           JOIN scm.delivery_orders d ON d.id = m.source_doc_id
+          WHERE m.source_doc_type = 'DO' AND m.source_doc_id = ANY($1::uuid[])
+            AND d.migrated_no_stock = true`, [ids])
       : [{ movements: 0 }];
     note(`verify (fresh connection): ${plan.length} planned document(s) · values not as planned ${disagree}` +
-         ` · still NULL ${stillNull} · inventory movements on these documents ${mv.movements}`);
+         ` · still NULL ${stillNull} · inventory movements on the MIGRATED documents among them ${mv.movements}`);
     if (disagree || stillNull) bad("VERIFY FAILED: a written value is not the one the plan named. Investigate before trusting any header reading.");
-    if (mv.movements > 0) bad(`VERIFY FAILED: ${mv.movements} inventory movement(s) exist on these migrated documents. They must have NONE.`);
-    note("verify OK — every planned field reads back as its sales order's value, and no inventory moved.");
+    if (mv.movements > 0) bad(`VERIFY FAILED: ${mv.movements} inventory movement(s) exist on migrated documents. They must have NONE — the balance snapshot already counted these units.`);
+    note("verify OK — every planned field reads back as its sales order's value, and no migrated document moved stock.");
   } finally {
     await check.end({ timeout: 5 });
   }

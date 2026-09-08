@@ -124,7 +124,15 @@ const doLine = (id: string, doId: string, code: string): Row => ({
   id, delivery_order_id: doId, company_id: CO_A, item_code: code, item_group: null,
   description: null, description2: null, uom: 'UNIT', qty: 5,
   unit_price_sen: 1000, unit_cost_sen: 500, discount_sen: 0, variants: null,
-  line_no: 0, linked_ac_dtlkey: Number(id.replace(/\D/g, '') || 1) + 1000,
+  line_no: 0,
+  /* DISTINCT PER LINE, and it was not: `id.replace(/\D/g,'')` finds no digit in
+     'doi-a' or 'doi-b', so both fell to the `|| 1` and both lines carried 1001 —
+     two lines of two DIFFERENT delivery orders claiming ONE line of the account
+     book, which cannot happen in the book and made this fixture assert against a
+     shape reality does not produce. It went unnoticed because nothing read the
+     key across lines until a sofa forced it (docs/bugs/0722). doi-a keeps 1001
+     so the assertions below still read as written. */
+  linked_ac_dtlkey: 1000 + (id.charCodeAt(id.length - 1) - 96),
 });
 
 /* The write-back switch is a live app_config row, off by default. Every test

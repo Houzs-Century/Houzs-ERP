@@ -175,3 +175,66 @@ test("a null description2 is not a match for anything", () => {
   const got = selectBuildRows([{ item_code: "8030-1S", description2: null }], N_009597);
   assert.equal(got.verdict, "none");
 });
+
+/* ── THE LINE KEY, WHERE CONTAINED TEXT CANNOT TELL TWO BUILDS APART ────────
+ * HC-SO-012827 holds two sofa lines whose Desc2 the book wrote so that ONE IS
+ * A SUBSTRING OF THE OTHER (read off the committed book snapshot
+ * ac-reconcile-truth.json.gz, SO-012827, DtlKeys 873100 and 873101):
+ *
+ *   873100  "3 seater  35 inch  color modenza 07 silver  Nilon bottom"
+ *   873101  "35 inch  color modenza 07 silver  Nilon bottom"
+ *
+ * The owner ruled them separately 2026-09-08 — the three-seater is
+ * `1A(LHF)+1NA+1A(RHF)` and the second line is a single chair, `1S`. No
+ * substring of 873101's text exists that 873100 does not also carry, so
+ * `desc2Match` CANNOT address the single chair: the needle always reaches both
+ * and the matcher correctly refuses as ambiguous. Choosing by position or by
+ * "the shorter one" is the transposition class docs/bugs/0690 is about.
+ *
+ * The AutoCount line key is the identity the book itself assigns, and
+ * scm.mfg_sales_order_items.linked_ac_dtlkey already carries it. */
+const SO_012827 = [
+  { item_code: "8030-1S", linked_ac_dtlkey: "873100", description2: "3 seater  35 inch  color modenza 07 silver  Nilon bottom" },
+  { item_code: "8030-1S", linked_ac_dtlkey: "873101", description2: "35 inch  color modenza 07 silver  Nilon bottom" },
+];
+
+test("LINE KEY: the contained text is ambiguous by desc2Match — that is why the key exists", () => {
+  const got = selectBuildRows(SO_012827, "35 inch  color modenza 07 silver  Nilon bottom");
+  assert.equal(got.verdict, "ambiguous");
+  assert.deepEqual(got.rows, []);
+});
+
+test("LINE KEY: addresses exactly one line, where no needle can", () => {
+  const got = selectBuildRows(SO_012827, null, undefined, { lineKeys: ["873101"] });
+  assert.equal(got.verdict, "linekey");
+  assert.equal(got.rows.length, 1);
+  assert.equal(got.rows[0].linked_ac_dtlkey, "873101");
+});
+
+test("LINE KEY: wins over desc2Match, so a correction carrying both is not ambiguous", () => {
+  const got = selectBuildRows(SO_012827, "35 inch  color modenza 07 silver  Nilon bottom", undefined, { lineKeys: ["873100"] });
+  assert.equal(got.verdict, "linekey");
+  assert.equal(got.rows.length, 1);
+  assert.equal(got.rows[0].linked_ac_dtlkey, "873100");
+});
+
+test("LINE KEY: a key the document does not carry is `none`, never a fallback to text", () => {
+  // Falling back to desc2Match here would write the build onto the WRONG line,
+  // which is the whole failure the key was added to prevent.
+  const got = selectBuildRows(SO_012827, "35 inch  color modenza 07 silver  Nilon bottom", undefined, { lineKeys: ["999999"] });
+  assert.equal(got.verdict, "none");
+  assert.deepEqual(got.rows, []);
+});
+
+test("LINE KEY: matches as a string even when the row holds it as a number", () => {
+  const rows = [{ item_code: "8030-1S", linked_ac_dtlkey: 873101, description2: "x" }];
+  const got = selectBuildRows(rows, null, undefined, { lineKeys: ["873101"] });
+  assert.equal(got.verdict, "linekey");
+  assert.equal(got.rows.length, 1);
+});
+
+test("LINE KEY: several keys select several lines — two identical sofas, one build", () => {
+  const got = selectBuildRows(SO_012827, null, undefined, { lineKeys: ["873100", "873101"] });
+  assert.equal(got.verdict, "linekey");
+  assert.equal(got.rows.length, 2);
+});

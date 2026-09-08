@@ -8,6 +8,37 @@
 开库存那一步又开的一套。库存会把这台沙发**多算一台**。这不是 0714 那 9 张单的
 问题，是开库存那个现成的 workflow 按自己的规则顺手做的；这条先记下来，还没修。
 
+**MEASURED AGAIN 2026-09-08, and it is NOT one sofa.** This entry was written
+from the one build the step-2 run happened to touch. Asked of the whole corpus,
+the same defect is on about twenty:
+
+| measured on production, 2026-09-08 | |
+| --- | --- |
+| purchase orders holding open sofa cutover stock | 73 |
+| builds those orders' own sofa lines justify | 73 |
+| distinct (batch, model, variant key) builds the lot table holds | 93 |
+| open pieces | 222 |
+| build-buckets whose MODEL is on no line of their own order | 3 |
+
+So roughly 20 sofas are counted twice, about a quarter of the sofa stock. Most
+of the surplus was written by the 2026-09-07 20:49 run (78 lots across 32
+batches, the display-sofa + binding-category release), one more build by the
+2026-09-08 13:03 run. `docs/bugs/0722-a-delivery-order-invented-the-sofa-s-leg-height-so-the-stock.md`
+is the same DISEASE one layer up — a document computing a stock key that
+disagrees with the goods.
+
+**A THIRD SHAPE, still UNKNOWN.** Three batches hold pieces of a model that
+appears on no line of that purchase order: 8030 pieces under HC-PO-009712 (a
+5535 order), 8030 under HC-PO-009017 (a 9058 order), 9058 under HC-PO-009550 (an
+8030 order), all written 2026-09-07 20:49. The obvious story — two ERP orders
+sharing one AutoCount document, so a build takes its neighbour's number — was
+CHECKED AND REFUTED: each of the three maps 1:1 to its own `linked_ac_docno`,
+and no `linked_ac_docno` in company 1 is shared by two purchase orders. The
+importer writes `code: l.item_code` from the order's own line, so for these rows
+to exist those lines must have carried the other model when the run happened and
+been re-coded since. Which lane re-coded them is not established. They are
+REPORTED and NOT repaired.
+
 **Symptom.** `Import AutoCount sofa stock` apply run 34229613738 (2026-09-08
 13:03Z, dispatched as step 2 of `docs/bugs/0714-the-sofa-purchase-line-was-filed-as-others-so-the-sales-orde.md`)
 listed 22 lots to create. 19 were the compartments that repair had just made
@@ -42,7 +73,32 @@ allocator bound HC-SO-012629's three lines to batch HC-PO-009712 in step 3
 (run 34230737819), which is correct: one set of lots with the matching key
 covers the set. The stale-key set is the surplus.
 
-**Fix.** Not written. Retiring the 3 lots keyed without `nylon fabric`
+**Fix.** Two halves, both in this PR, neither applied to production yet.
+
+- **The importer stops adding.** `import-ac-sofa-stock.mjs` now checks, before
+  writing, whether the same (item code, warehouse, batch) already holds OPEN
+  stock under a DIFFERENT variant key. If it does, the piece is REPORTED as
+  "RE-KEYED, NOT RE-OPENED" and skipped, with both keys printed. It deliberately
+  does not re-key the existing lot: that is a stock write with money and
+  allocation consequences and belongs to a tool that plans it and asks.
+- **The repair retires the surplus.** `repair-duplicate-sofa-cutover-lots.mjs`
+  plus `.github/workflows/repair-duplicate-sofa-cutover-lots.yml` (plan by
+  default, CONFIRM phrase on apply, fresh-connection SHAPE verify). Nothing is
+  deleted: one negative ADJUSTMENT per surplus lot at that lot's own bucket,
+  which the FIFO trigger consumes against that exact lot, reversible by the
+  opposite adjustment, `reason_code` COUNT. The lot that SURVIVES is the one
+  whose key the purchase line computes today — not the newest, because a special
+  REMOVED makes newest-wins keep the wrong one. Five refusals, each a test:
+  a consumed lot, a part-consumed lot, a lot carrying cost (so no write this
+  makes can move money), a lot a live sales order is allocated to by its exact
+  key, and a group where no open lot matches the purchase line. The pure half is
+  `backend/scripts/lib/duplicate-sofa-lot-plan.mjs`, pinned by
+  `backend/tests/duplicateSofaLotPlan.test.mjs` (16 tests, PROVED RED four ways:
+  newest-wins instead of the purchase line fails 8; dropping the consumed-lot
+  refusal fails 1; not reporting the wrong-model class fails 2; ignoring the
+  sales-order binding fails 1).
+
+**Still not written.** Retiring the 3 lots keyed without `nylon fabric`
 (ids `4b9bdbc2-…`, `89f67bc0-…`, `deb10345-…`) is a stock write and needs the
 sofa-stock lane's own plan/apply tool plus the owner's word; the 8030 rows
 under this batch need the lane that wrote them. What the IMPORT should learn
