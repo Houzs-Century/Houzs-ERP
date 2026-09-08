@@ -36,6 +36,7 @@
  */
 import postgres from "postgres";
 
+import { soProcessingDateFragment } from "./lib/so-processing-date.mjs";
 import { compartmentOf, modelOf } from "./lib/variant-reconcile.mjs";
 
 const DST = process.env.DATABASE_URL;
@@ -48,6 +49,12 @@ const DOCS = String(process.env.DOCS || "")
 if (!DOCS.length) { console.error("need DOCS=HC-SO-013495,... (ERP or AutoCount numbers)"); process.exit(2); }
 
 const sql = postgres(DST, { ssl: "require", prepare: false, max: 1 });
+/* The ONE name of the Processing Date column, spliced as SQL text rather than
+   bound as a parameter — see lib/so-processing-date.mjs. Migration 0286 renamed
+   `internal_expected_dd` to `processing_date`, so naming the old one is a 42703
+   that returns NOTHING; this script was caught doing exactly that by
+   tests/soProcessingDateOneName.test.mjs before it ever reached production. */
+const PDATE = soProcessingDateFragment(sql);
 const plain = (m) => console.log(m);
 const money = (sen) => (sen == null ? "—" : `RM ${(Number(sen) / 100).toFixed(2)}`);
 const oneLine = (s) => String(s).replace(/\r?\n/g, " ⏎ ");
@@ -58,7 +65,7 @@ try {
      accepted only one would answer "not found" about a document it holds. */
   const heads = await sql`
     SELECT h.doc_no, h.linked_ac_docno AS ac_no, h.status::text AS status,
-           h.internal_expected_dd
+           h.${PDATE} AS processing_date
       FROM scm.mfg_sales_orders h
      WHERE h.company_id = ${CO}
        AND (h.doc_no = ANY(${DOCS}) OR h.linked_ac_docno = ANY(${DOCS}))
@@ -82,7 +89,7 @@ try {
     plain(`════════ ${h.doc_no}  (account book ${h.ac_no ?? "—"})  ════════`);
     plain(
       `   status ${h.status} · processing date ` +
-        `${h.internal_expected_dd ?? "(none — NOT proceeded)"} · ${items.length} line(s) in the ERP`,
+        `${h.processing_date ?? "(none — NOT proceeded)"} · ${items.length} line(s) in the ERP`,
     );
 
     /* ── THE PIECE LIST LEADS ────────────────────────────────────────────────
