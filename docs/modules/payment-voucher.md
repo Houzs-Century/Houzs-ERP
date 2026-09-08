@@ -298,10 +298,29 @@ bill carries no stock — cancel unwinds it by what was applied, and the detail
 answers each allocation with `kind` ('PI' | 'API'), `piId` / `apInvoiceId`.
 On the New AP Payment screen the Apply-to-invoice list shows the supplier's
 open AP invoices beside the purchase invoices (an `AP` tag on the row; tick
-= pay in full, type = part) and the payload names `apInvoiceId` for those;
-the detail screen's edit path lists purchase invoices only and passes the
-voucher's existing AP-invoice allocations through unchanged, so an edit
-never silently drops them.
+= pay in full, type = part) and the payload names `apInvoiceId` for those.
+**The detail screen's Edit of a DRAFT AP Payment is that same form (2026-09-08,
+owner, on a rejected voucher whose bill was an AP invoice: 当我 reject ap
+payment 后, 他的 edit 不是退回去 knock pi? 而是这样? → 做)** — until then it
+showed the plain voucher's line editor (a "Settle 1 invoice(s)" line demanding
+a debit account) over a picker of purchase invoices only, so the AP invoice
+the voucher paid read "no outstanding purchase invoices" and could not be
+re-knocked. Now (`frontend/src/pages/scm-v2/PaymentVoucherDetail.tsx`,
+`apEdit`): no line editor — the one AP-control debit (400 / 405 by the
+supplier's code, `useAccountRoles`) is written on Save from the ticks; the
+"Linked invoices" card lists the supplier's open PIs **and** AP invoices
+(`EditAllocRow`, keyed by the document's id — `allocKeyOf` reads
+`apInvoiceId` or `piId` off each stored allocation), the voucher's own
+allocations prefilled and listed even when they fell off the open list, tick
+= pay in full, type = part, an `AP` tag on the AP rows (an invoice's
+outstanding is its unpaid balance less OTHER unposted vouchers' reservations,
+once — the old picker added this voucher's own allocation back onto a balance
+that already held it, so an invoice already paid in full by this draft showed
+twice its balance); a Prepay (advance)
+box seeded as the stored total's excess over the allocations; the total
+follows ticks + prepay. Save sends `lines: [the AP line]` and both-kind
+`allocations`; the number stays and the voucher walks Check → Approve again.
+Contract: `frontend/src/pages/scm-v2/PaymentVoucherDetail.test.tsx`.
 
 ## 0d. 预付挂在 supplier (2026-09-02)
 
