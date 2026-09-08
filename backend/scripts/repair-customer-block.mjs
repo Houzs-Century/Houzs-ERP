@@ -166,8 +166,8 @@ async function main() {
   log(`address master: ${locRows.length} rows over ${byPc.size} postcodes`);
 
   // ── the CONTROL, before ───────────────────────────────────────────────────
-  const control = async () => {
-    const [r] = await sql`
+  const control = async (client) => {
+    const [r] = await client`
       SELECT (SELECT count(*) FROM scm.mfg_sales_orders WHERE company_id = ${CO}) AS so_docs,
              (SELECT count(*) FROM scm.mfg_sales_order_items i JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no WHERE h.company_id = ${CO}) AS so_lines,
              (SELECT COALESCE(SUM(i.qty), 0) FROM scm.mfg_sales_order_items i JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no WHERE h.company_id = ${CO}) AS so_qty,
@@ -185,7 +185,7 @@ async function main() {
              (SELECT count(*) FROM scm.mfg_sales_order_items i JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no WHERE h.company_id = ${CO} AND i.stock_status = 'PARTIAL') AS partial`;
     return r;
   };
-  const before = await control();
+  const before = await control(sql);
 
   // ── ARM SO — the city ─────────────────────────────────────────────────────
   const soPlan = [];
@@ -370,6 +370,18 @@ async function main() {
   // ── verification: FRESH connection, assert the SHAPE ──────────────────────
   const verify = postgres(url, { ssl: "require", prepare: false, max: 1 });
   try {
+    /* The address master is re-read HERE too. Asserting a written city against
+       the map the writing session already held would only prove the write agreed
+       with itself. */
+    const freshLoc = await verify`SELECT postcode, city FROM scm.my_localities WHERE postcode IS NOT NULL AND city IS NOT NULL`;
+    const freshByPc = new Map();
+    for (const r of freshLoc) {
+      const pc = String(r.postcode).trim();
+      if (!freshByPc.has(pc)) freshByPc.set(pc, []);
+      if (!freshByPc.get(pc).includes(r.city)) freshByPc.get(pc).push(r.city);
+    }
+    const freshCityOf = (pc) => freshByPc.get(String(pc).trim()) ?? [];
+
     const soIds = soPlan.map((p) => p.docNo);
     const doIds = doPlan.map((p) => p.id);
     const wantCity = new Map(soPlan.map((p) => [p.docNo, p.city]));
@@ -381,7 +393,7 @@ async function main() {
     for (const r of soBack) {
       if (clean(r.city) !== wantCity.get(r.doc_no)) { soWrongValue++; continue; }
       const addr = joinAddr(r.address1, r.address2, r.address3, r.address4);
-      const again = cityFromBook(addr, cityOf);
+      const again = cityFromBook(addr, freshCityOf);
       if (again.city !== clean(r.city)) soNotAMasterCity++;
     }
 
@@ -408,14 +420,24 @@ async function main() {
         if (typeof r[col] !== "string") doTypeWrong++;
       }
       if (vacant(r.phone) && vacant(r.address1) && vacant(r.address2)) doStillBlank++;
-      // The block is the PARENT's, so where the parent has one the two must agree.
+      /* The block is the PARENT's, so a field THIS RUN wrote must now equal the
+         sales order's own value, re-read on this connection. Scoped to the
+         written fields on purpose: a field somebody had already filled by hand
+         is allowed to differ from the order, and flagging that would turn a
+         correct human edit into a failed verification. */
       const parentAddr2 = clean(r.s_address2) ?? clean([r.s_address3, r.s_address4].filter(Boolean).join(", "));
-      const pairs = [[r.phone, r.s_phone], [r.address1, r.s_address1], [r.address2, parentAddr2],
-        [r.city, r.s_city], [r.customer_state, r.s_customer_state], [r.postcode, r.s_postcode]];
-      for (const [dv, sv] of pairs) if (has(sv) && has(dv) && clean(dv) !== clean(sv)) doDisagreesWithParent++;
+      const parentOf = {
+        phone: r.s_phone, address1: r.s_address1, address2: parentAddr2, city: r.s_city,
+        state: r.s_customer_state, customer_state: r.s_customer_state, postcode: r.s_postcode,
+      };
+      for (const col of Object.keys(p.set)) {
+        const sv = parentOf[col];
+        if (sv === undefined) continue;
+        if (has(sv) && clean(r[col]) !== clean(sv)) doDisagreesWithParent++;
+      }
     }
 
-    const after = await control();
+    const after = await control(verify);
     log("");
     log("=== VERIFICATION (fresh connection, values not counts) ===");
     log(`  sales-order rows re-read              ${soBack.length} of ${soPlan.length}`);
