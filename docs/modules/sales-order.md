@@ -2109,6 +2109,24 @@ Parsing checks; it never decides. A second implementation of "different" is what
 `docs/bugs/0708-two-tools-answered-the-same-pairing-question-differently-twe.md`
 cost.
 
+**The same module now answers for PURCHASE ORDERS and GOODS RECEIPTS too**
+(owner, 2026-09-08: 「然后把PO GR也tally掉」). `lib/so-tally-verdict.mjs` gained
+`DOC_TYPES` — the WORDS each document type needs and nothing else — plus
+`docTypeSpec()`, which REFUSES an unknown type rather than rendering a purchase
+order under a sales-order heading. `bucketOf` and `isTallied` are unchanged and
+type-independent: adding a document type cannot change what TALLIED means, and
+`renderVerdict(v)` with no type still produces the sales-order text byte for
+byte, which is what this file's caller relies on.
+
+**Nothing on the sales-order side of this moved.** `check-so-tally.mjs` is not
+modified by that lane, `VERDICT_OUT` still receives SALES ORDERS and nothing
+else, and `publish-so-reconcile-verdict.mjs` and the migrated-sales-order lock
+read the same payload they always did. The sibling report is
+`backend/scripts/check-po-gr-tally.mjs` +
+`.github/workflows/po-gr-tally-verdict.yml`; the method, the four buckets and
+the two per-type "NOT a difference" classes are written up in
+`docs/cutover-tally-method.md` §C2.
+
 **MEASURED**, `node backend/scripts/check-so-tally.mjs` against PRODUCTION over
 the read-only DSN, 2026-09-08 11:52 UTC, company 1, exit 0 — **re-run before
 quoting it**, the sofa lanes move these numbers daily:
