@@ -1230,7 +1230,12 @@ for (const cfg of TYPES) {
             (k.wanted ? ` — the sheet says "${k.wanted}"` : " — the mapping sheet does not carry the book's code") +
             ` (ERP ${d.erp_no}; ${k.why})`;
           F.item.push(line);
-          itemRows.push({ key: ac, erpNo: d.erp_no, line });
+          /* Whether THIS ERP row carried AutoCount's line key. The pairing
+             behind this verdict was read when it did and GUESSED when it did
+             not, and since the 2026-09-08 14:22 backfill one document holds
+             both kinds — so the question belongs to the line, not the
+             document. lib/ac-not-a-difference.mjs reads it. */
+          itemRows.push({ key: ac, erpNo: d.erp_no, line, erpKeyed: el.ac_dtlkey != null });
         }
       }
       const aq = al.qty ?? 0;
