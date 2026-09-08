@@ -185,6 +185,11 @@ export const NOTE_CLASSES = Object.freeze([
      answer live off the child rows every time it is asked. Nothing can drift,
      and the silence is declared rather than left to read as a measurement. */
   'chain-no-erp-counter',
+  /* THE ERP NAMES A PRODUCT THE BOOK DOES NOT, BY THE OWNER'S OWN DECISION.
+     Declared with the book model it overrides and who decided it, so it EXPIRES
+     the moment the book stops saying that — which is what tells his decision
+     from the hand-typed model of docs/bugs/0693. lib/ac-model-override.mjs. */
+  'owner-model-override',
 ]);
 
 const NOTED = new Set(NOTE_CLASSES);

@@ -161,6 +161,7 @@ import { makeVerdictRecorder } from "./lib/so-verdict-derive.mjs";
 import { transferChainAxis } from "./lib/ac-transfer-chain-report.mjs";
 import { emitVerdicts } from "./lib/ac-verdict-emit.mjs";
 import { makeSofaRulingLookup } from "./lib/sofa-rulings.mjs";
+import { applyOwnerModelOverride } from "./lib/ac-model-override-apply.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const DATA = path.join(here, "data");
@@ -1306,7 +1307,7 @@ for (const cfg of TYPES) {
              not, and since the 2026-09-08 14:22 backfill one document holds
              both kinds — so the question belongs to the line, not the
              document. lib/ac-not-a-difference.mjs reads it. */
-          itemRows.push({ key: ac, erpNo: d.erp_no, line, erpKeyed: el.ac_dtlkey != null });
+          itemRows.push({ key: ac, erpNo: d.erp_no, line, erpKeyed: el.ac_dtlkey != null, acCode: al.itemKey, erpCode: el.item_code });
           VERDICT.record(t, ac, d.erp_no, "item code", line);
         }
       }
@@ -1392,7 +1393,8 @@ for (const cfg of TYPES) {
      (tests/acNotADifference.test.ts): a document whose item-code MULTISETS
      differ, or whose TOTAL differs, or which carries a priced line we do not
      have, stays counted and is reported LOUDER as an impostor. */
-  const IC = splitGuessedItemCodePairing({ rows: itemRows, bags: bags.size ? bags : null });
+  const MO = applyOwnerModelOverride({ rows: itemRows, dataDir: DATA, recorder: VERDICT, t }, { log, plain, show: SHOW });
+  const IC = splitGuessedItemCodePairing({ rows: MO.differ, bags: bags.size ? bags : null });
   const LS = cfg.migratedChainLineShape
     ? splitMigratedChainLineShape({ rows: lineCountRows, facts: shapeFacts.size ? shapeFacts : null })
     : { lineShape: 0, differ: lineCountRows.length, moved: [], impostors: [], applied: false,
@@ -1407,6 +1409,7 @@ for (const cfg of TYPES) {
          below: three different lanes reclassified three different counts on the
          same day, and a number that shrinks without a reason attached is the
          thing the owner has to come back and ask about. */
+      (MO.moved.length ? ` (+${MO.moved.length} the ERP names another product BY YOUR DECISION)` : "") +
       (C.itemTranslation + C.itemDecomposition
         ? ` (of ${F.item.length + C.itemTranslation + C.itemDecomposition} raw code differences: ` +
           `${C.itemTranslation} are the same product written another way, ` +
