@@ -1,7 +1,7 @@
 ## The delivery order's item code was changed after the conversion and the ERP dropped the line [medium]
 
 <!-- area: Cutover + migrated data -->
-<!-- status: open -->
+<!-- status: fixed -->
 
 **Symptom.** The go-live reconcile has reported the same two documents on the
 delivery-order line-count axis since 2026-09-08 12:58, most recently run
@@ -148,6 +148,49 @@ before and after. No stock moves: a migrated delivery order is `migrated_no_stoc
 and the FIFO trigger is `AFTER INSERT ON inventory_movements`, so an INSERT into
 `scm.delivery_order_items` writes none — asserted before and after rather than
 argued.
+
+**APPLIED to production**, run
+[`34213756311`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34213756311)
+(`only_docs=DO-001953,DO-004903 max_writes=4`, confirm phrase passed by the
+workflow): `APPLIED — 4 delivery-order line(s)`, then *"VERIFIED ON A FRESH
+CONNECTION — 4 of 4 delivery-order line(s)"* with zero `WRONG SHAPE` rows. PLAN
+first, run
+[`34213468651`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34213468651).
+
+Re-read afterwards on a fresh connection (`probe-cutover-so-do-lines` run
+[`34213902675`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34213902675)) —
+the SHAPE, not a row count: `HC-DO-001953` book 4 / **ERP 4**, `HC-DO-004903`
+book 3 / **ERP 3**, every book DtlKey claimed by an ERP row and every header
+still RM 0.00.
+
+| | 17:54 run [`34212496647`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34212496647) | 18:10 run [`34213899437`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34213899437) |
+| --- | ---: | ---: |
+| **DO line count** | **2** | **0** |
+| DO item / qty / price / money | 0 / 0 / 0 / 0 | 0 / 0 / 0 / 0 |
+| DO lines paired | 819 | 823 |
+| SO / PO / GR / IV / PI (**CONTROL**) | 5 / 0 / 9 / 4 / 1 | **identical** |
+| whole reconcile | **21** | **19** |
+
+**STOCK — the risk this repair carried, measured either side.** Changing what a
+delivery note says went out changes WHICH product left the warehouse. Runs
+`34213598089` / `34213602189` before, `34213893128` / `34213896315` after:
+
+| check | before | after |
+| --- | --- | --- |
+| `check-stock-vs-autocount` | `cells compared: 996 \| AGREE: 950 \| DISAGREE: 12 \| AutoCount-only: 0 \| ERP-only: 3` | **identical** |
+| whole sofas | `AutoCount 107 vs ERP 107 (net +0)` | **identical** |
+| sofa cells | `41 \| AGREE 19 \| DISAGREE 22` | **identical** |
+| movement rows behind migrated documents | `0 behind 646` | **identical** |
+
+**The invoice followed, and it is ONE of the four, not four.**
+`create-migrated-invoices` DRY-RUN run
+[`34213920643`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34213920643),
+taken after the repair: `WOULD CREATE HC-I-2411-0323 ... from HC-DO-001953` —
+it read `nothing_to_invoice` before. `I-2410-0192` is `HC-DO-001604`'s and was
+unblocked by a different lane; `I-000213` and `I-2411-0275` are money gaps on
+documents nobody has repaired. **UNTESTED: the invoice APPLY has not been run** —
+that tool takes no per-document narrowing and one apply would also write
+`HC-I-2410-0192`, RM 6,688.00 on another lane's document.
 
 **Ref.** fix/do-swapped-codes, 2026-09-08.
 

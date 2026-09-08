@@ -666,7 +666,12 @@ async function planDo({ book, prodByCode }) {
 
 async function applyDo(plan) {
   if (!plan.writes.length) return { lines: 0, docs: 0 };
-  let lines = 0; let docs = 0;
+  let lines = 0;
+  /* DISTINCT documents. Two targets on one delivery note are two writes and ONE
+     document; counting a write per document read "4 line(s) on 4 document(s)"
+     on apply run 34213756311, which is two. A count nobody can check is the
+     shape that gets believed. */
+  const touched = new Set();
   for (const w of plan.writes) {
     if (ONLY_DOCS.size && !ONLY_DOCS.has(w.target.acDoc.toUpperCase())) continue;
     await sql.begin(async (tx) => {
@@ -692,10 +697,10 @@ async function applyDo(plan) {
       const rows = await tx`SELECT line_total_sen::bigint t FROM scm.delivery_order_items WHERE delivery_order_id = ${w.doId}`;
       const total = rows.reduce((s, r) => s + Number(r.t), 0);
       await tx`UPDATE scm.delivery_orders SET local_total_sen = ${total}, line_count = ${rows.length} WHERE id = ${w.doId}`;
-      lines += 1; docs += 1;
+      lines += 1; touched.add(w.doId);
     });
   }
-  return { lines, docs };
+  return { lines, docs: touched.size };
 }
 
 /* ── verification, on a FRESH connection, asserting the SHAPE ─────────────── */
