@@ -246,3 +246,16 @@ test("LINE KEY: a blank key is no key — the needle decides, as it always did",
   assert.equal(selectBuildRows(SO_012636, "Col: modenza 04: mustard", undefined, {}).verdict, "exact");
   assert.equal(selectBuildRows(SO_012636, "Col: modenza 04: mustard", undefined, { dtlKey: null }).verdict, "exact");
 });
+
+test("LINE KEY: one entry may list SEVERAL keys — its SO's line and its PO's", () => {
+  /* HC-SO-011221 line 775621 and the purchase order raised from it are two
+     different AutoCount lines. Listing both lets ONE entry correct the pair,
+     and a key belongs to exactly one document so the two can never cross. */
+  const so = [{ item_code: "9028-2S", linked_ac_dtlkey: "775621" }];
+  const po = [{ item_code: "9028-2S", linked_ac_dtlkey: "881000" }];
+  const keys = { dtlKey: ["775621", "881000"] };
+  assert.equal(selectBuildRows(so, null, undefined, keys).rows.length, 1);
+  assert.equal(selectBuildRows(po, null, undefined, keys).rows.length, 1);
+  /* A third document holding neither is not this build. */
+  assert.equal(selectBuildRows([{ linked_ac_dtlkey: "999" }], null, undefined, keys).verdict, "key-missing");
+});

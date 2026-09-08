@@ -71,11 +71,14 @@ export function makeSofaRulingLookup(dataDir, onError = () => {}) {
        that silently answers null on the wrong spelling reads exactly like "he
        never ruled on this". */
     const keyOf = (v) => (v === null || v === undefined ? "" : String(v).trim());
+    /* `dtlKey` may be a list: one entry names a sales order's book line AND the
+       purchase order's, which are two different AutoCount lines. */
+    const keysOf = (v) => (Array.isArray(v) ? v : [v]).map(keyOf).filter(Boolean);
     const keysHere = new Set(
       lines.map((l) => keyOf(l?.ac_dtlkey ?? l?.linked_ac_dtlkey)).filter(Boolean),
     );
-    const keyed = cands.filter((c) => keyOf(c.dtlKey) !== "");
-    const byKey = keyed.find((c) => keysHere.has(keyOf(c.dtlKey)));
+    const keyed = cands.filter((c) => keysOf(c.dtlKey).length > 0);
+    const byKey = keyed.find((c) => keysOf(c.dtlKey).some((k) => keysHere.has(k)));
     if (byKey) return { pieces: byKey.pieces, source: byKey.source };
 
     const text = lines.map((l) => l.description2 || "").find(Boolean) || "";
@@ -85,7 +88,9 @@ export function makeSofaRulingLookup(dataDir, onError = () => {}) {
        and these lines are not it, so blessing them on the strength of the
        document number alone would put one build's answer on another's rows. */
     const only =
-      cands.length === 1 && !cands[0].desc2Match && keyOf(cands[0].dtlKey) === "" ? cands[0] : null;
+      cands.length === 1 && !cands[0].desc2Match && keysOf(cands[0].dtlKey).length === 0
+        ? cands[0]
+        : null;
     const pick = hit || only;
     return pick ? { pieces: pick.pieces, source: pick.source } : null;
   };

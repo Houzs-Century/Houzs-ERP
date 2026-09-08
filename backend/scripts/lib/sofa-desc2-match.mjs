@@ -136,22 +136,30 @@ const keyOf = (v) => (v === null || v === undefined ? "" : String(v).trim());
 export function selectBuildRows(rows, needle, readDesc2 = (r) => r.description2, opts = {}) {
   const all = Array.isArray(rows) ? rows : [];
 
-  /* Identity first, and it is the whole answer when it is given. */
-  const wantKey = keyOf(opts?.dtlKey);
-  if (wantKey !== "") {
+  /* Identity first, and it is the whole answer when it is given.
+     ONE ENTRY, SEVERAL KEYS. A correction names a sales order and the purchase
+     order raised from it, and those are two different AutoCount lines with two
+     different DtlKeys — so `dtlKey` may be a list. A key belongs to exactly one
+     document, so listing both cannot cross the two: the document that does not
+     hold either key answers `key-missing` and the caller skips it. */
+  const wantKeys = (Array.isArray(opts?.dtlKey) ? opts.dtlKey : [opts?.dtlKey])
+    .map(keyOf)
+    .filter(Boolean);
+  if (wantKeys.length) {
+    const want = new Set(wantKeys);
     const readKey = opts.readKey ?? ((r) => r.linked_ac_dtlkey);
-    const hits = all.filter((r) => keyOf(readKey(r)) === wantKey);
+    const hits = all.filter((r) => want.has(keyOf(readKey(r))));
     if (!hits.length)
       return {
         verdict: "key-missing",
         rows: [],
-        how: `no line on this document carries AutoCount DtlKey ${wantKey}`,
+        how: `no line on this document carries AutoCount DtlKey ${wantKeys.join(" or ")}`,
         texts: [],
       };
     return {
       verdict: "line-key",
       rows: hits,
-      how: `${hits.length} line(s) carry AutoCount DtlKey ${wantKey}`,
+      how: `${hits.length} line(s) carry AutoCount DtlKey ${[...new Set(hits.map((r) => keyOf(readKey(r))))].join(", ")}`,
       texts: [...new Set(hits.map((r) => normaliseDesc2(readDesc2(r))))],
     };
   }
