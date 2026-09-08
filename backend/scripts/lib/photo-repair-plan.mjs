@@ -55,6 +55,7 @@ export const PLAN_FUTURE_SKEW_MIN = 5;
 
 export const PRUNE_KIND = 'prune-dead-line-photo-keys';
 export const REPOINT_KIND = 'repoint-line-photos-to-owning-line';
+export const ATTACH_KIND = 'attach-uploaded-line-photos';
 
 /**
  * The row precondition each repair depends on, derived from the operation
@@ -79,6 +80,25 @@ export const PLAN_KINDS = {
        gained the address in the meantime means the repair already happened. */
     precondition: (op) => ({ expect: [...(op.before ?? [])], forbid: [...(op.add ?? [])] }),
     describe: (op) => `${op.doc} AC line ${op.dtl} add ${(op.add ?? []).join(' , ')}`,
+  },
+  /* ATTACH is the third repair, and the one the other two could not do.
+     PRUNE drops an address whose object is gone; REPOINT moves an address that
+     is already on the document onto the line that owns it. Neither can help a
+     line whose photograph was never in the bucket at all — the object has to be
+     UPLOADED first, and only then does the address become true.
+
+     Measured 2026-09-08: 7 purchase-order lines were in exactly that state. The
+     obvious remedy — re-run `import-po-line-photos.mjs APPLY=1` — was measured
+     before it was trusted and would have written 25 addresses, not 10: the
+     extra 15 sit on lines that ALREADY show their picture, and all 15 name an
+     object R2 does not hold (checked one by one, 0 of 15 present, against a
+     13/13 positive control). That is bug 0625 and bug 0668 a third time. So the
+     narrow repair exists instead, and its precondition is REPOINT's: the column
+     is exactly what the plan saw, and does not already carry what is being
+     added. */
+  [ATTACH_KIND]: {
+    precondition: (op) => ({ expect: [...(op.before ?? [])], forbid: [...(op.add ?? [])] }),
+    describe: (op) => `${op.doc} AC line ${op.dtl} attach ${(op.add ?? []).join(' , ')}`,
   },
 };
 
@@ -203,7 +223,7 @@ export function verifyPlanEnvelope(plan, expect) {
  * written and is not any more — checked against the row as it is RIGHT NOW,
  * inside the apply run, one row at a time.
  *
- * @param kind         PRUNE_KIND | REPOINT_KIND
+ * @param kind         PRUNE_KIND | REPOINT_KIND | ATTACH_KIND
  * @param op           one operation from the plan
  * @param currentPics  the row's photo_urls as just read from the database
  */
