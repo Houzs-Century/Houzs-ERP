@@ -1,6 +1,6 @@
 ## The reconcile reports a sofa the owner has already ruled on as an open difference [medium]
 
-<!-- status: open -->
+<!-- status: fixed -->
 
 <!-- area: AutoCount sync + write-back -->
 
@@ -60,6 +60,21 @@ from the investigation.
 **What a fix must not do.** It must not fold a ruled line into `AGREE`. The ERP
 really does differ from the book's text there, and hiding that would remove the
 only signal that would catch a ruling applied to the wrong document.
+
+**FIXED 2026-09-08 by `fix/verdict-sees-rulings` — see `docs/bugs/0717`.** What
+was deferred here ("the repair is a new verdict on the compartments axis - the
+shape `RECORDED` already uses") is what shipped: `RULED` is its own column and
+its own note class, the reconcile reads the owner's rulings out of
+`backend/scripts/data/sofa-compartment-corrections-*.json`, and a ruled build is
+no longer counted as a difference or locked. The constraint this entry set was
+kept — a ruled line is NOT folded into `AGREE`, because the ERP really does
+differ from the book's text there and that is the only signal that would catch a
+ruling applied to the wrong document.
+
+What raised the severity between this entry and 0717: the correctness lock went
+live at 19:32 the same day, so the class stopped being a mis-counted report and
+became documents staff cannot edit — including the one the owner had unblocked
+that morning with a customer waiting.
 
 **Ref.** `fix/sofa-proceeded-eight`, 2026-09-08. Measured on reconcile run
 `34212598908` and ERP evidence run `34213198537`.

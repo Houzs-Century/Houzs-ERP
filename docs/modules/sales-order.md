@@ -1986,9 +1986,39 @@ axis, so nobody is sent hunting for a difference that was never measured. Those
 162 open by themselves the moment the line keys are backfilled; nothing about
 them has to be repaired by hand.
 
+**A sofa the OWNER has ruled on no longer locks — added 2026-09-08.** Some sofa
+builds are his, read off his drawing, and his standing rule is that where the
+drawing and the account book's words disagree the DRAWING wins. So on those
+documents the ERP is SUPPOSED to differ from the book's text — and the reconcile,
+which compared against the text, was calling that difference `sofa compartments`
+and shutting the document. **The lock was punishing exactly the orders he had
+personally settled**, and every ruling he gave made it worse: `HC-SO-013475` was
+unblocked by his ruling in the morning of 2026-09-08 and locked by it that
+evening (`docs/bugs/0717`).
+
+`check-ac-erp-reconcile.mjs` now reads
+`backend/scripts/data/sofa-compartment-corrections-*.json` — the same rows
+`apply-sofa-compartment-corrections.mjs` writes the builds from — through
+`scripts/lib/sofa-ruling-index.mjs`, and two verdicts follow:
+
+| verdict | locks? | what it means |
+|---|---|---|
+| `RULED` | **no** | the ERP holds EXACTLY the build he ruled. Recorded on the non-locking NOTE channel as the class `ruled`, named in the report with his pieces and the file the ruling lives in — never silently subtracted. It is NOT folded into `AGREE`: the line genuinely does differ from the book's text, and that is the only signal that would catch a ruling applied to the wrong document. |
+| `RULING_LOST` | **yes**, on the new axis `sofa build differs from the owner ruling` | a ruling exists and the ERP does NOT hold it. His decision was overwritten or never applied; it needs HIM, not a data fix, which is why it does not share the `sofa compartments` axis. |
+
+**The exemption is scoped to the AXIS he ruled, not to the document.** A ruled
+order's price, quantity, line count and colour are still compared and still lock
+— pinned by `backend/tests/sofaRulingIndex.test.mjs`, which injects a money
+difference onto a ruled order and asserts it is still not `clean`.
+
+**And it is a CHECK, not a blank cheque.** The ERP is asserted against his stated
+pieces on every run, so a ruling cannot go stale silently. A ruling that reaches
+only the prose page (`docs/sofa-compartment-owner-rulings-2026-09-08.md`) and not
+the JSON is caught by the same test file.
+
 Which axes lock, and why the reconcile's DECLARED classes (sofa decomposition,
 item translation, `no-price`, book-blank variants, an unproceeded order's blank,
-`pend`, `recorded`) do not, is stated once in
+`pend`, `recorded`, `ruled`) do not, is stated once in
 `backend/scripts/lib/so-verdict-derive.mjs`. Full runbook including the order of
 operations: `docs/migrated-so-lock.md` §10.
 

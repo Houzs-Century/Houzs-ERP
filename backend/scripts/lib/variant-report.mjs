@@ -18,8 +18,9 @@
  * NOT restated here. This module renders; that one decides.
  */
 import {
-  AGREE, AXES, BOOK_BLANK, DIFFER, ERP_BLANK, NO_LINE_KEY, PENDING, RECORDED, UNREADABLE,
-  VARIANT_GROUPS, VERDICTS, compareLine, decodeBook, foldGuessedPairing,
+  AGREE, AXES, BOOK_BLANK, DIFFER, ERP_BLANK, NO_LINE_KEY, PENDING, RECORDED, RULED, RULING_LOST,
+  UNREADABLE, VARIANT_GROUPS, VERDICTS, applyCompartmentRuling, compareLine, compartmentOf,
+  decodeBook, foldGuessedPairing,
 } from "./variant-reconcile.mjs";
 import { comparisonKey } from "./keyless-multiset.mjs";
 import { classifyUnread, makeUnreadTally } from "./sofa-unread-split.mjs";
@@ -30,6 +31,14 @@ const SHOW_BOOK_BLANK = 5; // the direction that is NOT work; enough to see it e
    and the column the owner reads are the SAME WORD. Built from AXES rather than
    typed, so a new axis cannot arrive with no name here. */
 const AXIS_LABEL = Object.fromEntries(AXES.map((a) => [a.key, a.label]));
+
+/* The LOCKING axis a build that no longer matches the owner's ruling is recorded
+   under. Its own name, not `sofa compartments`: a document shut because somebody
+   overwrote his decision needs a different person and a different conversation
+   from one that never matched the book, and a shared axis name would put them in
+   one number. Declared in lib/so-verdict-derive.mjs, which is what makes it lock;
+   spelled here because this is the only place it is recorded. */
+const RULING_LOST_AXIS = "sofa build differs from the owner ruling";
 
 /**
  * The variant reconcile for one document type.
@@ -42,8 +51,18 @@ const AXIS_LABEL = Object.fromEntries(AXES.map((a) => [a.key, a.label]));
  * Every count is split PROCEEDED / not proceeded, because the owner's rule is
  * that an unconfirmed order may legitimately be blank and quoting the combined
  * figure as the backlog has already cost him time twice.
+ *
+ * `rulingFor` answers "has the owner ruled THIS build's compartments" — see
+ * lib/sofa-ruling-index.mjs. It is REQUIRED, not optional: a missing resolver
+ * would silently restore the behaviour where every ruled document is reported as
+ * a difference and LOCKED, which is the bug this argument exists to fix, and it
+ * would do so with no error anywhere (BUG CLASS optional-param-noop). Pass
+ * `() => ({ ruling: null, ambiguous: null })` to compare against the book alone.
  */
-export function reportVariants({ t, label, rows, desc2, deps: V, VERDICT, SHOW, log, plain }) {
+export function reportVariants({ t, label, rows, desc2, deps: V, VERDICT, SHOW, log, plain, rulingFor }) {
+  if (typeof rulingFor !== "function") {
+    throw new Error("reportVariants: `rulingFor` is required — see lib/sofa-ruling-index.mjs");
+  }
   const tally = {};
   for (const a of AXES) tally[a.key] = { yes: {}, no: {} };
   for (const a of AXES) for (const half of ["yes", "no"]) for (const v of VERDICTS) tally[a.key][half][v] = 0;
@@ -55,6 +74,19 @@ export function reportVariants({ t, label, rows, desc2, deps: V, VERDICT, SHOW, 
     bookBlanks[a.key] = [];
     noKeyRows[a.key] = [];
   }
+  /* The owner's rulings, NAMED. A suppression the reader cannot see is a
+     suppression nobody re-checks (docs/bugs/0668), and this is the one class
+     whose whole purpose is to stop a document being reported — so it is printed
+     with his value and the file his ruling lives in, never merely subtracted. */
+  const ruledRows = [];
+  const ruleLostRows = [];
+  const ruleUncheckable = [];
+  const ruleAmbiguous = [];
+  /* A ruling that changed nothing: the book's text already said what he ruled.
+     Counted, not listed — there is no difference to excuse and no line to act on,
+     but a reader comparing this run's RULED count against the ruling FILE needs
+     to see where the rest of the file went. */
+  let ruleAgreed = 0;
   const pop = { total: rows.length, modelled: 0, bedframe: 0, sofa: 0, other: 0, withDesc2: 0, proceeded: 0 };
   let unkeyedSofa = 0;
   /* The `unread` column, by CAUSE. lib/sofa-unread-split.mjs holds the argument
@@ -108,6 +140,34 @@ export function reportVariants({ t, label, rows, desc2, deps: V, VERDICT, SHOW, 
       axes.compartments.detail =
         "the ERP lines of this document carry no AutoCount line key, so the pieces of one build cannot be regrouped";
       unkeyedSofa++;
+    }
+    /* ── THE OWNER'S RULING, APPLIED AFTER THE PAIRING IS SETTLED ───────────
+       It has to come after the keyless override above, because a ruling may only
+       be asserted against a build that can be REGROUPED — see
+       applyCompartmentRuling's header. It excuses ONE axis on ONE build: every
+       other axis of this line was decided above and is not touched here. */
+    if (axes.compartments) {
+      const where = `${r.ac} DtlKey ${r.acLine.dtlKey} (ERP ${r.erpNo} ${lead.item_code ?? "?"})`;
+      const { ruling, ambiguous } = rulingFor({ ac: r.ac, erpNo: r.erpNo, erpLines: r.erpLines });
+      if (ambiguous) {
+        /* REFUSED, never chosen between. The line keeps whatever the book
+           comparison said, which is the stricter answer. */
+        ruleAmbiguous.push(
+          `${where}: ${ambiguous.length} owner rulings reach this build ` +
+            `(${ambiguous.map((x) => `${x.pieces.join("+")} via ${JSON.stringify(String(x.desc2Match).slice(0, 40))}`).join("  vs  ")})` +
+            " — REFUSED, and compared against the book instead",
+        );
+      }
+      const did = applyCompartmentRuling(axes.compartments, {
+        ruling,
+        erpPieces: r.erpLines.map((l) => compartmentOf(l.item_code)).filter(Boolean),
+        regroupable: !keyless,
+      });
+      const said = ruling ? `${where}: the owner ruled ${ruling.pieces.join("+")} (${ruling.source})` : "";
+      if (did === "not-regroupable") ruleUncheckable.push(`${said} — but this build cannot be regrouped, so it was NOT checked`);
+      else if (did === "ruled") ruledRows.push(`${said}; ERP holds ${axes.compartments.erp || "(blank)"}${proceeded ? "  [PROCEEDED]" : ""}`);
+      else if (did === "lost") ruleLostRows.push(`${said}; ERP holds ${axes.compartments.erp || "(blank)"} — ${axes.compartments.detail}${proceeded ? "  [PROCEEDED]" : ""}`);
+      else if (did === "agreed-anyway") ruleAgreed++;
     }
     if (axes.compartments && axes.compartments.verdict === UNREADABLE) {
       unread.record(
@@ -180,6 +240,22 @@ export function reportVariants({ t, label, rows, desc2, deps: V, VERDICT, SHOW, 
         /* Reached only when the order is NOT proceeded — the branch above took
            the proceeded arm. 还没proceed还没确认的就可以直接放空的. */
         VERDICT.note(t, r.ac, r.erpNo, "erp-blank-not-proceeded", AXIS_LABEL[key] ?? key, `${where}: ${both}`, false);
+      } else if (cell.verdict === RULED) {
+        /* THE OWNER HAS ALREADY SETTLED THIS BUILD, and the ERP holds exactly
+           what he settled. It is NOT a difference and it must NOT lock — the
+           mechanism that locked it was punishing the documents he had personally
+           answered, and every ruling he gave made it worse
+           (「SO13475 我不是给你答案了吗？为什么你还在纠结？」). It goes down the
+           NOTE channel, which never touches `clean`, and it is NAMED with his
+           value and the file his ruling lives in, so the exclusion is visible
+           rather than suppressed. */
+        VERDICT.note(t, r.ac, r.erpNo, "ruled", AXIS_LABEL[key] ?? key, `${where}: ${both}`, proceeded);
+      } else if (cell.verdict === RULING_LOST) {
+        /* A ruling exists and the ERP does not hold it. LOUDER than an ordinary
+           difference and on its OWN locking axis: this is his decision having
+           been overwritten, or never applied, and he needs to know which of his
+           answers stopped being true. */
+        VERDICT.record(t, r.ac, r.erpNo, RULING_LOST_AXIS, `${where}: ${both}`, proceeded);
       } else if (cell.verdict === NO_LINE_KEY) {
         /* NAMED, never a count on its own. A class the reader cannot enumerate
            is a suppression, not a declaration — the rule docs/bugs/0668 was
@@ -206,15 +282,15 @@ export function reportVariants({ t, label, rows, desc2, deps: V, VERDICT, SHOW, 
     return { t, pop, tally, comparable: false };
   }
 
-  plain("axis                 |                      PROCEEDED (the backlog)                       |             not proceeded (blank is OK)");
-  plain("                     |  agree  ERPblank  bookblank  differ  pend  unread  recorded  no-key |  agree  ERPblank  bookblank  differ  pend  unread  recorded  no-key");
+  plain("axis                 |                          PROCEEDED (the backlog)                            |             not proceeded (blank is OK)");
+  plain("                     |  agree  ERPblank  bookblank  differ  pend  unread  recorded  no-key  ruled  ruleLost |  agree  ERPblank  bookblank  differ  pend  unread  recorded  no-key  ruled  ruleLost");
   for (const a of AXES) {
     const y = tally[a.key].yes;
     const n = tally[a.key].no;
     const seen = VERDICTS.reduce((s2, v) => s2 + y[v] + n[v], 0);
     if (!seen) continue;
-    const cells = (h) => [h[AGREE], h[ERP_BLANK], h[BOOK_BLANK], h[DIFFER], h[PENDING], h[UNREADABLE], h[RECORDED], h[NO_LINE_KEY]]
-      .map((x, i) => String(x).padStart([6, 9, 10, 7, 5, 7, 10, 7][i]));
+    const cells = (h) => [h[AGREE], h[ERP_BLANK], h[BOOK_BLANK], h[DIFFER], h[PENDING], h[UNREADABLE], h[RECORDED], h[NO_LINE_KEY], h[RULED], h[RULING_LOST]]
+      .map((x, i) => String(x).padStart([6, 9, 10, 7, 5, 7, 10, 7, 6, 9][i]));
     plain(`${a.label.padEnd(20)} | ${cells(y).join(" ")} | ${cells(n).join(" ")}`);
   }
   plain(
@@ -239,6 +315,30 @@ export function reportVariants({ t, label, rows, desc2, deps: V, VERDICT, SHOW, 
       "values, which no ordering can fake. The document ships what the book ordered; only the row labelling is unknown. " +
       "A bucket whose two sets DIFFER keeps every one of its differences.",
   );
+  plain(
+    "ruled = the OWNER settled this sofa's build from his DRAWING and the ERP holds exactly what he settled, so the " +
+      "book's TEXT disagreeing is his ruling working, not a gap. It never locks the document. ruleLost = a ruling " +
+      "exists and the ERP does NOT hold it — his decision was overwritten or never applied, and that DOES lock, on " +
+      "its own axis, because it needs him and not a data fix.",
+  );
+  if (ruledRows.length || ruleLostRows.length || ruleUncheckable.length || ruleAmbiguous.length || ruleAgreed) {
+    log(
+      `${t} — OWNER RULINGS on sofa compartments: ${ruledRows.length} build(s) match his ruling and are NOT counted as ` +
+        `a difference; ${ruleLostRows.length} no longer match it; ${ruleUncheckable.length} could not be checked ` +
+        `(no line key); ${ruleAmbiguous.length} refused as ambiguous; ${ruleAgreed} where the book already agreed.`,
+    );
+    for (const [head, list] of [
+      ["RULED BY THE OWNER — not a difference, and NOT locked", ruledRows],
+      ["HIS RULING NO LONGER HOLDS — locked, and he needs to know", ruleLostRows],
+      ["A RULING EXISTS BUT COULD NOT BE CHECKED — the build cannot be regrouped", ruleUncheckable],
+      ["TWO RULINGS REACH ONE BUILD — refused, compared against the book instead", ruleAmbiguous],
+    ]) {
+      if (!list.length) continue;
+      plain(`   ${head}: ${list.length}`);
+      for (const row of list.slice(0, SHOW)) plain(`      ${row}`);
+      if (list.length > SHOW) plain(`      ... ${list.length - SHOW} more`);
+    }
+  }
   if (guessFold.folded) {
     log(
       `${t} — ${guessFold.folded} axis value(s) across ${guessFold.buckets} bucket(s) moved out of DIFFER into no-key: ` +
@@ -288,5 +388,16 @@ export function reportVariants({ t, label, rows, desc2, deps: V, VERDICT, SHOW, 
     for (const row of nk.slice(0, SHOW)) plain(`      ${row}`);
     if (nk.length > SHOW) plain(`      ... ${nk.length - SHOW} more`);
   }
-  return { t, pop, tally, comparable: true };
+  return {
+    t, pop, tally, comparable: true,
+    /* Carried out so the checker's own summary can state the owner-ruling split
+       without re-deriving it from the printed text. */
+    rulings: {
+      ruled: ruledRows.length,
+      lost: ruleLostRows.length,
+      uncheckable: ruleUncheckable.length,
+      ambiguous: ruleAmbiguous.length,
+      agreedAnyway: ruleAgreed,
+    },
+  };
 }

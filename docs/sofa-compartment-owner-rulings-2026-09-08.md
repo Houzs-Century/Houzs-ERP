@@ -45,3 +45,32 @@ say so wherever the change is recorded.
 
 **More rulings are expected: he is going through the report card by card.**
 Append them here as they arrive, with his words quoted exactly.
+
+## THIS PAGE IS THE WORDS. THE MACHINE READS THE DATA FILE — put the ruling in BOTH
+
+Since 2026-09-08 (`fix/verdict-sees-rulings`, `docs/bugs/0717`) the AutoCount
+reconcile CONSULTS the owner's rulings, so that a sofa he has settled is no
+longer reported as a difference and no longer LOCKED by the per-document verdict.
+
+**It reads `backend/scripts/data/sofa-compartment-corrections-2026-08.json` and
+`-2026-09.json`, not this page.** That is deliberate and it is not a slight on
+this page: those files are already what `apply-sofa-compartment-corrections.mjs`
+WRITES the builds from, so the checker and the applier read one set of rows and
+cannot come to different conclusions about what he ruled. This page is where his
+WORDS are, and his words are the slip's shorthand (`1AL`, `2AR`, `1BR`) — not ERP
+piece codes, and not something a parser should be trusted to translate.
+
+**So a ruling that lands only here is a ruling the reconcile cannot see, and the
+order it settles stays shut.** `backend/tests/sofaRulingIndex.test.mjs` fails if
+any document ruled on in the table above carries no entry in the corrections
+JSON. It deliberately does NOT compare the PIECES: the shorthand-to-piece-code
+translation is a judgement about a drawing, which is exactly what the section
+above says to bring to him rather than guess. The pieces are checked the only way
+they can be — against the ERP itself, on every reconcile run.
+
+**And the exemption is a CHECK, not a blank cheque.** The reconcile asserts the
+ERP against his stated pieces. A ruled build that still matches him is reported
+as `RULED`, naming his value and the file it lives in, and never locks. A ruled
+build that has been edited to something else is reported LOUDER than an ordinary
+difference, on its own axis (`sofa build differs from the owner ruling`), and
+does lock — because his decision has been overwritten and he needs to know.

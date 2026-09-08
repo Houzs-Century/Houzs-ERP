@@ -151,6 +151,7 @@ import { erpReconcileTypes } from "./lib/ac-reconcile-erp-sql.mjs";
 import { UNPROVEN, isErpNativeShape, splitErpNative } from "./lib/ac-erp-native.mjs";
 import { bagOf, compareBags } from "./lib/keyless-multiset.mjs";
 import { reportVariants } from "./lib/variant-report.mjs";
+import { loadSofaRulings, resolveRuling } from "./lib/sofa-ruling-index.mjs";
 import { FIELD_MAP } from "./lib/ac-field-identity.mjs";
 import {
   compareType, loadAcFieldSide, loadErpFieldSide, measurePoDiscount,
@@ -514,6 +515,21 @@ for (const cfg of TYPES) {
 }
 
 /* ── the variant side: masters, decoders, and their own self-test ─────────── */
+/* THE OWNER'S PER-DOCUMENT COMPARTMENT RULINGS, read from the same committed
+   files apply-sofa-compartment-corrections.mjs WRITES from, so the checker and
+   the applier cannot disagree about what he ruled (lib/sofa-ruling-index.mjs).
+   Announced rather than loaded silently: a ruling file that stopped loading
+   would put every settled sofa back into DIFFER and re-lock the documents he has
+   answered, which is exactly the failure this reads them to end. */
+const RULINGS = loadSofaRulings(here);
+log(
+  `OWNER SOFA RULINGS — ${RULINGS.builds} build(s) across ${RULINGS.index.size} document(s) loaded from ` +
+    `${RULINGS.files.join(", ")}. A build the owner has ruled is compared against HIS pieces, not the book's text.`,
+);
+if (!RULINGS.builds) {
+  log("OWNER SOFA RULINGS — NONE LOADED. Every sofa he has settled will be reported as a difference and will LOCK.");
+}
+
 /* Every decoder is the writers' own. Nothing here re-implements a Desc2 rule —
    see the header of lib/variant-reconcile.mjs for why that matters. */
 let V = null;
@@ -1523,7 +1539,10 @@ for (const cfg of TYPES) {
   }
 
   /* ── 4. THE VARIANTS INSIDE THE LINE ──────────────────────────────────── */
-  const vt = reportVariants({ t, label: cfg.label, rows: variantRows, desc2: B.desc2, deps: V, VERDICT, SHOW, log, plain });
+  const vt = reportVariants({
+    t, label: cfg.label, rows: variantRows, desc2: B.desc2, deps: V, VERDICT, SHOW, log, plain,
+    rulingFor: (w) => resolveRuling(RULINGS.index, w),
+  });
   variantTotals.push(vt);
 
   summary.push({

@@ -102,7 +102,11 @@ export const AXIS_GROUPS = Object.freeze([
   { key: "colour", label: "colour / fabric", axes: ["colour / fabric"] },
   { key: "seat-size", label: "seat size", axes: ["seat size"] },
   { key: "specials", label: "specials", axes: ["specials"] },
-  { key: "sofa-compartments", label: "sofa compartments", axes: ["sofa compartments", "sofa build not verifiable"] },
+  {
+    key: "sofa-compartments",
+    label: "sofa compartments",
+    axes: ["sofa compartments", "sofa build not verifiable", "sofa build differs from the owner ruling"],
+  },
   {
     key: "bedframe-build",
     label: "bedframe build (divan / gap / leg / total height)",
@@ -143,6 +147,11 @@ export const DECLARED_LABEL = Object.freeze({
     "the ERP is blank on an order NOBODY HAS PROCEEDED — your rule 还没proceed还没确认的就可以直接放空的",
   "sofa-decomposition": "one book line is one ERP line PER COMPARTMENT, so line count and per-line price are not comparable",
   "blank-book-row": "AutoCount's own EMPTY row — no item code, no quantity, no money for the ERP to hold",
+  ruled:
+    "YOU settled this sofa's build from your own drawing and the ERP holds exactly what you settled — so the account " +
+    "book's TEXT disagreeing is your ruling working, not a gap. Your rule: 图和字不一样的时候以图为准. The ruling is " +
+    "named with your value and the file it lives in; a build that stops matching it is reported LOUDLY instead, on " +
+    "its own line above",
 });
 
 /**

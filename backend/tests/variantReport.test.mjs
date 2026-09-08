@@ -14,7 +14,8 @@
 import { describe, it, expect } from "vitest";
 
 import { reportVariants } from "../scripts/lib/variant-report.mjs";
-import { DIFFER, NO_LINE_KEY, AGREE } from "../scripts/lib/variant-reconcile.mjs";
+import { DIFFER, NO_LINE_KEY, AGREE, RULED, RULING_LOST } from "../scripts/lib/variant-reconcile.mjs";
+import { buildRulingIndex, resolveRuling } from "../scripts/lib/sofa-ruling-index.mjs";
 import { buildFabricColourIndex, isPendingColour } from "../scripts/lib/fabric-colour-match.mjs";
 import { parseBedframe } from "../scripts/lib/parse-bedframe.mjs";
 import { SOFA_MODEL_ALIAS, parseSofa } from "../scripts/lib/parse-sofa.mjs";
@@ -24,6 +25,9 @@ import { SOFA_MODEL_ALIAS, parseSofa } from "../scripts/lib/parse-sofa.mjs";
 const FC = [
   { fabric_id: "PC151", colour_id: "PC151-02", label: "PC151-02", active: true },
   { fabric_id: "PC151", colour_id: "PC151-03", label: "PC151-03", active: true },
+  /* the sofa cases below: the book names BO315-21 and one ERP line names -22 */
+  { fabric_id: "BO315", colour_id: "BO315-21", label: "BO315-21", active: true },
+  { fabric_id: "BO315", colour_id: "BO315-22", label: "BO315-22", active: true },
 ];
 const { findColour } = buildFabricColourIndex(FC);
 const DEPS = {
@@ -49,7 +53,7 @@ const erpLine = (id, colour, key) => ({
 });
 
 /** Drive one document type and collect what it printed. */
-function run(rows, desc2) {
+function run(rows, desc2, rulingFor = () => ({ ruling: null, ambiguous: null })) {
   const out = [];
   const locked = [];
   const noted = [];
@@ -72,6 +76,7 @@ function run(rows, desc2) {
     SHOW: 20,
     log: (m) => out.push(m),
     plain: (m) => out.push(m),
+    rulingFor,
   });
   return { vt, out: out.join("\n"), locked, noted };
 }
@@ -138,5 +143,137 @@ describe("reportVariants — the guessed-pairing fold, end to end", () => {
     const { vt, out } = run(rows, {});
     expect(vt.comparable).toBe(false);
     expect(out).toContain("NOT a clean run");
+  });
+});
+
+/* ── THE OWNER'S COMPARTMENT RULINGS ────────────────────────────────────────
+ * The production case, docs/bugs/0714 and 0715: `HC-SO-013475`. The shop floor
+ * reported it as urgent with a customer waiting; the book's text decodes to one
+ * build, the owner's DRAWING says another, and he ruled that the drawing wins.
+ * The ERP was corrected to his answer — and the reconcile, comparing the ERP
+ * against the book's TEXT, then reported the difference his ruling had
+ * deliberately created and the verdict LOCKED the order he had just unblocked.
+ *
+ * The book's Desc2 below is the SELF_TEST shape from lib/variant-reconcile.mjs,
+ * whose decode was measured against the real decoders: five pieces. His ruling
+ * is three. So the comparison would be DIFFER, which is what makes these cases
+ * about the exemption and not about the parser. */
+const BOOK_SOFA_5 = '1EL+1NA+C+1NA+1ER/32"/Col:BO315-21';
+const D2 = 'HOK-8030 SOFA 3S(28") / COL: BO315-21';
+
+const sofaLine = (code, { key = 777, colour = "BO315-21", desc2 = D2 } = {}) => ({
+  id: code, item_code: code, item_group: "sofa", qty: 1,
+  line_suffix: null, proceeded: true, ac_dtlkey: key, description2: desc2,
+  variants: { fabricCode: colour, seatHeight: '32"' },
+  custom_specials: null,
+});
+
+const sofaRow = (lines) => ({ ac: "SO-013475", erpNo: "HC-SO-013475", acLine: { dtlKey: 777 }, erpLines: lines });
+
+/** His ruling for that build, in the shape lib/sofa-corrections-source.mjs loads. */
+const RULING_BUILDS = [{
+  docs: ["HC-SO-013475"],
+  model: "8030",
+  pieces: ["1A(LHF)", "1NA", "1A(RHF)"],
+  desc2Match: '3S(28")',
+  why: "the drawing shows three seats",
+  source: "sofa-compartment-corrections-2026-09.json",
+}];
+const rulingFor = (index) => (w) => resolveRuling(index, w);
+const RULINGS = rulingFor(buildRulingIndex(RULING_BUILDS));
+
+describe("reportVariants — a build the owner has already ruled on", () => {
+  const THREE = [
+    sofaLine("8030-1A(LHF)"),
+    sofaLine("8030-1NA"),
+    sofaLine("8030-1A(RHF)"),
+  ];
+
+  it("the ERP holding exactly what he ruled is RULED, is not a DIFFER, and does NOT lock", () => {
+    const { vt, locked, noted, out } = run([sofaRow(THREE)], { 777: BOOK_SOFA_5 }, RULINGS);
+
+    expect(vt.tally.compartments.yes[RULED]).toBe(1);
+    expect(vt.tally.compartments.yes[DIFFER]).toBe(0);
+    /* THE WHOLE POINT: the order he unblocked is not shut by his own answer. */
+    expect(locked.filter((l) => String(l[3]).toLowerCase().includes("sofa"))).toHaveLength(0);
+    expect(locked.filter((l) => String(l[3]) === "sofa compartments")).toHaveLength(0);
+    /* NAMED, never merely subtracted: his value and the file it lives in. */
+    expect(noted.some((nn) => nn[3] === "ruled" && nn[4] === "sofa compartments")).toBe(true);
+    expect(out).toContain("RULED BY THE OWNER");
+    expect(out).toContain("1A(LHF)+1NA+1A(RHF)");
+    expect(out).toContain("sofa-compartment-corrections-2026-09.json");
+  });
+
+  it("WITHOUT the ruling the SAME rows are a DIFFER and DO lock — the fix is the resolver, not the data", () => {
+    const { vt, locked } = run([sofaRow(THREE)], { 777: BOOK_SOFA_5 });
+    expect(vt.tally.compartments.yes[DIFFER]).toBe(1);
+    expect(vt.tally.compartments.yes[RULED]).toBe(0);
+    expect(locked.filter((l) => String(l[3]) === "sofa compartments")).toHaveLength(1);
+  });
+
+  it("A RULING EXCUSES THE AXIS HE RULED, NOT THE DOCUMENT: a colour difference on the SAME line still locks", () => {
+    /* The book names BO315-21; the lead ERP line names BO315-22. The build is
+       still exactly what he ruled, so compartments are RULED — and the colour
+       must still be reported, because he ruled a sofa's PIECES and said nothing
+       about its fabric. */
+    const lines = [
+      sofaLine("8030-1A(LHF)", { colour: "BO315-22" }),
+      sofaLine("8030-1NA", { colour: "BO315-22" }),
+      sofaLine("8030-1A(RHF)", { colour: "BO315-22" }),
+    ];
+    const { vt, locked } = run([sofaRow(lines)], { 777: BOOK_SOFA_5 }, RULINGS);
+
+    expect(vt.tally.compartments.yes[RULED]).toBe(1);
+    expect(vt.tally.colour.yes[DIFFER]).toBe(1);
+    expect(locked.filter((l) => String(l[3]) === "colour / fabric")).toHaveLength(1);
+  });
+
+  it("a ruled document whose ERP NO LONGER matches his ruling is its own loud state, and it locks", () => {
+    /* Somebody edited the build back to two pieces. The ruling is a CHECK, not a
+       blank cheque: it says this document must equal THIS, so the exemption
+       stops applying and the document is reported again — on its own axis,
+       because it needs him and not a data fix. */
+    const lines = [sofaLine("8030-1A(LHF)"), sofaLine("8030-1A(RHF)")];
+    const { vt, locked, out } = run([sofaRow(lines)], { 777: BOOK_SOFA_5 }, RULINGS);
+
+    expect(vt.tally.compartments.yes[RULING_LOST]).toBe(1);
+    expect(vt.tally.compartments.yes[RULED]).toBe(0);
+    const hits = locked.filter((l) => String(l[3]) === "sofa build differs from the owner ruling");
+    expect(hits).toHaveLength(1);
+    expect(out).toContain("HIS RULING NO LONGER HOLDS");
+  });
+
+  it("a build that cannot be REGROUPED is not checked against the ruling — an unkeyed row would fake a lost ruling", () => {
+    /* No AutoCount line key, so the pairing returns ONE of our rows for the
+       book's line. Asserting a three-piece ruling against one row would report a
+       ruling as lost on a document nobody has touched. */
+    const { vt, locked, out } = run(
+      [sofaRow([sofaLine("8030-1A(LHF)", { key: null })])],
+      { 777: BOOK_SOFA_5 },
+      RULINGS,
+    );
+    expect(vt.tally.compartments.yes[RULING_LOST]).toBe(0);
+    expect(vt.tally.compartments.yes[RULED]).toBe(0);
+    expect(locked.filter((l) => String(l[3]) === "sofa build differs from the owner ruling")).toHaveLength(0);
+    expect(out).toContain("A RULING EXISTS BUT COULD NOT BE CHECKED");
+  });
+
+  it("TWO rulings reaching one build are REFUSED, and the build is compared against the book", () => {
+    const two = buildRulingIndex([
+      ...RULING_BUILDS,
+      { docs: ["HC-SO-013475"], pieces: ["2A(LHF)", "1A(RHF)"], desc2Match: "BO315-21", source: "f.json", why: "" },
+    ]);
+    const { vt, out, locked } = run([sofaRow(THREE)], { 777: BOOK_SOFA_5 }, rulingFor(two));
+    expect(vt.tally.compartments.yes[RULED]).toBe(0);
+    expect(vt.tally.compartments.yes[DIFFER]).toBe(1);
+    expect(locked.filter((l) => String(l[3]) === "sofa compartments")).toHaveLength(1);
+    expect(out).toContain("TWO RULINGS REACH ONE BUILD");
+  });
+
+  it("a ruling on ANOTHER document does not reach this one", () => {
+    const other = buildRulingIndex([{ ...RULING_BUILDS[0], docs: ["HC-SO-999999"] }]);
+    const { vt } = run([sofaRow(THREE)], { 777: BOOK_SOFA_5 }, rulingFor(other));
+    expect(vt.tally.compartments.yes[RULED]).toBe(0);
+    expect(vt.tally.compartments.yes[DIFFER]).toBe(1);
   });
 });

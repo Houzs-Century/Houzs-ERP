@@ -52,6 +52,13 @@
  *                does not tick it, and `variants.specialsRecorded` carries it.
  *                That is the owner's ruling 甲 of 2026-09-03 already applied —
  *                「记下来给工厂看，但单据的钱不可以动」 — not an open gap.
+ *   RULED        compartments only.  The owner has ruled this document's build
+ *                from his DRAWING, the ERP holds exactly what he ruled, and the
+ *                book's TEXT says something else.  The difference is his ruling
+ *                working.  See applyCompartmentRuling below.
+ *   RULING_LOST  compartments only.  A ruling exists for this build and the ERP
+ *                does NOT hold it.  The LOUDEST state on this axis: somebody has
+ *                overwritten a decision the owner made, or it was never applied.
  *
  * ── WHY RECORDED HAD TO BECOME ITS OWN VERDICT ─────────────────────────────
  * `record-priced-specials-on-migrated-lines.mjs` deliberately writes
@@ -196,7 +203,13 @@ export const RECORDED = "RECORDED";
    own guess.  See foldGuessedPairing below for why that is a third state and
    not a difference. */
 export const NO_LINE_KEY = "NO_LINE_KEY";
-export const VERDICTS = [AGREE, ERP_BLANK, BOOK_BLANK, DIFFER, PENDING, UNREADABLE, RECORDED, NO_LINE_KEY];
+/* RULED / RULING_LOST — the owner's per-document compartment rulings.  Set ONLY
+   by applyCompartmentRuling, which the caller runs after the pairing is settled;
+   compareLine never produces either, because whether a build is regroupable at
+   all is a fact about the DOCUMENT's line keys and not about one line. */
+export const RULED = "RULED";
+export const RULING_LOST = "RULING_LOST";
+export const VERDICTS = [AGREE, ERP_BLANK, BOOK_BLANK, DIFFER, PENDING, UNREADABLE, RECORDED, NO_LINE_KEY, RULED, RULING_LOST];
 
 /** The generic two-value comparison every scalar axis uses. */
 export function verdictOf(bookVal, erpVal, same) {
@@ -469,6 +482,75 @@ export function compareLine(deps, { book, erpLines, proceeded }) {
   }
 
   return { axes, proceeded };
+}
+
+/* ── the owner's per-document compartment rulings ──────────────────────────── */
+
+/**
+ * Re-decide ONE compartment cell against the owner's ruling for that build.
+ *
+ * ── WHY THIS IS NOT INSIDE compareLine ──────────────────────────────────────
+ * A ruling may only be applied to a build that can be REGROUPED. Where the ERP
+ * lines of a document carry no AutoCount line key, the pairing returns one ERP
+ * row per book line instead of the whole build, so the multiset in hand is not
+ * the sofa — asserting a three-piece ruling against it would report a phantom
+ * `RULING_LOST` on a document nobody has touched. Regroupability is a fact about
+ * the DOCUMENT, which compareLine (one line at a time) cannot see. So the caller
+ * settles the pairing first and calls this.
+ *
+ * ── WHAT IT MAY AND MAY NOT DO ──────────────────────────────────────────────
+ * It NEVER touches an axis other than the one it is handed. `HC-SO-013475` being
+ * ruled on its COMPARTMENTS must not stop the checker reporting a wrong price or
+ * a missing line on the same document — the owner ruled a build, not a document,
+ * and `tests/variantReport.test.mjs` injects a money difference onto a ruled
+ * order and asserts it is still reported.
+ *
+ * It never folds a ruled build into AGREE, for the reason RECORDED and
+ * NO_LINE_KEY are not folded either: the ERP genuinely does not state what the
+ * book's text states, and hiding that removes the only signal that would catch a
+ * ruling applied to the WRONG document. `RULED` is its own column.
+ *
+ * And an AGREE stays AGREE. Where the book's text and the ERP already say the
+ * same thing the ruling is doing no work, so nothing moves: only a cell that
+ * would otherwise have been reported can be excused by a ruling, which is what
+ * keeps the exemption's blast radius equal to the problem.
+ *
+ * PURE: one cell in, the same cell mutated in place. No I/O, no clock.
+ *
+ * @param {{verdict: string, book: string, erp: string, detail: string}} cell
+ *   the COMPARTMENT cell from compareLine
+ * @param {{ruling: {pieces: string[], source: string, why: string}|null,
+ *          erpPieces: string[], regroupable: boolean}} ctx
+ *   `regroupable` is REQUIRED and decides the answer, so it is not optional
+ *   (BUG CLASS optional-param-noop).
+ * @returns {"none"|"not-regroupable"|"agreed-anyway"|"ruled"|"lost"} what it did
+ */
+export function applyCompartmentRuling(cell, { ruling, erpPieces, regroupable }) {
+  if (!cell || !ruling) return "none";
+  const said = `the owner ruled this build ${ruling.pieces.join("+")} (${ruling.source})`;
+  if (regroupable !== true) {
+    /* Say the ruling exists and why it could not be used. Silence here would
+       read as "no ruling", which is the state this whole module exists to end. */
+    cell.detail = `${cell.detail ? `${cell.detail}; ` : ""}${said}, but this document's ERP lines carry no ` +
+      "AutoCount line key, so the pieces of one build cannot be regrouped and the ruling cannot be checked";
+    return "not-regroupable";
+  }
+  const off = multisetDiff(erpPieces, ruling.pieces);
+  if (!off) {
+    if (cell.verdict === AGREE) return "agreed-anyway";
+    cell.verdict = RULED;
+    cell.detail = `${said} and the ERP holds exactly that; the book's TEXT says otherwise, and his DRAWING wins` +
+      (ruling.why ? ` — ${ruling.why}` : "");
+    return "ruled";
+  }
+  cell.verdict = RULING_LOST;
+  cell.detail =
+    `${said}, and the ERP does NOT hold it: ` +
+    (off.miss.length ? `MISSING ${off.miss.join(", ")}` : "") +
+    (off.miss.length && off.extra.length ? " | " : "") +
+    (off.extra.length ? `EXTRA ${off.extra.join(", ")}` : "") +
+    ". His decision was either overwritten or never applied.";
+  return "lost";
 }
 
 /* ── the pairing the checker had to GUESS ──────────────────────────────────── */

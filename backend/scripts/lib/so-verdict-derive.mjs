@@ -83,6 +83,12 @@ export const LOCKING_AXES = Object.freeze([
   'seat size',
   'sofa compartments',
   'specials',
+  /* THE OWNER'S OWN RULING, NO LONGER TRUE. Its own axis and not `sofa
+     compartments`, because it needs HIM and not a data fix: the ERP no longer
+     holds the build he settled from his drawing, so either somebody overwrote
+     his decision or it was never applied. lib/variant-report.mjs is the only
+     place it is recorded; lib/sofa-ruling-index.mjs is where the rulings live. */
+  'sofa build differs from the owner ruling',
 ]);
 
 const LOCKING = new Set(LOCKING_AXES);
@@ -143,6 +149,15 @@ export const NOTE_CLASSES = Object.freeze([
   'blank-book-row',
   /* WHY a compartment answer was unanswerable — the sofa-unread-split bucket */
   'unanswerable-cause',
+  /* THE OWNER SETTLED THIS SOFA'S BUILD FROM HIS DRAWING and the ERP holds
+     exactly what he settled, so the book's TEXT disagreeing is his ruling
+     working. It goes down THIS channel, which never touches `clean`, because the
+     lock was shutting the documents he had personally answered — every ruling he
+     gave made the locked count worse (「SO13475 我不是给你答案了吗？为什么你还在
+     纠结？」). NAMED with his value and the file the ruling lives in, never merely
+     subtracted: a suppression the reader cannot see is a suppression nobody
+     re-checks (docs/bugs/0668). */
+  'ruled',
 ]);
 
 const NOTED = new Set(NOTE_CLASSES);
