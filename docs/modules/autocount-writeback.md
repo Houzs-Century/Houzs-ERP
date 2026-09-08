@@ -663,14 +663,52 @@ it as one:
    whole sofas — while `foldErpUnits` collapses every compartment row of that
    model into ONE unit of quantity 2. The buckets then cannot meet. Measured on
    9 goods-receipt pairs; `GR-004913 | PO-009018` is `SOFA 9028 x1, SOFA 9028 x1`
-   in the book. `backfill-ac-sofa-line-keys.mjs` refuses the same shape for the
-   same reason, so the two writers agree.
+   in the book.
 
-Closing (3) needs a per-BUILD identity, not a per-model one. The candidate is
-`grn_items.purchase_order_item_id` — but `reshape-migrated-grns.mjs`
-deliberately leaves that NULL exactly when a purchase order carries one item code
-twice, which may be these very rows, so it must be MEASURED before it is built
-on.
+**(3) IS CLOSED ON SALES ORDERS AND STILL OPEN ON THE OTHER TYPES, and the
+difference is EVIDENCE, not effort.** The per-BUILD identity (3) needs turned out
+to be the build text the importer already stored:
+`scm.mfg_sales_order_items.description2`. Where every compartment row of a model
+on a document carries one, `foldErpUnits` groups by it — two builds, two units —
+and `pairDocument` matches each unit to the book line stating the SAME text,
+exact after `normaliseDesc2` (`lib/sofa-desc2-match.mjs`, whose header records
+what a loose `includes` cost) and a perfect bijection or nothing. It splits ONLY
+on evidence: one blank build text on that model and it folds exactly as before.
+
+`grn_items` and `delivery_order_items` carry no build text to pass, so their fold
+is untouched and (3) stands there. That is proved rather than assumed — the
+downstream plan was run from `main` (`34210033771`) and from the branch carrying
+the split (`34210128201`) and both read `GR ... 563 already keyed; 73 NOT
+stamped` and `DO ... 796 already keyed; 36 NOT stamped`, character for character.
+
+On sales orders the clause was worth **116 of 224 stamped rows** (plan
+`34210364936`), and it also dissolved the "uneven compartments" refusals: those
+builds were not uneven, they were two sofas folded into one unit.
+
+### The SALES-ORDER sofas — APPLIED 2026-09-08
+
+`backfill-ac-sofa-line-keys.mjs` (workflow **Backfill AutoCount line keys (SOFA,
+sales orders — plan by default)**) no longer carries a matching rule of its own:
+it reads `ac-reconcile-truth.json.gz` and calls the same `planLineKeys`. Its own
+rule had stamped ZERO rows in every run it ever had, for three reasons that were
+all defects of the rule —
+`docs/bugs/0710-the-sofa-line-key-backfill-could-never-stamp-a-single-row-so.md`.
+
+Apply run `34210459226`: `APPLIED: 224 row(s) stamped of 224 planned`, on 121
+book lines across 81 documents. `MODE=apply` needs
+`CONFIRM="STAMP SALES ORDER SOFA LINE KEYS"`.
+
+| | before | after |
+|---|---|---|
+| sales orders with a keyless line — **uneditable by composeEdit** | **89** | **8** |
+| `mfg_sales_order_items` sofa rows with no key | 237 / 1,168 | 13 / 1,168 |
+| the reconcile's sofa `unread` compartment answers (SO) | 195 | 113 |
+
+**Scope: sales orders, and only the SOFA builds on them.** Purchase orders are
+the lane's control and were deliberately not touched. The build invariant is now
+a STANDING measurement the plan takes on a fresh connection — run `34211018125`:
+across all 523 migrated sales orders holding a sofa, 578 builds, **2** not
+agreeing on one key, both pre-existing and both refused by this tool.
 
 **What the keys bought, measured against the run before them.** Reconcile
 `34189267879` (13:05 +08, before) against `34195045626` (14:32 +08, after). The
