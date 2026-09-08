@@ -917,7 +917,11 @@ of them are) could be handed base + surcharges by an ordinary edit
 (`docs/bugs/0600-*`).
 
 `soIsMigrated` is REQUIRED, not optional — an optional flag lets a new call site
-keep the unprotected answer silently, which is how the gap survived. **An ADD
+keep the unprotected answer silently, which is how the gap survived. **What it
+MEANS changed on 2026-09-08**: it is now "this order came FROM AutoCount" — the
+pair test in the migrated-lock section below — and not "this order exists in
+AutoCount". A written-back order the ERP priced itself is not an imported price
+(`docs/bugs/0713-an-order-the-erp-priced-itself-started-being-trusted-as-the.md`). **An ADD
 line always passes `false`**, on a migrated order too: a line typed today has no
 AutoCount price to protect.
 
@@ -1750,12 +1754,38 @@ the cutover write freeze, not a replacement for it: the freeze
 (`docs/write-freeze-staged-lift.md`) decides whether the MODULE may be saved at
 all, this decides whether THIS DOCUMENT may.
 
-**The predicate is `scm.mfg_sales_orders.linked_ac_docno`** (mig 0271): the
-origin AutoCount number on an imported order, NULL on one the ERP created.
-Nothing is stamped on a migrated row to mark it — the owner's rule is that
-adding a marker IS a change to the migrated data
-(「你换不一样就代表我们的数据从 autocount 搬过来的就不一样了啊」). The read has
-one home, `scm/lib/so-is-migrated.ts`, and it fails CLOSED.
+**The predicate is the PAIR of document numbers** — `doc_no` against
+`scm.mfg_sales_orders.linked_ac_docno` (mig 0271) — and **not** the presence of
+that column, which is what it was until 2026-09-08.
+
+`linked_ac_docno` means *"this document exists in AutoCount"*, which is TWO
+populations: carried across by the cutover, and **pushed there by our own
+write-back**, which stamps the same column on an order the ERP created minutes
+earlier. So a brand-new sales order went view-only a few minutes after a
+salesperson saved it — 「只开新单」 producing the exact opposite of itself
+(`docs/bugs/0703-a-brand-new-sales-order-becomes-read-only-minutes-after-it-i.md`,
+and `docs/bugs/0713-an-order-the-erp-priced-itself-started-being-trusted-as-the.md`
+for the money half of the same mistake).
+
+The two populations are told apart by how each is BUILT: the cutover import
+writes `docNo: "HC-" + acDoc`, so `doc_no` is a prefix plus the book number; the
+write-back sends the ERP's OWN number, so the two strings are EQUAL. Measured on
+production before it shipped (*SO migrated shape (read-only)*, run
+`34214516108`): of 2,883 company-1 orders carrying the column, 2,882 prefixed,
+1 equal, **0 neither** — and a second, independent signal (an
+`scm.autocount_outbox` `create_so` row) classifies the same 2,883 identically.
+
+**Nothing is stamped on a migrated row**, and that is why a column was NOT the
+fix: the owner's rule is that adding a marker IS a change to the migrated data
+(「你换不一样就代表我们的数据从 autocount 搬过来的就不一样了啊」), so a predicate
+over the numbers the import already wrote is the only answer that does not need
+his ruling. The options are enumerated in `docs/bugs/0703-a-brand-new-sales-order-becomes-read-only-minutes-after-it-i.md`.
+
+The read has one home, `scm/lib/so-is-migrated.ts`
+(`soIsMigrated` / `soIsMigratedShape`), and it fails CLOSED **twice**: the read
+THROWS rather than answering false, and a pair fitting NEITHER shape answers
+TRUE. **A reader must select BOTH columns** — `select('doc_no,
+linked_ac_docno')` — because the rule is about the two numbers together.
 
 | | |
 |---|---|
@@ -4345,10 +4375,14 @@ direct SO write path already passes `trustOperatorSelling = !(isPosTabletCaller)
   touched; a document a corrected total leaves inconsistent is NAMED.
   Ledger: `docs/bugs/0704-a-top-up-that-reads-the-outstanding-cut-is-blind-to-a-delive.md`.
 
-**A MIGRATED order is exempt.** When the SO header carries `linked_ac_docno`
-(migration 0271 — the marker that actually exists; `migrated_no_stock` lives only
-on `scm.grns` / `scm.delivery_orders`, never on the SO or PO header), the apply
-passes `trustOperatorSelling: 'including-zero'` and the stored price is kept. Two
+**A MIGRATED order is exempt.** When the order came FROM AutoCount —
+`soIsMigratedShape(doc_no, linked_ac_docno)`, not the mere presence of
+`linked_ac_docno` (migration 0271; `migrated_no_stock` lives only on
+`scm.grns` / `scm.delivery_orders`, never on the SO or PO header) — the apply
+passes `trustOperatorSelling: 'including-zero'` and the stored price is kept.
+Reading the bare column meant an order the ERP priced itself became "the book's
+price" the minute the write-back sent it:
+`docs/bugs/0713-an-order-the-erp-priced-itself-started-being-trusted-as-the.md`. Two
 reasons, both money:
 
 - that unit price is what AutoCount recorded as negotiated with the customer, and
