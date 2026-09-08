@@ -94,7 +94,7 @@ book's receipt rather than one raised in the ERP while the shop traded through
 cutover. The fixed section 3 settles that per document before anything is
 written.
 
-## MEASURED OUTCOME
+**MEASURED OUTCOME — applied to production and verified.**
 
 Applied to production. `MODE=plan` [34274440126](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34274440126),
 `MODE=apply` [34275605452](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34275605452),
