@@ -90,6 +90,7 @@ export const REVERSAL_SOURCE: Record<string, string> = {
   SIPAY: 'SIPAY_REVERSAL',
   SETTLE: 'SETTLE_REVERSAL',
   SETTLEADJ: 'SETTLEADJ_REVERSAL',
+  SETTLEMOVE: 'SETTLEMOVE_REVERSAL',
   ODB: 'ODB_REVERSAL',
   ODR: 'ODR_REVERSAL',
   RCT: 'RCT_REVERSAL',
@@ -454,6 +455,40 @@ export function settlementLines(
       debitSen: refund ? fee : 0,
       creditSen: refund ? 0 : fee,
       notes: `Fee is no longer receivable — ${tag}`,
+    },
+  ];
+}
+
+/**
+ * Card money keyed in WITHOUT a bank was booked to the GENERIC clearing
+ * account (326-0000, 未标银行) because nobody could say whose it was. The
+ * merchant's own statement has now named it, so the money moves onto that
+ * merchant's clearing account on the day the statement did — and the payout
+ * clears it from the same account the fee left (owner 2026-09-07/08: 我想要
+ * 拆账户 … match 了就不见). The generic account reads zero once every untagged
+ * payment has been matched.
+ *
+ *     Dr Clearing — PBB            3,365.00
+ *         Cr Clearing (generic)    3,365.00
+ */
+export function clearingMoveLines(
+  accounts: { fromCode: string; toCode: string },
+  s: { acquirerCode: string; txnDate: string; ref: string | null; amountSen: number },
+): RuleLine[] {
+  const amount = Math.abs(s.amountSen);
+  const tag = `${s.acquirerCode} settlement ${s.txnDate}${s.ref ? ` ref ${s.ref}` : ''}`;
+  return [
+    {
+      accountCode: accounts.toCode,
+      debitSen: amount,
+      creditSen: 0,
+      notes: `Named by the merchant's statement — ${tag}`,
+    },
+    {
+      accountCode: accounts.fromCode,
+      debitSen: 0,
+      creditSen: amount,
+      notes: `Out of the generic clearing account — ${tag}`,
     },
   ];
 }
