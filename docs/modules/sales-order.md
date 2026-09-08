@@ -3220,7 +3220,7 @@ strip. With the rule down, the label decodes as pieces AND the bracket decodes
 as pieces, and the line carries both — **the sofa reads one whole seat bigger
 than the book ordered.** Three PROCEEDED orders with purchase orders already
 raised were reported as differing from the book on exactly this
-(`docs/bugs/0712-the-label-and-the-build-it-names-were-both-counted-so-a-sof.md`).
+(`docs/bugs/0713-the-label-and-the-build-it-names-were-both-counted-so-a-sof.md`).
 
 Two things worth carrying forward:
 
@@ -3240,7 +3240,7 @@ the owner may have RULED on that build from the drawing, in which case the ERP
 is meant to differ from the text. The reconcile does not read
 `sofa-compartment-corrections-*.json` and so reports those as `DIFFER` too — 5
 of the 8 flagged on 2026-09-08 were his own rulings
-(`docs/bugs/0713-the-reconcile-reports-a-sofa-the-owner-has-already-ruled-on.md`).
+(`docs/bugs/0714-the-reconcile-reports-a-sofa-the-owner-has-already-ruled-on.md`).
 **Check that file before treating a flagged compartment as work.**
 
 Drafts stay freely saveable — the scan pipeline still lands imperfect drafts;
