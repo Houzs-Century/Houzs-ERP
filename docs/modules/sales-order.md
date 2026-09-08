@@ -4359,3 +4359,24 @@ A line whose `(code, colour)` pair has no counterpart lands in `dropped`, which
 this module already reports out loud rather than inventing a link. **A missing
 link is recoverable; a wrong one lights the wrong stock.** Both callers in
 `mfg-sales-orders.ts` pass `variants`, which both sides already carried.
+
+## Which SO line a migrated delivery note binds to — colour decides, or nobody does (2026-09-08)
+
+`scripts/sync-ac-delta.mjs` lane `do` and `scripts/create-migrated-documents.mjs`
+both bind an AutoCount delivery line to one of THIS order's lines through
+`buildMigratedDoPlan`. That binding is what moves a sales-order line's delivered
+quantity, so getting it wrong under-delivers one line and over-delivers another.
+
+The bucket is `(AutoCount SO number, ERP item code)` and the tie-break used to be
+position alone. Two lines of one sofa model in different fabrics are the ordinary
+case, and the book's delivery row carries no colour and no line key — 0 of 48,772
+DO lines have `fromSoDtlKey` on the 2026-09-08 re-cut — so position was a coin
+flip that also copied the wrong `variants` onto the note.
+
+**Now: the candidates must be indistinguishable by `variantIdentity` before
+position may decide.** If two candidate SO lines of one code carry different
+colours, no link is written; the row is listed against the delivery note for a
+person, and the delta lane counts it in its ALL-OR-NOTHING refusal total so the
+whole note is refused rather than half-written. The refusal message names the
+count: `colour cannot say which line N`. `docs/bugs/0688`,
+`docs/modules/delivery-order.md`.
