@@ -1520,7 +1520,7 @@ plain("═══════════ VARIANTS INSIDE THE LINE — ALL TYPES 
         `VARIANTS — a further ${noKey} axis value(s) are NOT counted above and are NOT work: two or more of our rows ` +
           "of one item at one quantity on one document carry no AutoCount line number, so which of ours answers which " +
           "of the book's was the checker's own guess, and both sides state the SAME set of values. Listed by name in " +
-          "each type's section as `no-key`; docs/bugs/0709 has the trace.",
+          "each type's section as `no-key`; docs/bugs/0709 and 0712 have the trace.",
       );
     }
   }

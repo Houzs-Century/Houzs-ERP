@@ -7,7 +7,7 @@
  * the test is what makes the move safe: a lifted block that still referenced
  * something in the old file's scope would load fine and only throw when called.
  *
- * The case is the production one, docs/bugs/0709 and 0711: two ERP rows of ONE
+ * The case is the production one, docs/bugs/0709 and 0712: two ERP rows of ONE
  * bedframe at ONE quantity on ONE delivery order, carrying NO AutoCount line
  * key, whose two colours are an exact transposition of the book's two.
  */

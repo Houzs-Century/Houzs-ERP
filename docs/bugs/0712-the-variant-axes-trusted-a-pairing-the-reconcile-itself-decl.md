@@ -108,4 +108,4 @@ lanes are working in today (`fix/gr-iv-pi-remainder`), so it is deliberately NOT
 done here — a change that moves another lane's numbers under it is not a
 courtesy.
 
-**Ref.** fix/do-colour-guard, 2026-09-08.
+**Ref.** fix/do-colour-guard, 2026-09-08. (Filed as `0711`, renumbered to `0712` at merge time — two other lanes took `0711` the same hour.)

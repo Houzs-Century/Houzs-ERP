@@ -3163,7 +3163,7 @@ moved with it, and the allow-list in
 `backend/tests/specialsRecordedNeverPriced.test.ts` gained the new path for the
 same reason the checker was on it: the same render, in a new file, computing no
 price and reading no money. (The move also brought a `no-key` column beside
-`differ` on the SCALAR axes — `docs/bugs/0711`, and
+`differ` on the SCALAR axes — `docs/bugs/0712`, and
 `docs/modules/delivery-order.md` for what it means.)
 
 Those readers are on the allow-list because they are READ-ONLY: they SELECT and

@@ -205,7 +205,7 @@ export function reportVariants({ t, label, rows, desc2, deps: V, VERDICT, SHOW, 
   if (guessFold.folded) {
     log(
       `${t} — ${guessFold.folded} axis value(s) across ${guessFold.buckets} bucket(s) moved out of DIFFER into no-key: ` +
-        "the pairing was the checker's guess and both sides state the same set. See docs/bugs/0709.",
+        "the pairing was the checker's guess and both sides state the same set. See docs/bugs/0709 and 0712.",
     );
   }
 

@@ -753,7 +753,7 @@ alone** — and Desc2 is where the colour lives. So the one fact that makes two
 colours look different is the same fact that makes the line key unstampable, and
 on those rows `check-ac-erp-reconcile.mjs` was reporting its own guess as a
 finding. Six such "swaps" have now been raised in this repo and five were
-phantoms (`docs/bugs/0672`, `0688`, `0689`, `0695`, `0696`, `0709`, `0711`).
+phantoms (`docs/bugs/0672`, `0688`, `0689`, `0695`, `0696`, `0709`, `0712`).
 
 The reconcile's variant table now carries a **`no-key`** column beside `differ`.
 A value moves into it only when all three hold, and they are stated once in
