@@ -184,6 +184,17 @@ have it.** The reconcile's AutoCount side is the committed snapshot
 So the phantom is a snapshot artefact, not a statement about the book. Both
 documents are corrected in this PR.
 
+### Its first dispatch after merge then found two more, in the CONTROL
+
+Run `34223295235`, `MODE=plan` against production, died on
+`invalid input value for enum scm.mfg_so_status: ""` — the control concatenated
+an ENUM as if it were text, and the pg fixture had declared that column `text`,
+so a real-Postgres suite passed on SQL production rejects. The same control's
+money column resolved to a name `scm.mfg_sales_orders` does not have, so its
+money arm compared NULL to NULL and proved nothing. Nothing was written — plan
+mode, before any write path.
+
+Both are traced in `docs/bugs/0718-a-test-fixture-looser-than-production-let-a-delete-script-sh.md`.
 **Ref.** `chore/remove-test-so`, 2026-09-08. Runs: `34220089049` (baseline),
 `34220096163` (shape + outbox), `34218303185` (reconcile before),
 `34220446297` (plan, refused).
