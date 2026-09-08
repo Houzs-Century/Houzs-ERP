@@ -1,6 +1,6 @@
 ## A special order the picker has a code for was carried as free text, so the book reads as unmet [low]
 
-<!-- status: open -->
+<!-- status: fixed -->
 
 <!-- area: AutoCount sync + write-back -->
 
@@ -60,5 +60,24 @@ edit away from vanishing. The line's two other specials are untouched —
 has no code for, which is exactly what the owner said free text is for.
 
 **Ref.** `fix/so-last-6-and-gr-transpose`, 2026-09-08. Catalogue measured in
-probe run `34249150622`. Marked `open` until the apply run is pasted here — the
-writer exists and has not yet been run against production at the time of writing.
+probe run `34249150622`. The apply is below.
+
+### The run, 2026-09-08
+
+**Plan `34253776387`**, then **apply `34254097020`**:
+
+```
+HC-SO-013496 dtl 926843: 9058-1S
+  specials ["Nilon bottom","CHANGE8030BACKREST","Nylon Fabric"]
+  ->       ["Nilon bottom","Change 8030 Backcushion","Nylon Fabric"]
+  custom_specials is DERIVED and is left alone: ["Nilon bottom","CHANGE8030BACKREST"]
+
+lines aligned 1 · already aligned 0 · refused 0
+VERIFY — re-reading 1 line(s) on a fresh connection
+  OK  HC-SO-013496 dtl 926843  ["Nilon bottom","Change 8030 Backcushion","Nylon Fabric"]  money unchanged
+VERIFY OK — the picker's own code is on the line, the free-text spelling is gone,
+            and all three money columns are unchanged
+```
+
+The sales-order tally that followed (`34254400214`) reads **`specials  0 differ`**
+across all 2,882 documents, where the run before this lane read 1.

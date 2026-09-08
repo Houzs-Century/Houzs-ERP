@@ -54,6 +54,7 @@ import {
   REQUEUE_NOTE_PREFIX,
   acNeedsAttention,
   acOutboxState,
+  acRefusalPredatesArrival,
   acRowCanSendNow,
   acRowIsRequeueable,
   classifyAcSkip,
@@ -418,7 +419,7 @@ export const listAutocountOutboxHandler = async (
      rule is no longer restated here: the state comes from `acOutboxState`, the
      one function the list, the health check and this block now share. */
   const [allRows, requeuedRows, retiredRows] = await Promise.all([
-    scanDocs(c, 'id, doc_type, doc_no, status', (q) => q, 'live'),
+    scanDocs(c, 'id, doc_type, doc_no, status, created_at', (q) => q, 'live'),
     /* `last_error` is NEVER downloaded. All this needs from it is whether the
        re-queue marker is on the front, and the LIKE answers that in Postgres —
        the notes are up to several hundred characters of the account book's own
@@ -445,6 +446,8 @@ export const listAutocountOutboxHandler = async (
      legitimately count the same document: one that arrived and was later edited
      into a refusal IS in the account book AND does need attention. */
   const statesPerDoc = new Map<string, Set<string>>();
+  const arrivedAt = new Map<string, string>();
+  const refusedAt = new Map<string, string>();
   for (const r of allRows.rows) {
     const key = acDocKey(r.doc_type, r.doc_no);
     /* The marker itself stands in for the note it prefixes. The LIKE above is
@@ -457,6 +460,21 @@ export const listAutocountOutboxHandler = async (
     const seen = statesPerDoc.get(key);
     if (seen) seen.add(state);
     else statesPerDoc.set(key, new Set([state]));
+    /* THE NEWEST ARRIVAL PER DOCUMENT, which is what makes a refusal readable as
+       history. Set membership alone cannot: `sent` and `failed` are both true of
+       a document that arrived and was later edited into a refusal, and that one
+       really does need attention. Only the other order is over. */
+    if (state === 'sent') {
+      const at = String(r.created_at ?? '');
+      const held = arrivedAt.get(key);
+      if (at && (!held || at > held)) arrivedAt.set(key, at);
+    }
+    /* And the newest REFUSAL, so the chip can compare the two. */
+    if (state === 'failed' || state === 'skipped') {
+      const at = String(r.created_at ?? '');
+      const held = refusedAt.get(key);
+      if (at && (!held || at > held)) refusedAt.set(key, at);
+    }
   }
 
   const docsIn = (...states: string[]): number => {
@@ -472,7 +490,25 @@ export const listAutocountOutboxHandler = async (
   const nFailed = docsIn('failed');
   const nSkipped = docsIn('skipped');
   const nRequeued = docsIn('requeued');
-  const nAttention = docsIn('failed', 'skipped');
+  /* ── NOT ACCEPTED MEANS "STILL", NOT "EVER" ────────────────────────────────
+     A document whose newest refusal PREDATES its newest arrival has been
+     answered: it is in the account book and nothing needs doing. Counting it
+     here told the owner `NOT ACCEPTED 2` on the same screen that counted both
+     documents under `IN AUTOCOUNT` and whose own re-queue answer read "This
+     document is already in AutoCount ... TO DO: Nothing" — 25 documents, chips
+     summing to 26 (2026-09-08, 「明明都进去了」).
+
+     The opposite order still counts, and must: a document that arrived and was
+     then edited into a refusal IS in the book AND does need attention. */
+  const nAttention = (() => {
+    let n = 0;
+    for (const [key, seen] of statesPerDoc) {
+      if (!seen.has('failed') && !seen.has('skipped')) continue;
+      if (acRefusalPredatesArrival(refusedAt.get(key), arrivedAt.get(key))) continue;
+      n += 1;
+    }
+    return n;
+  })();
   const nTotal = statesPerDoc.size;
   /* DOCUMENTS, like every other number on this line — the retired scan returns
      one row per SEND and a document that was cleared after nine sends is one
@@ -552,6 +588,16 @@ export const listAutocountOutboxHandler = async (
   if (rowsErr) return c.json({ error: 'load_failed', reason: rowsErr.message }, 500);
 
   let presented = ((rowData as unknown as Row[] | null) ?? []).map(present);
+  /* THE SAME RULE ON THE ROW AS ON THE CHIP, from the same map — two opinions
+     about one document is how the badge came to disagree with the chip beside it
+     and with the row's own re-queue answer. `present` cannot see this: it is
+     handed one row and the question is about the document. */
+  presented = presented.map((r) => (
+    r.needs_attention
+      && acRefusalPredatesArrival(String(r.created_at ?? ''), arrivedAt.get(acDocKey(r.doc_type, r.doc_no)))
+      ? { ...r, needs_attention: false }
+      : r
+  ));
   if (stateParam === 'attention') presented = presented.filter((r) => r.needs_attention);
   else if (stateParam === 'skipped') presented = presented.filter((r) => r.state === 'skipped');
   /* `failed` narrows the same way `skipped` does, and for the same reason: a
