@@ -221,27 +221,6 @@ export interface AcOutboxRow {
   sent_at: string | null;
 }
 
-/** The chip-strip numbers. DOCUMENTS, not sends, on every one of these. Named
- *  (it was inline until 2026-09-08) so `acRegisterTotal` can take the whole
- *  object; while the shape was anonymous both count lines reached in for
- *  `total` by hand, on every tab, and no test could make them agree. */
-export interface AcOutboxCounts {
-  pending: number;
-  sent: number;
-  failed: number;
-  skipped: number;
-  requeued: number;
-  attention: number;
-  /** Documents a PERSON has cleared off this page. Not a state of the send —
-   *  every other number here is a claim about what AutoCount did — which is why
-   *  it is not summed into `total`. BECAUSE it is not, the Cleared tab renders a
-   *  population `total` does not describe, and dividing by `total` there printed
-   *  "Showing 1-3 of 1 document" on the live page. Pick the denominator with
-   *  `acRegisterTotal`; never read `total` at a call site that can be on any tab. */
-  archived: number;
-  total: number;
-}
-
 export interface AcOutboxResponse {
   /**
    * `on` answers "is sending switched on FOR THE COMPANY I AM LOOKING AT", not
@@ -260,7 +239,22 @@ export interface AcOutboxResponse {
    * and was later edited into a refusal is counted by `sent` and by `failed`,
    * because both are true of it and both chips would list it.
    */
-  counts: AcOutboxCounts;
+  counts: {
+    pending: number;
+    sent: number;
+    failed: number;
+    skipped: number;
+    requeued: number;
+    attention: number;
+    /**
+     * Documents a PERSON has cleared off this page. Not a state of the send —
+     * every other number here is a claim about what AutoCount did, and this one
+     * is a claim about what somebody decided — which is why it is not summed
+     * into `total` either.
+     */
+    archived: number;
+    total: number;
+  };
   /**
    * False when the server's count scan stopped before the end of the queue, so
    * every number above is a floor rather than a fact. Required in the type
@@ -1768,6 +1762,7 @@ export function acGroupsOfType(groups: AcDocGroup[], docType: AcDocType | ""): A
 export function acListCountLine(shown: number, total: number): string {
   return `${shown} of ${total} document${total === 1 ? "" : "s"}`;
 }
+
 
 /**
  * What to add when the server could not scan the whole queue for its counts.

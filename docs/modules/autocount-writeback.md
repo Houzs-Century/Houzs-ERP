@@ -327,6 +327,7 @@ Each hook sits at the point the document becomes permanent — after the
 | DO created parentless, and GRN / PI with NO linked line | those routers' `POST /` | `recordParentlessCreate` — a `skipped` row, because AutoCount has no create for these. Not requeueable, which is why a wrongly-parentless row also loses its Send-again button |
 | SI created on `POST /sales-invoices` | `scm/lib/si-autocount-source.ts` | The one of the four that RESOLVES the source before it says anything. `POST /` accepts `deliveryOrderId` and a per-line `doItemId`, so the unconditional `recordParentlessCreate` that used to sit there claimed a fact it never checked and filed every desktop from-DO invoice as ERP-only (`HC-SI-2608-001`; BUG-HISTORY 2026-08-17). Now: one source DO with every line linked -> `enqueueConvert` `do_to_iv`; several -> the merged-conversion skip; a linked line beside a standalone one -> `mixed-source-lines`; genuinely no source -> `recordParentlessCreate`, unchanged |
 | line REMOVED, any of the six | the six `DELETE /.../items/:itemId` handlers | `retiredLineOf(...)` BEFORE the row is destroyed, handed to the edit as `retire` — see 7a |
+| SO edit (**the account book is WRONG and a person is right**) | `scripts/sync-ac-delta.mjs`, `LANES=push` | The only enqueue that does not come from a route. Where the delta sync REFUSES to write a header field because a person owns it, the two systems are left disagreeing — and since the owner opened the system to staff (2026-09-08), the ERP is master on that row, so the BOOK is the side that has to move. One keyed `enqueueEdit` per such order, `touchedFields` naming the columns the person set. Driven over the pg connection by `lib/pgrest-shim.mjs`, so it is the SAME composer and not a second one (precedent: `rebuild-ac-document.mjs`). OFF by default and behind the script's CONFIRM phrase, because it writes into the queue that feeds a licensed book. See `docs/modules/change-log.md` for the watching half of the same instruction |
 
 **An amendment is an EDIT, never a delete-and-recreate.** `applySoAmendment` and
 `applyPoAmendment` rewrite a confirmed document's header and lines in place; the
@@ -708,6 +709,45 @@ row in the outbox is a SALES order, including both historical `KeylessLineError`
 refusals. So the key is a NECESSARY condition that is now met; whether it is
 SUFFICIENT needs somebody to edit a migrated goods receipt in the ERP and read
 the resulting outbox row. Until that happens this stays UNTESTED.
+
+### A REPAIR can take the key away again — and it did
+
+The backfill above stamps keys forward. Nothing stops a later repair from
+INSERTing a row that never gets one, and one did: both INSERT statements in
+`backend/scripts/apply-sofa-compartment-corrections.mjs` named their columns one
+at a time and neither named `linked_ac_dtlkey`, so **every sofa compartment that
+script has ever ADDED landed keyless beside siblings that carry the key**.
+
+For a sofa that is not one row missing a key — it is the whole document losing
+its identity, because the invariant this module rests on is that all of a
+build's compartments carry the SAME key
+(`src/scm/lib/autocount-line-keys.ts:155`, and §7b's D9 fold below reads the key
+to decide which rows are one build). `composeEdit` then refuses the document
+whole and the operator reads *"The ERP cannot tell which lines AutoCount already
+has"*.
+
+It is invisible from the other direction too. `check-ac-erp-reconcile.mjs`
+compares a sofa's compartments per DtlKey, so a keyless compartment is not
+counted at all: `HC-SO-013475` held `1A(LHF)+1NA+1A(RHF)` and reconcile run
+`34199937397` read it as `1A(LHF)+1A(RHF)`.
+
+Fixed both ways on 2026-09-08 —
+`docs/bugs/0704-a-sofa-compartment-added-by-a-correction-lost-the-autocount.md`.
+The write path copies `i.linked_ac_dtlkey` from the row the compartment is built
+from; the rows earlier rounds already added are repaired by
+`backend/scripts/repair-sofa-added-compartment-line-key.mjs` (workflow **Repair
+sofa compartments added without their AutoCount line key**; `MODE=apply` needs
+`CONFIRM="I HAVE REVIEWED THE DRY-RUN"`, which the workflow passes). It copies
+only a key the row's OWN siblings already agree on, and only after the book
+confirms that key is a line of that document carrying that row's Desc2 — a wrong
+key is worse than a missing one, so all four gates refuse rather than fall back.
+
+**The lesson for the next repair, and it is now the third column lost this
+way** — `warehouse_id` (seven lines PENDING for ever, 2026-08-11),
+`description` / `delivery_date`, and now `linked_ac_dtlkey`: a column-by-column
+INSERT that clones a sibling row omits whatever nobody remembered, silently. If
+a repair adds a row beside an existing one, the columns that carry IDENTITY —
+`linked_ac_dtlkey`, `warehouse_id` — are not optional extras.
 
 ### The defect this section exists for
 
@@ -2434,6 +2474,23 @@ also parsed **`Desc2`** to get the ERP's variants —
 `import-ac-outstanding-so.mjs` turns a bedframe's `Desc2` into
 `variants.fabricCode` / `gap` / `divanHeight` / `legHeight` / `totalHeight` /
 `specials` — so the specification has to go back.
+
+> **Where that block is built, since 2026-09-08.** The decode is
+> `parseBedframe(Desc2)` and the ten-key object above is
+> `bedframeVariants(bf, findColour)`, both exported from
+> `backend/scripts/lib/parse-bedframe.mjs`. The object used to be spelled out
+> inside `import-ac-outstanding-so.mjs`, `import-ac-outstanding-po.mjs` and
+> `topup-ac-po-lines.mjs` — byte-for-byte identical in all three — and a fourth
+> writer (`topup-ac-lines-from-truth.mjs`) would have made a fourth copy.
+> `parseBedframe` itself was in exactly that state once and drifted TWICE
+> (a808bf36, 60125216) before anyone noticed, so the copies were the risk. The
+> key names are a CONTRACT with the UI (the Fabrics picker reads `fabricCode`;
+> `totalHeight` is the form's "Total height (auto)") and are pinned by
+> `backend/tests/bedframeVariantsBlock.test.ts`, which transcribes the writers'
+> own expression rather than checking the module against itself.
+> Not to be confused with `blockFor` in `backend/scripts/lib/po-arm-own-text.mjs`:
+> that one carries `size` and NOT `specials` because it is a COMPARISON
+> projection for a diagnostic, never the block a writer persists.
 
 `Desc2` was already being sent, so this was missing CONTENT, not a missing field.
 `composeDescription2` emitted `Col / Fabric / Seat / Leg` and read colour off
@@ -4530,7 +4587,10 @@ NULL`, including both count scans; a third scan counts the retired documents
 separately and publishes `counts.archived`. It is never folded into `total` —
 every other number on that line is a claim about what AutoCount did, and this
 one is a claim about what somebody decided. `?state=archived` is the only filter
-that looks at the other shelf.
+that looks at the other shelf — and therefore the only one whose "N of M
+documents" line counts against `counts.archived` rather than `counts.total`
+(`acListTotal`). It read *"3 of 1 document"* on production for the first few
+minutes; `docs/bugs/0705-the-cleared-tab-counted-its-documents-against-a-total-that-e.md`.
 
 **On screen.** A **Clear** control on the document line and a **Cleared** tab,
 on BOTH surfaces (`acDocCanArchive` / `acDocCanRestore` decide visibility — a

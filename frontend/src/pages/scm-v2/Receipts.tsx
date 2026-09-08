@@ -6,6 +6,14 @@
 // posts directly, 错就 void), DEBTOR (read-only mirror of the Other Debtors
 // receipts, raised and four-layered over there), CUSTOMER (read-only mirror
 // of the sales payments — 顾客的钱 keeps its own flow).
+//
+// The list is the voucher list's grid (owner 2026-09-08, pointing at that
+// header: Filter 我要这样的 filter function): every column sorts, every funnel
+// filters, the search box finds a number, a payer, a bank; the month picker,
+// the count and the total ride in the grid's toolbar and the total follows
+// whatever is filtered. New / Edit open in the pop-out over the list — the
+// form used to be pushed in ABOVE the table, which sent the operator to the
+// top of a long list (如果我在下面我要滑到很上面).
 // ----------------------------------------------------------------------------
 
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -18,6 +26,8 @@ import {
   type Account, type ReceiptRow,
 } from '../../vendor/scm/lib/accounting-queries';
 import { AccountSelect } from '../../vendor/scm/components/AccountSelect';
+import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
+import { Modal } from '../../vendor/scm/components/Modal';
 import { useSaveHotkey, SAVE_HOTKEY_HINT } from '../../vendor/scm/lib/use-save-hotkey';
 import { DateField } from '../../vendor/scm/components/DateField';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
@@ -38,6 +48,106 @@ const fmtRm = (sen: number | null | undefined): string => {
 const KIND_LABEL: Record<ReceiptRow['kind'], string> = {
   GENERAL: 'Receipt', DEBTOR: 'Other Debtor', CUSTOMER: 'Customer',
 };
+
+const RECEIPTS_STORAGE_KEY = 'receipts-list.layout.v1';
+/* Newest first, the voucher list's order. Module-level on purpose: the grid
+   re-derives its visible rows whenever a prop like this changes identity and
+   reports them back — an inline comparator would report on every render. */
+const NEWEST_FIRST = (a: ReceiptRow, b: ReceiptRow): number => b.date.localeCompare(a.date) || b.number.localeCompare(a.number);
+const NO_ROWS: ReceiptRow[] = [];
+
+const iconButton = { background: 'none', border: 'none', cursor: 'pointer', color: 'var(--fg-muted)', padding: 2 } as const;
+
+/* The grid's columns — the voucher list's shape: a cell, what search and the
+   funnel see of it, how it sorts. Edit / Void live in a last column so the
+   row tests (and the operator) find them by the receipt's number. */
+const buildReceiptColumns = (h: {
+  canEdit: boolean; canCancel: boolean;
+  onEdit: (r: ReceiptRow) => void; onVoid: (r: ReceiptRow) => void;
+}): DataGridColumn<ReceiptRow>[] => [
+  {
+    key: 'kind', label: 'Kind', width: 110, sortable: true, groupable: true,
+    accessor: (r) => <span style={{ fontSize: 'var(--fs-11)', fontWeight: 600 }}>{KIND_LABEL[r.kind]}</span>,
+    searchValue: (r) => KIND_LABEL[r.kind],
+    filterValue: (r) => KIND_LABEL[r.kind],
+    groupValue: (r) => KIND_LABEL[r.kind],
+    sortFn: (a, b) => KIND_LABEL[a.kind].localeCompare(KIND_LABEL[b.kind]),
+  },
+  {
+    key: 'number', label: 'No.', width: 180, sortable: true,
+    accessor: (r) => (
+      <span style={{ fontFamily: 'var(--font-mono)' }}>
+        {r.kind === 'DEBTOR'
+          ? <Link to="/scm/other-debtors" style={{ color: 'inherit' }}>{r.number}</Link>
+          : r.kind === 'CUSTOMER'
+            ? <Link to={`/scm/sales-orders/${r.number}`} style={{ color: 'inherit' }}>{r.number}</Link>
+            : r.number}
+      </span>
+    ),
+    searchValue: (r) => r.number,
+    filterValue: (r) => r.number,
+    filterType: 'numbering',
+    sortFn: (a, b) => a.number.localeCompare(b.number),
+  },
+  {
+    key: 'date', label: 'Date', width: 120, sortable: true,
+    accessor: (r) => r.date,
+    searchValue: (r) => r.date,
+    filterType: 'date', dateValue: (r) => r.date,
+    sortFn: (a, b) => a.date.localeCompare(b.date),
+  },
+  {
+    key: 'payer', label: 'From', width: 260, sortable: true, groupable: true,
+    accessor: (r) => r.payer,
+    searchValue: (r) => r.payer,
+    groupValue: (r) => r.payer || '(none)',
+    sortFn: (a, b) => a.payer.localeCompare(b.payer),
+  },
+  {
+    key: 'moneyAccount', label: 'Into', width: 200, sortable: true, groupable: true,
+    accessor: (r) => <span style={{ fontFamily: 'var(--font-mono)' }}>{r.moneyAccount}</span>,
+    searchValue: (r) => r.moneyAccount,
+    groupValue: (r) => r.moneyAccount || '(none)',
+    sortFn: (a, b) => a.moneyAccount.localeCompare(b.moneyAccount),
+  },
+  {
+    key: 'totalSen', label: 'Amount', width: 140, sortable: true, align: 'right',
+    accessor: (r) => <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(r.totalSen)}</span>,
+    searchValue: (r) => fmtRm(r.totalSen),
+    exportValue: (r) => r.totalSen / 100,
+    filterType: 'number', numberValue: (r) => r.totalSen / 100,
+    sortFn: (a, b) => a.totalSen - b.totalSen,
+  },
+  {
+    key: 'status', label: 'Status', width: 120, sortable: true, groupable: true,
+    accessor: (r) => <span style={{ fontSize: 'var(--fs-11)' }}>{r.status}</span>,
+    searchValue: (r) => r.status,
+    filterValue: (r) => r.status,
+    groupValue: (r) => r.status,
+    sortFn: (a, b) => a.status.localeCompare(b.status),
+  },
+  {
+    key: 'actions', label: '', exportLabel: 'Actions', width: 80, align: 'right',
+    accessor: (r) => (
+      <span style={{ whiteSpace: 'nowrap' }}>
+        {r.kind === 'GENERAL' && r.status === 'POSTED' && h.canEdit && (
+          <button type="button" aria-label={`Edit ${r.number}`} style={{ ...iconButton, marginRight: 4 }}
+            onClick={(e) => { e.stopPropagation(); h.onEdit(r); }}>
+            <Pencil size={14} strokeWidth={1.75} />
+          </button>
+        )}
+        {r.kind === 'GENERAL' && r.status === 'POSTED' && h.canCancel && (
+          <button type="button" aria-label={`Void ${r.number}`} style={iconButton}
+            onClick={(e) => { e.stopPropagation(); h.onVoid(r); }}>
+            <Ban size={14} strokeWidth={1.75} />
+          </button>
+        )}
+      </span>
+    ),
+    searchValue: () => '',
+    exportValue: () => '',
+  },
+];
 
 type Line = { rid: number; description: string; creditAccountCode: string; amountSen: number };
 
@@ -139,14 +249,29 @@ export const Receipts = () => {
       void notify({ title: 'Void failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
     }
   };
+  /* The columns are built once; the void handler closes over dialogs and
+     mutations that change identity every render, so it is reached by ref. */
+  const voidRef = useRef(onVoid);
+  voidRef.current = onVoid;
+  const columns = useMemo(() => buildReceiptColumns({
+    canEdit, canCancel,
+    onEdit: (r) => setEditing(r),
+    onVoid: (r) => { void voidRef.current(r); },
+  }), [canEdit, canCancel]);
 
   /* The one "may post" for the button and the key alike. */
   const canPost = total > 0 && !!payer.trim() && !!bank && !!receiptDate && !lines.some((l) => l.amountSen > 0 && !l.creditAccountCode);
   /* F3 / Ctrl+S posts the open form (owner 2026-09-08: 像 autocount 按 f3). */
   useSaveHotkey(() => { if (canPost) void save(); }, adding && !createReceipt.isPending && !updateReceipt.isPending);
 
-  const rows = listQ.data?.receipts ?? [];
-  const listTotal = rows.filter((r) => r.status !== 'CANCELLED').reduce((s, r) => s + r.totalSen, 0);
+  /* One identity per load: a fresh `[]` per render would have the grid
+     re-derive and report its rows every render, and the report re-renders. */
+  const rows = listQ.data?.receipts ?? NO_ROWS;
+  /* What the grid currently shows after its search and funnels — the count
+     and the total below follow it, so a filtered list totals itself. */
+  const [visible, setVisible] = useState<ReceiptRow[] | null>(null);
+  const shown = visible ?? rows;
+  const listTotal = shown.filter((r) => r.status !== 'CANCELLED').reduce((s, r) => s + r.totalSen, 0);
 
   return (
     <div className="space-y-4">
@@ -162,13 +287,17 @@ export const Receipts = () => {
       />
 
       {adding && (
-        <section className={styles.card}>
-          <div className={styles.cardHeader}><h2 className={styles.cardTitle}>{editing ? `Edit ${editing.number} — 改了会重新过账` : 'New receipt — 录入即过账'}</h2></div>
+        <Modal
+          title={editing ? `Edit ${editing.number} — 改了会重新过账` : 'New receipt — 录入即过账'}
+          onClose={closeForm}
+          width="min(980px, 100%)"
+          ariaLabel={editing ? 'Edit receipt' : 'New receipt'}
+        >
           {/* Every control wears the same field dress (styles.fieldInput — the
               PV form's), on a grid: Date | Received from | Received into, then
               Description | Account | Amount per line. Owner 2026-09-07: 没办法
               输入日期, 格子等等不整齐, 有些有格子有些没有. */}
-          <div className={styles.cardBody} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)', fontSize: 'var(--fs-13)' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)', fontSize: 'var(--fs-13)' }}>
             <div style={{ display: 'grid', gridTemplateColumns: 'minmax(150px, 180px) minmax(220px, 1fr) minmax(240px, 1fr)', gap: 'var(--space-3)', alignItems: 'end' }}>
               <label className={styles.field}>
                 <span className={styles.fieldLabel}>Date</span>
@@ -207,12 +336,23 @@ export const Receipts = () => {
               <Button variant="ghost" size="sm" onClick={closeForm}>Close</Button>
             </div>
           </div>
-        </section>
+        </Modal>
       )}
 
-      <section className={styles.card}>
-        <div className={styles.cardHeader}>
-          <h2 className={styles.cardTitle}>Money in</h2>
+      <DataGrid<ReceiptRow>
+        rows={rows}
+        columns={columns}
+        storageKey={RECEIPTS_STORAGE_KEY}
+        exportName="Receipts"
+        rowKey={(r) => `${r.kind}-${r.id}`}
+        searchPlaceholder="Search no., payer, bank…"
+        isLoading={listQ.isLoading}
+        emptyMessage={`Nothing came in ${month ? 'this month' : 'yet'} (searched general + other-debtor + customer receipts).`}
+        onFilteredRowsChange={setVisible}
+        defaultSort={NEWEST_FIRST}
+        rowStyle={(r) => (r.status === 'CANCELLED' ? { opacity: 0.55 } : undefined)}
+        groupBanner={false}
+        toolbar={(
           <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', fontSize: 'var(--fs-13)' }}>
             <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} aria-label="Month"
               style={{ padding: '4px 8px', border: '1px solid var(--border-weak, #d8d5cd)', borderRadius: 6 }} />
@@ -222,65 +362,11 @@ export const Receipts = () => {
                 All months
               </button>
             )}
+            <span style={{ color: 'var(--fg-muted)' }}>{shown.length} receipt(s)</span>
             <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700 }}>{fmtRm(listTotal)}</span>
           </div>
-        </div>
-        <div className={styles.cardBody} style={{ overflowX: 'auto' }}>
-          {listQ.isLoading && <div style={{ fontSize: 'var(--fs-13)' }}>Loading…</div>}
-          {!listQ.isLoading && rows.length === 0 && (
-            <div style={{ fontSize: 'var(--fs-13)', color: 'var(--fg-muted)' }}>Nothing came in {month ? 'this month' : 'yet'} (searched general + other-debtor + customer receipts).</div>
-          )}
-          {rows.length > 0 && (
-            <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 'var(--fs-13)' }}>
-              <thead>
-                <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--border-weak, #e3e1da)' }}>
-                  <th style={{ padding: '6px 8px' }}>Kind</th>
-                  <th style={{ padding: '6px 8px' }}>No.</th>
-                  <th style={{ padding: '6px 8px' }}>Date</th>
-                  <th style={{ padding: '6px 8px' }}>From</th>
-                  <th style={{ padding: '6px 8px' }}>Into</th>
-                  <th style={{ padding: '6px 8px', textAlign: 'right' }}>Amount</th>
-                  <th style={{ padding: '6px 8px' }}>Status</th>
-                  <th style={{ padding: '6px 8px' }} aria-label="actions" />
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r) => (
-                  <tr key={`${r.kind}-${r.id}`} style={{ borderBottom: '1px solid var(--border-weak, #f0eee8)', opacity: r.status === 'CANCELLED' ? 0.55 : 1 }}>
-                    <td style={{ padding: '4px 8px', fontSize: 'var(--fs-11)', fontWeight: 600 }}>{KIND_LABEL[r.kind]}</td>
-                    <td style={{ padding: '4px 8px', fontFamily: 'var(--font-mono)' }}>
-                      {r.kind === 'DEBTOR'
-                        ? <Link to="/scm/other-debtors" style={{ color: 'inherit' }}>{r.number}</Link>
-                        : r.kind === 'CUSTOMER'
-                          ? <Link to={`/scm/sales-orders/${r.number}`} style={{ color: 'inherit' }}>{r.number}</Link>
-                          : r.number}
-                    </td>
-                    <td style={{ padding: '4px 8px' }}>{r.date}</td>
-                    <td style={{ padding: '4px 8px' }}>{r.payer}</td>
-                    <td style={{ padding: '4px 8px', fontFamily: 'var(--font-mono)' }}>{r.moneyAccount}</td>
-                    <td style={{ padding: '4px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{fmtRm(r.totalSen)}</td>
-                    <td style={{ padding: '4px 8px', fontSize: 'var(--fs-11)' }}>{r.status}</td>
-                    <td style={{ padding: '4px 8px', textAlign: 'right', whiteSpace: 'nowrap' }}>
-                      {r.kind === 'GENERAL' && r.status === 'POSTED' && canEdit && (
-                        <button type="button" aria-label={`Edit ${r.number}`} onClick={() => setEditing(r)}
-                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--fg-muted)', padding: 2, marginRight: 4 }}>
-                          <Pencil size={14} strokeWidth={1.75} />
-                        </button>
-                      )}
-                      {r.kind === 'GENERAL' && r.status === 'POSTED' && canCancel && (
-                        <button type="button" aria-label={`Void ${r.number}`} onClick={() => void onVoid(r)}
-                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--fg-muted)', padding: 2 }}>
-                          <Ban size={14} strokeWidth={1.75} />
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-      </section>
+        )}
+      />
     </div>
   );
 };

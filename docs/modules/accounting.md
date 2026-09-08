@@ -450,7 +450,17 @@ month" (`listReceiptsHandler`, `backend/src/scm/routes/receipts.ts`;
 `useReceipts` in `frontend/src/vendor/scm/lib/accounting-queries.ts`; the
 page keeps an "All months" button beside the picker,
 `frontend/src/pages/scm-v2/Receipts.tsx`). F3 or Ctrl+S posts the open
-receipt form once it is complete (`useSaveHotkey`, payment-voucher.md). Contracts:
+receipt form once it is complete (`useSaveHotkey`, payment-voucher.md). Since
+2026-09-08 the list is the voucher list's grid (owner, pointing at that
+header: Filter 我要这样的 filter function) — `DataGrid`
+(`frontend/src/vendor/scm/components/DataGrid.tsx`): every column sorts and
+funnels (Kind / Status by value, No. type-to-find, Date by preset or range,
+Amount by min/max), the search box finds a number, a payer or a bank, Export
+Excel; the month picker, the count and the total ride in its toolbar and the
+total follows what is filtered. New / Edit open in the pop-out over the list
+(`Modal`, the AP invoice's) — the form used to be pushed in above the table,
+which sent the operator to the top of a long list (如果我在下面我要滑到很上面).
+Contracts:
 `backend/tests/receipts.test.ts` ("no month asked for lists every month"),
 `Receipts.test.tsx` ("opens on every month").
 Handlers in `receipts.ts` (mounted beside other-debtors in

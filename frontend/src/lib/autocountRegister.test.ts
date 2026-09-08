@@ -14,7 +14,7 @@
 // to look tidy in UTC.
 import { describe, expect, it } from "vitest";
 
-import type { AcDocGroup, AcOutboxCounts, AcOutboxRow } from "./autocountOutbox";
+import type { AcDocGroup, AcOutboxRow } from "./autocountOutbox";
 import { acGroupByDocument } from "./autocountOutbox";
 import {
   AC_BOOK_DIFFERENT_FLAG,
@@ -31,7 +31,6 @@ import {
   acDayLabel,
   acGroupsInRange,
   acRegisterItems,
-  acRegisterTotal,
   acSendsMark,
   acShowingLine,
   acSortGroups,
@@ -364,51 +363,5 @@ describe("the line that closes the register", () => {
   /* Never "Showing 1–0". An empty register is a sentence, not arithmetic. */
   it("does not count from one when there is nothing to count", () => {
     expect(acShowingLine(0, 3412)).toBe("Showing none of 3412 documents");
-  });
-});
-
-/* THE DENOMINATOR BELONGS TO THE TAB YOU ARE ON.
- *
- * `counts.archived` is deliberately NOT summed into `counts.total` — the type's
- * own comment says why: every other number there is a claim about what
- * AutoCount did, and this one is a claim about what a PERSON decided. So the
- * Cleared tab renders rows from a population `total` does not describe, and
- * both count lines read `total` regardless of tab.
- *
- * The owner saw the result on the live page and asked what had gone wrong:
- * three rows above the words "Showing 1-3 of 1 document", and "Cleared | 3 of
- * 1 document" in the filter strip. Three of one. */
-describe("the denominator the count lines divide by", () => {
-  const counts = (over: Partial<AcOutboxCounts>): AcOutboxCounts => ({
-    pending: 0, sent: 0, failed: 0, skipped: 0, requeued: 0,
-    attention: 0, archived: 0, total: 0, ...over,
-  });
-
-  it("counts CLEARED rows against the cleared population, not the live one", () => {
-    expect(acRegisterTotal(counts({ total: 1, archived: 3 }), "archived")).toBe(3);
-  });
-
-  it("counts every other tab against the live total", () => {
-    const c = counts({ total: 1, archived: 3 });
-    for (const s of ["all", "pending", "attention", "sent"] as const) {
-      expect(acRegisterTotal(c, s), s).toBe(1);
-    }
-  });
-
-  /* The bug as the owner met it, end to end through the sentence he read. */
-  it("no longer says three of one", () => {
-    const c = counts({ total: 1, archived: 3 });
-    expect(acShowingLine(3, acRegisterTotal(c, "archived"))).toBe(
-      "Showing 1–3 of 3 documents",
-    );
-  });
-
-  /* An empty Cleared tab still divides by its own population, which is zero —
-   * never by the live total, which would read "none of 1" on a tab that has
-   * never held anything. */
-  it("says none of zero on a cleared tab nobody has used", () => {
-    expect(acShowingLine(0, acRegisterTotal(counts({ total: 9 }), "archived"))).toBe(
-      "Showing none of 0 documents",
-    );
   });
 });

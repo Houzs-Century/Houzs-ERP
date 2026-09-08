@@ -23,6 +23,8 @@
 // stated with no leg mentioned means NO leg (0), not unknown; TBC/KIV means the
 // colour is not chosen yet; anything outside S/SS/Q/K/SK is a special size and
 // MUST carry its dimensions; an unqualified DRAWER means Front Drawer.
+import { isPendingColour } from "./fabric-colour-match.mjs";
+
 function parseBedframe(d2) {
   /* AutoCount Desc2 is free text typed by many people over years. Normalise the
      wrappers and misspellings FIRST so one set of patterns can read them all:
@@ -180,4 +182,46 @@ function parseBedframe(d2) {
   return o;
 }
 
-export { parseBedframe };
+/* THE VARIANTS BLOCK a bedframe line stores, built from one parse.
+ *
+ * WHY IT LIVES HERE. `parseBedframe` returns the owner's rules DECODED; every
+ * writer then has to turn that into the exact jsonb the Fabrics picker and the
+ * "Total height (auto)" field read back. That mapping was written out FOUR
+ * times - import-ac-outstanding-so.mjs, import-ac-outstanding-po.mjs,
+ * topup-ac-po-lines.mjs and now a fifth caller - and all four were byte-for-byte
+ * identical at extraction, which is the same state parseBedframe itself was in
+ * before it drifted twice (see the header above). A fifth copy is how the next
+ * drift happens, so there is now one.
+ *
+ * The key names MUST match a real UI-created line exactly: the Fabrics picker
+ * reads `fabricCode`, and `totalHeight` is what the form shows as
+ * "Total height (auto)". `size` is deliberately NOT here - it is not part of
+ * what those four writers stored, and lib/po-arm-own-text.mjs's `blockFor`
+ * (which does carry `size` and does NOT carry `specials`) answers a different
+ * question: it is a COMPARISON projection for a diagnostic, not the block a
+ * writer persists.
+ *
+ * @param {ReturnType<typeof parseBedframe>} bf
+ * @param {(colour: string | null | undefined) => ({fabric_id: string, colour_id: string, label: string} | null)} findColour
+ *        the fabric-colour resolver from lib/fabric-colour-match.mjs.
+ *        A PENDING colour (TBC / KIV) is not looked up: the owner's rule is
+ *        that the colour is simply not chosen yet, which is blank, not a miss.
+ */
+function bedframeVariants(bf, findColour) {
+  const fc = isPendingColour(bf.color) ? null : findColour(bf.color);
+  const tot = (Number(bf.gap) || 0) + (Number(bf.divan) || 0) + (Number(bf.leg) || 0);
+  return {
+    fabricId: fc ? fc.fabric_id : null,
+    colourId: fc ? fc.colour_id : null,
+    fabricCode: fc ? fc.colour_id : null,
+    colourLabel: fc ? fc.label : null,
+    fabricLabel: fc ? fc.fabric_id : null,
+    gap: bf.gap != null ? bf.gap + '"' : null,
+    divanHeight: bf.divan != null ? bf.divan + '"' : null,
+    legHeight: bf.leg != null ? bf.leg + '"' : null,
+    totalHeight: tot ? tot + '"' : null,
+    specials: bf.specials || [],
+  };
+}
+
+export { parseBedframe, bedframeVariants };

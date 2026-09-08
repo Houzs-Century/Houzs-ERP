@@ -56,6 +56,27 @@ const confirmColour = (knownColour, t) => {
   return null;
 };
 
+/* THE MILL'S OWN NAME FOR THE SHADE, WHICH IS NOT A SPECIAL ORDER.
+   The floor writes the code and the name together — "BO315-26 (YELLOW)",
+   "M2402-5 (Light Brown)", "M2402-19(DARK GREY)". The bracket is freed into
+   its own token by the bracket->'+' rewrite below, reaches the structure pass
+   as an unknown word, and the rider rule at the end of phase 1 turns it into a
+   SPECIAL ORDER: the book was asking the factory to build a "PEARL".
+
+   At most two plain alphabetic words, no digits, and none of the instruction
+   vocabulary — so "(No armrest)", "(Replace to 9028 headrest)" and
+   "(PLS FOLLOW THE INSTRUCTION)" stay the requests they are. Measured over all
+   1,979 distinct sofa Desc2 in the committed 2026-09-08 snapshot: 49 bracketed
+   suffixes sit on a fabric code, 48 are shade names and 1 is an instruction,
+   and this predicate separates them. Erring the other way is the expensive
+   one — a dropped instruction is a sofa built wrong, a kept trade name is only
+   a noisy line on a report. */
+const isTradeName = (s) => {
+  const t = String(s ?? "").trim();
+  if (!/^[A-Za-z]{3,}(?:\s+[A-Za-z]{3,})?$/.test(t)) return false;
+  return !SPECIAL_WORD.test(t) && !INSTRUCTION_TOKEN.test(t.toUpperCase().replace(/\s+/g, ""));
+};
+
 function unlabelledColour(d2raw, knownColour) {
   for (const raw of String(d2raw || "").split(/[/\n]+/)) {
     const seg = raw.trim();
@@ -80,8 +101,32 @@ function unlabelledColour(d2raw, knownColour) {
     if (/^\d+\s*(?:"|”|inch|cm)?$/i.test(t)) continue;                // a bare size
     if (/^(?:size|seat)\b/i.test(t)) continue;                        // a labelled size
     if (/\+/.test(t) && /^[\d+ACLNPRSTacnprst()\s]+$/.test(t)) continue; // a piece list
-    const hit = confirmColour(knownColour, t) || confirmColour(knownColour, t.replace(/\s*\([^)]*\)\s*/g, "").trim());
-    if (hit) return { value: typeof hit === "string" ? hit : t, evidence: seg };
+    /* `t` already had a (feather)/(foam) taken off to reach the library. Those
+       two are shade names in this book — BO315-22 is "Feather" the way BO315-26
+       is "Yellow" — and they were being LEFT in the text, so they reached the
+       rider rule as a special order like every other name. */
+    const fill = /\(\s*(feather|foam)\s*\)/i.exec(seg);
+    const m = /\(([^)]*)\)/.exec(t);
+    const bare = m ? t.replace(/\s*\([^)]*\)\s*/g, "").trim() : t;
+    const bareHit = m ? confirmColour(knownColour, bare) : null;
+    const hit = confirmColour(knownColour, t) || bareHit;
+    if (hit) {
+      /* THE BRACKET CONTRIBUTES NOTHING TO THE IDENTITY, so it is not part of
+         the code — that is the evidence, not a guess.
+
+         Do NOT ask instead "did the code fail to confirm WITH the bracket". The
+         live matcher strips brackets itself, on rung 1 of its candidate ladder
+         (`fabric-colour-match.mjs`, `noParen`), so in production the bracketed
+         form confirms directly and that question answers "no" every time. It was
+         written that way first and shipped a guard that never fired: reconcile
+         run 34200092543 reported the same three phantom specials as the run
+         before it. A stub built from an exact-match Set had said otherwise,
+         which is why the test below drives the REAL index. */
+      const name = m && isTradeName(m[1]) && bareHit && String(bareHit) === String(hit)
+        ? m[1].trim()
+        : fill ? fill[1] : null;
+      return { value: typeof hit === "string" ? hit : t, evidence: seg, tradeName: name };
+    }
   }
   return null;
 }
@@ -145,12 +190,29 @@ function parseSofa(d2raw, model, recl = false, opts = {}) {
      actually holds. */
   if (!o.color && typeof opts.knownColour === "function") {
     const u = unlabelledColour(d2raw, opts.knownColour);
-    if (u) { o.color = u.value; o.colorEvidence = u.evidence; o.why.push(`colour from an unlabelled code "${u.evidence}"`); }
+    if (u) {
+      o.color = u.value; o.colorEvidence = u.evidence; o.why.push(`colour from an unlabelled code "${u.evidence}"`);
+      /* Take the shade name out before the structure pass can free it into a
+         token the rider rule reads as a special order. A trade name is plain
+         letters and spaces (isTradeName), so nothing here needs escaping. */
+      if (u.tradeName) {
+        d2 = d2.replace(new RegExp(`\\(\\s*${u.tradeName.replace(/\s+/g, "\\s+")}\\s*\\)`, "gi"), " ");
+        o.why.push(`"(${u.tradeName})" is the library's own name for that colour, not a special order`);
+      }
+    }
   }
   /* Colour-first with NO label ("CH141-11 (SILVER)/28”/1A(LHF)+…") stays on
      the #1998 contract: unlabelledColour above reads it ONLY when the fabric
      library confirms the code. An unconfirmed code is left blank, never
      copied — parseSofaUnlabelledColour.test.ts pins both directions. */
+  /* A FOOTPRINT IS NOT A SEAT SIZE. "STOOL(25 X 40INCH)" states a stool's
+     length by its width; the seat-size axis has nothing to copy from it, and
+     reading the second number off it put a phantom 40" on the go-live tally
+     against an ERP that legitimately held 30". Blank is the honest answer —
+     the book states no seat size here. One Desc2 in the committed 2026-09-08
+     snapshot; the pair must be adjacent, so a real size elsewhere in the same
+     text is untouched. */
+  d2 = d2.replace(/\d{2,3}\s*[x*]\s*\d{2,3}\s*(?:['"]{0,2}\s*inch(?:es)?\b|"|''|cm\b)/gi, " ");
   // seat size: inches or cm anywhere (also "(28'Inch)" / "28''" / "28'" / "Size:28")
   const sm = /(\d{2,3})\s*(cm)\b/i.exec(d2) || /(\d{2})\s*(?:['"]{1,2}\s*inch(?:es)?\b|"|''|'(?!\w)|\s*inch(?:es)?\b)/i.exec(d2) || /size\s*[:：]\s*(\d{2})/i.exec(d2);
   if (sm) {

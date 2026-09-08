@@ -149,3 +149,106 @@ order looks RM 976.00 overpaid. That paid figure was never a recorded payment:
 book states `UDF_BALANCE = 0` with **no payment amount at all**. Re-deriving
 `paid_sen` from the corrected total is the same formula on the same inputs — but
 it is a payment column, so it is his call and it is not done.
+
+---
+
+# INSIDE the line: colour, seat size and specials — closed 2026-09-08 16:20
+
+The section above is about documents, lines, quantities and money. **The headline
+number it produces has never counted what is INSIDE a line.** Colour, seat size,
+specials and sofa compartments are a separate scoreboard in the same report, and
+reading `40` as the whole story understates it in one direction and overstates it
+in another. This section closes the first three of those four. **Sofa
+compartments are NOT here** — `fix/staff-reported-flow` owns them.
+
+## Where it landed
+
+On the ORDERS the factory builds from (SO + PO), PROCEEDED — the only population
+the owner's rule 「还没proceed还没确认的就可以直接放空的」 counts as work:
+
+| axis | 15:15 (run `34198407570`) | 16:20 (run `34203745033`) |
+| --- | --- | --- |
+| colour / fabric, DIFFER | 2 | **0** |
+| seat size, DIFFER | 2 | **0** |
+| specials, ERP blank | 8 | **1** |
+| specials, DIFFER | 5 | 5 |
+| the book states it and a proceeded order does not carry it | **8** | **1** |
+
+Two separate causes, and only one of them was a data defect.
+
+## Cause 1 — the decoder invented eight of the twelve
+
+`docs/bugs/0705`. The book writes a fabric's code and the mill's own name for the
+shade together — `BO315-26 (YELLOW)`, `NX011 (BEIGE)`, `M2402-19(DARK GREY)`.
+`parse-sofa.mjs` read the colour correctly and then left the bracket standing,
+where the structure pass freed it into a token and the rider catch-all turned it
+into a SPECIAL ORDER. The book was asking the factory to build a "PEARL". Seven
+lines reached the go-live tally that way. `STOOL(25 X 40INCH)` was the same shape
+on the seat axis: a stool's length by its width, read as a 40" seat.
+
+Sized over all 1,979 distinct sofa Desc2 in the snapshot: **49 → 2** (both
+remaining are the one genuine instruction, `(PLS FOLLOW DRAWING)`) and **1 → 0**.
+No production row was written for this half — the defect was in what the book was
+READ as.
+
+## Cause 2 — four lines really did disagree, and were corrected TO THE BOOK
+
+Owner's rule, 2026-09-08: 「一律跟账本。除了sofa compartment而已啊」. Applied by
+`repair-so-variant-from-book.mjs` + `repair-so-variant-from-book.yml` from the
+reviewed list `backend/scripts/data/variant-book-corrections.json`. PLAN run
+`34203337587`, APPLY run **`34203653853`**: `4 of 4 book line(s) merged, across 6
+ERP row(s)`, then `VERIFIED on a fresh connection: 6 ERP row(s) ... hold the
+book's value, and every one is still a jsonb OBJECT`.
+
+| document | axis | was | now | already downstream? |
+| --- | --- | --- | --- | --- |
+| `HC-SO-010120` `9058-1S` | colour | `BO315-22` | `HR805-31` | no purchase order, no delivery |
+| `HC-SO-013258` `9058-2A(LHF)` + `L(RHF)` | colour | `HR805-31` | `HR805-10` | 2 purchase-order lines |
+| `HC-SO-009708` `9050-2A(LHF)` + `1A(RHF)` | seat | 30" | **28"** | 2 purchase-order lines |
+| `HC-SO-013310` `5535-1S` | seat | 28" | **30"** | 1 purchase-order line |
+
+**The three with a purchase order behind them are not a divergence this created.**
+Checked before writing, with `diag-so-po-variant-divergence.mjs` (run
+`34203454325`): on `HC-SO-013258` the purchase order ALREADY held `HR805-10` and
+the Desc2 backs the PO — `SO-vs-PO conflict axes: colourId | Desc2 backs PO on:
+colourId | backs SO on: (none)`. The factory was already building the right
+colour; the sales order was the wrong document, and correcting it CLOSED that
+conflict. On `HC-SO-009708` and `HC-SO-013310` the SO and PO Desc2 are IDENTICAL
+and the PO seat axis reports zero differences against its own book, so neither
+correction can open one.
+
+## What was deliberately NOT written, and by whom it should be
+
+- **Specials — 1 ERP-blank + 5 DIFFER still open on proceeded orders.**
+  `variants.specials` folds into the authoritative unit price at ten call sites
+  across nine files, so stamping a code there reprices a historical document
+  (`docs/bugs/0013`), and `custom_specials` is a DERIVED column the next
+  recompute erases. Two writers already know that —
+  `backfill-specials-into-variants.mjs` for unpriced codes and
+  `record-priced-specials-on-migrated-lines.mjs` for the owner's money-neutral
+  ruling 甲. A third would be the bug. The open set is `PO-010082` (blank; the
+  book asks for `Backrest change to 8030 design` + `Bottom wrap nylon`),
+  `PO-010146`, `PO-010151`, `PO-010161` (the phrase is on the line, the pickable
+  CODE is not), `SO-011717` (`one side armrest replace seat`), and `SO-012128` —
+  which is not a specials defect at all but the pairing artifact of the missing
+  pillow line in section C above.
+- **`SO-001526` and `SO-013227`** (seat, both NOT PROCEEDED) carry no AutoCount
+  line key, so only the reconcile's own value-then-order fallback can identify
+  the row. Building a second, private matcher in a repair script is this repo's
+  most expensive recurring bug, so they are REPORTED and untouched
+  (`docs/bugs/0707`).
+- **`HC-SO-010120` line 2**, `AMN-SOFA PILLOW` DtlKey 687987, Desc2
+  `colour : HR 805-10`, holds no colour. It is an ACCESSORY, and the variant
+  reconcile models only bedframe and sofa, so it appears on no axis. Found by the
+  divergence diagnostic, recorded here because nothing else will report it.
+
+## Stock, money and readiness did not move — measured, not asserted
+
+Only `variants` was written: no quantity, no price, no item code, no status.
+Across the two reconcile runs the SO document axes read `quantity: 1; unit price:
+0; document total: 5` **before and after**, and every migrated goods receipt is
+still `migrated_no_stock with 0 inventory movements naming it`. The document-level
+headline moved 40 → 36 in the same window and **that is not this work**: it stayed
+at 40 across both branch runs (`34200092543`, `34200664197`), and the change came
+with other lanes merging into `main` — more lines paired (SO 14,903 → 14,913, PO
+1,309 → 1,327, IV 43 → 45 documents) and a GR item-code reclassification.

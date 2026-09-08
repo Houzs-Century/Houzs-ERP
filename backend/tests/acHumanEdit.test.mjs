@@ -78,14 +78,33 @@ const CRON_ROW = {
 
 const CRON_ROW_CAPITALISED = { ...CRON_ROW, actorName: 'System (auto-allocate)', action: 'UPDATE_STATUS' };
 
-/* The migration's own writes carry the pinned actor id. */
+/* A BACKFILL's own write, in the shape the tree actually produces. Corrected
+   2026-09-08 (docs/bugs/0703): this fixture used to carry
+   `actorId: MIGRATION_ACTOR_ID, actorName: 'AutoCount import'`, which no code
+   in this repo writes. Only two scripts INSERT into an audit table —
+   backfill-2990-delivered-dos.mjs:124 and repair-so-fee-line-integrity.mjs:317
+   — and BOTH omit actor_id entirely and name themselves in
+   actor_name_snapshot. A fixture for a row shape that does not exist is how a
+   rule gets pinned to the wrong thing. */
 const MIGRATION_ROW = {
   docNo: 'HC-SO-012929',
-  actorId: MIGRATION_ACTOR_ID,
-  actorName: 'AutoCount import',
+  actorId: null,
+  actorName: 'System (2990 delivered-chain backfill)',
   at: '2026-08-29T00:00:00.000Z',
-  action: 'CREATE',
+  action: 'STATUS',
   fieldChanges: [{ field: 'salespersonId', from: null, to: 'staff-a' }],
+};
+
+/* The SAME edit, made by a salesperson in the browser. auth.ts pins the uuid
+   onto her row; only her NAME distinguishes it from the machine. This is the
+   row the arm removed in 0703 called the system. */
+const HER_WEB_EDIT = {
+  docNo: 'HC-SO-012929',
+  actorId: MIGRATION_ACTOR_ID,
+  actorName: 'Wei Siang',
+  at: '2026-09-08T06:00:00.000Z',
+  action: 'UPDATE_DETAILS',
+  fieldChanges: [{ field: 'deliveryAddress', from: '12 Jalan Lama', to: '88 Jalan Baru' }],
 };
 
 const SO_FIELDS = [
@@ -96,39 +115,62 @@ const SO_FIELDS = [
 
 describe('isSystemAuditRow — the authorship rule, identical to check-so-open-for-new.mjs', () => {
   it('a null actor named "system…" is the cron, in both spellings the code writes', () => {
-    expect(isSystemAuditRow(CRON_ROW, MIGRATION_ACTOR_ID)).toBe(true);
-    expect(isSystemAuditRow(CRON_ROW_CAPITALISED, MIGRATION_ACTOR_ID)).toBe(true);
+    expect(isSystemAuditRow(CRON_ROW)).toBe(true);
+    expect(isSystemAuditRow(CRON_ROW_CAPITALISED)).toBe(true);
   });
 
-  it("the migration's pinned actor is the system", () => {
-    expect(isSystemAuditRow(MIGRATION_ROW, MIGRATION_ACTOR_ID)).toBe(true);
+  /* CORRECTED 2026-09-08, docs/bugs/0703. This assertion used to read "the
+     migration's pinned actor is the system" and expect TRUE. It is now the
+     opposite, and the reason is measured rather than argued:
+
+       · src/scm/middleware/auth.ts PINS that uuid onto c.get('user').id for
+         EVERY authenticated SCM caller, and all 21 recordSoAudit call sites in
+         routes/mfg-sales-orders.ts pass `actorId: user.id`. So the id is on
+         every human sales-order edit. Proved by RUNNING the middleware —
+         src/scm/shared/audit-author.test.ts.
+       · NO script writes actor_id into either audit table. The only two that
+         INSERT (backfill-2990-delivered-dos.mjs:124 and
+         repair-so-fee-line-integrity.mjs:317) both omit the column.
+
+     So the arm matched every person and no migration row, which is the exact
+     failure this file exists to prevent, pointing the other way. */
+  it("a backfill's own row names itself, so it is the system", () => {
+    expect(isSystemAuditRow(MIGRATION_ROW)).toBe(true);
+  });
+
+  it('RED: the pinned actor id is NOT an authorship signal — it is on every human edit', () => {
+    expect(isSystemAuditRow(HER_WEB_EDIT)).toBe(false);
+    expect(isSystemAuditRow({ actorId: MIGRATION_ACTOR_ID, actorName: 'Ah Meng' })).toBe(false);
   });
 
   it('RED: a NAMED person whose row carries a null actor_id is a PERSON, not the system', () => {
     // This is defect 1. `!r.actor_id` answered `true` here and the edit was overwritten.
-    expect(isSystemAuditRow(NAMED_PERSON_NULL_ACTOR, MIGRATION_ACTOR_ID)).toBe(false);
+    expect(isSystemAuditRow(NAMED_PERSON_NULL_ACTOR)).toBe(false);
   });
 
   it('RED: an UNATTRIBUTED row is a PERSON — the permissive direction would hide it', () => {
-    expect(isSystemAuditRow(HANDOVER_BY_A_PERSON, MIGRATION_ACTOR_ID)).toBe(false);
-    expect(isSystemAuditRow({ actorId: null, actorName: '' }, MIGRATION_ACTOR_ID)).toBe(false);
+    expect(isSystemAuditRow(HANDOVER_BY_A_PERSON)).toBe(false);
+    expect(isSystemAuditRow({ actorId: null, actorName: '' })).toBe(false);
   });
 
   it('an ordinary staff actor_id is a person', () => {
-    expect(isSystemAuditRow({ actorId: 'e3f0…', actorName: 'Ah Meng' }, MIGRATION_ACTOR_ID)).toBe(false);
+    expect(isSystemAuditRow({ actorId: 'e3f0…', actorName: 'Ah Meng' })).toBe(false);
   });
 
   it('a name merely CONTAINING "system" is not the cron — the match is a prefix, like the SQL', () => {
-    expect(isSystemAuditRow({ actorId: null, actorName: 'Ana Systems' }, MIGRATION_ACTOR_ID)).toBe(false);
+    expect(isSystemAuditRow({ actorId: null, actorName: 'Ana Systems' })).toBe(false);
   });
 
   it('a table with no pinned migration actor passes null, and null never matches an actor', () => {
-    expect(isSystemAuditRow({ actorId: MIGRATION_ACTOR_ID, actorName: null }, null)).toBe(false);
-    expect(isSystemAuditRow({ actorId: null, actorName: 'system' }, null)).toBe(true);
+    expect(isSystemAuditRow({ actorId: MIGRATION_ACTOR_ID, actorName: null })).toBe(false);
+    expect(isSystemAuditRow({ actorId: null, actorName: 'system' })).toBe(true);
   });
 
-  it('the deciding parameter is REQUIRED, so the compiler-equivalent is a throw at every call site', () => {
-    expect(() => isSystemAuditRow(CRON_ROW)).toThrow(/migrationActorId is required/);
+  /* The actor argument this used to demand is GONE (docs/bugs/0703): it decided
+     nothing correct, and a decision-shaped parameter with no decision in it is
+     worse than none, because the next reader assumes it does something. */
+  it('needs only the row', () => {
+    expect(isSystemAuditRow(CRON_ROW)).toBe(true);
   });
 });
 
@@ -137,7 +179,6 @@ describe('humanEditIndex — per (document, field), with WHO', () => {
     const ix = humanEditIndex({
       rows: [MIGRATION_ROW, CRON_ROW, NAMED_PERSON_NULL_ACTOR],
       fields: SO_FIELDS,
-      migrationActorId: MIGRATION_ACTOR_ID,
     });
     expect(ix.byDocField.has('HC-SO-012929|salesperson_id')).toBe(true);
     expect(ix.byDocField.get('HC-SO-012929|salesperson_id').who).toContain('Wei Siang');
@@ -145,11 +186,24 @@ describe('humanEditIndex — per (document, field), with WHO', () => {
     expect(ix.systemRows).toBe(2);
   });
 
+  /* RED for 0703, at the level the sync actually calls: her browser edit, with
+     the pinned actor id on it, must veto the field. Before the arm was removed
+     this returned an EMPTY index and the account book's value was written over
+     her. */
+  it("RED: a salesperson's browser edit vetoes its field, pinned actor id and all", () => {
+    const ix = humanEditIndex({ rows: [HER_WEB_EDIT, CRON_ROW], fields: SO_FIELDS });
+    expect(ix.byDocField.has('HC-SO-012929|delivery_address')).toBe(true);
+    expect(ix.byDocField.get('HC-SO-012929|delivery_address').who).toContain('Wei Siang');
+    expect(ix.personRows).toBe(1);
+    expect(ix.systemRows).toBe(1);
+    /* Per FIELD: the book may still correct a field nobody touched. */
+    expect(ix.byDocField.has('HC-SO-012929|salesperson_id')).toBe(false);
+  });
+
   it('a field the person did NOT touch is left writable — the veto is per field, not per document', () => {
     const ix = humanEditIndex({
       rows: [NAMED_PERSON_NULL_ACTOR],
       fields: SO_FIELDS,
-      migrationActorId: MIGRATION_ACTOR_ID,
     });
     expect(ix.byDocField.has('HC-SO-012929|salesperson_id')).toBe(true);
     expect(ix.byDocField.has('HC-SO-012929|delivery_address')).toBe(false);
@@ -157,13 +211,13 @@ describe('humanEditIndex — per (document, field), with WHO', () => {
 
   it('matches the snake_case spelling of a column as well as the camelCase one', () => {
     const snake = { ...NAMED_PERSON_NULL_ACTOR, fieldChanges: [{ field: 'salesperson_id', from: 1, to: 2 }] };
-    const ix = humanEditIndex({ rows: [snake], fields: SO_FIELDS, migrationActorId: MIGRATION_ACTOR_ID });
+    const ix = humanEditIndex({ rows: [snake], fields: SO_FIELDS });
     expect(ix.byDocField.has('HC-SO-012929|salesperson_id')).toBe(true);
   });
 
   it('a field with no ERP column can never be vetoed, because it can never be written', () => {
     const row = { ...NAMED_PERSON_NULL_ACTOR, fieldChanges: [{ field: 'CreditorName', from: 'a', to: 'b' }] };
-    const ix = humanEditIndex({ rows: [row], fields: SO_FIELDS, migrationActorId: MIGRATION_ACTOR_ID });
+    const ix = humanEditIndex({ rows: [row], fields: SO_FIELDS });
     expect(ix.byDocField.size).toBe(0);
   });
 
@@ -171,22 +225,22 @@ describe('humanEditIndex — per (document, field), with WHO', () => {
     const ix = humanEditIndex({
       rows: [CRON_ROW, CRON_ROW_CAPITALISED],
       fields: SO_FIELDS,
-      migrationActorId: MIGRATION_ACTOR_ID,
     });
     expect(ix.byDocField.size).toBe(0);
     expect(ix.byDoc.size).toBe(0);
     expect(ix.systemRows).toBe(2);
   });
 
-  it('migrationActorId is required here too', () => {
-    expect(() => humanEditIndex({ rows: [], fields: [] })).toThrow(/migrationActorId is required/);
+  it('still refuses a malformed call rather than answering it', () => {
+    expect(() => humanEditIndex({ rows: 'not an array', fields: [] })).toThrow(/rows must be an array/);
+    expect(() => humanEditIndex({ rows: [], fields: 'nope' })).toThrow(/fields must be an array/);
   });
 });
 
 describe('humanTouchedDocs — the document-level answer for the narrowed lanes', () => {
   it('RED: 550 cron rows do not make a document "staff edited"', () => {
     const rows = Array.from({ length: 550 }, () => CRON_ROW);
-    const ix = humanTouchedDocs({ rows, migrationActorId: MIGRATION_ACTOR_ID });
+    const ix = humanTouchedDocs({ rows });
     expect(ix.byDoc.size).toBe(0);
     expect(ix.systemRows).toBe(550);
     expect(ix.personRows).toBe(0);
@@ -194,7 +248,7 @@ describe('humanTouchedDocs — the document-level answer for the narrowed lanes'
 
   it('one person among them refuses the document, and is named', () => {
     const rows = [CRON_ROW, NAMED_PERSON_NULL_ACTOR, CRON_ROW_CAPITALISED];
-    const ix = humanTouchedDocs({ rows, migrationActorId: MIGRATION_ACTOR_ID });
+    const ix = humanTouchedDocs({ rows });
     expect(ix.byDoc.get('HC-SO-012929').who).toContain('Wei Siang');
     expect(ix.personRows).toBe(1);
   });

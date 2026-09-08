@@ -668,6 +668,27 @@ NOT blocked: a payment an operator records against a migrated invoice behaves
 normally, and cancelling it still turns the paid amount into credit — that money
 moved in THIS book and is ours to account for.
 
+### A SHORT DELIVERY ORDER IS A MISSING INVOICE, and it is silent (2026-09-08)
+
+`src/scm/lib/migrated-chain.ts` rule 4 writes a migrated invoice only when its
+total equals AutoCount's **to the sen**. That is right — a plausible wrong number
+is silent forever — but it means the invoice's absence is a symptom of the
+DELIVERY ORDER, and nothing on the invoice screens says so. The reconcile reports
+it as `IV absent`, which reads as an invoice problem and is not one.
+
+Measured on the dry run, run `34199062827` (2026-09-08 15:23 +08): of the six
+in-scope sales invoices the ERP does not hold, **four** are refused by that gate
+or by `nothing_to_invoice`, and every one of the four is a delivery order missing
+a line or a price the book states — `DO-001604` short RM 150.00, `DO-000097`
+short RM 50.00, `DO-001953` with nothing to bill, `DO-003699` at RM 0.00. Repair
+the delivery note and the invoice writes itself; there is nothing to fix on the
+invoice side.
+
+**When an absent migrated invoice is reported, run that dry run first.** It names
+the source document and the reason per invoice, in one line each, and it writes
+nothing. The whole classification is
+`docs/cutover-gr-iv-pi-remainder-2026-09-08.md`.
+
 ## 6. What locks and when
 
 The governing rule is in the file header (`:16-27`) and implemented as
