@@ -1236,6 +1236,39 @@ the State picker's own handler would clear the cascade and wipe that value.
 Full rules, the ambiguity contract and the surfaces that deliberately opt out:
 `docs/modules/address-cascade.md`.
 
+#### On a MIGRATED order the City is DERIVED, and it can be legitimately blank (2026-09-08)
+
+**AutoCount has no city column.** The book's header carries `InvAddr1..4`, and
+`InvAddr4` is the STATE — its commonest values across the committed cut are
+Selangor 2,647, Penang 1,797, Kuala Lumpur 1,560, Johor 820. Anyone repairing a
+blank city by copying `InvAddr4` would stamp a state name onto thousands of
+orders; it reads as a city on one document only because Kuala Lumpur is both.
+
+So `mfg_sales_orders.city` on a migrated order is not a copy, it is READ out of
+the address text: `import-ac-outstanding-so.mjs:308` takes what follows the
+5-digit postcode up to the first comma. That importer then SUBTRACTS the state
+name from the result, which is right on 914 book addresses
+(`PADANG SERAI KEDAH` -> `PADANG SERAI`) and **deletes the whole city on 1,935**,
+every one of them an address whose city and state are the same word.
+
+The rule that repairs it is `backend/scripts/lib/customer-block.mjs`
+(`cityFromBook`), and it is a GATE rather than a derivation: the book's own text
+is accepted only when `scm.my_localities` — the ERP's postcode -> city master,
+mig 0022, the same table the cascade above reads — lists it as a city of that
+exact postcode, and what is written is the master's spelling. `Selangor` at
+40000 is refused, a postcode with nothing after it is refused, `KL` is refused.
+Applied by `backend/scripts/repair-customer-block.mjs`; counted by
+`backend/scripts/check-customer-block-gap.mjs`.
+
+**`email` and `customer_type` are a different thing and are NOT a migration
+loss.** No AutoCount export in `backend/scripts/data/` carries either column, and
+the sales-order customer master is the prior sales orders themselves
+(`GET /mfg-sales-orders/debtors/search` autocompletes
+`debtor_code, debtor_name, phone, address1..4` out of `mfg_sales_orders`). When
+the Create-DO banner names them it is reporting the truth — there is nowhere they
+could have been carried from — and nobody should go looking for them in the book.
+Ledger: `docs/bugs/0715-subtracting-the-state-from-the-city-deleted-the-city-wheneve.md`.
+
 ### Data hooks
 `frontend/src/vendor/scm/lib/sales-order-queries.ts`
 
@@ -1782,10 +1815,22 @@ over the numbers the import already wrote is the only answer that does not need
 his ruling. The options are enumerated in `docs/bugs/0703-a-brand-new-sales-order-becomes-read-only-minutes-after-it-i.md`.
 
 The read has one home, `scm/lib/so-is-migrated.ts`
-(`soIsMigrated` / `soIsMigratedShape`), and it fails CLOSED **twice**: the read
-THROWS rather than answering false, and a pair fitting NEITHER shape answers
-TRUE. **A reader must select BOTH columns** — `select('doc_no,
-linked_ac_docno')` — because the rule is about the two numbers together.
+(`soIsMigrated` / `soIsMigratedShape` / `soNumberShape`), and it fails CLOSED
+**twice**: the read THROWS rather than answering false, and a pair fitting
+NEITHER shape answers TRUE. **A reader must select BOTH columns** —
+`select('doc_no, linked_ac_docno')` — because the rule is about the two numbers
+together.
+
+**The three read-only checks import that module too**, and run under `npx tsx`
+for it — `check-so-open-for-new.mjs`, `check-so-migrated-shape.mjs` and
+`set-migrated-so-lock.mjs`. They each carried their own `linked_ac_docno IS
+NULL` copy for a few hours after the predicate moved, and the go-live gate
+therefore reported the bug's own answer: *"NEW orders 0 — of 0 ERP-created
+orders in all"* about a system where one existed
+(`docs/bugs/0716-the-check-that-proves-new-orders-save-counted-them-the-way-t.md`).
+`soNumberShape` exists so the census can report the DISTRIBUTION
+(`no-book-number` / `equal` / `prefixed` / `neither`) without re-deriving
+anything.
 
 | | |
 |---|---|
