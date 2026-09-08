@@ -2340,6 +2340,20 @@ lines were pulled OUT of AutoCount's `FurtherDescription` at cutover
 (`backend/scripts/import-so-line-photos.mjs`), so putting them back means writing
 that same field.
 
+> **The sofa model alias reaches this script by IMPORT now, not by copy**
+> (2026-09-08). Both photo importers — `import-so-line-photos.mjs` and
+> `backend/scripts/import-po-line-photos.mjs` — attach a build photo to every
+> compartment of a sofa, so each one needed `SOFA_MODEL_ALIAS` to know that
+> `5536` is spelled `9058` and `5540` is spelled `8030`. Each carried its own
+> copy of the table, byte-identical to the real one in
+> `backend/scripts/lib/parse-sofa.mjs` and therefore invisible until it was
+> counted. They now import it, and `backend/tests/catalogCodeGuard.test.mjs`
+> asserts that exactly one file in `backend/` DEFINES the table, failing by name
+> if a third copy appears. Nothing about which photo attaches to which piece
+> changed — the copies agreed with the original; the risk was that one day they
+> would not. The disagreement this class actually produced is
+> `docs/bugs/0686-the-top-up-asked-the-catalogue-with-the-unaliased-sofa-code.md`.
+
 **What the live book actually stores was measured, not assumed** — three lines
 read on 2026-08-15, `docs/autocount-further-description-photos.md` §4.2. Every
 one stores the picture as `\wmetafile8`, a Windows metafile; none as
