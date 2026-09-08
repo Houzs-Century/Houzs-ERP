@@ -410,7 +410,7 @@ const InTransitTab = () => {
 
   const exportCsv = () => {
     downloadCSV('paid-not-yet-in-the-bank.csv', toCSV(lines, [
-      { key: 'acq', label: 'Acquirer', getValue: (l) => l.acquirerCode },
+      { key: 'acq', label: 'Acquirer', getValue: (l) => l.acquirerCode ?? '未标' },
       { key: 'doc', label: 'Document', getValue: (l) => l.docNo },
       { key: 'paid', label: 'Customer paid on', getValue: (l) => l.paidOn },
       { key: 'age', label: 'Days', getValue: (l) => l.ageDays },
@@ -498,7 +498,8 @@ const InTransitTab = () => {
           <tbody>
             {lines.map((l) => (
               <tr key={`${l.source}:${l.paymentId}`} style={rowLine}>
-                <td style={cell}><span className={styles.codeChip}>{l.acquirerCode}</span></td>
+                {/* null = keyed in without a bank; listed once (docs/bugs/0688). */}
+                <td style={cell}><span className={styles.codeChip}>{l.acquirerCode ?? '未标'}</span></td>
                 <td style={cell}>{l.docNo}</td>
                 <td style={cell}>{l.paidOn}</td>
                 <td style={{ ...num, color: l.ageDays > 14 ? danger : undefined, fontWeight: l.ageDays > 14 ? 700 : undefined }}>{l.ageDays}</td>
