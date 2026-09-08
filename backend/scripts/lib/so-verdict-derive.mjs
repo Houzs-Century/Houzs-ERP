@@ -74,6 +74,21 @@ export const LOCKING_AXES = Object.freeze([
   'a line key on the wrong document',
   'lines could not be matched',
   'sofa build not verifiable',
+  /* ── THE DOCUMENT CONVERSION CHAIN ─────────────────────────────────────────
+   * The owner, 2026-09-08: 「然后transfer from和transfer to？」 — and until this
+   * lane the answer was that the chain had never been an axis at all.
+   * check-ac-erp-reconcile.mjs read `fromDocType` / `fromDocNo` /
+   * `transferedQty` ONLY to decide SCOPE, so a line could point at the wrong
+   * source document, or carry the wrong transferred quantity, and every report
+   * would still have said the documents tally. One column carrying several
+   * populations — this repo's own named class, found by the owner asking.
+   *
+   * `transfer from` is a wrong or missing parent link; `transfer to` is our
+   * stored transfer counter disagreeing with AutoCount's own. The verdicts are
+   * lib/transfer-chain-verdict.mjs's, which re-exports the counter rule from
+   * lib/transfer-counter-verdict.mjs rather than restating it. */
+  'transfer from',
+  'transfer to',
   /* the variant axes, spelled exactly as lib/variant-reconcile.mjs labels them */
   'colour / fabric',
   'divan height',
@@ -83,6 +98,14 @@ export const LOCKING_AXES = Object.freeze([
   'seat size',
   'sofa compartments',
   'specials',
+  /* THE CHAIN'S OWN "we could not tell". Separate from `transfer from` for the
+   * same reason `sofa build not verifiable` is separate from `sofa
+   * compartments`: our parent carries no AutoCount number, or the book states a
+   * source LINE and our row has no line key to answer with. Neither is a wrong
+   * link and neither is agreement, and folding it into either is how 110
+   * documents came to be reported as clean on 2026-09-08 while nothing had
+   * compared them. */
+  'transfer chain not verifiable',
 ]);
 
 const LOCKING = new Set(LOCKING_AXES);
@@ -100,7 +123,10 @@ const LOCKING = new Set(LOCKING_AXES);
  * Membership is a property of the AXIS, not of a document: `sofa build not
  * verifiable` is recorded ONLY where variant-report set the compartment cell
  * to UNREADABLE, and it is recorded for no other reason. */
-export const UNANSWERABLE_AXES = Object.freeze(['sofa build not verifiable']);
+export const UNANSWERABLE_AXES = Object.freeze([
+  'sofa build not verifiable',
+  'transfer chain not verifiable',
+]);
 
 const UNANSWERABLE = new Set(UNANSWERABLE_AXES);
 for (const a of UNANSWERABLE_AXES) {
@@ -147,6 +173,18 @@ export const NOTE_CLASSES = Object.freeze([
      「GR 0 没关系」. PROVED per document by lib/ac-not-a-difference.mjs
      (`migrated_no_stock` and zero inventory movements), never assumed. */
   'erp-zero-money',
+  /* THE BOOK ITSELF RECORDS NO SOURCE LINE ON THIS EDGE. `FromDocDtlKey` is
+     NULL on every one of the ~220,000 rows of all six AutoCount detail tables,
+     so a delivery, invoice or receipt states the source DOCUMENT and nothing
+     finer. We agree on everything the book states — declared, counted, and
+     never printed as though a LINE comparison had run. */
+  'chain-line-not-in-book',
+  /* the book raised this line from nothing — the head of a chain */
+  'chain-no-source',
+  /* the ERP stores NO onward counter on this edge, because it computes the
+     answer live off the child rows every time it is asked. Nothing can drift,
+     and the silence is declared rather than left to read as a measurement. */
+  'chain-no-erp-counter',
 ]);
 
 const NOTED = new Set(NOTE_CLASSES);

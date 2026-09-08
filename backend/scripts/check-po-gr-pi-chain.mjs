@@ -37,6 +37,17 @@
  * reported as unkeyed, never quietly matched to the row that happens to sit at
  * the same index.
  *
+ * ── IT EXPLAINS; IT DOES NOT SECOND-GUESS ──────────────────────────────────
+ * `check-ac-erp-reconcile.mjs` owns the word DIFFERENT and its verdict is the
+ * one that counts — two implementations of "different" is how two statements of
+ * one rule come to disagree while both report on "the same" documents, which is
+ * written into that file's header twice and cost 40 wrong findings on go-live
+ * morning (docs/bugs/0689). So this prints NO verdict, NO bucket and NO differ
+ * count, and nothing here feeds the tally. It answers the other question — WHY
+ * a document the reconcile already named does not line up, and at which line.
+ * If this and the reconcile ever disagree, THE RECONCILE IS RIGHT and this is
+ * broken.
+ *
  * ── THE THREE THINGS IT PRINTS ──────────────────────────────────────────────
  * 1. MULTI-ORDER RECEIPTS — how many in-scope receipts draw on more than one
  *    purchase order, and the distribution. The fact the refusal was built on.
@@ -79,6 +90,9 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DATA = path.join(HERE, 'data');
 const CO = Number(process.env.COMPANY_ID || 1);
 const SHOW = Math.max(1, Number(process.env.SHOW || 20));
+/* Focus on the documents the TALLY named, so this is read as the explanation of
+   a verdict rather than as a verdict of its own. */
+const DOCS = new Set(String(process.env.DOCS || '').split(',').map((x) => x.trim()).filter(Boolean));
 const MAX_AGE = Number(process.env.MAX_SNAPSHOT_AGE_DAYS || 2);
 
 const plain = (m) => console.log(m);
@@ -171,6 +185,7 @@ async function main() {
   const unkeyed = [];
 
   for (const h of heads) {
+    if (DOCS.size && !DOCS.has(h.grn_number)) continue;
     const key = pairKey(h.ac_gr, h.ac_po);
     const bookLines = (book.GR.lines.get(h.ac_gr) ?? []).filter((l) => l.fromDocType === 'PO' && l.fromDocNo === h.ac_po);
     if (!bookLines.length) continue;
@@ -247,8 +262,15 @@ async function main() {
   }
 
   plain('');
-  plain('═════════ 2. LINE BY LINE — every pair whose lines do not agree ═════════');
-  note(`${differing.length} (receipt x purchase order) pair(s) differ on at least one LINE.`);
+  plain('═════════ 2. LINE BY LINE — where the two sides do not line up, and at which line ═════════');
+  plain('   THE NUMBER BELOW IS NOT A DIFFER COUNT AND MUST NEVER BE QUOTED AS ONE.');
+  plain('   check-ac-erp-reconcile.mjs owns the word DIFFERENT, and it applies the rulings before it counts:');
+  plain('   a migrated receipt at RM 0.00 is 「GR 0 没关系」, a purchase line the book never priced is');
+  plain('   空白不覆盖, and a decomposed sofa is not commensurable line for line. THIS REPORT APPLIES NONE');
+  plain('   OF THEM — it prints every raw observation so a named document can be read line by line. That is');
+  plain('   why this number is many times the number the tally reports, and why the two are not in conflict:');
+  plain('   they answer different questions. Set DOCS=HC-GR-xxx,HC-GR-yyy to look only at the ones it named.');
+  note(`${differing.length} pair(s) carry at least one RAW line observation (NOT a differ count — see above).`);
   for (const d of differing.slice(0, SHOW)) {
     plain('');
     plain(`── ${d.doc}  (${d.pair})${d.inScope ? '' : '  [pair is OUTSIDE the migration scope]'}`);
@@ -295,15 +317,17 @@ async function main() {
     plain('   They are named, not guessed at by position — that guess is what put a REGAL in front of a');
     plain('   customer whose book line said TRION.');
     for (const u of unkeyed.slice(0, SHOW)) plain(`     ${u.doc}  ${u.item}  qty ${u.qty}`);
-    if (unkeyed.length > SHOW) plain(`     ... ${unkeyed.length - unkeyed.length + unkeyed.length - SHOW} more`);
+    if (unkeyed.length > SHOW) plain(`     ... ${unkeyed.length - SHOW} more`);
   }
 
   plain('');
   plain('═════════ 一句话 ═════════');
   note(differing.length === 0
     ? `GOODS RECEIPTS LINE UP with the account book, line by line, across ${heads.length} documents.`
-    : `${differing.length} goods-receipt pair(s) differ on a LINE. Each one is named above with both sides' `
-      + 'arithmetic; none of them is explained by a receipt spanning several purchase orders.');
+    : `${differing.length} pair(s) carry a raw line observation, and every one is attributable to a LINE — not `
+      + 'one is explained by a receipt spanning several purchase orders, which was the wrong instrument. This is '
+      + 'NOT the differ count: the rulings are deliberately not applied here, and stating the TALLY VERDICT '
+      + 'remains check-ac-erp-reconcile.mjs’s job.');
 
   await sql.end({ timeout: 5 });
   process.exit(0);

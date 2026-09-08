@@ -1,4 +1,4 @@
-name: Are the purchase orders and goods receipts tallied? (read-only)
+name: Are the documents tallied? SO PO GR DO SI PI (read-only)
 
 # 「然后把PO GR也tally掉」 — the owner, 2026-09-08, immediately after the sales
 # orders were answered.
@@ -32,9 +32,14 @@ on:
   workflow_dispatch:
     inputs:
       types:
-        description: "Document types to answer for, comma separated (SO is the control)"
+        # WIDENED 2026-09-08 to all six. The owner: 「SO PO GR PI SI DO 等等？都
+        # 解决了吗？」 — he named six document types, and this workflow answered
+        # for three because `docTypeSpec` threw for the other three. The
+        # reconcile has always COMPARED all six; only the words were missing.
+        # SO stays in the list and stays the control.
+        description: "Document types to answer for, comma separated (SO is the control). SI is spelled IV, the book's own name"
         required: false
-        default: "PO,GR,SO"
+        default: "SO,PO,GR,DO,IV,PI"
         type: string
       show:
         description: "Offenders to list per section (raise it to see every one)"

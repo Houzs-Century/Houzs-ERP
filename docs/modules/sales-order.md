@@ -2173,6 +2173,51 @@ type-independent: adding a document type cannot change what TALLIED means, and
 `renderVerdict(v)` with no type still produces the sales-order text byte for
 byte, which is what this file's caller relies on.
 
+**And for DELIVERY ORDERS, SALES INVOICES and PURCHASE INVOICES since
+2026-09-08** (owner: 「SO PO GR PI SI DO 等等？都解决了吗？」). `docTypeSpec` THREW
+for those three, so no report could be asked for half the types he named, while
+the reconcile had always COMPARED all six and the recorder had always been keyed
+by type. Only the WORDS were missing. Two of the three labels had to move or
+they would be lies: a delivery order's item code is taken from the sales-order
+line by design, and a sales/purchase invoice's LINES are built from our own
+delivery or receipt (`migratedChainLineShape`), so printing "unit price" as a
+checked axis for any of them would report our own derivation back as agreement.
+The workflow's `types` default is now all six, with SO still the control.
+
+### The transfer chain is an AXIS since 2026-09-08 — 「transfer from和transfer to」
+
+Which document a line was raised FROM, and how much of it has been transferred
+ON, had never been compared. `check-ac-erp-reconcile.mjs` reads `transferedQty`,
+`fromDocType` and `fromDocNo` **only to decide SCOPE**, and `LOCKING_AXES`
+carried no member for either — so a line could point at the wrong source
+document and every report would still have said the documents tally. Two
+cross-system checkers existed (`check-ac-convert-symmetry.mjs`,
+`check-ac-transfer-counters.mjs`) and neither produces a per-document verdict,
+so neither could lock a document or move a tally answer.
+
+`LOCKING_AXES` now carries `transfer from` and `transfer to`;
+`UNANSWERABLE_AXES` carries `transfer chain not verifiable`. `bucketOf` and
+`isTallied` are untouched. Three NOTE classes carry the silences so none of them
+reads as agreement: `chain-line-not-in-book`, `chain-no-source` and
+`chain-no-erp-counter`.
+
+**What the account book can answer, and it is less than it sounds.**
+`FromDocDtlKey` is EMPTY on every one of the ~220,000 detail rows of all six
+AutoCount tables, so the source LINE is answerable on ONE edge only — SO→PO,
+which AutoCount records differently as `FromSODtlKey`. On the other four edges
+the book states a source DOCUMENT and nothing finer, and the checker says so
+instead of comparing at document grain and letting a reader believe it checked
+lines. It is re-measured every run from the snapshot, never trusted from a
+comment. `PODTL.FromDocType` is likewise empty on all 18,890 rows, so the
+classifier tests the DocNo — testing the TYPE reports every purchase order in
+the book as sourceless.
+
+The rule modules are `backend/scripts/lib/transfer-chain-verdict.mjs` (pure, and
+it RE-EXPORTS the counter rule from `lib/transfer-counter-verdict.mjs` rather
+than restating it), `lib/ac-transfer-chain-run.mjs` (the reads; it may only
+write onto a document the run already compared, and it FAILS SOFT) and
+`lib/ac-transfer-chain-report.mjs` (the printing).
+
 **Nothing on the sales-order side of this moved.** `check-so-tally.mjs` is not
 modified by that lane, `VERDICT_OUT` still receives SALES ORDERS and nothing
 else, and `publish-so-reconcile-verdict.mjs` and the migrated-sales-order lock
@@ -3918,6 +3963,31 @@ fall behind.
 Best-effort throughout, exactly like the AutoCount enqueue and the GL posting
 beside them — a failure never fails the operator's save, and the next roll
 self-heals.
+
+### The BALANCE a human is shown — which total it subtracts from (2026-09-08)
+
+The order total lives in TWO columns and the balance rule reads whichever one is
+filled. `recomputeTotals` writes `local_total_sen = total_revenue_sen =
+grandTotal` on every edit, so a modern order carries the same figure in both;
+an AutoCount-imported one carries it in `local_total_sen` ONLY, because the
+cutover importer's header column list (`HCOLS` in
+`backend/scripts/import-ac-outstanding-so.mjs`) does not include
+`total_revenue_sen` and the column defaults to `0 NOT NULL`.
+
+| | |
+|---|---|
+| The rule | `soBalanceSen` in `backend/src/scm/shared/so-outstanding.ts` — `soDisplayTotalSen` minus `soPaidSen`, SIGNED (negative = over-collected, painted red; owner 2026-08-16) |
+| The total it picks | `total_revenue_sen` when > 0, else `local_total_sen` (`soDisplayTotalSen`) |
+| What it still refuses | an order with NO total in either column answers **0**. A zero total is UNKNOWN, not "owes nothing" |
+| Where it is served | `GET /mfg-sales-orders/:docNo` stamps it as `balance_sen` on the response, over the header column of the same name — which is NOT a balance (see `so-outstanding.ts`'s own header for the three candidates) |
+| The shared client half | `deriveBalance` (`frontend/src/vendor/scm/lib/so-detail-gates.ts`), consumed by the mobile detail KPI and the desktop print-preview card. A server balance of **0** does not outrank a computable `total - paid`; a NON-zero one does, because only the server applies the legacy header-deposit rule |
+| The write-back's rule is DIFFERENT | `soOutstandingSen` is clamped at 0 and does NOT fall back — AutoCount's `UDF_BALANCE` is only ever written from a total the ERP itself recomputed |
+
+Until 2026-09-08 the rule read `total_revenue_sen` alone, so the detail page
+answered Balance 0.00 for every migrated order while the LIST beside it (reading
+the view's `balance_sen_live`) answered correctly — the owner's own order showed
+Total RM 3,200.00, Paid RM 1,600.00, Balance RM 0.00
+(`docs/bugs/0723-the-sales-order-detail-showed-a-paid-up-balance-of-0-on-ever.md`).
 
 ### Payment methods: THREE choosable, FOUR protected — and one list feeds every picker
 

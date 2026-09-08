@@ -158,6 +158,7 @@ import {
 } from "./lib/ac-field-identity-run.mjs";
 import { printFieldTable, printPoDiscount } from "./lib/ac-field-identity-report.mjs";
 import { makeVerdictRecorder } from "./lib/so-verdict-derive.mjs";
+import { transferChainAxis } from "./lib/ac-transfer-chain-report.mjs";
 import { emitVerdicts } from "./lib/ac-verdict-emit.mjs";
 import { makeSofaRulingLookup } from "./lib/sofa-rulings.mjs";
 
@@ -1963,14 +1964,6 @@ if (notWork) {
   );
 }
 
-/* ── THE PER-DOCUMENT SALES-ORDER VERDICT ──────────────────────────────────
-   Written out ONLY when asked for (VERDICT_OUT), so the read-only check the
-   owner dispatches stays exactly what it was. publish-so-reconcile-verdict.mjs
-   is what puts these rows in the database; this file never writes one, which
-   keeps the CLAUDE.md rule that a read-only check is read-only.
-
-   The verdict is keyed on the ERP document number and covers SALES ORDERS only:
-   it feeds the migrated-sales-order lock, and no other document type has one. */
 /* ── THE PER-DOCUMENT VERDICT ───────────────────────────────────────────────
    Written out ONLY when asked for, so the read-only check the owner dispatches
    stays exactly what it was. This file never writes one to the DATABASE:
@@ -1981,6 +1974,13 @@ if (notWork) {
    migrated-sales-order lock. `VERDICT_DIR` is the newer per-type path the owner
    asked for on 2026-09-08 (「然后把PO GR也tally掉」). The serialising lives in
    lib/ac-verdict-emit.mjs; it DECIDES nothing, and it must not. */
+/* 「然后transfer from和transfer to？」 (owner, 2026-09-08). LAST, because it may
+   only write onto documents this run already COMPARED — `record()` creates an
+   entry it has never seen, and that would move the population
+   lib/tally-crosscheck.mjs sets the two instruments against. It decides nothing
+   and FAILS SOFT: see lib/ac-transfer-chain-run.mjs. */
+await transferChainAxis({ sql, CO, PDATE, types: TYPES.map((c) => c.t), recorder: VERDICT, maxAgeDays: MAX_AGE_DAYS },
+  { plain, log, show: SHOW });
 emitVerdicts({
   recorder: VERDICT,
   companyId: CO,
