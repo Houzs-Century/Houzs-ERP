@@ -219,8 +219,10 @@ A bill OPENS OVER the list in `frontend/src/vendor/scm/components/Modal.tsx`
 (点开时他是跑上去 — the detail used to be a card pushed in above the list) with
 Edit · Copy · Post · Cancel bill and its Files card; the one form behind New,
 Edit and Copy is `frontend/src/pages/scm-v2/ApInvoiceForm.tsx` (Insert adds
-a line and lands on its account picker, Enter on an amount moves down; the
-amount is the shared `MoneyInput`; the scan sits on New and Copy). **Every
+a line and lands on its account picker, Enter on an amount moves down, F3 or
+Ctrl+S is the save button once the form is ready — `useSaveHotkey`,
+payment-voucher.md; the amount is the shared `MoneyInput`; the scan sits on
+New and Copy). **Every
 field can be edited** (edit 这个不能全部都设成可以改吗): `PATCH /:id` takes a
 DRAFT as before and RE-POSTS a posted bill — the old journal gets its contra
 dated as the old bill was, a fresh entry books the bill as saved, one active
@@ -381,8 +383,9 @@ Tables land in migration 0350.
 pop-out form (`DebtorBillForm.tsx` inside `Modal`, opened from the page
 `frontend/src/pages/scm-v2/OtherDebtors.tsx`): lines in the owner's
 order — account, description, amount — Insert adds a line and lands on its
-account, Enter on an amount moves down (adding a line at the end), amounts
-read 1,800.00 (`MoneyInput`), the date takes bare digits (`DateField`).
+account, Enter on an amount moves down (adding a line at the end), F3 or
+Ctrl+S posts once the form is ready (`useSaveHotkey`, payment-voucher.md),
+amounts read 1,800.00 (`MoneyInput`), the date takes bare digits (`DateField`).
 Every bill can be EDITED — every field, `PATCH /other-debtors/bills/:billId`
 (`updateDebtorBillHandler`) — and because a debtor bill is on the books from
 birth, an edit RE-POSTS: the old ODB gets its contra dated as the old bill
@@ -415,7 +418,8 @@ narrows to that month, and a malformed month is a 400 rather than "this
 month" (`listReceiptsHandler`, `backend/src/scm/routes/receipts.ts`;
 `useReceipts` in `frontend/src/vendor/scm/lib/accounting-queries.ts`; the
 page keeps an "All months" button beside the picker,
-`frontend/src/pages/scm-v2/Receipts.tsx`). Contracts:
+`frontend/src/pages/scm-v2/Receipts.tsx`). F3 or Ctrl+S posts the open
+receipt form once it is complete (`useSaveHotkey`, payment-voucher.md). Contracts:
 `backend/tests/receipts.test.ts` ("no month asked for lists every month"),
 `Receipts.test.tsx` ("opens on every month").
 Handlers in `receipts.ts` (mounted beside other-debtors in
