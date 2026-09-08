@@ -32,6 +32,10 @@
  *       correct only if UDF_BALANCE is the book's maintained record of what is
  *       owed - which the census establishes per document, with the date the
  *       book was last edited printed beside every row.
+ *       LastModified is a real stamp but it is an EDIT date, not a receipt
+ *       date, so every row this writes carries the same "DATE NOT OBSERVED"
+ *       label that label-migrated-payment-dates.mjs puts on the cutover's
+ *       rows.  One grep then finds every date on this ledger nobody observed.
  *
  *   RULING=both
  *       settle-collected on bucket (a), balance-only on everything else that
@@ -259,6 +263,15 @@ async function main() {
 
   /* ── the write.  Every statement guarded on the value the plan read. ── */
   let wroteSettle = 0, wroteBalance = 0, skipped = 0;
+  /* THE DATE THIS WRITES IS NOT A PAYMENT DATE EITHER, and the row has to say
+     so.  AutoCount records only what is still OWED; it carries no date on
+     which money arrived.  The nearest real stamp the book holds is
+     LastModified - when the header was last edited - so that is what goes in
+     paid_at, and the label stops `backend/src/acc/daily-close.ts:55-63`, which
+     buckets payments by paid_at, from reading an edit date as counted cash.
+     Same marker as label-migrated-payment-dates.mjs, so one grep finds every
+     date on this ledger that was not observed. */
+  const DATE_LABEL = "DATE NOT OBSERVED: dated the book's LastModified (when the AutoCount header was last edited), not a payment date - AutoCount records no payment date";
   const note = `book settlement carried back from AutoCount (${path.basename("ac-doc-headers.json.gz")} cut ${localOf(heads.exportedAt)})`;
   for (const c of planSettle) {
     const done = await sql.begin(async (tx) => {
@@ -275,7 +288,7 @@ async function main() {
         INSERT INTO scm.mfg_sales_order_payments
           (so_doc_no, paid_at, method, amount_sen, is_deposit, company_id, note)
         VALUES (${c.doc}, ${String(c.bookEdited).slice(0, 10) || null}, 'imported', ${c.owes}, false, 1,
-                ${`${note}; AutoCount ${c.ac} UDF_BALANCE 0`})`;
+                ${`${note}; AutoCount ${c.ac} UDF_BALANCE 0 [${DATE_LABEL}]`})`;
       return true;
     });
     if (done) wroteSettle++; else { skipped++; log(`   SKIPPED ${c.doc} - it moved between the plan and the write`); }
