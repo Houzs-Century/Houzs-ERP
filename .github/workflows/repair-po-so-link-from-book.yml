@@ -1,0 +1,74 @@
+name: Repair PO -> SO link from the account book (PLAN gated)
+
+# The `not linked` column of check-ac-convert-symmetry stood at 765 ERP lines
+# with no cause attached until section 6b split it. 740 of those are the absence
+# being CORRECT - an ERP-native document, a book line naming no source, a parent
+# outside the cutover, or an edge the book records only by document number. This
+# workflow writes the small remainder the book settles at LINE grain, and
+# nothing else.
+#
+# It matters because a company-1 bedframe / sofa / (SP) mattress sales line
+# reads READY only through its OWN dedicated purchase-order line
+# (isHardBoundLine). A purchase line with no so_item_id lights nothing up, so
+# the order behind it stays PENDING with the goods in the warehouse.
+#
+# PLAN IS THE DEFAULT and writes nothing. An apply run needs
+# confirm="I HAVE REVIEWED THE DRY-RUN" and is refused without it.
+#
+# AFTERWARDS: dispatch "Recompute SO stock allocation". A direct SQL write does
+# not trigger the allocation recompute (docs/bugs/0675), so the new links do not
+# reach the sales-order pills until that runs. The apply path prints the
+# READY / PENDING / PARTIAL counts either side of its own write so the delta is
+# on the record.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (default, writes nothing) or apply"
+        required: false
+        default: "plan"
+      confirm:
+        description: 'Required for apply: I HAVE REVIEWED THE DRY-RUN'
+        required: false
+        default: ""
+      company_id:
+        description: "ERP company (AED_HOUZS is company 1)"
+        required: false
+        default: "1"
+      max_snapshot_age_days:
+        description: "Refuse if the AutoCount snapshot is older than this many days"
+        required: false
+        default: "2"
+
+# Its own group, never the deploy's: a repair must not queue behind - or
+# displace - a release. cancel-in-progress is false because cancelling this
+# mid-apply is exactly what must not happen.
+concurrency:
+  group: repair-po-so-link-from-book
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/repair-po-so-link-from-book.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          MAX_SNAPSHOT_AGE_DAYS: ${{ inputs.max_snapshot_age_days }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first

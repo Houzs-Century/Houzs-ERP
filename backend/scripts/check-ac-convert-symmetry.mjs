@@ -1614,9 +1614,14 @@ if (SKIP_ERP) {
          - how many live PROCEEDED sales-order lines have no dedicated purchase
            order at all, which is the consequence the floor actually sees. */
     out("");
-    out("    --- HARD-BOUND: the part of this column that can never light up");
+    out("    --- HARD-BOUND: which of these lines can actually hold an order up");
     out(`        ${boundLive.length} of ${grandTotal} unlinked lines are company-${HARD_BOUND_COMPANY_ID} `
-      + "bedframe / sofa / (SP) mattress on a document that is not cancelled");
+      + "bedframe / sofa / (SP) mattress on a document that is not cancelled.");
+    out("        ONLY THE PO <- SO EDGE DECIDES READINESS, and saying otherwise would inflate this");
+    out("        number by the invoice lines. The allocator lights a bound line off");
+    out("        purchase_order_items.received_qty through so_item_id and reads nothing else; a sales");
+    out("        or purchase INVOICE line with no link is a paperwork pointer and cannot hold up an");
+    out("        order. The count that has a customer behind it is the PO <- SO row below.");
     {
       const byEdgeCls = new Map();
       for (const b of boundLive) {
@@ -1624,7 +1629,10 @@ if (SKIP_ERP) {
         byEdgeCls.set(k, (byEdgeCls.get(k) ?? 0) + 1);
       }
       for (const [k, n] of [...byEdgeCls].sort()) out(`          ${k.padEnd(30)} ${n}`);
-      for (const b of boundLive.slice(0, SHOW)) {
+      const poBound = boundLive.filter((b) => b.edge === "PO <- SO");
+      out(`        ON THE READINESS EDGE: ${poBound.length} hard-bound purchase-order line(s) carry no `
+        + "sales-order link, so the bound sales line they were raised for cannot light up through them.");
+      for (const b of poBound.slice(0, SHOW)) {
         out(`          ${String(b.child_no ?? "").padEnd(14)} ${String(b.item_code ?? "").padEnd(22)} `
           + `${String(b.item_group ?? "").padEnd(10)} ${b.cls}`);
       }
@@ -1663,7 +1671,9 @@ if (SKIP_ERP) {
       + `(${grand.erp_native} ERP-native, ${grand.book_no_edge} the book has no such edge, `
       + `${grand.out_of_scope} parent not imported, ${grand.doc_grain_only} the book records only a document number); `
       + `${grand.dropped} the book states at a reachable grain (our defect), ${grand.unresolved} cannot be said. `
-      + `${boundLive.length} are hard-bound and can never light up.`);
+      + `${boundLive.filter((b) => b.edge === "PO <- SO").length} sit on the readiness edge as a hard-bound `
+      + `purchase-order line with no sales-order link (${boundLive.length} are hard-bound across all six edges, `
+      + "but only PO <- SO can hold an order up).");
 
     /* ══ 7. THE MATRIX ═══════════════════════════════════════════════════════
      *
