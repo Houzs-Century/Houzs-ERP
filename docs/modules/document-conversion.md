@@ -1363,7 +1363,7 @@ shape** — and it is the same shape every ERP below converged on.
 | 11 | PC Receive → PC Return | `purchase_consignment_receive_items.returned_qty` | stored | `qtyCapRefusal` | yes | **no** | yes |
 
 **Identity guard on the two INVOICE chains (rows 3 and 6) — 409
-`source_link_material_mismatch`, added 2026-09-08.** Every cap in the table
+`link_material_mismatch`, added 2026-09-08.** Every cap in the table
 above answers "may this parent line be DRAWN ON". None of them asked whether the
 child names the SAME PRODUCT, and on rows 3 and 6 the parent line id comes
 straight from the client. `probe-link-identity.mjs` (run 34139187692,
