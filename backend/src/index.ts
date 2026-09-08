@@ -69,6 +69,7 @@ import search from "./routes/search";
 import assrPrint from "./routes/assr_print";
 import assrPortal from "./routes/assrPortal";
 import assrFormIntake from "./routes/assrFormIntake";
+import chatCallback from "./routes/chatCallback";
 import survey from "./routes/survey";
 import track from "./routes/track";
 import portal from "./routes/portal";
@@ -298,6 +299,13 @@ app.route("/api/pos", pos);
 // below the gate at first, so every call 401'd at the gate before the
 // route's own key check ever ran.
 app.route("/api/assr-form-intake", assrFormIntake);
+
+// Houzs Chat (Connect) delivery callback — PRE-AUTH for the same reason as
+// the form intake above: chat.houzscentury.com's servers call it with no staff
+// session, self-guarded by the CHAT_CALLBACK_KEY shared secret (X-Chat-Key
+// header). It RECORDS what the customer tapped into scm.wa_message_log; it
+// never writes a delivery date onto the Sales Order. See routes/chatCallback.ts.
+app.route("/api/chat-callback", chatCallback);
 
 // Auth gate for everything else under /api/*. Mounted AFTER the
 // public API routes above so they stay unauthenticated.
