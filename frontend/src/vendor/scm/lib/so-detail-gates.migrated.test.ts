@@ -26,6 +26,7 @@ import rawMobileDetail from '../../../mobile/MobileSODetail.tsx?raw';
 import rawMobileNewSo from '../../../mobile/MobileNewSO.tsx?raw';
 import rawRowMenus from '../../../pages/scm-v2/row-menus.ts?raw';
 import rawAuthedFetch from './authed-fetch.ts?raw';
+import { humanApiError } from './authed-fetch';
 
 describe('migratedReadonly', () => {
   test('true only when the SERVER said so', () => {
@@ -110,6 +111,34 @@ describe('every SO write surface consults the gate', () => {
      and check"), which on a migrated order is advice that loops. */
   test('the refusal code has a curated operator sentence', () => {
     expect(rawAuthedFetch).toContain('so_migrated_readonly:');
+  });
+
+  /* ...AND THE CURATED ONE MUST STEP ASIDE FOR A PER-DOCUMENT SENTENCE.
+     Since the lock was re-grained onto correctness (2026-09-08) the answer is
+     different per order: one still differs from the account book on `document
+     total`, its neighbour matches and is open. The curated line — written for
+     the whole class — would have overwritten that with "view-only until its
+     payments are reconciled", which by then is not even the reason, leaving the
+     salesperson a shut order and nothing to act on. */
+  test('a PER-DOCUMENT reason wins over the curated class sentence', () => {
+    const said = humanApiError(409, JSON.stringify({
+      error: 'so_migrated_readonly',
+      reason: 'HC-SO-010789 still differs from the AutoCount book on: document total. '
+        + 'It opens by itself once that is corrected. Ask IT if it must change today.',
+      message: 'HC-SO-010789 still differs from the AutoCount book on: document total. '
+        + 'It opens by itself once that is corrected. Ask IT if it must change today.',
+      docNo: 'HC-SO-010789',
+    }));
+    expect(said).toContain('HC-SO-010789');
+    expect(said).toContain('document total');
+  });
+
+  /* ...without ever rendering WORSE than before. A server that sends nothing
+     sayable still gets the curated sentence, never the 409 catch-all. */
+  test('the curated sentence is still the fallback when the server says nothing', () => {
+    const said = humanApiError(409, JSON.stringify({ error: 'so_migrated_readonly' }));
+    expect(said).toContain('AutoCount');
+    expect(said).not.toMatch(/refresh and check/i);
   });
 
   /* FOUND IN THE BROWSER, NOT BY A TEST (2026-09-08). The first cut gated Edit

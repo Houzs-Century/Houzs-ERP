@@ -133,15 +133,17 @@ call, and it has to be made BEFORE the freeze is lifted, not after.**
 ## 3. The grammar
 
 ```
-value  :=  off | all | <company ids>
+value  :=  off | all | <company ids> | verdict:<company ids> | verdict:all
 ```
 
 | Value | Meaning |
 |---|---|
 | `off`, `0`, `false`, empty | Migrated orders are editable. Nothing is locked. |
-| `1` | **Today.** Company 1 (Houzs Century): migrated orders read-only. |
-| `1,2` | Both companies. |
-| `all`, `true` | Every company. |
+| `1` | **Today.** Company 1 (Houzs Century): EVERY migrated order read-only. |
+| `1,2` | Both companies, same way. |
+| `all`, `true` | Every company, same way. |
+| **`verdict:1`** | **Company 1, BY CORRECTNESS.** A migrated order is read-only only while the published reconcile verdict says it still DIFFERS from the account book — or while there is no fresh verdict for it. One that matches is fully editable. See §10. |
+| `verdict:1,2`, `verdict:all` | The same, over more companies. |
 
 Whitespace and case do not matter; a trailing comma is fine; duplicates collapse.
 
@@ -155,6 +157,8 @@ carrying a `-` here is treated as **malformed**, not as "on" — see below.
 |---|---|---|
 | `1 - scm.sales.orders` (a freeze value pasted in) | **Every company's migrated orders lock.** The value reports as malformed. | Reading it as "on" would be right by accident. Refusing to read it is right on purpose, and you can see the mistake. |
 | `houzs`, `company 1`, `1;2`, `1.5`, `on` | Same — locks all, reports malformed. | We cannot tell who to lock. Over-locking is loud, visible in seconds, and undone by one UPDATE. Silently opening is invisible. |
+| `verdict:`, `verdict:off`, `verdict:houzs` | **Locks ALL migrated orders, by ORIGIN — not per document.** Reports malformed. | The hardest lock, never the softer one. Per-document IS an opening, so a typo may not reach it. |
+| `verdict:1 - scm.sales.orders` | Same as `1 - scm.sales.orders`: locks all, malformed. | The `-` check runs on the part AFTER `verdict:`, so the freeze paste is refused identically in both spellings. |
 | Empty, or the row is missing | **Open.** | An absent row parses as `off`. Note this is NOT the seeded default — see the next section. |
 
 **The rule in one line: a value nobody can parse LOCKS. A typo can never open.**
@@ -374,7 +378,7 @@ re-run by CI. What each one is:
 |---|---|---|---|
 | Sales Order writes, incl. `PATCH /:docNo/hold` and `POST /:docNo/amendments` | `/mfg-sales-orders/*` | **YES** | the document itself |
 | Amendment gates — supplier-confirm, approve-so, approve-po, send, reject, withdraw | `/so-amendments/*` | **YES** (2026-09-08) | `approve-so` rewrites the order's header and lines |
-| Salesperson handover (`salesperson_id`, `agent`) | `/so-handover/*` | no | attribution, not the order's content or money; a manager action on resignation/transfer, gated by `scm.so.attribute_other`. **A judgement call, not an oversight** — if the owner wants it shut, it is one more `scm.use` line |
+| Salesperson handover (`salesperson_id`, `agent`) | `/so-handover/*` | **YES, since 2026-09-08** | **This row said "no" until the same afternoon it stopped being true.** It is guarded IN THE HANDLER, not at the mount — `soDocNoFromPath` reads the document from the PATH and this route carries a LIST of them in the BODY, so a third mount of the factory would have found nothing, answered "not migrated" and waved every write through. `routes/so-handover.ts` asks `migratedSoReadonlyState` per order and puts the refusal in `skipped` with the lock's own sentence. See the table in §7 above, which is the one that was updated when it changed. |
 | Delivery scheduling (`amended_delivery_date`, `delivery_state`) | `/delivery-planning/*` | no | the delivery module's own flow. Shutting it would stop migrated orders being delivered |
 | Delivery order / return / revert — line delivered quantities, status | `/delivery-orders-mfg/*`, `/delivery-returns/*` | no | same reason. `so-delivery-sync.ts`, `so-generation.ts` |
 | `po_qty_picked` recount on SO lines | `/mfg-purchase-orders/*` | no | a DERIVED counter driven by PO activity, not a staff edit (`recomputeSoPicked`) |
@@ -386,3 +390,205 @@ re-run by CI. What each one is:
 enumeration, then read each member. The first version of this lock was written
 by reasoning about which router mattered, and it got the count right and the
 population wrong.
+
+---
+
+## 10. CORRECTNESS MODE — open the orders that match the book (`verdict:1`)
+
+Owner, 2026-09-08, once the tally was under way:
+
+> **他们是要开 SO 和 edit SO 来 proceed 单;purchasing 要开 PO;logistic 要 convert SO to DO**
+
+Sales proceed orders, purchasing raises purchase orders, logistics converts to
+delivery orders — and **every one of those happens on the MIGRATED orders**,
+which §2's rule forbids. Origin is the wrong grain: it shuts 2,882 documents to
+protect the handful that are actually wrong.
+
+`verdict:1` changes the question the guard asks from *where did this come from*
+to **does this order match the account book**. Same switch, same table, same 30
+seconds to take effect, same bypass cohort.
+
+### The verdict is DERIVED, and it lives beside the data
+
+`check-ac-erp-reconcile.mjs` already decides what "different" means — it is what
+prints the summary in *AutoCount vs ERP reconcile (read-only)*. It now also
+RECORDS what it found, per document, and `publish-so-reconcile-verdict.mjs`
+writes those rows to **`scm.so_reconcile_verdict`**.
+
+There is **no hand-maintained list and there must never be one.**
+`sofa-compartment-corrections-2026-08.json` was a hand-written file stating what
+a sofa was, with nothing grading it against the book, and three sofas were built
+wrong. A "these ones are fine" list is that defect with the stakes moved onto
+every migrated order at once.
+
+**Nothing is stamped on the migrated rows.** The owner's rule (§2) holds:
+「你换不一样就代表我们的数据从 autocount 搬过来的就不一样了啊」. The verdict is a
+separate table keyed by document number, and `scm.mfg_sales_orders` is not
+touched by any of it. The table can be truncated and rebuilt without a migrated
+row changing.
+
+### This count and `docs/cutover-remaining-differences.md` are different questions
+
+That file classifies the reconcile's FINDING count across all six document
+types - 41 on the morning of 2026-09-08, of which 19 were sales orders. This
+section counts DOCUMENTS THAT DO NOT OPEN, sales orders only. The second number
+is larger and the two do not contradict:
+
+- one document can carry several findings, and several documents can share one;
+- a document the reconcile could not ANSWER for produces no finding at all - it
+  is not a difference - and it still does not open, because "could not tell" is
+  not "it matches". That is the whole of the 151.
+
+So: read that file to know what is WRONG and who has to fix it. Read this one to
+know what a salesperson can and cannot save today.
+
+### Absent means LOCKED — five states, and only one of them opens
+
+| State | Answer |
+|---|---|
+| the verdict says CLEAN, measured within 48h | **OPEN** |
+| the verdict says it differs | locked, and the sentence names the axis |
+| no verdict has ever been published for this document | locked |
+| the newest verdict is older than 48h | locked |
+| the verdict read errored or threw | locked |
+
+48h is not a third number: it is the AutoCount snapshot's own limit in
+`check-ac-erp-reconcile.mjs`, because **a verdict cannot be fresher than the book
+it was measured against.** The risk it bounds is one-directional — a document
+REPAIRED since the run reads stale and stays shut (annoying, safe); a document
+that has BROKEN since the run would read clean and OPEN, which is the direction
+that costs something.
+
+**So an expired verdict re-shuts every migrated order.** That is the intended
+failure mode, not an outage. Re-run the check.
+
+### What a salesperson sees
+
+Not the class sentence any more — the document's own:
+
+> HC-SO-010789 still differs from the AutoCount book on: document total. It
+> opens by itself once that is corrected. Ask IT if it must change today.
+
+And where we cannot presently prove it matches:
+
+> HC-SO-010789 cannot be confirmed against the AutoCount book right now, so it
+> stays view-only. Ask IT — the AutoCount check needs to run again.
+
+**The operator `description` is NOT consulted in this mode**, deliberately: in
+origin mode one sentence covered the whole population and retyping it was
+useful; here the sentence must name the document and the axis, and an override
+would erase exactly the part that makes the refusal actionable. Both sentences
+stay under the 200-character cap both clients enforce — `migratedSoVerdictMessage`
+drops AXIS NAMES until it fits rather than truncating one.
+
+### Publishing a verdict
+
+Actions -> **AutoCount vs ERP reconcile (read-only)** -> Run workflow, with
+**publish_verdict** ticked. Two steps in one job: the reconcile measures and
+writes a file, the publisher reads THAT file. A published verdict can therefore
+only ever be one that run measured — there is no path by which a stale or
+hand-assembled file reaches the table, and the publisher refuses a file measured
+more than 48h ago anyway.
+
+**Publishing changes nothing on its own.** While the switch reads `1`, every
+migrated order stays shut exactly as it is today. The rows just sit there.
+
+### THE ORDER OF OPERATIONS — this matters more than the code
+
+1. **The `sync-ac-delta` authorship guard must be live FIRST — it now IS.**
+   `sync-ac-delta` could overwrite a staff edit with no signal at all (§2,
+   risk 1), and its input set is the migrated documents, so opening edits before
+   that guard existed risked losing a person's work. **It shipped in #3205 on
+   2026-09-08** (`backend/scripts/lib/ac-human-edit.mjs`,
+   `docs/bugs/0700-the-delta-sync-read-a-null-actor-as-the-system-and-overwrote.md`),
+   and it hangs authorship on the AUDIT TRAIL rather than on
+   `mfg_sales_orders.version` — `version` is an optimistic-locking token bumped
+   by `advanceSoGeneration` from seven automated paths, and when it was measured
+   against production 50 of the 50 migrated orders it called "touched" were the
+   stock-allocation cron. Re-confirm it is still on main before flipping, rather
+   than trusting this paragraph.
+2. **Publish a verdict** (above). Read the run's `SO VERDICT` line.
+3. **Set the switch**, once the owner says so:
+
+   ```sql
+   UPDATE scm.app_config SET value = 'verdict:1', updated_at = now()
+    WHERE key = 'scm.migrated_so_lock';
+   ```
+
+4. **Lift the write freeze** for the modules the three teams need. That is a
+   DIFFERENT row with a DIFFERENT grammar — see §1 and the trap below.
+
+### Keeping it true afterwards
+
+The verdict expires in 48h, so **correctness mode needs the reconcile re-run and
+re-published on a cadence** or every migrated order re-shuts. That is a real
+operational cost and it is the honest one: the alternative is opening documents
+on evidence nobody refreshed.
+
+**A document can go from clean back to locked**, and that is not a bug. The
+reconcile compares the ERP against the BOOK; a staff edit that reached AutoCount
+through the write-back still matches, and one that did NOT reach it now differs —
+which is exactly the document you want shut. The publisher prints the
+clean/differ split every run, so a re-lock is never silent.
+
+**This mode is a bridge, not a regime.** It exists to get from "all 2,882 shut"
+to "only the broken ones shut" while the last differences are repaired. When
+they are repaired and the AutoCount payments are reconciled, the answer is still
+the one at the top of this file: set the value to `off` and retire the whole
+thing.
+
+### What correctness mode does and does NOT do about bug 0703
+
+`docs/bugs/0703-a-brand-new-sales-order-becomes-read-only-minutes-after-it-i.md`
+is the blocker on the freeze lift: the AutoCount write-back stamps
+`linked_ac_docno` onto a **brand-new** sales order minutes after it is saved, so
+the order a salesperson just created starts reading as migrated and shuts —
+「只开新单」 producing the opposite of itself.
+
+**Correctness mode does not fix it.** A new order that has just been stamped is
+migrated as far as the predicate is concerned, and it carries no published
+verdict, so it locks — with a different sentence (*"cannot be confirmed against
+the AutoCount book right now"*) and the same effect.
+
+**It does bound it, which origin mode does not.** That order genuinely IS in the
+book now, and it matches, so the NEXT reconcile publishes it `clean` and it opens
+by itself. Under origin mode nothing it can ever do will open it. So the damage
+goes from permanent to one reconcile cycle — which is another reason the cadence
+in the section above is not optional.
+
+That is a mitigation, not the fix. The fix is the owner's choice of the options
+in 0703, and it is still owed.
+
+### Where the correctness-mode code is
+
+| What | File |
+|---|---|
+| The verdict contract, the 48h rule, the four unknowns | `backend/src/scm/lib/so-reconcile-verdict.ts` |
+| The grammar (`verdict:`), the decision, the per-document sentence | `backend/src/scm/lib/migrated-so-lock.ts` |
+| Which axes LOCK, and why the declared classes do not | `backend/scripts/lib/so-verdict-derive.mjs` |
+| The recorder's call sites inside the comparison | `backend/scripts/check-ac-erp-reconcile.mjs` |
+| The publisher | `backend/scripts/publish-so-reconcile-verdict.mjs` |
+| The tables | `backend/src/db/migrations-pg/20260908T1420_scm_so_reconcile_verdict.sql` |
+| Grammar + decision + guard tests | `backend/tests/migratedSoVerdictMode.test.ts` |
+| The verdict contract's own tests | `backend/tests/soReconcileVerdict.test.ts` |
+| Why the frontend had to stop overwriting the sentence | `docs/bugs/0700-a-per-document-refusal-reason-was-overwritten-by-the-curated.md` |
+
+### The trap, restated because it has been walked into once already
+
+`scm.write_freeze` is the OTHER row and it has the `- <areas>` grammar. Its
+areas clause is **CUMULATIVE**: to open sales orders, purchase orders and
+delivery orders you name all three PLUS whatever is already lifted. The live
+value is `'1 - scm.procurement.products'`, and the area keys — verified against
+`backend/src/scm/lib/scm-areas.ts`, the enforcement code, not against a doc —
+are `scm.sales.orders` (SO + amendments + handover + quotes + scan-so),
+`scm.procurement.po` (PO + po-amendments) and `scm.sales.delivery` (DO). So:
+
+```sql
+UPDATE scm.app_config
+   SET value = '1 - scm.procurement.products, scm.sales.orders, scm.procurement.po, scm.sales.delivery',
+       updated_at = now()
+ WHERE key = 'scm.write_freeze';
+```
+
+A runbook once documented the live value as a bare `1`; using that would have
+silently re-closed product setup.

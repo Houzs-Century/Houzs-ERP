@@ -65,7 +65,7 @@ beforeEach(() => { apiPost.mockReset(); });
 
 const payload = (over: Partial<AcOutboxResponse> = {}): AcOutboxResponse => ({
   writeback: { value: "1", on: true, scope: "1" },
-  counts: { pending: 0, sent: 0, failed: 0, skipped: 0, requeued: 0, attention: 0, total: 0 },
+  counts: { pending: 0, sent: 0, failed: 0, skipped: 0, requeued: 0, attention: 0, archived: 0, total: 0 },
   oldest_pending: null,
   rows: [],
   truncated: false,
@@ -90,6 +90,7 @@ const row = (over: Partial<AcOutboxRow> = {}): AcOutboxRow => ({
   can_requeue: false,
   can_send_now: false,
   ac_doc_no: null,
+  archived_at: null,
   created_at: "2026-08-15T00:00:00.000Z",
   updated_at: "2026-08-15T00:00:00.000Z",
   sent_at: null,
@@ -196,7 +197,7 @@ describe("acHeadline — the owner's question, answered in one line", () => {
 
   it("counts the not-accepted and held-back together as one plain line", () => {
     const h = acHeadline(payload({
-      counts: { pending: 0, sent: 3, failed: 1, skipped: 2, requeued: 4, attention: 3, total: 10 },
+      counts: { pending: 0, sent: 3, failed: 1, skipped: 2, requeued: 4, attention: 3, archived: 0, total: 10 },
     }));
     expect(h.tone).toBe("bad");
     /* The four-tab change merged failed + skipped into "Not accepted", so the
@@ -208,7 +209,7 @@ describe("acHeadline — the owner's question, answered in one line", () => {
 
   it("agrees with itself about one document", () => {
     const h = acHeadline(payload({
-      counts: { pending: 0, sent: 0, failed: 1, skipped: 0, requeued: 0, attention: 1, total: 1 },
+      counts: { pending: 0, sent: 0, failed: 1, skipped: 0, requeued: 0, attention: 1, archived: 0, total: 1 },
     }));
     expect(h.text).toContain("1 document is not in the account book");
   });
@@ -217,7 +218,7 @@ describe("acHeadline — the owner's question, answered in one line", () => {
      see a permanent phantom failure. */
   it("re-queued rows alone do not make the page red", () => {
     const h = acHeadline(payload({
-      counts: { pending: 0, sent: 1, failed: 0, skipped: 0, requeued: 5, attention: 0, total: 6 },
+      counts: { pending: 0, sent: 1, failed: 0, skipped: 0, requeued: 5, attention: 0, archived: 0, total: 6 },
     }));
     expect(h.tone).toBe("good");
     expect(h.text).toContain("Everything is in AutoCount");
@@ -225,7 +226,7 @@ describe("acHeadline — the owner's question, answered in one line", () => {
 
   it("a waiting backlog is good news, not an alarm", () => {
     const h = acHeadline(payload({
-      counts: { pending: 2, sent: 0, failed: 0, skipped: 0, requeued: 0, attention: 0, total: 2 },
+      counts: { pending: 2, sent: 0, failed: 0, skipped: 0, requeued: 0, attention: 0, archived: 0, total: 2 },
     }));
     expect(h.tone).toBe("good");
     expect(h.text).toContain("2 still on the way");
@@ -243,7 +244,7 @@ describe("acHeadline — the owner's question, answered in one line", () => {
   it("will not say everything arrived when the server says it could not finish counting", () => {
     const h = acHeadline(payload({
       counts_complete: false,
-      counts: { pending: 0, sent: 900, failed: 0, skipped: 0, requeued: 0, attention: 0, total: 900 },
+      counts: { pending: 0, sent: 900, failed: 0, skipped: 0, requeued: 0, attention: 0, archived: 0, total: 900 },
     }));
     expect(h.text).not.toContain("Everything is in AutoCount");
     expect(h.tone).not.toBe("good");
@@ -260,7 +261,7 @@ describe("acHeadline — the owner's question, answered in one line", () => {
   it("still raises the alarm when a partial count already found refusals", () => {
     const h = acHeadline(payload({
       counts_complete: false,
-      counts: { pending: 0, sent: 5, failed: 2, skipped: 0, requeued: 0, attention: 2, total: 7 },
+      counts: { pending: 0, sent: 5, failed: 2, skipped: 0, requeued: 0, attention: 2, archived: 0, total: 7 },
     }));
     expect(h.tone).toBe("bad");
     expect(h.text).toContain("need your attention");
@@ -466,7 +467,7 @@ describe("the type strip counts", () => {
      the reason the two strips are fed from two different helpers. */
   it("takes the status count from the server, with Everything meaning the total", () => {
     const d = payload({
-      counts: { pending: 1, sent: 2, failed: 3, skipped: 4, requeued: 5, attention: 7, total: 15 },
+      counts: { pending: 1, sent: 2, failed: 3, skipped: 4, requeued: 5, attention: 7, archived: 0, total: 15 },
     });
     expect(acStateCount(d, "all")).toBe(15);
     expect(acStateCount(d, "attention")).toBe(7);
@@ -602,7 +603,7 @@ describe("the page opens on what is stuck", () => {
 
   it("says nothing is stuck rather than telling a healthy company to try another filter", () => {
     const healthy = payload({
-      counts: { pending: 0, sent: 900, failed: 0, skipped: 0, requeued: 0, attention: 0, total: 900 },
+      counts: { pending: 0, sent: 900, failed: 0, skipped: 0, requeued: 0, attention: 0, archived: 0, total: 900 },
     });
     expect(acEmptyLine(healthy, "attention")).toMatch(/Nothing needs your attention/);
     /* Same company, a filter the reader CHOSE: "try another" is the right
