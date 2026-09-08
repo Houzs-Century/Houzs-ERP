@@ -44,6 +44,37 @@ collections. Plan first, show the per-order list, then write.
 | **apply**, `settle-collected` | [34173408223](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34173408223) | `APPLIED - 44 order(s) settled from the book, 0 skipped`; fresh-connection read-back: *every written order holds the book's figure and its payment rows sum to it* |
 | label the fabricated dates | [34173735895](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34173735895) | `APPLIED - 2795 payment row(s) labelled, 0 skipped`; `provably-fabricated dates still unlabelled: 0` |
 | census again | [34175101883](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34175101883) | bucket (a) 45 → **1** |
+| read the written rows BACK | [34175822266](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34175822266) | the stored notes and dates, quoted below |
+| census on a **1.2-hour-old** book | [34175913404](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34175913404) | bucket (a) still **1** |
+
+**The written rows, read back out of production rather than inferred from the
+diff.** `probe-so-payment-reconcile` on `HC-SO-002309` and `HC-SO-011422`
+(the largest of the 45, RM 14,870.00) returns two payment rows each, summing to
+the order total, with a live balance of RM 0.00 — and both notes carry their own
+date's provenance:
+
+```
+2024-08-11  RM 1770.00  method=imported  deposit=true
+   note: imported from AutoCount SO-002309 [DATE NOT OBSERVED: this is the ORDER date,
+         not a payment date - the AutoCount cutover had no payment date to copy]
+2026-09-04  RM 4279.00  method=imported  deposit=false
+   note: book settlement carried back from AutoCount (...); AutoCount SO-002309
+         UDF_BALANCE 0 [DATE NOT OBSERVED: dated the book's LastModified (when the
+         AutoCount header was last edited), not a payment date - AutoCount records
+         no payment date]
+```
+
+That is the direct observation the run ids above could only imply.
+
+**The re-opening, measured instead of asserted.** A fresher AutoCount cut landed
+on `main` between the repair and this entry (`ca0ee30c1`, #3148 — headers cut
+2026-09-08 08:02:45 UTC+8, **15 hours** newer than the one the repair used). Run
+`34175913404` re-ran the census against it: bucket (a) is **still 1**, still only
+`HC-SO-012571`. So the structural finding stands — the gap CAN re-open at any
+moment and nothing automatic will close it — but **as of the 08:02 cut it had not
+yet**, and no new payment slipped in during the 15-hour interval. Do not restate
+that as "the gap is closed"; it is one measurement of an interval that happened
+to be quiet.
 
 `settle-collected` was the only ruling that could work, and the reason is worth
 keeping: `balance-only` moves the header's stored `balance_sen`, and **the screen
