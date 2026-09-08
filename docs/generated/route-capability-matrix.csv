@@ -386,6 +386,8 @@ POST,/api/projects/venues,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requir
 DELETE,/api/projects/venues/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""projects.manage"")",,YES,DECLARED_GATE,backend/src/routes/projects.ts
 PATCH,/api/projects/venues/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""projects.manage"")",,YES,DECLARED_GATE,backend/src/routes/projects.ts
 GET,/api/public/contractor-calendar/:token,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,NO,INHERITED_ONLY,backend/src/routes/publicContractorCalendar.ts
+GET,/api/public/contractor-calendar/:token/events/:eventId/floorplan,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,NO,INHERITED_ONLY,backend/src/routes/publicContractorCalendar.ts
+GET,/api/public/contractor-calendar/:token/events/:eventId/floorplan/:fileId,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,NO,INHERITED_ONLY,backend/src/routes/publicContractorCalendar.ts
 GET,/api/public/do-scan/:token,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,NO,INHERITED_ONLY,backend/src/routes/publicDoScan.ts
 POST,/api/public/do-scan/:token/advance,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/publicDoScan.ts
 POST,/api/public/do-scan/batch/advance,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/publicDoScan.ts

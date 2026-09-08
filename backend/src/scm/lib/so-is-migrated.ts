@@ -62,11 +62,27 @@
        is.
    --------------------------------------------------------------------------- */
 
+export type SoNumberShape =
+  /** No AutoCount number at all — the ERP made it and nothing has pushed it. */
+  | 'no-book-number'
+  /** `doc_no` IS the book number: the book took OUR number, so we made it. */
+  | 'equal'
+  /** `doc_no` is a prefix + the book number: the cutover import built it. */
+  | 'prefixed'
+  /** Fits neither. Cannot come from the import; see `soIsMigratedShape`. */
+  | 'neither';
+
 /**
- * The whole rule, pure, so the tests can pin it without a database.
+ * WHICH of the four shapes this pair of numbers has — the whole rule, pure, so
+ * the tests can pin it without a database.
  *
  * `acDocNo` is `scm.mfg_sales_orders.linked_ac_docno`; `docNo` is the ERP
  * document number on the same row.
+ *
+ * Exported alongside the boolean because the read-only census
+ * (`backend/scripts/check-so-migrated-shape.mjs`) reports the DISTRIBUTION and
+ * must not carry its own copy of the rule — one home is the whole point of this
+ * module, and the census is where a second copy would be hardest to notice.
  *
  * Trimmed and case-folded, matching `frontend/src/lib/autocountRegister.ts`,
  * which computes the same test for the AutoCount register's column: a document
@@ -83,24 +99,33 @@
  * only one in use today (measured: 2,882 of 2,882) and the next company is a
  * migration away; a rule that named it would be wrong the day one is added.
  */
+export function soNumberShape(
+  docNo: string | null | undefined,
+  acDocNo: string | null | undefined,
+): SoNumberShape {
+  const book = String(acDocNo ?? '').trim().toLowerCase();
+  if (book === '') return 'no-book-number';
+
+  const erp = String(docNo ?? '').trim().toLowerCase();
+  if (erp === book) return 'equal';
+
+  if (erp.length > book.length && erp.endsWith(book)
+      && erp.slice(0, erp.length - book.length).endsWith('-')) return 'prefixed';
+
+  return 'neither';
+}
+
+/** Did this sales order come FROM AutoCount? The answer every caller wants. */
 export function soIsMigratedShape(
   docNo: string | null | undefined,
   acDocNo: string | null | undefined,
 ): boolean {
-  const book = String(acDocNo ?? '').trim().toLowerCase();
-  /* Never been to the account book. The ERP made it and nothing has pushed it. */
-  if (book === '') return false;
-
-  const erp = String(docNo ?? '').trim().toLowerCase();
-  /* The book took OUR number: this is our own document, written back. */
-  if (erp === book) return false;
-
-  /* `HC-` + the book number: the cutover import built it that way. */
-  if (erp.length > book.length && erp.endsWith(book)
-      && erp.slice(0, erp.length - book.length).endsWith('-')) return true;
-
-  /* Neither shape. See the header — this locks. */
-  return true;
+  /* `neither` LOCKS, with `prefixed`. See the header: it cannot be produced by
+     the cutover import, but `renumber-sales-orders.mjs` can give a migrated
+     order a new doc_no, and reading that as "the ERP made this" would open a
+     document the owner ruled shut. */
+  const shape = soNumberShape(docNo, acDocNo);
+  return shape === 'prefixed' || shape === 'neither';
 }
 
 /* The reader, not the client. Typing the supabase client structurally here made

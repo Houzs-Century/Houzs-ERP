@@ -334,6 +334,39 @@ export async function insertMigratedDo(sql, d, { companyId, sysUser, debtorFallb
               true, ${d.doNo},
               ${warehouseId}, ${salesLocation})
       RETURNING id`;
+    /* THE CUSTOMER BLOCK IS NOT OPTIONAL EITHER, and it was missing for exactly
+       the same reason the prices below once were: the INSERT names the columns
+       this writer thought about, and phone / email / address / city / state /
+       postcode were not among them. scm.delivery_orders HAS all of them and the
+       interactive create path fills them from the source order
+       (delivery-orders-mfg.ts:3459), so every document this writer made rendered
+       "—" for the whole block and a driver could not deliver from it. Reported
+       by the owner 2026-09-08, the day delivery orders opened to staff.
+
+       Copied from the PARENT SALES ORDER in the same transaction, because that
+       is where the book's own customer went (import-ac-outstanding-so.mjs
+       copies Phone1 / InvAddr1..4 onto the order). The four SO address lines
+       fold into the DO's two exactly as src/scm/lib/so-to-do-fields.ts folds
+       them for the live converters. Nothing is defaulted: where the order has
+       no value the column stays NULL, which is the honest rendering of a field
+       the source genuinely does not carry.
+
+       docs/bugs/0714. Rows already written are repaired by
+       scripts/repair-customer-block.mjs; this stops it recurring. */
+    await tx`UPDATE scm.delivery_orders d SET
+               phone = s.phone, email = s.email,
+               customer_type = s.customer_type, building_type = s.building_type,
+               address1 = s.address1,
+               address2 = COALESCE(NULLIF(btrim(s.address2), ''),
+                                   NULLIF(btrim(concat_ws(', ', NULLIF(btrim(s.address3), ''), NULLIF(btrim(s.address4), ''))), '')),
+               city = s.city, state = s.customer_state, customer_state = s.customer_state,
+               postcode = s.postcode, customer_country = s.customer_country,
+               emergency_contact_name = s.emergency_contact_name,
+               emergency_contact_phone = s.emergency_contact_phone,
+               emergency_contact_relationship = s.emergency_contact_relationship
+             FROM scm.mfg_sales_orders s
+            WHERE d.id = ${hdr.id}
+              AND s.doc_no = d.so_doc_no AND s.company_id = d.company_id`;
     /* THE PRICE COLUMNS ARE NOT OPTIONAL. They were omitted here while the GRN
        half of create-migrated-documents.mjs wrote unit_price_sen and
        line_total_sen - one file, two answers. They default to 0 NOT NULL, so

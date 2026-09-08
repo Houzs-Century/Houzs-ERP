@@ -16,7 +16,8 @@ const base = (over: Partial<Row>): Row => ({
 });
 const ROWS: Row[] = [
   base({ id: 'r1' }),
-  base({ id: 'r2', doc_type: 'PO', doc_key: 'po-7', doc_number: 'PO-7', reason: 'Supplier cannot deliver', status: 'L1_APPROVED', l1_by: 21, l1_by_name: 'Ben', l1_at: '2026-09-08T02:00:00Z', requested_by: 12, requested_by_name: 'Dee' }),
+  /* A Purchase Order takes ONE signature, so a fresh request is already at its final level. */
+  base({ id: 'r2', doc_type: 'PO', doc_key: 'po-7', doc_number: 'PO-7', reason: 'Supplier cannot deliver', status: 'REQUESTED', requested_by: 12, requested_by_name: 'Dee' }),
 ];
 
 let viewer = { id: 31, perms: ['*'] };
@@ -59,18 +60,18 @@ describe('CancelRequests', () => {
     expect(await screen.findByText('SO-1')).toBeTruthy();
     expect(screen.getByText('PO-7')).toBeTruthy();
     expect(screen.getByText('Waiting for level-1 approval (0 of 2)')).toBeTruthy();
-    expect(screen.getByText('Waiting for level-2 approval (1 of 2)')).toBeTruthy();
+    expect(screen.getByText('Waiting for approval (0 of 1)')).toBeTruthy();
     expect(screen.getByText('Amy')).toBeTruthy();
     expect(screen.getByText(/2 open requests/)).toBeTruthy();
   });
 
-  it('a wildcard holder sees Approve L1 on the fresh one and Approve & cancel on the level-1-signed one', async () => {
+  it('a wildcard holder sees Approve (level 1) on the SO and Approve & cancel on the PO', async () => {
     mount();
-    expect(await screen.findByText('Approve L1')).toBeTruthy();
+    expect(await screen.findByText('Approve (level 1)')).toBeTruthy();
     expect(screen.getByText('Approve & cancel')).toBeTruthy();
   });
 
-  it('level 2 on the PO runs the PO\'s own cancel afterwards', async () => {
+  it('the PO\'s single approval runs the PO\'s own cancel afterwards', async () => {
     mount();
     fireEvent.click(await screen.findByText('Approve & cancel'));
     await waitFor(() => expect(approvePo).toHaveBeenCalledWith({ key: 'po-7' }));
@@ -79,11 +80,10 @@ describe('CancelRequests', () => {
     expect(notify).toHaveBeenCalledWith(expect.objectContaining({ title: 'Purchase Order PO-7 cancelled' }));
   });
 
-  it('the level-1 signer of PO-7 cannot sign it again; a level-1-only desk cannot sign level 2', async () => {
-    viewer = { id: 21, perms: ['*'] };
+  it('the person who raised PO-7 cannot sign it, wildcard or not', async () => {
+    viewer = { id: 12, perms: ['*'] };
     mount();
-    expect(await screen.findByText('Approve L1')).toBeTruthy();
+    expect(await screen.findByText('Approve (level 1)')).toBeTruthy();
     expect(screen.queryByText('Approve & cancel')).toBeNull();
-    viewer = { id: 41, perms: ['scm.po_cancel.approve_l1'] };
   });
 });

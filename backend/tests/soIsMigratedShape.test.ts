@@ -30,7 +30,7 @@
                       having BEEN to AutoCount is not the same as having come
                       FROM it. */
 import { describe, expect, test } from 'vitest';
-import { soIsMigrated, soIsMigratedShape } from '../src/scm/lib/so-is-migrated';
+import { soIsMigrated, soIsMigratedShape, soNumberShape } from '../src/scm/lib/so-is-migrated';
 
 describe('soIsMigratedShape — the two documents docs/bugs/0703 names', () => {
   test('HC-SO-2609-001 — created by staff, written back, is NOT migrated', () => {
@@ -141,5 +141,33 @@ describe('soIsMigrated — the read', () => {
   test('a failed read THROWS rather than answering false', async () => {
     await expect(soIsMigrated(() => Promise.resolve({ data: null, error: { message: 'boom' } }), 'HC-SO-1'))
       .rejects.toThrow(/soIsMigrated: boom/);
+  });
+});
+
+/* `soNumberShape` is what the read-only census reports the DISTRIBUTION of, and
+   the boolean above is derived from it — so the two can never disagree about a
+   document. These pin the four names, because a census that renamed a bucket
+   would quietly stop matching the runbook and the ledger entry. */
+describe('soNumberShape — the four names the census reports', () => {
+  test.each([
+    ['HC-SO-2609-001', null, 'no-book-number'],
+    ['HC-SO-2609-001', '', 'no-book-number'],
+    ['HC-SO-2609-001', 'HC-SO-2609-001', 'equal'],
+    ['HC-SO-013361', 'SO-013361', 'prefixed'],
+    ['HC-SO-9999', 'SO-013361', 'neither'],
+  ])('%s / %s is %s', (erp, book, want) => {
+    expect(soNumberShape(erp, book as string | null)).toBe(want);
+  });
+
+  test('the boolean is derived from it, so they cannot disagree', () => {
+    for (const [erp, book] of [
+      ['HC-SO-2609-001', 'HC-SO-2609-001'],
+      ['HC-SO-013361', 'SO-013361'],
+      ['HC-SO-9999', 'SO-013361'],
+      ['HC-SO-2609-001', null],
+    ] as Array<[string, string | null]>) {
+      const shape = soNumberShape(erp, book);
+      expect(soIsMigratedShape(erp, book)).toBe(shape === 'prefixed' || shape === 'neither');
+    }
   });
 });

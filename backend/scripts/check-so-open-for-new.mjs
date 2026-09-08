@@ -11,8 +11,13 @@
 // all, scm.migrated_so_lock decides whether THIS DOCUMENT may — so this prints
 // both rows and then the two facts they are supposed to produce:
 //
-//   1. NEW orders (linked_ac_docno IS NULL) created inside the window. If this
-//      is zero after a lift, staff cannot save and the lift did not work.
+//   1. NEW orders created inside the window. If this is zero after a lift,
+//      staff cannot save and the lift did not work. "NEW" is decided by
+//      soIsMigratedShape — the SAME module the guard decides with — and NOT by
+//      `linked_ac_docno IS NULL`, which is what it used to be: the AutoCount
+//      write-back sets that column on the ERP's own order, so a successful send
+//      deleted the very evidence this check exists to produce
+//      (docs/bugs/0703-a-brand-new-sales-order-becomes-read-only-minutes-after-it-i.md).
 //   2. Actions recorded against MIGRATED orders inside the window, split into
 //      SYSTEM rows (the allocation recompute writes these constantly) and rows
 //      a PERSON is credited with. Only the second number is the alarm. The
@@ -39,6 +44,13 @@ import { readFileSync } from "node:fs";
 import postgres from "postgres";
 /* The person-vs-machine rule, in its ONE home. */
 import { auditMachineSql } from "../src/scm/shared/audit-author.ts";
+/* And the came-FROM-AutoCount rule, in ITS one home — the same module the
+   middleware decides with, so this check cannot answer a different question
+   from the thing it is checking. That is exactly what it used to do: it counted
+   NEW orders as `linked_ac_docno IS NULL`, and the AutoCount write-back sets
+   that column on the ERP's own order, so a successful send DELETED the evidence
+   that the lift had worked (docs/bugs/0703). */
+import { soIsMigratedShape } from "../src/scm/lib/so-is-migrated.ts";
 
 const HOURS = Number(process.env.HOURS || 24);
 const COMPANY_ID = Number(process.env.COMPANY_ID || 1);
@@ -95,29 +107,29 @@ async function main() {
     }
   }
 
-  const [made] = await sql`
-    SELECT count(*)::int AS n,
-           max(created_at) AS newest
+  /* CLASSIFIED IN JS, BY THE REAL RULE, not by a second copy of it in SQL. The
+     corpus is one company's sales-order headers — thousands of rows, three
+     columns — so reading them and asking the module is cheap, and it is the
+     only way this check can be guaranteed to agree with the guard. */
+  const headers = await sql`
+    SELECT doc_no, status, linked_ac_docno, created_at
       FROM scm.mfg_sales_orders
      WHERE company_id = ${COMPANY_ID}
-       AND linked_ac_docno IS NULL
-       AND created_at > now() - make_interval(hours => ${HOURS}::int)
   `;
-  const [everNative] = await sql`
-    SELECT count(*)::int AS n
-      FROM scm.mfg_sales_orders
-     WHERE company_id = ${COMPANY_ID} AND linked_ac_docno IS NULL
-  `;
+  const native = headers.filter((r) => !soIsMigratedShape(r.doc_no, r.linked_ac_docno));
+  const cutoff = Date.now() - HOURS * 3_600_000;
+  const inWindow = native
+    .filter((r) => new Date(r.created_at).getTime() > cutoff)
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  const made = { n: inWindow.length, newest: inWindow[0]?.created_at ?? null };
+  const everNative = { n: native.length };
+  const newest = inWindow.slice(0, 10);
 
-  const newest = await sql`
-    SELECT doc_no, status, created_at
-      FROM scm.mfg_sales_orders
-     WHERE company_id = ${COMPANY_ID}
-       AND linked_ac_docno IS NULL
-       AND created_at > now() - make_interval(hours => ${HOURS}::int)
-     ORDER BY created_at DESC
-     LIMIT 10
-  `;
+  /* The RAW column count as well, because it is what the old version of this
+     check reported and somebody will compare the two. They differ by exactly
+     the orders the write-back has sent. */
+  const linked = headers.length - native.length;
+  log(`(raw \`linked_ac_docno IS NOT NULL\` count, which is NOT the predicate: ${linked} of ${headers.length})`);
 
   log(
     `NEW orders saved in the last ${HOURS}h (company ${COMPANY_ID}): ${made.n}`
@@ -163,16 +175,24 @@ async function main() {
   /* sql.unsafe with BOUND PARAMETERS, not string interpolation of the values.
      The only thing spliced in is SYSTEM_ROW, which auditMachineSql validates as
      a plain column reference before it builds anything. */
+  /* MIGRATED here means the same thing the guard means: it came FROM AutoCount.
+     `linked_ac_docno IS NOT NULL` would count the ERP's own written-back orders
+     as migrated, which is how HC-SO-2609-001 appeared in this check's "touched
+     by a PERSON" alarm on the day it was created (docs/bugs/0703). The doc
+     numbers are resolved above, so the SQL takes a list. */
+  const migratedDocs = headers
+    .filter((r) => soIsMigratedShape(r.doc_no, r.linked_ac_docno))
+    .map((r) => r.doc_no);
   const WINDOW = `
       FROM scm.mfg_so_audit_log a
       JOIN scm.mfg_sales_orders so ON so.doc_no = a.so_doc_no
      WHERE so.company_id = $1
-       AND so.linked_ac_docno IS NOT NULL
+       AND so.doc_no = ANY($3)
        AND a.created_at > now() - make_interval(hours => $2::int)`;
 
   const [systemCount] = await sql.unsafe(
     `SELECT count(*)::int AS n ${WINDOW} AND ${SYSTEM_ROW}`,
-    [COMPANY_ID, HOURS],
+    [COMPANY_ID, HOURS, migratedDocs],
   );
 
   const touched = await sql.unsafe(
@@ -180,7 +200,7 @@ async function main() {
        AND NOT ${SYSTEM_ROW}
      ORDER BY a.created_at DESC
      LIMIT 50`,
-    [COMPANY_ID, HOURS],
+    [COMPANY_ID, HOURS, migratedDocs],
   );
 
   log(

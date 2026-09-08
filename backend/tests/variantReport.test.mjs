@@ -52,6 +52,7 @@ const erpLine = (id, colour, key) => ({
 function run(rows, desc2) {
   const out = [];
   const locked = [];
+  const noted = [];
   const vt = reportVariants({
     t: "DO",
     label: "Delivery Order",
@@ -62,12 +63,17 @@ function run(rows, desc2) {
        reads BOOK-BLANK. That is what this harness did on its first run. */
     desc2: new Map(Object.entries(desc2).map(([k, v]) => [Number(k), v])),
     deps: DEPS,
-    VERDICT: { record: (...a) => locked.push(a), seen: () => {} },
+    /* `note` is the NON-locking channel (lib/so-verdict-derive.mjs): the
+       declared classes the report names so nothing is excluded silently. A stub
+       missing it would throw the moment a book-blank cell appeared, which is
+       why it is a real function here and not an optional call at the callsite —
+       an optional call would also hide the wiring genuinely going missing. */
+    VERDICT: { record: (...a) => locked.push(a), seen: () => {}, note: (...a) => noted.push(a) },
     SHOW: 20,
     log: (m) => out.push(m),
     plain: (m) => out.push(m),
   });
-  return { vt, out: out.join("\n"), locked };
+  return { vt, out: out.join("\n"), locked, noted };
 }
 
 const BOOK_02 = 'Clr: PC151-02/Divan:8"+no legs/Gap:14"';

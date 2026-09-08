@@ -778,6 +778,30 @@ and it is not counted as work, and every one of them is printed BY NAME under
 its axis — a class the reader cannot enumerate is a suppression, not a
 declaration (`docs/bugs/0668`).
 
+**Where the DO colour axis stands, measured** — reconcile runs
+[`34210768489`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34210768489)
+(17:34 +08), [`34217483131`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34217483131)
+(18:49, the guard) and [`34217807499`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34217807499)
+(18:53, after the blanks were filled):
+
+| colour / fabric, PROCEEDED | 17:34 | 18:49 | 18:53 |
+|---|---|---|---|
+| agree | 164 | 164 | **168** |
+| ERP blank — the only column that is WORK | 4 | 4 | **0** |
+| differ | 4 | **0** | **0** |
+| no-key | — | 4 | 4 |
+
+**The delivery-order colour backlog is zero.** The four blanks were closed by
+`repair-migrated-do-line-colour.mjs` (`docs/bugs/0715`), which copies the colour
+from the delivery line's OWN sales-order line — the rule
+`lib/migrated-do-writer.mjs` already states — and writes only where the book's
+colour multiset for the whole `(document, item, quantity)` bucket equals the one
+its sales-order lines carry. Apply run
+[`34217713545`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34217713545):
+4 rows, read back on a fresh connection, with money, quantities, readiness,
+stock, the migrated-document movement leak and `scm.autocount_outbox` (45 rows)
+identical before and after.
+
 ### A migrated delivery note can be SHORT a line, and no rule can find it (2026-09-08)
 
 The null keys have a second consequence, and it decides the shape of any repair.
@@ -862,6 +886,40 @@ only from the SALES ORDER path (`scm/lib/so-edit-header.ts`, `composeCreateSo`),
 so the book's `UDF_PAYEMENT` / `UDF_BALANCE` never learn about a payment recorded
 against the delivery. That is the payment half of the owner's sentence, it is a
 different lane's subject, and it is named here so it is not lost between the two.
+
+### A migrated delivery order carries the customer block from its sales order (2026-09-08)
+
+`scm.delivery_orders` holds the whole customer block — `phone`, `email`,
+`customer_type`, `building_type`, `address1`, `address2`, `city`, `state`,
+`customer_state`, `postcode`, `customer_country` and the three emergency-contact
+columns — and the interactive create path fills every one of them from the source
+order (`delivery-orders-mfg.ts:3459`). `backend/src/scm/lib/so-to-do-fields.ts`
+owns WHICH fields carry across, for both live converters.
+
+**`lib/migrated-do-writer.mjs` did not carry any of it until 2026-09-08.** Its
+header INSERT named fourteen columns and none of them was in that list, so every
+document either of its callers produced — `create-migrated-documents.mjs` and
+`sync-ac-delta.mjs` — rendered `-` for phone, email and address. The owner
+reported it the day delivery orders opened to staff (`HC-DO-011556`), and the
+point is that it is not a figures problem: **a delivery note with no phone and no
+address is unusable as paperwork even on a fully delivered order whose data he
+has ruled does not matter** (「已经出货了的就随便把 ... 数据对不对不重要了」).
+
+It now copies the block from the parent sales order inside the same transaction,
+one `UPDATE ... FROM scm.mfg_sales_orders`, folding the order's four address
+lines into the delivery order's two the same way `so-to-do-fields.ts` does.
+**Nothing is defaulted** — a field the order does not carry stays NULL, which is
+what the Create-DO banner is built to report honestly. Pinned by
+`backend/tests/migratedDoWriter.test.mjs`.
+
+Rows written before that: `backend/scripts/repair-customer-block.mjs` +
+`.github/workflows/repair-customer-block.yml` (plan by default, apply gated on
+`CONFIRM="CARRY THE CUSTOMER BLOCK"`); the size of the class is measured by
+`backend/scripts/check-customer-block-gap.mjs` +
+`.github/workflows/check-customer-block-gap.yml`, read-only. Neither touches a
+line, a quantity, a price, a payment column or a status, and neither enqueues an
+AutoCount outbox row. Ledger:
+`docs/bugs/0714-the-migrated-delivery-order-never-carried-a-customer-block-s.md`.
 
 ### Who moves the DO status, and what each value blocks (2026-08-16)
 
