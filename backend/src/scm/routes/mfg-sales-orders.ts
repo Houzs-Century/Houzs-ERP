@@ -259,6 +259,7 @@ import { advanceSoGeneration } from '../lib/so-generation';
 import { creditFromCancelledSo, getCustomerCreditBalance } from '../lib/customer-credits';
 import { summariseReadiness, type ReadinessLine } from '../lib/so-readiness';
 import { effectiveLineStockStatus, readinessLinesByDoc, type LiveStockState } from '../lib/so-line-effective-stock';
+import { loadNonSellingWarehouses, nonSellingWarehouseNotice } from '../lib/non-selling-warehouse';
 import { attachLineCategories, resolveLineCategories } from '../lib/so-readiness-category';
 import { deriveDisplayBrandingRowByDoc } from '../lib/so-display-branding';
 import { mintMonthlyDocNo, insertWithDocNoRetry, companyCodeById } from '../lib/doc-no';
@@ -1676,8 +1677,15 @@ mfgSalesOrders.get('/', async (c) => {
     const readinessByDoc = new Map<string, ReturnType<typeof summariseReadiness>>();
     /* Third argument null: the list first-paint reads the payment-totals VIEW
        (frozen column set, no processing_date) — and with null coverage the
-       promotion arm cannot fire anyway, so "cannot say" is exact. */
-    const linesByDoc = readinessLinesByDoc(itemRows, null, null);
+       promotion arm cannot fire anyway, so "cannot say" is exact.
+       FOURTH argument null, and typed rather than omitted (the parameter is
+       required): the first paint deliberately runs no extra reads, and it does
+       not need this one — the STORED status it rolls up was written by the
+       allocator, which applies the non-selling rule at source. The enrichment
+       fetch a beat later is where the live promotion can fire, and THAT call
+       passes the real set. What is given up here is only the cover for a stale
+       stored READY, for the few hundred ms until the enrichment lands. */
+    const linesByDoc = readinessLinesByDoc(itemRows, null, null, null);
     attachLineCategories(linesByDoc.values(), productCategory);
     for (const [docNo, ls] of linesByDoc) readinessByDoc.set(docNo, summariseReadiness(ls));
 
@@ -2840,7 +2848,7 @@ mfgSalesOrders.get('/:docNo', async (c) => {
      stands as the verdict, and the client fetches the live coverage from
      `GET /:docNo/coverage` after the doc renders. The computation is UNCHANGED,
      just moved off the critical path — see that endpoint below. */
-  const [remainingMap, deliveriesMap, shippedTraceMap] = await Promise.all([
+  const [remainingMap, deliveriesMap, shippedTraceMap, nonSellingWh] = await Promise.all([
     soDeliverableRemaining(sb, [docNo]),
     soLineDeliveries(sb, itemRows.map((it) => it.id)),
     /* Traceability — the source PO(s) each line's SHIPPED goods came from,
@@ -2849,6 +2857,11 @@ mfgSalesOrders.get('/:docNo', async (c) => {
        NOT MRP — stays inline so the detail keeps showing the source PO even
        after the line is delivered (MRP coverage drops off once satisfied). */
     soLineShippedSources(sb, itemRows.map((it) => it.id)),
+    /* Display / showroom / service warehouses (owner ruling 2026-09-08). One
+       16-row read, run alongside the three above so it costs no round trip on
+       the detail's critical path — which was deliberately taken off computeMrp
+       on 2026-09-01 and must stay fast. */
+    loadNonSellingWarehouses(sb),
   ]);
   const items = itemRows.map((it) => {
     const rem = remainingMap.get(it.id);
@@ -2856,6 +2869,9 @@ mfgSalesOrders.get('/:docNo', async (c) => {
     const deliveredQty = deliveries.reduce((s, d) => s + d.qty, 0);
     const shippedTrace = shippedTraceMap.get(it.id);
     const shippedPos = shippedTrace?.pos ?? [];
+    const lineNonSelling = nonSellingWh.get(
+      String((it as { warehouse_id?: string | null }).warehouse_id ?? ''),
+    ) ?? null;
     /* SERVICE lines carry no inventory and are inherently available, so they
        stay 'stock' with no MRP run needed. Every other line's live coverage is
        UNKNOWN without MRP, so stock_state is null here and the client heals it
@@ -2887,8 +2903,19 @@ mfgSalesOrders.get('/:docNo', async (c) => {
             (it as { item_group?: string | null }).item_group ?? null,
             (it as { item_code?: string | null }).item_code ?? null,
           ),
+          lineNonSellingWarehouse: lineNonSelling !== null,
         },
       ),
+      /* WHY the line reads PENDING, named, so the refusal reaches the person
+         looking at it. A correct refusal that tells nobody is the "the button
+         does nothing" defect (vendor/scm/lib/mutation-error.ts) — 35 write paths
+         shipped in that shape here once. Null on every ordinary line. */
+      non_selling_warehouse: lineNonSelling === null ? null : {
+        code: lineNonSelling.code,
+        name: lineNonSelling.name,
+        type: lineNonSelling.type,
+        notice: nonSellingWarehouseNotice(lineNonSelling),
+      },
       // coverage_po / coverage_eta are MRP-derived — unknown without the run.
       coverage_po: null,
       coverage_eta: null,
@@ -2991,11 +3018,16 @@ mfgSalesOrders.get('/:docNo/items', async (c) => {
   );
   // Coverage from the SAME MRP allocation engine the detail + MRP page use.
   // Best-effort: a failed allocation just drops lines to Pending.
-  const [remainingMap, deliveriesMap, shippedTraceMap, cov] = await Promise.all([
+  const [remainingMap, deliveriesMap, shippedTraceMap, cov, nonSellingWh] = await Promise.all([
     soDeliverableRemaining(sb, [docNo]),
     soLineDeliveries(sb, itemRows.map((it) => it.id)),
     soLineShippedSources(sb, itemRows.map((it) => it.id)),
     soCoverage(c, sb),
+    /* This is the endpoint where the live-'stock' PROMOTION actually fires, so
+       it is the one that must know which warehouses may not promise (owner
+       ruling 2026-09-08). MRP pools per warehouse and would happily report
+       'stock' for a line standing in KL DISPLAY. */
+    loadNonSellingWarehouses(sb),
   ]);
   const coverageMap = cov.coverage;
   const readyPosMap = await soLineReadySourcePos(sb, activeCompanyId(c) ?? null, cov.mrp, itemRows as Array<{ id: string; item_group?: string | null; qty?: number | null; stock_status?: string | null; allocated_batch_no?: string | null }>);
@@ -3010,6 +3042,9 @@ mfgSalesOrders.get('/:docNo/items', async (c) => {
     // SOFA stock-coverage trusts the batch-aware stock_status; non-sofa trusts
     // the MRP SKU-pool source (identical to the detail's rule).
     const isSofaLine = String((it as { item_group?: string | null }).item_group ?? '').toUpperCase().includes('SOFA');
+    const lineNonSelling = nonSellingWh.get(
+      String((it as { warehouse_id?: string | null }).warehouse_id ?? ''),
+    ) ?? null;
     /* SERVICE lines (delivery fee / dispose / lift) never enter the MRP
        allocator — they create no purchase demand (mrp.ts skips them), so `cov`
        is always undefined and stock_state would fall through to null, rendering
@@ -3043,8 +3078,17 @@ mfgSalesOrders.get('/:docNo/items', async (c) => {
             (it as { item_group?: string | null }).item_group ?? null,
             (it as { item_code?: string | null }).item_code ?? null,
           ),
+          lineNonSellingWarehouse: lineNonSelling !== null,
         },
       ),
+      /* The reason, carried on the same payload the pill reads — see the twin
+         on GET /:docNo. */
+      non_selling_warehouse: lineNonSelling === null ? null : {
+        code: lineNonSelling.code,
+        name: lineNonSelling.name,
+        type: lineNonSelling.type,
+        notice: nonSellingWarehouseNotice(lineNonSelling),
+      },
       coverage_po: covered ? cov?.po ?? null : null,
       coverage_eta: covered ? cov?.eta ?? null : null,
       shipped_source_pos: shippedPos,

@@ -78,9 +78,19 @@ export type LiveStockState = 'stock' | 'po' | 'shortage' | null;
 export type EffectiveStockStatus = 'READY' | 'PARTIAL' | 'PENDING';
 
 /** The context that decides whether the live-'stock' promotion may fire — see
- *  the two gates in the module header. `orderProcessed` = the order carries a
- *  processing date; `lineHardBound` = `isHardBoundLine(item_group, item_code)`. */
-export type PromotionGates = { orderProcessed: boolean; lineHardBound: boolean };
+ *  the two gates in the module header — plus the one RULE that overrides both
+ *  engines. `orderProcessed` = the order carries a processing date;
+ *  `lineHardBound` = `isHardBoundLine(item_group, item_code)`;
+ *  `lineNonSellingWarehouse` = the line's warehouse is display / showroom /
+ *  service (`warehouseCanPromise`, lib/non-selling-warehouse.ts).
+ *
+ *  Every field is REQUIRED, so adding the third one made the compiler walk the
+ *  call sites instead of letting them keep the old permissive answer. */
+export type PromotionGates = {
+  orderProcessed: boolean;
+  lineHardBound: boolean;
+  lineNonSellingWarehouse: boolean;
+};
 
 /**
  * The verdict both the board column and the line pill answer from.
@@ -100,6 +110,19 @@ export function effectiveLineStockStatus(
   gates: PromotionGates | null,
 ): EffectiveStockStatus {
   const stored = (storedStatus ?? '').toUpperCase();
+  /* THE ONE VETO, and it is deliberately unlike the two gates above it.
+     ─────────────────────────────────────────────────────────────────────────
+     "Neither engine may veto the other" is a rule about two ENGINES disagreeing
+     about where the goods are. This is not an engine — it is the owner's RULE
+     (2026-09-08 「分配时跳过这九个仓」) about whether goods that both engines can
+     plainly see may be PROMISED to a customer. Both engines are right that a
+     unit is standing in KL DISPLAY; neither is entitled to sell it.
+     So it outranks a stored READY too, which the two promotion gates never do.
+     Without that, a stored READY written before this shipped — or one left
+     behind by a recompute that has not caught up (§0.3 staleness) — would keep
+     showing READY on the pill while the engine had already stopped promising
+     it, which is two surfaces disagreeing again. */
+  if (gates !== null && gates.lineNonSellingWarehouse) return 'PENDING';
   if (stored === 'READY') return 'READY';
   if (liveState === 'stock' && gates !== null && gates.orderProcessed && !gates.lineHardBound) return 'READY';
   if (stored === 'PARTIAL') return 'PARTIAL';
@@ -117,18 +140,32 @@ export function effectiveLineStockStatus(
  *  `processedDocs` is the set of doc_nos whose order carries a processing date
  *  (the first promotion gate; the second, hard binding, is derived from each
  *  row's own item_group/item_code). `null` = the caller cannot say — the strict
- *  direction: no line promotes on live 'stock'. */
+ *  direction: no line promotes on live 'stock'.
+ *
+ *  `nonSellingWarehouseIds` is the display / showroom / service warehouse set
+ *  (`loadNonSellingWarehouses`). REQUIRED, and `| null` rather than optional
+ *  (CLAUDE.md, "a parameter that DECIDES something"): a caller that cannot load
+ *  the warehouse master must TYPE the null and thereby say so, instead of
+ *  inheriting a default that silently keeps the pre-2026-09-08 answer. `null`
+ *  leaves the veto off — the STORED status then carries the rule alone, which it
+ *  does correctly because the allocator applies the same gate at source; what is
+ *  lost is only the cover for a stale projection. */
 export function readinessLinesByDoc(
   rows: Array<{
     id: string; doc_no: string; item_group: string | null;
     item_code: string | null; stock_status?: string | null; cancelled?: boolean | null;
+    warehouse_id?: string | null;
   }>,
   coverage: Map<string, { source: string }> | null,
   processedDocs: ReadonlySet<string> | null,
+  nonSellingWarehouseIds: ReadonlySet<string> | null,
 ): Map<string, ReadinessLine[]> {
   const out = new Map<string, ReadinessLine[]>();
   for (const r of rows) {
     const arr = out.get(r.doc_no) ?? [];
+    const nonSelling = nonSellingWarehouseIds !== null
+      && r.warehouse_id != null
+      && nonSellingWarehouseIds.has(r.warehouse_id);
     arr.push({
       item_group: r.item_group,
       item_code: r.item_code,
@@ -136,9 +173,10 @@ export function readinessLinesByDoc(
       stock_status: effectiveLineStockStatus(
         r.stock_status ?? null,
         (coverage?.get(r.id)?.source ?? null) as LiveStockState,
-        processedDocs === null ? null : {
-          orderProcessed: processedDocs.has(r.doc_no),
+        processedDocs === null && !nonSelling ? null : {
+          orderProcessed: processedDocs !== null && processedDocs.has(r.doc_no),
           lineHardBound: isHardBoundLine(r.item_group, r.item_code),
+          lineNonSellingWarehouse: nonSelling,
         },
       ),
     });
