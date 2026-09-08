@@ -209,6 +209,7 @@ const AC_REPEATED_SENDS: AcOutboxRow[] = [
      on every sent row in the lab and measured a page production does not have.
      The one row that legitimately mismatches is AC_BOOK_MISMATCH below. */
   ac_doc_no: "HC-SO-2608-002",
+  archived_at: null,
   created_at: s.createdAt,
   updated_at: s.sentAt,
   sent_at: s.sentAt,
@@ -240,6 +241,7 @@ const AC_BOOK_MISMATCH: AcOutboxRow = {
   can_requeue: false,
   can_send_now: false,
   ac_doc_no: "PO-009968",
+  archived_at: null,
   created_at: "2026-08-17T02:10:00.000Z",
   updated_at: "2026-08-17T02:10:30.000Z",
   sent_at: "2026-08-17T02:10:30.000Z",
@@ -252,6 +254,7 @@ function acRows(total: number): AcOutboxRow[] {
       doc_id: null,
       remedy: null,
       ac_doc_no: null,
+      archived_at: null,
       created_at: "2026-08-15T00:00:00.000Z",
       updated_at: "2026-08-15T00:00:00.000Z",
       sent_at: null as string | null,
@@ -353,6 +356,7 @@ function acRows(total: number): AcOutboxRow[] {
          is what a document sent since §7g looks like, so the register's fifth
          column is quiet on it, which is the case that has to be measured. */
       ac_doc_no: `HC-SO-2608-${String(i).padStart(4, "0")}`,
+      archived_at: null,
       sent_at: "2026-08-15T01:00:00.000Z",
       reason: null,
       reason_kind: null,
@@ -385,6 +389,7 @@ function acPayload(total: number): AcOutboxResponse {
          newer row. Counting them here is the phantom-failure bug #2189 left
          behind, and the lab must not reproduce a shape the server cannot send. */
       attention: docsWhere((r) => r.state === "failed" || r.state === "skipped"),
+      archived: 0,
       total: docsWhere(() => true),
     },
     oldest_pending: null,
