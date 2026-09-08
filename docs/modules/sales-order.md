@@ -1934,7 +1934,7 @@ Before the row is removed, `repair-so-book-parity-owner-ruling.mjs` reads it wit
 that read comes back empty. Putting it back is one `INSERT` with those values
 plus the same header re-sum. The captured row is also copied into the ledger
 entry, which is the durable record:
-`docs/bugs/0712-the-owner-ruled-that-a-row-the-book-describes-nothing-in-is.md`.
+`docs/bugs/0713-the-owner-ruled-that-a-row-the-book-describes-nothing-in-is.md`.
 
 **Why the FK sweep is the guard that matters.** The three FKs listed under *The
 SO line's downstream links* below — `purchase_order_items.so_item_id`,

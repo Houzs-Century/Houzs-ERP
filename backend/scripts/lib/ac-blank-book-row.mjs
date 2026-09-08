@@ -77,7 +77,7 @@
  * WHAT ARM 2 ABSORBS, measured over the whole 2026-09-08 08:03 cut — every
  * header and every line of all six types, not just the reconcile's population:
  * EIGHT rows, and they are named in
- * docs/bugs/0712-the-owner-ruled-that-a-row-the-book-describes-nothing-in-is.md.
+ * docs/bugs/0713-the-owner-ruled-that-a-row-the-book-describes-nothing-in-is.md.
  */
 
 const zero = (v) => v === null || v === undefined || Number(v) === 0;

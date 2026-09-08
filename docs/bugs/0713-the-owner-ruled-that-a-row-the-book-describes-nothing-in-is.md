@@ -8,7 +8,7 @@ future session will find out that a hard `DELETE` on a live sales-order line was
 the owner's, that he was told the standing convention first, and exactly how far
 the ruling reaches. Read it before widening anything here.
 
-## The ruling, verbatim — 2026-09-08 (Malaysia, UTC+8)
+### The ruling, verbatim — 2026-09-08 (Malaysia, UTC+8)
 
 He was shown the last three sales-order differences on the go-live reconcile, and
 told that two of them needed HIS decision **because this repo's standing
@@ -34,7 +34,7 @@ The same ruling is recorded in `docs/modules/sales-order.md` under **"The owner'
 delete ruling (2026-09-08)"**, because a future reader who finds the `DELETE`
 will look at the module guide before the bug ledger.
 
-## Symptom
+### Symptom
 
 Three sales orders were the whole of the sales-order column on the go-live
 reconcile. Run [`34212888329`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34212888329)
@@ -54,7 +54,7 @@ reconcile. Run [`34212888329`](https://github.com/Houzs-Century/Houzs-ERP/action
 The whole reconcile read **21**. The sales-order type contributed **4** of them
 (line count 2, document total 2) — and those 4 are these three documents.
 
-## Root cause (traced), one per document
+### Root cause (traced), one per document
 
 **1. `SO-013160` — we hold a line the book does not.** The ERP has a 4th row,
 `STORAGE` RM 300.00, claiming AutoCount DtlKey **892917**. That key is on **no
@@ -98,7 +98,7 @@ His 「都要跟Autocount一样」 settles the part that matters — the documen
 must equal the book — and leaves the split alone, because the book states nothing
 about it.
 
-## Fix
+### Fix
 
 **Half 1 — the checker, for `SO-011384`. This is a CHECKER change, not a data
 change, and the distinction is the point.** Nothing is written to that document;

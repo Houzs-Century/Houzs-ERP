@@ -18,7 +18,7 @@
  * these rows and the class they belong to. It is NOT a general licence: nothing
  * here may be widened into "deleting is fine now". The full record, including
  * where the class boundary is, is in docs/modules/sales-order.md ("The owner's
- * delete ruling") and docs/bugs/0712-the-owner-ruled-that-a-row-the-book-describes-nothing-in-is.md.
+ * delete ruling") and docs/bugs/0713-the-owner-ruled-that-a-row-the-book-describes-nothing-in-is.md.
  *
  * ── WHAT IT WRITES — TWO LANES, BOTH PER-DOCUMENT, BOTH NAMED ──────────────
  *
@@ -107,7 +107,7 @@
  *
  * RECOVERY IF THE RULING IS EVER REVERSED. The deleted row is printed in full
  * as JSON by the plan AND by the apply, and it is copied into
- * docs/bugs/0712-the-owner-ruled-that-a-row-the-book-describes-nothing-in-is.md. To put it back: INSERT one row into
+ * docs/bugs/0713-the-owner-ruled-that-a-row-the-book-describes-nothing-in-is.md. To put it back: INSERT one row into
  * `scm.mfg_sales_order_items` with exactly those column values (a fresh `id` is
  * fine — nothing referenced the old one, which is one of the preconditions of
  * the delete), then re-sum the header the way `applyHeader` below does. Nothing
