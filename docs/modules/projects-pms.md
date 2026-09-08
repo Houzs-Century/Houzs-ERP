@@ -321,7 +321,22 @@ surface (own month grid, no import from `Projects.tsx`), routed by
 It renders each event as ONE Houzs-teal bar SPANNING its days (label shown once,
 lane-packed per week — a multi-day event does not repeat per day), on a teal
 frame/header/grid (owner 2026-09-04: the plain version read as empty and the
-per-day repetition confused contractors).
+per-day repetition confused contractors; header and frame moved to the brass
+`accent` token 2026-09-08 so the bars are the only green).
+**Tapping an event opens ONLY its unfilled floorplan (owner 2026-09-08).** The
+list now carries `eventId` (the project id; it opens nothing on its own), and two
+more public routes in the same file sit behind the same token gate + limiter:
+`GET /api/public/contractor-calendar/:token/events/:eventId/floorplan` lists the
+files and `.../floorplan/:fileId` streams one (`?download=1` = attachment
+disposition). Both re-check `id = ? AND contractor = <token's contractor> AND
+confirmed AND not archived` per call. "Unfilled floorplan" is the same rule as
+the mobile Floor Plans card's Unfilled tile: live attachments on the
+`Blank Floorplan` checklist task, else the legacy project-level
+`project_attachments` row with category `floorplan`. The Display Floor Plan, the
+Filled Floorplan and every other file stay server-side; the file id is
+`t<attachment id>` / `l<legacy id>` and the R2 key never reaches the browser.
+Pinned by `backend/tests/publicContractorCalendarFloorplan.test.ts` (light
+project) and the panel test in `ContractorCalendar.test.tsx`.
 **The role BADGE is the second half of the checklist-tick gate, and the UI must
 ask it too.** A caller holding `projects.checklist.tick` but **not**
 `projects.write` may attach, edit, delete and status-change only on tasks whose

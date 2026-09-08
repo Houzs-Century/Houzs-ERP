@@ -1,7 +1,7 @@
 ## The delivery-order colour swap is the checker pairing two indistinguishable rows by position [high]
 
 <!-- area: AutoCount sync + write-back -->
-<!-- status: open -->
+<!-- status: fixed -->
 
 **Symptom.** The AutoCount reconcile has printed the same four fabric colours as
 an exact swap on every run for two days, most recently
@@ -156,7 +156,28 @@ genuinely carries no colour where the book states one — and `DO-011566`'s two
 `FLAT-(Q)` rows are unkeyed but blank on BOTH rows, so the verdict is the same
 whichever way they pair. All four sit on PROCEEDED orders.
 
-**Fix.** NONE to the two documents, deliberately — they are not wrong.
+**Fix — SHIPPED and MEASURED on production.** Nothing was written to the two
+documents, deliberately: they are not wrong. What changed is the checker, and
+what it printed either side of the change is the whole proof.
+
+| DO colour axis, PROCEEDED | before, run [`34210768489`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34210768489) 17:34 +08 | after the guard, [`34217483131`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34217483131) 18:49 | after the blanks were filled, [`34217807499`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34217807499) 18:53 |
+|---|---|---|---|
+| agree | 164 | 164 | **168** |
+| ERP blank (the only column that is WORK) | 4 | 4 | **0** |
+| **differ** | **4** | **0** | **0** |
+| no-key (new; not work) | — | 4 | 4 |
+
+`docs/bugs/0712` is the checker change. The four ERP-blank lines were a
+different shape and are closed by `repair-migrated-do-line-colour.mjs`, plan run
+[`34217614240`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34217614240)
+and apply run
+[`34217713545`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34217713545):
+`APPLIED: 4 row(s) written of 4 planned`, then, on a FRESH connection, `all 4
+row(s) hold the planned colour` with money, quantities, readiness, stock, the
+migrated-document movement leak and the AutoCount outbox (45 rows) identical
+before and after.
+
+**Fix (original text).** NONE to the two documents, deliberately — they are not wrong.
 `backend/scripts/probe-do-colour-pairing.mjs` (read-only, no `APPLY` path) is
 added here as the observation that decides this class: per line, whether the
 pairing was FORCED by a line key or GUESSED, and where it was guessed, whether

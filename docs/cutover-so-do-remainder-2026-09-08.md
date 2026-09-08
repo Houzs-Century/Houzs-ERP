@@ -99,7 +99,7 @@ Blocked on the keys: `backfill-ac-sofa-line-keys.mjs` has not reached this
 document, so `topup` calls it UNJUDGEABLE and refuses — correctly, under-repair
 rather than duplicate.
 
-### D — one order carries a line AutoCount does not have (1 line count + 1 money)
+### D — one order carries a line AutoCount does not have (1 line count + 1 money) — **DONE, apply run `34216413503`**
 
 `SO-013160`: the ERP holds a 4th row, `STORAGE` RM 300.00, claiming **DtlKey
 892917**. That key is on **no document of any type in the whole snapshot** —
@@ -109,7 +109,7 @@ AutoCount after we imported it.
 
 **This one needs the owner**: removing it is a line DELETION on a live order.
 
-### E — one sofa is priced RM 88.00 above the book (1 money)
+### E — one sofa is priced RM 88.00 above the book (1 money) — **DONE, same run**
 
 `SO-012571`: the book says `DSL-8050 SOFA` RM 3,300.00; the ERP's lead
 compartment `8050-1A(R)(LHF)` says RM 3,388.00, and with the RM 150.00 DISPOSE
@@ -119,7 +119,7 @@ line that is RM 3,538.00 against the book's RM 3,450.00.
 ERP lines: 305 AutoCount line(s) / 460 ERP row(s)`, because which compartment
 carries the money is a decision, not a copy. It belongs to the sofa tooling.
 
-### F — three that are the BOOK's own gap (2 DO line count + 1 SO line count) — **TWO OF THE THREE WERE MISCLASSIFIED. DONE, apply run `34213756311`**
+### F — three that are the BOOK's own gap (2 DO line count + 1 SO line count) — **`SO-011384` DONE by an owner ruling; the two DO rows were closed by another lane** — **TWO OF THE THREE WERE MISCLASSIFIED. DONE, apply run `34213756311`**
 
 > **CORRECTED 18:08.** `DO-001953` and `DO-004903` were **not** the book's own
 > gap and never needed the owner. The reading below stopped at *"its own sales
@@ -373,6 +373,29 @@ dry-run above is the evidence, and the write has not been run.**
 the reconcile classifies it `same-money` — its total equals the book and the two
 book lines it lacks are RM 0.00.
 
+### The class reads ZERO on its own instrument
+
+`Probe DO item codes changed after conversion (read-only)` shipped with #3244 and
+was dispatched on `main` after the merge — run `34216439995`:
+
+```
+THE CLASS: 34 delivery line(s) on 30 delivery order(s)
+OF THE 30 ... the ERP HOLDS 4 and does not hold 26
+Of the 4 it holds: 4 already carry every flagged line; 0 are SHORT, 0 line(s)
+```
+
+### What this RULED OUT — the checker itself moved between the two reconcile runs
+
+Both reconcile runs were dispatched on `main`, and **#3239 merged at 10:01:25Z,
+between the BEFORE (09:54Z) and the AFTER (10:10Z)**, so the AFTER run read a
+checker that was not byte-identical to the BEFORE one. (#3238, which changes what
+the reconcile PRINTS, merged at 10:34:55Z — after both.) That contaminant is
+refuted by the control rather than by argument: SO, PO, GR, IV and PI are
+identical on every axis across the two runs, and the only movement is DO's line
+count 2 -> 0 with lines paired 819 -> 823 — **+4, exactly the four rows written.**
+A moved checker does not land on one type's one column at exactly the write's own
+size.
+
 ---
 
 # INSIDE the line: colour, seat size and specials — closed 2026-09-08 16:20
@@ -579,3 +602,84 @@ inventing a product is forbidden — the original order slip is the only source.
 payment column was written by this lane on any document, so readiness and stock
 cannot have moved and the reconcile reading above is the current state, not a
 before.
+
+---
+
+# D, E and F closed — the owner's delete ruling, 2026-09-08 18:34-18:40
+
+**The whole sales-order column is now zero.** `SO DATA … line-count differs: 0;
+item code: 0; quantity: 0; unit price: 0; document total: 0`, and
+`DtlKey on the wrong document` went 1 -> 0. The reconcile went **20 -> 17**.
+
+## The ruling this rests on
+
+Sections D and E were held back as the owner's decisions, and F's `SO-011384` was
+held back because "there is no product to point at and inventing one is
+forbidden". He was shown all three, **told that the standing convention is never
+delete only cancel**, and ruled:
+
+> 「删掉啊 没写的也删掉
+> 简单来说都要跟Autocount一样啊 你不懂吗？」
+
+That is an explicit, informed override **for these rows and the class they belong
+to, and not a general licence**. It is recorded verbatim, dated, with the fact
+that he was told the rule first, in `docs/modules/sales-order.md` ("The owner's
+delete ruling (2026-09-08)") and in
+`docs/bugs/0713-the-owner-ruled-that-a-row-the-book-describes-nothing-in-is.md`,
+which also carries every column of the deleted row and the run evidence below.
+
+## What each one became
+
+| section | document | what was done |
+| --- | --- | --- |
+| D | `SO-013160` | the `STORAGE` RM 300.00 row claiming DtlKey 892917 was **DELETED**, and the header re-summed to RM 300.00 = the book. The run proved the key is on no line of any of the six types (220,733 distinct DtlKeys) and that **0 rows across all 5 foreign keys referencing `scm.mfg_sales_order_items`** pointed at it |
+| E | `SO-012571` | the compartment that already carried the sofa's money, `8050-1A(R)(LHF)`, went RM 3,388.00 -> RM 3,300.00; its sibling stays RM 0.00. Document RM 3,450.00 = the book. `repair-so-price-from-autocount.mjs`'s decomposed-sofa skip is **unchanged** |
+| F | `SO-011384` | **a CHECKER change, not a data change.** `lib/ac-blank-book-row.mjs` grew a second arm: a row with no item code, no description, no Desc2 and no money is nothing even when it carries a quantity. Nothing was written to the document |
+
+**MONEY IS THE BOUNDARY THE RULING DID NOT MOVE.** `HC-SO-000102`'s
+`"DELIVERY FEE "` (RM 50.00) and `HC-DO-001604`'s `"* DISPOSE …"` (RM 150.00) are
+code-less and stay findings; the reconcile's own self-test now asserts that in
+both directions.
+
+Over the whole book the widened arm absorbs **eight** rows — `SO-000260`,
+`SO-001299`, `SO-001606`, `SO-011384`, `DO-000806`, `DO-001168`, `I-000976`,
+`I-001363`; PO, GR and PI have none. Only `SO-011384` was on an offender list, so
+the other seven changed no count. All eight are named in the ledger entry.
+
+## Runs
+
+| run | at (Malaysia) | what |
+| --- | --- | --- |
+| `34216158876` | 18:34 | PLAN — 1 delete, 1 re-price, **0 refused**. Nothing written |
+| `34216261677` | 18:36 | reconcile BEFORE — **20** |
+| `34216413503` | 18:37 | APPLY — `1 line(s) deleted, 1 sofa compartment(s) repriced, 2 header(s) re-summed`, verified on a fresh connection, zero WRONG SHAPE |
+| `34216507949` | 18:40 | reconcile AFTER — **17** |
+
+**CONTROL — PO, GR, DO, IV and PI did not move**, cell for cell. Stock did not
+move: `check-stock-vs-autocount` reads `cells compared: 996 | AGREE: 933 |
+DISAGREE: 29 | AutoCount-only: 0 | ERP-only: 3` and `whole sofas — AutoCount 107
+vs ERP 104` identically either side (`34216287587` / `34216512525`), and
+`check-migrated-cancel-exposure` reads `0 movement rows behind 646 migrated
+documents` either side (`34216290534` / `34216515488`). Readiness moved by
+**exactly one PENDING line — the deleted row itself**, 1371 -> 1370
+(`34216294639` / `34216518695`); READY, PARTIAL, the header counts and the
+36 PO-received-but-not-READY lines are unchanged.
+
+**The write-back was not touched** — 「写回autocount的你不需要理了」. The run
+counted `scm.autocount_outbox` for both documents before and after: 0 and 0.
+
+## What these two documents now owe — the owner's call, unchanged from `HC-SO-000021`
+
+`paid_sen` and the header `balance_sen` were NOT touched, so both totals moved
+away from `paid + balance`:
+
+| document | total now (= the book) | paid + balance | reads as |
+| --- | --- | --- | --- |
+| `HC-SO-013160` | RM 300.00 | RM 600.00 | **RM 300.00 overpaid** |
+| `HC-SO-012571` | RM 3,450.00 | RM 3,538.00 | **RM 88.00 too much still shown as owing** |
+
+## What is left on this reconcile: 17
+
+`SO phantom 1` (`HC-SO-2609-001`, an ERP document the book does not have),
+`GR money 9`, `DO phantom 2`, `IV absent 4`, `PI line count 1`. None of them is
+a sales-order data axis.

@@ -1,11 +1,15 @@
 // Document cancellation approval — pure state machine + guards.
 //
-// THE OWNER, 2026-09-08: 「SO 和 PO 取消的话需要 approval 2 层 — 已经输入原因」.
-// Cancelling a Sales Order or a Purchase Order is no longer one click. The
-// person who wants it cancelled writes a REASON and raises a request; a level-1
-// approver signs; a level-2 approver signs; only then may the document's
-// existing cancel route run. Two signatures, two different people, neither of
-// them the requester.
+// THE OWNER, 2026-09-08: 「SO 和 PO 取消的话需要 approval 2 层 — 已经输入原因」,
+// then the same day: 「只有 SO 需要 sales director approval, PO 不需要 … PO 只要
+// Purchaser 一个审批」. So the depth is PER DOCUMENT:
+//
+//   Sales Order      reason → level 1 (Sales Director) → level 2 (Purchaser) → cancel
+//   Purchase Order   reason → one signature (Purchaser)                      → cancel
+//
+// Whatever the depth, the signer is never the requester, and on the Sales
+// Order the two signers are two different people. Only then may the
+// document's existing cancel route run.
 //
 // This file is the RULES and nothing else — no DB, no I/O — so the route
 // handlers (routes/document-cancel-routes.ts), the execution guard in front of
@@ -24,9 +28,9 @@
 export type CancelDocType = 'SO' | 'PO';
 
 export type CancelRequestStatus =
-  | 'REQUESTED'    // raised, waiting for level 1
-  | 'L1_APPROVED'  // level 1 signed, waiting for level 2
-  | 'APPROVED'     // both signatures on it — the cancel may now run
+  | 'REQUESTED'    // raised, waiting for the first signature
+  | 'L1_APPROVED'  // level 1 signed, waiting for level 2 (Sales Order only)
+  | 'APPROVED'     // every signature is on it — the cancel may now run
   | 'EXECUTED'     // the document was cancelled (stamped by the cancel guard)
   | 'REJECTED'     // an approver refused it
   | 'WITHDRAWN';   // the requester pulled it back
@@ -39,13 +43,32 @@ export const isOpenCancelStatus = (s: string | null | undefined): boolean =>
 
 export type ApprovalLevel = 1 | 2;
 
+/** How many signatures each document needs (owner 2026-09-08). */
+export const APPROVAL_LEVELS: Record<CancelDocType, ApprovalLevel> = { SO: 2, PO: 1 };
+
+export const levelsFor = (docType: CancelDocType): ApprovalLevel => APPROVAL_LEVELS[docType];
+
 /** The permission key that signs each level, per document. Declared in
  *  services/permissions.ts; Owner + IT Admin + Managing Director pass via `*`,
- *  everyone else through the Roles matrix. */
-export const CANCEL_APPROVE_KEY: Record<CancelDocType, Record<ApprovalLevel, string>> = {
+ *  everyone else through the Roles matrix. The Purchase Order has ONE level,
+ *  so it has one key. */
+export const CANCEL_APPROVE_KEY: Record<CancelDocType, Partial<Record<ApprovalLevel, string>>> = {
   SO: { 1: 'scm.so_cancel.approve_l1', 2: 'scm.so_cancel.approve_l2' },
-  PO: { 1: 'scm.po_cancel.approve_l1', 2: 'scm.po_cancel.approve_l2' },
+  PO: { 1: 'scm.po_cancel.approve' },
 };
+
+/** The key for a level, or null when that document has no such level (or
+ *  `docType` is not one of ours) — a row with an unknown doc_type must fail
+ *  closed, not index past the table. */
+export function approveKeyFor(docType: string, level: ApprovalLevel): string | null {
+  if (docType !== 'SO' && docType !== 'PO') return null;
+  return CANCEL_APPROVE_KEY[docType][level] ?? null;
+}
+
+/** Every key that may sign or refuse a request on this document type. */
+export function approveKeysFor(docType: string): string[] {
+  return [approveKeyFor(docType, 1), approveKeyFor(docType, 2)].filter((k): k is string => k != null);
+}
 
 /** Which signature a request is waiting for; null when it is not waiting. */
 export function pendingLevel(status: string | null | undefined): ApprovalLevel | null {
@@ -54,15 +77,19 @@ export function pendingLevel(status: string | null | undefined): ApprovalLevel |
   return null;
 }
 
-export function statusAfterApproval(level: ApprovalLevel): CancelRequestStatus {
-  return level === 1 ? 'L1_APPROVED' : 'APPROVED';
+/** The status a signature at `level` produces: APPROVED when it was the last
+ *  one this document needs, L1_APPROVED when a second is still to come. */
+export function statusAfterApproval(docType: CancelDocType, level: ApprovalLevel): CancelRequestStatus {
+  return level >= levelsFor(docType) ? 'APPROVED' : 'L1_APPROVED';
 }
 
+/** True when a signature at `level` is the document's final one. */
+export const isFinalLevel = (docType: CancelDocType, level: ApprovalLevel): boolean => level >= levelsFor(docType);
+
 /** What the document shows while the request is open: "1 of 2" style. */
-export function signaturesGiven(status: string | null | undefined): number {
-  if (status === 'REQUESTED') return 0;
+export function signaturesGiven(docType: CancelDocType, status: string | null | undefined): number {
   if (status === 'L1_APPROVED') return 1;
-  if (status === 'APPROVED' || status === 'EXECUTED') return 2;
+  if (status === 'APPROVED' || status === 'EXECUTED') return levelsFor(docType);
   return 0;
 }
 
@@ -91,7 +118,7 @@ export function readReason(v: unknown): { ok: true; reason: string } | { ok: fal
 
 /** A DRAFT is discarded, not cancelled (the SO deletes it; the PO's draft cancel
  *  commits nothing to anyone) — so a draft needs no approval and no request.
- *  Everything else that is not already terminal needs the two signatures. */
+ *  Everything else that is not already terminal needs its signatures. */
 export function cancelNeedsApproval(docType: CancelDocType, docStatus: string | null | undefined): boolean {
   const s = String(docStatus ?? '').toUpperCase();
   if (s === 'DRAFT') return false;
@@ -134,9 +161,9 @@ export type GateRefusal = Refusal & { httpStatus: 403 | 409 };
 const same = (a: number | null | undefined, b: number | null | undefined): boolean =>
   a != null && b != null && Number(a) === Number(b);
 
-/** Refuse an approve, or return the level it will sign. Two people, neither the
- *  requester: the level-2 signer may not be the level-1 signer, and nobody signs
- *  their own request — a wildcard grant does not lift either rule. */
+/** Refuse an approve, or return the level it will sign. Nobody signs their own
+ *  request, and on a two-level document the level-2 signer may not be the
+ *  level-1 signer — a wildcard grant does not lift either rule. */
 export function approvalRefusal(req: CancelRequestLike, signer: Signer): { level: ApprovalLevel } | { refusal: GateRefusal } {
   const level = pendingLevel(req.status);
   if (level == null) {
@@ -149,13 +176,20 @@ export function approvalRefusal(req: CancelRequestLike, signer: Signer): { level
     return { refusal: { httpStatus: 403, error: 'same_signer', message: 'You already gave the level-1 approval — level 2 must be a different person.' } };
   }
   const key = approveKeyFor(req.doc_type, level);
-  if (!key || !signer.holds(key)) {
-    return { refusal: { httpStatus: 403, error: 'approve_forbidden', message: `You do not have permission to give the level-${level} approval for cancelling this ${req.doc_type === 'SO' ? 'sales order' : 'purchase order'}.` } };
+  if (!key) {
+    return { refusal: { httpStatus: 409, error: 'not_pending', message: `This ${req.doc_type === 'PO' ? 'purchase order' : 'document'} has no level-${level} approval.` } };
+  }
+  if (!signer.holds(key)) {
+    const noun = req.doc_type === 'SO' ? 'sales order' : 'purchase order';
+    const message = levelsFor(req.doc_type as CancelDocType) > 1
+      ? `You do not have permission to give the level-${level} approval for cancelling this ${noun}.`
+      : `You do not have permission to approve cancelling this ${noun}.`;
+    return { refusal: { httpStatus: 403, error: 'approve_forbidden', message } };
   }
   return { level };
 }
 
-/** Either approver desk may refuse, while a signature is still pending. */
+/** Any approver desk may refuse, while a signature is still pending. */
 export function rejectRefusal(req: CancelRequestLike, signer: Signer): GateRefusal | null {
   if (pendingLevel(req.status) == null) {
     return { httpStatus: 409, error: 'not_pending', message: 'This request is no longer waiting for approval.' };
@@ -167,7 +201,7 @@ export function rejectRefusal(req: CancelRequestLike, signer: Signer): GateRefus
 }
 
 /** The requester may pull an open request back at any point before the cancel
- *  runs — including after both signatures, if they changed their mind. An
+ *  runs — including after every signature, if they changed their mind. An
  *  approver may also close it on their behalf. */
 export function withdrawRefusal(req: CancelRequestLike, signer: Signer): GateRefusal | null {
   if (!isOpenCancelStatus(req.status)) {
@@ -179,30 +213,24 @@ export function withdrawRefusal(req: CancelRequestLike, signer: Signer): GateRef
   return null;
 }
 
-/** The key for a level, or null when `docType` is not one of ours — a row with
- *  an unknown doc_type must fail closed, not index past the table. */
-export function approveKeyFor(docType: string, level: ApprovalLevel): string | null {
-  return docType === 'SO' || docType === 'PO' ? CANCEL_APPROVE_KEY[docType][level] : null;
-}
-
 export function holdsAnyApproveKey(docType: string, signer: Pick<Signer, 'holds'>): boolean {
-  const l1 = approveKeyFor(docType, 1);
-  const l2 = approveKeyFor(docType, 2);
-  return (l1 != null && signer.holds(l1)) || (l2 != null && signer.holds(l2));
+  return approveKeysFor(docType).some((k) => signer.holds(k));
 }
 
 /* ── The gate in front of the cancel itself ──────────────────────────────── */
 
 /** Why the existing cancel route may not run yet. `open` is the document's open
  *  request, or null when there is none. Null answer = the cancel may proceed. */
-export function executionRefusal(open: { status: string } | null | undefined): Refusal | null {
+export function executionRefusal(docType: CancelDocType, open: { status: string } | null | undefined): Refusal | null {
+  const total = levelsFor(docType);
+  const noun = total > 1 ? 'two approvals' : 'an approval';
   if (!open) {
-    return { error: 'cancel_approval_required', message: 'Cancelling needs two approvals first — request the cancellation and give a reason.' };
+    return { error: 'cancel_approval_required', message: `Cancelling needs ${noun} first — request the cancellation and give a reason.` };
   }
   if (open.status === 'APPROVED') return null;
-  const given = signaturesGiven(open.status);
+  const given = signaturesGiven(docType, open.status);
   return {
     error: 'cancel_approval_required',
-    message: `Cancelling needs two approvals first (${given} of 2 given).`,
+    message: `Cancelling needs ${noun} first (${given} of ${total} given).`,
   };
 }
