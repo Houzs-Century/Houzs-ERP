@@ -193,6 +193,11 @@ export const NOTE_CLASSES = Object.freeze([
      document the book raised off this one is absent from ours. A receipt whose
      invoice we DO hold stays counted as a difference. */
   'chain-onward-not-migrated',
+  /* THE ERP NAMES A PRODUCT THE BOOK DOES NOT, BY THE OWNER'S OWN DECISION.
+     Declared with the book model it overrides and who decided it, so it EXPIRES
+     the moment the book stops saying that — which is what tells his decision
+     from the hand-typed model of docs/bugs/0693. lib/ac-model-override.mjs. */
+  'owner-model-override',
 ]);
 
 const NOTED = new Set(NOTE_CLASSES);

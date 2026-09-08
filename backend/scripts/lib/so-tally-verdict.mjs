@@ -339,6 +339,10 @@ export const DECLARED_LABEL = Object.freeze({
     "imported. So we record 0 transferred: not a wrong number, an ABSENT one, and your decision rather than a " +
     "defect. PROVED per document (every onward document the book raised off this one is absent from ours); a " +
     "line whose onward document we DO hold is still counted as a difference",
+  "owner-model-override":
+    "the ERP names a different product from the account book because YOU decided it — 「那就放8030 daybed把」. " +
+    "The decision is written down with the book's own model beside it, so if the book ever stops saying that, " +
+    "this goes straight back to being a difference without anybody editing anything",
 });
 
 /* The note classes that are NOT printed in "WHAT THIS VERDICT EXCLUDED": they
