@@ -1,0 +1,231 @@
+{
+  "kind": "repoint-line-photos-to-owning-line",
+  "generatedAt": "2026-09-08T11:51:25.463Z",
+  "account": "816e457307d7fa0491c2a08a72ad5dcd",
+  "bucket": "houzs-erp",
+  "company": 1,
+  "count": 20,
+  "ops": [
+    {
+      "arm": "SALES ORDER",
+      "id": "947157a8-8eac-4838-adba-d4afb50793df",
+      "doc": "HC-SO-007822",
+      "dtl": "544137",
+      "code": "9028-2S",
+      "add": [
+        "so-items/HC-SO-007822/464490ff-c306-4a96-9fbf-5b1a6f2b7ea0/ac-544137-2.jpg"
+      ],
+      "before": []
+    },
+    {
+      "arm": "SALES ORDER",
+      "id": "783750cd-93c7-425a-98ac-36ea39097dd0",
+      "doc": "HC-SO-004935",
+      "dtl": "347778",
+      "code": "5527-2S",
+      "add": [
+        "so-items/HC-SO-004935/26d4eaf4-a1c5-4efa-aeb8-f0a99fe658d8/ac-347778-2.jpg"
+      ],
+      "before": []
+    },
+    {
+      "arm": "SALES ORDER",
+      "id": "db1f3641-c461-4fdf-b247-dc8fba78f30f",
+      "doc": "HC-SO-013200",
+      "dtl": "895032",
+      "code": "8050-1S(R)",
+      "add": [
+        "so-items/HC-SO-013200/9f3c4787-fc04-4c3d-b55c-459be20b2231/ac-895032-2.jpg"
+      ],
+      "before": []
+    },
+    {
+      "arm": "SALES ORDER",
+      "id": "c64d8a46-2c1f-45f2-b157-ef767ce2fb0c",
+      "doc": "HC-SO-006450",
+      "dtl": "443677",
+      "code": "5527-2A(LHF)",
+      "add": [
+        "so-items/HC-SO-006450/eaed1073-c61d-43d4-a104-fbc32ada9637/ac-443677-2.jpg"
+      ],
+      "before": []
+    },
+    {
+      "arm": "SALES ORDER",
+      "id": "b9d153e6-84ea-4723-bf77-3819949e6291",
+      "doc": "HC-SO-009335",
+      "dtl": "639684",
+      "code": "8050-1S(R)",
+      "add": [
+        "so-items/HC-SO-009335/09f13a3c-2b16-4b19-aa67-b1d2aa3ccb5a/ac-639684-2.jpg"
+      ],
+      "before": []
+    },
+    {
+      "arm": "SALES ORDER",
+      "id": "ce5cd463-91e9-41a8-9421-3386b7807825",
+      "doc": "HC-SO-013227",
+      "dtl": "901845",
+      "code": "8030-1A(LHF)",
+      "add": [
+        "so-items/HC-SO-013227/60265b77-fe4e-4d6b-a42b-ff126d66c9aa/ac-901845-2.jpg"
+      ],
+      "before": []
+    },
+    {
+      "arm": "SALES ORDER",
+      "id": "0f8d2346-0df3-4e0a-99d9-69412c7d6732",
+      "doc": "HC-SO-003443",
+      "dtl": "229227",
+      "code": "5527-2S",
+      "add": [
+        "so-items/HC-SO-003443/c07ab8de-2e9b-457e-bb9b-b2f87e9cd109/ac-229227-2.jpg"
+      ],
+      "before": []
+    },
+    {
+      "arm": "SALES ORDER",
+      "id": "961a29e5-3749-4b4c-909c-e54bb2087ea9",
+      "doc": "HC-SO-008269",
+      "dtl": "573205",
+      "code": "8030-2S",
+      "add": [
+        "so-items/HC-SO-008269/b15d2e15-7a90-495d-bc19-7aac41386c38/ac-573205-2.jpg"
+      ],
+      "before": []
+    },
+    {
+      "arm": "SALES ORDER",
+      "id": "fae6fa49-23e2-4db1-b8f4-9f53d6dc6690",
+      "doc": "HC-SO-013164",
+      "dtl": "893072",
+      "code": "8030-1A(LHF)",
+      "add": [
+        "so-items/HC-SO-013164/fa62553c-72bb-4e4c-bc1a-1142b6cfa1b7/ac-893072-2.jpg"
+      ],
+      "before": []
+    },
+    {
+      "arm": "SALES ORDER",
+      "id": "cf3c8917-577a-43aa-a6d3-fb3e11c6a95b",
+      "doc": "HC-SO-006229",
+      "dtl": "430995",
+      "code": "5527-2S",
+      "add": [
+        "so-items/HC-SO-006229/c76d152b-df71-481a-b0c9-f4865b8d0608/ac-430995-2.jpg"
+      ],
+      "before": []
+    },
+    {
+      "arm": "SALES ORDER",
+      "id": "1d41ba96-2905-48d2-a41c-fdd698f55e16",
+      "doc": "HC-SO-006319",
+      "dtl": "436443",
+      "code": "5527-Console",
+      "add": [
+        "so-items/HC-SO-006319/c605f7af-5a9f-4d25-9623-b0f663b73f29/ac-436443-2.jpg"
+      ],
+      "before": []
+    },
+    {
+      "arm": "SALES ORDER",
+      "id": "565eb6e4-9dc7-43f4-acc5-fd06c4552be0",
+      "doc": "HC-SO-011957",
+      "dtl": "822481",
+      "code": "9028-STOOL",
+      "add": [
+        "so-items/HC-SO-011957/496c61d2-950f-453c-929b-b218fd28e574/ac-822481-2.jpg"
+      ],
+      "before": []
+    },
+    {
+      "arm": "SALES ORDER",
+      "id": "704d04e0-23e7-4153-9d76-940e0d5cb7c5",
+      "doc": "HC-SO-009945",
+      "dtl": "678175",
+      "code": "8030-1A(LHF)",
+      "add": [
+        "so-items/HC-SO-009945/f6a5ec28-dbbe-4eec-8a57-3f0fc8bc45de/ac-678175-2.jpg"
+      ],
+      "before": []
+    },
+    {
+      "arm": "SALES ORDER",
+      "id": "469a3c7b-5620-4a83-8b28-17eb4a7d62bd",
+      "doc": "HC-SO-012049",
+      "dtl": "830098",
+      "code": "8050-L(LHF)",
+      "add": [
+        "so-items/HC-SO-012049/2ced9dc2-269a-48a5-92c2-ca25c55b5d79/ac-830098-2.jpg"
+      ],
+      "before": []
+    },
+    {
+      "arm": "SALES ORDER",
+      "id": "8b15abcd-3273-40a2-88a1-7c15e2df2736",
+      "doc": "HC-SO-010458",
+      "dtl": "722366",
+      "code": "8051-STOOL",
+      "add": [
+        "so-items/HC-SO-010458/cd1e4394-c002-4f3f-aa14-fea09f989c75/ac-722366-2.jpg"
+      ],
+      "before": []
+    },
+    {
+      "arm": "SALES ORDER",
+      "id": "50bcb847-b6f4-46cc-a953-aabbe7609a90",
+      "doc": "HC-SO-011571",
+      "dtl": "798788",
+      "code": "8050-1S",
+      "add": [
+        "so-items/HC-SO-011571/ee862291-54dd-4523-ae88-ca06c678fb38/ac-798788-2.jpg"
+      ],
+      "before": []
+    },
+    {
+      "arm": "SALES ORDER",
+      "id": "f72782e3-e690-4186-b0dc-95b1c2c323a8",
+      "doc": "HC-SO-011690",
+      "dtl": "804195",
+      "code": "8051-1S",
+      "add": [
+        "so-items/HC-SO-011690/d1d2b4e7-1d78-4f23-9f18-d45ac7ac418d/ac-804195-2.jpg"
+      ],
+      "before": []
+    },
+    {
+      "arm": "SALES ORDER",
+      "id": "c4fffc36-639a-46f9-a0fe-35414b4d8f93",
+      "doc": "HC-SO-011744",
+      "dtl": "806377",
+      "code": "9058-1A(LHF)",
+      "add": [
+        "so-items/HC-SO-011744/7d88e4de-d56d-4528-a790-3777c4374446/ac-806377-2.jpg"
+      ],
+      "before": []
+    },
+    {
+      "arm": "SALES ORDER",
+      "id": "16383c8c-095d-413e-b16b-0d17d51780d8",
+      "doc": "HC-SO-012827",
+      "dtl": "873101",
+      "code": "8030-1S",
+      "add": [
+        "so-items/HC-SO-012827/cebbeb5f-15d7-4fa2-8764-740e9d35f167/ac-873101-2.jpg"
+      ],
+      "before": []
+    },
+    {
+      "arm": "SALES ORDER",
+      "id": "191da896-eb14-4040-baa5-83885a668a67",
+      "doc": "HC-SO-013242",
+      "dtl": "901909",
+      "code": "9028-1A(LHF)",
+      "add": [
+        "so-items/HC-SO-013242/04a0b6d3-bf7f-430c-aada-d0a9930165f4/ac-901909-2.jpg"
+      ],
+      "before": []
+    }
+  ],
+  "digest": "sha256:97669acf9ace96da11df9fcebb4ad411d5d6f0af3aeddc98c73050bfc315fa90"
+}
