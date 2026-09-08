@@ -1,5 +1,31 @@
 ## The PO line discount repair, planned but not applied: 10 live orders overstated by RM 42,662.80 [high]
 
+<!-- area: Purchase orders + GRN + PI -->
+<!-- status: fixed -->
+
+> **APPLIED — the title is now HISTORY, not state. Corrected 2026-09-08.**
+>
+> The title says "planned but not applied" because that was true for the four
+> hours between this entry being written and the apply being dispatched. It has
+> been false ever since, and on 2026-09-08 a whole-ledger sweep still read this
+> entry as an open money defect and queued it for re-diagnosis. That is the cost
+> of an entry that describes only the moment it was written.
+>
+> | run | local time | mode | what it wrote |
+> |---|---|---|---|
+> | [34116301278](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34116301278) | 2026-09-07 19:23 | APPLY | 89 lines, 10 headers — the RM 42,662.80 in the table below |
+> | [34187837941](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34187837941) | 2026-09-08 12:41 | APPLY | 15 lines, 1 header — the delivered order the first run's SCOPE walk missed (#3187) |
+> | [34186213070](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34186213070) | 2026-09-08 12:13 | PLAN | `Lines to correct: 0` — the ten originals re-read clean |
+>
+> **One document was NOT repaired and must not be**: `PO-009335` is denominated
+> in CNY, the repair booked its exchange rate as a discount, and that was
+> reverted in run
+> [34120085455](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34120085455)
+> (2026-09-07 20:07 local, RM 13,068.55 restored). The script now REFUSES any
+> non-MYR document by design and prints it as a `CURRENCY:` error every run — an
+> expected refusal, not a regression. Full trace in
+> `docs/bugs/0665-a-checker-could-not-tell-an-exchange-rate-from-a-discount-an.md`.
+
 **Symptom.** A migrated purchase order shows a bigger total in the ERP than the
 same order in AutoCount, so we look like we owe the supplier more than we do.
 `PO-009948` is the worked example: one unit of `AK-ARMOUR MATT (K)` at a unit
