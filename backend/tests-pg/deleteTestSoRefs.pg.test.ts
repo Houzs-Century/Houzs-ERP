@@ -112,7 +112,22 @@ async function seed(db: Sql) {
     INSERT INTO scm.mfg_sales_orders (doc_no, status, company_id, total_sen, linked_ac_docno) VALUES
       ('HC-SO-2609-001', 'CONFIRMED', 1, 100000, 'HC-SO-2609-001'),
       ('HC-SO-013361',   'CONFIRMED', 1, 250000, 'SO-013361'),
-      ('HC-SO-013362',   'DRAFT',     1,  70000, NULL);
+      -- NOT 'DRAFT'. The enum above has no DRAFT and neither does the schema
+      -- dump it was copied from, so seeding one made every test in this file
+      -- die in the fixture with `invalid input value for enum
+      -- scm.mfg_so_status: "DRAFT"` (run 34224696391) -- 17 red tests, one
+      -- wrong word, and none of the failures were about what they tested.
+      -- Which value this row carries is incidental: line 270 nulls it and line
+      -- 306 deletes it. It only has to be VALID and not CONFIRMED.
+      --
+      -- Worth knowing, and deliberately NOT changed here: this repo holds two
+      -- copies of the enum and they DISAGREE.
+      --   backend/scripts/scm-schema/2990s-full-schema.sql:16   no DRAFT
+      --   backend/scripts/scale-pg-real-schema.mjs:48           HAS DRAFT
+      -- One rule, two copies is a recurring defect class here. Which one
+      -- matches production is unmeasured -- resolving it needs a read of the
+      -- live type, not a guess, and it is not this PR's job.
+      ('HC-SO-013362',   'ON_HOLD',   1,  70000, NULL);
 
     INSERT INTO scm.mfg_so_audit_log (so_doc_no, action, actor_name_snapshot)
       VALUES ('HC-SO-2609-001', 'CREATE', 'Lim');
