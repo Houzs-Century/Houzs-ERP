@@ -2353,6 +2353,21 @@ that same field.
 > changed — the copies agreed with the original; the risk was that one day they
 > would not. The disagreement this class actually produced is
 > `docs/bugs/0686-the-top-up-asked-the-catalogue-with-the-unaliased-sofa-code.md`.
+>
+> **`catalogCodeGuard.test.mjs` now holds TWO lists, and the second is not a
+> longer version of the first** (2026-09-08). `CSV_ITEM_CODE_WRITERS` gained
+> `reshape-migrated-grns.mjs`, whose unattributed arm wrote AutoCount's raw
+> `ItemCode` onto company-1 goods-receipt lines; it builds a whole plan and then
+> writes it, so the existing property — folds the alias, then REFUSES and exits
+> on a code the catalogue lacks — is the right shape for it.
+> `CSV_ITEM_CODE_REPAIRS` is the new list, and it holds
+> `repair-migrated-grn-item-codes.mjs`, whose refusal is to LEAVE A ROW rather
+> than to stop: the rows exist already, and exiting on one untranslatable line
+> would withhold the repair from every other. Its property is therefore stronger
+> than the exit and is asserted as such — an untranslatable code can never enter
+> the write set, and the `UPDATE` names only `item_code` and `material_name`. The
+> defect both lists now cover is
+> `docs/bugs/0691-the-goods-receipt-reshape-wrote-autocount-s-own-item-code-on.md`.
 
 **What the live book actually stores was measured, not assumed** — three lines
 read on 2026-08-15, `docs/autocount-further-description-photos.md` §4.2. Every

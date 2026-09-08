@@ -593,6 +593,43 @@ ruling on those lines: 「跟 autocount 一样」. Filling the first matching li
 would be inventing an attribution, and the total quantity per (purchase order,
 item) is identical either way, so stock and MRP are unaffected.
 
+**But an unattributed line still carries the ERP's OWN item code, not the
+book's** (2026-09-08). Leaving the purchase-order LINE unset is the ruling above;
+leaving the item CODE untranslated was a defect. An attributed line copies
+`purchase_order_items.item_code`, which the PO importer had already resolved
+through `backend/scripts/data/autocount-erp-mapping-1561.csv`. The unattributed
+arm had nothing to copy and fell back to AutoCount's raw `ItemCode`, so company-1
+receipt lines read `HOK-1007 (HF)(W) (SP)` where the ERP catalogue spells that
+product `CODY 2.0 (F)-(SP)`, and `material_name` inherited the same string. The
+fallback now reads the same mapping file with the same two rules every other CSV
+item-code writer applies — the **sofa alias fold at read time**
+(`aliasFoldsForCatalog`; only a mapped code the catalogue LACKS folds, and only
+onto one it HAS) and the **catalogue guard at write time** (`nonCatalogRefs` and
+a non-zero exit, printed BEFORE the dry-run return so the plan is known
+unwritable while it is being read). Where the map is silent the book code stands
+and the guard decides. `material_name` comes from the ERP product where the code
+resolves.
+
+Two lookups deliberately keep following the RAW code: the money carry
+(`carryByPo`) and the invoiced-quantity carry (`billed`) are keyed on what is ON
+DISK, and rows written before this change hold the untranslated code — a
+translated key would miss them and silently re-derive the price from the book.
+
+**The rows already written are repaired by
+`backend/scripts/repair-migrated-grn-item-codes.mjs`** + Actions -> **Repair
+migrated GRN item codes**. It touches `item_code` and `material_name` only, on
+company-scoped `migrated_no_stock` AutoCount-linked receipts, and ONLY where
+`purchase_order_item_id IS NULL` — an attributed line's code has a source and is
+not this script's to re-decide. A row is rewritten only when the mapping gives a
+translation AND the catalogue carries it; anything else is LEFT and counted,
+because replacing a wrong-but-traceable code with an orphan is a worse row
+(`docs/bugs/0577`). No stock moves: the FIFO trigger is `AFTER INSERT ON
+scm.inventory_movements`, migrated receipts have none, and no quantity, price,
+date or status column appears in the `UPDATE` — asserted before the write and
+re-asserted on a fresh connection after it. PLAN by default; `APPLY=1` +
+`CONFIRM="REPAIR GRN ITEM CODES"` writes. Full trace:
+`docs/bugs/0691-the-goods-receipt-reshape-wrote-autocount-s-own-item-code-on.md`.
+
 **`purchase_order_items.received_qty` is NOT written by the reshape.** The plan
 compares what the book's receipts add up to per purchase-order line against the
 number the column holds today, and prints every difference — so an unattributed
