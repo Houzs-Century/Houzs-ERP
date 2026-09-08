@@ -10,6 +10,20 @@
 //   sales_exemption_expiry, remark2, remark3, remark4, note   (headers)
 //   line_delivery_date                                        (lines)
 //
+// 2026-09-08 — TWO defects found by the reconcile and fixed here, after ten
+// days without a run left 614 line dates and 132 header dates holding the
+// 2026-08-29 book:
+//   1. the DATE source was `ac-so-dates.json.gz`, an OLDER cut than the
+//      `ac-outstanding-so.json.gz` the reconcile grades against (75 lines
+//      already disagreed). Refreshing from it wrote yesterday's answer.
+//   2. line dates were keyed on DocNo + ERP item code. A sofa's compartment
+//      rows carry codes no mapping row produces, so they matched nothing and
+//      stayed BLANK for good; two lines of one product with different dates
+//      collapsed to one. Keyed on AutoCount's own DtlKey now, which is unique
+//      across all 14,041 book lines.
+// This tool is the ONLY writer of these fields, so a gap here is invisible
+// everywhere else until the reconcile counts it.
+//
 // SAFETY: every doc whose audit trail shows a person touched any of these
 // fields is REFUSED (same needle lists as the backfills) — HC is frozen, so
 // in practice nothing refuses, but the guard is the rule, not the situation.
@@ -66,7 +80,15 @@ function parseCsvLine(line) {
 
 async function main() {
   log(`mode=${APPLY ? "APPLY" : "PLAN"}`);
-  const dates = gz("ac-so-dates.json.gz");
+  /* THE DATE SOURCE IS `ac-outstanding-so.json.gz`, NOT `ac-so-dates.json.gz`.
+     Both are cuts of the same 14,041 book lines and `PDate` equals `UDF_PDate`
+     on every one of them, but they are cut at DIFFERENT times: measured
+     2026-09-08, 75 lines already disagree on the delivery date, and
+     `ac-outstanding-so` is the fresher of the two AND the one the reconcile
+     grades us against. Refreshing from the older cut writes yesterday's answer
+     and reports success. It also carries `DtlKey`, which `ac-so-dates` does
+     not — see the line-date map below. */
+  const dates = gz("ac-outstanding-so.json.gz");
   const remarks = gz("ac-so-remarks.json.gz");
   const csv = fs.readFileSync(path.join(here, "data", "autocount-erp-mapping-1561.csv"), "utf8").replace(/^﻿/, "").split(/\r?\n/).filter(Boolean);
   csv.shift();
@@ -75,14 +97,24 @@ async function main() {
   const C1_ALIAS = { "SVC-DELIVERY": "TRANSPORTATION CHARGES", "SVC-DELIVERY-ADD": "TRANSPORTATION CHARGES", "SVC-DELIVERY-CROSS": "TRANSPORTATION CHARGES" };
   const erpOf = (ac) => { let e = byAc.get(norm(ac)); if (e && C1_ALIAS[e.toUpperCase()]) e = C1_ALIAS[e.toUpperCase()]; return e || null; };
 
-  const proc = new Map(), earliest = new Map(), lineDates = new Map();
+  /* TWO line-date maps, and the KEY is the point.
+     `byKey` is AutoCount's own DtlKey — unique across all 14,041 book lines
+     (measured), so it pairs exactly and it reaches the rows an item-code key
+     never could: a sofa's compartment rows carry codes like `8030-1A(LHF)`
+     that no mapping row produces, so they matched nothing and stayed blank.
+     `byItem` is the old DocNo+item-code key, kept ONLY for ERP rows that carry
+     no `linked_ac_dtlkey`. It is lossy by construction — two lines of the same
+     product with different dates collapse to one (2 such lines today) — which
+     is why it is the fallback and not the rule. */
+  const proc = new Map(), earliest = new Map(), byKey = new Map(), byItem = new Map();
   for (const r of dates) {
-    if (r.PDate && String(r.PDate).trim() && !proc.has(r.DocNo)) proc.set(r.DocNo, day(r.PDate));
-    const d = day(r.DelivDate);
+    if (r.UDF_PDate && String(r.UDF_PDate).trim() && !proc.has(r.DocNo)) proc.set(r.DocNo, day(r.UDF_PDate));
+    const d = day(r.DeliveryDate);
     if (d) {
       if (!earliest.has(r.DocNo) || d < earliest.get(r.DocNo)) earliest.set(r.DocNo, d);
+      if (r.DtlKey != null && String(r.DtlKey).trim() !== "") byKey.set(String(r.DtlKey).trim(), d);
       const erp = erpOf(r.ItemCode);
-      if (erp) lineDates.set(`${r.DocNo}|${erp.toUpperCase()}`, d);
+      if (erp) byItem.set(`${r.DocNo}|${erp.toUpperCase()}`, d);
     }
   }
   const rem = new Map();
@@ -127,16 +159,28 @@ async function main() {
   log(`headers with differences: ${ups.length} — ${Object.entries(per).map(([k, n]) => `${k} ${n}`).join(", ")}`);
   for (const u of ups.slice(0, 10)) log(`   ${u.doc}: ${u.changed.map((k) => `${k} -> ${JSON.stringify(u.want[k])}`).join(" | ")}`);
 
-  const items = await sql`SELECT i.id, i.item_code, to_char(i.line_delivery_date, 'YYYY-MM-DD') AS d, i.doc_no, h.linked_ac_docno
+  const items = await sql`SELECT i.id, i.item_code, i.linked_ac_dtlkey,
+      to_char(i.line_delivery_date, 'YYYY-MM-DD') AS d, i.doc_no, h.linked_ac_docno
     FROM scm.mfg_sales_order_items i JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
     WHERE h.company_id = 1 AND h.linked_ac_docno IS NOT NULL`;
   const lus = [];
+  const lineWhy = { byKey: 0, byItem: 0, erpBlank: 0, erpDiffers: 0, noBookDate: 0, refused: 0 };
   for (const it of items) {
-    if (touched.has(it.doc_no)) continue;
-    const want = lineDates.get(`${it.linked_ac_docno}|${(it.item_code || "").toUpperCase()}`) ?? null;
-    if (want !== null && want !== it.d) lus.push({ id: it.id, d: want });
+    if (touched.has(it.doc_no)) { lineWhy.refused++; continue; }
+    const k = it.linked_ac_dtlkey == null ? null : String(it.linked_ac_dtlkey).trim();
+    const viaKey = k ? byKey.get(k) ?? null : null;
+    const want = viaKey ?? byItem.get(`${it.linked_ac_docno}|${(it.item_code || "").toUpperCase()}`) ?? null;
+    if (want === null) { lineWhy.noBookDate++; continue; }
+    if (want === it.d) continue;
+    if (viaKey !== null) lineWhy.byKey++; else lineWhy.byItem++;
+    if (it.d == null) lineWhy.erpBlank++; else lineWhy.erpDiffers++;
+    lus.push({ id: it.id, d: want });
   }
-  log(`line delivery dates with differences: ${lus.length}`);
+  /* The split is the report. "614 differ" and "142 blank" are two different
+     defects with two different stories, and a single total hides which one a
+     re-run actually closes. */
+  log(`line delivery dates with differences: ${lus.length} — ERP blank ${lineWhy.erpBlank}, ERP holds another date ${lineWhy.erpDiffers}; ` +
+      `matched on DtlKey ${lineWhy.byKey}, on item code ${lineWhy.byItem}; lines the book states no date for ${lineWhy.noBookDate}`);
 
   if (!APPLY) { log('PLAN ONLY — APPLY=1 CONFIRM="REFRESH SO TAIL" writes.'); await sql.end(); return; }
 
