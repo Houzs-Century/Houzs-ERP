@@ -163,6 +163,8 @@ const LEGACY_FILES_SQL = `SELECT id, file_name, mime_type AS content_type, size_
       LIMIT 1`;
 
 async function listUnfilledFloorplans(env: Env, projectId: number): Promise<ShareFile[]> {
+  // company-scope: intentionally cross-company — `projectId` was resolved under
+  // the token's contractor by resolveEvent; both statements join to it.
   const task = await env.DB.prepare(TASK_FILES_SQL).bind(projectId).all<FileRow>();
   const toFile = (prefix: "t" | "l") => (r: FileRow): ShareFile => ({
     fileId: `${prefix}${r.id}`,
@@ -184,6 +186,9 @@ async function fileKey(
 ): Promise<{ r2_key: string; file_name: string | null; content_type: string | null } | null> {
   const id = Number(fileId.slice(1));
   if (fileId.startsWith("t")) {
+    // company-scope: intentionally cross-company — pre-auth public route; the
+    // boundary is the token's contractor, already applied to `projectId` by
+    // resolveEvent, and this read is joined back to that project id.
     return env.DB.prepare(
       `SELECT a.r2_key, a.file_name, a.content_type
          FROM project_checklist_attachments a
@@ -196,6 +201,7 @@ async function fileKey(
       .bind(id, projectId)
       .first<{ r2_key: string; file_name: string | null; content_type: string | null }>();
   }
+  // company-scope: intentionally cross-company — same boundary as above.
   return env.DB.prepare(
     `SELECT r2_key, file_name, mime_type AS content_type
        FROM project_attachments
