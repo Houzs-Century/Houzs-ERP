@@ -69,10 +69,11 @@ book there would have written a stool's WIDTH into a build instruction.
 
 - `isTradeName()` — at most two plain alphabetic words, no digits, and matching
   neither `SPECIAL_WORD` nor `INSTRUCTION_TOKEN`. `unlabelledColour` now reports
-  the bracket it removed to reach the library, and `parseSofa` takes it out of
-  the text before the structure pass can free it into a token. The guard fires
-  ONLY on a bracket attached to a code the LIVE library confirms, so it can
-  never drop a bracket that is not part of a colour.
+  the bracket, and `parseSofa` takes it out of the text before the structure
+  pass can free it into a token. The bracket qualifies only when the code
+  **confirms to the SAME library row without it** — so the bracket demonstrably
+  contributes nothing to the colour's identity, and a bracket that is genuinely
+  part of a code can never be dropped.
 - a footprint guard: an adjacent `N x M inch|cm` pair is removed before the seat
   size is read, so the axis is BOOK-BLANK — the honest answer — rather than 40".
 
@@ -84,10 +85,33 @@ Measured over the same 1,979 Desc2 after the change: shade names read as
 specials **49 → 2**, and the 2 are both spellings of `(PLS FOLLOW DRAWING)`,
 which is the one that must survive. Footprints read as a seat size **1 → 0**.
 
+**THE FIRST VERSION OF THIS FIX SHIPPED A GUARD THAT NEVER FIRED, and that is
+the more useful half of this entry.** It asked the wrong question: *did the code
+fail to confirm WITH the bracket, and confirm only once it was stripped?* Under
+an exact-match test stub that is exactly what happens, and all four new tests
+went green. Against the live library it is false every time —
+`fabric-colour-match.mjs` strips brackets ITSELF on rung 1 of its candidate
+ladder (`noParen`), so `findColour("BO315-26 (YELLOW)")` returns `BO315-26`
+directly and the stripped branch is never reached.
+
+Measured, not assumed: the same reconcile was re-run on the branch carrying that
+version — run `34200092543`, 2026-09-08 15:35 — and reported the same three
+phantom specials as the run before it. Only the footprint half moved (seat size,
+not proceeded: `3 differ` → `2`), which is what proved the branch's code was
+running at all and the colour guard simply did nothing.
+
+The stub was the whole defect. The tests now build the index with the REAL
+`buildFabricColourIndex`, from the same rows `check-ac-erp-reconcile.mjs` reads
+out of `scm.fabric_colours`, with a `knownColour` byte-identical to the
+reconcile's — so a stub can never again answer a question production does not
+ask. This is the repo's own named trap, *"the check that answers a different
+question"*, in its purest form: the assertion passed, and it was not about the
+system.
+
 **Tests, proved RED on the unfixed tree** (`scripts/lib/parse-sofa.test.mjs`,
 run by `working-agreement.yml` via `node --test scripts/lib/*.test.mjs`): four
 new cases, three of which failed before the change and all of which pass after —
-`161 pass, 0 fail`. The second is the one that matters most: three real book
+`161 pass, 0 fail` across `scripts/lib`. The second is the one that matters most: three real book
 strings that carry a shade name AND a genuine request on the same line
 (`BO315-21 (PEARL)/30"/2S ( PLS FOLLOW THE INSTRUCTION )`,
 `BO315-22 (FEATHER)/32"/2L(Replace to 9028 headrest)`,

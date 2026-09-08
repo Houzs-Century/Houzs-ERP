@@ -66,14 +66,32 @@ test("the real HC-SO-000814 text decodes to NOTHING, which is why a data file co
  * as "the book states a special this line does not carry".
  *
  * `knownColour` is the LIVE fabric library, so the guard only ever fires on a
- * bracket attached to a code the library confirms. The stub below stands in
- * for it; docs/bugs/0703 carries the evidence.
+ * bracket attached to a code the library confirms. `docs/bugs/0705` carries the
+ * evidence.
+ *
+ * IT DRIVES THE REAL INDEX, NOT A STUB, AND THAT IS THE WHOLE POINT. The first
+ * version of these tests used an exact-match Set, which said the bracketed form
+ * does NOT confirm. The real matcher strips brackets on rung 1 of its candidate
+ * ladder, so in production it DOES — and the guard, written against the stub's
+ * answer, never fired once against the live library (reconcile run
+ * 34200092543 reported the same three phantom specials as the run before it).
+ * `buildFabricColourIndex` is the same function `check-ac-erp-reconcile.mjs`
+ * feeds from `scm.fabric_colours`, so a stub cannot drift from it again.
  */
-const LIB = new Set([
-  "BO315-26", "BO315-25", "BO315-21", "BO315-22", "BO315-23", "M2402-5", "M2402-19", "NX011", "TR01",
-  "CH141-12", "BO315-32", "HARRING GD8371",
-]);
-const knownColour = (t) => (LIB.has(String(t).trim().toUpperCase()) ? String(t).trim().toUpperCase() : null);
+import { buildFabricColourIndex } from "./fabric-colour-match.mjs";
+
+const { findColour } = buildFabricColourIndex(
+  [
+    ["BO315", "BO315-21"], ["BO315", "BO315-22"], ["BO315", "BO315-23"], ["BO315", "BO315-25"],
+    ["BO315", "BO315-26"], ["BO315", "BO315-32"], ["M2402", "M2402-5"], ["M2402", "M2402-19"],
+    ["NX011", "NX011"], ["TR01", "TR01"], ["CH141", "CH141-12"], ["KN390", "KN390-2"],
+  ].map(([fabric_id, colour_id]) => ({ fabric_id, colour_id, label: colour_id, active: true })),
+);
+/* Byte-identical to the reconcile's own knownColour. */
+const knownColour = (c) => {
+  const h = findColour(c);
+  return h ? h.colour_id : null;
+};
 
 test("a bracketed trade name after a library-confirmed code is the COLOUR, not a special", () => {
   for (const [d2, colour] of [

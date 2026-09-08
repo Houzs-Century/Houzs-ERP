@@ -106,16 +106,25 @@ function unlabelledColour(d2raw, knownColour) {
        is "Yellow" — and they were being LEFT in the text, so they reached the
        rider rule as a special order like every other name. */
     const fill = /\(\s*(feather|foam)\s*\)/i.exec(seg);
-    const direct = confirmColour(knownColour, t);
-    if (direct) {
-      return { value: typeof direct === "string" ? direct : t, evidence: seg, tradeName: fill ? fill[1] : null };
-    }
-    /* The library confirms the code only once the bracket is stripped, so the
-       bracket is NOT part of the code — that is the evidence, not a guess. */
-    const hit = confirmColour(knownColour, t.replace(/\s*\([^)]*\)\s*/g, "").trim());
+    const m = /\(([^)]*)\)/.exec(t);
+    const bare = m ? t.replace(/\s*\([^)]*\)\s*/g, "").trim() : t;
+    const bareHit = m ? confirmColour(knownColour, bare) : null;
+    const hit = confirmColour(knownColour, t) || bareHit;
     if (hit) {
-      const m = /\(([^)]*)\)/.exec(t);
-      const name = m && isTradeName(m[1]) ? m[1].trim() : fill ? fill[1] : null;
+      /* THE BRACKET CONTRIBUTES NOTHING TO THE IDENTITY, so it is not part of
+         the code — that is the evidence, not a guess.
+
+         Do NOT ask instead "did the code fail to confirm WITH the bracket". The
+         live matcher strips brackets itself, on rung 1 of its candidate ladder
+         (`fabric-colour-match.mjs`, `noParen`), so in production the bracketed
+         form confirms directly and that question answers "no" every time. It was
+         written that way first and shipped a guard that never fired: reconcile
+         run 34200092543 reported the same three phantom specials as the run
+         before it. A stub built from an exact-match Set had said otherwise,
+         which is why the test below drives the REAL index. */
+      const name = m && isTradeName(m[1]) && bareHit && String(bareHit) === String(hit)
+        ? m[1].trim()
+        : fill ? fill[1] : null;
       return { value: typeof hit === "string" ? hit : t, evidence: seg, tradeName: name };
     }
   }
