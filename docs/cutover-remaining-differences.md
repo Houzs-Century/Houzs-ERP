@@ -238,17 +238,29 @@ document, so this is the list of which ones stop being read-only.*
 The two switches do different things, and the answer splits on the AREA the
 document lives in, not on the class it was given above:
 
-| type | count | area the document lives in | after step 1 (freeze lift) | after step 2 (`scm.migrated_so_lock = 'off'`) |
+| type | live count | area the document lives in | after step 1 (freeze lift) | after step 2 (`scm.migrated_so_lock = 'off'`) |
 | --- | ---: | --- | --- | --- |
-| SO | 19 | `scm.sales.orders` | still read-only — the migrated lock holds | **editable** |
+| SO | 18 | `scm.sales.orders` | still read-only — the migrated lock holds | **editable** |
 | DO | 4 | `scm.sales.delivery` | **editable immediately** | unchanged — this lock is SO-only |
 | GR | 11 | `scm.procurement.grn` | shut | shut |
 | IV | 6 | `scm.sales.invoices` | shut | shut |
 | PI | 1 | `scm.procurement.pi` | shut | shut |
 | PO | 0 | `scm.procurement.po` | — | — |
 
-**23 of the 40 become touchable; 18 stay shut.** (19 SO + 4 DO = 23; 11 GR +
+**22 of the 40 become touchable; 18 stay shut.** (18 SO + 4 DO = 22; 11 GR +
 6 IV + 1 PI = 18.)
+
+> **Two arithmetic notes, left visible rather than smoothed over.**
+> The class table above this section totals **41** and classifies SO at 19;
+> `SO-000021` was repaired at 12:56 (run `34188782181`), which is what took the
+> count to **40**. SO live is therefore **18**, and that is the number used
+> here.
+>
+> The DO section lists **five** document names under a heading of **4**. Which
+> of the five is not a separate finding has NOT been established — re-run the
+> reconcile and read the DO rows before quoting either number. It does not
+> change the answer to the question this section asks: all of them live in
+> `scm.sales.delivery` and all of them open at step 1.
 
 ### The four DO ones are the ones to look at, because step 1 alone opens them
 
