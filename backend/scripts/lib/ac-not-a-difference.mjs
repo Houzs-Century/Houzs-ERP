@@ -294,12 +294,27 @@ export function splitDecidedAbsences({ t, missing, linesOf, register = DECIDED_A
  * were genuinely the wrong product. So a document leaves the item-code column
  * only when BOTH hold, and the second is a measurement no ordering can affect:
  *
- *   a. NO ERP line on the document carries a line key, so the pairing this
- *      verdict rests on was guessed rather than read. A document that HAS keys
- *      was paired for real and its differences are real.
+ *   a. THE ERP LINE THIS VERDICT IS ABOUT carries no line key, so the pairing it
+ *      rests on was guessed rather than read. A line that HAS a key was paired
+ *      for real and its difference is real.
  *   b. The book-side and ERP-side item-code MULTISETS are EQUAL — the same
  *      products in the same quantities, in any order. A wrong product changes
  *      the multiset, so this cannot swallow one.
+ *
+ * CLAUSE (a) USED TO BE ASKED OF THE WHOLE DOCUMENT, and that was right for
+ * exactly as long as a document was all-keyed or all-keyless. It stopped being
+ * true at 2026-09-08 14:22 (+08), when backfill-ac-downstream-line-keys.mjs
+ * stamped 563 of 636 goods-receipt lines: it stamps only where the book FORCES
+ * the pairing and leaves the rest NULL, so a PARTIALLY keyed document is now
+ * the normal state and 29 receipts are in it. On such a document one keyed line
+ * made `keyed` true for the whole thing and the guessed lines beside it were
+ * counted as differences AND skipped silently — not even printed as impostors.
+ * Measured: `GR-005334|PO-009887`, whose seven mattress rows the backfill
+ * refused to key because AutoCount itself holds two lines of one item at one
+ * quantity with different price/location/Desc2 (run 34199483652), and whose
+ * item-code multiset the ERP matches exactly (run 34198777922). The row's own
+ * key is therefore what clause (a) asks about; the document-level flag stays as
+ * the fallback for a caller that does not carry the per-line fact.
  *
  * A document that satisfies (a) and fails (b) is an `impostor`: it stays
  * counted AND is printed louder, because "the sets differ too" is the strongest
@@ -309,10 +324,12 @@ export function splitDecidedAbsences({ t, missing, linesOf, register = DECIDED_A
  * unknown, so the LINE-LEVEL verdict is withdrawn, while the DOCUMENT-level
  * claim — these two documents name the same goods — is asserted and proved.
  *
- * @param {{rows:{key:string,erpNo:string,line:string}[],
+ * @param {{rows:{key:string,erpNo:string,line:string,erpKeyed?:boolean}[],
  *          bags:Map<string,{book:string,erp:string,keyed:boolean}>|null}} args
  *   `bags` is keyed by document, holding each side's canonical multiset string
- *   and whether ANY ERP line of that document carried a line key.
+ *   and whether ANY ERP line of that document carried a line key. A row may
+ *   carry `erpKeyed` — whether THAT line carried one — and when it does, it is
+ *   what clause (a) reads; the document flag is the fallback.
  * @returns {{guessed:number,differ:number,moved:object[],impostors:{line:string,why:string}[],
  *            applied:boolean,why:string}}
  */
@@ -340,7 +357,11 @@ export function splitGuessedItemCodePairing({ rows, bags }) {
       impostors.push({ line: r.line, why: `no item-code multiset was measured for ${r.key} — unproven, counted as a difference` });
       continue;
     }
-    if (b.keyed) continue;
+    /* The LINE's own key when the caller carried it, the document's otherwise.
+       A partially keyed document is the normal state since the 14:22 backfill,
+       and asking the document hid every guessed line standing beside a keyed
+       one. */
+    if (r.erpKeyed === undefined ? b.keyed : r.erpKeyed) continue;
     if (b.book === b.erp) moved.push(r);
     else {
       impostors.push({
