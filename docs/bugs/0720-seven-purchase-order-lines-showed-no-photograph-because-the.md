@@ -21,7 +21,7 @@ present: 0   missing: 15   of 15      (the addresses a blanket re-import would a
 present: 13  missing:  0   of 13      (positive control, known-good keys)
 ```
 
-The 11 source JPEGs were exported and sat on the operator machine the whole
+The 10 source JPEGs were exported and sat on the operator machine the whole
 time. What did not happen was their upload. The signature is in the local
 done-list: `.ac-photos/po/.uploaded.txt` held **12** keys where the batch was
 about 28, and the ones it holds are interleaved with the ones it does not —
