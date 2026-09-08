@@ -111,4 +111,17 @@ describe('every SO write surface consults the gate', () => {
   test('the refusal code has a curated operator sentence', () => {
     expect(rawAuthedFetch).toContain('so_migrated_readonly:');
   });
+
+  /* FOUND IN THE BROWSER, NOT BY A TEST (2026-09-08). The first cut gated Edit
+     and the payments CARD on the desktop read page and left the two buttons in
+     the header bar — "Cancel SO" and "Collect payment" — live on a migrated
+     order. Both are writes the API refuses, so the operator got a toast instead
+     of a greyed control, which is the thing this whole change exists to avoid.
+     Pinned here because the header bar is a different place from the gates the
+     tests above cover, and nothing pointed at it. */
+  test('the desktop read page gates the header bar, not only Edit', () => {
+    expect(rawDetailV2).toContain('{!migratedLocked && !["cancelled", "draft"].includes(');
+    const cancelBtn = rawDetailV2.slice(rawDetailV2.indexOf('onClick={doCancel}'));
+    expect(cancelBtn.slice(0, 200)).toContain('disabled={migratedLocked}');
+  });
 });
