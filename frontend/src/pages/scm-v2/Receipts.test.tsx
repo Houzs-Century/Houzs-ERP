@@ -37,7 +37,24 @@ vi.mock('../../vendor/scm/lib/accounting-queries', async (importOriginal) => ({
   useReceipts: (month?: string) => { receiptsAsked.push(month); return { data: LIST, isLoading: false }; },
   useCreateReceipt: () => ({ mutateAsync: createAsync, isPending: false }),
   useVoidReceipt: () => ({ mutateAsync: voidAsync, isPending: false }),
+  /* The Other Debtor door (owner 2026-09-08): the registry, one debtor's open
+     bills, and the raise-and-post mutation. */
+  useOtherDebtors: () => ({ data: { debtors: [
+    { id: 'd1', name: 'AHMAD BIN ALI', phone: null, notes: null, is_active: true, outstanding_sen: 30000 },
+    { id: 'd2', name: 'OLD DEBTOR', phone: null, notes: null, is_active: false, outstanding_sen: 0 },
+  ] }, isLoading: false }),
+  useDebtorDetail: (id: string | null) => ({ data: id === 'd1' ? DETAIL_D1 : undefined, isLoading: false }),
+  useCreateDebtorReceipt: () => ({ mutateAsync: debtorReceiptAsync, isPending: false }),
 }));
+const debtorReceiptAsync = vi.fn(async (_b: unknown) => ({ ok: true, posted: true, jeNo: 'HC-JE-2609-0007', receipt: { id: 'dr9', receiptNumber: 'HC-ODR-2609-002', totalSen: 30000 } }));
+const DETAIL_D1 = {
+  debtor: { id: 'd1', name: 'AHMAD BIN ALI', phone: null, notes: null, is_active: true, outstanding_sen: 30000 },
+  bills: [
+    { id: 'b1', bill_number: 'HC-ODB-2609-001', bill_date: '2026-09-01', total_sen: 50000, received_sen: 20000, status: 'POSTED', notes: null },
+    { id: 'b0', bill_number: 'HC-ODB-2608-009', bill_date: '2026-08-20', total_sen: 10000, received_sen: 10000, status: 'PAID', notes: null },
+  ],
+  receipts: [],
+};
 vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ can: () => true }) }));
 const confirmFn = vi.fn(async (_a: unknown) => true);
 vi.mock('../../vendor/scm/components/ConfirmDialog', () => ({ useConfirm: () => confirmFn }));
@@ -71,6 +88,40 @@ describe('the unified money-in list', () => {
     expect(receiptsAsked.at(-1)).toBe('2026-09');
     fireEvent.click(screen.getByText('All months'));
     expect(receiptsAsked.at(-1)).toBeUndefined();
+  });
+
+  /* 不可能链接起来吗? … receipt 页我也希望这样 → 用这个方式 (owner 2026-09-08):
+     an Other Debtor's money is received from THIS New receipt — pick the
+     debtor, tick the bill, Post — and it books at once through the debtor
+     module's own route with postNow. */
+  test('an Other Debtor\'s money is received here: the debtor\'s open bills, tick in full, Post books it in one call', async () => {
+    debtorReceiptAsync.mockClear();
+    createAsync.mockClear();
+    draw();
+    fireEvent.click(screen.getByText('New receipt'));
+    fireEvent.click(screen.getByRole('radio', { name: 'Other Debtor' }));
+    expect(screen.getByText('New receipt — Other Debtor — 录入即过账')).toBeTruthy();
+    expect(screen.getByText('Pick the debtor to list what they still owe.')).toBeTruthy();
+    /* The registry: active debtors only, what each still owes beside the name. */
+    const debtor = screen.getByLabelText('Debtor') as HTMLSelectElement;
+    expect([...debtor.options].map((o) => o.textContent)).toEqual(['— pick the debtor —', 'AHMAD BIN ALI — owes MYR 300.00']);
+    fireEvent.change(debtor, { target: { value: 'd1' } });
+    /* Only the bill with money outstanding is offered; the paid one is not. */
+    expect(screen.getByText('HC-ODB-2609-001')).toBeTruthy();
+    expect(screen.queryByText('HC-ODB-2608-009')).toBeNull();
+    fireEvent.click(screen.getByLabelText('Collect HC-ODB-2609-001 in full'));
+    expect(screen.getByText('Total MYR 300.00')).toBeTruthy();
+    fireEvent.focus(screen.getByLabelText(/Received into/));
+    fireEvent.mouseDown(screen.getByText('310-0010 · MAYBANK'));
+    fireEvent.click(screen.getByText('Post receipt'));
+    await waitFor(() => expect(debtorReceiptAsync).toHaveBeenCalledTimes(1));
+    expect(debtorReceiptAsync.mock.calls[0]![0]).toMatchObject({
+      debtorId: 'd1', bankAccountCode: '310-0010', postNow: true,
+      allocations: [{ billId: 'b1', amountSen: 30000 }],
+    });
+    expect(createAsync).not.toHaveBeenCalled();
+    /* The pop-out closes on the post. */
+    await waitFor(() => expect(screen.queryByText(/录入即过账/)).toBeNull());
   });
 
   test('a general receipt raises with its own date, typed payer, picked bank and free-pick lines', async () => {
