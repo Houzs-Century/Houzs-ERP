@@ -1,6 +1,6 @@
 ## The reconcile reports a sofa the owner has already ruled on as an open difference [medium]
 
-<!-- status: open -->
+<!-- status: fixed -->
 
 <!-- area: AutoCount sync + write-back -->
 
@@ -60,6 +60,20 @@ from the investigation.
 **What a fix must not do.** It must not fold a ruled line into `AGREE`. The ERP
 really does differ from the book's text there, and hiding that would remove the
 only signal that would catch a ruling applied to the wrong document.
+
+**FIXED 2026-09-08 by `fix/apply-sofa-rulings`.** The repair is the `RULED`
+verdict this entry specified: its own column, never folded into `AGREE`, fed
+from the SAME corrections files the apply script writes from. It does what this
+entry asked and one thing more - a ruling that has NOT been written stays
+`DIFFER` and now NAMES the answer it is failing to match, which is the line that
+would have caught `HC-SO-013327` holding `1NA` while the ruling said `1B(RHF)`.
+Note the table in this entry is superseded on two rows: the owner re-read those
+slips on 2026-09-08 and CHANGED his answers, so what it records as "the ERP
+matches his ruling" was true of the OLD reading. See
+`docs/sofa-compartment-owner-rulings-2026-09-08.md`.
+One of the five, `HC-SO-011099`, is deliberately still `DIFFER`: its ruling
+cannot be written yet (`docs/bugs/0717`), and that is the safety property
+working, not a gap.
 
 **Ref.** `fix/sofa-proceeded-eight`, 2026-09-08. Measured on reconcile run
 `34212598908` and ERP evidence run `34213198537`.

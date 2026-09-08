@@ -48,6 +48,21 @@
  *   UNREADABLE   the decoder cannot read this Desc2 (parse-sofa returns
  *                conf "low", or the guard that keeps "(1 ELT / T + NA +2ER)" a
  *                placeholder fires).  A photograph job, never a data defect.
+ *   RULED        sofa compartments only.  The owner read the slip HIMSELF and
+ *                set the build against the book's own words, and the ERP holds
+ *                exactly what he ruled.  「一律跟账本。除了sofa compartment而已啊」
+ *                — the book decides everything EXCEPT the sofa build, which is
+ *                his.  So the ERP is SUPPOSED to differ from the text here.
+ *                It is NOT folded into AGREE, for the same reason RECORDED is
+ *                not: the line genuinely does differ from the book, and hiding
+ *                that would remove the only signal that would catch a ruling
+ *                applied to the WRONG document.
+ *                A ruling that has NOT been written stays DIFFER — that is the
+ *                whole safety property.  On 2026-09-08 the owner ruled three
+ *                builds, was shown a report still displaying the old values and
+ *                said 「这个很多我刚刚都给过你答案了啊」.  Had this column existed,
+ *                the two he had already been given would have read RULED and
+ *                the one still unwritten would have stood out as the only work.
  *   RECORDED     specials only.  The book asks for a PRICED option, the line
  *                does not tick it, and `variants.specialsRecorded` carries it.
  *                That is the owner's ruling 甲 of 2026-09-03 already applied —
@@ -191,12 +206,19 @@ export const DIFFER = "DIFFER";
 export const PENDING = "PENDING";
 export const UNREADABLE = "UNREADABLE";
 export const RECORDED = "RECORDED";
+/* The owner's per-document sofa ruling, already applied. Its evidence lives in
+   backend/scripts/data/sofa-compartment-corrections-*.json — the SAME files
+   apply-sofa-compartment-corrections.mjs writes from, so the reporter and the
+   writer can never disagree about what he ruled. A build held back in _held is
+   deliberately absent from that set: it is a ruling we have NOT written, and it
+   must keep reading DIFFER. */
+export const RULED = "RULED";
 /* NO_LINE_KEY — both sides state the SAME set of values for this axis on this
    document, and which of OUR rows answers which of the book's was the checker's
    own guess.  See foldGuessedPairing below for why that is a third state and
    not a difference. */
 export const NO_LINE_KEY = "NO_LINE_KEY";
-export const VERDICTS = [AGREE, ERP_BLANK, BOOK_BLANK, DIFFER, PENDING, UNREADABLE, RECORDED, NO_LINE_KEY];
+export const VERDICTS = [AGREE, ERP_BLANK, BOOK_BLANK, DIFFER, PENDING, UNREADABLE, RECORDED, RULED, NO_LINE_KEY];
 
 /** The generic two-value comparison every scalar axis uses. */
 export function verdictOf(bookVal, erpVal, same) {
@@ -324,7 +346,7 @@ export function decodeBook(deps, { desc2, itemGroup, itemCode }) {
  *
  * Returns { axes: { <key>: { verdict, book, erp, detail } }, proceeded }.
  */
-export function compareLine(deps, { book, erpLines, proceeded }) {
+export function compareLine(deps, { book, erpLines, proceeded, erpNo = null }) {
   const lead = erpLines[0] || {};
   const group = book.group;
   const axes = {};
@@ -413,6 +435,27 @@ export function compareLine(deps, { book, erpLines, proceeded }) {
           (d.miss.length ? `MISSING ${d.miss.join(", ")}` : "") +
           (d.miss.length && d.extra.length ? " | " : "") +
           (d.extra.length ? `EXTRA ${d.extra.join(", ")}` : "");
+        /* THE OWNER MAY HAVE ALREADY ANSWERED THIS ONE. Consulted ONLY on a
+           difference that is otherwise real: a ruling can never turn an AGREE
+           or an ERP_BLANK into something else, and it is asked AFTER the
+           multiset has spoken, so the book comparison is never skipped.
+           RULED requires the ERP to hold his answer EXACTLY. A ruling that has
+           not been written, or written onto the WRONG document, still reads
+           DIFFER — and now names whose answer it is failing to match, which is
+           the line that would have caught HC-SO-013327 holding 1NA while his
+           ruling said 1B(RHF). */
+        const ruling = erpNo && deps.sofaRuling ? deps.sofaRuling(erpNo, erpLines) : null;
+        if (ruling && Array.isArray(ruling.pieces) && ruling.pieces.length) {
+          if (!multisetDiff(have, ruling.pieces)) {
+            cell.verdict = RULED;
+            cell.detail = "the owner ruled this build " + ruling.pieces.join("+") +
+              " from the drawing" + (ruling.source ? " (" + ruling.source + ")" : "") +
+              " and the ERP holds it, so it differs from the book's words BY DECISION";
+          } else {
+            cell.detail += " | the owner ruled " + ruling.pieces.join("+") +
+              " and the ERP does NOT hold it";
+          }
+        }
       }
     }
   }
