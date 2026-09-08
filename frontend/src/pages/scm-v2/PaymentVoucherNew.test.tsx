@@ -81,6 +81,7 @@ vi.mock('../../vendor/scm/lib/currencies-queries', async (importOriginal) => ({
 
 import { PaymentVoucherNew } from './PaymentVoucherNew';
 import { stashPvFiles, takePvFiles } from '../../vendor/scm/lib/pv-file-handoff';
+import { todayMyt } from '../../vendor/scm/lib/dates';
 
 const draw = (url: string) => render(
   <MemoryRouter initialEntries={[url]}><PaymentVoucherNew /></MemoryRouter>,
@@ -284,6 +285,30 @@ describe('the plain Payment Voucher (/new)', () => {
        saved last time — shown resolved, still editable. */
     expect((screen.getByLabelText(/Payee/) as HTMLInputElement).value).toBe('TNB');
     expect((screen.getByLabelText('Account (Debit) *') as HTMLInputElement).value).toBe('900-A002 · Advertisement');
+  });
+
+  /* 普通 payment scan bill 可以 default 放今天吗 → 做 (owner 2026-09-08): the
+     bill's date no longer overwrites the voucher's — that stays today, the
+     day he records the payment — and rides in the notes instead. */
+  test('a scanned bill leaves the voucher dated TODAY; the bill\'s own date goes to the notes', () => {
+    render(
+      <MemoryRouter initialEntries={[{
+        pathname: '/scm/payment-vouchers/new',
+        state: { billPrefill: {
+          extraction: {
+            vendorName: '99 SPEEDMART S/B', vendorRegNo: null, documentKind: 'receipt' as const,
+            invoiceNumber: 'T0012', invoiceDate: '2026-08-25', dueDate: '2026-09-15',
+            currency: 'MYR', totalSen: 1910, sstSen: null, lines: [],
+          },
+          memory: null,
+        } },
+      }]}><PaymentVoucherNew /></MemoryRouter>,
+    );
+    const [y, m, d] = todayMyt().split('-');
+    const date = screen.getByLabelText(/Voucher Date/) as HTMLInputElement;
+    expect(date.value).toBe(`${d}/${m}/${y}`);
+    expect(date.value).not.toBe('25/08/2026');
+    expect((screen.getByLabelText('Notes') as HTMLTextAreaElement).value).toBe('BILL T0012 · DATED 2026-08-25 · DUE 2026-09-15');
   });
 
   test('a scanned bill\'s FILES ride the stash and attach right after the save (print pv include ocr 的文件一起)', async () => {
