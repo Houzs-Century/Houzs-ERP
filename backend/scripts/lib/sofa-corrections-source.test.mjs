@@ -66,8 +66,36 @@ test("BOTH real files load, and the 2026-08 round is still there", () => {
      to is a judgement (the book names `TNS-9838 DB`, and `TNS-9838 SOFA` is a
      separate item) — so the entry states no model rather than a typed one, which
      is the defect docs/bugs/0693 records. `_held` is counted separately and
-     printed on every run, so it cannot be mistaken for done. */
-  assert.equal(bySource.get("sofa-compartment-corrections-2026-09.json"), 34);
+     printed on every run, so it cannot be mistaken for done.
+     34 -> 36 on 2026-09-08: the two builds the previous round HELD, both now
+     answered by the owner in his own words. HC-SO-011601 is the full build he
+     confirmed with 「对啊」 after only the corner and the seat had been given;
+     HC-SO-011657 is the daybed he settled with 「那就放8030 daybed把」. `_held`
+     is empty as a result — an answer that has been given may not sit in the
+     held list, because the operator's log prints held builds as outstanding
+     work and would keep asking him a question he has already answered. */
+  assert.equal(bySource.get("sofa-compartment-corrections-2026-09.json"), 36);
+});
+
+/* ── AN ANSWERED BUILD MAY NOT SIT IN `_held` ───────────────────────────────
+ * `_held` is printed on every run as work still owed, and makeSofaRulingLookup
+ * EXCLUDES it, so a build parked there keeps reporting "cannot be compared"
+ * however complete its answer is. That is the report handing the owner back
+ * work he has already done (docs/bugs/0720). These two were held for a real
+ * reason and the reason is now gone; pinning them out of the list is what stops
+ * a later edit quietly parking an answered build again. */
+test("the two builds the owner answered on 2026-09-08 are entries, not held", () => {
+  const { builds, held } = loadCorrections(DATA, "2026-09");
+  for (const doc of ["HC-SO-011601", "HC-SO-011657"]) {
+    assert.ok(
+      builds.some((b) => (b.docs || []).includes(doc)),
+      `${doc}: the owner answered this one — it belongs in entries`,
+    );
+    assert.ok(
+      !held.some((h) => (h.docs || []).includes(doc)),
+      `${doc}: still in _held, so every run keeps printing an answered build as outstanding`,
+    );
+  }
 });
 
 /* ── THE TWO SOURCES MAY NOT BE CONFUSED FOR EACH OTHER ─────────────────────
