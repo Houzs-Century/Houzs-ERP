@@ -137,8 +137,15 @@ async function main() {
         const hasGrDoc = d.row.parent_a != null && String(d.row.parent_a).trim() !== "";
         if (!hasGrDoc) {
           bump("B. scm.grns.linked_ac_gr_docno IS NULL (the receipt does not name its book receipt)");
-          const k = String(d.row.erp_no ?? "?");
-          if (!grnDocGaps.has(k)) grnDocGaps.set(k, { wants: new Set(), lines: 0 });
+          /* KEYED ON THE INVOICE LINE'S id, NOT on `erp_no`. On this edge
+             `erp_no` is the INVOICE number (`h.invoice_number` in the PI arm of
+             chainEdges), and the first version of this diagnostic keyed the
+             receipt lookup on it — so it asked scm.grns for `HC-PI-007927`,
+             matched nothing, and printed NO-ROW for all 20. The receipt is
+             reached from the line, below. */
+          const k = String(d.row.id ?? "");
+          if (!k) { bump("B (unkeyed: the edge returned no line id)"); continue; }
+          if (!grnDocGaps.has(k)) grnDocGaps.set(k, { wants: new Set(), lines: 0, invoice: String(d.row.erp_no ?? "?") });
           grnDocGaps.get(k).wants.add(String(d.bl.fromDocNo ?? "").trim());
           grnDocGaps.get(k).lines += 1;
         } else {
@@ -157,26 +164,33 @@ async function main() {
     if (grnDocGaps.size === 0) {
       say("   nothing lands on cause B on this cut.");
     } else {
-      const nums = [...grnDocGaps.keys()];
+      /* Walk the LINE to its receipt: invoice line -> grn_item -> grn. This is
+         the join the chain edge already makes; it simply does not project the
+         receipt's own number, only its `linked_ac_gr_docno` (which is the NULL
+         being investigated). */
+      const ids = [...grnDocGaps.keys()];
       const facts = await sql`
-        SELECT g.grn_number, g.created_at, g.status::text AS status,
+        SELECT pii.id::text AS line_id, g.grn_number, g.created_at, g.status::text AS status,
                COALESCE(g.migrated_no_stock, false) AS migrated_no_stock,
                g.linked_ac_gr_docno, p.linked_ac_docno AS po_doc,
                (SELECT count(*)::int FROM scm.inventory_movements m
                  WHERE m.company_id = g.company_id AND m.source_doc_no = g.grn_number) AS movements,
                array_remove(p.linked_ac_grn_docnos, NULL) AS po_named_receipts
-          FROM scm.grns g
+          FROM scm.purchase_invoice_items pii
+          JOIN scm.grn_items gi ON gi.id = pii.grn_item_id
+          JOIN scm.grns g ON g.id = gi.grn_id
           LEFT JOIN scm.purchase_orders p ON p.id = g.purchase_order_id
-         WHERE g.company_id = ${CO} AND g.grn_number = ANY(${nums})
+         WHERE pii.id = ANY(${ids}::uuid[])
          ORDER BY g.grn_number`;
-      const byNo = new Map(facts.map((f) => [f.grn_number, f]));
+      const byNo = new Map(facts.map((f) => [f.line_id, f]));
       let derivable = 0;
       let native = 0;
       let unclear = 0;
       say("");
-      say(`   ${"ERP receipt".padEnd(24)} ${"book wants".padEnd(14)} ${"PO".padEnd(12)} ${"stamped on PO?".padEnd(15)} migrated  moves  created`);
-      for (const [erpNo, g] of [...grnDocGaps].slice(0, SHOW)) {
-        const f = byNo.get(erpNo);
+      say(`   ${"ERP receipt".padEnd(22)} ${"invoice".padEnd(16)} ${"book wants".padEnd(22)} ${"PO".padEnd(12)} ${"verdict".padEnd(12)} migrated moves created`);
+      for (const [lineId, g] of [...grnDocGaps].slice(0, SHOW)) {
+        const f = byNo.get(lineId);
+        const erpNo = f?.grn_number ?? "(no receipt row)";
         const wants = [...g.wants].join(",");
         const onPo = (f?.po_named_receipts ?? []).map(up);
         const wantedOnPo = [...g.wants].some((w) => onPo.includes(up(w)));
@@ -191,13 +205,19 @@ async function main() {
         if (verdict.startsWith("DERIVABLE")) derivable += 1;
         else if (verdict === "NOT-ON-PO") native += 1;
         else unclear += 1;
-        say(`   ${erpNo.padEnd(24)} ${wants.padEnd(14)} ${String(f?.po_doc ?? "?").padEnd(12)} ` +
-            `${verdict.padEnd(15)} ${String(f?.migrated_no_stock ?? "?").padEnd(9)} ${String(f?.movements ?? "?").padEnd(6)} ` +
+        say(`   ${String(erpNo).padEnd(22)} ${String(g.invoice).padEnd(16)} ${wants.slice(0, 21).padEnd(22)} ${String(f?.po_doc ?? "?").padEnd(12)} ` +
+            `${verdict.padEnd(12)} ${String(f?.migrated_no_stock ?? "?").padEnd(8)} ${String(f?.movements ?? "?").padEnd(5)} ` +
             `${f?.created_at ? new Date(f.created_at).toISOString().slice(0, 10) : "?"}`);
       }
       if (grnDocGaps.size > SHOW) say(`   … and ${grnDocGaps.size - SHOW} more (raise SHOW)`);
-      say(`\n   receipts on cause B: ${grnDocGaps.size} · the book's receipt IS stamped on their PO: ${derivable} ` +
-          `· NOT on the PO: ${native} · no row read: ${unclear}`);
+      say(`\n   invoice lines on cause B: ${grnDocGaps.size} · the book's receipt IS stamped on their PO: ${derivable} ` +
+          `· NOT on the PO: ${native} · no receipt row read: ${unclear}`);
+      /* A line whose book side names SEVERAL receipts cannot be settled by
+         stamping one number, whatever the rest of the evidence says. Counted
+         separately so it is never mistaken for a derivable one. */
+      const multi = [...grnDocGaps.values()].filter((g) => [...g.wants].some((w) => /[,;\s]/.test(w))).length;
+      say(`   of those, the book names SEVERAL source receipts on the line: ${multi} — ` +
+          "one stamp cannot answer those, whatever else is true of them");
       say("   DERIVABLE means stamp-ac-grn-refs.mjs already recorded that receipt number against this");
       say("   purchase order, so naming it on the receipt states a fact we already hold.");
     }
