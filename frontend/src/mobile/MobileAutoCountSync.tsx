@@ -835,7 +835,7 @@ export function MobileAutoCountSync({ onBack }: { onBack: () => void }) {
                     fontVariantNumeric: "tabular-nums",
                   }}
                 >
-                  <span>{acShowingLine(live.length, d.counts.total)}</span>
+                  <span>{acShowingLine(live.length, acListTotal(d, state))}</span>
                 </div>
               </>
             )}
