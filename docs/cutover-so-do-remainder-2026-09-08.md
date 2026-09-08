@@ -373,6 +373,29 @@ dry-run above is the evidence, and the write has not been run.**
 the reconcile classifies it `same-money` — its total equals the book and the two
 book lines it lacks are RM 0.00.
 
+### The class reads ZERO on its own instrument
+
+`Probe DO item codes changed after conversion (read-only)` shipped with #3244 and
+was dispatched on `main` after the merge — run `34216439995`:
+
+```
+THE CLASS: 34 delivery line(s) on 30 delivery order(s)
+OF THE 30 ... the ERP HOLDS 4 and does not hold 26
+Of the 4 it holds: 4 already carry every flagged line; 0 are SHORT, 0 line(s)
+```
+
+### What this RULED OUT — the checker itself moved between the two reconcile runs
+
+Both reconcile runs were dispatched on `main`, and **#3239 merged at 10:01:25Z,
+between the BEFORE (09:54Z) and the AFTER (10:10Z)**, so the AFTER run read a
+checker that was not byte-identical to the BEFORE one. (#3238, which changes what
+the reconcile PRINTS, merged at 10:34:55Z — after both.) That contaminant is
+refuted by the control rather than by argument: SO, PO, GR, IV and PI are
+identical on every axis across the two runs, and the only movement is DO's line
+count 2 -> 0 with lines paired 819 -> 823 — **+4, exactly the four rows written.**
+A moved checker does not land on one type's one column at exactly the write's own
+size.
+
 ---
 
 # INSIDE the line: colour, seat size and specials — closed 2026-09-08 16:20
