@@ -2173,6 +2173,51 @@ type-independent: adding a document type cannot change what TALLIED means, and
 `renderVerdict(v)` with no type still produces the sales-order text byte for
 byte, which is what this file's caller relies on.
 
+**And for DELIVERY ORDERS, SALES INVOICES and PURCHASE INVOICES since
+2026-09-08** (owner: 「SO PO GR PI SI DO 等等？都解决了吗？」). `docTypeSpec` THREW
+for those three, so no report could be asked for half the types he named, while
+the reconcile had always COMPARED all six and the recorder had always been keyed
+by type. Only the WORDS were missing. Two of the three labels had to move or
+they would be lies: a delivery order's item code is taken from the sales-order
+line by design, and a sales/purchase invoice's LINES are built from our own
+delivery or receipt (`migratedChainLineShape`), so printing "unit price" as a
+checked axis for any of them would report our own derivation back as agreement.
+The workflow's `types` default is now all six, with SO still the control.
+
+### The transfer chain is an AXIS since 2026-09-08 — 「transfer from和transfer to」
+
+Which document a line was raised FROM, and how much of it has been transferred
+ON, had never been compared. `check-ac-erp-reconcile.mjs` reads `transferedQty`,
+`fromDocType` and `fromDocNo` **only to decide SCOPE**, and `LOCKING_AXES`
+carried no member for either — so a line could point at the wrong source
+document and every report would still have said the documents tally. Two
+cross-system checkers existed (`check-ac-convert-symmetry.mjs`,
+`check-ac-transfer-counters.mjs`) and neither produces a per-document verdict,
+so neither could lock a document or move a tally answer.
+
+`LOCKING_AXES` now carries `transfer from` and `transfer to`;
+`UNANSWERABLE_AXES` carries `transfer chain not verifiable`. `bucketOf` and
+`isTallied` are untouched. Three NOTE classes carry the silences so none of them
+reads as agreement: `chain-line-not-in-book`, `chain-no-source` and
+`chain-no-erp-counter`.
+
+**What the account book can answer, and it is less than it sounds.**
+`FromDocDtlKey` is EMPTY on every one of the ~220,000 detail rows of all six
+AutoCount tables, so the source LINE is answerable on ONE edge only — SO→PO,
+which AutoCount records differently as `FromSODtlKey`. On the other four edges
+the book states a source DOCUMENT and nothing finer, and the checker says so
+instead of comparing at document grain and letting a reader believe it checked
+lines. It is re-measured every run from the snapshot, never trusted from a
+comment. `PODTL.FromDocType` is likewise empty on all 18,890 rows, so the
+classifier tests the DocNo — testing the TYPE reports every purchase order in
+the book as sourceless.
+
+The rule modules are `backend/scripts/lib/transfer-chain-verdict.mjs` (pure, and
+it RE-EXPORTS the counter rule from `lib/transfer-counter-verdict.mjs` rather
+than restating it), `lib/ac-transfer-chain-run.mjs` (the reads; it may only
+write onto a document the run already compared, and it FAILS SOFT) and
+`lib/ac-transfer-chain-report.mjs` (the printing).
+
 **Nothing on the sales-order side of this moved.** `check-so-tally.mjs` is not
 modified by that lane, `VERDICT_OUT` still receives SALES ORDERS and nothing
 else, and `publish-so-reconcile-verdict.mjs` and the migrated-sales-order lock
