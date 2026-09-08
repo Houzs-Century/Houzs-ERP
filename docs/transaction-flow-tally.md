@@ -1,7 +1,7 @@
 # Transaction flow tally — Company 1 (Houzs Century)
 
-**Measured 2026-09-08 08:20 local (UTC+8)**, run
-[`34173009728`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34173009728),
+**Re-measured 2026-09-08 11:17 local (UTC+8)**, run
+[`34182972797`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34182972797),
 `Convert symmetry check (read-only)`, concluded `success`.
 
 The book side is the committed AutoCount snapshot
@@ -16,14 +16,25 @@ Reproduce the whole thing with one dispatch: Actions → **Convert symmetry chec
 
 ## The table
 
-| relationship | forward: book → ERP | backward: ERP → book | disagreements | what they are |
+| relationship | forward: book → ERP | backward: ERP → book | open | what they are |
 |---|---|---|---|---|
-| **Sales order → purchase order** | **506 / 522** | **506 / 506** | 16 forward | 16 book edges dated 2026-06-08 .. 2026-09-04 the ERP has not linked |
-| **Sales order → delivery order** | **171 / 173** | **171 / 171** | 2 forward | `DO-001800 ← SO-002281` and `DO-005583 ← SO-007435`. The first is a LIVE alarm — see below |
-| **Purchase order → goods receipt** | **497 / 521** | **497 / 497** | 24 forward | all dated 2026-08-28 .. 2026-09-07, the last 11 days |
-| **Delivery order → sales invoice** | **46 / 46** | **46 / 46** | 2 wrong item | already filed, `docs/bugs/0676-two-sales-invoices-and-three-purchase-invoices-name-a-source.md` |
-| **Goods receipt → purchase invoice** | **394 / 448** COMPOSED | **394 / 394** COMPOSED | 54 forward, 3 wrong item | spread 2026-01-16 .. 2026-09-02 — NOT a backlog |
+| **Sales order → purchase order** | **507 / 522** | **507 / 507** | 15 | every one carries a book LINE key; the block is per line and named below |
+| **Sales order → delivery order** | **171 / 173** | **171 / 171** | 2 | **the account book's own gap** — the item is not on the order in AutoCount either |
+| **Purchase order → goods receipt** | **521 / 521** | **521 / 521** | **0** | closed 2026-09-08 11:15 local |
+| **Delivery order → sales invoice** | **46 / 46** | **46 / 46** | **0** | |
+| **Goods receipt → purchase invoice** | **448 / 448** COMPOSED | **448 / 448** COMPOSED | **0** | closed 2026-09-08 11:15 local |
 | *(sixth edge)* invoice raised straight off the order | 0 / 0 | 0 / 0 | — | the book records 142 of these; the ERP imported none of their documents |
+
+**95 → 17.** The 2026-09-08 08:20 measurement read 96 book edges the ERP did not
+hold; a re-measure at 10:52 (run
+[`34181536566`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34181536566))
+read 95 after another lane closed a `PO ← SO` edge. **78 of those were closed by
+`stamp-ac-grn-refs.mjs`** once it sourced the whole book instead of the
+outstanding cut — run
+[`34182881026`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34182881026),
+`DONE. POs stamped: 54 (+24 GR, +54 PI)`. The 17 that remain are accounted for
+one at a time below, and **2 of them are the account book's own gap, which means
+having them too IS being identical.**
 
 **Denominators, stated so they can be audited rather than trusted.**
 
@@ -36,9 +47,157 @@ Reproduce the whole thing with one dispatch: Actions → **Convert symmetry chec
   that can be put.
 - **BACKWARD** counts every edge the ERP asserts. **All six read N of N: the ERP
   has invented no edge the account book does not record.** That is the more
-  serious of the two directions and it is clean everywhere.
+  serious of the two directions and it is clean everywhere, before and after.
+- **Wrong-product links are now 0 on every edge.** The 2 + 3 that stood at 08:20
+  were closed by the invoice-link lane during the morning.
 
 ---
+
+## What was CLOSED on 2026-09-08, and how
+
+### `GR ← PO` 497/521 → **521/521**, and `PI ← GR` 394/448 → **448/448**
+
+Both were one defect. `stamp-ac-grn-refs.mjs` read `ac-gr-refs.json.gz`, which
+`export-ac-reimport.py:349` cuts with a `WHERE` clause naming only the purchase
+orders being exported — the ones **outstanding on the day of that cut**. The ERP
+keeps an imported purchase order forever; the cut does not keep its receipts. So
+the moment AutoCount finishes receiving an order it leaves that population, and
+its receipts and invoices become invisible to the job — permanently, however
+often it runs. It HAD run, successfully, at 2026-09-07 23:51 local
+(`34140454809`), and moved neither number.
+
+Measured: that file carried **318** purchase orders, **214** receipt documents
+and **186** purchase invoices. The ERP holds **574** imported purchase orders.
+
+**The date shape that ruled a backlog out was reading the wrong date.** This
+document previously recorded the 54 as *"NOT a backlog shape. UNKNOWN cause."*,
+because they span 2026-01-16 .. 2026-09-02. Membership is not decided by the
+invoice's date but by whether its **purchase order** was still outstanding on
+2026-08-28; when an order leaves that population its whole invoice history
+leaves with it, whatever the dates on it.
+
+The source is now `ac-convert-edges.json.gz` — the same live book, unfiltered —
+composed through the receipt exactly the way this checker composes it, so what
+the stamp writes is what the check reads. Writes are a UNION, and the run
+reported **`held by the ERP but NOT recorded in the book: 0`**. Full trace:
+`docs/bugs/0689-the-goods-receipt-and-purchase-invoice-pointers-were-stamped.md`.
+
+**No stock, no readiness, no money moved.** `linked_ac_grn_docnos` and
+`linked_ac_pinv_docnos` appear in `backend/src` only inside comments — there is
+no read on the Worker request path. The readiness census either side of the
+write (`Go-live readiness (read-only)`, runs
+[`34182646977`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34182646977)
+at 11:11 and
+[`34182980374`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34182980374)
+at 11:17) went `READY=1724 PENDING=1369 PARTIAL=10` →
+`READY=1725 PENDING=1368 PARTIAL=10`. **That one line is LIKELY not ours** —
+two other lanes wrote inside the same six minutes (`Enqueue SO allocation
+recompute` `34182606676`, `Repair PO line description + delivery date from the
+book` `34182769882`) — and it is mechanically impossible from these two columns.
+Said as LIKELY rather than asserted in either direction.
+
+**Handed to the goods-receipt lane, not decided here.**
+`create-migrated-documents.mjs` (KIND=grn) decides what receipts to create from
+`linked_ac_grn_docnos`, and that list is now 24 receipts longer. That job was
+NOT run. Whoever owns it is now deciding with a number rather than a surprise.
+
+---
+
+## The two that are the BOOK's own gap — `DO ← SO`
+
+`HC-DO-001800` and `HC-DO-005583` are not links the ERP lost. They were never
+linkable, because the item is not on the sales order **in AutoCount either**:
+
+```text
+SO-002281  2024-08-10  cancelled=F
+   seq  16 | AK-ARMOUR MATT (Q)        qty 1 | transfered 0
+   seq  32 | AK- LTX CLS PIL           qty 3 | transfered 3
+   seq  48 | NTYR-CS LTX PIL + CSC     qty 3 | transfered 3
+   seq  64 | AK-SK + MICROFIL PIL      qty 1 | transfered 0
+
+DO-001800  2024-10-30  cancelled=F
+   seq  32 | HB109NL                   qty 3 | from SO SO-002281
+   seq  48 | HB109M-CC                 qty 3 | from SO SO-002281
+```
+
+Neither item is on the order; AutoCount recorded the delivery anyway and
+consumed other lines' quantity for it. `DO-005583` is the same shape one step
+subtler — `SO-007435` seq 144 is `AK-SK + MICROFIL PIL` x2 with
+`TransferedQty 2`, and the delivery note's seq 144 is `AK-SK FX AIRLOFT PIL` x2:
+same sequence, same quantity, a different product name.
+
+`repair-do-so-item-links.mjs`, which never sees the book, reaches the same
+verdict from the ERP side alone and refuses all three lines with
+`no_so_line_with_that_item_code` (run
+[`34182380708`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34182380708)).
+Both sides agree. Writing the link would INVENT a relationship AutoCount does
+not record, against the owner's standing 「跟 autocount 一样」. **This is the
+acceptable non-zero: the gap is in the book, so carrying it too IS being
+identical.** Ledger:
+`docs/bugs/0691-the-two-orphaned-delivery-lines-are-the-account-book-s-own-g.md`.
+
+The standing reading — *"the mechanism that blanks `so_item_id` is LIVE, so
+repairing would re-orphan them"* — is retired for these three. They are not a
+delete's doing, so they are not evidence for that mechanism either way. The
+sentinel keeps watching for a fifth, on a baseline of 4 with all four named
+beside their answers.
+
+---
+
+## The 15 that remain — `PO ← SO`, and whose lane they are
+
+**Every one of the 15 carries a book LINE key** (`PODTL.FromSODtlKey` resolving
+to the named sales order), checked against `ac-convert-edges.json.gz`: 15 of 15
+keyed, 0 named by document number only. So none of them is "the book records no
+source" — the book does record it, and the block is on the ERP side.
+
+`probe-po-so-link-recoverable.mjs` (run
+[`34182101293`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34182101293),
+2026-09-08 11:02 local) classifies the whole 371-line unlinked population and
+refuses to guess:
+
+| why the line is not linked | lines |
+|---|---|
+| the BOOK records no source order — a link would be INVENTED | 329 |
+| the source order was not imported (outside the cutover) | 17 |
+| **the two ends name DIFFERENT products** — bug class 0672, refused | **10** |
+| the purchase-order key is not unique (sofa decomposition) | 6 |
+| no AutoCount line key on the ERP row (an ERP-native line) | 6 |
+| **RECOVERABLE — all four gates passed** | **3** |
+
+**The 10 item disagreements are the item-code lane's work, not a link defect.**
+In all 10 the BOOK's own two ends AGREE — AutoCount converted a product into
+itself — so **an `item_code` was rewritten on import and the LINK is right**.
+Five of the 15 missing document edges sit on those documents (`PO-010097`,
+`PO-010098`, `PO-010101`, `PO-010154`, `PO-010156`). They close when the item
+codes are corrected, and not before: writing the link first is exactly what put
+a customer's REGAL on a TRION on 2026-09-07.
+
+The 3 recoverable lines restore `PO-010150 ← SO-011160`, which is **not** one of
+the 15 — that document edge is already held through another line.
+
+**Not repaired here on purpose.** `purchase_order_items.so_item_id` moves
+READINESS (a hard-bound bedframe or sofa reads READY off its own dedicated
+purchase order), the SO/PO line repair belongs to another lane, and a direct SQL
+write triggers no recompute (`docs/bugs/0675`).
+
+---
+
+## The 08:20 reading, kept as history — SUPERSEDED above
+
+The detail below was written against the **2026-09-08 08:20** measurement and is
+kept because its reasoning is the record of what was believed and why. **Four of
+its five section headings are now wrong** and the sections above replace them:
+
+| section below | its 08:20 verdict | true at 11:17 |
+|---|---|---|
+| 1. Sales order to purchase order | 16 open | **15** open, each attributed above |
+| 2. Sales order to delivery order | 2 open and one of them is LIVE | **2 open, and they are the BOOK own gap** — not a live mechanism |
+| 3. Purchase order to goods receipt | 24 open, LIKELY a backlog | **0 open.** It was not a backlog; the stamp source could not see them |
+| 4. Delivery order to sales invoice | complete and symmetric, 2 wrong item | **still complete; the 2 wrong-item links are now 0** |
+| 5. Goods receipt to purchase invoice | 54 open, NOT a backlog shape, UNKNOWN cause | **0 open.** The cause was the same stamp source; the date shape was the wrong signal |
+
+Read it for the reasoning, never for the numbers.
 
 ## The five relationships, one at a time
 
@@ -201,18 +360,25 @@ longer does.
 
 ---
 
-## What was NOT repaired, and why
+## What was repaired, and what was NOT
 
-Nothing was written. Each candidate fails at least one standing rule, and
-shipping a repair anyway is how a hard-bound bedframe comes to read READY on
-someone else's stock:
+**78 of the 95 were repaired**, in one change, and re-measured after: run
+[`34182881026`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34182881026)
+wrote them and run
+[`34182972797`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34182972797)
+read both edges at N of N.
 
-| candidate | why not |
+| candidate | outcome |
 |---|---|
-| 16 SO→PO links, 2 SO→DO links | writing `so_item_id` moves READINESS — a hard-bound line reads READY off its own dedicated purchase order. This session was scoped to move neither stock nor readiness, and a direct SQL write triggers no recompute (`docs/bugs/0675`) |
-| `DO-001800`'s orphaned lines | the mechanism that blanks `so_item_id` is LIVE (sentinel run `34170202404`). Repairing rows under a live mechanism re-orphans them; the root cause is the fix |
-| 24 GR→PO, 54 PI→GR stamps | the goods-receipt reshape is another agent's lane and `scm.grns` was not to be touched. The GR set is LIKELY a backlog that a stamp re-run closes on its own |
-| 2 + 3 wrong-product invoice links | root cause UNKNOWN (`docs/bugs/0676`) and correcting one moves a money ceiling or a stock valuation |
+| 24 GR to PO, 54 PI to GR stamps | **CLOSED.** The stamp source was the outstanding cut and could never see them; it now reads the whole book. `docs/bugs/0689-*.md` |
+| `DO-001800` and `DO-005583` orphaned lines | **NOT a defect.** The item is not on the sales order in AutoCount either, so a link would be invented. The answer is written into the sentinel baseline. `docs/bugs/0691-*.md` |
+| 15 SO to PO links | **Another lane.** 5 of them are blocked behind an ERP-side `item_code` that disagrees with the book while the book own two ends agree; `so_item_id` also moves READINESS and a direct write triggers no recompute (`docs/bugs/0675`) |
+| 2 + 3 wrong-product invoice links | **CLOSED by the invoice-link lane** during the morning of 2026-09-08. The checker now reads 0 wrong-item links on every edge |
+
+**The migrated goods receipt DOCUMENTS are a separate question and were not
+touched.** `create-migrated-documents.mjs` (KIND=grn) builds receipts from
+`linked_ac_grn_docnos`, which is now 24 receipts longer. Creating them is the
+goods-receipt lane call.
 
 ---
 
