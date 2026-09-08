@@ -32,6 +32,15 @@ import { requireActiveCompanyId, scopeToCompanyId } from '../lib/companyScope';
 import { hasHouzsPerm } from '../lib/houzs-perms';
 import { recordSoAudit, type FieldChange } from '../lib/so-audit';
 import { readStaffAgentName } from '../lib/so-agent';
+/* THE THIRD DOOR ONTO A MIGRATED SALES ORDER. `/mfg-sales-orders/*` and
+   `/so-amendments/*` are both guarded by the router-level migratedSoReadonly
+   factory (scm/index.ts); this route is not, and cannot be — that factory
+   reads the document number out of the PATH, and `POST /apply` carries a
+   LIST of them in the body. So the same decision is asked here, per order,
+   through the SAME function the guard and the SO detail screen both use.
+   It writes `salesperson_id` and `agent`, which are two of the fields
+   sync-ac-delta's header lane copies back from AutoCount. */
+import { migratedSoReadonlyState } from '../lib/migrated-so-readonly';
 import { enqueueEdit } from '../lib/autocount-outbox';
 import type { Env, Variables } from '../env';
 
@@ -154,7 +163,7 @@ soHandover.post('/apply', async (c) => {
 
   for (const docNo of docNos) {
     const { data: beforeRow, error: readError } = await scopeToCompanyId(
-      sb.from('mfg_sales_orders').select('doc_no, salesperson_id, agent, status').eq('doc_no', docNo),
+      sb.from('mfg_sales_orders').select('doc_no, salesperson_id, agent, status, linked_ac_docno').eq('doc_no', docNo),
       co.companyId,
     ).maybeSingle();
     /* A FAILED read and an order that is genuinely not here are different
@@ -164,6 +173,20 @@ soHandover.post('/apply', async (c) => {
     if (readError) { skipped.push({ docNo, reason: `Could not be read: ${readError.message}` }); continue; }
     if (!beforeRow) { skipped.push({ docNo, reason: 'Not found in this company.' }); continue; }
     const before = beforeRow as unknown as Record<string, unknown>;
+
+    /* MIGRATED ORDERS ARE READ-ONLY WHILE THE LOCK IS ON, here too. The
+       `isMigrated` argument is REQUIRED and `boolean | null`: this route has the
+       answer for free off the row it just read (`linked_ac_docno` is the
+       import's own stamp, and the predicate is soIsMigrated's), so it says so
+       rather than letting the decision inherit a default. The refusal goes into
+       `skipped` with the lock's own sentence, which is the only reason this is
+       safe to add: a handover that silently dropped an order is exactly the
+       failure this route's per-order report exists to prevent. */
+    const lock = await migratedSoReadonlyState(c, before.linked_ac_docno != null);
+    if (lock.locked) {
+      skipped.push({ docNo, reason: lock.reason ?? 'This order came from AutoCount and is view-only for now.' });
+      continue;
+    }
 
     /* The preview may be stale. Only move what still belongs to the person the
        operator chose — never someone else's order that happened to be listed. */
