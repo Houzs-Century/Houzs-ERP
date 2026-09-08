@@ -11,11 +11,11 @@ them exists because ignoring it once proposed RM 2,216,501 of invented revenue
 三张沙发单,**账本写的型号跟我们系统写的型号不一样**。不是拆件的问题 —— 件数、
 颜色、尺寸都对得上,只有**型号**对不上。
 
-| 订单 | 采购单 | 账本写 | 我们写 |
-| --- | --- | --- | --- |
-| `HC-SO-010882` | `HC-PO-009550` | `DSL-8030 SOFA`(8030) | 9058 的三件 |
-| `HC-SO-011660` | `HC-PO-009017` | `AMN-SF9058 SOFA`(9058) | 8030 的三件 |
-| `HC-SO-012629` | `HC-PO-009712` | `HOK-5535 SOFA`(5535) | 8030 的三件 |
+| 订单 | 客户 | 采购单 | 账本写 | 我们写 |
+| --- | --- | --- | --- | --- |
+| `HC-SO-010882` | Tee | `HC-PO-009550` | `DSL-8030 SOFA`(8030) | 9058 的三件 |
+| `HC-SO-011660` | Sulaiman | `HC-PO-009017` | `AMN-SF9058 SOFA`(9058) | 8030 的三件 |
+| `HC-SO-012629` | KONG KIT YING | `HC-PO-009712` | `HOK-5535 SOFA`(5535) | 8030 的三件 |
 
 **卖单跟采购单是一致的** —— 两边都写同一个型号,只是两边都跟账本不一样。所以这
 不是「其中一张写错」,是这三张沙发从一开始进来时型号就被换掉了。
@@ -120,3 +120,31 @@ column because the sofa's two compartment rows make the two sides count the same
 | the correction applied | `34182517603` — 42 of 42, verified on a fresh connection |
 | the reconcile after the repair | `34182710620` — SO 10, PO 9: these three sofas plus `SO-012128` |
 | the catalogue coverage probe | `34182299845` |
+| the plan re-run that PROVES convergence and names the customers | `34183673080` — `different` 0, `already names the book's product` 13,950 -> 13,992 |
+
+## Stock readiness, before and after the 42 corrections
+
+A direct SQL write does not trigger an allocation recompute (`docs/bugs/0675`),
+so one was requested through the Worker's own queue row (run `34182606676`, token
+`ac3f4920`) and the row was drained by the five-minute cron before the second
+read. Company-1 imported sales-order lines:
+
+```
+before  PENDING 13081   READY 1968   PARTIAL 11      (run 34182061903, 11:07 UTC+8)
+after   PENDING 13080   READY 1969   PARTIAL 11      (run 34183114608, 11:24 UTC+8)
+```
+
+One line moved PENDING -> READY. Other go-live lanes were writing in the same
+window (`Sync AutoCount delta` run `34183057067`), so that single move is NOT
+attributed to this correction with certainty — what IS established is that the
+recompute ran and readiness did not regress.
+
+## The tenth difference, established rather than inferred
+
+`HC-SO-012128` carries no ERP line at all on AutoCount DtlKey `924549`: the plan
+over every key our own lines carry (`34183673080`) never sees that key, while
+`833309` — the sofa above it — is carried by exactly one row and agrees. The
+document also appears in neither `unmatchedAc` nor `unmatchedErp` in run
+`34182710620`, so both sides hold two lines. The second ERP line is therefore an
+unkeyed `9028-1A(RHF)` compartment of that sofa, and the book's four
+`HOK-SQUARE PILLOW` are absent. See `docs/bugs/0691`.
