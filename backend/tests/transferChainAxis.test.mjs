@@ -30,10 +30,10 @@ import {
   LOCKING_AXES, NOTE_CLASSES, UNANSWERABLE_AXES,
   buildVerdictRows, makeVerdictRecorder, summariseVerdict,
 } from "../scripts/lib/so-verdict-derive.mjs";
-import { AXIS_GROUPS, bucketOf, isTallied, tallyVerdict } from "../scripts/lib/so-tally-verdict.mjs";
+import { AXIS_GROUPS, DECLARED_LABEL, NOT_DECLARED_CLASSES, bucketOf, isTallied, tallyVerdict } from "../scripts/lib/so-tally-verdict.mjs";
 import {
   AXIS_FROM, AXIS_TO, AXIS_UNVERIFIABLE,
-  NOTE_LINE_NOT_IN_BOOK, NOTE_NO_ERP_COUNTER, NOTE_NO_SOURCE,
+  NOTE_LINE_NOT_IN_BOOK, NOTE_NO_ERP_COUNTER, NOTE_NO_SOURCE, NOTE_ONWARD_NOT_MIGRATED,
 } from "../scripts/lib/ac-transfer-chain-run.mjs";
 
 const rowsFor = (record) => {
@@ -58,11 +58,20 @@ describe("the chain axes are DECLARED, so the recorder does not swallow them", (
     });
   }
 
-  for (const klass of [NOTE_LINE_NOT_IN_BOOK, NOTE_NO_SOURCE, NOTE_NO_ERP_COUNTER]) {
+  for (const klass of [NOTE_LINE_NOT_IN_BOOK, NOTE_NO_SOURCE, NOTE_NO_ERP_COUNTER, NOTE_ONWARD_NOT_MIGRATED]) {
     it(`"${klass}" is a declared NOTE class`, () => {
       assert.ok(NOTE_CLASSES.includes(klass), `${klass} is not in NOTE_CLASSES — note() would be a silent no-op`);
     });
   }
+
+  /* A note class with no sentence prints as its own bare identifier in the
+     section headed "WHAT THIS VERDICT EXCLUDED, AND UNDER WHOSE RULING" — an
+     exclusion the owner cannot read is the suppression docs/bugs/0668 is about,
+     wearing a label. */
+  it("every declared NOTE class has a sentence the owner can read", () => {
+    const missing = NOTE_CLASSES.filter((k) => !NOT_DECLARED_CLASSES.includes(k) && !DECLARED_LABEL[k]);
+    assert.deepEqual(missing, [], `these note classes have no DECLARED_LABEL sentence: ${missing.join(", ")}`);
+  });
 });
 
 describe("a wrong or missing source link LOCKS the document", () => {

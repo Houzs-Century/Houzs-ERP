@@ -39,6 +39,7 @@ import {
   splitErpZeroMoney,
   splitGuessedItemCodePairing,
   splitMigratedChainLineShape,
+  splitUnmigratedOnwardTransfer,
 } from '../scripts/lib/ac-not-a-difference.mjs';
 
 const rows = (n: number, tag: string) => Array.from({ length: n }, (_, i) => `${tag}-${i}`);
@@ -446,5 +447,132 @@ describe('line count — a shape difference is not a missing line', () => {
     expect(r.lineShape).toBe(6);
     expect(r.differ).toBe(4);
     expect(r.lineShape + r.differ).toBe(10);
+  });
+});
+
+/* ── 6. THE ONWARD TRANSFER NOBODY MIGRATED ────────────────────────────────
+ *
+ * The account book holds 5,283 purchase invoices and the ERP holds 55, because
+ * the purchase-invoice HISTORY was deliberately never migrated. So AutoCount
+ * says a goods-receipt line has been fully invoiced and we say nothing has
+ * gone on — 283 of 400 receipt pairs, every one of them printing "we record 0".
+ *
+ * That is a DECISION, not a defect, and a decision belongs in a column of its
+ * own with the decision's name on it. It must not become an amnesty: the same
+ * sentence would cover a receipt whose invoice we DO hold and forgot to count,
+ * which is a real defect. So the proof is per document and it is measured —
+ * every onward document the book raised off this one must be ABSENT from ours.
+ */
+describe('onward transfer — the downstream document type was never migrated', () => {
+  const toRow = (
+    ac: string,
+    bookDocNo: string,
+    erpCounter: number,
+    verdict = 'erp_low',
+    bookTransfered = 10000,
+  ) => ({
+    key: `k-${ac}`, ac, erpNo: `HC-${ac}`, bookDocNo, verdict, bookTransfered, erpCounter,
+    line: `${ac}: book moved ${bookTransfered} and we record ${erpCounter}`, proceeded: true,
+  });
+  const DECISION = {
+    label: 'the purchase-invoice history was never migrated',
+    onwardType: 'PI',
+    ruling: 'the owner declined importing the purchase-invoice history',
+    consequence: 'our receipt can never show an invoiced quantity for a document we do not hold',
+  };
+  /* the book raised PI-100 off GR-1; we hold no purchase invoice at all */
+  const onwardOf = (d: string) => (d === 'GR-1' ? ['PI-100'] : d === 'GR-2' ? ['PI-200'] : []);
+
+  test('no decision declared: nothing moves', () => {
+    const r = splitUnmigratedOnwardTransfer({
+      rows: [toRow('GR-1', 'GR-1', 0)], decision: null, coverage: new Set<string>(), onwardOf,
+    });
+    expect(r.notMigrated).toBe(0);
+    expect(r.differ).toBe(1);
+    expect(r.applied).toBe(false);
+  });
+
+  test('no coverage measurement: nothing moves — an unproven decision is not a decision', () => {
+    const r = splitUnmigratedOnwardTransfer({
+      rows: [toRow('GR-1', 'GR-1', 0)], decision: DECISION, coverage: null, onwardOf,
+    });
+    expect(r.notMigrated).toBe(0);
+    expect(r.differ).toBe(1);
+    expect(r.applied).toBe(false);
+  });
+
+  test('the book invoiced it, we hold no such invoice, and we record 0: the decision covers it', () => {
+    const r = splitUnmigratedOnwardTransfer({
+      rows: [toRow('GR-1', 'GR-1', 0)], decision: DECISION, coverage: new Set<string>(), onwardOf,
+    });
+    expect(r.notMigrated).toBe(1);
+    expect(r.differ).toBe(0);
+    expect(r.impostors).toHaveLength(0);
+  });
+
+  test('WE HOLD THE ONWARD INVOICE: that is a real defect and it stays counted', () => {
+    const r = splitUnmigratedOnwardTransfer({
+      rows: [toRow('GR-1', 'GR-1', 0)], decision: DECISION, coverage: new Set(['PI-100']), onwardOf,
+    });
+    expect(r.notMigrated).toBe(0);
+    expect(r.differ).toBe(1);
+    expect(r.impostors[0].why).toContain('PI-100');
+  });
+
+  test('we record SOME of it: not "we record 0", so the decision does not describe it', () => {
+    const r = splitUnmigratedOnwardTransfer({
+      rows: [toRow('GR-1', 'GR-1', 5000)], decision: DECISION, coverage: new Set<string>(), onwardOf,
+    });
+    expect(r.notMigrated).toBe(0);
+    expect(r.differ).toBe(1);
+    expect(r.impostors[0].why).toContain('we record 5000');
+  });
+
+  test('we claim a transfer the book does not have: never covered, whatever the coverage says', () => {
+    const r = splitUnmigratedOnwardTransfer({
+      rows: [toRow('GR-1', 'GR-1', 10000, 'erp_asserts_untransferred', 0)],
+      decision: DECISION, coverage: new Set<string>(), onwardOf,
+    });
+    expect(r.notMigrated).toBe(0);
+    expect(r.differ).toBe(1);
+  });
+
+  test('the book moved it and NO onward document names it: unexplained, stays counted', () => {
+    const r = splitUnmigratedOnwardTransfer({
+      rows: [toRow('GR-9', 'GR-9', 0)], decision: DECISION, coverage: new Set<string>(), onwardOf,
+    });
+    expect(r.notMigrated).toBe(0);
+    expect(r.differ).toBe(1);
+    expect(r.impostors[0].why).toContain('no PI');
+  });
+
+  test('a partial cover still reports differ: two of five move, never five', () => {
+    const list = [
+      toRow('GR-1', 'GR-1', 0),          // covered
+      toRow('GR-2', 'GR-2', 0),          // covered
+      toRow('GR-3', 'GR-3', 0),          // no onward doc — unexplained
+      toRow('GR-4', 'GR-1', 400),        // we record some
+      toRow('GR-5', 'GR-2', 0),          // onward doc IS held
+    ];
+    const r = splitUnmigratedOnwardTransfer({
+      rows: list, decision: DECISION, coverage: new Set(['PI-200']), onwardOf,
+    });
+    /* GR-2 and GR-5 both point at PI-200, which we DO hold, so neither moves. */
+    expect(r.notMigrated).toBe(1);
+    expect(r.differ).toBe(4);
+    expect(r.notMigrated + r.differ).toBe(5);
+  });
+
+  test('THE COUNT IS NEVER LOST, on every path', () => {
+    const list = Array.from({ length: 9 }, (_, i) => toRow(`g${i}`, 'GR-1', i === 0 ? 0 : i * 100));
+    for (const args of [
+      { decision: null, coverage: new Set<string>() },
+      { decision: DECISION, coverage: null },
+      { decision: DECISION, coverage: new Set<string>() },
+      { decision: DECISION, coverage: new Set(['PI-100']) },
+    ]) {
+      const r = splitUnmigratedOnwardTransfer({ rows: list, onwardOf, ...args } as never);
+      expect(r.notMigrated + r.differ).toBe(9);
+    }
   });
 });
