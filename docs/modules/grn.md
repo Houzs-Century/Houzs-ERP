@@ -727,11 +727,40 @@ one ERP row per compartment, so the two multisets are not commensurable — and
 they keep the existing declared-decomposition path.
 
 `docs/bugs/0693-the-reconcile-guesses-which-goods-receipt-line-is-which-and.md`
-carries the trace. **Stamping `linked_ac_dtlkey` from the reshape's own plan is
-the root fix and is not done**: it would make the pairing exact rather than
-guessed, and migration 0280 names a second thing it unblocks — without the key
-the AutoCount write-back refuses every edit of a migrated receipt, because the
-handle it addresses a detail row by does not exist.
+carries the trace.
+
+### THE KEYS LANDED — 2026-09-08 14:22 (+08), and everything above is now HALF true
+
+**The root fix named in the paragraph this replaces is DONE.**
+`backfill-ac-downstream-line-keys.mjs` (run `34194376108`) stamps
+`linked_ac_dtlkey` from the book, and `check-ac-erp-reconcile.mjs` reads the
+column instead of the `NULL::bigint` constant. Production, measured on run
+`34199483652` (2026-09-08 15:28 +08): **563 of 636** receipt lines carry a key,
+**371 of 400** documents are fully keyed, and **0 stored keys disagree with the
+derived one**. So a receipt's lines are now paired for real, not zipped, and the
+write-back can name the line an operator changed.
+
+**What did NOT go away is the reason to read this section: 73 lines are still
+unkeyed, and the backfill refuses them on purpose.** It stamps only where the
+book FORCES the pairing (`lib/ac-forced-line-pairing.mjs`), and the commonest
+refusal is the book's own doing — *"the book has 2 lines of this item at this
+quantity and they are NOT identical (2 distinct price/location/Desc2
+combinations), so which is which is unknowable"*. 29 receipts are in that state.
+
+**The state that did not exist before and now does is PARTIALLY keyed**, and it
+broke the classifier: `splitGuessedItemCodePairing` asked the DOCUMENT whether it
+had a key, so one keyed line answered for the unkeyed ones beside it and their
+guessed differences were counted as wrong products — silently, not even printed.
+It now asks the LINE. `docs/bugs/0704-*.md`; the whole goods-receipt / invoice
+remainder is classified one row per document in
+`docs/cutover-gr-iv-pi-remainder-2026-09-08.md`.
+
+**A receipt's MONEY is a separate debt and it is still open.** Four migrated
+receipts carry a non-zero total that is not the book's, three of them exactly
+4/3 of it, because `grn_items.unit_price_sen` comes from the purchase-ORDER line
+and AutoCount's line discount was dropped on import. **RM 2,119.50 more than the
+supplier billed.** `docs/bugs/0705-*.md` names the shape of the repair and why it
+is not this module's convert path.
 
 ---
 

@@ -59,9 +59,11 @@ describe("executable route contract", () => {
     // bills, both kinds (AP invoices raised there, purchase invoices mirrored).
     // 154 since 2026-09-08: /scm/ap-invoices/scan — the bill pile for AP
     // invoices, one AP invoice per bill (the voucher's pile page, target="ap").
-    // 155 since 2026-09-08: /scm/cancel-requests — the cancellation-approval
+    // 155 since 2026-09-08: /change-log — who changed which document since the
+    // owner opened sales, delivery, purchase and receipt documents to staff.
+    // 156 since 2026-09-08: /scm/cancel-requests — the cancellation-approval
     // inbox (SO / PO cancel = a reason + two signatures).
-    expect(STAFF_ROUTE_PATTERNS).toHaveLength(155);
+    expect(STAFF_ROUTE_PATTERNS).toHaveLength(156);
     expect(new Set(STAFF_ROUTE_PATTERNS).size).toBe(STAFF_ROUTE_PATTERNS.length);
     expect([...STAFF_ROUTE_PATTERNS].sort()).toEqual([...appPages].sort());
   });
@@ -91,8 +93,9 @@ describe("executable route contract", () => {
     // 161 since 2026-09-05 — /scm/official-receipts; see the staff-route count above.
     // 162 since 2026-09-06 — /scm/ap-invoices; see the staff-route count above.
     // 163 since 2026-09-08 — /scm/ap-invoices/scan; see the staff-route count above.
-    // 164 since 2026-09-08 — /scm/cancel-requests; see the staff-route count above.
-    expect(ROUTE_CONTRACT).toHaveLength(164);
+    // 164 since 2026-09-08 — /change-log; see the staff-route count above.
+    // 165 since 2026-09-08 — /scm/cancel-requests; see the staff-route count above.
+    expect(ROUTE_CONTRACT).toHaveLength(165);
   });
 
   it("keeps every desktop nav destination on a live staff route", () => {
@@ -120,11 +123,13 @@ describe("executable route contract", () => {
 describe("mobile route drift gate", () => {
   it("pins the complete runtime destination inventory", () => {
     // 35 since 2026-08-15: the System group and its one row, /autocount-sync.
-    expect(MOBILE_MENU_GROUPS.flatMap((group) => group.items)).toHaveLength(35);
+    // 36 since 2026-09-08: /change-log, the System group's second row — the
+    // owner asks "who changed my sales order" away from a desk too.
+    expect(MOBILE_MENU_GROUPS.flatMap((group) => group.items)).toHaveLength(36);
     expect(PROFILE_ORG_ITEMS).toHaveLength(5);
-    expect(allMobile).toHaveLength(40);
-    expect(new Set(allMobile.map((item) => item.to)).size).toBe(40);
-    expect(new Set(allMobile.map((item) => item.to.split("?")[0])).size).toBe(39);
+    expect(allMobile).toHaveLength(41);
+    expect(new Set(allMobile.map((item) => item.to)).size).toBe(41);
+    expect(new Set(allMobile.map((item) => item.to.split("?")[0])).size).toBe(40);
   });
 
   it("maps every declared mobile row to a real screen, never a placeholder stub", () => {

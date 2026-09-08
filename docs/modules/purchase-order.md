@@ -911,6 +911,16 @@ REQUIRED parameter of that routine now, so a third document type cannot inherit
 the wrong one in silence. `docs/bugs/0701-*` has the trace, including what is
 still UNKNOWN — nobody has counted how many purchase orders it already cost.
 
+**The authorship rule inside that routine moved again on the same day**
+(`docs/bugs/0704-*`): it is now `actor_name_snapshot ILIKE 'system%'` and
+nothing else, living in `backend/src/scm/shared/audit-author.ts`, because the
+`actor_id` arm it shipped with matched every human sales-order edit and no
+migration row. `ac-human-edit.mjs` keeps the indexing and the refusal wording
+and delegates the decision. Nothing changes for the purchase-order side in
+practice — `scm.entity_audit_log` never carried a pinned actor — but the two
+document types now answer the question the same way, which is the property that
+was missing.
+
 AutoCount's `PO.DeliverAddr1..4` deliberately got **no** column: on a purchase
 order that is our own receiving address, identical on all 9,408 book documents.
 The delivery-address ruling was about the SALES order, where the address is the

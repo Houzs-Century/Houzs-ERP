@@ -29,7 +29,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { bookCurrency } from "./lib/ac-currency.mjs";
 import postgres from "postgres";
-import { parseBedframe } from "./lib/parse-bedframe.mjs";
+import { bedframeVariants, parseBedframe } from "./lib/parse-bedframe.mjs";
 import { SOFA_MODEL_ALIAS, parseSofa } from "./lib/parse-sofa.mjs";
 import { buildFabricColourIndex, isPendingColour } from "./lib/fabric-colour-match.mjs";
 import { SALESLOC, salesLoc } from "./lib/ac-header-fields.mjs";
@@ -263,17 +263,13 @@ async function main() {
         const fcHit = pending ? null : findColour(bf.color);
         if (bf.color && !pending && !fcHit) exceptions.push({ ac: acDoc, code: l.ItemCode, desc: `colour "${bf.color}" not in fabric_colours`, price: 0 });
         else if (fcHit) { const allow = allowedColour.get((erp || "").toUpperCase()); if (allow && !allow.has(norm(fcHit.colour_id))) exceptions.push({ ac: acDoc, code: l.ItemCode, desc: `colour ${fcHit.colour_id} not a configured option for ${erp}`, price: 0 }); }
-        const tot = (Number(bf.gap) || 0) + (Number(bf.divan) || 0) + (Number(bf.leg) || 0);
-        // key names MUST match a real UI-created line exactly (the Fabrics picker
-        // reads fabricCode; totalHeight is shown as "Total height (auto)")
-        variants = {
-          fabricId: fcHit ? fcHit.fabric_id : null, colourId: fcHit ? fcHit.colour_id : null,
-          fabricCode: fcHit ? fcHit.colour_id : null, colourLabel: fcHit ? fcHit.label : null,
-          fabricLabel: fcHit ? fcHit.fabric_id : null,
-          gap: bf.gap != null ? bf.gap + '"' : null, divanHeight: bf.divan != null ? bf.divan + '"' : null,
-          legHeight: bf.leg != null ? bf.leg + '"' : null, totalHeight: tot ? tot + '"' : null,
-          specials: bf.specials || [],
-        };
+        /* The block itself is lib/parse-bedframe.mjs's `bedframeVariants` — it
+           was written out identically here, in import-ac-outstanding-po.mjs and
+           in topup-ac-po-lines.mjs, and a fourth writer was about to add a
+           fourth copy. Key names MUST match a real UI-created line exactly (the
+           Fabrics picker reads fabricCode; totalHeight is shown as "Total
+           height (auto)"), which is exactly why it is stated once. */
+        variants = bedframeVariants(bf, findColour);
       }
       // description MUST be the ERP product name (what a picker-selected item stores),
       // not the AutoCount Description — else list shows item_code but Edit shows the AC text.

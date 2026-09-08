@@ -132,6 +132,13 @@ export const SCM_UNGUARDED_PREFIXES: readonly string[] = [
   "/sales-analysis",
   "/state-warehouse-mappings",
   "/entity-audit-log",
+  /* The go-live change log (2026-09-08). No area guard for /autocount-outbox's
+     reason: an L2 area key is a PAGE key and this page belongs to no SCM area —
+     it reads sales orders, deliveries, purchases and receipts at once, so any
+     area key here would be an arbitrary owner. It is READ-ONLY, so the freeze
+     treating it as frozen costs nothing. Authorization is the flat
+     scm.changelog.read / settings.manage keys inside the route. */
+  "/change-log",
   "/autocount-outbox",
   "/currencies",
   "/hr",

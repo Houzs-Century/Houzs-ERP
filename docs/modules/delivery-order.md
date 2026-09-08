@@ -739,6 +739,66 @@ part that bites — `delivery_order_items.linked_ac_dtlkey` is null on all 173
 migrated delivery orders, so a migrated delivery cannot be addressed line by
 line. Header-only would still work. Do not start until the read has been done.
 
+### A migrated delivery note can be SHORT a line, and no rule can find it (2026-09-08)
+
+The null keys have a second consequence, and it decides the shape of any repair.
+While `delivery_order_items.linked_ac_dtlkey` is null, a delivery note cannot be
+compared to the book line by line: the verdict in the AutoCount reconcile rests
+on its value-then-order fallback. A tool that added "the missing line" to a
+delivery order by that fallback would be writing on a guess.
+
+> **That null is being filled, and it moved while this was written — do not read
+> a count from this paragraph.** The line above said *"null on all 173 migrated
+> delivery orders"* on the morning of 2026-09-08, sourced from the reconcile run
+> `34199308084` (15:26 +08), which listed `DO-001604` among the documents it
+> could not line-match — a verdict only reachable when NO ERP row on the document
+> carries a key. Thirty-four minutes later, plan run `34201640955` read the same
+> document's live rows and found all three sofa compartments carrying DtlKey
+> `199269`. `backfill-ac-downstream-line-keys.mjs` is stamping this column and
+> the state is partial and moving, so `topup-ac-lines-from-truth.mjs`'s DO lane
+> COUNTS the keyed rows of its target document on every run and prints the count,
+> rather than asserting a number that goes stale between two dispatches.
+
+So `backend/scripts/topup-ac-lines-from-truth.mjs` has two lanes and they are not
+symmetrical. Its SO lane is a general rule keyed on DtlKey. Its **DO lane is a
+NAMED list** — `DO_TARGETS` in that file, one entry per line it may add, each
+asserted against the book (document, DtlKey, quantity, unit price, line
+subtotal) and against the ERP (no row already answering it) before anything is
+written. A target whose book row has moved is REFUSED, never adjusted to fit.
+Today the list holds one line: `DO-001604`, whose book row is
+`* DISPOSE 3S L SHAPE SOFA + CONSOLE TABLE`, no item code, quantity 1,
+**RM 150.00** — a text-only line carrying real money, explicitly NOT in the
+blank-row class of `docs/bugs/0695` (section G of
+`docs/cutover-so-do-remainder-2026-09-08.md`).
+
+Two deliberate choices in that write, both recorded because neither is obvious:
+
+- **`item_code` is DECLARED, not copied.** The column is NOT NULL and the book
+  states no ItemCode, so a value is forced. `DISPOSE` is what the book's own
+  text names and what AutoCount's `DISPOSE` code binds to in the mapping sheet;
+  the book's text goes verbatim into `description`, so nothing it said is lost.
+  The reconcile does not compare a delivery order's item codes at all —
+  `lib/ac-reconcile-erp-sql.mjs:196`, *taken from the SALES ORDER line by
+  design* — so the choice cannot create a difference.
+- **`linked_ac_dtlkey` IS stamped, and the row also carries a marker in
+  `notes`.** This reverses the decision the lane was first written with. The
+  original reasoning was that keying one row of a keyless document would flip it
+  out of the reconcile's keyless-multiset comparison into keyed pairing — a
+  wider change than adding a line. The plan run refuted the premise (see the box
+  above): the document is already keyed, so there is no comparison left to flip,
+  and the honest value for a row that IS AutoCount DtlKey 199273 is 199273. A
+  WRONG key is worse than NULL — mig 0280, *NULL means "create"* — which is why
+  the target asserts the book's row (quantity, unit price, line subtotal) before
+  the key is used. The `notes` marker is kept beside it so a re-run still claims
+  the row if a later tool ever rewrites keys.
+
+Header money is re-summed as Sigma `line_total_sen`, the same rule
+`lib/migrated-do-writer.mjs:375` and `delivery-orders-mfg.ts:461` keep, and
+`line_count` is set to what the document holds rather than incremented. No
+inventory movement is written: these documents are `migrated_no_stock`
+(mig 0276) and stay at zero movements.
+Ledger: `docs/bugs/0704-a-top-up-that-reads-the-outstanding-cut-is-blind-to-a-delive.md`.
+
 **What is NOT covered here and is a real gap: money taken at the door.**
 `scm.delivery_order_payments` — the ledger Mobile POD writes when a driver
 collects on delivery — reaches AutoCount **nowhere**. `composePaymentUdf` is fed

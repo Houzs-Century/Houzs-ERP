@@ -1808,6 +1808,73 @@ UPDATE scm.app_config SET value = 'off', updated_at = now()
 
 Full runbook, including what a malformed value does: `docs/migrated-so-lock.md`.
 
+#### CORRECTNESS MODE — `verdict:1` opens the migrated orders that MATCH the book
+
+Owner, 2026-09-08, after the ruling above: **「他们是要开 SO 和 edit SO 来 proceed
+单;purchasing 要开 PO;logistic 要 convert SO to DO」**. All three happen ON the
+migrated orders, so an ORIGIN-grained lock blocks the work the cutover exists to
+enable — 2,882 documents shut to protect the handful that are wrong.
+
+A new switch value re-grains it onto CORRECTNESS. Everything above still
+describes value `1`; this describes `verdict:1`.
+
+| | |
+|---|---|
+| Switch | the SAME row, `scm.app_config['scm.migrated_so_lock']`, value **`verdict:1`** / `verdict:1,2` / `verdict:all`. Every pre-existing value means exactly what it meant, and a malformed `verdict:` spelling falls back to locking ALL by origin — the harder answer, because per-document IS an opening. |
+| The fact it reads | `scm.so_reconcile_verdict`, one row per migrated sales order, keyed on the ERP `doc_no`. Written ONLY by `backend/scripts/publish-so-reconcile-verdict.mjs` from a `check-ac-erp-reconcile.mjs` run. **Nothing is stamped on `mfg_sales_orders`** — the owner's rule (「你换不一样就代表我们的数据从 autocount 搬过来的就不一样了啊」) is why the verdict lives in its own table. |
+| Decision | `migratedSoIsLocked(value, companyId, isMigrated, verdict)`. The fourth parameter is **REQUIRED and `SoReconcileVerdict \| null`**, so the compiler enumerated the call sites — `null` LOCKS, exactly as `isMigrated: null` does. |
+| Only `clean` opens | Five states, one of which opens: clean-and-fresh. **No verdict published**, **verdict older than 48h**, **the read errored or threw**, and **it differs** all LOCK. 48h is the AutoCount snapshot's own limit — a verdict cannot be fresher than the book it was measured against. |
+| Refusal | still `409 so_migrated_readonly`, but the sentence now names the DOCUMENT and the AXIS: *"HC-SO-010789 still differs from the AutoCount book on: document total. It opens by itself once that is corrected."* Under the 200-char cap both clients enforce — `migratedSoVerdictMessage` drops axis NAMES until it fits rather than truncating one. |
+| Operator `description` | **not consulted in this mode.** A per-document sentence has to name the document; an override would erase the part that makes it actionable. |
+| The LIST | `migratedSoListGate` reads the page's verdicts in ONE batched statement (`.in('doc_no', …)`), then answers per row. A row whose verdict did not come back is absent, and absent locks — so the list can only ever show MORE locked than the API refuses, never fewer. |
+| Cost while OFF | zero. `migratedSoReadonlyState` short-circuits on `!value.byVerdict` before any verdict read, and `migratedSoVerdictMode.test.ts` proves it by giving the guard a fake client that THROWS on the verdict table. |
+
+**What the two front ends needed: nothing new.** They already consume
+`migrated_readonly` + `migrated_readonly_reason` as decided facts, so the five
+surfaces in the table above are unchanged. ONE frontend defect had to be fixed:
+`humanApiError`'s curated `ERROR_CODE_MESSAGES` entry won over the server's
+`reason`, which would have thrown the per-document sentence away and shown the
+old class sentence about payments —
+`docs/bugs/0700-a-per-document-refusal-reason-was-overwritten-by-the-curated.md`.
+
+**MEASURED against production**, Actions -> *AutoCount vs ERP reconcile
+(read-only)*, run `34196304394`, 2026-09-08 14:48 MYT. **Re-run before quoting
+it** — this is the count on the day, not a property of the system, and the
+figure moved once already inside one afternoon (see below):
+
+> 2,882 migrated sales orders compared. **2,676 (92.9%) match the book exactly**
+> and would open on `verdict:1`. **206 (7.1%) stay locked** — and only **55** of
+> those carry a real difference; the other **151** are locked because the
+> reconcile could not ANSWER for them, which is not the same thing and is
+> deliberately not treated as one.
+
+Documents per locking axis in that run (documents, not findings): sofa build not
+verifiable 162, sofa compartments 29, line count 11, a book line we do not have
+10, specials 7, seat size 5, document total 5, colour / fabric 2, item code 1,
+quantity 1, a line key on the wrong document 1.
+
+An earlier run the same afternoon (`34194151677`, 14:19 MYT) said 2,653 / 229,
+with a 23-document `lines could not be matched` axis. Those 23 are the same
+documents; between the two runs the keyless MULTISET comparison landed on main
+and settled every one of them as identical. **The verdict got better because the
+reconcile got better, and it did so with no change to this lock** — which is the
+property the whole design is for.
+
+**`sofa build not verifiable` is the big one and it is not a wrong sofa.** Where
+a document's ERP lines carry no AutoCount line key, one book line's compartments
+cannot be regrouped, so `variant-reconcile` answers UNREADABLE rather than
+agreeing. "Could not tell" is not "it matches", so it locks — on its own named
+axis, so nobody is sent hunting for a difference that was never measured. Those
+162 open by themselves the moment the line keys are backfilled; nothing about
+them has to be repaired by hand.
+
+Which axes lock, and why the reconcile's DECLARED classes (sofa decomposition,
+item translation, `no-price`, book-blank variants, an unproceeded order's blank,
+`pend`, `recorded`) do not, is stated once in
+`backend/scripts/lib/so-verdict-derive.mjs`. Full runbook including the order of
+operations: `docs/migrated-so-lock.md` §10.
+
+
 ### Deleting an SO — DRAFT only, and the test-order escape hatch
 
 `DELETE /:docNo` hard-deletes a **DRAFT and nothing else** — `409 so_not_draft`
@@ -3110,6 +3177,34 @@ beside the one that does not. Read the split, never the total, when deciding
 whether there is anything left to do
 (`docs/bugs/0674-the-specials-recording-plan-reported-its-stable-denominator.md`).
 
+#### The specials axis counts what the DECODER said the book asks for
+
+Every verdict above is computed against `parseSofa(...).specials`, so a phrase
+the decoder invents is indistinguishable, in the report, from an option the shop
+actually wrote down. That is not hypothetical: until 2026-09-08 a fabric's shade
+name — `BO315-26 (YELLOW)`, `NX011 (BEIGE)`, `M2402-19(DARK GREY)` — was read as
+a special order, because `unlabelledColour` strips the bracket to confirm the
+code against the fabric library and then LEFT it in the text, where the
+structure pass freed it into a token and the rider catch-all turned it into a
+request. Seven such lines reached the owner's go-live tally as
+`ERP blank on a proceeded order`, the one column the report calls WORK, and none
+of them was work
+(`docs/bugs/0705-a-fabric-shade-name-in-brackets-was-read-as-a-special-order.md`).
+
+`isTradeName()` in `backend/scripts/lib/parse-sofa.mjs` now takes the bracket
+out, and only ever on a code the LIVE library confirms. It is deliberately
+narrow — at most two plain alphabetic words, no digits, and neither
+`SPECIAL_WORD` nor `INSTRUCTION_TOKEN` — because the two errors do not cost the
+same: dropping `(No armrest)` builds a sofa wrong, keeping `(PEARL)` only makes
+a report noisy. Anything unrecognised stays a special.
+
+**The rule this leaves behind, for any axis, not just specials:** before quoting
+a variant difference as migration backlog, read the book's own Desc2 for one of
+the offenders. `node --test scripts/lib/parse-sofa.test.mjs` pins both
+directions, and the seat-size axis carries the same shape — `STOOL(25 X 40INCH)`
+is a stool's length by its width, and reading `40"` off it put a phantom on the
+same tally.
+
 Drafts stay freely saveable — the scan pipeline still lands imperfect drafts;
 what changed is that they can no longer BECOME orders until resolved.
 ON_HOLD-resume and reopen re-enter CONFIRMED without re-gating (legacy orders
@@ -3764,14 +3859,38 @@ normal shape for a PERSON's row — `routes/so-amendments.ts:262` writes one on
 purpose, and `routes/so-handover.ts:191` writes one whenever the session's user
 object is thin, on the very route that changes `salesperson_id` and `agent`.
 
-The rule now has ONE home, `backend/scripts/lib/ac-human-edit.mjs`, and it is the
-one `check-so-open-for-new.mjs` proved against production:
+**CORRECTED AGAIN the same day, and this is the version that holds.** The rule
+above shipped as
 
 ```
 SYSTEM := actor_id = the migration's pinned actor
        OR (actor_id IS NULL AND actor_name_snapshot ILIKE 'system%')
+```
+
+and its first arm matched **every sales-order edit a person makes in the
+browser**, so on this lane the guard still refused nothing. `middleware/auth.ts`
+pins that exact uuid onto `c.get('user').id` for every authenticated SCM caller,
+and all 21 `recordSoAudit` call sites in `routes/mfg-sales-orders.ts` pass
+`actorId: user.id`. It also matched ZERO migration rows: no script writes
+`actor_id` into either audit table at all. `docs/bugs/0704-*` has the trace and
+the measurement — which is an EXECUTED assertion (the real middleware is run in
+`backend/src/scm/shared/audit-author.test.ts`), because this same claim had by
+then been got wrong twice in opposite directions by reading files.
+
+The rule has ONE home for the whole repo, `backend/src/scm/shared/audit-author.ts`:
+
+```
+SYSTEM := actor_name_snapshot ILIKE 'system%'
 PERSON := everything else, an UNATTRIBUTED row included
 ```
+
+`actor_id` is not consulted anywhere, because it is a constant.
+`backend/scripts/lib/ac-human-edit.mjs` keeps the field aliasing, the
+per-(document, field) index and the refusal wording — none of which is a
+decision — and delegates the authorship question to that module. It lives under
+`src/scm/shared/` because the go-live change log (`docs/modules/change-log.md`)
+reads the same rule from inside the Worker, and a Worker bundle cannot import
+out of `backend/scripts`.
 
 Two consequences worth knowing before you read a plan:
 
@@ -4197,6 +4316,34 @@ direct SO write path already passes `trustOperatorSelling = !(isPosTabletCaller)
   whose own qty x unit price is not the book's, a surcharge, and a line whose
   goods have already left. The purchase-order twin is `repair-po-line-discount`.
   Ledger: `docs/bugs/0696-autocount-s-sales-order-line-discount-is-dropped-the-same-wa.md`.
+- **A MIGRATED order can be missing a LINE the book has, and the outstanding cut
+  cannot see it** — found 2026-09-08. `import-ac-outstanding-so.mjs` is
+  idempotent at DOCUMENT level, so a line the shop added to the book after the
+  import can never arrive later; `topup-ac-so-lines.mjs` exists for exactly that
+  and reads `data/ac-outstanding-so.json.gz`, which carries **zero** lines for a
+  document that has since been delivered — so on those documents it cannot see a
+  missing line at all. Six sales orders sat in that blind spot
+  (`docs/bugs/0694`, and section A of
+  `docs/cutover-so-do-remainder-2026-09-08.md`).
+  `backend/scripts/topup-ac-lines-from-truth.mjs` +
+  `.github/workflows/topup-ac-lines-from-truth.yml` close it: the same DtlKey
+  comparison run against `data/ac-reconcile-truth.json.gz` (the whole book), over
+  the population the ERP **holds** rather than the outstanding scope. Plan by
+  default. It writes a PRICED line, which `topup-ac-so-lines.mjs` refuses by
+  design, because it re-sums `local_total_sen`, `line_count` and the five
+  category buckets from the lines — the same write `repair-so-line-discount.mjs`
+  performs, and the invariant `mfg-sales-orders.ts:4321` maintains. It REFUSES: a
+  document holding any line with a NULL `linked_ac_dtlkey` (UNJUDGEABLE, whole);
+  a book line with no ItemCode (the book names no product); a SOFA line
+  (compartments are a decision); a code not in `scm.mfg_products`; quantity 0;
+  a non-MYR document; and a line whose own `SubTotal` is not qty x UnitPrice,
+  because that gap is a line discount and the script above owns it. A bedframe
+  line is decoded by IMPORTING `lib/parse-bedframe.mjs` — `parseBedframe` plus
+  `bedframeVariants`, the block the two importers and `topup-ac-po-lines.mjs`
+  used to spell out and now share. An ERP row the book does NOT have is
+  REPORTED, never deleted. `paid_sen` and the header `balance_sen` are never
+  touched; a document a corrected total leaves inconsistent is NAMED.
+  Ledger: `docs/bugs/0704-a-top-up-that-reads-the-outstanding-cut-is-blind-to-a-delive.md`.
 
 **A MIGRATED order is exempt.** When the SO header carries `linked_ac_docno`
 (migration 0271 — the marker that actually exists; `migrated_no_stock` lives only

@@ -816,6 +816,17 @@ export const NAV_TABS: NavTab[] = [
     icon: RefreshCw,
     anyPerm: ["*", "scm.autocount.read", "settings.manage"],
   },
+  // Beside AutoCount Sync because it answers the neighbouring question. That
+  // one is "did my document reach the account book"; this one is "who changed
+  // my document, and to what" — the supervision the owner asked for when he
+  // opened sales, delivery, purchase and receipt documents to staff.
+  {
+    section: "system",
+    to: "/change-log",
+    label: "Change Log",
+    icon: History,
+    anyPerm: ["*", "scm.changelog.read", "settings.manage"],
+  },
   {
     section: "system",
     to: "/assistant",

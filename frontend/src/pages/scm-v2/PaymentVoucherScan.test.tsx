@@ -90,6 +90,9 @@ describe('the pile for AP invoices', () => {
     expect(screen.queryByText(/Open as ONE voucher/)).toBeNull();
     expect(screen.queryByText('Open as voucher')).toBeNull();
     expect(screen.queryByLabelText(/bills separately/)).toBeNull();
+    /* Nor the petty-cash tick: an AP invoice is one per bill by nature. */
+    expect(screen.queryByLabelText(/for one voucher/)).toBeNull();
+    expect(screen.queryByText(/Open ticked as ONE voucher/)).toBeNull();
 
     fireEvent.click(screen.getAllByText('Open as AP invoice')[1]!);
     await waitFor(() => expect(screen.getByText('AP LIST')).toBeTruthy());
@@ -112,7 +115,9 @@ describe('the bill pile', () => {
     expect(screen.getByText('Read 3 bill(s)')).toBeTruthy();
     fireEvent.click(screen.getByLabelText('Select page-1.pdf'));
     fireEvent.click(screen.getByLabelText('Select page-2.pdf'));
-    fireEvent.click(screen.getByText('Merge 2 pages into one bill'));
+    /* The button says what Merge IS — pages of one bill — since the owner
+       pressed it to put three receipts on one voucher (2026-09-08). */
+    fireEvent.click(screen.getByText('These 2 files are pages of ONE bill — merge'));
     fireEvent.click(screen.getByText('Read 2 bill(s)'));
 
     await waitFor(() => expect(extractAsync).toHaveBeenCalled());
@@ -174,6 +179,41 @@ describe('the bill pile', () => {
     expect(screen.getByText('Design retainer — August')).toBeTruthy();
     expect(screen.getByText('Extra artwork')).toBeTruthy();
     expect(screen.getByText('MYR 100.00')).toBeTruthy();
+  });
+
+  test('case 4: DIFFERENT receipts tick across groups and open as ONE voucher — one line each, no payee, every page attached', async () => {
+    extractAsync.mockClear();
+    landedState = null;
+    extractAsync.mockResolvedValueOnce({ bills: [
+      readBill(0, { vendorName: '99 SPEEDMART S/B', invoiceNumber: 'T0012', totalSen: 1910 }, null),
+      /* Shell has a remembered payee and account — NOT borrowed for the lot. */
+      readBill(1, { vendorName: 'SHELL MALAYSIA', invoiceNumber: 'S-99', totalSen: 5000 }, null, { payeeName: 'Shell', debitAccountCode: '900-M001' }),
+      readBill(2, { vendorName: 'WATSONS', invoiceNumber: 'W-1', totalSen: 1200 }, null),
+    ] });
+    draw();
+    fireEvent.change(screen.getByLabelText('Add bill files'), { target: { files: [pdf('a.pdf'), pdf('b.pdf'), pdf('c.pdf')] } });
+    fireEvent.click(screen.getByText('Read 3 bill(s)'));
+
+    /* Three shops = three groups, each its own voucher — until ticked together. */
+    await waitFor(() => expect(screen.getByText('Open ticked as ONE voucher (0 lines)')).toBeTruthy());
+    expect(screen.getAllByText('Open as voucher')).toHaveLength(3);
+    fireEvent.click(screen.getByLabelText('Tick T0012 for one voucher'));
+    fireEvent.click(screen.getByLabelText('Tick W-1 for one voucher'));
+    fireEvent.click(screen.getByText('Open ticked as ONE voucher (2 lines)'));
+    await waitFor(() => expect(screen.getByText('NEW PAGE')).toBeTruthy());
+
+    const state = landedState as { billPrefill: { extraction: { vendorName: string | null; invoiceNumber: string | null; totalSen: number | null; documentKind: string }; lines: Array<{ description: string | null; amountSen: number | null }>; memory: unknown } };
+    expect(state.billPrefill.extraction.vendorName).toBeNull();     // the payee is the person's to type
+    expect(state.billPrefill.memory).toBeNull();                     // no shop's habit borrowed
+    expect(state.billPrefill.extraction.documentKind).toBe('receipt');
+    expect(state.billPrefill.extraction.invoiceNumber).toBe('T0012, W-1');
+    expect(state.billPrefill.extraction.totalSen).toBe(3110);
+    expect(state.billPrefill.lines).toEqual([
+      { description: '99 SPEEDMART S/B T0012', amountSen: 1910 },
+      { description: 'WATSONS W-1', amountSen: 1200 },
+    ]);
+    /* Only the ticked receipts' pages, in bill order — Shell's stays out. */
+    expect(takePvFiles().map((f) => f.name)).toEqual(['a.pdf', 'c.pdf']);
   });
 
   test('case 3: "pay each bill separately" splits the group; unreadable totals and failures are named', async () => {

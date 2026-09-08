@@ -48,6 +48,16 @@ import {
   type AcTone,
 } from "../lib/autocountOutbox";
 import {
+  acDocCanArchive,
+  acListTotal,
+  acDocCanRestore,
+  AC_ARCHIVE_LABEL,
+  AC_ARCHIVE_BUSY_LABEL,
+  AC_RESTORE_LABEL,
+  AC_RESTORE_BUSY_LABEL,
+  AC_ARCHIVED_TAB_NOTE,
+} from "../lib/autocountArchive";
+import {
   AC_BOOK_DIFFERENT_FLAG,
   AC_DATE_RANGES,
   AC_DATE_RANGE_LABEL,
@@ -303,7 +313,7 @@ function DaySeparator({ label }: { label: string }) {
 }
 
 function OutboxCard(
-  { group, maxAttempts, sending, note, open, onToggle, historyOpen, onToggleHistory, onSendAgain, onSendNow, onRelink }: {
+  { group, maxAttempts, sending, note, open, onToggle, historyOpen, onToggleHistory, onSendAgain, onSendNow, onRelink, onArchive, onRestore }: {
     group: AcDocGroup;
     maxAttempts: number;
     sending: boolean;
@@ -315,6 +325,8 @@ function OutboxCard(
     onSendAgain: () => void;
     onSendNow: () => void;
     onRelink: () => void;
+    onArchive: () => void;
+    onRestore: () => void;
   },
 ) {
   /* The card is the DOCUMENT and its newest send says where it stands — same
@@ -391,6 +403,39 @@ function OutboxCard(
               }}
             >
               {sending ? AC_RELINK_BUSY_LABEL : AC_RELINK_LABEL}
+            </button>
+          )}
+          {/* CLEARING A FINISHED DOCUMENT OFF THE LIST, on the phone as well as
+              on the desktop. A control on one surface only is the bug class
+              this repo keeps paying for, and the owner reads this page on the
+              floor. It sends nothing and deletes nothing — every send stays
+              recorded, and Put back returns the document to the list. */}
+          {acDocCanArchive(group) && (
+            <button
+              onClick={onArchive}
+              disabled={sending}
+              style={{
+                marginLeft: "auto", fontFamily: "inherit", fontSize: 11, fontWeight: 700,
+                borderRadius: 7, padding: "3px 8px", cursor: sending ? "default" : "pointer",
+                border: "1px solid var(--brd)", background: "var(--srf2)", color: "var(--mut)",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {sending ? AC_ARCHIVE_BUSY_LABEL : AC_ARCHIVE_LABEL}
+            </button>
+          )}
+          {acDocCanRestore(group) && (
+            <button
+              onClick={onRestore}
+              disabled={sending}
+              style={{
+                marginLeft: "auto", fontFamily: "inherit", fontSize: 11, fontWeight: 700,
+                borderRadius: 7, padding: "3px 8px", cursor: sending ? "default" : "pointer",
+                border: "1px solid var(--brd)", background: "var(--srf2)", color: "var(--mut)",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {sending ? AC_RESTORE_BUSY_LABEL : AC_RESTORE_LABEL}
             </button>
           )}
         </div>
@@ -589,6 +634,8 @@ export function MobileAutoCountSync({ onBack }: { onBack: () => void }) {
       onSendAgain={() => void requeue.sendAgain(g.current.id)}
       onSendNow={() => void requeue.sendNow(g.current.id)}
       onRelink={() => void requeue.relink(g.current.id, g.current.doc_type, g.current.doc_no)}
+      onArchive={() => void requeue.archiveDoc(g.current.id, g.current.doc_type, g.current.doc_no)}
+      onRestore={() => void requeue.restoreDoc(g.current.id, g.current.doc_type, g.current.doc_no)}
     />
   );
 
@@ -713,9 +760,19 @@ export function MobileAutoCountSync({ onBack }: { onBack: () => void }) {
                   here and "6 of 17 documents" there — two hand-written strings
                   making two different claims about one number. */}
               <span style={{ fontSize: 10.5, color: "var(--mut)", fontVariantNumeric: "tabular-nums" }}>
-                {acListCountLine(groups.length, d.counts.total)}
+                {acListCountLine(groups.length, acListTotal(d, state))}
               </span>
             </div>
+
+            {/* THE SAME SENTENCE THE DESKTOP PRINTS under this tab. Somebody
+                who finds documents missing from a sync page asks one question —
+                was anything thrown away — and it is answered here, not in a
+                release note. */}
+            {state === "archived" && (
+              <p style={{ fontSize: 11.5, color: "var(--mut)", margin: "0 0 8px", lineHeight: 1.45 }}>
+                {AC_ARCHIVED_TAB_NOTE}
+              </p>
+            )}
 
             {/* THE SORT. A control the desktop register has, in the shape this
                 surface can afford: one button that names the order it is IN,

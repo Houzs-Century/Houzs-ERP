@@ -46,6 +46,69 @@ describe('coerceBillJson', () => {
     expect(parseModelJson('Here is the bill:\n```json\n{"totalRm": 5}\n```')).toEqual({ totalRm: 5 });
     expect(parseModelJson('no json at all')).toBeNull();
   });
+
+  /* docs/bugs/0702 — the owner's 99 Speedmart receipt (2026-09-08: 这个 ocr 会
+     显示 sub total, 这样我开 ocr 时会开, 不太对): the reader listed the footer
+     rows as line items, so the voucher pre-filled at roughly TWICE the receipt.
+     The shape below is that receipt's, with made-up goods. */
+  const SPEEDMART = {
+    vendorName: '99 SPEEDMART S/B', documentKind: 'receipt', invoiceNumber: 'T0012-3456',
+    invoiceDate: '2026-09-07', currency: 'MYR', totalRm: 19.10, sstRm: null,
+    lines: [
+      { description: 'MILO ACTIV-GO 1KG', amountRm: 15.90 },
+      { description: 'GARDENIA ORIGINAL 400G', amountRm: 3.20 },
+      { description: 'ROUNDING ADJ', amountRm: 0.00 },
+      { description: 'Sub Total', amountRm: 19.10 },
+      { description: 'NET TOTAL', amountRm: 19.10 },
+      { description: 'DUITNOW QR', amountRm: 19.10 },
+      { description: 'CHANGE', amountRm: 0.00 },
+      { description: 'Total Items', amountRm: 2 },
+    ],
+  };
+
+  it('a receipt\'s footer rows are NOT line items — the lines are the goods, and they add up to the total', () => {
+    const out = coerceBillJson(SPEEDMART);
+    expect(out.lines).toEqual([
+      { description: 'MILO ACTIV-GO 1KG', amountSen: 1590 },
+      { description: 'GARDENIA ORIGINAL 400G', amountSen: 320 },
+    ]);
+    expect(out.lines.reduce((s, l) => s + (l.amountSen ?? 0), 0)).toBe(out.totalSen);
+  });
+
+  it('rows that MOVE the total stay: a discount, the tax, a non-zero rounding — the total the receipt asks for is what the lines add up to', () => {
+    const out = coerceBillJson({
+      ...SPEEDMART, totalRm: 20.00,
+      lines: [
+        { description: 'MILO ACTIV-GO 1KG', amountRm: 15.90 },
+        { description: 'GARDENIA ORIGINAL 400G', amountRm: 3.20 },
+        { description: 'MEMBER DISCOUNT', amountRm: -0.50 },
+        { description: 'SST 6%', amountRm: 1.42 },
+        { description: 'ROUNDING ADJ', amountRm: -0.02 },
+        { description: 'TOTAL', amountRm: 20.00 },
+        { description: 'CASH', amountRm: 50.00 },
+        { description: 'CHANGE', amountRm: 30.00 },
+      ],
+    });
+    expect(out.lines.map((l) => l.description)).toEqual(['MILO ACTIV-GO 1KG', 'GARDENIA ORIGINAL 400G', 'MEMBER DISCOUNT', 'SST 6%', 'ROUNDING ADJ']);
+    expect(out.lines.reduce((s, l) => s + (l.amountSen ?? 0), 0)).toBe(2000);
+  });
+
+  it('the tender rows of every wallet and card are footer, wherever the total sits; a goods line that merely contains "total" is kept', () => {
+    const out = coerceBillJson({
+      ...SPEEDMART, totalRm: 12.00,
+      lines: [
+        { description: 'TOTAL CARE SHAMPOO 200ML', amountRm: 12.00 },
+        { description: 'Amount Due', amountRm: 12.00 },
+        { description: 'Touch \'n Go eWallet', amountRm: 12.00 },
+        { description: 'GrabPay', amountRm: 0 },
+        { description: 'VISA ****1234', amountRm: 0 },
+        { description: 'Balance', amountRm: 0 },
+        { description: 'Tendered', amountRm: 12.00 },
+        { description: 'Payment: Cash', amountRm: null },
+      ],
+    });
+    expect(out.lines).toEqual([{ description: 'TOTAL CARE SHAMPOO 200ML', amountSen: 1200 }]);
+  });
 });
 
 describe('matchSupplier', () => {

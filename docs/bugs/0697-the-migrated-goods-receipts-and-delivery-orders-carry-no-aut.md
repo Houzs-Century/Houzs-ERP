@@ -53,4 +53,20 @@ mutual-identity clause disabled, 3 of 23 fail (price, Desc2, location); with
 `5535` added to `SOFA_MODEL_ALIAS`, 1 fails; with the uneven-fold flag forced to
 false, 2 fail. Restored, 23 of 23 pass.
 
-**Ref.** fix/ac-line-keys-downstream, 2026-09-08.
+**Applied.** Production, 2026-09-08 14:22 (+08), run `34194376108`:
+`APPLIED: 1358 row(s) stamped of 1358 planned` — 563 of 636 goods-receipt lines
+(371 of 400 documents fully keyed) and 795 of 831 delivery-order lines (159 of
+173). 0 stored keys disagreed. The shape re-read on a fresh connection was
+identical before and after.
+
+Measured against the reconcile run before it (`34189267879` -> `34195045626`):
+goods-receipt lines PAIRED 506 -> 624, `item code: 2 (+34 the checker had to
+GUESS)` -> `item code: 2`, documents that could not be line-matched 44 -> 2;
+delivery orders 747 -> 818 paired, quantity differences 1 -> 0, unmatched 25 ->
+1. SO / IV / PI, which this did not touch, held at 23 / 13 / 31 — the control
+that shows the movement is the keys and not the reporting rewrite #3195 landed
+in between.
+
+**Ref.** fix/ac-line-keys-downstream (#3199), fix/ac-line-keys-confirm-input
+(#3201), 2026-09-08. See also `docs/bugs/0700` — the workflow could not satisfy
+this script's own CONFIRM gate on its first apply.

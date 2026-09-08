@@ -40,6 +40,7 @@ import { otherDebtors } from "./routes/other-debtors";
 import { apInvoices } from "./routes/ap-invoices";
 import { receipts } from "./routes/receipts";
 import { entityAuditLog } from "./routes/entity-audit-log";
+import { changeLog } from "./routes/change-log";
 import { autocountOutbox } from "./routes/autocount-outbox";
 import { currencies } from "./routes/currencies";
 import { mfgSalesOrders } from "./routes/mfg-sales-orders";
@@ -543,6 +544,15 @@ scm.use("/payment-audit-log/*", scmAreaGuard("scm.finance.accounting"));
 // Narrowing later is safe; nothing consumes this endpoint yet (backend-only, no
 // UI in this PR).
 scm.route("/entity-audit-log", entityAuditLog);
+// Go-live CHANGE LOG (2026-09-08): the same two audit tables, read ACROSS
+// documents instead of one at a time, and split into what a PERSON changed and
+// what the system changed. NO scmAreaGuard, for /autocount-outbox's reason: an
+// L2 area key is a PAGE key and this page belongs to no SCM area — it spans
+// sales orders, deliveries, purchases and receipts at once. Authorization is the
+// flat scm.changelog.read / settings.manage keys checked inside the route
+// against the REAL caller, which is stricter than the coarse scm.access
+// umbrella, and has to be: it reports what every colleague did.
+scm.route("/change-log", changeLog);
 // AutoCount write-back queue, READ ONLY (scm.autocount_outbox, mig 0277). NO
 // scmAreaGuard, for hr's reason and not for the umbrella's: an L2 area key is a
 // PAGE key and this page belongs to no SCM area — it spans sales orders,
