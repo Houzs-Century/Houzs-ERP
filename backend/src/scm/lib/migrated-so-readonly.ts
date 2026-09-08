@@ -41,6 +41,7 @@ import { getSupabaseService } from '../../db/supabase';
 import { soIsMigrated } from './so-is-migrated';
 import { callerBypasses } from './write-freeze';
 import { activeCompanyId } from './companyScope';
+import { chunkSizeForUrl } from './paginate-all';
 import {
   migratedSoIsLocked,
   migratedSoLockMessage,
@@ -262,9 +263,28 @@ async function fetchVerdicts(
   const out = new Map<string, SoReconcileVerdict>();
   if (docNos.length === 0) return out;
   try {
-    const { data, error } = await sb.from(VERDICT_TABLE).select(VERDICT_COLS).in('doc_no', docNos);
-    if (error || !Array.isArray(data)) return out;
-    for (const raw of data as Array<Record<string, unknown>>) {
+    /* CHUNKED BY URL BYTES, not by a number typed here. The SO list has a
+       LEGACY arm that reads .limit(500), so this can be handed 500 doc numbers
+       at once (~9.5KB of `in.(…)`) - the exact size that has been observed
+       REFUSED in production, which is why chunkSizeForUrl exists and why every
+       other docNos read on that route already goes through it. A refused URL
+       here would answer "no verdicts", locking every row on the page while the
+       API happily accepted the writes: safe, but a list that disagrees with its
+       own endpoint. Serial rather than through chunkIn because that helper
+       needs a .range()-shaped query, and typing this module's client that
+       structurally makes the compiler unroll its generics (TS2589 - the trap
+       so-is-migrated.ts records). Two round trips for a 500-row page. */
+    const size = chunkSizeForUrl(docNos);
+    const rows: Array<Record<string, unknown>> = [];
+    for (let i = 0; i < docNos.length; i += size) {
+      const { data, error } = await sb.from(VERDICT_TABLE).select(VERDICT_COLS).in('doc_no', docNos.slice(i, i + size));
+      /* One failed batch means we cannot vouch for ANY row on this page - the
+         rows already collected would render as open while the rest render as
+         locked, from one read. Drop the lot; absent locks. */
+      if (error || !Array.isArray(data)) return out;
+      rows.push(...(data as Array<Record<string, unknown>>));
+    }
+    for (const raw of rows) {
       const docNo = raw.doc_no ?? raw.docNo;
       const measuredAt = raw.measured_at ?? raw.measuredAt;
       if (typeof docNo !== 'string' || typeof measuredAt !== 'string') continue;

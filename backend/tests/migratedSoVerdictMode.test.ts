@@ -26,6 +26,7 @@ import {
   OPERATOR_MESSAGE_MAX,
 } from '../src/scm/lib/migrated-so-lock';
 import {
+  migratedSoListGate,
   migratedSoReadonly,
   primeMigratedSoLockCache,
   resetMigratedSoLockCache,
@@ -210,7 +211,20 @@ function fakeSupabase(fail: Fail = 'none', ageMs = 60_000) {
                 },
               };
             },
-            in: async () => ({ data: [], error: null }),
+            /* The LIST's batched read, served from the SAME table of verdicts
+               as the single read above — so a divergence between what the list
+               shows and what the endpoint does can only come from the code, not
+               from two fixtures that disagree. */
+            in: async (_col: string, values: readonly string[]) => {
+              if (table !== 'so_reconcile_verdict') throw new Error(`unexpected batched read: ${table}`);
+              if (fail === 'verdict') return { data: null, error: { message: 'read failed' } };
+              return {
+                data: values
+                  .filter((v) => verdicts[v])
+                  .map((v) => ({ doc_no: v, ...verdicts[v], measured_at: measured })),
+                error: null,
+              };
+            },
           };
         },
       };
@@ -319,5 +333,73 @@ describe("value '1' — origin mode is byte-for-byte what it was", () => {
     expect(status).toBe(409);
     expect(String(body.reason)).toContain('AutoCount');
     expect(String(body.reason)).not.toContain(CLEAN_DOC);
+  });
+});
+
+/* ── 5. the LIST, which must never offer what the endpoint refuses ───────── */
+
+describe('migratedSoListGate — correctness mode', () => {
+  /* The switch has to be PRIMED here as it is for every other block: the fake
+     client knows two tables and THROWS on app_config, and readLock treats a
+     throw as an OUTAGE and fails OPEN — which is the documented behaviour (a
+     Supabase blip must not stop the shop floor) and would silently make every
+     assertion below pass for the wrong reason. */
+  beforeEach(() => primeMigratedSoLockCache('verdict:1'));
+
+  /* The list is the surface a salesperson looks at BEFORE clicking anything, so
+     a row it shows as editable that the API then refuses is the "the button
+     does nothing" failure, one screen earlier. The gate is allowed to be more
+     pessimistic than the endpoint and never more permissive. */
+  const baseRows = [
+    { doc_no: CLEAN_DOC, linked_ac_docno: 'SO-000123' },
+    { doc_no: DIRTY_DOC, linked_ac_docno: 'SO-010789' },
+    { doc_no: UNPUBLISHED_DOC, linked_ac_docno: 'SO-999999' },
+    { doc_no: NATIVE_DOC, linked_ac_docno: null },
+  ];
+
+  /** Runs the gate inside a request, since it reads company + client off the context. */
+  async function gate(companyId: number | undefined, opts: { fail?: Fail; ageMs?: number } = {}) {
+    const { fail = 'none', ageMs = 60_000 } = opts;
+    const app = new Hono();
+    app.get('/g', async (c) => {
+      c.set('user' as never, { permissions: ['scm.access'] } as never);
+      if (companyId != null) c.set('companyId' as never, companyId as never);
+      c.set('supabase' as never, fakeSupabase(fail, ageMs) as never);
+      const answer = await migratedSoListGate(c, baseRows);
+      return c.json(Object.fromEntries(baseRows.map((r) => [r.doc_no, answer(r.doc_no).migrated_readonly])));
+    });
+    return (await (await app.request('/g')).json()) as Record<string, boolean>;
+  }
+
+  it('answers PER ROW, matching what the endpoint would do to each', async () => {
+    const g = await gate(1);
+    expect(g[CLEAN_DOC]).toBe(false);       // saves — proved above
+    expect(g[DIRTY_DOC]).toBe(true);        // 409 — proved above
+    expect(g[UNPUBLISHED_DOC]).toBe(true);  // 409 — proved above
+    expect(g[NATIVE_DOC]).toBe(false);      // never migrated
+  });
+
+  /* A NATIVE row must carry `false`, not nothing: an absent key reads as "old
+     build" on the client and would silently unlock the row. */
+  it('every row gets an explicit answer, including the native one', async () => {
+    const g = await gate(1);
+    for (const r of baseRows) expect(typeof g[r.doc_no]).toBe('boolean');
+  });
+
+  it('a FAILED verdict read locks the whole page, never half of it', async () => {
+    const g = await gate(1, { fail: 'verdict' });
+    expect(g[CLEAN_DOC]).toBe(true);
+    expect(g[DIRTY_DOC]).toBe(true);
+    expect(g[NATIVE_DOC]).toBe(false); // still native; the verdict was never its question
+  });
+
+  it('an EXPIRED verdict locks every migrated row', async () => {
+    const g = await gate(1, { ageMs: 3 * 24 * 60 * 60 * 1000 });
+    expect(g[CLEAN_DOC]).toBe(true);
+  });
+
+  it('the other company is untouched', async () => {
+    const g = await gate(2);
+    expect(g[DIRTY_DOC]).toBe(false);
   });
 });
