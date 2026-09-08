@@ -73,10 +73,15 @@ async function main() {
   p(`${addons.length} addon row(s) for company ${CO}; ${sofaAddons.length} carry a SOFA category`);
   p(`columns: ${[...addonCols].sort().join(", ")}`);
   /* The PRICE decides which route HC-SO-013496's specials repair may take. A
-     FREE option can be ticked in variants.specials; a PRICED one cannot be
-     stamped there without repricing the document, which is why the owner's
-     ruling 甲 put priced options in variants.specialsRecorded instead. So the
-     price is printed for every sofa option, not guessed at. */
+     FREE option can simply be ticked in variants.specials; a PRICED one cannot
+     be stamped there without repricing the document, and the owner's ruling 甲
+     of 2026-09-03 is what covers that case — money-neutrally, in its own key.
+     (That key is deliberately NOT NAMED anywhere in this file. A guard test in
+     backend/tests keeps its spelling out of every file that is not a display
+     surface or the backfill, and it scans for the literal string — so writing
+     it here, even inside a comment, fails that guard. This probe is neither a
+     display surface nor a writer, so it has no business spelling it.) The price
+     is therefore printed for every sofa option rather than guessed at. */
   const priceCols = ["selling_price_sen", "cost_price_sen", "price_sen", "unit_price_sen", "amount_sen"]
     .filter((c) => addonCols.has(c));
   p("");
