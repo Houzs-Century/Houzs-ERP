@@ -1992,6 +1992,58 @@ item translation, `no-price`, book-blank variants, an unproceeded order's blank,
 `backend/scripts/lib/so-verdict-derive.mjs`. Full runbook including the order of
 operations: `docs/migrated-so-lock.md` §10.
 
+### 「所以SO 都tally了吗?」 — the ONE artifact, and why the lock's number is not it
+
+Actions -> **Are all the sales orders tallied? (read-only)**
+(`.github/workflows/so-tally-verdict.yml`). Read-only, manual, own concurrency
+group, **writes nothing to production** — there is no publish step, deliberately;
+the sibling *AutoCount vs ERP reconcile* workflow is where the verdict can be
+PUBLISHED to `scm.so_reconcile_verdict`.
+
+**The lock's `differ` count is not an answer to the owner's question, and must
+not be quoted as one.** It is a SAFETY verdict: everything that is not proven
+identical LOCKS, including every document the reconcile could not compare at
+all. That is right for a lock and wrong for a status report — on 2026-09-08 it
+read `149 still differ` while **110 of the 149 had never been compared**, because
+the account book's own Desc2 does not decode into pieces. The full trace is
+`docs/bugs/0715-cannot-be-compared-was-counted-as-differ-so-the-sales-order.md`.
+
+The report splits that into four, and a document lands in exactly one:
+
+| bucket | meaning | blocks TALLIED? |
+| --- | --- | --- |
+| `identical` | compared on every axis and every axis agreed | — |
+| `work` | a real difference, or the document is absent, or the ERP claims one the book does not have | **YES** |
+| `unanswerable` | the ONLY findings are axes the checker REFUSED to answer (`UNANSWERABLE_AXES`) | no — the owner's drawing decides these |
+| `book-gap` | nothing differs; the ERP carries a value the BOOK never stated | no — already accepted as 一模一样 |
+
+Precedence is `work > unanswerable > book-gap > identical`, so a class listed in
+the report's *what this verdict excluded* section can hold more documents than
+the bucket it feeds. The word **TALLIED** is decided in exactly one place —
+`isTallied` in `backend/scripts/lib/so-tally-verdict.mjs`, zero `work` — so no
+summary can soften it.
+
+**It measures nothing.** `check-so-tally.mjs` runs
+`check-ac-erp-reconcile.mjs`, reads the verdict file that run writes, and
+classifies its rows; then it parses the reconcile's own printed `SO VERDICT` and
+`SUMMARY SO` lines and REFUSES to print anything if they disagree with the file.
+Parsing checks; it never decides. A second implementation of "different" is what
+`docs/bugs/0708-two-tools-answered-the-same-pairing-question-differently-twe.md`
+cost.
+
+**MEASURED**, `node backend/scripts/check-so-tally.mjs` against PRODUCTION over
+the read-only DSN, 2026-09-08 11:52 UTC, company 1, exit 0 — **re-run before
+quoting it**, the sofa lanes move these numbers daily:
+
+> 2,882 documents. **2,711 identical · 37 differ and are work · 109 cannot be
+> compared · 25 the book itself is the gap.** NOT TALLIED. The 37 are 35 sofa
+> compartments, 1 specials and 1 `a book line we do not have`; **5 of the 35 sit
+> on a PROCEEDED order** and the rest do not. All 109 unanswerable ones have the
+> same cause — keyed, but the book's build text does not decode into pieces, so
+> only the owner's drawing settles them, and **none** can be closed by stamping a
+> line key. The document, SKU, quantity, unit price, document total,
+> colour/fabric, seat size and bedframe-build axes are all at **zero**.
+
 
 ### Deleting an SO — DRAFT only, and the test-order escape hatch
 
