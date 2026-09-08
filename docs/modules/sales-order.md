@@ -972,6 +972,25 @@ client never sends a `doc_no`, and money crosses the wire as `*_sen` integers.
   `maintenanceConfig.sofaLegHeights`. The label is **Seat Size** on every
   surface (`so-variant-rule` declares it, and the SO line card renders it since
   2026-08-21 — it was the last screen saying "Seat Heights").
+
+  **The Leg Height auto-fill is a SALES-ORDER convenience and it does not travel
+  downstream.** A blank sofa Leg Height is seeded with the maintenance "Default"
+  option (owner 2026-07-13) so the field is never empty — but only where the
+  caller says so: `SoLineCard`'s `seedSofaLegDefault` is a MANDATORY prop with no
+  default, beside `variantsRequired`. `true` on the documents that SPECIFY the
+  sofa (SO New/Detail, Consignment Order New/Detail); `false` on the ones that
+  FULFIL one (Delivery Order, Delivery Return, Consignment Note New/Detail,
+  Consignment Return New/Detail, Sales Invoice). The reason it cannot be a
+  default: `computeVariantKey` emits `legheight=` for a sofa, so seeding on a
+  delivery form moves the line into a different STOCK BUCKET from the goods
+  reserved for it — HC-SO-012565 read "available 0" against its own sofa, and
+  three delivery orders shipped on 2026-09-08 consumed no lot at all
+  (`docs/bugs/0722-a-delivery-order-invented-the-sofa-s-leg-height-so-the-stock.md`).
+  The values are pinned per call site by
+  `frontend/src/vendor/scm/components/sofa-leg-default-seed.test.ts`. On
+  `SalesOrderDetail.tsx` the two props share one line on purpose: that file sits
+  at its `scripts/file-size-ceilings.json` ceiling, and the gate charges GROWTH,
+  so a prop added on its own line fails the build (it did, on #3296).
 - **Bedframe** — Gap ← `maintenanceConfig.gaps`; Divan ←
   `maintenanceConfig.divanHeights`; Leg ← `maintenanceConfig.legHeights`.
   `totalHeight` (= divan + leg + gap) is COMPUTED into the variants blob for the
@@ -1974,6 +1993,20 @@ One banner component for all of them where a banner is new:
 sentence for a write that reaches the API anyway is curated in
 `frontend/src/vendor/scm/lib/authed-fetch.ts`.
 
+> **…and the client has to actually SHOW it.** Curating the sentence is only
+> half of the delivery, and the mobile SO editor dropped the other half:
+> `MobileNewSO.applyLineDiff` wrapped each line DELETE / POST / PATCH in a bare
+> `catch { failed += 1; }`, so the 409's sentence was discarded at the moment it
+> arrived and the operator was shown *"N line change(s) did not save. Your edits
+> are still here; try Save again."* — built from the count alone. The owner
+> pressed Save repeatedly against a lock that would never yield
+> (`docs/bugs/0723-*`). Both surfaces now carry the reason through
+> `frontend/src/vendor/scm/lib/line-write-failures.ts`: one shared cause is
+> stated ONCE, and a 403/409 drops the retry advice, because retrying a decision
+> is not a remedy. `frontend/scripts/check-silent-mutations.mjs` does not cover
+> this shape — it scans `useMutation` call sites, and this path is a raw
+> `authedFetch` loop.
+
 **Opening them again is ONE statement**, when collections are corrected:
 
 ```sql
@@ -2018,6 +2051,20 @@ from `backend/scripts/data/sofa-compartment-corrections-*.json` — the same fil
 the apply script writes from. `lib/variant-report.mjs` locks on `DIFFER` and on
 a proceeded `ERP_BLANK`; `BOOK_BLANK`, `PENDING`, `RECORDED` and now `RULED`
 fall to the branches below and never lock.
+
+**The ruling is asked for on BOTH branches, and until 2026-09-08 it was asked
+for on only one.** The lookup ran where the book's Desc2 DECODED and the two
+sides then disagreed — and not where the Desc2 does **not** decode at all, which
+is exactly the case his rule reserves for his drawing and therefore exactly the
+case where his answer is the only one there is. So a sofa he had read, ruled and
+had written into the ERP kept reporting as `UNREADABLE`, i.e. **CANNOT BE
+COMPARED — your drawing decides these**, on every run for ever; 20 of the 109
+unanswerable documents were in that state. Both branches now use the same
+lookup and the same strictness: `RULED` needs the ERP to hold his answer as an
+exact multiset, a `_held` ruling is excluded by `makeSofaRulingLookup`, and a
+ruling the ERP has not been moved to stays `UNREADABLE` — still locking — while
+naming the answer it is failing to match.
+`docs/bugs/0720-the-reconcile-never-asked-for-the-owner-s-ruling-where-his-d.md`.
 
 **So a migrated sales order now unlocks exactly when the ERP holds what the
 owner ruled.** Measured on the 2026-09-08 runs: `HC-SO-010209` was
@@ -2117,18 +2164,124 @@ Parsing checks; it never decides. A second implementation of "different" is what
 `docs/bugs/0708-two-tools-answered-the-same-pairing-question-differently-twe.md`
 cost.
 
+**The same module now answers for PURCHASE ORDERS and GOODS RECEIPTS too**
+(owner, 2026-09-08: 「然后把PO GR也tally掉」). `lib/so-tally-verdict.mjs` gained
+`DOC_TYPES` — the WORDS each document type needs and nothing else — plus
+`docTypeSpec()`, which REFUSES an unknown type rather than rendering a purchase
+order under a sales-order heading. `bucketOf` and `isTallied` are unchanged and
+type-independent: adding a document type cannot change what TALLIED means, and
+`renderVerdict(v)` with no type still produces the sales-order text byte for
+byte, which is what this file's caller relies on.
+
+**And for DELIVERY ORDERS, SALES INVOICES and PURCHASE INVOICES since
+2026-09-08** (owner: 「SO PO GR PI SI DO 等等？都解决了吗？」). `docTypeSpec` THREW
+for those three, so no report could be asked for half the types he named, while
+the reconcile had always COMPARED all six and the recorder had always been keyed
+by type. Only the WORDS were missing. Two of the three labels had to move or
+they would be lies: a delivery order's item code is taken from the sales-order
+line by design, and a sales/purchase invoice's LINES are built from our own
+delivery or receipt (`migratedChainLineShape`), so printing "unit price" as a
+checked axis for any of them would report our own derivation back as agreement.
+The workflow's `types` default is now all six, with SO still the control.
+
+### The transfer chain is an AXIS since 2026-09-08 — 「transfer from和transfer to」
+
+Which document a line was raised FROM, and how much of it has been transferred
+ON, had never been compared. `check-ac-erp-reconcile.mjs` reads `transferedQty`,
+`fromDocType` and `fromDocNo` **only to decide SCOPE**, and `LOCKING_AXES`
+carried no member for either — so a line could point at the wrong source
+document and every report would still have said the documents tally. Two
+cross-system checkers existed (`check-ac-convert-symmetry.mjs`,
+`check-ac-transfer-counters.mjs`) and neither produces a per-document verdict,
+so neither could lock a document or move a tally answer.
+
+`LOCKING_AXES` now carries `transfer from` and `transfer to`;
+`UNANSWERABLE_AXES` carries `transfer chain not verifiable`. `bucketOf` and
+`isTallied` are untouched. Three NOTE classes carry the silences so none of them
+reads as agreement: `chain-line-not-in-book`, `chain-no-source` and
+`chain-no-erp-counter`.
+
+**What the account book can answer, and it is less than it sounds.**
+`FromDocDtlKey` is EMPTY on every one of the ~220,000 detail rows of all six
+AutoCount tables, so the source LINE is answerable on ONE edge only — SO→PO,
+which AutoCount records differently as `FromSODtlKey`. On the other four edges
+the book states a source DOCUMENT and nothing finer, and the checker says so
+instead of comparing at document grain and letting a reader believe it checked
+lines. It is re-measured every run from the snapshot, never trusted from a
+comment. `PODTL.FromDocType` is likewise empty on all 18,890 rows, so the
+classifier tests the DocNo — testing the TYPE reports every purchase order in
+the book as sourceless.
+
+The rule modules are `backend/scripts/lib/transfer-chain-verdict.mjs` (pure, and
+it RE-EXPORTS the counter rule from `lib/transfer-counter-verdict.mjs` rather
+than restating it), `lib/ac-transfer-chain-run.mjs` (the reads; it may only
+write onto a document the run already compared, and it FAILS SOFT) and
+`lib/ac-transfer-chain-report.mjs` (the printing).
+
+**Nothing on the sales-order side of this moved.** `check-so-tally.mjs` is not
+modified by that lane, `VERDICT_OUT` still receives SALES ORDERS and nothing
+else, and `publish-so-reconcile-verdict.mjs` and the migrated-sales-order lock
+read the same payload they always did. The sibling report is
+`backend/scripts/check-po-gr-tally.mjs` +
+`.github/workflows/po-gr-tally-verdict.yml`; the method, the four buckets and
+the two per-type "NOT a difference" classes are written up in
+`docs/cutover-tally-method.md` §C2.
+
 **MEASURED**, `node backend/scripts/check-so-tally.mjs` against PRODUCTION over
 the read-only DSN, 2026-09-08 11:52 UTC, company 1, exit 0 — **re-run before
 quoting it**, the sofa lanes move these numbers daily:
 
-> 2,882 documents. **2,711 identical · 37 differ and are work · 109 cannot be
-> compared · 25 the book itself is the gap.** NOT TALLIED. The 37 are 35 sofa
-> compartments, 1 specials and 1 `a book line we do not have`; **5 of the 35 sit
-> on a PROCEEDED order** and the rest do not. All 109 unanswerable ones have the
-> same cause — keyed, but the book's build text does not decode into pieces, so
-> only the owner's drawing settles them, and **none** can be closed by stamping a
-> line key. The document, SKU, quantity, unit price, document total,
-> colour/fabric, seat size and bedframe-build axes are all at **zero**.
+> 2,882 documents. **2,775 identical · 6 differ and are work · 45 cannot be
+> compared · 56 the book itself is the gap.** NOT TALLIED. The 6 are 4 sofa
+> compartments, 1 specials and 1 `a book line we do not have`; **1 of the 6 sits
+> on a PROCEEDED order**. The document, SKU, quantity, unit price, document
+> total, colour/fabric, seat size and bedframe-build axes are all at **zero**,
+> and stayed there across the repair.
+
+**Where the earlier 37 / 109 went** (runs `34226234984` before, `34231033829`
+after, both company 1 against the same 2026-09-08 book snapshot):
+
+| | before | after |
+| --- | --- | --- |
+| identical | 2,714 | 2,775 |
+| differ, and it is work | 33 | **6** |
+| cannot be compared | 109 | **45** |
+| the book itself is the gap | 26 | 56 |
+
+The `37` quoted above it was measured before PR #3282 merged; on current `main`
+the same corpus read **33**, and that four-document difference is #3282's, not
+this round's.
+
+`the book itself is the gap` RISING by 30 is the expected shape of this work, not
+a regression: a build read off the owner's DRAWING is by definition a value the
+book never stated, which is the definition of that column. It is the class
+already accepted as 一模一样.
+
+Three rounds did the closing:
+
+- **the owner's own rulings, asked for on the branch that never asked** — 16 of
+  the 20 documents holding a written ruling now read `RULED` instead of "cannot
+  be compared". The other 4 (`HC-SO-011733`, `012025`, `012929`, `013384`) stay
+  unanswerable ON PURPOSE: `RULED` needs the ERP to hold his answer as an exact
+  multiset, and on those four it does not — the report now names the answer each
+  is failing to match.
+- **`sofa-compartment-corrections-book-aligned.json`** — 30 sofas on 29
+  documents, expanded from the book's own decoded Desc2 (apply `34230069328`,
+  `VERIFY OK — 30 document(s), piece multiset and both money columns`, money
+  unchanged on every one).
+- **`sofa-compartment-corrections-drawings.json`** — 50 sofas read off the order
+  slips (apply `34230384064`, `VERIFY OK — 50 document(s)`, 10 purchase-order
+  lines carried in the same transaction, nothing downstream of them moved).
+
+**What is still open, and why** — none of it is a document nobody looked at:
+
+| document | why |
+| --- | --- |
+| `HC-SO-011099` | his ruling is real and NOT written; the build collapses two rows into one and the dropped row is a dedication target (`docs/bugs/0719`) |
+| `HC-SO-005082`, `HC-SO-011221` | the ERP rows' `description2` does not carry the book's words, so `desc2Match` cannot target them by text. They need targeting by `linked_ac_dtlkey` instead |
+| `HC-SO-007293` | book says `2S`, the ERP holds `2A(LHF)+L(RHF)`. Collapsing a richer build down to the book is the one direction that can DESTROY a correct earlier reading, so it was left rather than swept |
+| `HC-SO-012128` | a book line the ERP does not have — `HOK-SQUARE PILLOW` x4 at RM 0.00, "FOR CONPESSANTION WRONG ITEM DELIVERY". It NAMES a product, so the owner's 「没写的也删掉」 does not cover it and it must be CREATED. No writer exists for that yet — `probe-dropped-book-lines.mjs` only reports |
+| `HC-SO-013496` | the book asks for `Change 8030 Backcushion` and the line carries `CHANGE8030BACKREST`. Whether that is a real gap or a catalogue-spelling artifact needs a read of live `scm.special_addons`, and the only writer to hand sets `custom_specials`, which is DERIVED and self-erasing |
 
 
 ### Deleting an SO — DRAFT only, and the test-order escape hatch
@@ -2340,7 +2493,18 @@ Three more properties it did not have before:
 - **Its SQL is executed against a real Postgres in CI** before production sees it
   (`backend/tests-pg/deleteTestSoRefs.pg.test.ts`, the `backend-postgres` job),
   because `node --check` used to be the whole of the evidence a production
-  DELETE had.
+  DELETE had. **That fixture must declare the same column TYPES production has.**
+  It declared `mfg_sales_orders.status` as `text` when production has the enum
+  `scm.mfg_so_status`, and 17 green tests then said nothing about a
+  `coalesce(status, '')` the database refuses — run `34223295235`. And note that
+  `npm --prefix backend run typecheck` does NOT cover `tests-pg/`: the backend
+  tsconfig does not include it, so running the suite is the only local check.
+
+The CONTROL measures `local_total_sen`, which is what this table's document
+total is called. It is not `total_sen` — that column does not exist here, and a
+money check pointed at a missing column compares NULL to NULL and reports
+agreement. `paid_sen`, `deposit_sen` and `balance_sen` are deliberately outside
+everything this tool reads or writes.
 
 Ledger: `docs/bugs/0715-deleting-a-sales-order-trusted-a-hand-written-child-list-nob.md`.
 
@@ -3800,6 +3964,31 @@ Best-effort throughout, exactly like the AutoCount enqueue and the GL posting
 beside them — a failure never fails the operator's save, and the next roll
 self-heals.
 
+### The BALANCE a human is shown — which total it subtracts from (2026-09-08)
+
+The order total lives in TWO columns and the balance rule reads whichever one is
+filled. `recomputeTotals` writes `local_total_sen = total_revenue_sen =
+grandTotal` on every edit, so a modern order carries the same figure in both;
+an AutoCount-imported one carries it in `local_total_sen` ONLY, because the
+cutover importer's header column list (`HCOLS` in
+`backend/scripts/import-ac-outstanding-so.mjs`) does not include
+`total_revenue_sen` and the column defaults to `0 NOT NULL`.
+
+| | |
+|---|---|
+| The rule | `soBalanceSen` in `backend/src/scm/shared/so-outstanding.ts` — `soDisplayTotalSen` minus `soPaidSen`, SIGNED (negative = over-collected, painted red; owner 2026-08-16) |
+| The total it picks | `total_revenue_sen` when > 0, else `local_total_sen` (`soDisplayTotalSen`) |
+| What it still refuses | an order with NO total in either column answers **0**. A zero total is UNKNOWN, not "owes nothing" |
+| Where it is served | `GET /mfg-sales-orders/:docNo` stamps it as `balance_sen` on the response, over the header column of the same name — which is NOT a balance (see `so-outstanding.ts`'s own header for the three candidates) |
+| The shared client half | `deriveBalance` (`frontend/src/vendor/scm/lib/so-detail-gates.ts`), consumed by the mobile detail KPI and the desktop print-preview card. A server balance of **0** does not outrank a computable `total - paid`; a NON-zero one does, because only the server applies the legacy header-deposit rule |
+| The write-back's rule is DIFFERENT | `soOutstandingSen` is clamped at 0 and does NOT fall back — AutoCount's `UDF_BALANCE` is only ever written from a total the ERP itself recomputed |
+
+Until 2026-09-08 the rule read `total_revenue_sen` alone, so the detail page
+answered Balance 0.00 for every migrated order while the LIST beside it (reading
+the view's `balance_sen_live`) answered correctly — the owner's own order showed
+Total RM 3,200.00, Paid RM 1,600.00, Balance RM 0.00
+(`docs/bugs/0723-the-sales-order-detail-showed-a-paid-up-balance-of-0-on-ever.md`).
+
 ### Payment methods: THREE choosable, FOUR protected — and one list feeds every picker
 
 Every payment dropdown on both surfaces renders from **`scm.so_dropdown_options`**
@@ -5060,3 +5249,52 @@ person, and the delta lane counts it in its ALL-OR-NOTHING refusal total so the
 whole note is refused rather than half-written. The refusal message names the
 count: `colour cannot say which line N`. `docs/bugs/0688`,
 `docs/modules/delivery-order.md`.
+
+
+## The book's own words live in the line REMARK under `账本原文: ` (2026-09-04)
+
+AutoCount's Description 2 is the salesperson's own text on the order slip —
+`COL: PC151-01/ DIVAN: 8" + 2" LEG/ GAP: 12"`, but also
+`Dipose 1 old mattress and 1 old bed frame` and `PICKUP AT SHOWROOM`, which no
+variant blob can encode. It is carried into
+`scm.mfg_sales_order_items.remark` under the label **`账本原文: `** by
+`scripts/preserve-autocount-desc2-in-remark.mjs` (owner request 2026-09-02,
+applied 2026-09-04). `docs/bugs/0639` is the entry; read it before touching
+this, and **do not build a second carrier** — one was built and retracted on
+2026-09-08 (`docs/bugs/0722`) because it did not find this one.
+
+**Why `remark` and not `description2`, which the importer also fills.** Two
+faults, and they are opposite in shape:
+
+- **Hidden on sofa and bedframe.** Every surface reads
+  `buildVariantSummary(item_group, variants) || description2`, so the decoded
+  summary wins wherever it is non-empty. Measured by RUNNING the function
+  against the blobs the importer writes: sofa -> `PC151-01 Sand`, bedframe ->
+  `BF-01 Sand / DIVAN 8 + LEG 2 / GAP 12`, mattress / accessory -> `""`. The
+  importer builds a variants blob for bedframe and sofa only
+  (`import-ac-outstanding-so.mjs:236-299`), so the text is hidden on exactly
+  those two groups and still shows on the rest.
+- **Destroyed on every group by the first edit.**
+  `updates['description2'] = buildVariantSummary(...) || null`
+  (`scm/routes/mfg-sales-orders.ts:8575`). A sofa line has the book text
+  replaced by our derivation; a mattress line, whose summary is `""`, has it set
+  to NULL by the `|| null`. **The lines where the words were still visible are
+  the lines where the first edit deletes them outright.** `remark` has neither
+  problem: nothing regenerates it, and it is absent from `SO_ITEM_COLS`
+  (`scm/lib/autocount-outbox.ts:382`) so it cannot reach the AutoCount
+  write-back. Same choice the PO side made with `purchase_order_items.notes`.
+
+**Known residual — 164 lines, measured 2026-09-08.** `decide()` in that script
+consults the book snapshot only when `description2` is EMPTY; a line whose
+`description2` has already been replaced by our generated summary is skipped
+outright (`preserve-autocount-desc2-in-remark.mjs:160-166`). That is the state of
+every line a later lane created or rewrote, so the residual regrows: 140
+`compartment corrected 2026-09-04`, 17 `topped up from AutoCount …`, 3 empty,
+and 4 carrying customer text. `docs/bugs/0722` has the breakdown and the fix.
+
+**Do not compare these strings byte-for-byte.** The copy in `remark` came from
+the live `description2` and carries the salesperson's SMART quotes (`”`, `’`);
+the committed snapshot `scripts/data/ac-reconcile-truth.json.gz` carries straight
+ones and flattens the line's newline to a space. The same sentence in two
+renderings compares unequal — that is what made the retracted tool think 1,650
+already-done lines still needed doing.

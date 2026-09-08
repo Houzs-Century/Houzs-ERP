@@ -479,7 +479,11 @@ PILLOW),AutoCount 那条 `RDS-5526 SOFA`(DtlKey 58980,**UnitPrice 9,300**)不在
   一样（或原文相同），才把 PO 行（连同 migrated 收货行）改成 SO 的件、挂 `so_item_id`。
   已交货的 5 张**拒绝**（沙发已经出门，开库存就是把送出去的沙发放回架上）。
 - **修完还要跑两个现成的 workflow**：`import-ac-sofa-stock.yml`（开 lot）→ allocation
-  recompute（绑批次 → READY）。写这段的时候**三个都还没在 prod 上跑过**。
+  recompute（绑批次 → READY）。**三步都在 2026-09-08 晚上跑完了**：修行 run
+  34222954681（9/9）、开库存 run 34229613738（22 个 lot）、重算 run 34230737819
+  （22 行绑上批次）。9 张 SO 的 19 件全部 READY 且带批次；DO 有没有真的开出来还没
+  看到（LIKELY）。开库存那一步顺手给 HC-PO-009712 多开了一套 lot，另记一条，见
+  `docs/bugs/0721-the-sofa-stock-import-opened-a-second-set-of-lots-for-a-buil.md`。
 - 账本条目：`docs/bugs/0714-the-sofa-purchase-line-was-filed-as-others-so-the-sales-orde.md`。
 
 ## 9. 一句话铁律

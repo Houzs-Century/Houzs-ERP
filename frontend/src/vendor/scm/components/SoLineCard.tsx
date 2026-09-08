@@ -187,6 +187,7 @@ const SoLineCardInner = ({
   itemId,
   isEditing = true,
   variantsRequired,
+  seedSofaLegDefault,
   searchHint,
 }: {
   index:     number;
@@ -228,6 +229,33 @@ const SoLineCardInner = ({
          (DO, consignment note/return, delivery return, sales invoice — the
           variants ride in with the items and are not re-specified here) */
   variantsRequired: boolean;
+  /* Whether this document may AUTO-FILL a blank sofa Leg Height with the
+     maintenance "Default" option (owner 2026-07-13).
+
+     MANDATORY PROP, no default, for a harder reason than the one above: the leg
+     height is part of the STOCK BUCKET. computeVariantKey emits `legheight=` for
+     a sofa (shared/variant-key.ts), so seeding the field does not merely fill a
+     box — it moves the line into a different bucket from the goods reserved for
+     it. On 2026-09-08 that blocked HC-SO-012565: the lots stood at BALAKONG
+     under `fabriccode=bo315-31|seatheight=26|special=...`, the delivery form
+     seeded `legHeight: "Default"`, and the pre-flight read the invented bucket
+     as available 0. Three delivery orders that morning (HC-DO-2609-004, -009,
+     -011) were shipped through that dialog and their OUT movements consumed no
+     lot at all. docs/bugs/0722.
+
+     THE RULE:
+       · a document that SPECIFIES the sofa            -> true
+         (SO New/Detail, Consignment Order New/Detail — the key it writes is the
+          one the purchase order and then the lot inherit, so seeding is
+          consistent everywhere downstream)
+       · a document that FULFILS one                   -> false
+         (DO, consignment note/return, delivery return, sales invoice — the goods
+          were already keyed when they were bought; adding an attribute here can
+          only disagree with them)
+
+     Leg Height is `required: false` in shared/so-variant-rule.ts, so a blank one
+     blocks no Confirm gate on either side. */
+  seedSofaLegDefault: boolean;
   /* Scan-Order (Task #73) — the OCR rawText for a NO-MATCH line, shown as the
      SKU picker's placeholder so the operator sees what was on the slip while
      they pick a real SKU. It is a HINT ONLY — never committed as the product
@@ -363,8 +391,10 @@ const SoLineCardInner = ({
      When the SKU's real category is sofa/bedframe but the saved itemGroup is
      generic, rewrite itemGroup so the committed line equals a manually-picked
      one. For sofa, also default Leg Height to the "Default" maintenance option
-     (RM 0.00) when unset, so it is never an empty required field and never
-     blocks Confirm. Edit-mode only — a read-only view still RENDERS the
+     (RM 0.00) when unset — but ONLY where the caller says this document
+     specifies the sofa (`seedSofaLegDefault`; see the prop's own note). A
+     fulfilment document that seeds it re-buckets the line away from the stock
+     reserved for it. Edit-mode only — a read-only view still RENDERS the
      configurator (driven by `category` above) but must not mutate. */
   useEffect(() => {
     if (!isEditing || !draft.itemCode) return;
@@ -373,7 +403,7 @@ const SoLineCardInner = ({
         && draft.itemGroup.toLowerCase() !== category) {
       patch.itemGroup = category;
     }
-    if (category === 'sofa' && maint
+    if (seedSofaLegDefault && category === 'sofa' && maint
         && isBlankVariant(draft.variants.legHeight)
         && isBlankVariant(draft.variants.sofaLegHeight)) {
       const def = defaultSofaLegValue(maint);
@@ -381,7 +411,7 @@ const SoLineCardInner = ({
     }
     if (Object.keys(patch).length > 0) onChange(patch);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isEditing, category, draft.itemCode, maint]);
+  }, [isEditing, category, draft.itemCode, maint, seedSofaLegDefault]);
 
   /* PR-F (Task #79) — Per-line photo state.
      Line-card-redesign (Commander 2026-05-27): also support DRAFT mode

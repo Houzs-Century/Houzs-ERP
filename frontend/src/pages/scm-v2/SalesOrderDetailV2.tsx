@@ -86,6 +86,7 @@ import { formatPhone } from "@2990s/shared/phone";
 import {
   isLocked as isSoLocked,
   amendmentEligible as soAmendmentEligible,
+  deriveBalance as soDeriveBalance,
   migratedReadonly as soMigratedReadonly,
   migratedReadonlyReason as soMigratedReadonlyReason,
 } from "../../vendor/scm/lib/so-detail-gates";
@@ -114,6 +115,11 @@ type SoHeader = {
   local_total_sen: number;
   balance_sen: number;
   paid_sen: number;
+  /* Stamped by GET /:docNo (ledger + the legacy header deposit) — the only
+     paid figure that is maintained. `paid_sen` is deprecated and is 0 on any
+     order paid through the payment drawer. */
+  paid_sen_total?: number | null;
+  total_revenue_sen?: number | null;
   discount_sen?: number;
   phone: string | null;
   email: string | null;
@@ -1674,8 +1680,17 @@ function SalesOrderDetailV2ReadOnly() {
             value: fmtMoney(salesOrder.local_total_sen, salesOrder.currency),
           },
           {
+            /* Through the SHARED gate, not off `balance_sen` — the same number
+               the mobile detail shows and the same one the PDF below prints.
+               Reading the column directly is what put a 0 here for every
+               AutoCount-imported order, on a card whose Order total row above
+               it was correct. Trace: the entry named in `deriveBalance`'s own
+               docblock (vendor/scm/lib/so-detail-gates.ts). */
             label: "Balance",
-            value: fmtMoney(salesOrder.balance_sen, salesOrder.currency),
+            value: fmtMoney(
+              soDeriveBalance(salesOrder, printPaymentsQ.data),
+              salesOrder.currency,
+            ),
           },
         ]}
         {...print.handlers}

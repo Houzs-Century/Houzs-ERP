@@ -28,6 +28,27 @@
  * the two facts answer different questions. 5535 is deliberately absent from
  * that map - the owner has ruled twice that it is its own model - so a fold of
  * 5535 can never appear here.
+ *
+ * ── AND NEITHER IS A DECLARED OWNER OVERRIDE ────────────────────────────────
+ * 「一律跟账本。除了sofa compartment而已啊」 gives the model to the book, and this
+ * grader is what enforces it. But the owner can still decide, out loud and on
+ * one named line, that the ERP carries a product the book does not:
+ * HC-SO-011657 is one - the book's own daybed `TNS-9838 DB` is discontinued and
+ * has no stool piece to sell, and he answered 「那就放8030 daybed把」.
+ *
+ * Recording that as a bare `model` would be indistinguishable from the defect
+ * this module exists to catch, so it is not accepted as one. An override must
+ * DECLARE the book model it overrides, and be attributed. That is strictly
+ * stronger than the rule it sits beside:
+ *
+ *   - an undeclared model that differs is still DIFFER, so docs/bugs/0693 -
+ *     three hand-typed models outranking the book for a month - stays caught;
+ *   - a declaration that no longer matches what the book says on that line is
+ *     DIFFER too, so refreshing the book cut RE-OPENS every override whose
+ *     ground has moved instead of letting it rot unnoticed;
+ *   - what survives is reported as OWNER-OVERRIDE, never folded into AGREE,
+ *     because "he decided this" and "these match" are different answers and
+ *     only one of them means the ERP and the book say the same thing.
  */
 
 /** Upper-cased, trimmed - the form model codes are compared in. */
@@ -52,7 +73,9 @@ export function modelOfErpCode(code, alias = {}) {
  * @property {string[]} unmapped      book item codes the item map does not carry
  * @property {{doc:string,dtlKey:string,ac:string}[]} hits the book lines found
  * @property {string[]} missing       one line per document that produced no hit
- * @property {"AGREE"|"AGREE-VIA-ALIAS"|"DIFFER"|"NO-MODEL-IN-FILE"|"NO-BOOK-LINE"|"UNMAPPED-BOOK-CODE"|"BOOK-SPLIT"} verdict
+ * @property {string|null} overrideBook the book model the entry DECLARES it is
+ *   overriding, upper-cased; null when it declares none
+ * @property {"AGREE"|"AGREE-VIA-ALIAS"|"OWNER-OVERRIDE"|"DIFFER"|"NO-MODEL-IN-FILE"|"NO-BOOK-LINE"|"UNMAPPED-BOOK-CODE"|"BOOK-SPLIT"} verdict
  */
 
 /**
@@ -94,6 +117,15 @@ export function gradeCorrectionsAgainstBook({ builds, bookLines, erpCodeFor, des
     }
 
     const fileModel = b?.model == null ? null : K(b.model);
+    /* A declared override, and ONLY when it names both the book model it
+       overrides and who decided it. Anything less is an ordinary typed model
+       and is graded as one. */
+    const ov = b?.modelOverride;
+    const overrideBook =
+      ov && typeof ov === "object" && ov.book != null && String(ov.by ?? "").trim() !== ""
+        ? K(ov.book)
+        : null;
+
     let verdict;
     if (fileModel === null) verdict = "NO-MODEL-IN-FILE";
     else if (!hits.length) verdict = "NO-BOOK-LINE";
@@ -101,10 +133,14 @@ export function gradeCorrectionsAgainstBook({ builds, bookLines, erpCodeFor, des
     else if (folded.size !== 1) verdict = "BOOK-SPLIT";
     else if ([...raw][0] === fileModel) verdict = "AGREE";
     else if ([...folded][0] === fileModel) verdict = "AGREE-VIA-ALIAS";
+    /* Asked LAST, so an override can never dress up an agreement as a decision
+       - and only while the book still says what the declaration says it says.
+       Once it does not, nobody has decided what the line reads NOW. */
+    else if (overrideBook !== null && overrideBook === [...raw][0]) verdict = "OWNER-OVERRIDE";
     else verdict = "DIFFER";
 
     rows.push({
-      docs, source: String(b?.source ?? ""), fileModel, verdict, missing, hits,
+      docs, source: String(b?.source ?? ""), fileModel, verdict, missing, hits, overrideBook,
       bookRaw: [...raw].sort(), bookFolded: [...folded].sort(), unmapped: [...unmapped].sort(),
     });
   }

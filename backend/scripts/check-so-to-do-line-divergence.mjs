@@ -234,6 +234,53 @@ try {
   console.log(`  GOODS lines on sales orders:   ${g0.goods_so_lines}`);
   console.log(`    carrying none:                  ${g0.without_a_book_key}`);
   console.log('');
+  console.log('');
+  console.log('=== 7. THE KEYS OUR OWN GUARD REFUSED ===');
+  console.log('(rows whose error is KeysBySourceDoc: a key the ERP sent that is on NO sales order in the book)');
+  /* A DIFFERENT FAULT FROM SECTION 2, and it must not be read as the same one.
+     Section 2 is AutoCount refusing a line it can see. This is our own guard
+     refusing to send at all, because a key the ERP holds is on no SO row in the
+     account book. The relink tool cannot repair it: `alreadyKeyed` rows are left
+     untouched by design, so a key that is PRESENT and WRONG is invisible to it.
+     Naming the key is the whole point - it is the one fact nothing else prints,
+     because the guard throws before the host's per-key dump ever runs. */
+  const guard = failed.filter((r) => classify(r.last_error) === 'our_guard_key_not_in_book');
+  if (!guard.length) {
+    console.log('  none - no row is being refused by our own guard');
+  } else {
+    for (const r of guard) {
+      const keys = Array.isArray(r.sent_keys) ? r.sent_keys.map(Number).filter(Number.isFinite) : [];
+      console.log(`  ${r.doc_no}  sent ${keys.length} key(s): ${keys.join(', ') || '(none in payload)'}`);
+      if (!keys.length || !r.doc_id) continue;
+      /* WHERE EACH KEY LIVES IN THE ERP. A key stored on a sales-order line is
+         what the transfer needs; the same number sitting on a DELIVERY-order or
+         purchase line as well says the value was copied off the wrong document,
+         which is a different repair from a line the book has since dropped. */
+      const homes = await pg.unsafe(`
+        SELECT k::bigint AS key,
+               (SELECT count(*) FROM scm.mfg_sales_order_items  WHERE linked_ac_dtlkey = k)::int AS on_so_lines,
+               (SELECT count(*) FROM scm.delivery_order_items   WHERE linked_ac_dtlkey = k)::int AS on_do_lines,
+               (SELECT count(*) FROM scm.purchase_order_items   WHERE linked_ac_dtlkey = k)::int AS on_po_lines,
+               (SELECT count(*) FROM scm.grn_items              WHERE linked_ac_dtlkey = k)::int AS on_gr_lines
+          FROM unnest($1::bigint[]) AS k`, [keys]);
+      for (const h of homes) {
+        console.log(`      key ${h.key}  ERP rows holding it - SO ${h.on_so_lines} / DO ${h.on_do_lines} / PO ${h.on_po_lines} / GR ${h.on_gr_lines}`);
+      }
+      /* AND THE PARENT'S WHOLE KEY SET, in line order, so a reader can see at a
+         glance whether one key is an outlier among neighbours that run together. */
+      const lines = await pg.unsafe(`
+        SELECT si.doc_no, si.linked_ac_dtlkey AS key, ${SERVICE_SQL('si')} AS is_service
+          FROM scm.delivery_orders d
+          JOIN scm.delivery_order_items di ON di.delivery_order_id = d.id
+          JOIN scm.mfg_sales_order_items si ON si.id = di.so_item_id
+         WHERE d.id = $1::uuid
+         ORDER BY si.linked_ac_dtlkey NULLS FIRST`, [r.doc_id]);
+      for (const l of lines) {
+        console.log(`      line on ${l.doc_no}: key ${l.key ?? '(none)'}${l.is_service ? ' [SERVICE]' : ''}`);
+      }
+    }
+  }
+
   console.log('READ IT LIKE THIS: if the SERVICE row is the one with no key, the fee line');
   console.log('is what AutoCount cannot take. If GOODS lines are missing keys too, it is not');
   console.log('about fees at all and the line-key backfill is the answer.');

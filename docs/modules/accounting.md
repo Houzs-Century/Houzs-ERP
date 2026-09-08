@@ -255,11 +255,30 @@ date). Three shared components moved for this round and for every page
 that uses them: `frontend/src/vendor/scm/components/SearchCombo.tsx` scrolls
 the highlighted option into view as ↓ moves and opens ON the first option;
 `frontend/src/vendor/scm/components/DateField.tsx` selects a pre-filled date
-on focus and masks typed digits (31032026 → 31/03/2026, `maskDmy`);
+on focus and masks typed digits (31032026 → 31/03/2026, `maskDmy`) — but only
+while every `/` on screen is one the mask itself placed (`separatorsAreMaskOwn`);
+a separator the operator typed is left alone and read by `parseDmy`, so
+`7/9/2026` no longer collapses to `79/20/26`. On blur, text that does not parse
+STAYS on screen with `aria-invalid` and a `role="alert"` message rather than
+reverting in silence. **On a coarse pointer the native `<input type="date">` IS
+the tap target** — `useCoarsePointer` swaps it from a 20px strip
+(`.nativeHidden`) to a transparent full-field overlay (`.nativeOverlay`,
+`pointer-events: auto`, marked `data-touch-target` in the DOM), so a finger tap
+opens the OS picker with no script involved; the day-first masked text stays
+visible underneath, so the display is still ours. `showPicker()` is now the
+MOUSE path only, reached from the calendar button, which keeps its 44px hit
+area. Consequence to know: a phone user can no longer tap into the text box to
+type a date — the OS picker is the touch entry method, and typing stays on every
+fine pointer (`pointer: coarse` is the PRIMARY pointer, so a keyboard-case iPad
+and a touchscreen laptop both keep the text box) and on any hardware keyboard.
+The earlier spelling of this, a `showPicker()` call fired from the text box's
+`onClick`, worked on Chrome and did nothing at all on iOS —
+`docs/bugs/0725-the-touch-date-picker-called-showpicker-on-an-untappable-inp.md`.
 `frontend/src/vendor/scm/components/MoneyInput.tsx` rests as 1,800.00
 (`fmtMoneyAtRest`) and edits plain. Pinned by `backend/tests/apInvoiceEdit.test.ts`,
 ApInvoices.test.tsx (pop-out, Edit, Copy, Insert / Enter, amounts),
-`SearchCombo.keys.test.tsx`, `DateField.mask.test.tsx`, `MoneyInput.test.tsx`.
+`SearchCombo.keys.test.tsx`, `DateField.mask.test.tsx`,
+`DateField.touch.test.tsx`, `MoneyInput.test.tsx`.
 
 **The AutoCount sections (2026-09-06).** Every account carries a `section`
 (`scm.accounts.section`, migration 20260906T0900) — the top node the

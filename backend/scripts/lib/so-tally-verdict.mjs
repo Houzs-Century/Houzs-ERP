@@ -104,11 +104,188 @@ export const AXIS_GROUPS = Object.freeze([
   { key: "specials", label: "specials", axes: ["specials"] },
   { key: "sofa-compartments", label: "sofa compartments", axes: ["sofa compartments", "sofa build not verifiable"] },
   {
+    /* 「transfer from和transfer to」 — the owner, 2026-09-08. Which document a
+       line was raised FROM, and how much of it has been transferred ON. */
+    key: "transfer-chain",
+    label: "单据转换链 — which document the line came FROM, and how much has gone ON",
+    axes: ["transfer from", "transfer to", "transfer chain not verifiable"],
+  },
+  {
     key: "bedframe-build",
     label: "bedframe build (divan / gap / leg / total height)",
     axes: ["divan height", "gap", "leg height", "T.Heights"],
   },
 ]);
+
+/* ── ONE DOCUMENT TYPE'S VOCABULARY, STATED ONCE ────────────────────────────
+ * 2026-09-08, the owner: 「然后把PO GR也tally掉」 — do for purchase orders and
+ * goods receipts what was just done for sales orders.
+ *
+ * The BUCKETING above is type-independent and stays that way: `bucketOf` and
+ * `isTallied` never learn what a purchase order is. What genuinely differs
+ * between the types is only WORDS and one GRAIN note, so that is all this table
+ * holds. Adding a fourth type must not be able to change what TALLIED means.
+ *
+ * WHY THE LABELS HAVE TO MOVE AT ALL. Two of them would be lies if they did
+ * not:
+ *   - a goods receipt's `quantity` is the quantity RECEIVED, not ordered, and
+ *     the owner reads those as different questions;
+ *   - a goods receipt's unit price is DECLARED — grn_items.unit_price_sen is
+ *     copied from the purchase-order line by design, never from GRDTL.UnitPrice
+ *     (lib/ac-reconcile-erp-sql.mjs, `priceDeclared`). Printing "unit price"
+ *     as a checked axis for GR would report our own derivation as agreement.
+ *
+ * `scope` is a function of the verdict because each type's population rule is
+ * its own: the sales orders are scoped by the DO rule, the purchase orders and
+ * the goods receipts by the outstanding rule in lib/ac-scope.mjs.
+ */
+export const DOC_TYPES = Object.freeze({
+  SO: {
+    key: "SO",
+    heading: "全部 SALES ORDER 对账结论 — SALES ORDERS vs THE ACCOUNT BOOK",
+    plural: "sales orders",
+    headline: "SALES ORDERS",
+    grain: null,
+    scope: (v, num) =>
+      `${num(v.documents.book)} sales orders in the account book; ${num(v.documents.scope)} are OUTSTANDING and ` +
+      `expected in the ERP (the owner's DO rule — a fully delivered order is correctly absent); ` +
+      `${num(v.documents.outOfScopeAbsent)} are out of scope and absent, which is that rule working.`,
+    labels: {},
+    tallied:
+      "agree with the account book on the document, the lines, the SKU, the quantity, the price, the total and " +
+      "every variant inside the line.",
+  },
+  PO: {
+    key: "PO",
+    heading: "全部 PURCHASE ORDER 对账结论 — PURCHASE ORDERS vs THE ACCOUNT BOOK",
+    plural: "purchase orders",
+    headline: "PURCHASE ORDERS",
+    grain: null,
+    scope: (v, num) =>
+      `${num(v.documents.book)} purchase orders in the account book; ${num(v.documents.scope)} are OUTSTANDING and ` +
+      `expected in the ERP; ${num(v.documents.outOfScopeAbsent)} are out of scope and absent, which is that rule ` +
+      "working.",
+    /* CURRENCY IS NAMED IN THE PRICE LABEL, and that is not decoration. A
+       foreign purchase order is where the book and the ERP can hold the same
+       NUMBER and still disagree, and reading the local-currency total as the
+       document's once wrote RM 13,068.55 of imaginary discount onto a CNY order
+       (docs/bugs/0665). The axis locks; the SUMMARY's `non-MYR` column does not
+       count it as a gap, which is exactly why it has to be visible here. */
+    labels: { price: "unit price, the document total, and the CURRENCY" },
+    tallied:
+      "agree with the account book on the document, the lines, the SKU, the quantity, the price, the total, the " +
+      "currency and every variant inside the line.",
+  },
+  GR: {
+    key: "GR",
+    heading: "全部 GOODS RECEIPT 对账结论 — GOODS RECEIPTS vs THE ACCOUNT BOOK",
+    plural: "goods receipts",
+    headline: "GOODS RECEIPTS",
+    /* THE GRAIN NOTE IS NOT OPTIONAL. One "document" here is a
+       (AutoCount receipt × purchase order) PAIR: an ERP goods receipt belongs to
+       ONE purchase order while an AutoCount receipt can span several, and 51 of
+       the 214 in-scope receipts do. A reader who takes the population as
+       "receipts" reads a right number as the wrong fact. */
+    grain:
+      'GRAIN: one "document" below is a (AutoCount receipt × purchase order) PAIR, written `GR-nnn|PO-nnn`. An ERP ' +
+      "goods receipt belongs to ONE purchase order while an AutoCount receipt can span several, so the pair is the " +
+      "finest grain BOTH sides can state. Counting receipts instead would report every multi-order receipt as short " +
+      "by the part of it raised against another order.",
+    scope: (v, num) =>
+      `${num(v.documents.book)} receipt×order pairs in the account book; ${num(v.documents.scope)} are in the ` +
+      `expected ERP population; ${num(v.documents.outOfScopeAbsent)} are out of scope and absent, which is that ` +
+      "rule working.",
+    labels: {
+      quantity: "quantity RECEIVED",
+      price: "the money the book states (document total)",
+    },
+    tallied:
+      "agree with the account book on the document, the lines, the SKU, the quantity received and the money the " +
+      "book states.",
+  },
+  /* ── THE THREE THE OWNER NAMED ON 2026-09-08 ───────────────────────────────
+   * 「SO PO GR PI SI DO 等等？都解决了吗？」 — six types, and only three had a
+   * spec, so `docTypeSpec` THREW for the other three and no report could be
+   * asked for them. The reconcile has always compared all six and the recorder
+   * has always been keyed by type; what was missing was the words.
+   *
+   * The BUCKETING is untouched and stays that way: `bucketOf` and `isTallied`
+   * do not learn what a delivery order is, and adding these three cannot change
+   * what TALLIED means. Only labels and one scope sentence differ.
+   *
+   * Two of the labels would be LIES if they did not move, and that is the whole
+   * reason the table exists rather than a default:
+   *   - a delivery order's item code is taken from the SALES ORDER line by
+   *     design, never from DODTL.ItemCode (lib/ac-reconcile-erp-sql.mjs,
+   *     `itemCodeDeclared`), and a migrated delivery carries no money at all;
+   *   - a purchase invoice's and a sales invoice's LINES come from OUR receipt
+   *     or delivery, not from the book's PIDTL / IVDTL (`migratedChainLineShape`
+   *     on both), so the line SHAPE is ours and the money is what must agree.
+   * Printing "unit price" as a checked axis for any of the three would report
+   * our own derivation back as agreement. */
+  DO: {
+    key: "DO",
+    heading: "全部 DELIVERY ORDER 对账结论 — DELIVERY ORDERS vs THE ACCOUNT BOOK",
+    plural: "delivery orders",
+    headline: "DELIVERY ORDERS",
+    grain: null,
+    scope: (v, num) =>
+      `${num(v.documents.book)} delivery orders in the account book; ${num(v.documents.scope)} are raised against ` +
+      `an OUTSTANDING sales order and expected in the ERP; ${num(v.documents.outOfScopeAbsent)} are out of scope ` +
+      "and absent, which is that rule working. The owner declined importing the delivery HISTORY — 11,443 " +
+      "documents — and that decision is what keeps this population small.",
+    labels: {
+      "item-code": "the SKU (taken from the sales-order line by design, so this is our own copy)",
+      price: "the money the book states (document total)",
+    },
+    tallied:
+      "agree with the account book on the document, the lines, the quantity delivered, and which sales order each " +
+      "line was delivered against.",
+  },
+  IV: {
+    key: "IV",
+    heading: "全部 SALES INVOICE 对账结论 — SALES INVOICES vs THE ACCOUNT BOOK",
+    plural: "sales invoices",
+    headline: "SALES INVOICES",
+    grain: null,
+    scope: (v, num) =>
+      `${num(v.documents.book)} sales invoices in the account book; ${num(v.documents.scope)} belong to a sales ` +
+      `order or delivery order the ERP holds — the owner's own ruling 「没有的 SO DO 何来发票？有的 SO DO 自然要发票」 ` +
+      `— and ${num(v.documents.outOfScopeAbsent)} are out of scope and absent, which is that rule working.`,
+    labels: {
+      lines: "the lines (built from OUR delivery order, so the number of rows is ours and the money is what must agree)",
+      price: "the money the book states (document total)",
+    },
+    tallied:
+      "agree with the account book on the document, the money, and which delivery order or sales order each line " +
+      "was invoiced against.",
+  },
+  PI: {
+    key: "PI",
+    heading: "全部 PURCHASE INVOICE 对账结论 — PURCHASE INVOICES vs THE ACCOUNT BOOK",
+    plural: "purchase invoices",
+    headline: "PURCHASE INVOICES",
+    grain: null,
+    scope: (v, num) =>
+      `${num(v.documents.book)} purchase invoices in the account book; ${num(v.documents.scope)} belong to a ` +
+      `goods receipt or purchase order the ERP holds; ${num(v.documents.outOfScopeAbsent)} are out of scope and ` +
+      "absent, which is that rule working.",
+    labels: {
+      lines: "the lines (built from OUR goods receipt, so the number of rows is ours and the money is what must agree)",
+      price: "the money the book states (document total)",
+    },
+    tallied:
+      "agree with the account book on the document, the money, and which goods receipt or purchase order each " +
+      "line was invoiced against.",
+  },
+});
+
+/** The spec for a type, or a refusal. A typo must not silently render as SO. */
+export function docTypeSpec(type) {
+  const spec = DOC_TYPES[String(type || "SO").toUpperCase()];
+  if (!spec) throw new Error(`no DOC_TYPES spec for document type "${type}" — add one before reporting on it`);
+  return spec;
+}
 
 const GROUP_OF = new Map();
 for (const g of AXIS_GROUPS) {
@@ -143,6 +320,19 @@ export const DECLARED_LABEL = Object.freeze({
     "the ERP is blank on an order NOBODY HAS PROCEEDED — your rule 还没proceed还没确认的就可以直接放空的",
   "sofa-decomposition": "one book line is one ERP line PER COMPARTMENT, so line count and per-line price are not comparable",
   "blank-book-row": "AutoCount's own EMPTY row — no item code, no quantity, no money for the ERP to hold",
+  "erp-zero-money":
+    "a MIGRATED goods receipt carrying RM 0.00 — your decision 2026-09-08 「GR 0 没关系」. PROVED per document " +
+    "(migrated paperwork, zero inventory movements), never assumed; the ones that could NOT be proved are still " +
+    "counted as differences",
+  "chain-line-not-in-book":
+    "the account book itself does not record WHICH LINE a delivery / invoice / receipt was raised from — only " +
+    "which DOCUMENT. Our link names the same document the book does; there is no finer answer in the book to " +
+    "check against, and none is claimed",
+  "chain-no-source":
+    "the book raised this line from nothing at all — it is the head of a chain, typed from scratch",
+  "chain-no-erp-counter":
+    "this edge has no stored ceiling in the ERP: how much has gone on is worked out from the child documents " +
+    "every time it is asked, so there is no saved number that can drift out of step",
 });
 
 /**
@@ -312,20 +502,18 @@ const rpad = (n, w) => String(n).padStart(w);
  * engineer: what population, then each axis in his words, then what was
  * excluded and under whose ruling, then the four numbers, then the sentence.
  */
-export function renderVerdict(v, { show = 20 } = {}) {
+export function renderVerdict(v, { show = 20, type = "SO" } = {}) {
+  const spec = docTypeSpec(type);
   const out = [];
   const p = (s = "") => out.push(s);
 
   p("");
-  p("═════════════ 全部 SALES ORDER 对账结论 — SALES ORDERS vs THE ACCOUNT BOOK ═════════════");
+  p(`═════════════ ${spec.heading} ═════════════`);
   p(
     `company ${v.companyId} · measured ${v.measuredAt} · book snapshot ${v.snapshotExportedAt} · ${v.source}`,
   );
-  p(
-    `${num(v.documents.book)} sales orders in the account book; ${num(v.documents.scope)} are OUTSTANDING and ` +
-      `expected in the ERP (the owner's DO rule — a fully delivered order is correctly absent); ` +
-      `${num(v.documents.outOfScopeAbsent)} are out of scope and absent, which is that rule working.`,
-  );
+  if (spec.grain) p(spec.grain);
+  p(spec.scope(v, num));
   p(
     `THIS VERDICT COVERS ${num(v.documents.population)} document(s): ${num(v.documents.compared)} present on both ` +
       `sides and compared line by line, ${num(v.documents.absent)} in scope and absent from the ERP, ` +
@@ -347,7 +535,7 @@ export function renderVerdict(v, { show = 20 } = {}) {
   p(`${pad("", 52)} ${rpad("", 7)} ${rpad("PROCEEDED", 9)} ${rpad("compare", 7)} ${rpad("PROCEEDED", 9)}`);
   for (const g of v.groups) {
     p(
-      `${pad(g.label, 52)} ${rpad(g.work.docs, 7)} ${rpad(g.work.docsProceeded, 9)} ` +
+      `${pad(spec.labels[g.key] ?? g.label, 52)} ${rpad(g.work.docs, 7)} ${rpad(g.work.docsProceeded, 9)} ` +
         `${rpad(g.unanswerable.docs, 7)} ${rpad(g.unanswerable.docsProceeded, 9)}`,
     );
   }
@@ -409,6 +597,25 @@ export function renderVerdict(v, { show = 20 } = {}) {
   if (v.reconcileSummary?.erpZeroMoney) {
     p(`   ${v.reconcileSummary.erpZeroMoney} document(s) carrying RM 0.00 on migrated paperwork — your decision 「GR 0 没关系」.`);
   }
+  /* A foreign document is COMPARED IN ITS OWN CURRENCY, which is a fact about
+     the comparison and not yet a verdict about the document. Whether the ERP's
+     own currency column agrees is a separate question, answered on the CURRENCY
+     axis above.
+
+     THIS SENTENCE USED TO ANSWER IT HERE, and wrongly — it said "what is wrong
+     is the ERP's own currency column", which is the same unread assertion that
+     had the reconcile calling HC-PO-009335 'MYR' for nineteen hours after it was
+     repaired to CNY (docs/bugs/0721). A count of documents compared in their own
+     currency says nothing about whether their currency code is right. */
+  if (v.reconcileSummary?.foreign) {
+    p(
+      `   ${v.reconcileSummary.foreign} document(s) are NOT in ${"MYR"}. Their totals are compared in the ` +
+        "document's own currency, so the money can be right to the sen. Whether the ERP's currency column " +
+        "ALSO agrees with the book is checked separately and counted on the CURRENCY axis above — never as " +
+        "money, because reading a local-currency total as the document's is what made an exchange rate look " +
+        "like a discount.",
+    );
+  }
 
   p("");
   p(
@@ -444,7 +651,7 @@ export function renderVerdict(v, { show = 20 } = {}) {
   const tallied = isTallied(v);
   p("");
   p("═════════════ THE ANSWER ═════════════");
-  p(`SALES ORDERS — ${num(v.documents.population)} documents, ${num(v.lines.acLinesPaired)} book lines paired.`);
+  p(`${spec.headline} — ${num(v.documents.population)} documents, ${num(v.lines.acLinesPaired)} book lines paired.`);
   p(`  IDENTICAL to the account book on every axis:            ${rpad(v.buckets.identical, 6)}`);
   const docWork = v.documents.absent + v.documents.phantom;
   p(
@@ -458,13 +665,13 @@ export function renderVerdict(v, { show = 20 } = {}) {
   p("");
   p(
     tallied
-      ? `TALLIED. All ${num(v.documents.population)} sales orders agree with the account book on the document, the ` +
-        "lines, the SKU, the quantity, the price, the total and every variant inside the line. " +
+      ? `TALLIED. All ${num(v.documents.population)} ${spec.plural} ${spec.tallied} ` +
         (v.buckets.unanswerable
           ? `${v.buckets.unanswerable} sofa build(s) could not be compared at all — the book's text does not state ` +
             "the pieces — and they are yours to adjudicate from the drawing, not work anyone owes."
           : "Nothing was left uncompared.")
-      : `NOT TALLIED. ${v.buckets.work} sales order(s) still differ from the account book and somebody owes each one. ` +
+      : `NOT TALLIED. ${v.buckets.work} of the ${spec.plural} still differ from the account book and somebody owes ` +
+        "each one. " +
         (v.buckets.unanswerable
           ? `A further ${v.buckets.unanswerable} could not be compared at all and are yours to adjudicate from the drawing.`
           : ""),
