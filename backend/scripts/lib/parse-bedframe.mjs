@@ -179,6 +179,43 @@ function parseBedframe(d2) {
      the line came out with no leg rather than none. Re-apply it once every
      divan rule has had its turn. */
   if (o.leg === undefined && o.divan != null && !/LEG/i.test(s)) o.leg = 0;
+  /* ── A HEIGHT STATED AS "NOT CHOSEN YET" ─────────────────────────────────
+     TBC/KIV against a height is the SAME owner rule the colour already obeys
+     ("TBC/KIV means the colour is not chosen yet", the header above): the
+     component exists and its size has not been picked. Recorded as its own
+     fact because `o.divan == null` cannot carry it — an absent divan and an
+     undecided one are different, and the owner's model treats them
+     differently (a divan with no leg mentioned means NO leg; a leg written
+     "Leg TBC" means nobody knows).
+
+     Only an EXPLICIT statement counts. Nothing here infers a pending height
+     from silence, so a line that never mentions a divan is untouched.
+
+     Measured on the committed book cut (83,610 Desc2 lines): divan 55,
+     mattress gap 38, leg 20. All three are written this way by staff, which is
+     why all three are read rather than the divan alone.
+
+     The separator between the word and the marker is whatever staff typed —
+     a colon, a space, nothing at all ("LegTBC"), or a bracket the wrapper
+     strip left behind ("DIVAN: 8 (LEG) KIV"). One character class covers them
+     all. There is deliberately NO word boundary after the keyword: "LegTBC" is
+     one token to a regex engine, and requiring a boundary there missed the
+     book's own `Divan:8"+TBC"legs`.
+
+     The marker also comes BEFORE the word as often as after it — 'TBC"legs',
+     '(legs KIV)' — so both orders are read. Neither pattern can run away: the
+     separator class holds no letters or digits, so `DIVAN: 8" (LEG) KIV` marks
+     the LEG pending and leaves the divan at 8", which is what it says. */
+  const SEP = `[\\s:："'’”().+-]*`;
+  const MARK = `(?:TBC|KIV)`;
+  const pendingFor = (word) =>
+    new RegExp(`\\b${word}${SEP}${MARK}\\b|\\b${MARK}${SEP}${word}`, "i").test(s);
+  o.divanPending = pendingFor(`DIV(?:AN)?\\.?`);
+  o.gapPending = new RegExp(
+    `(?:MATT(?:RESS)?|M)?\\s*['’.]?\\s*(?:GAP|GP)${SEP}${MARK}\\b|\\b${MARK}${SEP}(?:M['’.]?\\s*)?(?:GAP|GP)\\b`,
+    "i",
+  ).test(s);
+  o.legPending = pendingFor(`LEGS?`);
   return o;
 }
 
@@ -210,6 +247,27 @@ function parseBedframe(d2) {
 function bedframeVariants(bf, findColour) {
   const fc = isPendingColour(bf.color) ? null : findColour(bf.color);
   const tot = (Number(bf.gap) || 0) + (Number(bf.divan) || 0) + (Number(bf.leg) || 0);
+  /* ── AN UNDECIDED COMPONENT MAKES THE TOTAL UNKNOWN, NOT SMALLER ─────────
+     This block used to read `Divan: TBC / Gap: 12"` as `divanHeight: null`
+     — right — and then `totalHeight: '12"'`, which states the bed is twelve
+     inches tall. Nobody knows how tall it is: the divan under it has not been
+     picked, and `Number(null) || 0` counted "not chosen yet" as ZERO.
+
+     The colour arm one line above already honours the owner's rule that
+     TBC/KIV is not-chosen-yet. This is the same rule on the same line of text,
+     and the two arms disagreeing is the whole defect.
+
+     THE RECONCILE CANNOT SEE THIS, which is why it survived: the AutoCount
+     comparison derives the book's side with THIS SAME EXPRESSION, so both
+     sides produce '12"' and the axis reports agreement. tests/
+     bedframePendingHeight.test.ts asserts the INTENDED value instead, and was
+     run RED against this function before the guard existed: 5 failed, 3
+     passed — the 3 being the controls that pin what must NOT change.
+
+     A merely ABSENT component is untouched. `Gap: 12"` on a line that never
+     mentions a divan still totals 12", and a divan with no leg mentioned still
+     means no leg (0) per the owner's model. Only an explicit TBC/KIV counts. */
+  const heightPending = bf.divanPending === true || bf.gapPending === true || bf.legPending === true;
   return {
     fabricId: fc ? fc.fabric_id : null,
     colourId: fc ? fc.colour_id : null,
@@ -219,7 +277,7 @@ function bedframeVariants(bf, findColour) {
     gap: bf.gap != null ? bf.gap + '"' : null,
     divanHeight: bf.divan != null ? bf.divan + '"' : null,
     legHeight: bf.leg != null ? bf.leg + '"' : null,
-    totalHeight: tot ? tot + '"' : null,
+    totalHeight: heightPending || !tot ? null : tot + '"',
     specials: bf.specials || [],
   };
 }
