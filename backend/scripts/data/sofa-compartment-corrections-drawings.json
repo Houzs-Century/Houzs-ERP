@@ -1,12 +1,17 @@
 {
  "_note": "SOFA BUILDS READ OFF THE ORDER SLIP'S DRAWING, 2026-09-08. Every document here is one the sales-order tally listed under 'CANNOT BE COMPARED - your drawing decides these': the account book's own Desc2 states a colour, a size or a finish but never the build, so nothing but the drawing can answer it. The owner asked for these to be read and decided rather than handed back to him - 「37张不一样的你处理不到？」/「然后109sofa图解析了 直接处理全部」/「你不是会解析照片了吗？为什么还需要我呢」.\n\nEVERY BUILD HERE IS A READING, NOT HIS RULING. The documents he read HIMSELF are in sofa-compartment-corrections-2026-08.json and -2026-09.json and are not touched. Each entry carries its confidence and cites what was actually seen in the photograph, so he can overrule any single one without redoing the round.\n\nTHE DRAWINGS ARE 240px THUMBNAILS AND THAT IS THE ORIGINAL. AutoCount itself stores them at that size - 2,732 of the 2,750 photographs in the whole sales-order export are 240px or smaller, and backend/scripts/export-ac-line-photos.py keeps original pixels with no resampling. So there is no higher-resolution copy to go back to, and the owner's own approved readings (HC-SO-012636, HC-SO-012929, HC-SO-013384) were made from these same images.",
  "_rules": "Money never moves: the price rides the FIRST piece and every other piece is 0. Lines are matched to target pieces and UPDATED in place so a row id - and any purchase allocation hanging off it - survives. desc2Match is required and is verified to be a VERBATIM substring of that document's own book Desc2 before the file is written. A `seat` is present only where a number was actually legible in a box or stated in the Desc2 - a guessed seat size is a defect (owner: never invent a seat size), and seatHeight holds bare inches.",
- "_confidence": "29 CONFIDENT (the drawing plainly shows the build) and 23 LIKELY (readable, but one element is a judgement call, named in that entry's why). A LIKELY build is applied - the owner asked for a decision, not a list - but it is labelled here so it is never mistaken for a fact, and so overruling one is a one-line edit.",
+ "_confidence": "29 CONFIDENT (the drawing plainly shows the build) and 21 LIKELY (readable, but one element is a judgement call, named in that entry's why). A LIKELY build is applied - the owner asked for a decision, not a list - but it is labelled here so it is never mistaken for a fact, and so overruling one is a one-line edit.",
  "_unread": [
   {
    "doc": "HC-SO-004709",
    "reason": "ambiguous",
    "why": "photo SO-004709__335480_1.jpg: one continuous outline holding only TWO boxes, each marked 35\", with a heavy black open bracket at the left end (the 'wooden arm') and a hatched block at the right end, captioned 'left side / with woorden arm'. Desc2 states 3S(35\"). Two seats drawn versus three stated - drawing and book disagree on the seat count, so the build is not settled."
+  },
+  {
+   "doc": "HC-SO-004709",
+   "reason": "product-not-minted",
+   "why": "the second sofa on this document is the book line RDS-R819 SOFA, and the build read from the drawing needs the piece 819-1S, which is NOT A MINTED PRODUCT (dry run 34229437633: \"piece SKU not minted: 819-1S\"). Minting a sofa model to fit a reading is not a repair, so this one goes to him. The document's OTHER sofa was already unreadable - its drawing shows two 35\" boxes while the book says 3S(35\")."
   },
   {
    "doc": "HC-SO-008683",
@@ -71,25 +76,17 @@
    "why": "photo: the only image is a 110x239 px partial crop of the slip. Three boxes each marked '35' can be made out (the left one drawn taller than the other two), but at that resolution no arm block resolves at either outer end - the narrow shapes there could be arms or the box edges - and there is a further hand-written token immediately right of the last box ('+ ...') that cannot be read at all. The build is not settled."
   },
   {
+   "doc": "HC-SO-012827",
+   "reason": "ambiguous",
+   "why": "the document carries TWO different sofas and the second one's slip text is entirely CONTAINED IN the first one's - \"35 inch color modenza 07 silver Nilon bottom\" against \"3 SEATER 35 inch color modenza 07 silver Nilon bottom\" - so no substring picks it out and the writer refused it rather than risk putting one build's answer on the other's rows (dry run 34229437633). The THREE-SEATER on this document IS written, from the unique needle \"3 seater\"; only the armchair beside it is left. Reading: the drawing shows a single undivided box, i.e. 1S at 35\"."
+  },
+  {
    "doc": "HC-SO-012947",
    "reason": "ambiguous",
    "why": "photo SO-012947__879533_1: the writer drew an arrow and wrote 'tbc side' beside the drawing, so the side the chaise goes on is explicitly NOT confirmed on the slip - emitting L(LHF) or L(RHF) would be writing a decision the slip says is unmade. Separately, the three 28 inch boxes are drawn JOINED inside one continuous outline (one unbroken top line with shared vertical dividers, no gaps), so by the owner's 2+1 versus 1+1+1 discriminator the split between the deep first box and the two shallow ones is not settled either. Desc2 ('9058 sofa backrest change 9028') carries no build and no size to break either tie."
   }
  ],
  "entries": [
-  {
-   "docs": [
-    "HC-SO-004709"
-   ],
-   "model": "819",
-   "pieces": [
-    "1S"
-   ],
-   "desc2Match": "Col:03-Straw#",
-   "confidence": "likely",
-   "why": "photo: photo SO-004709__335482_1.jpg: a single box with a hatched arm block on BOTH its left and its right side, '1R' written inside in blue and '30\"' written over it in black, with '30\"' repeated beside the box. One seat carrying its own two arms, read as a plain one-seater. Judgement call: the slip's '1R' marks it a recliner, which the piece vocabulary has no code for. | READ FROM THE DRAWING 2026-09-08, confidence LIKELY. This is a LIKELY reading, not a fact: the judgement it rests on is named above, and the owner can overrule this ONE build without touching the rest of the round. The account book's own Desc2 does not state this build at all, which is why his drawing is the only source (owner: 一律跟账本。除了sofa compartment而已啊).",
-   "seat": "30"
-  },
   {
    "docs": [
     "HC-SO-008214"
@@ -562,19 +559,6 @@
    "desc2Match": "3 seater",
    "confidence": "confident",
    "why": "photo: photo SO-012827__873100_1: '8030' and 'col: Modenza 07 Silver' written above the drawing; three DETACHED boxes joined by '+' signs, with a hatched arm block at the far left end of box 1 and a hatched arm block at the far right end of box 3, middle box plain; 'all 35' written under the row and '* nilon bottom.' below that. Detached boxes = 1+1+1. Desc2 '3 seater  35 inch' agrees as a multiset. | READ FROM THE DRAWING 2026-09-08, confidence CONFIDENT. The account book's own Desc2 does not state this build at all, which is why his drawing is the only source (owner: 一律跟账本。除了sofa compartment而已啊).",
-   "seat": "35"
-  },
-  {
-   "docs": [
-    "HC-SO-012827"
-   ],
-   "model": "8030",
-   "pieces": [
-    "1S"
-   ],
-   "desc2Match": "35 inch  color modenza 07 silver  Nilon bottom",
-   "confidence": "likely",
-   "why": "photo: photo SO-012827__873101_1 is a SECOND, separate drawing on its own page: '8030' / 'col: Modenza 07' then ONE continuous rectangle containing a hatched arm block inside each end and a single UNDIVIDED seat area between them - i.e. a one-seater armchair, which fits this document having two DSL-8030 lines (one marked '3 seater', this one not). JUDGEMENT CALL: the middle span has no divider drawn, so I read one seat (1S); if that span was meant as two seats the answer would be 2S. No number is written on this drawing - seat 35 is taken from this line's own Desc2, not invented. NOTE on desc2Match: line seq 32's whole text is a substring of line seq 16's, so no substring is unique to it; the full line text is given so an exact match picks it out. | READ FROM THE DRAWING 2026-09-08, confidence LIKELY. This is a LIKELY reading, not a fact: the judgement it rests on is named above, and the owner can overrule this ONE build without touching the rest of the round. The account book's own Desc2 does not state this build at all, which is why his drawing is the only source (owner: 一律跟账本。除了sofa compartment而已啊).",
    "seat": "35"
   },
   {
