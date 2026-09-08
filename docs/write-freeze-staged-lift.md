@@ -211,13 +211,34 @@ next**, and do not run two stages back to back without watching the floor in
 between — the whole reason for staging is to find out that a module is broken
 while only that module is open.
 
-Actions -> **SCM write freeze (on/off)** -> Run workflow:
+> **CORRECTED 2026-09-08.** This section told the reader to run a workflow
+> called **SCM write freeze (on/off)** with inputs `state` / `companies`. **No
+> such workflow existed** — `grep -rl "SCM write freeze" .github/workflows`
+> matched only the two READ-ONLY checks. That is why every lift so far was
+> "prepared as a SQL statement": the runbook's primary instruction pointed at
+> something that was never built, and the fallback below became the only path.
+> The workflow now exists, under the name and inputs written here.
+
+Actions -> **Write freeze (open / close SCM modules)** -> Run workflow:
 
 - `target` = `prod`
-- `state` = `on` (the freeze stays ON — you are naming exceptions to it)
-- `companies` = `1`
-- `areas` = the cumulative list for the stage
-- `message` = optional; overrides the sentence staff see
+- `mode` = `plan` first. It prints BEFORE, AFTER, what OPENS, what CLOSES and
+  what stays frozen, and writes nothing. Then run it again with `apply`.
+- `areas` = the cumulative list for the stage, or `off` to end the freeze, or
+  `none` to freeze the whole surface
+- `company` = blank for 1 (Houzs Century)
+- `allow_close` = `yes` ONLY when you mean to take away an area that is open
+  today. Without it the apply REFUSES rather than silently re-freezing a module
+  somebody is using — which looks like the ERP being broken and nobody connects
+  it to this.
+- `message` = optional; the sentence staff see. **Blank leaves the existing one
+  alone**, so an ordinary lift never blanks the explanation.
+
+Every area is validated against the mounts in `scm/index.ts` through the same
+reader the read-only check uses, so a mistyped area is REFUSED and named instead
+of written. That matters because the middleware treats a token it cannot resolve
+as "stays frozen" — a typo would otherwise be a silent no-op that reads as a
+successful lift.
 
 > `areas` is **cumulative**. It is the complete list of what is open, not a
 > delta. Stage 3 must repeat stages 1 and 2, or they close again.
@@ -232,7 +253,9 @@ Actions -> **SCM write freeze (on/off)** -> Run workflow:
 | 5 | `...,scm.procurement.pi,scm.sales.invoices` | ...and both invoice modules |
 | 6 | — set `state` = `off` | Everything. The freeze is over. |
 
-The equivalent SQL, if you would rather do it directly (stage 2 shown):
+The equivalent SQL, for reading only — **prefer the workflow**, which validates
+the area names, prints what it closes, and re-reads on a fresh connection to
+prove the value resolves to the areas you meant (stage 2 shown):
 
 ```sql
 UPDATE scm.app_config
