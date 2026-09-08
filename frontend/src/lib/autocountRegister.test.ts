@@ -54,6 +54,7 @@ const row = (over: Partial<AcOutboxRow> = {}): AcOutboxRow => ({
   can_requeue: false,
   can_send_now: false,
   ac_doc_no: null,
+  archived_at: null,
   created_at: "2026-08-15T00:00:00.000Z",
   updated_at: "2026-08-15T00:00:00.000Z",
   sent_at: null,
@@ -113,6 +114,53 @@ describe("what the account book answered with", () => {
     expect(acBookNumber(row({ state: "pending", ac_doc_no: null })).verdict).toBe("not-yet");
     expect(acBookNumber(row({ state: "sent", ac_doc_no: null })).verdict).toBe("not-recorded");
     expect(acBookNumber(row({ state: "sent", ac_doc_no: "   " })).verdict).toBe("not-recorded");
+  });
+
+  /* THE FALSE POSITIVE THIS FLAG WAS ABOUT TO FIRE ON EVERY MIGRATED DOCUMENT.
+     Measured against production on 2026-09-08: all three documents in Houzs
+     Century's queue were flagged DIFFERENT NUMBER — HC-SO-013361 against
+     SO-013361, and the same for -013393 and -013394 — and none of them is a
+     mismatch. A document imported from the account book is numbered
+     `HC-` + the AutoCount number BY CONSTRUCTION
+     (backend/scripts/import-ac-outstanding-so.mjs:342, `docNo: "HC-" + acDoc`),
+     and backend/scripts/check-migrated-numbering.mjs asserts exactly that
+     equality across the corpus. So the two numbers differing by the company
+     prefix is the DESIGN, not a divergence.
+
+     It matters more than three rows. 2,877 outstanding documents came across in
+     the cutover; every one of them that staff touch after go-live queues an
+     edit and lights this flag. This file's own comment says why that is worse
+     than not flagging at all: "a false flag on a healthy row teaches everyone
+     to ignore the flag, and then the real one is invisible too." */
+  it("does not cry mismatch when the book number is the ERP number without its company prefix", () => {
+    const v = acBookNumber(row({ doc_no: "HC-SO-013361", ac_doc_no: "SO-013361" }));
+    expect(v.verdict).toBe("prefixed");
+    expect(v.flagged).toBe(false);
+    /* The BOOK's number is still what the cell shows — it is the string
+       somebody has to type into AutoCount to find the document. */
+    expect(v.number).toBe("SO-013361");
+  });
+
+  it("recognises the other company's prefix too, without either being written down", () => {
+    expect(acBookNumber(row({ doc_no: "2990-SO-000123", ac_doc_no: "SO-000123" })).flagged)
+      .toBe(false);
+  });
+
+  /* THE REAL MISMATCH MUST SURVIVE THIS, and it is the same document the first
+     test in this block is about: HC-PO-2608-001 does NOT end with PO-009968, so
+     no prefix rule can explain it away. */
+  it("still shouts about the incident it was built for", () => {
+    expect(acBookNumber(row({ doc_no: "HC-PO-2608-001", ac_doc_no: "PO-009968" })).flagged)
+      .toBe(true);
+  });
+
+  /* A SUFFIX MATCH IS NOT ENOUGH. `SO-013361` ends with `13361`, and calling
+     that a prefixed number would quietly excuse a book number that is a
+     genuinely different, shorter document number. What separates them is that
+     the part in front has to END at a separator, i.e. be a real prefix. */
+  it("does not accept a bare suffix as a prefix match", () => {
+    expect(acBookNumber(row({ doc_no: "HC-SO-013361", ac_doc_no: "13361" })).flagged)
+      .toBe(true);
   });
 
   it("never flags a row it has no answer for", () => {
