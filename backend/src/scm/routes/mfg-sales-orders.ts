@@ -10098,15 +10098,14 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
     return c.json({ error: 'swap_failed', reason: delErr.message }, 500);
   }
 
-  /* Carry the frozen links onto the replacement lines, matched by SKU. A module
-     SKU with no counterpart in the new build is NOT re-pointed — that link is
-     genuinely gone and is reported instead of quietly invented. */
+  /* Carry the frozen links onto the replacement lines, matched by SKU AND COLOUR
+     (docs/bugs/0672 site 11 — on SKU alone the two fabrics of one sofa model
+     share a bucket and pair by POSITION, so a reordered replacement set hands
+     the BLUE two-seater's purchase order to the GREY one). A (SKU, colour) with
+     no counterpart is NOT re-pointed — that link is genuinely gone and is
+     reported instead of quietly invented. */
   const soLinkResult = await (async () => {
     if (soLinkSnapshot.length === 0) return { restored: 0, dropped: 0 };
-    /* The bucket is (SKU, COLOUR) — docs/bugs/0672 site 11. On SKU alone the two
-       fabrics of one sofa model share a bucket and pair by POSITION, so a
-       reordered replacement set hands the BLUE two-seater's purchase order to
-       the GREY one. Both sides already carry `variants`. */
     const plan = planSoLineRelink(
       oldLines.map((l) => ({ id: l.id, itemCode: l.item_code, lineNo: l.line_no ?? null, variantSig: soLineVariantSig(l.variants) })),
       ((inserted ?? []) as Array<{ id: string; item_code: string | null; line_no: number | null; variants: unknown }>)
