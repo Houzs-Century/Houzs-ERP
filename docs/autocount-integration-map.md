@@ -41,7 +41,7 @@ This is the part people get wrong. "The AutoCount connection" is not one thing.
 
 | # | Channel | Direction | Auth | What it is for |
 |---|---|---|---|---|
-| 1 | `https://autocount.houzscentury.com` → cloudflared → `localhost:8900` **AcSyncService** | ERP **writes** to AutoCount | `X-API-KEY` header, fail-closed | The live write-back. Nine routes, all POST, **all writes** |
+| 1 | `https://autocount.houzscentury.com` → cloudflared → `localhost:8900` **AcSyncService** | ERP **writes** to AutoCount, and asks it six narrow questions | `X-API-KEY` header, fail-closed | The live write-back. **17 routes: ten write, six READ, plus `/health`** — see §6 |
 | 2 | `https://it-houzs.dev` — the LEGACY read relay | reads **out of** AutoCount | **partial and broken — see the COE** | Pre-cutover read middleware. Still up |
 | 3 | ZeroTier → `10.147.17.100,55500` — direct SQL to `AED_HOUZS` | reads (and could write) | SQL login `sa2` + password | How the migration read the book, and how every fidelity comparison was done — including reading `Desc2` line by line |
 | 4 | `tempdb.ac_src_bridge` — a scratch table | moves source code to and from the host | same SQL login | The only channel needing neither a screen nor a keyboard. **Its contents are stale** — see §7 |
@@ -188,11 +188,46 @@ with `TransferedDocNotAllowToCancelException`. Cancel the child first.
 
 ## 6. Reading data OUT of AutoCount
 
-There is **no read route on the write service**. All nine of its routes are
-writes; `/health` is the only thing that answers anything, and it answers from
-constants. That is deliberate — it is a receiving end.
+> **CORRECTED 2026-09-08.** This section opened *“There is no read route on the
+> write service. All nine of its routes are writes; `/health` is the only thing
+> that answers anything”*. That was true when it was written and has not been
+> since 2026-08-31, and it is the expensive direction to be wrong in: it tells a
+> reader who needs one fact out of the account book that there is no way to ask,
+> so they either go without the fact or reach for the ZeroTier SQL credential.
+> Re-count rather than believing this paragraph either —
+> `grep -n 'case "/' backend/scripts/autocount-service/AcSyncService.cs`.
 
-Reading happens two other ways:
+**The service has SIX read routes**, added one at a time as a question came up
+that no export could answer. Each is one `SELECT`, no SDK session, no
+transaction, no document opened:
+
+| route | answers | the ERP reaches it at |
+|---|---|---|
+| `/doc-read` | one document's header + lines as the BOOK holds them, naming any column that does not exist | `GET /api/scm/autocount-outbox/book-doc` |
+| `/table-columns` | which columns a document table actually has (names only) — including whether it carries `UDF_` columns | `GET /api/scm/autocount-outbox/table-columns?table=DO` |
+| `/further-description` | a line's `FurtherDescription`, reporting truncation instead of hiding it | **service only — no ERP route** |
+| `/line-fingerprints` | a document's lines, enough to match ours up against the book's | the held-back / relink flow |
+| `/picture-census` | how many lines carry a picture | **service only — no ERP route** |
+| `/last-errors` | the host's own recent failures | `GET /api/scm/autocount-outbox/host-log` |
+
+`/health` is still the only one that answers from CONSTANTS, and the trap in §7
+about it stands untouched: it proves a process is listening, never that the book
+can be opened.
+
+**Everything else on the service writes** — the seven document operations,
+`/cancel`, `/edit` and `/ensure-masters`.
+
+**The ERP keeps the two vocabularies APART, on purpose.** `AC_ROUTE`
+(`backend/src/services/autocount-writeback.ts`) is the eleven operations the
+write-back can ask for, and every one of them is a thing an outbox ROW can be —
+a document's journey, with a status, attempts and a retry policy. The reads live
+in their own map, `AC_READ_ROUTE`
+(`backend/src/services/autocount-host-read.ts`), and that file's header says why:
+a read takes no outbox row, has no retry policy and no attempts, because there is
+nothing to deliver. **Adding a read route must never add an `AcOp`.**
+
+Two BULK ways of reading remain, and the read routes do not replace them —
+they answer one document, not a corpus:
 
 1. **Direct SQL over ZeroTier** (channel 3). This is how every comparison in
    this repository was produced — `export-ac-fidelity-truth.py` and the
