@@ -205,13 +205,28 @@ this row says, and is the bigger hammer if the floor has to stop.
   query alone will not list them. Testing with one proves nothing.
 - **The 30s cache is per isolate.** Different staff can briefly see different
   behaviour. Wait it out before concluding a change failed.
-- **It guards `/api/scm/mfg-sales-orders/:docNo/*` only.** `POST /` (create) is
-  never gated — that is the point. `/so-amendments/:id/*` is NOT gated by the
-  middleware either: those act on an amendment that already exists, and no NEW
-  amendment can be raised on a migrated order once this is on
-  (`POST /:docNo/amendments` is behind the guard). An amendment already open on a
-  migrated order when this shipped can still be approved. If that matters, find
-  them before lifting the freeze.
+- **It guards TWO prefixes, and `POST /` (create) on neither.** A brand-new
+  order carries no document in its path, so it never reaches the lookup — that
+  is 「只开新单」 in one line of control flow, and it is the point.
+
+  > **CORRECTED 2026-09-08 (`docs/bugs/0688-an-amendment-already-open-on-a-migrated-sales-order-could-st.md`).**
+  > This bullet used to end: *"`/so-amendments/:id/*` is NOT gated by the
+  > middleware either… An amendment already open on a migrated order when this
+  > shipped can still be approved. If that matters, find them before lifting the
+  > freeze."* **That hole is CLOSED.**
+  > `scm.use("/so-amendments/*", migratedSoAmendmentReadonly())` applies the same
+  > rule on the amendment prefix — same 409, same bypass cohort, same switch —
+  > because `approve-so` is not a status flip: it runs `applySoAmendment`, which
+  > rewrites the bound order's header and its lines. Writing a hole down is not
+  > closing it, and the freeze lift that makes it reachable is the very next
+  > operational step.
+  >
+  > **How big was it? Zero documents.** Measured 2026-09-08 at 11:25 MYT
+  > (Actions -> *Migrated-SO open amendments — status (read-only)*, run
+  > `34183293402`): **0** open amendments on a migrated order, out of **18** open
+  > amendments in all, across **2,882** migrated orders of **3,047**. The door
+  > was open and nobody was standing in it. That is the count on the day, not a
+  > property of the system — re-run the check before quoting it.
 - **Reads were never affected** and never will be by this switch.
 
 ---
@@ -221,12 +236,49 @@ this row says, and is the bigger hammer if the floor has to stop.
 | What | File |
 |---|---|
 | The decision, the grammar, the sentence | `backend/src/scm/lib/migrated-so-lock.ts` |
-| The middleware + the ONE shared state function | `backend/src/scm/lib/migrated-so-readonly.ts` |
-| Mount point | `backend/src/scm/routes/mfg-sales-orders.ts` (`mfgSalesOrders.use('*', migratedSoReadonly())`) |
+| The two middlewares + the ONE shared state function | `backend/src/scm/lib/migrated-so-readonly.ts` |
+| Mount points — BOTH prefixes | `backend/src/scm/index.ts` (`scm.use("/mfg-sales-orders/*", migratedSoReadonly())` and `scm.use("/so-amendments/*", migratedSoAmendmentReadonly())`) |
+| How many amendments are open on a migrated order right now | `backend/scripts/check-migrated-so-amendments.mjs` — Actions -> *Migrated-SO open amendments — status (read-only)* |
+| Did new orders start saving, and did anything touch a migrated one | `backend/scripts/check-so-open-for-new.mjs` — Actions -> *Sales orders open for NEW — status (read-only)* |
 | Is this order migrated? | `backend/src/scm/lib/so-is-migrated.ts` |
 | The switch's row | `backend/src/db/migrations-pg/20260908T0014_scm_migrated_so_lock.sql` |
 | Shared frontend gate | `frontend/src/vendor/scm/lib/so-detail-gates.ts` (`migratedReadonly`) |
 | Curated refusal sentence | `frontend/src/vendor/scm/lib/authed-fetch.ts` (`so_migrated_readonly`) |
 | Grammar + decision tests | `backend/tests/migratedSoLock.test.ts` |
+| Both guards in the production mount shape | `backend/tests/migratedSoReadonlyMiddleware.test.ts` |
 | All-four-surfaces wiring test | `frontend/src/vendor/scm/lib/so-detail-gates.migrated.test.ts` |
 | Module guide | `docs/modules/sales-order.md` |
+
+---
+
+## 9. Every other door onto a migrated order, and why it is open
+
+Two routers WRITE a sales-order document and both are now guarded. Several
+others write a COLUMN on one, and they are deliberately left alone — a
+migrated order still has to be delivered, and the whole point of importing the
+outstanding ones was that they would be.
+Blocking those would stop the shop floor doing the one thing the cutover exists
+to let it do.
+
+The population was enumerated, not reasoned about. Eleven files in
+`backend/src` hold a write statement against `mfg_sales_orders`,
+`mfg_sales_order_items`, `mfg_sales_order_payments` or `so_amendments`; the
+command that lists them is in the PR body for `docs/bugs/0688-…` and is
+re-run by CI. What each one is:
+
+| Door | Prefix | Guarded? | Why |
+|---|---|---|---|
+| Sales Order writes, incl. `PATCH /:docNo/hold` and `POST /:docNo/amendments` | `/mfg-sales-orders/*` | **YES** | the document itself |
+| Amendment gates — supplier-confirm, approve-so, approve-po, send, reject, withdraw | `/so-amendments/*` | **YES** (2026-09-08) | `approve-so` rewrites the order's header and lines |
+| Salesperson handover (`salesperson_id`, `agent`) | `/so-handover/*` | no | attribution, not the order's content or money; a manager action on resignation/transfer, gated by `scm.so.attribute_other`. **A judgement call, not an oversight** — if the owner wants it shut, it is one more `scm.use` line |
+| Delivery scheduling (`amended_delivery_date`, `delivery_state`) | `/delivery-planning/*` | no | the delivery module's own flow. Shutting it would stop migrated orders being delivered |
+| Delivery order / return / revert — line delivered quantities, status | `/delivery-orders-mfg/*`, `/delivery-returns/*` | no | same reason. `so-delivery-sync.ts`, `so-generation.ts` |
+| `po_qty_picked` recount on SO lines | `/mfg-purchase-orders/*` | no | a DERIVED counter driven by PO activity, not a staff edit (`recomputeSoPicked`) |
+| Stock allocation recompute (`stock_status`) | many + cron | no | derived from stock, never typed by anyone |
+| Scan-to-SO intake, incl. its payment rows | `/scan-so/*` | no | it books only against an order it just CREATED — `docNo` comes from `createDraftSalesOrder`'s 201 (`scan-so.ts:4098`), so it can never reach a migrated one |
+| 2990 mirror ingest | `/so-mirror/*` | no | writes company 2990's rows; the lock names company 1 |
+
+**If this list is ever re-checked, check it the same way** — run the
+enumeration, then read each member. The first version of this lock was written
+by reasoning about which router mattered, and it got the count right and the
+population wrong.

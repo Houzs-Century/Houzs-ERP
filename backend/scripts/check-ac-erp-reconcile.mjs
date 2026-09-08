@@ -79,6 +79,33 @@
  *    not as gaps — the document TOTAL still has to match to the cent, and it
  *    is checked.
  *
+ * ── THE COLUMNS THAT ARE NOT DIFFERENCES ────────────────────────────────────
+ * Three of the summary's counts were never disagreements, and printing them
+ * under a heading that says "difference" made the owner re-ask about the same
+ * three cells every single run. They now have columns of their OWN — visible,
+ * counted, named — and they are excluded from the gap total:
+ *
+ *   `no-price`  the BOOK states no unit price. Houzs prices a purchase when the
+ *               goods arrive, so most purchase-order lines carry UnitPrice 0.00
+ *               and a 0.00 line subtotal. Copying the book would ERASE a real
+ *               ERP price. This is the owner's 空白不覆盖 rule, and the split
+ *               that computes it was already here — it just did not reach the
+ *               summary.
+ *   `ERP-RM0`   our document carries RM 0.00 where the book states a value, on
+ *               MIGRATED PAPERWORK. Owner, 2026-09-08: 「GR 0 没关系」. Named
+ *               consequence: a purchase invoice cannot be raised off it.
+ *   `decided`   an in-scope document the ERP does not have, about which the
+ *               owner has already ruled. It stays on screen, by name, with the
+ *               action still owed, until it is done.
+ *
+ * NONE of these is a constant that is believed. Each one is DERIVED from a
+ * measurement made in the same run — see lib/ac-not-a-difference.mjs, whose
+ * header is the specification, and backend/tests/acNotADifference.test.ts,
+ * which pins the property that a partial cover still reports DIFFER. That is
+ * the 0668 lesson applied in the other direction: 0668 was a hand-typed label
+ * printing 30 real gaps as decisions, and a benign column is the same hazard
+ * with the sign flipped.
+ *
  * ── SELF-TEST ───────────────────────────────────────────────────────────────
  * A checker that cannot match must refuse, never report a clean run.  Before
  * comparing anything it proves, per type, that its doc-number matcher and its
@@ -114,6 +141,7 @@ import {
 } from "./lib/variant-reconcile.mjs";
 
 import { buildScope, currencyVerdict, decodeSnapshot, isTestDoc, LOCAL_CURRENCY } from "./lib/ac-scope.mjs";
+import { splitBookUnpriced, splitDecidedAbsences, splitErpZeroMoney } from "./lib/ac-not-a-difference.mjs";
 import { grPairGrain } from "./lib/ac-gr-pair-grain.mjs";
 import { FIELD_MAP } from "./lib/ac-field-identity.mjs";
 import {
@@ -356,6 +384,31 @@ const TYPES = [
        sides can state, and at that grain the comparison is like-for-like. */
     pairGrain: true,
     sofaAware: true,
+    /* THE OWNER'S STANDING DECISION about a migrated receipt that carries no
+       money, 2026-09-08: 「GR 0 没关系」. Declared HERE, per type, so it can
+       never leak to a document type he never ruled on — and honoured only where
+       the run can PROVE the receipt is migrated paperwork. `zeroMoneyProof`
+       below is that proof; without it nothing is reclassified. */
+    zeroMoneyDecision: {
+      label: "GR 0 没关系",
+      ruling:
+        "the owner ruled 2026-09-08 that a MIGRATED goods receipt may carry RM 0.00. It moves no stock, no " +
+        "cost and no MRP — the units were already brought in by the balance snapshot, and the receipt is " +
+        "paperwork recording that the book has one",
+      consequence:
+        "a PURCHASE INVOICE cannot be raised off a RM 0.00 receipt. That is the whole cost of this decision " +
+        "and it is named here so nobody rediscovers it as a surprise",
+    },
+    /* One row per migrated receipt, carrying the two facts the decision rests
+       on. Read-only. `source_doc_no` is how every other script in this repo
+       asks "did this document move stock" (apply-sofa-compartment-corrections
+       .mjs:90), so the question is asked the same way here. */
+    zeroMoneyProof: () => sql`SELECT g.grn_number AS erp_no,
+        COALESCE(g.migrated_no_stock, false) AS migrated_no_stock,
+        (SELECT count(*)::int FROM scm.inventory_movements m
+          WHERE m.company_id = g.company_id AND m.source_doc_no = g.grn_number) AS movements
+      FROM scm.grns g
+      WHERE g.company_id = ${CO} AND g.status <> 'CANCELLED' AND g.linked_ac_gr_docno IS NOT NULL`,
     priceDeclared:
       "grn_items.unit_price_sen is taken from the PURCHASE ORDER line by design, not from GRDTL.UnitPrice — " +
       "reshape-migrated-grns.mjs copies the book's item, quantity and date, and leaves price to the order",
@@ -473,6 +526,30 @@ try {
   }
 } catch (e) {
   await refuse(`the ERP database could not be read: ${e.message}`);
+}
+
+/* The proof behind the owner's zero-money decision, loaded SEPARATELY and
+   FAILING SOFT on purpose. If those columns cannot be read — renamed, dropped,
+   a permission — the honest outcome is that nothing is reclassified and the run
+   says why, NOT that the whole reconcile refuses to answer the other twelve
+   questions it can still answer. A null proof is what `splitErpZeroMoney`
+   treats as "unproven", which keeps every count in the money column. */
+const zeroMoneyProof = {};
+for (const cfg of TYPES) {
+  if (!cfg.zeroMoneyProof) continue;
+  try {
+    const rows = await cfg.zeroMoneyProof();
+    zeroMoneyProof[cfg.t] = new Map(
+      rows.map((r) => [r.erp_no, { migratedNoStock: r.migrated_no_stock === true, movements: Number(r.movements) }]),
+    );
+  } catch (e) {
+    zeroMoneyProof[cfg.t] = null;
+    log(
+      `${cfg.t} — the migrated-paperwork proof could not be read (${e.message}). The owner's ` +
+        `「${cfg.zeroMoneyDecision?.label ?? "zero money"}」 decision is therefore NOT applied and every ` +
+        "document-total difference below is counted as a difference.",
+    );
+  }
 }
 
 /* ── self-test: prove the matchers hit before trusting any verdict ───────── */
@@ -877,15 +954,44 @@ for (const cfg of TYPES) {
   }
   const absenceWord = decisionHolds ? "owner-declined" : "GAP";
   const countsAsGap = !decisionHolds;
+  /* An absence the owner has ALREADY RULED ON is not an unexplained gap, and
+     printing it as one is how a decided item gets re-asked about every run. It
+     is not hidden either: every entry is named below with the ruling and the
+     action still owed, and it keeps its own `decided` column in the summary
+     until somebody executes it. The register is lib/ac-not-a-difference.mjs;
+     an entry is honoured only while its stated REASON still measures true
+     against the book, which is the 0668 lesson at document grain. */
+  const AB = splitDecidedAbsences({ t, missing: missingInScope, linesOf: (d) => B.lines.get(d) || [] });
   log(
-    `${t} DOCUMENTS — in-scope AutoCount documents absent from the ERP: ${missingInScope.length} (${absenceWord}); ` +
-      `ERP claims a document the book does not have: ${phantom.length}`,
+    `${t} DOCUMENTS — in-scope AutoCount documents absent from the ERP: ${AB.absent} (${absenceWord})` +
+      (AB.decided ? `, plus ${AB.decided} the owner has already ruled on (listed below)` : "") +
+      `; ERP claims a document the book does not have: ${phantom.length}`,
   );
   plain(
     `   out-of-scope and absent (CORRECT by the population rule): ${absentOutOfScope.length}; ` +
       `present though out of scope: ${outOfScopeMirrored.length}; duplicate claims: ${dupes.length}`,
   );
-  if (missingInScope.length) plain(`   absent (first ${SHOW}): ${first(missingInScope).join(", ")}`);
+  if (AB.decided) {
+    log(`${t} — ${AB.decided} of those ${missingInScope.length} absentee(s) are a DECISION the owner has already made, not an open gap:`);
+    for (const e of AB.decidedRows) {
+      plain(`      ${e.docNo} — ruling (${e.decidedOn}, ${e.source}): ${e.ruling}`);
+      plain(`         still owed: ${e.pending}`);
+      plain(`         still true in the book: ${e.proof}`);
+    }
+  }
+  for (const e of AB.refused) {
+    log(
+      `${t} DECISION REFUSED — the register claims ${e.docNo} is settled ("${e.ruling}") but ${e.why}. ` +
+        "It is counted as a GAP. Fix the register or the document.",
+    );
+  }
+  for (const e of AB.stale) {
+    log(
+      `${t} DECISION REGISTER STALE — ${e.docNo} is no longer an in-scope absence, so the entry recording ` +
+        `"${e.ruling}" describes nothing. Delete it from DECIDED_ABSENCES in lib/ac-not-a-difference.mjs.`,
+    );
+  }
+  if (AB.absent) plain(`   absent (first ${SHOW}): ${first(AB.absentDocs).join(", ")}`);
   if (phantom.length) plain(`   phantom (first ${SHOW}): ${first(phantom).join(", ")}`);
   if (dupes.length) plain(`   duplicate (first ${SHOW}): ${first(dupes).join(" | ")}`);
 
@@ -893,8 +999,9 @@ for (const cfg of TYPES) {
     log(`${t} DATA — line and money comparison NOT APPLICABLE. ${cfg.linesNotComparable}`);
     summary.push({
       t, acDocs: B.headers.size, scope: scope.size, erpLinked: claimed.size,
-      missing: missingInScope.length, absenceIs: decisionHolds ? "DECISION" : "GAP", phantom: phantom.length,
-      bothSides: 0, lineCount: "-", item: "-", qty: "-", price: "-", money: "-", gaps: missingInScope.length * (countsAsGap ? 1 : 0) + phantom.length,
+      missing: AB.absent, decided: AB.decided, absenceIs: decisionHolds ? "DECISION" : "GAP", phantom: phantom.length,
+      bothSides: 0, lineCount: "-", item: "-", qty: "-", price: "-", noPrice: "-", money: "-", erpZeroMoney: "-",
+      gaps: AB.absent * (countsAsGap ? 1 : 0) + phantom.length,
     });
     continue;
   }
@@ -919,6 +1026,10 @@ for (const cfg of TYPES) {
   /* The unit-price differences, split by WHAT KIND they are. See the comment at
      the classification below; only `bothPriced` and `erpDropped` are copy jobs. */
   const P = { bookDropped: [], bookUnpriced: [], erpDropped: [], bothPriced: [] };
+  /* The document-total differences in a machine-readable shape, so the owner's
+     zero-money decision can be applied per document with a proof behind it
+     rather than by pattern-matching a printed string. */
+  const moneyRows = [];
   /* One entry per AUTOCOUNT line that became at least one ERP line, carrying
      the ERP lines it became. A sofa line becomes one ERP row per compartment,
      so the compartment axis is only answerable over the whole group. */
@@ -1013,7 +1124,11 @@ for (const cfg of TYPES) {
          no money at all. Counted apart so 55 documents do not read as 55
          separate defects. */
       if (!erpTotal && bookTotal) zeroMoneyDocs++;
-      F.money.push(`${ac}: AutoCount RM ${rm(bookTotal)} vs ERP RM ${rm(erpTotal)} (ERP ${d.erp_no})`);
+      const line = `${ac}: AutoCount RM ${rm(bookTotal)} vs ERP RM ${rm(erpTotal)} (ERP ${d.erp_no})`;
+      F.money.push(line);
+      /* The same difference in a shape a classifier can read. The string above
+         is what a human sees; this is what decides which column it lands in. */
+      moneyRows.push({ key: ac, erpNo: d.erp_no, bookSen: bookTotal, erpSen: erpTotal, line });
     }
 
     /* When NO ERP line on this document carries a DtlKey and the two sides do
@@ -1167,28 +1282,70 @@ for (const cfg of TYPES) {
     }
   }
 
+  /* The split that decides which of the unit-price findings are DIFFERENCES.
+     `book holds NO price` is not one: the book states 0.00 with a 0.00 line
+     subtotal, so copying it would ERASE the ERP's price rather than correct it.
+     It gets its own `no-price` column in the summary and is out of the gap
+     total — unless the export self-check has fired, in which case none of the
+     four buckets can be trusted and NOTHING moves. */
+  const PX = splitBookUnpriced(P);
+  const MZ = splitErpZeroMoney({
+    rows: moneyRows,
+    decision: cfg.zeroMoneyDecision ?? null,
+    proof: zeroMoneyProof[t] ?? null,
+  });
   log(
     `${t} DATA (${bothSides} documents on both sides, ${comparedLines} lines paired) — ` +
       `line-count differs: ${F.lineCount.length}; item code: ${F.item.length}` +
       /* SAY WHAT WAS TAKEN OUT, in the same sentence as the number, or the drop
-         from 101 to 61 on 2026-09-08 reads as work nobody did. */
+         from 101 to 61 on 2026-09-08 reads as work nobody did. The same rule is
+         why `unit price` and `document total` now carry their own parenthetical
+         below: three different lanes reclassified three different counts on the
+         same day, and a number that shrinks without a reason attached is the
+         thing the owner has to come back and ask about. */
       (C.itemTranslation + C.itemDecomposition
         ? ` (of ${F.item.length + C.itemTranslation + C.itemDecomposition} raw code differences: ` +
           `${C.itemTranslation} are the same product written another way, ` +
           `${C.itemDecomposition} are one book line decomposed into compartments)`
         : "") +
       `; quantity: ${F.qty.length}; ` +
-      `unit price: ${F.price.length}; document total: ${F.money.length}`,
+      `unit price: ${PX.differ}` + (PX.noPrice ? ` (+${PX.noPrice} the book states no price for)` : "") +
+      `; document total: ${MZ.differ}` + (MZ.erpZero ? ` (+${MZ.erpZero} our document carries RM 0.00 by the owner's decision)` : ""),
   );
   plain(
     `   unpaired: ${F.unmatchedAc.length} AutoCount lines, ${F.unmatchedErp.length} ERP lines; ` +
       `DtlKey on the wrong document: ${F.keyOrphan.length}; ` +
       `AutoCount lines with no ItemCode (description-only, not comparable): ${descOnly}`,
   );
-  if (zeroMoneyDocs) {
+  /* ZERO MONEY IN THE ERP — the owner's decision, applied ONLY where proved.
+     A document total of RM 0.00 against a book value describes two completely
+     different things: migrated paperwork the owner has ruled on, and a live
+     document that lost its money. The shape alone cannot tell them apart, so
+     the split below requires `migrated_no_stock` AND zero inventory movements
+     per document. Anything that claims the decision and fails the proof is
+     printed LOUDER than an ordinary difference and stays counted as one. */
+  if (MZ.applied && MZ.erpZero) {
+    log(
+      `${t} — ${MZ.erpZero} of the ${bothSides} documents on both sides carry RM 0.00 in the ERP while the ` +
+        `book states a value. NOT a money gap: 「${cfg.zeroMoneyDecision.label}」 — ${cfg.zeroMoneyDecision.ruling}.`,
+    );
+    plain(`      PROVED per document, not assumed: every one is migrated_no_stock with 0 inventory movements naming it.`);
+    plain(`      What it costs: ${cfg.zeroMoneyDecision.consequence}.`);
+    plain(`      RM 0.00 in the ERP (first ${Math.min(SHOW, MZ.moved.length)} of ${MZ.moved.length}):`);
+    for (const row of first(MZ.moved)) plain(`      ${row.line}`);
+  }
+  if (MZ.impostors.length) {
+    log(
+      `${t} ZERO-MONEY DECISION REFUSED for ${MZ.impostors.length} document(s) — they carry RM 0.00 like the ` +
+        `${MZ.erpZero} above, but they are NOT migrated paperwork. Every one is counted as a money difference:`,
+    );
+    for (const row of MZ.impostors.slice(0, SHOW)) plain(`      ${row.line} — ${row.why}`);
+  }
+  if (!MZ.applied && zeroMoneyDocs) {
     log(
       `${t} — ${zeroMoneyDocs} of the ${bothSides} documents on both sides carry ZERO money in the ERP ` +
-        "while the book carries a value. That is one systematic cause, not that many separate defects.",
+        "while the book carries a value. That is one systematic cause, not that many separate defects." +
+        (cfg.zeroMoneyDecision ? ` They are still counted as differences: ${MZ.why}` : ""),
     );
   }
   if (foreignDocs.length) {
@@ -1227,7 +1384,8 @@ for (const cfg of TYPES) {
   }
   if (F.price.length) {
     log(
-      `${t} UNIT PRICE — the ${F.price.length} difference(s), split by what each one IS:` +
+      `${t} UNIT PRICE — ${PX.differ} real difference(s) and ${PX.noPrice} line(s) the BOOK states no price ` +
+        `for, out of ${F.price.length}:` +
         `  book holds NO price, ERP does: ${P.bookUnpriced.length}` +
         `; both sides priced and they differ: ${P.bothPriced.length}` +
         `; ERP dropped a price the book states: ${P.erpDropped.length}` +
@@ -1235,8 +1393,14 @@ for (const cfg of TYPES) {
     );
     plain(
       "      Only the last three are copy jobs. `book holds NO price` is the owner's 空白不覆盖 case — the book " +
-        "states 0.00 AND a 0.00 line subtotal, so it holds no price to copy and the ERP's value must stand.",
+        "states 0.00 AND a 0.00 line subtotal, so it holds no price to copy and the ERP's value must stand. " +
+        "Houzs prices a purchase when the goods ARRIVE, so a blank there is the business working, not a gap.",
     );
+    if (!PX.trusted) {
+      log(
+        `${t} NO-PRICE COLUMN REFUSED — ${PX.why} Nothing is moved out of the price column on this run.`,
+      );
+    }
     plain(
       "      `export lost a price` is the SELF-CHECK: the book states a line SubTotal while its UnitPrice is zero, " +
         "which is what a lost price looks like. A non-zero count there means this whole split is untrustworthy.",
@@ -1276,7 +1440,13 @@ for (const cfg of TYPES) {
     acDocs: B.headers.size,
     scope: scope.size,
     erpLinked: claimed.size,
-    missing: missingInScope.length,
+    missing: AB.absent,
+    /* The three counts that are NOT differences, each kept in its own field so
+       the table can show it and the gap total can leave it out. Losing one of
+       them into `gaps` would be the bug this whole split exists to prevent, so
+       the arithmetic below adds the DIFFERENCE halves explicitly rather than
+       subtracting the benign ones from a total. */
+    decided: AB.decided,
     absenceIs: decisionHolds ? "DECISION" : "GAP",
     phantom: phantom.length,
     bothSides,
@@ -1284,12 +1454,14 @@ for (const cfg of TYPES) {
     lineCount: F.lineCount.length,
     item: F.item.length,
     qty: F.qty.length,
-    price: F.price.length,
-    money: F.money.length,
+    price: PX.differ,
+    noPrice: PX.noPrice,
+    money: MZ.differ,
+    erpZeroMoney: MZ.erpZero,
     foreign: foreignDocs.length,
     gaps:
-      (countsAsGap ? missingInScope.length : 0) +
-      phantom.length + F.lineCount.length + F.item.length + F.qty.length + F.price.length + F.money.length,
+      (countsAsGap ? AB.absent : 0) +
+      phantom.length + F.lineCount.length + F.item.length + F.qty.length + PX.differ + MZ.differ,
   });
 }
 
@@ -1467,7 +1639,15 @@ plain("═══════════ 5. FIELD IDENTITY — EVERY FIELD THE M
 /* ── one-screen verdict ──────────────────────────────────────────────────── */
 plain("");
 plain("═══════════ SUMMARY ═══════════");
-plain("type  book  scope    erp  absent  phantom   both  lineCnt   item    qty  price  money  non-MYR");
+/* THE LEFT HALF IS WORK; THE RIGHT HALF IS NOT.  Four columns —
+   `decided`, `no-price`, `ERP-RM0` and `non-MYR` — are counts of things that
+   are correct as they stand, and none of them is added into `gaps`.  They are
+   printed anyway, and printed SEPARATELY, because the alternative is a number
+   that silently disappears: the owner asked for these cells at zero, and the
+   honest way to reach zero is to say what each count IS, not to stop counting
+   it.  Each has a sentence under the table in his own terms. */
+plain("        <-------------------- DIFFERENCES (the work) --------------------->  <----- NOT differences ----->");
+plain("type  book  scope    erp  absent  phantom   both  lineCnt   item    qty  price  money  decided  no-price  ERP-RM0  non-MYR");
 for (const s of summary) {
   plain(
     [
@@ -1483,21 +1663,59 @@ for (const s of summary) {
       String(s.qty).padStart(6),
       String(s.price).padStart(6),
       String(s.money).padStart(6),
+      /* An absence the owner has already ruled on. Named in full in this type's
+         own section above, with the action still owed. */
+      String(s.decided ?? 0).padStart(8),
+      /* The BOOK states no unit price. Copying it would ERASE the ERP's. */
+      String(s.noPrice ?? 0).padStart(9),
+      /* Our document carries RM 0.00 on migrated paperwork — the owner's
+         standing decision, proved per document, never assumed. */
+      String(s.erpZeroMoney ?? 0).padStart(8),
       /* Its own column, deliberately not folded into `money` and deliberately
          not counted in `gaps`: a foreign-currency document is compared in its
          own currency and may be perfectly correct. What it flags is that the
          ERP tags it MYR. Ledger 0665. */
-      String(s.foreign ?? 0).padStart(7),
+      String(s.foreign ?? 0).padStart(8),
     ].join(" "),
   );
 }
-plain("absent = in the expected population but not in the ERP; for DO/IV/PI the population is empty by owner decision.");
-plain("non-MYR = documents compared in their OWN currency. Not a money difference, and never repaired by script.");
+plain("");
+plain("absent   = in the expected population and NOT in the ERP. A real gap: somebody has to carry the document over.");
+plain("decided  = absent, but you have already said what to do with it. Listed by name above with the ruling and what is still owed;");
+plain("           it stays here until it is done, and it is NOT counted as an unexplained gap.");
+plain("no-price = AutoCount states NO price on the line (0.00 unit price AND a 0.00 line subtotal) while the ERP holds one.");
+plain("           Houzs prices a purchase when the goods arrive, so this is the business working. Copying the book here would");
+plain("           ERASE a real price, which is why it is not a difference and never a copy job.");
+plain("ERP-RM0  = our document carries RM 0.00 while the book states a value, on migrated paperwork that moves no stock.");
+plain("           Your decision 「GR 0 没关系」. Proved per document (migrated_no_stock, zero stock movements), never assumed.");
+plain("           What it costs: a purchase invoice cannot be raised off a RM 0.00 receipt.");
+plain("non-MYR  = documents compared in their OWN currency. Not a money difference, and never repaired by script.");
 const totalGaps = summary.reduce((a, s) => a + s.gaps, 0);
+const n = (v) => (typeof v === "number" ? v : 0);
+const notWork = summary.reduce((a, s) => a + n(s.decided) + n(s.noPrice) + n(s.erpZeroMoney) + n(s.foreign), 0);
+plain("");
 log(
   totalGaps === 0
     ? "CLEAN — every in-scope AutoCount document is in the ERP and every comparable field agrees."
     : `${totalGaps} disagreements that are NOT covered by a declared design difference. Detail above.`,
 );
+if (notWork) {
+  /* Stated as its own sentence rather than folded into the line above, because
+     the number the owner acts on is `totalGaps` and the number he keeps asking
+     about is this one. Both are printed; neither is hidden inside the other. */
+  log(
+    `${notWork} more count(s) are shown in the four right-hand columns and are NOT work: ` +
+      summary
+        .flatMap((s) => [
+          n(s.decided) ? `${s.t} decided ${s.decided}` : null,
+          n(s.noPrice) ? `${s.t} the book states no price ${s.noPrice}` : null,
+          n(s.erpZeroMoney) ? `${s.t} our document carries RM 0.00 ${s.erpZeroMoney}` : null,
+          n(s.foreign) ? `${s.t} not in ${LOCAL_CURRENCY} ${s.foreign}` : null,
+        ])
+        .filter(Boolean)
+        .join("; ") +
+      ". Each is explained under the table.",
+  );
+}
 
 await sql.end({ timeout: 5 });

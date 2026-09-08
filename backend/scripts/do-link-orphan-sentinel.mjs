@@ -56,16 +56,47 @@ import postgres from "postgres";
 import { DO_NOT_DELIVERED_SQL_IN } from "./lib/do-shipped-states.mjs";
 
 /* BASELINE = the orphans that are known, understood and deliberately left.
-   Exactly one on 2026-08-17: 2990-DO-2607-013's NTYR pillow. Its SO line
-   (2990-SO-2606-030, ordered 1) is already fully delivered by
-   2990-DO-2608-010, so re-linking it would report 2 delivered against 1
-   ordered. repair-do-so-item-links.mjs refuses it by design and a human has to
-   decide whether it is a re-delivery or a duplicate document.
 
    RAISING THIS NUMBER TO GET GREEN IS THE ONE THING NOT TO DO. It is the count
    of orphans we have an ANSWER for, not a tolerance. A new orphan is the event
-   this sentinel exists to report. */
-const BASELINE_ORPHANS = 1;
+   this sentinel exists to report. Every one below is named with its answer, so
+   the next person can check the answer instead of inheriting a number.
+
+   1. 2990-DO-2607-013's NTYR pillow (2026-08-17). Its SO line
+      (2990-SO-2606-030, ordered 1) is already fully delivered by
+      2990-DO-2608-010, so re-linking it would report 2 delivered against 1
+      ordered. repair-do-so-item-links.mjs refuses it by design and a human has
+      to decide whether it is a re-delivery or a duplicate document.
+
+   2-4. THE ACCOUNT BOOK'S OWN GAP, traced 2026-09-08 against
+      ac-convert-edges.json.gz (the whole book, cut 2026-09-07 16:39 local).
+      These three are NOT rows a delete blanked — they were never linkable,
+      because the item is not on the sales order IN AUTOCOUNT EITHER:
+
+        HC-DO-001800 delivers HB109NL x3 and HB109M-CC x3 naming HC-SO-002281.
+        AutoCount's SO-002281 has four lines and neither item is among them:
+        AK-ARMOUR MATT (Q), AK- LTX CLS PIL, NTYR-CS LTX PIL + CSC,
+        AK-SK + MICROFIL PIL. The book still counted the delivery — seq 32 and
+        48 read TransferedQty 3 of 3 — so AutoCount consumed OTHER lines'
+        quantity to ship these two.
+
+        HC-DO-005583 delivers AK-SK FX AIRLOFT PIL x2 naming HC-SO-007435,
+        whose seq 144 is AK-SK + MICROFIL PIL x2 with TransferedQty 2 of 2.
+        Same sequence, same quantity, a different product name: a substitution
+        AutoCount recorded on the delivery and never on the order.
+
+      So the ERP is FAITHFUL here and a link would be INVENTED — the owner's
+      standing rule is 「跟 autocount 一样」, and where the book is silent the
+      answer is that the book is silent. repair-do-so-item-links.mjs reaches the
+      same verdict from the ERP side alone and refuses all three with
+      `no_so_line_with_that_item_code` (run 34182380708, 2026-09-08 11:07
+      local). Ledger: docs/bugs/0690-*.md.
+
+      WHAT WOULD MAKE THIS A DEFECT AGAIN: if AutoCount's own sales order gains
+      a line for one of these items, the answer above stops being true and the
+      row becomes repairable. That is a book change, so it shows up as a
+      re-import, not as a silent drift. */
+const BASELINE_ORPHANS = 4;
 
 /* BASELINE = goods lines that carry NO warehouse and therefore can never be
    allocated stock (allocation buckets by warehouse+item+variant). Ten on

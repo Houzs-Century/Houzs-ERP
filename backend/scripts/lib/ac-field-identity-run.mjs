@@ -148,10 +148,29 @@ export function loadAcFieldSide(dataDir, book) {
     }
   };
 
+  /* THE FIVE FIELDS BELOW ARE GRADED AGAINST THE CUT THEIR WRITER READ.
+     `sync-ac-delta.mjs`'s hdr lane copies remark2/3/4, the note and the sales
+     exemption expiry out of `ac-doc-headers.json.gz`. This section used to
+     compare them against `ac-so-remarks.json.gz`, which is a DIFFERENT cut of
+     the same fields — measured 2026-09-08 on the committed files, the two
+     disagree on 1 Remark2, 13 Remark4 and 13 SalesExemptionExpiryDate. So the
+     moment the hdr lane wrote the fresher value, the checker reported 17 new
+     "differences" on rows where the ERP had just become MORE correct, and the
+     backlog went up for doing the right thing. Grading a writer against a
+     source the writer never read measures the gap between two snapshots, not
+     the gap between the book and the ERP. The header cut wins where it carries
+     the document; `ac-so-remarks` remains the fallback, so a checkout without
+     the optional header file behaves exactly as before. (Same root cause as
+     docs/bugs/0687, one layer up: the tool and its check must read one cut.) */
+  const HDR_MASTER_SO = ["Remark2", "Remark3", "Remark4", "UDF_Note", "SalesExemptionExpiryDate"];
   const SO = group(soRows, "DocNo", "DtlKey", "SO");
   for (const [d, h] of SO.headers) {
+    const fresh = hdrBy.SO.get(d);
     const rem = remByDoc.get(d);
-    if (rem) Object.assign(h, { Remark2: rem.Remark2, Remark3: rem.Remark3, Remark4: rem.Remark4, UDF_Note: rem.UDF_Note, SalesExemptionExpiryDate: rem.SalesExemptionExpiryDate });
+    for (const k of HDR_MASTER_SO) {
+      const v = fresh && fresh[k] !== undefined ? fresh[k] : rem ? rem[k] : undefined;
+      if (v !== undefined) h[k] = v;
+    }
     const st = statusByDoc.get(d);
     if (st) h.ToPONo = st.ToPONo;
   }

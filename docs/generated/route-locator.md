@@ -1129,11 +1129,11 @@ Total: 1182 route registrations across 152 files.
 - L442  GET    /:code
 
 ## backend/src/scm/routes/receipts.ts  (5)
-- L363  GET    /
-- L364  POST   /
-- L365  POST   /:id/void
-- L366  GET    /:id
-- L367  PATCH  /:id
+- L369  GET    /
+- L370  POST   /
+- L371  POST   /:id/void
+- L372  GET    /:id
+- L373  PATCH  /:id
 
 ## backend/src/scm/routes/staff.ts  (5)
 - L144  GET    /
