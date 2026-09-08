@@ -184,7 +184,67 @@ async function attachedShape(client, arm, applied) {
   return wrong;
 }
 
-/* ── APPLY FROM A PLAN FILE — no R2, only DATABASE_URL ────────────────────── */
+/* ── COMPUTE A PLAN — asks R2, and reads the database READ-ONLY ───────────── */
+async function computePlan() {
+  note(`attach uploaded line photos — MODE=${APPLY ? 'apply' : 'plan'} company=${CO} bucket=${BUCKET}`);
+  const { byArm, malformed } = readResolve(PLAN_SRC);
+  note(`resolve source ${PLAN_SRC}`);
+  for (const a of ARMS) note(`  ${a.name}: ${byArm.get(a.name).length} planned address(es)`);
+  if (malformed.length) {
+    bad(`REFUSING ${malformed.length} off-scheme key(s) in the resolve output — they are not uploaded and not attached:`);
+    for (const k of malformed.slice(0, 20)) bad(`   ${k}`);
+  }
+
+  const liveKeys = await listObjectKeys({
+    accountId: ACCOUNT, bucket: BUCKET, token: TOKEN, prefixes: ARMS.map((a) => a.prefix),
+  });
+  note(`R2 holds ${liveKeys.size} object(s) under ${ARMS.map((a) => a.prefix).join(' + ')}`);
+
+  const read = postgres(DSN, { ssl: 'require', prepare: false, max: 1 });
+  const ops = [];
+  try {
+    for (const arm of ARMS) {
+      const rows = await arm.load(read, CO);
+      const { plan, skipped } = planAttachUploaded(rows, byArm.get(arm.name), liveKeys);
+      note('');
+      note(`${arm.name} — ${rows.length} line(s) read`);
+      note(`  TO ATTACH: ${plan.length} line(s), ${plan.reduce((s, p) => s + p.keys.length, 0)} address(es)`);
+      for (const p of plan) note(`    ${p.doc} AC line ${p.dtl} -> ${p.keys.join(' , ')}`);
+      const notMine = skipped.filter((s) => !/already shows/.test(s.why));
+      note(`  skipped: ${skipped.length} (${skipped.length - notMine.length} already showing a picture — nothing to do)`);
+      for (const s of notMine.slice(0, 40)) note(`    - ${s.doc} AC line ${s.dtl}: ${s.why}`);
+      for (const p of plan) {
+        ops.push({ arm: arm.name, id: p.id, doc: p.doc, dtl: p.dtl, before: p.before, add: p.keys });
+      }
+    }
+  } finally {
+    await read.end();
+  }
+
+  note('');
+  if (!ops.length) {
+    note('NOTHING TO ATTACH — every photographed line either shows its picture already, or its object is not in the bucket yet.');
+    return;
+  }
+  if (!PLAN_OUT) {
+    note('PLAN ONLY — nothing written. Set PLAN_OUT=<path> to hand the plan to the apply workflow.');
+    return;
+  }
+  const out = buildPlan({ kind: ATTACH_KIND, account: ACCOUNT, bucket: BUCKET, company: CO, ops });
+  mkdirSync(dirname(PLAN_OUT), { recursive: true });
+  writeFileSync(PLAN_OUT, `${JSON.stringify(out, null, 2)}\n`, 'utf8');
+  note(`PLAN WRITTEN — ${PLAN_OUT}`);
+  note(`  ${out.count} operation(s), digest ${out.digest}`);
+  note(`  Apply it within ${MAX_AGE.minutes} minute(s): "Apply line photo repair (from a plan file)", script attach-uploaded-line-photos, CONFIRM="${CONFIRM_PHRASE}" (DATABASE_URL only — no R2 token).`);
+}
+
+/* ── APPLY FROM A PLAN FILE — no R2, only DATABASE_URL ─────────────────────
+   This is deliberately the LAST database work in the file, so the fresh
+   connection the verification opens is also the last one opened. That is what
+   `audit:release-discipline` reads (`fresh-verify`): it takes the last client
+   opened after the write and asks whether anything is read back on it. With
+   the plan-mode read below this, the check would point at a connection that
+   never writes and report a repair that HAS a shape verify as having none. */
 async function applyFromPlan() {
   let plan;
   try {
@@ -273,59 +333,8 @@ async function applyFromPlan() {
   }
 }
 
-async function main() {
-  if (PLAN_IN) { await applyFromPlan(); return; }
-
-  note(`attach uploaded line photos — MODE=${APPLY ? 'apply' : 'plan'} company=${CO} bucket=${BUCKET}`);
-  const { byArm, malformed } = readResolve(PLAN_SRC);
-  note(`resolve source ${PLAN_SRC}`);
-  for (const a of ARMS) note(`  ${a.name}: ${byArm.get(a.name).length} planned address(es)`);
-  if (malformed.length) {
-    bad(`REFUSING ${malformed.length} off-scheme key(s) in the resolve output — they are not uploaded and not attached:`);
-    for (const k of malformed.slice(0, 20)) bad(`   ${k}`);
-  }
-
-  const liveKeys = await listObjectKeys({
-    accountId: ACCOUNT, bucket: BUCKET, token: TOKEN, prefixes: ARMS.map((a) => a.prefix),
-  });
-  note(`R2 holds ${liveKeys.size} object(s) under ${ARMS.map((a) => a.prefix).join(' + ')}`);
-
-  const sql = postgres(DSN, { ssl: 'require', prepare: false, max: 1 });
-  const ops = [];
-  try {
-    for (const arm of ARMS) {
-      const rows = await arm.load(sql, CO);
-      const { plan, skipped } = planAttachUploaded(rows, byArm.get(arm.name), liveKeys);
-      note('');
-      note(`${arm.name} — ${rows.length} line(s) read`);
-      note(`  TO ATTACH: ${plan.length} line(s), ${plan.reduce((s, p) => s + p.keys.length, 0)} address(es)`);
-      for (const p of plan) note(`    ${p.doc} AC line ${p.dtl} -> ${p.keys.join(' , ')}`);
-      const notMine = skipped.filter((s) => !/already shows/.test(s.why));
-      note(`  skipped: ${skipped.length} (${skipped.length - notMine.length} already showing a picture — nothing to do)`);
-      for (const s of notMine.slice(0, 40)) note(`    - ${s.doc} AC line ${s.dtl}: ${s.why}`);
-      for (const p of plan) {
-        ops.push({ arm: arm.name, id: p.id, doc: p.doc, dtl: p.dtl, before: p.before, add: p.keys });
-      }
-    }
-  } finally {
-    await sql.end();
-  }
-
-  note('');
-  if (!ops.length) {
-    note('NOTHING TO ATTACH — every photographed line either shows its picture already, or its object is not in the bucket yet.');
-    return;
-  }
-  if (PLAN_OUT) {
-    const out = buildPlan({ kind: ATTACH_KIND, account: ACCOUNT, bucket: BUCKET, company: CO, ops });
-    mkdirSync(dirname(PLAN_OUT), { recursive: true });
-    writeFileSync(PLAN_OUT, `${JSON.stringify(out, null, 2)}\n`, 'utf8');
-    note(`PLAN WRITTEN — ${PLAN_OUT}`);
-    note(`  ${out.count} operation(s), digest ${out.digest}`);
-    note(`  Apply it within ${MAX_AGE.minutes} minute(s): "Apply line photo repair (from a plan file)", script attach-uploaded-line-photos, CONFIRM="${CONFIRM_PHRASE}" (DATABASE_URL only — no R2 token).`);
-    return;
-  }
-  note(`PLAN ONLY — nothing written. Set PLAN_OUT=<path> to hand the plan to the apply workflow.`);
-}
+/* PLAN_IN is the apply input and PLAN_SRC the plan input, so which half runs is
+   decided by which one is set, never by MODE alone. */
+const main = () => (PLAN_IN ? applyFromPlan() : computePlan());
 
 main().catch((e) => { console.error(e); process.exit(1); });
