@@ -250,8 +250,8 @@ export function ContractorCalendar() {
         </div>
 
         {/* Calendar grid */}
-        <div className="overflow-hidden rounded-xl border-2 border-slate-400 bg-white shadow-md ring-1 ring-slate-900/5">
-          <div className="grid grid-cols-7 border-b-2 border-slate-600 bg-slate-800">
+        <div className="overflow-hidden rounded-xl border-2 border-accent/60 bg-white shadow-md ring-1 ring-accent/10">
+          <div className="grid grid-cols-7 border-b-2 border-accent-hover bg-accent">
             {weekdayNames.map((w) => (
               <div key={w} className="px-2 py-2 text-center text-[10px] font-semibold uppercase tracking-wide text-white">
                 {w}
