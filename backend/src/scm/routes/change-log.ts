@@ -42,6 +42,7 @@
 // ---------------------------------------------------------------------------
 
 import { Hono } from 'hono';
+import type { Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { scopeToCompany } from '../lib/companyScope';
@@ -163,7 +164,9 @@ function readFields(raw: unknown): ChangeLogChange['fields'] {
  * Query: `hours` (default 168, max 2880), `author` (person | machine | all,
  * default person), `docType` (SO,PO,DO,GRN or all).
  */
-changeLog.get('/', async (c) => {
+export const changeLogHandler = async (
+  c: Context<{ Bindings: Env; Variables: Variables }>,
+) => {
   if (!READ_KEYS.some((k) => hasHouzsPerm(c, k))) {
     return c.json(
       {
@@ -331,6 +334,12 @@ changeLog.get('/', async (c) => {
     },
     documents: shown,
   });
-});
+};
+
+/* The handler is EXPORTED and the route is a one-line registration, so
+   changeLogRoute.test.ts can mount it behind a fake supabase client — the
+   supabaseAuth bridge cannot run in that harness. Same shape as
+   routes/autocount-outbox.ts. */
+changeLog.get('/', changeLogHandler);
 
 export default changeLog;
