@@ -1344,8 +1344,11 @@ describe("the host log panel", () => {
         : Promise.resolve(list));
   };
 
+  /* UNANNOTATED on purpose: `mock.calls` is `any[][]`, so a tuple annotation on
+     the destructured parameter matches no overload of `filter`. Inference gives
+     the right thing and writes no `any` for the linter to count. */
   const hostLogCalls = () =>
-    apiGet.mock.calls.filter(([u]: [string]) => typeof u === "string" && u.includes("/host-log")).length;
+    apiGet.mock.calls.filter((call) => typeof call[0] === "string" && call[0].includes("/host-log")).length;
 
   it("does NOT reach the office machine until somebody opens it", async () => {
     await mount(payload());
