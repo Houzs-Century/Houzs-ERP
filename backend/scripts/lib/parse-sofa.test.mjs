@@ -153,3 +153,65 @@ test('a seat size written with a unit is still read — the footprint guard is n
   assert.equal(parseSofa('[ 2EL(28") + STOOL(28")(NO BACK CUSHION) / COL: X', "5526", false).size, "28");
   assert.equal(parseSofa('TR01 (RUMMA) / 2S / 60cm', "9028", false, { knownColour }).size, "24");
 });
+
+test("a label followed by its own build in brackets is a TITLE — the bracket wins", () => {
+  /* Owner 2026-08-10: 「2R(1+1) 就是 1A+1A」. The rule was already here; the
+     `$` anchor meant it only fired when the bracket ENDED the segment, so
+     every live spelling missed it and the label was counted as pieces ON TOP
+     of the build it names. Three PROCEEDED company-1 orders read one whole
+     seat larger than the book ordered on 2026-09-08 — SO-009335 (MRS ONG,
+     IN_PRODUCTION), SO-010458 (JACK GUN, READY_TO_SHIP) and SO-011114
+     (TAN RU YI, IN_PRODUCTION). Every string below is verbatim from the
+     committed book snapshot. */
+
+  // SO-009335 DtlKey 639683 — trailing residue after the bracket.
+  assert.deepEqual(
+    parseSofa("2 seater ( 1EL + 1 ER)  change bottom to Nilon  75 cm per seat  colour : B0315-27", "8050", false).pieces,
+    ["1A(LHF)", "1A(RHF)"],
+  );
+
+  // SO-010458 DtlKey 722365 — a SIZE bracket after the build bracket.
+  assert.deepEqual(
+    parseSofa("3S (2+1)(32'Inch)/Col:BO315-21", "8051", false).pieces,
+    ["2A(LHF)", "1A(RHF)"],
+  );
+
+  // SO-011114 DtlKey 764705 — a SIZE bracket BEFORE the build bracket.
+  assert.deepEqual(
+    parseSofa("3S(28'Inch)(2+1)/Col:BOO315-22/BackRest change to 5540", "9058", false).pieces,
+    ["2A(LHF)", "1A(RHF)"],
+  );
+
+  /* The seat size and the colour must not move: taking the size bracket out
+     is for the title test ONLY, and `o.size` is read from the raw Desc2. */
+  const so10458 = parseSofa("3S (2+1)(32'Inch)/Col:BO315-21", "8051", false);
+  assert.equal(so10458.size, "32");
+  assert.equal(so10458.color, "BO315-21");
+});
+
+test("the title rule refuses a bracket that is not the whole build", () => {
+  /* A size bracket is DIGITS plus an optional unit. "(1R)" starts with a digit
+     too, and treating it as a size cost `(1R+1NA)30"+C+(1R)32"` its second arm
+     when this was first written — measured over the committed book. */
+  assert.deepEqual(
+    parseSofa('BO315-24 (SAND)/(1R+1NA)30"+C+(1R)32"', "9058", false).pieces,
+    ["1A(LHF)", "1NA", "CNR", "1A(RHF)"],
+  );
+
+  /* The owner's own example still decodes the way he stated it. */
+  assert.deepEqual(parseSofa("2R(1+1)", "9058", false).pieces, ["1A(LHF)", "1A(RHF)"]);
+
+  /* Guarded to brackets holding a '+', so a LABELLED bracket keeps its label. */
+  assert.deepEqual(
+    parseSofa("4S (corner)+L", "9058", false).pieces,
+    ["2A(LHF)", "2NA", "CNR", "L(RHF)"],
+  );
+
+  /* A trailing DIGIT means the tail may be a real piece rather than residue,
+     so the rule stands down and today's reading is kept unchanged. Dropping a
+     piece silently is worse than leaving a line for a human. */
+  assert.deepEqual(
+    parseSofa("3S (2+1) 1S", "9058", false).pieces,
+    ["3S", "2S", "1S", "1S"],
+  );
+});

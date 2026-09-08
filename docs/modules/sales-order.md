@@ -3205,6 +3205,44 @@ directions, and the seat-size axis carries the same shape — `STOOL(25 X 40INCH
 is a stool's length by its width, and reading `40"` off it put a phantom on the
 same tally.
 
+#### The compartments axis: a label and its own bracket are ONE sofa
+
+The floor often writes the build twice — a label, then the same build spelled
+out in brackets: `3S (2+1)`, `2 seater (1EL + 1ER)`, `4S (60cm) (2s+2s)`,
+`[ 3S (2EL+1ER (26")) ]`. The bracket is the label EXPLAINED, never extra
+furniture, and `parse-sofa.mjs` has carried the owner's ruling since 2026-08-10:
+「2R(1+1) 就是 1A+1A」 — the title is dropped and the bracket wins.
+
+Until 2026-09-08 that rule was anchored to the END of the segment, so it fired
+only on the clean form and stood down on every spelling the shop actually uses:
+a size bracket on either side of the build, or residue left by the special-order
+strip. With the rule down, the label decodes as pieces AND the bracket decodes
+as pieces, and the line carries both — **the sofa reads one whole seat bigger
+than the book ordered.** Three PROCEEDED orders with purchase orders already
+raised were reported as differing from the book on exactly this
+(`docs/bugs/0712-the-label-and-the-build-it-names-were-both-counted-so-a-sof.md`).
+
+Two things worth carrying forward:
+
+- **A clarification in the account book can break a reader.** `HC-SO-010458`
+  and `HC-SO-011114` imported cleanly as `3S(32’Inch)` and decoded correctly;
+  the `(2+1)` was typed into AutoCount LATER by a salesperson being helpful. The
+  ERP row was right the whole time and the newer book text was what disagreed.
+- **On this axis, "follow the book" needs the decoder checked first.** The
+  standing rule is 「一律跟账本」, but the book here is a decoded reading, not a
+  quoted value. Correcting these three "to the book" would have added a phantom
+  two-seater to an order already in production. Read the ERP rows and the slip
+  PHOTO before writing a compartment — `probe-sofa-absent-pieces.mjs` puts the
+  build, its purchase order, the drawing and the decode on one screen.
+
+A compartment difference on a PROCEEDED order also has a second innocent cause:
+the owner may have RULED on that build from the drawing, in which case the ERP
+is meant to differ from the text. The reconcile does not read
+`sofa-compartment-corrections-*.json` and so reports those as `DIFFER` too — 5
+of the 8 flagged on 2026-09-08 were his own rulings
+(`docs/bugs/0713-the-reconcile-reports-a-sofa-the-owner-has-already-ruled-on.md`).
+**Check that file before treating a flagged compartment as work.**
+
 Drafts stay freely saveable — the scan pipeline still lands imperfect drafts;
 what changed is that they can no longer BECOME orders until resolved.
 ON_HOLD-resume and reopen re-enter CONFIRMED without re-gating (legacy orders
