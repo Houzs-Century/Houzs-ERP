@@ -25,6 +25,7 @@ import {
   coveredGrnIds, findUnlinkedPiLines, unlinkedInvoiceResponse, unlinkedCheckFailedResponse,
 } from '../lib/return-unlinked-lines';
 import { assertSourceLinesInCompany } from '../lib/ref-in-company';
+import { assertLinkedLineItemsMatch } from '../lib/line-link-item-identity';
 import { readStatusCounts } from '../lib/status-counts';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY,
@@ -816,6 +817,20 @@ purchaseInvoices.post('/', async (c) => {
       return refuseWithoutWriting(c, { ...b, reason: `Line ${i + 1}: ${b.reason}` }, 400);
     }
   }
+  /* IDENTITY, not just the key — docs/bugs/0672 site 15. The checks around this
+     one prove the GRN line's company, its parent's status and its remaining
+     quantity; none proves it is the SAME PRODUCT. `recomputeGrnInvoiced` writes
+     `grn_items.invoiced_qty` by `.eq('id', grn_item_id)`, so a wrong link bills
+     against the wrong receipt line and leaves the right one open to be invoiced
+     twice. probe-link-identity.mjs run 34139187692 found 3 such rows already
+     live on this column. */
+  {
+    const idc = await assertLinkedLineItemsMatch(sb, 'grn_items',
+      items.map((it) => ({ linkId: (it.grnItemId as string | undefined) ?? null, itemCode: it.itemCode })),
+      { source: 'Goods Receipt line' });
+    if (!idc.ok) return c.json(idc.body, idc.status);
+  }
+
   const itemRows = items.map((it) => {
     /* PI discount unification (audit 2026-06-11 M3) — ONE rule on every PI
        line write path: line_total_sen = qty × unit − discount, discount
@@ -2054,6 +2069,20 @@ purchaseInvoices.post('/:id/items', async (c) => {
     if (capLock) return c.json(capLock, 409);
   }
 
+  /* IDENTITY, not just the key — docs/bugs/0672 site 15. The checks around this
+     one prove the GRN line's company, its parent's status and its remaining
+     quantity; none proves it is the SAME PRODUCT. `recomputeGrnInvoiced` writes
+     `grn_items.invoiced_qty` by `.eq('id', grn_item_id)`, so a wrong link bills
+     against the wrong receipt line and leaves the right one open to be invoiced
+     twice. probe-link-identity.mjs run 34139187692 found 3 such rows already
+     live on this column. */
+  {
+    const idc = await assertLinkedLineItemsMatch(sb, 'grn_items',
+      [{ linkId: grnItemId, itemCode: it.itemCode }],
+      { source: 'Goods Receipt line' });
+    if (!idc.ok) return c.json(idc.body, idc.status);
+  }
+
   const row: Record<string, unknown> = {
     purchase_invoice_id: piId,
     grn_item_id: (it.grnItemId as string) ?? null,
@@ -2278,6 +2307,20 @@ purchaseInvoices.patch('/:id/items/:itemId', async (c) => {
       requested: qty, ownPriorDraw: prevQty, what: 'GRN line',
     });
     if (capLock) return c.json(capLock, 409);
+  }
+
+  /* THE LINK CAN ALSO DRIFT AFTER THE FACT. docs/bugs/0672's second structural
+     observation: four edit paths let `item_code` be rewritten UNDER a live link,
+     so a line that was correctly bound at create time can be edited out of
+     identity with its source afterwards. Only the GRN edit path froze it
+     (grnInheritedFieldChanges). Re-asserted here on every PATCH that carries a
+     code, against the code that will actually be stored — `it.itemCode` when the
+     body sends one, the previous value otherwise. */
+  if (grnItemId) {
+    const idc = await assertLinkedLineItemsMatch(sb, 'grn_items',
+      [{ linkId: grnItemId, itemCode: it.itemCode ?? prev.item_code }],
+      { source: 'Goods Receipt line' });
+    if (!idc.ok) return c.json(idc.body, idc.status);
   }
 
   const { error } = await scopeToCompanyId(sb.from('purchase_invoice_items').update(updates).eq('id', itemId), co.companyId);

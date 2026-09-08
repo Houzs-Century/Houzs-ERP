@@ -61,6 +61,7 @@ import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
    (/from-pos, /from-po-items) no longer use it: they scope their source reads,
    so a cross-company PO is not visible to them at all. */
 import { assertSourceLinesInCompany } from '../lib/ref-in-company';
+import { assertLinkedLineItemsMatch, lineLinkItemMismatch } from '../lib/line-link-item-identity';
 import { parseLineNumbers, invalidLineNumberBody } from '../shared/line-numbers';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { todayMyt } from '../lib/my-time';
@@ -1431,7 +1432,29 @@ grns.post('/', async (c) => {
       const xl = await assertSourceLinesInCompany(sb, c, 'purchase_order_items', [...acceptedByPoItem.keys()]);
       if (!xl.ok) return refuseWithoutWriting(c, xl.body, xl.status);
       const { data: poItems } = await sb.from('purchase_order_items')
-        .select('id, qty, received_qty, po:purchase_orders!inner ( status, on_hold )').in('id', [...acceptedByPoItem.keys()]);
+        .select('id, qty, received_qty, item_code, po:purchase_orders!inner ( status, on_hold )').in('id', [...acceptedByPoItem.keys()]);
+      /* IDENTITY, not just the key — docs/bugs/0672 site 15. Everything around
+         this proves the PO line's company and that its parent is receivable;
+         nothing proved it is the SAME PRODUCT. `recomputePoReceived` writes
+         `purchase_order_items.received_qty` by id, so a wrong link books the
+         receipt against the wrong PO line — and a bedframe or sofa PO line is
+         HARD-BOUND (isHardBoundLine, lib/so-stock-allocation.ts), so it is
+         exactly what tells the floor a customer's bed arrived when a different
+         bed did. `item_code` is added to the select above, so this costs no
+         extra round trip. */
+      {
+        const byId = new Map<string, string | null>(
+          ((poItems ?? []) as Array<{ id: string; item_code: string | null }>).map((r) => [r.id, r.item_code]),
+        );
+        const mismatch = lineLinkItemMismatch(
+          (items as Array<Record<string, unknown>>)
+            .filter((it) => (it.purchaseOrderItemId as string | undefined))
+            .map((it) => ({ linkId: it.purchaseOrderItemId as string, itemCode: it.itemCode })),
+          byId,
+          { source: 'Purchase Order line' },
+        );
+        if (mismatch) return refuseWithoutWriting(c, mismatch, 409);
+      }
       /* Receivable-PO guard (audit gap #5) — a PO-linked line may only be
          received while its source PO is receivable. Only `/from-po-items`
          enforced this; the manual New-GRN form (this path) could slip PO-linked
@@ -2907,6 +2930,15 @@ grns.post('/:id/items', async (c) => {
       requested: qtyReceived, what: 'PO line',
     });
     if (capLock) return refuseWithoutWriting(c, { ...capLock, poItemId: addLinePoItemId }, 409);
+  }
+
+  /* IDENTITY, not just the key — docs/bugs/0672 site 15, the add-line twin of
+     the create-path guard above. */
+  if (addLinePoItemId) {
+    const idc = await assertLinkedLineItemsMatch(sb, 'purchase_order_items',
+      [{ linkId: addLinePoItemId, itemCode: it.itemCode }],
+      { source: 'Purchase Order line' });
+    if (!idc.ok) return refuseWithoutWriting(c, idc.body, idc.status);
   }
 
   const pf = await assertAuditWritable(sb, { entityType: 'GRN', entityId: grnId, action: 'UPDATE', companyId: activeCompanyId(c) });

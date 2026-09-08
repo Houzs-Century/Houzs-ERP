@@ -95,6 +95,7 @@ import { freezeShipCost } from '../lib/fulfillment-costing';
 import { validateItemCodes, unknownItemCodeResponse } from '../lib/validate-item-codes';
 import { resolveItemGroups } from '../lib/sku-category';
 import { buildDoItemRow as buildItemRow, loadCarriedSoLinePhotos, carriedPhotoUrls } from '../lib/do-item-row';
+import { assertLinkedLineItemsMatch } from '../lib/line-link-item-identity';
 import { checkStockAvailability, shortStockResponse, stockCheckableLines, type StockShortage } from '../lib/check-stock-availability';
 import { findSofaLinesWithoutCompleteBatch, sofaNoCompleteBatchResponse, findIncompleteSofaSets, sofaIncompleteSetResponse, detectSofaSoItemIds } from '../lib/sofa-batch-guard';
 import { resolveExpectedBatchBySoItem, buildDropshipOffenders } from '../lib/dropship-batch';
@@ -3380,6 +3381,20 @@ deliveryOrdersMfg.post('/', async (c) => {
     }
   }
 
+  /* IDENTITY, not just the key — docs/bugs/0672 site 15. The guards around this
+     one prove the SO line's company and that the pick does not exceed what was
+     ordered; none proved it is the SAME PRODUCT. `so_item_id` is what
+     `soRemainingByItemId` draws down and what the delivered-qty sync writes back
+     to the sales order, and `buildDoItemRow` copies the SOURCE line's photos
+     onto the delivery line through it — so a wrong link ships against the wrong
+     order line AND prints the wrong product's photos on the delivery note. */
+  {
+    const idc = await assertLinkedLineItemsMatch(sb, 'mfg_sales_order_items',
+      (items as Array<Record<string, unknown>>).map((it) => ({ linkId: (it.soItemId as string | undefined) ?? null, itemCode: it.itemCode })),
+      { source: 'Sales Order line' });
+    if (!idc.ok) { markIdempotencyNoWrite(c); return c.json(idc.body, idc.status); }
+  }
+
   /* The back door that guard leaves open (Wei Siang 2026-08-04). "Uncapped"
      above is only safe while an unlinked line means a genuinely ad-hoc item. It
      stopped being safe the moment someone typed an SO number into the header and
@@ -4702,6 +4717,20 @@ export const addDeliveryOrderItemHandler = async (c: Context<{ Bindings: Env; Va
   const nextLineNo = typeof (maxNoRow as { line_no?: number | null } | null)?.line_no === 'number'
     ? (maxNoRow as { line_no: number }).line_no + 1
     : null;
+  /* IDENTITY, not just the key — docs/bugs/0672 site 15. The guards around this
+     one prove the SO line's company and that the pick does not exceed what was
+     ordered; none proved it is the SAME PRODUCT. `so_item_id` is what
+     `soRemainingByItemId` draws down and what the delivered-qty sync writes back
+     to the sales order, and `buildDoItemRow` copies the SOURCE line's photos
+     onto the delivery line through it — so a wrong link ships against the wrong
+     order line AND prints the wrong product's photos on the delivery note. */
+  {
+    const idc = await assertLinkedLineItemsMatch(sb, 'mfg_sales_order_items',
+      [{ linkId: (it.soItemId as string | undefined) ?? null, itemCode: it.itemCode }],
+      { source: 'Sales Order line' });
+    if (!idc.ok) { markIdempotencyNoWrite(c); return c.json(idc.body, idc.status); }
+  }
+
   const addPhotos = await loadCarriedSoLinePhotos(sb, [it as { soItemId?: unknown }], (q) => scopeToCompany(q, c));
   const row = buildItemRow(id, it, nextLineNo, addCommitments.get('add') ?? null, addPhotos);
   const { data, error } = await sb.from('delivery_order_items').insert({ ...row, company_id: activeCompanyId(c) }).select(ITEM).single();
