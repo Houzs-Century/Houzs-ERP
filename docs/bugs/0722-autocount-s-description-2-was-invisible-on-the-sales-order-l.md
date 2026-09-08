@@ -88,9 +88,9 @@ merged into a live cutover on the strength of reading rather than measuring. The
 correct response is to remove the hazard first and land the root fix as its own
 reviewed change, not to ship a second change in the same breath as the retraction.
 
-**What this PR does.** Deletes `backend/scripts/backfill-so-desc2-into-remark.mjs`,
-`backend/scripts/lib/desc2-remark.mjs`, `backend/tests/desc2IntoRemark.test.mjs`
-and `.github/workflows/backfill-so-desc2-into-remark.yml`; rewrites this entry;
+**What this PR does.** Deletes `backend/scripts/backfill-so-desc2-into-remark.mjs` [gone],
+`backend/scripts/lib/desc2-remark.mjs` [gone], `backend/tests/desc2IntoRemark.test.mjs` [gone]
+and `.github/workflows/backfill-so-desc2-into-remark.yml` [gone]; rewrites this entry;
 and corrects the `docs/modules/sales-order.md` section that described the
 retracted `AC原文` scheme as if it were the system's behaviour.
 
