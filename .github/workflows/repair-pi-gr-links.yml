@@ -1,0 +1,104 @@
+name: Purchase invoices — stamp the receipt line each invoice line billed
+
+# Measured on production, run 34272715185 (read-only):
+#   59  doc_differs        <- scm.grns.linked_ac_gr_docno IS NULL
+#   58  erp_link_missing   <- purchase_invoice_items.grn_item_id IS NULL
+#  117  differing lines across 47 invoices
+#
+# This repairs the 58. The same run showed the book names exactly ONE source
+# document on every one of them, and that we hold that receipt in all 58 cases,
+# so the repair is not scope-limited — it is reachable end to end.
+#
+# The other cause is NOT repaired here. `linked_ac_gr_docno IS NOT NULL` is the
+# filter that decides which receipts are in the GOODS-RECEIPT comparison, so
+# stamping it moves documents into a population, and it is only safe where the
+# receipt IS the book's receipt rather than one raised in the ERP during
+# cutover. diag-pi-gr-links.yml settles that per document first.
+#
+# The ERP side lives only in production, so this runs here over
+# secrets.DATABASE_URL rather than putting the production DSN in front of a
+# person. Manual trigger only.
+#
+# PLAN writes nothing. The plan file it produces is COMMITTED, and APPLY
+# recomputes the plan from live data and refuses unless the digest matches what
+# was committed — so what is applied can only ever be what was reviewed.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (writes nothing) or apply (writes purchase_invoice_items.grn_item_id)"
+        required: true
+        default: "plan"
+        type: choice
+        options: ["plan", "apply"]
+      company_id:
+        description: "ERP company (AED_HOUZS is company 1)"
+        required: false
+        default: "1"
+      max_snapshot_age_days:
+        description: "Refuse if either AutoCount snapshot is older than this"
+        required: false
+        default: "2"
+      remeasure:
+        description: "After the run, re-measure the purchase-invoice causes (read-only)"
+        required: false
+        default: true
+        type: boolean
+
+# Its own group: this touches one column on a small number of rows and must
+# neither queue behind a release nor displace one.
+concurrency:
+  group: repair-pi-gr-links
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+
+      - name: Stamp the receipt-line links
+        run: node scripts/repair-pi-gr-links.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          MAX_SNAPSHOT_AGE_DAYS: ${{ inputs.max_snapshot_age_days }}
+          # Only honoured when MODE=apply; the script refuses to write without it.
+          CONFIRM: I HAVE REVIEWED THE DRY-RUN
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
+      # The plan is an artifact so it can be committed without re-running the
+      # read. On an apply run it is unchanged by construction — the digest check
+      # above already refused any drift.
+      - name: Keep the plan
+        if: ${{ inputs.mode == 'plan' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: pi-gr-line-links-plan
+          path: backend/scripts/data/pi-gr-line-links-plan.json
+          if-no-files-found: error
+
+      # The number this whole lane exists to move, re-read from the database
+      # AFTER the write, in the same job. A repair that reports its own row
+      # count has not measured anything the owner asked about.
+      - name: Re-measure the purchase-invoice causes (READ-ONLY)
+        if: ${{ inputs.remeasure }}
+        run: node scripts/diag-pi-gr-links.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          MAX_SNAPSHOT_AGE_DAYS: ${{ inputs.max_snapshot_age_days }}
+          SHOW: "60"
+          NODE_OPTIONS: --dns-result-order=ipv4first
