@@ -371,7 +371,16 @@ async function main() {
           else { log(`      remove ${compartmentOf(p.from)}`); nDel++; }
         }
       }
-      verify.push({ doc, isPo, poId, needle: c.desc2Match, want, copies: sofas.length, money: before, source: c.source });
+      /* `exclude` travels with the needle. The verifier re-reads the WHOLE
+         document and narrows to this build the same way the writer did, so
+         leaving the exclusion behind made it compare one build's target against
+         BOTH builds' rows. Measured, prod APPLY run 34245004498: the write was
+         correct and complete - HC-SO-012025 held 1A(LHF)+1NA+CNR+1A(RHF) and a
+         separate 1S, exactly the two sofas the owner ruled - and the check
+         still reported "pieces are [1A(LHF) | 1A(RHF) | 1NA | 1S | CNR],
+         expected [1S]" and failed the job. A verifier that narrows differently
+         from the writer is not verifying the write. */
+      verify.push({ doc, isPo, poId, needle: c.desc2Match, exclude: c.desc2Exclude, want, copies: sofas.length, money: before, source: c.source });
 
       if (!APPLY) continue;
       const touched = [];
@@ -537,7 +546,7 @@ async function verifyOnFreshConnection(items) {
                   FROM scm.mfg_sales_order_items i
                   JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
                  WHERE h.company_id = ${CO} AND i.doc_no = ${it.doc} AND i.item_group = 'sofa' ORDER BY i.line_no`;
-    const mine = it.needle ? selectBuildRows(rows, it.needle).rows : rows;
+    const mine = it.needle || it.exclude ? selectBuildRows(rows, it.needle, undefined, it.exclude).rows : rows;
     const want = [];
     for (let i = 0; i < it.copies; i++) want.push(...it.want);
     const bag = (xs) => xs.map(K).sort().join(" | ");
