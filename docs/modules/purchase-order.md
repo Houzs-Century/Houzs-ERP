@@ -895,6 +895,21 @@ filled on all 9,408 and holding one distinct value, `C.O.D.`). Both nullable
 screen shows them today.** The only writer is `backend/scripts/sync-ac-delta.mjs`
 with `LANES=hdr`, driven by `backend/scripts/lib/ac-header-fields.mjs`.
 
+**Until 2026-09-08 that writer had NO human veto**, and it is worth knowing why
+if you are reading an old plan output. The veto set was built from
+`scm.mfg_so_audit_log` and keyed by SALES-ORDER document number; the
+purchase-order half of the same routine looked itself up in it by `po_number`,
+which can never match. So `po_date` — which staff DO edit, `PATCH
+/api/scm/mfg-purchase-orders/:id` — plus `attention` and `display_term` were
+written back from the book over whatever a person had put there, and the run
+printed no refusal at all. The lane now reads `scm.entity_audit_log`
+(`entity_type = 'PURCHASE_ORDER'`, mig `0139_scm_entity_audit_log.sql`) with the
+shared rule in `backend/scripts/lib/ac-human-edit.mjs`, refuses per (document,
+field), and names the document, both values and who. The veto index is a
+REQUIRED parameter of that routine now, so a third document type cannot inherit
+the wrong one in silence. `docs/bugs/0701-*` has the trace, including what is
+still UNKNOWN — nobody has counted how many purchase orders it already cost.
+
 AutoCount's `PO.DeliverAddr1..4` deliberately got **no** column: on a purchase
 order that is our own receiving address, identical on all 9,408 book documents.
 The delivery-address ruling was about the SALES order, where the address is the
