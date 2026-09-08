@@ -265,10 +265,7 @@
     {
       "file": "frontend/src/pages/ShareCalendar.tsx",
       "text": "const weekdayNames = weeks[0].map((d) => d.toLocaleDateString(\"en-US\", { weekday: \"short\" }));",
-      "why": "Weekday column headers (Mon-Sun) on the public calendar grid — a WEEKDAY NAME LABEL (README case 2) derived from the grid's own Monday-first cells (the month grid's first row, or the single week in week view); not a date value and fmtDate has no weekday-header form.",
-      "file": "frontend/src/pages/ContractorCalendar.tsx",
-      "text": "const weekdayNames = cells.slice(0, 7).map((d) => d.toLocaleDateString(\"en-US\", { weekday: \"short\" }));",
-      "why": "Weekday column headers (Mon-Sun) on the public calendar grid — a WEEKDAY NAME LABEL (README case 2) derived from the grid own Monday-first cells; not a date value and fmtDate has no weekday-header form."
+      "why": "Weekday column headers (Mon-Sun) on the public calendar grid — a WEEKDAY NAME LABEL (README case 2) derived from the grid's own Monday-first cells (the month grid's first row, or the single week in week view); not a date value and fmtDate has no weekday-header form."
     },
     {
       "file": "frontend/src/vendor/scm/components/DateField.touch.test.tsx",
