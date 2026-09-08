@@ -333,6 +333,10 @@ export const DECLARED_LABEL = Object.freeze({
   "chain-no-erp-counter":
     "this edge has no stored ceiling in the ERP: how much has gone on is worked out from the child documents " +
     "every time it is asked, so there is no saved number that can drift out of step",
+  "owner-model-override":
+    "the ERP names a different product from the account book because YOU decided it — 「那就放8030 daybed把」. " +
+    "The decision is written down with the book's own model beside it, so if the book ever stops saying that, " +
+    "this goes straight back to being a difference without anybody editing anything",
 });
 
 /**
