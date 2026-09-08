@@ -1836,18 +1836,27 @@ old class sentence about payments —
 `docs/bugs/0700-a-per-document-refusal-reason-was-overwritten-by-the-curated.md`.
 
 **MEASURED against production**, Actions -> *AutoCount vs ERP reconcile
-(read-only)*, run `34194151677`, 2026-09-08 14:19 MYT:
+(read-only)*, run `34196304394`, 2026-09-08 14:50 MYT. **Re-run before quoting
+it** — this is the count on the day, not a property of the system, and the
+figure moved once already inside one afternoon (see below):
 
-> 2,882 migrated sales orders compared. **2,653 (92.1%) match the book exactly**
-> and would open on `verdict:1`. **229 (7.9%) stay locked** — and only **55** of
-> those carry a real difference; the other **174** are locked because the
+> 2,882 migrated sales orders compared. **2,676 (92.9%) match the book exactly**
+> and would open on `verdict:1`. **206 (7.1%) stay locked** — and only **55** of
+> those carry a real difference; the other **151** are locked because the
 > reconcile could not ANSWER for them, which is not the same thing and is
 > deliberately not treated as one.
 
 Documents per locking axis in that run (documents, not findings): sofa build not
-verifiable 162, sofa compartments 29, lines could not be matched 23, line count
-11, a book line we do not have 10, specials 7, seat size 5, document total 5,
-colour / fabric 2, item code 1, quantity 1, a line key on the wrong document 1.
+verifiable 162, sofa compartments 29, line count 11, a book line we do not have
+10, specials 7, seat size 5, document total 5, colour / fabric 2, item code 1,
+quantity 1, a line key on the wrong document 1.
+
+An earlier run the same afternoon (`34194151677`, 14:19 MYT) said 2,653 / 229,
+with a 23-document `lines could not be matched` axis. Those 23 are the same
+documents; between the two runs the keyless MULTISET comparison landed on main
+and settled every one of them as identical. **The verdict got better because the
+reconcile got better, and it did so with no change to this lock** — which is the
+property the whole design is for.
 
 **`sofa build not verifiable` is the big one and it is not a wrong sofa.** Where
 a document's ERP lines carry no AutoCount line key, one book line's compartments
