@@ -170,7 +170,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/slips.ts` | 3 | 246 |
 | `backend/src/scm/routes/so-amendments.ts` | 9 | 1351 |
 | `backend/src/scm/routes/so-dropdown-options.ts` | 4 | 318 |
-| `backend/src/scm/routes/so-handover.ts` | 2 | 237 |
+| `backend/src/scm/routes/so-handover.ts` | 2 | 242 |
 | `backend/src/scm/routes/so-mirror.ts` | 1 | 333 |
 | `backend/src/scm/routes/so-settings.ts` | 2 | 61 |
 | `backend/src/scm/routes/sofa-combos.ts` | 7 | 795 |
@@ -201,13 +201,13 @@ scripts, never assumed: each runner declares its own directory, and
 | tree | runner | *.sql | highest | applied to PRODUCTION by deploy.yml | read by backend vitest |
 |---|---|---|---|---|---|
 | `backend/src/db/migrations` | `backend/scripts/migrate.mjs` | 152 | `153_sessions_stay_signed_in.sql` (153) | no | yes |
-| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 381 | `0352_acc_pv_files.sql` (0352) | YES | no |
+| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 382 | `0352_acc_pv_files.sql` (0352) | YES | no |
 
 Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its number): `0136_capture_compat_views_trips_lorries.sql.TEMPLATE`
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (2024 files, 708263 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (2025 files, 708837 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
