@@ -20,16 +20,33 @@ import { bedframeVariants, parseBedframe } from '../scripts/lib/parse-bedframe.m
 
 type Bf = {
   color?: string | null; gap?: number; divan?: number; leg?: number; specials?: string[];
+  divanPending?: boolean; gapPending?: boolean; legPending?: boolean;
 };
 type Colour = { fabric_id: string; colour_id: string; label: string } | null;
 
 /** The three importers' own expression, transcribed. isPendingColour is
  *  /(TBC|KIV)/i (lib/fabric-colour-match.mjs) — restated here so this test does
- *  not verify the module against itself. */
+ *  not verify the module against itself.
+ *
+ *  ── ONE DELIBERATE DIVERGENCE FROM THE ORIGINAL THREE COPIES ──────────────
+ *  `totalHeight` below is NOT what those three files carried. Theirs was
+ *  `tot ? tot + '"' : null`, and on a line whose DIVAN, GAP or LEG is written
+ *  TBC/KIV that counts an undecided component as ZERO — it read
+ *  `Divan: TBC / Gap: 12"` as a bed twelve inches tall. The colour arm of the
+ *  same expression already honoured "TBC means not chosen yet"; the height arm
+ *  did not, and one function cannot answer the same question two ways.
+ *
+ *  The transcription is kept faithful for every other field, because the point
+ *  of this test is still that the extraction did not quietly change anything.
+ *  This one line is changed ON PURPOSE, and the fixture that exercises it —
+ *  'Clr:TBC/Divan:8"+TBC"legs/Gap:14"' — went from '22"' to null when the
+ *  parser learned to read a pending height. tests/bedframePendingHeight.test.ts
+ *  is where that behaviour is asserted against the intended value. */
 const LITERAL_BLOCK = (bf: Bf, findColour: (c: string | null | undefined) => Colour) => {
   const pending = /(TBC|KIV)/i.test(bf.color || '');
   const fcHit = pending ? null : findColour(bf.color);
   const tot = (Number(bf.gap) || 0) + (Number(bf.divan) || 0) + (Number(bf.leg) || 0);
+  const heightPending = bf.divanPending === true || bf.gapPending === true || bf.legPending === true;
   return {
     fabricId: fcHit ? fcHit.fabric_id : null,
     colourId: fcHit ? fcHit.colour_id : null,
@@ -39,7 +56,7 @@ const LITERAL_BLOCK = (bf: Bf, findColour: (c: string | null | undefined) => Col
     gap: bf.gap != null ? bf.gap + '"' : null,
     divanHeight: bf.divan != null ? bf.divan + '"' : null,
     legHeight: bf.leg != null ? bf.leg + '"' : null,
-    totalHeight: tot ? tot + '"' : null,
+    totalHeight: heightPending || !tot ? null : tot + '"',
     specials: bf.specials || [],
   };
 };
