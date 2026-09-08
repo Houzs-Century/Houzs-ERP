@@ -189,7 +189,47 @@ async function main() {
      customer leg is still open. The SO side's DO rule governs the CUSTOMER
      delivery only and deliberately does not mirror onto purchasing. */
   const doneDocs = new Set();
-  for (const r of rows) { if (doneDocs.has(r.DocNo)) continue; if (!SOFA && isSofa(r.ItemCode)) continue; if (!groups.has(r.DocNo)) groups.set(r.DocNo, []); groups.get(r.DocNo).push(r); }
+  /* A SOFA LINE DROPPED HERE USED TO VANISH WITHOUT A TRACE, and on a MIXED
+     document that is worse than an exclusion. The gate is per LINE, so a
+     purchase order carrying one sofa and three pillows is still BUILT — from
+     the pillows alone — and the ERP ends up holding a document that looks
+     whole and is short its sofa. The next run cannot repair it either: both
+     importers are idempotent at DOCUMENT level, so a re-run with SOFA=1 sees
+     the document already present and skips it entirely (that is exactly what
+     topup-ac-po-lines.mjs exists to undo).
+
+     Measured 2026-09-08 against the fresh cut: PO-010085, PO-010086,
+     PO-010146, PO-010150, PO-010151, PO-010160 and PO-010161 sit in the ERP
+     as SUBMITTED holding only their pillow lines. Each has exactly one sofa
+     line in the book, in BOTH export lanes. Nothing in any log said so.
+
+     So the drop is COUNTED and the documents are NAMED, and the mixed ones —
+     the harmful class — are named separately from the all-sofa ones, which
+     are a clean exclusion. */
+  const sofaDropped = new Map();
+  for (const r of rows) {
+    if (doneDocs.has(r.DocNo)) continue;
+    if (!SOFA && isSofa(r.ItemCode)) {
+      if (!sofaDropped.has(r.DocNo)) sofaDropped.set(r.DocNo, []);
+      sofaDropped.get(r.DocNo).push(r.ItemCode);
+      continue;
+    }
+    if (!groups.has(r.DocNo)) groups.set(r.DocNo, []);
+    groups.get(r.DocNo).push(r);
+  }
+  if (sofaDropped.size) {
+    const droppedLines = [...sofaDropped.values()].reduce((a, v) => a + v.length, 0);
+    /* MIXED = the document still has non-sofa lines, so it IS built here and
+       arrives incomplete. ALL-SOFA = nothing left, the document does not come
+       in at all — visible by its absence, and not a partial document. */
+    const mixed = [...sofaDropped.keys()].filter((d) => groups.has(d));
+    const allSofa = [...sofaDropped.keys()].filter((d) => !groups.has(d));
+    log(`SOFA=1 is not set: ${droppedLines} sofa line(s) on ${sofaDropped.size} purchase order(s) are NOT carried.`);
+    log(`   ${allSofa.length} document(s) drop out whole (nothing left to import) — a clean exclusion.`);
+    log(`   ${mixed.length} document(s) are MIXED and WILL be imported WITHOUT their sofa line(s):`);
+    for (const d of mixed) log(`      ${d}: ${sofaDropped.get(d).join(", ")}`);
+    if (mixed.length) log(`   Re-running with SOFA=1 will NOT fix these — the importer is idempotent per document. Use topup-ac-po-lines.mjs.`);
+  }
   let pos = [...groups.entries()];
   if (LIMIT) pos = pos.slice(0, LIMIT);
 

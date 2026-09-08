@@ -172,6 +172,15 @@ false: migration 0156 rebuilt that view as a CONFIRMED LIVE LEAK and appends
 `w.company_id` as its last column, saying in its own header that it did so "so
 the route can `.eq('company_id', <active>)` it". The read is scoped now as well.
 
+`ref-in-company.ts` gained a second, OPTIONAL assertion on 2026-09-08
+(`docs/bugs/0682`): `assertSourceLinesInCompany` can now also prove that a
+source LINE names the same product as the line binding to it, over the read it
+was already taking for the company check. **Nothing in Stock Take is affected**
+— `assertWarehouseInCompany`, the function this module uses, is untouched and
+takes no such argument. It is noted here only because this guide is the one that
+names the file; the rule itself is documented in the six conversion guides that
+apply it, and in `backend/src/scm/lib/line-link-item-identity.ts`.
+
 A test fixture that drives create must therefore carry a `warehouses` row in the
 active company — see `backend/tests/stockTakeAccountable.test.ts`.
 

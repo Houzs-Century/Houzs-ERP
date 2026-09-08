@@ -21,6 +21,7 @@ import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   crossCompanySourceRefusal,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
 import { writeMovements, defaultWarehouseId } from '../lib/inventory-movements';
+import { assertLinkedLineItemsMatch } from '../lib/line-link-item-identity';
 import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
 import { warehouseLabel } from '../lib/warehouse-label';
@@ -1129,6 +1130,19 @@ deliveryReturns.post('/', async (c) => {
     if (over) return c.json(over.body, over.status);
   }
 
+  /* IDENTITY, not just the key — docs/bugs/0672 site 15. The guards around this
+     one prove the delivery line's company and that the return does not exceed
+     what was delivered; none proves it is the SAME PRODUCT. The return books
+     stock back IN against this link and `doLineRemaining` subtracts it from the
+     source line's remaining, so a wrong link returns goods to the wrong product
+     and re-opens a delivery that was fully invoiced. */
+  {
+    const idc = await assertLinkedLineItemsMatch(sb, 'delivery_order_items',
+      (items as Array<Record<string, unknown>>).map((it) => ({ linkId: (it.doItemId as string | undefined) ?? null, itemCode: it.itemCode })),
+      { source: 'Delivery Order line' });
+    if (!idc.ok) return c.json(idc.body, idc.status);
+  }
+
   const { data: header, error: hErr } = await insertHeader(sb, user.id, body, c);
   if (hErr) return c.json({ error: 'insert_failed', reason: hErr.message }, 500);
   const h = header as unknown as { id: string; return_number: string };
@@ -1547,6 +1561,19 @@ deliveryReturns.post('/:id/items', async (c) => {
   {
     const over = await checkDrOverRemaining(sb, [it]);
     if (over) return c.json(over.body, over.status);
+  }
+
+  /* IDENTITY, not just the key — docs/bugs/0672 site 15. The guards around this
+     one prove the delivery line's company and that the return does not exceed
+     what was delivered; none proves it is the SAME PRODUCT. The return books
+     stock back IN against this link and `doLineRemaining` subtracts it from the
+     source line's remaining, so a wrong link returns goods to the wrong product
+     and re-opens a delivery that was fully invoiced. */
+  {
+    const idc = await assertLinkedLineItemsMatch(sb, 'delivery_order_items',
+      [{ linkId: (it.doItemId as string | undefined) ?? null, itemCode: it.itemCode }],
+      { source: 'Delivery Order line' });
+    if (!idc.ok) return c.json(idc.body, idc.status);
   }
 
   const row = buildItemRow(id, it, await sourceUnitCostByItemId(

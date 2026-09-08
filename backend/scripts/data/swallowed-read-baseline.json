@@ -193,6 +193,10 @@
       "reads": 1,
       "catches": 0
     },
+    "backend/src/scm/lib/so-remaining-by-item.ts": {
+      "reads": 1,
+      "catches": 0
+    },
     "backend/src/scm/lib/so-revision.ts": {
       "reads": 1,
       "catches": 0
@@ -250,7 +254,7 @@
       "catches": 0
     },
     "backend/src/scm/routes/delivery-orders-mfg.ts": {
-      "reads": 48,
+      "reads": 47,
       "catches": 0
     },
     "backend/src/scm/routes/delivery-planning.ts": {
@@ -366,7 +370,7 @@
       "catches": 0
     },
     "backend/src/scm/routes/purchase-invoices.ts": {
-      "reads": 26,
+      "reads": 25,
       "catches": 0
     },
     "backend/src/scm/routes/purchase-returns.ts": {

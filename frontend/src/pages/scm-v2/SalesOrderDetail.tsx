@@ -58,7 +58,7 @@ import {
   CANCELLABLE_STATUSES,
   isLocked as isSoLocked,
   procLockActive as soProcLockActive,
-  amendmentEligible as soAmendmentEligible,
+  amendmentEligible as soAmendmentEligible, migratedReadonly as soMigratedReadonly, migratedReadonlyReason as soMigratedReason,
 } from '../../vendor/scm/lib/so-detail-gates';
 import { soDateGuardError, soErrorText } from '../../vendor/scm/lib/so-form-validate';
 import { zeroPriceClaim } from '../../vendor/scm/lib/zeroPriceClaim';
@@ -1571,8 +1571,8 @@ export const SalesOrderDetail = () => {
      the page becomes read-only. unlockOverride NOT honoured for this case —
      the child must be cancelled/deleted to edit. Convert-to-DO stays available
      (partial delivery) via the list's right-click. */
-  const hasChildren = Boolean((header as { has_children?: boolean }).has_children);
-  const isLocked = isSoLocked(header.status, hasChildren, unlockOverride);
+  const hasChildren = Boolean((header as { has_children?: boolean }).has_children), migratedLocked = soMigratedReadonly(header);
+  const isLocked = migratedLocked || isSoLocked(header.status, hasChildren, unlockOverride); // migrated is OUTSIDE isSoLocked: Override must not reach it
   /* The one thing a hard-locked SO still accepts: a new salesperson. Same
      permission the API enforces (mfg-sales-orders.ts PATCH), so the Edit button
      it re-enables can never open an order the server would refuse to save. */
@@ -1679,9 +1679,9 @@ export const SalesOrderDetail = () => {
      payments are view-only until the operator opts in here, and a DRAFT skips
      the toggle because it is never confirmed. Page Edit mode still counts as
      opting in, so the existing flow on an unlocked SO is untouched. */
-  const canCancel = CANCELLABLE_STATUSES.includes(header.status);
-  const canOfferPayEdit  = !isDraftSo && !isCancelled && !isEditing;
-  const canEditPayments  = isDraftSo || (!isCancelled && (isEditing || payEditing));
+  const canCancel = !migratedLocked && CANCELLABLE_STATUSES.includes(header.status);
+  const canOfferPayEdit  = !migratedLocked && !isDraftSo && !isCancelled && !isEditing;
+  const canEditPayments  = !migratedLocked && (isDraftSo || (!isCancelled && (isEditing || payEditing)));
 
   /* The two exits this PAGE owns, guarded against discarding typed-but-unbooked
      payment rows (owner 2026-08-07). PaymentsTable registers the browser-level
@@ -1934,7 +1934,7 @@ export const SalesOrderDetail = () => {
                 dropdown. The heavy door stays for everything else. */}
             {!isEditing ? (
               <Button variant="primary"
-                onClick={enterEdit} disabled={isLocked && !canAttributeOther}>
+                onClick={enterEdit} disabled={migratedLocked || (isLocked && !canAttributeOther)}>
                 <Pencil {...ICON} />
                 <span>Edit</span>
               </Button>
@@ -1948,13 +1948,13 @@ export const SalesOrderDetail = () => {
                     SUBMITS AN AMENDMENT instead of writing the lines directly. */}
                 {amendmentMode ? (
                   <Button variant="primary"
-                    onClick={submitAmendment} disabled={savingOrder || createAmendment.isPending}>
+                    onClick={submitAmendment} disabled={migratedLocked || savingOrder || createAmendment.isPending}>
                     <Save {...ICON} />
                     <span>{savingOrder || createAmendment.isPending ? 'Submitting…' : 'Submit amendment request'}</span>
                   </Button>
                 ) : (
                   <Button variant="primary"
-                    onClick={saveEdit} disabled={updateHeader.isPending || savingOrder}>
+                    onClick={saveEdit} disabled={migratedLocked || updateHeader.isPending || savingOrder}>
                     <Save {...ICON} />
                     <span>{updateHeader.isPending || savingOrder ? 'Saving…' : 'Save'}</span>
                   </Button>
@@ -2053,7 +2053,7 @@ export const SalesOrderDetail = () => {
       )}
 
       {/* ── Lock banner ─────────────────────────────────────────── */}
-      {!isCancelled && LOCKED_STATUSES.includes(header.status) && (
+      {!isCancelled && (migratedLocked || LOCKED_STATUSES.includes(header.status)) && (
         <div style={{
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
           padding: 'var(--space-3) var(--space-4)',
@@ -2064,11 +2064,11 @@ export const SalesOrderDetail = () => {
         }}>
           <span style={LOCK_BANNER_INNER_STYLE}>
             <Lock {...ICON} />
-            {unlockOverride
-              ? <strong>Edit-lock overridden — changes are tracked in the status timeline below.</strong>
+            {migratedLocked ? <><strong>View only — carried over from AutoCount.</strong> {soMigratedReason(header)}</>
+              : unlockOverride ? <strong>Edit-lock overridden — changes are tracked in the status timeline below.</strong>
               : <>This SO is <strong>{header.status.replace(/_/g, ' ')}</strong>. Line item edits + addresses are locked. Click <em>Override</em> if you must change something.</>}
           </span>
-          <Button variant={unlockOverride ? 'ghost' : 'primary'}
+          <Button variant={unlockOverride ? 'ghost' : 'primary'} disabled={migratedLocked}
             onClick={async () => {
               if (!unlockOverride) {
                 const reason = await askPrompt({

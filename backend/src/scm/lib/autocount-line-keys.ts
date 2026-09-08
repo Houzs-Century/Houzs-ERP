@@ -203,6 +203,12 @@ export interface NewLineKeyTarget {
   newIds: string[][];
   /** The AutoCount ItemCode sent for each declared-new line, same order. */
   newCodes: string[];
+  /** The Desc2 sent for each declared-new line, same order. Carried because
+   *  ItemCode ALONE cannot separate two lines of the same model in different
+   *  fabrics — the ordinary sofa case — and this zip is positional. Its sibling
+   *  `persistLineKeys` has compared Desc2 since it was written; this one did
+   *  not, which is docs/bugs/0672 site 12. */
+  newDesc2: string[];
   /** Every DtlKey the payload already carried — the book lines we did NOT add. */
   knownKeys: number[];
 }
@@ -236,14 +242,59 @@ export async function persistNewLineKeys(
     }
 
     const norm = (s: string | null | undefined) => String(s ?? '').trim().toUpperCase();
+    /* THE SAME THREE DEFENCES `persistLineKeys` HAS, ninety lines above.
+       docs/bugs/0672 site 12: this function had only the first of them, and
+       even that was written `got && want && got !== want` — so a BLANK code on
+       either side passed as agreement and the key was stored anyway. A blank is
+       not agreement; it is the absence of anything to agree about, and letting
+       it through is the false negative the whole bug class is made of.
+
+       A wrong key is not a mislabelled row: `composeEdit` addresses a book row
+       by `doc.EditDetail(dtlKey)` and STRIPS `ItemCode` off a keyed line, so
+       nothing in flight can ever reveal the mistake. The correctness of
+       `linked_ac_dtlkey` IS the correctness of every future edit of that
+       document, in a live licensed account book. Refusing leaves the rows
+       keyless, which the next edit refuses loudly — recoverable. Storing a
+       wrong one is not. */
+    const dupes = new Set(
+      target.newCodes.map(norm).filter((c, i, a) => c && a.indexOf(c) !== i),
+    );
     for (let i = 0; i < fresh.length; i += 1) {
       const got = norm(fresh[i].ItemCode);
       const want = norm(target.newCodes[i]);
-      if (got && want && got !== want) {
+      if (!got || !want || got !== want) {
         // eslint-disable-next-line no-console
         console.error(
           `${label}: NOT STORED — the new line at position ${i + 1} is '${fresh[i].ItemCode}' in `
           + `AutoCount but '${target.newCodes[i]}' in the ERP.`,
+        );
+        return;
+      }
+      /* PREFIX-TOLERANT, for the reason the sibling records: SODTL.Desc2 is
+         nvarchar(100) and live sofa builds already sit at exactly 100, so the
+         book truncates them itself. An equality test would refuse lines that
+         legitimately match. Two different builds of one model diverge in the
+         first few tokens, not after character 100. */
+      const gotD = norm(fresh[i].Desc2);
+      const wantD = norm(target.newDesc2?.[i]);
+      if (gotD && wantD && !gotD.startsWith(wantD) && !wantD.startsWith(gotD)) {
+        // eslint-disable-next-line no-console
+        console.error(
+          `${label}: NOT STORED — the new line at position ${i + 1} carries Desc2 `
+          + `'${fresh[i].Desc2}' in AutoCount but '${target.newDesc2?.[i]}' in the ERP. `
+          + 'Same ItemCode, different line.',
+        );
+        return;
+      }
+      /* Two added lines of the SAME code — one sofa model in two fabrics is the
+         ordinary case — cannot be told apart by code, so the zip is a coin flip
+         unless Desc2 is present on both sides to break the tie. */
+      if (dupes.has(want) && !(gotD && wantD)) {
+        // eslint-disable-next-line no-console
+        console.error(
+          `${label}: NOT STORED — ItemCode '${target.newCodes[i]}' was added on more than one `
+          + `line and position ${i + 1} has no Desc2 on both sides to tell them apart. `
+          + 'Storing by position here would be a guess.',
         );
         return;
       }
@@ -306,6 +357,7 @@ export function newLineTargetOf(docType: string, payload: { body?: unknown }): N
   const lines = Array.isArray(body.Lines) ? (body.Lines as Array<Record<string, unknown>>) : [];
   const newIds: string[][] = [];
   const newCodes: string[] = [];
+  const newDesc2: string[] = [];
   const knownKeys: number[] = [];
   for (const l of lines) {
     const key = Number(l.DtlKey);
@@ -319,6 +371,7 @@ export function newLineTargetOf(docType: string, payload: { body?: unknown }): N
     if (!ids.length) return null;
     newIds.push(ids);
     newCodes.push(String(l.ItemCode ?? ''));
+    newDesc2.push(String(l.Desc2 ?? ''));
   }
-  return newIds.length ? { table, newIds, newCodes, knownKeys } : null;
+  return newIds.length ? { table, newIds, newCodes, newDesc2, knownKeys } : null;
 }

@@ -13,6 +13,7 @@ const K = (doc, row, dtl, n) => `po-items/${doc}/${row}/ac-${dtl}-${n}.jpg`;
 const R1 = 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa';
 const R2 = 'bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb';
 const OLD = 'cccccccc-3333-4333-8333-cccccccccccc';
+const R3 = 'dddddddd-4444-4444-8444-dddddddddddd';
 
 test('an address names its AutoCount line and the row it was minted on', () => {
   assert.equal(acDtlKeyOf(K('HC-PO-1', R1, '778434', 1)), '778434');
@@ -85,4 +86,59 @@ test('re-point is inert once the key is attached', () => {
     { id: R2, doc: 'HC-PO-4', lineNo: 2, dtl: '5', itemCode: 'A', pics: [live] },
   ];
   assert.deepEqual(planRepoint(rows, new Set([live])), [], 'the line now shows its picture');
+});
+
+/* docs/bugs/0672 SITE 9 — planRepoint picks `firstRow(group)` for a group keyed
+ * on (doc_no, DtlKey), and that key is NOT unique: migrations 0273 and 0280
+ * index it non-uniquely, and probe-link-identity.mjs run 34172468269 counted 310
+ * such shared keys on the sales-order lines and 106 on the purchase-order lines
+ * in production.
+ *
+ * Taking the first row is the owner's own sofa rule when the group is one
+ * build's compartments. It is a coin flip when it is not: the picture lands on
+ * whichever row sorted first. The MODEL is what compartments share — their item
+ * codes deliberately differ (MODEL-1S, MODEL-2S, MODEL-CNR) — so the model is
+ * the test, and every group in production passes it today.
+ */
+/* ASK WHAT A CLEAN RESULT WOULD ALSO BE TRUE OF. The first draft of these three
+   fixtures put the live key on a row INSIDE the group under test, so
+   `planRepoint`'s `shows` short-circuit returned [] before any model test could
+   run and all three passed against the UNFIXED code. That is this bug class
+   wearing a test's clothes — a check that answers a different question and
+   prints like a clean one, the same shape docs/bugs/0672 records the PR #3076
+   guard falling into. The key now lives on a row with a DIFFERENT DtlKey, so
+   the group under test genuinely shows nothing and the model test is what
+   decides. */
+test('re-point REFUSES a (doc, DtlKey) group holding two different models', () => {
+  const live = K('HC-PO-9', R1, '778436', 2);   // minted on R1, which is a DIFFERENT line
+  const rows = [
+    { id: R1, doc: 'HC-PO-9', lineNo: 1, dtl: '778434', itemCode: 'PC151-2S', pics: [live] },
+    { id: R2, doc: 'HC-PO-9', lineNo: 2, dtl: '778436', itemCode: 'PC151-2S', pics: [] },
+    { id: R3, doc: 'HC-PO-9', lineNo: 3, dtl: '778436', itemCode: 'PC160-CNR', pics: [] },
+  ];
+  assert.deepEqual(planRepoint(rows, new Set([live])), [],
+    'two models behind one DtlKey: which row owns the picture is unknowable, so nothing moves');
+});
+
+test("re-point still moves a sofa build's compartments, which share a model", () => {
+  const live = K('HC-PO-9', R1, '778437', 2);
+  const rows = [
+    { id: R1, doc: 'HC-PO-9', lineNo: 1, dtl: '778434', itemCode: 'PC151-2S', pics: [live] },
+    { id: R2, doc: 'HC-PO-9', lineNo: 2, dtl: '778437', itemCode: 'PC151-CNR', pics: [] },
+    { id: R3, doc: 'HC-PO-9', lineNo: 3, dtl: '778437', itemCode: 'PC151-1S', pics: [] },
+  ];
+  const plan = planRepoint(rows, new Set([live]));
+  assert.equal(plan.length, 1, 'one build, one target');
+  assert.equal(plan[0].id, R2, 'the first compartment row of the group');
+});
+
+test('re-point refuses a group where a row carries NO item code at all', () => {
+  const live = K('HC-PO-9', R1, '778436', 2);
+  const rows = [
+    { id: R1, doc: 'HC-PO-9', lineNo: 1, dtl: '778434', itemCode: 'PC151-2S', pics: [live] },
+    { id: R2, doc: 'HC-PO-9', lineNo: 2, dtl: '778436', itemCode: 'PC151-2S', pics: [] },
+    { id: R3, doc: 'HC-PO-9', lineNo: 3, dtl: '778436', itemCode: '', pics: [] },
+  ];
+  assert.deepEqual(planRepoint(rows, new Set([live])), [],
+    'a blank cannot be asserted equal to anything');
 });

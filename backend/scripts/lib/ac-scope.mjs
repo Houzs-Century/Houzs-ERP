@@ -175,6 +175,16 @@ export function decodeSnapshot(snap) {
         fromDocType: r[lIdx.fromDocType],
         fromDocNo: r[lIdx.fromDocNo],
         fromSoDtlKey: r[lIdx.fromSoDtlKey],
+        /* The line's own stock location. APPENDED to the export 2026-09-08 and
+           read BY NAME, exactly like the currency fields above: a snapshot cut
+           before that carries no such column and decodes to null, so a consumer
+           can say "this cut cannot answer where the goods shipped from" instead
+           of reading an absent column as a blank location. Blank in the BOOK
+           also decodes to null — 1,135 of 48,772 DO lines are genuinely blank —
+           and the two are the same answer here, because the rule that consumes
+           this (lib/ac-do-location.mjs) treats "no location" as "cannot
+           resolve" either way and never defaults. */
+        location: Object.hasOwn(lIdx, "location") ? (r[lIdx.location] || null) : null,
       };
       if (!lines.has(l.docNo)) lines.set(l.docNo, []);
       lines.get(l.docNo).push(l);

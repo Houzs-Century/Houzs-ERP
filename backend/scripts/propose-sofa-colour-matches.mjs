@@ -140,7 +140,12 @@ async function main() {
        CHECK anything else: the code is not literally present, so the pass
              reached it by a widening the owner should look at. */
     const nameOnly = left !== null && (left === "" || normColour(p.row.label).replace(/[^A-Z0-9]/g, "").includes(left) || left.length <= 12);
-    const conf = left !== null && nameOnly ? "HIGH" : "CHECK";
+    /* AN ASSUMED SERIES IS NEVER HIGH — docs/bugs/0672 site 16. When the
+       document wrote a BARE NUMBER, the matcher supplied the "PC" itself; the
+       series is not in the text at all. In the owner's data that is usually
+       right, which is why the pass exists, but "usually right" is precisely the
+       thing a person should be shown rather than told. */
+    const conf = p.e.assumedSeries ? "CHECK" : (left !== null && nameOnly ? "HIGH" : "CHECK");
     const dead = p.row.active === false;
     const wouldDiffer = (() => {
       const alt = withoutActive.explainColour(p.text);
@@ -151,7 +156,8 @@ async function main() {
     log("");
     log(`─ "${p.text}"   ${p.lines.length} line(s)`);
     log(`   PROPOSE  ${p.row.fabric_id} / ${p.row.colour_id}   "${p.row.label}"   [${conf}]`);
-    log(`   matched by: ${p.e.via}${p.e.padded ? " +padded" : ""}${p.e.redirected ? " +redirected to the live row" : ""}` +
+    if (p.e.assumedSeries) log(`   *** THE SERIES WAS ASSUMED. The text is a bare number; "PC" came from the matcher, not the document. ***`);
+    log(`   matched by: ${p.e.via}${p.e.padded ? " +padded" : ""}${p.e.assumedSeries ? " +ASSUMED SERIES (PC)" : ""}${p.e.redirected ? " +redirected to the live row" : ""}` +
         `${left !== null ? `; text minus the code = ${JSON.stringify(left)}` : "; the code is not literally in the text"}`);
     if (dead) log(`   *** THIS ROW IS SUPERSEDED (active = false). Do NOT bind to it. ***`);
     if (wouldDiffer) log(`   *** without \`active\`, the matcher would have answered ${wouldDiffer} - the dead-row trap, avoided here. ***`);
