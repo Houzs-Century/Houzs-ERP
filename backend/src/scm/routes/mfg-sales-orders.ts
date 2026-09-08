@@ -10099,11 +10099,8 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
   }
 
   /* Carry the frozen links onto the replacement lines, matched by SKU AND COLOUR
-     (docs/bugs/0672 site 11 — on SKU alone the two fabrics of one sofa model
-     share a bucket and pair by POSITION, so a reordered replacement set hands
-     the BLUE two-seater's purchase order to the GREY one). A (SKU, colour) with
-     no counterpart is NOT re-pointed — that link is genuinely gone and is
-     reported instead of quietly invented. */
+     (docs/bugs/0672 site 11: on SKU alone one model's two fabrics pair by
+     POSITION). No counterpart -> NOT re-pointed, reported rather than invented. */
   const soLinkResult = await (async () => {
     if (soLinkSnapshot.length === 0) return { restored: 0, dropped: 0 };
     const plan = planSoLineRelink(
