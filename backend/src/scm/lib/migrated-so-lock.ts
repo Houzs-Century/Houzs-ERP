@@ -40,7 +40,7 @@
 //     Supabase blip must not stop the shop floor. The migrated documents are
 //     still protected by the write freeze underneath this.
 //   • ABSENT / EMPTY is NOT the seeded default here. Migration
-//     20260908T0900_scm_migrated_so_lock.sql seeds '1', because the owner's
+//     20260908T0014_scm_migrated_so_lock.sql seeds '1', because the owner's
 //     ruling is that migrated orders are locked TODAY — a fresh environment
 //     reading "open" would be reading the wrong answer, not a neutral one.
 // ----------------------------------------------------------------------------

@@ -3810,6 +3810,37 @@ endpoint, no PDF. The one writer is
 | `display_term` | `SO.DisplayTerm` | the credit term AutoCount PRINTS. The ERP's own terms live on the CUSTOMER, so this is the only order-level record of one |
 | `ac_to_po_no` | `SO.UDF_ToPONo` | the purchase order(s) AutoCount raised FROM this order, comma-joined. **NOT a customer PO number** |
 
+#### The lane will NOT write a field a person owns — and it says whose it was
+
+*Added 2026-09-08, `fix/sync-human-edit-guard`.* Before that date this lane
+decided "did a person change this?" by testing the audit row's actor column for
+falsiness, so every row with a NULL `actor_id` counted as the SYSTEM's. That is
+wrong here, and wrong in the direction that loses the edit: a null actor is a
+normal shape for a PERSON's row — `routes/so-amendments.ts:262` writes one on
+purpose, and `routes/so-handover.ts:191` writes one whenever the session's user
+object is thin, on the very route that changes `salesperson_id` and `agent`.
+
+The rule now has ONE home, `backend/scripts/lib/ac-human-edit.mjs`, and it is the
+one `check-so-open-for-new.mjs` proved against production:
+
+```
+SYSTEM := actor_id = the migration's pinned actor
+       OR (actor_id IS NULL AND actor_name_snapshot ILIKE 'system%')
+PERSON := everything else, an UNATTRIBUTED row included
+```
+
+Two consequences worth knowing before you read a plan:
+
+* The veto is **per (document, field)**. A person who changed the agent does not
+  freeze the delivery address.
+* A refusal is **named, not counted**: the plan prints the document, the line
+  (`(header)` for a header field), the ERP value, the book value and who edited
+  it. A tally cell reading `3` told nobody which order to open.
+
+`version > 1` is NOT an authorship signal and decides nothing. It survives only
+as an extra conservatism on the `desc` and `pay` lanes and is printed apart from
+the authorship count. `docs/bugs/0700-*` has the trace.
+
 **A neighbouring lane, named here because this is where this script's lanes are
 described:** `sync-ac-delta.mjs`'s `LANES=do` now stamps the SHIP-FROM BRANCH on
 every delivery note it creates, through the shared
