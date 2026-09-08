@@ -853,9 +853,29 @@ satisfied. It is now skipped for these documents for the same reason it already
 skips service lines: with no IN to reverse, *"the goods were already consumed
 downstream"* names a cause that does not exist.
 
-Was it ever hit in production? `backend/scripts/check-migrated-cancel-exposure.mjs`
-+ Actions -> *Migrated cancel exposure (read-only)* answer it. Ledger:
-`docs/bugs/0675-a-migrated-goods-receipt-cancelled-reversing-879-units-it-ne.md`.
+Was it ever hit in production? **No. Measured 2026-09-08 — stock is CLEAN.**
+`backend/scripts/check-migrated-cancel-exposure.mjs` + Actions -> *Migrated
+cancel exposure (read-only)*, run
+[34189651181](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34189651181):
+
+```
+movements behind the 473 migrated goods receipts:   0 row(s), 0 units
+movements behind the 173 migrated delivery orders:  0 row(s), 0 units
+STOCK — CLEAN. 0 movement rows behind 646 migrated documents.
+CANCEL audit rows on migrated documents: 0
+```
+
+So the guard above is **preventive, not a repair** — there is nothing to
+un-post. Had it fired, the run's Q5 puts the cost at 1,334 units on the receipt
+side and 1,245 on the delivery side.
+
+**Read the probe's history before trusting a past "we checked".** It had never
+once been dispatched, and the first dispatch CRASHED on the movement query —
+`COALESCE` over the `scm.inventory_movement_type` enum is refused by Postgres
+before any row is read, so it could never have answered. Fixed 2026-09-08
+(`::text` at both sites). Ledger:
+`docs/bugs/0675-a-migrated-goods-receipt-cancelled-reversing-879-units-it-ne.md`
+and `docs/bugs/0698-the-migrated-cancel-exposure-probe-could-never-have-answered.md`.
 
 ---
 
