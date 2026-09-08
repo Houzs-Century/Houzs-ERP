@@ -814,6 +814,40 @@ only a key the row's OWN siblings already agree on, and only after the book
 confirms that key is a line of that document carrying that row's Desc2 — a wrong
 key is worse than a missing one, so all four gates refuse rather than fall back.
 
+### The key now also ADDRESSES a correction, not just identifies a row
+
+*Added 2026-09-08.* `apply-sofa-compartment-corrections.mjs` picks the lines of one
+build out of a document with `desc2Match`, a substring of the AutoCount Desc2. That
+is not always enough to name a build. On `HC-SO-012827` the book wrote two sofas so
+that **one Desc2 is a substring of the other**:
+
+```
+DtlKey 873100   "3 seater  35 inch  color modenza 07 silver  Nilon bottom"
+DtlKey 873101   "35 inch  color modenza 07 silver  Nilon bottom"
+```
+
+No needle reaches `873101` alone — every candidate is also carried by `873100`, and
+`selectBuildRows` refuses as `ambiguous`, correctly. So a correction may now carry
+**`lineKeys`**, matched against `linked_ac_dtlkey`, which both the SO and PO queries
+in that script now select. Same column, second job: it identified a row, and it now
+addresses one.
+
+Three properties, each a refusal rather than a fallback:
+
+- **It never falls back to the text.** A key the document does not carry is `none`.
+  Matching by text instead would write the build onto the wrong line, which is the
+  transposition class `docs/bugs/0690` names. Measured on prod dry run
+  `34234942367`: the ERP carries `873101` but **not** `873100`, and the run said so
+  and skipped rather than guessing.
+- **The VERIFY step narrows the same way.** Re-reading every sofa row of a
+  two-build document would compare one build's target against both builds' rows and
+  fail a correct write.
+- **The reconcile's ruling lookup understands it too** — `makeSofaRulingLookup`
+  checks `lineKeys` against the ERP lines' `ac_dtlkey` before it looks at text. It
+  did not at first, and `HC-SO-012827` went on reporting *"sofa build not
+  verifiable"* with the owner's answer already in the database (tally run
+  `34236971666`). `docs/bugs/0722`.
+
 **The lesson for the next repair, and it is now the third column lost this
 way** — `warehouse_id` (seven lines PENDING for ever, 2026-08-11),
 `description` / `delivery_date`, and now `linked_ac_dtlkey`: a column-by-column
@@ -4906,44 +4940,21 @@ not-folded-into-agree property, the unwritten ruling that stays `DIFFER`, the
 no-ruling control, and the assertion that a ruling cannot rescue an ERP carrying
 no compartments at all.
 
-## A correction may name its BOOK LINE, and a collapse may release a dedication (2026-09-08)
+## A collapse RELEASES the purchase dedication it strands (2026-09-08)
 
-Two changes to `backend/scripts/apply-sofa-compartment-corrections.mjs` and the
-matcher it shares with the reporter. Both are new SURFACE — a new field on a
-correction entry, and a new operation in the plan an operator reads.
+New SURFACE on `backend/scripts/apply-sofa-compartment-corrections.mjs`: a new
+operation in the plan an operator reads.
 
-**1. `dtlKey` selects a build by its AutoCount line, not by its text.** A
-correction has always been narrowed to one build by `desc2Match`, a prefix of
-the Desc2 the build was ordered with. That cannot reach a build whose ERP rows
-do not carry the book's words at all, and two of the six sales orders left on
-2026-09-08 are exactly that — `HC-SO-005082` and `HC-SO-011221`, where every
-needle answered `none` and the correction silently did nothing. Widening the
-needle is the wrong direction: a build differs from its neighbour by exactly the
-characters a widening removes.
+A build that goes from several rows to ONE leaves the dropped rows'
+`purchase_order_items.so_item_id` pointing at rows that are about to disappear,
+and the surplus guard refused the whole build for it (`HC-SO-011099`,
+`docs/bugs/0719`). His answer was never in doubt; our way of writing it was
+stuck. Writing only the purchase half — which DOES succeed — would have left the
+factory's document saying `2S` while the customer's still said
+`1A(LHF)+1A(RHF)`.
 
-An entry may now carry `dtlKey` — one AutoCount `DtlKey`, or a list of them, one
-per document the entry names. It is IDENTITY: every ERP row behind one book line
-carries the same `linked_ac_dtlkey` (`src/scm/lib/autocount-line-keys.ts:155`),
-so the key selects all of one build's rows and none of the neighbour's, even
-when the two texts are byte-identical. Two refusals carry the safety:
-
-- **A key no row on the document carries returns `key-missing` and writes
-  nothing.** It never falls back to the text — a key we cannot find means the
-  key we were handed is wrong, and answering with the text would be the guess
-  the matcher exists to refuse. One entry legitimately names a sales order's
-  line AND its purchase order's, so `key-missing` on the other document is a
-  skip, not a fault.
-- **The reporter honours the same key.** `scripts/lib/sofa-rulings.mjs` reads
-  `ac_dtlkey` or `linked_ac_dtlkey` off the reconcile's own rows, and a KEYED
-  entry is excluded from the "one ruling with no needle owns the document"
-  fallback. Without that, a keyed entry would bless every line of a document
-  that merely shares its number.
-
-**2. A collapse RELEASES the purchase dedication it strands.** A build that goes
-from several rows to ONE leaves the dropped rows' `purchase_order_items.so_item_id`
-pointing at rows that are about to disappear, and the surplus guard refused the
-whole build for it (`HC-SO-011099`, `docs/bugs/0719`). The plan gained a
-`release` op, executed in the SAME transaction as the delete it exists for:
+The plan gained a `release` op, executed in the SAME transaction as the delete it
+exists for:
 
 ```
 release 1A(RHF) — HC-PO-009882 9028-1A(RHF) stops being dedicated to a row
@@ -4951,29 +4962,45 @@ release 1A(RHF) — HC-PO-009882 9028-1A(RHF) stops being dedicated to a row
 ```
 
 It is RELEASED (`so_item_id = NULL`), **never re-pointed onto the surviving
-row**: the dedication is one sales line to one purchase line, and a second
-purchase line aimed at the surviving row would read as two incoming units of one
-ordered piece — the same reason an inserted PO line never copies `so_item_id`.
-Five conditions gate it and every one is a refusal: sales-order side only; the
-build must collapse to exactly ONE piece, so "which surviving row did this
-purchase line mean" has one answer; the dropped row must have NO delivery-order
-line (「已经出货了的就随便把」); every purchase line being released must be free of
-goods receipts; and the entry must NAME the purchase order, so the half that
-deletes the released line is going to run. Without that last one the release
-would leave an unbound purchase line stating the old build — worse than the
-refusal it replaced.
+row**, for two reasons. The dedication is one sales line to one purchase line, so
+a second purchase line aimed at the surviving row would read as two incoming
+units of one ordered piece — the same reason an inserted PO line never copies
+`so_item_id`. And re-pointing walks into a trap that is not obvious: the
+downstream carry sets `item_code` on every PO line dedicated to a corrected SO
+row, so re-pointing would have made BOTH purchase rows `9028-2S`, and the PO half
+of the same entry would then have read them as **two identical sofas**
+(`splitBuildCopies`) and refused. Releasing leaves the released row on its old
+code, which is exactly what makes it surplus and deletable.
+
+**The guard was not relaxed.** Five conditions gate the release and every one is
+a refusal that leaves the old behaviour in place:
+
+1. sales-order side only — a GRN hanging off a purchase line is goods, not
+   paperwork, and is not this script's to move;
+2. the build must collapse to exactly ONE piece, so "which surviving row did
+   this purchase line mean" has one answer and needs no guess;
+3. the dropped row must carry NO delivery-order line — something shipped against
+   it, and 「已经出货了的就随便把」 says leave those alone;
+4. every purchase line being released must itself be free of goods receipts, so
+   the PO half can really delete it;
+5. the entry must NAME the purchase order, or nothing would clean up the released
+   line and we would trade a refusal for an unbound purchase line stating the old
+   build.
+
+The money assertion was restated at the same time: it now names the ops that
+LEAVE a priced row (`update`, `insert`) instead of excluding `delete`. The old
+spelling would have summed `undefined` the moment a new op appeared, turning the
+whole assertion into `NaN` — which compares false against everything and would
+have refused every build with a message that is not about money.
 
 `HC-SO-011099` moved out of `_held` in the same change. It is not thereby
 blessed: `RULED` still requires the ERP to hold his answer, so until the write
-runs it reads `DIFFER` and now NAMES the answer it is failing to match.
+runs it reads `DIFFER` and NAMES the answer it is failing to match.
 
-Tests: `scripts/lib/sofa-desc2-match.test.mjs` (line-key selection, the
-`key-missing` refusal, identity beating a matching text, several keys on one
-entry), `scripts/lib/sofa-rulings.test.mjs` (the reporter honours the key and
-refuses the document-number fallback for a keyed entry), and
-`scripts/lib/sofa-corrections-source.test.mjs` (an entry names a `desc2Match` OR
-a `dtlKey`, and two keyed builds on ONE document are two builds, not a
-contradiction).
+Line-key addressing — `lineKeys` on a correction entry — is a SEPARATE change
+that landed the same day from another lane; it is documented in the section
+below, and `HC-SO-005082` and `HC-SO-011221` are corrected through it.
+
 ## Several ERP lines can share ONE book line — the sofa (2026-09-08)
 
 **The rule.** AutoCount holds a sofa as a single line; the ERP decomposes it into

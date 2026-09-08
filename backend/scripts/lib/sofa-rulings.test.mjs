@@ -100,47 +100,60 @@ test("the REAL corrections files load, and the builds written on 2026-09-08 are 
   );
 });
 
-/* ── A BUILD SELECTED BY ITS LINE KEY ────────────────────────────────────────
- * Two of the last six sales-order differences hold the build on rows that carry
- * NO Desc2, so no needle can reach them and the entry is keyed on the AutoCount
- * DtlKey instead. The reporter has to honour the same key the writer does, or a
- * build that IS written keeps reading DIFFER — which is bug 0714 all over
- * again, one file later.
- */
-test("LINE KEY: a keyed ruling is found on the row carrying that DtlKey", () => {
-  const dir = withData({
-    sep: { entries: [{ docs: ["HC-SO-011221"], pieces: ["2A(LHF)", "1A(RHF)"], dtlKey: "775621", why: "book" }] },
-  });
-  const look = makeSofaRulingLookup(dir);
-  /* The reconcile aliases the column to `ac_dtlkey`; a caller reading the table
-     directly has `linked_ac_dtlkey`. Both spellings must resolve. */
-  assert.deepEqual(look("HC-SO-011221", [{ ac_dtlkey: "775621" }]).pieces, ["2A(LHF)", "1A(RHF)"]);
-  assert.deepEqual(look("HC-SO-011221", [{ linked_ac_dtlkey: 775621 }]).pieces, ["2A(LHF)", "1A(RHF)"]);
+/* ── A RULING ADDRESSED BY LINE KEY MUST BE FOUND TOO ───────────────────────
+ * HC-SO-012827 holds a three-seater and a separate single chair whose Desc2 the
+ * book wrote as a SUBSTRING of the three-seater's, so the single chair has no
+ * needle that reaches it alone and is addressed by the account book's own
+ * DtlKey instead (scripts/lib/sofa-desc2-match.mjs).
+ *
+ * This lookup is what stops the report handing the owner back a sofa he has
+ * already ruled on (docs/bugs/0720). It chose an entry by `desc2Match` only, so
+ * a line-key ruling was invisible to it and its line kept reading "sofa build
+ * not verifiable" AFTER the build had been written to production — measured on
+ * tally run 34236971666, where HC-SO-012827 stayed in the cannot-compare list
+ * with the owner's answer already in the database.
+ *
+ * The ERP lines carry the key as `ac_dtlkey` (lib/ac-reconcile-erp-sql.mjs). */
+const keyedLines = (rows) => rows.map(([ac_dtlkey, description2]) => ({ ac_dtlkey, description2 }));
+
+const SO_012827_DATA = {
+  sep: {
+    entries: [
+      { docs: ["HC-SO-012827"], pieces: ["1A(LHF)", "1NA", "1A(RHF)"], desc2Match: "3 seater", why: "owner" },
+      { docs: ["HC-SO-012827"], pieces: ["1S"], lineKeys: ["873101"], why: "owner" },
+    ],
+  },
+};
+
+test("LINE KEY: a ruling addressed by lineKeys is found on the line that carries the key", () => {
+  const look = makeSofaRulingLookup(withData(SO_012827_DATA));
+  const got = look("HC-SO-012827", keyedLines([["873101", "35 inch  color modenza 07 silver  Nilon bottom"]]));
+  assert.deepEqual(got && got.pieces, ["1S"]);
 });
 
-test("LINE KEY: the ruling never reaches the document's OTHER book line", () => {
-  const dir = withData({
-    sep: {
-      entries: [
-        { docs: ["HC-SO-005082"], pieces: ["2379-3S"], dtlKey: "358016", why: "book" },
-        { docs: ["HC-SO-005082"], pieces: ["2379-2S"], dtlKey: "358017", why: "book" },
-      ],
-    },
-  });
-  const look = makeSofaRulingLookup(dir);
-  assert.deepEqual(look("HC-SO-005082", [{ ac_dtlkey: "358016" }]).pieces, ["2379-3S"]);
-  assert.deepEqual(look("HC-SO-005082", [{ ac_dtlkey: "358017" }]).pieces, ["2379-2S"]);
-  /* A third line of the same document is nobody's ruling. */
-  assert.equal(look("HC-SO-005082", [{ ac_dtlkey: "358018" }]), null);
+test("LINE KEY: the three-seater still resolves by its text, unaffected", () => {
+  const look = makeSofaRulingLookup(withData(SO_012827_DATA));
+  const got = look("HC-SO-012827", keyedLines([["873100", "3 seater  35 inch  color modenza 07 silver  Nilon bottom"]]));
+  assert.deepEqual(got && got.pieces, ["1A(LHF)", "1NA", "1A(RHF)"]);
 });
 
-test("LINE KEY: a keyed entry is not blessed by a document that only shares its number", () => {
-  const dir = withData({
-    sep: { entries: [{ docs: ["HC-SO-011221"], pieces: ["2A(LHF)"], dtlKey: "775621", why: "book" }] },
-  });
-  const look = makeSofaRulingLookup(dir);
-  /* No key on the lines at all: the entry names one, so it must not match. */
-  assert.equal(look("HC-SO-011221", [{ description2: "anything" }]), null);
+test("LINE KEY: a key ruling never blesses a line that does not carry the key", () => {
+  /* The whole point of the key. Answering "1S" for the three-seater's lines
+     would bless the wrong furniture, which is the failure this lane prevents. */
+  const look = makeSofaRulingLookup(withData({
+    sep: { entries: [{ docs: ["HC-SO-012827"], pieces: ["1S"], lineKeys: ["873101"], why: "owner" }] },
+  }));
+  assert.equal(look("HC-SO-012827", keyedLines([["873100", "3 seater  35 inch  color"]])), null);
+});
+
+test("LINE KEY: a lone key ruling is not treated as the document's only build", () => {
+  /* `only` blesses a single needle-less entry as the document's one build. A
+     lineKeys entry is needle-less but is NOT unaddressed, so it must not take
+     that path on a line whose key does not match. */
+  const look = makeSofaRulingLookup(withData({
+    sep: { entries: [{ docs: ["HC-SO-012827"], pieces: ["1S"], lineKeys: ["873101"], why: "owner" }] },
+  }));
+  assert.equal(look("HC-SO-012827", [{ description2: "no key on this row at all" }]), null);
 });
 
 test("a LATER ruling supersedes an earlier one on the same build", () => {

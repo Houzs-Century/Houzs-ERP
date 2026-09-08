@@ -86,37 +86,15 @@ export function desc2Contains(haystack, needle) {
   return wanted !== "" && normaliseDesc2(haystack).includes(wanted);
 }
 
-/* ── WHEN THERE IS NO TEXT TO MATCH ─────────────────────────────────────────
-   A needle can only find a build whose ERP rows carry the book's words. Two of
-   the six sales orders left on 2026-09-08 carry NONE — `HC-SO-005082` and
-   `HC-SO-011221` hold the build with `description2` the book's Desc2 is not in,
-   so every needle returns `none` and the correction silently does nothing.
-
-   Widening the needle until it hits is the wrong direction and this module's
-   own header says why: a build differs from its neighbour by exactly the
-   characters a widening removes. The right key is the one AutoCount already
-   stamped on the row. `linked_ac_dtlkey` is the BOOK LINE's identity, and
-   src/scm/lib/autocount-line-keys.ts:155 states the invariant this rests on —
-   "Every ERP row behind this AutoCount line gets the SAME key". So a DtlKey
-   selects exactly one build's rows, all of them, and cannot reach the
-   neighbouring build even when the two texts are byte-identical.
-
-   IT IS A REFUSAL, NEVER A FALLBACK. A key no row carries means the key we were
-   handed is wrong. Falling back to the text there would put the correction on
-   whatever the text happens to reach, which is the guess this module exists to
-   refuse — so `key-missing` returns no rows and the caller must not write. */
-const keyOf = (v) => (v === null || v === undefined ? "" : String(v).trim());
-
 /**
  * @typedef {object} BuildSelection
- * @property {"all"|"exact"|"normalised"|"none"|"ambiguous"|"line-key"|"key-missing"} verdict
+ * @property {"all"|"exact"|"normalised"|"none"|"ambiguous"|"linekey"} verdict
  *   `all` — the correction carries no desc2Match, so every row is the build.
  *   `exact` — plain substring, the behaviour this matcher has always had.
  *   `normalised` — found only after normalising; say so in the operator's log.
  *   `none` — no row carries the text. The build is not on this document.
  *   `ambiguous` — the needle spans more than one build. REFUSE; never pick.
- *   `line-key` — chosen by the AutoCount DtlKey. Identity, not resemblance.
- *   `key-missing` — a DtlKey was given and no row carries it. REFUSE.
+ *   `linekey` — selected by the account book's OWN line key, not by text.
  * @property {any[]} rows the rows of the build; empty unless the verdict allows
  * @property {string} how one line, for the operator's log
  * @property {string[]} texts the distinct normalised Desc2 the needle reached
@@ -128,40 +106,47 @@ const keyOf = (v) => (v === null || v === undefined ? "" : String(v).trim());
  * @param {any[]} rows every sofa row on the document, in document order
  * @param {string|null|undefined} needle the correction's `desc2Match`
  * @param {(row:any)=>unknown} [readDesc2] how to read a row's Desc2
- * @param {{dtlKey?: unknown, readKey?: (row:any)=>unknown}} [opts]
- *   `dtlKey` — the correction's AutoCount line key. When present it DECIDES and
- *   the needle is not consulted at all.
+ * @param {{lineKeys?: unknown[], readLineKey?: (row:any)=>unknown}} [opts]
+ *   `lineKeys` — the correction's `lineKeys`: the account book's own DtlKey for
+ *   each line of this build. When present it DECIDES, and the text is not
+ *   consulted at all.
  * @returns {BuildSelection}
  */
 export function selectBuildRows(rows, needle, readDesc2 = (r) => r.description2, opts = {}) {
   const all = Array.isArray(rows) ? rows : [];
 
-  /* Identity first, and it is the whole answer when it is given.
-     ONE ENTRY, SEVERAL KEYS. A correction names a sales order and the purchase
-     order raised from it, and those are two different AutoCount lines with two
-     different DtlKeys — so `dtlKey` may be a list. A key belongs to exactly one
-     document, so listing both cannot cross the two: the document that does not
-     hold either key answers `key-missing` and the caller skips it. */
-  const wantKeys = (Array.isArray(opts?.dtlKey) ? opts.dtlKey : [opts?.dtlKey])
-    .map(keyOf)
-    .filter(Boolean);
-  if (wantKeys.length) {
-    const want = new Set(wantKeys);
-    const readKey = opts.readKey ?? ((r) => r.linked_ac_dtlkey);
-    const hits = all.filter((r) => want.has(keyOf(readKey(r))));
-    if (!hits.length)
+  /* ── THE LINE KEY DECIDES WHEN IT IS GIVEN ────────────────────────────────
+     Text cannot always tell two builds apart. HC-SO-012827 holds a three-seater
+     and a single chair whose Desc2 the book wrote so that one is a SUBSTRING of
+     the other ("3 seater  35 inch  color …" and "35 inch  color …"), so no
+     needle addresses the single chair alone — every candidate reaches both and
+     is refused as ambiguous, correctly.
+
+     The account book assigns each line its own DtlKey, and
+     scm.mfg_sales_order_items.linked_ac_dtlkey already carries it. That is
+     IDENTITY, not a resemblance, so it is matched exactly (as strings, since
+     the file writes keys as text and a column may hand back a number).
+
+     It never falls back to the text. A key the document does not carry means
+     the build is not where the correction says it is, and quietly matching by
+     text instead would write the build onto the WRONG line — which is the
+     transposition class docs/bugs/0690 names and the reason this mode exists.
+     Matching by position, or by "the shorter text", is the same bug wearing a
+     different hat; neither is done here. */
+  const keys = Array.isArray(opts.lineKeys) ? opts.lineKeys.map((k) => String(k ?? "").trim()).filter(Boolean) : [];
+  if (keys.length) {
+    const readKey = opts.readLineKey || ((r) => r.linked_ac_dtlkey);
+    const want = new Set(keys);
+    const hits = all.filter((r) => want.has(String(readKey(r) ?? "").trim()));
+    const texts = [...new Set(hits.map((r) => normaliseDesc2(readDesc2(r))))];
+    if (hits.length !== want.size)
       return {
-        verdict: "key-missing",
+        verdict: "none",
         rows: [],
-        how: `no line on this document carries AutoCount DtlKey ${wantKeys.join(" or ")}`,
-        texts: [],
+        how: `the document does not carry ${[...want].filter((k) => !hits.some((r) => String(readKey(r) ?? "").trim() === k)).join(", ") || "these line key(s)"} — the build is not on this document, and matching by text instead would write it onto the wrong line`,
+        texts,
       };
-    return {
-      verdict: "line-key",
-      rows: hits,
-      how: `${hits.length} line(s) carry AutoCount DtlKey ${[...new Set(hits.map((r) => keyOf(readKey(r))))].join(", ")}`,
-      texts: [...new Set(hits.map((r) => normaliseDesc2(readDesc2(r))))],
-    };
+    return { verdict: "linekey", rows: hits, how: `matched the account book's own line key ${keys.join(", ")}`, texts };
   }
 
   if (!needle) return { verdict: "all", rows: all.slice(), how: "no desc2Match on this correction", texts: [] };
