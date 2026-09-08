@@ -4739,3 +4739,68 @@ build that answered every one of that document's sends (`host_mvid`
 `HC-SO-013394`'s rows start carrying `SO-013394`. `acBookNumber` already tells
 this apart from "not in the book" — it is the `not-recorded` verdict, and it is
 deliberately not flagged.
+
+## The transfer uses AutoCount's DOCUMENTED call on every shape (2026-09-08)
+
+**What changed.** `RunTransfer` used to RETURN EARLY into
+`AddPartialTransferDetail` whenever the ERP named lines and sent no quantity.
+Every SO -> DO is that shape, and every one of them was refused:
+
+```
+SO->DO shape: PARTIAL BY LINE - the ERP named 8 source line(s) and no quantity
+transfer: AddPartialTransferDetail per source document
+SO->DO refused: AutoCount.Invoicing.InvalidTransferItemException: Invalid transfer item.
+```
+
+Ten delivery orders, six attempts each, three weeks. The full refutation of every
+data-side theory is `docs/bugs/0716-every-so-to-do-transfer-used-an-undocumented-autocount-call.md`.
+
+**`AddPartialTransferDetail` is on NO page of AutoCount's programmer wiki** — all
+175 read 2026-09-08. The two documented calls are `FullTransfer` and
+`PartialTransfer`, and the host's assemblies expose a `PartialTransfer` overload
+that carries the LINE KEY as well as the item, uom and quantity — so naming an
+exact line loses nothing by moving to it. `LogTransferApi` prints the real
+signatures into the host log at every service start; read those rather than this
+paragraph.
+
+**Where the quantity comes from.** The service reached for the undocumented call
+because "every PartialTransfer overload demands a quantity and the ERP sends
+none". The ERP sends none; the BOOK knows it. A by-line transfer means "these
+lines, at whatever is still outstanding", which is `Qty - TransferedQty` on the
+source row. `OutstandingQtyOf` reads it and `BindTransferArg` uses it whenever the
+ERP's plan carries no number of its own.
+
+So all three shapes now go through the documented call:
+
+| the ERP is saying | what binds |
+| --- | --- |
+| this whole document | every named line at its outstanding quantity |
+| these lines only | those lines at their outstanding quantity |
+| 3 of the 5 on this line | the ERP's own number, from `Details[].Qty` |
+
+**Two rules that come with it, and neither is optional:**
+
+- **`focQty` binds to ZERO, and it is matched BEFORE `qty`.** The parameter name
+  contains `qty`, so the quantity rule answered it with the quantity being
+  SHIPPED — a free-of-charge quantity equal to the sold one on every line of a
+  licensed account book. The ERP has no concept of a FOC quantity and sends none.
+- **The fallback must never run on a document the SDK has already written into.**
+  `PartialTransfer` is one call PER LINE, so a throw on line 4 of 8 leaves three
+  lines in the target and `AddPartialTransferDetail` on top would add them again.
+  `Xfer.DocumentedCallsMade` counts what landed and `RunTransfer` throws instead
+  of falling back once any did.
+
+`AddPartialTransferDetail` is KEPT as the fallback for a shape the documented
+overloads cannot express — it is the call that put DO-011260 in the book — and it
+is reached only when nothing has been written yet.
+
+**AutoCount's own verdict now reaches the ERP.** `PreflightValidItems` has asked
+`TransferHelper.CheckAndGetValidPartialTransferItem` since 2026-08-17 and wrote
+the answer only to the host's log file. It now lands on `Xfer.ItemCheck` and
+`Convert_`'s catch appends it to the message stored in
+`scm.autocount_outbox.last_error`, naming the keys AutoCount refused when it
+refuses any. The AutoCount Sync page also reads that log directly —
+`GET /api/scm/autocount-outbox/host-log`, which existed for weeks with no caller.
+
+**This is INERT until the host is rebuilt.** `AcSyncService.cs` compiles nowhere
+but the office machine; `docs/autocount-service-deploy.md` is the swap.
