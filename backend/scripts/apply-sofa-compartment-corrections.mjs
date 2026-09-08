@@ -250,17 +250,29 @@ async function main() {
          single chair carries a Desc2 that is a SUBSTRING of the three-seater's
          on the same document, so every possible needle reaches both and is
          refused as ambiguous, correctly. The key is identity; see the mode's
-         reasoning and its tests in scripts/lib/sofa-desc2-match.mjs. */
-      if (c.desc2Match || (Array.isArray(c.lineKeys) && c.lineKeys.length)) {
-        const pick = selectBuildRows(rows, c.desc2Match, undefined, { lineKeys: c.lineKeys });
+         reasoning and its tests in scripts/lib/sofa-desc2-match.mjs.
+
+         `desc2Exclude` is the LAST resort, under the key, for a build whose
+         rows are NOT keyed and whose text is a strict SUFFIX of its
+         neighbour's. HC-SO-012025 is both at once: the book states the same
+         text twice, once with a leading space and once without, and only the
+         two LEAD rows carry a DtlKey — a correction that adds compartments
+         inserts them with none. Rows carrying the exclusion are not this
+         build. */
+      if (c.desc2Match || c.desc2Exclude || (Array.isArray(c.lineKeys) && c.lineKeys.length)) {
+        const pick = selectBuildRows(rows, c.desc2Match, undefined, { lineKeys: c.lineKeys, exclude: c.desc2Exclude });
         if (pick.verdict === "linekey")
           log(`  ${doc}: ${pick.how} — the two builds on this document cannot be told apart by their text`);
+        if (pick.verdict === "exclusion-missing") {
+          log(`  ${doc}: REFUSED — ${pick.how}. Writing this build without it would put it on BOTH sofas.`);
+          nAmbiguous++; continue;
+        }
         if (pick.verdict === "ambiguous") {
           log(`  ${doc}: REFUSED — "${c.desc2Match}" reaches ${pick.texts.length} DIFFERENT builds on this document, and telling them apart is the whole job of desc2Match: ${pick.texts.map((t) => JSON.stringify(t.slice(0, 56))).join("  vs  ")}`);
           nAmbiguous++; continue;
         }
         if (!pick.rows.length) {
-          log(`  ${doc}: no line matches ${pick.verdict === "none" && Array.isArray(c.lineKeys) && c.lineKeys.length ? `line key(s) ${c.lineKeys.join(", ")}` : `"${c.desc2Match}"`} (${pick.how}) — skipped, the build is not on this document`);
+          log(`  ${doc}: no line matches ${pick.verdict === "none" && Array.isArray(c.lineKeys) && c.lineKeys.length ? `line key(s) ${c.lineKeys.join(", ")}` : `"${c.desc2Match}"`}${c.desc2Exclude ? ` once ${JSON.stringify(c.desc2Exclude)} is excluded` : ""} (${pick.how}) — skipped, the build is not on this document`);
           continue;
         }
         if (pick.verdict === "normalised")
@@ -440,7 +452,19 @@ async function main() {
           else { log(`      remove ${compartmentOf(p.from)}`); nDel++; }
         }
       }
-      verify.push({ doc, isPo, poId, needle: c.desc2Match, lineKeys: c.lineKeys, want, copies: sofas.length, money: before, source: c.source });
+      /* THE WHOLE ADDRESS TRAVELS WITH THE BUILD, not half of it. The verifier
+         re-reads the WHOLE document and narrows to this build the same way the
+         writer did; anything left behind here makes it compare one build's
+         target against BOTH builds' rows and both builds' money. Measured
+         twice, on the same defect at two different addressing modes: prod APPLY
+         run 34245004498 wrote HC-SO-012025 correctly and completely - the
+         document came out holding 1A(LHF)+1NA+CNR+1A(RHF) and a separate 1S,
+         exactly the two sofas the owner ruled - and the check still reported
+         `pieces are [1A(LHF) | 1A(RHF) | 1NA | 1S | CNR], expected [1S]` and
+         failed the job, because `desc2Exclude` was not on the verify item. A
+         verifier that narrows differently from the writer is not verifying the
+         write; it is asking a different question. */
+      verify.push({ doc, isPo, poId, needle: c.desc2Match, lineKeys: c.lineKeys, exclude: c.desc2Exclude, want, copies: sofas.length, money: before, source: c.source });
 
       if (!APPLY) continue;
       const touched = [];
@@ -615,12 +639,13 @@ async function verifyOnFreshConnection(items) {
                   FROM scm.mfg_sales_order_items i
                   JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
                  WHERE h.company_id = ${CO} AND i.doc_no = ${it.doc} AND i.item_group = 'sofa' ORDER BY i.line_no`;
-    /* Narrow the SAME way the apply did, line keys included — verifying against
-       every sofa row on a document that holds two builds would compare this
-       build's target against both builds' rows and fail a correct write. */
+    /* Narrow the SAME way the apply did, line keys and exclusion included —
+       verifying against every sofa row on a document that holds two builds
+       would compare this build's target against both builds' rows and fail a
+       correct write. */
     const hasKeys = Array.isArray(it.lineKeys) && it.lineKeys.length;
-    const mine = (it.needle || hasKeys)
-      ? selectBuildRows(rows, it.needle, undefined, { lineKeys: it.lineKeys }).rows
+    const mine = (it.needle || hasKeys || it.exclude)
+      ? selectBuildRows(rows, it.needle, undefined, { lineKeys: it.lineKeys, exclude: it.exclude }).rows
       : rows;
     const want = [];
     for (let i = 0; i < it.copies; i++) want.push(...it.want);

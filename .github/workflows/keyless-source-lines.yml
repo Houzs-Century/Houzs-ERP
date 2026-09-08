@@ -1,0 +1,41 @@
+name: Keyless source lines (read-only)
+
+# Of 245 delivery orders, 58 have a source sales-order line carrying no AutoCount
+# line key (measured 2026-09-08). That is the next thing that will stick after
+# the ten stuck documents were cleared, and WHY a line has no key is not one
+# answer — the sales order was never created there, the line was added after the
+# document reached the book, it was never keyed at migration, or it is a service
+# line the book may legitimately not carry. Each takes a different remedy.
+#
+# Read-only. SELECTs only, no writes, manual trigger only. Exits 0 for every
+# legitimate answer; only an unreachable database exits non-zero.
+on:
+  workflow_dispatch:
+
+# Deliberately NOT in the deploy concurrency group: this touches nothing and must
+# never queue behind — or displace — a release.
+concurrency:
+  group: keyless-source-lines
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-keyless-source-lines.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first
