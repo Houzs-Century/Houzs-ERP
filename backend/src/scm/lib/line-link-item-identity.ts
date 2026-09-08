@@ -43,6 +43,26 @@
  * and nothing downstream can tell. `migration-copy-never-compute` is the same
  * rule one layer out.
  *
+ * THE EDIT DOOR, and why the PATCH handlers call this too. Everything above is
+ * about BINDING a link. docs/bugs/0672's second structural observation is that a
+ * link bound correctly can be edited OUT of identity afterwards: every existing
+ * unlinked-line guard (`unlinkedEditRefusal`) is scoped to a STORED link of
+ * NULL, so a line that ALREADY carries a `do_item_id` / `grn_item_id` could have
+ * its `item_code` rewritten to anything and no cap, no recount and no unlinked
+ * scan would look — they are all gated on that same null. `doLineRemaining` then
+ * spends THAT delivery line's allowance on a different product, and `recostForPi`
+ * books the purchase line's money onto that lot.
+ *
+ * Both invoice PATCH arms therefore re-assert identity, and both do it on the
+ * EFFECTIVE POST-PATCH code — the body's value when it sends one, the stored
+ * value otherwise — because a patch that omits `itemCode` still leaves a code
+ * sitting next to the link. The purchase arm reaches the rule through
+ * `assertSourceLinesInCompany(..., { lines, linkField, source })` because it is
+ * already proving the source line's company; the sales arm reaches it through
+ * `assertLinkedLineItemsMatch` because it holds neither the company read nor the
+ * source rows. Which site uses which is enumerated in
+ * tests/keyWithoutIdentityGuards.test.mjs.
+ *
  * The rule matches `soLinkItemMismatch` (lib/so-link-item-identity.ts) exactly
  * — same normalisation, same "an unresolvable source is refused" stance — and
  * that file's five PO call sites are the precedent this one generalises. Kept

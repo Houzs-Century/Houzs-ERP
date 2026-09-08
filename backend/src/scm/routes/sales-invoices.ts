@@ -1881,19 +1881,8 @@ salesInvoices.patch('/:id/items/:itemId', async (c) => {
     const storedLink = (prev as { do_item_id?: string | null }).do_item_id ?? null;
     const repoint = await unlinkedEditRefusal(sb, 'sales-invoice', { parentId: siFromDoId, storedLink, storedCode: (prev as { item_code?: string | null }).item_code ?? null, patchCode: it.itemCode });
     if (repoint) return c.json(repoint, 409);
-    /* THE EDIT DOOR ON A LINKED LINE, and it is the one arm docs/bugs/0672
-       site 15 left open on this chain. unlinkedEditRefusal above is scoped to
-       a STORED link of NULL, so a line that ALREADY carries a do_item_id could
-       have its item_code rewritten under a live link — and doLineRemaining then
-       spends THAT delivery line's allowance on a different product. The purchase
-       side closes the identical door beside its own qty cap; this is the same
-       rule from the same home (lib/line-link-item-identity.ts), reached by the
-       third way in because neither a company read nor the source rows are in
-       hand here. Asserted on the EFFECTIVE POST-PATCH code: a patch that omits
-       itemCode still leaves the stored code sitting next to the link. */
-    const drift = await assertLinkedLineItemsMatch(sb, 'delivery_order_items',
-      [{ linkId: storedLink, itemCode: updates['item_code'] !== undefined ? updates['item_code'] : prev.item_code }],
-      { source: 'Delivery Order line' });
+    /* THE EDIT DOOR ON A LIVE LINK — the guard above is scoped to a STORED link of null. See line-link-item-identity.ts, "THE EDIT DOOR". */
+    const drift = await assertLinkedLineItemsMatch(sb, 'delivery_order_items', [{ linkId: storedLink, itemCode: updates['item_code'] !== undefined ? updates['item_code'] : prev.item_code }], { source: 'Delivery Order line' });
     if (!drift.ok) return c.json(drift.body, drift.status);
   }
 
