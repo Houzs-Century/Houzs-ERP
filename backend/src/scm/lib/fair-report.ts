@@ -228,7 +228,8 @@ export interface FairSoMoney {
  * twice. (Until 2026-09-08 they differed in substance too — `soBalanceSen`
  * answered 0 whenever `total_revenue_sen` was 0, and this docblock said so. It
  * now falls back to `local_total_sen`, so a migrated order's Balance agrees on
- * both surfaces; `docs/bugs/0723-*`.)
+ * both surfaces.)
+ * `docs/bugs/0723-the-sales-order-detail-showed-a-paid-up-balance-of-0-on-ever.md`
  *
  * Signed on purpose — an over-collected order reads negative, which the owner
  * asked to see rather than have clamped away.

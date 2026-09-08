@@ -1683,8 +1683,9 @@ function SalesOrderDetailV2ReadOnly() {
             /* Through the SHARED gate, not off `balance_sen` — the same number
                the mobile detail shows and the same one the PDF below prints.
                Reading the column directly is what put a 0 here for every
-               AutoCount-imported order (docs/bugs/0723-*), on a card whose
-               Order total row above it was correct. */
+               AutoCount-imported order, on a card whose Order total row above
+               it was correct. Trace: the entry named in `deriveBalance`'s own
+               docblock (vendor/scm/lib/so-detail-gates.ts). */
             label: "Balance",
             value: fmtMoney(
               soDeriveBalance(salesOrder, printPaymentsQ.data),

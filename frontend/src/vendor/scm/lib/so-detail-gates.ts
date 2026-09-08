@@ -177,10 +177,11 @@ export function amendmentEligible(header: SoDetailGateHeader, locked: boolean): 
    A SERVER ZERO DOES NOT WIN OVER A TOTAL WE CAN SUBTRACT FROM. `balance_sen`
    is non-null on every response, so `!= null` handed 0 straight through — and
    0 is exactly what the server used to answer for an AutoCount-imported order
-   (total_revenue_sen is 0 on those; docs/bugs/0723-*). This function's own
-   fallback was correct the whole time and was never reached, so the mobile SO
-   detail printed Total 3,200, Paid 1,600, Balance 0.00. The server half is
-   fixed too; this half is what stops a stale or cached payload doing it again.
+   (total_revenue_sen is 0 on those). This function's own fallback was correct
+   the whole time and was never reached, so the mobile SO detail printed Total
+   3,200, Paid 1,600, Balance 0.00. The server half is fixed too; this half is
+   what stops a stale or cached payload doing it again. Trace:
+   `docs/bugs/0723-the-sales-order-detail-showed-a-paid-up-balance-of-0-on-ever.md`
 
    The floor is gone, but only where a total is KNOWN. NO total in either
    column means the header has not been recomputed, not that the customer owes

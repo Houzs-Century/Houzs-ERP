@@ -88,7 +88,7 @@ describe('the total a human is shown, when only one column has been filled', () 
      did not. It is NOT an endorsement of the answer: `readSoOutstandingSen`
      would compute this same 0 and tell AutoCount a half-paid order is settled.
      It is unreachable today only because migrated orders are read-only. See
-     the follow-up in docs/bugs/0723-*. */
+     the follow-up in the ledger entry named in soBalanceSen's docblock. */
   test('the write-back rule does NOT fall back — a migrated order stays 0 there', () => {
     expect(soOutstandingSen(migrated)).toBe(0);
   });

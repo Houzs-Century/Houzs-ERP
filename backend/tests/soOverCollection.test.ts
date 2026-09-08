@@ -76,7 +76,7 @@ describe('the signed balance a human is shown', () => {
      being 0 is the ordinary AutoCount-imported shape (2,687 of prod's 2,824
      live orders — probe run 31938735652 section b), where local_total_sen holds
      the real figure and the balance IS computable. Answering 0 for those was
-     the bug (docs/bugs/0723-*). */
+     the bug — see the ledger entry named in soBalanceSen's docblock. */
   test('an order with NO total answers 0, NOT a huge negative, even with money against it', () => {
     expect(soBalanceSen({
       ...order, totalRevenueSen: 0, localTotalSen: 0, ledgerPaidSen: 990_000,

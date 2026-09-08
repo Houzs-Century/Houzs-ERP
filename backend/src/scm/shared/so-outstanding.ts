@@ -128,8 +128,9 @@ export function soOutstandingSen(a: SoPaidInputs): number {
  * 0 for all of them, and `GET /:docNo` stamps its answer over the header's own
  * `balance_sen`, so a partly-paid migrated order showed the customer's whole
  * outstanding amount as SETTLED — Total 3,200, Paid 1,600, Balance 0.00 on the
- * owner's phone (docs/bugs/0723-*), while the SO LIST beside it read
- * `balance_sen_live` and said 1,600.
+ * owner's phone, while the SO LIST beside it read `balance_sen_live` and said
+ * 1,600. Trace:
+ * `docs/bugs/0723-the-sales-order-detail-showed-a-paid-up-balance-of-0-on-ever.md`
  *
  * THE FALLBACK IS NOT A GUESS: the cutover importer wrote the ledger row as
  * `paid = total − UDF_BALANCE` against the same `local_total_sen` it stored, so
