@@ -13,6 +13,7 @@ import { Plus, X } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import type { Account } from '../../vendor/scm/lib/accounting-queries';
 import { AccountSelect } from '../../vendor/scm/components/AccountSelect';
+import { useSaveHotkey, SAVE_HOTKEY_HINT } from '../../vendor/scm/lib/use-save-hotkey';
 import { DateField } from '../../vendor/scm/components/DateField';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
 import { fmtSen } from '../../vendor/shared/format';
@@ -84,6 +85,9 @@ export const DebtorBillForm = ({ mode, initial, accounts, receivedSen = 0, savin
   const belowReceived = mode === 'edit' && total < receivedSen;
   const ready = !!v.billDate && total > 0 && !belowReceived && v.lines.filter((l) => l.amountSen > 0).every((l) => !!l.creditAccountCode);
   const saveLabel = mode === 'edit' ? 'Save & re-post' : 'Post bill';
+  /* F3 / Ctrl+S = the save button (owner 2026-09-08: 像 autocount 按 f3);
+     a form that is not ready ignores it, as the button would. */
+  useSaveHotkey(() => { if (ready) void onSubmit(toBillSubmit(v)); }, !saving);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)', fontSize: 'var(--fs-13)' }}>
@@ -156,6 +160,7 @@ export const DebtorBillForm = ({ mode, initial, accounts, receivedSen = 0, savin
 
       <div style={{ display: 'flex', gap: 'var(--space-2)', justifyContent: 'flex-end', alignItems: 'center' }}>
         {belowReceived && <span style={{ fontSize: 'var(--fs-12)', color: 'var(--c-festive-b, #B8331F)' }}>The total cannot fall below the {fmtSen(receivedSen)} already received.</span>}
+        <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>{SAVE_HOTKEY_HINT}</span>
         <Button variant="ghost" size="sm" onClick={onCancel}>Cancel</Button>
         <Button variant="primary" size="sm" onClick={() => void onSubmit(toBillSubmit(v))} disabled={saving || !ready}>
           {saving ? 'Saving…' : saveLabel}

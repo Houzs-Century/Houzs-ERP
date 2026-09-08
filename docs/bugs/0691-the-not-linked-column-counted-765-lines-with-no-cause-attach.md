@@ -63,5 +63,26 @@ at line grain, under the four release-discipline gates, guarded on
 beside the other PO/SO lanes. It does NOT recompute the allocation
 (docs/bugs/0675) and says so.
 
-**Ref.** `fix/notlinked-column`, 2026-09-08. Runs: 34182972797 (the column as it
-stood), 34183990531 (the DtlKey route, refuted), 34184228024 (the classification).
+**The repair, RUN.** PR #3179 shipped the script marked UNTESTED because a new
+`workflow_dispatch` workflow has to reach the default branch before it can be
+dispatched. It has now been dispatched, on 2026-09-08:
+
+| run | what it did |
+| --- | --- |
+| **34185233130** PLAN | 371 live company-1 purchase-order lines with no link; 329 the book records no source for, 17 out of scope, 6 no key, 6 an ambiguous key, 0 a different product, **13 provable**. The buckets total 371 — no row falls through. |
+| **34185303207** APPLY | **wrote 13 of 13**; re-read on a FRESH connection, **0 rows wrong shape** — every pair names the same product. Allocation counts either side of the write: `READY 1969 / PENDING 13080 / PARTIAL 11` both times, which is expected (docs/bugs/0675). |
+| **34185958137** recompute (APPLY) | the canonical allocator, committed: `linesFlipped=29 ordersAdvanced=16 ordersRegressed=0`. |
+| **34186141752** re-measure | the column is now **752**, `dropped` **13 → 0**, findings **25 → 12**. `PO <- SO` FORWARD went 507/522 → **512/522**. The readiness edge went 24 → **15** unlinked hard-bound purchase lines, and the consequence from the sales-order end 133 → **124** of 894. |
+
+**None of the 9 bedframes flipped to READY, and that is the correct outcome.**
+The recompute's per-line list names 29 flips and not one is on the eight orders
+this repair touched. A bound line lights off its dedicated purchase line's
+`received_qty > 0`, so the absence of a flip is direct evidence those purchase
+orders have not been received yet (a non-selling warehouse would produce the
+same reading — owner ruling 2026-09-08). The link being missing would have kept
+them dark **after** the goods arrived; that is what was repaired.
+
+**Ref.** `fix/notlinked-column`, PR #3179, 2026-09-08. Runs: 34182972797 (the
+column as it stood), 34183990531 (the DtlKey route, refuted), 34184228024 (the
+classification), 34185233130 / 34185303207 (the repair), 34185958137 (the
+recompute), 34186141752 (the re-measure).

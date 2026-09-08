@@ -145,5 +145,10 @@ describe('the Customer Refund sheet (§14)', () => {
     expect(has(draws, 'REFUND TO')).toBe(true);
     expect(has(draws, 'SO 2990-SO-2607-001')).toBe(true);
     expect(has(draws, 'Ah Meng')).toBe(true);
+    /* The AR line names the customer beside the account (owner 2026-09-08:
+       看不到是谁 → 可以); an ordinary voucher's lines do not. */
+    expect(has(draws, 'Advertisement · Ah Meng')).toBe(true);
+    const plain = await render({}, []);
+    expect(has(plain, 'Advertisement · ')).toBe(false);
   });
 });

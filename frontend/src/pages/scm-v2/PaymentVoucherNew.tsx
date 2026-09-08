@@ -27,6 +27,7 @@ import { useCreatePaymentVoucher, usePaymentVoucherDetail, useSupplierAdvances, 
 import { takePvFiles } from '../../vendor/scm/lib/pv-file-handoff';
 import { useIdempotencyKey } from '../../lib/idempotency';
 import { useAccounts, useAccountRoles, postableAccounts, type Account } from '../../vendor/scm/lib/accounting-queries';
+import { useSaveHotkey, SAVE_HOTKEY_HINT } from '../../vendor/scm/lib/use-save-hotkey';
 import { usePurchaseInvoices } from '../../vendor/scm/lib/purchase-invoice-queries';
 import { useApInvoices } from '../../vendor/scm/lib/ap-invoice-queries';
 import { useSuppliers, useSupplierDetail } from '../../vendor/scm/lib/suppliers-queries';
@@ -596,6 +597,10 @@ export const PaymentVoucherNew = () => {
     }
   };
 
+  /* F3 / Ctrl+S = the Create button (owner 2026-09-08: 像 autocount 按 f3);
+     onSave keeps its own sentences for what is still missing. */
+  useSaveHotkey(() => { void onSave(); }, !saving);
+
   return (
     <div className="space-y-4">
       <PageHeader back
@@ -603,6 +608,7 @@ export const PaymentVoucherNew = () => {
         title={isRefund ? 'New Customer Refund' : isAp ? 'New AP Payment' : 'New Payment Voucher'}
         actions={
           <div className={styles.actions}>
+            <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>{SAVE_HOTKEY_HINT}</span>
             <Button variant="ghost" size="md" onClick={() => navigate('/scm/payment-vouchers')}>
               <X {...ICON} /> Cancel
             </Button>
@@ -877,12 +883,10 @@ export const PaymentVoucherNew = () => {
                 </div>
               </div>
 
+              {/* The owner's typing order (2026-09-08: 先 account, 再 description,
+                  再 amount) — the same order the AP invoice and Other Debtor
+                  bill already keep; Tab follows the DOM. */}
               <div className={styles.formGrid2}>
-                <label className={styles.field}>
-                  <span className={styles.fieldLabel}>Description</span>
-                  <input type="text" value={l.description} onChange={(e) => setLine(l.rid, { description: e.target.value })}
-                    placeholder="e.g. Sea freight — Shenzhen → Klang" className={styles.fieldInput} />
-                </label>
                 <label className={styles.field}>
                   <span className={styles.fieldLabel}>Account (Debit) *</span>
                   <AccountSelect
@@ -892,6 +896,11 @@ export const PaymentVoucherNew = () => {
                     className={styles.fieldInput}
                     placeholder={accountsQ.isLoading ? 'Loading accounts…' : '— Expense / charge account —'}
                   />
+                </label>
+                <label className={styles.field}>
+                  <span className={styles.fieldLabel}>Description</span>
+                  <input type="text" value={l.description} onChange={(e) => setLine(l.rid, { description: e.target.value })}
+                    placeholder="e.g. Sea freight — Shenzhen → Klang" className={styles.fieldInput} />
                 </label>
               </div>
 

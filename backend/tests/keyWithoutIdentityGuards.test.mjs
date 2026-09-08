@@ -156,6 +156,17 @@ const SITE_15 = [
     expect: /checkSiOverRemaining/,
   },
   {
+    /* Beyond 0672's list, and the SALES twin of the purchase PATCH arm below.
+       unlinkedEditRefusal beside it is scoped to a STORED link of null, so a
+       line ALREADY carrying a do_item_id could have its item_code rewritten
+       under a live link — and doLineRemaining then spends that delivery
+       line's allowance on a different product. */
+    label: 'sales-invoices PATCH line — item_code may not drift under a live link',
+    file: 'src/scm/routes/sales-invoices.ts',
+    start: "const repoint = await unlinkedEditRefusal(sb, 'sales-invoice', {",
+    end: "sb.from('sales_invoice_items').update(updates)",
+  },
+  {
     label: 'purchase-invoices POST / — grn_item_id from the create body',
     file: 'src/scm/routes/purchase-invoices.ts',
     start: 'const wantByGrnItem = new Map<string, number>();',

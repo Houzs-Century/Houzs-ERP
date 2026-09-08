@@ -18,6 +18,7 @@ import {
   useExtractBills, fileToBase64, PV_FILE_ACCEPT, type BillExtraction, type VendorMemory, type PvFilePayload,
 } from '../../vendor/scm/lib/payment-voucher-queries';
 import { AccountSelect } from '../../vendor/scm/components/AccountSelect';
+import { useSaveHotkey, SAVE_HOTKEY_HINT } from '../../vendor/scm/lib/use-save-hotkey';
 import { SearchCombo } from '../../vendor/scm/components/SearchCombo';
 import { DateField } from '../../vendor/scm/components/DateField';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
@@ -119,6 +120,9 @@ export const ApInvoiceForm = ({
   const extract = useExtractBills();
   const [scanNote, setScanNote] = useState<string | null>(null);
   const [pendingFiles, setPendingFiles] = useState<PvFilePayload[]>([]);
+  /* F3 / Ctrl+S = the save button (owner 2026-09-08: 像 autocount 按 f3);
+     a form that is not ready ignores it, as the button would. */
+  useSaveHotkey(() => { if (ready) void onSubmit(toSubmit(v), pendingFiles); }, !saving);
   const applyExtraction = (ex: BillExtraction, match: { id: string } | null, memory: VendorMemory | null) => {
     const account = memory?.debitAccountCode ?? '';
     const drafts: ApFormLine[] = ex.lines
@@ -273,6 +277,7 @@ export const ApInvoiceForm = ({
 
       <div style={{ display: 'flex', gap: 'var(--space-2)', justifyContent: 'flex-end', alignItems: 'center' }}>
         {belowPaid && <span style={{ fontSize: 'var(--fs-12)', color: 'var(--c-festive-b, #B8331F)' }}>The total cannot fall below the {fmtSen(paidSen)} already paid.</span>}
+        <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>{SAVE_HOTKEY_HINT}</span>
         <Button variant="ghost" size="sm" onClick={onCancel}>Cancel</Button>
         <Button variant="primary" size="sm" onClick={() => void onSubmit(toSubmit(v), pendingFiles)} disabled={saving || !ready}>
           {saving ? 'Saving…' : saveLabel}

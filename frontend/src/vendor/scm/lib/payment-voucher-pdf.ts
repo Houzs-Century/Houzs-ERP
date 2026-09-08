@@ -155,10 +155,14 @@ export async function renderPaymentVoucherInto(
 
   /* Column order is the owner's (2026-09-04): the GL address first — code
      and name in their own columns — then what the money was for. */
+  /* A refund's one line debits the AR control: the customer it is for prints
+     beside the account name, as the party rides the journal line (owner
+     2026-09-08: 看不到是谁 → 可以). */
+  const refund = header.purpose === 'CUSTOMER_REFUND' && String(header.payee_name).trim() !== '';
   const rows = lines.map((l, idx) => [
     String(idx + 1),
     l.debit_account_code,
-    accountName(l.debit_account_code) ?? '—',
+    `${accountName(l.debit_account_code) ?? '—'}${refund ? ` · ${header.payee_name}` : ''}`,
     l.description?.trim() ? l.description : '—',
     fmtRm(Number(l.amount_sen), currency),
   ]);

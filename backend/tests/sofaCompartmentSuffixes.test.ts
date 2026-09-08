@@ -58,10 +58,21 @@ describe('decomposeGroup — is this group ONE sofa, or a key collision?', () =>
     expect((r as { why: string }).why).toMatch(/not a compartment suffix/);
   });
 
-  it('refuses a repeated compartment — one sofa has one of each', () => {
-    const r = decomposeGroup(['REGAL-1S', 'REGAL-1S']);
-    expect(r.ok).toBe(false);
-    expect((r as { why: string }).why).toMatch(/repeats/);
+  /* THIS ASSERTION IS THE OPPOSITE OF WHAT IT SAID FIRST, and the reversal is
+     the finding. The rule refused a repeated compartment until probe run
+     34143079454 flagged 14 of 394 groups, every one of them for that reason
+     alone (`9058-1NA, 9058-1NA, 9058-CNR`, `R819-1S(R), R819-1S(R)`). A
+     four-seater is 1A(LHF) + 1NA + 1NA + 1A(RHF); two identical recliners is a
+     book line of quantity two. Refusing those answered a different question. */
+  it('ACCEPTS a repeated compartment — a four-seater has two armless middles', () => {
+    const r = decomposeGroup(['9058-1NA', '9058-1NA', '9058-CNR']);
+    expect(r.ok).toBe(true);
+    expect((r as { repeated: string[] }).repeated).toEqual(['1NA']);
+  });
+
+  it('reports no repeat when every compartment is distinct', () => {
+    const r = decomposeGroup(['REGAL-1S', 'REGAL-CNR']);
+    expect((r as { repeated: string[] }).repeated).toEqual([]);
   });
 
   /* A caller that forgets to filter to groups of >1 must not read a clean
