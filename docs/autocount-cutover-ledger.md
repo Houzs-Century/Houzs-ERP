@@ -707,6 +707,7 @@ W4 里有 **45 个 cell** 的 AutoCount 余额比 ERP 少。脚本**没有**去�
 | 补 31 行漏拆的沙发行 | 走旧(非沙发)通道进来的沙发行没拆件 | `repair-leaked-sofa-lines.mjs` / 31354031243 (08-10 03:57) | 修 **31** 行、加 **38** 个件。**在原行上 UPDATE,不删** —— id 保住,PO allocation 不断 |
 | 建 19 个缺的布料色号 | PROC 单用的颜色,库里真的没有(不是比对问题) | `add-missing-sofa-fabrics.mjs` / 31351207634 (08-10 02:57) | `fabric_library` **+6**、`fabric_colours` **+19** |
 | venue 归并 | 导入带进来的是 AutoCount 时代的别名,下拉里选不到 | `fix-imported-so-venues-address.mjs` (31295324294) + `normalize-venue-aliases.mjs` (31348076922) | 文字规范 **1,606** 单 + 别名归并 **43** 单 + 新建 venue **2** 个 |
+| **补 13 行 PO→SO 的指定** | convert 对称检查的 `not linked` 栏里,只有这 13 行是账本自己在**行**这一级讲明的 —— `PODTL.FromSODtlKey` 指到某一条 SO 行,那条行 ERP 里只有一条,而我们的 `so_item_id` 还是空的。9 行是 bedframe,床架是 hard binding,没有这条指定就永远亮不了 READY | `repair-po-so-link-from-book.mjs` / PLAN 34185233130 + APPLY 34185303207 (09-08 03:57) | 写 **13/13**,fresh connection 复查 **0** 行形状不对;`dropped` 13 → **0**(34186141752)。写入当下 allocation 不变(READY 1969),这是预期的:直接 SQL 不会触发重算 |
 
 开件(compartment)本身不是修正,是导入的前置动作,一并记在这里:
 `open-sofa-so-compartments.mjs` 两批 —— run 31326039191(7 个型号,mint 16)+
