@@ -173,11 +173,26 @@ export function selectBuildRows(rows, needle, readDesc2 = (r) => r.description2,
     const want = new Set(keys);
     const hits = all.filter((r) => want.has(String(readKey(r) ?? "").trim()));
     const texts = [...new Set(hits.map((r) => normaliseDesc2(readDesc2(r))))];
-    if (hits.length !== want.size)
+    /* ONE BOOK LINE, SEVERAL ERP ROWS. A sofa is one line in the account book
+       and one ERP row per COMPARTMENT, and every one of those rows carries that
+       single line's DtlKey (src/scm/lib/autocount-line-keys.ts:155). So the
+       test is that every key NAMED is PRESENT — never that the row count equals
+       the key count.
+
+       Counting rows against keys was the first spelling and it silently skipped
+       a correct build: measured on prod, dry-run 34243523350, HC-SO-011221
+       holds `9028-2S` and `9028-1S` BOTH carrying DtlKey 775621, and one key
+       against two rows answered "the document does not carry these line key(s)"
+       — a sentence about a missing key, produced by a shared one. That is the
+       same shape docs/bugs/0722 records on the write-back side, one layer
+       down. */
+    const present = new Set(hits.map((r) => String(readKey(r) ?? "").trim()));
+    const absent = [...want].filter((k) => !present.has(k));
+    if (absent.length)
       return {
         verdict: "none",
         rows: [],
-        how: `the document does not carry ${[...want].filter((k) => !hits.some((r) => String(readKey(r) ?? "").trim() === k)).join(", ") || "these line key(s)"} — the build is not on this document, and matching by text instead would write it onto the wrong line`,
+        how: `the document does not carry ${absent.join(", ")} — the build is not on this document, and matching by text instead would write it onto the wrong line`,
         texts,
       };
     return { verdict: "linekey", rows: hits, how: `matched the account book's own line key ${keys.join(", ")}`, texts };
