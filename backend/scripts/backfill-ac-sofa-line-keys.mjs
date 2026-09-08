@@ -308,34 +308,41 @@ async function main() {
       `PLAN — ${sofaStamps.length} sofa compartment row(s) would be stamped. Read the refusals above, then re-run ` +
         `with MODE=apply CONFIRM="${CONFIRM_PHRASE}".`,
     );
-    await sql.end();
-    return;
   }
 
   /* The write. `linked_ac_dtlkey IS NULL` in the predicate as well as in the
      plan: between the read and the write another lane may have stamped the same
      row, and losing that race must be a no-op, never an overwrite. */
   let written = 0;
-  for (let i = 0; i < sofaStamps.length; i += 200) {
-    const batch = sofaStamps.slice(i, i + 200);
-    await sql.begin(async (tx) => {
-      for (const u of batch) {
-        const r = await tx.unsafe(
-          "UPDATE scm.mfg_sales_order_items SET linked_ac_dtlkey = $1 WHERE id = $2::uuid AND linked_ac_dtlkey IS NULL",
-          [u.dtlKey, u.id],
-        );
-        written += r.count ?? 0;
-      }
-    });
-    log(`  ..${Math.min(i + 200, sofaStamps.length)}/${sofaStamps.length}`);
+  if (APPLY) {
+    for (let i = 0; i < sofaStamps.length; i += 200) {
+      const batch = sofaStamps.slice(i, i + 200);
+      await sql.begin(async (tx) => {
+        for (const u of batch) {
+          const r = await tx.unsafe(
+            "UPDATE scm.mfg_sales_order_items SET linked_ac_dtlkey = $1 WHERE id = $2::uuid AND linked_ac_dtlkey IS NULL",
+            [u.dtlKey, u.id],
+          );
+          written += r.count ?? 0;
+        }
+      });
+      log(`  ..${Math.min(i + 200, sofaStamps.length)}/${sofaStamps.length}`);
+    }
+    log(`APPLIED: ${written} row(s) stamped of ${sofaStamps.length} planned`);
   }
-  log(`APPLIED: ${written} row(s) stamped of ${sofaStamps.length} planned`);
   await sql.end();
 
   /* ── THE PROOF, ON A FRESH CONNECTION ────────────────────────────────────
      A second connection, so nothing in this process's session state — a
      transaction snapshot, a `SET`, a cached plan — can make the after-shape
-     agree with the before-shape for the wrong reason. */
+     agree with the before-shape for the wrong reason.
+
+     IT RUNS IN PLAN MODE TOO, and that is not decoration. The build invariant
+     below is a property of the WHOLE sofa population, not of one run's writes,
+     so a run that stamps nothing must still be able to state it — otherwise the
+     only way to check yesterday's stamping is to stamp again, and the re-run
+     that proves the tool inert (0 of 0) proves nothing about the rows it wrote
+     the first time. */
   const verify = postgres(DSN, { ssl: "require", prepare: false, max: 1 });
   const after = await shapeOf(verify);
   printShape("SHAPE AFTER (fresh connection)", after);
@@ -369,12 +376,10 @@ async function main() {
      agreeing on one key". A verifier that cannot tell the intended outcome from
      the damage is not a verifier. */
   const touchedDocs = [...new Set(shapeRows.map((r) => r.doc_no))];
-  const buildCheckRows = touchedDocs.length
-    ? await verify`SELECT h.doc_no, i.id::text AS id, i.item_code, i.description2,
-          i.line_suffix, i.qty::float8 AS qty, i.linked_ac_dtlkey::text AS key
-        FROM scm.mfg_sales_order_items i JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
-        WHERE h.company_id = ${CO} AND h.doc_no = ANY(${touchedDocs}) AND i.item_group ILIKE 'sofa'`
-    : [];
+  const buildCheckRows = await verify`SELECT h.doc_no, i.id::text AS id, i.item_code, i.description2,
+        i.line_suffix, i.qty::float8 AS qty, i.linked_ac_dtlkey::text AS key
+      FROM scm.mfg_sales_order_items i JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
+      WHERE h.company_id = ${CO} AND h.linked_ac_docno IS NOT NULL AND i.item_group ILIKE 'sofa'`;
   const keyById = new Map(buildCheckRows.map((r) => [r.id, r.key ?? null]));
   const stampedIds = new Set(sofaStamps.map((s) => String(s.id)));
   const byDoc = new Map();
@@ -406,8 +411,9 @@ async function main() {
   const brokenOurs = splitBuilds.filter((b) => b.ours);
   log(
     `VERIFIED ON A FRESH CONNECTION — ${shapeRows.length} of ${touched.length} stamped row(s) re-read; ` +
-      `${wrongShape.length} WRONG SHAPE; ${buildGroups} sofa build(s) on the ${touchedDocs.length} document(s) ` +
-      `touched, ${splitBuilds.length} of them NOT agreeing on one key, ${brokenOurs.length} of those stamped by THIS run`,
+      `${wrongShape.length} WRONG SHAPE; across ALL ${byDoc.size} migrated sales order(s) holding a sofa, ` +
+      `${buildGroups} build(s), ${splitBuilds.length} of them NOT agreeing on one key ` +
+      `(${brokenOurs.length} containing a row stamped by THIS run). ${touchedDocs.length} document(s) were touched.`,
   );
   for (const b of splitBuilds.slice(0, 20)) {
     plain(
