@@ -1815,10 +1815,22 @@ over the numbers the import already wrote is the only answer that does not need
 his ruling. The options are enumerated in `docs/bugs/0703-a-brand-new-sales-order-becomes-read-only-minutes-after-it-i.md`.
 
 The read has one home, `scm/lib/so-is-migrated.ts`
-(`soIsMigrated` / `soIsMigratedShape`), and it fails CLOSED **twice**: the read
-THROWS rather than answering false, and a pair fitting NEITHER shape answers
-TRUE. **A reader must select BOTH columns** — `select('doc_no,
-linked_ac_docno')` — because the rule is about the two numbers together.
+(`soIsMigrated` / `soIsMigratedShape` / `soNumberShape`), and it fails CLOSED
+**twice**: the read THROWS rather than answering false, and a pair fitting
+NEITHER shape answers TRUE. **A reader must select BOTH columns** —
+`select('doc_no, linked_ac_docno')` — because the rule is about the two numbers
+together.
+
+**The three read-only checks import that module too**, and run under `npx tsx`
+for it — `check-so-open-for-new.mjs`, `check-so-migrated-shape.mjs` and
+`set-migrated-so-lock.mjs`. They each carried their own `linked_ac_docno IS
+NULL` copy for a few hours after the predicate moved, and the go-live gate
+therefore reported the bug's own answer: *"NEW orders 0 — of 0 ERP-created
+orders in all"* about a system where one existed
+(`docs/bugs/0716-the-check-that-proves-new-orders-save-counted-them-the-way-t.md`).
+`soNumberShape` exists so the census can report the DISTRIBUTION
+(`no-book-number` / `equal` / `prefixed` / `neither`) without re-deriving
+anything.
 
 | | |
 |---|---|
