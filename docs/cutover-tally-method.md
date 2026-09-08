@@ -234,18 +234,49 @@ contributes zero. The book's own `PODTL` for all three orders states
 `UnitPrice 0.00`, so the book agrees the ORDER had no price; only the RECEIPT
 states one.
 
-**LIKELY, not yet observed on the ERP side:** that our purchase-order line
-carries a price for the small line and none for the large one. Settling it needs
-a production read — dispatch the PO/GR verdict workflow and read the
-`document total` detail.
+**PROVEN on production, run `34231092897`** — `stamp-migrated-source-prices.mjs`
+dispatched in PLAN mode (writes nothing), company 1, `kind=gr`, 2026-09-08
+13:17 UTC. That tool already computes the right figure to the sen and then
+REFUSES to write it:
+
+```
+PI-007287      AutoCount  RM 11,247.00  ours would be   RM 3,200.00   HC-GR-004909
+PI-007765      AutoCount   RM 4,580.00  ours would be   RM 2,230.00   HC-GR-005169
+PI-007771      AutoCount   RM 9,284.00  ours would be   RM 4,850.00   HC-GR-005171-PO-009344 + HC-GR-005171-PO-009553
+```
+
+`RM 3,200.00`, `RM 2,230.00` and `RM 2,330.00 + RM 2,520.00 = RM 4,850.00` are
+exactly the book pair totals in the table above. The same run explains the
+RM 120 / RM 80 / RM 60 we DO hold:
+
+```
+HC-GR-004909 group 829661 (SQUARE PILLOW): already carries money in the ERP — never overwritten. SKIPPED.
+HC-GR-005169 group 861817 (SQUARE PILLOW): already carries money in the ERP — never overwritten. SKIPPED.
+HC-GR-005171-PO-009344 group 851497 (LONG PILLOW): already carries money in the ERP — never overwritten. SKIPPED.
+```
+
+The accessory line is priced; the furniture line is not. And the run states why
+it will not price the furniture line:
+
+> **LEFT ALONE — 28 AutoCount invoice(s) whose ERP side cannot reach the billed
+> total:** our receipt mirrors ONE purchase order and AutoCount's receipt spans
+> several, so the invoice bills more than our lines cover. A price cannot fix
+> that; **these are the multi-purchase-order fragments with the owner.**
+
+**So the 9 are not a data defect and no existing tool will close them.** They
+are that already-known class. The same run also reports what it WOULD do
+elsewhere — `STAMPING 23 line(s) across 21 document(s) / 7 AutoCount invoice(s)`,
+after which those 7 reconcile to the sen and become convertible — which is a
+separate, available decision and was NOT applied here.
 
 **Do NOT repair this by copying the book's receipt price.** It would put money
 on a receipt that its own purchase order does not have, contradict
 `priceDeclared`, and change what a purchase invoice raised off that receipt
-would say. It is a question for the owner — the money model, not a data error —
-and it sits beside his existing 「GR 0 没关系」 ruling, which already accepts a
-migrated receipt carrying LESS than the book states (RM 0.00). Whether a
-PARTIAL amount falls under the same ruling is his to say.
+would say — the stamp tool's own words are that it would move an owner-held
+decision out of the "ours RM 0.00" bucket into "both sides priced and genuinely
+differ", where it reads as new. It sits beside his existing 「GR 0 没关系」
+ruling, which already accepts a migrated receipt carrying LESS than the book
+states. Whether a PARTIAL amount falls under the same ruling is his to say.
 
 **Currency is its own axis and it LOCKS.** A foreign purchase order's total is
 compared in the document's own currency, so the money can be right to the sen
