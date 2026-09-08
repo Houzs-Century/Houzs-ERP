@@ -1,0 +1,64 @@
+name: Probe DO item codes changed after conversion (read-only)
+
+# THE POPULATION, not the two documents the reconcile happens to see.
+#
+# `DO-001953` and `DO-004903` were found because their LINE COUNT differs from
+# the account book's. A delivery order whose item code was changed but whose
+# line count stayed the same is invisible on that axis, so "DO line-count: 2" is
+# not the size of this class. This probe measures it directly, in the book's own
+# terms: a delivery line whose source sales order contains no line with that
+# item code. AutoCount records the source DOCUMENT and never the source LINE
+# (FromDocDtlKey is empty on all 48,772 DO lines in this book), which is exactly
+# why nothing objected when the code was changed after the conversion.
+#
+# Then the half that needs the database: of the delivery orders the book flags,
+# which ones does the ERP hold, and does a row already answer each flagged line?
+# Only a document the ERP holds can be short a line — the migration carried the
+# OUTSTANDING population and a document it does not hold is the rule working.
+#
+# READ-ONLY. Every statement in the script is a SELECT and there is no APPLY
+# path through the file. The AutoCount side is the committed snapshot
+# backend/scripts/data/ac-reconcile-truth.json.gz; the book itself is reachable
+# only over ZeroTier from the office and a hosted runner has no route to it.
+on:
+  workflow_dispatch:
+    inputs:
+      top:
+        description: "How many delivery orders to print line by line"
+        required: false
+        default: "200"
+        type: string
+      company_id:
+        description: "ERP company (AED_HOUZS is company 1)"
+        required: false
+        default: "1"
+        type: string
+
+# Its own group, never the deploy's: a diagnostic must not queue behind - or
+# displace - a release.
+concurrency:
+  group: probe-do-code-changed-after-conversion
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/probe-do-code-changed-after-conversion.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          TOP: ${{ inputs.top }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
+          NODE_OPTIONS: --dns-result-order=ipv4first
