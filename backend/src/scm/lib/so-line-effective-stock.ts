@@ -66,6 +66,7 @@
 
 import type { ReadinessLine } from './so-readiness';
 import { isHardBoundLine } from './so-stock-allocation';
+import { nonSellingWarehouseNotice, type NonSellingWarehouse } from './non-selling-warehouse';
 
 /** What computeMrp says about a line, via mrpLineCoverage(). `null` = no
  *  verdict (line absent from the allocation, or MRP itself failed). */
@@ -127,6 +128,46 @@ export function effectiveLineStockStatus(
   if (liveState === 'stock' && gates !== null && gates.orderProcessed && !gates.lineHardBound) return 'READY';
   if (stored === 'PARTIAL') return 'PARTIAL';
   return 'PENDING';
+}
+
+/** The columns `soLineStockVerdict` reads off a line row. */
+export type SoLineStockVerdictRow = {
+  stock_status?: string | null;
+  item_group?: string | null;
+  item_code?: string | null;
+  warehouse_id?: string | null;
+};
+
+/**
+ * The two payload fields an SO-line DETAIL row carries about stock: what the
+ * pill renders, and — when the answer is PENDING because of WHERE the line
+ * stands — the sentence saying which warehouse and what to do instead.
+ *
+ * ONE home. `GET /:docNo` and `GET /:docNo/items` each stamped a near-identical
+ * eleven-line block, differing only in the live state, and a rule with two homes
+ * is the thing this module exists to stop. Spread it into the row:
+ * `...soLineStockVerdict(it as SoLineStockVerdictRow, live, processed, whs)`.
+ */
+export function soLineStockVerdict(
+  row: SoLineStockVerdictRow,
+  liveState: LiveStockState,
+  orderProcessed: boolean,
+  nonSelling: ReadonlyMap<string, NonSellingWarehouse>,
+): {
+  stock_status_effective: EffectiveStockStatus;
+  non_selling_warehouse: { code: string | null; name: string | null; type: string | null; notice: string } | null;
+} {
+  const w = nonSelling.get(String(row.warehouse_id ?? '')) ?? null;
+  return {
+    stock_status_effective: effectiveLineStockStatus(row.stock_status ?? null, liveState, {
+      orderProcessed,
+      lineHardBound: isHardBoundLine(row.item_group ?? null, row.item_code ?? null),
+      lineNonSellingWarehouse: w !== null,
+    }),
+    non_selling_warehouse: w === null
+      ? null
+      : { code: w.code, name: w.name, type: w.type, notice: nonSellingWarehouseNotice(w) },
+  };
 }
 
 /** One page of SO lines, grouped per document and already carrying the
