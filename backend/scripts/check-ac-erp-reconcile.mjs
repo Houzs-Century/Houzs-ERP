@@ -1086,12 +1086,23 @@ for (const cfg of TYPES) {
         else if (cfg.itemCodeDeclared) D.item++;
         else {
           F.item.push(
-            `${ac} DtlKey ${al.dtlKey}: AutoCount model ${am ?? "?"} ("${al.itemKey}") vs ERP model ` +
-              `${em ?? "?"} ("${el.item_code ?? ""}")`,
+            `${ac} DtlKey ${al.dtlKey}: AutoCount model ${am ?? "?"} ("${al.itemKey}"` +
+              /* No model on either side means the CODES were compared, and the
+                 code compared is the MAPPED one — so print it, for the same
+                 reason as the non-sofa arm below. */
+              (am || em ? "" : ` -> "${mapped(al.itemKey)}"`) +
+              `) vs ERP model ${em ?? "?"} ("${el.item_code ?? ""}")`,
           );
         }
       } else if (mapped(al.itemKey) !== norm(el.item_code)) {
-        const msg = `${ac} DtlKey ${al.dtlKey}: AutoCount "${al.itemKey}" vs ERP "${el.item_code ?? ""}"`;
+        /* PRINT WHAT WAS COMPARED, not only what the book spells. The comparison
+           is `mapped(book) !== norm(erp)`, so a line whose ERP code is the RAW
+           book code — untranslated — renders as two identical strings and reads
+           as a checker bug. That is exactly how the 103 company-1 GR findings of
+           2026-09-08 (run 34178538830) were reported. The raw code stays: it is
+           what an operator greps AutoCount for. */
+        const msg = `${ac} DtlKey ${al.dtlKey}: AutoCount "${al.itemKey}" -> mapped "${mapped(al.itemKey)}" ` +
+          `vs ERP "${el.item_code ?? ""}"`;
         if (cfg.itemCodeDeclared || split) D.item++;
         else F.item.push(msg);
       }
