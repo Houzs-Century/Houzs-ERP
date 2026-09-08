@@ -480,15 +480,18 @@ migrated order stays shut exactly as it is today. The rows just sit there.
 
 ### THE ORDER OF OPERATIONS — this matters more than the code
 
-1. **The `sync-ac-delta` authorship guard must be live FIRST.** `sync-ac-delta`
-   can overwrite a staff edit with no signal at all (§2, risk 1), and its input
-   set is the migrated documents. Opening edits before that guard exists risks
-   losing a person's work. **Do not set `verdict:1` before it ships.**
-   Note for whoever builds it: do NOT hang the authorship signal on
-   `mfg_sales_orders.version` — it is an optimistic-locking token bumped by
-   `advanceSoGeneration` from seven automated paths, and measured, 80 of 81
-   "conflicts" were the automated stock-allocation sweep. The audit trail is the
-   real signal.
+1. **The `sync-ac-delta` authorship guard must be live FIRST — it now IS.**
+   `sync-ac-delta` could overwrite a staff edit with no signal at all (§2,
+   risk 1), and its input set is the migrated documents, so opening edits before
+   that guard existed risked losing a person's work. **It shipped in #3205 on
+   2026-09-08** (`backend/scripts/lib/ac-human-edit.mjs`,
+   `docs/bugs/0700-the-delta-sync-read-a-null-actor-as-the-system-and-overwrote.md`),
+   and it hangs authorship on the AUDIT TRAIL rather than on
+   `mfg_sales_orders.version` — `version` is an optimistic-locking token bumped
+   by `advanceSoGeneration` from seven automated paths, and when it was measured
+   against production 50 of the 50 migrated orders it called "touched" were the
+   stock-allocation cron. Re-confirm it is still on main before flipping, rather
+   than trusting this paragraph.
 2. **Publish a verdict** (above). Read the run's `SO VERDICT` line.
 3. **Set the switch**, once the owner says so:
 
@@ -518,6 +521,28 @@ to "only the broken ones shut" while the last differences are repaired. When
 they are repaired and the AutoCount payments are reconciled, the answer is still
 the one at the top of this file: set the value to `off` and retire the whole
 thing.
+
+### What correctness mode does and does NOT do about bug 0703
+
+`docs/bugs/0703-a-brand-new-sales-order-becomes-read-only-minutes-after-it-i.md`
+is the blocker on the freeze lift: the AutoCount write-back stamps
+`linked_ac_docno` onto a **brand-new** sales order minutes after it is saved, so
+the order a salesperson just created starts reading as migrated and shuts —
+「只开新单」 producing the opposite of itself.
+
+**Correctness mode does not fix it.** A new order that has just been stamped is
+migrated as far as the predicate is concerned, and it carries no published
+verdict, so it locks — with a different sentence (*"cannot be confirmed against
+the AutoCount book right now"*) and the same effect.
+
+**It does bound it, which origin mode does not.** That order genuinely IS in the
+book now, and it matches, so the NEXT reconcile publishes it `clean` and it opens
+by itself. Under origin mode nothing it can ever do will open it. So the damage
+goes from permanent to one reconcile cycle — which is another reason the cadence
+in the section above is not optional.
+
+That is a mitigation, not the fix. The fix is the owner's choice of the options
+in 0703, and it is still owed.
 
 ### Where the correctness-mode code is
 
