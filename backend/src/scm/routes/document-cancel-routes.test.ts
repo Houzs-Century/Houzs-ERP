@@ -59,8 +59,10 @@ function app(who: Who) {
   a.use('/mfg-purchase-orders/:id/cancel', cancelApprovalGuard('PO'));
   a.route('/mfg-sales-orders', soCancelRequests);
   a.route('/mfg-purchase-orders', poCancelRequests);
-  a.patch('/mfg-sales-orders/:docNo/status', async (c) => { reached((await c.req.json()).status); return c.json({ ok: true }); });
-  a.patch('/mfg-purchase-orders/:id/cancel', (c) => { reached('po'); return c.json({ ok: true }); });
+  /* The stand-ins echo the flag the real area guard's writeBypass reads, so a
+     test can see whether the guard admitted THIS write for an approver. */
+  a.patch('/mfg-sales-orders/:docNo/status', async (c) => { reached((await c.req.json()).status); return c.json({ ok: true, admitted: c.get('cancelExecutionAdmitted') === true }); });
+  a.patch('/mfg-purchase-orders/:id/cancel', (c) => { reached('po'); return c.json({ ok: true, admitted: c.get('cancelExecutionAdmitted') === true }); });
   a.route('/cancel-requests', cancelRequestsInbox);
   return a;
 }
@@ -218,7 +220,7 @@ describe('the two signatures', () => {
 describe('the area-guard bypass for approvers', () => {
   const ctx = (method: string, path: string, perms: string[]) => ({
     req: { method, path },
-    get: (_k: 'user') => ({ permissions_set: new Set(perms) }),
+    get: (k: 'user' | 'houzsUser' | 'cancelExecutionAdmitted') => (k === 'user' ? { permissions_set: new Set(perms) } : undefined),
   });
   it('admits only the three approver verbs, only for a holder of that document\'s keys', () => {
     const so = cancelApproverWriteBypass('SO');
@@ -286,6 +288,43 @@ describe('the guard in front of the cancel', () => {
     expect((await post(L2, '/mfg-purchase-orders/po-1/cancel-request/approve')).status).toBe(409);
     expect((await patch(NOBODY, '/mfg-purchase-orders/po-1/cancel')).status).toBe(200);
     expect(rows()[0]).toMatchObject({ doc_type: 'PO', status: 'EXECUTED' });
+  });
+
+  it('admits the cancel write for an approver who lacks the area, and only then', async () => {
+    /* A level-2 desk whose position has Sales Orders at `view` (prod: the Purchaser). */
+    const L2_ONLY: Who = { id: 61, name: 'Purchaser Fay', perms: ['scm.access', 'scm.so.view_all', 'scm.so_cancel.approve_l2'] };
+    await post(REQUESTER, '/mfg-sales-orders/SO-1/cancel-request', { reason: 'Customer cancelled the order' });
+    /* Before the request is APPROVED nothing is admitted — the refusal comes first. */
+    expect((await patch(L2_ONLY, '/mfg-sales-orders/SO-1/status', { status: 'CANCELLED' })).status).toBe(403);
+    await post(L1, '/mfg-sales-orders/SO-1/cancel-request/approve');
+    await post(L2_ONLY, '/mfg-sales-orders/SO-1/cancel-request/approve');
+    /* A caller with NO approve key is not admitted (the area guard decides for them). */
+    const stranger = await patch(NOBODY, '/mfg-sales-orders/SO-1/status', { status: 'CANCELLED' });
+    expect(await body(stranger)).toMatchObject({ ok: true, admitted: false });
+    expect(rows()[0]).toMatchObject({ status: 'EXECUTED' });
+    /* Fresh request, same dance, now the approver executes: admitted. */
+    tables.mfg_sales_orders[0]!.status = 'CONFIRMED';
+    await post(REQUESTER, '/mfg-sales-orders/SO-1/cancel-request', { reason: 'Customer cancelled the order again' });
+    await post(L1, '/mfg-sales-orders/SO-1/cancel-request/approve');
+    await post(L2_ONLY, '/mfg-sales-orders/SO-1/cancel-request/approve');
+    const res = await patch(L2_ONLY, '/mfg-sales-orders/SO-1/status', { status: 'CANCELLED' });
+    expect(await body(res)).toMatchObject({ ok: true, admitted: true });
+    /* And a non-cancel transition by the same approver is never admitted. */
+    const other = await patch(L2_ONLY, '/mfg-sales-orders/SO-1/status', { status: 'IN_PRODUCTION' });
+    expect(await body(other)).toMatchObject({ ok: true, admitted: false });
+  });
+
+  it('cancelExecutionBypass honours the flag and otherwise defers to the approver verbs', async () => {
+    const { cancelExecutionBypass } = await import('./document-cancel-routes');
+    const so = cancelExecutionBypass('SO');
+    const ctx = (method: string, path: string, perms: string[], admitted = false) => ({
+      req: { method, path },
+      get: (k: 'user' | 'houzsUser' | 'cancelExecutionAdmitted') =>
+        k === 'cancelExecutionAdmitted' ? admitted : k === 'user' ? { permissions_set: new Set(perms) } : undefined,
+    });
+    expect(so(ctx('PATCH', '/api/scm/mfg-sales-orders/SO-1/status', [], true))).toBe(true);
+    expect(so(ctx('PATCH', '/api/scm/mfg-sales-orders/SO-1/status', ['scm.so_cancel.approve_l2']))).toBe(false);
+    expect(so(ctx('POST', '/api/scm/mfg-sales-orders/SO-1/cancel-request/approve', ['scm.so_cancel.approve_l2']))).toBe(true);
   });
 
   it('falls through on an unknown document so the handler gives its own 404', async () => {
