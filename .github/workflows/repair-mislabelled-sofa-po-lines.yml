@@ -1,0 +1,89 @@
+name: Re-file the mislabelled sofa purchase lines
+
+# The SO-linked purchase-order importer asked the catalogue with the UNALIASED
+# model code, got silence, filed the sofa line as `others`, and skipped the
+# decomposition — so the line sits on the bare `-1S` with no marker, invisible
+# to the sofa stock import and to every dedication reader, while its sales
+# order holds the decoded compartments with no purchase line behind them and
+# reads PENDING forever. This re-codes the purchase line (and its migrated,
+# movement-free goods-receipt line) onto the order's own compartments, in one
+# transaction per build, from the book's own PODTL.FromSODtlKey edge.
+#
+# NOTHING IS DELETED. The money does not move: no money column is written on
+# the re-coded rows and every inserted piece is 0, asserted before and after
+# inside the transaction. A build whose sofa has already left on a delivery
+# order is refused.
+#
+# PLAN unless mode=apply, which additionally needs the confirm phrase. After an
+# apply, run "Import AutoCount sofa stock" and the allocation recompute — this
+# workflow does neither.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      mode:
+        description: "plan (writes nothing) or apply"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: 'On apply only: I HAVE REVIEWED THE DRY-RUN'
+        required: false
+        default: ""
+      company:
+        description: "company_id"
+        required: false
+        default: "1"
+      doc:
+        description: "Optional single purchase-order number (HC-PO-009435 or PO-009435), to rehearse one build"
+        required: false
+        default: ""
+
+concurrency:
+  group: repair-mislabelled-sofa-po-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/repair-mislabelled-sofa-po-lines.mjs
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY: ${{ inputs.company }}
+          DOC: ${{ inputs.doc }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/repair-mislabelled-sofa-po-lines.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY: ${{ inputs.company }}
+          DOC: ${{ inputs.doc }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

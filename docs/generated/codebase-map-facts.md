@@ -11,7 +11,7 @@ FOR, which trees are dead, what must be changed in pairs — lives in
 
 ## 1. Backend route inventory
 
-174 route modules (47 in `backend/src/routes`, 127 in `backend/src/scm/routes`), 1215 endpoint registrations.
+175 route modules (47 in `backend/src/routes`, 128 in `backend/src/scm/routes`), 1217 endpoint registrations.
 
 An endpoint is a `router.<method>("/…")` registration. For the per-route authorization
 boundary see the sibling artifact `docs/generated/route-capability-matrix.csv`, which
@@ -66,7 +66,8 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/track.ts` | 1 | 44 |
 | `backend/src/routes/udf.ts` | 4 | 251 |
 | `backend/src/routes/users.ts` | 22 | 2331 |
-| `backend/src/scm/routes/accounting-bank.ts` | 0 | 765 |
+| `backend/src/scm/routes/accounting-bank-config.ts` | 0 | 126 |
+| `backend/src/scm/routes/accounting-bank.ts` | 0 | 798 |
 | `backend/src/scm/routes/accounting-chart.ts` | 0 | 787 |
 | `backend/src/scm/routes/accounting-item-groups.ts` | 0 | 259 |
 | `backend/src/scm/routes/accounting-numbering.ts` | 0 | 134 |
@@ -77,7 +78,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/accounting-rp.ts` | 0 | 319 |
 | `backend/src/scm/routes/accounting-settlement.ts` | 0 | 1280 |
 | `backend/src/scm/routes/accounting-stock-close.ts` | 0 | 53 |
-| `backend/src/scm/routes/accounting.ts` | 75 | 1506 |
+| `backend/src/scm/routes/accounting.ts` | 77 | 1509 |
 | `backend/src/scm/routes/addons.ts` | 4 | 215 |
 | `backend/src/scm/routes/amendment-mirror.ts` | 1 | 126 |
 | `backend/src/scm/routes/ap-invoice-files.ts` | 0 | 50 |
@@ -203,13 +204,13 @@ scripts, never assumed: each runner declares its own directory, and
 | tree | runner | *.sql | highest | applied to PRODUCTION by deploy.yml | read by backend vitest |
 |---|---|---|---|---|---|
 | `backend/src/db/migrations` | `backend/scripts/migrate.mjs` | 152 | `153_sessions_stay_signed_in.sql` (153) | no | yes |
-| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 383 | `0352_acc_pv_files.sql` (0352) | YES | no |
+| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 384 | `0352_acc_pv_files.sql` (0352) | YES | no |
 
 Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its number): `0136_capture_compat_views_trips_lorries.sql.TEMPLATE`
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (2048 files, 714454 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (2049 files, 715137 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |

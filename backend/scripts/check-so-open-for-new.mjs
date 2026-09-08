@@ -125,10 +125,17 @@ async function main() {
   const everNative = { n: native.length };
   const newest = inWindow.slice(0, 10);
 
-  /* The RAW column count as well, because it is what the old version of this
+  /* The RAW column count as well, because it is what the OLD version of this
      check reported and somebody will compare the two. They differ by exactly
-     the orders the write-back has sent. */
-  const linked = headers.length - native.length;
+     the orders the write-back has sent.
+
+     COUNTED FROM THE COLUMN, not derived from `native`. The first version of
+     this line said `headers.length - native.length`, which is the count by the
+     NEW rule wearing the OLD rule's label — printing 2882 under the words
+     `linked_ac_docno IS NOT NULL` when the true answer was 2883. A wrong label
+     on a right number is worse than no line: it is the one a reader compares
+     against the old runs. */
+  const linked = headers.filter((r) => r.linked_ac_docno != null).length;
   log(`(raw \`linked_ac_docno IS NOT NULL\` count, which is NOT the predicate: ${linked} of ${headers.length})`);
 
   log(
