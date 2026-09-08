@@ -61,6 +61,27 @@ samples land exactly on it:
 The ERP is not wrong about a date it invented. It is holding, faithfully, the
 answer the book gave ten days ago.
 
+*3. And the PLAN it printed would have ERASED 93 documents.* Found by reading
+the plan rather than the code, which is the only place it was visible. The
+snapshots carry the IN-SCOPE population — 2,789 orders — while the query is
+`WHERE company_id = 1 AND linked_ac_docno IS NOT NULL`, which also returns the
+93 company-1 orders that mirror an AutoCount document the scope rule excludes
+(the reconcile calls them `present though out of scope`). For those the
+snapshot has no row, `rem.get(...) || {}` returned `{}`, and every field
+computed to `null`. Run `34179438387`, PLAN, verbatim:
+
+```
+headers with differences: 226 — processing_date 93, customer_delivery_date 206,
+  sales_exemption_expiry 93, remark2 94, remark3 7, remark4 92, note 17
+   HC-SO-011235: processing_date -> null | customer_delivery_date -> null |
+     sales_exemption_expiry -> null | remark2 -> null | remark4 -> null
+```
+
+93 processing dates, 93 exemption dates, ~93 remarks — the count IS the
+out-of-scope population. A missing snapshot row and a cleared book value are
+indistinguishable once both are `null`, so this read as ordinary work. It is
+pre-existing: the same code shipped the 2026-08-29 run.
+
 **Fix.**
 
 1. The date source is `ac-outstanding-so.json.gz` — the fresher cut, and the one
@@ -71,13 +92,20 @@ answer the book gave ten days ago.
    the ERP line since migration `0273`. The old DocNo+item-code key is kept ONLY
    for ERP rows carrying no key, and is now documented as the lossy fallback it
    is rather than the rule.
-3. PLAN mode prints the cause split — ERP blank vs ERP holds another date,
+3. A document this cut does not carry is SKIPPED, not blanked, and the count is
+   printed beside the refusals.
+4. 空白不覆盖 is enforced on the header fields too: where the book states nothing
+   and the ERP holds a value, the ERP's value stands. It already held on the
+   line side (`want === null` skips); the header path wrote the `null` through.
+5. PLAN mode prints the cause split — ERP blank vs ERP holds another date,
    matched on DtlKey vs on item code — because "614 differ" and "142 blank" are
    two defects with two different stories and one total hides which a re-run
    actually closes.
 
-Unchanged on purpose: the refusal guard (any document whose audit trail shows a
-person touched a synced field is skipped), and 空白不覆盖 — a book that states no
-date never blanks an ERP value.
+Unchanged on purpose: the refusal guard — any document whose audit trail shows a
+person touched a synced field is skipped.
+
+**Lesson.** The unsafe half of this was invisible in the source and obvious in
+the plan. A tool whose PLAN mode prints only totals would have been run.
 
 **Ref.** fix/so-po-align-0908, 2026-09-08.

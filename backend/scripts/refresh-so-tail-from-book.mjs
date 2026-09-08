@@ -122,7 +122,17 @@ async function main() {
     remark2: txt(r.Remark2), remark3: txt(r.Remark3), remark4: txt(r.Remark4),
     note: txt(r.UDF_Note), seed: day(r.SalesExemptionExpiryDate),
   });
-  log(`snapshot: dates docs ${new Set(dates.map((r) => r.DocNo)).size}, remark docs ${rem.size}`);
+  /* WHICH DOCUMENTS THIS CUT SPEAKS ABOUT. The snapshots carry the IN-SCOPE
+     population (2,789 orders); the ERP also holds 93 company-1 orders that
+     mirror an AutoCount document the scope rule excludes. For those the
+     snapshot has no row, and `rem.get(...) || {}` used to turn that silence
+     into `null` for every field — a PLAN that proposed erasing the processing
+     date, delivery date, exemption date and remarks of 93 real documents, and
+     it read like ordinary work because a missing row and a cleared value look
+     identical once both are `null`. A document this cut does not carry is a
+     document the book said nothing about here; it is SKIPPED. */
+  const docsInCut = new Set(dates.map((r) => r.DocNo));
+  log(`snapshot: dates docs ${docsInCut.size}, remark docs ${rem.size}`);
 
   const orders = await sql`SELECT doc_no, linked_ac_docno,
       to_char(processing_date, 'YYYY-MM-DD') AS p,
@@ -139,9 +149,12 @@ async function main() {
 
   const per = { processing_date: 0, customer_delivery_date: 0, sales_exemption_expiry: 0, remark2: 0, remark3: 0, remark4: 0, note: 0 };
   let refused = 0;
+  let outOfCut = 0;
+  let heldBlank = 0;
   const ups = [];
   for (const o of orders) {
     if (touched.has(o.doc_no)) { refused++; continue; }
+    if (!docsInCut.has(o.linked_ac_docno)) { outOfCut++; continue; }
     const R = rem.get(o.linked_ac_docno) || {};
     const want = {
       processing_date: proc.get(o.linked_ac_docno) ?? null,
@@ -150,12 +163,20 @@ async function main() {
       remark2: R.remark2 ?? null, remark3: R.remark3 ?? null, remark4: R.remark4 ?? null, note: R.note ?? null,
     };
     const cur = { processing_date: o.p, customer_delivery_date: o.d, sales_exemption_expiry: o.seed, remark2: txt(o.remark2), remark3: txt(o.remark3), remark4: txt(o.remark4), note: txt(o.note) };
+    /* 空白不覆盖 — the owner's standing rule. Where the book states nothing and
+       the ERP holds a value, the ERP's value stands; an operator filling a
+       field in is allowed and is not drift to undo. So a difference is work
+       only when the book actually STATES the new value. */
+    for (const k of Object.keys(want)) {
+      if ((want[k] ?? null) === null && (cur[k] ?? null) !== null) { want[k] = cur[k]; heldBlank++; }
+    }
     const changed = Object.keys(want).filter((k) => (want[k] ?? null) !== (cur[k] ?? null));
     if (!changed.length) continue;
     for (const k of changed) per[k]++;
     ups.push({ doc: o.doc_no, want, changed });
   }
-  log(`headers REFUSED (a person touched a synced field): ${refused}`);
+  log(`headers REFUSED (a person touched a synced field): ${refused}; SKIPPED (the AutoCount document is not in this cut): ${outOfCut}; ` +
+      `field values the ERP keeps because the book states none (空白不覆盖): ${heldBlank}`);
   log(`headers with differences: ${ups.length} — ${Object.entries(per).map(([k, n]) => `${k} ${n}`).join(", ")}`);
   for (const u of ups.slice(0, 10)) log(`   ${u.doc}: ${u.changed.map((k) => `${k} -> ${JSON.stringify(u.want[k])}`).join(" | ")}`);
 
