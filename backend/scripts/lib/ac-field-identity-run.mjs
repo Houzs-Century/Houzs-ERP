@@ -60,13 +60,31 @@ export function loadAcFieldSide(dataDir, book) {
   const group = (rows, docField, lineKeyField, type) => {
     const headers = new Map();
     const lines = new Map(); // docNo -> [line]
+    /* ONE BOOK LINE IS ONE LINE, however many exports carry it.
+       The PO population is fed by two lanes and 241 of the 696 SO-linked rows
+       are the SAME book line as one already in the outstanding lane (measured
+       2026-09-08 across 152 purchase orders). Pushed twice, every tally on
+       those lines DOUBLED: `description` and `line delivery date` each read 14
+       blank where 7 book lines are blank, and each sample printed twice.
+       The two copies differ in exactly two fields and neither is comparable —
+       `DocKey` only the outstanding lane carries, `Cancelled` only the linked
+       one — so the copies are MERGED rather than one of them dropped, and no
+       field is lost. The header side already deduped, first lane wins. */
+    const seen = new Map(); // `${doc}|${key}` -> the line object already pushed
     for (const r of rows) {
       const d = nz(r[docField]);
       if (!d) continue;
       if (!headers.has(d)) headers.set(d, { ...r, __doc: d });
       if (!lines.has(d)) lines.set(d, []);
       const key = r[lineKeyField];
-      lines.get(d).push({ ...r, __key: key == null ? null : String(key), __bookLineTotalSen: bookLineTotal(type, key) });
+      const dedupe = key == null ? null : `${d}|${String(key)}`;
+      if (dedupe && seen.has(dedupe)) {
+        Object.assign(seen.get(dedupe), Object.fromEntries(Object.entries(r).filter(([, v]) => v != null)));
+        continue;
+      }
+      const line = { ...r, __key: key == null ? null : String(key), __bookLineTotalSen: bookLineTotal(type, key) };
+      lines.get(d).push(line);
+      if (dedupe) seen.set(dedupe, line);
     }
     for (const [d, h] of headers) {
       const ls = lines.get(d) || [];
