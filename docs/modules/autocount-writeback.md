@@ -4902,3 +4902,37 @@ Tests: `scripts/lib/variant-reconcile.test.mjs` — the ruled build, the
 not-folded-into-agree property, the unwritten ruling that stays `DIFFER`, the
 no-ruling control, and the assertion that a ruling cannot rescue an ERP carrying
 no compartments at all.
+
+## Several ERP lines can share ONE book line — the sofa (2026-09-08)
+
+**The rule.** AutoCount holds a sofa as a single line; the ERP decomposes it into
+a line per piece, and every piece carries that one line's `DtlKey`. That is
+deliberate (`docs/autocount-integration-map.md` §4.2), so `linked_ac_dtlkey` is
+NOT unique across ERP lines and nothing may assume it is.
+
+`readConvertSourceKeys` merges by KEY now, first-seen order. Before that it built
+one entry per ERP line and sent `[901830, 901830, 901831]`, which the host
+reported as *"of 3 line key(s) given, only 2 exist on a SO"* — a sentence that
+describes a missing key and was produced by a repeated one. Full trace:
+`docs/bugs/0722-a-sofa-is-one-line-in-the-book-and-several-in-the-erp-so-its.md`.
+
+**Three consequences, and none of them is optional:**
+
+- **A shared key never carries a quantity.** The ERP counts pieces, the book
+  counts sofas. Summing sends 2 against a line of 1 — an over-transfer of a
+  licensed account book. Whole, none is needed: the service moves each named
+  line's outstanding.
+- **A part-shipped shared line is REFUSED.** "Two of the three pieces" has no
+  shape in a document holding one line of one unit.
+- **The untaken siblings must be read.** A delivery shipping one of two pieces
+  sees the key once and looks 1:1; the sibling it left behind is exactly what
+  makes it partial. The read needs no parent predicate — a `DtlKey` identifies
+  one line of one document, so every ERP row carrying it belongs to that book
+  line by construction.
+
+**OWNER RULING 2026-09-08 — option C, NOT BUILT YET.** A part-shipped sofa should
+hold ONLY the sofa's own line back, letting every other line on the document go
+on time, and completeness is judged on the sofa's pieces alone — 「C 除了
+accessories 不看 就看sofa」, so a pillow still in the warehouse does not hold the
+sofa. Until it is built the refusal above stands in for it. Anyone building C
+starts here and in that ledger entry.
