@@ -196,7 +196,9 @@ async function main() {
   log(`  the sales-order line is not in the ERP             ${counts.notInErp}`);
   log(`  the AutoCount line is not in this snapshot         ${counts.notInBook}`);
   log(`  the AutoCount code is not in the mapping sheet     ${counts.unmapped}   (says nothing either way)`);
-  for (const r of refused) log(`   REFUSED ${r.docNo ?? "(no ERP doc)"} key ${r.dtlKey}: ${r.detail}`);
+  for (const r of refused) {
+    log(`   REFUSED ${r.docNo ?? "(no ERP doc)"}${r.debtorName ? ` (${r.debtorName})` : ""} key ${r.dtlKey}: ${r.detail}`);
+  }
 
   if (plan.length === 0) {
     log("");
