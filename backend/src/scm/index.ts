@@ -30,7 +30,14 @@ import { suppliers } from "./routes/suppliers";
 import { mfgPurchaseOrders } from "./routes/mfg-purchase-orders";
 import { mfgPurchaseOrdersListEnrichment } from "./routes/mfg-purchase-orders-list-enrichment";
 import { purchaseOrderItemPhotos } from "./routes/purchase-order-item-photos";
-import { cancelApprovalGuard, cancelRequestsInbox, poCancelRequests, soCancelRequests } from "./routes/document-cancel-routes";
+import {
+  CANCEL_REQUEST_OPEN_READ_PATH,
+  cancelApprovalGuard,
+  cancelApproverWriteBypass,
+  cancelRequestsInbox,
+  poCancelRequests,
+  soCancelRequests,
+} from "./routes/document-cancel-routes";
 import { grns } from "./routes/grns";
 import { grnsListEnrichment } from "./routes/grns-list-enrichment";
 import { purchaseInvoices } from "./routes/purchase-invoices";
@@ -282,7 +289,15 @@ scm.route("/quotes", quotes);
 scm.use("/suppliers/*", scmAreaGuard("scm.procurement.suppliers"));
 scm.route("/suppliers", suppliers);
 // ── Purchase Orders / GRN / PI (scm.procurement.*) ──────────────────────────
-scm.use("/mfg-purchase-orders/*", scmAreaGuard("scm.procurement.po"));
+// Cancellation approvers sign by KEY, not by area (owner 2026-09-08: the Sales
+// Director signs level 1 on a PO cancel and holds no procurement area at all).
+// The bypass admits only POST …/cancel-request/{approve,reject,withdraw} for a
+// holder of scm.po_cancel.approve_l1|l2; the open-read suffix lets the card on
+// the document load for them. routes/document-cancel-routes.ts explains both.
+scm.use("/mfg-purchase-orders/*", scmAreaGuard("scm.procurement.po", {
+  openReadPaths: [CANCEL_REQUEST_OPEN_READ_PATH],
+  writeBypass: cancelApproverWriteBypass("PO"),
+}));
 // Deferred list enrichment — the MRP-derived PO-list columns (Assigned SO /
 // Delivered) the list no longer computes on its critical path. Mounted BEFORE
 // the main router so its static `/list-mrp-enrichment` path resolves ahead of
@@ -318,7 +333,12 @@ scm.use("/purchase-invoices/*", scmAreaGuard("scm.procurement.pi"));
 scm.route("/purchase-invoices", purchaseInvoicesListEnrichment);
 scm.route("/purchase-invoices", purchaseInvoices);
 // ── Sales Orders (scm.sales.orders) ─────────────────────────────────────────
-scm.use("/mfg-sales-orders/*", scmAreaGuard("scm.sales.orders"));
+// Same key-not-area admission as the PO mount above: the Purchaser signs
+// level 2 on a Sales Order cancel with Sales Orders at `view`.
+scm.use("/mfg-sales-orders/*", scmAreaGuard("scm.sales.orders", {
+  openReadPaths: [CANCEL_REQUEST_OPEN_READ_PATH],
+  writeBypass: cancelApproverWriteBypass("SO"),
+}));
 /* MIGRATED sales orders are READ-ONLY while the cutover finishes (owner
    2026-09-08, 「只开新单，旧单暂时不能改」). A NEW order saves normally; one
    carried across from AutoCount does not, because sync-ac-delta can still

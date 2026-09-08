@@ -38,7 +38,7 @@
 // ----------------------------------------------------------------------------
 import type { Context, Next } from 'hono';
 import { getSupabaseService } from '../../db/supabase';
-import { soIsMigrated } from './so-is-migrated';
+import { soIsMigrated, soIsMigratedShape } from './so-is-migrated';
 import { callerBypasses } from './write-freeze';
 import { activeCompanyId } from './companyScope';
 import { chunkSizeForUrl } from './paginate-all';
@@ -374,8 +374,11 @@ async function migratedByDocNo(sb: SupabaseLike, docNo: string): Promise<GuardTa
   try {
     return {
       docNo,
+      /* BOTH numbers, because the rule is about the pair (so-is-migrated.ts).
+         Selecting only `linked_ac_docno` is what made a brand-new order read as
+         an import the minute the write-back stamped it — docs/bugs/0703. */
       isMigrated: await soIsMigrated(
-        (d) => sb.from('mfg_sales_orders').select('linked_ac_docno').eq('doc_no', d).maybeSingle(),
+        (d) => sb.from('mfg_sales_orders').select('doc_no, linked_ac_docno').eq('doc_no', d).maybeSingle(),
         docNo,
       ),
     };
@@ -488,7 +491,9 @@ export async function withSoMigratedReadonly(
      what the salesperson sees, so it is what the refusal names — the AutoCount
      number the reconcile keys on means nothing on their screen. */
   const docNo = typeof salesOrder.doc_no === 'string' ? salesOrder.doc_no : null;
-  const mig = await migratedSoReadonlyState(c, docNo, acDocNo !== null);
+  /* The PAIR, not the presence of the column — see so-is-migrated.ts. The
+     detail select already reads both, so this still costs no extra query. */
+  const mig = await migratedSoReadonlyState(c, docNo, soIsMigratedShape(docNo, acDocNo));
   salesOrder.migrated_readonly = mig.locked;
   salesOrder.migrated_readonly_reason = mig.reason;
   return salesOrder;
@@ -507,7 +512,11 @@ export async function migratedSoListGate(
   const migrated = new Set<string>();
   for (const b of (Array.isArray(baseRows) ? baseRows : []) as Array<Record<string, unknown>>) {
     const docNo = typeof b.doc_no === 'string' ? b.doc_no : null;
-    if (docNo && ((b.linkedAcDocno ?? b.linked_ac_docno ?? null) !== null)) migrated.add(docNo);
+    const link = b.linkedAcDocno ?? b.linked_ac_docno ?? null;
+    /* Same predicate as the guard and the detail, so a row cannot offer Edit on
+       a page the endpoint then refuses — or grey one the endpoint would allow,
+       which is what docs/bugs/0703 did to every order the write-back had sent. */
+    if (docNo && soIsMigratedShape(docNo, typeof link === 'string' ? link : null)) migrated.add(docNo);
   }
 
   const { value } = await readLock(lockReader(clientFor(c)));

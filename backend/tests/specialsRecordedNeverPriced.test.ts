@@ -60,6 +60,11 @@ const ALLOWED = new Set([
   'backend/scripts/lib/variant-reconcile.mjs',
   'backend/scripts/lib/variant-reconcile.test.mjs',
   'backend/scripts/check-ac-erp-reconcile.mjs',
+  /* The variant table and its legend, LIFTED OUT of check-ac-erp-reconcile.mjs
+     on 2026-09-08 because that file hit its 2,000-line ceiling. It prints the
+     `recorded` column's sentence and nothing else: the same render, in a new
+     file. It computes no price and reads no money. */
+  'backend/scripts/lib/variant-report.mjs',
   'backend/scripts/plan-priced-specials-money.mjs',
 ]);
 
