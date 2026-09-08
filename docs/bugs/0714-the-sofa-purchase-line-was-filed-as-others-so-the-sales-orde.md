@@ -87,11 +87,40 @@ different sofa is refused and named. The pure half is
 `backend/tests/mislabelledSofaPoPlan.test.mjs` (the population predicate and
 every refusal; 24 tests, run green on this branch).
 
-What the repair does NOT do, and what still has to happen after it: open the
-stock (that is `import-ac-sofa-stock.yml`, which will now see the builds) and
-bind the batch (the allocation recompute). Neither has been run against
-production as this entry is written; the 2026-09-09 delivery depends on all
-three.
+**Ran, all three steps, on production 2026-09-08 (owner ruling the same
+evening: `item_group = 'sofa'` may be written; merge and run).** PR #3270 merged
+through the queue as `b387a0e` at 11:50Z.
+
+| step | run | what it reported | what the live database showed afterwards |
+| --- | --- | --- | --- |
+| 1 plan | 34222789273 | 9 builds planned, 5 refused (delivery-order lines already on the compartments), 0 deletions | — |
+| 1 apply | 34222954681 | `builds applied 9 of 9; shapes verified 9`, totals held on every purchase order and receipt | 12:57:06Z: HC-PO-009435 holds `8030-2A(LHF)` + `8030-1A(RHF)`, both `sofa`, each dedicated to its sales line, receipt split with it (lead piece keeps RM 1,950.00, the other 0) |
+| 2 dry-run | 34229086324 | 22 lots to create across 10 batches; the projection said 0 lines would go READY because the 19 repaired compartments were ALREADY READY (see below) | — |
+| 2 apply | 34229613738 | the same 22 | 13:11:12Z: lots present for the 9 batches at the purchase line's warehouse, Lisa's two at Balakong under batch HC-PO-009435, variant key identical to the sales line's |
+| 3 dry-run | 34230476031 | `canonical result: ok=true linesFlipped=22 ordersAdvanced=0 ordersRegressed=0`, rolled back | — |
+| 3 apply | 34230737819 | the same, committed | 13:16:30Z: the 19 compartments of the 9 orders carry `allocated_batch_no` = their own purchase order's number, `stock_status` READY, order status READY_TO_SHIP |
+
+Two things the runs taught that the plan above did not say:
+
+- **The compartments went READY before the stock was opened.** The audit log
+  on HC-SO-012565 shows `system (auto-allocate)` flipping `2 line(s) → READY`
+  and the order to READY_TO_SHIP at 12:02:57Z, eight minutes after step 1 and
+  an hour before step 2. That is `isHardBoundLine` doing what its comment says:
+  a company-1 sofa line reads READY through its OWN dedicated, received purchase
+  line, and step 1 had just written that dedication. READY without a batch is
+  still not shippable — the batch guard reads `allocated_batch_no` — which is
+  why steps 2 and 3 were still needed and why step 2's projection (which only
+  counts PENDING lines) printed 0.
+- **Step 2 also opened lots for a build outside this population**, HC-PO-009712
+  (HC-SO-012629), under the import's own rules. That is a second, separate
+  defect — the build already had lots under a different variant key — recorded
+  in `docs/bugs/0721-the-sofa-stock-import-opened-a-second-set-of-lots-for-a-buil.md`
+  and NOT repaired here.
+
+**What is NOT proven:** nobody has pressed Create Delivery Order on
+HC-SO-012565 since. The two gates it failed read warehouse, batch and variant
+key, and all three now match the lots; that is LIKELY, not PROVEN, until the
+delivery on 2026-09-09 is created.
 
 **Not fixed here, offered as options.** The pick screen's Remaining column is
 delivery arithmetic and carries no stock signal, so an operator learns the sofa
