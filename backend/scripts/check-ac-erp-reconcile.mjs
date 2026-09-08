@@ -157,7 +157,8 @@ import {
   runSelfTest as runFieldSelfTest,
 } from "./lib/ac-field-identity-run.mjs";
 import { printFieldTable, printPoDiscount } from "./lib/ac-field-identity-report.mjs";
-import { buildVerdictRows, makeVerdictRecorder, summariseVerdict } from "./lib/so-verdict-derive.mjs";
+import { makeVerdictRecorder } from "./lib/so-verdict-derive.mjs";
+import { emitVerdicts } from "./lib/ac-verdict-emit.mjs";
 import { makeSofaRulingLookup } from "./lib/sofa-rulings.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -182,6 +183,22 @@ const SHOW = Math.max(1, Number(process.env.SHOW || 20));
    never be a second opinion about "different". */
 const VERDICT = makeVerdictRecorder();
 const VERDICT_OUT = String(process.env.VERDICT_OUT || "").trim();
+/* THE SAME VERDICT, FOR THE OTHER DOCUMENT TYPES. 2026-09-08, the owner:
+   「然后把PO GR也tally掉」.
+
+   A DIRECTORY and not a second path, because the recorder above has ALWAYS been
+   keyed by document type — every `VERDICT.record(t, ...)` call site below passes
+   the type it is looping over — so purchase-order and goods-receipt findings
+   were already being collected and simply never written out. This emits what is
+   already there; it adds no comparison, and it must never be allowed to. The
+   file `VERDICT_OUT` still receives SALES ORDERS and nothing else, so
+   publish-so-reconcile-verdict.mjs and the migrated-sales-order lock see a byte
+   for byte unchanged payload. */
+const VERDICT_DIR = String(process.env.VERDICT_DIR || "").trim();
+const VERDICT_TYPES = String(process.env.VERDICT_TYPES || "SO,PO,GR")
+  .split(",")
+  .map((s) => s.trim().toUpperCase())
+  .filter(Boolean);
 
 const log = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 const plain = (m) => console.log(m);
@@ -1048,19 +1065,37 @@ for (const cfg of TYPES) {
       VERDICT.record(t, ac, d.erp_no, "currency", "this snapshot does not state the document's currency");
     }
     if (cur.kind === "foreign") {
-      /* NOT a money difference. The ERP's `currency` column saying MYR on a
-         foreign document is a real defect, but it is a CURRENCY defect, and
-         counting it in the money column is what made an exchange rate look like
-         a discount in the first place. */
+      /* ── READ THE ERP'S OWN CURRENCY. DO NOT ASSERT IT. ──────────────────
+         This block used to record a `currency` difference for EVERY foreign
+         book document and print "tagged 'MYR'" — a sentence about a column
+         nothing had selected. `HC-PO-009335` was repaired to CNY on 2026-09-07
+         (repair-migrated-currency.mjs, run 34143840216, MODE=apply, which
+         printed `verified HC-PO-009335 currency = 'CNY'`), and this checker
+         went on reporting it as MYR the next day. That is docs/bugs/0715's
+         failure wearing the opposite hat: there, a comparison that never ran
+         was counted as a difference; here, a comparison that never ran was
+         counted as a difference about the ERP side specifically.
+
+         `currency` is now on the docs() SELECT for the types this compares. A
+         type whose query does NOT carry it still records — "we did not read it"
+         must never resolve to "it agrees". */
+      const erpCur = d.currency == null ? null : String(d.currency).trim().toUpperCase();
+      const agrees = erpCur !== null && erpCur === cur.code;
+      /* NOT a money difference either way. Counting a foreign document in the
+         money column is what made an exchange rate look like a discount in the
+         first place (docs/bugs/0665), so it stays out of `money` whether the
+         currency agrees or not. */
       foreignDocs.push(
         `${ac}: ${cur.why} — document RM ${rm(h.docTotalSen)}, local RM ${rm(h.totalSen)}, ` +
-          `ERP RM ${rm(erpTotal)} tagged '${LOCAL_CURRENCY}' (ERP ${d.erp_no})`,
+          `ERP RM ${rm(erpTotal)} tagged '${erpCur ?? "not read for this type"}' (ERP ${d.erp_no})` +
+          (agrees ? " — the ERP AGREES with the book on the currency" : ""),
       );
-      /* NOT a money difference — and still a difference. The reconcile's own
-         words: "a real defect, but a CURRENCY defect". An order whose currency
-         we hold wrongly is not one to proceed, so it locks on its own axis
-         rather than being counted as money it is not. */
-      VERDICT.record(t, ac, d.erp_no, "currency", cur.why);
+      if (!agrees) {
+        /* An order whose currency we hold wrongly is not one to proceed, so it
+           locks on its own axis rather than being counted as money it is not. */
+        VERDICT.record(t, ac, d.erp_no, "currency",
+          `${cur.why}; the ERP holds '${erpCur ?? "unknown — this type's query does not select currency"}'`);
+      }
     }
     if (bookTotal !== erpTotal) {
       /* An ERP side that is zero while the book is not is a POPULATION
@@ -1332,6 +1367,21 @@ for (const cfg of TYPES) {
     decision: cfg.zeroMoneyDecision ?? null,
     proof: zeroMoneyProof[t] ?? null,
   });
+  /* THE OWNER'S RULING HAS TO REACH THE PER-DOCUMENT VERDICT TOO, not only the
+     SUMMARY table. `document total` was recorded honestly in the loop above —
+     the proof that 「GR 0 没关系」 covers a given receipt is a separate read,
+     classified only once the whole type has been walked. Applying it here, from
+     the split's OWN output, is what stops 100 receipts the owner has already
+     ruled on from being counted as 100 documents of work.
+
+     `MZ.moved` is exactly the proved set: migrated paperwork, zero inventory
+     movements, ERP zero against a non-zero book. `impostors` are deliberately
+     NOT moved and stay recorded as differences. */
+  if (MZ.applied) {
+    for (const r of MZ.moved) {
+      VERDICT.reclassify(t, r.key, "document total", "erp-zero-money", r.line);
+    }
+  }
   /* THE TWO PAIRING-INDEPENDENT SPLITS. Both answer the same question about a
      column this checker cannot always compute honestly: is the finding a
      property of the DATA, or of the correspondence the checker had to invent
@@ -1921,47 +1971,26 @@ if (notWork) {
 
    The verdict is keyed on the ERP document number and covers SALES ORDERS only:
    it feeds the migrated-sales-order lock, and no other document type has one. */
-if (VERDICT_OUT) {
-  const measuredAt = new Date().toISOString();
-  const runId = crypto.randomUUID();
-  const rows = buildVerdictRows({ recorder: VERDICT, type: "SO", companyId: CO, measuredAt, runId });
-  const sum = summariseVerdict(rows);
-  plain("");
-  plain("═══════════ PER-DOCUMENT VERDICT — SALES ORDERS ═══════════");
-  log(
-    `SO VERDICT — ${sum.docCount} migrated sales orders compared against the book: ` +
-      `${sum.cleanCount} match it exactly and would OPEN; ${sum.differCount} still differ and stay LOCKED.`,
-  );
-  for (const [axis, docs] of sum.perAxis) plain(`   ${axis}: ${docs} document(s)`);
-  for (const r of rows.filter((x) => !x.clean).slice(0, SHOW)) {
-    plain(`   LOCKED ${r.doc_no} (${r.ac_doc_no}) — ${r.axes.join(", ")}`);
-  }
-  const differ = sum.differCount;
-  if (differ > SHOW) plain(`   ... and ${differ - SHOW} more`);
-  fs.writeFileSync(
-    VERDICT_OUT,
-    JSON.stringify({
-      version: 1,
-      type: "SO",
-      company_id: CO,
-      measured_at: measuredAt,
-      run_id: runId,
-      snapshot_exported_at: snap.exported_at ?? null,
-      source: process.env.GITHUB_SERVER_URL && process.env.GITHUB_RUN_ID
-        ? `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`
-        : "local",
-      summary: sum,
-      /* The reconcile's OWN summary row for this type and its OWN presence
-         lists, carried so check-so-tally.mjs states the document / line / SKU /
-         quantity / price / money axes without measuring anything itself.
-         publish-so-reconcile-verdict.mjs names the fields it inserts, so extra
-         keys here reach no database column. */
-      population: summaryByType.get("SO") ?? null,
-      presence: VERDICT.presenceFor("SO"),
-      rows,
-    }, null, 0),
-  );
-  plain(`   verdict written to ${VERDICT_OUT} (${rows.length} rows)`);
-}
+/* ── THE PER-DOCUMENT VERDICT ───────────────────────────────────────────────
+   Written out ONLY when asked for, so the read-only check the owner dispatches
+   stays exactly what it was. This file never writes one to the DATABASE:
+   publish-so-reconcile-verdict.mjs does that, which keeps the CLAUDE.md rule
+   that a read-only check is read-only.
 
+   `VERDICT_OUT` is SALES ORDERS and nothing else — it feeds the
+   migrated-sales-order lock. `VERDICT_DIR` is the newer per-type path the owner
+   asked for on 2026-09-08 (「然后把PO GR也tally掉」). The serialising lives in
+   lib/ac-verdict-emit.mjs; it DECIDES nothing, and it must not. */
+emitVerdicts({
+  recorder: VERDICT,
+  companyId: CO,
+  snapshotExportedAt: snap.exported_at ?? null,
+  summaryByType,
+  verdictOut: VERDICT_OUT,
+  verdictDir: VERDICT_DIR,
+  verdictTypes: VERDICT_TYPES,
+  show: SHOW,
+  plain,
+  log,
+});
 await sql.end({ timeout: 5 });

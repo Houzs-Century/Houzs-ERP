@@ -151,6 +151,142 @@ reconstructing a per-line figure from GR details is not an option;
 | PO linkage | ERP PO `linked_ac_docno` == AutoCount PO DocNo; `so_item` link kept where present. |
 | Exceptions | SO colour/free-text exception list (~37, all AutoCount source-data truncation) consciously reviewed; nothing silently dropped. |
 
+## C2. THE ONE-LINE ANSWER, per document type (added 2026-09-08)
+
+Section C ties out COUNTS and VALUE. It does not answer 「都tally了吗」 for a
+document type, because a summary row can be right about its own column and still
+leave a document differing — see `docs/bugs/0715` (a comparison that never ran,
+counted as `differ`) and `docs/bugs/0720` (a purchase order that differed on
+CURRENCY while the gap total read `PO 0`).
+
+Two read-only workflows print that answer, one document at a time, and neither
+writes anything:
+
+| question | Actions -> workflow | script |
+|---|---|---|
+| 「SO 都tally了吗」 | **Are all the sales orders tallied? (read-only)** | `backend/scripts/check-so-tally.mjs` |
+| 「PO GR 也tally了吗」 | **Are the purchase orders and goods receipts tallied? (read-only)** | `backend/scripts/check-po-gr-tally.mjs` |
+
+Both classify the SAME comparison — `check-ac-erp-reconcile.mjs` — into four
+buckets, and **neither measures anything itself**. The second runs the reconcile
+ONCE for every requested type (`TYPES`, default `PO,GR,SO`) so purchase orders,
+goods receipts and the sales-order CONTROL all quote one run.
+
+**The four buckets, and why the third one has to exist.** A document whose sofa
+build the book's own text does not state is NEITHER agreeing NOR differing.
+Folding it into DIFFER invents a backlog nobody owes; folding it into IDENTICAL
+calls it checked when nothing checked it. It gets its own column, always.
+
+- `identical` — compared on every axis, and every axis agreed.
+- `work` — at least one axis where both sides state something different, or the
+  document is absent, or the ERP claims one the book does not have.
+- `unanswerable` — the only findings are axes the checker refused to answer.
+- `book-gap` — the ERP carries a value the BOOK never stated. Already accepted.
+
+**TALLIED means zero `work`**, and it is decided in exactly one place —
+`isTallied` in `backend/scripts/lib/so-tally-verdict.mjs`. Not "few", not "only
+the declared ones are left". No summary writer gets a vote.
+
+**Two things that are NOT differences, per type, and are printed with the ruling
+that made them so** — do not "repair" either into a difference:
+
+- PO: **241 lines where the BOOK states no price.** Houzs prices a purchase when
+  the goods arrive; copying the book's blank would ERASE a real price.
+- GR: **100 receipts carrying RM 0.00.** The owner, 2026-09-08: 「GR 0 没关系」.
+  Proved per document (`migrated_no_stock`, zero inventory movements), never
+  assumed.
+
+**Grain, for goods receipts.** One "document" is a
+(AutoCount receipt x purchase order) PAIR, written `GR-nnn|PO-nnn`. An ERP goods
+receipt belongs to ONE purchase order while an AutoCount receipt can span
+several, and 51 of the 214 in-scope receipts do. Counting receipts instead
+reports every one of those as short by the part raised against another order.
+
+### Why 9 goods receipts still differ on money — and why it is a DECISION, not a defect
+
+**PROVEN, from the committed book snapshot** `backend/scripts/data/ac-reconcile-truth.json.gz`
+(exported 2026-09-08, re-run the arithmetic below rather than quoting it):
+
+> Of the **11,623** receipt x order pairs AutoCount itself states, **8,169**
+> carry a price on the RECEIPT while the purchase ORDER states none at all.
+> Only 3,333 have a price on both.
+
+That is not an anomaly — it is how this business books a purchase. The price is
+settled when the goods arrive, which is the same fact behind the 241 unpriced
+purchase lines the owner ruled 「这个没问题」.
+
+Our goods receipts take their money from the purchase-ORDER line by design
+(`priceDeclared` in `backend/scripts/lib/ac-reconcile-erp-sql.mjs`;
+`reshape-migrated-grns.mjs` copies the book's item, quantity and date and leaves
+price to the order). So wherever the order is blank, our receipt is short by
+exactly that line.
+
+**Worked, on the three the reconcile named** (raw ringgit, book side proven):
+
+| pair | book line 1 | book line 2 | book pair total | our total |
+|---|---|---|---|---|
+| `GR-004909\|PO-009017` | 1 x RM 3,080.00 | 4 x RM 30.00 = 120.00 | RM 3,200.00 | **RM 120.00** |
+| `GR-005171\|PO-009344` | 1 x RM 2,250.00 | 2 x RM 40.00 = 80.00 | RM 2,330.00 | **RM 80.00** |
+| `GR-005169\|PO-009475` | 1 x RM 2,170.00 | 2 x RM 30.00 = 60.00 | RM 2,230.00 | **RM 60.00** |
+
+In each one our total equals the SECOND line to the sen and the big qty-1 line
+contributes zero. The book's own `PODTL` for all three orders states
+`UnitPrice 0.00`, so the book agrees the ORDER had no price; only the RECEIPT
+states one.
+
+**PROVEN on production, run `34231092897`** — `stamp-migrated-source-prices.mjs`
+dispatched in PLAN mode (writes nothing), company 1, `kind=gr`, 2026-09-08
+13:17 UTC. That tool already computes the right figure to the sen and then
+REFUSES to write it:
+
+```
+PI-007287      AutoCount  RM 11,247.00  ours would be   RM 3,200.00   HC-GR-004909
+PI-007765      AutoCount   RM 4,580.00  ours would be   RM 2,230.00   HC-GR-005169
+PI-007771      AutoCount   RM 9,284.00  ours would be   RM 4,850.00   HC-GR-005171-PO-009344 + HC-GR-005171-PO-009553
+```
+
+`RM 3,200.00`, `RM 2,230.00` and `RM 2,330.00 + RM 2,520.00 = RM 4,850.00` are
+exactly the book pair totals in the table above. The same run explains the
+RM 120 / RM 80 / RM 60 we DO hold:
+
+```
+HC-GR-004909 group 829661 (SQUARE PILLOW): already carries money in the ERP — never overwritten. SKIPPED.
+HC-GR-005169 group 861817 (SQUARE PILLOW): already carries money in the ERP — never overwritten. SKIPPED.
+HC-GR-005171-PO-009344 group 851497 (LONG PILLOW): already carries money in the ERP — never overwritten. SKIPPED.
+```
+
+The accessory line is priced; the furniture line is not. And the run states why
+it will not price the furniture line:
+
+> **LEFT ALONE — 28 AutoCount invoice(s) whose ERP side cannot reach the billed
+> total:** our receipt mirrors ONE purchase order and AutoCount's receipt spans
+> several, so the invoice bills more than our lines cover. A price cannot fix
+> that; **these are the multi-purchase-order fragments with the owner.**
+
+**So the 9 are not a data defect and no existing tool will close them.** They
+are that already-known class. The same run also reports what it WOULD do
+elsewhere — `STAMPING 23 line(s) across 21 document(s) / 7 AutoCount invoice(s)`,
+after which those 7 reconcile to the sen and become convertible — which is a
+separate, available decision and was NOT applied here.
+
+**Do NOT repair this by copying the book's receipt price.** It would put money
+on a receipt that its own purchase order does not have, contradict
+`priceDeclared`, and change what a purchase invoice raised off that receipt
+would say — the stamp tool's own words are that it would move an owner-held
+decision out of the "ours RM 0.00" bucket into "both sides priced and genuinely
+differ", where it reads as new. It sits beside his existing 「GR 0 没关系」
+ruling, which already accepts a migrated receipt carrying LESS than the book
+states. Whether a PARTIAL amount falls under the same ruling is his to say.
+
+**Currency is its own axis and it LOCKS.** A foreign purchase order's total is
+compared in the document's own currency, so the money can be right to the sen
+while the ERP's `currency` column reads MYR — which is wrong. It is deliberately
+NOT in the SUMMARY's gap total (comparing a local-currency total against a
+document-currency one is what wrote RM 13,068.55 of imaginary discount onto a
+CNY order, `docs/bugs/0665`), so the per-document verdict is the only place it
+shows. Never repair a foreign document's TOTAL by script: a discount and an
+exchange rate are not distinguishable from a total alone.
+
 ## D. The mapping/rules the tally depends on (so a re-run reproduces the same numbers)
 
 - SKU: `backend/scripts/data/autocount-erp-mapping-1561.csv` (ac_code -> erp_code); 0 non-sofa codes off the pick list after the `SVC-DELIVERY -> TRANSPORTATION CHARGES` company-1 alias.

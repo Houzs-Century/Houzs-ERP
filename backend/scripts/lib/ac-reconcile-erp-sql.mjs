@@ -49,7 +49,7 @@ export function erpReconcileTypes({ sql, CO, PDATE }) {
     absenceIs: "GAP",
     bornAt: () => sql`SELECT doc_no AS erp_no, created_at FROM scm.mfg_sales_orders WHERE company_id = ${CO}`,
     docs: () => sql`SELECT doc_no AS erp_no, linked_ac_docno AS ac_no,
-        COALESCE(local_total_sen, subtotal_sen) AS total_sen
+        COALESCE(local_total_sen, subtotal_sen) AS total_sen, currency::text AS currency
       FROM scm.mfg_sales_orders WHERE company_id = ${CO}`,
     lines: () => sql`SELECT h.linked_ac_docno AS ac_no, i.item_code, i.qty::float8 AS qty,
         i.unit_price_sen, i.linked_ac_dtlkey AS ac_dtlkey, i.line_suffix,
@@ -65,7 +65,8 @@ export function erpReconcileTypes({ sql, CO, PDATE }) {
     label: "Purchase Order",
     absenceIs: "GAP",
     bornAt: () => sql`SELECT po_number AS erp_no, created_at FROM scm.purchase_orders WHERE company_id = ${CO}`,
-    docs: () => sql`SELECT po_number AS erp_no, linked_ac_docno AS ac_no, total_sen
+    docs: () => sql`SELECT po_number AS erp_no, linked_ac_docno AS ac_no, total_sen,
+        currency::text AS currency
       FROM scm.purchase_orders WHERE company_id = ${CO}`,
     lines: () => sql`SELECT h.linked_ac_docno AS ac_no, i.item_code, i.qty::float8 AS qty,
         i.unit_price_sen, i.linked_ac_dtlkey AS ac_dtlkey, i.line_suffix,
@@ -149,7 +150,7 @@ export function erpReconcileTypes({ sql, CO, PDATE }) {
       "reshape-migrated-grns.mjs copies the book's item, quantity and date, and leaves price to the order",
     docs: () => sql`SELECT g.grn_number AS erp_no,
         g.linked_ac_gr_docno || '|' || p.linked_ac_docno AS ac_no,
-        COALESCE(g.total_sen, 0) AS total_sen
+        COALESCE(g.total_sen, 0) AS total_sen, g.currency::text AS currency
       FROM scm.grns g JOIN scm.purchase_orders p ON p.id = g.purchase_order_id
       WHERE g.company_id = ${CO} AND g.status <> 'CANCELLED'
         AND g.linked_ac_gr_docno IS NOT NULL AND p.linked_ac_docno IS NOT NULL`,

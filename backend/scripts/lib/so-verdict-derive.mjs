@@ -143,6 +143,10 @@ export const NOTE_CLASSES = Object.freeze([
   'blank-book-row',
   /* WHY a compartment answer was unanswerable — the sofa-unread-split bucket */
   'unanswerable-cause',
+  /* A MIGRATED goods receipt carrying RM 0.00 — the owner, 2026-09-08:
+     「GR 0 没关系」. PROVED per document by lib/ac-not-a-difference.mjs
+     (`migrated_no_stock` and zero inventory movements), never assumed. */
+  'erp-zero-money',
 ]);
 
 const NOTED = new Set(NOTE_CLASSES);
@@ -215,6 +219,51 @@ export function makeVerdictRecorder() {
       if (!cell) { cell = { n: 0, proceeded: 0, lines: [] }; byAxis.set(axis, cell); }
       cell.n += 1;
       if (proceeded === true) cell.proceeded += 1;
+      if (detail && cell.lines.length < 5) cell.lines.push(String(detail));
+    },
+
+    /**
+     * MOVE a finding from the locking channel to the note channel, because a
+     * split that runs AFTER the document loop has ruled it is not a difference.
+     *
+     * ── WHY THIS EXISTS, AND WHY IT IS THE NARROWEST THING THAT WORKS ───────
+     * Some of the owner's rulings cannot be applied inside the loop, because
+     * they need EVIDENCE the loop has not gathered yet. 「GR 0 没关系」 is the
+     * live case: a migrated goods receipt may carry RM 0.00, but only where the
+     * run can PROVE the receipt is migrated paperwork — `migrated_no_stock`
+     * with zero inventory movements — and that proof is a separate read,
+     * classified by `splitErpZeroMoney` once the whole type has been walked.
+     *
+     * So the comparison records the money difference honestly, and the split
+     * then reclassifies the ones the ruling covers. Without this, the ruling
+     * reached the SUMMARY table and NOT the per-document verdict, and the goods
+     * receipts read as 109 documents of work when 100 of them were the owner's
+     * own decision. That is `docs/bugs/0715` exactly — a declared class counted
+     * as work — with the arrow pointing the other way.
+     *
+     * ── IT CAN OPEN A DOCUMENT, SO IT IS FENCED ────────────────────────────
+     * This is the ONLY method that can make a recorded document `clean`, which
+     * makes it the only one that could wrongly open one. Three fences:
+     *   - `klass` must be a declared NOTE class, so nothing can be dropped into
+     *     a channel nobody enumerates;
+     *   - it is a NO-OP unless that axis was actually recorded on that
+     *     document, so it cannot invent a clean row for a document the run
+     *     never compared;
+     *   - the caller passes the split's OWN output, never a predicate of its
+     *     own. The decision stays in one place; this only records it.
+     */
+    reclassify(type, acDocNo, axis, klass, detail) {
+      if (!NOTED.has(klass)) return;
+      const m = bucket(type);
+      const d = m.get(acDocNo);
+      if (!d || !d.axes.has(axis)) return;
+      d.axes.delete(axis);
+      d.proceededAxes.delete(axis);
+      let byAxis = d.notes.get(klass);
+      if (!byAxis) { byAxis = new Map(); d.notes.set(klass, byAxis); }
+      let cell = byAxis.get(axis);
+      if (!cell) { cell = { n: 0, proceeded: 0, lines: [] }; byAxis.set(axis, cell); }
+      cell.n += 1;
       if (detail && cell.lines.length < 5) cell.lines.push(String(detail));
     },
 
