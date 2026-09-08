@@ -1,0 +1,51 @@
+name: Unverifiable sofa builds — what the ERP holds (read-only)
+
+# The reconcile ends 110 migrated sales orders with `sofa build not verifiable`:
+# the book states a colour, a size and instructions but never the build. Reading
+# the OWNER'S DRAWING is how those get answered — and a proposal only means
+# something next to what the ERP is holding today, which lives only in
+# production. So it is read here, not pasted into a chat for the owner to run
+# (CLAUDE.md: never ask the owner to run a query — build the check).
+#
+# READ-ONLY: SELECTs, no DDL, no writes, no transaction.
+# Manual trigger only — a production DB read on a schedule is CI noise.
+on:
+  workflow_dispatch:
+    inputs:
+      company_id:
+        description: "ERP company to read (AED_HOUZS is 1)"
+        required: false
+        default: "1"
+      dtlkeys_file:
+        description: "File of AutoCount line keys, relative to backend/"
+        required: false
+        default: "scripts/data/unverifiable-sofa-dtlkeys-2026-09-08.txt"
+
+# Its own group, never the deploy's: a diagnostic must not queue behind — or
+# displace — a release.
+concurrency:
+  group: probe-unverifiable-sofa-builds
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/probe-unverifiable-sofa-builds.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          COMPANY: ${{ inputs.company_id }}
+          DTLKEYS_FILE: ${{ inputs.dtlkeys_file }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
+          NODE_OPTIONS: --dns-result-order=ipv4first
