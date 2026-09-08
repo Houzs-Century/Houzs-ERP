@@ -49,7 +49,7 @@ async function schema(db: Sql) {
     CREATE SCHEMA scm;
 
     /* status is an ENUM in production, not text, and declaring it as text here
-       is what let `coalesce(status, '')` reach production and fail there
+       is what let coalesce(status, '') reach production and fail there
        (run 34223295235, plan mode). Values copied from
        backend/scripts/scm-schema/2990s-full-schema.sql:16. */
     CREATE TYPE scm.mfg_so_status AS ENUM (
