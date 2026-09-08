@@ -130,8 +130,17 @@ test("no two builds give the same document different pieces", () => {
     const pieces = (b.pieces || []).map((p) => String(p).trim().toUpperCase()).join("+");
     for (const doc of b.docs || []) {
       /* A document CAN legitimately appear twice — two different builds on one
-         document, told apart by desc2Match. Key on both. */
-      const key = `${doc} :: ${b.desc2Match ?? ""}`;
+         document, told apart by desc2Match OR by the AutoCount line key. Key on
+         whichever the entry uses, or two builds on one document that name their
+         book lines rather than their text look like one document contradicting
+         itself. HC-SO-005082 is exactly that: its 3S and its 2S are two sofas
+         and neither ERP row carries the book's words. */
+      const keyed = (Array.isArray(b.dtlKey) ? b.dtlKey : [b.dtlKey])
+        .map((k) => (k === null || k === undefined ? "" : String(k).trim()))
+        .filter(Boolean)
+        .sort()
+        .join(",");
+      const key = `${doc} :: ${b.desc2Match ?? ""} :: ${keyed}`;
       const prev = seen.get(key);
       if (prev && prev.pieces !== pieces) {
         assert.fail(

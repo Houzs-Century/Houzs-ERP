@@ -4862,7 +4862,9 @@ can never disagree about what he ruled. Two properties matter:
 
 - **`_held` builds are excluded.** `loadCorrections` returns them in a separate
   list. A ruling we have NOT written must keep reading `DIFFER`, because it is
-  still work — `HC-SO-011099` is exactly that today (`docs/bugs/0719`).
+  still work. `HC-SO-011099` was exactly that until 2026-09-08; it is no
+  longer held (see the section below), and `HC-PO-010056` / `HC-PO-000162`
+  remain.
 - **The entry is selected by its own `desc2Match`**, through the same matcher
   the apply script uses, never by document number alone. A document can hold
   more than one sofa build, and putting one build's answer on another build's
@@ -4894,7 +4896,8 @@ signal that catches a ruling applied to the wrong document.
 and never lock. Before this change `HC-SO-010209` and `HC-SO-011099` were both
 `LOCKED ... — sofa compartments` in the run's own output. After it, a document
 unlocks exactly when the ERP holds what the owner ruled: `HC-SO-010209` unlocks,
-`HC-SO-011099` stays locked because its ruling is still unwritten. That is the
+`HC-SO-011099` stayed locked while its ruling was unwritten — it was unheld on
+2026-09-08 and unlocks the moment the write lands. That is the
 intended behaviour and it is the same standing `RECORDED` already has, but it is
 a permission change, so it is stated here rather than left to be discovered.
 
@@ -4902,3 +4905,72 @@ Tests: `scripts/lib/variant-reconcile.test.mjs` — the ruled build, the
 not-folded-into-agree property, the unwritten ruling that stays `DIFFER`, the
 no-ruling control, and the assertion that a ruling cannot rescue an ERP carrying
 no compartments at all.
+
+## A correction may name its BOOK LINE, and a collapse may release a dedication (2026-09-08)
+
+Two changes to `backend/scripts/apply-sofa-compartment-corrections.mjs` and the
+matcher it shares with the reporter. Both are new SURFACE — a new field on a
+correction entry, and a new operation in the plan an operator reads.
+
+**1. `dtlKey` selects a build by its AutoCount line, not by its text.** A
+correction has always been narrowed to one build by `desc2Match`, a prefix of
+the Desc2 the build was ordered with. That cannot reach a build whose ERP rows
+do not carry the book's words at all, and two of the six sales orders left on
+2026-09-08 are exactly that — `HC-SO-005082` and `HC-SO-011221`, where every
+needle answered `none` and the correction silently did nothing. Widening the
+needle is the wrong direction: a build differs from its neighbour by exactly the
+characters a widening removes.
+
+An entry may now carry `dtlKey` — one AutoCount `DtlKey`, or a list of them, one
+per document the entry names. It is IDENTITY: every ERP row behind one book line
+carries the same `linked_ac_dtlkey` (`src/scm/lib/autocount-line-keys.ts:155`),
+so the key selects all of one build's rows and none of the neighbour's, even
+when the two texts are byte-identical. Two refusals carry the safety:
+
+- **A key no row on the document carries returns `key-missing` and writes
+  nothing.** It never falls back to the text — a key we cannot find means the
+  key we were handed is wrong, and answering with the text would be the guess
+  the matcher exists to refuse. One entry legitimately names a sales order's
+  line AND its purchase order's, so `key-missing` on the other document is a
+  skip, not a fault.
+- **The reporter honours the same key.** `scripts/lib/sofa-rulings.mjs` reads
+  `ac_dtlkey` or `linked_ac_dtlkey` off the reconcile's own rows, and a KEYED
+  entry is excluded from the "one ruling with no needle owns the document"
+  fallback. Without that, a keyed entry would bless every line of a document
+  that merely shares its number.
+
+**2. A collapse RELEASES the purchase dedication it strands.** A build that goes
+from several rows to ONE leaves the dropped rows' `purchase_order_items.so_item_id`
+pointing at rows that are about to disappear, and the surplus guard refused the
+whole build for it (`HC-SO-011099`, `docs/bugs/0719`). The plan gained a
+`release` op, executed in the SAME transaction as the delete it exists for:
+
+```
+release 1A(RHF) — HC-PO-009882 9028-1A(RHF) stops being dedicated to a row
+        this collapse removes; the PO half of this entry deletes it
+```
+
+It is RELEASED (`so_item_id = NULL`), **never re-pointed onto the surviving
+row**: the dedication is one sales line to one purchase line, and a second
+purchase line aimed at the surviving row would read as two incoming units of one
+ordered piece — the same reason an inserted PO line never copies `so_item_id`.
+Five conditions gate it and every one is a refusal: sales-order side only; the
+build must collapse to exactly ONE piece, so "which surviving row did this
+purchase line mean" has one answer; the dropped row must have NO delivery-order
+line (「已经出货了的就随便把」); every purchase line being released must be free of
+goods receipts; and the entry must NAME the purchase order, so the half that
+deletes the released line is going to run. Without that last one the release
+would leave an unbound purchase line stating the old build — worse than the
+refusal it replaced.
+
+`HC-SO-011099` moved out of `_held` in the same change. It is not thereby
+blessed: `RULED` still requires the ERP to hold his answer, so until the write
+runs it reads `DIFFER` and now NAMES the answer it is failing to match.
+
+Tests: `scripts/lib/sofa-desc2-match.test.mjs` (line-key selection, the
+`key-missing` refusal, identity beating a matching text, several keys on one
+entry), `scripts/lib/sofa-rulings.test.mjs` (the reporter honours the key and
+refuses the document-number fallback for a keyed entry), and
+`scripts/lib/sofa-corrections-source.test.mjs` (an entry names a `desc2Match` OR
+a `dtlKey`, and two keyed builds on ONE document are two builds, not a
+contradiction).

@@ -398,6 +398,40 @@
    ],
    "desc2Match": "2+1(30'INCH)/COL:KN390-2",
    "why": "the ACCOUNT BOOK's own words, not a drawing: AutoCount SO-011756 DtlKey 806486 states \"2+1(30'INCH)/COL:KN390-2\", which the reconcile decodes to 2A(LHF)+1A(RHF), and the ERP holds 2S+1S. Written under the owner's standing rule 一律跟账本 — the book decides every axis, and the sofa compartment is his ONLY where his drawing has spoken; here it has not, so the book's text is the authority. No seat is written: the book states this one in a form this file does not need, and the seat axis reads ZERO differences today which this change must not disturb."
+  },
+  {
+   "docs": [
+    "HC-SO-005082"
+   ],
+   "model": "2379",
+   "pieces": [
+    "3S"
+   ],
+   "dtlKey": "358016",
+   "why": "the ACCOUNT BOOK's own words, not a drawing: AutoCount SO-005082 DtlKey 358016 states \"2379 60cm 3S / Col: Coating Armani J9226-2-Buttercream\", which the decoder reads as 3S, and the ERP holds 1S. SELECTED BY LINE KEY, not by text: this document holds TWO sofa lines whose Desc2 differ by one character (3S vs 2S) and the ERP rows do not carry the book's text at all, so every needle answers `none` and the correction silently did nothing. linked_ac_dtlkey is the book line's own identity and cannot reach the neighbouring build. NO SEAT is written - the book says 60cm and variants.seatHeight holds bare inches. Written under 一律跟账本; the order is NOT PROCEEDED, so nothing is being built from it."
+  },
+  {
+   "docs": [
+    "HC-SO-005082"
+   ],
+   "model": "2379",
+   "pieces": [
+    "2S"
+   ],
+   "dtlKey": "358017",
+   "why": "the ACCOUNT BOOK's own words, not a drawing: AutoCount SO-005082 DtlKey 358017 states \"2379 60cm 2S / Col: Coating Armani J9226-2-Buttercream\", which the decoder reads as 2S, and the ERP holds 1S. The SECOND sofa on this document - see the 358016 entry above for why both are selected by line key rather than by Desc2. NO SEAT is written (the book says 60cm). Written under 一律跟账本; the order is NOT PROCEEDED."
+  },
+  {
+   "docs": [
+    "HC-SO-011221"
+   ],
+   "model": "9028",
+   "pieces": [
+    "2A(LHF)",
+    "1A(RHF)"
+   ],
+   "dtlKey": "775621",
+   "why": "the ACCOUNT BOOK's own words, not a drawing: AutoCount SO-011221 DtlKey 775621 states \"2+1(28\\\")/Col:BO315-3/BO315-23/Seat infront add 2\\\")\", which the decoder reads cleanly as 2A(LHF)+1A(RHF) at high confidence, and the ERP holds 2S+1S. SELECTED BY LINE KEY: the ERP rows do not carry the book's Desc2, so no needle reaches them. NO SEAT is written even though the book states 28\" - this file writes none, and the seat axis already reads zero differences. Written under 一律跟账本; the order is NOT PROCEEDED."
   }
  ]
 }

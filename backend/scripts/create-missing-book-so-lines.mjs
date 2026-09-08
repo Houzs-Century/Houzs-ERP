@@ -82,8 +82,12 @@ const ONLY = (process.env.DOC || "").trim();
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const log = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
-const newSql = () => postgres(DST, { ssl: "require", prepare: false, max: 1 });
-const sql = newSql();
+/* Two LITERAL clients, deliberately not one factory. The writer's own session
+   is the worst witness that its write landed, so the verification below opens
+   its own — and writing `postgres(` at both sites is what makes that visible to
+   a reader and to check-release-discipline.mjs alike. */
+const PG = { ssl: "require", prepare: false, max: 1 };
+const sql = postgres(DST, PG);
 
 /* AutoCount's category -> our item_group. The SAME table
    import-ac-outstanding-so.mjs uses (`CATG`, :72), because a second hand-copy of
@@ -215,7 +219,7 @@ async function main() {
  */
 async function verifyOnFreshConnection(items) {
   if (!items.length) return;
-  const v = newSql();
+  const v = postgres(DST, PG);
   log(`\nVERIFY — re-reading ${items.length} document(s) on a fresh connection`);
   let bad = 0;
   for (const it of items) {
