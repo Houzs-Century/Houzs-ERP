@@ -709,6 +709,45 @@ refusals. So the key is a NECESSARY condition that is now met; whether it is
 SUFFICIENT needs somebody to edit a migrated goods receipt in the ERP and read
 the resulting outbox row. Until that happens this stays UNTESTED.
 
+### A REPAIR can take the key away again — and it did
+
+The backfill above stamps keys forward. Nothing stops a later repair from
+INSERTing a row that never gets one, and one did: both INSERT statements in
+`backend/scripts/apply-sofa-compartment-corrections.mjs` named their columns one
+at a time and neither named `linked_ac_dtlkey`, so **every sofa compartment that
+script has ever ADDED landed keyless beside siblings that carry the key**.
+
+For a sofa that is not one row missing a key — it is the whole document losing
+its identity, because the invariant this module rests on is that all of a
+build's compartments carry the SAME key
+(`src/scm/lib/autocount-line-keys.ts:155`, and §7b's D9 fold below reads the key
+to decide which rows are one build). `composeEdit` then refuses the document
+whole and the operator reads *"The ERP cannot tell which lines AutoCount already
+has"*.
+
+It is invisible from the other direction too. `check-ac-erp-reconcile.mjs`
+compares a sofa's compartments per DtlKey, so a keyless compartment is not
+counted at all: `HC-SO-013475` held `1A(LHF)+1NA+1A(RHF)` and reconcile run
+`34199937397` read it as `1A(LHF)+1A(RHF)`.
+
+Fixed both ways on 2026-09-08 —
+`docs/bugs/0704-a-sofa-compartment-added-by-a-correction-lost-the-autocount.md`.
+The write path copies `i.linked_ac_dtlkey` from the row the compartment is built
+from; the rows earlier rounds already added are repaired by
+`backend/scripts/repair-sofa-added-compartment-line-key.mjs` (workflow **Repair
+sofa compartments added without their AutoCount line key**; `MODE=apply` needs
+`CONFIRM="I HAVE REVIEWED THE DRY-RUN"`, which the workflow passes). It copies
+only a key the row's OWN siblings already agree on, and only after the book
+confirms that key is a line of that document carrying that row's Desc2 — a wrong
+key is worse than a missing one, so all four gates refuse rather than fall back.
+
+**The lesson for the next repair, and it is now the third column lost this
+way** — `warehouse_id` (seven lines PENDING for ever, 2026-08-11),
+`description` / `delivery_date`, and now `linked_ac_dtlkey`: a column-by-column
+INSERT that clones a sibling row omits whatever nobody remembered, silently. If
+a repair adds a row beside an existing one, the columns that carry IDENTITY —
+`linked_ac_dtlkey`, `warehouse_id` — are not optional extras.
+
 ### The defect this section exists for
 
 `/edit` used to fall through to `doc.AddDetail()` for a line with no key —
