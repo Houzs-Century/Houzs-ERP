@@ -129,7 +129,10 @@ try {
       FROM touched t
       LEFT JOIN LATERAL (
         SELECT id, status FROM scm.autocount_outbox
-         WHERE op = 'so_to_do' AND doc_id = t.id
+         /* CAST, because scm.autocount_outbox.doc_id is TEXT and
+            scm.delivery_orders.id is a uuid — Postgres has no text = uuid
+            operator and the whole section died on it. */
+         WHERE op = 'so_to_do' AND doc_id = t.id::text
          ORDER BY created_at DESC LIMIT 1
       ) o ON true`);
   const s = sent[0];
