@@ -224,6 +224,18 @@ export function fakeSb(
         filters.push((r) => (val === null ? r[col] === null || r[col] === undefined : r[col] === val));
         return builder;
       },
+      /* THE NEGATION OF `is`, and only of `is`. PostgREST's `.not(col, op,
+         val)` takes any operator, but the only shape this repo asks for is
+         `.not(col, 'is', null)` — "has a value" — so an unknown operator
+         THROWS rather than quietly matching everything. A fake that answered a
+         filter it does not implement by returning every row would make a scope
+         test pass for the wrong reason, which is the exact failure mode this
+         file exists to avoid. */
+      not(col: string, op: string, val: unknown) {
+        if (op !== 'is') throw new Error(`fake-postgrest: not(${op}) is not implemented`);
+        filters.push((r) => !(val === null ? r[col] === null || r[col] === undefined : r[col] === val));
+        return builder;
+      },
       neq(col: string, val: unknown) { filters.push((r) => String(r[col]) !== String(val)); return builder; },
       in(col: string, vals: unknown[]) { filters.push((r) => vals.map(String).includes(String(r[col]))); return builder; },
       lt(col: string, val: unknown) { filters.push((r) => Number(r[col] ?? 0) < Number(val)); return builder; },

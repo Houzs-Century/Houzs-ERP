@@ -135,6 +135,15 @@ import {
   type AcTone,
 } from "../lib/autocountOutbox";
 import {
+  acDocCanArchive,
+  acDocCanRestore,
+  AC_ARCHIVE_LABEL,
+  AC_ARCHIVE_BUSY_LABEL,
+  AC_RESTORE_LABEL,
+  AC_RESTORE_BUSY_LABEL,
+  AC_ARCHIVED_TAB_NOTE,
+} from "../lib/autocountArchive";
+import {
   AC_BOOK_DIFFERENT_FLAG,
   AC_BOOK_NOT_RECORDED_NOTE,
   AC_DATE_RANGES,
@@ -386,7 +395,7 @@ function EarlierSends({ sends, maxAttempts }: { sends: AcOutboxRow[]; maxAttempt
  * sentence, rather than in a column where it is a dash on every healthy row.
  */
 function RegisterRow(
-  { group, maxAttempts, sending, note, open, onToggle, historyOpen, onToggleHistory, onSendAgain, onSendNow, onRelink }: {
+  { group, maxAttempts, sending, note, open, onToggle, historyOpen, onToggleHistory, onSendAgain, onSendNow, onRelink, onArchive, onRestore }: {
     group: AcDocGroup;
     maxAttempts: number;
     sending: boolean;
@@ -398,6 +407,8 @@ function RegisterRow(
     onSendAgain: () => void;
     onSendNow: () => void;
     onRelink: () => void;
+    onArchive: () => void;
+    onRestore: () => void;
   },
 ) {
   const row = group.current;
@@ -512,6 +523,37 @@ function RegisterRow(
               onClick={onRelink}
             >
               {sending ? AC_RELINK_BUSY_LABEL : AC_RELINK_LABEL}
+            </Button>
+          )}
+          {/* THE CONTROL FOR A DOCUMENT WHOSE WORK IS OVER, and the only one
+              here that touches neither AutoCount nor the ERP document — it
+              takes a finished line off this list and nothing else. Offered on
+              the DOCUMENT, not on a send: the three documents this was built
+              for carry 32 sends between them, and a per-send button would ask
+              for 32 presses to clear 3 finished documents.
+
+              `acDocCanArchive` is a HINT and not the gate, exactly as
+              `can_requeue` is. The server re-reads every send and refuses a
+              document that is still waiting or still needs somebody; this only
+              keeps the button off a row whose answer is knowably no. */}
+          {acDocCanArchive(group) && (
+            <Button
+              variant="secondary"
+              className="!h-7 shrink-0 !px-2 !text-[11.5px]"
+              disabled={sending}
+              onClick={onArchive}
+            >
+              {sending ? AC_ARCHIVE_BUSY_LABEL : AC_ARCHIVE_LABEL}
+            </Button>
+          )}
+          {acDocCanRestore(group) && (
+            <Button
+              variant="secondary"
+              className="!h-7 shrink-0 !px-2 !text-[11.5px]"
+              disabled={sending}
+              onClick={onRestore}
+            >
+              {sending ? AC_RESTORE_BUSY_LABEL : AC_RESTORE_LABEL}
             </Button>
           )}
         </Cell>
@@ -794,6 +836,8 @@ export function AutoCountSync() {
       onSendAgain={() => void requeue.sendAgain(g.current.id)}
       onSendNow={() => void requeue.sendNow(g.current.id)}
       onRelink={() => void requeue.relink(g.current.id, g.current.doc_type, g.current.doc_no)}
+      onArchive={() => void requeue.archiveDoc(g.current.id, g.current.doc_type, g.current.doc_no)}
+      onRestore={() => void requeue.restoreDoc(g.current.id, g.current.doc_type, g.current.doc_no)}
     />
   );
 
@@ -913,6 +957,16 @@ export function AutoCountSync() {
                   </span>
                 </div>
               </div>
+
+              {/* WHAT THE CLEARED TAB IS, said where somebody lands on it. A
+                  reader who finds documents missing from a sync page has one
+                  question — was something thrown away — and it must be answered
+                  on the screen rather than in a release note. */}
+              {state === "archived" && (
+                <p className="max-w-[84ch] px-2.5 pb-2 text-[12.5px] text-ink-muted">
+                  {AC_ARCHIVED_TAB_NOTE}
+                </p>
+              )}
 
               {groups.length > 0 && split.live.length > 0 && (
                 <RegisterHead

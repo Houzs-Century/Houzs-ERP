@@ -21,6 +21,8 @@ import {
   AC_DOC_SCAN_MAX,
   listAutocountOutboxHandler,
   requeueAutocountOutboxHandler,
+  archiveAutocountOutboxHandler,
+  restoreAutocountOutboxHandler,
   REQUEUED_LIKE,
 } from './autocount-outbox';
 
@@ -84,7 +86,11 @@ function harness(opts: {
     await next();
   });
   app.get('/autocount-outbox', listAutocountOutboxHandler);
-  return app;
+  app.post('/autocount-outbox/archive', archiveAutocountOutboxHandler);
+  app.post('/autocount-outbox/restore', restoreAutocountOutboxHandler);
+  /* The fake is handed back so a test can read what the write actually did to
+     the rows, rather than trusting the handler's own report of it. */
+  return Object.assign(app, { sb });
 }
 
 /** What the route answers with — every field the assertions below read. */
@@ -420,7 +426,7 @@ describe('GET /autocount-outbox — the switch and the empty queue', () => {
     expect(body.writeback?.value).toBeNull();
     expect(body.writeback?.on).toBe(false);
     expect(countsOf(body)).toEqual({
-      pending: 0, sent: 0, failed: 0, skipped: 0, requeued: 0, attention: 0, total: 0,
+      pending: 0, sent: 0, failed: 0, skipped: 0, requeued: 0, attention: 0, archived: 0, total: 0,
     });
     /* Zero because there is nothing, not because the scan gave up. */
     expect(body.counts_complete).toBe(true);
@@ -781,5 +787,216 @@ describe('POST /autocount-outbox/:id/requeue — the answer it gives', () => {
        a SENT row must never be offered, because AutoCount has no duplicate
        guard on the ERP document number. */
     expect(byId).toEqual({ a: true, b: false, c: true });
+  });
+});
+
+// ── Clearing a finished document off the page ───────────────────────────────
+//
+// THE OWNER ASKED TWICE. On 2026-09-08 the whole AutoCount Sync page for Houzs
+// Century was three documents and 32 rows — HC-SO-013361, HC-SO-013393 and
+// HC-SO-013394, every one an old write-back test, every one in the account book
+// — sitting under a green banner reading "Everything is in AutoCount. Nothing
+// is waiting and nothing was refused."
+//
+// These tests pin the two properties that make this SAFE rather than merely
+// convenient: nothing is deleted, and a document that still needs somebody
+// cannot be cleared. The second is what stops this becoming a way to make the
+// page look tidy while a document sits in the ERP and not in the book.
+
+const postDoc = async (
+  app: Hono<{ Bindings: Env; Variables: Variables }>,
+  path: 'archive' | 'restore',
+  payload: unknown,
+) => {
+  const res = await app.request(`/autocount-outbox/${path}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+};
+
+const MAY_ARCHIVE = ['scm.autocount.requeue'];
+/* The two keys are deliberately different sets — the read gate accepts
+   `scm.autocount.read`, the clear gate does not — so a test that both clears a
+   document and then LOOKS at the list needs both. That asymmetry is the point
+   of the permission tests above and is not worth collapsing here. */
+const MAY_ARCHIVE_AND_READ = ['scm.autocount.requeue', 'scm.autocount.read'];
+
+describe('POST /autocount-outbox/archive', () => {
+  it('refuses a reader who may only WATCH the queue, and names what is needed', async () => {
+    const app = harness({ outbox: [row({ status: 'sent' })], companyId: 1, perms: ['scm.autocount.read'] });
+    const { status, body } = await postDoc(app, 'archive', { doc_type: 'SO', doc_no: 'HC-SO-2608-001' });
+    expect(status).toBe(403);
+    expect(body.error).toBe('forbidden');
+    expect(String(body.message)).toContain('scm.autocount.requeue');
+  });
+
+  it('clears every send of a finished document — and DELETES NONE OF THEM', async () => {
+    const outbox = [
+      row({ id: 'a', status: 'sent', doc_no: 'HC-SO-013393' }),
+      row({ id: 'b', status: 'sent', doc_no: 'HC-SO-013393' }),
+      row({ id: 'c', status: 'sent', doc_no: 'HC-SO-013393' }),
+    ];
+    const app = harness({ outbox, companyId: 1, perms: MAY_ARCHIVE });
+    const { status, body } = await postDoc(app, 'archive', { doc_type: 'SO', doc_no: 'HC-SO-013393' });
+    expect(status).toBe(200);
+    expect(body.archived).toBe(true);
+    expect(body.rows).toBe(3);
+    /* THE ROWS ARE STILL THERE. This is the whole safety property: 0277's table
+       comment forbids deleting them, and the audit trail is the point of the
+       table. */
+    expect(outbox).toHaveLength(3);
+    for (const r of outbox) {
+      expect(r.archived_at, String(r.id)).not.toBeNull();
+      expect(r.archived_by, String(r.id)).toBe(9);
+      /* AND NEITHER THE STATUS NOR THE REASON WAS TOUCHED — the trap this whole
+         design exists to avoid. `isRequeuedNote` is a PREFIX test, so a marker
+         written onto `last_error` would stop a settled row reading as Replaced
+         and push it back onto the Not accepted tab. */
+      expect(r.status, String(r.id)).toBe('sent');
+      expect(r.last_error, String(r.id)).toBeNull();
+    }
+  });
+
+  it('will not clear a document that is still in the ERP and not in the book', async () => {
+    const outbox = [
+      row({ id: 'a', status: 'sent', doc_no: 'HC-SO-9' }),
+      row({ id: 'b', status: 'skipped', doc_no: 'HC-SO-9', last_error: 'refused, nothing sent (KeylessLineError): line 3' }),
+    ];
+    const app = harness({ outbox, companyId: 1, perms: MAY_ARCHIVE });
+    const { status, body } = await postDoc(app, 'archive', { doc_type: 'SO', doc_no: 'HC-SO-9' });
+    /* A REFUSAL IS A 200 — the same contract the re-queue handler uses. The
+       caller asked a legitimate question and got an answer; an HTTP error would
+       reach the page through the generic path that prints a status code at a
+       reader who cannot act on one. */
+    expect(status).toBe(200);
+    expect(body.archived).toBe(false);
+    expect(body.code).toBe('needs-attention');
+    /* THE REFUSAL REACHES A PERSON. Thirty-five write paths in this repo once
+       refused correctly and told nobody, and the owner reported it as "the
+       button does nothing". */
+    expect(String(body.message).length).toBeGreaterThan(20);
+    expect(body.blocked).toBe(1);
+    expect(outbox.every((r) => (r.archived_at ?? null) === null)).toBe(true);
+  });
+
+  it('will not clear a document still on its way', async () => {
+    const app = harness({
+      outbox: [row({ id: 'a', status: 'pending', doc_no: 'HC-SO-8' })],
+      companyId: 1,
+      perms: MAY_ARCHIVE,
+    });
+    const { body } = await postDoc(app, 'archive', { doc_type: 'SO', doc_no: 'HC-SO-8' });
+    expect(body.code).toBe('still-working');
+    expect(body.archived).toBe(false);
+  });
+
+  /* A RE-QUEUED REFUSAL IS HISTORY, and all three of the documents this was
+     built for carry one. A rule that read `status` alone would refuse every one
+     of them; the shared `acNeedsAttention` is what tells the two apart. */
+  it('clears a document whose refusals were all replaced by a later send', async () => {
+    const outbox = [
+      row({ id: 'a', status: 'sent', doc_no: 'HC-SO-013361' }),
+      row({ id: 'b', status: 'failed', doc_no: 'HC-SO-013361', last_error: '[re-queued 2026-09-04T06:51:29.513Z -> outbox abc] Gave up after 6 attempts.' }),
+    ];
+    const app = harness({ outbox, companyId: 1, perms: MAY_ARCHIVE });
+    const { body } = await postDoc(app, 'archive', { doc_type: 'SO', doc_no: 'HC-SO-013361' });
+    expect(body.code).toBe('ok');
+    expect(body.rows).toBe(2);
+  });
+
+  /* THE TENANT BOUNDARY. The SCM client is service-role and bypasses RLS, so
+     the company predicate is the whole of it — on the WRITE as well as on the
+     read that preceded it. */
+  it('never touches another company row carrying the same document number', async () => {
+    const mine = row({ id: 'mine', company_id: 1, status: 'sent', doc_no: 'HC-SO-7' });
+    const theirs = row({ id: 'theirs', company_id: 2, status: 'sent', doc_no: 'HC-SO-7' });
+    const app = harness({ outbox: [mine, theirs], companyId: 1, perms: MAY_ARCHIVE });
+    const { body } = await postDoc(app, 'archive', { doc_type: 'SO', doc_no: 'HC-SO-7' });
+    expect(body.rows).toBe(1);
+    expect(mine.archived_at).not.toBeNull();
+    expect(theirs.archived_at ?? null).toBeNull();
+  });
+
+  it('refuses when the company cannot be resolved rather than acting on every company', async () => {
+    const app = harness({ outbox: [row({ status: 'sent' })], companyId: undefined, perms: MAY_ARCHIVE });
+    const { status } = await postDoc(app, 'archive', { doc_type: 'SO', doc_no: 'HC-SO-2608-001' });
+    expect(status).toBe(409);
+  });
+
+  it('refuses a document type the queue cannot hold', async () => {
+    const app = harness({ outbox: [], companyId: 1, perms: MAY_ARCHIVE });
+    const { status, body } = await postDoc(app, 'archive', { doc_type: 'XX', doc_no: 'HC-XX-1' });
+    expect(status).toBe(400);
+    expect(body.error).toBe('invalid_document');
+  });
+
+  it('says so when there is nothing on the list for that document', async () => {
+    const app = harness({ outbox: [], companyId: 1, perms: MAY_ARCHIVE });
+    const { body } = await postDoc(app, 'archive', { doc_type: 'SO', doc_no: 'HC-SO-NONE' });
+    expect(body.code).toBe('doc-not-found');
+    expect(body.archived).toBe(false);
+  });
+});
+
+describe('the cleared documents are hidden, counted apart, and reachable', () => {
+  const shelf = () => [
+    row({ id: 'live', status: 'sent', doc_no: 'HC-SO-LIVE', archived_at: null }),
+    row({ id: 'gone', status: 'sent', doc_no: 'HC-SO-GONE', archived_at: '2026-09-08T02:00:00.000Z' }),
+  ];
+
+  it('keeps a cleared document off every ordinary list and out of every ordinary count', async () => {
+    const app = harness({ outbox: shelf(), flag: '1', companyId: 1 });
+    for (const qs of ['', '?state=all', '?state=sent']) {
+      const { body } = await get(app, qs);
+      expect(idsOf(body), qs).not.toContain('gone');
+    }
+    const { body } = await get(app, '?state=all');
+    expect(countsOf(body).sent).toBe(1);
+    expect(countsOf(body).total).toBe(1);
+    /* COUNTED APART, never folded into `total`: every other number on that line
+       is a claim about what AutoCount did, and this one is a claim about what a
+       person decided. */
+    expect(countsOf(body).archived).toBe(1);
+  });
+
+  it('shows it under Cleared, and only it', async () => {
+    const app = harness({ outbox: shelf(), flag: '1', companyId: 1 });
+    const { body } = await get(app, '?state=archived');
+    expect(idsOf(body)).toEqual(['gone']);
+  });
+
+  it('counts CLEARED DOCUMENTS, not cleared sends', async () => {
+    const app = harness({
+      outbox: [
+        row({ id: 'g1', status: 'sent', doc_no: 'HC-SO-GONE', archived_at: '2026-09-08T02:00:00.000Z' }),
+        row({ id: 'g2', status: 'sent', doc_no: 'HC-SO-GONE', archived_at: '2026-09-08T02:00:00.000Z' }),
+        row({ id: 'g3', status: 'sent', doc_no: 'HC-SO-GONE', archived_at: '2026-09-08T02:00:00.000Z' }),
+      ],
+      flag: '1',
+      companyId: 1,
+    });
+    const { body } = await get(app, '?state=all');
+    expect(countsOf(body).archived).toBe(1);
+  });
+
+  it('puts a cleared document back, and then it is on the list again', async () => {
+    const outbox = shelf();
+    const app = harness({ outbox, flag: '1', companyId: 1, perms: MAY_ARCHIVE_AND_READ });
+    const { status, body } = await postDoc(app, 'restore', { doc_type: 'SO', doc_no: 'HC-SO-GONE' });
+    expect(status).toBe(200);
+    expect(body.restored).toBe(true);
+    expect(body.rows).toBe(1);
+    expect(outbox.find((r) => r.id === 'gone')?.archived_at).toBeNull();
+    const after = await get(app, '?state=all');
+    expect(idsOf(after.body)).toContain('gone');
+  });
+
+  it('putting back a document that was never cleared changes nothing and says so', async () => {
+    const app = harness({ outbox: shelf(), flag: '1', companyId: 1, perms: MAY_ARCHIVE });
+    const { status, body } = await postDoc(app, 'restore', { doc_type: 'SO', doc_no: 'HC-SO-LIVE' });
+    expect(status).toBe(200);
+    expect(body.rows).toBe(0);
   });
 });
