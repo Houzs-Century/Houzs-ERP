@@ -276,12 +276,20 @@ exclusion testing only `line_suffix` printed 40 decompositions as wrong products
 and it is recorded here rather than quietly deleted because the numbers from that
 run are cited above.
 
-Fixed by folding both sides through `lib/keyless-multiset.mjs`'s `comparisonKey`
-— the SAME canonicalisation the reconcile's own keyless verdict uses, rather than
-a second opinion — with one trap worth knowing: the fold reads the book's
-UNTRANSLATED code, because the book names a sofa `AMN-SF2379 SOFA` and the
-mapping sheet turns that into `2379-1S`, which contains no "SOFA" at all. Passing
-the translated string turns the fold off on exactly the rows it exists for.
+**The first fix was not enough, and that is the more useful half.** Folding both
+sides through `comparisonKey` cleared the two invoice rows and left the four
+receipts printing `book: SOFA 9058 x1` against `ours: SOFA 9058 x5` (run
+`34203599150`) — folding the CODE is not folding the QUANTITY, and five
+compartment rows are one sofa. Writing that division here would have been the
+third opinion about a sofa that caused the bug. The probe now calls
+`bagOf` + `compareBags` from `lib/keyless-multiset.mjs`, which folds our
+compartments by the BOOK's own build text and DIVIDES. One trap worth carrying
+away: the fold reads the book's UNTRANSLATED code, because the book names a sofa
+`AMN-SF2379 SOFA` and the mapping sheet turns that into `2379-1S`, which contains
+no "SOFA" at all — passing the translated string turns the fold off on exactly
+the rows it exists for. `docs/bugs/0707`. **The second round is UNTESTED against
+production**: a `workflow_dispatch` workflow reads its script from the default
+branch, so it can only run after this merges.
 
 **Nothing in sections A to D depended on the six**: the item-code verdict comes
 from `GR item code — 0 line(s) where the ERP row and the book line carry the SAME
