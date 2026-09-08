@@ -538,7 +538,8 @@ stands.
 
 **And the third field is not a gate, it is a VETO** —
 `lineNonSellingWarehouse`, added 2026-09-08 on the owner's ruling
-「分配时跳过这九个仓」, `docs/bugs/0686`. The two gates above arbitrate between two
+「分配时跳过这九个仓」,
+`docs/bugs/0686-the-allocator-promised-display-showroom-and-service-stock-to.md`. The two gates above arbitrate between two
 ENGINES about where the goods are, which is why they never veto a stored READY.
 This one is not an engine: `scm.warehouses.type` in
 {`showroom`, `display`, `service`} says the goods may not be PROMISED at all,

@@ -1,7 +1,7 @@
 ## The allocator promised display, showroom and service stock to customers [medium]
 
 **Symptom.** Nobody saw it, and that is the whole reason it was worth fixing on
-2026-09-08 rather than later. `docs/bugs/0682` measured the exposure the day the
+2026-09-08 rather than later. `docs/bugs/0682-the-allocator-never-asks-whether-a-warehouse-is-a-showroom-s.md` measured the exposure the day the
 cutover landed: **9 non-selling warehouses in company 1 holding 1,897 units**,
 **1,642** of them in the pooled class that allocates on on-hand alone, **all 9
 active and all 9 in the order-entry dropdown** — and **0 sales-order lines
@@ -83,4 +83,4 @@ exists on both surfaces already (`/scm/stock-transfers/new` and
 `mobile/MobileStockTransferNew.tsx`), so this adds a step, not a wall.
 
 **Ref.** fix/display-warehouse-allocator, 2026-09-08. Supersedes the
-"Fix: none here, by intent" in `docs/bugs/0682`.
+"Fix: none here, by intent" in `docs/bugs/0682-the-allocator-never-asks-whether-a-warehouse-is-a-showroom-s.md`.

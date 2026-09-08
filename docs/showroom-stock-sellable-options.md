@@ -4,7 +4,7 @@
 >
 > 原话：**「分配时跳过这九个仓」**。
 > 已经做好了 —— 陈列室、展销会、维修仓的货，系统不会再答应给客人。
-> 改动记在 `docs/bugs/0686-*`，规则那一层在
+> 改动记在 `docs/bugs/0686-the-allocator-promised-display-showroom-and-service-stock-to.md`，规则那一层在
 > `backend/src/scm/lib/non-selling-warehouse.ts`。
 > **一行搬进来的资料都没有动，货也一件都没有移。** 变的只是「能不能答应给客人」。
 > 要卖陈列品：先开一张**调拨单**把货转去卖货的仓库（`/scm/stock-transfers/new`，
@@ -13,7 +13,7 @@
 > 下面这份是当时给老板选的三个做法，原样留着当纪录。
 
 **这是一个生意上的决定，不是程式的 bug，所以不会自己动手改。**
-量出来的证据在 `docs/bugs/0682-*`，probe run **34173822315**（2026-09-08 08:36）；
+量出来的证据在 `docs/bugs/0682-the-allocator-never-asks-whether-a-warehouse-is-a-showroom-s.md`，probe run **34173822315**（2026-09-08 08:36）；
 动手前又自己重跑了一次确认，run **34177208009**（2026-09-08 09:36），九个仓、
 1,897 件、1,642 件可分配、0 张单指过去 —— 数字完全一样。
 
@@ -136,8 +136,9 @@
   + workflow **Can showroom stock be sold (read-only)**，read-only，run **34173822315**。
 - 分配库存的程式：`backend/src/scm/lib/so-stock-allocation.ts` 第 6 步 —
   读 `inventory_balances` 时**没有任何仓库条件**，只按 SO 行自己的 `warehouse_id` 分桶。
-- 已经在用这个标记的地方：`backend/src/scm/routes/inventory.ts`，
-  `NON_SELLING_WAREHOUSE_TYPES = {showroom, display, service}`。
+- 已经在用这个标记的地方：`backend/src/scm/routes/inventory.ts` 的呆滞库存报表。
+  （2026-09-08 之后 `NON_SELLING_WAREHOUSE_TYPES = {showroom, display, service}`
+  搬去 `backend/src/scm/lib/non-selling-warehouse.ts` 当唯一一份，两边共用。）
 - 沙发为什么盖不到：`sofa-set-coverage.ts` 的 `loadSofaBatchStock` 读
   `v_inventory_lots_open` 时带 `.not('batch_no','is',null)`；陈列沙发 17 个批次全部无批号。
 - 完整分析：`docs/bugs/0682-the-allocator-never-asks-whether-a-warehouse-is-a-showroom-s.md`
