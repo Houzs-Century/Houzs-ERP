@@ -58,9 +58,7 @@ import {
   CANCELLABLE_STATUSES,
   isLocked as isSoLocked,
   procLockActive as soProcLockActive,
-  amendmentEligible as soAmendmentEligible,
-  migratedReadonly as soMigratedReadonly,
-  migratedReadonlyReason as soMigratedReadonlyReason,
+  amendmentEligible as soAmendmentEligible, migratedReadonly as soMigratedReadonly, migratedReadonlyReason as soMigratedReason,
 } from '../../vendor/scm/lib/so-detail-gates';
 import { soDateGuardError, soErrorText } from '../../vendor/scm/lib/so-form-validate';
 import { zeroPriceClaim } from '../../vendor/scm/lib/zeroPriceClaim';
@@ -1573,19 +1571,8 @@ export const SalesOrderDetail = () => {
      the page becomes read-only. unlockOverride NOT honoured for this case —
      the child must be cancelled/deleted to edit. Convert-to-DO stays available
      (partial delivery) via the list's right-click. */
-  const hasChildren = Boolean((header as { has_children?: boolean }).has_children);
-  /* CUTOVER (owner 2026-09-08, 「只开新单，旧单暂时不能改」) — an order carried
-     across from AutoCount is view-only until its payments are reconciled.
-
-     OR'd OUTSIDE isSoLocked, deliberately: `unlockOverride` is the Override
-     button below, and a salesperson is allowed to override OUR paperwork lock.
-     They are not allowed to override this one. The reasons a migrated order is
-     shut are that sync-ac-delta can still overwrite the row unannounced and that
-     AutoCount payments taken since 2026-08-28 have not reached us — neither is
-     something local certainty can settle. Putting the term outside the call is
-     what makes Override unable to reach it. */
-  const migratedLocked = soMigratedReadonly(header);
-  const isLocked = migratedLocked || isSoLocked(header.status, hasChildren, unlockOverride);
+  const hasChildren = Boolean((header as { has_children?: boolean }).has_children), migratedLocked = soMigratedReadonly(header);
+  const isLocked = migratedLocked || isSoLocked(header.status, hasChildren, unlockOverride); // migrated is OUTSIDE isSoLocked: Override must not reach it
   /* The one thing a hard-locked SO still accepts: a new salesperson. Same
      permission the API enforces (mfg-sales-orders.ts PATCH), so the Edit button
      it re-enables can never open an order the server would refuse to save. */
@@ -1693,10 +1680,6 @@ export const SalesOrderDetail = () => {
      the toggle because it is never confirmed. Page Edit mode still counts as
      opting in, so the existing flow on an unlocked SO is untouched. */
   const canCancel = !migratedLocked && CANCELLABLE_STATUSES.includes(header.status);
-  /* A migrated order's balance is the ONE number we know is wrong (AutoCount
-     payments taken since 2026-08-28 have not reached the ERP), so the payments
-     card is the last place to offer an edit on one. The API refuses these too;
-     this stops the operator being offered the click. */
   const canOfferPayEdit  = !migratedLocked && !isDraftSo && !isCancelled && !isEditing;
   const canEditPayments  = !migratedLocked && (isDraftSo || (!isCancelled && (isEditing || payEditing)));
 
@@ -1951,9 +1934,7 @@ export const SalesOrderDetail = () => {
                 dropdown. The heavy door stays for everything else. */}
             {!isEditing ? (
               <Button variant="primary"
-                onClick={enterEdit}
-                disabled={migratedLocked || (isLocked && !canAttributeOther)}
-                title={migratedLocked ? soMigratedReadonlyReason(header) : undefined}>
+                onClick={enterEdit} disabled={migratedLocked || (isLocked && !canAttributeOther)}>
                 <Pencil {...ICON} />
                 <span>Edit</span>
               </Button>
@@ -2071,29 +2052,8 @@ export const SalesOrderDetail = () => {
         </div>
       )}
 
-      {/* ── Carried over from AutoCount: view only (owner 2026-09-08) ─────
-          Above the status Lock banner because it out-ranks it — this one has no
-          Override, and saying so in the page is the difference between a rule
-          and "the button does nothing". */}
-      {migratedLocked && (
-        <div
-          data-testid="so-migrated-readonly-banner"
-          style={{
-            padding: 'var(--space-3) var(--space-4)',
-            background: 'rgba(232, 107, 58, 0.08)',
-            border: '1px solid var(--c-orange)',
-            borderRadius: 'var(--radius-md)',
-            marginBottom: 'var(--space-3)',
-            fontSize: '12.5px', lineHeight: 1.5,
-          }}
-        >
-          <strong>View only — carried over from AutoCount.</strong>{' '}
-          {soMigratedReadonlyReason(header)}
-        </div>
-      )}
-
       {/* ── Lock banner ─────────────────────────────────────────── */}
-      {!isCancelled && LOCKED_STATUSES.includes(header.status) && (
+      {!isCancelled && (migratedLocked || LOCKED_STATUSES.includes(header.status)) && (
         <div style={{
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
           padding: 'var(--space-3) var(--space-4)',
@@ -2104,11 +2064,11 @@ export const SalesOrderDetail = () => {
         }}>
           <span style={LOCK_BANNER_INNER_STYLE}>
             <Lock {...ICON} />
-            {unlockOverride
-              ? <strong>Edit-lock overridden — changes are tracked in the status timeline below.</strong>
+            {migratedLocked ? <><strong>View only — carried over from AutoCount.</strong> {soMigratedReason(header)}</>
+              : unlockOverride ? <strong>Edit-lock overridden — changes are tracked in the status timeline below.</strong>
               : <>This SO is <strong>{header.status.replace(/_/g, ' ')}</strong>. Line item edits + addresses are locked. Click <em>Override</em> if you must change something.</>}
           </span>
-          <Button variant={unlockOverride ? 'ghost' : 'primary'}
+          <Button variant={unlockOverride ? 'ghost' : 'primary'} disabled={migratedLocked}
             onClick={async () => {
               if (!unlockOverride) {
                 const reason = await askPrompt({

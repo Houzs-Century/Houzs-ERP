@@ -87,6 +87,7 @@ import {
   migratedReadonly as soMigratedReadonly,
   migratedReadonlyReason as soMigratedReadonlyReason,
 } from "../../vendor/scm/lib/so-detail-gates";
+import { MigratedReadonlyBanner } from "../../vendor/scm/components/MigratedReadonlyBanner";
 
 // ─── Row types (subset — see MfgSalesOrdersList.tsx for the full SoRow) ────
 
@@ -1205,19 +1206,7 @@ function SalesOrderDetailV2ReadOnly() {
 
       {/* ─── Detail body ────────────────────────────────────────────── */}
       <div className="py-5">
-        {/* CUTOVER banner (owner 2026-09-08). A disabled button with a tooltip is
-            not a message — this repo's own record is that a refusal reaching
-            nobody reads as "the button does nothing". So the reason is stated in
-            the page, once, above everything, in the words the server sent. */}
-        {migratedLocked && (
-          <div
-            data-testid="so-migrated-readonly-banner"
-            className="mb-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-[12.5px] leading-relaxed text-amber-900"
-          >
-            <div className="font-semibold">View only — carried over from AutoCount</div>
-            <div className="mt-0.5">{soMigratedReadonlyReason(salesOrder)}</div>
-          </div>
-        )}
+        <MigratedReadonlyBanner header={salesOrder} />
         {/* Mobile-only Order total hero — sits at the very top of the scroll
             body, above the Customer section. On md+ the dark Order total lives
             in the sticky aside instead (below). */}

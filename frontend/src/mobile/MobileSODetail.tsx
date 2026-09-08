@@ -30,9 +30,7 @@ import {
   CANCELLABLE_STATUSES,
   isLocked as isSoLocked,
   procLockActive as soProcLockActive,
-  amendmentEligible as soAmendmentEligible,
-  migratedReadonly as soMigratedReadonly,
-  migratedReadonlyReason as soMigratedReadonlyReason,
+  amendmentEligible as soAmendmentEligible, migratedReadonly as soMigratedReadonly, migratedReadonlyReason as soMigratedReason,
   deriveBalance,
 } from "../vendor/scm/lib/so-detail-gates";
 import {
@@ -427,14 +425,8 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
        (has_children). Mirrors SalesOrderDetail.isLocked. */
   const rawStatus = (h?.status ?? "").toUpperCase();
   const hasChildren = Boolean(h?.has_children);
-  /* CUTOVER (owner 2026-09-08, 「只开新单，旧单暂时不能改」) — an order carried
-     across from AutoCount is view-only until its payments are reconciled. The
-     SAME shared predicate the two desktop screens read, off the SAME
-     server-decided field, so the rule cannot be right on one surface and wrong
-     on the other — which is the recurring bug class here. */
-  const migratedLocked = soMigratedReadonly(h);
-  const canCancel = !migratedLocked && CANCELLABLE_STATUSES.includes(rawStatus);
-  const isLocked = migratedLocked || isSoLocked(h?.status, hasChildren);
+  const migratedLocked = soMigratedReadonly(h), canCancel = !migratedLocked && CANCELLABLE_STATUSES.includes(rawStatus);
+  const isLocked = migratedLocked || isSoLocked(h?.status, hasChildren); // migrated sits OUTSIDE: there is no override or amendment route out of it
 
   /* Processing LOCK — the shared procLockActive: once the SO has a Processing
      Date AND that day has passed (compared against todayMyt() — the Malaysia
@@ -722,9 +714,6 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
      processing lock does NOT gate payments either (owner rule 2026-07-05). */
   const isDraftSo = ph === "draft";
   const [payEditing, setPayEditing] = useState(false);
-  /* A migrated order's balance is the one number we know is wrong (AutoCount
-     payments taken since 2026-08-28 have not reached the ERP), so payments are
-     shut on it too — desktop parity, and the API refuses them either way. */
   const canOfferPayEdit = !migratedLocked && ph === "submitted" && !paymentLocked;
   const canEditPayments = !migratedLocked && (isDraftSo || (canOfferPayEdit && payEditing));
   const canAddPayment = canEditPayments;
@@ -820,14 +809,9 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
                 footer Edit button is disabled below. */}
             {editLocked ? (
               <div data-testid={migratedLocked ? "so-migrated-readonly-banner" : "so-locked-banner"} style={{ display: "flex", alignItems: "flex-start", gap: 8, background: "rgba(232,107,58,0.08)", border: "1px solid var(--c-orange, #e86b3a)", borderRadius: 10, padding: "9px 11px", marginBottom: 12, fontSize: 11, color: "#8a4a24", lineHeight: 1.45 }}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#c66a34" strokeWidth="2" strokeLinecap="round" style={{ flexShrink: 0, marginTop: 1 }}><rect x="4" y="10" width="16" height="10" rx="2" /><path d="M8 10V7a4 4 0 0 1 8 0v3" /></svg>
-                {/* Migrated FIRST: it out-ranks every other lock (it has no
-                    Override and no amendment route), and naming the wrong lock
-                    is what turns a refusal into "the button does nothing". */}
-                {migratedLocked
-                  ? soMigratedReadonlyReason(h)
-                  : processingLocked
-                  ? "Locked — the processing date has passed and this order was proceeded. Line items can't be edited."
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#c66a34" strokeWidth="2" strokeLinecap="round"><rect x="4" y="10" width="16" height="10" rx="2" /><path d="M8 10V7a4 4 0 0 1 8 0v3" /></svg>
+                {migratedLocked ? soMigratedReason(h)
+                  : processingLocked ? "Locked — the processing date has passed and this order was proceeded. Line items can't be edited."
                   : hasChildren
                   ? "Locked — a delivery order or invoice references this SO. Line items can't be edited."
                   : "Locked — this order has moved past editing. Line items can't be edited."}

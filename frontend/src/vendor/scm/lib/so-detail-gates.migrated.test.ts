@@ -93,8 +93,11 @@ describe('every SO write surface consults the gate', () => {
     expect(src).toMatch(/migratedLocked/);
   });
 
+  /* A gate with no sentence is how this repo produced "the button does nothing".
+     Each surface either renders the shared banner component or interpolates the
+     server's reason into a lock banner of its own. */
   test.each(surfaces)('%s shows the reason, not just a disabled control', (_name, src) => {
-    expect(src).toMatch(/soMigratedReadonlyReason|migratedReason/);
+    expect(src).toMatch(/MigratedReadonlyBanner|soMigratedReadonlyReason|soMigratedReason/);
   });
 
   /* The list is the fifth surface and the one with no detail payload to read —

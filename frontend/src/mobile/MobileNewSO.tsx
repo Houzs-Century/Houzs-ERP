@@ -31,7 +31,8 @@ import {
 import { SearchableSelect } from "../vendor/scm/components/SearchableSelect";
 import { diffHeaderPayload, hasHeaderChanges } from "../vendor/scm/lib/so-header-diff";
 import { planAmendmentSubmit, amendmentSubmittedNotice, AMENDMENT_MODE_BANNER, AMENDMENT_NOTHING_TO_SUBMIT } from "../vendor/scm/lib/so-amendment-submit";
-import { LOCKED_STATUSES, procLockActive, migratedReadonly as soMigratedReadonly, migratedReadonlyReason as soMigratedReadonlyReason } from "../vendor/scm/lib/so-detail-gates";
+import { LOCKED_STATUSES, procLockActive, migratedReadonly as soMigratedReadonly, type SoDetailGateHeader } from "../vendor/scm/lib/so-detail-gates";
+import { MigratedReadonlyBanner } from "../vendor/scm/components/MigratedReadonlyBanner";
 import {
   useSoDropdownOptions,
   optionsOrFallback,
@@ -783,12 +784,7 @@ export function MobileNewSO({
     }
   };
   const [lineLocked, setLineLocked] = useState(false);
-  /* CUTOVER (owner 2026-09-08, 「只开新单，旧单暂时不能改」) — set from the SAME
-     server-decided `migrated_readonly` the two desktop screens and the mobile
-     detail read. Held as state (not derived) because this screen hydrates from
-     one detail GET and then works offline of it, exactly like lineLocked. */
-  const [migratedLocked, setMigratedLocked] = useState(false);
-  const [migratedReason, setMigratedReason] = useState<string>("");
+  const [migHeader, setMigHeader] = useState<SoDetailGateHeader | null>(null);
   /* SO-amendment flags captured from the detail GET (Phase 1-C). When
      `amendEligible` the SO is processing-locked but still editable via the
      amendment flow — the edit view stays usable and Save submits an AMENDMENT
@@ -1004,8 +1000,7 @@ export function MobileNewSO({
         const st = (detail.salesOrder.status ?? "").toUpperCase();
         setSoStatus(st);
         setLineLocked(LOCKED_STATUSES.includes(st) || Boolean(detail.salesOrder.has_children));
-        setMigratedLocked(soMigratedReadonly(detail.salesOrder));
-        setMigratedReason(soMigratedReadonlyReason(detail.salesOrder));
+        setMigHeader(detail.salesOrder);
         /* Amendment gate (server-derived) — the same flags the desktop SO Detail
            routes on. When amendment_eligible the SO is processing-locked but the
            edit view stays usable; Save then submits an amendment (see save()). */
@@ -1166,9 +1161,7 @@ export function MobileNewSO({
      line write on a PO'd SO would break the supplier copy, which is exactly what
      this flow prevents. Uses the server flag; falls back to false when absent so
      older responses keep the old block-everything behaviour. */
-  /* Migrated out-ranks amendment mode: an amendment is still a write against the
-     order, and approving one re-prices the line off the header the cutover
-     imported (docs/bugs/0035-*). There is no amendment route out of this lock. */
+  const migratedLocked = soMigratedReadonly(migHeader); // no override and no amendment route out of this one
   const amendmentMode = !migratedLocked && amendEligible && !lineLocked && !hasOpenAmend;
   /* Line editing is blocked when the SO is shipped / has downstream docs
      (lineLocked), OR when the processing date has passed (procLocked) UNLESS the
@@ -2209,19 +2202,7 @@ export function MobileNewSO({
                 NOT shown in amendment mode — there the lines + frozen fields ARE
                 editable (they ride an amendment), so this banner would contradict
                 the form. The amendment banner on the Items card says it instead. */}
-            {/* CUTOVER: carried over from AutoCount, view only (owner 2026-09-08).
-                FIRST, and it suppresses the processing-lock banner below by
-                out-ranking it — two lock sentences on one screen is how an
-                operator stops reading either. */}
-            {migratedLocked && (
-              <div data-testid="so-migrated-readonly-banner" style={{ display: "flex", alignItems: "flex-start", gap: 9, marginBottom: 11, padding: "10px 12px", background: "#fbf3e6", border: "1px solid #ecd9b6", borderRadius: 12 }}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#a16a2e" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flex: "none", marginTop: 1 }}><rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></svg>
-                <div style={{ fontSize: 11.5, color: "#8a5a22", lineHeight: 1.5 }}>
-                  <b>View only — carried over from AutoCount.</b> {migratedReason}
-                </div>
-              </div>
-            )}
-
+            <MigratedReadonlyBanner header={migHeader} rounded={12} />
             {!migratedLocked && procLocked && !amendmentMode && (
               <div style={{ display: "flex", alignItems: "flex-start", gap: 9, marginBottom: 11, padding: "10px 12px", background: "#fbf3e6", border: "1px solid #ecd9b6", borderRadius: 12 }}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#a16a2e" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flex: "none", marginTop: 1 }}><rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></svg>

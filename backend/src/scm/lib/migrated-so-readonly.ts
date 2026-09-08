@@ -30,6 +30,7 @@
 //     one answer to "who can still save" and not two.
 // ----------------------------------------------------------------------------
 import type { Context, Next } from 'hono';
+import { getSupabaseService } from '../../db/supabase';
 import { soIsMigrated } from './so-is-migrated';
 import { callerBypasses } from './write-freeze';
 import { activeCompanyId } from './companyScope';
@@ -102,6 +103,20 @@ type SupabaseLike = {
   from(t: string): { select(cols: string): { eq(col: string, v: string): { maybeSingle(): PromiseLike<{ data: unknown; error: unknown }> } } };
 };
 
+/* The route's own client when there is one, else the service client. This
+   middleware is mounted in scm/index.ts, AHEAD of the sales-order router's
+   supabaseAuth, so `supabase` is not in the context yet at that point — the same
+   position write-freeze.ts is mounted at, and it makes its own client for the
+   same reason. The detail/list stampers below run INSIDE the router and do have
+   one; sharing this accessor keeps both paths reading one app_config row. */
+/* Cast via `unknown` on purpose. Typing the real supabase client structurally
+   makes the compiler unroll its generics (TS2589, "excessively deep") — the same
+   trap so-is-migrated.ts records at its own boundary. This module needs two
+   reads, not a database client. */
+const clientFor = (c: Context): SupabaseLike =>
+  (c.get('supabase') as unknown as SupabaseLike | undefined)
+  ?? (getSupabaseService(c.env) as unknown as SupabaseLike);
+
 const lockReader = (sb: SupabaseLike): ConfigReader =>
   () => sb.from('app_config').select('value, description').eq('key', LOCK_KEY).maybeSingle() as PromiseLike<{ data: ConfigRow; error: unknown }>;
 
@@ -129,8 +144,7 @@ export async function migratedSoReadonlyState(
   c: Context,
   isMigrated: boolean | null,
 ): Promise<MigratedSoReadonlyState> {
-  const sb = c.get('supabase') as SupabaseLike;
-  const { value, message } = await readLock(lockReader(sb));
+  const { value, message } = await readLock(lockReader(clientFor(c)));
   if (value.scope === 'off') return { locked: false, reason: null };
   if (callerBypasses(c)) return { locked: false, reason: null };
   if (!migratedSoIsLocked(value, activeCompanyId(c) ?? null, isMigrated)) return { locked: false, reason: null };
@@ -150,7 +164,7 @@ export function migratedSoReadonly() {
     const docNo = soDocNoFromPath(c.req.path);
     if (docNo == null) return next(); // create, or a collection-level route
 
-    const sb = c.get('supabase') as SupabaseLike;
+    const sb = clientFor(c);
 
     /* Cheap exit BEFORE the per-document read: when the switch is off there is
        nothing to look up, and that is the state this whole file is built to be
@@ -188,4 +202,49 @@ export function migratedSoReadonly() {
       409,
     );
   };
+}
+
+/* Re-exported so routes/mfg-sales-orders.ts reaches the whole migrated-document
+   policy through ONE import. Not a second home for the fact — so-is-migrated.ts
+   is still the only place it is decided, and this file is already its biggest
+   consumer. The router is on its size ceiling and a second import line there is
+   a line that has to come from somewhere. */
+export { soIsMigrated } from './so-is-migrated';
+
+/* ── The two call sites in the sales-order router ───────────────────────────
+   Both live HERE, not in routes/mfg-sales-orders.ts, so that file pays ONE line
+   per site. It is a 12,000-line router already sitting on its size ceiling, and
+   the answer to "where does this logic go" is never "a block in there". */
+
+/** Stamp the DETAIL payload and hand it back, so the call site is the ONE
+ *  expression it already had. `acDocNo` is the header's `linked_ac_docno`, which
+ *  the detail select already reads — the caller never pays a second query. */
+export async function withSoMigratedReadonly(
+  c: Context,
+  salesOrder: Record<string, unknown>,
+  acDocNo: string | null,
+): Promise<Record<string, unknown>> {
+  const mig = await migratedSoReadonlyState(c, acDocNo !== null);
+  salesOrder.migrated_readonly = mig.locked;
+  salesOrder.migrated_readonly_reason = mig.reason;
+  return salesOrder;
+}
+
+/** Build the LIST's per-row answer from the base-table rows the list already
+ *  reads (the payment-totals VIEW does not enumerate `linked_ac_docno`, so it
+ *  rides that read). ONE app_config lookup for the whole page, then a pure
+ *  function per row, returning the object the row spread merges — a NATIVE row
+ *  gets `false` rather than nothing, because an absent key reads as "old build"
+ *  on the client and would silently unlock the row. */
+export async function migratedSoListGate(
+  c: Context,
+  baseRows: unknown,
+): Promise<(docNo: string) => { migrated_readonly: boolean }> {
+  const migrated = new Set<string>();
+  for (const b of (Array.isArray(baseRows) ? baseRows : []) as Array<Record<string, unknown>>) {
+    const docNo = typeof b.doc_no === 'string' ? b.doc_no : null;
+    if (docNo && ((b.linkedAcDocno ?? b.linked_ac_docno ?? null) !== null)) migrated.add(docNo);
+  }
+  const { locked } = await migratedSoReadonlyState(c, true);
+  return (docNo: string) => ({ migrated_readonly: locked && migrated.has(docNo) });
 }
