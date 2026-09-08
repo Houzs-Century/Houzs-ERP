@@ -1,0 +1,60 @@
+name: Probe cutover SO/PO/DO lines (read-only)
+
+# The go-live reconcile prints a COUNT per axis ("line-count differs: 19").
+# A count cannot be repaired. This puts the book's lines and the ERP's lines of
+# each named offender side by side, keyed by AutoCount's own DtlKey, and then
+# measures the blind spot docs/bugs/0691 named: a document whose book side and
+# ERP side hold the same NUMBER of rows can still be missing a line, because a
+# decomposed sofa contributed two rows and the line beside it contributed none.
+#
+# READ-ONLY. The script takes no APPLY flag and every statement in it is a
+# SELECT. The AutoCount side is the committed snapshot
+# backend/scripts/data/ac-reconcile-truth.json.gz — the book itself is only
+# reachable over ZeroTier from the office and a hosted runner has no route to it.
+on:
+  workflow_dispatch:
+    inputs:
+      docs:
+        description: "Comma-separated AutoCount document numbers; blank = the 2026-09-08 reconcile's own offenders"
+        required: false
+        default: ""
+        type: string
+      top:
+        description: "Offenders to list per type in section B"
+        required: false
+        default: "200"
+        type: string
+      company_id:
+        description: "ERP company (AED_HOUZS is company 1)"
+        required: false
+        default: "1"
+        type: string
+
+# Deliberately NOT in the deploy concurrency group: it touches nothing and must
+# never queue behind - or displace - a release.
+concurrency:
+  group: probe-cutover-so-do-lines
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/probe-cutover-so-do-lines.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DOCS: ${{ inputs.docs }}
+          TOP: ${{ inputs.top }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
