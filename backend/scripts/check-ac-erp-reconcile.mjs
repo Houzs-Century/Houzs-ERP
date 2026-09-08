@@ -158,6 +158,7 @@ import {
 } from "./lib/ac-field-identity-run.mjs";
 import { printFieldTable, printPoDiscount } from "./lib/ac-field-identity-report.mjs";
 import { buildVerdictRows, makeVerdictRecorder, summariseVerdict } from "./lib/so-verdict-derive.mjs";
+import { makeSofaRulingLookup } from "./lib/sofa-rulings.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const DATA = path.join(here, "data");
@@ -544,6 +545,11 @@ try {
     const h = findColour(c);
     return h ? h.colour_id : null;
   };
+  /* His own sofa builds, so a document he has already ruled on is never
+     handed back to him as an open question (docs/bugs/0714). The lookup, the
+     _held exclusion and the desc2Match selection live in lib/sofa-rulings.mjs. */
+  const sofaRuling = makeSofaRulingLookup(DATA, (m) =>
+    log(`SOFA RULINGS could not be read (${m}) — ruled builds will report as DIFFER`));
   V = {
     parseBedframe,
     parseSofa,
@@ -551,6 +557,7 @@ try {
     modelAlias: SOFA_MODEL_ALIAS,
     knownColour,
     reclOf: (m) => RECL.some((s) => prodCodes.has(`${m}${s}`.toUpperCase())),
+    sofaRuling,
     /* A colour is compared as the library row it names, never as a spelling. */
     colourIdentity: (text) => {
       const h = findColour(text);

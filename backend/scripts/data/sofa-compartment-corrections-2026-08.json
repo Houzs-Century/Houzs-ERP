@@ -388,10 +388,10 @@
    "pieces": [
     "1A(LHF)",
     "1NA",
-    "1A(RHF)"
+    "L(RHF)"
    ],
    "seat": "26",
-   "why": "photo: three boxes all marked 26, arms only at the two ends",
+   "why": "photo: three boxes all marked 26, arms only at the two ends | 2026-09-08 OWNER, re-reading his own slip: 1AL + 1NA + 1L(R). The right-hand piece is the CHAISE, not a one-seat arm. His 1L(R) is slip shorthand for one chaise on the right; the ERP code for that piece carries NO count prefix - scripts/lib/parse-sofa.mjs:602 emits L(LHF)/L(RHF) for the chaise token, and :545/:557 fold a 1L standing beside other pieces into ONE chaise - so 1L(R) is written here as L(RHF), never as a minted 1L(RHF). This is a CORRECTED READING, not a regression: the ERP's earlier value never drifted - he read the same slip again and changed his own answer. Recorded in docs/sofa-compartment-owner-rulings-2026-09-08.md. This document is already DELIVERED, so this is a records correction; its migrated delivery note follows the parent by the same paperwork-only rule the rest of this file rests on.",
    "desc2Match": "L shape \\nbottom Nilon \\nColour : modenz"
   },
   {
@@ -408,19 +408,6 @@
    "seat": "35",
    "why": "photo: [hatch|35][ ][35|hatch]",
    "desc2Match": "colour : B0315-2 feather \\nwrap bottom t"
-  },
-  {
-   "docs": [
-    "HC-SO-011099",
-    "HC-PO-009882"
-   ],
-   "pieces": [
-    "1A(LHF)",
-    "1A(RHF)"
-   ],
-   "seat": "30",
-   "why": "photo: two 30\" boxes, a small arm at each end | 2026-09-07: the purchase order was missing from this entry, so the build was written onto the sales order alone and HC-PO left holding the lead piece only (chain audit run 34134017406 reported it as PIECE ABSENT). HC-PO-009882 added so the pair is corrected together, which is what this file's own rule says.",
-   "desc2Match": "2S / colour :BO315-4"
   },
   {
    "docs": [
@@ -511,6 +498,19 @@
   }
  ],
  "_held": [
+  {
+   "docs": [
+    "HC-SO-011099",
+    "HC-PO-009882"
+   ],
+   "pieces": [
+    "2S"
+   ],
+   "seat": "30",
+   "why": "photo: two 30\" boxes, a small arm at each end | 2026-09-08 OWNER, re-reading his own slip: 2S. It is ONE two-seater, not two one-seat arms - which is also what the book's own words say (2S / colour :BO315-4), so this ruling moves the ERP TOWARDS the book rather than away from it. This is a CORRECTED READING, not a regression: the ERP's earlier value never drifted - he read the same slip again and changed his own answer. Recorded in docs/sofa-compartment-owner-rulings-2026-09-08.md. The model resolves from the rows themselves (HOK-5530 aliases to 9028), so the target piece is 9028-2S. This build drops from two rows to one: the surviving row is UPDATED in place so its id, its dedication and its linked_ac_dtlkey all survive, and the second row is deleted ONLY if nothing downstream points at it - apply-sofa-compartment-corrections.mjs refuses the whole build otherwise. | 2026-09-07: the purchase order was missing from this entry, so the build was written onto the sales order alone and HC-PO left holding the lead piece only (chain audit run 34134017406 reported it as PIECE ABSENT). HC-PO-009882 added so the pair is corrected together, which is what this file's own rule says.",
+   "heldWhy": "NOT WRITTEN 2026-09-08, and his ruling above is NOT in doubt - the ERP simply cannot be moved to it without a second repair. The build collapses TWO rows into ONE on both sides. On the sales order the surviving row is updated in place and the second is surplus; that surplus row is the dedication target of a line on HC-PO-009882, so the apply script refuses the whole build rather than cut a row something still points at. Dry-run 34220106079 said: HC-SO-011099: REFUSED - a surplus line is referenced downstream: 9028-1A(RHF): 1 PO line(s), 0 DO line(s). Applying the purchase-order half ALONE is worse than doing nothing: the same dry-run plans HC-PO-009882 1A(RHF)+1A(LHF) -> 2S successfully, which would leave the factory document saying 2S while the customer document still said 1A(LHF)+1A(RHF). Ordering does not rescue it either - the purchase order keeps its 1A(RHF) row, whose so_item_id is the very sales-order row the sales order then has to delete. What this needs is the PO->SO dedication re-pointed onto the surviving row as part of the collapse; that is a change to shared pairing machinery and is deliberately not stacked onto this data fix. Evidence: probe run 34220446190 section B. See docs/bugs/0719.",
+   "desc2Match": "2S / colour :BO315-4"
+  },
   {
    "docs": [
     "HC-PO-010056",

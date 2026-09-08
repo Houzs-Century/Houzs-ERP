@@ -4838,3 +4838,67 @@ refuses any. The AutoCount Sync page also reads that log directly —
 
 **This is INERT until the host is rebuilt.** `AcSyncService.cs` compiles nowhere
 but the office machine; `docs/autocount-service-deploy.md` is the swap.
+## `RULED` — the owner's own sofa build, and why it is not `AGREE` (2026-09-08)
+
+The reconcile's variant table gained a **ninth verdict** on the sofa
+compartments axis. It is a new word in the vocabulary `so-verdict-derive.mjs`
+and the summary table share, so it belongs here rather than only in the bug
+ledger.
+
+**Why it had to exist.** 「一律跟账本。除了sofa compartment而已啊」 — the book
+decides every axis EXCEPT the sofa build, which is the owner's. He reads the
+slip's drawing himself and rules, and the ERP is then **supposed** to differ
+from the book's words. `lib/variant-reconcile.mjs` had no input for a
+per-document override, so a build he had personally decided could only come out
+as `DIFFER`, and every run handed it back to him as an open question. On
+2026-09-08 five of the eight proceeded compartment differences were rulings he
+had already given (`docs/bugs/0714-the-reconcile-reports-a-sofa-the-owner-has-already-ruled-on.md`), and being shown one again is what produced
+「这个很多我刚刚都给过你答案了啊」.
+
+**Where the answer comes from.** `check-ac-erp-reconcile.mjs` now loads
+`backend/scripts/data/sofa-compartment-corrections-*.json` through the SAME
+`loadCorrections` the apply script writes from, so the reporter and the writer
+can never disagree about what he ruled. Two properties matter:
+
+- **`_held` builds are excluded.** `loadCorrections` returns them in a separate
+  list. A ruling we have NOT written must keep reading `DIFFER`, because it is
+  still work — `HC-SO-011099` is exactly that today (`docs/bugs/0719`).
+- **The entry is selected by its own `desc2Match`**, through the same matcher
+  the apply script uses, never by document number alone. A document can hold
+  more than one sofa build, and putting one build's answer on another build's
+  line is the failure this whole lane exists to prevent.
+
+**The verdict, exactly.** `RULED` requires the ERP to hold his answer as an
+identical MULTISET. It is consulted only AFTER the book comparison has already
+returned a real difference, so a ruling can never turn an `AGREE` or an
+`ERP_BLANK` into something else. A ruling that has not been written — or has
+been written onto the wrong document — still reads `DIFFER`, and the detail now
+names the answer it is failing to match:
+
+```
+... MISSING 1S | EXTRA 1A(LHF), 1NA, 2A(RHF)
+    | the owner ruled 1A(LHF)+2A(RHF)+1B(RHF) and the ERP does NOT hold it
+```
+
+That sentence is the point of the change as much as the new column is: it is the
+line that would have caught `HC-SO-013327` sitting on `1NA` while his ruling
+said `1B(RHF)`.
+
+**It is NOT folded into `AGREE`,** for the same reason `RECORDED` is not. The
+line genuinely does differ from the book, and hiding that would remove the only
+signal that catches a ruling applied to the wrong document.
+
+**One consequence to know about: a `RULED` cell no longer LOCKS the document.**
+`variant-report.mjs` locks on `DIFFER` and on a proceeded `ERP_BLANK`;
+`BOOK_BLANK`, `PENDING`, `RECORDED` and now `RULED` fall to the branches below
+and never lock. Before this change `HC-SO-010209` and `HC-SO-011099` were both
+`LOCKED ... — sofa compartments` in the run's own output. After it, a document
+unlocks exactly when the ERP holds what the owner ruled: `HC-SO-010209` unlocks,
+`HC-SO-011099` stays locked because its ruling is still unwritten. That is the
+intended behaviour and it is the same standing `RECORDED` already has, but it is
+a permission change, so it is stated here rather than left to be discovered.
+
+Tests: `scripts/lib/variant-reconcile.test.mjs` — the ruled build, the
+not-folded-into-agree property, the unwritten ruling that stays `DIFFER`, the
+no-ruling control, and the assertion that a ruling cannot rescue an ERP carrying
+no compartments at all.

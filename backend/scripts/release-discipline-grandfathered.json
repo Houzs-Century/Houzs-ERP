@@ -77,9 +77,7 @@
       "rerun-note"
     ],
     "apply-sofa-compartment-corrections.mjs": [
-      "confirm-phrase",
-      "fresh-verify",
-      "rerun-note"
+      "fresh-verify"
     ],
     "apply-variant-patch.mjs": [
       "confirm-phrase"

@@ -18,7 +18,7 @@
  * NOT restated here. This module renders; that one decides.
  */
 import {
-  AGREE, AXES, BOOK_BLANK, DIFFER, ERP_BLANK, NO_LINE_KEY, PENDING, RECORDED, UNREADABLE,
+  AGREE, AXES, BOOK_BLANK, DIFFER, ERP_BLANK, NO_LINE_KEY, PENDING, RECORDED, RULED, UNREADABLE,
   VARIANT_GROUPS, VERDICTS, compareLine, decodeBook, foldGuessedPairing,
 } from "./variant-reconcile.mjs";
 import { comparisonKey } from "./keyless-multiset.mjs";
@@ -83,7 +83,7 @@ export function reportVariants({ t, label, rows, desc2, deps: V, VERDICT, SHOW, 
     const proceeded = lead.proceeded === true;
     if (proceeded) pop.proceeded++;
     const book = decodeBook(V, { desc2: text, itemGroup: group, itemCode: lead.item_code });
-    const { axes } = compareLine(V, { book, erpLines: r.erpLines, proceeded });
+    const { axes } = compareLine(V, { book, erpLines: r.erpLines, proceeded, erpNo: r.erpNo });
     /* THE COMPARTMENT AXIS NEEDS THE WHOLE BUILD, AND ONLY THE LINE KEY CAN
        REGROUP IT. One AutoCount sofa line becomes one ERP line per piece; the
        pieces are recognisable as one build because they share
@@ -207,14 +207,14 @@ export function reportVariants({ t, label, rows, desc2, deps: V, VERDICT, SHOW, 
   }
 
   plain("axis                 |                      PROCEEDED (the backlog)                       |             not proceeded (blank is OK)");
-  plain("                     |  agree  ERPblank  bookblank  differ  pend  unread  recorded  no-key |  agree  ERPblank  bookblank  differ  pend  unread  recorded  no-key");
+  plain("                     |  agree  ERPblank  bookblank  differ  pend  unread  recorded  ruled  no-key |  agree  ERPblank  bookblank  differ  pend  unread  recorded  ruled  no-key");
   for (const a of AXES) {
     const y = tally[a.key].yes;
     const n = tally[a.key].no;
     const seen = VERDICTS.reduce((s2, v) => s2 + y[v] + n[v], 0);
     if (!seen) continue;
-    const cells = (h) => [h[AGREE], h[ERP_BLANK], h[BOOK_BLANK], h[DIFFER], h[PENDING], h[UNREADABLE], h[RECORDED], h[NO_LINE_KEY]]
-      .map((x, i) => String(x).padStart([6, 9, 10, 7, 5, 7, 10, 7][i]));
+    const cells = (h) => [h[AGREE], h[ERP_BLANK], h[BOOK_BLANK], h[DIFFER], h[PENDING], h[UNREADABLE], h[RECORDED], h[RULED], h[NO_LINE_KEY]]
+      .map((x, i) => String(x).padStart([6, 9, 10, 7, 5, 7, 10, 6, 7][i]));
     plain(`${a.label.padEnd(20)} | ${cells(y).join(" ")} | ${cells(n).join(" ")}`);
   }
   plain(
@@ -225,6 +225,13 @@ export function reportVariants({ t, label, rows, desc2, deps: V, VERDICT, SHOW, 
     "recorded = the book asks for a PRICED special the line does not tick, and variants.specialsRecorded already " +
       "carries it: the owner's 2026-09-03 ruling 甲 applied — the factory sees the option and the document's money " +
       "did not move. DECIDED work, not backlog, and it is broken out so it can never be summed into the DIFFER column again.",
+  );
+  plain(
+    "ruled = the owner read the slip HIMSELF and set the sofa build against the book's own words, and the ERP holds " +
+      "exactly what he ruled — 「一律跟账本。除了sofa compartment而已啊」, the book decides everything EXCEPT the sofa " +
+      "build. DECIDED, not backlog, and never folded into agree: the line really does differ from the text, which is the " +
+      "only signal that would catch a ruling applied to the wrong document. A ruling NOT yet written stays in differ and " +
+      "now names the answer it is failing to match. Source: backend/scripts/data/sofa-compartment-corrections-*.json.",
   );
   if (unkeyedSofa) {
     plain(
@@ -265,10 +272,16 @@ export function reportVariants({ t, label, rows, desc2, deps: V, VERDICT, SHOW, 
        lumped number, and both times the lump came from a line like this one. */
     const dif = list.filter((x) => x.differ);
     const difYes = dif.filter((x) => x.proceeded).length;
+    /* The owner's own rulings are named on the SAME line as the difference
+       count, because this is the line that gets quoted into briefs. A build
+       he has already decided must never be re-presented to him as an open
+       question - docs/bugs/0714, and 「这个很多我刚刚都给过你答案了啊」. */
+    const ruled = tally[a.key].yes[RULED] + tally[a.key].no[RULED];
     log(
       `${t} VARIANT ${a.label} — ${difYes} DIFFER on a PROCEEDED order` +
         (dif.length - difYes ? ` (+${dif.length - difYes} on orders not yet proceeded)` : "") +
-        `, ${list.filter((x) => !x.differ).length} ERP blank on a proceeded order`,
+        `, ${list.filter((x) => !x.differ).length} ERP blank on a proceeded order` +
+        (ruled ? `, ${ruled} RULED by the owner and already written (decided, NOT work)` : ""),
     );
     for (const row of list.slice(0, SHOW)) plain(`      ${row.line}`);
     if (list.length > SHOW) plain(`      ... ${list.length - SHOW} more`);
