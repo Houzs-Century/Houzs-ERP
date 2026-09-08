@@ -616,3 +616,23 @@ the page showing "as of &lt;time&gt;".
   + `POST /regenerate`), `src/index.ts` (cron branch), `wrangler.toml` (cron),
   `frontend/src/vendor/scm/lib/mrp-queries.ts` (`useRegenerateMrp` + `stored` /
   `computedAt`), `frontend/src/pages/scm-v2/Mrp.tsx` (Regenerate button + "as of").
+
+## The pairing audit no longer skips a fully received PO line (2026-09-08)
+
+`backend/scripts/audit-mrp-pairing.mjs` section (C2) compares each purchase-order
+line's `item_code` with its stored sales-order line's — the only item-code
+detector in the file. It iterated `poOpen`, and **`poOpen` drops a line the
+moment it is FULLY RECEIVED.**
+
+That is the state a wrong dedication does its damage in: the goods arrived, so
+the customer's order reads READY against a bed that is not theirs. All nine wrong
+dedications of `docs/bugs/0671` converge on it. So the detector answered *"which
+OUTSTANDING lines disagree"* and printed as though it had answered *"which lines
+disagree"* — `docs/bugs/0672` site 20, `docs/bugs/0684`.
+
+It now iterates a second list, `poAll`, holding every non-dead line. **The
+WAREHOUSE and VARIANT splits still count OPEN lines only** — a received line's
+warehouse is history — and every shortage, bucket and pairing figure in the file
+is unchanged, so the outstanding numbers stay comparable to earlier runs. The
+item-code line now also prints how many of its hits are already fully received;
+a zero there is a real zero for the first time.

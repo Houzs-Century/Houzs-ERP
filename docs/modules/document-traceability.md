@@ -973,3 +973,31 @@ and **NOT LOADED** if it fails — never `STOCK` or a bare dash, which are
 answers. `coverage` is a required prop on the shared drill-down; the rule, the
 five surfaces that fetch separately, and how to add a sixth are in
 `docs/modules/coverage-state.md` (trace: `docs/bugs/0603-a-drill-down-printed-stock-while-the-answer-was-still-loadin.md`).
+
+## A migration may not rewrite a product FROM a link (2026-09-08)
+
+`docs/bugs/0672` site 5, trace in `docs/bugs/0684`. The inverted form of the
+bug class, and the one that can destroy its own evidence.
+
+`backend/scripts/open-5526-model.mjs` re-points a sofa model and then carries the
+new code onto the downstream documents that snapshotted the old one. Those
+follow-on statements were:
+
+```sql
+UPDATE scm.purchase_order_items SET item_code = <new> WHERE so_item_id = <parent>
+```
+
+— **no predicate on the code the row currently states.** If a downstream row's
+`so_item_id` points at the WRONG parent (`docs/bugs/0671` put nine such rows in
+production), this restamps that row's `item_code` to the parent's new code,
+**making the two sides AGREE** — and `probe-link-identity.mjs` compares exactly
+those two columns, so the script could erase the finding.
+
+Every follow-on now names the OLD code (`AND item_code = <old>`), and rows that
+do not state it are **left untouched and counted**, reported as *"downstream rows
+LEFT ALONE because they do not state the code being migrated from"*. A non-zero
+there is a finding, not noise: either that row's link or its code is wrong.
+
+The general rule this is an instance of: `migration-copy-never-compute`. A
+migration reads the source's own value; it never infers one, and it never
+normalises a disagreement away.
