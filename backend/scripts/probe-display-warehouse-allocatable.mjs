@@ -110,7 +110,7 @@ async function main() {
     SELECT b.warehouse_id, b.item_code, COALESCE(b.variant_key,'') AS variant_key,
            b.qty::numeric AS qty, p.category::text AS category
       FROM scm.inventory_balances b
-      LEFT JOIN scm.mfg_products p ON p.code = b.item_code
+      LEFT JOIN scm.mfg_products p ON p.code = b.item_code AND p.company_id = ${CO}
      WHERE b.warehouse_id = ANY(${[...probeIds]}) AND b.qty <> 0`;
   const pooled = [], bound = [];
   for (const r of bal) (isHardBoundLine(r.category, r.item_code) ? bound : pooled).push(r);
@@ -145,7 +145,7 @@ async function main() {
            COUNT(*) FILTER (WHERE l.batch_no IS NULL)::int AS no_batch,
            COALESCE(SUM(l.qty_remaining) FILTER (WHERE l.batch_no IS NOT NULL AND l.qty_remaining > 0), 0)::numeric AS coverable_qty
       FROM scm.v_inventory_lots_open l
-      JOIN scm.mfg_products p ON p.code = l.item_code
+      JOIN scm.mfg_products p ON p.code = l.item_code AND p.company_id = ${CO}
      WHERE l.warehouse_id = ANY(${[...probeIds]})
        AND lower(p.category::text) = 'sofa'
      GROUP BY l.warehouse_id`;
