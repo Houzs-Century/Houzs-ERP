@@ -48,7 +48,8 @@ try {
            p.po_number, p.linked_ac_docno AS ac_po,
            (SELECT COUNT(*) FROM scm.grn_items x WHERE x.grn_id = g.id)::int AS lines,
            (SELECT COALESCE(SUM(x.qty_accepted * x.unit_price_sen), 0) FROM scm.grn_items x WHERE x.grn_id = g.id)::bigint AS line_sen,
-           (SELECT COUNT(*) FROM scm.inventory_movements m WHERE m.ref_type = 'GRN' AND m.ref_id = g.id)::int AS movements
+           (SELECT COUNT(*) FROM scm.inventory_movements m
+             WHERE m.source_doc_type = 'GRN' AND m.source_doc_id = g.id)::int AS movements
       FROM scm.grns g
       LEFT JOIN scm.purchase_orders p ON p.id = g.purchase_order_id
      WHERE g.company_id = ${CO} AND g.linked_ac_gr_docno = ANY(${DOCS})
