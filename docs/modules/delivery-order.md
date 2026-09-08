@@ -2165,8 +2165,12 @@ a line key: `fromSoDtlKey` is populated on 10,792 of 18,890 purchase-order lines
 and **0 of 48,772 delivery-order lines** in the 2026-09-08 re-cut. When the two
 orders list the pair in a different sequence the result is an exact swap — and
 the writer copies `variants` off whichever line it paired with, so the note
-inherits the other customer's colour. `DO-011505` and `DO-011478` are that shape
-in production.
+inherits the other customer's colour.
+
+`DO-011505` and `DO-011478` are NOT this mechanism, though `docs/bugs/0672` says
+they are. Their swapped keys carry different AutoCount codes that map to
+different ERP codes, so those rows never share a bucket here. See
+`docs/bugs/0689`.
 
 **The rule now: pair on model + colour; where colour cannot resolve it, write NO
 link.** Positional consumption happens only while the candidate lines are
