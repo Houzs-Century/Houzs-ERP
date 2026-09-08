@@ -82,6 +82,8 @@ import zlib from "node:zlib";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 
+import { judgeCompartmentPair, normCode } from "./lib/sofa-po-so-pair.mjs";
+
 const url = process.env.DATABASE_URL;
 if (!url) { console.error("DATABASE_URL required"); process.exit(2); }
 const CO = Number(process.env.COMPANY_ID || 1);
@@ -93,10 +95,11 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const out = (m = "") => console.log(m);
 const log = (m = "") => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 
-/* Byte-identical to repair-po-so-link-from-book.mjs's normaliser, deliberately:
-   two repairs on the same edge must not disagree about what "the same product"
-   means. */
-const norm = (s) => (s ?? "").trim().toUpperCase().replace(/\s+/g, " ");
+/* ONE normaliser and ONE pairing rule, shared with the probe through
+   lib/sofa-po-so-pair.mjs. They were two copies for twenty minutes on
+   2026-09-08 and disagreed on production about HC-PO-010040 <- SO-012277; that
+   module's header records which reading is right and why. */
+const norm = normCode;
 
 if (APPLY && process.env.CONFIRM !== CONFIRM_PHRASE) {
   console.error(`REFUSED: MODE=apply needs CONFIRM="${CONFIRM_PHRASE}". `
@@ -209,27 +212,20 @@ async function main() {
     const note = (msg) => { if (first) refusedDetail.push(msg); };
     const acSo = bookSoByKey.get(bp.fromSoDtlKey).docNo;
 
-    const tally = (rows) => { const m = new Map(); for (const x of rows) m.set(norm(x.item_code), (m.get(norm(x.item_code)) ?? 0) + 1); return m; };
-    const pT = tally(poRows), sT = tally(soRows);
-    const dup = [...pT].filter(([, n]) => n > 1).map(([c]) => c).concat([...sT].filter(([, n]) => n > 1).map(([c]) => c));
-    if (dup.length) {
-      refused.duplicateCode++;
-      note(`${r.po_number} <- ${acSo}: ${[...new Set(dup)].join(", ")} appears more than once on one side - which row is which is a coin flip`);
+    /* ONE pairing rule, shared with probe-staff-reported-flow.mjs. It takes
+       EVERY purchase row carrying the key, LINKED ROWS INCLUDED - a compartment
+       somebody already dedicated still occupies its sales row, and leaving it
+       out both under-counts the purchase side and hides the collision gate 5
+       exists to catch. That is not a preference: the two tools held separate
+       copies for twenty minutes on 2026-09-08 and disagreed on production about
+       this very pair. lib/sofa-po-so-pair.mjs has the trace and the test. */
+    const j = judgeCompartmentPair(poRows, soRows);
+    if (j.verdict !== "provable") {
+      refused[j.verdict]++;
+      note(`${r.po_number} <- ${acSo}: ${j.why}`);
       continue;
     }
-    const onlyPo = [...pT.keys()].filter((c) => !sT.has(c));
-    const onlySo = [...sT.keys()].filter((c) => !pT.has(c));
-    if (onlyPo.length || onlySo.length) {
-      refused.differentProducts++;
-      note(`${r.po_number} <- ${acSo}: the purchase side carries ${onlyPo.join(", ") || "(nothing extra)"} and the sales side carries ${onlySo.join(", ") || "(nothing extra)"} - a BUILD disagreement, not a link one; it needs the drawing`);
-      continue;
-    }
-    if (poRows.length !== soRows.length) {
-      refused.countsDiffer++;
-      note(`${r.po_number} <- ${acSo}: ${poRows.length} purchase row(s) against ${soRows.length} sales row(s)`);
-      continue;
-    }
-    const target = soRows.find((s) => norm(s.item_code) === norm(r.item_code));
+    const target = j.pairs.find((x) => x.po.id === r.id)?.so;
     if (!target) { refused.differentProducts++; note(`${r.po_number} ${norm(r.item_code)}: no sales compartment of that product`); continue; }
     /* A sales compartment another purchase row already holds is taken. Gate 3
        makes this unreachable on a clean pair; it is asserted rather than

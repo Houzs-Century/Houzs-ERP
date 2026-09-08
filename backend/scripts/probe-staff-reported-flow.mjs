@@ -55,6 +55,7 @@ import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 
 import { loadCorrections } from "./lib/sofa-corrections-source.mjs";
+import { judgeCompartmentPair, normCode } from "./lib/sofa-po-so-pair.mjs";
 import { soProcessingDateFragment } from "./lib/so-processing-date.mjs";
 
 const url = process.env.DATABASE_URL;
@@ -67,10 +68,12 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const out = (m = "") => console.log(m);
 const log = (m = "") => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 
-/* The same normaliser repair-po-so-link-from-book.mjs uses, deliberately: the
-   probe and any repair built from it must not disagree about what "the same
-   product" means. */
-const norm = (s) => (s ?? "").trim().toUpperCase().replace(/\s+/g, " ");
+/* The same normaliser and the same pairing rule the repair uses, imported
+   rather than copied: this probe and repair-po-so-link-sofa-compartments.mjs
+   held separate copies for twenty minutes on 2026-09-08 and disagreed on
+   production about HC-PO-010040 <- SO-012277. lib/sofa-po-so-pair.mjs records
+   which reading is right and why. */
+const norm = normCode;
 
 /* An order that no longer creates demand. Mirrors SO_TERMINAL_STATES in
    src/scm/shared/so-terminal-states.ts; a line on one of these is not a
@@ -303,9 +306,17 @@ async function sectionC() {
       JOIN scm.purchase_orders h ON h.id = i.purchase_order_id AND h.company_id = ${CO}
      WHERE i.so_item_id IS NULL AND UPPER(COALESCE(h.status::text, '')) <> 'CANCELLED'`;
 
+  /* EVERY purchase row carrying a key, LINKED ONES INCLUDED. This read used to
+     be over `unlinked` alone, and that is exactly the bug lib/sofa-po-so-pair's
+     header records: a three-compartment pair with one row already dedicated read
+     as 2 against 3 here and 3 against 3 in the repair. */
   const erpPoByKey = new Map();
-  for (const r of unlinked) {
-    if (!r.dtl) continue;
+  for (const r of await sql`
+    SELECT i.id::text AS id, i.item_code, i.item_group, i.linked_ac_dtlkey::text AS dtl,
+           i.so_item_id::text AS so_item_id, h.po_number
+      FROM scm.purchase_order_items i
+      JOIN scm.purchase_orders h ON h.id = i.purchase_order_id AND h.company_id = ${CO}
+     WHERE i.linked_ac_dtlkey IS NOT NULL AND UPPER(COALESCE(h.status::text, '')) <> 'CANCELLED'`) {
     if (!erpPoByKey.has(r.dtl)) erpPoByKey.set(r.dtl, []);
     erpPoByKey.get(r.dtl).push(r);
   }
@@ -343,40 +354,19 @@ async function sectionC() {
     if (seenPairs.has(pairId)) continue;
     seenPairs.add(pairId);
 
-    const tally = (rows) => {
-      const m = new Map();
-      for (const x of rows) m.set(norm(x.item_code), (m.get(norm(x.item_code)) ?? 0) + 1);
-      return m;
-    };
-    const pT = tally(poRows), sT = tally(soRows);
-    const dupPo = [...pT].filter(([, n]) => n > 1).map(([c]) => c);
-    const dupSo = [...sT].filter(([, n]) => n > 1).map(([c]) => c);
-    const unmatched = [...pT.keys()].filter((c) => !sT.has(c));
-
-    if (unmatched.length) {
-      verdicts.itemMismatch++;
-      refusedDetail.push(`${r.po_number} <- ${bookSoByKey.get(bookPo.fromSoDtlKey).docNo}: `
-        + `the purchase side carries ${unmatched.join(", ")} and the sales side does not`);
-      continue;
-    }
-    if (dupPo.length || dupSo.length) {
-      verdicts.compartmentDuplicated++;
-      refusedDetail.push(`${r.po_number} <- ${bookSoByKey.get(bookPo.fromSoDtlKey).docNo}: `
-        + `${[...new Set([...dupPo, ...dupSo])].join(", ")} appears more than once on one side - which row is which is a coin flip`);
-      continue;
-    }
-    if (poRows.length !== soRows.length) {
-      verdicts.countsDiffer++;
-      refusedDetail.push(`${r.po_number} <- ${bookSoByKey.get(bookPo.fromSoDtlKey).docNo}: `
-        + `${poRows.length} purchase row(s) against ${soRows.length} sales row(s)`);
-      continue;
-    }
+    const acSo = bookSoByKey.get(bookPo.fromSoDtlKey).docNo;
+    const j = judgeCompartmentPair(poRows, soRows);
+    if (j.verdict === "duplicateCode") { verdicts.compartmentDuplicated++; refusedDetail.push(`${r.po_number} <- ${acSo}: ${j.why}`); continue; }
+    if (j.verdict === "differentProducts") { verdicts.itemMismatch++; refusedDetail.push(`${r.po_number} <- ${acSo}: ${j.why}`); continue; }
+    if (j.verdict !== "provable") { verdicts.countsDiffer++; refusedDetail.push(`${r.po_number} <- ${acSo}: ${j.why}`); continue; }
     verdicts.compartmentUnique++;
-    for (const p of poRows) {
-      const s = soRows.find((x) => norm(x.item_code) === norm(p.item_code));
-      resolvable.push({ poNumber: p.po_number, code: norm(p.item_code), group: p.item_group,
-        soDocNo: s.doc_no, stockStatus: s.stock_status, soStatus: s.so_status,
-        acPo: bookPo.docNo, acSo: bookSoByKey.get(bookPo.fromSoDtlKey).docNo });
+    /* Only the rows that still need writing are listed - a compartment already
+       dedicated is part of the PAIR but not part of the work. */
+    for (const pair of j.pairs) {
+      if (pair.po.so_item_id) continue;
+      resolvable.push({ poNumber: pair.po.po_number, code: norm(pair.po.item_code), group: pair.po.item_group,
+        soDocNo: pair.so.doc_no, stockStatus: pair.so.stock_status, soStatus: pair.so.so_status,
+        acPo: bookPo.docNo, acSo });
     }
   }
 
