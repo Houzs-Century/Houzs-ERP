@@ -18,6 +18,7 @@ import {
   type Account, type ReceiptRow,
 } from '../../vendor/scm/lib/accounting-queries';
 import { AccountSelect } from '../../vendor/scm/components/AccountSelect';
+import { useSaveHotkey, SAVE_HOTKEY_HINT } from '../../vendor/scm/lib/use-save-hotkey';
 import { DateField } from '../../vendor/scm/components/DateField';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
 import { todayMyt } from '../../vendor/scm/lib/dates';
@@ -139,6 +140,11 @@ export const Receipts = () => {
     }
   };
 
+  /* The one "may post" for the button and the key alike. */
+  const canPost = total > 0 && !!payer.trim() && !!bank && !!receiptDate && !lines.some((l) => l.amountSen > 0 && !l.creditAccountCode);
+  /* F3 / Ctrl+S posts the open form (owner 2026-09-08: 像 autocount 按 f3). */
+  useSaveHotkey(() => { if (canPost) void save(); }, adding && !createReceipt.isPending && !updateReceipt.isPending);
+
   const rows = listQ.data?.receipts ?? [];
   const listTotal = rows.filter((r) => r.status !== 'CANCELLED').reduce((s, r) => s + r.totalSen, 0);
 
@@ -193,8 +199,9 @@ export const Receipts = () => {
                 <Plus {...ICON} /> Line
               </Button>
               <span style={{ marginLeft: 'auto', fontFamily: 'var(--font-mono)' }}>Total {fmtRm(total)}</span>
+              <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>{SAVE_HOTKEY_HINT}</span>
               <Button variant="primary" size="sm" onClick={() => void save()}
-                disabled={createReceipt.isPending || updateReceipt.isPending || total <= 0 || !payer.trim() || !bank || !receiptDate || lines.some((l) => l.amountSen > 0 && !l.creditAccountCode)}>
+                disabled={createReceipt.isPending || updateReceipt.isPending || !canPost}>
                 {editing ? (updateReceipt.isPending ? 'Re-posting…' : 'Save & re-post') : createReceipt.isPending ? 'Posting…' : 'Post receipt'}
               </Button>
               <Button variant="ghost" size="sm" onClick={closeForm}>Close</Button>

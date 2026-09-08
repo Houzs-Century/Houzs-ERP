@@ -18,7 +18,7 @@
 // the scm.payment_voucher.* flat permissions.
 // ----------------------------------------------------------------------------
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { CheckCircle2, ChevronDown, Copy, History, Pencil, Plus, Printer, RotateCcw, Save, Send, Ban, Trash2, X, XCircle } from 'lucide-react';
 import { Button } from '@2990s/design-system';
@@ -41,6 +41,7 @@ import { DocFilesCard } from '../../vendor/scm/components/DocFilesCard';
 import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
 import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
 import { useAccounts, postableAccounts, type Account } from '../../vendor/scm/lib/accounting-queries';
+import { useSaveHotkey, SAVE_HOTKEY_HINT } from '../../vendor/scm/lib/use-save-hotkey';
 import { usePurchaseInvoices } from '../../vendor/scm/lib/purchase-invoice-queries';
 import { useApInvoices } from '../../vendor/scm/lib/ap-invoice-queries';
 import { useSuppliers, useSupplierDetail } from '../../vendor/scm/lib/suppliers-queries';
@@ -191,6 +192,11 @@ export const PaymentVoucherDetail = () => {
 
   const isDraft = pv?.status === 'DRAFT';
   const [isEditing, setIsEditing] = useState(() => searchParams.get('edit') === '1');
+  /* F3 / Ctrl+S = Save while editing (owner 2026-09-08: 像 autocount 按 f3).
+     A hook, so it sits above the loading return; onSave is defined below
+     that return and the key reaches it through this ref. */
+  const saveRef = useRef<() => void>(() => {});
+  useSaveHotkey(() => saveRef.current(), isEditing && !busy);
 
   // Edit draft state.
   const [payeeName, setPayeeName]                 = useState('');
@@ -403,6 +409,8 @@ export const PaymentVoucherDetail = () => {
   /* There is no standalone Post button any more — the second yes posts
      (owner 2026-09-02: 当approved 了才会进gl), and re-approving resumes a
      post that died halfway. */
+  saveRef.current = () => { void onSave(); };
+
   const onCancel = async () => {
     if (!(await askConfirm({ title: `Cancel voucher ${pv.pv_number}?`, body: 'This sets status to CANCELLED and reverses the GL entry if it was posted.', confirmLabel: 'Cancel voucher', danger: true }))) return;
     try {
@@ -542,6 +550,7 @@ export const PaymentVoucherDetail = () => {
                 <Button variant="ghost" size="md" onClick={() => setIsEditing(false)} disabled={busy}>
                   <X {...ICON} /> Back
                 </Button>
+                <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>{SAVE_HOTKEY_HINT}</span>
                 <Button variant="primary" size="md" onClick={onSave} disabled={busy}>
                   <Save {...ICON} /> {update.isPending ? 'Saving…' : 'Save'}
                 </Button>
@@ -668,8 +677,8 @@ export const PaymentVoucherDetail = () => {
                 <thead>
                   <tr style={{ textAlign: 'left', color: 'var(--fg-muted)', fontSize: 'var(--fs-11)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
                     <th style={{ padding: '6px 8px' }}>#</th>
-                    <th style={{ padding: '6px 8px' }}>Description</th>
                     <th style={{ padding: '6px 8px' }}>Account (Debit)</th>
+                    <th style={{ padding: '6px 8px' }}>Description</th>
                     <th style={{ padding: '6px 8px', textAlign: 'right' }}>Amount</th>
                   </tr>
                 </thead>
@@ -677,8 +686,11 @@ export const PaymentVoucherDetail = () => {
                   {lines.map((l, idx) => (
                     <tr key={l.id} style={{ borderTop: '1px solid var(--line)' }}>
                       <td style={{ padding: '6px 8px', color: 'var(--fg-muted)' }}>{idx + 1}</td>
+                      {/* A refund's one line debits the AR control; the customer it
+                          is for rides beside the account, as the party does in the
+                          journal (owner 2026-09-08: 看不到是谁 → 可以). */}
+                      <td style={{ padding: '6px 8px' }}>{accountLabel(l.debit_account_code)}{isRefundPv && pv.payee_name ? ` · ${pv.payee_name}` : ''}</td>
                       <td style={{ padding: '6px 8px' }}>{l.description || '—'}</td>
-                      <td style={{ padding: '6px 8px' }}>{accountLabel(l.debit_account_code)}</td>
                       <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{fmtRm(Number(l.amount_sen ?? 0), currency)}</td>
                     </tr>
                   ))}
@@ -705,14 +717,16 @@ export const PaymentVoucherDetail = () => {
                       )}
                     </div>
                   </div>
+                  {/* Account first, then description, then amount — the owner's
+                      typing order (2026-09-08), as on PV New. */}
                   <div className={styles.formGrid2}>
-                    <label className={styles.field}>
-                      <span className={styles.fieldLabel}>Description</span>
-                      <input type="text" value={l.description} onChange={(e) => setLine(l.rid, { description: e.target.value })} className={styles.fieldInput} />
-                    </label>
                     <label className={styles.field}>
                       <span className={styles.fieldLabel}>Account (Debit) *</span>
                       <AccountSelect accounts={accounts} value={l.debitAccountCode} onChange={(v) => setLine(l.rid, { debitAccountCode: v })} className={styles.fieldInput} />
+                    </label>
+                    <label className={styles.field}>
+                      <span className={styles.fieldLabel}>Description</span>
+                      <input type="text" value={l.description} onChange={(e) => setLine(l.rid, { description: e.target.value })} className={styles.fieldInput} />
                     </label>
                   </div>
                   <div className={styles.formGrid4} style={{ gridTemplateColumns: 'repeat(2, 1fr)' }}>
