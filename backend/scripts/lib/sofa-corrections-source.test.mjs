@@ -67,19 +67,46 @@ test("BOTH real files load, and the 2026-08 round is still there", () => {
      separate item) — so the entry states no model rather than a typed one, which
      is the defect docs/bugs/0693 records. `_held` is counted separately and
      printed on every run, so it cannot be mistaken for done.
-     34 -> 35, and held 1 -> 4, later on 2026-09-08: he re-read the enlarged
+     34 -> 36 on 2026-09-08: the two builds the previous round HELD, both now
+     answered by the owner in his own words. HC-SO-011601 is the full build he
+     confirmed with 「对啊」 after only the corner and the seat had been given;
+     HC-SO-011657 is the daybed he settled with 「那就放8030 daybed把」. `_held`
+     is empty as a result — an answer that has been given may not sit in the
+     held list, because the operator's log prints held builds as outstanding
+     work and would keep asking him a question he has already answered.
+     36 -> 37, and held 0 -> 3, later the same day: he re-read the enlarged
      slips of HC-SO-011733, HC-SO-012025 and HC-SO-013384 and gave six answers.
      TWO of them CONFIRM entries this file already held and add no build; ONE is
-     a new entry (HC-SO-012025's second sofa); and THREE are HELD. The held
-     count is asserted beside the build count because a held build that quietly
-     became a written one would otherwise move neither number - and prod dry-run
-     34243747163 is why one of the three is held: the applier refused
-     HC-SO-011733's sales-order half and planned its PURCHASE half anyway, which
-     is the half-write docs/bugs/0719 exists to forbid. */
-  assert.equal(bySource.get("sofa-compartment-corrections-2026-09.json"), 35);
+     a new entry (HC-SO-012025's second sofa); and THREE are HELD for reasons
+     that are NOT "we have no answer" - two documents cannot yet be addressed at
+     the grain his answer needs, and one asks him a question only he can close.
+     The held count is asserted beside the build count because a held build that
+     quietly became a written one would otherwise move neither number. */
+  assert.equal(bySource.get("sofa-compartment-corrections-2026-09.json"), 37);
   const heldBySource = new Map();
   for (const h of both.held) heldBySource.set(h.source, (heldBySource.get(h.source) ?? 0) + 1);
-  assert.equal(heldBySource.get("sofa-compartment-corrections-2026-09.json"), 4);
+  assert.equal(heldBySource.get("sofa-compartment-corrections-2026-09.json"), 3);
+});
+
+/* ── AN ANSWERED BUILD MAY NOT SIT IN `_held` ───────────────────────────────
+ * `_held` is printed on every run as work still owed, and makeSofaRulingLookup
+ * EXCLUDES it, so a build parked there keeps reporting "cannot be compared"
+ * however complete its answer is. That is the report handing the owner back
+ * work he has already done (docs/bugs/0720). These two were held for a real
+ * reason and the reason is now gone; pinning them out of the list is what stops
+ * a later edit quietly parking an answered build again. */
+test("the two builds the owner answered on 2026-09-08 are entries, not held", () => {
+  const { builds, held } = loadCorrections(DATA, "2026-09");
+  for (const doc of ["HC-SO-011601", "HC-SO-011657"]) {
+    assert.ok(
+      builds.some((b) => (b.docs || []).includes(doc)),
+      `${doc}: the owner answered this one — it belongs in entries`,
+    );
+    assert.ok(
+      !held.some((h) => (h.docs || []).includes(doc)),
+      `${doc}: still in _held, so every run keeps printing an answered build as outstanding`,
+    );
+  }
 });
 
 /* ── THE TWO SOURCES MAY NOT BE CONFUSED FOR EACH OTHER ─────────────────────
