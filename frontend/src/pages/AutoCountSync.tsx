@@ -73,7 +73,7 @@
 // verbatim: it comes from the module that produced the outcome, so a new
 // outcome can never reach the owner as a bare hyphenated key.
 // ---------------------------------------------------------------------------
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { AlertTriangle, ChevronDown, ChevronRight, ChevronUp, RefreshCw } from "lucide-react";
 
@@ -168,6 +168,19 @@ import {
   type AcRegisterItem,
   type AcSort,
 } from "../lib/autocountRegister";
+import {
+  acHostLogFindings,
+  useAcHostLog,
+  AC_HOST_LOG_BLURB,
+  AC_HOST_LOG_BUSY,
+  AC_HOST_LOG_LINES,
+  AC_HOST_LOG_MISSING,
+  AC_HOST_LOG_NOTHING_LIFTED,
+  AC_HOST_LOG_OPEN,
+  AC_HOST_LOG_TITLE,
+  AC_HOST_LOG_UNREACHABLE,
+  type AcHostLogTone,
+} from "../lib/autocountHostLog";
 
 const TONE_BANNER: Record<AcTone, string> = {
   good: "border-synced/40 bg-synced/5 text-synced",
@@ -732,6 +745,108 @@ function RegisterHead({ sort, onSort }: { sort: AcSort; onSort: () => void }) {
   );
 }
 
+const HOST_LOG_TONE: Record<AcHostLogTone, string> = {
+  answer: "border-err/40 bg-err/5 text-err",
+  bad: "border-amber-500/40 bg-amber-500/5 text-warning-text",
+  note: "border-border bg-canvas text-ink-muted",
+};
+
+/**
+ * THE OFFICE MACHINE'S OWN LOG, on the page that shows the refusals.
+ *
+ * WHY IT IS HERE AT ALL. `Invalid transfer item.` names nothing — not the line,
+ * not the document, not the reason — and ten delivery orders spent six attempts
+ * each carrying those eleven words. The AutoCount service had already asked the
+ * vendor's own validator which lines it would accept, on every one of those
+ * attempts, and written the answer to a text file on the shop-floor PC. Reading
+ * it meant a remote-desktop session, so nobody did.
+ *
+ * CLOSED BY DEFAULT AND FETCHED ON DEMAND. This is a round trip through the
+ * tunnel to a desktop PC in the office; a panel that loaded with the page would
+ * put that machine on the critical path of a screen everybody opens.
+ */
+function HostLogPanel() {
+  const [open, setOpen] = useState(false);
+  const [onlyErrors, setOnlyErrors] = useState(true);
+  const q = useAcHostLog(AC_HOST_LOG_LINES, onlyErrors, open);
+  const lines = q.data?.lines ?? [];
+  const findings = useMemo(() => acHostLogFindings(lines), [lines]);
+
+  return (
+    <div className="rounded-lg border border-border bg-surface">
+      <button
+        type="button"
+        className="flex w-full items-start gap-2 px-3 py-2.5 text-left"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+      >
+        {open ? <ChevronDown size={14} className="mt-0.5 shrink-0 text-ink-muted" />
+              : <ChevronRight size={14} className="mt-0.5 shrink-0 text-ink-muted" />}
+        <span className="min-w-0">
+          <span className="block text-[13px] font-semibold text-ink">{AC_HOST_LOG_TITLE}</span>
+          <span className="mt-0.5 block text-[12px] text-ink-muted">{AC_HOST_LOG_BLURB}</span>
+        </span>
+      </button>
+
+      {open && (
+        <div className="space-y-2 border-t border-border px-3 py-2.5">
+          <div className="flex flex-wrap items-center gap-3">
+            <Button
+              variant="secondary"
+              icon={<RefreshCw size={14} className={q.fetching ? "animate-spin" : undefined} />}
+              onClick={() => q.reload()}
+            >
+              {q.fetching ? AC_HOST_LOG_BUSY : AC_HOST_LOG_OPEN}
+            </Button>
+            <label className="flex items-center gap-1.5 text-[12px] text-ink-muted">
+              <input
+                type="checkbox"
+                checked={onlyErrors}
+                onChange={(e) => setOnlyErrors(e.target.checked)}
+              />
+              Only the lines the host marked as errors
+            </label>
+          </div>
+
+          {/* A failure that reaches nobody is worse than a crash — and a log
+              panel that fails silently is exactly the shape this page exists to
+              stop. The tunnel being down is itself the finding: it is the same
+              tunnel every document goes through. */}
+          {q.error && (
+            <div className="rounded-md border border-err/40 bg-err/5 p-2.5 text-[12px] text-err">
+              <p className="font-semibold">{AC_HOST_LOG_UNREACHABLE}</p>
+              <p className="mt-1 whitespace-pre-wrap break-words font-mono text-[11px]">{q.error}</p>
+            </div>
+          )}
+
+          {q.data?.exists === false && (
+            <p className="text-[12px] text-ink-muted">{AC_HOST_LOG_MISSING}</p>
+          )}
+
+          {/* THE LIFTED LINES FIRST, because the tail underneath is a wall of
+              text and the two that answer the question are somewhere inside it. */}
+          {findings.map((f, i) => (
+            <div key={i} className={cn("rounded-md border p-2.5 text-[12px]", HOST_LOG_TONE[f.tone])}>
+              <p className="font-semibold">{f.meaning}</p>
+              <p className="mt-1 whitespace-pre-wrap break-words font-mono text-[11px] opacity-90">{f.line}</p>
+            </div>
+          ))}
+
+          {q.data && !q.fetching && findings.length === 0 && (
+            <p className="text-[12px] text-ink-muted">{AC_HOST_LOG_NOTHING_LIFTED}</p>
+          )}
+
+          {lines.length > 0 && (
+            <pre className="max-h-80 overflow-auto rounded-md border border-border bg-canvas p-2.5 font-mono text-[11px] leading-snug text-ink-muted">
+              {lines.join("\n")}
+            </pre>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function AutoCountSync() {
   const [params, setParams] = useSearchParams();
 
@@ -867,6 +982,9 @@ export function AutoCountSync() {
       <div className={cn("rounded-lg border p-3 text-[13px] font-semibold", TONE_BANNER[headline.tone])}>
         {headline.text}
       </div>
+
+      {/* AND WHEN THE ANSWER NAMES NOTHING, where the reason actually is. */}
+      <HostLogPanel />
 
       {/* A failure that reaches nobody is worse than a crash — this page exists
           because a state went unseen, so its own load error is stated, not
