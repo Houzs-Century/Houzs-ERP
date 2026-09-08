@@ -974,13 +974,16 @@ if (SKIP_ERP) {
     const stamped = new Set(stampCols.map((r) => r.table_name));
     out(`    tables carrying linked_ac_docno: ${[...stamped].sort().join(", ")}`);
     out("");
-    out("    WHAT CANNOT BE ASKED, and why - the GOODS RECEIPT has no AutoCount number of its own.");
-    out("    scm.grns.linked_ac_docno holds its PURCHASE ORDER's number (the cutover convention,");
-    out("    autocount-outbox.ts:1069-1099). A PO received in several deliveries has several AC");
-    out("    receipt numbers on purchase_orders.linked_ac_grn_docnos and nothing says which GRN is");
-    out("    which, so the system itself refuses to pick one. GR<-PO and PI<-GR therefore have no");
-    out("    document-grain identity on the child side, and no amount of wanting changes that. The");
-    out("    strongest question that IS answerable for GR<-PO is asked below instead.");
+    out("    WHAT AN ERP GOODS RECEIPT DOES NOT CARRY, and what is asked instead.");
+    out("    scm.grns.linked_ac_docno holds its PURCHASE ORDER's number, not the receipt's (the");
+    out("    cutover convention, autocount-outbox.ts:1069-1099). So no ERP ROW can be matched to a");
+    out("    particular AutoCount receipt, and 'which ERP GRN is AutoCount's GR-005322' has no");
+    out("    answer. The EDGE is a different question and it does have one: mig 0275 stamps");
+    out("    purchase_orders.linked_ac_grn_docnos with the AutoCount receipts that brought that");
+    out("    order in, so a PO row carrying linked_ac_docno = P and linked_ac_grn_docnos = {G1,G2}");
+    out("    IS the ERP asserting G1 <- P and G2 <- P in AutoCount's own numbering. Both GR<-PO and");
+    out("    PI<-GR are measured below on that stamp. This block used to say the edge could not be");
+    out("    asked at all - it was reading that same column eleven lines above as a document COUNT.");
 
     /* The ERP's edge set, resolved to AutoCount document numbers on both ends.
        DISTINCT because the ERP holds one link per LINE and the book pair is a
@@ -1040,6 +1043,19 @@ if (SKIP_ERP) {
     out("");
     out(`    ERP imported: SO ${imported.SO.size} | PO ${imported.PO.size} | DO ${imported.DO.size} | IV ${imported.IV.size} documents`);
 
+    /* WHEN a missing edge is dated decides what it IS, and nothing else in this
+       section can tell you. A missing edge whose date sits entirely AFTER the
+       newest edge the ERP holds is a BACKLOG - the import lane has not run since
+       then - and it closes itself on the next resync. One interleaved with edges
+       the ERP does hold is a DEFECT: the lane ran over that period and skipped
+       it. Printing the two spans side by side is the whole difference between
+       "24 receipts to import" and "24 receipts silently lost", which the count
+       alone cannot distinguish and which decides whether anyone must act. */
+    const spanOf = (t, docNos) => {
+      const ds = docNos.map((d) => book[t].headers.get(d)?.docDate ?? "").filter(Boolean).sort();
+      return ds.length ? `${ds[0]} .. ${ds[ds.length - 1]} (${ds.length})` : "none";
+    };
+
     const presenceRows = [];
     for (const [edgeId, q] of Object.entries(erpEdgeQ)) {
       const edge = EDGES.find((e) => e.id === edgeId);
@@ -1052,13 +1068,13 @@ if (SKIP_ERP) {
          taken on trust. */
       let inScope = 0; let held = 0; let missing = 0;
       let outOfScope = 0; let cancelledSkipped = 0;
-      const missingEx = [];
+      const missingEx = []; const heldDocs = []; const missDocs = [];
       for (const [k, v] of bookPairs) {
         if (v.cancelled) { cancelledSkipped++; continue; }
         if (!imported[edge.child]?.has(v.child) || !imported[edge.parent]?.has(v.parent)) { outOfScope++; continue; }
         inScope++;
-        if (erpPairs.has(k)) held++;
-        else { missing++; if (missingEx.length < SHOW) missingEx.push(k); }
+        if (erpPairs.has(k)) { held++; heldDocs.push(v.child); }
+        else { missing++; missDocs.push(v.child); if (missingEx.length < SHOW) missingEx.push(k); }
       }
       /* BACKWARD. Every ERP edge is by construction between two MIGRATED
          documents (the query demands a stamp on both ends), so the denominator
@@ -1076,6 +1092,7 @@ if (SKIP_ERP) {
         + `${outOfScope} name a document the ERP did not import (out of cutover scope)`);
       out(`        FORWARD  book -> ERP : ${held} of ${inScope} held by the ERP | ${missing} MISSING`);
       out(`        BACKWARD ERP -> book : ${recorded} of ${erpPairs.size} recorded in the book | ${inventedTotal} NOT IN THE BOOK`);
+      if (missing) out(`        WHEN: held ${spanOf(edge.child, heldDocs)} | MISSING ${spanOf(edge.child, missDocs)}`);
       for (const m of missingEx) out(`          missing: ${m.replace("|", " <- ")}`);
       for (const m of invented) out(`          not in the book: ${m.replace("|", " <- ")}`);
       presenceRows.push({ edgeId, inScope, held, missing, erp: erpPairs.size, recorded, invented: inventedTotal });
@@ -1116,13 +1133,13 @@ if (SKIP_ERP) {
       }
       const bookPairs = bookDocEdges(book, EDGES.find((e) => e.id === "GR <- PO"));
       let inScope = 0; let held = 0; let missing = 0; let outOfScope = 0; let cancelledSkipped = 0;
-      const missingEx = [];
+      const missingEx = []; const heldDocs = []; const missDocs = [];
       for (const [k, v] of bookPairs) {
         if (v.cancelled) { cancelledSkipped++; continue; }
         if (!imported.PO.has(v.parent)) { outOfScope++; continue; }
         inScope++;
-        if (erpPairs.has(k)) held++;
-        else { missing++; if (missingEx.length < SHOW) missingEx.push(k); }
+        if (erpPairs.has(k)) { held++; heldDocs.push(v.child); }
+        else { missing++; missDocs.push(v.child); if (missingEx.length < SHOW) missingEx.push(k); }
       }
       let recorded = 0; const invented = [];
       for (const k of erpPairs) {
@@ -1133,6 +1150,7 @@ if (SKIP_ERP) {
         + `${outOfScope} name a purchase order the ERP did not import (out of cutover scope)`);
       out(`        FORWARD  book -> ERP : ${held} of ${inScope} held by the ERP | ${missing} MISSING`);
       out(`        BACKWARD ERP -> book : ${recorded} of ${erpPairs.size} recorded in the book | ${erpPairs.size - recorded} NOT IN THE BOOK`);
+      if (missing) out(`        WHEN: held ${spanOf("GR", heldDocs)} | MISSING ${spanOf("GR", missDocs)}`);
       for (const m of missingEx) out(`          missing: ${m.replace("|", " <- ")}`);
       for (const m of invented) out(`          not in the book: ${m.replace("|", " <- ")}`);
       presenceRows.push({ edgeId: "GR <- PO", inScope, held, missing, erp: erpPairs.size, recorded, invented: erpPairs.size - recorded });
@@ -1188,13 +1206,13 @@ if (SKIP_ERP) {
         }
       }
       let inScope = 0; let held = 0; let missing = 0; let outOfScope = 0; let cancelledSkipped = 0;
-      const missingEx = [];
+      const missingEx = []; const heldDocs = []; const missDocs = [];
       for (const [k, v] of bookPairs) {
         if (v.cancelled) { cancelledSkipped++; continue; }
         if (!imported.PO.has(v.parent)) { outOfScope++; continue; }
         inScope++;
-        if (erpPairs.has(k)) held++;
-        else { missing++; if (missingEx.length < SHOW) missingEx.push(k); }
+        if (erpPairs.has(k)) { held++; heldDocs.push(v.child); }
+        else { missing++; missDocs.push(v.child); if (missingEx.length < SHOW) missingEx.push(k); }
       }
       let recorded = 0; const invented = [];
       for (const k of erpPairs) {
@@ -1207,6 +1225,7 @@ if (SKIP_ERP) {
       out(`        ${cancelledSkipped} sit on a cancelled document, ${outOfScope} name a purchase order the ERP did not import`);
       out(`        FORWARD  book -> ERP : ${held} of ${inScope} held by the ERP | ${missing} MISSING`);
       out(`        BACKWARD ERP -> book : ${recorded} of ${erpPairs.size} recorded in the book | ${erpPairs.size - recorded} NOT IN THE BOOK`);
+      if (missing) out(`        WHEN: held ${spanOf("PI", heldDocs)} | MISSING ${spanOf("PI", missDocs)}`);
       for (const m of missingEx) out(`          missing: ${m.replace("|", " <- ")}`);
       for (const m of invented) out(`          not in the book: ${m.replace("|", " <- ")}`);
       presenceRows.push({ edgeId: "PI <- GR (composed)", inScope, held, missing, erp: erpPairs.size, recorded, invented: erpPairs.size - recorded });
@@ -1315,7 +1334,7 @@ if (SKIP_ERP) {
       PO: { line: "purchase_order_items", head: "purchase_orders", fk: "purchase_order_id", pk: "id" },
     })) {
       const dups = await pg.unsafe(`
-        SELECT c.linked_ac_dtlkey::text AS k, count(*)::int AS n
+        SELECT c.linked_ac_dtlkey::text AS k, count(*)::int AS n, sum(c.qty)::numeric AS erp_qty
           FROM scm.${spec.line} c
           JOIN scm.${spec.head} h ON h.${spec.pk} = c.${spec.fk} AND h.company_id = ${CO}
          WHERE c.linked_ac_dtlkey IS NOT NULL
@@ -1324,9 +1343,18 @@ if (SKIP_ERP) {
       for (const d of dups) {
         const bookLine = book[t].byKey.get(d.k);
         if (!bookLine) { unresolved++; continue; }
-        if (SOFA_RE.test(bookLine.itemKey || "")) sofa++;
-        else if (notSofa.length < SHOW) notSofa.push(`${bookLine.docNo} key ${d.k} ${bookLine.itemKey} (${d.n} ERP rows)`);
-        else notSofa.push("");
+        if (SOFA_RE.test(bookLine.itemKey || "")) { sofa++; continue; }
+        /* A non-sofa key claimed by several rows is either a legitimate SPLIT of
+           one book line into several ERP rows - in which case the quantities
+           still add up to the book's - or a DUPLICATE import, in which case the
+           ERP total exceeds it. The quantity is what separates them, and without
+           it "2 are NOT a sofa" is a curiosity rather than a finding. */
+        const bookQty = bookLine.qty / 10000;
+        const erpQty = Number(d.erp_qty);
+        const verdict = erpQty === bookQty
+          ? "quantities AGREE - one book line split across ERP rows, no stock invented"
+          : `quantities DIFFER - ERP ${erpQty} vs book ${bookQty}`;
+        notSofa.push(`${bookLine.docNo} key ${d.k} ${bookLine.itemKey} (${d.n} ERP rows): ${verdict}`);
       }
       out(`        ${t}: ${dups.length} DtlKey(s) carried by more than one ERP row`);
       out(`           ${sofa} resolve to a book line whose item code is a SOFA - the expected decomposition`);
