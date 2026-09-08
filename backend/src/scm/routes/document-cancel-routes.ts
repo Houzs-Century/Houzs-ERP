@@ -3,7 +3,11 @@
    cancelling a Sales Order or a Purchase Order, and the guard that makes the
    two existing cancel endpoints wait for it.
 
-   THE OWNER, 2026-09-08: 「SO 和 PO 取消的话需要 approval 2 层 — 已经输入原因」.
+   THE OWNER, 2026-09-08: 「SO 和 PO 取消的话需要 approval 2 层 — 已经输入原因」,
+   and later that day 「只有 SO 需要 sales director approval, PO 不需要 … PO 只要
+   Purchaser 一个审批」 — so a Sales Order takes two signatures and a Purchase
+   Order one (shared/document-cancel.ts APPROVAL_LEVELS). Nothing here counts
+   to two: every handler asks the table.
 
    WHAT IT MOUNTS (routes/../index.ts):
 
@@ -69,13 +73,15 @@ import { recordEntityAudit } from '../lib/entity-audit';
 import { notifyCancelRequest } from '../../services/cancelRequestNotify';
 import { hasPermission } from '../../services/permissions';
 import {
-  CANCEL_APPROVE_KEY,
   OPEN_CANCEL_STATUSES,
   approvalRefusal,
+  approveKeysFor,
   cancelNeedsApproval,
   cancelRequestRefusal,
   executionRefusal,
+  isFinalLevel,
   isOpenCancelStatus,
+  levelsFor,
   readReason,
   rejectRefusal,
   statusAfterApproval,
@@ -298,7 +304,8 @@ export function approveCancelHandler(docType: CancelDocType) {
     const { level } = verdict;
     const actor = actorOf(c);
     const at = nowIso();
-    const patch: Record<string, unknown> = { status: statusAfterApproval(level), updated_at: at };
+    const final = isFinalLevel(docType, level);
+    const patch: Record<string, unknown> = { status: statusAfterApproval(docType, level), updated_at: at };
     patch[`l${level}_by`] = actor.id;
     patch[`l${level}_by_name`] = actor.name;
     patch[`l${level}_at`] = at;
@@ -315,13 +322,13 @@ export function approveCancelHandler(docType: CancelDocType) {
     if (error) return c.json({ error: 'approve_failed', reason: error.message }, 500);
     if (!updated) return c.json({ error: 'stale', message: 'This request changed while you were looking at it — reload and try again.' }, 409);
 
-    await audit(c, docType, doc, 'APPROVE', `level ${level} of 2 approved`);
-    await notifyCancelRequest(c.env, level === 1 ? 'level1' : 'approved', {
+    await audit(c, docType, doc, 'APPROVE', `level ${level} of ${levelsFor(docType)} approved`);
+    await notifyCancelRequest(c.env, final ? 'approved' : 'level1', {
       docType, docNumber: doc.number, reason: String(open.reason ?? ''), companyId,
       requesterUserId: Number(open.requested_by) || null, requesterName: (open.requested_by_name as string | null) ?? null,
       actorUserId: actor.id, actorName: actor.name,
     });
-    return c.json({ request: updated, execute: level === 2 });
+    return c.json({ request: updated, execute: final });
   };
 }
 
@@ -462,12 +469,12 @@ const APPROVER_VERB = /\/cancel-request\/(approve|reject|withdraw)$/;
  * area's `edit`.
  */
 export function cancelApproverWriteBypass(docType: CancelDocType) {
-  const keys = CANCEL_APPROVE_KEY[docType];
+  const keys = approveKeysFor(docType);
   return (c: { req: { method: string; path: string }; get: (k: 'user') => unknown }): boolean => {
     if (c.req.method.toUpperCase() !== 'POST' || !APPROVER_VERB.test(c.req.path)) return false;
     const u = c.get('user') as { permissions_set?: Set<string>; permissions?: string[] } | undefined;
     const granted = u?.permissions_set ?? u?.permissions ?? [];
-    return hasPermission(granted, keys[1]) || hasPermission(granted, keys[2]);
+    return keys.some((k) => hasPermission(granted, k));
   };
 }
 
@@ -508,7 +515,7 @@ export function cancelApprovalGuard(docType: CancelDocType): MiddlewareHandler<{
     if (!cancelNeedsApproval(docType, (doc as { status?: string }).status)) return next();
 
     const open = await loadOpenRequest(sb, docType, key, co.companyId);
-    const refusal = executionRefusal(open);
+    const refusal = executionRefusal(docType, open);
     if (refusal) return c.json(refusal, 403);
 
     await next();

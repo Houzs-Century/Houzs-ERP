@@ -221,6 +221,40 @@ own `ALTER`, so it exists in production but appeared in no migration
 (cutover ledger §1 "坑二"). `IF NOT EXISTS` makes 0277 a no-op against the live
 database and makes the column real everywhere else.
 
+#### The column means TWO populations, and the reconcile now separates them
+
+`linked_ac_docno IS NOT NULL` does not mean "the cutover carried this". It means
+"this document exists in AutoCount", which is two populations with opposite
+consequences (`docs/bugs/0703-*`):
+
+| how the number got there | the pair looks like | what it is |
+| --- | --- | --- |
+| the 2026-08-28 cutover import | `HC-` + the book's number | carried over — compare it against the book |
+| this write-back, on success | the ERP's OWN number, so the two strings are EQUAL | the ERP made it and sent it |
+
+The rule that tells them apart is `src/scm/lib/so-is-migrated.ts` — one file, and
+callers IMPORT it. `backend/scripts/lib/ac-erp-native.mjs` is the reconcile's
+caller; it does not restate the rule.
+
+**Why the reconcile cares.** `check-ac-erp-reconcile.mjs` compares the ERP
+against a SNAPSHOT of the book. A document this write-back stamped minutes ago
+cannot be in a snapshot cut this morning, so it used to be reported as *"ERP
+claims a document the book does not have"* — the headline count ROSE every time
+staff raised a document. On 2026-09-08 that was `HC-SO-2609-001`,
+`HC-DO-2609-003` and `HC-DO-2609-011`, 3 of 17. The owner's definition settles
+what the number is for: **「差异 0」= 搬进来的资料全部对上账本**.
+
+Those documents now go in a `native` column of the summary table, named
+individually with the minute they were created, and the run prints the
+arithmetic — *"would have reported 17 under the old population; 3 ... so the
+count is 14"* — so the narrowing cannot be taken on trust. Being ERP-native by
+number shape is not sufficient on its own: `created_at` must be at or after the
+snapshot's `exported_at`. A document this write-back stamped BEFORE the cut whose
+number the snapshot does not state stays a phantom, because that is the write-back
+claiming something the book then did not confirm. Measured on run `34219567205`:
+that bucket is empty, and 0 ERP-native documents of any type were found inside
+the book.
+
 ---
 
 ## 4. The toggle

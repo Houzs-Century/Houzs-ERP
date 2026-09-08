@@ -108,4 +108,37 @@ lanes are working in today (`fix/gr-iv-pi-remainder`), so it is deliberately NOT
 done here — a change that moves another lane's numbers under it is not a
 courtesy.
 
+**MEASURED on production, before and after, with nothing else written between
+the two runs.** Reconcile [`34210768489`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34210768489)
+(17:34 +08, pre-guard) then [`34217483131`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34217483131)
+(18:49, post-guard):
+
+| DO axis, PROCEEDED | differ before | differ after | no-key after |
+|---|---|---|---|
+| colour / fabric | 4 | **0** | 4 |
+| gap | 2 | **0** | 2 |
+| T.Heights | 3 | **1** | 2 |
+
+The run states its own effect — `DO — 8 axis value(s) across 3 bucket(s) moved
+out of DIFFER into no-key` — and `differ + no-key` is preserved on every axis,
+so nothing was invented or destroyed. The T.Heights survivor is the CONTROL that
+the guard is not a blanket: `DO-000608 DtlKey 84752`, book `12"` against ERP
+`22"`, is the only row of its item on its document, so no pairing could have
+transposed it and it stays a difference.
+
+**The wider control.** `no-key` across ALL SIX document types totals **8** — the
+same 8 — so not one value on a sales order, purchase order, goods receipt, sales
+invoice or purchase invoice was reclassified. Every other DO axis reads exactly
+as it did: divan `143/0/1/0`, leg `143/0/1/0`, seat `25/1/3/0`, compartments
+`19/0/0/2` with `unread 8`, specials `167/1/2/2` with `recorded 1`.
+
+**What moved that this did NOT move, said plainly.** Between those two runs the
+document-axis total went `21 -> 17` disagreements and the sales-order verdict
+`2730 -> 2736` open, and the sofa-compartment DIFFER on the ORDERS went `14 ->
+8`. None of that is this change: other lanes were writing to the same corpus in
+the same 75 minutes (#3240 stamped sofa line keys, #3243 and #3251 landed), and
+this guard cannot touch a document axis at all and excludes compartments from
+`FOLDABLE_AXES` by construction. Attributing them here would be the kind of
+tidy story this ledger exists to stop.
+
 **Ref.** fix/do-colour-guard, 2026-09-08. (Filed as `0711`, renumbered to `0712` at merge time — two other lanes took `0711` the same hour.)

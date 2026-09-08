@@ -11,7 +11,7 @@ const fetchMock = vi.fn(async (_path: string, _init?: RequestInit) => ({}) as un
 vi.mock('./authed-fetch', () => ({ authedFetch: (p: string, i?: RequestInit) => fetchMock(p, i) }));
 
 const {
-  CANCEL_APPROVE_KEY, cancelRequestLine, pendingLevel, signaturesGiven, isOpenCancelStatus,
+  CANCEL_APPROVE_KEY, approveLabel, cancelRequestLine, isFinalLevel, pendingLevel, signaturesGiven, isOpenCancelStatus,
   viewerCanApprove, viewerCanReject, viewerCanWithdraw,
   useCancelRequest, useCancelRequests, useRaiseCancelRequest, useApproveCancelRequest,
   useRejectCancelRequest, useWithdrawCancelRequest,
@@ -33,28 +33,40 @@ describe('display rules', () => {
     expect(pendingLevel('REQUESTED')).toBe(1);
     expect(pendingLevel('L1_APPROVED')).toBe(2);
     expect(pendingLevel('APPROVED')).toBeNull();
-    expect(signaturesGiven('L1_APPROVED')).toBe(1);
-    expect(signaturesGiven('EXECUTED')).toBe(2);
+    expect(signaturesGiven('so', 'L1_APPROVED')).toBe(1);
+    expect(signaturesGiven('so', 'EXECUTED')).toBe(2);
+    expect(signaturesGiven('po', 'APPROVED')).toBe(1);
     expect(cancelRequestLine(row())).toBe('Waiting for level-1 approval (0 of 2)');
     expect(cancelRequestLine(row({ status: 'L1_APPROVED' }))).toBe('Waiting for level-2 approval (1 of 2)');
     expect(cancelRequestLine(row({ status: 'APPROVED' }))).toContain('2 of 2');
+    /* A Purchase Order takes one signature. */
+    expect(cancelRequestLine(row({ doc_type: 'PO' }))).toBe('Waiting for approval (0 of 1)');
+    expect(cancelRequestLine(row({ doc_type: 'PO', status: 'APPROVED' }))).toContain('1 of 1');
+    expect(approveLabel('so', 1)).toBe('Approve (level 1)');
+    expect(approveLabel('so', 2)).toBe('Approve & cancel (level 2)');
+    expect(approveLabel('po', 1)).toBe('Approve & cancel');
+    expect(isFinalLevel('po', 1)).toBe(true);
+    expect(isFinalLevel('so', 1)).toBe(false);
     expect(cancelRequestLine(row({ status: 'EXECUTED' }))).toBe('Cancelled');
     expect(isOpenCancelStatus('WITHDRAWN')).toBe(false);
   });
 
   it('shows Approve only to the right desk, never to the requester or the same signer twice', () => {
-    expect(viewerCanApprove(row(), viewer(21, [CANCEL_APPROVE_KEY.so[1]]))).toBe(true);
-    expect(viewerCanApprove(row(), viewer(21, [CANCEL_APPROVE_KEY.so[2]]))).toBe(false);
+    expect(viewerCanApprove(row(), viewer(21, ['scm.so_cancel.approve_l1']))).toBe(true);
+    expect(viewerCanApprove(row(), viewer(21, ['scm.so_cancel.approve_l2']))).toBe(false);
     expect(viewerCanApprove(row(), viewer(11, ['*']))).toBe(false);
     const l1Done = row({ status: 'L1_APPROVED', l1_by: 21 });
     expect(viewerCanApprove(l1Done, viewer(21, ['*']))).toBe(false);
     expect(viewerCanApprove(l1Done, viewer(31, ['*']))).toBe(true);
-    expect(viewerCanApprove(row({ doc_type: 'PO' }), viewer(21, [CANCEL_APPROVE_KEY.so[1]]))).toBe(false);
+    expect(viewerCanApprove(row({ doc_type: 'PO' }), viewer(21, ['scm.so_cancel.approve_l1']))).toBe(false);
+    expect(viewerCanApprove(row({ doc_type: 'PO' }), viewer(21, ['scm.po_cancel.approve']))).toBe(true);
+    expect(CANCEL_APPROVE_KEY.po[2]).toBeUndefined();
     expect(viewerCanApprove(row({ status: 'APPROVED' }), viewer(31, ['*']))).toBe(false);
   });
 
   it('Reject for either desk while pending; Withdraw for the requester or a desk while open', () => {
-    expect(viewerCanReject(row(), viewer(31, [CANCEL_APPROVE_KEY.so[2]]))).toBe(true);
+    expect(viewerCanReject(row(), viewer(31, ['scm.so_cancel.approve_l2']))).toBe(true);
+    expect(viewerCanReject(row({ doc_type: 'PO' }), viewer(31, ['scm.po_cancel.approve']))).toBe(true);
     expect(viewerCanReject(row(), viewer(51, []))).toBe(false);
     expect(viewerCanReject(row({ status: 'APPROVED' }), viewer(31, ['*']))).toBe(false);
     expect(viewerCanWithdraw(row(), viewer(11, []))).toBe(true);
