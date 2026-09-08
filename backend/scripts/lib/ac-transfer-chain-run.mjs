@@ -63,8 +63,20 @@ import {
   fromVerdictFor, namesSource, runSelfTest,
   TO_VERDICTS, toVerdictFor, runToSelfTest,
 } from "./transfer-chain-verdict.mjs";
+import { CHAIN_LINE_NOT_STAMPED, CHAIN_PARENT_UNSTAMPED, CHAIN_UNSPECIFIED } from "./unanswerable-causes.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+
+/* Which CAUSE each unanswerable FROM verdict is. A MAP and not a ternary on
+   purpose: `IS_UNANSWERABLE` has three members today and a fourth added later
+   would silently inherit whichever arm a ternary put last, which is the
+   "one label, several populations" defect this table exists to prevent. An
+   unmapped verdict falls to the unspecified bucket, which the report prints
+   WHOLE rather than folding into either real cause. */
+const CHAIN_CAUSE_OF = Object.freeze({
+  line_not_stamped: CHAIN_LINE_NOT_STAMPED,
+  erp_parent_unstamped: CHAIN_PARENT_UNSTAMPED,
+});
 const SNAP = path.join(here, "..", "data", "ac-convert-edges.json.gz");
 
 /** The axis names this lane records. Declared in lib/so-verdict-derive.mjs. */
@@ -466,6 +478,23 @@ export async function recordTransferChain({ sql, CO, PDATE, types, recorder, max
           recorder.note(e.t, ac, erpNo, NOTE_LINE_NOT_IN_BOOK, AXIS_FROM, detail, proceeded);
         } else {
           recorder.record(e.t, ac, erpNo, AXIS_UNVERIFIABLE, `${v}: ${detail}`, proceeded);
+          /* WHOSE THIS REFUSAL IS, recorded beside it — the same shape
+             lib/variant-report.mjs uses for an unreadable sofa, and for the
+             same reason. `transfer chain not verifiable` is TWO populations
+             owed opposite things: `line_not_stamped` is a key we never stamped
+             and closes with a backfill nobody has to rule on, while
+             `erp_parent_unstamped` is an ERP-native parent the book has nothing
+             to compare against — unanswerable by anyone, the owner included.
+             One number covering both is how HC-PO-009828 reached the CANNOT BE
+             COMPARED column on run 34257873206 named by no cause at all.
+
+             The verdict is NOT recomputed here: `v` is the value the recorder
+             above already used, so the cause and the refusal cannot disagree. */
+          recorder.note(
+            e.t, ac, erpNo, "unanswerable-cause",
+            CHAIN_CAUSE_OF[v] ?? CHAIN_UNSPECIFIED,
+            detail, proceeded,
+          );
           if (r.examples.from.length < 40) r.examples.from.push({ v, ac, erpNo, detail, proceeded });
         }
       } else {

@@ -69,9 +69,22 @@
  * lib/ac-mapping-csv.mjs for the Windows vitest reason).
  */
 import { LOCKING_AXES, UNANSWERABLE_AXES } from "./so-verdict-derive.mjs";
-import { UNREAD_LABEL, MECHANICAL } from "./sofa-unread-split.mjs";
+import {
+  ABSENT_SOURCE_CAUSES,
+  CAUSE_LABEL,
+  CAUSE_OWNER,
+  CHAIN_CAUSES,
+  CHAIN_UNSPECIFIED,
+  MECHANICAL_CAUSES,
+  UNNAMED,
+} from "./unanswerable-causes.mjs";
 
 const UNANSWERABLE = new Set(UNANSWERABLE_AXES);
+
+/* The one axis whose refusal is not about a sofa. Named here so the fallback
+   below can tell "the chain could not be answered" apart from "something we
+   have never seen", instead of folding both into one bucket. */
+const CHAIN_AXIS = "transfer chain not verifiable";
 
 export const BUCKETS = Object.freeze(["identical", "work", "unanswerable", "book-gap"]);
 
@@ -372,7 +385,21 @@ export function tallyVerdict(payload) {
   /* the raw axis name -> the same, so nothing hides inside a group label */
   const byAxis = new Map();
   const declared = new Map();
+  /* THE CAUSE CROSS-TAB IS FED BY THE COLUMN, AND BY NOTHING ELSE. It used to
+     be fed by every row, so a document already counted as WORK explained a
+     column it is not in — see lib/unanswerable-causes.mjs for the four
+     measurements that showed it. */
   const causes = new Map();
+  /* Not dropped, STATED. An unread sofa on a document that differs on another
+     axis is still a real refusal; it simply is not what the CANNOT BE COMPARED
+     column is made of. Counting it on its own line is what keeps the two
+     numbers from being confused again in either direction. */
+  let unreadOnWorkDocs = 0;
+  /* The invariant this whole change exists to make printable: how many
+     documents sit in the column carrying NO named cause. It must be 0, and
+     saying so is only worth anything because the number is measured. */
+  let uncausedUnanswerable = 0;
+  const uncausedDocs = [];
   const examples = { work: [], unanswerable: [] };
 
   for (const row of rows) {
@@ -404,9 +431,20 @@ export function tallyVerdict(payload) {
       });
     }
 
+    /* Which causes this row contributed to the column. Collected rather than
+       counted on the spot so the "no cause at all" case below is a MEASUREMENT
+       of this row and not a second walk that could disagree with the first. */
+    const rowCauses = new Set();
+
     for (const [klass, byAxisNotes] of Object.entries(row.notes || {})) {
       if (klass === "unanswerable-cause") {
+        /* THE GATE. A document with a real difference on another axis is WORK,
+           whatever its unreadable sofa turns out to be — `bucketOf` already
+           said so, and the cause table must agree with it rather than quietly
+           describe a wider population under the column's own heading. */
+        if (b !== "unanswerable") { unreadOnWorkDocs += 1; continue; }
         for (const [cause, cell] of Object.entries(byAxisNotes)) {
+          rowCauses.add(cause);
           if (!causes.has(cause)) causes.set(cause, { cause, docs: 0, findings: 0, findingsProceeded: 0 });
           const c = causes.get(cause);
           c.docs += 1;
@@ -422,6 +460,41 @@ export function tallyVerdict(payload) {
         d.findings += cell.n ?? 0;
         d.findingsProceeded += cell.proceeded ?? 0;
         d.axes.add(axis);
+      }
+    }
+
+    /* ── NOTHING IN THE COLUMN LEAVES WITHOUT A NAME ────────────────────────
+       HC-PO-009828 sat in CANNOT BE COMPARED on run 34257873206 named by no
+       cause row at all, because its only finding was the transfer chain and
+       only the sofa arm emitted causes. A table that claims to explain a column
+       and silently omits a member of it is the defect, not the omission.
+
+       The finer chain causes are emitted upstream by lib/ac-transfer-chain-run.mjs,
+       which holds the verdict; this is the FLOOR under them. When the run
+       recorded a cause, the block above already used it and `rowCauses` is not
+       empty. When it did not, the row still gets a named bucket here — the
+       chain one where the chain is the reason, and the whole-listed `unnamed`
+       one otherwise, which is `sofa-unread-split.mjs`'s `other` argument applied
+       one level up. */
+    if (b === "unanswerable") {
+      const bump = (cause, n, nProceeded) => {
+        if (!causes.has(cause)) causes.set(cause, { cause, docs: 0, findings: 0, findingsProceeded: 0 });
+        const c = causes.get(cause);
+        c.docs += 1;
+        c.findings += n;
+        c.findingsProceeded += nProceeded;
+        rowCauses.add(cause);
+      };
+      /* PER REASON, NOT PER ROW. A document refused on BOTH the sofa and the
+         chain used to be counted as named because ONE of its two refusals had
+         a cause — which is the same defect this file fixes, one level down. */
+      if (axes.includes(CHAIN_AXIS) && ![...rowCauses].some((c) => CHAIN_CAUSES.has(c))) {
+        bump(CHAIN_UNSPECIFIED, 1, proceededAxes.has(CHAIN_AXIS) ? 1 : 0);
+      }
+      if (rowCauses.size === 0) {
+        uncausedUnanswerable += 1;
+        uncausedDocs.push(`${row.doc_no} (${row.ac_doc_no ?? "?"}) — ${axes.join(", ") || "(no axis)"}`);
+        bump(UNNAMED, axes.length, axes.filter((a) => proceededAxes.has(a)).length);
       }
     }
   }
@@ -473,6 +546,20 @@ export function tallyVerdict(payload) {
       .map((d) => ({ ...d, axes: [...d.axes].sort() }))
       .sort((a, b) => b.findings - a.findings),
     unanswerableCauses: [...causes.values()].sort((a, b) => b.findings - a.findings),
+    /* ── THE THREE ARMS OF THE COLUMN, COUNTED IN DOCUMENTS ─────────────────
+       A document may carry TWO causes (keyless AND undecodable), so these do
+       not sum to the column and are not meant to. Each answers one question the
+       owner actually asks: how much of this can we close ourselves, how much
+       can nobody close, and how much is genuinely his. */
+    mechanicalDocs: [...causes.values()].filter((c) => MECHANICAL_CAUSES.has(c.cause)).reduce((s, c) => s + c.docs, 0),
+    absentSourceDocs: [...causes.values()].filter((c) => ABSENT_SOURCE_CAUSES.has(c.cause)).reduce((s, c) => s + c.docs, 0),
+    /* Documents whose unread compartment sits on a row already counted as WORK.
+       Not in the column, and said out loud so the two can never be added. */
+    unreadOnWorkDocs,
+    /* MUST be 0. It is printed either way — a zero somebody measured is the
+       only kind worth reading. */
+    uncausedUnanswerable,
+    uncausedDocs,
     /* The reconcile's own summary row, verbatim, so a reader can put this
        report and the reconcile log side by side without trusting either. */
     reconcileSummary: pop,
@@ -556,15 +643,40 @@ export function renderVerdict(v, { show = 20, type = "SO" } = {}) {
   if (v.unanswerableCauses.length) {
     p("");
     p("─── WHAT 'CANNOT BE COMPARED' MEANS, BY CAUSE — and whose it is ───");
-    for (const c of v.unanswerableCauses) {
-      p(`   ${rpad(c.docs, 5)} document(s), ${c.findings} line(s) (${c.findingsProceeded} proceeded)  ${UNREAD_LABEL[c.cause] ?? c.cause}`);
-    }
-    const mech = v.unanswerableCauses.find((c) => c.cause === MECHANICAL);
-    const mechDocs = mech ? mech.docs : 0;
     p(
-      `   => ${mechDocs} of these can be made comparable WITHOUT you (stamp the line key); the rest cannot — ` +
-        "the account book's own text does not say what the build is, so your drawing is the only source.",
+      `   every one of the ${v.buckets.unanswerable} document(s) in that column is named below. A document can ` +
+        "carry TWO causes (no line key AND an undecodable build), so the rows need not sum to it.",
     );
+    for (const c of v.unanswerableCauses) {
+      p(
+        `   ${rpad(c.docs, 5)} document(s), ${c.findings} line(s) (${c.findingsProceeded} proceeded)  ` +
+          `[${CAUSE_OWNER[c.cause] ?? "UNNAMED"}]  ${CAUSE_LABEL[c.cause] ?? c.cause}`,
+      );
+    }
+    p(
+      `   => ${v.mechanicalDocs} can be made comparable WITHOUT you (stamp the line key — a recording job, ` +
+        `no ruling from anybody); ${v.absentSourceDocs} nobody can answer, you included, because the book ` +
+        "states no source at all; the rest are your drawing.",
+    );
+    /* PRINTED WHETHER IT IS ZERO OR NOT. "every document is named" is a claim,
+       and the only thing that makes it evidence is the count that would have
+       been non-zero if it were false. */
+    p(
+      `   documents in the column carrying NO named cause: ${v.uncausedUnanswerable}` +
+        (v.uncausedUnanswerable ? "  — LISTED WHOLE, never sampled:" : "  (this is the check, not a decoration)"),
+    );
+    for (const d of v.uncausedDocs) p(`      ${d}`);
+    if (v.unreadOnWorkDocs) {
+      /* NOT IN THE COLUMN, and said so rather than left out. These are the
+         documents whose cause used to be counted into the table above while
+         they sat in DIFFER — the reason PO read "13 of these can be made
+         comparable" about a set that was not the 13 in the column. */
+      p(
+        `   separately: ${v.unreadOnWorkDocs} document(s) carry an unreadable sofa but ALSO differ on another ` +
+          "axis, so they are counted as WORK and are NOT in this column. The work is owed whatever the sofa " +
+          "turns out to be; they are named here only so the two numbers are never added together.",
+      );
+    }
   }
 
   if (v.declared.length) {
