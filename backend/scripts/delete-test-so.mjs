@@ -335,8 +335,20 @@ async function main() {
      sales-order corpus EXCLUDING this document, before and after, so the
      verification can assert that every OTHER order, line and payment is
      byte-for-byte the same set. */
+  /* The header's document total, whatever this schema calls it. `local_total_sen`
+     is FIRST because it is what production actually has — the earlier list led
+     with `total_sen`, which is not a column on scm.mfg_sales_orders at all, so
+     the money arm of the control would have resolved to null and quietly proved
+     nothing (measured from the captured header, run 34220446297).
+
+     NOT a payment column. `paid_sen`, `deposit_sen` and `balance_sen` are
+     deliberately absent from this list and from everything else here. */
   const moneyCol = await resolveCol(db, "scm.mfg_sales_orders",
-    ["total_sen", "grand_total_sen", "net_total_sen", "total_amount_sen"]);
+    ["local_total_sen", "total_revenue_sen", "total_sen", "grand_total_sen",
+      "net_total_sen", "total_amount_sen"]);
+  if (!moneyCol) {
+    console.log("NOTE    : no document-total column resolved — the CONTROL's money arm is inert on this schema.");
+  }
   const payCol = childCols["scm.mfg_sales_order_payments"];
   const control = (client) => controlSnapshot(client, DOC_NO, { moneyCol, payCol });
   const beforeCtl = await control(db);

@@ -30,6 +30,14 @@
 import { loadCorrections } from "./sofa-corrections-source.mjs";
 import { desc2Contains } from "./sofa-desc2-match.mjs";
 
+/** The last element satisfying `pred`, or undefined. Written out rather than
+ *  using Array.prototype.findLast so this module keeps running on the Node the
+ *  oldest runner in this repo pins. */
+function findLast(list, pred) {
+  for (let i = list.length - 1; i >= 0; i--) if (pred(list[i])) return list[i];
+  return undefined;
+}
+
 /**
  * Build the lookup the reconcile hands to `compareLine` as `deps.sofaRuling`.
  *
@@ -77,12 +85,28 @@ export function makeSofaRulingLookup(dataDir, onError = () => {}) {
     const keysHere = new Set(
       lines.map((l) => keyOf(l?.ac_dtlkey ?? l?.linked_ac_dtlkey)).filter(Boolean),
     );
-    const keyed = cands.filter((c) => keysOf(c.dtlKey).length > 0);
-    const byKey = keyed.find((c) => keysOf(c.dtlKey).some((k) => keysHere.has(k)));
+    /* THE NEWEST RULING IS THE RULING — the same rule the text path below
+       carries, and for the same reason. A keyed entry is no more immune to him
+       re-reading a slip than a needled one is. */
+    const byKey = findLast(cands, (c) => keysOf(c.dtlKey).some((k) => keysHere.has(k)));
     if (byKey) return { pieces: byKey.pieces, source: byKey.source };
 
     const text = lines.map((l) => l.description2 || "").find(Boolean) || "";
-    const hit = cands.find((c) => c.desc2Match && desc2Contains(text, c.desc2Match));
+    /* THE NEWEST RULING IS THE RULING. Two entries can match one build — he
+       re-reads a slip and corrects himself, and the later file carries the
+       correction. `byDoc` holds them in load order, which loadCorrections fixes
+       as 2026-08, 2026-09, book-aligned, drawings: oldest first, and the drawing
+       last because 「一律跟账本。除了sofa compartment而已啊」 makes his drawing
+       the final word on the build. So the LAST match wins, not the first.
+       This said `.find()` until 2026-09-08, and HC-SO-012929 is what it cost:
+       he ruled it on 2026-09-04 and again on 2026-09-05, removing a surplus 1S,
+       the ERP was moved to his answer, and the reader kept asserting August's
+       three-piece build. The two never matched, so a document he had personally
+       answered twice reported as "CANNOT BE COMPARED — your drawing decides
+       these" on every single run. 「这个很多我刚刚都给过你答案了啊」.
+       Measured on the 2026-09-08 data: exactly ONE document is ruled in more
+       than one file, so this changes that document and nothing else. */
+    const hit = findLast(cands, (c) => c.desc2Match && desc2Contains(text, c.desc2Match));
     /* A single ruling with no needle can only be this document's one build —
        but a KEYED entry is not that case. It named the book line it is about,
        and these lines are not it, so blessing them on the strength of the
