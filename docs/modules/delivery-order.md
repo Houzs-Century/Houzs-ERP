@@ -2064,6 +2064,22 @@ which is per-line by nature. `seedFollowerVariants` strips both.
 The rule itself, and which pages are on it, are documented in
 `docs/modules/sales-order.md`.
 
+**And a DO line may not INVENT a variant either (2026-09-08).** `SoLineCard`
+auto-fills a blank sofa Leg Height with the maintenance "Default" option — a
+sales-order convenience that was running here too, because the card is shared.
+The leg height is part of the stock bucket (`computeVariantKey` emits
+`legheight=` for a sofa), so the pre-flight in
+`backend/src/scm/lib/check-stock-availability.ts` asked
+`inventory_balances` about a bucket nothing was ever stored under and answered
+"Stock not enough at the selected warehouse" for a sofa that was standing in it.
+Pressing **Ship anyway** did not help either: the OUT then writes under the
+invented key and consumes no lot, so the goods leave and the stock stays on the
+books at cost 0 — which is what HC-DO-2609-004, HC-DO-2609-009 and
+HC-DO-2609-011 did on 2026-09-08 (5 lines, still unrepaired). This page now
+passes `seedSofaLegDefault={false}`; the prop is mandatory so no delivery-side
+form can inherit the sales-side answer by saying nothing.
+`docs/bugs/0722-a-delivery-order-invented-the-sofa-s-leg-height-so-the-stock.md`.
+
 ## `migrated_no_stock` — a DELIVERED order with no OUT behind it (mig 0276)
 
 The delivery orders carried over from AutoCount are created **DELIVERED with no
