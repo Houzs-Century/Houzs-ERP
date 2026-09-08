@@ -60,6 +60,11 @@ carries exactly one. Run 34220188752 (plan, `DOC=HC-PO-009435`, on main at
 `db9b124`, 2026-09-08 11:21Z) says so verbatim: *"downstream has moved - 1
 goods-receipt line(s) (HC-GR-005256-PO-009435)"*, PROVABLE 0. It also leaves
 `item_group` as it found it, on purpose, deferring the category to the 0514 lane.
+The collapsed `-1S` probe (run 34219111494, recorded in
+`docs/bugs/0715-twenty-sofa-item-codes-are-bound-as-sofa-but-do-not-say-so-a.md`)
+does not contradict this either: its purchase-order corpus is `item_group =
+'sofa'`, where it found 9 bare `-1S` rows and 0 never-decomposed ones. The 14
+rows here are filed `others`, so they sat outside that corpus as well.
 So on this population the two tools do not overlap: that one owns the shape with
 no receipt; this one owns the shape with a migrated, movement-free receipt, and
 writes the category because the sofa stock import and `computeVariantKey` both
