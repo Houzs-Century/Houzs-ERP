@@ -187,6 +187,50 @@ calls it checked when nothing checked it. It gets its own column, always.
 `isTallied` in `backend/scripts/lib/so-tally-verdict.mjs`. Not "few", not "only
 the declared ones are left". No summary writer gets a vote.
 
+### The `unanswerable` column is split BY CAUSE, and the split must cover the column
+
+"Cannot be compared" is not one thing, and the report says which of three it is
+per document. The registry is `backend/scripts/lib/unanswerable-causes.mjs`; it
+IMPORTS the sofa buckets from `backend/scripts/lib/sofa-unread-split.mjs` rather
+than restating them.
+
+| whose it is | what closes it |
+| --- | --- |
+| **MECHANICAL** | a line key we never stamped. A recording job — 「一律跟账本。除了sofa compartment而已啊」 reserves the owner's ruling for what the compartments ARE, not for which line they sit on |
+| **ABSENT SOURCE** | the account book states nothing to compare against and no drawing exists. Unanswerable by anyone, the owner included, and never a backlog |
+| **YOURS** | the book's own text does not decode into pieces and a drawing does. Only he can read it |
+
+Two traps this split was bought by, on run 34257873206
+(`docs/bugs/0729-*.md`):
+
+1. **The table must be fed by the COLUMN, not by every row.** A document with a
+   real difference on another axis is `work`, whatever its unreadable sofa turns
+   out to be. Counting its cause into the cannot-compare table made
+   `=> N of these can be made comparable WITHOUT you` a promise about a set the
+   owner was not being handed — GR read 6 against a column of 3, DO 7 against 5,
+   PI 5 against 2.
+2. **`sofa build not verifiable` is not the only unanswerable axis.**
+   `transfer chain not verifiable` is the other, and it is itself TWO
+   populations owed opposite things: `line_not_stamped` is MECHANICAL (a
+   backfill), `erp_parent_unstamped` is an ABSENT SOURCE (an ERP-native parent
+   the book has nothing to compare against). The causes are emitted in
+   `backend/scripts/lib/ac-transfer-chain-run.mjs` beside the refusal, from the
+   verdict it already holds, so a cause and its refusal cannot disagree.
+
+The report prints `documents in the column carrying NO named cause: N`, whether
+N is zero or not. "Every one is named" is a claim; the number that would be
+non-zero if it were false is what makes it evidence.
+
+### Why a document differs, per document — the read that was being thrown away
+
+`backend/scripts/diag-doc-differ-cause.mjs` (workflow **Why does each document
+differ, by cause (read-only)**) prints, for one document type, every document in
+the `work` and `unanswerable` buckets with the reconcile's OWN findings and the
+account book's own lines beside them. `buildVerdictRows` has always written that
+`detail` string; nothing printed it, so the next step after the tally was to read
+the axis name AS the cause and sweep the set — and a cause-mixed sweep overwrites
+the rows that were already right. It compares nothing and writes nothing.
+
 **Two things that are NOT differences, per type, and are printed with the ruling
 that made them so** — do not "repair" either into a difference:
 
