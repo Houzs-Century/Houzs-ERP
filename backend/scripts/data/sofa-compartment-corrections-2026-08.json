@@ -7,14 +7,14 @@
     "HC-PO-009550",
     "HC-SO-010882"
    ],
-   "model": "9058",
+   "model": "8030",
    "pieces": [
     "1A(LHF)",
     "CNR",
     "2A(RHF)"
    ],
    "seat": "32",
-   "why": "Desc2 1R+C+2R - the corner was eaten by the NOISE regex (#1856)",
+   "why": "Desc2 1R+C+2R - the corner was eaten by the NOISE regex (#1856). MODEL CORRECTED 2026-09-08 from 9058 to 8030: the book's own line (SO DtlKey 758395, PO DtlKey 868619) carries DSL-8030 SOFA, which autocount-erp-mapping-1561.csv maps to 8030-1S, and SOFA_MODEL_ALIAS does not fold 8030. The 9058 here was never justified - this entry's `why` argues the PIECES only - and it is Sulaiman's model (HC-SO-011660), whose entry held this one's. Owner 2026-09-08: 我们一定要对回账本.",
    "desc2Match": "BO315-23 (BEIGE)/32”/1R+C+2R"
   },
   {
@@ -37,29 +37,29 @@
     "HC-PO-009712",
     "HC-SO-012629"
    ],
-   "model": "8030",
+   "model": "5535",
    "pieces": [
     "1A(LHF)",
     "CNR",
     "2A(RHF)"
    ],
    "seat": "30",
-   "why": "Desc2 1R+C+2R",
+   "why": "Desc2 1R+C+2R. MODEL CORRECTED 2026-09-08 from 8030 to 5535: the book's own line (SO DtlKey 860757, PO DtlKey 884504) carries HOK-5535 SOFA -> 5535-1S. 5535 is deliberately ABSENT from SOFA_MODEL_ALIAS - the owner has ruled twice that it is its own model and must never be folded - so 8030 could only have come from treating it like 5537/5540, which do fold there. Owner 2026-09-08: 我们一定要对回账本.",
    "desc2Match": "1R+C+2R (30\") / COL: BO315-3 BEIGE / BOT"
   },
   {
    "docs": [
-    "HC-PO-010026",
+    "HC-PO-009017",
     "HC-SO-011660"
    ],
-   "model": "8030",
+   "model": "9058",
    "pieces": [
     "1B(LHF)",
     "CNR",
     "2A(RHF)"
    ],
    "seat": "30",
-   "why": "Desc2 1B+C+2R",
+   "why": "Desc2 1B+C+2R. MODEL CORRECTED 2026-09-08 from 8030 to 9058: the book's own line (SO DtlKey 803503) carries AMN-SF9058 SOFA -> 9058-1S, and 9058 does not fold. The 8030 here is Tee's model (HC-SO-010882), whose entry held this one's - the two were written into each other's rows. DOCUMENT CORRECTED in the same pass: the book raises this sofa's purchase order as PO-009017 (PODTL 829659, FromSODtlKey 803503). PO-010026 was an SO-linked-import number, and in the book it is a bedframe (NB-KHA01(K)) on someone else's order, so this entry has never reached a purchase order by number since the migrated POs were renumbered to follow AutoCount. Owner 2026-09-08: 我们一定要对回账本.",
    "desc2Match": "GD2502#09-SANDY/30”/1B+C+2R"
   },
   {

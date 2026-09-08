@@ -191,6 +191,25 @@ without reaching for the mouse (`PaymentVoucherNew.tsx`, each card carries
 round-3 manners carried across, the same day the Other Debtor bill got them
 (accounting.md, "Other Debtors, round 2").
 
+**Account, then description, then amount; F3 saves (2026-09-08, 这个进 pv 时
+我发现不是很顺手 … 像 autocount 按 f3).** The line card on `PaymentVoucherNew.tsx`
+and the edit card on `PaymentVoucherDetail.tsx` read account → description →
+amount, the order the AP invoice and the Other Debtor bill already keep, so Tab
+walks the way the owner types; the detail's lines table shows the same order.
+**F3** (and Ctrl+S / ⌘S) is the save button from any field of the form —
+`useSaveHotkey` in `frontend/src/vendor/scm/lib/use-save-hotkey.ts`, a window
+listener that swallows the browser's own F3/Ctrl+S while the form is open and
+calls the form's own save, so an unfinished voucher gets the button's sentence
+rather than a half save; the hint reads "F3 saves" beside the button. The same
+hook sits on the AP invoice form, the Other Debtor bill and the Receipts form
+(accounting.md). A Customer Refund's one line debits the AR control, and the
+customer it is for now prints beside the account on the detail table and on
+the sheet (`payment-voucher-pdf.ts`: "ACCOUNT RECEIVEABLE · Chan Ka Weng") —
+the party that rides the journal line, made visible (owner: 看不到是谁 → 可以).
+Contracts: `use-save-hotkey.test.tsx`, `PaymentVoucherNew.test.tsx` (the order,
+F3 on a complete and on an empty voucher), `payment-voucher-pdf.test.ts` (the
+refund line's name).
+
 **The batch runs in voucher-date order (2026-09-07, docs/bugs/0653).** Prepare,
 Check and Approve & post stamp the ticked vouchers oldest voucher date first
 (same date: Draft order), never in tick order — the formal number is minted

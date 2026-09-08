@@ -335,6 +335,54 @@ describe('the plain Payment Voucher (/new)', () => {
     expect((document.activeElement as HTMLElement | null)?.closest('[data-line]')?.contains(third)).toBe(true);
   });
 
+  /* The owner's typing order (2026-09-08: 可以先 account, 再到 description, 再到
+     amount 吗) — Tab follows the DOM, so the DOM says account, description,
+     amount, as the AP invoice and the Other Debtor bill already do. */
+  test('a line reads account, then description, then amount — in that Tab order', () => {
+    draw('/scm/payment-vouchers/new');
+    const line = screen.getByLabelText('line 1 amount').closest('[data-line]')!;
+    const account = line.querySelector('[role="combobox"]')!;
+    const description = line.querySelector('input[placeholder^="e.g. Sea freight"]')!;
+    const amount = screen.getByLabelText('line 1 amount');
+    const before = (a: Element, b: Element) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+    expect(before(account, description)).toBe(true);
+    expect(before(description, amount)).toBe(true);
+  });
+
+  /* 像 autocount 按 f3 (owner 2026-09-08): F3 anywhere on the form is the
+     Create button; Ctrl+S too. An unfinished voucher gets the button's own
+     sentence, not a half save. */
+  test('F3 creates the voucher once it is complete; on an unfinished one it only explains', async () => {
+    mutateAsync.mockClear();
+    const filled = render(
+      <MemoryRouter initialEntries={[{
+        pathname: '/scm/payment-vouchers/new',
+        state: { billPrefill: {
+          extraction: {
+            vendorName: 'TENAGA NASIONAL BERHAD', vendorRegNo: null, documentKind: 'bill' as const,
+            invoiceNumber: 'INV-77', invoiceDate: '2026-09-01', dueDate: null,
+            currency: 'MYR', totalSen: 15000, sstSen: null, lines: [],
+          },
+          memory: { payeeName: 'TNB', debitAccountCode: '900-A002', purpose: 'OTHER', timesSeen: 3 },
+        } },
+      }]}><PaymentVoucherNew /></MemoryRouter>,
+    );
+    expect(screen.getByText('F3 saves')).toBeTruthy();
+    const f3 = new KeyboardEvent('keydown', { key: 'F3', cancelable: true, bubbles: true });
+    window.dispatchEvent(f3);
+    expect(f3.defaultPrevented).toBe(true);
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    /* Off the window before the next page listens, or two forms hear one key. */
+    filled.unmount();
+
+    /* A fresh, empty voucher: F3 says what is missing and saves nothing. */
+    mutateAsync.mockClear();
+    draw('/scm/payment-vouchers/new');
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 's', ctrlKey: true, cancelable: true, bubbles: true }));
+    expect(await screen.findByText('Enter a payee')).toBeTruthy();
+    expect(mutateAsync).not.toHaveBeenCalled();
+  });
+
   test('the account search actually narrows — 打关键字眼 finds the account', () => {
     draw('/scm/payment-vouchers/new');
     const paidFrom = screen.getByLabelText(/Paid From/) as HTMLInputElement;
