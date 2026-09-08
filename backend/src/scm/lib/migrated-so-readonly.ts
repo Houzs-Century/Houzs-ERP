@@ -295,6 +295,17 @@ export async function amendmentSoDocNo(read: AmendmentSoReader, id: string): Pro
   throw new Error('amendmentSoDocNo: the amendment row carries no readable so_doc_no');
 }
 
+/* THE AMENDMENT READ IS NOT COMPANY-SCOPED, and that is safe here for a reason
+   worth writing down rather than re-deriving. The guard runs ahead of the
+   router's own scoping, so it has no company predicate to reuse — but the only
+   thing it takes from the row is `so_doc_no`, and the only thing it can emit is
+   a 409 naming that document. A caller in the OTHER company never reaches that
+   emit: migratedSoIsLocked answers false for a company the lock does not name,
+   so the request passes and the router's own scoped load answers 404. A caller
+   in company 1 gets a doc number their amendment list already showed them.
+   `linked_ac_docno` is written only by the Houzs AutoCount import, so no 2990
+   document carries one today — if that ever changes, this echo is the line to
+   revisit. */
 async function migratedByAmendmentId(sb: SupabaseLike, id: string): Promise<GuardTarget | null> {
   let docNo: string | null = null;
   try {
