@@ -72,7 +72,7 @@ slips on 2026-09-08 and CHANGED his answers, so what it records as "the ERP
 matches his ruling" was true of the OLD reading. See
 `docs/sofa-compartment-owner-rulings-2026-09-08.md`.
 One of the five, `HC-SO-011099`, is deliberately still `DIFFER`: its ruling
-cannot be written yet (`docs/bugs/0717`), and that is the safety property
+cannot be written yet (`docs/bugs/0719`), and that is the safety property
 working, not a gap.
 
 **Ref.** `fix/sofa-proceeded-eight`, 2026-09-08. Measured on reconcile run

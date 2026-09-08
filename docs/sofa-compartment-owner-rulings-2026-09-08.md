@@ -94,7 +94,7 @@ only the purchase-order half WOULD have succeeded and is exactly why it must not
 run: the factory's document would say `2S` while the customer's still said
 `1A(LHF)+1A(RHF)`. The ruling now sits in the corrections file's `_held` list,
 printed on every run so it cannot be mistaken for done. Full trace and what a fix
-must do: `docs/bugs/0717`.
+must do: `docs/bugs/0719`.
 
 ### The two in production, and what the factory holds
 
@@ -114,7 +114,7 @@ happened.
 
 ### The report can no longer show him a question he has answered
 
-`docs/bugs/0714` is fixed in the same PR: the reconcile now reads these
+`docs/bugs/0714-the-reconcile-reports-a-sofa-the-owner-has-already-ruled-on.md` is fixed in the same PR: the reconcile now reads these
 corrections files and reports a written ruling as **`RULED`**, its own column,
 never folded into `AGREE`. A ruling that has NOT been written stays `DIFFER` and
 names the answer it is failing to match.

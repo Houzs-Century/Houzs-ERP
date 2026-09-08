@@ -4788,7 +4788,7 @@ from the book's words. `lib/variant-reconcile.mjs` had no input for a
 per-document override, so a build he had personally decided could only come out
 as `DIFFER`, and every run handed it back to him as an open question. On
 2026-09-08 five of the eight proceeded compartment differences were rulings he
-had already given (`docs/bugs/0714`), and being shown one again is what produced
+had already given (`docs/bugs/0714-the-reconcile-reports-a-sofa-the-owner-has-already-ruled-on.md`), and being shown one again is what produced
 「这个很多我刚刚都给过你答案了啊」.
 
 **Where the answer comes from.** `check-ac-erp-reconcile.mjs` now loads
@@ -4798,7 +4798,7 @@ can never disagree about what he ruled. Two properties matter:
 
 - **`_held` builds are excluded.** `loadCorrections` returns them in a separate
   list. A ruling we have NOT written must keep reading `DIFFER`, because it is
-  still work — `HC-SO-011099` is exactly that today (`docs/bugs/0717`).
+  still work — `HC-SO-011099` is exactly that today (`docs/bugs/0719`).
 - **The entry is selected by its own `desc2Match`**, through the same matcher
   the apply script uses, never by document number alone. A document can hold
   more than one sofa build, and putting one build's answer on another build's

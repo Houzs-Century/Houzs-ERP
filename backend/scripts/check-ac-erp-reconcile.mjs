@@ -550,7 +550,8 @@ try {
      writes from. The reconcile used to have no input for a per-document
      override, so a build he had personally decided could only come out as
      DIFFER and was handed back to him as an open question every run
-     (docs/bugs/0714). Only WRITTEN rulings are loaded: loadCorrections keeps
+     (docs/bugs/0714-the-reconcile-reports-a-sofa-the-owner-has-already-ruled-on.md).
+     Only WRITTEN rulings are loaded: loadCorrections keeps
      _held in a separate list, and a build we have not written must keep
      reading DIFFER.
      A document can hold MORE THAN ONE sofa build, so the entry is selected by
