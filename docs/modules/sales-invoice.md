@@ -913,3 +913,16 @@ Identity is asserted **before** the quantity cap wherever both run: a ceiling
 computed against the wrong line is a number about the wrong thing, and reporting
 it sends the operator to fix a quantity when the real fault is the source they
 picked.
+
+**The EDIT door on a line that is ALREADY linked (2026-09-08, second pass).**
+The paragraph above is about BINDING a link. A link bound correctly can still be
+edited out of identity afterwards, and `unlinkedEditRefusal` beside it does not
+see that: it is scoped to a STORED link of `null`. So a line already carrying a
+`do_item_id` could have its `item_code` rewritten to anything, and
+`doLineRemaining` would then spend that delivery line's allowance on a different
+product. `PATCH /:id/items/:itemId` now re-asserts identity through
+`assertLinkedLineItemsMatch` — the same rule, the same home — on the EFFECTIVE
+POST-PATCH code, because a patch that omits `itemCode` still leaves the stored
+code sitting next to the link. The purchase chain closes the identical door in
+`purchase-invoices.ts`; the enumeration of both is
+`backend/tests/keyWithoutIdentityGuards.test.mjs`.

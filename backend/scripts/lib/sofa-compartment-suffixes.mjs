@@ -50,10 +50,20 @@ const norm = (v) => String(v ?? '').trim().toUpperCase().replace(/\s+/g, ' ');
  * @param {Array<string|null|undefined>} codes the item codes sharing one key
  * @returns {{ok: true, model: string} | {ok: false, why: string}}
  *
- * `ok` means: one model, every remainder a known compartment suffix, no suffix
- * twice. Anything else is REFUSED with a reason rather than being called a
- * collision — the caller decides what to do with a group it cannot explain, and
- * "I cannot explain this group" is a different statement from "this is wrong".
+ * `ok` means: ONE model, and every remainder a known compartment suffix.
+ * Anything else is REFUSED with a reason rather than being called a collision —
+ * the caller decides what to do with a group it cannot explain, and "I cannot
+ * explain this group" is a different statement from "this is wrong".
+ *
+ * A REPEATED COMPARTMENT IS NOT A DEFECT, and this function said it was until
+ * it was run. Probe 34143079454 flagged 10 of 296 sales-order groups and 4 of
+ * 98 purchase-order groups, and every single one failed on the repeat rule
+ * alone: `9058-1NA, 9058-1NA, 9058-CNR`, `8030-1A(RHF), 8030-1A(RHF)`,
+ * `R819-1S(R), R819-1S(R)`. A four-seater is 1A(LHF) + 1NA + 1NA + 1A(RHF) —
+ * two armless middles is an ordinary build, and two identical recliners is a
+ * book line of quantity two. Refusing them was the same mistake as the one this
+ * module exists to correct: a rule that answers a different question. Repeats
+ * are reported so a caller can still see them, never refused.
  *
  * A group of ONE is not this function's business — a lone row does not share a
  * key with anything — and is refused rather than silently passed, so a caller
@@ -75,6 +85,7 @@ export function decomposeGroup(codes) {
   const unknown = [...new Set(suffixes.filter((s) => !SOFA_COMPARTMENTS.has(s)))];
   if (unknown.length) return { ok: false, why: `not a compartment suffix: ${unknown.join(', ')}` };
   if (models.size !== 1) return { ok: false, why: `${models.size} different models share the key` };
-  if (new Set(suffixes).size !== suffixes.length) return { ok: false, why: 'a compartment repeats' };
-  return { ok: true, model: [...models][0] };
+  const seen = new Set();
+  const repeated = [...new Set(suffixes.filter((x) => (seen.has(x) ? true : (seen.add(x), false))))];
+  return { ok: true, model: [...models][0], repeated };
 }

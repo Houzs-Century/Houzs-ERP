@@ -59,6 +59,7 @@ import { canViewAllSales, canViewScmFinance } from '../lib/houzs-perms';
 import { SO_ITEM_FINANCE_KEYS } from '../lib/finance-keys';
 import { doLineRemaining, doRemainingByItemId, checkSiOverRemaining, checkSiReopenOverRemaining, findOverInvoicedDoItems, resolveCandidateDoIds, custKeyOf, remainingUnavailableResponse, siTransferRefusal, type DoRemainingLine } from '../lib/do-line-remaining';
 import { siShadowRefusal, unlinkedEditRefusal } from '../lib/unlinked-line-edit-guard';
+import { assertLinkedLineItemsMatch } from '../lib/line-link-item-identity';
 import { resolveSiHeaderSources, resolveDoLineSources } from '../lib/source-po-trace';
 import { validateItemCodes, unknownItemCodeResponse } from '../lib/validate-item-codes';
 import { applyCustomerCreditToSi, creditFromCancelledSi, reverseCancelledSiCredit, reconcileSiOverpay } from '../lib/customer-credits';
@@ -1877,13 +1878,12 @@ salesInvoices.patch('/:id/items/:itemId', async (c) => {
   /* The EDIT half of FIX 3 — see unlinked-line-edit-guard for why (the cap above
      is gated on prev.do_item_id, so a re-typed unlinked code double-bills). */
   {
-    const repoint = await unlinkedEditRefusal(sb, 'sales-invoice', {
-      parentId: siFromDoId,
-      storedLink: (prev as { do_item_id?: string | null }).do_item_id ?? null,
-      storedCode: (prev as { item_code?: string | null }).item_code ?? null,
-      patchCode: it.itemCode,
-    });
+    const storedLink = (prev as { do_item_id?: string | null }).do_item_id ?? null;
+    const repoint = await unlinkedEditRefusal(sb, 'sales-invoice', { parentId: siFromDoId, storedLink, storedCode: (prev as { item_code?: string | null }).item_code ?? null, patchCode: it.itemCode });
     if (repoint) return c.json(repoint, 409);
+    /* THE EDIT DOOR ON A LIVE LINK — the guard above is scoped to a STORED link of null. See line-link-item-identity.ts, "THE EDIT DOOR". */
+    const drift = await assertLinkedLineItemsMatch(sb, 'delivery_order_items', [{ linkId: storedLink, itemCode: updates['item_code'] !== undefined ? updates['item_code'] : prev.item_code }], { source: 'Delivery Order line' });
+    if (!drift.ok) return c.json(drift.body, drift.status);
   }
 
   const { error } = await scopeToCompanyId(sb.from('sales_invoice_items').update(updates).eq('id', itemId), co.companyId);

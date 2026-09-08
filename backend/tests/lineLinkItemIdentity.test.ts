@@ -7,7 +7,7 @@
  * established at all.
  */
 import { describe, expect, it } from 'vitest';
-import { lineLinkItemMismatch, normLinkItemCode } from '../src/scm/lib/line-link-item-identity';
+import { assertLinkedLineItemsMatch, lineLinkItemMismatch, normLinkItemCode } from '../src/scm/lib/line-link-item-identity';
 
 const src = (pairs: Array<[string, string | null]>) => new Map<string, string | null>(pairs);
 const LBL = { source: 'Delivery Order line' };
@@ -133,5 +133,75 @@ describe('lineLinkItemMismatch', () => {
       src([['so-2', 'PC160-CNR']]),
       { source: 'Sales Order line' },
     )?.error).toBe('link_material_mismatch');
+  });
+});
+
+/* THE READ HALF. The block above pins the RULE; nothing pinned the function that
+   goes and gets the rows for it, and that half is where a guard fails silently:
+   it decides which table is read, whether the read is batched, and — the one
+   that has cost this repo money before — what happens when the read ERRORS.
+   Ported from the v2 branch, which wrote them against its own second copy of
+   this rule, checkInvoiceSourceItemIdentity; that copy is gone and the
+   assertions are re-pointed here, at the one home. */
+type SeenRead = { table?: string; select?: string; ids?: string[] };
+function fakeSb(rows: Array<{ id: string; item_code: string | null }>, opts: { error?: string } = {}) {
+  const seen: SeenRead = {};
+  const api = {
+    seen,
+    from(table: string) { seen.table = table; return api; },
+    select(cols: string) { seen.select = cols; return api; },
+    in(_col: string, ids: string[]) {
+      seen.ids = ids;
+      return Promise.resolve(opts.error ? { data: null, error: { message: opts.error } } : { data: rows, error: null });
+    },
+  };
+  return api;
+}
+
+const DO_LINE = { id: 'do-line-1', item_code: 'REGAL-KING' };
+
+describe('assertLinkedLineItemsMatch — the guard, read included', () => {
+  it('does nothing and takes no read when no line carries a link', async () => {
+    const sb = fakeSb([]);
+    expect(await assertLinkedLineItemsMatch(sb, 'delivery_order_items', [{ linkId: null, itemCode: 'X' }], LBL))
+      .toEqual({ ok: true });
+    expect(sb.seen.table).toBeUndefined();
+  });
+
+  it('reads the table it was given, and only id + item_code from it', async () => {
+    const sb = fakeSb([DO_LINE]);
+    await assertLinkedLineItemsMatch(sb, 'delivery_order_items', [{ linkId: 'do-line-1', itemCode: 'REGAL-KING' }], LBL);
+    expect(sb.seen.table).toBe('delivery_order_items');
+    expect(sb.seen.select).toBe('id, item_code');
+  });
+
+  it('reads grn_items when the purchase chain asks', async () => {
+    const sb = fakeSb([{ id: 'gr-line-1', item_code: 'TRION-QUEEN' }]);
+    await assertLinkedLineItemsMatch(sb, 'grn_items', [{ linkId: 'gr-line-1', itemCode: 'TRION-QUEEN' }], { source: 'Goods Receipt line' });
+    expect(sb.seen.table).toBe('grn_items');
+  });
+
+  it('refuses a cross-product bind with 409', async () => {
+    const r = await assertLinkedLineItemsMatch(fakeSb([DO_LINE]), 'delivery_order_items', [{ linkId: 'do-line-1', itemCode: 'TRION-QUEEN' }], LBL);
+    expect(r.ok).toBe(false);
+    expect(r.ok === false && r.status).toBe(409);
+  });
+
+  /* A guard that answers 'clean' when its read failed is the defect wearing the
+     guard's clothes. checkSiReopenOverRemaining paid for this once already. */
+  it('FAILS CLOSED — a failed read is a 503, never a pass', async () => {
+    const r = await assertLinkedLineItemsMatch(fakeSb([], { error: 'connection reset' }), 'delivery_order_items', [{ linkId: 'do-line-1', itemCode: 'REGAL-KING' }], LBL);
+    expect(r.ok).toBe(false);
+    expect(r.ok === false && r.status).toBe(503);
+    expect(r.ok === false && (r.body as { error: string }).error).toBe('link_identity_unavailable');
+  });
+
+  it('de-duplicates the ids it asks for', async () => {
+    const sb = fakeSb([DO_LINE]);
+    await assertLinkedLineItemsMatch(sb, 'delivery_order_items', [
+      { linkId: 'do-line-1', itemCode: 'REGAL-KING' },
+      { linkId: 'do-line-1', itemCode: 'REGAL-KING' },
+    ], LBL);
+    expect(sb.seen.ids).toEqual(['do-line-1']);
   });
 });
