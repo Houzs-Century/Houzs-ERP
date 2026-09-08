@@ -510,14 +510,14 @@ Total: 1182 route registrations across 152 files.
 - L1444  GET    /reservations
 
 ## backend/src/scm/routes/delivery-orders-mfg.ts  (16)
-- L2670  GET    /
-- L2904  GET    /deliverable-so-lines
-- L2993  GET    /so-source/:docNo
-- L3019  GET    /:id
-- L3209  POST   /
-- L4165  POST   /from-sos
-- L4176  PUT    /:id/crew
-- L4321  PATCH  /:id
+- L2659  GET    /
+- L2893  GET    /deliverable-so-lines
+- L2982  GET    /so-source/:docNo
+- L3008  GET    /:id
+- L3198  POST   /
+- L4162  POST   /from-sos
+- L4173  PUT    /:id/crew
+- L4318  PATCH  /:id
 - L4753  POST   /:id/items
 - L4755  PATCH  /:id/items/:itemId
 - L5073  DELETE /:id/items/:itemId
@@ -612,36 +612,36 @@ Total: 1182 route registrations across 152 files.
 - L1128  DELETE /:id/items/:itemId
 
 ## backend/src/scm/routes/purchase-invoices.ts  (14)
-- L322  GET    /
-- L422  GET    /outstanding-grn-items
-- L517  GET    /:id
-- L629  GET    /:id/linked
-- L697  POST   /
-- L1162  PATCH  /:id/post
-- L1166  PATCH  /:id/payment
-- L1389  PATCH  /:id/cancel
-- L1690  POST   /from-grn-items
-- L1874  POST   /from-grn
-- L1886  PATCH  /:id
-- L1986  POST   /:id/items
-- L2156  PATCH  /:id/items/:itemId
-- L2333  DELETE /:id/items/:itemId
+- L323  GET    /
+- L423  GET    /outstanding-grn-items
+- L518  GET    /:id
+- L630  GET    /:id/linked
+- L698  POST   /
+- L1140  PATCH  /:id/post
+- L1144  PATCH  /:id/payment
+- L1367  PATCH  /:id/cancel
+- L1668  POST   /from-grn-items
+- L1852  POST   /from-grn
+- L1864  PATCH  /:id
+- L1964  POST   /:id/items
+- L2134  PATCH  /:id/items/:itemId
+- L2323  DELETE /:id/items/:itemId
 
 ## backend/src/scm/routes/purchase-returns.ts  (14)
-- L178  GET    /
-- L200  GET    /returnable-grn-lines
-- L238  GET    /:id
-- L281  GET    /:id/linked
-- L688  POST   /
-- L1130  POST   /from-grns
-- L1267  POST   /from-grn
-- L1269  PATCH  /:id/post
-- L1322  PATCH  /:id/complete
-- L1425  PATCH  /:id/cancel
-- L1436  PATCH  /:id
-- L1639  POST   /:id/items
-- L1755  PATCH  /:id/items/:itemId
-- L1816  DELETE /:id/items/:itemId
+- L179  GET    /
+- L201  GET    /returnable-grn-lines
+- L239  GET    /:id
+- L282  GET    /:id/linked
+- L689  POST   /
+- L1144  POST   /from-grns
+- L1281  POST   /from-grn
+- L1283  PATCH  /:id/post
+- L1336  PATCH  /:id/complete
+- L1439  PATCH  /:id/cancel
+- L1450  PATCH  /:id
+- L1666  POST   /:id/items
+- L1782  PATCH  /:id/items/:itemId
+- L1843  DELETE /:id/items/:itemId
 
 ## backend/src/routes/announcements.ts  (13)
 - L567  GET    /
@@ -788,17 +788,17 @@ Total: 1182 route registrations across 152 files.
 - L678  GET    /:id
 
 ## backend/src/scm/routes/delivery-returns.ts  (11)
-- L759  GET    /
-- L838  GET    /returnable-do-lines
-- L857  GET    /:id
-- L1021  POST   /
-- L1456  POST   /from-do
-- L1457  POST   /from-dos
-- L1460  PATCH  /:id
-- L1506  POST   /:id/items
-- L1570  PATCH  /:id/items/:itemId
-- L1699  DELETE /:id/items/:itemId
-- L1852  PATCH  /:id/status
+- L760  GET    /
+- L839  GET    /returnable-do-lines
+- L858  GET    /:id
+- L1022  POST   /
+- L1470  POST   /from-do
+- L1471  POST   /from-dos
+- L1474  PATCH  /:id
+- L1520  POST   /:id/items
+- L1597  PATCH  /:id/items/:itemId
+- L1726  DELETE /:id/items/:itemId
+- L1879  PATCH  /:id/status
 
 ## backend/src/scm/routes/mfg-products.ts  (11)
 - L224  GET    /

@@ -75,7 +75,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/accounting-receipts.ts` | 0 | 88 |
 | `backend/src/scm/routes/accounting-reports.ts` | 0 | 186 |
 | `backend/src/scm/routes/accounting-rp.ts` | 0 | 316 |
-| `backend/src/scm/routes/accounting-settlement.ts` | 0 | 1273 |
+| `backend/src/scm/routes/accounting-settlement.ts` | 0 | 1280 |
 | `backend/src/scm/routes/accounting-stock-close.ts` | 0 | 53 |
 | `backend/src/scm/routes/accounting.ts` | 75 | 1506 |
 | `backend/src/scm/routes/addons.ts` | 4 | 215 |
@@ -102,7 +102,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/delivery-planning.ts` | 5 | 2904 |
 | `backend/src/scm/routes/delivery-rate-cards.ts` | 11 | 689 |
 | `backend/src/scm/routes/delivery-residence-rules.ts` | 4 | 227 |
-| `backend/src/scm/routes/delivery-returns.ts` | 11 | 1852 |
+| `backend/src/scm/routes/delivery-returns.ts` | 11 | 1879 |
 | `backend/src/scm/routes/delivery-zones.ts` | 9 | 789 |
 | `backend/src/scm/routes/document-flow.ts` | 2 | 1065 |
 | `backend/src/scm/routes/document-hold-routes.ts` | 0 | 96 |
@@ -153,9 +153,9 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/purchase-consignment-receives.ts` | 13 | 1426 |
 | `backend/src/scm/routes/purchase-consignment-returns.ts` | 14 | 1151 |
 | `backend/src/scm/routes/purchase-invoices-list-enrichment.ts` | 1 | 73 |
-| `backend/src/scm/routes/purchase-invoices.ts` | 14 | 2416 |
+| `backend/src/scm/routes/purchase-invoices.ts` | 14 | 2406 |
 | `backend/src/scm/routes/purchase-order-item-photos.ts` | 2 | 227 |
-| `backend/src/scm/routes/purchase-returns.ts` | 14 | 1816 |
+| `backend/src/scm/routes/purchase-returns.ts` | 14 | 1843 |
 | `backend/src/scm/routes/pv-files.ts` | 0 | 140 |
 | `backend/src/scm/routes/pwp-codes.ts` | 5 | 500 |
 | `backend/src/scm/routes/pwp-rules.ts` | 4 | 233 |
@@ -201,13 +201,13 @@ scripts, never assumed: each runner declares its own directory, and
 | tree | runner | *.sql | highest | applied to PRODUCTION by deploy.yml | read by backend vitest |
 |---|---|---|---|---|---|
 | `backend/src/db/migrations` | `backend/scripts/migrate.mjs` | 152 | `153_sessions_stay_signed_in.sql` (153) | no | yes |
-| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 378 | `0352_acc_pv_files.sql` (0352) | YES | no |
+| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 379 | `0352_acc_pv_files.sql` (0352) | YES | no |
 
 Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its number): `0136_capture_compat_views_trips_lorries.sql.TEMPLATE`
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (2007 files, 703606 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (2015 files, 705102 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -225,7 +225,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `frontend/src/mobile/MobilePMS.tsx` | 4483 |
 | `frontend/src/pages/scm-v2/SupplierDetail.tsx` | 4334 |
 | `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | 4206 |
-| `frontend/src/mobile/MobileNewSO.tsx` | 3742 |
+| `frontend/src/mobile/MobileNewSO.tsx` | 3747 |
 | `backend/src/scm/routes/grns.ts` | 3564 |
 | `frontend/src/components/DataTable.tsx` | 3545 |
 | `frontend/src/mobile/MobileServiceCase.tsx` | 3376 |
@@ -444,7 +444,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileModuleList.tsx` | 2105 |
 | `frontend/src/mobile/MobileMyCaseDetail.tsx` | 326 |
 | `frontend/src/mobile/MobileNewProject.tsx` | 196 |
-| `frontend/src/mobile/MobileNewSO.tsx` | 3742 |
+| `frontend/src/mobile/MobileNewSO.tsx` | 3747 |
 | `frontend/src/mobile/MobilePMS.tsx` | 4483 |
 | `frontend/src/mobile/MobilePOD.tsx` | 558 |
 | `frontend/src/mobile/MobilePmsDefectActions.tsx` | 109 |
