@@ -103,6 +103,11 @@ export function erpReconcileTypes({ sql, CO, PDATE }) {
        sides can state, and at that grain the comparison is like-for-like. */
     pairGrain: true,
     sofaAware: true,
+    /* The MULTISET verdict on this type's keyless documents compares item and
+       QUANTITY only. `priceDeclared` below says the price is taken from the
+       purchase order, so comparing money here would measure our own derivation
+       and report it as the book being wrong. */
+    keylessMoney: false,
     /* THE OWNER'S STANDING DECISION about a migrated receipt that carries no
        money, 2026-09-08: 「GR 0 没关系」. Declared HERE, per type, so it can
        never leak to a document type he never ruled on — and honoured only where
@@ -183,6 +188,10 @@ export function erpReconcileTypes({ sql, CO, PDATE }) {
        constant and `ac-scope.mjs` cannot drift apart again. */
     absenceIs: "GAP",
     sofaAware: true,
+    /* A migrated delivery order carries no money at all — the reconcile counts
+       that as a POPULATION property, not per-document drift — so the multiset
+       verdict on its keyless documents is item and QUANTITY only. */
+    keylessMoney: false,
     itemCodeDeclared:
       "delivery_order_items.item_code is taken from the SALES ORDER line by design, not from DODTL.ItemCode",
     docs: () => sql`SELECT do_number AS erp_no, linked_ac_docno AS ac_no,

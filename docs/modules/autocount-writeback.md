@@ -632,6 +632,35 @@ receipts — a constant, not the column — so it was structurally forced to pai
 quantity and position for ever. It reads the column now
 (`docs/bugs/0697-the-migrated-goods-receipts-and-delivery-orders-carry-no-aut.md`).
 
+**What it stamped, and what it will not.** Dry run against production 2026-09-08
+13:48 (+08), run `34192040888`:
+
+| | documents | lines | stampable | left NULL | fully keyed |
+|---|---|---|---|---|---|
+| goods receipts | 400 | 636 | 563 | 73 | 371 / 400 |
+| delivery orders | 173 | 831 | 795 | 36 | 159 / 173 |
+
+The lines it leaves NULL are left NULL for three reasons, and the third is a
+LIMIT OF THE FOLD rather than a disagreement — worth knowing before anyone reads
+it as one:
+
+1. the book holds two lines of the same item at the same quantity that differ on
+   price, location or Desc2. Nothing separates them for us either;
+2. our sofa compartments are UNEVEN, so the fold cannot say how many sofas the
+   build is (4 documents);
+3. **the book holds TWO SEPARATE LINES of one sofa model on one document** — two
+   whole sofas — while `foldErpUnits` collapses every compartment row of that
+   model into ONE unit of quantity 2. The buckets then cannot meet. Measured on
+   9 goods-receipt pairs; `GR-004913 | PO-009018` is `SOFA 9028 x1, SOFA 9028 x1`
+   in the book. `backfill-ac-sofa-line-keys.mjs` refuses the same shape for the
+   same reason, so the two writers agree.
+
+Closing (3) needs a per-BUILD identity, not a per-model one. The candidate is
+`grn_items.purchase_order_item_id` — but `reshape-migrated-grns.mjs`
+deliberately leaves that NULL exactly when a purchase order carries one item code
+twice, which may be these very rows, so it must be MEASURED before it is built
+on.
+
 ### The defect this section exists for
 
 `/edit` used to fall through to `doc.AddDetail()` for a line with no key —

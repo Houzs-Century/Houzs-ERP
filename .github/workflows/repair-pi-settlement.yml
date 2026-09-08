@@ -1,0 +1,61 @@
+name: Repair PI settlement (plan/apply)
+
+# Settles the purchase invoices an approved AP Payment paid but never marked
+# paid: until 20260908T0900_scm_settle_pi_paid_sen_enum_status.sql the settle
+# function failed on every call (docs/bugs/0700), so the vouchers' allocations
+# carry applied_sen 0 against invoices still POSTED at paid_sen 0. Each row is
+# settled through the same function the approve calls; a row the function
+# refuses, or a foreign-currency one, is listed and left alone. plan is the
+# default and writes nothing; the script refuses to run while the target still
+# carries the broken function. See backend/scripts/repair-pi-settlement.mjs.
+#
+# Secrets resolve by ENVIRONMENT (docs/bugs/0629): the job declares the
+# environment the target names, so STAGING_DATABASE_URL is the Staging
+# environment's own and never the repo-scope trap.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "staging"
+        type: choice
+        options: [staging, prod]
+      mode:
+        description: "plan (report only) or apply (write)"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: 'apply requires: SETTLE PI ALLOCATIONS'
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: repair-pi-settlement-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.target == 'prod' && 'Production' || 'Staging' }}
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - name: Repair PI settlement
+        env:
+          DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+        run: |
+          if [ -z "$DATABASE_URL" ]; then echo "DATABASE_URL missing"; exit 2; fi
+          node scripts/repair-pi-settlement.mjs

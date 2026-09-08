@@ -149,6 +149,12 @@ export function foldErpUnits(rows) {
     u.pieces.set(c, (u.pieces.get(c) ?? 0) + Number(r.qty ?? 0));
   }
   for (const u of sofas.values()) {
+    /* Sorted so `ids[0]` is the same row whatever order the database handed the
+       compartments back in. The pairing sorts units by it, and a plan that
+       depends on an unordered SELECT is not reproducible — which is exactly the
+       flaw backfill-ac-line-keys.mjs's retired purchase-order half had, where
+       the zip ordered by a `line_no` it selected as NULL. */
+    u.ids.sort();
     const qs = [...u.pieces.values()].map(qtyKey);
     const lo = Math.min(...qs);
     const hi = Math.max(...qs);

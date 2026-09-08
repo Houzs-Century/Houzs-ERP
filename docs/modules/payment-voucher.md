@@ -588,7 +588,7 @@ leans on:
 | Lib | Role |
 |---|---|
 | `lib/pv-rate-adoption.ts` | **PURE.** The FX-rate decision table (§6) and the cancel-path retention predicate. No database. |
-| `lib/pi-settlement.ts` | `settlePiPaidCenti` + the pure `computePiSettlement`. The clamp that stops two vouchers over-paying one invoice lives in PL/pgSQL (`scm.settle_pi_paid_sen`, mig 0147) with a legacy optimistic fallback. |
+| `lib/pi-settlement.ts` | `settlePiPaidSen` + the pure `computePiSettlement`. The clamp that stops two vouchers over-paying one invoice lives in PL/pgSQL (`scm.settle_pi_paid_sen`: 0147 → 0305 → `20260908T0900_scm_settle_pi_paid_sen_enum_status.sql`, which writes the status as the enum it is — until then every call failed 42804 and no paid invoice was ever marked paid, docs/bugs/0700) with a legacy optimistic fallback. |
 | `lib/recost.ts` | `recostFromGrn` — the costing cascade the rate adoption triggers. |
 | `lib/fx.ts` | `normalizeCurrency` / `normalizeExchangeRate` / `safeRate` / `toMyrSen` / `masterRateForCurrency`. |
 | `lib/entity-audit.ts` | `recordEntityAudit` + the `assertAuditWritable` pre-flight. |
@@ -808,7 +808,8 @@ because all-MYR is the overwhelming majority of documents in this system.
 |---|---|
 | `backend/src/scm/lib/pv-rate-adoption.test.ts` | the §6 decision table, exhaustively, with no DB (47 cases) |
 | `backend/tests/pvRateFromPayment.test.ts` | the route: the rate is written, the **real** `recostFromGrn` moves the FIFO lot off its 1:1 basis, the audit rows land, a costing failure cannot fail the payment, all-MYR is inert, cancel retains (13 cases). Its supabase stub is hand-rolled, so it must model `.schema()` — the JE-number prefix reads `public.companies` from a client pinned to `scm` (`docs/bugs/0522`), and a stub without it 500s the whole post. |
-| `backend/tests-pg/pvRateAdoption.pg.test.ts` | real Postgres: the PL/pgSQL `settle_pi_paid_sen` clamp composed with the decision, and the `numeric(14,6)` round-trip. Runs in CI's `backend-postgres` job; SKIPS with no local PG |
+| `backend/tests-pg/pvRateAdoption.pg.test.ts` | real Postgres: the PL/pgSQL `settle_pi_paid_sen` clamp composed with the decision, and the `numeric(14,6)` round-trip. Runs in CI's `backend-postgres` job; SKIPS with no local PG. Its fixture declares `status text` — which is why it never saw docs/bugs/0700 |
+| `backend/tests-pg/settlePiPaidSenEnum.pg.test.ts` | real Postgres, with `status` as the ENUM it really is: the NEWEST `settle_pi_paid_sen` definition in the migration tree lands PAID / PARTIALLY_PAID / POSTED (cancel) / the clamp / not_live on that column (docs/bugs/0700). RED on a tree without the fix — the newest body is then 0305's and raises 42804 |
 | `backend/src/scm/lib/fx-guard.test.ts` | both write-path guards (41 cases) |
 | `backend/tests/fulfillmentCosting.test.ts` | `parseAmountCenti` / `buildLines` / `buildAllocations` — negative and fractional amounts are REFUSED, not clamped to 0 |
 | `backend/tests/companyScopeHardening.test.ts` | the cancel cannot reverse another company's GL entry |

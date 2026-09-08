@@ -774,6 +774,23 @@ BUG-HISTORY 里跟这次割接直接相关的三条(都在文件最上面):GRN p
 
 ---
 
+### 2026-09-08 补记:§5 里有四行已经不成立,而且被照抄过
+
+**不改上面的历史行**(铁律 5),但下面这四行**不要再当成待办**。
+整条链路的现状改看 **`docs/autocount-link-map.md`**(那份是仪表盘,这份是账本)。
+
+| §5 的行 | 当时写的 | 2026-09-08 实测 | 证据 |
+|---|---|---|---|
+| #4 | `backfill-zero-cost-lots` 一次都没跑 | **已 APPLY** | run `33849184319`(08-29 05:32 本地),`mode=APPLY`;264 lots / 2,203 units / RM 841,956.14 |
+| #14 | `import-ac-sofa-stock` 的 apply 一次都没有 | **已 APPLY** | run `34160820055`(09-07),`mode=APPLY` |
+| #2 / §1 坑二 | `scm.purchase_orders.linked_ac_docno` 没有 migration | **已收口** | `migrations-pg/0277_scm_autocount_outbox.sql:89-105` 就是在补它 |
+| §7 附注 | `check-line-supply-trace.yml` 还没合并,`main` 上没有 | **已在 main** | `.github/workflows/check-line-supply-trace.yml` 存在 |
+
+> **§5 的第一张表不能单独读。** 它下面那张「收盘状态」表才是真的状态,
+> 而这四行连那张表都没有更新到。**照着 §5 第一张表去「补跑」,会把已经做过的事再做一遍。**
+> 这是全仓被抄错最多次的一段;下一次动这个档案的人,请把两张表合并掉。
+
+
 ## 6. 快照档案:每一个是什么的快照、什么时候拿的
 
 `backend/scripts/data/*.json.gz` 是**只读的原件**,不要改;要换就整份换掉,并在这里加一行。
