@@ -115,11 +115,24 @@ on 5 sales orders, all PENDING**.
 
 | sales order | pieces | book's purchase order | verdict |
 | --- | --- | --- | --- |
-| `HC-SO-013232` | `8030-1A(LHF)`, `8030-1A(RHF)` | `PO-010078` | **provable** at compartment grain |
-| `HC-SO-012277` | `8051-1NA`, `8051-1A(RHF)` | `PO-010040` | **provable** once the whole pair is tallied |
+| `HC-SO-013232` | `8030-1A(LHF)`, `8030-1A(RHF)` | `PO-010078` | **LINKED** — apply run `34205955392` |
+| `HC-SO-012277` | `8051-1NA`, `8051-1A(RHF)` | `PO-010040` | **LINKED** — same run |
 | `HC-SO-010287` | `9058-2A(LHF)`, `9058-1A(RHF)` | `PO-010085` | the purchase side is the same sofa **MIRRORED** — the owner's, from the drawing |
 | `HC-SO-008166` | `9058-1NA` | `PO-009974` | that purchase line is not unlinked, so the tool never sees it — a separate look |
 | `HC-SO-013389` | `8030-1A(RHF)` | `PO-010087` | appeared on the re-measure; not yet classified |
+| `HC-SO-011752` x2, `HC-SO-007362` | `JAGER-(Q)`, `REGAL (A)-(K)` | `PO-010098`, `PO-010137` | BEDFRAMES, 1:1 pairs — `repair-po-so-link-from-book.mjs`'s job, and it called them `out_of_scope` while their purchase orders were still outside the cutover. Re-run that tool now they are in |
+
+**APPLIED**: run `34205955392` wrote 4 of 4 planned links, verified on a fresh
+connection (`0 wrong shape`), and the finding fell from 8 to 7 on the re-measure
+(probe run `34206066600`) with both linked orders gone from the list. It did not
+fall by 2 because the population is moving — other lanes are importing purchase
+orders today, and three bedframe lines entered the list in the same window.
+
+The allocation counts either side of the write are IDENTICAL — `READY 1969 |
+PENDING 13093 | PARTIAL 11` — by design: a direct SQL write does not recompute
+the projection (`docs/bugs/0675`). **Dispatch "Recompute SO stock allocation"**
+to project the new links; it is deliberately a separate, serialised operation
+and this lane did not run it.
 
 Tool: `backend/scripts/repair-po-so-link-sofa-compartments.mjs`, and
 `docs/bugs/0707-a-sofa-s-purchase-line-could-never-be-linked-to-its-sales-li.md`
