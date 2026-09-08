@@ -202,81 +202,74 @@ receipt belongs to ONE purchase order while an AutoCount receipt can span
 several, and 51 of the 214 in-scope receipts do. Counting receipts instead
 reports every one of those as short by the part raised against another order.
 
-### Why 9 goods receipts still differ on money — and why it is a DECISION, not a defect
+### The 9 goods receipts that "differed on money" were a MEASURING ERROR — CORRECTED 2026-09-08
 
-**PROVEN, from the committed book snapshot** `backend/scripts/data/ac-reconcile-truth.json.gz`
-(exported 2026-09-08, re-run the arithmetic below rather than quoting it):
+> **This section previously said the opposite**, at length: that the nine were a
+> DECISION rather than a defect, that "no existing tool will close them", and
+> **"Do NOT repair this by copying the book's receipt price."** All of that was
+> built on one sentence that is false — *"our receipt mirrors ONE purchase order
+> and AutoCount's receipt spans several, so the invoice bills more than our lines
+> cover"* — and the owner rejected it:
+>
+> 「PI 是from multiple的PO 所以GR的吧? 没有啊 我们一张GR to 一张PI — 可是GR 会from
+> multiple PO啊 — 所以你要去GR 每个line的amount 都对齐啊 — PO GR PI的line
+> information去吧要对其啊」
+>
+> The old text is not reproduced here. Read `docs/bugs/0723-*.md` for the trace.
 
-> Of the **11,623** receipt x order pairs AutoCount itself states, **8,169**
-> carry a price on the RECEIPT while the purchase ORDER states none at all.
-> Only 3,333 have a price on both.
+**Not one sen is missing.** The gate in `stamp-migrated-source-prices.mjs`
+compared an ERP group's total against the WHOLE AutoCount invoice's `NetTotal`.
+Our documents mirror only the (receipt x purchase order) pairs the migration
+carried — the OUTSTANDING population, the owner's own rule — so the rest of the
+invoice belongs to purchase orders that were already fully received and were
+never imported. A partial mirror cannot reach a whole invoice, and no price can
+make it.
 
-That is not an anomaly — it is how this business books a purchase. The price is
-settled when the goods arrive, which is the same fact behind the 241 unpriced
-purchase lines the owner ruled 「这个没问题」.
+**PROVEN from the committed snapshot** `backend/scripts/data/ac-reconcile-truth.json.gz`,
+attributed by document link only (`PIDTL.FromDocNo` -> receipt,
+`GRDTL.FromDocNo` -> order; nothing paired by position or by name — the
+`docs/bugs/0690` transposition hazard). Re-run the arithmetic rather than quoting
+it; `backend/tests/acChainLineGrain.test.mjs` pins all three:
 
-Our goods receipts take their money from the purchase-ORDER line by design
-(`priceDeclared` in `backend/scripts/lib/ac-reconcile-erp-sql.mjs`;
-`reshape-migrated-grns.mjs` copies the book's item, quantity and date and leaves
-price to the order). So wherever the order is blank, our receipt is short by
-exactly that line.
+| invoice | book NetTotal | the pairs we HOLD | the pairs never carried |
+|---|---|---|---|
+| PI-007287 | RM 11,247.00 | `GR-004909\|PO-009017` **RM 3,200.00** | `GR-004909\|PO-009033` 3,070.00 + `GR-004914\|PO-008984` 3,300.00 + `GR-004914\|PO-009074` 1,677.00 |
+| PI-007765 | RM 4,580.00 | `GR-005169\|PO-009475` **RM 2,230.00** | `GR-005169\|PO-009469` 2,350.00 |
+| PI-007771 | RM 9,284.00 | `GR-005171\|PO-009344` 2,330.00 + `GR-005171\|PO-009553` 2,520.00 = **RM 4,850.00** | `GR-005171\|PO-009365` 1,444.00 + `GR-005171\|PO-009516` 2,990.00 |
 
-**Worked, on the three the reconcile named** (raw ringgit, book side proven):
+RM 3,200.00 / RM 2,230.00 / RM 4,850.00 are **exactly** what the stamper printed
+as "ours would be" on run `34231092897`. It had the right figure all along and
+was grading it against the wrong total.
 
-| pair | book line 1 | book line 2 | book pair total | our total |
-|---|---|---|---|---|
-| `GR-004909\|PO-009017` | 1 x RM 3,080.00 | 4 x RM 30.00 = 120.00 | RM 3,200.00 | **RM 120.00** |
-| `GR-005171\|PO-009344` | 1 x RM 2,250.00 | 2 x RM 40.00 = 80.00 | RM 2,330.00 | **RM 80.00** |
-| `GR-005169\|PO-009475` | 1 x RM 2,170.00 | 2 x RM 30.00 = 60.00 | RM 2,230.00 | **RM 60.00** |
+**How big the wrong yardstick is:** 131 of the 192 live purchase invoices that
+touch an in-scope receipt bill at least one line whose purchase order was never
+migrated — **RM 625,213.71 across 892 lines**. That is not a backlog; it is
+money that was never ours to hold.
 
-In each one our total equals the SECOND line to the sen and the big qty-1 line
-contributes zero. The book's own `PODTL` for all three orders states
-`UnitPrice 0.00`, so the book agrees the ORDER had no price; only the RECEIPT
-states one.
+**Why those orders are out of scope, checked rather than assumed.**
+`PO-009033`, `PO-008984`, `PO-009074`, `PO-009469`, `PO-009365` and `PO-009516`
+each read `Qty == TransferedQty` on every line and none is raised for a line of
+an in-scope sales order, so each fails both lanes of `SCOPE.PO` in
+`backend/scripts/lib/ac-scope.mjs`.
 
-**PROVEN on production, run `34231092897`** — `stamp-migrated-source-prices.mjs`
-dispatched in PLAN mode (writes nothing), company 1, `kind=gr`, 2026-09-08
-13:17 UTC. That tool already computes the right figure to the sen and then
-REFUSES to write it:
+**Two facts found while proving this, which the arithmetic depends on:**
 
-```
-PI-007287      AutoCount  RM 11,247.00  ours would be   RM 3,200.00   HC-GR-004909
-PI-007765      AutoCount   RM 4,580.00  ours would be   RM 2,230.00   HC-GR-005169
-PI-007771      AutoCount   RM 9,284.00  ours would be   RM 4,850.00   HC-GR-005171-PO-009344 + HC-GR-005171-PO-009553
-```
+- **Every one of the 189 in-scope receipts is billed for exactly what it holds.**
+  That is what lets the book's (receipt x order) split stand in for an
+  invoice-line split AutoCount never states. Book-wide it is 5,269 exact, 4
+  billed for slightly less, 0 for more. It is asserted at run time, not assumed —
+  where an invoice bills only part of a receipt, the share is reported as NOT
+  DETERMINABLE instead of as a number nobody can defend.
+- **20 live purchase invoices have a line sum that does not equal their header,
+  and every one is CNY** — the line export is DOCUMENT currency, the header
+  export LOCAL. `PI-001222`: lines 1,635,817 sen, header 2,641,055 sen,
+  `1,635,817 / 0.61938 = 2,641,055`, and both exports state that rate. It is a
+  RATE, not a discount, and it is refused rather than converted. None of the 20
+  touches an in-scope receipt.
 
-`RM 3,200.00`, `RM 2,230.00` and `RM 2,330.00 + RM 2,520.00 = RM 4,850.00` are
-exactly the book pair totals in the table above. The same run explains the
-RM 120 / RM 80 / RM 60 we DO hold:
-
-```
-HC-GR-004909 group 829661 (SQUARE PILLOW): already carries money in the ERP — never overwritten. SKIPPED.
-HC-GR-005169 group 861817 (SQUARE PILLOW): already carries money in the ERP — never overwritten. SKIPPED.
-HC-GR-005171-PO-009344 group 851497 (LONG PILLOW): already carries money in the ERP — never overwritten. SKIPPED.
-```
-
-The accessory line is priced; the furniture line is not. And the run states why
-it will not price the furniture line:
-
-> **LEFT ALONE — 28 AutoCount invoice(s) whose ERP side cannot reach the billed
-> total:** our receipt mirrors ONE purchase order and AutoCount's receipt spans
-> several, so the invoice bills more than our lines cover. A price cannot fix
-> that; **these are the multi-purchase-order fragments with the owner.**
-
-**So the 9 are not a data defect and no existing tool will close them.** They
-are that already-known class. The same run also reports what it WOULD do
-elsewhere — `STAMPING 23 line(s) across 21 document(s) / 7 AutoCount invoice(s)`,
-after which those 7 reconcile to the sen and become convertible — which is a
-separate, available decision and was NOT applied here.
-
-**Do NOT repair this by copying the book's receipt price.** It would put money
-on a receipt that its own purchase order does not have, contradict
-`priceDeclared`, and change what a purchase invoice raised off that receipt
-would say — the stamp tool's own words are that it would move an owner-held
-decision out of the "ours RM 0.00" bucket into "both sides priced and genuinely
-differ", where it reads as new. It sits beside his existing 「GR 0 没关系」
-ruling, which already accepts a migrated receipt carrying LESS than the book
-states. Whether a PARTIAL amount falls under the same ruling is his to say.
+**The yardstick now lives in ONE place** — `backend/scripts/lib/ac-chain-line-grain.mjs`.
+The two-export cross-check that the old gate was reaching for is kept and is now
+MEASURED per document (`invoiceIdentity`) rather than assumed.
 
 **Currency is its own axis and it LOCKS.** A foreign purchase order's total is
 compared in the document's own currency, so the money can be right to the sen

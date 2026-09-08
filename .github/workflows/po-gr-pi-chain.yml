@@ -1,0 +1,82 @@
+name: Do PO, GR and PI line up line by line? (read-only)
+
+# 「PO GR PI的line information去吧要对其啊」 — the owner, 2026-09-08, after a lane
+# told him nine goods receipts could not be reconciled because "AutoCount's
+# receipt spans several purchase orders". That was a DOCUMENT-TOTAL measurement
+# wearing a line-level explanation; the schema disagrees with it
+# (`scm.grn_items.purchase_order_item_id` is per line and NULLABLE, so a
+# multi-order receipt is perfectly representable) and so did he.
+#
+# This walks the chain a LINE at a time — our receipt line to the book's on
+# `linked_ac_dtlkey`, the book's receipt line to its purchase order on
+# GRDTL.FromDocNo, the book's invoice line to its receipt on PIDTL.FromDocNo —
+# and prints both sides' lines summed to their document total, so a difference
+# is attributable to a line instead of explained by a story about grain.
+#
+# It also names TRANSPOSITIONS: two of our lines carrying each other's item,
+# detected on the AutoCount line KEY rather than on the names looking swapped.
+# Pairing by position is what creates that defect (docs/bugs/0690), so a report
+# hunting for it must not pair that way itself.
+#
+# READ-ONLY. SELECTs only, one connection, no DDL, no transaction, no MODE=apply
+# and no publish step. It answers a question; it changes nothing.
+#
+# The AutoCount side is the committed snapshot
+# backend/scripts/data/ac-reconcile-truth.json.gz — the book is reachable only
+# over ZeroTier from the office network, which a GitHub-hosted runner has no
+# route to. The check REFUSES on a stale snapshot rather than answering against
+# an old book.
+#
+# Manual trigger only: it is a question, not a gate, and a production DB read on
+# a schedule becomes CI noise nobody reads.
+on:
+  workflow_dispatch:
+    inputs:
+      show:
+        description: "Documents to detail (raise it to see every one)"
+        required: false
+        default: "20"
+        type: string
+      company_id:
+        description: "ERP company (AED_HOUZS is company 1)"
+        required: false
+        default: "1"
+      max_snapshot_age_days:
+        description: "Refuse if the AutoCount snapshot is older than this many days"
+        required: false
+        default: "2"
+
+# Its OWN group. Not the deploy's — a diagnostic must not queue behind or
+# displace a release — and not the other tally lanes' either: several lanes are
+# working this book at once, and asking this question must not cancel somebody
+# else's run mid-flight.
+concurrency:
+  group: po-gr-pi-chain
+  cancel-in-progress: true
+
+jobs:
+  chain:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - name: The chain, line by line
+        run: node scripts/check-po-gr-pi-chain.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SHOW: ${{ inputs.show }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          MAX_SNAPSHOT_AGE_DAYS: ${{ inputs.max_snapshot_age_days }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first
