@@ -368,6 +368,39 @@ describe('item code — a guessed pairing is not a wrong product, and a wrong pr
     expect(r.guessed).toBe(0);
     expect(r.differ).toBe(1);
   });
+
+  /* A PARTIALLY keyed document is the normal state since the 2026-09-08 14:22
+     backfill: it stamps only where the book FORCES the pairing and leaves the
+     rest NULL. Asking the DOCUMENT whether it has keys then answers "yes" for a
+     line that was still guessed. Production shape: GR-005334|PO-009887. */
+  test('a partially keyed document: the GUESSED line moves and the KEYED line beside it does not', () => {
+    const bags = new Map([
+      ['part', { book: 'IMMORTAL x1 | ULTIMATE x1', erp: 'IMMORTAL x1 | ULTIMATE x1', keyed: true }],
+    ]);
+    const guessed = { ...codeRow('part'), erpKeyed: false };
+    const read = { ...codeRow('part'), erpKeyed: true };
+    const r = splitGuessedItemCodePairing({ rows: [guessed, read], bags });
+    expect(r.guessed).toBe(1);
+    expect(r.differ).toBe(1);
+    expect(r.guessed + r.differ).toBe(2);
+  });
+
+  test('erpKeyed never overrides the multiset: an unkeyed line whose bags DIFFER stays a difference', () => {
+    const bags = new Map([
+      ['bad', { book: 'CELENE (A)-(K) x1', erp: 'CELENE (A)-(SS) x1', keyed: true }],
+    ]);
+    const r = splitGuessedItemCodePairing({ rows: [{ ...codeRow('bad'), erpKeyed: false }], bags });
+    expect(r.guessed).toBe(0);
+    expect(r.differ).toBe(1);
+    expect(r.impostors[0].why).toContain('DIFFERENT goods');
+  });
+
+  test('a caller that carries no per-line fact still gets the document answer', () => {
+    const bags = new Map([['a', { book: 'A x1', erp: 'A x1', keyed: false }]]);
+    const r = splitGuessedItemCodePairing({ rows: [codeRow('a')], bags });
+    expect(r.guessed).toBe(1);
+    expect(r.differ).toBe(0);
+  });
 });
 
 /* ── line count: the migrated chain builds from OUR document ─────────────── */
