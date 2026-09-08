@@ -62,7 +62,9 @@ vi.mock('../../vendor/scm/lib/payment-voucher-queries', () => ({
 vi.mock('../../vendor/scm/lib/ap-invoice-listing-pdf', () => ({
   generateApListingPdf: (rows: unknown, filter: unknown) => listingAsync(rows, filter),
 }));
-vi.mock('../../vendor/scm/lib/accounting-queries', () => ({
+vi.mock('../../vendor/scm/lib/accounting-queries', async (importOriginal) => ({
+  /* The real pure helpers stay (postableAccounts — docs/bugs/0693); only the hooks are stubbed. */
+  ...(await importOriginal<typeof import('../../vendor/scm/lib/accounting-queries')>()),
   isControlSpecial: (s: string | null | undefined) => s === 'SDC' || s === 'SCC' || s === 'SBS',
   useAccounts: () => ({ data: { accounts: [
     { account_code: '900-0000', account_name: 'Operating Expense', account_type: 'EXPENSE', parent_code: null, is_active: true, acc_money: false, special_type: null },

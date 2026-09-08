@@ -282,7 +282,17 @@ Special Acc Type SBK/SCH → acc_money, banks / related-party loans /
 directors / HP+borrowings pre-classified company-specific — so the file
 never enters the repo. 父户不记账 is enforced three-deep: the GL gate
 (engine rule 3), `requireLeafAccount` at PV create/patch (typing time), and
-AccountSelect simply not offering a header with children. One-off chart
+AccountSelect simply not offering a header with children. A header is any
+account with a sub-account, RETIRED ones included, at all three doors
+(docs/bugs/0693, 2026-09-08: 900-R006 RENTAL- SHOWROOM kept three retired
+showrooms under it; the two typing-time doors read only the active children
+and let it onto 2990-HPV-2607-003, the gate would have refused it at approve).
+The pickers take their list from `postableAccounts` / `leafAccounts` in
+`frontend/src/vendor/scm/lib/accounting-queries.ts` — the one home, fed the
+WHOLE chart — on `PaymentVoucherNew.tsx`, `PaymentVoucherDetail.tsx`,
+`ApInvoices.tsx`, `OtherDebtors.tsx`, `Receipts.tsx` and the manual journal on
+`Accounting.tsx`; contracts `AccountSelect.test.tsx` and the leaf block of
+`backend/tests/accountingChart.test.ts`. One-off chart
 repairs travel as repair workflows beside the seed (plan/apply + CONFIRM):
 .github/workflows/reparent-900-expenses.yml +
 backend/scripts/reparent-900-expenses.mjs hung the flat AutoCount 900-x

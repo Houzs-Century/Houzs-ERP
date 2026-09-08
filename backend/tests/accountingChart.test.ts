@@ -512,12 +512,17 @@ describe('requireLeafAccount — 父户不记账 at typing time', () => {
     expect(await requireLeafAccount(ctx(tables), 1, '900-X001')).toBeNull();
   });
 
-  test('a header whose children are all INACTIVE books again — the tick page can retire a level', async () => {
+  /* docs/bugs/0693 — 900-R006 RENTAL- SHOWROOM kept three retired showrooms
+     under it: still a header to the owner, and to the GL gate that refused it
+     at approve. A retired child does not turn its parent back into a leaf. */
+  test('a header whose children are all RETIRED stays a header — the GL gate counts every child, so this door does too', async () => {
     const tables = { accounts: [
       acct(1, '310-0000'),
       acct(1, '310-0010', { parent_code: '310-0000', is_active: false }),
     ] };
-    expect(await requireLeafAccount(ctx(tables), 1, '310-0000')).toBeNull();
+    const refusal = await requireLeafAccount(ctx(tables), 1, '310-0000');
+    expect(refusal).not.toBeNull();
+    expect((await refusal!.json() as { error: string }).error).toBe('not_a_leaf_account');
   });
 
   test('a control account (SDC/SCC/SBS) refuses even as a leaf — 由模块自动过账; SBK books on', async () => {
