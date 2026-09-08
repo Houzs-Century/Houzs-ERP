@@ -99,11 +99,61 @@ which `{model}-*` piece codes the product master actually holds. It is READ-ONLY
 from the committed snapshot rather than from `description2`, which is
 server-generated on write (`docs/bugs/0639`).
 
-**IT HAS NOT BEEN DISPATCHED. UNTESTED.** A `workflow_dispatch` workflow is only
-triggerable once its file is on `main`, so this ships first and is run second —
-and per the working agreement it is not "shipped" until a run reports success.
-**No conclusion about which reader produced these rows should be drawn, and no
-data repair should be written, until that run exists.**
+**MEASURED — prod, company 1, run `34219111494`, `success`.** The probe was
+dispatched after this shipped, and it answers:
+
+```
+SALES ORDER: 1168 sofa line(s); 127 on a bare "-1S", on 123 document(s)
+   P  the decoder's placeholder (remark says SOFA UNPARSED) : 1
+   S  a GENUINE one-seater, the book says one seat          : 9
+   N  NEVER DECOMPOSED - the book states a real build, and  : 34
+   ?  no book line reachable, or the book states no build   : 83
+   (of the 127, 0 are cancelled)
+
+PURCHASE ORDER: 360 sofa line(s); 9 on a bare "-1S", on 9 document(s)
+   P 4    S 5    N 0    ? 0
+```
+
+**Both competing explanations are REFUTED.**
+
+- *"The decoder tried and could not read it."* Only **1** of the 127 sales-order
+  rows carries `SOFA UNPARSED`, and **none of the 34 class-N rows does**. These
+  lines never entered the decoder's fallback branch, so they cannot be recovered
+  by `redecode-collapsed-sofa-lines.mjs`, which selects on that marker.
+- *"A piece SKU was never minted."* Every class-N row printed
+  `every piece SKU exists`. The models are fully catalogued — `2379` holds 19
+  compartment codes, `8051` 20, `8030` 16, `9028` 14, `5535` 14, `7179` 12,
+  `7219` 11, `7223` 11.
+
+**The item-code theory carries 28 of the 34, not all of them.** Class N by
+AutoCount item code:
+
+| AutoCount code | binding | SO lines | code says "SOFA"? |
+| --- | --- | --- | --- |
+| `THL-2379` | cat=SOFA erp=`2379-1S` | 22 | **no** |
+| `THL-7179` | cat=SOFA erp=`7179-1S` | 3 | **no** |
+| `THL-7223` | cat=SOFA erp=`7223-1S` | 2 | **no** |
+| `THL-7219` | cat=SOFA erp=`7219-1S` | 1 | **no** |
+| `SVI-00913 SOFA`, `DSL-8051 SOFA`, `DSL-9028 SOFA`, `AMN-SF9028 SOFA`, `HOK-5535 SOFA`, `DSL-8030 SOFA` | cat=SOFA | 1 each | yes |
+
+**28 wordless, 6 worded.** So the code-word test explains the large majority and
+**cannot be the whole story** — six lines sit on codes that DO say sofa and were
+still never decomposed. That is a second, open sub-question, and it is stated
+here rather than bridged: the importer's sofa branch is gated on
+`process.env.SOFA === "1"` as well as on the group
+(`import-ac-outstanding-so.mjs:254`), so a run that did not set it would produce
+exactly this shape on any code. **UNKNOWN which run produced those six.**
+
+Every one of the sixteen documents this lane was handed is in the class-N list —
+`HC-SO-001895`, `002961`, `003100`, `003189`, `004281`, `004751`, `005013` (x2),
+`005082` (x2), `006752`, `006890`, `008794`, `008821` — alongside eighteen more
+nobody had counted.
+
+**No data repair is written yet, deliberately.** It is a write against 34 live
+sales-order lines that must insert compartments, keep `linked_ac_dtlkey`
+(`docs/bugs/0704`), move no money and refuse any build whose downstream has
+already shipped — the four release-discipline rules, and a plan/apply workflow
+with a CONFIRM phrase. That is its own PR.
 
 **Not fixed here, deliberately.** Changing `isSofa` in the importer repairs
 nothing already imported — the import has run. The repair is a separate script
