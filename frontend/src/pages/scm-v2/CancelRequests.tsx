@@ -25,8 +25,11 @@ import { STATUS_TONES } from '../../vendor/scm/lib/status-pill';
 import { useUpdateMfgSalesOrderStatus } from '../../vendor/scm/lib/sales-order-queries';
 import { useCancelPurchaseOrder } from '../../vendor/scm/lib/suppliers-queries';
 import {
+  approveLabel,
   cancelRequestLine,
   docTypeOfRow,
+  isFinalLevel,
+  levelsFor,
   isOpenCancelStatus,
   pendingLevel,
   useApproveCancelRequest,
@@ -106,18 +109,19 @@ export const CancelRequests = () => {
     } else {
       await cancelPo.mutateAsync(row.doc_key);
     }
-    void serviceNotify({ title: `${DOC_LABEL[row.doc_type]} ${row.doc_number} cancelled`, body: 'Both approvals were given and the cancellation has run.' });
+    void serviceNotify({ title: `${DOC_LABEL[row.doc_type]} ${row.doc_number} cancelled`, body: 'The approval is complete and the cancellation has run.' });
   };
 
   const doApprove = async (row: CancelRequestRow) => {
     const level = pendingLevel(row.status);
+    const final = level != null && isFinalLevel(docTypeOfRow(row), level);
     if (!(await askConfirm({
-      title: level === 2 ? `Approve and cancel ${row.doc_number}?` : `Give level-1 approval to cancel ${row.doc_number}?`,
-      body: level === 2
-        ? 'This is the second and final approval. The document is cancelled on your signature.'
+      title: final ? `Approve and cancel ${row.doc_number}?` : `Give level-1 approval to cancel ${row.doc_number}?`,
+      body: final
+        ? 'This is the final approval. The document is cancelled on your signature.'
         : 'Level 2 still has to approve after you. Nothing is cancelled yet.',
-      confirmLabel: level === 2 ? 'Approve & cancel' : 'Approve (level 1)',
-      danger: level === 2,
+      confirmLabel: final ? 'Approve & cancel' : 'Approve (level 1)',
+      danger: final,
     }))) return;
     try {
       const res = await (docTypeOfRow(row) === 'so' ? approveSo : approvePo).mutateAsync({ key: row.doc_key });
@@ -182,14 +186,14 @@ export const CancelRequests = () => {
       sortFn: (a, b) => a.status.localeCompare(b.status),
     },
     {
-      key: 'l1', label: 'Level 1', width: 190, sortable: true, defaultHidden: false,
+      key: 'l1', label: 'Level 1 / Approval', width: 190, sortable: true, defaultHidden: false,
       accessor: (r) => who(r.l1_by_name, r.l1_at),
       searchValue: (r) => r.l1_by_name ?? '',
       sortFn: (a, b) => String(a.l1_at ?? '').localeCompare(String(b.l1_at ?? '')),
     },
     {
       key: 'l2', label: 'Level 2', width: 190, sortable: true,
-      accessor: (r) => who(r.l2_by_name, r.l2_at),
+      accessor: (r) => (levelsFor(docTypeOfRow(r)) > 1 ? who(r.l2_by_name, r.l2_at) : <span style={{ color: 'var(--fg-muted)' }}>n/a</span>),
       searchValue: (r) => r.l2_by_name ?? '',
       sortFn: (a, b) => String(a.l2_at ?? '').localeCompare(String(b.l2_at ?? '')),
     },
@@ -204,11 +208,12 @@ export const CancelRequests = () => {
       key: 'actions', label: 'Actions', width: 260,
       accessor: (r) => {
         const level = pendingLevel(r.status);
+        const final = level != null && isFinalLevel(docTypeOfRow(r), level);
         return (
           <span style={{ display: 'inline-flex', gap: 6, flexWrap: 'wrap' }} onDoubleClick={(e) => e.stopPropagation()}>
-            {viewerCanApprove(r, viewer) && (
-              <button type="button" style={{ ...actionBtn, ...(level === 2 ? { borderColor: 'var(--c-festive-b, #B8331F)', color: 'var(--c-festive-b, #B8331F)' } : {}) }} onClick={() => void doApprove(r)}>
-                {level === 2 ? 'Approve & cancel' : 'Approve L1'}
+            {viewerCanApprove(r, viewer) && level != null && (
+              <button type="button" style={{ ...actionBtn, ...(final ? { borderColor: 'var(--c-festive-b, #B8331F)', color: 'var(--c-festive-b, #B8331F)' } : {}) }} onClick={() => void doApprove(r)}>
+                {final ? 'Approve & cancel' : approveLabel(docTypeOfRow(r), level)}
               </button>
             )}
             {r.status === 'APPROVED' && (
@@ -235,7 +240,7 @@ export const CancelRequests = () => {
         description={
           q.isLoading
             ? 'Loading requests…'
-            : `${openCount} open request${openCount === 1 ? '' : 's'} — a Sales Order or Purchase Order is cancelled only after level-1 and level-2 approval`
+            : `${openCount} open request${openCount === 1 ? '' : 's'} — a Sales Order is cancelled after two approvals, a Purchase Order after one`
         }
       />
 
