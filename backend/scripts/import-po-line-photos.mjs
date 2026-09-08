@@ -19,6 +19,7 @@ import zlib from "node:zlib";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
+import { SOFA_MODEL_ALIAS } from "./lib/parse-sofa.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -31,7 +32,6 @@ const isSofa = (c) => /SOFA/i.test(c || "");
 /* One AutoCount sofa line becomes MANY ERP lines (one per compartment), so the
    build photo attaches to EVERY piece of that build: whichever piece the
    supplier or the warehouse opens, the reference shot is on it. */
-const SOFA_MODEL_ALIAS = { "5530": "9028", "5536": "9058", "5537": "8030", "5540": "8030" };
 const sofaModelOf = (erp) => {
   const m = (erp || "").replace(/-1S$/i, "").toUpperCase();
   return SOFA_MODEL_ALIAS[m] || m;

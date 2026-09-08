@@ -16,6 +16,7 @@ import zlib from "node:zlib";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
+import { SOFA_MODEL_ALIAS } from "./lib/parse-sofa.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -30,7 +31,6 @@ const isSofa = (c) => /SOFA/i.test(c || "");
    piece and sees the reference shot (owner 2026-08-10: "import 进来的时候需要
    连那个照片一起 import 进来"). Model comes from the same mapping + alias the
    SO importer uses. */
-const SOFA_MODEL_ALIAS = { "5530": "9028", "5536": "9058", "5537": "8030", "5540": "8030" };
 const sofaModelOf = (erp) => {
   const m = (erp || "").replace(/-1S$/i, "").toUpperCase();
   return SOFA_MODEL_ALIAS[m] || m;

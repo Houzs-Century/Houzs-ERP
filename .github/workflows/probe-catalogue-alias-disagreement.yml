@@ -1,0 +1,41 @@
+name: probe-catalogue-alias-disagreement
+
+# READ-ONLY. Where the product catalogue and SOFA_MODEL_ALIAS disagree, with a
+# denominator, and what that disagreement costs at topup-ac-po-lines.mjs's
+# SOFA-axis refusal. No writes, no DDL. Exits 0 for every legitimate answer.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Database to probe"
+        required: true
+        default: "prod"
+        type: choice
+        options: [prod, staging]
+
+concurrency:
+  group: probe-catalogue-alias-disagreement
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - name: Run read-only probe
+        env:
+          DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
+        run: node scripts/probe-catalogue-alias-disagreement.mjs | tee probe-out.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: probe-catalogue-alias-disagreement
+          path: backend/probe-out.txt
+          retention-days: 7
