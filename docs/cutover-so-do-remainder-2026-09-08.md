@@ -362,3 +362,107 @@ headline moved 40 → 36 in the same window and **that is not this work**: it st
 at 40 across both branch runs (`34200092543`, `34200664197`), and the change came
 with other lanes merging into `main` — more lines paired (SO 14,903 → 14,913, PO
 1,309 → 1,327, IV 43 → 45 documents) and a GR item-code reclassification.
+
+---
+
+# The lines the IMPORT dropped — measured 2026-09-08 18:15, and nothing was written
+
+The sections above are about book lines the ERP does not hold on documents it
+does. This one is about the lines the cutover import itself let go, which no
+reconcile axis reports at all: a document the ERP holds correctly is not on any
+list, whatever the import decided along the way.
+
+**The owner was asked about them as a number and answered 「这些都要」.** The
+number is `import-ac-outstanding-so.mjs`'s own `Blank zero-value lines dropped:
+17`, and it is the only trace the run leaves. Put in front of the live database
+it turns out not to be seventeen and not to be one thing.
+
+Measured: probe run `34214774396`
+(`probe-dropped-book-lines.yml`, read-only, 2026-09-08 10:18 UTC = **18:18
+Malaysia**), plus run `34211433089` (`probe-cutover-so-do-lines`) for the
+document-by-document read.
+
+## Two of the seventeen were never dropped, and writing them would have doubled the goods
+
+The importer resolves a code-less line's free text against the **live** pick list
+BEFORE the owner's rule can see it. So `code-less AND zero-priced` — all the
+committed export can tell you — is the CANDIDATE set, not the dropped set:
+
+```
+of the 17 zero-priced code-less line(s), the resolver answers 2 TODAY
+  SO-000015 dtl 123388 "AKEMI BASTION MATTRESS (153x190x25CM)" -> AKEMI BASTION MATT (SP)
+  SO-000015 dtl 123389 "NK-JAGER B/FRAME(Q) (152x190CM)"       -> JAGER-(Q)
+```
+
+`HC-SO-000015` (customer `CUSTOMER`, 2024-07-31, CONFIRMED) holds all three of
+its book lines — `AKEMI FORTRESS MATT (K)` RM 9,099.00, `AKEMI BASTION MATT (SP)`
+RM 0.00, `JAGER-(Q)` RM 0.00 — header RM 9,099.00, lines summing RM 9,099.00,
+equal to the book to the sen, and its `mfg_so_audit_log` is EMPTY. The import
+wrote them itself.
+
+**Why it looked missing:** none of its rows carries an AutoCount line key, so the
+reconcile calls the document UNJUDGEABLE. That is not a hand edit —
+`backfill-ac-line-keys.mjs` buckets by the TRANSLATED item code, and a code-less
+book line has no mapping row, so the ERP row minted for it can never be keyed.
+Eight sales orders are in that state and every keyless row on the five that were
+read corresponds to a code-less book line
+(`docs/bugs/0712-a-code-less-book-line-can-never-be-keyed-so-the-eight-unjudg.md`).
+
+## What was really dropped: 15, and 3 of them are somebody's
+
+| n | what | who owns it |
+| --- | --- | --- |
+| 12 | the book states nothing at all and quantity is 0 | nobody — `lib/ac-blank-book-row.mjs` already rules this the two sides agreeing |
+| 2 | a build INSTRUCTION on a line of its own | the FIELD it belongs on, not a product line |
+| 1 | the book states nothing and ORDERS FOUR | **the owner** |
+
+### `HC-SO-000102` — `COLOUR : 885-4` is nowhere on the document, and the library does not have the colour
+
+Searched over every line's `description2`, `remark`, `variants` and
+`custom_specials` and the header's remark fields, punctuation removed from both
+sides: **not found**. And `scm.fabric_colours` holds **0** rows whose colour code
+is `885-4`, so there is no colour field it could be written to even by decision.
+The order is CONFIRMED, RM 2,549.00 fully paid, and its `CROWN (SS+S)` bedframe
+was delivered on `DO-000097` in 2023. The same instruction is a line of that
+delivery note too, and equally absent.
+
+**Not a line to add.** A colour is a variant of the bedframe line; minting a
+product for it would invent goods. It needs a fabric-library row first, and then
+it is a variant write — the lane `repair-so-variant-from-book.mjs` owns.
+
+### `HC-SO-000814` — `LEG: FOLLOW DISPLAY` is nowhere on the document
+
+Same search, same answer. The sofa's own build text IS carried on all three
+compartments (`[ (1 ELT / T + NA +2ER) (28") / COL: J9883-1-1 PAMA]`, on
+`description2` and on `remark`); the leg instruction was a separate book line and
+did not come. The order is `IN_PRODUCTION` with a processing date of 2024-05-07,
+and the book already shows the sofa transferred to `DO-000542` — so the sofa is
+built and this is a record, not a live build instruction.
+
+### `HC-SO-011384` — the row that orders four of nothing
+
+Already section F above, and re-confirmed here from the import side: dtl 783795,
+quantity 4, no item code, no description, no Desc2, no money, on Ramachandran's
+RM 17,888.00 roadshow order for `PENANG WATERFRONT CONVENTION CENTRE`. Every
+other line on that order is quantity 2. **Nothing in the book names it** and
+inventing a product is forbidden — the original order slip is the only source.
+
+## And the other document types, which the owner asked about (「其他order也是这样？」)
+
+| type | code-less lines in the cut the importer read | what happened |
+| --- | --- | --- |
+| sales orders (14,041 lines) | 22 | 2 resolved as goods, 1 resolved as a mattress, 1 became a charge by delivery wording, 3 became charges by the owner's rule, 15 dropped |
+| purchase orders (501 lines) | 1 | `PO-009979` `ERGOTEX PILLOW CASE - FAIR` **x20 at RM 50.00 = RM 1,000.00**. The purchase importer does not drop — it records an exception, because `scm.purchase_order_items.item_code` is NOT NULL. It is that document's ONLY line, so **the whole purchase order is absent from the ERP** (`PO-009979 -> (NOT IN THE ERP)`, run `34211433089`). Owner 2026-09-02 already ruled 「要进 accessories」; it needs the product minted before the column will take the line |
+| delivery orders (369 lines) | 3 | `DO-000097`'s `COLOUR : 885-4`, `DO-001604`'s empty row, and `DO-001604`'s `* DISPOSE …` at RM 150.00 — the last already written by `topup-ac-lines-from-truth` (run `34204421089`, section G above) |
+
+## Nothing was written, and here is the reading that says so
+
+| check | run | reading |
+| --- | --- | --- |
+| reconcile | `34211712847`, 09:44 UTC | **21** disagreements. CONTROL: PO `0 / 0 / 0 / 0 / 0`; GR `0 / 0 / 0 / 0 / 9` with 100 ERP-RM0 and 2 same-goods; IV 4 absent, 4 same-goods, 9 same-money, 1 no-key-open; PI 1 line-count, 11 same-money, 6 no-key-open — identical to the 16:25 baseline above |
+| movements behind the affected documents | `34214774396`, section G | `HC-DO-000097` 0, `HC-DO-000542` 0, both `migrated_no_stock = true` |
+
+**There is no "after".** No quantity, price, item code, status, variant or
+payment column was written by this lane on any document, so readiness and stock
+cannot have moved and the reconcile reading above is the current state, not a
+before.
