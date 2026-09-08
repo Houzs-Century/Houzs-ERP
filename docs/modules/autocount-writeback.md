@@ -2714,6 +2714,28 @@ also parsed **`Desc2`** to get the ERP's variants —
 > that one carries `size` and NOT `specials` because it is a COMPARISON
 > projection for a diagnostic, never the block a writer persists.
 
+> **`totalHeight` is NULL when a height is undecided, since 2026-09-09.** If the
+> `Desc2` writes the DIVAN, the mattress GAP or the LEG as `TBC` / `KIV`, the
+> block returns `totalHeight: null` rather than a sum. It used to return the sum
+> of whatever else was stated — `Divan: TBC / Gap: 12"` came back as a bed `12"`
+> tall — because `Number(undefined) || 0` counted "not chosen yet" as ZERO. That
+> is the same owner rule the COLOUR arm of this block already obeyed
+> (`isPendingColour`); the two arms were answering it differently.
+>
+> `parseBedframe` now returns `divanPending` / `gapPending` / `legPending`
+> alongside the heights, because an ABSENT component and an UNDECIDED one are
+> different facts — a divan with no leg mentioned still means no leg (0), and a
+> line that never mentions a divan still totals what it does state. Only an
+> explicit marker suppresses the total.
+>
+> Measured on the 2026-09-08 book cut: the divan is written that way on 55
+> lines, the gap on 38, the leg on 20. The reconcile could not see any of it,
+> because it derives the book's side with this same expression and both sides
+> produced the same wrong number — so the pin is
+> `backend/tests/bedframePendingHeight.test.ts`, which asserts the INTENDED
+> value and never one side of a comparison against the other.
+> Ledger: `docs/bugs/0732-an-undecided-divan-height-was-counted-as-zero-so-the-bed-got.md`.
+
 > **And the FREE-TEXT name resolver moved the same way, 2026-09-08.** A code-less
 > AutoCount sales line names its product only in the Description, and
 > `import-ac-outstanding-so.mjs` resolves that against the live company-1 pick
