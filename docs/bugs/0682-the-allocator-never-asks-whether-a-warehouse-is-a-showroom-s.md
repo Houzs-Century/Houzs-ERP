@@ -83,9 +83,8 @@ Note `is_showroom` is NOT that axis and must not be used for this: it is `true`
 on only 2 of the 9 (the two SLEEP STUDIO / SUITE rooms) because it drives the
 project VENUE picker, not sellability. `type` is the one to read.
 
-## What the probe measured (PROVEN, run 34173822315)
-
-**The exposure is 1,642 units, and none of it is being drawn today.**
+**What the probe measured (PROVEN, run 34173822315) — the exposure is 1,642
+units, and none of it is being drawn today.**
 
 | | cells | units |
 |---|---|---|
