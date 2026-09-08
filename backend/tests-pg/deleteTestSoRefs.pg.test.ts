@@ -230,8 +230,14 @@ describePg('delete-test-so — the reference sweep, against real Postgres', () =
     await sql.unsafe(`DELETE FROM scm.mfg_sales_orders         WHERE doc_no    = '${DOC}'`);
 
     const swept = await sweepReferences(sql, DOC);
-    expect(swept.hits.map((h) => h.table).sort())
-      .toEqual(['scm.autocount_outbox', 'scm.mfg_so_audit_log']);
+    /* A hit is one (table, COLUMN) pair, not one table — scm.autocount_outbox
+       carries the number in BOTH doc_no and ac_doc_no and answers twice, which
+       is what production prints as well (run 34220446297). */
+    expect(swept.hits.map((h) => `${h.table}.${h.column}`).sort()).toEqual([
+      'scm.autocount_outbox.ac_doc_no',
+      'scm.autocount_outbox.doc_no',
+      'scm.mfg_so_audit_log.so_doc_no',
+    ]);
     // And every survivor is one somebody decided to keep.
     for (const h of swept.hits) expect(AUDIT_KEEP.has(h.table)).toBe(true);
   });
