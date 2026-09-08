@@ -10,6 +10,7 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { authedFetch } from "../vendor/scm/lib/authed-fetch";
 import { lineWriteFailure, lineWriteSaveMessage, type LineWriteFailure } from "../vendor/scm/lib/line-write-failures";
+import { photoLabel, photoUploadFailure, photoUploadFailureMessage, unmatchedLinePhotos, type PhotoUploadFailure } from "../vendor/scm/lib/photo-upload-failures";
 import { runSoVersionedMutation } from "../vendor/scm/lib/so-versioned-mutation";
 import { notifySaveProblems } from "../vendor/scm/components/SaveProblemsList";
 import { uploadSlipFull } from "../vendor/scm/lib/slip";
@@ -1534,26 +1535,25 @@ export function MobileNewSO({
       if (hit) { claimed.add(hit.id); return hit.id; }
       return null;
     };
-    let failed = 0;
+    /* COLLECTS THE REASONS, not a count: the photo half of the defect #3303
+       fixed for line writes. Wording and the retry/refusal decision are in
+       vendor/scm/lib/photo-upload-failures.ts, with the whole trace. */
+    const failures: PhotoUploadFailure[] = [];
     const uploadUnderLease = async (lease: string) => {
       for (const l of withFiles) {
         const itemId = resolveId(l);
-        if (!itemId) { failed += l.photoFiles.length; continue; }
+        const line = l.itemCode.trim() || l.name.trim();
+        if (!itemId) { failures.push(...unmatchedLinePhotos(line, l.photoFiles)); continue; }
         for (const file of l.photoFiles) {
-          try {
-            await uploadSoItemPhotoWithLease(soDocNo, itemId, file, lease);
-          } catch { failed += 1; }
+          try { await uploadSoItemPhotoWithLease(soDocNo, itemId, file, lease); }
+          catch (e) { failures.push(photoUploadFailure(photoLabel(line, file.name), e)); }
         }
       }
     };
-    if (existingLeaseToken) {
-      await uploadUnderLease(existingLeaseToken);
-    } else {
-      await runSoVersionedMutation(qc, soDocNo, "mobile-new-so-photo-upload", ({ leaseToken }) =>
-        uploadUnderLease(leaseToken));
-    }
-    if (failed > 0) {
-      void notify({ title: "Some photos didn't upload", body: `${failed} line photo(s) failed to upload. Add them again from the SO detail screen.`, tone: "error" });
+    if (existingLeaseToken) { await uploadUnderLease(existingLeaseToken); }
+    else { await runSoVersionedMutation(qc, soDocNo, "mobile-new-so-photo-upload", ({ leaseToken }) => uploadUnderLease(leaseToken)); }
+    if (failures.length > 0) {
+      void notify({ title: "Some photos didn't upload", body: photoUploadFailureMessage(failures), tone: "error" });
     }
   }
 
