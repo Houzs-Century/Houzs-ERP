@@ -19,6 +19,7 @@ import {
 } from '../../vendor/scm/lib/payment-voucher-queries';
 import { AccountSelect } from '../../vendor/scm/components/AccountSelect';
 import { useSaveHotkey, SAVE_HOTKEY_HINT } from '../../vendor/scm/lib/use-save-hotkey';
+import { upperFill } from '../../vendor/scm/lib/ocr-fill';
 import { SearchCombo } from '../../vendor/scm/components/SearchCombo';
 import { DateField } from '../../vendor/scm/components/DateField';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
@@ -51,6 +52,41 @@ export const toSubmit = (v: ApFormValues): ApFormSubmit => ({
     .map((l) => ({ ...(l.description.trim() ? { description: l.description.trim() } : {}), debitAccountCode: l.debitAccountCode, amountSen: l.amountSen })),
 });
 
+/* The reader's answer as form values — the supplier from the server's match,
+   the bill's number and dates, its lines under the REMEMBERED account only
+   (never a model guess); text the reader fills goes upper case (owner
+   2026-09-08). One home: the form's own Scan bill and the pile page's
+   hand-off (ApInvoices.tsx) both fill through here. */
+export const formFromExtraction = (ex: BillExtraction, match: { id: string } | null, memory: VendorMemory | null): Partial<ApFormValues> => {
+  const account = memory?.debitAccountCode ?? '';
+  const drafts: ApFormLine[] = ex.lines
+    .filter((l): l is { description: string | null; amountSen: number } => l.amountSen != null && l.amountSen > 0)
+    .map((l, i) => ({ rid: i + 1, description: upperFill(l.description) ?? '', debitAccountCode: account, amountSen: l.amountSen }));
+  /* A bill with no readable lines still carries its total — one line. */
+  if (drafts.length === 0 && ex.totalSen != null && ex.totalSen > 0) {
+    drafts.push({ rid: 1, description: upperFill(ex.invoiceNumber ? `Bill ${ex.invoiceNumber}` : 'As per bill') ?? '', debitAccountCode: account, amountSen: ex.totalSen });
+  }
+  return {
+    ...(match ? { supplierId: match.id } : {}),
+    ...(ex.invoiceNumber ? { supplierRef: upperFill(ex.invoiceNumber) ?? '' } : {}),
+    ...(ex.invoiceDate ? { invoiceDate: ex.invoiceDate } : {}),
+    ...(ex.dueDate ? { dueDate: ex.dueDate } : {}),
+    ...(drafts.length > 0 ? { lines: drafts } : {}),
+  };
+};
+
+/* What the form says after a read — the same sentences whether the bill was
+   picked here or handed over from the pile. */
+export const scanNoteFor = (bill: { extraction: BillExtraction; supplierMatch: { name: string } | null; memory: VendorMemory | null }): string => [
+  'Read — check every figure before saving.',
+  bill.supplierMatch ? `Looks like supplier ${bill.supplierMatch.name}.` : 'No supplier matched the printed name — pick it yourself.',
+  bill.memory?.debitAccountCode
+    ? `Account ${bill.memory.debitAccountCode} filled from your last ${bill.memory.payeeName ?? 'same-vendor'} bill — check it.`
+    : null,
+  bill.extraction.totalSen == null ? 'The TOTAL was not readable — enter it yourself.' : null,
+  bill.extraction.currency !== 'MYR' ? `The bill reads as ${bill.extraction.currency}; AP invoices are MYR — a foreign bill goes through a purchase invoice.` : null,
+].filter(Boolean).join(' ');
+
 const soft: React.CSSProperties = { fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' };
 const th: React.CSSProperties = {
   padding: '6px 8px', textAlign: 'left', fontSize: 'var(--fs-11)', fontWeight: 600, letterSpacing: '0.04em',
@@ -62,12 +98,17 @@ const iconBtn: React.CSSProperties = { border: 'none', background: 'none', curso
 
 export const ApInvoiceForm = ({
   mode, initial, suppliers, suppliersLoading = false, lineAccounts, posted = false, paidSen = 0, saving, onSubmit, onCancel,
+  initialFiles, initialNote,
 }: {
   mode: ApFormMode;
   initial: ApFormValues;
   suppliers: Array<{ id: string; code: string; name: string }>;
   suppliersLoading?: boolean;
   lineAccounts: Account[];
+  /** A bill handed over from the pile page: its read pages, waiting to attach
+      on save, and the reader's sentence about it. */
+  initialFiles?: PvFilePayload[];
+  initialNote?: string | null;
   /** Editing a bill already on the books: saving re-posts, and money paid
       caps the total and pins the supplier — the same rules the route holds. */
   posted?: boolean;
@@ -118,28 +159,15 @@ export const ApInvoiceForm = ({
      account ONLY from vendor memory, never a model guess. MULTI-SELECT MEANS
      ONE BILL (its pages); the read pages attach after save. */
   const extract = useExtractBills();
-  const [scanNote, setScanNote] = useState<string | null>(null);
-  const [pendingFiles, setPendingFiles] = useState<PvFilePayload[]>([]);
+  const [scanNote, setScanNote] = useState<string | null>(initialNote ?? null);
+  const [pendingFiles, setPendingFiles] = useState<PvFilePayload[]>(initialFiles ?? []);
+  /* 拖进来 upload (owner 2026-09-08): the scan row takes a dropped bill too. */
+  const [dragOver, setDragOver] = useState(false);
   /* F3 / Ctrl+S = the save button (owner 2026-09-08: 像 autocount 按 f3);
      a form that is not ready ignores it, as the button would. */
   useSaveHotkey(() => { if (ready) void onSubmit(toSubmit(v), pendingFiles); }, !saving);
   const applyExtraction = (ex: BillExtraction, match: { id: string } | null, memory: VendorMemory | null) => {
-    const account = memory?.debitAccountCode ?? '';
-    const drafts: ApFormLine[] = ex.lines
-      .filter((l): l is { description: string | null; amountSen: number } => l.amountSen != null && l.amountSen > 0)
-      .map((l, i) => ({ rid: i + 1, description: l.description ?? '', debitAccountCode: account, amountSen: l.amountSen }));
-    /* A bill with no readable lines still carries its total — one line. */
-    if (drafts.length === 0 && ex.totalSen != null && ex.totalSen > 0) {
-      drafts.push({ rid: 1, description: ex.invoiceNumber ? `Bill ${ex.invoiceNumber}` : 'As per bill', debitAccountCode: account, amountSen: ex.totalSen });
-    }
-    setV((prev) => ({
-      ...prev,
-      ...(match ? { supplierId: match.id } : {}),
-      ...(ex.invoiceNumber ? { supplierRef: ex.invoiceNumber } : {}),
-      ...(ex.invoiceDate ? { invoiceDate: ex.invoiceDate } : {}),
-      ...(ex.dueDate ? { dueDate: ex.dueDate } : {}),
-      ...(drafts.length > 0 ? { lines: drafts } : {}),
-    }));
+    setV((prev) => ({ ...prev, ...formFromExtraction(ex, match, memory) }));
   };
   const onScanFiles = async (list: FileList | null) => {
     if (!list || list.length === 0) return;
@@ -154,15 +182,7 @@ export const ApInvoiceForm = ({
       /* The LAST successful read wins, matching applyExtraction overwriting
          the lines — this form reads ONE bill at a time. */
       setPendingFiles(files);
-      setScanNote([
-        'Read — check every figure before saving.',
-        bill.supplierMatch ? `Looks like supplier ${bill.supplierMatch.name}.` : 'No supplier matched the printed name — pick it yourself.',
-        bill.memory?.debitAccountCode
-          ? `Account ${bill.memory.debitAccountCode} filled from your last ${bill.memory.payeeName ?? 'same-vendor'} bill — check it.`
-          : null,
-        bill.extraction.totalSen == null ? 'The TOTAL was not readable — enter it yourself.' : null,
-        bill.extraction.currency !== 'MYR' ? `The bill reads as ${bill.extraction.currency}; AP invoices are MYR — a foreign bill goes through a purchase invoice.` : null,
-      ].filter(Boolean).join(' '));
+      setScanNote(scanNoteFor(bill));
     } catch (e) {
       setScanNote(e instanceof Error ? e.message : 'The bill could not be read.');
     }
@@ -173,14 +193,25 @@ export const ApInvoiceForm = ({
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)', fontSize: 'var(--fs-13)' }}>
       {mode !== 'edit' && (
-        <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap' }}>
-          {/* Scan bill — pick the bill's page(s); MULTI-SELECT = ONE BILL. */}
+        <div
+          aria-label="Drop the bill here"
+          onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+          onDragLeave={() => { setDragOver(false); }}
+          onDrop={(e) => { e.preventDefault(); setDragOver(false); if (!extract.isPending) void onScanFiles(e.dataTransfer.files); }}
+          style={{
+            display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap',
+            padding: '6px 8px', borderRadius: 6, border: `1px dashed ${dragOver ? 'var(--c-orange)' : 'var(--border-weak, #e3e1da)'}`,
+          }}>
+          {/* Scan bill — pick the bill's page(s); MULTI-SELECT = ONE BILL. A
+              pile of bills goes through the pile page ("Scan bills" on the
+              list), one AP invoice each. */}
           <label style={{ fontSize: 'var(--fs-12)', color: 'var(--c-orange)', cursor: 'pointer', fontWeight: 600, whiteSpace: 'nowrap' }}>
             📷 {extract.isPending ? 'Reading…' : 'Scan bill (OCR)'}
             <input type="file" multiple accept={PV_FILE_ACCEPT} aria-label="Scan bill files" style={{ display: 'none' }}
               disabled={extract.isPending}
               onChange={(e) => { void onScanFiles(e.target.files); e.target.value = ''; }} />
           </label>
+          <span style={soft}>or drag the bill here</span>
           {scanNote && (
             <span style={{ fontSize: 'var(--fs-12)', color: extract.isPending ? 'var(--fg-muted)' : 'var(--c-orange)' }}>{scanNote}</span>
           )}

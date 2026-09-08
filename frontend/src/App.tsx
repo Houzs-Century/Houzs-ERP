@@ -686,6 +686,7 @@ export default function App() {
         <Route path="/scm/receipts" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmReceiptsV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/official-receipts" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmOfficialReceiptsV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/ap-invoices" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmApInvoicesV2 /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/ap-invoices/scan" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmPaymentVoucherScanV2 target="ap" /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/payment-vouchers/:id" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmPaymentVoucherDetailV2 /></Scm2990Shell></ScmGuard>} />
         {/* TEMP — vendored 2990's stock-movement pages (wave 4: Adjustments /
             Transfers / Takes), parallel to the native /scm/* below. Each wrapped
