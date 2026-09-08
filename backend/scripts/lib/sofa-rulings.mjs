@@ -36,6 +36,14 @@
 import { loadCorrections } from "./sofa-corrections-source.mjs";
 import { desc2Contains } from "./sofa-desc2-match.mjs";
 
+/** The last element satisfying `pred`, or undefined. Written out rather than
+ *  using Array.prototype.findLast so this module keeps running on the Node the
+ *  oldest runner in this repo pins. */
+function findLast(list, pred) {
+  for (let i = list.length - 1; i >= 0; i--) if (pred(list[i])) return list[i];
+  return undefined;
+}
+
 /**
  * Build the lookup the reconcile hands to `compareLine` as `deps.sofaRuling`.
  *
@@ -75,16 +83,33 @@ export function makeSofaRulingLookup(dataDir, onError = () => {}) {
        reading "sofa build not verifiable" AFTER the owner's answer had been
        written to production — measured on tally run 34236971666. That is
        exactly the report handing him back work he has already done, which is
-       docs/bugs/0720. */
+       docs/bugs/0720. Full trace: docs/bugs/0722.
+
+       `findLast` here for the SAME reason it is used on the text below: the
+       newest ruling is the ruling. */
     const keys = new Set(rows.map((l) => String(l.ac_dtlkey ?? "").trim()).filter(Boolean));
     const byKey = keys.size
-      ? cands.find((c) => Array.isArray(c.lineKeys) && c.lineKeys.length
+      ? findLast(cands, (c) => Array.isArray(c.lineKeys) && c.lineKeys.length
           && c.lineKeys.every((k) => keys.has(String(k ?? "").trim())))
       : null;
     if (byKey) return { pieces: byKey.pieces, source: byKey.source };
 
     const text = rows.map((l) => l.description2 || "").find(Boolean) || "";
-    const hit = cands.find((c) => c.desc2Match && desc2Contains(text, c.desc2Match));
+    /* THE NEWEST RULING IS THE RULING. Two entries can match one build — he
+       re-reads a slip and corrects himself, and the later file carries the
+       correction. `byDoc` holds them in load order, which loadCorrections fixes
+       as 2026-08, 2026-09, book-aligned, drawings: oldest first, and the drawing
+       last because 「一律跟账本。除了sofa compartment而已啊」 makes his drawing
+       the final word on the build. So the LAST match wins, not the first.
+       This said `.find()` until 2026-09-08, and HC-SO-012929 is what it cost:
+       he ruled it on 2026-09-04 and again on 2026-09-05, removing a surplus 1S,
+       the ERP was moved to his answer, and the reader kept asserting August's
+       three-piece build. The two never matched, so a document he had personally
+       answered twice reported as "CANNOT BE COMPARED — your drawing decides
+       these" on every single run. 「这个很多我刚刚都给过你答案了啊」.
+       Measured on the 2026-09-08 data: exactly ONE document is ruled in more
+       than one file, so this changes that document and nothing else. */
+    const hit = findLast(cands, (c) => c.desc2Match && desc2Contains(text, c.desc2Match));
     /* A single ruling with no ADDRESS OF ANY KIND can only be this document's
        one build. An entry carrying `lineKeys` is needle-less but it is NOT
        unaddressed — it named its lines and they are not these — so it must not
