@@ -85,6 +85,10 @@ export function separatorsAreMaskOwn(raw: string): boolean {
  *  input behind it is `pointer-events: none`, so on a phone the picker had no
  *  reachable opener at all and the owner concluded typing was the only way in
  *  (2026-09-08: mobile 的 date 为什么没有 dropdown calender 是要 manual type 的).
+ *  On a coarse pointer the native input therefore moves over the calendar icon
+ *  and becomes the tap target — the icon only, so the rest of the field is
+ *  still the text box and hand-typing survives on a phone (owner, 2026-09-09:
+ *  可以保留手打).
  *  Guarded because jsdom and older embedded webviews have no `matchMedia`.
  *
  *  `pointer: coarse` is the PRIMARY pointer, deliberately not `any-pointer`: a
@@ -196,9 +200,10 @@ export function DateField({
 
   // MOUSE ONLY. showPicker() is the reliable opener on the desktop engines
   // (Chrome 99+, Edge, Firefox 101+) and it is what the calendar button uses.
-  // It is NOT the touch path: see the .nativeOverlay comment in the stylesheet
-  // — on a coarse pointer the native input is the tap target itself and no
-  // script runs at all.
+  // It is NOT the touch path: see the .nativeIconTarget comment in the
+  // stylesheet — on a coarse pointer the native input sits over the calendar
+  // icon and IS the tap target, so no script runs at all. Measured on WebKit
+  // 26.5: showPicker() exists there and does not throw, and engages nothing.
   const openPicker = () => {
     const el = nativeRef.current;
     if (!el || disabled) return;
@@ -295,18 +300,24 @@ export function DateField({
           day-first text above and never the OS-locale rendering (PR #2390).
           Its GEOMETRY is what changes with the pointer, and that is the whole
           fix: on a mouse it stays a 20px strip behind the calendar button and
-          showPicker() opens it; on a finger it stretches over the entire field
-          and takes pointer events, so the tap itself reaches a real date
-          control and iOS raises its own wheel with no script in the path.
+          showPicker() opens it; on a finger it becomes a 44 by 44 tap target
+          sitting over the calendar ICON and takes pointer events, so the tap
+          itself reaches a real date control and iOS raises its own wheel with
+          no script in the path.
           #3300 tried to do this by calling showPicker() against the 20px
           pointer-events:none strip — Chrome obliges, iOS Safari does not, which
           is why the desktop screenshot showed a calendar and the iPhone showed
-          nothing. `data-touch-target` is the DOM-readable statement of which
-          mode is live: assertable in a test, and legible in Safari's remote
-          inspector when someone next reports that a picker will not open. */}
+          nothing. #3311 then made the target the WHOLE field, which reached the
+          picker but took the keyboard away: with a date input over every pixel
+          there was nowhere left to tap to hand-type. The owner asked for both
+          back (2026-09-09: 「可以保留手打」), so the field is split — icon
+          opens the picker, body focuses the text box below.
+          `data-touch-target` is the DOM-readable statement of which mode is
+          live: assertable in a test, and legible in Safari's remote inspector
+          when someone next reports that a picker will not open. */}
       <input
         ref={nativeRef}
-        className={coarse ? styles.nativeOverlay : styles.nativeHidden}
+        className={coarse ? styles.nativeIconTarget : styles.nativeHidden}
         data-touch-target={coarse ? 'true' : undefined}
         type="date"
         tabIndex={-1}
