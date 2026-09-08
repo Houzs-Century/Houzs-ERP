@@ -248,6 +248,10 @@ async function main() {
       qty: r.qty,
       suffixed: Boolean(r.line_suffix),
       storedKey: r.ac_dtlkey,
+      /* The build text the importer stored on the line. It is what tells two
+         sofas of ONE model on one document apart, and the goods-receipt and
+         delivery-order lanes pass none — see foldErpUnits. */
+      desc2: r.description2,
     });
   }
 
@@ -262,6 +266,7 @@ async function main() {
   log(
     `SO — ${totals.documents} sales order(s), ${totals.erpRows} line(s): ` +
       `${totals.stampedRows} row(s) the document FORCES (${totals.forcedUnique} the only candidate, ` +
+      `${totals.forcedBuildText} matched one-to-one on the BUILD TEXT both sides state, ` +
       `${totals.forcedInterchangeable} where the book's own lines are identical and therefore interchangeable); ` +
       `${totals.alreadyKeyed} already keyed; ${totals.refusedRows} NOT forced; ` +
       `${totals.documentsNoBook} document(s) the book does not state; ` +

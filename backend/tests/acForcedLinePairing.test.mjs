@@ -296,3 +296,85 @@ describe("the whole plan", () => {
     expect(out.stamps).toEqual([{ id: "a", dtlKey: 10, key: "BC-CB49", forced: "unique" }]);
   });
 });
+
+describe("two sofas of ONE model on one document — the build text decides", () => {
+  // Measured on production 2026-09-08 (plan run 34209494838): 25 of the 44
+  // refused sales orders were refused as "the book has 2 such line(s), we have
+  // 1", which is arithmetic, not ambiguity. The customer bought two 8030s; the
+  // ERP holds both builds' compartments and the fold made them one unit.
+  const sofa = (id, code, desc2) => erp({ id, code, qty: 1, desc2 });
+  const bookSofa = (dtlKey, desc2, over = {}) =>
+    book({ dtlKey, code: "8030-1S", rawCode: "DSL-8030 SOFA", qty: 1, desc2, ...over });
+
+  it("splits one model into two units when every row states a build text", () => {
+    const u = foldErpUnits([
+      sofa("a", "8030-1A(LHF)", "2L+C (30INCH)"),
+      sofa("b", "8030-L(RHF)", "2L+C (30INCH)"),
+      sofa("c", "8030-1S", "1S (28INCH)"),
+    ]);
+    expect(u).toHaveLength(2);
+    expect(u.map((x) => x.key)).toEqual(["SOFA 8030", "SOFA 8030"]);
+    expect(u.map((x) => x.ids.join("+")).sort()).toEqual(["a+b", "c"]);
+  });
+
+  it("does NOT split when any row of that model has no build text", () => {
+    // A partial split would invent a build boundary out of a blank column.
+    const u = foldErpUnits([
+      sofa("a", "8030-1A(LHF)", "2L+C (30INCH)"),
+      sofa("b", "8030-L(RHF)", null),
+    ]);
+    expect(u).toHaveLength(1);
+    expect(u[0].ids).toEqual(["a", "b"]);
+  });
+
+  it("stamps each build with the book line stating the SAME text", () => {
+    const r = pairDocument({
+      docNo: "SO-013164",
+      bookLines: [bookSofa(900, "1S (28INCH)", { unitPriceSen: 100 }), bookSofa(901, "2L+C (30INCH)", { unitPriceSen: 200 })],
+      erpRows: [
+        sofa("a", "8030-1A(LHF)", "2L+C (30inch)"),
+        sofa("b", "8030-L(RHF)", "2L+C (30inch)"),
+        sofa("c", "8030-1S", "1S (28inch)"),
+      ],
+    });
+    expect(r.refusals).toEqual([]);
+    // Every compartment of one build carries ONE key — composeEdit's condition.
+    expect(r.stamps.filter((s) => s.dtlKey === 901).map((s) => s.id).sort()).toEqual(["a", "b"]);
+    expect(r.stamps.filter((s) => s.dtlKey === 900).map((s) => s.id)).toEqual(["c"]);
+    expect(r.stamps.every((s) => s.forced === "build text")).toBe(true);
+  });
+
+  it("REFUSES when the two builds' texts do not match the book's one-to-one", () => {
+    // The prices differ, so the interchangeable clause cannot rescue it either.
+    // A wrong DtlKey edits somebody else's line in a live account book.
+    const r = pairDocument({
+      docNo: "SO-013164",
+      bookLines: [bookSofa(900, "1S (28INCH)", { unitPriceSen: 100 }), bookSofa(901, "2L+C (30INCH)", { unitPriceSen: 200 })],
+      erpRows: [
+        sofa("a", "8030-1A(LHF)", "SOMETHING ELSE"),
+        sofa("b", "8030-L(RHF)", "SOMETHING ELSE"),
+        sofa("c", "8030-1S", "1S (28inch)"),
+      ],
+    });
+    expect(r.stamps).toEqual([]);
+    expect(r.refusals[0].reason).toMatch(/NOT identical/);
+  });
+
+  it("keeps refusing when the fold cannot split, and SAYS how many texts we hold", () => {
+    const r = pairDocument({
+      docNo: "SO-007822",
+      bookLines: [bookSofa(900, "A"), bookSofa(901, "B")],
+      erpRows: [sofa("a", "8030-1A(LHF)", null), sofa("b", "8030-L(RHF)", null)],
+    });
+    expect(r.stamps).toEqual([]);
+    expect(r.refusals[0].reason).toMatch(/we have 1 .*0 distinct build text/);
+  });
+
+  it("leaves a caller that passes NO build text bit-for-bit unchanged", () => {
+    // The goods-receipt and delivery-order lanes pass none, and their guarantee
+    // must not move because a sibling lane started passing one.
+    const u = foldErpUnits([erp({ id: "a", code: "8030-1A(LHF)" }), erp({ id: "b", code: "8030-CNR" })]);
+    expect(u).toHaveLength(1);
+    expect(u[0]).toMatchObject({ key: "SOFA 8030", qty: 1, uneven: false, desc2: null });
+  });
+});

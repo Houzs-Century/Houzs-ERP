@@ -46,7 +46,15 @@
 //       Exactly one candidate on each side. The pairing is FORCED — there is no
 //       other line it could be. Stamp.
 //
-//   n book lines, n ERP units, n > 1
+//   n book lines, n ERP units, n > 1, and the BUILD TEXTS match one-to-one
+//       Stamp by that text. Each unit carries the Desc2 its rows were imported
+//       with and each book line states its own; where the two sets are equal
+//       after normalisation and the match is a perfect bijection, which line a
+//       unit is is not a choice at all. Anything short of a bijection — a unit
+//       matching two lines, a line claimed by two units, a missing text on
+//       either side — falls through to the next clause.
+//
+//   n book lines, n ERP units, n > 1, texts do NOT decide it
 //       Stamp, but ONLY when the n book lines are mutually identical on every
 //       column the book states (unit price, sub-total, location, Desc2). Two
 //       book rows that agree on all of those are INTERCHANGEABLE: whichever ERP
@@ -83,6 +91,7 @@
 
 import { normCode } from "./ac-mapping-csv.mjs";
 import { comparisonKey } from "./keyless-multiset.mjs";
+import { normaliseDesc2 } from "./sofa-desc2-match.mjs";
 
 export { comparisonKey };
 
@@ -116,14 +125,54 @@ const bucketOf = (key, qty) => JSON.stringify([key, qtyKey(qty)]);
  * allowed to state a pairing either. Such a unit is marked `uneven` and this
  * module refuses it.
  *
- * @param {Array<{id: string, code: string, qty: number, suffixed?: boolean}>} rows
+ * ── WHEN ONE MODEL ON ONE DOCUMENT IS TWO SOFAS ────────────────────────────
+ * Folding every compartment of a model into ONE unit is right until the
+ * customer bought two of that model. Measured on production 2026-09-08 (plan
+ * run 34209494838): 25 of the 44 refused sales orders were refused for exactly
+ * that — "the book has 2 such line(s), we have 1" — by ARITHMETIC, not by
+ * ambiguity. The book holds two lines; we hold one folded unit; the counts
+ * cannot agree however clear the data is.
+ *
+ * The build text separates them, and it is the ONLY thing that does. Where
+ * every compartment row of a model on a document carries a non-empty
+ * `desc2` — the build the ERP stored when the line was imported — the rows are
+ * grouped by it, so two builds ordered with different text become two units.
+ * `normaliseDesc2` is the comparison form, taken from lib/sofa-desc2-match.mjs
+ * rather than written again: that module's own header records the day a plain
+ * `includes` dropped seven owner-approved builds because one side wrote a
+ * newline and the other wrote the two characters backslash-n.
+ *
+ * IT ONLY EVER SPLITS ON EVIDENCE. If ANY row of that model lacks a build text
+ * the model folds as before — a partial split would invent a build boundary out
+ * of a blank column. And a split alone stamps nothing: `pairDocument` still has
+ * to match each unit to a book line, and does that by the SAME text, exactly.
+ * Callers that pass no `desc2` (the goods-receipt and delivery-order lanes) are
+ * bit-for-bit unaffected, which is what their own tests pin.
+ *
+ * @param {Array<{id: string, code: string, qty: number, suffixed?: boolean,
+ *                desc2?: string|null}>} rows
  * @returns {Array<{key: string, ids: string[], qty: number, ceiling: number,
- *                  uneven: boolean, kind: "plain"|"sofa", codes: string[]}>}
+ *                  uneven: boolean, kind: "plain"|"sofa", codes: string[],
+ *                  desc2: string|null}>}
  */
 export function foldErpUnits(rows) {
   const units = [];
   /** `SOFA <model>` -> unit under construction */
   const sofas = new Map();
+  /* Every model's build texts, before anything is grouped: the split may only
+     happen when EVERY row of that model states one. */
+  const textsByModel = new Map();
+  for (const r of rows) {
+    const { key, model } = comparisonKey({ code: r.code, side: "erp", suffixed: r.suffixed });
+    if (!key || !model) continue;
+    if (!textsByModel.has(key)) textsByModel.set(key, []);
+    textsByModel.get(key).push(normaliseDesc2(r.desc2));
+  }
+  const splits = new Set();
+  for (const [key, texts] of textsByModel) {
+    if (texts.every((t) => t !== "") && new Set(texts).size > 1) splits.add(key);
+  }
+
   for (const r of rows) {
     const { key, model } = comparisonKey({ code: r.code, side: "erp", suffixed: r.suffixed });
     if (!key) continue;
@@ -136,11 +185,14 @@ export function foldErpUnits(rows) {
         uneven: false,
         kind: "plain",
         codes: [normCode(r.code)],
+        desc2: null,
       });
       continue;
     }
-    if (!sofas.has(key)) sofas.set(key, { key, ids: [], pieces: new Map(), kind: "sofa" });
-    const u = sofas.get(key);
+    const text = normaliseDesc2(r.desc2);
+    const group = splits.has(key) ? `${key}${text}` : key;
+    if (!sofas.has(group)) sofas.set(group, { key, ids: [], pieces: new Map(), kind: "sofa", desc2: splits.has(key) ? text : null });
+    const u = sofas.get(group);
     u.ids.push(String(r.id));
     const c = normCode(r.code);
     /* Compartment quantities are NOT summed: three pieces of one sofa are one
@@ -166,6 +218,7 @@ export function foldErpUnits(rows) {
       uneven: lo !== hi,
       kind: "sofa",
       codes: [...u.pieces.keys()],
+      desc2: u.desc2,
     });
   }
   return units;
@@ -190,7 +243,7 @@ const bookFingerprint = (l) =>
  * @param {Array<{id: string, code: string, qty: number, suffixed?: boolean,
  *                storedKey?: number|string|null}>} a.erpRows
  * @param {string} a.docNo  for the refusal messages
- * @returns {{stamps: Array<{id: string, dtlKey: number, key: string, forced: "unique"|"interchangeable"}>,
+ * @returns {{stamps: Array<{id: string, dtlKey: number, key: string, forced: "unique"|"interchangeable"|"build text"}>,
  *            refusals: Array<{key: string, reason: string, erpRows: number, bookLines: number}>,
  *            audits: Array<{id: string, stored: number, derived: number}>,
  *            blankBookRows: number}}
@@ -254,9 +307,19 @@ export function pairDocument({ bookLines, erpRows, docNo }) {
       continue;
     }
     if (lines.length !== units.length) {
+      /* WHY THE BUILD TEXTS ARE NAMED IN THE REFUSAL. This is the bucket where
+         one model on one document is really two sofas, and the only thing that
+         can tell them apart is the text they were ordered with. Saying how many
+         distinct texts our rows carry turns "not guessing" into a measurement
+         the next reader can act on: 1 means the ERP genuinely cannot separate
+         them, 0 means nothing was stored, and N>1 with the counts still wrong
+         means the split ran and the book still disagrees. */
+      const texts = new Set(units.map((u) => u.desc2).filter((t) => t));
       refusals.push({
         key,
-        reason: `the book has ${lines.length} such line(s), we have ${units.length} — not guessing which is which`,
+        reason:
+          `the book has ${lines.length} such line(s), we have ${units.length} — not guessing which is which ` +
+          `(our rows carry ${texts.size} distinct build text(s))`,
         erpRows: units.reduce((s, u) => s + u.ids.length, 0),
         bookLines: lines.length,
       });
@@ -264,27 +327,57 @@ export function pairDocument({ bookLines, erpRows, docNo }) {
     }
 
     let forced = "unique";
+    /* Both sides in a stable order so a re-run derives the SAME assignment. */
+    let ls = [...lines].sort((x, y) => Number(x.dtlKey) - Number(y.dtlKey));
+    let us = [...units].sort((x, y) => (x.ids[0] > y.ids[0] ? 1 : -1));
+
     if (units.length > 1) {
-      const prints = new Set(lines.map(bookFingerprint));
-      if (prints.size > 1) {
-        refusals.push({
-          key,
-          reason:
-            `the book has ${lines.length} lines of this item at this quantity and they are NOT identical ` +
-            `(${prints.size} distinct price/location/Desc2 combinations), so which is which is unknowable`,
-          erpRows: units.reduce((s, u) => s + u.ids.length, 0),
-          bookLines: lines.length,
-        });
-        continue;
+      /* ── THE BUILD TEXT, WHERE BOTH SIDES STATE ONE ───────────────────────
+         Two sofas of one model are two book lines and, once foldErpUnits has
+         split them, two units. Which is which is then not a choice: each unit
+         carries the build text its rows were imported with, and it is matched
+         to the book line stating the SAME text. Exact equality after
+         normalisation, and a perfect bijection or nothing — a unit that matches
+         two lines, or a line matched by two units, is refused with everything
+         else in the bucket. This is an identity, not a resemblance: `2+C+2NA+C
+         TABLE(28'INCH)` and `C TABLE(W)+2(28'INCH)` share a document
+         (HC-SO-013164) and must keep on not seeing each other. */
+      const byText = new Map();
+      for (const l of ls) {
+        const t = normaliseDesc2(l.desc2);
+        if (!t) continue;
+        if (!byText.has(t)) byText.set(t, []);
+        byText.get(t).push(l);
       }
-      forced = "interchangeable";
+      const matched = us.map((u) => (u.desc2 ? byText.get(u.desc2) ?? [] : []));
+      const bijection =
+        us.every((u, i) => u.desc2 && matched[i].length === 1) &&
+        new Set(matched.map((m) => m[0].dtlKey)).size === us.length;
+      if (bijection) {
+        ls = matched.map((m) => m[0]);
+        forced = "build text";
+      } else {
+        const prints = new Set(lines.map(bookFingerprint));
+        if (prints.size > 1) {
+          refusals.push({
+            key,
+            reason:
+              `the book has ${lines.length} lines of this item at this quantity and they are NOT identical ` +
+              `(${prints.size} distinct price/location/Desc2 combinations), and the build texts do not match ` +
+              "one-to-one either, so which is which is unknowable",
+            erpRows: units.reduce((s, u) => s + u.ids.length, 0),
+            bookLines: lines.length,
+          });
+          continue;
+        }
+        /* Interchangeable: the book lines are identical on every column the
+           book states, so the arbitrary order is arbitrary BY PROOF, not by
+           luck — whichever row receives whichever key, the line the write-back
+           edits is indistinguishable from the one it "should" have edited. */
+        forced = "interchangeable";
+      }
     }
 
-    /* Both sides in a stable order so a re-run derives the SAME assignment.
-       Within an interchangeable bucket the order is arbitrary BY PROOF, not by
-       luck — the book lines are identical on every column the book states. */
-    const ls = [...lines].sort((x, y) => Number(x.dtlKey) - Number(y.dtlKey));
-    const us = [...units].sort((x, y) => (x.ids[0] > y.ids[0] ? 1 : -1));
     us.forEach((u, i) => {
       const dtlKey = Number(ls[i].dtlKey);
       for (const id of u.ids) {
