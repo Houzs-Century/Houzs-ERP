@@ -21,7 +21,10 @@
 // keys on (warehouse, item, variant).
 //
 // MODE: plan (default) prints every row it would change; APPLY=1 +
-// CONFIRM="REPAIR PO LINE TEXT" writes. Convergent: a second run finds zero.
+// CONFIRM="REPAIR PO LINE TEXT" writes.
+// RE-RUN: convergent — the UPDATE is COALESCE-guarded and the plan only selects
+// rows still holding NULL, so a second run against the same snapshot finds zero
+// repairable rows and writes nothing.
 import fs from "node:fs";
 import zlib from "node:zlib";
 import path from "node:path";
