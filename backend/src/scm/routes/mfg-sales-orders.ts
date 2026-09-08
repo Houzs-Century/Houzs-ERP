@@ -33,7 +33,7 @@ import { specialDeliveryFeesForLines, reconstructDeliveryRuleLines } from '../li
 import { soHasDownstream } from '../lib/downstream-lock';
 import { dateOrNull, effectiveDateAfterPatch, isDateColumn } from '../lib/date-coerce';
 import { soStatusAfterProcessingDateChange } from '../lib/so-proceed-status-change';
-import { soIsMigrated } from '../lib/so-is-migrated';
+import { soIsMigrated, withSoMigratedReadonly, migratedSoListGate } from '../lib/migrated-so-readonly';
 import { soDocNosWithDownstream } from '../lib/downstream-lock'; // own line: autocountWritebackWiring asserts the import above verbatim
 import { doNosBySalesOrder, type DeliveryOrderNoRow } from '../lib/so-delivery-order-nos';
 import { soDownstreamRefs, NO_SO_DOWNSTREAM_REFS } from '../lib/downstream-doc-refs';
@@ -254,7 +254,7 @@ import {
 } from '../lib/so-create-payment-slips';
 import { pickCrossCategoryMatch, type AutoMatchCandidate } from '../lib/cross-category-match';
 import { recomputeSoStockAllocation, isHardBoundLine } from '../lib/so-stock-allocation';
-import { snapshotSoLineLinks, planSoLineRelink, applySoLineRelink } from '../lib/so-line-relink';
+import { snapshotSoLineLinks, planSoLineRelink, applySoLineRelink, soLineVariantSig } from '../lib/so-line-relink';
 import { advanceSoGeneration } from '../lib/so-generation';
 import { creditFromCancelledSo, getCustomerCreditBalance } from '../lib/customer-credits';
 import { summariseReadiness, type ReadinessLine } from '../lib/so-readiness';
@@ -1454,7 +1454,7 @@ mfgSalesOrders.get('/', async (c) => {
       (await sb.from('warehouses').select('id, code, name')).data ?? [])();
     const baseRowsProm = (async () =>
       (await chunkIn(docNos, (batch, from, to) => sb.from('mfg_sales_orders')
-        .select('doc_no, delivery_state, amended_delivery_date').in('doc_no', batch).order('doc_no').range(from, to))).data)();
+        .select('doc_no, delivery_state, amended_delivery_date, linked_ac_docno').in('doc_no', batch).order('doc_no').range(from, to))).data)();
     /* PO No. column (owner 2026-07-24): the system Purchase Order numbers this
        SO was converted into. Its own SO-line→PO-item→PO chain, independent of
        every other enrichment above, so it rides the same concurrent wave.
@@ -1750,7 +1750,7 @@ mfgSalesOrders.get('/', async (c) => {
     const planningToday = todayMyt();
 
     // PO No. — SO doc_no → system PO numbers it was converted into (see wave).
-    const convertedPoByDoc = await convertedPoProm;
+    const [convertedPoByDoc, migratedGate] = await Promise.all([convertedPoProm, migratedSoListGate(c, await baseRowsProm)]);
 
     /* Source-PO union per SO (defect 2026-08-02-A): SHIPPED arm only on this
        path — shipped trace from `shippedTraceProm` (cheap real-batch reads),
@@ -1805,7 +1805,7 @@ mfgSalesOrders.get('/', async (c) => {
       (r as Record<string, unknown>).lifecycle_state = lifecycleByDoc.get(docNo) ?? 'none';
       (r as Record<string, unknown>).current_doc_no = currentByDoc.get(docNo) ?? (docNo || null);
       (r as Record<string, unknown>).do_nos = doNosBySo.get(docNo) ?? [];
-      Object.assign(r as Record<string, unknown>, downRefsBySo.get(docNo) ?? NO_SO_DOWNSTREAM_REFS);
+      Object.assign(r as Record<string, unknown>, downRefsBySo.get(docNo) ?? NO_SO_DOWNSTREAM_REFS, migratedGate(docNo));
       (r as Record<string, unknown>).has_undelivered = hasUndelivered.has(docNo);
       const readiness = readinessByDoc.get(docNo);
       (r as Record<string, unknown>).stock_remark = readiness?.stockRemark ?? '';
@@ -2595,7 +2595,7 @@ mfgSalesOrders.get('/:docNo', async (c) => {
        LIST route reads that view, so the base-table detail read is the only
        place they are valid. (`proceeded_at` was appended here until 2026-08-18,
        feeding a "Proceed Date" the desktop deleted on 2026-06-05.) */
-    scopeToCompany(sb.from('mfg_sales_orders').select(`${HEADER}, amend_date_from_customer, amended_delivery_date, amend_reason, revision, signature_b64, slip_key, slip_state, slip_image_key, receipt_image_key, version`).eq('doc_no', docNo), c).maybeSingle(),
+    scopeToCompany(sb.from('mfg_sales_orders').select(`${HEADER}, amend_date_from_customer, amended_delivery_date, amend_reason, revision, signature_b64, slip_key, slip_state, slip_image_key, receipt_image_key, version, linked_ac_docno`).eq('doc_no', docNo), c).maybeSingle(),
     /* line_no = the persisted listing order (0165); NULLS LAST so pre-0165
        docs fall back to created_at + the rule re-derive below. */
     sb.from('mfg_sales_order_items').select(ITEM).eq('doc_no', docNo)
@@ -2940,7 +2940,7 @@ mfgSalesOrders.get('/:docNo', async (c) => {
   // Stamp each line's supplier fabric code so the on-screen line reads
   // "BF-01 (PC151-01)" (owner 2026-07-24). ONE batched query; fail-soft.
   await enrichLinesWithFabricSupplierCode(sb, c, items);
-  return c.json({ salesOrder, items, pwpCodes });
+  return c.json({ salesOrder: await withSoMigratedReadonly(c, salesOrder as Record<string, unknown>, (h.data as { linked_ac_docno?: string | null }).linked_ac_docno ?? null), items, pwpCodes });
 });
 
 /* GET /:docNo/coverage — the DEFERRED live Stock column — lives in
@@ -10083,7 +10083,7 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
   /* Insert the NEW set first, then remove the OLD — an insert failure leaves
      the order untouched; a delete failure rolls the inserts back. */
   const { data: inserted, error: insErr } = await sb.from('mfg_sales_order_items')
-    .insert(stampCompany(rows, c)).select('id, item_code, line_no');
+    .insert(stampCompany(rows, c)).select('id, item_code, line_no, variants');
   if (insErr) return c.json({ error: 'insert_failed', reason: insErr.message }, 500);
   const { error: delErr } = await sb.from('mfg_sales_order_items').delete().in('id', oldIds);
   if (delErr) {
@@ -10092,15 +10092,15 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
     return c.json({ error: 'swap_failed', reason: delErr.message }, 500);
   }
 
-  /* Carry the frozen links onto the replacement lines, matched by SKU. A module
-     SKU with no counterpart in the new build is NOT re-pointed — that link is
-     genuinely gone and is reported instead of quietly invented. */
+  /* Carry the frozen links onto the replacement lines, matched by SKU AND COLOUR
+     (docs/bugs/0672 site 11: on SKU alone one model's two fabrics pair by
+     POSITION). No counterpart -> NOT re-pointed, reported rather than invented. */
   const soLinkResult = await (async () => {
     if (soLinkSnapshot.length === 0) return { restored: 0, dropped: 0 };
     const plan = planSoLineRelink(
-      oldLines.map((l) => ({ id: l.id, itemCode: l.item_code, lineNo: l.line_no ?? null })),
-      ((inserted ?? []) as Array<{ id: string; item_code: string | null; line_no: number | null }>)
-        .map((r) => ({ id: r.id, itemCode: r.item_code, lineNo: r.line_no })),
+      oldLines.map((l) => ({ id: l.id, itemCode: l.item_code, lineNo: l.line_no ?? null, variantSig: soLineVariantSig(l.variants) })),
+      ((inserted ?? []) as Array<{ id: string; item_code: string | null; line_no: number | null; variants: unknown }>)
+        .map((r) => ({ id: r.id, itemCode: r.item_code, lineNo: r.line_no, variantSig: soLineVariantSig(r.variants) })),
       soLinkSnapshot,
     );
     if (plan.dropped.length > 0) {

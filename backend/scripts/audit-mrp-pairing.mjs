@@ -268,12 +268,28 @@ async function auditCompany(companyId, allWarehouses, allStateMaps, whById) {
      WHERE pi.company_id = ${companyId}`;
 
   const poOpen = [];
+  /* EVERY live PO line, open or fully received — docs/bugs/0672 site 20.
+     The identity check in (C2) below used to iterate `poOpen`, and `poOpen`
+     skips a line the moment it is FULLY RECEIVED. That is the exact state all
+     nine wrong dedications of docs/bugs/0671 converge on, so the one detector
+     in this file that compares item codes could not see the damage it existed
+     to find. A detector blind to the finished state is not a detector; it is a
+     report about the unfinished one. Kept as a SECOND list rather than by
+     widening `poOpen`, because every shortage and pairing number below is about
+     what is still OUTSTANDING and must not change. */
+  const poAll = [];
   let poOverReceived = 0, poDead = 0, poFullyReceived = 0;
   const poDrafts = [];
   for (const r of poRaw) {
     if (PO_DEAD.has(snorm(r.po_status))) { poDead += 1; continue; }
     const left = num(r.qty) - num(r.received_qty);
     if (num(r.received_qty) > num(r.qty)) poOverReceived += 1;
+    poAll.push({
+      ...r,
+      left,
+      poWh: r.warehouse_id ?? r.purchase_location_id ?? null,
+      bucketKey: composite(r.warehouse_id ?? r.purchase_location_id ?? null, r.item_code, computeVariantKey(r.item_group, r.variants)),
+    });
     if (left <= 0) { poFullyReceived += 1; continue; }
     const eta = effectiveDelivery(d2(r.delivery_date), d2(r.supplier_delivery_date_2), d2(r.supplier_delivery_date_3), d2(r.supplier_delivery_date_4))
       ?? effectiveDelivery(d2(r.expected_at), d2(r.h2), d2(r.h3), d2(r.h4))
@@ -601,15 +617,32 @@ async function auditCompany(companyId, allWarehouses, allStateMaps, whById) {
   notice("  it was literally raised from shows no assigned SO. Same document, two buckets.");
   const demandById = new Map(demand.map((r) => [r.id, r]));
   const mismatch = { warehouse: [], variant: [], code: [], soGone: 0 };
-  for (const e of poOpen) {
+  /* OVER `poAll`, NOT `poOpen` — docs/bugs/0672 site 20. `poOpen` drops a line
+     the moment it is fully received, and a fully received line is exactly where
+     a wrong dedication does its damage: the goods ARRIVED, so the customer's
+     order reads READY against a bed that is not theirs. Iterating the open set
+     answered "which OUTSTANDING lines disagree", which is a different question
+     from "which lines disagree", and printed as if it were the second.
+
+     The warehouse and variant splits still count OPEN lines only — those are
+     about supply that has yet to land, and a received line's warehouse is
+     history. The ITEM CODE split counts everything, and says which. */
+  const soDemandById = new Map(demandRaw.map((r) => [r.id, r]));
+  let codeMismatchReceived = 0;
+  for (const e of poAll) {
     if (!e.so_item_id) continue;
-    const so = demandById.get(e.so_item_id);
-    if (!so) { mismatch.soGone += 1; continue; }
+    const so = demandById.get(e.so_item_id) ?? soDemandById.get(e.so_item_id);
+    if (!so) { if (e.left > 0) mismatch.soGone += 1; continue; }
     const soKey = composite(so.warehouse_id ?? null, so.item_code, computeVariantKey(so.item_group, so.variants));
+    const row = { po: e.po_number, code: e.item_code, soDoc: so.doc_no, soKey, poKey: e.bucketKey, left: e.left };
+    if (snorm(so.item_code) !== snorm(e.item_code)) {
+      mismatch.code.push(row);
+      if (e.left <= 0) codeMismatchReceived += 1;
+      continue;
+    }
+    if (e.left <= 0) continue; // warehouse/variant are OPEN-line questions
     if (soKey === e.bucketKey) continue;
-    const row = { po: e.po_number, code: e.item_code, soDoc: so.doc_no, soKey, poKey: e.bucketKey };
-    if (so.item_code !== e.item_code) mismatch.code.push(row);
-    else if ((so.warehouse_id ?? null) !== (e.poWh ?? null)) mismatch.warehouse.push(row);
+    if ((so.warehouse_id ?? null) !== (e.poWh ?? null)) mismatch.warehouse.push(row);
     else mismatch.variant.push(row);
   }
   notice(`  open PO lines whose stored SO line is no longer live demand : ${mismatch.soGone}  (shipped/closed — expected)`);
@@ -618,6 +651,10 @@ async function auditCompany(companyId, allWarehouses, allStateMaps, whById) {
   notice(`  stored links split by VARIANT   : ${mismatch.variant.length}  (same SKU + warehouse, different fabric/leg/gap key)`);
   for (const m of mismatch.variant.slice(0, 15)) notice(`      ${pad(m.po, 18)} ${pad(m.code, 24)} SO ${pad(m.soDoc, 18)} soKey=${m.soKey} poKey=${m.poKey}`);
   notice(`  stored links split by ITEM CODE : ${mismatch.code.length}  (cross-category / substituted SKU)`);
+  notice(`     ... of those, ALREADY FULLY RECEIVED : ${codeMismatchReceived}  <- docs/bugs/0672 site 20:`);
+  notice("         this detector used to skip these entirely, and a fully received wrong dedication is");
+  notice("         the damaging state — the goods arrived, so the customer's order reads READY");
+  notice("         against a bed that is not theirs. A zero here is now a real zero.");
   for (const m of mismatch.code.slice(0, 15)) notice(`      ${pad(m.po, 18)} ${pad(m.code, 24)} SO ${pad(m.soDoc, 18)} soKey=${m.soKey} poKey=${m.poKey}`);
 
   /* ═══════════════ (D) DOUBLE-ALLOCATION ════════════════════════════════ */

@@ -19,6 +19,10 @@ const line = (over: Partial<PoLineShape> = {}): PoLineShape => ({
      existing case keeps asserting what it always asserted. The `wait` shape is
      reached only by a fixture that says otherwise. */
   sourceSoInBook: true,
+  /* The default fixture AGREES on the product, so every existing case keeps
+     asserting exactly what it always asserted. */
+  itemCode: 'REGAL-KING',
+  sourceItemCode: 'REGAL-KING',
   ...over,
 });
 
@@ -153,5 +157,54 @@ describe('a keyless line waits when its sales order is merely not in the book ye
     const r = poTransferShape([line()]);
     expect(r.kind).toBe('transfer');
     if (r.kind === 'transfer') expect(r.dtlKeys).toEqual([991]);
+  });
+});
+
+/* docs/bugs/0672 SITE 13 — the transfer was decided on the KEY and never on the
+ * PRODUCT.
+ *
+ * `poTransferShape` refuses a great deal: consolidated lines, stock lines,
+ * keyless lines, a repeated key, more than one source document. Every one of
+ * those is about CARDINALITY or PRESENCE. None of them asks whether the
+ * purchase-order line and the sales-order line it names are the same product.
+ *
+ * A transfer is executed in the account book as `doc.DocTransfer(dtlKeys)`, and
+ * the key is the ONLY handle — `composeEdit` even strips ItemCode off a keyed
+ * line, so nothing in flight could reveal the mistake. A PO line for a TRION
+ * that names a REGAL sales line therefore transfers the REGAL's book line into
+ * a purchase order for TRIONs, in a licensed book, silently.
+ *
+ * The fallback is already built and already correct: `create` loses a link and
+ * writes nothing wrong. This file's own header states the rule — "every case
+ * that is not certainly 1:1 is asserted to fall back". Identity is part of 1:1.
+ */
+describe('a purchase order whose line names a DIFFERENT product does not transfer', () => {
+  test('one disagreeing line is enough to fall back to create', () => {
+    const shape = poTransferShape([
+      line({ id: 'a', so_item_id: 'soi-1', sourceAcDtlKey: 991, itemCode: 'REGAL-KING', sourceItemCode: 'REGAL-KING' }),
+      line({ id: 'b', so_item_id: 'soi-2', sourceAcDtlKey: 992, itemCode: 'TRION-KING', sourceItemCode: 'REGAL-QUEEN' }),
+    ]);
+    expect(shape.kind).toBe('create');
+    expect(shape.kind === 'create' && shape.reason).toMatch(/different product|does not name the same/i);
+  });
+
+  test('agreement is compared the way a person reads a code', () => {
+    const shape = poTransferShape([
+      line({ itemCode: '  regal-king ', sourceItemCode: 'REGAL-KING' }),
+    ]);
+    expect(shape.kind).toBe('transfer');
+  });
+
+  test('a BLANK code on either side is not agreement — it is nothing to agree about', () => {
+    expect(poTransferShape([line({ itemCode: 'REGAL-KING', sourceItemCode: null })]).kind).toBe('create');
+    expect(poTransferShape([line({ itemCode: null, sourceItemCode: 'REGAL-KING' })]).kind).toBe('create');
+  });
+
+  test('the cardinality refusals still win when both apply, so the reason stays the loudest one', () => {
+    const shape = poTransferShape([
+      line({ id: 'a', so_item_id: null, itemCode: 'X', sourceItemCode: 'Y' }),
+    ]);
+    expect(shape.kind).toBe('create');
+    expect(shape.kind === 'create' && shape.reason).toMatch(/for stock/i);
   });
 });

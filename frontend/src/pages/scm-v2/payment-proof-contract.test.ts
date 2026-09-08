@@ -65,10 +65,21 @@ describe('SO detail payments lock', () => {
       .toBeLessThan(firstEarlyReturn);
     /* Only CANCELLED shuts the ledger — same rule as MobileSODetail's
        `paymentLocked`. A DRAFT stays open without the toggle (never confirmed);
-       everything else is opt-in, so the no-naked-edits rule survives. */
+       everything else is opt-in, so the no-naked-edits rule survives.
+
+       ONE exception since 2026-09-08, and it is not a status: an order carried
+       over from AutoCount. Its balance is the one figure the ERP knows is wrong
+       (AutoCount payments taken since 2026-08-28 have not reached us), so the
+       money is shut on it too — and the API refuses these writes regardless, so
+       leaving the card open would only offer a click that 409s. `migratedLocked`
+       is the SERVER's answer, not a status test, which is why it sits outside
+       the parenthesised status rule rather than inside it. */
     expect(detailSource).toContain(
-      'const canEditPayments  = isDraftSo || (!isCancelled && (isEditing || payEditing));',
+      'const canEditPayments  = !migratedLocked && (isDraftSo || (!isCancelled && (isEditing || payEditing)));',
     );
+    /* The migrated term must not have leaked into the LINE locks' shape — the
+       assertions above still forbid isLocked / !isEditing reaching the money. */
+    expect(detailSource).toContain('const canOfferPayEdit  = !migratedLocked && !isDraftSo');
   });
 });
 
@@ -87,9 +98,17 @@ describe('the door into the payments ledger', () => {
        which is a 2990 delivery-flow assumption: on Houzs every SO sits at
        CONFIRMED with a balance still owing, so the button never appeared where
        it was most needed. Only CANCELLED takes no money (DRAFT is out on the
-       standing "no payments on drafts" ruling, and is never locked anyway). */
+       standing "no payments on drafts" ruling, and is never locked anyway).
+
+       ONE further term since 2026-09-08, and it is still not a lock: a MIGRATED
+       order. Its balance is the one figure the ERP knows is wrong (AutoCount
+       payments taken since 2026-08-28 have not reached us), so there is no money
+       to collect against it here and the server refuses the write anyway. That
+       is a fact about the MONEY, which is exactly what this test says the gate
+       must be about — see docs/bugs/0687-*, where the button shipped live on a
+       migrated order because nothing pointed at this bar. */
     expect(readViewSource).toContain(
-      '{!["cancelled", "draft"].includes(salesOrder.status?.toLowerCase() ?? "") && (',
+      '{!migratedLocked && !["cancelled", "draft"].includes(salesOrder.status?.toLowerCase() ?? "") && (',
     );
     expect(readViewSource).not.toContain('{hardLocked && salesOrder.status');
   });

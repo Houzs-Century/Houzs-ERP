@@ -1,4 +1,8 @@
-name: probe-sofa-import-duplicates
+name: probe-catalogue-alias-disagreement
+
+# READ-ONLY. Where the product catalogue and SOFA_MODEL_ALIAS disagree, with a
+# denominator, and what that disagreement costs at topup-ac-po-lines.mjs's
+# SOFA-axis refusal. No writes, no DDL. Exits 0 for every legitimate answer.
 
 on:
   workflow_dispatch:
@@ -11,7 +15,7 @@ on:
         options: [prod, staging]
 
 concurrency:
-  group: probe-sofa-import-duplicates
+  group: probe-catalogue-alias-disagreement
   cancel-in-progress: false
 
 jobs:
@@ -24,7 +28,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
       - run: npm ci
       - name: Run read-only probe
         env:
@@ -36,9 +40,9 @@ jobs:
         # its last query, exited 1, and the run concluded `success`.
         run: |
           set -o pipefail
-          node scripts/probe-sofa-import-duplicates.mjs | tee probe-out.ndjson
+          node scripts/probe-catalogue-alias-disagreement.mjs | tee probe-out.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: probe-sofa-import-duplicates
-          path: backend/probe-out.ndjson
+          name: probe-catalogue-alias-disagreement
+          path: backend/probe-out.txt
           retention-days: 7
