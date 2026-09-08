@@ -508,7 +508,7 @@ export const NAV_TABS: NavTab[] = [
           { to: "/scm/mrp", label: "MRP · Stock Status", icon: Calculator, anyPerm: ["*", "scm.access"], anyAccess: ["scm.procurement.mrp"], hideForSalesRep: true },
           { to: "/scm/purchase-orders", label: "Purchase Orders", icon: ClipboardList, anyPerm: ["*", "scm.access"], anyAccess: ["scm.procurement.po"], hideForSalesRep: true },
           { to: "/scm/po-amendments", label: "PO Amendments", icon: History, anyPerm: ["*", "scm.access", "scm.po_amendment.create", "scm.po_amendment.approve"], anyAccess: ["scm.procurement.po"], hideForSalesRep: true },
-          { to: "/scm/cancel-requests", label: "Cancellation Requests", icon: ClipboardCheck, anyPerm: ["*", "scm.access", "scm.so_cancel.approve_l1", "scm.so_cancel.approve_l2", "scm.po_cancel.approve_l1", "scm.po_cancel.approve_l2"], anyAccess: ["scm.procurement.po", "scm.sales.orders"], hideForSalesRep: true },
+          { to: "/scm/cancel-requests", label: "Cancellation Requests", icon: ClipboardCheck, anyPerm: ["*", "scm.access", "scm.so_cancel.approve_l1", "scm.so_cancel.approve_l2", "scm.po_cancel.approve"], anyAccess: ["scm.procurement.po", "scm.sales.orders"], hideForSalesRep: true },
           { to: "/scm/grns", label: "Goods Receipt", icon: PackageCheck, anyPerm: ["*", "scm.access"], anyAccess: ["scm.procurement.grn"], hideForSalesRep: true },
           { to: "/scm/purchase-invoices", label: "Purchase Invoices", icon: ReceiptText, anyPerm: ["*", "scm.access"], anyAccess: ["scm.procurement.pi"], hideForSalesRep: true },
           { to: "/scm/purchase-returns", label: "Purchase Returns", icon: Undo2, anyPerm: ["*", "scm.access"], anyAccess: ["scm.procurement.pr"], hideForSalesRep: true },

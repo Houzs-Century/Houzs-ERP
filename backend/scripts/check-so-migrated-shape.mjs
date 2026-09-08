@@ -37,16 +37,41 @@
 //   COMPANY_ID=2 node scripts/check-so-migrated-shape.mjs
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
+/* THE RULE, from its one home - the same module the middleware decides with.
+   The first version of this script expressed the shape a second time, in SQL.
+   That was a copy, and a copy of a rule inside the very check that is supposed
+   to police the rule is the hardest place for a drift to be noticed. The
+   independent signal here is the OUTBOX, below, not a second parse. */
+import { soNumberShape, soIsMigratedShape } from "../src/scm/lib/so-is-migrated.ts";
 
 const COMPANY_ID = Number(process.env.COMPANY_ID || 1);
 if (!Number.isInteger(COMPANY_ID) || COMPANY_ID <= 0) {
   console.error(`COMPANY_ID must be a positive integer; got ${JSON.stringify(process.env.COMPANY_ID)}`);
   process.exit(1);
 }
-/* The two documents docs/bugs/0703 names, pinned here so the run that decides
-   the fix prints them by name instead of leaving the reader to trust a count.
-   Overridable, because the second one is only an EXAMPLE of a cutover order. */
-const PIN = (process.env.PINNED || "HC-SO-2609-001,HC-SO-013361")
+/* The documents docs/bugs/0703 names, pinned here so the run that decides the
+   fix prints them by name instead of leaving the reader to trust a count.
+
+   IT USED TO PIN HC-SO-2609-001 TOO, and that document no longer exists: it was
+   DELETED from the ERP on 2026-09-08 at the owner's instruction — a test order,
+   《把SO2609-001 删掉 这是测试单来的》. Leaving it pinned would print
+   "NOT FOUND" as a ::warning:: on every future run, which reads as an anomaly
+   rather than as a document somebody removed on purpose.
+
+   It is NOT replaced by another live write-back example, because on the day it
+   was deleted there was no second one: the 'equal' bucket held exactly 1 of
+   2,883 (run 34214516108, measured again by 34220096163). That bucket is
+   printed above and is the honest, self-updating answer — when the ERP next
+   creates and sends an order, 'equal' becomes 1 again on its own and this pin
+   does not have to be edited for the probe to tell the truth.
+
+   The SHAPE rule is still pinned by name on BOTH documents, in
+   backend/tests/soIsMigratedShape.test.ts — a pure function needs no live row.
+
+   Ledger: docs/bugs/0715-deleting-a-sales-order-trusted-a-hand-written-child-list-nob.md
+
+   Overridable: the remaining one is only an EXAMPLE of a cutover order. */
+const PIN = (process.env.PINNED || "HC-SO-013361")
   .split(",").map((s) => s.trim()).filter(Boolean);
 
 function resolveUrl() {
@@ -70,164 +95,134 @@ const myt = (d) => (d ? new Date(d).toLocaleString("en-GB", { timeZone: "Asia/Ku
 
 const sql = postgres(url, { ssl: "require", prepare: false, max: 1 });
 
-/* The shape verdict, in SQL, matching frontend/src/lib/autocountRegister.ts
-   exactly: trimmed and case-folded, and a prefix must END AT A SEPARATOR so
-   that `SO-013361` cannot "match" its own suffix. Written once here and reused
-   by every query below, so the buckets cannot disagree with each other. */
-const SHAPE = () => sql`
-  CASE
-    WHEN lower(btrim(so.linked_ac_docno)) = lower(btrim(so.doc_no)) THEN 'equal'
-    WHEN length(btrim(so.doc_no)) > length(btrim(so.linked_ac_docno))
-     AND right(lower(btrim(so.doc_no)), length(btrim(so.linked_ac_docno)) + 1)
-         = '-' || lower(btrim(so.linked_ac_docno)) THEN 'prefixed'
-    ELSE 'neither'
-  END`;
-
-/* Did the ERP itself create this document and send it? The outbox is
-   append-only, so this is a durable fact and not a snapshot of a queue. */
-const HAS_CREATE = () => sql`
-  EXISTS (SELECT 1 FROM scm.autocount_outbox o
-           WHERE o.doc_type = 'SO' AND o.op = 'create_so'
-             AND lower(btrim(o.doc_no)) = lower(btrim(so.doc_no)))`;
-
 async function main() {
   log(`check-so-migrated-shape — company ${COMPANY_ID}, read-only`);
   log("");
 
-  const [totals] = await sql`
-    SELECT count(*)::int AS all_so,
-           count(*) FILTER (WHERE so.linked_ac_docno IS NOT NULL)::int AS linked,
-           count(*) FILTER (WHERE so.linked_ac_docno IS NULL)::int     AS unlinked
-      FROM scm.mfg_sales_orders so
-     WHERE so.company_id = ${COMPANY_ID}`;
-  log(`SALES ORDERS (company ${COMPANY_ID}): ${totals.all_so}`);
-  log(`  linked_ac_docno IS NOT NULL — what the lock calls "migrated" today: ${totals.linked}`);
-  log(`  linked_ac_docno IS NULL     — what it calls "new" today:            ${totals.unlinked}`);
+  /* ONE read of the header pairs, classified in JS by the shared rule. */
+  const headers = await sql`
+    SELECT doc_no, status, linked_ac_docno, created_at
+      FROM scm.mfg_sales_orders
+     WHERE company_id = ${COMPANY_ID}
+     ORDER BY created_at`;
+  const shaped = headers.map((r) => ({ ...r, shape: soNumberShape(r.doc_no, r.linked_ac_docno) }));
+  const linked = shaped.filter((r) => r.shape !== "no-book-number");
+  const migrated = shaped.filter((r) => soIsMigratedShape(r.doc_no, r.linked_ac_docno));
+
+  log(`SALES ORDERS (company ${COMPANY_ID}): ${headers.length}`);
+  log(`  linked_ac_docno IS NOT NULL — the OLD predicate's "migrated": ${linked.length}`);
+  log(`  linked_ac_docno IS NULL     — the OLD predicate's "new":      ${headers.length - linked.length}`);
+  log(`  came FROM AutoCount — what the guard decides today:           ${migrated.length}`);
+  log(`  the ERP's own — new orders, written back or not:              ${headers.length - migrated.length}`);
   log("");
 
   /* THE THREE BUCKETS. The third is the answer to whether the shape rule is
      safe, so it is measured before anything is concluded from the first two. */
-  const buckets = await sql`
-    SELECT ${SHAPE()} AS shape,
-           count(*)::int AS n,
-           min(so.created_at) AS oldest,
-           max(so.created_at) AS newest
-      FROM scm.mfg_sales_orders so
-     WHERE so.company_id = ${COMPANY_ID} AND so.linked_ac_docno IS NOT NULL
-     GROUP BY 1 ORDER BY 1`;
-  const byShape = new Map(buckets.map((b) => [b.shape, b]));
-  const n = (k) => byShape.get(k)?.n ?? 0;
-
+  const of = (k) => linked.filter((r) => r.shape === k);
   log("SHAPE OF linked_ac_docno AGAINST doc_no");
   for (const k of ["equal", "prefixed", "neither"]) {
-    const b = byShape.get(k);
+    const rows = of(k);
     const what = k === "equal" ? "the ERP's own number went to the book -> WRITE-BACK"
       : k === "prefixed" ? "doc_no is a prefix + the book number -> CUTOVER IMPORT"
       : "NEITHER — the shape rule cannot classify these";
-    log(`  ${k.padEnd(9)} ${String(b?.n ?? 0).padStart(6)}   ${what}`);
-    if (b) log(`  ${" ".repeat(9)}        created ${myt(b.oldest)} .. ${myt(b.newest)} MYT`);
+    log(`  ${k.padEnd(9)} ${String(rows.length).padStart(6)}   ${what}`);
+    if (rows.length) {
+      log(`  ${" ".repeat(9)}        created ${myt(rows[0].created_at)} .. ${myt(rows[rows.length - 1].created_at)} MYT`);
+    }
   }
   log("");
 
   /* WHICH prefixes, and how many of each. A rule that assumed `HC-` would be
      wrong the day a company is added; this is the check that the assumption is
      not silently load-bearing. */
-  const prefixes = await sql`
-    SELECT left(btrim(so.doc_no), length(btrim(so.doc_no)) - length(btrim(so.linked_ac_docno))) AS prefix,
-           count(*)::int AS n
-      FROM scm.mfg_sales_orders so
-     WHERE so.company_id = ${COMPANY_ID} AND so.linked_ac_docno IS NOT NULL
-       AND ${SHAPE()} = 'prefixed'
-     GROUP BY 1 ORDER BY 2 DESC`;
-  log(`PREFIXES IN USE (${prefixes.length}):`);
-  for (const p of prefixes) log(`  ${JSON.stringify(p.prefix)}  ${p.n}`);
+  const prefixes = new Map();
+  for (const r of of("prefixed")) {
+    const erp = String(r.doc_no).trim();
+    const pre = erp.slice(0, erp.length - String(r.linked_ac_docno).trim().length);
+    prefixes.set(pre, (prefixes.get(pre) ?? 0) + 1);
+  }
+  log(`PREFIXES IN USE (${prefixes.size}):`);
+  for (const [pre, n] of [...prefixes].sort((a, b) => b[1] - a[1])) log(`  ${JSON.stringify(pre)}  ${n}`);
   log("");
 
+  /* Did the ERP itself create each document and send it? The outbox is
+     append-only, so this is a durable fact and not a snapshot of a queue — and
+     it is INDEPENDENT of the numbers, which is what makes it worth comparing. */
+  const created = new Set(
+    (await sql`SELECT DISTINCT lower(btrim(doc_no)) AS d FROM scm.autocount_outbox
+                WHERE doc_type = 'SO' AND op = 'create_so'`).map((r) => r.d),
+  );
+  const erpCreated = (r) => created.has(String(r.doc_no).trim().toLowerCase());
+
   /* THE THIRD BUCKET, NAMED. A count here would be the thing this script
-     exists to refuse: these are the documents a shape rule would misfile. */
-  const neither = await sql`
-    SELECT so.doc_no, so.linked_ac_docno, so.status, so.created_at, ${HAS_CREATE()} AS erp_created
-      FROM scm.mfg_sales_orders so
-     WHERE so.company_id = ${COMPANY_ID} AND so.linked_ac_docno IS NOT NULL
-       AND ${SHAPE()} = 'neither'
-     ORDER BY so.created_at DESC
-     LIMIT 200`;
+     exists to refuse: these are the documents the shape rule cannot place. */
+  const neither = of("neither");
   if (neither.length === 0) {
     log("THIRD BUCKET IS EMPTY — every linked order is either equal or prefixed.");
     log("  The shape rule classifies the whole corpus with nothing left over.");
   } else {
-    warn(`THIRD BUCKET: ${n("neither")} document(s) the shape rule cannot classify (showing ${neither.length}):`);
-    for (const r of neither) {
+    warn(`THIRD BUCKET: ${neither.length} document(s) the shape rule cannot classify:`);
+    for (const r of neither.slice(0, 200)) {
       warn(`  ${r.doc_no}  book=${JSON.stringify(r.linked_ac_docno)}  ${r.status}`
-        + `  created ${myt(r.created_at)} MYT  erp_created_outbox=${r.erp_created}`);
+        + `  created ${myt(r.created_at)} MYT  erp_created_outbox=${erpCreated(r)}`);
     }
+    warn("  They LOCK, deliberately — see so-is-migrated.ts. Read every one of them.");
   }
   log("");
 
-  /* THE CROSS-TAB — the refutation test. The shape rule and the outbox are two
-     independent answers to "did the ERP originate this document". Where they
-     disagree, at most one of them is right and neither may be shipped without
-     an explanation for the disagreement. */
-  const cross = await sql`
-    SELECT ${SHAPE()} AS shape, ${HAS_CREATE()} AS erp_created, count(*)::int AS n
-      FROM scm.mfg_sales_orders so
-     WHERE so.company_id = ${COMPANY_ID} AND so.linked_ac_docno IS NOT NULL
-     GROUP BY 1, 2 ORDER BY 1, 2`;
+  /* THE CROSS-TAB — the refutation test. The shape and the outbox are two
+     INDEPENDENT answers to "did the ERP originate this document". Where they
+     disagree, at most one is right and neither may be trusted without an
+     explanation for the disagreement. */
+  const cross = new Map();
+  for (const r of linked) {
+    const k = `${r.shape}|${erpCreated(r)}`;
+    cross.set(k, (cross.get(k) ?? 0) + 1);
+  }
   log("CROSS-TAB  shape  x  has an outbox create_so row (the ERP created and sent it)");
-  for (const r of cross) {
-    log(`  ${String(r.shape).padEnd(9)} erp_created=${String(r.erp_created).padEnd(5)} ${String(r.n).padStart(6)}`);
+  for (const [k, n] of [...cross].sort()) {
+    const [shape, erp] = k.split("|");
+    log(`  ${shape.padEnd(9)} erp_created=${erp.padEnd(5)} ${String(n).padStart(6)}`);
   }
 
-  const disagree = await sql`
-    SELECT so.doc_no, so.linked_ac_docno, so.created_at, ${SHAPE()} AS shape, ${HAS_CREATE()} AS erp_created
-      FROM scm.mfg_sales_orders so
-     WHERE so.company_id = ${COMPANY_ID} AND so.linked_ac_docno IS NOT NULL
-       AND ((${SHAPE()} = 'equal') <> ${HAS_CREATE()})
-     ORDER BY so.created_at DESC
-     LIMIT 100`;
+  const disagree = linked.filter((r) => (r.shape === "equal") !== erpCreated(r));
   log("");
   if (disagree.length === 0) {
     log("THE TWO SIGNALS AGREE on every linked order: shape='equal' exactly where an");
     log("  outbox create_so row exists. Either can be used to name the cutover population.");
   } else {
-    warn(`THE TWO SIGNALS DISAGREE on ${disagree.length} document(s) (capped at 100):`);
-    for (const r of disagree) {
+    warn(`THE TWO SIGNALS DISAGREE on ${disagree.length} document(s):`);
+    for (const r of disagree.slice(0, 100)) {
       warn(`  ${r.doc_no}  book=${JSON.stringify(r.linked_ac_docno)}  shape=${r.shape}`
-        + `  erp_created_outbox=${r.erp_created}  created ${myt(r.created_at)} MYT`);
+        + `  erp_created_outbox=${erpCreated(r)}  created ${myt(r.created_at)} MYT`);
     }
-    warn("  Read each one before choosing a signal. A document the ERP created but whose");
-    warn("  number AutoCount changed is the case that makes the shape rule unsafe.");
+    warn("  Read each one before trusting either signal. A document the ERP created but");
+    warn("  whose number AutoCount changed is the case that makes the shape rule unsafe.");
   }
   log("");
 
-  /* ERP-ORIGINATED AND NOT YET IN THE BOOK — the population that is open today
-     only because the write-back has not run yet. It is the same documents the
-     lock is about to shut, seen one step earlier. */
-  const [pending] = await sql`
-    SELECT count(*)::int AS n
-      FROM scm.mfg_sales_orders so
-     WHERE so.company_id = ${COMPANY_ID} AND so.linked_ac_docno IS NULL AND ${HAS_CREATE()}`;
-  log(`ERP-created, outbox row exists, NOT yet stamped: ${pending.n}`);
-  log("  (these are open today and would shut the moment the write-back succeeds)");
+  const pendingSend = shaped.filter((r) => r.shape === "no-book-number" && erpCreated(r));
+  log(`ERP-created, outbox row exists, NOT yet stamped: ${pendingSend.length}`);
+  log("  (before docs/bugs/0703 these were the orders that shut the moment the write-back");
+  log("   succeeded; they stay open now, which is what this check re-proves)");
   log("");
 
   /* THE PINNED DOCUMENTS — the two the fix has to get right, by name. */
   log("PINNED DOCUMENTS");
   const pins = await sql`
-    SELECT so.doc_no, so.linked_ac_docno, so.status, so.created_at, so.company_id,
-           ${SHAPE()} AS shape, ${HAS_CREATE()} AS erp_created
+    SELECT so.doc_no, so.linked_ac_docno, so.status, so.created_at, so.company_id
       FROM scm.mfg_sales_orders so
      WHERE so.doc_no = ANY(${PIN})`;
   for (const d of PIN) {
-    const r = pins.find((p) => p.doc_no === d);
+    const r = pins.find((x) => x.doc_no === d);
     if (!r) { warn(`  ${d}  NOT FOUND`); continue; }
     log(`  ${r.doc_no}  company=${r.company_id}  book=${JSON.stringify(r.linked_ac_docno)}`);
-    log(`      shape=${r.shape}  erp_created_outbox=${r.erp_created}  ${r.status}  created ${myt(r.created_at)} MYT`);
+    log(`      shape=${soNumberShape(r.doc_no, r.linked_ac_docno)}`
+      + `  MIGRATED=${soIsMigratedShape(r.doc_no, r.linked_ac_docno)}`
+      + `  erp_created_outbox=${erpCreated(r)}  ${r.status}  created ${myt(r.created_at)} MYT`);
   }
   log("");
 
-  /* The outbox rows for the pinned documents, so a disagreement on one of them
-     can be read rather than guessed at. */
   const pinOutbox = await sql`
     SELECT o.doc_no, o.op, o.status, o.ac_doc_no, o.created_at
       FROM scm.autocount_outbox o

@@ -3,7 +3,11 @@
    cancelling a Sales Order or a Purchase Order, and the guard that makes the
    two existing cancel endpoints wait for it.
 
-   THE OWNER, 2026-09-08: 「SO 和 PO 取消的话需要 approval 2 层 — 已经输入原因」.
+   THE OWNER, 2026-09-08: 「SO 和 PO 取消的话需要 approval 2 层 — 已经输入原因」,
+   and later that day 「只有 SO 需要 sales director approval, PO 不需要 … PO 只要
+   Purchaser 一个审批」 — so a Sales Order takes two signatures and a Purchase
+   Order one (shared/document-cancel.ts APPROVAL_LEVELS). Nothing here counts
+   to two: every handler asks the table.
 
    WHAT IT MOUNTS (routes/../index.ts):
 
@@ -68,14 +72,17 @@ import { recordSoAudit } from '../lib/so-audit';
 import { recordEntityAudit } from '../lib/entity-audit';
 import { notifyCancelRequest } from '../../services/cancelRequestNotify';
 import { hasPermission } from '../../services/permissions';
+import { getSupabaseService } from '../../db/supabase';
 import {
-  CANCEL_APPROVE_KEY,
   OPEN_CANCEL_STATUSES,
   approvalRefusal,
+  approveKeysFor,
   cancelNeedsApproval,
   cancelRequestRefusal,
   executionRefusal,
+  isFinalLevel,
   isOpenCancelStatus,
+  levelsFor,
   readReason,
   rejectRefusal,
   statusAfterApproval,
@@ -298,7 +305,8 @@ export function approveCancelHandler(docType: CancelDocType) {
     const { level } = verdict;
     const actor = actorOf(c);
     const at = nowIso();
-    const patch: Record<string, unknown> = { status: statusAfterApproval(level), updated_at: at };
+    const final = isFinalLevel(docType, level);
+    const patch: Record<string, unknown> = { status: statusAfterApproval(docType, level), updated_at: at };
     patch[`l${level}_by`] = actor.id;
     patch[`l${level}_by_name`] = actor.name;
     patch[`l${level}_at`] = at;
@@ -315,13 +323,13 @@ export function approveCancelHandler(docType: CancelDocType) {
     if (error) return c.json({ error: 'approve_failed', reason: error.message }, 500);
     if (!updated) return c.json({ error: 'stale', message: 'This request changed while you were looking at it — reload and try again.' }, 409);
 
-    await audit(c, docType, doc, 'APPROVE', `level ${level} of 2 approved`);
-    await notifyCancelRequest(c.env, level === 1 ? 'level1' : 'approved', {
+    await audit(c, docType, doc, 'APPROVE', `level ${level} of ${levelsFor(docType)} approved`);
+    await notifyCancelRequest(c.env, final ? 'approved' : 'level1', {
       docType, docNumber: doc.number, reason: String(open.reason ?? ''), companyId,
       requesterUserId: Number(open.requested_by) || null, requesterName: (open.requested_by_name as string | null) ?? null,
       actorUserId: actor.id, actorName: actor.name,
     });
-    return c.json({ request: updated, execute: level === 2 });
+    return c.json({ request: updated, execute: final });
   };
 }
 
@@ -461,14 +469,39 @@ const APPROVER_VERB = /\/cancel-request\/(approve|reject|withdraw)$/;
  * raising a request, and every other write on the prefix, keeps needing the
  * area's `edit`.
  */
+/** The slice of a Hono context the bypass predicates read. Hono's generic
+ *  `get` is assignable to this because every key named here is a Variable. */
+type GuardCtx = {
+  req: { method: string; path: string };
+  get: (k: 'user' | 'houzsUser' | 'cancelExecutionAdmitted') => unknown;
+};
+
 export function cancelApproverWriteBypass(docType: CancelDocType) {
-  const keys = CANCEL_APPROVE_KEY[docType];
-  return (c: { req: { method: string; path: string }; get: (k: 'user') => unknown }): boolean => {
+  return (c: GuardCtx): boolean => {
     if (c.req.method.toUpperCase() !== 'POST' || !APPROVER_VERB.test(c.req.path)) return false;
-    const u = c.get('user') as { permissions_set?: Set<string>; permissions?: string[] } | undefined;
-    const granted = u?.permissions_set ?? u?.permissions ?? [];
-    return hasPermission(granted, keys[1]) || hasPermission(granted, keys[2]);
+    return callerHoldsApproveKey(c, docType);
   };
+}
+
+/** Does the caller hold one of this document's cancel-approve keys? Reads the
+ *  REAL caller wherever the request is: `houzsUser` once the SCM auth bridge
+ *  has run, else the intact Houzs `user` the area guard itself reads. */
+function callerHoldsApproveKey(c: Pick<GuardCtx, 'get'>, docType: CancelDocType): boolean {
+  const u = (c.get('houzsUser') ?? c.get('user')) as { permissions_set?: Set<string>; permissions?: string[] } | undefined;
+  const granted = u?.permissions_set ?? u?.permissions ?? [];
+  return approveKeysFor(docType).some((k) => hasPermission(granted, k));
+}
+
+/**
+ * The area guard's `writeBypass` for the two document mounts: the approver
+ * verbs on the request (above), PLUS the one cancel write that
+ * `cancelApprovalGuard` — mounted before the area guard — has already found to
+ * be the execution of an APPROVED request by a holder of the document's
+ * approve key (`cancelExecutionAdmitted`). Nothing else on the prefix.
+ */
+export function cancelExecutionBypass(docType: CancelDocType) {
+  const approver = cancelApproverWriteBypass(docType);
+  return (c: GuardCtx): boolean => c.get('cancelExecutionAdmitted') === true || approver(c);
 }
 
 /* ── The guard in front of the cancel itself ─────────────────────────────── */
@@ -499,7 +532,10 @@ export function cancelApprovalGuard(docType: CancelDocType): MiddlewareHandler<{
     if (!key) return next();
     const co = requireActiveCompanyId(c as AnyCtx);
     if (!co.ok) return next();
-    const sb = (c as AnyCtx).get('supabase');
+    /* Mounted BEFORE the area guard and the router's own supabaseAuth, so the
+       bridge has not stashed a client yet on the first request through; the
+       service client is the same one supabaseAuth would mint. */
+    const sb = (c as AnyCtx).get('supabase') ?? getSupabaseService(c.env);
     const { data: doc, error: docErr } = await scopeToCompanyId(sb.from(cfg.table).select('status').eq(cfg.keyColumn, key), co.companyId).maybeSingle();
     /* A read that FAILED is not "no such document": say so rather than let the
        cancel through on a blip (the swallowed-reads gate's whole point). */
@@ -508,8 +544,17 @@ export function cancelApprovalGuard(docType: CancelDocType): MiddlewareHandler<{
     if (!cancelNeedsApproval(docType, (doc as { status?: string }).status)) return next();
 
     const open = await loadOpenRequest(sb, docType, key, co.companyId);
-    const refusal = executionRefusal(open);
+    const refusal = executionRefusal(docType, open);
     if (refusal) return c.json(refusal, 403);
+
+    /* The final approver may lack the document's edit level (prod: the
+       Purchaser signs level 2 on a Sales Order with Sales Orders at `view`),
+       yet the cancel they just approved runs through the document's own
+       status route. This guard is mounted BEFORE the area guard, so it can
+       tell that guard — through its writeBypass — that THIS write is the
+       execution of an approved request by someone entitled to sign it. Only
+       that: an approver still cannot move the document anywhere else. */
+    if (callerHoldsApproveKey(c, docType)) c.set('cancelExecutionAdmitted', true);
 
     await next();
 

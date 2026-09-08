@@ -1,0 +1,43 @@
+name: SO -> DO line divergence (read-only)
+
+# Answers the owner's question of 2026-09-08 — "我们的SO 转去DO 为什么不一样呢" —
+# about the delivery orders the AutoCount Sync page marks NOT ACCEPTED.
+#
+# It reads the refusal the host already wrote into scm.autocount_outbox and,
+# for every line key the ERP sent, what the account book said about it. Nothing
+# is inferred: the answer comes out of the row.
+#
+# Read-only. SELECTs only, no writes, no transaction, manual trigger only — a
+# production read on a schedule is CI noise nobody reads (CLAUDE.md). Exits 0
+# for every legitimate answer; only an unreachable database exits non-zero.
+on:
+  workflow_dispatch:
+
+# Deliberately NOT in the deploy concurrency group: this touches nothing and
+# must never queue behind — or displace — a release.
+concurrency:
+  group: so-to-do-line-divergence
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-so-to-do-line-divergence.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first

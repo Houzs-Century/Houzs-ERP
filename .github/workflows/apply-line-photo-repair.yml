@@ -1,15 +1,25 @@
 name: Apply line photo repair (from a plan file)
 
-# The APPLY half of the two AutoCount line-photo repairs. It holds ONE
+# The APPLY half of the three AutoCount line-photo repairs. It holds ONE
 # credential — the database — and it can hold no other.
 #
-# WHY THIS WORKFLOW EXISTS. Both repairs decide what to do by asking R2: for the
-# prune, "is this address dead?"; for the re-point, "is this photograph really
-# in the bucket?". Neither question can be answered here. This repository is
+# WHY THIS WORKFLOW EXISTS. All three repairs decide what to do by asking R2:
+# for the prune, "is this address dead?"; for the re-point and the attach, "is
+# this photograph really in the bucket?". Neither question can be answered here.
+# This repository is
 # PUBLIC, non-admin collaborators can read repository secrets, and the R2 API
 # token reads every photograph the company owns — so it must never become an
 # Actions secret. The operator machine can ask R2 but its DSN is read-only.
 # Neither side can run the repair alone.
+#
+# THE THIRD REPAIR, attach-uploaded-line-photos, is the one the other two could
+# not do: a line whose photograph was never in the bucket at all has nothing to
+# prune and nothing to move. Its object is uploaded first by
+# upload-line-photos-r2.mjs on the operator machine, and only then is the
+# address true. It exists because the obvious alternative was measured: a
+# blanket `import-po-line-photos.mjs APPLY=1` on 2026-09-08 would have written
+# 25 addresses where the gap needed 10, and R2 held none of the extra 15
+# objects — docs/bugs/0625 and docs/bugs/0668 for a third time.
 #
 # So the decision is made where the bucket can be asked, written to a PLAN FILE,
 # and applied here:
@@ -47,12 +57,13 @@ on:
         options:
           - prune-dead-line-photo-keys
           - repoint-line-photos-to-owning-line
+          - attach-uploaded-line-photos
       plan:
         description: "Plan file, path from the repo root (must be committed on the branch you run from)"
         required: true
         type: string
       confirm:
-        description: 'CONFIRM phrase — "PRUNE DEAD PHOTO KEYS" or "REPOINT LINE PHOTOS"'
+        description: 'CONFIRM phrase — "PRUNE DEAD PHOTO KEYS", "REPOINT LINE PHOTOS" or "ATTACH UPLOADED LINE PHOTOS"'
         required: true
         type: string
       target:

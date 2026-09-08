@@ -221,6 +221,40 @@ own `ALTER`, so it exists in production but appeared in no migration
 (cutover ledger §1 "坑二"). `IF NOT EXISTS` makes 0277 a no-op against the live
 database and makes the column real everywhere else.
 
+#### The column means TWO populations, and the reconcile now separates them
+
+`linked_ac_docno IS NOT NULL` does not mean "the cutover carried this". It means
+"this document exists in AutoCount", which is two populations with opposite
+consequences (`docs/bugs/0703-*`):
+
+| how the number got there | the pair looks like | what it is |
+| --- | --- | --- |
+| the 2026-08-28 cutover import | `HC-` + the book's number | carried over — compare it against the book |
+| this write-back, on success | the ERP's OWN number, so the two strings are EQUAL | the ERP made it and sent it |
+
+The rule that tells them apart is `src/scm/lib/so-is-migrated.ts` — one file, and
+callers IMPORT it. `backend/scripts/lib/ac-erp-native.mjs` is the reconcile's
+caller; it does not restate the rule.
+
+**Why the reconcile cares.** `check-ac-erp-reconcile.mjs` compares the ERP
+against a SNAPSHOT of the book. A document this write-back stamped minutes ago
+cannot be in a snapshot cut this morning, so it used to be reported as *"ERP
+claims a document the book does not have"* — the headline count ROSE every time
+staff raised a document. On 2026-09-08 that was `HC-SO-2609-001`,
+`HC-DO-2609-003` and `HC-DO-2609-011`, 3 of 17. The owner's definition settles
+what the number is for: **「差异 0」= 搬进来的资料全部对上账本**.
+
+Those documents now go in a `native` column of the summary table, named
+individually with the minute they were created, and the run prints the
+arithmetic — *"would have reported 17 under the old population; 3 ... so the
+count is 14"* — so the narrowing cannot be taken on trust. Being ERP-native by
+number shape is not sufficient on its own: `created_at` must be at or after the
+snapshot's `exported_at`. A document this write-back stamped BEFORE the cut whose
+number the snapshot does not state stays a phantom, because that is the write-back
+claiming something the book then did not confirm. Measured on run `34219567205`:
+that bucket is empty, and 0 ERP-native documents of any type were found inside
+the book.
+
 ---
 
 ## 4. The toggle
@@ -4739,3 +4773,132 @@ build that answered every one of that document's sends (`host_mvid`
 `HC-SO-013394`'s rows start carrying `SO-013394`. `acBookNumber` already tells
 this apart from "not in the book" — it is the `not-recorded` verdict, and it is
 deliberately not flagged.
+
+## The transfer uses AutoCount's DOCUMENTED call on every shape (2026-09-08)
+
+**What changed.** `RunTransfer` used to RETURN EARLY into
+`AddPartialTransferDetail` whenever the ERP named lines and sent no quantity.
+Every SO -> DO is that shape, and every one of them was refused:
+
+```
+SO->DO shape: PARTIAL BY LINE - the ERP named 8 source line(s) and no quantity
+transfer: AddPartialTransferDetail per source document
+SO->DO refused: AutoCount.Invoicing.InvalidTransferItemException: Invalid transfer item.
+```
+
+Ten delivery orders, six attempts each, three weeks. The full refutation of every
+data-side theory is `docs/bugs/0716-every-so-to-do-transfer-used-an-undocumented-autocount-call.md`.
+
+**`AddPartialTransferDetail` is on NO page of AutoCount's programmer wiki** — all
+175 read 2026-09-08. The two documented calls are `FullTransfer` and
+`PartialTransfer`, and the host's assemblies expose a `PartialTransfer` overload
+that carries the LINE KEY as well as the item, uom and quantity — so naming an
+exact line loses nothing by moving to it. `LogTransferApi` prints the real
+signatures into the host log at every service start; read those rather than this
+paragraph.
+
+**Where the quantity comes from.** The service reached for the undocumented call
+because "every PartialTransfer overload demands a quantity and the ERP sends
+none". The ERP sends none; the BOOK knows it. A by-line transfer means "these
+lines, at whatever is still outstanding", which is `Qty - TransferedQty` on the
+source row. `OutstandingQtyOf` reads it and `BindTransferArg` uses it whenever the
+ERP's plan carries no number of its own.
+
+So all three shapes now go through the documented call:
+
+| the ERP is saying | what binds |
+| --- | --- |
+| this whole document | every named line at its outstanding quantity |
+| these lines only | those lines at their outstanding quantity |
+| 3 of the 5 on this line | the ERP's own number, from `Details[].Qty` |
+
+**Two rules that come with it, and neither is optional:**
+
+- **`focQty` binds to ZERO, and it is matched BEFORE `qty`.** The parameter name
+  contains `qty`, so the quantity rule answered it with the quantity being
+  SHIPPED — a free-of-charge quantity equal to the sold one on every line of a
+  licensed account book. The ERP has no concept of a FOC quantity and sends none.
+- **The fallback must never run on a document the SDK has already written into.**
+  `PartialTransfer` is one call PER LINE, so a throw on line 4 of 8 leaves three
+  lines in the target and `AddPartialTransferDetail` on top would add them again.
+  `Xfer.DocumentedCallsMade` counts what landed and `RunTransfer` throws instead
+  of falling back once any did.
+
+`AddPartialTransferDetail` is KEPT as the fallback for a shape the documented
+overloads cannot express — it is the call that put DO-011260 in the book — and it
+is reached only when nothing has been written yet.
+
+**AutoCount's own verdict now reaches the ERP.** `PreflightValidItems` has asked
+`TransferHelper.CheckAndGetValidPartialTransferItem` since 2026-08-17 and wrote
+the answer only to the host's log file. It now lands on `Xfer.ItemCheck` and
+`Convert_`'s catch appends it to the message stored in
+`scm.autocount_outbox.last_error`, naming the keys AutoCount refused when it
+refuses any. The AutoCount Sync page also reads that log directly —
+`GET /api/scm/autocount-outbox/host-log`, which existed for weeks with no caller.
+
+**This is INERT until the host is rebuilt.** `AcSyncService.cs` compiles nowhere
+but the office machine; `docs/autocount-service-deploy.md` is the swap.
+## `RULED` — the owner's own sofa build, and why it is not `AGREE` (2026-09-08)
+
+The reconcile's variant table gained a **ninth verdict** on the sofa
+compartments axis. It is a new word in the vocabulary `so-verdict-derive.mjs`
+and the summary table share, so it belongs here rather than only in the bug
+ledger.
+
+**Why it had to exist.** 「一律跟账本。除了sofa compartment而已啊」 — the book
+decides every axis EXCEPT the sofa build, which is the owner's. He reads the
+slip's drawing himself and rules, and the ERP is then **supposed** to differ
+from the book's words. `lib/variant-reconcile.mjs` had no input for a
+per-document override, so a build he had personally decided could only come out
+as `DIFFER`, and every run handed it back to him as an open question. On
+2026-09-08 five of the eight proceeded compartment differences were rulings he
+had already given (`docs/bugs/0714-the-reconcile-reports-a-sofa-the-owner-has-already-ruled-on.md`), and being shown one again is what produced
+「这个很多我刚刚都给过你答案了啊」.
+
+**Where the answer comes from.** `check-ac-erp-reconcile.mjs` now loads
+`backend/scripts/data/sofa-compartment-corrections-*.json` through the SAME
+`loadCorrections` the apply script writes from, so the reporter and the writer
+can never disagree about what he ruled. Two properties matter:
+
+- **`_held` builds are excluded.** `loadCorrections` returns them in a separate
+  list. A ruling we have NOT written must keep reading `DIFFER`, because it is
+  still work — `HC-SO-011099` is exactly that today (`docs/bugs/0719`).
+- **The entry is selected by its own `desc2Match`**, through the same matcher
+  the apply script uses, never by document number alone. A document can hold
+  more than one sofa build, and putting one build's answer on another build's
+  line is the failure this whole lane exists to prevent.
+
+**The verdict, exactly.** `RULED` requires the ERP to hold his answer as an
+identical MULTISET. It is consulted only AFTER the book comparison has already
+returned a real difference, so a ruling can never turn an `AGREE` or an
+`ERP_BLANK` into something else. A ruling that has not been written — or has
+been written onto the wrong document — still reads `DIFFER`, and the detail now
+names the answer it is failing to match:
+
+```
+... MISSING 1S | EXTRA 1A(LHF), 1NA, 2A(RHF)
+    | the owner ruled 1A(LHF)+2A(RHF)+1B(RHF) and the ERP does NOT hold it
+```
+
+That sentence is the point of the change as much as the new column is: it is the
+line that would have caught `HC-SO-013327` sitting on `1NA` while his ruling
+said `1B(RHF)`.
+
+**It is NOT folded into `AGREE`,** for the same reason `RECORDED` is not. The
+line genuinely does differ from the book, and hiding that would remove the only
+signal that catches a ruling applied to the wrong document.
+
+**One consequence to know about: a `RULED` cell no longer LOCKS the document.**
+`variant-report.mjs` locks on `DIFFER` and on a proceeded `ERP_BLANK`;
+`BOOK_BLANK`, `PENDING`, `RECORDED` and now `RULED` fall to the branches below
+and never lock. Before this change `HC-SO-010209` and `HC-SO-011099` were both
+`LOCKED ... — sofa compartments` in the run's own output. After it, a document
+unlocks exactly when the ERP holds what the owner ruled: `HC-SO-010209` unlocks,
+`HC-SO-011099` stays locked because its ruling is still unwritten. That is the
+intended behaviour and it is the same standing `RECORDED` already has, but it is
+a permission change, so it is stated here rather than left to be discovered.
+
+Tests: `scripts/lib/variant-reconcile.test.mjs` — the ruled build, the
+not-folded-into-agree property, the unwritten ruling that stays `DIFFER`, the
+no-ruling control, and the assertion that a ruling cannot rescue an ERP carrying
+no compartments at all.

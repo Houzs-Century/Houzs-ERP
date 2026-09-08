@@ -681,5 +681,17 @@ away from `paid + balance`:
 ## What is left on this reconcile: 17
 
 `SO phantom 1` (`HC-SO-2609-001`, an ERP document the book does not have),
+
+> **CORRECTED 2026-09-08.** The book DOES have it, and the ERP no longer does.
+> The AutoCount side of this reconcile is the committed snapshot
+> `backend/scripts/data/ac-reconcile-truth.json.gz`, exported
+> `2026-09-08T00:03:44.762Z` — about six hours BEFORE the write-back at
+> 06:06:53Z — so the phantom was a SNAPSHOT ARTEFACT, not a statement about the
+> account book. The live book was read directly the same day and holds
+> `HC-SO-2609-001` uncancelled at RM 100.00, one line. The ERP row was then
+> deleted at the owner's instruction, so the book's copy is a stray test
+> document somebody has to cancel there by hand. Ledger:
+> `docs/bugs/0715-deleting-a-sales-order-trusted-a-hand-written-child-list-nob.md`.
+
 `GR money 9`, `DO phantom 2`, `IV absent 4`, `PI line count 1`. None of them is
 a sales-order data axis.

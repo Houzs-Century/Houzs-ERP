@@ -18,7 +18,7 @@
  * NOT restated here. This module renders; that one decides.
  */
 import {
-  AGREE, AXES, BOOK_BLANK, DIFFER, ERP_BLANK, NO_LINE_KEY, PENDING, RECORDED, UNREADABLE,
+  AGREE, AXES, BOOK_BLANK, DIFFER, ERP_BLANK, NO_LINE_KEY, PENDING, RECORDED, RULED, UNREADABLE,
   VARIANT_GROUPS, VERDICTS, compareLine, decodeBook, foldGuessedPairing,
 } from "./variant-reconcile.mjs";
 import { comparisonKey } from "./keyless-multiset.mjs";
@@ -83,7 +83,7 @@ export function reportVariants({ t, label, rows, desc2, deps: V, VERDICT, SHOW, 
     const proceeded = lead.proceeded === true;
     if (proceeded) pop.proceeded++;
     const book = decodeBook(V, { desc2: text, itemGroup: group, itemCode: lead.item_code });
-    const { axes } = compareLine(V, { book, erpLines: r.erpLines, proceeded });
+    const { axes } = compareLine(V, { book, erpLines: r.erpLines, proceeded, erpNo: r.erpNo });
     /* THE COMPARTMENT AXIS NEEDS THE WHOLE BUILD, AND ONLY THE LINE KEY CAN
        REGROUP IT. One AutoCount sofa line becomes one ERP line per piece; the
        pieces are recognisable as one build because they share
@@ -97,6 +97,11 @@ export function reportVariants({ t, label, rows, desc2, deps: V, VERDICT, SHOW, 
        other, independent reason this line cannot be answered. */
     const bookUnreadable = book.compartments === null;
     const keyless = !r.erpLines.every((l) => l.ac_dtlkey != null);
+    /* Carried onto the row rather than recomputed in pass 3, so the CAUSE the
+       per-document verdict records and the cause the cross-tab prints are the
+       SAME measurement. Two statements of one classification is the failure
+       this file's own header names. */
+    const unreadCause = classifyUnread({ keyless, bookUnreadable });
     if (axes.compartments && keyless) {
       axes.compartments.verdict = UNREADABLE;
       axes.compartments.book = axes.compartments.book || "(not regroupable)";
@@ -106,7 +111,7 @@ export function reportVariants({ t, label, rows, desc2, deps: V, VERDICT, SHOW, 
     }
     if (axes.compartments && axes.compartments.verdict === UNREADABLE) {
       unread.record(
-        classifyUnread({ keyless, bookUnreadable }),
+        unreadCause,
         proceeded,
         `${r.ac} DtlKey ${r.acLine.dtlKey} (ERP ${r.erpNo} ${lead.item_code ?? "?"})` +
           (proceeded ? "" : "  [NOT PROCEEDED]"),
@@ -120,7 +125,7 @@ export function reportVariants({ t, label, rows, desc2, deps: V, VERDICT, SHOW, 
        line key could be stamped at all, so the two cannot disagree about which
        rows are candidates for each other. */
     computed.push({
-      r, lead, proceeded, axes,
+      r, lead, proceeded, axes, unreadCause,
       bucket: `${r.ac}|${comparisonKey({ code: lead.item_code, side: "erp", suffixed: Boolean(lead.line_suffix) }).key}|${Number(Number(lead.qty ?? 0).toFixed(4))}`,
       keyed: !keyless,
     });
@@ -130,7 +135,7 @@ export function reportVariants({ t, label, rows, desc2, deps: V, VERDICT, SHOW, 
      clauses that keep it from swallowing a real difference. */
   const guessFold = foldGuessedPairing(computed);
 
-  for (const { r, lead, proceeded, axes } of computed) {
+  for (const { r, lead, proceeded, axes, unreadCause } of computed) {
     const half = proceeded ? "yes" : "no";
     for (const [key, cell] of Object.entries(axes)) {
       tally[key][half][cell.verdict]++;
@@ -150,7 +155,7 @@ export function reportVariants({ t, label, rows, desc2, deps: V, VERDICT, SHOW, 
            order IS proceeded, which is the same line the table calls "the only
            column that is WORK". BOOK_BLANK, PENDING and RECORDED fall to the
            branches below and never lock. */
-        VERDICT.record(t, r.ac, r.erpNo, AXIS_LABEL[key] ?? key, `${where}: ${both}`);
+        VERDICT.record(t, r.ac, r.erpNo, AXIS_LABEL[key] ?? key, `${where}: ${both}`, proceeded);
       } else if (cell.verdict === UNREADABLE) {
         /* WE COULD NOT ANSWER THIS AXIS. A sofa whose ERP lines carry no
            AutoCount line key cannot have its compartments regrouped, so the
@@ -158,14 +163,29 @@ export function reportVariants({ t, label, rows, desc2, deps: V, VERDICT, SHOW, 
            "it matches". It locks on its own named axis so the person reading
            the refusal is not sent looking for a difference that was never
            measured. */
-        VERDICT.record(t, r.ac, r.erpNo, "sofa build not verifiable", `${where}: ${cell.detail || "not comparable"}`);
+        VERDICT.record(t, r.ac, r.erpNo, "sofa build not verifiable", `${where}: ${cell.detail || "not comparable"}`, proceeded);
+        /* WHOSE it is, recorded next to the refusal. A key that is merely
+           unstamped is OURS to stamp; a build text that does not decode is the
+           owner's drawing and nothing else. One number covering both has been
+           quoted as one backlog once already (lib/sofa-unread-split.mjs). */
+        VERDICT.note(t, r.ac, r.erpNo, "unanswerable-cause", unreadCause, where, proceeded);
       } else if (cell.verdict === BOOK_BLANK) {
         bookBlanks[key].push(`${where}: ${both}`);
+        VERDICT.note(t, r.ac, r.erpNo, "book-blank", AXIS_LABEL[key] ?? key, `${where}: ${both}`, proceeded);
+      } else if (cell.verdict === PENDING) {
+        VERDICT.note(t, r.ac, r.erpNo, "pending", AXIS_LABEL[key] ?? key, `${where}: ${both}`, proceeded);
+      } else if (cell.verdict === RECORDED) {
+        VERDICT.note(t, r.ac, r.erpNo, "recorded", AXIS_LABEL[key] ?? key, `${where}: ${both}`, proceeded);
+      } else if (cell.verdict === ERP_BLANK) {
+        /* Reached only when the order is NOT proceeded — the branch above took
+           the proceeded arm. 还没proceed还没确认的就可以直接放空的. */
+        VERDICT.note(t, r.ac, r.erpNo, "erp-blank-not-proceeded", AXIS_LABEL[key] ?? key, `${where}: ${both}`, false);
       } else if (cell.verdict === NO_LINE_KEY) {
         /* NAMED, never a count on its own. A class the reader cannot enumerate
            is a suppression, not a declaration — the rule docs/bugs/0668 was
            written for, applied to the column that was added to answer it. */
         noKeyRows[key].push(`${where}: ${both}`);
+        VERDICT.note(t, r.ac, r.erpNo, "no-line-key", AXIS_LABEL[key] ?? key, `${where}: ${both}`, proceeded);
       }
     }
   }
@@ -187,14 +207,14 @@ export function reportVariants({ t, label, rows, desc2, deps: V, VERDICT, SHOW, 
   }
 
   plain("axis                 |                      PROCEEDED (the backlog)                       |             not proceeded (blank is OK)");
-  plain("                     |  agree  ERPblank  bookblank  differ  pend  unread  recorded  no-key |  agree  ERPblank  bookblank  differ  pend  unread  recorded  no-key");
+  plain("                     |  agree  ERPblank  bookblank  differ  pend  unread  recorded  ruled  no-key |  agree  ERPblank  bookblank  differ  pend  unread  recorded  ruled  no-key");
   for (const a of AXES) {
     const y = tally[a.key].yes;
     const n = tally[a.key].no;
     const seen = VERDICTS.reduce((s2, v) => s2 + y[v] + n[v], 0);
     if (!seen) continue;
-    const cells = (h) => [h[AGREE], h[ERP_BLANK], h[BOOK_BLANK], h[DIFFER], h[PENDING], h[UNREADABLE], h[RECORDED], h[NO_LINE_KEY]]
-      .map((x, i) => String(x).padStart([6, 9, 10, 7, 5, 7, 10, 7][i]));
+    const cells = (h) => [h[AGREE], h[ERP_BLANK], h[BOOK_BLANK], h[DIFFER], h[PENDING], h[UNREADABLE], h[RECORDED], h[RULED], h[NO_LINE_KEY]]
+      .map((x, i) => String(x).padStart([6, 9, 10, 7, 5, 7, 10, 6, 7][i]));
     plain(`${a.label.padEnd(20)} | ${cells(y).join(" ")} | ${cells(n).join(" ")}`);
   }
   plain(
@@ -205,6 +225,13 @@ export function reportVariants({ t, label, rows, desc2, deps: V, VERDICT, SHOW, 
     "recorded = the book asks for a PRICED special the line does not tick, and variants.specialsRecorded already " +
       "carries it: the owner's 2026-09-03 ruling 甲 applied — the factory sees the option and the document's money " +
       "did not move. DECIDED work, not backlog, and it is broken out so it can never be summed into the DIFFER column again.",
+  );
+  plain(
+    "ruled = the owner read the slip HIMSELF and set the sofa build against the book's own words, and the ERP holds " +
+      "exactly what he ruled — 「一律跟账本。除了sofa compartment而已啊」, the book decides everything EXCEPT the sofa " +
+      "build. DECIDED, not backlog, and never folded into agree: the line really does differ from the text, which is the " +
+      "only signal that would catch a ruling applied to the wrong document. A ruling NOT yet written stays in differ and " +
+      "now names the answer it is failing to match. Source: backend/scripts/data/sofa-compartment-corrections-*.json.",
   );
   if (unkeyedSofa) {
     plain(
@@ -245,10 +272,16 @@ export function reportVariants({ t, label, rows, desc2, deps: V, VERDICT, SHOW, 
        lumped number, and both times the lump came from a line like this one. */
     const dif = list.filter((x) => x.differ);
     const difYes = dif.filter((x) => x.proceeded).length;
+    /* The owner's own rulings are named on the SAME line as the difference
+       count, because this is the line that gets quoted into briefs. A build
+       he has already decided must never be re-presented to him as an open
+       question - docs/bugs/0714, and 「这个很多我刚刚都给过你答案了啊」. */
+    const ruled = tally[a.key].yes[RULED] + tally[a.key].no[RULED];
     log(
       `${t} VARIANT ${a.label} — ${difYes} DIFFER on a PROCEEDED order` +
         (dif.length - difYes ? ` (+${dif.length - difYes} on orders not yet proceeded)` : "") +
-        `, ${list.filter((x) => !x.differ).length} ERP blank on a proceeded order`,
+        `, ${list.filter((x) => !x.differ).length} ERP blank on a proceeded order` +
+        (ruled ? `, ${ruled} RULED by the owner and already written (decided, NOT work)` : ""),
     );
     for (const row of list.slice(0, SHOW)) plain(`      ${row.line}`);
     if (list.length > SHOW) plain(`      ... ${list.length - SHOW} more`);

@@ -77,9 +77,7 @@
       "rerun-note"
     ],
     "apply-sofa-compartment-corrections.mjs": [
-      "confirm-phrase",
-      "fresh-verify",
-      "rerun-note"
+      "fresh-verify"
     ],
     "apply-variant-patch.mjs": [
       "confirm-phrase"
@@ -240,9 +238,6 @@
     ],
     "delete-so-by-docnos.mjs": [
       "confirm-phrase",
-      "fresh-verify"
-    ],
-    "delete-test-so.mjs": [
       "fresh-verify"
     ],
     "diag-pwp-price-gap.mjs": [
