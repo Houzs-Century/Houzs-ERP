@@ -2338,6 +2338,41 @@ not one of §6's enqueue anchors, so the balance in AutoCount is the one the
 document last carried when something else was edited. Sending it is strictly
 better than never sending it; keeping it live needs a payment-side hook.
 
+### Which PAYMENTS the book can learn about — one table, and it is not the only one that takes money
+
+Both fields above are computed from **`scm.mfg_sales_order_payments` and nothing
+else**:
+
+| reader | field it builds | table |
+|---|---|---|
+| `readSoOutstandingSen` (`scm/lib/autocount-read.ts:65`) | `UDF_BALANCE` | `scm.mfg_sales_order_payments` |
+| `readSoPaymentRefs` (`scm/lib/autocount-read.ts:187`) | `UDF_PAYEMENT` | `scm.mfg_sales_order_payments` |
+
+`composePaymentUdf` has exactly two feeders — `scm/lib/so-edit-header.ts:187` and
+`services/autocount-writeback.ts:1284` — and both are fed from those two reads.
+
+**`scm.delivery_order_payments` is a SECOND money table, and no AutoCount path
+reads it.** It is written by `POST /delivery-orders-mfg/:id/payments`
+(`scm/routes/delivery-orders-mfg.ts:5243`) and rendered by the DO Create and
+Detail screens through the same `PaymentsTable` the sales order uses
+(`frontend/src/vendor/scm/lib/delivery-order-queries.ts:417-470`). So a payment
+a driver takes at the door is recorded in our database and the account book is
+never told — the book goes on showing that customer as owing.
+
+That is not a branch that forgot to enqueue: there is no code path of any kind
+from that table to the write-back, which is why it is a section here and not a
+line in §6's table. **Do not "fix" it by pointing `readSoPaymentRefs` at both
+tables** — the two ledgers can legitimately hold the SAME payment (a door
+collection also keyed on the order), and summing them would tell AutoCount the
+customer paid twice.
+
+The exposure is measured, never assumed, by
+`backend/scripts/check-do-payment-book-gap.mjs` (workflow: **DO payment book gap
+(read-only)**), which separates door money the sales order ALSO records from
+door money that exists nowhere else. Ledger entry:
+`docs/bugs/0704-money-collected-at-the-door-never-reaches-the-account-book.md`,
+where the ruling and the chosen repair will be recorded.
+
 ### DeliverPhone1 — two contacts, two columns
 
 Owner 2026-08-15: *"我们的电话号码 … 应该是有一个 Delivery Contact，一个是
@@ -3282,8 +3317,10 @@ below, whose output is an Actions log.
 | Endpoint (re-send) | `POST /api/scm/autocount-outbox/:id/requeue` — same file. **It SENDS, it does not only queue** (2026-08-23). It used to write a fresh `pending` row and stop, leaving the five-minute drain to send it — so the button put the document into Waiting and the operator watched a clock. It now dispatches the row it just created through `sendOutboxRowNow` and reports the result in `sent_now`, kept apart from the re-queue's own verdict: a document can be queued fine and refused by the account book a second later. |
 | Endpoint (send now) | `POST /api/scm/autocount-outbox/:id/send-now` — same file. Dispatches synchronously, but only accepts a row that is ALREADY `pending`, which a `failed` row never is. That is why the two endpoints exist and why the re-queue one had to grow the send: the button an operator gets on a failed row is Send **again**. |
 | **Both send the ANCESTORS first** | `sendAncestorsFirst` in the same file, over `lib/autocount-cascade.ts`. AutoCount builds a conversion only by carrying an earlier document into it, so a child whose parent is not in the book cannot go — and left alone the row WAITS, which is right for the sweep and useless to a person: the parent is `failed` at six of six attempts, so nothing re-sends it and the child waits forever (`HC-SI-2608-002` was waiting on `HC-DO-2608-003` exactly like this). Pressing either button is the moment to CAUSE the parent. One helper, so the two buttons cannot come to differ — `check:duplicated-decisions` caught them differing by two response fields and that was the fix, not an allowlist entry. |
+| Endpoint (clear / put back) | `POST /api/scm/autocount-outbox/archive` and `POST /api/scm/autocount-outbox/restore` — same file, added 2026-09-08. Takes a **document** (`{doc_type, doc_no}`), not a row id: the queue is append-only, so three finished documents were 32 rows and a per-row control would have asked for 32 presses. Writes `archived_at` / `archived_by` and NOTHING else — see §12b. |
 | Permission (read) | `scm.autocount.read` **or** `settings.manage` (Owner / IT Admin pass on `*`) |
 | Permission (re-send) | `scm.autocount.requeue` **or** `settings.manage`. **Not** `scm.autocount.read` — see below |
+| Permission (clear / put back) | The SAME keys as re-send — `scm.autocount.requeue` **or** `settings.manage`. No new permission string, on this file's own precedent that a key nobody has been granted is a button nobody can press; and whoever may push a document into a live licensed account book may certainly tidy a finished one off a screen. `scm.autocount.read` stays out for the reason it is out of re-send: it is the key you hand somebody so they can WATCH the queue |
 
 **Mounted with NO `scmAreaGuard`** (`backend/src/scm/index.ts`, and therefore
 listed in `SCM_UNGUARDED_PREFIXES` in `backend/src/scm/lib/scm-areas.ts` — the
@@ -3343,6 +3380,7 @@ words. The owner reviewed a mockup and asked for five changes; all five live in
 | **A REBUILT line carries its ItemCode; an edited one never does** | The keyed edit path strips `ItemCode` from every line on purpose, and that must not change: the ERP's answer for the collapsed sofa codes is a POLICY, so sending it would silently re-point the 194 real book lines those two brand items hold. A REBUILD is not an edit — it clears the details and ADDS the lines — so stripping it there adds a line with a BLANK item code. That reached the live book on 2026-09-02: seven of eight lines on `SO-013394` came back with `ItemCode = ''`, and nothing failed, because the host wrapped the assignment in `Set()`, which swallows. Now: `effOpts.rebuild` is DERIVED and authoritative (a caller may ask, it may not decide), the mapper puts the code back on a rebuild only, and the host THROWS on a new line with no item code rather than adding a blank one. `docs/bugs/0615-a-rebuild-added-lines-with-a-blank-item-code.md`. |
 | **Send again on a held-back EDIT** | Rebuilds the document rather than re-composing a keyed edit — `docs/bugs/0614`. An `edit` used to be refused by the ladder AND carry no button, so a document whose keyless line can never be matched had no way through at all. A rebuild clears the book's details and lays the ERP's lines down, so it needs none of the `retire` list a skipped row cannot recover — which was the whole reason for the old refusal. **Never automatic**: an ordinary save with a keyless line still refuses (`docs/bugs/0613`), because a rebuild reissues every line key. `rebuildAllowed` still refuses a converted document (`docs/bugs/0611`) and one whose keys a purchase order holds (`docs/bugs/0609`), and the host still refuses one its own tables say was transferred. |
 | **Send again, per row** | Offered only where the server's `can_requeue` says a re-send can mean anything, and driven by `useAcRequeue` — one hook, both surfaces. Since 2026-08-23 pressing it SENDS immediately and pushes the missing ancestors first, in order (SO → DO → SI, PO → GR → PI); the reply carries `sent_now` and `ancestors_sent`. |
+| **Clear, per document** | Takes a FINISHED document off the list. Offered where `acDocCanArchive` says every send of the document is settled — a HINT, like `can_requeue`; the server re-reads them all and refuses a document that is still waiting or still needs somebody, as a 200 carrying a sentence the row renders. Driven by the same `useAcRequeue` hook as the three buttons beside it, so its refusal appears in the same place, in the same voice, on both surfaces. **Put back** is the other direction, under the **Cleared** tab. See §12b. |
 | **No coding words** | The page no longer prints the config key, the raw `op` values, the raw state values, or the server's `remedy` strings — those name columns, tables and an SDK primitive. The remedy still ships in the API response and is still what the health-check log prints. Plurals are spelled out in `AC_DOC_TYPE_PLURAL`, never built by appending an "s" — "Goods received" has none. *(NOT SUFFICIENT — the row below is the correction.)* |
 
 #### Corrected the same day — the machinery was arriving from the SERVER
@@ -4473,3 +4511,99 @@ that already means "this cannot be expressed as a transfer": it costs a link and
 writes nothing wrong. A blank on either side falls back too.
 `readPoTransferFacts` adds `item_code` to the two selects it was already taking,
 so the check costs no extra round trip.
+
+## 12b. Clearing a FINISHED document off the page (2026-09-08)
+
+The owner asked twice for three old test documents to stop appearing on
+System · AutoCount Sync. Measured against production the same day, those three
+documents WERE the page: Houzs Century's whole queue is 32 rows over
+`HC-SO-013361` (9 sends), `HC-SO-013394` (10) and `HC-SO-013393` (13), every one
+of them an old write-back test, every one in the account book, sitting under the
+green banner *"Everything is in AutoCount. Nothing is waiting and nothing was
+refused."*
+
+**The table is append-only and that is not negotiable.** 0277's own
+`COMMENT ON TABLE` reads *"Never delete rows: this is the audit trail of what
+the ERP told AutoCount"*, and the owner's standing rule across the ERP is never
+delete, only cancel. One document accumulates a row per operation forever, so
+without a way to retire a document nothing could ever leave this screen.
+
+**The cheap answer is worse than doing nothing.** Writing a marker onto
+`last_error` looks like it would work and would not: `isRequeuedNote`
+(`scm/lib/autocount-outbox-status.ts`) is a PREFIX test, chosen deliberately so
+that a row whose own message quotes the marker mid-string still reads as an open
+refusal. A second marker in front of a re-queued row's note therefore stops it
+classifying as `requeued` and pushes it back onto **Not accepted** — the
+opposite of what was asked. All three of the documents above carry a re-queued
+refusal, so all three would have moved the wrong way.
+
+**So it is a column of its own.** `archived_at` / `archived_by`, migration
+`20260908T0620_scm_autocount_outbox_archive.sql`. It says a PERSON is finished
+with the row and says nothing about what AutoCount did — which is why it is not
+a fifth `status`, on the same argument that keeps `requeued` a derived state.
+Nothing that classifies a row reads it, so `acOutboxState`, `isRequeuedNote`,
+`classifyAcSkip` and `acNeedsAttention` reach the same verdict on a cleared row
+as on a live one, and clearing one column brings the row back exactly as it was.
+
+**The rule — `acArchiveVerdict`, `scm/lib/autocount-outbox-archive.ts`.** A
+document may be cleared when it has nothing left to do, and every refusal is
+that sentence made checkable:
+
+| verdict | when | what the person is told |
+|---|---|---|
+| `ok` | every send settled | cleared; N sends moved |
+| `still-working` | any send is `pending` | wait for the next send |
+| `needs-attention` | any send is an OUTSTANDING `failed` / `skipped` | it is in the ERP and not in the book — this page's whole job |
+| `already-archived` | every send already cleared | nothing changed |
+| `doc-not-found` | no rows | nothing to clear |
+
+`still-working` is reported AHEAD of `needs-attention` when a document is both:
+only one of the two resolves itself, and sending somebody to fix a document the
+next five-minute drain may well clear is how a page earns a reputation for
+crying wolf. The attention test is the shared `acNeedsAttention`, not `status` —
+a re-queued failure is history, and a rule reading `status` alone would refuse
+all three of the documents this was built for.
+
+**Reading.** Every statement in the list handler now carries `archived_at IS
+NULL`, including both count scans; a third scan counts the retired documents
+separately and publishes `counts.archived`. It is never folded into `total` —
+every other number on that line is a claim about what AutoCount did, and this
+one is a claim about what somebody decided. `?state=archived` is the only filter
+that looks at the other shelf.
+
+**On screen.** A **Clear** control on the document line and a **Cleared** tab,
+on BOTH surfaces (`acDocCanArchive` / `acDocCanRestore` decide visibility — a
+hint, never the gate). The refusal comes back as a **200 with a sentence**, the
+same contract the re-queue handler uses, and is rendered on the row that was
+pressed through the same `useAcRequeue` notes map as the three buttons beside
+it. The tab carries `AC_ARCHIVED_TAB_NOTE`, which says in the reader's own terms
+that nothing was deleted — the one question somebody asks when documents go
+missing from a sync page.
+
+### The `HC-` prefix is NOT a different number — corrected the same day
+
+`HC-SO-013361` is in the book as `SO-013361`, and the register flagged that
+amber as **DIFFERENT NUMBER**. It is not a mismatch: a migrated document is
+numbered `HC-` + its AutoCount number by construction
+(`backend/scripts/import-ac-outstanding-so.mjs`, and
+`backend/scripts/check-migrated-numbering.mjs` asserts the equality across the
+corpus), so the two ALWAYS differ by exactly the company prefix. `acBookNumber`
+gained a fifth verdict, `prefixed` — quiet, unflagged, still showing the book's
+number because that is what somebody types into AutoCount. Derived from the pair
+rather than from a list of prefixes, so `2990-` works unwritten and the real
+incident this column exists for (`HC-PO-2608-001` → `PO-009968`) still shouts.
+`docs/bugs/0700-the-autocount-sync-page-flagged-every-migrated-document-as-f.md`.
+
+### A `sent` row with no book number is a RECORDING gap, not a missing document
+
+`HC-SO-013393` shows 13 sends, all `sent`, and no book number at all. It IS in
+the account book: `scm.mfg_sales_orders.linked_ac_docno` for it is `SO-013393`,
+put there by the cutover import, i.e. by AutoCount itself. What is missing is
+our note of it, and the cause is visible in the rows —
+`autocount-outbox.ts` records `ac_doc_no: result.docNo`, and the shop-floor
+build that answered every one of that document's sends (`host_mvid`
+`fb1daa6d…`, built 2026-08-18) returned no `docNo` on an `edit`. From build
+`1afe67e6…` (built 2026-09-02T13:52Z) onward it does, which is exactly where
+`HC-SO-013394`'s rows start carrying `SO-013394`. `acBookNumber` already tells
+this apart from "not in the book" — it is the `not-recorded` verdict, and it is
+deliberately not flagged.

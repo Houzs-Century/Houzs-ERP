@@ -58,6 +58,11 @@ import {
   acRowIsRequeueable,
   classifyAcSkip,
 } from '../lib/autocount-outbox-status';
+import {
+  AC_ARCHIVE_MEANING,
+  acArchiveAccepted,
+  acArchiveVerdict,
+} from '../lib/autocount-outbox-archive';
 import { callAcRead } from '../../services/autocount-host-read';
 import { autocountRelinkLinesHandler } from './autocount-relink';
 import { autocountLineSweepHandler } from './autocount-line-sweep';
@@ -109,13 +114,21 @@ const REQUEUE_KEYS = ['scm.autocount.requeue', 'settings.manage'] as const;
  *  it would move megabytes to render a table of document numbers. */
 const SELECT =
   'id, company_id, op, doc_type, doc_no, doc_id, status, attempts, last_error, ' +
-  'ac_doc_no, created_at, updated_at, sent_at';
+  'ac_doc_no, created_at, updated_at, sent_at, archived_at';
 
 const DEFAULT_LIMIT = 200;
 const MAX_LIMIT = 500;
 
-/** The filters the page offers. `attention` is the owner's actual question. */
-const STATES = ['all', 'attention', 'pending', 'sent', 'failed', 'skipped', 'requeued'] as const;
+/**
+ * The filters the page offers. `attention` is the owner's actual question.
+ *
+ * `archived` is the ONLY one that looks at retired rows, and it is why every
+ * other statement in this handler carries `archived_at IS NULL`. A finished
+ * document that has been cleared off the page is still in the table and still
+ * reachable — hiding it from the default view is a reading rule, not a deletion,
+ * and a reader who wants it back has one chip to press.
+ */
+const STATES = ['all', 'attention', 'pending', 'sent', 'failed', 'skipped', 'requeued', 'archived'] as const;
 type StateFilter = (typeof STATES)[number];
 
 const DOC_TYPES = ['SO', 'PO', 'DO', 'IV', 'GR', 'PI'] as const;
@@ -177,6 +190,8 @@ interface ScanResult {
 /** Just enough of the PostgREST builder for the two scans below. */
 interface ScanBuilder extends PromiseLike<{ data: unknown; error: { message?: string } | null }> {
   like(col: string, pattern: string): ScanBuilder;
+  is(col: string, value: null): ScanBuilder;
+  not(col: string, op: 'is', value: null): ScanBuilder;
   range(from: number, to: number): ScanBuilder;
 }
 
@@ -199,6 +214,11 @@ async function scanDocs(
   c: Context<{ Bindings: Env; Variables: Variables }>,
   columns: string,
   narrow: (q: ScanBuilder) => ScanBuilder,
+  /* WHICH SIDE OF THE ARCHIVE LINE. Required and not defaulted, so a new scan
+     has to SAY which set it means — a default would let the next caller inherit
+     "live" silently and be wrong by omission, which is exactly how the company
+     predicate once went missing and cost most of a day (#2201). */
+  shelf: 'live' | 'retired',
 ): Promise<ScanResult> {
   const sb = c.get('supabase');
   const out: Row[] = [];
@@ -207,7 +227,15 @@ async function scanDocs(
     /* The company predicate goes on BEFORE the caller's narrowing, so no caller
        can forget it — there is no un-scoped builder to hand out. */
     const scoped = scopeToCompany(base, c) as unknown as ScanBuilder;
-    const { data, error } = await narrow(scoped).range(from, from + AC_DOC_SCAN_PAGE - 1);
+    /* THE ARCHIVE PREDICATE goes on beside the company one and before the
+       caller's, for the same reason: there is no builder to hand out that could
+       forget it. A count that mixed the two shelves would make "3 of 3
+       documents" read under a list showing none of them, which is the
+       self-contradiction these counts already exist to avoid. */
+    const shelved = shelf === 'live'
+      ? scoped.is('archived_at', null)
+      : scoped.not('archived_at', 'is', null);
+    const { data, error } = await narrow(shelved).range(from, from + AC_DOC_SCAN_PAGE - 1);
     if (error) return { rows: [], complete: false, error };
     /* A null body is PostgREST's answer to a read that produced nothing AND to
        one that failed; `error` above already separated those, so this is the
@@ -262,6 +290,11 @@ function present(raw: Row) {
        buttons that would both mean "send it". */
     can_send_now: acRowCanSendNow(status, lastError, Number(raw.attempts ?? 0)),
     ac_doc_no: (raw.ac_doc_no as string | null) ?? null,
+    /* WHEN A PERSON FINISHED WITH THIS ROW — never a claim about the send. It
+       is returned on every row rather than only on the archived list so the
+       page can label a restored row honestly and so the Restore control knows
+       what it is looking at without a second request. */
+    archived_at: (raw.archived_at as string | null) ?? null,
     created_at: (raw.created_at as string | null) ?? null,
     updated_at: (raw.updated_at as string | null) ?? null,
     sent_at: (raw.sent_at as string | null) ?? null,
@@ -384,16 +417,22 @@ export const listAutocountOutboxHandler = async (
      — the same self-contradiction #2220 fixed, one component further up. That
      rule is no longer restated here: the state comes from `acOutboxState`, the
      one function the list, the health check and this block now share. */
-  const [allRows, requeuedRows] = await Promise.all([
-    scanDocs(c, 'id, doc_type, doc_no, status', (q) => q),
+  const [allRows, requeuedRows, retiredRows] = await Promise.all([
+    scanDocs(c, 'id, doc_type, doc_no, status', (q) => q, 'live'),
     /* `last_error` is NEVER downloaded. All this needs from it is whether the
        re-queue marker is on the front, and the LIKE answers that in Postgres —
        the notes are up to several hundred characters of the account book's own
        per-line dump, and a count has no use for one of them. */
-    scanDocs(c, 'id', (q) => q.like('last_error', REQUEUED_LIKE)),
+    scanDocs(c, 'id', (q) => q.like('last_error', REQUEUED_LIKE), 'live'),
+    /* THE OTHER SHELF, counted separately and never folded into the five above.
+       An archived document is not "sent" or "requeued" for counting purposes —
+       it is off the page, and the only honest number for it is its own. Two
+       document identities and no status, because the chip says how many
+       documents were cleared and nothing else. */
+    scanDocs(c, 'doc_type, doc_no', (q) => q, 'retired'),
   ]);
 
-  const scanError = [allRows, requeuedRows].find((r) => r.error);
+  const scanError = [allRows, requeuedRows, retiredRows].find((r) => r.error);
   if (scanError) {
     return c.json({ error: 'load_failed', reason: scanError.error?.message ?? 'count failed' }, 500);
   }
@@ -435,11 +474,15 @@ export const listAutocountOutboxHandler = async (
   const nRequeued = docsIn('requeued');
   const nAttention = docsIn('failed', 'skipped');
   const nTotal = statesPerDoc.size;
+  /* DOCUMENTS, like every other number on this line — the retired scan returns
+     one row per SEND and a document that was cleared after nine sends is one
+     cleared document, not nine. */
+  const nArchived = new Set(retiredRows.rows.map((r) => acDocKey(r.doc_type, r.doc_no))).size;
   /* A COUNT THAT DID NOT SEE EVERY ROW MUST NOT READ AS A FACT. The scan stops
      at AC_DOC_SCAN_MAX and says so rather than reporting the prefix it managed
      to read as the whole company — the shape CLAUDE.md calls a verdict computed
      over nothing. The page prints one extra sentence when this is false. */
-  const countsComplete = allRows.complete && requeuedRows.complete;
+  const countsComplete = allRows.complete && requeuedRows.complete && retiredRows.complete;
 
   /* The oldest pending row, because a climbing age is the early warning that the
      tunnel is down and the dead-lettering has started — MAX_ATTEMPTS on a
@@ -481,9 +524,20 @@ export const listAutocountOutboxHandler = async (
        can be a failed one, and asking only for skips made the Re-queued filter
        answer "nothing" on a page whose rows were rendering Re-queued. */
     requeued: ['skipped', 'failed'],
+    /* NO STATUS AT ALL. `archived` is not a state of the send — a cleared
+       document can have arrived, been refused and been re-queued, and all of
+       that is still true of it. What separates this list from the others is the
+       shelf, applied below, not the status column. */
+    archived: null,
   };
 
   let rowsQ = sb.from('autocount_outbox').select(SELECT);
+  /* THE SHELF, on the row query as well as on the counts. Without it the
+     `archived` chip would show a count and list nothing, and every other chip
+     would list documents its own count had already excluded. */
+  rowsQ = stateParam === 'archived'
+    ? rowsQ.not('archived_at', 'is', null)
+    : rowsQ.is('archived_at', null);
   const statuses = statusesFor[stateParam];
   if (statuses) rowsQ = rowsQ.in('status', statuses);
   if (docType) rowsQ = rowsQ.eq('doc_type', docType);
@@ -533,6 +587,11 @@ export const listAutocountOutboxHandler = async (
       requeued: nRequeued,
       /* The owner's question, as one number. */
       attention: nAttention,
+      /* CLEARED FROM THE PAGE BY A PERSON. Not a state of the send and never
+         mixed into the five above — every other number here is a claim about
+         what AutoCount did, and this one is a claim about what somebody
+         decided. */
+      archived: nArchived,
       total: nTotal,
     },
     counts_complete: countsComplete,
@@ -978,6 +1037,236 @@ export const requeueAutocountOutboxHandler = async (
   return c.json(body, 200);
 };
 
+/**
+ * The body both archive routes take: which DOCUMENT, not which row.
+ *
+ * PER DOCUMENT AND NOT PER ROW, and this is the whole ergonomic argument. The
+ * queue is append-only, so the three documents this was built for carry 9, 10
+ * and 13 rows between them; asking somebody to press a button thirty-two times
+ * to clear three finished documents is not a feature. The page already shows
+ * one line per document (`acGroupByDocument`), and this is that line's control.
+ */
+async function readArchiveTarget(
+  c: Context<{ Bindings: Env; Variables: Variables }>,
+): Promise<{ ok: true; docType: string; docNo: string } | { ok: false; res: Response }> {
+  let body: { doc_type?: unknown; doc_no?: unknown };
+  try {
+    body = (await c.req.json()) as typeof body;
+  } catch {
+    return { ok: false, res: c.json({ error: 'invalid_body' }, 400) };
+  }
+  const docType = String(body.doc_type ?? '').trim();
+  const docNo = String(body.doc_no ?? '').trim();
+  if (!docNo || !(DOC_TYPES as readonly string[]).includes(docType)) {
+    return { ok: false, res: c.json({ error: 'invalid_document', allowed: DOC_TYPES }, 400) };
+  }
+  return { ok: true, docType, docNo };
+}
+
+/** The gate both routes share, so they cannot come to disagree about who may. */
+function refuseUnlessMayArchive(
+  c: Context<{ Bindings: Env; Variables: Variables }>,
+): Response | null {
+  if (REQUEUE_KEYS.some((k) => hasHouzsPerm(c, k))) return null;
+  /* THE SAME KEYS AS "Send again", and no new permission string. Two reasons,
+     both of them this file's own precedents. A key nobody has been granted is a
+     button nobody can press (the read gate's argument for accepting
+     `settings.manage`), and whoever may push a document into a live licensed
+     account book may certainly tidy a finished one off a screen — this writes
+     nothing to AutoCount and destroys nothing. `scm.autocount.read` stays out
+     for the reason it is out of the re-queue: it is the key you hand somebody
+     so they can WATCH the queue. */
+  return c.json(
+    {
+      error: 'forbidden',
+      message:
+        'Clearing a document off this page changes what everyone else sees here, '
+        + `so it is limited to ${REQUEUE_KEYS.join(' or ')}.`,
+    },
+    403,
+  );
+}
+
+/**
+ * POST /autocount-outbox/archive — take a FINISHED document off this page.
+ *
+ * NOT A DELETE, and the distinction is the reason this endpoint exists at all.
+ * 0277's own table comment forbids deleting a row ("this is the audit trail of
+ * what the ERP told AutoCount") and the owner's standing rule across the ERP is
+ * never delete, only cancel. Every row stays, every reason stays, every document
+ * number stays; one column says a person is done looking.
+ *
+ * NOT A NOTE ON THE REASON EITHER. `isRequeuedNote` is a prefix test on
+ * `last_error`, so writing a second marker in front of a re-queued row's note
+ * would stop it reading as `requeued` and push it back onto Not accepted — the
+ * opposite of what was asked. Nothing here writes `status` or `last_error`.
+ *
+ * A REFUSAL IS A 200, exactly as the re-queue's is: "this document still needs
+ * somebody" is a legitimate answer to a legitimate request, and an HTTP error
+ * would reach the page through the generic failure path that prints a status
+ * code at a reader who cannot act on one. Only a call that cannot be answered
+ * at all — no permission, no company, no document named — carries a non-200.
+ */
+export const archiveAutocountOutboxHandler = async (
+  c: Context<{ Bindings: Env; Variables: Variables }>,
+) => {
+  const forbidden = refuseUnlessMayArchive(c);
+  if (forbidden) return forbidden;
+
+  /* The STRICT company resolver, not activeCompanyId. This is a write, and the
+     lenient helper degrades to "no predicate" when the company is unresolved —
+     which on a write means "act on every company's rows". */
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+
+  const target = await readArchiveTarget(c);
+  if (!target.ok) return target.res;
+
+  const sb = c.get('supabase');
+  const { data, error } = await sb
+    .from('autocount_outbox')
+    .select('id, status, last_error, archived_at')
+    .eq('company_id', co.companyId)
+    .eq('doc_type', target.docType)
+    .eq('doc_no', target.docNo);
+
+  if (error) {
+    return c.json(
+      { archived: false, code: 'read-failed', message: AC_ARCHIVE_MEANING['read-failed'], rows: 0 },
+      500,
+    );
+  }
+
+  const rows = ((data as unknown as Row[] | null) ?? []).map((r) => ({
+    id: String(r.id ?? ''),
+    status: String(r.status ?? ''),
+    last_error: (r.last_error as string | null) ?? null,
+    archived_at: (r.archived_at as string | null) ?? null,
+  }));
+
+  const verdict = acArchiveVerdict(rows);
+  const say = (code: typeof verdict.code, wrote: number) => ({
+    archived: acArchiveAccepted(code),
+    code,
+    message: AC_ARCHIVE_MEANING[code],
+    doc_type: target.docType,
+    doc_no: target.docNo,
+    /* HOW MANY SENDS WERE CLEARED, and how many are the reason one was not.
+       The page quotes these, so "1 of 9 still needs somebody" is a sentence it
+       can build rather than a number it has to invent. */
+    rows: wrote,
+    blocked: verdict.blocked,
+  });
+
+  if (!acArchiveAccepted(verdict.code)) {
+    /* THE REFUSAL REACHES A PERSON. This repo has already shipped 35 write
+       paths that refused correctly and told nobody, and the owner reported it
+       as "the button does nothing" — so the outcome goes back in the body, the
+       page renders it on the row that was pressed, and the log line is for
+       whoever reads it afterwards. */
+    // eslint-disable-next-line no-console
+    console.warn('[autocount-outbox] archive refused', verdict.code, target.docNo, verdict.blocked);
+    return c.json(say(verdict.code, 0), 200);
+  }
+
+  const stampedAt = new Date().toISOString();
+  const { error: writeErr } = await sb
+    .from('autocount_outbox')
+    .update({ archived_at: stampedAt, archived_by: c.get('houzsUser')?.id ?? null })
+    .eq('company_id', co.companyId)
+    .eq('doc_type', target.docType)
+    .eq('doc_no', target.docNo)
+    /* ONLY THE ROWS THE VERDICT COUNTED. Re-stating the predicate rather than
+       listing the ids keeps this one statement, and `archived_at IS NULL` means
+       a row somebody archived a second ago is not re-stamped with a newer time
+       — the record of WHEN it was first cleared is the useful one. */
+    .is('archived_at', null);
+
+  if (writeErr) {
+    return c.json(
+      { ...say('write-failed', 0), message: AC_ARCHIVE_MEANING['write-failed'] },
+      500,
+    );
+  }
+  return c.json(say('ok', verdict.rows), 200);
+};
+
+/**
+ * POST /autocount-outbox/restore — put a cleared document back on the page.
+ *
+ * The other half of "not a delete". Nothing about the reversal needs a verdict:
+ * a row that is on the page is already the state this restores to, so restoring
+ * a live document is a no-op that reports how many rows it moved (zero) rather
+ * than an error about a request that asked for nothing harmful.
+ */
+export const restoreAutocountOutboxHandler = async (
+  c: Context<{ Bindings: Env; Variables: Variables }>,
+) => {
+  const forbidden = refuseUnlessMayArchive(c);
+  if (forbidden) return forbidden;
+
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+
+  const target = await readArchiveTarget(c);
+  if (!target.ok) return target.res;
+
+  const sb = c.get('supabase');
+  /* READ, THEN WRITE — the same two steps as the archive beside it, rather than
+     an `UPDATE … RETURNING`. The count this reports is what the page prints, and
+     counting the rows the statement matched BEFORE it changed them is the only
+     way to say "1 put back" honestly when the predicate is on the very column
+     being written. */
+  const { data, error } = await sb
+    .from('autocount_outbox')
+    .select('id')
+    .eq('company_id', co.companyId)
+    .eq('doc_type', target.docType)
+    .eq('doc_no', target.docNo)
+    .not('archived_at', 'is', null);
+
+  if (error) {
+    return c.json(
+      { restored: false, code: 'read-failed', message: AC_ARCHIVE_MEANING['read-failed'], rows: 0 },
+      500,
+    );
+  }
+  const rows = ((data as unknown as Row[] | null) ?? []).length;
+
+  if (rows > 0) {
+    const { error: writeErr } = await sb
+      .from('autocount_outbox')
+      .update({ archived_at: null, archived_by: null })
+      .eq('company_id', co.companyId)
+      .eq('doc_type', target.docType)
+      .eq('doc_no', target.docNo)
+      .not('archived_at', 'is', null);
+    if (writeErr) {
+      return c.json(
+        { restored: false, code: 'write-failed', message: AC_ARCHIVE_MEANING['write-failed'], rows: 0 },
+        500,
+      );
+    }
+  }
+
+  return c.json({
+    restored: true,
+    code: 'ok',
+    message: rows > 0
+      ? 'Back on the list, exactly as it was.'
+      : 'This document was already on the list, so nothing changed.',
+    doc_type: target.docType,
+    doc_no: target.docNo,
+    rows,
+    blocked: 0,
+  }, 200);
+};
+
+/* BEFORE the `/:id/...` routes. Hono matches in registration order and a
+   two-segment pattern cannot swallow a one-segment path, but keeping the
+   literal routes above the parameterised ones removes the question. */
+autocountOutbox.post('/archive', archiveAutocountOutboxHandler);
+autocountOutbox.post('/restore', restoreAutocountOutboxHandler);
 autocountOutbox.post('/:id/requeue', requeueAutocountOutboxHandler);
 autocountOutbox.post('/:id/send-now', sendNowAutocountOutboxHandler);
 

@@ -295,6 +295,26 @@ test("rule 3 demands a stated reversal and a stated verification", () => {
     false,
     "placeholders and one-word answers are not statements",
   );
+  /* CRLF. GitHub returns a PR body with CRLF line endings, and every matcher
+     here ends `(.*)$` — in JavaScript `.` does not match \r, so a bare
+     split("\n") leaves the \r past the end of the capture and `$` cannot match.
+     Rule 3 then reported BOTH lines missing against a body that stated both in
+     full. Measured on PR #3207, run 34197700964, 2026-09-08.
+
+     It is the "checker that cannot match" trap with the sign flipped: not a
+     false clean, a false VIOLATION — and a gate that fails compliant PRs is a
+     gate somebody deletes. This case is the whole bug; delete the `\r?` from
+     findStatement's split and it goes red. */
+  assert.equal(
+    evaluate({
+      ...base,
+      body: "Reversal: rename b back to a; nothing reads b yet.\r\nVerified against: the live catalog via pg-catalog-check.yml.\r\n",
+      files,
+    }).ok,
+    true,
+    "a CRLF body states the same two things and must be read the same way",
+  );
+
   assert.equal(
     evaluate({ ...base, body: "Reversal: rename b back to a, nothing reads it.", files }).ok,
     false,

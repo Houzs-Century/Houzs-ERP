@@ -41,12 +41,19 @@ import { getSupabaseService } from '../../db/supabase';
 import { soIsMigrated } from './so-is-migrated';
 import { callerBypasses } from './write-freeze';
 import { activeCompanyId } from './companyScope';
+import { chunkSizeForUrl } from './paginate-all';
 import {
   migratedSoIsLocked,
   migratedSoLockMessage,
+  migratedSoVerdictMessage,
   parseMigratedSoLock,
   type MigratedSoLockValue,
 } from './migrated-so-lock';
+import {
+  readSoVerdict,
+  soVerdictFromRow,
+  type SoReconcileVerdict,
+} from './so-reconcile-verdict';
 
 const LOCK_TTL_MS = 30_000;
 const LOCK_KEY = 'scm.migrated_so_lock';
@@ -125,7 +132,7 @@ async function readLock(read: ConfigReader): Promise<LockState> {
     /* FAIL OPEN, deliberately — the OUTAGE case, not the typo case. An
        unreachable app_config is not an instruction, and the migrated documents
        are still sitting behind the write freeze underneath this guard. */
-    const state: LockState = { value: { scope: 'off', malformed: false }, message: null };
+    const state: LockState = { value: { scope: 'off', malformed: false, byVerdict: false }, message: null };
     cached = { at: now, state };
     return state;
   }
@@ -134,7 +141,15 @@ async function readLock(read: ConfigReader): Promise<LockState> {
 export const MIGRATED_SO_READONLY_ERROR = 'so_migrated_readonly';
 
 type SupabaseLike = {
-  from(t: string): { select(cols: string): { eq(col: string, v: string): { maybeSingle(): PromiseLike<{ data: unknown; error: unknown }> } } };
+  from(t: string): {
+    select(cols: string): {
+      eq(col: string, v: string): { maybeSingle(): PromiseLike<{ data: unknown; error: unknown }> };
+      /* The LIST's batched verdict read. One statement per page rather than one
+         per row: the list renders 50 orders and a per-row round trip would make
+         the page's cost a function of how much of the cutover is still open. */
+      in(col: string, v: readonly string[]): PromiseLike<{ data: unknown; error: unknown }>;
+    };
+  };
 };
 
 /* The route's own client when there is one, else the service client. This
@@ -176,13 +191,114 @@ export interface MigratedSoReadonlyState {
  */
 export async function migratedSoReadonlyState(
   c: Context,
+  docNo: string | null,
   isMigrated: boolean | null,
+  /* The verdict, when the caller already has it. The LIST reads a whole page's
+     worth in one statement and passes each row's answer in; the DETAIL and the
+     middleware have one document and let this function fetch it. `undefined`
+     means "not supplied", which is NOT the same as `null` ("looked, found
+     nothing") — hence the sentinel rather than an optional that collapses the
+     two. */
+  suppliedVerdict?: SoReconcileVerdict | null,
 ): Promise<MigratedSoReadonlyState> {
   const { value, message } = await readLock(lockReader(clientFor(c)));
   if (value.scope === 'off') return { locked: false, reason: null };
   if (callerBypasses(c)) return { locked: false, reason: null };
-  if (!migratedSoIsLocked(value, activeCompanyId(c) ?? null, isMigrated)) return { locked: false, reason: null };
-  return { locked: true, reason: migratedSoLockMessage(message) };
+
+  /* ORIGIN MODE — the pre-2026-09-08 answer, and no verdict is read at all.
+     Deliberately short-circuited BEFORE the lookup: while the switch says '1'
+     this file must cost exactly what it cost yesterday. */
+  if (!value.byVerdict) {
+    if (!migratedSoIsLocked(value, activeCompanyId(c) ?? null, isMigrated, null)) {
+      return { locked: false, reason: null };
+    }
+    return { locked: true, reason: migratedSoLockMessage(message) };
+  }
+
+  /* CORRECTNESS MODE. Company and origin are settled BEFORE the verdict read,
+     so a native order and the other company never pay for a lookup whose answer
+     could not change theirs. */
+  const companyId = activeCompanyId(c) ?? null;
+  const outOfScope = value.scope !== 'all'
+    && (companyId == null || !value.scope.includes(companyId));
+  if (outOfScope || isMigrated === false) return { locked: false, reason: null };
+
+  const verdict = suppliedVerdict !== undefined
+    ? suppliedVerdict
+    : (docNo != null ? await fetchVerdict(clientFor(c), docNo) : null);
+
+  if (!migratedSoIsLocked(value, companyId, isMigrated, verdict)) {
+    return { locked: false, reason: null };
+  }
+  return { locked: true, reason: migratedSoVerdictMessage(docNo, verdict) };
+}
+
+/* ── reading the published verdict ─────────────────────────────────────────
+   scm.so_reconcile_verdict is written ONLY by
+   scripts/publish-so-reconcile-verdict.mjs, from a reconcile run. Nothing in
+   the request path writes it, and nothing hand-maintains it. */
+const VERDICT_TABLE = 'so_reconcile_verdict';
+const VERDICT_COLS = 'doc_no, clean, axes, measured_at';
+
+async function fetchVerdict(sb: SupabaseLike, docNo: string): Promise<SoReconcileVerdict> {
+  return readSoVerdict(
+    (d) => sb.from(VERDICT_TABLE).select(VERDICT_COLS).eq('doc_no', d).maybeSingle(),
+    docNo,
+  );
+}
+
+/**
+ * A whole page's verdicts in one statement.
+ *
+ * A document the read did not return is ABSENT, and absent is 'unknown', which
+ * LOCKS — so a partial answer can never open a row. A read that FAILED returns
+ * an empty map for the same reason: every row then reads as unpublished, and
+ * the page shows locked rather than showing rows it cannot vouch for.
+ */
+async function fetchVerdicts(
+  sb: SupabaseLike,
+  docNos: readonly string[],
+  now: number = Date.now(),
+): Promise<Map<string, SoReconcileVerdict>> {
+  const out = new Map<string, SoReconcileVerdict>();
+  if (docNos.length === 0) return out;
+  try {
+    /* CHUNKED BY URL BYTES, not by a number typed here. The SO list has a
+       LEGACY arm that reads .limit(500), so this can be handed 500 doc numbers
+       at once (~9.5KB of `in.(…)`) - the exact size that has been observed
+       REFUSED in production, which is why chunkSizeForUrl exists and why every
+       other docNos read on that route already goes through it. A refused URL
+       here would answer "no verdicts", locking every row on the page while the
+       API happily accepted the writes: safe, but a list that disagrees with its
+       own endpoint. Serial rather than through chunkIn because that helper
+       needs a .range()-shaped query, and typing this module's client that
+       structurally makes the compiler unroll its generics (TS2589 - the trap
+       so-is-migrated.ts records). Two round trips for a 500-row page. */
+    const size = chunkSizeForUrl(docNos);
+    const rows: Array<Record<string, unknown>> = [];
+    for (let i = 0; i < docNos.length; i += size) {
+      const { data, error } = await sb.from(VERDICT_TABLE).select(VERDICT_COLS).in('doc_no', docNos.slice(i, i + size));
+      /* One failed batch means we cannot vouch for ANY row on this page - the
+         rows already collected would render as open while the rest render as
+         locked, from one read. Drop the lot; absent locks. */
+      if (error || !Array.isArray(data)) return out;
+      rows.push(...(data as Array<Record<string, unknown>>));
+    }
+    for (const raw of rows) {
+      const docNo = raw.doc_no ?? raw.docNo;
+      const measuredAt = raw.measured_at ?? raw.measuredAt;
+      if (typeof docNo !== 'string' || typeof measuredAt !== 'string') continue;
+      out.set(docNo, soVerdictFromRow(
+        {
+          clean: raw.clean === true,
+          axes: Array.isArray(raw.axes) ? (raw.axes as string[]) : null,
+          measured_at: measuredAt,
+        },
+        now,
+      ));
+    }
+  } catch { /* every row stays absent, and absent LOCKS */ }
+  return out;
 }
 
 /* ── The guard, once, for both prefixes ─────────────────────────────────────
@@ -233,7 +349,7 @@ function migratedGuard(
     const target = await resolve(sb, key);
     if (target == null) return next(); // the key names no sales order
 
-    const state = await migratedSoReadonlyState(c, target.isMigrated);
+    const state = await migratedSoReadonlyState(c, target.docNo, target.isMigrated);
     if (!state.locked) return next();
 
     const text = state.reason ?? migratedSoLockMessage(null);
@@ -368,7 +484,11 @@ export async function withSoMigratedReadonly(
   salesOrder: Record<string, unknown>,
   acDocNo: string | null,
 ): Promise<Record<string, unknown>> {
-  const mig = await migratedSoReadonlyState(c, acDocNo !== null);
+  /* The ERP document number, off the payload the caller already built. It is
+     what the salesperson sees, so it is what the refusal names — the AutoCount
+     number the reconcile keys on means nothing on their screen. */
+  const docNo = typeof salesOrder.doc_no === 'string' ? salesOrder.doc_no : null;
+  const mig = await migratedSoReadonlyState(c, docNo, acDocNo !== null);
   salesOrder.migrated_readonly = mig.locked;
   salesOrder.migrated_readonly_reason = mig.reason;
   return salesOrder;
@@ -389,6 +509,28 @@ export async function migratedSoListGate(
     const docNo = typeof b.doc_no === 'string' ? b.doc_no : null;
     if (docNo && ((b.linkedAcDocno ?? b.linked_ac_docno ?? null) !== null)) migrated.add(docNo);
   }
-  const { locked } = await migratedSoReadonlyState(c, true);
-  return (docNo: string) => ({ migrated_readonly: locked && migrated.has(docNo) });
+
+  const { value } = await readLock(lockReader(clientFor(c)));
+
+  /* ORIGIN MODE — one answer covers the page, exactly as before. */
+  if (!value.byVerdict) {
+    const { locked } = await migratedSoReadonlyState(c, null, true, null);
+    return (docNo: string) => ({ migrated_readonly: locked && migrated.has(docNo) });
+  }
+
+  /* CORRECTNESS MODE — the answer is per row, so the page reads the verdicts
+     for its OWN migrated documents in one statement. A row whose verdict did
+     not come back is absent, and absent locks: the list can only ever show
+     MORE locked than the API would refuse, never fewer. A list that offered
+     Edit on a row the endpoint then refused is the "button does nothing"
+     failure this repo keeps paying for. */
+  const verdicts = await fetchVerdicts(clientFor(c), [...migrated]);
+  const states = new Map<string, boolean>();
+  for (const docNo of migrated) {
+    const { locked } = await migratedSoReadonlyState(
+      c, docNo, true, verdicts.get(docNo) ?? null,
+    );
+    states.set(docNo, locked);
+  }
+  return (docNo: string) => ({ migrated_readonly: states.get(docNo) === true });
 }

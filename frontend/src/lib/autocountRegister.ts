@@ -78,13 +78,29 @@ export const AC_REGISTER_COLUMNS = [
  * like that apart is the whole job of this page:
  *
  * - `same` — quiet. The number on the paperwork is the number in the book.
+ * - `prefixed` — quiet. The book's number is the ERP's number with the company
+ *   prefix taken off, which is what a MIGRATED document looks like BY
+ *   CONSTRUCTION and is not a disagreement at all. See below.
  * - `different` — LOUD. Flagged on the row, unclicked.
  * - `not-recorded` — it is in the book and the ERP kept no number for it. NOT
  *   flagged: that is a gap in our record, not a disagreement between two.
  * - `not-yet` — it is not in the book at all, which the Status column has
  *   already said. It must stay quiet; saying it twice is not saying it better.
+ *
+ * WHY `prefixed` HAD TO BE ADDED, 2026-09-08. Every document brought across in
+ * the cutover is numbered `HC-` + its AutoCount number — that is the import's
+ * own rule (`docNo: "HC-" + acDoc`, backend/scripts/import-ac-outstanding-so.mjs)
+ * and backend/scripts/check-migrated-numbering.mjs asserts the equality across
+ * the whole corpus. So on a migrated document the two numbers ALWAYS differ, by
+ * exactly the prefix, and this function was calling every one of them a
+ * mismatch. Measured against production the same day: all three documents in
+ * Houzs Century's queue were flagged DIFFERENT NUMBER and not one of them was.
+ * 2,877 outstanding documents came across, so this was set to fire on almost
+ * everything staff touch after go-live — and the comment two paragraphs down
+ * already says what that costs: a false flag teaches everyone to ignore the
+ * flag, and then the real one is invisible too.
  */
-export type AcBookVerdict = "same" | "different" | "not-recorded" | "not-yet";
+export type AcBookVerdict = "same" | "prefixed" | "different" | "not-recorded" | "not-yet";
 
 export interface AcBookNumber {
   verdict: AcBookVerdict;
@@ -102,6 +118,27 @@ export interface AcBookNumber {
 const acSameNumber = (a: string, b: string): boolean =>
   a.trim().toLowerCase() === b.trim().toLowerCase();
 
+/**
+ * Is `bookNo` the same document as `erpNo`, wearing no company prefix?
+ *
+ * DERIVED FROM THE PAIR, never from a hard-coded list of prefixes. `HC-` and
+ * `2990-` are this company set today and the next one is a migration away;
+ * a rule that names them would be wrong the day a company is added, silently
+ * and in the direction that cries wolf.
+ *
+ * The part in front must END AT A SEPARATOR, which is what stops a bare suffix
+ * qualifying: `SO-013361` ends with `13361`, and treating that as "the same
+ * document without its prefix" would quietly excuse a book number that really
+ * is a different, shorter document. A real prefix ends in `-`.
+ */
+const acPrefixedNumber = (erpNo: string, bookNo: string): boolean => {
+  const erp = erpNo.trim().toLowerCase();
+  const book = bookNo.trim().toLowerCase();
+  if (book === "" || erp.length <= book.length) return false;
+  if (!erp.endsWith(book)) return false;
+  return erp.slice(0, erp.length - book.length).endsWith("-");
+};
+
 export function acBookNumber(row: AcOutboxRow): AcBookNumber {
   const answered = row.ac_doc_no === null ? "" : row.ac_doc_no.trim();
   if (answered === "") {
@@ -113,8 +150,17 @@ export function acBookNumber(row: AcOutboxRow): AcBookNumber {
       flagged: false,
     };
   }
-  const same = acSameNumber(answered, row.doc_no);
-  return { verdict: same ? "same" : "different", number: answered, flagged: !same };
+  if (acSameNumber(answered, row.doc_no)) {
+    return { verdict: "same", number: answered, flagged: false };
+  }
+  /* QUIET, BUT NOT `same` — the two strings genuinely are not equal, and saying
+     they are would be the kind of small lie that makes the next reader distrust
+     the column. The cell still SHOWS the book's number, because that is the
+     string somebody has to type into AutoCount to find the document. */
+  if (acPrefixedNumber(row.doc_no, answered)) {
+    return { verdict: "prefixed", number: answered, flagged: false };
+  }
+  return { verdict: "different", number: answered, flagged: true };
 }
 
 /** The short mark beside a flagged number — it has to fit inside the cell. */
