@@ -1897,6 +1897,60 @@ into DRAFT (below). So the route also asks:
 | `version` CAS + edit lease | `428` / `409` | Unchanged. |
 
 | `version` CAS + edit lease | `428` / `409` | Unchanged. |
+
+### The owner's delete ruling (2026-09-08) — a hard DELETE on a migrated line, and how far it reaches
+
+**If you have found a hard `DELETE` on `scm.mfg_sales_order_items` and are
+wondering who authorised it, this is the section.**
+
+Everything above this heading is the standing rule and it is UNCHANGED: a
+confirmed order is CANCELLED, never deleted, and the repair scripts refuse to
+remove a line — `topup-ac-lines-from-truth.mjs` says so in its own header, *"an
+ERP row the book does NOT have is REPORTED and never deleted"*.
+
+On 2026-09-08 the owner was shown the last three sales-order differences on the
+go-live reconcile and **told that two of them needed his decision precisely
+because that convention exists.** Knowing it, he answered:
+
+> 「删掉啊 没写的也删掉
+> 简单来说都要跟Autocount一样啊 你不懂吗？」
+>
+> "Delete it. The one that says nothing, delete that too. Put simply, everything
+> has to be the same as AutoCount. Don't you understand?"
+
+**That is an explicit, informed override, and it is NARROW.** It covers the rows
+below and the class they belong to. It is not "deleting is fine now", and no
+later change may cite it for a wider licence.
+
+| what he ruled on | what was done | what it is NOT |
+|---|---|---|
+| `HC-SO-013160` holds a `STORAGE` RM 300.00 line claiming AutoCount DtlKey 892917 — a key on **no line of any document of any of the six types** in the book snapshot. The book has 3 lines / RM 300.00; we had 4 / RM 600.00 | the ERP row is **DELETED**, and the header re-summed from its lines | not a licence to delete any row the reconcile flags. The delete refuses unless the key is absent from the whole book, exactly one ERP row carries it, every OTHER row of the document carries a key the book HAS, and **no row of any table referencing `scm.mfg_sales_order_items` points at it** |
+| a book row with no item code, no description, no Desc2 and no money — even when it carries a QUANTITY (`SO-011384` DtlKey 783795, quantity 4) | a **CHECKER** change only. `scripts/lib/ac-blank-book-row.mjs` grew a second arm so the reconcile stops calling such a row a missing line. No document was written | not "code-less rows do not count". **MONEY IS THE BOUNDARY THE RULING DID NOT MOVE**: `HC-SO-000102`'s `"DELIVERY FEE "` (RM 50.00) and `HC-DO-001604`'s `"* DISPOSE …"` (RM 150.00) are code-less and stay findings |
+| `HC-SO-012571`, a decomposed sofa RM 88.00 above the book | the compartment that **already** carries the sofa's money is set to the book's RM 3,300.00. Its siblings stay at RM 0.00 | not a loosening of `repair-so-price-from-autocount.mjs`'s decomposed-sofa skip, which is still right for the general case. How a sofa's price splits across compartments is our internal representation; the book states one line and one number |
+
+**The delete is the only irreversible one, so it carries a recovery path.**
+Before the row is removed, `repair-so-book-parity-owner-ruling.mjs` reads it with
+`SELECT *` and prints **every column** into the run log as JSON, and refuses if
+that read comes back empty. Putting it back is one `INSERT` with those values
+plus the same header re-sum. The captured row is also copied into the ledger
+entry, which is the durable record:
+`docs/bugs/0713-the-owner-ruled-that-a-row-the-book-describes-nothing-in-is.md`.
+
+**Why the FK sweep is the guard that matters.** The three FKs listed under *The
+SO line's downstream links* below — `purchase_order_items.so_item_id`,
+`delivery_order_items.so_item_id`, `sales_invoice_items.so_item_id` — are all
+`ON DELETE SET NULL`. Deleting a line therefore **silently unlinks** every
+downstream purchase order, delivery note and invoice that named it, and leaves no
+trace that it happened. The script takes the referencing-FK list from
+`pg_constraint` at run time rather than from a list typed in the file, and
+refuses if a single row points at the target.
+
+Tooling: `backend/scripts/repair-so-book-parity-owner-ruling.mjs` +
+`.github/workflows/repair-so-book-parity-owner-ruling.yml` (plan by default;
+`CONFIRM="I HAVE REVIEWED THE OWNER DELETE RULING PLAN"` arms the apply).
+Neither lane touches `paid_sen` or the header `balance_sen`, and neither reaches
+AutoCount — 「写回autocount的你不需要理了」, same day.
+
 ## The save lock — one minute, and it knows whose it is
 
 **It covers ONE SAVE, not an editing session.** Opening an order takes no lock at
@@ -3155,6 +3209,17 @@ also keeps `specialsRecorded` OUT of its `carried` array, so a recorded option i
 never counted as a ticked one and the reported ERP value still says what the line
 actually holds.
 
+**The table that prints that column moved on 2026-09-08.** `reportVariants` —
+the whole 226-line render — is now `backend/scripts/lib/variant-report.mjs`,
+because `check-ac-erp-reconcile.mjs` reached its 2,000-line ceiling and the
+repo's rule is that an over-cap file may not grow. Nothing about the behaviour
+moved with it, and the allow-list in
+`backend/tests/specialsRecordedNeverPriced.test.ts` gained the new path for the
+same reason the checker was on it: the same render, in a new file, computing no
+price and reading no money. (The move also brought a `no-key` column beside
+`differ` on the SCALAR axes — `docs/bugs/0712`, and
+`docs/modules/delivery-order.md` for what it means.)
+
 Those readers are on the allow-list because they are READ-ONLY: they SELECT and
 print, none writes a line, and none can reach a price. The rule stays "render the
 key, do not price it" — a report is a render — and the test's assertion that the
@@ -3204,6 +3269,44 @@ the offenders. `node --test scripts/lib/parse-sofa.test.mjs` pins both
 directions, and the seat-size axis carries the same shape — `STOOL(25 X 40INCH)`
 is a stool's length by its width, and reading `40"` off it put a phantom on the
 same tally.
+
+#### The compartments axis: a label and its own bracket are ONE sofa
+
+The floor often writes the build twice — a label, then the same build spelled
+out in brackets: `3S (2+1)`, `2 seater (1EL + 1ER)`, `4S (60cm) (2s+2s)`,
+`[ 3S (2EL+1ER (26")) ]`. The bracket is the label EXPLAINED, never extra
+furniture, and `parse-sofa.mjs` has carried the owner's ruling since 2026-08-10:
+「2R(1+1) 就是 1A+1A」 — the title is dropped and the bracket wins.
+
+Until 2026-09-08 that rule was anchored to the END of the segment, so it fired
+only on the clean form and stood down on every spelling the shop actually uses:
+a size bracket on either side of the build, or residue left by the special-order
+strip. With the rule down, the label decodes as pieces AND the bracket decodes
+as pieces, and the line carries both — **the sofa reads one whole seat bigger
+than the book ordered.** Three PROCEEDED orders with purchase orders already
+raised were reported as differing from the book on exactly this
+(`docs/bugs/0713-the-label-and-the-build-it-names-were-both-counted-so-a-sof.md`).
+
+Two things worth carrying forward:
+
+- **A clarification in the account book can break a reader.** `HC-SO-010458`
+  and `HC-SO-011114` imported cleanly as `3S(32’Inch)` and decoded correctly;
+  the `(2+1)` was typed into AutoCount LATER by a salesperson being helpful. The
+  ERP row was right the whole time and the newer book text was what disagreed.
+- **On this axis, "follow the book" needs the decoder checked first.** The
+  standing rule is 「一律跟账本」, but the book here is a decoded reading, not a
+  quoted value. Correcting these three "to the book" would have added a phantom
+  two-seater to an order already in production. Read the ERP rows and the slip
+  PHOTO before writing a compartment — `probe-sofa-absent-pieces.mjs` puts the
+  build, its purchase order, the drawing and the decode on one screen.
+
+A compartment difference on a PROCEEDED order also has a second innocent cause:
+the owner may have RULED on that build from the drawing, in which case the ERP
+is meant to differ from the text. The reconcile does not read
+`sofa-compartment-corrections-*.json` and so reports those as `DIFFER` too — 5
+of the 8 flagged on 2026-09-08 were his own rulings
+(`docs/bugs/0714-the-reconcile-reports-a-sofa-the-owner-has-already-ruled-on.md`).
+**Check that file before treating a flagged compartment as work.**
 
 Drafts stay freely saveable — the scan pipeline still lands imperfect drafts;
 what changed is that they can no longer BECOME orders until resolved.

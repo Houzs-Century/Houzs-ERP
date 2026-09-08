@@ -739,6 +739,45 @@ part that bites — `delivery_order_items.linked_ac_dtlkey` is null on all 173
 migrated delivery orders, so a migrated delivery cannot be addressed line by
 line. Header-only would still work. Do not start until the read has been done.
 
+### The colours on a keyless delivery line cannot be read line by line, and the reconcile now SAYS so (2026-09-08)
+
+**白话.** 有两张交货单，系统里两行的布料颜色看起来跟账本「对调」了。**没有对调，
+货也没有出错。** 那两行是同一款、同一个数量、同一个客户，系统没有账本的行号，所以
+是系统自己「猜」哪一行对哪一行 —— 猜错一半的机会就长得像对调。两边的颜色**整组
+一样**，客人拿到的就是账本上写的那两个颜色。
+
+`backfill-ac-downstream-line-keys.mjs` stamps `linked_ac_dtlkey` only where the
+document FORCES the pairing. It therefore REFUSES exactly the shape that matters
+here: two rows of one item at one quantity whose book lines differ **in Desc2
+alone** — and Desc2 is where the colour lives. So the one fact that makes two
+colours look different is the same fact that makes the line key unstampable, and
+on those rows `check-ac-erp-reconcile.mjs` was reporting its own guess as a
+finding. Six such "swaps" have now been raised in this repo and five were
+phantoms (`docs/bugs/0672`, `0688`, `0689`, `0695`, `0696`, `0709`, `0712`).
+
+The reconcile's variant table now carries a **`no-key`** column beside `differ`.
+A value moves into it only when all three hold, and they are stated once in
+`lib/variant-reconcile.mjs` `foldGuessedPairing`:
+
+1. at least TWO rows of the bucket carry no AutoCount line key — one unkeyed row
+   among keyed ones is forced by elimination, not guessed;
+2. the bucket holds more than one row;
+3. the two sides' value MULTISETS for that axis are EQUAL — order-independent,
+   so no ordering can fake it and none can hide a real difference behind it. A
+   bucket whose bags differ keeps every one of its differences.
+
+It applies to the SCALAR axes only (`FOLDABLE_AXES`: colour, divan, gap, leg,
+T.Heights, seat). Compartments already have a stricter rule one paragraph up —
+an unkeyed sofa build is UNREADABLE, never AGREE — and specials are a multiset
+over one line already.
+
+**`no-key` is not AGREE.** The row genuinely does not state what the book's row
+states; what is proven is that the DOCUMENT ships the right values and that
+which of our rows is which is unknown. It does not lock the per-document verdict
+and it is not counted as work, and every one of them is printed BY NAME under
+its axis — a class the reader cannot enumerate is a suppression, not a
+declaration (`docs/bugs/0668`).
+
 ### A migrated delivery note can be SHORT a line, and no rule can find it (2026-09-08)
 
 The null keys have a second consequence, and it decides the shape of any repair.
@@ -2138,6 +2177,26 @@ data error.
   ALL-OR-NOTHING with an explicit refusal list, so it never vanished a document;
   and its over-delivery assertion is keyed on quantity, which a substituted line
   changes the meaning of. Enabling it there is a separate, reviewed change.
+- **The ruling could only ever reach a WHOLE document, never a line inside one
+  (2026-09-08).** `buildMigratedDoPlan` ends
+  `[...byDo.values()].filter((d) => !done.has(d.doNo))`
+  (`lib/migrated-do-writer.mjs:293`) and `done` is every `linked_ac_docno`
+  already in `scm.delivery_orders`. So a note whose EVERY line was a
+  substitution came in complete once the flag was on — `DO-001800`,
+  `DO-005583` — while a note that already existed because ONE of its lines could
+  be matched kept the gap: `DO-001953` (book 4, ERP 2) and `DO-004903` (book 3,
+  ERP 1). **Adding a substituted line to a document that already exists is
+  `topup-ac-lines-from-truth.mjs`'s DO lane, not this writer's**, and its targets
+  carry `substituted: true` to write exactly the shape in the table above.
+  `docs/bugs/0713`.
+- **The whole class is 30 delivery orders in the book and 4 in the ERP.**
+  `backend/scripts/probe-do-code-changed-after-conversion.mjs` (read-only) is
+  the measurement, because the reconcile's line-count axis cannot see a note
+  whose code was changed without changing the count. Run
+  [`34213215063`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34213215063)
+  named all 30 against production: 26 are correctly absent (their sales orders
+  were fully delivered before the cut), and the 4 the ERP holds are the four
+  named above.
 
 ## The delivery warehouse lives on the DO HEADER (2026-09-07)
 

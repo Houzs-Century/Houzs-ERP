@@ -130,6 +130,19 @@ wildcard does **not** lift (`approvalRefusal` in `shared/document-cancel.ts`):
 write to it before (the area guard's `edit`, plus the salesperson row-scope on
 a Sales Order) can ask for it to be cancelled.
 
+**Signing needs the key, not the document's area.** Prod appointed the Sales
+Director as level 1 and the Purchaser as level 2 (owner, 2026-09-08 — 「需要先给
+sales director 审批才到 purchaser 审批」); the Sales Director holds no
+procurement area and the Purchaser has Sales Orders at `view`, so under the
+plain area guard neither could sign. The two document mounts in
+`backend/src/scm/index.ts` therefore carry `cancelApproverWriteBypass(docType)`
+as the area guard's `writeBypass` — it admits ONLY
+`POST …/cancel-request/{approve,reject,withdraw}` for a holder of that
+document's `approve_l1` or `approve_l2` key (the handler still runs the
+per-request refusals) — and `/cancel-request` as an `openReadPaths` suffix so
+the card on the document loads for them. Raising a request, and every other
+write on the prefix, still needs the area's `edit`.
+
 ## 5. Notices
 
 `backend/src/services/cancelRequestNotify.ts` — the same private-announcement
