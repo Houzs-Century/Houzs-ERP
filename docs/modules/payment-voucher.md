@@ -382,13 +382,32 @@ bill 我也想要用ocr. Two doors, one reader:
      per bill.
   3. 多个supplier 多个单 — "pay each bill separately" splits a group; each
      bill opens as its own voucher.
+  4. 几张不同的 receipt 开一张 voucher (2026-09-08: 因为我是三个 receipt 开一张
+     voucher 罢了) — petty cash. Read them, tick them across groups (a
+     checkbox on every read bill), "Open ticked as ONE voucher (N lines)":
+     one line per receipt (shop + number, the receipt's total), the payee
+     LEFT for the person (three shops have no one payee, and no shop's
+     vendor memory is borrowed), the voucher dated by the latest receipt,
+     every receipt's pages attached; refused while the ticked receipts are
+     in different currencies. This is NOT the Merge — Merge makes PAGES of
+     one bill (the button now says so: "These N files are pages of ONE bill
+     — merge"); the owner had pressed it for three receipts and the reader,
+     told they were one document, read one.
 
 The pile takes drag-and-drop and pasted screenshots (Ctrl+V) as well as the
 picker, and each read bill renders tidy: number / dates / total on one
 aligned grid, the bill's own line items tabled under it — EVERY printed
 line is read, no line cap (owner 2026-09-02: 别限制最多只能读8行; the
 model's output budget is sized for ~300 lines and a 300-entry runaway
-guard sits in `coerceBillJson`, not in the prompt).
+guard sits in `coerceBillJson`, not in the prompt). A receipt's FOOTER is
+not lines (docs/bugs/0702; owner: 这个 ocr 会显示 sub total): the prompt asks
+for the goods and service rows plus any discount, tax or rounding row —
+the rows that add up to what was paid — and `stripFooterLines` in
+`backend/src/acc/bill-extract.ts` drops, deterministically, whatever the
+model still lists of a restated total (sub/net/grand total, amount due,
+balance), a tender row (cash, card, DuitNow/QR, TNG and the other wallets,
+tendered, paid), the change and an item count, so the voucher pre-fills at
+the receipt's total rather than twice it.
 
 The reading is POST `/payment-vouchers/extract` (perm
 `scm.payment_voucher.create`; 503 when `ANTHROPIC_API_KEY` is unset) →

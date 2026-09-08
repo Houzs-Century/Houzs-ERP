@@ -65,13 +65,14 @@ Return ONLY a JSON object, no prose, with exactly these keys:
   "currency": the 3-letter currency printed (default "MYR"),
   "totalRm": the GRAND TOTAL payable as a plain number (e.g. 1234.56) or null,
   "sstRm": the SST/tax amount as a plain number, or null when not itemised,
-  "lines": EVERY line item printed on the bill, in order [{ "description": string, "amountRm": number|null }] — one entry per printed line however many there are, or ONE entry summarising the charge when the bill has no itemisation
+  "lines": the rows that ADD UP to the amount paid — EVERY goods/service line printed, in order, plus any discount, tax or rounding row [{ "description": string, "amountRm": number|null }] — one entry per printed line however many there are, or ONE entry summarising the charge when the bill has no itemisation
 }
 
 Rules:
 - Read what is PRINTED. A field you cannot read with confidence is null — NEVER estimated, NEVER computed from other fields.
 - Dates: Malaysian papers usually print DD/MM/YYYY — convert to YYYY-MM-DD. A date you cannot disambiguate is null.
 - totalRm is the amount the vendor asks to be PAID (after tax/rounding), not a subtotal.
+- A receipt's FOOTER is not line items: never list a Sub Total / Total / Net Total / Amount Due row, a payment or tender row (Cash, Card, DuitNow, QR, e-wallet, Tendered, Paid), the Change, or a Total Items count — those restate the total, they are not charges.
 - vendorName is the ISSUER, never the addressee (the addressee is our own company).
 - Line descriptions stay short (under 80 chars), in the bill's own words.`;
 
@@ -87,6 +88,48 @@ const isoOrNull = (v: unknown): string | null => {
   const s = String(v ?? '').trim();
   return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
 };
+
+/* ── A receipt's footer is not lines (docs/bugs/0702) ───────────────────────
+   The owner's 99 Speedmart receipt came back with Sub Total / NET TOTAL /
+   DUITNOW QR / CHANGE listed as line items, and the voucher pre-filled at
+   twice the receipt (2026-09-08: 这个 ocr 会显示 sub total, 不太对). The
+   prompt now asks for the rows that ADD UP to what was paid, but a vision
+   model is not a filter — this is the deterministic one. Dropped: a restated
+   total (sub / net / grand total, amount due, balance), a tender row however
+   the money was handed over (cash, card, DuitNow/QR, TNG and the other
+   wallets, FPX, tendered, paid), the change, an item count, and a rounding
+   row of ZERO. Kept: a discount, a tax row and a non-zero rounding — they
+   MOVE the total, and a voucher whose lines do not add up to the receipt
+   would not reconcile. The match is on the WHOLE description (punctuation
+   folded), so "TOTAL CARE SHAMPOO" is a shampoo and "Total" is a footer. */
+const foldDescription = (s: string): string =>
+  s.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+
+const TENDER_TAIL = '(?:\\s+(?:by|with|via|mode|method|type|tendered|received|amount|rm|myr|cash|card|qr|duitnow|tng|ewallet|e wallet|wallet|online|fpx|visa|master\\w*|debit|credit|pay|payment|\\d+))*';
+const FOOTER_ROWS: RegExp[] = [
+  /^(?:sub|net|nett|grand)?\s*total(?:\s+(?:amount|due|payable|paid|incl\w*|inclusive|of|sst|gst|tax|rm|myr|rounded|after|rounding|items?|qty|quantity|\d+))*$/,
+  /^amount\s+(?:due|payable|paid|tendered|received|to\s+pay)(?:\s+(?:rm|myr))?$/,
+  /^balance(?:\s+due)?(?:\s+(?:rm|myr))?$/,
+  /^change(?:\s+due)?(?:\s+(?:rm|myr))?$/,
+  new RegExp(`^(?:cash|tendered|paid|payment|pay)${TENDER_TAIL}$`),
+  /\bduitnow\b/,
+  new RegExp(`^qr(?:\\s+pay\\w*)?${TENDER_TAIL}$`),
+  new RegExp(`^(?:tng|touch\\s*n\\s*go|grabpay|grab\\s+pay|boost|shopeepay|shopee\\s+pay|fpx|online\\s+banking|bank\\s+transfer|e\\s*wallet|ewallet)${TENDER_TAIL}$`),
+  new RegExp(`^(?:credit|debit)\\s*card${TENDER_TAIL}$`),
+  new RegExp(`^(?:visa|master\\s*card|amex|unionpay|mydebit|card)${TENDER_TAIL}$`),
+  /^(?:total\s+)?(?:qty|quantity|items?|no\s+of\s+items?|items?\s+count)(?:\s+\d+)?$/,
+];
+
+export function isFooterLine(description: string | null, amountSen: number | null): boolean {
+  if (!description) return false;
+  const d = foldDescription(description);
+  if (!d) return false;
+  if (/^round\w*(?:\s+adj\w*)?$/.test(d) && (amountSen ?? 0) === 0) return true;
+  return FOOTER_ROWS.some((rx) => rx.test(d));
+}
+
+export const stripFooterLines = (lines: BillLine[]): BillLine[] =>
+  lines.filter((l) => !isFooterLine(l.description, l.amountSen));
 
 /** Coerce whatever the model said into the strict shape — every field
     defensively, because a vision model under a bad photo says strange things
@@ -109,13 +152,13 @@ export function coerceBillJson(raw: unknown): BillExtraction {
     /* 300 is a runaway guard against a confused model, not a reading limit —
        the owner's rule is EVERY printed line (别限制最多只能读8行), and no real
        bill approaches it; max_tokens below is sized to carry it. */
-    lines: linesRaw.slice(0, 300).map((l) => {
+    lines: stripFooterLines(linesRaw.slice(0, 300).map((l) => {
       const li = (l && typeof l === 'object' ? l : {}) as Record<string, unknown>;
       return {
         description: li.description ? String(li.description).slice(0, 160) : null,
         amountSen: rmToSen(li.amountRm),
       };
-    }),
+    })),
   };
 }
 
