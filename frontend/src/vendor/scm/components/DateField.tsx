@@ -9,7 +9,7 @@
 // the OS calendar picker. The on-the-wire contract is unchanged: `value` is an
 // ISO `YYYY-MM-DD` string (or '') and `onChange` emits the same.
 
-import { useState, useRef, useId, type CSSProperties } from 'react';
+import { useState, useRef, useId, useEffect, type CSSProperties } from 'react';
 import { Calendar } from 'lucide-react';
 import styles from './DateField.module.css';
 
@@ -85,7 +85,11 @@ export function separatorsAreMaskOwn(raw: string): boolean {
  *  input behind it is `pointer-events: none`, so on a phone the picker had no
  *  reachable opener at all and the owner concluded typing was the only way in
  *  (2026-09-08: mobile 的 date 为什么没有 dropdown calender 是要 manual type 的).
- *  Guarded because jsdom and older embedded webviews have no `matchMedia`. */
+ *  Guarded because jsdom and older embedded webviews have no `matchMedia`.
+ *
+ *  `pointer: coarse` is the PRIMARY pointer, deliberately not `any-pointer`: a
+ *  touchscreen Windows laptop and an iPad with a Magic Keyboard both report a
+ *  fine primary pointer, so neither loses its text box to the overlay below. */
 export function isCoarsePointer(): boolean {
   if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
   try {
@@ -93,6 +97,34 @@ export function isCoarsePointer(): boolean {
   } catch {
     return false;
   }
+}
+
+/** `isCoarsePointer()` as render state, re-read when the primary pointer
+ *  changes — a tablet gaining a keyboard case, a phone driven by a desktop
+ *  browser's device emulation. Read at render (not inside a handler) because
+ *  the touch fix is a DIFFERENT ELEMENT GEOMETRY, not a different event
+ *  handler, so it has to be decided while the tree is being built. */
+function useCoarsePointer(): boolean {
+  const [coarse, setCoarse] = useState(isCoarsePointer);
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
+    let mql: MediaQueryList;
+    try {
+      mql = window.matchMedia('(pointer: coarse)');
+    } catch {
+      return;
+    }
+    const onChange = () => setCoarse(isCoarsePointer());
+    onChange();
+    // A MediaQueryList with no addEventListener is Safari < 14 and some older
+    // embedded webviews. The read above has already run, so what is lost there
+    // is only the LIVE update; the field still renders for the right pointer.
+    // Typed non-nullish, so this is a runtime feature test, not a null check.
+    if (typeof mql.addEventListener !== 'function') return;
+    mql.addEventListener('change', onChange);
+    return () => mql.removeEventListener('change', onChange);
+  }, []);
+  return coarse;
 }
 
 /** "2026-05-31" → "31/05/2026". Returns '' for empty/malformed. */
@@ -156,16 +188,20 @@ export function DateField({
   const nativeRef = useRef<HTMLInputElement>(null);
   const fallbackId = useId();
   const inputId = id ?? fallbackId;
+  const coarse = useCoarsePointer();
 
   const display = editing ?? isoToDmy(value);
   const showInvalid = invalid || draftInvalid;
   const errorId = `${inputId}-date-error`;
 
+  // MOUSE ONLY. showPicker() is the reliable opener on the desktop engines
+  // (Chrome 99+, Edge, Firefox 101+) and it is what the calendar button uses.
+  // It is NOT the touch path: see the .nativeOverlay comment in the stylesheet
+  // — on a coarse pointer the native input is the tap target itself and no
+  // script runs at all.
   const openPicker = () => {
     const el = nativeRef.current;
     if (!el || disabled) return;
-    // showPicker() is the reliable cross-browser opener (Chrome 99+, Edge,
-    // Safari 16+, Firefox 101+); fall back to focus()+click() otherwise.
     if (typeof el.showPicker === 'function') {
       try { el.showPicker(); return; } catch { /* not allowed in this context */ }
     }
@@ -207,14 +243,6 @@ export function DateField({
            and typing into it APPENDED, so 31032026 became 06/09/202631032026,
            parsed as nothing, and snapped back on blur. Typing now replaces. */
         onFocus={(e) => { setEditing(isoToDmy(value)); setDraftInvalid(false); e.currentTarget.select(); }}
-        /* Touch only. The calendar button is 20px square with tabIndex -1 and
-           the native input behind it takes no pointer events, so a finger had
-           no way to reach the picker — tapping the box raised the numeric
-           keypad instead, which is why the owner reported that dates must be
-           typed. Hung on CLICK rather than FOCUS on purpose: a click is a tap,
-           while focus also arrives from Tab and from programmatic focus, so
-           keyboard and mouse users keep the field they had. */
-        onClick={() => { if (isCoarsePointer()) openPicker(); }}
         onChange={(e) => {
           const raw = e.target.value;
           /* Digits typed straight through wear the mask as they land:
@@ -262,12 +290,24 @@ export function DateField({
       >
         <Calendar size={14} strokeWidth={1.75} aria-hidden />
       </button>
-      {/* Hidden native date input — supplies the OS calendar picker and emits
-          ISO. Visually hidden but kept in layout (not display:none) so
-          showPicker() can anchor it next to the button. */}
+      {/* Native date input — supplies the OS calendar picker and emits ISO.
+          Always visually transparent, so what the operator READS is the masked
+          day-first text above and never the OS-locale rendering (PR #2390).
+          Its GEOMETRY is what changes with the pointer, and that is the whole
+          fix: on a mouse it stays a 20px strip behind the calendar button and
+          showPicker() opens it; on a finger it stretches over the entire field
+          and takes pointer events, so the tap itself reaches a real date
+          control and iOS raises its own wheel with no script in the path.
+          #3300 tried to do this by calling showPicker() against the 20px
+          pointer-events:none strip — Chrome obliges, iOS Safari does not, which
+          is why the desktop screenshot showed a calendar and the iPhone showed
+          nothing. `data-touch-target` is the DOM-readable statement of which
+          mode is live: assertable in a test, and legible in Safari's remote
+          inspector when someone next reports that a picker will not open. */}
       <input
         ref={nativeRef}
-        className={styles.nativeHidden}
+        className={coarse ? styles.nativeOverlay : styles.nativeHidden}
+        data-touch-target={coarse ? 'true' : undefined}
         type="date"
         tabIndex={-1}
         aria-hidden

@@ -87,6 +87,7 @@ log("");
 log(`entries graded                      ${rows.length} / ${builds.length}`);
 log(`  name the model the book names     ${n("AGREE")} / ${rows.length}`);
 log(`  agree only after SOFA_MODEL_ALIAS ${n("AGREE-VIA-ALIAS")} / ${rows.length}`);
+log(`  the OWNER overrode the book       ${n("OWNER-OVERRIDE")} / ${rows.length}`);
 log(`  DISAGREE with the book            ${n("DIFFER")} / ${rows.length}`);
 log(`  carry no model at all             ${n("NO-MODEL-IN-FILE")} / ${rows.length}`);
 log(`  build not found in the book cut   ${n("NO-BOOK-LINE")} / ${rows.length}`);
@@ -111,6 +112,10 @@ const show = (title, want) => {
 };
 
 show("DISAGREE with the book - the book wins, these need correcting", "DIFFER");
+/* Printed with the differences rather than with the agreements: the ERP really
+   does name another product on these lines, and the only thing making that
+   right is a decision somebody has to be able to find and re-read. */
+show("the OWNER decided the line carries another product - his call, not a defect", "OWNER-OVERRIDE");
 show("book code is not in the item map", "UNMAPPED-BOOK-CODE");
 show("the book names more than one model for this build", "BOOK-SPLIT");
 show("agree only because SOFA_MODEL_ALIAS folds them - policy, not a defect", "AGREE-VIA-ALIAS");

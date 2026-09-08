@@ -34,6 +34,34 @@
  * 2026-09-04: all 16 documents that match exactly today match exactly ONE
  * distinct Desc2, so the guard cannot regress a build that already applies.
  *
+
+ * ── WHEN THE LINE KEY IS NOT THERE EITHER: `desc2Exclude` ──────────────────
+ * The line-key mode above is the right answer whenever the ERP rows carry a
+ * key. They do not always. A correction that ADDS compartments inserts them
+ * with `linked_ac_dtlkey` NULL, so on HC-SO-012025 only the two LEAD rows are
+ * keyed and the six rows added around them are not — and the account book
+ * states that document's build text TWICE, once with a LEADING SPACE (DtlKey
+ * 829179) and once without (829180), each lead's text inherited verbatim by the
+ * rows added from it. The second sofa's text is therefore a strict SUFFIX of
+ * the first's, so EVERY substring that finds the second also finds the first —
+ * proved exhaustively in the test, not assumed. While the two were believed to
+ * be identical sofas that did not matter: one correction was written onto both,
+ * which is this file's stated rule. On 2026-09-08 the owner read the enlarged
+ * slips and ruled that they are NOT the same sofa, and from that moment the
+ * second one had no address of any kind.
+ *
+ * `desc2Exclude` is the other half of the address: the rows that carry it are
+ * NOT this build. It is deliberately BYTE-EXACT and never normalised, because
+ * the discriminator here IS a leading space and `normaliseDesc2` erases exactly
+ * that. It is the LAST resort, under the line key, and it is not a way to pick
+ * between two builds by resemblance — it names rows that are somebody else's.
+ *
+ * AND IT CARRIES ITS OWN BRAKE. If the exclusion matches NO row on the
+ * document, the discriminator is gone — a re-import trimmed the space, say —
+ * and the correction would silently widen back onto both sofas. That is the
+ * failure this whole module exists to prevent, so an exclusion that removes
+ * nothing is a REFUSAL (`exclusion-missing`), never a quiet no-op.
+ *
  * Zero dependencies — `node --test scripts/lib/sofa-desc2-match.test.mjs` runs
  * it on a bare checkout, and the working-agreement workflow does exactly that.
  */
@@ -95,6 +123,9 @@ export function desc2Contains(haystack, needle) {
  *   `none` — no row carries the text. The build is not on this document.
  *   `ambiguous` — the needle spans more than one build. REFUSE; never pick.
  *   `linekey` — selected by the account book's OWN line key, not by text.
+ *   `exclusion-missing` — a `desc2Exclude` was given and no row on the document
+ *     carries it, so the discriminator that tells this build from its neighbour
+ *     is gone. REFUSE; the alternative is writing this build onto both.
  * @property {any[]} rows the rows of the build; empty unless the verdict allows
  * @property {string} how one line, for the operator's log
  * @property {string[]} texts the distinct normalised Desc2 the needle reached
@@ -106,14 +137,17 @@ export function desc2Contains(haystack, needle) {
  * @param {any[]} rows every sofa row on the document, in document order
  * @param {string|null|undefined} needle the correction's `desc2Match`
  * @param {(row:any)=>unknown} [readDesc2] how to read a row's Desc2
- * @param {{lineKeys?: unknown[], readLineKey?: (row:any)=>unknown}} [opts]
+ * @param {{lineKeys?: unknown[], readLineKey?: (row:any)=>unknown, exclude?: string}} [opts]
  *   `lineKeys` — the correction's `lineKeys`: the account book's own DtlKey for
  *   each line of this build. When present it DECIDES, and the text is not
  *   consulted at all.
+ *   `exclude` — the correction's `desc2Exclude`: rows carrying this text,
+ *   BYTE-EXACTLY, are not this build. Consulted only when there is no line key.
  * @returns {BuildSelection}
  */
 export function selectBuildRows(rows, needle, readDesc2 = (r) => r.description2, opts = {}) {
-  const all = Array.isArray(rows) ? rows : [];
+  const every = Array.isArray(rows) ? rows : [];
+  let all = every;
 
   /* ── THE LINE KEY DECIDES WHEN IT IS GIVEN ────────────────────────────────
      Text cannot always tell two builds apart. HC-SO-012827 holds a three-seater
@@ -162,6 +196,22 @@ export function selectBuildRows(rows, needle, readDesc2 = (r) => r.description2,
         texts,
       };
     return { verdict: "linekey", rows: hits, how: `matched the account book's own line key ${keys.join(", ")}`, texts };
+  }
+
+  /* The exclusion narrows the CANDIDATE POOL before the text is consulted, so a
+     row it names can never be reached, be counted towards ambiguity, or be
+     treated as surplus by the caller. It is deliberately BELOW the line key: a
+     key is identity and needs no help. */
+  const ex = String(opts.exclude ?? "");
+  if (ex !== "") {
+    all = every.filter((r) => !String(readDesc2(r) ?? "").includes(ex));
+    if (all.length === every.length)
+      return {
+        verdict: "exclusion-missing",
+        rows: [],
+        how: `no line on this document carries the desc2Exclude ${JSON.stringify(ex)}, so the text that tells this build from its neighbour is gone`,
+        texts: [],
+      };
   }
 
   if (!needle) return { verdict: "all", rows: all.slice(), how: "no desc2Match on this correction", texts: [] };

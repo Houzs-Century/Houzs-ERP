@@ -682,9 +682,24 @@ async function main() {
            WHERE i.delivery_order_id = ANY(${dd}::uuid[]) AND i.qty > 0` : []),
       ];
       const total = sums.reduce((t, r) => t + Number(r.t), 0);
-      const ok = total === a.acTotal;
+      /* AGAINST THE SAME YARDSTICK THE GATE USED — the book's own money for the
+         (receipt x order) pairs we hold, NOT the whole invoice. Verifying
+         against a different number from the one the decision was made on is how
+         a verify reports defects that are its own (docs/bugs/0594), and here it
+         did exactly that: on the first apply this line printed
+         "PI-006028: ours RM 2,072.00, AutoCount billed RM 3,738.00 — THESE
+         DISAGREE" for an invoice whose remaining RM 1,666.00 is on a purchase
+         order the migration never carried. Nothing was wrong with the write.
+         `a.expected` is what lib/ac-chain-line-grain.mjs said we owe; for a
+         DELIVERY there is no pair and the whole document IS the comparison. */
+      const want = a.expected ?? a.acTotal;
+      const ok = total === want;
       if (ok) invoicesAgreeing++;
-      (ok ? note : bad)(`  ${a.inv}: our source line(s) now sum to ${rm(total)}, AutoCount billed ${rm(a.acTotal)}${ok ? '' : ' — THESE DISAGREE'}`);
+      (ok ? note : bad)(
+        `  ${a.inv}: our source line(s) now sum to ${rm(total)}, the book states ${rm(want)} for the pair(s) we hold`
+        + `${a.outOfScopeSen ? ` (the invoice bills ${rm(a.acTotal)} in all; ${rm(a.outOfScopeSen)} of it is on order(s) never migrated)` : ''}`
+        + `${ok ? '' : ' — THESE DISAGREE'}`,
+      );
     }
     note(`  ${invoicesAgreeing} of ${accepted.length} AutoCount invoice(s) now reconcile to the sen.`);
   } finally {
