@@ -184,6 +184,42 @@ have it.** The reconcile's AutoCount side is the committed snapshot
 So the phantom is a snapshot artefact, not a statement about the book. Both
 documents are corrected in this PR.
 
+### What the FIRST run after merge then caught, and the fixture that should have
+
+The rule this repo learned from `docs/bugs/0711` is that *a `workflow_dispatch`
+workflow is not shipped until it has been dispatched once and reported success.*
+Dispatched on merged `main`, run `34223295235`, `MODE=plan`:
+
+```
+DELETE_FAIL: invalid input value for enum scm.mfg_so_status: ""
+```
+
+The sweep and both classifications were correct by then — zero unclassified, the
+audit log named as AUDIT. It died in the CONTROL, on
+
+```sql
+coalesce(status, '')
+```
+
+**`status` is an ENUM** (`scm.mfg_so_status`, nine values,
+`backend/scripts/scm-schema/2990s-full-schema.sql` line 16), not text, so `''` is
+asked to be a member of it. Nothing was written — plan mode, and it failed before
+any write path.
+
+**The pg suite passed on SQL production rejects, and that is the more useful
+finding.** The fixture declared `status text`. A fixture LOOSER than production
+proves nothing about production: `text` accepts `coalesce(x, '')` happily, so 17
+green tests against a real Postgres said nothing about the one statement that
+mattered. The fixture now creates the real enum, and a case with a NULL status —
+the only way to reach the coalesce at all — fails without the `::text` cast.
+
+A second defect found the same way, from reading the captured header rather than
+from a crash: the control resolved its money column from
+`["total_sen", "grand_total_sen", "net_total_sen", "total_amount_sen"]` and
+**`scm.mfg_sales_orders` has none of them.** The money arm would have been NULL
+on both sides, compared equal, and proved nothing while looking like a control.
+It leads with `local_total_sen` now, and says so out loud when nothing resolves.
+`paid_sen`, `deposit_sen` and `balance_sen` are deliberately not in that list.
 **Ref.** `chore/remove-test-so`, 2026-09-08. Runs: `34220089049` (baseline),
 `34220096163` (shape + outbox), `34218303185` (reconcile before),
 `34220446297` (plan, refused).
