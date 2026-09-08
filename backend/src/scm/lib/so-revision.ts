@@ -56,6 +56,7 @@ import { activeCompanyId, isMirroredDocNo, houzsOwns2990 } from './companyScope'
 import { todayMyt } from './my-time';
 import { dateOrNull } from './date-coerce';
 import { soWarehouseIdForDoc } from './so-warehouse';
+import { soIsMigratedShape } from './so-is-migrated';
 import { routingNote, type AmendmentFieldKind } from '../shared/amendment-routing';
 import { soAmendableHeaderFields } from '../shared/so-field-policy';
 import { canonicaliseSoHeaderChanges } from '../shared/so-processing-date';
@@ -369,7 +370,14 @@ export async function applySoAmendment(
      routinely carried as the whole-set price on ONE lead module line with 0 on
      its siblings. Plain `true` reads a stored 0 as "not provided" and hands the
      sibling a catalogue price anyway, which bills the set several times over. */
-  const soIsMigrated = ((soHdrCo as { linked_ac_docno?: string | null } | null)?.linked_ac_docno ?? null) !== null;
+  /* THE PAIR, through the one home. `linked_ac_docno IS NOT NULL` was the test
+     here too, and it is equally wrong here: the write-back stamps that column on
+     an order the ERP priced itself, which would then be trusted as "the BOOK's
+     negotiated price" and stop being re-priced. docs/bugs/0703. */
+  const soIsMigrated = soIsMigratedShape(
+    docNo,
+    (soHdrCo as { linked_ac_docno?: string | null } | null)?.linked_ac_docno ?? null,
+  );
 
   /* THE AMENDMENT HAS TO BE ABLE TO CARRY THE MONEY (owner, 2026-08-16): "Any
      amount can be edited, unless it is locked. If it has proceeded and a day has

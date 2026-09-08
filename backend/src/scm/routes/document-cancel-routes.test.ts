@@ -32,11 +32,12 @@ const CALLER = { id: 'staff-uuid', email: 'x@houzs.test', app_metadata: {}, user
 
 const {
   cancelApprovalGuard, soCancelRequests, poCancelRequests, cancelRequestsInbox,
+  cancelApproverWriteBypass, CANCEL_REQUEST_OPEN_READ_PATH,
 } = await import('./document-cancel-routes');
 
 type Who = { id: number; name: string; perms: string[] };
 const REQUESTER: Who = { id: 11, name: 'Sales Amy', perms: ['scm.access', 'scm.so.view_all'] };
-const L1: Who = { id: 21, name: 'Ops Ben', perms: ['scm.access', 'scm.so.view_all', 'scm.so_cancel.approve_l1', 'scm.po_cancel.approve_l1'] };
+const L1: Who = { id: 21, name: 'Ops Ben', perms: ['scm.access', 'scm.so.view_all', 'scm.so_cancel.approve_l1', 'scm.po_cancel.approve'] };
 const L2: Who = { id: 31, name: 'MD Cara', perms: ['*'] };
 const BOTH: Who = { id: 41, name: 'IT Dan', perms: ['*'] };
 const NOBODY: Who = { id: 51, name: 'Eve', perms: ['scm.access', 'scm.so.view_all'] };
@@ -214,6 +215,28 @@ describe('the two signatures', () => {
   });
 });
 
+describe('the area-guard bypass for approvers', () => {
+  const ctx = (method: string, path: string, perms: string[]) => ({
+    req: { method, path },
+    get: (_k: 'user') => ({ permissions_set: new Set(perms) }),
+  });
+  it('admits only the three approver verbs, only for a holder of that document\'s keys', () => {
+    const so = cancelApproverWriteBypass('SO');
+    expect(so(ctx('POST', '/api/scm/mfg-sales-orders/SO-1/cancel-request/approve', ['scm.so_cancel.approve_l2']))).toBe(true);
+    expect(so(ctx('POST', '/api/scm/mfg-sales-orders/SO-1/cancel-request/reject', ['scm.so_cancel.approve_l1']))).toBe(true);
+    expect(so(ctx('POST', '/api/scm/mfg-sales-orders/SO-1/cancel-request/withdraw', ['scm.so_cancel.approve_l1']))).toBe(true);
+    /* Raising a request is NOT admitted by the key — that still needs the area's edit. */
+    expect(so(ctx('POST', '/api/scm/mfg-sales-orders/SO-1/cancel-request', ['scm.so_cancel.approve_l1']))).toBe(false);
+    /* The other document's key does not open this prefix. */
+    expect(so(ctx('POST', '/api/scm/mfg-sales-orders/SO-1/cancel-request/approve', ['scm.po_cancel.approve']))).toBe(false);
+    /* Any other write on the prefix stays behind the area. */
+    expect(so(ctx('PATCH', '/api/scm/mfg-sales-orders/SO-1/status', ['scm.so_cancel.approve_l2']))).toBe(false);
+    expect(so(ctx('POST', '/api/scm/mfg-sales-orders/SO-1/cancel-request/approve', ['scm.access']))).toBe(false);
+    expect(cancelApproverWriteBypass('PO')(ctx('POST', '/api/scm/mfg-purchase-orders/po-1/cancel-request/approve', ['scm.po_cancel.approve']))).toBe(true);
+    expect(CANCEL_REQUEST_OPEN_READ_PATH).toBe('/cancel-request');
+  });
+});
+
 describe('the guard in front of the cancel', () => {
   it('lets every non-cancel status transition through untouched', async () => {
     const res = await patch(NOBODY, '/mfg-sales-orders/SO-1/status', { status: 'IN_PRODUCTION' });
@@ -245,12 +268,22 @@ describe('the guard in front of the cancel', () => {
     expect((await patch(L2, '/mfg-sales-orders/SO-1/status', { status: 'CANCELLED' })).status).toBe(403);
   });
 
-  it('a draft purchase order needs no approval; a live one does', async () => {
+  it('a draft purchase order needs no approval; a live one needs ONE signature', async () => {
     expect((await patch(NOBODY, '/mfg-purchase-orders/po-draft/cancel')).status).toBe(200);
-    expect((await patch(NOBODY, '/mfg-purchase-orders/po-1/cancel')).status).toBe(403);
+    const none = await patch(NOBODY, '/mfg-purchase-orders/po-1/cancel');
+    expect(none.status).toBe(403);
+    expect((await body(none)).message).toContain('an approval');
     await post(REQUESTER, '/mfg-purchase-orders/po-1/cancel-request', { reason: 'Supplier cannot deliver' });
-    await post(L1, '/mfg-purchase-orders/po-1/cancel-request/approve');
-    await post(L2, '/mfg-purchase-orders/po-1/cancel-request/approve');
+    expect(notify).toHaveBeenLastCalledWith(expect.anything(), 'raised', expect.objectContaining({ docType: 'PO' }));
+    /* The requester still cannot sign their own. */
+    expect(await body(await post(REQUESTER, '/mfg-purchase-orders/po-1/cancel-request/approve'))).toMatchObject({ error: 'self_approval' });
+    const one = await post(L1, '/mfg-purchase-orders/po-1/cancel-request/approve');
+    expect(one.status).toBe(200);
+    expect(await body(one)).toMatchObject({ execute: true, request: { status: 'APPROVED', l1_by: 21 } });
+    expect(rows()[0]?.l2_by ?? null).toBeNull();
+    expect(notify).toHaveBeenLastCalledWith(expect.anything(), 'approved', expect.objectContaining({ docType: 'PO', requesterUserId: 11 }));
+    /* Nothing is left to sign. */
+    expect((await post(L2, '/mfg-purchase-orders/po-1/cancel-request/approve')).status).toBe(409);
     expect((await patch(NOBODY, '/mfg-purchase-orders/po-1/cancel')).status).toBe(200);
     expect(rows()[0]).toMatchObject({ doc_type: 'PO', status: 'EXECUTED' });
   });

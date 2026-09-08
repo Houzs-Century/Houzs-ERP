@@ -50,12 +50,20 @@ close.
 ## 2. What a migrated order is, and why it is different
 
 A MIGRATED sales order is one the 2026-08 cutover carried across from AutoCount.
-It is identified by `scm.mfg_sales_orders.linked_ac_docno` — the origin AutoCount
-document number, written by `import-ac-outstanding-so.mjs`, and **NULL for every
-order the ERP created itself**. Nothing was stamped on those rows to mark them:
-the owner's rule is that adding a marker IS a change to the migrated data
+It is identified by **the pair** `doc_no` / `scm.mfg_sales_orders.linked_ac_docno`
+— corrected 2026-09-08, see §2b. The import writes `docNo: "HC-" + acDoc`, so a
+carried-across order's ERP number is a prefix plus the book number; the AutoCount
+write-back sends the ERP's OWN number, so on an order the ERP created the two are
+EQUAL. The read has one home, `backend/src/scm/lib/so-is-migrated.ts`.
+
+Nothing was stamped on those rows to mark them, and nothing is now: the owner's
+rule is that adding a marker IS a change to the migrated data
 (「你换不一样就代表我们的数据从 autocount 搬过来的就不一样了啊」), so the gate
-reads the column the import already wrote.
+reads the numbers the import already wrote.
+
+*The sentence here used to be "**NULL for every order the ERP created itself**".
+That was false — the write-back stamps the column on our own documents — and it
+is what §2b is about.*
 
 Two risks, both live, neither of which touches a new order:
 
@@ -103,30 +111,41 @@ instead of silently replaced.
 
 ---
 
-## 2b. ⚠️ A NEW ORDER JOINS THE LOCKED POPULATION MINUTES AFTER IT IS SAVED
+## 2b. A NEW ORDER USED TO JOIN THE LOCKED POPULATION MINUTES AFTER IT WAS SAVED
 
-*Found 2026-09-08. NOT fixed. Read `docs/bugs/0703-*` before lifting anything.*
+*Found 2026-09-08. **FIXED the same day** — `docs/bugs/0703-*`.*
 
-The sentence above — "`linked_ac_docno` … NULL for every order the ERP created
-itself" — **is false today.** On a successful AutoCount write-back the outbox
+The sentence §2 used to carry — "`linked_ac_docno` … NULL for every order the ERP
+created itself" — **was false.** On a successful AutoCount write-back the outbox
 stamps that same column on the ERP's own document
-(`backend/src/scm/lib/autocount-outbox.ts:1902`). So a brand-new sales order
-becomes "migrated" to this lock a few minutes after a salesperson saves it, and
-goes view-only — the exact opposite of 「只开新单」.
+(`backend/src/scm/lib/autocount-outbox.ts`). So a brand-new sales order became
+"migrated" to this lock a few minutes after a salesperson saved it, and went
+view-only — the exact opposite of 「只开新单」.
 
-Not a theory — it happened today. Run `34193634352` (2026-09-08, 14:12 MYT)
-shows `HC-SO-2609-001` — the ERP's own numbering — CREATEd by a person at
-14:06:51 MYT and sitting in the `linked_ac_docno IS NOT NULL` population, while
-the count of `linked_ac_docno IS NULL` is 0. Run `34194179668` (14:20 MYT) shows
-why: `scm.autocount_writeback = "1"`, ON for company 1, and `create_so SENT 1
-(of 1) last 2026-09-08T06:11` — 14:11 MYT, between the two.
+Not a theory. Run `34193634352` (2026-09-08, 14:12 MYT) showed `HC-SO-2609-001` —
+the ERP's own numbering — CREATEd by a person at 14:06:51 and sitting in the
+`linked_ac_docno IS NOT NULL` population, while the count of
+`linked_ac_docno IS NULL` was 0. Run `34194179668` (14:20 MYT) showed why:
+`scm.autocount_writeback = "1"`, ON for company 1, `create_so SENT 1 (of 1) last
+2026-09-08T06:11` — 14:11 MYT, between the two.
 
-It also blinds the verification: §4's "have staff create a new order" check
-counts `linked_ac_docno IS NULL`, so a successful write-back erases the proof
-that the lift worked.
+**What the predicate is now.** The PAIR, not the column. Measured on production
+before it changed — Actions -> *SO migrated shape (read-only)*, run
+`34214516108`: of 2,883 company-1 orders carrying `linked_ac_docno`, **2,882 are
+`HC-` + the book number** (cutover), **1 is equal to it** (write-back), and
+**0 are neither**. A second, independent signal — an `scm.autocount_outbox`
+`create_so` row — classifies the same 2,883 identically, with no disagreement.
 
-**Options and a recommendation are in `docs/bugs/0703-*`. This is the owner's
-call, and it has to be made BEFORE the freeze is lifted, not after.**
+**A pair that fits neither shape LOCKS.** It cannot be produced by the import,
+but `renumber-sales-orders.mjs` can give a migrated order a new `doc_no`, and
+reading that as "the ERP made this" would open a document the owner ruled shut.
+Empty today; *SO migrated shape (read-only)* is what will say when it stops
+being.
+
+**Why not a column.** `docs/bugs/0703-*` enumerates the three options. The short
+version: a durable column backfilled on the migrated rows is the thing the owner
+already ruled against in §2, so it is his call and not a session's — and the
+shape rule needs no ruling and writes to no row.
 
 ---
 
@@ -192,12 +211,14 @@ the explicit act.
 
 ## 4. Reading the current state — do this before and after every change
 
-```sql
-SELECT value, description, updated_at
-  FROM scm.app_config WHERE key = 'scm.migrated_so_lock';
-```
+Actions -> **Sales orders open for NEW — status (read-only)** -> Run workflow.
+It prints this row and `scm.write_freeze` side by side, with the two facts they
+are supposed to produce. `backend/scripts/check-so-open-for-new.mjs`.
 
-Without a database: the write-freeze status surfaces do NOT report this key.
+Actions -> **Migrated sales-order lock (open / close)** with `mode=plan` reads it
+too, and adds what a proposed value would change, per company, in documents. It
+writes nothing on `plan`.
+
 The observable check is the one that matters anyway — **have one ordinary member
 of staff open one migrated order** (`HC-…`) and confirm the orange *"View only —
 carried over from AutoCount"* banner is there and Edit is greyed. Not an
@@ -227,7 +248,7 @@ renders a curated sentence — never the generic "refresh and check", which on a
 migrated order is advice that loops.
 
 **On a new order** — nothing changes at all. No banner, no greying, every button
-where it was. (Until the write-back stamps it — see §2b.)
+where it was. (True again since 2026-09-08; §2b is why it briefly was not.)
 
 ---
 
@@ -279,17 +300,29 @@ above rather than to an outage sentence.
 
 ## 6. Putting it back
 
-**Lock migrated orders again** (undo an unlock):
+Actions -> **Migrated sales-order lock (open / close)** -> Run workflow:
 
-```sql
-UPDATE scm.app_config SET value = '1', updated_at = now()
- WHERE key = 'scm.migrated_so_lock';
-```
+| input | for "lock migrated orders again" |
+|---|---|
+| `target` | `prod` |
+| `mode` | `plan` first, read it, then `apply` |
+| `value` | `1` |
+| `allow_open` | leave blank — closing is not gated, only opening is |
+| `message` | blank leaves the sentence staff read alone |
 
-**Lock both companies:** `value = 'all'`.
+**Lock both companies:** `value = all`. **Correctness mode:** `value = verdict:1`
+(§10). **Unlock everything:** `value = off`, and that direction needs
+`allow_open = yes`.
 
-**If something is wrong and you are not sure what:** set `value = '1'`. That is
-the known-good state this document was written against.
+**If something is wrong and you are not sure what:** `value = 1`. That is the
+known-good state this document was written against.
+
+*There used to be a raw `UPDATE` here, and in §10, and CLAUDE.md's standing rule
+is that the owner is not a database console. The workflow refuses a malformed
+value before it is written, prints what it opens and what it closes per company
+in DOCUMENTS, and re-reads on a fresh connection to assert the resolved state —
+none of which a paste can do. `docs/bugs/0712-*`, and `docs/bugs/0710-*` for the
+same finding on the write-freeze row.*
 
 Note that the write freeze is still underneath. Re-freezing sales orders
 (`scm.write_freeze = '1'`) stops every sales-order write for company 1 whatever
@@ -508,12 +541,11 @@ migrated order stays shut exactly as it is today. The rows just sit there.
    stock-allocation cron. Re-confirm it is still on main before flipping, rather
    than trusting this paragraph.
 2. **Publish a verdict** (above). Read the run's `SO VERDICT` line.
-3. **Set the switch**, once the owner says so:
-
-   ```sql
-   UPDATE scm.app_config SET value = 'verdict:1', updated_at = now()
-    WHERE key = 'scm.migrated_so_lock';
-   ```
+3. **Set the switch**, once the owner says so. Actions -> **Migrated
+   sales-order lock (open / close)**, `target=prod`, `value=verdict:1`,
+   `mode=plan` first. The plan prints how many migrated documents the value
+   OPENS, per company; `mode=apply` then needs `allow_open=yes`, because
+   opening is the gated direction on this row.
 
 4. **Lift the write freeze** for the modules the three teams need. That is a
    DIFFERENT row with a DIFFERENT grammar — see §1 and the trap below.
@@ -537,27 +569,31 @@ they are repaired and the AutoCount payments are reconciled, the answer is still
 the one at the top of this file: set the value to `off` and retire the whole
 thing.
 
-### What correctness mode does and does NOT do about bug 0703
+### Bug 0703 is FIXED, and correctness mode never depended on it
 
 `docs/bugs/0703-a-brand-new-sales-order-becomes-read-only-minutes-after-it-i.md`
-is the blocker on the freeze lift: the AutoCount write-back stamps
-`linked_ac_docno` onto a **brand-new** sales order minutes after it is saved, so
-the order a salesperson just created starts reading as migrated and shuts —
+was the blocker on the freeze lift: the AutoCount write-back stamped
+`linked_ac_docno` onto a **brand-new** sales order minutes after it was saved, so
+the order a salesperson had just created started reading as migrated and shut —
 「只开新单」 producing the opposite of itself.
 
-**Correctness mode does not fix it.** A new order that has just been stamped is
-migrated as far as the predicate is concerned, and it carries no published
-verdict, so it locks — with a different sentence (*"cannot be confirmed against
-the AutoCount book right now"*) and the same effect.
+**It was fixed on 2026-09-08 by changing the predicate to the PAIR of document
+numbers** (§2b). A new order's ERP number IS the number in the book, so it is not
+migrated, in origin mode and in correctness mode alike.
 
-**It does bound it, which origin mode does not.** That order genuinely IS in the
-book now, and it matches, so the NEXT reconcile publishes it `clean` and it opens
-by itself. Under origin mode nothing it can ever do will open it. So the damage
-goes from permanent to one reconcile cycle — which is another reason the cadence
-in the section above is not optional.
+**Correctness mode could not have fixed it, and that is worth keeping.** A new
+order that had just been stamped was migrated as far as the old predicate was
+concerned, and it carried no published verdict, so it locked — with a different
+sentence (*"cannot be confirmed against the AutoCount book right now"*) and the
+same effect. What correctness mode DID do was bound the damage: the order
+genuinely was in the book and matched, so the next reconcile would publish it
+`clean` and it would open by itself. Under origin mode nothing it could ever do
+would open it.
 
-That is a mitigation, not the fix. The fix is the owner's choice of the options
-in 0703, and it is still owed.
+**The lesson that outlives both:** a fresh document had no verdict, and "no
+verdict" locks. Any future rule that decides a document's fate by looking it up
+in a table has to answer the question "what about the one created ten seconds
+ago" before it ships.
 
 ### Where the correctness-mode code is
 

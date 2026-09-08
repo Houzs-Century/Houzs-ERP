@@ -226,6 +226,23 @@ invoice problems at all.
   `docs/cutover-so-do-remainder-2026-09-08.md` and belong to the delivery-order
   lane. **Repair those two delivery notes and `I-2410-0192` and `I-2411-0323`
   resolve themselves.** Nothing in this document touches them.
+
+  > **CONFIRMED 2026-09-08 18:12, and it was a prediction until then.** Both
+  > delivery notes are now repaired — `HC-DO-001604` by section G at 16:19,
+  > `HC-DO-001953` by `docs/bugs/0713` at 18:08 — and a DRY-RUN taken afterwards
+  > (run `34213920643`) reads
+  > `WOULD CREATE HC-I-2411-0323 ... from HC-DO-001953` and
+  > `WOULD CREATE HC-I-2410-0192 ... from HC-DO-001604`. `I-2411-0323` read
+  > `nothing_to_invoice` before that repair, so the sentence above is now
+  > measured rather than reasoned.
+  >
+  > **NEITHER HAS BEEN WRITTEN. UNTESTED as applied.** One dispatch of *Migrated
+  > invoices* (`mode=apply kind=si target=prod`, confirm `I HAVE REVIEWED THE
+  > DRY-RUN`) takes IV absent **4 -> 2**. It was not run by the delivery-order
+  > lane because this tool takes no per-document narrowing, so one apply writes
+  > both — and `HC-I-2410-0192` carries RM 6,688.00 on a document that lane never
+  > touched. **This is the cheapest remaining item on the reconcile and it is
+  > this document's lane, not that one's.**
 * `DO-000097`'s RM 50.00 does not surface on the reconcile at all — a migrated
   delivery order carries no money to compare — so it is only visible through this
   gate. `docs/bugs/0669`.

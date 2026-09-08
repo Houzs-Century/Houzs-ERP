@@ -2,16 +2,18 @@
    document-cancel-queries — the ONE client of the cancellation-approval routes
    (backend/src/scm/routes/document-cancel-routes.ts), for both documents.
 
-   THE OWNER, 2026-09-08: 「SO 和 PO 取消的话需要 approval 2 层 — 已经输入原因」.
-   Cancelling a Sales Order or a Purchase Order is no longer one click: the
-   person who wants it cancelled writes a reason and RAISES A REQUEST; a level-1
-   approver signs; a level-2 approver signs; only then does the document's own
-   cancel route run — and the server refuses it until then
-   (`cancel_approval_required`), whatever screen sends it.
+   THE OWNER, 2026-09-08: 「SO 和 PO 取消的话需要 approval 2 层 — 已经输入原因」,
+   then the same day 「只有 SO 需要 sales director approval, PO 不需要 … PO 只要
+   Purchaser 一个审批」. So the depth is PER DOCUMENT — a Sales Order needs two
+   signatures (Sales Director, then Purchaser), a Purchase Order needs one
+   (Purchaser) — and the person who wants it cancelled writes a reason and
+   RAISES A REQUEST first. The server refuses the document's own cancel route
+   until the request is APPROVED (`cancel_approval_required`), whatever screen
+   sends it.
 
    NOTHING HERE CANCELS ANYTHING. The two cancel mutations that always existed
    (useUpdateMfgSalesOrderStatus with CANCELLED, useCancelPurchaseOrder) stay
-   the only way a document is cancelled; the level-2 approve answers
+   the only way a document is cancelled; the final approve answers
    `execute: true` and the CALLER runs that mutation. Keeping the executor out
    of this file is what keeps the SO's version protocol and the PO's quota
    release in the one place each already lives.
@@ -57,39 +59,63 @@ export type CancelRequestDetail = {
   needsApproval: boolean;
 };
 
+export type ApprovalLevel = 1 | 2;
+
+/** How many signatures each document needs. MUST match the server's table
+ *  (backend/src/scm/shared/document-cancel.ts APPROVAL_LEVELS). */
+export const APPROVAL_LEVELS: Record<CancelDocType, ApprovalLevel> = { so: 2, po: 1 };
+
+export const levelsFor = (docType: CancelDocType): ApprovalLevel => APPROVAL_LEVELS[docType];
+
 /** The permission that signs each level. MUST match the server's table
- *  (backend/src/scm/shared/document-cancel.ts CANCEL_APPROVE_KEY) — the screen
- *  only decides whether to SHOW a button; the server's 403 is the real gate. */
-export const CANCEL_APPROVE_KEY: Record<CancelDocType, { 1: string; 2: string }> = {
+ *  (CANCEL_APPROVE_KEY there) — the screen only decides whether to SHOW a
+ *  button; the server's 403 is the real gate. */
+export const CANCEL_APPROVE_KEY: Record<CancelDocType, Partial<Record<ApprovalLevel, string>>> = {
   so: { 1: 'scm.so_cancel.approve_l1', 2: 'scm.so_cancel.approve_l2' },
-  po: { 1: 'scm.po_cancel.approve_l1', 2: 'scm.po_cancel.approve_l2' },
+  po: { 1: 'scm.po_cancel.approve' },
 };
+
+/** Every key that may sign or refuse on this document type. */
+export const approveKeysFor = (docType: CancelDocType): string[] =>
+  Object.values(CANCEL_APPROVE_KEY[docType]).filter((k): k is string => typeof k === 'string');
 
 const BASE: Record<CancelDocType, string> = { so: 'mfg-sales-orders', po: 'mfg-purchase-orders' };
 
 export const docTypeOfRow = (row: Pick<CancelRequestRow, 'doc_type'>): CancelDocType => (row.doc_type === 'PO' ? 'po' : 'so');
 
 /** Which signature the request is waiting for; null when none. */
-export const pendingLevel = (status: string | null | undefined): 1 | 2 | null =>
+export const pendingLevel = (status: string | null | undefined): ApprovalLevel | null =>
   status === 'REQUESTED' ? 1 : status === 'L1_APPROVED' ? 2 : null;
 
-export const signaturesGiven = (status: string | null | undefined): number =>
-  status === 'L1_APPROVED' ? 1 : status === 'APPROVED' || status === 'EXECUTED' ? 2 : 0;
+/** True when a signature at `level` is the document's last one. */
+export const isFinalLevel = (docType: CancelDocType, level: ApprovalLevel): boolean => level >= levelsFor(docType);
+
+export const signaturesGiven = (docType: CancelDocType, status: string | null | undefined): number =>
+  status === 'L1_APPROVED' ? 1 : status === 'APPROVED' || status === 'EXECUTED' ? levelsFor(docType) : 0;
 
 export const isOpenCancelStatus = (status: string | null | undefined): boolean =>
   status === 'REQUESTED' || status === 'L1_APPROVED' || status === 'APPROVED';
 
 /** One sentence for the request's state, the same on every screen. */
-export function cancelRequestLine(row: Pick<CancelRequestRow, 'status'>): string {
+export function cancelRequestLine(row: Pick<CancelRequestRow, 'status' | 'doc_type'>): string {
+  const docType = docTypeOfRow(row);
+  const total = levelsFor(docType);
+  const given = signaturesGiven(docType, row.status);
   switch (row.status) {
-    case 'REQUESTED': return 'Waiting for level-1 approval (0 of 2)';
-    case 'L1_APPROVED': return 'Waiting for level-2 approval (1 of 2)';
-    case 'APPROVED': return 'Approved (2 of 2) — cancellation can run';
+    case 'REQUESTED': return total > 1 ? `Waiting for level-1 approval (${given} of ${total})` : `Waiting for approval (${given} of ${total})`;
+    case 'L1_APPROVED': return `Waiting for level-2 approval (${given} of ${total})`;
+    case 'APPROVED': return `Approved (${given} of ${total}) — cancellation can run`;
     case 'EXECUTED': return 'Cancelled';
     case 'REJECTED': return 'Rejected';
     case 'WITHDRAWN': return 'Withdrawn';
     default: return String(row.status);
   }
+}
+
+/** The approve button's words: names the level only where there are two. */
+export function approveLabel(docType: CancelDocType, level: ApprovalLevel): string {
+  if (levelsFor(docType) === 1) return 'Approve & cancel';
+  return level === 2 ? 'Approve & cancel (level 2)' : 'Approve (level 1)';
 }
 
 const detailKey = (docType: CancelDocType, key: string | null) => ['document-cancel-request', docType, key] as const;
@@ -135,8 +161,8 @@ export function useRaiseCancelRequest(docType: CancelDocType) {
   });
 }
 
-/** Sign the level the request is waiting for. `execute` is true after level 2:
- *  the caller must then run the document's own cancel mutation. */
+/** Sign the level the request is waiting for. `execute` is true after the
+ *  document's final signature: the caller must then run its own cancel. */
 export function useApproveCancelRequest(docType: CancelDocType) {
   const invalidate = useInvalidate(docType);
   return useMutation({
@@ -175,18 +201,17 @@ export function viewerCanApprove(row: CancelRequestRow, v: CancelViewer): boolea
   if (level == null) return false;
   if (same(v.userId, row.requested_by)) return false;
   if (level === 2 && same(v.userId, row.l1_by)) return false;
-  return v.can(CANCEL_APPROVE_KEY[docTypeOfRow(row)][level]);
+  const key = CANCEL_APPROVE_KEY[docTypeOfRow(row)][level];
+  return key != null && v.can(key);
 }
 
 export function viewerCanReject(row: CancelRequestRow, v: CancelViewer): boolean {
   if (pendingLevel(row.status) == null) return false;
-  const keys = CANCEL_APPROVE_KEY[docTypeOfRow(row)];
-  return v.can(keys[1]) || v.can(keys[2]);
+  return approveKeysFor(docTypeOfRow(row)).some((k) => v.can(k));
 }
 
 export function viewerCanWithdraw(row: CancelRequestRow, v: CancelViewer): boolean {
   if (!isOpenCancelStatus(row.status)) return false;
   if (same(v.userId, row.requested_by)) return true;
-  const keys = CANCEL_APPROVE_KEY[docTypeOfRow(row)];
-  return v.can(keys[1]) || v.can(keys[2]);
+  return approveKeysFor(docTypeOfRow(row)).some((k) => v.can(k));
 }

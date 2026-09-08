@@ -917,7 +917,11 @@ of them are) could be handed base + surcharges by an ordinary edit
 (`docs/bugs/0600-*`).
 
 `soIsMigrated` is REQUIRED, not optional — an optional flag lets a new call site
-keep the unprotected answer silently, which is how the gap survived. **An ADD
+keep the unprotected answer silently, which is how the gap survived. **What it
+MEANS changed on 2026-09-08**: it is now "this order came FROM AutoCount" — the
+pair test in the migrated-lock section below — and not "this order exists in
+AutoCount". A written-back order the ERP priced itself is not an imported price
+(`docs/bugs/0713-an-order-the-erp-priced-itself-started-being-trusted-as-the.md`). **An ADD
 line always passes `false`**, on a migrated order too: a line typed today has no
 AutoCount price to protect.
 
@@ -1783,12 +1787,38 @@ the cutover write freeze, not a replacement for it: the freeze
 (`docs/write-freeze-staged-lift.md`) decides whether the MODULE may be saved at
 all, this decides whether THIS DOCUMENT may.
 
-**The predicate is `scm.mfg_sales_orders.linked_ac_docno`** (mig 0271): the
-origin AutoCount number on an imported order, NULL on one the ERP created.
-Nothing is stamped on a migrated row to mark it — the owner's rule is that
-adding a marker IS a change to the migrated data
-(「你换不一样就代表我们的数据从 autocount 搬过来的就不一样了啊」). The read has
-one home, `scm/lib/so-is-migrated.ts`, and it fails CLOSED.
+**The predicate is the PAIR of document numbers** — `doc_no` against
+`scm.mfg_sales_orders.linked_ac_docno` (mig 0271) — and **not** the presence of
+that column, which is what it was until 2026-09-08.
+
+`linked_ac_docno` means *"this document exists in AutoCount"*, which is TWO
+populations: carried across by the cutover, and **pushed there by our own
+write-back**, which stamps the same column on an order the ERP created minutes
+earlier. So a brand-new sales order went view-only a few minutes after a
+salesperson saved it — 「只开新单」 producing the exact opposite of itself
+(`docs/bugs/0703-a-brand-new-sales-order-becomes-read-only-minutes-after-it-i.md`,
+and `docs/bugs/0713-an-order-the-erp-priced-itself-started-being-trusted-as-the.md`
+for the money half of the same mistake).
+
+The two populations are told apart by how each is BUILT: the cutover import
+writes `docNo: "HC-" + acDoc`, so `doc_no` is a prefix plus the book number; the
+write-back sends the ERP's OWN number, so the two strings are EQUAL. Measured on
+production before it shipped (*SO migrated shape (read-only)*, run
+`34214516108`): of 2,883 company-1 orders carrying the column, 2,882 prefixed,
+1 equal, **0 neither** — and a second, independent signal (an
+`scm.autocount_outbox` `create_so` row) classifies the same 2,883 identically.
+
+**Nothing is stamped on a migrated row**, and that is why a column was NOT the
+fix: the owner's rule is that adding a marker IS a change to the migrated data
+(「你换不一样就代表我们的数据从 autocount 搬过来的就不一样了啊」), so a predicate
+over the numbers the import already wrote is the only answer that does not need
+his ruling. The options are enumerated in `docs/bugs/0703-a-brand-new-sales-order-becomes-read-only-minutes-after-it-i.md`.
+
+The read has one home, `scm/lib/so-is-migrated.ts`
+(`soIsMigrated` / `soIsMigratedShape`), and it fails CLOSED **twice**: the read
+THROWS rather than answering false, and a pair fitting NEITHER shape answers
+TRUE. **A reader must select BOTH columns** — `select('doc_no,
+linked_ac_docno')` — because the rule is about the two numbers together.
 
 | | |
 |---|---|
@@ -3303,6 +3333,65 @@ directions, and the seat-size axis carries the same shape — `STOOL(25 X 40INCH
 is a stool's length by its width, and reading `40"` off it put a phantom on the
 same tally.
 
+**The book has TWO field separators, and the decoder only knew one** (2026-09-08,
+`docs/bugs/0713-the-colour-label-ran-to-the-end-of-the-segment-and-swallowed.md`).
+Most Desc2 separate their fields with a SLASH, and `COL:` was written to run to
+the next one — `[^\/\n]+`. Newer entries separate with a DOUBLE SPACE and carry
+no slash at all, so the colour label ran to the end of the line and swallowed the
+build, the seat size and every instruction after it: `colour : HR805 -31 ( 30
+inch )  1EL + C + 1 NA + 1ER` decoded to **nothing**, and the line fell to the
+bare `-1S` placeholder. The same span was deleted before the special-order sweep
+ran, so the reconcile was told the BOOK asked for nothing while the ERP line
+carried `wrap bottom to umbrella fabric` — the "book blank" shape on the specials
+axis. `382 of 10,696` sofa Desc2 in the committed snapshot carry a colour label
+whose value contains a double space.
+
+`splitColourValue()` now ends the label where what FOLLOWS identifies itself as a
+piece list, a seat size, or an instruction from `SPECIAL_WORD`. **The cut is
+positive, never speculative** — a double space alone does not end a colour,
+because a shade's own name contains one (`COL- BEETEX     HARRING 8371 04#COFFEE`).
+Measured over all 2,239 distinct (model, Desc2) pairs both ways on `recl`: **0
+builds lost, 0 builds changed**, 72 lines gained a build they never had, and 274
+lines got back an instruction the book always stated.
+
+#### The compartments axis: a label and its own bracket are ONE sofa
+
+The floor often writes the build twice — a label, then the same build spelled
+out in brackets: `3S (2+1)`, `2 seater (1EL + 1ER)`, `4S (60cm) (2s+2s)`,
+`[ 3S (2EL+1ER (26")) ]`. The bracket is the label EXPLAINED, never extra
+furniture, and `parse-sofa.mjs` has carried the owner's ruling since 2026-08-10:
+「2R(1+1) 就是 1A+1A」 — the title is dropped and the bracket wins.
+
+Until 2026-09-08 that rule was anchored to the END of the segment, so it fired
+only on the clean form and stood down on every spelling the shop actually uses:
+a size bracket on either side of the build, or residue left by the special-order
+strip. With the rule down, the label decodes as pieces AND the bracket decodes
+as pieces, and the line carries both — **the sofa reads one whole seat bigger
+than the book ordered.** Three PROCEEDED orders with purchase orders already
+raised were reported as differing from the book on exactly this
+(`docs/bugs/0713-the-label-and-the-build-it-names-were-both-counted-so-a-sof.md`).
+
+Two things worth carrying forward:
+
+- **A clarification in the account book can break a reader.** `HC-SO-010458`
+  and `HC-SO-011114` imported cleanly as `3S(32’Inch)` and decoded correctly;
+  the `(2+1)` was typed into AutoCount LATER by a salesperson being helpful. The
+  ERP row was right the whole time and the newer book text was what disagreed.
+- **On this axis, "follow the book" needs the decoder checked first.** The
+  standing rule is 「一律跟账本」, but the book here is a decoded reading, not a
+  quoted value. Correcting these three "to the book" would have added a phantom
+  two-seater to an order already in production. Read the ERP rows and the slip
+  PHOTO before writing a compartment — `probe-sofa-absent-pieces.mjs` puts the
+  build, its purchase order, the drawing and the decode on one screen.
+
+A compartment difference on a PROCEEDED order also has a second innocent cause:
+the owner may have RULED on that build from the drawing, in which case the ERP
+is meant to differ from the text. The reconcile does not read
+`sofa-compartment-corrections-*.json` and so reports those as `DIFFER` too — 5
+of the 8 flagged on 2026-09-08 were his own rulings
+(`docs/bugs/0714-the-reconcile-reports-a-sofa-the-owner-has-already-ruled-on.md`).
+**Check that file before treating a flagged compartment as work.**
+
 Drafts stay freely saveable — the scan pipeline still lands imperfect drafts;
 what changed is that they can no longer BECOME orders until resolved.
 ON_HOLD-resume and reopen re-enter CONFIRMED without re-gating (legacy orders
@@ -4443,10 +4532,14 @@ direct SO write path already passes `trustOperatorSelling = !(isPosTabletCaller)
   touched; a document a corrected total leaves inconsistent is NAMED.
   Ledger: `docs/bugs/0704-a-top-up-that-reads-the-outstanding-cut-is-blind-to-a-delive.md`.
 
-**A MIGRATED order is exempt.** When the SO header carries `linked_ac_docno`
-(migration 0271 — the marker that actually exists; `migrated_no_stock` lives only
-on `scm.grns` / `scm.delivery_orders`, never on the SO or PO header), the apply
-passes `trustOperatorSelling: 'including-zero'` and the stored price is kept. Two
+**A MIGRATED order is exempt.** When the order came FROM AutoCount —
+`soIsMigratedShape(doc_no, linked_ac_docno)`, not the mere presence of
+`linked_ac_docno` (migration 0271; `migrated_no_stock` lives only on
+`scm.grns` / `scm.delivery_orders`, never on the SO or PO header) — the apply
+passes `trustOperatorSelling: 'including-zero'` and the stored price is kept.
+Reading the bare column meant an order the ERP priced itself became "the book's
+price" the minute the write-back sent it:
+`docs/bugs/0713-an-order-the-erp-priced-itself-started-being-trusted-as-the.md`. Two
 reasons, both money:
 
 - that unit price is what AutoCount recorded as negotiated with the customer, and

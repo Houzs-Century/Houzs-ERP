@@ -192,7 +192,31 @@ documents nobody has repaired. **UNTESTED: the invoice APPLY has not been run** 
 that tool takes no per-document narrowing and one apply would also write
 `HC-I-2410-0192`, RM 6,688.00 on another lane's document.
 
-**Ref.** fix/do-swapped-codes, 2026-09-08.
+**CLOSED — the class reads ZERO on its own instrument.** The probe this entry
+added, dispatched on `main` after the merge, run
+[`34216439995`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34216439995):
+
+```
+THE CLASS: 34 delivery line(s) on 30 delivery order(s) carry a real item code
+           that the sales order they were converted from does not contain
+OF THE 30 ... the ERP HOLDS 4 and does not hold 26 (correctly — outstanding
+           means not yet delivered)
+Of the 4 it holds: 4 already carry every flagged line; 0 are SHORT, 0 line(s)
+```
+
+**What the audit RULED OUT — the reconcile's own base moved between the two
+runs, and the control is what refutes it.** Both reconcile runs were dispatched
+on `main`, and PR #3238 (*"the reconcile stops printing its own guessed pairing
+as a difference"*) merged at 10:34:55Z — AFTER both. #3239 merged at 10:01:25Z,
+which IS between the BEFORE (09:54Z) and the AFTER (10:10Z), so the AFTER run
+read a checker that had moved. That is a real contaminant and it is ruled out by
+the measurement, not by argument: every axis of SO, PO, GR, IV and PI is
+IDENTICAL across the two runs, and the only movement is DO's line count 2 -> 0
+with lines paired 819 -> 823 — **+4, exactly the four rows written.** A change in
+the checker would not land on one type's one column at exactly the write's own
+size.
+
+**Ref.** fix/do-swapped-codes (#3244, merged 2026-09-08 10:37Z), 2026-09-08.
 
 Module guide: `docs/modules/delivery-order.md`, *"A delivery line can carry a
 SUBSTITUTED item code"*.

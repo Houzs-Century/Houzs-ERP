@@ -3,7 +3,11 @@
    cancelling a Sales Order or a Purchase Order, and the guard that makes the
    two existing cancel endpoints wait for it.
 
-   THE OWNER, 2026-09-08: 「SO 和 PO 取消的话需要 approval 2 层 — 已经输入原因」.
+   THE OWNER, 2026-09-08: 「SO 和 PO 取消的话需要 approval 2 层 — 已经输入原因」,
+   and later that day 「只有 SO 需要 sales director approval, PO 不需要 … PO 只要
+   Purchaser 一个审批」 — so a Sales Order takes two signatures and a Purchase
+   Order one (shared/document-cancel.ts APPROVAL_LEVELS). Nothing here counts
+   to two: every handler asks the table.
 
    WHAT IT MOUNTS (routes/../index.ts):
 
@@ -67,13 +71,17 @@ import { poHasDownstream, soHasDownstream } from '../lib/downstream-lock';
 import { recordSoAudit } from '../lib/so-audit';
 import { recordEntityAudit } from '../lib/entity-audit';
 import { notifyCancelRequest } from '../../services/cancelRequestNotify';
+import { hasPermission } from '../../services/permissions';
 import {
   OPEN_CANCEL_STATUSES,
   approvalRefusal,
+  approveKeysFor,
   cancelNeedsApproval,
   cancelRequestRefusal,
   executionRefusal,
+  isFinalLevel,
   isOpenCancelStatus,
+  levelsFor,
   readReason,
   rejectRefusal,
   statusAfterApproval,
@@ -296,7 +304,8 @@ export function approveCancelHandler(docType: CancelDocType) {
     const { level } = verdict;
     const actor = actorOf(c);
     const at = nowIso();
-    const patch: Record<string, unknown> = { status: statusAfterApproval(level), updated_at: at };
+    const final = isFinalLevel(docType, level);
+    const patch: Record<string, unknown> = { status: statusAfterApproval(docType, level), updated_at: at };
     patch[`l${level}_by`] = actor.id;
     patch[`l${level}_by_name`] = actor.name;
     patch[`l${level}_at`] = at;
@@ -313,13 +322,13 @@ export function approveCancelHandler(docType: CancelDocType) {
     if (error) return c.json({ error: 'approve_failed', reason: error.message }, 500);
     if (!updated) return c.json({ error: 'stale', message: 'This request changed while you were looking at it — reload and try again.' }, 409);
 
-    await audit(c, docType, doc, 'APPROVE', `level ${level} of 2 approved`);
-    await notifyCancelRequest(c.env, level === 1 ? 'level1' : 'approved', {
+    await audit(c, docType, doc, 'APPROVE', `level ${level} of ${levelsFor(docType)} approved`);
+    await notifyCancelRequest(c.env, final ? 'approved' : 'level1', {
       docType, docNumber: doc.number, reason: String(open.reason ?? ''), companyId,
       requesterUserId: Number(open.requested_by) || null, requesterName: (open.requested_by_name as string | null) ?? null,
       actorUserId: actor.id, actorName: actor.name,
     });
-    return c.json({ request: updated, execute: level === 2 });
+    return c.json({ request: updated, execute: final });
   };
 }
 
@@ -433,6 +442,42 @@ export const cancelRequestsInbox = new Hono<{ Bindings: Env; Variables: Variable
 cancelRequestsInbox.use('*', supabaseAuth);
 cancelRequestsInbox.get('/', listCancelRequestsHandler);
 
+/* ── Letting an approver in who does not own the document's area ────────── */
+
+/** The document's cancel-request detail is readable by any scm.access holder:
+ *  the area guard's `openReadPaths` matches on this suffix. A level-1 Sales
+ *  Director signs Purchase Order cancellations without holding the procurement
+ *  area, and the card on the document has to load for them first. What it
+ *  shows — the reason, who raised it, who signed — is the approval itself. */
+export const CANCEL_REQUEST_OPEN_READ_PATH = '/cancel-request';
+
+const APPROVER_VERB = /\/cancel-request\/(approve|reject|withdraw)$/;
+
+/**
+ * `writeBypass` for the two document mounts (scm/index.ts): admit
+ * `POST …/cancel-request/{approve,reject,withdraw}` for a caller holding EITHER
+ * approve key of that document type, whatever their area level says.
+ *
+ * WHY. The area level answers "may this person work on Purchase Orders"; the
+ * approve key answers "may this person sign a cancellation". Prod 2026-09-08:
+ * the Sales Director (level 1) holds no procurement area at all, and the
+ * Purchaser (level 2) has Sales Orders at `view` — under the plain area guard
+ * neither could sign the document they were appointed to sign. The handler
+ * still runs approvalRefusal / rejectRefusal / withdrawRefusal on the real
+ * caller, so this admits nobody the key does not. Path-tight on purpose:
+ * raising a request, and every other write on the prefix, keeps needing the
+ * area's `edit`.
+ */
+export function cancelApproverWriteBypass(docType: CancelDocType) {
+  const keys = approveKeysFor(docType);
+  return (c: { req: { method: string; path: string }; get: (k: 'user') => unknown }): boolean => {
+    if (c.req.method.toUpperCase() !== 'POST' || !APPROVER_VERB.test(c.req.path)) return false;
+    const u = c.get('user') as { permissions_set?: Set<string>; permissions?: string[] } | undefined;
+    const granted = u?.permissions_set ?? u?.permissions ?? [];
+    return keys.some((k) => hasPermission(granted, k));
+  };
+}
+
 /* ── The guard in front of the cancel itself ─────────────────────────────── */
 
 /**
@@ -470,7 +515,7 @@ export function cancelApprovalGuard(docType: CancelDocType): MiddlewareHandler<{
     if (!cancelNeedsApproval(docType, (doc as { status?: string }).status)) return next();
 
     const open = await loadOpenRequest(sb, docType, key, co.companyId);
-    const refusal = executionRefusal(open);
+    const refusal = executionRefusal(docType, open);
     if (refusal) return c.json(refusal, 403);
 
     await next();
