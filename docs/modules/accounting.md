@@ -255,11 +255,19 @@ date). Three shared components moved for this round and for every page
 that uses them: `frontend/src/vendor/scm/components/SearchCombo.tsx` scrolls
 the highlighted option into view as ↓ moves and opens ON the first option;
 `frontend/src/vendor/scm/components/DateField.tsx` selects a pre-filled date
-on focus and masks typed digits (31032026 → 31/03/2026, `maskDmy`);
+on focus and masks typed digits (31032026 → 31/03/2026, `maskDmy`) — but only
+while every `/` on screen is one the mask itself placed (`separatorsAreMaskOwn`);
+a separator the operator typed is left alone and read by `parseDmy`, so
+`7/9/2026` no longer collapses to `79/20/26`. On blur, text that does not parse
+STAYS on screen with `aria-invalid` and a `role="alert"` message rather than
+reverting in silence. On a coarse pointer a tap on the box opens the OS calendar
+(`isCoarsePointer` → `openPicker`) and the calendar button carries a 44px hit
+area; mouse and keyboard behaviour is unchanged.
 `frontend/src/vendor/scm/components/MoneyInput.tsx` rests as 1,800.00
 (`fmtMoneyAtRest`) and edits plain. Pinned by `backend/tests/apInvoiceEdit.test.ts`,
 ApInvoices.test.tsx (pop-out, Edit, Copy, Insert / Enter, amounts),
-`SearchCombo.keys.test.tsx`, `DateField.mask.test.tsx`, `MoneyInput.test.tsx`.
+`SearchCombo.keys.test.tsx`, `DateField.mask.test.tsx`,
+`DateField.touch.test.tsx`, `MoneyInput.test.tsx`.
 
 **The AutoCount sections (2026-09-06).** Every account carries a `section`
 (`scm.accounts.section`, migration 20260906T0900) — the top node the

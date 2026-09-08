@@ -74,3 +74,40 @@
   opacity: 0;
   pointer-events: none;
 }
+
+/* Blur reported the draft as unparseable. Absolutely positioned so a field in
+   error does not change the height of the row it sits in — this component is
+   used in 163 places and most of them are dense form grids. */
+.draftError {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  z-index: 5;
+  white-space: nowrap;
+  font-family: var(--font-sans);
+  font-size: var(--fs-11, 11px);
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--c-festive-b, #B8331F);
+  pointer-events: none;
+}
+
+/* TOUCH TARGET. Apple and Google both specify 44px minimum; the button above
+   is 20px, which is why the picker was unreachable by finger. The hit area is
+   grown with a transparent overlay rather than by setting width/height, because
+   a 44px-tall child would push .wrap from ~30px to ~52px and re-flow every form
+   row on every phone and tablet. The overlay is part of the button, so a tap
+   anywhere in it activates the button; the icon keeps its 20px appearance.
+   Desktop (pointer: fine) is untouched. */
+@media (pointer: coarse) {
+  .iconBtn { position: relative; }
+  .iconBtn::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 44px;
+    height: 44px;
+  }
+}
