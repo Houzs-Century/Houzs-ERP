@@ -371,23 +371,75 @@ describe('several ERP lines sharing one book line', () => {
     expect(row.payload.body.Details).toBeUndefined();
   });
 
-  /* HALF A SOFA HAS NO SHAPE IN THE BOOK. The owner's ruling of 2026-09-08 is
-     option C - the sofa's own line waits for the delivery that completes it
-     while the other lines go on time, judged on the sofa's pieces only. Until
-     that is built, this refuses loudly instead of approximating. */
-  test('part of a sofa is REFUSED rather than approximated', async () => {
+  /* HALF A SOFA HAS NO SHAPE IN THE BOOK, so it WAITS — option C, the owner's
+     ruling of 2026-09-08. What used to happen is that the whole document was
+     refused for it, which held a pillow hostage to a sofa. */
+  test('the sofa WAITS and the pillow goes on time', async () => {
     const sb = withFlag('1', {
       mfg_sales_order_items: sofaSo(),
       delivery_order_items: [
-        /* one of the two pieces ships; the pillow ships too */
+        /* one of the two sofa pieces ships; the pillow ships too */
         { id: 'd1', delivery_order_id: 'do-1', so_item_id: 'so-1', item_code: 'HOK-5535 SOFA', qty: 1 },
         { id: 'd3', delivery_order_id: 'do-1', so_item_id: 'so-3', item_code: 'HOK-LONG PILLOW', qty: 3 },
+      ],
+    });
+    expect((await convertDo(sb)).queued).toBe(true);
+    const [row] = outbox(sb);
+    expect(row.status).toBe('pending');
+    /* THE PILLOW ONLY. 901830 is the sofa and its second piece is still here. */
+    expect(row.payload.body.DtlKeys).toEqual([901831]);
+  });
+
+  /* 「C 除了accessories 不看 就看sofa」 — the pillow is a different key and a
+     different question, so it never enters the sofa's decision. */
+  test('an undelivered ACCESSORY does not hold the sofa back', async () => {
+    const sb = withFlag('1', {
+      mfg_sales_order_items: sofaSo(),
+      delivery_order_items: [
+        /* BOTH sofa pieces ship; the pillow does not */
+        { id: 'd1', delivery_order_id: 'do-1', so_item_id: 'so-1', item_code: 'HOK-5535 SOFA', qty: 1 },
+        { id: 'd2', delivery_order_id: 'do-1', so_item_id: 'so-2', item_code: 'HOK-5535 SOFA', qty: 1 },
+      ],
+    });
+    expect((await convertDo(sb)).queued).toBe(true);
+    const [row] = outbox(sb);
+    expect(row.payload.body.DtlKeys).toEqual([901830]);
+  });
+
+  /* COUNTED ACROSS EVERY DELIVERY, not just this one. Each trip takes ONE
+     piece, so "did THIS document take them all" answers no on the very trip
+     that completes it — the sofa would wait for ever. */
+  test('the delivery that covers the LAST piece carries the sofa', async () => {
+    const sb = withFlag('1', {
+      mfg_sales_order_items: sofaSo(),
+      delivery_order_items: [
+        /* piece 1 went out on an EARLIER delivery order */
+        { id: 'd0', delivery_order_id: 'do-0', so_item_id: 'so-1', item_code: 'HOK-5535 SOFA', qty: 1 },
+        /* this one takes the last piece */
+        { id: 'd2', delivery_order_id: 'do-1', so_item_id: 'so-2', item_code: 'HOK-5535 SOFA', qty: 1 },
+      ],
+    });
+    expect((await convertDo(sb)).queued).toBe(true);
+    const [row] = outbox(sb);
+    expect(row.payload.body.DtlKeys).toEqual([901830]);
+    /* And still no quantity: the ERP counts pieces, the book counts sofas. */
+    expect(row.payload.body.Details).toBeUndefined();
+  });
+
+  /* A transfer with NO lines is not a transfer - the service falls back to
+     every outstanding line on the source, which is the defect this whole
+     function exists to prevent. */
+  test('a document that is ONLY an incomplete sofa is refused, not sent empty', async () => {
+    const sb = withFlag('1', {
+      mfg_sales_order_items: sofaSo(),
+      delivery_order_items: [
+        { id: 'd1', delivery_order_id: 'do-1', so_item_id: 'so-1', item_code: 'HOK-5535 SOFA', qty: 1 },
       ],
     });
     expect((await convertDo(sb)).queued).toBe(false);
     const [row] = outbox(sb);
     expect(row.status).toBe('skipped');
-    expect(row.last_error).toContain('ONE line');
+    expect(row.last_error).toContain('waits for the delivery that completes it');
     expect(outbox(sb).filter((r) => r.status === 'pending')).toHaveLength(0);
   });
 
