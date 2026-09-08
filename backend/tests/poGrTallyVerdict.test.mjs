@@ -33,6 +33,7 @@ import {
   tallyVerdict,
 } from "../scripts/lib/so-tally-verdict.mjs";
 import { crossCheck } from "../scripts/lib/tally-crosscheck.mjs";
+import { buildVerdictRows, makeVerdictRecorder } from "../scripts/lib/so-verdict-derive.mjs";
 
 const row = (over = {}) => ({
   doc_no: "HC-PO-000001",
@@ -235,5 +236,89 @@ describe("crossCheck — the report and the reconcile must state one run, or not
     const { pl, v } = built();
     pl.summary.perAxis = [["item code", 4]];
     expect(crossCheck({ type: "PO", v, payload: pl, log: okLog }).problems.join(" ")).toMatch(/no such axis/);
+  });
+});
+
+describe("THE OWNER'S RULING MUST REACH THE PER-DOCUMENT VERDICT, not only the SUMMARY", () => {
+  /* 「GR 0 没关系」, 2026-09-08. `document total` is recorded honestly inside the
+     document loop, because the PROOF that a receipt is migrated paperwork is a
+     separate read classified only after the whole type has been walked. If the
+     ruling never reaches the recorder, the goods receipts read as 109 documents
+     of work when 100 of them are the owner's own decision — `docs/bugs/0715`
+     with the arrow pointing the other way. */
+  const rec = () => makeVerdictRecorder();
+
+  it("a reclassified document stops being work and becomes book-gap-free clean", () => {
+    const r = rec();
+    r.seen("GR", "GR-1|PO-1", "HC-GR-1");
+    r.record("GR", "GR-1|PO-1", "HC-GR-1", "document total", "AutoCount RM 1646.00 vs ERP RM 0.00");
+    let rows = buildVerdictRows({ recorder: r, type: "GR", companyId: 1, measuredAt: "t", runId: "r" });
+    expect(rows[0].clean).toBe(false);
+    expect(bucketOf(rows[0])).toBe("work");
+
+    r.reclassify("GR", "GR-1|PO-1", "document total", "erp-zero-money", "proved migrated paperwork");
+    rows = buildVerdictRows({ recorder: r, type: "GR", companyId: 1, measuredAt: "t", runId: "r" });
+    expect(rows[0].clean).toBe(true);
+    expect(rows[0].axes).toEqual([]);
+    expect(bucketOf(rows[0])).toBe("identical");
+  });
+
+  it("the ruling is NAMED in the verdict, not silently dropped", () => {
+    const r = rec();
+    r.seen("GR", "GR-1|PO-1", "HC-GR-1");
+    r.record("GR", "GR-1|PO-1", "HC-GR-1", "document total", "x");
+    r.reclassify("GR", "GR-1|PO-1", "document total", "erp-zero-money", "proved");
+    const rows = buildVerdictRows({ recorder: r, type: "GR", companyId: 1, measuredAt: "t", runId: "r" });
+    expect(Object.keys(rows[0].notes)).toContain("erp-zero-money");
+    const out = renderVerdict(tallyVerdict(payload(rows)), { type: "GR" }).join("\n");
+    expect(out).toMatch(/「GR 0 没关系」/);
+  });
+
+  /* THE FENCES. This is the only method that can make a recorded document
+     clean, so it is the only one that could wrongly OPEN one. */
+  /* The `d.axes.has(axis)` fence, tested for what it ACTUALLY does. An earlier
+     version of this case asserted the axes array was untouched — which is true
+     whether the fence is there or not, because deleting an absent key is a
+     no-op. A test that passes both ways proves nothing (CLAUDE.md: "a checker
+     that cannot match reports a clean run"), and removing the fence was watched
+     NOT to fail it before this was rewritten.
+
+     What the fence really prevents is an INFLATED declaration: the owner is
+     told "N documents were excluded under your ruling", and N must be the
+     number that actually carried the finding. A reclassify for an axis that was
+     never recorded must add nothing at all. */
+  it("does not inflate the declared count with an axis that never had a finding", () => {
+    const r = rec();
+    r.seen("GR", "GR-2|PO-2", "HC-GR-2");
+    r.record("GR", "GR-2|PO-2", "HC-GR-2", "quantity", "real difference");
+    r.reclassify("GR", "GR-2|PO-2", "document total", "erp-zero-money", "never recorded on this doc");
+    const rows = buildVerdictRows({ recorder: r, type: "GR", companyId: 1, measuredAt: "t", runId: "r" });
+    expect(rows[0].axes).toEqual(["quantity"]);
+    expect(rows[0].clean).toBe(false);
+    /* THE ASSERTION THAT MOVES WHEN THE FENCE GOES. */
+    expect(rows[0].notes["erp-zero-money"]).toBeUndefined();
+    const v = tallyVerdict(payload(rows));
+    expect(v.declared.find((d) => d.klass === "erp-zero-money")).toBeUndefined();
+  });
+
+  it("refuses a class nobody declared — no dropping a finding into a channel nobody enumerates", () => {
+    const r = rec();
+    r.seen("GR", "GR-3|PO-3", "HC-GR-3");
+    r.record("GR", "GR-3|PO-3", "HC-GR-3", "document total", "x");
+    r.reclassify("GR", "GR-3|PO-3", "document total", "made-up-amnesty", "x");
+    const rows = buildVerdictRows({ recorder: r, type: "GR", companyId: 1, measuredAt: "t", runId: "r" });
+    expect(rows[0].axes).toEqual(["document total"]);
+    expect(rows[0].clean).toBe(false);
+  });
+
+  it("leaves the OTHER axes on the same document locking", () => {
+    const r = rec();
+    r.seen("GR", "GR-4|PO-4", "HC-GR-4");
+    r.record("GR", "GR-4|PO-4", "HC-GR-4", "document total", "x");
+    r.record("GR", "GR-4|PO-4", "HC-GR-4", "quantity", "y");
+    r.reclassify("GR", "GR-4|PO-4", "document total", "erp-zero-money", "proved");
+    const rows = buildVerdictRows({ recorder: r, type: "GR", companyId: 1, measuredAt: "t", runId: "r" });
+    expect(rows[0].axes).toEqual(["quantity"]);
+    expect(bucketOf(rows[0])).toBe("work");
   });
 });

@@ -238,6 +238,10 @@ export const DECLARED_LABEL = Object.freeze({
     "the ERP is blank on an order NOBODY HAS PROCEEDED — your rule 还没proceed还没确认的就可以直接放空的",
   "sofa-decomposition": "one book line is one ERP line PER COMPARTMENT, so line count and per-line price are not comparable",
   "blank-book-row": "AutoCount's own EMPTY row — no item code, no quantity, no money for the ERP to hold",
+  "erp-zero-money":
+    "a MIGRATED goods receipt carrying RM 0.00 — your decision 2026-09-08 「GR 0 没关系」. PROVED per document " +
+    "(migrated paperwork, zero inventory movements), never assumed; the ones that could NOT be proved are still " +
+    "counted as differences",
 });
 
 /**

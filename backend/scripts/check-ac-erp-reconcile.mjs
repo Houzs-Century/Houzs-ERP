@@ -1349,6 +1349,21 @@ for (const cfg of TYPES) {
     decision: cfg.zeroMoneyDecision ?? null,
     proof: zeroMoneyProof[t] ?? null,
   });
+  /* THE OWNER'S RULING HAS TO REACH THE PER-DOCUMENT VERDICT TOO, not only the
+     SUMMARY table. `document total` was recorded honestly in the loop above —
+     the proof that 「GR 0 没关系」 covers a given receipt is a separate read,
+     classified only once the whole type has been walked. Applying it here, from
+     the split's OWN output, is what stops 100 receipts the owner has already
+     ruled on from being counted as 100 documents of work.
+
+     `MZ.moved` is exactly the proved set: migrated paperwork, zero inventory
+     movements, ERP zero against a non-zero book. `impostors` are deliberately
+     NOT moved and stay recorded as differences. */
+  if (MZ.applied) {
+    for (const r of MZ.moved) {
+      VERDICT.reclassify(t, r.key, "document total", "erp-zero-money", r.line);
+    }
+  }
   /* THE TWO PAIRING-INDEPENDENT SPLITS. Both answer the same question about a
      column this checker cannot always compute honestly: is the finding a
      property of the DATA, or of the correspondence the checker had to invent
