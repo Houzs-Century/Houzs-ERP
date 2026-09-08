@@ -900,3 +900,78 @@ repeated inside the SQL and a human-touched document is refused — but "the
 dry-run prints EXACTLY the list apply consumes" is the standard
 `backfill-sofa-variants-from-desc2.mjs` sets in its own header, and this script
 does not meet it. Not fixed tonight.
+
+---
+
+## 10. AFTER OPENING — supervising the change, 2026-09-08
+
+The runbook above ends at the cut. This section is the day after it, and the
+owner's instruction reverses the direction everything above assumes:
+
+> 做可以监督到这期间我们打开系统的数据跟之前谁改了东西 谁改了 都根据他们改的数据为最高标准 跟着
+
+**The account book arbitrates the MIGRATION BACKLOG. It does not arbitrate a
+change a person makes after opening.** From the moment sales orders, delivery
+orders, purchase orders and goods receipts are open to staff, a person's edit in
+the ERP is the highest standard and AutoCount follows it. Every lane described
+above keeps its old direction for untouched documents; none of them may keep it
+for a row somebody has edited.
+
+### 10.1 Where he looks
+
+**Change Log**, `/change-log` — desktop nav under *System*, beside AutoCount
+Sync, and the same row in the phone menu. `docs/modules/change-log.md`.
+
+It reads BOTH audit trails across documents (sales orders from
+`scm.mfg_so_audit_log`, everything else from `scm.entity_audit_log`), folds them
+by document, and separates what a PERSON changed from what the SYSTEM changed.
+Opens on **People**, last 7 days.
+
+**The separation is the product, not a detail.** `recomputeSoStockAllocation`
+writes `UPDATE_LINE` and `UPDATE_STATUS` rows with exactly the shape a person's
+edit produces (`scm/lib/so-stock-allocation.ts:998` and `:1082`), and a check
+written the day before reported *"50 staff actions on migrated orders"* when all
+fifty were that cron (#3177). Both numbers are therefore always on screen, taken
+BEFORE the filter is applied — a filtered count can never read as the whole
+truth.
+
+### 10.2 The sync cannot silently win any more
+
+`sync-ac-delta.mjs` refuses to write the book's value over a field a person
+owns, per (document, FIELD) — so the book may still correct a field on the same
+order that nobody touched. Every refusal NAMES the document, both values and the
+person; a tally cell reading `3` told nobody which order to open.
+
+And the refusal is no longer the end of it: **`LANES=push`** carries the ERP's
+own value OUT to the account book through `enqueueEdit`, the same composer the
+sales-order routes call. OFF by default and behind the script's CONFIRM phrase,
+because it writes into the queue that feeds a licensed book.
+
+### 10.3 The one thing to know before trusting any of it
+
+Authorship is decided in ONE place, `backend/src/scm/shared/audit-author.ts`:
+
+```
+SYSTEM := actor_name_snapshot ILIKE 'system%'
+PERSON := everything else, an UNATTRIBUTED row included
+```
+
+**`actor_id` is not consulted, and must never be re-introduced.**
+`scm/middleware/auth.ts` replaces `c.get('user').id` with one pinned staff uuid
+for every authenticated SCM caller, so that column is a constant — it is on
+every human edit and on no migration row. Reading it as authorship is what made
+this guard refuse nothing, twice, in opposite directions (`docs/bugs/0700`,
+`docs/bugs/0702`, `docs/bugs/0704`). The pinning is now an EXECUTED assertion in
+`backend/src/scm/shared/audit-author.test.ts` rather than a sentence, so a third
+occurrence fails a test instead of losing a salesperson's work.
+
+`version` is not an authorship signal anywhere either — #3042 measured 80 of 81
+"conflicts" as the allocation sweep.
+
+### 10.4 NOT proven here
+
+Nothing in §10 has been run against production. The `push` lane has not been
+dispatched and `/change-log` has not been opened against the live database.
+**UNTESTED against prod data.** What IS proven is the logic, red-first: replant
+the removed `actor_id` arm and three suites go to 10 failed of 62; restore it and
+62 pass.
