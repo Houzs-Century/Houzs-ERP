@@ -29,10 +29,19 @@
 //      builds a Map keyed by DtlKey silently keeps ONE row per key, so a
 //      duplicated key makes the lane a coin flip. Counted per table, and
 //      counted again ACROSS companies, where a collision is certainly wrong
-//      because each company has its own AutoCount book.
+//      because each company has its own AutoCount book. The BENIGN case (one
+//      book line becoming a sofa's several compartment lines) is separated
+//      from a real collision by the MODEL and by the DOCUMENT — never by the
+//      item code, which differs in both cases; see the MODEL helper below.
 //   4  THE SOFA COLOUR — the same permutation test on the colour carried in
 //      `variants`, because an exact colour swap between two lines of one
 //      document is this class wearing different clothes.
+//
+// EVERY LINE->LINE CHAIN IN `scm`, INCLUDING THE TWO RETURNS. The first two
+// runs measured six edges and no return chain at all, so the probe was silent
+// about `delivery_return_items.do_item_id` and `purchase_return_items
+// .grn_item_id` — two of the nine client-supplied bind points that docs/bugs
+// /0672 site 15 is about. Silence printed exactly like a clean answer.
 //
 // NULLS ARE REPORTED, NOT SKIPPED. A count taken only over rows that already
 // carry a link cannot see a link that was never written, and a "0 mismatches"
@@ -74,6 +83,17 @@ const DOC = {
   PO: { line: "purchase_order_items", head: "purchase_orders", fk: "purchase_order_id", pk: "id" },
   SI: { line: "sales_invoice_items", head: "sales_invoices", fk: "sales_invoice_id", pk: "id" },
   PI: { line: "purchase_invoice_items", head: "purchase_invoices", fk: "purchase_invoice_id", pk: "id" },
+  /* THE TWO RETURN CHAINS WERE NEVER MEASURED. Run 34137796488 and its corrected
+     re-run 34139187692 both reported six edges, and neither of them was a return.
+     That was not a clean answer about returns — it was NO answer, and it printed
+     identically to a clean one, which is exactly the false negative this file
+     exists to refuse. Site 15 of docs/bugs/0672 names `purchase-returns.ts` and
+     `delivery-returns.ts` as two of its nine client-supplied bind points, so the
+     probe was silent about two of the very sites it was written to size.
+     `delivery_return_items.do_item_id` and `purchase_return_items.grn_item_id`
+     both carry `item_code` on both sides and are comparable like any other. */
+  DR: { line: "delivery_return_items", head: "delivery_returns", fk: "delivery_return_id", pk: "id" },
+  PR: { line: "purchase_return_items", head: "purchase_returns", fk: "purchase_return_id", pk: "id" },
 };
 const TYPES = Object.keys(DOC);
 
@@ -108,6 +128,25 @@ const NORM = (expr) => `upper(regexp_replace(btrim(coalesce(${expr}, '')), '\\s+
    id first, so a row carrying either is comparable, and the count of comparable
    pairs is printed so an empty answer can never pass as a clean one again. */
 const COL = (a) => `upper(btrim(coalesce(${a}.variants->>'colourId', ${a}.variants->>'colourLabel', ${a}.variants->>'colourCode', '')))`;
+
+/* THE MODEL, not the item code. Section 3 asks whether the rows sharing ONE
+   AutoCount DtlKey are a sofa's compartments (expected: one book line becomes
+   several ERP lines) or a genuine collision. The first version of that split
+   asked "do they name DIFFERENT item codes" and answered 295 of 296 and 98 of
+   98 — a worthless answer, because a sofa's compartments ALWAYS have different
+   item codes: MODEL-1S, MODEL-2S, MODEL-CNR. The discriminator answered a
+   different question from the one asked, the same mistake as the `colourCode`
+   one a layer down, and docs/bugs/0672 records it as UNKNOWN rather than
+   quietly repairing it.
+
+   What actually separates the two cases is the MODEL — the code before the
+   first dash. Compartments of one sofa share it; two unrelated products do not.
+   A second and stronger discriminator is printed beside it: whether the rows
+   sharing a key sit on MORE THAN ONE DOCUMENT. A sofa's compartments are all
+   lines of the same order, so a key spanning two documents is wrong whatever
+   the model says, and that test does not depend on the naming convention
+   holding. */
+const MODEL = (expr) => `split_part(${NORM(expr)}, '-', 1)`;
 
 async function columnsOf(tables) {
   const rows = await sql`
@@ -234,23 +273,41 @@ async function main() {
     try {
       const rows = await sql.unsafe(`
         WITH k AS (
-          SELECT c.linked_ac_dtlkey AS dtlkey, ${NORM("c.item_code")} AS code${headHasCompany ? `, h.company_id` : ``}
+          SELECT c.linked_ac_dtlkey AS dtlkey, ${NORM("c.item_code")} AS code,
+                 ${MODEL("c.item_code")} AS model, c.${d.fk} AS doc${headHasCompany ? `, h.company_id` : ``}
             FROM scm.${d.line} c
             JOIN scm.${d.head} h ON h.${d.pk} = c.${d.fk}
            WHERE c.linked_ac_dtlkey IS NOT NULL
+        ),
+        dup AS (
+          SELECT dtlkey,
+                 COUNT(*)::int                   AS n,
+                 COUNT(DISTINCT code)::int       AS codes,
+                 COUNT(DISTINCT model)::int      AS models,
+                 COUNT(DISTINCT doc)::int        AS docs
+            FROM k GROUP BY dtlkey HAVING COUNT(*) > 1
         )
         SELECT (SELECT COUNT(*) FROM scm.${d.line})::int                       AS total,
                (SELECT COUNT(*) FROM k)::int                                   AS keyed,
-               (SELECT COUNT(*) FROM (SELECT dtlkey FROM k GROUP BY dtlkey HAVING COUNT(*) > 1) x)::int AS dup_keys,
-               (SELECT COALESCE(SUM(n), 0) FROM (SELECT COUNT(*) AS n FROM k GROUP BY dtlkey HAVING COUNT(*) > 1) y)::int AS dup_rows,
-               (SELECT COUNT(*) FROM (SELECT dtlkey FROM k GROUP BY dtlkey HAVING COUNT(*) > 1 AND COUNT(DISTINCT code) > 1) w)::int AS dup_keys_diff_code
+               (SELECT COUNT(*) FROM dup)::int                                 AS dup_keys,
+               (SELECT COALESCE(SUM(n), 0) FROM dup)::int                      AS dup_rows,
+               (SELECT COUNT(*) FROM dup WHERE codes > 1)::int                 AS dup_keys_diff_code,
+               (SELECT COUNT(*) FROM dup WHERE models = 1)::int                AS dup_keys_one_model,
+               (SELECT COUNT(*) FROM dup WHERE models > 1)::int                AS dup_keys_many_models,
+               (SELECT COALESCE(SUM(n), 0) FROM dup WHERE models > 1)::int     AS dup_rows_many_models,
+               (SELECT COUNT(*) FROM dup WHERE docs > 1)::int                  AS dup_keys_many_docs,
+               (SELECT COALESCE(SUM(n), 0) FROM dup WHERE docs > 1)::int       AS dup_rows_many_docs,
+               (SELECT COALESCE(MAX(n), 0) FROM dup)::int                      AS dup_max_group
                ${headHasCompany ? `,
                (SELECT COUNT(*) FROM (SELECT dtlkey FROM k GROUP BY dtlkey HAVING COUNT(DISTINCT company_id) > 1) z)::int AS cross_company_keys` : ``}`);
       const r = rows[0];
       log(`   ${t}  ${d.line}`);
       log(`        ${r.keyed} of ${r.total} rows carry an AutoCount DtlKey`);
-      log(`        ${r.dup_keys} DtlKeys are carried by more than one row (${r.dup_rows} rows)`);
-      log(`        ... of those, ${r.dup_keys_diff_code} carry rows naming DIFFERENT products. The rest are ONE book line expanded into several ERP lines (a sofa's compartments), which is expected.`);
+      log(`        ${r.dup_keys} DtlKeys are carried by more than one row (${r.dup_rows} rows, largest group ${r.dup_max_group})`);
+      log(`        ... ${r.dup_keys_diff_code} of those carry rows naming different ITEM CODES — which decides NOTHING, see below`);
+      log(`        SAME MODEL (code before the first dash agrees): ${r.dup_keys_one_model} keys — one book line expanded into a sofa's compartments, BY DESIGN`);
+      log(`        DIFFERENT MODELS: ${r.dup_keys_many_models} keys (${r.dup_rows_many_models} rows) — a genuine collision; every Map keyed by DtlKey is a coin flip on these`);
+      log(`        SPANNING MORE THAN ONE DOCUMENT: ${r.dup_keys_many_docs} keys (${r.dup_rows_many_docs} rows) — a sofa's compartments are all on ONE document, so any of these is wrong regardless of model`);
       if (headHasCompany) log(`        ${r.cross_company_keys} DtlKeys appear under MORE THAN ONE company — each company has its own book, so any of these is wrong`);
       else log(`        (company not counted: ${d.head} has no company_id)`);
     } catch (err) {
