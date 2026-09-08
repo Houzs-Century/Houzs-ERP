@@ -1,6 +1,33 @@
 #!/usr/bin/env node
-/* backfill-ac-downstream-line-keys — give the MIGRATED goods receipts and
- * delivery orders the account book's own line key.
+/* backfill-ac-downstream-line-keys — give the MIGRATED goods receipts, delivery
+ * orders, SALES INVOICES and PURCHASE INVOICES the account book's own line key.
+ *
+ * ── WHY THE TWO INVOICE LANES WERE ADDED (2026-09-09) ──────────────────────
+ * The transfer-chain audit (PR #3304, run 34246919551) could not ask the
+ * invoices anything at all — 「销售发票、采购发票 — 问不了：每一行都没有账本行号」.
+ * That is not a missing comparison, it is a missing KEY: migration 0280 created
+ * `linked_ac_dtlkey` on scm.sales_invoice_items and scm.purchase_invoice_items
+ * and, as its own header says, nothing backfills it. Every invoice line
+ * therefore reached lib/ac-transfer-chain-run.mjs as `unkeyed`, and the report
+ * correctly printed "not measured" rather than a zero.
+ *
+ * Nothing about the comparison had to change to fix that. The reconcile already
+ * compares all six types, lib/so-tally-verdict.mjs already carries the IV and PI
+ * vocabulary, and lib/ac-transfer-chain-run.mjs already configures both edges.
+ * What was absent was the key they all dereference — so this backfill grew two
+ * lanes rather than a second checker being written.
+ *
+ * THE INVOICE-SHAPED DIFFICULTY, and what answers it. A migrated invoice's lines
+ * are built from OUR delivery order / goods receipt and the migration carried
+ * only the OUTSTANDING population, so the ERP deliberately holds a SUBSET of
+ * what the book's invoice bills — 131 of the 192 in-scope purchase invoices bill
+ * at least one line whose purchase order was never carried
+ * (lib/ac-chain-line-grain.mjs). Bucketed on (item, quantity) alone every one of
+ * those reads as "the book has 2 such lines, we have 1" and is refused for a
+ * reason that is SCOPE, not doubt. `IVDTL.FromDocNo` / `PIDTL.FromDocNo` is the
+ * discriminator and it is the BOOK'S OWN; the pairing module takes it as
+ * `sourceDoc` and decides per document whether both sides state enough for it to
+ * be used at all.
  *
  * THE OWNER, 2026-09-08: 「为什么会这样行号不一样呢？一定要一样的啊？」
  * They are not DIFFERENT. Migration 0280 added `linked_ac_dtlkey` to the four
@@ -50,8 +77,9 @@ import postgres from "postgres";
 import { buildScope, decodeSnapshot } from "./lib/ac-scope.mjs";
 import { grPairGrain } from "./lib/ac-gr-pair-grain.mjs";
 import { readMappingCsv, normCode } from "./lib/ac-mapping-csv.mjs";
-import { planLineKeys } from "./lib/ac-forced-line-pairing.mjs";
+import { planLineKeys, resolveErpSource } from "./lib/ac-forced-line-pairing.mjs";
 import { erpReconcileTypes } from "./lib/ac-reconcile-erp-sql.mjs";
+import { chainEdges } from "./lib/ac-transfer-chain-run.mjs";
 import { soProcessingDateFragment } from "./lib/so-processing-date.mjs";
 
 const DSN = process.env.DATABASE_URL;
@@ -118,6 +146,38 @@ const bookByDoc = (linesMap, desc2) => {
   return m;
 };
 
+/* ── THE INVOICE LANES NEED ONE MORE COLUMN OF THE BOOK'S OWN ──────────────
+   A migrated invoice's lines are built from OUR delivery order / goods receipt
+   and the migration carried only the OUTSTANDING population, so the ERP holds a
+   deliberate SUBSET of what the book's invoice bills: 131 of 192 in-scope
+   purchase invoices bill at least one line whose purchase order was never
+   carried (lib/ac-chain-line-grain.mjs). On (item, quantity) alone every one of
+   those reads as "the book has 2 such lines, we have 1" — refused for SCOPE
+   while sounding like doubt.
+
+   `IVDTL.FromDocNo` / `PIDTL.FromDocNo` is the discriminator, and it is the
+   book's own. It is passed through as `sourceDoc` on both sides;
+   lib/ac-forced-line-pairing.mjs decides per document whether both sides state
+   enough for it to be used at all, and falls back to the older rule when they
+   do not. */
+const bookInvoiceByDoc = (linesMap, desc2) => {
+  const m = new Map();
+  for (const [docNo, ls] of linesMap) {
+    m.set(docNo, ls.map((l) => ({ ...toBookLine(l, desc2), sourceDoc: l.fromDocNo || null })));
+  }
+  return m;
+};
+
+/** Every source document the book names on each invoice — the list
+ *  `resolveErpSource` picks our line's parent out of. */
+const bookSourcesByDoc = (linesMap) => {
+  const m = new Map();
+  for (const [docNo, ls] of linesMap) {
+    m.set(docNo, new Set(ls.map((l) => l.fromDocNo).filter(Boolean)));
+  }
+  return m;
+};
+
 /* ── THE SHAPE THAT MUST NOT MOVE ──────────────────────────────────────────
    Sums and per-status counts, not row counts. A row count agrees with itself
    after a trigger has rewritten every value in the table; a sum does not. */
@@ -155,6 +215,44 @@ async function shapeOf(sql) {
      AND (g.migrated_no_stock IS TRUE OR d.migrated_no_stock IS TRUE)`;
   const [mv] = await sql`SELECT count(*)::int rows, COALESCE(sum(qty), 0)::text units
     FROM scm.inventory_movements WHERE company_id = ${CO}`;
+  /* ── THE INVOICES, AND THE CONTROL ────────────────────────────────────────
+     The two tables this run now also writes, plus the three document types it
+     must NOT touch. A line key is identity, not value — so a sales-order,
+     purchase-order or goods-receipt figure moving during an invoice stamp is
+     the run's own proof that something else happened, and it refuses. */
+  const [si] = await sql`SELECT count(*)::int rows,
+      COALESCE(sum(i.qty), 0)::text qty,
+      COALESCE(sum(i.unit_price_sen), 0)::text unit_sen,
+      COALESCE(sum(i.line_total_sen), 0)::text line_sen,
+      count(*) FILTER (WHERE i.do_item_id IS NOT NULL)::int linked_do,
+      count(*) FILTER (WHERE i.so_item_id IS NOT NULL)::int linked_so
+    FROM scm.sales_invoice_items i JOIN scm.sales_invoices h ON h.id = i.sales_invoice_id
+    WHERE h.company_id = ${CO}`;
+  const [sh] = await sql`SELECT count(*)::int rows, COALESCE(sum(total_sen), 0)::text total_sen,
+      count(*) FILTER (WHERE migrated_no_stock)::int migrated
+    FROM scm.sales_invoices WHERE company_id = ${CO}`;
+  const [pi] = await sql`SELECT count(*)::int rows,
+      COALESCE(sum(i.qty), 0)::text qty,
+      COALESCE(sum(i.unit_price_sen), 0)::text unit_sen,
+      COALESCE(sum(i.line_total_sen), 0)::text line_sen,
+      count(*) FILTER (WHERE i.grn_item_id IS NOT NULL)::int linked_grn
+    FROM scm.purchase_invoice_items i JOIN scm.purchase_invoices h ON h.id = i.purchase_invoice_id
+    WHERE h.company_id = ${CO}`;
+  const [ph] = await sql`SELECT count(*)::int rows, COALESCE(sum(total_sen), 0)::text total_sen,
+      count(*) FILTER (WHERE migrated_no_stock)::int migrated
+    FROM scm.purchase_invoices WHERE company_id = ${CO}`;
+  const [so] = await sql`SELECT count(*)::int rows,
+      COALESCE(sum(i.qty), 0)::text qty,
+      COALESCE(sum(i.unit_price_sen), 0)::text unit_sen,
+      count(*) FILTER (WHERE i.linked_ac_dtlkey IS NOT NULL)::int keyed
+    FROM scm.mfg_sales_order_items i JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
+    WHERE h.company_id = ${CO}`;
+  const [po] = await sql`SELECT count(*)::int rows,
+      COALESCE(sum(i.qty), 0)::text qty,
+      COALESCE(sum(i.unit_price_sen), 0)::text unit_sen,
+      count(*) FILTER (WHERE i.linked_ac_dtlkey IS NOT NULL)::int keyed
+    FROM scm.purchase_order_items i JOIN scm.purchase_orders h ON h.id = i.purchase_order_id
+    WHERE h.company_id = ${CO}`;
   /* Readiness. A direct SQL write does NOT trigger an allocation recompute
      (docs/bugs/0675) — which is exactly why these three numbers must be
      IDENTICAL either side of this run, and why a change in them would mean
@@ -169,6 +267,12 @@ async function shapeOf(sql) {
     delivery_orders: dh,
     migrated_movement_leak: leak,
     inventory_movements: mv,
+    sales_invoice_items: si,
+    sales_invoices: sh,
+    purchase_invoice_items: pi,
+    purchase_invoices: ph,
+    so_items_CONTROL: so,
+    po_items_CONTROL: po,
     allocation: Object.fromEntries(alloc.map((r) => [r.s ?? "(null)", r.n])),
   };
 }
@@ -180,6 +284,12 @@ const printShape = (label, s) => {
   plain(`      do_items           rows ${s.do_items.rows}, qty ${s.do_items.qty}, unit_price_sen ${s.do_items.unit_sen}`);
   plain(`      delivery_orders    rows ${s.delivery_orders.rows}, local_total_sen ${s.delivery_orders.total_sen}, migrated_no_stock ${s.delivery_orders.migrated}`);
   plain(`      inventory_movements rows ${s.inventory_movements.rows}, units ${s.inventory_movements.units}`);
+  plain(`      sales_invoice_items    rows ${s.sales_invoice_items.rows}, qty ${s.sales_invoice_items.qty}, unit_price_sen ${s.sales_invoice_items.unit_sen}, line_total_sen ${s.sales_invoice_items.line_sen}, linked to a DO line ${s.sales_invoice_items.linked_do}, to an SO line ${s.sales_invoice_items.linked_so}`);
+  plain(`      sales_invoices         rows ${s.sales_invoices.rows}, total_sen ${s.sales_invoices.total_sen}, migrated_no_stock ${s.sales_invoices.migrated}`);
+  plain(`      purchase_invoice_items rows ${s.purchase_invoice_items.rows}, qty ${s.purchase_invoice_items.qty}, unit_price_sen ${s.purchase_invoice_items.unit_sen}, line_total_sen ${s.purchase_invoice_items.line_sen}, linked to a GRN line ${s.purchase_invoice_items.linked_grn}`);
+  plain(`      purchase_invoices      rows ${s.purchase_invoices.rows}, total_sen ${s.purchase_invoices.total_sen}, migrated_no_stock ${s.purchase_invoices.migrated}`);
+  plain(`      CONTROL mfg_sales_order_items rows ${s.so_items_CONTROL.rows}, qty ${s.so_items_CONTROL.qty}, unit_price_sen ${s.so_items_CONTROL.unit_sen}, keyed ${s.so_items_CONTROL.keyed}`);
+  plain(`      CONTROL purchase_order_items  rows ${s.po_items_CONTROL.rows}, qty ${s.po_items_CONTROL.qty}, unit_price_sen ${s.po_items_CONTROL.unit_sen}, keyed ${s.po_items_CONTROL.keyed}`);
   plain(`      migrated-document movement LEAK (must be 0): ${s.migrated_movement_leak.grn_rows} GR rows, ${s.migrated_movement_leak.do_rows} DO rows, ${s.migrated_movement_leak.units} units`);
   plain(`      SO line readiness  ${Object.entries(s.allocation).map(([k, v]) => `${k} ${v}`).join(", ")}`);
 };
@@ -204,6 +314,23 @@ async function main() {
   const linesOf = (t) => erpTypes.find((c) => c.t === t).lines();
   const grRows = await linesOf("GR");
   const doRows = await linesOf("DO");
+  const ivRows = await linesOf("IV");
+  const piRows = await linesOf("PI");
+
+  /* OUR parents, from lib/ac-transfer-chain-run.mjs's own edge SQL rather than
+     a second copy of it: that module already states which two documents an ERP
+     invoice line reaches and why there are two of them. `resolveErpSource` then
+     picks the one the BOOK names. */
+  const edges = chainEdges({ sql, CO, PDATE: soProcessingDateFragment(sql) });
+  const parentsOf = async (t) => {
+    const m = new Map();
+    for (const r of await edges.find((e) => e.t === t).rows()) {
+      m.set(String(r.id), [r.parent_a, r.parent_b]);
+    }
+    return m;
+  };
+  const ivParents = await parentsOf("IV");
+  const piParents = await parentsOf("PI");
 
   /* The DENOMINATORS, stated whole so no number below floats free. */
   const [grAll] = await sql`SELECT count(*)::int n,
@@ -213,10 +340,20 @@ async function main() {
       count(*) FILTER (WHERE i.linked_ac_dtlkey IS NOT NULL)::int keyed
     FROM scm.delivery_order_items i JOIN scm.delivery_orders h ON h.id = i.delivery_order_id
     WHERE h.company_id = ${CO}`;
+  const [ivAll] = await sql`SELECT count(*)::int n,
+      count(*) FILTER (WHERE i.linked_ac_dtlkey IS NOT NULL)::int keyed
+    FROM scm.sales_invoice_items i JOIN scm.sales_invoices h ON h.id = i.sales_invoice_id
+    WHERE h.company_id = ${CO}`;
+  const [piAll] = await sql`SELECT count(*)::int n,
+      count(*) FILTER (WHERE i.linked_ac_dtlkey IS NOT NULL)::int keyed
+    FROM scm.purchase_invoice_items i JOIN scm.purchase_invoices h ON h.id = i.purchase_invoice_id
+    WHERE h.company_id = ${CO}`;
   log(`scm.grn_items: ${grAll.n} rows for company ${CO}, ${grAll.keyed} already carry an AutoCount line key; ${grRows.length} sit on a receipt this run can address`);
   log(`scm.delivery_order_items: ${doAll.n} rows for company ${CO}, ${doAll.keyed} already carry one; ${doRows.length} sit on a delivery order this run can address`);
+  log(`scm.sales_invoice_items: ${ivAll.n} rows for company ${CO}, ${ivAll.keyed} already carry one; ${ivRows.length} sit on a sales invoice this run can address`);
+  log(`scm.purchase_invoice_items: ${piAll.n} rows for company ${CO}, ${piAll.keyed} already carry one; ${piRows.length} sit on a purchase invoice this run can address`);
 
-  const groupBy = (rows) => {
+  const groupBy = (rows, { parents = null, bookSources = null } = {}) => {
     const m = new Map();
     for (const r of rows) {
       if (!m.has(r.ac_no)) m.set(r.ac_no, []);
@@ -226,6 +363,12 @@ async function main() {
         qty: r.qty,
         suffixed: Boolean(r.line_suffix),
         storedKey: r.ac_dtlkey,
+        /* Null on the receipt and delivery lanes, which pass neither map — so
+           those two are bit-for-bit the run they were before the invoices
+           joined it. */
+        sourceDoc: parents
+          ? resolveErpSource(parents.get(String(r.id)) ?? [], bookSources?.get(r.ac_no) ?? new Set())
+          : null,
       });
     }
     return m;
@@ -246,6 +389,20 @@ async function main() {
       bookByDoc: bookByDoc(book.DO.lines, book.DO.desc2),
       erpByDoc: groupBy(doRows),
     },
+    {
+      t: "IV",
+      label: "sales invoice",
+      table: "sales_invoice_items",
+      bookByDoc: bookInvoiceByDoc(book.IV.lines, book.IV.desc2),
+      erpByDoc: groupBy(ivRows, { parents: ivParents, bookSources: bookSourcesByDoc(book.IV.lines) }),
+    },
+    {
+      t: "PI",
+      label: "purchase invoice",
+      table: "purchase_invoice_items",
+      bookByDoc: bookInvoiceByDoc(book.PI.lines, book.PI.desc2),
+      erpByDoc: groupBy(piRows, { parents: piParents, bookSources: bookSourcesByDoc(book.PI.lines) }),
+    },
   ];
 
   const allStamps = [];
@@ -254,7 +411,9 @@ async function main() {
     log(
       `${lane.t} — ${totals.documents} ${lane.label} document(s), ${totals.erpRows} line(s): ` +
         `${totals.stampedRows} to stamp (${totals.forcedUnique} forced by being the only candidate, ` +
-        `${totals.forcedInterchangeable} where the book's own lines are identical and therefore interchangeable); ` +
+        `${totals.forcedInterchangeable} where the book's own lines are identical and therefore interchangeable, ` +
+          `${totals.forcedBuildText} by the build text, ` +
+          `${totals.forcedSourceDoc} by the source document the book itself names); ` +
         `${totals.alreadyKeyed} already keyed; ${totals.refusedRows} NOT stamped; ` +
         `${totals.documentsFullyStamped} document(s) fully keyed; ` +
         `${totals.documentsNoBook} document(s) the book does not state; ` +
@@ -276,6 +435,31 @@ async function main() {
       for (const a of d.audits ?? []) {
         plain(`      DISAGREEMENT ${d.docNo} row ${a.id}: stored ${a.stored}, this rule derives ${a.derived} — NOT overwritten`);
       }
+    }
+
+    /* ── A BOOK LINE WE DO NOT HAVE IS NOT A KEYING PROBLEM, AND MUST NOT BE
+       READ AS ONE. There is no row to stamp, so the document can be reported
+       FULLY KEYED while the book still states a line the ERP never got. That is
+       precisely I-2606-0047: the book bills DSL-8050 twice from DO-010332 — a
+       2S at RM 3,250.00 and a 1S at RM 0.00 — and we hold only the 2S, which is
+       the "book qty 3 vs ours 2" the reconcile found. Every line we DO hold
+       keyed cleanly, so nothing above would have mentioned it.
+
+       The VERDICT on this axis belongs to check-ac-erp-reconcile.mjs ("a book
+       line we do not have"), not here, and it is not restated: this prints what
+       the pairing SAW so a fully-keyed document cannot be mistaken for an
+       identical one. */
+    const missing = perDoc.filter((d) => (d.unmatchedBookLines ?? []).length);
+    if (missing.length) {
+      const rows = missing.reduce((s, d) => s + d.unmatchedBookLines.reduce((n, u) => n + u.lines, 0), 0);
+      log(
+        `${lane.t} — ${rows} book line(s) on ${missing.length} document(s) have NO row on our side to carry a key. ` +
+          "Not a refusal (there is nothing to stamp) and not a clean bill either — the reconcile owns this axis:",
+      );
+      for (const d of missing.slice(0, 40)) {
+        plain(`      ${d.docNo}: ${d.unmatchedBookLines.map((u) => `${u.key} x${u.lines}`).join(", ")}`);
+      }
+      if (missing.length > 40) plain(`      ... and ${missing.length - 40} more`);
     }
     allStamps.push(...stamps.map((s) => ({ ...s, table: lane.table })));
   }
@@ -318,8 +502,18 @@ async function main() {
         WHERE g.company_id = ${CO} AND i.linked_ac_dtlkey IS NOT NULL) gr,
       (SELECT count(*)::int FROM scm.delivery_order_items i
         JOIN scm.delivery_orders h ON h.id = i.delivery_order_id
-        WHERE h.company_id = ${CO} AND i.linked_ac_dtlkey IS NOT NULL) do_`;
-  log(`AFTER: scm.grn_items carrying an AutoCount line key ${keyed.gr}/${grAll.n}; scm.delivery_order_items ${keyed.do_}/${doAll.n}`);
+        WHERE h.company_id = ${CO} AND i.linked_ac_dtlkey IS NOT NULL) do_,
+      (SELECT count(*)::int FROM scm.sales_invoice_items i
+        JOIN scm.sales_invoices h ON h.id = i.sales_invoice_id
+        WHERE h.company_id = ${CO} AND i.linked_ac_dtlkey IS NOT NULL) iv,
+      (SELECT count(*)::int FROM scm.purchase_invoice_items i
+        JOIN scm.purchase_invoices h ON h.id = i.purchase_invoice_id
+        WHERE h.company_id = ${CO} AND i.linked_ac_dtlkey IS NOT NULL) pi`;
+  log(
+    `AFTER: scm.grn_items carrying an AutoCount line key ${keyed.gr}/${grAll.n}; ` +
+      `scm.delivery_order_items ${keyed.do_}/${doAll.n}; ` +
+      `scm.sales_invoice_items ${keyed.iv}/${ivAll.n}; scm.purchase_invoice_items ${keyed.pi}/${piAll.n}`,
+  );
   await verify.end();
 
   const drift = [];

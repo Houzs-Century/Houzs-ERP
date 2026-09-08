@@ -1,9 +1,14 @@
-name: Backfill AutoCount line keys (goods receipts + delivery orders)
+name: Backfill AutoCount line keys (goods receipts + delivery orders + invoices)
 
-# Manual. Stamps scm.grn_items.linked_ac_dtlkey and
-# scm.delivery_order_items.linked_ac_dtlkey from the account book's own export,
-# so the reconcile stops GUESSING which of our rows answers which of the book's
-# and the write-back can name the line an operator changed.
+# Manual. Stamps linked_ac_dtlkey on scm.grn_items, scm.delivery_order_items,
+# scm.sales_invoice_items and scm.purchase_invoice_items from the account book's
+# own export, so the reconcile stops GUESSING which of our rows answers which of
+# the book's and the write-back can name the line an operator changed.
+#
+# The two INVOICE lanes were added 2026-09-09. Before them the transfer-chain
+# audit could not ask a sales or purchase invoice anything at all — every line
+# reached it with no book line number — so that axis printed "not measured" for
+# both types. The key is the whole of what was missing.
 #
 # Migration 0280 added the column and states "nothing backfills it". This is
 # that backfill. It stamps only where the document FORCES the pairing — see

@@ -264,6 +264,7 @@ export function chainEdges({ sql, CO, PDATE }) {
          invoice as a wrong link. */
       rows: () => sql`
         SELECT h.linked_ac_docno AS ac_no, h.invoice_number AS erp_no,
+               i.id::text AS id,
                i.linked_ac_dtlkey::text AS child_key,
                dh.linked_ac_docno AS parent_a, sh.linked_ac_docno AS parent_b,
                NULL::text AS parent_line_key,
@@ -288,6 +289,7 @@ export function chainEdges({ sql, CO, PDATE }) {
          reachable from our own invoice line through its receipt. */
       rows: () => sql`
         SELECT h.linked_ac_docno AS ac_no, h.invoice_number AS erp_no,
+               i.id::text AS id,
                i.linked_ac_dtlkey::text AS child_key,
                g.linked_ac_gr_docno AS parent_a, p.linked_ac_docno AS parent_b,
                NULL::text AS parent_line_key,
