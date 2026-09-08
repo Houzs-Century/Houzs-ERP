@@ -663,14 +663,52 @@ it as one:
    whole sofas — while `foldErpUnits` collapses every compartment row of that
    model into ONE unit of quantity 2. The buckets then cannot meet. Measured on
    9 goods-receipt pairs; `GR-004913 | PO-009018` is `SOFA 9028 x1, SOFA 9028 x1`
-   in the book. `backfill-ac-sofa-line-keys.mjs` refuses the same shape for the
-   same reason, so the two writers agree.
+   in the book.
 
-Closing (3) needs a per-BUILD identity, not a per-model one. The candidate is
-`grn_items.purchase_order_item_id` — but `reshape-migrated-grns.mjs`
-deliberately leaves that NULL exactly when a purchase order carries one item code
-twice, which may be these very rows, so it must be MEASURED before it is built
-on.
+**(3) IS CLOSED ON SALES ORDERS AND STILL OPEN ON THE OTHER TYPES, and the
+difference is EVIDENCE, not effort.** The per-BUILD identity (3) needs turned out
+to be the build text the importer already stored:
+`scm.mfg_sales_order_items.description2`. Where every compartment row of a model
+on a document carries one, `foldErpUnits` groups by it — two builds, two units —
+and `pairDocument` matches each unit to the book line stating the SAME text,
+exact after `normaliseDesc2` (`lib/sofa-desc2-match.mjs`, whose header records
+what a loose `includes` cost) and a perfect bijection or nothing. It splits ONLY
+on evidence: one blank build text on that model and it folds exactly as before.
+
+`grn_items` and `delivery_order_items` carry no build text to pass, so their fold
+is untouched and (3) stands there. That is proved rather than assumed — the
+downstream plan was run from `main` (`34210033771`) and from the branch carrying
+the split (`34210128201`) and both read `GR ... 563 already keyed; 73 NOT
+stamped` and `DO ... 796 already keyed; 36 NOT stamped`, character for character.
+
+On sales orders the clause was worth **116 of 224 stamped rows** (plan
+`34210364936`), and it also dissolved the "uneven compartments" refusals: those
+builds were not uneven, they were two sofas folded into one unit.
+
+### The SALES-ORDER sofas — APPLIED 2026-09-08
+
+`backfill-ac-sofa-line-keys.mjs` (workflow **Backfill AutoCount line keys (SOFA,
+sales orders — plan by default)**) no longer carries a matching rule of its own:
+it reads `ac-reconcile-truth.json.gz` and calls the same `planLineKeys`. Its own
+rule had stamped ZERO rows in every run it ever had, for three reasons that were
+all defects of the rule —
+`docs/bugs/0710-the-sofa-line-key-backfill-could-never-stamp-a-single-row-so.md`.
+
+Apply run `34210459226`: `APPLIED: 224 row(s) stamped of 224 planned`, on 121
+book lines across 81 documents. `MODE=apply` needs
+`CONFIRM="STAMP SALES ORDER SOFA LINE KEYS"`.
+
+| | before | after |
+|---|---|---|
+| sales orders with a keyless line — **uneditable by composeEdit** | **89** | **8** |
+| `mfg_sales_order_items` sofa rows with no key | 237 / 1,168 | 13 / 1,168 |
+| the reconcile's sofa `unread` compartment answers (SO) | 195 | 113 |
+
+**Scope: sales orders, and only the SOFA builds on them.** Purchase orders are
+the lane's control and were deliberately not touched. The build invariant is now
+a STANDING measurement the plan takes on a fresh connection — run `34211018125`:
+across all 523 migrated sales orders holding a sofa, 578 builds, **2** not
+agreeing on one key, both pre-existing and both refused by this tool.
 
 **What the keys bought, measured against the run before them.** Reconcile
 `34189267879` (13:05 +08, before) against `34195045626` (14:32 +08, after). The
@@ -2491,6 +2529,49 @@ also parsed **`Desc2`** to get the ERP's variants —
 > Not to be confused with `blockFor` in `backend/scripts/lib/po-arm-own-text.mjs`:
 > that one carries `size` and NOT `specials` because it is a COMPARISON
 > projection for a diagnostic, never the block a writer persists.
+
+> **And the FREE-TEXT name resolver moved the same way, 2026-09-08.** A code-less
+> AutoCount sales line names its product only in the Description, and
+> `import-ac-outstanding-so.mjs` resolves that against the live company-1 pick
+> list before the owner's blank-line rule can see it. That resolver is now
+> `buildNameResolver` in `backend/scripts/lib/ac-name-resolver.mjs` — a pure
+> move — beside `buildTracedNameResolver`, which is the SAME function returning
+> the rule it took as well as the answer. It had to come out: the drop rule
+> below fires on a resolver MISS and on a genuinely blank line identically, and
+> nothing could ask the resolver why it failed without writing a second copy of
+> the matcher. `backend/tests/acNameResolver.test.mjs` pins that the two agree
+> on every input, so a trace can never report a branch the import does not take.
+
+### The owner's blank-line rule, and the three populations it catches
+
+Owner, 2026-08-09: a code-less AutoCount sales line **with a price is a charge**
+and becomes `TRANSPORTATION CHARGES`; **with no price it is dropped**. The rule
+is his and it stands. What it catches is not one kind of thing, and the import
+prints one number for all of them (`Blank zero-value lines dropped: 17`), which
+is why the owner was answering a count rather than a list
+(`docs/bugs/0711-the-cutover-import-dropped-seventeen-book-lines-behind-one-c.md`).
+
+Measured over all 14,041 lines of `backend/scripts/data/ac-outstanding-so.json.gz`,
+the file the importer read — 22 code-less lines, 5 priced, 17 dropped:
+
+| class | n | who owns it |
+| --- | --- | --- |
+| NAMED GOODS the resolver could not read | 2 | the MATCHER. The drop is a resolver miss wearing the rule's clothes |
+| a build INSTRUCTION on a line of its own (`COLOUR : 885-4`, `LEG: FOLLOW DISPLAY`) | 2 | the FIELD it belongs on — a colour is a variant, never a product line |
+| the book states NOTHING (no code, no name, no money) | 13 | nobody, for the 12 at quantity 0. The 13th, `SO-011384` at quantity **4**, is the owner's: the book orders four of something it never names |
+
+`backend/scripts/probe-dropped-book-lines.mjs` +
+`.github/workflows/probe-dropped-book-lines.yml` is the read-only way to re-ask
+this — it classifies every dropped line, runs the LIVE pick list through the
+resolver above so a miss reports the branch it fell out of, and says per document
+what the ERP holds and how many of its rows still carry an AutoCount line key.
+
+**The other importers do NOT share this rule, and the difference matters.**
+`import-ac-outstanding-po.mjs` never drops a code-less purchase line — it records
+an exception, because `scm.purchase_order_items.item_code` is NOT NULL and the
+row cannot be inserted at all (owner 2026-09-02: 「要进 accessories」, which needs
+a product minted first). Where that line is the document's ONLY line, the whole
+purchase order stays out of the ERP.
 
 `Desc2` was already being sent, so this was missing CONTENT, not a missing field.
 `composeDescription2` emitted `Col / Fabric / Seat / Leg` and read colour off

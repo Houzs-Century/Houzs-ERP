@@ -1,0 +1,53 @@
+name: Probe dropped book lines (read-only)
+
+# The cutover sales-order import applies the owner's 2026-08-09 rule to a line
+# it cannot resolve to a product: PRICED -> a charge, ZERO-PRICED -> dropped.
+# The rule is his and is not in question. What it CAUGHT was never measured, and
+# he answered 「这些都要」 before anyone put the list in front of him. This puts
+# the list in front of him, split into the three populations it really is —
+# goods the matcher failed on, build instructions that belong on another field,
+# and rows the book itself describes with nothing — and says, per document, what
+# the ERP holds today.
+#
+# READ-ONLY. The script takes no APPLY flag and every statement in it is a
+# SELECT. The AutoCount side is the committed import cut
+# backend/scripts/data/ac-outstanding-so.json.gz — the exact file the importer
+# read — because the book itself is reachable only over ZeroTier from the office
+# and a hosted runner has no route to it.
+on:
+  workflow_dispatch:
+    inputs:
+      company_id:
+        description: "ERP company (AED_HOUZS is company 1)"
+        required: false
+        default: "1"
+        type: string
+
+# Deliberately NOT in the deploy concurrency group: it touches nothing and must
+# never queue behind - or displace - a release.
+concurrency:
+  group: probe-dropped-book-lines
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/probe-dropped-book-lines.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first
