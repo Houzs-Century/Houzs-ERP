@@ -3108,6 +3108,34 @@ beside the one that does not. Read the split, never the total, when deciding
 whether there is anything left to do
 (`docs/bugs/0674-the-specials-recording-plan-reported-its-stable-denominator.md`).
 
+#### The specials axis counts what the DECODER said the book asks for
+
+Every verdict above is computed against `parseSofa(...).specials`, so a phrase
+the decoder invents is indistinguishable, in the report, from an option the shop
+actually wrote down. That is not hypothetical: until 2026-09-08 a fabric's shade
+name — `BO315-26 (YELLOW)`, `NX011 (BEIGE)`, `M2402-19(DARK GREY)` — was read as
+a special order, because `unlabelledColour` strips the bracket to confirm the
+code against the fabric library and then LEFT it in the text, where the
+structure pass freed it into a token and the rider catch-all turned it into a
+request. Seven such lines reached the owner's go-live tally as
+`ERP blank on a proceeded order`, the one column the report calls WORK, and none
+of them was work
+(`docs/bugs/0705-a-fabric-shade-name-in-brackets-was-read-as-a-special-order.md`).
+
+`isTradeName()` in `backend/scripts/lib/parse-sofa.mjs` now takes the bracket
+out, and only ever on a code the LIVE library confirms. It is deliberately
+narrow — at most two plain alphabetic words, no digits, and neither
+`SPECIAL_WORD` nor `INSTRUCTION_TOKEN` — because the two errors do not cost the
+same: dropping `(No armrest)` builds a sofa wrong, keeping `(PEARL)` only makes
+a report noisy. Anything unrecognised stays a special.
+
+**The rule this leaves behind, for any axis, not just specials:** before quoting
+a variant difference as migration backlog, read the book's own Desc2 for one of
+the offenders. `node --test scripts/lib/parse-sofa.test.mjs` pins both
+directions, and the seat-size axis carries the same shape — `STOOL(25 X 40INCH)`
+is a stool's length by its width, and reading `40"` off it put a phantom on the
+same tally.
+
 Drafts stay freely saveable — the scan pipeline still lands imperfect drafts;
 what changed is that they can no longer BECOME orders until resolved.
 ON_HOLD-resume and reopen re-enter CONFIRMED without re-gating (legacy orders
