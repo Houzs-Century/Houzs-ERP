@@ -79,6 +79,14 @@ editable fields — `scm.delivery_order_items.committed_variant_key` already exi
 for the drop-ship path. That is a change to the stock/money path and is the
 owner's call.
 
+**PROVEN in production 2026-09-08 23:49 (+08).** The first delivery raised after
+this shipped, HC-DO-2609-013 off HC-SO-012565, wrote its OUT movements under the
+lot's own key with **no `legheight=default`**, and both lots under batch
+HC-PO-009435 went `qty_remaining` 1 -> 0 with a consumption row each. That is the
+whole defect closed end to end: this morning's three deliveries moved goods and
+consumed nothing; this one consumed what it shipped. Full trace in
+`docs/bugs/0714-the-sofa-purchase-line-was-filed-as-others-so-the-sales-orde.md`.
+
 **Ref.** claude/so-do-conversion-remaining-wz1d5x, 2026-09-08. Found while
 finishing `docs/bugs/0714-the-sofa-purchase-line-was-filed-as-others-so-the-sales-orde.md`,
 whose LIKELY this refutes: the three steps there were necessary and were not
