@@ -105,7 +105,7 @@ const TYPES = {
         NULL::int AS line_count
       FROM scm.purchase_orders WHERE company_id = ${CO} AND linked_ac_docno IS NOT NULL`,
     lines: () => sql`SELECT h.linked_ac_docno AS ac_no, i.item_code, i.qty::float8 AS qty,
-        i.unit_price_sen, i.total_sen, i.linked_ac_dtlkey AS ac_dtlkey, i.line_suffix,
+        i.unit_price_sen, i.line_total_sen AS total_sen, i.linked_ac_dtlkey AS ac_dtlkey, i.line_suffix,
         0 AS line_no, i.item_group, i.description2, NULL::text AS remark
       FROM scm.purchase_order_items i
       JOIN scm.purchase_orders h ON h.id = i.purchase_order_id
@@ -117,7 +117,7 @@ const TYPES = {
         COALESCE(local_total_sen, 0) AS total_sen, NULL::int AS line_count
       FROM scm.delivery_orders WHERE company_id = ${CO} AND linked_ac_docno IS NOT NULL`,
     lines: () => sql`SELECT h.linked_ac_docno AS ac_no, i.item_code, i.qty::float8 AS qty,
-        i.unit_price_sen, i.total_sen, i.linked_ac_dtlkey AS ac_dtlkey, i.line_suffix,
+        i.unit_price_sen, i.line_total_sen AS total_sen, i.linked_ac_dtlkey AS ac_dtlkey, i.line_suffix,
         COALESCE(i.line_no, 0) AS line_no, i.item_group, i.description2, NULL::text AS remark
       FROM scm.delivery_order_items i
       JOIN scm.delivery_orders h ON h.id = i.delivery_order_id
