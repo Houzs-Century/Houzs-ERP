@@ -226,3 +226,62 @@ sofa. `docs/bugs/0691` named it for line counts. It also explains:
 - `SO-012571`'s RM 88.00.
 
 It is one flag, and it is wrong for every non-sofa line on a mixed document.
+
+---
+
+## Which of these a salesperson could TOUCH once PO / DO / SO open
+
+*Added 2026-09-08, `fix/sync-human-edit-guard`. The owner asked for PO, DO,
+新 SO and edit SO. Every one of the 40 differences above sits on a MIGRATED
+document, so this is the list of which ones stop being read-only.*
+
+The two switches do different things, and the answer splits on the AREA the
+document lives in, not on the class it was given above:
+
+| type | count | area the document lives in | after step 1 (freeze lift) | after step 2 (`scm.migrated_so_lock = 'off'`) |
+| --- | ---: | --- | --- | --- |
+| SO | 19 | `scm.sales.orders` | still read-only — the migrated lock holds | **editable** |
+| DO | 4 | `scm.sales.delivery` | **editable immediately** | unchanged — this lock is SO-only |
+| GR | 11 | `scm.procurement.grn` | shut | shut |
+| IV | 6 | `scm.sales.invoices` | shut | shut |
+| PI | 1 | `scm.procurement.pi` | shut | shut |
+| PO | 0 | `scm.procurement.po` | — | — |
+
+**23 of the 40 become touchable; 18 stay shut.** (19 SO + 4 DO = 23; 11 GR +
+6 IV + 1 PI = 18.)
+
+### The four DO ones are the ones to look at, because step 1 alone opens them
+
+`migratedSoReadonly()` guards sales orders. **Nothing equivalent guards delivery
+orders** — `/delivery-orders-mfg/*` carries the area guard and no document-level
+lock — so lifting `scm.sales.delivery` makes `DO-001953`, `DO-004903`,
+`DO-002544`, `DO-011465` and `DO-001604` editable in the same minute, migrated
+lock or not.
+
+**Does that matter? For three of them, yes, and in a specific way:**
+`DO-001953`, `DO-004903` and `DO-001604` are the **Z** rows — the ERP is
+genuinely missing goods or money the book has, and four of the six IV gaps are
+downstream of exactly these. If a person "tidies" one of them by hand before the
+line repair runs, the repair's own preconditions stop holding and the invoice
+chain has to be re-diagnosed from a document nobody has a before-picture of.
+
+`DO-002544` (**Y**, an annotation with no goods) and `DO-011465` (**X**, the
+checker's own sofa artefact) are harmless to touch.
+
+### The nineteen SO ones, after step 2
+
+They are editable, and the sync will no longer overwrite an edit made to them —
+`docs/migrated-so-lock.md` §2a. Two consequences worth stating plainly:
+
+1. **An edit is not a repair.** A salesperson correcting `SO-010789` by hand
+   makes the reconcile agree and leaves `docs/bugs/0697`'s population of 16
+   documents / 22 late lines / RM 750.00 unfixed everywhere else. Worse, the
+   repair that carries the population can no longer be run over that document
+   without a person's edit standing in its way — which is precisely the refusal
+   this PR added, working as intended, at the cost of a manual reconciliation.
+2. **`SO-000021` and `SO-013160` are already the owner's call** (W). An edit by
+   anyone else settles a question that was put to him.
+
+**Recommendation: land the population repairs BEFORE step 2, not after.** The
+sync guard makes a person's edit safe from the machine; it does not make it safe
+from being the wrong repair.
