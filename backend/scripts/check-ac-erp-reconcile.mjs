@@ -102,6 +102,8 @@ import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 import { parseBedframe } from "./lib/parse-bedframe.mjs";
 import { SOFA_MODEL_ALIAS, parseSofa } from "./lib/parse-sofa.mjs";
+import { readMappingCsv, normCode } from "./lib/ac-mapping-csv.mjs";
+import { classifyItemCode, modelOf } from "./lib/item-code-class.mjs";
 import { buildFabricColourIndex, isPendingColour } from "./lib/fabric-colour-match.mjs";
 import { mapSpecial as mapBedframeSpecial } from "./lib/bedframe-special-map.mjs";
 import { K as SK, mapPhrase as mapSofaPhrase, skey } from "./lib/sofa-special-map.mjs";
@@ -164,15 +166,20 @@ if (!(ageDays <= MAX_AGE_DAYS)) {
 }
 
 /* ── item-code translation (trap 2) ──────────────────────────────────────── */
-const codeMap = new Map();
-{
-  const rows = fs.readFileSync(MAP_CSV, "utf8").replace(/^﻿/, "").split(/\r?\n/).filter(Boolean);
-  rows.shift();
-  for (const line of rows) {
-    const [ac, erp] = line.split(",");
-    if (ac && erp) codeMap.set(ac.trim().toUpperCase(), erp.trim().toUpperCase());
-  }
-}
+/* READ BY lib/ac-mapping-csv.mjs, NOT by split(","), since 2026-09-08.  The
+   sheet is RFC4180 and three of its rows quote the ERP code because a mattress
+   name carries the inch mark:
+
+     DL-GENERASI (S),"DUNLOPILLO GENERASI 5"" MATT (S)",NEW,MATTRESS,400-D001
+
+   The naive split that used to be here cut that into `"DUNLOPILLO GENERASI 5""`,
+   a fragment no ERP row can ever equal, so every sales-order line carrying one
+   of those three codes was reported as an item-code DEFECT - 40 of the 101 in
+   front of the owner on go-live morning (docs/bugs/0689).  The correction
+   runner correct-so-item-code-from-autocount.mjs had always parsed it properly;
+   TWO parsers for one file is how the two disagreed, so there is now one. */
+const mappingRows = readMappingCsv(fs.readFileSync(MAP_CSV, "utf8"));
+const codeMap = new Map([...mappingRows].map(([ac, m]) => [ac, normCode(m.erp)]));
 
 /* ── snapshot -> typed rows ──────────────────────────────────────────────── */
 const norm = (s) => String(s ?? "").trim().toUpperCase().replace(/\s+/g, " ");
@@ -204,11 +211,8 @@ const mapped = (s) => codeMap.get(norm(s)) ?? norm(s);
        are compared, exactly as the non-sofa branch does.  A pair where only
        ONE side has a model is still a real finding and stays one. */
 const isSofaCode = (s) => /SOFA/i.test(String(s ?? ""));
-const rawModelOf = (s) => (String(s ?? "").match(/\d{3,}/) || [null])[0];
-const modelOf = (s) => {
-  const m = rawModelOf(s);
-  return m == null ? null : SOFA_MODEL_ALIAS[m] || m;
-};
+/* `modelOf` now lives in lib/item-code-class.mjs, with the alias fold and the
+   "5535 is its own model" rule pinned by tests/itemCodeClass.test.mjs. */
 
 /* ── the book's own build text (the VARIANT half) ─────────────────────────── */
 /* A snapshot cut before 2026-09-07 carries no Desc2 at all, and a variant
@@ -477,6 +481,24 @@ try {
   if (codeMap.size < 100) {
     problems.push(`the item-code map loaded only ${codeMap.size} rows from ${MAP_CSV}`);
   }
+  /* PROVE THE PARSER, not just the row count. A naive split(",") loads all 1,577
+     rows and gets three of them WRONG, and the row count cannot see that: it was
+     the count that made the reader look healthy while it invented 40 findings
+     (docs/bugs/0689). The quoted rows are the ones that can break, so they are
+     the ones asserted. */
+  for (const [ac, want] of [
+    ["DL-GENERASI (S)", 'DUNLOPILLO GENERASI 5" MATT (S)'],
+    ["DL-GENERASI (SS)", 'DUNLOPILLO GENERASI 5" MATT (SS)'],
+    ["DL-GENERASI (K)", 'DUNLOPILLO GENERASI 5" MATT (K)'],
+  ]) {
+    const got = codeMap.get(normCode(ac));
+    if (got !== normCode(want)) {
+      problems.push(
+        `the mapping sheet's QUOTED rows are not being read: "${ac}" resolved to "${got ?? "(nothing)"}", ` +
+          `wanted "${want}". Every line carrying one would be reported as an item-code defect.`,
+      );
+    }
+  }
   for (const cfg of TYPES) {
     const t = cfg.t;
     /* The GR side claims a PAIR key, so it must be proved against the PAIR
@@ -517,8 +539,8 @@ try {
     await refuse("the matchers do not match; refusing to report a clean run.");
   }
   plain(
-    `self-test: item-code map ${codeMap.size} rows; doc-number and DtlKey matchers resolve for every ` +
-      "type that claims one. Proceeding.",
+    `self-test: item-code map ${codeMap.size} rows and its three RFC4180-quoted rows resolve to what ` +
+      "production stores; doc-number and DtlKey matchers resolve for every type that claims one. Proceeding.",
   );
 }
 
@@ -890,6 +912,10 @@ for (const cfg of TYPES) {
     keyOrphan: [], unmatchedErp: [], unmatchedAc: [],
   };
   const D = { lineCount: 0, item: 0, price: 0 }; // declared, not gaps
+  /* The two HARMLESS halves of the raw item-code difference, counted apart so
+     the headline number is the DEFECT count and neither half can hide inside
+     it. See lib/item-code-class.mjs. */
+  const C = { itemTranslation: 0, itemDecomposition: 0 };
   /* The unit-price differences, split by WHAT KIND they are. See the comment at
      the classification below; only `bothPriced` and `erpDropped` are copy jobs. */
   const P = { bookDropped: [], bookUnpriced: [], erpDropped: [], bothPriced: [] };
@@ -932,10 +958,15 @@ for (const cfg of TYPES) {
        AutoCount's own "... SOFA" code, the ERP's compartment suffix, and one
        AutoCount DtlKey claimed by more than one ERP line. */
     const dupKeyed = new Set();
+    /* How many ERP rows carry each AutoCount line key on THIS document. A sofa
+       is one book line and one ERP row per compartment, so >1 is the
+       decomposition the item-code classifier must be told about. */
+    const erpPerKey = new Map();
     let splitSeen = false;
     for (const l of erpLines) {
       const k = l.ac_dtlkey == null ? null : String(l.ac_dtlkey).trim();
       if (!k) continue;
+      erpPerKey.set(k, (erpPerKey.get(k) ?? 0) + 1);
       if (dupKeyed.has(k)) splitSeen = true;
       dupKeyed.add(k);
     }
@@ -1075,25 +1106,34 @@ for (const cfg of TYPES) {
     for (const [al, el, split] of pairs) {
       comparedLines++;
       if (!al.hasCode) descOnly++;
-      else if (isSofaCode(al.itemKey)) {
-        /* compartment codes: only the model is comparable */
-        const am = modelOf(al.itemKey);
-        const em = modelOf(el.item_code);
-        /* neither side carries a model: not a decomposed sofa at all, but an
-           accessory whose NAME contains "SOFA".  Compare the codes. */
-        const agrees = am && em ? am === em : !am && !em && mapped(al.itemKey) === norm(el.item_code);
-        if (agrees) D.item++;
-        else if (cfg.itemCodeDeclared) D.item++;
+      else if (mapped(al.itemKey) !== norm(el.item_code)) {
+        /* THE CODES DIFFER AS STRINGS. That is THREE unrelated populations
+           wearing one number, and only the third is a defect. On 2026-09-08 the
+           column read 101 on sales orders and 10 on purchase orders, and it was
+           waved away all night as "derived, so it measures our translation, not
+           a defect" - an assumption nobody had measured. Measured, it was 46
+           translation, 4 decomposition and 61 genuinely different products, one
+           of which is the shape that put a REGAL in front of a customer whose
+           book line says TRION (docs/bugs/0668, 0671, 0689).
+
+           The split itself is stated ONCE, in lib/item-code-class.mjs, and
+           pinned by tests/itemCodeClass.test.mjs. It is not restated here,
+           because two statements of one rule is how the mapping sheet came to
+           have two parsers that disagreed. */
+        const groupSize = erpPerKey.get(String(al.dtlKey)) ?? 1;
+        const k = classifyItemCode({
+          acCode: al.itemKey, erpCode: el.item_code, mapping: mappingRows, groupSize,
+        });
+        if (cfg.itemCodeDeclared) D.item++;
+        else if (k.cls === "translation") { D.item++; C.itemTranslation++; }
+        else if (k.cls === "decomposition") { D.item++; C.itemDecomposition++; }
         else {
           F.item.push(
-            `${ac} DtlKey ${al.dtlKey}: AutoCount model ${am ?? "?"} ("${al.itemKey}") vs ERP model ` +
-              `${em ?? "?"} ("${el.item_code ?? ""}")`,
+            `${ac} DtlKey ${al.dtlKey}: AutoCount "${al.itemKey}" vs ERP "${el.item_code ?? ""}"` +
+              (k.wanted ? ` — the sheet says "${k.wanted}"` : " — the mapping sheet does not carry the book's code") +
+              ` (ERP ${d.erp_no}; ${k.why})`,
           );
         }
-      } else if (mapped(al.itemKey) !== norm(el.item_code)) {
-        const msg = `${ac} DtlKey ${al.dtlKey}: AutoCount "${al.itemKey}" vs ERP "${el.item_code ?? ""}"`;
-        if (cfg.itemCodeDeclared || split) D.item++;
-        else F.item.push(msg);
       }
       const aq = al.qty ?? 0;
       const eq = el.qty == null ? 0 : Number(el.qty);
@@ -1129,7 +1169,15 @@ for (const cfg of TYPES) {
 
   log(
     `${t} DATA (${bothSides} documents on both sides, ${comparedLines} lines paired) — ` +
-      `line-count differs: ${F.lineCount.length}; item code: ${F.item.length}; quantity: ${F.qty.length}; ` +
+      `line-count differs: ${F.lineCount.length}; item code: ${F.item.length}` +
+      /* SAY WHAT WAS TAKEN OUT, in the same sentence as the number, or the drop
+         from 101 to 61 on 2026-09-08 reads as work nobody did. */
+      (C.itemTranslation + C.itemDecomposition
+        ? ` (of ${F.item.length + C.itemTranslation + C.itemDecomposition} raw code differences: ` +
+          `${C.itemTranslation} are the same product written another way, ` +
+          `${C.itemDecomposition} are one book line decomposed into compartments)`
+        : "") +
+      `; quantity: ${F.qty.length}; ` +
       `unit price: ${F.price.length}; document total: ${F.money.length}`,
   );
   plain(
@@ -1170,6 +1218,8 @@ for (const cfg of TYPES) {
   plain(
     `   DECLARED, not counted as gaps: sofa-decomposed documents ${sofaDocs} ` +
       `(line count ${D.lineCount}, unit price ${D.price}); item code by design ${D.item}` +
+      ` [translation ${C.itemTranslation}, decomposition ${C.itemDecomposition}` +
+      `, declared for this type ${D.item - C.itemTranslation - C.itemDecomposition}]` +
       (cfg.itemCodeDeclared ? ` — ${cfg.itemCodeDeclared}` : ""),
   );
   if (cfg.priceDeclared) {
