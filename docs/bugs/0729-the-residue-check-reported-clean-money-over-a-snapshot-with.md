@@ -44,3 +44,19 @@ owner reads. What the residue check owed was the REASON, and it was silently
 owing nothing at all.
 
 **Ref.** fix/po-gr-transfer-chain-2026-09-09, 2026-09-09.
+
+**And once it could see, it disagreed the other way — measured, run 34261651815.**
+It named **six** unequal pairs where the tally names four. The two extra —
+`GR-000997|PO-001696` and `GR-000815|PO-001068` — are sofas: one book line
+against several compartment rows here, and this probe sums rows while the
+reconcile compares the document total. Rather than reimplement the reconcile's
+total (a second implementation of "different" is what
+`docs/bugs/0708-two-tools-answered-the-same-pairing-question-differently-twe.md`
+cost), section 3 is now labelled what it actually is — a **ratio probe**. It
+prints the SHAPE; the tally owns the LIST, and the header says so.
+
+The shape is the part worth having: three of the six are **exactly 4/3** —
+`GR-005363` RM 3,525.00 vs RM 4,700.00, `GR-005367` RM 1,575.00 vs RM 2,100.00,
+`GR-005368` RM 1,258.50 vs RM 1,678.00. That is **RM 2,119.50** of supplier
+discount the importer dropped by taking `PODTL.UnitPrice` (undiscounted) where
+the book's own money is `PODTL.SubTotal` (discounted).

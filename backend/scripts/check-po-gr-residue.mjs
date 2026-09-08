@@ -247,9 +247,15 @@ try {
 
   /* ── 3. GOODS RECEIPTS: the money differs ───────────────────────────────── */
   p("");
-  p("─── 3. GOODS RECEIPT money — both sides priced and they differ ───");
-  p("    a ratio of exactly 4/3 is the DROPPED 25% supplier discount: AutoCount stores PODTL.UnitPrice");
-  p("    undiscounted and PODTL.SubTotal discounted, and the importer took the undiscounted half");
+  p("─── 3. GOODS RECEIPT money — a RATIO PROBE, not a second verdict ───");
+  p("    WHICH documents differ on money is `check-po-gr-tally.mjs`'s answer and only its answer. This");
+  p("    prints the RATIO between our stored line money and the book's line subtotals so the SHAPE of a");
+  p("    difference is visible, and it deliberately does not reimplement the reconcile's document total —");
+  p("    a second implementation of \"different\" is what docs/bugs/0708 cost. Expect it to name a document");
+  p("    or two the tally does not: a sofa is one book line and several compartment rows here, and this");
+  p("    sums rows. Read the SHAPE, take the LIST from the tally.");
+  p("    A ratio of exactly 4/3 is the DROPPED 25% supplier discount: AutoCount stores PODTL.UnitPrice");
+  p("    undiscounted and PODTL.SubTotal discounted, and the importer took the undiscounted half.");
   const money = await sql`
     SELECT g.linked_ac_gr_docno AS gr, p.linked_ac_docno AS po, g.grn_number AS erp_no,
            COALESCE(SUM(i.qty_accepted * i.unit_price_sen), 0)::float8 AS sen
@@ -299,8 +305,9 @@ try {
   if (moneyReadable) {
     log(
       m === 0
-        ? "GOODS RECEIPT MONEY — 0 priced pair(s) differ from the book, measured against ac-reconcile-truth.json.gz."
-        : `GOODS RECEIPT MONEY — ${m} priced (receipt x order) pair(s) differ from the book.`,
+        ? "GOODS RECEIPT MONEY — the ratio probe found 0 priced pair(s) unequal, measured against ac-reconcile-truth.json.gz."
+        : `GOODS RECEIPT MONEY — the ratio probe found ${m} priced pair(s) unequal. The TALLY is the authority on ` +
+          "which of them is a difference; this says what SHAPE each one has.",
     );
   }
 
