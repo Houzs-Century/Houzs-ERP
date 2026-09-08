@@ -219,8 +219,14 @@ describe('the SO list rolls up the shared rule, not a raw stored column', () => 
        GET /:docNo/coverage (2026-09-01), so it now passes `null` for the live
        state; the deferred re-compute lives in the enrichment route (below) and
        stamps the verdict from the LIVE state. The shared helper is still the only
-       place the verdict is formed. */
-    expect(mfgSalesOrders.split('stock_status_effective:').length - 1).toBe(2);
+       place the verdict is formed.
+       COUNTED DIFFERENTLY SINCE 2026-09-08: the two handlers no longer WRITE the
+       key — they spread `soLineStockVerdict`, which stamps it together with the
+       non-selling-warehouse note. That is the same property, one level tighter:
+       the key appearing here at all would mean a handler had gone back to
+       forming the verdict itself. */
+    expect(mfgSalesOrders.split('soLineStockVerdict(').length - 1).toBe(2);
+    expect(mfgSalesOrders).not.toContain('stock_status_effective:');
     expect(listEnrichmentRoute.split('stock_status_effective:').length - 1).toBe(1);
   });
 
