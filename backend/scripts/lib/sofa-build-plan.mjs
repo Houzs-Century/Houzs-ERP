@@ -190,6 +190,28 @@ export function planCopyMoney(copyRows) {
  * code already matches, so a row id — and the purchase dedication hanging off
  * it — survives.
  *
+ * ── THREE PASSES, IN THIS ORDER, AND THE MIDDLE ONE WAS BOUGHT ──────────────
+ * 1. FULL CODE. The row is already this piece; nothing about it moves.
+ * 2. COMPARTMENT. Same piece, different MODEL — `9058-CNR` onto `8030-CNR`.
+ * 3. WHATEVER IS LEFT, in document order. Genuinely a different piece.
+ *
+ * Pass 2 did not exist until 2026-09-08 and its absence was invisible while
+ * every correction kept the model it found. The moment the owner ruled that the
+ * three disagreeing sofas follow the account book, a model change made pass 1
+ * match NOTHING, so all three rows fell to pass 3 and were dealt out by
+ * position. Measured on prod (run `34187267757`), `HC-PO-009550` holds its
+ * compartments in the order `2A(RHF), CNR, 1A(LHF)` while the build is written
+ * `1A(LHF), CNR, 2A(RHF)`, so two of three compartments would have landed on a
+ * DIFFERENT row — and the same probe shows every one of those rows carries a
+ * `so_item_id` dedication to the sales-order row with the same code, which is
+ * what bound-mode readiness reads (`isHardBoundLine`). Position is not identity;
+ * the compartment is.
+ *
+ * A model change is now identity-preserving on its own, rather than only when
+ * the sales-order half happens to run second and overwrite the purchase order
+ * through that dedication. That ordering held for all three of these builds and
+ * it is not a property anything asserts.
+ *
  * @param {any[]} rows one sofa's rows
  * @param {string[]} want target piece codes, fully qualified and upper-cased
  * @param {(row:any)=>unknown} [codeOf]
@@ -201,6 +223,16 @@ export function pairRowsToPieces(rows, want, codeOf = (r) => r.code) {
   for (const w of want) {
     const i = pool.findIndex((r) => K(codeOf(r)) === K(w));
     pairs.push({ want: K(w), row: i >= 0 ? pool.splice(i, 1)[0] : null });
+  }
+  /* Same compartment under another model keeps its own row. Only a piece with
+     a compartment at all can match this way — a bare `8030` has none, and two
+     codeless rows must not be paired to each other on the strength of "". */
+  for (const p of pairs) {
+    if (p.row) continue;
+    const comp = compartmentOf(p.want);
+    if (!comp) continue;
+    const i = pool.findIndex((r) => compartmentOf(codeOf(r)) === comp);
+    if (i >= 0) p.row = pool.splice(i, 1)[0];
   }
   /* Reuse a leftover row rather than delete-and-insert: the id is what carries
      the dedication. */

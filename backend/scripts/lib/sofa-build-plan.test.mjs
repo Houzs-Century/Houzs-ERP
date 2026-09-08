@@ -183,3 +183,71 @@ test("compartmentOf", () => {
   assert.equal(compartmentOf("9058-CNR"), "CNR");
   assert.equal(compartmentOf("STOOL"), "");
 });
+
+/* ── A MODEL CHANGE MUST NOT MOVE A COMPARTMENT ONTO ANOTHER ROW ────────────
+   Fixtures are prod rows read by the read-only probe run 34187267757
+   (company 1, 2026-09-08), in the id order the applier reads them. Every one of
+   those purchase-order rows carries a so_item_id dedication to the sales-order
+   row with the SAME code, which is what bound-mode readiness reads - so the row
+   a compartment lands on is its identity, and position is not. */
+
+test("HC-PO-009550: 9058 -> 8030 keeps every compartment on its own row", () => {
+  const rows = [
+    { id: "po1", code: "9058-2A(RHF)" },
+    { id: "po2", code: "9058-CNR" },
+    { id: "po3", code: "9058-1A(LHF)" },
+  ];
+  const want = ["8030-1A(LHF)", "8030-CNR", "8030-2A(RHF)"];
+  const { pairs, surplus } = pairRowsToPieces(rows, want);
+  assert.deepEqual(pairs.map((p) => p.row.id), ["po3", "po2", "po1"]);
+  assert.deepEqual(surplus, []);
+  for (const p of pairs) assert.equal(compartmentOf(p.row.code), compartmentOf(p.want));
+});
+
+test("HC-PO-009712: 8030 -> 5535, all three rows in a different order, all three stay put", () => {
+  const rows = [
+    { id: "k1", code: "8030-CNR" },
+    { id: "k2", code: "8030-2A(RHF)" },
+    { id: "k3", code: "8030-1A(LHF)" },
+  ];
+  const { pairs } = pairRowsToPieces(rows, ["5535-1A(LHF)", "5535-CNR", "5535-2A(RHF)"]);
+  assert.deepEqual(pairs.map((p) => p.row.id), ["k3", "k1", "k2"]);
+});
+
+test("the positional fallback is what this replaces, and it was wrong here", () => {
+  /* Written as the defect so it cannot come back: dealing the same rows out in
+     document order puts 2A(RHF) where 1A(LHF) belongs. */
+  const rows = [
+    { id: "po1", code: "9058-2A(RHF)" },
+    { id: "po2", code: "9058-CNR" },
+    { id: "po3", code: "9058-1A(LHF)" },
+  ];
+  const positional = ["8030-1A(LHF)", "8030-CNR", "8030-2A(RHF)"].map((w, i) => ({ want: w, row: rows[i] }));
+  const moved = positional.filter((p) => compartmentOf(p.row.code) !== compartmentOf(p.want));
+  assert.equal(moved.length, 2, "two of three compartments would have changed row");
+});
+
+test("an exact code still wins over a compartment match", () => {
+  const rows = [
+    { id: "old", code: "9058-CNR" },
+    { id: "new", code: "8030-CNR" },
+  ];
+  const { pairs, surplus } = pairRowsToPieces(rows, ["8030-CNR"]);
+  assert.equal(pairs[0].row.id, "new");
+  assert.deepEqual(surplus.map((r) => r.id), ["old"]);
+});
+
+test("a codeless piece is never paired on an empty compartment", () => {
+  const rows = [{ id: "x", code: "STOOL" }, { id: "y", code: "DIVAN ONLY" }];
+  const { pairs } = pairRowsToPieces(rows, ["STOOL", "8030-CNR"]);
+  assert.equal(pairs[0].row.id, "x", "exact code");
+  /* `DIVAN ONLY` has no compartment, so it reaches 8030-CNR only through the
+     positional fallback - never by matching "" against "". */
+  assert.equal(pairs[1].row.id, "y");
+});
+
+test("a real placeholder still falls through to the positional fallback", () => {
+  const rows = [{ id: "p", code: "8030-1S", total: 419000, unit_price_sen: 419000, qty: 1 }];
+  const { pairs } = pairRowsToPieces(rows, ["5535-1A(LHF)", "5535-CNR", "5535-2A(RHF)"]);
+  assert.deepEqual(pairs.map((p) => p.row?.id ?? null), ["p", null, null]);
+});
