@@ -385,7 +385,11 @@ bill 我也想要用ocr. Two doors, one reader:
   4. 几张不同的 receipt 开一张 voucher (2026-09-08: 因为我是三个 receipt 开一张
      voucher 罢了) — petty cash. Read them, tick them across groups (a
      checkbox on every read bill), "Open ticked as ONE voucher (N lines)":
-     one line per receipt (shop + number, the receipt's total), the payee
+     one line per receipt at the receipt's total, described by WHAT WAS
+     BOUGHT — the item descriptions the reader found, joined with " · "
+     (owner, seeing "99 SPEEDMART" where the pile showed the goods: 转去
+     voucher 就变名字了); the shop + number stands in only for a receipt
+     with no readable item. The payee is
      LEFT for the person (three shops have no one payee, and no shop's
      vendor memory is borrowed), the voucher dated by the latest receipt,
      every receipt's pages attached; refused while the ticked receipts are

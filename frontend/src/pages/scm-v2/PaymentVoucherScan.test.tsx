@@ -185,9 +185,14 @@ describe('the bill pile', () => {
     extractAsync.mockClear();
     landedState = null;
     extractAsync.mockResolvedValueOnce({ bills: [
-      readBill(0, { vendorName: '99 SPEEDMART S/B', invoiceNumber: 'T0012', totalSen: 1910 }, null),
+      /* Two goods on one receipt: the line says what was bought, joined. */
+      readBill(0, { vendorName: '99 SPEEDMART S/B', invoiceNumber: 'T0012', totalSen: 1910, lines: [
+        { description: '4475 3M SCOTCH BRITE SPAN P', amountSen: 1040 },
+        { description: '1953 FEBREZE FABRIK ANTI BA', amountSen: 870 },
+      ] }, null),
       /* Shell has a remembered payee and account — NOT borrowed for the lot. */
       readBill(1, { vendorName: 'SHELL MALAYSIA', invoiceNumber: 'S-99', totalSen: 5000 }, null, { payeeName: 'Shell', debitAccountCode: '900-M001' }),
+      /* No readable item: the shop + number stands in. */
       readBill(2, { vendorName: 'WATSONS', invoiceNumber: 'W-1', totalSen: 1200 }, null),
     ] });
     draw();
@@ -208,8 +213,11 @@ describe('the bill pile', () => {
     expect(state.billPrefill.extraction.documentKind).toBe('receipt');
     expect(state.billPrefill.extraction.invoiceNumber).toBe('T0012, W-1');
     expect(state.billPrefill.extraction.totalSen).toBe(3110);
+    /* The line is WHAT WAS BOUGHT at the receipt's total, never the shop's
+       name (owner: 转去 voucher 就变名字了) — the shop stands in only when no
+       item was readable. */
     expect(state.billPrefill.lines).toEqual([
-      { description: '99 SPEEDMART S/B T0012', amountSen: 1910 },
+      { description: '4475 3M SCOTCH BRITE SPAN P · 1953 FEBREZE FABRIK ANTI BA', amountSen: 1910 },
       { description: 'WATSONS W-1', amountSen: 1200 },
     ]);
     /* Only the ticked receipts' pages, in bill order — Shell's stays out. */
