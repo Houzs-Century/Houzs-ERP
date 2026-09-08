@@ -14,6 +14,15 @@
 // whatever is filtered. New / Edit open in the pop-out over the list — the
 // form used to be pushed in ABOVE the table, which sent the operator to the
 // top of a long list (如果我在下面我要滑到很上面).
+//
+// The same New receipt takes an OTHER DEBTOR's money too (owner 2026-09-08:
+// 不可能链接起来吗? 想 pv 也可以付 AP invoice, expense — receipt 页我也希望这样;
+// then 用这个方式 for posting on Post): a kind switch, Sundry income or Other
+// Debtor; the debtor's open bills list with an amount each, exactly the
+// Other Debtors page's picker; Post raises the ODR through that module's own
+// route with postNow, which books Dr bank / Cr 305 and knocks the bills off in
+// the same call — no four layers on this door. The bill itself (记它欠多少) is
+// still raised on the Other Debtors page.
 // ----------------------------------------------------------------------------
 
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -22,8 +31,9 @@ import { Ban, Pencil, Plus } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import {
   useAccounts, useReceipts, useCreateReceipt, useVoidReceipt, useReceiptDetail, useUpdateReceipt,
+  useOtherDebtors, useDebtorDetail, useCreateDebtorReceipt,
   postableAccounts,
-  type Account, type ReceiptRow,
+  type Account, type ReceiptRow, type DebtorBill,
 } from '../../vendor/scm/lib/accounting-queries';
 import { AccountSelect } from '../../vendor/scm/components/AccountSelect';
 import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
@@ -174,6 +184,19 @@ export const Receipts = () => {
   const updateReceipt = useUpdateReceipt();
 
   const [adding, setAdding] = useState(false);
+  /* Which money this New receipt takes: sundry income (lines pick their own
+     credit accounts) or an Other Debtor's (bills ticked, control credited). */
+  const [kind, setKind] = useState<'GENERAL' | 'DEBTOR'>('GENERAL');
+  const [debtorId, setDebtorId] = useState('');
+  const [debtorAllocs, setDebtorAllocs] = useState<Record<string, number>>({});
+  const debtorsQ = useOtherDebtors();
+  const debtorDetailQ = useDebtorDetail(adding && kind === 'DEBTOR' && debtorId ? debtorId : null);
+  const createDebtorReceipt = useCreateDebtorReceipt();
+  const openBills = useMemo<DebtorBill[]>(
+    () => (debtorDetailQ.data?.bills ?? []).filter((b) => b.status !== 'CANCELLED' && b.total_sen - b.received_sen > 0),
+    [debtorDetailQ.data],
+  );
+  const debtorTotal = Object.values(debtorAllocs).reduce((s, v) => s + (v > 0 ? v : 0), 0);
   const [payer, setPayer] = useState('');
   const [bank, setBank] = useState('');
   /* The receipt's own date — the number's month follows it (docMonthTag on
@@ -208,6 +231,7 @@ export const Receipts = () => {
     setAdding(false); setEditing(null); seededFor.current = null;
     setPayer(''); setBank(''); setReceiptDate(todayMyt());
     setLines([{ rid: 1, description: '', creditAccountCode: '', amountSen: 0 }]);
+    setKind('GENERAL'); setDebtorId(''); setDebtorAllocs({});
   };
   const patchLine = (rid: number, patch: Partial<Line>) =>
     setLines((prev) => prev.map((l) => (l.rid === rid ? { ...l, ...patch } : l)));
@@ -217,6 +241,15 @@ export const Receipts = () => {
       .filter((l) => l.creditAccountCode && l.amountSen > 0)
       .map((l) => ({ ...(l.description.trim() ? { description: l.description.trim() } : {}), creditAccountCode: l.creditAccountCode, amountSen: l.amountSen }));
     try {
+      if (!editing && kind === 'DEBTOR') {
+        const res = await createDebtorReceipt.mutateAsync({
+          debtorId, receiptDate, bankAccountCode: bank, postNow: true,
+          allocations: Object.entries(debtorAllocs).filter(([, v]) => v > 0).map(([billId, amountSen]) => ({ billId, amountSen })),
+        });
+        closeForm();
+        void notify({ title: `${res.receipt.receiptNumber} posted`, body: `${fmtRm(res.receipt.totalSen ?? debtorTotal)} booked into the ledger — the ticked bills are knocked off.`, tone: 'info' });
+        return;
+      }
       if (editing) {
         const res = await updateReceipt.mutateAsync({ id: editing.id, payerName: payer.trim(), receiptDate, bankAccountCode: bank, lines: sendLines });
         closeForm();
@@ -260,9 +293,13 @@ export const Receipts = () => {
   }), [canEdit, canCancel]);
 
   /* The one "may post" for the button and the key alike. */
-  const canPost = total > 0 && !!payer.trim() && !!bank && !!receiptDate && !lines.some((l) => l.amountSen > 0 && !l.creditAccountCode);
+  const debtorMode = !editing && kind === 'DEBTOR';
+  const canPost = debtorMode
+    ? debtorTotal > 0 && !!debtorId && !!bank && !!receiptDate
+    : total > 0 && !!payer.trim() && !!bank && !!receiptDate && !lines.some((l) => l.amountSen > 0 && !l.creditAccountCode);
+  const saving = createReceipt.isPending || updateReceipt.isPending || createDebtorReceipt.isPending;
   /* F3 / Ctrl+S posts the open form (owner 2026-09-08: 像 autocount 按 f3). */
-  useSaveHotkey(() => { if (canPost) void save(); }, adding && !createReceipt.isPending && !updateReceipt.isPending);
+  useSaveHotkey(() => { if (canPost) void save(); }, adding && !saving);
 
   /* One identity per load: a fresh `[]` per render would have the grid
      re-derive and report its rows every render, and the report re-renders. */
@@ -288,7 +325,7 @@ export const Receipts = () => {
 
       {adding && (
         <Modal
-          title={editing ? `Edit ${editing.number} — 改了会重新过账` : 'New receipt — 录入即过账'}
+          title={editing ? `Edit ${editing.number} — 改了会重新过账` : debtorMode ? 'New receipt — Other Debtor — 录入即过账' : 'New receipt — 录入即过账'}
           onClose={closeForm}
           width="min(980px, 100%)"
           ariaLabel={editing ? 'Edit receipt' : 'New receipt'}
@@ -298,21 +335,95 @@ export const Receipts = () => {
               Description | Account | Amount per line. Owner 2026-09-07: 没办法
               输入日期, 格子等等不整齐, 有些有格子有些没有. */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)', fontSize: 'var(--fs-13)' }}>
+            {!editing && (
+              <div role="radiogroup" aria-label="Receipt kind" style={{ display: 'flex', gap: 6 }}>
+                {([['GENERAL', 'Sundry income'], ['DEBTOR', 'Other Debtor']] as const).map(([k, label]) => (
+                  <button key={k} type="button" role="radio" aria-checked={kind === k}
+                    onClick={() => { setKind(k); setDebtorAllocs({}); }}
+                    style={{
+                      padding: '4px 12px', borderRadius: 999, cursor: 'pointer', fontSize: 'var(--fs-13)',
+                      border: `1px solid ${kind === k ? 'var(--c-orange)' : 'var(--border-weak, #d8d5cd)'}`,
+                      background: kind === k ? 'var(--c-orange)' : 'none', color: kind === k ? '#fff' : 'inherit', fontWeight: kind === k ? 600 : 400,
+                    }}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
             <div style={{ display: 'grid', gridTemplateColumns: 'minmax(150px, 180px) minmax(220px, 1fr) minmax(240px, 1fr)', gap: 'var(--space-3)', alignItems: 'end' }}>
               <label className={styles.field}>
                 <span className={styles.fieldLabel}>Date</span>
                 <DateField fullWidth value={receiptDate} onChange={(iso) => setReceiptDate(iso)} className={styles.fieldInput} aria-label="Receipt date" />
               </label>
-              <label className={styles.field}>
-                <span className={styles.fieldLabel}>Received from (打字就行)</span>
-                <input value={payer} onChange={(e) => setPayer(e.target.value)} className={styles.fieldInput} />
-              </label>
+              {debtorMode ? (
+                <label className={styles.field}>
+                  <span className={styles.fieldLabel}>Debtor</span>
+                  <select aria-label="Debtor" value={debtorId} className={styles.fieldInput}
+                    onChange={(e) => { setDebtorId(e.target.value); setDebtorAllocs({}); }}>
+                    <option value="">— pick the debtor —</option>
+                    {(debtorsQ.data?.debtors ?? []).filter((d) => d.is_active || d.id === debtorId).map((d) => (
+                      <option key={d.id} value={d.id}>{d.name}{d.outstanding_sen > 0 ? ` — owes ${fmtRm(d.outstanding_sen)}` : ''}</option>
+                    ))}
+                  </select>
+                </label>
+              ) : (
+                <label className={styles.field}>
+                  <span className={styles.fieldLabel}>Received from (打字就行)</span>
+                  <input value={payer} onChange={(e) => setPayer(e.target.value)} className={styles.fieldInput} />
+                </label>
+              )}
               <label className={styles.field}>
                 <span className={styles.fieldLabel}>Received into</span>
                 <AccountSelect accounts={moneyAccounts} value={bank} onChange={setBank} placeholder="— bank / cash —" className={styles.fieldInput} />
               </label>
             </div>
-            {lines.map((l) => (
+            {debtorMode && (
+              /* The Other Debtors page's own picker: tick pays a bill in full,
+                 type for a partial; nothing above the bill's outstanding. */
+              !debtorId ? (
+                <div style={{ color: 'var(--fg-muted)' }}>Pick the debtor to list what they still owe.</div>
+              ) : debtorDetailQ.isLoading ? (
+                <div style={{ color: 'var(--fg-muted)' }}>Loading their bills…</div>
+              ) : openBills.length === 0 ? (
+                <div style={{ color: 'var(--fg-muted)' }}>This debtor has no open bill — raise the bill on Other Debtors first.</div>
+              ) : (
+                <table style={{ borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
+                  <thead>
+                    <tr style={{ textAlign: 'left', color: 'var(--fg-muted)', fontSize: 'var(--fs-11)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                      <th style={{ padding: '4px 8px' }} aria-label="collect in full" />
+                      <th style={{ padding: '4px 8px' }}>Bill</th>
+                      <th style={{ padding: '4px 8px' }}>Date</th>
+                      <th style={{ padding: '4px 8px', textAlign: 'right' }}>Outstanding</th>
+                      <th style={{ padding: '4px 8px' }}>Receive</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {openBills.map((b) => {
+                      const out = b.total_sen - b.received_sen;
+                      const v = debtorAllocs[b.id] ?? 0;
+                      return (
+                        <tr key={b.id} style={{ borderBottom: '1px solid var(--border-weak, #f0eee8)' }}>
+                          <td style={{ padding: '4px 8px' }}>
+                            <input type="checkbox" aria-label={`Collect ${b.bill_number} in full`}
+                              checked={v === out && out > 0}
+                              onChange={(e) => setDebtorAllocs((prev) => ({ ...prev, [b.id]: e.target.checked ? out : 0 }))} />
+                          </td>
+                          <td style={{ padding: '4px 8px', fontFamily: 'var(--font-mono)' }}>{b.bill_number}</td>
+                          <td style={{ padding: '4px 8px', whiteSpace: 'nowrap' }}>{b.bill_date}</td>
+                          <td style={{ padding: '4px 8px', textAlign: 'right', color: 'var(--fg-muted)', fontFamily: 'var(--font-mono)' }}>{fmtRm(out)}</td>
+                          <td style={{ padding: '4px 8px', width: 160 }}>
+                            <MoneyInput bare valueSen={v > 0 ? v : null} allowBlank inputClassName={styles.fieldInput} selectOnFocus aria-label={`amount for ${b.bill_number}`}
+                              placeholder="0.00" style={{ width: '100%' }}
+                              onCommit={(sen) => setDebtorAllocs((prev) => ({ ...prev, [b.id]: Math.min(out, Math.max(0, sen ?? 0)) }))} />
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )
+            )}
+            {!debtorMode && lines.map((l) => (
               <div key={l.rid} style={{ display: 'grid', gridTemplateColumns: 'minmax(200px, 1fr) minmax(240px, 1fr) 160px', gap: 'var(--space-2)', alignItems: 'center' }}>
                 <input placeholder="Description" value={l.description} className={styles.fieldInput}
                   onChange={(e) => patchLine(l.rid, { description: e.target.value })} />
@@ -324,14 +435,16 @@ export const Receipts = () => {
               </div>
             ))}
             <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center' }}>
-              <Button variant="ghost" size="sm" onClick={() => setLines((p) => [...p, { rid: Math.max(...p.map((x) => x.rid)) + 1, description: '', creditAccountCode: '', amountSen: 0 }])}>
-                <Plus {...ICON} /> Line
-              </Button>
-              <span style={{ marginLeft: 'auto', fontFamily: 'var(--font-mono)' }}>Total {fmtRm(total)}</span>
+              {!debtorMode && (
+                <Button variant="ghost" size="sm" onClick={() => setLines((p) => [...p, { rid: Math.max(...p.map((x) => x.rid)) + 1, description: '', creditAccountCode: '', amountSen: 0 }])}>
+                  <Plus {...ICON} /> Line
+                </Button>
+              )}
+              <span style={{ marginLeft: 'auto', fontFamily: 'var(--font-mono)' }}>Total {fmtRm(debtorMode ? debtorTotal : total)}</span>
               <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>{SAVE_HOTKEY_HINT}</span>
               <Button variant="primary" size="sm" onClick={() => void save()}
-                disabled={createReceipt.isPending || updateReceipt.isPending || !canPost}>
-                {editing ? (updateReceipt.isPending ? 'Re-posting…' : 'Save & re-post') : createReceipt.isPending ? 'Posting…' : 'Post receipt'}
+                disabled={saving || !canPost}>
+                {editing ? (updateReceipt.isPending ? 'Re-posting…' : 'Save & re-post') : saving ? 'Posting…' : 'Post receipt'}
               </Button>
               <Button variant="ghost" size="sm" onClick={closeForm}>Close</Button>
             </div>
