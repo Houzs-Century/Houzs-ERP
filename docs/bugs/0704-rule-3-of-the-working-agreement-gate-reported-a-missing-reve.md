@@ -1,3 +1,5 @@
+<!-- area: Repo tooling: tests, ratchets, generators -->
+
 ## Rule 3 of the working-agreement gate reported a missing Reversal line against a body that stated it [low]
 
 **Symptom.** PR #3207 carried a migration and a PR body with both required
