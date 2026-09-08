@@ -1,0 +1,81 @@
+name: DO payment book gap (read-only)
+
+# Money a driver collected at the door that the ACCOUNT BOOK has never been told
+# about.
+#
+# The owner's go-live requirement, in his words: 「然后确保Autocount也会钱收到」.
+# A payment keyed on the SALES ORDER is covered - it rides the sales-order
+# write-back into AutoCount's UDF_BALANCE and UDF_PAYEMENT. A payment keyed on
+# the DELIVERY ORDER is not: readSoOutstandingSen and readSoPaymentRefs both
+# read scm.mfg_sales_order_payments and only that table, and nothing on any
+# AutoCount path reads scm.delivery_order_payments at all - while the DO Create
+# and Detail screens render the same PaymentsTable the SO does.
+#
+# Three buckets: already on the sales order too (no gap), NOT on it (the book is
+# overstating what that customer owes), and delivery orders with no sales order
+# at all (undecidable here, reported separately rather than assumed either way).
+#
+# SELECT only. No writes, no DDL, no transaction. Manual trigger only - a
+# production DB read on a schedule turns a real query into CI noise nobody
+# reads. Its own concurrency group, so a diagnostic never queues behind or
+# displaces a release. Exit 0 for every legitimate answer.
+#
+# NOTHING HERE CORRECTS ANYTHING. Recording a payment the customer never made is
+# the worst error available on this cutover, so the ruling is the owner's and any
+# repair is a separate, plan-gated tool.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      company_id:
+        description: "Company to measure. Blank = 1 (Houzs Century)."
+        required: false
+        default: ""
+      list_limit:
+        description: "Rows to enumerate per bucket. 0 = all. Blank = 200."
+        required: false
+        default: ""
+
+concurrency:
+  group: check-do-payment-book-gap-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/check-do-payment-book-gap.mjs
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          LIST_LIMIT: ${{ inputs.list_limit }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/check-do-payment-book-gap.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          LIST_LIMIT: ${{ inputs.list_limit }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
