@@ -814,6 +814,40 @@ only a key the row's OWN siblings already agree on, and only after the book
 confirms that key is a line of that document carrying that row's Desc2 — a wrong
 key is worse than a missing one, so all four gates refuse rather than fall back.
 
+### The key now also ADDRESSES a correction, not just identifies a row
+
+*Added 2026-09-08.* `apply-sofa-compartment-corrections.mjs` picks the lines of one
+build out of a document with `desc2Match`, a substring of the AutoCount Desc2. That
+is not always enough to name a build. On `HC-SO-012827` the book wrote two sofas so
+that **one Desc2 is a substring of the other**:
+
+```
+DtlKey 873100   "3 seater  35 inch  color modenza 07 silver  Nilon bottom"
+DtlKey 873101   "35 inch  color modenza 07 silver  Nilon bottom"
+```
+
+No needle reaches `873101` alone — every candidate is also carried by `873100`, and
+`selectBuildRows` refuses as `ambiguous`, correctly. So a correction may now carry
+**`lineKeys`**, matched against `linked_ac_dtlkey`, which both the SO and PO queries
+in that script now select. Same column, second job: it identified a row, and it now
+addresses one.
+
+Three properties, each a refusal rather than a fallback:
+
+- **It never falls back to the text.** A key the document does not carry is `none`.
+  Matching by text instead would write the build onto the wrong line, which is the
+  transposition class `docs/bugs/0690` names. Measured on prod dry run
+  `34234942367`: the ERP carries `873101` but **not** `873100`, and the run said so
+  and skipped rather than guessing.
+- **The VERIFY step narrows the same way.** Re-reading every sofa row of a
+  two-build document would compare one build's target against both builds' rows and
+  fail a correct write.
+- **The reconcile's ruling lookup understands it too** — `makeSofaRulingLookup`
+  checks `lineKeys` against the ERP lines' `ac_dtlkey` before it looks at text. It
+  did not at first, and `HC-SO-012827` went on reporting *"sofa build not
+  verifiable"* with the owner's answer already in the database (tally run
+  `34236971666`). `docs/bugs/0722`.
+
 **The lesson for the next repair, and it is now the third column lost this
 way** — `warehouse_id` (seven lines PENDING for ever, 2026-08-11),
 `description` / `delivery_date`, and now `linked_ac_dtlkey`: a column-by-column
