@@ -38,7 +38,11 @@
  * D: what the ERP holds for each affected document — every line with its
  *    AutoCount key, and the header's status, totals and remarks.
  * E: whether each instruction's text reached the ERP anywhere on its document.
- * F: the movement control — a migrated document must carry none.
+ * F: PROVENANCE — how many of each document's rows still carry an AutoCount line
+ *    key, and what its audit log records. A document whose rows carry no key did
+ *    not get them from the import, and a repair that "adds the missing line" to
+ *    one of those duplicates goods it already holds.
+ * G: the movement control — a migrated document must carry none.
  *
  * READ-ONLY BY CONSTRUCTION: every statement is a SELECT, there is no APPLY
  * flag, and there is no path through this file that writes.
@@ -226,7 +230,32 @@ async function main() {
 
   plain("");
   plain("=".repeat(78));
-  plain("F — CONTROL: are the affected documents carrying inventory movements?");
+  plain("F — PROVENANCE: who wrote the rows these documents hold?");
+  plain("=".repeat(78));
+  /* THE QUESTION THAT DECIDES WHETHER THERE IS ANYTHING TO REPAIR. The importer
+     stamps `linked_ac_dtlkey` on EVERY line it inserts, so a document whose
+     rows carry no key did not get those rows from the import — somebody edited
+     the order afterwards, and the ERP's own save path rewrites the whole line
+     set without keys. A repair that adds a "missing" line to such a document
+     duplicates goods that are already on it. Read, never assumed. */
+  for (const d of acDocs) {
+    const erpNo = "HC-" + d;
+    const rows = items.filter((i) => i.doc_no === erpNo);
+    if (!rows.length) continue;
+    const keyed = rows.filter((r) => r.linked_ac_dtlkey != null).length;
+    plain("");
+    plain(`  ${erpNo}: ${keyed} of ${rows.length} row(s) carry an AutoCount line key`);
+    const audit = await sql`
+      SELECT action, actor_name_snapshot, created_at
+        FROM scm.mfg_so_audit_log WHERE so_doc_no = ${erpNo}
+       ORDER BY created_at LIMIT 20`;
+    if (!audit.length) plain("     mfg_so_audit_log: ZERO rows — nothing recorded a change to this order");
+    for (const a of audit) plain(`     ${a.created_at} ${a.action} by ${a.actor_name_snapshot ?? "?"}`);
+  }
+
+  plain("");
+  plain("=".repeat(78));
+  plain("G — CONTROL: are the affected documents carrying inventory movements?");
   plain("=".repeat(78));
   /* A migrated document must have NO movements behind it (migration 0276): the
      units came in once, through the AutoCount balance snapshot. Measured here

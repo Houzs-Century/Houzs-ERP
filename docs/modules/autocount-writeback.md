@@ -2492,6 +2492,49 @@ also parsed **`Desc2`** to get the ERP's variants —
 > that one carries `size` and NOT `specials` because it is a COMPARISON
 > projection for a diagnostic, never the block a writer persists.
 
+> **And the FREE-TEXT name resolver moved the same way, 2026-09-08.** A code-less
+> AutoCount sales line names its product only in the Description, and
+> `import-ac-outstanding-so.mjs` resolves that against the live company-1 pick
+> list before the owner's blank-line rule can see it. That resolver is now
+> `buildNameResolver` in `backend/scripts/lib/ac-name-resolver.mjs` — a pure
+> move — beside `buildTracedNameResolver`, which is the SAME function returning
+> the rule it took as well as the answer. It had to come out: the drop rule
+> below fires on a resolver MISS and on a genuinely blank line identically, and
+> nothing could ask the resolver why it failed without writing a second copy of
+> the matcher. `backend/tests/acNameResolver.test.mjs` pins that the two agree
+> on every input, so a trace can never report a branch the import does not take.
+
+### The owner's blank-line rule, and the three populations it catches
+
+Owner, 2026-08-09: a code-less AutoCount sales line **with a price is a charge**
+and becomes `TRANSPORTATION CHARGES`; **with no price it is dropped**. The rule
+is his and it stands. What it catches is not one kind of thing, and the import
+prints one number for all of them (`Blank zero-value lines dropped: 17`), which
+is why the owner was answering a count rather than a list
+(`docs/bugs/0711-the-cutover-import-dropped-seventeen-book-lines-behind-one-c.md`).
+
+Measured over all 14,041 lines of `backend/scripts/data/ac-outstanding-so.json.gz`,
+the file the importer read — 22 code-less lines, 5 priced, 17 dropped:
+
+| class | n | who owns it |
+| --- | --- | --- |
+| NAMED GOODS the resolver could not read | 2 | the MATCHER. The drop is a resolver miss wearing the rule's clothes |
+| a build INSTRUCTION on a line of its own (`COLOUR : 885-4`, `LEG: FOLLOW DISPLAY`) | 2 | the FIELD it belongs on — a colour is a variant, never a product line |
+| the book states NOTHING (no code, no name, no money) | 13 | nobody, for the 12 at quantity 0. The 13th, `SO-011384` at quantity **4**, is the owner's: the book orders four of something it never names |
+
+`backend/scripts/probe-dropped-book-lines.mjs` +
+`.github/workflows/probe-dropped-book-lines.yml` is the read-only way to re-ask
+this — it classifies every dropped line, runs the LIVE pick list through the
+resolver above so a miss reports the branch it fell out of, and says per document
+what the ERP holds and how many of its rows still carry an AutoCount line key.
+
+**The other importers do NOT share this rule, and the difference matters.**
+`import-ac-outstanding-po.mjs` never drops a code-less purchase line — it records
+an exception, because `scm.purchase_order_items.item_code` is NOT NULL and the
+row cannot be inserted at all (owner 2026-09-02: 「要进 accessories」, which needs
+a product minted first). Where that line is the document's ONLY line, the whole
+purchase order stays out of the ERP.
+
 `Desc2` was already being sent, so this was missing CONTENT, not a missing field.
 `composeDescription2` emitted `Col / Fabric / Seat / Leg` and read colour off
 `fabricColor`, which is the GRN-family editors' key. A bedframe keeps its colour
