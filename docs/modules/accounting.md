@@ -1137,6 +1137,29 @@ code is listed and left alone; convergent; fresh-connection verification).
 Contracts: `backend/src/acc/payments.test.ts` (the code beside the name, the
 debtor code winning, a blank one falling back), `backend/tests/pvCustomerRefund.test.ts`.
 
+**A paid purchase invoice is marked paid (2026-09-08, docs/bugs/0700, owner:
+这个要做).** Approving a SUPPLIER_PAYMENT voucher settles each purchase invoice
+it pays through `scm.settle_pi_paid_sen`, and until this day that function
+failed on every call: it wrote the new status as a CASE of bare text literals
+into the enum column `scm.purchase_invoice_status` (42804 — no assignment cast
+from text to an enum). The voucher's journal was posted and the bank credited;
+the invoice stayed POSTED at paid_sen 0, open in the AP Payment picker and
+unlocked for edits, and the allocation recorded applied_sen 0, so a cancel
+would have released nothing.
+`backend/src/db/migrations-pg/20260908T0900_scm_settle_pi_paid_sen_enum_status.sql`
+re-creates the function with each branch typed as the enum — nothing else in
+the body moves — and `backend/tests-pg/settlePiPaidSenEnum.pg.test.ts` pins
+the newest definition in the tree against a fixture that declares the real
+enum. The 21 prod allocations the failure left behind (two 2990 vouchers,
+RM 46,948.10) are settled by `.github/workflows/repair-pi-settlement.yml` +
+`backend/scripts/repair-pi-settlement.mjs` (plan/apply, environment-scoped,
+CONFIRM "SETTLE PI ALLOCATIONS"): the same function, the same clamp, vouchers
+in approval order, `applied_sen` recorded from what it applied; a refused or
+foreign-currency row is listed and left alone; convergent; refuses to run while
+the target still carries the broken function; fresh-connection verification.
+Once settled an invoice is locked (`pi_locked`) — to correct its price, cancel
+the voucher first (which unwinds exactly `applied_sen`), edit, and pay again.
+
 **One clearing account per card machine (2026-09-07, owner: 我想要拆账户，因为这样
 我比较然后检查回).** Until now every acquirer's card money sat in ONE account,
 326-0000 CARD MACHINE CLEARING (EDC), so Daily Bank could only say what "the
