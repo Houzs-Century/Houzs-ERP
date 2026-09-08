@@ -222,7 +222,28 @@ Edit and Copy is `frontend/src/pages/scm-v2/ApInvoiceForm.tsx` (Insert adds
 a line and lands on its account picker, Enter on an amount moves down, F3 or
 Ctrl+S is the save button once the form is ready — `useSaveHotkey`,
 payment-voucher.md; the amount is the shared `MoneyInput`; the scan sits on
-New and Copy). **Every
+New and Copy).
+
+**The bill pile for AP invoices (2026-09-08, owner: AP invoice 的 OCR 要优化像 PV
+这样 … 我可能同时 upload 多张 supplier 给的 invoice, 所以要分出来一张一张).**
+"📷 Scan bills" beside "+ New AP invoice" opens `/scm/ap-invoices/scan` — the
+voucher's pile page (`frontend/src/pages/scm-v2/PaymentVoucherScan.tsx`,
+`target="ap"`): drop or paste many files, one file = one bill, tick pages and
+Merge for a bill photographed in pieces, read them in one call. The difference
+from the voucher's pile is the last step: a bill IS an invoice with its own
+number, so every bill opens as ITS OWN AP invoice ("Open as AP invoice"; a
+same-supplier group is never offered as one). The hand-off lands on
+`frontend/src/pages/scm-v2/ApInvoices.tsx` as `location.state.apPrefill`, the
+pages riding the voucher's module stash (pv-file-handoff.ts); the list opens
+its New form pre-filled through `formFromExtraction` — the one home the form's
+own Scan bill fills through too (`ApInvoiceForm.tsx`, which also takes a bill
+DROPPED on its scan row) — and attaches the pages on save. What the reader
+fills goes UPPER CASE (`upperFill`, `frontend/src/vendor/scm/lib/ocr-fill.ts`;
+owner: 帮我 fill data 时默认全部大写, typed text left alone: 打字不需要先).
+Contracts: `ApInvoices.test.tsx` (the button, the hand-off, the drop, the
+casing), `PaymentVoucherScan.test.tsx` (the AP pile), routeManifest 154.
+
+**Every
 field can be edited** (edit 这个不能全部都设成可以改吗): `PATCH /:id` takes a
 DRAFT as before and RE-POSTS a posted bill — the old journal gets its contra
 dated as the old bill was, a fresh entry books the bill as saved, one active

@@ -60,6 +60,47 @@ const readBill = (index: number, over: Partial<{ invoiceNumber: string | null; t
   memory: memory ? { ...memory, purpose: 'OTHER', timesSeen: 2 } : null,
 });
 
+/* The same pile for AP invoices (owner 2026-09-08: 每张单一张 ap invoice … 分出来
+   一张一张): the reading and the merge are the voucher's; every bill opens as
+   its own AP invoice, and a same-supplier group is never offered as one. */
+describe('the pile for AP invoices', () => {
+  let apLanded: unknown = null;
+  const ApProbe = () => { apLanded = useLocation().state; return <div>AP LIST</div>; };
+  const drawAp = () => render(
+    <MemoryRouter initialEntries={['/scm/ap-invoices/scan']}>
+      <Routes>
+        <Route path="/scm/ap-invoices/scan" element={<PaymentVoucherScan target="ap" />} />
+        <Route path="/scm/ap-invoices" element={<ApProbe />} />
+      </Routes>
+    </MemoryRouter>,
+  );
+
+  test('same-supplier bills stay one AP invoice each; the one opened carries its reading and stashes its pages', async () => {
+    extractAsync.mockClear(); apLanded = null;
+    extractAsync.mockResolvedValueOnce({ bills: [
+      readBill(0, { invoiceNumber: 'INV-1', totalSen: 100000 }, { id: 'sup-1', name: 'Foshan Chairs' }, { payeeName: 'Foshan Chairs', debitAccountCode: '900-F002' }),
+      readBill(1, { invoiceNumber: 'INV-2', totalSen: 50000 }, { id: 'sup-1', name: 'Foshan Chairs' }, { payeeName: 'Foshan Chairs', debitAccountCode: '900-F002' }),
+    ] });
+    drawAp();
+    expect(screen.getByText('Scan bills — AP invoices')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Add bill files'), { target: { files: [pdf('a.pdf'), pdf('b.pdf')] } });
+    fireEvent.click(screen.getByText('Read 2 bill(s)'));
+
+    await waitFor(() => expect(screen.getAllByText('Open as AP invoice')).toHaveLength(2));
+    expect(screen.queryByText(/Open as ONE voucher/)).toBeNull();
+    expect(screen.queryByText('Open as voucher')).toBeNull();
+    expect(screen.queryByLabelText(/bills separately/)).toBeNull();
+
+    fireEvent.click(screen.getAllByText('Open as AP invoice')[1]!);
+    await waitFor(() => expect(screen.getByText('AP LIST')).toBeTruthy());
+    const state = apLanded as { apPrefill: { extraction: { invoiceNumber: string | null }; supplierMatch: { id: string } | null; memory: { debitAccountCode: string | null } | null } };
+    expect(state.apPrefill.extraction.invoiceNumber).toBe('INV-2');
+    expect(state.apPrefill.supplierMatch).toMatchObject({ id: 'sup-1' });
+    expect(state.apPrefill.memory).toMatchObject({ debitAccountCode: '900-F002' });
+    expect(takePvFiles().map((f) => f.name)).toEqual(['b.pdf']);
+  });
+});
+
 describe('the bill pile', () => {
   test('case 1: ticked pages merge into ONE bill in the payload sent for reading', async () => {
     extractAsync.mockClear();
