@@ -60,8 +60,14 @@ test("BOTH real files load, and the 2026-08 round is still there", () => {
      19 -> 35 on 2026-09-08: the SIXTEEN builds the owner read off his own slips
      in one sitting, ending 「所以全部答案我都给你了」. Fifteen documents; two of
      the sixteen are the two sofas of HC-SO-012827 and two more are the two
-     sofas of HC-SO-004709. Same file, same reason as above. */
-  assert.equal(bySource.get("sofa-compartment-corrections-2026-09.json"), 35);
+     sofas of HC-SO-004709. Same file, same reason as above.
+     35 -> 34 the same day: HC-SO-011657 moved to `_held`. His STOOL ruling is
+     not in doubt, but 9838-STOOL is not minted and WHICH model the stool belongs
+     to is a judgement (the book names `TNS-9838 DB`, and `TNS-9838 SOFA` is a
+     separate item) — so the entry states no model rather than a typed one, which
+     is the defect docs/bugs/0693 records. `_held` is counted separately and
+     printed on every run, so it cannot be mistaken for done. */
+  assert.equal(bySource.get("sofa-compartment-corrections-2026-09.json"), 34);
 });
 
 /* ── THE TWO SOURCES MAY NOT BE CONFUSED FOR EACH OTHER ─────────────────────

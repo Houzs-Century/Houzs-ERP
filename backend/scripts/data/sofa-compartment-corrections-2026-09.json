@@ -431,18 +431,6 @@
   },
   {
    "docs": [
-    "HC-SO-011657"
-   ],
-   "model": "9838",
-   "pieces": [
-    "STOOL"
-   ],
-   "seat": null,
-   "desc2Match": "TBC/DSL model/Default size",
-   "why": "owner 2026-09-08, reading his own slips one by one and then 「所以全部答案我都给你了」. 「第二个是stool」. The book's own line is quoted from the committed snapshot backend/scripts/data/ac-reconcile-truth.json.gz. SO-011657 DtlKey 803494 is item TNS-9838 DB, Desc2 \"TBC/DSL model/Default size\". NOT EVERY SOFA SLIP IS A SOFA: the drawing is a 6ft x 3ft box labelled 'umbrella fabric cover' and he ruled it a STOOL - there is no build to decompose. If 9838-STOOL is not minted the piece-SKU gate REFUSES and the answer is a minting task, not a re-reading; that refusal is reported rather than worked around. MODEL: written as 9838, not the \"9838 DB\" that check-sofa-corrections-vs-book.mjs reads off the item name TNS-9838 DB. The minted SKUs for this model are 9838-1A(LHF), 9838-2NA, 9838-3S and so on, and item-code-class.mjs modelOf takes the first run of 3+ digits, which is 9838 - so 9838 is the prefix the ERP actually uses and the checker flagging it is that checker splitting on the first dash and keeping the trailing \" DB\". MEASURED, prod dry-run 34234942367: REFUSED - piece SKU not minted: 9838-STOOL. His answer is not in doubt and is recorded here; the product 9838-STOOL simply does not exist yet in scm.products. Minting a product code is a CATALOGUE change and is not something this lane does unilaterally - it needs one action from whoever owns the product list, and then this entry applies unchanged with no re-reading."
-  },
-  {
-   "docs": [
     "HC-SO-012026"
    ],
    "model": "9058",
@@ -497,6 +485,20 @@
    "seat": null,
    "desc2Match": "backrest change 9028",
    "why": "owner 2026-09-08, reading his own slips one by one and then 「所以全部答案我都给你了」. 「L（LHF）+2AR」. The book's own line is quoted from the committed snapshot backend/scripts/data/ac-reconcile-truth.json.gz. SO-012947 DtlKey 879533 is item AMN-SF9058 SOFA, Desc2 \"9058 sofa backrest change 9028\". Two rules land on this one document. THE BACKREST NOTE IS NOT A MODEL CHANGE - it says 9028 and the model stays 9058, the second document to show this after HC-SO-012108. And TBC SIDE WRITTEN ON A SLIP IS NOT UNANSWERABLE - the slip says it and the drawing still told him the chaise is on the LEFT. The chaise is written L(LHF), with no count prefix, the ERP's own spelling. His ruling is taken on the COMPARTMENT axis only - 「一律跟账本。除了sofa compartment而已啊」 - so the SKU model, quantity, price and colour still follow the book."
+  }
+ ],
+ "_held": [
+  {
+   "docs": [
+    "HC-SO-011657"
+   ],
+   "pieces": [
+    "STOOL"
+   ],
+   "seat": null,
+   "desc2Match": "TBC/DSL model/Default size",
+   "why": "owner 2026-09-08, reading his own slips one by one and then 「所以全部答案我都给你了」. 「第二个是stool」. The book's own line is quoted from the committed snapshot backend/scripts/data/ac-reconcile-truth.json.gz. SO-011657 DtlKey 803494 is item TNS-9838 DB, Desc2 \"TBC/DSL model/Default size\". NOT EVERY SOFA SLIP IS A SOFA: the drawing is a 6ft x 3ft box labelled 'umbrella fabric cover' and he ruled it a STOOL - there is no build to decompose. If 9838-STOOL is not minted the piece-SKU gate REFUSES and the answer is a minting task, not a re-reading; that refusal is reported rather than worked around. MODEL: written as 9838, not the \"9838 DB\" that check-sofa-corrections-vs-book.mjs reads off the item name TNS-9838 DB. The minted SKUs for this model are 9838-1A(LHF), 9838-2NA, 9838-3S and so on, and item-code-class.mjs modelOf takes the first run of 3+ digits, which is 9838 - so 9838 is the prefix the ERP actually uses and the checker flagging it is that checker splitting on the first dash and keeping the trailing \" DB\". MEASURED, prod dry-run 34234942367: REFUSED - piece SKU not minted: 9838-STOOL. His answer is not in doubt and is recorded here; the product 9838-STOOL simply does not exist yet in scm.products. Minting a product code is a CATALOGUE change and is not something this lane does unilaterally - it needs one action from whoever owns the product list, and then this entry applies unchanged with no re-reading.",
+   "heldWhy": "NOT WRITTEN 2026-09-08, and his ruling above is NOT in doubt. Two things stop it, and neither is a re-reading. (1) THE PRODUCT DOES NOT EXIST. Prod dry runs 34234942367 / 34235361240 / 34235917676 all answered the same: REFUSED - piece SKU not minted: 9838-STOOL. Minting a product code is a CATALOGUE change, not a compartment correction, and is not done unilaterally by this lane. (2) WHICH MODEL THE STOOL BELONGS TO IS A JUDGEMENT, NOT A FACT WE HOLD. The book item is TNS-9838 DB, and this file first stated the model as 9838 on the strength of the minted 9838-1A(LHF) / 9838-3S codes and item-code-class.mjs modelOf taking the first run of 3+ digits. tests/sofaCorrectionsVsBook.test.mjs refused that: the book names 9838 DB and a hand-typed model that the book does not name is exactly the defect docs/bugs/0693 was written about, where three builds carried a typed model that overwrote the correct one and the ERP disagreed with the book for a month. TNS-9838 DB and TNS-9838 SOFA are BOTH real items in the book, so 9838 DB may well be its own product rather than a suffix to strip - and guessing which would be inventing the answer. The model is therefore removed rather than typed, and this entry waits for the one decision it needs: create the STOOL under whichever model is right, then this applies unchanged with nothing more from him."
   }
  ]
 }

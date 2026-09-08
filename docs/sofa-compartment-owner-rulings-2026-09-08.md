@@ -279,18 +279,31 @@ source."* No decoder change was made in this round, because none would have clos
 document.
 
 
-## `HC-SO-011657` is blocked on a product that does not exist yet
+## `HC-SO-011657` is HELD — two blockers, neither of them a re-reading
 
-His answer is not in doubt and is written into the corrections file. The prod dry run
-(`34234942367`) refused it for one reason:
+His STOOL answer is not in doubt and is recorded verbatim. It sits in the corrections file's
+`_held` list, which is printed on every run so it cannot be mistaken for done — the same
+place `HC-SO-011099` sits.
+
+**1. The product does not exist.** Every prod dry run said the same thing:
 
 ```
 HC-SO-011657: REFUSED - piece SKU not minted: 9838-STOOL
 ```
 
-`9838-STOOL` simply is not in `scm.products`. Minting a product code is a **catalogue**
-change, not a compartment correction, so this lane did not do it unilaterally. It needs one
-action from whoever owns the product list; after that this entry applies unchanged, with **no
+Minting a product code is a **catalogue** change, not a compartment correction, so this lane
+did not do it unilaterally.
+
+**2. Which model the stool belongs to is a JUDGEMENT, not a fact we hold.** The book item is
+`TNS-9838 DB`. This file first stated the model as `9838`, on the strength of the minted
+`9838-1A(LHF)` / `9838-3S` codes. **`tests/sofaCorrectionsVsBook.test.mjs` refused that** —
+the book names `9838 DB`, and a hand-typed model the book does not name is exactly the defect
+`docs/bugs/0693` records, where three builds carried a typed model that overwrote the correct
+one and the ERP disagreed with the book for a month. `TNS-9838 DB` and `TNS-9838 SOFA` are
+**both** real items, so `9838 DB` may be its own product rather than a suffix to strip.
+
+So the model was **removed rather than guessed**. What this needs is one decision — create
+the STOOL under whichever model is right — after which the entry applies unchanged, with **no
 re-reading and nothing more from him**.
 
 ---
