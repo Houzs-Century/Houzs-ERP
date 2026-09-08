@@ -52,8 +52,12 @@ test("BOTH real files load, and the 2026-08 round is still there", () => {
      number following them, so the assertion had been RED on main and the
      working-agreement workflow (which runs `node --test scripts/lib/*.test.mjs`
      and reports rather than blocks) had been carrying the failure. Corrected to
-     what the file actually holds. */
-  assert.equal(bySource.get("sofa-compartment-corrections-2026-09.json"), 18);
+     what the file actually holds.
+     18 -> 19 on 2026-09-08: HC-SO-013475, the sofa the shop floor reported as
+     "Autocount drawing is 1+1+1, ERP 2+1". It went into THIS file rather than a
+     2026-09-08 one because the FILE= substring filter would then select two
+     rounds at once - the test below pins that. */
+  assert.equal(bySource.get("sofa-compartment-corrections-2026-09.json"), 19);
 });
 
 /**
