@@ -42,6 +42,7 @@ import postgres from "postgres";
 import { buildScope, decodeSnapshot } from "./lib/ac-scope.mjs";
 import { grPairGrain } from "./lib/ac-gr-pair-grain.mjs";
 import { readMappingCsv, normCode } from "./lib/ac-mapping-csv.mjs";
+import { comparisonKey } from "./lib/keyless-multiset.mjs";
 
 const DSN = process.env.DATABASE_URL;
 if (!DSN) { console.error("REFUSED: DATABASE_URL not set."); process.exit(2); }
@@ -72,9 +73,31 @@ if (MAPPING.size < 100) {
 
 const sql = postgres(DSN, { ssl: "require", prepare: false, max: 1, connect_timeout: 30 });
 
-const bagText = (pairs) => {
+/* THE SOFA FOLD IS NOT OPTIONAL, and leaving it out INVENTS findings — this
+   probe's own first run proved it. A sofa is ONE book line (`2379-1S`,
+   `9058-1S`) and ONE ERP ROW PER COMPARTMENT, so a raw bag can never be equal
+   on a sofa document: run 34202080707 printed four goods receipts as "BAGS
+   DIFFER" and two invoice rows as goods the book does not have, and every one
+   of the six was a decomposition. Same shape as docs/bugs/0694, where a sofa
+   exclusion that tested only `line_suffix` printed 40 decompositions as wrong
+   products. So both sides go through `lib/keyless-multiset.mjs`'s
+   `comparisonKey` — the SAME canonicalisation the reconcile's keyless verdict
+   uses, model-folded through SOFA_MODEL_ALIAS — rather than a second opinion
+   written here. */
+/* `rawCode` is the BOOK's own untranslated code and it is load-bearing: the book
+   names a sofa `AMN-SF2379 SOFA` and the sheet translates that to `2379-1S`,
+   which contains no "SOFA" at all. Handing the TRANSLATED string in as rawCode
+   silently turns the fold off on exactly the rows it exists for. */
+const canon = ({ code, rawCode, side, suffixed = false }) =>
+  comparisonKey({ code: normCode(code), rawCode: rawCode ?? code, side, suffixed }).key;
+
+const bagText = (rows) => {
   const m = new Map();
-  for (const [c, q] of pairs) { const k = normCode(c); if (!k) continue; m.set(k, (m.get(k) ?? 0) + Number(q || 0)); }
+  for (const r of rows) {
+    const k = canon(r);
+    if (!k) continue;
+    m.set(k, (m.get(k) ?? 0) + Number(r.qty || 0));
+  }
   return [...m.entries()].sort((a, b) => (a[0] > b[0] ? 1 : -1)).map(([c, q]) => `${c} x${q}`).join(" | ");
 };
 
@@ -133,8 +156,8 @@ async function main() {
        checker's guess, so the only honest question is the multiset. */
     const unkeyed = erp.lines.filter((l) => l.ac_dtlkey == null);
     if (unkeyed.length) {
-      const bBag = bagText(bookLines.map((l) => [translate(l.itemKey), l.qty ?? 0]));
-      const eBag = bagText(erp.lines.map((l) => [l.item_code, l.qty ?? 0]));
+      const bBag = bagText(bookLines.map((l) => ({ code: translate(l.itemKey), rawCode: l.itemKey, qty: l.qty ?? 0, side: "book" })));
+      const eBag = bagText(erp.lines.map((l) => ({ code: l.item_code, qty: l.qty ?? 0, side: "erp", suffixed: l.line_suffix != null })));
       codeGuessed.push({ pair, erpNo: erp.erp_no, unkeyed: unkeyed.length, of: erp.lines.length, same: bBag === eBag, bBag, eBag });
     }
   }
@@ -208,15 +231,24 @@ async function main() {
     for (const [ac, ours] of byDoc) {
       const bl = book[t].lines.get(ac) || [];
       if (!bl.length) continue;
-      if (ours.some((r) => r.line_suffix) || bl.some((l) => /SOFA/i.test(String(l.itemKey ?? "")))) continue;
+      /* Both sides folded the same way as the bag above: a sofa's compartments
+         are ONE book line, so an unfolded subtraction reports every compartment
+         beyond the first as a row the book does not have. */
       const have = new Map();
-      for (const l of bl) { const c = translate(l.itemKey); have.set(c, (have.get(c) ?? 0) + (l.qty ?? 0)); }
+      for (const l of bl) {
+        const c = canon({ code: translate(l.itemKey), rawCode: l.itemKey, side: "book" });
+        have.set(c, (have.get(c) ?? 0) + (l.qty ?? 0));
+      }
       for (const r of ours) {
-        const c = normCode(r.item_code);
+        const c = canon({ code: r.item_code, side: "erp", suffixed: r.line_suffix != null });
         const left = have.get(c) ?? 0;
         if (left >= (r.qty ?? 0)) { have.set(c, left - (r.qty ?? 0)); continue; }
+        /* A sofa's ERP rows outnumber the book's line by construction, so a
+           shortfall on a folded sofa key says nothing. Only a PLAIN code the
+           book does not carry at all is a finding here. */
+        if (c.startsWith("SOFA ")) continue;
         extras++;
-        say(`     ${t} ${ac} (ERP ${r.erp_no}): we hold "${c}" qty ${r.qty} at ${rm(r.unit_price_sen)} — the book has ${left} of it  [id ${r.id}]`);
+        say(`     ${t} ${ac} (ERP ${r.erp_no}): we hold "${normCode(r.item_code)}" qty ${r.qty} at ${rm(r.unit_price_sen)} — the book has ${left} of it  [id ${r.id}]`);
       }
     }
     log(`${t} — ${extras} ERP row(s) the book does not account for.`);

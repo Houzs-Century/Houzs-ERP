@@ -1731,10 +1731,38 @@ Two things about it are load-bearing and easy to get wrong:
   them can be repaired — their only available failure is a missing LINK. The
   checker says so out loud so the silence is not read as a clean measurement.
 
-**Status: the instrument shipped, the number is not taken yet.**
-`workflow_dispatch` requires the workflow file on the default branch, so it
-cannot run until it merges. `docs/bugs/0705` carries the entry and the result
-goes there.
+**MEASURED — run `34203192972`, 2026-09-08 16:11 Malaysia.** (The first dispatch,
+`34201730668`, crashed on `min(uuid)` after one axis — `docs/bugs/0707`.)
+
+```
+    axis      | compared | agree | ERP LOW | ERP HIGH | ERP asserts | unkeyed rows
+    ------------------------------------------------------------------------------------
+    SO -> PO  |      761 |   735 |      25 |        1 |           0 |          244
+    PO -> GR  |     1137 |  1130 |       7 |        0 |           0 |           17
+    GR -> PI  |      504 |   142 |     362 |        0 |           0 |          229
+```
+
+**This settles the question G2 has carried since mig `0231`, and it settles it in
+our favour on two of the three counters.** Against AutoCount's own numbers,
+`received_qty` reads HIGH on **0** groups and `invoiced_qty` reads HIGH on **0**.
+The 140 and 80 that read HIGH against their own ERP children are the migration
+faithfully copying a receipt the book already made — 220 lines off the suspect
+list, no code changed to get there. `ERP asserts a transfer the book does not
+have` is **0** on all three axes, so nothing in the ERP claims a conversion
+AutoCount has no record of.
+
+What is left is all in the LOW direction:
+
+| axis | reading LOW | what it is |
+| --- | --- | --- |
+| SO -> PO | 25 | the book raised the purchase; our picker still shows 0 picked, so the line is offered again — a SECOND purchase order. Belongs to `fix/staff-reported-flow` (#3225), which writes `so_item_id` at compartment grain |
+| PO -> GR | 7 | ALL seven are sofa decompositions (`book 1 of 1 \| ERP 1 of 2 over 2 rows`). The book received the whole sofa, we received one compartment, so the bound sales line cannot go READY. Covered by the owner's 「除了 sofa compartment 而已啊」 exemption |
+| GR -> PI | 362 | the cutover's own scope decision made visible: AutoCount's 4,789 historical purchase invoices were deliberately not imported, so `invoiced_qty` is 0 on receipts the book has already invoiced. Those 362 lines can be invoiced AGAIN here |
+
+One over-convert: `SO-000870` `CODY-(K)`, book 1 of 1, ERP **2** of 1.
+
+`docs/bugs/0705` carries the entry and the reasoning for repairing none of them
+from that lane.
 
 ### G3 — DRAFT policy is decided three different ways, and where a DRAFT does not consume, two documents can be raised for the same line.
 

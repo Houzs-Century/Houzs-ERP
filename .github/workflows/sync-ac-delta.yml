@@ -32,6 +32,14 @@ name: Sync AutoCount delta (go-live)
 #             OFF by default, because it is a WRITE TO MASTER DATA. Every row
 #             carries an ACIMP- staff_code so the whole set is reversible, and
 #             it never activates anybody.
+#   push      the OTHER direction, and the one the owner reversed when he opened
+#             the system to staff: where a PERSON owns a field and the account
+#             book still holds the old value, the ERP is master and the BOOK is
+#             brought to it. Enqueues one keyed AutoCount edit per order through
+#             the same enqueueEdit the sales-order routes call. OFF by default,
+#             because it writes into the queue that feeds a licensed book.
+#             The PLAN prints every refused field either way, so the count is
+#             readable without arming anything.
 # The INSERT lane belongs to the importers the plan names
 # (import-ac-outstanding-so.mjs, import-ac-outstanding-po.mjs,
 # import-ac-so-linked-pos.mjs) and is NOT run from here.
@@ -69,7 +77,7 @@ on:
         default: ""
         type: string
       lanes:
-        description: "Apply lanes (comma separated): desc,pay,links,recv,do,dedi,hdr,hdrstaff. hdr/hdrstaff are OFF by default."
+        description: "Apply lanes (comma separated): desc,pay,links,recv,do,dedi,hdr,hdrstaff,push. hdr/hdrstaff/push are OFF by default."
         required: false
         default: "desc,pay,links,recv,do,dedi"
         type: string
@@ -100,7 +108,10 @@ jobs:
       - uses: actions/setup-node@v6
         with: { node-version: 22 }
       - run: npm ci
-      - run: node scripts/sync-ac-delta.mjs
+      # npx tsx, not node: this script imports src/scm/shared/audit-author.ts and
+      # src/scm/lib/autocount-outbox.ts rather than keeping second copies of
+      # the authorship rule and the write-back composer.
+      - run: npx tsx scripts/sync-ac-delta.mjs
         env:
           MODE: ${{ inputs.apply == 'yes' && 'apply' || 'plan' }}
           CONFIRM: ${{ inputs.confirm }}
@@ -118,7 +129,10 @@ jobs:
       - uses: actions/setup-node@v6
         with: { node-version: 22 }
       - run: npm ci
-      - run: node scripts/sync-ac-delta.mjs
+      # npx tsx, not node: this script imports src/scm/shared/audit-author.ts and
+      # src/scm/lib/autocount-outbox.ts rather than keeping second copies of
+      # the authorship rule and the write-back composer.
+      - run: npx tsx scripts/sync-ac-delta.mjs
         env:
           MODE: ${{ inputs.apply == 'yes' && 'apply' || 'plan' }}
           CONFIRM: ${{ inputs.confirm }}

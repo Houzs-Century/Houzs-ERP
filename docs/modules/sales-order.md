@@ -3857,14 +3857,38 @@ normal shape for a PERSON's row — `routes/so-amendments.ts:262` writes one on
 purpose, and `routes/so-handover.ts:191` writes one whenever the session's user
 object is thin, on the very route that changes `salesperson_id` and `agent`.
 
-The rule now has ONE home, `backend/scripts/lib/ac-human-edit.mjs`, and it is the
-one `check-so-open-for-new.mjs` proved against production:
+**CORRECTED AGAIN the same day, and this is the version that holds.** The rule
+above shipped as
 
 ```
 SYSTEM := actor_id = the migration's pinned actor
        OR (actor_id IS NULL AND actor_name_snapshot ILIKE 'system%')
+```
+
+and its first arm matched **every sales-order edit a person makes in the
+browser**, so on this lane the guard still refused nothing. `middleware/auth.ts`
+pins that exact uuid onto `c.get('user').id` for every authenticated SCM caller,
+and all 21 `recordSoAudit` call sites in `routes/mfg-sales-orders.ts` pass
+`actorId: user.id`. It also matched ZERO migration rows: no script writes
+`actor_id` into either audit table at all. `docs/bugs/0704-*` has the trace and
+the measurement — which is an EXECUTED assertion (the real middleware is run in
+`backend/src/scm/shared/audit-author.test.ts`), because this same claim had by
+then been got wrong twice in opposite directions by reading files.
+
+The rule has ONE home for the whole repo, `backend/src/scm/shared/audit-author.ts`:
+
+```
+SYSTEM := actor_name_snapshot ILIKE 'system%'
 PERSON := everything else, an UNATTRIBUTED row included
 ```
+
+`actor_id` is not consulted anywhere, because it is a constant.
+`backend/scripts/lib/ac-human-edit.mjs` keeps the field aliasing, the
+per-(document, field) index and the refusal wording — none of which is a
+decision — and delegates the authorship question to that module. It lives under
+`src/scm/shared/` because the go-live change log (`docs/modules/change-log.md`)
+reads the same rule from inside the Worker, and a Worker bundle cannot import
+out of `backend/scripts`.
 
 Two consequences worth knowing before you read a plan:
 

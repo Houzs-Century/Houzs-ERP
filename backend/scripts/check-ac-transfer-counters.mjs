@@ -183,7 +183,7 @@ const AXES = [
     groups: () => pg`
       SELECT linked_ac_dtlkey::text AS k, count(*)::int AS rows,
              sum(qty)::numeric AS erp_qty, sum(received_qty)::numeric AS erp_counter,
-             min(item_code) AS item_code, min(purchase_order_id)::text AS erp_doc
+             min(item_code) AS item_code, min(purchase_order_id::text) AS erp_doc
         FROM scm.purchase_order_items
        WHERE company_id = ${CO} AND linked_ac_dtlkey IS NOT NULL
        GROUP BY linked_ac_dtlkey`,
@@ -211,7 +211,7 @@ const AXES = [
     groups: () => pg`
       SELECT linked_ac_dtlkey::text AS k, count(*)::int AS rows,
              sum(qty_accepted)::numeric AS erp_qty, sum(invoiced_qty)::numeric AS erp_counter,
-             min(item_code) AS item_code, min(grn_id)::text AS erp_doc
+             min(item_code) AS item_code, min(grn_id::text) AS erp_doc
         FROM scm.grn_items
        WHERE company_id = ${CO} AND linked_ac_dtlkey IS NOT NULL
        GROUP BY linked_ac_dtlkey`,

@@ -202,6 +202,16 @@ export const PERMISSIONS: PermissionDef[] = [
   // already exists — a key nobody holds is an endpoint nobody can call).
   // Owner + IT Admin cover it via "*".
   { key: "scm.autocount.read", resource: "Supply Chain", verb: "read", label: "View AutoCount sync queue", description: "See every document the ERP pushed to AutoCount, its state (queued / sent / failed / skipped) and the reason it failed or was skipped" },
+  /* DECLARED 2026-09-08, for the go-live change log the owner asked for when he
+     opened sales orders, delivery orders, purchase orders and goods receipts to
+     staff: 「谁改了东西 谁改了」. It is a SUPERVISION key, not an operational one —
+     the page shows what every colleague changed on every document in the
+     company, so it is deliberately its own key rather than riding
+     scm.autocount.read (watching the account-book queue and watching your
+     colleagues are different grants) and rather than riding an SCM area key (a
+     change log spans every area at once). Owner + IT Admin cover it via "*";
+     settings.manage is the other key the route accepts. */
+  { key: "scm.changelog.read", resource: "Supply Chain", verb: "read", label: "View the change log", description: "See who changed which sales order, delivery order, purchase order or goods receipt, when, and from what to what — with the system's own automated changes counted separately" },
   /* DECLARED 2026-08-16, when the page grew a per-row "Send again" button.
      The read key above used to end "Read-only: re-sending stays in
      requeue-autocount-skipped.yml"; it does not any more, and the two are
