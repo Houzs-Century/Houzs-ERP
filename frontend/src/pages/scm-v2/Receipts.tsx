@@ -47,8 +47,10 @@ export const Receipts = () => {
   const canCancel = can('scm.payment_voucher.cancel');
   const canEdit = can('scm.payment_voucher.write') || canCreate;
 
-  const [month, setMonth] = useState<string>(() => new Date().toISOString().slice(0, 7));
-  const listQ = useReceipts(month);
+  /* Every month by default; the month is a FILTER (owner 2026-09-08: 月份只是
+     筛选 — the page used to open on this month alone). '' = all. */
+  const [month, setMonth] = useState<string>('');
+  const listQ = useReceipts(month || undefined);
   const accountsQ = useAccounts();
   const accounts = useMemo<Account[]>(() => (accountsQ.data?.accounts ?? []).filter((a) => a.is_active), [accountsQ.data]);
   const moneyAccounts = useMemo(() => accounts.filter((a) => a.acc_money === true), [accounts]);
@@ -135,7 +137,7 @@ export const Receipts = () => {
   };
 
   const rows = listQ.data?.receipts ?? [];
-  const monthTotal = rows.filter((r) => r.status !== 'CANCELLED').reduce((s, r) => s + r.totalSen, 0);
+  const listTotal = rows.filter((r) => r.status !== 'CANCELLED').reduce((s, r) => s + r.totalSen, 0);
 
   return (
     <div className="space-y-4">
@@ -204,13 +206,19 @@ export const Receipts = () => {
           <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', fontSize: 'var(--fs-13)' }}>
             <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} aria-label="Month"
               style={{ padding: '4px 8px', border: '1px solid var(--border-weak, #d8d5cd)', borderRadius: 6 }} />
-            <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700 }}>{fmtRm(monthTotal)}</span>
+            {month !== '' && (
+              <button type="button" onClick={() => setMonth('')}
+                style={{ padding: '4px 8px', border: '1px solid var(--border-weak, #d8d5cd)', borderRadius: 6, background: 'none', cursor: 'pointer', fontSize: 'var(--fs-13)' }}>
+                All months
+              </button>
+            )}
+            <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700 }}>{fmtRm(listTotal)}</span>
           </div>
         </div>
         <div className={styles.cardBody} style={{ overflowX: 'auto' }}>
           {listQ.isLoading && <div style={{ fontSize: 'var(--fs-13)' }}>Loading…</div>}
           {!listQ.isLoading && rows.length === 0 && (
-            <div style={{ fontSize: 'var(--fs-13)', color: 'var(--fg-muted)' }}>Nothing came in this month (searched general + other-debtor + customer receipts).</div>
+            <div style={{ fontSize: 'var(--fs-13)', color: 'var(--fg-muted)' }}>Nothing came in {month ? 'this month' : 'yet'} (searched general + other-debtor + customer receipts).</div>
           )}
           {rows.length > 0 && (
             <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 'var(--fs-13)' }}>

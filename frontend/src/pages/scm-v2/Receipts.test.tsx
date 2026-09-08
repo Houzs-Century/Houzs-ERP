@@ -17,6 +17,13 @@ const DETAIL_G1 = {
   receipt: { id: 'g1', receipt_number: 'HC-OR-2609-001', payer_name: 'ALLIANZ INSURANCE', receipt_date: '2026-09-03', bank_account_code: '310-0010', total_sen: 88800, status: 'POSTED', notes: null },
   lines: [{ id: 'l1', line_no: 1, description: '车险赔偿', credit_account_code: '700-0000', amount_sen: 88800 }],
 };
+/* Which month the page asked the list for — undefined = every month. */
+const receiptsAsked: Array<string | undefined> = [];
+const LIST = { month: null, receipts: [
+  { kind: 'GENERAL', id: 'g1', number: 'HC-OR-2609-001', date: '2026-09-03', payer: 'ALLIANZ INSURANCE', moneyAccount: '310-0010', totalSen: 88800, status: 'POSTED' },
+  { kind: 'DEBTOR', id: 'dr1', number: 'HC-ODR-2609-001', date: '2026-09-02', payer: 'AHMAD BIN ALI', moneyAccount: '310-0010', totalSen: 20000, status: 'POSTED', debtorId: 'd1' },
+  { kind: 'CUSTOMER', id: 'p1', number: 'HC-SO-2609-004', date: '2026-09-01', payer: 'Customer deposit', moneyAccount: 'EDC', totalSen: 350000, status: 'RECEIVED' },
+] };
 vi.mock('../../vendor/scm/lib/accounting-queries', () => ({
   useReceiptDetail: (id: string | null) => ({ data: id === 'g1' ? DETAIL_G1 : undefined, isLoading: false }),
   useUpdateReceipt: () => ({ mutateAsync: updateAsync, isPending: false }),
@@ -25,11 +32,7 @@ vi.mock('../../vendor/scm/lib/accounting-queries', () => ({
     { account_code: '310-0010', account_name: 'MAYBANK', account_type: 'ASSET', parent_code: null, is_active: true, acc_money: true },
     { account_code: '700-0000', account_name: 'Other Income', account_type: 'INCOME', parent_code: null, is_active: true, acc_money: false },
   ] }, isLoading: false }),
-  useReceipts: () => ({ data: { month: '2026-09', receipts: [
-    { kind: 'GENERAL', id: 'g1', number: 'HC-OR-2609-001', date: '2026-09-03', payer: 'ALLIANZ INSURANCE', moneyAccount: '310-0010', totalSen: 88800, status: 'POSTED' },
-    { kind: 'DEBTOR', id: 'dr1', number: 'HC-ODR-2609-001', date: '2026-09-02', payer: 'AHMAD BIN ALI', moneyAccount: '310-0010', totalSen: 20000, status: 'POSTED', debtorId: 'd1' },
-    { kind: 'CUSTOMER', id: 'p1', number: 'HC-SO-2609-004', date: '2026-09-01', payer: 'Customer deposit', moneyAccount: 'EDC', totalSen: 350000, status: 'RECEIVED' },
-  ] }, isLoading: false }),
+  useReceipts: (month?: string) => { receiptsAsked.push(month); return { data: LIST, isLoading: false }; },
   useCreateReceipt: () => ({ mutateAsync: createAsync, isPending: false }),
   useVoidReceipt: () => ({ mutateAsync: voidAsync, isPending: false }),
 }));
@@ -52,6 +55,20 @@ describe('the unified money-in list', () => {
     expect(screen.getByText('MYR 4,588.00')).toBeTruthy();
     expect(screen.getByText('HC-SO-2609-004').closest('a')!.getAttribute('href')).toBe('/scm/sales-orders/HC-SO-2609-004');
     expect(screen.getByText('HC-ODR-2609-001').closest('a')!.getAttribute('href')).toBe('/scm/other-debtors');
+  });
+
+  /* 月份只是筛选 (owner 2026-09-08): the page opens on every month; picking one
+     narrows the list, and "All months" widens it again. */
+  test('opens on every month; the month field filters and can be cleared', () => {
+    receiptsAsked.length = 0;
+    draw();
+    expect(receiptsAsked[0]).toBeUndefined();
+    expect((screen.getByLabelText('Month') as HTMLInputElement).value).toBe('');
+    expect(screen.queryByText('All months')).toBeNull();
+    fireEvent.change(screen.getByLabelText('Month'), { target: { value: '2026-09' } });
+    expect(receiptsAsked.at(-1)).toBe('2026-09');
+    fireEvent.click(screen.getByText('All months'));
+    expect(receiptsAsked.at(-1)).toBeUndefined();
   });
 
   test('a general receipt raises with its own date, typed payer, picked bank and free-pick lines', async () => {
