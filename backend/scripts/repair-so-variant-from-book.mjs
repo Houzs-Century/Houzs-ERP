@@ -128,24 +128,41 @@ async function main() {
                   WHERE h.company_id = ${CO} AND i.linked_ac_dtlkey = ${e.ac_dtlkey}`;
 
     const head = `${e.ac_doc} DtlKey ${e.ac_dtlkey} (${e.item_code}, ${e.axis})`;
-    if (!rows.length) { plain(`  !! ${head}: no ERP line carries that AutoCount key — skipped`); skipped++; continue; }
-    if (rows.length > 1) { plain(`  !! ${head}: ${rows.length} ERP lines carry that key; a correction must name ONE row — skipped`); skipped++; continue; }
-    const row = rows[0];
-    if (row.variants !== null && (typeof row.variants !== "object" || Array.isArray(row.variants))) {
-      plain(`  !! ${head}: its variants is not a jsonb object (#1938 owns that shape) — skipped`);
+    if (!rows.length) {
+      /* The migrated documents that carry NO line key at all. The reconcile
+         pairs those by value then by document order, and a second, private
+         matcher here would disagree with the one whose verdict is printed —
+         this repo's most expensive recurring bug. Reported, never guessed at. */
+      plain(`  !! ${head}: no ERP line carries that AutoCount key. This document was migrated without line keys, so the row can only be identified by the reconcile's own value-then-order fallback — REPORTED, not guessed. Skipped.`);
       skipped++; continue;
     }
+    /* SEVERAL ROWS BEHIND ONE BOOK LINE IS THE NORMAL SOFA SHAPE, not an
+       ambiguity: one AutoCount sofa line becomes one ERP line per compartment,
+       and a scalar axis is written IDENTICALLY to every piece of a build —
+       which is exactly why variant-reconcile.mjs reads it off the lead. So the
+       correction goes to all of them, or to none. */
+    const badShape = rows.filter((r) => r.variants !== null && (typeof r.variants !== "object" || Array.isArray(r.variants)));
+    if (badShape.length) {
+      plain(`  !! ${head}: ${badShape.length} of ${rows.length} row(s) hold a variants that is not a jsonb object (#1938 owns that shape) — skipped`);
+      skipped++; continue;
+    }
+    const row = rows[0];
 
-    /* THE STALE-LIST REFUSAL. */
-    const now = e.axis === "colour" ? pickColour(row.variants) : String(inches(pickAxisSeat(row.variants)) ?? "");
-    const wantNowId = e.axis === "colour" ? idOf(findColour, e.erp_now) : null;
-    const nowId = e.axis === "colour" ? idOf(findColour, now) : null;
-    const nowMatches = e.axis === "colour"
-      ? (nowId && wantNowId ? nowId === wantNowId : norm(now) === norm(e.erp_now))
-      : now === String(e.erp_now);
-    if (!nowMatches) {
-      const bookId = e.axis === "colour" ? idOf(findColour, e.book) : null;
-      const already = e.axis === "colour" ? (nowId && bookId && nowId === bookId) : now === String(e.book);
+    /* THE STALE-LIST REFUSAL — asserted on EVERY row of the build. A build
+       whose pieces disagree with each other is a state a human has to look at,
+       never one to flatten by writing over it. */
+    const valueOf = (r) => (e.axis === "colour" ? pickColour(r.variants) : String(inches(pickAxisSeat(r.variants)) ?? ""));
+    const sameAs = (v, want) => (e.axis === "colour"
+      ? (() => { const a = idOf(findColour, v), b = idOf(findColour, want); return a && b ? a === b : norm(v) === norm(want); })()
+      : v === String(want));
+    const now = valueOf(row);
+    const spread = [...new Set(rows.map(valueOf))];
+    if (spread.length > 1) {
+      plain(`  !! ${head}: the ${rows.length} pieces of this build do not agree with each other (${spread.map((x) => JSON.stringify(x || "")).join(", ")}) — a human has to look at that. Skipped.`);
+      skipped++; continue;
+    }
+    if (!sameAs(now, e.erp_now)) {
+      const already = sameAs(now, e.book);
       plain(`  -- ${head}: the ERP now holds "${now || "(blank)"}", the list expected "${e.erp_now}" — ${already ? "ALREADY the book's value, nothing to do" : "SOMEBODY EDITED IT SINCE; re-review before writing"} — skipped`);
       skipped++; continue;
     }
@@ -164,9 +181,9 @@ async function main() {
       patch = { seatHeight: `${n}"` };
     }
 
-    const down = await downstream(e.type, row.id);
-    writable.push({ e, row, table, patch, down });
-    log(`${head}: ${e.axis} "${now}" -> "${e.book}"  [${row.proceeded ? "PROCEEDED" : "not proceeded"}; ${down.text}]  ERP ${row.doc_no} line ${row.id}`);
+    const down = await downstream(e.type, rows.map((r) => r.id));
+    writable.push({ e, row, rows, table, patch, down });
+    log(`${head}: ${e.axis} "${now}" -> "${e.book}"  [${row.proceeded ? "PROCEEDED" : "not proceeded"}; ${down.text}]  ERP ${row.doc_no}, ${rows.length} piece(s): ${rows.map((r) => r.item_code).join(" + ")}`);
     plain(`      book: ${JSON.stringify(e.desc2)}`);
     plain(`      why : ${e.why}`);
   }
@@ -183,13 +200,14 @@ async function main() {
 
   if (MODE !== "apply") { plain(""); log(`DRY-RUN. Set MODE=apply and CONFIRM="${PHRASE}" to write.`); await sql.end(); return; }
 
-  let written = 0;
+  let written = 0, rowsWritten = 0;
   for (const w of writable) {
-    const n = await mergeVariantPatch(sql, { table: w.table, id: w.row.id, patch: w.patch, owned: OWNED_SOFA_KEYS });
-    if (!n) { plain(`  !! ${w.e.ac_doc}: not merged — the row vanished or its variants is not an object`); continue; }
-    written++;
+    let n = 0;
+    for (const r of w.rows) n += await mergeVariantPatch(sql, { table: w.table, id: r.id, patch: w.patch, owned: OWNED_SOFA_KEYS });
+    if (n !== w.rows.length) { plain(`  !! ${w.e.ac_doc}: merged ${n} of ${w.rows.length} piece(s) — a row vanished or its variants is not an object`); }
+    if (n) { written++; rowsWritten += n; }
   }
-  log(`APPLIED: ${written} of ${writable.length} line(s) merged.`);
+  log(`APPLIED: ${written} of ${writable.length} book line(s) merged, across ${rowsWritten} ERP row(s).`);
   await sql.end();
 
   /* ── verify on a FRESH connection, and assert the SHAPE ─────────────────
@@ -202,34 +220,36 @@ async function main() {
   );
   let ok = 0; const bad = [];
   for (const w of writable) {
-    const [r] = w.e.type === "SO"
-      ? await v`SELECT variants, jsonb_typeof(COALESCE(variants,'{}'::jsonb)) AS kind
-                FROM scm.mfg_sales_order_items WHERE id = ${w.row.id}::uuid`
-      : await v`SELECT variants, jsonb_typeof(COALESCE(variants,'{}'::jsonb)) AS kind
-                FROM scm.purchase_order_items WHERE id = ${w.row.id}::uuid`;
-    const why = [];
-    if (!r) why.push("the row is gone");
-    else {
-      if (r.kind !== "object") why.push(`variants is jsonb ${r.kind}, not an object`);
-      if (w.e.axis === "colour") {
-        const got = findAgain(pickColour(r.variants));
-        const want = findAgain(w.e.book);
-        if (!got || !want || got.colour_id !== want.colour_id) why.push(`colour reads ${JSON.stringify(pickColour(r.variants))}, wanted ${w.e.book}`);
-      } else {
-        const got = inches(pickAxisSeat(r.variants));
-        if (got !== inches(w.e.book)) why.push(`seat reads ${JSON.stringify(pickAxisSeat(r.variants))}, wanted ${w.e.book}"`);
+    for (const wr of w.rows) {
+      const [r] = w.e.type === "SO"
+        ? await v`SELECT variants, jsonb_typeof(COALESCE(variants,'{}'::jsonb)) AS kind
+                  FROM scm.mfg_sales_order_items WHERE id = ${wr.id}::uuid`
+        : await v`SELECT variants, jsonb_typeof(COALESCE(variants,'{}'::jsonb)) AS kind
+                  FROM scm.purchase_order_items WHERE id = ${wr.id}::uuid`;
+      const why = [];
+      if (!r) why.push("the row is gone");
+      else {
+        if (r.kind !== "object") why.push(`variants is jsonb ${r.kind}, not an object`);
+        if (w.e.axis === "colour") {
+          const got = findAgain(pickColour(r.variants));
+          const want = findAgain(w.e.book);
+          if (!got || !want || got.colour_id !== want.colour_id) why.push(`colour reads ${JSON.stringify(pickColour(r.variants))}, wanted ${w.e.book}`);
+        } else {
+          const got = inches(pickAxisSeat(r.variants));
+          if (got !== inches(w.e.book)) why.push(`seat reads ${JSON.stringify(pickAxisSeat(r.variants))}, wanted ${w.e.book}"`);
+        }
       }
+      if (why.length) bad.push(`${w.e.ac_doc} ${wr.item_code}: ${why.join("; ")}`);
+      else ok++;
     }
-    if (why.length) bad.push(`${w.e.ac_doc} ${w.e.item_code}: ${why.join("; ")}`);
-    else ok++;
   }
   await v.end();
   if (bad.length) {
     for (const b of bad) console.error(`VERIFY FAILED — ${b}`);
-    console.error(`REFUSING to report success: ${bad.length} of ${writable.length} line(s) do not hold what was written.`);
+    console.error(`REFUSING to report success: ${bad.length} ERP row(s) do not hold what was written.`);
     process.exit(1);
   }
-  log(`VERIFIED on a fresh connection: ${ok} of ${writable.length} line(s) hold the book's value, and every one is still a jsonb OBJECT.`);
+  log(`VERIFIED on a fresh connection: ${ok} ERP row(s) across ${writable.length} book line(s) hold the book's value, and every one is still a jsonb OBJECT.`);
 }
 
 const norm = (s) => String(s ?? "").trim().toUpperCase().replace(/\s+/g, " ");
@@ -248,13 +268,14 @@ function pickAxisSeat(v) {
 }
 
 /** Has the floor already acted on this line? */
-async function downstream(type, id) {
+async function downstream(type, ids) {
+  const uuids = ids.map((x) => String(x));
   if (type === "PO") {
-    const [{ n }] = await sql`SELECT COUNT(*)::int n FROM scm.grn_items WHERE purchase_order_item_id = ${id}::uuid`;
+    const [{ n }] = await sql`SELECT COUNT(*)::int n FROM scm.grn_items WHERE purchase_order_item_id = ANY(${uuids}::uuid[])`;
     return { building: n > 0, delivered: false, text: n ? `${n} goods-receipt line(s) — RECEIVED` : "no goods receipt yet" };
   }
-  const [{ n: po }] = await sql`SELECT COUNT(*)::int n FROM scm.purchase_order_items WHERE so_item_id = ${id}::uuid`;
-  const [{ n: dl }] = await sql`SELECT COUNT(*)::int n FROM scm.delivery_order_items WHERE so_item_id = ${id}::uuid`;
+  const [{ n: po }] = await sql`SELECT COUNT(*)::int n FROM scm.purchase_order_items WHERE so_item_id = ANY(${uuids}::uuid[])`;
+  const [{ n: dl }] = await sql`SELECT COUNT(*)::int n FROM scm.delivery_order_items WHERE so_item_id = ANY(${uuids}::uuid[])`;
   const bits = [];
   if (po) bits.push(`${po} purchase-order line(s) — the factory has been told`);
   if (dl) bits.push(`${dl} delivery line(s) — ALREADY DELIVERED`);

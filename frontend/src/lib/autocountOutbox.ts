@@ -1763,6 +1763,7 @@ export function acListCountLine(shown: number, total: number): string {
   return `${shown} of ${total} document${total === 1 ? "" : "s"}`;
 }
 
+
 /**
  * What to add when the server could not scan the whole queue for its counts.
  *

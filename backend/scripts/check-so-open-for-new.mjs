@@ -37,6 +37,8 @@
 //   COMPANY_ID=1 node scripts/check-so-open-for-new.mjs
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
+/* The person-vs-machine rule, in its ONE home. */
+import { auditMachineSql } from "../src/scm/shared/audit-author.ts";
 
 const HOURS = Number(process.env.HOURS || 24);
 const COMPANY_ID = Number(process.env.COMPANY_ID || 1);
@@ -148,30 +150,38 @@ async function main() {
      actor name beginning "system". Everything else is a row a PERSON is
      credited with, and those are the ones printed. An unattributed row that is
      not named "system" counts as a person, deliberately — the permissive
-     direction here would be to hide it. */
-  const SYSTEM_ROW = sql`(a.actor_id IS NULL AND a.actor_name_snapshot ILIKE 'system%')`;
-
-  const [systemCount] = await sql`
-    SELECT count(*)::int AS n
+     direction here would be to hide it.
+     MOVED TO ONE HOME 2026-09-08. The predicate used to be written out here,
+     and two other callers asked the same question with two other answers — the
+     delta sync's was wrong in the direction that destroys a salesperson's work
+     (docs/bugs/0702). It now comes from src/scm/shared/audit-author.ts, and the
+     rule GENERALISED slightly in the move: the `actor_id IS NULL` arm is gone,
+     because that column is a constant (middleware/auth.ts pins one uuid onto
+     every authenticated caller) and it made so-delivery-sync's own rows read as
+     people. Every row this check called system, it still calls system. */
+  const SYSTEM_ROW = auditMachineSql("a.actor_name_snapshot");
+  /* sql.unsafe with BOUND PARAMETERS, not string interpolation of the values.
+     The only thing spliced in is SYSTEM_ROW, which auditMachineSql validates as
+     a plain column reference before it builds anything. */
+  const WINDOW = `
       FROM scm.mfg_so_audit_log a
       JOIN scm.mfg_sales_orders so ON so.doc_no = a.so_doc_no
-     WHERE so.company_id = ${COMPANY_ID}
+     WHERE so.company_id = $1
        AND so.linked_ac_docno IS NOT NULL
-       AND a.created_at > now() - make_interval(hours => ${HOURS}::int)
-       AND ${SYSTEM_ROW}
-  `;
+       AND a.created_at > now() - make_interval(hours => $2::int)`;
 
-  const touched = await sql`
-    SELECT a.so_doc_no, a.action, a.actor_name_snapshot, a.source, a.created_at
-      FROM scm.mfg_so_audit_log a
-      JOIN scm.mfg_sales_orders so ON so.doc_no = a.so_doc_no
-     WHERE so.company_id = ${COMPANY_ID}
-       AND so.linked_ac_docno IS NOT NULL
-       AND a.created_at > now() - make_interval(hours => ${HOURS}::int)
+  const [systemCount] = await sql.unsafe(
+    `SELECT count(*)::int AS n ${WINDOW} AND ${SYSTEM_ROW}`,
+    [COMPANY_ID, HOURS],
+  );
+
+  const touched = await sql.unsafe(
+    `SELECT a.so_doc_no, a.action, a.actor_name_snapshot, a.source, a.created_at ${WINDOW}
        AND NOT ${SYSTEM_ROW}
      ORDER BY a.created_at DESC
-     LIMIT 50
-  `;
+     LIMIT 50`,
+    [COMPANY_ID, HOURS],
+  );
 
   log(
     `MIGRATED orders touched by the SYSTEM in the last ${HOURS}h: ${systemCount.n}`

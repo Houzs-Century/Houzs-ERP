@@ -47,7 +47,10 @@ jobs:
       - uses: actions/setup-node@v6
         with: { node-version: 22 }
       - run: npm ci
-      - run: node scripts/check-so-open-for-new.mjs
+      # npx tsx, not node: this script imports the shared person-vs-machine rule
+      # from src/scm/shared/audit-author.ts (one home for it). Same runner
+      # golive-parity-check.yml already uses for the same reason.
+      - run: npx tsx scripts/check-so-open-for-new.mjs
         env:
           DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
           HOURS: ${{ inputs.hours }}
@@ -62,7 +65,10 @@ jobs:
       - uses: actions/setup-node@v6
         with: { node-version: 22 }
       - run: npm ci
-      - run: node scripts/check-so-open-for-new.mjs
+      # npx tsx, not node: this script imports the shared person-vs-machine rule
+      # from src/scm/shared/audit-author.ts (one home for it). Same runner
+      # golive-parity-check.yml already uses for the same reason.
+      - run: npx tsx scripts/check-so-open-for-new.mjs
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           HOURS: ${{ inputs.hours }}

@@ -11,7 +11,7 @@ FOR, which trees are dead, what must be changed in pairs — lives in
 
 ## 1. Backend route inventory
 
-172 route modules (47 in `backend/src/routes`, 125 in `backend/src/scm/routes`), 1201 endpoint registrations.
+173 route modules (47 in `backend/src/routes`, 126 in `backend/src/scm/routes`), 1202 endpoint registrations.
 
 An endpoint is a `router.<method>("/…")` registration. For the per-route authorization
 boundary see the sibling artifact `docs/generated/route-capability-matrix.csv`, which
@@ -87,6 +87,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/autocount-outbox.ts` | 10 | 1273 |
 | `backend/src/scm/routes/autocount-relink.ts` | 0 | 179 |
 | `backend/src/scm/routes/categories.ts` | 10 | 509 |
+| `backend/src/scm/routes/change-log.ts` | 1 | 345 |
 | `backend/src/scm/routes/consignment-notes.ts` | 12 | 1262 |
 | `backend/src/scm/routes/consignment-orders.ts` | 19 | 2332 |
 | `backend/src/scm/routes/consignment-returns.ts` | 9 | 1248 |
@@ -207,7 +208,7 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (2025 files, 708770 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (2034 files, 711031 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -235,7 +236,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 
 ## 4. Frontend desktop routes
 
-156 `<Route>` declarations in `frontend/src/App.tsx` (aliases from
+157 `<Route>` declarations in `frontend/src/App.tsx` (aliases from
 `frontend/src/lib/routeAliases.ts` are expanded at runtime and not counted here).
 
 | path | page module |
@@ -248,6 +249,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `/assr` | `frontend/src/pages/ServiceCases` |
 | `/assr/:id` | (inline) |
 | `/autocount-sync` | `frontend/src/pages/AutoCountSync` |
+| `/change-log` | `frontend/src/pages/ChangeLog` |
 | `/fair-report-fill` | `frontend/src/pages/FairReportFill` |
 | `/fleet-health` | `frontend/src/pages/FleetHealth` |
 | `/fleet-health/:lorryId` | `frontend/src/pages/LorryRecord` |
@@ -401,7 +403,7 @@ Page files by directory:
 
 | directory | *.tsx |
 |---|---|
-| `frontend/src/pages` | 36 |
+| `frontend/src/pages` | 37 |
 | `frontend/src/pages/MailCenter` | 3 |
 | `frontend/src/pages/announcements` | 4 |
 | `frontend/src/pages/scm-v2` | 146 |
@@ -411,7 +413,7 @@ Page files by directory:
 
 ## 5. Mobile screen inventory
 
-50 screen/component modules in `frontend/src/mobile`.
+51 screen/component modules in `frontend/src/mobile`.
 
 | file | lines |
 |---|---|
@@ -419,13 +421,14 @@ Page files by directory:
 | `frontend/src/mobile/MobileAnnouncementMedia.tsx` | 171 |
 | `frontend/src/mobile/MobileAnnouncementPopup.tsx` | 152 |
 | `frontend/src/mobile/MobileAnnouncements.tsx` | 1644 |
-| `frontend/src/mobile/MobileApp.tsx` | 1081 |
+| `frontend/src/mobile/MobileApp.tsx` | 1096 |
 | `frontend/src/mobile/MobileAssistant.tsx` | 295 |
 | `frontend/src/mobile/MobileAssrCategoryChips.tsx` | 76 |
 | `frontend/src/mobile/MobileAssrSoField.tsx` | 76 |
-| `frontend/src/mobile/MobileAutoCountSync.tsx` | 893 |
+| `frontend/src/mobile/MobileAutoCountSync.tsx` | 894 |
 | `frontend/src/mobile/MobileAvatar.tsx` | 148 |
 | `frontend/src/mobile/MobileCalendar.tsx` | 792 |
+| `frontend/src/mobile/MobileChangeLog.tsx` | 237 |
 | `frontend/src/mobile/MobileConvertWizard.tsx` | 1199 |
 | `frontend/src/mobile/MobileCrashBoundary.tsx` | 39 |
 | `frontend/src/mobile/MobileDeliveryFieldsCard.tsx` | 524 |
@@ -479,6 +482,7 @@ Rows are derived from `frontend/src/mobile/MobileApp.tsx` and `frontend/src/App.
 | `/announcements` | Announcements | `frontend/src/pages/Announcements` | dedicated: announcements |
 | `/assr` | Service Case | `frontend/src/pages/ServiceCases` | dedicated: service |
 | `/autocount-sync` | AutoCount Sync | `frontend/src/pages/AutoCountSync` | dedicated: autocount-sync |
+| `/change-log` | Change Log | `frontend/src/pages/ChangeLog` | dedicated: change-log |
 | `/fleet-health` | Fleet Mileage | `frontend/src/pages/FleetHealth` | dedicated: mileage-capture |
 | `/mail-center` | Mail Center | `frontend/src/pages/MailCenter/Inbox` | dedicated: mail |
 | `/projects` | Projects | `frontend/src/pages/Projects` | dedicated: pms |
