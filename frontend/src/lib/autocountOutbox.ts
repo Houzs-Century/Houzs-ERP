@@ -73,6 +73,18 @@ import { useCallback, useState } from "react";
 import { api } from "../api/client";
 import { useQuery } from "../hooks/useQuery";
 import { fmtDateTime } from "../vendor/shared/format";
+/* THE ARCHIVE HALF, in its own file for the 2,000-line cap and nothing else —
+   the same reason autocountRegister.ts is separate. One layer, three files. */
+import {
+  archiveAcOutboxDoc,
+  restoreAcOutboxDoc,
+  acShelfDone,
+  acShelfNote,
+  acShelfFailedNote,
+  AC_ARCHIVE_FAILED_LINE,
+  AC_RESTORE_FAILED_LINE,
+  type AcArchiveResult,
+} from "./autocountArchive";
 
 /**
  * The states the page can filter to. FOUR tabs (owner, 2026-08-21: *"4个"*, after
@@ -429,101 +441,6 @@ export interface AcRelinkResult {
 export const AC_RELINK_LABEL = "Match up lines";
 export const AC_RELINK_BUSY_LABEL = "Matching";
 
-/**
- * What a document's OWN state on the page is, once a person has finished with
- * it — the answer to the owner's request, made twice, that three old test
- * documents stop appearing on a screen whose job is to show what needs doing.
- *
- * NOTHING IS DELETED AND NOTHING IS REWRITTEN, and both halves are load-bearing.
- * The queue is the audit trail of what the ERP told AutoCount and its own table
- * comment forbids deleting a row. And the obvious cheap alternative — writing a
- * marker onto the row's reason — is worse than doing nothing: the re-queue
- * marker is matched as a PREFIX, so a second marker in front of it would stop a
- * settled row reading as Replaced and push it back onto Not accepted, which is
- * the opposite of what was asked. The server keeps this on a column of its own
- * for exactly that reason.
- *
- * SAME CONTRACT AS `requeueAcOutboxRow`: it THROWS on 403 / 409 / 500 and
- * RESOLVES with `archived: false` on a refusal, and BOTH have to be rendered. A
- * refusal here is the server answering the question — "that one still needs
- * somebody" — and a component that renders only the resolved-happy branch is the
- * silent-mutation shape frontend/scripts/check-silent-mutations.mjs exists to
- * catch.
- *
- * BY DOCUMENT, NOT BY ROW. The three documents this was built for carry 9, 10
- * and 13 sends between them; a per-row control would ask for thirty-two presses
- * to clear three finished documents.
- */
-export interface AcArchiveResult {
-  archived?: boolean;
-  restored?: boolean;
-  code: string;
-  /** The server's own sentence. Rendered verbatim, never rewritten here. */
-  message: string;
-  doc_type?: string;
-  doc_no?: string;
-  /** How many sends moved. */
-  rows: number;
-  /** How many sends are the REASON one did not. */
-  blocked: number;
-}
-
-export async function archiveAcOutboxDoc(
-  docType: string,
-  docNo: string,
-): Promise<AcArchiveResult> {
-  return api.post<AcArchiveResult>('/api/scm/autocount-outbox/archive', {
-    doc_type: docType,
-    doc_no: docNo,
-  });
-}
-
-export async function restoreAcOutboxDoc(
-  docType: string,
-  docNo: string,
-): Promise<AcArchiveResult> {
-  return api.post<AcArchiveResult>('/api/scm/autocount-outbox/restore', {
-    doc_type: docType,
-    doc_no: docNo,
-  });
-}
-
-/* "CLEAR", NOT "ARCHIVE" OR "HIDE". The reader of this page is deciding whether
-   pressing it destroys anything, and "archive" is a word people associate with
-   putting things beyond reach. "Clear" says what it does to the LIST, which is
-   the only thing it touches. The Cleared tab beside it is where the document
-   goes, so the word is the same in both places. */
-export const AC_ARCHIVE_LABEL = "Clear";
-export const AC_ARCHIVE_BUSY_LABEL = "Clearing";
-export const AC_RESTORE_LABEL = "Put back";
-export const AC_RESTORE_BUSY_LABEL = "Restoring";
-
-/** The sentence under the Cleared tab, so nobody reads it as a wastebasket. */
-export const AC_ARCHIVED_TAB_NOTE =
-  "Documents somebody has finished with. Everything they did is still recorded — "
-  + "nothing here was deleted, and Put back returns any of them to the list.";
-
-/**
- * MAY THIS DOCUMENT BE CLEARED — the page's hint, never the gate.
- *
- * The gate is the server, which re-reads every send of the document and can
- * refuse for reasons this cannot see. This exists only so the page does not
- * offer a button whose answer is knowably no: a document that still needs
- * somebody, or is still on its way, is exactly what this screen is FOR.
- *
- * `current` is the newest send under the filter in force, so this asks the
- * question about the whole group rather than about one row — the same reason
- * the control lives on the document line.
- */
-export function acDocCanArchive(group: AcDocGroup): boolean {
-  if (group.current.archived_at !== null) return false;
-  return group.sends.every((r) => r.state !== "pending" && !r.needs_attention);
-}
-
-/** The other direction. A cleared document is one whose newest send is cleared. */
-export function acDocCanRestore(group: AcDocGroup): boolean {
-  return group.current.archived_at !== null;
-}
 
 export const AC_SEND_AGAIN_LABEL = "Send again";
 export const AC_SEND_AGAIN_BUSY_LABEL = "Sending";
@@ -774,18 +691,15 @@ export function useAcRequeue(onAccepted: () => void) {
   const sendAgain = useCallback((rowId: string) => run(rowId, requeueAcOutboxRow), [run]);
   const sendNow = useCallback((rowId: string) => run(rowId, sendNowAcOutboxRow), [run]);
 
-  /* THE FOURTH DOOR — and, like `relink`, it takes a DOCUMENT and not a row, so
-     it is not routed through `run` either. It shares the notes map for the
+  /* THE FOURTH DOOR — and, like `relink`, it takes a DOCUMENT and not a row,
+     so it is not routed through `run` either. It shares the notes map for the
      reason all four do: whatever a row's button did, its answer appears in the
-     same place, in the page's own voice. `rowId` is only the key it writes the
-     note under — the newest send is the line the operator pressed.
+     same place, in the page's own voice. `rowId` is only the key the note is
+     written under — the newest send is the line the operator pressed.
 
-     BOTH BRANCHES ARE RENDERED. A refusal ("that one still needs somebody")
-     resolves with `archived: false` and a sentence; a thrown call is a
-     different fact and gets the page's own words. Rendering only the happy
-     branch is the silent-mutation shape check-silent-mutations.mjs exists to
-     catch, and this repo has already shipped 35 write paths that refused
-     correctly and told nobody. */
+     BOTH BRANCHES ARE RENDERED, and the shaping of both lives in
+     `autocountArchive.ts` beside the endpoints, so the page cannot come to word
+     a refusal differently from the check that produced it. */
   const setDocShelf = useCallback(
     async (
       rowId: string,
@@ -797,41 +711,10 @@ export function useAcRequeue(onAccepted: () => void) {
       setSendingId(rowId);
       try {
         const r = await call(docType, docNo);
-        const ok = r.archived === true || r.restored === true;
-        setNotes((prev) => ({
-          ...prev,
-          [rowId]: {
-            /* `wait`, not `bad`, on a refusal — for the same reason the send
-               buttons use it: being told a document still needs somebody is
-               news, not a fault. */
-            tone: ok ? "good" : "wait",
-            /* THE SERVER'S SENTENCE, VERBATIM. It is written where the rule
-               lives, so the page cannot come to word the refusal differently
-               from the check that produced it. */
-            text: r.message,
-            todo: null,
-            quote: null,
-            quoteTechnical: null,
-            ancestors: [],
-            /* Nothing about the document's REFUSAL changed — clearing a
-               finished document off a list is not a claim about AutoCount. */
-            clearsReason: false,
-          },
-        }));
-        if (ok) onAccepted();
+        setNotes((prev) => ({ ...prev, [rowId]: acShelfNote(r) }));
+        if (acShelfDone(r)) onAccepted();
       } catch (e) {
-        setNotes((prev) => ({
-          ...prev,
-          [rowId]: {
-            tone: "bad",
-            text: failedText,
-            todo: null,
-            quote: e instanceof Error ? e.message : String(e),
-            quoteTechnical: null,
-            ancestors: [],
-            clearsReason: false,
-          },
-        }));
+        setNotes((prev) => ({ ...prev, [rowId]: acShelfFailedNote(failedText, e) }));
       } finally {
         setSendingId(null);
       }
@@ -841,14 +724,12 @@ export function useAcRequeue(onAccepted: () => void) {
 
   const archiveDoc = useCallback(
     (rowId: string, docType: string, docNo: string) =>
-      setDocShelf(rowId, docType, docNo, archiveAcOutboxDoc,
-        'Nothing was cleared — the request never got through.'),
+      setDocShelf(rowId, docType, docNo, archiveAcOutboxDoc, AC_ARCHIVE_FAILED_LINE),
     [setDocShelf],
   );
   const restoreDoc = useCallback(
     (rowId: string, docType: string, docNo: string) =>
-      setDocShelf(rowId, docType, docNo, restoreAcOutboxDoc,
-        'Nothing was put back — the request never got through.'),
+      setDocShelf(rowId, docType, docNo, restoreAcOutboxDoc, AC_RESTORE_FAILED_LINE),
     [setDocShelf],
   );
 

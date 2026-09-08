@@ -15,13 +15,6 @@ import {
   AC_SEND_NOW_LABEL,
   AC_SEND_NOW_BUSY_LABEL,
   AC_RELINK_LABEL,
-  AC_ARCHIVE_LABEL,
-  AC_ARCHIVE_BUSY_LABEL,
-  AC_RESTORE_LABEL,
-  AC_RESTORE_BUSY_LABEL,
-  AC_ARCHIVED_TAB_NOTE,
-  acDocCanArchive,
-  acDocCanRestore,
   AC_RELINK_BUSY_LABEL,
   AC_SEND_AGAIN_LABEL,
   AC_TECHNICAL_LABEL,
@@ -54,6 +47,15 @@ import {
   type AcSaid,
   type AcTone,
 } from "../lib/autocountOutbox";
+import {
+  acDocCanArchive,
+  acDocCanRestore,
+  AC_ARCHIVE_LABEL,
+  AC_ARCHIVE_BUSY_LABEL,
+  AC_RESTORE_LABEL,
+  AC_RESTORE_BUSY_LABEL,
+  AC_ARCHIVED_TAB_NOTE,
+} from "../lib/autocountArchive";
 import {
   AC_BOOK_DIFFERENT_FLAG,
   AC_DATE_RANGES,
