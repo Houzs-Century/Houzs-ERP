@@ -436,6 +436,31 @@ async function main() {
         plain(`      DISAGREEMENT ${d.docNo} row ${a.id}: stored ${a.stored}, this rule derives ${a.derived} — NOT overwritten`);
       }
     }
+
+    /* ── A BOOK LINE WE DO NOT HAVE IS NOT A KEYING PROBLEM, AND MUST NOT BE
+       READ AS ONE. There is no row to stamp, so the document can be reported
+       FULLY KEYED while the book still states a line the ERP never got. That is
+       precisely I-2606-0047: the book bills DSL-8050 twice from DO-010332 — a
+       2S at RM 3,250.00 and a 1S at RM 0.00 — and we hold only the 2S, which is
+       the "book qty 3 vs ours 2" the reconcile found. Every line we DO hold
+       keyed cleanly, so nothing above would have mentioned it.
+
+       The VERDICT on this axis belongs to check-ac-erp-reconcile.mjs ("a book
+       line we do not have"), not here, and it is not restated: this prints what
+       the pairing SAW so a fully-keyed document cannot be mistaken for an
+       identical one. */
+    const missing = perDoc.filter((d) => (d.unmatchedBookLines ?? []).length);
+    if (missing.length) {
+      const rows = missing.reduce((s, d) => s + d.unmatchedBookLines.reduce((n, u) => n + u.lines, 0), 0);
+      log(
+        `${lane.t} — ${rows} book line(s) on ${missing.length} document(s) have NO row on our side to carry a key. ` +
+          "Not a refusal (there is nothing to stamp) and not a clean bill either — the reconcile owns this axis:",
+      );
+      for (const d of missing.slice(0, 40)) {
+        plain(`      ${d.docNo}: ${d.unmatchedBookLines.map((u) => `${u.key} x${u.lines}`).join(", ")}`);
+      }
+      if (missing.length > 40) plain(`      ... and ${missing.length - 40} more`);
+    }
     allStamps.push(...stamps.map((s) => ({ ...s, table: lane.table })));
   }
 
