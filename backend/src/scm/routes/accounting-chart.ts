@@ -306,11 +306,13 @@ export const chartImportHandler = async (c: any): Promise<Response> => {
 /* ── The early leaf door for voucher drafts ──────────────────────────────────
    The GL gate (engine rule 3) refuses a parent at posting; this refuses it at
    TYPING, where the operator can still just pick the child. Two refusals live
-   behind the same door: a header with active children (父户不记账) and a
-   CONTROL account (SDC/SCC/SBS — AR, AP + deposits, stock), whose balance
-   belongs to a module, never to a hand-picked line (owner 2026-09-03: 锁).
-   Fails CLOSED on a read error — an unverifiable account does not get onto a
-   money document. */
+   behind the same door: a header with sub-accounts (父户不记账 — RETIRED
+   sub-accounts included, docs/bugs/0693: the gate counts every child, so a
+   door that counted only the active ones let 900-R006 onto a voucher the
+   approve then refused) and a CONTROL account (SDC/SCC/SBS — AR, AP +
+   deposits, stock), whose balance belongs to a module, never to a hand-picked
+   line (owner 2026-09-03: 锁). Fails CLOSED on a read error — an unverifiable
+   account does not get onto a money document. */
 export const requireLeafAccount = async (
   c: any,
   companyId: number,
@@ -322,13 +324,12 @@ export const requireLeafAccount = async (
     .select('account_code')
     .eq('company_id', companyId)
     .eq('parent_code', code)
-    .eq('is_active', true)
     .limit(1);
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   if (((kids ?? []) as unknown[]).length > 0) {
     return c.json({
       error: 'not_a_leaf_account',
-      message: `${code} is a header with sub-accounts — 父户不记账: pick the specific sub-account instead.`,
+      message: `${code} is a header with sub-accounts (retired ones count too) — 父户不记账: pick the specific sub-account instead.`,
     }, 400);
   }
   const selfRes: { data: unknown; error: { message: string } | null } = await sb

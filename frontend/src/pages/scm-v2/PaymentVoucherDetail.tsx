@@ -40,7 +40,7 @@ import { isRefundPurpose, pvTypeLabel, pvTypeOf } from '../../vendor/scm/lib/pv-
 import { DocFilesCard } from '../../vendor/scm/components/DocFilesCard';
 import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
 import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
-import { useAccounts, type Account } from '../../vendor/scm/lib/accounting-queries';
+import { useAccounts, postableAccounts, type Account } from '../../vendor/scm/lib/accounting-queries';
 import { useSaveHotkey, SAVE_HOTKEY_HINT } from '../../vendor/scm/lib/use-save-hotkey';
 import { usePurchaseInvoices } from '../../vendor/scm/lib/purchase-invoice-queries';
 import { useApInvoices } from '../../vendor/scm/lib/ap-invoice-queries';
@@ -142,10 +142,14 @@ export const PaymentVoucherDetail = () => {
   const [rejectNote, setRejectNote] = useState<string | null>(null);
 
   const accountsQ = useAccounts();
-  const accounts  = useMemo<Account[]>(() => (accountsQ.data?.accounts ?? []).filter((a) => a.is_active), [accountsQ.data]);
+  /* The whole chart goes in: a header whose children are all retired is still
+     a header (docs/bugs/0693). Names below read the unfiltered chart. */
+  const accounts  = useMemo<Account[]>(() => postableAccounts(accountsQ.data?.accounts ?? []), [accountsQ.data]);
   const accountLabel = (code: string | null | undefined): string => {
     if (!code) return '—';
-    const a = accounts.find((x) => x.account_code === code);
+    /* Off the UNFILTERED chart: a refund's AR control line and a since-retired
+       account must still print their names. */
+    const a = (accountsQ.data?.accounts ?? []).find((x) => x.account_code === code);
     return a ? `${a.account_code} · ${a.account_name}` : code;
   };
 

@@ -27,6 +27,7 @@ import {
   useArAging,
   useApAging,
   useAccounts,
+  leafAccounts,
   type Account,
   type ArAgingRow,
   type ApAgingRow,
@@ -381,10 +382,10 @@ const NewJournalForm = ({ onDone }: { onDone: () => void }) => {
   const [lines, setLines] = useState<DraftLine[]>([{ ...EMPTY_LINE }, { ...EMPTY_LINE }]);
 
   const all = accounts.data?.accounts ?? [];
-  const parents = useMemo(() => new Set(all.map((a) => a.parent_code).filter(Boolean) as string[]), [all]);
-  // Postable = active and not a header — the same rule the engine enforces,
-  // applied here so the picker cannot offer an account the post will refuse.
-  const postable = all.filter((a) => a.is_active && !parents.has(a.account_code));
+  // Postable = active and not a header (retired children count, docs/bugs/0693)
+  // — the engine's own rule from its one screen-side home, applied here so the
+  // picker cannot offer an account the post will refuse.
+  const postable = useMemo(() => leafAccounts(all), [all]);
 
   const totals = useMemo(() => {
     let dr = 0; let cr = 0; let bad = false;

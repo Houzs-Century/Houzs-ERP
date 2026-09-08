@@ -26,7 +26,7 @@ import { Button } from '@2990s/design-system';
 import { useCreatePaymentVoucher, usePaymentVoucherDetail, useSupplierAdvances, usePvReservations, NO_RESERVATIONS, useExtractBills, useUploadPvFile, useRefundSource, fileToBase64, type BillExtraction, type VendorMemory, type PvFilePayload } from '../../vendor/scm/lib/payment-voucher-queries';
 import { takePvFiles } from '../../vendor/scm/lib/pv-file-handoff';
 import { useIdempotencyKey } from '../../lib/idempotency';
-import { useAccounts, useAccountRoles, type Account } from '../../vendor/scm/lib/accounting-queries';
+import { useAccounts, useAccountRoles, postableAccounts, type Account } from '../../vendor/scm/lib/accounting-queries';
 import { useSaveHotkey, SAVE_HOTKEY_HINT } from '../../vendor/scm/lib/use-save-hotkey';
 import { usePurchaseInvoices } from '../../vendor/scm/lib/purchase-invoice-queries';
 import { useApInvoices } from '../../vendor/scm/lib/ap-invoice-queries';
@@ -117,7 +117,9 @@ export const PaymentVoucherNew = () => {
   const saving   = create.isPending;
 
   const accountsQ = useAccounts();
-  const accounts  = useMemo<Account[]>(() => (accountsQ.data?.accounts ?? []).filter((a) => a.is_active), [accountsQ.data]);
+  /* The whole chart goes in: a header whose children are all retired is still
+     a header (docs/bugs/0693). */
+  const accounts  = useMemo<Account[]>(() => postableAccounts(accountsQ.data?.accounts ?? []), [accountsQ.data]);
   /* Paid From offers MONEY only (owner: paid from 应该只能选cash 和银行) — the
      server refuses anything else anyway; the picker just stops offering it. */
   const moneyAccounts = useMemo<Account[]>(() => accounts.filter((a) => a.acc_money === true), [accounts]);

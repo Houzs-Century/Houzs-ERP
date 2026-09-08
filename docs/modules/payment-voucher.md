@@ -247,7 +247,8 @@ accounts only, per company). Contracts: `PaymentVoucherNew.test.tsx`
 
 **And lines take only LEAVES** (owner 2026-09-03, 父户不记账): create and
 draft-edit run every debit code through `requireLeafAccount`
-(accounting-chart.ts) — a header with active sub-accounts refuses
+(accounting-chart.ts) — a header with sub-accounts (retired ones included
+since docs/bugs/0693, the same count the GL gate makes) refuses
 `not_a_leaf_account` at typing time, before the GL gate would refuse the
 same header at approval. The same door also refuses CONTROL accounts
 (AutoCount special SDC/SCC/SBS — AR, AP + customer deposits, stock; the

@@ -43,7 +43,9 @@ vi.mock('../../vendor/scm/lib/ap-invoice-queries', () => ({
     { kind: 'API', id: 'api-1', invoiceNumber: '2990-API-2609-001', supplierId: 'sup-1', supplierCode: 'S001', supplierName: 'Foshan Chairs', supplierInvoiceRef: 'RENT-9', invoiceDate: '2026-09-03', dueDate: null, currency: 'MYR', totalSen: 42000, paidSen: 0, outstandingSen: 42000, status: 'POSTED' },
   ] }, isLoading: false }),
 }));
-vi.mock('../../vendor/scm/lib/accounting-queries', () => ({
+vi.mock('../../vendor/scm/lib/accounting-queries', async (importOriginal) => ({
+  /* The real pure helpers stay (postableAccounts — docs/bugs/0693); only the hooks are stubbed. */
+  ...(await importOriginal<typeof import('../../vendor/scm/lib/accounting-queries')>()),
   isControlSpecial: (s: string | null | undefined) => s === 'SDC' || s === 'SCC' || s === 'SBS',
   useAccounts: () => ({ data: { accounts: [
     { account_code: '310-0010', account_name: 'Bank — Maybank', account_type: 'ASSET', is_active: true, acc_money: true },
