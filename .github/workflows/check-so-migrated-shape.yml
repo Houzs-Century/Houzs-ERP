@@ -1,0 +1,72 @@
+name: SO migrated shape — which population is linked_ac_docno? (read-only)
+
+# Manual. The measurement behind docs/bugs/0703: `linked_ac_docno` names TWO
+# populations — documents carried over by the 2026-08 cutover, and documents the
+# ERP pushed to AutoCount itself — and the migrated-SO lock wants only the first.
+#
+# It prints the split by SHAPE (`doc_no` equal to the book number vs a prefix of
+# it), names every document that is NEITHER, and cross-tabs that against the
+# outbox's own `create_so` record so the two independent signals can be compared
+# instead of one being chosen from reading the source.
+#
+# Strictly SELECTs; it can never change either switch or any document. Exits 0
+# for every legitimate answer; only an unreachable database exits non-zero.
+#
+# No `tee` (docs/bugs/0687): a pipeline whose left side dies still reports the
+# exit status of `tee` unless `pipefail` is set.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      company_id:
+        description: "Company id (1 = Houzs Century)"
+        required: false
+        default: "1"
+        type: string
+      pinned:
+        description: "Comma-separated doc numbers to print in full. Blank = the two docs/bugs/0703 names."
+        required: false
+        default: ""
+        type: string
+
+# Its own group: a diagnostic must never queue behind, or displace, a release.
+concurrency:
+  group: check-so-migrated-shape-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/check-so-migrated-shape.mjs
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          PINNED: ${{ inputs.pinned }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/check-so-migrated-shape.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          PINNED: ${{ inputs.pinned }}
