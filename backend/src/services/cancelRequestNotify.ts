@@ -35,10 +35,12 @@ const SOURCE = "document_cancel";
 export type CancelNotifyDocType = "SO" | "PO";
 export type CancelNotifyEvent = "raised" | "level1" | "approved" | "rejected";
 
-/** MUST match scm/shared/document-cancel.ts CANCEL_APPROVE_KEY. */
-export const CANCEL_APPROVE_PERM: Record<CancelNotifyDocType, { 1: string; 2: string }> = {
+/** MUST match scm/shared/document-cancel.ts CANCEL_APPROVE_KEY. A Sales Order
+ *  takes two signatures, a Purchase Order one (owner 2026-09-08) — so the PO
+ *  has no level-2 desk to tell. */
+export const CANCEL_APPROVE_PERM: Record<CancelNotifyDocType, Partial<Record<1 | 2, string>>> = {
   SO: { 1: "scm.so_cancel.approve_l1", 2: "scm.so_cancel.approve_l2" },
-  PO: { 1: "scm.po_cancel.approve_l1", 2: "scm.po_cancel.approve_l2" },
+  PO: { 1: "scm.po_cancel.approve" },
 };
 
 const NOUN: Record<CancelNotifyDocType, string> = { SO: "Sales Order", PO: "Purchase Order" };
@@ -77,19 +79,21 @@ export async function notifyCancelRequest(env: Env, event: CancelNotifyEvent, op
 
     if (event === "raised" || event === "level1") {
       const level = event === "raised" ? 1 : 2;
-      const approvers = await usersHoldingPermission(env, CANCEL_APPROVE_PERM[opts.docType][level], {
-        companyId: opts.companyId ?? null,
-      });
+      const perm = CANCEL_APPROVE_PERM[opts.docType][level];
+      if (!perm) return; // this document has no such level — nobody to tell
+      const twoLevels = CANCEL_APPROVE_PERM[opts.docType][2] != null;
+      const approvers = await usersHoldingPermission(env, perm, { companyId: opts.companyId ?? null });
       const audience = cleanIds(approvers).filter((id) => id !== actor);
       if (audience.length === 0) return;
       const raisedBy = (opts.requesterName ?? "").trim();
+      const levelWord = twoLevels ? `level-${level} ` : "";
       await postPersonalNotice(env, {
         userIds: audience,
         category: "GENERAL",
-        title: `${noun} ${opts.docNumber} — cancellation needs level-${level} approval`,
+        title: `${noun} ${opts.docNumber} — cancellation needs ${levelWord}approval`,
         body:
           level === 1
-            ? `A request to cancel ${noun} ${opts.docNumber} was raised${raisedBy ? ` by ${raisedBy}` : ""} and is waiting for your level-1 approval.${tail}`
+            ? `A request to cancel ${noun} ${opts.docNumber} was raised${raisedBy ? ` by ${raisedBy}` : ""} and is waiting for your ${levelWord}approval.${tail}`
             : `Level 1 has approved cancelling ${noun} ${opts.docNumber}${byText}. It is now waiting for your level-2 approval.${tail}`,
         source: SOURCE,
       });
@@ -107,7 +111,7 @@ export async function notifyCancelRequest(env: Env, event: CancelNotifyEvent, op
           : `${noun} ${opts.docNumber} — cancellation rejected`,
       body:
         event === "approved"
-          ? `Both approvals are on your request to cancel ${noun} ${opts.docNumber}${byText}. The document is being cancelled.`
+          ? `${CANCEL_APPROVE_PERM[opts.docType][2] != null ? "Both approvals are" : "The approval is"} on your request to cancel ${noun} ${opts.docNumber}${byText}. The document is being cancelled.`
           : `Your request to cancel ${noun} ${opts.docNumber} was rejected${byText}.${tail}`,
       source: SOURCE,
     });
