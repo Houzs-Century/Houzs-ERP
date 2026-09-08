@@ -29,35 +29,41 @@ import { requireLeafAccount } from './accounting-chart';
 
 type Row = Record<string, any>;
 
-/* Month window "YYYY-MM" → [first day, first day of next month). Defaults to
-   the current month — the page answers 这个月收了什么钱 without pagination. */
-const monthWindow = (raw: string | undefined): { from: string; to: string } | null => {
-  const m = /^(\d{4})-(\d{2})$/.exec(String(raw ?? '').trim() || new Date().toISOString().slice(0, 7));
-  if (!m) return null;
+/* Month window "YYYY-MM" → [first day, first day of next month). Absent (or
+   "all") means EVERY month: the page opens on everything that ever came in and
+   the month is a filter (owner 2026-09-08: 月份只是筛选 — it used to default to
+   this month). A malformed value is refused, never read as "this month". */
+const monthWindow = (raw: string | undefined): { from: string; to: string } | null | 'bad' => {
+  const s = String(raw ?? '').trim();
+  if (s === '' || s.toLowerCase() === 'all') return null;
+  const m = /^(\d{4})-(\d{2})$/.exec(s);
+  if (!m) return 'bad';
   const y = Number(m[1]); const mo = Number(m[2]);
-  if (mo < 1 || mo > 12) return null;
+  if (mo < 1 || mo > 12) return 'bad';
   const pad = (n: number) => String(n).padStart(2, '0');
   const from = `${y}-${pad(mo)}-01`;
   const to = mo === 12 ? `${y + 1}-01-01` : `${y}-${pad(mo + 1)}-01`;
   return { from, to };
 };
 
-/* ── GET /receipts?month=YYYY-MM — the unified money-in list ─────────────── */
+/* ── GET /receipts[?month=YYYY-MM] — the unified money-in list ───────────── */
 export const listReceiptsHandler = async (c: any): Promise<Response> => {
   const win = monthWindow(c.req.query('month'));
-  if (!win) return c.json({ error: 'bad_month', message: 'month must look like 2026-09.' }, 400);
+  if (win === 'bad') return c.json({ error: 'bad_month', message: 'month must look like 2026-09, or be left out for every month.' }, 400);
   const sb = c.get('supabase');
+  /* No month asked for = the three reads are whole. */
+  const windowed = (q: any, col: string) => (win ? q.gte(col, win.from).lt(col, win.to) : q);
 
   const [general, debtor, customer] = await Promise.all([
-    scopeToCompany(sb.from('acc_receipts')
-      .select('id, receipt_number, payer_name, receipt_date, bank_account_code, total_sen, status, notes')
-      .gte('receipt_date', win.from).lt('receipt_date', win.to), c).order('receipt_number'),
-    scopeToCompany(sb.from('acc_debtor_receipts')
-      .select('id, receipt_number, receipt_date, bank_account_code, total_sen, status, debtor_id, debtor:acc_debtors(name)')
-      .gte('receipt_date', win.from).lt('receipt_date', win.to), c).order('receipt_number'),
-    scopeToCompany(sb.from('mfg_sales_order_payments')
-      .select('id, so_doc_no, paid_at, method, amount_sen, is_deposit')
-      .gte('paid_at', win.from).lt('paid_at', win.to), c).order('paid_at'),
+    scopeToCompany(windowed(sb.from('acc_receipts')
+      .select('id, receipt_number, payer_name, receipt_date, bank_account_code, total_sen, status, notes'), 'receipt_date'), c)
+      .order('receipt_number'),
+    scopeToCompany(windowed(sb.from('acc_debtor_receipts')
+      .select('id, receipt_number, receipt_date, bank_account_code, total_sen, status, debtor_id, debtor:acc_debtors(name)'), 'receipt_date'), c)
+      .order('receipt_number'),
+    scopeToCompany(windowed(sb.from('mfg_sales_order_payments')
+      .select('id, so_doc_no, paid_at, method, amount_sen, is_deposit'), 'paid_at'), c)
+      .order('paid_at'),
   ]);
   if (general.error) return c.json({ error: 'load_failed', reason: general.error.message }, 500);
   if (debtor.error) return c.json({ error: 'load_failed', reason: debtor.error.message }, 500);
@@ -82,7 +88,7 @@ export const listReceiptsHandler = async (c: any): Promise<Response> => {
     })),
   ].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : a.number < b.number ? 1 : -1));
 
-  return c.json({ month: win.from.slice(0, 7), receipts: rows });
+  return c.json({ month: win ? win.from.slice(0, 7) : null, receipts: rows });
 };
 
 /* ── POST /receipts — record + post, one motion (不需要走四层) ────────────── */

@@ -403,10 +403,20 @@ the same Insert/Enter manners the same day — payment-voucher.md.
 
 **Receipts (2026-09-03, later the same day: 未来如果我收到其他的钱不是
 under other debtor 的呢? 就我只想开 receipt 罢了)**: /scm/receipts is the
-unified money-in list — one month-windowed table holding GENERAL receipts
+unified money-in list — one table holding GENERAL receipts
 (raised here), the Other Debtor receipts (read-only mirrors, four-layered
 on their own page) and the customer sales payments (read-only mirrors —
-顾客的钱 keeps the sales flow it always had; nothing is re-entered).
+顾客的钱 keeps the sales flow it always had; nothing is re-entered). It opens
+on EVERY month and the month field is a filter (owner 2026-09-08: 月份只是筛选;
+until then it opened on this month alone): `GET /receipts` with no `month`
+reads the three tables whole and answers `month: null`, `?month=YYYY-MM`
+narrows to that month, and a malformed month is a 400 rather than "this
+month" (`listReceiptsHandler`, `backend/src/scm/routes/receipts.ts`;
+`useReceipts` in `frontend/src/vendor/scm/lib/accounting-queries.ts`; the
+page keeps an "All months" button beside the picker,
+`frontend/src/pages/scm-v2/Receipts.tsx`). Contracts:
+`backend/tests/receipts.test.ts` ("no month asked for lists every month"),
+`Receipts.test.tsx` ("opens on every month").
 Handlers in `receipts.ts` (mounted beside other-debtors in
 `backend/src/scm/index.ts`, mirrored in `scm-areas.ts`, nav entry in
 `Sidebar.tsx`, route in `frontend/src/routing/routeManifest.ts`; PV key
