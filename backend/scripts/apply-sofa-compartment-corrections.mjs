@@ -223,12 +223,12 @@ async function main() {
       }
       let rows = isPo
         ? await sql`SELECT i.id, i.item_code AS code, i.qty, i.unit_price_sen, i.line_total_sen AS total,
-                           i.variants, i.description2, i.received_qty, i.so_item_id
+                           i.variants, i.description2, i.received_qty, i.so_item_id, i.linked_ac_dtlkey
                       FROM scm.purchase_order_items i
                      WHERE i.purchase_order_id = ${poId} AND i.item_group = 'sofa'
                      ORDER BY i.id`
         : await sql`SELECT i.id, i.item_code AS code, i.qty, i.unit_price_sen, i.total_sen AS total,
-                           i.variants, i.description2, i.line_no
+                           i.variants, i.description2, i.line_no, i.linked_ac_dtlkey
                       FROM scm.mfg_sales_order_items i
                       JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
                      WHERE h.company_id = ${CO} AND i.doc_no = ${doc} AND i.item_group = 'sofa'
@@ -245,14 +245,22 @@ async function main() {
          module before widening anything further — and note that it REFUSES an
          ambiguous match rather than picking, which is the only reason a looser
          needle is safe on a document that holds two builds. */
-      if (c.desc2Match) {
-        const pick = selectBuildRows(rows, c.desc2Match);
+      /* `lineKeys` — the account book's own DtlKey per line — DECIDES when it is
+         given, because text cannot always tell two builds apart. HC-SO-012827's
+         single chair carries a Desc2 that is a SUBSTRING of the three-seater's
+         on the same document, so every possible needle reaches both and is
+         refused as ambiguous, correctly. The key is identity; see the mode's
+         reasoning and its tests in scripts/lib/sofa-desc2-match.mjs. */
+      if (c.desc2Match || (Array.isArray(c.lineKeys) && c.lineKeys.length)) {
+        const pick = selectBuildRows(rows, c.desc2Match, undefined, { lineKeys: c.lineKeys });
+        if (pick.verdict === "linekey")
+          log(`  ${doc}: ${pick.how} — the two builds on this document cannot be told apart by their text`);
         if (pick.verdict === "ambiguous") {
           log(`  ${doc}: REFUSED — "${c.desc2Match}" reaches ${pick.texts.length} DIFFERENT builds on this document, and telling them apart is the whole job of desc2Match: ${pick.texts.map((t) => JSON.stringify(t.slice(0, 56))).join("  vs  ")}`);
           nAmbiguous++; continue;
         }
         if (!pick.rows.length) {
-          log(`  ${doc}: no line matches "${c.desc2Match}" (${pick.how}) — skipped, the build is not on this document`);
+          log(`  ${doc}: no line matches ${pick.verdict === "none" && Array.isArray(c.lineKeys) && c.lineKeys.length ? `line key(s) ${c.lineKeys.join(", ")}` : `"${c.desc2Match}"`} (${pick.how}) — skipped, the build is not on this document`);
           continue;
         }
         if (pick.verdict === "normalised")
@@ -361,7 +369,7 @@ async function main() {
           else { log(`      remove ${compartmentOf(p.from)}`); nDel++; }
         }
       }
-      verify.push({ doc, isPo, poId, needle: c.desc2Match, want, copies: sofas.length, money: before, source: c.source });
+      verify.push({ doc, isPo, poId, needle: c.desc2Match, lineKeys: c.lineKeys, want, copies: sofas.length, money: before, source: c.source });
 
       if (!APPLY) continue;
       const touched = [];
@@ -520,14 +528,20 @@ async function verifyOnFreshConnection(items) {
   let bad = 0;
   for (const it of items) {
     const rows = it.isPo
-      ? await v`SELECT i.item_code AS code, i.qty, i.unit_price_sen, i.line_total_sen AS total, i.description2
+      ? await v`SELECT i.item_code AS code, i.qty, i.unit_price_sen, i.line_total_sen AS total, i.description2, i.linked_ac_dtlkey
                   FROM scm.purchase_order_items i
                  WHERE i.purchase_order_id = ${it.poId} AND i.item_group = 'sofa' ORDER BY i.id`
-      : await v`SELECT i.item_code AS code, i.qty, i.unit_price_sen, i.total_sen AS total, i.description2
+      : await v`SELECT i.item_code AS code, i.qty, i.unit_price_sen, i.total_sen AS total, i.description2, i.linked_ac_dtlkey
                   FROM scm.mfg_sales_order_items i
                   JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
                  WHERE h.company_id = ${CO} AND i.doc_no = ${it.doc} AND i.item_group = 'sofa' ORDER BY i.line_no`;
-    const mine = it.needle ? selectBuildRows(rows, it.needle).rows : rows;
+    /* Narrow the SAME way the apply did, line keys included — verifying against
+       every sofa row on a document that holds two builds would compare this
+       build's target against both builds' rows and fail a correct write. */
+    const hasKeys = Array.isArray(it.lineKeys) && it.lineKeys.length;
+    const mine = (it.needle || hasKeys)
+      ? selectBuildRows(rows, it.needle, undefined, { lineKeys: it.lineKeys }).rows
+      : rows;
     const want = [];
     for (let i = 0; i < it.copies; i++) want.push(...it.want);
     const bag = (xs) => xs.map(K).sort().join(" | ");

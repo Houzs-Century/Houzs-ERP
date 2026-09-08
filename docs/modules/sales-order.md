@@ -972,6 +972,25 @@ client never sends a `doc_no`, and money crosses the wire as `*_sen` integers.
   `maintenanceConfig.sofaLegHeights`. The label is **Seat Size** on every
   surface (`so-variant-rule` declares it, and the SO line card renders it since
   2026-08-21 — it was the last screen saying "Seat Heights").
+
+  **The Leg Height auto-fill is a SALES-ORDER convenience and it does not travel
+  downstream.** A blank sofa Leg Height is seeded with the maintenance "Default"
+  option (owner 2026-07-13) so the field is never empty — but only where the
+  caller says so: `SoLineCard`'s `seedSofaLegDefault` is a MANDATORY prop with no
+  default, beside `variantsRequired`. `true` on the documents that SPECIFY the
+  sofa (SO New/Detail, Consignment Order New/Detail); `false` on the ones that
+  FULFIL one (Delivery Order, Delivery Return, Consignment Note New/Detail,
+  Consignment Return New/Detail, Sales Invoice). The reason it cannot be a
+  default: `computeVariantKey` emits `legheight=` for a sofa, so seeding on a
+  delivery form moves the line into a different STOCK BUCKET from the goods
+  reserved for it — HC-SO-012565 read "available 0" against its own sofa, and
+  three delivery orders shipped on 2026-09-08 consumed no lot at all
+  (`docs/bugs/0722-a-delivery-order-invented-the-sofa-s-leg-height-so-the-stock.md`).
+  The values are pinned per call site by
+  `frontend/src/vendor/scm/components/sofa-leg-default-seed.test.ts`. On
+  `SalesOrderDetail.tsx` the two props share one line on purpose: that file sits
+  at its `scripts/file-size-ceilings.json` ceiling, and the gate charges GROWTH,
+  so a prop added on its own line fails the build (it did, on #3296).
 - **Bedframe** — Gap ← `maintenanceConfig.gaps`; Divan ←
   `maintenanceConfig.divanHeights`; Leg ← `maintenanceConfig.legHeights`.
   `totalHeight` (= divan + leg + gap) is COMPUTED into the variants blob for the
@@ -2429,7 +2448,18 @@ Three more properties it did not have before:
 - **Its SQL is executed against a real Postgres in CI** before production sees it
   (`backend/tests-pg/deleteTestSoRefs.pg.test.ts`, the `backend-postgres` job),
   because `node --check` used to be the whole of the evidence a production
-  DELETE had.
+  DELETE had. **That fixture must declare the same column TYPES production has.**
+  It declared `mfg_sales_orders.status` as `text` when production has the enum
+  `scm.mfg_so_status`, and 17 green tests then said nothing about a
+  `coalesce(status, '')` the database refuses — run `34223295235`. And note that
+  `npm --prefix backend run typecheck` does NOT cover `tests-pg/`: the backend
+  tsconfig does not include it, so running the suite is the only local check.
+
+The CONTROL measures `local_total_sen`, which is what this table's document
+total is called. It is not `total_sen` — that column does not exist here, and a
+money check pointed at a missing column compares NULL to NULL and reports
+agreement. `paid_sen`, `deposit_sen` and `balance_sen` are deliberately outside
+everything this tool reads or writes.
 
 Ledger: `docs/bugs/0715-deleting-a-sales-order-trusted-a-hand-written-child-list-nob.md`.
 
@@ -5150,49 +5180,51 @@ whole note is refused rather than half-written. The refusal message names the
 count: `colour cannot say which line N`. `docs/bugs/0688`,
 `docs/modules/delivery-order.md`.
 
-## The book's own words live in the line REMARK, not in `description2` (2026-09-08)
 
-Owner, cutover day: 「记得把autocount的这个description2 remain着搬进去我们的
-remark」. AutoCount's Description 2 is the salesperson's own text on the order
-slip — `COL: PC151-01/ DIVAN: 8" + 2" LEG/ GAP: 12"`, but also
+## The book's own words live in the line REMARK under `账本原文: ` (2026-09-04)
+
+AutoCount's Description 2 is the salesperson's own text on the order slip —
+`COL: PC151-01/ DIVAN: 8" + 2" LEG/ GAP: 12"`, but also
 `Dipose 1 old mattress and 1 old bed frame` and `PICKUP AT SHOWROOM`, which no
-variant blob can encode. **16,532** of the book's SO detail lines carry one
-(`scripts/data/ac-reconcile-truth.json.gz`, `types.SO.desc2`).
+variant blob can encode. It is carried into
+`scm.mfg_sales_order_items.remark` under the label **`账本原文: `** by
+`scripts/preserve-autocount-desc2-in-remark.mjs` (owner request 2026-09-02,
+applied 2026-09-04). `docs/bugs/0639` is the entry; read it before touching
+this, and **do not build a second carrier** — one was built and retracted on
+2026-09-08 (`docs/bugs/0722`) because it did not find this one.
 
-**`mfg_sales_order_items.description2` is NOT where it survives**, even though
-the importer writes it there (`scripts/import-ac-outstanding-so.mjs`, `ICOLS`).
-Two reasons, and the second is the one that matters:
+**Why `remark` and not `description2`, which the importer also fills.** Two
+faults, and they are opposite in shape:
 
-- Nothing renders it. Every surface reads
+- **Hidden on sofa and bedframe.** Every surface reads
   `buildVariantSummary(item_group, variants) || description2`, so the decoded
-  summary wins and a migrated line — which always has a variants blob — never
-  shows the stored text.
-- **The item PATCH regenerates the column on every write** —
+  summary wins wherever it is non-empty. Measured by RUNNING the function
+  against the blobs the importer writes: sofa -> `PC151-01 Sand`, bedframe ->
+  `BF-01 Sand / DIVAN 8 + LEG 2 / GAP 12`, mattress / accessory -> `""`. The
+  importer builds a variants blob for bedframe and sofa only
+  (`import-ac-outstanding-so.mjs:236-299`), so the text is hidden on exactly
+  those two groups and still shows on the rest.
+- **Destroyed on every group by the first edit.**
   `updates['description2'] = buildVariantSummary(...) || null`
-  (`scm/routes/mfg-sales-orders.ts:8575`). That rule is right for a derived
-  summary and fatal for the book's words: the first edit of a migrated line
-  replaces them, or nulls them.
+  (`scm/routes/mfg-sales-orders.ts:8575`). A sofa line has the book text
+  replaced by our derivation; a mattress line, whose summary is `""`, has it set
+  to NULL by the `|| null`. **The lines where the words were still visible are
+  the lines where the first edit deletes them outright.** `remark` has neither
+  problem: nothing regenerates it, and it is absent from `SO_ITEM_COLS`
+  (`scm/lib/autocount-outbox.ts:382`) so it cannot reach the AutoCount
+  write-back. Same choice the PO side made with `purchase_order_items.notes`.
 
-So the book text is carried into `remark`, which is rendered verbatim on every
-SO surface, is searchable / filterable / CSV-exported on the desktop detail, is
-regenerated by nothing, and is absent from `SO_ITEM_COLS` so it cannot reach the
-AutoCount write-back. Same choice the PO migration made with
-`purchase_order_items.notes`.
+**Known residual — 164 lines, measured 2026-09-08.** `decide()` in that script
+consults the book snapshot only when `description2` is EMPTY; a line whose
+`description2` has already been replaced by our generated summary is skipped
+outright (`preserve-autocount-desc2-in-remark.mjs:160-166`). That is the state of
+every line a later lane created or rewrote, so the residual regrows: 140
+`compartment corrected 2026-09-04`, 17 `topped up from AutoCount …`, 3 empty,
+and 4 carrying customer text. `docs/bugs/0722` has the breakdown and the fix.
 
-**The shape, and how to read it back.** The book text is APPENDED on its own
-final line behind `AC原文: ` — never substituted, because the importer's own
-notes are load-bearing:
-
-```
-sofa: seat sizes read from the drawing
-AC原文: COL: PC151-01/ DIVAN: 8" + 2" LEG/ GAP: 12"
-```
-
-`splitRemark()` in `scripts/lib/desc2-remark.mjs` returns the two halves. The
-marker is safe to parse on: no Desc2 in the snapshot contains a newline, a CJK
-character or the marker itself. Blank stays blank — a line the book has no
-Description 2 for gets nothing.
-
-Backfilled by `scripts/backfill-so-desc2-into-remark.mjs` (plan → commit the
-plan → apply; the apply refuses a plan whose digest no longer matches the live
-rows). Idempotent: a second run plans zero rows. `docs/bugs/0722`.
+**Do not compare these strings byte-for-byte.** The copy in `remark` came from
+the live `description2` and carries the salesperson's SMART quotes (`”`, `’`);
+the committed snapshot `scripts/data/ac-reconcile-truth.json.gz` carries straight
+ones and flattens the line's newline to a space. The same sentence in two
+renderings compares unequal — that is what made the retracted tool think 1,650
+already-done lines still needed doing.

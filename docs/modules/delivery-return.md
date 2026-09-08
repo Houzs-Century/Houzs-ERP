@@ -50,6 +50,17 @@ The two facts that make this module easy to get wrong:
 | Desktop new | `frontend/src/pages/scm-v2/DeliveryReturnNew.tsx` |
 | Convert from a DO | `frontend/src/pages/scm-v2/DeliveryReturnFromDo.tsx` |
 
+> **A return line may not INVENT a sofa variant (2026-09-08).** `DeliveryReturnNew`
+> renders the shared `SoLineCard`, which auto-fills a blank sofa Leg Height with
+> the maintenance "Default" option — a SALES-ORDER convenience. The leg height is
+> part of the stock bucket (`computeVariantKey` emits `legheight=` for a sofa), so
+> on a document that moves goods it re-buckets the line away from the stock it is
+> about: the return's IN would open a lot nothing else can find. This page passes
+> `seedSofaLegDefault={false}`; the prop is mandatory, so no fulfilment form can
+> inherit the sales-side answer by staying silent. It was the delivery ORDER that
+> paid for this —
+> `docs/bugs/0722-a-delivery-order-invented-the-sofa-s-leg-height-so-the-stock.md`.
+
 > **This picker is SCOPED since 2026-08-22.** It reads `doToDr` through
 > `readConvertScope`, so the Delivery Order list's right-click "Transfer to
 > Delivery Return" opens on the note the operator came from — pre-ticked at each

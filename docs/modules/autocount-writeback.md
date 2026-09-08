@@ -814,6 +814,40 @@ only a key the row's OWN siblings already agree on, and only after the book
 confirms that key is a line of that document carrying that row's Desc2 — a wrong
 key is worse than a missing one, so all four gates refuse rather than fall back.
 
+### The key now also ADDRESSES a correction, not just identifies a row
+
+*Added 2026-09-08.* `apply-sofa-compartment-corrections.mjs` picks the lines of one
+build out of a document with `desc2Match`, a substring of the AutoCount Desc2. That
+is not always enough to name a build. On `HC-SO-012827` the book wrote two sofas so
+that **one Desc2 is a substring of the other**:
+
+```
+DtlKey 873100   "3 seater  35 inch  color modenza 07 silver  Nilon bottom"
+DtlKey 873101   "35 inch  color modenza 07 silver  Nilon bottom"
+```
+
+No needle reaches `873101` alone — every candidate is also carried by `873100`, and
+`selectBuildRows` refuses as `ambiguous`, correctly. So a correction may now carry
+**`lineKeys`**, matched against `linked_ac_dtlkey`, which both the SO and PO queries
+in that script now select. Same column, second job: it identified a row, and it now
+addresses one.
+
+Three properties, each a refusal rather than a fallback:
+
+- **It never falls back to the text.** A key the document does not carry is `none`.
+  Matching by text instead would write the build onto the wrong line, which is the
+  transposition class `docs/bugs/0690` names. Measured on prod dry run
+  `34234942367`: the ERP carries `873101` but **not** `873100`, and the run said so
+  and skipped rather than guessing.
+- **The VERIFY step narrows the same way.** Re-reading every sofa row of a
+  two-build document would compare one build's target against both builds' rows and
+  fail a correct write.
+- **The reconcile's ruling lookup understands it too** — `makeSofaRulingLookup`
+  checks `lineKeys` against the ERP lines' `ac_dtlkey` before it looks at text. It
+  did not at first, and `HC-SO-012827` went on reporting *"sofa build not
+  verifiable"* with the owner's answer already in the database (tally run
+  `34236971666`). `docs/bugs/0722`.
+
 **The lesson for the next repair, and it is now the third column lost this
 way** — `warehouse_id` (seven lines PENDING for ever, 2026-08-11),
 `description` / `delivery_date`, and now `linked_ac_dtlkey`: a column-by-column
@@ -4902,3 +4936,37 @@ Tests: `scripts/lib/variant-reconcile.test.mjs` — the ruled build, the
 not-folded-into-agree property, the unwritten ruling that stays `DIFFER`, the
 no-ruling control, and the assertion that a ruling cannot rescue an ERP carrying
 no compartments at all.
+
+## Several ERP lines can share ONE book line — the sofa (2026-09-08)
+
+**The rule.** AutoCount holds a sofa as a single line; the ERP decomposes it into
+a line per piece, and every piece carries that one line's `DtlKey`. That is
+deliberate (`docs/autocount-integration-map.md` §4.2), so `linked_ac_dtlkey` is
+NOT unique across ERP lines and nothing may assume it is.
+
+`readConvertSourceKeys` merges by KEY now, first-seen order. Before that it built
+one entry per ERP line and sent `[901830, 901830, 901831]`, which the host
+reported as *"of 3 line key(s) given, only 2 exist on a SO"* — a sentence that
+describes a missing key and was produced by a repeated one. Full trace:
+`docs/bugs/0722-a-sofa-is-one-line-in-the-book-and-several-in-the-erp-so-its.md`.
+
+**Three consequences, and none of them is optional:**
+
+- **A shared key never carries a quantity.** The ERP counts pieces, the book
+  counts sofas. Summing sends 2 against a line of 1 — an over-transfer of a
+  licensed account book. Whole, none is needed: the service moves each named
+  line's outstanding.
+- **A part-shipped shared line is REFUSED.** "Two of the three pieces" has no
+  shape in a document holding one line of one unit.
+- **The untaken siblings must be read.** A delivery shipping one of two pieces
+  sees the key once and looks 1:1; the sibling it left behind is exactly what
+  makes it partial. The read needs no parent predicate — a `DtlKey` identifies
+  one line of one document, so every ERP row carrying it belongs to that book
+  line by construction.
+
+**OWNER RULING 2026-09-08 — option C, NOT BUILT YET.** A part-shipped sofa should
+hold ONLY the sofa's own line back, letting every other line on the document go
+on time, and completeness is judged on the sofa's pieces alone — 「C 除了
+accessories 不看 就看sofa」, so a pillow still in the warehouse does not hold the
+sofa. Until it is built the refusal above stands in for it. Anyone building C
+starts here and in that ledger entry.

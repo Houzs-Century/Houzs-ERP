@@ -569,6 +569,10 @@ export function DeliveryOrderNewV2() {
   const [vehicle, setVehicle] = useState("");
   const [buildingType, setBuildingType] = useState("");
   const [venue, setVenue] = useState("");
+  /* Carried, never typed: the SO's brand rides onto the DO the way /from-sos
+     carries it. The form had no field for it, so every DO raised here shipped
+     with branding NULL while its order named one (docs/bugs/0723). */
+  const [branding, setBranding] = useState("");
   const [expectedDate, setExpectedDate] = useState("");
   const [customerDelDate, setCustomerDelDate] = useState("");
   const [note, setNote] = useState("");
@@ -707,6 +711,13 @@ export function DeliveryOrderNewV2() {
     setSalesLocation(so.salesLocation ?? "");
     setBuildingType(so.buildingType ?? "");
     setVenue(so.venue ?? "");
+    setBranding(so.branding ?? "");
+    /* The customer's date is the SO's; /from-sos copies it and falls back to
+       it for expected_delivery_at. Left unseeded, both dates reached the DO as
+       NULL unless the operator retyped them (docs/bugs/0723). Expected-at stays
+       the operator's own field: blank posts as null and the server falls back
+       to the customer date, exactly as /from-sos does. */
+    setCustomerDelDate((so.customerDeliveryDate ?? "").slice(0, 10));
     setFlash(`Prefilled from ${soDocNo}`);
   }, [soSource.data, soDocNo, editId]);
 
@@ -773,6 +784,7 @@ export function DeliveryOrderNewV2() {
     setVehicle(String(doo.vehicle ?? ""));
     setBuildingType(String(doo.building_type ?? ""));
     setVenue(String(doo.venue ?? ""));
+    setBranding(String((doo.branding ?? "") as string));
     setExpectedDate(String((doo.expected_delivery_at ?? "") as string).slice(0, 10));
     setCustomerDelDate(String((doo.customer_delivery_date ?? "") as string).slice(0, 10));
     setNote(String((doo.note ?? doo.notes ?? "") as string));
@@ -891,6 +903,7 @@ export function DeliveryOrderNewV2() {
     vehicle,
     buildingType,
     venue,
+    branding,
     expectedDeliveryAt: expectedDate,
     customerDeliveryDate: customerDelDate,
     note,
@@ -1425,6 +1438,7 @@ export function DeliveryOrderNewV2() {
                    category-mandatory variants are NOT re-required here (they
                    ride in from the SO stash / DO detail). */
                 variantsRequired={false}
+                seedSofaLegDefault={false}
               />
             ))}
           </div>
