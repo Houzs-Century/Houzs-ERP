@@ -56,8 +56,12 @@ test("BOTH real files load, and the 2026-08 round is still there", () => {
      18 -> 19 on 2026-09-08: HC-SO-013475, the sofa the shop floor reported as
      "Autocount drawing is 1+1+1, ERP 2+1". It went into THIS file rather than a
      2026-09-08 one because the FILE= substring filter would then select two
-     rounds at once - the test below pins that. */
-  assert.equal(bySource.get("sofa-compartment-corrections-2026-09.json"), 19);
+     rounds at once - the test below pins that.
+     19 -> 35 on 2026-09-08: the SIXTEEN builds the owner read off his own slips
+     in one sitting, ending 「所以全部答案我都给你了」. Fifteen documents; two of
+     the sixteen are the two sofas of HC-SO-012827 and two more are the two
+     sofas of HC-SO-004709. Same file, same reason as above. */
+  assert.equal(bySource.get("sofa-compartment-corrections-2026-09.json"), 35);
 });
 
 /**
@@ -84,12 +88,17 @@ test("no two builds give the same document different pieces", () => {
     const pieces = (b.pieces || []).map((p) => String(p).trim().toUpperCase()).join("+");
     for (const doc of b.docs || []) {
       /* A document CAN legitimately appear twice — two different builds on one
-         document, told apart by desc2Match. Key on both. */
-      const key = `${doc} :: ${b.desc2Match ?? ""}`;
+         document, told apart by their ADDRESS. Key on the address, whichever
+         kind it is: `desc2Match` addresses by text, `lineKeys` by the account
+         book's own DtlKey. HC-SO-012827 carries two builds addressed only by
+         line key (the book wrote one line's Desc2 as a substring of the
+         other's), and keying on desc2Match alone would call those two a
+         contradiction when they are two different sofas. */
+      const key = `${doc} :: ${b.desc2Match ?? ""} :: ${(b.lineKeys || []).join(",")}`;
       const prev = seen.get(key);
       if (prev && prev.pieces !== pieces) {
         assert.fail(
-          `${doc} is given two different builds for the same desc2Match:\n` +
+          `${doc} is given two different builds at the same address:\n` +
           `  ${prev.source}: ${prev.pieces}\n  ${b.source}: ${pieces}\n` +
           `Correct both, or the round that runs last silently wins.`,
         );
@@ -113,7 +122,7 @@ test("the 1ELT build says L(LHF) on BOTH its documents (owner 2026-09-05)", () =
   }
 });
 
-test("every build in every file names its documents, its pieces and a desc2Match", () => {
+test("every build in every file names its documents, its pieces and how to find itself", () => {
   for (const b of loadCorrections(DATA).builds) {
     const where = `${b.source} ${(b.docs || []).join("/")}`;
     assert.ok(Array.isArray(b.docs) && b.docs.length, `${where}: no docs`);
@@ -121,9 +130,30 @@ test("every build in every file names its documents, its pieces and a desc2Match
     /* A `why` is required but not a length: the 2026-08 round has one that
        reads exactly "owner" (HC-SO-011733), and that is a complete answer. */
     assert.ok(typeof b.why === "string" && b.why.trim() !== "", `${where}: no why`);
-    /* A document can hold several builds, and desc2Match is the ONLY thing that
-       tells them apart. A build without one claims the whole document. */
-    assert.ok(b.desc2Match, `${where}: no desc2Match`);
+    /* A document can hold several builds, so a build MUST say which lines are
+       its own — one without an address claims the whole document.
+       `desc2Match` does that by text, and `lineKeys` by the account book's own
+       DtlKey. The key was added for HC-SO-012827, where the book wrote one
+       line's Desc2 as a SUBSTRING of the other's: no needle can address the
+       shorter line alone, so text cannot be the only accepted address. Either
+       one satisfies this; neither present does not. */
+    assert.ok(
+      b.desc2Match || (Array.isArray(b.lineKeys) && b.lineKeys.length),
+      `${where}: no desc2Match and no lineKeys — nothing says which lines of the document this build is`,
+    );
+  }
+});
+
+test("a build addressed by lineKeys carries keys that are non-empty strings", () => {
+  for (const b of loadCorrections(DATA).builds) {
+    if (!Array.isArray(b.lineKeys)) continue;
+    const where = `${b.source} ${(b.docs || []).join("/")}`;
+    assert.ok(b.lineKeys.length, `${where}: lineKeys is present but empty`);
+    for (const k of b.lineKeys)
+      assert.ok(typeof k === "string" && k.trim() !== "", `${where}: a line key must be a non-empty string, got ${JSON.stringify(k)}`);
+    /* One build is one document's lines. A build addressed by key names ONE
+       document, because a DtlKey belongs to exactly one. */
+    assert.equal(b.docs.length, 1, `${where}: a build addressed by line key names exactly one document`);
   }
 });
 

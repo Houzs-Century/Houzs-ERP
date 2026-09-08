@@ -118,3 +118,152 @@ happened.
 corrections files and reports a written ruling as **`RULED`**, its own column,
 never folded into `AGREE`. A ruling that has NOT been written stays `DIFFER` and
 names the answer it is failing to match.
+
+---
+
+# ROUND 2 — he read his own slips one by one and gave SIXTEEN answers
+
+**「所以全部答案我都给你了」** and **「给你全部了 然后你也可以用description2验证你自己的
+答案看是不是对的」** — 2026-09-08. He was annoyed while doing it (**「为什么这种你也不懂
+呢？」**) because most of what had been escalated to him was readable. The rules he gave
+alongside the answers are below, and they are the point: **they exist so this class never
+comes back to him.**
+
+Sixteen builds on **fifteen** documents (`HC-SO-004709` and `HC-SO-012827` each hold two
+sofas). All fifteen were in the tally's *cannot be compared* list on run
+**`34233001504`** — the book's own text does not state a build, so his drawing was the
+only source.
+
+| document | his words, verbatim | written as | seat |
+|---|---|---|---|
+| `HC-SO-012108` | 「这个是8030 / 1AL+1NA+LR 35寸」 | `1A(LHF)+1NA+L(RHF)` model 8030 | 35 |
+| `HC-SO-004709` ① | 「一个是2s 35" 要left wooden arm」 | `2S` model 5527 | 35 |
+| `HC-SO-004709` ② | 「一个是1s 30寸」 | `1S` model R819 | 30 |
+| `HC-SO-008683` | 「2AL+C+2NA30寸」 | `2A(LHF)+CNR+2NA` model 7233 | 30 |
+| `HC-SO-010121` | 「第二个是1AL+1NA+1AR 32寸」 | `1A(LHF)+1NA+1A(RHF)` model 8051 | **not written — see below** |
+| `HC-SO-011158` | 「第一个是1AL+C+1NA+1AR」 | `1A(LHF)+CNR+1NA+1A(RHF)` model 9050 | — |
+| `HC-SO-011268` | 「第二个是2AL+1AR」 | `2A(LHF)+1A(RHF)` model 9028 | 28 |
+| `HC-SO-011434` | 「1BL+1BR」 | `1B(LHF)+1B(RHF)` model 9058 | 32 |
+| `HC-SO-011447` | 「然后1AL+C+1NA+1AR」 | `1A(LHF)+CNR+1NA+1A(RHF)` model 9058 | — |
+| `HC-SO-011454` | 「这个是1AL+C+1NA+1AR」 | `1A(LHF)+CNR+1NA+1A(RHF)` model 9058 | — |
+| `HC-SO-011455` | 「第二个是1AL+C+2AR」 | `1A(LHF)+CNR+2A(RHF)` model 9050 | — |
+| `HC-SO-011601` | 「第一个是corner 你也应该懂的 32寸seat」 | **NOT WRITTEN — partial, see below** | 32 |
+| `HC-SO-011657` | 「第二个是stool」 | `STOOL` model 9838 | — |
+| `HC-SO-012026` | 「1AL+1NA+1NA+C+1AR」 | `1A(LHF)+1NA+1NA+CNR+1A(RHF)` model 9058 | — |
+| `HC-SO-012827` ① | 「第二个是1AL+1NA+1AR+1s」 | `1A(LHF)+1NA+1A(RHF)` model 8030 | 35 |
+| `HC-SO-012827` ② | 「…+1s」 (the separate chair) | `1S` model 8030 | 35 |
+| `HC-SO-012947` | 「L（LHF）+2AR」 | `L(LHF)+2A(RHF)` model 9058 | — |
+
+His shorthand maps `AL`→`A(LHF)`, `AR`→`A(RHF)`, `BL`→`B(LHF)`, `BR`→`B(RHF)`,
+`LR`→`L(RHF)`, `C`→`CNR`, `2s`→`2S`. The chaise carries **no count prefix** in the ERP,
+so `LR` is `L(RHF)` and not `1L(RHF)`.
+
+## His reading rules — these are the durable part
+
+Apply them; **do not ask him again.**
+
+- **Three boxes inside ONE outline = `2+1`. Three boxes drawn SEPARATELY = `1+1+1`.**
+  His own discriminator (`HC-SO-010458`, `HC-SO-011114` = `2+1`; `HC-SO-013475` = `1+1+1`).
+- **The piece AT THE TURN of an L is a CORNER.** A chaise (`L`) runs OUT from the turn.
+- **A deeper box is NOT automatically a chaise** — he ruled `HC-SO-011268`'s deeper right
+  box `1AR`.
+- **No arm drawn ≠ `NA`** — `HC-SO-011158`'s slip draws no arms at all and he put arms at
+  both ends. **No hatching decides nothing** (`HC-SO-011455`).
+- **No seat size written ≠ undecidable** — `011158`, `011447`, `012026` had none and he
+  ruled them anyway.
+- **Numbers inside the boxes may be WIDTHS, not seat depth** — `HC-SO-008683`'s `70"`/`53"`
+  are widths; the seat is 30.
+- **A note about the ARM REST is not a statement about the piece** — `011454` says
+  `arm rest take off` and he still ruled arms at both ends.
+- **A backrest note is not a model change** — `012108` (`back rest change to 9058`, model
+  stays 8030) and `012947` (`backrest change 9028`, model stays 9058). Seen twice.
+- **`tbc side` on a slip is not unanswerable** — `012947` says it and the drawing still
+  told him the chaise is on the left.
+- **Not every sofa slip is a sofa** — `011657` is a 6ft x 3ft box labelled
+  `umbrella fabric cover`; it is a STOOL.
+- **A notation the decoder does not know (`2G1F`, `3S`, `B`, `R`) is a decoder gap, not a
+  question for him.**
+- **Where the slip's model and the book's item code disagree, the SKU axis follows the
+  book** — `011434`: slip `9028`, book `DSL-9058` → the book.
+- **`5535` is its own model and is NEVER aliased.**
+  `SOFA_MODEL_ALIAS = { 5530: 9028, 5536: 9058, 5537: 8030, 5540: 8030 }`.
+
+## Where his answer and the book disagree — and what wins
+
+「一律跟账本。除了sofa compartment而已啊」 — the book decides everything **except** the
+sofa build.
+
+- **`HC-SO-004709` ①: the book says `3S(35")`, he ruled `2S`. HIS ANSWER STANDS.** Do not
+  "correct" it back to the book — the compartment axis is his.
+- **`HC-SO-008683`: the decoder's own `2G1F` rule gives `2A(LHF)+CNR+1A(RHF)`, he ruled
+  `2NA` for the third piece. HIS ANSWER STANDS** — and it is a per-document override, **not**
+  a change to the `2G1F` rule.
+- **`HC-SO-010121` is the one exception, and it is deliberate.** He said **32寸**; the book
+  says **31 inch**. Seat is *not* a compartment, so by his own rule the book wins and the
+  seat was **left alone**. Writing 32 would also have opened a fresh difference on an axis
+  that reads 0 across all 2,882 documents. **If the drawing really says 32, then the BOOK is
+  what needs correcting** — that is a book edit, not an ERP one. **One sentence from him
+  settles it.**
+
+## `HC-SO-011601` is NOT written — his answer is partial, not unclear
+
+「第一个是corner 你也应该懂的 32寸seat」 names **the piece at the turn** and **the seat**.
+It does not name the rest of the build, and the book's Desc2 for `SO-011601`
+(DtlKey `802011`, `AMN-SF9050 SOFA`) is just `bottom wrap to Nilon` — no build at all.
+Inventing the remaining pieces around a corner he did name is precisely the failure this
+page exists to prevent, so **nothing was written**. This is the ONE document from this round
+that still needs him, and it needs **one line**, not a re-reading of everything.
+
+## `HC-SO-012827` needed a new way to address a line
+
+The book wrote its two sofas so that **one Desc2 is a substring of the other**:
+
+```
+DtlKey 873100   "3 seater  35 inch  color modenza 07 silver  Nilon bottom"
+DtlKey 873101   "35 inch  color modenza 07 silver  Nilon bottom"
+```
+
+No `desc2Match` can address the shorter line alone — every candidate reaches both and the
+matcher refuses as `ambiguous`, **correctly**. Choosing by position, or by "the shorter
+text", is the transposition class `docs/bugs/0690` names.
+
+So the corrections file now accepts **`lineKeys`** — the account book's **own `DtlKey`**,
+already carried on `scm.mfg_sales_order_items.linked_ac_dtlkey`. It is identity, not
+resemblance. It **never falls back to the text**: a key the document does not carry is
+`none`, because quietly matching by text instead is the exact bug the mode was added to
+prevent. Mode and tests: `backend/scripts/lib/sofa-desc2-match.mjs`.
+
+## The decoder vocabulary was NOT the problem — measured, not assumed
+
+The brief for this lane predicted that teaching the decoder the `R` (recliner) and `B`
+tokens would close a large slice of the pile "with no drawing-reading at all", on a count of
+**305 book rows** containing them. **That was checked before any code was written, and it is
+wrong in the direction that matters: those rows already decode.**
+
+```
+parseSofa("1R+2R+3R", 9028, recl)      -> 1A(R)(LHF), 2A(RHF), 1A(R)(LHF), 2A(RHF)
+parseSofa("1B+1B", 8069)               -> 1B(LHF), 1B(RHF)
+parseSofa("1B+C+2R", 9058, recl)       -> 1B(LHF), CNR, 2A(RHF)
+parseSofa("2A(LHF)+1B(RHF)", 8069)     -> 2A(LHF), 1B(RHF)
+parseSofa('2R(30")+C.Table+1R(22")')   -> 2A(LHF), CNR, 1A(R)(RHF)
+```
+
+`parse-sofa.mjs` already emits `A`, `NA`, `L`, `CNR`, `B`, `R`, `P`, `Console`, `CT` and
+`STOOL`. Running the decoder over **every sofa line of the 45 unreadable documents** gives:
+
+| | lines |
+|---|---|
+| decode today | 6 |
+| fail on an unknown TOKEN | **4** |
+| fail because **the book states no build at all** | **47** |
+
+The four unknown tokens are `2G1FCLR`, `1INCH`, `3SEATERCOLORMODENZA07SILVERNILON` and
+`NOSTICHINGBETTWENTWOSEAT` — every one a phrase **glued to its neighbour**, not a missing
+piece type. And `2G1FCLR`'s document (`HC-SO-008683`) is one he ruled anyway, **against**
+what the decoder would have produced.
+
+**So the pile is not a vocabulary gap. It is 47 lines where the account book simply does not
+say what the build is** — which is exactly what the verdict has been reporting: *"the
+account book's own text does not say what the build is, so your drawing is the only
+source."* No decoder change was made in this round, because none would have closed a single
+document.
