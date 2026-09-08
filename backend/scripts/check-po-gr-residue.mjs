@@ -27,6 +27,12 @@
  *
  * Exit 0 for every legitimate answer. Non-zero only when it cannot answer.
  *
+ * ── DISPATCHED, NOT JUST WRITTEN ───────────────────────────────────────────
+ * CLAUDE.md: a workflow_dispatch workflow is not shipped until it has been
+ * dispatched once and reported success. Runs 34260859286, 34261381499,
+ * 34261651815 and 34261802057, company 1, all exit 0 — and each of the first
+ * three found a defect IN THIS FILE, which is the argument for the rule.
+ *
  * RE-RUN: identical output for an identical database and snapshot. It writes
  * nothing, so a second run costs one connection and changes no row.
  */
