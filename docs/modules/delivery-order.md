@@ -739,6 +739,53 @@ part that bites — `delivery_order_items.linked_ac_dtlkey` is null on all 173
 migrated delivery orders, so a migrated delivery cannot be addressed line by
 line. Header-only would still work. Do not start until the read has been done.
 
+### A migrated delivery note can be SHORT a line, and no rule can find it (2026-09-08)
+
+The same null keys have a second consequence, and it decides the shape of any
+repair. `delivery_order_items.linked_ac_dtlkey` is null on all 173 migrated
+delivery orders, so **no** delivery note can be compared to the book line by
+line: every verdict in the AutoCount reconcile rests on its value-then-order
+fallback. A tool that added "the missing line" to a delivery order by that
+fallback would be writing on a guess.
+
+So `backend/scripts/topup-ac-lines-from-truth.mjs` has two lanes and they are not
+symmetrical. Its SO lane is a general rule keyed on DtlKey. Its **DO lane is a
+NAMED list** — `DO_TARGETS` in that file, one entry per line it may add, each
+asserted against the book (document, DtlKey, quantity, unit price, line
+subtotal) and against the ERP (no row already answering it) before anything is
+written. A target whose book row has moved is REFUSED, never adjusted to fit.
+Today the list holds one line: `DO-001604`, whose book row is
+`* DISPOSE 3S L SHAPE SOFA + CONSOLE TABLE`, no item code, quantity 1,
+**RM 150.00** — a text-only line carrying real money, explicitly NOT in the
+blank-row class of `docs/bugs/0695` (section G of
+`docs/cutover-so-do-remainder-2026-09-08.md`).
+
+Two deliberate choices in that write, both recorded because neither is obvious:
+
+- **`item_code` is DECLARED, not copied.** The column is NOT NULL and the book
+  states no ItemCode, so a value is forced. `DISPOSE` is what the book's own
+  text names and what AutoCount's `DISPOSE` code binds to in the mapping sheet;
+  the book's text goes verbatim into `description`, so nothing it said is lost.
+  The reconcile does not compare a delivery order's item codes at all —
+  `lib/ac-reconcile-erp-sql.mjs:196`, *taken from the SALES ORDER line by
+  design* — so the choice cannot create a difference.
+- **`linked_ac_dtlkey` is deliberately left NULL** and the row is claimed by a
+  marker in `notes` instead. Stamping the key would be correct in itself, but it
+  flips that ONE document out of the reconcile's keyless-multiset comparison into
+  keyed pairing, which changes how the checker judges it — a wider change than
+  adding the line. The cost is named: `backfill-ac-downstream-line-keys.mjs`
+  buckets on (item code, quantity), so this row will report one extra
+  per-bucket refusal (*the book has no line of this item at this quantity*) on
+  `DO-001604` until a key is stamped. That refusal is per bucket, not per
+  document, so every other line on the note still stamps.
+
+Header money is re-summed as Sigma `line_total_sen`, the same rule
+`lib/migrated-do-writer.mjs:375` and `delivery-orders-mfg.ts:461` keep, and
+`line_count` is set to what the document holds rather than incremented. No
+inventory movement is written: these documents are `migrated_no_stock`
+(mig 0276) and stay at zero movements.
+Ledger: `docs/bugs/0704-a-top-up-that-reads-the-outstanding-cut-is-blind-to-a-delive.md`.
+
 **What is NOT covered here and is a real gap: money taken at the door.**
 `scm.delivery_order_payments` — the ledger Mobile POD writes when a driver
 collects on delivery — reaches AutoCount **nowhere**. `composePaymentUdf` is fed
