@@ -145,7 +145,7 @@ import {
   splitBookUnpriced, splitDecidedAbsences, splitErpZeroMoney,
   splitGuessedItemCodePairing, splitMigratedChainLineShape,
 } from "./lib/ac-not-a-difference.mjs";
-import { isBlankBookRow, splitBlankBookRows } from "./lib/ac-blank-book-row.mjs";
+import { blankRowArm, isBlankBookRow, splitBlankBookRows } from "./lib/ac-blank-book-row.mjs";
 import { grPairGrain } from "./lib/ac-gr-pair-grain.mjs";
 import { erpReconcileTypes } from "./lib/ac-reconcile-erp-sql.mjs";
 import { bagOf, compareBags } from "./lib/keyless-multiset.mjs";
@@ -432,21 +432,32 @@ for (const cfg of TYPES) {
   }
   /* The BLANK-ROW declaration is proved against the book itself, in BOTH
      directions, because a declaration that swallows too much reads as a clean
-     run. `SO-001473`'s key 98858 is empty in every column and must be declared;
-     `SO-011384`'s key 783795 has NO item code and QUANTITY 4 and must NOT be.
-     Both are real rows on the 2026-09-08 cut; if the exporter ever stops
-     carrying one, that is a snapshot problem and this says so rather than
-     reporting a clean run over a rule it could not exercise. */
-  for (const [dn, key, want] of [["SO-001473", "98858", true], ["SO-011384", "783795", false]]) {
+     run. Three real rows on the 2026-09-08 cut, one per arm and one per
+     boundary; if the exporter ever stops carrying one, that is a snapshot
+     problem and this says so rather than reporting a clean run over a rule it
+     could not exercise.
+
+       SO-001473 / 98858   arm 1 — empty in every column. DECLARED.
+       SO-011384 / 783795  arm 2 — no item code, no description, no Desc2, no
+                           money, QUANTITY 4. DECLARED since the owner's ruling
+                           of 2026-09-08 (「删掉啊 没写的也删掉」); it answered
+                           false until then, and the case is kept, flipped,
+                           rather than deleted so the change is visible here.
+       SO-000102 / 15971   THE MONEY BOUNDARY, which the ruling does not move.
+                           "DELIVERY FEE ", no item code, RM 50.00. It must
+                           STILL be a finding, or the ruling has been widened
+                           into "code-less rows do not count". */
+  for (const [dn, key, want, why] of [
+    ["SO-001473", "98858", true, "an empty AutoCount row would be counted as a missing line again"],
+    ["SO-011384", "783795", true, "the owner's 2026-09-08 ruling on a row the book describes nothing in would not be applied"],
+    ["SO-000102", "15971", false, "a code-less row carrying RM 50.00 of real money would be declared away"],
+  ]) {
     const l = (book.SO.lines.get(dn) ?? []).find((x) => String(x.dtlKey) === key);
     if (!l) {
       problems.push(`the blank-row rule cannot be self-tested: ${dn} DtlKey ${key} is not in this snapshot`);
-    } else if (isBlankBookRow(l) !== want) {
+    } else if (isBlankBookRow(l, book.SO.desc2.get(l.dtlKey)) !== want) {
       problems.push(
-        `the blank-row rule answered ${!want} for ${dn} DtlKey ${key} and must answer ${want} — ` +
-          (want
-            ? "an empty AutoCount row would be counted as a missing line again"
-            : "a row the book orders 4 of would be declared away"),
+        `the blank-row rule answered ${!want} for ${dn} DtlKey ${key} and must answer ${want} — ${why}`,
       );
     }
   }
@@ -905,7 +916,7 @@ for (const cfg of TYPES) {
     lineCount: [], money: [], item: [], qty: [], price: [],
     keyOrphan: [], unmatchedErp: [], unmatchedAc: [],
   };
-  const D = { lineCount: 0, item: 0, price: 0, blankRows: 0, blankRowDocs: new Set() }; // declared, not gaps
+  const D = { lineCount: 0, item: 0, price: 0, blankRows: 0, blankRowsStatesNothing: 0, blankRowDocs: new Set() }; // declared, not gaps
   /* The item-code and line-count findings in a machine-readable shape, for the
      same reason `moneyRows` exists below: a classifier must decide a column
      from a MEASUREMENT, never by pattern-matching the printed string. */
@@ -977,13 +988,23 @@ for (const cfg of TYPES) {
       (B.lines.get(ac) || [])
         .slice()
         .sort((a, b) => a.seq - b.seq || (a.dtlKey > b.dtlKey ? 1 : -1)),
+      B.desc2,
     );
     if (acBlank.length) {
       D.blankRows += acBlank.length;
       D.blankRowDocs.add(ac);
       for (const l of acBlank) {
+        /* WHICH ARM declared it, named per row. Arm 2 is an owner ruling and a
+           reader must be able to see every row it swept up without re-deriving
+           the rule — that is the difference between a declaration and a
+           suppression. */
+        const arm = blankRowArm(l, B.desc2.get(l.dtlKey));
+        if (arm === "states-nothing") D.blankRowsStatesNothing += 1;
         blankRowRows.push(
-          `${ac}: DtlKey ${l.dtlKey} — AutoCount states no item code, no quantity and no money (ERP ${d.erp_no})`,
+          arm === "states-nothing"
+            ? `${ac}: DtlKey ${l.dtlKey} — AutoCount states no item code, no description, no build text and no ` +
+              `money, at quantity ${l.qty ?? 0} (ERP ${d.erp_no}) [owner ruling 2026-09-08]`
+            : `${ac}: DtlKey ${l.dtlKey} — AutoCount states no item code, no quantity and no money (ERP ${d.erp_no})`,
         );
       }
     }
@@ -1532,10 +1553,13 @@ for (const cfg of TYPES) {
   );
   if (D.blankRows) {
     log(
-      `${t} — ${D.blankRows} AutoCount row(s) across ${D.blankRowDocs.size} document(s) carry NO item code, NO ` +
-        "quantity and NO money. AutoCount lets a salesperson leave a row empty; the ERP cannot hold one (a line " +
-        "needs a product), so the two sides AGREE about them. DECLARED, not counted in the line-count column — " +
-        "and a row with a quantity, or with money, is NOT in this class and stays a finding.",
+      `${t} — ${D.blankRows} AutoCount row(s) across ${D.blankRowDocs.size} document(s) state NOTHING the ERP can ` +
+        "hold. AutoCount lets a salesperson leave a row empty; the ERP cannot hold one (a line needs a product), " +
+        "so the two sides AGREE about them. DECLARED, not counted in the line-count column. Two arms: a row with " +
+        "no item code, no quantity and no money, and — since the owner's ruling of 2026-09-08 " +
+        `(「删掉啊 没写的也删掉」) — ${D.blankRowsStatesNothing} row(s) that carry a QUANTITY and still ` +
+        "state no item code, no description, no build text and no money. MONEY IS THE BOUNDARY THE RULING DID NOT " +
+        "MOVE: a row carrying money is never in this class, whatever else is blank.",
     );
     for (const row of first(blankRowRows)) plain(`      ${row}`);
     if (blankRowRows.length > SHOW) plain(`      ... and ${blankRowRows.length - SHOW} more`);

@@ -1897,6 +1897,60 @@ into DRAFT (below). So the route also asks:
 | `version` CAS + edit lease | `428` / `409` | Unchanged. |
 
 | `version` CAS + edit lease | `428` / `409` | Unchanged. |
+
+### The owner's delete ruling (2026-09-08) — a hard DELETE on a migrated line, and how far it reaches
+
+**If you have found a hard `DELETE` on `scm.mfg_sales_order_items` and are
+wondering who authorised it, this is the section.**
+
+Everything above this heading is the standing rule and it is UNCHANGED: a
+confirmed order is CANCELLED, never deleted, and the repair scripts refuse to
+remove a line — `topup-ac-lines-from-truth.mjs` says so in its own header, *"an
+ERP row the book does NOT have is REPORTED and never deleted"*.
+
+On 2026-09-08 the owner was shown the last three sales-order differences on the
+go-live reconcile and **told that two of them needed his decision precisely
+because that convention exists.** Knowing it, he answered:
+
+> 「删掉啊 没写的也删掉
+> 简单来说都要跟Autocount一样啊 你不懂吗？」
+>
+> "Delete it. The one that says nothing, delete that too. Put simply, everything
+> has to be the same as AutoCount. Don't you understand?"
+
+**That is an explicit, informed override, and it is NARROW.** It covers the rows
+below and the class they belong to. It is not "deleting is fine now", and no
+later change may cite it for a wider licence.
+
+| what he ruled on | what was done | what it is NOT |
+|---|---|---|
+| `HC-SO-013160` holds a `STORAGE` RM 300.00 line claiming AutoCount DtlKey 892917 — a key on **no line of any document of any of the six types** in the book snapshot. The book has 3 lines / RM 300.00; we had 4 / RM 600.00 | the ERP row is **DELETED**, and the header re-summed from its lines | not a licence to delete any row the reconcile flags. The delete refuses unless the key is absent from the whole book, exactly one ERP row carries it, every OTHER row of the document carries a key the book HAS, and **no row of any table referencing `scm.mfg_sales_order_items` points at it** |
+| a book row with no item code, no description, no Desc2 and no money — even when it carries a QUANTITY (`SO-011384` DtlKey 783795, quantity 4) | a **CHECKER** change only. `scripts/lib/ac-blank-book-row.mjs` grew a second arm so the reconcile stops calling such a row a missing line. No document was written | not "code-less rows do not count". **MONEY IS THE BOUNDARY THE RULING DID NOT MOVE**: `HC-SO-000102`'s `"DELIVERY FEE "` (RM 50.00) and `HC-DO-001604`'s `"* DISPOSE …"` (RM 150.00) are code-less and stay findings |
+| `HC-SO-012571`, a decomposed sofa RM 88.00 above the book | the compartment that **already** carries the sofa's money is set to the book's RM 3,300.00. Its siblings stay at RM 0.00 | not a loosening of `repair-so-price-from-autocount.mjs`'s decomposed-sofa skip, which is still right for the general case. How a sofa's price splits across compartments is our internal representation; the book states one line and one number |
+
+**The delete is the only irreversible one, so it carries a recovery path.**
+Before the row is removed, `repair-so-book-parity-owner-ruling.mjs` reads it with
+`SELECT *` and prints **every column** into the run log as JSON, and refuses if
+that read comes back empty. Putting it back is one `INSERT` with those values
+plus the same header re-sum. The captured row is also copied into the ledger
+entry, which is the durable record:
+`docs/bugs/0713-the-owner-ruled-that-a-row-the-book-describes-nothing-in-is.md`.
+
+**Why the FK sweep is the guard that matters.** The three FKs listed under *The
+SO line's downstream links* below — `purchase_order_items.so_item_id`,
+`delivery_order_items.so_item_id`, `sales_invoice_items.so_item_id` — are all
+`ON DELETE SET NULL`. Deleting a line therefore **silently unlinks** every
+downstream purchase order, delivery note and invoice that named it, and leaves no
+trace that it happened. The script takes the referencing-FK list from
+`pg_constraint` at run time rather than from a list typed in the file, and
+refuses if a single row points at the target.
+
+Tooling: `backend/scripts/repair-so-book-parity-owner-ruling.mjs` +
+`.github/workflows/repair-so-book-parity-owner-ruling.yml` (plan by default;
+`CONFIRM="I HAVE REVIEWED THE OWNER DELETE RULING PLAN"` arms the apply).
+Neither lane touches `paid_sen` or the header `balance_sen`, and neither reaches
+AutoCount — 「写回autocount的你不需要理了」, same day.
+
 ## The save lock — one minute, and it knows whose it is
 
 **It covers ONE SAVE, not an editing session.** Opening an order takes no lock at
