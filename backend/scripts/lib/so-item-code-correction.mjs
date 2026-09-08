@@ -107,7 +107,14 @@ export function planSoItemCodeCorrections({ edges, bookSoByDtl, acMapByCode, erp
       refused.push({
         why: "decomposed",
         dtlKey: key, acCode, docNo: rows[0]?.doc_no ?? null, rows: rows.length,
-        detail: `AutoCount line ${key} (${acCode}) is claimed by ${rows.length} ERP rows - a decomposed sofa. The book line's own code is not a compartment's code; a person owns this one.`,
+        /* The CUSTOMER and OUR OWN CODES, because a refusal a person has to
+           adjudicate is useless without them: three of these turned out to be a
+           sofa whose MODEL disagrees with the book, and the escalation could not
+           name whose order it was. */
+        debtorName: rows[0]?.debtor_name ?? null,
+        ourCodes: rows.map((r) => r.item_code),
+        detail: `AutoCount line ${key} (${acCode}) is claimed by ${rows.length} ERP rows - a decomposed sofa. `
+          + `Ours: ${rows.map((r) => r.item_code).join(", ")}. The book line's own code is not a compartment's code; a person owns this one.`,
       });
       continue;
     }
