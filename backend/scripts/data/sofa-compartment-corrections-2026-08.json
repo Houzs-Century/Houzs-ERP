@@ -481,8 +481,8 @@
    ],
    "seat": "30",
    "colour": "ch141-8S",
-   "why": "owner",
-   "desc2Match": "{COL:CH141-8 ARMY}/{SEAT HEIGHT: +1\"INCH"
+   "why": "owner | 2026-09-08 THE NEEDLE WAS REPAIRED, THE ANSWER WAS NOT TOUCHED. It read \"{COL:CH141-8 ARMY}/{SEAT HEIGHT: +1\\\"INCH\" and the fabric library RENUMBERED CH141-8 to CH141-08 on 2026-08-11, so production has held \"{COL:CH141-08 ARMY}\" ever since and this needle has matched nothing. A ruling nothing can find is a ruling the reconcile does not have, so a build the owner had personally answered kept reporting as CANNOT BE COMPARED - HC-SO-011733 is one of the 43 in the 2026-09-08 sales-order tally (run 34237658597), and it is PROCEEDED. Same class as docs/bugs/0718: a correction gone silently inert when the fabric library renumbered itself. The needle is now \"{SEAT HEIGHT: +1\", which both the account book and the ERP carry and no colour renumbering can move. Measured on prod, read-only probe run 34242061732: this document holds exactly one sofa build and its six compartments are 2A(LHF)+CNR+1NA+1NA+CONSOLE+1A(RHF) at seat 30 - the answer below, already written, so re-applying it is a no-op. HE RE-READ THE SAME SLIP ON 2026-09-08 and gave the same five seats and arms without mentioning the Console; that reading is recorded in sofa-compartment-corrections-2026-09.json's `_held` list with the one question it leaves open, and nothing is deleted until he answers it.",
+   "desc2Match": "{SEAT HEIGHT: +1"
   },
   {
    "docs": [
