@@ -17,6 +17,8 @@
 // (mfg-purchase-orders.ts, poItemPhotoSignedHandler).
 // ---------------------------------------------------------------------------
 
+import { isOneModel } from './one-model-group.mjs';
+
 /** The AutoCount DtlKey an importer-minted address names, or null if the
  *  address was not minted by the importer (an operator upload, say). */
 export function acDtlKeyOf(key) {
@@ -101,6 +103,25 @@ export function planRepoint(rows, liveKeys) {
     const [doc, dtl] = [lk.slice(0, lk.lastIndexOf('|')), lk.slice(lk.lastIndexOf('|') + 1)];
     const shows = group.some((r) => (r.pics ?? []).some((k) => liveKeys.has(k) && acDtlKeyOf(k) === dtl));
     if (shows) continue;
+    /* THE GROUP MUST BE ONE PRODUCT — docs/bugs/0672 site 9.
+       `(doc_no, DtlKey)` is NOT unique: migrations 0273 and 0280 index
+       `linked_ac_dtlkey` non-uniquely, and probe-link-identity.mjs run
+       34172468269 counted 310 shared keys on the sales-order lines (774 rows)
+       and 106 on the purchase-order lines (275 rows) in production.
+
+       `firstRow(group)` below is the owner's own sofa rule when the group is one
+       build's compartments (2026-08-10, 「每个 SKU 的照片都一样,留第一个就可以
+       了」). When it is not, it is a coin flip: the picture lands on whichever
+       row sorted first, and nothing downstream can tell.
+
+       The MODEL is the test, not the item code — a build's compartments
+       deliberately carry DIFFERENT codes (MODEL-1S, MODEL-2S, MODEL-CNR), so
+       comparing codes would refuse every sofa, which is the whole population
+       this planner exists for. Measured: every shared key in production passes
+       the model test today, so this refuses nothing now and refuses the first
+       group that ever regresses. A row with no code at all also refuses: a blank
+       cannot be asserted equal to anything. */
+    if (!isOneModel(group, (r) => r.itemCode)) continue;
     const found = new Set();
     for (const s of onDoc.get(doc) ?? []) {
       for (const k of s.pics ?? []) if (liveKeys.has(k) && acDtlKeyOf(k) === dtl) found.add(k);
