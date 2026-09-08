@@ -87,6 +87,25 @@ the leg` x25, `no hole on sitting area` x8), and the one that was not — `PERSE
 truncated (`wrap bottom t`, `PO-008244`); the BOOK is truncated there, and this
 migration copies rather than computes.
 
+**What this RULED OUT — the checker was NOT confusing two axes.** The theory
+handed to this lane was that `check-ac-erp-reconcile.mjs` was feeding specials
+text into the sofa-compartment comparison, which would have made it a CHECKER
+bug. It is not. On all four documents the compartment axis is `UNREADABLE`
+(`variant-reconcile.mjs` sets `book.compartments = null` when the decoder returns
+no pieces, and the book states no build on any of the four) and the specials axis
+reported `BOOK_BLANK` — the verdict the checker reserves for "the ERP holds a
+value the book never stated", which its own rule says is NOT work. The checker
+was reporting exactly what it was told; it was told a lie by the DECODER, and the
+decoder is what changed here. **No operator's specials were deleted, and none
+should be.**
+
+The eight PROCEEDED compartment `DIFFER`s are a different population again, and
+already accounted for elsewhere: five are builds the owner ruled on from the
+drawing and the reconcile does not read his corrections file
+(`docs/bugs/0714-the-reconcile-reports-a-sofa-the-owner-has-already-ruled-on.md`,
+`fix/sofa-proceeded-eight`), and the rest are genuinely missing builds owned by
+that same lane. None of the four documents above is among them.
+
 **What this does NOT do.** It does not touch a single production row. The six
 recovered builds are sitting on `SOFA UNPARSED` placeholder lines today, and
 `backend/scripts/redecode-collapsed-sofa-lines.mjs` is the tool that gives them

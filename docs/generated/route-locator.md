@@ -704,19 +704,19 @@ Total: 1196 route registrations across 154 files.
 - L3390  DELETE /:id/items/:itemId
 
 ## backend/src/scm/routes/other-debtors.ts  (13)
-- L635  GET    /
-- L636  POST   /
-- L637  GET    /:id
-- L638  PATCH  /:id
-- L639  POST   /:id/bills
-- L640  POST   /bills/:billId/cancel
-- L641  PATCH  /bills/:billId
-- L642  POST   /:id/receipts
-- L643  POST   /receipts/:receiptId/submit
-- L644  POST   /receipts/:receiptId/withdraw
-- L645  POST   /receipts/:receiptId/check
-- L646  POST   /receipts/:receiptId/reject
-- L647  POST   /receipts/:receiptId/approve
+- L664  GET    /
+- L665  POST   /
+- L666  GET    /:id
+- L667  PATCH  /:id
+- L668  POST   /:id/bills
+- L669  POST   /bills/:billId/cancel
+- L670  PATCH  /bills/:billId
+- L671  POST   /:id/receipts
+- L672  POST   /receipts/:receiptId/submit
+- L673  POST   /receipts/:receiptId/withdraw
+- L674  POST   /receipts/:receiptId/check
+- L675  POST   /receipts/:receiptId/reject
+- L676  POST   /receipts/:receiptId/approve
 
 ## backend/src/scm/routes/purchase-consignment-receives.ts  (13)
 - L513  GET    /
@@ -801,17 +801,17 @@ Total: 1196 route registrations across 154 files.
 - L1879  PATCH  /:id/status
 
 ## backend/src/scm/routes/document-cancel-routes.ts  (11)
-- L416  GET    /:docNo/cancel-request
-- L417  POST   /:docNo/cancel-request
-- L418  POST   /:docNo/cancel-request/approve
-- L419  POST   /:docNo/cancel-request/reject
-- L420  POST   /:docNo/cancel-request/withdraw
-- L425  GET    /:id/cancel-request
-- L426  POST   /:id/cancel-request
-- L427  POST   /:id/cancel-request/approve
-- L428  POST   /:id/cancel-request/reject
-- L429  POST   /:id/cancel-request/withdraw
-- L434  GET    /
+- L418  GET    /:docNo/cancel-request
+- L419  POST   /:docNo/cancel-request
+- L420  POST   /:docNo/cancel-request/approve
+- L421  POST   /:docNo/cancel-request/reject
+- L422  POST   /:docNo/cancel-request/withdraw
+- L427  GET    /:id/cancel-request
+- L428  POST   /:id/cancel-request
+- L429  POST   /:id/cancel-request/approve
+- L430  POST   /:id/cancel-request/reject
+- L431  POST   /:id/cancel-request/withdraw
+- L436  GET    /
 
 ## backend/src/scm/routes/mfg-products.ts  (11)
 - L224  GET    /

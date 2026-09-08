@@ -139,6 +139,29 @@ function splitColourValue(val) {
    boundary: "1EL  + C + 1 NA + 1ER" is one build, and splitting it there left
    the `1EL` alone in a segment the structure pass then lost to the longer one. */
 const tailAsSegments = (tail) => String(tail).replace(/(?<!\+)\s{2,}(?!\+)/g, " / ");
+/* A SIZE written as its own bracket beside a parenthesised build — "3S
+   (2+1)(32'Inch)", "3S(28'Inch)(2+1)" — is what stands between the title rule
+   below and the build it is meant to read.  Taken out for that test ONLY.
+
+   It does nothing unless the segment ALSO carries a bracket holding a '+', so
+   the one shape this exists for is the only shape it can reach: a lone
+   "2A+1A(30')" keeps its bracket and decodes exactly as it does today.  A size
+   is digits with an optional UNIT and never a '+', so a build bracket can
+   never be mistaken for one.
+
+   It must also clear an EMPTY bracket, because by the time the segment loop
+   runs the seat-size strip above has usually already taken the size out and
+   left its shell behind — "3S (2+1)(32'Inch)" arrives here as "3S (2+1)( )".
+   That shell is what actually defeated the title rule in production.
+
+   THE UNIT IS THE WHOLE GUARD, and it is spelled out rather than approximated
+   by "starts with a digit": "(1R)" starts with a digit too, and a bracket that
+   matches loses a real PIECE.  Measured over the committed book — dropping the
+   unit test cost `(1R+1NA)30"+C+(1R)32"` its second arm. */
+const SIZE_BRACKET =
+  /\(\s*(?:\d+(?:\.\d+)?\s*(?:cm|mm|inch(?:es)?|in|["”'’]{1,2}\s*(?:inch(?:es)?)?)?\s*)?\)/gi;
+const stripSizeBracket = (seg) =>
+  (/\([^)]*\+[^)]*\)/.test(seg) ? seg.replace(SIZE_BRACKET, " ") : seg);
 
 function unlabelledColour(d2raw, knownColour) {
   for (const raw of String(d2raw || "").split(/[/\n]+/)) {
@@ -346,8 +369,24 @@ function parseSofa(d2raw, model, recl = false, opts = {}) {
     // wins (owner 2026-08-10: "2R(1+1) 就是 1A+1A"; "2 seater (1EL+1ER)").
     // Guarded to brackets holding a '+', so "4S (corner)+L" keeps its label.
     // The title may be letter-led too — "L2L(L+1NA+1NA+L)" (SO-008166).
-    const seg = rawSeg.replace(/^\s*[A-Za-z0-9]{1,8}\s*\(([^)]*\+[^)]*)\)\s*$/, "$1")
-      .replace(/^\s*[1-4]\s*[A-Za-z]{0,8}\s*\(([^)]*\+[^)]*)\)\s*$/, "$1");
+    //
+    // THE TITLE AND ITS BUILD ARE RARELY THE WHOLE SEGMENT, and the `$` anchor
+    // used to require exactly that, so the rule missed every live spelling and
+    // the label was then counted as pieces ON TOP of the build it names — a
+    // sofa read as one seat larger than the book ordered (docs/bugs, three
+    // PROCEEDED orders on 2026-09-08).  Two things get out of the way first:
+    //   - a SIZE bracket, which the floor writes beside the build in either
+    //     order — "3S (2+1)(32'Inch)" and "3S(28'Inch)(2+1)".  Removed for the
+    //     purposes of THIS test only; `o.size` is read from the raw Desc2
+    //     elsewhere and is untouched.
+    //   - trailing residue left by the special-order strip above, e.g.
+    //     "2 seater ( 1EL + 1 ER)  change".
+    // The trailing tail may hold NO digit, so a real extra piece — "3S (2+1) 1S"
+    // — still refuses the rule and keeps today's reading rather than being
+    // silently dropped.
+    const seg = stripSizeBracket(rawSeg)
+      .replace(/^\s*[A-Za-z0-9]{1,8}\s*\(([^)]*\+[^)]*)\)\s*[^+()\d]*$/, "$1")
+      .replace(/^\s*[1-4]\s*[A-Za-z]{0,8}\s*\(([^)]*\+[^)]*)\)\s*[^+()\d]*$/, "$1");
     // spaces glue ("3 SEATER"->3SEATER) but paren notes become their own
     // tokens ("(HANDLE MOVABLE)"->+HANDLEMOVABLE+); quotes are residue
     let s = seg.replace(/\s+/g, "").toUpperCase().replace(/[()]/g, "+").replace(/["'*]/g, "").replace(/:/g, "+").replace(/\.(?![5])/g, "+");

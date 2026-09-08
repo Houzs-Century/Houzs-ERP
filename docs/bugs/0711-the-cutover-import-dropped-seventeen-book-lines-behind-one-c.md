@@ -42,7 +42,7 @@ that could not answer. So "code-less AND zero-priced" — which is what a reader
 of `ac-outstanding-so.json.gz` can compute — is the **candidate** set, not the
 dropped set. Over the whole file (14,041 lines / 2,789 documents) that candidate
 set is 22 code-less lines, 5 priced and 17 unpriced. Asked against the live pick
-list, probe run `34213244770`:
+list, probe run `34214774396`:
 
 ```
 of the 17 zero-priced code-less line(s), the resolver answers 2 TODAY
@@ -54,7 +54,7 @@ of the 17 zero-priced code-less line(s), the resolver answers 2 TODAY
 goods on a live order.** `HC-SO-000015` holds three rows —
 `AKEMI FORTRESS MATT (K)` RM 9,099.00, `AKEMI BASTION MATT (SP)` RM 0.00,
 `JAGER-(Q)` RM 0.00 — header RM 9,099.00, lines summing RM 9,099.00, equal to
-the book to the sen (probe runs `34211433089` and `34213244770`). Its
+the book to the sen (probe runs `34211433089` and `34214774396`). Its
 `mfg_so_audit_log` has **zero rows**, so nobody edited it: the importer wrote
 those three lines itself, by name.
 
@@ -66,7 +66,7 @@ So the real dropped population is **15**, and it is three different things:
 | a build INSTRUCTION on a line of its own | 2 | the FIELD it belongs on. `SO-000102` dtl 15968 `COLOUR : 885-4`, `SO-000814` dtl 58981 Desc2 `LEG: FOLLOW DISPLAY`. Creating a product line for one invents goods the customer never ordered |
 | the book states nothing and ORDERS FOUR | 1 | **the owner.** `SO-011384` dtl 783795, quantity 4, no code, no description, no Desc2, no money. Nothing can be recovered from the book and inventing a product is forbidden — already section F of `docs/cutover-so-do-remainder-2026-09-08.md` |
 
-*Neither instruction reached the ERP by any route* (probe run `34213244770`,
+*Neither instruction reached the ERP by any route* (probe run `34214774396`,
 section E, which searches every line's `description2`, `remark`, `variants` and
 `custom_specials` and the header's remark fields, punctuation removed from both
 sides):

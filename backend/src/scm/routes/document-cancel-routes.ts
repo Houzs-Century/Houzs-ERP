@@ -67,7 +67,9 @@ import { poHasDownstream, soHasDownstream } from '../lib/downstream-lock';
 import { recordSoAudit } from '../lib/so-audit';
 import { recordEntityAudit } from '../lib/entity-audit';
 import { notifyCancelRequest } from '../../services/cancelRequestNotify';
+import { hasPermission } from '../../services/permissions';
 import {
+  CANCEL_APPROVE_KEY,
   OPEN_CANCEL_STATUSES,
   approvalRefusal,
   cancelNeedsApproval,
@@ -432,6 +434,42 @@ poCancelRequests.post('/:id/cancel-request/withdraw', withdrawCancelHandler('PO'
 export const cancelRequestsInbox = new Hono<{ Bindings: Env; Variables: Variables }>();
 cancelRequestsInbox.use('*', supabaseAuth);
 cancelRequestsInbox.get('/', listCancelRequestsHandler);
+
+/* ── Letting an approver in who does not own the document's area ────────── */
+
+/** The document's cancel-request detail is readable by any scm.access holder:
+ *  the area guard's `openReadPaths` matches on this suffix. A level-1 Sales
+ *  Director signs Purchase Order cancellations without holding the procurement
+ *  area, and the card on the document has to load for them first. What it
+ *  shows — the reason, who raised it, who signed — is the approval itself. */
+export const CANCEL_REQUEST_OPEN_READ_PATH = '/cancel-request';
+
+const APPROVER_VERB = /\/cancel-request\/(approve|reject|withdraw)$/;
+
+/**
+ * `writeBypass` for the two document mounts (scm/index.ts): admit
+ * `POST …/cancel-request/{approve,reject,withdraw}` for a caller holding EITHER
+ * approve key of that document type, whatever their area level says.
+ *
+ * WHY. The area level answers "may this person work on Purchase Orders"; the
+ * approve key answers "may this person sign a cancellation". Prod 2026-09-08:
+ * the Sales Director (level 1) holds no procurement area at all, and the
+ * Purchaser (level 2) has Sales Orders at `view` — under the plain area guard
+ * neither could sign the document they were appointed to sign. The handler
+ * still runs approvalRefusal / rejectRefusal / withdrawRefusal on the real
+ * caller, so this admits nobody the key does not. Path-tight on purpose:
+ * raising a request, and every other write on the prefix, keeps needing the
+ * area's `edit`.
+ */
+export function cancelApproverWriteBypass(docType: CancelDocType) {
+  const keys = CANCEL_APPROVE_KEY[docType];
+  return (c: { req: { method: string; path: string }; get: (k: 'user') => unknown }): boolean => {
+    if (c.req.method.toUpperCase() !== 'POST' || !APPROVER_VERB.test(c.req.path)) return false;
+    const u = c.get('user') as { permissions_set?: Set<string>; permissions?: string[] } | undefined;
+    const granted = u?.permissions_set ?? u?.permissions ?? [];
+    return hasPermission(granted, keys[1]) || hasPermission(granted, keys[2]);
+  };
+}
 
 /* ── The guard in front of the cancel itself ─────────────────────────────── */
 
