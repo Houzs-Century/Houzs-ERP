@@ -52,15 +52,25 @@ instead, where it is real. The book side is handed its UNTRANSLATED `itemKey` as
 key is skipped in the extra-row scan, because our rows outnumber the book's line
 there by construction.
 
-**Round two is UNTESTED against production at the time of writing.** A
-`workflow_dispatch` workflow reads its script from the DEFAULT branch, so the
-fixed probe cannot be dispatched until this merges; the run and its output are
-added below the moment it has been executed, and until that line exists this
-paragraph is a claim about an operation nobody has performed.
+**RUN, and it is no longer UNTESTED** — run `34206144168`, 2026-09-08 16:44
+(+08), against production:
 
-What IS proven across every run so far, and is what this probe's conclusions
-actually rest on, is the KEYED verdict — `0 line(s) where the ERP row and the
-book line carry the SAME AutoCount key and DIFFERENT products` — unchanged on
-runs `34202080707`, `34202524554` and `34203599150`. It never used the bag.
+```
+GR unkeyed rows — 29 pair(s) still carry at least one ERP row with NO AutoCount
+key. Compared as MULTISETS (sofa builds folded by the book's own build text):
+28 PROVEN identical, 1 carry a real difference, 0 genuinely undecidable.
+PI — 1 ERP row(s) the book does not account for.   (CELENE 2.0 (A)(F)-(Q) on PI-007875)
+IV — 0 ERP row(s) the book does not account for.
+```
+
+Six false rows before, one row after — and the one that survives is a DIFFERENT
+defect, not this one: `GR-000997|PO-001696`, where the book's own code for that
+sofa is `2379-1S` and carries no "SOFA" at all, so `comparisonKey`'s book branch
+does not fold it while our compartment code does. `docs/bugs/0709`.
+
+The KEYED verdict this probe's conclusions actually rest on — `0 line(s) where
+the ERP row and the book line carry the SAME AutoCount key and DIFFERENT
+products` — is unchanged on all four runs (`34202080707`, `34202524554`,
+`34203599150`, `34206144168`). It never used the bag.
 
 **Ref.** fix/gr-iv-pi-remainder, 2026-09-08.
