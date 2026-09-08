@@ -220,6 +220,13 @@ this row says, and is the bigger hammer if the floor has to stop.
   > rewrites the bound order's header and its lines. Writing a hole down is not
   > closing it, and the freeze lift that makes it reachable is the very next
   > operational step.
+  >
+  > **How big was it? Zero documents.** Measured 2026-09-08 at 11:25 MYT
+  > (Actions -> *Migrated-SO open amendments — status (read-only)*, run
+  > `34183293402`): **0** open amendments on a migrated order, out of **18** open
+  > amendments in all, across **2,882** migrated orders of **3,047**. The door
+  > was open and nobody was standing in it. That is the count on the day, not a
+  > property of the system — re-run the check before quoting it.
 - **Reads were never affected** and never will be by this switch.
 
 ---
@@ -248,7 +255,8 @@ this row says, and is the bigger hammer if the floor has to stop.
 
 Two routers WRITE a sales-order document and both are now guarded. Several
 others write a COLUMN on one, and they are deliberately left alone — a
-migrated order still has to be delivered, and 2,877 of them are outstanding.
+migrated order still has to be delivered, and the whole point of importing the
+outstanding ones was that they would be.
 Blocking those would stop the shop floor doing the one thing the cutover exists
 to let it do.
 
