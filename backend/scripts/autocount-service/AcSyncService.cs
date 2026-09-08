@@ -1453,11 +1453,23 @@ class AcSyncService {
       var why = DescribeSourceKeys(fromType, dtlKeys);
       Log("  " + fromType + "->" + toType + " refused: " + ex.GetType().FullName + ": " + ex.Message.Trim());
       Log("  source lines as the book holds them: " + why);
+      /* AND WHAT AUTOCOUNT ITSELF SAID ABOUT THE KEYS, which is the half that was
+         missing. DescribeSourceKeys reads the TABLES - it answers "does this line
+         exist, is it outstanding, is the document cancelled", and on every one of
+         these ten documents it answered yes, yes, no, which is why the refusal
+         stayed unexplained for three weeks. x.ItemCheck is the VENDOR's verdict on
+         the same keys, taken before anything was written, and it is the only thing
+         on either side that can say which line is the invalid transfer item.
+         Empty when the check did not run (a FULL transfer never calls it), and
+         that reads differently from a check that found nothing wrong. */
+      var check = x.ItemCheck;
+      Log("  " + (string.IsNullOrEmpty(check) ? "AutoCount's own line check did not run on this shape" : check));
       /* The SDK's own exception is the INNER one, so /last-errors and the log
          still carry its type and stack; the message the ERP stores is the one
          that names the lines. */
       throw new Exception(
-        ex.Message.Trim() + " || source " + fromType + " lines as the book holds them: " + why, ex);
+        ex.Message.Trim() + " || source " + fromType + " lines as the book holds them: " + why
+        + (string.IsNullOrEmpty(check) ? "" : " || " + check), ex);
     }
     throw new Exception("unsupported target " + toType);
   }
@@ -1568,6 +1580,27 @@ class AcSyncService {
     public Action Primitive;
     public Dictionary<long, Dictionary<string, object>> LineCache =
       new Dictionary<long, Dictionary<string, object>>();
+    /* WHAT AUTOCOUNT'S OWN VALIDATOR SAID ABOUT THESE KEYS, kept so the CATCH
+       can put it in the message the ERP stores.
+
+       PreflightValidItems has asked TransferHelper.CheckAndGetValidPartialTransferItem
+       since 2026-08-17 and has only ever written the answer to this host's log
+       file. `Invalid transfer item.` names nothing, so every failing row in
+       scm.autocount_outbox carried eleven useless words while the vendor's own
+       verdict - which of the keys it will not take - sat on a machine reachable
+       only over remote desktop. Six attempts per document, ten documents, and
+       the answer was produced every time and read none of them.
+
+       Null until the check runs, which is deliberate: a FULL transfer never
+       calls it, and "the check did not run" must not read as "the check said
+       nothing was wrong". */
+    public string ItemCheck;
+    /* HOW MANY DOCUMENTED TRANSFER CALLS ACTUALLY RAN on this document.
+       Not a statistic: it is what makes the fallback safe. PartialTransfer
+       is one call PER LINE, so a throw on line 4 of 8 leaves three lines
+       already in the target, and running AddPartialTransferDetail on top of
+       that would add them again in a licensed account book. */
+    public int DocumentedCallsMade;
   }
 
   /* WHOSE DOCUMENT THIS IS, off the SOURCE header in the book — the FALLBACK,
@@ -1649,29 +1682,49 @@ class AcSyncService {
     SubscribeTransferDiagnostics(doc);
     if (!x.Plan.Full) PreflightValidItems(x);
 
-    /* A by-line partial carries no quantity, and every PartialTransfer overload
-       demands one. AddPartialTransferDetail is not a workaround for this shape:
-       it is the documented call for "these lines, at whatever is outstanding",
-       and the only one whose arguments the ERP actually sends. */
-    if (!x.Plan.Full && x.Plan.QtyByKey.Count == 0) {
-      /* SAY WHICH CALL IS NOT BEING MADE, AND WHY. FullTransfer is the one
-         PROVEN against this book (host, 2026-08-17 00:55:30); this path does not
-         use it because it would move EVERY outstanding line on the source and
-         the ERP has named a subset. That is the right call for a real partial
-         and the wrong one for a whole document the ERP merely enumerated — and
-         today enqueueConvert cannot tell the two apart, because
-         readConvertSourceKeys returns the key list whenever every source line
-         HAS a key, partial or not. So if the line below fails, this is where to
-         look: the fix is the ERP saying "whole", not this service inferring it
-         from a row count. */
-      Log("  transfer: AddPartialTransferDetail per source document - the ERP named " + x.DtlKeys.Length +
-          " line(s) and no quantity, so FullTransfer (which would move every outstanding line) is not used");
-      x.Primitive();
-      return;
-    }
+    /* ── THE DOCUMENTED CALL IS TRIED ON EVERY SHAPE NOW ─────────────────────
+       This block used to RETURN here for a by-line plan carrying no quantity,
+       straight into AddPartialTransferDetail, on the reasoning that "every
+       PartialTransfer overload demands a quantity and the ERP sends none". The
+       first half was true and the second half was the mistake: the ERP does not
+       send one, but the BOOK knows it - a by-line transfer means "at whatever is
+       still outstanding", and that number is on the source row. BindTransferArg
+       now reads it, so the shape IS expressible through the documented call.
 
+       WHAT IT COST TO LEARN. Measured on the host 2026-09-08: every SO->DO in
+       the log took this early return, called AddPartialTransferDetail, and was
+       refused with
+
+         AutoCount.Invoicing.InvalidTransferItemException: Invalid transfer item.
+
+       thrown inside GeneralSalesPartialTransferDetail..ctor - ten delivery
+       orders, six attempts each, not one success. And none of the usual
+       explanations survived: the target carried its debtor (`[300-C002]`), every
+       key was present, outstanding, transferable and on ONE source document, and
+       the vendor's own validator accepted all of them (`8 row(s) for 8 key(s)`).
+       The one thing every failure had in common is the call itself.
+
+       AddPartialTransferDetail appears on NO page of AutoCount's programmer wiki
+       (175 pages, read 2026-09-08). FullTransfer and PartialTransfer are both
+       documented, and this host's own assemblies expose a PartialTransfer
+       overload taking the line key alongside the item, uom and quantity - so
+       nothing about naming an exact line is lost by moving to it.
+
+       IT IS STILL THE FALLBACK, not deleted. It is what drains a shape the
+       documented overloads cannot express, and it is the call that put
+       DO-011260 in the book. */
     string why;
     if (TryDocumentedTransfer(doc, x, out why)) return;
+
+    /* NEVER FALL BACK ONTO A DOCUMENT THE SDK HAS ALREADY WRITTEN INTO. A throw
+       part way through the per-line loop leaves the in-memory target holding
+       some of the lines; running the primitive on top of that duplicates them.
+       This used to be guarded only for a partial-QUANTITY plan, which was the
+       only shape that reached here. */
+    if (x.DocumentedCallsMade > 0)
+      throw new Exception("the documented transfer call was refused after it had already moved " +
+        x.DocumentedCallsMade + " line(s) into this document (" + why +
+        "). Refusing rather than falling back, because the fallback would add those lines a second time.");
 
     if (x.Plan.QtyByKey.Count > 0)
       /* NOT falling back, on purpose. AddPartialTransferDetail moves each line's
@@ -1862,17 +1915,56 @@ class AcSyncService {
       var t = x.PurchaseSide
         ? AutoCount.Invoicing.Purchase.TransferHelper.CheckAndGetValidPartialTransferItem(x.FromType, x.DtlKeys, x.S.DBSetting)
         : AutoCount.Invoicing.Sales.TransferHelper.CheckAndGetValidPartialTransferItem(x.FromType, x.DtlKeys, x.S.DBSetting);
-      if (t == null) { Log("  valid-transfer-item check: returned NULL for " + x.DtlKeys.Length + " key(s)"); return; }
+      if (t == null) {
+        x.ItemCheck = "AutoCount's own line check returned NOTHING for the " + x.DtlKeys.Length + " key(s) sent";
+        Log("  valid-transfer-item check: returned NULL for " + x.DtlKeys.Length + " key(s)");
+        return;
+      }
       var cols = new List<string>();
       foreach (System.Data.DataColumn c in t.Columns) cols.Add(c.ColumnName);
       Log("  valid-transfer-item check: " + t.Rows.Count + " row(s) for " + x.DtlKeys.Length +
           " key(s); columns = " + string.Join(", ", cols.ToArray()));
-      if (t.Rows.Count < x.DtlKeys.Length)
+      x.ItemCheck = "AutoCount's own line check accepted " + t.Rows.Count + " of the " +
+                    x.DtlKeys.Length + " key(s) sent";
+      if (t.Rows.Count < x.DtlKeys.Length) {
         Log("  valid-transfer-item check: AutoCount kept FEWER rows than keys given - the shortfall IS the invalid transfer item(s)");
+        /* WHICH KEYS SURVIVED, and therefore which did not. The DataTable is the
+           vendor's own answer and it is the fact eleven production attempts never
+           produced; naming the rejected keys is the entire point of carrying this
+           string back. The DtlKey column is found by NAME rather than by index
+           because a column list this service does not control must not be indexed
+           into positionally - that is the ExistingColumns lesson, one table over. */
+        var kept = KeptKeys(t);
+        if (kept != null) {
+          var rejected = new List<string>();
+          foreach (var k in x.DtlKeys) if (!kept.ContainsKey(k)) rejected.Add(k.ToString());
+          if (rejected.Count > 0)
+            x.ItemCheck += "; it will NOT take line key(s) " + string.Join(", ", rejected.ToArray());
+        }
+      }
     } catch (Exception ex) {
+      x.ItemCheck = "AutoCount's own line check REFUSED these " + x.DtlKeys.Length +
+                    " key(s) outright: " + ex.Message.Trim();
       Log("  valid-transfer-item check THREW " + ex.GetType().FullName + ": " + ex.Message.Trim() +
           " - that is the vendor's own validator refusing these keys, before any document was created");
     }
+  }
+
+  /* The DtlKeys the vendor's validator KEPT, read out of its DataTable by column
+     NAME. Returns null when the table carries no column this service recognises
+     as the line key - in which case nothing is said about which key was refused,
+     because a guess there names an innocent line. */
+  static Dictionary<long, bool> KeptKeys(System.Data.DataTable t) {
+    string col = null;
+    foreach (System.Data.DataColumn c in t.Columns)
+      if (string.Equals(c.ColumnName, "DtlKey", StringComparison.OrdinalIgnoreCase)) { col = c.ColumnName; break; }
+    if (col == null) return null;
+    var outp = new Dictionary<long, bool>();
+    foreach (System.Data.DataRow r in t.Rows) {
+      if (r.IsNull(col)) continue;
+      try { outp[System.Convert.ToInt64(r[col])] = true; } catch { }
+    }
+    return outp;
   }
 
   /* ── the three things the SDK tries to say, and used to say to nobody ─────
@@ -2053,7 +2145,9 @@ class AcSyncService {
 
     try {
       Log("  transfer: calling " + Sig(chosen) + " x" + calls.Count);
-      foreach (var args in calls) chosen.Invoke(doc, args);
+      /* COUNTED AS THEY LAND, not after the loop: the count has to be true
+         at the moment of a throw, which is the only moment it is read. */
+      foreach (var args in calls) { chosen.Invoke(doc, args); x.DocumentedCallsMade++; }
       Log("  transfer: " + chosen.Name + " returned without throwing");
       return true;
     } catch (System.Reflection.TargetInvocationException tie) {
@@ -2108,7 +2202,28 @@ class AcSyncService {
       return true;
     }
     if (t == typeof(decimal)) {
-      if (n.Contains("qty") && x.Plan.QtyByKey.ContainsKey(key)) { value = x.Plan.QtyByKey[key]; return true; }
+      /* FOC FIRST, AND IT IS ALWAYS ZERO. "focQty" contains "qty", so the
+         quantity rule below would have answered it with the quantity being
+         shipped - putting a free-of-charge quantity equal to the sold one on
+         every line of a licensed account book. The ERP has no concept of a FOC
+         quantity and sends none, so the honest answer is nought, and it must be
+         given BEFORE the substring test that would otherwise swallow it. */
+      if (n.Contains("foc")) { value = 0m; return true; }
+      if (n.Contains("qty")) {
+        /* WHAT THE ERP SAID, when it said anything. A "3 of 5" plan carries a
+           number per line and that number is the whole point of the call. */
+        if (x.Plan.QtyByKey.ContainsKey(key)) { value = x.Plan.QtyByKey[key]; return true; }
+        /* OTHERWISE WHAT IS OUTSTANDING, read off the book's own line.
+           A by-line transfer means "these lines, at whatever is still
+           outstanding" - that is exactly what AddPartialTransferDetail does, and
+           the only reason this service reached for that undocumented call is
+           that the documented one demands the number spelled out. It is spelled
+           out here. Refusing when the book cannot say leaves the caller on the
+           old path rather than transferring a guess. */
+        var outstanding = OutstandingQtyOf(x, key);
+        if (outstanding.HasValue && outstanding.Value > 0m) { value = outstanding.Value; return true; }
+        return false;
+      }
       return false;
     }
     if (t == typeof(long)) {
@@ -2134,6 +2249,24 @@ class AcSyncService {
       return true;
     }
     return false;
+  }
+
+  /* HOW MUCH OF A SOURCE LINE IS STILL TO GO, off the book's own row: ordered
+     quantity minus what has already been transferred out of it.
+
+     Null rather than zero on anything it cannot establish - a missing column, a
+     NULL Qty, an unreadable row - because zero is a QUANTITY and would transfer
+     a line as nothing. The caller treats null as "cannot express this line
+     through the documented call" and leaves it on the older path. */
+  static decimal? OutstandingQtyOf(Xfer x, long key) {
+    var qty = SourceLineCell(x, key, "Qty");
+    if (string.IsNullOrEmpty(qty)) return null;
+    try {
+      var q = System.Convert.ToDecimal(qty);
+      var done = SourceLineCell(x, key, "TransferedQty");
+      var t = string.IsNullOrEmpty(done) ? 0m : System.Convert.ToDecimal(done);
+      return q - t;
+    } catch { return null; }
   }
 
   /* Which source document a named line sits on. KeysBySourceDoc already read it
@@ -2169,7 +2302,11 @@ class AcSyncService {
         using (var cn = new System.Data.SqlClient.SqlConnection(db.ConnectionString)) {
           cn.Open();
           var absent = new List<string>();
-          var cols = ExistingColumns(cn, dtl, new string[] { "ItemCode", "Location", "UOM", "BatchNo" }, absent);
+          /* Qty and TransferedQty ride along so OutstandingQtyOf can answer from
+             this same cached row. They are what "at whatever is outstanding"
+             MEANS, and the documented PartialTransfer demands a number for it. */
+          var cols = ExistingColumns(cn, dtl,
+            new string[] { "ItemCode", "Location", "UOM", "BatchNo", "Qty", "TransferedQty" }, absent);
           if (cols.Count == 0) return null;
           using (var cmd = cn.CreateCommand()) {
             cmd.CommandText = "SELECT " + SelectList(cols) + " FROM [" + dtl + "] WHERE DtlKey = @k";
