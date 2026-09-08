@@ -4147,6 +4147,23 @@ direct SO write path already passes `trustOperatorSelling = !(isPosTabletCaller)
   cannot be requested, approved or applied. The apply carries the line's existing
   discount forward untouched and an ADD line always lands at discount 0. Reducing
   an amount on a locked SO is therefore a **unit-price** change, never a discount.
+- **A MIGRATED line's discount is not there at all, and that overstates what the
+  customer owes** — found 2026-09-08. AutoCount keeps its line discount in the
+  gap between `SODTL.UnitPrice` and `SODTL.SubTotal`, and every sales-order
+  importer here computes the line amount out of the undiscounted half.
+  `HC-SO-000021` holds RM 10,852.00 against the book's RM 9,876.00, and the
+  RM 976.00 is three line discounts; every line PAIRS and every item code,
+  quantity and unit price agrees, which is why only the document total said
+  anything. Whole book on the 2026-09-08 08:03 Malaysia cut: 38 lines across 20
+  documents, RM 13,990.00. `backend/scripts/repair-so-line-discount.mjs` +
+  `.github/workflows/repair-so-line-discount.yml` correct it, plan by default,
+  writing `discount_sen` + `total_sen` + `total_inc_sen` + `balance_sen` and
+  re-summing the header — together, because a line amount written without the
+  discount beside it is recomputed away by the next UI edit at
+  `mfg-sales-orders.ts:4251`. It refuses a decomposed sofa group, an ERP line
+  whose own qty x unit price is not the book's, a surcharge, and a line whose
+  goods have already left. The purchase-order twin is `repair-po-line-discount`.
+  Ledger: `docs/bugs/0696-autocount-s-sales-order-line-discount-is-dropped-the-same-wa.md`.
 
 **A MIGRATED order is exempt.** When the SO header carries `linked_ac_docno`
 (migration 0271 — the marker that actually exists; `migrated_no_stock` lives only
