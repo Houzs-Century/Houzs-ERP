@@ -1,6 +1,17 @@
 ## The reconcile reports a sofa the owner has already ruled on as an open difference [medium]
 
-<!-- status: open -->
+<!-- status: fixed -->
+
+**FIXED 2026-09-08**, `fix/unlock-146-sofas` —
+`docs/bugs/0717-the-reconcile-could-not-see-the-owner-s-own-sofa-rulings-so.md`.
+The reconcile now reads the corrections files through the same loader
+`apply-sofa-compartment-corrections.mjs` writes from, and the compartment axis
+gained the `RULED` verdict this entry asked for: its own column, never folded
+into `AGREE`, and honoured **only** where the ERP line actually carries the ruled
+pieces. The measured cost this entry named turned out to be larger than the
+report it was written about: on the 2026-09-08 correctness lock, **25 of the 146
+locked sales orders were documents the owner had already ruled on** — 21 of them
+on the `UNREADABLE` arm this entry did not reach.
 
 <!-- area: AutoCount sync + write-back -->
 

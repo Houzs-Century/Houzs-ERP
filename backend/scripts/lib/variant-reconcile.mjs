@@ -52,6 +52,13 @@
  *                does not tick it, and `variants.specialsRecorded` carries it.
  *                That is the owner's ruling 甲 of 2026-09-03 already applied —
  *                「记下来给工厂看，但单据的钱不可以动」 — not an open gap.
+ *   RULED        compartments only.  The OWNER read the slip and decided this
+ *                build; the decision is in
+ *                data/sofa-compartment-corrections-*.json and the ERP line
+ *                carries exactly it.  The book's own text is NOT what it was
+ *                compared against, because a ruling exists precisely where the
+ *                text is wrong or silent.  Its own column, never AGREE — see
+ *                lib/sofa-owner-rulings.mjs and docs/bugs/0714.
  *
  * ── WHY RECORDED HAD TO BECOME ITS OWN VERDICT ─────────────────────────────
  * `record-priced-specials-on-migrated-lines.mjs` deliberately writes
@@ -196,7 +203,14 @@ export const RECORDED = "RECORDED";
    own guess.  See foldGuessedPairing below for why that is a third state and
    not a difference. */
 export const NO_LINE_KEY = "NO_LINE_KEY";
-export const VERDICTS = [AGREE, ERP_BLANK, BOOK_BLANK, DIFFER, PENDING, UNREADABLE, RECORDED, NO_LINE_KEY];
+/* RULED — compartments only.  The OWNER read the slip and decided this build,
+   the decision is recorded in data/sofa-compartment-corrections-*.json, and the
+   ERP line carries exactly what he ruled.  It is deliberately NOT folded into
+   AGREE: the ERP really does differ from the book's own text, and hiding that
+   would remove the only signal that catches a ruling applied to the WRONG
+   document (docs/bugs/0714).  See lib/sofa-owner-rulings.mjs. */
+export const RULED = "RULED";
+export const VERDICTS = [AGREE, ERP_BLANK, BOOK_BLANK, DIFFER, PENDING, UNREADABLE, RECORDED, RULED, NO_LINE_KEY];
 
 /** The generic two-value comparison every scalar axis uses. */
 export function verdictOf(bookVal, erpVal, same) {
@@ -322,9 +336,14 @@ export function decodeBook(deps, { desc2, itemGroup, itemCode }) {
  * written identically to every piece of a build); the compartment axis is the
  * multiset over all of them.
  *
+ * `ruling` is the OWNER's own piece list for this build, where one exists —
+ * lib/sofa-owner-rulings.mjs finds it.  It is compared against what the ERP
+ * HOLDS, never trusted on its own: a ruling that was never applied leaves the
+ * multiset different and the line falls through to the ordinary comparison.
+ *
  * Returns { axes: { <key>: { verdict, book, erp, detail } }, proceeded }.
  */
-export function compareLine(deps, { book, erpLines, proceeded }) {
+export function compareLine(deps, { book, erpLines, proceeded, ruling = null, rulingWhy = "" }) {
   const lead = erpLines[0] || {};
   const group = book.group;
   const axes = {};
@@ -398,7 +417,20 @@ export function compareLine(deps, { book, erpLines, proceeded }) {
     const cell = axes.compartments;
     const have = erpLines.map((l) => compartmentOf(l.item_code)).filter(Boolean);
     cell.erp = have.join("+");
-    if (book.compartments === null) {
+    /* THE OWNER'S RULING COMES FIRST, AND ONLY WHEN THE LINE ACTUALLY CARRIES
+       IT.  `ruling` is a piece list he decided from the drawing; the ERP is
+       compared against THAT rather than against the book's words, which is the
+       whole reason a ruling exists.  A ruling that was never applied leaves the
+       multiset different, this branch does not fire, and the line falls through
+       to the ordinary comparison and stays locked — a file is not evidence, the
+       row is. */
+    if (ruling && ruling.length && !multisetDiff(have, ruling)) {
+      cell.verdict = RULED;
+      cell.book = ruling.join("+");
+      cell.detail = rulingWhy
+        ? `the owner ruled this build from the drawing — ${rulingWhy}`
+        : "the owner ruled this build from the drawing";
+    } else if (book.compartments === null) {
       cell.verdict = UNREADABLE;
       cell.book = "(cannot be read from Desc2)";
       cell.detail = book.why.join("; ");

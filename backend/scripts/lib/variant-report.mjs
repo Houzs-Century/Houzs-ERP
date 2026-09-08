@@ -18,9 +18,10 @@
  * NOT restated here. This module renders; that one decides.
  */
 import {
-  AGREE, AXES, BOOK_BLANK, DIFFER, ERP_BLANK, NO_LINE_KEY, PENDING, RECORDED, UNREADABLE,
-  VARIANT_GROUPS, VERDICTS, compareLine, decodeBook, foldGuessedPairing,
+  AGREE, AXES, BOOK_BLANK, DIFFER, ERP_BLANK, NO_LINE_KEY, PENDING, RECORDED, RULED, UNREADABLE,
+  VARIANT_GROUPS, VERDICTS, compareLine, decodeBook, foldGuessedPairing, modelOf,
 } from "./variant-reconcile.mjs";
+import { rulingFor } from "./sofa-owner-rulings.mjs";
 import { comparisonKey } from "./keyless-multiset.mjs";
 import { classifyUnread, makeUnreadTally } from "./sofa-unread-split.mjs";
 
@@ -43,7 +44,7 @@ const AXIS_LABEL = Object.fromEntries(AXES.map((a) => [a.key, a.label]));
  * that an unconfirmed order may legitimately be blank and quoting the combined
  * figure as the backlog has already cost him time twice.
  */
-export function reportVariants({ t, label, rows, desc2, deps: V, VERDICT, SHOW, log, plain }) {
+export function reportVariants({ t, label, rows, desc2, deps: V, VERDICT, SHOW, log, plain, rulings = null }) {
   const tally = {};
   for (const a of AXES) tally[a.key] = { yes: {}, no: {} };
   for (const a of AXES) for (const half of ["yes", "no"]) for (const v of VERDICTS) tally[a.key][half][v] = 0;
@@ -60,6 +61,12 @@ export function reportVariants({ t, label, rows, desc2, deps: V, VERDICT, SHOW, 
   /* The `unread` column, by CAUSE. lib/sofa-unread-split.mjs holds the argument
      for why one number there was two populations needing different people. */
   const unread = makeUnreadTally();
+  /* The owner's rulings, as three lists the operator can act on: the lines his
+     answer governs, the lines a ruling names but does NOT reach, and the lines
+     two rulings reach at once. */
+  const ruledRows = [];
+  const ruledNotCarried = [];
+  const ruledAmbiguous = [];
   /* PASS 1 computes every line's verdicts; PASS 2 folds the ones only a GUESSED
      pairing could have produced; PASS 3 tallies and lists. The fold has to sit
      between them because it is a statement about a GROUP of lines — which of
@@ -83,7 +90,33 @@ export function reportVariants({ t, label, rows, desc2, deps: V, VERDICT, SHOW, 
     const proceeded = lead.proceeded === true;
     if (proceeded) pop.proceeded++;
     const book = decodeBook(V, { desc2: text, itemGroup: group, itemCode: lead.item_code });
-    const { axes } = compareLine(V, { book, erpLines: r.erpLines, proceeded });
+    /* THE OWNER'S OWN ANSWER, WHERE HE HAS GIVEN ONE. Looked up per line, not
+       per document: one document can hold two builds and a ruling is about one
+       of them. The needle is matched against the BOOK's text, which is the copy
+       nothing of ours can have overwritten (docs/bugs/0639). An AMBIGUOUS
+       lookup deliberately yields NO ruling — two answers reaching one line is
+       the case this must never choose between. */
+    let ruling = null;
+    let rulingWhy = "";
+    if (rulings && group === "sofa") {
+      const hit = rulingFor(rulings, {
+        erpDocNo: r.erpNo, model: modelOf(lead.item_code, V.modelAlias), bookDesc2: text,
+      });
+      if (hit.verdict === "one") { ruling = hit.ruling.pieces; rulingWhy = hit.ruling.why; }
+      else if (hit.verdict === "ambiguous") ruledAmbiguous.push(`${r.ac} (ERP ${r.erpNo}): ${hit.how}`);
+    }
+    const { axes } = compareLine(V, { book, erpLines: r.erpLines, proceeded, ruling, rulingWhy });
+    if (axes.compartments && axes.compartments.verdict === RULED) {
+      ruledRows.push(`${r.ac} DtlKey ${r.acLine.dtlKey} (ERP ${r.erpNo}): ${axes.compartments.erp}` +
+        (proceeded ? "" : "  [NOT PROCEEDED]"));
+    } else if (ruling) {
+      /* A ruling EXISTS for this line and the ERP does not carry it. That is
+         not a quiet no-op: either it was never applied or it was applied to the
+         wrong document, and both are worth a human. It stays locked, on
+         whatever axis the ordinary comparison decides. */
+      ruledNotCarried.push(`${r.ac} DtlKey ${r.acLine.dtlKey} (ERP ${r.erpNo}): the ruling says ` +
+        `${ruling.join("+")}, the line holds ${axes.compartments?.erp || "(nothing)"}`);
+    }
     /* THE COMPARTMENT AXIS NEEDS THE WHOLE BUILD, AND ONLY THE LINE KEY CAN
        REGROUP IT. One AutoCount sofa line becomes one ERP line per piece; the
        pieces are recognisable as one build because they share
@@ -187,14 +220,14 @@ export function reportVariants({ t, label, rows, desc2, deps: V, VERDICT, SHOW, 
   }
 
   plain("axis                 |                      PROCEEDED (the backlog)                       |             not proceeded (blank is OK)");
-  plain("                     |  agree  ERPblank  bookblank  differ  pend  unread  recorded  no-key |  agree  ERPblank  bookblank  differ  pend  unread  recorded  no-key");
+  plain("                     |  agree  ERPblank  bookblank  differ  pend  unread  recorded  ruled  no-key |  agree  ERPblank  bookblank  differ  pend  unread  recorded  ruled  no-key");
   for (const a of AXES) {
     const y = tally[a.key].yes;
     const n = tally[a.key].no;
     const seen = VERDICTS.reduce((s2, v) => s2 + y[v] + n[v], 0);
     if (!seen) continue;
-    const cells = (h) => [h[AGREE], h[ERP_BLANK], h[BOOK_BLANK], h[DIFFER], h[PENDING], h[UNREADABLE], h[RECORDED], h[NO_LINE_KEY]]
-      .map((x, i) => String(x).padStart([6, 9, 10, 7, 5, 7, 10, 7][i]));
+    const cells = (h) => [h[AGREE], h[ERP_BLANK], h[BOOK_BLANK], h[DIFFER], h[PENDING], h[UNREADABLE], h[RECORDED], h[RULED], h[NO_LINE_KEY]]
+      .map((x, i) => String(x).padStart([6, 9, 10, 7, 5, 7, 10, 7, 7][i]));
     plain(`${a.label.padEnd(20)} | ${cells(y).join(" ")} | ${cells(n).join(" ")}`);
   }
   plain(
@@ -206,6 +239,28 @@ export function reportVariants({ t, label, rows, desc2, deps: V, VERDICT, SHOW, 
       "carries it: the owner's 2026-09-03 ruling 甲 applied — the factory sees the option and the document's money " +
       "did not move. DECIDED work, not backlog, and it is broken out so it can never be summed into the DIFFER column again.",
   );
+  if (ruledRows.length || ruledNotCarried.length || ruledAmbiguous.length) {
+    plain(
+      `ruled = the OWNER read the slip and decided this build; data/sofa-compartment-corrections-*.json records it and the ` +
+        `ERP line carries EXACTLY it. Never folded into agree - the line really does differ from the book's own words, and ` +
+        `that difference is the only thing that would catch a ruling written onto the wrong document (docs/bugs/0714).`,
+    );
+    plain(`   ${ruledRows.length} line(s) carry the owner's ruling:`);
+    for (const line of ruledRows.slice(0, SHOW)) plain(`      ${line}`);
+    if (ruledRows.length > SHOW) plain(`      ... ${ruledRows.length - SHOW} more`);
+  }
+  if (ruledNotCarried.length) {
+    log(
+      `${t} RULED BUT NOT CARRIED - ${ruledNotCarried.length} line(s) a ruling names where the ERP holds something else. ` +
+        `The ruling was never applied, or it was applied to another document. These stay LOCKED, deliberately.`,
+    );
+    for (const line of ruledNotCarried.slice(0, SHOW)) plain(`      ${line}`);
+    if (ruledNotCarried.length > SHOW) plain(`      ... ${ruledNotCarried.length - SHOW} more`);
+  }
+  if (ruledAmbiguous.length) {
+    log(`${t} RULED AMBIGUOUS - ${ruledAmbiguous.length} line(s) two rulings both reach and disagree about. NONE was applied.`);
+    for (const line of ruledAmbiguous.slice(0, SHOW)) plain(`      ${line}`);
+  }
   if (unkeyedSofa) {
     plain(
       `   of the ${pop.sofa} sofa lines, ${unkeyedSofa} sit on a document whose ERP lines carry no AutoCount ` +

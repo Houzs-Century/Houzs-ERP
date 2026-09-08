@@ -136,9 +136,11 @@ import { mapSpecial as mapBedframeSpecial } from "./lib/bedframe-special-map.mjs
 import { K as SK, mapPhrase as mapSofaPhrase, skey } from "./lib/sofa-special-map.mjs";
 import { soProcessingDateFragment } from "./lib/so-processing-date.mjs";
 import {
-  AGREE, AXES, BOOK_BLANK, DIFFER, ERP_BLANK, NO_LINE_KEY, PENDING, RECORDED, UNREADABLE, VARIANT_GROUPS,
+  AGREE, AXES, BOOK_BLANK, DIFFER, ERP_BLANK, NO_LINE_KEY, PENDING, RECORDED, RULED, UNREADABLE, VARIANT_GROUPS,
   VERDICTS, compareLine, decodeBook, foldGuessedPairing, runSelfTest,
 } from "./lib/variant-reconcile.mjs";
+import { loadCorrections } from "./lib/sofa-corrections-source.mjs";
+import { buildRulingIndex } from "./lib/sofa-owner-rulings.mjs";
 
 import { buildScope, currencyVerdict, decodeSnapshot, isTestDoc, LOCAL_CURRENCY } from "./lib/ac-scope.mjs";
 import {
@@ -163,6 +165,13 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const DATA = path.join(here, "data");
 const SNAP = path.join(DATA, "ac-reconcile-truth.json.gz");
 const MAP_CSV = path.join(DATA, "autocount-erp-mapping-1561.csv");
+/* THE OWNER'S OWN COMPARTMENT ANSWERS. Read from the same files
+   apply-sofa-compartment-corrections.mjs writes from, through the same loader,
+   so the reconcile and the writer can never disagree about what he ruled. This
+   is a FILE read, not a database one: the check stays read-only.
+   Before this existed the reconcile reported a build he had already decided as
+   an open difference, which locked the order — docs/bugs/0714. */
+const RULINGS = buildRulingIndex(loadCorrections(DATA).builds);
 const CO = Number(process.env.COMPANY_ID || 1); // AED_HOUZS is company 1
 const MAX_AGE_DAYS = Number(process.env.MAX_SNAPSHOT_AGE_DAYS || 2);
 /* The owner asked for the first 20 offenders each way, and 20 is the right
@@ -1512,7 +1521,7 @@ for (const cfg of TYPES) {
   }
 
   /* ── 4. THE VARIANTS INSIDE THE LINE ──────────────────────────────────── */
-  const vt = reportVariants({ t, label: cfg.label, rows: variantRows, desc2: B.desc2, deps: V, VERDICT, SHOW, log, plain });
+  const vt = reportVariants({ t, label: cfg.label, rows: variantRows, desc2: B.desc2, deps: V, VERDICT, SHOW, log, plain, rulings: RULINGS });
   variantTotals.push(vt);
 
   summary.push({
@@ -1605,6 +1614,7 @@ plain("═══════════ VARIANTS INSIDE THE LINE — ALL TYPES 
     let orderWork = 0;
     let orderDiffer = 0;
     let noKey = 0;
+    let ruled = 0;
     for (const a of AXES) {
       const y = add[a.key];
       const b = build[a.key];
@@ -1613,6 +1623,7 @@ plain("═══════════ VARIANTS INSIDE THE LINE — ALL TYPES 
       work += y.yes[ERP_BLANK];
       differ += y.yes[DIFFER] + y.no[DIFFER];
       noKey += y.yes[NO_LINE_KEY] + y.no[NO_LINE_KEY];
+      ruled += y.yes[RULED] + y.no[RULED];
       orderWork += b.yes[ERP_BLANK];
       orderDiffer += b.yes[DIFFER] + b.no[DIFFER];
       plain(
@@ -1627,7 +1638,12 @@ plain("═══════════ VARIANTS INSIDE THE LINE — ALL TYPES 
         `Across all five types the same figures are ${work} and ${differ}; the difference is delivery orders and ` +
         "invoices, which mirror a build rather than decide one and mostly carry no variants at all — filling those " +
         "is not work anyone asked for. An unconfirmed order's blank is not counted either: " +
-        "还没proceed还没确认的就可以直接放空的.",
+        "还没proceed还没确认的就可以直接放空的." +
+        (ruled
+          ? ` A further ${ruled} axis value(s) are RULED — the owner decided the build from the drawing and the line ` +
+            "carries exactly his answer, so the book's own words disagreeing with it is the ruling working. Counted " +
+            "on its own and never added to either figure above (docs/bugs/0714)."
+          : ""),
     );
     if (noKey) {
       log(

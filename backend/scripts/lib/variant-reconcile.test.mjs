@@ -36,7 +36,7 @@ import { parseBedframe } from "./parse-bedframe.mjs";
 import { SOFA_MODEL_ALIAS, parseSofa } from "./parse-sofa.mjs";
 import { isPendingColour } from "./fabric-colour-match.mjs";
 import {
-  AGREE, BOOK_BLANK, DIFFER, ERP_BLANK, PENDING, RECORDED, UNREADABLE,
+  AGREE, BOOK_BLANK, DIFFER, ERP_BLANK, PENDING, RECORDED, RULED, UNREADABLE,
   compareLine, decodeBook, inches, multisetDiff, runSelfTest,
 } from "./variant-reconcile.mjs";
 
@@ -222,4 +222,65 @@ test("multisetDiff names what each side is short of", () => {
   assert.equal(multisetDiff(["1NA", "CNR"], ["CNR", "1NA"]), null);
   assert.deepEqual(multisetDiff(["1NA"], ["1NA", "CNR"]), { miss: ["CNR"], extra: [] });
   assert.deepEqual(multisetDiff(["1NA", "1NA"], ["1NA"]), { miss: [], extra: ["1NA"] });
+});
+
+/* ── THE OWNER'S RULING (docs/bugs/0714) ────────────────────────────────────
+   A ruling is the one case where the ERP is SUPPOSED to differ from the book's
+   text. The three tests below pin the whole contract: it is honoured only when
+   the LINE carries it, it never becomes AGREE, and it never silences a real
+   difference. */
+
+const sofaLine = (code, over = {}) => ({ item_code: code, item_group: "sofa", variants: {}, custom_specials: null, proceeded: true, ...over });
+
+const compareSofa = (desc2, codes, extra = {}) => {
+  const erpLines = codes.map((c) => sofaLine(c));
+  const book = decodeBook(DEPS, { desc2, itemGroup: "sofa", itemCode: codes[0] });
+  return compareLine(DEPS, { book, erpLines, proceeded: true, ...extra }).axes;
+};
+
+test("0714: a build the OWNER ruled on, carried by the line, is RULED — not DIFFER", () => {
+  /* The book's own text says a two-piece build; the owner read the drawing and
+     ruled three pieces; the ERP carries his three. Before this the reconcile
+     called that a difference and the migrated order stayed shut. */
+  const bare = compareSofa("2A(LHF)+1A(RHF)/COL: CH141-8", ["8069-1A(LHF)", "8069-2A(RHF)", "8069-1B(RHF)"]);
+  assert.equal(bare.compartments.verdict, DIFFER, "with no ruling it is still a difference");
+
+  const ruled = compareSofa("2A(LHF)+1A(RHF)/COL: CH141-8", ["8069-1A(LHF)", "8069-2A(RHF)", "8069-1B(RHF)"], {
+    ruling: ["1A(LHF)", "2A(RHF)", "1B(RHF)"], rulingWhy: "photo: three boxes",
+  });
+  assert.equal(ruled.compartments.verdict, RULED);
+  assert.notEqual(ruled.compartments.verdict, AGREE, "0714: a ruled line must NEVER be folded into AGREE");
+  assert.match(ruled.compartments.detail, /owner ruled this build/);
+});
+
+test("0714: a ruling is honoured on a build the BOOK cannot describe at all", () => {
+  /* The majority case in the 2026-09-08 lock: the book states a colour and a
+     factory instruction and nothing about the shape, so the compartment axis
+     was UNREADABLE and locked — even where the owner had already ruled. */
+  const unread = compareSofa("Col : tbc  Nilon bottom", ["8030-1A(LHF)", "8030-1A(RHF)"]);
+  assert.equal(unread.compartments.verdict, UNREADABLE);
+
+  const ruled = compareSofa("Col : tbc  Nilon bottom", ["8030-1A(LHF)", "8030-1A(RHF)"], {
+    ruling: ["1A(LHF)", "1A(RHF)"],
+  });
+  assert.equal(ruled.compartments.verdict, RULED);
+});
+
+test("0714: a ruling the LINE does not carry changes nothing — a file is not evidence", () => {
+  /* The failure mode this fix could introduce, pinned: a ruling written onto
+     the wrong document, or never applied, must leave the line exactly as
+     locked as it was. */
+  const axes = compareSofa("2A(LHF)+1A(RHF)/COL: CH141-8", ["8069-1S"], {
+    ruling: ["1A(LHF)", "2A(RHF)", "1B(RHF)"],
+  });
+  assert.equal(axes.compartments.verdict, DIFFER, "the ERP holds neither the book's build nor the ruling");
+  assert.equal(axes.compartments.erp, "1S");
+});
+
+test("0714: a ruling touches ONLY the compartment axis", () => {
+  const axes = compareSofa("2A(LHF)+1A(RHF)/COL: CH141-8", ["8069-1A(LHF)", "8069-2A(RHF)", "8069-1B(RHF)"], {
+    ruling: ["1A(LHF)", "2A(RHF)", "1B(RHF)"],
+  });
+  assert.equal(axes.compartments.verdict, RULED);
+  assert.equal(axes.colour.verdict, ERP_BLANK, "the colour gap the book states is still a gap");
 });

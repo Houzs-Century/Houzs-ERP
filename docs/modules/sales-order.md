@@ -1890,13 +1890,47 @@ and settled every one of them as identical. **The verdict got better because the
 reconcile got better, and it did so with no change to this lock** — which is the
 property the whole design is for.
 
-**`sofa build not verifiable` is the big one and it is not a wrong sofa.** Where
-a document's ERP lines carry no AutoCount line key, one book line's compartments
-cannot be regrouped, so `variant-reconcile` answers UNREADABLE rather than
-agreeing. "Could not tell" is not "it matches", so it locks — on its own named
-axis, so nobody is sent hunting for a difference that was never measured. Those
-162 open by themselves the moment the line keys are backfilled; nothing about
-them has to be repaired by hand.
+**`sofa build not verifiable` is the big one and it is not a wrong sofa.** It is
+the axis's UNREADABLE verdict — "could not tell", which is not "it matches", so
+it locks on its own named axis rather than sending anyone hunting for a
+difference that was never measured. **There are TWO independent reasons it
+fires, and which one dominates has changed**, so the run's own unread census
+(`the N UNREAD compartment answer(s) … BY CAUSE`) is the thing to read, never
+this paragraph:
+
+- **no AutoCount line key** — the compartments of one build cannot be regrouped.
+  Those open by themselves when the line keys are backfilled.
+- **keyed, but the book's build text cannot be decoded into pieces** — the book
+  states a colour and a factory instruction and says nothing about the shape.
+  No backfill touches those; the owner's drawing is the only source.
+
+On run `34220621512` (2026-09-08 11:25 UTC) the split was **113 of 113 on the
+SECOND cause and 0 on the first** — so the earlier sentence here, that the
+`sofa build not verifiable` documents "open by themselves the moment the line
+keys are backfilled", was true of the run it was written from and is not true
+today. The census is generated per run; trust it, not a number in prose
+(CLAUDE.md, *a number in a comment is a fact with an expiry date*).
+
+**`RULED` — the owner's own answer is not a difference (2026-09-08).** Some
+builds are decided by the owner reading the drawing, not by AutoCount's words:
+his answers live in `backend/scripts/data/sofa-compartment-corrections-*.json`
+and `apply-sofa-compartment-corrections.mjs` writes them onto the lines. The
+reconcile did not open those files, so every one of them reported as a
+difference — `DIFFER` where the book states another build, `UNREADABLE` where it
+states none — and both LOCK. **25 of the 146 documents locked by run
+`34220621512` were documents he had already ruled on.**
+
+| verdict | means |
+|---|---|
+| `RULED` | a correction file names this build, and the ERP line carries EXACTLY the pieces it names |
+| anything else | the ruling was never applied, or was applied to another document — the line stays locked, and the run prints it under `RULED BUT NOT CARRIED` |
+
+`RULED` is deliberately **not** folded into `AGREE`: the ERP really does differ
+from the book's text, and that difference is the only signal that would catch a
+ruling written onto the wrong document. It has its own column in the variant
+table and its own count in the roll-up. The lookup is
+`backend/scripts/lib/sofa-owner-rulings.mjs`; the reasoning is
+`docs/bugs/0717` and `docs/bugs/0714`.
 
 Which axes lock, and why the reconcile's DECLARED classes (sofa decomposition,
 item translation, `no-price`, book-blank variants, an unproceeded order's blank,
