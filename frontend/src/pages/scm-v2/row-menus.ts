@@ -258,7 +258,7 @@ export function salesOrderRowMenu<R extends StatusRow & SoChainRow & MigratedRow
         live && { label: "Close remaining", onClick: () => h.close(r) },
         isCancelled && { label: "Reopen", onClick: () => h.reopen(r) },
       ],
-      [!isCancelled && dangerItem("Cancel Sales Order", () => h.cancel(r))],
+      [!isCancelled && dangerItem("Request cancellation", () => h.cancel(r))],
     );
   };
 }
@@ -420,6 +420,8 @@ export function purchaseOrderRowMenu<R extends StatusRow & PoChainRow>(h: {
   cancel: (r: R) => void;
   canReceive: (r: R) => boolean;
   canCancel: (r: R) => boolean;
+  /** A DRAFT still cancels directly; a live PO is cancelled by REQUEST (owner 2026-09-08). */
+  isDraft: (r: R) => boolean;
 }): (r: R) => RowMenuItem[] {
   return (r) => buildRowMenu(
     [
@@ -429,7 +431,7 @@ export function purchaseOrderRowMenu<R extends StatusRow & PoChainRow>(h: {
     ],
     [h.canReceive(r) && { label: transferToLabel("grn"), onClick: () => h.transferToGrn(r) }],
     holdEntries(r, h.setHold),
-    [h.canCancel(r) && dangerItem("Cancel Purchase Order", () => h.cancel(r))],
+    [h.canCancel(r) && dangerItem(h.isDraft(r) ? "Cancel Purchase Order" : "Request cancellation", () => h.cancel(r))],
   );
 }
 

@@ -160,6 +160,7 @@ const ScmSalesOrderDetailV2 = lazy(() => import("./pages/scm-v2/SalesOrderDetail
 const ScmAmendmentsV2 = lazy(() => import("./pages/scm-v2/Amendments").then((m) => ({ default: m.Amendments })));
 const ScmAmendmentDetailV2 = lazy(() => import("./pages/scm-v2/AmendmentDetailV2").then((m) => ({ default: m.AmendmentDetailV2 })));
 const ScmPoAmendmentsV2 = lazy(() => import("./pages/scm-v2/PoAmendments").then((m) => ({ default: m.PoAmendments })));
+const ScmCancelRequestsV2 = lazy(() => import("./pages/scm-v2/CancelRequests").then((m) => ({ default: m.CancelRequests })));
 const ScmPoAmendmentDetailV2 = lazy(() => import("./pages/scm-v2/PoAmendmentDetailV2").then((m) => ({ default: m.PoAmendmentDetailV2 })));
 const ScmSoDetailListingV2 = lazy(() => import("./pages/scm-v2/SalesOrderDetailListing").then((m) => ({ default: m.SalesOrderDetailListing })));
 const ScmDoDetailListingV2 = lazy(() => import("./pages/scm-v2/DeliveryOrderDetailListing").then((m) => ({ default: m.DeliveryOrderDetailListing })));
@@ -641,6 +642,9 @@ export default function App() {
             in the sidebar sense — routes are matched exactly, so order is safe. */}
         <Route path="/scm/po-amendments" element={<ScmGuard area="scm.procurement.po"><Scm2990Shell><ScmPoAmendmentsV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/po-amendments/:id" element={<ScmGuard area="scm.procurement.po"><Scm2990Shell><ScmPoAmendmentDetailV2 /></Scm2990Shell></ScmGuard>} />
+        {/* Cancellation requests (owner 2026-09-08) — one inbox for both documents; a
+            row's actions still hit the per-document routes behind their own area guards. */}
+        <Route path="/scm/cancel-requests" element={<ScmGuard area="scm" allowDirector><Scm2990Shell><ScmCancelRequestsV2 /></Scm2990Shell></ScmGuard>} />
         {/* Vendored 2990's MRP + read/list pages. Each wrapped in <Scm2990Shell>.
             product-models list precedes /:id so the literal segment matches first. */}
         <Route path="/scm/mrp" element={<ScmGuard area="scm.procurement.mrp"><Scm2990Shell><ScmMrpV2 /></Scm2990Shell></ScmGuard>} />

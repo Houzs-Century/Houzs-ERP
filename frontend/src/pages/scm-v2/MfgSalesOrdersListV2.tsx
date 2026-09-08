@@ -76,6 +76,7 @@ import { useDebouncedSearchTerm, useSearchResultTransition } from "../../hooks/u
 import { useMfgSalesOrdersPaged, useUpdateMfgSalesOrderStatus, useMfgSalesOrderDetail, useEnrichedSoListRows, useSoLineCoverage } from "../../vendor/scm/lib/sales-order-queries";
 import { useSetDocumentHold } from "../../vendor/scm/lib/document-hold-queries";
 import { holdPrompt } from "./use-hold-action";
+import { useCancelRequestAction } from "./use-cancel-request-action";
 import { makeCloseAction } from "./use-close-action";
 import { StatusWithHold, type HoldFields } from "../../vendor/scm/components/HoldChip";
 import { ScanOrderModal } from "../../vendor/scm/components/ScanOrderModal";
@@ -1074,6 +1075,7 @@ export function MfgSalesOrdersListV2() {
   const statsPending =
     isLoading || isPlaceholderData || Boolean(error) || searchTransition.resultsAreStale;
   const updateStatus = useUpdateMfgSalesOrderStatus();
+  const requestCancel = useCancelRequestAction("so");
   const setHold = useSetDocumentHold("so");
 
   // The server already filtered (status + search) and sorted this page; the
@@ -1216,16 +1218,8 @@ export function MfgSalesOrdersListV2() {
   /* Not setSoStatus: the WORDS are the point — Close sits one menu entry from
      Cancel and they do opposite things to the money. Both live in ./use-close-action. */
   const doCloseSo = makeCloseAction({ askConfirm, notify, mutate: updateStatus.mutate });
-  const doCancelSo = async (r: SoRow) => {
-    if (!(await askConfirm({
-      title: `Cancel ${r.doc_no}?`,
-      body: "A cancelled sales order cannot be reactivated — any deposit becomes customer credit.",
-      confirmLabel: "Cancel Sales Order",
-    }))) return;
-    updateStatus.mutate({ docNo: r.doc_no, status: "CANCELLED", expectedStatus: r.status }, {
-      onError: (e) => notify({ title: "Cancel failed", body: e instanceof Error ? e.message : "Something went wrong.", tone: "error" }),
-    });
-  };
+  /* Cancel is a REQUEST (owner 2026-09-08): reason + two approvals, in ./use-cancel-request-action. */
+  const doCancelSo = (r: SoRow) => void requestCancel(r.doc_no, r.doc_no);
   /* Put On Hold / Take Off Hold — the mig-0324 MARKER, never the status. The
      wording lives in ./use-hold-action; this screen runs it through askConfirm
      because every other action here does. */

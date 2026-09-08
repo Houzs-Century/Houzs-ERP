@@ -147,6 +147,7 @@ import { RevisionsTab } from './so-revisions-tab';
 import styles from './SalesOrderDetail.module.css';
 import { DateField } from "../../vendor/scm/components/DateField";
 import { HoldChip } from "../../vendor/scm/components/HoldChip";
+import { CancelRequestPanel } from "../../vendor/scm/components/CancelRequestPanel"; import { useCancelRequestAction } from "./use-cancel-request-action";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
@@ -485,6 +486,7 @@ export const SalesOrderDetail = () => {
   const detail = useMfgSalesOrderDetail(docNo ?? null);
   const updateHeader = useUpdateMfgSalesOrderHeader();
   const updateStatus = useUpdateMfgSalesOrderStatus();
+  const requestCancel = useCancelRequestAction('so');
   const deleteDraft = useDeleteMfgSalesOrder();
   const askConfirm = useConfirm();
   const askPrompt = usePrompt();
@@ -1709,14 +1711,10 @@ export const SalesOrderDetail = () => {
     setPayEditing((v) => !v);
   };
 
-  const handleCancelSo = async () => {
-    if (!(await askConfirm({
-      title: `Cancel ${header.doc_no}?`,
-      body: "The SO will stop proceeding — it won't appear in MRP / PO / DO conversion, and line edits lock. You can Reopen it later.",
-      confirmLabel: 'Cancel SO', danger: true,
-    }))) return;
-    updateStatus.mutate({ docNo: header.doc_no, status: 'CANCELLED', expectedStatus: header.status });
-  };
+  /* Cancel is a REQUEST now (owner 2026-09-08): a reason, then two approvals,
+     then the cancel itself — run by CancelRequestPanel on the second signature. */
+  const handleCancelSo = () => void requestCancel(header.doc_no, header.doc_no);
+  const executeCancel = () => updateStatus.mutate({ docNo: header.doc_no, status: 'CANCELLED', expectedStatus: header.status });
   /* Discard draft (owner 2026-07-20) — hard-delete a junk DRAFT (esp. a bad
      scan/OCR draft) instead of burning a doc number on confirm→cancel. Behind the
      house confirm dialog (no naked destructive action); the backend refuses
@@ -1913,13 +1911,13 @@ export const SalesOrderDetail = () => {
               ]}
               {...print.handlers}
             />
-            {/* Cancel SO (Commander 2026-05-29) — stops proceeding; final. */}
+            {/* Request cancellation (owner 2026-09-08) — a reason + two approvals; final once it runs. */}
             {!isCancelled && canCancel && !isEditing ? (
               <Button variant="ghost"
                 onClick={handleCancelSo} disabled={updateStatus.isPending}
                 style={{ color: 'var(--c-festive-b, #B8331F)' }}>
                 <Ban {...ICON} />
-                <span>Cancel SO</span>
+                <span>Request cancellation</span>
               </Button>
             ) : null}
             {/* PR-A — Page-level Edit/Save/Cancel.
@@ -2116,6 +2114,7 @@ export const SalesOrderDetail = () => {
           An amendment is in flight. Show its status pill + the gate actions,
           gated by permission AND the amendment's current state, plus a "view
           changes" link opening the before/after diff. */}
+      <CancelRequestPanel docType="so" docKey={header.doc_no} docNumber={header.doc_no} onExecute={executeCancel} executing={updateStatus.isPending} />
       {openAmendments.map((oa) => (
         <div key={oa.id} style={{
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
