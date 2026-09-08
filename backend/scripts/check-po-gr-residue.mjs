@@ -57,6 +57,20 @@ if (!fs.existsSync(CHAIN)) {
   process.exit(2);
 }
 const snap = JSON.parse(zlib.gunzipSync(fs.readFileSync(CHAIN)).toString("utf8"));
+
+/* THE MONEY LIVES IN A DIFFERENT SNAPSHOT, and the first cut of this file did
+   not know that. `ac-convert-edges.json.gz` carries the CHAIN columns only —
+   there is no `subTotal` in its `line_fields` — so reading one produced
+   `undefined`, every book total came out 0, every pair was skipped, and the
+   check printed "no priced pair differs from the book" while the tally was
+   reporting four. A verdict computed over nothing must never read as a pass.
+   The money is in `ac-reconcile-truth.json.gz`, which is the snapshot the
+   reconcile itself compares against. */
+const TRUTH = path.join(here, "data", "ac-reconcile-truth.json.gz");
+const truth = fs.existsSync(TRUTH)
+  ? JSON.parse(zlib.gunzipSync(fs.readFileSync(TRUTH)).toString("utf8"))
+  : null;
+const TL = truth ? Object.fromEntries((truth.line_fields || []).map((n, i) => [n, i])) : {};
 const L = Object.fromEntries((snap.line_fields || []).map((n, i) => [n, i]));
 const H = Object.fromEntries((snap.header_fields || []).map((n, i) => [n, i]));
 const Q = (v) => Math.round(Number(v || 0) * 10000);
@@ -187,14 +201,6 @@ try {
      WHERE g.company_id = ${CO} AND g.status <> 'CANCELLED'
        AND g.linked_ac_gr_docno IS NOT NULL AND p.linked_ac_docno IS NOT NULL`;
   const bookGr = new Map(bookLines("GR").map((r) => [String(r[L.dtlKey]), r]));
-  /* every purchase-order line we hold, so "could we even point at it" is measured */
-  const poLineOf = new Map(
-    (await sql`SELECT h.linked_ac_docno AS doc, i.linked_ac_dtlkey::text AS key
-                 FROM scm.purchase_order_items i
-                 JOIN scm.purchase_orders h ON h.id = i.purchase_order_id
-                WHERE h.company_id = ${CO} AND h.linked_ac_docno IS NOT NULL AND i.linked_ac_dtlkey IS NOT NULL`)
-      .map((r) => [`${up(r.doc)}#${String(r.key).trim()}`, true]),
-  );
   const heldPo = new Set(
     (await sql`SELECT DISTINCT linked_ac_docno AS d FROM scm.purchase_orders
                 WHERE company_id = ${CO} AND linked_ac_docno IS NOT NULL`).map((r) => up(r.d)),
@@ -224,10 +230,13 @@ try {
           : `we hold ${have.join(", ") || "none"} of those orders, so ${srcs.filter((s) => !heldPo.has(s)).join(", ")} would have to be imported first`),
     );
     for (const l of d.lines.slice(0, 3)) {
-      const reachable = l.wanted.some((w) => poLineOf.has(`${w}#${l.key}`));
-      p(
-        `          DtlKey ${l.key} qty ${fmt(l.qty)} — the same key on a purchase-order line we hold: ${reachable ? "YES" : "no"}`,
-      );
+      /* The line's OWN key and its quantity. It deliberately does NOT ask
+         whether a purchase-order line carries the same key: a goods-receipt
+         DtlKey is a GRDTL key and a purchase-order line carries a PODTL one, so
+         that question always answers "no" and reads as a finding. The book
+         states no source LINE on this edge at all (`FromDocDtlKey` is NULL on
+         every detail row), so the document is the finest grain there is. */
+      p(`          GRDTL ${l.key}, quantity ${fmt(l.qty)}`);
     }
   }
   log(
@@ -250,15 +259,28 @@ try {
      WHERE g.company_id = ${CO} AND g.status <> 'CANCELLED'
        AND g.linked_ac_gr_docno IS NOT NULL AND p.linked_ac_docno IS NOT NULL
      GROUP BY 1, 2, 3`;
-  /* the book's money for a (receipt x order) PAIR is the sum of that pair's line subtotals */
+  /* the book's money for a (receipt x order) PAIR is the sum of that pair's line
+     subtotals, read from the TRUTH snapshot — the chain snapshot has no money
+     columns at all, and reading one there is what made this section answer
+     "nothing differs" over an empty measurement. */
   const pairBook = new Map();
-  for (const r of bookLines("GR")) {
-    for (const tok of sourceDocTokens(r[L.fromDocNo])) {
-      const k = `${up(r[L.docNo])}|${tok}`;
-      pairBook.set(k, (pairBook.get(k) || 0) + Math.round(Number(r[L.subTotal] || 0) * 100));
+  const moneyReadable = truth != null && TL.subTotal !== undefined && TL.fromDocNo !== undefined;
+  if (!moneyReadable) {
+    log(
+      "GOODS RECEIPT MONEY — NOT MEASURED: ac-reconcile-truth.json.gz is absent or carries no `subTotal` " +
+        "column, so there is nothing to compare our totals against. This is not a clean result; the money " +
+        "was not checked.",
+    );
+  } else {
+    for (const r of truth.types.GR.lines) {
+      for (const tok of sourceDocTokens(r[TL.fromDocNo])) {
+        const k = `${up(r[TL.docNo])}|${tok}`;
+        pairBook.set(k, (pairBook.get(k) || 0) + Math.round(Number(r[TL.subTotal] || 0) * 100));
+      }
     }
   }
   let m = 0;
+  if (moneyReadable)
   for (const r of money) {
     const k = `${up(r.gr)}|${up(r.po)}`;
     const b = pairBook.get(k);
@@ -274,11 +296,13 @@ try {
         : `ratio ${ratio.toFixed(4)}`;
     p(`    ${k} (ERP ${r.erp_no}): book RM ${(b / 100).toFixed(2)} vs ours RM ${(ours / 100).toFixed(2)} — ${note}`);
   }
-  log(
-    m === 0
-      ? "GOODS RECEIPT MONEY — no priced pair differs from the book."
-      : `GOODS RECEIPT MONEY — ${m} priced (receipt x order) pair(s) differ from the book.`,
-  );
+  if (moneyReadable) {
+    log(
+      m === 0
+        ? "GOODS RECEIPT MONEY — 0 priced pair(s) differ from the book, measured against ac-reconcile-truth.json.gz."
+        : `GOODS RECEIPT MONEY — ${m} priced (receipt x order) pair(s) differ from the book.`,
+    );
+  }
 
   p("");
   p("NOTHING WAS REPAIRED. A transfer-quantity correction moves an on-hand figure and stock is DEFERRED");
