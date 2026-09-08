@@ -55,6 +55,8 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { variantIdentity } from "./do-so-item-pairing.mjs";
+
 export const norm = (s) => (s || "").trim().toUpperCase().replace(/\s+/g, " ");
 
 export function parseCsvLine(line) {
@@ -130,7 +132,7 @@ export function buildMigratedDoPlan({ rows, itemMap, soItems, done = new Set(), 
      "DO documents: 82" — the count AFTER the loss — with nothing subtracted
      from anything. The reconcile then printed those 2 as "(owner-declined)".
      Attribution is what turns a total into a finding. */
-  const stats = { noSoLine: 0, unmapped: 0, exhausted: 0, collapsed: 0, substituted: 0,
+  const stats = { noSoLine: 0, unmapped: 0, exhausted: 0, collapsed: 0, substituted: 0, ambiguousColour: 0,
     missExamples: [], missCodes: new Map(), byDoc: new Map(), subLines: [] };
   const noteDoc = (doNo, field, entry) => {
     let d = stats.byDoc.get(doNo);
@@ -172,6 +174,29 @@ export function buildMigratedDoPlan({ rows, itemMap, soItems, done = new Set(), 
       if (used >= cands.length) {
         stats.exhausted++;
         noteDoc(r.DoNo, "dropped", { so: r.SoNo, code: norm(erp), desc: r.LineDesc ?? null, qty: r.Qty ?? null, why: `all ${cands.length} matching sales-order line(s) are already claimed by an earlier line of this same delivery` });
+        continue;
+      }
+      /* AND THE CANDIDATES MUST BE INDISTINGUISHABLE BEFORE POSITION DECIDES.
+         Two lines of one sofa model in different fabrics are an ordinary order,
+         and this pairing is (SO number, item code) + POSITION with nothing else
+         in it. The account book's delivery line carries NO colour and NO line
+         key — `fromSoDtlKey` is populated on 10,792 of 18,890 PO lines and 0 of
+         48,772 DO lines in the 2026-09-08 re-cut — so when the two orders
+         disagree the result is an exact swap, and `variants` is copied from
+         whichever line was picked, which puts the other customer's colour on
+         the note. DO-011505 and DO-011478 are that shape in production
+         (docs/bugs/0672, instance 2).
+
+         So: pair on model + colour, and where colour does not resolve it, write
+         NO link. A missing link is visible and recoverable; a wrong one is
+         neither, and it is the one the factory and the customer see.
+         variantIdentity is the repo's existing colour signature — pwpCode, then
+         colourId, then the summary, then description2 — and refusing on it
+         rather than restating the rule is deliberate. */
+      const sigs = new Set(cands.map((c) => variantIdentity(c)));
+      if (sigs.size > 1) {
+        stats.ambiguousColour++;
+        noteDoc(r.DoNo, "dropped", { so: r.SoNo, code: norm(erp), desc: r.LineDesc ?? null, qty: r.Qty ?? null, why: `${cands.length} sales-order lines of ${norm(erp)} carry ${sigs.size} different colours and the account book's delivery line names none — pair this one by hand` });
         continue;
       }
       taken.set(ck, used + 1);
