@@ -1,0 +1,92 @@
+name: Retire the duplicate sofa cutover lots
+
+# The sofa stock import keys a cell by (item, warehouse, batch, VARIANT KEY), so
+# a build whose document gained or lost a special after its lots were opened
+# re-keys, reads as a cell nobody has opened, and is opened a second time. One
+# physical sofa, two sets of lots. Measured on production 2026-09-08: 73 purchase
+# orders hold open sofa cutover stock and their own lines justify 73 builds; the
+# lot table held 93. docs/bugs/0721.
+#
+# NOTHING IS DELETED. A surplus lot is retired by ONE negative ADJUSTMENT at its
+# own (warehouse, item, variant key, batch), which the FIFO trigger consumes
+# against that exact lot — the lot row stays and the opposite adjustment reverses
+# it. Only zero-cost lots qualify, so no money moves.
+#
+# It REFUSES rather than guessing: a consumed or part-consumed lot, a lot
+# carrying cost, a lot a live sales order is allocated to by its exact key, a
+# group where no open lot matches the purchase line, and a cell whose item code
+# is on no line of the order it claims to come from.
+#
+# PLAN unless mode=apply, which additionally needs the confirm phrase. After an
+# apply, run the SO stock allocation recompute — a direct SQL stock write does
+# not trigger a projection recompute (docs/bugs/0675). This workflow does not.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      mode:
+        description: "plan (writes nothing) or apply"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: 'On apply only: RETIRE THE DUPLICATE SOFA LOTS'
+        required: false
+        default: ""
+      company:
+        description: "company_id"
+        required: false
+        default: "1"
+      batch:
+        description: "Optional single purchase-order number (HC-PO-009712), to rehearse one build"
+        required: false
+        default: ""
+
+concurrency:
+  group: repair-duplicate-sofa-lots-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/repair-duplicate-sofa-cutover-lots.mjs
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY: ${{ inputs.company }}
+          BATCH: ${{ inputs.batch }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/repair-duplicate-sofa-cutover-lots.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY: ${{ inputs.company }}
+          BATCH: ${{ inputs.batch }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
