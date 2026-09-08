@@ -1943,8 +1943,9 @@ Parsing checks; it never decides. A second implementation of "different" is what
 `docs/bugs/0708-two-tools-answered-the-same-pairing-question-differently-twe.md`
 cost.
 
-**MEASURED**, first dispatch of that workflow, 2026-09-08, company 1 — **re-run
-before quoting it**, the sofa lanes move these numbers daily:
+**MEASURED**, `node backend/scripts/check-so-tally.mjs` against PRODUCTION over
+the read-only DSN, 2026-09-08 10:59 UTC, company 1, exit 0 — **re-run before
+quoting it**, the sofa lanes move these numbers daily:
 
 > 2,883 documents. **2,709 identical · 38 differ and are work · 109 cannot be
 > compared · 27 the book itself is the gap.** NOT TALLIED. Of the 38: 37 are

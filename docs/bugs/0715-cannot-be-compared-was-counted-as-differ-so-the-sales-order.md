@@ -81,11 +81,17 @@ its own bucket"* and *"cannot-be-compared does NOT block TALLIED"* both fail —
 the row classifies as `work` and `isTallied` answers `false`, which is the
 2026-09-08 behaviour exactly.
 
-**What it measured, first run.** Dispatch of the new workflow, 2026-09-08,
-company 1: 2,883 documents — **2,709 identical, 38 differ and are work (37 on
-content, 1 phantom document), 109 cannot be compared, 27 the book itself is the
-gap.** The 149 the old line reported is now 38 + 109 + 2 double-counted
-documents that carry a real difference AND an unreadable sofa.
+**What it measured.** `node backend/scripts/check-so-tally.mjs` run against
+PRODUCTION over the read-only DSN, 2026-09-08 10:59 UTC, company 1, exit 0.
+2,883 documents — **2,709 identical, 38 differ and are work (37 on content, 1
+phantom, `HC-SO-2609-001`), 109 cannot be compared, 27 the book itself is the
+gap.** The reconcile inside that run locked 146 (37 + 109); the 149 quoted at
+the top is the earlier run `34216507949`, and the corpus moved between the two
+because the live sofa lanes were landing. Both numbers split the same way: the
+large majority of what reads as `differ` was never compared.
 
-**Ref.** `feat/so-tally-verdict`, 2026-09-08. Measured against reconcile run
-`34216507949` and the first dispatch of `so-tally-verdict.yml`.
+**Ref.** `feat/so-tally-verdict`, PR #3267, 2026-09-08. Measured against
+reconcile run `34216507949` and the local production run above. The workflow's
+own first dispatch is recorded in the PR — GitHub only lists a
+`workflow_dispatch` workflow once it is on the default branch, so it cannot be
+dispatched before this merges.
