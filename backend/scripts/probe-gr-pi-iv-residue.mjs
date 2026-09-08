@@ -74,6 +74,12 @@ const say = (m) => console.log(m);
 const rm = (sen) => `RM ${(Number(sen || 0) / 100).toFixed(2)}`;
 const sql = postgres(DST, { ssl: "require", prepare: false, max: 1 });
 
+/* AutoCount writes a whole sofa as "DSL-8030 SOFA"; the ERP writes one row per
+   compartment, suffixed -1A(LHF) / -2A(RHF) / -L(LHF) / -CNR / -1NA / -1S /
+   -STOOL / -CONSOLE. Either side saying so means the document was decomposed. */
+const SOFA_CODE = /SOFA/i;
+const COMPARTMENT = /-(?:\d*[AB]\s*\((?:LHF|RHF|R\)\(RHF)\)|L\((?:LHF|RHF)\)|CNR|\d*NA|STOOL|CONSOLE|\d*S)$/i;
+
 const snap = JSON.parse(zlib.gunzipSync(fs.readFileSync(path.join(DATA, "ac-reconcile-truth.json.gz"))).toString("utf8"));
 const book = decodeSnapshot(snap);
 const SCOPE = buildScope(book);
@@ -139,8 +145,18 @@ async function main() {
     if (!bookLines.length) continue;
     /* A sofa is ONE book line and one ERP row per compartment, so the two
        multisets are not commensurable and the comparison is not attempted —
-       counted apart, never folded into either verdict. */
-    const isSofa = erp.lines.some((l) => l.line_suffix);
+       counted apart, never folded into either verdict.
+       DETECTED THREE WAYS, as check-ac-erp-reconcile.mjs:1109 does, because no
+       single one holds across the import rounds. The first run of this probe
+       tested `line_suffix` ALONE and reported 0 sofa pairs and 61 genuine
+       product differences; `scm.grn_items.line_suffix` is NULL on every
+       migrated receipt, so the test could not fire and 40-odd decompositions
+       (book `9028-1S` against our `9028-1A(RHF)` + `9028-2A(LHF)`) were
+       printed as wrong products. A weak exclusion INVENTS findings exactly the
+       way a weak matcher misses them. */
+    const isSofa = erp.lines.some((l) => l.line_suffix)
+      || bookLines.some((l) => SOFA_CODE.test(String(l.itemKey ?? "")))
+      || erp.lines.some((l) => COMPARTMENT.test(String(l.item_code ?? "")));
     if (isSofa) { sofaPairs++; continue; }
 
     const bBag = bag(bookLines.map((l) => translate(l.itemKey)));
