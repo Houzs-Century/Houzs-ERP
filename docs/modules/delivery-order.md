@@ -2465,6 +2465,35 @@ computed against the wrong line is a number about the wrong thing, and reporting
 it sends the operator to fix a quantity when the real fault is the source they
 picked.
 
+## A migrated DO's sales / delivery fields come from the SO header too (2026-09-08)
+
+The customer block (phone, email, address, city, state, postcode, emergency
+contact) is the section above, *A migrated delivery order carries the customer
+block from its sales order* — docs/bugs/0714, repaired on production the same
+evening. The header block ABOVE that card on the same screen — **Salesperson,
+Customer ref, Delivery date, Expected at** — was blank for the same cause and is
+not in 0714's field map (`DO_CARRY` is deliberately "what a driver needs").
+
+`DO_SALES_CARRY` in `scripts/lib/customer-block.mjs` is the list:
+`salesperson_id`, `agent`, `branding`, `ref`, `customer_delivery_date`, and
+`expected_delivery_at` = the customer's date or, failing that, the DO's own
+`do_date` (what `/from-sos` does with the creation date). The writer
+(`insertMigratedDo`) applies it in the SAME `UPDATE … FROM scm.mfg_sales_orders`
+as the customer block, so a new migrated document carries all of it at once.
+
+**Not in the list, on purpose.** `venue` / `venue_id` (a canonicalising trigger
+rewrites them on write — 0714's own reason) and `sales_location` /
+`warehouse_id` (the ship-from branch from the account book, owner 2026-09-07
+「记在单头就好」, `lib/ac-do-location.mjs` — never the SO's sales branch).
+
+The documents already written are filled by
+`backfill-migrated-do-sales-fields.mjs` (Actions → **Carry the sales / delivery
+fields onto migrated DO headers**; PLAN by default, apply needs `CONFIRM="I HAVE
+REVIEWED THE DRY-RUN"`; `scope` migrated|all; `do_number` for one document).
+Every SET re-asserts `IS NULL`, so a corrected header survives. What the plan
+lists under "order itself blank" is an SO-side gap: fix the SO and re-run, it
+is idempotent. docs/bugs/0716.
+
 ## A migrated DO line will NOT bind to a sales-order line colour cannot choose (2026-09-08)
 
 `backend/scripts/lib/migrated-do-writer.mjs` `buildMigratedDoPlan` buckets

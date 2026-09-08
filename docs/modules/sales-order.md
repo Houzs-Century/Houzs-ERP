@@ -1303,6 +1303,14 @@ cities written, the other 294 refused with a printed reason. Full before/after i
 Applied by `backend/scripts/repair-customer-block.mjs`; counted by
 `backend/scripts/check-customer-block-gap.mjs`.
 
+The same file also holds `DO_SALES_CARRY` (2026-09-08, docs/bugs/0716): the
+SALES / DELIVERY fields a migrated delivery order takes from this order's
+header — `salesperson_id`, `agent`, `branding`, `ref`, `customer_delivery_date`,
+and `expected_delivery_at` falling back to the DO's own date. That is the DO
+side's concern (`docs/modules/delivery-order.md`, *A migrated DO's sales /
+delivery fields come from the SO header too*); nothing here is written by it.
+The SO header is read, never changed.
+
 **`email` and `customer_type` are a different thing and are NOT a migration
 loss.** No AutoCount export in `backend/scripts/data/` carries either column, and
 the sales-order customer master is the prior sales orders themselves

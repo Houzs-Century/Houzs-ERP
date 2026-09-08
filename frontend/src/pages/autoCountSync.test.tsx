@@ -1313,3 +1313,73 @@ describe("AutoCountSync — matching a held-back document's lines up", () => {
     expect(await within(cardOf("SO-KL")).findByText(/9058-1S/)).toBeTruthy();
   });
 });
+
+/* ── THE OFFICE MACHINE'S OWN LOG ───────────────────────────────────
+   `Invalid transfer item.` names nothing, and ten delivery orders carried those
+   eleven words through six attempts each while the host wrote the sentence that
+   explains them into a log file nobody could reach. These four pin the panel
+   that reaches it: it does NOT call the office machine until asked, it lifts the
+   answering line out of the wall of text, it says the tunnel is down rather than
+   rendering empty, and it never reads an empty match as "nothing is wrong".
+
+   THE MOCK IS ARMED AFTER `mount`, NOT BEFORE, and that ordering is the test.
+   `mount` ends with `apiGet.mockResolvedValue(body)`, which REPLACES any
+   implementation set before it — arming first left the host-log call answering
+   the outbox payload, whose `lines` is undefined, so the empty-match test passed
+   for entirely the wrong reason. Arming after is safe precisely because of the
+   property the first test asserts: nothing calls that route until the panel is
+   opened. */
+describe("the host log panel", () => {
+  const SHORTFALL =
+    "  valid-transfer-item check: AutoCount kept FEWER rows than keys given - the shortfall IS the invalid transfer item(s)";
+  const ORDINARY = "  SO->DO shape: the ERP named 3 line(s)";
+  const OPEN_IT = /What the office machine said/;
+
+  /** Answer the host-log route with these lines; everything else keeps the list. */
+  const armHostLog = (lines: string[]) => {
+    const list = payload();
+    apiGet.mockImplementation((url: string) =>
+      typeof url === "string" && url.includes("/host-log")
+        ? Promise.resolve({ ok: true, path: "C:\Temp\ac-sync-service.log", exists: true, lines })
+        : Promise.resolve(list));
+  };
+
+  /* UNANNOTATED on purpose: `mock.calls` is `any[][]`, so a tuple annotation on
+     the destructured parameter matches no overload of `filter`. Inference gives
+     the right thing and writes no `any` for the linter to count. */
+  const hostLogCalls = () =>
+    apiGet.mock.calls.filter((call) => typeof call[0] === "string" && call[0].includes("/host-log")).length;
+
+  it("does NOT reach the office machine until somebody opens it", async () => {
+    await mount(payload());
+    expect(hostLogCalls()).toBe(0);
+  });
+
+  it("lifts the line that answers the refusal out of the wall of text", async () => {
+    await mount(payload());
+    armHostLog([ORDINARY, SHORTFALL]);
+    await userEvent.click(screen.getByRole("button", { name: OPEN_IT }));
+    /* The MEANING, not the log line — both carry the same words, so the assertion
+       names the element that explains rather than the one that quotes. */
+    expect(await screen.findByText(/AutoCount refused some of the lines/)).toBeTruthy();
+  });
+
+  it("says the tunnel is down instead of rendering nothing", async () => {
+    await mount(payload());
+    apiGet.mockImplementation((url: string) =>
+      typeof url === "string" && url.includes("/host-log")
+        ? Promise.reject(new Error("fetch failed"))
+        : Promise.resolve(payload()));
+    await userEvent.click(screen.getByRole("button", { name: OPEN_IT }));
+    expect(await screen.findByText(/did not answer/)).toBeTruthy();
+  });
+
+  /* A tail that matched nothing is not a clean bill of health — the failure
+     being chased may simply be older than the tail. */
+  it("an empty match reads as 'nothing matched', never as 'nothing is wrong'", async () => {
+    await mount(payload());
+    armHostLog([ORDINARY]);
+    await userEvent.click(screen.getByRole("button", { name: OPEN_IT }));
+    expect(await screen.findByText(/matched a known pattern/)).toBeTruthy();
+  });
+});
