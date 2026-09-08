@@ -2247,6 +2247,47 @@ entry built from one would 404. The fix is one column on two selects already in
 flight in `routes/delivery-orders-mfg.ts`, and it is not in that change because
 the file is over its size ceiling — `document-conversion.md` §8b sizes it.
 
+## The printed DO is BLACK ON WHITE, ONE FACE, LETTER — it goes through a dot-matrix printer (owner, 2026-09-08)
+
+**What the warehouse prints on:** an Epson LQ-310 (24-pin impact printer, black
+ribbon) onto 9.5 x 11 inch **2-ply continuous paper**. The owner's brief, in
+his words: 「delivery order 需要修改为黑白色而已 / 目前打印了会看不清楚，字体需要放大
+一些 / 字体统一」. The Theme C "Ink & Petrol" sheet of 2026-08-07 was a CSS
+handoff drawn for a screen, and on this printer every one of its devices was a
+cause of the unreadable print — trace in
+`docs/bugs/0713-the-delivery-order-printed-unreadably-on-the-dot-matrix-prin.md`.
+
+The rules the renderer now holds, each pinned in
+`frontend/src/vendor/scm/lib/delivery-order-template.test.ts` off the DRAWN
+output (autoTable's own style setters are in the population):
+
+| rule | why, on THIS printer | pinned by |
+|---|---|---|
+| **one ink: black.** No grey labels, no faint placeholders, no coloured headers | there is no grey ribbon; the driver dithers grey into sparse dots, and the carbonless second ply gets a fainter copy of the dots | *"no fill of any colour, every ink pure black"* |
+| **no fills.** No paper panel, no doc-number pill, no status pill, no header band — the panel is a stroked box, the status is bold text, the header row is bold text over a heavy rule | a fill dithers into a field of dots UNDER the words | same test — `fills` must be `[]` |
+| **one face: helvetica**, at the `DO_SIZE` scale in `delivery-order-theme.ts`, **nothing under 9pt** | 24 pins cannot form 7.5pt courier; and helvetica is the family `ensurePdfCjkFont` redirects, so a Chinese address now paints in EVERY cell | *"one face, and nothing under the 9pt floor"* |
+| **page: Letter** (`DO_PAGE_FORMAT`), not A4 | 9.5 x 11 continuous form is 8.5 in wide between its perforations and 11 in tall — exactly Letter. A4 is 18mm taller, so a fit-to-page print shrank every sheet and its type | *"the page is Letter"* |
+| **solid rules, 0.25mm minimum.** The signature Name / Date fields are solid lines, not dotted | a 0.1mm hairline or a row of dots prints broken | (visual; no test) |
+
+**Layout consequences worth knowing before you touch it.** The Letter sheet is
+shorter and the type is larger, so the page budget moved: the scan QR now sits
+BESIDE the title column (it used to stack under the issued date, and on Letter
+that alone pushed a three-line DO's signature onto a second form); the item
+code and Source PO columns are one step below body size so a 17-character PO
+number fits its column on one line; the signature box is 20mm. Rendered
+2026-09-08 with PyMuPDF off the test fixture: a 3-line DO with driver, note
+and QR is **1 page**; 22 lines are 3 pages.
+
+**The Consignment Note reuses this renderer** (`ConsignmentNoteDetail.tsx`,
+`showPicking: false`) and prints the same way. The shared ITEM PHOTOS block
+(`pdf-item-photos.ts`) is NOT changed — it is shared with the SO and PO PDFs,
+prints only when a line carries a photo, and a photo does not survive an impact
+printer anyway.
+
+**Not in scope, and said so:** whether the DO should offer a second, colour
+layout for a laser printer. Today there is one DO layout and it is this one;
+the SO / PO / invoice PDFs keep the shared `pdf-common` letterhead untouched.
+
 ## A line added here reaches the account book (since 2026-08-31)
 
 Adding a line to a document AutoCount already holds used to refuse the WHOLE
