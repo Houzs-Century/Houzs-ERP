@@ -40,7 +40,7 @@ import { isRefundPurpose, pvTypeLabel, pvTypeOf } from '../../vendor/scm/lib/pv-
 import { DocFilesCard } from '../../vendor/scm/components/DocFilesCard';
 import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
 import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
-import { useAccounts, postableAccounts, type Account } from '../../vendor/scm/lib/accounting-queries';
+import { useAccounts, useAccountRoles, postableAccounts, type Account } from '../../vendor/scm/lib/accounting-queries';
 import { useSaveHotkey, SAVE_HOTKEY_HINT } from '../../vendor/scm/lib/use-save-hotkey';
 import { usePurchaseInvoices } from '../../vendor/scm/lib/purchase-invoice-queries';
 import { useApInvoices } from '../../vendor/scm/lib/ap-invoice-queries';
@@ -71,6 +71,17 @@ const fmtRm = (centi: number | null | undefined, currency = 'MYR'): string => {
 /* The stored `purpose` is the document kind — shown as "Type: AP Payment /
    Payment Voucher" (owner 2026-09-07: 为什么我一直看到 purpose - others?); the
    labels live in vendor/scm/lib/pv-type-label.ts. */
+
+/* One row of the edit-mode invoice picker — a purchase invoice or an AP
+   invoice, keyed by that document's id (what pv_allocations names). */
+type EditAllocRow = {
+  key: string; kind: 'PI' | 'API';
+  invoiceNumber: string; supplierInvoiceRef: string | null; invoiceDate: string | null;
+  totalSen: number; outstandingSen: number;
+};
+/** The invoice an allocation row names, whichever kind and casing the API used. */
+const allocKeyOf = (a: Record<string, unknown>): string =>
+  String(a.apInvoiceId ?? a.ap_invoice_id ?? a.piId ?? a.pi_id ?? '');
 
 type EditLine = {
   rid:              string;
@@ -217,8 +228,14 @@ export const PaymentVoucherDetail = () => {
      amount and the server re-composes it (refundAmountSen), never the lines. */
   const isRefundPv = isRefundPurpose(pv?.purpose);
   const [editRefundAmountSen, setEditRefundAmountSen] = useState<number>(0);
-  // Migration 0202 — edit allocations: applied amount per PI id (centi).
+  // Migration 0202 — edit allocations: applied amount per invoice id (PI or AP invoice), in sen.
   const [allocAmounts, setAllocAmounts]           = useState<Record<string, number>>({});
+  /* 预付 on an AP Payment being edited (owner 2026-09-08, a rejected voucher
+     whose Edit showed the plain-voucher line editor: reject ap payment 后, 他的
+     edit 不是退回去 knock pi?). Seeded as what the stored total exceeds its
+     allocations by; the total FOLLOWS ticks + prepay, exactly as on PV New. */
+  const [editAdvanceSen, setEditAdvanceSen]       = useState<number>(0);
+  const rolesQ = useAccountRoles();
 
   // A POSTED/CANCELLED voucher can never enter edit mode.
   useEffect(() => { if (!isDraft && isEditing) setIsEditing(false); }, [isDraft, isEditing]);
@@ -238,10 +255,13 @@ export const PaymentVoucherDetail = () => {
        put a figure nobody typed in front of the operator as if it were evidence. */
     setMyrPaidSen(null);
     setEditRefundAmountSen(Number(pv.total_sen ?? 0));
-    // Seed the applied-amount map from the loaded allocations (keyed by PI id).
-    setAllocAmounts(Object.fromEntries(
-      allocations.map((a) => [String(a.piId ?? a.pi_id ?? ''), Number(a.amountSen ?? a.amount_sen ?? 0)]),
-    ));
+    // Seed the applied-amount map from the loaded allocations (keyed by the
+    // invoice's id — a PI's or an AP invoice's), and the prepay as the rest.
+    const applied = allocations.map((a) => [allocKeyOf(a), Number(a.amountSen ?? a.amount_sen ?? 0)] as const).filter(([k]) => k);
+    setAllocAmounts(Object.fromEntries(applied));
+    setEditAdvanceSen(pvTypeOf(pv.purpose) === 'SUPPLIER_PAYMENT'
+      ? Math.max(0, Number(pv.total_sen ?? 0) - applied.reduce((s, [, v]) => s + v, 0))
+      : 0);
     setEditLines(
       lines.length > 0
         ? lines.map((l) => ({
@@ -260,9 +280,11 @@ export const PaymentVoucherDetail = () => {
   const dropLine = (rid: string) => setEditLines((prev) => (prev.length <= 1 ? prev : prev.filter((l) => l.rid !== rid)));
   const addLine  = () => setEditLines((prev) => [...prev, newLine()]);
 
-  const editTotalSen = useMemo(() => editLines.reduce((s, l) => s + l.amountSen, 0), [editLines]);
+  const editLinesTotalSen = useMemo(() => editLines.reduce((s, l) => s + l.amountSen, 0), [editLines]);
   const viewTotalSen = Number(pv?.total_sen ?? 0);
-  const totalSen = isEditing ? (isRefundPv ? editRefundAmountSen : editTotalSen) : viewTotalSen;
+  /* An AP Payment's edit has no typed lines: its total is the ticks plus the
+     prepay, and its ONE debit line (the AP control) is written on save. */
+  const apEdit = isEditing && !isRefundPv && purpose === 'SUPPLIER_PAYMENT';
 
   /* Multi-currency (Phase 1-A) — the PV keeps its own currency; the exchange
      rate converts the GL posting to MYR. In VIEW we show the stored currency; in
@@ -275,6 +297,90 @@ export const PaymentVoucherDetail = () => {
   const currency  = isEditing ? editCurrency : viewCurrency;
   const isForeign = currency !== 'MYR';
   useEffect(() => { if (isEditing && !isForeign) { setExchangeRate('1'); setMyrPaidSen(null); } }, [isEditing, isForeign]);
+  const rate = resolveFxRate(isEditing ? exchangeRate : pv?.exchange_rate);
+
+  /* ── Edit allocations (migration 0202) ────────────────────────────────────
+     In Edit mode on a SUPPLIER_PAYMENT voucher, list the supplier's outstanding
+     PIs AND AP invoices — the two kinds PV New lists side by side (owner
+     2026-09-08: a rejected AP Payment whose bill was an AP invoice showed "no
+     outstanding purchase invoices" and could not be re-knocked) — so the
+     operator can add/adjust settlements. The already-allocated rows stay
+     listed (their outstanding excludes what this PV applies, so add it back). */
+  const editApplyToPi = isEditing && purpose === 'SUPPLIER_PAYMENT' && !!supplierId;
+  const piListQ = usePurchaseInvoices();
+  const apListQ = useApInvoices('API');
+  /* Other UNPOSTED vouchers' reservations (docs/bugs/0653) — this voucher's own
+     rows are excluded by id, so what it already applies stays visible. */
+  const reservationsQ = usePvReservations(editApplyToPi ? supplierId : null, id || null);
+  const reservedByOthers = reservationsQ.data ?? NO_RESERVATIONS;
+  const editAllocRows = useMemo<EditAllocRow[]>(() => {
+    if (!editApplyToPi) return [];
+    /* Outstanding = the invoice's unpaid balance less what OTHER unposted
+       vouchers reserve. This voucher is a DRAFT: nothing of its own is in
+       paid_sen yet and its rows are excluded from the reservations by id, so
+       its own allocation is already inside that balance — adding it back
+       (as this list once did) counted it twice and let the tick pay an
+       invoice twice over. */
+    const byKey = new Map<string, EditAllocRow>();
+    for (const r of ((piListQ.data?.purchaseInvoices ?? []) as Array<Record<string, any>>)) {
+      const sid = String(r.supplier_id ?? r.supplier?.id ?? '');
+      if (sid !== supplierId) continue;
+      const st = String(r.status ?? '').toUpperCase();
+      if (st !== 'POSTED' && st !== 'PARTIALLY_PAID') continue;
+      const piId = String(r.id ?? '');
+      if (!piId) continue;
+      const outstanding = Number(r.total_sen ?? 0) - Number(r.paid_sen ?? 0) - (reservedByOthers.byPi[piId] ?? 0);
+      if (outstanding <= 0) continue;
+      byKey.set(piId, {
+        key: piId, kind: 'PI',
+        invoiceNumber:      String(r.invoice_number ?? piId),
+        supplierInvoiceRef: (r.supplier_invoice_ref ?? null) as string | null,
+        invoiceDate:        (r.invoice_date ?? null) as string | null,
+        totalSen:           Number(r.total_sen ?? 0),
+        outstandingSen:   outstanding,
+      });
+    }
+    for (const r of apListQ.data?.rows ?? []) {
+      if (String(r.supplierId ?? '') !== supplierId) continue;
+      if (r.status !== 'POSTED' && r.status !== 'PARTIALLY_PAID') continue;
+      const outstanding = r.outstandingSen - (reservedByOthers.byApInvoice[r.id] ?? 0);
+      if (outstanding <= 0) continue;
+      byKey.set(r.id, {
+        key: r.id, kind: 'API',
+        invoiceNumber: r.invoiceNumber, supplierInvoiceRef: r.supplierInvoiceRef, invoiceDate: r.invoiceDate,
+        totalSen: r.totalSen, outstandingSen: outstanding,
+      });
+    }
+    // Ensure every already-allocated invoice is present even if it dropped off.
+    for (const a of allocations) {
+      const key = allocKeyOf(a);
+      if (!key || byKey.has(key)) continue;
+      byKey.set(key, {
+        key, kind: String(a.kind ?? '') === 'API' ? 'API' : 'PI',
+        invoiceNumber:      String(a.invoiceNumber ?? a.invoice_number ?? key),
+        supplierInvoiceRef: (a.supplierInvoiceRef ?? a.supplier_invoice_ref ?? null) as string | null,
+        invoiceDate:        (a.invoiceDate ?? a.invoice_date ?? null) as string | null,
+        totalSen:           Number(a.totalSen ?? a.total_sen ?? a.amountSen ?? a.amount_sen ?? 0),
+        outstandingSen:   Number(a.amountSen ?? a.amount_sen ?? 0),
+      });
+    }
+    /* Oldest first across both kinds — the order you settle a supplier in. */
+    return [...byKey.values()].sort((a, b) => String(a.invoiceDate ?? '').localeCompare(String(b.invoiceDate ?? '')));
+  }, [editApplyToPi, piListQ.data, apListQ.data, allocations, supplierId, reservedByOthers]);
+
+  const editAllocatedSen = useMemo(
+    () => editAllocRows.reduce((s, r) => s + (allocAmounts[r.key] ?? 0), 0),
+    [editAllocRows, allocAmounts],
+  );
+  const editTotalSen = apEdit ? editAllocatedSen + editAdvanceSen : editLinesTotalSen;
+  const totalSen = isEditing ? (isRefundPv ? editRefundAmountSen : editTotalSen) : viewTotalSen;
+  /* Only a typed-lines voucher can apply more than it totals; an AP Payment's
+     total IS its ticks plus prepay. */
+  const editOverAllocated = editApplyToPi && !apEdit && editAllocatedSen > editTotalSen;
+  /* The AP split (owner 2026-09-03): a 405-x supplier is an OTHER CREDITOR — its
+     payment debits AP_OTHER, everyone else AP. The server holds the rule
+     (acc/rules.ts apControlRole); this is the display mirror, as on PV New. */
+  const apAccountCode = (supplierRow?.code.startsWith('405-') ? rolesQ.data?.roles.AP_OTHER : rolesQ.data?.roles.AP) ?? '';
   /* Derived from the ringgit actually paid over the foreign face total, re-derived
      when either moves. null (blank figure, or a zero total — the divide-by-zero)
      leaves the rate alone rather than blanking it. */
@@ -286,63 +392,6 @@ export const PaymentVoucherDetail = () => {
     if (derivedRate === null) return;
     setExchangeRate(String(derivedRate));
   }, [derivedRate]);
-  const rate = resolveFxRate(isEditing ? exchangeRate : pv?.exchange_rate);
-
-  /* ── Edit allocations (migration 0202) ────────────────────────────────────
-     In Edit mode on a SUPPLIER_PAYMENT voucher, list the supplier's outstanding
-     PIs (derived client-side from the PI list) so the operator can add/adjust
-     settlements. The already-allocated PIs stay listed (their outstanding
-     excludes what this PV applies, so add it back). */
-  const editApplyToPi = isEditing && purpose === 'SUPPLIER_PAYMENT' && !!supplierId;
-  const piListQ = usePurchaseInvoices();
-  /* Other UNPOSTED vouchers' reservations (docs/bugs/0653) — this voucher's own
-     rows are excluded by id, so what it already applies stays visible. */
-  const reservationsQ = usePvReservations(editApplyToPi ? supplierId : null, id || null);
-  const reservedByOthers = reservationsQ.data ?? NO_RESERVATIONS;
-  const editAllocRows = useMemo(() => {
-    if (!editApplyToPi) return [] as Array<{ piId: string; invoiceNumber: string; supplierInvoiceRef: string | null; totalSen: number; outstandingSen: number }>;
-    const appliedByThisPv = new Map<string, number>(
-      allocations.map((a) => [String(a.piId ?? a.pi_id ?? ''), Number(a.amountSen ?? a.amount_sen ?? 0)]),
-    );
-    const byId = new Map<string, { piId: string; invoiceNumber: string; supplierInvoiceRef: string | null; totalSen: number; outstandingSen: number }>();
-    for (const r of ((piListQ.data?.purchaseInvoices ?? []) as Array<Record<string, any>>)) {
-      const sid = String(r.supplier_id ?? r.supplier?.id ?? '');
-      if (sid !== supplierId) continue;
-      const st = String(r.status ?? '').toUpperCase();
-      if (st !== 'POSTED' && st !== 'PARTIALLY_PAID') continue;
-      const piId = String(r.id ?? '');
-      if (!piId) continue;
-      const baseOutstanding = Number(r.total_sen ?? 0) - Number(r.paid_sen ?? 0) - (reservedByOthers.byPi[piId] ?? 0);
-      const outstanding = baseOutstanding + (appliedByThisPv.get(piId) ?? 0);
-      if (outstanding <= 0) continue;
-      byId.set(piId, {
-        piId,
-        invoiceNumber:      String(r.invoice_number ?? piId),
-        supplierInvoiceRef: (r.supplier_invoice_ref ?? null) as string | null,
-        totalSen:           Number(r.total_sen ?? 0),
-        outstandingSen:   outstanding,
-      });
-    }
-    // Ensure every already-allocated PI is present even if it dropped off.
-    for (const a of allocations) {
-      const piId = String(a.piId ?? a.pi_id ?? '');
-      if (!piId || byId.has(piId)) continue;
-      byId.set(piId, {
-        piId,
-        invoiceNumber:      String(a.invoiceNumber ?? a.invoice_number ?? piId),
-        supplierInvoiceRef: (a.supplierInvoiceRef ?? a.supplier_invoice_ref ?? null) as string | null,
-        totalSen:           Number(a.totalSen ?? a.total_sen ?? a.amountSen ?? a.amount_sen ?? 0),
-        outstandingSen:   Number(a.amountSen ?? a.amount_sen ?? 0),
-      });
-    }
-    return [...byId.values()];
-  }, [editApplyToPi, piListQ.data, allocations, supplierId, reservedByOthers]);
-
-  const editAllocatedSen = useMemo(
-    () => editAllocRows.reduce((s, r) => s + (allocAmounts[r.piId] ?? 0), 0),
-    [editAllocRows, allocAmounts],
-  );
-  const editOverAllocated = editApplyToPi && editAllocatedSen > editTotalSen;
 
   if (detailQ.isLoading || !pv) return <SkeletonDetailPage />;
 
@@ -351,28 +400,34 @@ export const PaymentVoucherDetail = () => {
     if (!payeeName.trim()) { notify({ title: 'Enter a payee', body: 'Who is this voucher paying?', tone: 'error' }); return; }
     if (!creditAccountCode) { notify({ title: 'Pick a “Paid From” account', body: 'Choose the bank / cash / payables account.', tone: 'error' }); return; }
     if (isRefundPv && editRefundAmountSen <= 0) { void notify({ title: 'Enter the refund amount', body: 'How much goes back to the customer?', tone: 'error' }); return; }
-    if (!isRefundPv && realLines.length === 0) { notify({ title: 'Add at least one line', body: 'Each line needs a debit account and an amount > 0.', tone: 'error' }); return; }
+    if (apEdit && !supplierId) { void notify({ title: 'Pick a supplier', body: 'An AP Payment settles a supplier — choose whose invoices this pays.', tone: 'error' }); return; }
+    if (apEdit && !apAccountCode) { void notify({ title: 'No AP control account', body: 'The AP / Other Creditor role has no account yet — set it on Accounting.', tone: 'error' }); return; }
+    if (apEdit && editTotalSen <= 0) { void notify({ title: 'Nothing to pay yet', body: 'Tick an invoice, type a partial amount, or enter a prepay figure.', tone: 'error' }); return; }
+    if (!isRefundPv && !apEdit && realLines.length === 0) { notify({ title: 'Add at least one line', body: 'Each line needs a debit account and an amount > 0.', tone: 'error' }); return; }
     if (editOverAllocated) {
       notify({ title: 'Applied more than the voucher total', body: `You've applied ${fmtRm(editAllocatedSen)} to PIs but the voucher total is only ${fmtRm(editTotalSen)}.`, tone: 'error' });
       return;
     }
-    // Migration 0202 — settled PIs (SUPPLIER_PAYMENT only). Send the full set of
-    // applied rows (amount > 0) so the server replaces the prior allocations.
+    // Migration 0202 — settled invoices (SUPPLIER_PAYMENT only). Send the full
+    // set of applied rows (amount > 0), both kinds, so the server replaces the
+    // prior allocations.
     const sendAllocations = editApplyToPi
-      ? [
-        ...editAllocRows
-          .map((r) => ({ piId: r.piId, amountSen: allocAmounts[r.piId] ?? 0 }))
-          .filter((a) => a.amountSen > 0),
-        /* An edit REPLACES the allocation set, and this screen's picker lists
-           purchase invoices only — the AP-invoice rows the voucher already
-           settles (raised on the New screen, 2026-09-06) ride through
-           unchanged rather than being silently dropped. */
-        ...allocations
-          .filter((a) => String(a.kind ?? '') === 'API' && a.apInvoiceId)
-          .map((a) => ({ apInvoiceId: String(a.apInvoiceId), amountSen: Number(a.amountSen ?? 0) }))
-          .filter((a) => a.amountSen > 0),
-      ]
+      ? editAllocRows
+        .map((r) => ({ row: r, amountSen: allocAmounts[r.key] ?? 0 }))
+        .filter((a) => a.amountSen > 0)
+        .map((a) => (a.row.kind === 'API' ? { apInvoiceId: a.row.key, amountSen: a.amountSen } : { piId: a.row.key, amountSen: a.amountSen }))
       : [];
+    /* AP Payment: the ONE GL line is written here — Dr the AP control account
+       for exactly the ticks plus the prepay, as PV New writes it. The operator
+       never touches a debit account on this document. */
+    const settledCount = sendAllocations.length;
+    const apLines = [{
+      description: [
+        settledCount > 0 ? `Settle ${settledCount} invoice(s)` : null,
+        editAdvanceSen > 0 ? `prepay ${(editAdvanceSen / 100).toFixed(2)}` : null,
+      ].filter(Boolean).join(' + ') + ` — ${payeeName.trim()}`,
+      debitAccountCode: apAccountCode, amountSen: editTotalSen,
+    }];
     try {
       await update.mutateAsync({
         id,
@@ -391,11 +446,13 @@ export const PaymentVoucherDetail = () => {
           : 1,
         ...(isRefundPv
           ? { refundAmountSen: editRefundAmountSen }
-          : { lines: realLines.map((l) => ({
-            description:      l.description || undefined,
-            debitAccountCode: l.debitAccountCode,
-            amountSen:      l.amountSen,
-          })) }),
+          : apEdit
+            ? { lines: apLines }
+            : { lines: realLines.map((l) => ({
+              description:      l.description || undefined,
+              debitAccountCode: l.debitAccountCode,
+              amountSen:      l.amountSen,
+            })) }),
         // Always send allocations for a SUPPLIER_PAYMENT edit (empty clears
         // them); FREIGHT/OTHER omit the key so the server leaves them untouched.
         ...(editApplyToPi ? { allocations: sendAllocations } : {}),
@@ -665,11 +722,18 @@ export const PaymentVoucherDetail = () => {
       {/* ── Lines ─────────────────────────────────────────────────────── */}
       <section className={styles.card}>
         <div className={styles.cardHeader}>
-          <h2 className={styles.cardTitle}>Lines ({isEditing ? editLines.length : lines.length})</h2>
+          <h2 className={styles.cardTitle}>Lines ({isEditing ? (apEdit ? 1 : editLines.length) : lines.length})</h2>
           <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>total {fmtRm(totalSen, currency)}</span>
         </div>
         <div className={styles.cardBody} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-          {!isEditing || isRefundPv ? (
+          {apEdit ? (
+            /* No line editor on an AP Payment: its one debit line is the AP
+               control, written on save from the ticks below — as on PV New. */
+            <p style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-13)', margin: 0 }}>
+              One line, written by the system on save: Dr {accountLabel(apAccountCode)} {fmtRm(editTotalSen, currency)}
+              {editAdvanceSen > 0 ? ` (incl. prepay ${fmtRm(editAdvanceSen, currency)})` : ''} — pick the invoices below.
+            </p>
+          ) : !isEditing || isRefundPv ? (
             lines.length === 0 ? (
               <p style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-13)' }}>No lines.</p>
             ) : (
@@ -752,10 +816,12 @@ export const PaymentVoucherDetail = () => {
       {(purpose === 'SUPPLIER_PAYMENT' || allocations.length > 0) && (
         <section className={styles.card}>
           <div className={styles.cardHeader}>
-            <h2 className={styles.cardTitle}>Linked Purchase Invoices</h2>
+            <h2 className={styles.cardTitle}>Linked invoices</h2>
             {isEditing && editApplyToPi ? (
               <span style={{ fontSize: 'var(--fs-12)', color: editOverAllocated ? 'var(--c-festive-b, #B8331F)' : 'var(--fg-muted)' }}>
-                Allocated {fmtRm(editAllocatedSen)} / PV total {fmtRm(editTotalSen)}
+                {apEdit
+                  ? `Applying ${fmtRm(editAllocatedSen)}${editAdvanceSen > 0 ? ` + prepay ${fmtRm(editAdvanceSen)}` : ''} = ${fmtRm(editTotalSen)}`
+                  : `Allocated ${fmtRm(editAllocatedSen)} / PV total ${fmtRm(editTotalSen)}`}
               </span>
             ) : (
               <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
@@ -767,10 +833,8 @@ export const PaymentVoucherDetail = () => {
             {isEditing && editApplyToPi ? (
               !supplierId ? (
                 <p style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-13)' }}>Pick a supplier to list outstanding invoices.</p>
-              ) : piListQ.isLoading ? (
+              ) : piListQ.isLoading || apListQ.isLoading ? (
                 <p style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-13)' }}>Loading outstanding invoices…</p>
-              ) : editAllocRows.length === 0 ? (
-                <p style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-13)' }}>This supplier has no outstanding purchase invoices.</p>
               ) : (
                 <>
                   {editOverAllocated && (
@@ -778,10 +842,17 @@ export const PaymentVoucherDetail = () => {
                       You've applied more than the voucher total — reduce the amounts below before saving.
                     </div>
                   )}
+                  {editAllocRows.length === 0 ? (
+                    <p style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-13)' }}>
+                      This supplier has no outstanding invoice{apEdit ? ' — a prepay below still books as their advance' : ''}.
+                    </p>
+                  ) : (
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
                     <thead>
                       <tr style={{ textAlign: 'left', color: 'var(--fg-muted)', fontSize: 'var(--fs-11)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                        <th style={{ padding: '6px 8px', width: 34 }} aria-label="Pay in full" />
                         <th style={{ padding: '6px 8px' }}>Invoice</th>
+                        <th style={{ padding: '6px 8px' }}>Date</th>
                         <th style={{ padding: '6px 8px' }}>Supplier Ref</th>
                         <th style={{ padding: '6px 8px', textAlign: 'right' }}>Amount</th>
                         <th style={{ padding: '6px 8px', textAlign: 'right' }}>Outstanding</th>
@@ -790,16 +861,30 @@ export const PaymentVoucherDetail = () => {
                     </thead>
                     <tbody>
                       {editAllocRows.map((r) => (
-                        <tr key={r.piId} style={{ borderTop: '1px solid var(--line)' }}>
-                          <td style={{ padding: '6px 8px', fontFamily: 'var(--font-mono)' }}>{r.invoiceNumber}</td>
+                        <tr key={r.key} style={{ borderTop: '1px solid var(--line)' }}>
+                          <td style={{ padding: '6px 8px' }}>
+                            {/* Tick = pay this invoice in full; untick clears it. A
+                                typed partial shows unchecked — the AMOUNT is the truth. */}
+                            <input type="checkbox" aria-label={`Pay ${r.invoiceNumber} in full`}
+                              checked={(allocAmounts[r.key] ?? 0) === r.outstandingSen && r.outstandingSen > 0}
+                              onChange={(e) => { const v = e.target.checked ? r.outstandingSen : 0; setAllocAmounts((prev) => ({ ...prev, [r.key]: v })); }}
+                              style={{ width: 16, height: 16, accentColor: 'var(--c-orange)' }} />
+                          </td>
+                          <td style={{ padding: '6px 8px', fontFamily: 'var(--font-mono)' }}>
+                            {r.invoiceNumber}
+                            {r.kind === 'API' && (
+                              <span style={{ marginLeft: 6, fontSize: 'var(--fs-11)', fontFamily: 'inherit', color: 'var(--fg-muted)' }} title="AP invoice — a non-stock supplier bill">AP</span>
+                            )}
+                          </td>
+                          <td style={{ padding: '6px 8px', whiteSpace: 'nowrap', color: 'var(--fg-muted)' }}>{fmtDateOrDash(r.invoiceDate)}</td>
                           <td style={{ padding: '6px 8px', color: r.supplierInvoiceRef ? 'var(--fg)' : 'var(--fg-muted)' }}>{r.supplierInvoiceRef || '—'}</td>
                           <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{fmtRm(r.totalSen)}</td>
                           <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)', color: 'var(--fg-muted)' }}>{fmtRm(r.outstandingSen)}</td>
                           <td style={{ padding: '6px 8px', textAlign: 'right' }}>
-                            <MoneyInput bare valueSen={allocAmounts[r.piId] ?? 0}
+                            <MoneyInput bare valueSen={allocAmounts[r.key] ?? 0} aria-label={`Apply to ${r.invoiceNumber}`}
                               onCommit={(sen) => {
                                 const v = Math.max(0, Math.min(r.outstandingSen, sen ?? 0));
-                                setAllocAmounts((prev) => ({ ...prev, [r.piId]: v }));
+                                setAllocAmounts((prev) => ({ ...prev, [r.key]: v }));
                               }}
                               inputClassName={styles.fieldInput} selectOnFocus />
                           </td>
@@ -807,10 +892,32 @@ export const PaymentVoucherDetail = () => {
                       ))}
                     </tbody>
                   </table>
+                  )}
+                  {apEdit && (
+                    /* 预付 — money for this supplier AHEAD of any invoice, on the
+                       same voucher; on approve the server records it as their
+                       advance. The total follows ticks + prepay (PV New's rule). */
+                    <>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', flexWrap: 'wrap', borderTop: '1px solid var(--line)', paddingTop: 'var(--space-3)', marginTop: 'var(--space-3)' }}>
+                        <b style={{ fontSize: 'var(--fs-13)' }}>Prepay (advance)</b>
+                        <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>pay ahead of any invoice — hangs on this supplier until knocked off</span>
+                        <span style={{ flex: 1 }} />
+                        <label style={{ width: 160 }}>
+                          <span style={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden', clip: 'rect(0 0 0 0)' }}>Prepay amount</span>
+                          <MoneyInput bare valueSen={editAdvanceSen}
+                            onCommit={(sen) => setEditAdvanceSen(Math.max(0, sen ?? 0))}
+                            inputClassName={styles.fieldInput} selectOnFocus />
+                        </label>
+                      </div>
+                      <div style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)', marginTop: 'var(--space-2)' }}>
+                        Books: Dr {apAccountCode || 'AP'} Account Payable {fmtRm(editTotalSen)}{editAdvanceSen > 0 ? ` (incl. prepay ${fmtRm(editAdvanceSen)})` : ''} · Cr {creditAccountCode || 'Paid From'} {fmtRm(editTotalSen)}
+                      </div>
+                    </>
+                  )}
                 </>
               )
             ) : allocations.length === 0 ? (
-              <p style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-13)' }}>No purchase invoices settled by this voucher.</p>
+              <p style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-13)' }}>No invoices settled by this voucher.</p>
             ) : (
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
                 <thead>
@@ -830,6 +937,9 @@ export const PaymentVoucherDetail = () => {
                           {piId
                             ? <Link to={`/scm/purchase-invoices/${piId}`} style={{ color: 'var(--c-orange)' }}>{a.invoiceNumber ?? a.invoice_number ?? piId}</Link>
                             : (a.invoiceNumber ?? a.invoice_number ?? '—')}
+                          {String(a.kind ?? '') === 'API' && (
+                            <span style={{ marginLeft: 6, fontSize: 'var(--fs-11)', fontFamily: 'inherit', color: 'var(--fg-muted)' }} title="AP invoice — a non-stock supplier bill">AP</span>
+                          )}
                         </td>
                         <td style={{ padding: '6px 8px', color: (a.supplierInvoiceRef ?? a.supplier_invoice_ref) ? 'var(--fg)' : 'var(--fg-muted)' }}>{a.supplierInvoiceRef ?? a.supplier_invoice_ref ?? '—'}</td>
                         <td style={{ padding: '6px 8px' }}>
