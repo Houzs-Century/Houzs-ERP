@@ -346,14 +346,50 @@ async function main() {
   /* Idempotency: this exact (code, warehouse, batch, variant) already opened by
      a previous run of this script is skipped. batch_no makes the key unique per
      build, so a top-up run adds only what is genuinely new. */
+  const existingRows = await sql`SELECT item_code, warehouse_id, batch_no, COALESCE(variant_key,'') vk, qty_remaining
+                                  FROM scm.inventory_lots
+                                 WHERE source_doc_type = 'AC_CUTOVER' AND source_doc_no = ${SRC_DOC}`;
   const existing = new Set(
-    (await sql`SELECT item_code, warehouse_id, batch_no, COALESCE(variant_key,'') vk
-                 FROM scm.inventory_lots
-                WHERE source_doc_type = 'AC_CUTOVER' AND source_doc_no = ${SRC_DOC}`)
-      .map((r) => `${norm(r.item_code)}|${r.warehouse_id}|${r.batch_no}|${r.vk}`),
+    existingRows.map((r) => `${norm(r.item_code)}|${r.warehouse_id}|${r.batch_no}|${r.vk}`),
   );
-  const todo = plan.filter((p) => !existing.has(`${norm(p.code)}|${p.whId}|${p.batch}|${p.variantKey}`));
-  const skipped = plan.length - todo.length;
+  /* THE SAME SOFA UNDER A SECOND KEY IS NOT A NEW SOFA (docs/bugs/0721).
+     The test above is the whole cell INCLUDING the variant key, so a build whose
+     document gained or lost a SPECIAL after its lots were opened re-keys, misses
+     the test, and is opened again. HC-SO-012629 gained "Nylon Fabric" between
+     the 2026-08-28 run and the 2026-09-08 one; HC-PO-009712 ended up holding two
+     sets of 5535 compartments for one physical sofa, and the per-ITEM-CODE
+     AutoCount cap in section 4 cannot see it because both sets are the same code.
+
+     Measured before this guard existed: 73 purchase orders held open sofa
+     cutover stock and their own lines justified 73 builds; the lot table held
+     93. So this REPORTS and does not write. Re-keying an open lot is a stock
+     write with money and allocation consequences, and it belongs to
+     repair-duplicate-sofa-cutover-lots.mjs, which plans it and asks. */
+  const openByCell = new Map();
+  for (const r of existingRows) {
+    if (Number(r.qty_remaining) <= 0) continue;
+    const cell = `${norm(r.item_code)}|${r.warehouse_id}|${r.batch_no}`;
+    if (!openByCell.has(cell)) openByCell.set(cell, new Set());
+    openByCell.get(cell).add(r.vk);
+  }
+  const rekeyed = [];
+  const todo = plan.filter((p) => {
+    if (existing.has(`${norm(p.code)}|${p.whId}|${p.batch}|${p.variantKey}`)) return false;
+    const held = openByCell.get(`${norm(p.code)}|${p.whId}|${p.batch}`);
+    if (held && held.size > 0) { rekeyed.push({ p, held: [...held] }); return false; }
+    return true;
+  });
+  const skipped = plan.length - todo.length - rekeyed.length;
+  if (rekeyed.length > 0) {
+    log("");
+    log(`RE-KEYED, NOT RE-OPENED — ${rekeyed.length} build piece(s) already hold OPEN stock on the same (item, warehouse, batch) under a DIFFERENT variant key. Writing them would count one sofa twice (docs/bugs/0721), so they are reported and skipped:`);
+    for (const r of rekeyed) {
+      log(`   ${r.p.code} batch ${r.p.batch} @ ${r.p.whId}`);
+      log(`      document today "${r.p.variantKey || "no-variant"}"`);
+      for (const h of r.held) log(`      already open   "${h || "no-variant"}"`);
+    }
+    log("   The repair that resolves them: backend/scripts/repair-duplicate-sofa-cutover-lots.mjs (plan first).");
+  }
   const units = todo.reduce((s, p) => s + p.qty, 0);
   const zeroCost = todo.filter((p) => p.costSen === 0).length;
   log("");

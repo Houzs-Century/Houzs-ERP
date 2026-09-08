@@ -987,7 +987,10 @@ client never sends a `doc_no`, and money crosses the wire as `*_sen` integers.
   three delivery orders shipped on 2026-09-08 consumed no lot at all
   (`docs/bugs/0722-a-delivery-order-invented-the-sofa-s-leg-height-so-the-stock.md`).
   The values are pinned per call site by
-  `frontend/src/vendor/scm/components/sofa-leg-default-seed.test.ts`.
+  `frontend/src/vendor/scm/components/sofa-leg-default-seed.test.ts`. On
+  `SalesOrderDetail.tsx` the two props share one line on purpose: that file sits
+  at its `scripts/file-size-ceilings.json` ceiling, and the gate charges GROWTH,
+  so a prop added on its own line fails the build (it did, on #3296).
 - **Bedframe** — Gap ← `maintenanceConfig.gaps`; Divan ←
   `maintenanceConfig.divanHeights`; Leg ← `maintenanceConfig.legHeights`.
   `totalHeight` (= divan + leg + gap) is COMPUTED into the variants blob for the
