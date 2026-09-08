@@ -254,7 +254,7 @@ import {
 } from '../lib/so-create-payment-slips';
 import { pickCrossCategoryMatch, type AutoMatchCandidate } from '../lib/cross-category-match';
 import { recomputeSoStockAllocation, isHardBoundLine } from '../lib/so-stock-allocation';
-import { snapshotSoLineLinks, planSoLineRelink, applySoLineRelink } from '../lib/so-line-relink';
+import { snapshotSoLineLinks, planSoLineRelink, applySoLineRelink, soLineVariantSig } from '../lib/so-line-relink';
 import { advanceSoGeneration } from '../lib/so-generation';
 import { creditFromCancelledSo, getCustomerCreditBalance } from '../lib/customer-credits';
 import { summariseReadiness, type ReadinessLine } from '../lib/so-readiness';
@@ -10089,7 +10089,7 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
   /* Insert the NEW set first, then remove the OLD — an insert failure leaves
      the order untouched; a delete failure rolls the inserts back. */
   const { data: inserted, error: insErr } = await sb.from('mfg_sales_order_items')
-    .insert(stampCompany(rows, c)).select('id, item_code, line_no');
+    .insert(stampCompany(rows, c)).select('id, item_code, line_no, variants');
   if (insErr) return c.json({ error: 'insert_failed', reason: insErr.message }, 500);
   const { error: delErr } = await sb.from('mfg_sales_order_items').delete().in('id', oldIds);
   if (delErr) {
@@ -10103,10 +10103,14 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
      genuinely gone and is reported instead of quietly invented. */
   const soLinkResult = await (async () => {
     if (soLinkSnapshot.length === 0) return { restored: 0, dropped: 0 };
+    /* The bucket is (SKU, COLOUR) — docs/bugs/0672 site 11. On SKU alone the two
+       fabrics of one sofa model share a bucket and pair by POSITION, so a
+       reordered replacement set hands the BLUE two-seater's purchase order to
+       the GREY one. Both sides already carry `variants`. */
     const plan = planSoLineRelink(
-      oldLines.map((l) => ({ id: l.id, itemCode: l.item_code, lineNo: l.line_no ?? null })),
-      ((inserted ?? []) as Array<{ id: string; item_code: string | null; line_no: number | null }>)
-        .map((r) => ({ id: r.id, itemCode: r.item_code, lineNo: r.line_no })),
+      oldLines.map((l) => ({ id: l.id, itemCode: l.item_code, lineNo: l.line_no ?? null, variantSig: soLineVariantSig(l.variants) })),
+      ((inserted ?? []) as Array<{ id: string; item_code: string | null; line_no: number | null; variants: unknown }>)
+        .map((r) => ({ id: r.id, itemCode: r.item_code, lineNo: r.line_no, variantSig: soLineVariantSig(r.variants) })),
       soLinkSnapshot,
     );
     if (plan.dropped.length > 0) {
