@@ -69,10 +69,18 @@ const MESSAGE = RAW_MESSAGE.trim() === "" ? null : RAW_MESSAGE.trim();
 const log = (m = "") => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 const warn = (m) => console.log(process.env.GITHUB_ACTIONS ? `::warning::${m}` : `WARNING: ${m}`);
 
-/* readScmAreaKeys returns a SET, and the read-only checker spreads it before
-   using it. Normalised here once, sorted, so every comparison below is an array
-   and no call site has to remember which it got. */
-const areaKeys = [...readScmAreaKeys()].sort();
+/* BOTH SHAPES, on purpose, and this cost a dispatch to learn.
+   `readScmAreaKeys` returns a SET and `validateFreezeValue` CALLS `.has()` on
+   what you hand it — so normalising to an array and passing that in dies with
+   `areaKeys.has is not a function`, in the workflow, on the first real run. The
+   Set is what the library gets; the sorted array is for this file's own
+   filtering and printing. Neither is derived from the other at a call site. */
+const AREA_SET = readScmAreaKeys();
+if (typeof AREA_SET?.has !== "function") {
+  console.error("readScmAreaKeys no longer returns a Set — validateFreezeValue calls .has() on it.");
+  process.exit(1);
+}
+const areaKeys = [...AREA_SET].sort();
 if (areaKeys.length === 0) {
   console.error("Could not read the SCM area keys. Refusing to write a value nothing validated.");
   process.exit(1);
@@ -114,12 +122,12 @@ try {
   log(`set-write-freeze — MODE=${MODE}`);
   log("");
   log(`BEFORE  ${KEY} = ${JSON.stringify(before)}`);
-  const parsedBefore = before === null ? null : validateFreezeValue(before, areaKeys);
+  const parsedBefore = before === null ? null : validateFreezeValue(before, AREA_SET);
   if (parsedBefore) log(`        means: ${describeFreezeValue(parsedBefore)}`);
   else warn("        the row is ABSENT — migration 0272 seeds 'off', so an absent row reads as OPEN.");
   log("");
   log(`AFTER   ${KEY} = ${JSON.stringify(target)}`);
-  const parsedAfter = validateFreezeValue(target, areaKeys);
+  const parsedAfter = validateFreezeValue(target, AREA_SET);
   log(`        means: ${describeFreezeValue(parsedAfter)}`);
   if (!parsedAfter.ok) {
     console.error("REFUSED — the value this script built does not parse. Nothing was written.");
@@ -200,7 +208,7 @@ try {
       try {
         const [after] = await check`SELECT value, description FROM scm.app_config WHERE key = ${KEY}`;
         const got = after?.value ?? null;
-        const p = got === null ? null : validateFreezeValue(got, areaKeys);
+        const p = got === null ? null : validateFreezeValue(got, AREA_SET);
         const resolved = p?.ok ? (p.scope === "off" ? [...areaKeys] : [...p.open].sort()) : null;
         const want = [...openAfter].sort();
         const same = resolved !== null && resolved.length === want.length && resolved.every((a, i) => a === want[i]);
