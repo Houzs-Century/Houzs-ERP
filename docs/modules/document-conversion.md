@@ -1731,10 +1731,39 @@ Two things about it are load-bearing and easy to get wrong:
   them can be repaired — their only available failure is a missing LINK. The
   checker says so out loud so the silence is not read as a clean measurement.
 
-**Status: the instrument shipped, the number is not taken yet.**
-`workflow_dispatch` requires the workflow file on the default branch, so it
-cannot run until it merges. `docs/bugs/0705` carries the entry and the result
-goes there.
+**First dispatch, run `34201730668` (2026-09-08 15:54 Malaysia) — PARTIAL.** It
+answered SO -> PO and then died on `function min(uuid) does not exist`
+(`docs/bugs/0707`), so PO -> GR and GR -> PI have no answer yet. What it did
+prove:
+
+```
+    scm.mfg_sales_order_items.po_qty_picked  vs  SODTL.TransferedPOQty
+        ERP rows: 14808 keyed in 14344 group(s); 254 carry NO AutoCount key
+        of the keyed groups: 12 name a key the book does not have,
+                             13571 the book leaves the counter NULL
+        COMPARED: 761 group(s)
+          agree                         736
+          ERP reads LOW                  24   the book transferred MORE than we record
+          ERP reads HIGH                  1
+          ERP asserts a transfer          0
+        681 of the compared groups are 1:1; 661 of those agree exactly
+```
+
+**24 sales-order lines where the account book says the purchase was made and the
+ERP's picker still thinks it was not** — the second-purchase hole, now sized
+against the book rather than against our own children (section 4b of the
+symmetry check reported 22 for the same shape). Section 1's constant test also
+passed against production, so the three counters and `linked_ac_dtlkey` are real
+varied data, not the `NULL::bigint AS ac_dtlkey` shape:
+
+```
+    po_qty_picked  15062 rows | 14808 keyed (14344 distinct keys) | 6 distinct values, 0..5
+    received_qty    1344 rows |  1309 keyed (1137 distinct keys) | 12 distinct values, 0..200
+    invoiced_qty     792 rows |   563 keyed  (504 distinct keys) |  8 distinct values, 0..172
+```
+
+**PO -> GR and GR -> PI remain UNKNOWN.** `docs/bugs/0705` carries the entry and
+the completed result goes there.
 
 ### G3 — DRAFT policy is decided three different ways, and where a DRAFT does not consume, two documents can be raised for the same line.
 
