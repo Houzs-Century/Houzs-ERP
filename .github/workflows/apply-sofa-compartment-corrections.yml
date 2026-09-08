@@ -45,6 +45,17 @@ on:
         required: false
         default: ""
         type: string
+      # apply=1 is refused unless this says exactly I HAVE REVIEWED THE DRY-RUN.
+      # The script grew that gate because a build changes the ROW COUNT of a live
+      # sales order and carries the change onto the PO, GRN, DO and invoices. The
+      # input is declared HERE and passed in BOTH jobs below, which is the half
+      # docs/bugs/0700 records going missing: the phrase existed in the script and
+      # the workflow around it had no way to satisfy it, so apply=1 died in 8s.
+      confirm:
+        description: 'type exactly: I HAVE REVIEWED THE DRY-RUN (only needed when apply=1)'
+        required: false
+        default: ""
+        type: string
 
 concurrency:
   group: apply-sofa-compartment-corrections-${{ inputs.target }}
@@ -64,6 +75,7 @@ jobs:
       - run: node scripts/apply-sofa-compartment-corrections.mjs
         env:
           APPLY: ${{ inputs.apply }}
+          CONFIRM: ${{ inputs.confirm }}
           COMPANY: ${{ inputs.company }}
           DOC: ${{ inputs.doc }}
           FILE: ${{ inputs.file }}
@@ -81,6 +93,7 @@ jobs:
       - run: node scripts/apply-sofa-compartment-corrections.mjs
         env:
           APPLY: ${{ inputs.apply }}
+          CONFIRM: ${{ inputs.confirm }}
           COMPANY: ${{ inputs.company }}
           DOC: ${{ inputs.doc }}
           FILE: ${{ inputs.file }}
