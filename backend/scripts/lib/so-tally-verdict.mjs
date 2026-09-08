@@ -104,6 +104,13 @@ export const AXIS_GROUPS = Object.freeze([
   { key: "specials", label: "specials", axes: ["specials"] },
   { key: "sofa-compartments", label: "sofa compartments", axes: ["sofa compartments", "sofa build not verifiable"] },
   {
+    /* 「transfer from和transfer to」 — the owner, 2026-09-08. Which document a
+       line was raised FROM, and how much of it has been transferred ON. */
+    key: "transfer-chain",
+    label: "单据转换链 — which document the line came FROM, and how much has gone ON",
+    axes: ["transfer from", "transfer to", "transfer chain not verifiable"],
+  },
+  {
     key: "bedframe-build",
     label: "bedframe build (divan / gap / leg / total height)",
     axes: ["divan height", "gap", "leg height", "T.Heights"],
@@ -196,6 +203,81 @@ export const DOC_TYPES = Object.freeze({
       "agree with the account book on the document, the lines, the SKU, the quantity received and the money the " +
       "book states.",
   },
+  /* ── THE THREE THE OWNER NAMED ON 2026-09-08 ───────────────────────────────
+   * 「SO PO GR PI SI DO 等等？都解决了吗？」 — six types, and only three had a
+   * spec, so `docTypeSpec` THREW for the other three and no report could be
+   * asked for them. The reconcile has always compared all six and the recorder
+   * has always been keyed by type; what was missing was the words.
+   *
+   * The BUCKETING is untouched and stays that way: `bucketOf` and `isTallied`
+   * do not learn what a delivery order is, and adding these three cannot change
+   * what TALLIED means. Only labels and one scope sentence differ.
+   *
+   * Two of the labels would be LIES if they did not move, and that is the whole
+   * reason the table exists rather than a default:
+   *   - a delivery order's item code is taken from the SALES ORDER line by
+   *     design, never from DODTL.ItemCode (lib/ac-reconcile-erp-sql.mjs,
+   *     `itemCodeDeclared`), and a migrated delivery carries no money at all;
+   *   - a purchase invoice's and a sales invoice's LINES come from OUR receipt
+   *     or delivery, not from the book's PIDTL / IVDTL (`migratedChainLineShape`
+   *     on both), so the line SHAPE is ours and the money is what must agree.
+   * Printing "unit price" as a checked axis for any of the three would report
+   * our own derivation back as agreement. */
+  DO: {
+    key: "DO",
+    heading: "全部 DELIVERY ORDER 对账结论 — DELIVERY ORDERS vs THE ACCOUNT BOOK",
+    plural: "delivery orders",
+    headline: "DELIVERY ORDERS",
+    grain: null,
+    scope: (v, num) =>
+      `${num(v.documents.book)} delivery orders in the account book; ${num(v.documents.scope)} are raised against ` +
+      `an OUTSTANDING sales order and expected in the ERP; ${num(v.documents.outOfScopeAbsent)} are out of scope ` +
+      "and absent, which is that rule working. The owner declined importing the delivery HISTORY — 11,443 " +
+      "documents — and that decision is what keeps this population small.",
+    labels: {
+      "item-code": "the SKU (taken from the sales-order line by design, so this is our own copy)",
+      price: "the money the book states (document total)",
+    },
+    tallied:
+      "agree with the account book on the document, the lines, the quantity delivered, and which sales order each " +
+      "line was delivered against.",
+  },
+  IV: {
+    key: "IV",
+    heading: "全部 SALES INVOICE 对账结论 — SALES INVOICES vs THE ACCOUNT BOOK",
+    plural: "sales invoices",
+    headline: "SALES INVOICES",
+    grain: null,
+    scope: (v, num) =>
+      `${num(v.documents.book)} sales invoices in the account book; ${num(v.documents.scope)} belong to a sales ` +
+      `order or delivery order the ERP holds — the owner's own ruling 「没有的 SO DO 何来发票？有的 SO DO 自然要发票」 ` +
+      `— and ${num(v.documents.outOfScopeAbsent)} are out of scope and absent, which is that rule working.`,
+    labels: {
+      lines: "the lines (built from OUR delivery order, so the number of rows is ours and the money is what must agree)",
+      price: "the money the book states (document total)",
+    },
+    tallied:
+      "agree with the account book on the document, the money, and which delivery order or sales order each line " +
+      "was invoiced against.",
+  },
+  PI: {
+    key: "PI",
+    heading: "全部 PURCHASE INVOICE 对账结论 — PURCHASE INVOICES vs THE ACCOUNT BOOK",
+    plural: "purchase invoices",
+    headline: "PURCHASE INVOICES",
+    grain: null,
+    scope: (v, num) =>
+      `${num(v.documents.book)} purchase invoices in the account book; ${num(v.documents.scope)} belong to a ` +
+      `goods receipt or purchase order the ERP holds; ${num(v.documents.outOfScopeAbsent)} are out of scope and ` +
+      "absent, which is that rule working.",
+    labels: {
+      lines: "the lines (built from OUR goods receipt, so the number of rows is ours and the money is what must agree)",
+      price: "the money the book states (document total)",
+    },
+    tallied:
+      "agree with the account book on the document, the money, and which goods receipt or purchase order each " +
+      "line was invoiced against.",
+  },
 });
 
 /** The spec for a type, or a refusal. A typo must not silently render as SO. */
@@ -242,6 +324,15 @@ export const DECLARED_LABEL = Object.freeze({
     "a MIGRATED goods receipt carrying RM 0.00 — your decision 2026-09-08 「GR 0 没关系」. PROVED per document " +
     "(migrated paperwork, zero inventory movements), never assumed; the ones that could NOT be proved are still " +
     "counted as differences",
+  "chain-line-not-in-book":
+    "the account book itself does not record WHICH LINE a delivery / invoice / receipt was raised from — only " +
+    "which DOCUMENT. Our link names the same document the book does; there is no finer answer in the book to " +
+    "check against, and none is claimed",
+  "chain-no-source":
+    "the book raised this line from nothing at all — it is the head of a chain, typed from scratch",
+  "chain-no-erp-counter":
+    "this edge has no stored ceiling in the ERP: how much has gone on is worked out from the child documents " +
+    "every time it is asked, so there is no saved number that can drift out of step",
 });
 
 /**
