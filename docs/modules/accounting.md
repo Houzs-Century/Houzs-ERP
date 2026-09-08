@@ -941,6 +941,48 @@ two days:
   owner's own answer to where banks are defined ("chart of account 我也是会做成总
   维护不是？").
 
+**Reading the bank's file — headings, never positions (2026-09-08; owner, on
+the eight Hong Leong files for 2990's 310-0020 / account 23600602788: 别卡死
+读 column, 我怕未来 bank 可能换 format … 可能隔几天我就做一次).**
+`backend/src/acc/bank-parse.ts` finds every column by its heading text
+(case, spaces and punctuation folded): the names the config teaches first,
+then `DEFAULT_HEADINGS` — the captions banks are known to print for each
+role (Date / Transaction Date / Txn Date…, Deposit / Credit Amount…,
+Withdrawal / Payment Amount…) — so a re-captioned or reordered export still
+reads, and a file matching none of them is refused with its own headings
+quoted. A column map's values are one heading or SEVERAL (JSON arrays); the
+`reference` role JOINS every present heading (Hong Leong's any-day export
+splits the narrative into sender name, reference and "other details"). It
+strips Excel's `="…"` guard from every cell, reads the opening balance from
+the statement's own row ("Balance from previous statement", "Prior Day
+Balance :") instead of deriving it from a day's single printed balance, and
+hands lines back in DATE ORDER whichever way the bank printed them (the
+any-day export runs newest first), closing = the newest printed balance.
+Uploads overlap by design: `movementFingerprint` (day + amount + the
+narrative's WORDS in any order, a split word glued back — "MERCHAN T") keys
+what this account already carries on ANY earlier statement, counted, so a
+longer export marks what it repeats DUPLICATE/IGNORED (naming the entry or
+the statement it sits on) and adds only the movements beyond that count —
+two identical transfers on one day stay two
+(`bankUpload`, `backend/src/scm/routes/accounting-bank.ts`). Setup lives on
+Reconciliation setup's **Bank statements** card
+(`frontend/src/pages/scm-v2/SettlementSetup.tsx`, hooks in
+`frontend/src/pages/scm-v2/bank-queries.ts`): per company, the account, the
+bank, the account number the file must mention, format, delimiter, amount
+style, and each heading role as a comma-separated list, a blank role falling
+back to the built-in names — `GET/POST /accounting/bank/config`
+(`backend/src/scm/routes/accounting-bank-config.ts`; money accounts of this
+company's chart only, CSV/TXT only, an amount named one way only; the
+`ready` flag on `/bank/setup` is now always true for that reason).
+`backend/src/db/migrations-pg/20260908T2100_acc_bank_statement_hlb_2990.sql`
+seeds 2990's HLB account (both layouts' captions), adds the GHL recognition
+rule ("/GHL/<merchant> … (FOR GHL)" on an interbank GIRO credit) and loosens
+the HLB rule to the split word. Contracts: `backend/src/acc/bank-parse.test.ts`
+(both Hong Leong layouts on synthetic rows, the built-in headings, the
+fingerprint), `backend/src/acc/bank-match.test.ts` (GHL, HLB whole and
+split), `backend/tests/bankRoutes.test.ts` ("uploading overlapping exports",
+"setting up a statement account"), `SettlementSetup.test.tsx` (the card).
+
 On both reconciliation screens, working a statement REPLACES the list rather than stacking under it —
 the owner on the version that stacked: 就感觉很多东西挤在一页. Each page links to
 the other where the work hands over. What they share is presentation only

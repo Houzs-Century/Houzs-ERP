@@ -1,0 +1,90 @@
+name: Are all the sales orders tallied? (read-only)
+
+# 「所以SO 都tally了吗?」 / 「确保全部SO 都是准确的」 /
+# 「处理完了我要知道是不是全部SO 都tally了内容包裹SKU?包裹sofa compartment?」
+# — the owner, three times, 2026-09-07 and 2026-09-08.
+#
+# He asked three times because no single artifact answered it. The answer was
+# assembled by hand from three places in the 1,300-line reconcile log — the
+# per-type SUMMARY table, the variants-inside-the-line table, and the unread
+# cross-tab — and on 2026-09-08 the SAME corpus was reported truthfully as
+# "0 differ" and as "8 differ" on the same day, while the per-document verdict
+# said 149. Three true sentences about three different axes; none an answer.
+#
+# This job prints ONE verdict with a column per axis in his words, a column of
+# its own for the sofas that CANNOT be compared at all, and one sentence at the
+# bottom. The word TALLIED is decided in code (scripts/lib/so-tally-verdict.mjs,
+# `isTallied`) and only when zero documents are work, so no summary writer gets
+# a vote.
+#
+# READ-ONLY, AND THIS LANE WRITES NOTHING TO PRODUCTION. It runs
+# check-ac-erp-reconcile.mjs — SELECTs only, one connection, no DDL, no
+# transaction — and reads the machine-readable verdict that run writes to a
+# temp file. There is no MODE=apply and no publish step: the sibling workflow
+# `ac-erp-reconcile.yml` is where the verdict can be PUBLISHED to
+# scm.so_reconcile_verdict, deliberately not here.
+#
+# The AutoCount side is the committed snapshot
+# backend/scripts/data/ac-reconcile-truth.json.gz — the book is reachable only
+# over ZeroTier from the office network, which a GitHub-hosted runner has no
+# route to. The checker REFUSES when that snapshot is stale rather than
+# answering against an old book.
+#
+# Manual trigger only: it is a question, not a gate, and a production DB read on
+# a schedule becomes CI noise nobody reads.
+on:
+  workflow_dispatch:
+    inputs:
+      show:
+        description: "Offenders to list per section (raise it to adjudicate every sofa)"
+        required: false
+        default: "20"
+        type: string
+      company_id:
+        description: "ERP company (AED_HOUZS is company 1)"
+        required: false
+        default: "1"
+      max_snapshot_age_days:
+        description: "Refuse if the AutoCount snapshot is older than this many days"
+        required: false
+        default: "2"
+      reconcile_log:
+        description: "Also print the full reconcile log underneath the verdict (long)"
+        required: false
+        default: false
+        type: boolean
+
+# Its OWN group, never the deploy's: a diagnostic must not queue behind — or
+# displace — a release. Also not the reconcile's, so asking this question does
+# not cancel somebody's reconcile run mid-flight.
+concurrency:
+  group: so-tally-verdict
+  cancel-in-progress: true
+
+jobs:
+  verdict:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - name: The verdict
+        run: node scripts/check-so-tally.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SHOW: ${{ inputs.show }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          MAX_SNAPSHOT_AGE_DAYS: ${{ inputs.max_snapshot_age_days }}
+          RECONCILE_LOG: ${{ inputs.reconcile_log }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first

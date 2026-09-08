@@ -1594,6 +1594,7 @@ Three tools own this edge and they do not overlap:
 | ONE purchase row, ONE sales row | `repair-po-so-link-from-book.mjs` | a Map keyed by DtlKey would keep one row of a multi-row side |
 | SEVERAL on both sides, same products | `repair-po-so-link-sofa-compartments.mjs` | the pairing is a copy plus an identity match, not a choice |
 | ONE collapsed purchase row (`{model}-1S`), SEVERAL sales rows | `repair-collapsed-sofa-po-line.mjs` | the other two cannot invent a compartment; this one takes it from the BOOK's own Desc2 and only when the sales side already holds that exact multiset |
+| the same, but the purchase row is filed `others` AND carries a migrated, movement-free goods-receipt line | `repair-mislabelled-sofa-po-lines.mjs` | the row above refuses any build with a receipt line (its gate 6) and leaves the category alone; this one splits the receipt WITH the line (owner 2026-08-11) and writes `item_group = 'sofa'`, because the sofa stock import and `computeVariantKey` both key on it. Measured 2026-09-08: all 14 rows of this shape carry a receipt, so the row above reaches none of them (run 34220188752). `docs/bugs/0714-the-sofa-purchase-line-was-filed-as-others-so-the-sales-orde.md` |
 
 All three share ONE pairing vocabulary — `scripts/lib/sofa-po-so-pair.mjs` and
 `scripts/lib/redecode-sofa-plan.mjs`. Two copies of the pairing rule existed for
@@ -1609,6 +1610,16 @@ purchase row that decoded to a single `1S` from a text today's parser reads as
 `docs/bugs/0715` was written about. Widening the predicate would rewrite live
 one-seaters; the narrow answer is to require the sales side to state the same
 multiset independently.
+
+**And do not key a sofa tool on the PURCHASE row's `item_group` either.** It did
+not survive the SO -> PO hop on this population — measured, run `34218446892`:
+BOTH rows of `HC-PO-009435`, the sofa and its pillows, answer "not a sofa". That
+is the second, independent reason `redecode-collapsed-sofa-lines.mjs` (corpus:
+`WHERE i.item_group = 'sofa'`) cannot see these documents. What makes the line a
+sofa is the SALES side and the piece codes. The category is a real defect —
+`computeVariantKey` reads it, so it changes which stock bucket the row matches —
+and it belongs to the `docs/bugs/0514` lane, not to a link repair.
+`docs/bugs/0716`.
 
 **A link does not recompute readiness** (`docs/bugs/0675`). After any of the
 three, dispatch *Recompute SO stock allocation*, then *Recompute SO

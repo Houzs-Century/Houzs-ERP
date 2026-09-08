@@ -48,7 +48,14 @@
 //   2  THE PURCHASE SIDE IS ONE UNLINKED ROW AND THE SALES SIDE IS SEVERAL.
 //      Two purchase rows on one book line is somebody else's decomposition and
 //      is left alone; a row that already names a sales line is never re-pointed.
-//   3  THE PURCHASE ROW IS A COLLAPSED SINGLE and carries build text of its own.
+//   3  THE PURCHASE ROW IS A COLLAPSED SINGLE and carries build text of its own,
+//      and THE SALES SIDE IS A SOFA. What makes this a sofa is the sales side:
+//      the purchase row's own `item_group` did not survive the SO -> PO hop on
+//      this population (docs/bugs/0514) - measured, run 34218446892 - which is
+//      also why `redecode-collapsed-sofa-lines.mjs`, whose corpus is
+//      `WHERE i.item_group = 'sofa'`, cannot see it. That category is a real
+//      defect and is REPORTED, never written here: it would move
+//      `computeVariantKey` and with it which stock bucket the row matches.
 //   4  THE PURCHASE ROW'S OWN TEXT DECODES TO EXACTLY THE SALES SIDE'S PIECES,
 //      compared as a MULTISET (`lib/redecode-sofa-plan.mjs`), with every piece
 //      code unique so the dedication is an identity match and never a choice.
@@ -354,7 +361,21 @@ async function main() {
     /* Gate 2 - the shape this repair exists for, and nothing else. */
     if (rows.length !== 1) { refused.poNotOne++; continue; }
     const po = rows[0];
-    if ((po.item_group ?? "").toLowerCase() !== "sofa") { refused.notSofa++; continue; }
+    /* WHAT MAKES THIS A SOFA IS THE SALES SIDE, NOT THE PURCHASE ROW'S OWN
+       `item_group`. Measured on production, run 34218446892: HC-PO-009435's
+       two rows - the sofa AND its pillows - are BOTH refused by a
+       `po.item_group = 'sofa'` test, because the purchase row's category did
+       not survive the SO -> PO hop (the class docs/bugs/0514 names). That test
+       is also why `redecode-collapsed-sofa-lines.mjs`, whose corpus is
+       `WHERE i.item_group = 'sofa'`, cannot see this population either.
+       The category is a real defect and it is NOT repaired here - writing it
+       would move `computeVariantKey`, and with it which stock bucket the row
+       matches. It is REPORTED on every planned build instead. */
+    if (!soSide.every((r) => (r.item_group ?? "").toLowerCase() === "sofa")) {
+      refused.notSofa++;
+      note(`the sales side is not a sofa (${[...new Set(soSide.map((r) => r.item_group ?? "(null)"))].join(", ")})`);
+      continue;
+    }
     if (po.so_item_id) { refused.poLinked++; continue; }
     if (soSide.length < 2) { refused.soSideNotDecomposed++; continue; }
 
@@ -413,7 +434,9 @@ async function main() {
     /* Gate 6 - downstream. Deliberately stricter than "posted": a draft
        delivery counts, and the log says which kind it was. */
     const grs = await sql`
-      SELECT g.grn_number AS doc FROM scm.grn_items gi JOIN scm.grns g ON g.id = gi.grn_id
+      SELECT g.grn_number AS doc, g.migrated_no_stock AS migrated,
+             gi.item_code AS code, gi.qty_accepted AS qty
+        FROM scm.grn_items gi JOIN scm.grns g ON g.id = gi.grn_id
        WHERE gi.purchase_order_item_id = ${po.id}`;
     const dos = await sql`
       SELECT d.do_number AS doc, UPPER(COALESCE(d.status::text, '')) AS status
@@ -421,7 +444,14 @@ async function main() {
        WHERE di.so_item_id = ANY(${soSide.map((r) => r.id)})`;
     if (grs.length || dos.length) {
       refused.downstreamMoved++;
-      note(`downstream has moved - ${grs.length} goods-receipt line(s) (${grs.map((g) => g.doc).join(", ") || "-"}), `
+      /* WHICH KIND of receipt matters and the log has to say so. A cutover
+         receipt with `migrated_no_stock` moved no units - the balance snapshot
+         already brought them in - so it is paperwork, while a REAL one booked
+         stock under the code the row carried at the time. Both are refused
+         here; only one of them means physical goods are sitting under the
+         wrong SKU. */
+      note(`downstream has moved - ${grs.length} goods-receipt line(s) `
+        + `(${grs.map((g) => `${g.doc} ${g.code} x${g.qty} ${g.migrated ? "migrated/no stock" : "REAL STOCK"}`).join(", ") || "-"}), `
         + `${dos.length} delivery line(s) (${dos.map((d) => `${d.doc} ${d.status}`).join(", ") || "-"})`);
       continue;
     }
@@ -449,7 +479,7 @@ async function main() {
   out(`    the BOOK records no source order                   ${String(refused.bookHasNoSource).padStart(5)}  a link here would be INVENTED`);
   out(`    the source order is not live in the ERP            ${String(refused.soNotLive).padStart(5)}  not imported, or terminal`);
   out(`    the book line is several ERP purchase rows         ${String(refused.poNotOne).padStart(5)}  already decomposed`);
-  out(`    the purchase row is not a sofa                     ${String(refused.notSofa).padStart(5)}`);
+  out(`    the SALES side is not a sofa                       ${String(refused.notSofa).padStart(5)}`);
   out(`    the purchase row already names a sales line        ${String(refused.poLinked).padStart(5)}`);
   out(`    the sales side is a single row too                 ${String(refused.soSideNotDecomposed).padStart(5)}  1:1 - the other repair's job`);
   out(`    the purchase row is not a collapsed single         ${String(refused.poNotCollapsed).padStart(5)}  (gate 3)`);
@@ -469,7 +499,8 @@ async function main() {
     out(`      book ${b.acPo} <- ${b.acSo}, SO line ${b.soDtlKey}; the book moved ${b.bookMoved} of ${b.bookQty}`);
     out(`      purchase text ${JSON.stringify(oneLine(b.po.d2))}`);
     if (b.ps.why.length) out(`      decoder notes: ${b.ps.why.join("; ")}`);
-    out(`      ERP purchase row qty ${b.po.qty} received ${b.po.received_qty}`);
+    out(`      ERP purchase row qty ${b.po.qty} received ${b.po.received_qty}, item_group ${b.po.item_group ?? "(null)"}`
+      + `${(b.po.item_group ?? "").toLowerCase() === "sofa" ? "" : "   <- the PURCHASE row's category did not survive the SO -> PO hop (docs/bugs/0514). NOT repaired here: writing it would move computeVariantKey and with it the stock bucket."}`);
     for (const d of b.dedicate) {
       out(`      ${d.code === b.plan.update ? "re-code" : "insert "} ${String(d.code).padEnd(22)} -> ${d.so.doc} `
         + `[line ${d.so.stock_status}, batch ${d.so.allocated_batch_no ?? "(none)"}]`);
@@ -505,6 +536,46 @@ async function main() {
       out(`    ${doc}  ${String(r.code).padEnd(22)} ${String(r.item_group).padEnd(9)} ${String(r.stock_status).padEnd(8)}`
         + ` SO line ${r.dtl} -> the book raised ${[...new Set(r.pos.map((p) => p.docNo))].join(", ")}`);
     }
+  }
+
+  /* ── why each blocked line cannot reach READY, in the allocator's own terms ── */
+  out("");
+  out("==============================================================================");
+  out("4.  WHAT THE ALLOCATOR AND THE SHIP GATE SEE ON THOSE LINES");
+  out("==============================================================================");
+  out("");
+  out("  A sofa set reaches READY two ways (src/scm/lib/so-stock-allocation.ts 7b):");
+  out("  ONE production batch covering the WHOLE set - and a batch is an open lot with a");
+  out("  NON-NULL batch_no - or, when no batch covers, the owner's hard binding through");
+  out("  its own dedicated purchase line's received_qty. The second road leaves");
+  out("  allocated_batch_no NULL, and the DO ship gate (sofa-batch-guard.ts) refuses a");
+  out("  line with no bound batch - so a hard-bound sofa ships through the drop-ship");
+  out("  confirmation, which is offered only when EVERY affected line has a bound PO.");
+  out("");
+  const blockedCodes = [...new Set(blocked.map((r) => r.code).filter(Boolean))];
+  const lots = blockedCodes.length ? await sql`
+    SELECT item_code, warehouse_id::text AS wh, batch_no,
+           SUM(qty_remaining)::numeric AS qty, count(*)::int AS lots
+      FROM scm.v_inventory_lots_open
+     WHERE qty_remaining > 0 AND item_code = ANY(${blockedCodes})
+     GROUP BY item_code, warehouse_id, batch_no` : [];
+  const byCode = new Map();
+  for (const l of lots) {
+    if (!byCode.has(l.item_code)) byCode.set(l.item_code, { batched: 0, unbatched: 0 });
+    const b = byCode.get(l.item_code);
+    if (l.batch_no) b.batched += Number(l.qty); else b.unbatched += Number(l.qty);
+  }
+  const batchedCodes = [...byCode.entries()].filter(([, v]) => v.batched > 0).length;
+  out(`  ${blockedCodes.length} distinct product code(s) across the blocked lines; open lots exist for`);
+  out(`  ${byCode.size} of them, and ${batchedCodes} carry a batch_no at all.`);
+  out("");
+  let shownLots = 0;
+  for (const r of blocked) {
+    if (shownLots++ >= TOP) { out(`    ... and ${blocked.length - shownLots} more - raise TOP`); break; }
+    const b = byCode.get(r.code);
+    out(`    ${r.doc}  ${String(r.code).padEnd(22)} ${String(r.stock_status).padEnd(8)}`
+      + ` batch ${String(r.allocated_batch_no ?? "(none)").padEnd(16)}`
+      + ` open stock: ${b ? `${b.batched} batched / ${b.unbatched} unbatched` : "none"}`);
   }
 
   if (!APPLY) {

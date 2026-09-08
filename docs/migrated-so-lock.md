@@ -122,6 +122,13 @@ stamps that same column on the ERP's own document
 "migrated" to this lock a few minutes after a salesperson saved it, and went
 view-only — the exact opposite of 「只开新单」.
 
+> **NOTE 2026-09-08.** `HC-SO-2609-001` was DELETED from the ERP on 2026-09-08 at the owner's instruction — it was a test
+> order. The measurement below stands as the record of what was observed; the
+> document itself is gone, and with it the only ERP-created sales order
+> production held. The rule it demonstrates is unchanged and is still pinned by
+> `backend/tests/soIsMigratedShape.test.ts`. Ledger:
+> `docs/bugs/0715-deleting-a-sales-order-trusted-a-hand-written-child-list-nob.md`.
+
 Not a theory. Run `34193634352` (2026-09-08, 14:12 MYT) showed `HC-SO-2609-001` —
 the ERP's own numbering — CREATEd by a person at 14:06:51 and sitting in the
 `linked_ac_docno IS NOT NULL` population, while the count of

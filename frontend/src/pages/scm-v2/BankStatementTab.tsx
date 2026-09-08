@@ -120,7 +120,7 @@ const UploadAndList = ({ onOpen }: { onOpen: (id: number) => void }) => {
         )}
         {accounts.length === 0 && !setup.isLoading && (
           <div style={{ fontSize: 'var(--fs-13)', color: danger }}>
-            No bank account is set up to take a statement in this company yet.
+            No bank account is set up to take a statement in this company yet — add one under Reconciliation setup → Bank statements.
           </div>
         )}
         {result && (
