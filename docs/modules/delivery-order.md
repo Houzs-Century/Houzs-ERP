@@ -2427,6 +2427,29 @@ computed against the wrong line is a number about the wrong thing, and reporting
 it sends the operator to fix a quantity when the real fault is the source they
 picked.
 
+## A migrated DO's customer card comes from the SO header (2026-09-08)
+
+The migrated writer (`scripts/lib/migrated-do-writer.mjs`, `insertMigratedDo`)
+now snapshots the sales order's HEADER onto the DO exactly as `/from-sos` does:
+address, city, state, postcode, phone, email, salesperson, agent, customer type,
+building type, branding, venue, ref, emergency contact, `customer_delivery_date`
+and `expected_delivery_at` (falling back to the DO date). Until 2026-09-08 it
+copied only `debtor_name`, so every AutoCount-mirrored DO opened with Phone /
+Email / Address / Salesperson / Delivery date all "—" and printed the same way
+(docs/bugs/0716). The mapping is `scripts/lib/migrated-do-header-snapshot.mjs`,
+the script-side twin of `src/scm/lib/so-to-do-fields.ts`; both callers
+(`create-migrated-documents.mjs`, `sync-ac-delta.mjs`) pass `soHeader`.
+
+**`sales_location` and `warehouse_id` are NOT in that snapshot.** On a migrated
+DO they are the ship-from branch from the account book (owner 2026-09-07,
+「记在单头就好」, `lib/ac-do-location.mjs`), never the SO's sales branch.
+
+The documents already written are filled by `backfill-migrated-do-header.mjs`
+(Actions → **Backfill migrated DO header snapshot from the SO**; DRY-RUN unless
+`apply=1`; `scope` migrated|all; `do_number` for one document). Every SET is
+guarded by `IS NULL`, so a corrected header survives. What the plan lists under
+"SO itself blank" is an SO-side gap: fix the SO and re-run, it is idempotent.
+
 ## A migrated DO line will NOT bind to a sales-order line colour cannot choose (2026-09-08)
 
 `backend/scripts/lib/migrated-do-writer.mjs` `buildMigratedDoPlan` buckets

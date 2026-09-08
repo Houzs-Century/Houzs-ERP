@@ -172,6 +172,7 @@ import { acFromSoDtlKey, normItemCode, planSoPoDedications } from "./lib/ac-po-l
 import {
   buildMigratedDoPlan, insertMigratedDo, loadAcErpItemMap, migratedDoNumber,
 } from "./lib/migrated-do-writer.mjs";
+import { soHeaderSelectList } from "./lib/migrated-do-header-snapshot.mjs";
 /* THE SAME RULE THE CUTOVER PATH USES, imported rather than restated. #3121 gave
    create-migrated-documents.mjs a ship-from branch and left this lane — the
    writer's OTHER documented caller — passing neither field, so every delivery
@@ -709,6 +710,7 @@ async function main() {
   const doLineLocs = new Map();
   const doRefused = [], doNotes = [];
   const doDebtor = new Map();
+  const doSoHead = new Map();
   const TRUTH = "ac-reconcile-truth.json.gz";
   log("");
   if (!has(TRUTH)) {
@@ -889,9 +891,13 @@ async function main() {
          WHERE h.company_id = ${CO} AND h.linked_ac_docno = ANY(${gapAcNos})
            AND COALESCE(i.cancelled, false) = false
          ORDER BY i.line_no` : [];
+      /* The whole header, not just the name: the DO writer snapshots address /
+         phone / email / salesperson / delivery date from it (docs/bugs/0716). */
       for (const r of gapDocNos.length
-        ? await sql`SELECT doc_no, debtor_name FROM scm.mfg_sales_orders WHERE company_id = ${CO} AND doc_no = ANY(${gapDocNos})`
-        : []) doDebtor.set(r.doc_no, r.debtor_name);
+        ? await sql.unsafe(
+          `SELECT ${soHeaderSelectList("h")} FROM scm.mfg_sales_orders h WHERE h.company_id = $1 AND h.doc_no = ANY($2)`,
+          [CO, gapDocNos])
+        : []) { doDebtor.set(r.doc_no, r.debtor_name); doSoHead.set(r.doc_no, r); }
       /* What the ERP already counts as delivered on these orders, from its own
          rows. Used ONLY as the over-delivery assertion below - never to derive
          a quantity to write. */
@@ -1682,7 +1688,7 @@ async function main() {
         const where = resolveAcDeliveryLocation(d.doNo, doHdrLoc, doLineLocs, doWarehouses);
         if (!where.warehouseId) { noWh += 1; log(`   ${migratedDoNumber(d.doNo)}: no ship-from branch stamped — ${where.why}`); }
         const made = await insertMigratedDo(sql, d, { companyId: CO, sysUser: SYS_USER, debtorFallback: doDebtor.get(d.so) ?? null,
-          warehouseId: where.warehouseId, salesLocation: where.salesLocation });
+          warehouseId: where.warehouseId, salesLocation: where.salesLocation, soHeader: doSoHead.get(d.so) ?? null });
         doMade.push(made); nDo += 1;
       } catch (e) {
         doFailed.push(`${migratedDoNumber(d.doNo)} <- ${d.so}: ${e.message}`);

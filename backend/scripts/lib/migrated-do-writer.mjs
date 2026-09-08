@@ -56,8 +56,9 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { variantIdentity } from "./do-so-item-pairing.mjs";
+import { soHeaderToDoSnapshot } from "./migrated-do-header-snapshot.mjs";
 
-export const norm = (s) => (s || "").trim().toUpperCase().replace(/\s+/g, " ");
+export const norm =(s) => (s || "").trim().toUpperCase().replace(/\s+/g, " ");
 
 export function parseCsvLine(line) {
   const out = []; let cur = ""; let q = false;
@@ -318,22 +319,35 @@ export function doNote(d) {
     on the HEADER, never on a per-line column. Both are optional and default to
     NULL, because an unresolved location must stay visibly absent rather than
     fall back to a company-blind default; backfill-migrated-do-warehouse.mjs
-    reports every document it cannot resolve instead of guessing one. */
-export async function insertMigratedDo(sql, d, { companyId, sysUser, debtorFallback = null, warehouseId = null, salesLocation = null }) {
+    reports every document it cannot resolve instead of guessing one.
+    `soHeader` is the sales order's header row (SO_HEADER_SNAPSHOT_COLS): the
+    customer / delivery snapshot — address, phone, email, salesperson, delivery
+    date — is copied from it exactly as /from-sos copies it, because a delivery
+    order is a snapshot of its sales order at dispatch. Left out until
+    2026-09-08 (docs/bugs/0716): every mirrored DO opened with the whole
+    customer card "—". Optional so an older caller still writes; a NULL header
+    leaves the snapshot NULL, which backfill-migrated-do-header.mjs fills. */
+export async function insertMigratedDo(sql, d, { companyId, sysUser, debtorFallback = null, warehouseId = null, salesLocation = null, soHeader = null }) {
   const doNo = migratedDoNumber(d.doNo);
+  const doDate = (d.date || "").slice(0, 10) || null;
   return sql.begin(async (tx) => {
-    const [hdr] = await tx`INSERT INTO scm.delivery_orders
-        (do_number, so_doc_no, debtor_code, debtor_name, status, do_date, currency,
-         company_id, created_by, notes, migrated_no_stock, linked_ac_docno,
-         warehouse_id, sales_location)
-      VALUES (${doNo}, ${d.so}, ${d.debtorCode},
-              ${d.debtorName ?? debtorFallback ?? "(unnamed)"},
-              'DELIVERED', ${(d.date || "").slice(0, 10) || null}, 'MYR',
-              ${companyId}, ${sysUser},
-              ${doNote(d)},
-              true, ${d.doNo},
-              ${warehouseId}, ${salesLocation})
-      RETURNING id`;
+    const [hdr] = await tx`INSERT INTO scm.delivery_orders ${tx({
+      do_number: doNo,
+      so_doc_no: d.so,
+      debtor_code: d.debtorCode,
+      debtor_name: d.debtorName ?? debtorFallback ?? soHeader?.debtor_name ?? "(unnamed)",
+      status: "DELIVERED",
+      do_date: doDate,
+      currency: "MYR",
+      company_id: companyId,
+      created_by: sysUser,
+      notes: doNote(d),
+      migrated_no_stock: true,
+      linked_ac_docno: d.doNo,
+      warehouse_id: warehouseId,
+      sales_location: salesLocation,
+      ...soHeaderToDoSnapshot(soHeader, { doDate }),
+    })} RETURNING id`;
     /* THE PRICE COLUMNS ARE NOT OPTIONAL. They were omitted here while the GRN
        half of create-migrated-documents.mjs wrote unit_price_sen and
        line_total_sen - one file, two answers. They default to 0 NOT NULL, so
