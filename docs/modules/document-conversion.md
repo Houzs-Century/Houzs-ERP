@@ -1681,6 +1681,61 @@ way by construction. The remedy shipped in 2026-07 was to stop swallowing the
 outcome (the failure now reaches the GRN's audit trail and the response), which
 makes the drift *visible* — it does not make the counter *authoritative*.
 
+#### G2a — The cache has a THIRD witness, and until 2026-09-08 nobody asked it (measurement shipped, verdict pending)
+
+**PROVEN.** `check-ac-convert-symmetry` asks the transfer-TO question twice and
+both times inside ONE system: section 3 compares the account book's counter to
+the book's own children, section 4b compares the ERP's counter to the ERP's own
+children. Neither compares the two systems to each other, so both can read clean
+while the ERP believes a different thing from AutoCount about the same line.
+
+On the migrated population that is the NORMAL case. The receipt that moved
+`received_qty` happened in AutoCount before the cutover, and mig `0280` states
+the design plainly — *"Nothing backfills it: the keys are stamped forward"* — so
+there is no ERP goods receipt behind it and section 4b's own-children comparison
+has nothing to find it with. Run `34198847720` (2026-09-08 15:20 Malaysia):
+
+| stored ceiling | disagrees with its own ERP children | direction |
+| --- | --- | --- |
+| `purchase_order_items.received_qty` | 140 of 1344 live PO lines | all 140 read HIGH |
+| `grn_items.invoiced_qty` | 80 of 792 live GRN lines | all 80 read HIGH |
+| `mfg_sales_order_items.po_qty_picked` | 22 of 15061 live SO lines | all 22 read LOW, all 22 on migrated `HC-*` orders |
+
+Reading HIGH with no ERP receipt behind it is either the migration faithfully
+copying a receipt the book already made — correct, and the only thing that lets
+a hard-bound sales line reach READY — or a ceiling wrongly closed. **The ERP
+cannot referee its own cache.** The book can.
+
+`backend/scripts/check-ac-transfer-counters.mjs` +
+`.github/workflows/ac-transfer-counter-check.yml` (read-only) put the question
+to it, matched by `linked_ac_dtlkey`:
+
+```
+scm.mfg_sales_order_items.po_qty_picked  vs  SODTL.TransferedPOQty   (SO -> PO)
+scm.purchase_order_items.received_qty    vs  PODTL.TransferedQty     (PO -> GR)
+scm.grn_items.invoiced_qty               vs  GRDTL.TransferedQty     (GR -> PI)
+```
+
+Two things about it are load-bearing and easy to get wrong:
+
+- **The comparison is a FRACTION, not a subtraction.** One book line can be
+  several ERP rows — a sofa is one `DtlKey` and six compartments (`0273`/`0280`)
+  — so summing the counter and subtracting reports the decomposition itself as a
+  defect. It compares `t/q` against `T/Q` cross-multiplied, which cannot round.
+  `backend/scripts/lib/transfer-counter-verdict.mjs` holds that rule and the
+  self-test drives the same function the check calls.
+- **SO -> DO and DO -> IV have no stored ERP counter at all.** How much of a
+  sales order has been delivered is computed off `delivery_order_items` every
+  time it is asked; how much of a delivery order has been invoiced off
+  `sales_invoice_items`. Nothing on those two edges can drift, and nothing on
+  them can be repaired — their only available failure is a missing LINK. The
+  checker says so out loud so the silence is not read as a clean measurement.
+
+**Status: the instrument shipped, the number is not taken yet.**
+`workflow_dispatch` requires the workflow file on the default branch, so it
+cannot run until it merges. `docs/bugs/0705` carries the entry and the result
+goes there.
+
 ### G3 — DRAFT policy is decided three different ways, and where a DRAFT does not consume, two documents can be raised for the same line.
 
 **PROVEN.** Three incompatible answers to one question coexist:
