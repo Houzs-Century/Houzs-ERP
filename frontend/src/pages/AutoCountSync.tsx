@@ -158,6 +158,7 @@ import {
   acBookNumber,
   acGroupsInRange,
   acRegisterItems,
+  acRegisterTotal,
   acSendsMark,
   acShowingLine,
   acSortGroups,
@@ -952,7 +953,7 @@ export function AutoCountSync() {
                     <span className="font-semibold text-ink">{acListTitle(state, docType)}</span>
                     <span className="mx-2 opacity-50">|</span>
                     <span className="tabular-nums">
-                      {q.fetching ? "Loading…" : acListCountLine(groups.length, d.counts.total)}
+                      {q.fetching ? "Loading…" : acListCountLine(groups.length, acRegisterTotal(d.counts, state))}
                     </span>
                   </span>
                 </div>
@@ -1005,7 +1006,7 @@ export function AutoCountSync() {
                     answer "am I looking at all of it". This can. */}
                 <div className="flex items-center justify-between gap-3 border-t border-border bg-surface-2 px-2.5 py-1.5 text-[12px] text-ink-muted">
                   <span className="tabular-nums">
-                    {acShowingLine(live.length, d.counts.total)}
+                    {acShowingLine(live.length, acRegisterTotal(d.counts, state))}
                   </span>
                   <span>{AC_SORTED_BY_LINE[sort]}</span>
                 </div>

@@ -33,7 +33,12 @@
 // ----------------------------------------------------------------------------
 import { fmtDate, fmtTime } from "../vendor/shared/format";
 
-import type { AcDocGroup, AcOutboxRow } from "./autocountOutbox";
+import type {
+  AcDocGroup,
+  AcFilterState,
+  AcOutboxCounts,
+  AcOutboxRow,
+} from "./autocountOutbox";
 
 /** `dd/mm/yyyy`, which is what `fmtDate` produces for anything it can read. */
 const AC_DMY = /^(\d{2})\/(\d{2})\/(\d{4})$/;
@@ -364,4 +369,24 @@ export function acShowingLine(shown: number, total: number): string {
   return shown === 0
     ? `Showing none of ${total} ${noun}`
     : `Showing 1–${shown} of ${total} ${noun}`;
+}
+
+/**
+ * WHICH POPULATION the two count lines are a fraction OF.
+ *
+ * `counts.total` is the live register. `counts.archived` is deliberately not
+ * summed into it — the type says why — so on the Cleared tab the rows on screen
+ * come from a population `total` does not describe. Both count lines read
+ * `total` on every tab, and the owner met the result on the live page:
+ *
+ *     Cleared | 3 of 1 document
+ *     Showing 1–3 of 1 document
+ *
+ * `state` is REQUIRED and there is no default. A default would be a decision
+ * nobody reviews, and it is exactly the decision that was wrong here: every
+ * caller silently got the live total because that is what was to hand. Passing
+ * the tab makes the compiler ask each call site which population it means.
+ */
+export function acRegisterTotal(counts: AcOutboxCounts, state: AcFilterState): number {
+  return state === "archived" ? counts.archived : counts.total;
 }
