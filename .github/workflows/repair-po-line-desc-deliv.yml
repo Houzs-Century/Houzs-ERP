@@ -1,0 +1,42 @@
+name: Repair PO line description + delivery date from the book
+
+# Manual. `apply-sofa-compartment-corrections.mjs` added sofa compartment rows
+# to company-1 purchase orders without `description` or `delivery_date` (its SO
+# branch always set `description`; its PO branch listed neither column), so
+# those rows hold NULL while the book's line states a value. The source is
+# fixed; this copies the book's own values onto the rows already written, keyed
+# on AutoCount's DtlKey. PLAN default; apply=1 + the confirm phrase writes.
+# Convergent: a second run finds zero. Writes two descriptive columns only —
+# no money, no quantity, no stock.
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "1 to write, else PLAN"
+        required: false
+        default: "0"
+        type: string
+      confirm:
+        description: 'For apply ONLY, type exactly: REPAIR PO LINE TEXT'
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: repair-po-line-desc-deliv
+  cancel-in-progress: false
+
+jobs:
+  run-prod:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/repair-po-line-desc-deliv-from-book.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          CONFIRM: ${{ inputs.confirm }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

@@ -362,11 +362,20 @@ async function main() {
               touched.push({ id: p.id, code: p.to, v: p.v });
             } else {
               const src = s.src;
+              /* `description` and `delivery_date` are COPIED from the piece
+                 this one is built from, for the same reason `description2` and
+                 `warehouse_id` are. They were omitted, so every compartment
+                 this script ever added carries NULL in both while the book
+                 states a value on the line — the reconcile reads them as
+                 "blank in the ERP where the book states one", and it reads them
+                 on the SO side as filled because the SO branch below has always
+                 set `description`. Both are the SAME book line's values; the
+                 lead already holds them; copying is a copy, not a guess. */
               if (isPo) await tx`INSERT INTO scm.purchase_order_items
-                  (purchase_order_id, material_kind, item_code, material_name, item_group, description2,
-                   qty, received_qty, unit_price_sen, line_total_sen, variants, warehouse_id, from_mrp, company_id)
-                  SELECT i.purchase_order_id, 'mfg_product', ${p.to}, ${name}, 'sofa', ${src.description2 ?? null},
-                         i.qty, 0, ${p.price}, ${p.tot}, ${tx.json(p.v)}, i.warehouse_id, false, ${CO}
+                  (purchase_order_id, material_kind, item_code, material_name, item_group, description, description2,
+                   qty, received_qty, unit_price_sen, line_total_sen, variants, warehouse_id, delivery_date, from_mrp, company_id)
+                  SELECT i.purchase_order_id, 'mfg_product', ${p.to}, ${name}, 'sofa', i.description, ${src.description2 ?? null},
+                         i.qty, 0, ${p.price}, ${p.tot}, ${tx.json(p.v)}, i.warehouse_id, i.delivery_date, false, ${CO}
                     FROM scm.purchase_order_items i WHERE i.id = ${src.id}`;
               /* so_item_id is deliberately NOT copied onto an inserted PO line.
                  The dedication is one SO line to one PO line, and pointing a
