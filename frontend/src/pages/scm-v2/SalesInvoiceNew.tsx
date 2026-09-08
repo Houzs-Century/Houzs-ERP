@@ -702,6 +702,7 @@ export const SalesInvoiceNew = () => {
               client-side invention - a red ring and a ` *` for a field the
               backend never asked for. */
               variantsRequired={false}
+              seedSofaLegDefault={false}
             />
           ))}
           <button type="button" onClick={addLine}
