@@ -20,6 +20,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { correlatedFetch } from "../lib/requestCorrelation";
+import { fmtDate } from "../vendor/shared/format";
 
 type ShareEvent = {
   eventId: number;
@@ -391,11 +392,6 @@ export function ContractorCalendar() {
   );
 }
 
-function fmtDay(s: string | null): string {
-  const d = parseDay(s);
-  return d ? d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "";
-}
-
 function fmtSize(n: number | null): string {
   if (n == null || !Number.isFinite(n)) return "";
   if (n < 1024 * 1024) return `${Math.max(1, Math.round(n / 1024))} KB`;
@@ -425,8 +421,9 @@ function FloorplanPanel({
   onClose: () => void;
 }) {
   const booth = (event.boothNo ?? "").trim();
-  const start = fmtDay(event.startDate);
-  const end = fmtDay(event.endDate);
+  // The ONE date format (fmtDate → "16/08/2026"); a missing date renders as "—".
+  const start = event.startDate ? fmtDate(event.startDate) : "";
+  const end = event.endDate ? fmtDate(event.endDate) : "";
   return (
     <div
       className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4"
