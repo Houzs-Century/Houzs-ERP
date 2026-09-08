@@ -145,7 +145,7 @@ async function main() {
                               WHERE company_id = ${CO} AND upper(code) = ${String(m.erp).trim().toUpperCase()} LIMIT 1`;
     if (!prod) { refuse(`${JSON.stringify(bl.itemKey)} maps to ${JSON.stringify(m.erp)}, which the catalogue does not hold`); continue; }
 
-    const [hdr] = await sql`SELECT doc_no, total_sen, line_count FROM scm.mfg_sales_orders
+    const [hdr] = await sql`SELECT doc_no, local_total_sen, line_count, status FROM scm.mfg_sales_orders
                              WHERE company_id = ${CO} AND doc_no = ${e.doc}`;
     if (!hdr) { refuse(`${e.doc} is not in the ERP`); continue; }
 
@@ -176,12 +176,12 @@ async function main() {
     log(`  ${e.doc} dtl ${key}: ADD line ${lineNo}  ${grp}  ${JSON.stringify(prod.code)} x${qty} @ RM 0.00`);
     log(`      description2 = ${JSON.stringify(d2)}`);
     log(`      book says the document holds ${bh?.lineCount ?? "?"} line(s); the ERP holds ${rows.length} and will hold ${rows.length + 1}`);
-    log(`      header total stays ${hdr.total_sen} (the line carries no money); inventory movements naming it: ${movesBefore}`);
+    log(`      header total stays ${hdr.local_total_sen} and status stays ${JSON.stringify(hdr.status)} (the line carries no money); inventory movements naming it: ${movesBefore}`);
     log(`      why: ${e.why}`);
 
     verify.push({
       doc: e.doc, key, code: prod.code, qty, grp, d2,
-      total: Number(hdr.total_sen), moves: movesBefore, lines: rows.length + 1,
+      total: Number(hdr.local_total_sen), status: hdr.status, moves: movesBefore, lines: rows.length + 1,
     });
 
     if (!APPLY) continue;
@@ -223,7 +223,7 @@ async function verifyOnFreshConnection(items) {
   log(`\nVERIFY — re-reading ${items.length} document(s) on a fresh connection`);
   let bad = 0;
   for (const it of items) {
-    const [h] = await v`SELECT total_sen, line_count FROM scm.mfg_sales_orders
+    const [h] = await v`SELECT local_total_sen, line_count, status FROM scm.mfg_sales_orders
                          WHERE company_id = ${CO} AND doc_no = ${it.doc}`;
     const rows = await v`SELECT item_code, qty, unit_price_sen, total_sen, description2, item_group, linked_ac_dtlkey, warehouse_id
                            FROM scm.mfg_sales_order_items
@@ -242,10 +242,13 @@ async function verifyOnFreshConnection(items) {
       if (String(r.item_group) !== it.grp) say.push(`group ${r.item_group}, expected ${it.grp}`);
       if (r.warehouse_id == null) say.push("warehouse_id is NULL — the line can never match stock");
     }
-    if (Number(h?.total_sen) !== it.total) say.push(`document total ${h?.total_sen}, expected ${it.total} — MONEY MOVED`);
+    if (Number(h?.local_total_sen) !== it.total) say.push(`document total ${h?.local_total_sen}, expected ${it.total} — MONEY MOVED`);
+    /* HC-SO-012128 is DELIVERED. Adding a line the book states must not change
+       what the document IS, so the status is asserted rather than assumed. */
+    if (String(h?.status) !== String(it.status)) say.push(`status ${h?.status}, expected ${it.status} — THE DOCUMENT CHANGED STATE`);
     if (Number(h?.line_count) !== it.lines) say.push(`header line_count ${h?.line_count}, expected ${it.lines}`);
     if (moves !== it.moves) say.push(`inventory movements ${moves}, expected ${it.moves} — STOCK MOVED`);
-    if (!say.length) { log(`  OK  ${it.doc}  ${it.code} x${it.qty} @ 0  total ${h.total_sen}  lines ${h.line_count}  movements ${moves}`); continue; }
+    if (!say.length) { log(`  OK  ${it.doc}  ${it.code} x${it.qty} @ 0  total ${h.local_total_sen}  status ${h.status}  lines ${h.line_count}  movements ${moves}`); continue; }
     bad++;
     for (const s of say) log(`  FAIL ${it.doc}: ${s}`);
   }
