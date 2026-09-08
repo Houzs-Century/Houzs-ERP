@@ -72,6 +72,7 @@ import { recordSoAudit } from '../lib/so-audit';
 import { recordEntityAudit } from '../lib/entity-audit';
 import { notifyCancelRequest } from '../../services/cancelRequestNotify';
 import { hasPermission } from '../../services/permissions';
+import { getSupabaseService } from '../../db/supabase';
 import {
   OPEN_CANCEL_STATUSES,
   approvalRefusal,
@@ -468,14 +469,39 @@ const APPROVER_VERB = /\/cancel-request\/(approve|reject|withdraw)$/;
  * raising a request, and every other write on the prefix, keeps needing the
  * area's `edit`.
  */
+/** The slice of a Hono context the bypass predicates read. Hono's generic
+ *  `get` is assignable to this because every key named here is a Variable. */
+type GuardCtx = {
+  req: { method: string; path: string };
+  get: (k: 'user' | 'houzsUser' | 'cancelExecutionAdmitted') => unknown;
+};
+
 export function cancelApproverWriteBypass(docType: CancelDocType) {
-  const keys = approveKeysFor(docType);
-  return (c: { req: { method: string; path: string }; get: (k: 'user') => unknown }): boolean => {
+  return (c: GuardCtx): boolean => {
     if (c.req.method.toUpperCase() !== 'POST' || !APPROVER_VERB.test(c.req.path)) return false;
-    const u = c.get('user') as { permissions_set?: Set<string>; permissions?: string[] } | undefined;
-    const granted = u?.permissions_set ?? u?.permissions ?? [];
-    return keys.some((k) => hasPermission(granted, k));
+    return callerHoldsApproveKey(c, docType);
   };
+}
+
+/** Does the caller hold one of this document's cancel-approve keys? Reads the
+ *  REAL caller wherever the request is: `houzsUser` once the SCM auth bridge
+ *  has run, else the intact Houzs `user` the area guard itself reads. */
+function callerHoldsApproveKey(c: Pick<GuardCtx, 'get'>, docType: CancelDocType): boolean {
+  const u = (c.get('houzsUser') ?? c.get('user')) as { permissions_set?: Set<string>; permissions?: string[] } | undefined;
+  const granted = u?.permissions_set ?? u?.permissions ?? [];
+  return approveKeysFor(docType).some((k) => hasPermission(granted, k));
+}
+
+/**
+ * The area guard's `writeBypass` for the two document mounts: the approver
+ * verbs on the request (above), PLUS the one cancel write that
+ * `cancelApprovalGuard` — mounted before the area guard — has already found to
+ * be the execution of an APPROVED request by a holder of the document's
+ * approve key (`cancelExecutionAdmitted`). Nothing else on the prefix.
+ */
+export function cancelExecutionBypass(docType: CancelDocType) {
+  const approver = cancelApproverWriteBypass(docType);
+  return (c: GuardCtx): boolean => c.get('cancelExecutionAdmitted') === true || approver(c);
 }
 
 /* ── The guard in front of the cancel itself ─────────────────────────────── */
@@ -506,7 +532,10 @@ export function cancelApprovalGuard(docType: CancelDocType): MiddlewareHandler<{
     if (!key) return next();
     const co = requireActiveCompanyId(c as AnyCtx);
     if (!co.ok) return next();
-    const sb = (c as AnyCtx).get('supabase');
+    /* Mounted BEFORE the area guard and the router's own supabaseAuth, so the
+       bridge has not stashed a client yet on the first request through; the
+       service client is the same one supabaseAuth would mint. */
+    const sb = (c as AnyCtx).get('supabase') ?? getSupabaseService(c.env);
     const { data: doc, error: docErr } = await scopeToCompanyId(sb.from(cfg.table).select('status').eq(cfg.keyColumn, key), co.companyId).maybeSingle();
     /* A read that FAILED is not "no such document": say so rather than let the
        cancel through on a blip (the swallowed-reads gate's whole point). */
@@ -517,6 +546,15 @@ export function cancelApprovalGuard(docType: CancelDocType): MiddlewareHandler<{
     const open = await loadOpenRequest(sb, docType, key, co.companyId);
     const refusal = executionRefusal(docType, open);
     if (refusal) return c.json(refusal, 403);
+
+    /* The final approver may lack the document's edit level (prod: the
+       Purchaser signs level 2 on a Sales Order with Sales Orders at `view`),
+       yet the cancel they just approved runs through the document's own
+       status route. This guard is mounted BEFORE the area guard, so it can
+       tell that guard — through its writeBypass — that THIS write is the
+       execution of an approved request by someone entitled to sign it. Only
+       that: an approver still cannot move the document anywhere else. */
+    if (callerHoldsApproveKey(c, docType)) c.set('cancelExecutionAdmitted', true);
 
     await next();
 

@@ -104,10 +104,19 @@ and wakes only when the body says `CANCELLED`; `cancelApprovalGuard('PO')` on
 2. refuses with **403 `cancel_approval_required`** unless the document carries
    an `APPROVED` request (the message says how many of the document's
    signatures are on it — "0 of 2", or "0 of 1" on a PO);
-3. lets the existing handler run, untouched, with every guard it always had
+3. when the request IS approved and the caller holds one of the document's
+   approve keys, sets `cancelExecutionAdmitted` on the context — the area
+   guard's `writeBypass` (`cancelExecutionBypass`) honours it, so the approver
+   who just signed can run the cancel even when their position lacks the
+   document's `edit` level (prod: the Purchaser with Sales Orders at `view`).
+   For this the guard is mounted BEFORE the area guard on both prefixes and
+   mints its own service client when the auth bridge has not run yet
+   (docs/bugs/0717). Only this one write: the same approver is never admitted
+   to any other status transition;
+4. lets the existing handler run, untouched, with every guard it always had
    (downstream lock, version CAS, PWP vouchers, customer credit, AutoCount
    outbox);
-4. on a 2xx, stamps the request `EXECUTED` with `executed_by` / `executed_at`.
+5. on a 2xx, stamps the request `EXECUTED` with `executed_by` / `executed_at`.
 
 The two cancel handlers are **not edited** — `mfg-sales-orders.ts` and
 `mfg-purchase-orders.ts` sit on their size ceilings, and a middleware at the
