@@ -453,15 +453,6 @@ export function parseSaveProblems(body: string | undefined | null): SaveProblem[
 /** Build an operator-friendly message from an API failure. Surfaces the
  *  server's own reason ONLY when it's already a plain sentence; otherwise maps
  *  the HTTP status to plain words. Never leaks JSON / SQL / status codes. */
-/* Codes whose refusal names ONE DOCUMENT, so the server's sentence beats
-   anything that can be written here. Keep this list tiny: a curated sentence is
-   the better default precisely because it is written for the operator, and this
-   is the exception for refusals the server can say more about than we can.
-   `so_migrated_readonly` earns it because since 2026-09-08 the answer differs
-   per order — one still differs from the account book on `document total`, its
-   neighbour matches and is open — and a class-level sentence cannot say which. */
-const SERVER_SENTENCE_WINS: ReadonlySet<string> = new Set(['so_migrated_readonly']);
-
 const ERROR_CODE_MESSAGES: Record<string, string> = {
   // Aggregated save gate (backend so-save-problems.ts). A surface that renders
   // the `problems` list itself never reaches this; it's the single-line fallback
@@ -609,6 +600,15 @@ const ERROR_CODE_MESSAGES: Record<string, string> = {
   je_reversed:
     'This journal entry was reversed and cannot be posted. Create a new one.',
 };
+
+/* Codes whose refusal names ONE DOCUMENT, so the server's sentence beats
+   anything that can be written here. Keep this list tiny: a curated sentence is
+   the better default precisely because it is written for the operator, and this
+   is the exception for refusals the server can say more about than we can.
+   `so_migrated_readonly` earns it because since 2026-09-08 the answer differs
+   per order — one still differs from the account book on `document total`, its
+   neighbour matches and is open — and a class-level sentence cannot say which. */
+const SERVER_SENTENCE_WINS: ReadonlySet<string> = new Set(['so_migrated_readonly']);
 
 /* A machine CODE, not a sentence: snake_case, no spaces. Mirrors the guard in
    api/client.ts. Without it an UNCURATED code that the backend echoes into both
