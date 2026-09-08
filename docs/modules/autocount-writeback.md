@@ -5149,3 +5149,27 @@ and which therefore has no address of any kind until every compartment row is
 keyed. `backfill-ac-sofa-line-keys.mjs` refuses to stamp them precisely because
 two identical builds of one model do not force which is which; the fix is to copy
 the lead's key onto the row at INSERT time, where the provenance is known.
+
+## NOT ACCEPTED means "still", not "ever" (2026-09-09)
+
+The chips and the row badge count a document as not accepted only while its
+newest REFUSAL is newer than its newest ARRIVAL. `acRefusalPredatesArrival`
+(`lib/autocount-outbox-status.ts`) is the one place that decides it, and both the
+count and the row read it from the same per-document map — two opinions about one
+document is exactly how the badge came to disagree with the chip beside it.
+
+**Order, not set membership.** A document that arrived and was later edited into
+a refusal IS in the account book AND does need attention; both chips are right
+about it and nothing there changes. Only the other order — refused, then
+accepted — is history.
+
+**This has now been fixed three times at the trigger and once at the shape.**
+Twice the trigger was the re-queue marker (#2220, then the counts block); the
+third was a document re-composed and accepted with no marker on the old row, and
+the page read `NOT ACCEPTED 2` beside `IN AUTOCOUNT 24` out of `ALL 25`
+(`docs/bugs/0727`). If a fourth appears, the question to ask is not which marker
+was missed — it is whether something is still asking "has this ever been
+refused" instead of "is it still refused".
+
+**An unknown order leaves the refusal standing.** Hiding a real one costs a
+document; showing a stale one costs a glance.

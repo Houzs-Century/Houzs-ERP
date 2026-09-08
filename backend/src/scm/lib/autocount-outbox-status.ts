@@ -521,3 +521,38 @@ export function acRowIsRequeueable(
   if (op === 'edit') return state === 'failed' || state === 'skipped';
   return false;
 }
+
+/**
+ * IS THIS REFUSAL OLDER THAN THE DOCUMENT'S ARRIVAL?
+ *
+ * The queue is append-only and one document accumulates a send per attempt, so
+ * a refusal that was later put right sits on the page for ever. `acOutboxState`
+ * already catches the case where the re-queue TOOL marked the old row — but the
+ * marker is not the fact. The fact is the ORDER: a refusal that predates a
+ * successful send has been answered, whether anything annotated it or not.
+ *
+ * Measured 2026-09-08. HC-DO-2609-004 and HC-DO-2609-009 were refused, fixed,
+ * re-composed and accepted — verified in AED_HOUZS itself — and the page still
+ * read `NOT ACCEPTED 2` while the same screen counted them under `IN AUTOCOUNT`
+ * and its own re-queue answer said "This document is already in AutoCount ...
+ * TO DO: Nothing." Twenty-five documents, and the chips summed to twenty-six.
+ *
+ * ORDER, NOT SET MEMBERSHIP, and that distinction is the whole function. A
+ * document that ARRIVED and was then edited into a refusal IS in the account
+ * book AND does need attention — both chips are right about it, and the counts
+ * block says so in as many words. Only the other order is history.
+ *
+ * Returns false whenever either timestamp cannot be read: an unknown order must
+ * leave the refusal standing, because hiding a real one is the failure that
+ * costs a document and showing a stale one costs a glance.
+ */
+export function acRefusalPredatesArrival(
+  rowCreatedAt: string | null | undefined,
+  newestArrivalAt: string | null | undefined,
+): boolean {
+  if (!rowCreatedAt || !newestArrivalAt) return false;
+  const row = Date.parse(rowCreatedAt);
+  const arrived = Date.parse(newestArrivalAt);
+  if (!Number.isFinite(row) || !Number.isFinite(arrived)) return false;
+  return row < arrived;
+}

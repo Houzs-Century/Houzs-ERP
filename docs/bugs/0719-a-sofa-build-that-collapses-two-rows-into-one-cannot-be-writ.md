@@ -1,6 +1,6 @@
 ## A sofa build that collapses two rows into one cannot be written while a purchase line is dedicated to the row it drops [medium]
 
-<!-- status: open -->
+<!-- status: fixed -->
 
 <!-- area: AutoCount sync + write-back -->
 
@@ -111,8 +111,52 @@ a refusal that leaves the old behaviour in place:
    stating the old build.
 
 `HC-SO-011099` moved out of `_held` in the same change, carrying his ruling and
-this reason. **UNTESTED against production at the time of writing** — the entry
-is in the file and the code path exists; the dry-run and the apply are the
-evidence, and this entry stays `open` until they are pasted below.
+this reason. **WRITTEN AND VERIFIED**, and the runs are below.
 
 **Ref.** `fix/so-last-6-and-gr-transpose`, 2026-09-08.
+
+### The runs, 2026-09-08 — both halves, in order
+
+**Dry-run `34243523350`** planned it for the first time since the guard was
+taught the release:
+
+```
+HC-SO-011099  9028  1A(LHF)+1A(RHF)  ->  2S  @30"   money total 288800, charged 288800
+      change 1A(LHF) -> 2S
+      release 1A(RHF) — HC-PO-009882 9028-1A(RHF) stops being dedicated to a row
+              this collapse removes; the PO half of this entry deletes it
+      remove 1A(RHF)
+```
+
+**Apply `34244691604` — the sales order:**
+
+```
+builds touched 1 (1 sofa) · lines updated 1 · added 0 · removed 1
+downstream carried: PO lines 1 · GRN lines 0 · DO lines 0
+purchase dedications RELEASED by a collapse: 1
+VERIFY — re-reading 1 document(s) on a fresh connection
+  OK  HC-SO-011099  2S  money 288800/288800
+VERIFY OK — 1 document(s), piece multiset and both money columns
+```
+
+**Apply `34245244962` — the purchase order**, run second, scoped with `DOC=`:
+
+```
+HC-PO-009882  9028  1A(RHF)+2S  ->  2S  @30"   money total 0, charged 0
+      remove 1A(LHF)
+VERIFY — re-reading 1 document(s) on a fresh connection
+  OK  HC-PO-009882  2S  money 0/0
+```
+
+Read the second run's opening state — `1A(RHF)+2S`, not `1A(RHF)+1A(LHF)`. That
+is the sales order's downstream carry having already moved the SURVIVING
+purchase line onto `2S` through the dedication it kept, leaving the RELEASED row
+still on its old code and therefore surplus. That is the mechanism working end
+to end, and it is why releasing beats re-pointing: had the dedication been
+re-pointed, the carry would have moved BOTH purchase rows to `2S` and the PO
+half would have read them as two identical sofas.
+
+**Both documents now state the same build**, which was the whole point — writing
+only the purchase half would have left the factory's paper saying `2S` while the
+customer's still said `1A(LHF)+1A(RHF)`. Money did not move on either side, and
+the sales-order tally (`34254400214`) no longer lists `HC-SO-011099` on any axis.
