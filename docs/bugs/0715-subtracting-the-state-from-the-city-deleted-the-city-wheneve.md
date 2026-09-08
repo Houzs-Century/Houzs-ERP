@@ -1,7 +1,7 @@
 ## Subtracting the state from the city deleted the city whenever they are the same word [medium]
 
 <!-- area: Cutover + migrated data -->
-<!-- status: open -->
+<!-- status: fixed -->
 
 **Symptom.** Creating a delivery order from `HC-SO-012565` on 2026-09-08, the
 Create-DO banner read:
@@ -86,5 +86,31 @@ cutover import, the population it would serve is already imported, and changing 
 one-shot importer that will not run again buys nothing while risking a re-import.
 If it is ever run again, replace those three lines with `cityFromBook`.
 
-**Ref.** fix/customer-info-gap, 2026-09-08. Status stays `open` until the repair
-has been dispatched against production and its run id recorded here.
+**Sized, then closed, on production.** Probe run
+[`34221966031`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34221966031)
+(19:38 Malaysia): of 2,883 company-1 sales orders, **711 carried a blank city**
+(3 of them holding a stored `.`), and the gate accepted a city for **417** of
+them. The other 294 are printed refusals — 142 the book gives no postcode, 112
+the book writes nothing after it, 40 the book writes something
+`scm.my_localities` does not list for that postcode (`KL`, `BM`, `JB`, and
+district-vs-locality disagreements such as `KUALA LUMPUR` at 53300 where the
+master says Setapak), 3 the order carries no address at all. **The book has no
+city for those and none was invented.**
+
+Apply run
+[`34222124527`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34222124527)
+wrote 417 cities. On the plan, `the book's address differs from the ERP's: 0` —
+the orders' address lines are still the book's, verbatim. Verified on a FRESH
+connection, which re-read the address master as well: `0` cities not the value
+planned and `0` the master would refuse. Re-measured by probe run
+[`34222237940`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34222237940):
+blank cities **711 -> 294**, repairable **417 -> 0**. `HC-SO-012565` now reads
+`city=true`, so the banner no longer names City on it.
+
+Email and Customer Type were counted and left alone: blank on all 2,883 sales
+orders and 2,882 respectively, and the probe re-asserts on every run that the
+book has neither column (`email column present: false; debtor-type column
+present: false`).
+
+**Ref.** fix/customer-info-gap, 2026-09-08. Full before/after:
+`docs/customer-block-gap-2026-09-08.md`.
