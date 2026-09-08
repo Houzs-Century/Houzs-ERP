@@ -48,9 +48,20 @@
 //   lines while unit_price_sen carries the price — a check on the total column
 //   alone passed vacuously there AND refused correct work.
 //
-// DRY-RUN by default; APPLY=1 writes. Every build is its own transaction, and
-// the run ends by re-reading every corrected document on a FRESH connection and
-// asserting the piece MULTISET, not a row count.
+// DRY-RUN by default; APPLY=1 writes, and APPLY=1 additionally needs
+// CONFIRM="I HAVE REVIEWED THE DRY-RUN" — the house gate this script was
+// grandfathered out of (release-discipline-grandfathered.json) and which
+// docs/bugs/0700 records a sibling workflow failing to pass. Every build is its
+// own transaction, and the run ends by re-reading every corrected document on a
+// FRESH connection and asserting the piece MULTISET, not a row count.
+//
+// RE-RUN: inert on a build already written. Rows are MATCHED to target pieces
+// and updated in place, so a second run re-states the same codes, the same
+// money and the same seat on the same row ids; nothing is inserted, nothing is
+// deleted and no downstream row moves. That is what makes it safe to leave the
+// 2026-08 file loaded beside the 2026-09 one. A build whose target piece SKU is
+// not minted, or whose surplus row is referenced downstream, is REFUSED on
+// every run rather than half-applied.
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
@@ -70,6 +81,16 @@ import {
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
 const APPLY = process.env.APPLY === "1";
+/* A build changes the ROW COUNT of a live sales order and carries the change
+   down onto the purchase order, the receipt, the delivery note and the invoices
+   raised from them. APPLY=1 alone is one character; the phrase has to be typed
+   on purpose. Refused loudly, never downgraded to a dry-run — an operator who
+   asked for a write and got a plan reads the plan as the write. */
+const CONFIRM_PHRASE = "I HAVE REVIEWED THE DRY-RUN";
+if (APPLY && process.env.CONFIRM !== CONFIRM_PHRASE) {
+  console.error(`REFUSED: APPLY=1 needs CONFIRM="${CONFIRM_PHRASE}". Nothing was written.`);
+  process.exit(2);
+}
 const CO = Number(process.env.COMPANY || 1);
 const ONLY = (process.env.DOC || "").trim();
 /* Which round to plan. Blank = every file. "2026-09" plans that round alone,

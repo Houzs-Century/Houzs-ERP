@@ -14,7 +14,9 @@
 // is genuinely free.
 //
 // SAFETY:
-//   - DRY-RUN by default (prints every row it would touch)
+//   - MODE=plan by default: prints every row it would touch AND the FULL
+//     content of the document, every column, and writes nothing. MODE=apply
+//     deletes. APPLY=1 is still accepted as the older spelling of MODE=apply.
 //   - APPLY additionally requires CONFIRM_DOC to equal DOC_NO — a
 //     destructive prod write should never ride on one typed field
 //   - REFUSES if the SO has ANY downstream document (DO / SI / etc.) or
@@ -24,8 +26,19 @@
 //     voucher earned elsewhere was redeemed ON this SO (see the PWP
 //     section below) — deleting either would destroy the audit trail of
 //     a voucher that is still in circulation
+//   - SWEEPS THE LIVE SCHEMA for every column that could name this document,
+//     and REFUSES on any reference it does not recognise. The hand-written
+//     CHILD_TABLES list below was incomplete for a year — scm.so_revisions,
+//     scm.so_amendment_lines, scm.mfg_so_item_deletions and scm.so_mirror_skips
+//     all carry a sales-order doc_no and NONE of them was probed — so that list
+//     is no longer the only thing standing between a delete and a silent
+//     orphan. What the sweep finds is CLASSIFIED, never cascaded into: a table
+//     nobody has classified stops the run instead of being deleted from.
 //   - Runs the deletes in a single transaction; nothing writes unless
 //     everything succeeds
+//   - VERIFIES ON A FRESH CONNECTION and asserts the SHAPE — the document and
+//     every child gone, the append-only audit trail deliberately still there,
+//     and a CONTROL proving no OTHER sales order, line or payment moved
 //
 // EXIT CODE: 0 for every legitimate answer, INCLUDING a refusal — a
 // refusal is a verdict, not a malfunction, and a red job reads as "the
@@ -34,13 +47,39 @@
 //
 // Usage:  DOC_NO=2990-SO-2607-019 [CONFIRM_DOC=… APPLY=1] node scripts/delete-test-so.mjs
 //
-// RE-RUN: inert. The documents it removes are gone.
+// RE-RUN: inert. A second apply finds nothing and says so; it cannot delete
+// twice.
+//
+// THERE IS NO UNDO, AND THE RECOVERY PATH IS THE RUN LOG. Before it writes
+// anything this prints the header row, every line row and every payment row as
+// complete JSON — every column, including the sofa `variants` build — so the
+// document can be re-keyed by hand from that output if a ruling is ever
+// reversed. Keep the run URL with the bug-ledger entry, and put the JSON in the
+// entry too: an Actions log is kept for 90 days, a repo file forever.
 import postgres from "postgres";
+/* The SQL this script cannot run anywhere but production lives here, so CI's
+   postgres:16 can run it first — tests-pg/deleteTestSoRefs.pg.test.ts. */
+import {
+  AUDIT, AUDIT_KEEP, CHILD, DOWNSTREAM, UNCLASSIFIED,
+  classifyReference, controlDrift, controlSnapshot, sweepReferences,
+} from "./lib/delete-test-so-refs.mjs";
 
 const DST = process.env.DATABASE_URL;
 const DOC_NO = (process.env.DOC_NO ?? "").trim();
 const CONFIRM_DOC = (process.env.CONFIRM_DOC ?? "").trim();
-const APPLY = process.env.APPLY === "1";
+/* MODE=plan is the default and writes nothing. APPLY=1 stays valid because it
+   is what every runbook and every previous run of this script used; it is now
+   just another spelling of MODE=apply. An unrecognised MODE stops the run — a
+   typo must never fall through to the writing branch. */
+const MODE = (process.env.MODE || (process.env.APPLY === "1" ? "apply" : "plan")).trim().toLowerCase();
+if (MODE !== "plan" && MODE !== "apply") {
+  console.error(`MODE must be "plan" or "apply"; got ${JSON.stringify(process.env.MODE)}`);
+  process.exit(2);
+}
+const APPLY = MODE === "apply";
+/* An unclassified reference stops the run. Set this to leave those rows in
+   place as orphans and delete anyway — a deliberate, named act. */
+const ALLOW_ORPHAN_REFS = process.env.ALLOW_ORPHAN_REFS === "yes";
 // A voucher earned on another order and redeemed on THIS one is money the
 // customer still owns. Opt in to hand it back (status -> AVAILABLE) rather
 // than letting the delete silently consume it.
@@ -85,7 +124,7 @@ async function resolveCol(db, qualified, cols) {
 }
 
 async function main() {
-  console.log(`\n== delete-test-so :: DOC_NO=${DOC_NO} mode=${APPLY ? "APPLY" : "DRY-RUN"} ==\n`);
+  console.log(`\n== delete-test-so :: DOC_NO=${DOC_NO} MODE=${MODE} ==\n`);
 
   if (APPLY && CONFIRM_DOC !== DOC_NO) {
     refuse(
@@ -107,6 +146,33 @@ async function main() {
     return;
   }
   console.log(`Parent  : ${DOC_NO}  status=${so.status}  company_id=${so.company_id}  proceeded_at=${so.proceeded_at ?? "—"}`);
+
+  /* (1b) THE RECOVERY PATH. There is no undo, so the only way back is to be
+     able to re-key the document by hand — which needs every column, not the
+     handful printed above. This runs in BOTH modes and BEFORE the delete, so
+     the apply run's own log carries the document it removed. */
+  const capture = {};
+  for (const [label, table, cols] of [
+    ["header", "scm.mfg_sales_orders", ["doc_no"]],
+    ["items", "scm.mfg_sales_order_items", ["doc_no"]],
+    ["payments", "scm.mfg_sales_order_payments", ["so_doc_no", "doc_no"]],
+    ["activity", "scm.mfg_sales_order_activity", ["doc_no"]],
+  ]) {
+    /* resolveCol asks information_schema, so a table that is not in this
+       database yields null rather than "relation does not exist". Production
+       has no scm.mfg_sales_order_activity (run 34220089049), and a capture
+       that assumed it did would have thrown before printing a single row. */
+    const c = await resolveCol(db, table, cols);
+    if (!c) { capture[label] = `(${table} is not in this database — nothing to capture)`; continue; }
+    capture[label] = await db.unsafe(`SELECT * FROM ${table} WHERE ${c} = $1`, [DOC_NO]);
+  }
+  console.log("");
+  console.log(`CONTENT OF ${DOC_NO} — the complete record, printed BEFORE any write.`);
+  console.log("If a ruling is reversed, this JSON is what the document is re-keyed from.");
+  console.log("---8<--- capture begin ---8<---");
+  console.log(JSON.stringify(capture, null, 2));
+  console.log("---8<--- capture end ---8<---");
+  console.log("");
 
   // (2) Refuse on any signal this is not a fresh test SO.
   const finalStatuses = new Set(["INVOICED", "DELIVERED", "CLOSED", "SHIPPED"]);
@@ -136,6 +202,57 @@ async function main() {
   }
   if (downstreamTotal > 0) {
     refuse(`${downstreamTotal} downstream doc row(s) reference ${DOC_NO}. Not a test SO.`);
+  }
+
+  /* (2b) THE SWEEP. The two probes above are a hand-written list, and this
+     script's hand-written lists have been incomplete before. Ask the live
+     schema instead: every text column in scm/public whose name could hold a
+     document number, counted against this one. Then classify what came back.
+     Nothing here deletes; the sweep decides whether the delete may proceed. */
+  const sweep = await sweepReferences(db, DOC_NO);
+  console.log("");
+  console.log(`REFERENCE SWEEP — ${sweep.scanned} candidate columns in the live schema`);
+  if (sweep.failed.length) {
+    for (const f of sweep.failed) console.log(`  UNREADABLE  ${f.table}.${f.column}  ${f.why}`);
+  }
+  if (sweep.hits.length === 0) {
+    console.log(`  nothing anywhere in the database names ${DOC_NO}`);
+  }
+  const childTableNames = new Set(CHILD_TABLES.map((t) => t.table));
+  const LEGEND = {
+    [CHILD]: "CHILD        — deleted with the order",
+    [AUDIT]: "AUDIT        — deliberately KEPT (append-only record)",
+    [DOWNSTREAM]: "DOWNSTREAM   — a real document; this REFUSES",
+    [UNCLASSIFIED]: "UNCLASSIFIED — nobody has said what this is",
+  };
+  const orphans = [];
+  for (const h of sweep.hits) {
+    const kind = classifyReference(h.table, childTableNames);
+    console.log(`  ${String(h.n).padStart(5)} row(s)  ${`${h.table}.${h.column}`.padEnd(46)} ${LEGEND[kind]}`);
+    if (kind === UNCLASSIFIED) orphans.push(h);
+    if (kind === DOWNSTREAM) {
+      refuse(`${h.n} row(s) in ${h.table}.${h.column} reference ${DOC_NO}. That is a real downstream document.`);
+    }
+  }
+  console.log("");
+  if (sweep.failed.length > 0) {
+    refuse(
+      `${sweep.failed.length} column(s) could not be counted (${sweep.failed.map((f) => `${f.table}.${f.column}`).join(", ")}). ` +
+      "A count that did not run is not a zero.",
+    );
+  }
+  if (orphans.length > 0 && !ALLOW_ORPHAN_REFS) {
+    refuse(
+      `${orphans.length} reference(s) nobody has classified: ` +
+      orphans.map((h) => `${h.table}.${h.column} (${h.n})`).join(", ") +
+      ". Deleting would leave them pointing at a document that does not exist. Classify them in " +
+      "CHILD_TABLES / AUDIT_KEEP / DOWNSTREAM_TABLES, or re-run with ALLOW_ORPHAN_REFS=yes to " +
+      "leave them behind on purpose.",
+    );
+  }
+  if (orphans.length > 0) {
+    console.log(`ALLOW_ORPHAN_REFS=yes — ${orphans.length} unclassified reference(s) will be LEFT BEHIND as orphans.`);
+    console.log("");
   }
 
   // (3) Discover every row that references it. Print BEFORE deleting so the
@@ -213,8 +330,24 @@ async function main() {
     }
   }
 
+  /* (4b) THE CONTROL. "Nothing else moved" is a claim, and a row count of the
+     thing you deleted is not evidence for it. This fingerprints the whole
+     sales-order corpus EXCLUDING this document, before and after, so the
+     verification can assert that every OTHER order, line and payment is
+     byte-for-byte the same set. */
+  const moneyCol = await resolveCol(db, "scm.mfg_sales_orders",
+    ["total_sen", "grand_total_sen", "net_total_sen", "total_amount_sen"]);
+  const payCol = childCols["scm.mfg_sales_order_payments"];
+  const control = (client) => controlSnapshot(client, DOC_NO, { moneyCol, payCol });
+  const beforeCtl = await control(db);
+  console.log("CONTROL (every sales order EXCEPT this one) — BEFORE");
+  console.log(`  orders=${beforeCtl.so_rows}  lines=${beforeCtl.item_rows}  payments=${beforeCtl.pay_rows ?? "n/a"}`);
+  console.log(`  ${moneyCol ?? "money"}=${beforeCtl.money_sum ?? "n/a"}  fingerprint=${beforeCtl.so_fingerprint}`);
+  console.log("");
+
   if (!APPLY) {
-    console.log(`\nDRY-RUN complete. To actually delete, re-run with APPLY=1 and CONFIRM_DOC=${DOC_NO}.`);
+    console.log(`PLAN complete. Nothing was written.`);
+    console.log(`To actually delete: MODE=apply CONFIRM_DOC=${DOC_NO}`);
     return;
   }
 
@@ -246,14 +379,64 @@ async function main() {
     if (r.count !== 1) throw new Error(`expected to delete exactly 1 SO row, deleted ${r.count} — rolled back`);
   });
 
-  // (6) After-state proof.
-  const [check] = await db`SELECT count(*)::int AS n FROM scm.mfg_sales_orders WHERE doc_no = ${DOC_NO}`;
-  console.log(`\nAfter   : ${DOC_NO} present? ${check.n > 0 ? "STILL PRESENT (delete failed?)" : "gone"}`);
-  if (havePwp) {
-    const [pwpLeft] = await db`
-      SELECT count(*)::int AS n FROM scm.pwp_codes
-       WHERE source_doc_no = ${DOC_NO} OR redeemed_doc_no = ${DOC_NO}`;
-    console.log(`After   : vouchers still pointing at ${DOC_NO}: ${pwpLeft.n}`);
+  /* (6) AFTER-STATE PROOF, ON A FRESH CONNECTION. The connection that did the
+     writing can answer from its own session state; a second client cannot. And
+     the assertion is the SHAPE, not a row count: the document and every child
+     gone, the append-only audit trail still there, and the control set
+     unchanged to the byte. A mismatch THROWS — an exit 1 here means the
+     database is not in the state this run reported, which is not a verdict. */
+  const verify = postgres(DST, { ssl: "require", prepare: false, max: 1 });
+  const shape = [];
+  try {
+    const [check] = await verify`SELECT count(*)::int AS n FROM scm.mfg_sales_orders WHERE doc_no = ${DOC_NO}`;
+    console.log(`\nAfter (fresh connection):`);
+    console.log(`  parent ${DOC_NO} rows=${check.n}  ${check.n === 0 ? "gone" : "STILL PRESENT"}`);
+    if (check.n !== 0) shape.push(`the parent row is still present (${check.n})`);
+
+    for (const t of CHILD_TABLES) {
+      const col = childCols[t.table];
+      if (!col) continue;
+      const [r] = await verify.unsafe(`SELECT count(*)::int AS n FROM ${t.table} WHERE ${col} = $1`, [DOC_NO]);
+      console.log(`  ${t.table.padEnd(40)} ${col.padEnd(12)} rows=${r.n}`);
+      if (r.n !== 0) shape.push(`${t.table}.${col} still has ${r.n} row(s)`);
+    }
+
+    if (havePwp) {
+      const [pwpLeft] = await verify`
+        SELECT count(*)::int AS n FROM scm.pwp_codes
+         WHERE source_doc_no = ${DOC_NO} OR redeemed_doc_no = ${DOC_NO}`;
+      console.log(`  vouchers still pointing at ${DOC_NO}: ${pwpLeft.n}`);
+      if (pwpLeft.n !== 0) shape.push(`${pwpLeft.n} voucher(s) still point at ${DOC_NO}`);
+    }
+
+    /* Re-sweep. Everything that survives must be something AUDIT_KEEP names, or
+       an orphan the operator asked for out loud. Anything else is a table this
+       script deleted the parent out from under. */
+    const after = await sweepReferences(verify, DOC_NO);
+    console.log(`  reference sweep: ${after.hits.length} table(s) still name ${DOC_NO}`);
+    for (const h of after.hits) {
+      const kept = AUDIT_KEEP.has(h.table);
+      console.log(`    ${String(h.n).padStart(5)}  ${h.table}.${h.column}  ${kept ? "AUDIT — kept on purpose" : "UNEXPECTED"}`);
+      if (!kept && !ALLOW_ORPHAN_REFS) shape.push(`${h.table}.${h.column} still names the deleted document`);
+    }
+    if (after.failed.length) shape.push(`${after.failed.length} column(s) could not be re-read`);
+
+    const afterCtl = await control(verify);
+    console.log("  CONTROL (every sales order EXCEPT this one) — AFTER");
+    console.log(`    orders=${afterCtl.so_rows}  lines=${afterCtl.item_rows}  payments=${afterCtl.pay_rows ?? "n/a"}`);
+    console.log(`    ${moneyCol ?? "money"}=${afterCtl.money_sum ?? "n/a"}  fingerprint=${afterCtl.so_fingerprint}`);
+    for (const k of controlDrift(beforeCtl, afterCtl)) {
+      shape.push(`CONTROL ${k} moved: ${beforeCtl[k]} -> ${afterCtl[k]} — another document changed`);
+    }
+    if (shape.length === 0) {
+      console.log("  SHAPE OK: the document and its children are gone, the audit trail is intact,");
+      console.log("  and every other sales order, line and payment is unchanged.");
+    }
+  } finally {
+    await verify.end();
+  }
+  if (shape.length > 0) {
+    throw new Error(`VERIFICATION FAILED — ${shape.join("; ")}`);
   }
 
   // (7) What the next save will ACTUALLY take. Read the counter, do not reason

@@ -56,9 +56,8 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { variantIdentity } from "./do-so-item-pairing.mjs";
-import { soHeaderToDoSnapshot } from "./migrated-do-header-snapshot.mjs";
 
-export const norm =(s) => (s || "").trim().toUpperCase().replace(/\s+/g, " ");
+export const norm = (s) => (s || "").trim().toUpperCase().replace(/\s+/g, " ");
 
 export function parseCsvLine(line) {
   const out = []; let cur = ""; let q = false;
@@ -319,35 +318,72 @@ export function doNote(d) {
     on the HEADER, never on a per-line column. Both are optional and default to
     NULL, because an unresolved location must stay visibly absent rather than
     fall back to a company-blind default; backfill-migrated-do-warehouse.mjs
-    reports every document it cannot resolve instead of guessing one.
-    `soHeader` is the sales order's header row (SO_HEADER_SNAPSHOT_COLS): the
-    customer / delivery snapshot — address, phone, email, salesperson, delivery
-    date — is copied from it exactly as /from-sos copies it, because a delivery
-    order is a snapshot of its sales order at dispatch. Left out until
-    2026-09-08 (docs/bugs/0716): every mirrored DO opened with the whole
-    customer card "—". Optional so an older caller still writes; a NULL header
-    leaves the snapshot NULL, which backfill-migrated-do-header.mjs fills. */
-export async function insertMigratedDo(sql, d, { companyId, sysUser, debtorFallback = null, warehouseId = null, salesLocation = null, soHeader = null }) {
+    reports every document it cannot resolve instead of guessing one. */
+export async function insertMigratedDo(sql, d, { companyId, sysUser, debtorFallback = null, warehouseId = null, salesLocation = null }) {
   const doNo = migratedDoNumber(d.doNo);
-  const doDate = (d.date || "").slice(0, 10) || null;
   return sql.begin(async (tx) => {
-    const [hdr] = await tx`INSERT INTO scm.delivery_orders ${tx({
-      do_number: doNo,
-      so_doc_no: d.so,
-      debtor_code: d.debtorCode,
-      debtor_name: d.debtorName ?? debtorFallback ?? soHeader?.debtor_name ?? "(unnamed)",
-      status: "DELIVERED",
-      do_date: doDate,
-      currency: "MYR",
-      company_id: companyId,
-      created_by: sysUser,
-      notes: doNote(d),
-      migrated_no_stock: true,
-      linked_ac_docno: d.doNo,
-      warehouse_id: warehouseId,
-      sales_location: salesLocation,
-      ...soHeaderToDoSnapshot(soHeader, { doDate }),
-    })} RETURNING id`;
+    const [hdr] = await tx`INSERT INTO scm.delivery_orders
+        (do_number, so_doc_no, debtor_code, debtor_name, status, do_date, currency,
+         company_id, created_by, notes, migrated_no_stock, linked_ac_docno,
+         warehouse_id, sales_location)
+      VALUES (${doNo}, ${d.so}, ${d.debtorCode},
+              ${d.debtorName ?? debtorFallback ?? "(unnamed)"},
+              'DELIVERED', ${(d.date || "").slice(0, 10) || null}, 'MYR',
+              ${companyId}, ${sysUser},
+              ${doNote(d)},
+              true, ${d.doNo},
+              ${warehouseId}, ${salesLocation})
+      RETURNING id`;
+    /* THE CUSTOMER BLOCK IS NOT OPTIONAL EITHER, and it was missing for exactly
+       the same reason the prices below once were: the INSERT names the columns
+       this writer thought about, and phone / email / address / city / state /
+       postcode were not among them. scm.delivery_orders HAS all of them and the
+       interactive create path fills them from the source order
+       (delivery-orders-mfg.ts:3459), so every document this writer made rendered
+       "—" for the whole block and a driver could not deliver from it. Reported
+       by the owner 2026-09-08, the day delivery orders opened to staff.
+
+       Copied from the PARENT SALES ORDER in the same transaction, because that
+       is where the book's own customer went (import-ac-outstanding-so.mjs
+       copies Phone1 / InvAddr1..4 onto the order). The four SO address lines
+       fold into the DO's two exactly as src/scm/lib/so-to-do-fields.ts folds
+       them for the live converters. Nothing is defaulted: where the order has
+       no value the column stays NULL, which is the honest rendering of a field
+       the source genuinely does not carry.
+
+       docs/bugs/0714. Rows already written are repaired by
+       scripts/repair-customer-block.mjs; this stops it recurring.
+
+       AND THE SALES / DELIVERY FIELDS, same statement, same reason. The card
+       the customer block fixed is the driver's; the header block above it —
+       Salesperson, Customer ref, Delivery date, Expected at — read "—" on the
+       same screen (HC-DO-011559, owner 2026-09-08) and for the same cause.
+       /from-sos copies salesperson_id / agent / branding / ref /
+       customer_delivery_date and sets expected_delivery_at to the customer
+       date or, failing that, the creation date — here the DO's own date. The
+       list is DO_SALES_CARRY in lib/customer-block.mjs, shared with
+       backfill-migrated-do-sales-fields.mjs. venue / venue_id stay out (a
+       canonicalising trigger rewrites them); sales_location / warehouse_id
+       are the ship-from branch from the book, never the order's.
+       docs/bugs/0716. */
+    await tx`UPDATE scm.delivery_orders d SET
+               phone = s.phone, email = s.email,
+               customer_type = s.customer_type, building_type = s.building_type,
+               address1 = s.address1,
+               address2 = COALESCE(NULLIF(btrim(s.address2), ''),
+                                   NULLIF(btrim(concat_ws(', ', NULLIF(btrim(s.address3), ''), NULLIF(btrim(s.address4), ''))), '')),
+               city = s.city, state = s.customer_state, customer_state = s.customer_state,
+               postcode = s.postcode, customer_country = s.customer_country,
+               emergency_contact_name = s.emergency_contact_name,
+               emergency_contact_phone = s.emergency_contact_phone,
+               emergency_contact_relationship = s.emergency_contact_relationship,
+               salesperson_id = s.salesperson_id, agent = s.agent,
+               branding = s.branding, ref = s.ref,
+               customer_delivery_date = s.customer_delivery_date,
+               expected_delivery_at = COALESCE(s.customer_delivery_date, d.do_date)
+             FROM scm.mfg_sales_orders s
+            WHERE d.id = ${hdr.id}
+              AND s.doc_no = d.so_doc_no AND s.company_id = d.company_id`;
     /* THE PRICE COLUMNS ARE NOT OPTIONAL. They were omitted here while the GRN
        half of create-migrated-documents.mjs wrote unit_price_sen and
        line_total_sen - one file, two answers. They default to 0 NOT NULL, so

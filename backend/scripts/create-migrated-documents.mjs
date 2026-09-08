@@ -55,7 +55,6 @@ import { loadBookGrLocations, resolveAcReceiptLocation } from "./lib/ac-gr-locat
    location map is how stock silently moves between branches — and the resolution
    onto a warehouse row is the tested spec of migration 0309's backfill. */
 import { mixedLocationDocs, resolveAcDeliveryLocation } from "./lib/ac-do-location.mjs";
-import { soHeaderSelectList } from "./lib/migrated-do-header-snapshot.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -228,15 +227,11 @@ async function doDos() {
       WHERE company_id = ${CO} AND migrated_no_stock = true AND linked_ac_docno IS NOT NULL`)
     .map((r) => r.linked_ac_docno));
 
-  /* The sales order's HEADER, whole. delivery_orders.debtor_name is NOT NULL -
-     the document is addressed to someone - and the AutoCount note carries the
-     name; where it does not, the sales order it delivers does. The REST of the
-     header (address, phone, email, salesperson, delivery date) comes from the
-     same row: a delivery order is a snapshot of its sales order at dispatch,
-     and until 2026-09-08 this writer copied only the name (docs/bugs/0716). */
-  const soHead = new Map((await sql.unsafe(
-    `SELECT ${soHeaderSelectList("h")} FROM scm.mfg_sales_orders h
-      WHERE h.company_id = ${Number(CO)} AND h.linked_ac_docno IS NOT NULL`)).map((r) => [r.doc_no, r]));
+  /* delivery_orders.debtor_name is NOT NULL - the document is addressed to
+     someone. The AutoCount note carries it; where it does not, the sales order
+     it delivers does. */
+  const soDebtor = new Map((await sql`SELECT doc_no, debtor_name FROM scm.mfg_sales_orders
+    WHERE company_id = ${CO} AND linked_ac_docno IS NOT NULL`).map((r) => [r.doc_no, r.debtor_name]));
   /* item_group / variants / description2 are pulled BECAUSE A DELIVERY ORDER IS
      A SNAPSHOT OF THE SALES ORDER AT DISPATCH. The first version of this writer
      named seven columns and copied none of the three, and the failure mode was
@@ -393,8 +388,8 @@ async function doDos() {
   for (const d of plan) {
     const where = resolveAcDeliveryLocation(d.doNo, hdrLoc, lineLocs, warehouses);
     if (!where.warehouseId) { noWh += 1; log(`   ${d.doNo}: no delivery warehouse stamped — ${where.why}`); }
-    await insertMigratedDo(sql, d, { companyId: CO, sysUser: SYS_USER, debtorFallback: soHead.get(d.so)?.debtor_name ?? null,
-      warehouseId: where.warehouseId, salesLocation: where.salesLocation, soHeader: soHead.get(d.so) ?? null });
+    await insertMigratedDo(sql, d, { companyId: CO, sysUser: SYS_USER, debtorFallback: soDebtor.get(d.so) ?? null,
+      warehouseId: where.warehouseId, salesLocation: where.salesLocation });
     made += 1;
   }
   log(`delivery warehouse stamped on ${made - noWh} of ${made} new document(s); ${noWh} left NULL and named above`);

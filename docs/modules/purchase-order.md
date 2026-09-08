@@ -946,6 +946,34 @@ MEMBERSHIP of the row's `photo_urls`, never by key shape. The importer's append
 (`ARRAY(SELECT DISTINCT unnest(COALESCE(photo_urls,'{}') || <keys>))`) is why
 the column must stay NOT NULL with a `'{}'` default.
 
+**A SOFA BUILD IS ONE PICTURE, ON THE FIRST COMPARTMENT.** One AutoCount line
+becomes one ERP line per compartment, all carrying the same `linked_ac_dtlkey`,
+and the importer hangs the photograph on the first of them only (owner
+2026-08-10). The siblings hold an empty `photo_urls` BY DESIGN, so a per-ROW
+count of "lines with no photo" is not the gap: measured on production 2026-09-08
+(run `34221745956`), 184 purchase-order rows read as missing and **175 of them
+were siblings of a line that already shows one** — the real figure was 7 lines.
+The unit is the AutoCount LINE. `probe-line-photo-gap.mjs` asks it that way; see
+the fuller note in `docs/modules/sales-order.md` §*The AutoCount migration's
+photos*.
+
+**THOSE 7 ARE CLOSED, AND THE WAY THEY CLOSED IS THE PART WORTH KEEPING.** Run
+`34227291924`, prod, 2026-09-08: **240 of 240 photographed purchase-order lines
+in the ERP now show their picture, MISSING 0.** Their objects had never been
+uploaded — an interrupted batch, traceable in the operator machine's own
+done-list — so this needed an UPLOAD and then an attach, not a re-point.
+
+**Do NOT close a gap like that with `import-po-line-photos.mjs APPLY=1`.** It was
+measured before it was trusted and it would have written **25** addresses where
+the gap needed 10. The other 15 sit on lines that already show their picture,
+and R2 holds none of those 15 objects — that is
+`docs/bugs/0625-a-backfill-replayed-the-round-1-photo-key-log-without-asking.md`
+again. The importer cannot know: it runs in Actions and has no R2 token, because
+this repository is PUBLIC. The narrow path is
+`backend/scripts/attach-uploaded-line-photos.mjs` — it asks R2 on the operator
+machine, refuses any address whose object is absent and any line that already
+shows one, and hands the writer a plan file. `docs/bugs/0720-…` has the trace.
+
 **TWO SCREENS OFFER THE CONTROL, AND THEY MUST NOT DRIFT (2026-08-28).** The
 strip is on the PO's TABLE view (`PurchaseOrderDetailV2`, a `Photos` column) AND
 in the rich LINE EDITOR (`PurchaseOrderDetail`, inside each `PoLineCard`). The
@@ -1594,6 +1622,7 @@ Three tools own this edge and they do not overlap:
 | ONE purchase row, ONE sales row | `repair-po-so-link-from-book.mjs` | a Map keyed by DtlKey would keep one row of a multi-row side |
 | SEVERAL on both sides, same products | `repair-po-so-link-sofa-compartments.mjs` | the pairing is a copy plus an identity match, not a choice |
 | ONE collapsed purchase row (`{model}-1S`), SEVERAL sales rows | `repair-collapsed-sofa-po-line.mjs` | the other two cannot invent a compartment; this one takes it from the BOOK's own Desc2 and only when the sales side already holds that exact multiset |
+| the same, but the purchase row is filed `others` AND carries a migrated, movement-free goods-receipt line | `repair-mislabelled-sofa-po-lines.mjs` | the row above refuses any build with a receipt line (its gate 6) and leaves the category alone; this one splits the receipt WITH the line (owner 2026-08-11) and writes `item_group = 'sofa'`, because the sofa stock import and `computeVariantKey` both key on it. Measured 2026-09-08: all 14 rows of this shape carry a receipt, so the row above reaches none of them (run 34220188752). `docs/bugs/0714-the-sofa-purchase-line-was-filed-as-others-so-the-sales-orde.md` |
 
 All three share ONE pairing vocabulary — `scripts/lib/sofa-po-so-pair.mjs` and
 `scripts/lib/redecode-sofa-plan.mjs`. Two copies of the pairing rule existed for
@@ -1609,6 +1638,16 @@ purchase row that decoded to a single `1S` from a text today's parser reads as
 `docs/bugs/0715` was written about. Widening the predicate would rewrite live
 one-seaters; the narrow answer is to require the sales side to state the same
 multiset independently.
+
+**And do not key a sofa tool on the PURCHASE row's `item_group` either.** It did
+not survive the SO -> PO hop on this population — measured, run `34218446892`:
+BOTH rows of `HC-PO-009435`, the sofa and its pillows, answer "not a sofa". That
+is the second, independent reason `redecode-collapsed-sofa-lines.mjs` (corpus:
+`WHERE i.item_group = 'sofa'`) cannot see these documents. What makes the line a
+sofa is the SALES side and the piece codes. The category is a real defect —
+`computeVariantKey` reads it, so it changes which stock bucket the row matches —
+and it belongs to the `docs/bugs/0514` lane, not to a link repair.
+`docs/bugs/0716`.
 
 **A link does not recompute readiness** (`docs/bugs/0675`). After any of the
 three, dispatch *Recompute SO stock allocation*, then *Recompute SO

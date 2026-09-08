@@ -12,6 +12,7 @@
 //                    however many rows name the model.
 //   the shape guard — one document may never hold the same (so_item_id, code,
 //                    qty) twice, whatever the mapping above it decided.
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import { buildMigratedDoPlan, doNote } from '../scripts/lib/migrated-do-writer.mjs';
@@ -302,5 +303,36 @@ describe('the header note', () => {
       rows: [acRow()], itemMap, soItems: [soLine('so-1', 'CHAIR-01')],
     });
     expect(doNote(plan[0])).not.toMatch(/SUBSTITUTED/);
+  });
+});
+
+
+/* The customer block. `insertMigratedDo` writes to a live database and cannot be
+   exercised from vitest, so what is pinned here is its SOURCE: that the header
+   write carries the block at all, and that it takes it from the parent sales
+   order rather than defaulting anything. Proved RED against the unfixed file —
+   before docs/bugs/0714 the INSERT named 14 columns and none of these. */
+describe('the customer block on a migrated delivery order', () => {
+  const src = readFileSync(new URL('../scripts/lib/migrated-do-writer.mjs', import.meta.url), 'utf8');
+
+  it('carries every field a driver needs, from the parent sales order', () => {
+    for (const col of ['phone', 'email', 'customer_type', 'building_type', 'address1',
+      'address2', 'city', 'state', 'customer_state', 'postcode', 'customer_country',
+      'emergency_contact_name', 'emergency_contact_phone', 'emergency_contact_relationship']) {
+      expect(src).toMatch(new RegExp(`\\b${col}\\s*=\\s*(?:s\\.|COALESCE)`));
+    }
+    expect(src).toMatch(/FROM scm\.mfg_sales_orders s/);
+    expect(src).toMatch(/s\.doc_no = d\.so_doc_no AND s\.company_id = d\.company_id/);
+  });
+
+  it("folds the order's four address lines into the delivery order's two", () => {
+    expect(src).toMatch(/concat_ws\(', ', NULLIF\(btrim\(s\.address3\)/);
+  });
+
+  it('defaults nothing — a field the order does not carry stays NULL', () => {
+    const at = src.indexOf('UPDATE scm.delivery_orders d SET');
+    expect(at).toBeGreaterThan(-1); // vacuously true otherwise, which is how this hid
+    const stmt = src.slice(at, src.indexOf('`;', at));
+    expect(stmt).not.toMatch(/COALESCE\([^)]*'[A-Za-z]/);
   });
 });
