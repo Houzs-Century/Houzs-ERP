@@ -1993,6 +1993,20 @@ One banner component for all of them where a banner is new:
 sentence for a write that reaches the API anyway is curated in
 `frontend/src/vendor/scm/lib/authed-fetch.ts`.
 
+> **…and the client has to actually SHOW it.** Curating the sentence is only
+> half of the delivery, and the mobile SO editor dropped the other half:
+> `MobileNewSO.applyLineDiff` wrapped each line DELETE / POST / PATCH in a bare
+> `catch { failed += 1; }`, so the 409's sentence was discarded at the moment it
+> arrived and the operator was shown *"N line change(s) did not save. Your edits
+> are still here; try Save again."* — built from the count alone. The owner
+> pressed Save repeatedly against a lock that would never yield
+> (`docs/bugs/0723-*`). Both surfaces now carry the reason through
+> `frontend/src/vendor/scm/lib/line-write-failures.ts`: one shared cause is
+> stated ONCE, and a 403/409 drops the retry advice, because retrying a decision
+> is not a remedy. `frontend/scripts/check-silent-mutations.mjs` does not cover
+> this shape — it scans `useMutation` call sites, and this path is a raw
+> `authedFetch` loop.
+
 **Opening them again is ONE statement**, when collections are corrected:
 
 ```sql
