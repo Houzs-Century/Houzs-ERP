@@ -14,6 +14,7 @@ import { Ban, Pencil, Plus } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import {
   useAccounts, useReceipts, useCreateReceipt, useVoidReceipt, useReceiptDetail, useUpdateReceipt,
+  postableAccounts,
   type Account, type ReceiptRow,
 } from '../../vendor/scm/lib/accounting-queries';
 import { AccountSelect } from '../../vendor/scm/components/AccountSelect';
@@ -52,7 +53,9 @@ export const Receipts = () => {
   const [month, setMonth] = useState<string>('');
   const listQ = useReceipts(month || undefined);
   const accountsQ = useAccounts();
-  const accounts = useMemo<Account[]>(() => (accountsQ.data?.accounts ?? []).filter((a) => a.is_active), [accountsQ.data]);
+  /* The whole chart goes in: a header whose children are all retired is still
+     a header (docs/bugs/0693). */
+  const accounts = useMemo<Account[]>(() => postableAccounts(accountsQ.data?.accounts ?? []), [accountsQ.data]);
   const moneyAccounts = useMemo(() => accounts.filter((a) => a.acc_money === true), [accounts]);
 
   const createReceipt = useCreateReceipt();
