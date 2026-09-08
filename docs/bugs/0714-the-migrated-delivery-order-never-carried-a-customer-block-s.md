@@ -1,7 +1,7 @@
 ## The migrated delivery order never carried a customer block so a driver has no phone and no address [high]
 
 <!-- area: Cutover + migrated data -->
-<!-- status: open -->
+<!-- status: fixed -->
 
 **Symptom.** Delivery orders opened to staff on 2026-09-08 at 17:41 and the
 owner sent a screen of `HC-DO-011556`, converted from `HC-SO-013124`, customer
@@ -67,5 +67,32 @@ The size of the class is measured by
 `backend/scripts/check-customer-block-gap.mjs` +
 `.github/workflows/check-customer-block-gap.yml`, read-only.
 
-**Ref.** fix/customer-info-gap, 2026-09-08. Status stays `open` until the repair
-has been dispatched against production and its run id recorded here.
+**Sized, then closed, on production.** Probe run
+[`34221966031`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34221966031)
+(19:38 Malaysia): **173 of 185 company-1 delivery orders carried no phone and no
+address at all** — every one of them written by that writer, none created by a
+human, and every one answerable from its parent sales order. 0 were unanswerable
+and 0 were half-filled.
+
+Apply run
+[`34222124527`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34222124527)
+wrote 175 delivery-order headers (173 needing the whole block, 2 needing only a
+city) in one transaction, and verified on a FRESH connection: `0` fields not the
+value planned, `0` disagreeing with the parent sales order, `0` still without a
+phone and an address. The control block was read on that same fresh connection —
+document counts, line counts, quantities, money, inventory movements and the
+READY/PENDING/PARTIAL allocation — and `control rows moved: 0`. Re-measured by
+probe run
+[`34222237940`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34222237940):
+**173 -> 0**.
+
+The AutoCount reconcile was **14 disagreements** two minutes before the apply
+([`34221922832`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34221922832))
+and **14** after
+([`34222294313`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34222294313)),
+with field identity 71 differ / 76 ERP-blank on both sides. Unmoved, which is the
+correct result: a customer block on a delivery order is not a line, a quantity or
+an amount.
+
+**Ref.** fix/customer-info-gap, 2026-09-08. Full before/after:
+`docs/customer-block-gap-2026-09-08.md`.

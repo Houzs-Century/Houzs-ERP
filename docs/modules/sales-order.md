@@ -1192,6 +1192,45 @@ renders the carried copies of these photos through the same component. Same
 keys, same R2 objects, shared byte cache — a thumb loaded on the SO detail is
 free on the PO detail.
 
+#### The AutoCount migration's photos: ONE build, ONE picture, on the FIRST piece
+
+The cutover carved the reference shots out of AutoCount's `FurtherDescription`
+RTF and hung them on the imported lines (`docs/autocount-further-description-photos.md`).
+The rule that governs where they land is the owner's, 2026-08-10
+(「每个 SKU 的照片都一样，留第一个就可以了」), and it is the single most
+misread fact in this area:
+
+**One AutoCount line is ONE photograph. A sofa build is one AutoCount line held
+as SEVERAL ERP rows — one per compartment — and the picture goes on the FIRST
+piece only.** The sibling compartments carry an empty `photo_urls` BY DESIGN.
+
+So the unit that "has a photograph" is true or false of is the **AutoCount
+line** (`linked_ac_dtlkey`), never the ERP row. Counting rows overstates the gap
+by the number of sibling compartments, and the difference is not small: measured
+on production 2026-09-08 (run `34221745956`), the row-level instrument
+`probe-line-photo-coverage.mjs` reported **450 sales-order rows** with no
+picture, of which **420 were siblings of a line that already shows one**. The
+real number was **20 lines**. Ask the question with
+`probe-line-photo-gap.mjs` (per line) and treat `probe-line-photo-coverage.mjs`
+(per row) as the raw funnel it says it is.
+
+Two more facts that stop the same re-derivation:
+
+- **A photographed line with no ERP row is usually not a defect.** The cutover
+  imported OUTSTANDING documents only, so most of the book's photographed lines
+  belong to documents that were deliberately never carried across.
+- **The row id inside a key is a mint-time record, not an authorisation.** The
+  read routes authorise by MEMBERSHIP of `photo_urls`, so an address naming a
+  row id that no longer exists still opens. Do not "repair" key shape.
+
+The two repairs that act here — `prune-dead-line-photo-keys.mjs` and
+`repoint-line-photos-to-owning-line.mjs` — need the R2 token AND a writing DSN
+in one process, which no machine has. They cross that gap with a digest-signed,
+120-minute plan file applied by *Apply line photo repair (from a plan file)*;
+`docs/bugs/0638-…` is the design and `scripts/lib/photo-repair-plan.mjs` the
+rules. **The R2 API token must never become an Actions secret — this repository
+is PUBLIC.**
+
 #### Line photos on the printed SO (owner mockup, 2026-08)
 
 `sales-order-pdf.ts` prints photos as ONE "ITEM PHOTOS" block after
@@ -1257,6 +1296,10 @@ is accepted only when `scm.my_localities` — the ERP's postcode -> city master,
 mig 0022, the same table the cascade above reads — lists it as a city of that
 exact postcode, and what is written is the master's spelling. `Selangor` at
 40000 is refused, a postcode with nothing after it is refused, `KL` is refused.
+APPLIED to production 2026-09-08, apply run `34222124527`: 417 of 711 blank
+cities written, the other 294 refused with a printed reason. Full before/after in
+`docs/customer-block-gap-2026-09-08.md`.
+
 Applied by `backend/scripts/repair-customer-block.mjs`; counted by
 `backend/scripts/check-customer-block-gap.mjs`.
 
@@ -1363,8 +1406,14 @@ number to all thirty and refuses twenty-nine with `23505`.
 read pages (`fetchMonthlyDocNos` → `paginateAll`), the suffix widens to four
 digits, `maxMonthlySuffix` parses any width, and a truncated floor is harmless
 under the counter. What is left is cost: one extra PostgREST round trip per
-create per 1,000 rows in that month. `.github/workflows/doc-no-headroom.yml`
-reports how far the busiest month has ever got.
+create per 1,000 rows in that month. **Measured** on production by run
+[`34222385098`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34222385098)
+(*Document numbers — headroom and month-tag drift*, 2026-09-08): the busiest
+Sales Order month this ERP has ever recorded is **76** (`2990-SO-2608`), and the
+busiest month of ANY series is **162** (`2990-JE-2608`) — 16% of the 1,000 line.
+Reaching 1,000 Sales Orders in one month takes **38.5 orders every working day**,
+thirteen times the busiest month on record. Re-run that workflow rather than
+quoting these numbers.
 
 ### Caching / loading behaviour (why the list opens instantly)
 Three layers, tuned so the list never shows a full-load spinner on a revisit:
