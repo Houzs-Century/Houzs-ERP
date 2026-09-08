@@ -422,6 +422,16 @@ mobile card, because `source === 'po'` now guarantees a number. Trace:
   on the purchase side against `2A(LHF)+1A(RHF)` on the sales side), which is a
   build disagreement needing the drawing, not a link one.
 
+  **The pairing rule lives in ONE place**, `backend/scripts/lib/sofa-po-so-pair.mjs`
+  (`judgeCompartmentPair`), imported by the repair and by
+  `backend/scripts/probe-staff-reported-flow.mjs`. Its contract matters and is
+  easy to get wrong: **pass every ERP purchase row carrying the key, LINKED ROWS
+  INCLUDED.** A compartment somebody already dedicated still occupies its sales
+  row, so a tally over the unlinked rows alone under-counts the purchase side and
+  hides the collision the guard exists to catch — which is exactly how two copies
+  of this rule gave opposite answers on production about `HC-PO-010040 <- SO-012277`
+  (`docs/bugs/0708-two-tools-answered-the-same-pairing-question-differently-twe.md`).
+
   **Size the two apart before quoting either.** Probe run `34202130553`
   (`probe-staff-reported-flow.mjs`): 2,842 live hard-bound sales lines carry no
   dedicated purchase line, and for **2,717 of them the book has no purchase
