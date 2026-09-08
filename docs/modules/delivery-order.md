@@ -2138,6 +2138,26 @@ data error.
   ALL-OR-NOTHING with an explicit refusal list, so it never vanished a document;
   and its over-delivery assertion is keyed on quantity, which a substituted line
   changes the meaning of. Enabling it there is a separate, reviewed change.
+- **The ruling could only ever reach a WHOLE document, never a line inside one
+  (2026-09-08).** `buildMigratedDoPlan` ends
+  `[...byDo.values()].filter((d) => !done.has(d.doNo))`
+  (`lib/migrated-do-writer.mjs:293`) and `done` is every `linked_ac_docno`
+  already in `scm.delivery_orders`. So a note whose EVERY line was a
+  substitution came in complete once the flag was on — `DO-001800`,
+  `DO-005583` — while a note that already existed because ONE of its lines could
+  be matched kept the gap: `DO-001953` (book 4, ERP 2) and `DO-004903` (book 3,
+  ERP 1). **Adding a substituted line to a document that already exists is
+  `topup-ac-lines-from-truth.mjs`'s DO lane, not this writer's**, and its targets
+  carry `substituted: true` to write exactly the shape in the table above.
+  `docs/bugs/0712`.
+- **The whole class is 30 delivery orders in the book and 4 in the ERP.**
+  `backend/scripts/probe-do-code-changed-after-conversion.mjs` (read-only) is
+  the measurement, because the reconcile's line-count axis cannot see a note
+  whose code was changed without changing the count. Run
+  [`34213215063`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34213215063)
+  named all 30 against production: 26 are correctly absent (their sales orders
+  were fully delivered before the cut), and the 4 the ERP holds are the four
+  named above.
 
 ## The delivery warehouse lives on the DO HEADER (2026-09-07)
 
