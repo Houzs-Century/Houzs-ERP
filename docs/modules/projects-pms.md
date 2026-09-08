@@ -321,8 +321,9 @@ surface (own month grid, no import from `Projects.tsx`), routed by
 It renders each event as ONE Houzs-teal bar SPANNING its days (label shown once,
 lane-packed per week — a multi-day event does not repeat per day), on a teal
 frame/header/grid (owner 2026-09-04: the plain version read as empty and the
-per-day repetition confused contractors; header and frame moved to the brass
-`accent` token 2026-09-08 so the bars are the only green).
+per-day repetition confused contractors; header and frame went dark slate on
+2026-09-08 so the bars are the only green — the owner tried the brass `accent`
+token the same day and chose slate).
 **Tapping an event opens ONLY its unfilled floorplan (owner 2026-09-08).** The
 list now carries `eventId` (the project id; it opens nothing on its own), and two
 more public routes in the same file sit behind the same token gate + limiter:

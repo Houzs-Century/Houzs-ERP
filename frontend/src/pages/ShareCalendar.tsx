@@ -385,7 +385,7 @@ export function ShareCalendar({ mode }: { mode: ShareMode }) {
   const eventCount = data ? data.events.length : 0;
   const navBtn = "h-9 rounded-md border border-gray-200 bg-white text-gray-600 hover:border-[#0F766E]";
   const toggleBtn = (active: boolean) =>
-    `h-9 px-3 text-[12px] font-semibold ${active ? "bg-accent text-white" : "bg-white text-gray-600 hover:bg-gray-50"}`;
+    `h-9 px-3 text-[12px] font-semibold ${active ? "bg-slate-800 text-white" : "bg-white text-gray-600 hover:bg-gray-50"}`;
 
   return (
     <div className="min-h-screen bg-[#0F766E]/5 text-gray-900">
@@ -420,8 +420,8 @@ export function ShareCalendar({ mode }: { mode: ShareMode }) {
         </div>
         {exportError ? <p className="mb-2 text-right text-[12px] text-red-700">{exportError}</p> : null}
 
-        <div className="overflow-hidden rounded-xl border-2 border-accent/60 bg-white shadow-md ring-1 ring-accent/10">
-          <div className="grid grid-cols-7 border-b-2 border-accent-hover bg-accent">
+        <div className="overflow-hidden rounded-xl border-2 border-slate-400 bg-white shadow-md ring-1 ring-slate-900/5">
+          <div className="grid grid-cols-7 border-b-2 border-slate-600 bg-slate-800">
             {weekdayNames.map((w, i) => (
               <div key={w} className="px-2 py-2 text-center text-[10px] font-semibold uppercase tracking-wide text-white">
                 {w}
