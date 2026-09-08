@@ -1523,11 +1523,18 @@ if (SKIP_ERP) {
           FROM scm.${e.table} c
           LEFT JOIN scm.${e.head} h ON h.id = c.${e.fk}
          WHERE c.${e.col} IS NULL`);
+      const childType = e.id.slice(0, 2);
       const verdicts = rows.map((r) => {
+        const acNo = r.child_ac_docno ? String(r.child_ac_docno).trim() : null;
         const v = classifyNotLinked({
           childAcDocNo: r.child_ac_docno,
           childDtlKey: r.child_dtlkey,
-          bookLine: r.child_dtlkey ? book[e.id.slice(0, 2)].byKey.get(String(r.child_dtlkey)) ?? null : null,
+          bookLine: r.child_dtlkey ? book[childType].byKey.get(String(r.child_dtlkey)) ?? null : null,
+          /* The child DOCUMENT's lines. `?? null` and not `?? []`: a document
+             the snapshot does not hold and a document with no lines are
+             different answers, and an empty array would read as "the book
+             records no source", which is the benign one. */
+          bookChildLines: acNo ? book[childType].lines.get(acNo) ?? null : null,
           lineKeyed: e.lineKeyed,
           fromType: e.fromType,
           parentImported: (d) => importedAny[e.parentType].has(d),
@@ -1631,7 +1638,7 @@ if (SKIP_ERP) {
          gets counted as fine. The trade is that the whole live proceeded
          population comes back rather than a count - a few thousand rows on a
          table the ERP already reads whole elsewhere. */
-      const PDATE = pg.unsafe(SO_PROCESSING_DATE_COLUMN);
+      const PDATE = soProcessingDateFragment(pg);
       const soLines = await pg`
         SELECT i.id::text AS id, i.doc_no, i.item_code, i.item_group,
                EXISTS (SELECT 1 FROM scm.purchase_order_items p WHERE p.so_item_id = i.id) AS has_po

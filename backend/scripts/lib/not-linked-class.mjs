@@ -47,10 +47,22 @@
 // write, and the report says so where it prints the number.
 //
 // UNRESOLVED is the sixth answer and it is deliberately NOT a benign bucket: it
-// is the honest "we cannot say" for a child line whose AutoCount DtlKey is
-// absent or resolves to no book line. It must never be folded into a benign
-// class - the whole point of splitting the column is that a real gap can no
-// longer hide inside one, so what cannot be classified is named as such.
+// is the honest "we cannot say" - the child document is not in the snapshot,
+// the SO->PO line key is absent, or the book's source line is carried by
+// several ERP rows so the book cannot say which took the goods. It must never
+// be folded into a benign class - the whole point of splitting the column is
+// that a real gap can no longer hide inside one, so what cannot be classified
+// is named as such.
+//
+// THE ROUTE TO THE BOOK IS PER EDGE, AND GETTING THAT WRONG MANUFACTURES A GAP.
+// This classifier's first version read every edge through the child line's
+// linked_ac_dtlkey and reported 360 of the 765 as "no AutoCount line key"
+// (run 34183990531). Migration 0280's own header refutes that reading: it ADDED
+// that column to the four downstream tables and states "nothing backfills it:
+// the keys are stamped forward", so a MIGRATED delivery note, receipt or
+// invoice has no key by design. Only SO->PO is read through the line key now;
+// the other five are read through the child DOCUMENT, which is the grain the
+// book stores them at anyway.
 //
 // PURE: identifiers and lookup callbacks in, a verdict out. No filesystem, no
 // database, no process.exit. The caller owns the I/O.
@@ -67,7 +79,7 @@ export const NOT_LINKED_CLASSES = [
   { id: "out_of_scope", benign: true, label: "the book names a parent the cutover did not import" },
   { id: "doc_grain_only", benign: true, label: "the book records a document number and nothing finer" },
   { id: "dropped", benign: false, label: "the book states it at a grain we can reach - OUR DEFECT" },
-  { id: "unresolved", benign: false, label: "no AutoCount line key, or it resolves to no book line - CANNOT SAY" },
+  { id: "unresolved", benign: false, label: "the book cannot be reached, or cannot say which line - CANNOT SAY" },
 ];
 
 const BENIGN = new Set(NOT_LINKED_CLASSES.filter((c) => c.benign).map((c) => c.id));
@@ -79,7 +91,12 @@ export const isBenignNotLinked = (cls) => BENIGN.has(cls);
  * @param {object} a
  * @param {string|null} a.childAcDocNo  AutoCount doc number on the CHILD header; null = ERP-native
  * @param {string|null} a.childDtlKey   AutoCount DtlKey on the CHILD line (as text), or null
- * @param {object|null} a.bookLine      the book line that DtlKey resolves to, or null
+ * @param {object|null} a.bookLine      the book line that DtlKey resolves to, or null.
+ *   Read ONLY on the line-keyed edge; the other five have no line key to follow.
+ * @param {object[]|null} a.bookChildLines  every line of the CHILD document in the
+ *   book, or null when that document is not in the snapshot. This is the route
+ *   for the five document-grain edges - see the block that uses it for why the
+ *   DtlKey route is structurally wrong there.
  * @param {boolean} a.lineKeyed         does the BOOK record a source LINE for this edge (SO->PO only)
  * @param {string|null} a.fromType      the FromDocType this edge expects; null on the line-keyed edge
  * @param {(docNo: string) => boolean} a.parentImported   is that parent document in the ERP
@@ -97,6 +114,7 @@ export function classifyNotLinked({
   childAcDocNo,
   childDtlKey,
   bookLine,
+  bookChildLines,
   lineKeyed,
   fromType,
   parentImported,
@@ -110,33 +128,21 @@ export function classifyNotLinked({
     return { cls: "erp_native", why: "the child document carries no AutoCount number", ...none };
   }
 
-  /* We cannot reach the book line, so we cannot say what the book asserts. This
-     is an ANSWER, not a bucket to hide in. */
-  if (childDtlKey == null || String(childDtlKey).trim() === "") {
-    return { cls: "unresolved", why: "the child line carries no AutoCount DtlKey", ...none };
-  }
-  if (!bookLine) {
-    return { cls: "unresolved", why: `DtlKey ${childDtlKey} resolves to no line in the book`, ...none };
-  }
-
-  /* The book's own line names no source of this type. An absent link here is
-     the book's answer reproduced exactly. */
-  const names = lineKeyed
-    ? !!bookLine.fromSoDtlKey
-    : bookLine.fromDocType === fromType && !!bookLine.fromDocNo;
-  if (!names) {
-    return {
-      cls: "book_no_edge",
-      why: lineKeyed
-        ? "the book line carries no FromSODtlKey"
-        : `the book line FromDocType is ${bookLine.fromDocType || "(none)"}, not ${fromType}`,
-      ...none,
-    };
-  }
-
-  /* THE LINE-KEYED EDGE. PODTL.FromSODtlKey names the source LINE, so both
-     "which document" and "which line" are the book's own words. */
+  /* ── THE LINE-KEYED EDGE, SO->PO ────────────────────────────────────────
+     PODTL.FromSODtlKey names the source LINE, so the child's own DtlKey is the
+     right route: it is the only edge where the book has anything finer than a
+     document to say. Without that key there is nothing to read, and that is an
+     ANSWER, not a bucket to hide in. */
   if (lineKeyed) {
+    if (childDtlKey == null || String(childDtlKey).trim() === "") {
+      return { cls: "unresolved", why: "the child line carries no AutoCount DtlKey", ...none };
+    }
+    if (!bookLine) {
+      return { cls: "unresolved", why: `DtlKey ${childDtlKey} resolves to no line in the book`, ...none };
+    }
+    if (!bookLine.fromSoDtlKey) {
+      return { cls: "book_no_edge", why: "the book line carries no FromSODtlKey", ...none };
+    }
     const key = String(bookLine.fromSoDtlKey);
     const doc = bookLine.fromDocNo ? String(bookLine.fromDocNo).trim() : null;
     if (doc && !parentImported(doc)) {
@@ -175,20 +181,50 @@ export function classifyNotLinked({
     };
   }
 
-  /* EVERY OTHER EDGE. The book gives a document number and stops. */
-  const doc = String(bookLine.fromDocNo).trim();
-  if (!parentImported(doc)) {
+  /* ── EVERY OTHER EDGE, RESOLVED AT DOCUMENT GRAIN ───────────────────────
+     Reading these through the child's DtlKey was this classifier's own first
+     mistake, and it is worth recording rather than quietly correcting: 360 of
+     the 765 came back "no AutoCount line key" on run 34183990531, which reads
+     as a gap and is nothing of the kind. Migration 0280 says so in its own
+     header - it ADDED linked_ac_dtlkey to these four downstream tables, and
+     "nothing backfills it: the keys are stamped forward". A migrated delivery
+     note or receipt has no key BY DESIGN, so a route that needs one answers
+     UNKNOWN for the entire migrated population. That is the trap this repo
+     names as a checker that cannot match reporting a clean run, wearing its
+     other face: a checker that cannot match reporting a false gap.
+     The book stores these edges at DOCUMENT grain anyway (FromDocType +
+     FromDocNo, and FromDocDtlKey NULL on all ~220,000 rows), so the child
+     DOCUMENT is both the available route and the correct one. */
+  if (bookChildLines == null) {
+    return {
+      cls: "unresolved",
+      why: `the child document ${childAcDocNo} is not in the book snapshot`,
+      ...none,
+    };
+  }
+  const sources = [...new Set(bookChildLines
+    .filter((l) => l.fromDocType === fromType && !!l.fromDocNo)
+    .map((l) => String(l.fromDocNo).trim()))];
+  if (sources.length === 0) {
+    return {
+      cls: "book_no_edge",
+      why: `no line of book document ${childAcDocNo} names a ${fromType} source`,
+      ...none,
+    };
+  }
+  const imported = sources.filter((d) => parentImported(d));
+  if (imported.length === 0) {
     return {
       cls: "out_of_scope",
-      why: `the book source ${fromType} ${doc} was not imported`,
-      parentDocNo: doc,
+      why: `the book source ${fromType} ${sources.join(", ")} was not imported`,
+      parentDocNo: sources[0],
       parentDtlKey: null,
     };
   }
   return {
     cls: "doc_grain_only",
-    why: `the book names ${fromType} ${doc} and stores no source line key`,
-    parentDocNo: doc,
+    why: `the book names ${fromType} ${imported.join(", ")} and stores no source line key`,
+    parentDocNo: imported[0],
     parentDtlKey: null,
   };
 }

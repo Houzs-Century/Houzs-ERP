@@ -35,8 +35,24 @@ const base = {
   childAcDocNo: 'PO-010093',
   childDtlKey: '9001',
   bookLine: bookLine(),
+  bookChildLines: null,
   lineKeyed: true,
   fromType: null,
+  parentImported: () => true,
+  parentLineCount: () => 1,
+};
+
+/* A document-grain edge - every edge except SO->PO. `bookChildLines` is the
+   route; the child's own DtlKey is deliberately absent, because on a MIGRATED
+   delivery note, receipt or invoice it genuinely is (mig 0280: the keys are
+   stamped forward and nothing backfills them). */
+const docGrain = {
+  childAcDocNo: 'DO-001800',
+  childDtlKey: null,
+  bookLine: null,
+  bookChildLines: [bookLine({ docNo: 'DO-001800', fromDocType: 'SO', fromDocNo: 'SO-002281' })],
+  lineKeyed: false,
+  fromType: 'SO',
   parentImported: () => true,
   parentLineCount: () => 1,
 };
@@ -67,17 +83,65 @@ describe('classifyNotLinked - the four benign causes', () => {
   });
 
   it('a document-grain-only edge is benign: the book stores no source LINE for it', () => {
-    const v = classifyNotLinked({
-      ...base,
-      lineKeyed: false,
-      fromType: 'SO',
-      bookLine: bookLine({ fromDocType: 'SO', fromDocNo: 'SO-000123' }),
-    });
+    const v = classifyNotLinked({ ...docGrain });
     expect(v.cls).toBe('doc_grain_only');
     expect(isBenignNotLinked(v.cls)).toBe(true);
+    expect(v.parentDocNo).toBe('SO-002281');
     /* The book named a document and nothing finer, so the LINE key stays null.
        Filling it in would be the invention migration-copy-never-compute forbids. */
     expect(v.parentDtlKey).toBeNull();
+  });
+});
+
+describe('the document-grain edges are read through the DOCUMENT, never the line key', () => {
+  /* This is the mistake the first version of this classifier made and it is
+     pinned here rather than only corrected: reading these five edges through
+     linked_ac_dtlkey reported 360 of 765 lines as "no AutoCount line key",
+     which is a manufactured gap - mig 0280 stamps those keys FORWARD and
+     backfills nothing, so the whole migrated population has none. */
+  it('a missing child DtlKey does NOT make a document-grain edge unresolved', () => {
+    const v = classifyNotLinked({ ...docGrain, childDtlKey: null, bookLine: null });
+    expect(v.cls).toBe('doc_grain_only');
+  });
+
+  it('the book document naming no source of THIS type is benign', () => {
+    /* The 183 invoice lines with no sales-order link are this case: the book's
+       invoices are converted from DELIVERY ORDERS, so an IV <- SO link would be
+       an edge the account book does not have. */
+    const v = classifyNotLinked({
+      ...docGrain,
+      childAcDocNo: 'I-000745',
+      bookChildLines: [bookLine({ docNo: 'I-000745', fromDocType: 'DO', fromDocNo: 'DO-004000' })],
+    });
+    expect(v.cls).toBe('book_no_edge');
+    expect(v.why).toContain('SO');
+  });
+
+  it('a child document absent from the snapshot is UNRESOLVED, not "no edge"', () => {
+    /* `null` and `[]` must not collapse: an empty line list would read as the
+       book recording no source, which is the benign answer. */
+    const v = classifyNotLinked({ ...docGrain, bookChildLines: null });
+    expect(v.cls).toBe('unresolved');
+    expect(isBenignNotLinked(v.cls)).toBe(false);
+  });
+
+  it('several sources are all reported, and one imported parent is enough', () => {
+    const v = classifyNotLinked({
+      ...docGrain,
+      bookChildLines: [
+        bookLine({ fromDocType: 'SO', fromDocNo: 'SO-000001' }),
+        bookLine({ fromDocType: 'SO', fromDocNo: 'SO-000002' }),
+      ],
+      parentImported: (d) => d === 'SO-000002',
+    });
+    expect(v.cls).toBe('doc_grain_only');
+    expect(v.parentDocNo).toBe('SO-000002');
+  });
+
+  it('no source imported at all is OUT OF SCOPE and names what the book said', () => {
+    const v = classifyNotLinked({ ...docGrain, parentImported: () => false });
+    expect(v.cls).toBe('out_of_scope');
+    expect(v.why).toContain('SO-002281');
   });
 });
 
@@ -152,7 +216,7 @@ describe('the benign / finding split is DECLARED, not derived at the call site',
       classifyNotLinked({ ...base, childAcDocNo: null }),
       classifyNotLinked({ ...base }),
       classifyNotLinked({ ...base, bookLine: bookLine({ fromSoDtlKey: '7001', fromDocNo: 'X' }), parentImported: () => false }),
-      classifyNotLinked({ ...base, lineKeyed: false, fromType: 'SO', bookLine: bookLine({ fromDocType: 'SO', fromDocNo: 'SO-1' }) }),
+      classifyNotLinked({ ...docGrain }),
       classifyNotLinked({ ...base, bookLine: bookLine({ fromSoDtlKey: '7001', fromDocNo: 'SO-1' }) }),
       classifyNotLinked({ ...base, bookLine: null }),
     ].map((v) => v.cls);
