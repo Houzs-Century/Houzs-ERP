@@ -652,14 +652,79 @@ designed, over a population nobody had a route to.
 
 `backend/scripts/backfill-ac-downstream-line-keys.mjs` closes that for goods
 receipts and delivery orders (workflow **Backfill AutoCount line keys (goods
-receipts + delivery orders)**; `APPLY=1` needs `CONFIRM="STAMP DOWNSTREAM LINE
-KEYS"`). It stamps ONLY where the document forces the pairing —
+receipts + delivery orders + invoices)**; `APPLY=1` needs `CONFIRM="STAMP
+DOWNSTREAM LINE KEYS"`). It stamps ONLY where the document forces the pairing —
 `backend/scripts/lib/ac-forced-line-pairing.mjs` holds the rule and its header
 argues each clause — and leaves everything else NULL and named, because a WRONG
 DtlKey makes `AcSyncService` append to the live book while a NULL one is refused
-loudly. Sales invoices and purchase invoices are NOT covered: their lines come
-from OUR delivery order and OUR goods receipt rather than from AutoCount's own
-`IVDTL` / `PIDTL`, so the book states no counterpart to pair against.
+loudly.
+
+> **CORRECTED 2026-09-09.** This paragraph used to end: *"Sales invoices and
+> purchase invoices are NOT covered: their lines come from OUR delivery order
+> and OUR goods receipt rather than from AutoCount's own `IVDTL` / `PIDTL`, so
+> the book states no counterpart to pair against."* The first half is true and
+> the conclusion does not follow. The book states `IVDTL.FromDocNo` /
+> `PIDTL.FromDocNo` — WHICH delivery order or goods receipt each invoice line
+> was raised from — and our own line knows which of ours it came from, so there
+> is a counterpart and it is the book's own key. Believing that sentence is what
+> left 344 invoice lines keyless until the transfer-chain audit could not ask
+> either invoice type anything at all: 「销售发票、采购发票 — 问不了：每一行都没有
+> 账本行号」 (`docs/bugs/0727`).
+
+### The two INVOICE lanes (added 2026-09-09)
+
+The subset problem is what makes an invoice different, not the absence of a key.
+A migrated invoice's lines are built from OUR delivery order / goods receipt and
+the migration carried only the OUTSTANDING population, so the ERP deliberately
+holds a SUBSET of what the book's invoice bills — 131 of the 192 in-scope
+purchase invoices bill at least one line whose purchase order was never carried
+(`backend/scripts/lib/ac-chain-line-grain.mjs`). On `(item, quantity)` alone
+every one of those reads as *"the book has 2 such lines, we have 1"*: refused
+for a reason that is SCOPE, not doubt.
+
+So the bucket gains the source document, and `ac-forced-line-pairing` decides
+per document whether to use it:
+
+- **ALL-OR-NOTHING.** If either side leaves ONE row's source unstated the
+  partition is off and the older rule stands. A sourceless row must not fall
+  into a shared `""` bucket with every other sourceless row — that would pair
+  lines the book never linked.
+- the goods-receipt and delivery-order lanes pass no source at all and are
+  therefore **bit-for-bit** unchanged, which their own tests pin;
+- a sofa fold whose compartments disagree about where they came from states no
+  source, so the partition switches off — the same argument `uneven` already
+  makes about quantity.
+
+`resolveErpSource` decides which of our TWO parents the book means — an invoice
+line reaches its delivery order AND the sales order behind it, its goods receipt
+AND that receipt's purchase order, because the book writes both edges — from the
+book's own list for that invoice, returning null when it names both or neither.
+The parent join is not rewritten here: it is `chainEdges`' own SQL in
+`backend/scripts/lib/ac-transfer-chain-run.mjs`, which already states that
+two-parent shape and why.
+
+**Applied to production 2026-09-08, run `34258125504`** —
+`APPLIED: 291 row(s) stamped of 291 planned`:
+
+| | documents | lines | stamped | left NULL |
+|---|---|---|---|---|
+| sales invoices | 45 | 186 | 174 | 12 |
+| purchase invoices | 55 | 158 | 117 | 41 |
+
+Both tables went 0 -> keyed; **0 stored keys disagreed**. The SHAPE proof
+(fresh connection) reported money, quantities, readiness, stock and the
+migrated-document movement leak IDENTICAL, with `mfg_sales_order_items` and
+`purchase_order_items` carried as an explicit CONTROL that did not move.
+
+What it bought, run `34258790142`: sales invoices answer **0 differ** on SKU,
+quantity, money and the transfer chain — all of which were previously
+unmeasurable. Purchase invoices went the other way: 53 of 55 differ, of which
+the transfer chain alone is 47 documents (all PROCEEDED). Those differences were
+always there; the instrument could not see them. Every printed
+`transfer from` failure names a PURCHASE ORDER where the book names a GOODS
+RECEIPT (21 of 21 in the run's sample, 0 naming a receipt), because the receipt
+behind the invoice carries no `linked_ac_gr_docno` — that is the next thing to
+close, and it is a goods-receipt stamping gap, not an invoice one.
 
 The same absence had a second victim outside this module.
 `check-ac-erp-reconcile.mjs` selected `NULL::bigint AS ac_dtlkey` for goods

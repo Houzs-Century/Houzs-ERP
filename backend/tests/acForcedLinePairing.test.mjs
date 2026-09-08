@@ -5,7 +5,7 @@
 // so "no key" is the safe answer and "a key" is the dangerous one.
 import { describe, expect, it } from "vitest";
 
-import { comparisonKey, foldErpUnits, pairDocument, planLineKeys } from "../scripts/lib/ac-forced-line-pairing.mjs";
+import { comparisonKey, foldErpUnits, pairDocument, planLineKeys, resolveErpSource } from "../scripts/lib/ac-forced-line-pairing.mjs";
 
 const book = (over = {}) => ({
   dtlKey: 1, code: "BC-CB49", rawCode: "BC-CB49", qty: 1,
@@ -403,5 +403,169 @@ describe("the roll-up counts every FORCED kind", () => {
     const { stampedRows, forcedUnique, forcedInterchangeable, forcedBuildText } = out.totals;
     expect(forcedBuildText).toBe(3);
     expect(forcedUnique + forcedInterchangeable + forcedBuildText).toBe(stampedRows);
+  });
+});
+
+/* ── THE SOURCE-DOCUMENT PARTITION — what the INVOICE lanes need ────────────
+ * A migrated invoice's lines are built from OUR delivery order / goods receipt
+ * and the migration carried only the OUTSTANDING population, so the ERP holds a
+ * deliberate SUBSET of the book's invoice lines: measured on the committed
+ * snapshot, 131 of 192 in-scope purchase invoices bill at least one line whose
+ * purchase order the migration never carried (lib/ac-chain-line-grain.mjs).
+ *
+ * Bucketed on (item, quantity) alone that reads as ambiguity — "the book has 2
+ * such lines, we have 1" — and every one of those lines is refused for a reason
+ * that is SCOPE, not doubt.
+ *
+ * The book states the discriminator itself. `IVDTL.FromDocNo` / `PIDTL.FromDocNo`
+ * name the delivery order / goods receipt each invoice line was raised from, and
+ * our own row knows which of ours it came from. Pairing inside that partition is
+ * still the book's own key, never a position and never a resemblance.
+ *
+ * IT IS ALL-OR-NOTHING PER DOCUMENT, on purpose. If either side leaves one row's
+ * source unstated the partition is off and the rule is exactly what it was — the
+ * goods-receipt and delivery-order lanes pass no source at all and are pinned
+ * bit-for-bit below.
+ */
+describe("the source-document partition", () => {
+  it("pairs our line against the book line raised from the SAME source document", () => {
+    // The book bills the same item at the same quantity from two receipts; the
+    // migration carried only GR-A. Without the partition this is "the book has
+    // 2 such lines, we have 1" and both are refused.
+    const r = pairDocument({
+      docNo: "PI-1",
+      bookLines: [
+        book({ dtlKey: 11, sourceDoc: "GR-A", unitPriceSen: 1000, subTotalSen: 1000 }),
+        book({ dtlKey: 22, sourceDoc: "GR-B", unitPriceSen: 2000, subTotalSen: 2000 }),
+      ],
+      erpRows: [erp({ id: "a", sourceDoc: "GR-A" })],
+    });
+    expect(r.refusals).toEqual([]);
+    expect(r.stamps).toEqual([{ id: "a", dtlKey: 11, key: "BC-CB49", forced: "source document" }]);
+    // The line we never carried is an UNMATCHED BOOK LINE, not a refusal.
+    expect(r.unmatchedBookLines).toEqual([{ key: "BC-CB49", lines: 1 }]);
+  });
+
+  it("still REFUSES two book lines from the SAME source that we hold one of", () => {
+    // The partition narrows; it never invents. Inside one receipt the two lines
+    // are as indistinguishable as they ever were.
+    const r = pairDocument({
+      docNo: "PI-2",
+      bookLines: [
+        book({ dtlKey: 11, sourceDoc: "GR-A", unitPriceSen: 1000, subTotalSen: 1000 }),
+        book({ dtlKey: 22, sourceDoc: "GR-A", unitPriceSen: 2000, subTotalSen: 2000 }),
+      ],
+      erpRows: [erp({ id: "a", sourceDoc: "GR-A" })],
+    });
+    expect(r.stamps).toEqual([]);
+    expect(r.refusals[0].reason).toMatch(/the book has 2 such line\(s\), we have 1/);
+  });
+
+  it("is OFF when one of OUR rows states no source, and refuses as it did before", () => {
+    const r = pairDocument({
+      docNo: "PI-3",
+      bookLines: [
+        book({ dtlKey: 11, sourceDoc: "GR-A", unitPriceSen: 1000, subTotalSen: 1000 }),
+        book({ dtlKey: 22, sourceDoc: "GR-B", unitPriceSen: 2000, subTotalSen: 2000 }),
+      ],
+      erpRows: [erp({ id: "a", sourceDoc: null })],
+    });
+    expect(r.stamps).toEqual([]);
+    expect(r.refusals[0].reason).toMatch(/the book has 2 such line\(s\), we have 1/);
+  });
+
+  it("is OFF when one BOOK line states no source", () => {
+    const r = pairDocument({
+      docNo: "PI-4",
+      bookLines: [
+        book({ dtlKey: 11, sourceDoc: "GR-A", unitPriceSen: 1000, subTotalSen: 1000 }),
+        book({ dtlKey: 22, sourceDoc: null, unitPriceSen: 2000, subTotalSen: 2000 }),
+      ],
+      erpRows: [erp({ id: "a", sourceDoc: "GR-A" })],
+    });
+    expect(r.stamps).toEqual([]);
+    expect(r.refusals[0].reason).toMatch(/the book has 2 such line\(s\), we have 1/);
+  });
+
+  it("is OFF for a sofa whose compartment rows disagree about where they came from", () => {
+    // A fold that cannot state ONE source must not be allowed to state a
+    // pairing either — the same argument `uneven` makes about quantity.
+    const r = pairDocument({
+      docNo: "PI-5",
+      bookLines: [
+        book({ dtlKey: 11, code: "8030-1S", rawCode: "DSL-8030 SOFA", sourceDoc: "GR-A", unitPriceSen: 1000, subTotalSen: 1000 }),
+        book({ dtlKey: 22, code: "8030-1S", rawCode: "DSL-8030 SOFA", sourceDoc: "GR-B", unitPriceSen: 2000, subTotalSen: 2000 }),
+      ],
+      erpRows: [
+        erp({ id: "a", code: "8030-1A(LHF)", sourceDoc: "GR-A" }),
+        erp({ id: "b", code: "8030-CNR", sourceDoc: "GR-B" }),
+      ],
+    });
+    expect(r.stamps).toEqual([]);
+    expect(r.refusals[0].reason).toMatch(/the book has 2 such line\(s\), we have 1/);
+  });
+
+  it("carries the source onto the folded unit when every compartment agrees", () => {
+    const u = foldErpUnits([
+      erp({ id: "a", code: "8030-1A(LHF)", sourceDoc: "GR-A" }),
+      erp({ id: "b", code: "8030-CNR", sourceDoc: "GR-A" }),
+    ]);
+    expect(u).toHaveLength(1);
+    expect(u[0]).toMatchObject({ key: "SOFA 8030", sourceDoc: "GR-A" });
+  });
+
+  it("leaves a caller that passes NO source bit-for-bit unchanged", () => {
+    // The goods-receipt and delivery-order lanes pass none. Two identical book
+    // lines and two units still pair as INTERCHANGEABLE, exactly as today.
+    const r = pairDocument({
+      docNo: "GR-1",
+      bookLines: [book({ dtlKey: 11 }), book({ dtlKey: 22 })],
+      erpRows: [erp({ id: "a" }), erp({ id: "b" })],
+    });
+    expect(r.refusals).toEqual([]);
+    expect(r.stamps.map((s) => s.forced)).toEqual(["interchangeable", "interchangeable"]);
+  });
+
+  it("counts source-document stamps in the roll-up, so the four sum to stampedRows", () => {
+    const out = planLineKeys({
+      bookByDoc: new Map([["PI-6", [
+        book({ dtlKey: 11, sourceDoc: "GR-A", unitPriceSen: 1000, subTotalSen: 1000 }),
+        book({ dtlKey: 22, sourceDoc: "GR-B", unitPriceSen: 2000, subTotalSen: 2000 }),
+      ]]]),
+      erpByDoc: new Map([["PI-6", [erp({ id: "a", sourceDoc: "GR-A" })]]]),
+    });
+    const { stampedRows, forcedUnique, forcedInterchangeable, forcedBuildText, forcedSourceDoc } = out.totals;
+    expect(forcedSourceDoc).toBe(1);
+    expect(forcedUnique + forcedInterchangeable + forcedBuildText + forcedSourceDoc).toBe(stampedRows);
+  });
+});
+
+/* Our invoice line reaches TWO parents — a sales invoice line knows its
+ * delivery order AND the sales order behind it; a purchase invoice line knows
+ * its goods receipt AND that receipt's purchase order. The BOOK names exactly
+ * one. Which of ours it means is decided by the book's own list, never by
+ * preferring one join over the other. */
+describe("which of our parents the book is talking about", () => {
+  it("takes the one parent the book's invoice actually names", () => {
+    expect(resolveErpSource(["GR-004909", "PO-009017"], new Set(["GR-004909", "GR-004914"]))).toBe("GR-004909");
+  });
+
+  it("refuses when the book names BOTH of our parents", () => {
+    // The invoice bills the receipt AND the order behind it. Which one this row
+    // answers is not stated, so the document falls back to the old rule.
+    expect(resolveErpSource(["GR-004909", "PO-009017"], new Set(["GR-004909", "PO-009017"]))).toBeNull();
+  });
+
+  it("refuses when the book names NEITHER", () => {
+    expect(resolveErpSource(["GR-004909", "PO-009017"], new Set(["GR-005169"]))).toBeNull();
+  });
+
+  it("treats a blank or absent parent as no parent at all", () => {
+    expect(resolveErpSource([null, "  ", "GR-004909"], new Set(["GR-004909"]))).toBe("GR-004909");
+    expect(resolveErpSource([null, ""], new Set(["GR-004909"]))).toBeNull();
+  });
+
+  it("is not confused by the same parent arriving twice", () => {
+    expect(resolveErpSource(["GR-A", "GR-A"], new Set(["GR-A"]))).toBe("GR-A");
   });
 });
