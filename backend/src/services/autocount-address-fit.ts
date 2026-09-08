@@ -103,3 +103,65 @@ function padLines(out: readonly string[]): (string | null)[] {
   for (let i = 0; i < AC_ADDRESS_LINES; i += 1) four.push(out[i] ?? null);
   return four;
 }
+
+/** Whitespace collapsed and trimmed, or null. The account book is given one
+ *  spelling of a value, never two that differ by a space. */
+export const tidy = (s: unknown): string | null => {
+  const v = String(s ?? '').replace(/\s+/g, ' ').trim();
+  return v || null;
+};
+
+/**
+ * The customer's address, packed into AutoCount's FOUR numbered lines.
+ *
+ * FIVE ERP FIELDS, FOUR AUTOCOUNT LINES — this is the one decision that had to
+ * be written down rather than derived, and this comment is where it lives (the
+ * DO/SI note in `autocount-outbox.ts` declined to invent it and omitted the
+ * keys instead; on a CREATE there is nothing to preserve, so the packing has to
+ * be chosen).
+ *
+ * | AutoCount | ERP |
+ * |---|---|
+ * | `InvAddr1` | `address1` |
+ * | `InvAddr2` | `address2` |
+ * | `InvAddr3` | `address3`, else `postcode` + `city` |
+ * | `InvAddr4` | `address4`, else `customer_state` |
+ *
+ * `address3` / `address4` WIN when they are populated: only the cutover import
+ * ever wrote them, and that text is AutoCount's own. An ERP-created order has
+ * both blank and keeps the same facts in `city` / `postcode` / `customer_state`
+ * — measured 2026-08-14 on production, 94 of 115 unpushed sales orders are in
+ * exactly that shape, so AutoCount's document carried the street lines and no
+ * town, no postcode and no state, on the address a delivery is printed from.
+ *
+ * Postcode before town, state on its own line, is the Malaysian postal order
+ * ("43300 SERI KEMBANGAN" / "SELANGOR"). Free text, no master, no foreign key.
+ */
+export function soInvoiceAddress(h: {
+  /* `unknown` and optional for the same reason as soCustomerRef above. */
+  address1?: unknown; address2?: unknown; address3?: unknown; address4?: unknown;
+  city?: unknown; postcode?: unknown; customer_state?: unknown;
+}): {
+    InvAddr1: string | null;
+    InvAddr2: string | null;
+    InvAddr3: string | null;
+    InvAddr4: string | null;
+  } {
+  const town = [tidy(h.postcode), tidy(h.city)].filter(Boolean).join(' ');
+  /* FITTED TO THE BOOK'S OWN WIDTH before it leaves. AutoCount's four address
+     columns are 40 characters and it refuses the WHOLE document when one is
+     over — see fitAddressLines, which returns an address that already fits
+     untouched, so this changes nothing for the documents that were working. */
+  const { lines } = fitAddressLines([
+    tidy(h.address1),
+    tidy(h.address2),
+    tidy(h.address3) ?? (town || null),
+    tidy(h.address4) ?? tidy(h.customer_state),
+  ]);
+  return {
+    InvAddr1: lines[0] ?? null,
+    InvAddr2: lines[1] ?? null,
+    InvAddr3: lines[2] ?? null,
+    InvAddr4: lines[3] ?? null,
+  };
+}
