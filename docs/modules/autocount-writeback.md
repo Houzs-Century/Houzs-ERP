@@ -726,6 +726,35 @@ RECEIPT (21 of 21 in the run's sample, 0 naming a receipt), because the receipt
 behind the invoice carries no `linked_ac_gr_docno` — that is the next thing to
 close, and it is a goods-receipt stamping gap, not an invoice one.
 
+### `transfer chain not verifiable` is TWO populations, and it now says which
+
+Added 2026-09-09. The FROM half has three unanswerable verdicts
+(`IS_UNANSWERABLE` in `lib/transfer-chain-verdict.mjs`). One,
+`agree_doc_line_unstated`, is declared and never locks. The other two BOTH
+recorded the single axis `transfer chain not verifiable` and emitted no cause at
+all, so a document unanswerable only for that reason reached the tally's
+`CANNOT BE COMPARED` column named by nothing — `HC-PO-009828` on run
+34257873206.
+
+They are owed opposite things, which is why one label could not carry both:
+
+| verdict | cause key | whose |
+|---|---|---|
+| `line_not_stamped` | `chainLineNotStamped` | **MECHANICAL** — the book names a source line and our row carries no AutoCount line key. `backfill-ac-downstream-line-keys.mjs` fills it; no ruling from anybody |
+| `erp_parent_unstamped` | `chainParentUnstamped` | **ABSENT SOURCE** — our parent carries no AutoCount number at all (an ERP-native parent). The book has nothing to compare against, so nobody can answer it, the owner included. Never a backlog |
+
+`lib/ac-transfer-chain-run.mjs` now notes the cause beside the refusal it
+already records, from the verdict `v` it already holds — the same shape
+`lib/variant-report.mjs` uses for an unreadable sofa, so a cause and its refusal
+cannot disagree. The mapping is a frozen MAP, not a ternary: a fourth
+unanswerable verdict added later would silently inherit whichever arm a ternary
+put last, and that is the defect this table exists to prevent. An unmapped
+verdict falls to `chainUnverifiable`, which the report prints whole.
+
+Vocabulary and ownership live in `backend/scripts/lib/unanswerable-causes.mjs`;
+`docs/bugs/0729-the-cannot-be-compared-cause-table-described-a-different-pop.md`
+has the four measurements that bought it.
+
 The same absence had a second victim outside this module.
 `check-ac-erp-reconcile.mjs` selected `NULL::bigint AS ac_dtlkey` for goods
 receipts — a constant, not the column — so it was structurally forced to pair by

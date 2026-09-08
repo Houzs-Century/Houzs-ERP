@@ -315,3 +315,105 @@ describe("the axis map cannot go stale", () => {
     expect(AXIS_GROUPS.find((g) => g.key === "sofa-compartments").axes).toContain("sofa build not verifiable");
   });
 });
+
+/* ── THE CAUSE TABLE MUST DESCRIBE THE COLUMN IT IS TITLED AFTER ─────────────
+ * Run 34257873206, on `main`, printed under the heading "WHAT 'CANNOT BE
+ * COMPARED' MEANS, BY CAUSE" a table whose document counts were NOT the
+ * cannot-compare column's:
+ *
+ *     GR   cause table 4 + 2 = 6 documents   ·   CANNOT BE COMPARED = 3
+ *     DO   cause table 3 + 2 + 2 = 7         ·   CANNOT BE COMPARED = 5
+ *     PI   cause table 2 + 3 = 5             ·   CANNOT BE COMPARED = 2
+ *     PO   cause table 13                    ·   CANNOT BE COMPARED = 13, and
+ *          HC-PO-000254 is in the cause table while sitting in DIFFER, while
+ *          HC-PO-009828 sits in the cannot-compare column named by NO cause.
+ *
+ * Two independent defects, and this is the repo's named class — ONE COLUMN
+ * CARRYING SEVERAL POPULATIONS:
+ *
+ *   1. the causes were accumulated from EVERY row, so a document already
+ *      counted as WORK contributed a cause to the table explaining a column it
+ *      is not in. "=> N can be made comparable WITHOUT you" was therefore a
+ *      promise about documents that were never in the column.
+ *   2. `sofa build not verifiable` is not the only unanswerable axis.
+ *      `transfer chain not verifiable` emits no cause note at all, so a
+ *      document unanswerable ONLY for that reason was named by nothing.
+ *
+ * The fix is not a bigger list. It is the INVARIANT: every document in the
+ * cannot-compare column carries at least one named cause, and the ones that are
+ * not in the column are reported separately rather than mixed in.
+ */
+describe("the cause table explains the CANNOT BE COMPARED column and nothing else", () => {
+  it("a WORK document's unread sofa is NOT counted into the cannot-compare causes", () => {
+    const v = tallyVerdict(
+      payload([
+        row({
+          /* HC-DO-011510's shape: a real specials difference AND an unreadable
+             sofa on the same document. Precedence makes it WORK. */
+          doc_no: "W",
+          axes: ["specials", "sofa build not verifiable"],
+          axes_proceeded: ["specials", "sofa build not verifiable"],
+          notes: { "unanswerable-cause": { keyedBookUnreadable: { n: 1, proceeded: 1, lines: [] } } },
+        }),
+        row({
+          doc_no: "U",
+          axes: ["sofa build not verifiable"],
+          axes_proceeded: ["sofa build not verifiable"],
+          notes: { "unanswerable-cause": { keyedBookUnreadable: { n: 1, proceeded: 1, lines: [] } } },
+        }),
+      ]),
+    );
+    expect(v.buckets.work).toBe(1);
+    expect(v.buckets.unanswerable).toBe(1);
+    const owner = v.unanswerableCauses.find((c) => c.cause === "keyedBookUnreadable");
+    expect(owner.docs).toBe(1);
+    /* the WORK one is not lost — it is stated on its own line */
+    expect(v.unreadOnWorkDocs).toBe(1);
+  });
+
+  it("the causes cover EVERY document in the column — a chain-only refusal is named too", () => {
+    const v = tallyVerdict(
+      payload([
+        row({
+          /* HC-PO-009828: unanswerable, and its only axis emits no sofa note. */
+          doc_no: "C",
+          axes: ["transfer chain not verifiable"],
+          axes_proceeded: ["transfer chain not verifiable"],
+        }),
+      ]),
+    );
+    expect(v.buckets.unanswerable).toBe(1);
+    expect(v.uncausedUnanswerable).toBe(0);
+    expect(v.unanswerableCauses.map((c) => c.cause)).toContain("chainUnverifiable");
+  });
+
+  it("the cause table's document coverage equals the column, on a mixed corpus", () => {
+    const v = tallyVerdict(
+      payload([
+        row({ doc_no: "A", axes: ["sofa build not verifiable"], notes: { "unanswerable-cause": { keylessBookReadable: { n: 1, proceeded: 0, lines: [] } } } }),
+        row({ doc_no: "B", axes: ["transfer chain not verifiable"] }),
+        row({ doc_no: "C", axes: ["sofa build not verifiable", "transfer chain not verifiable"], notes: { "unanswerable-cause": { keyedBookUnreadable: { n: 1, proceeded: 0, lines: [] } } } }),
+        row({ doc_no: "D", axes: ["quantity"] }),
+        row({ doc_no: "E" }),
+      ]),
+    );
+    expect(v.buckets.unanswerable).toBe(3);
+    expect(v.uncausedUnanswerable).toBe(0);
+    /* a document may carry TWO causes, so the causes need not SUM to the column
+       — what must hold is that none of the column is uncaused, and that no
+       cause counts a document outside the column. */
+    for (const c of v.unanswerableCauses) expect(c.docs).toBeLessThanOrEqual(v.buckets.unanswerable);
+    expect(v.unanswerableCauses.find((c) => c.cause === "chainUnverifiable").docs).toBe(2);
+  });
+
+  it("the mechanical arm is the one a key closes, and it is counted from the column only", () => {
+    const v = tallyVerdict(
+      payload([
+        row({ doc_no: "M", axes: ["sofa build not verifiable"], notes: { "unanswerable-cause": { keylessBookReadable: { n: 2, proceeded: 2, lines: [] } } } }),
+        row({ doc_no: "W", axes: ["quantity", "sofa build not verifiable"], notes: { "unanswerable-cause": { keylessBookReadable: { n: 9, proceeded: 9, lines: [] } } } }),
+      ]),
+    );
+    expect(v.mechanicalDocs).toBe(1);
+    expect(v.unreadOnWorkDocs).toBe(1);
+  });
+});
