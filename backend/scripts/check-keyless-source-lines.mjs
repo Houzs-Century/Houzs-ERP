@@ -143,6 +143,39 @@ try {
   console.log(`    pending:                  ${s.pending}`);
   console.log(`    never queued at all:      ${s.never_queued}`);
   console.log('');
+  console.log('');
+  console.log('=== 6. NEVER QUEUED IS NOT THE SAME AS MISSING ===');
+  console.log('(a delivery order the ERP never queued may already be in the book, from the migration)');
+  /* THE QUESTION SECTION 5 RAISES AND CANNOT ANSWER. Every one of the 58 came
+     back `never queued at all` — no outbox row was ever written for them. That
+     reads as alarming and may be the opposite: a document brought IN from
+     AutoCount during the cutover is already there, so there was never anything
+     to send. `linked_ac_docno` is what tells the two apart, and getting this
+     backwards would put a repair on documents that need none. */
+  const linked = await pg.unsafe(`
+    WITH touched AS (
+      SELECT DISTINCT d.id, d.linked_ac_docno, d.created_at
+        FROM scm.delivery_orders d
+        JOIN scm.delivery_order_items di ON di.delivery_order_id = d.id
+        JOIN scm.mfg_sales_order_items si ON si.id = di.so_item_id
+       WHERE si.linked_ac_dtlkey IS NULL
+    )
+    SELECT count(*)::int                                                 AS touched,
+           count(*) FILTER (WHERE linked_ac_docno IS NOT NULL)::int      AS already_in_the_book,
+           count(*) FILTER (WHERE linked_ac_docno IS NULL)::int          AS not_in_the_book,
+           min(created_at)::date::text                                   AS oldest,
+           max(created_at)::date::text                                   AS newest
+      FROM touched`);
+  const l = linked[0];
+  console.log(`  delivery orders touching a keyless line: ${l.touched}`);
+  console.log(`    ALREADY carry an AutoCount document number: ${l.already_in_the_book}`);
+  console.log(`    carry none:                                 ${l.not_in_the_book}`);
+  console.log(`  raised between ${l.oldest} and ${l.newest}`);
+  console.log('');
+  console.log('  A document that already carries an AutoCount number is IN the book and needs');
+  console.log('  no repair — it was never queued because it never had to be. Only the second');
+  console.log('  row is a backlog, and only then if the ERP should have sent it.');
+
   console.log('READ IT LIKE THIS: the ones already SENT cost nothing and need no repair.');
   console.log('What is left after them is the real backlog, and sections 2 and 3 say which');
   console.log('remedy each part of it takes.');
