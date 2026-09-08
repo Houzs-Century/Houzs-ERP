@@ -240,12 +240,19 @@ async function main() {
     const b = lus.slice(i, i + 100);
     for (let attempt = 1; ; attempt++) {
       try {
+        /* Count AFTER the transaction commits, never inside it. Run
+           34179984666 said "766 of 807" when 707 had landed: `lw` was
+           incremented row by row inside a transaction that then rolled back,
+           so the failure report over-counted the work it had just lost. */
+        let inBatch = 0;
         await sql.begin(async (tx) => {
+          inBatch = 0;
           for (const u of b) {
             const r = await tx`UPDATE scm.mfg_sales_order_items SET line_delivery_date = ${u.d}::date WHERE id = ${u.id} RETURNING id`;
-            lw += r.length;
+            inBatch += r.length;
           }
         });
+        lw += inBatch;
         break;
       } catch (e) {
         /* 40P01 deadlock and 57014 query-cancelled (the statement/lock timeout
