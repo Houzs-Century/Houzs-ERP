@@ -12,7 +12,7 @@
 // rows, and its row count reported 7 of 7.
 import { describe, expect, it } from "vitest";
 
-import { currencyVerdict, planDocument, readBookDiscounts } from "../scripts/lib/po-discount-plan.mjs";
+import { currencyVerdict, planDocument, readBookDiscounts, repairPopulation } from "../scripts/lib/po-discount-plan.mjs";
 
 /** Every document is MYR at rate 1 unless a case says otherwise — the shape the
  *  book has on 9,390 of its 9,412 purchase orders. */
@@ -254,5 +254,43 @@ describe("currency: a rate is not a discount, and the difference is unknowable f
     expect(currencyVerdict({ currency: "CNY", rate: 0.61938 }).kind).toBe("foreign");
     expect(currencyVerdict({ currency: "", rate: null }).kind).toBe("unknown");
     expect(currencyVerdict(undefined).kind).toBe("unknown");
+  });
+});
+
+// ── the population ───────────────────────────────────────────────────────────
+// Added 2026-09-08, after the reconcile found PO-009770 — RM 18,525.00 in the
+// ERP against the book's RM 13,893.75, all 15 lines discounted at 75% — sixteen
+// hours after an APPLY run that reported "89 of 89 written" and was, for its own
+// population, complete. The scope is the OUTSTANDING purchase orders; PO-009770
+// stopped being outstanding when its goods arrived, and our wrong copy of it did
+// not move. docs/bugs/0693-*.md.
+describe("the population a repair walks is what the ERP HOLDS", () => {
+  it("plans a document the ERP holds even though the outstanding scope no longer names it", () => {
+    const lines = new Map([
+      ["PO-IN", [{ dtlKey: 1, itemKey: "X", qty: 1, unitPriceSen: 188000, subTotalSen: 141000 }]],
+      // held by the ERP, dropped out of scope since it was imported
+      ["PO-OUT", [{ dtlKey: 2, itemKey: "Y", qty: 1, unitPriceSen: 100000, subTotalSen: 75000 }]],
+    ]);
+    const scopeOnly = readBookDiscounts(lines, new Set(["PO-IN"]), hdrs());
+    expect(scopeOnly.byDoc.has("PO-OUT")).toBe(false);
+
+    const { population, counts } = repairPopulation(new Set(["PO-IN"]), ["PO-IN", "PO-OUT"]);
+    expect(counts).toMatchObject({ inScope: 1, erpHeld: 2, heldButOutOfScope: 1, inScopeButNotHeld: 0 });
+    const r = readBookDiscounts(lines, population, hdrs());
+    expect(r.byDoc.has("PO-OUT")).toBe(true);
+    expect(r.inScope).toMatchObject({ docs: 2, lines: 2, sen: 47000 + 25000 });
+  });
+
+  it("keeps an in-scope document the ERP does NOT hold, so its absence stays reportable", () => {
+    // Dropping it would silently delete the "in scope but absent from the ERP"
+    // report, which is the only thing that says a document never arrived.
+    const { population, counts } = repairPopulation(new Set(["PO-IN", "PO-MISSING"]), ["PO-IN"]);
+    expect(population.has("PO-MISSING")).toBe(true);
+    expect(counts).toMatchObject({ inScope: 2, erpHeld: 1, heldButOutOfScope: 0, inScopeButNotHeld: 1 });
+  });
+
+  it("trims and ignores blanks in what the database hands back", () => {
+    const { population } = repairPopulation(new Set(), [" PO-A ", "", null, "PO-A"]);
+    expect([...population]).toEqual(["PO-A"]);
   });
 });

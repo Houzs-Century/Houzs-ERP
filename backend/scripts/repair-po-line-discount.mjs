@@ -96,7 +96,7 @@ import { buildScope, decodeSnapshot } from './lib/ac-scope.mjs';
    there because every INTERESTING decision is a REFUSAL that cannot be
    exercised against production without first creating the damage there.
    Pure, it is a test with a planted defect. */
-import { planDocument, readBookDiscounts } from './lib/po-discount-plan.mjs';
+import { planDocument, readBookDiscounts, repairPopulation } from './lib/po-discount-plan.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DATA = path.join(HERE, 'data');
@@ -156,16 +156,32 @@ async function main() {
   const book = decodeSnapshot(snap);
   const scope = buildScope(book);
 
+  /* THE POPULATION IS WHAT THE ERP HOLDS, NOT WHAT IS STILL IN SCOPE — read
+     from the database BEFORE the book is filtered, because filtering by the
+     scope is the defect. See `repairPopulation` and docs/bugs/0693-*.md: a
+     purchase order stops being OUTSTANDING once its goods arrive, and our copy
+     of it, discount and all, stays exactly where it is. */
+  const heldRows = await sql`SELECT DISTINCT linked_ac_docno AS ac_no
+      FROM scm.purchase_orders
+     WHERE company_id = ${CO} AND linked_ac_docno IS NOT NULL`;
+  const { population, counts } = repairPopulation(scope.PO, heldRows.map((r) => r.ac_no));
+
   /* The AutoCount side: every PO line whose own amount differs from
      qty x unit price. That difference IS the discount — the book states no
      other place for it. */
   const {
     byDoc: bookDiscount, skipped: bookSkipped, currencyRefused, whole, inScope,
-  } = readBookDiscounts(book.PO.lines, scope.PO, book.PO.headers);
+  } = readBookDiscounts(book.PO.lines, population, book.PO.headers);
 
   note('');
   note(`WHOLE BOOK: ${whole.lines} discounted line(s) across ${whole.docs.size} purchase order(s), ${rm(whole.sen)}.`);
-  note(`IN THE MIGRATED SCOPE: ${inScope.lines} line(s) across ${inScope.docs} purchase order(s), ${rm(inScope.sen)}.`);
+  note(
+    `POPULATION: ${population.size} purchase order(s) — ${counts.inScope} still in the outstanding scope, ` +
+    `${counts.erpHeld} held by the ERP, of which ${counts.heldButOutOfScope} are held but NO LONGER IN SCOPE ` +
+    `(they were outstanding when they were imported and their goods have since arrived — the scope moved, our copy did not). ` +
+    `${counts.inScopeButNotHeld} are in scope and the ERP does not hold them.`,
+  );
+  note(`CARRYING A DISCOUNT, IN THAT POPULATION: ${inScope.lines} line(s) across ${inScope.docs} purchase order(s), ${rm(inScope.sen)}.`);
 
   /* THE CURRENCY GATE, printed before anything else it might affect. A document
      that is not MYR at rate 1 never reached the discount rule at all — see
@@ -288,7 +304,7 @@ async function main() {
   plain(`${pad('TOTAL', 28)}${rpad(table.length + ' doc(s)', 15)}${rpad(rm(sumNow), 17)}${rpad(rm(sumAc), 19)}${rpad(rm(sumDiff), 17)}`);
   plain('');
   note(`The ERP overstates these ${table.length} purchase order(s) by ${rm(sumDiff)} against AutoCount.`);
-  note(`Lines to correct: ${writes.length}. Headers to recompute: ${headers.length}. Refused: ${refusals.length}. In scope but absent from the ERP: ${absent.length}.`);
+  note(`Lines to correct: ${writes.length}. Headers to recompute: ${headers.length}. Refused: ${refusals.length}. In the population but absent from the ERP: ${absent.length}.`);
   const withReceipts = table.filter((t) => t.received > 0);
   if (withReceipts.length) {
     note(
