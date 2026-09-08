@@ -176,11 +176,78 @@ test("a null description2 is not a match for anything", () => {
   assert.equal(got.verdict, "none");
 });
 
-/* ── THE SECOND SOFA WHOSE TEXT IS A SUFFIX OF THE FIRST ────────────────────
+/* ── THE LINE KEY, WHERE CONTAINED TEXT CANNOT TELL TWO BUILDS APART ────────
+ * HC-SO-012827 holds two sofa lines whose Desc2 the book wrote so that ONE IS
+ * A SUBSTRING OF THE OTHER (read off the committed book snapshot
+ * ac-reconcile-truth.json.gz, SO-012827, DtlKeys 873100 and 873101):
+ *
+ *   873100  "3 seater  35 inch  color modenza 07 silver  Nilon bottom"
+ *   873101  "35 inch  color modenza 07 silver  Nilon bottom"
+ *
+ * The owner ruled them separately 2026-09-08 — the three-seater is
+ * `1A(LHF)+1NA+1A(RHF)` and the second line is a single chair, `1S`. No
+ * substring of 873101's text exists that 873100 does not also carry, so
+ * `desc2Match` CANNOT address the single chair: the needle always reaches both
+ * and the matcher correctly refuses as ambiguous. Choosing by position or by
+ * "the shorter one" is the transposition class docs/bugs/0690 is about.
+ *
+ * The AutoCount line key is the identity the book itself assigns, and
+ * scm.mfg_sales_order_items.linked_ac_dtlkey already carries it. */
+const SO_012827 = [
+  { item_code: "8030-1S", linked_ac_dtlkey: "873100", description2: "3 seater  35 inch  color modenza 07 silver  Nilon bottom" },
+  { item_code: "8030-1S", linked_ac_dtlkey: "873101", description2: "35 inch  color modenza 07 silver  Nilon bottom" },
+];
+
+test("LINE KEY: the contained text is ambiguous by desc2Match — that is why the key exists", () => {
+  const got = selectBuildRows(SO_012827, "35 inch  color modenza 07 silver  Nilon bottom");
+  assert.equal(got.verdict, "ambiguous");
+  assert.deepEqual(got.rows, []);
+});
+
+test("LINE KEY: addresses exactly one line, where no needle can", () => {
+  const got = selectBuildRows(SO_012827, null, undefined, { lineKeys: ["873101"] });
+  assert.equal(got.verdict, "linekey");
+  assert.equal(got.rows.length, 1);
+  assert.equal(got.rows[0].linked_ac_dtlkey, "873101");
+});
+
+test("LINE KEY: wins over desc2Match, so a correction carrying both is not ambiguous", () => {
+  const got = selectBuildRows(SO_012827, "35 inch  color modenza 07 silver  Nilon bottom", undefined, { lineKeys: ["873100"] });
+  assert.equal(got.verdict, "linekey");
+  assert.equal(got.rows.length, 1);
+  assert.equal(got.rows[0].linked_ac_dtlkey, "873100");
+});
+
+test("LINE KEY: a key the document does not carry is `none`, never a fallback to text", () => {
+  // Falling back to desc2Match here would write the build onto the WRONG line,
+  // which is the whole failure the key was added to prevent.
+  const got = selectBuildRows(SO_012827, "35 inch  color modenza 07 silver  Nilon bottom", undefined, { lineKeys: ["999999"] });
+  assert.equal(got.verdict, "none");
+  assert.deepEqual(got.rows, []);
+});
+
+test("LINE KEY: matches as a string even when the row holds it as a number", () => {
+  const rows = [{ item_code: "8030-1S", linked_ac_dtlkey: 873101, description2: "x" }];
+  const got = selectBuildRows(rows, null, undefined, { lineKeys: ["873101"] });
+  assert.equal(got.verdict, "linekey");
+  assert.equal(got.rows.length, 1);
+});
+
+test("LINE KEY: several keys select several lines — two identical sofas, one build", () => {
+  const got = selectBuildRows(SO_012827, null, undefined, { lineKeys: ["873100", "873101"] });
+  assert.equal(got.verdict, "linekey");
+  assert.equal(got.rows.length, 2);
+});
+
+/* ── THE SECOND SOFA WHOSE TEXT IS A SUFFIX OF THE FIRST, AND WHOSE ROWS ARE
+ *    NOT KEYED ──────────────────────────────────────────────────────────────
  * HC-SO-012025, read off production 2026-09-08 (probe run 34242061732). The
- * account book states the SAME build text twice, once with a LEADING SPACE and
- * once without — DtlKey 829179 and 829180 — and the ERP explodes each into four
- * compartment rows that inherit their lead's text verbatim.
+ * line-key mode above is the right answer whenever the rows carry a key; here
+ * only the two LEAD rows do, because a correction that ADDS compartments
+ * inserts them with linked_ac_dtlkey NULL. And the account book states this
+ * document's build text TWICE, once with a LEADING SPACE (DtlKey 829179) and
+ * once without (829180), each lead's text inherited verbatim by the rows added
+ * from it.
  *
  * The owner ruled on 2026-09-08 that the two sofas are NOT the same: the first
  * is `1A(LHF)+1NA+CNR+1A(RHF)` and the second, the slip marked `9050 G`, is a
@@ -192,8 +259,8 @@ test("a null description2 is not a match for anything", () => {
  * BYTE-EXACT — the discriminator here IS a leading space, and normaliseDesc2
  * erases exactly that. */
 const SO_012025 = [
-  { item_code: "9050-1A(LHF)", description2: " bottom to Nilon  \n30 inch , all adjustable arm rest  \ncolour :GD2502# 18- GREY" },
-  { item_code: "9050-1A(LHF)", description2: "bottom to Nilon  \n30 inch , all adjustable arm rest  \ncolour :GD2502# 18- GREY" },
+  { item_code: "9050-1A(LHF)", linked_ac_dtlkey: "829179", description2: " bottom to Nilon  \n30 inch , all adjustable arm rest  \ncolour :GD2502# 18- GREY" },
+  { item_code: "9050-1A(LHF)", linked_ac_dtlkey: "829180", description2: "bottom to Nilon  \n30 inch , all adjustable arm rest  \ncolour :GD2502# 18- GREY" },
   { item_code: "9050-1NA", description2: " bottom to Nilon  \n30 inch , all adjustable arm rest  \ncolour :GD2502# 18- GREY" },
   { item_code: "9050-CNR", description2: " bottom to Nilon  \n30 inch , all adjustable arm rest  \ncolour :GD2502# 18- GREY" },
   { item_code: "9050-1A(RHF)", description2: " bottom to Nilon  \n30 inch , all adjustable arm rest  \ncolour :GD2502# 18- GREY" },
@@ -201,6 +268,15 @@ const SO_012025 = [
   { item_code: "9050-CNR", description2: "bottom to Nilon  \n30 inch , all adjustable arm rest  \ncolour :GD2502# 18- GREY" },
   { item_code: "9050-1A(RHF)", description2: "bottom to Nilon  \n30 inch , all adjustable arm rest  \ncolour :GD2502# 18- GREY" },
 ];
+
+test("012025: the LINE KEY cannot address these builds — four of the eight rows carry none", () => {
+  /* This is why the mode above is not the answer here, stated as a measurement
+     rather than as a sentence: asking for DtlKey 829180 reaches ONE row, and
+     the build is four. */
+  const got = selectBuildRows(SO_012025, null, undefined, { lineKeys: ["829180"] });
+  assert.equal(got.verdict, "linekey");
+  assert.equal(got.rows.length, 1);
+});
 
 test("012025: the needle that reaches BOTH sofas is not ambiguous — the texts normalise equal", () => {
   /* This is the state that let ONE correction be written onto BOTH sofas: the
@@ -215,11 +291,8 @@ test("012025: the needle that reaches BOTH sofas is not ambiguous — the texts 
 });
 
 test("012025: the FIRST sofa is addressable on its own, byte-exactly", () => {
-  // The leading space belongs to DtlKey 829179 and to the three rows added from
-  // it; the second sofa's four rows do not carry it anywhere.
   const got = selectBuildRows(SO_012025, " bottom to Nilon");
   assert.equal(got.verdict, "exact");
-  assert.equal(got.rows.length, 4);
   assert.deepEqual(got.rows.map((r) => r.item_code), ["9050-1A(LHF)", "9050-1NA", "9050-CNR", "9050-1A(RHF)"]);
 });
 
@@ -234,10 +307,9 @@ test("012025: NO substring can address the SECOND sofa alone — that is why exc
 });
 
 test("desc2Exclude removes the rows that carry it, byte-exactly", () => {
-  const got = selectBuildRows(SO_012025, "all adjustable arm rest", undefined, " bottom to Nilon");
+  const got = selectBuildRows(SO_012025, "all adjustable arm rest", undefined, { exclude: " bottom to Nilon" });
   assert.equal(got.verdict, "exact");
   assert.equal(got.rows.length, 4);
-  assert.deepEqual(got.rows.map((r) => r.item_code), ["9050-1A(LHF)", "9050-1NA", "9050-CNR", "9050-1A(RHF)"]);
   // and they are the SECOND sofa's rows: none of them carries the leading space
   for (const r of got.rows) assert.equal(r.description2.startsWith(" "), false);
 });
@@ -246,20 +318,26 @@ test("desc2Exclude that excludes NOTHING refuses instead of taking the whole doc
   /* The discriminator is one space. If a re-import ever trims it the exclusion
      silently stops excluding, and the correction for the SECOND sofa would be
      written onto BOTH. So an exclusion that removes no row is a REFUSAL. */
-  const got = selectBuildRows(SO_012025, "all adjustable arm rest", undefined, "NOT ON THIS DOCUMENT");
+  const got = selectBuildRows(SO_012025, "all adjustable arm rest", undefined, { exclude: "NOT ON THIS DOCUMENT" });
   assert.equal(got.verdict, "exclusion-missing");
   assert.deepEqual(got.rows, []);
 });
 
 test("desc2Exclude that removes EVERY row refuses too", () => {
-  const got = selectBuildRows(SO_012025, "all adjustable arm rest", undefined, "adjustable");
+  const got = selectBuildRows(SO_012025, "all adjustable arm rest", undefined, { exclude: "adjustable" });
   assert.equal(got.verdict, "none");
   assert.deepEqual(got.rows, []);
 });
 
+test("the LINE KEY still decides when both are given — a key is identity, an exclusion is not", () => {
+  const got = selectBuildRows(SO_012025, null, undefined, { lineKeys: ["829179"], exclude: " bottom to Nilon" });
+  assert.equal(got.verdict, "linekey");
+  assert.equal(got.rows.length, 1);
+});
+
 test("desc2Exclude is inert on a build that does not carry one", () => {
-  const got = selectBuildRows(SO_012025, " bottom to Nilon", undefined, null);
-  assert.equal(got.rows.length, 4);
+  assert.equal(selectBuildRows(SO_012025, " bottom to Nilon", undefined, {}).rows.length, 4);
+  assert.equal(selectBuildRows(SO_012025, " bottom to Nilon", undefined, { exclude: null }).rows.length, 4);
 });
 
 test("012025 after the collapse: the SECOND sofa's single row still answers, and the FIRST is untouched", () => {
@@ -270,6 +348,6 @@ test("012025 after the collapse: the SECOND sofa's single row still answers, and
                  SO_012025[2], SO_012025[3], SO_012025[4]];
   const first = selectBuildRows(after, " bottom to Nilon");
   assert.deepEqual(first.rows.map((r) => r.item_code), ["9050-1A(LHF)", "9050-1NA", "9050-CNR", "9050-1A(RHF)"]);
-  const second = selectBuildRows(after, "all adjustable arm rest", undefined, " bottom to Nilon");
+  const second = selectBuildRows(after, "all adjustable arm rest", undefined, { exclude: " bottom to Nilon" });
   assert.deepEqual(second.rows.map((r) => r.item_code), ["9050-1S"]);
 });

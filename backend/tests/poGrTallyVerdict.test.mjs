@@ -68,8 +68,31 @@ const payload = (rows, over = {}) => ({
 const render = (rows, type, over = {}) => renderVerdict(tallyVerdict(payload(rows, over)), { type }).join("\n");
 
 describe("docTypeSpec — a type this report has no words for must REFUSE, not default", () => {
-  it("knows the three types the owner asked about", () => {
-    expect(Object.keys(DOC_TYPES).sort()).toEqual(["GR", "PO", "SO"]);
+  /* WIDENED 2026-09-08. It pinned exactly ["GR","PO","SO"], which was right
+     when the owner had asked 「然后把PO GR也tally掉」 and wrong the moment he
+     asked 「SO PO GR PI SI DO 等等？都解决了吗？」. `docTypeSpec` THREW for the
+     other three, so no report could be asked for them at all — the reconcile
+     has always compared six types and the recorder has always been keyed by
+     type; what was missing was the WORDS.
+
+     The pin is kept rather than deleted, because its job is to make ADDING a
+     type a deliberate act with a spec behind it. What it now asserts is the
+     property, not the count: every declared type carries the whole vocabulary,
+     so a type cannot be added as a bare key and render with holes in it. */
+  it("knows the six document types the owner named", () => {
+    expect(Object.keys(DOC_TYPES).sort()).toEqual(["DO", "GR", "IV", "PI", "PO", "SO"]);
+  });
+
+  it("every declared type carries a full vocabulary — no type renders with holes", () => {
+    for (const [key, spec] of Object.entries(DOC_TYPES)) {
+      expect(spec.key, `${key}.key`).toBe(key);
+      for (const field of ["heading", "plural", "headline", "tallied"]) {
+        expect(typeof spec[field], `${key}.${field}`).toBe("string");
+        expect(spec[field].length, `${key}.${field} is empty`).toBeGreaterThan(0);
+      }
+      expect(typeof spec.scope, `${key}.scope`).toBe("function");
+      expect(typeof spec.labels, `${key}.labels`).toBe("object");
+    }
   });
 
   /* A typo rendering as SALES ORDERS would put a purchase-order number under a
@@ -84,7 +107,7 @@ describe("docTypeSpec — a type this report has no words for must REFUSE, not d
 });
 
 describe("THE GATE DID NOT MOVE — TALLIED is still zero work, for every type", () => {
-  for (const type of ["SO", "PO", "GR"]) {
+  for (const type of ["SO", "PO", "GR", "DO", "IV", "PI"]) {
     it(`${type}: one differing document is NOT TALLIED`, () => {
       const v = tallyVerdict(payload([row(), row({ doc_no: "x", axes: ["quantity"] })]));
       expect(isTallied(v)).toBe(false);

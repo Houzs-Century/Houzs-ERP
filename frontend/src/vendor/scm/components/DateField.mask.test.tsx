@@ -50,3 +50,54 @@ describe('DateField typing', () => {
     expect(parseDmy('31/03/202')).toBeNull();
   });
 });
+
+/* ONE CHARACTER AT A TIME — the shape the tests above could not see.
+   Every case here fires a change event per keystroke, the way a keyboard does.
+   The three tests above fire WHOLE strings with padded two-digit components,
+   and padded input re-lands on the mask's own slots, so `7/9/2026` losing its
+   separators and arriving as `79/20/26` was invisible to them. */
+describe('DateField typed one keystroke at a time', () => {
+  const typeOut = (box: HTMLInputElement, text: string) => {
+    for (const ch of text) fireEvent.change(box, { target: { value: box.value + ch } });
+  };
+
+  const typedResult = (text: string) => {
+    const onChange = vi.fn();
+    render(<DateField value="" onChange={onChange} aria-label="Invoice date" />);
+    const box = screen.getByLabelText('Invoice date') as HTMLInputElement;
+    fireEvent.focus(box);
+    typeOut(box, text);
+    return { box, onChange };
+  };
+
+  test.each([
+    ['7/9/2026', '2026-09-07'],
+    ['1/1/2026', '2026-01-01'],
+    ['7-9-2026', '2026-09-07'],
+    ['31/3/2026', '2026-03-31'],
+    ['7/9/26', '2026-09-07'],
+  ])('the operator keeps his own separators: %s reaches the parent as %s', (typed, iso) => {
+    const { box, onChange } = typedResult(typed);
+    expect(box.value).toBe(typed);
+    expect(onChange).toHaveBeenLastCalledWith(iso);
+  });
+
+  test.each([
+    ['07092026', '07/09/2026', '2026-09-07'],
+    ['31032026', '31/03/2026', '2026-03-31'],
+    ['07/09/2026', '07/09/2026', '2026-09-07'],
+    ['31/03/2026', '31/03/2026', '2026-03-31'],
+  ])('regression cover — the padded forms still wear the mask: %s', (typed, shown, iso) => {
+    const { box, onChange } = typedResult(typed);
+    expect(box.value).toBe(shown);
+    expect(onChange).toHaveBeenLastCalledWith(iso);
+  });
+
+  test('a half-typed date commits nothing and is reported on blur, not swallowed', () => {
+    const { box, onChange } = typedResult('7/9');
+    expect(onChange).not.toHaveBeenCalled();
+    fireEvent.blur(box);
+    expect(box.value).toBe('7/9');
+    expect(box.getAttribute('aria-invalid')).toBe('true');
+  });
+});

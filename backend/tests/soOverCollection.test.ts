@@ -26,9 +26,12 @@
 import { describe, expect, test } from 'vitest';
 import { soPaidSen, soBalanceSen, soOutstandingSen } from '../src/scm/shared/so-outstanding';
 
-/* Same shape the SO detail page builds via soPaidInputsOf. RM 4,000 order. */
+/* Same shape the SO detail page builds via soPaidInputsOf. RM 4,000 order,
+   recomputed — `recomputeTotals` writes local_total_sen = total_revenue_sen, so
+   a modern order carries the same figure in both columns. */
 const order = {
   totalRevenueSen: 400_000,
+  localTotalSen: 400_000,
   headerDepositSen: 0,
   ledgerPaidSen: 0,
   depositInLedger: false,
@@ -66,15 +69,34 @@ describe('the signed balance a human is shown', () => {
     })).toBe(0);
   });
 
-  /* THE GUARD THAT KEEPS 2,121 PRODUCTION ORDERS OUT OF THE RED. total_revenue_sen
-     is 0 on 2,687 of prod's 2,824 live orders — every AutoCount import, where
-     the real total sits in local_total_sen (probe run 31938735652 section b).
-     Those rows carry real payments, so a bare `total - paid` would paint them
-     all a large angry red for money nobody over-collected. Zero total means
-     UNKNOWN, not "owes nothing". */
-  test('a zero total answers 0, NOT a huge negative, even with money against it', () => {
-    expect(soBalanceSen({ ...order, totalRevenueSen: 0, ledgerPaidSen: 990_000 })).toBe(0);
-    expect(soBalanceSen({ ...order, totalRevenueSen: 0, ledgerPaidSen: 0 })).toBe(0);
+  /* THE GUARD THAT KEEPS AN ORDER WITH NO TOTAL OUT OF THE RED. Zero total
+     means UNKNOWN, not "owes nothing" — a bare `total - paid` on a header that
+     has never been recomputed would paint it a large angry red for money nobody
+     over-collected. BOTH totals must be absent now: total_revenue_sen alone
+     being 0 is the ordinary AutoCount-imported shape (2,687 of prod's 2,824
+     live orders — probe run 31938735652 section b), where local_total_sen holds
+     the real figure and the balance IS computable. Answering 0 for those was
+     the bug — see the ledger entry named in soBalanceSen's docblock. */
+  test('an order with NO total answers 0, NOT a huge negative, even with money against it', () => {
+    expect(soBalanceSen({
+      ...order, totalRevenueSen: 0, localTotalSen: 0, ledgerPaidSen: 990_000,
+    })).toBe(0);
+    expect(soBalanceSen({
+      ...order, totalRevenueSen: 0, localTotalSen: 0, ledgerPaidSen: 0,
+    })).toBe(0);
+  });
+
+  /* THE OWNER'S ORDER, 2026-09-08: RM 3,200 carried across from AutoCount,
+     RM 1,600 collected, and the detail page said Balance RM 0.00 while the SO
+     list said RM 1,600.00. Only total_revenue_sen is 0 here; the money is real
+     and so is the total. */
+  test('a MIGRATED order answers off local_total_sen, not 0', () => {
+    const migrated = {
+      ...order, totalRevenueSen: 0, localTotalSen: 320_000,
+      ledgerPaidSen: 160_000, depositInLedger: true,
+    };
+    expect(soBalanceSen(migrated)).toBe(160_000);
+    expect(soBalanceSen({ ...migrated, ledgerPaidSen: 400_000 })).toBe(-80_000);
   });
 });
 

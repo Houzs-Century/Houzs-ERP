@@ -19,10 +19,19 @@
  *      list. A held build is a ruling we have NOT written, so it is still work
  *      and must keep reading DIFFER. HC-SO-011099 is exactly that today
  *      (docs/bugs/0719).
- *   2. THE ENTRY IS CHOSEN BY ITS OWN desc2Match, never by document number
- *      alone. A document can hold more than one sofa build; putting one build's
- *      answer on another build's line would bless the wrong furniture, which is
- *      the failure this whole lane exists to prevent.
+ *   2. THE ENTRY IS CHOSEN BY ITS OWN ADDRESS, never by document number alone.
+ *      A document can hold more than one sofa build; putting one build's answer
+ *      on another build's line would bless the wrong furniture, which is the
+ *      failure this whole lane exists to prevent. There are two kinds of
+ *      address and both are honoured here: `desc2Match` addresses by TEXT, and
+ *      `desc2Exclude` names the rows that are NOT this build, byte-exactly, for
+ *      the case where the rows are not keyed and one build's text is a strict
+ *      SUFFIX of its neighbour's, so no needle can reach it (HC-SO-012025).
+ *      `lineKeys` by the account book's own DtlKey, which the ERP lines carry
+ *      as `ac_dtlkey`. The key is checked FIRST because it is identity rather
+ *      than resemblance, and it exists because text is not always enough —
+ *      HC-SO-012827's single chair carries a Desc2 that is a SUBSTRING of the
+ *      three-seater's beside it, so no needle reaches it alone.
  *
  * Zero dependencies beyond the two sibling libs, so `node --test scripts/lib/`
  * runs its test on a bare checkout.
@@ -65,7 +74,30 @@ export function makeSofaRulingLookup(dataDir, onError = () => {}) {
   return (erpNo, erpLines) => {
     const cands = byDoc.get(erpNo);
     if (!cands || !cands.length) return null;
-    const text = (erpLines || []).map((l) => l.description2 || "").find(Boolean) || "";
+    const rows = erpLines || [];
+
+    /* ── THE LINE KEY IS CONSULTED FIRST, BECAUSE IT IS IDENTITY ─────────────
+       A build whose Desc2 the book wrote as a SUBSTRING of its neighbour's has
+       no needle that reaches it alone, so it is addressed by the account book's
+       own DtlKey (HC-SO-012827; see sofa-desc2-match.mjs). The ERP lines carry
+       it as `ac_dtlkey` (lib/ac-reconcile-erp-sql.mjs).
+
+       Until this existed a line-key ruling was invisible here and its line kept
+       reading "sofa build not verifiable" AFTER the owner's answer had been
+       written to production — measured on tally run 34236971666. That is
+       exactly the report handing him back work he has already done, which is
+       docs/bugs/0720. Full trace: docs/bugs/0722.
+
+       `findLast` here for the SAME reason it is used on the text below: the
+       newest ruling is the ruling. */
+    const keys = new Set(rows.map((l) => String(l.ac_dtlkey ?? "").trim()).filter(Boolean));
+    const byKey = keys.size
+      ? findLast(cands, (c) => Array.isArray(c.lineKeys) && c.lineKeys.length
+          && c.lineKeys.every((k) => keys.has(String(k ?? "").trim())))
+      : null;
+    if (byKey) return { pieces: byKey.pieces, source: byKey.source };
+
+    const text = rows.map((l) => l.description2 || "").find(Boolean) || "";
     /* THE NEWEST RULING IS THE RULING. Two entries can match one build — he
        re-reads a slip and corrects himself, and the later file carries the
        correction. `byDoc` holds them in load order, which loadCorrections fixes
@@ -80,18 +112,25 @@ export function makeSofaRulingLookup(dataDir, onError = () => {}) {
        these" on every single run. 「这个很多我刚刚都给过你答案了啊」.
        Measured on the 2026-09-08 data: exactly ONE document is ruled in more
        than one file, so this changes that document and nothing else. */
-    /* `desc2Exclude` is the other half of an address, for a build whose text is
-       a strict SUFFIX of its neighbour's and therefore has no needle of its own
-       (HC-SO-012025: the same text twice, once with a leading space). It is
-       BYTE-EXACT and never normalised, because the discriminator IS that space
-       and normaliseDesc2 removes it. Applied HERE as well as in the writer so
-       the reporter and the writer cannot disagree about whose build a line is:
-       without it the newest ruling wins for BOTH sofas and the four-piece one
-       would be reported as the single seater the owner ruled its neighbour. */
+    /* `desc2Exclude` is the LAST resort of an address, under the line key, for a
+       build whose rows are not keyed AND whose text is a strict SUFFIX of its
+       neighbour's (HC-SO-012025: the same text twice, once with a leading
+       space, and only the two lead rows keyed). It is BYTE-EXACT and never
+       normalised, because the discriminator IS that space and normaliseDesc2
+       removes it. Applied HERE as well as in the writer so the reporter and the
+       writer cannot disagree about whose build a line is: without it the newest
+       ruling wins for BOTH sofas and the four-piece one would be reported as
+       the single seater the owner ruled its neighbour. */
     const excluded = (c) => c.desc2Exclude && String(text ?? "").includes(c.desc2Exclude);
     const hit = findLast(cands, (c) => c.desc2Match && !excluded(c) && desc2Contains(text, c.desc2Match));
-    /* A single ruling with no needle can only be this document's one build. */
-    const only = cands.length === 1 && !cands[0].desc2Match && !excluded(cands[0]) ? cands[0] : null;
+    /* A single ruling with no ADDRESS OF ANY KIND can only be this document's
+       one build. An entry carrying `lineKeys` is needle-less but it is NOT
+       unaddressed — it named its lines and they are not these — so it must not
+       fall through to here and bless the wrong furniture. */
+    const only = cands.length === 1 && !cands[0].desc2Match
+      && !(Array.isArray(cands[0].lineKeys) && cands[0].lineKeys.length)
+      && !excluded(cands[0])
+      ? cands[0] : null;
     const pick = hit || only;
     return pick ? { pieces: pick.pieces, source: pick.source } : null;
   };

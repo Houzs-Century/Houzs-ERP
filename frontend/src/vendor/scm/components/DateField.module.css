@@ -61,7 +61,9 @@
 
 /* Hidden native date input — present for the picker + ISO emit, not for
    display. Kept in the DOM box (1px, opacity 0) so showPicker() anchors near
-   the calendar button. pointer-events:none so the button owns the click. */
+   the calendar button. pointer-events:none so the button owns the click.
+   This is the FINE-pointer geometry; a coarse pointer gets .nativeOverlay
+   below instead, and only one of the two is ever on the element. */
 .nativeHidden {
   position: absolute;
   right: 4px;
@@ -73,4 +75,86 @@
   border: 0;
   opacity: 0;
   pointer-events: none;
+}
+
+/* TOUCH: the native input IS the tap target, covering the whole field.
+   WHY. Until this class existed the only touch route to the picker was
+   showPicker() called from the text box's onClick (PR #3300) — and that fires
+   against THIS input while it is 20px wide, transparent and
+   pointer-events:none. Chrome honours showPicker() on such an element, which
+   is why the owner's desktop screenshot showed the calendar open; iOS Safari
+   raises its date wheel only for a real user tap on a real, hit-testable date
+   control, so on his iPhone nothing happened at all and he reported
+   「尝试了 手机还是看不到」 (2026-09-08, hours after #3300 deployed).
+   Stretched over the field with opacity 0 and pointer-events auto, a finger
+   tap lands on a genuine <input type=date> and the OS opens its own wheel with
+   no scripting involved. The masked day-first text underneath stays the thing
+   the operator READS, so the OS-locale display bug PR #2390 fixed does not
+   come back.
+   appearance:none is load-bearing on iOS: without it Safari keeps the date
+   input's intrinsic width and the overlay does not actually span the field. */
+.nativeOverlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  box-sizing: border-box;
+  opacity: 0;
+  pointer-events: auto;
+  z-index: 3;
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  /* iOS zooms the page when a focused control's text is under 16px. The
+     control is invisible, but the zoom is not. */
+  font-size: 16px;
+}
+
+/* Blur reported the draft as unparseable. Absolutely positioned so a field in
+   error does not change the height of the row it sits in — this component sits
+   in dense form grids on nearly two hundred screens, and pushing every one of
+   them down by a line is a bigger change than the fix.
+   It is drawn as an opaque chip on purpose: floated over the row beneath, plain
+   red text on a transparent ground rendered ON TOP of that row's own text and
+   neither could be read (observed in the browser, 2026-09-08). */
+.draftError {
+  position: absolute;
+  top: calc(100% + 3px);
+  left: 0;
+  z-index: 5;
+  white-space: nowrap;
+  padding: 2px 6px;
+  border: 1px solid var(--c-festive-b, #B8331F);
+  border-radius: var(--radius-sm, 4px);
+  background: var(--c-paper, #fff);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.14);
+  font-family: var(--font-sans);
+  font-size: var(--fs-11, 11px);
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--c-festive-b, #B8331F);
+  pointer-events: none;
+}
+
+/* TOUCH TARGET. Apple and Google both specify 44px minimum; the button above
+   is 20px, which is why the picker was unreachable by finger. The hit area is
+   grown with a transparent overlay rather than by setting width/height, because
+   a 44px-tall child would push .wrap from ~30px to ~52px and re-flow every form
+   row on every phone and tablet. The overlay is part of the button, so a tap
+   anywhere in it activates the button; the icon keeps its 20px appearance.
+   Desktop (pointer: fine) is untouched. */
+@media (pointer: coarse) {
+  .iconBtn { position: relative; }
+  .iconBtn::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 44px;
+    height: 44px;
+  }
 }

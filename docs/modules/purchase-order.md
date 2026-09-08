@@ -1624,6 +1624,17 @@ Three tools own this edge and they do not overlap:
 | ONE collapsed purchase row (`{model}-1S`), SEVERAL sales rows | `repair-collapsed-sofa-po-line.mjs` | the other two cannot invent a compartment; this one takes it from the BOOK's own Desc2 and only when the sales side already holds that exact multiset |
 | the same, but the purchase row is filed `others` AND carries a migrated, movement-free goods-receipt line | `repair-mislabelled-sofa-po-lines.mjs` | the row above refuses any build with a receipt line (its gate 6) and leaves the category alone; this one splits the receipt WITH the line (owner 2026-08-11) and writes `item_group = 'sofa'`, because the sofa stock import and `computeVariantKey` both key on it. Measured 2026-09-08: all 14 rows of this shape carry a receipt, so the row above reaches none of them (run 34220188752). `docs/bugs/0714-the-sofa-purchase-line-was-filed-as-others-so-the-sales-orde.md` |
 
+One shape in this family is NOT a purchase-line repair and is listed so nobody
+looks for it here: the same physical sofa holding TWO sets of stock lots. That
+is a lot problem, not a line problem — the sofa stock import keys a cell by
+(item, warehouse, batch, VARIANT KEY), so a build whose document gained or lost a
+special after its lots were opened is opened a second time. The tool is
+`backend/scripts/repair-duplicate-sofa-cutover-lots.mjs`, its workflow is
+**Retire the duplicate sofa cutover lots**, and the importer now REPORTS the
+shape instead of writing it ("RE-KEYED, NOT RE-OPENED").
+`docs/bugs/0721-the-sofa-stock-import-opened-a-second-set-of-lots-for-a-buil.md`
+and `docs/bugs/0723-three-sofa-builds-hold-stock-of-a-model-that-is-on-no-line-o.md`.
+
 All three share ONE pairing vocabulary — `scripts/lib/sofa-po-so-pair.mjs` and
 `scripts/lib/redecode-sofa-plan.mjs`. Two copies of the pairing rule existed for
 twenty minutes on 2026-09-08 and gave opposite answers on production about

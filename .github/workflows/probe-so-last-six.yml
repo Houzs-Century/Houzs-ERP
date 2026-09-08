@@ -1,0 +1,47 @@
+name: Probe the last six SO differences and the transposed GR (read-only)
+
+# The six sales orders and one goods receipt left after tonight's sweeps took
+# the sales-order differences from 37 to 6. Each has a DIFFERENT cause, so this
+# prints what the ERP actually holds for each one, beside the committed
+# AutoCount snapshot, before anything is planned. A sweep across mixed causes is
+# how a correct row gets overwritten with a wrong one.
+#
+# READ-ONLY. scripts/probe-so-last-six.mjs takes no APPLY flag and every
+# statement in it is a SELECT.
+on:
+  workflow_dispatch:
+    inputs:
+      company_id:
+        description: "ERP company (AED_HOUZS is company 1)"
+        required: false
+        default: "1"
+        type: string
+
+# Its OWN group. Four other lanes are running against this repo tonight and a
+# diagnostic must never cancel one of their runs.
+concurrency:
+  group: probe-so-last-six
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/probe-so-last-six.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first
