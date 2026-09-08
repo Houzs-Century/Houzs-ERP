@@ -34,6 +34,7 @@ import { soHasDownstream } from '../lib/downstream-lock';
 import { dateOrNull, effectiveDateAfterPatch, isDateColumn } from '../lib/date-coerce';
 import { soStatusAfterProcessingDateChange } from '../lib/so-proceed-status-change';
 import { soIsMigrated } from '../lib/so-is-migrated';
+import { migratedSoReadonly, migratedSoReadonlyState } from '../lib/migrated-so-readonly';
 import { soDocNosWithDownstream } from '../lib/downstream-lock'; // own line: autocountWritebackWiring asserts the import above verbatim
 import { doNosBySalesOrder, type DeliveryOrderNoRow } from '../lib/so-delivery-order-nos';
 import { soDownstreamRefs, NO_SO_DOWNSTREAM_REFS } from '../lib/downstream-doc-refs';
@@ -314,6 +315,19 @@ mfgSalesOrders.use('*', async (c, next) => {
   if (touchesMirrored && !houzsOwns2990(c.env)) return c.json(MIRRORED_SO_READONLY, 409);
   return next();
 });
+
+/* ── MIGRATED SOs are READ-ONLY here (cutover, owner 2026-09-08) ────────────
+   「只开新单，旧单暂时不能改」 — a NEW sales order saves normally; one carried
+   across from AutoCount does not, while `sync-ac-delta` can still overwrite an
+   edit unannounced and while AutoCount payments taken since 2026-08-28 have not
+   reached the ERP (so the balance on screen is wrong).
+
+   Mounted HERE, one line below the mirrored-SO guard, for the identical reason
+   spelled out above it: this file holds ~22 write routes reached through the
+   :docNo segment, and a per-handler guard leaves the next one added unguarded.
+   The rule, the switch and the sentence live in lib/migrated-so-lock.ts;
+   lib/migrated-so-readonly.ts is the only thing that turns a request into it. */
+mfgSalesOrders.use('*', migratedSoReadonly());
 
 /* ── SO child-lock guard (Tier 2 — downstream lock) ─────────────────────────
    An SO locks (read-only — no line edit / no CANCELLED transition) once it has
@@ -1453,7 +1467,7 @@ mfgSalesOrders.get('/', async (c) => {
       (await sb.from('warehouses').select('id, code, name')).data ?? [])();
     const baseRowsProm = (async () =>
       (await chunkIn(docNos, (batch, from, to) => sb.from('mfg_sales_orders')
-        .select('doc_no, delivery_state, amended_delivery_date').in('doc_no', batch).order('doc_no').range(from, to))).data)();
+        .select('doc_no, delivery_state, amended_delivery_date, linked_ac_docno').in('doc_no', batch).order('doc_no').range(from, to))).data)();
     /* PO No. column (owner 2026-07-24): the system Purchase Order numbers this
        SO was converted into. Its own SO-line→PO-item→PO chain, independent of
        every other enrichment above, so it rides the same concurrent wave.
@@ -1731,14 +1745,26 @@ mfgSalesOrders.get('/', async (c) => {
        status are already on the view rows (`r`). */
     const overrideByDoc = new Map<string, string | null>();
     const amendedDDByDoc = new Map<string, string | null>();
+    /* `linked_ac_docno` rides the SAME base-table read for the SAME reason: the
+       view does not enumerate it either (mig 0325's body is the definition, and
+       it stops at the hold columns). It is what tells the list which rows the
+       cutover carried across, so the row menu can grey Edit / Confirm / Cancel
+       instead of offering a click the API is going to refuse. */
+    const migratedDocNos = new Set<string>();
     {
       const baseRows = await baseRowsProm;
-      for (const b of baseRows as unknown as Array<{ doc_no: string | null; delivery_state?: string | null; deliveryState?: string | null; amended_delivery_date?: string | null; amendedDeliveryDate?: string | null }>) {
+      for (const b of baseRows as unknown as Array<{ doc_no: string | null; delivery_state?: string | null; deliveryState?: string | null; amended_delivery_date?: string | null; amendedDeliveryDate?: string | null; linked_ac_docno?: string | null; linkedAcDocno?: string | null }>) {
         if (!b.doc_no) continue;
         overrideByDoc.set(b.doc_no, b.deliveryState ?? b.delivery_state ?? null);
         amendedDDByDoc.set(b.doc_no, b.amendedDeliveryDate ?? b.amended_delivery_date ?? null);
+        if ((b.linkedAcDocno ?? b.linked_ac_docno ?? null) !== null) migratedDocNos.add(b.doc_no);
       }
     }
+    /* ONE app_config read for the whole page (30s cached), then a pure per-row
+       answer — the decision itself is the same function the detail and the guard
+       use. A bypass holder (`*` / `scm.admin`) gets `locked: false` here exactly
+       as the guard would let their write through. */
+    const migListState = await migratedSoReadonlyState(c, true);
     const planningToday = todayMyt();
 
     // PO No. — SO doc_no → system PO numbers it was converted into (see wave).
@@ -1788,6 +1814,11 @@ mfgSalesOrders.get('/', async (c) => {
       (r as Record<string, unknown>).source_po_union = sourceUnionByDoc.get(docNo)?.pos ?? [];
       (r as Record<string, unknown>).source_po_adj = sourceUnionByDoc.get(docNo)?.adj ?? false;
       (r as Record<string, unknown>).has_children = downstreamDocNos.has(docNo);
+      /* Migrated + locked, decided once above. A native row is never locked, so
+         the flag is simply false rather than absent — an absent key reads as
+         "old build" on the client and would silently unlock the row. */
+      (r as Record<string, unknown>).migrated_readonly =
+        migListState.locked && migratedDocNos.has(docNo);
       const dDelivered = deliveredTotal.get(docNo) ?? 0;
       const dRemaining = remainingTotal.get(docNo) ?? 0;
       (r as Record<string, unknown>).delivery_state =
@@ -2587,7 +2618,7 @@ mfgSalesOrders.get('/:docNo', async (c) => {
        LIST route reads that view, so the base-table detail read is the only
        place they are valid. (`proceeded_at` was appended here until 2026-08-18,
        feeding a "Proceed Date" the desktop deleted on 2026-06-05.) */
-    scopeToCompany(sb.from('mfg_sales_orders').select(`${HEADER}, amend_date_from_customer, amended_delivery_date, amend_reason, revision, signature_b64, slip_key, slip_state, slip_image_key, receipt_image_key, version`).eq('doc_no', docNo), c).maybeSingle(),
+    scopeToCompany(sb.from('mfg_sales_orders').select(`${HEADER}, amend_date_from_customer, amended_delivery_date, amend_reason, revision, signature_b64, slip_key, slip_state, slip_image_key, receipt_image_key, version, linked_ac_docno`).eq('doc_no', docNo), c).maybeSingle(),
     /* line_no = the persisted listing order (0165); NULLS LAST so pre-0165
        docs fall back to created_at + the rule re-derive below. */
     sb.from('mfg_sales_order_items').select(ITEM).eq('doc_no', docNo)
@@ -2934,6 +2965,20 @@ mfgSalesOrders.get('/:docNo', async (c) => {
     pwpCodes = (codeRows ?? []) as Array<Record<string, unknown>>;
   } catch {
     pwpCodes = [];
+  }
+  /* MIGRATED = READ-ONLY (owner 2026-09-08, 「只开新单，旧单暂时不能改」). The
+     SAME function lib/migrated-so-readonly.ts uses to REFUSE the write, so the
+     button and the endpoint cannot disagree — a rule enforced on one surface and
+     not the other is the recurring bug class in this repo. `linked_ac_docno` is
+     read on the DETAIL select, never on HEADER: HEADER also feeds the list,
+     which reads the payment-totals VIEW, and a column the view does not
+     enumerate 500s that page (see the VIEW-TRAP note above HEADER).
+     Both front ends read `migrated_readonly` and nothing else. */
+  {
+    const acDocNo = (h.data as { linked_ac_docno?: string | null }).linked_ac_docno ?? null;
+    const mig = await migratedSoReadonlyState(c, acDocNo !== null);
+    (salesOrder as Record<string, unknown>).migrated_readonly = mig.locked;
+    (salesOrder as Record<string, unknown>).migrated_readonly_reason = mig.reason;
   }
   gateSoFinance(c, salesOrder, items);
   // Stamp each line's supplier fabric code so the on-screen line reads

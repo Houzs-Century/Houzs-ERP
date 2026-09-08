@@ -1712,6 +1712,60 @@ twin (0 emptied, 0 live picker codes lost); **26 more** carry a SEMANTIC pair
 owner's phrase ruling and is deliberately left alone — see BUG-HISTORY for why
 the phrase map was NOT vendored into the runtime bundles.
 
+### MIGRATED orders are READ-ONLY (cutover, owner 2026-09-08) — SURFACE CHANGE
+
+Owner ruling, asked whether Sales Orders could be opened to staff before the
+tally finished: **「只开新单，旧单暂时不能改」** — a NEW sales order saves
+normally; one carried across from AutoCount does not. This is a partial lift of
+the cutover write freeze, not a replacement for it: the freeze
+(`docs/write-freeze-staged-lift.md`) decides whether the MODULE may be saved at
+all, this decides whether THIS DOCUMENT may.
+
+**The predicate is `scm.mfg_sales_orders.linked_ac_docno`** (mig 0271): the
+origin AutoCount number on an imported order, NULL on one the ERP created.
+Nothing is stamped on a migrated row to mark it — the owner's rule is that
+adding a marker IS a change to the migrated data
+(「你换不一样就代表我们的数据从 autocount 搬过来的就不一样了啊」). The read has
+one home, `scm/lib/so-is-migrated.ts`, and it fails CLOSED.
+
+| | |
+|---|---|
+| Switch | `scm.app_config` key **`scm.migrated_so_lock`** — `off` / `all` / company ids. Seeded `'1'` by `20260908T0014_scm_migrated_so_lock.sql`. Effective in 30s, no deploy. |
+| Guard | `scm/lib/migrated-so-readonly.ts`, mounted `mfgSalesOrders.use('*', migratedSoReadonly())` — at the ROUTER, one line below the mirrored-SO guard, for the argument that guard already makes: ~22 write routes reach their SO through the `:docNo` segment and a per-handler guard leaves the next one added unguarded. |
+| Decision | `scm/lib/migrated-so-lock.ts` — pure, unit-tested. `isMigrated: boolean \| null` is REQUIRED, and `null` ("the read failed") LOCKS. |
+| Refusal | **`409 so_migrated_readonly`**, sentence on BOTH `reason` and `message`, curated in `authed-fetch.ts` `ERROR_CODE_MESSAGES`. NOT 503: a migrated order is not briefly away, and `api/client.ts` re-sends a 503 four times. |
+| Bypass | `*` / `scm.admin` — the SAME cohort as the write freeze, so there is one answer to "who can still save", not two. |
+| Never gated | Every GET. `POST /` (create) — it carries no doc number in its path, which is 「只开新单」 in one line of control flow. |
+
+**What the two front ends read.** `GET /:docNo` stamps `migrated_readonly` +
+`migrated_readonly_reason` on `salesOrder`, and the LIST stamps
+`migrated_readonly` per row — both computed by the SAME `migratedSoReadonlyState`
+the middleware refuses with, so a button and its endpoint cannot disagree.
+`linked_ac_docno` rides the DETAIL select and the list's base-table enrichment
+read, never `HEADER`: `HEADER` also feeds the list, which reads the
+payment-totals VIEW, and a column that view does not enumerate 500s the page
+(VIEW-TRAP, above).
+
+The shared frontend layer is `vendor/scm/lib/so-detail-gates.ts` —
+`migratedReadonly()` / `migratedReadonlyReason()`, consumed by
+`SalesOrderDetailV2` (banner + Edit + payments), `SalesOrderDetail` (banner +
+`isLocked` + Save + Cancel + payments), `MobileSODetail` (banner + `isLocked` +
+payments), `MobileNewSO` (banner + `lineEditingBlocked` / `addressIdentityLocked`
+/ `scheduleDatesLocked` + Save) and `row-menus.ts` (a migrated row's menu drops
+to Open + Print). It is its OWN predicate, deliberately NOT folded into
+`isLocked`: `isLocked` takes `unlockOverride`, and the desktop Override button
+must not be able to reach this lock — the reasons are `sync-ac-delta` and
+unreconciled AutoCount payments, and no local certainty settles either.
+
+**Opening them again is ONE statement**, when collections are corrected:
+
+```sql
+UPDATE scm.app_config SET value = 'off', updated_at = now()
+ WHERE key = 'scm.migrated_so_lock';
+```
+
+Full runbook, including what a malformed value does: `docs/migrated-so-lock.md`.
+
 ### Deleting an SO — DRAFT only, and the test-order escape hatch
 
 `DELETE /:docNo` hard-deletes a **DRAFT and nothing else** — `409 so_not_draft`

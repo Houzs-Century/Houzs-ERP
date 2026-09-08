@@ -31,7 +31,7 @@ import {
 import { SearchableSelect } from "../vendor/scm/components/SearchableSelect";
 import { diffHeaderPayload, hasHeaderChanges } from "../vendor/scm/lib/so-header-diff";
 import { planAmendmentSubmit, amendmentSubmittedNotice, AMENDMENT_MODE_BANNER, AMENDMENT_NOTHING_TO_SUBMIT } from "../vendor/scm/lib/so-amendment-submit";
-import { LOCKED_STATUSES, procLockActive } from "../vendor/scm/lib/so-detail-gates";
+import { LOCKED_STATUSES, procLockActive, migratedReadonly as soMigratedReadonly, migratedReadonlyReason as soMigratedReadonlyReason } from "../vendor/scm/lib/so-detail-gates";
 import {
   useSoDropdownOptions,
   optionsOrFallback,
@@ -783,6 +783,12 @@ export function MobileNewSO({
     }
   };
   const [lineLocked, setLineLocked] = useState(false);
+  /* CUTOVER (owner 2026-09-08, 「只开新单，旧单暂时不能改」) — set from the SAME
+     server-decided `migrated_readonly` the two desktop screens and the mobile
+     detail read. Held as state (not derived) because this screen hydrates from
+     one detail GET and then works offline of it, exactly like lineLocked. */
+  const [migratedLocked, setMigratedLocked] = useState(false);
+  const [migratedReason, setMigratedReason] = useState<string>("");
   /* SO-amendment flags captured from the detail GET (Phase 1-C). When
      `amendEligible` the SO is processing-locked but still editable via the
      amendment flow — the edit view stays usable and Save submits an AMENDMENT
@@ -998,6 +1004,8 @@ export function MobileNewSO({
         const st = (detail.salesOrder.status ?? "").toUpperCase();
         setSoStatus(st);
         setLineLocked(LOCKED_STATUSES.includes(st) || Boolean(detail.salesOrder.has_children));
+        setMigratedLocked(soMigratedReadonly(detail.salesOrder));
+        setMigratedReason(soMigratedReadonlyReason(detail.salesOrder));
         /* Amendment gate (server-derived) — the same flags the desktop SO Detail
            routes on. When amendment_eligible the SO is processing-locked but the
            edit view stays usable; Save then submits an amendment (see save()). */
@@ -1158,19 +1166,22 @@ export function MobileNewSO({
      line write on a PO'd SO would break the supplier copy, which is exactly what
      this flow prevents. Uses the server flag; falls back to false when absent so
      older responses keep the old block-everything behaviour. */
-  const amendmentMode = amendEligible && !lineLocked && !hasOpenAmend;
+  /* Migrated out-ranks amendment mode: an amendment is still a write against the
+     order, and approving one re-prices the line off the header the cutover
+     imported (docs/bugs/0035-*). There is no amendment route out of this lock. */
+  const amendmentMode = !migratedLocked && amendEligible && !lineLocked && !hasOpenAmend;
   /* Line editing is blocked when the SO is shipped / has downstream docs
      (lineLocked), OR when the processing date has passed (procLocked) UNLESS the
      order is in amendment mode (then the editor stays open and Save raises an
      amendment). A procLocked SO that already has an open amendment stays
      read-only — a second amendment can't be raised while one is in flight. */
-  const lineEditingBlocked = lineLocked || (procLocked && !amendmentMode);
+  const lineEditingBlocked = migratedLocked || lineLocked || (procLocked && !amendmentMode);
   /* Identity address columns (State/City/Postcode) freeze on the processing
      lock (State drives each line's warehouse → the supplier PO) — EXCEPT in
      amendment mode, where changing them is exactly what an amendment is for, so
      they stay editable and their new values ride the request for approval
      (Owner 2026-07-16: "應該是全部可以 request 啊 然後看有沒有 approval"). */
-  const addressIdentityLocked = procLocked && !amendmentMode;
+  const addressIdentityLocked = migratedLocked || (procLocked && !amendmentMode);
   /* The two schedule dates follow the same rule: frozen on a plain locked SO,
      requestable via the amendment. Delivery Date specifically — owner:
      "delivery date 也要給 amend 也是 subject approval". */
@@ -1179,7 +1190,7 @@ export function MobileNewSO({
      pair to pull a locked SO back out of Proceed, so freezing the inputs here
      would deny the very action the permission grants. Moving (rather than
      clearing) a locked date still 409s server-side — same as desktop. */
-  const scheduleDatesLocked = procLocked && !amendmentMode && !canRemoveProcessingDate;
+  const scheduleDatesLocked = migratedLocked || (procLocked && !amendmentMode && !canRemoveProcessingDate);
   /* Schedule-date floor (desktop parity) — the backend rejects a past
      Processing / Delivery Date (todayMY, UTC+8), so grey out earlier days in
      the picker exactly as SalesOrderNew / SalesOrderDetail do, instead of
@@ -2198,7 +2209,20 @@ export function MobileNewSO({
                 NOT shown in amendment mode — there the lines + frozen fields ARE
                 editable (they ride an amendment), so this banner would contradict
                 the form. The amendment banner on the Items card says it instead. */}
-            {procLocked && !amendmentMode && (
+            {/* CUTOVER: carried over from AutoCount, view only (owner 2026-09-08).
+                FIRST, and it suppresses the processing-lock banner below by
+                out-ranking it — two lock sentences on one screen is how an
+                operator stops reading either. */}
+            {migratedLocked && (
+              <div data-testid="so-migrated-readonly-banner" style={{ display: "flex", alignItems: "flex-start", gap: 9, marginBottom: 11, padding: "10px 12px", background: "#fbf3e6", border: "1px solid #ecd9b6", borderRadius: 12 }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#a16a2e" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flex: "none", marginTop: 1 }}><rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></svg>
+                <div style={{ fontSize: 11.5, color: "#8a5a22", lineHeight: 1.5 }}>
+                  <b>View only — carried over from AutoCount.</b> {migratedReason}
+                </div>
+              </div>
+            )}
+
+            {!migratedLocked && procLocked && !amendmentMode && (
               <div style={{ display: "flex", alignItems: "flex-start", gap: 9, marginBottom: 11, padding: "10px 12px", background: "#fbf3e6", border: "1px solid #ecd9b6", borderRadius: 12 }}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#a16a2e" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flex: "none", marginTop: 1 }}><rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></svg>
                 <div style={{ fontSize: 11.5, color: "#8a5a22", lineHeight: 1.5 }}>
@@ -2619,8 +2643,8 @@ export function MobileNewSO({
       {!loading && (
         <footer id="nso-footer" className="actbar" style={{ display: "flex", gap: 9 }}>
           {mode === "edit" ? (
-            <button className="btn" disabled={submitting} onClick={() => save(false)} style={{ flex: 1, opacity: submitting ? 0.6 : 1 }}>
-              {submitting ? (amendmentMode ? "Submitting…" : "Saving…") : amendmentMode ? "Submit Amendment" : "Save Changes"}
+            <button className="btn" disabled={submitting || migratedLocked} onClick={() => save(false)} style={{ flex: 1, opacity: submitting || migratedLocked ? 0.6 : 1 }}>
+              {submitting ? (amendmentMode ? "Submitting…" : "Saving…") : migratedLocked ? "View only" : amendmentMode ? "Submit Amendment" : "Save Changes"}
             </button>
           ) : (
             <>
