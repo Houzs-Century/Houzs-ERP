@@ -1339,31 +1339,39 @@ if (SKIP_ERP) {
           JOIN scm.${spec.head} h ON h.${spec.pk} = c.${spec.fk} AND h.company_id = ${CO}
          WHERE c.linked_ac_dtlkey IS NOT NULL
          GROUP BY 1 HAVING count(*) > 1`);
-      let sofa = 0; const notSofa = []; let unresolved = 0;
+      let sofa = 0; let sofaDoc = 0; const notSofa = []; let unresolved = 0;
       for (const d of dups) {
         const bookLine = book[t].byKey.get(d.k);
         if (!bookLine) { unresolved++; continue; }
         if (SOFA_RE.test(bookLine.itemKey || "")) { sofa++; continue; }
-        /* A non-sofa key claimed by several rows is either a legitimate SPLIT of
-           one book line into several ERP rows - in which case the quantities
-           still add up to the book's - or a DUPLICATE import, in which case the
-           ERP total exceeds it. The quantity is what separates them, and without
-           it "2 are NOT a sofa" is a curiosity rather than a finding. */
+        /* THE ITEM CODE IS THE WRONG PLACE TO LOOK for the last few. A sofa
+           order carries the sofa AND its upholstery on separate book lines, and
+           the upholstery code (THL-7179) contains no "SOFA" for the predicate to
+           find. When the importer splits the sofa into compartments it puts the
+           fabric line's key on each compartment row too, so that key is shared
+           for exactly the same reason - and reading it as a duplicate import is
+           the false alarm this check would otherwise raise.
+           So ask the DOCUMENT, not just the line. A non-sofa line on a document
+           that carries no sofa at all is the case with nothing benign to explain
+           it, and that is the one worth naming. */
+        const onSofaDoc = (book[t].lines.get(bookLine.docNo) ?? []).some((l) => SOFA_RE.test(l.itemKey || ""));
         const bookQty = bookLine.qty / 10000;
         const erpQty = Number(d.erp_qty);
-        const verdict = erpQty === bookQty
-          ? "quantities AGREE - one book line split across ERP rows, no stock invented"
-          : `quantities DIFFER - ERP ${erpQty} vs book ${bookQty}`;
-        notSofa.push(`${bookLine.docNo} key ${d.k} ${bookLine.itemKey} (${d.n} ERP rows): ${verdict}`);
+        if (onSofaDoc) { sofaDoc++; continue; }
+        notSofa.push(`${bookLine.docNo} key ${d.k} ${bookLine.itemKey} (${d.n} ERP rows, ERP qty ${erpQty} vs book ${bookQty})`);
       }
       out(`        ${t}: ${dups.length} DtlKey(s) carried by more than one ERP row`);
-      out(`           ${sofa} resolve to a book line whose item code is a SOFA - the expected decomposition`);
-      out(`           ${notSofa.length} are NOT a sofa line; ${unresolved} do not resolve to any book line in this snapshot`);
-      for (const n of notSofa.slice(0, SHOW)) if (n) out(`             ${n}`);
+      out(`           ${sofa} are a SOFA line - the expected compartment decomposition`);
+      out(`           ${sofaDoc} are a non-sofa line ON a sofa document (the upholstery line, whose key`);
+      out(`               the importer stamps on each compartment row for the same reason)`);
+      out(`           ${notSofa.length} are on a document carrying NO sofa at all; ${unresolved} do not resolve to any book line`);
+      for (const n of notSofa.slice(0, SHOW)) out(`             ${n}`);
       if (dups.length > 0 && notSofa.length === 0 && unresolved === 0) {
-        log(`SETTLED: every one of the ${dups.length} shared ${t} DtlKeys is a sofa line decomposed into compartments.`);
+        log(`SETTLED (${t}): all ${dups.length} shared DtlKeys are sofa decomposition - ${sofa} the sofa line itself, `
+          + `${sofaDoc} the upholstery line of a sofa document. None is a duplicate import.`);
       } else if (notSofa.length > 0) {
-        log(`NOT ALL SOFA: ${notSofa.length} shared ${t} DtlKey(s) resolve to a book line that is not a sofa - each is a key claimed by rows the book never split.`);
+        log(`NOT SOFA (${t}): ${notSofa.length} shared DtlKey(s) sit on a document with no sofa line - `
+          + `each is a key claimed by ERP rows the book never split, and none has a benign explanation.`);
       }
     }
 
