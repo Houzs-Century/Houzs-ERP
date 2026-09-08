@@ -139,7 +139,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/model-free-gifts.ts` | 3 | 147 |
 | `backend/src/scm/routes/mrp-lead-times.ts` | 2 | 95 |
 | `backend/src/scm/routes/mrp.ts` | 2 | 1763 |
-| `backend/src/scm/routes/other-debtors.ts` | 13 | 647 |
+| `backend/src/scm/routes/other-debtors.ts` | 13 | 676 |
 | `backend/src/scm/routes/outstanding.ts` | 2 | 321 |
 | `backend/src/scm/routes/payment-vouchers.ts` | 21 | 1989 |
 | `backend/src/scm/routes/personal-quick-picks.ts` | 3 | 212 |
@@ -209,7 +209,7 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (2048 files, 713565 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (2048 files, 713761 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
