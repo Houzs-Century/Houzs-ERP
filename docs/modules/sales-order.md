@@ -2006,6 +2006,28 @@ sentence for a write that reaches the API anyway is curated in
 > is not a remedy. `frontend/scripts/check-silent-mutations.mjs` does not cover
 > this shape — it scans `useMutation` call sites, and this path is a raw
 > `authedFetch` loop.
+>
+> **The staged-PHOTO drain had the identical hole, and it is closed too**
+> (`docs/bugs/0726-*`). `MobileNewSO.uploadStagedPhotos` counted with
+> `catch { failed += 1; }` and said *"N line photo(s) failed to upload. Add them
+> again from the SO detail screen."*; `SalesOrderNew.flushPendingPhotos` returned
+> `{ failed, skipped }`, summed the two and said *"Please re-attach on the Detail
+> page."* — the same instruction to keep doing the thing that just failed. Both
+> now report through `frontend/src/vendor/scm/lib/photo-upload-failures.ts`,
+> which IMPORTS `line-write-failures.ts`'s capture, shared-cause collapse and
+> refusal test rather than restating them, so the two vocabularies cannot drift.
+> Three things are photo-specific and live in that module: the label is
+> `item code (file name)`, because a line carries several photos and only some
+> fail; the retryable tail names the SO detail screen instead of promising *"your
+> edits are still here"*, which is FALSE for a staged `File` that does not survive
+> the screen; and a photo whose line could not be paired back to a saved item
+> carries its own sentence with NO status, so the shared rule reads it as
+> retryable — which it is.
+>
+> **Still counting, and known:** `MobileNewSO.recordNewPayments` keeps only
+> `firstError` and no status, so it says *"Record them again…"* against a refusal
+> too. Recorded in `docs/bugs/0726-*`; the wording module already exists, what is
+> open is what a re-posted payment should promise.
 
 **Opening them again is ONE statement**, when collections are corrected:
 
