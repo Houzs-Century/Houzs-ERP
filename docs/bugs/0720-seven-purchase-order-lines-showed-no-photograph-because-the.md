@@ -102,21 +102,49 @@ apart by colour). The address must name the target row, the target is
 build, one photograph, on the first piece (owner, 2026-08-10,
 「每个 SKU 的照片都一样，留第一个就可以了」).
 
+**The apply**, run `34227185119`, prod, *Apply line photo repair (from a plan
+file)*, plan digest `sha256:c219d36f…`, one minute old when it was accepted:
+
+```
+PURCHASE ORDER: APPLIED — 7 line(s) updated, 10 address(es) attached
+SALES ORDER: no operation in this plan
+=== VERIFIED ON A FRESH CONNECTION ===
+  PURCHASE ORDER: 7 line(s) re-read; each now lists the attached address
+                  and it carries that row's own AutoCount line: true
+APPLIED 7 line(s), REFUSED 0 line(s), SHAPE PROBLEMS 0.
+```
+
 **Verified — the owner's number, before and after, on production.**
-`probe-line-photo-gap.mjs`, company 1:
+`probe-line-photo-gap.mjs`, company 1, run `34227291924` (after) against the
+before-run in this session:
 
 | purchase order, per AutoCount LINE | before | after |
 |---|---|---|
-| in the ERP | 240 | PENDING THE APPLY RUN |
-| **ARRIVED — the line shows its picture** | 233 | PENDING THE APPLY RUN |
-| **MISSING — no row of the line shows one** | **7** | PENDING THE APPLY RUN |
-| sibling rows carrying none BY DESIGN | 175 | PENDING THE APPLY RUN |
+| in the ERP | 240 lines / 434 rows | 240 lines / 434 rows |
+| **ARRIVED — the line shows its picture** | 233 | **240** |
+| **MISSING — no row of the line shows one** | **7** | **0** |
+| sibling rows carrying none BY DESIGN | 175 | **177** |
 
-The by-design figure did not move, which is the control: 7 lines were repaired
-and exactly 7 moved from MISSING to ARRIVED, with nothing reclassified. No
-sales-order figure moved — the plan carried 10 operations, all on the
-`PURCHASE ORDER` arm, and the run log reads `SALES ORDER: no operation in this
-plan`.
+**Every purchase-order line the ERP holds a book photograph for now carries it.**
+
+**One figure DID move that a repair of 7 lines might not be expected to move,
+and it is named rather than absorbed.** The BY DESIGN row count went 175 → 177.
+That is not a reclassification and it is not drift — it is arithmetic, and it
+closes exactly. The 7 repaired lines were held as **9** ERP rows (`HC-PO-010085`
+and `HC-PO-010160` are two compartments each; the other five are one row each).
+The photograph goes on the first piece, so 7 of those 9 rows gained one and the
+other **2** are sibling compartments that carry none by design. While those rows
+belonged to a MISSING line they were not counted in that figure at all; now
+their line has ARRIVED, they are. `175 + 2 = 177`, and the ARRIVED count rose by
+exactly the 7 lines repaired.
+
+**The controls held.** No sales-order figure moved — 637 in the ERP, 637
+ARRIVED, 0 MISSING, 430 by-design siblings, all identical before and after; the
+plan carried 10 operations, every one on the `PURCHASE ORDER` arm, and the run
+log reads `SALES ORDER: no operation in this plan`. The purchase-order
+population did not move underneath the measurement either (240 lines / 434 rows
+both times), unlike the sales-order repair the night before, which had a
+concurrent lane inserting compartments under it.
 
 **What is still open, said plainly.** The other 15 addresses are NOT a defect
 and were deliberately not written: their lines already show their photograph
@@ -126,5 +154,8 @@ from the ERP. What they are is 15 *plan entries whose object was never uploaded*
 output. They are now refused by name rather than being a trap for the next
 person who reaches for `APPLY=1`.
 
-**Ref.** `fix/po-line-photos-upload`, 2026-09-08. Probe run and apply run
-recorded in the PR.
+**Ref.** `fix/po-line-photos-upload`, 2026-09-08. Apply run `34227185119`,
+after-probe run `34227291924`. The plan file
+`backend/scripts/data/photo-repair-plans/po-attach-2026-09-08.json` is SPENT —
+its per-row precondition now refuses every one of its own operations, which is
+the guard working, and it is kept only as the record of what was applied.

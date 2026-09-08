@@ -957,6 +957,23 @@ The unit is the AutoCount LINE. `probe-line-photo-gap.mjs` asks it that way; see
 the fuller note in `docs/modules/sales-order.md` §*The AutoCount migration's
 photos*.
 
+**THOSE 7 ARE CLOSED, AND THE WAY THEY CLOSED IS THE PART WORTH KEEPING.** Run
+`34227291924`, prod, 2026-09-08: **240 of 240 photographed purchase-order lines
+in the ERP now show their picture, MISSING 0.** Their objects had never been
+uploaded — an interrupted batch, traceable in the operator machine's own
+done-list — so this needed an UPLOAD and then an attach, not a re-point.
+
+**Do NOT close a gap like that with `import-po-line-photos.mjs APPLY=1`.** It was
+measured before it was trusted and it would have written **25** addresses where
+the gap needed 10. The other 15 sit on lines that already show their picture,
+and R2 holds none of those 15 objects — that is
+`docs/bugs/0625-a-backfill-replayed-the-round-1-photo-key-log-without-asking.md`
+again. The importer cannot know: it runs in Actions and has no R2 token, because
+this repository is PUBLIC. The narrow path is
+`backend/scripts/attach-uploaded-line-photos.mjs` — it asks R2 on the operator
+machine, refuses any address whose object is absent and any line that already
+shows one, and hands the writer a plan file. `docs/bugs/0720-…` has the trace.
+
 **TWO SCREENS OFFER THE CONTROL, AND THEY MUST NOT DRIFT (2026-08-28).** The
 strip is on the PO's TABLE view (`PurchaseOrderDetailV2`, a `Photos` column) AND
 in the rich LINE EDITOR (`PurchaseOrderDetail`, inside each `PoLineCard`). The
