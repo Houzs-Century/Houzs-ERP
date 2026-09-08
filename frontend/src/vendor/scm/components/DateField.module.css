@@ -76,18 +76,27 @@
 }
 
 /* Blur reported the draft as unparseable. Absolutely positioned so a field in
-   error does not change the height of the row it sits in — this component is
-   used in 163 places and most of them are dense form grids. */
+   error does not change the height of the row it sits in — this component sits
+   in dense form grids on nearly two hundred screens, and pushing every one of
+   them down by a line is a bigger change than the fix.
+   It is drawn as an opaque chip on purpose: floated over the row beneath, plain
+   red text on a transparent ground rendered ON TOP of that row's own text and
+   neither could be read (observed in the browser, 2026-09-08). */
 .draftError {
   position: absolute;
-  top: calc(100% + 2px);
+  top: calc(100% + 3px);
   left: 0;
   z-index: 5;
   white-space: nowrap;
+  padding: 2px 6px;
+  border: 1px solid var(--c-festive-b, #B8331F);
+  border-radius: var(--radius-sm, 4px);
+  background: var(--c-paper, #fff);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.14);
   font-family: var(--font-sans);
   font-size: var(--fs-11, 11px);
   font-weight: 600;
-  line-height: 1.2;
+  line-height: 1.3;
   color: var(--c-festive-b, #B8331F);
   pointer-events: none;
 }
