@@ -1610,6 +1610,16 @@ purchase row that decoded to a single `1S` from a text today's parser reads as
 one-seaters; the narrow answer is to require the sales side to state the same
 multiset independently.
 
+**And do not key a sofa tool on the PURCHASE row's `item_group` either.** It did
+not survive the SO -> PO hop on this population — measured, run `34218446892`:
+BOTH rows of `HC-PO-009435`, the sofa and its pillows, answer "not a sofa". That
+is the second, independent reason `redecode-collapsed-sofa-lines.mjs` (corpus:
+`WHERE i.item_group = 'sofa'`) cannot see these documents. What makes the line a
+sofa is the SALES side and the piece codes. The category is a real defect —
+`computeVariantKey` reads it, so it changes which stock bucket the row matches —
+and it belongs to the `docs/bugs/0514` lane, not to a link repair.
+`docs/bugs/0716`.
+
 **A link does not recompute readiness** (`docs/bugs/0675`). After any of the
 three, dispatch *Recompute SO stock allocation*, then *Recompute SO
 po_qty_picked* — the SO -> PO ceiling those missing links left reading LOW is a
