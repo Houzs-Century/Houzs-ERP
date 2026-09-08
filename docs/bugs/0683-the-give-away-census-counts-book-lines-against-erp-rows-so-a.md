@@ -16,13 +16,22 @@ company 1 — **reaches neither**, and wrote `TO WRITE: 0 line(s)`.
 The census reports `HC-SO-012128` as *"book 2 line(s) (1 at RM 0.00) vs ERP 2"*
 and files it UNJUDGEABLE rather than SHORT, because the two counts are equal.
 They are equal by coincidence. The book's 2 lines are the `HOK-5530 SOFA`
-(DtlKey 833309) and the pillow line (DtlKey 924549); the sofa's `Desc2` reads
-`(1EL+1ER)28inch`, and a sofa line is DECOMPOSED into one ERP row per
-compartment — so 1 book sofa line legitimately becomes 2 ERP rows and the pillow
-line becomes none. **2 = 2 while 4 pillows are missing.** Any document holding a
-sofa is mis-compared this way; the count carries no information there.
-(PROVEN for the book side, from `ac-outstanding-so.json.gz`; the ERP side is
-LIKELY — it needs a read that names the 2 rows.)
+(DtlKey 833309) and the pillow line (DtlKey 924549), and a sofa line is
+DECOMPOSED into one ERP row per compartment.
+
+Run the repo's OWN decoder on that line's `Desc2` rather than eyeballing it —
+`parseSofa('(1EL+1ER)28inch/Col:BO315-2 …', '5530')` returns
+
+```
+pieces: ["1A(LHF)","1A(RHF)"]   count = 2   size: 28   color: BO315-2   conf: high
+```
+
+**exactly 2 compartments, at high confidence.** So the sofa alone accounts for
+both ERP rows and the pillow line contributes none: **2 = 2 while 4 pillows are
+missing.** Any document holding a sofa is mis-compared this way, and the count
+carries no information there. (The book side and the decode are PROVEN; that the
+ERP stored precisely those two decoded pieces is what the importer does by
+construction, and a read naming the 2 rows would close the last step.)
 
 **2. `HC-SO-004188` is not short at all any more.** The census names 14
 documents holding a book line with no ERP row and 004188 is not among them, so
