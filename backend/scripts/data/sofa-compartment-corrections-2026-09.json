@@ -1,5 +1,5 @@
 {
- "_note": "Owner-approved compartment answers for the sofa lines still on a bare -1S placeholder on PROCEEDED company-1 orders, 2026-09-04. Same shape as sofa-compartment-corrections-2026-08.json. Every entry names the documents it applies to, the model, the target piece list, the seat where the book or the slip states one, the desc2Match that tells one build on a document from another, and a why recording how the answer was reached. Four entries are the owner's own reading, given in chat; the rest are read off the photograph and confirmed by him.",
+ "_note": "Owner-approved compartment answers for the sofa lines still on a bare -1S placeholder on PROCEEDED company-1 orders, 2026-09-04. Same shape as sofa-compartment-corrections-2026-08.json. Every entry names the documents it applies to, the model, the target piece list, the seat where the book or the slip states one, the desc2Match that tells one build on a document from another, and a why recording how the answer was reached. Four entries are the owner's own reading, given in chat; the rest are read off the photograph and confirmed by him. 2026-09-08: HC-SO-013475 was added to this same file rather than a new one - a fourth file whose name also contains \"2026-09\" would make the FILE= substring filter select two rounds at once (scripts/lib/sofa-corrections-source.test.mjs pins that), and this build carries its own why, which is where the evidence has to live. It is NOT a placeholder build: it is the shop floor reporting that the drawing and our decode disagree.",
  "_rules": "Money never moves: the price rides the FIRST piece and every other piece is 0. Lines are matched to target pieces and UPDATED in place so a row id - and any purchase allocation hanging off it - survives. A document can hold MORE THAN ONE sofa build, so desc2Match is required; where a document holds TWO lines with the SAME text those are two identical sofas and both take the build.",
  "entries": [
   {
@@ -263,6 +263,20 @@
    "seat": "24",
    "desc2Match": "Col:BO315-7 Peach",
    "why": "owner 2026-09-05, reading the slip himself: 1A(LHF)+2A(RHF)+1NA at 24\". My own reading of the same photograph was 1A(LHF)+2A(RHF) - I missed the armless seat, which is the third time today I got the piece COUNT wrong on a drawing that is not a plain row with an arm at each end. The slip's 'Seater depth +1 inch foam, total 49\"' is a special order, not a piece."
+  },
+  {
+   "docs": [
+    "HC-SO-013475"
+   ],
+   "model": "8030",
+   "pieces": [
+    "1A(LHF)",
+    "1NA",
+    "1A(RHF)"
+   ],
+   "seat": "28",
+   "desc2Match": "3S(28\")",
+   "why": "Staff report relayed by the owner, 2026-09-08: \"So013475 item 2 matching incorrect. Autocount drawing is 1+1+1. ERP 2+1. please check & correct it, this urgent bill.\" The book text for DtlKey 924983 is 3S(28\"), and parse-sofa.mjs turns a 3S at any seat depth other than 24\" into 2A(LHF)+1A(RHF) by the owner standing rule - which is WHY the ERP holds 2+1, so this is a per-document override of that rule and not a change to it. The DRAWING on the same line (photo so-items/HC-SO-013475/4b274c15-0260-4861-a47b-9748ab8cd792/ac-924983-1.jpg, AutoCount DtlKey 924983) shows three separate seats and the owner ruled the drawing wins. Line 1 of the same order is a DIFFERENT build (2S(35\")) and is not touched - hence the desc2Match."
   }
  ]
 }
