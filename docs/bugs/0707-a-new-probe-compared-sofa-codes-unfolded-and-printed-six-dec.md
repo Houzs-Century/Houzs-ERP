@@ -30,6 +30,7 @@ happening again in a new file — the same weak exclusion, the same invented
 findings, four days later. Writing a third opinion about what a sofa code means
 is what makes it recur.
 
+<<<<<<< HEAD
 **Fix, in two rounds, and the FIRST ROUND WAS NOT ENOUGH — which is the part
 worth reading.** Round one folded both sides through `comparisonKey`, the
 canonicalisation the reconcile's keyless verdict uses. Run `34203599150` proved
@@ -62,5 +63,17 @@ What IS proven across every run so far, and is what this probe's conclusions
 actually rest on, is the KEYED verdict — `0 line(s) where the ERP row and the
 book line carry the SAME AutoCount key and DIFFERENT products` — unchanged on
 runs `34202080707`, `34202524554` and `34203599150`. It never used the bag.
+=======
+**Fix.** Both sides now go through `lib/keyless-multiset.mjs`'s `comparisonKey`,
+the same canonicalisation the reconcile's own keyless verdict uses (model-folded
+through `SOFA_MODEL_ALIAS`; 5535 is its own model and is not in that table). The
+book side is handed its UNTRANSLATED `itemKey` as `rawCode`, which is the half
+that was dead, and a shortfall on a folded `SOFA <model>` key is skipped in the
+extra-row scan rather than reported — our rows outnumber the book's line there by
+construction. Verified against production, run TBD-BELOW: the four `BAGS DIFFER`
+and the two invoice rows are gone and the keyed item-code verdict (`0 line(s)
+where the ERP row and the book line carry the SAME AutoCount key and DIFFERENT
+products`) is unchanged.
+>>>>>>> origin/main
 
 **Ref.** fix/gr-iv-pi-remainder, 2026-09-08.

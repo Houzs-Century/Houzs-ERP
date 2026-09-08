@@ -19,16 +19,39 @@
 // corrected on 2026-09-08 after being run against production (run
 // 34183368917): it reported 50 migrated sales orders "touched", and every one
 // of them was the stock-allocation cron writing UPDATE_LINE / UPDATE_STATUS
-// rows exactly the way a person does. The classification it settled on is the
-// audit row's OWN attribution, and it is the only honest one available:
+// rows exactly the way a person does. The classification is the audit row's OWN
+// attribution, and it is the only honest one available:
 //
-//     SYSTEM  :=  actor_id = <the migration's pinned actor>
-//             OR  (actor_id IS NULL AND actor_name_snapshot ILIKE 'system%')
+//     SYSTEM  :=  actor_name_snapshot ILIKE 'system%'
 //     PERSON  :=  everything else
 //
-// `isSystemAuditRow` below is that sentence in JavaScript, deliberately
-// character-for-character equivalent to the SQL in that check, so the report
-// and the guard cannot drift into two different answers.
+// THE DECISION IS NOT MADE IN THIS FILE ANY MORE. It lives in
+// src/scm/shared/audit-author.ts, because the go-live change log runs in the
+// WORKER and a Worker bundle cannot import out of backend/scripts, while a
+// script CAN import a .ts (they run under `npx tsx`). One direction, one
+// answer, three callers. What stays here is the INDEXING — the field aliasing,
+// the per-(document, field) map and the refusal wording — none of which is a
+// decision.
+//
+// THE SECOND ARM IS GONE, AND WHY [2026-09-08, docs/bugs/0703]. This file
+// shipped with `actor_id = MIGRATION_ACTOR_ID => SYSTEM` alongside the name
+// test. That arm was measured after it landed and it is wrong in the direction
+// this whole file exists to prevent:
+//
+//   - It matches EVERY human sales-order edit. src/scm/middleware/auth.ts PINS
+//     that exact uuid onto c.get('user').id for every authenticated SCM caller,
+//     and all 21 recordSoAudit call sites in routes/mfg-sales-orders.ts pass
+//     `actorId: user.id`. Proven by RUNNING the middleware - the assertion is
+//     in src/scm/shared/audit-author.test.ts, not a reading of it.
+//   - It matches ZERO migration rows. No script writes actor_id into either
+//     audit table. The only two that INSERT - backfill-2990-delivered-dos.mjs:124
+//     and repair-so-fee-line-integrity.mjs:317 - both omit the column, so those
+//     rows carry NULL and are classified by their NAME like everything else.
+//
+// So the arm refused nothing it was meant to and skipped everything it was
+// meant to catch. `migrationActorId` is therefore no longer a parameter: a
+// parameter that decides nothing is worse than no parameter, because the next
+// reader assumes it does something.
 //
 // WHY `actor_id IS NULL` ALONE IS NOT "SYSTEM", WHICH IS THE WHOLE BUG.
 // A null actor is a normal shape for a PERSON's row in this schema:
@@ -57,48 +80,32 @@
 // exactly ONE as a person.
 // ----------------------------------------------------------------------------
 
-/** The migration's own actor, as create-migrated-documents.mjs pins it. */
-export const MIGRATION_ACTOR_ID = "00000000-0000-4000-8000-000000000001";
+import { classifyAuditAuthor } from "../../src/scm/shared/audit-author.ts";
 
 /**
- * The name prefix the automated writers stamp into `actor_name_snapshot`:
- * 'system (auto-allocate)' (so-stock-allocation.ts:998) and
- * 'System (auto-allocate)' (:1082). Matched case-insensitively as a PREFIX,
- * identical to the `ILIKE 'system%'` in check-so-open-for-new.mjs.
+ * The uuid src/scm/middleware/auth.ts pins onto EVERY authenticated SCM caller,
+ * and the one create-migrated-documents.mjs stamps as created_by.
+ *
+ * IT IS NOT AN AUTHORSHIP SIGNAL and nothing in this file tests against it - it
+ * is exported only so a caller that needs the constant for a created_by or an
+ * FK has one place to read it from. See the header for the measurement.
  */
-const SYSTEM_NAME = /^system/i;
+export const MIGRATION_ACTOR_ID = "00000000-0000-4000-8000-000000000001";
 
 const str = (v) => (v == null ? null : String(v).trim() || null);
 
 /**
  * Is this audit row the SYSTEM's rather than a person's?
  *
- * `migrationActorId` is `string | null` and NOT optional, deliberately: it is
- * the parameter that DECIDES the answer, so every call site has to say which
- * actor it is treating as the migration's — or say `null`, meaning "this table
- * has no pinned migration actor", which is the honest answer for
- * scm.entity_audit_log. An optional argument defaulting to a constant is how a
- * gate ships half-applied (see src/scm/lib/migrated-so-lock.ts for the same
- * argument about `isMigrated`).
+ * ONE ARGUMENT, because there is one signal. The rule itself is
+ * src/scm/shared/audit-author.ts - this is the adapter that maps this file's
+ * camelCase row shape onto it, and nothing more.
  *
  * @param {{actorId?: unknown, actorName?: unknown}} row
- * @param {string|null} migrationActorId
  * @returns {boolean}
  */
-export function isSystemAuditRow(row, migrationActorId) {
-  if (migrationActorId === undefined) {
-    throw new TypeError(
-      "isSystemAuditRow(row, migrationActorId): migrationActorId is required — "
-      + "pass MIGRATION_ACTOR_ID for scm.mfg_so_audit_log, or null for a table with no pinned migration actor.",
-    );
-  }
-  const actorId = str(row?.actorId);
-  const actorName = str(row?.actorName) ?? "";
-  if (actorId !== null && migrationActorId !== null && actorId === migrationActorId) return true;
-  // Null actor + a name that starts "system" is the cron. Null actor + any
-  // other name (or no name) is a PERSON — see the header note.
-  if (actorId === null && SYSTEM_NAME.test(actorName)) return true;
-  return false;
+export function isSystemAuditRow(row) {
+  return classifyAuditAuthor({ actor_name_snapshot: str(row?.actorName) }) === "machine";
 }
 
 /** snake_case -> camelCase, the two spellings an audit row's `field` can carry. */
@@ -151,19 +158,15 @@ export function whoOf(row) {
  * @param {object}   args
  * @param {Array}    args.rows              `{ docNo, actorId, actorName, at, action, fieldChanges }`
  * @param {Array}    args.fields            `[{ key, erp }]` — the fields the caller may write
- * @param {string|null} args.migrationActorId   REQUIRED, see isSystemAuditRow
  * @returns {{
  *   byDocField: Map<string, {who:string, at:any, action:any, from:any, to:any, field:string}>,
  *   byDoc: Map<string, {who:string, at:any, action:any, fields:Set<string>}>,
  *   personRows: number, systemRows: number, rows: number
  * }}
  */
-export function humanEditIndex({ rows, fields, migrationActorId }) {
+export function humanEditIndex({ rows, fields }) {
   if (!Array.isArray(rows)) throw new TypeError("humanEditIndex: rows must be an array");
   if (!Array.isArray(fields)) throw new TypeError("humanEditIndex: fields must be an array");
-  if (migrationActorId === undefined) {
-    throw new TypeError("humanEditIndex: migrationActorId is required (string or null)");
-  }
 
   /* alias -> field key. Built once. A field with no ERP column cannot be
      written, so it cannot be vetoed either — it is not in this map. */
@@ -179,7 +182,7 @@ export function humanEditIndex({ rows, fields, migrationActorId }) {
   let systemRows = 0;
 
   for (const r of rows) {
-    if (isSystemAuditRow(r, migrationActorId)) { systemRows++; continue; }
+    if (isSystemAuditRow(r)) { systemRows++; continue; }
     personRows++;
     const who = whoOf(r);
     const doc = String(r.docNo);
@@ -209,16 +212,13 @@ export function humanEditIndex({ rows, fields, migrationActorId }) {
  * @returns {{ byDoc: Map<string, {who:string, at:any, action:any, fields:string[]}>,
  *            personRows:number, systemRows:number }}
  */
-export function humanTouchedDocs({ rows, migrationActorId }) {
+export function humanTouchedDocs({ rows }) {
   if (!Array.isArray(rows)) throw new TypeError("humanTouchedDocs: rows must be an array");
-  if (migrationActorId === undefined) {
-    throw new TypeError("humanTouchedDocs: migrationActorId is required (string or null)");
-  }
   const byDoc = new Map();
   let personRows = 0;
   let systemRows = 0;
   for (const r of rows) {
-    if (isSystemAuditRow(r, migrationActorId)) { systemRows++; continue; }
+    if (isSystemAuditRow(r)) { systemRows++; continue; }
     personRows++;
     const doc = String(r.docNo);
     if (byDoc.has(doc)) continue;

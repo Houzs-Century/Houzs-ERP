@@ -327,6 +327,7 @@ Each hook sits at the point the document becomes permanent — after the
 | DO created parentless, and GRN / PI with NO linked line | those routers' `POST /` | `recordParentlessCreate` — a `skipped` row, because AutoCount has no create for these. Not requeueable, which is why a wrongly-parentless row also loses its Send-again button |
 | SI created on `POST /sales-invoices` | `scm/lib/si-autocount-source.ts` | The one of the four that RESOLVES the source before it says anything. `POST /` accepts `deliveryOrderId` and a per-line `doItemId`, so the unconditional `recordParentlessCreate` that used to sit there claimed a fact it never checked and filed every desktop from-DO invoice as ERP-only (`HC-SI-2608-001`; BUG-HISTORY 2026-08-17). Now: one source DO with every line linked -> `enqueueConvert` `do_to_iv`; several -> the merged-conversion skip; a linked line beside a standalone one -> `mixed-source-lines`; genuinely no source -> `recordParentlessCreate`, unchanged |
 | line REMOVED, any of the six | the six `DELETE /.../items/:itemId` handlers | `retiredLineOf(...)` BEFORE the row is destroyed, handed to the edit as `retire` — see 7a |
+| SO edit (**the account book is WRONG and a person is right**) | `scripts/sync-ac-delta.mjs`, `LANES=push` | The only enqueue that does not come from a route. Where the delta sync REFUSES to write a header field because a person owns it, the two systems are left disagreeing — and since the owner opened the system to staff (2026-09-08), the ERP is master on that row, so the BOOK is the side that has to move. One keyed `enqueueEdit` per such order, `touchedFields` naming the columns the person set. Driven over the pg connection by `lib/pgrest-shim.mjs`, so it is the SAME composer and not a second one (precedent: `rebuild-ac-document.mjs`). OFF by default and behind the script's CONFIRM phrase, because it writes into the queue that feeds a licensed book. See `docs/modules/change-log.md` for the watching half of the same instruction |
 
 **An amendment is an EDIT, never a delete-and-recreate.** `applySoAmendment` and
 `applyPoAmendment` rewrite a confirmed document's header and lines in place; the
@@ -4586,7 +4587,10 @@ NULL`, including both count scans; a third scan counts the retired documents
 separately and publishes `counts.archived`. It is never folded into `total` —
 every other number on that line is a claim about what AutoCount did, and this
 one is a claim about what somebody decided. `?state=archived` is the only filter
-that looks at the other shelf.
+that looks at the other shelf — and therefore the only one whose "N of M
+documents" line counts against `counts.archived` rather than `counts.total`
+(`acListTotal`). It read *"3 of 1 document"* on production for the first few
+minutes; `docs/bugs/0705-the-cleared-tab-counted-its-documents-against-a-total-that-e.md`.
 
 **On screen.** A **Clear** control on the document line and a **Cleared** tab,
 on BOTH surfaces (`acDocCanArchive` / `acDocCanRestore` decide visibility — a

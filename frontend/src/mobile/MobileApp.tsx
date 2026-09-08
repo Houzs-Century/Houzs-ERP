@@ -61,6 +61,7 @@ const MobileStockCard = lazy(() => import("./MobileStockCard").then((m) => ({ de
 const MobileStockTransferNew = lazy(() => import("./MobileStockTransferNew").then((m) => ({ default: m.MobileStockTransferNew })));
 const MobileFairReport = lazy(() => import("./MobileFairReport").then((m) => ({ default: m.MobileFairReport })));
 const MobileAutoCountSync = lazy(() => import("./MobileAutoCountSync").then((m) => ({ default: m.MobileAutoCountSync })));
+const MobileChangeLog = lazy(() => import("./MobileChangeLog").then((m) => ({ default: m.MobileChangeLog })));
 // SO Maintenance is the SAME desktop page (/scm/sales-orders/maintenance) — the
 // director-only State→Warehouse / Localities / SO-dropdown CRUD surface. Mobile
 // has no route table, so the vendored desktop page is mounted directly inside
@@ -83,6 +84,7 @@ type Screen =
   | { t: "so-maintenance" }
   | { t: "fair-report" }
   | { t: "autocount-sync" }
+  | { t: "change-log" }
   | { t: "new-so"; mode: "new" | "edit" | "edit-draft"; docNo?: string; scanPrefill?: MobileScanPrefill }
   | { t: "scan" }
   | { t: "module"; key: string; title: string }
@@ -127,6 +129,7 @@ export function destinationScreen(to: string, label: string): DestinationTarget 
   if (path === "/scm/sales-orders/maintenance") return { t: "so-maintenance" };
   if (path === "/reports/fair-report") return { t: "fair-report" };
   if (path === "/autocount-sync") return { t: "autocount-sync" };
+  if (path === "/change-log") return { t: "change-log" };
   if (path === "/scm/amendments") return { t: "amendments" };
   if (path === "/scm/po-amendments") return { t: "po-amendments" };
   if (path === "/assr") return { t: "service" };
@@ -391,6 +394,11 @@ export const MOBILE_MENU_GROUPS: { group: string; items: MobileMenuItem[] }[] = 
      endpoint accepts. */
   { group: "System", items: [
     { to: "/autocount-sync", label: "AutoCount Sync" },
+    /* The go-live change log. Second row in this group, and it belongs on a
+       phone for the same reason the first one does: "who changed my sales
+       order" is a question the owner asks away from a desk. Gated by its own
+       live NAV_TABS entry at /change-log. */
+    { to: "/change-log", label: "Change Log" },
   ]},
 ];
 
@@ -742,6 +750,13 @@ function MobileAppInner() {
     // mount the screen (or fire its queries) for a user outside the cohort.
     // Mirrors the desktop FairReport route guard; OFF, not hide.
     overlay = !canViewFairReport(user) ? <TabLocked title="Sales Report" /> : <MobileFairReport onBack={back} />;
+  }
+  else if (screen.t === "change-log") {
+    /* Guard the SCREEN, not only the menu row — same two keys the desktop route
+       and the server accept, and the server is still the boundary. OFF, not
+       hidden. */
+    const maySee = can("*") || can("scm.changelog.read") || can("settings.manage");
+    overlay = !maySee ? <TabLocked title="Change Log" /> : <MobileChangeLog onBack={back} />;
   }
   else if (screen.t === "autocount-sync") {
     /* Guard the SCREEN, not only the menu row: an /autocount-sync URL must not
