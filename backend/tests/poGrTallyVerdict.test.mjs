@@ -34,6 +34,7 @@ import {
 } from "../scripts/lib/so-tally-verdict.mjs";
 import { crossCheck } from "../scripts/lib/tally-crosscheck.mjs";
 import { buildVerdictRows, makeVerdictRecorder } from "../scripts/lib/so-verdict-derive.mjs";
+import { currencyVerdict } from "../scripts/lib/ac-scope.mjs";
 
 const row = (over = {}) => ({
   doc_no: "HC-PO-000001",
@@ -320,5 +321,37 @@ describe("THE OWNER'S RULING MUST REACH THE PER-DOCUMENT VERDICT, not only the S
     const rows = buildVerdictRows({ recorder: r, type: "GR", companyId: 1, measuredAt: "t", runId: "r" });
     expect(rows[0].axes).toEqual(["quantity"]);
     expect(bucketOf(rows[0])).toBe("work");
+  });
+});
+
+describe("currencyVerdict must hand back what it read, so the caller can COMPARE not assert", () => {
+  /* The reconcile recorded a `currency` difference for EVERY foreign book
+     document and printed "tagged 'MYR'" — a sentence about a column nothing had
+     selected. HC-PO-009335 was repaired to CNY on 2026-09-07
+     (repair-migrated-currency.mjs run 34143840216, MODE=apply, which printed
+     `verified HC-PO-009335 currency = 'CNY'`) and the checker went on calling it
+     MYR the next day. Returning `code` is what lets the caller ask the ERP
+     instead of telling it. */
+  it("returns the book's own code and rate on a foreign document", () => {
+    const v = currencyVerdict({ currency: "CNY", rate: 0.61938 });
+    expect(v.kind).toBe("foreign");
+    expect(v.code).toBe("CNY");
+    expect(v.rate).toBe(0.61938);
+  });
+
+  it("returns the code on a local document too", () => {
+    expect(currencyVerdict({ currency: "myr", rate: 1 }).code).toBe("MYR");
+  });
+
+  /* THE ASSERTION THAT WAS THE BUG. The reason string must not claim anything
+     about the ERP: this function never reads the ERP. */
+  it("says nothing about what the ERP holds — it has not read it", () => {
+    const why = currencyVerdict({ currency: "CNY", rate: 0.61938 }).why;
+    expect(why).toContain("CNY");
+    expect(why).not.toMatch(/the ERP holds/);
+  });
+
+  it("still refuses to answer when the snapshot carries no currency", () => {
+    expect(currencyVerdict({ currency: "", rate: null }).kind).toBe("unknown");
   });
 });

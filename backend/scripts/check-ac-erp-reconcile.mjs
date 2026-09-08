@@ -1065,19 +1065,37 @@ for (const cfg of TYPES) {
       VERDICT.record(t, ac, d.erp_no, "currency", "this snapshot does not state the document's currency");
     }
     if (cur.kind === "foreign") {
-      /* NOT a money difference. The ERP's `currency` column saying MYR on a
-         foreign document is a real defect, but it is a CURRENCY defect, and
-         counting it in the money column is what made an exchange rate look like
-         a discount in the first place. */
+      /* ── READ THE ERP'S OWN CURRENCY. DO NOT ASSERT IT. ──────────────────
+         This block used to record a `currency` difference for EVERY foreign
+         book document and print "tagged 'MYR'" — a sentence about a column
+         nothing had selected. `HC-PO-009335` was repaired to CNY on 2026-09-07
+         (repair-migrated-currency.mjs, run 34143840216, MODE=apply, which
+         printed `verified HC-PO-009335 currency = 'CNY'`), and this checker
+         went on reporting it as MYR the next day. That is docs/bugs/0715's
+         failure wearing the opposite hat: there, a comparison that never ran
+         was counted as a difference; here, a comparison that never ran was
+         counted as a difference about the ERP side specifically.
+
+         `currency` is now on the docs() SELECT for the types this compares. A
+         type whose query does NOT carry it still records — "we did not read it"
+         must never resolve to "it agrees". */
+      const erpCur = d.currency == null ? null : String(d.currency).trim().toUpperCase();
+      const agrees = erpCur !== null && erpCur === cur.code;
+      /* NOT a money difference either way. Counting a foreign document in the
+         money column is what made an exchange rate look like a discount in the
+         first place (docs/bugs/0665), so it stays out of `money` whether the
+         currency agrees or not. */
       foreignDocs.push(
         `${ac}: ${cur.why} — document RM ${rm(h.docTotalSen)}, local RM ${rm(h.totalSen)}, ` +
-          `ERP RM ${rm(erpTotal)} tagged '${LOCAL_CURRENCY}' (ERP ${d.erp_no})`,
+          `ERP RM ${rm(erpTotal)} tagged '${erpCur ?? "not read for this type"}' (ERP ${d.erp_no})` +
+          (agrees ? " — the ERP AGREES with the book on the currency" : ""),
       );
-      /* NOT a money difference — and still a difference. The reconcile's own
-         words: "a real defect, but a CURRENCY defect". An order whose currency
-         we hold wrongly is not one to proceed, so it locks on its own axis
-         rather than being counted as money it is not. */
-      VERDICT.record(t, ac, d.erp_no, "currency", cur.why);
+      if (!agrees) {
+        /* An order whose currency we hold wrongly is not one to proceed, so it
+           locks on its own axis rather than being counted as money it is not. */
+        VERDICT.record(t, ac, d.erp_no, "currency",
+          `${cur.why}; the ERP holds '${erpCur ?? "unknown — this type's query does not select currency"}'`);
+      }
     }
     if (bookTotal !== erpTotal) {
       /* An ERP side that is zero while the book is not is a POPULATION

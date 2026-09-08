@@ -71,4 +71,12 @@ the 28 cases; dropping the per-type labels fails 3; dropping the goods-receipt
 grain note fails 1; making `docTypeSpec` fall back to SO instead of refusing
 fails 1; and disabling one arm of the cross-check fails 1.
 
+**Follow-on, and it changes the answer.** Looking closely at that one PO
+finding is what exposed `docs/bugs/0721`: the reconcile never read the ERP's
+currency column at all, and `HC-PO-009335` had ALREADY been repaired to CNY on
+2026-09-07. So the difference this entry made visible turned out to be a FALSE
+POSITIVE. Both facts stand — the summary did hide a per-document lock, and that
+lock was itself unverified — and the per-document verdict is what made the
+second one findable.
+
 **Ref.** `feat/po-gr-tally`, 2026-09-08.
