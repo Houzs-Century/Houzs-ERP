@@ -98,9 +98,17 @@ describe('the door into the payments ledger', () => {
        which is a 2990 delivery-flow assumption: on Houzs every SO sits at
        CONFIRMED with a balance still owing, so the button never appeared where
        it was most needed. Only CANCELLED takes no money (DRAFT is out on the
-       standing "no payments on drafts" ruling, and is never locked anyway). */
+       standing "no payments on drafts" ruling, and is never locked anyway).
+
+       ONE further term since 2026-09-08, and it is still not a lock: a MIGRATED
+       order. Its balance is the one figure the ERP knows is wrong (AutoCount
+       payments taken since 2026-08-28 have not reached us), so there is no money
+       to collect against it here and the server refuses the write anyway. That
+       is a fact about the MONEY, which is exactly what this test says the gate
+       must be about — see docs/bugs/0687-*, where the button shipped live on a
+       migrated order because nothing pointed at this bar. */
     expect(readViewSource).toContain(
-      '{!["cancelled", "draft"].includes(salesOrder.status?.toLowerCase() ?? "") && (',
+      '{!migratedLocked && !["cancelled", "draft"].includes(salesOrder.status?.toLowerCase() ?? "") && (',
     );
     expect(readViewSource).not.toContain('{hardLocked && salesOrder.status');
   });
