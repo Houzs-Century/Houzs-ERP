@@ -40,7 +40,16 @@
 // that lane then verifies WITH them instead of around them.
 //
 // ── THE RULE, AND WHY EACH CLAUSE IS SAFE ──────────────────────────────────
-// Lines are bucketed on (canonical item code, quantity). Then, per bucket:
+// Lines are bucketed on (canonical item code, quantity) — and, on a document
+// where BOTH sides state a source for EVERY line, on the source document too.
+// See `pairDocument`'s partition comment: an invoice's lines name the delivery
+// order / goods receipt they were raised from (`IVDTL.FromDocNo` /
+// `PIDTL.FromDocNo`), which is the book's own key and the only thing that tells
+// apart two identical lines the migration carried only one of. It is
+// all-or-nothing per document, so the goods-receipt and delivery-order lanes —
+// which pass no source at all — are bit-for-bit what they were.
+//
+// Then, per bucket:
 //
 //   n book lines, n ERP units, n == 1
 //       Exactly one candidate on each side. The pairing is FORCED — there is no
@@ -107,7 +116,46 @@ const qtyKey = (q) => (Number.isFinite(Number(q)) ? Number(Number(q).toFixed(4))
    source is what tests/noNulBytesInSource.test.mjs exists to refuse. The key is
    carried BESIDE the bucket rather than parsed back out of it, so nothing ever
    has to un-join this string. */
-const bucketOf = (key, qty) => JSON.stringify([key, qtyKey(qty)]);
+const bucketOf = (key, qty, sourceDoc = null) => JSON.stringify([key, qtyKey(qty), sourceDoc]);
+
+/** A source document number, or null. Blank and absent are the SAME answer —
+ *  "the book states no source here" — and both must switch the partition off
+ *  rather than becoming a bucket everything sourceless falls into together. */
+const srcOf = (v) => {
+  const s = v == null ? "" : String(v).trim();
+  return s === "" ? null : s;
+};
+
+/**
+ * WHICH of our line's parents the book means.
+ *
+ * An ERP invoice line reaches TWO documents — a sales invoice line knows its
+ * delivery order AND the sales order behind it, a purchase invoice line knows
+ * its goods receipt AND that receipt's purchase order — because the BOOK writes
+ * both edges: `IVDTL.FromDocNo` names a delivery order on most lines and a
+ * sales order on 169 of them, and `PIDTL.FromDocNo` a receipt on most and an
+ * order on the rest (lib/ac-transfer-chain-run.mjs states the same two-parent
+ * shape for the same reason).
+ *
+ * The book names exactly ONE per line, so the book's own list for that invoice
+ * decides which of ours answers. Preferring one join over the other instead
+ * would silently bucket a direct invoice's line under a delivery order the book
+ * never mentioned — a pairing built on our join order, which is position
+ * matching wearing a link's clothes (docs/bugs/0690).
+ *
+ * Exactly one candidate in the book's list, or null. Both means the invoice
+ * bills the receipt AND the order behind it and this row does not say which;
+ * null switches the partition off for the whole document and the older, coarser
+ * rule stands — the cheap outcome.
+ *
+ * @param {Array<string|null|undefined>} candidates  our line's parents
+ * @param {Set<string>} bookSources  every FromDocNo the book states on this document
+ * @returns {string|null}
+ */
+export function resolveErpSource(candidates, bookSources) {
+  const inBook = [...new Set((candidates || []).map(srcOf).filter(Boolean))].filter((c) => bookSources.has(c));
+  return inBook.length === 1 ? inBook[0] : null;
+}
 
 /**
  * Fold one document's ERP rows into UNITS — the things a book line can be.
@@ -186,14 +234,16 @@ export function foldErpUnits(rows) {
         kind: "plain",
         codes: [normCode(r.code)],
         desc2: null,
+        sourceDoc: srcOf(r.sourceDoc),
       });
       continue;
     }
     const text = normaliseDesc2(r.desc2);
     const group = splits.has(key) ? `${key}${text}` : key;
-    if (!sofas.has(group)) sofas.set(group, { key, ids: [], pieces: new Map(), kind: "sofa", desc2: splits.has(key) ? text : null });
+    if (!sofas.has(group)) sofas.set(group, { key, ids: [], pieces: new Map(), sources: new Set(), kind: "sofa", desc2: splits.has(key) ? text : null });
     const u = sofas.get(group);
     u.ids.push(String(r.id));
+    u.sources.add(srcOf(r.sourceDoc));
     const c = normCode(r.code);
     /* Compartment quantities are NOT summed: three pieces of one sofa are one
        sofa, not three. Two fabric VARIANTS of the same compartment in one build
@@ -219,6 +269,11 @@ export function foldErpUnits(rows) {
       kind: "sofa",
       codes: [...u.pieces.keys()],
       desc2: u.desc2,
+      /* A fold that cannot state ONE source must not be allowed to state a
+         pairing either — the same argument `uneven` makes about quantity. Two
+         compartments raised from different deliveries leave the unit sourceless,
+         which switches the partition off for the whole document. */
+      sourceDoc: u.sources.size === 1 ? [...u.sources][0] : null,
     });
   }
   return units;
@@ -254,35 +309,77 @@ export function pairDocument({ bookLines, erpRows, docNo }) {
   const audits = [];
   let blankBookRows = 0;
 
-  /** bucket -> book lines */
-  const bookBuckets = new Map();
+  /* The coded book lines, keyed once. A book row with no item code is not a
+     line the ERP can hold — see lib/ac-blank-book-row.mjs. It is counted, never
+     paired, and never a refusal: the two sides AGREE about it. */
+  const coded = [];
   for (const l of bookLines) {
     const { key } = comparisonKey({ code: l.code, rawCode: l.rawCode, side: "book" });
-    /* A book row with no item code is not a line the ERP can hold — see
-       lib/ac-blank-book-row.mjs. It is counted, never paired, and never a
-       refusal: the two sides AGREE about it. */
     if (!key) {
       blankBookRows += 1;
       continue;
     }
-    const b = bucketOf(key, l.qty);
+    coded.push({ l, key });
+  }
+  const allUnits = foldErpUnits(erpRows);
+
+  /* ── THE SOURCE-DOCUMENT PARTITION ────────────────────────────────────────
+     A migrated INVOICE holds a deliberate SUBSET of the book's lines: the
+     migration carried the OUTSTANDING population, so 131 of 192 in-scope
+     purchase invoices bill at least one line whose purchase order was never
+     carried (lib/ac-chain-line-grain.mjs). Bucketed on (item, quantity) alone
+     that reads as ambiguity — "the book has 2 such lines, we have 1" — and the
+     line is refused for a reason that is SCOPE, not doubt.
+
+     The book states the discriminator itself: `IVDTL.FromDocNo` /
+     `PIDTL.FromDocNo` name the delivery order / goods receipt each invoice line
+     was raised from, and our own row knows which of ours it came from. So the
+     bucket becomes (source document, item, quantity) and the pairing is still
+     the book's own key — never a position, never a resemblance.
+
+     ALL-OR-NOTHING PER DOCUMENT, on purpose. If either side leaves ONE row's
+     source unstated the partition is off and the rule is exactly what it was:
+     a sourceless row must not fall into a shared "" bucket with every other
+     sourceless row, which would pair lines the book never linked. The
+     goods-receipt and delivery-order lanes pass no source at all and are
+     therefore bit-for-bit unaffected — pinned in tests/acForcedLinePairing. */
+  const partition =
+    coded.length > 0 &&
+    allUnits.length > 0 &&
+    coded.every(({ l }) => srcOf(l.sourceDoc)) &&
+    allUnits.every((u) => srcOf(u.sourceDoc));
+
+  /** bucket -> book lines */
+  const bookBuckets = new Map();
+  /* The SAME lines bucketed WITHOUT the source, so a stamp can say honestly
+     whether the source document is what narrowed it or whether the bucket held
+     one candidate all along. */
+  const bookBucketsNoSrc = new Map();
+  for (const { l, key } of coded) {
+    const b = bucketOf(key, l.qty, partition ? srcOf(l.sourceDoc) : null);
     if (!bookBuckets.has(b)) bookBuckets.set(b, { key, lines: [] });
     bookBuckets.get(b).lines.push(l);
+    const nb = bucketOf(key, l.qty, null);
+    bookBucketsNoSrc.set(nb, (bookBucketsNoSrc.get(nb) ?? 0) + 1);
   }
 
   /** bucket -> ERP units */
   const erpBuckets = new Map();
-  for (const u of foldErpUnits(erpRows)) {
-    const b = bucketOf(u.key, u.qty);
-    if (!erpBuckets.has(b)) erpBuckets.set(b, { key: u.key, units: [] });
+  for (const u of allUnits) {
+    const b = bucketOf(u.key, u.qty, partition ? srcOf(u.sourceDoc) : null);
+    if (!erpBuckets.has(b)) erpBuckets.set(b, { key: u.key, qty: u.qty, units: [] });
     erpBuckets.get(b).units.push(u);
   }
 
   const storedById = new Map();
   for (const r of erpRows) if (r.storedKey != null && r.storedKey !== "") storedById.set(String(r.id), Number(r.storedKey));
 
-  for (const [b, { key, units }] of erpBuckets) {
+  for (const [b, { key, qty, units }] of erpBuckets) {
     const lines = bookBuckets.get(b)?.lines ?? [];
+    /* Did the source document do the narrowing? Only if the source-agnostic
+       bucket held MORE candidates than this one. Saying so where it is not true
+       would credit the partition with stamps it did not earn. */
+    const narrowedBySource = partition && (bookBucketsNoSrc.get(bucketOf(key, qty, null)) ?? 0) > lines.length;
 
     const uneven = units.filter((u) => u.uneven);
     if (uneven.length) {
@@ -326,7 +423,7 @@ export function pairDocument({ bookLines, erpRows, docNo }) {
       continue;
     }
 
-    let forced = "unique";
+    let forced = narrowedBySource ? "source document" : "unique";
     /* Both sides in a stable order so a re-run derives the SAME assignment. */
     let ls = [...lines].sort((x, y) => Number(x.dtlKey) - Number(y.dtlKey));
     let us = [...units].sort((x, y) => (x.ids[0] > y.ids[0] ? 1 : -1));
@@ -427,6 +524,7 @@ export function planLineKeys({ bookByDoc, erpByDoc }) {
     forcedUnique: 0,
     forcedInterchangeable: 0,
     forcedBuildText: 0,
+    forcedSourceDoc: 0,
     disagreements: 0,
     blankBookRows: 0,
     documentsFullyStamped: 0,
@@ -456,6 +554,7 @@ export function planLineKeys({ bookByDoc, erpByDoc }) {
     totals.forcedUnique += r.stamps.filter((s) => s.forced === "unique").length;
     totals.forcedInterchangeable += r.stamps.filter((s) => s.forced === "interchangeable").length;
     totals.forcedBuildText += r.stamps.filter((s) => s.forced === "build text").length;
+    totals.forcedSourceDoc += r.stamps.filter((s) => s.forced === "source document").length;
     totals.disagreements += r.audits.length;
     totals.blankBookRows += r.blankBookRows;
     /* EVERY row is exactly one of three things: already keyed, stamped now, or
