@@ -248,7 +248,11 @@ async function main() {
         });
         break;
       } catch (e) {
-        if (e?.code !== "40P01" || attempt >= 3) { failedBatches.push({ at: i, why: e?.code ?? String(e) }); break; }
+        /* 40P01 deadlock and 57014 query-cancelled (the statement/lock timeout
+           a busy table produces) are both "someone else had it, come back" —
+           run 34179984666 hit 57014 on the batch at offset 300 and gave up on
+           41 lines because only the deadlock was retried. */
+        if ((e?.code !== "40P01" && e?.code !== "57014") || attempt >= 4) { failedBatches.push({ at: i, why: e?.code ?? String(e) }); break; }
         retried++;
         await new Promise((r) => setTimeout(r, 500 * attempt));
       }
