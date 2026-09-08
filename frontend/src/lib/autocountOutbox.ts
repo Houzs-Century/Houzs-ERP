@@ -1763,21 +1763,6 @@ export function acListCountLine(shown: number, total: number): string {
   return `${shown} of ${total} document${total === 1 ? "" : "s"}`;
 }
 
-/**
- * THE DENOMINATOR that line is `of`, which is NOT always the company total.
- *
- * `counts.total` counts what is ON the page, so on the Cleared tab — the one
- * filter that looks at the other shelf — it is the wrong number, and observably
- * so: three cleared documents under "3 of 1 document", on production, minutes
- * after the tab shipped. A page whose every other number was made exact to stop
- * it contradicting itself must not open a new way to do it.
- *
- * Nowhere else changes: for the four ordinary filters the company total IS what
- * the reader is being shown a slice of.
- */
-export function acListTotal(d: AcOutboxResponse, state: AcFilterState): number {
-  return state === "archived" ? d.counts.archived : d.counts.total;
-}
 
 /**
  * What to add when the server could not scan the whole queue for its counts.

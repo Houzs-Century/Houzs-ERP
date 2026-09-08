@@ -35,7 +35,6 @@ import {
   acGroupsOfType,
   acHeadline,
   acListCountLine,
-  acListTotal,
   acListTitle,
   acOpLabel,
   acOpensItself,
@@ -59,6 +58,9 @@ import {
   type AcOutboxResponse,
   type AcOutboxRow,
 } from "./autocountOutbox";
+/* `acListTotal` lives beside the Cleared tab it exists for; see that file's
+   header for why the archive half is a separate module. */
+import { acListTotal } from "./autocountArchive";
 
 /* Braces, not a concise arrow — a returned mock becomes vitest's teardown and
    fires api.post after every test. Same trap as the two page suites. */

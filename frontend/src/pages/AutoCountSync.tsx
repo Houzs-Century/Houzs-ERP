@@ -111,7 +111,6 @@ import {
   acGroupsOfType,
   acHeadline,
   acListCountLine,
-  acListTotal,
   acListTitle,
   acOpLabel,
   acReplacedHeading,
@@ -137,6 +136,7 @@ import {
 } from "../lib/autocountOutbox";
 import {
   acDocCanArchive,
+  acListTotal,
   acDocCanRestore,
   AC_ARCHIVE_LABEL,
   AC_ARCHIVE_BUSY_LABEL,
