@@ -946,6 +946,17 @@ MEMBERSHIP of the row's `photo_urls`, never by key shape. The importer's append
 (`ARRAY(SELECT DISTINCT unnest(COALESCE(photo_urls,'{}') || <keys>))`) is why
 the column must stay NOT NULL with a `'{}'` default.
 
+**A SOFA BUILD IS ONE PICTURE, ON THE FIRST COMPARTMENT.** One AutoCount line
+becomes one ERP line per compartment, all carrying the same `linked_ac_dtlkey`,
+and the importer hangs the photograph on the first of them only (owner
+2026-08-10). The siblings hold an empty `photo_urls` BY DESIGN, so a per-ROW
+count of "lines with no photo" is not the gap: measured on production 2026-09-08
+(run `34221745956`), 184 purchase-order rows read as missing and **175 of them
+were siblings of a line that already shows one** — the real figure was 7 lines.
+The unit is the AutoCount LINE. `probe-line-photo-gap.mjs` asks it that way; see
+the fuller note in `docs/modules/sales-order.md` §*The AutoCount migration's
+photos*.
+
 **TWO SCREENS OFFER THE CONTROL, AND THEY MUST NOT DRIFT (2026-08-28).** The
 strip is on the PO's TABLE view (`PurchaseOrderDetailV2`, a `Photos` column) AND
 in the rich LINE EDITOR (`PurchaseOrderDetail`, inside each `PoLineCard`). The
