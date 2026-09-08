@@ -105,6 +105,23 @@ pre-existing: the same code shipped the 2026-08-29 run.
 Unchanged on purpose: the refusal guard — any document whose audit trail shows a
 person touched a synced field is skipped.
 
+*4. And then it deadlocked.* The first APPLY (`34179743773`) wrote all 132
+headers and died in the line loop:
+
+```
+PostgresError: deadlock detected   code: '40P01'
+where: 'while updating tuple (488,13) in relation "mfg_sales_order_items"'
+Process 2290876 waits for ShareLock on transaction 455739; blocked by 2290803.
+```
+
+`scm.mfg_sales_order_items` is written by the Worker's allocation recompute as
+well as by this tool, and 300 unordered `WHERE id =` updates in one transaction
+take row locks in whatever order the array happened to be in. Fixed by sorting
+the batch by id (one lock order for every run of this script), batching 100
+instead of 300, and retrying a `40P01` batch up to three times — with a
+non-zero exit and a named batch if one still fails, because a convergent tool
+that silently skips work is how a partial write reads as a clean run.
+
 **Lesson.** The unsafe half of this was invisible in the source and obvious in
 the plan. A tool whose PLAN mode prints only totals would have been run.
 

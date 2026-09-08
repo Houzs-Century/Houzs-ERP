@@ -222,17 +222,42 @@ async function main() {
     });
   }
   log(`headers refreshed: ${hw} of ${ups.length} intended`);
+  /* LOCK ORDER, then a retry. `scm.mfg_sales_order_items` is written by the
+     Worker's allocation recompute as well as by this tool, and 300 unordered
+     `WHERE id =` updates in one transaction take row locks in whatever order
+     the array happened to be in. Run 34179743773 deadlocked there after
+     writing all 132 headers — `40P01 ... while updating tuple (488,13) in
+     relation "mfg_sales_order_items"`. Sorting by id gives every writer of this
+     script the same order, and smaller batches hold fewer locks at once; the
+     retry covers the writer that does not share our order. The tool is
+     convergent, so a batch that fails all three times is picked up by the next
+     run rather than silently skipped — but it must still be REPORTED. */
   let lw = 0;
-  for (let i = 0; i < lus.length; i += 300) {
-    const b = lus.slice(i, i + 300);
-    await sql.begin(async (tx) => {
-      for (const u of b) {
-        const r = await tx`UPDATE scm.mfg_sales_order_items SET line_delivery_date = ${u.d}::date WHERE id = ${u.id} RETURNING id`;
-        lw += r.length;
+  let retried = 0;
+  const failedBatches = [];
+  lus.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  for (let i = 0; i < lus.length; i += 100) {
+    const b = lus.slice(i, i + 100);
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await sql.begin(async (tx) => {
+          for (const u of b) {
+            const r = await tx`UPDATE scm.mfg_sales_order_items SET line_delivery_date = ${u.d}::date WHERE id = ${u.id} RETURNING id`;
+            lw += r.length;
+          }
+        });
+        break;
+      } catch (e) {
+        if (e?.code !== "40P01" || attempt >= 3) { failedBatches.push({ at: i, why: e?.code ?? String(e) }); break; }
+        retried++;
+        await new Promise((r) => setTimeout(r, 500 * attempt));
       }
-    });
+    }
   }
-  log(`line dates refreshed: ${lw} of ${lus.length} intended`);
+  log(`line dates refreshed: ${lw} of ${lus.length} intended` +
+      (retried ? `; ${retried} batch retry(ies) after a deadlock` : "") +
+      (failedBatches.length ? `; ${failedBatches.length} BATCH(ES) STILL FAILED — re-run: ${failedBatches.map((f) => `${f.at}:${f.why}`).join(", ")}` : ""));
+  if (failedBatches.length) { await sql.end(); process.exit(1); }
 
   /* fresh-connection SHAPE verify */
   const vsql = postgres(DST, { ssl: "require", prepare: false, max: 1 });
