@@ -260,20 +260,28 @@ while every `/` on screen is one the mask itself placed (`separatorsAreMaskOwn`)
 a separator the operator typed is left alone and read by `parseDmy`, so
 `7/9/2026` no longer collapses to `79/20/26`. On blur, text that does not parse
 STAYS on screen with `aria-invalid` and a `role="alert"` message rather than
-reverting in silence. **On a coarse pointer the native `<input type="date">` IS
-the tap target** — `useCoarsePointer` swaps it from a 20px strip
-(`.nativeHidden`) to a transparent full-field overlay (`.nativeOverlay`,
-`pointer-events: auto`, marked `data-touch-target` in the DOM), so a finger tap
-opens the OS picker with no script involved; the day-first masked text stays
-visible underneath, so the display is still ours. `showPicker()` is now the
-MOUSE path only, reached from the calendar button, which keeps its 44px hit
-area. Consequence to know: a phone user can no longer tap into the text box to
-type a date — the OS picker is the touch entry method, and typing stays on every
-fine pointer (`pointer: coarse` is the PRIMARY pointer, so a keyboard-case iPad
-and a touchscreen laptop both keep the text box) and on any hardware keyboard.
-The earlier spelling of this, a `showPicker()` call fired from the text box's
-`onClick`, worked on Chrome and did nothing at all on iOS —
-`docs/bugs/0725-the-touch-date-picker-called-showpicker-on-an-untappable-inp.md`.
+reverting in silence. **On a coarse pointer the field is SPLIT: the calendar
+icon is a real `<input type="date">`, the rest is the text box** —
+`useCoarsePointer` swaps the native input from a 20px strip (`.nativeHidden`) to
+a transparent 44 by 44 target pinned to the right-hand end (`.nativeIconTarget`,
+`pointer-events: auto`, `z-index: 3`, marked `data-touch-target` in the DOM), so
+a finger tap on the icon opens the OS picker with no script involved, while a
+tap anywhere else focuses the masked text box and raises the keyboard. Both
+entry methods work on a phone: pick a date, or type one. The day-first masked
+text stays visible underneath, so the display is still ours. `showPicker()` is
+the MOUSE path only, reached from the calendar button, which keeps its 44px hit
+area; the 44px target overflows the ~30px field vertically rather than growing
+it, so no form row re-flows (measured 30px on both pointers, before and after).
+Typing also stays on every fine pointer (`pointer: coarse` is the PRIMARY
+pointer, so a keyboard-case iPad and a touchscreen laptop both keep the text
+box) and on any hardware keyboard. Two earlier spellings are recorded and should
+not be re-tried: a `showPicker()` call fired from the text box's `onClick`,
+which worked on Chrome and did nothing at all on iOS
+(`docs/bugs/0725-the-touch-date-picker-called-showpicker-on-an-untappable-inp.md`),
+and a full-field `inset: 0` overlay, which reached the picker but covered the
+text box so a phone could not type at all — the owner asked for typing back the
+next day, 「可以保留手打」
+(`docs/bugs/0726-pr-3311-took-hand-typing-away-on-a-phone-the-date-input-cove.md`).
 `frontend/src/vendor/scm/components/MoneyInput.tsx` rests as 1,800.00
 (`fmtMoneyAtRest`) and edits plain. Pinned by `backend/tests/apInvoiceEdit.test.ts`,
 ApInvoices.test.tsx (pop-out, Edit, Copy, Insert / Enter, amounts),

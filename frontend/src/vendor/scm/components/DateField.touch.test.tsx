@@ -14,7 +14,18 @@
    iOS Safari does not: it raises its date wheel only for a genuine tap on a
    real, hit-testable date control. So the assertion below is no longer "a tap
    calls showPicker". It is: on a coarse pointer the native date input IS the
-   tap target, and no script is in the path at all. */
+   tap target, and no script is in the path at all.
+
+   PR #3311 then made that target the WHOLE field, and it cost the keyboard:
+   with a date input over every pixel there was nowhere left to tap to type.
+   The owner, 2026-09-09: 「可以保留手打」. The target is now confined to the
+   calendar icon (`.nativeIconTarget`, 44 by 44), so BOTH assertions have to
+   hold at once on a coarse pointer — the native input is still the real,
+   unscripted tap target for the picker, AND the text box is still an enabled,
+   focusable, typable control. jsdom has no layout, so the geometry that
+   separates the two is measured in a real WebKit engine (recorded in
+   `docs/bugs/0726-…`); what is pinned here is the render contract that
+   geometry hangs off. */
 
 import { fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, test, vi } from 'vitest';
@@ -63,7 +74,7 @@ function nativeDateInput(container: HTMLElement): HTMLInputElement {
 }
 
 describe('reaching the picker by finger', () => {
-  test('a coarse pointer puts the real date input over the whole field', () => {
+  test('a coarse pointer puts the real date input over the calendar icon', () => {
     setPointer('coarse');
     const { container } = render(<DateField value="" onChange={() => {}} aria-label="Delivery date" />);
     const native = nativeDateInput(container);
@@ -73,8 +84,34 @@ describe('reaching the picker by finger', () => {
     // showPicker() at.
     expect(native.dataset.touchTarget).toBe('true');
     expect(native.disabled).toBe(false);
-    expect(native.className).toContain('nativeOverlay');
+    expect(native.className).toContain('nativeIconTarget');
     expect(native.className).not.toContain('nativeHidden');
+  });
+
+  test('and leaves the text box on a coarse pointer — hand-typing survives', () => {
+    // The regression #3311 shipped: `.nativeOverlay` was `inset: 0`, so the
+    // date input covered the text box and a phone could not type at all. The
+    // class that replaces it is confined to the icon by width/height, which is
+    // why the name is the assertion here — jsdom computes no layout.
+    setPointer('coarse');
+    const onChange = vi.fn();
+    const { container } = render(
+      <DateField value="" onChange={onChange} aria-label="Delivery date" />,
+    );
+    expect(nativeDateInput(container).className).not.toContain('nativeOverlay');
+
+    const box = screen.getByLabelText('Delivery date') as HTMLInputElement;
+    expect(box.type).toBe('text');
+    expect(box.disabled).toBe(false);
+    expect(box.getAttribute('readonly')).toBeNull();
+
+    // And it accepts a date typed into it, on a phone, per keystroke.
+    fireEvent.focus(box);
+    for (const chunk of ['7', '7/', '7/9', '7/9/', '7/9/2', '7/9/20', '7/9/202', '7/9/2026']) {
+      fireEvent.change(box, { target: { value: chunk } });
+    }
+    expect(box.value).toBe('7/9/2026');
+    expect(onChange).toHaveBeenLastCalledWith('2026-09-07');
   });
 
   test('a fine pointer does not — the mouse keeps the text box it had', () => {
@@ -84,7 +121,7 @@ describe('reaching the picker by finger', () => {
 
     expect(native.dataset.touchTarget).toBeUndefined();
     expect(native.className).toContain('nativeHidden');
-    expect(native.className).not.toContain('nativeOverlay');
+    expect(native.className).not.toContain('nativeIconTarget');
   });
 
   test('no matchMedia at all falls back to the fine-pointer field', () => {
