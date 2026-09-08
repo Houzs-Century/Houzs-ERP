@@ -1428,7 +1428,7 @@ grns.post('/', async (c) => {
       acceptedByPoItem.set(poItemId, (acceptedByPoItem.get(poItemId) ?? 0) + accepted);
     }
     if (acceptedByPoItem.size > 0) {
-      const xl = await assertSourceLinesInCompany(sb, c, 'purchase_order_items', [...acceptedByPoItem.keys()]);
+      const xl = await assertSourceLinesInCompany(sb, c, 'purchase_order_items', [...acceptedByPoItem.keys()], { lines: items, linkField: 'purchaseOrderItemId', source: 'Purchase Order line' });
       if (!xl.ok) return refuseWithoutWriting(c, xl.body, xl.status);
       const { data: poItems } = await sb.from('purchase_order_items')
         .select('id, qty, received_qty, po:purchase_orders!inner ( status, on_hold )').in('id', [...acceptedByPoItem.keys()]);
@@ -2899,7 +2899,7 @@ grns.post('/:id/items', async (c) => {
      Manual (no PO link) lines are uncapped. Same 409 the From-PO flows use. */
   const addLinePoItemId = (it.purchaseOrderItemId as string) ?? null;
   if (addLinePoItemId) {
-    const xl = await assertSourceLinesInCompany(sb, c, 'purchase_order_items', [addLinePoItemId]);
+    const xl = await assertSourceLinesInCompany(sb, c, 'purchase_order_items', [addLinePoItemId], { lines: [it], linkField: 'purchaseOrderItemId', source: 'Purchase Order line' });
     if (!xl.ok) return refuseWithoutWriting(c, xl.body, xl.status);
     const capLock = await qtyCapRefusal(sb, {
       table: 'purchase_order_items', id: addLinePoItemId,

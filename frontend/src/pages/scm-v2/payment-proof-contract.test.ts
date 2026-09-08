@@ -65,10 +65,21 @@ describe('SO detail payments lock', () => {
       .toBeLessThan(firstEarlyReturn);
     /* Only CANCELLED shuts the ledger — same rule as MobileSODetail's
        `paymentLocked`. A DRAFT stays open without the toggle (never confirmed);
-       everything else is opt-in, so the no-naked-edits rule survives. */
+       everything else is opt-in, so the no-naked-edits rule survives.
+
+       ONE exception since 2026-09-08, and it is not a status: an order carried
+       over from AutoCount. Its balance is the one figure the ERP knows is wrong
+       (AutoCount payments taken since 2026-08-28 have not reached us), so the
+       money is shut on it too — and the API refuses these writes regardless, so
+       leaving the card open would only offer a click that 409s. `migratedLocked`
+       is the SERVER's answer, not a status test, which is why it sits outside
+       the parenthesised status rule rather than inside it. */
     expect(detailSource).toContain(
-      'const canEditPayments  = isDraftSo || (!isCancelled && (isEditing || payEditing));',
+      'const canEditPayments  = !migratedLocked && (isDraftSo || (!isCancelled && (isEditing || payEditing)));',
     );
+    /* The migrated term must not have leaked into the LINE locks' shape — the
+       assertions above still forbid isLocked / !isEditing reaching the money. */
+    expect(detailSource).toContain('const canOfferPayEdit  = !migratedLocked && !isDraftSo');
   });
 });
 

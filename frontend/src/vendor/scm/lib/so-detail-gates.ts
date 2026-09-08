@@ -40,6 +40,19 @@ export type SoDetailGateHeader = {
      so the gate degrades to the date rule alone. */
   po_locked?: boolean | null;
   amendment_eligible?: boolean | null;
+  /* Server-computed: this order was carried across from AutoCount at the 2026-08
+     cutover AND the migrated-order lock is currently on for this company
+     (backend/src/scm/lib/migrated-so-lock.ts). It arrives as ALREADY-DECIDED
+     rather than as the raw `linked_ac_docno`, because the answer depends on an
+     app_config switch and on the caller's bypass — neither of which the browser
+     can see. The endpoint that refuses the write computes it with the SAME
+     function, so the button and the API cannot disagree.
+     Absent (a cached pre-deploy payload) reads as false, which is the pre-2026-09
+     behaviour exactly. */
+  migrated_readonly?: boolean | null;
+  /* The sentence to show the operator. Server-authored so it can be changed by
+     an operator through scm.app_config.description without a deploy. */
+  migrated_readonly_reason?: string | null;
   balance_sen?: number | null;
   paid_sen_total?: number | null;
   local_total_sen?: number | null;
@@ -58,6 +71,36 @@ export function isLocked(
   unlockOverride = false,
 ): boolean {
   return (LOCKED_STATUSES.includes(upper(status)) && !unlockOverride) || hasChildren;
+}
+
+/* migratedReadonly — this order came across from AutoCount and the cutover lock
+   is still on, so NOTHING about it may be edited (owner 2026-09-08,
+   「只开新单，旧单暂时不能改」).
+
+   DELIBERATELY NOT FOLDED INTO isLocked(), and this is the whole point of it
+   being a separate predicate: isLocked takes `unlockOverride`, and the desktop
+   editor offers an Override button that sets it (SalesOrderDetail.tsx). A
+   salesperson may override a status lock — that is a judgement about our own
+   paperwork. They may not override this one: the reason a migrated order is shut
+   is that AutoCount payments have not reached us and sync-ac-delta can still
+   overwrite the row, and no amount of local certainty changes either fact.
+
+   Two arms so the reason is never lost: `migratedReadonly` for the gate, and
+   `migratedReadonlyReason` for the sentence beside it. A gate with no sentence
+   is how this repo produced "the button does nothing". */
+export function migratedReadonly(header: SoDetailGateHeader | null | undefined): boolean {
+  return header?.migrated_readonly === true;
+}
+
+/* The sentence to render next to a disabled control. Never empty when
+   migratedReadonly() is true — the server always sends one, and this is the
+   fallback for a payload that somehow arrives without it. */
+export const MIGRATED_READONLY_FALLBACK =
+  'This order came from AutoCount and is view-only for now. New orders save normally.';
+
+export function migratedReadonlyReason(header: SoDetailGateHeader | null | undefined): string {
+  const v = String(header?.migrated_readonly_reason ?? '').trim();
+  return v.length > 0 ? v : MIGRATED_READONLY_FALLBACK;
 }
 
 /* procLockActive — the SO PROCESS lock: once a CONFIRMED-or-later SO's processing

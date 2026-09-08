@@ -538,6 +538,16 @@ const ERROR_CODE_MESSAGES: Record<string, string> = {
   // believe it saved.
   so_owned_by_2990:
     'This order belongs to 2990 and can only be changed in 2990. Any change made here would be undone automatically.',
+  /* MIGRATED SALES ORDER, cutover lock (owner 2026-09-08). Curated here rather
+     than left to the `message`/`reason` fallback for the reason the
+     migrated_source_document block above records at length: the fallback keeps
+     only a sentence under 200 characters, and a server sentence an operator can
+     retype through scm.app_config.description has no such guarantee. A code with
+     an entry here always renders; a code without one is one edit away from the
+     status catch-all, which for a 409 reads "refresh and check" — advice that is
+     a loop, because refreshing changes nothing about a migrated order. */
+  so_migrated_readonly:
+    'This order came from AutoCount, so it is view-only until its payments are reconciled. A new order saves normally. Ask IT if this one has to change today.',
   so_create_blocked_2990:
     'New orders for 2990 have to be created in 2990. An order created here would take a number 2990 is about to use, and would be overwritten.',
   // Optimistic-lock conflict (backend mfg-sales-orders.ts PATCH /:docNo). Two

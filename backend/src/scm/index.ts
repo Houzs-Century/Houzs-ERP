@@ -109,6 +109,7 @@ import { hr } from "./routes/hr";
 import { scmAreaGuard } from "./middleware/area-guard";
 import { hasPositionCapability } from "../services/positionCapabilities";
 import { scmWriteFreeze } from "./lib/write-freeze";
+import { migratedSoReadonly } from "./lib/migrated-so-readonly";
 import { writeFreezeStatus } from "./routes/write-freeze-status";
 
 export const scm = new Hono<{ Bindings: Env }>();
@@ -310,6 +311,20 @@ scm.route("/purchase-invoices", purchaseInvoicesListEnrichment);
 scm.route("/purchase-invoices", purchaseInvoices);
 // ── Sales Orders (scm.sales.orders) ─────────────────────────────────────────
 scm.use("/mfg-sales-orders/*", scmAreaGuard("scm.sales.orders"));
+/* MIGRATED sales orders are READ-ONLY while the cutover finishes (owner
+   2026-09-08, 「只开新单，旧单暂时不能改」). A NEW order saves normally; one
+   carried across from AutoCount does not, because sync-ac-delta can still
+   overwrite an edit unannounced and AutoCount payments taken since 2026-08-28
+   have not reached the ERP, so its balance on screen is wrong.
+
+   Mounted HERE rather than inside the router because the router is a
+   12,000-line file on its size ceiling, and because this is the same position
+   the write freeze occupies: a document-level rule and a module-level one
+   belong next to each other, not one of them buried in a route file. It is
+   scoped to this prefix, so it is the SO surface only, and `POST /` carries no
+   doc number in its path and is never reached — 「只开新单」 in one line of
+   control flow. Switch + runbook: docs/migrated-so-lock.md. */
+scm.use("/mfg-sales-orders/*", migratedSoReadonly());
 // Deferred list enrichment — the MRP-derived SO-list fields the list no longer
 // computes on its critical path (READY source-PO chips + readiness/planning
 // verdicts). Mounted BEFORE the main router so its static `/list-mrp-enrichment`

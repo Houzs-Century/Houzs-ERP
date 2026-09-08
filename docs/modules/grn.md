@@ -642,12 +642,22 @@ double-count; only the book can.** Two offline tests decide it, both in
 If `moneyAfter` ever exceeds the ceiling the run says so in those words and the
 plan is not to be applied.
 
-**What it unlocked.** `check-ac-erp-reconcile.mjs` printed *"GR DATA — line and
-money comparison NOT APPLICABLE"* and stopped, because the quantity was derived
-and the grains did not match. Both reasons are gone, so the GR section now
-compares line count, item code and QUANTITY at pair grain. The unit PRICE is
-still taken from the purchase-order line and is reported as DECLARED, not as a
-gap.
+**What it unlocked — measured, not predicted.** `check-ac-erp-reconcile.mjs`
+printed *"GR DATA — line and money comparison NOT APPLICABLE"* and stopped,
+because the quantity was derived and the grains did not match. Both reasons are
+gone, so the GR section now compares line count, item code and QUANTITY at pair
+grain. The unit PRICE is still taken from the purchase-order line and is reported
+as DECLARED, not as a gap.
+
+The reshape was **applied to production 2026-09-08 09:00 local** (run
+34175100153: created 153, updated 247, cancelled 0), and the reconcile then read
+**`GR DATA (400 documents on both sides, 506 lines paired)`** — absent 0, phantom
+0, line-count differs 0 of 400, quantity differs 0 of 400, unit price differs
+0 of 400; item code 103 of 400 and document total 109 of 400 remain, of which the
+run attributes 100 to documents carrying zero money in the ERP against a valued
+book line — `stamp-migrated-source-prices.mjs`'s to close. **44 of 400 could not
+be line-matched and are UNVERIFIED, not verified-clean.** Full evidence with
+denominators in `docs/bugs/0675`.
 
 ---
 
@@ -1222,3 +1232,40 @@ and **NOT LOADED** if it fails — never `STOCK` or a bare dash, which are
 answers. `coverage` is a required prop on the shared drill-down; the rule, the
 five surfaces that fetch separately, and how to add a sixth are in
 `docs/modules/coverage-state.md` (trace: `docs/bugs/0603-a-drill-down-printed-stock-while-the-answer-was-still-loadin.md`).
+
+## The source line must be the SAME PRODUCT — 409 `link_material_mismatch`
+
+Added 2026-09-08, `docs/bugs/0682`; bug class `docs/bugs/0672` site 15.
+
+Every write path here that accepts a **Purchase Order line (`purchase_order_item_id`)** id from the request body proved
+three things about it — the source line's COMPANY, its parent document's STATUS,
+and that the QUANTITY fits. It never proved the two rows name the same product.
+A line for product B naming a source line for product A therefore passed
+everything: the foreign key is valid, nothing dangles, no constraint breaks, and
+no coverage count drops.
+
+That matters because the quantity ledgers are addressed BY THE LINK
+(`recomputePoReceived`, `recomputeGrnInvoiced`, `adjustGrnReturnedQty` and
+`doLineRemaining` all key on it), so a wrong link draws down the WRONG source
+line and leaves the right one open to be received a second time.
+
+**The rule** is `backend/src/scm/lib/line-link-item-identity.ts` — one home,
+reached three ways depending on what the path already has in hand:
+`assertSourceLinesInCompany(..., { lines, linkField, source })` where the company
+read is already happening, `lineLinkItemMismatch(...)` where the source rows are
+already held, `assertLinkedLineItemsMatch(...)` otherwise. Codes are compared
+trimmed, upper-cased and with inner whitespace collapsed — the same
+normalisation as `soLinkTargetRefusal` and `normItemCode`.
+
+**Two refusals worth knowing before you debug one:**
+
+- A source row that **cannot be read back** is refused, not skipped. An id that
+  resolved to nothing cannot be asserted equal to anything.
+- A **failed read** answers 503 `link_identity_unavailable`, never a pass. "We
+  could not check" must not be spelled the same way as "we checked and it was
+  fine".
+
+Identity is asserted **before** the quantity cap wherever both run: a ceiling
+computed against the wrong line is a number about the wrong thing, and reporting
+it sends the operator to fix a quantity when the real fault is the source they
+picked.

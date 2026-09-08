@@ -300,9 +300,16 @@ against. Then read section 5 and work out what happened.
 - **The freeze only guards `/api/scm/*`.** Writes to other parts of the ERP
   (projects, PMS, HR outside SCM) were never in scope.
 - **Reads were never frozen** and never will be by this switch.
-- **`scm.write_freeze` and `scm.autocount_writeback` are neighbouring rows in
-  the same table with the same grammar.** Pasting one into the other is a real
-  mistake to make. The write-back flag now refuses any value carrying a `-`
+- **THERE IS A SECOND SWITCH ON SALES ORDERS, and lifting this one alone is not
+  what the owner asked for.** `scm.migrated_so_lock` (2026-09-08,
+  「只开新单，旧单暂时不能改」) keeps the documents carried over from
+  AutoCount read-only after `scm.sales.orders` is lifted here. **Confirm it is in
+  place BEFORE running stage 1** — lifting the freeze first, even for a minute,
+  opens every migrated order onto a balance the ERP knows is wrong. Runbook:
+  `docs/migrated-so-lock.md`.
+- **`scm.write_freeze`, `scm.autocount_writeback` and `scm.migrated_so_lock` are
+  neighbouring rows in the same table with similar grammars.** Pasting one into
+  the other is a real mistake to make. The write-back flag now refuses any value carrying a `-`
   clause rather than reading it as "on" — but do not rely on that; check the key
   you are editing.
 - **The 30s cache is per isolate.** Different staff can briefly see different
