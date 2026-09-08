@@ -648,6 +648,29 @@ export function renderVerdict(v, { show = 20, type = "SO" } = {}) {
     const sorted = list.slice().sort((a, b) => Number(b.proceeded) - Number(a.proceeded) || (a.doc_no < b.doc_no ? -1 : 1));
     for (const e of sorted.slice(0, show)) {
       p(`   ${e.doc_no} (${e.ac_doc_no ?? "?"})${e.proceeded ? "  [PROCEEDED]" : ""} — ${e.axes.join(", ")}`);
+      /* ── A REFUSAL MUST SHOW THE VALUE IT IS REFUSING ABOUT ────────────────
+         2026-09-09, the owner, about three orders reported as having no source
+         at all for their build:
+         「所以基本上model和sofa compartment基本上都有了啊？那为什么你说没有呢？」
+         He was right. Two sources had been checked — the photograph and the
+         book's Desc2 — and the third, THE VALUE THE ERP IS HOLDING, was never
+         looked at. This list had the same blind spot: document number, axis
+         name, stop. An order the ERP already holds a perfectly good build for
+         reached him as a blank to fill from memory, which is 「把他已经答过的
+         题目丢回给他」.
+
+         The detail was already on the row and already carried through
+         `tallyVerdict` into `examples`. Nothing printed it. Printing it turns
+         "not verifiable" into a one-word confirmation.
+
+         ONLY on the cannot-compare list, deliberately. A WORK row names a real
+         difference on its axis and the reconcile log carries the two values
+         side by side; a cannot-compare row names a REFUSAL, and the refusal
+         alone is the thing nobody can act on. This prints, it does not
+         reclassify: `bucketOf` is untouched and the row is still unanswerable. */
+      if (kind === "unanswerable" && e.detail) {
+        for (const d of String(e.detail).split(/\r?\n/)) if (d.trim()) p(`         ${d.trim()}`);
+      }
     }
     if (sorted.length > show) p(`   ... ${sorted.length - show} more (raise SHOW to list them all)`);
   }

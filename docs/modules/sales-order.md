@@ -2198,6 +2198,28 @@ without it, `correct-so-item-code-from-autocount.mjs` with `POPULATION=all`
 plans a correction that would UNDO his ruling (measured on prod run
 34258437955: 2 planned, 1 of them his).
 
+**A refusal prints the value WE HOLD — 2026-09-09.** The `CANNOT BE COMPARED`
+list printed the document number and the axis name and stopped, so an order the
+ERP already holds a good build for reached the owner as a blank to fill from
+memory. He pushed back — 「所以基本上model和sofa compartment基本上都有了啊？那为什
+么你说没有呢？」 — and he was right: the photograph and the book's `Desc2` had
+been checked, and **what our own database holds had not**.
+
+`lib/variant-report.mjs`'s `UNREADABLE` branch now records
+`we hold "<cell.erp>" — <reason>` beside the refusal, mirroring what the `DIFFER`
+branch beside it has always recorded. The value is **read, not recomputed**:
+`lib/variant-reconcile.mjs` already sets `cell.erp = have.join("+")` before that
+branch runs. `renderVerdict` then prints the row's `detail` under each
+cannot-compare entry — that list ONLY, because a `work` row already names a real
+difference while a refusal alone is the thing nobody can act on.
+
+`bucketOf` and `isTallied` are untouched: this **prints, it does not
+reclassify**, and `tests/soTallyVerdict.test.mjs` pins that the document stays
+in `unanswerable`. To ask the same question of a document directly, the
+read-only **What the ERP holds for a sales order** workflow runs
+`backend/scripts/diag-so-erp-build.mjs` (`DOCS=` takes ERP or AutoCount
+numbers). See `docs/bugs/0728-the-cannot-be-compared-list-printed-the-refusal-and-never-th.md`.
+
 **It measures nothing.** `check-so-tally.mjs` runs
 `check-ac-erp-reconcile.mjs`, reads the verdict file that run writes, and
 classifies its rows; then it parses the reconcile's own printed `SO VERDICT` and
