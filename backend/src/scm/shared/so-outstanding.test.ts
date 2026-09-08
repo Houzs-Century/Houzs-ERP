@@ -85,10 +85,15 @@ describe('the total a human is shown, when only one column has been filled', () 
 
   /* The write-back's rule is deliberately untouched by the fallback, and this
      pins that it did not move — the screen changed, the licensed ledger's rule
-     did not. It is NOT an endorsement of the answer: `readSoOutstandingSen`
-     would compute this same 0 and tell AutoCount a half-paid order is settled.
-     It is unreachable today only because migrated orders are read-only. See
-     the follow-up in the ledger entry named in soBalanceSen's docblock. */
+     did not.
+
+     THE 0 HERE IS NEVER ASKED FOR ANY MORE, which is the follow-up this comment
+     used to promise. `readSoOutstandingSen` (scm/lib/autocount-read.ts) now
+     REFUSES a `total_revenue_sen` that is not greater than zero, so the account
+     book is told nothing at all about a migrated order rather than being told
+     this 0. The arithmetic below is unchanged on purpose: the fix belongs in
+     the reader, which is where the decision "may the ERP speak" lives.
+     docs/bugs/0726-*. */
   test('the write-back rule does NOT fall back — a migrated order stays 0 there', () => {
     expect(soOutstandingSen(migrated)).toBe(0);
   });
