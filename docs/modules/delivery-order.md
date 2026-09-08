@@ -778,6 +778,30 @@ and it is not counted as work, and every one of them is printed BY NAME under
 its axis — a class the reader cannot enumerate is a suppression, not a
 declaration (`docs/bugs/0668`).
 
+**Where the DO colour axis stands, measured** — reconcile runs
+[`34210768489`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34210768489)
+(17:34 +08), [`34217483131`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34217483131)
+(18:49, the guard) and [`34217807499`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34217807499)
+(18:53, after the blanks were filled):
+
+| colour / fabric, PROCEEDED | 17:34 | 18:49 | 18:53 |
+|---|---|---|---|
+| agree | 164 | 164 | **168** |
+| ERP blank — the only column that is WORK | 4 | 4 | **0** |
+| differ | 4 | **0** | **0** |
+| no-key | — | 4 | 4 |
+
+**The delivery-order colour backlog is zero.** The four blanks were closed by
+`repair-migrated-do-line-colour.mjs` (`docs/bugs/0715`), which copies the colour
+from the delivery line's OWN sales-order line — the rule
+`lib/migrated-do-writer.mjs` already states — and writes only where the book's
+colour multiset for the whole `(document, item, quantity)` bucket equals the one
+its sales-order lines carry. Apply run
+[`34217713545`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34217713545):
+4 rows, read back on a fresh connection, with money, quantities, readiness,
+stock, the migrated-document movement leak and `scm.autocount_outbox` (45 rows)
+identical before and after.
+
 ### A migrated delivery note can be SHORT a line, and no rule can find it (2026-09-08)
 
 The null keys have a second consequence, and it decides the shape of any repair.
