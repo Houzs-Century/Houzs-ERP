@@ -530,7 +530,14 @@ async function planDo({ book, prodByCode }) {
   const writes = []; const refusals = [];
   plain("");
   plain("═══════════════════════ DO — THE NAMED DELIVERY-NOTE LINES ═══════════════════════");
-  plain("No migrated delivery order carries a line key, so this lane is a NAMED list, not a rule.");
+  /* This banner used to ASSERT "no migrated delivery order carries a line key",
+     and apply run 34204421089 printed it directly above a document whose three
+     rows all carry DtlKey 199269 — a stale fact stated beside the measurement
+     that refutes it. `backfill-ac-downstream-line-keys.mjs` is filling that
+     column and the state moves between two dispatches, so the banner states the
+     RULE and the per-document line states the MEASUREMENT. */
+  plain("A delivery note's line keys are being backfilled and the state moves, so this lane is a NAMED list, not a rule.");
+  plain("Each target prints how many of its ERP rows carry an AutoCount line key at the moment of this run.");
   for (const t of DO_TARGETS) {
     const l = (book.DO.lines.get(t.acDoc) || []).find((x) => keyOf(x.dtlKey) === t.dtlKey);
     if (!l) { refusals.push(`${t.acDoc} DtlKey ${t.dtlKey}: that line is not in this snapshot — REFUSED`); continue; }

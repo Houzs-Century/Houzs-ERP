@@ -1,5 +1,12 @@
 # The SO / PO / DO reconcile remainder — 2026-09-08 (Malaysia, UTC+8)
 
+> **UPDATED 16:40. Sections A, B and G are DONE — 11 sales-order lines on 9
+> documents and 1 delivery-note line were written to production, and the whole
+> reconcile went 36 -> 23.** What each section says below is what it said at
+> 12:58; the section headings now carry their outcome, and the run ids are in
+> *What was written to production* at the foot of this file. C, D, E and F are
+> unchanged and still need what they needed.
+
 What the go-live reconcile still reports on the sales-order, purchase-order and
 delivery-order line, quantity and money axes, **one row per document, with the
 cause**. Written so the next person repairs rather than re-derives.
@@ -53,7 +60,7 @@ on the checker's value-then-order fallback.
 
 ## The 21 that remain
 
-### A — six sales orders are missing a line the shop added to the book after we imported (6 line count + 3 money)
+### A — six sales orders are missing a line the shop added to the book after we imported (6 line count + 3 money) — **DONE, apply run `34204421089`**
 
 | document | the missing line | why it is still there |
 | --- | --- | --- |
@@ -70,7 +77,7 @@ re-sums the header + the five category buckets when the line is priced — the
 same write `repair-so-line-discount.mjs` already performs. `paid_sen` is not
 touched; the inconsistency is named.
 
-### B — five bedframe lines on three orders (3 line count)
+### B — five bedframe lines on three orders (3 line count) — **DONE, same run**
 
 `SO-011752` (2: `HOK-1013 (Q)` at PC-151-02 and PC-151-17), `SO-010602`
 (2: `HOK-DIVAN ONLY (K)`, `HOK-1013 (Q)`), `SO-007362` (1: `HOK-2006(A) (K)`) —
@@ -122,7 +129,7 @@ The owner accepts these as 一模一样.
 | `DO-004903` (3 vs 1) | the same two item codes against `SO-006438`, which contains neither |
 | `SO-011384` (12 vs 11) | a row with **no item code and quantity 4**. The book orders four of something it does not name; there is no product to point at and inventing one is forbidden. |
 
-### G — one delivery note is short RM 150.00 (1 money)
+### G — one delivery note is short RM 150.00 (1 money) — **DONE, same run**
 
 `DO-001604`: the book's third line is `* DISPOSE 3S L SHAPE SOFA + CONSOLE
 TABLE`, no item code, quantity 1, **RM 150.00**. The ERP's three rows are the
@@ -141,6 +148,109 @@ is explicitly NOT in the blank-row class (`docs/bugs/0695`).
 so readiness cannot have moved: the only columns touched are `discount_sen`,
 `line_total_sen` / `total_sen` / `total_inc_sen` / `balance_sen` on the line and
 `local_total_sen` + the five category buckets on the header.
+
+## What section A, B and G actually did — 2026-09-08 16:00-16:40
+
+The tool the remedy above asked for is
+`backend/scripts/topup-ac-lines-from-truth.mjs` +
+`.github/workflows/topup-ac-lines-from-truth.yml` (PR #3213, corrected by
+#3220). Plan by default; apply armed by
+`CONFIRM="I HAVE REVIEWED THE BOOK LINE TOP-UP PLAN"`, narrowed to the ten
+documents that were read in the plan, and capped at 12 writes.
+
+| run | at (Malaysia) | what |
+| --- | --- | --- |
+| `34204160822` | 16:07 | PLAN. 11 sales-order lines across 9 documents + 1 delivery-note line to write; 13 book rows REFUSED for stating no item code; 87 documents left whole as UNJUDGEABLE; `SO-013160`'s orphan DtlKey reported, not deleted. Nothing written. |
+| `34204316650` | 16:15 | reconcile BEFORE — **36** |
+| `34204421089` | 16:19 | APPLY. `APPLIED — 11 sales-order line(s) on 9 document(s); 1 delivery-order line(s) on 1 document(s).` |
+| `34204590904` | 16:25 | reconcile AFTER — **23** |
+
+Verified on a fresh connection inside the apply run:
+
+```
+VERIFIED ON A FRESH CONNECTION — 11 of 11 sales-order line(s) carry the book's item,
+quantity and money, the ERP's own line invariant, a jsonb OBJECT (not a string) in
+variants, and a header equal to the sum of its lines; 1 of 1 delivery-order line(s)
+the same.
+```
+
+Zero `WRONG SHAPE` rows. All nine sales-order headers now equal the book to the
+sen, and so does `HC-DO-001604` (RM 6,688.00).
+
+### What moved on the reconcile
+
+| axis | 16:15 | 16:25 |
+| --- | --- | --- |
+| SO line count | 11 | **2** — only `SO-011384` (F) and `SO-013160` (D) |
+| SO document total | 5 | **2** — only `SO-012571` (E) and `SO-013160` (D) |
+| SO AutoCount lines with no ERP line | 12 | **1** — only `SO-011384`'s code-less row |
+| DO document total | 1 | **0** |
+| DO lines paired | 818 | 819 |
+| whole reconcile | **36** | **23** |
+
+**CONTROL — PO, GR, IV and PI did not move.** PO `0 / 0 / 0 / 0 / 0`; GR
+`0 / 0 / 0 / 0 / 9` with 100 ERP-RM0 and 2 same-goods; IV 4 absent, 4 same-goods,
+9 same-money, 1 no-key-open; PI 1 line-count, 11 same-money, 6 no-key-open —
+identical in both runs. SO's `item 1`, `qty 1` and `phantom 1` and DO's
+`line count 2` are also identical: nothing outside this lane was touched.
+
+### `HC-SO-012842` — the self-inconsistency named in section A, and what the re-sum did to it
+
+Its header read RM 4,888.00 while its own six lines summed RM 4,588.00. The
+header is DEFINED as the sum of its lines, so the re-sum CORRECTED that: adding
+the book's RM 300.00 `Miscellaneous` line makes the lines sum RM 4,888.00 and the
+header stays exactly where it was, now agreeing with itself, with the book, and
+with `paid RM 4,588.00 + balance RM 300.00`. Nothing was papered over — the plan
+printed the disagreement by name before the write.
+
+This document is also why the first plan (`34201640955`) was thrown away and the
+tool corrected: it predicted RM 5,188.00, because the plan added to the HEADER
+while the apply sums the LINES. Ledger
+`docs/bugs/0705-the-plan-predicted-a-header-the-apply-would-not-write-on-the.md`.
+
+### Three documents now owe RM 150.00 more than they are recorded as paying
+
+`paid_sen` and the header `balance_sen` were NOT touched anywhere in this lane.
+The three documents that gained a PRICED line therefore read:
+
+| document | total now | paid + balance | short by |
+| --- | --- | --- | --- |
+| `HC-SO-010789` | RM 7,650.00 | RM 7,500.00 | RM 150.00 |
+| `HC-SO-003945` | RM 3,350.00 | RM 3,200.00 | RM 150.00 |
+| `HC-SO-008319` | RM 6,250.00 | RM 6,100.00 | RM 150.00 |
+
+That is the truth of the business, not a defect: the customer was billed a
+storage or cancellation charge the ERP did not carry, so the balance owing is
+RM 150.00 higher. Whether the balance column is re-derived is the owner's call,
+the same call still open on `HC-SO-000021` below.
+
+### Readiness DID move, by exactly the demand that was added
+
+Go-live readiness, `34199484225` (15:31) against `34204688974` (16:28):
+
+| | before | after |
+| --- | --- | --- |
+| live orders / with a processing date / header READY_TO_SHIP | 2794 / 584 / 220 | 2794 / 584 / 220 |
+| lines on PROCESSED orders | `READY=1725, PENDING=1368, PARTIAL=10` | `READY=1725, PENDING=1377, PARTIAL=10` |
+| PROCESSED lines whose PO is received but the line is not READY | 36 | 36 |
+
+**+9 PENDING, and nothing else.** Nine of the eleven new lines sit on orders that
+carry a processing date; they are demand nobody has allocated stock to, which is
+what a line the ERP has never seen before should look like. No line gained or
+lost READY. A sales-order line is DEMAND, so
+`recompute-so-allocation.mjs` should be run to give the new lines a stock
+verdict — **UNTESTED: that has not been run, and it will move this table again.**
+
+### Stock did not move at all
+
+| check | before | after |
+| --- | --- | --- |
+| `check-stock-vs-autocount` | `cells compared: 996 \| AGREE: 962 \| DISAGREE: 0 \| AutoCount-only: 0 \| ERP-only: 3` | identical |
+| whole sofas | `AutoCount 107 vs ERP 107 (net +0)` | identical |
+| migrated documents that wrote a movement | 0 / 0 / 0 | identical |
+| `check-migrated-cancel-exposure` | `0 movement rows behind 646 migrated documents` | identical |
+
+Runs `34199542895` / `34199602289` before, `34204767930` / `34204854334` after.
 
 **One thing the owner must see about `HC-SO-000021`.** Its total is now
 RM 9,876.00 and `paid_sen` still reads RM 10,852.00 with a zero balance, so the

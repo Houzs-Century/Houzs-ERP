@@ -796,7 +796,24 @@ Header money is re-summed as Sigma `line_total_sen`, the same rule
 `lib/migrated-do-writer.mjs:375` and `delivery-orders-mfg.ts:461` keep, and
 `line_count` is set to what the document holds rather than incremented. No
 inventory movement is written: these documents are `migrated_no_stock`
-(mig 0276) and stay at zero movements.
+(mig 0276) and stay at zero movements — measured before and after the apply,
+`0 movement rows behind 646 migrated documents` in both.
+
+**What the lane PRINTS, and why the wording matters.** Its banner states the
+RULE — *"a delivery note's line keys are being backfilled and the state moves, so
+this lane is a NAMED list, not a rule"* — and each target then prints the
+MEASUREMENT, `N ERP row(s) (K carry an AutoCount line key)`, taken at the moment
+of that run. The banner used to assert the corpus fact instead, and apply run
+`34204421089` printed *"No migrated delivery order carries a line key"* directly
+above three rows carrying DtlKey 199269. A run's own output is the one place a
+stale fact cannot be argued with, so the assertion moved to where it is measured.
+
+**Done, 2026-09-08.** `HC-DO-001604` carries the line: apply run `34204421089`,
+header RM 6,688.00 = the book, `1 of 1 delivery-order line(s)` verified on a
+fresh connection. The delivery-order money column of the AutoCount reconcile went
+1 to 0 (`34204316650` -> `34204590904`) and the note's paired line count went 818
+to 819 with no new unpaired ERP row. Full before/after in
+`docs/cutover-so-do-remainder-2026-09-08.md`.
 Ledger: `docs/bugs/0704-a-top-up-that-reads-the-outstanding-cut-is-blind-to-a-delive.md`.
 
 **What is NOT covered here and is a real gap: money taken at the door.**

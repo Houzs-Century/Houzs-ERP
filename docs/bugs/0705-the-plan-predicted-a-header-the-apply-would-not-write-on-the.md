@@ -36,8 +36,19 @@ from the same corrected figure.
 
 Not pinned by a unit test: the expression is one SQL sum against a live
 document's rows, and a test that mocked those rows would be asserting the mock.
-It is pinned by the plan itself — the re-run is in the PR, showing
-`HC-SO-012842` predicting RM 4,888.00.
+It is pinned by the plan itself. Corrected plan run `34204160822`, 16:07 +08:
+
+```
+PRE-EXISTING: the header reads RM 4888.00 while its own lines sum to RM 4588.00 — a
+difference of RM 300.00 that was there before this script. The re-sum below CORRECTS it,
+because the header is DEFINED as the sum of its lines.
+lines sum RM 4588.00  +RM 300.00  ->  header becomes RM 4888.00 (was RM 4888.00)
+the book says RM 4888.00  = MATCHES THE BOOK
+```
+
+And the apply agreed with it: run `34204421089` read back
+`HC-SO-012842  7 line(s), total RM 4888.00 (book RM 4888.00 = same)   paid RM 4588.00 +
+balance RM 300.00 = RM 4888.00 = the total`.
 
 **A second thing the same run refuted, recorded because a doc was written from
 the stale reading.** The DO lane was built on

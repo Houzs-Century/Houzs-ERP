@@ -7,7 +7,7 @@ import { fmtAmt } from "../lib/scm";
 import { useQueryClient } from "@tanstack/react-query";
 import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
-import { usePrompt } from "../vendor/scm/components/PromptDialog";
+import { usePrompt } from "../vendor/scm/components/PromptDialog"; import { CancelRequestPanel } from "../vendor/scm/components/CancelRequestPanel"; import { useCancelRequestAction } from "../pages/scm-v2/use-cancel-request-action";
 import { fetchScanSlipImageBlobUrl } from "../vendor/scm/lib/slip";
 import { MobileLinePhotos } from "./MobileLinePhotos";
 import { useStaff, usePickableStaff } from "../vendor/scm/lib/admin-queries";
@@ -289,7 +289,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
   const sendAmendment = useSendAmendment();
   const rejectAmendment = useRejectAmendment();
   const withdrawAmendment = useWithdrawAmendment();
-  const updateStatus = useUpdateMfgSalesOrderStatus();
+  const updateStatus = useUpdateMfgSalesOrderStatus(); const requestCancel = useCancelRequestAction("so"); // cancel = request + two approvals (owner 2026-09-08)
   const deleteDraft = useDeleteMfgSalesOrder();
 
   /* Reads route through the SHARED vendored hooks (vendor/scm/lib/
@@ -844,6 +844,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
                 approve the bound PO (SO_APPROVED) / send to supplier (PO_APPROVED)
                 — mirroring the desktop SalesOrderDetail + PurchaseOrderDetail
                 amendment banners so mobile can finish + send the amendment. */}
+            <CancelRequestPanel compact docType="so" docKey={docNo} docNumber={docNo} onExecute={() => setStatus("CANCELLED")} executing={busy} />
             {hasOpenAmendment && openAmendment && (
               <div style={{ display: "flex", flexDirection: "column", gap: 9, background: "rgba(214,158,46,0.14)", border: "1px solid rgba(214,158,46,0.55)", borderRadius: 12, padding: "11px 13px", marginBottom: 12 }}>
                 <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
@@ -1296,7 +1297,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
                 {/* Cancel — only on in-flight statuses (not SHIPPED+ / INVOICED /
                     CLOSED), matching the desktop's cancellableStatuses. */}
                 {canCancel ? (
-                  <button className="btn-danger" style={{ flex: 1, opacity: busy ? 0.55 : 1 }} disabled={busy} onClick={() => setStatus("CANCELLED", `Cancel ${docNo}? This voids the order.`)}>{busy ? "Working…" : "Cancel Order"}</button>
+                  <button className="btn-danger" style={{ flex: 1, opacity: busy ? 0.55 : 1 }} disabled={busy} onClick={() => void requestCancel(docNo, docNo)}>{busy ? "Working…" : "Request cancel"}</button>
                 ) : (
                   <div style={{ flex: 1, textAlign: "center", fontSize: 11, color: "var(--mut2)", alignSelf: "center" }}>Locked — downstream documents exist.</div>
                 )}

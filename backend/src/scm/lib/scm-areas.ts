@@ -147,6 +147,10 @@ export const SCM_UNGUARDED_PREFIXES: readonly string[] = [
   "/fabric-colours",
   "/document-flow",
   "/po-so-coverage",
+  // The cancellation-request inbox (2026-09-08): spans the sales and procurement
+  // areas, so it rides the coarse scm.access gate only; its writes are per-
+  // document routes behind their own area guards.
+  "/cancel-requests",
   // "/ar" left this list on 2026-08-13 when it gained an area guard. Both halves
   // have to move together: the drift test derives the guarded set and the
   // unguarded set from the SAME source scan, so gating a router without removing
