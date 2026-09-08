@@ -36,6 +36,12 @@ on:
         required: false
         default: ""
         type: string
+      population:
+        description: "edges = only lines AutoCount's own PODTL edge names (the 2026-09-08 ten bedframes). all = every migrated line carrying a DtlKey."
+        required: false
+        default: "edges"
+        type: choice
+        options: [edges, all]
       company_id:
         description: "ERP company (AED_HOUZS is company 1)"
         required: false
@@ -60,6 +66,7 @@ jobs:
       - run: node scripts/correct-so-item-code-from-autocount.mjs
         env:
           MODE: ${{ inputs.apply == 'yes' && 'apply' || 'plan' }}
+          POPULATION: ${{ inputs.population }}
           CONFIRM: ${{ inputs.confirm }}
           COMPANY_ID: ${{ inputs.company_id }}
           OUT: ${{ runner.temp }}/so-item-code-dump.json
@@ -79,6 +86,7 @@ jobs:
       - run: node scripts/correct-so-item-code-from-autocount.mjs
         env:
           MODE: ${{ inputs.apply == 'yes' && 'apply' || 'plan' }}
+          POPULATION: ${{ inputs.population }}
           CONFIRM: ${{ inputs.confirm }}
           COMPANY_ID: ${{ inputs.company_id }}
           OUT: ${{ runner.temp }}/so-item-code-dump.json
