@@ -696,6 +696,43 @@ book line — `stamp-migrated-source-prices.mjs`'s to close. **44 of 400 could n
 be line-matched and are UNVERIFIED, not verified-clean.** Full evidence with
 denominators in `docs/bugs/0675`.
 
+### The item-code count was measuring the CHECKER, not the receipt
+
+**`scm.grn_items` carries no AutoCount line number.** Migration
+`0280_scm_ac_line_keys_downstream.sql` added `linked_ac_dtlkey` to this table and
+says in its own header that nothing backfills it; the reshape's
+`INSERT INTO scm.grn_items` does not write it either, although the plan it writes
+from holds the book's `DtlKey` on every item. So `check-ac-erp-reconcile.mjs`
+hardcodes `NULL::bigint AS ac_dtlkey` for the GR lane and has nothing to pair a
+receipt line on.
+
+Its keyless fallback zips on `(qty, unit price)`, then `qty`, then document
+order. A migrated receipt's price comes from the purchase ORDER by design, so the
+first pass misses; two qty-1 mattresses then land in one `qty` bucket and
+whichever row postgres returned first takes the first book line. **Every sample
+the reconcile printed is a straight transposition** — `DtlKey 917594` is
+`AK-IMMORTAL MATT (K)` and we answer `AKEMI ULTIMATE MATT (K)`, `917604` the
+exact reverse.
+
+The verdict that survives this is a SET question, and it is now computed and
+reported per document: **is the book-side item-code multiset equal to the ERP-side
+one?** Equal means both sides name the same products in the same quantities and
+only the correspondence is unknown — those move to the summary's `same-goods`
+column. **Unequal means a product is genuinely wrong, and it stays counted and is
+printed louder as an impostor**, because the identical shape on the sales and
+purchase side was NOT an artefact: 61 of 111 were the wrong product.
+
+Sofa documents are excluded from the measurement outright — one book line becomes
+one ERP row per compartment, so the two multisets are not commensurable — and
+they keep the existing declared-decomposition path.
+
+`docs/bugs/0693-the-reconcile-guesses-which-goods-receipt-line-is-which-and.md`
+carries the trace. **Stamping `linked_ac_dtlkey` from the reshape's own plan is
+the root fix and is not done**: it would make the pairing exact rather than
+guessed, and migration 0280 names a second thing it unblocks — without the key
+the AutoCount write-back refuses every edit of a migrated receipt, because the
+handle it addresses a detail row by does not exist.
+
 ---
 
 ## 5. Stock direction
