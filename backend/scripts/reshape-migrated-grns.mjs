@@ -324,7 +324,7 @@ async function main() {
   const grnLines = await sql`SELECT i.id::text AS id, i.grn_id::text AS grn_id, i.purchase_order_item_id::text AS poi_id,
       i.item_code, i.material_name, i.item_group, i.qty_received::float8 AS qty_received,
       i.qty_accepted::float8 AS qty_accepted, i.invoiced_qty::float8 AS invoiced_qty,
-      i.returned_qty::float8 AS returned_qty, i.unit_price_sen, i.line_total_sen, i.variants,
+      i.returned_qty::float8 AS returned_qty, i.unit_price_sen, i.discount_sen, i.line_total_sen, i.variants,
       i.line_suffix, i.description2, i.uom, i.notes
     FROM scm.grn_items i JOIN scm.grns g ON g.id = i.grn_id
     WHERE g.company_id = ${CO} AND g.migrated_no_stock = true ORDER BY i.grn_id, i.id`;
@@ -681,8 +681,47 @@ async function main() {
   say("  for part of the corpus. Re-cut it and re-run this to raise the copied count.");
   for (const d of plan.filter((x) => x.warehouseFrom !== "book").slice(0, 5)) say(`    ${d.gr} / ${d.po}: ${d.warehouseWhy}`);
 
-  rule("MONEY — carried, never recomputed");
-  log(`MONEY — the migrated receipts hold RM ${(moneyBefore / 100).toFixed(2)} today; this plan writes RM ${(moneyAfter / 100).toFixed(2)}.`);
+  rule("MONEY — carried, never recomputed, and reconciled to the book");
+  /* THE BOOK IS THE CEILING. A money jump between two ERP states cannot tell a
+     correction from a double-count; only the book can. This sums AutoCount's
+     own GRDTL SubTotal for exactly the pairs this plan writes, so the run
+     STATES the ceiling instead of leaving the next reader to guess. The bare
+     before/after this replaced blocked the cutover three times (docs/bugs/0682). */
+  let bookSen = 0;
+  for (const d of plan) {
+    for (const bl of edges.pairs.get(d.key)?.lines ?? []) {
+      const s = book.GR.byDtlKey.get(bl.dtlKey) ?? book.GR.byDtlKey.get(Number(bl.dtlKey));
+      bookSen += s?.subTotalSen ?? Math.round(n0(bl.qty) * n0(priceByKey.get(bl.dtlKey)));
+    }
+  }
+  /* LIKE FOR LIKE. `moneyBefore` sums `line_total_sen` over ALL migrated
+     receipts; `moneyAfter` computes qty x price over the PLAN's documents only.
+     Two different populations measured two different ways — which is why it
+     read as a doubling. Split both apart so the comparison is honest. */
+  const qpOf = (g) => (linesByGrn.get(g.id) ?? []).reduce(
+    (t, l) => t + Math.round(n0(l.qty_accepted) * n0(l.unit_price_sen)), 0);
+  const ltOf = (g) => (linesByGrn.get(g.id) ?? []).reduce((t, l) => t + n0(l.line_total_sen), 0);
+  const sum = (a, f) => a.reduce((t, g) => t + f(g), 0);
+  const replaced = updates.map((d) => d.existing);
+  const rm = (sen) => `RM ${(sen / 100).toFixed(2)}`;
+  log(`MONEY — the ${plan.length} documents this plan writes are worth ${rm(moneyAfter)}; ` +
+    `the ${replaced.length} they REPLACE are worth ${rm(sum(replaced, qpOf))} today on the same formula; ` +
+    `the BOOK states those same pairs are worth ${rm(bookSen)}.`);
+  say(`  VERDICT: the plan lands ${rm(Math.abs(bookSen - moneyAfter))} ${moneyAfter > bookSen ? "ABOVE" : "BELOW"} the book.` +
+    (moneyAfter > bookSen
+      ? "  *** ABOVE THE BOOK IS A DOUBLE-COUNT SIGNATURE — DO NOT APPLY, partition the lines first. ***"
+      : "  Below the book is the expected shape: lines the ERP never priced stay unpriced until"));
+  if (moneyAfter <= bookSen) say("  `stamp-migrated-source-prices.mjs` runs. It CANNOT be a double-count: the book is the ceiling.");
+  say("");
+  say(`  the headline before/after, taken apart:`);
+  say(`    all ${grns.length} migrated receipts, sum(line_total_sen)      ${rm(moneyBefore)}   <- the old "before"`);
+  say(`    ... of which ${untouched.length} documents are UNTOUCHED and SURVIVE  ${rm(sum(untouched, ltOf))}  (NOT in the "after")`);
+  say(`    ... of which ${replaced.length} documents are actually replaced      ${rm(sum(replaced, ltOf))}`);
+  say(`    those same ${replaced.length}, valued as qty x unit_price            ${rm(sum(replaced, qpOf))}  <- like for like`);
+  say(`    lines holding a PRICE but a ZERO line_total_sen: ${grnLines.filter((l) => n0(l.line_total_sen) === 0 && n0(l.unit_price_sen) > 0).length} of ${grnLines.length}`);
+  say(`      -> that column, not the reshape, is why the old "before" read low. The reshape WRITES it.`);
+  say(`    TRUE after-state: ${rm(moneyAfter)} + ${rm(sum(untouched, ltOf))} untouched = ${rm(moneyAfter + sum(untouched, ltOf))} over ${plan.length + untouched.length} documents.`);
+  say("");
   say("  Nothing here decides a price. `stamp-migrated-source-prices.mjs` owns that — it applied 32 lines to");
   say("  production on 2026-09-07 16:02Z (run 34141318054) — and this carries what each line already holds,");
   say("  per unit, so a line split across two receipts keeps the same money per unit. Its selection is");
