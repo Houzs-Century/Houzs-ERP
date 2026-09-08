@@ -128,8 +128,13 @@ for (const a of LOCKING_AXES) {
 export const DECLARED_LABEL = Object.freeze({
   "book-blank": "the ERP states a value the BOOK never did — an operator filled it in, which is allowed",
   pending: "the book itself says TBC / KIV, so there is nothing to copy yet",
+  /* The jsonb key this is carried under is deliberately NOT spelled here: a
+     tree scan in backend/tests asserts that only display surfaces name it, and a
+     mention would have to become an exception in that scan. A check with an
+     exception in it is the shape this repo keeps paying for.
+     lib/variant-reconcile.mjs owns the verdict and names the key. */
   recorded:
-    "the book asks for a PRICED special the line does not tick and variants.specialsRecorded already carries it — " +
+    "the book asks for a PRICED special the line does not tick, and the line already carries it as recorded — " +
     "your 2026-09-03 ruling 甲: the factory sees the option and the document's money did not move",
   "no-line-key":
     "our rows carry no AutoCount line number, so which of ours answers which of the book's was the checker's guess — " +
