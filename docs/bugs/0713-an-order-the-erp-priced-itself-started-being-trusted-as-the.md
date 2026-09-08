@@ -64,5 +64,13 @@ one such order exists in production today — `HC-SO-2609-001`, created
 Measured: Actions -> *SO migrated shape (read-only)*, run `34214516108` — 1
 write-back order of 2,883.
 
+> **UPDATED 2026-09-08.** That one order, `HC-SO-2609-001`, has since been
+> DELETED from the ERP on 2026-09-08 at the owner's instruction — it was a test order. So there is now NO ERP-originated sales
+> order in production, and the exposure this paragraph measures is zero by
+> construction rather than by inspection. The fix is unaffected: it changes what
+> happens on the next such order, and `soIsMigratedShape` is a pure function
+> whose test fixtures do not need the row. Ledger:
+> `docs/bugs/0715-deleting-a-sales-order-trusted-a-hand-written-child-list-nob.md`.
+
 **Ref.** fix/so-open-for-new, 2026-09-08. Follows `docs/bugs/0703-*` and
 `docs/bugs/0600-*`.

@@ -35,6 +35,18 @@
    a copy is still sitting in AutoCount. */
 export const AUDIT_KEEP = new Set([
   "scm.autocount_outbox",
+  /* The sales-order audit log — `so_doc_no, action, actor_id,
+     actor_name_snapshot, field_changes, status_snapshot, source, note`
+     (2990s-full-schema.sql:727). It holds the CREATE row that says who made the
+     order and from where, and on 2026-09-08 that row is what identified
+     HC-SO-2609-001 as a test rather than a customer's order in the first place.
+     Deleting the order is the owner's instruction; erasing the record that
+     somebody made it is not, and the two are not the same act.
+
+     It was NOT on any list until the sweep found it (run 34220446297) — which
+     is the whole reason the sweep exists, and why it refuses rather than
+     cascading into a table nobody has thought about. */
+  "scm.mfg_so_audit_log",
   "scm.entity_audit_log",
 ]);
 
@@ -66,9 +78,18 @@ export function classifyReference(table, childTables) {
   return UNCLASSIFIED;
 }
 
-/* The parent's own primary key. It is the row being deleted, not a reference to
-   it, so it is excluded from the sweep — and named here rather than inline so
-   the test can assert the exclusion actually happens. */
+/* THE PARENT'S OWN ROW IS NOT A REFERENCE TO ITSELF, and the distinction is
+   per-ROW, not per-column. The first draft excluded only
+   `scm.mfg_sales_orders.doc_no` and then reported
+   `scm.mfg_sales_orders.linked_ac_docno` as an unclassified reference —
+   run 34220446297 — because the account book took our own number, so
+   `linked_ac_docno` equals `doc_no` on the very row being deleted.
+
+   Excluding the COLUMN would have been the wrong repair: a DIFFERENT sales
+   order carrying this one's number in `linked_ac_docno` is a real and
+   dangerous reference, and that is exactly what would have been silenced. So
+   the parent table is scanned with the row itself excluded instead, and every
+   other row still counts. */
 export const PARENT_TABLE = "scm.mfg_sales_orders";
 export const PARENT_COL = "doc_no";
 
@@ -105,10 +126,14 @@ export async function sweepReferences(db, docNo, { timeout = "120s" } = {}) {
     for (const r of cols) {
       const qualified = `${r.schema}.${r.table}`;
       if (qualified === PARENT_TABLE && r.column === PARENT_COL) continue;
+      // On the parent table, skip the row being deleted; count every other one.
+      const notItself = qualified === PARENT_TABLE
+        ? ` AND lower(btrim("${PARENT_COL}")) IS DISTINCT FROM lower(btrim($1))`
+        : "";
       try {
         const [row] = await db.unsafe(
           `SELECT count(*)::int AS n FROM "${r.schema}"."${r.table}"
-            WHERE lower(btrim("${r.column}")) = lower(btrim($1))`,
+            WHERE lower(btrim("${r.column}")) = lower(btrim($1))${notItself}`,
           [docNo],
         );
         if (row.n > 0) hits.push({ table: qualified, column: r.column, n: row.n });

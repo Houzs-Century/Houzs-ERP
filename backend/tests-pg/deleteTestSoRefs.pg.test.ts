@@ -49,7 +49,11 @@ async function schema(db: Sql) {
     CREATE SCHEMA scm;
 
     CREATE TABLE scm.mfg_sales_orders (
-      doc_no text PRIMARY KEY, status text, company_id int, total_sen bigint
+      doc_no text PRIMARY KEY, status text, company_id int, total_sen bigint,
+      -- The book's number for this order. When AutoCount takes OUR number the
+      -- two are equal, which is the case that made the sweep report the row
+      -- being deleted as a reference to itself (run 34220446297).
+      linked_ac_docno text
     );
     CREATE TABLE scm.mfg_sales_order_items (
       id serial PRIMARY KEY, doc_no text, item_code text, qty numeric, variants jsonb
@@ -66,6 +70,11 @@ async function schema(db: Sql) {
     -- NOT in CHILD_TABLES. The sweep has to find this by itself.
     CREATE TABLE scm.so_revisions (
       id serial PRIMARY KEY, doc_no text, rev int
+    );
+    -- The sales-order audit log. Append-only, survives the delete on purpose,
+    -- and on NO list at all until the sweep found it.
+    CREATE TABLE scm.mfg_so_audit_log (
+      id serial PRIMARY KEY, so_doc_no text, action text, actor_name_snapshot text
     );
     -- Append-only. Survives the delete on purpose.
     CREATE TABLE scm.autocount_outbox (
@@ -86,12 +95,18 @@ async function seed(db: Sql) {
   await db.unsafe(`
     TRUNCATE scm.mfg_sales_orders, scm.mfg_sales_order_items, scm.mfg_sales_order_payments,
              scm.mfg_sales_order_activity, scm.so_amendments, scm.so_revisions,
-             scm.autocount_outbox, scm.delivery_orders, scm.unrelated_notes;
+             scm.autocount_outbox, scm.delivery_orders, scm.unrelated_notes,
+             scm.mfg_so_audit_log;
 
-    INSERT INTO scm.mfg_sales_orders (doc_no, status, company_id, total_sen) VALUES
-      ('HC-SO-2609-001', 'CONFIRMED', 1, 100000),
-      ('HC-SO-013361',   'CONFIRMED', 1, 250000),
-      ('HC-SO-013362',   'DRAFT',     1,  70000);
+    -- HC-SO-2609-001 carries its OWN number as the book number, exactly as
+    -- production does after a successful write-back.
+    INSERT INTO scm.mfg_sales_orders (doc_no, status, company_id, total_sen, linked_ac_docno) VALUES
+      ('HC-SO-2609-001', 'CONFIRMED', 1, 100000, 'HC-SO-2609-001'),
+      ('HC-SO-013361',   'CONFIRMED', 1, 250000, 'SO-013361'),
+      ('HC-SO-013362',   'DRAFT',     1,  70000, NULL);
+
+    INSERT INTO scm.mfg_so_audit_log (so_doc_no, action, actor_name_snapshot)
+      VALUES ('HC-SO-2609-001', 'CREATE', 'Lim');
 
     INSERT INTO scm.mfg_sales_order_items (doc_no, item_code, qty, variants) VALUES
       ('HC-SO-2609-001', 'SOFA-A', 1, '{"colour":"BEIGE"}'),
@@ -152,6 +167,33 @@ describePg('delete-test-so — the reference sweep, against real Postgres', () =
     expect(byTable.has('scm.so_amendments.so_doc_no')).toBe(false);
   });
 
+  /* PROVED RED against the first draft of the sweep, which excluded the parent
+     table by COLUMN and therefore reported the deleted row's own
+     linked_ac_docno as an unclassified reference (run 34220446297). */
+  test("the order's OWN book number is not a reference to itself", async () => {
+    const swept = await sweepReferences(sql, DOC);
+    expect(swept.hits.some((h) => h.table === 'scm.mfg_sales_orders')).toBe(false);
+  });
+
+  /* And the repair must not go too far the other way. Excluding the COLUMN
+     would silence this row, which is a genuine and dangerous reference. */
+  test('ANOTHER order carrying this number as its book number IS a reference', async () => {
+    await sql.unsafe(
+      `UPDATE scm.mfg_sales_orders SET linked_ac_docno = '${DOC}' WHERE doc_no = 'HC-SO-013362'`);
+    const swept = await sweepReferences(sql, DOC);
+    const hit = swept.hits.find((h) => h.table === 'scm.mfg_sales_orders');
+    expect(hit?.column).toBe('linked_ac_docno');
+    expect(hit?.n).toBe(1);
+  });
+
+  test('the sales-order audit log is found, and it is KEPT, not deleted', async () => {
+    const swept = await sweepReferences(sql, DOC);
+    const hit = swept.hits.find((h) => h.table === 'scm.mfg_so_audit_log');
+    expect(hit?.n).toBe(1);
+    // Who created the order outlives the order. That is the point.
+    expect(classifyReference('scm.mfg_so_audit_log', new Set())).toBe(AUDIT);
+  });
+
   test('a reference is matched trimmed and case-folded, the way the register does', async () => {
     await sql.unsafe(`INSERT INTO scm.so_revisions (doc_no, rev) VALUES ('  hc-so-2609-001 ', 2)`);
     const swept = await sweepReferences(sql, '  HC-SO-2609-001  ');
@@ -188,7 +230,10 @@ describePg('delete-test-so — the reference sweep, against real Postgres', () =
     await sql.unsafe(`DELETE FROM scm.mfg_sales_orders         WHERE doc_no    = '${DOC}'`);
 
     const swept = await sweepReferences(sql, DOC);
-    expect(swept.hits.map((h) => h.table)).toEqual(['scm.autocount_outbox']);
+    expect(swept.hits.map((h) => h.table).sort())
+      .toEqual(['scm.autocount_outbox', 'scm.mfg_so_audit_log']);
+    // And every survivor is one somebody decided to keep.
+    for (const h of swept.hits) expect(AUDIT_KEEP.has(h.table)).toBe(true);
   });
 });
 
