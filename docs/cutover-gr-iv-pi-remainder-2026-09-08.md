@@ -298,7 +298,8 @@ says nothing about being a sofa, so `comparisonKey`'s BOOK branch does not fold
 it while our compartment code does — `docs/bugs/0709`. The reconcile does not
 count that document at all; it classifies it through `classifyItemCode`'s
 decomposition arm, which folds on the MODEL. Two modules, two definitions of
-"this is a sofa", agreeing everywhere except on one row.
+"this is a sofa", which agree on every other row the probe compared and disagree
+on this one.
 
 **Nothing in sections A to D depended on the six**: the item-code verdict comes
 from `GR item code — 0 line(s) where the ERP row and the book line carry the SAME

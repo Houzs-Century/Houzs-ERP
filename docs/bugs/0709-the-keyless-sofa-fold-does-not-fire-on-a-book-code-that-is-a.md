@@ -41,7 +41,7 @@ does not report this document at all: run `34206144168`'s sibling
 document(s) ... 2 PROVEN identical"*, because `check-ac-erp-reconcile.mjs`
 classifies it through `classifyItemCode`'s `decomposition` arm, which folds on
 the MODEL and does not consult `isSofaCode` at all. Two modules, two definitions
-of "this is a sofa", agreeing everywhere except here.
+of "this is a sofa", that agree on every other row the probe compared.
 
 **LIKELY** — stated as LIKELY because it has not been settled against the book —
 `-1S` is the book's marker for one whole sofa (it is what every other sofa line
