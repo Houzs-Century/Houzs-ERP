@@ -53,6 +53,11 @@
  * connection rather than resting on this paragraph.
  *
  * ── CONVERGENT ──────────────────────────────────────────────────────────────
+ * RE-RUN: inert. A repaired row already holds the catalogue's code AND the
+ * catalogue's name, and the classifier reads BOTH back, so it lands in
+ * `already-ok` and never enters the write set again. A half-repaired row — right
+ * code, name still the book's — is NOT treated as done and is picked up.
+ *
  * A second run finds nothing. The mapping is idempotent on its own output —
  * measured on autocount-erp-mapping-1561.csv: 171 ERP codes are also AutoCount
  * codes and all 171 map to THEMSELVES, zero chains — so a repaired row looks up
