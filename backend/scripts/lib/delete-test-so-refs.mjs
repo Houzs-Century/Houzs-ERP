@@ -154,11 +154,21 @@ export async function sweepReferences(db, docNo, { timeout = "120s" } = {}) {
  *
  * `moneyCol` and `payCol` are resolved by the caller against the LIVE schema and
  * may be null; a column that is not there yields null rather than a wrong sum.
+ *
+ * `status` IS AN ENUM (`scm.mfg_so_status`), NOT TEXT, and it must be cast
+ * before it is concatenated: `coalesce(status, '')` asks Postgres to read '' as
+ * a member of that enum and it answers
+ * `invalid input value for enum scm.mfg_so_status: ""`. That is not a
+ * hypothetical — it is what run 34223295235 died on, in plan mode, against
+ * production. The pg fixture declared the column as `text`, which is MORE
+ * PERMISSIVE than the real schema, so the suite passed on SQL production
+ * rejects; the fixture now creates the enum. A fixture looser than production
+ * proves nothing about production.
  */
 export async function controlSnapshot(client, docNo, { moneyCol = null, payCol = null } = {}) {
   const [row] = await client.unsafe(
     `SELECT (SELECT count(*)::int FROM scm.mfg_sales_orders WHERE doc_no <> $1) AS so_rows,
-            (SELECT md5(coalesce(string_agg(doc_no || '|' || coalesce(status, ''), ',' ORDER BY doc_no), ''))
+            (SELECT md5(coalesce(string_agg(doc_no || '|' || coalesce(status::text, ''), ',' ORDER BY doc_no), ''))
                FROM scm.mfg_sales_orders WHERE doc_no <> $1) AS so_fingerprint,
             (SELECT count(*)::int FROM scm.mfg_sales_order_items WHERE doc_no <> $1) AS item_rows,
             ${payCol ? `(SELECT count(*)::int FROM scm.mfg_sales_order_payments WHERE "${payCol}" <> $1)` : "NULL::int"} AS pay_rows,

@@ -2415,7 +2415,18 @@ Three more properties it did not have before:
 - **Its SQL is executed against a real Postgres in CI** before production sees it
   (`backend/tests-pg/deleteTestSoRefs.pg.test.ts`, the `backend-postgres` job),
   because `node --check` used to be the whole of the evidence a production
-  DELETE had.
+  DELETE had. **That fixture must declare the same column TYPES production has.**
+  It declared `mfg_sales_orders.status` as `text` when production has the enum
+  `scm.mfg_so_status`, and 17 green tests then said nothing about a
+  `coalesce(status, '')` the database refuses — run `34223295235`. And note that
+  `npm --prefix backend run typecheck` does NOT cover `tests-pg/`: the backend
+  tsconfig does not include it, so running the suite is the only local check.
+
+The CONTROL measures `local_total_sen`, which is what this table's document
+total is called. It is not `total_sen` — that column does not exist here, and a
+money check pointed at a missing column compares NULL to NULL and reports
+agreement. `paid_sen`, `deposit_sen` and `balance_sen` are deliberately outside
+everything this tool reads or writes.
 
 Ledger: `docs/bugs/0715-deleting-a-sales-order-trusted-a-hand-written-child-list-nob.md`.
 
