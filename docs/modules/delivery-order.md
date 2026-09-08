@@ -741,12 +741,23 @@ line. Header-only would still work. Do not start until the read has been done.
 
 ### A migrated delivery note can be SHORT a line, and no rule can find it (2026-09-08)
 
-The same null keys have a second consequence, and it decides the shape of any
-repair. `delivery_order_items.linked_ac_dtlkey` is null on all 173 migrated
-delivery orders, so **no** delivery note can be compared to the book line by
-line: every verdict in the AutoCount reconcile rests on its value-then-order
-fallback. A tool that added "the missing line" to a delivery order by that
-fallback would be writing on a guess.
+The null keys have a second consequence, and it decides the shape of any repair.
+While `delivery_order_items.linked_ac_dtlkey` is null, a delivery note cannot be
+compared to the book line by line: the verdict in the AutoCount reconcile rests
+on its value-then-order fallback. A tool that added "the missing line" to a
+delivery order by that fallback would be writing on a guess.
+
+> **That null is being filled, and it moved while this was written — do not read
+> a count from this paragraph.** The line above said *"null on all 173 migrated
+> delivery orders"* on the morning of 2026-09-08, sourced from the reconcile run
+> `34199308084` (15:26 +08), which listed `DO-001604` among the documents it
+> could not line-match — a verdict only reachable when NO ERP row on the document
+> carries a key. Thirty-four minutes later, plan run `34201640955` read the same
+> document's live rows and found all three sofa compartments carrying DtlKey
+> `199269`. `backfill-ac-downstream-line-keys.mjs` is stamping this column and
+> the state is partial and moving, so `topup-ac-lines-from-truth.mjs`'s DO lane
+> COUNTS the keyed rows of its target document on every run and prints the count,
+> rather than asserting a number that goes stale between two dispatches.
 
 So `backend/scripts/topup-ac-lines-from-truth.mjs` has two lanes and they are not
 symmetrical. Its SO lane is a general rule keyed on DtlKey. Its **DO lane is a
@@ -769,15 +780,17 @@ Two deliberate choices in that write, both recorded because neither is obvious:
   The reconcile does not compare a delivery order's item codes at all —
   `lib/ac-reconcile-erp-sql.mjs:196`, *taken from the SALES ORDER line by
   design* — so the choice cannot create a difference.
-- **`linked_ac_dtlkey` is deliberately left NULL** and the row is claimed by a
-  marker in `notes` instead. Stamping the key would be correct in itself, but it
-  flips that ONE document out of the reconcile's keyless-multiset comparison into
-  keyed pairing, which changes how the checker judges it — a wider change than
-  adding the line. The cost is named: `backfill-ac-downstream-line-keys.mjs`
-  buckets on (item code, quantity), so this row will report one extra
-  per-bucket refusal (*the book has no line of this item at this quantity*) on
-  `DO-001604` until a key is stamped. That refusal is per bucket, not per
-  document, so every other line on the note still stamps.
+- **`linked_ac_dtlkey` IS stamped, and the row also carries a marker in
+  `notes`.** This reverses the decision the lane was first written with. The
+  original reasoning was that keying one row of a keyless document would flip it
+  out of the reconcile's keyless-multiset comparison into keyed pairing — a
+  wider change than adding a line. The plan run refuted the premise (see the box
+  above): the document is already keyed, so there is no comparison left to flip,
+  and the honest value for a row that IS AutoCount DtlKey 199273 is 199273. A
+  WRONG key is worse than NULL — mig 0280, *NULL means "create"* — which is why
+  the target asserts the book's row (quantity, unit price, line subtotal) before
+  the key is used. The `notes` marker is kept beside it so a re-run still claims
+  the row if a later tool ever rewrites keys.
 
 Header money is re-summed as Sigma `line_total_sen`, the same rule
 `lib/migrated-do-writer.mjs:375` and `delivery-orders-mfg.ts:461` keep, and
