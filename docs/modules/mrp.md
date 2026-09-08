@@ -404,6 +404,30 @@ mobile card, because `source === 'po'` now guarantees a number. Trace:
   promotion gate (`so-line-effective-stock.ts`) refuses to promote bound lines
   on MRP's say-so; see sales-order.md §0.3 for the company-split table and the
   `check-bound-exclusivity.mjs` census that re-measures the rule.
+- **A SOFA'S BINDING CAN BE UNWRITABLE, and that is a separate failure from an
+  absent purchase order.** The book records the SO -> PO edge at LINE grain in
+  `PODTL.FromSODtlKey`, and `backend/scripts/repair-po-so-link-from-book.mjs`
+  copies it — refusing whenever either key resolves to more than one ERP row,
+  because a Map keyed by DtlKey would keep one of them. **Every sofa is in that
+  bucket by construction**: one book line is one ERP row per compartment. So the
+  whole sofa population was unrepairable by that tool, and a sofa piece whose
+  purchase order exists in the book sat PENDING for ever while MRP told
+  purchasing to raise a second one.
+
+  `backend/scripts/repair-po-so-link-sofa-compartments.mjs` is the tool at the
+  other grain: inside ONE pair of book lines, if every item code appears exactly
+  once on each side then each purchase compartment has exactly one sales
+  compartment of the same product to be, and the pairing is a copy rather than a
+  choice. Anything else is refused — notably a MIRRORED build (`1A(LHF)+2A(RHF)`
+  on the purchase side against `2A(LHF)+1A(RHF)` on the sales side), which is a
+  build disagreement needing the drawing, not a link one.
+
+  **Size the two apart before quoting either.** Probe run `34202130553`
+  (`probe-staff-reported-flow.mjs`): 2,842 live hard-bound sales lines carry no
+  dedicated purchase line, and for **2,717 of them the book has no purchase
+  order either** — the absence is CORRECT and quoting 2,842 as a backlog is
+  alarming and wrong. Seven, on four orders, are the ones the book names and we
+  do not hold. `docs/bugs/0707-a-sofa-s-purchase-line-could-never-be-linked-to-its-sales-li.md`.
 - **AND SO DOES THIS ENGINE, since 2026-08-31** (owner's option 甲, company 1
   only). This bullet used to end "MRP's own pooled view knows none of this",
   and that gap was not academic: the migrated stock snapshot carries no variant,
