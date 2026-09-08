@@ -1,0 +1,45 @@
+name: GR / PI / IV residue — what the 74 really are (read-only)
+
+# The AutoCount vs ERP reconcile (run 34184553347, 2026-09-08 11:45 +08) counts
+# 127 disagreements that are not covered by a declared design difference. 74 of
+# them are goods receipts and invoices: GR item code 36 + GR money 9, PI line
+# count 12, IV absent 6 + IV line count 9 + IV item code 2.
+#
+# This probe answers, from production, the four questions those 74 rest on:
+#
+#   1. Are the GR item-code differences a WRONG PRODUCT, or a line-to-line
+#      correspondence the checker had to guess? `scm.grn_items` carries no
+#      AutoCount line key, so the reconcile zips keyless lines on (qty, price)
+#      then qty then document order. The probe asks the one question no ordering
+#      can affect: is the item-code MULTISET the same on both sides?
+#   2. Why do 9 receipts carry a non-zero total that is not the book's?
+#   3. Do the 21 invoices whose line COUNT differs still agree on MONEY?
+#   4. What are the 6 absent sales invoices, and do we hold their source?
+#
+# READ-ONLY: SELECTs only, no DDL, no writes, no transaction. Manual trigger,
+# own concurrency group, exit 0 for every legitimate answer. Document numbers
+# and item codes are printed because the finding cannot be reviewed without
+# them; no customer or supplier NAME is printed.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: probe-gr-pi-iv-residue
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+        working-directory: backend
+      - name: probe (read-only)
+        working-directory: backend
+        env:
+          DATABASE_URL: "${{ secrets.DATABASE_URL }}"
+        run: node scripts/probe-gr-pi-iv-residue.mjs
