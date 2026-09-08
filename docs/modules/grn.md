@@ -612,8 +612,35 @@ uses, and it is not an invention, because every candidate line shares the code
 and therefore the price. **Re-dispatch "Stamp migrated source prices" after the
 reshape**: its selection is `unit_price_sen = 0`, and the new grain makes MORE of
 it stampable, because its partial-mirror refusal exists precisely for the
-one-document-per-purchase-order shape the reshape replaces. The run prints the
-money before and after.
+one-document-per-purchase-order shape the reshape replaces.
+
+**The run prints the BOOK's own total beside its own — and that is the only
+number that settles anything.** For a full day the run ended on a bare
+`RM 210,513.43 today; this plan writes RM 461,371.95`, and that unexplained 119%
+blocked the apply three times (`docs/bugs/0682`). The two figures were not
+comparable in two independent ways: `moneyBefore` sums `line_total_sen` over ALL
+320 migrated receipts, while `moneyAfter` computes `qty x price` over the 400
+PAIR documents — and 73 of the 320 are `untouched`, so they sit in the "before"
+and **survive**, carrying RM 124,729.00, 59% of the whole "before". On top of
+that, 276 of 591 lines hold a real `unit_price_sen` and a `line_total_sen` of
+**0**, so the "before" read a broken column while the "after" read a product.
+Like for like the 247 documents actually replaced are worth RM 249,691.95, not
+RM 85,784.43.
+
+So the MONEY section now states AutoCount's own `GRDTL.SubTotal` for exactly the
+pairs it is writing, splits the headline apart, and prints a verdict. **A delta
+between two states of our own system cannot tell a correction from a
+double-count; only the book can.** Two offline tests decide it, both in
+`backend/scripts/audit-gr-reshape-money.mjs` (no database, no network, no
+`node_modules`, so it re-derives on a bare checkout):
+
+| test | what it asks | measured 2026-09-08 |
+| --- | --- | --- |
+| **partition** | does any receipt line land on more than one pair? | **0 of 567** — each `GRDTL` row carries its own `FromDocNo`. Unlike `linked_ac_dtlkey`, where one book line owns several ERP rows (one per sofa compartment) and a repair nearly wrote RM 2,216,501 of invented revenue |
+| **ceiling** | what does the book say those pairs are worth? | **RM 574,763.43** (214 receipts, all MYR at rate 1). The plan writes RM 461,371.95 — **RM 113,391.48 BELOW**. A double-count cannot land under the book |
+
+If `moneyAfter` ever exceeds the ceiling the run says so in those words and the
+plan is not to be applied.
 
 **What it unlocked.** `check-ac-erp-reconcile.mjs` printed *"GR DATA — line and
 money comparison NOT APPLICABLE"* and stopped, because the quantity was derived

@@ -26,15 +26,22 @@
      1. data/ac-fidelity-do-headers.json.gz — the book's own header field.
         Covers 11,134 documents.
      2. line Locations, and ONLY when every line of that document agrees — from
-        data/ac-fidelity-do-lines.json.gz (the whole book, 11,134 documents)
-        and data/ac-partial-dos.json.gz (the cutover cut, 84). The header
-        snapshot runs behind the book, so 19 of the cut's 84 have no header row;
-        all 19 are unanimous on their lines, and where BOTH sources exist they
-        agree on 65 of 65.
-     3. nothing — the document is REPORTED and left alone. Measured 2026-09-08:
-        89 of 171 migrated documents land here, every one a DO-0114xx/DO-0115xx
-        raised AFTER both snapshots were taken. They are named, not defaulted;
-        a snapshot refresh is what fills them.
+        data/ac-fidelity-do-lines.json.gz (the whole book, 11,134 documents),
+        data/ac-partial-dos.json.gz (the cutover cut, 84), and — since
+        2026-09-08 — data/ac-reconcile-truth.json.gz, whose line projection
+        grew a `location` column. The header snapshot runs behind the book, so
+        19 of the cut's 84 have no header row; all 19 are unanimous on their
+        lines, and where BOTH sources exist they agree on 65 of 65.
+
+        THE THIRD FEED IS WHY THIS RUN CAN ANSWER AT ALL. On 2026-09-08, 89 of
+        171 migrated documents resolved to NOTHING because every one was a
+        DO-0114xx/DO-0115xx raised after both older snapshots were taken. The
+        fresh truth cut carries 163 documents in that range, all 163 unanimous,
+        and ZERO of them appear in either fidelity file. It is a third feed into
+        the SAME unanimity rule, not a new source: it reproduces the two known
+        mixed documents (DO-000140 PG+HQ, DO-000153 KL+SUNWAY) exactly.
+     3. nothing — the document is REPORTED and left alone. They are named, not
+        defaulted; a snapshot refresh is what fills them.
 
    ONE RULE, NOT A SECOND COPY. The order above, the map and the resolution all
    live in lib/ac-do-location.mjs, shared with create-migrated-documents.mjs so
@@ -63,6 +70,7 @@ import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import postgres from 'postgres';
 import { mixedLocationDocs, resolveAcDeliveryLocation } from './lib/ac-do-location.mjs';
+import { decodeSnapshot } from './lib/ac-scope.mjs';
 
 const DSN = process.env.DATABASE_URL;
 const APPLY = (process.env.MODE || 'plan').toLowerCase() === 'apply';
@@ -105,6 +113,34 @@ async function main() {
   };
   for (const l of gz('ac-fidelity-do-lines.json.gz')) addLineLoc(l.DocNo, l.Location);
   for (const r of gz('ac-partial-dos.json.gz')) addLineLoc(r.DoNo, r.Location);
+  /* THE THIRD LINE SNAPSHOT, and the reason the other two were not enough.
+     Both files above are cuts that stopped moving: `ac-fidelity-do-lines` is
+     the fidelity round's whole-book cut and `ac-partial-dos` is the cutover
+     cut, and on 2026-09-08 EIGHTY-NINE of 171 migrated delivery orders — every
+     one a DO-0114xx/DO-0115xx raised after both were taken — had no row in
+     either, so the rule could not answer and named them rather than guessing.
+     `ac-reconcile-truth.json.gz` is the cut that IS refreshed, and its line
+     projection grew `location` on 2026-09-08 for exactly this.
+
+     It is a THIRD FEED into the same unanimity rule, not a fourth source: it
+     goes into `lineLocs` beside the other two, so a document whose lines
+     disagree still disagrees and is still refused. `decodeSnapshot` reads the
+     field by NAME, so a truth snapshot cut before the column existed yields
+     null on every line and this loop adds nothing — the backfill then behaves
+     exactly as it did before, which is what makes the addition safe to land
+     ahead of a cut. */
+  let fromTruth = 0;
+  try {
+    const truth = JSON.parse(zlib.gunzipSync(fs.readFileSync(path.join(here, 'data', 'ac-reconcile-truth.json.gz'))).toString('utf8'));
+    const book = decodeSnapshot(truth);
+    for (const ls of book.DO.lines.values()) {
+      for (const l of ls) if (l.location) { addLineLoc(l.docNo, l.location); fromTruth++; }
+    }
+    note(`ac-reconcile-truth.json.gz cut ${truth.exported_at}: ${fromTruth} DO line location(s) read`);
+    if (!fromTruth) note('   that snapshot carries NO line location — it predates the column; re-cut export-ac-reconcile-truth.mjs');
+  } catch (e) {
+    note(`ac-reconcile-truth.json.gz unreadable (${e.message}) — falling back to the two fidelity cuts alone`);
+  }
   note(`book: ${hdrLoc.size} document header(s), ${lineLocs.size} document(s) with line locations`);
 
   /* The documents the book itself cannot answer with ONE location. Named rather
