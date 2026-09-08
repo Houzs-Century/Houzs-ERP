@@ -221,15 +221,10 @@ export interface AcOutboxRow {
   sent_at: string | null;
 }
 
-/**
- * The chip-strip numbers. DOCUMENTS, not sends, on every one of these.
- *
- * Given a NAME of its own (it was inline in `AcOutboxResponse` until 2026-09-08)
- * so that the helper which picks a DENOMINATOR from it can take the whole object
- * and be forced to consider every field. While the shape was anonymous, the two
- * count lines each reached in for `total` by hand, on every tab, and nothing
- * could be written that made them agree.
- */
+/** The chip-strip numbers. DOCUMENTS, not sends, on every one of these. Named
+ *  (it was inline until 2026-09-08) so `acRegisterTotal` can take the whole
+ *  object; while the shape was anonymous both count lines reached in for
+ *  `total` by hand, on every tab, and no test could make them agree. */
 export interface AcOutboxCounts {
   pending: number;
   sent: number;
@@ -237,18 +232,12 @@ export interface AcOutboxCounts {
   skipped: number;
   requeued: number;
   attention: number;
-  /**
-   * Documents a PERSON has cleared off this page. Not a state of the send —
-   * every other number here is a claim about what AutoCount did, and this one
-   * is a claim about what somebody decided — which is why it is not summed
-   * into `total` either.
-   *
-   * BECAUSE it is not in `total`, the Cleared tab renders a population `total`
-   * does not describe, and dividing by `total` there produced the sentence the
-   * owner read on the live page: "Showing 1-3 of 1 document". Use
-   * `acRegisterTotal` to pick the denominator; never read `total` directly at a
-   * call site that can be on any tab.
-   */
+  /** Documents a PERSON has cleared off this page. Not a state of the send —
+   *  every other number here is a claim about what AutoCount did — which is why
+   *  it is not summed into `total`. BECAUSE it is not, the Cleared tab renders a
+   *  population `total` does not describe, and dividing by `total` there printed
+   *  "Showing 1-3 of 1 document" on the live page. Pick the denominator with
+   *  `acRegisterTotal`; never read `total` at a call site that can be on any tab. */
   archived: number;
   total: number;
 }
