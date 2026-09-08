@@ -98,8 +98,20 @@ and created after the cutover. **Re-run before quoting any of these** — the li
 sofa lanes move them within an afternoon, which is exactly why the report is a
 workflow and not a number typed into a document.
 
+**FIRST DISPATCH — SUCCESS.** Run
+[`34222415520`](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/34222415520),
+`completed success`, 2026-09-08 11:46 UTC, `main`, company 1. A
+`workflow_dispatch` workflow is not shipped until it has been dispatched once and
+reported success (CLAUDE.md); it could not be dispatched before the merge, because
+GitHub only lists one once the file is on the DEFAULT branch —
+`gh workflow run so-tally-verdict.yml --ref feat/so-tally-verdict` answered
+`HTTP 404: workflow so-tally-verdict.yml not found on the default branch`.
+
+The dispatched run printed **2,882 / 2,711 identical / 37 work / 109 cannot be
+compared / 25 book-gap** — identical to the local production run above, which is
+the outcome that had to be CHECKED rather than assumed, and its `PROOF` block
+lines up on every axis.
+
 **Ref.** `feat/so-tally-verdict`, PR #3267, 2026-09-08. Measured against
-reconcile run `34216507949` and the local production run above. The workflow's
-own first dispatch is recorded in the PR — GitHub only lists a
-`workflow_dispatch` workflow once it is on the default branch, so it cannot be
-dispatched before this merges.
+reconcile run `34216507949`, the local production run above, and dispatch
+`34222415520`.
