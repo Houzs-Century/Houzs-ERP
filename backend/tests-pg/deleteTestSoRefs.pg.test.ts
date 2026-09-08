@@ -114,8 +114,8 @@ async function seed(db: Sql) {
       ('HC-SO-013361',   'CONFIRMED', 1, 250000, 'SO-013361'),
       -- NOT 'DRAFT'. The enum above has no DRAFT and neither does the schema
       -- dump it was copied from, so seeding one made every test in this file
-      -- die in the fixture with `invalid input value for enum
-      -- scm.mfg_so_status: "DRAFT"` (run 34224696391) -- 17 red tests, one
+      -- die in the fixture with: invalid input value for enum
+      -- scm.mfg_so_status: "DRAFT"  (run 34224696391) -- 17 red tests, one
       -- wrong word, and none of the failures were about what they tested.
       -- Which value this row carries is incidental: line 270 nulls it and line
       -- 306 deletes it. It only has to be VALID and not CONFIRMED.
