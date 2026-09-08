@@ -11,6 +11,7 @@ import {
   executionRefusal,
   holdsAnyApproveKey,
   isOpenCancelStatus,
+  levelsFor,
   pendingLevel,
   readReason,
   rejectRefusal,
@@ -52,15 +53,20 @@ describe('the ladder', () => {
     expect(pendingLevel('APPROVED')).toBeNull();
     expect(pendingLevel('EXECUTED')).toBeNull();
     expect(pendingLevel('REJECTED')).toBeNull();
-    expect(statusAfterApproval(1)).toBe('L1_APPROVED');
-    expect(statusAfterApproval(2)).toBe('APPROVED');
+    expect(statusAfterApproval('SO', 1)).toBe('L1_APPROVED');
+    expect(statusAfterApproval('SO', 2)).toBe('APPROVED');
+    /* A Purchase Order takes one signature: the first is the last. */
+    expect(statusAfterApproval('PO', 1)).toBe('APPROVED');
+    expect(levelsFor('SO')).toBe(2);
+    expect(levelsFor('PO')).toBe(1);
   });
-  it('counts signatures for the "1 of 2" wording', () => {
-    expect(signaturesGiven('REQUESTED')).toBe(0);
-    expect(signaturesGiven('L1_APPROVED')).toBe(1);
-    expect(signaturesGiven('APPROVED')).toBe(2);
-    expect(signaturesGiven('EXECUTED')).toBe(2);
-    expect(signaturesGiven('WITHDRAWN')).toBe(0);
+  it('counts signatures for the "1 of 2" wording, per document', () => {
+    expect(signaturesGiven('SO', 'REQUESTED')).toBe(0);
+    expect(signaturesGiven('SO', 'L1_APPROVED')).toBe(1);
+    expect(signaturesGiven('SO', 'APPROVED')).toBe(2);
+    expect(signaturesGiven('SO', 'EXECUTED')).toBe(2);
+    expect(signaturesGiven('SO', 'WITHDRAWN')).toBe(0);
+    expect(signaturesGiven('PO', 'APPROVED')).toBe(1);
   });
   it('knows which requests are still open', () => {
     expect(isOpenCancelStatus('REQUESTED')).toBe(true);
@@ -77,7 +83,9 @@ describe('approving', () => {
     expect(approvalRefusal(req(), signer(2, ['scm.so_cancel.approve_l1']))).toEqual({ level: 1 });
     expect(approvalRefusal(req(), signer(2, ['scm.so_cancel.approve_l2']))).toMatchObject({ refusal: { error: 'approve_forbidden', httpStatus: 403 } });
     expect(approvalRefusal(req({ doc_type: 'PO' }), signer(2, ['scm.so_cancel.approve_l1']))).toMatchObject({ refusal: { error: 'approve_forbidden' } });
-    expect(approvalRefusal(req({ doc_type: 'PO' }), signer(2, ['scm.po_cancel.approve_l1']))).toEqual({ level: 1 });
+    expect(approvalRefusal(req({ doc_type: 'PO' }), signer(2, ['scm.po_cancel.approve']))).toEqual({ level: 1 });
+    /* The Purchase Order has no level 2: a row that somehow says L1_APPROVED is not signable. */
+    expect(approvalRefusal(req({ doc_type: 'PO', status: 'L1_APPROVED', l1_by: 2 }), signer(3, ['*']))).toMatchObject({ refusal: { error: 'not_pending', httpStatus: 409 } });
   });
   it('level 2 needs the level-2 key and a DIFFERENT person from level 1', () => {
     const l1Done = req({ status: 'L1_APPROVED', l1_by: 2 });
@@ -103,7 +111,8 @@ describe('rejecting and withdrawing', () => {
   it('either approver desk may reject while a signature is pending', () => {
     expect(rejectRefusal(req(), signer(2, ['scm.so_cancel.approve_l2']))).toBeNull();
     expect(rejectRefusal(req({ status: 'L1_APPROVED', l1_by: 2 }), signer(2, ['scm.so_cancel.approve_l1']))).toBeNull();
-    expect(rejectRefusal(req(), signer(2, ['scm.po_cancel.approve_l1']))).toMatchObject({ error: 'reject_forbidden', httpStatus: 403 });
+    expect(rejectRefusal(req(), signer(2, ['scm.po_cancel.approve']))).toMatchObject({ error: 'reject_forbidden', httpStatus: 403 });
+    expect(rejectRefusal(req({ doc_type: 'PO' }), signer(2, ['scm.po_cancel.approve']))).toBeNull();
     expect(rejectRefusal(req({ status: 'APPROVED' }), signer(2, ['*']))).toMatchObject({ error: 'not_pending', httpStatus: 409 });
   });
   it('the requester may withdraw at any open point; an approver may too; nobody else', () => {
@@ -114,8 +123,10 @@ describe('rejecting and withdrawing', () => {
     expect(withdrawRefusal(req({ status: 'EXECUTED', requested_by: 1 }), signer(1, []))).toMatchObject({ error: 'not_open', httpStatus: 409 });
   });
   it('holdsAnyApproveKey knows the document', () => {
-    expect(holdsAnyApproveKey('SO', signer(1, [CANCEL_APPROVE_KEY.SO[2]]))).toBe(true);
-    expect(holdsAnyApproveKey('PO', signer(1, [CANCEL_APPROVE_KEY.SO[2]]))).toBe(false);
+    expect(holdsAnyApproveKey('SO', signer(1, ['scm.so_cancel.approve_l2']))).toBe(true);
+    expect(holdsAnyApproveKey('PO', signer(1, ['scm.so_cancel.approve_l2']))).toBe(false);
+    expect(holdsAnyApproveKey('PO', signer(1, ['scm.po_cancel.approve']))).toBe(true);
+    expect(CANCEL_APPROVE_KEY.PO[2]).toBeUndefined();
     expect(holdsAnyApproveKey('XX', signer(1, ['*']))).toBe(false);
   });
 });
@@ -138,9 +149,12 @@ describe('what may be asked about, and what may run', () => {
     expect(cancelRequestRefusal('PO', 'DRAFT')).toMatchObject({ error: 'draft_needs_no_approval' });
   });
   it('the cancel may run only on an APPROVED request', () => {
-    expect(executionRefusal(null)).toMatchObject({ error: 'cancel_approval_required' });
-    expect(executionRefusal({ status: 'REQUESTED' })?.message).toContain('0 of 2');
-    expect(executionRefusal({ status: 'L1_APPROVED' })?.message).toContain('1 of 2');
-    expect(executionRefusal({ status: 'APPROVED' })).toBeNull();
+    expect(executionRefusal('SO', null)).toMatchObject({ error: 'cancel_approval_required' });
+    expect(executionRefusal('SO', { status: 'REQUESTED' })?.message).toContain('0 of 2');
+    expect(executionRefusal('SO', { status: 'L1_APPROVED' })?.message).toContain('1 of 2');
+    expect(executionRefusal('SO', { status: 'APPROVED' })).toBeNull();
+    expect(executionRefusal('PO', null)?.message).toContain('an approval');
+    expect(executionRefusal('PO', { status: 'REQUESTED' })?.message).toContain('0 of 1');
+    expect(executionRefusal('PO', { status: 'APPROVED' })).toBeNull();
   });
 });

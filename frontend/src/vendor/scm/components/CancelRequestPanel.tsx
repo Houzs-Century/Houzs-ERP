@@ -30,12 +30,16 @@ import { usePrompt } from './PromptDialog';
 import { serviceNotify } from '../lib/dialog-service';
 import { STATUS_TONES } from '../lib/status-pill';
 import {
+  approveLabel,
   cancelRequestLine,
+  isFinalLevel,
   pendingLevel,
   useApproveCancelRequest,
   useCancelRequest,
   useRejectCancelRequest,
   useWithdrawCancelRequest,
+  docTypeOfRow,
+  levelsFor,
   viewerCanApprove,
   viewerCanReject,
   viewerCanWithdraw,
@@ -82,6 +86,9 @@ export function CancelRequestPanel({ docType, docKey, docNumber, onExecute, exec
 
   const viewer = { userId: user?.id ?? null, can };
   const level = pendingLevel(open.status);
+  /* A Sales Order takes two signatures, a Purchase Order one — the final
+     signature is the one that cancels, whichever number it carries. */
+  const final = level != null && isFinalLevel(docType, level);
   const approved = open.status === 'APPROVED';
   const pending = busy || approve.isPending || reject.isPending || withdraw.isPending || !!executing;
 
@@ -90,12 +97,12 @@ export function CancelRequestPanel({ docType, docKey, docNumber, onExecute, exec
 
   const doApprove = async () => {
     if (!(await askConfirm({
-      title: level === 2 ? `Approve and cancel ${docNumber}?` : `Give level-1 approval to cancel ${docNumber}?`,
-      body: level === 2
-        ? 'This is the second and final approval. The document is cancelled on your signature — a cancelled sales order cannot be reactivated.'
+      title: final ? `Approve and cancel ${docNumber}?` : `Give level-1 approval to cancel ${docNumber}?`,
+      body: final
+        ? `This is the final approval. The document is cancelled on your signature${docType === 'so' ? ' — a cancelled sales order cannot be reactivated' : ''}.`
         : 'Level 2 still has to approve after you. Nothing is cancelled yet.',
-      confirmLabel: level === 2 ? 'Approve & cancel' : 'Approve (level 1)',
-      danger: level === 2,
+      confirmLabel: final ? 'Approve & cancel' : 'Approve (level 1)',
+      danger: final,
     }))) return;
     setBusy(true);
     try {
@@ -150,8 +157,8 @@ export function CancelRequestPanel({ docType, docKey, docNumber, onExecute, exec
       <Signatures row={open} />
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 2 }}>
         {viewerCanApprove(open, viewer) && (
-          <button type="button" style={btn(level === 2)} disabled={pending} onClick={doApprove}>
-            {level === 2 ? 'Approve & cancel (level 2)' : 'Approve (level 1)'}
+          <button type="button" style={btn(final)} disabled={pending} onClick={doApprove}>
+            {level != null ? approveLabel(docType, level) : 'Approve'}
           </button>
         )}
         {approved && onExecute && (
@@ -174,8 +181,8 @@ function Signatures({ row }: { row: CancelRequestRow }) {
   return (
     <div style={{ fontSize: 'var(--fs-11, 11px)', color: 'var(--fg-muted)', display: 'flex', flexWrap: 'wrap', gap: '4px 14px' }}>
       <span>Raised by {who(row.requested_by_name, row.requested_at)}</span>
-      <span>Level 1: {row.l1_at ? who(row.l1_by_name, row.l1_at) : 'pending'}</span>
-      <span>Level 2: {row.l2_at ? who(row.l2_by_name, row.l2_at) : 'pending'}</span>
+      <span>{levelsFor(docTypeOfRow(row)) > 1 ? 'Level 1' : 'Approval'}: {row.l1_at ? who(row.l1_by_name, row.l1_at) : 'pending'}</span>
+      {levelsFor(docTypeOfRow(row)) > 1 && <span>Level 2: {row.l2_at ? who(row.l2_by_name, row.l2_at) : 'pending'}</span>}
     </div>
   );
 }

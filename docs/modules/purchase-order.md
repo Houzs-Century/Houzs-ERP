@@ -268,7 +268,7 @@ with no per-area level consulted.
 | PATCH | `/:id/submit` | `:2904` | Legacy no-op/echo — returns 409 unless already SUBMITTED. Also 409 `purchase_location_id_required` if the PO has no ship-to warehouse (2026-08-02). |
 | PATCH | `/:id/confirm` | `:2998` | **The commit**: DRAFT → SUBMITTED. Blocked 409 `purchase_location_id_required` (via `poWarehouseGap`) if the header `purchase_location_id` is blank AND any line has no `warehouse_id` — a warehouse-less PO can't go live because its GR would receive into the wrong warehouse (owner 2026-08-02). |
 | POST | `/:id/send-to-supplier` | `:3019` | Email the PO PDF. Fail-closed on the `purchase_order` email channel (`:3032`). |
-| PATCH | `/:id/cancel` | `:3182` | → CANCELLED; releases SO quota AND clears the line's mig-0235 allocation sub-lines (a cancelled PO attributes nothing — 2026-08-02). **Since 2026-09-08 a non-DRAFT PO reaches this only after a cancellation request with a reason has been approved twice** — `cancelApprovalGuard('PO')` at the mount refuses 403 `cancel_approval_required` otherwise (`docs/modules/document-cancel-approval.md`). A DRAFT still cancels directly. |
+| PATCH | `/:id/cancel` | `:3182` | → CANCELLED; releases SO quota AND clears the line's mig-0235 allocation sub-lines (a cancelled PO attributes nothing — 2026-08-02). **Since 2026-09-08 a non-DRAFT PO reaches this only after a cancellation request with a reason has been approved (one Purchaser signature)** — `cancelApprovalGuard('PO')` at the mount refuses 403 `cancel_approval_required` otherwise (`docs/modules/document-cancel-approval.md`). A DRAFT still cancels directly. |
 | PATCH | `/:id/reopen` | `:3276` | CANCELLED → SUBMITTED; re-claims SO quota. Allocation sub-lines are NOT restored (they were cleared on cancel); the coarse `so_item_id` link remains, re-split via the allocation editor if needed. **Since 2026-08-13 it also runs `poWarehouseGap` and stamps `submitted_at`** — reopen was the third door to SUBMITTED and the only one with no warehouse gate, so cancel-then-reopen turned a warehouse-less DRAFT into a live, GR-receivable PO. |
 | POST | `/bulk-supplier-date` | — | **Was missing from this table until 2026-08-13.** Sets ONE supplier-REVISED delivery-date slot (`slot` 2/3/4 → `supplier_delivery_date_2..4`) across up to 100 POs. It never touches `supplier_id` and never touches `expected_at`. `applyToLines` **defaults to TRUE**, so unless the caller opts out it cascades onto every line's date as well. A downstream-locked or foreign-company PO is reported in `skipped`, never written; each updated PO still gets its own audit row. |
 
@@ -405,7 +405,7 @@ works and is multi-select at line level — but only for a line that is
   stamps `submitted_at`, writes a `POST` audit row, then runs `recomputeSoPicked`
   best-effort (`:2983-2989`). Idempotent on SUBMITTED / PARTIALLY_RECEIVED
   (`:2943`); rejects anything else with 409.
-- **Cancel** (`:3182`). Behind the two-approval request for any non-DRAFT PO
+- **Cancel** (`:3182`). Behind the reason + one-approval request for any non-DRAFT PO
   (`document-cancel-approval.md`). Refuses RECEIVED (`:3200`); idempotent on CANCELLED;
   then two locks — `poHasDownstream` (`:3208`) and `poHasOutstandingDropshipOut`
   (`:3214`). Releases every converted SO line's quota via `recomputeSoPicked`
@@ -1576,3 +1576,50 @@ normalised before two codes are called different.
 the tenth; deciding which of the two rows is the faithful copy — did the customer
 change the bed, or did the sales-order import mis-map it? — is the owner's.
 Ledger: `docs/bugs/0671-the-delta-sync-dedicated-9-sales-order-lines-to-purchase-ord.md`.
+
+## A sofa's purchase line and its sales compartments (2026-09-08)
+
+**One book line, one ERP row per compartment — on BOTH sides, or the sofa never
+ships.** `so_item_id` is single-valued, so a decomposed sofa needs one purchase
+row per sales compartment. Where the two sides hold a different NUMBER of rows,
+no dedication can be written at all, `isHardBoundLine` never lights the sales
+line, and every delivery-order entry point answers 409 `sofa_no_batch` — with
+the *"have no live supplier PO linked"* tail, which is the honest message and
+also the one that hides the real cause.
+
+Three tools own this edge and they do not overlap:
+
+| shape | tool | why it refuses the others |
+| --- | --- | --- |
+| ONE purchase row, ONE sales row | `repair-po-so-link-from-book.mjs` | a Map keyed by DtlKey would keep one row of a multi-row side |
+| SEVERAL on both sides, same products | `repair-po-so-link-sofa-compartments.mjs` | the pairing is a copy plus an identity match, not a choice |
+| ONE collapsed purchase row (`{model}-1S`), SEVERAL sales rows | `repair-collapsed-sofa-po-line.mjs` | the other two cannot invent a compartment; this one takes it from the BOOK's own Desc2 and only when the sales side already holds that exact multiset |
+
+All three share ONE pairing vocabulary — `scripts/lib/sofa-po-so-pair.mjs` and
+`scripts/lib/redecode-sofa-plan.mjs`. Two copies of the pairing rule existed for
+twenty minutes on 2026-09-08 and gave opposite answers on production about
+`HC-PO-010040`; do not write a fourth.
+
+**`{model}-1S` is ambiguous and that is the trap.** It is both the importer's
+"could not read the build" placeholder AND a legitimate one-seater. Only the
+`SOFA UNPARSED` remark separates them, and
+`redecode-collapsed-sofa-lines.mjs` requires BOTH (`isPlaceholderLine`). A
+purchase row that decoded to a single `1S` from a text today's parser reads as
+`2A(LHF)+1A(RHF)` carries no marker, so it is invisible to that tool — the class
+`docs/bugs/0715` was written about. Widening the predicate would rewrite live
+one-seaters; the narrow answer is to require the sales side to state the same
+multiset independently.
+
+**A link does not recompute readiness** (`docs/bugs/0675`). After any of the
+three, dispatch *Recompute SO stock allocation*, then *Recompute SO
+po_qty_picked* — the SO -> PO ceiling those missing links left reading LOW is a
+symptom of the same gap, not a second defect
+(`docs/bugs/0705-nothing-ever-compared-the-erp-s-transfer-counters-to-autocou.md`).
+
+**The batch guard is never relaxed to make a document pass.** A sofa set must
+ship whole from one dye lot (`src/scm/lib/sofa-batch-guard.ts`). Once the link is
+right the line reaches READY through a covering batch, or through the owner's
+hard-binding rule with `allocated_batch_no` still NULL — in which case the ship
+goes through the drop-ship confirmation, which `buildDropshipOffenders` can only
+offer once every affected line has a bound PO. That is the difference the link
+makes; the guard itself does not move.
