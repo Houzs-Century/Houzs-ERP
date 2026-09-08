@@ -67,6 +67,8 @@ import { useSetBreadcrumbs } from "../../hooks/useBreadcrumbs";
 import { useStaffLookup } from "../../hooks/useStaffLookup";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
+import { CancelRequestPanel } from "../../vendor/scm/components/CancelRequestPanel";
+import { useCancelRequestAction } from "./use-cancel-request-action";
 import { DocumentRelationshipMapModal, DocumentChoiceDialog } from "../../components/scm-v2/DocumentRelationshipMapModal";
 import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
@@ -563,6 +565,7 @@ function SalesOrderDetailV2ReadOnly() {
      the badge + source-PO chips upgrade in place when this arrives. */
   const coverage = useSoLineCoverage(docNo ?? null);
   const updateStatus = useUpdateMfgSalesOrderStatus();
+  const requestCancel = useCancelRequestAction("so");
   const { nameOf: salespersonNameOf } = useStaffLookup();
   const notify = useNotify();
   const askConfirm = useConfirm();
@@ -704,20 +707,13 @@ function SalesOrderDetailV2ReadOnly() {
     setPayEditing(true);
     paymentsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
-  const doCancel = async () => {
+  /* Cancel is a REQUEST now (owner 2026-09-08): a reason, then two approvals;
+     the cancel itself (executeCancel) is run by CancelRequestPanel on the
+     second signature, with every guard the status route always had. */
+  const doCancel = () => { if (salesOrder) void requestCancel(salesOrder.doc_no, salesOrder.doc_no); };
+  const executeCancel = () => {
     if (!salesOrder) return;
-    if (await askConfirm({
-      title: `Cancel sales order ${salesOrder.doc_no}?`,
-      body: "This cannot be undone.",
-      confirmLabel: "Cancel order",
-      danger: true,
-    })) {
-      updateStatus.mutate({
-        docNo: salesOrder.doc_no,
-        status: "cancelled",
-        expectedStatus: salesOrder.status,
-      });
-    }
+    updateStatus.mutate({ docNo: salesOrder.doc_no, status: "CANCELLED", expectedStatus: salesOrder.status });
   };
   /* History (owner 2026-08-13: "点history的时候没有反应").
      This used to `navigate(\`…/${docNo}?tab=history\`)` — to the route we are
@@ -1066,6 +1062,8 @@ function SalesOrderDetailV2ReadOnly() {
         </div>
       </div>
 
+      <CancelRequestPanel docType="so" docKey={salesOrder.doc_no} docNumber={salesOrder.doc_no} onExecute={executeCancel} executing={updateStatus.isPending} />
+
       {/* ─── Desktop sticky header (hidden on phone) ────────────────── */}
       {/* Nick 2026-07-09 — "这个圈起来的需要 pin 起来".
           TopNavbar (components/TopNavbar.tsx) sits sticky top-0 z-30 h-12
@@ -1195,7 +1193,7 @@ function SalesOrderDetailV2ReadOnly() {
                 disabled={migratedLocked}
                 title={migratedLocked ? lockedEditHint : undefined}
               >
-                Cancel SO
+                Request cancellation
               </Button>
             )}
             <Button

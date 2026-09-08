@@ -184,7 +184,7 @@ unwinds the SI first.
 | `DELIVERED` | customer has it | `PATCH /:docNo/status` | `so-delivery-sync.ts` — advance, when every live line is fully covered and the current status is one of CONFIRMED / IN_PRODUCTION / READY_TO_SHIP / SHIPPED | — |
 | `INVOICED` | billed | `PATCH /:docNo/status` | **nothing** | — |
 | `CLOSED` | 不追剩下的了 — stop chasing the remainder | `PATCH /:docNo/status` (the list's right-click **Close remaining**) | **nothing, ever** | No new Delivery Order and no new PO line — `SO_UNDELIVERABLE_STATUSES` (`shared/so-deliverable-states.ts`) and `SO_UNORDERABLE_STATUSES` (`lib/source-document-gates.ts`). Terminal for MRP/allocation (`SO_TERMINAL_STATES`): the order stops being demand. **One-way** — cannot move to any earlier live status (409); only `CANCELLED` is still reachable. Commission on what was delivered is UNAFFECTED. |
-| `CANCELLED` | killed | `PATCH /:docNo/status` | — | **FINAL.** Cannot be reactivated (`so_cancelled_final`, 409) — the deposit already became customer credit. If it also reached AutoCount, a second guard refuses first (`cancel_is_final`, 409) because the 2.2 SDK has no un-cancel. Terminal for MRP/allocation. |
+| `CANCELLED` | killed | `PATCH /:docNo/status` — **only after a cancellation REQUEST with a reason has been approved twice** (owner 2026-09-08; `cancelApprovalGuard` refuses 403 `cancel_approval_required` otherwise — see `docs/modules/document-cancel-approval.md`) | — | **FINAL.** Cannot be reactivated (`so_cancelled_final`, 409) — the deposit already became customer credit. If it also reached AutoCount, a second guard refuses first (`cancel_is_final`, 409) because the 2.2 SDK has no un-cancel. Terminal for MRP/allocation. |
 | `ON_HOLD` | **RETIRED as a status, 2026-08-22 (mig 0324)** | **nothing** | — | A hold is a MARKER now, not a step — see §0a below. `PATCH /:docNo/status` refuses this target with `hold_is_not_a_status` (409); it is still accepted as a `from`, so a legacy row can leave. The label stays in `scm.mfg_so_status` for ever (no `DROP VALUE`) and every pill map keeps rendering it. |
 
 ### §0a. A HOLD is a MARKER beside the status, not a step in the order's life
@@ -262,9 +262,11 @@ button at all.
 (`frontend/src/pages/scm-v2/row-menus.ts`, and the rule that decides membership
 is in `docs/modules/document-status-vocabulary.md` §1b): **Confirm** on a draft,
 **Put On Hold** / **Take Off Hold** (the mig-0324 MARKER, never a status write),
-**Close remaining** on any live order, and **Cancel Sales Order** alone at the
-bottom in red. Close and Cancel both sit behind a confirmation that says in plain
-words what each one does to the money. **Close remaining is not offered** on a
+**Close remaining** on any live order, and **Request cancellation** alone at the
+bottom in red. Close sits behind a confirmation that says in plain words what it
+does to the money; **Request cancellation** (owner 2026-09-08) asks for a reason and
+raises a request that two approvers must sign before the cancel runs —
+`use-cancel-request-action.ts`, `docs/modules/document-cancel-approval.md`. **Close remaining is not offered** on a
 DRAFT (no remainder to give up on), a CANCELLED order or an already CLOSED one —
 but the hold entries ARE still offered on all of those, because a marker says
 nothing about where the order is.

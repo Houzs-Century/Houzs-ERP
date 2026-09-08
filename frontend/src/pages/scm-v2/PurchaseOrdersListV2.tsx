@@ -74,6 +74,7 @@ import { convertToLink, transferToLabel, transferFromLabel } from "../../lib/con
 import { isCancelledDocStatus } from "../../lib/scm";
 import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
 import { useHoldAction } from "./use-hold-action";
+import { useCancelRequestAction } from "./use-cancel-request-action";
 import { StatusWithHold, rowIsHeld } from "../../vendor/scm/components/HoldChip";
 import { usePrintDocument } from "../../components/scm-v2/PrintChainProvider";
 import { purchaseOrderPrintChain } from "../../lib/printChain";
@@ -777,6 +778,7 @@ export function PurchaseOrdersListV2() {
   const statsPending =
     isLoading || isPlaceholderData || Boolean(error) || searchTransition.resultsAreStale;
   const cancelPo = useCancelPurchaseOrder();
+  const requestCancel = useCancelRequestAction("po");
   const holdAction = useHoldAction("po");
 
   // Server already filtered + sorted this page — render verbatim. The MRP-derived
@@ -1032,8 +1034,12 @@ export function PurchaseOrdersListV2() {
     transferToGrn: goGrnFromPo, cancel: (r) => doCancel(r), setHold: setPoHold,
     canReceive: (r) => !rowIsHeld(r) && ["SUBMITTED", "PARTIALLY_RECEIVED"].includes(r.status.toUpperCase()),
     canCancel: (r) => !["CANCELLED", "RECEIVED"].includes(r.status.toUpperCase()),
+    isDraft: (r) => r.status.toUpperCase() === "DRAFT",
   });
+  /* Owner 2026-09-08 — a live PO is cancelled by REQUEST (reason + two
+     approvals); only a DRAFT still cancels directly, behind the confirm. */
   const doCancel = async (r: PoHeaderRow) => {
+    if (r.status.toUpperCase() !== "DRAFT") { void requestCancel(r.id, r.po_number); return; }
     if (await askConfirm({
       title: `Cancel PO ${r.po_number}?`,
       body: "This can only be undone if no GRN has been raised.",

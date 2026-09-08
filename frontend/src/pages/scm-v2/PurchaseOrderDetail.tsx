@@ -82,6 +82,8 @@ import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { SkeletonDetailPage } from '../../vendor/scm/components/Skeleton';
 import { RelationshipMapButton } from '../../vendor/scm/components/RelationshipMapButton';
 import { StatusPill } from '../../vendor/scm/components/StatusPill';
+import { CancelRequestPanel } from '../../vendor/scm/components/CancelRequestPanel';
+import { useCancelRequestAction } from './use-cancel-request-action';
 import { SearchableSelect } from '../../vendor/scm/components/SearchableSelect';
 import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
 import { canOperatePurchaseOrders } from '../../auth/salesAccess';
@@ -211,6 +213,7 @@ export const PurchaseOrderDetail = () => {
   const updateHeader = useUpdatePurchaseOrderHeader();
   // PR-DRAFT-removal — Submit button removed (POs are SUBMITTED on create).
   const cancel = useCancelPurchaseOrder();
+  const requestCancel = useCancelRequestAction('po');
   const confirm = useConfirmPurchaseOrder();
   const reopen = useReopenPurchaseOrder();
   const addItem = useAddPurchaseOrderItem();
@@ -218,6 +221,15 @@ export const PurchaseOrderDetail = () => {
   const deleteItem = useDeletePurchaseOrderItem();
   const askConfirm = useConfirm();
   const notify = useNotify();
+  /* The cancel itself — the same mutation the Cancel button always ran. A DRAFT
+     calls it directly; a live PO reaches it through CancelRequestPanel after
+     the second signature (the server refuses it sooner). */
+  const executeCancel = () => {
+    if (!id) return;
+    cancel.mutate(id, {
+      onError: (err) => notify({ title: 'Cancel failed', body: `${err instanceof Error ? err.message : 'Something went wrong.'}`, tone: 'error' }),
+    });
+  };
   // PR #102 — PO PDF (AutoCount layout) needs the Purchase Location's
   // human-readable name; the header only carries the warehouse id. Load
   // warehouses once at the top so the print handler can resolve it.
@@ -997,17 +1009,20 @@ export const PurchaseOrderDetail = () => {
               The Delete half of that report no longer exists: the endpoint and
               both buttons were removed 2026-08-11 (#1939) under the owner rule
               不可以删只可以 cancel. Cancel + Reopen are the whole surface. */}
+          {/* Owner 2026-09-08 — a LIVE PO is cancelled by REQUEST (reason + two
+              approvals; CancelRequestPanel runs executeCancel on the second
+              signature). A DRAFT committed nothing to anyone and still cancels
+              directly, behind the confirm. The server enforces the same split. */}
           {(po.status === 'DRAFT' || po.status === 'SUBMITTED' || po.status === 'PARTIALLY_RECEIVED') && (
             <Button variant="ghost" size="md"
               onClick={async () => {
+                if (po.status !== 'DRAFT') { void requestCancel(po.id, po.po_number); return; }
                 if (!(await askConfirm({ title: `Cancel PO ${po.po_number}?`, body: 'This sets status to CANCELLED — line items + linked docs stay for audit.', confirmLabel: 'Cancel PO', danger: true }))) return;
-                cancel.mutate(po.id, {
-                  onError: (err) => notify({ title: 'Cancel failed', body: `${err instanceof Error ? err.message : 'Something went wrong.'}`, tone: 'error' }),
-                });
+                executeCancel();
               }}
               disabled={cancel.isPending}>
               <Ban {...ICON} />
-              <span>{cancel.isPending ? 'Cancelling…' : 'Cancel'}</span>
+              <span>{cancel.isPending ? 'Cancelling…' : po.status === 'DRAFT' ? 'Cancel' : 'Request cancellation'}</span>
             </Button>
           )}
           {/* Reopen a cancelled PO (Commander 2026-06-16 — "PO cancel 了 不可以
@@ -1078,6 +1093,7 @@ export const PurchaseOrderDetail = () => {
           WhatsApps it themselves). Perm gate is FE-hint only; server 403 is the
           real gate. Hidden for other amendment states (those are driven from the
           SO detail). Mirrors SalesOrderDetail's amendment-pending banner. */}
+      <CancelRequestPanel docType="po" docKey={po.id} docNumber={po.po_number} onExecute={executeCancel} executing={cancel.isPending} />
       {openAmendment && (openAmendment.status === 'SO_APPROVED' || openAmendment.status === 'PO_APPROVED') && (
         <div style={{
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',

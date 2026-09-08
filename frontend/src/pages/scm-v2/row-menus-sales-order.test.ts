@@ -103,7 +103,7 @@ describe("a closed order is terminal on this menu", () => {
   test("still offers Cancel, alone, last and red", () => {
     const m = soMenu()(R({ status: "CLOSED" }));
     const last = m[m.length - 1]!;
-    expect(last.label).toBe("Cancel Sales Order");
+    expect(last.label).toBe("Request cancellation");
     expect(last.danger).toBe(true);
     expect(m[m.length - 2]!.divider).toBe(true);
   });
@@ -165,7 +165,7 @@ describe("Print, for the whole chain", () => {
   test("the groups after Print are untouched", () => {
     const items = labels(soMenu()(withChain({ status: "DRAFT", do_refs: [], si_refs: [] })));
     expect(items).toEqual([
-      "Open", "Edit", "Print", "—", "Confirm", "Put On Hold", "—", "Cancel Sales Order",
+      "Open", "Edit", "Print", "—", "Confirm", "Put On Hold", "—", "Request cancellation",
     ]);
   });
 });
