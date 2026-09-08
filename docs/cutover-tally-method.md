@@ -187,6 +187,45 @@ calls it checked when nothing checked it. It gets its own column, always.
 `isTallied` in `backend/scripts/lib/so-tally-verdict.mjs`. Not "few", not "only
 the declared ones are left". No summary writer gets a vote.
 
+**A refusal PRINTS THE VALUE WE HOLD — added 2026-09-09.** The
+`CANNOT BE COMPARED` list used to print the document number and the axis name
+and stop, so an order the ERP already holds a perfectly good build for reached
+the owner as a blank to fill from memory:
+
+```
+HC-SO-013503 (SO-013503)  [PROCEEDED] — sofa build not verifiable
+```
+
+He pushed back — 「所以基本上model和sofa compartment基本上都有了啊？那为什么你说没
+有呢？」 — and he was right: the photograph and the book's `Desc2` had been
+checked, and **what our own database holds had not**. It now reads:
+
+```
+HC-SO-013503 (SO-013503)  [PROCEEDED] — sofa build not verifiable
+      sofa build not verifiable: … we hold "1A(LHF)+1NA+1A(RHF)" — the book's
+      Desc2 does not state the pieces
+```
+
+which is a one-word confirmation instead of a research task.
+
+Two notes for anyone extending this:
+
+- The build is **read, never recomputed**. `variant-reconcile.mjs` already sets
+  `cell.erp = have.join("+")` before the `UNREADABLE` branch;
+  `variant-report.mjs` records that value. A second computation of the piece
+  list is how two statements of one rule come to disagree (`docs/bugs/0708`).
+- It prints on the **cannot-compare list only**. A `work` row already names a
+  real difference on its axis; a refusal alone is the thing nobody can act on.
+  `bucketOf` and `isTallied` are untouched — this prints, it does not
+  reclassify, and `tests/soTallyVerdict.test.mjs` pins that the document stays
+  in `unanswerable`.
+
+To ask the same question about any document directly, without the reconcile:
+**What the ERP holds for a sales order (read-only)** ->
+`backend/scripts/diag-so-erp-build.mjs`, which takes `DOCS=` as ERP or AutoCount
+numbers and prints every line plus the piece list. It compares nothing.
+See `docs/bugs/0728`.
+
 **Two things that are NOT differences, per type, and are printed with the ruling
 that made them so** — do not "repair" either into a difference:
 
