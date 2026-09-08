@@ -1290,6 +1290,49 @@ query over the survivors. That is the fix for the 2026-08-20 re-issue, not a
 regression — see `docs/doc-number-reissue-coe.md` and the 2026-06-12 note in
 `scm/lib/doc-no.ts`.
 
+#### Thirty people pressing Save at the same second (owner, 2026-09-08)
+
+His question before the module opened to the whole sales floor: 「确保检查看
+document number 怎么跑 以免 30 个人同时开单的话号码大家撞」. **No two of them can
+get the same number, and none of them sees an error.** Three independent layers,
+in the order they act:
+
+1. **The claim is atomic.** `scm.next_doc_no_n` (migration 0316) is one
+   `INSERT … ON CONFLICT … DO UPDATE … RETURNING` statement, so the second
+   caller waits on the first's row lock and reads the incremented counter. Two
+   creates cannot read the same value, however close together they arrive.
+2. **The floor cannot make it wrong.** `mintMonthlyDocNo` reads the month's live
+   max first and passes it as `p_floor`; the RPC answers
+   `GREATEST(counter, floor + 1)`. A stale, truncated or empty floor can only be
+   IGNORED, so the read that precedes the claim is not a race window.
+3. **The unique index is the backstop, and `insertWithDocNoRetry` is what turns
+   it into a retry instead of a 500.** `scm.mfg_sales_orders.doc_no` is the
+   primary key. The create path mints at `mfg-sales-orders.ts:3365` — early,
+   because a PWP voucher claim is reserved against the number before the header
+   exists — and there is exactly ONE header insert, at `:5006`, wrapped in
+   `insertWithDocNoRetry`. Its first attempt reuses the already-minted number
+   and a re-mint only happens on a `23505`. **`tries` is 8 normally and 1 when a
+   PWP code was claimed**, deliberately: a re-mint would orphan
+   `pwp_codes.redeemed_doc_no`, so a promo order fails clean and rolls the claim
+   back rather than retrying.
+
+Proved end to end, not by reading: `backend/tests-pg/docNoConcurrentCreate.pg.test.ts`
+fires 30 concurrent creates on 30 real connections through the real
+`mintMonthlyDocNo` + `insertWithDocNoRetry`, and asserts 30 documents, 30
+distinct numbers, zero errors. It also holds all thirty at a barrier so they
+share an IDENTICAL floor, and shows every one of them still minted exactly once
+— the counter, not the retry, is what makes it safe. The RED is in the same
+file: with the counter switched off at the transport (`counter: false`, which is
+the real pre-0316 / pre-migration state) the same thirty-way race hands ONE
+number to all thirty and refuses twenty-nine with `23505`.
+
+**Past 1,000 documents in one month** the numbering does not break. The floor
+read pages (`fetchMonthlyDocNos` → `paginateAll`), the suffix widens to four
+digits, `maxMonthlySuffix` parses any width, and a truncated floor is harmless
+under the counter. What is left is cost: one extra PostgREST round trip per
+create per 1,000 rows in that month. `.github/workflows/doc-no-headroom.yml`
+reports how far the busiest month has ever got.
+
 ### Caching / loading behaviour (why the list opens instantly)
 Three layers, tuned so the list never shows a full-load spinner on a revisit:
 1. **react-query in-memory** (`lib/queryClient.ts`) — `staleTime 30s`, `gcTime 30min`.
