@@ -38,6 +38,55 @@ export interface SoPaidInputs {
 }
 
 /**
+ * What the SCREEN needs on top of the paid rule: the SECOND total column.
+ *
+ * A separate interface rather than a field on `SoPaidInputs`, because the two
+ * audiences take different inputs. `soOutstandingSen` writes AutoCount's
+ * `UDF_BALANCE` and must keep answering off `total_revenue_sen` alone; only the
+ * screen is allowed to fall back. Extending here means the compiler enumerates
+ * the `soBalanceSen` call sites and leaves the write-back's untouched.
+ */
+export interface SoBalanceInputs extends SoPaidInputs {
+  /**
+   * `scm.mfg_sales_orders.local_total_sen` — the order total the ERP prints,
+   * and the ONLY total an AutoCount-imported order has (the cutover importer's
+   * header column list carries `local_total_sen` and not `total_revenue_sen`;
+   * `import-ac-outstanding-so.mjs`'s `HCOLS`).
+   */
+  localTotalSen: number;
+}
+
+/**
+ * The order total a HUMAN is shown, in sen.
+ *
+ * `total_revenue_sen` when `recomputeTotals` has run, `local_total_sen`
+ * otherwise. Both are 0 only when the order has no total at all, and THAT is
+ * the case the balance below refuses to answer.
+ */
+export function soDisplayTotalSen(a: SoBalanceInputs): number {
+  return a.totalRevenueSen > 0 ? a.totalRevenueSen : a.localTotalSen;
+}
+
+/**
+ * Total minus paid, SIGNED — the one subtraction, shared with the Fair Report.
+ *
+ * `fairBalanceSen` (scm/lib/fair-report.ts) delegates here. Two names because
+ * the two callers choose a different AMOUNT to subtract from — the report uses
+ * the figure it prints in its own Amount column — but the arithmetic, and the
+ * decision NOT to clamp it, is one rule in one place. A third hand-rolled
+ * `total - paid` is what put a stale header column into the report's Balance
+ * (docs/bugs/0496-*).
+ */
+export function signedBalanceSen(
+  totalSen: number | null | undefined,
+  paidSen: number | null | undefined,
+): number {
+  const n = (v: number | null | undefined): number =>
+    typeof v === 'number' && Number.isFinite(v) ? v : 0;
+  return n(totalSen) - n(paidSen);
+}
+
+/**
  * Everything received on this order, in sen.
  *
  * The header deposit is added ONLY when the ledger does not already carry it as
@@ -71,24 +120,37 @@ export function soOutstandingSen(a: SoPaidInputs): number {
  * The SIGNED balance for a HUMAN — negative means over-collected, and the UI
  * paints that red (owner 2026-08-16: 「需要可以超收 negative 边红色」).
  *
- * WHY THIS IS NOT JUST `total − paid`. `total_revenue_sen` is 0 on 2,687 of
+ * IT SUBTRACTS FROM `soDisplayTotalSen`, NOT FROM `total_revenue_sen`, and that
+ * is the whole of this function's history. `total_revenue_sen` is 0 on 2,687 of
  * production's 2,824 live orders — every AutoCount-imported one, where the real
  * figure sits in `local_total_sen` and `recomputeTotals` has never run
- * (probe-so-overpay, run 31938735652). Those rows carry real payments, so a
- * bare subtraction would paint 2,121 legacy orders a large angry red for money
- * that was never over-collected — RM 9.26m of false alarm. A zero total is
- * "unknown", not "owes nothing", so it answers 0 exactly as it does today and
- * only a KNOWN total is allowed to go negative. Fixing that 0 is a separate
- * job (the detail page under-reports those orders' balance today, in the safe
- * direction); this function must not turn it into a scarier bug in passing.
+ * (probe-so-overpay, run 31938735652). Reading only that column, this answered
+ * 0 for all of them, and `GET /:docNo` stamps its answer over the header's own
+ * `balance_sen`, so a partly-paid migrated order showed the customer's whole
+ * outstanding amount as SETTLED — Total 3,200, Paid 1,600, Balance 0.00 on the
+ * owner's phone (docs/bugs/0723-*), while the SO LIST beside it read
+ * `balance_sen_live` and said 1,600.
+ *
+ * THE FALLBACK IS NOT A GUESS: the cutover importer wrote the ledger row as
+ * `paid = total − UDF_BALANCE` against the same `local_total_sen` it stored, so
+ * `local_total_sen − paid` reproduces AutoCount's own outstanding figure by
+ * construction (`import-ac-outstanding-so.mjs`, and the note on
+ * `readSoOutstandingSen`). It cannot mass-produce the red screen the old guard
+ * was protecting against either — that subtraction is `min(total, UDF_BALANCE)`,
+ * which is negative only where AutoCount itself recorded an over-collection.
+ *
+ * THE GUARD THAT STAYS: an order with NO total in EITHER column answers 0. A
+ * zero total is "unknown", not "owes nothing", and a bare subtraction there
+ * would paint money that was never over-collected a large angry red.
  */
-export function soBalanceSen(a: SoPaidInputs): number {
-  if (!(a.totalRevenueSen > 0)) return 0;
-  return a.totalRevenueSen - soPaidSen(a);
+export function soBalanceSen(a: SoBalanceInputs): number {
+  const total = soDisplayTotalSen(a);
+  if (!(total > 0)) return 0;
+  return signedBalanceSen(total, soPaidSen(a));
 }
 
 /**
- * The two header numbers this rule needs, off a raw `mfg_sales_orders` row.
+ * The header numbers this rule needs, off a raw `mfg_sales_orders` row.
  *
  * Here rather than at the call site so the COLUMN NAMES live beside the rule
  * that uses them — the whole failure mode is a reader picking `balance_sen`,
@@ -96,15 +158,22 @@ export function soBalanceSen(a: SoPaidInputs): number {
  * non-numeric value reads as 0, which is what the SO detail page has always
  * done; the write-back's own reader refuses the document instead, because a
  * screen showing 0 and a ledger asserting 0 are different acts.
+ *
+ * A CALLER FEEDING `soBalanceSen` MUST SELECT `local_total_sen`. Omitted from
+ * the select it reads as 0 here, which puts a migrated order back on the only
+ * total it does not have. `HEADER` in `routes/mfg-sales-orders.ts` carries it;
+ * the callers that take only `soPaidSen` off this (reports.ts, si-order-deposit)
+ * are unaffected either way.
  */
 export function soPaidInputsOf(
   header: Record<string, unknown> | null | undefined,
   ledgerPaidSen: number,
   depositInLedger: boolean,
-): SoPaidInputs {
+): SoBalanceInputs {
   const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
   return {
     totalRevenueSen: num(header?.total_revenue_sen),
+    localTotalSen: num(header?.local_total_sen),
     headerDepositSen: num(header?.deposit_sen),
     ledgerPaidSen,
     depositInLedger,

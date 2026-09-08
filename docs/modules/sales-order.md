@@ -3875,6 +3875,31 @@ Best-effort throughout, exactly like the AutoCount enqueue and the GL posting
 beside them — a failure never fails the operator's save, and the next roll
 self-heals.
 
+### The BALANCE a human is shown — which total it subtracts from (2026-09-08)
+
+The order total lives in TWO columns and the balance rule reads whichever one is
+filled. `recomputeTotals` writes `local_total_sen = total_revenue_sen =
+grandTotal` on every edit, so a modern order carries the same figure in both;
+an AutoCount-imported one carries it in `local_total_sen` ONLY, because the
+cutover importer's header column list (`HCOLS` in
+`backend/scripts/import-ac-outstanding-so.mjs`) does not include
+`total_revenue_sen` and the column defaults to `0 NOT NULL`.
+
+| | |
+|---|---|
+| The rule | `soBalanceSen` in `backend/src/scm/shared/so-outstanding.ts` — `soDisplayTotalSen` minus `soPaidSen`, SIGNED (negative = over-collected, painted red; owner 2026-08-16) |
+| The total it picks | `total_revenue_sen` when > 0, else `local_total_sen` (`soDisplayTotalSen`) |
+| What it still refuses | an order with NO total in either column answers **0**. A zero total is UNKNOWN, not "owes nothing" |
+| Where it is served | `GET /mfg-sales-orders/:docNo` stamps it as `balance_sen` on the response, over the header column of the same name — which is NOT a balance (see `so-outstanding.ts`'s own header for the three candidates) |
+| The shared client half | `deriveBalance` (`frontend/src/vendor/scm/lib/so-detail-gates.ts`), consumed by the mobile detail KPI and the desktop print-preview card. A server balance of **0** does not outrank a computable `total - paid`; a NON-zero one does, because only the server applies the legacy header-deposit rule |
+| The write-back's rule is DIFFERENT | `soOutstandingSen` is clamped at 0 and does NOT fall back — AutoCount's `UDF_BALANCE` is only ever written from a total the ERP itself recomputed |
+
+Until 2026-09-08 the rule read `total_revenue_sen` alone, so the detail page
+answered Balance 0.00 for every migrated order while the LIST beside it (reading
+the view's `balance_sen_live`) answered correctly — the owner's own order showed
+Total RM 3,200.00, Paid RM 1,600.00, Balance RM 0.00
+(`docs/bugs/0723-the-sales-order-detail-showed-a-paid-up-balance-of-0-on-ever.md`).
+
 ### Payment methods: THREE choosable, FOUR protected — and one list feeds every picker
 
 Every payment dropdown on both surfaces renders from **`scm.so_dropdown_options`**

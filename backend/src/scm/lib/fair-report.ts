@@ -16,6 +16,7 @@
 // ----------------------------------------------------------------------------
 
 import { isFinanceViewer, isSalesDirectorUser } from '../../services/pmsAccess';
+import { signedBalanceSen } from '../shared/so-outstanding';
 import type { AuthUser } from '../../services/auth';
 
 // ── Stage ────────────────────────────────────────────────────────────────────
@@ -219,18 +220,21 @@ export interface FairSoMoney {
  * legacy-deposit rule: the header `deposit_sen` counts only when the ledger has
  * no `is_deposit` row, or every modern order double-counts its deposit.
  *
- * It is subtracted from the SAME `amount_sen` this report prints, not from
- * `total_revenue_sen`, so the Balance column always reconciles with the Amount
- * column beside it. That is why this is not `soBalanceSen`: that function
- * deliberately answers 0 when `total_revenue_sen` is 0, to keep a negative out
- * of AutoCount's `UDF_BALANCE`, and a report that printed a large Amount next
- * to a 0 Balance would just be inconsistent in a different place.
+ * It is subtracted from the SAME `amount_sen` this report prints, so the
+ * Balance column always reconciles with the Amount column beside it. That is
+ * the only reason this is not `soBalanceSen`: the two differ in which TOTAL
+ * they choose, not in the arithmetic, which is why the subtraction itself is
+ * `signedBalanceSen` in `scm/shared/so-outstanding.ts` and is not written out
+ * twice. (Until 2026-09-08 they differed in substance too — `soBalanceSen`
+ * answered 0 whenever `total_revenue_sen` was 0, and this docblock said so. It
+ * now falls back to `local_total_sen`, so a migrated order's Balance agrees on
+ * both surfaces; `docs/bugs/0723-*`.)
  *
  * Signed on purpose — an over-collected order reads negative, which the owner
  * asked to see rather than have clamped away.
  */
 export function fairBalanceSen(amountSen: number | null | undefined, paidSen: number | null | undefined): number {
-  return n(amountSen) - n(paidSen);
+  return signedBalanceSen(amountSen, paidSen);
 }
 
 /** Assemble the money half of a stage=so row from the SO header columns. */
