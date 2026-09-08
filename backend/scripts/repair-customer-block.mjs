@@ -196,7 +196,7 @@ async function main() {
       SELECT doc_no, linked_ac_docno, address1, address2, address3, address4, city, postcode
         FROM scm.mfg_sales_orders
        WHERE company_id = ${CO}
-         AND COALESCE(UPPER(status), '') <> 'CANCELLED'`;
+         AND COALESCE(UPPER(status::text), '') <> 'CANCELLED'`;
     for (const s of rows) {
       if (!vacant(s.city)) continue;
       const addr = joinAddr(s.address1, s.address2, s.address3, s.address4);
@@ -235,7 +235,7 @@ async function main() {
         LEFT JOIN scm.mfg_sales_orders s
                ON s.doc_no = d.so_doc_no AND s.company_id = d.company_id
        WHERE d.company_id = ${CO}
-         AND COALESCE(UPPER(d.status), '') <> 'CANCELLED'`;
+         AND COALESCE(UPPER(d.status::text), '') <> 'CANCELLED'`;
     for (const d of rows) {
       /* The sales order as the carry map expects it. The city the SO arm is
          about to write is applied here in memory so ONE run closes both. */

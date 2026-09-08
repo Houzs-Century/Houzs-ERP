@@ -105,7 +105,7 @@ async function main() {
       LEFT JOIN scm.mfg_sales_orders s
              ON s.doc_no = d.so_doc_no AND s.company_id = d.company_id
      WHERE d.company_id = ${CO}
-       AND COALESCE(UPPER(d.status), '') <> 'CANCELLED'`;
+       AND COALESCE(UPPER(d.status::text), '') <> 'CANCELLED'`;
 
   const noContact = dos.filter((d) => blank(d.phone) && blank(d.address1) && blank(d.address2));
   const soHasBlock = (d) => has(d.so_phone) || has(d.so_a1) || has(d.so_a2) || has(d.so_a3) || has(d.so_a4);
@@ -153,7 +153,7 @@ async function main() {
            address1, address2, address3, address4, city, customer_state, postcode
       FROM scm.mfg_sales_orders
      WHERE company_id = ${CO}
-       AND COALESCE(UPPER(status), '') <> 'CANCELLED'`;
+       AND COALESCE(UPPER(status::text), '') <> 'CANCELLED'`;
 
   // The ERP's own postcode -> city master (mig 0022, editable at /localities).
   const locRows = await sql`SELECT postcode, city FROM scm.my_localities WHERE postcode IS NOT NULL AND city IS NOT NULL`;
