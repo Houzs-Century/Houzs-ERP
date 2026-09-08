@@ -272,3 +272,180 @@ export function splitDecidedAbsences({ t, missing, linesOf, register = DECIDED_A
   preserveTotal(`${t} absences`, total, parts);
   return { ...parts, decidedRows, refused, stale, absentDocs };
 }
+
+/* ── 4. ITEM CODE: the CHECKER had to guess which line is which ──────────── */
+
+/**
+ * Split item-code differences into products we genuinely got wrong and
+ * correspondences the checker INVENTED because it had no line key to pair on.
+ *
+ * WHY THIS EXISTS. `scm.grn_items` carries no AutoCount line key — migration
+ * 0280 added the column and nothing backfills it — so for a goods receipt the
+ * reconcile zips keyless lines on (qty, unit price), then qty, then document
+ * order. A migrated receipt's price comes from the purchase ORDER by design, so
+ * the first pass misses, and two qty-1 mattresses land in one bucket where
+ * whichever row postgres returned first takes the first book line. Run
+ * 34184553347 printed ten such pairs, every one a straight TRANSPOSITION:
+ * DtlKey 917594 is `AK-IMMORTAL MATT (K)` and we answered `AKEMI ULTIMATE MATT
+ * (K)`, 917604 the exact reverse. See docs/bugs/0693.
+ *
+ * WHY IT IS NOT AN AMNESTY, which is the only thing that matters here. The
+ * identical shape on the sales and purchase side was NOT an artefact: 61 of 111
+ * were genuinely the wrong product. So a document leaves the item-code column
+ * only when BOTH hold, and the second is a measurement no ordering can affect:
+ *
+ *   a. NO ERP line on the document carries a line key, so the pairing this
+ *      verdict rests on was guessed rather than read. A document that HAS keys
+ *      was paired for real and its differences are real.
+ *   b. The book-side and ERP-side item-code MULTISETS are EQUAL — the same
+ *      products in the same quantities, in any order. A wrong product changes
+ *      the multiset, so this cannot swallow one.
+ *
+ * A document that satisfies (a) and fails (b) is an `impostor`: it stays
+ * counted AND is printed louder, because "the sets differ too" is the strongest
+ * evidence available that a product is genuinely wrong.
+ *
+ * What survives reclassification is exactly what should: the correspondence is
+ * unknown, so the LINE-LEVEL verdict is withdrawn, while the DOCUMENT-level
+ * claim — these two documents name the same goods — is asserted and proved.
+ *
+ * @param {{rows:{key:string,erpNo:string,line:string}[],
+ *          bags:Map<string,{book:string,erp:string,keyed:boolean}>|null}} args
+ *   `bags` is keyed by document, holding each side's canonical multiset string
+ *   and whether ANY ERP line of that document carried a line key.
+ * @returns {{guessed:number,differ:number,moved:object[],impostors:{line:string,why:string}[],
+ *            applied:boolean,why:string}}
+ */
+export function splitGuessedItemCodePairing({ rows, bags }) {
+  const total = rows.length;
+  if (!bags) {
+    preserveTotal("item code (not applied)", total, { guessed: 0, differ: total });
+    return {
+      guessed: 0,
+      differ: total,
+      moved: [],
+      impostors: [],
+      applied: false,
+      why:
+        "the per-document item-code multisets could not be built, so there is no measurement that a " +
+        "difference is only a guessed correspondence. Nothing is reclassified: rule 3, an unproven " +
+        "benign label is not a benign label.",
+    };
+  }
+  const moved = [];
+  const impostors = [];
+  for (const r of rows) {
+    const b = bags.get(r.key);
+    if (!b) {
+      impostors.push({ line: r.line, why: `no item-code multiset was measured for ${r.key} — unproven, counted as a difference` });
+      continue;
+    }
+    if (b.keyed) continue;
+    if (b.book === b.erp) moved.push(r);
+    else {
+      impostors.push({
+        line: r.line,
+        why:
+          `${r.key} has NO line key AND the two sides name DIFFERENT goods, so this is not a pairing ` +
+          `artefact — book [${b.book}] vs ours [${b.erp}]`,
+      });
+    }
+  }
+  const parts = { guessed: moved.length, differ: total - moved.length };
+  preserveTotal("item code", total, parts);
+  return {
+    ...parts,
+    moved,
+    impostors,
+    applied: true,
+    why:
+      "the ERP document carries no AutoCount line key, so the line-to-line pairing was GUESSED, and the " +
+      "two sides' item-code multisets are equal — the same products in the same quantities. The document " +
+      "is right; only which of our rows answers which of the book's rows is unknown.",
+  };
+}
+
+/* ── 5. LINE COUNT: a migrated invoice is built from OUR source document ─── */
+
+/**
+ * Split invoice line-count differences into real gaps and the line SHAPE the
+ * migrated chain produces by design.
+ *
+ * WHY. A migrated purchase / sales invoice does not copy AutoCount's invoice
+ * lines — it draws them from OUR goods receipt or delivery order, which is a
+ * PARTIAL mirror (src/scm/lib/migrated-chain.ts, rule 3's NOTE says so in
+ * terms: a document whose line COUNT merely differs from AutoCount's is
+ * converted, because the money reconciles exactly; different line shape, same
+ * invoice, is normal). Three things routinely change the row count without
+ * changing what was billed: AutoCount bills a FREE gift as its own RM 0.00 line
+ * (`AK-SLEEP ESSENTIAL 7 HOLES` on a mattress), the book states one item code on
+ * two lines where we hold one (PI-007471: qty 14 + qty 158 against our 172), and
+ * a sofa fans out into compartments.
+ *
+ * WHAT MUST STILL BE TRUE, measured per document — a count is not waved through
+ * on the module comment's say-so:
+ *
+ *   a. the document TOTAL is identical to the sen. This is rule 4 of the
+ *      converter, re-asserted from the database rather than trusted.
+ *   b. per ITEM CODE, both sides agree on quantity and money. A code the ERP
+ *      does not carry at all is permitted only when the book prices it at
+ *      RM 0.00 — the free line. Anything else means we billed different goods
+ *      and it stays a difference.
+ *
+ * (b) is what stops this becoming an amnesty: a document that is short a REAL
+ * line fails it, because that line carries money, and a document billing the
+ * wrong product fails it on the code.
+ *
+ * @param {{rows:{key:string,erpNo:string,line:string}[],
+ *          facts:Map<string,{totalsEqual:boolean,perCode:{code:string,why:string}[]}>|null}} args
+ *   `perCode` is EMPTY when every code reconciles; each entry is a reason the
+ *   document does not qualify.
+ * @returns {{lineShape:number,differ:number,moved:object[],impostors:{line:string,why:string}[],
+ *            applied:boolean,why:string}}
+ */
+export function splitMigratedChainLineShape({ rows, facts }) {
+  const total = rows.length;
+  if (!facts) {
+    preserveTotal("line count (not applied)", total, { lineShape: 0, differ: total });
+    return {
+      lineShape: 0,
+      differ: total,
+      moved: [],
+      impostors: [],
+      applied: false,
+      why:
+        "the per-document totals and per-item-code sums could not be read, so nothing proves a line-count " +
+        "difference is only a shape difference. Nothing is reclassified.",
+    };
+  }
+  const moved = [];
+  const impostors = [];
+  for (const r of rows) {
+    const f = facts.get(r.key);
+    if (!f) {
+      impostors.push({ line: r.line, why: `no line-shape measurement for ${r.key} — unproven, counted as a difference` });
+      continue;
+    }
+    if (!f.totalsEqual) {
+      impostors.push({ line: r.line, why: `${r.key} differs in line COUNT and the document TOTAL is not identical — this is a money gap, not a shape` });
+      continue;
+    }
+    if (f.perCode.length) {
+      impostors.push({ line: r.line, why: `${r.key} totals agree but the goods do not: ${f.perCode.map((p) => `${p.code} ${p.why}`).join("; ")}` });
+      continue;
+    }
+    moved.push(r);
+  }
+  const parts = { lineShape: moved.length, differ: total - moved.length };
+  preserveTotal("line count", total, parts);
+  return {
+    ...parts,
+    moved,
+    impostors,
+    applied: true,
+    why:
+      "the invoice is built from OUR receipt / delivery by design and its total equals AutoCount's to the " +
+      "sen, and every item code agrees on quantity and money — the only book lines we do not carry are " +
+      "priced at RM 0.00. Same goods, same money, a different number of rows.",
+  };
+}
