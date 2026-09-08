@@ -153,3 +153,63 @@ test('a seat size written with a unit is still read — the footprint guard is n
   assert.equal(parseSofa('[ 2EL(28") + STOOL(28")(NO BACK CUSHION) / COL: X', "5526", false).size, "28");
   assert.equal(parseSofa('TR01 (RUMMA) / 2S / 60cm', "9028", false, { knownColour }).size, "24");
 });
+
+/* ── the colour label must stop where the colour stops ──────────────────────
+ *
+ * The floor writes a slash-separated Desc2 on most documents, and the colour
+ * label is terminated by the next slash. Newer entries (SO-008xxx onward) use a
+ * DOUBLE SPACE as the field separator and no slash at all, and `colour :` was
+ * written to run to the end of the segment — so on those documents it swallowed
+ * every field after it: the build, the specials, and the seat size.
+ *
+ * Two consequences, both measured on the committed 2026-09-08 snapshot:
+ *   - the build vanished and the line fell to the bare `-1S` placeholder;
+ *   - the book's own instructions vanished, so the reconcile reported the BOOK
+ *     as asking for nothing while the ERP line carried the instruction — the
+ *     "book blank" shape on the specials axis.
+ *
+ * Every string below is verbatim from that snapshot.
+ */
+test("the colour label stops at the field separator, so the BUILD survives it", () => {
+  /* SO-009072 line 1. `1EL + C + 1 NA + 1ER` is the build; it sat inside the
+     colour value and the line decoded to nothing at all. */
+  const got = parseSofa("colour : HR805 -31 ( 30 inch )  1EL  + C + 1 NA + 1ER", "9058", false);
+  assert.deepEqual(got.pieces, ["1A(LHF)", "CNR", "1NA", "1A(RHF)"]);
+  assert.notEqual(got.conf, "low");
+
+  /* SO-009073. Same shape, and the instruction after the build must survive
+     too — the build is not the end of the segment either. */
+  const b = parseSofa("colour : HR805-10 ( 28 inch )  1EL + 1 NA + L  wrap bottom to umbrella fabric", "5536", false);
+  assert.deepEqual(b.pieces, ["1A(LHF)", "1NA", "L(RHF)"]);
+  assert.ok(b.specials.some((s) => /wrap bottom to umbrella fabric/i.test(s)),
+    `the instruction must survive, got ${JSON.stringify(b.specials)}`);
+});
+
+test("the colour label stops at the field separator, so the SPECIALS survive it", () => {
+  /* SO-010121 / SO-010123 / SO-013384 / SO-013385 — the four PROCEEDED orders
+     the 2026-09-08 reconcile reported with the book holding NO specials while
+     the ERP line carried them. The book states them; the decoder ate them. */
+  for (const [d2, model, want] of [
+    ["31 inch  colour : tbc  wrap bottom to umbrella fabric", "8051", /wrap bottom to umbrella fabric/i],
+    ["32 inch per seat  colour : B0315-5 Fosil  wrap bottom to umbrella fabric", "9028", /wrap bottom to umbrella fabric/i],
+    ["Col : ZL -15 MISTY  fully cover replace the leg  Nilon bottom", "8030", /nilon bottom/i],
+    ["Col : ZL-15 MISTY  Nilon bottom  fully cover with one layer back rest change 8030", "9028", /nilon bottom/i],
+  ]) {
+    const got = parseSofa(d2, model, false);
+    assert.ok(got.specials.some((s) => want.test(s)),
+      `${d2}: got ${JSON.stringify(got.specials)}`);
+    /* And the colour must be the colour, not the colour plus everything after
+       it — a value like "tbc  wrap bottom to umbrella fabric" resolves against
+       no fabric library and reads as a colour DIFFERENCE against the ERP. */
+    assert.ok(!/\s{2,}/.test(String(got.color ?? "")),
+      `${d2}: the colour swallowed the tail — ${JSON.stringify(got.color)}`);
+  }
+});
+
+test("a colour whose own name contains a wide gap is NOT truncated", () => {
+  /* SO-006112, verbatim. The tail after the gap is more of the colour, not a
+     build and not an instruction, so the value must survive whole — this is the
+     regression the narrowing above could have caused. */
+  const got = parseSofa("822 COMER / COL- BEETEX     HARRING 8371 04#COFFEE", "822", false);
+  assert.match(String(got.color), /HARRING 8371 04#COFFEE/i);
+});

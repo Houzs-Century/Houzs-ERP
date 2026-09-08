@@ -77,6 +77,69 @@ const isTradeName = (s) => {
   return !SPECIAL_WORD.test(t) && !INSTRUCTION_TOKEN.test(t.toUpperCase().replace(/\s+/g, ""));
 };
 
+/* ── WHERE A LABELLED COLOUR ENDS ──────────────────────────────────────────
+   `COL:`/`colour :` used to run to the end of its segment — `[^\/\n]+` — and on
+   a slash-separated Desc2 that is exactly right: the next slash ends the field.
+
+   The floor also writes documents with NO slashes, separating the fields with a
+   DOUBLE SPACE ("31 inch  colour : tbc  wrap bottom to umbrella fabric",
+   SO-008xxx onward). There the label swallowed every field after it, and both
+   halves of that were paid for:
+     - the BUILD went inside the colour, so the line decoded to nothing and fell
+       to the bare `-1S` placeholder ("colour : HR805 -31 ( 30 inch )  1EL + C +
+       1 NA + 1ER", SO-009072);
+     - the INSTRUCTIONS went with it, so the reconcile read the BOOK as asking
+       for nothing while the ERP line carried the request — the "book blank"
+       shape on the specials axis (SO-010121/010123/013384/013385).
+
+   THE CUT IS POSITIVE, NEVER SPECULATIVE. A double space alone does not end the
+   colour: a shade's own name contains one ("COL- BEETEX     HARRING 8371
+   04#COFFEE", SO-006112, where the tail is more colour). It ends only where what
+   FOLLOWS identifies itself as something else — a piece list, a seat size, or an
+   instruction from the vocabulary the special sweep already speaks. Where
+   nothing identifies itself, the value is returned whole and this function has
+   changed nothing. */
+const PIECE_TOKEN = /^(?:[1-4](?:S|SEATER|NA|B|L|R|P|RR|PP|EL|ER|EFL|EFR|C|CT)?|L[123]?|1?ELT|CT|CNR|C|R|P|CS|STOOL|CORNER|LSHAPE|[12]?NA[LR]?T?)$/i;
+const SIZE_TAIL = /^[\s("']*\d{2,3}\s*(?:''|"|'|\s*inch(?:es)?|\s*cm)\b/i;
+const looksLikeBuild = (tail) => {
+  const t = String(tail).trim();
+  if (!t || COLOUR_LIKE.test(t)) return false;
+  const toks = t.replace(/\s+/g, "").toUpperCase().replace(/[()]/g, "+").replace(/["'*.]/g, "").split("+").filter(Boolean);
+  if (!toks.length) return false;
+  if (toks.length === 1) return toks[0].length <= 4 && /[A-Z]/.test(toks[0]) && PIECE_TOKEN.test(toks[0]);
+  return toks.every((x) => PIECE_TOKEN.test(x));
+};
+/* A SEAT SIZE IS NEVER PART OF A SHADE'S NAME. It is written right up against
+   the code with a single space — "HR805 -31 ( 30 inch )  1EL + C + …" — so the
+   double-space scan above never reaches it, and it would ride into the colour
+   and be lost with it. Moved to the tail, where the size pass reads it. */
+const TRAILING_SIZE = /[\s(]*\d{2,3}\s*(?:''|"|'(?!\w)|\s*inch(?:es)?|\s*cm)\b\s*\)?\s*$/i;
+function splitColourValue(val) {
+  const s = String(val ?? "");
+  const cut = (at) => {
+    let value = s.slice(0, at), tail = s.slice(at);
+    const sz = TRAILING_SIZE.exec(value);
+    if (sz && sz.index > 0) { tail = value.slice(sz.index) + tail; value = value.slice(0, sz.index); }
+    return { value, tail };
+  };
+  const re = /\s{2,}/g;
+  let m;
+  while ((m = re.exec(s))) {
+    const t = s.slice(m.index).trim();
+    if (!t) break;
+    if (SIZE_TAIL.test(t) || looksLikeBuild(t) || (SPECIAL_WORD.test(t) && !COLOUR_LIKE.test(t))) return cut(m.index);
+  }
+  return { value: s, tail: "" };
+}
+/* The tail goes back into the pipeline carrying the separator the REST of the
+   pipeline speaks. The book wrote its fields apart with a double space, and a
+   build and an instruction left glued by a plain space become one token
+   ("…+ L  wrap bottom…" -> "LWRAP") and take the build down with them. */
+/* A gap NEXT TO a '+' is sloppy typing inside one chain, never a field
+   boundary: "1EL  + C + 1 NA + 1ER" is one build, and splitting it there left
+   the `1EL` alone in a segment the structure pass then lost to the longer one. */
+const tailAsSegments = (tail) => String(tail).replace(/(?<!\+)\s{2,}(?!\+)/g, " / ");
+
 function unlabelledColour(d2raw, knownColour) {
   for (const raw of String(d2raw || "").split(/[/\n]+/)) {
     const seg = raw.trim();
@@ -161,9 +224,20 @@ function parseSofa(d2raw, model, recl = false, opts = {}) {
      ever sees the ONE segment that carried the structure, so a phrase alone in
      its own segment ("/BACK CUSHION CHANGE 8030") was dropped too. */
   {
-    const src = d2.replace(/col(?:our|or)?\s*\([^)]*\)\s*[:：][^\/\n]*/gi, " ")
-                  .replace(/col(?:our|or)?\s*[-:：][^\/\n]*/gi, " ");
-    for (const chunk of src.split(/[\/\n*]+/)) {
+    /* The tail a colour label is NOT entitled to is collected rather than
+       spliced back, so the main sweep's own chunking is untouched: every chunk
+       it produced before it produces now, and the recovered tails are scanned
+       BESIDE them. A tail is split on the separator the book used to write it
+       — the double space — because a tail can carry a build AND an instruction
+       ("1EL + 1 NA + L  wrap bottom to umbrella fabric") and only the second is
+       a special. */
+    const tails = [];
+    const keep = (_, v) => { const { tail } = splitColourValue(v); if (tail.trim()) tails.push(tail); return " "; };
+    const src = d2.replace(/col(?:our|or)?\s*\([^)]*\)\s*[:：]([^\/\n]*)/gi, keep)
+                  .replace(/col(?:our|or)?\s*[-:：]([^\/\n]*)/gi, keep);
+    const chunks = src.split(/[\/\n*]+/);
+    for (const t of tails) for (const piece of t.split(/[\/\n*]+|\s{2,}/)) chunks.push(piece);
+    for (const chunk of chunks) {
       const c = chunk.trim();
       if (c && SPECIAL_WORD.test(c) && !COLOUR_LIKE.test(c)) addSpecial(c);
     }
@@ -180,10 +254,12 @@ function parseSofa(d2raw, model, recl = false, opts = {}) {
     .replace(/\bC\/T\b/gi, "CT").replace(/(\d?NA)\/(L|R)T/gi, "$1$2T").replace(/CONSOLE/gi, "CT");
   // colours: per-piece "colour (2s): X" first, then general COL:/COLOUR:
   d2 = d2.replace(/col(?:our|or)?\s*\(([^)]+)\)\s*[:：]\s*([^\/\n]+)/gi, (_, pc, val) => {
-    o.perPieceColor[pc.trim().toUpperCase()] = val.trim(); return " ";
+    const { value, tail } = splitColourValue(val);
+    o.perPieceColor[pc.trim().toUpperCase()] = value.trim(); return " " + tailAsSegments(tail);
   });
   d2 = d2.replace(/col(?:our|or)?\s*[-:：]\s*([^\/\n]+)/gi, (_, val) => {
-    if (!o.color) o.color = val.trim(); return " ";
+    const { value, tail } = splitColourValue(val);
+    if (!o.color) o.color = value.trim(); return " " + tailAsSegments(tail);
   });
   /* Read the raw text, not `d2`: by this point the composite-token guards above
      have already rewritten it, and the colour must be the string AutoCount
@@ -304,7 +380,12 @@ function parseSofa(d2raw, model, recl = false, opts = {}) {
        the build then decoded at HIGH confidence one compartment short:
        "1+C+2" came out as 1S + 2S with no corner, no placeholder, no flag.
        35 SO / 4 PO / 10 SO-linked-PO lines in the committed exports. */
-    const NOISE = /^(RANDOM(COLOU?R)?|COLOU?RTBC|COLOU?R|TBC|KIV|WRAP|PERSEAT|X?\d*PILLOWS?|FOC\w*|FREE\w*|NORMALARM\w*|NOCONS|X?\d+SETS?|CUSTOM|\d+X\d*|SEATERS?|[A-BD-KM-OQS-Z])$/;
+    /* "30 inch per set" is "per seat" mistyped — a unit qualifier, not a
+       request. It only became visible when the colour label stopped eating the
+       segment it sits in, and the rider catch-all was turning it into a SPECIAL
+       ORDER the factory would be asked to build. 5 lines in the committed
+       snapshot. PERSEAT was already here; PERSET is the same word. */
+    const NOISE = /^(RANDOM(COLOU?R)?|COLOU?RTBC|COLOU?R|TBC|KIV|WRAP|PERSEAT|PERSET|X?\d*PILLOWS?|FOC\w*|FREE\w*|NORMALARM\w*|NOCONS|X?\d+SETS?|CUSTOM|\d+X\d*|SEATERS?|[A-BD-KM-OQS-Z])$/;
     const quiet = [], rider = [];
     const toks = [];
     for (const t0 of s.split("+").filter(Boolean)) {
