@@ -3,7 +3,7 @@
   "totals": {
     "@typescript-eslint/no-explicit-any": 523,
     "@typescript-eslint/no-floating-promises": 776,
-    "@typescript-eslint/no-unnecessary-condition": 1764,
+    "@typescript-eslint/no-unnecessary-condition": 1762,
     "no-restricted-syntax": 133
   },
   "files": {
@@ -1016,7 +1016,6 @@
       "@typescript-eslint/no-unnecessary-condition": 2
     },
     "src/vendor/scm/lib/delivery-order-pdf.ts": {
-      "@typescript-eslint/no-unnecessary-condition": 2,
       "no-restricted-syntax": 4
     },
     "src/vendor/scm/lib/delivery-order-queries.ts": {
