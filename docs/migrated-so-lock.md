@@ -192,12 +192,14 @@ the explicit act.
 
 ## 4. Reading the current state — do this before and after every change
 
-```sql
-SELECT value, description, updated_at
-  FROM scm.app_config WHERE key = 'scm.migrated_so_lock';
-```
+Actions -> **Sales orders open for NEW — status (read-only)** -> Run workflow.
+It prints this row and `scm.write_freeze` side by side, with the two facts they
+are supposed to produce. `backend/scripts/check-so-open-for-new.mjs`.
 
-Without a database: the write-freeze status surfaces do NOT report this key.
+Actions -> **Migrated sales-order lock (open / close)** with `mode=plan` reads it
+too, and adds what a proposed value would change, per company, in documents. It
+writes nothing on `plan`.
+
 The observable check is the one that matters anyway — **have one ordinary member
 of staff open one migrated order** (`HC-…`) and confirm the orange *"View only —
 carried over from AutoCount"* banner is there and Edit is greyed. Not an
@@ -279,17 +281,29 @@ above rather than to an outage sentence.
 
 ## 6. Putting it back
 
-**Lock migrated orders again** (undo an unlock):
+Actions -> **Migrated sales-order lock (open / close)** -> Run workflow:
 
-```sql
-UPDATE scm.app_config SET value = '1', updated_at = now()
- WHERE key = 'scm.migrated_so_lock';
-```
+| input | for "lock migrated orders again" |
+|---|---|
+| `target` | `prod` |
+| `mode` | `plan` first, read it, then `apply` |
+| `value` | `1` |
+| `allow_open` | leave blank — closing is not gated, only opening is |
+| `message` | blank leaves the sentence staff read alone |
 
-**Lock both companies:** `value = 'all'`.
+**Lock both companies:** `value = all`. **Correctness mode:** `value = verdict:1`
+(§10). **Unlock everything:** `value = off`, and that direction needs
+`allow_open = yes`.
 
-**If something is wrong and you are not sure what:** set `value = '1'`. That is
-the known-good state this document was written against.
+**If something is wrong and you are not sure what:** `value = 1`. That is the
+known-good state this document was written against.
+
+*There used to be a raw `UPDATE` here, and in §10, and CLAUDE.md's standing rule
+is that the owner is not a database console. The workflow refuses a malformed
+value before it is written, prints what it opens and what it closes per company
+in DOCUMENTS, and re-reads on a fresh connection to assert the resolved state —
+none of which a paste can do. `docs/bugs/0712-*`, and `docs/bugs/0710-*` for the
+same finding on the write-freeze row.*
 
 Note that the write freeze is still underneath. Re-freezing sales orders
 (`scm.write_freeze = '1'`) stops every sales-order write for company 1 whatever
@@ -508,12 +522,11 @@ migrated order stays shut exactly as it is today. The rows just sit there.
    stock-allocation cron. Re-confirm it is still on main before flipping, rather
    than trusting this paragraph.
 2. **Publish a verdict** (above). Read the run's `SO VERDICT` line.
-3. **Set the switch**, once the owner says so:
-
-   ```sql
-   UPDATE scm.app_config SET value = 'verdict:1', updated_at = now()
-    WHERE key = 'scm.migrated_so_lock';
-   ```
+3. **Set the switch**, once the owner says so. Actions -> **Migrated
+   sales-order lock (open / close)**, `target=prod`, `value=verdict:1`,
+   `mode=plan` first. The plan prints how many migrated documents the value
+   OPENS, per company; `mode=apply` then needs `allow_open=yes`, because
+   opening is the gated direction on this row.
 
 4. **Lift the write freeze** for the modules the three teams need. That is a
    DIFFERENT row with a DIFFERENT grammar — see §1 and the trap below.
