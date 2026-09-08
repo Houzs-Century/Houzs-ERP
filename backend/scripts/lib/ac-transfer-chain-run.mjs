@@ -60,9 +60,10 @@ import { fileURLToPath } from "node:url";
 
 import {
   IS_DIFFERENCE, IS_UNANSWERABLE, FROM_VERDICTS,
-  fromVerdictFor, namesSource, runSelfTest,
+  fromVerdictFor, namesSource, runSelfTest, sourceDocTokens,
   TO_VERDICTS, toVerdictFor, runToSelfTest,
 } from "./transfer-chain-verdict.mjs";
+import { UNMIGRATED_ONWARD, splitUnmigratedOnwardTransfer } from "./ac-not-a-difference.mjs";
 import { CHAIN_LINE_NOT_STAMPED, CHAIN_PARENT_UNSTAMPED, CHAIN_UNSPECIFIED } from "./unanswerable-causes.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -87,6 +88,60 @@ export const AXIS_UNVERIFIABLE = "transfer chain not verifiable";
 export const NOTE_LINE_NOT_IN_BOOK = "chain-line-not-in-book";
 export const NOTE_NO_SOURCE = "chain-no-source";
 export const NOTE_NO_ERP_COUNTER = "chain-no-erp-counter";
+/** The onward document type this line was transferred to was never migrated. */
+export const NOTE_ONWARD_NOT_MIGRATED = "chain-onward-not-migrated";
+
+/* ── WHAT WE ACTUALLY HOLD OF THE ONWARD TYPE ───────────────────────────────
+ * The MEASUREMENT behind lib/ac-not-a-difference.mjs section 6, and the whole
+ * reason that bucket is not an amnesty. It is a set of AutoCount document
+ * numbers, read from the ERP this run: a receipt whose purchase invoice we DO
+ * hold is a real defect and must stay counted, however well "the history was
+ * never migrated" describes its neighbours.
+ *
+ * Written out per type, like `chainEdges`, so no table name is composed from a
+ * string the caller passed. Each returns a Set, or null when it could not be
+ * read — and null makes the split refuse rather than move anything. */
+export const ONWARD_COVERAGE = Object.freeze({
+  /* the purchase invoices we hold, which is what could have raised a receipt's
+     invoiced quantity */
+  PI: ({ sql, CO }) => sql`
+    SELECT DISTINCT linked_ac_docno AS doc_no FROM scm.purchase_invoices
+     WHERE company_id = ${CO} AND linked_ac_docno IS NOT NULL`,
+  /* the goods receipts we hold, which is what could have raised a purchase
+     order's received quantity. CANCELLED receipts are excluded for the same
+     reason the edge query excludes them: they moved nothing. */
+  GR: ({ sql, CO }) => sql`
+    SELECT DISTINCT linked_ac_gr_docno AS doc_no FROM scm.grns
+     WHERE company_id = ${CO} AND status <> 'CANCELLED' AND linked_ac_gr_docno IS NOT NULL`,
+});
+
+/**
+ * Which documents of `onwardType` the BOOK raised off each document, from the
+ * chain snapshot.
+ *
+ * CANCELLED onward documents are left out. That is the conservative direction
+ * and it is deliberate: leaving one in could explain a shortfall with a
+ * document that moved nothing, while leaving it out can only push a row back
+ * into the difference column, where an unexplained row belongs.
+ *
+ * @returns {Map<string, string[]>|null}
+ */
+export function onwardIndex(book, onwardType) {
+  const B = book?.[onwardType];
+  if (!B) return null;
+  const m = new Map();
+  for (const line of B.lines.values()) {
+    if (B.cancelled.has(line.docNo)) continue;
+    /* BOTH sides upper-cased, because the coverage set this is compared against
+       is read from the ERP and the two systems have disagreed about case on
+       documents that are the same document. */
+    for (const tok of sourceDocTokens(line.fromDocNo)) {
+      if (!m.has(tok)) m.set(tok, new Set());
+      m.get(tok).add(String(line.docNo ?? "").trim().toUpperCase());
+    }
+  }
+  return new Map([...m].map(([k, v]) => [k, [...v]]));
+}
 
 /* decimal(19,4) on the book side, numeric on ours. Compared as scaled integers:
    a checker that reports 1e-15 as a disagreement is worse than no checker. */
@@ -221,6 +276,7 @@ export function chainEdges({ sql, CO, PDATE }) {
          invoice as a wrong link. */
       rows: () => sql`
         SELECT h.linked_ac_docno AS ac_no, h.invoice_number AS erp_no,
+               i.id::text AS id,
                i.linked_ac_dtlkey::text AS child_key,
                dh.linked_ac_docno AS parent_a, sh.linked_ac_docno AS parent_b,
                NULL::text AS parent_line_key,
@@ -245,6 +301,7 @@ export function chainEdges({ sql, CO, PDATE }) {
          reachable from our own invoice line through its receipt. */
       rows: () => sql`
         SELECT h.linked_ac_docno AS ac_no, h.invoice_number AS erp_no,
+               i.id::text AS id,
                i.linked_ac_dtlkey::text AS child_key,
                g.linked_ac_gr_docno AS parent_a, p.linked_ac_docno AS parent_b,
                NULL::text AS parent_line_key,
@@ -386,6 +443,37 @@ export async function recordTransferChain({ sql, CO, PDATE, types, recorder, max
   const edges = chainEdges({ sql, CO, PDATE }).filter((e) => types.includes(e.t));
   const out = [];
 
+  /* ── THE ONWARD MEASUREMENT ────────────────────────────────────────────────
+     Read ONCE for every onward type any requested edge declares, before the
+     edges are walked. Two halves: what the BOOK raised off each document, and
+     what WE HOLD of that type. A read that fails leaves the entry ABSENT, and
+     an absent coverage set makes the split refuse — rule 3 of
+     lib/ac-not-a-difference.mjs: no proof, no move. */
+  const coverageOf = new Map();
+  const onwardOf = new Map();
+  const coverageWhy = new Map();
+  for (const e of edges) {
+    const d = UNMIGRATED_ONWARD[e.t];
+    if (!d || coverageOf.has(d.onwardType) || coverageWhy.has(d.onwardType)) continue;
+    const idx = onwardIndex(loaded.book, d.onwardType);
+    if (!idx) {
+      coverageWhy.set(d.onwardType, `the chain snapshot carries no ${d.onwardType} lines, so what the book raised off each document cannot be read`);
+      continue;
+    }
+    onwardOf.set(d.onwardType, idx);
+    const q = ONWARD_COVERAGE[d.onwardType];
+    if (!q) {
+      coverageWhy.set(d.onwardType, `no ERP coverage query is declared for ${d.onwardType}`);
+      continue;
+    }
+    try {
+      const held = await q({ sql, CO });
+      coverageOf.set(d.onwardType, new Set(held.map((x) => String(x.doc_no ?? "").trim().toUpperCase()).filter(Boolean)));
+    } catch (err) {
+      coverageWhy.set(d.onwardType, `the ${d.onwardType} documents the ERP holds could not be read: ${err.message}`);
+    }
+  }
+
   for (const e of edges) {
     const B = loaded.book[e.t];
     if (!B) {
@@ -505,7 +593,7 @@ export async function recordTransferChain({ sql, CO, PDATE, types, recorder, max
       if (e.bookCounter && row.counter != null) {
         let g = groups.get(key);
         if (!g) {
-          g = { key, ac, erpNo, bookQty: bl.qty, bookTransfered: bl[e.bookCounter], erpQty: 0, erpCounter: 0, rows: 0, proceeded: false };
+          g = { key, ac, erpNo, bookDocNo: bl.docNo, bookQty: bl.qty, bookTransfered: bl[e.bookCounter], erpQty: 0, erpCounter: 0, rows: 0, proceeded: false };
           groups.set(key, g);
         }
         g.erpQty += Q(row.qty);
@@ -516,6 +604,12 @@ export async function recordTransferChain({ sql, CO, PDATE, types, recorder, max
     }
 
     if (e.bookCounter) {
+      /* COLLECTED FIRST, RECORDED AFTER THE SPLIT. The migration decision is a
+         property of the WHOLE set — it needs the onward index and our coverage
+         — so it cannot be decided inside the loop that finds each row. Nothing
+         is recorded until lib/ac-not-a-difference.mjs has said which of these
+         the decision covers and which are impostors that stay counted. */
+      const pending = [];
       for (const g of groups.values()) {
         if (g.bookTransfered == null) continue;
         r.counterGroups += 1;
@@ -525,8 +619,46 @@ export async function recordTransferChain({ sql, CO, PDATE, types, recorder, max
         const detail =
           `DtlKey ${g.key}: the book moved ${fmtQ(g.bookTransfered)} of ${fmtQ(g.bookQty)}; ` +
           `the ERP records ${fmtQ(g.erpCounter)} of ${fmtQ(g.erpQty)} over ${g.rows} row(s)`;
-        recorder.record(e.t, g.ac, g.erpNo, AXIS_TO, `${v}: ${detail}`, g.proceeded);
-        if (r.examples.to.length < 40) r.examples.to.push({ v, ac: g.ac, erpNo: g.erpNo, detail, proceeded: g.proceeded });
+        pending.push({ ...g, verdict: v, line: `${g.ac}: ${detail}`, detail });
+      }
+
+      const decision = UNMIGRATED_ONWARD[e.t] ?? null;
+      const split = splitUnmigratedOnwardTransfer({
+        rows: pending,
+        decision,
+        coverage: decision ? (coverageOf.get(decision.onwardType) ?? null) : null,
+        onwardOf: (d) =>
+          decision ? (onwardOf.get(decision.onwardType)?.get(String(d ?? "").trim().toUpperCase()) ?? []) : [],
+      });
+      r.onward = {
+        applied: split.applied,
+        why: split.why,
+        unreadable: decision ? (coverageWhy.get(decision.onwardType) ?? null) : null,
+        notMigrated: split.notMigrated,
+        differ: split.differ,
+        decision,
+        impostors: split.impostors.slice(0, 40),
+        impostorCount: split.impostors.length,
+      };
+
+      const excused = new Set(split.moved.map((m) => m.key));
+      for (const g of pending) {
+        if (excused.has(g.key)) {
+          /* DECLARED AND COUNTED, never silent. The onward document the book
+             raised off this one is named, so a reader can go and look. */
+          const m = split.moved.find((x) => x.key === g.key);
+          recorder.note(
+            e.t, g.ac, g.erpNo, NOTE_ONWARD_NOT_MIGRATED, AXIS_TO,
+            `${g.detail} — the book raised ${decision.onwardType} ${m.onward.join(", ")} off ${g.bookDocNo} ` +
+              "and the ERP holds none of them",
+            g.proceeded,
+          );
+          continue;
+        }
+        recorder.record(e.t, g.ac, g.erpNo, AXIS_TO, `${g.verdict}: ${g.detail}`, g.proceeded);
+        if (r.examples.to.length < 40) {
+          r.examples.to.push({ v: g.verdict, ac: g.ac, erpNo: g.erpNo, detail: g.detail, proceeded: g.proceeded });
+        }
       }
     } else {
       /* NO STORED COUNTER ON THIS EDGE. Declared per document rather than left

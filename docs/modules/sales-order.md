@@ -2178,6 +2178,48 @@ the bucket it feeds. The word **TALLIED** is decided in exactly one place —
 `isTallied` in `backend/scripts/lib/so-tally-verdict.mjs`, zero `work` — so no
 summary can soften it.
 
+**A model the OWNER decided is a declared class, not a difference** (since
+2026-09-08, `docs/bugs/0727-the-owner-s-own-model-decision-was-still-counted-as-a-differ.md`).
+`owner-model-override` is a `NOTE_CLASSES` member in
+`backend/scripts/lib/so-verdict-derive.mjs`, labelled in `DECLARED_LABEL` in
+`backend/scripts/lib/so-tally-verdict.mjs`, and reached only through
+`VERDICT.reclassify` — so it can never make a document `clean` that the run did
+not compare. It fires ONLY where the owner-approved corrections file carries a
+`modelOverride` naming BOTH the book model it overrides AND who decided it
+(`backend/scripts/lib/ac-model-override.mjs`, applied by
+`backend/scripts/lib/ac-model-override-apply.mjs`). It EXPIRES by itself: the
+book model is re-checked every run, so refreshing the cut sends the line back to
+`work` with nobody editing anything.
+
+The same declaration also GUARDS the repair lane.
+`planSoItemCodeCorrections` (`backend/scripts/lib/so-item-code-correction.mjs`)
+takes a REQUIRED `overrideIndex` and refuses a row the owner has decided —
+without it, `correct-so-item-code-from-autocount.mjs` with `POPULATION=all`
+plans a correction that would UNDO his ruling (measured on prod run
+34258437955: 2 planned, 1 of them his).
+
+**A refusal prints the value WE HOLD — 2026-09-09.** The `CANNOT BE COMPARED`
+list printed the document number and the axis name and stopped, so an order the
+ERP already holds a good build for reached the owner as a blank to fill from
+memory. He pushed back — 「所以基本上model和sofa compartment基本上都有了啊？那为什
+么你说没有呢？」 — and he was right: the photograph and the book's `Desc2` had
+been checked, and **what our own database holds had not**.
+
+`lib/variant-report.mjs`'s `UNREADABLE` branch now records
+`we hold "<cell.erp>" — <reason>` beside the refusal, mirroring what the `DIFFER`
+branch beside it has always recorded. The value is **read, not recomputed**:
+`lib/variant-reconcile.mjs` already sets `cell.erp = have.join("+")` before that
+branch runs. `renderVerdict` then prints the row's `detail` under each
+cannot-compare entry — that list ONLY, because a `work` row already names a real
+difference while a refusal alone is the thing nobody can act on.
+
+`bucketOf` and `isTallied` are untouched: this **prints, it does not
+reclassify**, and `tests/soTallyVerdict.test.mjs` pins that the document stays
+in `unanswerable`. To ask the same question of a document directly, the
+read-only **What the ERP holds for a sales order** workflow runs
+`backend/scripts/diag-so-erp-build.mjs` (`DOCS=` takes ERP or AutoCount
+numbers). See `docs/bugs/0728-the-cannot-be-compared-list-printed-the-refusal-and-never-th.md`.
+
 **It measures nothing.** `check-so-tally.mjs` runs
 `check-ac-erp-reconcile.mjs`, reads the verdict file that run writes, and
 classifies its rows; then it parses the reconcile's own printed `SO VERDICT` and
@@ -2219,9 +2261,43 @@ so neither could lock a document or move a tally answer.
 
 `LOCKING_AXES` now carries `transfer from` and `transfer to`;
 `UNANSWERABLE_AXES` carries `transfer chain not verifiable`. `bucketOf` and
-`isTallied` are untouched. Three NOTE classes carry the silences so none of them
-reads as agreement: `chain-line-not-in-book`, `chain-no-source` and
-`chain-no-erp-counter`.
+`isTallied` are untouched. FOUR NOTE classes carry the silences so none of them
+reads as agreement: `chain-line-not-in-book`, `chain-no-source`,
+`chain-no-erp-counter` and — since 2026-09-09 — `chain-onward-not-migrated`.
+
+**`chain-onward-not-migrated` is a DECISION the cutover made, and it was being
+counted as a backlog.** Run 34255416449 said 289 of 400 goods receipts differ;
+283 of them differed on `transfer to` alone, every one reading "the book says
+fully invoiced, we say 0". Measured on the committed chain snapshot: the book
+holds 21,450 fully-transferred receipt lines and 5,283 purchase invoices, and
+the ERP holds 55, because the purchase-invoice HISTORY was deliberately never
+migrated. So `scm.grn_items.invoiced_qty` is 0 there and always will be — not a
+wrong number, an ABSENT one.
+
+It is NOT an amnesty, and that is the whole design:
+`splitUnmigratedOnwardTransfer` in `backend/scripts/lib/ac-not-a-difference.mjs`
+moves a row only when the shape is exactly "the book moved some and we record
+NONE", the book names an onward document raised off this one, and the ERP holds
+**none** of them — the last measured from `scm.purchase_invoices` / `scm.grns`
+in the same run. Anything else is an `impostor`: it stays counted and prints
+LOUDER, because a receipt whose purchase invoice we DO hold is the real defect
+this bucket must never swallow
+(`docs/bugs/0668-the-reconcile-printed-real-gaps-as-owner-decisions-for-do-iv.md`
+in the permissive direction).
+
+On run 34257834858 it excluded **283 documents / 362 findings with 0 impostors**
+on goods receipts — 289 → **26** — and covered **nothing** on purchase orders,
+where all 7 stayed counted. **The sales-order figures were the control and did
+not move: 38 differ / 30 cannot compare, before and after.** Full write-up in
+`docs/modules/autocount-writeback.md` and
+`docs/bugs/0728-the-reconcile-counted-a-migration-decision-as-283-goods-rece.md`.
+
+A guard came with it: `backend/tests/transferChainAxis.test.mjs` asserts every
+declared NOTE class carries a `DECLARED_LABEL` sentence, since a class without
+one prints as its own bare identifier under "WHAT THIS VERDICT EXCLUDED".
+`NOT_DECLARED_CLASSES` in `backend/scripts/lib/so-tally-verdict.mjs` names the
+one deliberate exemption (`unanswerable-cause`, which prints under its own
+heading) so the divert and the check cannot drift apart.
 
 **What the account book can answer, and it is less than it sounds.**
 `FromDocDtlKey` is EMPTY on every one of the ~220,000 detail rows of all six

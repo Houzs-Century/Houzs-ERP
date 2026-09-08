@@ -43,7 +43,7 @@ import postgres from "postgres";
 
 import { verdictFor } from "./lib/transfer-counter-verdict.mjs";
 import {
-  GROUP_CAUSES, IS_BY_DESIGN, IS_LINK_GAP,
+  GROUP_CAUSES, IS_BY_DESIGN, IS_LINK_GAP, IS_NOT_OUR_DEFECT,
   causeForGroup, runSelfTest,
 } from "./lib/so-po-counter-cause.mjs";
 import { soProcessingDateFragment } from "./lib/so-processing-date.mjs";
@@ -62,6 +62,9 @@ const head = (m) => { out(""); out("=".repeat(78)); out(m); out("=".repeat(78));
    checker that reports 1e-15 as a disagreement is worse than no checker. */
 const Q = (v) => Math.round(Number(v || 0) * 10000);
 const fmtQ = (n) => (n / 10000).toString();
+/* Compared trimmed and case-folded, because the two systems have disagreed
+   about both and neither difference is a different product. */
+const itemCode = (v) => String(v ?? "").trim().toUpperCase();
 
 /** How each cause reads to somebody who is not an engineer, and whose it is. */
 const CAUSE_LABEL = Object.freeze({
@@ -87,6 +90,15 @@ const CAUSE_LABEL = Object.freeze({
   book_names_no_child:
     "THE BOOK'S OWN GAP — the book's counter says a purchase was made and its own purchase-order table names " +
     "no line that made it",
+  decomposed_grain:
+    "NOT A DEFECT — one book line is one ERP row PER COMPARTMENT, and we recorded EXACTLY the quantity the book " +
+    "moved. The fraction differs only because our denominator is the compartment count. Copying the book's " +
+    "number would not make it agree; linking every compartment would, and where the two builds disagree that " +
+    "is the owner's drawing, not a script",
+  book_source_is_another_product:
+    "THE BOOK'S OWN GAP — the book's own transfer edge names a source sales line for a DIFFERENT product, while " +
+    "the same order carries a line whose code matches exactly. Copying it would put one product's purchase on " +
+    "another product's line, which is what docs/bugs/0671 cost. Only the owner can settle which line it was",
   mixed:
     "WORK, and MIXED — two or more different causes on one sales-order line. Never repaired as one of them",
 });
@@ -130,12 +142,17 @@ async function main() {
   const soCancelled = new Set();
   for (const r of snap.types.SO.headers || []) if (r[H.cancelled] === "T") soCancelled.add(r[H.docNo]);
   const soLine = new Map();
+  const soCodesByDoc = new Map();
   for (const r of snap.types.SO.lines || []) {
+    const code = itemCode(r[L.itemKey]);
     soLine.set(String(r[L.dtlKey]), {
       docNo: r[L.docNo],
+      itemCode: code,
       qty: Q(r[L.qty]),
       transferedPoQty: r[L.transferedPoQty] === "" ? null : Q(r[L.transferedPoQty]),
     });
+    if (!soCodesByDoc.has(r[L.docNo])) soCodesByDoc.set(r[L.docNo], new Set());
+    if (code) soCodesByDoc.get(r[L.docNo]).add(code);
   }
   const poCancelled = new Set();
   for (const r of snap.types.PO.headers || []) if (r[H.cancelled] === "T") poCancelled.add(r[H.docNo]);
@@ -144,7 +161,9 @@ async function main() {
     const src = String(r[L.fromSoDtlKey] || "").trim();
     if (!src) continue;
     if (!poChildrenOf.has(src)) poChildrenOf.set(src, []);
-    poChildrenOf.get(src).push({ poDocNo: r[L.docNo], poDtlKey: String(r[L.dtlKey]), qty: Q(r[L.qty]) });
+    poChildrenOf.get(src).push({
+      poDocNo: r[L.docNo], poDtlKey: String(r[L.dtlKey]), qty: Q(r[L.qty]), itemCode: itemCode(r[L.itemKey]),
+    });
   }
   out(`book: ${soLine.size} sales-order line(s); ${poChildrenOf.size} of them are named by a purchase-order line`);
 
@@ -250,9 +269,20 @@ async function main() {
         .filter((kid) => !poCancelled.has(kid.poDocNo))
         .map((kid) => {
           const line = erpPoLine.get(kid.poDtlKey);
+          /* DOES THE BOOK'S OWN EDGE NAME A LINE FOR ANOTHER PRODUCT? Narrow on
+             purpose: only when the named sales line's code differs AND the same
+             sales order carries a line whose code matches the purchase line
+             EXACTLY. A book purchase code that simply reads differently from the
+             sales code is routine and is NOT this. */
+          const named = o.book?.itemCode ?? "";
+          const onDoc = soCodesByDoc.get(o.book?.docNo) ?? new Set();
+          const bookSourceProductDiffers =
+            Boolean(kid.itemCode) && Boolean(named) && kid.itemCode !== named && onDoc.has(kid.itemCode);
           return {
             poDocNo: kid.poDocNo,
             poDtlKey: kid.poDtlKey,
+            poItemCode: kid.itemCode,
+            bookSourceProductDiffers,
             erpHasPoDoc: erpPoDoc.has(String(kid.poDocNo).trim().toUpperCase()),
             erpHasPoLine: Boolean(line),
             erpPoStatus: line?.po_status ?? null,
@@ -261,7 +291,7 @@ async function main() {
             bookSoLineKey: String(o.k),
           };
         });
-      const c = causeForGroup(kids);
+      const c = causeForGroup(kids, o.g);
       byCause.get(c.cause).push({ ...o, kids, childCauses: c.children });
     }
 
@@ -274,12 +304,15 @@ async function main() {
       out(`    ${cause.padEnd(24)}${String(rows.length).padStart(7)}${String(proc).padStart(11)}  ${CAUSE_LABEL[cause]}`);
     }
 
-    const work = GROUP_CAUSES.filter((c) => !IS_BY_DESIGN.has(c)).reduce((a, c) => a + byCause.get(c).length, 0);
-    const design = GROUP_CAUSES.filter((c) => IS_BY_DESIGN.has(c)).reduce((a, c) => a + byCause.get(c).length, 0);
-    const links = GROUP_CAUSES.filter((c) => IS_LINK_GAP.has(c)).reduce((a, c) => a + byCause.get(c).length, 0);
+    const sum = (pred) => GROUP_CAUSES.filter(pred).reduce((a, c) => a + byCause.get(c).length, 0);
+    const design = sum((c) => IS_BY_DESIGN.has(c));
+    const notOurs = sum((c) => IS_NOT_OUR_DEFECT.has(c));
+    const work = sum((c) => !IS_BY_DESIGN.has(c) && !IS_NOT_OUR_DEFECT.has(c));
+    const links = sum((c) => IS_LINK_GAP.has(c));
     out("");
     out(`    WORK ${work} line(s) — of which ${links} are a LINK to repair and ${work - links} are a stored number to recompute`);
     out(`    DECISION ${design} line(s) — the app's own rule dropping a purchase-order line on purpose. NEVER summed into WORK.`);
+    out(`    NOT OUR DEFECT ${notOurs} line(s) — the account book's own gap, or a grain our decomposition cannot express. NEVER summed into WORK.`);
 
     /* ── NAMED, PER DOCUMENT ──────────────────────────────────────────────── */
     head("3.  EVERY DISAGREEING LINE, NAMED, BY CAUSE");
@@ -309,7 +342,8 @@ async function main() {
     log(offenders.length === 0
       ? "SO -> PO COUNTER — every keyed sales-order line agrees with the account book."
       : `SO -> PO COUNTER — ${offenders.length} line(s) disagree: ${work} are work (${links} a link, ` +
-        `${work - links} a stored number), ${design} are the app's own rule working as designed.`);
+        `${work - links} a stored number), ${design} are the app's own rule working as designed, and ` +
+        `${notOurs} are the book's own gap or a grain our decomposition cannot express.`);
     out("NOTHING IS REPAIRED HERE. `po_qty_picked` is a purchasing ceiling and an MRP input, not an on-hand " +
       "figure — but no repair is planned by this file, and 「库存先不看」 is respected by construction.");
   } finally {

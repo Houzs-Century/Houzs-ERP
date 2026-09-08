@@ -185,6 +185,19 @@ export const NOTE_CLASSES = Object.freeze([
      answer live off the child rows every time it is asked. Nothing can drift,
      and the silence is declared rather than left to read as a measurement. */
   'chain-no-erp-counter',
+  /* THE ONWARD DOCUMENT TYPE WAS NEVER MIGRATED. The book says a receipt has
+     been fully invoiced and we record nothing, because the purchase-invoice
+     HISTORY was deliberately not imported — 5,283 in the book, 55 here. Not a
+     wrong number, an ABSENT one, and a decision rather than a defect. PROVED
+     per document by lib/ac-not-a-difference.mjs section 6: every onward
+     document the book raised off this one is absent from ours. A receipt whose
+     invoice we DO hold stays counted as a difference. */
+  'chain-onward-not-migrated',
+  /* THE ERP NAMES A PRODUCT THE BOOK DOES NOT, BY THE OWNER'S OWN DECISION.
+     Declared with the book model it overrides and who decided it, so it EXPIRES
+     the moment the book stops saying that — which is what tells his decision
+     from the hand-typed model of docs/bugs/0693. lib/ac-model-override.mjs. */
+  'owner-model-override',
 ]);
 
 const NOTED = new Set(NOTE_CLASSES);

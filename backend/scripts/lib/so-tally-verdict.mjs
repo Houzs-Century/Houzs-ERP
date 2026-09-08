@@ -346,7 +346,28 @@ export const DECLARED_LABEL = Object.freeze({
   "chain-no-erp-counter":
     "this edge has no stored ceiling in the ERP: how much has gone on is worked out from the child documents " +
     "every time it is asked, so there is no saved number that can drift out of step",
+  "chain-onward-not-migrated":
+    "the account book has moved this line ON to a document type the cutover deliberately did NOT bring over — " +
+    "the book holds 5,283 purchase invoices and we hold 55, and only receipts against OUTSTANDING orders were " +
+    "imported. So we record 0 transferred: not a wrong number, an ABSENT one, and your decision rather than a " +
+    "defect. PROVED per document (every onward document the book raised off this one is absent from ours); a " +
+    "line whose onward document we DO hold is still counted as a difference",
+  "owner-model-override":
+    "the ERP names a different product from the account book because YOU decided it — 「那就放8030 daybed把」. " +
+    "The decision is written down with the book's own model beside it, so if the book ever stops saying that, " +
+    "this goes straight back to being a difference without anybody editing anything",
 });
+
+/* The note classes that are NOT printed in "WHAT THIS VERDICT EXCLUDED": they
+ * have a section of their own. Named ONCE, here, because the divert below and
+ * the test that every other class carries a readable sentence must agree about
+ * which classes are exempt — two hand-kept lists is how a class comes to be
+ * exempt from a guard nobody meant to exempt it from.
+ *
+ * `unanswerable-cause` is not an exclusion at all: it is WHY a compartment
+ * could not be read, and it prints under "WHAT 'CANNOT BE COMPARED' MEANS, BY
+ * CAUSE" with its own vocabulary (`UNREAD_LABEL`). */
+export const NOT_DECLARED_CLASSES = Object.freeze(["unanswerable-cause"]);
 
 /**
  * Which of the four this document is. Exactly one, always.
@@ -437,7 +458,7 @@ export function tallyVerdict(payload) {
     const rowCauses = new Set();
 
     for (const [klass, byAxisNotes] of Object.entries(row.notes || {})) {
-      if (klass === "unanswerable-cause") {
+      if (NOT_DECLARED_CLASSES.includes(klass)) {
         /* THE GATE. A document with a real difference on another axis is WORK,
            whatever its unreadable sofa turns out to be — `bucketOf` already
            said so, and the cause table must agree with it rather than quietly
@@ -756,6 +777,29 @@ export function renderVerdict(v, { show = 20, type = "SO" } = {}) {
     const sorted = list.slice().sort((a, b) => Number(b.proceeded) - Number(a.proceeded) || (a.doc_no < b.doc_no ? -1 : 1));
     for (const e of sorted.slice(0, show)) {
       p(`   ${e.doc_no} (${e.ac_doc_no ?? "?"})${e.proceeded ? "  [PROCEEDED]" : ""} — ${e.axes.join(", ")}`);
+      /* ── A REFUSAL MUST SHOW THE VALUE IT IS REFUSING ABOUT ────────────────
+         2026-09-09, the owner, about three orders reported as having no source
+         at all for their build:
+         「所以基本上model和sofa compartment基本上都有了啊？那为什么你说没有呢？」
+         He was right. Two sources had been checked — the photograph and the
+         book's Desc2 — and the third, THE VALUE THE ERP IS HOLDING, was never
+         looked at. This list had the same blind spot: document number, axis
+         name, stop. An order the ERP already holds a perfectly good build for
+         reached him as a blank to fill from memory, which is 「把他已经答过的
+         题目丢回给他」.
+
+         The detail was already on the row and already carried through
+         `tallyVerdict` into `examples`. Nothing printed it. Printing it turns
+         "not verifiable" into a one-word confirmation.
+
+         ONLY on the cannot-compare list, deliberately. A WORK row names a real
+         difference on its axis and the reconcile log carries the two values
+         side by side; a cannot-compare row names a REFUSAL, and the refusal
+         alone is the thing nobody can act on. This prints, it does not
+         reclassify: `bucketOf` is untouched and the row is still unanswerable. */
+      if (kind === "unanswerable" && e.detail) {
+        for (const d of String(e.detail).split(/\r?\n/)) if (d.trim()) p(`         ${d.trim()}`);
+      }
     }
     if (sorted.length > show) p(`   ... ${sorted.length - show} more (raise SHOW to list them all)`);
   }

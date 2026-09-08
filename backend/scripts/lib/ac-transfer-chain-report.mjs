@@ -70,6 +70,46 @@ const pad = (s, w) => String(s).padEnd(w);
 const rp = (n, w) => String(n).padStart(w);
 
 /**
+ * The migration decision, and the rows it does NOT cover.
+ *
+ * The impostors are printed LOUDER than the differences they sit among, and on
+ * purpose: a real defect wearing a decision's label is one nobody goes and
+ * looks at, which is what docs/bugs/0668 cost 30 documents on go-live eve. This
+ * lane's version of that hazard is a goods receipt whose purchase invoice we DO
+ * hold reading as "the history was never migrated".
+ */
+export function printOnwardSplit(r, { plain, log, show = 20 }) {
+  const o = r.onward;
+  if (!o) return;
+  if (!o.applied) {
+    if (!o.decision) return; /* no decision declared for this type — nothing to say */
+    log(
+      `${r.t} ONWARD-TRANSFER DECISION NOT APPLIED — ${o.unreadable ?? o.why}. All ${o.differ} transfer-to ` +
+        "difference(s) stay counted as differences. An unproven decision is not a decision.",
+    );
+    return;
+  }
+  plain(
+    `      of those, ${o.notMigrated} are 「${o.decision.label}」 and NOT a difference; ${o.differ} remain`,
+  );
+  plain(`        ${o.decision.ruling}`);
+  plain(`        ${o.decision.consequence}`);
+  plain(
+    `        PROVED per document, never assumed: the book names at least one ${o.decision.onwardType} raised off ` +
+      "the document AND the ERP holds none of them. The grain is the DOCUMENT because AutoCount records no " +
+      "source LINE on this edge, and that is stated rather than dressed up as a line-level accounting.",
+  );
+  if (o.impostorCount) {
+    log(
+      `${r.t} — ${o.impostorCount} transfer-to difference(s) LOOK like 「${o.decision.label}」 and are NOT: they ` +
+        "stay counted, and they are the ones to go and look at first.",
+    );
+    for (const im of o.impostors.slice(0, show)) plain(`        IMPOSTOR: ${im.why}`);
+    if (o.impostorCount > show) plain(`        ... ${o.impostorCount - show} more (raise SHOW)`);
+  }
+}
+
+/**
  * @param {object} res            recordTransferChain()'s return
  * @param {object} io
  * @param {(s: string) => void} io.plain
@@ -159,6 +199,7 @@ export function printTransferChain(res, { plain, log, show = 20 }) {
         plain(`      ${pad(v, 26)}${rp(r.to[v], 7)}  ${TO_LABEL[v]}${mark}`);
       }
       if (r.noCounterNote) plain(`      ALSO NOT MEASURED: ${r.noCounterNote}.`);
+      printOnwardSplit(r, { plain, log, show });
     }
     for (const ex of r.examples.from.slice(0, show)) {
       plain(`      [${ex.v}] ${ex.ac} (ERP ${ex.erpNo})${ex.proceeded ? " PROCEEDED" : ""} — ${ex.detail}`);

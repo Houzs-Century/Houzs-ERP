@@ -218,6 +218,84 @@ describe("renderVerdict — the line a non-engineer reads", () => {
   });
 });
 
+/* ── A REFUSAL MUST SHOW THE VALUE IT IS REFUSING ABOUT ──────────────────────
+ * 2026-09-09. Three sales orders were reported to the owner as having "no
+ * source at all" for their sofa build, and he pushed back:
+ *
+ *     「所以基本上model和sofa compartment基本上都有了啊？那为什么你说没有呢？」
+ *
+ * He was right. Two sources had been checked — the photograph and the book's
+ * Desc2 — and the third, THE VALUE OUR OWN SYSTEM IS HOLDING, was never
+ * looked at. The report had the same blind spot by construction: the
+ * `CANNOT BE COMPARED` list printed the document number and the axis name and
+ * stopped, so an order the ERP already holds a perfectly good build for reached
+ * him as a blank to fill from memory.
+ *
+ * A line that says only "not verifiable" hands him work. A line that says
+ * "the book does not state a build; we hold 1A(LHF)+1NA+1A(RHF)" is a
+ * one-word confirmation. The detail was ALREADY on the row and already carried
+ * through `tallyVerdict` into `examples`; nothing printed it.
+ *
+ * This is 「把他已经答过的题目丢回给他」 — the class this repo has been paying for
+ * all night — caught as a property instead of as a complaint.
+ */
+describe("the CANNOT-BE-COMPARED list prints what the ERP itself holds", () => {
+  const unreadable = (over = {}) =>
+    row({
+      doc_no: "HC-SO-013495",
+      ac_doc_no: "SO-013495",
+      clean: false,
+      axes: ["sofa build not verifiable"],
+      axes_proceeded: ["sofa build not verifiable"],
+      detail:
+        'sofa build not verifiable: SO-013495 DtlKey 926840 (ERP HC-SO-013495 8030-1A(LHF)): ' +
+        'we hold "1A(LHF)+1NA+1A(RHF)" — the book\'s Desc2 does not state the pieces',
+      ...over,
+    });
+
+  it("prints the held build beside the refusal, not just the document and the axis", () => {
+    const v = tallyVerdict(payload([unreadable()]));
+    const text = renderVerdict(v).join("\n");
+
+    /* the refusal is still there and still its own bucket */
+    expect(v.buckets.unanswerable).toBe(1);
+    expect(text).toContain("CANNOT BE COMPARED — your drawing decides these");
+    expect(text).toContain("HC-SO-013495");
+
+    /* and the value behind it is on the page. THIS is the new property: the
+       owner can answer 「对」 without opening anything. */
+    expect(text).toContain("1A(LHF)+1NA+1A(RHF)");
+  });
+
+  it("still says so plainly when the ERP holds nothing either", () => {
+    const v = tallyVerdict(
+      payload([
+        unreadable({
+          doc_no: "HC-SO-013503",
+          ac_doc_no: "SO-013503",
+          detail:
+            'sofa build not verifiable: SO-013503 DtlKey 926872 (ERP HC-SO-013503 8030-1S): ' +
+            'we hold "(nothing)" — the book\'s Desc2 does not state the pieces',
+        }),
+      ]),
+    );
+    const text = renderVerdict(v).join("\n");
+    expect(text).toContain("HC-SO-013503");
+    expect(text).toContain("(nothing)");
+  });
+
+  /* A refusal that prints a build must not START reading as a difference. The
+     bucket is the thing the owner's backlog is counted from, and printing more
+     of the row may not move it. */
+  it("printing the build does not move the document out of CANNOT BE COMPARED", () => {
+    const v = tallyVerdict(payload([unreadable()]));
+    expect(v.buckets.work).toBe(0);
+    expect(v.buckets.identical).toBe(0);
+    expect(isTallied(v)).toBe(true);
+    expect(renderVerdict(v).join("\n")).toMatch(/(^|\n)TALLIED/);
+  });
+});
+
 describe("the axis map cannot go stale", () => {
   /* A locking axis with no group would be a difference the lock still shuts
      documents for and this report never prints. The module asserts it at
