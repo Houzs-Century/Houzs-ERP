@@ -1790,37 +1790,59 @@ plain("═══════════ SUMMARY ══════════�
    honest way to reach zero is to say what each count IS, not to stop counting
    it.  Each has a sentence under the table in his own terms. */
 plain("        <-------------------- DIFFERENCES (the work) --------------------->  <----- NOT differences ----->");
-plain("type  book  scope    erp  absent  phantom   both  lineCnt   item    qty  price  money  decided  no-price  ERP-RM0  non-MYR  same-goods  same-money");
+/* ONE LIST FOR THE HEADER AND THE ROW, so they cannot drift apart.
+   They were two independent literals, and on run 34187812364 the header
+   announced `same-goods` and `same-money` while every row printed 16 cells
+   under an 18-column heading: the two cells were added to the heading and the
+   edit that was supposed to add them to the row silently did not apply. A
+   heading that promises a column the rows do not carry is a table that lies,
+   and nothing could catch it because nothing related the two. Now the same
+   array yields both, and the loop below asserts the counts agree. */
+const SUMMARY_COLUMNS = [
+  { label: "type", width: -4, get: (s) => s.t },
+  { label: "book", width: 5, get: (s) => s.acDocs },
+  { label: "scope", width: 6, get: (s) => s.scope },
+  { label: "erp", width: 6, get: (s) => s.erpLinked },
+  { label: "absent", width: 7, get: (s) => s.missing },
+  { label: "phantom", width: 8, get: (s) => s.phantom },
+  { label: "both", width: 6, get: (s) => s.bothSides },
+  { label: "lineCnt", width: 8, get: (s) => s.lineCount },
+  { label: "item", width: 6, get: (s) => s.item },
+  { label: "qty", width: 6, get: (s) => s.qty },
+  { label: "price", width: 6, get: (s) => s.price },
+  { label: "money", width: 6, get: (s) => s.money },
+  /* An absence the owner has already ruled on, named in full in its own
+     section above with the action still owed. */
+  { label: "decided", width: 8, get: (s) => s.decided ?? 0 },
+  /* The BOOK states no unit price. Copying it would ERASE the ERP's. */
+  { label: "no-price", width: 9, get: (s) => s.noPrice ?? 0 },
+  /* Our document carries RM 0.00 on migrated paperwork — the owner's standing
+     decision, proved per document, never assumed. */
+  { label: "ERP-RM0", width: 8, get: (s) => s.erpZeroMoney ?? 0 },
+  /* Its own column, deliberately not folded into `money` and not counted in
+     `gaps`: a foreign document is compared in its own currency and may be
+     perfectly correct. What it flags is that the ERP tags it MYR. Ledger 0665. */
+  { label: "non-MYR", width: 8, get: (s) => s.foreign ?? 0 },
+  /* No AutoCount line number on these rows, so which of our lines answers which
+     of the book's was the checker's own guess — and both sides list the same
+     products in the same quantities, which no ordering can fake. */
+  { label: "same-goods", width: 11, get: (s) => s.guessedPairing ?? 0 },
+  /* An invoice built from OUR receipt or delivery: total equal to the sen and
+     every item code agreeing, on a different number of rows. */
+  { label: "same-money", width: 11, get: (s) => s.lineShape ?? 0 },
+];
+const cell = (v, w) => (w < 0 ? String(v).padEnd(-w) : String(v).padStart(w));
+plain(SUMMARY_COLUMNS.map((c) => cell(c.label, c.width)).join(" "));
 for (const s of summary) {
-  plain(
-    [
-      s.t.padEnd(4),
-      String(s.acDocs).padStart(5),
-      String(s.scope).padStart(6),
-      String(s.erpLinked).padStart(6),
-      String(s.missing).padStart(7),
-      String(s.phantom).padStart(8),
-      String(s.bothSides).padStart(6),
-      String(s.lineCount).padStart(8),
-      String(s.item).padStart(6),
-      String(s.qty).padStart(6),
-      String(s.price).padStart(6),
-      String(s.money).padStart(6),
-      /* An absence the owner has already ruled on. Named in full in this type's
-         own section above, with the action still owed. */
-      String(s.decided ?? 0).padStart(8),
-      /* The BOOK states no unit price. Copying it would ERASE the ERP's. */
-      String(s.noPrice ?? 0).padStart(9),
-      /* Our document carries RM 0.00 on migrated paperwork — the owner's
-         standing decision, proved per document, never assumed. */
-      String(s.erpZeroMoney ?? 0).padStart(8),
-      /* Its own column, deliberately not folded into `money` and deliberately
-         not counted in `gaps`: a foreign-currency document is compared in its
-         own currency and may be perfectly correct. What it flags is that the
-         ERP tags it MYR. Ledger 0665. */
-      String(s.foreign ?? 0).padStart(8),
-    ].join(" "),
-  );
+  const cells = SUMMARY_COLUMNS.map((c) => cell(c.get(s), c.width));
+  if (cells.length !== SUMMARY_COLUMNS.length) {
+    throw new Error(
+      `summary row for ${s.t} rendered ${cells.length} cells under ` +
+        `${SUMMARY_COLUMNS.length} headings — the table would misalign, which is how ` +
+        "two announced columns went unprinted on run 34187812364",
+    );
+  }
+  plain(cells.join(" "));
 }
 plain("");
 plain("absent   = in the expected population and NOT in the ERP. A real gap: somebody has to carry the document over.");
