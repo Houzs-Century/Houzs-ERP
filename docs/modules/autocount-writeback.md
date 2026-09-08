@@ -5195,12 +5195,13 @@ that, and three rules go with it:
   printed from.
 - **What still does not fit is reported**, not dropped.
 
-**THE CLASS IS OPEN.** Every AutoCount column has a width and the ERP measures
-**none** of the others. `AC_ADDRESS_LINE_MAX` is the only one this repo knows,
-and it knows it because somebody went and looked after a document stopped. The
-next could be a customer name, a reference, a remark. A census of the widths the
-write-back can reach, plus a guard that fits every string to its column, is the
-real remedy and is NOT built — `docs/bugs/0728`.
+**THE CLASS IS OPEN.** AutoCount's columns are fixed-width, and this repo holds
+exactly one of those widths — `AC_ADDRESS_LINE_MAX` — because somebody went and
+looked after a document stopped. Whether any other string the write-back sends
+can overrun its column is UNMEASURED, not ruled out; a customer name, a
+reference or a remark are the obvious candidates. The remedy is a census of the
+widths the write-back can reach plus a guard that fits each string to its own,
+and it is NOT built — `docs/bugs/0728`.
 
 **The refusal is per DOCUMENT, not per field.** One over-long string keeps the
 whole sales order out of the accounts.

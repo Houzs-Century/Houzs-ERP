@@ -51,12 +51,12 @@ order reached the book.
 **UNTESTED against the live book** — `HC-SO-2609-006` has not been re-sent under
 this build.
 
-**THE CLASS IS BIGGER THAN THIS FIELD, and it is open.** Every AutoCount column
-has a width and the ERP measures **none** of them. This one was found because a
-document stopped; the next could be a customer name, a reference, a remark. The
-honest state is that `AC_ADDRESS_LINE_MAX` is the only width this repo knows,
-and it knows it because somebody went and looked. A census of the widths the
-write-back can reach, and a guard that fits every string to its column, is the
-real remedy and is not built.
+**THE CLASS IS BIGGER THAN THIS FIELD, and it is open.** AutoCount's columns are
+fixed-width, and this repo now holds exactly one of those widths —
+`AC_ADDRESS_LINE_MAX`, the address — because somebody went and looked after a
+document stopped. Whether any other string the write-back sends can overrun its
+column is UNMEASURED, not ruled out; a customer name, a reference or a remark
+are the obvious candidates. The remedy is a census of the widths the write-back
+can reach plus a guard that fits each string to its own, and it is not built.
 
 **Ref.** fix/the-address-must-fit-the-book, 2026-09-09.
