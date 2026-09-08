@@ -632,13 +632,23 @@ receipts — a constant, not the column — so it was structurally forced to pai
 quantity and position for ever. It reads the column now
 (`docs/bugs/0697-the-migrated-goods-receipts-and-delivery-orders-carry-no-aut.md`).
 
-**What it stamped, and what it will not.** Dry run against production 2026-09-08
-13:48 (+08), run `34192040888`:
+**What it stamped, and what it will not.** APPLIED to production 2026-09-08
+14:22 (+08), run `34194376108` — `APPLIED: 1358 row(s) stamped of 1358 planned`:
 
-| | documents | lines | stampable | left NULL | fully keyed |
+| | documents | lines | stamped | left NULL | fully keyed |
 |---|---|---|---|---|---|
 | goods receipts | 400 | 636 | 563 | 73 | 371 / 400 |
 | delivery orders | 173 | 831 | 795 | 36 | 159 / 173 |
+
+`scm.grn_items` went 0 -> 563 of 792 company-1 rows carrying a key;
+`scm.delivery_order_items` 0 -> 795 of 831. **0 stored keys disagreed** with the
+derived one. The run re-read the SHAPE on a fresh connection and printed both:
+money, quantities, SO line readiness, stock and the migrated-document movement
+leak are byte-identical before and after. A line key is identity, not value.
+
+**FULLY KEYED is the unit that matters, not the line count.** `composeEdit`
+refuses the WHOLE document when any one line carries no key, so a document with
+563 of its 564 lines keyed is exactly as uneditable as one with none.
 
 The lines it leaves NULL are left NULL for three reasons, and the third is a
 LIMIT OF THE FOLD rather than a disagreement — worth knowing before anyone reads
@@ -660,6 +670,44 @@ Closing (3) needs a per-BUILD identity, not a per-model one. The candidate is
 deliberately leaves that NULL exactly when a purchase order carries one item code
 twice, which may be these very rows, so it must be MEASURED before it is built
 on.
+
+**What the keys bought, measured against the run before them.** Reconcile
+`34189267879` (13:05 +08, before) against `34195045626` (14:32 +08, after). The
+types this backfill did NOT touch are the control — they did not move, which is
+what shows the change is the keys and not the reporting rewrite #3195 landed in
+between:
+
+| | before | after |
+|---|---|---|
+| GR lines PAIRED | 506 | **624** |
+| GR item code | 2 **(+34 the checker had to GUESS)** | **2** |
+| GR documents that could not be line-matched | 44 | **2** |
+| DO lines PAIRED | 747 | **818** |
+| DO quantity differences | 1 | **0** |
+| DO documents that could not be line-matched | 25 | **1** |
+| SO / IV / PI could not be line-matched (control, untouched) | 23 / 13 / 31 | 23 / 13 / 31 |
+
+The `+34` clause is gone from the goods-receipt row, and with it the whole
+paragraph that read *"34 item-code difference(s) are the CHECKER's own guess"* —
+the checker no longer has to guess on a goods receipt. The one DO quantity
+difference was a mis-pairing, not a wrong quantity.
+
+Re-proved unchanged the same hour: stock `cells compared: 996 | AGREE: 962 |
+DISAGREE: 0`, `whole sofas — AutoCount 107 vs ERP 107`, `migrated documents that
+DID write an inventory movement: 0 / 0 / 0` (run `34195058192`), and convert
+symmetry `3 orphan child lines; 196 parent groups claim more than their children
+took; 0 live children under a cancelled parent` (run `34195071370`) — identical
+to `34186141752` before the write.
+
+**Can a migrated goods receipt now sync back? UNTESTED, and do not read the
+column population as a yes.** What IS proven is that the structural blocker is
+gone for 371 of 400 goods receipts and 159 of 173 delivery orders. What the
+outbox says (run `34195280474`) is that no goods receipt has EVER traversed the
+queue: `po_to_gr` is `NEVER ENQUEUED — no row of any status`, and every `edit`
+row in the outbox is a SALES order, including both historical `KeylessLineError`
+refusals. So the key is a NECESSARY condition that is now met; whether it is
+SUFFICIENT needs somebody to edit a migrated goods receipt in the ERP and read
+the resulting outbox row. Until that happens this stays UNTESTED.
 
 ### The defect this section exists for
 
