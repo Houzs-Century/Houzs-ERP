@@ -477,16 +477,19 @@ export const useCancelDebtorBill = () => {
     onSuccess: () => invalidateDebtors(qc),
   });
 };
+/** Raise a debtor receipt; `postNow` books it in the same call (the Receipts
+    page's door, owner 2026-09-08: 用这个方式 — 录入即过账 like a sundry receipt),
+    otherwise it starts at Draft for the Other Debtors page's four layers. */
 export const useCreateDebtorReceipt = () => {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ debtorId, ...body }: {
-      debtorId: string; receiptDate?: string; bankAccountCode: string; notes?: string;
+      debtorId: string; receiptDate?: string; bankAccountCode: string; notes?: string; postNow?: boolean;
       allocations: Array<{ billId: string; amountSen: number }>;
-    }) => authedFetch<{ ok: boolean; receipt: { receiptNumber: string } }>(
+    }) => authedFetch<{ ok: boolean; receipt: { id?: string; receiptNumber: string; totalSen?: number }; posted?: boolean; jeNo?: string }>(
       `/other-debtors/${debtorId}/receipts`, { method: 'POST', body: JSON.stringify(body) },
     ),
-    onSuccess: () => invalidateDebtors(qc),
+    onSuccess: () => { invalidateDebtors(qc); void qc.invalidateQueries({ queryKey: ['receipts'] }); },
   });
 };
 /* One hook, five doors — the receipt's four-layer actions mirror the PV's. */

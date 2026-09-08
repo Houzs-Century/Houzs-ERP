@@ -15,6 +15,13 @@
  *   NAMED        a real product, fully named, that the free-text resolver
  *                failed on — so the drop fired on a MATCHER failure, not on a
  *                blank line.  These belong in the ERP.
+ *
+ * AND THE RESOLVER RUNS FIRST, which reading the export alone gets backwards.
+ * "code-less and unpriced" is the CANDIDATE set, not the dropped set: a line in
+ * it that the pick list can answer was imported as GOODS and the owner's rule
+ * never saw it.  Section A asks the LIVE pick list before it calls anything
+ * dropped, because the pick list has grown since the import and the honest
+ * answer is today's, not a reconstruction of that run's.
  *   INSTRUCTION  a build note somebody typed on a line of its own
  *                ("COLOUR : 885-4", "LEG: FOLLOW DISPLAY").  Creating a product
  *                line for one invents goods the customer never ordered.  The
@@ -72,7 +79,7 @@ const flat = (s) => norm(s).replace(/[^A-Z0-9]/g, "");
    no outcome here, it only names which of the three populations a row is in. */
 const INSTRUCTION_RE = /^(COLOUR|COLOR|CLR|COL|LEG|LEGS|GAP|DIVAN|FABRIC|SIZE|REMARK|NOTE)\b\s*[:：]/i;
 function classify(l) {
-  const desc = String(l.Description ?? "").trim();
+  const desc = String(l.Description ?? l.LineDesc ?? "").trim();
   const d2 = String(l.Desc2 ?? "").trim();
   if (!desc && !d2) return num(l.Qty) > 0 ? "UNDESCRIBED-BUT-ORDERED" : "UNDESCRIBED";
   if (num(l.Qty) === 0 && INSTRUCTION_RE.test(desc || d2)) return "INSTRUCTION";
@@ -89,30 +96,57 @@ async function main() {
 
   const so = rd("ac-outstanding-so.json.gz");
   const codeless = so.filter((r) => blankS(r.ItemCode));
-  const kept = codeless.filter((r) => num(r.UnitPrice) > 0);
-  const dropped = codeless.filter((r) => !(num(r.UnitPrice) > 0));
+  const priced = codeless.filter((r) => num(r.UnitPrice) > 0);
+  const unpriced = codeless.filter((r) => !(num(r.UnitPrice) > 0));
   log(`data/ac-outstanding-so.json.gz: ${so.length} line(s) over ${new Set(so.map((r) => r.DocNo)).size} document(s)`);
-  log(`code-less line(s): ${codeless.length} — PRICED (kept) ${kept.length}; ZERO-PRICED (drop rule) ${dropped.length}`);
+  log(`code-less line(s): ${codeless.length} — PRICED ${priced.length}; ZERO-PRICED ${unpriced.length}`);
+
+  /* THE ORDER OF THE TWO RULES IS THE WHOLE POINT, and reading the file alone
+     gets it backwards. The importer resolves the free text against the LIVE
+     pick list FIRST; the owner's rule only sees what the resolver could not
+     answer. So "code-less and unpriced" is NOT the dropped set — it is the
+     candidate set, and a line in it that resolves was imported as GOODS. The
+     pick list is a live table that has grown since the import, so this is the
+     answer TODAY and not a reconstruction of that run. */
+  const products = await sql`SELECT code, name FROM scm.mfg_products WHERE company_id = ${CO}`;
+  log(`scm.mfg_products (company ${CO}): ${products.length}`);
+  const traced = buildTracedNameResolver(products);
+  const resolves = (r) => traced(String(r.Description ?? "").trim()).code;
+
+  const wouldDrop = unpriced.filter((r) => !resolves(r));
+  const rescued = unpriced.filter((r) => resolves(r));
+  log(`of the ${unpriced.length} zero-priced code-less line(s), the resolver answers ${rescued.length} TODAY — only ${wouldDrop.length} reach the owner's drop rule`);
+
+  plain("");
+  plain(`  RESOLVED BY NAME, so the drop rule never saw them: ${rescued.length}`);
+  for (const r of rescued) plain(`     ${r.DocNo} dtl ${r.DtlKey} qty ${r.Qty ?? "-"} ${JSON.stringify(r.Description ?? "")} -> ${resolves(r)}`);
 
   const groups = new Map();
-  for (const r of dropped) { const c = classify(r); if (!groups.has(c)) groups.set(c, []); groups.get(c).push(r); }
+  for (const r of wouldDrop) { const c = classify(r); if (!groups.has(c)) groups.set(c, []); groups.get(c).push(r); }
   for (const [c, rs] of [...groups].sort()) {
     plain("");
-    plain(`  ${c}: ${rs.length}`);
+    plain(`  DROPPED — ${c}: ${rs.length}`);
     for (const r of rs) plain(`     ${r.DocNo} dtl ${r.DtlKey} qty ${r.Qty ?? "-"} price ${r.UnitPrice ?? "-"} desc ${JSON.stringify(r.Description ?? "")} desc2 ${JSON.stringify(r.Desc2 ?? "")}`);
   }
   plain("");
-  plain("  PRICED code-less lines — NOT dropped; the resolver ran first, then the charge rule:");
-  for (const r of kept) plain(`     ${r.DocNo} dtl ${r.DtlKey} qty ${r.Qty} price ${r.UnitPrice} desc ${JSON.stringify(r.Description ?? "")}`);
+  plain("  PRICED code-less lines — the resolver ran first here too, then the charge rule:");
+  for (const r of priced) {
+    const code = resolves(r);
+    plain(`     ${r.DocNo} dtl ${r.DtlKey} qty ${r.Qty} price ${r.UnitPrice} ${JSON.stringify(r.Description ?? "")} -> ${code ? `RESOLVED ${code}` : "the charge rule: TRANSPORTATION CHARGES"}`);
+  }
 
   plain("");
   plain("=".repeat(78));
   plain("B — THE SAME COUNT FOR EVERY OTHER DOCUMENT TYPE");
   plain("=".repeat(78));
+  /* Each cut names its description column differently — `ac-partial-dos` says
+     LineDesc — and reading the wrong one reports a line that says something as
+     a line that says nothing. It did, on DO-001604's RM 150.00 dispose row. */
+  const descOf = (r) => String(r.Description ?? r.LineDesc ?? "");
   const census = (label, rows, docKey, dtlKey) => {
     const cl = rows.filter((r) => blankS(r.ItemCode));
-    const named = cl.filter((r) => !blankS(r.Description) || !blankS(r.Desc2));
-    const mute = cl.filter((r) => blankS(r.Description) && blankS(r.Desc2));
+    const named = cl.filter((r) => !blankS(descOf(r)) || !blankS(r.Desc2));
+    const mute = cl.filter((r) => blankS(descOf(r)) && blankS(r.Desc2));
     const muteOrdered = mute.filter((r) => num(r.Qty) > 0);
     plain(`  ${label}: ${rows.length} line(s) / ${new Set(rows.map((r) => r[docKey])).size} document(s)`);
     plain(`     code-less ${cl.length} — carrying text ${named.length} (priced ${named.filter((r) => num(r.UnitPrice) > 0).length}), stating nothing ${mute.length} (with a quantity ${muteOrdered.length})`);
@@ -124,11 +158,8 @@ async function main() {
 
   plain("");
   plain("=".repeat(78));
-  plain("C — THE LIVE PICK LIST, ASKED BY THE IMPORTER'S OWN RESOLVER");
+  plain("C — EVERY CODE-LESS LINE'S VERDICT, WITH THE RULE IT FELL OUT OF");
   plain("=".repeat(78));
-  const products = await sql`SELECT code, name FROM scm.mfg_products WHERE company_id = ${CO}`;
-  log(`scm.mfg_products (company ${CO}): ${products.length}`);
-  const traced = buildTracedNameResolver(products);
   const stripDim = (s) => norm(s).replace(/\([^)]*\)/g, " ").replace(/\s+/g, " ").trim();
   for (const r of codeless) {
     const d = String(r.Description ?? "").trim();
@@ -194,7 +225,7 @@ async function main() {
      proper home for it differs by kind (a colour is a variant; a leg note is a
      build text). Compared with punctuation and spacing removed from BOTH
      sides: the book writes "885-4" and a library row may write "885 - 4". */
-  const instructions = dropped.filter((r) => classify(r) === "INSTRUCTION")
+  const instructions = wouldDrop.filter((r) => classify(r) === "INSTRUCTION")
     .map((r) => ({ doc: r.DocNo, dtl: r.DtlKey, text: String(r.Description || r.Desc2 || "").trim() }));
   for (const ins of instructions) {
     const erpNo = "HC-" + ins.doc;
@@ -263,12 +294,10 @@ async function main() {
      A sales order never writes a movement itself — its DELIVERY does — so both
      are asked, and the delivery side asks for the ADJUSTMENT source type too
      because that is what a reversal writes (check-migrated-cancel-exposure). */
-  const mvSo = await sql`
-    SELECT COUNT(*)::int AS n
-      FROM scm.inventory_movements m
-      JOIN scm.mfg_sales_orders so ON so.id::text = m.source_doc_id::text
-     WHERE m.company_id = ${CO} AND so.company_id = ${CO} AND so.doc_no = ANY(${erpDocs})`;
-  plain(`  movements naming any of these ${erpDocs.length} sales orders: ${mvSo[0].n}`);
+  /* A sales order writes NO movement of its own — `source_doc_type` is only
+     ever DO / GRN / ADJUSTMENT / AC_CUTOVER / PC_RECEIVE — so the control is
+     the DELIVERY leg, asked for ADJUSTMENT too because that is what a reversal
+     writes (check-migrated-cancel-exposure). */
   const mvDo = await sql`
     SELECT d.do_number, d.so_doc_no, d.migrated_no_stock, COUNT(m.id)::int AS movements
       FROM scm.delivery_orders d
