@@ -654,13 +654,27 @@ export async function readConvertSourceKeys(
        that same book line by construction. Measured 2026-09-08, key 901830 is
        held by 2 rows and 856404 by 2 - both sofas.
 
-       Best-effort, and a read failure falls back to what was taken. That is the
-       old behaviour, which is wrong only in the direction of the refusal it
-       would otherwise raise. */
+       A FAILURE HERE IS NOT BEST-EFFORT, and it is the one read in this function
+       that cannot degrade quietly. The others fall back BEFORE any key is known,
+       where the fallback is "send no DtlKeys". This one runs after, and falling
+       back to the taken set would merge a PART-shipped sofa into one key and
+       send it as whole — the service would then move the book's entire sofa
+       while one piece is still in the warehouse. Before this change that shape
+       was saved by accident: the duplicate key made the host refuse. Merging
+       removes that accident, so the refusal has to become deliberate. */
     const siblings = new Map<number, { lines: number; qty: number }>();
     if (keys.length) {
-      const { data: sib } = await sb.from(spec.sourceItemTable)
+      const { data: sib, error: sibErr } = await sb.from(spec.sourceItemTable)
         .select(`id, linked_ac_dtlkey, ${spec.sourceQtyCol}`).in('linked_ac_dtlkey', keys);
+      if (sibErr) {
+        return {
+          refuse:
+            'the ERP could not read whether any source line on this document shares ONE line in the '
+            + 'account book — a sofa is one line there and several here — so it cannot tell a whole '
+            + 'transfer from a part-shipped one. Sending it anyway could move a whole sofa for one '
+            + 'delivered piece. Nothing was sent; re-send this document and the read is tried again.',
+        };
+      }
       for (const r of ((sib ?? []) as unknown as Array<Record<string, unknown>>)) {
         const n = Number(r.linked_ac_dtlkey);
         if (!Number.isFinite(n)) continue;
