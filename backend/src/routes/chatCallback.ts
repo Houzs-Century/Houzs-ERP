@@ -116,6 +116,15 @@ function safeId(raw: unknown): string | null {
 const EVENTS = new Set(["confirm", "amend"]);
 
 app.post("/", async (c) => {
+  // company-scope: every read below IS scoped — chatCompany() resolves HOUZS
+  // first and the predicate is applied as `.eq("company_id", company.id)` on
+  // the next line of each statement, which this checker's per-statement
+  // heuristic cannot see. It is conditional on purpose: company.id is null ONLY
+  // in the master-unreadable state (the single-company install / the D1 test
+  // mirror), where scm/lib/companyScope's own contract is "no predicate" —
+  // writing `.eq('company_id', null)` there would be a malformed filter, not a
+  // tighter one. The misconfiguration state (master readable, no HOUZS row) is
+  // refused, not degraded.
   const denied = await badChatKey(c);
   if (denied) return denied;
 
@@ -123,17 +132,25 @@ app.post("/", async (c) => {
     return c.json({ error: "not_configured", reason: "Supabase is not configured" }, 503);
   }
 
-  const body = await c.req
-    .json<{
-      callback_id?: string;
-      event?: string;
-      ref?: string;
-      phone?: string;
-      delivery_date?: string;
-      reason?: string;
-      note?: string;
-    }>()
-    .catch(() => null);
+  // try/catch rather than `.catch(() => null)`: the same house pattern
+  // scm/routes/delivery-messages.ts uses, and the one check-swallowed-reads
+  // wants — a discarded rejection cannot tell a malformed body from a body
+  // that never arrived. Here both answers really are 400, but the shape has to
+  // be the one that CAN tell, or the next reader copies the one that cannot.
+  let body: {
+    callback_id?: string;
+    event?: string;
+    ref?: string;
+    phone?: string;
+    delivery_date?: string;
+    reason?: string;
+    note?: string;
+  } | null = null;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid_json" }, 400);
+  }
   if (!body || typeof body !== "object") {
     return c.json({ error: "invalid_json" }, 400);
   }
@@ -157,31 +174,43 @@ app.post("/", async (c) => {
 
   const sb = getSupabaseService(c.env);
 
-  // ── Idempotency ─────────────────────────────────────────────────────────
-  // A webhook can fire twice for one tap. The id is matched against the exact
-  // JSON fragment it was written as, and only among this route's own rows, so
-  // a delivery-planning send can never be mistaken for a duplicate callback.
-  if (callbackId) {
-    const { data: dupe } = await sb
-      .from("wa_message_log")
-      .select("id")
-      .eq("source", "chat-callback")
-      .like("payload", `%"callback_id":"${callbackId}"%`)
-      .limit(1);
-    if (dupe && dupe.length > 0) {
-      return c.json({ ok: true, duplicate: true, id: (dupe[0] as { id: string }).id });
-    }
-  }
-
   // ── Company scope ───────────────────────────────────────────────────────
-  // The key speaks for HOUZS and nothing else: a doc that is not Houzs's is a
-  // REFUSAL to notice, not a row to write. See the COMPANY note at the top.
+  // Resolved FIRST, before anything reads a row: the key speaks for HOUZS and
+  // nothing else, so every query below carries its predicate. A doc that is
+  // not Houzs's is a REFUSAL to notice, not a row to write. See the COMPANY
+  // note at the top.
   const company = await chatCompany(c.env.DB, CHAT_KEY_COMPANY);
   if (company.master && company.id == null) {
     return c.json(
       { error: "misconfigured", reason: `no companies row for code ${CHAT_KEY_COMPANY}` },
       500,
     );
+  }
+
+  // ── Idempotency ─────────────────────────────────────────────────────────
+  // A webhook can fire twice for one tap. The id is matched against the exact
+  // JSON fragment it was written as, scoped to this company, and only among
+  // this route's own rows — so neither another tenant's row nor a
+  // delivery-planning send can be mistaken for a duplicate callback.
+  if (callbackId) {
+    let dupeQuery = sb
+      .from("wa_message_log")
+      .select("id")
+      .eq("source", "chat-callback")
+      .like("payload", `%"callback_id":"${callbackId}"%`);
+    if (company.id != null) dupeQuery = dupeQuery.eq("company_id", company.id);
+    const { data: dupe, error: dupeErr } = await dupeQuery.limit(1);
+    // NOT `data ?? []`. supabase-js does not throw: an unbound error here would
+    // read a five-second blip as "not a duplicate" and write the customer's
+    // answer twice — the exact class BUG-HISTORY 2026-07-17 records as money
+    // collected twice at the door. If we cannot tell, we refuse and let chat
+    // retry.
+    if (dupeErr) {
+      return c.json({ error: "load_failed", reason: dupeErr.message }, 500);
+    }
+    if (dupe && dupe.length > 0) {
+      return c.json({ ok: true, duplicate: true, id: (dupe[0] as { id: string }).id });
+    }
   }
 
   let soQuery = sb.from("mfg_sales_orders").select("doc_no, company_id").eq("doc_no", docNo);
