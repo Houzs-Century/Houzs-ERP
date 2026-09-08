@@ -801,17 +801,17 @@ Total: 1196 route registrations across 154 files.
 - L1879  PATCH  /:id/status
 
 ## backend/src/scm/routes/document-cancel-routes.ts  (11)
-- L416  GET    /:docNo/cancel-request
-- L417  POST   /:docNo/cancel-request
-- L418  POST   /:docNo/cancel-request/approve
-- L419  POST   /:docNo/cancel-request/reject
-- L420  POST   /:docNo/cancel-request/withdraw
-- L425  GET    /:id/cancel-request
-- L426  POST   /:id/cancel-request
-- L427  POST   /:id/cancel-request/approve
-- L428  POST   /:id/cancel-request/reject
-- L429  POST   /:id/cancel-request/withdraw
-- L434  GET    /
+- L418  GET    /:docNo/cancel-request
+- L419  POST   /:docNo/cancel-request
+- L420  POST   /:docNo/cancel-request/approve
+- L421  POST   /:docNo/cancel-request/reject
+- L422  POST   /:docNo/cancel-request/withdraw
+- L427  GET    /:id/cancel-request
+- L428  POST   /:id/cancel-request
+- L429  POST   /:id/cancel-request/approve
+- L430  POST   /:id/cancel-request/reject
+- L431  POST   /:id/cancel-request/withdraw
+- L436  GET    /
 
 ## backend/src/scm/routes/mfg-products.ts  (11)
 - L224  GET    /
