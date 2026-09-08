@@ -1731,39 +1731,38 @@ Two things about it are load-bearing and easy to get wrong:
   them can be repaired — their only available failure is a missing LINK. The
   checker says so out loud so the silence is not read as a clean measurement.
 
-**First dispatch, run `34201730668` (2026-09-08 15:54 Malaysia) — PARTIAL.** It
-answered SO -> PO and then died on `function min(uuid) does not exist`
-(`docs/bugs/0707`), so PO -> GR and GR -> PI have no answer yet. What it did
-prove:
+**MEASURED — run `34203192972`, 2026-09-08 16:11 Malaysia.** (The first dispatch,
+`34201730668`, crashed on `min(uuid)` after one axis — `docs/bugs/0707`.)
 
 ```
-    scm.mfg_sales_order_items.po_qty_picked  vs  SODTL.TransferedPOQty
-        ERP rows: 14808 keyed in 14344 group(s); 254 carry NO AutoCount key
-        of the keyed groups: 12 name a key the book does not have,
-                             13571 the book leaves the counter NULL
-        COMPARED: 761 group(s)
-          agree                         736
-          ERP reads LOW                  24   the book transferred MORE than we record
-          ERP reads HIGH                  1
-          ERP asserts a transfer          0
-        681 of the compared groups are 1:1; 661 of those agree exactly
+    axis      | compared | agree | ERP LOW | ERP HIGH | ERP asserts | unkeyed rows
+    ------------------------------------------------------------------------------------
+    SO -> PO  |      761 |   735 |      25 |        1 |           0 |          244
+    PO -> GR  |     1137 |  1130 |       7 |        0 |           0 |           17
+    GR -> PI  |      504 |   142 |     362 |        0 |           0 |          229
 ```
 
-**24 sales-order lines where the account book says the purchase was made and the
-ERP's picker still thinks it was not** — the second-purchase hole, now sized
-against the book rather than against our own children (section 4b of the
-symmetry check reported 22 for the same shape). Section 1's constant test also
-passed against production, so the three counters and `linked_ac_dtlkey` are real
-varied data, not the `NULL::bigint AS ac_dtlkey` shape:
+**This settles the question G2 has carried since mig `0231`, and it settles it in
+our favour on two of the three counters.** Against AutoCount's own numbers,
+`received_qty` reads HIGH on **0** groups and `invoiced_qty` reads HIGH on **0**.
+The 140 and 80 that read HIGH against their own ERP children are the migration
+faithfully copying a receipt the book already made — 220 lines off the suspect
+list, no code changed to get there. `ERP asserts a transfer the book does not
+have` is **0** on all three axes, so nothing in the ERP claims a conversion
+AutoCount has no record of.
 
-```
-    po_qty_picked  15062 rows | 14808 keyed (14344 distinct keys) | 6 distinct values, 0..5
-    received_qty    1344 rows |  1309 keyed (1137 distinct keys) | 12 distinct values, 0..200
-    invoiced_qty     792 rows |   563 keyed  (504 distinct keys) |  8 distinct values, 0..172
-```
+What is left is all in the LOW direction:
 
-**PO -> GR and GR -> PI remain UNKNOWN.** `docs/bugs/0705` carries the entry and
-the completed result goes there.
+| axis | reading LOW | what it is |
+| --- | --- | --- |
+| SO -> PO | 25 | the book raised the purchase; our picker still shows 0 picked, so the line is offered again — a SECOND purchase order. Belongs to `fix/staff-reported-flow` (#3225), which writes `so_item_id` at compartment grain |
+| PO -> GR | 7 | ALL seven are sofa decompositions (`book 1 of 1 \| ERP 1 of 2 over 2 rows`). The book received the whole sofa, we received one compartment, so the bound sales line cannot go READY. Covered by the owner's 「除了 sofa compartment 而已啊」 exemption |
+| GR -> PI | 362 | the cutover's own scope decision made visible: AutoCount's 4,789 historical purchase invoices were deliberately not imported, so `invoiced_qty` is 0 on receipts the book has already invoiced. Those 362 lines can be invoiced AGAIN here |
+
+One over-convert: `SO-000870` `CODY-(K)`, book 1 of 1, ERP **2** of 1.
+
+`docs/bugs/0705` carries the entry and the reasoning for repairing none of them
+from that lane.
 
 ### G3 — DRAFT policy is decided three different ways, and where a DRAFT does not consume, two documents can be raised for the same line.
 
