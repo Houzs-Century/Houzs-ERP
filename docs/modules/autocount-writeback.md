@@ -5048,3 +5048,82 @@ Two things that stay:
   sofa is incomplete, and the sofa lands on a later delivery order than the one
   its first piece shipped on. That is the trade option C makes, chosen with the
   alternatives on the table.
+
+## `desc2Exclude` — the address of last resort, and the verifier must use it too (2026-09-08)
+
+New SURFACE on `backend/scripts/apply-sofa-compartment-corrections.mjs` and
+`backend/scripts/lib/sofa-desc2-match.mjs`: a third way a correction names its
+build, and a new verdict an operator can read in the plan.
+
+**There are now three modes, and the ORDER is the argument.**
+
+1. `lineKeys` — the account book's own `DtlKey`. IDENTITY, so it decides and the
+   text is not consulted at all.
+2. `desc2Match` — text, exact then normalised, refusing when it is ambiguous.
+3. `desc2Exclude` — the rows that are **NOT** this build, byte-exactly.
+
+The third exists because the first two can BOTH be unavailable on one document,
+and `HC-SO-012025` is that document. Only its two LEAD rows carry a
+`linked_ac_dtlkey`: a correction that ADDS compartments inserts them with NULL,
+deliberately (`docs/bugs/0690`), so a key reaches one row where the build is
+four. And the account book states that document's build text TWICE — once with a
+LEADING SPACE (`DtlKey 829179`) and once without (`829180`) — each lead's text
+inherited verbatim by the rows added from it. The second sofa's text is therefore
+a strict SUFFIX of the first's, so every substring that finds the second also
+finds the first. The test proves that by trying every substring of it rather than
+asserting it.
+
+While the two were believed to be identical sofas none of this mattered: one
+correction was written onto both, which is this file's own rule. On 2026-09-08
+the owner read the enlarged slips and ruled that they are NOT the same sofa — the
+first `1A(LHF)+1NA+CNR+1A(RHF)`, the second, the slip marked `9050 G`, a plain
+`1S` — and from that moment the second one had no address of any kind.
+
+**Byte-exact, and never normalised.** The discriminator here IS a leading space,
+and `normaliseDesc2` folds runs of whitespace — it would erase exactly the thing
+being matched on. This is the one place in the module where normalisation is
+wrong.
+
+**An exclusion that matches NOTHING is a REFUSAL** (`exclusion-missing`), not a
+quiet no-op:
+
+```
+HC-SO-012025: REFUSED — no line on this document carries the desc2Exclude
+" bottom to Nilon", so the text that tells this build from its neighbour is
+gone. Writing this build without it would put it on BOTH sofas.
+```
+
+If a re-import ever trims that space the discriminator disappears, and without
+the brake the `1S` would be written onto the four-piece sofa as well — silently.
+That is the failure the whole matcher exists to prevent.
+
+**THE WHOLE ADDRESS TRAVELS TO THE VERIFIER, not half of it.**
+`verifyOnFreshConnection` re-reads the entire document and narrows to the build
+the same way the writer did; anything left off the verify item makes it compare
+one build's target against BOTH builds' rows and BOTH builds' money. That has now
+been paid for twice, once per mode. Measured, prod APPLY run `34245004498`: the
+write was correct and complete — the document came out holding
+`1A(LHF)+1NA+CNR+1A(RHF)` and a separate `1S`, exactly the two sofas he ruled —
+and the job still failed with
+
+```
+FAIL HC-SO-012025: pieces are [9050-1A(LHF) | 9050-1A(RHF) | 9050-1NA |
+                               9050-1S | 9050-CNR], expected [9050-1S]
+```
+
+because `desc2Exclude` was not on the verify item. A verifier that narrows
+differently from the writer is not verifying the write; it is asking a different
+question. `needle`, `lineKeys` and `exclude` now all travel. Re-applied and green
+on a fresh connection in run `34245773441`.
+
+**What this does NOT fix, and it is the next repair.** The compartment rows a
+correction ADDS still carry no `linked_ac_dtlkey`, so the reconcile cannot see
+them as part of their build. `HC-SO-012025`'s first sofa is now correct in
+production and still reads CANNOT BE COMPARED — reconcile run `34246640657`
+reports three of its rows as *"has no AutoCount line"*, so that build's ERP side
+reads as a single `1A(LHF)` against the owner's ruled four pieces. The same gap
+holds `HC-SO-013384`'s second sofa, whose two builds' texts are BYTE-IDENTICAL
+and which therefore has no address of any kind until every compartment row is
+keyed. `backfill-ac-sofa-line-keys.mjs` refuses to stamp them precisely because
+two identical builds of one model do not force which is which; the fix is to copy
+the lead's key onto the row at INSERT time, where the provenance is known.

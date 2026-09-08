@@ -117,10 +117,32 @@ Two things the runs taught that the plan above did not say:
   in `docs/bugs/0721-the-sofa-stock-import-opened-a-second-set-of-lots-for-a-buil.md`
   and NOT repaired here.
 
-**What is NOT proven:** nobody has pressed Create Delivery Order on
-HC-SO-012565 since. The two gates it failed read warehouse, batch and variant
-key, and all three now match the lots; that is LIKELY, not PROVEN, until the
-delivery on 2026-09-09 is created.
+**PROVEN 2026-09-08 23:49 (+08).** Nico: 「lisa DO没问题了」. **HC-DO-2609-013**
+was created off HC-SO-012565 — 3 lines, the two sofa compartments plus 3 long
+pillows — and it did more than open the form: read live, both lots under batch
+HC-PO-009435 went `qty_remaining` 1 -> **0**, each with one
+`inventory_lot_consumptions` row naming HC-DO-2609-013. The OUT movements carry
+`fabriccode=bo315-31|seatheight=26|special=bottom wrap nylon fabric,fully cover
+to floor,nylon fabric,seat base fully cover with no leg` — the lot's key exactly,
+with **no `legheight=default`**, which is what
+`docs/bugs/0722-a-delivery-order-invented-the-sofa-s-leg-height-so-the-stock.md`
+fixed hours earlier. So this delivery is the end-to-end proof of BOTH entries:
+the sofa exists (0714) and the document asks for it under the right identity
+(0722), and the stock actually moved.
+
+**One thing it also proves, and it is not good news.** Both sofa pieces left at
+`unit_cost_sen` **0**, because the lots themselves carry no cost — so this sale
+records no cost of goods for the sofa and its margin will read as everything.
+The 3 pillows on the same document went out at RM 37.52 each, so nothing is
+broken in the write path: it is the SOFA LOT that has no cost. Measured on the
+whole population the same evening: of 221 open sofa cutover lots across 73
+purchase orders, **207 carry zero cost** and only **11 of the 73 orders** carry
+any cost at all. That is the known gap `import-ac-sofa-stock.mjs` names in its
+own section 5 — AutoCount does not price a sofa purchase order, the real figure
+lives on the purchase INVOICE, and a build with no exact receipt cost is left at
+0 rather than averaged into a plausible number. `backfill-zero-cost-lots.mjs` is
+the tool that owns that fallback and **has not been run for this population**.
+Until it is, every sofa delivered off cutover stock books at zero cost.
 
 **Not fixed here, offered as options.** The pick screen's Remaining column is
 delivery arithmetic and carries no stock signal, so an operator learns the sofa
