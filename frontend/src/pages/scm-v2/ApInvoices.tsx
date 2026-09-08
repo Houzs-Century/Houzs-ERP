@@ -34,7 +34,7 @@ import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Plus, Printer } from 'lucide-react';
 import { Button } from '@2990s/design-system';
-import { useAccounts, isControlSpecial, type Account } from '../../vendor/scm/lib/accounting-queries';
+import { useAccounts, postableAccounts, type Account } from '../../vendor/scm/lib/accounting-queries';
 import { useSuppliers } from '../../vendor/scm/lib/suppliers-queries';
 import {
   useApInvoices, useApInvoiceDetail, useCreateApInvoice, useUpdateApInvoice, usePostApInvoice, useCancelApInvoice,
@@ -126,12 +126,9 @@ export const ApInvoices = () => {
   const suppliersQ = useSuppliers({ status: 'ACTIVE' });
   const accountsQ = useAccounts();
   /* A line debits an ordinary LEAF: active, not a control (由模块过账) and
-     not a header (父户不记账) — the same door the PV's lines walk. */
-  const lineAccounts = useMemo<Account[]>(() => {
-    const all = accountsQ.data?.accounts ?? [];
-    const parents = new Set(all.map((a) => a.parent_code).filter((p): p is string => !!p));
-    return all.filter((a) => a.is_active && !isControlSpecial(a.special_type) && !parents.has(a.account_code));
-  }, [accountsQ.data]);
+     not a header (父户不记账) — the same door the PV's lines walk, from the
+     one home (postableAccounts, docs/bugs/0693). */
+  const lineAccounts = useMemo<Account[]>(() => postableAccounts(accountsQ.data?.accounts ?? []), [accountsQ.data]);
   /* The detail names accounts off the UNFILTERED chart — a posted bill on a
      since-inactive account must still print that account's name. */
   const accountName = (code: string): string => (accountsQ.data?.accounts ?? []).find((a) => a.account_code === code)?.account_name ?? '';

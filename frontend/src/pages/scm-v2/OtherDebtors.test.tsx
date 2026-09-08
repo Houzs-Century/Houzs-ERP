@@ -19,7 +19,9 @@ const cancelBillAsync = vi.fn(async (_b: unknown) => ({ ok: true }));
 
 let detail: Record<string, unknown> | undefined;
 
-vi.mock('../../vendor/scm/lib/accounting-queries', () => ({
+vi.mock('../../vendor/scm/lib/accounting-queries', async (importOriginal) => ({
+  /* The real pure helpers stay (postableAccounts — docs/bugs/0693); only the hooks are stubbed. */
+  ...(await importOriginal<typeof import('../../vendor/scm/lib/accounting-queries')>()),
   isControlSpecial: (s: string | null | undefined) => s === 'SDC' || s === 'SCC' || s === 'SBS',
   useAccounts: () => ({ data: { accounts: [
     { account_code: '310-0010', account_name: 'MAYBANK', account_type: 'ASSET', parent_code: null, is_active: true, acc_money: true },
