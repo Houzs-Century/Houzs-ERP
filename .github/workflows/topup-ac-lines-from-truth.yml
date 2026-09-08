@@ -63,6 +63,16 @@ on:
         required: false
         default: "so,do"
         type: string
+      only_docs:
+        description: "Narrow the APPLY to these AutoCount document numbers (comma separated). The PLAN always covers the whole population. Empty = no narrowing."
+        required: false
+        default: ""
+        type: string
+      max_writes:
+        description: "Refuse an apply wider than this many lines. Raise it only with the plan in front of you."
+        required: false
+        default: "25"
+        type: string
       company_id:
         description: "ERP company (AED_HOUZS is company 1)"
         required: false
@@ -104,6 +114,8 @@ jobs:
           MODE: ${{ inputs.apply == 'yes' && 'apply' || 'plan' }}
           CONFIRM: ${{ inputs.confirm }}
           LANES: ${{ inputs.lanes }}
+          ONLY_DOCS: ${{ inputs.only_docs }}
+          MAX_WRITES: ${{ inputs.max_writes }}
           COMPANY_ID: ${{ inputs.company_id }}
           MAX_SNAPSHOT_AGE_DAYS: ${{ inputs.max_snapshot_age_days }}
           TOP: ${{ inputs.top }}
@@ -129,6 +141,8 @@ jobs:
           MODE: ${{ inputs.apply == 'yes' && 'apply' || 'plan' }}
           CONFIRM: ${{ inputs.confirm }}
           LANES: ${{ inputs.lanes }}
+          ONLY_DOCS: ${{ inputs.only_docs }}
+          MAX_WRITES: ${{ inputs.max_writes }}
           COMPANY_ID: ${{ inputs.company_id }}
           MAX_SNAPSHOT_AGE_DAYS: ${{ inputs.max_snapshot_age_days }}
           TOP: ${{ inputs.top }}

@@ -78,6 +78,10 @@
  *
  * MODE=plan (the default) writes nothing and IS the census.
  * MODE=apply needs CONFIRM="I HAVE REVIEWED THE BOOK LINE TOP-UP PLAN".
+ * ONLY_DOCS="SO-007144,DO-001604" narrows the APPLY to the documents you read
+ *   in the plan; the plan itself is always the whole population.
+ * MAX_WRITES (default 25) refuses an apply that turned out wider than the plan
+ *   you read — the failure mode a plan-then-apply pair exists to catch.
  *
  * RE-RUN: idempotent. Every SO line it writes carries its AutoCount DtlKey, so
  * a second run finds the key already present and plans nothing; the apply path
@@ -108,6 +112,16 @@ const MAX_AGE = Number(process.env.MAX_SNAPSHOT_AGE_DAYS || 2);
 const APPLY = (process.env.MODE || "plan").toLowerCase() === "apply";
 const TOP = Number(process.env.TOP || 60);
 const LANES = new Set(String(process.env.LANES || "so,do").toLowerCase().split(/[,\s]+/).filter(Boolean));
+/* An APPLY-time narrowing, empty by default. The PLAN is always the whole
+   population — a census that hides part of itself answers nothing — but an
+   apply may be restricted to the AutoCount document numbers that were actually
+   read and agreed. A repair whose scope is decided by reading the plan is a
+   different, smaller promise than one whose scope is decided by a rule. */
+const ONLY_DOCS = new Set(String(process.env.ONLY_DOCS || "").toUpperCase().split(/[,\s]+/).filter(Boolean));
+/* A HARD CEILING on the apply, because "wider than I thought" is the failure
+   mode a plan-then-apply pair exists to catch and a number is the cheapest way
+   to catch it. Raising it is a deliberate act with the plan in front of you. */
+const MAX_WRITES = Number(process.env.MAX_WRITES || 25);
 const CONFIRM_PHRASE = "I HAVE REVIEWED THE BOOK LINE TOP-UP PLAN";
 
 const note = (m = "") => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
@@ -283,6 +297,9 @@ async function main() {
 
   note("");
   note(`TO WRITE — sales-order lines: ${soPlan.writes.length} across ${new Set(soPlan.writes.map((w) => w.docNo)).size} document(s); delivery-order lines: ${doPlan.writes.length}`);
+  if (ONLY_DOCS.size) {
+    note(`ONLY_DOCS is set to ${[...ONLY_DOCS].join(", ")} — the plan above is the WHOLE population; the apply is restricted to those documents.`);
+  }
   if (!APPLY) {
     note("");
     note(`PLAN ONLY — nothing written. To apply: MODE=apply CONFIRM="${CONFIRM_PHRASE}"`);
@@ -295,6 +312,12 @@ async function main() {
     return;
   }
 
+  const total = soPlan.writes.length + doPlan.writes.length;
+  if (total > MAX_WRITES) {
+    bad(`REFUSED: the plan wants ${total} line(s) and MAX_WRITES is ${MAX_WRITES}. Read the plan, then raise MAX_WRITES deliberately or narrow it with ONLY_DOCS.`);
+    await sql.end({ timeout: 5 });
+    process.exit(2);
+  }
   const wroteSo = await applySo(soPlan);
   const wroteDo = await applyDo(doPlan);
   note(`APPLIED — ${wroteSo.lines} sales-order line(s) on ${wroteSo.docs} document(s); ${wroteDo.lines} delivery-order line(s) on ${wroteDo.docs} document(s).`);
@@ -421,6 +444,7 @@ async function applySo(plan) {
   if (!plan.writes.length) return { lines: 0, docs: 0 };
   let lines = 0; let docs = 0;
   for (const t of plan.docs) {
+    if (ONLY_DOCS.size && !ONLY_DOCS.has(t.acNo.toUpperCase())) continue;
     await sql.begin(async (tx) => {
       /* Re-read INSIDE the transaction. The plan was taken before the first
          insert of this run; a document topped up by a concurrent run would
@@ -529,6 +553,7 @@ async function applyDo(plan) {
   if (!plan.writes.length) return { lines: 0, docs: 0 };
   let lines = 0; let docs = 0;
   for (const w of plan.writes) {
+    if (ONLY_DOCS.size && !ONLY_DOCS.has(w.target.acDoc.toUpperCase())) continue;
     await sql.begin(async (tx) => {
       const live = await tx`SELECT item_code, qty::float8 AS qty, unit_price_sen::bigint AS unit_price_sen, notes
           FROM scm.delivery_order_items WHERE delivery_order_id = ${w.doId}`;
@@ -560,6 +585,7 @@ async function verify(soPlan, doPlan, book) {
   let good = 0;
 
   for (const w of soPlan.writes) {
+    if (ONLY_DOCS.size && !ONLY_DOCS.has(w.acNo.toUpperCase())) continue;
     const [r] = await fresh`SELECT i.item_code, i.item_group, i.qty::float8 q,
           i.unit_price_sen::bigint up, i.discount_sen::bigint disc,
           i.total_sen::bigint t, i.total_inc_sen::bigint ti, i.balance_sen::bigint bal,
@@ -604,6 +630,7 @@ async function verify(soPlan, doPlan, book) {
 
   let doGood = 0;
   for (const w of doPlan.writes) {
+    if (ONLY_DOCS.size && !ONLY_DOCS.has(w.target.acDoc.toUpperCase())) continue;
     const [r] = await fresh`SELECT COUNT(*)::int n,
           COALESCE(SUM(i.line_total_sen),0)::bigint lines_sum,
           MAX(h.local_total_sen)::bigint hdr, MAX(h.line_count)::int lc
@@ -639,6 +666,7 @@ async function verify(soPlan, doPlan, book) {
      up. Payment columns were not touched; where they no longer agree that is
      stated, not silently repaired. */
   for (const t of soPlan.docs) {
+    if (ONLY_DOCS.size && !ONLY_DOCS.has(t.acNo.toUpperCase())) continue;
     const [h] = await fresh`SELECT local_total_sen::bigint t, paid_sen::bigint p, balance_sen::bigint b, line_count::int lc
         FROM scm.mfg_sales_orders WHERE doc_no = ${t.docNo}`;
     if (!h) continue;
