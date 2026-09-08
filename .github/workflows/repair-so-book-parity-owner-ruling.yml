@@ -11,7 +11,7 @@ name: Owner delete ruling — SO book parity (plan by default)
 #
 # That is an EXPLICIT, INFORMED override of the never-delete convention, for
 # these rows and the class they belong to — NOT a general licence. The record is
-# docs/modules/sales-order.md ("The owner's delete ruling") and docs/bugs/0712.
+# docs/modules/sales-order.md ("The owner's delete ruling") and docs/bugs/0712-the-owner-ruled-that-a-row-the-book-describes-nothing-in-is.md.
 #
 # TWO LANES, BOTH PER-DOCUMENT:
 #   delete      HC-SO-013160's 4th row, STORAGE RM 300.00, claiming AutoCount
