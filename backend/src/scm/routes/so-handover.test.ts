@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, it, expect } from 'vitest';
 import { HANDOVER_BATCH_MAX, parseHandoverBody } from './so-handover';
 
@@ -56,5 +57,50 @@ describe('parseHandoverBody — the orders', () => {
     expect(err({ ...base, docNos: many })).toBe('too_many_orders');
     expect(ok({ ...base, docNos: many.slice(0, HANDOVER_BATCH_MAX) }).docNos)
       .toHaveLength(HANDOVER_BATCH_MAX);
+  });
+});
+
+/* ────────────────────────────────────────────────────────────────────────────
+   THE THIRD DOOR ONTO A MIGRATED SALES ORDER.
+
+   `migratedSoReadonly()` is mounted on `/mfg-sales-orders/*` and
+   `/so-amendments/*` (scm/index.ts) and resolves the document number out of the
+   PATH. `POST /so-handover/apply` carries a LIST of document numbers in the
+   BODY, so a third mount of that factory would find no doc number, answer "not
+   migrated", and wave every write through — a guard that is worse than none.
+   The decision therefore has to be asked per order inside the handler.
+
+   These read the source for the reason keyWithoutIdentityGuards.test.mjs gives:
+   the property is not "the rule is right" (migrated-so-lock.test.ts owns that),
+   it is "the rule is APPLIED AT THIS CALL SITE". PROVED RED on the tree before
+   fix/sync-human-edit-guard, where this route wrote salesperson_id and agent on
+   a migrated order while the lock was on. Re-anchor if the code moves; do not
+   delete.
+   ──────────────────────────────────────────────────────────────────────────── */
+describe('POST /apply respects the migrated-SO lock', () => {
+  const src = readFileSync(new URL('./so-handover.ts', import.meta.url), 'utf8');
+
+  it('asks the same decision function the guard and the SO detail screen use', () => {
+    expect(src).toContain("import { migratedSoReadonlyState } from '../lib/migrated-so-readonly';");
+    expect(src).toContain('await migratedSoReadonlyState(c, before.linked_ac_docno != null)');
+  });
+
+  it('reads linked_ac_docno, or it could not answer', () => {
+    expect(src).toMatch(/select\('doc_no, salesperson_id, agent, status, linked_ac_docno'\)/);
+  });
+
+  it('the refusal REACHES the operator instead of being a silent skip', () => {
+    const i = src.indexOf('const lock = await migratedSoReadonlyState');
+    expect(i, 'the lock check moved — re-anchor this test, do not delete it').toBeGreaterThan(-1);
+    const block = src.slice(i, i + 400);
+    expect(block).toContain('skipped.push({ docNo, reason: lock.reason');
+  });
+
+  it('refuses BEFORE the update, not after it', () => {
+    const lockAt = src.indexOf('const lock = await migratedSoReadonlyState');
+    const updateAt = src.indexOf("sb.from('mfg_sales_orders').update(updates)");
+    expect(lockAt).toBeGreaterThan(-1);
+    expect(updateAt).toBeGreaterThan(-1);
+    expect(lockAt).toBeLessThan(updateAt);
   });
 });
