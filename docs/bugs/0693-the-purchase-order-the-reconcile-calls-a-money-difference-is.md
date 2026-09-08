@@ -41,8 +41,20 @@ dispatched once against a population that is still being re-cut has an expiry
 date, and nothing in this repo says when it expired.** The reconcile is what
 noticed, sixteen hours later.
 
-**Fix.** No code change. `repair-po-line-discount.yml` re-dispatched over the
-current snapshot — PLAN first, then APPLY — which is the tool that owns this
-correction. Runs recorded in the PR body.
+**Fix.** ~~No code change. `repair-po-line-discount.yml` re-dispatched over the
+current snapshot.~~
+
+> **CORRECTED 2026-09-08, by running it.** That sentence was written from
+> reading the script, and the run refuted it. PLAN over the current snapshot,
+> run `34186213070`: `IN THE MIGRATED SCOPE: 84 line(s) across 9 purchase
+> order(s)` and `The ERP overstates these 9 purchase order(s) by RM 0.00` —
+> `PO-009770` is not in the population at all, so re-dispatching would have
+> changed nothing and reported success while doing it. The real cause is one
+> layer down and has its own entry: `docs/bugs/0694-*.md` — the repair walks the
+> OUTSTANDING scope, and this document stopped being outstanding when its goods
+> arrived.
+
+The code fix is `repairPopulation` (0694); this document is then repaired by the
+same workflow, over the widened population.
 
 **Ref.** fix/so-do-money-reconcile, 2026-09-08.
