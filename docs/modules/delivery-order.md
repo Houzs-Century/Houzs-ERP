@@ -912,8 +912,9 @@ lines into the delivery order's two the same way `so-to-do-fields.ts` does.
 what the Create-DO banner is built to report honestly. Pinned by
 `backend/tests/migratedDoWriter.test.mjs`.
 
-APPLIED to production 2026-09-08, apply run `34222124527`; full
-before/after in `docs/customer-block-gap-2026-09-08.md`.
+APPLIED to production 2026-09-08, apply run `34222124527`: 173 delivery orders
+had no phone and no address, and 0 do now. Full before/after in
+`docs/customer-block-gap-2026-09-08.md`.
 
 Rows written before that: `backend/scripts/repair-customer-block.mjs` +
 `.github/workflows/repair-customer-block.yml` (plan by default, apply gated on

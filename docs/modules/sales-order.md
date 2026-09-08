@@ -1257,8 +1257,9 @@ is accepted only when `scm.my_localities` — the ERP's postcode -> city master,
 mig 0022, the same table the cascade above reads — lists it as a city of that
 exact postcode, and what is written is the master's spelling. `Selangor` at
 40000 is refused, a postcode with nothing after it is refused, `KL` is refused.
-APPLIED to production 2026-09-08, apply run `34222124527`; full
-before/after in `docs/customer-block-gap-2026-09-08.md`.
+APPLIED to production 2026-09-08, apply run `34222124527`: 417 of 711 blank
+cities written, the other 294 refused with a printed reason. Full before/after in
+`docs/customer-block-gap-2026-09-08.md`.
 
 Applied by `backend/scripts/repair-customer-block.mjs`; counted by
 `backend/scripts/check-customer-block-gap.mjs`.
@@ -1325,6 +1326,49 @@ hands its number back either, because the counter is a stored row rather than a
 query over the survivors. That is the fix for the 2026-08-20 re-issue, not a
 regression — see `docs/doc-number-reissue-coe.md` and the 2026-06-12 note in
 `scm/lib/doc-no.ts`.
+
+#### Thirty people pressing Save at the same second (owner, 2026-09-08)
+
+His question before the module opened to the whole sales floor: 「确保检查看
+document number 怎么跑 以免 30 个人同时开单的话号码大家撞」. **No two of them can
+get the same number, and none of them sees an error.** Three independent layers,
+in the order they act:
+
+1. **The claim is atomic.** `scm.next_doc_no_n` (migration 0316) is one
+   `INSERT … ON CONFLICT … DO UPDATE … RETURNING` statement, so the second
+   caller waits on the first's row lock and reads the incremented counter. Two
+   creates cannot read the same value, however close together they arrive.
+2. **The floor cannot make it wrong.** `mintMonthlyDocNo` reads the month's live
+   max first and passes it as `p_floor`; the RPC answers
+   `GREATEST(counter, floor + 1)`. A stale, truncated or empty floor can only be
+   IGNORED, so the read that precedes the claim is not a race window.
+3. **The unique index is the backstop, and `insertWithDocNoRetry` is what turns
+   it into a retry instead of a 500.** `scm.mfg_sales_orders.doc_no` is the
+   primary key. The create path mints at `mfg-sales-orders.ts:3365` — early,
+   because a PWP voucher claim is reserved against the number before the header
+   exists — and there is exactly ONE header insert, at `:5006`, wrapped in
+   `insertWithDocNoRetry`. Its first attempt reuses the already-minted number
+   and a re-mint only happens on a `23505`. **`tries` is 8 normally and 1 when a
+   PWP code was claimed**, deliberately: a re-mint would orphan
+   `pwp_codes.redeemed_doc_no`, so a promo order fails clean and rolls the claim
+   back rather than retrying.
+
+Proved end to end, not by reading: `backend/tests-pg/docNoConcurrentCreate.pg.test.ts`
+fires 30 concurrent creates on 30 real connections through the real
+`mintMonthlyDocNo` + `insertWithDocNoRetry`, and asserts 30 documents, 30
+distinct numbers, zero errors. It also holds all thirty at a barrier so they
+share an IDENTICAL floor, and shows every one of them still minted exactly once
+— the counter, not the retry, is what makes it safe. The RED is in the same
+file: with the counter switched off at the transport (`counter: false`, which is
+the real pre-0316 / pre-migration state) the same thirty-way race hands ONE
+number to all thirty and refuses twenty-nine with `23505`.
+
+**Past 1,000 documents in one month** the numbering does not break. The floor
+read pages (`fetchMonthlyDocNos` → `paginateAll`), the suffix widens to four
+digits, `maxMonthlySuffix` parses any width, and a truncated floor is harmless
+under the counter. What is left is cost: one extra PostgREST round trip per
+create per 1,000 rows in that month. `.github/workflows/doc-no-headroom.yml`
+reports how far the busiest month has ever got.
 
 ### Caching / loading behaviour (why the list opens instantly)
 Three layers, tuned so the list never shows a full-load spinner on a revisit:
@@ -1818,10 +1862,22 @@ over the numbers the import already wrote is the only answer that does not need
 his ruling. The options are enumerated in `docs/bugs/0703-a-brand-new-sales-order-becomes-read-only-minutes-after-it-i.md`.
 
 The read has one home, `scm/lib/so-is-migrated.ts`
-(`soIsMigrated` / `soIsMigratedShape`), and it fails CLOSED **twice**: the read
-THROWS rather than answering false, and a pair fitting NEITHER shape answers
-TRUE. **A reader must select BOTH columns** — `select('doc_no,
-linked_ac_docno')` — because the rule is about the two numbers together.
+(`soIsMigrated` / `soIsMigratedShape` / `soNumberShape`), and it fails CLOSED
+**twice**: the read THROWS rather than answering false, and a pair fitting
+NEITHER shape answers TRUE. **A reader must select BOTH columns** —
+`select('doc_no, linked_ac_docno')` — because the rule is about the two numbers
+together.
+
+**The three read-only checks import that module too**, and run under `npx tsx`
+for it — `check-so-open-for-new.mjs`, `check-so-migrated-shape.mjs` and
+`set-migrated-so-lock.mjs`. They each carried their own `linked_ac_docno IS
+NULL` copy for a few hours after the predicate moved, and the go-live gate
+therefore reported the bug's own answer: *"NEW orders 0 — of 0 ERP-created
+orders in all"* about a system where one existed
+(`docs/bugs/0716-the-check-that-proves-new-orders-save-counted-them-the-way-t.md`).
+`soNumberShape` exists so the census can report the DISTRIBUTION
+(`no-book-number` / `equal` / `prefixed` / `neither`) without re-deriving
+anything.
 
 | | |
 |---|---|
@@ -1939,6 +1995,58 @@ item translation, `no-price`, book-blank variants, an unproceeded order's blank,
 `pend`, `recorded`) do not, is stated once in
 `backend/scripts/lib/so-verdict-derive.mjs`. Full runbook including the order of
 operations: `docs/migrated-so-lock.md` §10.
+
+### 「所以SO 都tally了吗?」 — the ONE artifact, and why the lock's number is not it
+
+Actions -> **Are all the sales orders tallied? (read-only)**
+(`.github/workflows/so-tally-verdict.yml`). Read-only, manual, own concurrency
+group, **writes nothing to production** — there is no publish step, deliberately;
+the sibling *AutoCount vs ERP reconcile* workflow is where the verdict can be
+PUBLISHED to `scm.so_reconcile_verdict`.
+
+**The lock's `differ` count is not an answer to the owner's question, and must
+not be quoted as one.** It is a SAFETY verdict: everything that is not proven
+identical LOCKS, including every document the reconcile could not compare at
+all. That is right for a lock and wrong for a status report — on 2026-09-08 it
+read `149 still differ` while **110 of the 149 had never been compared**, because
+the account book's own Desc2 does not decode into pieces. The full trace is
+`docs/bugs/0715-cannot-be-compared-was-counted-as-differ-so-the-sales-order.md`.
+
+The report splits that into four, and a document lands in exactly one:
+
+| bucket | meaning | blocks TALLIED? |
+| --- | --- | --- |
+| `identical` | compared on every axis and every axis agreed | — |
+| `work` | a real difference, or the document is absent, or the ERP claims one the book does not have | **YES** |
+| `unanswerable` | the ONLY findings are axes the checker REFUSED to answer (`UNANSWERABLE_AXES`) | no — the owner's drawing decides these |
+| `book-gap` | nothing differs; the ERP carries a value the BOOK never stated | no — already accepted as 一模一样 |
+
+Precedence is `work > unanswerable > book-gap > identical`, so a class listed in
+the report's *what this verdict excluded* section can hold more documents than
+the bucket it feeds. The word **TALLIED** is decided in exactly one place —
+`isTallied` in `backend/scripts/lib/so-tally-verdict.mjs`, zero `work` — so no
+summary can soften it.
+
+**It measures nothing.** `check-so-tally.mjs` runs
+`check-ac-erp-reconcile.mjs`, reads the verdict file that run writes, and
+classifies its rows; then it parses the reconcile's own printed `SO VERDICT` and
+`SUMMARY SO` lines and REFUSES to print anything if they disagree with the file.
+Parsing checks; it never decides. A second implementation of "different" is what
+`docs/bugs/0708-two-tools-answered-the-same-pairing-question-differently-twe.md`
+cost.
+
+**MEASURED**, `node backend/scripts/check-so-tally.mjs` against PRODUCTION over
+the read-only DSN, 2026-09-08 11:52 UTC, company 1, exit 0 — **re-run before
+quoting it**, the sofa lanes move these numbers daily:
+
+> 2,882 documents. **2,711 identical · 37 differ and are work · 109 cannot be
+> compared · 25 the book itself is the gap.** NOT TALLIED. The 37 are 35 sofa
+> compartments, 1 specials and 1 `a book line we do not have`; **5 of the 35 sit
+> on a PROCEEDED order** and the rest do not. All 109 unanswerable ones have the
+> same cause — keyed, but the book's build text does not decode into pieces, so
+> only the owner's drawing settles them, and **none** can be closed by stamping a
+> line key. The document, SKU, quantity, unit price, document total,
+> colour/fabric, seat size and bedframe-build axes are all at **zero**.
 
 
 ### Deleting an SO — DRAFT only, and the test-order escape hatch
