@@ -61,6 +61,41 @@ import { normCode } from "./ac-mapping-csv.mjs";
  *  too, which is why a model is required on both sides before anything folds. */
 export const isSofaCode = (s) => /SOFA/i.test(String(s ?? ""));
 
+/**
+ * THE KEY THE TWO SIDES ARE COMPARED UNDER — a plain item code, or `SOFA
+ * <model>` where the line is one sofa written the other system's way.
+ *
+ * Exported because `lib/ac-forced-line-pairing.mjs` answers the NEIGHBOURING
+ * question. This module asks "are the two bags EQUAL", which needs no
+ * assignment; that one asks "which book line is THIS row", so the migrated
+ * goods receipts and delivery orders can be stamped with the book's own DtlKey
+ * (migration 0280 added the column and backfilled nothing). The two MUST
+ * canonicalise a line identically, or the bag that calls a document clean and
+ * the pairing that stamps its keys would be describing different lines. One
+ * home; `bagOf` below is a caller like any other.
+ *
+ * @param {object} a
+ * @param {string} a.code      already TRANSLATED for the book side — this
+ *   module never reads the mapping CSV, because two readers of one file is the
+ *   defect lib/ac-mapping-csv.mjs exists to record
+ * @param {string} [a.rawCode] the book's own untranslated ItemCode
+ * @param {"book"|"erp"} a.side
+ * @param {boolean} [a.suffixed] ERP side: the importer's own line_suffix flag
+ * @returns {{key: string, model: string|null}}
+ */
+export function comparisonKey({ code, rawCode, side, suffixed = false }) {
+  const c = normCode(code);
+  if (!c) return { key: "", model: null };
+  /* A sofa on the BOOK side is named by AutoCount's own "... SOFA" string; on
+     OUR side by a compartment suffix, or by the line_suffix column the importer
+     stamps. Either way the MODEL is what the two can be compared on, and a side
+     that yields no model is never folded — it stays a plain code, so "AMN-SOFA
+     PILLOW" is compared as the accessory it is. */
+  const looksSofa = side === "book" ? isSofaCode(rawCode ?? code) : Boolean(suffixed) || isCompartmentCode(c);
+  const model = looksSofa ? modelOf(c) : null;
+  return { key: model ? `SOFA ${model}` : c, model };
+}
+
 const QTY_EPS = 1e-6;
 
 /**
@@ -80,17 +115,7 @@ export function bagOf(rows, side) {
   for (const r of rows) {
     const code = normCode(r.code);
     if (!code) continue;
-    /* A sofa on the BOOK side is named by AutoCount's own "... SOFA" string; on
-       OUR side by a compartment suffix, or by the line_suffix column the
-       importer stamps. Either way the MODEL is what the two can be compared on,
-       and a side that yields no model is never folded — it stays a plain code,
-       so "AMN-SOFA PILLOW" is compared as the accessory it is. */
-    const looksSofa =
-      side === "book"
-        ? isSofaCode(r.rawCode ?? r.code)
-        : Boolean(r.suffixed) || isCompartmentCode(code);
-    const model = looksSofa ? modelOf(code) : null;
-    const key = model ? `SOFA ${model}` : code;
+    const { key, model } = comparisonKey({ code: r.code, rawCode: r.rawCode, side, suffixed: r.suffixed });
     if (!bag.has(key)) {
       bag.set(key, { key, kind: model ? "sofa" : "plain", qty: 0, sen: 0, pieces: new Map(), codes: new Set() });
     }
