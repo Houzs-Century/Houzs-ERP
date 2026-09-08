@@ -19,19 +19,19 @@ import { soDocNoFromPath } from '../src/scm/lib/migrated-so-readonly';
 
 describe('parseMigratedSoLock', () => {
   test.each(['off', '0', 'false', '', '   ', null, undefined])('%s is open', (v) => {
-    expect(parseMigratedSoLock(v as string | null)).toEqual({ scope: 'off', malformed: false });
+    expect(parseMigratedSoLock(v as string | null)).toEqual({ scope: 'off', malformed: false, byVerdict: false });
   });
 
   test.each(['all', 'true', 'ALL', ' True '])('%s locks every company', (v) => {
-    expect(parseMigratedSoLock(v)).toEqual({ scope: 'all', malformed: false });
+    expect(parseMigratedSoLock(v)).toEqual({ scope: 'all', malformed: false, byVerdict: false });
   });
 
   test('a single company id', () => {
-    expect(parseMigratedSoLock('1')).toEqual({ scope: [1], malformed: false });
+    expect(parseMigratedSoLock('1')).toEqual({ scope: [1], malformed: false, byVerdict: false });
   });
 
   test('several, whitespace and duplicates tolerated', () => {
-    expect(parseMigratedSoLock(' 1 , 2 , 1 ')).toEqual({ scope: [1, 2], malformed: false });
+    expect(parseMigratedSoLock(' 1 , 2 , 1 ')).toEqual({ scope: [1, 2], malformed: false, byVerdict: false });
   });
 
   /* THE MISTAKE THIS GUARDS: scm.write_freeze and scm.migrated_so_lock are
@@ -40,55 +40,66 @@ describe('parseMigratedSoLock', () => {
      one is refused rather than read as a lock the operator did not type. */
   test('a write-freeze value pasted in is MALFORMED, not "on"', () => {
     expect(parseMigratedSoLock('1 - scm.procurement.products'))
-      .toEqual({ scope: 'all', malformed: true });
+      .toEqual({ scope: 'all', malformed: true, byVerdict: false });
   });
 
   test.each(['houzs', 'company 1', '1;2', '1.5', 'on'])('%s is malformed and locks all', (v) => {
-    expect(parseMigratedSoLock(v)).toEqual({ scope: 'all', malformed: true });
+    expect(parseMigratedSoLock(v)).toEqual({ scope: 'all', malformed: true, byVerdict: false });
   });
 
   /* A trailing comma used to yield company 0 under Number(); strict digits mean
      it is simply the same list. */
   test('a trailing comma does not invent a company', () => {
-    expect(parseMigratedSoLock('1,')).toEqual({ scope: [1], malformed: false });
+    expect(parseMigratedSoLock('1,')).toEqual({ scope: [1], malformed: false, byVerdict: false });
   });
 });
 
+/* THE FOURTH ARGUMENT IS `null` THROUGHOUT THIS BLOCK, and that is deliberate
+   rather than a placeholder. Every value here is an ORIGIN-mode value
+   (`byVerdict: false`), where the per-document verdict is not consulted at all —
+   so `null` asserts the stronger thing: these answers do not depend on a
+   verdict, and a verdict cannot change them. Correctness mode is specified next
+   door, in migratedSoVerdictMode.test.ts, where the argument is the subject.
+
+   It is REQUIRED, not optional, exactly so this file had to be edited. An
+   optional argument would have let every call site here keep the old behaviour
+   with no compile error and no failing test — the optional-param-noop bug class
+   (docs/bugs/0098-*), which cost four days on `itemCode`. */
 describe('migratedSoIsLocked', () => {
   const on = parseMigratedSoLock('1');
   const off = parseMigratedSoLock('off');
   const all = parseMigratedSoLock('all');
 
   test('off never locks, whatever the document is', () => {
-    expect(migratedSoIsLocked(off, 1, true)).toBe(false);
-    expect(migratedSoIsLocked(off, 1, null)).toBe(false);
+    expect(migratedSoIsLocked(off, 1, true, null)).toBe(false);
+    expect(migratedSoIsLocked(off, 1, null, null)).toBe(false);
   });
 
   test('a NATIVE order is never locked — this is the owner ruling', () => {
-    expect(migratedSoIsLocked(on, 1, false)).toBe(false);
-    expect(migratedSoIsLocked(all, 1, false)).toBe(false);
+    expect(migratedSoIsLocked(on, 1, false, null)).toBe(false);
+    expect(migratedSoIsLocked(all, 1, false, null)).toBe(false);
   });
 
   test('a MIGRATED order of a locked company is locked', () => {
-    expect(migratedSoIsLocked(on, 1, true)).toBe(true);
+    expect(migratedSoIsLocked(on, 1, true, null)).toBe(true);
   });
 
   test('a company the value does not name is untouched', () => {
-    expect(migratedSoIsLocked(on, 2, true)).toBe(false);
+    expect(migratedSoIsLocked(on, 2, true, null)).toBe(false);
   });
 
   test('an UNRESOLVED company is not locked — a companies-master blip must not stop 2990', () => {
-    expect(migratedSoIsLocked(on, null, true)).toBe(false);
+    expect(migratedSoIsLocked(on, null, true, null)).toBe(false);
   });
 
   test("'all' reaches a company the list never named", () => {
-    expect(migratedSoIsLocked(all, 2, true)).toBe(true);
+    expect(migratedSoIsLocked(all, 2, true, null)).toBe(true);
   });
 
   /* The one that decides whether this gate is safe or theatre. */
   test('isMigrated = null (the read failed) LOCKS', () => {
-    expect(migratedSoIsLocked(on, 1, null)).toBe(true);
-    expect(migratedSoIsLocked(all, 1, null)).toBe(true);
+    expect(migratedSoIsLocked(on, 1, null, null)).toBe(true);
+    expect(migratedSoIsLocked(all, 1, null, null)).toBe(true);
   });
 });
 
