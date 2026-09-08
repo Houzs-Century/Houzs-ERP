@@ -102,11 +102,6 @@
       "confirm-phrase",
       "fresh-verify"
     ],
-    "backfill-ac-sofa-line-keys.mjs": [
-      "confirm-phrase",
-      "fresh-verify",
-      "rerun-note"
-    ],
     "backfill-branding-to-canonical.mjs": [
       "confirm-phrase",
       "fresh-verify",

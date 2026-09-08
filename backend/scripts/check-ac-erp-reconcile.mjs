@@ -156,6 +156,7 @@ import {
 } from "./lib/ac-field-identity-run.mjs";
 import { printFieldTable, printPoDiscount } from "./lib/ac-field-identity-report.mjs";
 import { buildVerdictRows, makeVerdictRecorder, summariseVerdict } from "./lib/so-verdict-derive.mjs";
+import { classifyUnread, makeUnreadTally } from "./lib/sofa-unread-split.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const DATA = path.join(here, "data");
@@ -595,6 +596,9 @@ function reportVariants(t, label, rows, desc2) {
   }
   const pop = { total: rows.length, modelled: 0, bedframe: 0, sofa: 0, other: 0, withDesc2: 0, proceeded: 0 };
   let unkeyedSofa = 0;
+  /* The `unread` column, by CAUSE. lib/sofa-unread-split.mjs holds the argument
+     for why one number there was two populations needing different people. */
+  const unread = makeUnreadTally();
 
   for (const r of rows) {
     const lead = r.erpLines[0] || {};
@@ -621,12 +625,25 @@ function reportVariants(t, label, rows, desc2) {
        line per AutoCount line — so a five-piece build would be compared against
        one piece and reported as four missing compartments that are not missing
        at all. Say the axis is unanswerable instead of answering it wrongly. */
-    if (axes.compartments && !r.erpLines.every((l) => l.ac_dtlkey != null)) {
+    /* Measured BEFORE the override below, because the override replaces the
+       cell's verdict and would erase the evidence that the book text was the
+       other, independent reason this line cannot be answered. */
+    const bookUnreadable = book.compartments === null;
+    const keyless = !r.erpLines.every((l) => l.ac_dtlkey != null);
+    if (axes.compartments && keyless) {
       axes.compartments.verdict = UNREADABLE;
       axes.compartments.book = axes.compartments.book || "(not regroupable)";
       axes.compartments.detail =
         "the ERP lines of this document carry no AutoCount line key, so the pieces of one build cannot be regrouped";
       unkeyedSofa++;
+    }
+    if (axes.compartments && axes.compartments.verdict === UNREADABLE) {
+      unread.record(
+        classifyUnread({ keyless, bookUnreadable }),
+        proceeded,
+        `${r.ac} DtlKey ${r.acLine.dtlKey} (ERP ${r.erpNo} ${lead.item_code ?? "?"})` +
+          (proceeded ? "" : "  [NOT PROCEEDED]"),
+      );
     }
     const half = proceeded ? "yes" : "no";
     for (const [key, cell] of Object.entries(axes)) {
@@ -705,6 +722,10 @@ function reportVariants(t, label, rows, desc2) {
         "specials are still compared - those are per-line values and do not need the build regrouped.",
     );
   }
+
+  /* Printed whenever anything is unanswerable, because a single number there
+     has twice been read as one backlog. */
+  for (const line of unread.lines(SHOW)) plain(line);
 
   for (const a of AXES) {
     const list = offenders[a.key];
