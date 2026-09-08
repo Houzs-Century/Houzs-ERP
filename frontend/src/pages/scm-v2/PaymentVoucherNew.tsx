@@ -28,6 +28,7 @@ import { takePvFiles } from '../../vendor/scm/lib/pv-file-handoff';
 import { useIdempotencyKey } from '../../lib/idempotency';
 import { useAccounts, useAccountRoles, postableAccounts, type Account } from '../../vendor/scm/lib/accounting-queries';
 import { useSaveHotkey, SAVE_HOTKEY_HINT } from '../../vendor/scm/lib/use-save-hotkey';
+import { upperFill } from '../../vendor/scm/lib/ocr-fill';
 import { usePurchaseInvoices } from '../../vendor/scm/lib/purchase-invoice-queries';
 import { useApInvoices } from '../../vendor/scm/lib/ap-invoice-queries';
 import { useSuppliers, useSupplierDetail } from '../../vendor/scm/lib/suppliers-queries';
@@ -178,10 +179,12 @@ export const PaymentVoucherNew = () => {
     const payee = extras?.memory?.payeeName ?? ex.vendorName;
     if (payee) setPayeeName((prev) => prev.trim() ? prev : payee);
     if (ex.invoiceDate) setVoucherDate(ex.invoiceDate);
-    const noteBits = [
+    /* What the reader fills goes upper case (owner 2026-09-08; ocr-fill.ts);
+       the payee above keeps the operator's own saved casing. */
+    const noteBits = upperFill([
       ex.invoiceNumber ? `Bill ${ex.invoiceNumber}` : null,
       ex.dueDate ? `due ${ex.dueDate}` : null,
-    ].filter(Boolean).join(' · ');
+    ].filter(Boolean).join(' · '));
     if (noteBits) setNotes((prev) => prev.trim() ? prev : noteBits);
     /* The account: ONLY what this operator saved for this vendor before
        (mig 0341) — never a model guess. Absent a memory it stays empty and a
@@ -190,10 +193,10 @@ export const PaymentVoucherNew = () => {
     const srcLines = extras?.lines ?? ex.lines;
     const drafts = srcLines
       .filter((l) => l.amountSen != null && l.amountSen > 0)
-      .map((l) => ({ ...newLine(), description: l.description ?? '', amountSen: l.amountSen!, debitAccountCode: rememberedAccount }));
+      .map((l) => ({ ...newLine(), description: upperFill(l.description) ?? '', amountSen: l.amountSen!, debitAccountCode: rememberedAccount }));
     /* A bill with no readable lines still carries its total — one line. */
     if (drafts.length === 0 && ex.totalSen != null && ex.totalSen > 0) {
-      drafts.push({ ...newLine(), description: ex.invoiceNumber ? `Bill ${ex.invoiceNumber}` : 'As per bill', amountSen: ex.totalSen, debitAccountCode: rememberedAccount });
+      drafts.push({ ...newLine(), description: upperFill(ex.invoiceNumber ? `Bill ${ex.invoiceNumber}` : 'As per bill') ?? '', amountSen: ex.totalSen, debitAccountCode: rememberedAccount });
     }
     if (drafts.length > 0) setLines(drafts);
   };

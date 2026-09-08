@@ -145,6 +145,7 @@ import {
   splitBookUnpriced, splitDecidedAbsences, splitErpZeroMoney,
   splitGuessedItemCodePairing, splitMigratedChainLineShape,
 } from "./lib/ac-not-a-difference.mjs";
+import { isBlankBookRow, splitBlankBookRows } from "./lib/ac-blank-book-row.mjs";
 import { grPairGrain } from "./lib/ac-gr-pair-grain.mjs";
 import { erpReconcileTypes } from "./lib/ac-reconcile-erp-sql.mjs";
 import { FIELD_MAP } from "./lib/ac-field-identity.mjs";
@@ -417,6 +418,27 @@ for (const cfg of TYPES) {
       }
     }
   }
+  /* The BLANK-ROW declaration is proved against the book itself, in BOTH
+     directions, because a declaration that swallows too much reads as a clean
+     run. `SO-001473`'s key 98858 is empty in every column and must be declared;
+     `SO-011384`'s key 783795 has NO item code and QUANTITY 4 and must NOT be.
+     Both are real rows on the 2026-09-08 cut; if the exporter ever stops
+     carrying one, that is a snapshot problem and this says so rather than
+     reporting a clean run over a rule it could not exercise. */
+  for (const [dn, key, want] of [["SO-001473", "98858", true], ["SO-011384", "783795", false]]) {
+    const l = (book.SO.lines.get(dn) ?? []).find((x) => String(x.dtlKey) === key);
+    if (!l) {
+      problems.push(`the blank-row rule cannot be self-tested: ${dn} DtlKey ${key} is not in this snapshot`);
+    } else if (isBlankBookRow(l) !== want) {
+      problems.push(
+        `the blank-row rule answered ${!want} for ${dn} DtlKey ${key} and must answer ${want} — ` +
+          (want
+            ? "an empty AutoCount row would be counted as a missing line again"
+            : "a row the book orders 4 of would be declared away"),
+      );
+    }
+  }
+
   /* The field-identity comparators prove themselves on PLANTED defects before
      any of them is trusted — a comparator that cannot find a defect it is
      handed will report a clean run over real data. */
@@ -830,7 +852,7 @@ for (const cfg of TYPES) {
     lineCount: [], money: [], item: [], qty: [], price: [],
     keyOrphan: [], unmatchedErp: [], unmatchedAc: [],
   };
-  const D = { lineCount: 0, item: 0, price: 0 }; // declared, not gaps
+  const D = { lineCount: 0, item: 0, price: 0, blankRows: 0, blankRowDocs: new Set() }; // declared, not gaps
   /* The item-code and line-count findings in a machine-readable shape, for the
      same reason `moneyRows` exists below: a classifier must decide a column
      from a MEASUREMENT, never by pattern-matching the printed string. */
@@ -848,6 +870,9 @@ for (const cfg of TYPES) {
                   money. Empty means every code reconciles. */
   const bags = new Map();
   const shapeFacts = new Map();
+  /* Every blank book row, named. A declared class the reader cannot enumerate
+     is a suppression, not a declaration. */
+  const blankRowRows = [];
   /* The two HARMLESS halves of the raw item-code difference, counted apart so
      the headline number is the DEFECT count and neither half can hide inside
      it. See lib/item-code-class.mjs. */
@@ -881,9 +906,26 @@ for (const cfg of TYPES) {
     if (!h) continue;
     bothSides++;
 
-    const acLines = (B.lines.get(ac) || [])
-      .slice()
-      .sort((a, b) => a.seq - b.seq || (a.dtlKey > b.dtlKey ? 1 : -1));
+    /* AutoCount's own EMPTY ROWS are declared, not compared — a row with no
+       ItemCode, no quantity and no money is not a line the ERP can hold, and
+       counting it made eleven blank rows on six sales orders read as MISSING
+       LINES on go-live morning. The rule and every clause of it is in
+       lib/ac-blank-book-row.mjs; the rows are counted and listed below, never
+       dropped silently. */
+    const { lines: acLines, blank: acBlank } = splitBlankBookRows(
+      (B.lines.get(ac) || [])
+        .slice()
+        .sort((a, b) => a.seq - b.seq || (a.dtlKey > b.dtlKey ? 1 : -1)),
+    );
+    if (acBlank.length) {
+      D.blankRows += acBlank.length;
+      D.blankRowDocs.add(ac);
+      for (const l of acBlank) {
+        blankRowRows.push(
+          `${ac}: DtlKey ${l.dtlKey} — AutoCount states no item code, no quantity and no money (ERP ${d.erp_no})`,
+        );
+      }
+    }
     const erpLines = (erpLinesByAc.get(ac) || [])
       .slice()
       .sort(
@@ -1325,6 +1367,16 @@ for (const cfg of TYPES) {
       `, declared for this type ${D.item - C.itemTranslation - C.itemDecomposition}]` +
       (cfg.itemCodeDeclared ? ` — ${cfg.itemCodeDeclared}` : ""),
   );
+  if (D.blankRows) {
+    log(
+      `${t} — ${D.blankRows} AutoCount row(s) across ${D.blankRowDocs.size} document(s) carry NO item code, NO ` +
+        "quantity and NO money. AutoCount lets a salesperson leave a row empty; the ERP cannot hold one (a line " +
+        "needs a product), so the two sides AGREE about them. DECLARED, not counted in the line-count column — " +
+        "and a row with a quantity, or with money, is NOT in this class and stays a finding.",
+    );
+    for (const row of first(blankRowRows)) plain(`      ${row}`);
+    if (blankRowRows.length > SHOW) plain(`      ... and ${blankRowRows.length - SHOW} more`);
+  }
   if (cfg.priceDeclared) {
     plain(`   unit price is DECLARED for this type — ${cfg.priceDeclared}. The QUANTITY is not: it is copied from the book and is compared above.`);
   }
@@ -1595,37 +1647,59 @@ plain("═══════════ SUMMARY ══════════�
    honest way to reach zero is to say what each count IS, not to stop counting
    it.  Each has a sentence under the table in his own terms. */
 plain("        <-------------------- DIFFERENCES (the work) --------------------->  <----- NOT differences ----->");
-plain("type  book  scope    erp  absent  phantom   both  lineCnt   item    qty  price  money  decided  no-price  ERP-RM0  non-MYR  same-goods  same-money");
+/* ONE LIST FOR THE HEADER AND THE ROW, so they cannot drift apart.
+   They were two independent literals, and on run 34187812364 the header
+   announced `same-goods` and `same-money` while every row printed 16 cells
+   under an 18-column heading: the two cells were added to the heading and the
+   edit that was supposed to add them to the row silently did not apply. A
+   heading that promises a column the rows do not carry is a table that lies,
+   and nothing could catch it because nothing related the two. Now the same
+   array yields both, and the loop below asserts the counts agree. */
+const SUMMARY_COLUMNS = [
+  { label: "type", width: -4, get: (s) => s.t },
+  { label: "book", width: 5, get: (s) => s.acDocs },
+  { label: "scope", width: 6, get: (s) => s.scope },
+  { label: "erp", width: 6, get: (s) => s.erpLinked },
+  { label: "absent", width: 7, get: (s) => s.missing },
+  { label: "phantom", width: 8, get: (s) => s.phantom },
+  { label: "both", width: 6, get: (s) => s.bothSides },
+  { label: "lineCnt", width: 8, get: (s) => s.lineCount },
+  { label: "item", width: 6, get: (s) => s.item },
+  { label: "qty", width: 6, get: (s) => s.qty },
+  { label: "price", width: 6, get: (s) => s.price },
+  { label: "money", width: 6, get: (s) => s.money },
+  /* An absence the owner has already ruled on, named in full in its own
+     section above with the action still owed. */
+  { label: "decided", width: 8, get: (s) => s.decided ?? 0 },
+  /* The BOOK states no unit price. Copying it would ERASE the ERP's. */
+  { label: "no-price", width: 9, get: (s) => s.noPrice ?? 0 },
+  /* Our document carries RM 0.00 on migrated paperwork — the owner's standing
+     decision, proved per document, never assumed. */
+  { label: "ERP-RM0", width: 8, get: (s) => s.erpZeroMoney ?? 0 },
+  /* Its own column, deliberately not folded into `money` and not counted in
+     `gaps`: a foreign document is compared in its own currency and may be
+     perfectly correct. What it flags is that the ERP tags it MYR. Ledger 0665. */
+  { label: "non-MYR", width: 8, get: (s) => s.foreign ?? 0 },
+  /* No AutoCount line number on these rows, so which of our lines answers which
+     of the book's was the checker's own guess — and both sides list the same
+     products in the same quantities, which no ordering can fake. */
+  { label: "same-goods", width: 11, get: (s) => s.guessedPairing ?? 0 },
+  /* An invoice built from OUR receipt or delivery: total equal to the sen and
+     every item code agreeing, on a different number of rows. */
+  { label: "same-money", width: 11, get: (s) => s.lineShape ?? 0 },
+];
+const cell = (v, w) => (w < 0 ? String(v).padEnd(-w) : String(v).padStart(w));
+plain(SUMMARY_COLUMNS.map((c) => cell(c.label, c.width)).join(" "));
 for (const s of summary) {
-  plain(
-    [
-      s.t.padEnd(4),
-      String(s.acDocs).padStart(5),
-      String(s.scope).padStart(6),
-      String(s.erpLinked).padStart(6),
-      String(s.missing).padStart(7),
-      String(s.phantom).padStart(8),
-      String(s.bothSides).padStart(6),
-      String(s.lineCount).padStart(8),
-      String(s.item).padStart(6),
-      String(s.qty).padStart(6),
-      String(s.price).padStart(6),
-      String(s.money).padStart(6),
-      /* An absence the owner has already ruled on. Named in full in this type's
-         own section above, with the action still owed. */
-      String(s.decided ?? 0).padStart(8),
-      /* The BOOK states no unit price. Copying it would ERASE the ERP's. */
-      String(s.noPrice ?? 0).padStart(9),
-      /* Our document carries RM 0.00 on migrated paperwork — the owner's
-         standing decision, proved per document, never assumed. */
-      String(s.erpZeroMoney ?? 0).padStart(8),
-      /* Its own column, deliberately not folded into `money` and deliberately
-         not counted in `gaps`: a foreign-currency document is compared in its
-         own currency and may be perfectly correct. What it flags is that the
-         ERP tags it MYR. Ledger 0665. */
-      String(s.foreign ?? 0).padStart(8),
-    ].join(" "),
-  );
+  const cells = SUMMARY_COLUMNS.map((c) => cell(c.get(s), c.width));
+  if (cells.length !== SUMMARY_COLUMNS.length) {
+    throw new Error(
+      `summary row for ${s.t} rendered ${cells.length} cells under ` +
+        `${SUMMARY_COLUMNS.length} headings — the table would misalign, which is how ` +
+        "two announced columns went unprinted on run 34187812364",
+    );
+  }
+  plain(cells.join(" "));
 }
 plain("");
 plain("absent   = in the expected population and NOT in the ERP. A real gap: somebody has to carry the document over.");
