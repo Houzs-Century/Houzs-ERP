@@ -2409,11 +2409,11 @@ Which ERP column, therefore, matters more than usual, and the trap is live:
 |---|---|
 | `scm.mfg_sales_orders.balance_sen` | **NO.** `recomputeTotals` writes `balance_sen = local_total_sen = total_revenue_sen = grandTotal` on every edit, so it never reflects a payment. It looks right because the cutover's own `UDF_BALANCE` landed in it (`check-migration-fidelity.mjs:95`) — and the first edit of any order overwrote that with the gross total |
 | the view's `balance_sen_live` | close — `local_total - SUM(payments)`, what the SO list, the mobile list and delivery planning render. It MISSES the legacy header deposit that never reached the ledger. **Since mig 0301 (2026-08-16) it is SIGNED** — the `GREATEST(…, 0)` floor was removed so an over-collected order shows red instead of a comfortable RM 0.00 |
-| **`soOutstandingCenti`** (`scm/shared/so-outstanding.ts`) | **YES — this is the one the write-back sends.** Clamped at 0 on purpose: AutoCount is a licensed ledger and the ERP must not push a negative into it. `autocount-read.ts:79` calls THIS |
-| `soBalanceCenti` (same module) | **NOT for the write-back.** The SIGNED figure, for humans: the SO detail page, the list's Balance column and the PDF, which paint a negative red (owner 2026-08-16: 「需要可以超收 negative 边红色」). It answers 0 whenever `total_revenue_sen` is 0, because that column is unset on 2,687 of production's 2,824 live orders and a bare subtraction would paint RM 9.26m of false over-collection |
+| **`soOutstandingSen`** (`scm/shared/so-outstanding.ts`) | **YES — this is the one the write-back sends.** Clamped at 0 on purpose: AutoCount is a licensed ledger and the ERP must not push a negative into it. `autocount-read.ts` calls THIS, through `readSoOutstandingSen` |
+| `soBalanceSen` (same module) | **NOT for the write-back.** The SIGNED figure, for humans: the SO detail page, the list's Balance column and the PDF, which paint a negative red (owner 2026-08-16: 「需要可以超收 negative 边红色」). Since PR #3306 it subtracts from `soDisplayTotalSen` — `total_revenue_sen` when > 0, else `local_total_sen` — so a migrated order shows the money still owed instead of 0; only an order with NO total in EITHER column still answers 0. **The write-back does not get that fallback**, and the split is the point: a screen may estimate from a second column, a licensed ledger may not |
 
-> **The two names are the point.** `soOutstandingCenti` (floored) is what SUMS
-> and what leaves the building; `soBalanceCenti` (signed) is what a person
+> **The two names are the point.** `soOutstandingSen` (floored) is what SUMS
+> and what leaves the building; `soBalanceSen` (signed) is what a person
 > reads. They are deliberately not interchangeable, and the guard that used to
 > REFUSE an over-collection outright was removed on 2026-08-16 — over-collection
 > is legal now, so the money is recorded and the balance simply goes negative.
@@ -2431,10 +2431,32 @@ Three rules the composer keeps:
 - **Zero is a value.** `udf()` drops a falsy entry, so a settled order is sent as
   the string `"0.00"` (`acUdfMoney`). Dropping the key would leave a paid order
   showing a debt in the account book forever.
-- **No total means NO KEY.** `readSoOutstandingCenti` answers `null` when
-  `total_revenue_sen` is absent, because zero would declare a real debt settled
-  in a licensed ledger. The SO detail page reads the same absence as `0` — it is
+- **No total means NO KEY — and 0 IS "no total" (since 2026-09-09).**
+  `readSoOutstandingSen` answers `null` for any `total_revenue_sen` that is not
+  **greater than zero**, because zero would declare a real debt settled in a
+  licensed ledger. The SO detail page reads the same absence as `0` — it is
   drawing a screen, this is writing a ledger.
+
+  It used to refuse only a NULL, which **cannot happen**: the column is `integer
+  DEFAULT 0 NOT NULL`, while every AutoCount-imported order carries a hard 0
+  because the cutover importer's `HCOLS` writes `local_total_sen` and not this
+  column. So the guard stood aside on exactly the orders it was written for, and
+  the reader computed `max(0, 0 - paid) = 0` — the ERP telling the book that a
+  part-paid order was settled. `docs/bugs/0726-*`.
+
+  **It REFUSES rather than falling back to `local_total_sen`**, which is what
+  the SCREEN does since PR #3306. Refusing leaves the book holding its own
+  `UDF_BALANCE`, which is the figure the cutover read and is right; asserting
+  `local_total_sen - paid` would be worse than silence here, because the ERP's
+  PAID side is knowingly incomplete on these orders — payments taken in
+  AutoCount since 2026-08-28 have never reached the ERP (`lib/migrated-so-lock.ts`),
+  so the ERP would OVERSTATE the debt and a paid-up customer would be chased.
+  The type split enforces it: `soOutstandingSen` takes `SoPaidInputs`, which has
+  no `localTotalSen` field.
+
+  **A SETTLED order is not refused.** Its total is a real positive number and
+  its balance is a real 0, so `"0.00"` still goes — the guard is on the TOTAL,
+  never on the answer.
 - **Negative is not expressible.** The book holds a negative `UDF_BALANCE` on 47
   of the 13,015 headers; the ERP clamps at zero on both its own paths (the view's
   `GREATEST`, the detail route's `Math.max`) and keeps an overpayment as customer
@@ -2452,8 +2474,8 @@ else**:
 
 | reader | field it builds | table |
 |---|---|---|
-| `readSoOutstandingSen` (`scm/lib/autocount-read.ts:65`) | `UDF_BALANCE` | `scm.mfg_sales_order_payments` |
-| `readSoPaymentRefs` (`scm/lib/autocount-read.ts:187`) | `UDF_PAYEMENT` | `scm.mfg_sales_order_payments` |
+| `readSoOutstandingSen` (`scm/lib/autocount-read.ts:101`) | `UDF_BALANCE` | `scm.mfg_sales_order_payments` |
+| `readSoPaymentRefs` (`scm/lib/autocount-read.ts:227`) | `UDF_PAYEMENT` | `scm.mfg_sales_order_payments` |
 
 `composePaymentUdf` has exactly two feeders — `scm/lib/so-edit-header.ts:187` and
 `services/autocount-writeback.ts:1284` — and both are fed from those two reads.

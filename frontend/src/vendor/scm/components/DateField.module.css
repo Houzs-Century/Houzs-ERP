@@ -62,7 +62,7 @@
 /* Hidden native date input — present for the picker + ISO emit, not for
    display. Kept in the DOM box (1px, opacity 0) so showPicker() anchors near
    the calendar button. pointer-events:none so the button owns the click.
-   This is the FINE-pointer geometry; a coarse pointer gets .nativeOverlay
+   This is the FINE-pointer geometry; a coarse pointer gets .nativeIconTarget
    below instead, and only one of the two is ever on the element. */
 .nativeHidden {
   position: absolute;
@@ -77,27 +77,47 @@
   pointer-events: none;
 }
 
-/* TOUCH: the native input IS the tap target, covering the whole field.
-   WHY. Until this class existed the only touch route to the picker was
-   showPicker() called from the text box's onClick (PR #3300) — and that fires
-   against THIS input while it is 20px wide, transparent and
-   pointer-events:none. Chrome honours showPicker() on such an element, which
-   is why the owner's desktop screenshot showed the calendar open; iOS Safari
-   raises its date wheel only for a real user tap on a real, hit-testable date
-   control, so on his iPhone nothing happened at all and he reported
-   「尝试了 手机还是看不到」 (2026-09-08, hours after #3300 deployed).
-   Stretched over the field with opacity 0 and pointer-events auto, a finger
-   tap lands on a genuine <input type=date> and the OS opens its own wheel with
-   no scripting involved. The masked day-first text underneath stays the thing
-   the operator READS, so the OS-locale display bug PR #2390 fixed does not
-   come back.
-   appearance:none is load-bearing on iOS: without it Safari keeps the date
-   input's intrinsic width and the overlay does not actually span the field. */
-.nativeOverlay {
+/* TOUCH: the native input is the tap target for the PICKER, and it is confined
+   to the calendar icon at the right — not the whole field.
+   WHY IT EXISTS AT ALL. The only touch route to the picker used to be
+   showPicker() called from the text box's onClick (PR #3300) — fired against
+   THIS input while it was 20px wide, transparent and pointer-events:none.
+   Chrome honours showPicker() on such an element, which is why the owner's
+   desktop screenshot showed the calendar open; iOS Safari raises its date wheel
+   only for a real user tap on a real, hit-testable date control, so on his
+   iPhone nothing happened at all and he reported 「尝试了 手机还是看不到」
+   (2026-09-08, hours after #3300 deployed). Measured on Playwright WebKit 26.5:
+   showPicker() EXISTS there and does not throw, it simply engages nothing. So
+   the picker path must never go back to scripting; the finger has to land on
+   the real control.
+   WHY IT IS NO LONGER THE WHOLE FIELD. PR #3311 spelled that as `inset: 0`, and
+   the cost was the operator's keyboard: with the date input over the entire
+   field a phone user could not tap into the text box to hand-type a date. The
+   owner, 2026-09-09: 「可以保留手打」 — keep hand-typing. The field is now split.
+   The right 44px belong to this input, so a tap on the calendar icon still
+   reaches a genuine <input type=date> with no script in the path; everything
+   left of it is the masked text box again, so a tap there raises the keyboard
+   and typing works exactly as it does on a desktop.
+   44 by 44 is the Apple/Google minimum touch target, and it is reached by
+   OVERFLOWING the ~30px wrap vertically (top 50% + translateY) rather than by
+   making the field taller — the same trade-off .iconBtn::after below documents:
+   a 44px-tall child in flow would push .wrap from ~30px to ~52px and re-flow
+   every form row on every phone. `right: 0` keeps the horizontal overflow at
+   zero so the target cannot steal a tap from the control beside it.
+   The masked day-first text underneath stays the thing the operator READS, so
+   the OS-locale display bug PR #2390 fixed does not come back.
+   appearance:none + min-width:0 are load-bearing on iOS: without them Safari
+   keeps the date input's intrinsic width, and here that would spill the target
+   leftwards back across the text box — re-creating exactly the problem this
+   change exists to undo. */
+.nativeIconTarget {
   position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 44px;
+  min-width: 0;
+  height: 44px;
   margin: 0;
   padding: 0;
   border: 0;

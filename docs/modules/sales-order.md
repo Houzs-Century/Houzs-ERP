@@ -2006,6 +2006,28 @@ sentence for a write that reaches the API anyway is curated in
 > is not a remedy. `frontend/scripts/check-silent-mutations.mjs` does not cover
 > this shape — it scans `useMutation` call sites, and this path is a raw
 > `authedFetch` loop.
+>
+> **The staged-PHOTO drain had the identical hole, and it is closed too**
+> (`docs/bugs/0726-*`). `MobileNewSO.uploadStagedPhotos` counted with
+> `catch { failed += 1; }` and said *"N line photo(s) failed to upload. Add them
+> again from the SO detail screen."*; `SalesOrderNew.flushPendingPhotos` returned
+> `{ failed, skipped }`, summed the two and said *"Please re-attach on the Detail
+> page."* — the same instruction to keep doing the thing that just failed. Both
+> now report through `frontend/src/vendor/scm/lib/photo-upload-failures.ts`,
+> which IMPORTS `line-write-failures.ts`'s capture, shared-cause collapse and
+> refusal test rather than restating them, so the two vocabularies cannot drift.
+> Three things are photo-specific and live in that module: the label is
+> `item code (file name)`, because a line carries several photos and only some
+> fail; the retryable tail names the SO detail screen instead of promising *"your
+> edits are still here"*, which is FALSE for a staged `File` that does not survive
+> the screen; and a photo whose line could not be paired back to a saved item
+> carries its own sentence with NO status, so the shared rule reads it as
+> retryable — which it is.
+>
+> **Still counting, and known:** `MobileNewSO.recordNewPayments` keeps only
+> `firstError` and no status, so it says *"Record them again…"* against a refusal
+> too. Recorded in `docs/bugs/0726-*`; the wording module already exists, what is
+> open is what a re-posted payment should promise.
 
 **Opening them again is ONE statement**, when collections are corrected:
 
@@ -3981,7 +4003,7 @@ cutover importer's header column list (`HCOLS` in
 | What it still refuses | an order with NO total in either column answers **0**. A zero total is UNKNOWN, not "owes nothing" |
 | Where it is served | `GET /mfg-sales-orders/:docNo` stamps it as `balance_sen` on the response, over the header column of the same name — which is NOT a balance (see `so-outstanding.ts`'s own header for the three candidates) |
 | The shared client half | `deriveBalance` (`frontend/src/vendor/scm/lib/so-detail-gates.ts`), consumed by the mobile detail KPI and the desktop print-preview card. A server balance of **0** does not outrank a computable `total - paid`; a NON-zero one does, because only the server applies the legacy header-deposit rule |
-| The write-back's rule is DIFFERENT | `soOutstandingSen` is clamped at 0 and does NOT fall back — AutoCount's `UDF_BALANCE` is only ever written from a total the ERP itself recomputed |
+| The write-back's rule is DIFFERENT | `soOutstandingSen` is clamped at 0 and does NOT fall back — AutoCount's `UDF_BALANCE` is only ever written from a total the ERP itself recomputed. **Enforced since 2026-09-09, not just intended:** `readSoOutstandingSen` (`backend/src/scm/lib/autocount-read.ts`) refuses any `total_revenue_sen` not greater than zero and omits the key, so the book keeps its own figure. It used to refuse only a NULL, which the `0 NOT NULL` column makes impossible, so it had been computing `max(0, 0 - paid) = 0` for every migrated order — `docs/bugs/0726-*` |
 
 Until 2026-09-08 the rule read `total_revenue_sen` alone, so the detail page
 answered Balance 0.00 for every migrated order while the LIST beside it (reading

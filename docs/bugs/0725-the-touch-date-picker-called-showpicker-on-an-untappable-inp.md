@@ -79,7 +79,16 @@ genuine, hit-testable, focusable `<input type="date">` instead of a transparent
 strip that takes no pointer events, and the fix no longer depends on an API
 whose effect on WebKit was measured to be nothing.
 
-**Capability removed on purpose.** With the overlay covering the field, a phone
+**Capability removed on purpose — SUPERSEDED the next day, 2026-09-09, by
+`docs/bugs/0726-pr-3311-took-hand-typing-away-on-a-phone-the-date-input-cove.md`.**
+The paragraph below reads the owner's complaint as "typing is the only way in,
+so replace it". He meant "add the calendar, keep the typing" — 「可以保留手打」.
+The full-field overlay is now a 44 by 44 target over the calendar icon only
+(`.nativeIconTarget`): the icon opens the OS picker, the rest of the field
+focuses the text box, and a phone has both. Read the rest of this paragraph as
+what the trade WAS, not as current behaviour.
+
+With the overlay covering the field, a phone
 user can no longer tap into the text box to hand-type a date. Typing on a phone
 was the thing the owner complained about (2026-09-08: 「是要 manual type 的」) and
 it is the path that produced the `79/20/26` data loss in
