@@ -352,7 +352,20 @@ export async function insertMigratedDo(sql, d, { companyId, sysUser, debtorFallb
        the source genuinely does not carry.
 
        docs/bugs/0714. Rows already written are repaired by
-       scripts/repair-customer-block.mjs; this stops it recurring. */
+       scripts/repair-customer-block.mjs; this stops it recurring.
+
+       AND THE SALES / DELIVERY FIELDS, same statement, same reason. The card
+       the customer block fixed is the driver's; the header block above it —
+       Salesperson, Customer ref, Delivery date, Expected at — read "—" on the
+       same screen (HC-DO-011559, owner 2026-09-08) and for the same cause.
+       /from-sos copies salesperson_id / agent / branding / ref /
+       customer_delivery_date and sets expected_delivery_at to the customer
+       date or, failing that, the creation date — here the DO's own date. The
+       list is DO_SALES_CARRY in lib/customer-block.mjs, shared with
+       backfill-migrated-do-sales-fields.mjs. venue / venue_id stay out (a
+       canonicalising trigger rewrites them); sales_location / warehouse_id
+       are the ship-from branch from the book, never the order's.
+       docs/bugs/0716. */
     await tx`UPDATE scm.delivery_orders d SET
                phone = s.phone, email = s.email,
                customer_type = s.customer_type, building_type = s.building_type,
@@ -363,7 +376,11 @@ export async function insertMigratedDo(sql, d, { companyId, sysUser, debtorFallb
                postcode = s.postcode, customer_country = s.customer_country,
                emergency_contact_name = s.emergency_contact_name,
                emergency_contact_phone = s.emergency_contact_phone,
-               emergency_contact_relationship = s.emergency_contact_relationship
+               emergency_contact_relationship = s.emergency_contact_relationship,
+               salesperson_id = s.salesperson_id, agent = s.agent,
+               branding = s.branding, ref = s.ref,
+               customer_delivery_date = s.customer_delivery_date,
+               expected_delivery_at = COALESCE(s.customer_delivery_date, d.do_date)
              FROM scm.mfg_sales_orders s
             WHERE d.id = ${hdr.id}
               AND s.doc_no = d.so_doc_no AND s.company_id = d.company_id`;

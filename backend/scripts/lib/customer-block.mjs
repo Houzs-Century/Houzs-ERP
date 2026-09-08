@@ -144,3 +144,29 @@ export function cityFromBook(addr, cityOf) {
   if (prefixed) return { city: prefixed, reason: 'the book states it with a trailing state; the address master confirms the city' };
   return { city: null, reason: `the book writes "${text}" where a city goes and the address master does not list it for ${pc}` };
 }
+
+/**
+ * THE SALES / DELIVERY FIELDS a delivery order carries from its sales order —
+ * the header block above the customer card: who sold it, the customer's own
+ * reference, and when it is due. `[doColumn, sqlExpression]`, where the
+ * expression reads the sales order as `s` and the delivery order as `d`, so the
+ * writer (lib/migrated-do-writer.mjs, one UPDATE in the insert transaction) and
+ * the backfill (backfill-migrated-do-sales-fields.mjs) state the rule once.
+ *
+ * The SAME subset rule as DO_CARRY: everything here is something
+ * src/scm/lib/so-to-do-fields.ts already carries for the live converters.
+ * `expected_delivery_at` is the customer's date or, failing that, the DO's own
+ * date — /from-sos uses the creation date, which for a migrated document IS
+ * do_date. Not here, on purpose: venue / venue_id (a canonicalising trigger
+ * rewrites them on write), sales_location / warehouse_id (the ship-from branch
+ * from the book, owner 2026-09-07 — never the order's sales branch).
+ * docs/bugs/0716.
+ */
+export const DO_SALES_CARRY = [
+  ['salesperson_id', 's.salesperson_id'],
+  ['agent', 's.agent'],
+  ['branding', 's.branding'],
+  ['ref', 's.ref'],
+  ['customer_delivery_date', 's.customer_delivery_date'],
+  ['expected_delivery_at', 'COALESCE(s.customer_delivery_date, d.do_date)'],
+];

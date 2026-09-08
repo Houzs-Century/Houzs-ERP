@@ -1,0 +1,78 @@
+name: Carry the sales / delivery fields onto migrated DO headers (PLAN gated)
+
+# lib/migrated-do-writer.mjs wrote delivery-order headers without salesperson,
+# agent, branding, customer ref, customer_delivery_date or expected_delivery_at.
+# docs/bugs/0714 carried the CUSTOMER BLOCK (phone / address) and repaired
+# production; this is the header block above that card on the same screen, blank
+# for the same cause (HC-DO-011559, owner 2026-09-08). docs/bugs/0716.
+#
+# Source is the parent sales order, by the list the writer itself now applies
+# (DO_SALES_CARRY in lib/customer-block.mjs). Never overwrites a stated value —
+# every SET re-asserts IS NULL. Writes no line, quantity, price, status or
+# movement. venue / sales_location / warehouse_id are not touched.
+#
+# PLAN by default; apply needs the CONFIRM phrase. Idempotent.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (default) or apply"
+        required: false
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: 'For apply only — type: I HAVE REVIEWED THE DRY-RUN'
+        required: false
+        default: ""
+        type: string
+      company:
+        description: "company_id (default 1 — Houzs Century)"
+        required: false
+        default: "1"
+        type: string
+      scope:
+        description: "migrated = documents the migrated writer made; all = every DO in the company"
+        required: false
+        default: "migrated"
+        type: choice
+        options: [migrated, all]
+      do_number:
+        description: "limit to ONE DO number (e.g. HC-DO-011559); blank = whole scope"
+        required: false
+        default: ""
+        type: string
+      cap:
+        description: "max plan documents to print"
+        required: false
+        default: "40"
+        type: string
+
+concurrency:
+  group: backfill-migrated-do-sales-fields
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/backfill-migrated-do-sales-fields.mjs
+        env:
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY_ID: ${{ inputs.company }}
+          SCOPE: ${{ inputs.scope }}
+          DO_NUMBER: ${{ inputs.do_number }}
+          CAP: ${{ inputs.cap }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
