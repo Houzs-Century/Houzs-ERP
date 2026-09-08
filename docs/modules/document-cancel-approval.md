@@ -77,7 +77,7 @@ lock (`migratedSoReadonly`), so a migrated order cannot be asked about.
 | POST | `.../cancel-request/reject` | `{ reason }` (mandatory) → `REJECTED`; either approver desk, while a signature is pending |
 | POST | `.../cancel-request/withdraw` | → `WITHDRAWN`; the requester (at any open point, level 2 included) or an approver. Silent — nobody is notified |
 | same five | `/mfg-purchase-orders/:id/cancel-request…` | the Purchase Order set |
-| GET | `/cancel-requests?scope=open\|all` | the inbox — both documents, this company, newest first. Coarse `scm.access` only: an inbox spanning two areas cannot pick one |
+| GET | `/cancel-requests?scope=open\|all` | the inbox — both documents, this company, newest first. Coarse `scm.access` only: an inbox spanning two areas cannot pick one — so the prefix is listed in `SCM_UNGUARDED_PREFIXES` (`backend/src/scm/lib/scm-areas.ts`), which the write-freeze drift test pins against the mounts |
 
 Every step writes an audit row on the document's own history — the SO's
 `mfg_so_audit_log` (`CANCEL_SUBMIT_FOR_APPROVAL` / `CANCEL_APPROVE` /
@@ -168,10 +168,11 @@ SCM bundle); `cancelRequestNotify.test.ts` asserts they equal the gate's table.
   cancel mutation** — the same one the Cancel button always ran. If that is
   refused, the request stays `APPROVED` and **Cancel now** retries it.
 - **The inbox**: `frontend/src/pages/scm-v2/CancelRequests.tsx` at
-  `/scm/cancel-requests` (route in `frontend/src/App.tsx`; sidebar entry
-  Procurement → Cancellation Requests in `frontend/src/components/Sidebar.tsx`,
-  shown to holders of any of the four keys; tab label in
-  `frontend/src/lib/routeLabels.ts`). Both documents, Open / All, the same
+  `/scm/cancel-requests` (route in `frontend/src/App.tsx` and in the executable
+  URL contract `frontend/src/routing/routeManifest.ts`, whose drift test pins
+  the route count; sidebar entry Procurement → Cancellation Requests in
+  `frontend/src/components/Sidebar.tsx`, shown to holders of any of the four
+  keys; tab label in `frontend/src/lib/routeLabels.ts`). Both documents, Open / All, the same
   actions on the row; double-click opens the document.
 
 ## 7. What did NOT change

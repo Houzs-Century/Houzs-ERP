@@ -462,7 +462,10 @@ export function cancelApprovalGuard(docType: CancelDocType): MiddlewareHandler<{
     const co = requireActiveCompanyId(c as AnyCtx);
     if (!co.ok) return next();
     const sb = (c as AnyCtx).get('supabase');
-    const { data: doc } = await scopeToCompanyId(sb.from(cfg.table).select('status').eq(cfg.keyColumn, key), co.companyId).maybeSingle();
+    const { data: doc, error: docErr } = await scopeToCompanyId(sb.from(cfg.table).select('status').eq(cfg.keyColumn, key), co.companyId).maybeSingle();
+    /* A read that FAILED is not "no such document": say so rather than let the
+       cancel through on a blip (the swallowed-reads gate's whole point). */
+    if (docErr) return c.json({ error: 'load_failed', reason: docErr.message }, 500);
     if (!doc) return next();
     if (!cancelNeedsApproval(docType, (doc as { status?: string }).status)) return next();
 

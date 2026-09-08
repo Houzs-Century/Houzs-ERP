@@ -207,7 +207,12 @@ const CEILINGS = {
   // inline Acknowledge / Mark read, source tags — for the Announcements
   // redesign (PR #2994), +1.0 KB gzip. Deliberate; the popover body is the
   // next candidate to lazy-load if this ceiling is reached again.
-  INITIAL_JS_GZIP: 166 * KB,
+  // 166 -> 167 on 2026-09-08: main sat at 165.8 and the cancellation-approval
+  // inbox (PR #3223) added one sidebar entry, one lazy route and one manifest
+  // line to the shell — +0.3 KB gzip, no new eager module (its icon is one the
+  // shell already loads). The bell popover body is STILL the next diet; this
+  // bump buys 1 KB, not a policy.
+  INITIAL_JS_GZIP: 167 * KB,
   // Everything the app can lazy-load (users only fetch the routes they visit).
   // A soft guard against unbounded total growth, not a first-paint cost. Left
   // at 1800 deliberately — main is at ~99% of it and RAISING IT AGAIN IS NOT
