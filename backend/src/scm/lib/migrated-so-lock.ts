@@ -45,6 +45,8 @@
 //     reading "open" would be reading the wrong answer, not a neutral one.
 // ----------------------------------------------------------------------------
 
+import { OPEN_TOKENS, ALL_TOKENS } from './app-config-tokens';
+
 /** Which companies have their migrated sales orders locked. */
 export type MigratedSoLockScope = 'off' | 'all' | number[];
 
@@ -53,9 +55,6 @@ export interface MigratedSoLockValue {
   /** The value was present but unintelligible; scope was forced to 'all'. */
   malformed: boolean;
 }
-
-const OPEN_TOKENS = new Set(['', 'off', '0', 'false']);
-const ALL_TOKENS = new Set(['all', 'true']);
 
 const dedupe = <T>(xs: T[]): T[] => [...new Set(xs)];
 const split = (s: string): string[] => s.split(',').map((t) => t.trim()).filter((t) => t.length > 0);
