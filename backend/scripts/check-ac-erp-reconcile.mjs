@@ -157,7 +157,8 @@ import {
   runSelfTest as runFieldSelfTest,
 } from "./lib/ac-field-identity-run.mjs";
 import { printFieldTable, printPoDiscount } from "./lib/ac-field-identity-report.mjs";
-import { buildVerdictRows, makeVerdictRecorder, summariseVerdict } from "./lib/so-verdict-derive.mjs";
+import { makeVerdictRecorder } from "./lib/so-verdict-derive.mjs";
+import { emitVerdicts } from "./lib/ac-verdict-emit.mjs";
 import { makeSofaRulingLookup } from "./lib/sofa-rulings.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -1937,92 +1938,26 @@ if (notWork) {
 
    The verdict is keyed on the ERP document number and covers SALES ORDERS only:
    it feeds the migrated-sales-order lock, and no other document type has one. */
-/* ONE construction of the payload, used by both writers below. Two copies of
-   this object is how the SO file and a PO file would come to describe the same
-   run differently — the failure this whole lane is built against. */
-const verdictPayloadFor = (type, measuredAt, runId) => {
-  const rows = buildVerdictRows({ recorder: VERDICT, type, companyId: CO, measuredAt, runId });
-  const sum = summariseVerdict(rows);
-  return {
-    rows,
-    sum,
-    payload: {
-      version: 1,
-      type,
-      company_id: CO,
-      measured_at: measuredAt,
-      run_id: runId,
-      snapshot_exported_at: snap.exported_at ?? null,
-      source: process.env.GITHUB_SERVER_URL && process.env.GITHUB_RUN_ID
-        ? `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`
-        : "local",
-      summary: sum,
-      /* The reconcile's OWN summary row for this type and its OWN presence
-         lists, carried so check-so-tally.mjs states the document / line / SKU /
-         quantity / price / money axes without measuring anything itself.
-         publish-so-reconcile-verdict.mjs names the fields it inserts, so extra
-         keys here reach no database column. */
-      population: summaryByType.get(type) ?? null,
-      presence: VERDICT.presenceFor(type),
-      rows,
-    },
-  };
-};
+/* ── THE PER-DOCUMENT VERDICT ───────────────────────────────────────────────
+   Written out ONLY when asked for, so the read-only check the owner dispatches
+   stays exactly what it was. This file never writes one to the DATABASE:
+   publish-so-reconcile-verdict.mjs does that, which keeps the CLAUDE.md rule
+   that a read-only check is read-only.
 
-if (VERDICT_OUT) {
-  const measuredAt = new Date().toISOString();
-  const runId = crypto.randomUUID();
-  const { rows, sum, payload } = verdictPayloadFor("SO", measuredAt, runId);
-  plain("");
-  plain("═══════════ PER-DOCUMENT VERDICT — SALES ORDERS ═══════════");
-  log(
-    `SO VERDICT — ${sum.docCount} migrated sales orders compared against the book: ` +
-      `${sum.cleanCount} match it exactly and would OPEN; ${sum.differCount} still differ and stay LOCKED.`,
-  );
-  for (const [axis, docs] of sum.perAxis) plain(`   ${axis}: ${docs} document(s)`);
-  for (const r of rows.filter((x) => !x.clean).slice(0, SHOW)) {
-    plain(`   LOCKED ${r.doc_no} (${r.ac_doc_no}) — ${r.axes.join(", ")}`);
-  }
-  const differ = sum.differCount;
-  if (differ > SHOW) plain(`   ... and ${differ - SHOW} more`);
-  fs.writeFileSync(VERDICT_OUT, JSON.stringify(payload, null, 0));
-  plain(`   verdict written to ${VERDICT_OUT} (${rows.length} rows)`);
-}
-
-/* ── THE PER-DOCUMENT VERDICT FOR EVERY REQUESTED TYPE ──────────────────────
-   Written to a directory as `<TYPE>-verdict.json`, one file per type, all from
-   the SAME run — so a report that puts purchase orders and goods receipts side
-   by side is quoting one comparison, not two that may have seen different data.
-
-   Each type also gets ONE machine-readable line in a uniform shape. That line
-   is what check-po-gr-tally.mjs parses back out to prove its own counts against
-   this run's, and a uniform shape means the cross-check is one expression
-   rather than one per type. The SO-specific line above is left exactly as it
-   was: the sales-order lane parses it, and this lane must not move it. */
-if (VERDICT_DIR) {
-  fs.mkdirSync(VERDICT_DIR, { recursive: true });
-  const measuredAt = new Date().toISOString();
-  const runId = crypto.randomUUID();
-  plain("");
-  plain("═══════════ PER-DOCUMENT VERDICT — BY DOCUMENT TYPE ═══════════");
-  for (const type of VERDICT_TYPES) {
-    const { rows, sum, payload } = verdictPayloadFor(type, measuredAt, runId);
-    /* A type with no rows is NOT written as an empty answer. An absent file is
-       read by the checker as "this run never compared that type", which is the
-       truth; a zero-row file would read as "compared, and all clean". */
-    if (!rows.length) {
-      plain(`   ${type}: no compared documents in this run — no verdict file written.`);
-      continue;
-    }
-    const file = path.join(VERDICT_DIR, `${type}-verdict.json`);
-    fs.writeFileSync(file, JSON.stringify(payload, null, 0));
-    log(
-      `${type} TALLY VERDICT — ${sum.docCount} documents compared against the book: ` +
-        `${sum.cleanCount} match it exactly; ${sum.differCount} still differ.`,
-    );
-    for (const [axis, docs] of sum.perAxis) plain(`   ${type} ${axis}: ${docs} document(s)`);
-    plain(`   ${type} verdict written to ${file} (${rows.length} rows)`);
-  }
-}
-
+   `VERDICT_OUT` is SALES ORDERS and nothing else — it feeds the
+   migrated-sales-order lock. `VERDICT_DIR` is the newer per-type path the owner
+   asked for on 2026-09-08 (「然后把PO GR也tally掉」). The serialising lives in
+   lib/ac-verdict-emit.mjs; it DECIDES nothing, and it must not. */
+emitVerdicts({
+  recorder: VERDICT,
+  companyId: CO,
+  snapshotExportedAt: snap.exported_at ?? null,
+  summaryByType,
+  verdictOut: VERDICT_OUT,
+  verdictDir: VERDICT_DIR,
+  verdictTypes: VERDICT_TYPES,
+  show: SHOW,
+  plain,
+  log,
+});
 await sql.end({ timeout: 5 });
