@@ -1576,3 +1576,50 @@ normalised before two codes are called different.
 the tenth; deciding which of the two rows is the faithful copy — did the customer
 change the bed, or did the sales-order import mis-map it? — is the owner's.
 Ledger: `docs/bugs/0671-the-delta-sync-dedicated-9-sales-order-lines-to-purchase-ord.md`.
+
+## A sofa's purchase line and its sales compartments (2026-09-08)
+
+**One book line, one ERP row per compartment — on BOTH sides, or the sofa never
+ships.** `so_item_id` is single-valued, so a decomposed sofa needs one purchase
+row per sales compartment. Where the two sides hold a different NUMBER of rows,
+no dedication can be written at all, `isHardBoundLine` never lights the sales
+line, and every delivery-order entry point answers 409 `sofa_no_batch` — with
+the *"have no live supplier PO linked"* tail, which is the honest message and
+also the one that hides the real cause.
+
+Three tools own this edge and they do not overlap:
+
+| shape | tool | why it refuses the others |
+| --- | --- | --- |
+| ONE purchase row, ONE sales row | `repair-po-so-link-from-book.mjs` | a Map keyed by DtlKey would keep one row of a multi-row side |
+| SEVERAL on both sides, same products | `repair-po-so-link-sofa-compartments.mjs` | the pairing is a copy plus an identity match, not a choice |
+| ONE collapsed purchase row (`{model}-1S`), SEVERAL sales rows | `repair-collapsed-sofa-po-line.mjs` | the other two cannot invent a compartment; this one takes it from the BOOK's own Desc2 and only when the sales side already holds that exact multiset |
+
+All three share ONE pairing vocabulary — `scripts/lib/sofa-po-so-pair.mjs` and
+`scripts/lib/redecode-sofa-plan.mjs`. Two copies of the pairing rule existed for
+twenty minutes on 2026-09-08 and gave opposite answers on production about
+`HC-PO-010040`; do not write a fourth.
+
+**`{model}-1S` is ambiguous and that is the trap.** It is both the importer's
+"could not read the build" placeholder AND a legitimate one-seater. Only the
+`SOFA UNPARSED` remark separates them, and
+`redecode-collapsed-sofa-lines.mjs` requires BOTH (`isPlaceholderLine`). A
+purchase row that decoded to a single `1S` from a text today's parser reads as
+`2A(LHF)+1A(RHF)` carries no marker, so it is invisible to that tool — the class
+`docs/bugs/0715` was written about. Widening the predicate would rewrite live
+one-seaters; the narrow answer is to require the sales side to state the same
+multiset independently.
+
+**A link does not recompute readiness** (`docs/bugs/0675`). After any of the
+three, dispatch *Recompute SO stock allocation*, then *Recompute SO
+po_qty_picked* — the SO -> PO ceiling those missing links left reading LOW is a
+symptom of the same gap, not a second defect
+(`docs/bugs/0705-nothing-ever-compared-the-erp-s-transfer-counters-to-autocou.md`).
+
+**The batch guard is never relaxed to make a document pass.** A sofa set must
+ship whole from one dye lot (`src/scm/lib/sofa-batch-guard.ts`). Once the link is
+right the line reaches READY through a covering batch, or through the owner's
+hard-binding rule with `allocated_batch_no` still NULL — in which case the ship
+goes through the drop-ship confirmation, which `buildDropshipOffenders` can only
+offer once every affected line has a bound PO. That is the difference the link
+makes; the guard itself does not move.
