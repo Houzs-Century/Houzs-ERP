@@ -22,6 +22,7 @@ import {
   VARIANT_GROUPS, VERDICTS, compareLine, decodeBook, foldGuessedPairing,
 } from "./variant-reconcile.mjs";
 import { comparisonKey } from "./keyless-multiset.mjs";
+import { classifyUnread, makeUnreadTally } from "./sofa-unread-split.mjs";
 
 const SHOW_BOOK_BLANK = 5; // the direction that is NOT work; enough to see it exists
 
@@ -56,6 +57,9 @@ export function reportVariants({ t, label, rows, desc2, deps: V, VERDICT, SHOW, 
   }
   const pop = { total: rows.length, modelled: 0, bedframe: 0, sofa: 0, other: 0, withDesc2: 0, proceeded: 0 };
   let unkeyedSofa = 0;
+  /* The `unread` column, by CAUSE. lib/sofa-unread-split.mjs holds the argument
+     for why one number there was two populations needing different people. */
+  const unread = makeUnreadTally();
   /* PASS 1 computes every line's verdicts; PASS 2 folds the ones only a GUESSED
      pairing could have produced; PASS 3 tallies and lists. The fold has to sit
      between them because it is a statement about a GROUP of lines — which of
@@ -88,12 +92,25 @@ export function reportVariants({ t, label, rows, desc2, deps: V, VERDICT, SHOW, 
        line per AutoCount line — so a five-piece build would be compared against
        one piece and reported as four missing compartments that are not missing
        at all. Say the axis is unanswerable instead of answering it wrongly. */
-    if (axes.compartments && !r.erpLines.every((l) => l.ac_dtlkey != null)) {
+    /* Measured BEFORE the override below, because the override replaces the
+       cell's verdict and would erase the evidence that the book text was the
+       other, independent reason this line cannot be answered. */
+    const bookUnreadable = book.compartments === null;
+    const keyless = !r.erpLines.every((l) => l.ac_dtlkey != null);
+    if (axes.compartments && keyless) {
       axes.compartments.verdict = UNREADABLE;
       axes.compartments.book = axes.compartments.book || "(not regroupable)";
       axes.compartments.detail =
         "the ERP lines of this document carry no AutoCount line key, so the pieces of one build cannot be regrouped";
       unkeyedSofa++;
+    }
+    if (axes.compartments && axes.compartments.verdict === UNREADABLE) {
+      unread.record(
+        classifyUnread({ keyless, bookUnreadable }),
+        proceeded,
+        `${r.ac} DtlKey ${r.acLine.dtlKey} (ERP ${r.erpNo} ${lead.item_code ?? "?"})` +
+          (proceeded ? "" : "  [NOT PROCEEDED]"),
+      );
     }
     /* THE BUCKET a guessed pairing could have permuted this row within: the
        document, plus the comparison key and quantity of OUR row. It is the
@@ -105,7 +122,7 @@ export function reportVariants({ t, label, rows, desc2, deps: V, VERDICT, SHOW, 
     computed.push({
       r, lead, proceeded, axes,
       bucket: `${r.ac}|${comparisonKey({ code: lead.item_code, side: "erp", suffixed: Boolean(lead.line_suffix) }).key}|${Number(Number(lead.qty ?? 0).toFixed(4))}`,
-      keyed: r.erpLines.every((l) => l.ac_dtlkey != null),
+      keyed: !keyless,
     });
   }
 
@@ -208,6 +225,10 @@ export function reportVariants({ t, label, rows, desc2, deps: V, VERDICT, SHOW, 
         "the pairing was the checker's guess and both sides state the same set. See docs/bugs/0709 and 0712.",
     );
   }
+
+  /* Printed whenever anything is unanswerable, because a single number there
+     has twice been read as one backlog. */
+  for (const line of unread.lines(SHOW)) plain(line);
 
   for (const a of AXES) {
     const list = offenders[a.key];
