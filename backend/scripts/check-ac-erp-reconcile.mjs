@@ -148,6 +148,7 @@ import {
 import { blankRowArm, isBlankBookRow, splitBlankBookRows } from "./lib/ac-blank-book-row.mjs";
 import { grPairGrain } from "./lib/ac-gr-pair-grain.mjs";
 import { erpReconcileTypes } from "./lib/ac-reconcile-erp-sql.mjs";
+import { UNPROVEN, isErpNativeShape, splitErpNative } from "./lib/ac-erp-native.mjs";
 import { bagOf, compareBags } from "./lib/keyless-multiset.mjs";
 import { reportVariants } from "./lib/variant-report.mjs";
 import { FIELD_MAP } from "./lib/ac-field-identity.mjs";
@@ -351,6 +352,40 @@ try {
   }
 } catch (e) {
   await refuse(`the ERP database could not be read: ${e.message}`);
+}
+
+/* WHEN THE ERP WROTE EACH ROW. It answers ONE question — is this document newer
+   than the AutoCount snapshot it is being compared against — and it is read
+   per type, in its own try, FAILING SOFT for the same reason `zeroMoneyProof`
+   below does. If a table's `created_at` cannot be read, the honest outcome is
+   that NOTHING is reclassified for that type and the run says why, not that the
+   whole reconcile refuses to answer the twelve questions it can still answer.
+   Nothing is reclassified means the document stays counted — see
+   lib/ac-erp-native.mjs, which fails closed in both directions. */
+const bornAt = {};
+const bornAtFailed = [];
+for (const cfg of TYPES) {
+  if (!cfg.bornAt) {
+    bornAt[cfg.t] = null;
+    continue;
+  }
+  try {
+    const m = new Map();
+    for (const r of await cfg.bornAt()) {
+      if (r.erp_no) m.set(String(r.erp_no).trim(), r.created_at ?? null);
+    }
+    bornAt[cfg.t] = m;
+  } catch (e) {
+    bornAt[cfg.t] = null;
+    bornAtFailed.push(`${cfg.t} (${e.message})`);
+  }
+}
+if (bornAtFailed.length) {
+  log(
+    `CREATION DATES UNREADABLE for ${bornAtFailed.join(", ")}. No document of those types can be shown to ` +
+      "be newer than the AutoCount snapshot, so none is reclassified: any the ERP originated stay counted as " +
+      "differences. Fix the read rather than trusting this run's zero.",
+  );
 }
 
 /* The proof behind the owner's zero-money decision, loaded SEPARATELY and
@@ -575,6 +610,10 @@ try {
 const rm = (s) => (s == null ? "null" : (Number(s) / 100).toFixed(2));
 const first = (a) => a.slice(0, SHOW);
 const summary = [];
+/* Every document that leaves the difference column, by NAME. A count alone
+   would be a reclassification nobody could audit; the reconciliation printed
+   under the summary table names all of them. */
+const nativeMoved = [];
 const variantTotals = [];
 
 for (const cfg of TYPES) {
@@ -621,7 +660,8 @@ for (const cfg of TYPES) {
   plain(
     `ERP: ${erp[t].docs.length} documents (company ${CO}); ${erpByAc.size} mirror an AutoCount document; ` +
       `${pointerByAc.size} more are referenced by a pointer on a purchase order; ` +
-      `${erpBorn} are ERP-born and claim no AutoCount number`,
+      `${erpBorn} are ERP-born and claim no AutoCount number (ERP-native too — they have never been to the ` +
+      "book, so there is nothing to compare and they were never in any count here)",
   );
 
   /* 1. document level, both directions */
@@ -631,12 +671,46 @@ for (const cfg of TYPES) {
     if (claimed.has(docNo)) continue;
     (scope.has(docNo) ? missingInScope : absentOutOfScope).push(docNo);
   }
-  const phantom = [];
+  /* THE ERP'S OWN DOCUMENTS ARE NOT PHANTOMS. A document the ERP ORIGINATED —
+     `HC-DO-2609-003`, raised by staff at 17:41 on 2026-09-08 — is not a
+     difference against a book snapshot cut at 00:03 that morning; it is simply
+     newer than the snapshot. Counting it made this number RISE every time
+     somebody did their job. `lib/ac-erp-native.mjs` carries the rule (it is
+     `src/scm/lib/so-is-migrated.ts`, imported, never restated) and the proof
+     that each one really is newer. The owner, 2026-09-08:
+     「差异 0」= 搬进来的资料全部对上账本. */
+  const phantomCandidates = [];
   const outOfScopeMirrored = [];
+  const nativeInBook = [];
   for (const ac of claimed) {
-    if (!B.headers.has(ac)) phantom.push(`${ac} (ERP ${(erpByAc.get(ac) || pointerByAc.get(ac)).erp_no})`);
-    else if (!scope.has(ac)) outOfScopeMirrored.push(ac);
+    const d = erpByAc.get(ac) || pointerByAc.get(ac);
+    if (!B.headers.has(ac)) {
+      phantomCandidates.push({ ac, erpNo: String(d.erp_no ?? "").trim() });
+      continue;
+    }
+    if (!scope.has(ac)) outOfScopeMirrored.push(ac);
+    /* The OTHER direction, reported rather than acted on: an ERP-native document
+       whose number the book DOES state. Its comparison is untouched by this
+       change — it stays in every count below — and it is printed so a reader can
+       see that the narrowing did not silently reach it. */
+    if (isErpNativeShape(d.erp_no, ac)) nativeInBook.push(`${ac} (ERP ${d.erp_no})`);
   }
+  const NAT = splitErpNative({
+    candidates: phantomCandidates,
+    bornAt: bornAt[t],
+    snapshotCut: snap.exported_at,
+  });
+  /* Strings, as before, because this array is what gets printed and counted.
+     An UNPROVEN entry says so in its own text: ERP-native by number shape but
+     NOT shown to postdate the snapshot, which is a real finding — the write-back
+     says the book has it and the book, read afterwards, does not. */
+  const phantom = [...NAT.phantom, ...NAT.unproven].map(
+    (r) =>
+      `${r.ac} (ERP ${r.erpNo})` +
+      (r.verdict === UNPROVEN
+        ? " [the ERP made this number, but it was NOT created after the snapshot cut, so it is not explained by the snapshot's age]"
+        : ""),
+  );
 
   /* "owner-declined" IS A CLAIM ABOUT AN EMPTY POPULATION, and it may only be
      printed when the population is in fact empty. A DECISION means the owner
@@ -699,6 +773,19 @@ for (const cfg of TYPES) {
   }
   if (AB.absent) plain(`   absent (first ${SHOW}): ${first(AB.absentDocs).join(", ")}`);
   if (phantom.length) plain(`   phantom (first ${SHOW}): ${first(phantom).join(", ")}`);
+  if (NAT.native.length) {
+    log(
+      `${t} — ${NAT.native.length} document(s) are NEW SINCE THE CUTOVER: the ERP made them, and the account-book ` +
+        `snapshot was cut at ${snap.exported_at}, before they existed. Not a difference — nothing was carried ` +
+        "over wrongly. They are named here, and counted in the `native` column, never inside `phantom`.",
+    );
+    for (const r of NAT.native) plain(`      ${r.ac} (ERP ${r.erpNo}) — created ${new Date(r.createdAt).toISOString()}`);
+    for (const r of NAT.native) nativeMoved.push(`${t} ${r.ac}`);
+  }
+  plain(
+    `   ERP documents the book DOES state that the ERP itself originated: ${nativeInBook.length}` +
+      (nativeInBook.length ? ` (${first(nativeInBook).join(", ")}) — compared exactly as before, and counted above` : ""),
+  );
   if (dupes.length) plain(`   duplicate (first ${SHOW}): ${first(dupes).join(" | ")}`);
 
   if (cfg.linesNotComparable) {
@@ -706,7 +793,7 @@ for (const cfg of TYPES) {
     summary.push({
       t, acDocs: B.headers.size, scope: scope.size, erpLinked: claimed.size,
       missing: AB.absent, decided: AB.decided, absenceIs: decisionHolds ? "DECISION" : "GAP", phantom: phantom.length,
-      bothSides: 0, lineCount: "-", item: "-", qty: "-", price: "-", noPrice: "-", money: "-", erpZeroMoney: "-",
+      bothSides: 0, lineCount: "-", item: "-", qty: "-", price: "-", noPrice: "-", money: "-", erpZeroMoney: "-", native: NAT.native.length,
       gaps: AB.absent * (countsAsGap ? 1 : 0) + phantom.length,
     });
     continue;
@@ -1442,6 +1529,9 @@ for (const cfg of TYPES) {
     decided: AB.decided,
     absenceIs: decisionHolds ? "DECISION" : "GAP",
     phantom: phantom.length,
+    /* NOT a difference, and it has to be visible or nobody re-checks it: a
+       document the ERP originated after the book snapshot was cut. */
+    native: NAT.native.length,
     bothSides,
     unpairable: keyless.DIFFERS + keyless.AMBIGUOUS,
     lineCount: LS.differ,
@@ -1651,7 +1741,10 @@ plain("═══════════ SUMMARY ══════════�
    that silently disappears: the owner asked for these cells at zero, and the
    honest way to reach zero is to say what each count IS, not to stop counting
    it.  Each has a sentence under the table in his own terms. */
-plain("        <-------------------- DIFFERENCES (the work) --------------------->  <----- NOT differences ----->");
+/* MOVED BELOW SUMMARY_COLUMNS and BUILT FROM IT, 2026-09-08. It was a literal,
+   so adding `native` between `money` and `decided` would have left both block
+   labels pointing at the wrong cells — the run 34187812364 failure one level
+   up, where a heading promised what the rows did not carry. */
 /* ONE LIST FOR THE HEADER AND THE ROW, so they cannot drift apart.
    They were two independent literals, and on run 34187812364 the header
    announced `same-goods` and `same-money` while every row printed 16 cells
@@ -1673,6 +1766,11 @@ const SUMMARY_COLUMNS = [
   { label: "qty", width: 6, get: (s) => s.qty },
   { label: "price", width: 6, get: (s) => s.price },
   { label: "money", width: 6, get: (s) => s.money },
+  /* The ERP made this document AFTER the book snapshot was cut, so it cannot be
+     a difference against that snapshot — it is simply newer. Its own column
+     because the alternative was `phantom`, which made the headline RISE every
+     time staff raised a delivery order. lib/ac-erp-native.mjs. */
+  { label: "native", width: 7, get: (s) => s.native ?? 0 },
   /* An absence the owner has already ruled on, named in full in its own
      section above with the action still owed. */
   { label: "decided", width: 8, get: (s) => s.decided ?? 0 },
@@ -1698,6 +1796,16 @@ const SUMMARY_COLUMNS = [
   { label: "no-key-open", width: 12, get: (s) => s.unpairable ?? 0 },
 ];
 const cell = (v, w) => (w < 0 ? String(v).padEnd(-w) : String(v).padStart(w));
+const colAt = (i) => SUMMARY_COLUMNS.slice(0, i).reduce((a, c) => a + Math.abs(c.width) + 1, 0);
+const band = (i, j, label) => {
+  const pad = Math.max(0, colAt(j + 1) - colAt(i) - 1 - label.length - 4);
+  return `<${"-".repeat(pad - (pad >> 1))} ${label} ${"-".repeat(pad >> 1)}>`;
+};
+const iNative = SUMMARY_COLUMNS.findIndex((c) => c.label === "native");
+plain(
+  " ".repeat(colAt(1)) + band(1, iNative - 1, "DIFFERENCES (the work)") +
+    " " + band(iNative, SUMMARY_COLUMNS.length - 1, "NOT differences"),
+);
 plain(SUMMARY_COLUMNS.map((c) => cell(c.label, c.width)).join(" "));
 for (const s of summary) {
   const cells = SUMMARY_COLUMNS.map((c) => cell(c.get(s), c.width));
@@ -1712,6 +1820,9 @@ for (const s of summary) {
 }
 plain("");
 plain("absent   = in the expected population and NOT in the ERP. A real gap: somebody has to carry the document over.");
+plain("native   = a document the ERP MADE, not one the migration carried. The account book was photographed before it");
+plain("           existed, so it cannot disagree with that photograph. Every one is named above with the minute it was");
+plain("           created. 「差异 0」= 搬进来的资料全部对上账本 — this column is what keeps that zero reachable while the shop trades.");
 plain("decided  = absent, but you have already said what to do with it. Listed by name above with the ruling and what is still owed;");
 plain("           it stays here until it is done, and it is NOT counted as an unexplained gap.");
 plain("no-price = AutoCount states NO price on the line (0.00 unit price AND a 0.00 line subtotal) while the ERP holds one.");
@@ -1732,8 +1843,19 @@ plain("           every item code agrees on quantity and money; only the number 
 plain("           free gift as its own RM 0.00 line and sometimes splits one product across two. Nothing is owed here.");
 const totalGaps = summary.reduce((a, s) => a + s.gaps, 0);
 const n = (v) => (typeof v === "number" ? v : 0);
+const totalNative = summary.reduce((a, s) => a + n(s.native), 0);
 const notWork = summary.reduce((a, s) => a + n(s.decided) + n(s.noPrice) + n(s.erpZeroMoney) + n(s.foreign) + n(s.guessedPairing) + n(s.lineShape), 0);
 plain("");
+/* THE ARITHMETIC, in the same run that measured it, so the narrowing can never
+   be taken on trust: what this run would have reported before 2026-09-08, what
+   it reports now, and the documents that account for the whole difference. */
+log(
+  `POPULATION — the count below measures 搬进来的资料 only: the documents the cutover carried and their ` +
+    `downstream documents. This run would have reported ${totalGaps + totalNative} under the old population; ` +
+    `${totalNative} of those are documents the ERP made after the book snapshot was cut, so the count is ` +
+    `${totalGaps}. ${totalGaps + totalNative} = ${totalGaps} + ${totalNative}` +
+    (nativeMoved.length ? `. New since the cutover: ${nativeMoved.join(", ")}` : "") + ".",
+);
 log(
   totalGaps === 0
     ? "CLEAN — every in-scope AutoCount document is in the ERP and every comparable field agrees."

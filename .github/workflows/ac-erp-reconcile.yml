@@ -64,7 +64,13 @@ jobs:
           cache: npm
           cache-dependency-path: backend/package-lock.json
       - run: npm ci
-      - run: node scripts/check-ac-erp-reconcile.mjs
+      # `npx tsx`, not `node`, since 2026-09-08: the checker imports
+      # scripts/lib/ac-erp-native.mjs, which imports the ONE statement of "did
+      # the cutover carry this document" out of src/scm/lib/so-is-migrated.ts
+      # rather than restating it. Every other script here that reaches into
+      # src/ runs the same way (ac-convert-symmetry-check.yml,
+      # autocount-field-alignment.yml, check-so-open-for-new.yml).
+      - run: npx tsx scripts/check-ac-erp-reconcile.mjs
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           SHOW: ${{ inputs.show }}
