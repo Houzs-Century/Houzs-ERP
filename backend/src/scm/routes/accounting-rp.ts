@@ -38,7 +38,7 @@ const DATE = /^\d{4}-\d{2}-\d{2}$/;
 type GlLine = {
   je_no: string; entry_date: string; source_type: string | null; source_doc_no: string | null;
   account_code: string; account_name: string | null; debit_sen: number; credit_sen: number;
-  party_type: string | null; party_name: string | null; notes: string | null;
+  party_type: string | null; party_code?: string | null; party_name: string | null; notes: string | null;
   posted: boolean | null; reversed: boolean | null;
 };
 
@@ -57,13 +57,13 @@ const sen = (l: GlLine) => Number(l.debit_sen ?? 0) - Number(l.credit_sen ?? 0);
 async function loadLines(sb: any, companyId: number, moneyCodes: string[], from: string, to: string) {
   const money = await paginateAll<GlLine>((f, t) =>
     sb.from('v_gl_entries')
-      .select('je_no, entry_date, source_type, source_doc_no, account_code, account_name, debit_sen, credit_sen, party_type, party_name, notes, posted, reversed')
+      .select('je_no, entry_date, source_type, source_doc_no, account_code, account_name, debit_sen, credit_sen, party_type, party_code, party_name, notes, posted, reversed')
       .eq('company_id', companyId).in('account_code', moneyCodes).lte('entry_date', to)
       .order('line_id').range(f, t));
   if (money.error) return { ok: false as const, reason: String((money.error as { message?: string }).message ?? money.error) };
   const period = await paginateAll<GlLine>((f, t) =>
     sb.from('v_gl_entries')
-      .select('je_no, entry_date, source_type, source_doc_no, account_code, account_name, debit_sen, credit_sen, party_type, party_name, notes, posted, reversed')
+      .select('je_no, entry_date, source_type, source_doc_no, account_code, account_name, debit_sen, credit_sen, party_type, party_code, party_name, notes, posted, reversed')
       .eq('company_id', companyId).gte('entry_date', from).lte('entry_date', to)
       .order('line_id').range(f, t));
   if (period.error) return { ok: false as const, reason: String((period.error as { message?: string }).message ?? period.error) };
@@ -105,7 +105,7 @@ async function supplierPurposeSplits(
     if (numbers.length > 0) {
       const jl = await paginateAll<GlLine>((f, t) =>
         sb.from('v_gl_entries')
-          .select('je_no, entry_date, source_type, source_doc_no, account_code, account_name, debit_sen, credit_sen, party_type, party_name, notes, posted, reversed')
+          .select('je_no, entry_date, source_type, source_doc_no, account_code, account_name, debit_sen, credit_sen, party_type, party_code, party_name, notes, posted, reversed')
           .eq('company_id', companyId).eq('source_type', 'PI').in('source_doc_no', numbers.map((p) => p.invoice_number))
           .order('line_id').range(f, t));
       if (jl.error) return { ok: false, reason: String((jl.error as { message?: string }).message ?? jl.error) };
@@ -283,7 +283,10 @@ export const receiptsPaymentsReport = async (c: any): Promise<Response> => {
       for (const l of counterparts) {
         const amt = shareOf(Math.abs(sen(l)));
         const onControl = controlCodes.has(l.account_code);
-        const key = byParty && onControl ? `${l.account_code}:${l.party_name ?? '—'}` : l.account_code;
+        /* The party keys on its CODE where the line carries one (owner 2026-09-08:
+           one customer, one code — two customers can share a name), the name
+           still being what the row reads. */
+        const key = byParty && onControl ? `${l.account_code}:${l.party_code ?? l.party_name ?? '—'}` : l.account_code;
         const name = byParty && onControl ? `${l.party_name ?? '(no party)'} · ${l.account_name ?? l.account_code}` : String(l.account_name ?? l.account_code);
         add(side, key, l.account_code, name, leg.account_code, amt, { ...meta, party: l.party_name ?? null });
       }

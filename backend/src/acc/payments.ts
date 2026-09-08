@@ -67,6 +67,18 @@ async function transitFor(
   return (data as { transit_account_code: string }).transit_account_code;
 }
 
+/** The customer's party CODE on an AR line: the debtor code when the business
+    keeps one, else the customer's own id (owner 2026-09-08 — one customer, one
+    code; 2990 keeps no debtor codes and every order carries a customer_id).
+    Blank strings count as absent. One home: the refund voucher and the repair
+    script apply the same rule. */
+export const customerPartyCode = (debtorCode: string | null | undefined, customerId: string | null | undefined): string | null => {
+  const code = String(debtorCode ?? '').trim();
+  if (code !== '') return code;
+  const id = String(customerId ?? '').trim();
+  return id !== '' ? id : null;
+};
+
 /** The date the money moved (§2.5: document date drives reports), falling back
     to nothing — a payment with no paid_at is refused rather than dated today. */
 const paymentDate = (paidAt: string | null): string | null => {
@@ -85,14 +97,21 @@ export async function postSoPayment(sb: any, p: SoPaymentRow, opts: { dryRun?: b
   // The order table names its customer debtor_name (and the phone, phone) —
   // docs/bugs/0655: this read asked for customer_name, a column it never had,
   // and every customer payment since the hook landed died here.
+  // The party CODE (owner 2026-09-08: 一个 customer 一个 account code → 做):
+  // the debtor code when the business keeps one (HOUZS), else the order's own
+  // customer_id — every 2990 order has one and no two customers share it —
+  // so the sub-ledger keys on the customer, never on a name that two people
+  // can share or one person can misspell. The name still rides beside it.
   const { data: so, error: soErr } = await sb
     .from('mfg_sales_orders')
-    .select('company_id, debtor_name, phone')
+    .select('company_id, debtor_name, phone, customer_id, debtor_code')
     .eq('doc_no', p.so_doc_no)
     .maybeSingle();
   if (soErr) return { ok: false, status: 'so_read_failed', reason: soErr.message };
-  const companyId = (so as { company_id?: number | null } | null)?.company_id ?? p.company_id ?? null;
-  const customerName = (so as { debtor_name?: string | null } | null)?.debtor_name ?? null;
+  const order = so as { company_id?: number | null; debtor_name?: string | null; customer_id?: string | null; debtor_code?: string | null } | null;
+  const companyId = order?.company_id ?? p.company_id ?? null;
+  const customerName = order?.debtor_name ?? null;
+  const customerCode = customerPartyCode(order?.debtor_code, order?.customer_id);
 
   const roles = await resolveRoles(sb, companyId);
   const transit = p.method === 'merchant' || p.method === 'installment'
@@ -109,7 +128,7 @@ export async function postSoPayment(sb: any, p: SoPaymentRow, opts: { dryRun?: b
       method: p.method,
       docNo: p.so_doc_no,
       transitAccountCode: transit,
-      customerCode: null,
+      customerCode,
       customerName,
     }, amountSen),
   };
