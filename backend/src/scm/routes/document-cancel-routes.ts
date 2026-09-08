@@ -405,22 +405,28 @@ export const listCancelRequestsHandler = async (c: AnyCtx) => {
 
 /* ── Routers ─────────────────────────────────────────────────────────────── */
 
-function cancelRequestRouter(docType: CancelDocType) {
-  const r = new Hono<{ Bindings: Env; Variables: Variables }>();
-  r.use('*', supabaseAuth);
-  const p = `/:${DOCS[docType].param}/cancel-request`;
-  r.get(p, getCancelRequestHandler(docType));
-  r.post(p, requestCancelHandler(docType));
-  r.post(`${p}/approve`, approveCancelHandler(docType));
-  r.post(`${p}/reject`, rejectCancelHandler(docType));
-  r.post(`${p}/withdraw`, withdrawCancelHandler(docType));
-  return r;
-}
+/* The two routers are written out route by route rather than built from a
+   factory: scripts/generate-route-capability-matrix.mjs reads registrations
+   STATICALLY (a literal path on an exported router identifier) and refuses a
+   mounted router it cannot see into — the path family is the audit surface. */
 
 /** Mounted at /mfg-sales-orders — same prefix, same area guard as the SO router. */
-export const soCancelRequests = cancelRequestRouter('SO');
+export const soCancelRequests = new Hono<{ Bindings: Env; Variables: Variables }>();
+soCancelRequests.use('*', supabaseAuth);
+soCancelRequests.get('/:docNo/cancel-request', getCancelRequestHandler('SO'));
+soCancelRequests.post('/:docNo/cancel-request', requestCancelHandler('SO'));
+soCancelRequests.post('/:docNo/cancel-request/approve', approveCancelHandler('SO'));
+soCancelRequests.post('/:docNo/cancel-request/reject', rejectCancelHandler('SO'));
+soCancelRequests.post('/:docNo/cancel-request/withdraw', withdrawCancelHandler('SO'));
+
 /** Mounted at /mfg-purchase-orders — same prefix, same area guard as the PO router. */
-export const poCancelRequests = cancelRequestRouter('PO');
+export const poCancelRequests = new Hono<{ Bindings: Env; Variables: Variables }>();
+poCancelRequests.use('*', supabaseAuth);
+poCancelRequests.get('/:id/cancel-request', getCancelRequestHandler('PO'));
+poCancelRequests.post('/:id/cancel-request', requestCancelHandler('PO'));
+poCancelRequests.post('/:id/cancel-request/approve', approveCancelHandler('PO'));
+poCancelRequests.post('/:id/cancel-request/reject', rejectCancelHandler('PO'));
+poCancelRequests.post('/:id/cancel-request/withdraw', withdrawCancelHandler('PO'));
 
 /** Mounted at /cancel-requests. */
 export const cancelRequestsInbox = new Hono<{ Bindings: Env; Variables: Variables }>();

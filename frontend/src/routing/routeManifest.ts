@@ -37,6 +37,7 @@ export const STAFF_ROUTE_PATTERNS = [
   "/scm/purchase-orders/:id",
   "/scm/po-amendments",
   "/scm/po-amendments/:id",
+  "/scm/cancel-requests",
   "/scm/mrp",
   "/scm/accounting",
   "/scm/daily-bank",
