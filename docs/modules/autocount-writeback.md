@@ -4630,6 +4630,20 @@ documents" line counts against `counts.archived` rather than `counts.total`
 (`acListTotal`). It read *"3 of 1 document"* on production for the first few
 minutes; `docs/bugs/0705-the-cleared-tab-counted-its-documents-against-a-total-that-e.md`.
 
+**TWO lines read that denominator, not one, and the first correction reached
+only one of them.** They live in different modules on purpose — `acListCountLine`
+(`lib/autocountOutbox.ts`) answers *"how much did the filters leave"* in the
+filter strip; `acShowingLine` (`lib/autocountRegister.ts`) answers *"am I looking
+at all of it"* on the line that closes the register. Two questions, two
+sentences, one shared denominator that nothing named as shared — so the strip was
+corrected to *"Cleared | 3 of 3"* while the register went on closing with
+*"Showing 1–3 of 1 document"*, on the desktop page and the phone screen alike.
+**Both now call `acListTotal(d, state)`; neither page file reads `counts.total`
+at all.** Four tests in `frontend/src/lib/autocountArchive.test.ts` pin the
+COMPOSITION as well as the rule, because the rule alone was never what broke —
+`acListTotal` had shipped with no test of any kind.
+`docs/bugs/0708-the-cleared-tab-fix-corrected-one-of-the-two-lines-that-read.md`.
+
 **On screen.** A **Clear** control on the document line and a **Cleared** tab,
 on BOTH surfaces (`acDocCanArchive` / `acDocCanRestore` decide visibility — a
 hint, never the gate). The refusal comes back as a **200 with a sentence**, the

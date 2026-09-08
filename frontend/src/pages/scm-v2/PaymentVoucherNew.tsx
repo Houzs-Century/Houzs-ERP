@@ -178,11 +178,16 @@ export const PaymentVoucherNew = () => {
        print ("TNB" over "TENAGA NASIONAL BERHAD"); the print fills the gap. */
     const payee = extras?.memory?.payeeName ?? ex.vendorName;
     if (payee) setPayeeName((prev) => prev.trim() ? prev : payee);
-    if (ex.invoiceDate) setVoucherDate(ex.invoiceDate);
+    /* The voucher stays dated TODAY — the bill's date no longer overwrites it
+       (owner 2026-09-08: 普通 payment scan bill 可以 default 放今天吗 → 做): the
+       voucher's date is when he records the payment. The bill's own date rides
+       in the notes instead, so nothing read is lost. The AP invoice form keeps
+       the bill's date — there it IS the invoice date. */
     /* What the reader fills goes upper case (owner 2026-09-08; ocr-fill.ts);
        the payee above keeps the operator's own saved casing. */
     const noteBits = upperFill([
       ex.invoiceNumber ? `Bill ${ex.invoiceNumber}` : null,
+      ex.invoiceDate ? `dated ${ex.invoiceDate}` : null,
       ex.dueDate ? `due ${ex.dueDate}` : null,
     ].filter(Boolean).join(' · '));
     if (noteBits) setNotes((prev) => prev.trim() ? prev : noteBits);

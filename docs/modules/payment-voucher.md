@@ -363,8 +363,15 @@ The owner's ask, his words: 我想要把ocr 功能放去payment 那边，还有�
 bill 我也想要用ocr. Two doors, one reader:
 
 - **In the form** — "📷 Scan bill (OCR)" in the New PV Lines card header.
-  Multi-select = the PAGES of one bill; the form prefills payee, date, notes
-  and lines from what was read. What the reader fills goes UPPER CASE since
+  Multi-select = the PAGES of one bill; the form prefills payee, notes and
+  lines from what was read. The voucher's DATE stays today (owner
+  2026-09-08: 普通 payment scan bill 可以 default 放今天吗 → 做 — the date is
+  when he records the payment; until then the bill's date overwrote it);
+  the bill's own date rides in the notes ("BILL T0012 · DATED 2026-08-25")
+  so nothing read is lost. The same `applyExtraction` serves the pile's
+  hand-offs, so a bill or a ticked set opened from there lands today-dated
+  too; the AP invoice form keeps the bill's date — there it IS the invoice
+  date. What the reader fills goes UPPER CASE since
   2026-09-08 (`upperFill`, `frontend/src/vendor/scm/lib/ocr-fill.ts` — the
   one home the AP invoice form shares; owner: 帮我 fill data 时默认全部大写);
   the payee keeps the operator's own saved casing, and typed text is left
