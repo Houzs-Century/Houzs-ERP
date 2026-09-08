@@ -206,6 +206,22 @@ describe("AutoCount's own empty rows", () => {
 });
 
 describe("the whole plan", () => {
+  it("makes the three counts SUM to the denominator, even when a refused bucket holds a keyed row", () => {
+    // Two ERP rows in one bucket the book has only one line for: the bucket is
+    // refused, but one of its rows already carries a key. Summing the refusal
+    // buckets would count that row twice and the parts would not add up to 2.
+    const out = planLineKeys({
+      bookByDoc: new Map([["D1", [book({ dtlKey: 10 })]]]),
+      erpByDoc: new Map([["D1", [erp({ id: "a", storedKey: 10 }), erp({ id: "b" })]]]),
+    });
+    const { erpRows, stampedRows, alreadyKeyed, refusedRows } = out.totals;
+    expect(stampedRows + alreadyKeyed + refusedRows).toBe(erpRows);
+    expect({ erpRows, stampedRows, alreadyKeyed, refusedRows }).toEqual({
+      erpRows: 2, stampedRows: 0, alreadyKeyed: 1, refusedRows: 1,
+    });
+  });
+
+
   it("rolls up, and refuses a document the book does not state", () => {
     const out = planLineKeys({
       bookByDoc: new Map([["D1", [book({ dtlKey: 10 })]]]),

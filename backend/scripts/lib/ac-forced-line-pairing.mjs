@@ -372,9 +372,15 @@ export function planLineKeys({ bookByDoc, erpByDoc }) {
     totals.forcedInterchangeable += r.stamps.filter((s) => s.forced === "interchangeable").length;
     totals.disagreements += r.audits.length;
     totals.blankBookRows += r.blankBookRows;
-    const refused = r.refusals.reduce((s, x) => s + x.erpRows, 0);
+    /* EVERY row is exactly one of three things: already keyed, stamped now, or
+       left unkeyed. Deriving the third by subtraction rather than by summing the
+       refusal buckets is what makes the three add up to the denominator — a
+       refused bucket can CONTAIN an already-keyed row, and summing the buckets
+       counted that row twice. A report whose parts do not sum to its whole is
+       the shape nobody can check. */
+    const refused = erpRows.length - already - r.stamps.length;
     totals.refusedRows += refused;
-    if (refused === 0 && r.stamps.length + already === erpRows.length) totals.documentsFullyStamped += 1;
+    if (refused === 0) totals.documentsFullyStamped += 1;
     perDoc.push({
       docNo,
       stamped: r.stamps.length,
