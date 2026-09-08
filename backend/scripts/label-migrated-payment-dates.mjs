@@ -29,7 +29,7 @@
  *
  * SAFE FOR EVERY READER, checked by enumeration rather than assumed.  All six
  * code sites that key on this note match it by PREFIX -
- * check-so-payment-census.mjs:168 and repair-so-payment-from-book.mjs:173
+ * check-so-payment-census.mjs:168 and repair-so-payment-from-book.mjs:177
  * (`LIKE 'imported from AutoCount%'`), check-so-version-provenance.mjs:410 and
  * sync-ac-delta.mjs:455 (`/^imported from AutoCount/`),
  * probe-so-payment-reconcile.mjs:205 (`startsWith`) and
