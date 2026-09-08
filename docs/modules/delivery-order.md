@@ -2064,6 +2064,22 @@ which is per-line by nature. `seedFollowerVariants` strips both.
 The rule itself, and which pages are on it, are documented in
 `docs/modules/sales-order.md`.
 
+**And a DO line may not INVENT a variant either (2026-09-08).** `SoLineCard`
+auto-fills a blank sofa Leg Height with the maintenance "Default" option — a
+sales-order convenience that was running here too, because the card is shared.
+The leg height is part of the stock bucket (`computeVariantKey` emits
+`legheight=` for a sofa), so the pre-flight in
+`backend/src/scm/lib/check-stock-availability.ts` asked
+`inventory_balances` about a bucket nothing was ever stored under and answered
+"Stock not enough at the selected warehouse" for a sofa that was standing in it.
+Pressing **Ship anyway** did not help either: the OUT then writes under the
+invented key and consumes no lot, so the goods leave and the stock stays on the
+books at cost 0 — which is what HC-DO-2609-004, HC-DO-2609-009 and
+HC-DO-2609-011 did on 2026-09-08 (5 lines, still unrepaired). This page now
+passes `seedSofaLegDefault={false}`; the prop is mandatory so no delivery-side
+form can inherit the sales-side answer by saying nothing.
+`docs/bugs/0722-a-delivery-order-invented-the-sofa-s-leg-height-so-the-stock.md`.
+
 ## `migrated_no_stock` — a DELIVERED order with no OUT behind it (mig 0276)
 
 The delivery orders carried over from AutoCount are created **DELIVERED with no
@@ -2464,6 +2480,21 @@ Identity is asserted **before** the quantity cap wherever both run: a ceiling
 computed against the wrong line is a number about the wrong thing, and reporting
 it sends the operator to fix a quantity when the real fault is the source they
 picked.
+
+## The Create-DO form carries the SO's delivery date and branding (2026-09-08)
+
+`DeliveryOrderNewV2.tsx` prefills from `GET /so-source/:docNo` and posts to
+`POST /`. Until 2026-09-08 that prefill seeded the customer, salesperson and
+address but NOT `customerDeliveryDate`, and the form had no `branding` at all, so
+a DO raised here carried `customer_delivery_date`, `expected_delivery_at` and
+`branding` as NULL while its order named them — 12 company-1 and 35 company-2
+documents, measured by `backfill-migrated-do-sales-fields.mjs` with
+`scope=all` and filled by it (docs/bugs/0723). The form now seeds the customer
+date from the source and carries `branding` as a hidden header field, the way
+`/from-sos` does; Expected-at stays the operator's field and, left blank, the
+server falls back to the customer date. `missingSourceFields` names
+**Delivery Date** when the source order has none. Mobile is unaffected: its
+convert wizard posts to `/from-sos`, which copies server-side.
 
 ## A migrated DO's sales / delivery fields come from the SO header too (2026-09-08)
 

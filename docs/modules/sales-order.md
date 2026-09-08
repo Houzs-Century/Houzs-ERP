@@ -972,6 +972,22 @@ client never sends a `doc_no`, and money crosses the wire as `*_sen` integers.
   `maintenanceConfig.sofaLegHeights`. The label is **Seat Size** on every
   surface (`so-variant-rule` declares it, and the SO line card renders it since
   2026-08-21 — it was the last screen saying "Seat Heights").
+
+  **The Leg Height auto-fill is a SALES-ORDER convenience and it does not travel
+  downstream.** A blank sofa Leg Height is seeded with the maintenance "Default"
+  option (owner 2026-07-13) so the field is never empty — but only where the
+  caller says so: `SoLineCard`'s `seedSofaLegDefault` is a MANDATORY prop with no
+  default, beside `variantsRequired`. `true` on the documents that SPECIFY the
+  sofa (SO New/Detail, Consignment Order New/Detail); `false` on the ones that
+  FULFIL one (Delivery Order, Delivery Return, Consignment Note New/Detail,
+  Consignment Return New/Detail, Sales Invoice). The reason it cannot be a
+  default: `computeVariantKey` emits `legheight=` for a sofa, so seeding on a
+  delivery form moves the line into a different STOCK BUCKET from the goods
+  reserved for it — HC-SO-012565 read "available 0" against its own sofa, and
+  three delivery orders shipped on 2026-09-08 consumed no lot at all
+  (`docs/bugs/0722-a-delivery-order-invented-the-sofa-s-leg-height-so-the-stock.md`).
+  The values are pinned per call site by
+  `frontend/src/vendor/scm/components/sofa-leg-default-seed.test.ts`.
 - **Bedframe** — Gap ← `maintenanceConfig.gaps`; Divan ←
   `maintenanceConfig.divanHeights`; Leg ← `maintenanceConfig.legHeights`.
   `totalHeight` (= divan + leg + gap) is COMPUTED into the variants blob for the
@@ -2415,7 +2431,18 @@ Three more properties it did not have before:
 - **Its SQL is executed against a real Postgres in CI** before production sees it
   (`backend/tests-pg/deleteTestSoRefs.pg.test.ts`, the `backend-postgres` job),
   because `node --check` used to be the whole of the evidence a production
-  DELETE had.
+  DELETE had. **That fixture must declare the same column TYPES production has.**
+  It declared `mfg_sales_orders.status` as `text` when production has the enum
+  `scm.mfg_so_status`, and 17 green tests then said nothing about a
+  `coalesce(status, '')` the database refuses — run `34223295235`. And note that
+  `npm --prefix backend run typecheck` does NOT cover `tests-pg/`: the backend
+  tsconfig does not include it, so running the suite is the only local check.
+
+The CONTROL measures `local_total_sen`, which is what this table's document
+total is called. It is not `total_sen` — that column does not exist here, and a
+money check pointed at a missing column compares NULL to NULL and reports
+agreement. `paid_sen`, `deposit_sen` and `balance_sen` are deliberately outside
+everything this tool reads or writes.
 
 Ledger: `docs/bugs/0715-deleting-a-sales-order-trusted-a-hand-written-child-list-nob.md`.
 
