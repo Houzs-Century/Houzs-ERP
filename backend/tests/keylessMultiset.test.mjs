@@ -11,11 +11,11 @@
  *   2. a sofa fold that STATES a quantity it cannot know (it must say so).
  */
 import { describe, it, expect } from 'vitest';
-import { bagOf, compareBags, printableBag, isSofaCode } from '../scripts/lib/keyless-multiset.mjs';
+import { bagOf, compareBags, printableBag, isSofaCode, foldBuild, NO_BUILD } from '../scripts/lib/keyless-multiset.mjs';
 
 const bookRow = (code, qty, rm) => ({ code, rawCode: code, qty, sen: Math.round(rm * 100) });
-const erpRow = (code, qty, rmUnit, suffixed = false) => ({
-  code, qty, sen: Math.round(qty * rmUnit * 100), suffixed,
+const erpRow = (code, qty, rmUnit, desc2 = '') => ({
+  code, qty, sen: Math.round(qty * rmUnit * 100), desc2,
 });
 const cmp = (b, e, compareMoney = true) =>
   compareBags({ book: bagOf(b, 'book'), erp: bagOf(e, 'erp'), compareMoney });
@@ -147,5 +147,111 @@ describe('printableBag', () => {
 
   it('says so rather than printing nothing when a side has no lines', () => {
     expect(printableBag(bagOf([], 'erp'))).toBe('(no lines)');
+  });
+});
+
+describe('the BUILD is the fold unit, and the build TEXT is the divisor', () => {
+  /* Measured on production 2026-09-08, run 34189979464, with the previous
+     model-wide `MIN` fold: it reported nine sales orders as `book qty 2 vs
+     ours 1` (all sofas, none a defect) and returned six documents as undecidable
+     whose build text says plainly what they are. Both are fixed by folding per
+     BUILD and dividing by what `parseSofa` says one sofa of that build needs. */
+  const TWO_ARM = '(1EL+1ER)28inch/Col:BO315-2';           // -> 1A(LHF), 1A(RHF)
+  const WITH_CNR = '(1EL+CNR+1ER)30inch/Col:BO900';        // -> 1A(LHF), CNR, 1A(RHF)
+  const TWO_NA = 'CH141-01 (CREAM)/30"/1R+1NA+1NA+C+1R';   // -> 1A(LHF), 1NA, 1NA, CNR, 1A(RHF)
+  const PROSE = '28 inch per seat fully cover replace the leg colour B0315-21';
+
+  it('counts TWO sofas when two builds of one model each fold to one', () => {
+    const book = [bookRow('HOK-5527 SOFA', 1, 7400), bookRow('HOK-5527 SOFA', 1, 7400)];
+    const erp = [
+      erpRow('5527-1A(LHF)', 1, 7400, TWO_ARM), erpRow('5527-1A(RHF)', 1, 0, TWO_ARM),
+      erpRow('5527-1A(LHF)', 1, 7400, WITH_CNR), erpRow('5527-CNR', 1, 0, WITH_CNR),
+      erpRow('5527-1A(RHF)', 1, 0, WITH_CNR),
+    ];
+    expect(cmp(book, erp).verdict).toBe('IDENTICAL');
+  });
+
+  it('the model-wide MIN would have answered 1 — the per-build fold answers 2', () => {
+    const bag = bagOf([
+      erpRow('5527-1A(LHF)', 1, 7400, TWO_ARM), erpRow('5527-1A(RHF)', 1, 0, TWO_ARM),
+      erpRow('5527-1A(LHF)', 1, 7400, WITH_CNR), erpRow('5527-CNR', 1, 0, WITH_CNR),
+      erpRow('5527-1A(RHF)', 1, 0, WITH_CNR),
+    ], 'erp');
+    expect(bag.get('SOFA 5527').qty).toBe(2);
+    expect(bag.get('SOFA 5527').undecided).toBe(false);
+    /* CNR's flat total is 1, which is what the old fold minimised over. */
+    expect(Math.min(...bag.get('SOFA 5527').pieces.values())).toBe(1);
+  });
+
+  it('a build that legitimately REPEATS a piece is one sofa, not undecidable', () => {
+    /* GR-003922 on production: `1R+1NA+1NA+C+1R` is ONE sofa with TWO `1NA`.
+       The old fold saw `1NA x2` beside four singles and called it uneven. */
+    const book = [bookRow('DSL-9058 SOFA', 1, 2750)];
+    const erp = [
+      erpRow('9058-1A(LHF)', 1, 2750, TWO_NA), erpRow('9058-1A(RHF)', 1, 0, TWO_NA),
+      erpRow('9058-1NA', 1, 0, TWO_NA), erpRow('9058-1NA', 1, 0, TWO_NA),
+      erpRow('9058-CNR', 1, 0, TWO_NA),
+    ];
+    const r = cmp(book, erp);
+    expect(r.verdict).toBe('IDENTICAL');
+    expect(bagOf(erp, 'erp').get('SOFA 9058').qty).toBe(1);
+  });
+
+  it('divides: twice the pieces of one build is TWO sofas', () => {
+    const book = [bookRow('DSL-9058 SOFA', 2, 5500)];
+    const erp = [
+      erpRow('9058-1A(LHF)', 2, 2750, TWO_NA), erpRow('9058-1A(RHF)', 2, 0, TWO_NA),
+      erpRow('9058-1NA', 4, 0, TWO_NA), erpRow('9058-CNR', 2, 0, TWO_NA),
+    ];
+    expect(cmp(book, erp).verdict).toBe('IDENTICAL');
+  });
+
+  it('says AMBIGUOUS when the division is not one whole answer', () => {
+    const book = [bookRow('DSL-8030 SOFA', 2, 3860)];
+    const erp = [erpRow('8030-1A(LHF)', 2, 1930, TWO_ARM), erpRow('8030-1A(RHF)', 1, 0, TWO_ARM)];
+    const r = cmp(book, erp);
+    expect(r.verdict).toBe('AMBIGUOUS');
+    expect(r.ambiguities[0]).toContain('between 1 and 2');
+  });
+
+  it('a piece the build never called for is a COMPARTMENT note, not a line verdict', () => {
+    /* HC-SO-011099 on production: our rows are `1A(LHF)` + `1A(RHF)` under a
+       build text reading `2S`. The line — model, quantity, money — agrees with
+       the book; what disagrees is the compartment shape, which the reconcile's
+       variant half owns. Letting the decoder decide the LINE verdict returned
+       five sales orders and six delivery orders as undecidable in run
+       34190818236, and not one of them was missing anything. */
+    const book = [bookRow('DSL-8030 SOFA', 1, 1930)];
+    const erp = [
+      erpRow('8030-1A(LHF)', 1, 1930, TWO_ARM), erpRow('8030-1A(RHF)', 1, 0, TWO_ARM),
+      erpRow('8030-CNR', 1, 0, TWO_ARM),
+    ];
+    const r = cmp(book, erp);
+    expect(r.verdict).toBe('IDENTICAL');
+    const e = bagOf(erp, 'erp').get('SOFA 8030');
+    expect(e.qty).toBe(1);
+    expect(e.notes.join(' ')).toContain('COMPARTMENT question');
+  });
+
+  describe('a build text that does not decode has no divisor', () => {
+    it('is still DECIDED when every piece is distinct and at one quantity', () => {
+      expect(foldBuild(PROSE, '8030', new Map([['1A(LHF)', 1], ['1A(RHF)', 1], ['CNR', 1]])))
+        .toMatchObject({ lo: 1, hi: 1, undecided: false });
+    });
+
+    it('is UNDECIDED when a piece repeats — two 1NA rows are one sofa or two, and only the text could say', () => {
+      /* DO-011518 on production. This is the honest residue and it is printed
+         in full, per document, rather than counted into a bucket. */
+      const f = foldBuild(PROSE, '8030', new Map([['1A(LHF)', 1], ['1A(RHF)', 1], ['1NA', 2], ['CNR', 1]]));
+      expect(f.undecided).toBe(true);
+      expect(f.lo).toBe(1);
+      expect(f.hi).toBe(2);
+    });
+
+    it('NO_BUILD rows share one group — nothing can tell them apart, and it says so', () => {
+      const bag = bagOf([erpRow('5527-1A(LHF)', 1, 7400), erpRow('5527-1A(RHF)', 1, 0)], 'erp');
+      expect([...bag.get('SOFA 5527').builds.keys()]).toEqual([NO_BUILD]);
+      expect(bag.get('SOFA 5527').qty).toBe(1);
+    });
   });
 });

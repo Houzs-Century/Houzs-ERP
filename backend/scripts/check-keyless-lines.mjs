@@ -48,6 +48,7 @@ import { readMappingCsv, normCode } from "./lib/ac-mapping-csv.mjs";
 import { soProcessingDateFragment } from "./lib/so-processing-date.mjs";
 import { erpReconcileTypes } from "./lib/ac-reconcile-erp-sql.mjs";
 import { bagOf, compareBags, printableBag } from "./lib/keyless-multiset.mjs";
+import { splitBlankBookRows } from "./lib/ac-blank-book-row.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const DATA = path.join(here, "data");
@@ -117,6 +118,34 @@ try {
    wrong. */
 const COMPARE_MONEY = { SO: true, PO: true, GR: false, DO: false, IV: true, PI: true };
 
+/* EVERY LINE OF BOTH SIDES, for a document the bags could not settle.
+   「包括每个 line 都是要一样的」 is answered by showing the lines, not by a count,
+   and the owner reads the build text and the piece list TOGETHER. Truncated only
+   in width, never in row count: a dropped row is the one that mattered. */
+const cut = (s, n) => {
+  const v = String(s ?? "").replace(/\s+/g, " ").trim();
+  return v.length > n ? `${v.slice(0, n - 1)}…` : v;
+};
+function dumpBothSides(r) {
+  plain("         ── the book ──");
+  for (const l of [...r.acRaw].sort((a, b) => a.seq - b.seq)) {
+    const d2 = r.desc2.get(l.dtlKey);
+    plain(
+      `         seq ${String(l.seq).padStart(4)}  ${cut(l.itemKey, 30).padEnd(30)} ` +
+        `qty ${String(l.qty ?? 0).padStart(5)}  RM ${((l.docSubTotalSen ?? l.subTotalSen ?? 0) / 100).toFixed(2).padStart(10)}` +
+        (d2 ? `  build: ${cut(d2, 70)}` : "  build: (none)"),
+    );
+  }
+  plain("         ── ours ──");
+  for (const l of [...r.erpRaw].sort((a, b) => (a.line_no ?? 0) - (b.line_no ?? 0) || (a.item_code > b.item_code ? 1 : -1))) {
+    plain(
+      `         ${cut(l.item_code, 30).padEnd(35)} ` +
+        `qty ${String(l.qty ?? 0).padStart(5)}  RM ${(((l.qty == null ? 0 : Number(l.qty)) * (l.unit_price_sen == null ? 0 : Number(l.unit_price_sen))) / 100).toFixed(2).padStart(10)}` +
+        (l.description2 ? `  build: ${cut(l.description2, 70)}` : "  build: (none)"),
+    );
+  }
+}
+
 const totals = [];
 for (const cfg of TYPES) {
   const t = cfg.t;
@@ -136,6 +165,7 @@ for (const cfg of TYPES) {
   }
 
   const rows = { IDENTICAL: [], DIFFERS: [], AMBIGUOUS: [] };
+  const compartmentNotes = [];
   let bothSides = 0;
   let unpairable = 0;
 
@@ -143,7 +173,16 @@ for (const cfg of TYPES) {
     const h = B.headers.get(ac);
     if (!h) continue;
     bothSides++;
-    const acLines = B.lines.get(ac) || [];
+    /* AutoCount's own EMPTY ROWS are DECLARED, not compared — a row with no item
+       code, no quantity and no money is not a line the ERP can hold, and
+       counting it made eleven blank rows on six sales orders read as missing
+       lines on go-live morning. The rule is lib/ac-blank-book-row.mjs and it is
+       stated ONCE: check-ac-erp-reconcile.mjs applies the same call. Stating it
+       twice is what made these two scripts answer 25 and 26 for the same
+       population at the same moment on 2026-09-08 (runs 34191731557 and
+       34191733632) — the exact failure the shared SELECTs were extracted to
+       prevent, one layer up. */
+    const { lines: acLines } = splitBlankBookRows(B.lines.get(ac) || []);
     const erpLines = erpLinesByAc.get(ac) || [];
 
     /* THE POPULATION, restated EXACTLY as check-ac-erp-reconcile.mjs states it
@@ -171,14 +210,24 @@ for (const cfg of TYPES) {
         qty: l.qty == null ? 0 : Number(l.qty),
         sen: Math.round((l.qty == null ? 0 : Number(l.qty)) * (l.unit_price_sen == null ? 0 : Number(l.unit_price_sen))),
         suffixed: l.line_suffix != null,
+        /* The BOOK's own build text, written verbatim onto every compartment row
+           by both cutover importers. It is the only thing on a keyless document
+           that says which compartments are ONE sofa — see the fold in
+           lib/keyless-multiset.mjs. */
+        desc2: l.description2,
       })),
       "erp",
     );
 
     const r = compareBags({ book: bookBag, erp: erpBag, compareMoney: COMPARE_MONEY[t] });
+    /* Our compartments disagreeing with the book's decoded build text is a
+       COMPARTMENT finding, not a line one — reported in its own count so it can
+       never be read as a missing line, and never as coverage either. */
+    const notes = [...erpBag.values()].flatMap((v) => (v.notes || []).map((n) => `${v.key}: ${n}`));
+    if (notes.length) compartmentNotes.push({ ac, erpNo: d.erp_no, notes });
     rows[r.verdict].push({
       ac, erpNo: d.erp_no, acLines: acLines.length, erpLines: erpLines.length,
-      bookBag, erpBag, ...r,
+      bookBag, erpBag, acRaw: acLines, erpRaw: erpLines, desc2: B.desc2, ...r,
     });
   }
 
@@ -202,6 +251,7 @@ for (const cfg of TYPES) {
       plain(`      ${r.ac} (ERP ${r.erpNo}) — book ${r.acLines} line(s), ours ${r.erpLines}:`);
       for (const dd of r.differences) plain(`         ${dd}`);
       for (const aa of r.ambiguities) plain(`         (also ambiguous) ${aa}`);
+      dumpBothSides(r);
     }
     if (rows.DIFFERS.length > SHOW) plain(`      ... ${rows.DIFFERS.length - SHOW} more`);
   }
@@ -212,6 +262,7 @@ for (const cfg of TYPES) {
       plain(`         book: ${printableBag(r.bookBag)}`);
       plain(`         ours: ${printableBag(r.erpBag)}`);
       for (const aa of r.ambiguities) plain(`         why: ${aa}`);
+      dumpBothSides(r);
     }
   }
   if (rows.IDENTICAL.length) {
@@ -219,15 +270,28 @@ for (const cfg of TYPES) {
       rows.IDENTICAL.slice(0, SHOW).map((r) => `${r.ac}[${r.acLines}v${r.erpLines}]`).join(", "));
   }
 
-  totals.push({ t, unpairable, identical: rows.IDENTICAL.length, differs: rows.DIFFERS.length, ambiguous: rows.AMBIGUOUS.length });
+  if (compartmentNotes.length) {
+    log(
+      `${t} COMPARTMENT SHAPE — ${compartmentNotes.length} of the ${unpairable} carry sofa rows that are not what ` +
+        "the book's own build text decodes to. The LINE agrees (model, quantity, money); what disagrees is which " +
+        "compartments we minted. That is the variant axis, reported here so it is not lost, and it is NOT a missing line.",
+    );
+    for (const c of compartmentNotes.slice(0, SHOW)) {
+      plain(`      ${c.ac} (ERP ${c.erpNo})`);
+      for (const n of c.notes) plain(`         ${n}`);
+    }
+    if (compartmentNotes.length > SHOW) plain(`      ... ${compartmentNotes.length - SHOW} more`);
+  }
+
+  totals.push({ t, unpairable, identical: rows.IDENTICAL.length, differs: rows.DIFFERS.length, ambiguous: rows.AMBIGUOUS.length, shape: compartmentNotes.length });
 }
 
 plain("");
 plain("═══════════ TOTAL ═══════════");
-plain("type  unverified  IDENTICAL  DIFFERS  AMBIGUOUS");
+plain("type  unverified  IDENTICAL  DIFFERS  AMBIGUOUS   shape-note");
 const sum = { unpairable: 0, identical: 0, differs: 0, ambiguous: 0 };
 for (const r of totals) {
-  plain(`${r.t.padEnd(6)}${String(r.unpairable).padStart(10)}${String(r.identical).padStart(11)}${String(r.differs).padStart(9)}${String(r.ambiguous).padStart(11)}`);
+  plain(`${r.t.padEnd(6)}${String(r.unpairable).padStart(10)}${String(r.identical).padStart(11)}${String(r.differs).padStart(9)}${String(r.ambiguous).padStart(11)}${String(r.shape).padStart(13)}`);
   for (const k of Object.keys(sum)) sum[k] += r[k === "unpairable" ? "unpairable" : k];
 }
 plain(`${"ALL".padEnd(6)}${String(sum.unpairable).padStart(10)}${String(sum.identical).padStart(11)}${String(sum.differs).padStart(9)}${String(sum.ambiguous).padStart(11)}`);

@@ -676,6 +676,77 @@ word rather than a raw slug.
 `.github/workflows/merge-do-signed-into-delivered.yml`. Dry-run is the default
 and performs the real UPDATE inside a transaction it rolls back.
 
+### Does a sign-off reach AutoCount? The account book has no sign-off (2026-09-08)
+
+**白话.** logistic 在系统里签收了，AutoCount 那边**不会**「也签收到」—— 不是漏了，
+是账本的送货单**根本没有「签收」这个栏位**。账本那边：**货是在单开出去的时候就已经
+扣掉的**（我们这边是 Confirmed 那一步，账本那边是送货单被开出来那一刻），**钱是等
+开了发票才算应收**。司机签收在我们系统里是「送到了」的记录，账本没有一个对应的地方
+要收这个消息。所以两边对得上，不是一边少了一半。
+
+The owner asked for two field state changes to reach the account book — 「然后确保
+Autocount 也会钱收到 … 也会签收到」. This section answers the second one. The
+payment half is a different subject and a real gap; do not read this section as
+covering it.
+
+**Why the question is right to ask even though the answer is "nothing".** The
+same day it was asked, AutoCount was found holding payment on 45 sales orders
+that had reached the ERP on none of them — RM 171,400 the office was about to
+chase customers for. Two systems each internally consistent and silently apart is
+the shape to fear, so "nothing travels" needs evidence rather than a shrug. The
+evidence is pinned as a runnable test:
+`backend/tests/doSignOffReachesAutoCount.test.ts`.
+
+| the question | answer | grade |
+|---|---|---|
+| What does the ERP write when a delivery is signed off? | `DELIVERED` on `delivery_orders.status` plus `delivered_at`, and — only from Mobile POD — `signature_data` / `pod_r2_key` / the four GPS columns. `SIGNED` has not been written by anything since 2026-08-21 and the scan ladder's type forbids it | PROVEN — the section above, and `patchDeliveryOrderStatusHandler` |
+| How many code paths write it? | ONE. Every surface, the public QR scan included, calls `patchDeliveryOrderStatusHandler`; `publicDoScan.ts` imports that very function rather than writing its own | PROVEN |
+| Does that handler ask AutoCount anything? | Only on `CANCELLED`. Its ONE AutoCount call in the whole handler is `enqueueCancel`, inside the `toStatus === 'CANCELLED'` branch. The `DELIVERED` branch calls `syncSoDeliveredFromDo` and nothing else | PROVEN — asserted over the handler's own source in the test |
+| Could the DO `/edit` route carry it instead? | No. The delivery order's edit projection is five keys — `DebtorName`, `Attention`, `Ref`, `Phone1`, `Note` — so a DRAFT delivery and a signed-off one compose a **byte-identical** AutoCount header. `DocDate` is not even in `AC_EDIT_HEADER_KEYS`; the book's delivery order, as far as the ERP can edit it, is a name, a phone and two free-text fields | PROVEN — `downstreamEditHeader('DO', …)` run on a signed row in the test |
+| Is there an operation for it anywhere? | No. `AC_ROUTE` is eleven operations and `docs/generated/autocount-coverage.md` (generated, CI-audited) lists the same eleven. None is a sign-off | PROVEN |
+| Does AutoCount's own delivery order have a field for it? | The SDK's `DeliveryOrder` class declares **94** settable properties and **not one** matches signature / receive / acknowledge / proof / POD. The nearest are `Remark1..4`, `Note`, `ShipInfo` — free text — and `Transferable` / `PostToStock`, which are about the document, not its arrival. AutoCount's own wiki `Programmer:Delivery_Order_v2` models the same document and has none either | **LIKELY** — see the caveat below |
+| Does anything downstream in the book depend on it? | No, because there is nothing to depend on. In AutoCount the delivery order IS the stock movement (created here by `/so-to-do`) and the receivable arises at the invoice (`/do-to-iv`). Arrival at the customer's door is not an accounting event in that book | LIKELY, same caveat |
+
+**Why LIKELY and not PROVEN, stated rather than glossed.**
+`backend/scripts/autocount-service/sdk-api-reference.txt` was reflected with
+`BindingFlags.DeclaredOnly` — its own header warns, at length and from an earlier
+mistake, that **inherited members appear nowhere in it**. So it proves nothing is
+DECLARED on `DeliveryOrder`, not that nothing exists on a base class; and it
+cannot see a `UDF_` column the office's own book defines, which is exactly how
+the sales order came to carry `UDF_PAYEMENT`, `UDF_BALANCE` and `UDF_PDate`.
+
+**ONE read settles it, and it is read-only:**
+
+```
+GET /api/scm/autocount-outbox/table-columns?table=DO
+GET /api/scm/autocount-outbox/table-columns?table=DODTL&like=UDF_
+```
+
+`TableColumns` in `AcSyncService.cs` is one `SELECT name FROM sys.columns` over
+an allow-listed table — column NAMES only, no data, no customer, no amount, no
+SDK session. If it returns nothing signature-shaped, the LIKELY rows above become
+PROVEN and this section is finished. **It needs the host to be running a build that HAS the route.** The route landed
+in the service source on 2026-08-31 (#2832) and that file has been changed as
+recently as 2026-09-07 (#3019), so a host rebuilt since then carries it — but
+"the source has it" is not "the host has it", and `POST /health`'s `builtAt` /
+`mvid` is the only thing that says which build is answering. The AutoCount host is
+a serialised resource: hand this to whoever holds that slot rather than dialling
+it yourself.
+
+**If the answer ever comes back "there IS a field", this is NOT a small change.**
+The ERP would need a new outbox operation, the service a new route, and — the
+part that bites — `delivery_order_items.linked_ac_dtlkey` is null on all 173
+migrated delivery orders, so a migrated delivery cannot be addressed line by
+line. Header-only would still work. Do not start until the read has been done.
+
+**What is NOT covered here and is a real gap: money taken at the door.**
+`scm.delivery_order_payments` — the ledger Mobile POD writes when a driver
+collects on delivery — reaches AutoCount **nowhere**. `composePaymentUdf` is fed
+only from the SALES ORDER path (`scm/lib/so-edit-header.ts`, `composeCreateSo`),
+so the book's `UDF_PAYEMENT` / `UDF_BALANCE` never learn about a payment recorded
+against the delivery. That is the payment half of the owner's sentence, it is a
+different lane's subject, and it is named here so it is not lost between the two.
+
 ### Who moves the DO status, and what each value blocks (2026-08-16)
 
 DB type is the `scm.do_status` ENUM (base body in

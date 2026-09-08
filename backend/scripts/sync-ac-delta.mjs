@@ -73,27 +73,42 @@
 // money lane re-reads Sum(qty*unitprice) and UDF_BALANCE exactly as
 // import-ac-outstanding-so.mjs read them at insert time.
 //
-// NEVER OVERWRITE A HUMAN. A document is REFUSED and listed, not written, when
-// scm.mfg_so_audit_log shows a person changed a field in scope, or the header
-// `version` has moved off 1, or a person owns its payment rows. "These N
-// documents disagree and I did not touch them" is the intended outcome; a
-// silent overwrite of the owner's own data is not.
+// NEVER OVERWRITE A PERSON — AND SAY WHOSE EDIT IT WAS. A document or a field
+// is REFUSED and NAMED, never written, when the audit trail shows a person
+// changed something this script would write. "These N documents disagree and I
+// did not touch them" is the intended outcome; a silent overwrite of the
+// owner's own data is not, and neither is a refusal that only prints a COUNT.
+// Every refusal below names the DOCUMENT, the LINE, BOTH VALUES and WHO.
 //
-// THE THREE CONVERSION LANES USE THE AUDIT TRAIL ALONE for that test, and
-// deliberately NOT `version > 1`: version is an optimistic-locking token bumped
-// by seven automated paths, and the probe in #3042 found 80 of 81 such
-// "conflicts" were the automated stock-allocation sweep and exactly ONE was a
-// person. On the purchase-order side the trail is scm.entity_audit_log
-// (entity_type = 'PURCHASE_ORDER', migration 0139), matched on the fields these
-// lanes would write and nothing else.
-// The HEADER lane's veto is narrower and better: per (document, FIELD), and
-// keyed on mfg_so_audit_log.actor_id being a real person rather than the
-// migration's own system user. It does NOT use `version > 1` —
-// check-so-version-provenance.mjs (PR #3042) measured 80 of 81 "conflicts" as
-// the automated stock-allocation sweep and exactly 1 as a person, so that arm
-// refuses the owner's data on a robot's behalf. The desc2/pay lanes keep the
-// old two-armed test for now; the header section prints what the version arm
-// WOULD have refused, so the cost is a number and not an argument.
+// THE AUTHORSHIP RULE HAS ONE HOME: lib/ac-human-edit.mjs. Until 2026-09-08
+// this file answered "did a person do this?" three different ways in three
+// lanes, and the header lane's answer — `!actor_id` means the SYSTEM wrote it —
+// was wrong in the direction that loses data. A null actor is a normal shape
+// for a PERSON's row here (src/scm/routes/so-amendments.ts:262 writes one on
+// purpose; so-handover.ts:191 writes one whenever the session's user object is
+// thin), so people's edits were being classified as the machine's and written
+// over in silence. The rule now used everywhere is the one
+// check-so-open-for-new.mjs proved against production (run 34183368917, 50 of
+// 50 "touched" orders were the allocation cron):
+//
+//     SYSTEM := actor_id = the migration's pinned actor
+//            OR (actor_id IS NULL AND actor_name_snapshot ILIKE 'system%')
+//     PERSON := everything else, including an unattributed row.
+//
+// THE PURCHASE-ORDER SIDE reads scm.entity_audit_log (entity_type =
+// 'PURCHASE_ORDER', migration 0139). The conversion lanes match on the LINE
+// fields they write; section 6's header lane matches on the HEADER fields it
+// writes — and that half did not exist at all before 2026-09-08: its veto set
+// was keyed by sales-order document number while the lookup used `po_number`,
+// so `po_date` and friends were overwritten with no refusal printed.
+//
+// `version > 1` IS NOT AN AUTHORSHIP SIGNAL and never decides who did anything.
+// It survives only as an extra conservatism on the desc2 and payment lanes, so
+// this correction cannot make either of them start writing something they
+// refuse today; check-so-version-provenance.mjs (PR #3042) measured 80 of 81
+// "conflicts" as the automated stock-allocation sweep and exactly 1 as a
+// person. Its cost is printed apart from the authorship count, so retiring it
+// is a decision somebody can make from a number.
 //
 // SOFA is decomposed only by the shared decoder lib/parse-sofa.mjs — never
 // hand-parsed here — and compartment CHANGES are reported, never applied,
@@ -160,6 +175,18 @@ import {
   SO_PROCESSING_DATE_PAYLOAD_KEY,
   soProcessingDateFragment,
 } from "./lib/so-processing-date.mjs";
+/* "DID A PERSON CHANGE THIS?" — ONE HOME. This file used to answer it three
+   different ways in three lanes, and the one the header lane used
+   (`!actor_id` => the system did it) is the one that overwrote people's edits.
+   lib/ac-human-edit.mjs carries the rule check-so-open-for-new.mjs proved
+   against production, and the reasoning for every branch of it. */
+import {
+  MIGRATION_ACTOR_ID,
+  formatHumanRefusal,
+  humanEditIndex,
+  humanTouchedDocs,
+  isSystemAuditRow,
+} from "./lib/ac-human-edit.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -280,42 +307,77 @@ async function main() {
      WHERE p.company_id = 1 AND p.linked_ac_docno IS NOT NULL`;
   log(`ERP: SO ${soHeaders.length} headers / ${soItems.length} lines; PO ${poHeaders.length} headers / ${poItems.length} lines`);
 
-  // who did a human touch?
+  /* ─── WHO EDITED WHAT: the authorship question, asked ONCE ───
+     Every arm of this used to be decided inline and differently per lane. The
+     rule now lives in lib/ac-human-edit.mjs, is the one
+     check-so-open-for-new.mjs proved against production (run 34183368917: 50
+     of 50 "touched" migrated orders were the allocation cron), and it carries
+     the actor so a refusal can NAME the person instead of counting them.
+
+     The query selects the actor columns rather than `DISTINCT so_doc_no`,
+     because a document number cannot tell you who wrote it. */
   const allSoDocs = soHeaders.map((h) => h.doc_no);
-  const touched = new Set();
+  const soAuditRows = [];
   for (let i = 0; i < allSoDocs.length; i += 2000) {
-    const rows = await sql`SELECT DISTINCT so_doc_no FROM scm.mfg_so_audit_log
-       WHERE so_doc_no = ANY(${allSoDocs.slice(i, i + 2000)}) AND field_changes::text ILIKE ANY(${TOUCHED_NEEDLES})`;
-    for (const r of rows) touched.add(r.so_doc_no);
+    const rows = await sql`SELECT so_doc_no, actor_id, actor_name_snapshot, action, created_at, field_changes
+       FROM scm.mfg_so_audit_log
+      WHERE so_doc_no = ANY(${allSoDocs.slice(i, i + 2000)}) AND field_changes::text ILIKE ANY(${TOUCHED_NEEDLES})`;
+    for (const r of rows) {
+      soAuditRows.push({ docNo: r.so_doc_no, actorId: r.actor_id, actorName: r.actor_name_snapshot,
+                         action: r.action, at: r.created_at, fieldChanges: r.field_changes });
+    }
   }
-  const byAudit = touched.size;
-  /* THE THREE CONVERSION LANES TEST AUTHORSHIP ON THE AUDIT TRAIL ALONE.
-     `touched` below also folds in `version > 1`, and that is NOT an
-     authorship signal: version is an optimistic-locking token bumped by
-     seven automated paths, and the probe in #3042 found 80 of 81 such
-     "conflicts" were the automated stock-allocation sweep and exactly ONE
-     was a person. Folding it in here would refuse ~79 orders in the name of
-     a human who never touched them, and hide the one who did. */
-  const touchedByAudit = new Set(touched);
-  for (const h of soHeaders) if (Number(h.version) > 1) touched.add(h.doc_no);
-  log(`ERP sales orders a person has edited: ${touched.size} (${byAudit} by audit trail, the rest by version > 1)`);
+  const soHuman = humanTouchedDocs({ rows: soAuditRows, migrationActorId: MIGRATION_ACTOR_ID });
+  /* `touchedByAudit` is the AUTHORSHIP answer and nothing else: the documents a
+     PERSON edited. The three conversion lanes use exactly this. */
+  const touchedByAudit = new Set(soHuman.byDoc.keys());
+
+  /* `touched` = that, PLUS `version > 1`, and the version arm is NOT an
+     authorship signal — it is an extra conservatism the desc2 and payment
+     lanes carry into the cutover, kept so this change cannot make either lane
+     start writing something it refuses today. version is an optimistic-locking
+     token bumped by seven automated paths (src/scm/lib/so-generation.ts), and
+     check-so-version-provenance.mjs (PR #3042) measured 80 of 81 such
+     "conflicts" as the automated stock-allocation sweep and exactly ONE as a
+     person. Retiring the arm is a separate decision that needs a production
+     count, not a code change — which is why the two numbers are printed apart.
+     Nothing reads `touched` to decide WHO did anything; `soHuman.byDoc` does. */
+  const touched = new Set(touchedByAudit);
+  let byVersionOnly = 0;
+  for (const h of soHeaders) {
+    if (Number(h.version) > 1 && !touched.has(h.doc_no)) { touched.add(h.doc_no); byVersionOnly++; }
+  }
+  log(`ERP sales orders a PERSON edited (audit trail, actor-attributed): ${touchedByAudit.size}`);
+  log(`  audit rows examined ${soHuman.personRows + soHuman.systemRows}: ${soHuman.personRows} written by a person, ${soHuman.systemRows} by the system (allocation cron / the migration's own actor) — the system rows never refuse anything`);
+  log(`  additionally held back by the version > 1 conservatism (NOT an authorship signal): ${byVersionOnly}`);
 
   /* The PURCHASE-ORDER side of the same question. Sales orders have their own
      table (scm.mfg_so_audit_log); every other SCM document records into
      scm.entity_audit_log keyed (entity_type, entity_id) with the human
      document number alongside (migration 0139). The needles are the fields
-     THIS script would write on a purchase-order line, and nothing else - a
-     person who renamed the supplier has not vetoed a received quantity. */
+     THIS script would write on a purchase-order LINE, and nothing else - a
+     person who renamed the supplier has not vetoed a received quantity. The
+     HEADER fields have their own, wider needle set in section 6.
+
+     `migrationActorId` is null here on purpose: this table has no pinned
+     migration actor (src/scm/lib/entity-audit.ts resolves a real staff id or
+     leaves NULL), so there is no id to treat as the system's. */
   const PO_TOUCHED_NEEDLES = ["received_qty", "receivedQty", "so_item_id", "soItemId"].map((n) => `%${n}%`);
   const allPoDocs = poHeaders.map((h) => h.po_number);
-  const poTouched = new Set();
+  const poAuditRows = [];
   for (let i = 0; i < allPoDocs.length; i += 2000) {
-    const rows = await sql`SELECT DISTINCT entity_doc_no FROM scm.entity_audit_log
-       WHERE entity_type = 'PURCHASE_ORDER' AND entity_doc_no = ANY(${allPoDocs.slice(i, i + 2000)})
-         AND field_changes::text ILIKE ANY(${PO_TOUCHED_NEEDLES})`;
-    for (const r of rows) poTouched.add(r.entity_doc_no);
+    const rows = await sql`SELECT entity_doc_no, actor_id, actor_name_snapshot, action, created_at, field_changes
+       FROM scm.entity_audit_log
+      WHERE entity_type = 'PURCHASE_ORDER' AND entity_doc_no = ANY(${allPoDocs.slice(i, i + 2000)})
+        AND field_changes::text ILIKE ANY(${PO_TOUCHED_NEEDLES})`;
+    for (const r of rows) {
+      poAuditRows.push({ docNo: r.entity_doc_no, actorId: r.actor_id, actorName: r.actor_name_snapshot,
+                         action: r.action, at: r.created_at, fieldChanges: r.field_changes });
+    }
   }
-  log(`ERP purchase orders a person has edited in the fields this script writes: ${poTouched.size} (audit trail only)`);
+  const poHuman = humanTouchedDocs({ rows: poAuditRows, migrationActorId: null });
+  const poTouched = new Set(poHuman.byDoc.keys());
+  log(`ERP purchase orders a PERSON edited in the LINE fields this script writes: ${poTouched.size} (audit trail only; ${poHuman.systemRows} system row(s) ignored)`);
 
   const fcRows = await sql`SELECT fabric_id, colour_id, label FROM scm.fabric_colours WHERE company_id = 1`;
   const { findColour } = buildFabricColourIndex(fcRows);
@@ -361,6 +423,7 @@ async function main() {
 
   const descUpdates = [];
   const conflicts = [];
+  const descRefusedLines = [];   // the LINES a refusal actually costs, with both values
   const sofaCompartment = [];
   const photoGap = [];
   const unkeyed = [];
@@ -370,7 +433,33 @@ async function main() {
     const h = erpSoByAc.get(st.DocNo);
     const bookLines = acSoLines.get(st.DocNo);
     if (!bookLines) { noBookLines++; continue; }
-    if (touched.has(h.doc_no)) { conflicts.push({ acDoc: st.DocNo, doc: h.doc_no, why: `a person edited this order in the ERP (audit trail, or version ${h.version})` }); continue; }
+    if (touched.has(h.doc_no)) {
+      /* A REFUSAL THAT ONLY COUNTS IS A REFUSAL NOBODY CAN ACT ON. Work out
+         what this run WOULD have written, so the conflict names the document,
+         the line, both values and the person — the four things needed to go and
+         look at it. The person comes from the audit trail; where only the
+         version conservatism held the document back there is no person to name,
+         and the line says so rather than inventing one. */
+      const person = soHuman.byDoc.get(h.doc_no) ?? null;
+      const why = person
+        ? `${person.who} edited this order in the ERP${person.at ? ` on ${new Date(person.at).toISOString()}` : ""}`
+        : `held back by the version > 1 conservatism (version ${h.version}) — no person is recorded in the audit trail`;
+      conflicts.push({ acDoc: st.DocNo, doc: h.doc_no, why, who: person ? person.who : null });
+      for (const l of (soLinesByDoc.get(st.DocNo) || []).filter((x) => x.linked_ac_dtlkey != null)) {
+        const bl = acLineByDtl.get(String(l.linked_ac_dtlkey));
+        if (!bl) continue;
+        const wantD2 = txt(bl.Desc2);
+        const curD2 = txt(l.description2);
+        if (wantD2 !== null && wantD2 !== curD2) {
+          descRefusedLines.push(formatHumanRefusal({
+            doc: h.doc_no, line: `dtl=${l.linked_ac_dtlkey}`, field: "description2",
+            erp: curD2, book: wantD2, who: person ? person.who : `nobody (version ${h.version})`,
+            at: person ? person.at : null,
+          }));
+        }
+      }
+      continue;
+    }
     const erpLines = soLinesByDoc.get(st.DocNo) || [];
     const keyed = erpLines.filter((l) => l.linked_ac_dtlkey != null);
     if (keyed.length !== erpLines.length) unkeyed.push({ acDoc: st.DocNo, doc: h.doc_no, n: erpLines.length - keyed.length });
@@ -417,9 +506,16 @@ async function main() {
 
   if (conflicts.length) {
     log("");
-    log("CONFLICTS — AutoCount moved AND a person edited the ERP order. NOT TOUCHED:");
+    log("CONFLICTS — AutoCount moved AND the ERP order is held back. NOT TOUCHED:");
     for (const c of conflicts.slice(0, 60)) log(`   ${c.doc}  (${c.acDoc})  ${c.why}`);
     if (conflicts.length > 60) log(`   ... and ${conflicts.length - 60} more`);
+    log(`   of those, ${conflicts.filter((c) => c.who).length} name a PERSON in the audit trail; the rest are the version conservatism.`);
+  }
+  if (descRefusedLines.length) {
+    log("");
+    log(`WHAT THOSE REFUSALS COST — ${descRefusedLines.length} line(s) the book would have rewritten. Document, line, both values, who:`);
+    for (const s of descRefusedLines.slice(0, 40)) log(`   ${s}`);
+    if (descRefusedLines.length > 40) log(`   ... and ${descRefusedLines.length - 40} more`);
   }
   if (sofaCompartment.length) {
     log("");
@@ -442,7 +538,6 @@ async function main() {
     for (const p of pays) { if (!byDoc.has(p.so_doc_no)) byDoc.set(p.so_doc_no, []); byDoc.get(p.so_doc_no).push(p); }
     for (const st of editedSo) {
       const h = erpSoByAc.get(st.DocNo);
-      if (touched.has(h.doc_no)) continue;
       const bh = acSoHeader.get(st.DocNo);
       const lines = acSoLines.get(st.DocNo);
       if (!bh || !lines) continue;
@@ -451,10 +546,31 @@ async function main() {
       const bal = centi(bh.UDF_BALANCE);
       const paid = Math.max(0, total - bal);
       if (Number(h.local_total_sen) === total && Number(h.balance_sen) === bal && Number(h.paid_sen) === paid) continue;
+      /* HELD BACK, AND NOW SAID SO. This test used to `continue` ABOVE the
+         comparison, so an order whose book balance had moved and whose ERP row
+         a person had edited was skipped in complete silence — the refusal shape
+         the owner reports as "the button does nothing". Moved below, so the
+         refusal can print what it costs: the document, both balances, and who. */
+      if (touched.has(h.doc_no)) {
+        const person = soHuman.byDoc.get(h.doc_no) ?? null;
+        payConflicts.push({ doc: h.doc_no, acDoc: st.DocNo, who: person ? person.who : null,
+          why: formatHumanRefusal({
+            doc: h.doc_no, line: null, field: "balance_sen",
+            erp: Number(h.balance_sen), book: bal,
+            who: person ? person.who : `nobody in the audit trail (held by the version > 1 conservatism, version ${h.version})`,
+            at: person ? person.at : null,
+          }) });
+        continue;
+      }
       const rows = byDoc.get(h.doc_no) || [];
       const migrated = rows.filter((p) => p.method === "imported" && /^imported from AutoCount/.test(p.note || ""));
       if (rows.length !== migrated.length || migrated.length > 1) {
-        payConflicts.push({ doc: h.doc_no, acDoc: st.DocNo, why: `${rows.length} payment row(s), ${migrated.length} of them the migration's — a person owns this order's money` });
+        payConflicts.push({ doc: h.doc_no, acDoc: st.DocNo, who: "a person who took a payment in the ERP",
+          why: formatHumanRefusal({
+            doc: h.doc_no, line: null, field: "balance_sen",
+            erp: Number(h.balance_sen), book: bal,
+            who: `a person owns this order's money — ${rows.length} payment row(s), ${migrated.length} of them the migration's`,
+          }) });
         continue;
       }
       const pay = parsePayment(bh.UDF_PAYEMENT);
@@ -773,7 +889,11 @@ async function main() {
       }
       const itemMap = loadAcErpItemMap(path.join(here, "data"));
       for (const g of doGapScope) {
-        if (touchedByAudit.has(g.doc)) { doRefused.push(`${g.doc} (${g.acNo}): a person edited this sales order in the ERP (audit trail)`); continue; }
+        if (touchedByAudit.has(g.doc)) {
+          const p = soHuman.byDoc.get(g.doc);
+          doRefused.push(`${g.doc} (${g.acNo}): REFUSED, ${p ? p.who : "a person"} edited this sales order in the ERP${p && p.at ? ` on ${new Date(p.at).toISOString()}` : ""}${p && p.fields.length ? ` (${p.fields.join(", ")})` : ""}`);
+          continue;
+        }
         const mine = soItemsByAc.get(g.acNo) || [];
         if (!mine.length) { doRefused.push(`${g.doc} (${g.acNo}): the ERP order has no live line to deliver`); continue; }
         if (!g.kids.length) { doRefused.push(`${g.doc} (${g.acNo}): the book shows ${g.tq}/${g.qty} unit(s) delivered but NO delivery line names this order - there is no document to mirror`); continue; }
@@ -891,7 +1011,11 @@ async function main() {
                 (topup-ac-po-lines.mjs header). TransferedQty is per LINE and
                 must not produce it - so a line that would is REFUSED and
                 listed, never clamped to something nobody can stand behind. */
-          if (poTouched.has(l.po_number)) recvRefused.push(`${row}  REFUSED: a person edited this purchase order's received quantity or dedication in the ERP`);
+          if (poTouched.has(l.po_number)) {
+            const p = poHuman.byDoc.get(l.po_number);
+            recvRefused.push(formatHumanRefusal({ doc: l.po_number, line: `dtl=${l.linked_ac_dtlkey}`, field: "received_qty",
+              erp: erpRecv, book: bookTq, who: p ? p.who : "a person", at: p ? p.at : null }));
+          }
           else if (bookTq > num(l.qty) + 1e-6) recvRefused.push(`${row}  REFUSED: the book's received figure is ABOVE the ordered quantity - writing it would recreate the received_qty > qty defect`);
           else recvPlan.push({ poItemId: l.id, poNo: l.po_number, acDoc: String(l.linked_ac_docno), dtl: String(l.linked_ac_dtlkey),
                                itemCode: l.item_code, from: erpRecv, to: bookTq, ordered: num(l.qty), since });
@@ -972,7 +1096,12 @@ async function main() {
            (measured, not assumed - see the comment above this loop). */
         const dediWhere = `${si.doc_no} (${soNo}) line ${si.item_code} <- ${pi.po_number} (${poNo}) dtl=${cell(r, F.dtl)}`;
         if (dediPoItems.has(String(pi.id))) continue;                    // the section-4 lane already claims this PO line
-        if (poTouched.has(pi.po_number)) { dediRefused.push(`${dediWhere}: REFUSED, a person edited this purchase order's dedication in the ERP`); continue; }
+        if (poTouched.has(pi.po_number)) {
+          const p = poHuman.byDoc.get(pi.po_number);
+          dediRefused.push(formatHumanRefusal({ doc: pi.po_number, line: dediWhere, field: "so_item_id",
+            erp: pi.so_item_id ?? null, book: String(si.id), who: p ? p.who : "a person", at: p ? p.at : null }));
+          continue;
+        }
         if (dediClaimed.has(String(si.id))) { dediRefused.push(`${dediWhere}: REFUSED, that sales-order line is already dedicated to another purchase-order line`); continue; }
         /* THE IDENTITY, not just the key. Lane `links` above got this guard on
            2026-09-07 after the DtlKey pair alone put nine sales-order lines on
@@ -1106,6 +1235,7 @@ async function main() {
      so the difference is a number rather than an argument. */
   const HDRFILE = "ac-doc-headers.json.gz";
   const hdrWrites = [];          // { table, pk, pkVal, doc, field, col, from, to }
+  const hdrRefusals = [];        // one sentence per (document, field) a person owns
   const staffCreate = [];        // agent display names with no ERP staff row
   const staffRebind = [];        // ACIMP-* placeholder that a real staff row now shadows
   log("");
@@ -1157,39 +1287,79 @@ async function main() {
       const erpPoRows = await readErp("purchase_orders", "po_number", poFieldsLive.map((f) => f.erp));
       log(`  ERP migrated headers: ${erpSoRows.length} sales order(s), ${erpPoRows.length} purchase order(s)`);
 
-      /* ── the human veto, per (document, field) ── */
-      const SYS_ACTOR = "00000000-0000-4000-8000-000000000001";
+      /* ── the human veto, per (document, field) ──
+         CORRECTED 2026-09-08. This block used to decide authorship by testing
+         the actor column for FALSINESS, so every row with a NULL actor read as
+         the system's (the exact expression is quoted in
+         docs/bugs/0693-*, and a test in tests/acHumanEdit.test.mjs asserts it
+         has not come back). A null actor is a normal shape for a
+         PERSON's row here: src/scm/routes/so-amendments.ts:262 writes one on
+         purpose, and so-handover.ts:191 writes one whenever the session's user
+         object is thin. So a person's edit was classified as the machine's and
+         written straight over, with nothing printed. The rule now lives in
+         lib/ac-human-edit.mjs and is the one check-so-open-for-new.mjs proved
+         against production. */
       const HDR_NEEDLES = headerAuditNeedles(SO_HEADER_FIELDS);
-      const camel = (s) => s.replace(/_([a-z0-9])/g, (_m, c) => c.toUpperCase());
-      const humanField = new Set();   // `${doc}|${fieldKey}`
-      const humanDocs = new Set();
-      let auditRows = 0, sysAuthored = 0;
+      const soHdrAudit = [];
       const soDocNos = erpSoRows.map((r) => r.doc_no);
       for (let i = 0; i < soDocNos.length; i += 1000) {
-        const rows = await sql`SELECT so_doc_no, actor_id, actor_name_snapshot, field_changes::text AS fc
+        const rows = await sql`SELECT so_doc_no, actor_id, actor_name_snapshot, action, created_at, field_changes
                                  FROM scm.mfg_so_audit_log
                                 WHERE so_doc_no = ANY(${soDocNos.slice(i, i + 1000)})
                                   AND field_changes::text ILIKE ANY(${HDR_NEEDLES})`;
         for (const r of rows) {
-          auditRows++;
-          if (!r.actor_id || String(r.actor_id) === SYS_ACTOR) { sysAuthored++; continue; }
-          const fc = (r.fc || "").toLowerCase();
-          for (const f of SO_HEADER_FIELDS) {
-            if (!f.erp) continue;
-            if (fc.includes(f.erp.toLowerCase()) || fc.includes(camel(f.erp).toLowerCase())) {
-              humanField.add(`${r.so_doc_no}|${f.key}`);
-              humanDocs.add(r.so_doc_no);
-            }
-          }
+          soHdrAudit.push({ docNo: r.so_doc_no, actorId: r.actor_id, actorName: r.actor_name_snapshot,
+                            action: r.action, at: r.created_at, fieldChanges: r.field_changes });
         }
       }
+      const soHdrIx = humanEditIndex({ rows: soHdrAudit, fields: SO_HEADER_FIELDS, migrationActorId: MIGRATION_ACTOR_ID });
+      const humanField = soHdrIx.byDocField;
+
+      /* ── the PURCHASE-ORDER half of the same veto, which did not exist ──
+         The set above is keyed by SALES-ORDER document number, and the PO
+         tally looked itself up in it by `po_number` — a lookup that can never
+         hit. So the PO header lane wrote `po_date`, `expected_at`, `attention`
+         and `display_term` over whatever a person had put there, with no
+         refusal and no line in the log. `po_date` is staff-editable
+         (routes/mfg-purchase-orders.ts, PATCH /:id), and that edit records into
+         scm.entity_audit_log with entity_type = 'PURCHASE_ORDER'
+         (migration 0139), which is what this reads.
+
+         migrationActorId is null: that table has no pinned migration actor. */
+      const PO_HDR_NEEDLES = headerAuditNeedles(PO_HEADER_FIELDS);
+      const poHdrAudit = [];
+      const poDocNos = erpPoRows.map((r) => r.po_number);
+      for (let i = 0; i < poDocNos.length; i += 1000) {
+        const rows = await sql`SELECT entity_doc_no, actor_id, actor_name_snapshot, action, created_at, field_changes
+                                 FROM scm.entity_audit_log
+                                WHERE entity_type = 'PURCHASE_ORDER'
+                                  AND entity_doc_no = ANY(${poDocNos.slice(i, i + 1000)})
+                                  AND field_changes::text ILIKE ANY(${PO_HDR_NEEDLES})`;
+        for (const r of rows) {
+          poHdrAudit.push({ docNo: r.entity_doc_no, actorId: r.actor_id, actorName: r.actor_name_snapshot,
+                            action: r.action, at: r.created_at, fieldChanges: r.field_changes });
+        }
+      }
+      const poHdrIx = humanEditIndex({ rows: poHdrAudit, fields: PO_HEADER_FIELDS, migrationActorId: null });
+      const poHumanField = poHdrIx.byDocField;
+
       const versionWouldRefuse = soHeaders.filter((h) => Number(h.version) > 1).length;
-      log(`  audit rows naming a header field in scope           ${auditRows}  (${sysAuthored} written by the migration's own system actor, never a veto)`);
-      log(`  sales orders where a PERSON changed a header field  ${humanDocs.size}  — those fields are refused, the rest of the document is not`);
+      log(`  SO audit rows naming a header field in scope        ${soHdrAudit.length}  (${soHdrIx.systemRows} written by the system — the migration's actor or the allocation cron — never a veto)`);
+      log(`  sales orders where a PERSON changed a header field  ${soHdrIx.byDoc.size}  — those fields are refused, the rest of the document is not`);
+      log(`  PO audit rows naming a header field in scope        ${poHdrAudit.length}  (${poHdrIx.systemRows} system)`);
+      log(`  purchase orders where a PERSON changed one          ${poHdrIx.byDoc.size}  — NEW: this lane had no veto at all before 2026-09-08`);
       log(`  for comparison, a version > 1 test would refuse     ${versionWouldRefuse} whole document(s). NOT used: PR #3042 measured 80 of 81 as the automated allocation sweep.`);
 
       /* ── the per-field census ── */
-      const tally = (kindLabel, fields, bookByDoc, erpRows, pk, liveColSet, table) => {
+      /* `vetoIndex` is REQUIRED, not defaulted. It is the parameter that
+         DECIDES whether a person's edit survives this run, and the defect this
+         signature is fixing is exactly a call site that inherited the wrong one
+         silently. A caller with genuinely no trail to consult passes an empty
+         Map and says so at the call site. */
+      const tally = (kindLabel, fields, bookByDoc, erpRows, pk, liveColSet, table, vetoIndex) => {
+        if (!(vetoIndex instanceof Map)) {
+          throw new TypeError(`tally(${kindLabel}): vetoIndex is required — pass the human-edit index for THIS document type, or an empty Map with a comment saying why there is none`);
+        }
         const stats = new Map(fields.map((f) => [f.key, { agree: 0, differ: 0, erpBlank: 0, bookBlank: 0, bothBlank: 0, human: 0, sample: [] }]));
         let noBook = 0;
         for (const row of erpRows) {
@@ -1218,7 +1388,18 @@ async function main() {
                   return { verdict: "agree", book: b, erp: e };
                 })()
               : compareField(f, bookRaw, row[f.erp]);
-            if ((c.verdict === "differ" || c.verdict === "erpBlank") && humanField.has(`${row[pk]}|${f.key}`)) { st.human++; continue; }
+            const veto = (c.verdict === "differ" || c.verdict === "erpBlank")
+              ? vetoIndex.get(`${row[pk]}|${f.key}`) : undefined;
+            if (veto) {
+              st.human++;
+              /* NAMED, not counted. A tally cell saying "3" tells nobody which
+                 order to open. */
+              hdrRefusals.push(formatHumanRefusal({
+                doc: String(row[pk]), line: null, field: f.key,
+                erp: c.erp, book: c.book, who: veto.who, at: veto.at,
+              }));
+              continue;
+            }
             st[c.verdict]++;
             if ((c.verdict === "differ" || c.verdict === "erpBlank") && st.sample.length < 3) {
               st.sample.push(`${row[pk]} (${acNo}): ERP ${JSON.stringify(c.erp)} -> BOOK ${JSON.stringify(c.book)}`);
@@ -1251,8 +1432,18 @@ async function main() {
          "AutoCount has a value and the ERP has nowhere to put it", which is a
          completeness answer, not a defect. compareField sees an undefined ERP
          value for those and returns exactly that. */
-      const soStats = tally("SALES ORDER HEADERS", SO_HEADER_FIELDS, bookSo, erpSoRows, "doc_no", soCols, "mfg_sales_orders");
-      const poStats = tally("PURCHASE ORDER HEADERS", PO_HEADER_FIELDS, bookPo, erpPoRows, "po_number", poCols, "purchase_orders");
+      const soStats = tally("SALES ORDER HEADERS", SO_HEADER_FIELDS, bookSo, erpSoRows, "doc_no", soCols, "mfg_sales_orders", humanField);
+      const poStats = tally("PURCHASE ORDER HEADERS", PO_HEADER_FIELDS, bookPo, erpPoRows, "po_number", poCols, "purchase_orders", poHumanField);
+
+      if (hdrRefusals.length) {
+        log("");
+        log(`  HEADER FIELDS REFUSED because a PERSON owns them — ${hdrRefusals.length}. Document, line, both values, who:`);
+        for (const r of hdrRefusals.slice(0, 40)) log(`     ${r}`);
+        if (hdrRefusals.length > 40) log(`     ... and ${hdrRefusals.length - 40} more`);
+      } else {
+        log("");
+        log("  HEADER FIELDS REFUSED because a PERSON owns them — 0.");
+      }
 
       for (const [label, fields, stats] of [["SO", SO_HEADER_FIELDS, soStats], ["PO", PO_HEADER_FIELDS, poStats]]) {
         for (const f of fields) {

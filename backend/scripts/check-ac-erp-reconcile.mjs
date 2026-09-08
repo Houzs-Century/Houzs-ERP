@@ -148,6 +148,7 @@ import {
 import { isBlankBookRow, splitBlankBookRows } from "./lib/ac-blank-book-row.mjs";
 import { grPairGrain } from "./lib/ac-gr-pair-grain.mjs";
 import { erpReconcileTypes } from "./lib/ac-reconcile-erp-sql.mjs";
+import { bagOf, compareBags } from "./lib/keyless-multiset.mjs";
 import { FIELD_MAP } from "./lib/ac-field-identity.mjs";
 import {
   compareType, loadAcFieldSide, loadErpFieldSide, measurePoDiscount,
@@ -893,6 +894,9 @@ for (const cfg of TYPES) {
   let comparedLines = 0;
   let sofaDocs = 0;
   const unpairableDocs = [];
+  /* The three-way verdict on the documents that cannot be PAIRED. See the
+     multiset block below; `IDENTICAL` is an ANSWER, not a skipped check. */
+  const keyless = { IDENTICAL: 0, DIFFERS: 0, AMBIGUOUS: 0 };
   let zeroMoneyDocs = 0;
   /* Documents whose money is stated in a currency the ERP does not hold, and
      documents this snapshot could not tell us the currency of. Reported in
@@ -1081,7 +1085,41 @@ for (const cfg of TYPES) {
        for this document — a checker that cannot match must refuse rather than
        report. */
     if (!erpLines.some((l) => l.ac_dtlkey != null) && acLines.length !== erpLines.length) {
-      unpairableDocs.push(`${ac}: no line key on either side and the counts differ (ERP ${d.erp_no})`);
+      /* PAIRING is refused — but a MULTISET needs no key. The bag of
+         (item, quantity) on each side is order-independent, so a reordering
+         cannot manufacture a finding and a missing item cannot hide behind one.
+         Equal bags mean this document IS identical however its lines are
+         ordered; unequal bags NAME the defect. Only a sofa whose build text
+         cannot be decoded and whose pieces are uneven comes back undecidable.
+         lib/keyless-multiset.mjs, and check-keyless-lines.mjs prints both sides
+         of every one that is not settled here. Until 2026-09-08 this branch
+         stopped at the refusal, and "the checker refused" was three times
+         reported to the owner as though it meant the document was clean
+         (docs/bugs/0695, 0696). */
+      const kv = compareBags({
+        book: bagOf(
+          acLines.map((l) => ({
+            code: mapped(l.itemKey), rawCode: l.itemKey, qty: l.qty ?? 0,
+            sen: l.docSubTotalSen ?? l.subTotalSen ?? 0,
+          })),
+          "book",
+        ),
+        erp: bagOf(
+          erpLines.map((l) => ({
+            code: l.item_code, qty: l.qty == null ? 0 : Number(l.qty),
+            sen: Math.round((l.qty == null ? 0 : Number(l.qty)) * (l.unit_price_sen == null ? 0 : Number(l.unit_price_sen))),
+            suffixed: l.line_suffix != null, desc2: l.description2,
+          })),
+          "erp",
+        ),
+        compareMoney: cfg.keylessMoney !== false,
+      });
+      keyless[kv.verdict]++;
+      if (kv.verdict !== "IDENTICAL") {
+        unpairableDocs.push(
+          `${ac} ${kv.verdict} (ERP ${d.erp_no}): ${[...kv.differences, ...kv.ambiguities].join(" ; ")}`,
+        );
+      }
       continue;
     }
 
@@ -1353,10 +1391,14 @@ for (const cfg of TYPES) {
         "Re-cut it with AC_CRED_FILE=<path> node backend/scripts/export-ac-reconcile-truth.mjs.",
     );
   }
-  if (unpairableDocs.length) {
+  const keylessTotal = keyless.IDENTICAL + keyless.DIFFERS + keyless.AMBIGUOUS;
+  if (keylessTotal) {
     log(
-      `${t} — ${unpairableDocs.length} documents could NOT be line-matched (no line key on either side and ` +
-        "the line counts differ). Their line data is UNVERIFIED, not verified-clean.",
+      `${t} KEYLESS — ${keylessTotal} document(s) could not be line-MATCHED (no line key on either side and the ` +
+        `line counts differ), so they were compared as MULTISETS instead: ${keyless.IDENTICAL} PROVEN identical ` +
+        `(same items, same quantities${cfg.keylessMoney === false ? "" : ", same money"}, whatever order the lines are in), ` +
+        `${keyless.DIFFERS} carry a real difference, ${keyless.AMBIGUOUS} genuinely undecidable. ` +
+        "The undecidable ones print BOTH SIDES in `Keyless documents — verify by multiset`.",
     );
     for (const row of first(unpairableDocs)) plain(`      ${row}`);
   }
@@ -1448,7 +1490,7 @@ for (const cfg of TYPES) {
     absenceIs: decisionHolds ? "DECISION" : "GAP",
     phantom: phantom.length,
     bothSides,
-    unpairable: unpairableDocs.length,
+    unpairable: keyless.DIFFERS + keyless.AMBIGUOUS,
     lineCount: LS.differ,
     lineShape: LS.lineShape,
     item: IC.differ,
@@ -1687,6 +1729,10 @@ const SUMMARY_COLUMNS = [
   /* An invoice built from OUR receipt or delivery: total equal to the sen and
      every item code agreeing, on a different number of rows. */
   { label: "same-money", width: 11, get: (s) => s.lineShape ?? 0 },
+  /* Documents that cannot be line-MATCHED and whose two bags do not settle it
+     either. The ones that DO settle are an answer and are not counted here —
+     printing them as open is what made 137 documents read as unchecked. */
+  { label: "no-key-open", width: 12, get: (s) => s.unpairable ?? 0 },
 ];
 const cell = (v, w) => (w < 0 ? String(v).padEnd(-w) : String(v).padStart(w));
 plain(SUMMARY_COLUMNS.map((c) => cell(c.label, c.width)).join(" "));
@@ -1715,6 +1761,9 @@ plain("non-MYR  = documents compared in their OWN currency. Not a money differen
 plain("same-goods = we hold NO AutoCount line number on these rows, so which of our lines answers which of the book's was the");
 plain("           checker's own guess. Both sides list the SAME products in the SAME quantities, which no ordering can fake.");
 plain("           What is unknown is the pairing, not the goods. A document whose two lists DIFFER stays counted above.");
+plain("no-key-open = neither side carries a line number AND the line counts differ, so the lines cannot be PAIRED. They are compared");
+plain("           as MULTISETS instead — the bag of (item, quantity) on each side, order ignored — and only the ones the bags do NOT");
+plain("           settle are counted here. Both sides of each are printed by `Keyless documents - verify by multiset`.");
 plain("same-money = a purchase/sales invoice we built from OUR receipt or delivery. Its total equals the book to the sen and");
 plain("           every item code agrees on quantity and money; only the number of rows differs, because AutoCount bills a");
 plain("           free gift as its own RM 0.00 line and sometimes splits one product across two. Nothing is owed here.");

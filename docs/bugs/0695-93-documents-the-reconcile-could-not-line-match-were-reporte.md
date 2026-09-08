@@ -73,4 +73,9 @@ records, where two parsers for one CSV invented 40 of 111 item-code defects.
 claimed here. The measurement and whatever it finds land in the follow-up, with
 the run id.
 
+**MEASURED — see `docs/bugs/0700`.** Run `34191920800` (2026-09-08, 14:0x +08):
+136 keyless documents, **126 identical, 6 different, 4 undecidable**. The first
+fold this tool shipped with was itself wrong and invented 17 of those findings;
+0700 records what it was and how it was refuted.
+
 **Ref.** `fix/verify-93-keyless-docs`, 2026-09-08.

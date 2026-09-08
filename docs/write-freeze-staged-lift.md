@@ -365,6 +365,127 @@ quantity; picking one is the owner's call.
 
 ---
 
+## 6b. GO-LIVE: 开 PO、DO、进 SO 和 edit SO — the one statement, PREPARED, NOT RUN
+
+Owner 2026-09-08: 「**他们要开 PO DO 和进 SO 和 edit SO**」 — purchase orders,
+delivery orders, creating sales orders AND editing them, migrated ones included.
+That is bigger than §6a, and it is **two rows, in this order**.
+
+**Nothing below has been executed.**
+
+### The value, re-measured rather than recalled
+
+Read live 2026-09-08 at **14:11 MYT** (Actions -> *SCM write freeze — status
+(read-only)*, run `34193563758`):
+
+```
+scm.write_freeze = "1 - scm.procurement.products"      (written 2026-09-02 11:52 MYT)
+areas still PAUSED (23) · areas REOPENED (1): scm.procurement.products
+```
+
+**Re-run that workflow before you type anything.** This paragraph is a
+measurement with a date on it, and §1 of this file records the row being
+documented as a bare `1` for six days after somebody opened product setup.
+
+### The three area keys, taken from the ENFORCEMENT code
+
+Not from a table in a doc — `backend/src/scm/lib/scm-areas.ts` is what the
+middleware reads, and `backend/tests/writeFreezeAreas.test.ts` pins it against
+the mounts in `scm/index.ts`:
+
+| What he calls it | Area key | Mounted prefixes it opens |
+|---|---|---|
+| 进 SO / edit SO | `scm.sales.orders` | `/mfg-sales-orders`, `/so-amendments`, `/so-handover`, `/quotes`, `/pwp-codes`, `/scan-so`, `/scan-payment`, `/slips` |
+| 开 PO | `scm.procurement.po` | `/mfg-purchase-orders`, `/po-amendments` |
+| 开 DO | `scm.sales.delivery` | `/delivery-orders-mfg` |
+
+### Step 1 — the freeze
+
+```sql
+UPDATE scm.app_config
+   SET value = '1 - scm.procurement.products, scm.sales.orders, scm.procurement.po, scm.sales.delivery',
+       updated_at = now()
+ WHERE key = 'scm.write_freeze';
+```
+
+Workflow equivalent: **SCM write freeze (on/off)** -> `target=prod`, `state=on`,
+`companies=1`,
+`areas=scm.procurement.products,scm.sales.orders,scm.procurement.po,scm.sales.delivery`.
+
+**`scm.procurement.products` is in that value on purpose.** `areas` is the
+complete list of what is open, not a delta — leaving it out closes product
+setup, which has been open since 2026-09-02.
+
+**Reverse (step 1):**
+
+```sql
+UPDATE scm.app_config SET value = '1 - scm.procurement.products', updated_at = now()
+ WHERE key = 'scm.write_freeze';
+```
+
+### Step 2 — the migrated-order lock, and ONLY after the sync guard is live
+
+```sql
+UPDATE scm.app_config SET value = 'off', updated_at = now()
+ WHERE key = 'scm.migrated_so_lock';
+```
+
+**Reverse (step 2):**
+
+```sql
+UPDATE scm.app_config SET value = '1', updated_at = now()
+ WHERE key = 'scm.migrated_so_lock';
+```
+
+Step 2 is what makes MIGRATED orders editable. Its precondition is
+`docs/migrated-so-lock.md` §2a — the sync must be unable to overwrite a person's
+edit before a person is invited to make one. Doing step 2 first, even for a
+minute, is the window both rows exist to close.
+
+### What that leaves shut — counted, not estimated
+
+Twenty-four area keys exist (`SCM_AREAS`, derived from `SCM_AREA_MOUNTS`).
+Four would be open, so **20 of 24 remain paused**:
+
+`scm.procurement.grn`, `scm.procurement.pi`, `scm.procurement.pr`,
+`scm.procurement.mrp`, `scm.procurement.suppliers`, `scm.sales.invoices`,
+`scm.sales.returns`, `scm.warehouse.inventory`, `scm.warehouse.adjustments`,
+`scm.warehouse.transfers`, `scm.warehouse.stock_take`,
+`scm.finance.accounting`, `scm.finance.outstanding`,
+`scm.transportation.drivers`, and all six consignment areas
+(`orders`, `notes`, `returns`, `po_orders`, `po_receives`, `po_returns`).
+
+Plus every router with no area key at all (`SCM_UNGUARDED_PREFIXES` — `/hr`,
+`/staff`, `/localities`, `/currencies`, `/categories`,
+`/state-warehouse-mappings`, `/pos-cart`, `/personal-quick-picks`,
+`/sales-analysis` and the read-only ones), which no exception can name.
+
+**Goods receipts are NOT in the list, and that is worth saying out loud.**
+Opening `scm.sales.delivery` lets staff raise a delivery order; it does not let
+them receive goods (`scm.procurement.grn`) or invoice
+(`scm.procurement.pi`, `scm.sales.invoices`). If the floor needs the whole
+PO -> GR -> PI chain, that is stage 5 of §6, not this step.
+
+### How many write endpoints each of those opens — enumerated
+
+From the committed route inventory `docs/generated/route-capability-matrix.csv`
+(1,217 routes, gated in CI by `npm --prefix backend run audit:routes`), mapped
+through `SCM_AREA_MOUNTS`:
+
+| Area | write endpoints it opens |
+|---|---|
+| `scm.sales.orders` | **43** — `/mfg-sales-orders` 21, `/so-amendments` 6, `/scan-so` 6, `/quotes` 3, `/slips` 3, `/pwp-codes` 2, `/scan-payment` 1, `/so-handover` 1 |
+| `scm.procurement.po` | **21** — `/mfg-purchase-orders` 17, `/po-amendments` 4 |
+| `scm.sales.delivery` | **11** — `/delivery-orders-mfg` 11 |
+
+**The migrated-order lock covers 27 of those 43**, not all of them: it is mounted
+at `/mfg-sales-orders/*` and `/so-amendments/*` only
+(`backend/src/scm/index.ts:327` and `:346`). See `docs/migrated-so-lock.md` §5a
+for the sixteen that are outside it and which of them can touch a migrated
+document.
+
+---
+
 ### Verifying a lift took effect
 
 1. **Wait 30 seconds.** The middleware caches the value for that long, per

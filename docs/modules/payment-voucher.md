@@ -382,13 +382,32 @@ bill 我也想要用ocr. Two doors, one reader:
      per bill.
   3. 多个supplier 多个单 — "pay each bill separately" splits a group; each
      bill opens as its own voucher.
+  4. 几张不同的 receipt 开一张 voucher (2026-09-08: 因为我是三个 receipt 开一张
+     voucher 罢了) — petty cash. Read them, tick them across groups (a
+     checkbox on every read bill), "Open ticked as ONE voucher (N lines)":
+     one line per receipt (shop + number, the receipt's total), the payee
+     LEFT for the person (three shops have no one payee, and no shop's
+     vendor memory is borrowed), the voucher dated by the latest receipt,
+     every receipt's pages attached; refused while the ticked receipts are
+     in different currencies. This is NOT the Merge — Merge makes PAGES of
+     one bill (the button now says so: "These N files are pages of ONE bill
+     — merge"); the owner had pressed it for three receipts and the reader,
+     told they were one document, read one.
 
 The pile takes drag-and-drop and pasted screenshots (Ctrl+V) as well as the
 picker, and each read bill renders tidy: number / dates / total on one
 aligned grid, the bill's own line items tabled under it — EVERY printed
 line is read, no line cap (owner 2026-09-02: 别限制最多只能读8行; the
 model's output budget is sized for ~300 lines and a 300-entry runaway
-guard sits in `coerceBillJson`, not in the prompt).
+guard sits in `coerceBillJson`, not in the prompt). A receipt's FOOTER is
+not lines (docs/bugs/0702; owner: 这个 ocr 会显示 sub total): the prompt asks
+for the goods and service rows plus any discount, tax or rounding row —
+the rows that add up to what was paid — and `stripFooterLines` in
+`backend/src/acc/bill-extract.ts` drops, deterministically, whatever the
+model still lists of a restated total (sub/net/grand total, amount due,
+balance), a tender row (cash, card, DuitNow/QR, TNG and the other wallets,
+tendered, paid), the change and an item count, so the voucher pre-fills at
+the receipt's total rather than twice it.
 
 The reading is POST `/payment-vouchers/extract` (perm
 `scm.payment_voucher.create`; 503 when `ANTHROPIC_API_KEY` is unset) →
@@ -588,7 +607,7 @@ leans on:
 | Lib | Role |
 |---|---|
 | `lib/pv-rate-adoption.ts` | **PURE.** The FX-rate decision table (§6) and the cancel-path retention predicate. No database. |
-| `lib/pi-settlement.ts` | `settlePiPaidCenti` + the pure `computePiSettlement`. The clamp that stops two vouchers over-paying one invoice lives in PL/pgSQL (`scm.settle_pi_paid_sen`, mig 0147) with a legacy optimistic fallback. |
+| `lib/pi-settlement.ts` | `settlePiPaidSen` + the pure `computePiSettlement`. The clamp that stops two vouchers over-paying one invoice lives in PL/pgSQL (`scm.settle_pi_paid_sen`: 0147 → 0305 → `20260908T0900_scm_settle_pi_paid_sen_enum_status.sql`, which writes the status as the enum it is — until then every call failed 42804 and no paid invoice was ever marked paid, docs/bugs/0700) with a legacy optimistic fallback. |
 | `lib/recost.ts` | `recostFromGrn` — the costing cascade the rate adoption triggers. |
 | `lib/fx.ts` | `normalizeCurrency` / `normalizeExchangeRate` / `safeRate` / `toMyrSen` / `masterRateForCurrency`. |
 | `lib/entity-audit.ts` | `recordEntityAudit` + the `assertAuditWritable` pre-flight. |
@@ -808,7 +827,8 @@ because all-MYR is the overwhelming majority of documents in this system.
 |---|---|
 | `backend/src/scm/lib/pv-rate-adoption.test.ts` | the §6 decision table, exhaustively, with no DB (47 cases) |
 | `backend/tests/pvRateFromPayment.test.ts` | the route: the rate is written, the **real** `recostFromGrn` moves the FIFO lot off its 1:1 basis, the audit rows land, a costing failure cannot fail the payment, all-MYR is inert, cancel retains (13 cases). Its supabase stub is hand-rolled, so it must model `.schema()` — the JE-number prefix reads `public.companies` from a client pinned to `scm` (`docs/bugs/0522`), and a stub without it 500s the whole post. |
-| `backend/tests-pg/pvRateAdoption.pg.test.ts` | real Postgres: the PL/pgSQL `settle_pi_paid_sen` clamp composed with the decision, and the `numeric(14,6)` round-trip. Runs in CI's `backend-postgres` job; SKIPS with no local PG |
+| `backend/tests-pg/pvRateAdoption.pg.test.ts` | real Postgres: the PL/pgSQL `settle_pi_paid_sen` clamp composed with the decision, and the `numeric(14,6)` round-trip. Runs in CI's `backend-postgres` job; SKIPS with no local PG. Its fixture declares `status text` — which is why it never saw docs/bugs/0700 |
+| `backend/tests-pg/settlePiPaidSenEnum.pg.test.ts` | real Postgres, with `status` as the ENUM it really is: the NEWEST `settle_pi_paid_sen` definition in the migration tree lands PAID / PARTIALLY_PAID / POSTED (cancel) / the clamp / not_live on that column (docs/bugs/0700). RED on a tree without the fix — the newest body is then 0305's and raises 42804 |
 | `backend/src/scm/lib/fx-guard.test.ts` | both write-path guards (41 cases) |
 | `backend/tests/fulfillmentCosting.test.ts` | `parseAmountCenti` / `buildLines` / `buildAllocations` — negative and fractional amounts are REFUSED, not clamped to 0 |
 | `backend/tests/companyScopeHardening.test.ts` | the cancel cannot reverse another company's GL entry |
