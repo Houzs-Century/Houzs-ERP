@@ -1,0 +1,50 @@
+name: Document numbers — headroom and month-tag drift (read-only)
+
+# Answers "how much room does the numbering actually have, and has the UTC
+# month tag already bitten" without anyone opening a SQL console.
+#
+# Whether two simultaneous creates can COLLIDE is settled by
+# backend/tests-pg/docNoConcurrentCreate.pg.test.ts against a real postgres, not
+# here. What a test cannot say is how much traffic the running book carries and
+# where it sits relative to the 1,000-documents-in-one-month line that
+# scm/lib/doc-no.ts warns about. That lives only in production.
+#
+# Manual trigger only. A production DB read on a schedule turns a real question
+# into CI noise nobody reads — the standing rule in CLAUDE.md.
+on:
+  workflow_dispatch:
+    inputs:
+      months:
+        description: 'How many series months to print per document family'
+        required: false
+        default: '12'
+
+# Deliberately NOT in the deploy concurrency group: this touches nothing and
+# must never queue behind — or displace — a release.
+concurrency:
+  group: doc-no-headroom
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-doc-no-headroom.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MONTHS: ${{ inputs.months }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first
