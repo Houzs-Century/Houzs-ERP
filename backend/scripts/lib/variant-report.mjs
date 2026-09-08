@@ -163,7 +163,26 @@ export function reportVariants({ t, label, rows, desc2, deps: V, VERDICT, SHOW, 
            "it matches". It locks on its own named axis so the person reading
            the refusal is not sent looking for a difference that was never
            measured. */
-        VERDICT.record(t, r.ac, r.erpNo, "sofa build not verifiable", `${where}: ${cell.detail || "not comparable"}`, proceeded);
+        /* THE VALUE WE HOLD GOES IN, beside the reason we could not check it.
+           The DIFFER branch above records `both` — book AND ERP — while this
+           branch used to record the reason alone, so a refusal reached the
+           owner as a bare "not verifiable" and he was asked to supply from
+           memory a build the ERP may already hold. On 2026-09-09 that produced
+           「所以基本上model和sofa compartment基本上都有了啊？那为什么你说没有呢？」
+           and he was right.
+
+           `cell.erp` is NOT computed here: lib/variant-reconcile.mjs already
+           set it to `have.join("+")` from this document's own compartment rows,
+           and it is the same value the DIFFER branch prints. Reading it rather
+           than recomputing it is what keeps one statement of the build. */
+        VERDICT.record(
+          t,
+          r.ac,
+          r.erpNo,
+          "sofa build not verifiable",
+          `${where}: we hold "${cell.erp || "(nothing)"}" — ${cell.detail || "not comparable"}`,
+          proceeded,
+        );
         /* WHOSE it is, recorded next to the refusal. A key that is merely
            unstamped is OURS to stamp; a build text that does not decode is the
            owner's drawing and nothing else. One number covering both has been
