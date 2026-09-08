@@ -1836,7 +1836,7 @@ old class sentence about payments —
 `docs/bugs/0700-a-per-document-refusal-reason-was-overwritten-by-the-curated.md`.
 
 **MEASURED against production**, Actions -> *AutoCount vs ERP reconcile
-(read-only)*, run `34196304394`, 2026-09-08 14:50 MYT. **Re-run before quoting
+(read-only)*, run `34196304394`, 2026-09-08 14:48 MYT. **Re-run before quoting
 it** — this is the count on the day, not a property of the system, and the
 figure moved once already inside one afternoon (see below):
 
