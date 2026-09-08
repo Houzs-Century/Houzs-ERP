@@ -40,8 +40,12 @@ const row = (over: Partial<AcOutboxRow> = {}): AcOutboxRow => ({
   ...over,
 });
 
+/* `.at(0)`, not `[0]`: without noUncheckedIndexedAccess an index read is typed
+   non-null, which makes the guard below look redundant to the linter while
+   being the only thing between a bad fixture and a crash three lines later. The
+   route file makes the same choice for the same reason. */
 const groupOf = (rows: AcOutboxRow[]) => {
-  const [g] = acGroupByDocument(rows);
+  const g = acGroupByDocument(rows).at(0);
   if (!g) throw new Error("no group");
   return g;
 };
