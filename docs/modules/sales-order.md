@@ -1947,6 +1947,35 @@ describes value `1`; this describes `verdict:1`.
 | The LIST | `migratedSoListGate` reads the page's verdicts in ONE batched statement (`.in('doc_no', …)`), then answers per row. A row whose verdict did not come back is absent, and absent locks — so the list can only ever show MORE locked than the API refuses, never fewer. |
 | Cost while OFF | zero. `migratedSoReadonlyState` short-circuits on `!value.byVerdict` before any verdict read, and `migratedSoVerdictMode.test.ts` proves it by giving the guard a fake client that THROWS on the verdict table. |
 
+#### A build the OWNER ruled no longer locks the order (2026-09-08)
+
+The compartments axis is one of the `LOCKING_AXES`, so a sofa whose build
+differs from the book locks its sales order. That is right when the book is the
+authority — but on this ONE axis it is not:
+「一律跟账本。除了sofa compartment而已啊」, the book decides everything EXCEPT the
+sofa build, which is the owner's. He reads the slip's drawing and rules, and the
+ERP is then SUPPOSED to differ from the book's words.
+
+`lib/variant-reconcile.mjs` gained a `RULED` verdict for exactly that case, fed
+from `backend/scripts/data/sofa-compartment-corrections-*.json` — the same files
+the apply script writes from. `lib/variant-report.mjs` locks on `DIFFER` and on
+a proceeded `ERP_BLANK`; `BOOK_BLANK`, `PENDING`, `RECORDED` and now `RULED`
+fall to the branches below and never lock.
+
+**So a migrated sales order now unlocks exactly when the ERP holds what the
+owner ruled.** Measured on the 2026-09-08 runs: `HC-SO-010209` was
+`LOCKED ... — sofa compartments` before (`34221922832`) and is not after
+(`34223394604`), because its build now matches his ruling. `HC-SO-011099` stays
+locked in the same run — its ruling is real but has NOT been written
+(`docs/bugs/0719-a-sofa-build-that-collapses-two-rows-into-one-cannot-be-writ.md`),
+and an unwritten ruling keeps reading `DIFFER` on purpose.
+
+A ruling is never folded into `AGREE`, and it is consulted only AFTER the book
+comparison has already returned a real difference — so it can never turn an
+`AGREE` or an `ERP_BLANK` into an opening. The full rationale, the `_held`
+exclusion and the `desc2Match` selection are in
+`docs/modules/autocount-writeback.md`.
+
 **What the two front ends needed: nothing new.** They already consume
 `migrated_readonly` + `migrated_readonly_reason` as decided facts, so the five
 surfaces in the table above are unchanged. ONE frontend defect had to be fixed:

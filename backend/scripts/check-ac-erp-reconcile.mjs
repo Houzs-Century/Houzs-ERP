@@ -158,8 +158,7 @@ import {
 } from "./lib/ac-field-identity-run.mjs";
 import { printFieldTable, printPoDiscount } from "./lib/ac-field-identity-report.mjs";
 import { buildVerdictRows, makeVerdictRecorder, summariseVerdict } from "./lib/so-verdict-derive.mjs";
-import { loadCorrections } from "./lib/sofa-corrections-source.mjs";
-import { desc2Contains } from "./lib/sofa-desc2-match.mjs";
+import { makeSofaRulingLookup } from "./lib/sofa-rulings.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const DATA = path.join(here, "data");
@@ -546,33 +545,11 @@ try {
     const h = findColour(c);
     return h ? h.colour_id : null;
   };
-  /* THE OWNER'S OWN SOFA RULINGS, read from the same files the apply script
-     writes from. The reconcile used to have no input for a per-document
-     override, so a build he had personally decided could only come out as
-     DIFFER and was handed back to him as an open question every run
-     (docs/bugs/0714-the-reconcile-reports-a-sofa-the-owner-has-already-ruled-on.md).
-     Only WRITTEN rulings are loaded: loadCorrections keeps
-     _held in a separate list, and a build we have not written must keep
-     reading DIFFER.
-     A document can hold MORE THAN ONE sofa build, so the entry is selected by
-     its own desc2Match through the SAME matcher the apply script uses - never
-     by document number alone, which would put one build's answer on another
-     build's line. */
-  const rulingsByDoc = new Map();
-  try {
-    for (const b of loadCorrections(DATA).builds) {
-      if (!Array.isArray(b.pieces) || !b.pieces.length) continue;
-      for (const d of b.docs || []) {
-        if (!rulingsByDoc.has(d)) rulingsByDoc.set(d, []);
-        rulingsByDoc.get(d).push(b);
-      }
-    }
-  } catch (e) {
-    /* Named, never swallowed: with no rulings loaded every ruled build reads
-       DIFFER again, which is the bug this exists to fix. */
-    log(`SOFA RULINGS could not be read (${e.message}) — ruled builds will report as DIFFER`);
-  }
-
+  /* His own sofa builds, so a document he has already ruled on is never
+     handed back to him as an open question (docs/bugs/0714). The lookup, the
+     _held exclusion and the desc2Match selection live in lib/sofa-rulings.mjs. */
+  const sofaRuling = makeSofaRulingLookup(DATA, (m) =>
+    log(`SOFA RULINGS could not be read (${m}) — ruled builds will report as DIFFER`));
   V = {
     parseBedframe,
     parseSofa,
@@ -580,18 +557,7 @@ try {
     modelAlias: SOFA_MODEL_ALIAS,
     knownColour,
     reclOf: (m) => RECL.some((s) => prodCodes.has(`${m}${s}`.toUpperCase())),
-    /* null = he has not ruled on this build. Never a fallback to "close
-       enough": a wrong ruling silently blesses the wrong furniture. */
-    sofaRuling: (erpNo, erpLines) => {
-      const cands = rulingsByDoc.get(erpNo);
-      if (!cands || !cands.length) return null;
-      const text = (erpLines || []).map((l) => l.description2 || "").find(Boolean) || "";
-      const hit = cands.find((c) => c.desc2Match && desc2Contains(text, c.desc2Match));
-      /* A single ruling with no needle can only be this document's one build. */
-      const only = cands.length === 1 && !cands[0].desc2Match ? cands[0] : null;
-      const pick = hit || only;
-      return pick ? { pieces: pick.pieces, source: pick.source } : null;
-    },
+    sofaRuling,
     /* A colour is compared as the library row it names, never as a spelling. */
     colourIdentity: (text) => {
       const h = findColour(text);
