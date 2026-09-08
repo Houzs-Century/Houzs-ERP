@@ -1,0 +1,843 @@
+{
+ "_note": "SOFA BUILDS READ OFF THE ORDER SLIP'S DRAWING, 2026-09-08. Every document here is one the sales-order tally listed under 'CANNOT BE COMPARED - your drawing decides these': the account book's own Desc2 states a colour, a size or a finish but never the build, so nothing but the drawing can answer it. The owner asked for these to be read and decided rather than handed back to him - 「37张不一样的你处理不到？」/「然后109sofa图解析了 直接处理全部」/「你不是会解析照片了吗？为什么还需要我呢」.\n\nEVERY BUILD HERE IS A READING, NOT HIS RULING. The documents he read HIMSELF are in sofa-compartment-corrections-2026-08.json and -2026-09.json and are not touched. Each entry carries its confidence and cites what was actually seen in the photograph, so he can overrule any single one without redoing the round.\n\nTHE DRAWINGS ARE 240px THUMBNAILS AND THAT IS THE ORIGINAL. AutoCount itself stores them at that size - 2,732 of the 2,750 photographs in the whole sales-order export are 240px or smaller, and backend/scripts/export-ac-line-photos.py keeps original pixels with no resampling. So there is no higher-resolution copy to go back to, and the owner's own approved readings (HC-SO-012636, HC-SO-012929, HC-SO-013384) were made from these same images.",
+ "_rules": "Money never moves: the price rides the FIRST piece and every other piece is 0. Lines are matched to target pieces and UPDATED in place so a row id - and any purchase allocation hanging off it - survives. desc2Match is required and is verified to be a VERBATIM substring of that document's own book Desc2 before the file is written. A `seat` is present only where a number was actually legible in a box or stated in the Desc2 - a guessed seat size is a defect (owner: never invent a seat size), and seatHeight holds bare inches.",
+ "_confidence": "29 CONFIDENT (the drawing plainly shows the build) and 23 LIKELY (readable, but one element is a judgement call, named in that entry's why). A LIKELY build is applied - the owner asked for a decision, not a list - but it is labelled here so it is never mistaken for a fact, and so overruling one is a one-line edit.",
+ "_unread": [
+  {
+   "doc": "HC-SO-004709",
+   "reason": "ambiguous",
+   "why": "photo SO-004709__335480_1.jpg: one continuous outline holding only TWO boxes, each marked 35\", with a heavy black open bracket at the left end (the 'wooden arm') and a hatched block at the right end, captioned 'left side / with woorden arm'. Desc2 states 3S(35\"). Two seats drawn versus three stated - drawing and book disagree on the seat count, so the build is not settled."
+  },
+  {
+   "doc": "HC-SO-008683",
+   "reason": "ambiguous",
+   "why": "photo: L-shaped plan whose boxes carry widths, not seat depths - (70\"), (70\"), then a box at the turn crossed by a diagonal marked (5?), then a box holding an illegible scribbled mark plus a stray vertical stroke, then (53\") with a bar beneath it. The middle box cannot be identified, the bottom bar could be an arm or an ottoman, and the book's '2G1F' shorthand is not in the vocabulary - the build is not settled."
+  },
+  {
+   "doc": "HC-SO-010121",
+   "reason": "ambiguous",
+   "why": "the drawing and the slip's OWN written labels are exact mirrors of each other — the hatched arms give 1A(LHF)+2A(RHF), while the writer's labels on those same boxes read 1ER on the left-armed box and 2EL on the right-armed pair, which is the reverse. Both readings are internally consistent, so the drawing does not settle which convention this writer used. A guess here has a 50% chance of building the sofa mirror-imaged.",
+   "downgradedFrom": "likely"
+  },
+  {
+   "doc": "HC-SO-011158",
+   "reason": "ambiguous",
+   "why": "photo: 'colour: tbc', 'wrap bottom to nilon', 'Sliding Door', 'TV'. The drawing IS legible - an L-shaped plan of four boxes: a large wide box with a chamfered bottom-right corner at the left of the top row (the corner piece at the turn), two more boxes to its right, and one box below it forming the downward leg. But NO hatched arm block and NO arm tab is drawn anywhere on the slip, and no seat number appears in any box (Desc2 gives no size either). So the corner is clear but whether the three seats are A or NA - and which side the arm is on - is not settled by the drawing. Layout is identical to SO-011007, where the arms ARE hatched, but transferring that build across documents would be a guess."
+  },
+  {
+   "doc": "HC-SO-011268",
+   "reason": "ambiguous",
+   "why": "photo: 'Sofa 9028 L shape / Size: 28\" / Col: TBC', 'TV' drawn as a box below. The drawing is legible: ONE outline containing TWO boxes of 28\" (a 2-seat module), then '+', then a single box of 28\" drawn about 2.5x deeper = the chaise on the RIGHT. But NO hatched arm block and NO arm tab is drawn on any edge - I zoomed the left edge of the 2-seat module and both edges of the chaise at 20x and they are plain single lines. So whether the 2-seat module is 2A(LHF) or 2NA is a coin flip, and the same writer's owner-verified slip SO-012929 DOES draw arms (as protruding tabs) when they are intended. Everything else is settled: 2 seats in one outline + chaise on the right, 28\"."
+  },
+  {
+   "doc": "HC-SO-011434",
+   "reason": "ambiguous",
+   "why": "two independent problems, either of which is his to settle. (1) The slip writes the build as '(1B + 1B)' and 'B' with NO SIDE is not a code this repo emits - parse-sofa.mjs emits nB(LHF|RHF), and the token appears in none of the 16,532 sofa Desc2 texts in the book, so there is no 9058-1B to write. (2) The slip's own heading says model 9028 while the book's item code on that line is DSL-9058. The pieces and the model disagree with the book at the same time, which is more than a drawing can settle.",
+   "downgradedFrom": "likely"
+  },
+  {
+   "doc": "HC-SO-011447",
+   "reason": "ambiguous",
+   "why": "photo: a room-layout plan (TV, 'sliding door', 4/8/10 feet markers), not a build row. I can see an L: a box with a hatched arm block at its far LEFT, a second detached box, a wide element at the turn carrying a diagonal and a 'C' curve, and a fourth box up the vertical run with a hatched block on its TOP edge. No seat number is written in any box and Desc2 is only 'tbc'; the turn element cannot be settled as CNR vs a chaise, the side label of the vertical-run arm piece is not determinable from a plan view, and the photo is cropped at the left edge (the 'colour' line is cut off mid-word), so I cannot rule out a piece off-frame."
+  },
+  {
+   "doc": "HC-SO-011454",
+   "reason": "ambiguous",
+   "why": "photo 790646: slip headed '9058'; a row of three detached boxes, only the rightmost carrying a hatched arm block at its RIGHT end, with 'no holes on s...' written above and an X through the middle box; then, on the line below and to the left, a separate taller box with a hatched block along its BOTTOM edge, next to a long curve labelled 'TV'. No seat number appears anywhere. I cannot settle whether that lower box is a fourth piece forming an L-return or a side note about the armrest, and the book Desc2 says 'arm rest take off', which contradicts a drawn arm block. Photo 790645 is a showroom reference photo of an armless sectional, not a drawing."
+  },
+  {
+   "doc": "HC-SO-011455",
+   "reason": "ambiguous",
+   "why": "photo: slip headed '1. 9050 Corner (30\")'. I can see three units joined by '+': a wedge/corner shape labelled 30\", a rectangle with ONE outline split into two cells reading 30\" and 30\" with a narrow strip at its RIGHT edge annotated '-> adjustable arm rest', and, on the line below, a single box reading 30\" with a narrow strip along its TOP edge; below that, up-arrows pointing at a drawn 'TV' box. This slip uses no hatching at all, so I cannot tell which narrow strips are arms and which are backs - in particular the top strip on the single box sits against the corner, not at a free end, so calling it an arm (and on which side) is not defensible."
+  },
+  {
+   "doc": "HC-SO-011601",
+   "reason": "ambiguous",
+   "why": "photo: slip headed '9050', drawn as a room plan with 'TV' at the top and '10 feet' spanning the bottom run. Upper left is a box reading 32 with a hatched block along its TOP edge and '-> arm rest' written above it; below it a deeper trapezoid with a diagonal front at the turn; then two detached boxes reading 32 and 32, the second with a hatched block at its RIGHT end and 'arm rest' written beside it. Two things are unsettled: the deep trapezoid at the turn could be CNR or the chaise L (it is both at the corner and drawn deeper than its neighbours), and the LHF/RHF side of the upper arm piece cannot be derived from a plan-view drawing - if the group is mirrored every side label flips."
+  },
+  {
+   "doc": "HC-SO-011657",
+   "reason": "no-drawing-on-slip",
+   "why": "photo: a single plain rectangle on graph paper dimensioned '6ft' across and '3ft' down, captioned 'umbrella fabric cover'. No sofa, no compartments, no arm blocks and no seat depths are drawn; the book item is TNS-9838 DB with Desc2 'TBC/DSL model/Default size'."
+  },
+  {
+   "doc": "HC-SO-012026",
+   "reason": "ambiguous",
+   "why": "photo: slip headed '9058' with notes 'Backrest change to 8030 / Arm rest change seat area / Bottom change to nilon / No hole on sitting area'. Drawn as an L plan: a small box top-left with a hatched block along its TOP edge (arrowed, 'TV' beside it), then on the line below a deeper element whose top edge steps down at the turn, followed by three detached boxes, the last carrying a hatched arm block at its RIGHT end. Not one box carries a number and Desc2 states no size, and as with the other plan-view L drawings the deep turn element (CNR vs chaise L) and the side label of the top-left arm piece are not determinable."
+  },
+  {
+   "doc": "HC-SO-012108",
+   "reason": "illegible",
+   "why": "photo: the only image is a 110x239 px partial crop of the slip. Three boxes each marked '35' can be made out (the left one drawn taller than the other two), but at that resolution no arm block resolves at either outer end - the narrow shapes there could be arms or the box edges - and there is a further hand-written token immediately right of the last box ('+ ...') that cannot be read at all. The build is not settled."
+  },
+  {
+   "doc": "HC-SO-012947",
+   "reason": "ambiguous",
+   "why": "photo SO-012947__879533_1: the writer drew an arrow and wrote 'tbc side' beside the drawing, so the side the chaise goes on is explicitly NOT confirmed on the slip - emitting L(LHF) or L(RHF) would be writing a decision the slip says is unmade. Separately, the three 28 inch boxes are drawn JOINED inside one continuous outline (one unbroken top line with shared vertical dividers, no gaps), so by the owner's 2+1 versus 1+1+1 discriminator the split between the deep first box and the two shallow ones is not settled either. Desc2 ('9058 sofa backrest change 9028') carries no build and no size to break either tie."
+  }
+ ],
+ "entries": [
+  {
+   "docs": [
+    "HC-SO-004709"
+   ],
+   "model": "819",
+   "pieces": [
+    "1S"
+   ],
+   "desc2Match": "Col:03-Straw#",
+   "confidence": "likely",
+   "why": "photo: photo SO-004709__335482_1.jpg: a single box with a hatched arm block on BOTH its left and its right side, '1R' written inside in blue and '30\"' written over it in black, with '30\"' repeated beside the box. One seat carrying its own two arms, read as a plain one-seater. Judgement call: the slip's '1R' marks it a recliner, which the piece vocabulary has no code for. | READ FROM THE DRAWING 2026-09-08, confidence LIKELY. This is a LIKELY reading, not a fact: the judgement it rests on is named above, and the owner can overrule this ONE build without touching the rest of the round. The account book's own Desc2 does not state this build at all, which is why his drawing is the only source (owner: 一律跟账本。除了sofa compartment而已啊).",
+   "seat": "30"
+  },
+  {
+   "docs": [
+    "HC-SO-008214"
+   ],
+   "model": "9058",
+   "pieces": [
+    "1A(LHF)",
+    "1NA",
+    "CNR",
+    "1A(RHF)"
+   ],
+   "desc2Match": "Design: request add on legs",
+   "confidence": "likely",
+   "why": "photo: L-shaped plan of four boxes, every one marked 30\". A narrow arm rectangle sits outside the far-left box; two boxes run left to right; the third box sits at the turn and is drawn with a chamfered (cut) top-right corner; one box runs down from it with a narrow arm rectangle below its far end. Separate 'TV' box and the note '# seat cushion make softer'. Judgement call: the chamfered box at the turn read as CNR. | READ FROM THE DRAWING 2026-09-08, confidence LIKELY. This is a LIKELY reading, not a fact: the judgement it rests on is named above, and the owner can overrule this ONE build without touching the rest of the round. The account book's own Desc2 does not state this build at all, which is why his drawing is the only source (owner: 一律跟账本。除了sofa compartment而已啊).",
+   "seat": "30"
+  },
+  {
+   "docs": [
+    "HC-SO-009339"
+   ],
+   "model": "8051",
+   "pieces": [
+    "1A(LHF)",
+    "1NA",
+    "CONSOLE",
+    "1NA",
+    "1A(RHF)"
+   ],
+   "desc2Match": "1EL + 1NA + CS + 1NA + 1ER",
+   "confidence": "confident",
+   "why": "photo: header 'Model: 8051 (28 inch)'; one continuous outline holding 28 | 28 | a narrow empty cell | 28 | 28, with a hatched arm block at each outer end. The slip's own written line reads 1R + 1NA + 1CS + 1NA + 1R and Desc2 states 1EL + 1NA + CS + 1NA + 1ER - four seats plus one console, same multiset as the drawing. | READ FROM THE DRAWING 2026-09-08, confidence CONFIDENT. The account book's own Desc2 does not state this build at all, which is why his drawing is the only source (owner: 一律跟账本。除了sofa compartment而已啊).",
+   "seat": "28"
+  },
+  {
+   "docs": [
+    "HC-SO-009349"
+   ],
+   "model": "9058",
+   "pieces": [
+    "1A(LHF)",
+    "1NA",
+    "1A(RHF)"
+   ],
+   "desc2Match": "1EL + 1NA + 1ER",
+   "confidence": "confident",
+   "why": "photo: header 'SF9058 / 8030 / 9028, colour: tbc'; three SEPARATE boxes joined by '+' signs and labelled underneath 1EL (hatched arm block on its left), 1NA (no arm), 1ER (hatched arm block on its right). No number is written inside any box and Desc2 says only '3 seater', so no seat size is recorded. | READ FROM THE DRAWING 2026-09-08, confidence CONFIDENT. The account book's own Desc2 does not state this build at all, which is why his drawing is the only source (owner: 一律跟账本。除了sofa compartment而已啊)."
+  },
+  {
+   "docs": [
+    "HC-SO-009599"
+   ],
+   "model": "8051",
+   "pieces": [
+    "2S"
+   ],
+   "desc2Match": "colour : tbc",
+   "confidence": "likely",
+   "why": "photo: header '8051 (24, 26, 28, 30, 32)' then '(2 seater)' with an arrow drawn into the sketch; ONE continuous outer rectangle holding '24 inch | 24 inch' with a hatched arm block at each outer end and a '12inch' arrow under each arm. Judgement call: two cells inside a single outline captioned '(2 seater)' read as one 2-seater unit rather than two separate arm pieces. | READ FROM THE DRAWING 2026-09-08, confidence LIKELY. This is a LIKELY reading, not a fact: the judgement it rests on is named above, and the owner can overrule this ONE build without touching the rest of the round. The account book's own Desc2 does not state this build at all, which is why his drawing is the only source (owner: 一律跟账本。除了sofa compartment而已啊).",
+   "seat": "24"
+  },
+  {
+   "docs": [
+    "HC-SO-009602"
+   ],
+   "model": "8051",
+   "pieces": [
+    "2S"
+   ],
+   "desc2Match": "colour : tbc",
+   "confidence": "confident",
+   "why": "photo: an earlier sketch of two SEPARATE boxes, each marked 32 and hatched at its outer end, labelled 1EL and 1ER, is struck through with large X strokes; below it '* change bottom to nilon' and then the replacement drawing - ONE continuous outline holding 32 | 32 with a hatched arm block at each end, captioned '(2 seater)'. The 1EL+1ER decomposition was explicitly cancelled in favour of the single 2-seater. | READ FROM THE DRAWING 2026-09-08, confidence CONFIDENT. The account book's own Desc2 does not state this build at all, which is why his drawing is the only source (owner: 一律跟账本。除了sofa compartment而已啊).",
+   "seat": "32"
+  },
+  {
+   "docs": [
+    "HC-SO-009915"
+   ],
+   "model": "8038",
+   "pieces": [
+    "1A(LHF)",
+    "CONSOLE",
+    "1A(RHF)"
+   ],
+   "desc2Match": "CH141-12 METAL",
+   "confidence": "confident",
+   "why": "photo: header 'Model: 8038, colour: CH141-12 Metal'; three elements joined by '+' - a box marked 'P' over a size with a hatched arm block on its LEFT, a narrow EMPTY box with an arrow labelled 'conso table.', and a box marked 'P' over a size with a hatched arm block on its RIGHT; notes '* wrap bottom to nylon' and '* change power control to more in front'. Seat deliberately OMITTED: the size in both boxes reads '3?' and the second digit cannot be told apart as 30 or 32 at the photo's 240px resolution, and Desc2 states no size - so none is recorded rather than guessed. | READ FROM THE DRAWING 2026-09-08, confidence CONFIDENT. The account book's own Desc2 does not state this build at all, which is why his drawing is the only source (owner: 一律跟账本。除了sofa compartment而已啊)."
+  },
+  {
+   "docs": [
+    "HC-SO-010120"
+   ],
+   "model": "9058",
+   "pieces": [
+    "1A(LHF)",
+    "CNR",
+    "2A(RHF)"
+   ],
+   "desc2Match": "8030 back rest",
+   "confidence": "likely",
+   "why": "photo: L-shaped plan. A hatched arm block sits ON TOP of a box marked 30 (the leg running away from the viewer); directly below that box is a large EMPTY rectangle at the turn, wider than a seat and carrying no number; to its right a separate outline holds 30 | 30 with a hatched arm block at the far right end. Desc2's '30 inch per seat' matches the drawn 30s. Judgement calls: the wide unnumbered box at the turn read as CNR, and the slip's colour note reads B0315-22 while Desc2 says HR805-31. | READ FROM THE DRAWING 2026-09-08, confidence LIKELY. This is a LIKELY reading, not a fact: the judgement it rests on is named above, and the owner can overrule this ONE build without touching the rest of the round. The account book's own Desc2 does not state this build at all, which is why his drawing is the only source (owner: 一律跟账本。除了sofa compartment而已啊).",
+   "seat": "30"
+  },
+  {
+   "docs": [
+    "HC-SO-010123"
+   ],
+   "model": "9028",
+   "pieces": [
+    "L(LHF)",
+    "2A(RHF)"
+   ],
+   "desc2Match": "B0315-5 Fosil",
+   "confidence": "likely",
+   "why": "photo: 'TV' written above; a hatched arm block at the far LEFT, then a box marked 30 drawn clearly DEEPER (its outline extends well above the rest), then separately an outline holding 30 | 30 with a hatched arm block at the far RIGHT; note '* wrap bottom to nilon'. Judgement call: the deeper left box read as the chaise L rather than a 1A. Seat deliberately OMITTED: all three boxes plainly read 30 (well-closed zeros) but Desc2 states '32 inch per seat', and the same document's 'wrap bottom to nilon' on the slip versus 'wrap bottom to umbrella fabric' in Desc2 shows the book text was revised after the slip was drawn - so no seat is written rather than overwrite with the wrong one. | READ FROM THE DRAWING 2026-09-08, confidence LIKELY. This is a LIKELY reading, not a fact: the judgement it rests on is named above, and the owner can overrule this ONE build without touching the rest of the round. The account book's own Desc2 does not state this build at all, which is why his drawing is the only source (owner: 一律跟账本。除了sofa compartment而已啊)."
+  },
+  {
+   "docs": [
+    "HC-SO-010415"
+   ],
+   "model": "9058",
+   "pieces": [
+    "1A(LHF)",
+    "1NA",
+    "CNR",
+    "1A(RHF)"
+   ],
+   "desc2Match": "wrap bottom to umbrella fabric",
+   "confidence": "likely",
+   "why": "photo: L-shaped plan. Top run left-to-right = hatched arm block then a 30\" box (1A LHF), a plain 30\" box (1NA), then a WIDE box at the turn whose bottom steps deeper on its right side (CNR). Below that corner sits one more box with 30 and a hatched block along its BOTTOM edge = the arm at the far end of the downward leg, so 1A(RHF) (leg drawn on the right). JUDGEMENT CALL: this slip has no '+' separators, so the wide stepped box is read as CNR from its width and from the leg drawn below it; the identical drawing on the sister slip SO-010416 spells the same four terms out with explicit '+' signs. 'TV' is written in the open area, confirming a room plan. | READ FROM THE DRAWING 2026-09-08, confidence LIKELY. This is a LIKELY reading, not a fact: the judgement it rests on is named above, and the owner can overrule this ONE build without touching the rest of the round. The account book's own Desc2 does not state this build at all, which is why his drawing is the only source (owner: 一律跟账本。除了sofa compartment而已啊).",
+   "seat": "30"
+  },
+  {
+   "docs": [
+    "HC-SO-010416"
+   ],
+   "model": "9058",
+   "pieces": [
+    "1A(LHF)",
+    "1NA",
+    "CNR",
+    "1A(RHF)"
+   ],
+   "desc2Match": "colour : ninja - 02,03,07,09",
+   "confidence": "confident",
+   "why": "photo: photo (slip is rotated 90deg): '9058' at top, then the build written as an explicit sum. Term 1 = box with hatched arm block on its LEFT containing 30 -> 1A(LHF). '+' Term 2 = plain box with 30 -> 1NA. '+' Term 3 = a WIDE box at the turn, drawn deeper on the side where the leg descends -> CNR; an arrow '-> 10 feet' spans this top run. '+' Term 4, drawn BELOW the corner = box with 30 and a hatched block along its BOTTOM edge -> the arm at the far end of the downward leg, which is on the right of the drawing -> 1A(RHF); 'Door' and 'v 8 feet' are written down that side. All four boxes carry 30. | READ FROM THE DRAWING 2026-09-08, confidence CONFIDENT. The account book's own Desc2 does not state this build at all, which is why his drawing is the only source (owner: 一律跟账本。除了sofa compartment而已啊).",
+   "seat": "30"
+  },
+  {
+   "docs": [
+    "HC-SO-010417"
+   ],
+   "model": "9058",
+   "pieces": [
+    "1A(LHF)",
+    "1A(RHF)"
+   ],
+   "desc2Match": "B0315-10 silver",
+   "confidence": "confident",
+   "why": "photo: photo (slip rotated 90deg): '9058', 'colour: B0315-10 Silver'. Two boxes joined by '+': the left box has a hatched arm block on its LEFT and contains 32\", the right box contains 32\" with a hatched arm block on its RIGHT. Equal depth, no deeper box, no corner. Desc2 also states 32 inch per seat. | READ FROM THE DRAWING 2026-09-08, confidence CONFIDENT. The account book's own Desc2 does not state this build at all, which is why his drawing is the only source (owner: 一律跟账本。除了sofa compartment而已啊).",
+   "seat": "32"
+  },
+  {
+   "docs": [
+    "HC-SO-011002"
+   ],
+   "model": "9058",
+   "pieces": [
+    "1A(LHF)",
+    "1NA",
+    "L(RHF)"
+   ],
+   "desc2Match": "wrap bottom to Nilon",
+   "confidence": "likely",
+   "why": "photo: '9058', 'colour: tbc', 'TV' written above the row. Three boxes each containing 24: box 1 has a hatched arm block on its LEFT (1A LHF), box 2 is plain and detached (1NA), box 3 has a hatched arm block on its RIGHT. JUDGEMENT CALL: box 3 is drawn about 60% DEEPER than boxes 1 and 2 (measured on the image: ~50px tall vs ~32 and ~29), and its extra depth points toward the TV, i.e. toward the front of the sofa - so I read it as the chaise L(RHF) rather than a plain 1A(RHF). For contrast, the owner-approved SO-013384 and SO-012636 draw three boxes of EQUAL depth for the plain 1A+1NA+1A build. | READ FROM THE DRAWING 2026-09-08, confidence LIKELY. This is a LIKELY reading, not a fact: the judgement it rests on is named above, and the owner can overrule this ONE build without touching the rest of the round. The account book's own Desc2 does not state this build at all, which is why his drawing is the only source (owner: 一律跟账本。除了sofa compartment而已啊).",
+   "seat": "24"
+  },
+  {
+   "docs": [
+    "HC-SO-011007"
+   ],
+   "model": "9058",
+   "pieces": [
+    "1A(LHF)",
+    "CNR",
+    "1NA",
+    "1A(RHF)"
+   ],
+   "desc2Match": "wrap bottom to Nilon",
+   "confidence": "confident",
+   "why": "photo: '9058', 'colour : TBC', 'TV' written in the open area bottom-right. L-shaped plan: a downward leg on the LEFT drawn as one box containing 30 with a hatched arm block along its BOTTOM edge (1A LHF, arm at the far end of the leg); directly above it a large box that is both wider and deeper than the seats and has a chamfered bottom-right corner = CNR at the turn; then along the top run a plain box (1NA) and a box with a hatched arm block on its RIGHT (1A RHF). One sofa line, qty 1, and four boxes drawn. 30 is the only size written on the slip and is taken as the seat depth. | READ FROM THE DRAWING 2026-09-08, confidence CONFIDENT. The account book's own Desc2 does not state this build at all, which is why his drawing is the only source (owner: 一律跟账本。除了sofa compartment而已啊).",
+   "seat": "30"
+  },
+  {
+   "docs": [
+    "HC-SO-011159"
+   ],
+   "model": "9058",
+   "pieces": [
+    "1A(LHF)",
+    "CNR",
+    "1NA",
+    "1A(RHF)"
+   ],
+   "desc2Match": "wrap bottom to Nilon",
+   "confidence": "likely",
+   "why": "photo: '9058', 'colour: tbc', 'wrap bottom', 'TV' written above the drawing. Main row left-to-right: a wide shape whose left half is drawn markedly deeper and steps down (about 1.5x the width of the seats); then a plain box (1NA); then a box with a hatched arm block on its RIGHT (1A RHF). Separately, a detached box sits directly ABOVE the left end with a hatched arm block along its TOP edge. JUDGEMENT CALL: I read that detached box as the perpendicular leg of an L-shaped sofa (arm at the leg's far end -> 1A LHF), which makes the wide deep left shape the corner CNR - the same idiom as SO-011007, and supported by the book having only ONE sofa line at qty 1 for all four boxes. If instead that box were a standalone chair, the row alone would read L(LHF)+1NA+1A(RHF). NO size is written in any box and Desc2 gives none, so seat is omitted. | READ FROM THE DRAWING 2026-09-08, confidence LIKELY. This is a LIKELY reading, not a fact: the judgement it rests on is named above, and the owner can overrule this ONE build without touching the rest of the round. The account book's own Desc2 does not state this build at all, which is why his drawing is the only source (owner: 一律跟账本。除了sofa compartment而已啊)."
+  },
+  {
+   "docs": [
+    "HC-SO-011160"
+   ],
+   "model": "9058",
+   "pieces": [
+    "1A(LHF)",
+    "1NA",
+    "L(RHF)"
+   ],
+   "desc2Match": "HR805-90",
+   "confidence": "likely",
+   "why": "photo: no model written, dimensions '8 feet', '10 feet', '9 feet' circled across the top and '6 f(eet)' down the right side. Box 1 has a hatched arm block on its LEFT (1A LHF); box 2 is plain (1NA); box 3 is drawn far DEEPER than the other two (roughly 1.8x their height, extending downward toward the 'TV' written below) with a hatched arm block on its right. JUDGEMENT CALL: box 3 is read as the chaise L(RHF) on account of that depth plus the '6 feet' overall depth note; if the depth were only sloppy drawing it would be 1A(RHF). No number is written in any box; seat 28 comes from Desc2 '28 inch per seat'. | READ FROM THE DRAWING 2026-09-08, confidence LIKELY. This is a LIKELY reading, not a fact: the judgement it rests on is named above, and the owner can overrule this ONE build without touching the rest of the round. The account book's own Desc2 does not state this build at all, which is why his drawing is the only source (owner: 一律跟账本。除了sofa compartment而已啊).",
+   "seat": "28"
+  },
+  {
+   "docs": [
+    "HC-SO-011446"
+   ],
+   "model": "9058",
+   "pieces": [
+    "1A(LHF)",
+    "1NA",
+    "CNR",
+    "1A(RHF)"
+   ],
+   "desc2Match": "headrest change to 8030",
+   "confidence": "confident",
+   "why": "photo: 'TV' written top-left, 'wrap bottom to (nilon)' at the right. L-shaped plan. Bottom run left-to-right: a box with a hatched arm block on its LEFT (1A LHF), then a plain box (1NA). At the turn, bottom-right, a piece with a curved/chamfered inner corner whose bottom bracket extends back under the run = CNR. Rising from it, one box with a hatched arm block along its TOP edge = the arm at the far end of the upward leg, and the leg is on the right of the drawing -> 1A(RHF). Seat 30 from Desc2 '30 inch per seat'. | READ FROM THE DRAWING 2026-09-08, confidence CONFIDENT. The account book's own Desc2 does not state this build at all, which is why his drawing is the only source (owner: 一律跟账本。除了sofa compartment而已啊).",
+   "seat": "30"
+  },
+  {
+   "docs": [
+    "HC-SO-011450"
+   ],
+   "model": "9058",
+   "pieces": [
+    "1A(LHF)",
+    "1A(RHF)"
+   ],
+   "desc2Match": "GD2502 #18- GREY",
+   "confidence": "confident",
+   "why": "photo: slip headed '9058'; two units joined by '+'. Left unit is a hatched arm block at its far LEFT followed by one box reading 32; right unit is one box reading 32 followed by a hatched arm block at its far RIGHT. No other boxes on the slip. | READ FROM THE DRAWING 2026-09-08, confidence CONFIDENT. The account book's own Desc2 does not state this build at all, which is why his drawing is the only source (owner: 一律跟账本。除了sofa compartment而已啊).",
+   "seat": "32"
+  },
+  {
+   "docs": [
+    "HC-SO-011453"
+   ],
+   "model": "9058",
+   "pieces": [
+    "1A(LHF)",
+    "1NA",
+    "1A(RHF)"
+   ],
+   "desc2Match": "wrap bottom to Nilon",
+   "confidence": "confident",
+   "why": "photo: slip headed '9058 / 9028'; three separate boxes joined by '+' signs, each reading 30. A hatched arm block sits at the far LEFT of the first box and at the far RIGHT of the third; the middle box has no hatched block on either side. | READ FROM THE DRAWING 2026-09-08, confidence CONFIDENT. The account book's own Desc2 does not state this build at all, which is why his drawing is the only source (owner: 一律跟账本。除了sofa compartment而已啊).",
+   "seat": "30"
+  },
+  {
+   "docs": [
+    "HC-SO-011604"
+   ],
+   "model": "8051",
+   "pieces": [
+    "1A(LHF)",
+    "1A(RHF)"
+   ],
+   "desc2Match": "wrap bottom to Nilon",
+   "confidence": "confident",
+   "why": "photo: slip headed '8051.', 'colour: tbc'. Two units side by side: the left one a hatched arm block at its far LEFT then a box reading 32; the right one a box reading 32 then a hatched arm block at its far RIGHT. 'TV' written below the drawing, no other boxes. | READ FROM THE DRAWING 2026-09-08, confidence CONFIDENT. The account book's own Desc2 does not state this build at all, which is why his drawing is the only source (owner: 一律跟账本。除了sofa compartment而已啊).",
+   "seat": "32"
+  },
+  {
+   "docs": [
+    "HC-SO-011633"
+   ],
+   "model": "8030",
+   "pieces": [
+    "1A(LHF)",
+    "CONSOLE",
+    "1A(RHF)"
+   ],
+   "desc2Match": "1EL + CS + 1EL",
+   "confidence": "likely",
+   "why": "photo: photo 802567: slip headed '8030', 'colour: tbc', with 'TV' and 'conso[le]' written above the drawing. Three elements: a box with a hatched block at its far LEFT holding a two-digit number, a narrow empty tall box between, and a box holding a two-digit number with a hatched block at its far RIGHT. Photo 802568 is a showroom reference photo showing exactly two seats with a console between them. JUDGEMENT CALL: the book Desc2 writes both end pieces as '1EL' (left) whereas the drawing plainly puts the hatched arm at the outer LEFT of one and the outer RIGHT of the other; I followed the drawing. Seat omitted on purpose - the digits read as 25 or 26 at this resolution and I will not guess. | READ FROM THE DRAWING 2026-09-08, confidence LIKELY. This is a LIKELY reading, not a fact: the judgement it rests on is named above, and the owner can overrule this ONE build without touching the rest of the round. The account book's own Desc2 does not state this build at all, which is why his drawing is the only source (owner: 一律跟账本。除了sofa compartment而已啊)."
+  },
+  {
+   "docs": [
+    "HC-SO-012014"
+   ],
+   "model": "8030",
+   "pieces": [
+    "2A(LHF)",
+    "1A(RHF)"
+   ],
+   "desc2Match": "2R+1R",
+   "confidence": "confident",
+   "why": "photo: two units joined by '+'. The left unit is ONE continuous outline containing a narrow arm strip at its LEFT edge then two cells reading 28\" and 28\"; the right unit is one outline containing a cell reading 28\" then a narrow arm strip at its RIGHT edge. A 'TV' box is drawn below. Desc2 states 28\" and 2R+1R, which matches the drawing as a multiset (a two-seat unit plus a one-seat unit). | READ FROM THE DRAWING 2026-09-08, confidence CONFIDENT. The account book's own Desc2 does not state this build at all, which is why his drawing is the only source (owner: 一律跟账本。除了sofa compartment而已啊).",
+   "seat": "28"
+  },
+  {
+   "docs": [
+    "HC-SO-012031"
+   ],
+   "model": "9058",
+   "pieces": [
+    "1A(LHF)",
+    "1NA",
+    "CNR",
+    "1A(RHF)"
+   ],
+   "desc2Match": "wrap bottom to Nilon",
+   "confidence": "likely",
+   "why": "photo: photo (rotated 90 CW to read): room plan with '9058' at the head, 'TV' bottom-left and 'Sliding Door' on the right. Top run left-to-right = a box '30' with a solid shaded arm block on its far LEFT, then a detached box '30' with no arm; at the turn an unnumbered wider/deeper box whose inner (lower-left) corner is cut by a diagonal = the corner unit; the run then drops down to a box '30' carrying a hatched arm band across its BOTTOM edge. JUDGEMENT CALLS: (1) the unnumbered box at the turn is read as CNR, not a seat; (2) the arm at the foot of the downward leg is called RHF as the far end of the L (the near-left arm is LHF by the page convention of the brief's worked example). | READ FROM THE DRAWING 2026-09-08, confidence LIKELY. This is a LIKELY reading, not a fact: the judgement it rests on is named above, and the owner can overrule this ONE build without touching the rest of the round. The account book's own Desc2 does not state this build at all, which is why his drawing is the only source (owner: 一律跟账本。除了sofa compartment而已啊).",
+   "seat": "30"
+  },
+  {
+   "docs": [
+    "HC-SO-012106"
+   ],
+   "model": "9058",
+   "pieces": [
+    "L(LHF)",
+    "1NA",
+    "1NA",
+    "1A(RHF)"
+   ],
+   "desc2Match": "wrap bottom to Nilon",
+   "confidence": "likely",
+   "why": "photo: slip headed '9058.' / 'corner.'; a small square with a hatched band and 'TV' written above it sits well clear of the sofa (read as the television, not a piece). The sofa is one horizontal run of four units: the LEFT-most is drawn deeper than the rest, its top edge stepping down through an S-curve to the height of its neighbours = the chaise; then three detached boxes, the last with a cross-hatched arm block on its far RIGHT. No number is written in any box and the book gives no size, so seat is omitted. JUDGEMENT CALL: the deeper left-hand unit is read as the chaise L, not CNR - it is at the END of the run with nothing turning off it, and the word 'corner.' on the slip is taken to describe the L-shape sofa rather than a corner unit. | READ FROM THE DRAWING 2026-09-08, confidence LIKELY. This is a LIKELY reading, not a fact: the judgement it rests on is named above, and the owner can overrule this ONE build without touching the rest of the round. The account book's own Desc2 does not state this build at all, which is why his drawing is the only source (owner: 一律跟账本。除了sofa compartment而已啊)."
+  },
+  {
+   "docs": [
+    "HC-SO-012109"
+   ],
+   "model": "9058",
+   "pieces": [
+    "1A(LHF)",
+    "1NA",
+    "CNR",
+    "1A(RHF)"
+   ],
+   "desc2Match": "wrap bottom to Nilon",
+   "confidence": "likely",
+   "why": "photo: photo (rotated 90 CW to read): the same room plan as HC-SO-012031 - '9058', 'TV' bottom-left, 'Sliding Door' right. Box '30' with a solid shaded arm block on its far LEFT, a detached box '30' with no arm, an unnumbered deeper box at the turn with its lower-left corner cut by a diagonal, and below it a box '30' with a hatched arm band across its BOTTOM edge (verified at high zoom). JUDGEMENT CALLS: same two as HC-SO-012031 - the unnumbered box at the turn read as CNR, and the foot-of-leg arm called RHF. | READ FROM THE DRAWING 2026-09-08, confidence LIKELY. This is a LIKELY reading, not a fact: the judgement it rests on is named above, and the owner can overrule this ONE build without touching the rest of the round. The account book's own Desc2 does not state this build at all, which is why his drawing is the only source (owner: 一律跟账本。除了sofa compartment而已啊).",
+   "seat": "30"
+  },
+  {
+   "docs": [
+    "HC-SO-012172"
+   ],
+   "model": "9058",
+   "pieces": [
+    "2A(LHF)",
+    "CNR",
+    "1A(RHF)"
+   ],
+   "desc2Match": "Bottom wrap nylon",
+   "confidence": "confident",
+   "why": "photo: slip headed '9058 Corner'. The build is drawn as an equation. First term = ONE continuous outline split by a single internal vertical into two cushions (a dash in each), with a narrow rectangle protruding from its far LEFT end = the arm, so a two-seat arm unit. Then '+' and a right-angled TRIANGLE with the hypotenuse drawn in = the corner unit. Then '+' and a single square with the same narrow protruding rectangle on its BOTTOM (far) end = a one-seat arm unit at the other end of the L. Seat from the slip and the book, both reading Size:30 (TBC). | READ FROM THE DRAWING 2026-09-08, confidence CONFIDENT. The account book's own Desc2 does not state this build at all, which is why his drawing is the only source (owner: 一律跟账本。除了sofa compartment而已啊).",
+   "seat": "30"
+  },
+  {
+   "docs": [
+    "HC-SO-012276"
+   ],
+   "model": "9058",
+   "pieces": [
+    "1A(LHF)",
+    "1NA",
+    "1A(RHF)"
+   ],
+   "desc2Match": "colour : tbc",
+   "confidence": "confident",
+   "why": "photo: slip headed '9058' / 'col: tbc'. Three boxes drawn as three DETACHED rectangles (1+1+1 by the owner's discriminator), with a cross-hatched arm block on the far LEFT of the first and a cross-hatched arm block on the far RIGHT of the third. No number in any box and no size in the book, so seat omitted. | READ FROM THE DRAWING 2026-09-08, confidence CONFIDENT. The account book's own Desc2 does not state this build at all, which is why his drawing is the only source (owner: 一律跟账本。除了sofa compartment而已啊)."
+  },
+  {
+   "docs": [
+    "HC-SO-012360"
+   ],
+   "model": "8051",
+   "pieces": [
+    "1A(LHF)",
+    "1NA",
+    "1A(RHF)"
+   ],
+   "desc2Match": "tbc",
+   "confidence": "confident",
+   "why": "photo: three detached boxes; cross-hatched arm block on the far LEFT of the first box and cross-hatched arm block on the far RIGHT of the third. A double-headed width arrow is drawn inside the first box and '(size tbc)' is written beside the row, so no seat size is recorded. (A separate note 'double.' is written under the right end; it changes no piece.) | READ FROM THE DRAWING 2026-09-08, confidence CONFIDENT. The account book's own Desc2 does not state this build at all, which is why his drawing is the only source (owner: 一律跟账本。除了sofa compartment而已啊)."
+  },
+  {
+   "docs": [
+    "HC-SO-012633"
+   ],
+   "model": "8030",
+   "pieces": [
+    "1A(LHF)",
+    "1A(RHF)"
+   ],
+   "desc2Match": "replace the leg by fully cover",
+   "confidence": "confident",
+   "why": "photo: photo 1: slip headed '8030.' with 'Long' / 'Deep' dimensions. Two units written as an equation - a box '35' with a cross-hatched arm block on its far LEFT, then '+', then a box '35' with a cross-hatched arm block on its far RIGHT. Photo 2 is a reference shot of an existing sofa base/leg, no drawing. | READ FROM THE DRAWING 2026-09-08, confidence CONFIDENT. The account book's own Desc2 does not state this build at all, which is why his drawing is the only source (owner: 一律跟账本。除了sofa compartment而已啊).",
+   "seat": "35"
+  },
+  {
+   "docs": [
+    "HC-SO-012635"
+   ],
+   "model": "8030",
+   "pieces": [
+    "1A(LHF)",
+    "1NA",
+    "1A(RHF)"
+   ],
+   "desc2Match": "arm change to seat area",
+   "confidence": "confident",
+   "why": "photo: photo 1: slip headed '8030' / 'colour: tbc'. Three DETACHED boxes each containing 32, with a cross-hatched arm block on the far LEFT of the first and a cross-hatched arm block on the far RIGHT of the third; an arrow from 'arm rest change to seat area' points at the right-hand arm. Photos 2 and 3 are reference shots of an existing sofa, no drawing. | READ FROM THE DRAWING 2026-09-08, confidence CONFIDENT. The account book's own Desc2 does not state this build at all, which is why his drawing is the only source (owner: 一律跟账本。除了sofa compartment而已啊).",
+   "seat": "32"
+  },
+  {
+   "docs": [
+    "HC-SO-012752"
+   ],
+   "model": "9058",
+   "pieces": [
+    "1A(LHF)",
+    "CONSOLE",
+    "2NA",
+    "1NA",
+    "L(RHF)"
+   ],
+   "desc2Match": "backrest 8030 ( maybe )",
+   "confidence": "likely",
+   "why": "photo: slip headed '9058.'; one horizontal run. Left end = a box with a cross-hatched arm block on its far LEFT. Next a NARROW box with a downward arrow to the note 'conso table with cup holder (8030)' = the console. Then a single continuous outline (top and bottom lines run unbroken) split by one internal vertical = a two-seat no-arm unit. Then a detached single box. Right end = a box drawn deeper than the run, its left side joining the run through an S-curve = the chaise. JUDGEMENT CALLS: (1) the middle unit read as 2NA on the one-outline rule rather than two separate 1NA; (2) the small hatched box drawn above the right end, with 'TV.' written by it, read as the television and not a piece. No number in any box, so seat omitted. | READ FROM THE DRAWING 2026-09-08, confidence LIKELY. This is a LIKELY reading, not a fact: the judgement it rests on is named above, and the owner can overrule this ONE build without touching the rest of the round. The account book's own Desc2 does not state this build at all, which is why his drawing is the only source (owner: 一律跟账本。除了sofa compartment而已啊)."
+  },
+  {
+   "docs": [
+    "HC-SO-012826"
+   ],
+   "model": "9058",
+   "pieces": [
+    "1A(LHF)",
+    "1NA",
+    "1A(RHF)"
+   ],
+   "desc2Match": "nicca - 02 Oat glow",
+   "confidence": "confident",
+   "why": "photo: marker drawing with 'TV' above. Three DETACHED boxes each containing 24, hatched arm block inside the far LEFT edge of the first box and hatched arm block inside the far RIGHT edge of the third. Same shape as the owner's approved worked example. | READ FROM THE DRAWING 2026-09-08, confidence CONFIDENT. The account book's own Desc2 does not state this build at all, which is why his drawing is the only source (owner: 一律跟账本。除了sofa compartment而已啊).",
+   "seat": "24"
+  },
+  {
+   "docs": [
+    "HC-SO-012827"
+   ],
+   "model": "8030",
+   "pieces": [
+    "1A(LHF)",
+    "1NA",
+    "1A(RHF)"
+   ],
+   "desc2Match": "3 seater",
+   "confidence": "confident",
+   "why": "photo: photo SO-012827__873100_1: '8030' and 'col: Modenza 07 Silver' written above the drawing; three DETACHED boxes joined by '+' signs, with a hatched arm block at the far left end of box 1 and a hatched arm block at the far right end of box 3, middle box plain; 'all 35' written under the row and '* nilon bottom.' below that. Detached boxes = 1+1+1. Desc2 '3 seater  35 inch' agrees as a multiset. | READ FROM THE DRAWING 2026-09-08, confidence CONFIDENT. The account book's own Desc2 does not state this build at all, which is why his drawing is the only source (owner: 一律跟账本。除了sofa compartment而已啊).",
+   "seat": "35"
+  },
+  {
+   "docs": [
+    "HC-SO-012827"
+   ],
+   "model": "8030",
+   "pieces": [
+    "1S"
+   ],
+   "desc2Match": "35 inch  color modenza 07 silver  Nilon bottom",
+   "confidence": "likely",
+   "why": "photo: photo SO-012827__873101_1 is a SECOND, separate drawing on its own page: '8030' / 'col: Modenza 07' then ONE continuous rectangle containing a hatched arm block inside each end and a single UNDIVIDED seat area between them - i.e. a one-seater armchair, which fits this document having two DSL-8030 lines (one marked '3 seater', this one not). JUDGEMENT CALL: the middle span has no divider drawn, so I read one seat (1S); if that span was meant as two seats the answer would be 2S. No number is written on this drawing - seat 35 is taken from this line's own Desc2, not invented. NOTE on desc2Match: line seq 32's whole text is a substring of line seq 16's, so no substring is unique to it; the full line text is given so an exact match picks it out. | READ FROM THE DRAWING 2026-09-08, confidence LIKELY. This is a LIKELY reading, not a fact: the judgement it rests on is named above, and the owner can overrule this ONE build without touching the rest of the round. The account book's own Desc2 does not state this build at all, which is why his drawing is the only source (owner: 一律跟账本。除了sofa compartment而已啊).",
+   "seat": "35"
+  },
+  {
+   "docs": [
+    "HC-SO-012829"
+   ],
+   "model": "9028",
+   "pieces": [
+    "L(LHF)",
+    "1NA",
+    "1A(RHF)"
+   ],
+   "desc2Match": "leg change to 8030",
+   "confidence": "confident",
+   "why": "photo: '9028.' / 'col: tbc.'; three DETACHED boxes each with '30' written inside. The LEFT box is drawn far DEEPER than the other two (chaise) and carries a hatched arm block on its left; the middle box is plain; the right box has a hatched arm block on its right. Slip notes '* Backrest 8030.', '* no holes on sit area', '* nilon fabric.', '* 8030 leg.' match this Desc2 line. | READ FROM THE DRAWING 2026-09-08, confidence CONFIDENT. The account book's own Desc2 does not state this build at all, which is why his drawing is the only source (owner: 一律跟账本。除了sofa compartment而已啊).",
+   "seat": "30"
+  },
+  {
+   "docs": [
+    "HC-SO-013103"
+   ],
+   "model": "8030",
+   "pieces": [
+    "1A(LHF)",
+    "1NA",
+    "1A(RHF)"
+   ],
+   "desc2Match": "24 icnh per seat",
+   "confidence": "confident",
+   "why": "photo: photo SO-013103__889478_1 (thick marker drawing, 'tv' written below): three DETACHED boxes with clear gaps between them, a hatched arm scribble inside the LEFT end of box 1 and inside the RIGHT end of box 3, middle box plain. No numbers in the boxes, so seat 24 comes from Desc2 '24 icnh per seat'. Second photo SO-013103__889479_1 is a reference photo of the finished sofa: a straight 3-seater, three seat cushions with an arm at each end and no chaise - corroborates. Item HOK-5540 aliases to 8030. | READ FROM THE DRAWING 2026-09-08, confidence CONFIDENT. The account book's own Desc2 does not state this build at all, which is why his drawing is the only source (owner: 一律跟账本。除了sofa compartment而已啊).",
+   "seat": "24"
+  },
+  {
+   "docs": [
+    "HC-SO-013104"
+   ],
+   "model": "9058",
+   "pieces": [
+    "1A(LHF)",
+    "1NA",
+    "L(RHF)"
+   ],
+   "desc2Match": "L shape  32 inch per seat",
+   "confidence": "confident",
+   "why": "photo: '9058' written above three DETACHED boxes each containing '32'. Box 1 has a hatched arm block at its left; box 2 is plain; box 3 is drawn markedly DEEPER than the other two (chaise) with a hatched arm block at its right. Slip notes '* Back rest 8030', '* Bottom change to nilon.' and a 'Dimension 8 feet to 10 feet' arrow below. Desc2 'L shape  32 inch per seat' corroborates both the chaise and the 32. | READ FROM THE DRAWING 2026-09-08, confidence CONFIDENT. The account book's own Desc2 does not state this build at all, which is why his drawing is the only source (owner: 一律跟账本。除了sofa compartment而已啊).",
+   "seat": "32"
+  },
+  {
+   "docs": [
+    "HC-SO-013107"
+   ],
+   "model": "8030",
+   "pieces": [
+    "1A(LHF)",
+    "1A(RHF)"
+   ],
+   "desc2Match": "HR 805-20",
+   "confidence": "confident",
+   "why": "photo: '8030.' / 'Col: HR805-20.'; two DETACHED boxes joined by a '+', each containing '30', with a hatched arm block at the LEFT end of box 1 and a hatched arm block at the RIGHT end of box 2. 'wrap bottom to nilon.' and 'fully cover' written below match Desc2. | READ FROM THE DRAWING 2026-09-08, confidence CONFIDENT. The account book's own Desc2 does not state this build at all, which is why his drawing is the only source (owner: 一律跟账本。除了sofa compartment而已啊).",
+   "seat": "30"
+  },
+  {
+   "docs": [
+    "HC-SO-013108"
+   ],
+   "model": "9058",
+   "pieces": [
+    "1A(LHF)",
+    "1NA",
+    "1NA",
+    "CNR",
+    "1A(RHF)"
+   ],
+   "desc2Match": "no holes on sit area",
+   "confidence": "likely",
+   "why": "photo: '9058' above an L-shaped plan. Along the top row, left to right: a box with a narrow arm panel drawn inside its LEFT edge, then two plain boxes (all three drawn as detached rectangles), then a box at the turn with a quarter-circle curve drawn inside it = the corner piece. Below that corner box sits one further box with a narrow arm panel inside its outer (bottom) edge. Slip notes 'no holes on sit area.' and 'nilon bottom.' match Desc2; 'TV' marks the facing. JUDGEMENT CALL: encoding that bottom leg-end piece as 1A(RHF) - it sits at the right-hand end of the layout, but the slip never labels a side. No number appears in any box and Desc2 states no size, so seat is omitted rather than guessed. | READ FROM THE DRAWING 2026-09-08, confidence LIKELY. This is a LIKELY reading, not a fact: the judgement it rests on is named above, and the owner can overrule this ONE build without touching the rest of the round. The account book's own Desc2 does not state this build at all, which is why his drawing is the only source (owner: 一律跟账本。除了sofa compartment而已啊)."
+  },
+  {
+   "docs": [
+    "HC-SO-013110"
+   ],
+   "model": "8030",
+   "pieces": [
+    "1A(LHF)",
+    "1NA",
+    "1A(RHF)"
+   ],
+   "desc2Match": "Col :B0315-1 pearl",
+   "confidence": "confident",
+   "why": "photo: 'Col : B0315. | Pearl' above three DETACHED boxes joined by '+' signs. Each box contains a '3' followed by a '0' with a '2' written over the top of it - a correction to 32, and Desc2 independently states '32 inch per seat'. Hatched arm block at the LEFT end of box 1 and at the RIGHT end of box 3; middle box plain. 'Square Pillow' and 'Long Pillow' listed below correspond to the separate pillow lines. | READ FROM THE DRAWING 2026-09-08, confidence CONFIDENT. The account book's own Desc2 does not state this build at all, which is why his drawing is the only source (owner: 一律跟账本。除了sofa compartment而已啊).",
+   "seat": "32"
+  },
+  {
+   "docs": [
+    "HC-SO-013121"
+   ],
+   "model": "8051",
+   "pieces": [
+    "1A(LHF)",
+    "1A(RHF)"
+   ],
+   "desc2Match": "2S[P+P]",
+   "confidence": "likely",
+   "why": "photo: two DETACHED boxes with a clear gap between them, each containing '32' with an inch mark, and a narrow vertical arm panel drawn at the OUTER edge only - on the left edge of the left box and on the right edge of the right box; 'TV' written below. JUDGEMENT CALL: I read this as two units, taking the two detached outlines plus the '[P+P]' (two parts) in Desc2 as two pieces making up the '2S' seat count. If '2S' is instead meant as a single non-modular two-seater, the answer would be ['2S']. Seat 32 is written in both boxes and also stated in Desc2. | READ FROM THE DRAWING 2026-09-08, confidence LIKELY. This is a LIKELY reading, not a fact: the judgement it rests on is named above, and the owner can overrule this ONE build without touching the rest of the round. The account book's own Desc2 does not state this build at all, which is why his drawing is the only source (owner: 一律跟账本。除了sofa compartment而已啊).",
+   "seat": "32"
+  },
+  {
+   "docs": [
+    "HC-SO-013250"
+   ],
+   "model": "8030",
+   "pieces": [
+    "1A(LHF)",
+    "1NA",
+    "CONSOLE",
+    "L(RHF)"
+   ],
+   "desc2Match": "Nilon bottom  Col : tbc",
+   "confidence": "likely",
+   "why": "photo: '8030.' / 'col: tbc' / 'TV.', with a span bracket drawn over the whole row marked '12 feet'. Four DETACHED elements left to right: a box with a hatched arm block at its left, a plain box, a visibly NARROWER box, and a markedly DEEPER box carrying a hatched arm block at its right (chaise). A leader line runs down from the narrow third box to the handwritten word 'conso.'. JUDGEMENT CALL: assigning CONSOLE to that third box rests on where the leader line starts - it begins directly beneath the narrow box, not beneath the plain box. No number is written in any box and Desc2 states no size, so seat is omitted rather than guessed. | READ FROM THE DRAWING 2026-09-08, confidence LIKELY. This is a LIKELY reading, not a fact: the judgement it rests on is named above, and the owner can overrule this ONE build without touching the rest of the round. The account book's own Desc2 does not state this build at all, which is why his drawing is the only source (owner: 一律跟账本。除了sofa compartment而已啊)."
+  },
+  {
+   "docs": [
+    "HC-SO-013254"
+   ],
+   "model": "9028",
+   "pieces": [
+    "L(LHF)",
+    "1NA",
+    "1A(RHF)"
+   ],
+   "desc2Match": "bottom change Nilon",
+   "confidence": "likely",
+   "why": "photo: '9028.' / 'col: tbc. (Modenza)' / 'TV.' / '* wrap bottom to nylon.'; three DETACHED boxes each containing '30'. The LEFT box is drawn far deeper than the other two (chaise) with a narrow hatched arm panel inside its left edge; the middle box is plain; the right box has a hatched arm block at its right. JUDGEMENT CALL: 'Balcony (tbc)' is written at the left with an arrow pointing to the chaise end, so the room side is not yet confirmed and the layout could be mirrored; as drawn, the chaise is on the left. | READ FROM THE DRAWING 2026-09-08, confidence LIKELY. This is a LIKELY reading, not a fact: the judgement it rests on is named above, and the owner can overrule this ONE build without touching the rest of the round. The account book's own Desc2 does not state this build at all, which is why his drawing is the only source (owner: 一律跟账本。除了sofa compartment而已啊).",
+   "seat": "30"
+  },
+  {
+   "docs": [
+    "HC-SO-013258"
+   ],
+   "model": "9058",
+   "pieces": [
+    "1A(LHF)",
+    "1NA",
+    "L(RHF)"
+   ],
+   "desc2Match": "HR805-10",
+   "confidence": "likely",
+   "why": "photo: slip headed '9058'; three separate elements drawn left to right - a box with a hatched arm block at its far left, a plain box, then a distinctly DEEPER box at the right end (its outline runs far below the other two, toward the 'Tv.' drawn under it) with a hatched arm block at its right edge. Judgement call: I read that deeper right-hand element as the chaise (L on the right) rather than a third plain armed seat - Desc2 'L SHAPE' supports it, but the drawing is scrappy at this resolution. No number is written in any box; seat 30 comes from Desc2 '30 inch per seat' | READ FROM THE DRAWING 2026-09-08, confidence LIKELY. This is a LIKELY reading, not a fact: the judgement it rests on is named above, and the owner can overrule this ONE build without touching the rest of the round. The account book's own Desc2 does not state this build at all, which is why his drawing is the only source (owner: 一律跟账本。除了sofa compartment而已啊).",
+   "seat": "30"
+  },
+  {
+   "docs": [
+    "HC-SO-013262"
+   ],
+   "model": "8030",
+   "pieces": [
+    "1A(LHF)",
+    "1NA",
+    "L(RHF)"
+   ],
+   "desc2Match": "customize follow the detail in photo",
+   "confidence": "likely",
+   "why": "photo: slip headed '8-030'; three separately drawn boxes - box 1 with a hatched arm block at its far left, box 2 plain, then a clearly TALLER/deeper box at the right end (top edge ~2x higher than the seat row, pointing up toward the 'TV.' written above) with a hatched arm block at its right edge. Judgement call: the deeper right box read as the chaise L(RHF); unlike 013258 the Desc2 does not say 'L SHAPE' so the drawing is the only evidence. Seat OMITTED on purpose: the slip says '28/26 inch per seat' with the 28 apparently struck through - I cannot tell which number governs, so I will not guess | READ FROM THE DRAWING 2026-09-08, confidence LIKELY. This is a LIKELY reading, not a fact: the judgement it rests on is named above, and the owner can overrule this ONE build without touching the rest of the round. The account book's own Desc2 does not state this build at all, which is why his drawing is the only source (owner: 一律跟账本。除了sofa compartment而已啊)."
+  },
+  {
+   "docs": [
+    "HC-SO-013310"
+   ],
+   "model": "5535",
+   "pieces": [
+    "2A(LHF)",
+    "L(RHF)"
+   ],
+   "desc2Match": "Bottom wrap nylon",
+   "confidence": "confident",
+   "why": "photo: slip headed '5535 L'. Left group is TWO boxes (30\" and 30\") inside ONE continuous outline with a single shared divider, with an arm bracket drawn on its far LEFT = 2A(LHF). Then a hand-drawn '+'. Then a single much DEEPER box marked 30\" with an arm bracket on its far RIGHT = the chaise L(RHF). Desc2 'Size:30\"' agrees with the 30\" written in every box | READ FROM THE DRAWING 2026-09-08, confidence CONFIDENT. The account book's own Desc2 does not state this build at all, which is why his drawing is the only source (owner: 一律跟账本。除了sofa compartment而已啊).",
+   "seat": "30"
+  },
+  {
+   "docs": [
+    "HC-SO-013321"
+   ],
+   "model": "8030",
+   "pieces": [
+    "2S"
+   ],
+   "desc2Match": "book bottom",
+   "confidence": "likely",
+   "why": "photo: slip headed '8030', 'col: tbc', 'nilon bottom'. One rectangle with a CONTINUOUS top line and a single T-junction divider in the middle (I zoomed the divider to confirm one shared stroke, not two abutting box edges), a hatched arm block at the far LEFT end and a hatched arm block at the far RIGHT end; the two short bottom strokes are cushion lines. Judgement call: by the owner's one-outline rule this is a single joined two-seat unit carrying both arms, which in the vocabulary is 2S rather than 1A(LHF)+1A(RHF). No number written in either box and Desc2 states no size, so seat is omitted | READ FROM THE DRAWING 2026-09-08, confidence LIKELY. This is a LIKELY reading, not a fact: the judgement it rests on is named above, and the owner can overrule this ONE build without touching the rest of the round. The account book's own Desc2 does not state this build at all, which is why his drawing is the only source (owner: 一律跟账本。除了sofa compartment而已啊)."
+  },
+  {
+   "docs": [
+    "HC-SO-013322"
+   ],
+   "model": "8030",
+   "pieces": [
+    "L(LHF)",
+    "1NA",
+    "1A(RHF)"
+   ],
+   "desc2Match": "replace the leg by fully cover",
+   "confidence": "confident",
+   "why": "photo: photo 1: slip headed '8030'; three separately drawn boxes each containing 35 - the LEFT box is clearly deeper (its outline extends well above the other two, toward the 'TV.' written above) and carries a hatched arm block on its LEFT edge = chaise L(LHF); the middle box is plain = 1NA; the right box has a hatched arm block on its RIGHT edge = 1A(RHF). The 35 in each box matches. Photo 2 is a customer reference photo of a finished L-shaped sofa and adds no piece detail. The '35=10.75 / 32=10 feet / ...' column on the right is a size-to-feet conversion table, not part of this order | READ FROM THE DRAWING 2026-09-08, confidence CONFIDENT. The account book's own Desc2 does not state this build at all, which is why his drawing is the only source (owner: 一律跟账本。除了sofa compartment而已啊).",
+   "seat": "35"
+  },
+  {
+   "docs": [
+    "HC-SO-013323"
+   ],
+   "model": "9028",
+   "pieces": [
+    "L(LHF)",
+    "2A(RHF)"
+   ],
+   "desc2Match": "back rest change 8069",
+   "confidence": "likely",
+   "why": "photo: a low-resolution phone screenshot of the slip. Header line reads '9028  2+L  (28\")'. Drawing: a deeper box at the LEFT containing 28 with a bracket on its left side (extends downward toward the 'TV' written below-right) = chaise L(LHF); then '+'; then ONE outline containing two boxes '28 | 28' with a dark/hatched arm block at its far RIGHT = 2A(RHF). Judgement call: the slip occupies only about 85x30 px of the image so the individual strokes are blurred - I am relying on the written '2+L' header agreeing with what I can make out of the drawing. Seat 28 from the boxes, the header '(28\")' and Desc2 '28 inch' | READ FROM THE DRAWING 2026-09-08, confidence LIKELY. This is a LIKELY reading, not a fact: the judgement it rests on is named above, and the owner can overrule this ONE build without touching the rest of the round. The account book's own Desc2 does not state this build at all, which is why his drawing is the only source (owner: 一律跟账本。除了sofa compartment而已啊).",
+   "seat": "28"
+  },
+  {
+   "docs": [
+    "HC-SO-013434"
+   ],
+   "model": "8030",
+   "pieces": [
+    "1A(LHF)",
+    "1A(RHF)"
+   ],
+   "desc2Match": "back rest separate install in cus house",
+   "confidence": "confident",
+   "why": "photo: 'TV' written above, then TWO boxes drawn as separate rectangles with a clear gap between them (each has its own top line, and there is a plain gap between the left box's right edge and the right box's left edge). The left box has a hatched arm block on its LEFT edge, the right box has a hatched arm block on its RIGHT edge; both boxes are the same height so neither is a chaise. No number is written in either box; seat 30 comes from Desc2 '30 inch per seat' | READ FROM THE DRAWING 2026-09-08, confidence CONFIDENT. The account book's own Desc2 does not state this build at all, which is why his drawing is the only source (owner: 一律跟账本。除了sofa compartment而已啊).",
+   "seat": "30"
+  },
+  {
+   "docs": [
+    "HC-SO-013493"
+   ],
+   "model": "9050",
+   "pieces": [
+    "1A(LHF)",
+    "1NA",
+    "1A(RHF)"
+   ],
+   "desc2Match": "Nilon bottom",
+   "confidence": "confident",
+   "why": "photo: slip headed '9050', with 'col: tbc' and 'nilor bottom' written under the drawing. Three boxes each containing 32, drawn as three SEPARATE rectangles (two parallel verticals with a gap between each adjacent pair), a hatched arm block at the far left end and a hatched arm block at the far right end - the same shape as the owner's approved SO-012636. Seat 32 read from the boxes | READ FROM THE DRAWING 2026-09-08, confidence CONFIDENT. The account book's own Desc2 does not state this build at all, which is why his drawing is the only source (owner: 一律跟账本。除了sofa compartment而已啊).",
+   "seat": "32"
+  },
+  {
+   "docs": [
+    "HC-SO-013494"
+   ],
+   "model": "9050",
+   "pieces": [
+    "1A(LHF)",
+    "1NA",
+    "1A(RHF)"
+   ],
+   "desc2Match": "nicca 01",
+   "confidence": "confident",
+   "why": "photo: slip headed '9050', 'TV' drawn above the sofa. Three boxes each containing 32, drawn as three separate rectangles with double verticals and a gap between each adjacent pair. An extra bracket line stands outside the LEFT edge of box 1 with a handwritten arrow labelled 'Arm rest.' pointing at it, and an extra bracket line outside the RIGHT edge of box 3 with a second arrow labelled 'Arm rest' pointing at it; the middle box carries no arm. Seat 32 read from the boxes | READ FROM THE DRAWING 2026-09-08, confidence CONFIDENT. The account book's own Desc2 does not state this build at all, which is why his drawing is the only source (owner: 一律跟账本。除了sofa compartment而已啊).",
+   "seat": "32"
+  }
+ ]
+}

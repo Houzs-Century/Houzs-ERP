@@ -2011,6 +2011,20 @@ the apply script writes from. `lib/variant-report.mjs` locks on `DIFFER` and on
 a proceeded `ERP_BLANK`; `BOOK_BLANK`, `PENDING`, `RECORDED` and now `RULED`
 fall to the branches below and never lock.
 
+**The ruling is asked for on BOTH branches, and until 2026-09-08 it was asked
+for on only one.** The lookup ran where the book's Desc2 DECODED and the two
+sides then disagreed — and not where the Desc2 does **not** decode at all, which
+is exactly the case his rule reserves for his drawing and therefore exactly the
+case where his answer is the only one there is. So a sofa he had read, ruled and
+had written into the ERP kept reporting as `UNREADABLE`, i.e. **CANNOT BE
+COMPARED — your drawing decides these**, on every run for ever; 20 of the 109
+unanswerable documents were in that state. Both branches now use the same
+lookup and the same strictness: `RULED` needs the ERP to hold his answer as an
+exact multiset, a `_held` ruling is excluded by `makeSofaRulingLookup`, and a
+ruling the ERP has not been moved to stays `UNREADABLE` — still locking — while
+naming the answer it is failing to match.
+`docs/bugs/0720-the-reconcile-never-asked-for-the-owner-s-ruling-where-his-d.md`.
+
 **So a migrated sales order now unlocks exactly when the ERP holds what the
 owner ruled.** Measured on the 2026-09-08 runs: `HC-SO-010209` was
 `LOCKED ... — sofa compartments` before (`34221922832`) and is not after

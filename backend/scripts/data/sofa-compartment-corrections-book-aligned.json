@@ -1,0 +1,403 @@
+{
+ "_note": "BOOK-ALIGNED sofa builds — the account book's own decoded text, NOT the owner's drawings. Every entry here exists because the ERP carried a bare -1S (or a partial) placeholder while AutoCount's Desc2 states the build out loud and the decoder reads it cleanly. These are the 31 documents the 2026-09-08 sales-order tally listed under 'DIFFER, and it is work' on the sofa-compartment axis. They are NOT owner rulings and must never be described as such: the owner's own readings live in sofa-compartment-corrections-2026-08.json and -2026-09.json, and his drawing overrides the book ONLY on the documents named in those two files. Because the target build here EQUALS the book, a document corrected from this file reports AGREE, never RULED — RULED is reachable only where the ERP differs from the book by his decision, and it is checked after the multiset has already agreed or not.",
+ "_rules": "Money never moves: the price rides the FIRST piece and every other piece is 0, exactly as the importer wrote it. Lines are matched to target pieces and UPDATED in place so a row id - and any purchase allocation hanging off it - survives. desc2Match is the WHOLE Desc2 text of the line, because four of these documents carry TWO sofa lines whose texts share a prefix (HC-SO-005013 '60cm 3RR' and '60cm 2S'), and a short needle would put one build's answer on the other build's rows. NO SEAT is written by any entry: the book states many of these in centimetres, variants.seatHeight holds bare inches, and the seat axis reads ZERO differences on the 2026-09-08 tally - a repair that moved it would be creating work, not closing it.",
+ "_measured": "Sales-order tally run 34226234984 (2026-09-08, company 1, book snapshot 2026-09-08T00:03:44Z): 2,882 documents, 33 differ and are work. 31 of those differ on the sofa compartment, and 33 book lines across 29 documents are listed here - 30 of the 31 documents are NOT PROCEEDED, and none of the 29 has a purchase order raised from it, so no factory paperwork moves.",
+ "entries": [
+  {
+   "docs": [
+    "HC-SO-004281"
+   ],
+   "model": "2379",
+   "pieces": [
+    "2S"
+   ],
+   "desc2Match": "2S (60cm)/col:kiv",
+   "why": "the ACCOUNT BOOK's own words, not a drawing: AutoCount SO-004281 DtlKey 295720 states \"2S (60cm)/col:kiv\", which the reconcile decodes to 2S, and the ERP holds 1S. Written under the owner's standing rule 一律跟账本 — the book decides every axis, and the sofa compartment is his ONLY where his drawing has spoken; here it has not, so the book's text is the authority. No seat is written: the book states this one in CENTIMETRES, and variants.seatHeight holds bare inches, and the seat axis reads ZERO differences today which this change must not disturb."
+  },
+  {
+   "docs": [
+    "HC-SO-005013"
+   ],
+   "model": "2379",
+   "pieces": [
+    "1A(R)(LHF)",
+    "1NA",
+    "1A(R)(RHF)"
+   ],
+   "desc2Match": "60cm 3RR/ COL:TBC",
+   "why": "the ACCOUNT BOOK's own words, not a drawing: AutoCount SO-005013 DtlKey 350234 states \"60cm 3RR/ COL:TBC\", which the reconcile decodes to 1A(R)(LHF)+1NA+1A(R)(RHF), and the ERP holds 1S. Written under the owner's standing rule 一律跟账本 — the book decides every axis, and the sofa compartment is his ONLY where his drawing has spoken; here it has not, so the book's text is the authority. No seat is written: the book states this one in CENTIMETRES, and variants.seatHeight holds bare inches, and the seat axis reads ZERO differences today which this change must not disturb."
+  },
+  {
+   "docs": [
+    "HC-SO-005013"
+   ],
+   "model": "2379",
+   "pieces": [
+    "2S"
+   ],
+   "desc2Match": "60cm 2S / COL:TBC",
+   "why": "the ACCOUNT BOOK's own words, not a drawing: AutoCount SO-005013 DtlKey 350235 states \"60cm 2S / COL:TBC\", which the reconcile decodes to 2S, and the ERP holds 1S. Written under the owner's standing rule 一律跟账本 — the book decides every axis, and the sofa compartment is his ONLY where his drawing has spoken; here it has not, so the book's text is the authority. No seat is written: the book states this one in CENTIMETRES, and variants.seatHeight holds bare inches, and the seat axis reads ZERO differences today which this change must not disturb."
+  },
+  {
+   "docs": [
+    "HC-SO-006752"
+   ],
+   "model": "2379",
+   "pieces": [
+    "1A(R)(LHF)",
+    "2NA",
+    "1NA",
+    "2A(RHF)"
+   ],
+   "desc2Match": "60cm/R+2+3/Col:TBC",
+   "why": "the ACCOUNT BOOK's own words, not a drawing: AutoCount SO-006752 DtlKey 467885 states \"60cm/R+2+3/Col:TBC\", which the reconcile decodes to 1A(R)(LHF)+2NA+1NA+2A(RHF), and the ERP holds 1S. Written under the owner's standing rule 一律跟账本 — the book decides every axis, and the sofa compartment is his ONLY where his drawing has spoken; here it has not, so the book's text is the authority. No seat is written: the book states this one in CENTIMETRES, and variants.seatHeight holds bare inches, and the seat axis reads ZERO differences today which this change must not disturb."
+  },
+  {
+   "docs": [
+    "HC-SO-005082"
+   ],
+   "model": "2379",
+   "pieces": [
+    "3S"
+   ],
+   "desc2Match": "2379 60cm 3S / Col: Coating Armani J9226-2-Buttercream",
+   "why": "the ACCOUNT BOOK's own words, not a drawing: AutoCount SO-005082 DtlKey 358016 states \"2379 60cm 3S / Col: Coating Armani J9226-2-Buttercream\", which the reconcile decodes to 3S, and the ERP holds 1S. Written under the owner's standing rule 一律跟账本 — the book decides every axis, and the sofa compartment is his ONLY where his drawing has spoken; here it has not, so the book's text is the authority. No seat is written: the book states this one in CENTIMETRES, and variants.seatHeight holds bare inches, and the seat axis reads ZERO differences today which this change must not disturb."
+  },
+  {
+   "docs": [
+    "HC-SO-005082"
+   ],
+   "model": "2379",
+   "pieces": [
+    "2S"
+   ],
+   "desc2Match": "2379 60cm 2S / Col: Coating Armani J9226-2-Buttercream",
+   "why": "the ACCOUNT BOOK's own words, not a drawing: AutoCount SO-005082 DtlKey 358017 states \"2379 60cm 2S / Col: Coating Armani J9226-2-Buttercream\", which the reconcile decodes to 2S, and the ERP holds 1S. Written under the owner's standing rule 一律跟账本 — the book decides every axis, and the sofa compartment is his ONLY where his drawing has spoken; here it has not, so the book's text is the authority. No seat is written: the book states this one in CENTIMETRES, and variants.seatHeight holds bare inches, and the seat axis reads ZERO differences today which this change must not disturb."
+  },
+  {
+   "docs": [
+    "HC-SO-002961"
+   ],
+   "model": "2379",
+   "pieces": [
+    "2A(LHF)",
+    "1A(RHF)"
+   ],
+   "desc2Match": "3s(18\")/Col: Armani J9226-1 SAND * 1 s = R",
+   "why": "the ACCOUNT BOOK's own words, not a drawing: AutoCount SO-002961 DtlKey 188830 states \"3s(18\")/Col: Armani J9226-1 SAND * 1 s = R\", which the reconcile decodes to 2A(LHF)+1A(RHF), and the ERP holds 1S. Written under the owner's standing rule 一律跟账本 — the book decides every axis, and the sofa compartment is his ONLY where his drawing has spoken; here it has not, so the book's text is the authority. No seat is written: the book states this one in a form this file does not need, and the seat axis reads ZERO differences today which this change must not disturb."
+  },
+  {
+   "docs": [
+    "HC-SO-006890"
+   ],
+   "model": "2379",
+   "pieces": [
+    "1S",
+    "2S",
+    "3S"
+   ],
+   "desc2Match": "1+2+3(60cm)/col:kiv",
+   "why": "the ACCOUNT BOOK's own words, not a drawing: AutoCount SO-006890 DtlKey 478907 states \"1+2+3(60cm)/col:kiv\", which the reconcile decodes to 1S+2S+3S, and the ERP holds 1S. Written under the owner's standing rule 一律跟账本 — the book decides every axis, and the sofa compartment is his ONLY where his drawing has spoken; here it has not, so the book's text is the authority. No seat is written: the book states this one in CENTIMETRES, and variants.seatHeight holds bare inches, and the seat axis reads ZERO differences today which this change must not disturb."
+  },
+  {
+   "docs": [
+    "HC-SO-001895"
+   ],
+   "model": "7219",
+   "pieces": [
+    "2S",
+    "2S"
+   ],
+   "desc2Match": "2+2.5S",
+   "why": "the ACCOUNT BOOK's own words, not a drawing: AutoCount SO-001895 DtlKey 121095 states \"2+2.5S\", which the reconcile decodes to 2S+2S, and the ERP holds 1S. Written under the owner's standing rule 一律跟账本 — the book decides every axis, and the sofa compartment is his ONLY where his drawing has spoken; here it has not, so the book's text is the authority. No seat is written: the book states this one in a form this file does not need, and the seat axis reads ZERO differences today which this change must not disturb."
+  },
+  {
+   "docs": [
+    "HC-SO-003189"
+   ],
+   "model": "2379",
+   "pieces": [
+    "2S",
+    "1S"
+   ],
+   "desc2Match": "2s+1s/60cm/colour (2s):Armani J9226-4/colour(1s):armani J9226-3",
+   "why": "the ACCOUNT BOOK's own words, not a drawing: AutoCount SO-003189 DtlKey 210619 states \"2s+1s/60cm/colour (2s):Armani J9226-4/colour(1s):armani J9226-3\", which the reconcile decodes to 2S+1S, and the ERP holds 1S. Written under the owner's standing rule 一律跟账本 — the book decides every axis, and the sofa compartment is his ONLY where his drawing has spoken; here it has not, so the book's text is the authority. No seat is written: the book states this one in CENTIMETRES, and variants.seatHeight holds bare inches, and the seat axis reads ZERO differences today which this change must not disturb."
+  },
+  {
+   "docs": [
+    "HC-SO-003100"
+   ],
+   "model": "2379",
+   "pieces": [
+    "3S"
+   ],
+   "desc2Match": "3S(60cm)/Col:TBC",
+   "why": "the ACCOUNT BOOK's own words, not a drawing: AutoCount SO-003100 DtlKey 199134 states \"3S(60cm)/Col:TBC\", which the reconcile decodes to 3S, and the ERP holds 1S. Written under the owner's standing rule 一律跟账本 — the book decides every axis, and the sofa compartment is his ONLY where his drawing has spoken; here it has not, so the book's text is the authority. No seat is written: the book states this one in CENTIMETRES, and variants.seatHeight holds bare inches, and the seat axis reads ZERO differences today which this change must not disturb."
+  },
+  {
+   "docs": [
+    "HC-SO-008794"
+   ],
+   "model": "2379",
+   "pieces": [
+    "1S(R)"
+   ],
+   "desc2Match": "1R(60cm) Col: Ninja 06",
+   "why": "the ACCOUNT BOOK's own words, not a drawing: AutoCount SO-008794 DtlKey 614851 states \"1R(60cm) Col: Ninja 06\", which the reconcile decodes to 1S(R), and the ERP holds 1S. Written under the owner's standing rule 一律跟账本 — the book decides every axis, and the sofa compartment is his ONLY where his drawing has spoken; here it has not, so the book's text is the authority. No seat is written: the book states this one in CENTIMETRES, and variants.seatHeight holds bare inches, and the seat axis reads ZERO differences today which this change must not disturb."
+  },
+  {
+   "docs": [
+    "HC-SO-008821"
+   ],
+   "model": "2379",
+   "pieces": [
+    "1A(R)(LHF)",
+    "2A(RHF)"
+   ],
+   "desc2Match": "60cm/3R/Col:tbc",
+   "why": "the ACCOUNT BOOK's own words, not a drawing: AutoCount SO-008821 DtlKey 616048 states \"60cm/3R/Col:tbc\", which the reconcile decodes to 1A(R)(LHF)+2A(RHF), and the ERP holds 1S. Written under the owner's standing rule 一律跟账本 — the book decides every axis, and the sofa compartment is his ONLY where his drawing has spoken; here it has not, so the book's text is the authority. No seat is written: the book states this one in CENTIMETRES, and variants.seatHeight holds bare inches, and the seat axis reads ZERO differences today which this change must not disturb."
+  },
+  {
+   "docs": [
+    "HC-SO-004751"
+   ],
+   "model": "2379",
+   "pieces": [
+    "1A(R)(LHF)",
+    "1NA",
+    "1A(R)(RHF)"
+   ],
+   "desc2Match": "2379 60cm 3RR /Col: Armani J9226-1-Sand",
+   "why": "the ACCOUNT BOOK's own words, not a drawing: AutoCount SO-004751 DtlKey 337477 states \"2379 60cm 3RR /Col: Armani J9226-1-Sand\", which the reconcile decodes to 1A(R)(LHF)+1NA+1A(R)(RHF), and the ERP holds 1S. Written under the owner's standing rule 一律跟账本 — the book decides every axis, and the sofa compartment is his ONLY where his drawing has spoken; here it has not, so the book's text is the authority. No seat is written: the book states this one in CENTIMETRES, and variants.seatHeight holds bare inches, and the seat axis reads ZERO differences today which this change must not disturb."
+  },
+  {
+   "docs": [
+    "HC-SO-013226"
+   ],
+   "model": "8030",
+   "pieces": [
+    "1A(LHF)",
+    "CNR",
+    "Console",
+    "1NA",
+    "1A(RHF)"
+   ],
+   "desc2Match": "(1EL+1C+1Console+1NA+1ER)28inch/Col:ZL-12",
+   "why": "the ACCOUNT BOOK's own words, not a drawing: AutoCount SO-013226 DtlKey 901839 states \"(1EL+1C+1Console+1NA+1ER)28inch/Col:ZL-12\", which the reconcile decodes to 1A(LHF)+CNR+Console+1NA+1A(RHF), and the ERP holds 1S. Written under the owner's standing rule 一律跟账本 — the book decides every axis, and the sofa compartment is his ONLY where his drawing has spoken; here it has not, so the book's text is the authority. No seat is written: the book states this one in a form this file does not need, and the seat axis reads ZERO differences today which this change must not disturb."
+  },
+  {
+   "docs": [
+    "HC-SO-005862"
+   ],
+   "model": "2379",
+   "pieces": [
+    "1A(R)(LHF)",
+    "1NA",
+    "1A(R)(RHF)"
+   ],
+   "desc2Match": "3RR/60cm/colour TBC",
+   "why": "the ACCOUNT BOOK's own words, not a drawing: AutoCount SO-005862 DtlKey 410194 states \"3RR/60cm/colour TBC\", which the reconcile decodes to 1A(R)(LHF)+1NA+1A(R)(RHF), and the ERP holds 1S. Written under the owner's standing rule 一律跟账本 — the book decides every axis, and the sofa compartment is his ONLY where his drawing has spoken; here it has not, so the book's text is the authority. No seat is written: the book states this one in CENTIMETRES, and variants.seatHeight holds bare inches, and the seat axis reads ZERO differences today which this change must not disturb."
+  },
+  {
+   "docs": [
+    "HC-SO-010457"
+   ],
+   "model": "9028",
+   "pieces": [
+    "1A(LHF)",
+    "2A(RHF)"
+   ],
+   "desc2Match": "1+2(28'Inch)/Col:BO315-1",
+   "why": "the ACCOUNT BOOK's own words, not a drawing: AutoCount SO-010457 DtlKey 722356 states \"1+2(28'Inch)/Col:BO315-1\", which the reconcile decodes to 1A(LHF)+2A(RHF), and the ERP holds 1S+2S. Written under the owner's standing rule 一律跟账本 — the book decides every axis, and the sofa compartment is his ONLY where his drawing has spoken; here it has not, so the book's text is the authority. No seat is written: the book states this one in a form this file does not need, and the seat axis reads ZERO differences today which this change must not disturb."
+  },
+  {
+   "docs": [
+    "HC-SO-003772"
+   ],
+   "model": "7179",
+   "pieces": [
+    "2A(LHF)",
+    "1A(RHF)"
+   ],
+   "desc2Match": "3S(66cm)/col:kiv",
+   "why": "the ACCOUNT BOOK's own words, not a drawing: AutoCount SO-003772 DtlKey 247554 states \"3S(66cm)/col:kiv\", which the reconcile decodes to 2A(LHF)+1A(RHF), and the ERP holds 1S. Written under the owner's standing rule 一律跟账本 — the book decides every axis, and the sofa compartment is his ONLY where his drawing has spoken; here it has not, so the book's text is the authority. No seat is written: the book states this one in CENTIMETRES, and variants.seatHeight holds bare inches, and the seat axis reads ZERO differences today which this change must not disturb."
+  },
+  {
+   "docs": [
+    "HC-SO-008769"
+   ],
+   "model": "8051",
+   "pieces": [
+    "2A(LHF)",
+    "1A(RHF)"
+   ],
+   "desc2Match": "2+1(32'Inch)/Col:BO315-KIV",
+   "why": "the ACCOUNT BOOK's own words, not a drawing: AutoCount SO-008769 DtlKey 613495 states \"2+1(32'Inch)/Col:BO315-KIV\", which the reconcile decodes to 2A(LHF)+1A(RHF), and the ERP holds 2S+1S. Written under the owner's standing rule 一律跟账本 — the book decides every axis, and the sofa compartment is his ONLY where his drawing has spoken; here it has not, so the book's text is the authority. No seat is written: the book states this one in a form this file does not need, and the seat axis reads ZERO differences today which this change must not disturb."
+  },
+  {
+   "docs": [
+    "HC-SO-004692"
+   ],
+   "model": "2379",
+   "pieces": [
+    "3S"
+   ],
+   "desc2Match": "3s(60cm) / col: j9226-3-moccasin",
+   "why": "the ACCOUNT BOOK's own words, not a drawing: AutoCount SO-004692 DtlKey 334211 states \"3s(60cm) / col: j9226-3-moccasin\", which the reconcile decodes to 3S, and the ERP holds 1S. Written under the owner's standing rule 一律跟账本 — the book decides every axis, and the sofa compartment is his ONLY where his drawing has spoken; here it has not, so the book's text is the authority. No seat is written: the book states this one in CENTIMETRES, and variants.seatHeight holds bare inches, and the seat axis reads ZERO differences today which this change must not disturb."
+  },
+  {
+   "docs": [
+    "HC-SO-004718"
+   ],
+   "model": "2379",
+   "pieces": [
+    "1A(R)(LHF)",
+    "1A(R)(RHF)"
+   ],
+   "desc2Match": "60cm/2RR/Col:J9226-10-NAVY",
+   "why": "the ACCOUNT BOOK's own words, not a drawing: AutoCount SO-004718 DtlKey 335524 states \"60cm/2RR/Col:J9226-10-NAVY\", which the reconcile decodes to 1A(R)(LHF)+1A(R)(RHF), and the ERP holds 1S. Written under the owner's standing rule 一律跟账本 — the book decides every axis, and the sofa compartment is his ONLY where his drawing has spoken; here it has not, so the book's text is the authority. No seat is written: the book states this one in CENTIMETRES, and variants.seatHeight holds bare inches, and the seat axis reads ZERO differences today which this change must not disturb."
+  },
+  {
+   "docs": [
+    "HC-SO-006269"
+   ],
+   "model": "2379",
+   "pieces": [
+    "3S",
+    "1S"
+   ],
+   "desc2Match": "3+1S(NOR)",
+   "why": "the ACCOUNT BOOK's own words, not a drawing: AutoCount SO-006269 DtlKey 434819 states \"3+1S(NOR)\", which the reconcile decodes to 3S+1S, and the ERP holds 1S. Written under the owner's standing rule 一律跟账本 — the book decides every axis, and the sofa compartment is his ONLY where his drawing has spoken; here it has not, so the book's text is the authority. No seat is written: the book states this one in a form this file does not need, and the seat axis reads ZERO differences today which this change must not disturb."
+  },
+  {
+   "docs": [
+    "HC-SO-003939"
+   ],
+   "model": "2379",
+   "pieces": [
+    "1A(R)(LHF)",
+    "2A(RHF)"
+   ],
+   "desc2Match": "3R/60cm/colour:armani J9226-1sand",
+   "why": "the ACCOUNT BOOK's own words, not a drawing: AutoCount SO-003939 DtlKey 266659 states \"3R/60cm/colour:armani J9226-1sand\", which the reconcile decodes to 1A(R)(LHF)+2A(RHF), and the ERP holds 1S. Written under the owner's standing rule 一律跟账本 — the book decides every axis, and the sofa compartment is his ONLY where his drawing has spoken; here it has not, so the book's text is the authority. No seat is written: the book states this one in CENTIMETRES, and variants.seatHeight holds bare inches, and the seat axis reads ZERO differences today which this change must not disturb."
+  },
+  {
+   "docs": [
+    "HC-SO-003939"
+   ],
+   "model": "2379",
+   "pieces": [
+    "1S(R)"
+   ],
+   "desc2Match": "1R/60cm/colour:armani J9226-1sand",
+   "why": "the ACCOUNT BOOK's own words, not a drawing: AutoCount SO-003939 DtlKey 266660 states \"1R/60cm/colour:armani J9226-1sand\", which the reconcile decodes to 1S(R), and the ERP holds 1S. Written under the owner's standing rule 一律跟账本 — the book decides every axis, and the sofa compartment is his ONLY where his drawing has spoken; here it has not, so the book's text is the authority. No seat is written: the book states this one in CENTIMETRES, and variants.seatHeight holds bare inches, and the seat axis reads ZERO differences today which this change must not disturb."
+  },
+  {
+   "docs": [
+    "HC-SO-001896"
+   ],
+   "model": "7179",
+   "pieces": [
+    "2A(LHF)",
+    "L(RHF)"
+   ],
+   "desc2Match": "L SHAPE",
+   "why": "the ACCOUNT BOOK's own words, not a drawing: AutoCount SO-001896 DtlKey 121097 states \"L SHAPE\", which the reconcile decodes to 2A(LHF)+L(RHF), and the ERP holds 1S. Written under the owner's standing rule 一律跟账本 — the book decides every axis, and the sofa compartment is his ONLY where his drawing has spoken; here it has not, so the book's text is the authority. No seat is written: the book states this one in a form this file does not need, and the seat axis reads ZERO differences today which this change must not disturb."
+  },
+  {
+   "docs": [
+    "HC-SO-006448"
+   ],
+   "model": "7179",
+   "pieces": [
+    "2A(LHF)",
+    "L(RHF)"
+   ],
+   "desc2Match": "Lshape (28\") / colour:",
+   "why": "the ACCOUNT BOOK's own words, not a drawing: AutoCount SO-006448 DtlKey 442055 states \"Lshape (28\") / colour:\", which the reconcile decodes to 2A(LHF)+L(RHF), and the ERP holds 1S. Written under the owner's standing rule 一律跟账本 — the book decides every axis, and the sofa compartment is his ONLY where his drawing has spoken; here it has not, so the book's text is the authority. No seat is written: the book states this one in a form this file does not need, and the seat axis reads ZERO differences today which this change must not disturb."
+  },
+  {
+   "docs": [
+    "HC-SO-007949"
+   ],
+   "model": "2379",
+   "pieces": [
+    "1A(R)(LHF)",
+    "1NA",
+    "1A(R)(RHF)"
+   ],
+   "desc2Match": "3RR/75cm",
+   "why": "the ACCOUNT BOOK's own words, not a drawing: AutoCount SO-007949 DtlKey 551732 states \"3RR/75cm\", which the reconcile decodes to 1A(R)(LHF)+1NA+1A(R)(RHF), and the ERP holds 1S. Written under the owner's standing rule 一律跟账本 — the book decides every axis, and the sofa compartment is his ONLY where his drawing has spoken; here it has not, so the book's text is the authority. No seat is written: the book states this one in CENTIMETRES, and variants.seatHeight holds bare inches, and the seat axis reads ZERO differences today which this change must not disturb."
+  },
+  {
+   "docs": [
+    "HC-SO-007949"
+   ],
+   "model": "2379",
+   "pieces": [
+    "1S(R)"
+   ],
+   "desc2Match": "1R/60cm",
+   "why": "the ACCOUNT BOOK's own words, not a drawing: AutoCount SO-007949 DtlKey 551733 states \"1R/60cm\", which the reconcile decodes to 1S(R), and the ERP holds 1S. Written under the owner's standing rule 一律跟账本 — the book decides every axis, and the sofa compartment is his ONLY where his drawing has spoken; here it has not, so the book's text is the authority. No seat is written: the book states this one in CENTIMETRES, and variants.seatHeight holds bare inches, and the seat axis reads ZERO differences today which this change must not disturb."
+  },
+  {
+   "docs": [
+    "HC-SO-011221"
+   ],
+   "model": "9028",
+   "pieces": [
+    "2A(LHF)",
+    "1A(RHF)"
+   ],
+   "desc2Match": "2+1(28\")/Col:BO315-3/BO315-23/Seat infront add 2\")",
+   "why": "the ACCOUNT BOOK's own words, not a drawing: AutoCount SO-011221 DtlKey 775621 states \"2+1(28\")/Col:BO315-3/BO315-23/Seat infront add 2\")\", which the reconcile decodes to 2A(LHF)+1A(RHF), and the ERP holds 2S+1S. Written under the owner's standing rule 一律跟账本 — the book decides every axis, and the sofa compartment is his ONLY where his drawing has spoken; here it has not, so the book's text is the authority. No seat is written: the book states this one in a form this file does not need, and the seat axis reads ZERO differences today which this change must not disturb."
+  },
+  {
+   "docs": [
+    "HC-SO-008403"
+   ],
+   "model": "7223",
+   "pieces": [
+    "2A(LHF)",
+    "L(RHF)"
+   ],
+   "desc2Match": "Size: L shape(28\") /Col: J9226-11-LAVA",
+   "why": "the ACCOUNT BOOK's own words, not a drawing: AutoCount SO-008403 DtlKey 580451 states \"Size: L shape(28\") /Col: J9226-11-LAVA\", which the reconcile decodes to 2A(LHF)+L(RHF), and the ERP holds 1S. Written under the owner's standing rule 一律跟账本 — the book decides every axis, and the sofa compartment is his ONLY where his drawing has spoken; here it has not, so the book's text is the authority. No seat is written: the book states this one in a form this file does not need, and the seat axis reads ZERO differences today which this change must not disturb."
+  },
+  {
+   "docs": [
+    "HC-SO-006941"
+   ],
+   "model": "7223",
+   "pieces": [
+    "2S",
+    "1S"
+   ],
+   "desc2Match": "2+1S\"70cm\"/col:J9047-1-Brunette",
+   "why": "the ACCOUNT BOOK's own words, not a drawing: AutoCount SO-006941 DtlKey 479873 states \"2+1S\"70cm\"/col:J9047-1-Brunette\", which the reconcile decodes to 2S+1S, and the ERP holds 1S. Written under the owner's standing rule 一律跟账本 — the book decides every axis, and the sofa compartment is his ONLY where his drawing has spoken; here it has not, so the book's text is the authority. No seat is written: the book states this one in CENTIMETRES, and variants.seatHeight holds bare inches, and the seat axis reads ZERO differences today which this change must not disturb."
+  },
+  {
+   "docs": [
+    "HC-SO-007195"
+   ],
+   "model": "2379",
+   "pieces": [
+    "1S(R)"
+   ],
+   "desc2Match": "75cm/1R/colour:J9226-14-lead",
+   "why": "the ACCOUNT BOOK's own words, not a drawing: AutoCount SO-007195 DtlKey 492652 states \"75cm/1R/colour:J9226-14-lead\", which the reconcile decodes to 1S(R), and the ERP holds 1S. Written under the owner's standing rule 一律跟账本 — the book decides every axis, and the sofa compartment is his ONLY where his drawing has spoken; here it has not, so the book's text is the authority. No seat is written: the book states this one in CENTIMETRES, and variants.seatHeight holds bare inches, and the seat axis reads ZERO differences today which this change must not disturb."
+  },
+  {
+   "docs": [
+    "HC-SO-011756"
+   ],
+   "model": "5535",
+   "pieces": [
+    "2A(LHF)",
+    "1A(RHF)"
+   ],
+   "desc2Match": "2+1(30'INCH)/COL:KN390-2",
+   "why": "the ACCOUNT BOOK's own words, not a drawing: AutoCount SO-011756 DtlKey 806486 states \"2+1(30'INCH)/COL:KN390-2\", which the reconcile decodes to 2A(LHF)+1A(RHF), and the ERP holds 2S+1S. Written under the owner's standing rule 一律跟账本 — the book decides every axis, and the sofa compartment is his ONLY where his drawing has spoken; here it has not, so the book's text is the authority. No seat is written: the book states this one in a form this file does not need, and the seat axis reads ZERO differences today which this change must not disturb."
+  }
+ ]
+}
