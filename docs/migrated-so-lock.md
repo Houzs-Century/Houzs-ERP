@@ -427,6 +427,21 @@ separate table keyed by document number, and `scm.mfg_sales_orders` is not
 touched by any of it. The table can be truncated and rebuilt without a migrated
 row changing.
 
+### This count and `docs/cutover-remaining-differences.md` are different questions
+
+That file classifies the reconcile's FINDING count across all six document
+types - 41 on the morning of 2026-09-08, of which 19 were sales orders. This
+section counts DOCUMENTS THAT DO NOT OPEN, sales orders only. The second number
+is larger and the two do not contradict:
+
+- one document can carry several findings, and several documents can share one;
+- a document the reconcile could not ANSWER for produces no finding at all - it
+  is not a difference - and it still does not open, because "could not tell" is
+  not "it matches". That is the whole of the 151.
+
+So: read that file to know what is WRONG and who has to fix it. Read this one to
+know what a salesperson can and cannot save today.
+
 ### Absent means LOCKED — five states, and only one of them opens
 
 | State | Answer |
