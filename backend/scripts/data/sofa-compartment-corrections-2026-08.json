@@ -44,8 +44,8 @@
     "2A(RHF)"
    ],
    "seat": "30",
-   "why": "Desc2 1R+C+2R. MODEL CORRECTED 2026-09-08 from 8030 to 5535: the book's own line (SO DtlKey 860757, PO DtlKey 884504) carries HOK-5535 SOFA -> 5535-1S. 5535 is deliberately ABSENT from SOFA_MODEL_ALIAS - the owner has ruled twice that it is its own model and must never be folded - so 8030 could only have come from treating it like 5537/5540, which do fold there. Owner 2026-09-08: 我们一定要对回账本.",
-   "desc2Match": "1R+C+2R (30\") / COL: BO315-3 BEIGE / BOT"
+   "why": "Desc2 1R+C+2R. MODEL CORRECTED 2026-09-08 from 8030 to 5535: the book's own line (SO DtlKey 860757, PO DtlKey 884504) carries HOK-5535 SOFA -> 5535-1S. 5535 is deliberately ABSENT from SOFA_MODEL_ALIAS - the owner has ruled twice that it is its own model and must never be folded - so 8030 could only have come from treating it like 5537/5540, which do fold there. Owner 2026-09-08: 我们一定要对回账本. desc2Match SHORTENED the same day, from '...BO315-3 BEIGE / BOT': the ERP's own description2 reads BO315-03 where the book reads BO315-3, so the old needle reached neither document (prod run 34186295345 reported 'no line matches' on both) and this entry could not apply at all. The prefix that survives is the one both sides agree on; all three rows on each document carry one identical text, so it is not ambiguous.",
+   "desc2Match": "1R+C+2R (30\") / COL: BO315-"
   },
   {
    "docs": [
