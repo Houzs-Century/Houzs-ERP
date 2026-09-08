@@ -202,6 +202,20 @@ describe('the failure message names the line', () => {
     expect(msg).toContain('New line 2: variant missing');
   });
 
+  /* Desktop shares the phone's failure vocabulary now
+     (vendor/scm/lib/line-write-failures.ts), so ONE cause behind several
+     refused lines is stated once here too. It used to be repeated per line,
+     which buries the one sentence the operator can act on. */
+  it('states a SHARED cause once instead of once per line', () => {
+    const locked = 'This order came from AutoCount and is view-only for now.';
+    const msg = lineWriteErrorMessage([
+      { label: 'SOFA-1', message: locked },
+      { label: 'BF-2', message: locked },
+      { label: 'MT-3', message: locked },
+    ], 0);
+    expect(msg).toBe(`3 lines could not be saved — ${locked}.`);
+  });
+
   it('says the staged work is still on screen', () => {
     expect(lineWriteErrorMessage([{ label: 'BF-2', message: 'price refused' }], 2))
       .toContain('Your 2 new lines are still on screen and not saved yet');

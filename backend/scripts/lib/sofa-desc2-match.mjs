@@ -88,12 +88,13 @@ export function desc2Contains(haystack, needle) {
 
 /**
  * @typedef {object} BuildSelection
- * @property {"all"|"exact"|"normalised"|"none"|"ambiguous"} verdict
+ * @property {"all"|"exact"|"normalised"|"none"|"ambiguous"|"linekey"} verdict
  *   `all` — the correction carries no desc2Match, so every row is the build.
  *   `exact` — plain substring, the behaviour this matcher has always had.
  *   `normalised` — found only after normalising; say so in the operator's log.
  *   `none` — no row carries the text. The build is not on this document.
  *   `ambiguous` — the needle spans more than one build. REFUSE; never pick.
+ *   `linekey` — selected by the account book's OWN line key, not by text.
  * @property {any[]} rows the rows of the build; empty unless the verdict allows
  * @property {string} how one line, for the operator's log
  * @property {string[]} texts the distinct normalised Desc2 the needle reached
@@ -105,10 +106,49 @@ export function desc2Contains(haystack, needle) {
  * @param {any[]} rows every sofa row on the document, in document order
  * @param {string|null|undefined} needle the correction's `desc2Match`
  * @param {(row:any)=>unknown} [readDesc2] how to read a row's Desc2
+ * @param {{lineKeys?: unknown[], readLineKey?: (row:any)=>unknown}} [opts]
+ *   `lineKeys` — the correction's `lineKeys`: the account book's own DtlKey for
+ *   each line of this build. When present it DECIDES, and the text is not
+ *   consulted at all.
  * @returns {BuildSelection}
  */
-export function selectBuildRows(rows, needle, readDesc2 = (r) => r.description2) {
+export function selectBuildRows(rows, needle, readDesc2 = (r) => r.description2, opts = {}) {
   const all = Array.isArray(rows) ? rows : [];
+
+  /* ── THE LINE KEY DECIDES WHEN IT IS GIVEN ────────────────────────────────
+     Text cannot always tell two builds apart. HC-SO-012827 holds a three-seater
+     and a single chair whose Desc2 the book wrote so that one is a SUBSTRING of
+     the other ("3 seater  35 inch  color …" and "35 inch  color …"), so no
+     needle addresses the single chair alone — every candidate reaches both and
+     is refused as ambiguous, correctly.
+
+     The account book assigns each line its own DtlKey, and
+     scm.mfg_sales_order_items.linked_ac_dtlkey already carries it. That is
+     IDENTITY, not a resemblance, so it is matched exactly (as strings, since
+     the file writes keys as text and a column may hand back a number).
+
+     It never falls back to the text. A key the document does not carry means
+     the build is not where the correction says it is, and quietly matching by
+     text instead would write the build onto the WRONG line — which is the
+     transposition class docs/bugs/0690 names and the reason this mode exists.
+     Matching by position, or by "the shorter text", is the same bug wearing a
+     different hat; neither is done here. */
+  const keys = Array.isArray(opts.lineKeys) ? opts.lineKeys.map((k) => String(k ?? "").trim()).filter(Boolean) : [];
+  if (keys.length) {
+    const readKey = opts.readLineKey || ((r) => r.linked_ac_dtlkey);
+    const want = new Set(keys);
+    const hits = all.filter((r) => want.has(String(readKey(r) ?? "").trim()));
+    const texts = [...new Set(hits.map((r) => normaliseDesc2(readDesc2(r))))];
+    if (hits.length !== want.size)
+      return {
+        verdict: "none",
+        rows: [],
+        how: `the document does not carry ${[...want].filter((k) => !hits.some((r) => String(readKey(r) ?? "").trim() === k)).join(", ") || "these line key(s)"} — the build is not on this document, and matching by text instead would write it onto the wrong line`,
+        texts,
+      };
+    return { verdict: "linekey", rows: hits, how: `matched the account book's own line key ${keys.join(", ")}`, texts };
+  }
+
   if (!needle) return { verdict: "all", rows: all.slice(), how: "no desc2Match on this correction", texts: [] };
 
   /* One build is one Desc2. Two distinct texts under one needle means the

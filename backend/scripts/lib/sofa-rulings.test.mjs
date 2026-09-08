@@ -86,10 +86,74 @@ test("the REAL corrections files load, and the builds written on 2026-09-08 are 
     look("HC-SO-010209", lines("L shape \nbottom Nilon \nColour : modenza"))?.pieces,
     ["1A(LHF)", "1NA", "L(RHF)"],
   );
-  assert.equal(
-    look("HC-SO-011099", lines("2S / colour :BO315-4")), null,
-    "held, so it must stay DIFFER in the reconcile",
+  /* HC-SO-011099 was HELD until 2026-09-08 and this line asserted `null` for
+     that reason: a ruling we cannot write must keep reading DIFFER. It is no
+     longer held — apply-sofa-compartment-corrections.mjs can now release the
+     purchase dedication the collapse strands (docs/bugs/0719) — so the lookup
+     must FIND it. That does not bless the document: `compareLine` reports RULED
+     only when the ERP's pieces already equal the ruling, and while the ERP
+     still holds 1A(LHF)+1A(RHF) it stays DIFFER and NAMES the answer it is
+     failing to match. The unheld entry is what makes it name one. */
+  assert.deepEqual(
+    look("HC-SO-011099", lines("2S / colour :BO315-4"))?.pieces, ["2S"],
+    "unheld 2026-09-08: the reconcile must be able to say WHICH answer this document is failing to match",
   );
+});
+
+/* ── A RULING ADDRESSED BY LINE KEY MUST BE FOUND TOO ───────────────────────
+ * HC-SO-012827 holds a three-seater and a separate single chair whose Desc2 the
+ * book wrote as a SUBSTRING of the three-seater's, so the single chair has no
+ * needle that reaches it alone and is addressed by the account book's own
+ * DtlKey instead (scripts/lib/sofa-desc2-match.mjs).
+ *
+ * This lookup is what stops the report handing the owner back a sofa he has
+ * already ruled on (docs/bugs/0720). It chose an entry by `desc2Match` only, so
+ * a line-key ruling was invisible to it and its line kept reading "sofa build
+ * not verifiable" AFTER the build had been written to production — measured on
+ * tally run 34236971666, where HC-SO-012827 stayed in the cannot-compare list
+ * with the owner's answer already in the database.
+ *
+ * The ERP lines carry the key as `ac_dtlkey` (lib/ac-reconcile-erp-sql.mjs). */
+const keyedLines = (rows) => rows.map(([ac_dtlkey, description2]) => ({ ac_dtlkey, description2 }));
+
+const SO_012827_DATA = {
+  sep: {
+    entries: [
+      { docs: ["HC-SO-012827"], pieces: ["1A(LHF)", "1NA", "1A(RHF)"], desc2Match: "3 seater", why: "owner" },
+      { docs: ["HC-SO-012827"], pieces: ["1S"], lineKeys: ["873101"], why: "owner" },
+    ],
+  },
+};
+
+test("LINE KEY: a ruling addressed by lineKeys is found on the line that carries the key", () => {
+  const look = makeSofaRulingLookup(withData(SO_012827_DATA));
+  const got = look("HC-SO-012827", keyedLines([["873101", "35 inch  color modenza 07 silver  Nilon bottom"]]));
+  assert.deepEqual(got && got.pieces, ["1S"]);
+});
+
+test("LINE KEY: the three-seater still resolves by its text, unaffected", () => {
+  const look = makeSofaRulingLookup(withData(SO_012827_DATA));
+  const got = look("HC-SO-012827", keyedLines([["873100", "3 seater  35 inch  color modenza 07 silver  Nilon bottom"]]));
+  assert.deepEqual(got && got.pieces, ["1A(LHF)", "1NA", "1A(RHF)"]);
+});
+
+test("LINE KEY: a key ruling never blesses a line that does not carry the key", () => {
+  /* The whole point of the key. Answering "1S" for the three-seater's lines
+     would bless the wrong furniture, which is the failure this lane prevents. */
+  const look = makeSofaRulingLookup(withData({
+    sep: { entries: [{ docs: ["HC-SO-012827"], pieces: ["1S"], lineKeys: ["873101"], why: "owner" }] },
+  }));
+  assert.equal(look("HC-SO-012827", keyedLines([["873100", "3 seater  35 inch  color"]])), null);
+});
+
+test("LINE KEY: a lone key ruling is not treated as the document's only build", () => {
+  /* `only` blesses a single needle-less entry as the document's one build. A
+     lineKeys entry is needle-less but is NOT unaddressed, so it must not take
+     that path on a line whose key does not match. */
+  const look = makeSofaRulingLookup(withData({
+    sep: { entries: [{ docs: ["HC-SO-012827"], pieces: ["1S"], lineKeys: ["873101"], why: "owner" }] },
+  }));
+  assert.equal(look("HC-SO-012827", [{ description2: "no key on this row at all" }]), null);
 });
 
 test("a LATER ruling supersedes an earlier one on the same build", () => {

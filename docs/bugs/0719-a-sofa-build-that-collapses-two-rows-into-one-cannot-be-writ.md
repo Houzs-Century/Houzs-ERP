@@ -71,3 +71,48 @@ that references it.
 
 **Ref.** `fix/apply-sofa-rulings`, 2026-09-08. Dry-run `34220106079`; evidence
 probe `34220446190`; held-and-printed `34221653216`.
+
+### 2026-09-08 — the machinery this asked for now exists (NOT yet run against production)
+
+"What a fix must do" above asked for the dedication to be dealt with as part of
+the collapse. `apply-sofa-compartment-corrections.mjs` now does it, and it does
+it by RELEASING rather than re-pointing:
+
+```
+release 1A(RHF) — HC-PO-009882 9028-1A(RHF) stops being dedicated to a row
+        this collapse removes; the PO half of this entry deletes it
+```
+
+`so_item_id = NULL`, in the SAME transaction as the delete it exists for. Not
+re-pointed onto the surviving row, and that is deliberate: the dedication is one
+sales line to one purchase line, so a second purchase line aimed at the
+surviving row would read as two incoming units of one ordered piece — the exact
+reason an inserted PO line never copies `so_item_id` either. It also avoids the
+trap re-pointing walks into, which is worth naming because it is not obvious:
+the downstream carry sets `item_code` on every PO line dedicated to a corrected
+SO row, so re-pointing would have made BOTH purchase rows `9028-2S`, and the PO
+half of the same entry would then have read them as **two identical sofas**
+(`splitBuildCopies`) and refused. Releasing leaves the released row on its old
+code, which is exactly what makes it surplus and deletable.
+
+**The guard was not relaxed.** Five conditions gate the release and every one is
+a refusal that leaves the old behaviour in place:
+
+1. sales-order side only — a GRN hanging off a purchase line is goods, not
+   paperwork;
+2. the build must collapse to exactly ONE piece, so "which surviving row did
+   this purchase line mean" has one answer and needs no guess;
+3. the dropped row must carry NO delivery-order line — something shipped against
+   it, and 「已经出货了的就随便把」 says leave those alone;
+4. every purchase line being released must itself be free of goods receipts, so
+   the PO half can really delete it;
+5. the entry must NAME the purchase order, or nothing would clean up the
+   released line and we would trade a refusal for an unbound purchase line
+   stating the old build.
+
+`HC-SO-011099` moved out of `_held` in the same change, carrying his ruling and
+this reason. **UNTESTED against production at the time of writing** — the entry
+is in the file and the code path exists; the dry-run and the apply are the
+evidence, and this entry stays `open` until they are pasted below.
+
+**Ref.** `fix/so-last-6-and-gr-transpose`, 2026-09-08.

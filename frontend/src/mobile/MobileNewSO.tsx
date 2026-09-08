@@ -9,6 +9,7 @@ import {
 } from "../vendor/scm/lib/so-variant-cascade";
 import { useQueryClient } from "@tanstack/react-query";
 import { authedFetch } from "../vendor/scm/lib/authed-fetch";
+import { lineWriteFailure, lineWriteSaveMessage, type LineWriteFailure } from "../vendor/scm/lib/line-write-failures";
 import { runSoVersionedMutation } from "../vendor/scm/lib/so-versioned-mutation";
 import { notifySaveProblems } from "../vendor/scm/components/SaveProblemsList";
 import { uploadSlipFull } from "../vendor/scm/lib/slip";
@@ -1616,15 +1617,18 @@ export function MobileNewSO({
     return false;
   };
 
-  async function applyLineDiff(soDocNo: string, leaseToken: string): Promise<number> {
+  /* RETURNS THE REASONS, not a count: a bare `catch { failed += 1; }` here is
+     what told the owner to "try Save again" against a 409 that never could —
+     the whole trace is in vendor/scm/lib/line-write-failures.ts. */
+  async function applyLineDiff(soDocNo: string, leaseToken: string): Promise<LineWriteFailure[]> {
     const base = `/mfg-sales-orders/${encodeURIComponent(soDocNo)}/items`;
     const leaseHeaders = { "X-SO-Edit-Lease": leaseToken };
-    let failed = 0;
+    const failures: LineWriteFailure[] = [];
     const liveIds = new Set(lines.map((l) => l.itemId).filter(Boolean));
     for (const snap of origItems) {
       if (liveIds.has(snap.id)) continue;
       try { await authedFetch(`${base}/${encodeURIComponent(snap.id)}`, { method: "DELETE", headers: leaseHeaders }); }
-      catch { failed += 1; }
+      catch (e) { failures.push(lineWriteFailure(snap.item_code || "A removed line", e)); }
     }
     const snapById = new Map(origItems.map((s) => [s.id, s]));
     for (const l of lines) {
@@ -1637,16 +1641,16 @@ export function MobileNewSO({
             body: JSON.stringify(itemBody(l)),
           });
         }
-        catch { failed += 1; }
+        catch (e) { failures.push(lineWriteFailure(l.itemCode.trim(), e)); }
         continue;
       }
       const snap = snapById.get(l.itemId);
       if (snap && lineChanged(l, snap)) {
         try { await authedFetch(`${base}/${encodeURIComponent(l.itemId)}`, { method: "PATCH", headers: leaseHeaders, body: JSON.stringify(itemPatchBody(l)) }); }
-        catch { failed += 1; }
+        catch (e) { failures.push(lineWriteFailure(l.itemCode.trim() || (snap.item_code ?? "A line"), e)); }
       }
     }
-    return failed;
+    return failures;
   }
 
   /* ── Amendment line builder (Phase 1-C) ──────────────────────────────────
@@ -2029,10 +2033,8 @@ export function MobileNewSO({
            rejects them 409 so_locked_processing anyway. */
         if (!lineEditingBlocked) {
           if (leaseToken) {
-            const failed = await applyLineDiff(docNo, leaseToken);
-            if (failed > 0) {
-              throw new Error(`${failed} line change(s) did not save. Your edits are still here; try Save again.`);
-            }
+            const failures = await applyLineDiff(docNo, leaseToken);
+            if (failures.length > 0) throw new Error(lineWriteSaveMessage(failures));
           }
           await uploadStagedPhotos(docNo, leaseToken);
         }

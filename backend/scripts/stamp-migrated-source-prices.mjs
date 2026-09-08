@@ -28,24 +28,33 @@
  * app recomputes `line_total = qty*unit - discount` on every edit
  * (grns.ts:1654, :1885, :2256): a line total written alone is self-erasing.
  *
- * ⚠ ONLY WHERE THE WHOLE INVOICE THEN RECONCILES. A migrated receipt is a
- * PARTIAL mirror — the cutover imported the outstanding purchase order, and
- * AutoCount's receipt routinely spans several. Measured: the 95 zero-priced
- * receipts fall into 41 AutoCount purchase invoices, and for 20 of them the
- * book's own receipt lines for OUR purchase order sum to LESS than the invoice
- * (PI-006897 bills RM 10,893.00 against a receipt line set worth RM 2,224.00).
- * Those are the multi-purchase-order fragments already with the owner. This
- * script does not touch them, deliberately: a correct price there would move
- * them out of the converter's "ours RM 0.00" bucket and into "both sides priced
- * and genuinely differ", making an owner-held decision read as a new problem.
- * So the gate is arithmetic — a document is stamped only when, after stamping,
- * the ERP group's total EQUALS what AutoCount billed on that invoice.
+ * ⚠ ONLY WHERE IT RECONCILES AT LINE GRAIN — AND THE YARDSTICK IS NOT THE
+ * WHOLE INVOICE. A migrated receipt is a PARTIAL mirror: the cutover imported
+ * the OUTSTANDING purchase orders, and AutoCount's receipt routinely spans
+ * several. This gate used to compare the ERP group against the invoice's whole
+ * NetTotal, which a partial mirror can never reach — and then explained the
+ * shortfall as "our receipt mirrors ONE purchase order and AutoCount's spans
+ * several", a sentence the schema contradicts
+ * (`grn_items.purchase_order_item_id` is PER LINE and nullable; the lines model
+ * a multi-order receipt fine). Nine goods receipts were refused on it.
  *
- * THE CROSS-CHECK IS NOT CIRCULAR. The line money comes from
- * `ac-reconcile-truth.json.gz` (GRDTL/DODTL) and the invoice total from
+ * The owner, 2026-09-08: 「我们一张GR to 一张PI — 可是GR 会from multiple PO啊 —
+ * 所以你要去GR 每个line的amount 都对齐啊 — PO GR PI的line information去吧要对其啊」
+ *
+ * Measured on the committed snapshot: 131 of the 192 live purchase invoices
+ * touching an in-scope receipt bill at least one line whose purchase order was
+ * never migrated — RM 625,213.71 across 892 lines. That money is not missing
+ * and no price can conjure it. So the gate now asks the only answerable
+ * question: after stamping, does the ERP group equal THE BOOK'S OWN money for
+ * exactly the (receipt x order) pairs it holds? lib/ac-chain-line-grain.mjs
+ * owns that arithmetic and is the only place it is stated.
+ *
+ * THE CROSS-CHECK IS NOT CIRCULAR, AND IT IS NOW MEASURED. The line money comes
+ * from `ac-reconcile-truth.json.gz` (GRDTL/DODTL) and the invoice total from
  * `ac-invoice-refs.json.gz` (PI/IV headers). Two independent exports of the
- * same book agreeing to the sen is the evidence; a document where they do not
- * agree is left alone.
+ * same book agreeing to the sen is the evidence — `invoiceIdentity` re-proves
+ * it per document at run time, and a document where they disagree is REFUSED
+ * rather than left to a comment claiming they always agree.
  *
  * ⚠ CURRENCY IS A REFUSAL, NOT A CONVERSION. A document that is not MYR at
  * rate 1 never reaches the planner, and a snapshot with no currency at all
@@ -62,7 +71,12 @@
  * WHAT THIS DOES NOT TOUCH, said plainly:
  *   * PURCHASE ORDER lines. The book holds no price on them; 空白不覆盖.
  *   * STOCK. Every document here is `migrated_no_stock = true`; the cutover
- *     wrote no inventory movement for them and this writes none either.
+ *     wrote no inventory movement for them and this writes none either. That
+ *     used to be a claim in this comment; since 2026-09-08 the apply path
+ *     MEASURES it against the live database immediately before the first UPDATE
+ *     and REFUSES THE WHOLE RUN if any document to be priced carries one. The
+ *     owner deferred stock that day (「库存先不看」), so a price repair that could
+ *     move an on-hand figure has to stop, not proceed on a comment.
  *   * The GL. No journal entry is posted, here or by the invoices that follow.
  *   * A line that already carries money. The selection is zero-priced lines and
  *     a priced one is never overwritten.
@@ -95,6 +109,7 @@ import { fileURLToPath } from 'node:url';
 import postgres from 'postgres';
 
 import { decodeSnapshot, currencyVerdict } from './lib/ac-scope.mjs';
+import { buildChain, invoiceGateVerdict } from './lib/ac-chain-line-grain.mjs';
 import { planSourceDocument } from './lib/migrated-source-price-plan.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -351,7 +366,36 @@ async function main() {
     for (const f of foreignCurrency) bad(`     ${f}`);
   }
 
-  /* ── the invoice gate: only stamp where the whole group then reconciles ── */
+  /* ── THE INVOICE GATE, AT LINE GRAIN ────────────────────────────────────
+     It used to ask "does the ERP group reach the whole invoice's NetTotal?".
+     It cannot and never will: the migration carried the OUTSTANDING population,
+     so our documents mirror only SOME of the (receipt x order) pairs an invoice
+     bills — 131 of 192 live invoices bill at least one pair we never carried,
+     RM 625,213.71 in all. Grading a partial mirror against a whole invoice
+     reported nine goods receipts as short of money that was never ours, and the
+     report explained it with a sentence about multi-order receipts that the
+     schema contradicts (`grn_items.purchase_order_item_id` is PER LINE).
+
+     The owner, 2026-09-08: 「我们一张GR to 一张PI — 可是GR 会from multiple PO啊
+     — 所以你要去GR 每个line的amount 都对齐啊」.
+
+     So the yardstick is the BOOK'S OWN money for exactly the pairs we hold, and
+     it lives in lib/ac-chain-line-grain.mjs — the only place that says it. The
+     two-export cross-check is not lost; it is now measured per document
+     (`invoiceIdentity`) instead of assumed, and a book that cannot state one
+     invoice the same way twice REFUSES. */
+  const chain = buildChain(book, refs);
+
+  /** What one ERP document would be worth after this run's writes. */
+  const afterValue = (d) => {
+    const p = planByDoc.get(d.docNo);
+    if (!p) return docValue(d.rows);
+    const stamped = new Map(p.writes.map((w) => [w.lineId, w.lineTotalSen]));
+    return d.rows.reduce((s, r) => s + (stamped.has(r.lineId)
+      ? stamped.get(r.lineId)
+      : Math.max(0, Math.round(Number(r.qty) * num(r.unitSen)) - num(r.discountSen))), 0);
+  };
+
   const byInvoice = new Map();
   for (const d of docs) {
     const inv = invoiceOf(d);
@@ -365,18 +409,29 @@ async function main() {
   for (const [inv, group] of byInvoice) {
     const planned = group.filter((d) => planByDoc.has(d.docNo));
     if (!planned.length) continue;
-    const acTotal = acInvoiceTotal[inv];
-    const after = group.reduce((t, d) => {
-      const p = planByDoc.get(d.docNo);
-      if (!p) return t + docValue(d.rows);
-      const stamped = new Map(p.writes.map((w) => [w.lineId, w.lineTotalSen]));
-      return t + d.rows.reduce((s, r) => s + (stamped.has(r.lineId)
-        ? stamped.get(r.lineId)
-        : Math.max(0, Math.round(Number(r.qty) * num(r.unitSen)) - num(r.discountSen))), 0);
-    }, 0);
+    /* A DELIVERY mirrors a sales invoice one for one and has no (receipt x
+       order) pair to speak of, so the chain gate does not apply to it and the
+       whole-document comparison it always had is still the right one. */
+    const isReceiptSide = group.every((d) => d.kind === 'GR');
     const before = group.reduce((t, d) => t + docValue(d.rows), 0);
-    const row = { inv, acTotal, before, after, docs: group.map((d) => d.docNo), planned: planned.map((d) => d.docNo) };
-    if (acTotal != null && after === acTotal) accepted.push(row); else shortOfInvoice.push(row);
+    const after = group.reduce((t, d) => t + afterValue(d), 0);
+    const row = {
+      inv, acTotal: acInvoiceTotal[inv], before, after,
+      docs: group.map((d) => d.docNo), planned: planned.map((d) => d.docNo),
+    };
+    if (!isReceiptSide) {
+      if (row.acTotal != null && after === row.acTotal) accepted.push(row); else shortOfInvoice.push(row);
+      continue;
+    }
+    const v = invoiceGateVerdict(
+      chain, inv,
+      group.map((d) => ({ docNo: d.docNo, acDocNo: d.acDocNo, acScopeNo: d.acScopeNo, totalSen: afterValue(d) })),
+    );
+    Object.assign(row, {
+      expected: v.expectedSen, outOfScopeSen: v.outOfScopeSen,
+      outOfScopePairs: v.outOfScopePairs, why: v.why,
+    });
+    if (v.accepted) accepted.push(row); else shortOfInvoice.push(row);
   }
 
   const acceptedDocs = new Set(accepted.flatMap((a) => a.planned));
@@ -385,24 +440,46 @@ async function main() {
 
   /* ── the report ────────────────────────────────────────────────────────── */
   plain('');
-  plain('═════════ WHAT AUTOCOUNT BILLED, AND WHAT OUR DOCUMENTS WOULD BE WORTH ═════════');
+  plain('═════════ WHAT THE BOOK SAYS FOR THE PAIRS WE HOLD, AND WHAT OURS WOULD BE WORTH ═════════');
   plain('');
-  plain('AutoCount invoice   AutoCount billed      ours now        ours after      source document(s)');
+  plain('`book (our pairs)` is the account book\'s OWN money for the (receipt x purchase order) pairs this ERP');
+  plain('document mirrors — NOT the whole invoice, which also bills orders the migration never carried.');
+  plain('');
+  plain('AutoCount invoice   book (our pairs)      ours now        ours after      source document(s)');
   for (const a of [...accepted].sort((x, y) => x.inv.localeCompare(y.inv))) {
-    plain(`${String(a.inv).padEnd(19)} ${rm(a.acTotal).padStart(16)} ${rm(a.before).padStart(15)} ${rm(a.after).padStart(15)}      ${a.docs.join(' + ')}`);
+    plain(`${String(a.inv).padEnd(19)} ${rm(a.expected ?? a.acTotal).padStart(16)} ${rm(a.before).padStart(15)} ${rm(a.after).padStart(15)}      ${a.docs.join(' + ')}`);
   }
   plain('');
   note(`STAMPING ${writes.length} line(s) across ${acceptedDocs.size} document(s) / ${accepted.length} AutoCount invoice(s).`);
-  note(`After this, those ${accepted.length} invoice(s) reconcile to the sen and become convertible.`);
+  note(`After this, those ${accepted.length} invoice(s) reconcile to the sen at LINE grain and become convertible.`);
 
   if (shortOfInvoice.length) {
     plain('');
-    note(`LEFT ALONE — ${shortOfInvoice.length} AutoCount invoice(s) whose ERP side cannot reach the billed total:`);
-    note('  our receipt mirrors ONE purchase order and AutoCount\'s receipt spans several, so the invoice bills more');
-    note('  than our lines cover. A price cannot fix that; these are the multi-purchase-order fragments with the owner.');
+    note(`LEFT ALONE — ${shortOfInvoice.length} AutoCount invoice(s) that do NOT reconcile at line grain:`);
+    note('  Measured against the book\'s own money for the (receipt x order) pairs WE hold — not against the whole');
+    note('  invoice, which bills pairs the migration never carried. Each one prints why it was refused.');
     for (const s of [...shortOfInvoice].sort((x, y) => x.inv.localeCompare(y.inv))) {
-      plain(`     ${String(s.inv).padEnd(14)} AutoCount ${rm(s.acTotal ?? 0).padStart(13)}  ours would be ${rm(s.after).padStart(13)}   ${s.planned.join(' + ')}`);
+      plain(`     ${String(s.inv).padEnd(14)} book(our pairs) ${rm(s.expected ?? s.acTotal ?? 0).padStart(13)}  ours would be ${rm(s.after).padStart(13)}   ${s.planned.join(' + ')}`);
+      if (s.why) plain(`        ${s.why}`);
     }
+  }
+
+  /* ── WHAT THE INVOICE BILLS THAT WAS NEVER OURS ───────────────────────────
+     Printed, named and counted, so nobody reads the gap between an invoice's
+     NetTotal and our documents as missing money again. It is the owner's
+     outstanding rule working: a purchase order already fully received was not
+     migrated, and its share of the invoice is therefore not ours to hold. */
+  const withOutOfScope = [...accepted, ...shortOfInvoice].filter((r) => (r.outOfScopeSen ?? 0) > 0);
+  if (withOutOfScope.length) {
+    const totalOut = withOutOfScope.reduce((t, r) => t + r.outOfScopeSen, 0);
+    plain('');
+    note(`NOT MISSING MONEY — ${withOutOfScope.length} invoice(s) bill ${rm(totalOut)} on (receipt x order) pairs the`);
+    note('  migration never carried. The ERP is not short of it; it was never in scope. Shown so the difference');
+    note('  between an invoice NetTotal and our documents is never again read as a defect.');
+    for (const r of withOutOfScope.sort((x, y) => x.inv.localeCompare(y.inv)).slice(0, 20)) {
+      plain(`     ${String(r.inv).padEnd(14)} whole invoice ${rm(r.acTotal ?? 0).padStart(13)}  =  ours ${rm(r.expected ?? 0).padStart(13)}  +  never carried ${rm(r.outOfScopeSen).padStart(13)}   [${r.outOfScopePairs.join(', ')}]`);
+    }
+    if (withOutOfScope.length > 20) plain(`     ... ${withOutOfScope.length - 20} more`);
   }
 
   if (refusals.length) {
@@ -429,10 +506,46 @@ async function main() {
     return;
   }
 
+  /* ── 库存先不看: PROVE no on-hand figure can move, do not assume it ───────
+     The owner deferred stock on 2026-09-08, so a price repair that moved an
+     on-hand figure would have to STOP rather than proceed. Two independent
+     reasons it cannot, and only the second is evidence:
+
+       1. Nothing recomputes stock from a price. `trg_inventory_movement_fifo`
+          is AFTER INSERT ON inventory_movements, and this writes three money
+          columns on grn_items plus a re-summed header. That is READING CODE,
+          which describes intent, not production.
+       2. The documents themselves have NO movements. That is measured here,
+          against the live database, immediately before the first UPDATE — and
+          a document that HAS one aborts the whole run rather than being skipped
+          quietly, because it would mean `migrated_no_stock` no longer means
+          what this script's selection believes it means. */
+  const byId = new Map(docs.map((d) => [d.docNo, d]));
+  const touched = [...new Set(writes.map((w) => w.docNo))].map((n) => byId.get(n)).filter(Boolean);
+  const docIds = touched.map((d) => d.id);
+  const docNos = touched.map((d) => d.docNo);
+  const moved = docIds.length
+    ? await sql`
+      SELECT m.source_doc_id::text AS doc_id, m.source_doc_no, m.source_doc_type, COUNT(*)::int AS n
+        FROM scm.inventory_movements m
+       WHERE m.source_doc_id::text = ANY(${docIds}) OR m.source_doc_no = ANY(${docNos})
+       GROUP BY 1, 2, 3`
+    : [];
+  if (moved.length) {
+    plain('');
+    bad(`REFUSING THE WHOLE RUN: ${moved.length} of the ${docIds.length} document(s) to be priced already carry an`);
+    bad('  inventory movement, so they are not the stock-free migrated paperwork this selection believes they are.');
+    bad('  The owner deferred stock 2026-09-08 (「库存先不看」), so a repair that could move an on-hand figure stops');
+    bad('  here rather than proceeding on a document whose meaning has changed.');
+    for (const m of moved.slice(0, 10)) bad(`     ${m.source_doc_no ?? m.doc_id} (${m.source_doc_type}) — ${m.n} movement(s)`);
+    await sql.end({ timeout: 5 });
+    process.exit(2);
+  }
+  note(`STOCK: the ${docIds.length} document(s) to be priced carry 0 inventory movements — measured just now, not assumed.`);
+
   /* ── the write ─────────────────────────────────────────────────────────── */
   plain('');
   note(`=== APPLYING ${writes.length} line(s) ===`);
-  const byId = new Map(docs.map((d) => [d.docNo, d]));
   let wroteLines = 0;
   const touchedDocs = new Set();
   for (const w of writes) {
