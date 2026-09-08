@@ -5028,9 +5028,23 @@ describes a missing key and was produced by a repeated one. Full trace:
   one line of one document, so every ERP row carrying it belongs to that book
   line by construction.
 
-**OWNER RULING 2026-09-08 — option C, NOT BUILT YET.** A part-shipped sofa should
-hold ONLY the sofa's own line back, letting every other line on the document go
-on time, and completeness is judged on the sofa's pieces alone — 「C 除了
-accessories 不看 就看sofa」, so a pillow still in the warehouse does not hold the
-sofa. Until it is built the refusal above stands in for it. Anyone building C
-starts here and in that ledger entry.
+**OWNER RULING 2026-09-08 — option C, and it is BUILT** (`docs/bugs/0725`). A
+part-shipped sofa holds ONLY its own line back; every other line on the document
+goes on time. Completeness is judged on the sofa's own pieces — 「C 除了
+accessories 不看 就看sofa」 — which keying the decision on the shared DtlKey gives
+for free, since a pillow has its own key and is a different question.
+
+**Counted across EVERY delivery, not within one.** Each trip takes one piece, so
+"did THIS document take them all" answers no on the very trip that completes the
+sofa, and it would wait for ever. The delivery that covers the LAST piece is the
+one that carries the sofa into the book.
+
+Two things that stay:
+
+- **A document that is ONLY an incomplete sofa is still refused.** A transfer
+  naming no lines makes the service fall back to every outstanding line on the
+  source — the defect this function exists to prevent.
+- **The AutoCount delivery order will have fewer lines than the ERP's** while a
+  sofa is incomplete, and the sofa lands on a later delivery order than the one
+  its first piece shipped on. That is the trade option C makes, chosen with the
+  alternatives on the table.
