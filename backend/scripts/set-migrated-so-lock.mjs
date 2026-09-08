@@ -57,6 +57,12 @@ import {
   migratedSoIsLocked,
   VERDICT_PREFIX,
 } from "../src/scm/lib/migrated-so-lock.ts";
+/* The came-FROM-AutoCount rule, from ITS one home. The per-company counts this
+   script prints are the operator's whole picture of what a value costs, so they
+   have to be counted the way the GUARD counts — not by `linked_ac_docno IS NOT
+   NULL`, which also names every order the write-back has sent
+   (docs/bugs/0703). */
+import { soIsMigratedShape } from "../src/scm/lib/so-is-migrated.ts";
 
 const KEY = "scm.migrated_so_lock";
 const CONFIRM_PHRASE = "SET MIGRATED SO LOCK";
@@ -197,13 +203,22 @@ try {
      1 and 2 would be wrong the day a company is added, silently. Companies
      named in either VALUE are unioned in, so a value naming a company that has
      no sales orders is still shown rather than silently ignored. */
-  const companyRows = await sql`
-    SELECT c.id::int AS id, c.code,
-           (SELECT count(*) FROM scm.mfg_sales_orders so
-             WHERE so.company_id = c.id AND so.linked_ac_docno IS NOT NULL)::int AS migrated,
-           (SELECT count(*) FROM scm.mfg_sales_orders so
-             WHERE so.company_id = c.id AND so.linked_ac_docno IS NULL)::int AS native
-      FROM public.companies c ORDER BY c.id`;
+  const companies0 = await sql`SELECT id::int AS id, code FROM public.companies ORDER BY id`;
+  /* CLASSIFIED IN JS, BY THE REAL RULE. Three columns over the sales-order
+     headers is a cheap read, and it is the only way this print can be
+     guaranteed to agree with what the middleware will actually refuse. */
+  const soRows = await sql`SELECT company_id::int AS cid, doc_no, linked_ac_docno FROM scm.mfg_sales_orders`;
+  const tally = new Map();
+  for (const r of soRows) {
+    const t = tally.get(r.cid) ?? { migrated: 0, native: 0 };
+    if (soIsMigratedShape(r.doc_no, r.linked_ac_docno)) t.migrated += 1; else t.native += 1;
+    tally.set(r.cid, t);
+  }
+  const companyRows = companies0.map((c) => ({
+    id: c.id, code: c.code,
+    migrated: tally.get(c.id)?.migrated ?? 0,
+    native: tally.get(c.id)?.native ?? 0,
+  }));
   const known = new Map(companyRows.map((c) => [c.id, c]));
   for (const v of [parsedBefore, parsedAfter]) {
     if (Array.isArray(v.scope)) {

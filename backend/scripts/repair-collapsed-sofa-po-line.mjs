@@ -434,7 +434,9 @@ async function main() {
     /* Gate 6 - downstream. Deliberately stricter than "posted": a draft
        delivery counts, and the log says which kind it was. */
     const grs = await sql`
-      SELECT g.grn_number AS doc FROM scm.grn_items gi JOIN scm.grns g ON g.id = gi.grn_id
+      SELECT g.grn_number AS doc, g.migrated_no_stock AS migrated,
+             gi.item_code AS code, gi.qty_accepted AS qty
+        FROM scm.grn_items gi JOIN scm.grns g ON g.id = gi.grn_id
        WHERE gi.purchase_order_item_id = ${po.id}`;
     const dos = await sql`
       SELECT d.do_number AS doc, UPPER(COALESCE(d.status::text, '')) AS status
@@ -442,7 +444,14 @@ async function main() {
        WHERE di.so_item_id = ANY(${soSide.map((r) => r.id)})`;
     if (grs.length || dos.length) {
       refused.downstreamMoved++;
-      note(`downstream has moved - ${grs.length} goods-receipt line(s) (${grs.map((g) => g.doc).join(", ") || "-"}), `
+      /* WHICH KIND of receipt matters and the log has to say so. A cutover
+         receipt with `migrated_no_stock` moved no units - the balance snapshot
+         already brought them in - so it is paperwork, while a REAL one booked
+         stock under the code the row carried at the time. Both are refused
+         here; only one of them means physical goods are sitting under the
+         wrong SKU. */
+      note(`downstream has moved - ${grs.length} goods-receipt line(s) `
+        + `(${grs.map((g) => `${g.doc} ${g.code} x${g.qty} ${g.migrated ? "migrated/no stock" : "REAL STOCK"}`).join(", ") || "-"}), `
         + `${dos.length} delivery line(s) (${dos.map((d) => `${d.doc} ${d.status}`).join(", ") || "-"})`);
       continue;
     }
@@ -527,6 +536,46 @@ async function main() {
       out(`    ${doc}  ${String(r.code).padEnd(22)} ${String(r.item_group).padEnd(9)} ${String(r.stock_status).padEnd(8)}`
         + ` SO line ${r.dtl} -> the book raised ${[...new Set(r.pos.map((p) => p.docNo))].join(", ")}`);
     }
+  }
+
+  /* ── why each blocked line cannot reach READY, in the allocator's own terms ── */
+  out("");
+  out("==============================================================================");
+  out("4.  WHAT THE ALLOCATOR AND THE SHIP GATE SEE ON THOSE LINES");
+  out("==============================================================================");
+  out("");
+  out("  A sofa set reaches READY two ways (src/scm/lib/so-stock-allocation.ts 7b):");
+  out("  ONE production batch covering the WHOLE set - and a batch is an open lot with a");
+  out("  NON-NULL batch_no - or, when no batch covers, the owner's hard binding through");
+  out("  its own dedicated purchase line's received_qty. The second road leaves");
+  out("  allocated_batch_no NULL, and the DO ship gate (sofa-batch-guard.ts) refuses a");
+  out("  line with no bound batch - so a hard-bound sofa ships through the drop-ship");
+  out("  confirmation, which is offered only when EVERY affected line has a bound PO.");
+  out("");
+  const blockedCodes = [...new Set(blocked.map((r) => r.code).filter(Boolean))];
+  const lots = blockedCodes.length ? await sql`
+    SELECT item_code, warehouse_id::text AS wh, batch_no,
+           SUM(qty_remaining)::numeric AS qty, count(*)::int AS lots
+      FROM scm.v_inventory_lots_open
+     WHERE qty_remaining > 0 AND item_code = ANY(${blockedCodes})
+     GROUP BY item_code, warehouse_id, batch_no` : [];
+  const byCode = new Map();
+  for (const l of lots) {
+    if (!byCode.has(l.item_code)) byCode.set(l.item_code, { batched: 0, unbatched: 0 });
+    const b = byCode.get(l.item_code);
+    if (l.batch_no) b.batched += Number(l.qty); else b.unbatched += Number(l.qty);
+  }
+  const batchedCodes = [...byCode.entries()].filter(([, v]) => v.batched > 0).length;
+  out(`  ${blockedCodes.length} distinct product code(s) across the blocked lines; open lots exist for`);
+  out(`  ${byCode.size} of them, and ${batchedCodes} carry a batch_no at all.`);
+  out("");
+  let shownLots = 0;
+  for (const r of blocked) {
+    if (shownLots++ >= TOP) { out(`    ... and ${blocked.length - shownLots} more - raise TOP`); break; }
+    const b = byCode.get(r.code);
+    out(`    ${r.doc}  ${String(r.code).padEnd(22)} ${String(r.stock_status).padEnd(8)}`
+      + ` batch ${String(r.allocated_batch_no ?? "(none)").padEnd(16)}`
+      + ` open stock: ${b ? `${b.batched} batched / ${b.unbatched} unbatched` : "none"}`);
   }
 
   if (!APPLY) {
