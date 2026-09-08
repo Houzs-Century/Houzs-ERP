@@ -4896,7 +4896,9 @@ can never disagree about what he ruled. Two properties matter:
 
 - **`_held` builds are excluded.** `loadCorrections` returns them in a separate
   list. A ruling we have NOT written must keep reading `DIFFER`, because it is
-  still work — `HC-SO-011099` is exactly that today (`docs/bugs/0719`).
+  still work. `HC-SO-011099` was exactly that until 2026-09-08; it is no
+  longer held (see the section below), and `HC-PO-010056` / `HC-PO-000162`
+  remain.
 - **The entry is selected by its own `desc2Match`**, through the same matcher
   the apply script uses, never by document number alone. A document can hold
   more than one sofa build, and putting one build's answer on another build's
@@ -4928,7 +4930,8 @@ signal that catches a ruling applied to the wrong document.
 and never lock. Before this change `HC-SO-010209` and `HC-SO-011099` were both
 `LOCKED ... — sofa compartments` in the run's own output. After it, a document
 unlocks exactly when the ERP holds what the owner ruled: `HC-SO-010209` unlocks,
-`HC-SO-011099` stays locked because its ruling is still unwritten. That is the
+`HC-SO-011099` stayed locked while its ruling was unwritten — it was unheld on
+2026-09-08 and unlocks the moment the write lands. That is the
 intended behaviour and it is the same standing `RECORDED` already has, but it is
 a permission change, so it is stated here rather than left to be discovered.
 
@@ -4936,6 +4939,67 @@ Tests: `scripts/lib/variant-reconcile.test.mjs` — the ruled build, the
 not-folded-into-agree property, the unwritten ruling that stays `DIFFER`, the
 no-ruling control, and the assertion that a ruling cannot rescue an ERP carrying
 no compartments at all.
+
+## A collapse RELEASES the purchase dedication it strands (2026-09-08)
+
+New SURFACE on `backend/scripts/apply-sofa-compartment-corrections.mjs`: a new
+operation in the plan an operator reads.
+
+A build that goes from several rows to ONE leaves the dropped rows'
+`purchase_order_items.so_item_id` pointing at rows that are about to disappear,
+and the surplus guard refused the whole build for it (`HC-SO-011099`,
+`docs/bugs/0719`). His answer was never in doubt; our way of writing it was
+stuck. Writing only the purchase half — which DOES succeed — would have left the
+factory's document saying `2S` while the customer's still said
+`1A(LHF)+1A(RHF)`.
+
+The plan gained a `release` op, executed in the SAME transaction as the delete it
+exists for:
+
+```
+release 1A(RHF) — HC-PO-009882 9028-1A(RHF) stops being dedicated to a row
+        this collapse removes; the PO half of this entry deletes it
+```
+
+It is RELEASED (`so_item_id = NULL`), **never re-pointed onto the surviving
+row**, for two reasons. The dedication is one sales line to one purchase line, so
+a second purchase line aimed at the surviving row would read as two incoming
+units of one ordered piece — the same reason an inserted PO line never copies
+`so_item_id`. And re-pointing walks into a trap that is not obvious: the
+downstream carry sets `item_code` on every PO line dedicated to a corrected SO
+row, so re-pointing would have made BOTH purchase rows `9028-2S`, and the PO half
+of the same entry would then have read them as **two identical sofas**
+(`splitBuildCopies`) and refused. Releasing leaves the released row on its old
+code, which is exactly what makes it surplus and deletable.
+
+**The guard was not relaxed.** Five conditions gate the release and every one is
+a refusal that leaves the old behaviour in place:
+
+1. sales-order side only — a GRN hanging off a purchase line is goods, not
+   paperwork, and is not this script's to move;
+2. the build must collapse to exactly ONE piece, so "which surviving row did
+   this purchase line mean" has one answer and needs no guess;
+3. the dropped row must carry NO delivery-order line — something shipped against
+   it, and 「已经出货了的就随便把」 says leave those alone;
+4. every purchase line being released must itself be free of goods receipts, so
+   the PO half can really delete it;
+5. the entry must NAME the purchase order, or nothing would clean up the released
+   line and we would trade a refusal for an unbound purchase line stating the old
+   build.
+
+The money assertion was restated at the same time: it now names the ops that
+LEAVE a priced row (`update`, `insert`) instead of excluding `delete`. The old
+spelling would have summed `undefined` the moment a new op appeared, turning the
+whole assertion into `NaN` — which compares false against everything and would
+have refused every build with a message that is not about money.
+
+`HC-SO-011099` moved out of `_held` in the same change. It is not thereby
+blessed: `RULED` still requires the ERP to hold his answer, so until the write
+runs it reads `DIFFER` and NAMES the answer it is failing to match.
+
+Line-key addressing — `lineKeys` on a correction entry — is a SEPARATE change
+that landed the same day from another lane; it is documented in the section
+below, and `HC-SO-005082` and `HC-SO-011221` are corrected through it.
 
 ## Several ERP lines can share ONE book line — the sofa (2026-09-08)
 

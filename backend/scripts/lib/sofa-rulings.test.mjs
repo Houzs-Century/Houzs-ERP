@@ -86,9 +86,17 @@ test("the REAL corrections files load, and the builds written on 2026-09-08 are 
     look("HC-SO-010209", lines("L shape \nbottom Nilon \nColour : modenza"))?.pieces,
     ["1A(LHF)", "1NA", "L(RHF)"],
   );
-  assert.equal(
-    look("HC-SO-011099", lines("2S / colour :BO315-4")), null,
-    "held, so it must stay DIFFER in the reconcile",
+  /* HC-SO-011099 was HELD until 2026-09-08 and this line asserted `null` for
+     that reason: a ruling we cannot write must keep reading DIFFER. It is no
+     longer held — apply-sofa-compartment-corrections.mjs can now release the
+     purchase dedication the collapse strands (docs/bugs/0719) — so the lookup
+     must FIND it. That does not bless the document: `compareLine` reports RULED
+     only when the ERP's pieces already equal the ruling, and while the ERP
+     still holds 1A(LHF)+1A(RHF) it stays DIFFER and NAMES the answer it is
+     failing to match. The unheld entry is what makes it name one. */
+  assert.deepEqual(
+    look("HC-SO-011099", lines("2S / colour :BO315-4"))?.pieces, ["2S"],
+    "unheld 2026-09-08: the reconcile must be able to say WHICH answer this document is failing to match",
   );
 });
 

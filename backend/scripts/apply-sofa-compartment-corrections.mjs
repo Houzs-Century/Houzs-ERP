@@ -183,7 +183,7 @@ async function main() {
 
   let nBuilds = 0, nSofas = 0, nUpd = 0, nIns = 0, nDel = 0, nRefused = 0, nMissingSku = 0;
   let nPo = 0, nGr = 0, nDo = 0, nAmbiguous = 0, nStock = 0, nNoSeat = 0;
-  let nPi = 0, nSi = 0, nHeldInv = 0;
+  let nPi = 0, nSi = 0, nHeldInv = 0, nRel = 0;
   /** doc -> { isPo, needle, want, copies } — re-checked on a fresh connection. */
   const verify = [];
 
@@ -312,16 +312,72 @@ async function main() {
         if (!money.ok) { bad = money.why; break; }
         const { pairs, surplus } = pairRowsToPieces(copyRows, want);
 
+        /* ── A COLLAPSE MAY RELEASE A DEDICATION, AND ONLY A DEDICATION ──────
+           A build that goes from several rows to ONE leaves the dropped rows'
+           purchase dedications pointing at rows that are about to disappear,
+           and the guard below refused the whole build for it. That is
+           HC-SO-011099 and docs/bugs/0719: his answer was never in doubt, our
+           way of writing it was stuck, and writing only the purchase half —
+           which DOES succeed — would have left the factory's document saying
+           `2S` while the customer's still said `1A(LHF)+1A(RHF)`.
+
+           The fix 0719 asks for is that the dedication be dealt with as part of
+           the collapse. It is RELEASED (`so_item_id = NULL`), never re-pointed
+           onto the surviving row: the dedication is one sales line to one
+           purchase line, and pointing a second purchase line at the surviving
+           row would read as two incoming units of one ordered piece — the same
+           reason an inserted PO line never copies `so_item_id`. The released
+           line is then surplus on the purchase side and the PO half of this
+           same entry deletes it, which is why the conditions below refuse
+           unless that half exists and can run.
+
+           FIVE CONDITIONS, ALL OF THEM REFUSALS:
+             1. sales-order side only — a GRN hanging off a PO line is goods,
+                not paperwork, and is not this script's to move;
+             2. the build collapses to ONE piece, so "which surviving row did
+                this purchase line mean" has exactly one answer and needs no
+                guess;
+             3. the surplus row has NO delivery-order line — something already
+                shipped against it, and 「已经出货了的就随便把」 says leave those
+                alone rather than re-file them;
+             4. every purchase line being released is itself free of goods
+                receipts, so the PO half can really delete it;
+             5. this entry NAMES the purchase order, so the half that cleans it
+                up is going to run. Without that the release would leave an
+                unbound purchase line stating the old build — worse than the
+                refusal it replaced. */
+        const releases = [];
         const blockers = [];
         for (const r of surplus) {
           if (isPo) {
             const [{ n }] = await sql`SELECT COUNT(*)::int n FROM scm.grn_items WHERE purchase_order_item_id = ${r.id}`;
             if (n) blockers.push(`${r.code}: ${n} GRN line(s)`);
-          } else {
-            const [{ n: a }] = await sql`SELECT COUNT(*)::int n FROM scm.purchase_order_items WHERE so_item_id = ${r.id}`;
-            const [{ n: b }] = await sql`SELECT COUNT(*)::int n FROM scm.delivery_order_items WHERE so_item_id = ${r.id}`;
-            if (a + b) blockers.push(`${r.code}: ${a} PO line(s), ${b} DO line(s)`);
+            continue;
           }
+          const poLines = await sql`SELECT i.id, i.item_code, p.po_number
+                                      FROM scm.purchase_order_items i
+                                      JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
+                                     WHERE i.so_item_id = ${r.id}`;
+          const [{ n: nDo }] = await sql`SELECT COUNT(*)::int n FROM scm.delivery_order_items WHERE so_item_id = ${r.id}`;
+          if (!poLines.length && !nDo) continue;
+          if (nDo) { blockers.push(`${r.code}: ${poLines.length} PO line(s), ${nDo} DO line(s) — something shipped against it`); continue; }
+          if (pairs.length !== 1) {
+            blockers.push(`${r.code}: ${poLines.length} PO line(s), and this build keeps ${pairs.length} pieces — which one the purchase line meant is not written down anywhere`);
+            continue;
+          }
+          const poDocs = new Set(c.docs.filter((d) => /^HC-PO-/.test(d)));
+          const notNamed = poLines.filter((x) => !poDocs.has(x.po_number) && !poDocs.has(`HC-${String(x.po_number).replace(/^HC-/, "")}`));
+          if (notNamed.length) {
+            blockers.push(`${r.code}: ${notNamed.map((x) => x.po_number).join(", ")} holds a line dedicated to it and this correction does not name that purchase order, so nothing would clean the line up`);
+            continue;
+          }
+          let received = null;
+          for (const x of poLines) {
+            const [{ n }] = await sql`SELECT COUNT(*)::int n FROM scm.grn_items WHERE purchase_order_item_id = ${x.id}`;
+            if (n) { received = `${x.po_number} ${x.item_code}: ${n} GRN line(s)`; break; }
+          }
+          if (received) { blockers.push(`${r.code}: the purchase line dedicated to it has received goods — ${received}`); continue; }
+          releases.push({ soItemId: r.id, from: r.code, poLines });
         }
         if (blockers.length) { bad = `a surplus line is referenced downstream: ${blockers.join("; ")}`; break; }
 
@@ -342,10 +398,21 @@ async function main() {
           if (p.row) plan.push({ op: "update", id: p.row.id, from: p.row.code, to: p.want, price, tot, qty, v });
           else plan.push({ op: "insert", to: p.want, price, tot, qty, v, from: null });
         });
+        /* The release goes in FRONT of the delete it exists for: same
+           transaction, and the row cannot be cut from under a live pointer. */
+        for (const rel of releases)
+          plan.push({ op: "release", id: rel.soItemId, from: rel.from, poLines: rel.poLines });
         for (const r of surplus) plan.push({ op: "delete", id: r.id, from: r.code });
 
-        /* The assertion, restated on the plan itself rather than on intent. */
-        const after = plan.filter((p) => p.op !== "delete")
+        /* The assertion, restated on the plan itself rather than on intent.
+           Only the ops that LEAVE A PRICED ROW count — a delete removes one and
+           a release touches no money column at all. Naming them positively
+           rather than excluding `delete` is deliberate: the previous spelling
+           would have summed `undefined` the moment a new op appeared and turned
+           the whole assertion into NaN, which compares false against everything
+           and would have refused every build with a money message that is not
+           about money. */
+        const after = plan.filter((p) => p.op === "update" || p.op === "insert")
           .reduce((s, p) => ({ total: s.total + p.tot, charged: s.charged + p.price * p.qty }), { total: 0, charged: 0 });
         if (after.total !== money.before.total || after.charged !== money.before.charged) {
           bad = `money would move (total ${money.before.total} -> ${after.total}, charged ${money.before.charged} -> ${after.charged})`;
@@ -366,6 +433,10 @@ async function main() {
           if (p.op === "update" && K(p.from) === K(p.to)) { log(`      keep   ${compartmentOf(p.to)}${seat.write ? ` (seat ${seat.value})` : ""}`); nUpd++; }
           else if (p.op === "update") { log(`      change ${compartmentOf(p.from)} -> ${compartmentOf(p.to)}`); nUpd++; }
           else if (p.op === "insert") { log(`      add    ${compartmentOf(p.to)}`); nIns++; }
+          else if (p.op === "release") {
+            log(`      release ${compartmentOf(p.from)} — ${p.poLines.map((x) => `${x.po_number} ${x.item_code}`).join(", ")} stops being dedicated to a row this collapse removes; the PO half of this entry deletes it`);
+            nRel += p.poLines.length;
+          }
           else { log(`      remove ${compartmentOf(p.from)}`); nDel++; }
         }
       }
@@ -376,6 +447,14 @@ async function main() {
       for (const s of sofas) {
         await sql.begin(async (tx) => {
           for (const p of s.plan) {
+            if (p.op === "release") {
+              /* Released, not re-pointed — see the plan-side note. The row it
+                 pointed at is deleted two statements later, in THIS
+                 transaction, so the pointer is never dangling and never
+                 doubled. */
+              await tx`UPDATE scm.purchase_order_items SET so_item_id = NULL WHERE so_item_id = ${p.id}`;
+              continue;
+            }
             if (p.op === "delete") {
               if (isPo) await tx`DELETE FROM scm.purchase_order_items WHERE id = ${p.id}`;
               else await tx`DELETE FROM scm.mfg_sales_order_items WHERE id = ${p.id}`;
@@ -507,6 +586,7 @@ async function main() {
   log("");
   log(`builds touched ${nBuilds} (${nSofas} sofa${nSofas === 1 ? "" : "s"}) · lines updated ${nUpd} · added ${nIns} · removed ${nDel}`);
   log(`downstream carried: PO lines ${nPo} · GRN lines ${nGr} · DO lines ${nDo}`);
+  if (nRel) log(`purchase dedications RELEASED by a collapse: ${nRel} (each one's line is deleted by the PO half of the same entry — docs/bugs/0719)`);
   log(`downstream carried onto the invoices raised from them: purchase invoice lines ${nPi} · sales invoice lines ${nSi}${nHeldInv ? ` · ${nHeldInv} invoice(s) HELD because they are not migrated paperwork` : ""}`);
   log(`refused ${nRefused} (downstream reference, unreadable copies, or the money would move) · piece SKU not minted ${nMissingSku} · refused as ambiguous ${nAmbiguous} · refused for real stock movement ${nStock} · seat not written ${nNoSeat}`);
   for (const h of DATA.held) log(`HELD ${h.docs.join(" / ")} [${h.source}] — ${h.why}`);
