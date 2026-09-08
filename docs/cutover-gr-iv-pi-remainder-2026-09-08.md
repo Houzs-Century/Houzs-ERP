@@ -287,9 +287,19 @@ compartments by the BOOK's own build text and DIVIDES. One trap worth carrying
 away: the fold reads the book's UNTRANSLATED code, because the book names a sofa
 `AMN-SF2379 SOFA` and the mapping sheet turns that into `2379-1S`, which contains
 no "SOFA" at all — passing the translated string turns the fold off on exactly
-the rows it exists for. `docs/bugs/0707`. **The second round is UNTESTED against
-production**: a `workflow_dispatch` workflow reads its script from the default
-branch, so it can only run after this merges.
+the rows it exists for. `docs/bugs/0707`.
+
+**RUN — `34206144168`, 16:44:** six false rows before, one after.
+`28 PROVEN identical, 1 carry a real difference, 0 genuinely undecidable` across
+the 29 partially-unkeyed receipts; PI reports the one real extra row and IV
+reports none. The survivor is a different defect and is recorded as one:
+`GR-000997|PO-001696`, where the book's own code for that sofa is `2379-1S` and
+says nothing about being a sofa, so `comparisonKey`'s BOOK branch does not fold
+it while our compartment code does — `docs/bugs/0709`. The reconcile does not
+count that document at all; it classifies it through `classifyItemCode`'s
+decomposition arm, which folds on the MODEL. Two modules, two definitions of
+"this is a sofa", which agree on every other row the probe compared and disagree
+on this one.
 
 **Nothing in sections A to D depended on the six**: the item-code verdict comes
 from `GR item code — 0 line(s) where the ERP row and the book line carry the SAME
