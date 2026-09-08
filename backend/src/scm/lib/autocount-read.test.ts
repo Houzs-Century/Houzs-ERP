@@ -17,8 +17,17 @@ import { describe, expect, test } from 'vitest';
 import { readSoOutstandingSen } from './autocount-read';
 import { fakeSb, type Row } from './fake-postgrest';
 
+/* THE CAST LIVES HERE AND NOWHERE ELSE. `fakeSb` answers the handful of
+   PostgREST methods this module calls, not the 22 properties of a real
+   `SupabaseClient`, so it needs one widening to be passed at all. Written once,
+   against the reader's OWN parameter type — so if that signature changes, this
+   line is what stops compiling rather than eleven call sites — and never as
+   `as never`, which would switch the compiler off for the arguments too. */
+type SbArg = Parameters<typeof readSoOutstandingSen>[0];
+const asSb = (sb: ReturnType<typeof fakeSb>): SbArg => sb as unknown as SbArg;
+
 /** One document's payment ledger, in the shape the reader selects. */
-const sbWith = (payments: Row[]) => fakeSb({ mfg_sales_order_payments: payments });
+const sbWith = (payments: Row[]) => asSb(fakeSb({ mfg_sales_order_payments: payments }));
 
 /* The owner's own order, as the cutover left it in the database: the total is
    in `local_total_sen` because the importer's HCOLS does not carry
@@ -134,7 +143,7 @@ describe('readSoOutstandingSen — when the ERP may speak for a licensed ledger'
      degrade into "nothing has been paid, so the whole total is outstanding".
      `missing` makes fakeSb answer 42703 for the whole query, as PostgREST does. */
   test('an unreadable payments ledger THROWS rather than reading as unpaid', async () => {
-    const sb = fakeSb({ mfg_sales_order_payments: [] }, { mfg_sales_order_payments: ['amount_sen'] });
+    const sb = asSb(fakeSb({ mfg_sales_order_payments: [] }, { mfg_sales_order_payments: ['amount_sen'] }));
     await expect(readSoOutstandingSen(sb, {
       doc_no: 'HC-SO-1', total_revenue_sen: 500_00, deposit_sen: 0,
     })).rejects.toThrow(/mfg_sales_order_payments/);
