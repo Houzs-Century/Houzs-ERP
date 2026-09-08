@@ -96,6 +96,8 @@ async function main() {
     byDocModel.get(k).push(it);
   }
   let sofaHeld = 0, noOrder = 0, noLine = 0, unmapped = 0;
+  /* Code groups where more than one ERP line could have taken the photo. */
+  let ambiguousCode = 0;
   const heldDocs = []; // named, not just counted — a silent count hid a real bug
   for (const m of manifest) {
     /* The line the book actually photographed, when the ERP knows it. See the
@@ -158,12 +160,28 @@ async function main() {
       else noOrder++;
       continue;
     }
+    /* AMBIGUOUS BY CONSTRUCTION — docs/bugs/0672 site 10, COUNTED not silently
+       resolved. `cands` is every ERP line on this document carrying this item
+       code, and `cands[0]` takes the first. When there is more than one, the
+       book's photograph is being attached to whichever ERP line sorted first,
+       and the two can differ in COLOUR — two lines of one sofa model in two
+       fabrics is the ordinary case. The line-key path above already answers this
+       correctly whenever `linked_ac_dtlkey` exists; this fallback exists for the
+       lines that carry no key at all, where nothing in the manifest can settle
+       it. Refusing here would lose the photograph entirely, so the choice is
+       LOGGED for the owner rather than made silently — see the options in
+       docs/link-identity-open-decisions.md. */
+    if (cands.length > 1) {
+      ambiguousCode += 1;
+      log(`  AMBIGUOUS ${m.DocNo} ${erp}: ${cands.length} ERP lines carry this code and the book gives no line key — photo goes to the FIRST (variants: ${cands.map((cc) => JSON.stringify(cc.variants ?? null)).join(" | ").slice(0, 160)})`);
+    }
     const it = cands[0];
     const n = (seenN.get(it.id) ?? 0) + 1; seenN.set(it.id, n);
     const key = `so-items/${it.doc_no}/${it.id}/ac-${m.DtlKey}-${n}.jpg`;
     plan.push({ file: m.file, key, itemId: it.id, already: (it.photo_urls ?? []).includes(key) });
   }
   const todo = plan.filter((p) => !p.already);
+  log(`AMBIGUOUS code groups resolved by taking the FIRST line: ${ambiguousCode} (docs/bugs/0672 site 10 — an owner decision, see docs/link-identity-open-decisions.md)`);
   log(`manifest rows: ${manifest.length}; sofa held: ${sofaHeld}; unmapped: ${unmapped}; order-not-imported: ${noOrder}; line-missing: ${noLine}`);
   for (const d of heldDocs) log(`  sofa held (no ERP line): ${d}`);
   log(`photo keys planned: ${plan.length} (already attached: ${plan.length - todo.length})`);

@@ -4331,3 +4331,31 @@ Both go through `bookSoPaymentBestEffort` in `lib/so-payment-row.ts`, the same
 hook the panel path uses. `backend/tests/soCreateDepositBooks.test.ts` pins the
 shape — every payment insert in the writers is followed by the booking hook —
 and was RED on the unfixed tree.
+
+## Carrying SO-line links across a delete-and-reinsert matches SKU **and colour** (2026-09-08)
+
+`src/scm/lib/so-line-relink.ts`, `docs/bugs/0672` site 11, trace in
+`docs/bugs/0683`.
+
+The TBC sofa exchange deletes a build's lines and reinserts a new set; three
+tables reference `mfg_sales_order_items.id` with `ON DELETE SET NULL`, so the
+links are frozen before the delete and re-pointed after the reinsert.
+
+`SoLineIdentity` was `{ id, itemCode, lineNo }` and the bucket was **the item
+code alone**, so two lines of the same model in different fabrics — the ordinary
+sofa case, and exactly what an exchange produces — shared a bucket and were
+paired by ORDINAL. A replacement set listing them in the other order hands the
+BLUE two-seater's purchase order to the GREY one. The SKU matches, the foreign
+key is valid, nothing dangles — and a PO line is HARD-BOUND (`isHardBoundLine`),
+so the floor is told the wrong sofa is covered.
+
+**The bucket is now `(code, variantSig)`.** `soLineVariantSig` reads
+`colourId ?? colourLabel ?? colourCode` — the same precedence
+`probe-link-identity.mjs` uses, for the reason `docs/bugs/0674` records:
+comparing `colourCode` alone found **0 comparable pairs on every edge**, an EMPTY
+answer that printed identically to a clean one.
+
+A line whose `(code, colour)` pair has no counterpart lands in `dropped`, which
+this module already reports out loud rather than inventing a link. **A missing
+link is recoverable; a wrong one lights the wrong stock.** Both callers in
+`mfg-sales-orders.ts` pass `variants`, which both sides already carried.

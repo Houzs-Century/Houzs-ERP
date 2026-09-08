@@ -4261,3 +4261,45 @@ so the fixture cannot encode a bug as an expectation.
 - `backend/scripts/autocount-service/AcSyncService.cs` — the AutoCount half
 - `backend/scripts/autocount-service/sdk-api-reference.txt` — the reflected SDK surface
 - `docs/modules/sales-order.md`, `docs/modules/purchase-order.md`
+
+## A line key is never stored on a pairing that cannot be proved (2026-09-08)
+
+`docs/bugs/0672` sites 7, 9, 10 and 12; trace in `docs/bugs/0683` and `0684`.
+
+`composeEdit` addresses a book row by `doc.EditDetail(dtlKey)` and deliberately
+STRIPS `ItemCode` off a keyed line, so nothing in flight can ever reveal a wrong
+key. **The correctness of `linked_ac_dtlkey` IS the correctness of every future
+edit of that document.** Four writers of that column, and of things addressed
+through it, were paired on a key alone:
+
+| writer | was | now |
+|---|---|---|
+| `persistNewLineKeys` (`lib/autocount-line-keys.ts`) | ItemCode only, and `got && want && got !== want` let a BLANK pass as agreement | all three of `persistLineKeys` defences — ItemCode, prefix-tolerant `Desc2`, and refusal when a code repeats with no `Desc2` to separate the two. `NewLineKeyTarget` carries `newDesc2` |
+| `scripts/backfill-ac-line-keys.mjs` | positional zip inside a `(DocNo, TRANSLATED code)` bucket, guarded only by equal counts | a bucket whose ERP code maps back to more than one AutoCount product is refused and counted. The count guard could not catch this: the counts agreed BECAUSE the merge made them agree |
+| `scripts/backfill-photo-urls-from-keys.mjs` | first row of a `(doc, DtlKey)` group | the group must be ONE MODEL first |
+| `scripts/import-so-line-photos.mjs` / `-po-` | first of several same-code candidates | ambiguous groups COUNTED and logged; the choice itself is an open owner decision (`docs/link-identity-open-decisions.md`) |
+
+**The MODEL, never the item code.** A sofa's compartments deliberately carry
+different codes (`MODEL-1S`, `MODEL-2S`, `MODEL-CNR`), so comparing codes would
+refuse every sofa — the entire population these paths serve. The model is the
+code before the first dash, which compartments share. Helper:
+`backend/scripts/lib/one-model-group.mjs`.
+
+**Why this is cheap.** `probe-link-identity.mjs` run 34172468269 (2026-09-08
+08:13 local) counted every shared `linked_ac_dtlkey` in production: 310 keys on
+`mfg_sales_order_items` (774 rows) and 106 on `purchase_order_items` (275 rows),
+and **all of them are one model AND on one document.** No group in production
+fails these guards today.
+
+## The SO to PO transfer asserts the product, not only the key (2026-09-08)
+
+`src/scm/shared/po-transfer-shape.ts` refused consolidated lines, stock lines,
+keyless lines, a repeated key and multiple source documents — every one about
+CARDINALITY or PRESENCE. A purchase line for a TRION naming a REGAL sales line
+would have transferred the REGAL's book line into a purchase order for TRIONs.
+
+Identity is now one of its refusals and falls back to **`create`**, the shape
+that already means "this cannot be expressed as a transfer": it costs a link and
+writes nothing wrong. A blank on either side falls back too.
+`readPoTransferFacts` adds `item_code` to the two selects it was already taking,
+so the check costs no extra round trip.

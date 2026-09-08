@@ -215,9 +215,14 @@ export async function readSoPaymentRefs(
 export async function readPoTransferFacts(
   sb: Sb,
   poId: string,
-): Promise<Array<{ id: string; so_item_id: string | null; allocationCount: number; sourceAcDtlKey: number | null; sourceSoDocNo: string | null; sourceSoInBook: boolean }>> {
+): Promise<Array<{ id: string; so_item_id: string | null; allocationCount: number; sourceAcDtlKey: number | null; sourceSoDocNo: string | null; sourceSoInBook: boolean; itemCode: string | null; sourceItemCode: string | null }>> {
+  /* `item_code` on BOTH sides — docs/bugs/0672 site 13. The transfer decision
+     refused on cardinality and presence and never on the PRODUCT, and the
+     transfer is addressed by DtlKey alone, so a purchase line naming a
+     sales line for a different bed would have transferred the wrong book row.
+     Both selects were already being taken; this adds one column to each. */
   const rows = ((await readOrThrow('purchase_order_items',
-    sb.from('purchase_order_items').select('id, so_item_id').eq('purchase_order_id', poId))) ?? []) as Array<Record<string, unknown>>;
+    sb.from('purchase_order_items').select('id, so_item_id, item_code').eq('purchase_order_id', poId))) ?? []) as Array<Record<string, unknown>>;
   if (!rows.length) return [];
 
   const ids = rows.map((r) => String(r.id));
@@ -234,15 +239,17 @@ export async function readPoTransferFacts(
     .filter((v): v is string => v !== null))];
   const keyOf = new Map<string, number>();
   const docOf = new Map<string, string>();
+  const codeOf = new Map<string, string | null>();
   const inBook = new Set<string>();
   if (soItemIds.length) {
     const soLines = ((await readOrThrow('mfg_sales_order_items',
-      sb.from('mfg_sales_order_items').select('id, linked_ac_dtlkey, doc_no').in('id', soItemIds))) ?? []) as Array<Record<string, unknown>>;
+      sb.from('mfg_sales_order_items').select('id, linked_ac_dtlkey, doc_no, item_code').in('id', soItemIds))) ?? []) as Array<Record<string, unknown>>;
     for (const l of soLines) {
       const k = Number(l.linked_ac_dtlkey);
       if (Number.isFinite(k) && k > 0) keyOf.set(String(l.id), k);
       const dn = String(l.doc_no ?? '').trim();
       if (dn) docOf.set(String(l.id), dn);
+      codeOf.set(String(l.id), l.item_code == null ? null : String(l.item_code));
     }
 
     /* IS THE SALES ORDER IN THE BOOK YET — the fact that tells a MISSING key
@@ -279,6 +286,8 @@ export async function readPoTransferFacts(
       sourceAcDtlKey: soItemId ? (keyOf.get(soItemId) ?? null) : null,
       sourceSoDocNo: soItemId ? (docOf.get(soItemId) ?? null) : null,
       sourceSoInBook: soItemId ? inBook.has(docOf.get(soItemId) ?? '') : false,
+      itemCode: r.item_code == null ? null : String(r.item_code),
+      sourceItemCode: soItemId ? (codeOf.get(soItemId) ?? null) : null,
     };
   });
 }
