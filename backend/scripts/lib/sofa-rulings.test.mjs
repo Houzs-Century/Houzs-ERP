@@ -91,3 +91,46 @@ test("the REAL corrections files load, and the builds written on 2026-09-08 are 
     "held, so it must stay DIFFER in the reconcile",
   );
 });
+
+/* ── A BUILD SELECTED BY ITS LINE KEY ────────────────────────────────────────
+ * Two of the last six sales-order differences hold the build on rows that carry
+ * NO Desc2, so no needle can reach them and the entry is keyed on the AutoCount
+ * DtlKey instead. The reporter has to honour the same key the writer does, or a
+ * build that IS written keeps reading DIFFER — which is bug 0714 all over
+ * again, one file later.
+ */
+test("LINE KEY: a keyed ruling is found on the row carrying that DtlKey", () => {
+  const dir = withData({
+    sep: { entries: [{ docs: ["HC-SO-011221"], pieces: ["2A(LHF)", "1A(RHF)"], dtlKey: "775621", why: "book" }] },
+  });
+  const look = makeSofaRulingLookup(dir);
+  /* The reconcile aliases the column to `ac_dtlkey`; a caller reading the table
+     directly has `linked_ac_dtlkey`. Both spellings must resolve. */
+  assert.deepEqual(look("HC-SO-011221", [{ ac_dtlkey: "775621" }]).pieces, ["2A(LHF)", "1A(RHF)"]);
+  assert.deepEqual(look("HC-SO-011221", [{ linked_ac_dtlkey: 775621 }]).pieces, ["2A(LHF)", "1A(RHF)"]);
+});
+
+test("LINE KEY: the ruling never reaches the document's OTHER book line", () => {
+  const dir = withData({
+    sep: {
+      entries: [
+        { docs: ["HC-SO-005082"], pieces: ["2379-3S"], dtlKey: "358016", why: "book" },
+        { docs: ["HC-SO-005082"], pieces: ["2379-2S"], dtlKey: "358017", why: "book" },
+      ],
+    },
+  });
+  const look = makeSofaRulingLookup(dir);
+  assert.deepEqual(look("HC-SO-005082", [{ ac_dtlkey: "358016" }]).pieces, ["2379-3S"]);
+  assert.deepEqual(look("HC-SO-005082", [{ ac_dtlkey: "358017" }]).pieces, ["2379-2S"]);
+  /* A third line of the same document is nobody's ruling. */
+  assert.equal(look("HC-SO-005082", [{ ac_dtlkey: "358018" }]), null);
+});
+
+test("LINE KEY: a keyed entry is not blessed by a document that only shares its number", () => {
+  const dir = withData({
+    sep: { entries: [{ docs: ["HC-SO-011221"], pieces: ["2A(LHF)"], dtlKey: "775621", why: "book" }] },
+  });
+  const look = makeSofaRulingLookup(dir);
+  /* No key on the lines at all: the entry names one, so it must not match. */
+  assert.equal(look("HC-SO-011221", [{ description2: "anything" }]), null);
+});

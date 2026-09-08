@@ -175,3 +175,74 @@ test("a null description2 is not a match for anything", () => {
   const got = selectBuildRows([{ item_code: "8030-1S", description2: null }], N_009597);
   assert.equal(got.verdict, "none");
 });
+
+/* ── SELECTION BY LINE KEY ───────────────────────────────────────────────────
+ * A build whose ERP rows do NOT carry the book's text cannot be reached by any
+ * needle, however wide — there is nothing on the row to match. Two of the last
+ * six sales-order differences are exactly that, and widening a needle until it
+ * hits is how a correction lands on the neighbouring build.
+ *
+ * `linked_ac_dtlkey` is the AutoCount line's own identity, stamped on every ERP
+ * row that came out of it (src/scm/lib/autocount-line-keys.ts:155 — "Every ERP
+ * row behind this AutoCount line gets the SAME key"). Selecting on it is
+ * identity, not resemblance, and it cannot reach a neighbouring build even when
+ * the two texts are byte-identical.
+ *
+ * A key that matches NOTHING is a REFUSAL, never a fallback to the text: a key
+ * we cannot find means the key we were given is wrong, and answering with the
+ * text would be the guess this whole module exists to refuse.
+ */
+const KEYED = [
+  { item_code: "2379-1S", description2: null, linked_ac_dtlkey: "358016" },
+  { item_code: "2379-1S", description2: null, linked_ac_dtlkey: "358017" },
+];
+
+test("LINE KEY: the build is the rows carrying that AutoCount DtlKey", () => {
+  const got = selectBuildRows(KEYED, null, undefined, { dtlKey: "358016" });
+  assert.equal(got.verdict, "line-key");
+  assert.equal(got.rows.length, 1);
+  assert.equal(got.rows[0].linked_ac_dtlkey, "358016");
+});
+
+test("LINE KEY: a number and its own string spelling are the same key", () => {
+  assert.equal(selectBuildRows(KEYED, null, undefined, { dtlKey: 358017 }).rows.length, 1);
+  assert.equal(
+    selectBuildRows([{ linked_ac_dtlkey: 358017 }], null, undefined, { dtlKey: "358017" }).rows.length,
+    1,
+  );
+});
+
+test("LINE KEY: several rows of ONE build all come back — a sofa is one book line", () => {
+  const rows = [
+    { item_code: "9028-2S", linked_ac_dtlkey: "775621" },
+    { item_code: "9028-1S", linked_ac_dtlkey: "775621" },
+    { item_code: "9028-1S", linked_ac_dtlkey: "775999" },
+  ];
+  const got = selectBuildRows(rows, null, undefined, { dtlKey: "775621" });
+  assert.equal(got.verdict, "line-key");
+  assert.equal(got.rows.length, 2);
+});
+
+test("LINE KEY: a key no row carries REFUSES rather than falling back to the text", () => {
+  const got = selectBuildRows(SO_012636, "Col: modenza 04: mustard", undefined, { dtlKey: "999999" });
+  assert.equal(got.verdict, "key-missing");
+  assert.equal(got.rows.length, 0);
+});
+
+test("LINE KEY: identity beats the text — the needle is not consulted at all", () => {
+  /* Both rows carry a text the needle matches; only one carries the key. */
+  const rows = [
+    { item_code: "8030-1S", description2: "Col: modenza 04: mustard", linked_ac_dtlkey: "1" },
+    { item_code: "8030-1S", description2: "Col: modenza 04: mustard", linked_ac_dtlkey: "2" },
+  ];
+  const got = selectBuildRows(rows, "Col: modenza 04: mustard", undefined, { dtlKey: "2" });
+  assert.equal(got.verdict, "line-key");
+  assert.equal(got.rows.length, 1);
+  assert.equal(got.rows[0].linked_ac_dtlkey, "2");
+});
+
+test("LINE KEY: a blank key is no key — the needle decides, as it always did", () => {
+  assert.equal(selectBuildRows(SO_012636, "Col: modenza 04: mustard", undefined, { dtlKey: "" }).verdict, "exact");
+  assert.equal(selectBuildRows(SO_012636, "Col: modenza 04: mustard", undefined, {}).verdict, "exact");
+  assert.equal(selectBuildRows(SO_012636, "Col: modenza 04: mustard", undefined, { dtlKey: null }).verdict, "exact");
+});

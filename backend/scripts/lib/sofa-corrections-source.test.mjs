@@ -167,9 +167,14 @@ test("every build in every file names its documents, its pieces and a desc2Match
     /* A `why` is required but not a length: the 2026-08 round has one that
        reads exactly "owner" (HC-SO-011733), and that is a complete answer. */
     assert.ok(typeof b.why === "string" && b.why.trim() !== "", `${where}: no why`);
-    /* A document can hold several builds, and desc2Match is the ONLY thing that
-       tells them apart. A build without one claims the whole document. */
-    assert.ok(b.desc2Match, `${where}: no desc2Match`);
+    /* A document can hold several builds, and the entry must say WHICH — a
+       build that names neither claims the whole document.
+       desc2Match is the usual answer. `dtlKey` is the other one, and it is the
+       stronger of the two: it is the AutoCount line's own identity, so it works
+       where the ERP rows carry no Desc2 at all (HC-SO-005082, HC-SO-011221 —
+       every needle returns `none` there and the correction silently does
+       nothing). One or the other is required; neither is not. */
+    assert.ok(b.desc2Match || b.dtlKey, `${where}: names neither a desc2Match nor a dtlKey`);
   }
 });
 

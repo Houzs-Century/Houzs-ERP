@@ -86,14 +86,37 @@ export function desc2Contains(haystack, needle) {
   return wanted !== "" && normaliseDesc2(haystack).includes(wanted);
 }
 
+/* ── WHEN THERE IS NO TEXT TO MATCH ─────────────────────────────────────────
+   A needle can only find a build whose ERP rows carry the book's words. Two of
+   the six sales orders left on 2026-09-08 carry NONE — `HC-SO-005082` and
+   `HC-SO-011221` hold the build with `description2` the book's Desc2 is not in,
+   so every needle returns `none` and the correction silently does nothing.
+
+   Widening the needle until it hits is the wrong direction and this module's
+   own header says why: a build differs from its neighbour by exactly the
+   characters a widening removes. The right key is the one AutoCount already
+   stamped on the row. `linked_ac_dtlkey` is the BOOK LINE's identity, and
+   src/scm/lib/autocount-line-keys.ts:155 states the invariant this rests on —
+   "Every ERP row behind this AutoCount line gets the SAME key". So a DtlKey
+   selects exactly one build's rows, all of them, and cannot reach the
+   neighbouring build even when the two texts are byte-identical.
+
+   IT IS A REFUSAL, NEVER A FALLBACK. A key no row carries means the key we were
+   handed is wrong. Falling back to the text there would put the correction on
+   whatever the text happens to reach, which is the guess this module exists to
+   refuse — so `key-missing` returns no rows and the caller must not write. */
+const keyOf = (v) => (v === null || v === undefined ? "" : String(v).trim());
+
 /**
  * @typedef {object} BuildSelection
- * @property {"all"|"exact"|"normalised"|"none"|"ambiguous"} verdict
+ * @property {"all"|"exact"|"normalised"|"none"|"ambiguous"|"line-key"|"key-missing"} verdict
  *   `all` — the correction carries no desc2Match, so every row is the build.
  *   `exact` — plain substring, the behaviour this matcher has always had.
  *   `normalised` — found only after normalising; say so in the operator's log.
  *   `none` — no row carries the text. The build is not on this document.
  *   `ambiguous` — the needle spans more than one build. REFUSE; never pick.
+ *   `line-key` — chosen by the AutoCount DtlKey. Identity, not resemblance.
+ *   `key-missing` — a DtlKey was given and no row carries it. REFUSE.
  * @property {any[]} rows the rows of the build; empty unless the verdict allows
  * @property {string} how one line, for the operator's log
  * @property {string[]} texts the distinct normalised Desc2 the needle reached
@@ -105,10 +128,34 @@ export function desc2Contains(haystack, needle) {
  * @param {any[]} rows every sofa row on the document, in document order
  * @param {string|null|undefined} needle the correction's `desc2Match`
  * @param {(row:any)=>unknown} [readDesc2] how to read a row's Desc2
+ * @param {{dtlKey?: unknown, readKey?: (row:any)=>unknown}} [opts]
+ *   `dtlKey` — the correction's AutoCount line key. When present it DECIDES and
+ *   the needle is not consulted at all.
  * @returns {BuildSelection}
  */
-export function selectBuildRows(rows, needle, readDesc2 = (r) => r.description2) {
+export function selectBuildRows(rows, needle, readDesc2 = (r) => r.description2, opts = {}) {
   const all = Array.isArray(rows) ? rows : [];
+
+  /* Identity first, and it is the whole answer when it is given. */
+  const wantKey = keyOf(opts?.dtlKey);
+  if (wantKey !== "") {
+    const readKey = opts.readKey ?? ((r) => r.linked_ac_dtlkey);
+    const hits = all.filter((r) => keyOf(readKey(r)) === wantKey);
+    if (!hits.length)
+      return {
+        verdict: "key-missing",
+        rows: [],
+        how: `no line on this document carries AutoCount DtlKey ${wantKey}`,
+        texts: [],
+      };
+    return {
+      verdict: "line-key",
+      rows: hits,
+      how: `${hits.length} line(s) carry AutoCount DtlKey ${wantKey}`,
+      texts: [...new Set(hits.map((r) => normaliseDesc2(readDesc2(r))))],
+    };
+  }
+
   if (!needle) return { verdict: "all", rows: all.slice(), how: "no desc2Match on this correction", texts: [] };
 
   /* One build is one Desc2. Two distinct texts under one needle means the

@@ -57,10 +57,35 @@ export function makeSofaRulingLookup(dataDir, onError = () => {}) {
   return (erpNo, erpLines) => {
     const cands = byDoc.get(erpNo);
     if (!cands || !cands.length) return null;
-    const text = (erpLines || []).map((l) => l.description2 || "").find(Boolean) || "";
+    const lines = erpLines || [];
+
+    /* ── AN ENTRY MAY NAME ITS BOOK LINE INSTEAD OF ITS TEXT ─────────────────
+       Some builds sit on ERP rows carrying no Desc2 at all, so no needle can
+       reach them and the entry is keyed on the AutoCount DtlKey. The key is
+       IDENTITY: it selects the rows that came out of that one book line and
+       cannot reach the neighbouring build, which is the same guarantee
+       desc2Match gives and a stronger one than a text can give.
+
+       The reconcile aliases the column to `ac_dtlkey`; a caller reading the
+       table has `linked_ac_dtlkey`. Both spellings resolve, because a lookup
+       that silently answers null on the wrong spelling reads exactly like "he
+       never ruled on this". */
+    const keyOf = (v) => (v === null || v === undefined ? "" : String(v).trim());
+    const keysHere = new Set(
+      lines.map((l) => keyOf(l?.ac_dtlkey ?? l?.linked_ac_dtlkey)).filter(Boolean),
+    );
+    const keyed = cands.filter((c) => keyOf(c.dtlKey) !== "");
+    const byKey = keyed.find((c) => keysHere.has(keyOf(c.dtlKey)));
+    if (byKey) return { pieces: byKey.pieces, source: byKey.source };
+
+    const text = lines.map((l) => l.description2 || "").find(Boolean) || "";
     const hit = cands.find((c) => c.desc2Match && desc2Contains(text, c.desc2Match));
-    /* A single ruling with no needle can only be this document's one build. */
-    const only = cands.length === 1 && !cands[0].desc2Match ? cands[0] : null;
+    /* A single ruling with no needle can only be this document's one build —
+       but a KEYED entry is not that case. It named the book line it is about,
+       and these lines are not it, so blessing them on the strength of the
+       document number alone would put one build's answer on another's rows. */
+    const only =
+      cands.length === 1 && !cands[0].desc2Match && keyOf(cands[0].dtlKey) === "" ? cands[0] : null;
     const pick = hit || only;
     return pick ? { pieces: pick.pieces, source: pick.source } : null;
   };
