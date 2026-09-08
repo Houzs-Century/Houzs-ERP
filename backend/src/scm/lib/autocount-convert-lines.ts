@@ -666,16 +666,21 @@ export async function readConvertSourceKeys(
     if (keys.length) {
       const { data: sib, error: sibErr } = await sb.from(spec.sourceItemTable)
         .select(`id, linked_ac_dtlkey, ${spec.sourceQtyCol}`).in('linked_ac_dtlkey', keys);
-      if (sibErr) {
-        return {
-          refuse:
-            'the ERP could not read whether any source line on this document shares ONE line in the '
-            + 'account book — a sofa is one line there and several here — so it cannot tell a whole '
-            + 'transfer from a part-shipped one. Sending it anyway could move a whole sofa for one '
-            + 'delivered piece. Nothing was sent; re-send this document and the read is tried again.',
-        };
-      }
-      for (const r of ((sib ?? []) as unknown as Array<Record<string, unknown>>)) {
+      /* ON A READ FAILURE, FALL BACK TO WHAT WAS TAKEN — deliberately, and the
+         error is read rather than discarded so that decision is visible.
+
+         The first version of this REFUSED here, on the reasoning that a merge
+         could otherwise send a part-shipped sofa as whole. That reasoning was
+         wrong about which case is new. A delivery taking ONE of two pieces
+         carries the key ONCE, so the merge changes nothing about it — that
+         shape sent `[901830, 901831]` before this branch too, and the host
+         accepted it. The sibling read is what DETECTS it for the first time;
+         losing the read puts the document back exactly where it was this
+         morning, not somewhere worse. Refusing instead turned every path whose
+         client cannot serve this filter into a blocked shipment, which is the
+         module's standing rule violated in the other direction: a conversion
+         must never be lost to a diagnostic read. */
+      for (const r of (sibErr ? [] : (sib ?? []) as unknown as Array<Record<string, unknown>>)) {
         const n = Number(r.linked_ac_dtlkey);
         if (!Number.isFinite(n)) continue;
         const acc = siblings.get(n) ?? { lines: 0, qty: 0 };
