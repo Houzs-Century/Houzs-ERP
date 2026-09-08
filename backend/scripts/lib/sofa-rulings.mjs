@@ -24,6 +24,9 @@
  *      on another build's line would bless the wrong furniture, which is the
  *      failure this whole lane exists to prevent. There are two kinds of
  *      address and both are honoured here: `desc2Match` addresses by TEXT, and
+ *      `desc2Exclude` names the rows that are NOT this build, byte-exactly, for
+ *      the case where the rows are not keyed and one build's text is a strict
+ *      SUFFIX of its neighbour's, so no needle can reach it (HC-SO-012025).
  *      `lineKeys` by the account book's own DtlKey, which the ERP lines carry
  *      as `ac_dtlkey`. The key is checked FIRST because it is identity rather
  *      than resemblance, and it exists because text is not always enough —
@@ -109,13 +112,24 @@ export function makeSofaRulingLookup(dataDir, onError = () => {}) {
        these" on every single run. 「这个很多我刚刚都给过你答案了啊」.
        Measured on the 2026-09-08 data: exactly ONE document is ruled in more
        than one file, so this changes that document and nothing else. */
-    const hit = findLast(cands, (c) => c.desc2Match && desc2Contains(text, c.desc2Match));
+    /* `desc2Exclude` is the LAST resort of an address, under the line key, for a
+       build whose rows are not keyed AND whose text is a strict SUFFIX of its
+       neighbour's (HC-SO-012025: the same text twice, once with a leading
+       space, and only the two lead rows keyed). It is BYTE-EXACT and never
+       normalised, because the discriminator IS that space and normaliseDesc2
+       removes it. Applied HERE as well as in the writer so the reporter and the
+       writer cannot disagree about whose build a line is: without it the newest
+       ruling wins for BOTH sofas and the four-piece one would be reported as
+       the single seater the owner ruled its neighbour. */
+    const excluded = (c) => c.desc2Exclude && String(text ?? "").includes(c.desc2Exclude);
+    const hit = findLast(cands, (c) => c.desc2Match && !excluded(c) && desc2Contains(text, c.desc2Match));
     /* A single ruling with no ADDRESS OF ANY KIND can only be this document's
        one build. An entry carrying `lineKeys` is needle-less but it is NOT
        unaddressed — it named its lines and they are not these — so it must not
        fall through to here and bless the wrong furniture. */
     const only = cands.length === 1 && !cands[0].desc2Match
       && !(Array.isArray(cands[0].lineKeys) && cands[0].lineKeys.length)
+      && !excluded(cands[0])
       ? cands[0] : null;
     const pick = hit || only;
     return pick ? { pieces: pick.pieces, source: pick.source } : null;

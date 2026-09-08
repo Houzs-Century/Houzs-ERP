@@ -173,3 +173,33 @@ test("a LATER ruling supersedes an earlier one on the same build", () => {
   assert.deepEqual(hit.pieces, ["1A(LHF)", "2A(RHF)"]);
   assert.equal(hit.source, "sofa-compartment-corrections-2026-09.json");
 });
+
+test("desc2Exclude keeps the SECOND sofa's ruling off the FIRST sofa's lines", () => {
+  /* HC-SO-012025, prod 2026-09-08. The two sofas' texts differ only by a
+     LEADING SPACE, so the second build's needle ("all adjustable arm rest") is
+     carried by the first build's lines too. Without the exclusion the newest
+     ruling wins for BOTH, and the four-piece sofa would be reported as if the
+     owner had ruled it a single seater. */
+  const dir = withData({
+    sep: {
+      entries: [
+        { docs: ["HC-SO-012025"], pieces: ["1A(LHF)", "1NA", "CNR", "1A(RHF)"], desc2Match: " bottom to Nilon" },
+        { docs: ["HC-SO-012025"], pieces: ["1S"], desc2Match: "all adjustable arm rest", desc2Exclude: " bottom to Nilon" },
+      ],
+    },
+  });
+  const look = makeSofaRulingLookup(dir);
+  const first = look("HC-SO-012025", lines(" bottom to Nilon  \n30 inch , all adjustable arm rest  \ncolour :GD2502# 18- GREY"));
+  assert.deepEqual(first.pieces, ["1A(LHF)", "1NA", "CNR", "1A(RHF)"]);
+  const second = look("HC-SO-012025", lines("bottom to Nilon  \n30 inch , all adjustable arm rest  \ncolour :GD2502# 18- GREY"));
+  assert.deepEqual(second.pieces, ["1S"]);
+});
+
+test("desc2Exclude is byte-exact — normalising would erase the leading space it turns on", () => {
+  const dir = withData({
+    sep: { entries: [{ docs: ["HC-SO-012025"], pieces: ["1S"], desc2Match: "adjustable", desc2Exclude: " bottom to Nilon" }] },
+  });
+  const look = makeSofaRulingLookup(dir);
+  assert.equal(look("HC-SO-012025", lines(" bottom to Nilon \nadjustable")), null);
+  assert.deepEqual(look("HC-SO-012025", lines("bottom to Nilon \nadjustable")).pieces, ["1S"]);
+});

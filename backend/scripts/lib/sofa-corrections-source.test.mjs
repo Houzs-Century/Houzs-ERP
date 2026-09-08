@@ -73,8 +73,19 @@ test("BOTH real files load, and the 2026-08 round is still there", () => {
      HC-SO-011657 is the daybed he settled with 「那就放8030 daybed把」. `_held`
      is empty as a result — an answer that has been given may not sit in the
      held list, because the operator's log prints held builds as outstanding
-     work and would keep asking him a question he has already answered. */
-  assert.equal(bySource.get("sofa-compartment-corrections-2026-09.json"), 36);
+     work and would keep asking him a question he has already answered.
+     36 -> 37, and held 0 -> 3, later the same day: he re-read the enlarged
+     slips of HC-SO-011733, HC-SO-012025 and HC-SO-013384 and gave six answers.
+     TWO of them CONFIRM entries this file already held and add no build; ONE is
+     a new entry (HC-SO-012025's second sofa); and THREE are HELD for reasons
+     that are NOT "we have no answer" - two documents cannot yet be addressed at
+     the grain his answer needs, and one asks him a question only he can close.
+     The held count is asserted beside the build count because a held build that
+     quietly became a written one would otherwise move neither number. */
+  assert.equal(bySource.get("sofa-compartment-corrections-2026-09.json"), 37);
+  const heldBySource = new Map();
+  for (const h of both.held) heldBySource.set(h.source, (heldBySource.get(h.source) ?? 0) + 1);
+  assert.equal(heldBySource.get("sofa-compartment-corrections-2026-09.json"), 3);
 });
 
 /* ── AN ANSWERED BUILD MAY NOT SIT IN `_held` ───────────────────────────────

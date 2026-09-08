@@ -277,3 +277,116 @@ test("LINE KEY: a key the document does not carry is still a refusal", () => {
   assert.equal(got.rows.length, 0);
   assert.match(got.how, /999999/);
 });
+
+/* ── THE SECOND SOFA WHOSE TEXT IS A SUFFIX OF THE FIRST, AND WHOSE ROWS ARE
+ *    NOT KEYED ──────────────────────────────────────────────────────────────
+ * HC-SO-012025, read off production 2026-09-08 (probe run 34242061732). The
+ * line-key mode above is the right answer whenever the rows carry a key; here
+ * only the two LEAD rows do, because a correction that ADDS compartments
+ * inserts them with linked_ac_dtlkey NULL. And the account book states this
+ * document's build text TWICE, once with a LEADING SPACE (DtlKey 829179) and
+ * once without (829180), each lead's text inherited verbatim by the rows added
+ * from it.
+ *
+ * The owner ruled on 2026-09-08 that the two sofas are NOT the same: the first
+ * is `1A(LHF)+1NA+CNR+1A(RHF)` and the second, the slip marked `9050 G`, is a
+ * plain `1S`. So they have to be addressed SEPARATELY, and no substring can do
+ * it in both directions: the second sofa's text is a strict SUFFIX of the
+ * first's, so every needle that finds the second also finds the first.
+ *
+ * `desc2Exclude` is the other half of the address. It is deliberately
+ * BYTE-EXACT — the discriminator here IS a leading space, and normaliseDesc2
+ * erases exactly that. */
+const SO_012025 = [
+  { item_code: "9050-1A(LHF)", linked_ac_dtlkey: "829179", description2: " bottom to Nilon  \n30 inch , all adjustable arm rest  \ncolour :GD2502# 18- GREY" },
+  { item_code: "9050-1A(LHF)", linked_ac_dtlkey: "829180", description2: "bottom to Nilon  \n30 inch , all adjustable arm rest  \ncolour :GD2502# 18- GREY" },
+  { item_code: "9050-1NA", description2: " bottom to Nilon  \n30 inch , all adjustable arm rest  \ncolour :GD2502# 18- GREY" },
+  { item_code: "9050-CNR", description2: " bottom to Nilon  \n30 inch , all adjustable arm rest  \ncolour :GD2502# 18- GREY" },
+  { item_code: "9050-1A(RHF)", description2: " bottom to Nilon  \n30 inch , all adjustable arm rest  \ncolour :GD2502# 18- GREY" },
+  { item_code: "9050-1NA", description2: "bottom to Nilon  \n30 inch , all adjustable arm rest  \ncolour :GD2502# 18- GREY" },
+  { item_code: "9050-CNR", description2: "bottom to Nilon  \n30 inch , all adjustable arm rest  \ncolour :GD2502# 18- GREY" },
+  { item_code: "9050-1A(RHF)", description2: "bottom to Nilon  \n30 inch , all adjustable arm rest  \ncolour :GD2502# 18- GREY" },
+];
+
+test("012025: the LINE KEY cannot address these builds — four of the eight rows carry none", () => {
+  /* This is why the mode above is not the answer here, stated as a measurement
+     rather than as a sentence: asking for DtlKey 829180 reaches ONE row, and
+     the build is four. */
+  const got = selectBuildRows(SO_012025, null, undefined, { lineKeys: ["829180"] });
+  assert.equal(got.verdict, "linekey");
+  assert.equal(got.rows.length, 1);
+});
+
+test("012025: the needle that reaches BOTH sofas is not ambiguous — the texts normalise equal", () => {
+  /* This is the state that let ONE correction be written onto BOTH sofas: the
+     two texts differ by a leading space, which normalising removes, so the
+     ambiguity guard sees one distinct text and hands back all eight rows. That
+     was right while they were believed identical and is wrong now he has ruled
+     them different. */
+  const got = selectBuildRows(SO_012025, "all adjustable arm rest");
+  assert.equal(got.verdict, "exact");
+  assert.equal(got.rows.length, 8);
+  assert.equal(got.texts.length, 1);
+});
+
+test("012025: the FIRST sofa is addressable on its own, byte-exactly", () => {
+  const got = selectBuildRows(SO_012025, " bottom to Nilon");
+  assert.equal(got.verdict, "exact");
+  assert.deepEqual(got.rows.map((r) => r.item_code), ["9050-1A(LHF)", "9050-1NA", "9050-CNR", "9050-1A(RHF)"]);
+});
+
+test("012025: NO substring can address the SECOND sofa alone — that is why exclusion exists", () => {
+  // Everything the second sofa's text carries, the first sofa's text carries
+  // too. Proved rather than asserted: try every substring of it.
+  const second = SO_012025[1].description2;
+  const first = SO_012025[0].description2;
+  for (let i = 0; i < second.length; i++)
+    for (let j = i + 1; j <= second.length; j++)
+      assert.equal(first.includes(second.slice(i, j)), true);
+});
+
+test("desc2Exclude removes the rows that carry it, byte-exactly", () => {
+  const got = selectBuildRows(SO_012025, "all adjustable arm rest", undefined, { exclude: " bottom to Nilon" });
+  assert.equal(got.verdict, "exact");
+  assert.equal(got.rows.length, 4);
+  // and they are the SECOND sofa's rows: none of them carries the leading space
+  for (const r of got.rows) assert.equal(r.description2.startsWith(" "), false);
+});
+
+test("desc2Exclude that excludes NOTHING refuses instead of taking the whole document", () => {
+  /* The discriminator is one space. If a re-import ever trims it the exclusion
+     silently stops excluding, and the correction for the SECOND sofa would be
+     written onto BOTH. So an exclusion that removes no row is a REFUSAL. */
+  const got = selectBuildRows(SO_012025, "all adjustable arm rest", undefined, { exclude: "NOT ON THIS DOCUMENT" });
+  assert.equal(got.verdict, "exclusion-missing");
+  assert.deepEqual(got.rows, []);
+});
+
+test("desc2Exclude that removes EVERY row refuses too", () => {
+  const got = selectBuildRows(SO_012025, "all adjustable arm rest", undefined, { exclude: "adjustable" });
+  assert.equal(got.verdict, "none");
+  assert.deepEqual(got.rows, []);
+});
+
+test("the LINE KEY still decides when both are given — a key is identity, an exclusion is not", () => {
+  const got = selectBuildRows(SO_012025, null, undefined, { lineKeys: ["829179"], exclude: " bottom to Nilon" });
+  assert.equal(got.verdict, "linekey");
+  assert.equal(got.rows.length, 1);
+});
+
+test("desc2Exclude is inert on a build that does not carry one", () => {
+  assert.equal(selectBuildRows(SO_012025, " bottom to Nilon", undefined, {}).rows.length, 4);
+  assert.equal(selectBuildRows(SO_012025, " bottom to Nilon", undefined, { exclude: null }).rows.length, 4);
+});
+
+test("012025 after the collapse: the SECOND sofa's single row still answers, and the FIRST is untouched", () => {
+  /* Idempotence, stated as the shape the document has AFTER the write: the
+     second sofa is one `9050-1S` row keeping DtlKey 829180's text. Re-running
+     both corrections must select the same rows and change nothing. */
+  const after = [SO_012025[0], { item_code: "9050-1S", description2: SO_012025[1].description2 },
+                 SO_012025[2], SO_012025[3], SO_012025[4]];
+  const first = selectBuildRows(after, " bottom to Nilon");
+  assert.deepEqual(first.rows.map((r) => r.item_code), ["9050-1A(LHF)", "9050-1NA", "9050-CNR", "9050-1A(RHF)"]);
+  const second = selectBuildRows(after, "all adjustable arm rest", undefined, { exclude: " bottom to Nilon" });
+  assert.deepEqual(second.rows.map((r) => r.item_code), ["9050-1S"]);
+});
